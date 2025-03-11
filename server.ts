@@ -407,12 +407,15 @@ Bun.serve({
       for (const filePath of possiblePaths) {
         try {
           console.log(`- Trying: ${filePath}`);
-          const file = Bun.file(filePath);
-          const stat = Bun.fs.statSync(filePath);
           
-          if (stat.isFile()) {
+          // Check if file exists and is a file
+          if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
             console.log(`✓ Success with path: ${filePath}`);
-            return new Response(file, {
+            
+            // Read the file content and serve it
+            const fileContent = fs.readFileSync(filePath);
+            
+            return new Response(fileContent, {
               headers: {
                 "Content-Type": contentType,
                 "Cache-Control": "public, max-age=86400"
