@@ -3,11 +3,10 @@ FROM oven/bun:1.1-slim
 # Create the working directory
 WORKDIR /app
 
-# Copy package manifest & lock file
+# Copy package manifest
 COPY package.json .
-COPY bun.lockb .
 
-# Install dependencies
+# Install dependencies (this will generate bun.lockb)
 RUN bun install
 
 # Copy the rest of the files
