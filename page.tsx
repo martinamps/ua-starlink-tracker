@@ -71,23 +71,6 @@ export default function Page({
       : new Date().toLocaleString()
   );
   const [loading, setLoading] = React.useState<boolean>(false);
-  const [isMobile, setIsMobile] = React.useState<boolean>(false);
-
-  // Check if viewing on mobile
-  React.useEffect(() => {
-    const checkIfMobile = () => {
-      setIsMobile(window.innerWidth < 768);
-    };
-
-    // Initial check
-    checkIfMobile();
-
-    // Add event listener
-    window.addEventListener("resize", checkIfMobile);
-
-    // Clean up
-    return () => window.removeEventListener("resize", checkIfMobile);
-  }, []);
 
   // State for fleet statistics
   const [fleetStatistics, setFleetStatistics] = React.useState<
@@ -142,71 +125,23 @@ export default function Page({
   const percentage = y > 0 ? ((x / y) * 100).toFixed(2) : "0.00";
 
   return (
-    <div
-      style={{
-        fontFamily:
-          '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Open Sans", "Helvetica Neue", sans-serif',
-        maxWidth: "1200px",
-        margin: "0 auto",
-        padding: isMobile ? "10px" : "20px",
-        backgroundColor: "#f9f9f9",
-        color: "#333",
-        lineHeight: 1.6,
-        minHeight: "100vh",
-        display: "flex",
-        flexDirection: "column",
-      }}
-    >
-      <header
-        style={{
-          padding: isMobile ? "20px 0" : "30px 0",
-          textAlign: "center",
-          borderBottom: "1px solid #eaeaea",
-          marginBottom: isMobile ? "20px" : "30px",
-        }}
-      >
-        <h1
-          style={{
-            fontSize: isMobile ? "2rem" : "2.5rem",
-            color: "#0066cc",
-            margin: "0 0 10px 0",
-            letterSpacing: "-0.5px",
-            fontWeight: 700,
-          }}
-        >
+    <div className="font-sans max-w-7xl mx-auto px-4 sm:px-6 md:px-8 bg-gray-50 text-gray-800 min-h-screen flex flex-col">
+      <header className="py-6 sm:py-8 md:py-10 text-center border-b border-gray-200 mb-6 sm:mb-8">
+        <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold text-united-blue mb-3 tracking-tight">
           {typeof window !== 'undefined' && window.location.hostname.includes('unitedstarlinktracker') 
             ? 'UA Starlink Tracker'
             : 'Airline Starlink Tracker'}
         </h1>
-        <p
-          style={{
-            fontSize: isMobile ? "1rem" : "1.1rem",
-            color: "#666",
-            margin: "0 0 15px 0",
-          }}
-        >
+        <p className="text-lg sm:text-xl text-gray-600 mb-4">
           {typeof window !== 'undefined' && window.location.hostname.includes('unitedstarlinktracker')
             ? 'Tracking United Airlines aircraft with Starlink WiFi'
             : 'Tracking major airlines\' rollout of Starlink WiFi'}
         </p>
-        <div
-          style={{
-            maxWidth: "800px",
-            margin: "0 auto",
-            padding: "16px 20px",
-            backgroundColor: "#eef5ff",
-            borderRadius: "12px",
-            fontSize: isMobile ? "0.95rem" : "1rem",
-            lineHeight: 1.6,
-            color: "#444",
-            border: "1px solid rgba(0,102,204,0.15)",
-            textAlign: "left",
-          }}
-        >
-          <p style={{ margin: "0 0 10px 0" }}>
+        <div className="max-w-4xl mx-auto px-5 py-4 bg-blue-50 rounded-xl text-gray-700 border border-blue-100 text-left shadow-sm">
+          <p className="mb-2">
             United Airlines began equipping its fleet with SpaceX's Starlink
             internet on March 7, 2024. The ultra-fast WiFi offers speeds up to
-            250 Mbps—<strong>50 times faster</strong> than previous systems. The
+            250 Mbps—<span className="font-bold">50 times faster</span> than previous systems. The
             airline plans to install Starlink on over 40 regional aircraft
             monthly, completing its entire two-cabin regional fleet by the end
             of 2024. Each installation takes only 8 hours, making it 10 times
@@ -217,63 +152,21 @@ export default function Page({
       </header>
 
       {/* Fleet Stats Cards */}
-      <div
-        style={{
-          display: "flex",
-          flexDirection: isMobile ? "column" : "row",
-          gap: "20px",
-          marginBottom: isMobile ? "20px" : "30px",
-          width: "100%",
-        }}
-      >
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6 mb-8">
         {/* Mainline Fleet Card */}
-        <div
-          style={{
-            flex: 1,
-            backgroundColor: "white",
-            borderRadius: "12px",
-            padding: isMobile ? "20px" : "25px",
-            boxShadow: "0 4px 16px rgba(0,0,0,0.08)",
-            textAlign: "center",
-            display: "flex",
-            flexDirection: "column",
-            justifyContent: "center",
-          }}
-        >
-          <div
-            style={{
-              fontSize: "1.1rem",
-              fontWeight: 600,
-              marginBottom: "10px",
-              color: "#444",
-            }}
-          >
+        <div className="bg-white rounded-xl p-6 shadow-md flex flex-col justify-center text-center">
+          <div className="text-lg font-semibold mb-2 text-gray-700">
             United Mainline Fleet
           </div>
-          <div
-            style={{
-              fontSize: isMobile ? "2.5rem" : "3rem",
-              fontWeight: "bold",
-              color: "#0066cc",
-              marginBottom: "5px",
-              letterSpacing: "-1px",
-              lineHeight: 1.1,
-            }}
-          >
+          <div className="text-4xl md:text-5xl font-bold text-united-blue mb-1 leading-tight tracking-tight">
             {fleetStatistics?.mainline.percentage.toFixed(2)}%
           </div>
-          <div
-            style={{
-              fontSize: "1.1rem",
-              fontWeight: "normal",
-              margin: "0 0 5px 0",
-            }}
-          >
-            <span style={{ fontWeight: "bold", color: "#0066cc" }}>
+          <div className="text-lg">
+            <span className="font-bold text-united-blue">
               {fleetStatistics?.mainline.starlink || 0}
             </span>{" "}
             out of{" "}
-            <span style={{ fontWeight: "bold" }}>
+            <span className="font-bold">
               {fleetStatistics?.mainline.total || 0}
             </span>{" "}
             planes
@@ -281,53 +174,19 @@ export default function Page({
         </div>
 
         {/* Express Fleet Card */}
-        <div
-          style={{
-            flex: 1,
-            backgroundColor: "white",
-            borderRadius: "12px",
-            padding: isMobile ? "20px" : "25px",
-            boxShadow: "0 4px 16px rgba(0,0,0,0.08)",
-            textAlign: "center",
-            display: "flex",
-            flexDirection: "column",
-            justifyContent: "center",
-          }}
-        >
-          <div
-            style={{
-              fontSize: "1.1rem",
-              fontWeight: 600,
-              marginBottom: "10px",
-              color: "#444",
-            }}
-          >
+        <div className="bg-white rounded-xl p-6 shadow-md flex flex-col justify-center text-center">
+          <div className="text-lg font-semibold mb-2 text-gray-700">
             United Express Fleet
           </div>
-          <div
-            style={{
-              fontSize: isMobile ? "2.5rem" : "3rem",
-              fontWeight: "bold",
-              color: "#0066cc",
-              marginBottom: "5px",
-              letterSpacing: "-1px",
-              lineHeight: 1.1,
-            }}
-          >
+          <div className="text-4xl md:text-5xl font-bold text-united-blue mb-1 leading-tight tracking-tight">
             {fleetStatistics?.express.percentage.toFixed(2)}%
           </div>
-          <div
-            style={{
-              fontSize: "1.1rem",
-              fontWeight: "normal",
-              margin: "0 0 5px 0",
-            }}
-          >
-            <span style={{ fontWeight: "bold", color: "#0066cc" }}>
+          <div className="text-lg">
+            <span className="font-bold text-united-blue">
               {fleetStatistics?.express.starlink || 0}
             </span>{" "}
             out of{" "}
-            <span style={{ fontWeight: "bold" }}>
+            <span className="font-bold">
               {fleetStatistics?.express.total || 0}
             </span>{" "}
             planes
@@ -335,154 +194,45 @@ export default function Page({
         </div>
 
         {/* Combined Stats */}
-        <div
-          style={{
-            flex: 1,
-            backgroundColor: "white",
-            borderRadius: "12px",
-            padding: isMobile ? "20px" : "25px",
-            boxShadow: "0 4px 16px rgba(0,0,0,0.08)",
-            textAlign: "center",
-            display: "flex",
-            flexDirection: "column",
-            justifyContent: "center",
-            border: "2px solid rgba(0,102,204,0.1)",
-          }}
-        >
-          <div
-            style={{
-              fontSize: "1.1rem",
-              fontWeight: 600,
-              marginBottom: "10px",
-              color: "#444",
-            }}
-          >
+        <div className="bg-white rounded-xl p-6 shadow-md flex flex-col justify-center text-center border-2 border-blue-100">
+          <div className="text-lg font-semibold mb-2 text-gray-700">
             Combined Fleet
           </div>
-          <div
-            style={{
-              fontSize: isMobile ? "2.5rem" : "3rem",
-              fontWeight: "bold",
-              color: "#0066cc",
-              marginBottom: "5px",
-              letterSpacing: "-1px",
-              lineHeight: 1.1,
-            }}
-          >
+          <div className="text-4xl md:text-5xl font-bold text-united-blue mb-1 leading-tight tracking-tight">
             {percentage}%
           </div>
-          <div
-            style={{
-              fontSize: "1.1rem",
-              fontWeight: "normal",
-              margin: "0 0 5px 0",
-            }}
-          >
-            <span style={{ fontWeight: "bold", color: "#0066cc" }}>{x}</span>{" "}
-            out of <span style={{ fontWeight: "bold" }}>{y}</span> planes
+          <div className="text-lg">
+            <span className="font-bold text-united-blue">{x}</span>{" "}
+            out of <span className="font-bold">{y}</span> planes
           </div>
         </div>
       </div>
 
-      {/* Last Updated - hidden for now */}
-      <div
-        style={{
-          textAlign: "center",
-          marginBottom: "25px",
-          display: "none",
-        }}
-      >
-        <div
-          style={{
-            fontSize: "0.9rem",
-            color: "#888",
-            backgroundColor: "#f8f8f8",
-            padding: "8px 12px",
-            borderRadius: "20px",
-            display: "inline-block",
-          }}
-        >
+      {/* Last Updated - hidden by default */}
+      <div className="text-center mb-6 hidden">
+        <div className="text-sm text-gray-500 bg-gray-100 px-4 py-2 rounded-full inline-block">
           Last updated: {lastUpdated}
         </div>
       </div>
 
-      <h2
-        style={{
-          fontSize: isMobile ? "1.5rem" : "1.8rem",
-          margin: isMobile ? "20px 0 12px 0" : "30px 0 15px 0",
-          color: "#333",
-          fontWeight: 600,
-        }}
-      >
+      <h2 className="text-2xl md:text-3xl font-bold mb-4 text-gray-800">
         Planes with Starlink WiFi
       </h2>
 
-      <div
-        style={{
-          overflowX: "auto",
-          flex: 1,
-          marginBottom: "20px",
-          borderRadius: "12px",
-          boxShadow: "0 4px 16px rgba(0,0,0,0.08)",
-          backgroundColor: "white",
-        }}
-      >
-        <table
-          style={{
-            width: "100%",
-            borderCollapse: "collapse",
-            backgroundColor: "white",
-            borderRadius: "12px",
-            overflow: "hidden",
-          }}
-        >
+      <div className="overflow-x-auto bg-white rounded-xl shadow-md flex-1 mb-6">
+        <table className="w-full bg-white rounded-xl overflow-hidden">
           <thead>
-            <tr
-              style={{
-                backgroundColor: "#0066cc",
-                color: "white",
-                boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
-              }}
-            >
-              <th
-                style={{
-                  padding: isMobile ? "12px 8px" : "16px",
-                  textAlign: "left",
-                  fontWeight: "600",
-                  fontSize: isMobile ? "0.85rem" : "1rem",
-                }}
-              >
+            <tr className="bg-united-blue text-white">
+              <th className="py-3 px-4 text-left font-semibold">
                 Tail Number
               </th>
-              <th
-                style={{
-                  padding: isMobile ? "12px 8px" : "16px",
-                  textAlign: "left",
-                  fontWeight: "600",
-                  fontSize: isMobile ? "0.85rem" : "1rem",
-                  display: isMobile ? "none" : "table-cell", // Hide on mobile
-                }}
-              >
+              <th className="py-3 px-4 text-left font-semibold hidden md:table-cell">
                 Aircraft
               </th>
-              <th
-                style={{
-                  padding: isMobile ? "12px 8px" : "16px",
-                  textAlign: "left",
-                  fontWeight: "600",
-                  fontSize: isMobile ? "0.85rem" : "1rem",
-                }}
-              >
+              <th className="py-3 px-4 text-left font-semibold">
                 Operated By
               </th>
-              <th
-                style={{
-                  padding: isMobile ? "12px 8px" : "16px",
-                  textAlign: "left",
-                  fontWeight: "600",
-                  fontSize: isMobile ? "0.85rem" : "1rem",
-                }}
-              >
+              <th className="py-3 px-4 text-left font-semibold">
                 Date Installed
               </th>
             </tr>
@@ -491,31 +241,16 @@ export default function Page({
             {starlinkData.length === 0 ? (
               <tr>
                 <td
-                  colSpan={isMobile ? 3 : 4}
-                  style={{
-                    padding: "30px",
-                    textAlign: "center",
-                    color: "#666",
-                    backgroundColor: "#fafafa",
-                  }}
+                  colSpan={4}
+                  className="p-8 text-center text-gray-500 bg-gray-50"
                 >
                   {loading ? (
                     <div>
-                      <div style={{ fontSize: "1.1rem", marginBottom: "10px" }}>
+                      <div className="text-lg mb-3">
                         Loading data...
                       </div>
-                      <div
-                        style={{
-                          width: "40px",
-                          height: "40px",
-                          margin: "0 auto",
-                          border: "3px solid #f3f3f3",
-                          borderTop: "3px solid #0066cc",
-                          borderRadius: "50%",
-                          animation: "spin 1s linear infinite",
-                        }}
-                      ></div>
-                      <style>{`@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}</style>
+                      <div className="w-10 h-10 mx-auto border-3 border-gray-200 border-t-united-blue rounded-full animate-spin">
+                      </div>
                     </div>
                   ) : (
                     "No data available"
@@ -526,93 +261,36 @@ export default function Page({
               starlinkData.map((plane, idx) => (
                 <tr
                   key={idx}
-                  style={{
-                    borderBottom: "1px solid #eaeaea",
-                    backgroundColor: idx % 2 === 0 ? "#fafafa" : "white",
-                    transition: "background-color 0.2s ease",
-                  }}
+                  className={`border-b border-gray-200 ${idx % 2 === 0 ? "bg-gray-50" : "bg-white"} transition-colors`}
                 >
-                  <td
-                    style={{
-                      padding: isMobile ? "12px 8px" : "14px 16px",
-                      fontWeight: "bold",
-                    }}
-                  >
+                  <td className="py-3 px-4 font-medium">
                     <span
-                      style={{
-                        display: "inline-block",
-                        backgroundColor:
-                          plane["fleet"] === "mainline" ? "#e8f0ff" : "#eef5ff",
-                        color: "#0066cc",
-                        borderRadius: "20px",
-                        padding: "6px 12px",
-                        fontSize: "0.9rem",
-                        fontWeight: "600",
-                        border: "1px solid rgba(0,102,204,0.2)",
-                        boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
-                      }}
+                      className={`inline-block px-3 py-1.5 rounded-full text-sm font-semibold bg-blue-50 text-united-blue border border-blue-100 shadow-sm`}
                     >
                       {plane["TailNumber"]}
                     </span>
                     {plane["fleet"] === "mainline" ? (
                       <span
-                        style={{
-                          display: "inline-block",
-                          backgroundColor: "#0066cc",
-                          color: "white",
-                          borderRadius: "4px",
-                          padding: "2px 6px",
-                          fontSize: "0.7rem",
-                          marginLeft: "8px",
-                          verticalAlign: "middle",
-                        }}
+                        className="inline-block ml-2 px-1.5 py-0.5 text-xs bg-united-blue text-white rounded"
                       >
                         Mainline
                       </span>
                     ) : (
                       <span
-                        style={{
-                          display: "inline-block",
-                          backgroundColor: "#6699cc",
-                          color: "white",
-                          borderRadius: "4px",
-                          padding: "2px 6px",
-                          fontSize: "0.7rem",
-                          marginLeft: "8px",
-                          verticalAlign: "middle",
-                        }}
+                        className="inline-block ml-2 px-1.5 py-0.5 text-xs bg-blue-500 text-white rounded"
                       >
                         Express
                       </span>
                     )}
                   </td>
-                  <td
-                    style={{
-                      padding: isMobile ? "12px 8px" : "14px 16px",
-                      display: isMobile ? "none" : "table-cell", // Hide on mobile
-                    }}
-                  >
+                  <td className="py-3 px-4 hidden md:table-cell">
                     {plane["Aircraft"]}
                   </td>
-                  <td
-                    style={{
-                      padding: isMobile ? "12px 8px" : "14px 16px",
-                      fontSize: isMobile ? "0.9rem" : "inherit",
-                    }}
-                  >
+                  <td className="py-3 px-4">
                     {plane["OperatedBy"] || "United Airlines"}
                   </td>
                   <td
-                    style={{
-                      padding: isMobile ? "12px 8px" : "14px 16px",
-                      color: "#555",
-                      fontSize: isMobile ? "0.85rem" : "0.9rem",
-                      whiteSpace: "nowrap",
-                      // Highlight manually overridden dates
-                      fontWeight: dateOverrides[plane["TailNumber"]]
-                        ? "600"
-                        : "normal",
-                    }}
+                    className={`py-3 px-4 text-gray-700 text-sm whitespace-nowrap ${dateOverrides[plane["TailNumber"]] ? "font-medium" : ""}`}
                   >
                     {/* Format date for better display */}
                     {plane["DateFound"]
@@ -637,37 +315,16 @@ export default function Page({
         </table>
       </div>
 
-      <footer
-        style={{
-          marginTop: "auto",
-          textAlign: "center",
-          padding: "20px 0",
-          borderTop: "1px solid #eaeaea",
-          color: "#888",
-          fontSize: "0.9rem",
-        }}
-      >
+      <footer className="mt-auto py-6 text-center border-t border-gray-200 text-gray-500 text-sm">
         <a
           href="https://x.com/martinamps"
           target="_blank"
           rel="noopener noreferrer"
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            fontSize: "0.85rem",
-            color: "#888",
-            textDecoration: "none",
-            transition: "color 0.2s",
-          }}
+          className="inline-flex items-center text-gray-500 hover:text-gray-700 transition-colors"
         >
           Built with
           <svg
-            style={{
-              width: "1rem",
-              height: "1rem",
-              margin: "0 0.25rem",
-              color: "#f87171",
-            }}
+            className="w-4 h-4 mx-1 text-red-400"
             xmlns="http://www.w3.org/2000/svg"
             width="24"
             height="24"
