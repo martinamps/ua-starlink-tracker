@@ -277,7 +277,8 @@ Bun.serve({
   routes: {
     // Static asset routes
     "/favicon.ico": () => {
-      return new Response(Bun.file("./static/favicon.ico"), {
+      const filePath = process.cwd() + '/static/favicon.ico';
+      return new Response(Bun.file(filePath), {
         headers: { 
           "Content-Type": "image/x-icon",
           "Cache-Control": "public, max-age=86400"
@@ -285,7 +286,8 @@ Bun.serve({
       });
     },
     "/site.webmanifest": () => {
-      return new Response(Bun.file("./static/site.webmanifest"), {
+      const filePath = process.cwd() + '/static/site.webmanifest';
+      return new Response(Bun.file(filePath), {
         headers: { 
           "Content-Type": "application/manifest+json",
           "Cache-Control": "public, max-age=86400" 
@@ -293,7 +295,8 @@ Bun.serve({
       });
     },
     "/apple-touch-icon.png": () => {
-      return new Response(Bun.file("./static/apple-touch-icon.png"), {
+      const filePath = process.cwd() + '/static/apple-touch-icon.png';
+      return new Response(Bun.file(filePath), {
         headers: { 
           "Content-Type": "image/png",
           "Cache-Control": "public, max-age=86400" 
@@ -301,7 +304,8 @@ Bun.serve({
       });
     },
     "/android-chrome-192x192.png": () => {
-      return new Response(Bun.file("./static/android-chrome-192x192.png"), {
+      const filePath = process.cwd() + '/static/android-chrome-192x192.png';
+      return new Response(Bun.file(filePath), {
         headers: { 
           "Content-Type": "image/png",
           "Cache-Control": "public, max-age=86400" 
@@ -309,7 +313,8 @@ Bun.serve({
       });
     },
     "/android-chrome-512x512.png": () => {
-      return new Response(Bun.file("./static/android-chrome-512x512.png"), {
+      const filePath = process.cwd() + '/static/android-chrome-512x512.png';
+      return new Response(Bun.file(filePath), {
         headers: { 
           "Content-Type": "image/png",
           "Cache-Control": "public, max-age=86400" 
@@ -317,7 +322,8 @@ Bun.serve({
       });
     },
     "/favicon-16x16.png": () => {
-      return new Response(Bun.file("./static/favicon-16x16.png"), {
+      const filePath = process.cwd() + '/static/favicon-16x16.png';
+      return new Response(Bun.file(filePath), {
         headers: { 
           "Content-Type": "image/png",
           "Cache-Control": "public, max-age=86400" 
@@ -325,7 +331,8 @@ Bun.serve({
       });
     },
     "/favicon-32x32.png": () => {
-      return new Response(Bun.file("./static/favicon-32x32.png"), {
+      const filePath = process.cwd() + '/static/favicon-32x32.png';
+      return new Response(Bun.file(filePath), {
         headers: { 
           "Content-Type": "image/png",
           "Cache-Control": "public, max-age=86400" 
@@ -334,7 +341,12 @@ Bun.serve({
     },
     // Explicitly define the social image path
     "/static/social-image.webp": () => {
-      const file = Bun.file("./static/social-image.webp");
+      // Use path.join to create a path that works in both development and production
+      // In production, this will be /app/static/social-image.webp (inside Docker)
+      const filePath = process.cwd() + '/static/social-image.webp';
+      console.log(`Trying to serve social image from: ${filePath}`);
+      
+      const file = Bun.file(filePath);
       return new Response(file, {
         headers: { 
           "Content-Type": "image/webp",
