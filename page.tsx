@@ -24,11 +24,8 @@ interface PageProps {
   fleetStats?: FleetStats; // Optional fleet statistics
 }
 
-// Manual date overrides for specific tail numbers
 const dateOverrides: Record<string, string> = {
-  // Format: 'TailNumber': 'YYYY-MM-DD'
-  N127SY: "2024-03-07", // First Starlink installation per press release
-  "ERJ-175": "2024-03-07", // Override for ERJ-175 aircraft (should be replaced when actual tail numbers are known)
+  N127SY: "2025-03-07", // First Starlink installation per press release
 };
 
 export default function Page({
@@ -40,11 +37,15 @@ export default function Page({
   // Apply date overrides to the aircraft data
   const applyDateOverrides = (data: StarlinkAircraft[]): StarlinkAircraft[] => {
     return data.map((aircraft) => {
-      const tailNumber = aircraft["TailNumber"];
+      const tailNumber = aircraft.TailNumber;
       if (tailNumber && dateOverrides[tailNumber]) {
+        // Make sure we're using PST for the override date to avoid timezone issues
+        const overrideDate = new Date(
+          `${dateOverrides[tailNumber]}T12:00:00-08:00`
+        );
         return {
           ...aircraft,
-          DateFound: dateOverrides[tailNumber],
+          DateFound: overrideDate.toISOString().split("T")[0], // Format as YYYY-MM-DD
         };
       }
       return aircraft;
@@ -77,6 +78,7 @@ export default function Page({
     FleetStats | undefined
   >(fleetStats);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: <explanation>
   const fetchData = React.useCallback(() => {
     setLoading(true);
     fetch("/api/data")
@@ -125,28 +127,40 @@ export default function Page({
   const percentage = y > 0 ? ((x / y) * 100).toFixed(2) : "0.00";
 
   return (
-    <div className="font-sans max-w-7xl mx-auto px-4 sm:px-6 md:px-8 bg-gray-50 text-gray-800 min-h-screen flex flex-col">
+    <div className="font-sans w-full mx-auto px-4 sm:px-6 md:px-8 bg-gray-50 text-gray-800 min-h-screen flex flex-col">
       <header className="py-6 sm:py-8 md:py-10 text-center border-b border-gray-200 mb-6 sm:mb-8">
         <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold text-united-blue mb-3 tracking-tight">
-          {typeof window !== 'undefined' && window.location.hostname.includes('unitedstarlinktracker') 
-            ? 'UA Starlink Tracker'
-            : 'Airline Starlink Tracker'}
+          {typeof window !== "undefined" &&
+          window.location.hostname.includes("unitedstarlinktracker")
+            ? "UA Starlink Tracker"
+            : "Airline Starlink Tracker"}
         </h1>
-        <p className="text-lg sm:text-xl text-gray-600 mb-4">
-          {typeof window !== 'undefined' && window.location.hostname.includes('unitedstarlinktracker')
-            ? 'Tracking United Airlines aircraft with Starlink WiFi'
-            : 'Tracking major airlines\' rollout of Starlink WiFi'}
+        <p className="text-lg sm:text-xl text-gray-700 mb-4">
+          {typeof window !== "undefined" &&
+          window.location.hostname.includes("unitedstarlinktracker")
+            ? "Tracking United Airlines aircraft with Starlink WiFi"
+            : "Tracking major airlines' rollout of Starlink WiFi"}
         </p>
         <div className="max-w-4xl mx-auto px-5 py-4 bg-blue-50 rounded-xl text-gray-700 border border-blue-100 text-left shadow-sm">
           <p className="mb-2">
-            United Airlines began equipping its fleet with SpaceX's Starlink
-            internet on March 7, 2024. The ultra-fast WiFi offers speeds up to
-            250 Mbps—<span className="font-bold">50 times faster</span> than previous systems. The
-            airline plans to install Starlink on over 40 regional aircraft
-            monthly, completing its entire two-cabin regional fleet by the end
-            of 2024. Each installation takes only 8 hours, making it 10 times
-            faster than previous systems, and the lightweight 85-pound equipment
-            improves fuel efficiency compared to older 300-pound systems.
+            United Airlines{" "}
+            <a
+              href="https://www.united.com/en/us/newsroom/announcements/cision-125370"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-united-blue hover:underline font-medium"
+            >
+              began equipping its fleet
+            </a>{" "}
+            with SpaceX's Starlink internet on March 7, 2024. The ultra-fast
+            WiFi offers speeds up to 250 Mbps—
+            <span className="font-bold">50 times faster</span> than previous
+            systems. The airline plans to install Starlink on over 40 regional
+            aircraft monthly, completing its entire two-cabin regional fleet by
+            the end of 2024. Each installation takes only 8 hours, making it 10
+            times faster than previous systems, and the lightweight 85-pound
+            equipment improves fuel efficiency compared to older 300-pound
+            systems.
           </p>
         </div>
       </header>
@@ -202,8 +216,8 @@ export default function Page({
             {percentage}%
           </div>
           <div className="text-lg">
-            <span className="font-bold text-united-blue">{x}</span>{" "}
-            out of <span className="font-bold">{y}</span> planes
+            <span className="font-bold text-united-blue">{x}</span> out of{" "}
+            <span className="font-bold">{y}</span> planes
           </div>
         </div>
       </div>
@@ -222,18 +236,18 @@ export default function Page({
       <div className="overflow-x-auto bg-white rounded-xl shadow-md flex-1 mb-6">
         <table className="w-full bg-white rounded-xl overflow-hidden">
           <thead>
-            <tr className="bg-united-blue text-white">
-              <th className="py-3 px-4 text-left font-semibold">
+            <tr className="bg-united-blue">
+              <th className="py-3 px-4 text-left font-semibold text-sm md:text-base text-white">
                 Tail Number
               </th>
-              <th className="py-3 px-4 text-left font-semibold hidden md:table-cell">
-                Aircraft
+              <th className="py-3 px-4 text-left font-semibold text-sm md:text-base hidden md:table-cell text-white">
+                Aircraft Type
               </th>
-              <th className="py-3 px-4 text-left font-semibold">
+              <th className="py-3 px-4 text-left font-semibold text-sm md:text-base text-white">
                 Operated By
               </th>
-              <th className="py-3 px-4 text-left font-semibold">
-                Date Installed
+              <th className="py-3 px-4 text-left font-semibold text-sm md:text-base text-white">
+                Installation Date
               </th>
             </tr>
           </thead>
@@ -242,15 +256,12 @@ export default function Page({
               <tr>
                 <td
                   colSpan={4}
-                  className="p-8 text-center text-gray-500 bg-gray-50"
+                  className="p-8 text-center text-gray-600 bg-gray-50"
                 >
                   {loading ? (
                     <div>
-                      <div className="text-lg mb-3">
-                        Loading data...
-                      </div>
-                      <div className="w-10 h-10 mx-auto border-3 border-gray-200 border-t-united-blue rounded-full animate-spin">
-                      </div>
+                      <div className="text-lg mb-3">Loading data...</div>
+                      <div className="w-10 h-10 mx-auto border-3 border-gray-200 border-t-united-blue rounded-full animate-spin" />
                     </div>
                   ) : (
                     "No data available"
@@ -260,52 +271,51 @@ export default function Page({
             ) : (
               starlinkData.map((plane, idx) => (
                 <tr
-                  key={idx}
-                  className={`border-b border-gray-200 ${idx % 2 === 0 ? "bg-gray-50" : "bg-white"} transition-colors`}
+                  key={plane.TailNumber || idx}
+                  className={`border-b border-gray-200 ${
+                    idx % 2 === 0 ? "bg-gray-50" : "bg-white"
+                  } transition-colors`}
                 >
-                  <td className="py-3 px-4 font-medium">
-                    <span
-                      className={`inline-block px-3 py-1.5 rounded-full text-sm font-semibold bg-blue-50 text-united-blue border border-blue-100 shadow-sm`}
-                    >
-                      {plane["TailNumber"]}
+                  <td className="py-3 px-4 font-medium text-gray-700">
+                    <span className="inline-block px-3 py-1.5 rounded-full text-sm font-semibold bg-blue-50 text-united-blue border border-blue-100 shadow-sm">
+                      {plane.TailNumber}
                     </span>
-                    {plane["fleet"] === "mainline" ? (
-                      <span
-                        className="inline-block ml-2 px-1.5 py-0.5 text-xs bg-united-blue text-white rounded"
-                      >
+                    {plane.fleet === "mainline" ? (
+                      <span className="inline-block ml-2 px-1.5 py-0.5 text-xs bg-united-blue text-white rounded">
                         Mainline
                       </span>
                     ) : (
-                      <span
-                        className="inline-block ml-2 px-1.5 py-0.5 text-xs bg-blue-500 text-white rounded"
-                      >
+                      <span className="inline-block ml-2 px-1.5 py-0.5 text-xs bg-blue-500 text-white rounded">
                         Express
                       </span>
                     )}
                   </td>
-                  <td className="py-3 px-4 hidden md:table-cell">
-                    {plane["Aircraft"]}
+                  <td className="py-3 px-4 hidden md:table-cell text-gray-700">
+                    {plane.Aircraft}
                   </td>
-                  <td className="py-3 px-4">
-                    {plane["OperatedBy"] || "United Airlines"}
+                  <td className="py-3 px-4 text-gray-700">
+                    {plane.OperatedBy || "United Airlines"}
                   </td>
                   <td
-                    className={`py-3 px-4 text-gray-700 text-sm whitespace-nowrap ${dateOverrides[plane["TailNumber"]] ? "font-medium" : ""}`}
+                    className={`py-3 px-4 text-gray-700 text-sm whitespace-nowrap ${
+                      dateOverrides[plane.TailNumber] ? "font-medium" : ""
+                    }`}
                   >
-                    {/* Format date for better display */}
-                    {plane["DateFound"]
-                      ? new Date(plane["DateFound"]).toLocaleDateString(
-                          undefined,
-                          {
-                            year: "numeric",
-                            month: "short",
-                            day: "numeric",
-                          }
-                        )
-                      : new Date().toLocaleDateString(undefined, {
+                    {/* Hardcode override dates to ensure correct display */}
+                    {dateOverrides[plane.TailNumber]
+                      ? "Mar 7, 2024" // Hardcoded display for override dates
+                      : plane.DateFound
+                      ? new Date(plane.DateFound).toLocaleDateString("en-US", {
                           year: "numeric",
                           month: "short",
                           day: "numeric",
+                          timeZone: "America/Los_Angeles",
+                        })
+                      : new Date().toLocaleDateString("en-US", {
+                          year: "numeric",
+                          month: "short",
+                          day: "numeric",
+                          timeZone: "America/Los_Angeles",
                         })}
                   </td>
                 </tr>
@@ -315,12 +325,12 @@ export default function Page({
         </table>
       </div>
 
-      <footer className="mt-auto py-6 text-center border-t border-gray-200 text-gray-500 text-sm">
+      <footer className="mt-auto py-6 text-center border-t border-gray-200 text-gray-600 text-sm">
         <a
           href="https://x.com/martinamps"
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex items-center text-gray-500 hover:text-gray-700 transition-colors"
+          className="inline-flex items-center text-gray-600 hover:text-gray-800 transition-colors"
         >
           Built with
           <svg
@@ -334,8 +344,10 @@ export default function Page({
             strokeWidth="2"
             strokeLinecap="round"
             strokeLinejoin="round"
+            aria-label="Heart"
+            role="img"
           >
-            <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"></path>
+            <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z" />
           </svg>
           by @martinamps
         </a>

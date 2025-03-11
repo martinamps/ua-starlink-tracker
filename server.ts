@@ -224,15 +224,6 @@ Bun.serve({
       }
     ),
     
-    "/static/styles.css": new Response(
-      await Bun.file(path.join(path.dirname(import.meta.url.replace("file://", "")), "styles.css")).bytes(),
-      {
-        headers: {
-          "Content-Type": "text/css",
-          "Cache-Control": "public, max-age=3600",
-        },
-      }
-    ),
     // API endpoint
     "/api/data": (req) => {
       // Apply rate limiting
