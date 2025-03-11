@@ -126,6 +126,18 @@ export async function fetchAllSheets() {
       filtered.forEach(aircraft => {
         aircraft["sheet_gid"] = String(sheet.gid);
         aircraft["sheet_type"] = sheetType;
+        
+        // Extract tail number from Aircraft field (usually appears before the first space)
+        const aircraftStr = aircraft["Aircraft"] || "";
+        const tailNumber = aircraftStr.split(" ")[0] || "";
+        aircraft["TailNumber"] = tailNumber;
+        
+        // Get the "Operated By" field if it exists, otherwise use "United Airlines"
+        aircraft["OperatedBy"] = aircraft["Operated By"] || "United Airlines";
+        
+        // Set the date found to today
+        aircraft["DateFound"] = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
+        
         starlinkAircraft.push(aircraft);
       });
     } catch (error) {

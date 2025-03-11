@@ -23,7 +23,10 @@ db.query(`
     aircraft TEXT,
     wifi TEXT,
     sheet_gid TEXT,
-    sheet_type TEXT
+    sheet_type TEXT,
+    DateFound TEXT,
+    TailNumber TEXT,
+    OperatedBy TEXT
   );
 `).run();
 
@@ -51,8 +54,8 @@ async function updateStarlinkData() {
 
     // Insert new data
     const insertStmt = db.prepare(`
-      INSERT INTO starlink_planes (aircraft, wifi, sheet_gid, sheet_type)
-      VALUES (?, ?, ?, ?)
+      INSERT INTO starlink_planes (aircraft, wifi, sheet_gid, sheet_type, DateFound, TailNumber, OperatedBy)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
 
     for (const aircraft of starlinkAircraft) {
@@ -60,7 +63,10 @@ async function updateStarlinkData() {
         aircraft["Aircraft"] ?? "",
         aircraft["WiFi"] ?? "",
         aircraft["sheet_gid"] ?? "",
-        aircraft["sheet_type"] ?? ""
+        aircraft["sheet_type"] ?? "",
+        aircraft["DateFound"] ?? new Date().toISOString().split('T')[0],
+        aircraft["TailNumber"] ?? "",
+        aircraft["OperatedBy"] ?? "United Airlines"
       );
     }
 
@@ -107,7 +113,10 @@ function getStarlinkPlanes(): any[] {
     SELECT aircraft as Aircraft,
            wifi as WiFi,
            sheet_gid,
-           sheet_type
+           sheet_type,
+           DateFound,
+           TailNumber,
+           OperatedBy
     FROM starlink_planes
   `).all();
 }
