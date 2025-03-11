@@ -13,7 +13,7 @@ import {
   getStarlinkPlanes,
   getFleetStats,
 } from "./database";
-import { getDomainContent, SECURITY_HEADERS, CONTENT_TYPES } from "./constants";
+import { getDomainContent, SECURITY_HEADERS, CONTENT_TYPES, isUnitedDomain } from "./constants";
 import { getNotFoundHtml } from "./not-found";
 
 // Determine the static directory path based on environment
@@ -179,6 +179,7 @@ Bun.serve({
           starlink: starlinkPlanes,
           lastUpdated,
           fleetStats,
+          isUnited: isUnitedDomain(host),
         })
       );
 

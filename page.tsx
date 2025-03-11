@@ -23,6 +23,7 @@ interface PageProps {
   starlink: StarlinkAircraft[];
   lastUpdated?: string; // Optional timestamp from server
   fleetStats?: FleetStats; // Optional fleet statistics
+  isUnited?: boolean; // Whether we're on the United-specific domain
 }
 
 const dateOverrides: Record<string, string> = {
@@ -34,6 +35,7 @@ export default function Page({
   starlink,
   lastUpdated: serverLastUpdated,
   fleetStats,
+  isUnited = false, // Default to generic view if not specified
 }: PageProps) {
   // Apply date overrides to the aircraft data
   const applyDateOverrides = (data: StarlinkAircraft[]): StarlinkAircraft[] => {
@@ -131,14 +133,10 @@ export default function Page({
     <div className="font-sans w-full mx-auto px-4 sm:px-6 md:px-8 bg-gray-50 text-gray-800 min-h-screen flex flex-col">
       <header className="py-6 sm:py-8 md:py-10 text-center border-b border-gray-200 mb-6 sm:mb-8">
         <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold text-united-blue mb-3 tracking-tight">
-          {typeof window !== "undefined" && isUnitedDomain(window.location.hostname)
-            ? PAGE_CONTENT.pageTitle.united
-            : PAGE_CONTENT.pageTitle.generic}
+          {isUnited ? PAGE_CONTENT.pageTitle.united : PAGE_CONTENT.pageTitle.generic}
         </h1>
         <p className="text-lg sm:text-xl text-gray-700 mb-4">
-          {typeof window !== "undefined" && isUnitedDomain(window.location.hostname)
-            ? PAGE_CONTENT.pageSubtitle.united
-            : PAGE_CONTENT.pageSubtitle.generic}
+          {isUnited ? PAGE_CONTENT.pageSubtitle.united : PAGE_CONTENT.pageSubtitle.generic}
         </p>
         <div className="max-w-4xl mx-auto px-5 py-4 bg-blue-50 rounded-xl text-gray-700 border border-blue-100 text-left shadow-sm">
           <p className="mb-2">
