@@ -1,4 +1,5 @@
 import React from "react";
+import { isUnitedDomain, PAGE_CONTENT } from "./constants";
 
 interface StarlinkAircraft {
   [key: string]: string; // This covers dynamic keys like sheet_gid, etc.
@@ -130,22 +131,20 @@ export default function Page({
     <div className="font-sans w-full mx-auto px-4 sm:px-6 md:px-8 bg-gray-50 text-gray-800 min-h-screen flex flex-col">
       <header className="py-6 sm:py-8 md:py-10 text-center border-b border-gray-200 mb-6 sm:mb-8">
         <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold text-united-blue mb-3 tracking-tight">
-          {typeof window !== "undefined" &&
-          window.location.hostname.includes("unitedstarlinktracker")
-            ? "United Airlines Starlink Tracker"
-            : "Airline Starlink Tracker"}
+          {typeof window !== "undefined" && isUnitedDomain(window.location.hostname)
+            ? PAGE_CONTENT.pageTitle.united
+            : PAGE_CONTENT.pageTitle.generic}
         </h1>
         <p className="text-lg sm:text-xl text-gray-700 mb-4">
-          {typeof window !== "undefined" &&
-          window.location.hostname.includes("unitedstarlinktracker")
-            ? "Tracking United Airlines aircraft with Starlink WiFi"
-            : "Tracking major airlines' rollout of Starlink WiFi"}
+          {typeof window !== "undefined" && isUnitedDomain(window.location.hostname)
+            ? PAGE_CONTENT.pageSubtitle.united
+            : PAGE_CONTENT.pageSubtitle.generic}
         </p>
         <div className="max-w-4xl mx-auto px-5 py-4 bg-blue-50 rounded-xl text-gray-700 border border-blue-100 text-left shadow-sm">
           <p className="mb-2">
             United Airlines{" "}
             <a
-              href="https://www.united.com/en/us/newsroom/announcements/cision-125370"
+              href={PAGE_CONTENT.mainDescription.pressReleaseUrl}
               target="_blank"
               rel="noopener noreferrer"
               className="text-united-blue hover:underline font-medium"
@@ -170,7 +169,7 @@ export default function Page({
         {/* Mainline Fleet Card */}
         <div className="bg-white rounded-xl p-6 shadow-md flex flex-col justify-center text-center">
           <div className="text-lg font-semibold mb-2 text-gray-700">
-            United Mainline Fleet
+            {PAGE_CONTENT.fleetLabels.mainline}
           </div>
           <div className="text-4xl md:text-5xl font-bold text-united-blue mb-1 leading-tight tracking-tight">
             {fleetStatistics?.mainline.percentage.toFixed(2)}%
@@ -190,7 +189,7 @@ export default function Page({
         {/* Express Fleet Card */}
         <div className="bg-white rounded-xl p-6 shadow-md flex flex-col justify-center text-center">
           <div className="text-lg font-semibold mb-2 text-gray-700">
-            United Express Fleet
+            {PAGE_CONTENT.fleetLabels.express}
           </div>
           <div className="text-4xl md:text-5xl font-bold text-united-blue mb-1 leading-tight tracking-tight">
             {fleetStatistics?.express.percentage.toFixed(2)}%
@@ -210,7 +209,7 @@ export default function Page({
         {/* Combined Stats */}
         <div className="bg-white rounded-xl p-6 shadow-md flex flex-col justify-center text-center border-2 border-blue-100">
           <div className="text-lg font-semibold mb-2 text-gray-700">
-            Combined Fleet
+            {PAGE_CONTENT.fleetLabels.combined}
           </div>
           <div className="text-4xl md:text-5xl font-bold text-united-blue mb-1 leading-tight tracking-tight">
             {percentage}%

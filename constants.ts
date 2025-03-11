@@ -1,35 +1,61 @@
-// Domain-specific content mapping
+// Check if the current domain is for United Airlines specific tracking
+export function isUnitedDomain(hostname: string): boolean {
+  return hostname.includes("unitedstarlinktracker");
+}
+
+// Page-specific content that changes based on the domain
+export const PAGE_CONTENT = {
+  pageTitle: {
+    united: "United Airlines Starlink Tracker",
+    generic: "Airline Starlink Tracker"
+  },
+  pageSubtitle: {
+    united: "Tracking United Airlines aircraft with Starlink WiFi",
+    generic: "Tracking major airlines' rollout of Starlink WiFi"
+  },
+  mainDescription: {
+    pressReleaseUrl: "https://www.united.com/en/us/newsroom/announcements/cision-125370",
+    united: "United Airlines began equipping its fleet with SpaceX's Starlink internet on March 7, 2024. The ultra-fast WiFi offers speeds up to 250 Mbps—50 times faster than previous systems. The airline plans to install Starlink on over 40 regional aircraft monthly, completing its entire two-cabin regional fleet by the end of 2024. Each installation takes only 8 hours, making it 10 times faster than previous systems, and the lightweight 85-pound equipment improves fuel efficiency compared to older 300-pound systems."
+  },
+  fleetLabels: {
+    mainline: "United Mainline Fleet",
+    express: "United Express Fleet",
+    combined: "Combined Fleet"
+  }
+};
+
+// Domain-specific content mapping for HTML metadata
 export function getDomainContent(host: string) {
-  const isUnitedDomain = host.includes("unitedstarlinktracker");
+  const unitedDomain = isUnitedDomain(host);
   
   return {
-    siteTitle: isUnitedDomain
+    siteTitle: unitedDomain
       ? "United Airlines Starlink Tracker | Live WiFi Rollout Statistics"
       : "Airline Starlink Tracker | United, Delta & All Airlines WiFi Rollout",
       
-    siteDescription: isUnitedDomain
+    siteDescription: unitedDomain
       ? "Track United Airlines and United Express Starlink WiFi installation progress. Live statistics showing percentage of the fleet equipped with SpaceX's Starlink internet."
       : "Track the rollout of SpaceX's Starlink WiFi on major airlines. See live statistics on United Airlines, Delta and more as they equip their fleets with high-speed satellite internet.",
       
-    ogTitle: isUnitedDomain
-      ? "United Airlines Starlink Tracker"
+    ogTitle: unitedDomain
+      ? PAGE_CONTENT.pageTitle.united
       : "Airline Starlink Tracker - United, Delta & More",
       
-    ogDescription: isUnitedDomain
+    ogDescription: unitedDomain
       ? "Live statistics showing United Airlines Starlink WiFi installation progress across mainline and express fleets."
       : "Live statistics tracking SpaceX's Starlink WiFi rollout across major airlines like United and Delta.",
       
-    keywords: isUnitedDomain
+    keywords: unitedDomain
       ? "United Airlines, Starlink, WiFi, Internet, SpaceX, Aircraft, Fleet, United Express, In-flight WiFi"
       : "Airlines, Starlink, WiFi, Internet, SpaceX, Aircraft, United, Delta, In-flight WiFi, Satellite Internet",
       
-    analyticsUrl: isUnitedDomain
+    analyticsUrl: unitedDomain
       ? "unitedstarlinktracker.com"
       : "airlinestarlinktracker.com",
       
-    siteName: isUnitedDomain
-      ? "United Airlines Starlink Tracker"
-      : "Airline Starlink Tracker"
+    siteName: unitedDomain
+      ? PAGE_CONTENT.pageTitle.united
+      : PAGE_CONTENT.pageTitle.generic
   };
 }
 
