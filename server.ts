@@ -1,19 +1,20 @@
 import { Database } from "bun:sqlite";
 import React from "react";
 import ReactDOMServer from "react-dom/server";
-import { fileURLToPath } from 'node:url';
-import path from 'node:path';
+import { fileURLToPath } from "node:url";
+import path from "node:path";
 import Page from "./page";
 import { fetchAllSheets, ensureDatabaseFileExists } from "./utils";
 
 // Get the directory name of the current module
-const __dirname = fileURLToPath(new URL('.', import.meta.url));
+const __dirname = fileURLToPath(new URL(".", import.meta.url));
 
 // Location of the SQLite database
 // Use local path for development, container path for production
-const DB_PATH = process.env.NODE_ENV === 'production' 
-  ? "/srv/ua-starlink-tracker/plane-data.sqlite"  // Container path (for Coolify deployment)
-  : "./plane-data.sqlite";           // Local path for development
+const DB_PATH =
+  process.env.NODE_ENV === "production"
+    ? "/srv/ua-starlink-tracker/plane-data.sqlite" // Container path (for Coolify deployment)
+    : "./plane-data.sqlite"; // Local path for development
 
 // Ensure the database file exists before connecting
 ensureDatabaseFileExists(DB_PATH);
@@ -22,14 +23,19 @@ ensureDatabaseFileExists(DB_PATH);
 const db = new Database(DB_PATH);
 
 // First check if the table exists
-const tableExists = db.query(`
+const tableExists = db
+  .query(
+    `
   SELECT name FROM sqlite_master 
   WHERE type='table' AND name='starlink_planes'
-`).get();
+`
+  )
+  .get();
 
 if (!tableExists) {
   // Create new table with all columns
-  db.query(`
+  db.query(
+    `
     CREATE TABLE starlink_planes (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       aircraft TEXT,
@@ -41,78 +47,96 @@ if (!tableExists) {
       OperatedBy TEXT,
       fleet TEXT
     );
-  `).run();
+  `
+  ).run();
 } else {
   // Check if we need to add the new columns
-  const hasDateFound = db.query(`PRAGMA table_info(starlink_planes)`).all()
-    .some((col: any) => col.name === 'DateFound');
-  
+  const hasDateFound = db
+    .query("PRAGMA table_info(starlink_planes)")
+    .all()
+    .some((col: any) => col.name === "DateFound");
+
   if (!hasDateFound) {
     // Add the new columns if they don't exist
-    db.query(`ALTER TABLE starlink_planes ADD COLUMN DateFound TEXT;`).run();
-    db.query(`ALTER TABLE starlink_planes ADD COLUMN TailNumber TEXT;`).run();
-    db.query(`ALTER TABLE starlink_planes ADD COLUMN OperatedBy TEXT;`).run();
+    db.query("ALTER TABLE starlink_planes ADD COLUMN DateFound TEXT;").run();
+    db.query("ALTER TABLE starlink_planes ADD COLUMN TailNumber TEXT;").run();
+    db.query("ALTER TABLE starlink_planes ADD COLUMN OperatedBy TEXT;").run();
   }
-  
+
   // Check if we need to add the fleet column
-  const hasFleet = db.query(`PRAGMA table_info(starlink_planes)`).all()
-    .some((col: any) => col.name === 'fleet');
-  
+  const hasFleet = db
+    .query("PRAGMA table_info(starlink_planes)")
+    .all()
+    .some((col: any) => col.name === "fleet");
+
   if (!hasFleet) {
     // Add the fleet column if it doesn't exist
-    db.query(`ALTER TABLE starlink_planes ADD COLUMN fleet TEXT;`).run();
-    
+    db.query("ALTER TABLE starlink_planes ADD COLUMN fleet TEXT;").run();
+
     // Update existing records with default values
-    db.query(`
+    db.query(
+      `
       UPDATE starlink_planes 
       SET DateFound = ?, 
           TailNumber = SUBSTR(aircraft, 0, INSTR(aircraft, ' ')), 
           OperatedBy = ?
-    `).run(new Date().toISOString().split('T')[0], 'United Airlines');
+    `
+    ).run(new Date().toISOString().split("T")[0], "United Airlines");
   }
 }
 
 // Create meta table for storing meta data (total count, last updated time, etc)
-db.query(`
+db.query(
+  `
   CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
     value TEXT
   );
-`).run();
+`
+).run();
 
 /**
  * Re-fetch the data from Google Sheets and upsert it into the database.
  */
 async function updateStarlinkData() {
   try {
-    const { totalAircraftCount, starlinkAircraft, fleetStats } = await fetchAllSheets();
-    
+    const { totalAircraftCount, starlinkAircraft, fleetStats } =
+      await fetchAllSheets();
+
     // Clear table (simple approach)
-    db.query(`DELETE FROM starlink_planes`).run();
-    
+    db.query("DELETE FROM starlink_planes").run();
+
     // Update meta table with total count and last updated time
-    db.query(`INSERT OR REPLACE INTO meta (key, value) VALUES ('totalAircraftCount', ?)`)
-      .run(String(totalAircraftCount));
-    
+    db.query(
+      `INSERT OR REPLACE INTO meta (key, value) VALUES ('totalAircraftCount', ?)`
+    ).run(String(totalAircraftCount));
+
     // Store the last updated timestamp
     const lastUpdated = new Date().toISOString();
-    db.query(`INSERT OR REPLACE INTO meta (key, value) VALUES ('lastUpdated', ?)`)
-      .run(lastUpdated);
-      
+    db.query(
+      `INSERT OR REPLACE INTO meta (key, value) VALUES ('lastUpdated', ?)`
+    ).run(lastUpdated);
+
     // Store fleet statistics
-    db.query(`INSERT OR REPLACE INTO meta (key, value) VALUES ('expressTotal', ?)`)
-      .run(String(fleetStats.express.total));
-    db.query(`INSERT OR REPLACE INTO meta (key, value) VALUES ('expressStarlink', ?)`)
-      .run(String(fleetStats.express.starlink));
-    db.query(`INSERT OR REPLACE INTO meta (key, value) VALUES ('expressPercentage', ?)`)
-      .run(String(fleetStats.express.percentage.toFixed(2)));
-      
-    db.query(`INSERT OR REPLACE INTO meta (key, value) VALUES ('mainlineTotal', ?)`)
-      .run(String(fleetStats.mainline.total));
-    db.query(`INSERT OR REPLACE INTO meta (key, value) VALUES ('mainlineStarlink', ?)`)
-      .run(String(fleetStats.mainline.starlink));
-    db.query(`INSERT OR REPLACE INTO meta (key, value) VALUES ('mainlinePercentage', ?)`)
-      .run(String(fleetStats.mainline.percentage.toFixed(2)));
+    db.query(
+      `INSERT OR REPLACE INTO meta (key, value) VALUES ('expressTotal', ?)`
+    ).run(String(fleetStats.express.total));
+    db.query(
+      `INSERT OR REPLACE INTO meta (key, value) VALUES ('expressStarlink', ?)`
+    ).run(String(fleetStats.express.starlink));
+    db.query(
+      `INSERT OR REPLACE INTO meta (key, value) VALUES ('expressPercentage', ?)`
+    ).run(String(fleetStats.express.percentage.toFixed(2)));
+
+    db.query(
+      `INSERT OR REPLACE INTO meta (key, value) VALUES ('mainlineTotal', ?)`
+    ).run(String(fleetStats.mainline.total));
+    db.query(
+      `INSERT OR REPLACE INTO meta (key, value) VALUES ('mainlineStarlink', ?)`
+    ).run(String(fleetStats.mainline.starlink));
+    db.query(
+      `INSERT OR REPLACE INTO meta (key, value) VALUES ('mainlinePercentage', ?)`
+    ).run(String(fleetStats.mainline.percentage.toFixed(2)));
 
     // Insert new data
     const insertStmt = db.prepare(`
@@ -122,22 +146,24 @@ async function updateStarlinkData() {
 
     for (const aircraft of starlinkAircraft) {
       insertStmt.run(
-        aircraft["Aircraft"] ?? "",
-        aircraft["WiFi"] ?? "",
-        aircraft["sheet_gid"] ?? "",
-        aircraft["sheet_type"] ?? "",
-        aircraft["DateFound"] ?? new Date().toISOString().split('T')[0],
-        aircraft["TailNumber"] ?? "",
-        aircraft["OperatedBy"] ?? "United Airlines",
-        aircraft["fleet"] ?? "express"
+        aircraft.Aircraft ?? "",
+        aircraft.WiFi ?? "",
+        aircraft.sheet_gid ?? "",
+        aircraft.sheet_type ?? "",
+        aircraft.DateFound ?? new Date().toISOString().split("T")[0],
+        aircraft.TailNumber ?? "",
+        aircraft.OperatedBy ?? "United Airlines",
+        aircraft.fleet ?? "express"
       );
     }
 
-    console.log(`Updated data: ${starlinkAircraft.length} Starlink aircraft out of ${totalAircraftCount} total`);
-    
+    console.log(
+      `Updated data: ${starlinkAircraft.length} Starlink aircraft out of ${totalAircraftCount} total`
+    );
+
     return {
       total: totalAircraftCount,
-      starlinkCount: starlinkAircraft.length
+      starlinkCount: starlinkAircraft.length,
     };
   } catch (err) {
     console.error("Error updating starlink data:", err);
@@ -154,53 +180,67 @@ setInterval(() => {
   updateStarlinkData();
 }, 60 * 60 * 1000); // 1 hour
 
-/** 
- * Helper functions to read from DB 
+/**
+ * Helper functions to read from DB
  */
 function getTotalCount(): number {
-  const row = db.query(`
+  const row = db
+    .query(
+      `
     SELECT value 
     FROM meta 
     WHERE key = 'totalAircraftCount'
-  `).get();
+  `
+    )
+    .get();
 
-  if (row && row.value) {
-    return parseInt(row.value, 10);
+  if (row?.value) {
+    return Number.parseInt(row.value, 10);
   }
-  
+
   return 0; // Default
 }
 
 function getMetaValue(key: string, defaultValue: number): number {
-  const row = db.query(`
+  const row = db
+    .query(
+      `
     SELECT value 
     FROM meta 
     WHERE key = ?
-  `).get(key);
+  `
+    )
+    .get(key);
 
-  if (row && row.value) {
-    return parseFloat(row.value);
+  if (row?.value) {
+    return Number.parseFloat(row.value);
   }
-  
+
   return defaultValue;
 }
 
 function getLastUpdated(): string {
-  const lastUpdated = db.query(`
+  const lastUpdated = db
+    .query(
+      `
     SELECT value 
     FROM meta 
     WHERE key = 'lastUpdated'
-  `).get();
+  `
+    )
+    .get();
 
-  if (lastUpdated && lastUpdated.value) {
+  if (lastUpdated?.value) {
     return lastUpdated.value;
   }
-  
+
   return new Date().toISOString(); // Default to now if no value exists
 }
 
 function getStarlinkPlanes(): any[] {
-  return db.query(`
+  return db
+    .query(
+      `
     SELECT aircraft as Aircraft,
            wifi as WiFi,
            sheet_gid,
@@ -210,58 +250,62 @@ function getStarlinkPlanes(): any[] {
            OperatedBy,
            fleet
     FROM starlink_planes
-  `).all();
+  `
+    )
+    .all();
 }
 
 // Get port from environment variable or use 3000 as default
-const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+const PORT = process.env.PORT ? Number.parseInt(process.env.PORT, 10) : 3000;
 
 // Map file extensions to content types for static files
 const CONTENT_TYPES: Record<string, string> = {
-  'png': 'image/png',
-  'webp': 'image/webp',
-  'ico': 'image/x-icon',
-  'webmanifest': 'application/manifest+json',
-  'svg': 'image/svg+xml',
-  'jpg': 'image/jpeg',
-  'jpeg': 'image/jpeg'
+  png: "image/png",
+  webp: "image/webp",
+  ico: "image/x-icon",
+  webmanifest: "application/manifest+json",
+  svg: "image/svg+xml",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
 };
+
+// Create a simplified static file handler
 
 // Simple in-memory rate limiting
 const RATE_LIMIT = 30; // requests per minute
 const RATE_WINDOW = 60 * 1000; // 1 minute in milliseconds
-const ipRequests = new Map<string, { count: number, resetTime: number }>();
+const ipRequests = new Map<string, { count: number; resetTime: number }>();
 
-function applyRateLimit(req: Request): { allowed: boolean, remaining: number } {
+function applyRateLimit(req: Request): { allowed: boolean; remaining: number } {
   // Get client IP (in production, you'd rely on X-Forwarded-For or similar)
-  const ip = req.headers.get('x-forwarded-for') || 'unknown';
+  const ip = req.headers.get("x-forwarded-for") || "unknown";
   const now = Date.now();
-  
+
   if (!ipRequests.has(ip)) {
     // First request from this IP
-    ipRequests.set(ip, { 
-      count: 1, 
-      resetTime: now + RATE_WINDOW 
+    ipRequests.set(ip, {
+      count: 1,
+      resetTime: now + RATE_WINDOW,
     });
     return { allowed: true, remaining: RATE_LIMIT - 1 };
   }
-  
+
   const record = ipRequests.get(ip)!;
-  
+
   // Reset if window has expired
   if (now > record.resetTime) {
     record.count = 1;
     record.resetTime = now + RATE_WINDOW;
     return { allowed: true, remaining: RATE_LIMIT - 1 };
   }
-  
+
   // Increment and check
   record.count += 1;
   const remaining = Math.max(0, RATE_LIMIT - record.count);
-  
-  return { 
+
+  return {
     allowed: record.count <= RATE_LIMIT,
-    remaining
+    remaining,
   };
 }
 
@@ -275,8 +319,8 @@ setInterval(() => {
   }
 }, 5 * 60 * 1000);
 
-// Import Node.js fs module 
-import * as fs from 'node:fs';
+// Import Node.js fs module
+import * as fs from "node:fs";
 
 // Helper to list directory contents for debugging
 function listDirectoryContents(dirPath) {
@@ -286,8 +330,8 @@ function listDirectoryContents(dirPath) {
     for (const file of files) {
       try {
         const stat = fs.statSync(path.join(dirPath, file));
-        const type = stat.isDirectory() ? 'directory' : 'file';
-        const size = stat.isFile() ? `${Math.round(stat.size / 1024)}KB` : '';
+        const type = stat.isDirectory() ? "directory" : "file";
+        const size = stat.isFile() ? `${Math.round(stat.size / 1024)}KB` : "";
         console.log(`- ${file} (${type} ${size})`);
       } catch (e) {
         console.log(`- ${file} (error: ${e.message})`);
@@ -302,11 +346,14 @@ function listDirectoryContents(dirPath) {
 
 // List contents of all possible static directories at startup
 console.log("\nChecking static directories on startup:");
-listDirectoryContents(path.join(__dirname, 'static'));
-listDirectoryContents(path.join(process.cwd(), 'static'));
-listDirectoryContents('./static');
-try { listDirectoryContents('/app/static'); } catch (e) { console.log('Could not list /app/static'); }
-
+listDirectoryContents(path.join(__dirname, "static"));
+listDirectoryContents(path.join(process.cwd(), "static"));
+listDirectoryContents("./static");
+try {
+  listDirectoryContents("/app/static");
+} catch (e) {
+  console.log("Could not list /app/static");
+}
 
 // Debug helper to print environment info
 console.log("Environment info:");
@@ -318,37 +365,42 @@ console.log(`- NODE_ENV: ${process.env.NODE_ENV}`);
 // Helper function to serve static files with multiple fallback paths
 function createStaticFileHandler(filename, contentType) {
   return (req) => {
-    const requestPath = req.url;
-    console.log(`[${new Date().toISOString()}] Request for ${filename} from ${req.headers.get('host')}`);
-    
+    console.log(
+      `[${new Date().toISOString()}] Request for ${filename} from ${req.headers.get(
+        "host"
+      )}`
+    );
+
     // Try multiple possible locations for the file
     const possiblePaths = [
-      path.join(__dirname, 'static', filename),           // Using __dirname
-      path.join(process.cwd(), 'static', filename),       // Using current working directory
-      `/app/static/${filename}`,                          // Absolute Docker path
-      `./static/${filename}`,                             // Relative to working directory
-      path.resolve('./static', filename),                 // Resolved absolute path
+      path.join(__dirname, "static", filename), // Using __dirname
+      path.join(process.cwd(), "static", filename), // Using current working directory
+      `/app/static/${filename}`, // Absolute Docker path
+      `./static/${filename}`, // Relative to working directory
+      path.resolve("./static", filename), // Resolved absolute path
     ];
-    
-    console.log(`Attempting to serve ${filename}, trying ${possiblePaths.length} possible paths`);
-    
+
+    console.log(
+      `Attempting to serve ${filename}, trying ${possiblePaths.length} possible paths`
+    );
+
     // Try each path and use the first one that works
     for (const filePath of possiblePaths) {
       try {
         console.log(`- Trying: ${filePath}`);
-        
+
         // Check if file exists and is a file
         if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
           console.log(`✓ Success with path: ${filePath}`);
-          
+
           // Read the file content and serve it
           const fileContent = fs.readFileSync(filePath);
-          
+
           return new Response(fileContent, {
             headers: {
               "Content-Type": contentType,
-              "Cache-Control": "public, max-age=86400"
-            }
+              "Cache-Control": "public, max-age=86400",
+            },
           });
         }
       } catch (e) {
@@ -356,7 +408,7 @@ function createStaticFileHandler(filename, contentType) {
         // Continue to next path
       }
     }
-    
+
     // If we get here, all paths failed
     console.error(`ERROR: Could not serve ${filename} from any path`);
     return new Response(`File ${filename} not found`, { status: 404 });
@@ -369,57 +421,82 @@ Bun.serve({
   // Define static routes
   routes: {
     // Map all static assets using the helper function
-    "/favicon.ico": createStaticFileHandler('favicon.ico', 'image/x-icon'),
-    "/site.webmanifest": createStaticFileHandler('site.webmanifest', 'application/manifest+json'),
-    "/apple-touch-icon.png": createStaticFileHandler('apple-touch-icon.png', 'image/png'),
-    "/android-chrome-192x192.png": createStaticFileHandler('android-chrome-192x192.png', 'image/png'),
-    "/android-chrome-512x512.png": createStaticFileHandler('android-chrome-512x512.png', 'image/png'),
-    "/favicon-16x16.png": createStaticFileHandler('favicon-16x16.png', 'image/png'),
-    "/favicon-32x32.png": createStaticFileHandler('favicon-32x32.png', 'image/png'),
-    "/static/social-image.webp": createStaticFileHandler('social-image.webp', 'image/webp'),
-    
+    "/favicon.ico": createStaticFileHandler("favicon.ico", "image/x-icon"),
+    "/site.webmanifest": createStaticFileHandler(
+      "site.webmanifest",
+      "application/manifest+json"
+    ),
+    "/apple-touch-icon.png": createStaticFileHandler(
+      "apple-touch-icon.png",
+      "image/png"
+    ),
+    "/android-chrome-192x192.png": createStaticFileHandler(
+      "android-chrome-192x192.png",
+      "image/png"
+    ),
+    "/android-chrome-512x512.png": createStaticFileHandler(
+      "android-chrome-512x512.png",
+      "image/png"
+    ),
+    "/favicon-16x16.png": createStaticFileHandler(
+      "favicon-16x16.png",
+      "image/png"
+    ),
+    "/favicon-32x32.png": createStaticFileHandler(
+      "favicon-32x32.png",
+      "image/png"
+    ),
+    "/static/social-image.webp": createStaticFileHandler(
+      "social-image.webp",
+      "image/webp"
+    ),
+
     // Catch-all handler for static files
     "/static/*": (req) => {
       // Extract the filename from the URL path
       const url = new URL(req.url);
       const requestPath = url.pathname;
       const filename = path.basename(requestPath);
-      
-      console.log(`[${new Date().toISOString()}] Static file catch-all for: ${requestPath}`);
-      
+
+      console.log(
+        `[${new Date().toISOString()}] Static file catch-all for: ${requestPath}`
+      );
+
       // Determine content type based on file extension
       const ext = path.extname(filename).toLowerCase().substring(1);
-      const contentType = CONTENT_TYPES[ext] || 'application/octet-stream';
-      
+      const contentType = CONTENT_TYPES[ext] || "application/octet-stream";
+
       // Try multiple possible locations for the file
-      const subPath = requestPath.replace(/^\/static\//, '');
+      const subPath = requestPath.replace(/^\/static\//, "");
       const possiblePaths = [
-        path.join(__dirname, 'static', subPath),           // Using __dirname
-        path.join(process.cwd(), 'static', subPath),       // Using current working directory
-        `/app/static/${subPath}`,                          // Absolute Docker path
-        `./static/${subPath}`,                             // Relative to working directory
-        path.resolve('./static', subPath),                 // Resolved absolute path
+        path.join(__dirname, "static", subPath), // Using __dirname
+        path.join(process.cwd(), "static", subPath), // Using current working directory
+        `/app/static/${subPath}`, // Absolute Docker path
+        `./static/${subPath}`, // Relative to working directory
+        path.resolve("./static", subPath), // Resolved absolute path
       ];
-      
-      console.log(`Attempting to serve ${subPath}, trying ${possiblePaths.length} possible paths`);
-      
+
+      console.log(
+        `Attempting to serve ${subPath}, trying ${possiblePaths.length} possible paths`
+      );
+
       // Try each path and use the first one that works
       for (const filePath of possiblePaths) {
         try {
           console.log(`- Trying: ${filePath}`);
-          
+
           // Check if file exists and is a file
           if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
             console.log(`✓ Success with path: ${filePath}`);
-            
+
             // Read the file content and serve it
             const fileContent = fs.readFileSync(filePath);
-            
+
             return new Response(fileContent, {
               headers: {
                 "Content-Type": contentType,
-                "Cache-Control": "public, max-age=86400"
-              }
+                "Cache-Control": "public, max-age=86400",
+              },
             });
           }
         } catch (e) {
@@ -427,23 +504,25 @@ Bun.serve({
           // Continue to next path
         }
       }
-      
+
       // If we get here, all paths failed
       console.error(`ERROR: Could not serve ${requestPath} from any path`);
       return new Response(`File ${requestPath} not found`, { status: 404 });
     },
-    
+
     // Debug endpoint to check environment and file system
     "/debug/files": (req) => {
       // Only allow in development or with a special token
       const url = new URL(req.url);
-      const token = url.searchParams.get('token');
-      const isAuthorized = process.env.NODE_ENV !== 'production' || token === 'starlink-tracker-debug-1a2b3c';
-      
+      const token = url.searchParams.get("token");
+      const isAuthorized =
+        process.env.NODE_ENV !== "production" ||
+        token === "starlink-tracker-debug-1a2b3c";
+
       if (!isAuthorized) {
         return new Response("Unauthorized", { status: 401 });
       }
-      
+
       // Collect debug information
       const debugInfo = {
         environment: {
@@ -452,168 +531,176 @@ Bun.serve({
           importMetaUrl: import.meta.url,
           nodeEnv: process.env.NODE_ENV,
           platform: process.platform,
-          uptime: process.uptime()
+          uptime: process.uptime(),
         },
         directories: {},
-        files: {}
+        files: {},
       };
-      
+
       // Check important directories
       const directoriesToCheck = [
-        { name: 'dirname_static', path: path.join(__dirname, 'static') },
-        { name: 'cwd_static', path: path.join(process.cwd(), 'static') },
-        { name: 'relative_static', path: './static' },
-        { name: 'app_static', path: '/app/static' },
+        { name: "dirname_static", path: path.join(__dirname, "static") },
+        { name: "cwd_static", path: path.join(process.cwd(), "static") },
+        { name: "relative_static", path: "./static" },
+        { name: "app_static", path: "/app/static" },
       ];
-      
+
       for (const dir of directoriesToCheck) {
         try {
           const exists = fs.existsSync(dir.path);
           const stats = exists ? fs.statSync(dir.path) : null;
           const isDir = stats ? stats.isDirectory() : false;
-          
+
           debugInfo.directories[dir.name] = {
             path: dir.path,
             exists,
-            isDirectory: isDir
+            isDirectory: isDir,
           };
-          
+
           if (exists && isDir) {
             const files = fs.readdirSync(dir.path);
-            debugInfo.directories[dir.name].contents = files.map(file => {
+            debugInfo.directories[dir.name].contents = files.map((file) => {
               const filePath = path.join(dir.path, file);
               const fileStats = fs.statSync(filePath);
               return {
                 name: file,
                 isDirectory: fileStats.isDirectory(),
                 size: fileStats.size,
-                mtime: fileStats.mtime
+                mtime: fileStats.mtime,
               };
             });
           }
         } catch (e) {
           debugInfo.directories[dir.name] = {
             path: dir.path,
-            error: e.message
+            error: e.message,
           };
         }
       }
-      
+
       // Check for specific critical files
       const filesToCheck = [
-        { name: 'social_image', path: path.join(__dirname, 'static', 'social-image.webp') },
-        { name: 'favicon', path: path.join(__dirname, 'static', 'favicon.ico') }
+        {
+          name: "social_image",
+          path: path.join(__dirname, "static", "social-image.webp"),
+        },
+        {
+          name: "favicon",
+          path: path.join(__dirname, "static", "favicon.ico"),
+        },
       ];
-      
+
       for (const file of filesToCheck) {
         try {
           const exists = fs.existsSync(file.path);
           const stats = exists ? fs.statSync(file.path) : null;
           const isFile = stats ? stats.isFile() : false;
-          
+
           debugInfo.files[file.name] = {
             path: file.path,
             exists,
             isFile,
             size: stats ? stats.size : 0,
-            mtime: stats ? stats.mtime : null
+            mtime: stats ? stats.mtime : null,
           };
         } catch (e) {
           debugInfo.files[file.name] = {
             path: file.path,
-            error: e.message
+            error: e.message,
           };
         }
       }
-      
+
       // Return the debug information as JSON
       return new Response(JSON.stringify(debugInfo, null, 2), {
         headers: {
-          "Content-Type": "application/json"
-        }
+          "Content-Type": "application/json",
+        },
       });
     },
   },
-  
+
   // Main request handler for non-static routes
   async fetch(req) {
     const url = new URL(req.url);
-    
+
     // Apply security headers to all responses
     const securityHeaders = {
       "Content-Type": "application/json",
       "X-Content-Type-Options": "nosniff",
       "X-Frame-Options": "DENY",
-      "Content-Security-Policy": "default-src 'self' https://unpkg.com; connect-src 'self' https://analytics.martinamps.com; script-src 'self' 'unsafe-inline' https://unpkg.com https://analytics.martinamps.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://*;",
-      "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
+      "Content-Security-Policy":
+        "default-src 'self' https://unpkg.com; connect-src 'self' https://analytics.martinamps.com; script-src 'self' 'unsafe-inline' https://unpkg.com https://analytics.martinamps.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://*;",
+      "Strict-Transport-Security":
+        "max-age=63072000; includeSubDomains; preload",
       "Referrer-Policy": "no-referrer",
-      "Cache-Control": "no-store, max-age=0"
+      "Cache-Control": "no-store, max-age=0",
     };
 
     if (url.pathname === "/api/data") {
       // Apply rate limiting for API endpoints
       const rateLimit = applyRateLimit(req);
-      
+
       // Return 429 if rate limit exceeded
       if (!rateLimit.allowed) {
         return new Response(
           JSON.stringify({ error: "Rate limit exceeded. Try again later." }),
-          { 
-            status: 429, 
+          {
+            status: 429,
             headers: {
               ...securityHeaders,
               "Retry-After": "60",
               "X-RateLimit-Limit": String(RATE_LIMIT),
               "X-RateLimit-Remaining": "0",
-              "X-RateLimit-Reset": String(Math.floor(Date.now() / 1000) + 60)
-            }
+              "X-RateLimit-Reset": String(Math.floor(Date.now() / 1000) + 60),
+            },
           }
         );
       }
-      
+
       // Gather data from DB
       const totalCount = getTotalCount();
       const starlinkPlanes = getStarlinkPlanes();
       const lastUpdated = getLastUpdated();
-      
+
       // Get fleet statistics from DB
       const fleetStats = {
         express: {
-          total: getMetaValue('expressTotal', 0),
-          starlink: getMetaValue('expressStarlink', 0),
-          percentage: getMetaValue('expressPercentage', 0)
+          total: getMetaValue("expressTotal", 0),
+          starlink: getMetaValue("expressStarlink", 0),
+          percentage: getMetaValue("expressPercentage", 0),
         },
         mainline: {
-          total: getMetaValue('mainlineTotal', 0),
-          starlink: getMetaValue('mainlineStarlink', 0),
-          percentage: getMetaValue('mainlinePercentage', 0)
-        }
+          total: getMetaValue("mainlineTotal", 0),
+          starlink: getMetaValue("mainlineStarlink", 0),
+          percentage: getMetaValue("mainlinePercentage", 0),
+        },
       };
-      
+
       // For security, ensure the API is read-only
       // No POST/PUT/DELETE methods allowed
       if (req.method !== "GET") {
-        return new Response(
-          JSON.stringify({ error: "Method not allowed" }),
-          { status: 405, headers: securityHeaders }
-        );
+        return new Response(JSON.stringify({ error: "Method not allowed" }), {
+          status: 405,
+          headers: securityHeaders,
+        });
       }
-      
+
       // Return the data with appropriate security headers
       return new Response(
-        JSON.stringify({ 
-          totalCount, 
-          starlinkPlanes, 
+        JSON.stringify({
+          totalCount,
+          starlinkPlanes,
           lastUpdated,
-          fleetStats
+          fleetStats,
         }),
-        { 
+        {
           headers: {
             ...securityHeaders,
             "X-RateLimit-Limit": String(RATE_LIMIT),
             "X-RateLimit-Remaining": String(rateLimit.remaining),
-            "X-RateLimit-Reset": String(Math.floor(Date.now() / 1000) + 60)
-          } 
+            "X-RateLimit-Reset": String(Math.floor(Date.now() / 1000) + 60),
+          },
         }
       );
     }
@@ -622,51 +709,48 @@ Bun.serve({
       // Apply more lenient rate limiting for the main page
       const rateLimit = applyRateLimit(req);
       if (!rateLimit.allowed) {
-        return new Response(
-          "Too many requests. Please try again later.",
-          { 
-            status: 429, 
-            headers: {
-              "Content-Type": "text/plain",
-              "Retry-After": "60"
-            }
-          }
-        );
+        return new Response("Too many requests. Please try again later.", {
+          status: 429,
+          headers: {
+            "Content-Type": "text/plain",
+            "Retry-After": "60",
+          },
+        });
       }
-      
+
       // Only allow GET requests
       if (req.method !== "GET") {
-        return new Response(
-          "Method not allowed",
-          { status: 405, headers: { "Content-Type": "text/plain" } }
-        );
+        return new Response("Method not allowed", {
+          status: 405,
+          headers: { "Content-Type": "text/plain" },
+        });
       }
-      
+
       // Initial data for SSR
       const totalCount = getTotalCount();
       const starlinkPlanes = getStarlinkPlanes();
       const lastUpdated = getLastUpdated();
-      
+
       // Get fleet statistics from DB
       const fleetStats = {
         express: {
-          total: getMetaValue('expressTotal', 0),
-          starlink: getMetaValue('expressStarlink', 0),
-          percentage: getMetaValue('expressPercentage', 0)
+          total: getMetaValue("expressTotal", 0),
+          starlink: getMetaValue("expressStarlink", 0),
+          percentage: getMetaValue("expressPercentage", 0),
         },
         mainline: {
-          total: getMetaValue('mainlineTotal', 0),
-          starlink: getMetaValue('mainlineStarlink', 0),
-          percentage: getMetaValue('mainlinePercentage', 0)
-        }
+          total: getMetaValue("mainlineTotal", 0),
+          starlink: getMetaValue("mainlineStarlink", 0),
+          percentage: getMetaValue("mainlinePercentage", 0),
+        },
       };
 
       const html = ReactDOMServer.renderToString(
-        React.createElement(Page, { 
-          total: totalCount, 
+        React.createElement(Page, {
+          total: totalCount,
           starlink: starlinkPlanes,
           lastUpdated: lastUpdated,
-          fleetStats: fleetStats
+          fleetStats: fleetStats,
         })
       );
       // Prepare custom HTML headers for the main page
@@ -674,39 +758,41 @@ Bun.serve({
         "Content-Type": "text/html",
         "X-Content-Type-Options": "nosniff",
         "X-Frame-Options": "DENY",
-        "Content-Security-Policy": "default-src 'self' https://unpkg.com; connect-src 'self' https://analytics.martinamps.com; script-src 'self' 'unsafe-inline' https://unpkg.com https://analytics.martinamps.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:;",
-        "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
-        "Referrer-Policy": "no-referrer"
+        "Content-Security-Policy":
+          "default-src 'self' https://unpkg.com; connect-src 'self' https://analytics.martinamps.com; script-src 'self' 'unsafe-inline' https://unpkg.com https://analytics.martinamps.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:;",
+        "Strict-Transport-Security":
+          "max-age=63072000; includeSubDomains; preload",
+        "Referrer-Policy": "no-referrer",
       };
 
       // Get the host from the request to set domain-specific content
-      const host = req.headers.get('host') || 'unitedstarlinktracker.com';
-      const isUnitedDomain = host.includes('unitedstarlinktracker');
+      const host = req.headers.get("host") || "unitedstarlinktracker.com";
+      const isUnitedDomain = host.includes("unitedstarlinktracker");
 
       // Set titles and content based on domain
-      const siteTitle = isUnitedDomain ? 
-        "United Airlines Starlink Tracker | Live WiFi Rollout Statistics" : 
-        "Airline Starlink Tracker | United, Delta & All Airlines WiFi Rollout";
-      
-      const siteDescription = isUnitedDomain ?
-        "Track United Airlines and United Express Starlink WiFi installation progress. Live statistics showing percentage of the fleet equipped with SpaceX's Starlink internet." :
-        "Track the rollout of SpaceX's Starlink WiFi on major airlines. See live statistics on United Airlines, Delta and more as they equip their fleets with high-speed satellite internet.";
-      
-      const ogTitle = isUnitedDomain ? 
-        "United Airlines Starlink Tracker" : 
-        "Airline Starlink Tracker - United, Delta & More";
-        
-      const ogDescription = isUnitedDomain ?
-        "Live statistics showing United Airlines Starlink WiFi installation progress across mainline and express fleets." :
-        "Live statistics tracking SpaceX's Starlink WiFi rollout across major airlines like United and Delta.";
-      
-      const keywords = isUnitedDomain ?
-        "United Airlines, Starlink, WiFi, Internet, SpaceX, Aircraft, Fleet, United Express, In-flight WiFi" :
-        "Airlines, Starlink, WiFi, Internet, SpaceX, Aircraft, United, Delta, In-flight WiFi, Satellite Internet";
+      const siteTitle = isUnitedDomain
+        ? "United Airlines Starlink Tracker | Live WiFi Rollout Statistics"
+        : "Airline Starlink Tracker | United, Delta & All Airlines WiFi Rollout";
 
-      const analyticsUrl = isUnitedDomain ? 
-        "unitedstarlinktracker.com" : 
-        "airlinestarlinktracker.com";
+      const siteDescription = isUnitedDomain
+        ? "Track United Airlines and United Express Starlink WiFi installation progress. Live statistics showing percentage of the fleet equipped with SpaceX's Starlink internet."
+        : "Track the rollout of SpaceX's Starlink WiFi on major airlines. See live statistics on United Airlines, Delta and more as they equip their fleets with high-speed satellite internet.";
+
+      const ogTitle = isUnitedDomain
+        ? "United Airlines Starlink Tracker"
+        : "Airline Starlink Tracker - United, Delta & More";
+
+      const ogDescription = isUnitedDomain
+        ? "Live statistics showing United Airlines Starlink WiFi installation progress across mainline and express fleets."
+        : "Live statistics tracking SpaceX's Starlink WiFi rollout across major airlines like United and Delta.";
+
+      const keywords = isUnitedDomain
+        ? "United Airlines, Starlink, WiFi, Internet, SpaceX, Aircraft, Fleet, United Express, In-flight WiFi"
+        : "Airlines, Starlink, WiFi, Internet, SpaceX, Aircraft, United, Delta, In-flight WiFi, Satellite Internet";
+
+      const analyticsUrl = isUnitedDomain
+        ? "unitedstarlinktracker.com"
+        : "airlinestarlinktracker.com";
 
       return new Response(
         `
@@ -819,12 +905,15 @@ Bun.serve({
       "Content-Type": "text/html",
       "X-Content-Type-Options": "nosniff",
       "X-Frame-Options": "DENY",
-      "Content-Security-Policy": "default-src 'self'; style-src 'unsafe-inline'; img-src 'self' data:;",
-      "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
-      "Referrer-Policy": "no-referrer"
+      "Content-Security-Policy":
+        "default-src 'self'; style-src 'unsafe-inline'; img-src 'self' data:;",
+      "Strict-Transport-Security":
+        "max-age=63072000; includeSubDomains; preload",
+      "Referrer-Policy": "no-referrer",
     };
-    
-    return new Response(`
+
+    return new Response(
+      `
       <!DOCTYPE html>
       <html lang="en">
         <head>
@@ -851,7 +940,9 @@ Bun.serve({
           <p><a href="/">Return to United Airlines Starlink Tracker</a></p>
         </body>
       </html>
-    `, { status: 404, headers: notFoundHeaders });
+    `,
+      { status: 404, headers: notFoundHeaders }
+    );
   },
 });
 
