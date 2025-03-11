@@ -340,19 +340,29 @@ Bun.serve({
       });
     },
     // Explicitly define the social image path
-    "/static/social-image.webp": () => {
-      // Use path.join to create a path that works in both development and production
-      // In production, this will be /app/static/social-image.webp (inside Docker)
-      const filePath = process.cwd() + '/static/social-image.webp';
-      console.log(`Trying to serve social image from: ${filePath}`);
+    "/static/social-image.webp": (req) => {
+      // Log request information for debugging
+      console.log(`[${new Date().toISOString()}] Request for social image from ${req.headers.get('host')}`);
       
-      const file = Bun.file(filePath);
-      return new Response(file, {
-        headers: { 
-          "Content-Type": "image/webp",
-          "Cache-Control": "public, max-age=86400" 
+      try {
+        // Use a simple approach with a relative path - should work in Docker as the working directory is /app
+        const file = Bun.file("./static/social-image.webp");
+        
+        if (file && file.size > 0) {
+          return new Response(file, {
+            headers: { 
+              "Content-Type": "image/webp",
+              "Cache-Control": "public, max-age=86400" 
+            }
+          });
+        } else {
+          console.error("Social image file not found or empty");
+          return new Response("File not found", { status: 404 });
         }
-      });
+      } catch (error) {
+        console.error("Error serving social image:", error);
+        return new Response("Server error", { status: 500 });
+      }
     },
   },
   
