@@ -332,11 +332,27 @@ Bun.serve({
         }
       });
     },
-    "/static/social-image.webp": () => {
-      return new Response(Bun.file("./static/social-image.webp"), {
-        headers: { 
-          "Content-Type": "image/webp",
-          "Cache-Control": "public, max-age=86400" 
+    // Handle any files in the static directory using a wildcard route
+    "/static/*": (request) => {
+      const url = new URL(request.url);
+      const path = url.pathname.substring("/static/".length);
+      const filePath = `./static/${path}`;
+      const file = Bun.file(filePath);
+      
+      // Check if file exists
+      if (!file.size) {
+        console.error(`Static file not found: ${filePath}`);
+        return new Response("Not found", { status: 404 });
+      }
+      
+      // Determine content type based on file extension
+      const ext = path.split('.').pop()?.toLowerCase() || '';
+      const contentType = CONTENT_TYPES[ext] || 'application/octet-stream';
+      
+      return new Response(file, {
+        headers: {
+          "Content-Type": contentType,
+          "Cache-Control": "public, max-age=86400"
         }
       });
     },
@@ -529,7 +545,8 @@ Bun.serve({
             <meta property="og:title" content="${ogTitle}" />
             <meta property="og:description" content="${ogDescription}" />
             <meta property="og:type" content="website" />
-            <meta name="twitter:card" content="summary" />
+            <meta property="og:url" content="https://${host}/" />
+            <meta name="twitter:card" content="summary_large_image" />
             <meta name="twitter:title" content="${ogTitle}" />
             <meta name="twitter:description" content="${ogDescription}" />
             <!-- Favicon -->
