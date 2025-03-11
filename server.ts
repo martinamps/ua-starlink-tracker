@@ -468,8 +468,8 @@ Bun.serve({
       
       for (const dir of directoriesToCheck) {
         try {
-          const exists = Bun.fs.existsSync(dir.path);
-          const stats = exists ? Bun.fs.statSync(dir.path) : null;
+          const exists = fs.existsSync(dir.path);
+          const stats = exists ? fs.statSync(dir.path) : null;
           const isDir = stats ? stats.isDirectory() : false;
           
           debugInfo.directories[dir.name] = {
@@ -479,10 +479,10 @@ Bun.serve({
           };
           
           if (exists && isDir) {
-            const files = Bun.fs.readdirSync(dir.path);
+            const files = fs.readdirSync(dir.path);
             debugInfo.directories[dir.name].contents = files.map(file => {
               const filePath = path.join(dir.path, file);
-              const fileStats = Bun.fs.statSync(filePath);
+              const fileStats = fs.statSync(filePath);
               return {
                 name: file,
                 isDirectory: fileStats.isDirectory(),
@@ -507,8 +507,8 @@ Bun.serve({
       
       for (const file of filesToCheck) {
         try {
-          const exists = Bun.fs.existsSync(file.path);
-          const stats = exists ? Bun.fs.statSync(file.path) : null;
+          const exists = fs.existsSync(file.path);
+          const stats = exists ? fs.statSync(file.path) : null;
           const isFile = stats ? stats.isFile() : false;
           
           debugInfo.files[file.name] = {
