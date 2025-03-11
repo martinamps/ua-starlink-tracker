@@ -149,12 +149,12 @@ export default function Page({
             >
               began equipping its fleet
             </a>{" "}
-            with SpaceX's Starlink internet on March 7, 2024. The ultra-fast
+            with SpaceX's Starlink internet on March 7, 2025. The ultra-fast
             WiFi offers speeds up to 250 Mbps—
             <span className="font-bold">50 times faster</span> than previous
             systems. The airline plans to install Starlink on over 40 regional
             aircraft monthly, completing its entire two-cabin regional fleet by
-            the end of 2024. Each installation takes only 8 hours, making it 10
+            the end of 2025. Each installation takes only 8 hours, making it 10
             times faster than previous systems, and the lightweight 85-pound
             equipment improves fuel efficiency compared to older 300-pound
             systems.
@@ -300,7 +300,7 @@ export default function Page({
                   >
                     {/* Hardcode override dates to ensure correct display */}
                     {dateOverrides[plane.TailNumber]
-                      ? "Mar 7, 2024" // Hardcoded display for override dates
+                      ? "Mar 7, 2025" // Hardcoded display for override dates
                       : plane.DateFound
                       ? new Date(plane.DateFound).toLocaleDateString("en-US", {
                           year: "numeric",
