@@ -132,7 +132,7 @@ export default function Page({
         <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold text-united-blue mb-3 tracking-tight">
           {typeof window !== "undefined" &&
           window.location.hostname.includes("unitedstarlinktracker")
-            ? "UA Starlink Tracker"
+            ? "United Airlines Starlink Tracker"
             : "Airline Starlink Tracker"}
         </h1>
         <p className="text-lg sm:text-xl text-gray-700 mb-4">
