@@ -362,56 +362,36 @@ console.log(`- process.cwd(): ${process.cwd()}`);
 console.log(`- import.meta.url: ${import.meta.url}`);
 console.log(`- NODE_ENV: ${process.env.NODE_ENV}`);
 
-// Helper function to serve static files with multiple fallback paths
+// Determine the static directory based on environment
+const STATIC_DIR = process.env.NODE_ENV === 'production' 
+  ? '/app/static'   // Production (Docker) path
+  : path.join(__dirname, 'static');  // Development path
+
+console.log(`Using static directory: ${STATIC_DIR}`);
+
+// Simple handler for static files using the determined static directory path
 function createStaticFileHandler(filename, contentType) {
   return (req) => {
-    console.log(
-      `[${new Date().toISOString()}] Request for ${filename} from ${req.headers.get(
-        "host"
-      )}`
-    );
-
-    // Try multiple possible locations for the file
-    const possiblePaths = [
-      path.join(__dirname, "static", filename), // Using __dirname
-      path.join(process.cwd(), "static", filename), // Using current working directory
-      `/app/static/${filename}`, // Absolute Docker path
-      `./static/${filename}`, // Relative to working directory
-      path.resolve("./static", filename), // Resolved absolute path
-    ];
-
-    console.log(
-      `Attempting to serve ${filename}, trying ${possiblePaths.length} possible paths`
-    );
-
-    // Try each path and use the first one that works
-    for (const filePath of possiblePaths) {
-      try {
-        console.log(`- Trying: ${filePath}`);
-
-        // Check if file exists and is a file
-        if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
-          console.log(`✓ Success with path: ${filePath}`);
-
-          // Read the file content and serve it
-          const fileContent = fs.readFileSync(filePath);
-
-          return new Response(fileContent, {
-            headers: {
-              "Content-Type": contentType,
-              "Cache-Control": "public, max-age=86400",
-            },
-          });
-        }
-      } catch (e) {
-        console.log(`✗ Failed with path: ${filePath} - ${e.message}`);
-        // Continue to next path
+    const filePath = path.join(STATIC_DIR, filename);
+    console.log(`[${new Date().toISOString()}] Serving ${filename} from ${filePath}`);
+    
+    try {
+      // Check if file exists
+      if (fs.existsSync(filePath)) {
+        return new Response(Bun.file(filePath), {
+          headers: {
+            "Content-Type": contentType,
+            "Cache-Control": "public, max-age=86400",
+          },
+        });
       }
+      
+      console.error(`File not found: ${filePath}`);
+      return new Response(`File ${filename} not found`, { status: 404 });
+    } catch (error) {
+      console.error(`Error serving ${filename}:`, error);
+      return new Response("Error serving file", { status: 500 });
     }
-
-    // If we get here, all paths failed
-    console.error(`ERROR: Could not serve ${filename} from any path`);
-    return new Response(`File ${filename} not found`, { status: 404 });
   };
 }
 
@@ -456,58 +436,36 @@ Bun.serve({
       // Extract the filename from the URL path
       const url = new URL(req.url);
       const requestPath = url.pathname;
-      const filename = path.basename(requestPath);
-
-      console.log(
-        `[${new Date().toISOString()}] Static file catch-all for: ${requestPath}`
-      );
-
-      // Determine content type based on file extension
-      const ext = path.extname(filename).toLowerCase().substring(1);
-      const contentType = CONTENT_TYPES[ext] || "application/octet-stream";
-
-      // Try multiple possible locations for the file
       const subPath = requestPath.replace(/^\/static\//, "");
-      const possiblePaths = [
-        path.join(__dirname, "static", subPath), // Using __dirname
-        path.join(process.cwd(), "static", subPath), // Using current working directory
-        `/app/static/${subPath}`, // Absolute Docker path
-        `./static/${subPath}`, // Relative to working directory
-        path.resolve("./static", subPath), // Resolved absolute path
-      ];
-
-      console.log(
-        `Attempting to serve ${subPath}, trying ${possiblePaths.length} possible paths`
-      );
-
-      // Try each path and use the first one that works
-      for (const filePath of possiblePaths) {
-        try {
-          console.log(`- Trying: ${filePath}`);
-
-          // Check if file exists and is a file
-          if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
-            console.log(`✓ Success with path: ${filePath}`);
-
-            // Read the file content and serve it
-            const fileContent = fs.readFileSync(filePath);
-
-            return new Response(fileContent, {
-              headers: {
-                "Content-Type": contentType,
-                "Cache-Control": "public, max-age=86400",
-              },
-            });
-          }
-        } catch (e) {
-          console.log(`✗ Failed with path: ${filePath} - ${e.message}`);
-          // Continue to next path
+      
+      // Determine full file path in our static directory
+      const filePath = path.join(STATIC_DIR, subPath);
+      
+      console.log(`[${new Date().toISOString()}] Static file catch-all for: ${requestPath} => ${filePath}`);
+      
+      // Determine content type based on file extension
+      const ext = path.extname(requestPath).toLowerCase().substring(1);
+      const contentType = CONTENT_TYPES[ext] || "application/octet-stream";
+      
+      try {
+        // Check if file exists
+        if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+          console.log(`✓ Success serving: ${filePath}`);
+          
+          return new Response(Bun.file(filePath), {
+            headers: {
+              "Content-Type": contentType,
+              "Cache-Control": "public, max-age=86400",
+            },
+          });
         }
+        
+        console.error(`File not found: ${filePath}`);
+        return new Response(`File ${requestPath} not found`, { status: 404 });
+      } catch (error) {
+        console.error(`Error serving ${requestPath}:`, error);
+        return new Response("Error serving file", { status: 500 });
       }
-
-      // If we get here, all paths failed
-      console.error(`ERROR: Could not serve ${requestPath} from any path`);
-      return new Response(`File ${requestPath} not found`, { status: 404 });
     },
 
     // Debug endpoint to check environment and file system
@@ -582,11 +540,11 @@ Bun.serve({
       const filesToCheck = [
         {
           name: "social_image",
-          path: path.join(__dirname, "static", "social-image.webp"),
+          path: path.join(STATIC_DIR, "social-image.webp"),
         },
         {
           name: "favicon",
-          path: path.join(__dirname, "static", "favicon.ico"),
+          path: path.join(STATIC_DIR, "favicon.ico"),
         },
       ];
 
