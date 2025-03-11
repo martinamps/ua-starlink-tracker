@@ -12,8 +12,7 @@ RUN bun install
 # Copy the rest of the files
 COPY . .
 
-# Create directory for SQLite database
-RUN mkdir -p /srv/ua-starlink-tracker
+# The /srv/ua-starlink-tracker directory will be mounted from the host
 
 # Expose port
 EXPOSE 3000
