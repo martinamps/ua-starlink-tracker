@@ -1,4 +1,4 @@
-FROM oven/bun:latest-slim
+FROM oven/bun:slim
 
 # Create the working directory
 WORKDIR /app
