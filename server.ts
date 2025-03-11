@@ -16,19 +16,46 @@ ensureDatabaseFileExists(DB_PATH);
 // Connect to SQLite
 const db = new Database(DB_PATH);
 
-// Create table if it doesn't exist
-db.query(`
-  CREATE TABLE IF NOT EXISTS starlink_planes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    aircraft TEXT,
-    wifi TEXT,
-    sheet_gid TEXT,
-    sheet_type TEXT,
-    DateFound TEXT,
-    TailNumber TEXT,
-    OperatedBy TEXT
-  );
-`).run();
+// First check if the table exists
+const tableExists = db.query(`
+  SELECT name FROM sqlite_master 
+  WHERE type='table' AND name='starlink_planes'
+`).get();
+
+if (!tableExists) {
+  // Create new table with all columns
+  db.query(`
+    CREATE TABLE starlink_planes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      aircraft TEXT,
+      wifi TEXT,
+      sheet_gid TEXT,
+      sheet_type TEXT,
+      DateFound TEXT,
+      TailNumber TEXT,
+      OperatedBy TEXT
+    );
+  `).run();
+} else {
+  // Check if we need to add the new columns
+  const hasDateFound = db.query(`PRAGMA table_info(starlink_planes)`).all()
+    .some((col: any) => col.name === 'DateFound');
+  
+  if (!hasDateFound) {
+    // Add the new columns if they don't exist
+    db.query(`ALTER TABLE starlink_planes ADD COLUMN DateFound TEXT;`).run();
+    db.query(`ALTER TABLE starlink_planes ADD COLUMN TailNumber TEXT;`).run();
+    db.query(`ALTER TABLE starlink_planes ADD COLUMN OperatedBy TEXT;`).run();
+    
+    // Update existing records with default values
+    db.query(`
+      UPDATE starlink_planes 
+      SET DateFound = ?, 
+          TailNumber = SUBSTR(aircraft, 0, INSTR(aircraft, ' ')), 
+          OperatedBy = ?
+    `).run(new Date().toISOString().split('T')[0], 'United Airlines');
+  }
+}
 
 // Create meta table for storing total count
 db.query(`

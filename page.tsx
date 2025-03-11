@@ -163,8 +163,8 @@ export default function Page({ total, starlink }: PageProps) {
                     </span>
                   </td>
                   <td style={{ padding: '12px 15px' }}>{plane["Aircraft"]}</td>
-                  <td style={{ padding: '12px 15px' }}>{plane["OperatedBy"]}</td>
-                  <td style={{ padding: '12px 15px', color: '#666', fontSize: '0.9rem' }}>{plane["DateFound"]}</td>
+                  <td style={{ padding: '12px 15px' }}>{plane["OperatedBy"] || "United Airlines"}</td>
+                  <td style={{ padding: '12px 15px', color: '#666', fontSize: '0.9rem' }}>{plane["DateFound"] || new Date().toLocaleDateString()}</td>
                 </tr>
               ))
             )}
