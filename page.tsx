@@ -174,7 +174,9 @@ export default function Page({
             fontWeight: 700,
           }}
         >
-          UA Starlink Tracker
+          {typeof window !== 'undefined' && window.location.hostname.includes('unitedstarlinktracker') 
+            ? 'UA Starlink Tracker'
+            : 'Airline Starlink Tracker'}
         </h1>
         <p
           style={{
@@ -183,7 +185,9 @@ export default function Page({
             margin: "0 0 15px 0",
           }}
         >
-          Tracking United Airlines aircraft with Starlink WiFi
+          {typeof window !== 'undefined' && window.location.hostname.includes('unitedstarlinktracker')
+            ? 'Tracking United Airlines aircraft with Starlink WiFi'
+            : 'Tracking major airlines\' rollout of Starlink WiFi'}
         </p>
         <div
           style={{

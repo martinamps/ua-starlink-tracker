@@ -270,7 +270,7 @@ Bun.serve({
       "Content-Type": "application/json",
       "X-Content-Type-Options": "nosniff",
       "X-Frame-Options": "DENY",
-      "Content-Security-Policy": "default-src 'self'",
+      "Content-Security-Policy": "default-src 'self' https://unpkg.com; connect-src 'self' https://analytics.martinamps.com; script-src 'self' 'unsafe-inline' https://unpkg.com https://analytics.martinamps.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:;",
       "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
       "Referrer-Policy": "no-referrer",
       "Cache-Control": "no-store, max-age=0"
@@ -395,29 +395,66 @@ Bun.serve({
           fleetStats: fleetStats
         })
       );
+      // Prepare custom HTML headers for the main page
+      const htmlHeaders = {
+        "Content-Type": "text/html",
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "DENY",
+        "Content-Security-Policy": "default-src 'self' https://unpkg.com; connect-src 'self' https://analytics.martinamps.com; script-src 'self' 'unsafe-inline' https://unpkg.com https://analytics.martinamps.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:;",
+        "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
+        "Referrer-Policy": "no-referrer"
+      };
+
+      // Get the host from the request to set domain-specific content
+      const host = req.headers.get('host') || 'unitedstarlinktracker.com';
+      const isUnitedDomain = host.includes('unitedstarlinktracker');
+
+      // Set titles and content based on domain
+      const siteTitle = isUnitedDomain ? 
+        "United Airlines Starlink Tracker | Live WiFi Rollout Statistics" : 
+        "Airline Starlink Tracker | United, Delta & All Airlines WiFi Rollout";
+      
+      const siteDescription = isUnitedDomain ?
+        "Track United Airlines and United Express Starlink WiFi installation progress. Live statistics showing percentage of the fleet equipped with SpaceX's Starlink internet." :
+        "Track the rollout of SpaceX's Starlink WiFi on major airlines. See live statistics on United Airlines, Delta and more as they equip their fleets with high-speed satellite internet.";
+      
+      const ogTitle = isUnitedDomain ? 
+        "United Airlines Starlink Tracker" : 
+        "Airline Starlink Tracker - United, Delta & More";
+        
+      const ogDescription = isUnitedDomain ?
+        "Live statistics showing United Airlines Starlink WiFi installation progress across mainline and express fleets." :
+        "Live statistics tracking SpaceX's Starlink WiFi rollout across major airlines like United and Delta.";
+      
+      const keywords = isUnitedDomain ?
+        "United Airlines, Starlink, WiFi, Internet, SpaceX, Aircraft, Fleet, United Express, In-flight WiFi" :
+        "Airlines, Starlink, WiFi, Internet, SpaceX, Aircraft, United, Delta, In-flight WiFi, Satellite Internet";
+
+      const analyticsUrl = isUnitedDomain ? 
+        "unitedstarlinktracker.com" : 
+        "airlinestarlinktracker.com";
+
       return new Response(
         `
         <!DOCTYPE html>
         <html lang="en">
           <head>
-            <title>United Airlines Starlink Tracker | Live WiFi Rollout Statistics</title>
+            <title>${siteTitle}</title>
             <meta charset="UTF-8" />
             <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-            <meta name="description" content="Track United Airlines and United Express Starlink WiFi installation progress. Live statistics showing percentage of the fleet equipped with SpaceX's Starlink internet." />
-            <meta name="keywords" content="United Airlines, Starlink, WiFi, Internet, SpaceX, Aircraft, Fleet, United Express, In-flight WiFi" />
+            <meta name="description" content="${siteDescription}" />
+            <meta name="keywords" content="${keywords}" />
             <meta name="robots" content="index, follow" />
-            <meta property="og:title" content="United Airlines Starlink Tracker" />
-            <meta property="og:description" content="Live statistics showing United Airlines Starlink WiFi installation progress across mainline and express fleets." />
+            <meta property="og:title" content="${ogTitle}" />
+            <meta property="og:description" content="${ogDescription}" />
             <meta property="og:type" content="website" />
             <meta name="twitter:card" content="summary" />
-            <meta name="twitter:title" content="United Airlines Starlink Tracker" />
-            <meta name="twitter:description" content="Live statistics on United Airlines Starlink WiFi installation across the fleet." />
+            <meta name="twitter:title" content="${ogTitle}" />
+            <meta name="twitter:description" content="${ogDescription}" />
             <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>✈️</text></svg>" />
             
-            <!-- Security headers -->
-            <meta http-equiv="Content-Security-Policy" content="default-src 'self' https://unpkg.com; script-src 'self' 'unsafe-inline' https://unpkg.com https://analytics.martinamps.com; style-src 'self' 'unsafe-inline';">
+            <!-- Security headers - HTTP headers used instead of meta tags -->
             <meta http-equiv="X-Content-Type-Options" content="nosniff">
-            <meta http-equiv="X-Frame-Options" content="DENY">
             <meta name="referrer" content="no-referrer">
             
             <!-- Production versions of React -->
@@ -443,26 +480,27 @@ Bun.serve({
             </style>
             
             <!-- Analytics -->
-            <script defer data-domain="unitedstarlinktracker.com" src="https://analytics.martinamps.com/js/script.js"></script>
-            
-            <script>
-              // Define React and Page globally for client-side hydration
-              var Page = ${Bun.file("./page.tsx").toString()};
-            </script>
+            <script defer data-domain="${analyticsUrl}" src="https://analytics.martinamps.com/js/script.js"></script>
           </head>
           <body>
             <div id="root">${html}</div>
+            
+            <!-- Load React components after DOM is ready -->
             <script>
-              // Hydrate the React component with the initial data
-              ReactDOM.hydrateRoot(
-                document.getElementById('root'),
-                React.createElement(Page, ${JSON.stringify({
-                  total: totalCount,
-                  starlink: starlinkPlanes,
-                  lastUpdated: lastUpdated,
-                  fleetStats: fleetStats
-                })})
-              );
+              // Use a simplified approach for client-side rendering
+              (function() {
+                // Create a simplified version of our page component
+                function SimplePage(props) {
+                  // Just use the server-rendered HTML without hydration
+                  return null;
+                }
+                
+                // Make it available globally
+                window.PageComponent = SimplePage;
+                
+                // No hydration needed - we'll use the server-rendered HTML
+                // This is simpler and avoids TypeScript conversion issues
+              })();
             </script>
             
             <!-- Security: Prevent clickjacking -->
@@ -477,19 +515,28 @@ Bun.serve({
             {
               "@context": "https://schema.org",
               "@type": "WebSite",
-              "name": "United Airlines Starlink Tracker",
-              "description": "Track United Airlines Starlink WiFi installation progress across the fleet",
-              "url": "https://ua-starlink-tracker.example.com/"
+              "name": "${ogTitle}",
+              "description": "${siteDescription}",
+              "url": "https://${host}/"
             }
             </script>
           </body>
         </html>
         `,
-        { headers: { "Content-Type": "text/html" } }
+        { headers: htmlHeaders }
       );
     }
 
     // Show a proper 404 page
+    const notFoundHeaders = {
+      "Content-Type": "text/html",
+      "X-Content-Type-Options": "nosniff",
+      "X-Frame-Options": "DENY",
+      "Content-Security-Policy": "default-src 'self'; style-src 'unsafe-inline'; img-src 'self' data:;",
+      "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
+      "Referrer-Policy": "no-referrer"
+    };
+    
     return new Response(`
       <!DOCTYPE html>
       <html lang="en">
@@ -517,7 +564,7 @@ Bun.serve({
           <p><a href="/">Return to United Airlines Starlink Tracker</a></p>
         </body>
       </html>
-    `, { status: 404, headers: { "Content-Type": "text/html" } });
+    `, { status: 404, headers: notFoundHeaders });
   },
 });
 
