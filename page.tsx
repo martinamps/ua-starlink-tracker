@@ -479,7 +479,7 @@ export default function Page({
                   fontSize: isMobile ? "0.85rem" : "1rem",
                 }}
               >
-                Date Found
+                Date Installed
               </th>
             </tr>
           </thead>
@@ -643,35 +643,35 @@ export default function Page({
           fontSize: "0.9rem",
         }}
       >
-        <a 
-          href="https://x.com/martinamps" 
-          target="_blank" 
-          rel="noopener noreferrer" 
+        <a
+          href="https://x.com/martinamps"
+          target="_blank"
+          rel="noopener noreferrer"
           style={{
             display: "inline-flex",
             alignItems: "center",
             fontSize: "0.85rem",
             color: "#888",
             textDecoration: "none",
-            transition: "color 0.2s"
+            transition: "color 0.2s",
           }}
         >
-          Built with 
-          <svg 
+          Built with
+          <svg
             style={{
               width: "1rem",
               height: "1rem",
               margin: "0 0.25rem",
-              color: "#f87171"
+              color: "#f87171",
             }}
-            xmlns="http://www.w3.org/2000/svg" 
-            width="24" 
-            height="24" 
-            viewBox="0 0 24 24" 
-            fill="none" 
-            stroke="currentColor" 
-            strokeWidth="2" 
-            strokeLinecap="round" 
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
             strokeLinejoin="round"
           >
             <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"></path>
