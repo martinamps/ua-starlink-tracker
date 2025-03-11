@@ -4,18 +4,34 @@ interface StarlinkAircraft {
   [key: string]: string; // This covers dynamic keys like sheet_gid, etc.
 }
 
+interface FleetStats {
+  express: {
+    total: number;
+    starlink: number;
+    percentage: number;
+  };
+  mainline: {
+    total: number;
+    starlink: number;
+    percentage: number;
+  };
+}
+
 interface PageProps {
   total: number;
   starlink: StarlinkAircraft[];
+  lastUpdated?: string; // Optional timestamp from server
+  fleetStats?: FleetStats; // Optional fleet statistics
 }
 
 // Manual date overrides for specific tail numbers
 const dateOverrides: Record<string, string> = {
   // Format: 'TailNumber': 'YYYY-MM-DD'
   'N127SY': '2024-03-07', // First Starlink installation per press release
+  'ERJ-175': '2024-03-07', // Override for ERJ-175 aircraft (should be replaced when actual tail numbers are known)
 };
 
-export default function Page({ total, starlink }: PageProps) {
+export default function Page({ total, starlink, lastUpdated: serverLastUpdated, fleetStats }: PageProps) {
   // Apply date overrides to the aircraft data
   const applyDateOverrides = (data: StarlinkAircraft[]): StarlinkAircraft[] => {
     return data.map(aircraft => {
@@ -30,11 +46,23 @@ export default function Page({ total, starlink }: PageProps) {
     });
   };
 
+  // Format the timestamp from server to human-readable format
+  const formatLastUpdated = (isoTimestamp: string): string => {
+    try {
+      const date = new Date(isoTimestamp);
+      return date.toLocaleString();
+    } catch (e) {
+      return new Date().toLocaleString(); // Fallback
+    }
+  };
+
   const [starlinkData, setStarlinkData] = React.useState<StarlinkAircraft[]>(
     applyDateOverrides(starlink)
   );
   const [totalAircraft, setTotalAircraft] = React.useState<number>(total);
-  const [lastUpdated, setLastUpdated] = React.useState<string>(new Date().toLocaleString());
+  const [lastUpdated, setLastUpdated] = React.useState<string>(
+    serverLastUpdated ? formatLastUpdated(serverLastUpdated) : new Date().toLocaleString()
+  );
   const [loading, setLoading] = React.useState<boolean>(false);
   const [isMobile, setIsMobile] = React.useState<boolean>(false);
 
@@ -54,16 +82,28 @@ export default function Page({ total, starlink }: PageProps) {
     return () => window.removeEventListener('resize', checkIfMobile);
   }, []);
 
+  // State for fleet statistics
+  const [fleetStatistics, setFleetStatistics] = React.useState<FleetStats | undefined>(fleetStats);
+
   const fetchData = React.useCallback(() => {
     setLoading(true);
     fetch("/api/data")
       .then(res => res.json())
-      .then(({ totalCount, starlinkPlanes }) => {
+      .then(({ totalCount, starlinkPlanes, lastUpdated: fetchedLastUpdated, fleetStats: fetchedFleetStats }) => {
         // Apply date overrides to the new data
         const planesWithOverrides = applyDateOverrides(starlinkPlanes);
         setStarlinkData(planesWithOverrides);
         setTotalAircraft(totalCount);
-        setLastUpdated(new Date().toLocaleString());
+        
+        // Use the timestamp from the server instead of client time
+        if (fetchedLastUpdated) {
+          setLastUpdated(formatLastUpdated(fetchedLastUpdated));
+        }
+        
+        // Update fleet statistics
+        if (fetchedFleetStats) {
+          setFleetStatistics(fetchedFleetStats);
+        }
         setLoading(false);
       })
       .catch(err => {
@@ -132,19 +172,92 @@ export default function Page({ total, starlink }: PageProps) {
         </div>
       </header>
 
+      {/* Fleet Stats Cards */}
       <div style={{ 
         display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
+        flexDirection: isMobile ? 'column' : 'row',
+        gap: '20px',
         marginBottom: isMobile ? '20px' : '30px',
-        backgroundColor: 'white',
-        borderRadius: '12px',
-        padding: isMobile ? '20px' : '30px',
-        boxShadow: '0 4px 16px rgba(0,0,0,0.08)'
+        width: '100%'
       }}>
-        <div style={{ width: '100%', textAlign: 'center' }}>
+        {/* Mainline Fleet Card */}
+        <div style={{ 
+          flex: 1,
+          backgroundColor: 'white',
+          borderRadius: '12px',
+          padding: isMobile ? '20px' : '25px',
+          boxShadow: '0 4px 16px rgba(0,0,0,0.08)',
+          textAlign: 'center',
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'center'
+        }}>
+          <div style={{ fontSize: '1.1rem', fontWeight: 600, marginBottom: '10px', color: '#444' }}>
+            United Mainline Fleet
+          </div>
           <div style={{ 
-            fontSize: isMobile ? '3rem' : '4rem', 
+            fontSize: isMobile ? '2.5rem' : '3rem', 
+            fontWeight: 'bold', 
+            color: '#0066cc', 
+            marginBottom: '5px',
+            letterSpacing: '-1px',
+            lineHeight: 1.1
+          }}>
+            {fleetStatistics?.mainline.percentage.toFixed(2)}%
+          </div>
+          <div style={{ fontSize: '1.1rem', fontWeight: 'normal', margin: '0 0 5px 0' }}>
+            <span style={{ fontWeight: 'bold', color: '#0066cc' }}>{fleetStatistics?.mainline.starlink || 0}</span> out of <span style={{ fontWeight: 'bold' }}>{fleetStatistics?.mainline.total || 0}</span> planes
+          </div>
+        </div>
+        
+        {/* Express Fleet Card */}
+        <div style={{ 
+          flex: 1,
+          backgroundColor: 'white',
+          borderRadius: '12px',
+          padding: isMobile ? '20px' : '25px',
+          boxShadow: '0 4px 16px rgba(0,0,0,0.08)',
+          textAlign: 'center',
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'center'
+        }}>
+          <div style={{ fontSize: '1.1rem', fontWeight: 600, marginBottom: '10px', color: '#444' }}>
+            United Express Fleet
+          </div>
+          <div style={{ 
+            fontSize: isMobile ? '2.5rem' : '3rem', 
+            fontWeight: 'bold', 
+            color: '#0066cc', 
+            marginBottom: '5px',
+            letterSpacing: '-1px',
+            lineHeight: 1.1
+          }}>
+            {fleetStatistics?.express.percentage.toFixed(2)}%
+          </div>
+          <div style={{ fontSize: '1.1rem', fontWeight: 'normal', margin: '0 0 5px 0' }}>
+            <span style={{ fontWeight: 'bold', color: '#0066cc' }}>{fleetStatistics?.express.starlink || 0}</span> out of <span style={{ fontWeight: 'bold' }}>{fleetStatistics?.express.total || 0}</span> planes
+          </div>
+        </div>
+        
+        {/* Combined Stats */}
+        <div style={{ 
+          flex: 1,
+          backgroundColor: 'white',
+          borderRadius: '12px',
+          padding: isMobile ? '20px' : '25px',
+          boxShadow: '0 4px 16px rgba(0,0,0,0.08)',
+          textAlign: 'center',
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'center',
+          border: '2px solid rgba(0,102,204,0.1)'
+        }}>
+          <div style={{ fontSize: '1.1rem', fontWeight: 600, marginBottom: '10px', color: '#444' }}>
+            Combined Fleet
+          </div>
+          <div style={{ 
+            fontSize: isMobile ? '2.5rem' : '3rem', 
             fontWeight: 'bold', 
             color: '#0066cc', 
             marginBottom: '5px',
@@ -153,24 +266,26 @@ export default function Page({ total, starlink }: PageProps) {
           }}>
             {percentage}%
           </div>
-          <div style={{ 
-            fontSize: isMobile ? '1.2rem' : '1.4rem', 
-            fontWeight: 'normal',
-            margin: '5px 0 10px 0'
-          }}>
+          <div style={{ fontSize: '1.1rem', fontWeight: 'normal', margin: '0 0 5px 0' }}>
             <span style={{ fontWeight: 'bold', color: '#0066cc' }}>{x}</span> out of <span style={{ fontWeight: 'bold' }}>{y}</span> planes
           </div>
-          <div style={{ 
-            fontSize: '0.9rem', 
-            color: '#888', 
-            marginTop: '15px',
-            backgroundColor: '#f8f8f8',
-            padding: '8px 12px',
-            borderRadius: '20px',
-            display: 'inline-block'
-          }}>
-            Last updated: {lastUpdated}
-          </div>
+        </div>
+      </div>
+      
+      {/* Last Updated */}
+      <div style={{ 
+        textAlign: 'center',
+        marginBottom: '25px'
+      }}>
+        <div style={{ 
+          fontSize: '0.9rem', 
+          color: '#888',
+          backgroundColor: '#f8f8f8',
+          padding: '8px 12px',
+          borderRadius: '20px',
+          display: 'inline-block'
+        }}>
+          Last updated: {lastUpdated}
         </div>
       </div>
 
@@ -262,7 +377,7 @@ export default function Page({ total, starlink }: PageProps) {
                   }}>
                     <span style={{ 
                       display: 'inline-block',
-                      backgroundColor: '#eef5ff',
+                      backgroundColor: plane["fleet"] === "mainline" ? '#e8f0ff' : '#eef5ff',
                       color: '#0066cc',
                       borderRadius: '20px',
                       padding: '6px 12px',
@@ -273,6 +388,33 @@ export default function Page({ total, starlink }: PageProps) {
                     }}>
                       {plane["TailNumber"]}
                     </span>
+                    {plane["fleet"] === "mainline" ? (
+                      <span style={{
+                        display: 'inline-block',
+                        backgroundColor: '#0066cc',
+                        color: 'white',
+                        borderRadius: '4px',
+                        padding: '2px 6px',
+                        fontSize: '0.7rem',
+                        marginLeft: '8px',
+                        verticalAlign: 'middle'
+                      }}>
+                        Mainline
+                      </span>
+                    ) : (
+                      <span style={{
+                        display: 'inline-block',
+                        backgroundColor: '#6699cc',
+                        color: 'white',
+                        borderRadius: '4px',
+                        padding: '2px 6px',
+                        fontSize: '0.7rem',
+                        marginLeft: '8px',
+                        verticalAlign: 'middle'
+                      }}>
+                        Express
+                      </span>
+                    )}
                   </td>
                   <td style={{ 
                     padding: isMobile ? '12px 8px' : '14px 16px',

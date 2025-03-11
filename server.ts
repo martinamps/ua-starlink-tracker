@@ -33,7 +33,8 @@ if (!tableExists) {
       sheet_type TEXT,
       DateFound TEXT,
       TailNumber TEXT,
-      OperatedBy TEXT
+      OperatedBy TEXT,
+      fleet TEXT
     );
   `).run();
 } else {
@@ -46,6 +47,15 @@ if (!tableExists) {
     db.query(`ALTER TABLE starlink_planes ADD COLUMN DateFound TEXT;`).run();
     db.query(`ALTER TABLE starlink_planes ADD COLUMN TailNumber TEXT;`).run();
     db.query(`ALTER TABLE starlink_planes ADD COLUMN OperatedBy TEXT;`).run();
+  }
+  
+  // Check if we need to add the fleet column
+  const hasFleet = db.query(`PRAGMA table_info(starlink_planes)`).all()
+    .some((col: any) => col.name === 'fleet');
+  
+  if (!hasFleet) {
+    // Add the fleet column if it doesn't exist
+    db.query(`ALTER TABLE starlink_planes ADD COLUMN fleet TEXT;`).run();
     
     // Update existing records with default values
     db.query(`
@@ -57,7 +67,7 @@ if (!tableExists) {
   }
 }
 
-// Create meta table for storing total count
+// Create meta table for storing meta data (total count, last updated time, etc)
 db.query(`
   CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
@@ -70,19 +80,39 @@ db.query(`
  */
 async function updateStarlinkData() {
   try {
-    const { totalAircraftCount, starlinkAircraft } = await fetchAllSheets();
+    const { totalAircraftCount, starlinkAircraft, fleetStats } = await fetchAllSheets();
     
     // Clear table (simple approach)
     db.query(`DELETE FROM starlink_planes`).run();
     
-    // Update total count in meta table
+    // Update meta table with total count and last updated time
     db.query(`INSERT OR REPLACE INTO meta (key, value) VALUES ('totalAircraftCount', ?)`)
       .run(String(totalAircraftCount));
+    
+    // Store the last updated timestamp
+    const lastUpdated = new Date().toISOString();
+    db.query(`INSERT OR REPLACE INTO meta (key, value) VALUES ('lastUpdated', ?)`)
+      .run(lastUpdated);
+      
+    // Store fleet statistics
+    db.query(`INSERT OR REPLACE INTO meta (key, value) VALUES ('expressTotal', ?)`)
+      .run(String(fleetStats.express.total));
+    db.query(`INSERT OR REPLACE INTO meta (key, value) VALUES ('expressStarlink', ?)`)
+      .run(String(fleetStats.express.starlink));
+    db.query(`INSERT OR REPLACE INTO meta (key, value) VALUES ('expressPercentage', ?)`)
+      .run(String(fleetStats.express.percentage.toFixed(2)));
+      
+    db.query(`INSERT OR REPLACE INTO meta (key, value) VALUES ('mainlineTotal', ?)`)
+      .run(String(fleetStats.mainline.total));
+    db.query(`INSERT OR REPLACE INTO meta (key, value) VALUES ('mainlineStarlink', ?)`)
+      .run(String(fleetStats.mainline.starlink));
+    db.query(`INSERT OR REPLACE INTO meta (key, value) VALUES ('mainlinePercentage', ?)`)
+      .run(String(fleetStats.mainline.percentage.toFixed(2)));
 
     // Insert new data
     const insertStmt = db.prepare(`
-      INSERT INTO starlink_planes (aircraft, wifi, sheet_gid, sheet_type, DateFound, TailNumber, OperatedBy)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO starlink_planes (aircraft, wifi, sheet_gid, sheet_type, DateFound, TailNumber, OperatedBy, fleet)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     for (const aircraft of starlinkAircraft) {
@@ -93,7 +123,8 @@ async function updateStarlinkData() {
         aircraft["sheet_type"] ?? "",
         aircraft["DateFound"] ?? new Date().toISOString().split('T')[0],
         aircraft["TailNumber"] ?? "",
-        aircraft["OperatedBy"] ?? "United Airlines"
+        aircraft["OperatedBy"] ?? "United Airlines",
+        aircraft["fleet"] ?? "express"
       );
     }
 
@@ -135,6 +166,34 @@ function getTotalCount(): number {
   return 0; // Default
 }
 
+function getMetaValue(key: string, defaultValue: number): number {
+  const row = db.query(`
+    SELECT value 
+    FROM meta 
+    WHERE key = ?
+  `).get(key);
+
+  if (row && row.value) {
+    return parseFloat(row.value);
+  }
+  
+  return defaultValue;
+}
+
+function getLastUpdated(): string {
+  const lastUpdated = db.query(`
+    SELECT value 
+    FROM meta 
+    WHERE key = 'lastUpdated'
+  `).get();
+
+  if (lastUpdated && lastUpdated.value) {
+    return lastUpdated.value;
+  }
+  
+  return new Date().toISOString(); // Default to now if no value exists
+}
+
 function getStarlinkPlanes(): any[] {
   return db.query(`
     SELECT aircraft as Aircraft,
@@ -143,7 +202,8 @@ function getStarlinkPlanes(): any[] {
            sheet_type,
            DateFound,
            TailNumber,
-           OperatedBy
+           OperatedBy,
+           fleet
     FROM starlink_planes
   `).all();
 }
@@ -161,8 +221,29 @@ Bun.serve({
       // Gather data from DB
       const totalCount = getTotalCount();
       const starlinkPlanes = getStarlinkPlanes();
+      const lastUpdated = getLastUpdated();
+      
+      // Get fleet statistics from DB
+      const fleetStats = {
+        express: {
+          total: getMetaValue('expressTotal', 0),
+          starlink: getMetaValue('expressStarlink', 0),
+          percentage: getMetaValue('expressPercentage', 0)
+        },
+        mainline: {
+          total: getMetaValue('mainlineTotal', 0),
+          starlink: getMetaValue('mainlineStarlink', 0),
+          percentage: getMetaValue('mainlinePercentage', 0)
+        }
+      };
+      
       return new Response(
-        JSON.stringify({ totalCount, starlinkPlanes }),
+        JSON.stringify({ 
+          totalCount, 
+          starlinkPlanes, 
+          lastUpdated,
+          fleetStats
+        }),
         { headers: { "Content-Type": "application/json" } }
       );
     }
@@ -171,9 +252,29 @@ Bun.serve({
       // Initial data for SSR
       const totalCount = getTotalCount();
       const starlinkPlanes = getStarlinkPlanes();
+      const lastUpdated = getLastUpdated();
+      
+      // Get fleet statistics from DB
+      const fleetStats = {
+        express: {
+          total: getMetaValue('expressTotal', 0),
+          starlink: getMetaValue('expressStarlink', 0),
+          percentage: getMetaValue('expressPercentage', 0)
+        },
+        mainline: {
+          total: getMetaValue('mainlineTotal', 0),
+          starlink: getMetaValue('mainlineStarlink', 0),
+          percentage: getMetaValue('mainlinePercentage', 0)
+        }
+      };
 
       const html = ReactDOMServer.renderToString(
-        React.createElement(Page, { total: totalCount, starlink: starlinkPlanes })
+        React.createElement(Page, { 
+          total: totalCount, 
+          starlink: starlinkPlanes,
+          lastUpdated: lastUpdated,
+          fleetStats: fleetStats
+        })
       );
       return new Response(
         `
@@ -197,7 +298,9 @@ Bun.serve({
                 document.getElementById('root'),
                 React.createElement(Page, ${JSON.stringify({
                   total: totalCount,
-                  starlink: starlinkPlanes
+                  starlink: starlinkPlanes,
+                  lastUpdated: lastUpdated,
+                  fleetStats: fleetStats
                 })})
               );
             </script>

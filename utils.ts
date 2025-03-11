@@ -4,10 +4,9 @@ import { writeFileSync, existsSync } from "fs";
  * CSV Fetch & Parse Logic
  */
 
-const spreadsheetId = "1Mmu1m381RnGMgqxMiEqMni3zJ8uxdfpbeaP6XtN1yxM";
-
-// Array of all the gid values you found
-const gids = [
+// Express fleet spreadsheet
+const expressSpreadsheetId = "1Mmu1m381RnGMgqxMiEqMni3zJ8uxdfpbeaP6XtN1yxM";
+const expressGids = [
   13,
   1106195214,
   11,
@@ -16,15 +15,33 @@ const gids = [
   9,
   5,
   969079667,
-  0 // Adding gid=0 in case there's a main sheet with this ID
+  0
+];
+
+// Mainline fleet spreadsheet
+const mainlineSpreadsheetId = "1ZlYgN_IZmd6CSx_nXnuP0L0PiodapDRx3RmNkIpxXAo";
+const mainlineGids = [
+  0, 1, 948315825, 3, 4, 6, 5, 70572532, 7, 8, 10, 12, 15, 13, 2098141434
 ];
 
 // Function to create CSV export URLs for each sheet
 function createCsvExportUrls() {
-  return gids.map(gid => ({
+  // Create URLs for express fleet sheets
+  const expressUrls = expressGids.map(gid => ({
     gid,
-    url: `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv&gid=${gid}`
+    fleet: 'express',
+    url: `https://docs.google.com/spreadsheets/d/${expressSpreadsheetId}/export?format=csv&gid=${gid}`
   }));
+  
+  // Create URLs for mainline fleet sheets
+  const mainlineUrls = mainlineGids.map(gid => ({
+    gid,
+    fleet: 'mainline',
+    url: `https://docs.google.com/spreadsheets/d/${mainlineSpreadsheetId}/export?format=csv&gid=${gid}`
+  }));
+  
+  // Combine both sets of URLs
+  return [...expressUrls, ...mainlineUrls];
 }
 
 // Function to parse CSV with proper handling of quoted fields
@@ -93,7 +110,12 @@ function parseCSV(csvText: string) {
 export async function fetchAllSheets() {
   const exportUrls = createCsvExportUrls();
   const starlinkAircraft: Record<string, string>[] = [];
-  let totalAircraftCount = 0;
+  
+  // Separate counts for express and mainline fleets
+  let expressTotal = 0;
+  let mainlineTotal = 0;
+  let expressStarlink = 0;
+  let mainlineStarlink = 0;
 
   for (const sheet of exportUrls) {
     try {
@@ -113,7 +135,12 @@ export async function fetchAllSheets() {
       const csvText = await response.text();
       const { headers, rows } = parseCSV(csvText);
 
-      totalAircraftCount += rows.length;
+      // Add to the appropriate fleet total
+      if (sheet.fleet === 'express') {
+        expressTotal += rows.length;
+      } else {
+        mainlineTotal += rows.length;
+      }
 
       // Identify "sheetType" from first row's "Aircraft" col if present
       let sheetType = "";
@@ -123,20 +150,50 @@ export async function fetchAllSheets() {
 
       // Filter for Starlink WiFi
       const filtered = rows.filter(row => row["WiFi"]?.trim() === "StrLnk");
+      
+      // Count Starlink aircraft by fleet type
+      if (sheet.fleet === 'express') {
+        expressStarlink += filtered.length;
+      } else {
+        mainlineStarlink += filtered.length;
+      }
+      
       filtered.forEach(aircraft => {
         aircraft["sheet_gid"] = String(sheet.gid);
         aircraft["sheet_type"] = sheetType;
+        aircraft["fleet"] = sheet.fleet;
         
-        // Extract tail number from Aircraft field (usually appears before the first space)
-        const aircraftStr = aircraft["Aircraft"] || "";
-        const tailNumber = aircraftStr.split(" ")[0] || "";
-        aircraft["TailNumber"] = tailNumber;
+        // Use the "Reg #" column for tail number if available
+        if (aircraft["Reg #"]) {
+          aircraft["TailNumber"] = aircraft["Reg #"].trim();
+        } else {
+          // Fall back to extracting from Aircraft field if Reg # not available
+          const aircraftStr = aircraft["Aircraft"] || "";
+          
+          // Improved tail number extraction - looking for N-number pattern
+          let tailNumber = "";
+          const nNumberMatch = aircraftStr.match(/\b(N\d+[A-Z]*)\b/);
+          if (nNumberMatch && nNumberMatch[1]) {
+            tailNumber = nNumberMatch[1];
+          } else {
+            // If no N-number found, try fleet number or registration
+            const regMatch = aircraftStr.match(/\b([A-Z]-[A-Z0-9]+)\b/);
+            if (regMatch && regMatch[1]) {
+              tailNumber = regMatch[1];
+            } else {
+              // Last resort - use first part before space if nothing else found
+              tailNumber = aircraftStr.split(" ")[0] || "";
+            }
+          }
+          
+          aircraft["TailNumber"] = tailNumber;
+        }
         
         // Get the "Operated By" field if it exists, otherwise use "United Airlines"
         aircraft["OperatedBy"] = aircraft["Operated By"] || "United Airlines";
         
         // Set the date found to today
-        aircraft["DateFound"] = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
+        aircraft["DateFound"] = new Date().toISOString().split("T")[0]; // YYYY-MM-DD format
         
         starlinkAircraft.push(aircraft);
       });
@@ -145,9 +202,30 @@ export async function fetchAllSheets() {
     }
   }
 
+  // Total counts across both fleets
+  const totalAircraftCount = expressTotal + mainlineTotal;
+  const totalStarlinkCount = expressStarlink + mainlineStarlink;
+  
   return {
     totalAircraftCount,
-    starlinkAircraft
+    starlinkAircraft,
+    fleetStats: {
+      express: {
+        total: expressTotal,
+        starlink: expressStarlink,
+        percentage: expressTotal > 0 ? (expressStarlink / expressTotal) * 100 : 0
+      },
+      mainline: {
+        total: mainlineTotal,
+        starlink: mainlineStarlink,
+        percentage: mainlineTotal > 0 ? (mainlineStarlink / mainlineTotal) * 100 : 0
+      },
+      combined: {
+        total: totalAircraftCount,
+        starlink: totalStarlinkCount,
+        percentage: totalAircraftCount > 0 ? (totalStarlinkCount / totalAircraftCount) * 100 : 0
+      }
+    }
   };
 }
 
