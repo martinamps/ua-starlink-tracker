@@ -211,13 +211,92 @@ function getStarlinkPlanes(): any[] {
 // Get port from environment variable or use 3000 as default
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
+// Simple in-memory rate limiting
+const RATE_LIMIT = 30; // requests per minute
+const RATE_WINDOW = 60 * 1000; // 1 minute in milliseconds
+const ipRequests = new Map<string, { count: number, resetTime: number }>();
+
+function applyRateLimit(req: Request): { allowed: boolean, remaining: number } {
+  // Get client IP (in production, you'd rely on X-Forwarded-For or similar)
+  const ip = req.headers.get('x-forwarded-for') || 'unknown';
+  const now = Date.now();
+  
+  if (!ipRequests.has(ip)) {
+    // First request from this IP
+    ipRequests.set(ip, { 
+      count: 1, 
+      resetTime: now + RATE_WINDOW 
+    });
+    return { allowed: true, remaining: RATE_LIMIT - 1 };
+  }
+  
+  const record = ipRequests.get(ip)!;
+  
+  // Reset if window has expired
+  if (now > record.resetTime) {
+    record.count = 1;
+    record.resetTime = now + RATE_WINDOW;
+    return { allowed: true, remaining: RATE_LIMIT - 1 };
+  }
+  
+  // Increment and check
+  record.count += 1;
+  const remaining = Math.max(0, RATE_LIMIT - record.count);
+  
+  return { 
+    allowed: record.count <= RATE_LIMIT,
+    remaining
+  };
+}
+
+// Clean up rate limit records periodically (every 5 minutes)
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, record] of ipRequests.entries()) {
+    if (now > record.resetTime) {
+      ipRequests.delete(ip);
+    }
+  }
+}, 5 * 60 * 1000);
+
 // Bun server
 Bun.serve({
   port: PORT,
   async fetch(req) {
     const url = new URL(req.url);
+    
+    // Apply security headers to all responses
+    const securityHeaders = {
+      "Content-Type": "application/json",
+      "X-Content-Type-Options": "nosniff",
+      "X-Frame-Options": "DENY",
+      "Content-Security-Policy": "default-src 'self'",
+      "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
+      "Referrer-Policy": "no-referrer",
+      "Cache-Control": "no-store, max-age=0"
+    };
 
     if (url.pathname === "/api/data") {
+      // Apply rate limiting for API endpoints
+      const rateLimit = applyRateLimit(req);
+      
+      // Return 429 if rate limit exceeded
+      if (!rateLimit.allowed) {
+        return new Response(
+          JSON.stringify({ error: "Rate limit exceeded. Try again later." }),
+          { 
+            status: 429, 
+            headers: {
+              ...securityHeaders,
+              "Retry-After": "60",
+              "X-RateLimit-Limit": String(RATE_LIMIT),
+              "X-RateLimit-Remaining": "0",
+              "X-RateLimit-Reset": String(Math.floor(Date.now() / 1000) + 60)
+            }
+          }
+        );
+      }
+      
       // Gather data from DB
       const totalCount = getTotalCount();
       const starlinkPlanes = getStarlinkPlanes();
@@ -237,6 +316,16 @@ Bun.serve({
         }
       };
       
+      // For security, ensure the API is read-only
+      // No POST/PUT/DELETE methods allowed
+      if (req.method !== "GET") {
+        return new Response(
+          JSON.stringify({ error: "Method not allowed" }),
+          { status: 405, headers: securityHeaders }
+        );
+      }
+      
+      // Return the data with appropriate security headers
       return new Response(
         JSON.stringify({ 
           totalCount, 
@@ -244,11 +333,41 @@ Bun.serve({
           lastUpdated,
           fleetStats
         }),
-        { headers: { "Content-Type": "application/json" } }
+        { 
+          headers: {
+            ...securityHeaders,
+            "X-RateLimit-Limit": String(RATE_LIMIT),
+            "X-RateLimit-Remaining": String(rateLimit.remaining),
+            "X-RateLimit-Reset": String(Math.floor(Date.now() / 1000) + 60)
+          } 
+        }
       );
     }
 
     if (url.pathname === "/") {
+      // Apply more lenient rate limiting for the main page
+      const rateLimit = applyRateLimit(req);
+      if (!rateLimit.allowed) {
+        return new Response(
+          "Too many requests. Please try again later.",
+          { 
+            status: 429, 
+            headers: {
+              "Content-Type": "text/plain",
+              "Retry-After": "60"
+            }
+          }
+        );
+      }
+      
+      // Only allow GET requests
+      if (req.method !== "GET") {
+        return new Response(
+          "Method not allowed",
+          { status: 405, headers: { "Content-Type": "text/plain" } }
+        );
+      }
+      
       // Initial data for SSR
       const totalCount = getTotalCount();
       const starlinkPlanes = getStarlinkPlanes();
@@ -279,12 +398,50 @@ Bun.serve({
       return new Response(
         `
         <!DOCTYPE html>
-        <html>
+        <html lang="en">
           <head>
-            <title>UA Tracker</title>
+            <title>United Airlines Starlink Tracker | Live WiFi Rollout Statistics</title>
             <meta charset="UTF-8" />
-            <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
-            <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+            <meta name="description" content="Track United Airlines and United Express Starlink WiFi installation progress. Live statistics showing percentage of the fleet equipped with SpaceX's Starlink internet." />
+            <meta name="keywords" content="United Airlines, Starlink, WiFi, Internet, SpaceX, Aircraft, Fleet, United Express, In-flight WiFi" />
+            <meta name="robots" content="index, follow" />
+            <meta property="og:title" content="United Airlines Starlink Tracker" />
+            <meta property="og:description" content="Live statistics showing United Airlines Starlink WiFi installation progress across mainline and express fleets." />
+            <meta property="og:type" content="website" />
+            <meta name="twitter:card" content="summary" />
+            <meta name="twitter:title" content="United Airlines Starlink Tracker" />
+            <meta name="twitter:description" content="Live statistics on United Airlines Starlink WiFi installation across the fleet." />
+            <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>✈️</text></svg>" />
+            
+            <!-- Security headers -->
+            <meta http-equiv="Content-Security-Policy" content="default-src 'self' https://unpkg.com; script-src 'self' 'unsafe-inline' https://unpkg.com; style-src 'self' 'unsafe-inline';">
+            <meta http-equiv="X-Content-Type-Options" content="nosniff">
+            <meta http-equiv="X-Frame-Options" content="DENY">
+            <meta name="referrer" content="no-referrer">
+            
+            <!-- Production versions of React -->
+            <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+            <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+            
+            <style>
+              body {
+                margin: 0;
+                padding: 0;
+                background-color: #f9f9f9;
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Open Sans", "Helvetica Neue", sans-serif;
+              }
+              * {
+                box-sizing: border-box;
+              }
+              @media (prefers-color-scheme: dark) {
+                body {
+                  background-color: #1a1a1a;
+                  color: #f0f0f0;
+                }
+              }
+            </style>
+            
             <script>
               // Define React and Page globally for client-side hydration
               var Page = ${Bun.file("./page.tsx").toString()};
@@ -304,6 +461,24 @@ Bun.serve({
                 })})
               );
             </script>
+            
+            <!-- Security: Prevent clickjacking -->
+            <script>
+              if (window.self !== window.top) {
+                window.top.location = window.self.location;
+              }
+            </script>
+            
+            <!-- Structured data for SEO -->
+            <script type="application/ld+json">
+            {
+              "@context": "https://schema.org",
+              "@type": "WebSite",
+              "name": "United Airlines Starlink Tracker",
+              "description": "Track United Airlines Starlink WiFi installation progress across the fleet",
+              "url": "https://ua-starlink-tracker.example.com/"
+            }
+            </script>
           </body>
         </html>
         `,
@@ -311,7 +486,35 @@ Bun.serve({
       );
     }
 
-    return new Response("Not found", { status: 404 });
+    // Show a proper 404 page
+    return new Response(`
+      <!DOCTYPE html>
+      <html lang="en">
+        <head>
+          <title>404 - Page Not Found | United Airlines Starlink Tracker</title>
+          <meta charset="UTF-8" />
+          <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+          <meta name="robots" content="noindex, nofollow" />
+          <style>
+            body {
+              font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Open Sans", "Helvetica Neue", sans-serif;
+              text-align: center;
+              padding: 50px;
+              background-color: #f9f9f9;
+              color: #333;
+            }
+            h1 { color: #0066cc; }
+            a { color: #0066cc; text-decoration: none; }
+            a:hover { text-decoration: underline; }
+          </style>
+        </head>
+        <body>
+          <h1>404 - Page Not Found</h1>
+          <p>The page you're looking for doesn't exist.</p>
+          <p><a href="/">Return to United Airlines Starlink Tracker</a></p>
+        </body>
+      </html>
+    `, { status: 404, headers: { "Content-Type": "text/html" } });
   },
 });
 
