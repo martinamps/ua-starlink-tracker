@@ -395,13 +395,44 @@ function createStaticFileHandler(filename, contentType) {
   };
 }
 
+// Create a special fallback for favicon
+const faviconPath = path.join(STATIC_DIR, "favicon.ico");
+console.log(`Favicon path configured as: ${faviconPath}, exists: ${fs.existsSync(faviconPath)}`);
+
 // Bun server
 Bun.serve({
   port: PORT,
+  // Log all requests for debugging
+  development: true, // Enable request logging
   // Define static routes
   routes: {
-    // Map all static assets using the helper function
-    "/favicon.ico": createStaticFileHandler("favicon.ico", "image/x-icon"),
+    // Map all static assets using direct file serving
+    "/favicon.ico": (req) => {
+      console.log(`[${new Date().toISOString()}] Favicon request from ${req.headers.get("host")}`);
+      const filePath = path.join(STATIC_DIR, "favicon.ico");
+      
+      // Extra debug info
+      try {
+        const exists = fs.existsSync(filePath);
+        const stats = exists ? fs.statSync(filePath) : null;
+        console.log(`Favicon path: ${filePath}, exists: ${exists}, size: ${stats?.size || 'N/A'}`);
+        
+        if (exists) {
+          return new Response(Bun.file(filePath), {
+            headers: {
+              "Content-Type": "image/x-icon",
+              "Cache-Control": "public, max-age=86400",
+            },
+          });
+        } else {
+          console.error("Favicon not found!");
+          return new Response("Favicon not found", { status: 404 });
+        }
+      } catch (error) {
+        console.error("Error serving favicon:", error);
+        return new Response("Error serving favicon", { status: 500 });
+      }
+    },
     "/site.webmanifest": createStaticFileHandler(
       "site.webmanifest",
       "application/manifest+json"
@@ -581,6 +612,66 @@ Bun.serve({
   // Main request handler for non-static routes
   async fetch(req) {
     const url = new URL(req.url);
+    const requestPath = url.pathname;
+    
+    console.log(`[${new Date().toISOString()}] Request for: ${requestPath} from ${req.headers.get("host")}`);
+    
+    // Special handling for favicon (browsers often request this automatically)
+    if (requestPath === "/favicon.ico") {
+      console.log(`Handling favicon request via fetch handler`);
+      try {
+        if (fs.existsSync(faviconPath)) {
+          console.log(`Serving favicon from ${faviconPath}`);
+          return new Response(Bun.file(faviconPath), {
+            headers: {
+              "Content-Type": "image/x-icon",
+              "Cache-Control": "public, max-age=86400",
+            },
+          });
+        }
+      } catch (error) {
+        console.error("Error in favicon fallback:", error);
+      }
+    }
+    
+    // Try to serve static files if path matches a static file pattern
+    // This is a fallback in case the route handlers don't catch the request
+    if (requestPath.startsWith("/static/") || 
+        requestPath.endsWith(".png") || 
+        requestPath.endsWith(".ico") || 
+        requestPath.endsWith(".webmanifest")) {
+      
+      // Determine the file path relative to the static directory
+      const fileName = path.basename(requestPath);
+      let filePath;
+      
+      if (requestPath.startsWith("/static/")) {
+        const subPath = requestPath.replace(/^\/static\//, "");
+        filePath = path.join(STATIC_DIR, subPath);
+      } else {
+        filePath = path.join(STATIC_DIR, fileName);
+      }
+      
+      console.log(`Fallback static handler: trying to serve ${requestPath} from ${filePath}`);
+      
+      try {
+        if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+          // Determine content type
+          const ext = path.extname(fileName).toLowerCase().substring(1);
+          const contentType = CONTENT_TYPES[ext] || "application/octet-stream";
+          
+          console.log(`Serving static file ${filePath} via fallback handler`);
+          return new Response(Bun.file(filePath), {
+            headers: {
+              "Content-Type": contentType,
+              "Cache-Control": "public, max-age=86400",
+            },
+          });
+        }
+      } catch (error) {
+        console.error(`Error in static file fallback for ${requestPath}:`, error);
+      }
+    }
 
     // Apply security headers to all responses
     const securityHeaders = {
