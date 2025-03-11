@@ -1,8 +1,13 @@
 import { Database } from "bun:sqlite";
 import React from "react";
 import ReactDOMServer from "react-dom/server";
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 import Page from "./page";
 import { fetchAllSheets, ensureDatabaseFileExists } from "./utils";
+
+// Get the directory name of the current module
+const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
 // Location of the SQLite database
 // Use local path for development, container path for production
@@ -270,6 +275,7 @@ setInterval(() => {
   }
 }, 5 * 60 * 1000);
 
+
 // Bun server
 Bun.serve({
   port: PORT,
@@ -277,7 +283,7 @@ Bun.serve({
   routes: {
     // Static asset routes
     "/favicon.ico": () => {
-      const filePath = process.cwd() + '/static/favicon.ico';
+      const filePath = path.join(__dirname, 'static', 'favicon.ico');
       return new Response(Bun.file(filePath), {
         headers: { 
           "Content-Type": "image/x-icon",
@@ -286,7 +292,7 @@ Bun.serve({
       });
     },
     "/site.webmanifest": () => {
-      const filePath = process.cwd() + '/static/site.webmanifest';
+      const filePath = path.join(__dirname, 'static', 'site.webmanifest');
       return new Response(Bun.file(filePath), {
         headers: { 
           "Content-Type": "application/manifest+json",
@@ -295,7 +301,7 @@ Bun.serve({
       });
     },
     "/apple-touch-icon.png": () => {
-      const filePath = process.cwd() + '/static/apple-touch-icon.png';
+      const filePath = path.join(__dirname, 'static', 'apple-touch-icon.png');
       return new Response(Bun.file(filePath), {
         headers: { 
           "Content-Type": "image/png",
@@ -304,7 +310,7 @@ Bun.serve({
       });
     },
     "/android-chrome-192x192.png": () => {
-      const filePath = process.cwd() + '/static/android-chrome-192x192.png';
+      const filePath = path.join(__dirname, 'static', 'android-chrome-192x192.png');
       return new Response(Bun.file(filePath), {
         headers: { 
           "Content-Type": "image/png",
@@ -313,7 +319,7 @@ Bun.serve({
       });
     },
     "/android-chrome-512x512.png": () => {
-      const filePath = process.cwd() + '/static/android-chrome-512x512.png';
+      const filePath = path.join(__dirname, 'static', 'android-chrome-512x512.png');
       return new Response(Bun.file(filePath), {
         headers: { 
           "Content-Type": "image/png",
@@ -322,7 +328,7 @@ Bun.serve({
       });
     },
     "/favicon-16x16.png": () => {
-      const filePath = process.cwd() + '/static/favicon-16x16.png';
+      const filePath = path.join(__dirname, 'static', 'favicon-16x16.png');
       return new Response(Bun.file(filePath), {
         headers: { 
           "Content-Type": "image/png",
@@ -331,7 +337,7 @@ Bun.serve({
       });
     },
     "/favicon-32x32.png": () => {
-      const filePath = process.cwd() + '/static/favicon-32x32.png';
+      const filePath = path.join(__dirname, 'static', 'favicon-32x32.png');
       return new Response(Bun.file(filePath), {
         headers: { 
           "Content-Type": "image/png",
@@ -345,8 +351,8 @@ Bun.serve({
       console.log(`[${new Date().toISOString()}] Request for social image from ${req.headers.get('host')}`);
       
       try {
-        // Use a simple approach with a relative path - should work in Docker as the working directory is /app
-        const file = Bun.file("./static/social-image.webp");
+        const filePath = path.join(__dirname, 'static', 'social-image.webp');
+        const file = Bun.file(filePath);
         
         if (file && file.size > 0) {
           return new Response(file, {
