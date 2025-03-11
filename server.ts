@@ -211,6 +211,17 @@ function getStarlinkPlanes(): any[] {
 // Get port from environment variable or use 3000 as default
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
+// Map file extensions to content types for static files
+const CONTENT_TYPES: Record<string, string> = {
+  'png': 'image/png',
+  'webp': 'image/webp',
+  'ico': 'image/x-icon',
+  'webmanifest': 'application/manifest+json',
+  'svg': 'image/svg+xml',
+  'jpg': 'image/jpeg',
+  'jpeg': 'image/jpeg'
+};
+
 // Simple in-memory rate limiting
 const RATE_LIMIT = 30; // requests per minute
 const RATE_WINDOW = 60 * 1000; // 1 minute in milliseconds
@@ -262,6 +273,76 @@ setInterval(() => {
 // Bun server
 Bun.serve({
   port: PORT,
+  // Define static routes
+  routes: {
+    // Static asset routes
+    "/favicon.ico": () => {
+      return new Response(Bun.file("./static/favicon.ico"), {
+        headers: { 
+          "Content-Type": "image/x-icon",
+          "Cache-Control": "public, max-age=86400"
+        }
+      });
+    },
+    "/site.webmanifest": () => {
+      return new Response(Bun.file("./static/site.webmanifest"), {
+        headers: { 
+          "Content-Type": "application/manifest+json",
+          "Cache-Control": "public, max-age=86400" 
+        }
+      });
+    },
+    "/apple-touch-icon.png": () => {
+      return new Response(Bun.file("./static/apple-touch-icon.png"), {
+        headers: { 
+          "Content-Type": "image/png",
+          "Cache-Control": "public, max-age=86400" 
+        }
+      });
+    },
+    "/android-chrome-192x192.png": () => {
+      return new Response(Bun.file("./static/android-chrome-192x192.png"), {
+        headers: { 
+          "Content-Type": "image/png",
+          "Cache-Control": "public, max-age=86400" 
+        }
+      });
+    },
+    "/android-chrome-512x512.png": () => {
+      return new Response(Bun.file("./static/android-chrome-512x512.png"), {
+        headers: { 
+          "Content-Type": "image/png",
+          "Cache-Control": "public, max-age=86400" 
+        }
+      });
+    },
+    "/favicon-16x16.png": () => {
+      return new Response(Bun.file("./static/favicon-16x16.png"), {
+        headers: { 
+          "Content-Type": "image/png",
+          "Cache-Control": "public, max-age=86400" 
+        }
+      });
+    },
+    "/favicon-32x32.png": () => {
+      return new Response(Bun.file("./static/favicon-32x32.png"), {
+        headers: { 
+          "Content-Type": "image/png",
+          "Cache-Control": "public, max-age=86400" 
+        }
+      });
+    },
+    "/static/social-image.webp": () => {
+      return new Response(Bun.file("./static/social-image.webp"), {
+        headers: { 
+          "Content-Type": "image/webp",
+          "Cache-Control": "public, max-age=86400" 
+        }
+      });
+    },
+  },
+  
+  // Main request handler for non-static routes
   async fetch(req) {
     const url = new URL(req.url);
     
@@ -270,7 +351,7 @@ Bun.serve({
       "Content-Type": "application/json",
       "X-Content-Type-Options": "nosniff",
       "X-Frame-Options": "DENY",
-      "Content-Security-Policy": "default-src 'self' https://unpkg.com; connect-src 'self' https://analytics.martinamps.com; script-src 'self' 'unsafe-inline' https://unpkg.com https://analytics.martinamps.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:;",
+      "Content-Security-Policy": "default-src 'self' https://unpkg.com; connect-src 'self' https://analytics.martinamps.com; script-src 'self' 'unsafe-inline' https://unpkg.com https://analytics.martinamps.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://*;",
       "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
       "Referrer-Policy": "no-referrer",
       "Cache-Control": "no-store, max-age=0"
@@ -451,7 +532,19 @@ Bun.serve({
             <meta name="twitter:card" content="summary" />
             <meta name="twitter:title" content="${ogTitle}" />
             <meta name="twitter:description" content="${ogDescription}" />
-            <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>✈️</text></svg>" />
+            <!-- Favicon -->
+            <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+            <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+            <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+            <link rel="manifest" href="/site.webmanifest">
+            <link rel="shortcut icon" href="/favicon.ico">
+            
+            <!-- Open Graph Image -->
+            <meta property="og:image" content="https://${host}/static/social-image.webp">
+            <meta property="og:image:width" content="1200">
+            <meta property="og:image:height" content="630">
+            <meta property="og:image:alt" content="${siteTitle}">
+            <meta name="twitter:image" content="https://${host}/static/social-image.webp">
             
             <!-- Security headers - HTTP headers used instead of meta tags -->
             <meta http-equiv="X-Content-Type-Options" content="nosniff">
