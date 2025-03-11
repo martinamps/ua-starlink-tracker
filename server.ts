@@ -7,50 +7,71 @@ import Page from "./page";
 // Import modules
 import {
   initializeDatabase,
-  updateStarlinkData,
+  updateDatabase,
   getTotalCount,
   getLastUpdated,
   getStarlinkPlanes,
   getFleetStats,
 } from "./database";
-import { getDomainContent, SECURITY_HEADERS, CONTENT_TYPES, isUnitedDomain } from "./constants";
+import {
+  getDomainContent,
+  SECURITY_HEADERS,
+  CONTENT_TYPES,
+  isUnitedDomain,
+} from "./constants";
 import { getNotFoundHtml } from "./not-found";
+import { fetchAllSheets } from "./utils";
 
-// Determine the static directory path based on environment
+// Environment configuration
 const STATIC_DIR =
   process.env.NODE_ENV === "production"
     ? "/app/static"
     : path.join(path.dirname(import.meta.url.replace("file://", "")), "static");
+const PORT = process.env.PORT ? Number.parseInt(process.env.PORT, 10) : 3000;
+const HTML_TEMPLATE = fs.readFileSync(
+  path.join(path.dirname(import.meta.url.replace("file://", "")), "index.html"),
+  "utf8"
+);
 
 // Initialize database
 const db = initializeDatabase();
 
-// Get port from environment variable or use 3000 as default
-const PORT = process.env.PORT ? Number.parseInt(process.env.PORT, 10) : 3000;
-
-// Log basic server info
+// Log startup info
 console.log(
   `Server starting on port ${PORT}. Environment: ${
     process.env.NODE_ENV || "development"
   }`
 );
 
-// Initialize data
-updateStarlinkData(db);
+// Data update function
+async function updateStarlinkData() {
+  try {
+    const { totalAircraftCount, starlinkAircraft, fleetStats } =
+      await fetchAllSheets();
 
-// Set an hourly interval to re-fetch and store the data
+    updateDatabase(db, totalAircraftCount, starlinkAircraft, fleetStats);
+
+    console.log(
+      `Updated data: ${starlinkAircraft.length} Starlink aircraft out of ${totalAircraftCount} total`
+    );
+    return {
+      total: totalAircraftCount,
+      starlinkCount: starlinkAircraft.length,
+    };
+  } catch (err) {
+    console.error("Error updating starlink data:", err);
+    return { total: 0, starlinkCount: 0 };
+  }
+}
+
+// Initialize data and schedule updates
+updateStarlinkData();
 setInterval(() => {
   console.log("Running scheduled update...");
-  updateStarlinkData(db);
+  updateStarlinkData();
 }, 60 * 60 * 1000); // 1 hour
 
-// Read HTML template
-const HTML_TEMPLATE = fs.readFileSync(
-  path.join(path.dirname(import.meta.url.replace("file://", "")), "index.html"),
-  "utf8"
-);
-
-// Fill HTML template with data
+// HTML template rendering
 function renderHtml(
   template: string,
   variables: Record<string, string>
@@ -63,19 +84,51 @@ function renderHtml(
   return result;
 }
 
-// Define static files to be served
+// Static files configuration
 const staticFiles = [
-  { path: "/favicon.ico", filename: "favicon.ico", contentType: "image/x-icon" },
-  { path: "/site.webmanifest", filename: "site.webmanifest", contentType: "application/manifest+json" },
-  { path: "/apple-touch-icon.png", filename: "apple-touch-icon.png", contentType: "image/png" },
-  { path: "/android-chrome-192x192.png", filename: "android-chrome-192x192.png", contentType: "image/png" },
-  { path: "/android-chrome-512x512.png", filename: "android-chrome-512x512.png", contentType: "image/png" },
-  { path: "/favicon-16x16.png", filename: "favicon-16x16.png", contentType: "image/png" },
-  { path: "/favicon-32x32.png", filename: "favicon-32x32.png", contentType: "image/png" },
-  { path: "/static/social-image.webp", filename: "social-image.webp", contentType: "image/webp" },
+  {
+    path: "/favicon.ico",
+    filename: "favicon.ico",
+    contentType: "image/x-icon",
+  },
+  {
+    path: "/site.webmanifest",
+    filename: "site.webmanifest",
+    contentType: "application/manifest+json",
+  },
+  {
+    path: "/apple-touch-icon.png",
+    filename: "apple-touch-icon.png",
+    contentType: "image/png",
+  },
+  {
+    path: "/android-chrome-192x192.png",
+    filename: "android-chrome-192x192.png",
+    contentType: "image/png",
+  },
+  {
+    path: "/android-chrome-512x512.png",
+    filename: "android-chrome-512x512.png",
+    contentType: "image/png",
+  },
+  {
+    path: "/favicon-16x16.png",
+    filename: "favicon-16x16.png",
+    contentType: "image/png",
+  },
+  {
+    path: "/favicon-32x32.png",
+    filename: "favicon-32x32.png",
+    contentType: "image/png",
+  },
+  {
+    path: "/static/social-image.webp",
+    filename: "social-image.webp",
+    contentType: "image/webp",
+  },
 ];
 
-// Generate routes object from staticFiles
+// Generate routes
 const routes: Record<string, Response | ((req: Request) => Response)> = {};
 
 // Add static file routes
@@ -91,9 +144,8 @@ for (const file of staticFiles) {
   );
 }
 
-// Add API endpoint
+// API endpoint
 routes["/api/data"] = (req) => {
-  // Only allow GET requests
   if (req.method !== "GET") {
     return new Response(JSON.stringify({ error: "Method not allowed" }), {
       status: 405,
@@ -101,13 +153,11 @@ routes["/api/data"] = (req) => {
     });
   }
 
-  // Get data from database
   const totalCount = getTotalCount(db);
   const starlinkPlanes = getStarlinkPlanes(db);
   const lastUpdated = getLastUpdated(db);
   const fleetStats = getFleetStats(db);
 
-  // Return response
   return new Response(
     JSON.stringify({ totalCount, starlinkPlanes, lastUpdated, fleetStats }),
     {
@@ -116,9 +166,8 @@ routes["/api/data"] = (req) => {
   );
 };
 
-// Add debug endpoint
+// Debug endpoint
 routes["/debug/files"] = (req) => {
-  // Only allow in development or with special token
   const url = new URL(req.url);
   const token = url.searchParams.get("token");
   const isAuthorized =
@@ -129,7 +178,6 @@ routes["/debug/files"] = (req) => {
     return new Response("Unauthorized", { status: 401 });
   }
 
-  // Just return basic info
   const debugInfo = {
     environment: {
       nodeEnv: process.env.NODE_ENV,
@@ -146,19 +194,17 @@ routes["/debug/files"] = (req) => {
   });
 };
 
-// Bun server
+// Start server
 Bun.serve({
   port: PORT,
   routes,
 
-  // Main request handler for home page and fallbacks
   fetch(req) {
     const url = new URL(req.url);
     const host = req.headers.get("host") || "unitedstarlinktracker.com";
 
     // Home page
     if (url.pathname === "/") {
-      // Only allow GET requests
       if (req.method !== "GET") {
         return new Response("Method not allowed", {
           status: 405,
@@ -166,13 +212,11 @@ Bun.serve({
         });
       }
 
-      // Get data from database
       const totalCount = getTotalCount(db);
       const starlinkPlanes = getStarlinkPlanes(db);
       const lastUpdated = getLastUpdated(db);
       const fleetStats = getFleetStats(db);
 
-      // Render React component to HTML
       const reactHtml = ReactDOMServer.renderToString(
         React.createElement(Page, {
           total: totalCount,
@@ -183,10 +227,7 @@ Bun.serve({
         })
       );
 
-      // Get domain-specific content
       const metadata = getDomainContent(host);
-
-      // Fill template with variables
       const htmlVariables = {
         ...metadata,
         html: reactHtml,
@@ -197,7 +238,7 @@ Bun.serve({
       return new Response(html, { headers: SECURITY_HEADERS.html });
     }
 
-    // Try to serve static files with direct path mapping
+    // Static files
     if (url.pathname.startsWith("/static/")) {
       const subPath = url.pathname.replace(/^\/static\//, "");
       const filePath = path.join(STATIC_DIR, subPath);
@@ -219,7 +260,7 @@ Bun.serve({
       }
     }
 
-    // 404 page for everything else
+    // 404 page
     return new Response(getNotFoundHtml(host), {
       status: 404,
       headers: SECURITY_HEADERS.notFound,

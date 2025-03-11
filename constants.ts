@@ -3,6 +3,12 @@ export function isUnitedDomain(hostname: string): boolean {
   return hostname.includes("unitedstarlinktracker");
 }
 
+// Database path
+export const DB_PATH =
+  process.env.NODE_ENV === "production"
+    ? "/srv/ua-starlink-tracker/plane-data.sqlite" // Container path
+    : "./plane-data.sqlite"; // Local path
+
 // Page-specific content that changes based on the domain
 export const PAGE_CONTENT = {
   pageTitle: {

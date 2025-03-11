@@ -1,33 +1,39 @@
 import { Database } from "bun:sqlite";
-import { fetchAllSheets, ensureDatabaseFileExists } from "./utils";
+import { DB_PATH } from "./constants";
 
-// Location of the SQLite database
-const DB_PATH =
-  process.env.NODE_ENV === "production"
-    ? "/srv/ua-starlink-tracker/plane-data.sqlite" // Container path
-    : "./plane-data.sqlite"; // Local path
+type MetaRow = { value: string };
+type PlaneRow = {
+  Aircraft: string;
+  WiFi: string;
+  sheet_gid: string;
+  sheet_type: string;
+  DateFound: string;
+  TailNumber: string;
+  OperatedBy: string;
+  fleet: string;
+};
 
-// Initialize database
 export function initializeDatabase() {
-  ensureDatabaseFileExists(DB_PATH);
+  if (!Bun.file(DB_PATH).exists()) {
+    Bun.write(DB_PATH, "");
+  }
+
   const db = new Database(DB_PATH);
   setupTables(db);
   return db;
 }
 
-// Create tables and migrations
-function setupTables(db: Database) {
-  // Check if the starlink_planes table exists
-  const tableExists = db
+function tableExists(db: Database, tableName: string) {
+  return db
     .query(
-      `SELECT name FROM sqlite_master WHERE type='table' AND name='starlink_planes'`
+      `SELECT name FROM sqlite_master WHERE type='table' AND name='${tableName}'`
     )
     .get();
+}
 
-  if (!tableExists) {
-    // Create new table
-    db.query(
-      `
+function setupTables(db: Database) {
+  if (!tableExists(db, "starlink_planes")) {
+    db.query(`
       CREATE TABLE starlink_planes (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         aircraft TEXT,
@@ -38,124 +44,93 @@ function setupTables(db: Database) {
         TailNumber TEXT,
         OperatedBy TEXT,
         fleet TEXT
-      );
-    `
+      );`
     ).run();
-  } else {
-    // Handle migrations for existing tables
-    const hasDateFound = db
-      .query("PRAGMA table_info(starlink_planes)")
-      .all()
-      .some((col: any) => col.name === "DateFound");
-
-    if (!hasDateFound) {
-      db.query("ALTER TABLE starlink_planes ADD COLUMN DateFound TEXT;").run();
-      db.query("ALTER TABLE starlink_planes ADD COLUMN TailNumber TEXT;").run();
-      db.query("ALTER TABLE starlink_planes ADD COLUMN OperatedBy TEXT;").run();
-    }
-
-    const hasFleet = db
-      .query("PRAGMA table_info(starlink_planes)")
-      .all()
-      .some((col: any) => col.name === "fleet");
-
-    if (!hasFleet) {
-      db.query("ALTER TABLE starlink_planes ADD COLUMN fleet TEXT;").run();
-      db.query(
-        `
-        UPDATE starlink_planes 
-        SET DateFound = ?, 
-            TailNumber = SUBSTR(aircraft, 0, INSTR(aircraft, ' ')), 
-            OperatedBy = ?
-      `
-      ).run(new Date().toISOString().split("T")[0], "United Airlines");
-    }
   }
 
-  // Create meta table for storing metadata
-  db.query(
-    `
+  if (!tableExists(db, "meta")) {
+    db.query(
+      `
     CREATE TABLE IF NOT EXISTS meta (
       key TEXT PRIMARY KEY,
       value TEXT
     );
   `
-  ).run();
-}
-
-// Update data from Google Sheets
-export async function updateStarlinkData(db: Database) {
-  try {
-    const { totalAircraftCount, starlinkAircraft, fleetStats } =
-      await fetchAllSheets();
-
-    // Clear table and update with new data
-    db.query("DELETE FROM starlink_planes").run();
-    db.query(
-      `INSERT OR REPLACE INTO meta (key, value) VALUES ('totalAircraftCount', ?)`
-    ).run(String(totalAircraftCount));
-    db.query(
-      `INSERT OR REPLACE INTO meta (key, value) VALUES ('lastUpdated', ?)`
-    ).run(new Date().toISOString());
-
-    // Store fleet statistics
-    const stats = ["express", "mainline"];
-    const metrics = ["total", "starlink", "percentage"];
-
-    for (const fleet of stats) {
-      for (const metric of metrics) {
-        const value =
-          fleet === "express"
-            ? fleetStats.express[metric]
-            : fleetStats.mainline[metric];
-
-        const formattedValue =
-          metric === "percentage" ? value.toFixed(2) : String(value);
-
-        db.query("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)").run(
-          `${fleet}${metric.charAt(0).toUpperCase() + metric.slice(1)}`,
-          formattedValue
-        );
-      }
-    }
-
-    // Insert aircraft data
-    const insertStmt = db.prepare(`
-      INSERT INTO starlink_planes (aircraft, wifi, sheet_gid, sheet_type, DateFound, TailNumber, OperatedBy, fleet)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-
-    for (const aircraft of starlinkAircraft) {
-      insertStmt.run(
-        aircraft.Aircraft ?? "",
-        aircraft.WiFi ?? "",
-        aircraft.sheet_gid ?? "",
-        aircraft.sheet_type ?? "",
-        aircraft.DateFound ?? new Date().toISOString().split("T")[0],
-        aircraft.TailNumber ?? "",
-        aircraft.OperatedBy ?? "United Airlines",
-        aircraft.fleet ?? "express"
-      );
-    }
-
-    console.log(
-      `Updated data: ${starlinkAircraft.length} Starlink aircraft out of ${totalAircraftCount} total`
-    );
-    return {
-      total: totalAircraftCount,
-      starlinkCount: starlinkAircraft.length,
-    };
-  } catch (err) {
-    console.error("Error updating starlink data:", err);
-    return { total: 0, starlinkCount: 0 };
+    ).run();
   }
 }
 
-// Get database values with helper functions
+export function updateDatabase(
+  db: Database,
+  totalAircraftCount: number,
+  starlinkAircraft: Array<{
+    Aircraft?: string;
+    WiFi?: string;
+    sheet_gid?: string;
+    sheet_type?: string;
+    DateFound?: string;
+    TailNumber?: string;
+    OperatedBy?: string;
+    fleet?: string;
+  }>,
+  fleetStats: {
+    express: { total: number; starlink: number; percentage: number };
+    mainline: { total: number; starlink: number; percentage: number };
+  }
+) {
+  // Update meta data
+  db.query("DELETE FROM starlink_planes").run();
+  db.query(
+    `INSERT OR REPLACE INTO meta (key, value) VALUES ('totalAircraftCount', ?)`
+  ).run(String(totalAircraftCount));
+  db.query(
+    `INSERT OR REPLACE INTO meta (key, value) VALUES ('lastUpdated', ?)`
+  ).run(new Date().toISOString());
+
+  // Store fleet statistics
+  const stats = ["express", "mainline"];
+  const metrics = ["total", "starlink", "percentage"];
+
+  for (const fleet of stats) {
+    for (const metric of metrics) {
+      const value =
+        fleet === "express"
+          ? fleetStats.express[metric]
+          : fleetStats.mainline[metric];
+      const formattedValue =
+        metric === "percentage" ? value.toFixed(2) : String(value);
+
+      db.query("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)").run(
+        `${fleet}${metric.charAt(0).toUpperCase() + metric.slice(1)}`,
+        formattedValue
+      );
+    }
+  }
+
+  // Insert aircraft data
+  const insertStmt = db.prepare(`
+    INSERT INTO starlink_planes (aircraft, wifi, sheet_gid, sheet_type, DateFound, TailNumber, OperatedBy, fleet)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  for (const aircraft of starlinkAircraft) {
+    insertStmt.run(
+      aircraft.Aircraft ?? "",
+      aircraft.WiFi ?? "",
+      aircraft.sheet_gid ?? "",
+      aircraft.sheet_type ?? "",
+      aircraft.DateFound ?? new Date().toISOString().split("T")[0],
+      aircraft.TailNumber ?? "",
+      aircraft.OperatedBy ?? "United Airlines",
+      aircraft.fleet ?? "express"
+    );
+  }
+}
+
 export function getTotalCount(db: Database): number {
   const row = db
     .query(`SELECT value FROM meta WHERE key = 'totalAircraftCount'`)
-    .get();
+    .get() as MetaRow | null;
   return row?.value ? Number.parseInt(row.value, 10) : 0;
 }
 
@@ -164,33 +139,35 @@ export function getMetaValue(
   key: string,
   defaultValue: number
 ): number {
-  const row = db.query("SELECT value FROM meta WHERE key = ?").get(key);
+  const row = db
+    .query("SELECT value FROM meta WHERE key = ?")
+    .get(key) as MetaRow | null;
   return row?.value ? Number.parseFloat(row.value) : defaultValue;
 }
 
 export function getLastUpdated(db: Database): string {
   const lastUpdated = db
     .query(`SELECT value FROM meta WHERE key = 'lastUpdated'`)
-    .get();
+    .get() as MetaRow | null;
   return lastUpdated?.value ? lastUpdated.value : new Date().toISOString();
 }
 
-export function getStarlinkPlanes(db: Database): any[] {
+export function getStarlinkPlanes(db: Database): PlaneRow[] {
   return db
     .query(
       `
-    SELECT aircraft as Aircraft,
-           wifi as WiFi,
-           sheet_gid,
-           sheet_type,
-           DateFound,
-           TailNumber,
-           OperatedBy,
-           fleet
-    FROM starlink_planes
-  `
+      SELECT aircraft as Aircraft,
+             wifi as WiFi,
+             sheet_gid,
+             sheet_type,
+             DateFound,
+             TailNumber,
+             OperatedBy,
+             fleet
+      FROM starlink_planes
+    `
     )
-    .all();
+    .all() as PlaneRow[];
 }
 
 export function getFleetStats(db: Database) {
