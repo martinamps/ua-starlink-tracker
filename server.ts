@@ -275,100 +275,260 @@ setInterval(() => {
   }
 }, 5 * 60 * 1000);
 
+// Import Node.js fs module 
+import * as fs from 'node:fs';
+
+// Helper to list directory contents for debugging
+function listDirectoryContents(dirPath) {
+  try {
+    const files = fs.readdirSync(dirPath);
+    console.log(`Contents of directory ${dirPath}:`);
+    for (const file of files) {
+      try {
+        const stat = fs.statSync(path.join(dirPath, file));
+        const type = stat.isDirectory() ? 'directory' : 'file';
+        const size = stat.isFile() ? `${Math.round(stat.size / 1024)}KB` : '';
+        console.log(`- ${file} (${type} ${size})`);
+      } catch (e) {
+        console.log(`- ${file} (error: ${e.message})`);
+      }
+    }
+    return files;
+  } catch (e) {
+    console.error(`Error listing directory ${dirPath}: ${e.message}`);
+    return [];
+  }
+}
+
+// List contents of all possible static directories at startup
+console.log("\nChecking static directories on startup:");
+listDirectoryContents(path.join(__dirname, 'static'));
+listDirectoryContents(path.join(process.cwd(), 'static'));
+listDirectoryContents('./static');
+try { listDirectoryContents('/app/static'); } catch (e) { console.log('Could not list /app/static'); }
+
+
+// Debug helper to print environment info
+console.log("Environment info:");
+console.log(`- __dirname: ${__dirname}`);
+console.log(`- process.cwd(): ${process.cwd()}`);
+console.log(`- import.meta.url: ${import.meta.url}`);
+console.log(`- NODE_ENV: ${process.env.NODE_ENV}`);
+
+// Helper function to serve static files with multiple fallback paths
+function createStaticFileHandler(filename, contentType) {
+  return (req) => {
+    const requestPath = req.url;
+    console.log(`[${new Date().toISOString()}] Request for ${filename} from ${req.headers.get('host')}`);
+    
+    // Try multiple possible locations for the file
+    const possiblePaths = [
+      path.join(__dirname, 'static', filename),           // Using __dirname
+      path.join(process.cwd(), 'static', filename),       // Using current working directory
+      `/app/static/${filename}`,                          // Absolute Docker path
+      `./static/${filename}`,                             // Relative to working directory
+      path.resolve('./static', filename),                 // Resolved absolute path
+    ];
+    
+    console.log(`Attempting to serve ${filename}, trying ${possiblePaths.length} possible paths`);
+    
+    // Try each path and use the first one that works
+    for (const filePath of possiblePaths) {
+      try {
+        console.log(`- Trying: ${filePath}`);
+        
+        // Check if file exists and is a file
+        if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+          console.log(`✓ Success with path: ${filePath}`);
+          
+          // Read the file content and serve it
+          const fileContent = fs.readFileSync(filePath);
+          
+          return new Response(fileContent, {
+            headers: {
+              "Content-Type": contentType,
+              "Cache-Control": "public, max-age=86400"
+            }
+          });
+        }
+      } catch (e) {
+        console.log(`✗ Failed with path: ${filePath} - ${e.message}`);
+        // Continue to next path
+      }
+    }
+    
+    // If we get here, all paths failed
+    console.error(`ERROR: Could not serve ${filename} from any path`);
+    return new Response(`File ${filename} not found`, { status: 404 });
+  };
+}
 
 // Bun server
 Bun.serve({
   port: PORT,
   // Define static routes
   routes: {
-    // Static asset routes
-    "/favicon.ico": () => {
-      const filePath = path.join(__dirname, 'static', 'favicon.ico');
-      return new Response(Bun.file(filePath), {
-        headers: { 
-          "Content-Type": "image/x-icon",
-          "Cache-Control": "public, max-age=86400"
-        }
-      });
-    },
-    "/site.webmanifest": () => {
-      const filePath = path.join(__dirname, 'static', 'site.webmanifest');
-      return new Response(Bun.file(filePath), {
-        headers: { 
-          "Content-Type": "application/manifest+json",
-          "Cache-Control": "public, max-age=86400" 
-        }
-      });
-    },
-    "/apple-touch-icon.png": () => {
-      const filePath = path.join(__dirname, 'static', 'apple-touch-icon.png');
-      return new Response(Bun.file(filePath), {
-        headers: { 
-          "Content-Type": "image/png",
-          "Cache-Control": "public, max-age=86400" 
-        }
-      });
-    },
-    "/android-chrome-192x192.png": () => {
-      const filePath = path.join(__dirname, 'static', 'android-chrome-192x192.png');
-      return new Response(Bun.file(filePath), {
-        headers: { 
-          "Content-Type": "image/png",
-          "Cache-Control": "public, max-age=86400" 
-        }
-      });
-    },
-    "/android-chrome-512x512.png": () => {
-      const filePath = path.join(__dirname, 'static', 'android-chrome-512x512.png');
-      return new Response(Bun.file(filePath), {
-        headers: { 
-          "Content-Type": "image/png",
-          "Cache-Control": "public, max-age=86400" 
-        }
-      });
-    },
-    "/favicon-16x16.png": () => {
-      const filePath = path.join(__dirname, 'static', 'favicon-16x16.png');
-      return new Response(Bun.file(filePath), {
-        headers: { 
-          "Content-Type": "image/png",
-          "Cache-Control": "public, max-age=86400" 
-        }
-      });
-    },
-    "/favicon-32x32.png": () => {
-      const filePath = path.join(__dirname, 'static', 'favicon-32x32.png');
-      return new Response(Bun.file(filePath), {
-        headers: { 
-          "Content-Type": "image/png",
-          "Cache-Control": "public, max-age=86400" 
-        }
-      });
-    },
-    // Explicitly define the social image path
-    "/static/social-image.webp": (req) => {
-      // Log request information for debugging
-      console.log(`[${new Date().toISOString()}] Request for social image from ${req.headers.get('host')}`);
+    // Map all static assets using the helper function
+    "/favicon.ico": createStaticFileHandler('favicon.ico', 'image/x-icon'),
+    "/site.webmanifest": createStaticFileHandler('site.webmanifest', 'application/manifest+json'),
+    "/apple-touch-icon.png": createStaticFileHandler('apple-touch-icon.png', 'image/png'),
+    "/android-chrome-192x192.png": createStaticFileHandler('android-chrome-192x192.png', 'image/png'),
+    "/android-chrome-512x512.png": createStaticFileHandler('android-chrome-512x512.png', 'image/png'),
+    "/favicon-16x16.png": createStaticFileHandler('favicon-16x16.png', 'image/png'),
+    "/favicon-32x32.png": createStaticFileHandler('favicon-32x32.png', 'image/png'),
+    "/static/social-image.webp": createStaticFileHandler('social-image.webp', 'image/webp'),
+    
+    // Catch-all handler for static files
+    "/static/*": (req) => {
+      // Extract the filename from the URL path
+      const url = new URL(req.url);
+      const requestPath = url.pathname;
+      const filename = path.basename(requestPath);
       
-      try {
-        const filePath = path.join(__dirname, 'static', 'social-image.webp');
-        const file = Bun.file(filePath);
-        
-        if (file && file.size > 0) {
-          return new Response(file, {
-            headers: { 
-              "Content-Type": "image/webp",
-              "Cache-Control": "public, max-age=86400" 
-            }
-          });
-        } else {
-          console.error("Social image file not found or empty");
-          return new Response("File not found", { status: 404 });
+      console.log(`[${new Date().toISOString()}] Static file catch-all for: ${requestPath}`);
+      
+      // Determine content type based on file extension
+      const ext = path.extname(filename).toLowerCase().substring(1);
+      const contentType = CONTENT_TYPES[ext] || 'application/octet-stream';
+      
+      // Try multiple possible locations for the file
+      const subPath = requestPath.replace(/^\/static\//, '');
+      const possiblePaths = [
+        path.join(__dirname, 'static', subPath),           // Using __dirname
+        path.join(process.cwd(), 'static', subPath),       // Using current working directory
+        `/app/static/${subPath}`,                          // Absolute Docker path
+        `./static/${subPath}`,                             // Relative to working directory
+        path.resolve('./static', subPath),                 // Resolved absolute path
+      ];
+      
+      console.log(`Attempting to serve ${subPath}, trying ${possiblePaths.length} possible paths`);
+      
+      // Try each path and use the first one that works
+      for (const filePath of possiblePaths) {
+        try {
+          console.log(`- Trying: ${filePath}`);
+          const file = Bun.file(filePath);
+          const stat = Bun.fs.statSync(filePath);
+          
+          if (stat.isFile()) {
+            console.log(`✓ Success with path: ${filePath}`);
+            return new Response(file, {
+              headers: {
+                "Content-Type": contentType,
+                "Cache-Control": "public, max-age=86400"
+              }
+            });
+          }
+        } catch (e) {
+          console.log(`✗ Failed with path: ${filePath} - ${e.message}`);
+          // Continue to next path
         }
-      } catch (error) {
-        console.error("Error serving social image:", error);
-        return new Response("Server error", { status: 500 });
       }
+      
+      // If we get here, all paths failed
+      console.error(`ERROR: Could not serve ${requestPath} from any path`);
+      return new Response(`File ${requestPath} not found`, { status: 404 });
+    },
+    
+    // Debug endpoint to check environment and file system
+    "/debug/files": (req) => {
+      // Only allow in development or with a special token
+      const url = new URL(req.url);
+      const token = url.searchParams.get('token');
+      const isAuthorized = process.env.NODE_ENV !== 'production' || token === 'starlink-tracker-debug-1a2b3c';
+      
+      if (!isAuthorized) {
+        return new Response("Unauthorized", { status: 401 });
+      }
+      
+      // Collect debug information
+      const debugInfo = {
+        environment: {
+          dirname: __dirname,
+          cwd: process.cwd(),
+          importMetaUrl: import.meta.url,
+          nodeEnv: process.env.NODE_ENV,
+          platform: process.platform,
+          uptime: process.uptime()
+        },
+        directories: {},
+        files: {}
+      };
+      
+      // Check important directories
+      const directoriesToCheck = [
+        { name: 'dirname_static', path: path.join(__dirname, 'static') },
+        { name: 'cwd_static', path: path.join(process.cwd(), 'static') },
+        { name: 'relative_static', path: './static' },
+        { name: 'app_static', path: '/app/static' },
+      ];
+      
+      for (const dir of directoriesToCheck) {
+        try {
+          const exists = Bun.fs.existsSync(dir.path);
+          const stats = exists ? Bun.fs.statSync(dir.path) : null;
+          const isDir = stats ? stats.isDirectory() : false;
+          
+          debugInfo.directories[dir.name] = {
+            path: dir.path,
+            exists,
+            isDirectory: isDir
+          };
+          
+          if (exists && isDir) {
+            const files = Bun.fs.readdirSync(dir.path);
+            debugInfo.directories[dir.name].contents = files.map(file => {
+              const filePath = path.join(dir.path, file);
+              const fileStats = Bun.fs.statSync(filePath);
+              return {
+                name: file,
+                isDirectory: fileStats.isDirectory(),
+                size: fileStats.size,
+                mtime: fileStats.mtime
+              };
+            });
+          }
+        } catch (e) {
+          debugInfo.directories[dir.name] = {
+            path: dir.path,
+            error: e.message
+          };
+        }
+      }
+      
+      // Check for specific critical files
+      const filesToCheck = [
+        { name: 'social_image', path: path.join(__dirname, 'static', 'social-image.webp') },
+        { name: 'favicon', path: path.join(__dirname, 'static', 'favicon.ico') }
+      ];
+      
+      for (const file of filesToCheck) {
+        try {
+          const exists = Bun.fs.existsSync(file.path);
+          const stats = exists ? Bun.fs.statSync(file.path) : null;
+          const isFile = stats ? stats.isFile() : false;
+          
+          debugInfo.files[file.name] = {
+            path: file.path,
+            exists,
+            isFile,
+            size: stats ? stats.size : 0,
+            mtime: stats ? stats.mtime : null
+          };
+        } catch (e) {
+          debugInfo.files[file.name] = {
+            path: file.path,
+            error: e.message
+          };
+        }
+      }
+      
+      // Return the debug information as JSON
+      return new Response(JSON.stringify(debugInfo, null, 2), {
+        headers: {
+          "Content-Type": "application/json"
+        }
+      });
     },
   },
   
