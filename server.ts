@@ -332,27 +332,13 @@ Bun.serve({
         }
       });
     },
-    // Handle any files in the static directory using a wildcard route
-    "/static/*": (request) => {
-      const url = new URL(request.url);
-      const path = url.pathname.substring("/static/".length);
-      const filePath = `./static/${path}`;
-      const file = Bun.file(filePath);
-      
-      // Check if file exists
-      if (!file.size) {
-        console.error(`Static file not found: ${filePath}`);
-        return new Response("Not found", { status: 404 });
-      }
-      
-      // Determine content type based on file extension
-      const ext = path.split('.').pop()?.toLowerCase() || '';
-      const contentType = CONTENT_TYPES[ext] || 'application/octet-stream';
-      
+    // Explicitly define the social image path
+    "/static/social-image.webp": () => {
+      const file = Bun.file("./static/social-image.webp");
       return new Response(file, {
-        headers: {
-          "Content-Type": contentType,
-          "Cache-Control": "public, max-age=86400"
+        headers: { 
+          "Content-Type": "image/webp",
+          "Cache-Control": "public, max-age=86400" 
         }
       });
     },
@@ -546,7 +532,6 @@ Bun.serve({
             <meta property="og:description" content="${ogDescription}" />
             <meta property="og:type" content="website" />
             <meta property="og:url" content="https://${host}/" />
-            <meta name="twitter:card" content="summary_large_image" />
             <meta name="twitter:title" content="${ogTitle}" />
             <meta name="twitter:description" content="${ogDescription}" />
             <!-- Favicon -->
@@ -562,6 +547,7 @@ Bun.serve({
             <meta property="og:image:height" content="630">
             <meta property="og:image:alt" content="${siteTitle}">
             <meta name="twitter:image" content="https://${host}/static/social-image.webp">
+            <meta name="twitter:card" content="summary_large_image">
             
             <!-- Security headers - HTTP headers used instead of meta tags -->
             <meta http-equiv="X-Content-Type-Options" content="nosniff">

@@ -6,40 +6,30 @@ import { writeFileSync, existsSync } from "fs";
 
 // Express fleet spreadsheet
 const expressSpreadsheetId = "1Mmu1m381RnGMgqxMiEqMni3zJ8uxdfpbeaP6XtN1yxM";
-const expressGids = [
-  13,
-  1106195214,
-  11,
-  1735263052,
-  6,
-  9,
-  5,
-  969079667,
-  0
-];
+const expressGids = [13, 1106195214, 11, 1735263052, 6, 9, 5, 969079667];
 
 // Mainline fleet spreadsheet
 const mainlineSpreadsheetId = "1ZlYgN_IZmd6CSx_nXnuP0L0PiodapDRx3RmNkIpxXAo";
 const mainlineGids = [
-  0, 1, 948315825, 3, 4, 6, 5, 70572532, 7, 8, 10, 12, 15, 13, 2098141434
+  0, 1, 948315825, 3, 4, 6, 5, 70572532, 7, 8, 10, 12, 15, 13, 2098141434,
 ];
 
 // Function to create CSV export URLs for each sheet
 function createCsvExportUrls() {
   // Create URLs for express fleet sheets
-  const expressUrls = expressGids.map(gid => ({
+  const expressUrls = expressGids.map((gid) => ({
     gid,
-    fleet: 'express',
-    url: `https://docs.google.com/spreadsheets/d/${expressSpreadsheetId}/export?format=csv&gid=${gid}`
+    fleet: "express",
+    url: `https://docs.google.com/spreadsheets/d/${expressSpreadsheetId}/export?format=csv&gid=${gid}`,
   }));
-  
+
   // Create URLs for mainline fleet sheets
-  const mainlineUrls = mainlineGids.map(gid => ({
+  const mainlineUrls = mainlineGids.map((gid) => ({
     gid,
-    fleet: 'mainline',
-    url: `https://docs.google.com/spreadsheets/d/${mainlineSpreadsheetId}/export?format=csv&gid=${gid}`
+    fleet: "mainline",
+    url: `https://docs.google.com/spreadsheets/d/${mainlineSpreadsheetId}/export?format=csv&gid=${gid}`,
   }));
-  
+
   // Combine both sets of URLs
   return [...expressUrls, ...mainlineUrls];
 }
@@ -95,9 +85,8 @@ function parseCSV(csvText: string) {
     const rowObj: Record<string, string> = {};
     headers.forEach((header, index) => {
       const cleanHeader = header.replace(/"/g, "").trim();
-      rowObj[cleanHeader] = index < row.length
-        ? row[index].replace(/"/g, "").trim()
-        : "";
+      rowObj[cleanHeader] =
+        index < row.length ? row[index].replace(/"/g, "").trim() : "";
     });
 
     rows.push(rowObj);
@@ -110,7 +99,7 @@ function parseCSV(csvText: string) {
 export async function fetchAllSheets() {
   const exportUrls = createCsvExportUrls();
   const starlinkAircraft: Record<string, string>[] = [];
-  
+
   // Separate counts for express and mainline fleets
   let expressTotal = 0;
   let mainlineTotal = 0;
@@ -124,10 +113,10 @@ export async function fetchAllSheets() {
         headers: {
           // Add browser-like headers to avoid being blocked
           "User-Agent": "Mozilla/5.0",
-          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9",
+          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9",
           "Accept-Language": "en-US,en;q=0.5",
-          "Cache-Control": "no-cache"
-        }
+          "Cache-Control": "no-cache",
+        },
       });
       if (!response.ok) {
         throw new Error(`HTTP error! Status: ${response.status}`);
@@ -136,7 +125,7 @@ export async function fetchAllSheets() {
       const { headers, rows } = parseCSV(csvText);
 
       // Add to the appropriate fleet total
-      if (sheet.fleet === 'express') {
+      if (sheet.fleet === "express") {
         expressTotal += rows.length;
       } else {
         mainlineTotal += rows.length;
@@ -149,27 +138,27 @@ export async function fetchAllSheets() {
       }
 
       // Filter for Starlink WiFi
-      const filtered = rows.filter(row => row["WiFi"]?.trim() === "StrLnk");
-      
+      const filtered = rows.filter((row) => row["WiFi"]?.trim() === "StrLnk");
+
       // Count Starlink aircraft by fleet type
-      if (sheet.fleet === 'express') {
+      if (sheet.fleet === "express") {
         expressStarlink += filtered.length;
       } else {
         mainlineStarlink += filtered.length;
       }
-      
-      filtered.forEach(aircraft => {
+
+      filtered.forEach((aircraft) => {
         aircraft["sheet_gid"] = String(sheet.gid);
         aircraft["sheet_type"] = sheetType;
         aircraft["fleet"] = sheet.fleet;
-        
+
         // Use the "Reg #" column for tail number if available
         if (aircraft["Reg #"]) {
           aircraft["TailNumber"] = aircraft["Reg #"].trim();
         } else {
           // Fall back to extracting from Aircraft field if Reg # not available
           const aircraftStr = aircraft["Aircraft"] || "";
-          
+
           // Improved tail number extraction - looking for N-number pattern
           let tailNumber = "";
           const nNumberMatch = aircraftStr.match(/\b(N\d+[A-Z]*)\b/);
@@ -185,16 +174,16 @@ export async function fetchAllSheets() {
               tailNumber = aircraftStr.split(" ")[0] || "";
             }
           }
-          
+
           aircraft["TailNumber"] = tailNumber;
         }
-        
+
         // Get the "Operated By" field if it exists, otherwise use "United Airlines"
         aircraft["OperatedBy"] = aircraft["Operated By"] || "United Airlines";
-        
+
         // Set the date found to today
         aircraft["DateFound"] = new Date().toISOString().split("T")[0]; // YYYY-MM-DD format
-        
+
         starlinkAircraft.push(aircraft);
       });
     } catch (error) {
@@ -205,7 +194,7 @@ export async function fetchAllSheets() {
   // Total counts across both fleets
   const totalAircraftCount = expressTotal + mainlineTotal;
   const totalStarlinkCount = expressStarlink + mainlineStarlink;
-  
+
   return {
     totalAircraftCount,
     starlinkAircraft,
@@ -213,19 +202,24 @@ export async function fetchAllSheets() {
       express: {
         total: expressTotal,
         starlink: expressStarlink,
-        percentage: expressTotal > 0 ? (expressStarlink / expressTotal) * 100 : 0
+        percentage:
+          expressTotal > 0 ? (expressStarlink / expressTotal) * 100 : 0,
       },
       mainline: {
         total: mainlineTotal,
         starlink: mainlineStarlink,
-        percentage: mainlineTotal > 0 ? (mainlineStarlink / mainlineTotal) * 100 : 0
+        percentage:
+          mainlineTotal > 0 ? (mainlineStarlink / mainlineTotal) * 100 : 0,
       },
       combined: {
         total: totalAircraftCount,
         starlink: totalStarlinkCount,
-        percentage: totalAircraftCount > 0 ? (totalStarlinkCount / totalAircraftCount) * 100 : 0
-      }
-    }
+        percentage:
+          totalAircraftCount > 0
+            ? (totalStarlinkCount / totalAircraftCount) * 100
+            : 0,
+      },
+    },
   };
 }
 
