@@ -33,7 +33,8 @@ function tableExists(db: Database, tableName: string) {
 
 function setupTables(db: Database) {
   if (!tableExists(db, "starlink_planes")) {
-    db.query(`
+    db.query(
+      `
       CREATE TABLE starlink_planes (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         aircraft TEXT,
