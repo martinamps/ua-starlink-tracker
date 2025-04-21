@@ -2,7 +2,8 @@
   "name": "ua-tracker",
   "scripts": {
     "dev": "bun --watch server.ts",
-    "start": "bun server.ts"
+    "start": "bun server.ts",
+    "scrape": "bun run scrape.ts"
   },
   "dependencies": {
     "react": "^18.2.0",
