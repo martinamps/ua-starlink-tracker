@@ -47,6 +47,9 @@ function setupTables(db: Database) {
         fleet TEXT
       );`
     ).run();
+    db.query(
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_tailnumber ON starlink_planes(TailNumber);`
+    ).run();
   }
 
   if (!tableExists(db, "meta")) {
@@ -80,6 +83,15 @@ export function updateDatabase(
   }
 ) {
   // Update meta data
+  // Retrieve existing installation dates before clearing the table
+  const existingRows = db
+    .query("SELECT TailNumber, DateFound FROM starlink_planes")
+    .all() as { TailNumber: string; DateFound: string }[];
+  const existingDates = new Map(
+    existingRows.map((r) => [r.TailNumber, r.DateFound])
+  );
+
+  // Clear table to insert fresh data but preserve known dates
   db.query("DELETE FROM starlink_planes").run();
   db.query(
     `INSERT OR REPLACE INTO meta (key, value) VALUES ('totalAircraftCount', ?)`
@@ -115,12 +127,14 @@ export function updateDatabase(
   `);
 
   for (const aircraft of starlinkAircraft) {
+    const preservedDate =
+      existingDates.get(aircraft.TailNumber ?? "") ?? aircraft.DateFound;
     insertStmt.run(
       aircraft.Aircraft ?? "",
       aircraft.WiFi ?? "",
       aircraft.sheet_gid ?? "",
       aircraft.sheet_type ?? "",
-      aircraft.DateFound ?? new Date().toISOString().split("T")[0],
+      preservedDate ?? new Date().toISOString().split("T")[0],
       aircraft.TailNumber ?? "",
       aircraft.OperatedBy ?? "United Airlines",
       aircraft.fleet ?? "express"
