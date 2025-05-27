@@ -23,6 +23,7 @@ function tableExists(db: Database, tableName: string) {
 }
 
 function setupTables(db: Database) {
+  // Create tables first
   if (!tableExists(db, "starlink_planes")) {
     db.query(
       `
@@ -39,26 +40,6 @@ function setupTables(db: Database) {
         last_flight_check INTEGER DEFAULT 0
       );`
     ).run();
-  } else {
-    // Add last_flight_check column if it doesn't exist
-    const columns = db.query("PRAGMA table_info(starlink_planes)").all();
-    const hasLastFlightCheck = columns.some((col: any) => col.name === 'last_flight_check');
-    if (!hasLastFlightCheck) {
-      db.query("ALTER TABLE starlink_planes ADD COLUMN last_flight_check INTEGER DEFAULT 0").run();
-      
-      // Migrate existing data: if planes already have flight data, set their last_flight_check to avoid immediate re-checking
-      const now = Math.floor(Date.now() / 1000);
-      const migrationQuery = `
-        UPDATE starlink_planes 
-        SET last_flight_check = ? 
-        WHERE TailNumber IN (
-          SELECT DISTINCT tail_number FROM upcoming_flights
-        )
-      `;
-      const randomHoursAgo = now - (Math.floor(Math.random() * 4 + 1) * 60 * 60); // 1-5 hours ago
-      db.query(migrationQuery).run(randomHoursAgo);
-      console.log('Migrated existing flight data timestamps');
-    }
   }
 
   if (!tableExists(db, "meta")) {
@@ -87,6 +68,31 @@ function setupTables(db: Database) {
         FOREIGN KEY (tail_number) REFERENCES starlink_planes(TailNumber)
       );`
     ).run();
+  }
+
+  // Handle migrations after all tables exist
+  if (tableExists(db, "starlink_planes")) {
+    // Add last_flight_check column if it doesn't exist
+    const columns = db.query("PRAGMA table_info(starlink_planes)").all();
+    const hasLastFlightCheck = columns.some((col: any) => col.name === 'last_flight_check');
+    if (!hasLastFlightCheck) {
+      db.query("ALTER TABLE starlink_planes ADD COLUMN last_flight_check INTEGER DEFAULT 0").run();
+      
+      // Migrate existing data: if planes already have flight data, set their last_flight_check to avoid immediate re-checking
+      if (tableExists(db, "upcoming_flights")) {
+        const now = Math.floor(Date.now() / 1000);
+        const migrationQuery = `
+          UPDATE starlink_planes 
+          SET last_flight_check = ? 
+          WHERE TailNumber IN (
+            SELECT DISTINCT tail_number FROM upcoming_flights
+          )
+        `;
+        const randomHoursAgo = now - (Math.floor(Math.random() * 4 + 1) * 60 * 60); // 1-5 hours ago
+        db.query(migrationQuery).run(randomHoursAgo);
+        console.log('Migrated existing flight data timestamps');
+      }
+    }
   }
 }
 
