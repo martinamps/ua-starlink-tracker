@@ -88,22 +88,25 @@
   <body>
     <div id="root">{{html}}</div>
     
-    <!-- Load React components after DOM is ready -->
+    <!-- Minimal client-side functionality -->
     <script>
-      // Use a simplified approach for client-side rendering
-      (function() {
-        // Create a simplified version of our page component
-        function SimplePage(props) {
-          // Just use the server-rendered HTML without hydration
-          return null;
+      document.addEventListener('DOMContentLoaded', function() {
+        // Simple data refresh functionality
+        function refreshData() {
+          fetch('/api/data')
+            .then(res => res.json())
+            .then(data => {
+              // Simple page reload for now - keeps it minimal
+              if (data.totalCount !== {{totalCount}}) {
+                window.location.reload();
+              }
+            })
+            .catch(err => console.error('Error checking for updates:', err));
         }
-        
-        // Make it available globally
-        window.PageComponent = SimplePage;
-        
-        // No hydration needed - we'll use the server-rendered HTML
-        // This is simpler and avoids TypeScript conversion issues
-      })();
+
+        // Check for updates every 5 minutes
+        setInterval(refreshData, 5 * 60 * 1000);
+      });
     </script>
     
     <!-- Security: Prevent clickjacking -->

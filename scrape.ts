@@ -1,4 +1,4 @@
-import { fetchAllSheets } from "./utils";
+import { fetchAllSheets } from "./src/utils/utils";
 
 async function runScrape() {
   console.log("Starting spreadsheet scrape...");

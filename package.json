@@ -3,13 +3,17 @@
   "scripts": {
     "dev": "bun --watch server.ts",
     "start": "bun server.ts",
-    "scrape": "bun run scrape.ts"
+    "scrape": "bun run scrape.ts",
+    "update-flights": "bun -e \"import('./src/api/flight-updater.ts').then(m => m.updateAllFlights())\""
   },
   "dependencies": {
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react-dom": "^18.2.0",
+    "dotenv": "^16.4.5"
   },
   "devDependencies": {
-    "@types/bun": "^1.2.5"
+    "@types/bun": "^1.2.5",
+    "@types/react": "^19.1.5",
+    "@types/react-dom": "^19.1.5"
   }
 }

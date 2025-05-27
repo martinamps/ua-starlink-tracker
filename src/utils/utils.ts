@@ -181,8 +181,7 @@ export async function fetchAllSheets() {
         // Get the "Operated By" field if it exists, otherwise use "United Airlines"
         aircraft["OperatedBy"] = aircraft["Operated By"] || "United Airlines";
 
-        // Set the date found to today
-        aircraft["DateFound"] = new Date().toISOString().split("T")[0]; // YYYY-MM-DD format
+        // Don't overwrite DateFound - let database preserve existing dates
 
         starlinkAircraft.push(aircraft);
       });

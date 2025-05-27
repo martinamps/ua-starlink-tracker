@@ -1,10 +1,10 @@
+import 'dotenv/config';
 import React from "react";
 import ReactDOMServer from "react-dom/server";
 import path from "node:path";
 import fs from "node:fs";
-import Page from "./page";
 
-// Import modules
+import Page from "./src/components/page";
 import {
   initializeDatabase,
   updateDatabase,
@@ -12,26 +12,36 @@ import {
   getLastUpdated,
   getStarlinkPlanes,
   getFleetStats,
-} from "./database";
+  getUpcomingFlights,
+} from "./src/database/database";
 import {
   getDomainContent,
   SECURITY_HEADERS,
   CONTENT_TYPES,
   isUnitedDomain,
-} from "./constants";
-import { getNotFoundHtml } from "./not-found";
-import { fetchAllSheets } from "./utils";
+} from "./src/utils/constants";
+import { getNotFoundHtml } from "./src/utils/not-found";
+import { fetchAllSheets } from "./src/utils/utils";
+import { startFlightUpdater } from "./src/api/flight-updater";
+import type { ApiResponse, Flight } from "./src/types";
 
-// Environment configuration
+// Environment configuration  
 const STATIC_DIR =
   process.env.NODE_ENV === "production"
     ? "/app/static"
-    : path.join(path.dirname(import.meta.url.replace("file://", "")), "static");
+    : path.join(import.meta.dir, "static");
 const PORT = process.env.PORT ? Number.parseInt(process.env.PORT, 10) : 3000;
-const HTML_TEMPLATE = fs.readFileSync(
-  path.join(path.dirname(import.meta.url.replace("file://", "")), "index.html"),
-  "utf8"
-);
+
+// Bun-native HTML template handling
+const htmlTemplateFile = Bun.file(path.join(import.meta.dir, "index.html"));
+let htmlTemplateCache: string;
+
+async function getHtmlTemplate(): Promise<string> {
+  if (process.env.NODE_ENV === "production") {
+    return htmlTemplateCache ||= await htmlTemplateFile.text();
+  }
+  return await htmlTemplateFile.text();
+}
 
 // Initialize database
 const db = initializeDatabase();
@@ -157,14 +167,30 @@ routes["/api/data"] = (req) => {
   const starlinkPlanes = getStarlinkPlanes(db);
   const lastUpdated = getLastUpdated(db);
   const fleetStats = getFleetStats(db);
+  const allFlights = getUpcomingFlights(db);
 
-  return new Response(
-    JSON.stringify({ totalCount, starlinkPlanes, lastUpdated, fleetStats }),
-    {
-      headers: SECURITY_HEADERS.api,
+  // Group flights by tail number for easy lookup
+  const flightsByTail: Record<string, Flight[]> = {};
+  allFlights.forEach(flight => {
+    if (!flightsByTail[flight.tail_number]) {
+      flightsByTail[flight.tail_number] = [];
     }
-  );
+    flightsByTail[flight.tail_number].push(flight);
+  });
+
+  const response: ApiResponse = {
+    totalCount,
+    starlinkPlanes,
+    lastUpdated,
+    fleetStats,
+    flightsByTail
+  };
+
+  return new Response(JSON.stringify(response), {
+    headers: SECURITY_HEADERS.api,
+  });
 };
+
 
 // Debug endpoint
 routes["/debug/files"] = (req) => {
@@ -199,7 +225,7 @@ Bun.serve({
   port: PORT,
   routes,
 
-  fetch(req) {
+  async fetch(req) {
     const url = new URL(req.url);
     const host = req.headers.get("host") || "unitedstarlinktracker.com";
 
@@ -216,6 +242,16 @@ Bun.serve({
       const starlinkPlanes = getStarlinkPlanes(db);
       const lastUpdated = getLastUpdated(db);
       const fleetStats = getFleetStats(db);
+      const allFlights = getUpcomingFlights(db);
+
+      // Group flights by tail number for rendering
+      const flightsByTail: Record<string, Flight[]> = {};
+      allFlights.forEach(flight => {
+        if (!flightsByTail[flight.tail_number]) {
+          flightsByTail[flight.tail_number] = [];
+        }
+        flightsByTail[flight.tail_number].push(flight);
+      });
 
       const reactHtml = ReactDOMServer.renderToString(
         React.createElement(Page, {
@@ -224,6 +260,7 @@ Bun.serve({
           lastUpdated,
           fleetStats,
           isUnited: isUnitedDomain(host),
+          flightsByTail,
         })
       );
 
@@ -232,9 +269,13 @@ Bun.serve({
         ...metadata,
         html: reactHtml,
         host,
+        totalCount: totalCount.toString(),
+        lastUpdated: lastUpdated,
+        isUnited: isUnitedDomain(host).toString(),
       };
 
-      const html = renderHtml(HTML_TEMPLATE, htmlVariables);
+      const template = await getHtmlTemplate();
+      const html = renderHtml(template, htmlVariables);
       return new Response(html, { headers: SECURITY_HEADERS.html });
     }
 
@@ -267,5 +308,8 @@ Bun.serve({
     });
   },
 });
+
+// Start the flight updater
+startFlightUpdater();
 
 console.log(`Server running at http://localhost:${PORT}`);

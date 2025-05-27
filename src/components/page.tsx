@@ -1,29 +1,14 @@
 import React from "react";
-import { isUnitedDomain, PAGE_CONTENT } from "./constants";
-
-interface StarlinkAircraft {
-  [key: string]: string; // This covers dynamic keys like sheet_gid, etc.
-}
-
-interface FleetStats {
-  express: {
-    total: number;
-    starlink: number;
-    percentage: number;
-  };
-  mainline: {
-    total: number;
-    starlink: number;
-    percentage: number;
-  };
-}
+import { isUnitedDomain, PAGE_CONTENT } from "../utils/constants";
+import type { Aircraft, Flight, FleetStats } from "../types";
 
 interface PageProps {
   total: number;
-  starlink: StarlinkAircraft[];
-  lastUpdated?: string; // Optional timestamp from server
-  fleetStats?: FleetStats; // Optional fleet statistics
-  isUnited?: boolean; // Whether we're on the United-specific domain
+  starlink: Aircraft[];
+  lastUpdated?: string;
+  fleetStats?: FleetStats;
+  isUnited?: boolean;
+  flightsByTail?: Record<string, Flight[]>;
 }
 
 const dateOverrides: Record<string, string> = {
@@ -35,10 +20,11 @@ export default function Page({
   starlink,
   lastUpdated: serverLastUpdated,
   fleetStats,
-  isUnited = false, // Default to generic view if not specified
+  isUnited = false,
+  flightsByTail = {},
 }: PageProps) {
   // Apply date overrides to the aircraft data
-  const applyDateOverrides = (data: StarlinkAircraft[]): StarlinkAircraft[] => {
+  const applyDateOverrides = (data: Aircraft[]): Aircraft[] => {
     return data.map((aircraft) => {
       const tailNumber = aircraft.TailNumber;
       if (tailNumber && dateOverrides[tailNumber]) {
@@ -65,69 +51,119 @@ export default function Page({
     }
   };
 
-  const [starlinkData, setStarlinkData] = React.useState<StarlinkAircraft[]>(
-    applyDateOverrides(starlink)
-  );
-  const [totalAircraft, setTotalAircraft] = React.useState<number>(total);
-  const [lastUpdated, setLastUpdated] = React.useState<string>(
-    serverLastUpdated
-      ? formatLastUpdated(serverLastUpdated)
-      : new Date().toLocaleString()
-  );
-  const [loading, setLoading] = React.useState<boolean>(false);
-
-  // State for fleet statistics
-  const [fleetStatistics, setFleetStatistics] = React.useState<
-    FleetStats | undefined
-  >(fleetStats);
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: <explanation>
-  const fetchData = React.useCallback(() => {
-    setLoading(true);
-    fetch("/api/data")
-      .then((res) => res.json())
-      .then(
-        ({
-          totalCount,
-          starlinkPlanes,
-          lastUpdated: fetchedLastUpdated,
-          fleetStats: fetchedFleetStats,
-        }) => {
-          // Apply date overrides to the new data
-          const planesWithOverrides = applyDateOverrides(starlinkPlanes);
-          setStarlinkData(planesWithOverrides);
-          setTotalAircraft(totalCount);
-
-          // Use the timestamp from the server instead of client time
-          if (fetchedLastUpdated) {
-            setLastUpdated(formatLastUpdated(fetchedLastUpdated));
-          }
-
-          // Update fleet statistics
-          if (fetchedFleetStats) {
-            setFleetStatistics(fetchedFleetStats);
-          }
-          setLoading(false);
-        }
-      )
-      .catch((err) => {
-        console.error("Error fetching data:", err);
-        setLoading(false);
-      });
-  }, []);
-
-  React.useEffect(() => {
-    // Client-side fetch to keep data fresh
-    fetchData();
-
-    // Refresh data every 5 minutes
-    const intervalId = setInterval(fetchData, 5 * 60 * 1000);
-    return () => clearInterval(intervalId);
-  }, [fetchData]);
-
+  // Server-side rendering uses props directly, no client state needed
+  const starlinkData = applyDateOverrides(starlink);
   const x = starlinkData.length;
-  const y = totalAircraft;
+  const y = total;
   const percentage = y > 0 ? ((x / y) * 100).toFixed(2) : "0.00";
+
+  // Helper function to clean airport codes (remove ICAO prefixes)
+  const cleanAirportCode = (code: string) => {
+    if (code && code.length === 4) {
+      if (code.startsWith('K')) return code.substring(1);
+      if (code.startsWith('C')) return code.substring(1);
+      if (code.startsWith('M')) return code.substring(1);
+    }
+    return code;
+  };
+
+  // Helper function to format flight times
+  const formatFlightTime = (timestamp: number) => {
+    const date = new Date(timestamp * 1000);
+    const now = new Date();
+    const isToday = date.toDateString() === now.toDateString();
+    
+    const timeStr = date.toLocaleTimeString("en-US", {
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    });
+    
+    // For today's flights, show just the time
+    if (isToday) return timeStr;
+    
+    // For all other flights, show the actual date
+    const dateStr = date.toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+    });
+    
+    return `${dateStr} ${timeStr}`;
+  };
+
+
+  // Helper function to render upcoming flights
+  const renderUpcomingFlights = (tailNumber: string, isMobileView: boolean = false) => {
+    const flights = flightsByTail[tailNumber];
+    
+    if (!flights || flights.length === 0) {
+      return React.createElement("span", { className: "text-gray-400 text-sm" }, "No upcoming flights");
+    }
+
+    // Show more flights on desktop, fewer on mobile
+    const maxFlights = isMobileView ? 2 : 3;
+    const flightsToShow = flights.slice(0, maxFlights);
+    const remainingCount = flights.length - maxFlights;
+    
+    return React.createElement("div", { className: "space-y-2" }, [
+      ...flightsToShow.map((flight, idx) => {
+        const cleanDeparture = cleanAirportCode(flight.departure_airport);
+        const cleanArrival = cleanAirportCode(flight.arrival_airport);
+        
+        return React.createElement("div", { 
+          key: `flight-${idx}`,
+          className: `text-sm ${idx === 0 ? 'border-l-2 border-blue-500 pl-2' : 'pl-3'}`
+        }, [
+          React.createElement("div", { className: "flex items-center justify-between", key: "flight-info" }, [
+            React.createElement("a", {
+              href: `https://www.flightaware.com/live/flight/${flight.flight_number}`,
+              target: "_blank",
+              rel: "noopener noreferrer",
+              className: "font-medium text-united-blue hover:underline",
+              key: "flight-link"
+            }, flight.flight_number),
+            React.createElement("span", { 
+              className: "text-gray-500 text-xs",
+              key: "time"
+            }, formatFlightTime(flight.departure_time))
+          ]),
+          React.createElement("div", { 
+            className: "text-gray-600 text-xs",
+            key: "route"
+          }, `${cleanDeparture} → ${cleanArrival}`)
+        ]);
+      }),
+      ...(remainingCount > 0 ? [
+        React.createElement("div", { 
+          className: "text-gray-400 text-xs pl-3",
+          key: "remaining"
+        }, `+${remainingCount} more flights`)
+      ] : [])
+    ]);
+  };
+
+  // Mobile-specific flight display component
+  const renderMobileFlights = (plane: Aircraft) => {
+    const flights = flightsByTail[plane.TailNumber];
+    
+    if (!flights || flights.length === 0) {
+      return null;
+    }
+
+    return React.createElement("div", { className: "mt-3 pt-3 border-t border-gray-200" }, [
+      React.createElement("div", { 
+        className: "text-xs font-semibold text-gray-700 mb-2 flex items-center gap-1",
+        key: "header"
+      }, [
+        React.createElement("span", { key: "emoji" }, "✈️ Upcoming Flights"),
+        React.createElement("span", { 
+          className: "text-gray-400 font-normal",
+          key: "count"
+        }, `(${flights.length})`)
+      ]),
+      React.createElement("div", { key: "flights" }, renderUpcomingFlights(plane.TailNumber, true))
+    ]);
+  };
 
   return (
     <div className="font-sans w-full mx-auto px-4 sm:px-6 md:px-8 bg-gray-50 text-gray-800 min-h-screen flex flex-col">
@@ -174,15 +210,15 @@ export default function Page({
             {PAGE_CONTENT.fleetLabels.mainline}
           </div>
           <div className="text-4xl md:text-5xl font-bold text-united-blue mb-1 leading-tight tracking-tight">
-            {fleetStatistics?.mainline.percentage.toFixed(2)}%
+            {fleetStats?.mainline.percentage.toFixed(2)}%
           </div>
           <div className="text-lg">
             <span className="font-bold text-united-blue">
-              {fleetStatistics?.mainline.starlink || 0}
+              {fleetStats?.mainline.starlink || 0}
             </span>{" "}
             out of{" "}
             <span className="font-bold">
-              {fleetStatistics?.mainline.total || 0}
+              {fleetStats?.mainline.total || 0}
             </span>{" "}
             planes
           </div>
@@ -194,15 +230,15 @@ export default function Page({
             {PAGE_CONTENT.fleetLabels.express}
           </div>
           <div className="text-4xl md:text-5xl font-bold text-united-blue mb-1 leading-tight tracking-tight">
-            {fleetStatistics?.express.percentage.toFixed(2)}%
+            {fleetStats?.express.percentage.toFixed(2)}%
           </div>
           <div className="text-lg">
             <span className="font-bold text-united-blue">
-              {fleetStatistics?.express.starlink || 0}
+              {fleetStats?.express.starlink || 0}
             </span>{" "}
             out of{" "}
             <span className="font-bold">
-              {fleetStatistics?.express.total || 0}
+              {fleetStats?.express.total || 0}
             </span>{" "}
             planes
           </div>
@@ -226,7 +262,7 @@ export default function Page({
       {/* Last Updated - hidden by default */}
       <div className="text-center mb-6 hidden">
         <div className="text-sm text-gray-500 bg-gray-100 px-4 py-2 rounded-full inline-block">
-          Last updated: {lastUpdated}
+          Last updated: {serverLastUpdated ? formatLastUpdated(serverLastUpdated) : new Date().toLocaleString()}
         </div>
       </div>
 
@@ -234,21 +270,25 @@ export default function Page({
         Planes with Starlink WiFi
       </h2>
 
-      <div className="overflow-x-auto bg-white rounded-xl shadow-md flex-1 mb-6">
+      {/* Desktop Table View */}
+      <div className="hidden md:block overflow-x-auto bg-white rounded-xl shadow-md flex-1 mb-6">
         <table className="w-full bg-white rounded-xl overflow-hidden">
           <thead>
             <tr className="bg-united-blue">
-              <th className="py-3 px-4 text-left font-semibold text-sm md:text-base text-white">
+              <th className="py-3 px-4 text-left font-semibold text-sm lg:text-base text-white">
                 Tail Number
               </th>
-              <th className="py-3 px-4 text-left font-semibold text-sm md:text-base hidden md:table-cell text-white">
+              <th className="py-3 px-4 text-left font-semibold text-sm lg:text-base text-white">
                 Aircraft Type
               </th>
-              <th className="py-3 px-4 text-left font-semibold text-sm md:text-base text-white">
+              <th className="py-3 px-4 text-left font-semibold text-sm lg:text-base text-white">
                 Operated By
               </th>
-              <th className="py-3 px-4 text-left font-semibold text-sm md:text-base text-white">
+              <th className="py-3 px-4 text-left font-semibold text-sm lg:text-base text-white">
                 Installation Date
+              </th>
+              <th className="py-3 px-4 text-left font-semibold text-sm lg:text-base text-white">
+                Upcoming Flights
               </th>
             </tr>
           </thead>
@@ -256,17 +296,10 @@ export default function Page({
             {starlinkData.length === 0 ? (
               <tr>
                 <td
-                  colSpan={4}
+                  colSpan={5}
                   className="p-8 text-center text-gray-600 bg-gray-50"
                 >
-                  {loading ? (
-                    <div>
-                      <div className="text-lg mb-3">Loading data...</div>
-                      <div className="w-10 h-10 mx-auto border-3 border-gray-200 border-t-united-blue rounded-full animate-spin" />
-                    </div>
-                  ) : (
-                    "No data available"
-                  )}
+                  No data available
                 </td>
               </tr>
             ) : (
@@ -277,7 +310,7 @@ export default function Page({
                     idx % 2 === 0 ? "bg-gray-50" : "bg-white"
                   } transition-colors`}
                 >
-                  <td className="py-3 px-4 font-medium text-gray-700">
+                  <td className="py-4 px-4 font-medium text-gray-700">
                     <span className="inline-block px-3 py-1.5 rounded-full text-sm font-semibold bg-blue-50 text-united-blue border border-blue-100 shadow-sm">
                       {plane.TailNumber}
                     </span>
@@ -291,20 +324,19 @@ export default function Page({
                       </span>
                     )}
                   </td>
-                  <td className="py-3 px-4 hidden md:table-cell text-gray-700">
+                  <td className="py-4 px-4 text-gray-700 font-medium">
                     {plane.Aircraft}
                   </td>
-                  <td className="py-3 px-4 text-gray-700">
+                  <td className="py-4 px-4 text-gray-700">
                     {plane.OperatedBy || "United Airlines"}
                   </td>
                   <td
-                    className={`py-3 px-4 text-gray-700 text-sm whitespace-nowrap ${
+                    className={`py-4 px-4 text-gray-700 text-sm whitespace-nowrap ${
                       dateOverrides[plane.TailNumber] ? "font-medium" : ""
                     }`}
                   >
-                    {/* Hardcode override dates to ensure correct display */}
                     {dateOverrides[plane.TailNumber]
-                      ? "Mar 7, 2025" // Hardcoded display for override dates
+                      ? "Mar 7, 2025"
                       : plane.DateFound
                       ? new Date(plane.DateFound).toLocaleDateString("en-US", {
                           year: "numeric",
@@ -319,11 +351,83 @@ export default function Page({
                           timeZone: "America/Los_Angeles",
                         })}
                   </td>
+                  <td className="py-4 px-4">
+                    {renderUpcomingFlights(plane.TailNumber, false)}
+                  </td>
                 </tr>
               ))
             )}
           </tbody>
         </table>
+      </div>
+
+      {/* Mobile Card View */}
+      <div className="md:hidden space-y-4 mb-6">
+        {starlinkData.length === 0 ? (
+          <div className="bg-white rounded-xl shadow-md p-6 text-center text-gray-600">
+            No data available
+          </div>
+        ) : (
+          starlinkData.map((plane, idx) => (
+            <div
+              key={plane.TailNumber || idx}
+              className="bg-white rounded-xl shadow-md p-4 border border-gray-200"
+            >
+              {/* Header with tail number and fleet type */}
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <span className="inline-block px-3 py-1.5 rounded-full text-sm font-semibold bg-blue-50 text-united-blue border border-blue-100 shadow-sm">
+                    {plane.TailNumber}
+                  </span>
+                  {plane.fleet === "mainline" ? (
+                    <span className="inline-block px-1.5 py-0.5 text-xs bg-united-blue text-white rounded">
+                      Mainline
+                    </span>
+                  ) : (
+                    <span className="inline-block px-1.5 py-0.5 text-xs bg-blue-500 text-white rounded">
+                      Express
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Aircraft info grid */}
+              <div className="grid grid-cols-1 gap-2 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-gray-600 font-medium">Aircraft:</span>
+                  <span className="text-gray-800 font-medium">{plane.Aircraft}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-600 font-medium">Operator:</span>
+                  <span className="text-gray-800">{plane.OperatedBy || "United Airlines"}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-600 font-medium">Installed:</span>
+                  <span className={`text-gray-800 ${dateOverrides[plane.TailNumber] ? "font-medium" : ""}`}>
+                    {dateOverrides[plane.TailNumber]
+                      ? "Mar 7, 2025"
+                      : plane.DateFound
+                      ? new Date(plane.DateFound).toLocaleDateString("en-US", {
+                          year: "numeric",
+                          month: "short",
+                          day: "numeric",
+                          timeZone: "America/Los_Angeles",
+                        })
+                      : new Date().toLocaleDateString("en-US", {
+                          year: "numeric",
+                          month: "short",
+                          day: "numeric",
+                          timeZone: "America/Los_Angeles",
+                        })}
+                  </span>
+                </div>
+              </div>
+
+              {/* Mobile flights display */}
+              {renderMobileFlights(plane)}
+            </div>
+          ))
+        )}
       </div>
 
       <footer className="mt-auto py-6 text-center border-t border-gray-200 text-gray-600 text-sm">
