@@ -250,29 +250,66 @@ export function updateLastFlightCheck(db: Database, tailNumber: string) {
   db.query("UPDATE starlink_planes SET last_flight_check = ? WHERE TailNumber = ?").run(now, tailNumber);
 }
 
-export function needsFlightCheck(db: Database, tailNumber: string, hoursThreshold: number = 6): boolean {
+export function needsFlightCheck(db: Database, tailNumber: string, hoursThreshold: number = 4): boolean {
   const row = db.query("SELECT last_flight_check FROM starlink_planes WHERE TailNumber = ?").get(tailNumber) as { last_flight_check: number } | null;
   
   if (!row) return false; // Tail number not found
   
   const lastCheck = row.last_flight_check || 0;
   const now = Math.floor(Date.now() / 1000);
-  const thresholdSeconds = hoursThreshold * 60 * 60;
   
-  // If lastCheck is 0 (never checked), add some randomization to prevent all planes checking at once
+  // Get existing flights to make smarter decisions
+  const flightInfo = db.query(`
+    SELECT COUNT(*) as count,
+           MIN(departure_time) as next_departure,
+           MAX(departure_time) as latest_departure
+    FROM upcoming_flights
+    WHERE tail_number = ? AND departure_time > ?
+  `).get(tailNumber, now) as { count: number; next_departure: number | null; latest_departure: number | null } | null;
+
+  const hasFlights = flightInfo && flightInfo.count > 0;
+  const nextDeparture = flightInfo?.next_departure;
+  const latestDeparture = flightInfo?.latest_departure;
+  
+  // If lastCheck is 0 (never checked), add randomization to prevent all planes checking at once
   if (lastCheck === 0) {
-    // Check if we have any flights for this tail number already
-    const existingFlights = db.query("SELECT COUNT(*) as count FROM upcoming_flights WHERE tail_number = ?").get(tailNumber) as { count: number } | null;
-    
-    // If we already have flight data, don't need to check immediately
-    if (existingFlights && existingFlights.count > 0) {
-      // Set a random last check time within the past 1-5 hours to stagger future checks
-      const randomHoursAgo = Math.floor(Math.random() * 4) + 1; // 1-5 hours ago
+    if (hasFlights) {
+      // Set a random last check time within the past 1-3 hours to stagger future checks
+      const randomHoursAgo = Math.floor(Math.random() * 2) + 1; // 1-3 hours ago
       const randomLastCheck = now - (randomHoursAgo * 60 * 60);
       db.query("UPDATE starlink_planes SET last_flight_check = ? WHERE TailNumber = ?").run(randomLastCheck, tailNumber);
       return false;
     }
+    // New aircraft with no flights should be checked immediately
+    return true;
   }
   
-  return (now - lastCheck) > thresholdSeconds;
+  const hoursSinceLastCheck = (now - lastCheck) / 3600;
+  
+  // Dynamic checking based on flight situation
+  if (!hasFlights) {
+    // No upcoming flights - check every 8-12 hours with jitter
+    const thresholdHours = 8 + Math.random() * 4; // 8-12 hours
+    return hoursSinceLastCheck > thresholdHours;
+  }
+  
+  // Have flights - more frequent checks
+  const hoursToNextFlight = nextDeparture ? (nextDeparture - now) / 3600 : 999;
+  const hoursToLatestFlight = latestDeparture ? (latestDeparture - now) / 3600 : 999;
+  
+  // If next flight is within 6 hours, check more frequently
+  if (hoursToNextFlight <= 6) {
+    const thresholdHours = 1 + Math.random() * 0.5; // 1-1.5 hours with jitter
+    return hoursSinceLastCheck > thresholdHours;
+  }
+  
+  // If latest flight is within 24 hours, check every 2-4 hours
+  if (hoursToLatestFlight <= 24) {
+    const thresholdHours = 2 + Math.random() * 2; // 2-4 hours with jitter
+    return hoursSinceLastCheck > thresholdHours;
+  }
+  
+  // If we have flights but they're far out, check every 4-8 hours
+  const thresholdHours = 4 + Math.random() * 4; // 4-8 hours with jitter
+  return hoursSinceLastCheck > thresholdHours;
 }

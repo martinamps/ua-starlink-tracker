@@ -140,10 +140,10 @@ export async function updateAllFlights() {
   console.log(`Flight updates completed: ${updatedCount} aircraft updated, ${apiCallCount} API calls made`);
 }
 
-// Auto-update flights every 6 hours (to align with check threshold)
+// Auto-update flights every 2 hours (smart logic handles individual aircraft timing)
 export function startFlightUpdater() {
   updateAllFlights(); // Initial update
-  setInterval(updateAllFlights, 6 * 60 * 60 * 1000); // 6 hours
+  setInterval(updateAllFlights, 2 * 60 * 60 * 1000); // 2 hours
 }
 
 // Export individual functions for manual use
