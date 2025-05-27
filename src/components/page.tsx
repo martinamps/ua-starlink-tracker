@@ -79,10 +79,7 @@ export default function Page({
       hour12: true,
     });
     
-    // For today's flights, show just the time
-    if (isToday) return timeStr;
-    
-    // For all other flights, show the actual date
+    // Always show the date for clarity
     const dateStr = date.toLocaleDateString("en-US", {
       month: "short",
       day: "numeric",
