@@ -8,7 +8,7 @@ export interface Aircraft {
   DateFound: string;
   TailNumber: string;
   OperatedBy: string;
-  fleet: 'express' | 'mainline';
+  fleet: "express" | "mainline";
 }
 
 export interface Flight {

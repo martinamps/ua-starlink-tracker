@@ -1,6 +1,6 @@
 import React from "react";
-import { isUnitedDomain, PAGE_CONTENT } from "../utils/constants";
-import type { Aircraft, Flight, FleetStats } from "../types";
+import type { Aircraft, FleetStats, Flight } from "../types";
+import { PAGE_CONTENT, isUnitedDomain } from "../utils/constants";
 
 interface PageProps {
   total: number;
@@ -29,9 +29,7 @@ export default function Page({
       const tailNumber = aircraft.TailNumber;
       if (tailNumber && dateOverrides[tailNumber]) {
         // Make sure we're using PST for the override date to avoid timezone issues
-        const overrideDate = new Date(
-          `${dateOverrides[tailNumber]}T12:00:00-08:00`
-        );
+        const overrideDate = new Date(`${dateOverrides[tailNumber]}T12:00:00-08:00`);
         return {
           ...aircraft,
           DateFound: overrideDate.toISOString().split("T")[0], // Format as YYYY-MM-DD
@@ -60,9 +58,9 @@ export default function Page({
   // Helper function to clean airport codes (remove ICAO prefixes)
   const cleanAirportCode = (code: string) => {
     if (code && code.length === 4) {
-      if (code.startsWith('K')) return code.substring(1);
-      if (code.startsWith('C')) return code.substring(1);
-      if (code.startsWith('M')) return code.substring(1);
+      if (code.startsWith("K")) return code.substring(1);
+      if (code.startsWith("C")) return code.substring(1);
+      if (code.startsWith("M")) return code.substring(1);
     }
     return code;
   };
@@ -72,93 +70,130 @@ export default function Page({
     const date = new Date(timestamp * 1000);
     const now = new Date();
     const isToday = date.toDateString() === now.toDateString();
-    
+
     const timeStr = date.toLocaleTimeString("en-US", {
       hour: "numeric",
       minute: "2-digit",
       hour12: true,
     });
-    
+
     // Always show the date for clarity
     const dateStr = date.toLocaleDateString("en-US", {
       month: "short",
       day: "numeric",
     });
-    
+
     return `${dateStr} ${timeStr}`;
   };
 
-
   // Helper function to render upcoming flights
-  const renderUpcomingFlights = (tailNumber: string, isMobileView: boolean = false) => {
+  const renderUpcomingFlights = (tailNumber: string, isMobileView = false) => {
     const flights = flightsByTail[tailNumber];
-    
+
     if (!flights || flights.length === 0) {
-      return React.createElement("span", { className: "text-gray-400 text-sm" }, "No upcoming flights");
+      return React.createElement(
+        "span",
+        { className: "text-gray-400 text-sm" },
+        "No upcoming flights"
+      );
     }
 
     // Show more flights on desktop, fewer on mobile
     const maxFlights = isMobileView ? 2 : 3;
     const flightsToShow = flights.slice(0, maxFlights);
     const remainingCount = flights.length - maxFlights;
-    
+
     return React.createElement("div", { className: "space-y-2" }, [
       ...flightsToShow.map((flight, idx) => {
         const cleanDeparture = cleanAirportCode(flight.departure_airport);
         const cleanArrival = cleanAirportCode(flight.arrival_airport);
-        
-        return React.createElement("div", { 
-          key: `flight-${idx}`,
-          className: `text-sm ${idx === 0 ? 'border-l-2 border-blue-500 pl-2' : 'pl-3'}`
-        }, [
-          React.createElement("div", { className: "flex items-center justify-between", key: "flight-info" }, [
-            React.createElement("a", {
-              href: `https://www.flightaware.com/live/flight/${flight.flight_number}`,
-              target: "_blank",
-              rel: "noopener noreferrer",
-              className: "font-medium text-united-blue hover:underline",
-              key: "flight-link"
-            }, flight.flight_number),
-            React.createElement("span", { 
-              className: "text-gray-500 text-xs",
-              key: "time"
-            }, formatFlightTime(flight.departure_time))
-          ]),
-          React.createElement("div", { 
-            className: "text-gray-600 text-xs",
-            key: "route"
-          }, `${cleanDeparture} → ${cleanArrival}`)
-        ]);
+
+        return React.createElement(
+          "div",
+          {
+            key: `flight-${idx}`,
+            className: `text-sm ${idx === 0 ? "border-l-2 border-blue-500 pl-2" : "pl-3"}`,
+          },
+          [
+            React.createElement(
+              "div",
+              { className: "flex items-center justify-between", key: "flight-info" },
+              [
+                React.createElement(
+                  "a",
+                  {
+                    href: `https://www.flightaware.com/live/flight/${flight.flight_number}`,
+                    target: "_blank",
+                    rel: "noopener noreferrer",
+                    className: "font-medium text-united-blue hover:underline",
+                    key: "flight-link",
+                  },
+                  flight.flight_number
+                ),
+                React.createElement(
+                  "span",
+                  {
+                    className: "text-gray-500 text-xs",
+                    key: "time",
+                  },
+                  formatFlightTime(flight.departure_time)
+                ),
+              ]
+            ),
+            React.createElement(
+              "div",
+              {
+                className: "text-gray-600 text-xs",
+                key: "route",
+              },
+              `${cleanDeparture} → ${cleanArrival}`
+            ),
+          ]
+        );
       }),
-      ...(remainingCount > 0 ? [
-        React.createElement("div", { 
-          className: "text-gray-400 text-xs pl-3",
-          key: "remaining"
-        }, `+${remainingCount} more flights`)
-      ] : [])
+      ...(remainingCount > 0
+        ? [
+            React.createElement(
+              "div",
+              {
+                className: "text-gray-400 text-xs pl-3",
+                key: "remaining",
+              },
+              `+${remainingCount} more flights`
+            ),
+          ]
+        : []),
     ]);
   };
 
   // Mobile-specific flight display component
   const renderMobileFlights = (plane: Aircraft) => {
     const flights = flightsByTail[plane.TailNumber];
-    
+
     if (!flights || flights.length === 0) {
       return null;
     }
 
     return React.createElement("div", { className: "mt-3 pt-3 border-t border-gray-200" }, [
-      React.createElement("div", { 
-        className: "text-xs font-semibold text-gray-700 mb-2 flex items-center gap-1",
-        key: "header"
-      }, [
-        React.createElement("span", { key: "emoji" }, "✈️ Upcoming Flights"),
-        React.createElement("span", { 
-          className: "text-gray-400 font-normal",
-          key: "count"
-        }, `(${flights.length})`)
-      ]),
-      React.createElement("div", { key: "flights" }, renderUpcomingFlights(plane.TailNumber, true))
+      React.createElement(
+        "div",
+        {
+          className: "text-xs font-semibold text-gray-700 mb-2 flex items-center gap-1",
+          key: "header",
+        },
+        [
+          React.createElement("span", { key: "emoji" }, "✈️ Upcoming Flights"),
+          React.createElement(
+            "span",
+            {
+              className: "text-gray-400 font-normal",
+              key: "count",
+            },
+            `(${flights.length})`
+          ),
+        ]
+      ),
+      React.createElement("div", { key: "flights" }, renderUpcomingFlights(plane.TailNumber, true)),
     ]);
   };
 
@@ -166,14 +201,10 @@ export default function Page({
     <div className="font-sans w-full mx-auto px-4 sm:px-6 md:px-8 bg-gray-50 text-gray-800 min-h-screen flex flex-col">
       <header className="py-6 sm:py-8 md:py-10 text-center border-b border-gray-200 mb-6 sm:mb-8">
         <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold text-united-blue mb-3 tracking-tight">
-          {isUnited
-            ? PAGE_CONTENT.pageTitle.united
-            : PAGE_CONTENT.pageTitle.generic}
+          {isUnited ? PAGE_CONTENT.pageTitle.united : PAGE_CONTENT.pageTitle.generic}
         </h1>
         <p className="text-lg sm:text-xl text-gray-700 mb-4">
-          {isUnited
-            ? PAGE_CONTENT.pageSubtitle.united
-            : PAGE_CONTENT.pageSubtitle.generic}
+          {isUnited ? PAGE_CONTENT.pageSubtitle.united : PAGE_CONTENT.pageSubtitle.generic}
         </p>
         <div className="max-w-4xl mx-auto px-5 py-4 bg-blue-50 rounded-xl text-gray-700 border border-blue-100 text-left shadow-sm">
           <p className="mb-2">
@@ -186,15 +217,13 @@ export default function Page({
             >
               began equipping its fleet
             </a>{" "}
-            with SpaceX's Starlink internet on March 7, 2025. The ultra-fast
-            WiFi offers speeds up to 250 Mbps—
-            <span className="font-bold">50 times faster</span> than previous
-            systems. The airline plans to install Starlink on over 40 regional
-            aircraft monthly, completing its entire two-cabin regional fleet by
-            the end of 2025. Each installation takes only 8 hours, making it 10
-            times faster than previous systems, and the lightweight 85-pound
-            equipment improves fuel efficiency compared to older 300-pound
-            systems.
+            with SpaceX's Starlink internet on March 7, 2025. The ultra-fast WiFi offers speeds up
+            to 250 Mbps—
+            <span className="font-bold">50 times faster</span> than previous systems. The airline
+            plans to install Starlink on over 40 regional aircraft monthly, completing its entire
+            two-cabin regional fleet by the end of 2025. Each installation takes only 8 hours,
+            making it 10 times faster than previous systems, and the lightweight 85-pound equipment
+            improves fuel efficiency compared to older 300-pound systems.
           </p>
         </div>
       </header>
@@ -210,14 +239,8 @@ export default function Page({
             {fleetStats?.mainline.percentage.toFixed(2)}%
           </div>
           <div className="text-lg">
-            <span className="font-bold text-united-blue">
-              {fleetStats?.mainline.starlink || 0}
-            </span>{" "}
-            out of{" "}
-            <span className="font-bold">
-              {fleetStats?.mainline.total || 0}
-            </span>{" "}
-            planes
+            <span className="font-bold text-united-blue">{fleetStats?.mainline.starlink || 0}</span>{" "}
+            out of <span className="font-bold">{fleetStats?.mainline.total || 0}</span> planes
           </div>
         </div>
 
@@ -230,14 +253,8 @@ export default function Page({
             {fleetStats?.express.percentage.toFixed(2)}%
           </div>
           <div className="text-lg">
-            <span className="font-bold text-united-blue">
-              {fleetStats?.express.starlink || 0}
-            </span>{" "}
-            out of{" "}
-            <span className="font-bold">
-              {fleetStats?.express.total || 0}
-            </span>{" "}
-            planes
+            <span className="font-bold text-united-blue">{fleetStats?.express.starlink || 0}</span>{" "}
+            out of <span className="font-bold">{fleetStats?.express.total || 0}</span> planes
           </div>
         </div>
 
@@ -259,7 +276,8 @@ export default function Page({
       {/* Last Updated - hidden by default */}
       <div className="text-center mb-6 hidden">
         <div className="text-sm text-gray-500 bg-gray-100 px-4 py-2 rounded-full inline-block">
-          Last updated: {serverLastUpdated ? formatLastUpdated(serverLastUpdated) : new Date().toLocaleString()}
+          Last updated:{" "}
+          {serverLastUpdated ? formatLastUpdated(serverLastUpdated) : new Date().toLocaleString()}
         </div>
       </div>
 
@@ -292,10 +310,7 @@ export default function Page({
           <tbody>
             {starlinkData.length === 0 ? (
               <tr>
-                <td
-                  colSpan={5}
-                  className="p-8 text-center text-gray-600 bg-gray-50"
-                >
+                <td colSpan={5} className="p-8 text-center text-gray-600 bg-gray-50">
                   No data available
                 </td>
               </tr>
@@ -321,9 +336,7 @@ export default function Page({
                       </span>
                     )}
                   </td>
-                  <td className="py-4 px-4 text-gray-700 font-medium">
-                    {plane.Aircraft}
-                  </td>
+                  <td className="py-4 px-4 text-gray-700 font-medium">{plane.Aircraft}</td>
                   <td className="py-4 px-4 text-gray-700">
                     {plane.OperatedBy || "United Airlines"}
                   </td>
@@ -335,22 +348,20 @@ export default function Page({
                     {dateOverrides[plane.TailNumber]
                       ? "Mar 7, 2025"
                       : plane.DateFound
-                      ? new Date(plane.DateFound).toLocaleDateString("en-US", {
-                          year: "numeric",
-                          month: "short",
-                          day: "numeric",
-                          timeZone: "America/Los_Angeles",
-                        })
-                      : new Date().toLocaleDateString("en-US", {
-                          year: "numeric",
-                          month: "short",
-                          day: "numeric",
-                          timeZone: "America/Los_Angeles",
-                        })}
+                        ? new Date(plane.DateFound).toLocaleDateString("en-US", {
+                            year: "numeric",
+                            month: "short",
+                            day: "numeric",
+                            timeZone: "America/Los_Angeles",
+                          })
+                        : new Date().toLocaleDateString("en-US", {
+                            year: "numeric",
+                            month: "short",
+                            day: "numeric",
+                            timeZone: "America/Los_Angeles",
+                          })}
                   </td>
-                  <td className="py-4 px-4">
-                    {renderUpcomingFlights(plane.TailNumber, false)}
-                  </td>
+                  <td className="py-4 px-4">{renderUpcomingFlights(plane.TailNumber, false)}</td>
                 </tr>
               ))
             )}
@@ -400,22 +411,24 @@ export default function Page({
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-600 font-medium">Installed:</span>
-                  <span className={`text-gray-800 ${dateOverrides[plane.TailNumber] ? "font-medium" : ""}`}>
+                  <span
+                    className={`text-gray-800 ${dateOverrides[plane.TailNumber] ? "font-medium" : ""}`}
+                  >
                     {dateOverrides[plane.TailNumber]
                       ? "Mar 7, 2025"
                       : plane.DateFound
-                      ? new Date(plane.DateFound).toLocaleDateString("en-US", {
-                          year: "numeric",
-                          month: "short",
-                          day: "numeric",
-                          timeZone: "America/Los_Angeles",
-                        })
-                      : new Date().toLocaleDateString("en-US", {
-                          year: "numeric",
-                          month: "short",
-                          day: "numeric",
-                          timeZone: "America/Los_Angeles",
-                        })}
+                        ? new Date(plane.DateFound).toLocaleDateString("en-US", {
+                            year: "numeric",
+                            month: "short",
+                            day: "numeric",
+                            timeZone: "America/Los_Angeles",
+                          })
+                        : new Date().toLocaleDateString("en-US", {
+                            year: "numeric",
+                            month: "short",
+                            day: "numeric",
+                            timeZone: "America/Los_Angeles",
+                          })}
                   </span>
                 </div>
               </div>

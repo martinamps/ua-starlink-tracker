@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
+import type { Aircraft, FleetStats, Flight } from "../types";
 import { DB_PATH } from "../utils/constants";
-import type { Aircraft, Flight, FleetStats } from "../types";
 
 type MetaRow = { value: string };
 
@@ -15,15 +15,10 @@ export function initializeDatabase() {
 }
 
 function tableExists(db: Database, tableName: string) {
-  return db
-    .query(
-      `SELECT name FROM sqlite_master WHERE type='table' AND name='${tableName}'`
-    )
-    .get();
+  return db.query("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(tableName);
 }
 
 function setupTables(db: Database) {
-  // Create tables first
   if (!tableExists(db, "starlink_planes")) {
     db.query(
       `
@@ -37,7 +32,9 @@ function setupTables(db: Database) {
         TailNumber TEXT,
         OperatedBy TEXT,
         fleet TEXT,
-        last_flight_check INTEGER DEFAULT 0
+        last_flight_check INTEGER DEFAULT 0,
+        last_check_successful INTEGER DEFAULT 0,
+        consecutive_failures INTEGER DEFAULT 0
       );`
     ).run();
   }
@@ -70,28 +67,58 @@ function setupTables(db: Database) {
     ).run();
   }
 
-  // Handle migrations after all tables exist
   if (tableExists(db, "starlink_planes")) {
-    // Add last_flight_check column if it doesn't exist
     const columns = db.query("PRAGMA table_info(starlink_planes)").all();
-    const hasLastFlightCheck = columns.some((col: any) => col.name === 'last_flight_check');
+    const migrationsRun = [];
+
+    const hasLastFlightCheck = columns.some((col: any) => col.name === "last_flight_check");
     if (!hasLastFlightCheck) {
       db.query("ALTER TABLE starlink_planes ADD COLUMN last_flight_check INTEGER DEFAULT 0").run();
-      
-      // Migrate existing data: if planes already have flight data, set their last_flight_check to avoid immediate re-checking
+      migrationsRun.push("last_flight_check");
+
+      // Stagger initial check times for planes with existing flight data
       if (tableExists(db, "upcoming_flights")) {
         const now = Math.floor(Date.now() / 1000);
         const migrationQuery = `
-          UPDATE starlink_planes 
-          SET last_flight_check = ? 
+          UPDATE starlink_planes
+          SET last_flight_check = ?
           WHERE TailNumber IN (
             SELECT DISTINCT tail_number FROM upcoming_flights
           )
         `;
-        const randomHoursAgo = now - (Math.floor(Math.random() * 4 + 1) * 60 * 60); // 1-5 hours ago
+        const randomHoursAgo = now - Math.floor(Math.random() * 4 + 1) * 60 * 60;
         db.query(migrationQuery).run(randomHoursAgo);
-        console.log('Migrated existing flight data timestamps');
       }
+    }
+
+    const hasLastCheckSuccessful = columns.some((col: any) => col.name === "last_check_successful");
+    if (!hasLastCheckSuccessful) {
+      db.query(
+        "ALTER TABLE starlink_planes ADD COLUMN last_check_successful INTEGER DEFAULT 0"
+      ).run();
+      migrationsRun.push("last_check_successful");
+
+      if (tableExists(db, "upcoming_flights")) {
+        db.query(`
+          UPDATE starlink_planes
+          SET last_check_successful = 1
+          WHERE TailNumber IN (
+            SELECT DISTINCT tail_number FROM upcoming_flights
+          )
+        `).run();
+      }
+    }
+
+    const hasConsecutiveFailures = columns.some((col: any) => col.name === "consecutive_failures");
+    if (!hasConsecutiveFailures) {
+      db.query(
+        "ALTER TABLE starlink_planes ADD COLUMN consecutive_failures INTEGER DEFAULT 0"
+      ).run();
+      migrationsRun.push("consecutive_failures");
+    }
+
+    if (migrationsRun.length > 0) {
+      console.log(`Database migrations completed: ${migrationsRun.join(", ")}`);
     }
   }
 }
@@ -104,7 +131,10 @@ export function updateDatabase(
 ) {
   // Get existing dates before clearing the table
   const existingDates = new Map<string, string>();
-  const existingPlanes = db.query("SELECT TailNumber, DateFound FROM starlink_planes").all() as { TailNumber: string; DateFound: string }[];
+  const existingPlanes = db.query("SELECT TailNumber, DateFound FROM starlink_planes").all() as {
+    TailNumber: string;
+    DateFound: string;
+  }[];
   for (const plane of existingPlanes) {
     if (plane.TailNumber && plane.DateFound) {
       existingDates.set(plane.TailNumber, plane.DateFound);
@@ -113,12 +143,12 @@ export function updateDatabase(
 
   // Update meta data
   db.query("DELETE FROM starlink_planes").run();
-  db.query(
-    `INSERT OR REPLACE INTO meta (key, value) VALUES ('totalAircraftCount', ?)`
-  ).run(String(totalAircraftCount));
-  db.query(
-    `INSERT OR REPLACE INTO meta (key, value) VALUES ('lastUpdated', ?)`
-  ).run(new Date().toISOString());
+  db.query(`INSERT OR REPLACE INTO meta (key, value) VALUES ('totalAircraftCount', ?)`).run(
+    String(totalAircraftCount)
+  );
+  db.query(`INSERT OR REPLACE INTO meta (key, value) VALUES ('lastUpdated', ?)`).run(
+    new Date().toISOString()
+  );
 
   // Store fleet statistics
   for (const [fleetType, stats] of Object.entries(fleetStats)) {
@@ -137,10 +167,11 @@ export function updateDatabase(
 
   for (const aircraft of starlinkAircraft) {
     // Preserve existing DateFound or use new one, fallback to today only for truly new aircraft
-    const dateFound = aircraft.DateFound || 
-                     existingDates.get(aircraft.TailNumber || "") || 
-                     new Date().toISOString().split("T")[0];
-    
+    const dateFound =
+      aircraft.DateFound ||
+      existingDates.get(aircraft.TailNumber || "") ||
+      new Date().toISOString().split("T")[0];
+
     insertStmt.run(
       aircraft.Aircraft ?? "",
       aircraft.WiFi ?? "",
@@ -161,14 +192,8 @@ export function getTotalCount(db: Database): number {
   return row?.value ? Number.parseInt(row.value, 10) : 0;
 }
 
-export function getMetaValue(
-  db: Database,
-  key: string,
-  defaultValue: number
-): number {
-  const row = db
-    .query("SELECT value FROM meta WHERE key = ?")
-    .get(key) as MetaRow | null;
+export function getMetaValue(db: Database, key: string, defaultValue: number): number {
+  const row = db.query("SELECT value FROM meta WHERE key = ?").get(key) as MetaRow | null;
   return row?.value ? Number.parseFloat(row.value) : defaultValue;
 }
 
@@ -212,104 +237,130 @@ export function getFleetStats(db: Database): FleetStats {
   };
 }
 
-export function updateFlights(db: Database, tailNumber: string, flights: Pick<Flight, 'flight_number' | 'departure_airport' | 'arrival_airport' | 'departure_time' | 'arrival_time'>[]) {
-  // Clear old flights for this tail number
-  db.query("DELETE FROM upcoming_flights WHERE tail_number = ?").run(tailNumber);
-  
-  const insertStmt = db.prepare(`
-    INSERT INTO upcoming_flights (tail_number, flight_number, departure_airport, arrival_airport, departure_time, arrival_time, last_updated)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `);
-  
-  const now = Math.floor(Date.now() / 1000);
-  for (const flight of flights) {
-    insertStmt.run(
-      tailNumber,
-      flight.flight_number,
-      flight.departure_airport,
-      flight.arrival_airport,
-      flight.departure_time,
-      flight.arrival_time,
-      now
-    );
-  }
+export function updateFlights(
+  db: Database,
+  tailNumber: string,
+  flights: Pick<
+    Flight,
+    "flight_number" | "departure_airport" | "arrival_airport" | "departure_time" | "arrival_time"
+  >[]
+) {
+  const updateFlightsTransaction = db.transaction(() => {
+    db.query("DELETE FROM upcoming_flights WHERE tail_number = ?").run(tailNumber);
+
+    if (flights.length > 0) {
+      const insertStmt = db.prepare(`
+        INSERT INTO upcoming_flights (tail_number, flight_number, departure_airport, arrival_airport, departure_time, arrival_time, last_updated)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `);
+
+      const now = Math.floor(Date.now() / 1000);
+      for (const flight of flights) {
+        insertStmt.run(
+          tailNumber,
+          flight.flight_number,
+          flight.departure_airport,
+          flight.arrival_airport,
+          flight.departure_time,
+          flight.arrival_time,
+          now
+        );
+      }
+    }
+  });
+
+  updateFlightsTransaction();
 }
 
 export function getUpcomingFlights(db: Database, tailNumber?: string): Flight[] {
   const now = Math.floor(Date.now() / 1000);
-  const query = tailNumber 
+  const query = tailNumber
     ? "SELECT * FROM upcoming_flights WHERE tail_number = ? AND departure_time > ? ORDER BY departure_time ASC"
     : "SELECT * FROM upcoming_flights WHERE departure_time > ? ORDER BY departure_time ASC";
-  
+
   const params = tailNumber ? [tailNumber, now] : [now];
   return db.query(query).all(...params) as Flight[];
 }
 
-export function updateLastFlightCheck(db: Database, tailNumber: string) {
+export function updateLastFlightCheck(db: Database, tailNumber: string, success = true) {
   const now = Math.floor(Date.now() / 1000);
-  db.query("UPDATE starlink_planes SET last_flight_check = ? WHERE TailNumber = ?").run(now, tailNumber);
+  if (success) {
+    db.query(
+      "UPDATE starlink_planes SET last_flight_check = ?, last_check_successful = 1, consecutive_failures = 0 WHERE TailNumber = ?"
+    ).run(now, tailNumber);
+  } else {
+    db.query(
+      "UPDATE starlink_planes SET last_flight_check = ?, last_check_successful = 0, consecutive_failures = consecutive_failures + 1 WHERE TailNumber = ?"
+    ).run(now, tailNumber);
+  }
 }
 
-export function needsFlightCheck(db: Database, tailNumber: string, hoursThreshold: number = 4): boolean {
-  const row = db.query("SELECT last_flight_check FROM starlink_planes WHERE TailNumber = ?").get(tailNumber) as { last_flight_check: number } | null;
-  
-  if (!row) return false; // Tail number not found
-  
-  const lastCheck = row.last_flight_check || 0;
+export function needsFlightCheck(db: Database, tailNumber: string, hoursThreshold = 4): boolean {
   const now = Math.floor(Date.now() / 1000);
-  
-  // Get existing flights to make smarter decisions
-  const flightInfo = db.query(`
-    SELECT COUNT(*) as count,
-           MIN(departure_time) as next_departure,
-           MAX(departure_time) as latest_departure
-    FROM upcoming_flights
-    WHERE tail_number = ? AND departure_time > ?
-  `).get(tailNumber, now) as { count: number; next_departure: number | null; latest_departure: number | null } | null;
 
-  const hasFlights = flightInfo && flightInfo.count > 0;
-  const nextDeparture = flightInfo?.next_departure;
-  const latestDeparture = flightInfo?.latest_departure;
-  
-  // If lastCheck is 0 (never checked), add randomization to prevent all planes checking at once
+  // Single optimized query combining plane data with flight info
+  const data = db
+    .query(`
+    SELECT
+      sp.last_flight_check,
+      sp.last_check_successful,
+      sp.consecutive_failures,
+      COUNT(uf.id) as flight_count,
+      MIN(CASE WHEN uf.departure_time > ? THEN uf.departure_time ELSE NULL END) as next_departure,
+      MAX(CASE WHEN uf.departure_time > ? THEN uf.departure_time ELSE NULL END) as latest_departure
+    FROM starlink_planes sp
+    LEFT JOIN upcoming_flights uf ON sp.TailNumber = uf.tail_number
+    WHERE sp.TailNumber = ?
+    GROUP BY sp.TailNumber
+  `)
+    .get(now, now, tailNumber) as {
+    last_flight_check: number;
+    last_check_successful: number;
+    consecutive_failures: number;
+    flight_count: number;
+    next_departure: number | null;
+    latest_departure: number | null;
+  } | null;
+
+  if (!data) return false;
+
+  const lastCheck = data.last_flight_check || 0;
+  const lastCheckSuccessful = data.last_check_successful || 0;
+  const consecutiveFailures = data.consecutive_failures || 0;
+  const hasFlights = data.next_departure !== null;
+  const nextDeparture = data.next_departure;
+  const latestDeparture = data.latest_departure;
+
   if (lastCheck === 0) {
-    if (hasFlights) {
-      // Set a random last check time within the past 1-3 hours to stagger future checks
-      const randomHoursAgo = Math.floor(Math.random() * 2) + 1; // 1-3 hours ago
-      const randomLastCheck = now - (randomHoursAgo * 60 * 60);
-      db.query("UPDATE starlink_planes SET last_flight_check = ? WHERE TailNumber = ?").run(randomLastCheck, tailNumber);
-      return false;
-    }
-    // New aircraft with no flights should be checked immediately
     return true;
   }
-  
+
   const hoursSinceLastCheck = (now - lastCheck) / 3600;
-  
-  // Dynamic checking based on flight situation
+
+  if (!lastCheckSuccessful && consecutiveFailures > 0) {
+    // Exponential backoff: 0.5hr, 1hr, 2hr, 4hr, then cap at 4hr
+    const backoffHours = Math.min(4, 2 ** (consecutiveFailures - 1) * 0.5);
+    return hoursSinceLastCheck > backoffHours;
+  }
+
   if (!hasFlights) {
-    // No upcoming flights - check every 8-12 hours with jitter
-    const thresholdHours = 8 + Math.random() * 4; // 8-12 hours
+    const thresholdHours = 2 + Math.random() * 2;
     return hoursSinceLastCheck > thresholdHours;
   }
-  
-  // Have flights - more frequent checks
+
   const hoursToNextFlight = nextDeparture ? (nextDeparture - now) / 3600 : 999;
   const hoursToLatestFlight = latestDeparture ? (latestDeparture - now) / 3600 : 999;
-  
-  // If next flight is within 6 hours, check more frequently
+
   if (hoursToNextFlight <= 6) {
-    const thresholdHours = 1 + Math.random() * 0.5; // 1-1.5 hours with jitter
+    const thresholdHours = 1 + Math.random() * 0.5;
     return hoursSinceLastCheck > thresholdHours;
   }
-  
-  // If latest flight is within 24 hours, check every 2-4 hours
+
   if (hoursToLatestFlight <= 24) {
-    const thresholdHours = 2 + Math.random() * 2; // 2-4 hours with jitter
+    const thresholdHours = 2 + Math.random() * 2;
     return hoursSinceLastCheck > thresholdHours;
   }
-  
-  // If we have flights but they're far out, check every 4-8 hours
-  const thresholdHours = 4 + Math.random() * 4; // 4-8 hours with jitter
+
+  const thresholdHours = 4 + Math.random() * 4;
   return hoursSinceLastCheck > thresholdHours;
 }

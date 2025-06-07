@@ -1,35 +1,33 @@
-import 'dotenv/config';
+import "dotenv/config";
+import fs from "node:fs";
+import path from "node:path";
 import React from "react";
 import ReactDOMServer from "react-dom/server";
-import path from "node:path";
-import fs from "node:fs";
 
+import { startFlightUpdater } from "./src/api/flight-updater";
 import Page from "./src/components/page";
 import {
-  initializeDatabase,
-  updateDatabase,
-  getTotalCount,
+  getFleetStats,
   getLastUpdated,
   getStarlinkPlanes,
-  getFleetStats,
+  getTotalCount,
   getUpcomingFlights,
+  initializeDatabase,
+  updateDatabase,
 } from "./src/database/database";
+import type { ApiResponse, Flight } from "./src/types";
 import {
-  getDomainContent,
-  SECURITY_HEADERS,
   CONTENT_TYPES,
+  SECURITY_HEADERS,
+  getDomainContent,
   isUnitedDomain,
 } from "./src/utils/constants";
 import { getNotFoundHtml } from "./src/utils/not-found";
 import { fetchAllSheets } from "./src/utils/utils";
-import { startFlightUpdater } from "./src/api/flight-updater";
-import type { ApiResponse, Flight } from "./src/types";
 
-// Environment configuration  
+// Environment configuration
 const STATIC_DIR =
-  process.env.NODE_ENV === "production"
-    ? "/app/static"
-    : path.join(import.meta.dir, "static");
+  process.env.NODE_ENV === "production" ? "/app/static" : path.join(import.meta.dir, "static");
 const PORT = process.env.PORT ? Number.parseInt(process.env.PORT, 10) : 3000;
 
 // Bun-native HTML template handling
@@ -38,7 +36,10 @@ let htmlTemplateCache: string;
 
 async function getHtmlTemplate(): Promise<string> {
   if (process.env.NODE_ENV === "production") {
-    return htmlTemplateCache ||= await htmlTemplateFile.text();
+    if (!htmlTemplateCache) {
+      htmlTemplateCache = await htmlTemplateFile.text();
+    }
+    return htmlTemplateCache;
   }
   return await htmlTemplateFile.text();
 }
@@ -48,16 +49,13 @@ const db = initializeDatabase();
 
 // Log startup info
 console.log(
-  `Server starting on port ${PORT}. Environment: ${
-    process.env.NODE_ENV || "development"
-  }`
+  `Server starting on port ${PORT}. Environment: ${process.env.NODE_ENV || "development"}`
 );
 
 // Data update function
 async function updateStarlinkData() {
   try {
-    const { totalAircraftCount, starlinkAircraft, fleetStats } =
-      await fetchAllSheets();
+    const { totalAircraftCount, starlinkAircraft, fleetStats } = await fetchAllSheets();
 
     updateDatabase(db, totalAircraftCount, starlinkAircraft, fleetStats);
 
@@ -76,16 +74,16 @@ async function updateStarlinkData() {
 
 // Initialize data and schedule updates
 updateStarlinkData();
-setInterval(() => {
-  console.log("Running scheduled update...");
-  updateStarlinkData();
-}, 60 * 60 * 1000); // 1 hour
+setInterval(
+  () => {
+    console.log("Running scheduled update...");
+    updateStarlinkData();
+  },
+  60 * 60 * 1000
+); // 1 hour
 
 // HTML template rendering
-function renderHtml(
-  template: string,
-  variables: Record<string, string>
-): string {
+function renderHtml(template: string, variables: Record<string, string>): string {
   let result = template;
   for (const [key, value] of Object.entries(variables)) {
     const regex = new RegExp(`{{${key}}}`, "g");
@@ -143,15 +141,12 @@ const routes: Record<string, Response | ((req: Request) => Response)> = {};
 
 // Add static file routes
 for (const file of staticFiles) {
-  routes[file.path] = new Response(
-    await Bun.file(path.join(STATIC_DIR, file.filename)).bytes(),
-    {
-      headers: {
-        "Content-Type": file.contentType,
-        "Cache-Control": "public, max-age=86400",
-      },
-    }
-  );
+  routes[file.path] = new Response(await Bun.file(path.join(STATIC_DIR, file.filename)).bytes(), {
+    headers: {
+      "Content-Type": file.contentType,
+      "Cache-Control": "public, max-age=86400",
+    },
+  });
 }
 
 // API endpoint
@@ -171,19 +166,19 @@ routes["/api/data"] = (req) => {
 
   // Group flights by tail number for easy lookup
   const flightsByTail: Record<string, Flight[]> = {};
-  allFlights.forEach(flight => {
+  for (const flight of allFlights) {
     if (!flightsByTail[flight.tail_number]) {
       flightsByTail[flight.tail_number] = [];
     }
     flightsByTail[flight.tail_number].push(flight);
-  });
+  }
 
   const response: ApiResponse = {
     totalCount,
     starlinkPlanes,
     lastUpdated,
     fleetStats,
-    flightsByTail
+    flightsByTail,
   };
 
   return new Response(JSON.stringify(response), {
@@ -191,14 +186,12 @@ routes["/api/data"] = (req) => {
   });
 };
 
-
 // Debug endpoint
 routes["/debug/files"] = (req) => {
   const url = new URL(req.url);
   const token = url.searchParams.get("token");
   const isAuthorized =
-    process.env.NODE_ENV !== "production" ||
-    token === "starlink-tracker-debug-1a2b3c";
+    process.env.NODE_ENV !== "production" || token === "starlink-tracker-debug-1a2b3c";
 
   if (!isAuthorized) {
     return new Response("Unauthorized", { status: 401 });
@@ -246,12 +239,12 @@ Bun.serve({
 
       // Group flights by tail number for rendering
       const flightsByTail: Record<string, Flight[]> = {};
-      allFlights.forEach(flight => {
+      for (const flight of allFlights) {
         if (!flightsByTail[flight.tail_number]) {
           flightsByTail[flight.tail_number] = [];
         }
         flightsByTail[flight.tail_number].push(flight);
-      });
+      }
 
       const reactHtml = ReactDOMServer.renderToString(
         React.createElement(Page, {

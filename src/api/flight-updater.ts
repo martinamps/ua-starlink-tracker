@@ -1,129 +1,192 @@
-import 'dotenv/config';
-import { FlightAwareAPI } from './flightaware-api';
+import "dotenv/config";
 import {
-  initializeDatabase,
   getStarlinkPlanes,
-  updateFlights,
+  initializeDatabase,
   needsFlightCheck,
-  updateLastFlightCheck
-} from '../database/database';
-import type { Aircraft } from '../types';
+  updateFlights,
+  updateLastFlightCheck,
+} from "../database/database";
+import type { Aircraft } from "../types";
+import { FlightAwareAPI } from "./flightaware-api";
 
-async function updateFlightsForTailNumber(api: FlightAwareAPI, tailNumber: string) {
+async function updateFlightsForTailNumber(
+  api: FlightAwareAPI,
+  tailNumber: string
+): Promise<boolean> {
+  let success = false;
+  const db = initializeDatabase();
+
   try {
     console.log(`Fetching upcoming flights for ${tailNumber}`);
     const flights = await api.getUpcomingFlights(tailNumber);
-    
+
     if (flights.length === 0) {
       console.log(`No upcoming flights found for ${tailNumber}`);
     } else {
       console.log(`Found ${flights.length} upcoming flights for ${tailNumber}`);
     }
 
-    const db = initializeDatabase();
     updateFlights(db, tailNumber, flights);
-    updateLastFlightCheck(db, tailNumber);
-    db.close();
-    
-    console.log(`Updated ${flights.length} upcoming flights for ${tailNumber}`);
+    updateLastFlightCheck(db, tailNumber, true);
+
+    console.log(`Successfully updated ${flights.length} upcoming flights for ${tailNumber}`);
+    success = true;
   } catch (error) {
     console.error(`Failed to update flights for ${tailNumber}:`, error);
+
+    try {
+      updateLastFlightCheck(db, tailNumber, false);
+    } catch (updateError) {
+      console.error(`Failed to update last check status for ${tailNumber}:`, updateError);
+    }
+  } finally {
+    db.close();
   }
+
+  return success;
 }
 
-async function updateFlightsIfNeeded(api: FlightAwareAPI, tailNumber: string, hoursThreshold: number = 6) {
+async function updateFlightsIfNeeded(
+  api: FlightAwareAPI,
+  tailNumber: string,
+  hoursThreshold = 6
+): Promise<{ updated: boolean; success: boolean }> {
   const db = initializeDatabase();
   const needsUpdate = needsFlightCheck(db, tailNumber, hoursThreshold);
   db.close();
-  
+
   if (needsUpdate) {
-    await updateFlightsForTailNumber(api, tailNumber);
-    return true;
+    const success = await updateFlightsForTailNumber(api, tailNumber);
+    return { updated: true, success };
   }
-  
+
   console.log(`Skipping ${tailNumber} - checked recently`);
-  return false;
+  return { updated: false, success: true };
 }
 
-// Helper function to create delay with jitter
-function createJitteredDelay(baseMs: number, jitterMs: number = 500): number {
+function createJitteredDelay(baseMs: number, jitterMs = 500): number {
   return baseMs + Math.random() * jitterMs;
 }
 
-// Process planes in batches with concurrency control
-async function processPlanesInBatches(
-  api: FlightAwareAPI, 
-  planes: Aircraft[], 
-  batchSize: number = 3
-) {
+// Circuit breaker to prevent API hammering during outages
+let consecutiveApiFailures = 0;
+const MAX_CONSECUTIVE_FAILURES = 5;
+const CIRCUIT_BREAKER_RESET_TIME = 30 * 60 * 1000; // 30 minutes
+let circuitBreakerOpenedAt: number | null = null;
+
+async function processPlanesInBatches(api: FlightAwareAPI, planes: Aircraft[], batchSize = 3) {
   let updatedCount = 0;
   let apiCallCount = 0;
-  
-  // Filter planes that need updates first
+
+  if (circuitBreakerOpenedAt) {
+    const timeSinceOpened = Date.now() - circuitBreakerOpenedAt;
+    if (timeSinceOpened < CIRCUIT_BREAKER_RESET_TIME) {
+      console.log(
+        `Circuit breaker is open. Will retry in ${Math.round((CIRCUIT_BREAKER_RESET_TIME - timeSinceOpened) / 1000)}s`
+      );
+      return { updatedCount: 0, apiCallCount: 0 };
+    }
+    console.log("Circuit breaker reset, retrying API calls...");
+    circuitBreakerOpenedAt = null;
+    consecutiveApiFailures = 0;
+  }
+
   const planesToUpdate: Aircraft[] = [];
   const db = initializeDatabase();
-  
-  for (const plane of planes) {
-    if (!plane.TailNumber) continue;
-    if (needsFlightCheck(db, plane.TailNumber)) {
-      planesToUpdate.push(plane);
+
+  try {
+    for (const plane of planes) {
+      if (!plane.TailNumber) continue;
+      if (needsFlightCheck(db, plane.TailNumber)) {
+        planesToUpdate.push(plane);
+      }
     }
+  } finally {
+    db.close();
   }
-  
-  db.close();
-  
-  console.log(`${planesToUpdate.length} aircraft need flight updates out of ${planes.length} total`);
-  
+
+  console.log(
+    `${planesToUpdate.length} aircraft need flight updates out of ${planes.length} total`
+  );
+
   if (planesToUpdate.length === 0) {
-    console.log('No aircraft need flight updates at this time');
+    console.log("No aircraft need flight updates at this time");
     return { updatedCount: 0, apiCallCount: 0 };
   }
-  
-  // Process in batches
+
   for (let i = 0; i < planesToUpdate.length; i += batchSize) {
     const batch = planesToUpdate.slice(i, i + batchSize);
-    
-    // Process batch concurrently but with rate limiting
+
     const batchPromises = batch.map(async (plane, index) => {
       try {
-        // Stagger requests within batch with jitter
-        const staggerDelay = createJitteredDelay(index * 2000, 1000); // 2s base + 0-1s jitter
-        await new Promise(resolve => setTimeout(resolve, staggerDelay));
-        
-        const wasUpdated = await updateFlightsIfNeeded(api, plane.TailNumber);
-        if (wasUpdated) {
-          return { updated: true, apiCall: true, tailNumber: plane.TailNumber };
+        // Stagger requests: 1-2s, 3-4s, 5-6s per batch item
+        const staggerDelay = createJitteredDelay(1000 + index * 2000, 1000);
+        await new Promise((resolve) => setTimeout(resolve, staggerDelay));
+
+        const result = await updateFlightsIfNeeded(api, plane.TailNumber);
+
+        if (result.updated) {
+          if (result.success) {
+            consecutiveApiFailures = 0;
+          } else {
+            consecutiveApiFailures++;
+            if (consecutiveApiFailures >= MAX_CONSECUTIVE_FAILURES) {
+              circuitBreakerOpenedAt = Date.now();
+              console.error(
+                `Circuit breaker opened after ${MAX_CONSECUTIVE_FAILURES} consecutive API failures`
+              );
+            }
+          }
         }
-        return { updated: false, apiCall: false, tailNumber: plane.TailNumber };
+
+        return {
+          updated: result.updated,
+          apiCall: result.updated,
+          success: result.success,
+          tailNumber: plane.TailNumber,
+        };
       } catch (error) {
         console.error(`Error processing ${plane.TailNumber}:`, error);
-        return { updated: false, apiCall: false, tailNumber: plane.TailNumber, error };
+        consecutiveApiFailures++;
+        if (consecutiveApiFailures >= MAX_CONSECUTIVE_FAILURES) {
+          circuitBreakerOpenedAt = Date.now();
+          console.error(
+            `Circuit breaker opened after ${MAX_CONSECUTIVE_FAILURES} consecutive API failures`
+          );
+        }
+        return {
+          updated: false,
+          apiCall: false,
+          success: false,
+          tailNumber: plane.TailNumber,
+          error,
+        };
       }
     });
-    
+
     const batchResults = await Promise.all(batchPromises);
-    
-    // Count results
+
     for (const result of batchResults) {
       if (result.updated) updatedCount++;
       if (result.apiCall) apiCallCount++;
     }
-    
-    // Add delay between batches with jitter
+
     if (i + batchSize < planesToUpdate.length) {
-      const batchDelay = createJitteredDelay(5000, 2000); // 5s base + 0-2s jitter
-      console.log(`Batch completed, waiting ${Math.round(batchDelay/1000)}s before next batch...`);
-      await new Promise(resolve => setTimeout(resolve, batchDelay));
+      const batchDelay = createJitteredDelay(5000, 2000);
+      console.log(
+        `Batch completed, waiting ${Math.round(batchDelay / 1000)}s before next batch...`
+      );
+      await new Promise((resolve) => setTimeout(resolve, batchDelay));
     }
   }
-  
+
   return { updatedCount, apiCallCount };
 }
 
 export async function updateAllFlights() {
   const apiKey = process.env.AEROAPI_KEY;
   if (!apiKey) {
-    console.error('AEROAPI_KEY environment variable not set');
+    console.error("AEROAPI_KEY environment variable not set");
     return;
   }
 
@@ -132,18 +195,27 @@ export async function updateAllFlights() {
   db.close();
 
   const api = new FlightAwareAPI(apiKey);
-  
+
   console.log(`Checking flight updates for ${planes.length} Starlink aircraft...`);
-  
+
   const { updatedCount, apiCallCount } = await processPlanesInBatches(api, planes, 3);
-  
-  console.log(`Flight updates completed: ${updatedCount} aircraft updated, ${apiCallCount} API calls made`);
+
+  console.log(
+    `Flight updates completed: ${updatedCount} aircraft updated, ${apiCallCount} API calls made`
+  );
 }
 
-// Auto-update flights every 2 hours (smart logic handles individual aircraft timing)
 export function startFlightUpdater() {
-  updateAllFlights(); // Initial update
-  setInterval(updateAllFlights, 2 * 60 * 60 * 1000); // 2 hours
+  const safeUpdateAllFlights = async () => {
+    try {
+      await updateAllFlights();
+    } catch (error) {
+      console.error("Unhandled error in flight updater:", error);
+    }
+  };
+
+  safeUpdateAllFlights();
+  setInterval(safeUpdateAllFlights, 30 * 60 * 1000);
 }
 
 // Export individual functions for manual use

@@ -20,8 +20,7 @@ export const PAGE_CONTENT = {
     generic: "Tracking major airlines' rollout of Starlink WiFi",
   },
   mainDescription: {
-    pressReleaseUrl:
-      "https://www.united.com/en/us/newsroom/announcements/cision-125370",
+    pressReleaseUrl: "https://www.united.com/en/us/newsroom/announcements/cision-125370",
     united:
       "United Airlines began equipping its fleet with SpaceX's Starlink internet on March 7, 2025. The ultra-fast WiFi offers speeds up to 250 Mbps—50 times faster than previous systems. The airline plans to install Starlink on over 40 regional aircraft monthly, completing its entire two-cabin regional fleet by the end of 2025. Each installation takes only 8 hours, making it 10 times faster than previous systems, and the lightweight 85-pound equipment improves fuel efficiency compared to older 300-pound systems.",
   },
@@ -57,13 +56,9 @@ export function getDomainContent(host: string) {
       ? "United Airlines, Starlink, WiFi, Internet, SpaceX, Aircraft, Fleet, United Express, In-flight WiFi"
       : "Airlines, Starlink, WiFi, Internet, SpaceX, Aircraft, United, Delta, In-flight WiFi, Satellite Internet",
 
-    analyticsUrl: unitedDomain
-      ? "unitedstarlinktracker.com"
-      : "airlinestarlinktracker.com",
+    analyticsUrl: unitedDomain ? "unitedstarlinktracker.com" : "airlinestarlinktracker.com",
 
-    siteName: unitedDomain
-      ? PAGE_CONTENT.pageTitle.united
-      : PAGE_CONTENT.pageTitle.generic,
+    siteName: unitedDomain ? PAGE_CONTENT.pageTitle.united : PAGE_CONTENT.pageTitle.generic,
   };
 }
 

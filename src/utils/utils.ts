@@ -1,4 +1,4 @@
-import { writeFileSync, existsSync } from "fs";
+import { existsSync, writeFileSync } from "node:fs";
 
 /**
  * CSV Fetch & Parse Logic
@@ -10,9 +10,7 @@ const expressGids = [13, 1106195214, 11, 1735263052, 6, 9, 5, 969079667];
 
 // Mainline fleet spreadsheet
 const mainlineSpreadsheetId = "1ZlYgN_IZmd6CSx_nXnuP0L0PiodapDRx3RmNkIpxXAo";
-const mainlineGids = [
-  0, 1, 948315825, 3, 4, 6, 5, 70572532, 7, 8, 10, 12, 15, 13, 2098141434,
-];
+const mainlineGids = [0, 1, 948315825, 3, 4, 6, 5, 70572532, 7, 8, 10, 12, 15, 13, 2098141434];
 
 // Function to create CSV export URLs for each sheet
 function createCsvExportUrls() {
@@ -85,8 +83,7 @@ function parseCSV(csvText: string) {
     const rowObj: Record<string, string> = {};
     headers.forEach((header, index) => {
       const cleanHeader = header.replace(/"/g, "").trim();
-      rowObj[cleanHeader] =
-        index < row.length ? row[index].replace(/"/g, "").trim() : "";
+      rowObj[cleanHeader] = index < row.length ? row[index].replace(/"/g, "").trim() : "";
     });
 
     rows.push(rowObj);
@@ -133,12 +130,12 @@ export async function fetchAllSheets() {
 
       // Identify "sheetType" from first row's "Aircraft" col if present
       let sheetType = "";
-      if (rows.length > 0 && rows[0]["Aircraft"]) {
-        sheetType = rows[0]["Aircraft"].split("-")[0] || "Unknown";
+      if (rows.length > 0 && rows[0].Aircraft) {
+        sheetType = rows[0].Aircraft.split("-")[0] || "Unknown";
       }
 
       // Filter for Starlink WiFi
-      const filtered = rows.filter((row) => row["WiFi"]?.trim() === "StrLnk");
+      const filtered = rows.filter((row) => row.WiFi?.trim() === "StrLnk");
 
       // Count Starlink aircraft by fleet type
       if (sheet.fleet === "express") {
@@ -147,27 +144,27 @@ export async function fetchAllSheets() {
         mainlineStarlink += filtered.length;
       }
 
-      filtered.forEach((aircraft) => {
-        aircraft["sheet_gid"] = String(sheet.gid);
-        aircraft["sheet_type"] = sheetType;
-        aircraft["fleet"] = sheet.fleet;
+      for (const aircraft of filtered) {
+        aircraft.sheet_gid = String(sheet.gid);
+        aircraft.sheet_type = sheetType;
+        aircraft.fleet = sheet.fleet;
 
         // Use the "Reg #" column for tail number if available
         if (aircraft["Reg #"]) {
-          aircraft["TailNumber"] = aircraft["Reg #"].trim();
+          aircraft.TailNumber = aircraft["Reg #"].trim();
         } else {
           // Fall back to extracting from Aircraft field if Reg # not available
-          const aircraftStr = aircraft["Aircraft"] || "";
+          const aircraftStr = aircraft.Aircraft || "";
 
           // Improved tail number extraction - looking for N-number pattern
           let tailNumber = "";
           const nNumberMatch = aircraftStr.match(/\b(N\d+[A-Z]*)\b/);
-          if (nNumberMatch && nNumberMatch[1]) {
+          if (nNumberMatch?.[1]) {
             tailNumber = nNumberMatch[1];
           } else {
             // If no N-number found, try fleet number or registration
             const regMatch = aircraftStr.match(/\b([A-Z]-[A-Z0-9]+)\b/);
-            if (regMatch && regMatch[1]) {
+            if (regMatch?.[1]) {
               tailNumber = regMatch[1];
             } else {
               // Last resort - use first part before space if nothing else found
@@ -175,16 +172,16 @@ export async function fetchAllSheets() {
             }
           }
 
-          aircraft["TailNumber"] = tailNumber;
+          aircraft.TailNumber = tailNumber;
         }
 
         // Get the "Operated By" field if it exists, otherwise use "United Airlines"
-        aircraft["OperatedBy"] = aircraft["Operated By"] || "United Airlines";
+        aircraft.OperatedBy = aircraft["Operated By"] || "United Airlines";
 
         // Don't overwrite DateFound - let database preserve existing dates
 
         starlinkAircraft.push(aircraft);
-      });
+      }
     } catch (error) {
       console.error(`Failed to fetch sheet with gid=${sheet.gid}: `, error);
     }
@@ -201,22 +198,17 @@ export async function fetchAllSheets() {
       express: {
         total: expressTotal,
         starlink: expressStarlink,
-        percentage:
-          expressTotal > 0 ? (expressStarlink / expressTotal) * 100 : 0,
+        percentage: expressTotal > 0 ? (expressStarlink / expressTotal) * 100 : 0,
       },
       mainline: {
         total: mainlineTotal,
         starlink: mainlineStarlink,
-        percentage:
-          mainlineTotal > 0 ? (mainlineStarlink / mainlineTotal) * 100 : 0,
+        percentage: mainlineTotal > 0 ? (mainlineStarlink / mainlineTotal) * 100 : 0,
       },
       combined: {
         total: totalAircraftCount,
         starlink: totalStarlinkCount,
-        percentage:
-          totalAircraftCount > 0
-            ? (totalStarlinkCount / totalAircraftCount) * 100
-            : 0,
+        percentage: totalAircraftCount > 0 ? (totalStarlinkCount / totalAircraftCount) * 100 : 0,
       },
     },
   };

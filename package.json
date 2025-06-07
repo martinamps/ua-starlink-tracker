@@ -4,7 +4,11 @@
     "dev": "bun --watch server.ts",
     "start": "bun server.ts",
     "scrape": "bun run scrape.ts",
-    "update-flights": "bun -e \"import('./src/api/flight-updater.ts').then(m => m.updateAllFlights())\""
+    "update-flights": "bun -e \"import('./src/api/flight-updater.ts').then(m => m.updateAllFlights())\"",
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "lint:fix": "biome check --write .",
+    "prepare": "husky"
   },
   "dependencies": {
     "react": "^18.2.0",
@@ -12,8 +16,14 @@
     "dotenv": "^16.4.5"
   },
   "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
     "@types/bun": "^1.2.5",
     "@types/react": "^19.1.5",
-    "@types/react-dom": "^19.1.5"
+    "@types/react-dom": "^19.1.5",
+    "husky": "^9.1.7",
+    "lint-staged": "^15.2.9"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,js,jsx,json}": ["biome check --write"]
   }
 }
