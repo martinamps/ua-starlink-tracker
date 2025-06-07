@@ -60,7 +60,9 @@ bun run scrape
 2. **Aircraft Identification**: Identifies aircraft with Starlink WiFi (marked as "StrLnk" in WiFi column)
 3. **Flight Data**: FlightAware API provides real-time upcoming flight information for each aircraft
 4. **Database Storage**: Data stored in SQLite with installation date preservation and flight caching
-5. **API Endpoints**: Server provides `/api/data` endpoint with grouped flight data by tail number
+5. **API Endpoints**: 
+   - `/api/data` - Returns all Starlink aircraft data with grouped flight information
+   - `/api/check-flight` - Checks if a specific flight number has Starlink on a given date
 6. **Frontend Rendering**: Server-side React rendering with minimal client-side JavaScript
 
 ### Key Features
@@ -119,3 +121,56 @@ The Docker container runs in production mode and expects a mounted volume for th
 - `FLIGHTAWARE_API_KEY` - Required for flight data integration
 - `NODE_ENV` - Set to "production" for production deployment
 - `PORT` - Server port (default: 3000)
+
+### API Documentation
+
+#### `/api/check-flight`
+
+Checks if a specific flight has Starlink capability on a given date. Perfect for browser extensions that want to highlight Starlink-capable flights on Google Flights or similar services.
+
+**Method:** GET
+
+**Parameters:**
+- `flight_number` (required): The flight number (e.g., "UA123")
+- `date` (required): The date in YYYY-MM-DD format
+
+**Example Request:**
+```
+GET /api/check-flight?flight_number=UA123&date=2025-06-07
+```
+
+**Success Response (200 OK):**
+```json
+{
+  "hasStarlink": true,
+  "flights": [
+    {
+      "tail_number": "N127SY",
+      "aircraft_type": "737-900",
+      "flight_number": "UA123",
+      "departure_airport": "ORD",
+      "arrival_airport": "LAX",
+      "departure_time": 1749225600,
+      "arrival_time": 1749240000,
+      "departure_time_formatted": "2025-06-07T12:00:00.000Z",
+      "arrival_time_formatted": "2025-06-07T16:00:00.000Z",
+      "starlink_installed_date": "2025-03-07",
+      "operated_by": "United Airlines",
+      "fleet_type": "mainline"
+    }
+  ]
+}
+```
+
+**No Starlink Response (200 OK):**
+```json
+{
+  "hasStarlink": false,
+  "message": "No Starlink-equipped aircraft found for this flight on the specified date",
+  "flights": []
+}
+```
+
+**Error Responses:**
+- 400 Bad Request: Missing parameters or invalid date format
+- 405 Method Not Allowed: Non-GET request

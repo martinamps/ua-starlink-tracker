@@ -186,6 +186,103 @@ routes["/api/data"] = (req) => {
   });
 };
 
+routes["/api/check-flight"] = (req) => {
+  if (req.method !== "GET") {
+    return new Response(JSON.stringify({ error: "Method not allowed" }), {
+      status: 405,
+      headers: SECURITY_HEADERS.api,
+    });
+  }
+
+  const url = new URL(req.url);
+  const flightNumber = url.searchParams.get("flight_number");
+  const date = url.searchParams.get("date");
+
+  if (!flightNumber || !date) {
+    return new Response(
+      JSON.stringify({ error: "Missing required parameters: flight_number and date" }),
+      {
+        status: 400,
+        headers: SECURITY_HEADERS.api,
+      }
+    );
+  }
+
+  const dateObj = new Date(`${date}T00:00:00Z`);
+  if (Number.isNaN(dateObj.getTime())) {
+    return new Response(JSON.stringify({ error: "Invalid date format. Use YYYY-MM-DD" }), {
+      status: 400,
+      headers: SECURITY_HEADERS.api,
+    });
+  }
+
+  const startOfDay = Math.floor(dateObj.getTime() / 1000);
+  const endOfDay = startOfDay + 86400;
+
+  const matchingFlights = db
+    .query(
+      `
+      SELECT
+        uf.*,
+        sp.Aircraft,
+        sp.WiFi,
+        sp.DateFound,
+        sp.OperatedBy,
+        sp.fleet
+      FROM upcoming_flights uf
+      INNER JOIN starlink_planes sp ON uf.tail_number = sp.TailNumber
+      WHERE uf.flight_number = ?
+        AND uf.departure_time >= ?
+        AND uf.departure_time < ?
+      ORDER BY uf.departure_time ASC
+    `
+    )
+    .all(flightNumber, startOfDay, endOfDay) as Array<
+    Flight & {
+      Aircraft: string;
+      WiFi: string;
+      DateFound: string;
+      OperatedBy: string;
+      fleet: string;
+    }
+  >;
+
+  if (matchingFlights.length === 0) {
+    return new Response(
+      JSON.stringify({
+        hasStarlink: false,
+        message: "No Starlink-equipped aircraft found for this flight on the specified date",
+        flights: [],
+      }),
+      {
+        headers: SECURITY_HEADERS.api,
+      }
+    );
+  }
+
+  const response = {
+    hasStarlink: true,
+    flights: matchingFlights.map((flight) => ({
+      tail_number: flight.tail_number,
+      aircraft_type: flight.Aircraft,
+      flight_number: flight.flight_number,
+      departure_airport: flight.departure_airport,
+      arrival_airport: flight.arrival_airport,
+      departure_time: flight.departure_time,
+      arrival_time: flight.arrival_time,
+      departure_time_formatted: new Date(flight.departure_time * 1000).toISOString(),
+      arrival_time_formatted: new Date(flight.arrival_time * 1000).toISOString(),
+      starlink_installed_date: flight.DateFound,
+      operated_by: flight.OperatedBy,
+      fleet_type: flight.fleet,
+    })),
+  };
+
+  return new Response(JSON.stringify(response), {
+    headers: SECURITY_HEADERS.api,
+  });
+};
+
 // Debug endpoint
 routes["/debug/files"] = (req) => {
   const url = new URL(req.url);
