@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "United Airlines Starlink Tracker",
+  "version": "1.2.0",
+  "description": "Highlights United Airlines flights with Starlink WiFi on Google Flights",
+  "permissions": ["storage"],
+  "host_permissions": ["https://unitedstarlinktracker.com/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.google.com/flights/*", "https://www.google.com/travel/flights/*"],
+      "js": ["content.js"],
+      "css": ["styles.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
+}
