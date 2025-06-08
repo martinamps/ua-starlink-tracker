@@ -37,11 +37,11 @@ export function getDomainContent(host: string) {
 
   return {
     siteTitle: unitedDomain
-      ? "United Airlines Starlink Tracker | Live WiFi Rollout Statistics"
+      ? "Which United Planes Have Starlink? | Live United Starlink Status Tracker"
       : "Airline Starlink Tracker | United, Delta & All Airlines WiFi Rollout",
 
     siteDescription: unitedDomain
-      ? "Track United Airlines and United Express Starlink WiFi installation progress. Live statistics showing percentage of the fleet equipped with SpaceX's Starlink internet."
+      ? "Find out which United Airlines planes have Starlink WiFi. Live tracker showing United's Starlink status by aircraft, installation dates, and upcoming flights with high-speed internet."
       : "Track the rollout of SpaceX's Starlink WiFi on major airlines. See live statistics on United Airlines, Delta and more as they equip their fleets with high-speed satellite internet.",
 
     ogTitle: unitedDomain
@@ -53,7 +53,7 @@ export function getDomainContent(host: string) {
       : "Live statistics tracking SpaceX's Starlink WiFi rollout across major airlines like United and Delta.",
 
     keywords: unitedDomain
-      ? "United Airlines, Starlink, WiFi, Internet, SpaceX, Aircraft, Fleet, United Express, In-flight WiFi"
+      ? "which united planes have starlink, united starlink status, United Airlines Starlink WiFi, united starlink tracker, united starlink rollout, E175 starlink, CRJ-550 starlink, united mainline starlink, united express starlink, check united flight starlink"
       : "Airlines, Starlink, WiFi, Internet, SpaceX, Aircraft, United, Delta, In-flight WiFi, Satellite Internet",
 
     analyticsUrl: unitedDomain ? "unitedstarlinktracker.com" : "airlinestarlinktracker.com",

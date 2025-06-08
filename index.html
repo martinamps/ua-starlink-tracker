@@ -13,6 +13,7 @@
     <meta property="og:url" content="https://{{host}}/" />
     <meta name="twitter:title" content="{{ogTitle}}" />
     <meta name="twitter:description" content="{{ogDescription}}" />
+    <link rel="canonical" href="https://{{host}}/" />
     <!-- Favicon -->
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
@@ -48,6 +49,7 @@
         padding: 0;
         background-color: #f9f9f9;
         width: 100%;
+        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", system-ui, sans-serif;
       }
       @media (prefers-color-scheme: dark) {
         body {
@@ -88,16 +90,259 @@
   <body>
     <div id="root">{{html}}</div>
     
-    <!-- Minimal client-side functionality -->
+    <!-- Client-side functionality -->
     <script>
       document.addEventListener('DOMContentLoaded', function() {
+        // Store original table rows and cards for filtering
+        const desktopTable = document.querySelector('.hidden.md\\:block tbody');
+        const mobileCards = document.querySelector('.md\\:hidden .space-y-4');
+        let allDesktopRows = [];
+        let allMobileCards = [];
+        
+        if (desktopTable) {
+          allDesktopRows = Array.from(desktopTable.querySelectorAll('tr'));
+        }
+        if (mobileCards) {
+          allMobileCards = Array.from(mobileCards.children);
+        }
+        
+        // Search functionality
+        const searchInput = document.querySelector('input[type="text"][placeholder*="Search"]');
+        if (searchInput) {
+          searchInput.addEventListener('input', function(e) {
+            const searchTerm = e.target.value.toLowerCase();
+            filterAircraft();
+          });
+        }
+        
+        // Filter buttons functionality
+        const filterButtons = document.querySelectorAll('button[class*="rounded-lg"]');
+        filterButtons.forEach(button => {
+          if (button.textContent.includes('All (') || 
+              button.textContent.includes('Mainline (') || 
+              button.textContent.includes('Express (')) {
+            button.addEventListener('click', function() {
+              // Update active state
+              filterButtons.forEach(b => {
+                if (b.textContent.includes('All (') || 
+                    b.textContent.includes('Mainline (') || 
+                    b.textContent.includes('Express (')) {
+                  b.className = b.className.replace('bg-united-blue text-white', 'bg-gray-100 text-gray-700 hover:bg-gray-200');
+                }
+              });
+              this.className = this.className.replace('bg-gray-100 text-gray-700 hover:bg-gray-200', 'bg-united-blue text-white');
+              
+              filterAircraft();
+            });
+          }
+        });
+        
+        // Filter aircraft based on search and filter
+        function filterAircraft() {
+          const searchTerm = searchInput ? searchInput.value.toLowerCase() : '';
+          const activeFilter = document.querySelector('button[class*="bg-united-blue"]');
+          let filterType = 'all';
+          
+          if (activeFilter) {
+            if (activeFilter.textContent.includes('Mainline')) filterType = 'mainline';
+            else if (activeFilter.textContent.includes('Express')) filterType = 'express';
+          }
+          
+          // Filter desktop rows
+          if (desktopTable) {
+            allDesktopRows.forEach(row => {
+              const text = row.textContent.toLowerCase();
+              const isMainline = row.innerHTML.includes('Mainline</span>');
+              const isExpress = row.innerHTML.includes('Express</span>');
+              
+              // Also search in hidden flight data
+              let matchesSearch = searchTerm === '' || text.includes(searchTerm);
+              if (!matchesSearch && searchTerm !== '') {
+                const moreFlightsBtn = row.querySelector('[data-flights]');
+                if (moreFlightsBtn) {
+                  try {
+                    const hiddenFlights = JSON.parse(moreFlightsBtn.getAttribute('data-flights'));
+                    for (const flight of hiddenFlights) {
+                      const flightText = `${flight.flight_number} ${convertFlightNumber(flight.flight_number)} ${flight.departure_airport} ${flight.arrival_airport} ${cleanAirportCode(flight.departure_airport)} ${cleanAirportCode(flight.arrival_airport)}`.toLowerCase();
+                      if (flightText.includes(searchTerm)) {
+                        matchesSearch = true;
+                        break;
+                      }
+                    }
+                  } catch (e) {}
+                }
+              }
+              
+              const matchesFilter = filterType === 'all' || 
+                                  (filterType === 'mainline' && isMainline) ||
+                                  (filterType === 'express' && isExpress);
+              
+              row.style.display = matchesSearch && matchesFilter ? '' : 'none';
+            });
+          }
+          
+          // Filter mobile cards
+          if (mobileCards) {
+            allMobileCards.forEach(card => {
+              const text = card.textContent.toLowerCase();
+              const isMainline = card.innerHTML.includes('Mainline</span>');
+              const isExpress = card.innerHTML.includes('Express</span>');
+              
+              // Also search in hidden flight data
+              let matchesSearch = searchTerm === '' || text.includes(searchTerm);
+              if (!matchesSearch && searchTerm !== '') {
+                const moreFlightsBtn = card.querySelector('[data-flights]');
+                if (moreFlightsBtn) {
+                  try {
+                    const hiddenFlights = JSON.parse(moreFlightsBtn.getAttribute('data-flights'));
+                    for (const flight of hiddenFlights) {
+                      const flightText = `${flight.flight_number} ${convertFlightNumber(flight.flight_number)} ${flight.departure_airport} ${flight.arrival_airport} ${cleanAirportCode(flight.departure_airport)} ${cleanAirportCode(flight.arrival_airport)}`.toLowerCase();
+                      if (flightText.includes(searchTerm)) {
+                        matchesSearch = true;
+                        break;
+                      }
+                    }
+                  } catch (e) {}
+                }
+              }
+              
+              const matchesFilter = filterType === 'all' || 
+                                  (filterType === 'mainline' && isMainline) ||
+                                  (filterType === 'express' && isExpress);
+              
+              card.style.display = matchesSearch && matchesFilter ? '' : 'none';
+            });
+          }
+          
+          // Update results count
+          const searchInfo = document.querySelector('.mt-2.text-sm.text-gray-600');
+          if (searchInfo && searchTerm) {
+            const visibleCount = desktopTable ? 
+              allDesktopRows.filter(r => r.style.display !== 'none').length :
+              allMobileCards.filter(c => c.style.display !== 'none').length;
+            searchInfo.textContent = `Found ${visibleCount} aircraft matching "${searchTerm}"`;
+            searchInfo.style.display = 'block';
+          } else if (searchInfo) {
+            searchInfo.style.display = 'none';
+          }
+        }
+        
+        // Expandable flights functionality
+        document.addEventListener('click', function(e) {
+          if (e.target.textContent && e.target.textContent.includes('more flights')) {
+            e.preventDefault();
+            const button = e.target;
+            const tailNumber = button.getAttribute('data-tail');
+            const additionalFlights = button.getAttribute('data-flights');
+            
+            if (tailNumber && additionalFlights) {
+              try {
+                const flights = JSON.parse(additionalFlights);
+                const flightContainer = button.parentElement;
+                
+                // Hide the button
+                button.style.display = 'none';
+                
+                // Create and insert the additional flight elements
+                flights.forEach((flight, idx) => {
+                  const flightDiv = document.createElement('div');
+                  flightDiv.className = 'text-sm pl-3';
+                  
+                  const flightInfo = document.createElement('div');
+                  flightInfo.className = 'flex items-center justify-between';
+                  
+                  const flightLink = document.createElement('a');
+                  flightLink.href = `https://www.flightaware.com/live/flight/${flight.flight_number}`;
+                  flightLink.target = '_blank';
+                  flightLink.rel = 'noopener noreferrer';
+                  flightLink.className = 'font-medium text-united-blue hover:underline';
+                  flightLink.textContent = convertFlightNumber(flight.flight_number);
+                  
+                  const timeSpan = document.createElement('span');
+                  timeSpan.className = 'text-gray-500 text-xs';
+                  timeSpan.textContent = formatFlightTime(flight.departure_time);
+                  
+                  flightInfo.appendChild(flightLink);
+                  flightInfo.appendChild(timeSpan);
+                  
+                  const routeDiv = document.createElement('div');
+                  routeDiv.className = 'text-gray-600 text-xs';
+                  routeDiv.textContent = `${cleanAirportCode(flight.departure_airport)} → ${cleanAirportCode(flight.arrival_airport)}`;
+                  
+                  flightDiv.appendChild(flightInfo);
+                  flightDiv.appendChild(routeDiv);
+                  
+                  // Insert before the button
+                  flightContainer.insertBefore(flightDiv, button);
+                });
+                
+                // Add "Show less" button
+                const showLessBtn = document.createElement('button');
+                showLessBtn.className = 'text-gray-500 hover:text-gray-700 text-xs pl-3 hover:underline cursor-pointer';
+                showLessBtn.textContent = 'Show less';
+                showLessBtn.onclick = function() {
+                  // Remove the additional flights
+                  const addedFlights = flightContainer.querySelectorAll('.text-sm.pl-3');
+                  const startIdx = addedFlights.length - flights.length - 1; // -1 for show less button
+                  for (let i = startIdx; i < addedFlights.length - 1; i++) {
+                    addedFlights[i].remove();
+                  }
+                  showLessBtn.remove();
+                  button.style.display = '';
+                };
+                flightContainer.appendChild(showLessBtn);
+                
+              } catch (error) {
+                console.error('Error expanding flights:', error);
+              }
+            }
+          }
+        });
+        
+        // Helper functions
+        function convertFlightNumber(flightNumber) {
+          const regionalCarrierPrefixes = ["SKW", "RPA", "GJS", "ASQ", "ENY", "AWI", "UCA"];
+          for (const prefix of regionalCarrierPrefixes) {
+            if (flightNumber.startsWith(prefix)) {
+              const numericPart = flightNumber.substring(prefix.length);
+              if (/^\d+$/.test(numericPart)) {
+                return `UA${numericPart}`;
+              }
+            }
+          }
+          return flightNumber;
+        }
+        
+        function cleanAirportCode(code) {
+          if (code && code.length === 4) {
+            if (code.startsWith("K") || code.startsWith("C") || code.startsWith("M")) {
+              return code.substring(1);
+            }
+          }
+          return code;
+        }
+        
+        function formatFlightTime(timestamp) {
+          const date = new Date(timestamp * 1000);
+          const timeStr = date.toLocaleTimeString("en-US", {
+            hour: "numeric",
+            minute: "2-digit",
+            hour12: true,
+          });
+          const dateStr = date.toLocaleDateString("en-US", {
+            month: "short",
+            day: "numeric",
+          });
+          return `${dateStr} ${timeStr}`;
+        }
+        
         // Simple data refresh functionality
         function refreshData() {
           fetch('/api/data')
             .then(res => res.json())
             .then(data => {
               // Simple page reload for now - keeps it minimal
-              if (data.totalCount !== {{totalCount}}) {
+              if (data.totalCount !== {{totalAircraftCount}}) {
                 window.location.reload();
               }
             })
@@ -123,7 +368,42 @@
       "@type": "WebSite",
       "name": "{{ogTitle}}",
       "description": "{{siteDescription}}",
-      "url": "https://{{host}}/"
+      "url": "https://{{host}}/",
+      "potentialAction": {
+        "@type": "SearchAction",
+        "target": "https://{{host}}/api/check-flight?flight_number={search_term_string}",
+        "query-input": "required name=search_term_string"
+      }
+    }
+    </script>
+    
+    <!-- FAQ Schema -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "FAQPage",
+      "mainEntity": [{
+        "@type": "Question",
+        "name": "Which United planes have Starlink WiFi?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "As of {{currentDate}}, {{totalCount}} United Airlines aircraft have Starlink WiFi installed. This includes {{mainlineCount}} mainline aircraft and {{expressCount}} United Express aircraft. The rollout began with Embraer E175 regional jets and will expand to the entire fleet by end of 2025."
+        }
+      },{
+        "@type": "Question",
+        "name": "What is the status of United's Starlink rollout?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "United Airlines is installing Starlink on over 40 regional aircraft monthly. {{percentage}}% of the combined fleet now has Starlink ({{mainlinePercentage}}% mainline, {{expressPercentage}}% express). The entire two-cabin regional fleet will be complete by end of 2025."
+        }
+      },{
+        "@type": "Question",
+        "name": "How fast is United's Starlink WiFi?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "United's Starlink WiFi offers speeds up to 250 Mbps, which is 50 times faster than previous systems. This enables streaming, video calls, gaming, and browsing without interruptions."
+        }
+      }]
     }
     </script>
   </body>

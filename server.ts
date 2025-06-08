@@ -293,6 +293,45 @@ routes["/api/check-flight"] = (req) => {
   });
 };
 
+// robots.txt route
+routes["/robots.txt"] = new Response(
+  `User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /debug/
+
+Sitemap: https://unitedstarlinktracker.com/sitemap.xml`,
+  {
+    headers: {
+      "Content-Type": "text/plain",
+      "Cache-Control": "public, max-age=86400",
+    },
+  }
+);
+
+// sitemap.xml route
+routes["/sitemap.xml"] = (req) => {
+  const baseUrl = "https://unitedstarlinktracker.com";
+  const lastUpdated = getLastUpdated(db);
+
+  const sitemap = `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>${baseUrl}/</loc>
+    <lastmod>${lastUpdated ? new Date(lastUpdated).toISOString() : new Date().toISOString()}</lastmod>
+    <changefreq>hourly</changefreq>
+    <priority>1.0</priority>
+  </url>
+</urlset>`;
+
+  return new Response(sitemap, {
+    headers: {
+      "Content-Type": "application/xml",
+      "Cache-Control": "public, max-age=3600",
+    },
+  });
+};
+
 // Debug endpoint
 routes["/debug/files"] = (req) => {
   const url = new URL(req.url);
@@ -365,13 +404,23 @@ Bun.serve({
       );
 
       const metadata = getDomainContent(host);
+      const starlinkCount = starlinkPlanes.length;
+      const percentage = totalCount > 0 ? ((starlinkCount / totalCount) * 100).toFixed(2) : "0.00";
+
       const htmlVariables = {
         ...metadata,
         html: reactHtml,
         host,
-        totalCount: totalCount.toString(),
+        totalCount: starlinkCount.toString(),
+        totalAircraftCount: totalCount.toString(),
         lastUpdated: lastUpdated,
         isUnited: isUnitedDomain(host).toString(),
+        currentDate: new Date().toLocaleDateString(),
+        mainlineCount: (fleetStats?.mainline.starlink || 0).toString(),
+        expressCount: (fleetStats?.express.starlink || 0).toString(),
+        percentage: percentage,
+        mainlinePercentage: (fleetStats?.mainline.percentage || 0).toFixed(2),
+        expressPercentage: (fleetStats?.express.percentage || 0).toFixed(2),
       };
 
       const template = await getHtmlTemplate();
