@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "United Airlines Starlink Tracker",
+  "name": "Google Flights Starlink Indicator",
   "version": "1.2.0",
-  "description": "Highlights United Airlines flights with Starlink WiFi on Google Flights",
+  "description": "Highlights flights with Starlink WiFi on Google Flights",
   "permissions": ["storage"],
   "host_permissions": ["https://unitedstarlinktracker.com/*"],
   "background": {
