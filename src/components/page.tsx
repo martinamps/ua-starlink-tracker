@@ -65,6 +65,25 @@ export default function Page({
     return code;
   };
 
+  // Helper function to convert regional carrier codes to UA flight numbers
+  const convertToUAFlightNumber = (flightNumber: string) => {
+    // Common regional carrier prefixes that operate UA Express flights
+    const regionalCarrierPrefixes = ["SKW", "RPA", "GJS", "ASQ", "ENY", "AWI", "UCA"];
+
+    for (const prefix of regionalCarrierPrefixes) {
+      if (flightNumber.startsWith(prefix)) {
+        // Extract the numeric part and prepend with UA
+        const numericPart = flightNumber.substring(prefix.length);
+        if (/^\d+$/.test(numericPart)) {
+          return `UA${numericPart}`;
+        }
+      }
+    }
+
+    // Return original if not a regional carrier or already UA
+    return flightNumber;
+  };
+
   // Helper function to format flight times
   const formatFlightTime = (timestamp: number) => {
     const date = new Date(timestamp * 1000);
@@ -128,7 +147,7 @@ export default function Page({
                     className: "font-medium text-united-blue hover:underline",
                     key: "flight-link",
                   },
-                  flight.flight_number
+                  convertToUAFlightNumber(flight.flight_number)
                 ),
                 React.createElement(
                   "span",
