@@ -75,6 +75,9 @@ export const SECURITY_HEADERS = {
     "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
     "Referrer-Policy": "no-referrer",
     "Cache-Control": "no-store, max-age=0",
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
   },
   html: {
     "Content-Type": "text/html",

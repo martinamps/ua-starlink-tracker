@@ -274,11 +274,14 @@ export function updateFlights(
 
 export function getUpcomingFlights(db: Database, tailNumber?: string): Flight[] {
   const now = Math.floor(Date.now() / 1000);
-  const query = tailNumber
-    ? "SELECT * FROM upcoming_flights WHERE tail_number = ? AND departure_time > ? ORDER BY departure_time ASC"
-    : "SELECT * FROM upcoming_flights WHERE departure_time > ? ORDER BY departure_time ASC";
+  // Also filter out corrupted timestamps (less than year 2000 in seconds)
+  const minValidTimestamp = 946684800; // Jan 1, 2000 in seconds
 
-  const params = tailNumber ? [tailNumber, now] : [now];
+  const query = tailNumber
+    ? "SELECT * FROM upcoming_flights WHERE tail_number = ? AND departure_time > ? AND departure_time > ? ORDER BY departure_time ASC"
+    : "SELECT * FROM upcoming_flights WHERE departure_time > ? AND departure_time > ? ORDER BY departure_time ASC";
+
+  const params = tailNumber ? [tailNumber, now, minValidTimestamp] : [now, minValidTimestamp];
   return db.query(query).all(...params) as Flight[];
 }
 
