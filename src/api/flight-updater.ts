@@ -215,7 +215,7 @@ export function startFlightUpdater() {
   };
 
   safeUpdateAllFlights();
-  setInterval(safeUpdateAllFlights, 30 * 60 * 1000);
+  setInterval(safeUpdateAllFlights, 8 * 60 * 60 * 1000);
 }
 
 // Export individual functions for manual use
