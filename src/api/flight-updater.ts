@@ -205,6 +205,43 @@ export async function updateAllFlights() {
   );
 }
 
+/**
+ * Check flights for newly discovered planes (those with last_flight_check = 0)
+ * This runs immediately after scraping to provide faster updates for new aircraft
+ */
+export async function checkNewPlanes() {
+  const apiKey = process.env.AEROAPI_KEY;
+  if (!apiKey) {
+    console.log("AEROAPI_KEY not set, skipping new plane flight checks");
+    return;
+  }
+
+  const db = initializeDatabase();
+
+  // Get planes that have never been checked (last_flight_check = 0)
+  const newPlanes = db
+    .query(
+      `SELECT * FROM starlink_planes
+       WHERE last_flight_check = 0 OR last_flight_check IS NULL`
+    )
+    .all() as Aircraft[];
+
+  db.close();
+
+  if (newPlanes.length === 0) {
+    return;
+  }
+
+  console.log(`🔍 Found ${newPlanes.length} new plane(s), checking flights immediately...`);
+
+  const api = new FlightAwareAPI(apiKey);
+  const { updatedCount, apiCallCount } = await processPlanesInBatches(api, newPlanes, 3);
+
+  console.log(
+    `✅ New plane flight check completed: ${updatedCount} planes updated, ${apiCallCount} API calls made`
+  );
+}
+
 export function startFlightUpdater() {
   const safeUpdateAllFlights = async () => {
     try {

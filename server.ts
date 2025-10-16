@@ -4,7 +4,7 @@ import path from "node:path";
 import React from "react";
 import ReactDOMServer from "react-dom/server";
 
-import { startFlightUpdater } from "./src/api/flight-updater";
+import { checkNewPlanes, startFlightUpdater } from "./src/api/flight-updater";
 import Page from "./src/components/page";
 import {
   getFleetStats,
@@ -62,6 +62,10 @@ async function updateStarlinkData() {
     console.log(
       `Updated data: ${starlinkAircraft.length} Starlink aircraft out of ${totalAircraftCount} total`
     );
+
+    // scan new flights ~immediately
+    await checkNewPlanes();
+
     return {
       total: totalAircraftCount,
       starlinkCount: starlinkAircraft.length,
