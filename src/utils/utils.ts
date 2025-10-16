@@ -134,8 +134,11 @@ export async function fetchAllSheets() {
         sheetType = rows[0].Aircraft.split("-")[0] || "Unknown";
       }
 
-      // Filter for Starlink WiFi
-      const filtered = rows.filter((row) => row.WiFi?.trim() === "StrLnk");
+      // Filter for Starlink WiFi (both "StrLnk" for express and "Starlink" for mainline)
+      const filtered = rows.filter((row) => {
+        const wifi = row.WiFi?.trim();
+        return wifi === "StrLnk" || wifi === "Starlink";
+      });
 
       // Count Starlink aircraft by fleet type
       if (sheet.fleet === "express") {
