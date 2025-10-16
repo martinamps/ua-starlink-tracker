@@ -129,15 +129,36 @@ export function updateDatabase(
   starlinkAircraft: Partial<Aircraft>[],
   fleetStats: FleetStats
 ) {
-  // Get existing dates before clearing the table
+  // Get existing data before clearing the table
   const existingDates = new Map<string, string>();
-  const existingPlanes = db.query("SELECT TailNumber, DateFound FROM starlink_planes").all() as {
+  const existingFlightChecks = new Map<
+    string,
+    { last_flight_check: number; last_check_successful: number; consecutive_failures: number }
+  >();
+
+  const existingPlanes = db
+    .query(
+      "SELECT TailNumber, DateFound, last_flight_check, last_check_successful, consecutive_failures FROM starlink_planes"
+    )
+    .all() as {
     TailNumber: string;
     DateFound: string;
+    last_flight_check: number;
+    last_check_successful: number;
+    consecutive_failures: number;
   }[];
+
   for (const plane of existingPlanes) {
-    if (plane.TailNumber && plane.DateFound) {
-      existingDates.set(plane.TailNumber, plane.DateFound);
+    if (plane.TailNumber) {
+      if (plane.DateFound) {
+        existingDates.set(plane.TailNumber, plane.DateFound);
+      }
+      // Preserve flight check data to avoid resetting on every scraper run
+      existingFlightChecks.set(plane.TailNumber, {
+        last_flight_check: plane.last_flight_check || 0,
+        last_check_successful: plane.last_check_successful || 0,
+        consecutive_failures: plane.consecutive_failures || 0,
+      });
     }
   }
 
@@ -161,16 +182,23 @@ export function updateDatabase(
 
   // Insert aircraft data
   const insertStmt = db.prepare(`
-    INSERT INTO starlink_planes (aircraft, wifi, sheet_gid, sheet_type, DateFound, TailNumber, OperatedBy, fleet)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO starlink_planes (aircraft, wifi, sheet_gid, sheet_type, DateFound, TailNumber, OperatedBy, fleet, last_flight_check, last_check_successful, consecutive_failures)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   for (const aircraft of starlinkAircraft) {
+    const tailNumber = aircraft.TailNumber || "";
+
     // Preserve existing DateFound or use new one, fallback to today only for truly new aircraft
     const dateFound =
-      aircraft.DateFound ||
-      existingDates.get(aircraft.TailNumber || "") ||
-      new Date().toISOString().split("T")[0];
+      aircraft.DateFound || existingDates.get(tailNumber) || new Date().toISOString().split("T")[0];
+
+    // Preserve flight check data for existing planes, use 0 for new planes
+    const flightCheckData = existingFlightChecks.get(tailNumber) || {
+      last_flight_check: 0,
+      last_check_successful: 0,
+      consecutive_failures: 0,
+    };
 
     insertStmt.run(
       aircraft.Aircraft ?? "",
@@ -178,9 +206,12 @@ export function updateDatabase(
       aircraft.sheet_gid ?? "",
       aircraft.sheet_type ?? "",
       dateFound,
-      aircraft.TailNumber ?? "",
+      tailNumber,
       aircraft.OperatedBy ?? "United Airlines",
-      aircraft.fleet ?? "express"
+      aircraft.fleet ?? "express",
+      flightCheckData.last_flight_check,
+      flightCheckData.last_check_successful,
+      flightCheckData.consecutive_failures
     );
   }
 }

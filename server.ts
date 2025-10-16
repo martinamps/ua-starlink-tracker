@@ -76,6 +76,10 @@ async function updateStarlinkData() {
   }
 }
 
+// fill gaps we may have missed
+console.log("Checking for new planes...");
+checkNewPlanes().catch((err) => console.error("Error checking new planes on startup:", err));
+
 // Initialize data and schedule updates
 updateStarlinkData();
 setInterval(
