@@ -248,6 +248,7 @@ export function getStarlinkPlanes(db: Database): Aircraft[] {
              OperatedBy,
              fleet
       FROM starlink_planes
+      ORDER BY DateFound DESC
     `
     )
     .all() as Aircraft[];
