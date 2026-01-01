@@ -1,17 +1,15 @@
+import fs from "node:fs";
+import path from "node:path";
 import type { Browser, Page } from "playwright";
 import { chromium } from "playwright-extra";
 import StealthPlugin from "puppeteer-extra-plugin-stealth";
+import { LOG_DIR } from "../utils/logger";
 
 // Add stealth plugin to avoid detection
 chromium.use(StealthPlugin());
 
-// Set browser path to local directory (fallback if not set via env)
-if (!process.env.PLAYWRIGHT_BROWSERS_PATH) {
-  process.env.PLAYWRIGHT_BROWSERS_PATH = new URL(
-    "../../.playwright-browsers",
-    import.meta.url
-  ).pathname;
-}
+// Raw HTML debug output directory
+const RAW_LOG_DIR = path.join(LOG_DIR, "raw");
 
 export interface StarlinkCheckResult {
   hasStarlink: boolean;
@@ -23,6 +21,46 @@ export interface StarlinkCheckResult {
   origin: string;
   destination: string;
   error?: string;
+  debugFile?: string;
+}
+
+/**
+ * Save HTML debug output for later analysis
+ */
+function saveDebugHtml(
+  tailNumber: string,
+  flightNumber: string,
+  html: string,
+  bodyText: string
+): string {
+  try {
+    if (!fs.existsSync(RAW_LOG_DIR)) {
+      fs.mkdirSync(RAW_LOG_DIR, { recursive: true });
+    }
+
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const filename = `${tailNumber}-${flightNumber}-${timestamp}.html`;
+    const filepath = path.join(RAW_LOG_DIR, filename);
+
+    // Add debug info header to the HTML
+    const debugHtml = `<!--
+DEBUG INFO
+==========
+Tail: ${tailNumber}
+Flight: ${flightNumber}
+Timestamp: ${new Date().toISOString()}
+
+BODY TEXT EXTRACT:
+${bodyText.slice(0, 2000)}
+-->
+${html}`;
+
+    fs.writeFileSync(filepath, debugHtml);
+    return filepath;
+  } catch (err) {
+    console.error("Failed to save debug HTML:", err);
+    return "";
+  }
 }
 
 export async function checkStarlinkStatus(
@@ -48,6 +86,9 @@ export async function checkStarlinkStatus(
   try {
     browser = await chromium.launch({
       headless: true,
+      handleSIGINT: false,
+      handleSIGTERM: false,
+      handleSIGHUP: false,
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",
@@ -111,7 +152,10 @@ export async function checkStarlinkStatus(
     // Check if flight was found
     const pageContent = await page.content();
     if (pageContent.includes("We couldn't find") || pageContent.includes("No flights found")) {
-      result.error = "Flight not found";
+      result.error = "No upcoming flights available";
+      // Save debug HTML for analysis
+      const bodyText = await page.evaluate(() => document.body.innerText);
+      result.debugFile = saveDebugHtml("unknown", flightNumber, pageContent, bodyText);
       return result;
     }
 
@@ -178,6 +222,7 @@ export async function checkStarlinkStatus(
         tailNumber,
         aircraftType,
         wifiProvider,
+        bodyText,
       };
     });
 
@@ -186,17 +231,32 @@ export async function checkStarlinkStatus(
     result.aircraftType = data.aircraftType;
     result.wifiProvider = data.wifiProvider;
 
+    if (!data.wifiProvider || (!data.hasStarlink && !data.wifiProvider)) {
+      result.debugFile = saveDebugHtml(
+        data.tailNumber || "unknown",
+        flightNumber,
+        pageContent,
+        data.bodyText
+      );
+    }
+
     return result;
   } catch (error) {
     result.error = error instanceof Error ? error.message : String(error);
     return result;
   } finally {
-    if (page) {
-      await page.close();
-    }
-    if (browser) {
-      await browser.close();
-    }
+    try {
+      if (page) {
+        await page.close();
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    } catch {}
+    try {
+      if (browser) {
+        await browser.close();
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    } catch {}
   }
 }
 

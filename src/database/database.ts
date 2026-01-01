@@ -508,8 +508,23 @@ export function getLastVerification(
 }
 
 /**
+ * Generate a deterministic jitter based on tail number
+ * Returns a value between 0 and 1 that's consistent for each tail number
+ */
+function getTailNumberJitter(tailNumber: string): number {
+  let hash = 0;
+  for (let i = 0; i < tailNumber.length; i++) {
+    hash = (hash * 31 + tailNumber.charCodeAt(i)) >>> 0;
+  }
+  return (hash % 1000) / 1000;
+}
+
+/**
  * Check if a plane needs verification from a specific source
- * Default rate limit: 72 hours for United, 24 hours for FR24
+ * Uses jittered thresholds to distribute checks over time:
+ * - United: 48-96 hours (centered on 72)
+ * - FR24: 18-30 hours (centered on 24)
+ * - Spreadsheet: 0.5-1.5 hours (centered on 1)
  */
 export function needsVerification(
   db: Database,
@@ -517,14 +532,21 @@ export function needsVerification(
   source: VerificationSource,
   hoursThreshold?: number
 ): boolean {
-  // Default thresholds by source
-  const defaultThresholds: Record<VerificationSource, number> = {
+  // Base thresholds by source (will be jittered ±33%)
+  const baseThresholds: Record<VerificationSource, number> = {
     united: 72, // 3 days for United (to avoid spam)
     flightradar24: 24, // 1 day for FR24
     spreadsheet: 1, // 1 hour for spreadsheet (primary source)
   };
 
-  const threshold = hoursThreshold ?? defaultThresholds[source];
+  const baseThreshold = hoursThreshold ?? baseThresholds[source];
+
+  // Add deterministic jitter: ±33% based on tail number
+  // This distributes checks evenly across planes
+  const jitter = getTailNumberJitter(tailNumber); // 0 to 1
+  const jitterRange = baseThreshold * 0.33; // ±33%
+  const threshold = baseThreshold - jitterRange + jitter * 2 * jitterRange;
+
   const now = Math.floor(Date.now() / 1000);
   const cutoff = now - threshold * 3600;
 

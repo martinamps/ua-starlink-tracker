@@ -9,6 +9,37 @@ export const DB_PATH =
     ? "/srv/ua-starlink-tracker/plane-data.sqlite" // Container path
     : "./plane-data.sqlite"; // Local path
 
+// Flight data source configuration
+// Options: "flightradar24" (free) or "flightaware" (requires API key)
+export type FlightDataSource = "flightradar24" | "flightaware";
+export const FLIGHT_DATA_SOURCE: FlightDataSource =
+  (process.env.FLIGHT_DATA_SOURCE as FlightDataSource) || "flightradar24";
+
+// United Express operating carrier codes that should be normalized to UA
+const UNITED_EXPRESS_CARRIERS = ["SKW", "ASH", "RPA", "GJS", "PDT", "ACA", "ENY"];
+
+/**
+ * Normalize flight numbers to UA marketing code
+ * Converts operating carrier codes (SKW5882, ASH4054, RPA3712, GJS4467) to UA prefix
+ * This matches what customers see on their tickets
+ */
+export function normalizeFlightNumber(flightNumber: string): string {
+  if (!flightNumber) return flightNumber;
+
+  // Already UA-prefixed, return as-is
+  if (flightNumber.startsWith("UA")) return flightNumber;
+
+  // Check if it starts with a known United Express carrier code
+  for (const carrier of UNITED_EXPRESS_CARRIERS) {
+    if (flightNumber.startsWith(carrier)) {
+      return "UA" + flightNumber.slice(carrier.length);
+    }
+  }
+
+  // Unknown prefix, return as-is
+  return flightNumber;
+}
+
 // Page-specific content that changes based on the domain
 export const PAGE_CONTENT = {
   pageTitle: {

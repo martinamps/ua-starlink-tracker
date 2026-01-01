@@ -6,13 +6,47 @@ import {
   updateFlights,
   updateLastFlightCheck,
 } from "../database/database";
-import type { Aircraft } from "../types";
+import type { Aircraft, Flight } from "../types";
+import { FLIGHT_DATA_SOURCE } from "../utils/constants";
 import { FlightAwareAPI } from "./flightaware-api";
+import { FlightRadar24API } from "./flightradar24-api";
 
-async function updateFlightsForTailNumber(
-  api: FlightAwareAPI,
-  tailNumber: string
-): Promise<boolean> {
+// Common interface for flight APIs
+type FlightUpdate = Pick<
+  Flight,
+  "flight_number" | "departure_airport" | "arrival_airport" | "departure_time" | "arrival_time"
+>;
+
+interface FlightAPI {
+  getUpcomingFlights(tailNumber: string): Promise<FlightUpdate[]>;
+}
+
+/**
+ * Create the appropriate flight API based on configuration
+ */
+function createFlightAPI(): FlightAPI | null {
+  const source = FLIGHT_DATA_SOURCE;
+
+  if (source === "flightradar24") {
+    console.log("Using FlightRadar24 API (free)");
+    return new FlightRadar24API();
+  }
+
+  if (source === "flightaware") {
+    const apiKey = process.env.AEROAPI_KEY;
+    if (!apiKey) {
+      console.error("AEROAPI_KEY environment variable not set for FlightAware");
+      return null;
+    }
+    console.log("Using FlightAware API (requires API key)");
+    return new FlightAwareAPI(apiKey);
+  }
+
+  console.error(`Unknown flight data source: ${source}`);
+  return null;
+}
+
+async function updateFlightsForTailNumber(api: FlightAPI, tailNumber: string): Promise<boolean> {
   let success = false;
   const db = initializeDatabase();
 
@@ -47,7 +81,7 @@ async function updateFlightsForTailNumber(
 }
 
 async function updateFlightsIfNeeded(
-  api: FlightAwareAPI,
+  api: FlightAPI,
   tailNumber: string,
   hoursThreshold = 6
 ): Promise<{ updated: boolean; success: boolean }> {
@@ -60,7 +94,6 @@ async function updateFlightsIfNeeded(
     return { updated: true, success };
   }
 
-  console.log(`Skipping ${tailNumber} - checked recently`);
   return { updated: false, success: true };
 }
 
@@ -68,13 +101,12 @@ function createJitteredDelay(baseMs: number, jitterMs = 500): number {
   return baseMs + Math.random() * jitterMs;
 }
 
-// Circuit breaker to prevent API hammering during outages
 let consecutiveApiFailures = 0;
 const MAX_CONSECUTIVE_FAILURES = 5;
 const CIRCUIT_BREAKER_RESET_TIME = 30 * 60 * 1000; // 30 minutes
 let circuitBreakerOpenedAt: number | null = null;
 
-async function processPlanesInBatches(api: FlightAwareAPI, planes: Aircraft[], batchSize = 3) {
+async function processPlanesInBatches(api: FlightAPI, planes: Aircraft[], batchSize = 3) {
   let updatedCount = 0;
   let apiCallCount = 0;
 
@@ -119,8 +151,7 @@ async function processPlanesInBatches(api: FlightAwareAPI, planes: Aircraft[], b
 
     const batchPromises = batch.map(async (plane, index) => {
       try {
-        // Stagger requests: 1-2s, 3-4s, 5-6s per batch item
-        const staggerDelay = createJitteredDelay(1000 + index * 2000, 1000);
+        const staggerDelay = createJitteredDelay(2000 + index * 2000, 500);
         await new Promise((resolve) => setTimeout(resolve, staggerDelay));
 
         const result = await updateFlightsIfNeeded(api, plane.TailNumber);
@@ -172,7 +203,7 @@ async function processPlanesInBatches(api: FlightAwareAPI, planes: Aircraft[], b
     }
 
     if (i + batchSize < planesToUpdate.length) {
-      const batchDelay = createJitteredDelay(5000, 2000);
+      const batchDelay = createJitteredDelay(5000, 3000);
       console.log(
         `Batch completed, waiting ${Math.round(batchDelay / 1000)}s before next batch...`
       );
@@ -184,9 +215,9 @@ async function processPlanesInBatches(api: FlightAwareAPI, planes: Aircraft[], b
 }
 
 export async function updateAllFlights() {
-  const apiKey = process.env.AEROAPI_KEY;
-  if (!apiKey) {
-    console.error("AEROAPI_KEY environment variable not set");
+  const api = createFlightAPI();
+  if (!api) {
+    console.error("Failed to create flight API");
     return;
   }
 
@@ -194,11 +225,10 @@ export async function updateAllFlights() {
   const planes = getStarlinkPlanes(db);
   db.close();
 
-  const api = new FlightAwareAPI(apiKey);
-
   console.log(`Checking flight updates for ${planes.length} Starlink aircraft...`);
+  console.log(`Data source: ${FLIGHT_DATA_SOURCE}`);
 
-  const { updatedCount, apiCallCount } = await processPlanesInBatches(api, planes, 3);
+  const { updatedCount, apiCallCount } = await processPlanesInBatches(api, planes, 5);
 
   console.log(
     `Flight updates completed: ${updatedCount} aircraft updated, ${apiCallCount} API calls made`
@@ -210,9 +240,9 @@ export async function updateAllFlights() {
  * This runs immediately after scraping to provide faster updates for new aircraft
  */
 export async function checkNewPlanes() {
-  const apiKey = process.env.AEROAPI_KEY;
-  if (!apiKey) {
-    console.log("AEROAPI_KEY not set, skipping new plane flight checks");
+  const api = createFlightAPI();
+  if (!api) {
+    console.log("Flight API not available, skipping new plane flight checks");
     return;
   }
 
@@ -232,13 +262,12 @@ export async function checkNewPlanes() {
     return;
   }
 
-  console.log(`🔍 Found ${newPlanes.length} new plane(s), checking flights immediately...`);
+  console.log(`Found ${newPlanes.length} new plane(s), checking flights immediately...`);
 
-  const api = new FlightAwareAPI(apiKey);
-  const { updatedCount, apiCallCount } = await processPlanesInBatches(api, newPlanes, 3);
+  const { updatedCount, apiCallCount } = await processPlanesInBatches(api, newPlanes, 5);
 
   console.log(
-    `✅ New plane flight check completed: ${updatedCount} planes updated, ${apiCallCount} API calls made`
+    `New plane flight check completed: ${updatedCount} planes updated, ${apiCallCount} API calls made`
   );
 }
 

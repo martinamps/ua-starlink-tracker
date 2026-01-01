@@ -1,24 +1,37 @@
 FROM oven/bun:slim
 
-# Create the working directory
 WORKDIR /app
 
-# Copy package manifest
-COPY package.json .
+# Install Chromium runtime dependencies (required for Playwright's browser)
+RUN apt-get update && apt-get install -y \
+    libnss3 \
+    libatk1.0-0 \
+    libatk-bridge2.0-0 \
+    libcups2 \
+    libdrm2 \
+    libxkbcommon0 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxfixes3 \
+    libxrandr2 \
+    libgbm1 \
+    libasound2 \
+    libpango-1.0-0 \
+    libcairo2 \
+    libxshmfence1 \
+    && rm -rf /var/lib/apt/lists/*
 
-# Install dependencies (this will generate bun.lockb)
+COPY package.json .
 RUN bun install
 
-# Copy the rest of the files
+# Install Playwright's bundled Chromium (guaranteed compatible)
+RUN bunx playwright install chromium
+
 COPY . .
 
-# The /srv/ua-starlink-tracker directory will be mounted from the host
-
-# Expose port
 EXPOSE 3000
 
-# Set production environment for docker
 ENV NODE_ENV=production
+ENV LOG_DIR=/srv/ua-starlink-tracker/logs
 
-# Start the server
 CMD ["bun", "run", "server.ts"]

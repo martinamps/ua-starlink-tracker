@@ -9,14 +9,6 @@ import StealthPlugin from "puppeteer-extra-plugin-stealth";
 
 chromium.use(StealthPlugin());
 
-// Set browser path to local directory (fallback if not set via env)
-if (!process.env.PLAYWRIGHT_BROWSERS_PATH) {
-  process.env.PLAYWRIGHT_BROWSERS_PATH = new URL(
-    "../../.playwright-browsers",
-    import.meta.url
-  ).pathname;
-}
-
 export interface FR24Aircraft {
   registration: string;
   aircraftType: string;

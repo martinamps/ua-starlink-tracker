@@ -9,6 +9,7 @@
     "check-starlink": "PLAYWRIGHT_BROWSERS_PATH=./.playwright-browsers bun run src/scripts/united-starlink-checker.ts",
     "verify-starlink": "PLAYWRIGHT_BROWSERS_PATH=./.playwright-browsers bun run src/scripts/starlink-verifier.ts",
     "install-browser": "PLAYWRIGHT_BROWSERS_PATH=./.playwright-browsers bunx playwright install chromium",
+    "db-status": "bun run src/scripts/db-status.ts",
     "lint": "biome check .",
     "format": "biome format --write .",
     "lint:fix": "biome check --write .",

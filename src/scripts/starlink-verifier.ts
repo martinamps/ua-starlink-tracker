@@ -13,6 +13,7 @@ import {
   logVerification,
   needsVerification,
 } from "../database/database";
+import { verifierLog } from "../utils/logger";
 import { type StarlinkCheckResult, checkStarlinkStatus } from "./united-starlink-checker";
 
 const VERIFICATION_DELAY_MS = 5000; // 5 seconds between checks to be polite
@@ -94,6 +95,7 @@ function getPlanesNeedingVerification(
   forceAll = false
 ): Array<{ plane: Plane; flight: Flight }> {
   const result: Array<{ plane: Plane; flight: Flight }> = [];
+  const now = Math.floor(Date.now() / 1000);
 
   for (const plane of planes) {
     if (result.length >= limit) break;
@@ -102,13 +104,15 @@ function getPlanesNeedingVerification(
     const flights = flightsByTail[plane.TailNumber] || [];
     if (flights.length === 0) continue;
 
-    // Check rate limit (72 hours for United) - skip if forceAll
+    const futureFlights = flights.filter((f) => f.departure_time > now);
+    if (futureFlights.length === 0) continue;
+
     if (!forceAll && !needsVerification(db, plane.TailNumber, "united")) {
       continue;
     }
 
     // Use the first upcoming flight
-    result.push({ plane, flight: flights[0] });
+    result.push({ plane, flight: futureFlights[0] });
   }
 
   return result;
@@ -123,9 +127,7 @@ export async function verifyPlaneStarlink(
   flight: Flight,
   forceCheck = false
 ): Promise<StarlinkCheckResult | null> {
-  // Check rate limit (72 hours for United)
   if (!forceCheck && !needsVerification(db, tailNumber, "united")) {
-    console.log(`Skipping ${tailNumber}: checked within last 72 hours`);
     return null;
   }
 
@@ -134,7 +136,7 @@ export async function verifyPlaneStarlink(
   const origin = icaoToIata(flight.departure_airport);
   const destination = icaoToIata(flight.arrival_airport);
 
-  console.log(
+  verifierLog.info(
     `Checking ${tailNumber} via UA${flightNumber} ${origin}-${destination} on ${departureDate}`
   );
 
@@ -152,10 +154,24 @@ export async function verifyPlaneStarlink(
       error: result.error || null,
     });
 
+    if (result.hasStarlink) {
+      verifierLog.info(`✓ ${tailNumber} confirmed Starlink (${result.wifiProvider})`);
+    } else if (result.error) {
+      verifierLog.warn(
+        `✗ ${tailNumber} error: ${result.error}`,
+        result.debugFile ? { debugFile: result.debugFile } : undefined
+      );
+    } else {
+      verifierLog.info(
+        `✗ ${tailNumber} no Starlink (${result.wifiProvider || "unknown provider"})`,
+        result.debugFile ? { debugFile: result.debugFile } : undefined
+      );
+    }
+
     return result;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    console.error(`Error verifying ${tailNumber}:`, errorMessage);
+    verifierLog.error(`Error verifying ${tailNumber}`, errorMessage);
 
     logVerification(db, {
       tail_number: tailNumber,
@@ -191,17 +207,16 @@ export async function runVerificationBatch(
 
   try {
     // Fetch data from the API
-    console.log(`Fetching data from ${API_BASE_URL}/api/data...`);
+    verifierLog.debug(`Fetching data from ${API_BASE_URL}/api/data`);
     const data = await fetchTrackerData();
 
     if (!data) {
-      console.error("Failed to fetch tracker data");
+      verifierLog.error("Failed to fetch tracker data");
       return stats;
     }
 
-    console.log(`Found ${data.starlinkPlanes.length} Starlink planes`);
     const flightCount = Object.values(data.flightsByTail).flat().length;
-    console.log(`Found ${flightCount} upcoming flights`);
+    verifierLog.debug(`Found ${data.starlinkPlanes.length} planes, ${flightCount} flights`);
 
     // Get planes that need verification
     const toVerify = getPlanesNeedingVerification(
@@ -211,7 +226,13 @@ export async function runVerificationBatch(
       maxPlanes,
       forceAll
     );
-    console.log(`${toVerify.length} planes need verification\n`);
+
+    if (toVerify.length === 0) {
+      verifierLog.debug("No planes need verification at this time");
+      return stats;
+    }
+
+    verifierLog.info(`${toVerify.length} plane(s) need verification`);
 
     for (let i = 0; i < toVerify.length; i++) {
       const { plane, flight } = toVerify[i];
@@ -230,18 +251,15 @@ export async function runVerificationBatch(
 
       // Delay between checks
       if (i < toVerify.length - 1) {
-        console.log(`Waiting ${delayMs / 1000}s before next check...`);
+        verifierLog.debug(`Waiting ${delayMs / 1000}s before next check`);
         await new Promise((resolve) => setTimeout(resolve, delayMs));
       }
     }
 
-    // Print verification stats
+    // Log verification stats
     const dbStats = getVerificationStats(db);
-    console.log("\n=== Verification Stats ===");
-    console.log(`Total checks ever: ${dbStats.total_checks}`);
-    console.log(`Checks in last 24h: ${dbStats.last_24h_checks}`);
-    console.log(
-      `By source: United=${dbStats.checks_by_source.united}, FR24=${dbStats.checks_by_source.flightradar24}`
+    verifierLog.info(
+      `Stats: ${dbStats.total_checks} total checks, ${dbStats.last_24h_checks} in last 24h`
     );
   } finally {
     db.close();
@@ -283,6 +301,47 @@ export function logSpreadsheetVerification(
     flight_number: null,
     error: null,
   });
+}
+
+/**
+ * Start the background Starlink verifier
+ * Runs every ~60 seconds (±15s jitter), checking 1 plane per run
+ * With ~100 planes, full cycle takes ~100 minutes
+ * Combined with 48-96hr jitter per plane, this spreads load nicely
+ */
+export function startStarlinkVerifier() {
+  const BASE_INTERVAL_MS = 60 * 1000; // 60 seconds
+  const JITTER_MS = 15 * 1000; // ±15 seconds
+  const PLANES_PER_RUN = 1;
+
+  const getJitteredInterval = () => {
+    return BASE_INTERVAL_MS + (Math.random() * 2 - 1) * JITTER_MS;
+  };
+
+  const scheduleNext = () => {
+    const interval = getJitteredInterval();
+    setTimeout(runAndSchedule, interval);
+  };
+
+  const runAndSchedule = async () => {
+    try {
+      const stats = await runVerificationBatch(PLANES_PER_RUN, VERIFICATION_DELAY_MS);
+
+      if (stats.checked > 0) {
+        verifierLog.info(
+          `Batch complete: ${stats.starlink} Starlink, ${stats.notStarlink} not, ${stats.errors} errors`
+        );
+      }
+    } catch (error) {
+      verifierLog.error("Background verification failed", error);
+    }
+    scheduleNext();
+  };
+
+  // Initial run after 5 seconds
+  setTimeout(runAndSchedule, 5 * 1000);
+
+  verifierLog.info("Background verifier started (every ~60s ±15s, 1 plane/run)");
 }
 
 // CLI usage

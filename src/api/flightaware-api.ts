@@ -1,4 +1,5 @@
 import type { Flight } from "../types";
+import { normalizeFlightNumber } from "../utils/constants";
 
 interface FlightAwareConfig {
   apiKey: string;
@@ -100,7 +101,7 @@ export class FlightAwareAPI {
           return departureTime > now;
         })
         .map((flight) => ({
-          flight_number: flight.ident,
+          flight_number: normalizeFlightNumber(flight.ident),
           departure_airport: flight.origin.code,
           arrival_airport: flight.destination.code,
           departure_time: Math.floor(new Date(flight.scheduled_out).getTime() / 1000),

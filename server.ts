@@ -15,12 +15,14 @@ import {
   initializeDatabase,
   updateDatabase,
 } from "./src/database/database";
+import { startStarlinkVerifier } from "./src/scripts/starlink-verifier";
 import type { ApiResponse, Flight } from "./src/types";
 import {
   CONTENT_TYPES,
   SECURITY_HEADERS,
   getDomainContent,
   isUnitedDomain,
+  normalizeFlightNumber,
 } from "./src/utils/constants";
 import { getNotFoundHtml } from "./src/utils/not-found";
 import { fetchAllSheets } from "./src/utils/utils";
@@ -227,11 +229,8 @@ routes["/api/check-flight"] = (req) => {
   const startOfDay = Math.floor(dateObj.getTime() / 1000);
   const endOfDay = startOfDay + 86400;
 
-  // Handle UA -> SKW conversion for SkyWest operated flights
-  const flightNumbers = [flightNumber];
-  if (flightNumber.startsWith("UA")) {
-    flightNumbers.push(flightNumber.replace("UA", "SKW"));
-  }
+  // Normalize flight number to UA prefix for consistent matching
+  const normalizedFlightNumber = normalizeFlightNumber(flightNumber);
 
   const matchingFlights = db
     .query(
@@ -245,13 +244,13 @@ routes["/api/check-flight"] = (req) => {
         sp.fleet
       FROM upcoming_flights uf
       INNER JOIN starlink_planes sp ON uf.tail_number = sp.TailNumber
-      WHERE uf.flight_number IN (${flightNumbers.map(() => "?").join(",")})
+      WHERE uf.flight_number = ?
         AND uf.departure_time >= ?
         AND uf.departure_time < ?
       ORDER BY uf.departure_time ASC
     `
     )
-    .all(...flightNumbers, startOfDay, endOfDay) as Array<
+    .all(normalizedFlightNumber, startOfDay, endOfDay) as Array<
     Flight & {
       Aircraft: string;
       WiFi: string;
@@ -279,11 +278,7 @@ routes["/api/check-flight"] = (req) => {
     flights: matchingFlights.map((flight) => ({
       tail_number: flight.tail_number,
       aircraft_type: flight.Aircraft,
-      // Convert SKW back to UA for consistency with user's request
-      flight_number:
-        flight.flight_number.startsWith("SKW") && flightNumber.startsWith("UA")
-          ? flight.flight_number.replace("SKW", "UA")
-          : flight.flight_number,
+      flight_number: flight.flight_number,
       departure_airport: flight.departure_airport,
       arrival_airport: flight.arrival_airport,
       departure_time: flight.departure_time,
@@ -466,7 +461,8 @@ Bun.serve({
   },
 });
 
-// Start the flight updater
+// Start background jobs
 startFlightUpdater();
+startStarlinkVerifier();
 
 console.log(`Server running at http://localhost:${PORT}`);

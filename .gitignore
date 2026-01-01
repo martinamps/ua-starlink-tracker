@@ -5,3 +5,4 @@ node_modules
 # Playwright browsers
 .playwright-browsers/
 tmp/
+logs/
