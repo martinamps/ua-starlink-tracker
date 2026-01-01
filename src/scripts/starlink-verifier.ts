@@ -15,7 +15,8 @@ import {
   updateVerifiedWifi,
 } from "../database/database";
 import { verifierLog } from "../utils/logger";
-import { type StarlinkCheckResult, checkStarlinkStatus } from "./united-starlink-checker";
+import type { StarlinkCheckResult } from "./united-starlink-checker";
+import { checkStarlinkStatusSubprocess } from "./united-starlink-checker-subprocess";
 
 const VERIFICATION_DELAY_MS = 5000; // 5 seconds between checks to be polite
 const API_BASE_URL = "https://unitedstarlinktracker.com";
@@ -142,7 +143,12 @@ export async function verifyPlaneStarlink(
   );
 
   try {
-    const result = await checkStarlinkStatus(flightNumber, departureDate, origin, destination);
+    const result = await checkStarlinkStatusSubprocess(
+      flightNumber,
+      departureDate,
+      origin,
+      destination
+    );
 
     // Log the verification result
     logVerification(db, {

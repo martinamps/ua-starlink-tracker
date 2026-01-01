@@ -70,25 +70,19 @@ function log(level: LogLevel, message: string, data?: unknown) {
   // File output includes level
   const fileMsg = `${timestamp} [${level}] [${file}] ${message}${data !== undefined ? " " + formatData(data) : ""}`;
 
-  switch (level) {
-    case "ERROR":
-      console.error(consoleMsg);
-      writeToFile(fileMsg);
-      break;
-    case "WARN":
-      console.warn(consoleMsg);
-      writeToFile(fileMsg);
-      break;
-    case "DEBUG":
-      // Only show debug in development, but always write to file
-      if (process.env.NODE_ENV !== "production") {
-        console.log(consoleMsg);
-      }
-      writeToFile(fileMsg);
-      break;
-    default:
-      console.log(consoleMsg);
-      writeToFile(fileMsg);
+  writeToFile(fileMsg);
+
+  // In subprocess mode, use stderr for all logs to keep stdout clean for JSON
+  const useStderr = process.env.SUBPROCESS_MODE === "1";
+
+  if (level === "DEBUG" && process.env.NODE_ENV === "production") {
+    return;
+  }
+
+  if (useStderr || level === "ERROR" || level === "WARN") {
+    console.error(consoleMsg);
+  } else {
+    console.log(consoleMsg);
   }
 }
 
