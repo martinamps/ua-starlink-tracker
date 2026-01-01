@@ -175,6 +175,10 @@ export async function checkStarlinkStatus(
         bodyText.includes("Internet by Viasat") || bodyText.includes("by Viasat");
       const hasGogoText = bodyText.includes("by Gogo") || bodyText.includes("Gogo Wi-Fi");
 
+      // Check for no WiFi
+      const hasNoWifi =
+        bodyText.includes("Wi-Fi\n\nNot offered") || bodyText.includes("Wi-Fi: Not offered");
+
       // Determine WiFi provider
       let wifiProvider: string | null = null;
       if (hasStarlinkText || hasStarlinkComponent) {
@@ -185,6 +189,8 @@ export async function checkStarlinkStatus(
         wifiProvider = "Viasat";
       } else if (hasGogoText) {
         wifiProvider = "Gogo";
+      } else if (hasNoWifi) {
+        wifiProvider = "None";
       }
 
       // Extract tail number - look for pattern like "#N164SY" or "#3991"

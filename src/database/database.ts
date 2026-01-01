@@ -154,6 +154,20 @@ function setupTables(db: Database) {
       migrationsRun.push("consecutive_failures");
     }
 
+    // Add verified_wifi column - stores what United.com actually reports
+    const hasVerifiedWifi = columns.some((col: any) => col.name === "verified_wifi");
+    if (!hasVerifiedWifi) {
+      db.query("ALTER TABLE starlink_planes ADD COLUMN verified_wifi TEXT DEFAULT NULL").run();
+      migrationsRun.push("verified_wifi");
+    }
+
+    // Add verified_at timestamp
+    const hasVerifiedAt = columns.some((col: any) => col.name === "verified_at");
+    if (!hasVerifiedAt) {
+      db.query("ALTER TABLE starlink_planes ADD COLUMN verified_at INTEGER DEFAULT NULL").run();
+      migrationsRun.push("verified_at");
+    }
+
     if (migrationsRun.length > 0) {
       console.log(`Database migrations completed: ${migrationsRun.join(", ")}`);
     }
@@ -172,10 +186,14 @@ export function updateDatabase(
     string,
     { last_flight_check: number; last_check_successful: number; consecutive_failures: number }
   >();
+  const existingVerification = new Map<
+    string,
+    { verified_wifi: string | null; verified_at: number | null }
+  >();
 
   const existingPlanes = db
     .query(
-      "SELECT TailNumber, DateFound, last_flight_check, last_check_successful, consecutive_failures FROM starlink_planes"
+      "SELECT TailNumber, DateFound, last_flight_check, last_check_successful, consecutive_failures, verified_wifi, verified_at FROM starlink_planes"
     )
     .all() as {
     TailNumber: string;
@@ -183,6 +201,8 @@ export function updateDatabase(
     last_flight_check: number;
     last_check_successful: number;
     consecutive_failures: number;
+    verified_wifi: string | null;
+    verified_at: number | null;
   }[];
 
   for (const plane of existingPlanes) {
@@ -195,6 +215,11 @@ export function updateDatabase(
         last_flight_check: plane.last_flight_check || 0,
         last_check_successful: plane.last_check_successful || 0,
         consecutive_failures: plane.consecutive_failures || 0,
+      });
+      // Preserve verification data
+      existingVerification.set(plane.TailNumber, {
+        verified_wifi: plane.verified_wifi,
+        verified_at: plane.verified_at,
       });
     }
   }
@@ -219,8 +244,8 @@ export function updateDatabase(
 
   // Insert aircraft data
   const insertStmt = db.prepare(`
-    INSERT INTO starlink_planes (aircraft, wifi, sheet_gid, sheet_type, DateFound, TailNumber, OperatedBy, fleet, last_flight_check, last_check_successful, consecutive_failures)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO starlink_planes (aircraft, wifi, sheet_gid, sheet_type, DateFound, TailNumber, OperatedBy, fleet, last_flight_check, last_check_successful, consecutive_failures, verified_wifi, verified_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   for (const aircraft of starlinkAircraft) {
@@ -237,6 +262,12 @@ export function updateDatabase(
       consecutive_failures: 0,
     };
 
+    // Preserve verification data
+    const verificationData = existingVerification.get(tailNumber) || {
+      verified_wifi: null,
+      verified_at: null,
+    };
+
     insertStmt.run(
       aircraft.Aircraft ?? "",
       aircraft.WiFi ?? "",
@@ -248,7 +279,9 @@ export function updateDatabase(
       aircraft.fleet ?? "express",
       flightCheckData.last_flight_check,
       flightCheckData.last_check_successful,
-      flightCheckData.consecutive_failures
+      flightCheckData.consecutive_failures,
+      verificationData.verified_wifi,
+      verificationData.verified_at
     );
   }
 }
@@ -285,6 +318,7 @@ export function getStarlinkPlanes(db: Database): Aircraft[] {
              OperatedBy,
              fleet
       FROM starlink_planes
+      WHERE verified_wifi IS NULL OR verified_wifi = 'Starlink'
       ORDER BY DateFound DESC
     `
     )
@@ -687,5 +721,123 @@ export function getVerificationStats(db: Database): {
     verified_not_starlink: verified.not_starlink || 0,
     errors: verified.errors || 0,
     last_24h_checks: last24h.count,
+  };
+}
+
+/**
+ * Update the verified WiFi status for a plane
+ */
+export function updateVerifiedWifi(
+  db: Database,
+  tailNumber: string,
+  verifiedWifi: string | null
+): void {
+  const now = Math.floor(Date.now() / 1000);
+  db.query(`
+    UPDATE starlink_planes
+    SET verified_wifi = ?, verified_at = ?
+    WHERE TailNumber = ?
+  `).run(verifiedWifi, now, tailNumber);
+}
+
+/**
+ * Get mismatches between spreadsheet data and verified data
+ * Returns planes where:
+ * - Spreadsheet says Starlink but verification says otherwise
+ * - Or spreadsheet says no Starlink but verification found Starlink
+ */
+export interface WifiMismatch {
+  TailNumber: string;
+  Aircraft: string;
+  OperatedBy: string;
+  spreadsheet_wifi: string;
+  verified_wifi: string;
+  verified_at: number;
+  DateFound: string;
+}
+
+export function getWifiMismatches(db: Database): WifiMismatch[] {
+  return db
+    .query(`
+      SELECT
+        TailNumber,
+        aircraft as Aircraft,
+        OperatedBy,
+        wifi as spreadsheet_wifi,
+        verified_wifi,
+        verified_at,
+        DateFound
+      FROM starlink_planes
+      WHERE verified_wifi IS NOT NULL
+        AND (
+          -- Spreadsheet says Starlink but verification says None or other provider
+          (wifi = 'StrLnk' AND verified_wifi != 'Starlink')
+          OR
+          -- Spreadsheet says no Starlink but verification found it
+          (wifi != 'StrLnk' AND verified_wifi = 'Starlink')
+        )
+      ORDER BY verified_at DESC
+    `)
+    .all() as WifiMismatch[];
+}
+
+/**
+ * Get planes that haven't been verified yet
+ */
+export function getUnverifiedPlanes(db: Database, limit = 50): Aircraft[] {
+  return db
+    .query(`
+      SELECT
+        aircraft as Aircraft,
+        wifi as WiFi,
+        TailNumber,
+        OperatedBy,
+        DateFound,
+        fleet
+      FROM starlink_planes
+      WHERE verified_wifi IS NULL
+      ORDER BY DateFound DESC
+      LIMIT ?
+    `)
+    .all(limit) as Aircraft[];
+}
+
+/**
+ * Get verification summary stats
+ */
+export function getVerificationSummary(db: Database): {
+  total_planes: number;
+  verified_count: number;
+  unverified_count: number;
+  mismatches_count: number;
+  verified_starlink: number;
+  verified_none: number;
+  verified_other: number;
+} {
+  const stats = db
+    .query(`
+      SELECT
+        COUNT(*) as total_planes,
+        SUM(CASE WHEN verified_wifi IS NOT NULL THEN 1 ELSE 0 END) as verified_count,
+        SUM(CASE WHEN verified_wifi IS NULL THEN 1 ELSE 0 END) as unverified_count,
+        SUM(CASE WHEN verified_wifi IS NOT NULL AND (
+          (wifi = 'StrLnk' AND verified_wifi != 'Starlink')
+          OR (wifi != 'StrLnk' AND verified_wifi = 'Starlink')
+        ) THEN 1 ELSE 0 END) as mismatches_count,
+        SUM(CASE WHEN verified_wifi = 'Starlink' THEN 1 ELSE 0 END) as verified_starlink,
+        SUM(CASE WHEN verified_wifi = 'None' THEN 1 ELSE 0 END) as verified_none,
+        SUM(CASE WHEN verified_wifi IS NOT NULL AND verified_wifi NOT IN ('Starlink', 'None') THEN 1 ELSE 0 END) as verified_other
+      FROM starlink_planes
+    `)
+    .get() as any;
+
+  return {
+    total_planes: stats.total_planes || 0,
+    verified_count: stats.verified_count || 0,
+    unverified_count: stats.unverified_count || 0,
+    mismatches_count: stats.mismatches_count || 0,
+    verified_starlink: stats.verified_starlink || 0,
+    verified_none: stats.verified_none || 0,
+    verified_other: stats.verified_other || 0,
   };
 }

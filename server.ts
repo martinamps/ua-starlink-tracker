@@ -12,6 +12,8 @@ import {
   getStarlinkPlanes,
   getTotalCount,
   getUpcomingFlights,
+  getVerificationSummary,
+  getWifiMismatches,
   initializeDatabase,
   updateDatabase,
 } from "./src/database/database";
@@ -247,6 +249,7 @@ routes["/api/check-flight"] = (req) => {
       WHERE uf.flight_number = ?
         AND uf.departure_time >= ?
         AND uf.departure_time < ?
+        AND (sp.verified_wifi IS NULL OR sp.verified_wifi = 'Starlink')
       ORDER BY uf.departure_time ASC
     `
     )
@@ -292,6 +295,36 @@ routes["/api/check-flight"] = (req) => {
   };
 
   return new Response(JSON.stringify(response), {
+    headers: SECURITY_HEADERS.api,
+  });
+};
+
+// API endpoint to get verification mismatches
+routes["/api/mismatches"] = (req) => {
+  if (req.method !== "GET") {
+    return new Response(JSON.stringify({ error: "Method not allowed" }), {
+      status: 405,
+      headers: SECURITY_HEADERS.api,
+    });
+  }
+
+  const summary = getVerificationSummary(db);
+  const mismatches = getWifiMismatches(db);
+
+  const response = {
+    summary,
+    mismatches: mismatches.map((m) => ({
+      tail_number: m.TailNumber,
+      aircraft: m.Aircraft,
+      operated_by: m.OperatedBy,
+      spreadsheet_says: m.spreadsheet_wifi === "StrLnk" ? "Starlink" : m.spreadsheet_wifi,
+      verified_as: m.verified_wifi,
+      verified_at: new Date(m.verified_at * 1000).toISOString(),
+      date_found: m.DateFound,
+    })),
+  };
+
+  return new Response(JSON.stringify(response, null, 2), {
     headers: SECURITY_HEADERS.api,
   });
 };

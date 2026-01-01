@@ -12,6 +12,7 @@ import {
   initializeDatabase,
   logVerification,
   needsVerification,
+  updateVerifiedWifi,
 } from "../database/database";
 import { verifierLog } from "../utils/logger";
 import { type StarlinkCheckResult, checkStarlinkStatus } from "./united-starlink-checker";
@@ -153,6 +154,11 @@ export async function verifyPlaneStarlink(
       flight_number: `UA${flightNumber}`,
       error: result.error || null,
     });
+
+    // Update the plane's verified_wifi status (only if no error)
+    if (!result.error && result.wifiProvider) {
+      updateVerifiedWifi(db, tailNumber, result.wifiProvider);
+    }
 
     if (result.hasStarlink) {
       verifierLog.info(`✓ ${tailNumber} confirmed Starlink (${result.wifiProvider})`);
