@@ -19,7 +19,7 @@ export async function checkStarlinkStatusSubprocess(
   return new Promise((resolve, reject) => {
     const args = [SCRIPT_PATH, flightNumber, date, origin, destination];
     const child = spawn("bun", args, {
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["ignore", "pipe", "inherit"], // inherit stderr for unbuffered logs
       env: { ...process.env, SUBPROCESS_MODE: "1" },
       timeout: TIMEOUT_MS,
     });
@@ -29,9 +29,6 @@ export async function checkStarlinkStatusSubprocess(
     child.stdout.on("data", (data) => {
       stdout += data.toString();
     });
-
-    // Forward child's stderr to parent's stderr (preserves log output)
-    child.stderr.pipe(process.stderr);
 
     const timeout = setTimeout(() => {
       child.kill("SIGKILL");
