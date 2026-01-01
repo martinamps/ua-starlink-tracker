@@ -354,20 +354,72 @@ export function startStarlinkVerifier() {
 if (import.meta.main) {
   const args = process.argv.slice(2);
   const forceAll = args.includes("--force");
-  const maxPlanes = Number.parseInt(args.find((a) => !a.startsWith("--")) || "5", 10);
+  const tailArg = args.find((a) => a.startsWith("--tail="));
+  const tailNumber = tailArg?.split("=")[1];
 
-  console.log(
-    `Running Starlink verification for up to ${maxPlanes} planes${forceAll ? " (FORCE ALL - ignoring rate limits)" : ""}...\n`
-  );
+  if (tailNumber) {
+    // Verify a specific plane
+    console.log(`Verifying specific plane: ${tailNumber}\n`);
 
-  runVerificationBatch(maxPlanes, VERIFICATION_DELAY_MS, forceAll)
-    .then((stats) => {
-      console.log("\n=== Batch Results ===");
-      console.log(`Checked: ${stats.checked}`);
-      console.log(`Starlink confirmed: ${stats.starlink}`);
-      console.log(`Not Starlink: ${stats.notStarlink}`);
-      console.log(`Errors: ${stats.errors}`);
-      console.log(`Skipped: ${stats.skipped}`);
-    })
-    .catch(console.error);
+    const db = initializeDatabase();
+
+    // Get flight data for this plane
+    const flight = db
+      .query(
+        `SELECT * FROM upcoming_flights
+         WHERE tail_number = ? AND departure_time > ?
+         ORDER BY departure_time LIMIT 1`
+      )
+      .get(tailNumber, Math.floor(Date.now() / 1000)) as Flight | null;
+
+    if (!flight) {
+      console.error(`No upcoming flights found for ${tailNumber}`);
+      db.close();
+      process.exit(1);
+    }
+
+    console.log(
+      `Using flight: ${flight.flight_number} ${flight.departure_airport}-${flight.arrival_airport}`
+    );
+
+    verifyPlaneStarlink(db, tailNumber, flight, true)
+      .then((result) => {
+        console.log("\n=== Result ===");
+        console.log(JSON.stringify(result, null, 2));
+
+        // Show updated plane record
+        const plane = db
+          .query(
+            "SELECT TailNumber, wifi, verified_wifi, verified_at FROM starlink_planes WHERE TailNumber = ?"
+          )
+          .get(tailNumber);
+        console.log("\n=== Updated Plane Record ===");
+        console.log(JSON.stringify(plane, null, 2));
+
+        db.close();
+      })
+      .catch((err) => {
+        console.error(err);
+        db.close();
+        process.exit(1);
+      });
+  } else {
+    // Batch verification
+    const maxPlanes = Number.parseInt(args.find((a) => !a.startsWith("--")) || "5", 10);
+
+    console.log(
+      `Running Starlink verification for up to ${maxPlanes} planes${forceAll ? " (FORCE ALL - ignoring rate limits)" : ""}...\n`
+    );
+
+    runVerificationBatch(maxPlanes, VERIFICATION_DELAY_MS, forceAll)
+      .then((stats) => {
+        console.log("\n=== Batch Results ===");
+        console.log(`Checked: ${stats.checked}`);
+        console.log(`Starlink confirmed: ${stats.starlink}`);
+        console.log(`Not Starlink: ${stats.notStarlink}`);
+        console.log(`Errors: ${stats.errors}`);
+        console.log(`Skipped: ${stats.skipped}`);
+      })
+      .catch(console.error);
+  }
 }
