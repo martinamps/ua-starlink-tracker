@@ -595,8 +595,46 @@ export default function Page({
         </div>
       </div>
 
+      {/* Chrome Extension CTA */}
+      <div className="mb-2 py-4 flex flex-col items-center gap-3">
+        <span className="text-sm text-gray-600 font-medium">Works with Google Flights.</span>
+        <a
+          href="https://chromewebstore.google.com/detail/google-flights-starlink-i/jjfljoifenkfdbldliakmmjhdkbhehoi"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          <span className="inline-flex items-center gap-2 px-3 py-1.5 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-gray-800 transition-colors">
+            <svg
+              className="w-7 h-7"
+              viewBox="0 0 48 48"
+              xmlns="http://www.w3.org/2000/svg"
+              role="img"
+              aria-label="Chrome"
+            >
+              <path
+                fill="#EA4335"
+                d="M24 12c6.627 0 12 5.373 12 12h-12V12z"
+                transform="rotate(-120 24 24)"
+              />
+              <path fill="#4285F4" d="M24 12c6.627 0 12 5.373 12 12h-12V12z" />
+              <path
+                fill="#FBBC05"
+                d="M24 12c6.627 0 12 5.373 12 12h-12V12z"
+                transform="rotate(120 24 24)"
+              />
+              <path fill="#34A853" d="M12 24c0-3.314 1.343-6.314 3.515-8.485L24 24H12z" />
+              <path fill="#EA4335" d="M24 36c-3.314 0-6.314-1.343-8.485-3.515L24 24v12z" />
+              <path fill="#4285F4" d="M36 24c0 3.314-1.343 6.314-3.515 8.485L24 24h12z" />
+              <circle cx="24" cy="24" r="8" fill="#fff" />
+              <circle cx="24" cy="24" r="5" fill="#4285F4" />
+            </svg>
+            Add to Chrome
+          </span>
+        </a>
+      </div>
+
       {/* FAQ Section - Apple-inspired design */}
-      <div className="mt-16 mb-12">
+      <div className="mt-4 mb-12">
         <div className="text-center mb-12">
           <h2 className="text-3xl md:text-4xl font-semibold text-gray-900 mb-3">
             Everything you need to know

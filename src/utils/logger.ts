@@ -61,28 +61,26 @@ function log(level: LogLevel, message: string, data?: unknown) {
   const timestamp = formatTimestamp();
   const file = getCallerFile();
 
-  // Console output: "2026-01-01T21:18:03.610Z [flight-updater] Message"
-  let consoleMsg = `${timestamp} [${file}] ${message}`;
+  // Console + file output: "2026-01-01T21:18:03.610Z INFO [flight-updater] Message"
+  let msg = `${timestamp} ${level} [${file}] ${message}`;
   if (data !== undefined) {
-    consoleMsg += ` ${formatData(data)}`;
+    msg += ` ${formatData(data)}`;
   }
 
-  // File output includes level
-  const fileMsg = `${timestamp} [${level}] [${file}] ${message}${data !== undefined ? " " + formatData(data) : ""}`;
+  writeToFile(msg);
 
-  writeToFile(fileMsg);
-
-  // In subprocess mode, use stderr for all logs to keep stdout clean for JSON
-  const useStderr = process.env.SUBPROCESS_MODE === "1";
-
+  // Skip debug logs in production
   if (level === "DEBUG" && process.env.NODE_ENV === "production") {
     return;
   }
 
+  // In subprocess mode, use stderr for all logs to keep stdout clean for JSON
+  const useStderr = process.env.SUBPROCESS_MODE === "1";
+
   if (useStderr || level === "ERROR" || level === "WARN") {
-    console.error(consoleMsg);
+    console.error(msg);
   } else {
-    console.log(consoleMsg);
+    console.log(msg);
   }
 }
 

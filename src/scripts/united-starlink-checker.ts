@@ -117,7 +117,10 @@ export async function checkStarlinkStatus(
     });
 
     const url = `https://www.united.com/en/us/flightstatus/details/${flightNumber}/${date}/${origin}/${destination}/UA`;
-    info(`Fetching: ${url}`);
+    // Only log when running directly, not as subprocess (parent already logs context)
+    if (process.env.SUBPROCESS_MODE !== "1") {
+      info(`Fetching: ${url}`);
+    }
 
     // Navigate with a longer timeout
     await page.goto(url, {

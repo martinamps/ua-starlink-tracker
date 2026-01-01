@@ -163,11 +163,24 @@ The Docker container runs in production mode and expects a mounted volume for th
 - `NODE_ENV` - Set to "production" for production deployment
 - `PORT` - Server port (default: 3000)
 
+### Chrome Extension
+
+A companion Chrome extension is available that annotates Google Flights search results with Starlink availability:
+
+**Chrome Web Store:** https://chromewebstore.google.com/detail/google-flights-starlink-i/jjfljoifenkfdbldliakmmjhdkbhehoi
+
+The extension uses the `/api/check-flight` endpoint to check Starlink status for flights displayed on Google Flights. When modifying the API, ensure backwards compatibility to avoid breaking the extension.
+
+**API Contract (do not break):**
+- The `/api/check-flight` endpoint must continue to accept `flight_number` and `date` query parameters
+- The response must include `hasStarlink` (boolean) and `flights` (array) fields
+- CORS headers must allow requests from Google Flights domains
+
 ### API Documentation
 
 #### `/api/check-flight`
 
-Checks if a specific flight has Starlink capability on a given date. Perfect for browser extensions that want to highlight Starlink-capable flights on Google Flights or similar services.
+Checks if a specific flight has Starlink capability on a given date. Used by the Chrome extension to annotate Google Flights search results.
 
 **Method:** GET
 
