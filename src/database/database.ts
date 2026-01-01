@@ -18,7 +18,44 @@ function tableExists(db: Database, tableName: string) {
   return db.query("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(tableName);
 }
 
+export type VerificationSource = "united" | "flightradar24" | "spreadsheet";
+
+export interface VerificationLogEntry {
+  id?: number;
+  tail_number: string;
+  source: VerificationSource;
+  checked_at: number;
+  has_starlink: boolean | null;
+  wifi_provider: string | null;
+  aircraft_type: string | null;
+  flight_number: string | null;
+  error: string | null;
+}
+
 function setupTables(db: Database) {
+  // Create starlink_verification_log table
+  if (!tableExists(db, "starlink_verification_log")) {
+    db.query(`
+      CREATE TABLE starlink_verification_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        tail_number TEXT NOT NULL,
+        source TEXT NOT NULL,
+        checked_at INTEGER NOT NULL,
+        has_starlink INTEGER,
+        wifi_provider TEXT,
+        aircraft_type TEXT,
+        flight_number TEXT,
+        error TEXT
+      );
+    `).run();
+
+    // Create index for fast lookups by tail_number and source
+    db.query(`
+      CREATE INDEX idx_verification_tail_source
+      ON starlink_verification_log(tail_number, source, checked_at DESC);
+    `).run();
+  }
+
   if (!tableExists(db, "starlink_planes")) {
     db.query(
       `
@@ -398,4 +435,235 @@ export function needsFlightCheck(db: Database, tailNumber: string, hoursThreshol
 
   const thresholdHours = 4 + Math.random() * 4;
   return hoursSinceLastCheck > thresholdHours;
+}
+
+// ============================================
+// Starlink Verification Log Functions
+// ============================================
+
+/**
+ * Log a verification check result
+ */
+export function logVerification(
+  db: Database,
+  entry: Omit<VerificationLogEntry, "id" | "checked_at">
+): void {
+  const now = Math.floor(Date.now() / 1000);
+  db.query(`
+    INSERT INTO starlink_verification_log
+    (tail_number, source, checked_at, has_starlink, wifi_provider, aircraft_type, flight_number, error)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    entry.tail_number,
+    entry.source,
+    now,
+    entry.has_starlink === null ? null : entry.has_starlink ? 1 : 0,
+    entry.wifi_provider,
+    entry.aircraft_type,
+    entry.flight_number,
+    entry.error
+  );
+}
+
+/**
+ * Get the last verification for a tail number from a specific source
+ */
+export function getLastVerification(
+  db: Database,
+  tailNumber: string,
+  source: VerificationSource
+): VerificationLogEntry | null {
+  const row = db
+    .query(`
+    SELECT * FROM starlink_verification_log
+    WHERE tail_number = ? AND source = ?
+    ORDER BY checked_at DESC
+    LIMIT 1
+  `)
+    .get(tailNumber, source) as {
+    id: number;
+    tail_number: string;
+    source: string;
+    checked_at: number;
+    has_starlink: number | null;
+    wifi_provider: string | null;
+    aircraft_type: string | null;
+    flight_number: string | null;
+    error: string | null;
+  } | null;
+
+  if (!row) return null;
+
+  return {
+    id: row.id,
+    tail_number: row.tail_number,
+    source: row.source as VerificationSource,
+    checked_at: row.checked_at,
+    has_starlink: row.has_starlink === null ? null : row.has_starlink === 1,
+    wifi_provider: row.wifi_provider,
+    aircraft_type: row.aircraft_type,
+    flight_number: row.flight_number,
+    error: row.error,
+  };
+}
+
+/**
+ * Check if a plane needs verification from a specific source
+ * Default rate limit: 72 hours for United, 24 hours for FR24
+ */
+export function needsVerification(
+  db: Database,
+  tailNumber: string,
+  source: VerificationSource,
+  hoursThreshold?: number
+): boolean {
+  // Default thresholds by source
+  const defaultThresholds: Record<VerificationSource, number> = {
+    united: 72, // 3 days for United (to avoid spam)
+    flightradar24: 24, // 1 day for FR24
+    spreadsheet: 1, // 1 hour for spreadsheet (primary source)
+  };
+
+  const threshold = hoursThreshold ?? defaultThresholds[source];
+  const now = Math.floor(Date.now() / 1000);
+  const cutoff = now - threshold * 3600;
+
+  const lastCheck = db
+    .query(`
+    SELECT checked_at FROM starlink_verification_log
+    WHERE tail_number = ? AND source = ? AND checked_at > ?
+    ORDER BY checked_at DESC
+    LIMIT 1
+  `)
+    .get(tailNumber, source, cutoff) as { checked_at: number } | null;
+
+  return !lastCheck;
+}
+
+/**
+ * Get verification history for a tail number
+ */
+export function getVerificationHistory(
+  db: Database,
+  tailNumber: string,
+  limit = 10
+): VerificationLogEntry[] {
+  const rows = db
+    .query(`
+    SELECT * FROM starlink_verification_log
+    WHERE tail_number = ?
+    ORDER BY checked_at DESC
+    LIMIT ?
+  `)
+    .all(tailNumber, limit) as Array<{
+    id: number;
+    tail_number: string;
+    source: string;
+    checked_at: number;
+    has_starlink: number | null;
+    wifi_provider: string | null;
+    aircraft_type: string | null;
+    flight_number: string | null;
+    error: string | null;
+  }>;
+
+  return rows.map((row) => ({
+    id: row.id,
+    tail_number: row.tail_number,
+    source: row.source as VerificationSource,
+    checked_at: row.checked_at,
+    has_starlink: row.has_starlink === null ? null : row.has_starlink === 1,
+    wifi_provider: row.wifi_provider,
+    aircraft_type: row.aircraft_type,
+    flight_number: row.flight_number,
+    error: row.error,
+  }));
+}
+
+/**
+ * Get planes that need United verification (haven't been checked in 72 hours)
+ */
+export function getPlanesNeedingUnitedVerification(db: Database, limit = 10): string[] {
+  const now = Math.floor(Date.now() / 1000);
+  const cutoff = now - 72 * 3600; // 72 hours ago
+
+  // Get planes that either:
+  // 1. Have never been verified by United
+  // 2. Were last verified more than 72 hours ago
+  const rows = db
+    .query(`
+    SELECT sp.TailNumber
+    FROM starlink_planes sp
+    LEFT JOIN (
+      SELECT tail_number, MAX(checked_at) as last_check
+      FROM starlink_verification_log
+      WHERE source = 'united'
+      GROUP BY tail_number
+    ) vl ON sp.TailNumber = vl.tail_number
+    WHERE vl.last_check IS NULL OR vl.last_check < ?
+    ORDER BY COALESCE(vl.last_check, 0) ASC
+    LIMIT ?
+  `)
+    .all(cutoff, limit) as { TailNumber: string }[];
+
+  return rows.map((r) => r.TailNumber);
+}
+
+/**
+ * Get verification stats summary
+ */
+export function getVerificationStats(db: Database): {
+  total_checks: number;
+  checks_by_source: Record<VerificationSource, number>;
+  verified_starlink: number;
+  verified_not_starlink: number;
+  errors: number;
+  last_24h_checks: number;
+} {
+  const total = db.query("SELECT COUNT(*) as count FROM starlink_verification_log").get() as {
+    count: number;
+  };
+
+  const bySource = db
+    .query(`
+    SELECT source, COUNT(*) as count FROM starlink_verification_log GROUP BY source
+  `)
+    .all() as { source: string; count: number }[];
+
+  const verified = db
+    .query(`
+    SELECT
+      SUM(CASE WHEN has_starlink = 1 THEN 1 ELSE 0 END) as starlink,
+      SUM(CASE WHEN has_starlink = 0 THEN 1 ELSE 0 END) as not_starlink,
+      SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) as errors
+    FROM starlink_verification_log
+  `)
+    .get() as { starlink: number; not_starlink: number; errors: number };
+
+  const now = Math.floor(Date.now() / 1000);
+  const last24h = db
+    .query(`
+    SELECT COUNT(*) as count FROM starlink_verification_log WHERE checked_at > ?
+  `)
+    .get(now - 24 * 3600) as { count: number };
+
+  const sourceMap: Record<VerificationSource, number> = {
+    united: 0,
+    flightradar24: 0,
+    spreadsheet: 0,
+  };
+  for (const row of bySource) {
+    if (row.source in sourceMap) {
+      sourceMap[row.source as VerificationSource] = row.count;
+    }
+  }
+
+  return {
+    total_checks: total.count,
+    checks_by_source: sourceMap,
+    verified_starlink: verified.starlink || 0,
+    verified_not_starlink: verified.not_starlink || 0,
+    errors: verified.errors || 0,
+    last_24h_checks: last24h.count,
+  };
 }

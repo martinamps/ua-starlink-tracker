@@ -4,16 +4,23 @@
     "dev": "bun --watch server.ts",
     "start": "bun server.ts",
     "scrape": "bun run scrape.ts",
+    "scrape-fr24": "PLAYWRIGHT_BROWSERS_PATH=./.playwright-browsers bun run src/scripts/flightradar24-scraper.ts",
     "update-flights": "bun -e \"import('./src/api/flight-updater.ts').then(m => m.updateAllFlights())\"",
+    "check-starlink": "PLAYWRIGHT_BROWSERS_PATH=./.playwright-browsers bun run src/scripts/united-starlink-checker.ts",
+    "verify-starlink": "PLAYWRIGHT_BROWSERS_PATH=./.playwright-browsers bun run src/scripts/starlink-verifier.ts",
+    "install-browser": "PLAYWRIGHT_BROWSERS_PATH=./.playwright-browsers bunx playwright install chromium",
     "lint": "biome check .",
     "format": "biome format --write .",
     "lint:fix": "biome check --write .",
     "prepare": "husky"
   },
   "dependencies": {
+    "dotenv": "^16.6.1",
+    "playwright": "^1.57.0",
+    "playwright-extra": "^4.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "dotenv": "^16.6.1"
+    "react-dom": "^18.3.1"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
