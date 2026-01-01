@@ -1,4 +1,5 @@
 import { existsSync, writeFileSync } from "node:fs";
+import { error as logError } from "./logger";
 
 /**
  * CSV Fetch & Parse Logic
@@ -185,8 +186,8 @@ export async function fetchAllSheets() {
 
         starlinkAircraft.push(aircraft);
       }
-    } catch (error) {
-      console.error(`Failed to fetch sheet with gid=${sheet.gid}: `, error);
+    } catch (err) {
+      logError(`Failed to fetch sheet with gid=${sheet.gid}`, err);
     }
   }
 

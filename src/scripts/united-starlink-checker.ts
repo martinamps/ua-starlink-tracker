@@ -3,7 +3,7 @@ import path from "node:path";
 import type { Browser, Page } from "playwright";
 import { chromium } from "playwright-extra";
 import StealthPlugin from "puppeteer-extra-plugin-stealth";
-import { LOG_DIR } from "../utils/logger";
+import { LOG_DIR, info, warn } from "../utils/logger";
 
 // Add stealth plugin to avoid detection
 chromium.use(StealthPlugin());
@@ -58,7 +58,7 @@ ${html}`;
     fs.writeFileSync(filepath, debugHtml);
     return filepath;
   } catch (err) {
-    console.error("Failed to save debug HTML:", err);
+    warn("Failed to save debug HTML", err);
     return "";
   }
 }
@@ -117,7 +117,7 @@ export async function checkStarlinkStatus(
     });
 
     const url = `https://www.united.com/en/us/flightstatus/details/${flightNumber}/${date}/${origin}/${destination}/UA`;
-    console.log(`Fetching: ${url}`);
+    info(`Fetching: ${url}`);
 
     // Navigate with a longer timeout
     await page.goto(url, {

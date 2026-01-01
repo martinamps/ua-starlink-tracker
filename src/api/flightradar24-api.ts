@@ -5,6 +5,7 @@
 
 import type { Flight } from "../types";
 import { normalizeFlightNumber } from "../utils/constants";
+import { error, info, warn } from "../utils/logger";
 
 type FlightUpdate = Pick<
   Flight,
@@ -115,7 +116,7 @@ export class FlightRadar24API {
           const jitter = Math.random() * 1000;
           const delay = baseDelay + jitter;
 
-          console.log(
+          warn(
             `FR24 API error: ${errorMessage} - waiting ${Math.round(delay / 1000)}s before retry ${attempt + 1}/${maxRetries}`
           );
           await new Promise((resolve) => setTimeout(resolve, delay));
@@ -146,7 +147,7 @@ export class FlightRadar24API {
 
       if (!response.ok) {
         if (response.status === 404) {
-          console.log(`No flights found for tail number: ${tailNumber}`);
+          info(`No flights found for tail number: ${tailNumber}`);
           return [];
         }
         throw new Error(`FlightRadar24 API error: ${response.status} ${response.statusText}`);
@@ -208,8 +209,8 @@ export class FlightRadar24API {
       try {
         const flights = await this.getUpcomingFlights(tailNumber);
         results.set(tailNumber, flights);
-      } catch (error) {
-        console.error(`Error fetching flights for ${tailNumber}:`, error);
+      } catch (err) {
+        error(`Error fetching flights for ${tailNumber}`, err);
         results.set(tailNumber, []);
       }
     }

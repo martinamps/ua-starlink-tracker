@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import type { Aircraft, FleetStats, Flight } from "../types";
 import { DB_PATH } from "../utils/constants";
+import { info } from "../utils/logger";
 
 type MetaRow = { value: string };
 
@@ -10,6 +11,11 @@ export function initializeDatabase() {
   }
 
   const db = new Database(DB_PATH);
+
+  // Enable WAL mode for better concurrent access (prevents SQLITE_BUSY errors)
+  db.exec("PRAGMA journal_mode = WAL");
+  db.exec("PRAGMA busy_timeout = 5000"); // Wait up to 5s if database is locked
+
   setupTables(db);
   return db;
 }
@@ -169,7 +175,7 @@ function setupTables(db: Database) {
     }
 
     if (migrationsRun.length > 0) {
-      console.log(`Database migrations completed: ${migrationsRun.join(", ")}`);
+      info(`Database migrations completed: ${migrationsRun.join(", ")}`);
     }
   }
 }

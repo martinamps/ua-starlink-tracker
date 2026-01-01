@@ -4,6 +4,18 @@ import path from "node:path";
 import React from "react";
 import ReactDOMServer from "react-dom/server";
 
+import { info, error as logError } from "./src/utils/logger";
+
+// Global error handlers to prevent silent crashes
+process.on("unhandledRejection", (reason) => {
+  logError("Unhandled Rejection", reason);
+});
+
+process.on("uncaughtException", (err) => {
+  logError("Uncaught Exception", err);
+  // Don't exit - try to keep the server running
+});
+
 import { checkNewPlanes, startFlightUpdater } from "./src/api/flight-updater";
 import Page from "./src/components/page";
 import {
@@ -52,9 +64,7 @@ async function getHtmlTemplate(): Promise<string> {
 const db = initializeDatabase();
 
 // Log startup info
-console.log(
-  `Server starting on port ${PORT}. Environment: ${process.env.NODE_ENV || "development"}`
-);
+info(`Server starting on port ${PORT}. Environment: ${process.env.NODE_ENV || "development"}`);
 
 // Data update function
 async function updateStarlinkData() {
@@ -63,7 +73,7 @@ async function updateStarlinkData() {
 
     updateDatabase(db, totalAircraftCount, starlinkAircraft, fleetStats);
 
-    console.log(
+    info(
       `Updated data: ${starlinkAircraft.length} Starlink aircraft out of ${totalAircraftCount} total`
     );
 
@@ -75,20 +85,20 @@ async function updateStarlinkData() {
       starlinkCount: starlinkAircraft.length,
     };
   } catch (err) {
-    console.error("Error updating starlink data:", err);
+    logError("Error updating starlink data", err);
     return { total: 0, starlinkCount: 0 };
   }
 }
 
 // fill gaps we may have missed
-console.log("Checking for new planes...");
-checkNewPlanes().catch((err) => console.error("Error checking new planes on startup:", err));
+info("Checking for new planes...");
+checkNewPlanes().catch((err) => logError("Error checking new planes on startup", err));
 
 // Initialize data and schedule updates
 updateStarlinkData();
 setInterval(
   () => {
-    console.log("Running scheduled update...");
+    info("Running scheduled update...");
     updateStarlinkData();
   },
   60 * 60 * 1000
@@ -481,8 +491,8 @@ Bun.serve({
             },
           });
         }
-      } catch (error) {
-        console.error(`Error serving static file ${filePath}:`, error);
+      } catch (err) {
+        logError(`Error serving static file ${filePath}`, err);
       }
     }
 
@@ -498,4 +508,4 @@ Bun.serve({
 startFlightUpdater();
 startStarlinkVerifier();
 
-console.log(`Server running at http://localhost:${PORT}`);
+info(`Server running at http://localhost:${PORT}`);

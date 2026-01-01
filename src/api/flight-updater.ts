@@ -8,6 +8,7 @@ import {
 } from "../database/database";
 import type { Aircraft, Flight } from "../types";
 import { FLIGHT_DATA_SOURCE } from "../utils/constants";
+import { error, info } from "../utils/logger";
 import { FlightAwareAPI } from "./flightaware-api";
 import { FlightRadar24API } from "./flightradar24-api";
 
@@ -28,21 +29,21 @@ function createFlightAPI(): FlightAPI | null {
   const source = FLIGHT_DATA_SOURCE;
 
   if (source === "flightradar24") {
-    console.log("Using FlightRadar24 API (free)");
+    info("Using FlightRadar24 API (free)");
     return new FlightRadar24API();
   }
 
   if (source === "flightaware") {
     const apiKey = process.env.AEROAPI_KEY;
     if (!apiKey) {
-      console.error("AEROAPI_KEY environment variable not set for FlightAware");
+      error("AEROAPI_KEY environment variable not set for FlightAware");
       return null;
     }
-    console.log("Using FlightAware API (requires API key)");
+    info("Using FlightAware API (requires API key)");
     return new FlightAwareAPI(apiKey);
   }
 
-  console.error(`Unknown flight data source: ${source}`);
+  error(`Unknown flight data source: ${source}`);
   return null;
 }
 
@@ -51,27 +52,27 @@ async function updateFlightsForTailNumber(api: FlightAPI, tailNumber: string): P
   const db = initializeDatabase();
 
   try {
-    console.log(`Fetching upcoming flights for ${tailNumber}`);
+    info(`Fetching upcoming flights for ${tailNumber}`);
     const flights = await api.getUpcomingFlights(tailNumber);
 
     if (flights.length === 0) {
-      console.log(`No upcoming flights found for ${tailNumber}`);
+      info(`No upcoming flights found for ${tailNumber}`);
     } else {
-      console.log(`Found ${flights.length} upcoming flights for ${tailNumber}`);
+      info(`Found ${flights.length} upcoming flights for ${tailNumber}`);
     }
 
     updateFlights(db, tailNumber, flights);
     updateLastFlightCheck(db, tailNumber, true);
 
-    console.log(`Successfully updated ${flights.length} upcoming flights for ${tailNumber}`);
+    info(`Successfully updated ${flights.length} upcoming flights for ${tailNumber}`);
     success = true;
-  } catch (error) {
-    console.error(`Failed to update flights for ${tailNumber}:`, error);
+  } catch (err) {
+    error(`Failed to update flights for ${tailNumber}`, err);
 
     try {
       updateLastFlightCheck(db, tailNumber, false);
     } catch (updateError) {
-      console.error(`Failed to update last check status for ${tailNumber}:`, updateError);
+      error(`Failed to update last check status for ${tailNumber}`, updateError);
     }
   } finally {
     db.close();
@@ -113,12 +114,12 @@ async function processPlanesInBatches(api: FlightAPI, planes: Aircraft[], batchS
   if (circuitBreakerOpenedAt) {
     const timeSinceOpened = Date.now() - circuitBreakerOpenedAt;
     if (timeSinceOpened < CIRCUIT_BREAKER_RESET_TIME) {
-      console.log(
+      info(
         `Circuit breaker is open. Will retry in ${Math.round((CIRCUIT_BREAKER_RESET_TIME - timeSinceOpened) / 1000)}s`
       );
       return { updatedCount: 0, apiCallCount: 0 };
     }
-    console.log("Circuit breaker reset, retrying API calls...");
+    info("Circuit breaker reset, retrying API calls...");
     circuitBreakerOpenedAt = null;
     consecutiveApiFailures = 0;
   }
@@ -137,12 +138,10 @@ async function processPlanesInBatches(api: FlightAPI, planes: Aircraft[], batchS
     db.close();
   }
 
-  console.log(
-    `${planesToUpdate.length} aircraft need flight updates out of ${planes.length} total`
-  );
+  info(`${planesToUpdate.length} aircraft need flight updates out of ${planes.length} total`);
 
   if (planesToUpdate.length === 0) {
-    console.log("No aircraft need flight updates at this time");
+    info("No aircraft need flight updates at this time");
     return { updatedCount: 0, apiCallCount: 0 };
   }
 
@@ -163,7 +162,7 @@ async function processPlanesInBatches(api: FlightAPI, planes: Aircraft[], batchS
             consecutiveApiFailures++;
             if (consecutiveApiFailures >= MAX_CONSECUTIVE_FAILURES) {
               circuitBreakerOpenedAt = Date.now();
-              console.error(
+              error(
                 `Circuit breaker opened after ${MAX_CONSECUTIVE_FAILURES} consecutive API failures`
               );
             }
@@ -176,12 +175,12 @@ async function processPlanesInBatches(api: FlightAPI, planes: Aircraft[], batchS
           success: result.success,
           tailNumber: plane.TailNumber,
         };
-      } catch (error) {
-        console.error(`Error processing ${plane.TailNumber}:`, error);
+      } catch (err) {
+        error(`Error processing ${plane.TailNumber}`, err);
         consecutiveApiFailures++;
         if (consecutiveApiFailures >= MAX_CONSECUTIVE_FAILURES) {
           circuitBreakerOpenedAt = Date.now();
-          console.error(
+          error(
             `Circuit breaker opened after ${MAX_CONSECUTIVE_FAILURES} consecutive API failures`
           );
         }
@@ -204,9 +203,7 @@ async function processPlanesInBatches(api: FlightAPI, planes: Aircraft[], batchS
 
     if (i + batchSize < planesToUpdate.length) {
       const batchDelay = createJitteredDelay(5000, 3000);
-      console.log(
-        `Batch completed, waiting ${Math.round(batchDelay / 1000)}s before next batch...`
-      );
+      info(`Batch completed, waiting ${Math.round(batchDelay / 1000)}s before next batch...`);
       await new Promise((resolve) => setTimeout(resolve, batchDelay));
     }
   }
@@ -217,7 +214,7 @@ async function processPlanesInBatches(api: FlightAPI, planes: Aircraft[], batchS
 export async function updateAllFlights() {
   const api = createFlightAPI();
   if (!api) {
-    console.error("Failed to create flight API");
+    error("Failed to create flight API");
     return;
   }
 
@@ -225,12 +222,12 @@ export async function updateAllFlights() {
   const planes = getStarlinkPlanes(db);
   db.close();
 
-  console.log(`Checking flight updates for ${planes.length} Starlink aircraft...`);
-  console.log(`Data source: ${FLIGHT_DATA_SOURCE}`);
+  info(`Checking flight updates for ${planes.length} Starlink aircraft...`);
+  info(`Data source: ${FLIGHT_DATA_SOURCE}`);
 
   const { updatedCount, apiCallCount } = await processPlanesInBatches(api, planes, 5);
 
-  console.log(
+  info(
     `Flight updates completed: ${updatedCount} aircraft updated, ${apiCallCount} API calls made`
   );
 }
@@ -242,7 +239,7 @@ export async function updateAllFlights() {
 export async function checkNewPlanes() {
   const api = createFlightAPI();
   if (!api) {
-    console.log("Flight API not available, skipping new plane flight checks");
+    info("Flight API not available, skipping new plane flight checks");
     return;
   }
 
@@ -262,11 +259,11 @@ export async function checkNewPlanes() {
     return;
   }
 
-  console.log(`Found ${newPlanes.length} new plane(s), checking flights immediately...`);
+  info(`Found ${newPlanes.length} new plane(s), checking flights immediately...`);
 
   const { updatedCount, apiCallCount } = await processPlanesInBatches(api, newPlanes, 5);
 
-  console.log(
+  info(
     `New plane flight check completed: ${updatedCount} planes updated, ${apiCallCount} API calls made`
   );
 }
@@ -275,8 +272,8 @@ export function startFlightUpdater() {
   const safeUpdateAllFlights = async () => {
     try {
       await updateAllFlights();
-    } catch (error) {
-      console.error("Unhandled error in flight updater:", error);
+    } catch (err) {
+      error("Unhandled error in flight updater", err);
     }
   };
 

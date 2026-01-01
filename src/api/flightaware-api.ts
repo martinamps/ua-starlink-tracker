@@ -1,5 +1,6 @@
 import type { Flight } from "../types";
 import { normalizeFlightNumber } from "../utils/constants";
+import { info, warn } from "../utils/logger";
 
 interface FlightAwareConfig {
   apiKey: string;
@@ -61,7 +62,7 @@ export class FlightAwareAPI {
           const jitter = Math.random() * 5000;
           const delay = baseDelay + jitter;
 
-          console.log(
+          warn(
             `Rate limited (429), waiting ${Math.round(delay / 1000)}s before retry ${attempt + 1}/${maxRetries}`
           );
           await new Promise((resolve) => setTimeout(resolve, delay));
@@ -86,7 +87,7 @@ export class FlightAwareAPI {
 
       if (!response.ok) {
         if (response.status === 404) {
-          console.log(`No flights found for tail number: ${tailNumber}`);
+          info(`No flights found for tail number: ${tailNumber}`);
           return [];
         }
         throw new Error(`FlightAware API error: ${response.status} ${response.statusText}`);

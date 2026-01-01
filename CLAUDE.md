@@ -19,6 +19,19 @@ bun run start
 
 # Manually run the scraper to get current data (outputs to console)
 bun run scrape
+
+# Run Starlink verification manually (checks N planes against United.com)
+bun run verify-starlink         # Check up to 5 planes
+bun run verify-starlink 10      # Check up to 10 planes
+bun run verify-starlink --force # Force re-check all planes (ignore rate limits)
+bun run verify-starlink --tail=N12345  # Check a specific tail number
+
+# Check a single flight's Starlink status on United.com
+bun run check-starlink <flightNumber> <date> <origin> <destination>
+# Example: bun run check-starlink 4680 2026-01-01 AUS DEN
+
+# View database status including verification stats
+bun run db-status
 ```
 
 ## Architecture
@@ -39,16 +52,30 @@ bun run scrape
    - `src/api/flight-updater.ts` - Smart flight data updates with 6-hour caching and staggered checks
    - Includes exponential backoff with jitter for API rate limiting (429 errors)
 
-4. **Type System**
+4. **Starlink Verification System**
+   - `src/scripts/starlink-verifier.ts` - Background verification runner that checks Starlink status against United.com
+   - `src/scripts/united-starlink-checker.ts` - Playwright-based scraper that visits United.com flight status pages to extract WiFi provider info
+   - Uses Playwright with stealth plugin to avoid detection
+   - Verifies spreadsheet data by checking actual flight status pages for WiFi provider (Starlink, Panasonic, Viasat, Gogo, or None)
+   - Stores verification results in `starlink_verification_log` table with `verified_wifi` column on planes
+
+5. **Unified Logger** (`src/utils/logger.ts`)
+   - Auto-detects calling filename from stack trace - no manual prefixes needed
+   - Consistent format: `2026-01-01T21:18:03.610Z [filename] message`
+   - Log levels: `info`, `warn`, `error`, `debug`
+   - Writes to both console and `logs/app.log`
+   - Usage: `import { info, error } from "../utils/logger"; info("message");`
+
+6. **Type System**
    - `src/types.ts` - Shared TypeScript interfaces for Aircraft, Flight, FleetStats, and ApiResponse
    - Ensures type safety across the entire application
 
-5. **Web Server**
+7. **Web Server**
    - `server.ts` - Bun HTTP server with improved template handling using `Bun.file()` and `import.meta.dir`
    - `src/utils/constants.ts` - Configuration values, content strings, and security settings
    - `src/utils/not-found.ts` - 404 page generator
 
-6. **Frontend**
+8. **Frontend**
    - `src/components/page.tsx` - React component with responsive design and mobile-optimized flight display
    - `index.html` - Simplified HTML template for server-side rendering
    - Desktop: Table layout with full flight information
@@ -82,6 +109,20 @@ bun run scrape
 - **Desktop**: Full table with flight information column showing 3 flights per aircraft
 - **Mobile**: Card-based layout with all aircraft details and 2 flights per card
 - Clean typography and visual hierarchy optimized for aviation enthusiasts
+
+#### Starlink Verification System
+The verifier cross-checks spreadsheet data against United.com to confirm WiFi providers:
+
+- **Background Process**: `startStarlinkVerifier()` runs automatically when the server starts
+- **Scheduling**: Checks 1 plane every ~60 seconds (±15s jitter) to distribute load
+- **Rate Limiting**: Each plane is re-verified every 48-96 hours (jittered around 72h)
+- **Data Source**: Fetches plane/flight data from the `/api/data` endpoint, then visits United.com flight status pages
+- **Playwright Scraping**: Uses `united-starlink-checker.ts` with stealth plugin to scrape flight status pages
+- **URL Pattern**: `https://www.united.com/en/us/flightstatus/details/{flightNumber}/{date}/{origin}/{destination}/UA`
+- **Detection**: Looks for "Internet by Starlink", "Internet by Panasonic", etc. in page content
+- **Storage**: Results stored in `starlink_verification_log` table; `verified_wifi` column updated on planes
+- **Mismatch Detection**: `getWifiMismatches()` finds planes where spreadsheet and United.com disagree
+- **Logging**: Writes to `logs/verifier.log` with structured JSON output
 
 #### Data Integrity
 - Database migration logic for schema updates
