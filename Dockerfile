@@ -24,7 +24,8 @@ RUN apt-get update && apt-get install -y \
 COPY package.json .
 RUN bun install
 
-# Install Playwright's bundled Chromium (guaranteed compatible)
+# Install Playwright's bundled Chromium to the same path used by scripts
+ENV PLAYWRIGHT_BROWSERS_PATH=/app/.playwright-browsers
 RUN bunx playwright install chromium
 
 COPY . .
