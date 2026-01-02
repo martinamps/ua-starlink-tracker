@@ -336,15 +336,92 @@ export function startFleetDiscovery(mode: "discovery" | "maintenance" = "mainten
   info(`Fleet discovery started in ${mode} mode (every ${intervalMs / 1000}s)`);
 }
 
+/**
+ * Verify a specific tail number manually
+ */
+async function verifySpecificTail(tailNumber: string): Promise<void> {
+  const db = initializeDatabase();
+
+  try {
+    console.log(`\nVerifying ${tailNumber}...\n`);
+
+    // Get flights from FR24
+    const flightData = await getUpcomingFlightsForPlane(tailNumber);
+
+    if (!flightData) {
+      console.log(`No upcoming flights found for ${tailNumber}`);
+      db.close();
+      return;
+    }
+
+    const { forVerification, allFlights } = flightData;
+    console.log(`Found ${allFlights.length} upcoming flights`);
+    console.log(
+      `Checking via UA${forVerification.flightNumber} ${forVerification.origin}-${forVerification.destination} on ${forVerification.date}\n`
+    );
+
+    // Check Starlink status
+    const result = await checkStarlinkStatusSubprocess(
+      forVerification.flightNumber,
+      forVerification.date,
+      forVerification.origin,
+      forVerification.destination
+    );
+
+    console.log("=== Result ===");
+    console.log(`Has Starlink: ${result.hasStarlink}`);
+    console.log(`WiFi Provider: ${result.wifiProvider || "unknown"}`);
+    console.log(`Aircraft Type: ${result.aircraftType || "unknown"}`);
+    if (result.error) console.log(`Error: ${result.error}`);
+
+    // If Starlink found, add to database
+    if (result.hasStarlink && result.wifiProvider === "Starlink") {
+      // Check if already in starlink_planes
+      const existing = db
+        .query("SELECT id FROM starlink_planes WHERE TailNumber = ?")
+        .get(tailNumber);
+
+      if (existing) {
+        console.log(`\n${tailNumber} already in database, updating flights...`);
+        updateFlights(db, tailNumber, allFlights);
+      } else {
+        console.log(`\nAdding ${tailNumber} to database with ${allFlights.length} flights...`);
+        addDiscoveredStarlinkPlane(
+          db,
+          tailNumber,
+          result.aircraftType || null,
+          "Starlink",
+          null,
+          "express"
+        );
+        updateFlights(db, tailNumber, allFlights);
+      }
+      console.log("Done!");
+    } else {
+      console.log(`\n${tailNumber} does not have Starlink, not adding to database.`);
+    }
+  } finally {
+    db.close();
+  }
+}
+
 // CLI usage
 if (import.meta.main) {
   const args = process.argv.slice(2);
   const mode = args.find((a) => a === "--discovery" || a === "--maintenance") || "--maintenance";
   const batch = args.find((a) => a.startsWith("--batch="));
   const batchSize = batch ? Number.parseInt(batch.split("=")[1], 10) : 0;
+  const tailArg = args.find((a) => a.startsWith("--tail="));
+  const tailNumber = tailArg?.split("=")[1];
   const stats = args.includes("--stats");
 
-  if (stats) {
+  if (tailNumber) {
+    // Verify a specific tail
+    verifySpecificTail(tailNumber).catch((err) => {
+      console.error("Verification failed:", err);
+      process.exit(1);
+    });
+  } else if (stats) {
     // Just show stats
     const db = initializeDatabase();
     const fleetStats = getFleetDiscoveryStats(db);

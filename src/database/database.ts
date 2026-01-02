@@ -283,7 +283,8 @@ export function updateDatabase(
   }
 
   // Update meta data
-  db.query("DELETE FROM starlink_planes").run();
+  // Only delete spreadsheet planes, preserve discovered ones (sheet_gid = 'discovery')
+  db.query("DELETE FROM starlink_planes WHERE sheet_gid != 'discovery'").run();
   db.query(`INSERT OR REPLACE INTO meta (key, value) VALUES ('totalAircraftCount', ?)`).run(
     String(totalAircraftCount)
   );
@@ -300,6 +301,15 @@ export function updateDatabase(
     }
   }
 
+  // Get discovered planes so we don't duplicate them
+  const discoveredTails = new Set(
+    (
+      db.query("SELECT TailNumber FROM starlink_planes WHERE sheet_gid = 'discovery'").all() as {
+        TailNumber: string;
+      }[]
+    ).map((r) => r.TailNumber)
+  );
+
   // Insert aircraft data
   const insertStmt = db.prepare(`
     INSERT INTO starlink_planes (aircraft, wifi, sheet_gid, sheet_type, DateFound, TailNumber, OperatedBy, fleet, last_flight_check, last_check_successful, consecutive_failures, verified_wifi, verified_at)
@@ -308,6 +318,11 @@ export function updateDatabase(
 
   for (const aircraft of starlinkAircraft) {
     const tailNumber = aircraft.TailNumber || "";
+
+    // Skip if this plane was already discovered (it will be in the table with sheet_gid='discovery')
+    if (discoveredTails.has(tailNumber)) {
+      continue;
+    }
 
     // Preserve existing DateFound or use new one, fallback to today only for truly new aircraft
     const dateFound =
