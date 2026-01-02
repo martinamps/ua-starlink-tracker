@@ -16,6 +16,7 @@ import {
   initializeDatabase,
   logVerification,
   updateFleetVerificationResult,
+  updateFlights,
 } from "../database/database";
 import type { FleetAircraft, StarlinkStatus } from "../types";
 import { info, error as logError, warn } from "../utils/logger";
@@ -52,14 +53,28 @@ function extractFlightNumber(flightNumber: string): string {
   return match ? match[1] : flightNumber;
 }
 
-/**
- * Get an upcoming flight for a plane using FR24 API
- */
-async function getUpcomingFlightForPlane(tailNumber: string): Promise<{
+interface FlightInfo {
   flightNumber: string;
   date: string;
   origin: string;
   destination: string;
+  // Raw flight data for storage
+  raw: {
+    flight_number: string;
+    departure_airport: string;
+    arrival_airport: string;
+    departure_time: number;
+    arrival_time: number;
+  };
+}
+
+/**
+ * Get upcoming flights for a plane using FR24 API
+ * Returns all flights for storage, plus the first one formatted for verification
+ */
+async function getUpcomingFlightsForPlane(tailNumber: string): Promise<{
+  forVerification: Omit<FlightInfo, "raw">;
+  allFlights: FlightInfo["raw"][];
 } | null> {
   try {
     const flights = await fr24Api.getUpcomingFlights(tailNumber);
@@ -68,14 +83,23 @@ async function getUpcomingFlightForPlane(tailNumber: string): Promise<{
       return null;
     }
 
-    const flight = flights[0];
-    const departureDate = new Date(flight.departure_time * 1000).toISOString().split("T")[0];
+    const firstFlight = flights[0];
+    const departureDate = new Date(firstFlight.departure_time * 1000).toISOString().split("T")[0];
 
     return {
-      flightNumber: extractFlightNumber(flight.flight_number),
-      date: departureDate,
-      origin: icaoToIata(flight.departure_airport),
-      destination: icaoToIata(flight.arrival_airport),
+      forVerification: {
+        flightNumber: extractFlightNumber(firstFlight.flight_number),
+        date: departureDate,
+        origin: icaoToIata(firstFlight.departure_airport),
+        destination: icaoToIata(firstFlight.arrival_airport),
+      },
+      allFlights: flights.map((f) => ({
+        flight_number: f.flight_number,
+        departure_airport: f.departure_airport,
+        arrival_airport: f.arrival_airport,
+        departure_time: f.departure_time,
+        arrival_time: f.arrival_time,
+      })),
     };
   } catch (err) {
     logError(`Error getting flights for ${tailNumber}`, err);
@@ -90,10 +114,10 @@ async function verifyPlane(
   db: Database,
   plane: FleetAircraft
 ): Promise<StarlinkCheckResult | null> {
-  // Get upcoming flight for this plane
-  const flightInfo = await getUpcomingFlightForPlane(plane.tail_number);
+  // Get upcoming flights for this plane
+  const flightData = await getUpcomingFlightsForPlane(plane.tail_number);
 
-  if (!flightInfo) {
+  if (!flightData) {
     info(`No upcoming flights for ${plane.tail_number}, skipping`);
     // Schedule for later check
     updateFleetVerificationResult(db, plane.tail_number, {
@@ -104,16 +128,18 @@ async function verifyPlane(
     return null;
   }
 
+  const { forVerification, allFlights } = flightData;
+
   info(
-    `Checking ${plane.tail_number} via UA${flightInfo.flightNumber} ${flightInfo.origin}-${flightInfo.destination} on ${flightInfo.date}`
+    `Checking ${plane.tail_number} via UA${forVerification.flightNumber} ${forVerification.origin}-${forVerification.destination} on ${forVerification.date}`
   );
 
   try {
     const result = await checkStarlinkStatusSubprocess(
-      flightInfo.flightNumber,
-      flightInfo.date,
-      flightInfo.origin,
-      flightInfo.destination
+      forVerification.flightNumber,
+      forVerification.date,
+      forVerification.origin,
+      forVerification.destination
     );
 
     // Log to verification log
@@ -123,7 +149,7 @@ async function verifyPlane(
       has_starlink: result.hasStarlink,
       wifi_provider: result.wifiProvider,
       aircraft_type: result.aircraftType || plane.aircraft_type,
-      flight_number: `UA${flightInfo.flightNumber}`,
+      flight_number: `UA${forVerification.flightNumber}`,
       error: result.error || null,
     });
 
@@ -154,7 +180,9 @@ async function verifyPlane(
         plane.operated_by,
         plane.fleet === "mainline" ? "mainline" : "express"
       );
-      info(`DISCOVERY: ${plane.tail_number} has Starlink!`);
+      // Store the flights we already fetched so they show up on the website
+      updateFlights(db, plane.tail_number, allFlights);
+      info(`DISCOVERY: ${plane.tail_number} has Starlink! (stored ${allFlights.length} flights)`);
     }
 
     if (result.hasStarlink) {
