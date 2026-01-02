@@ -399,16 +399,37 @@ export function getStarlinkPlanes(db: Database): Aircraft[] {
 }
 
 export function getFleetStats(db: Database): FleetStats {
+  // Get totals from spreadsheet data (accurate for fleet size)
+  const expressTotal = getMetaValue(db, "expressTotal", 0);
+  const mainlineTotal = getMetaValue(db, "mainlineTotal", 0);
+
+  // Get Starlink counts from verified data (only count planes that are actually displayed)
+  const verifiedCounts = db
+    .query(
+      `
+      SELECT
+        fleet,
+        COUNT(*) as count
+      FROM starlink_planes
+      WHERE verified_wifi IS NULL OR verified_wifi = 'Starlink'
+      GROUP BY fleet
+    `
+    )
+    .all() as Array<{ fleet: string; count: number }>;
+
+  const expressStarlink = verifiedCounts.find((r) => r.fleet === "express")?.count || 0;
+  const mainlineStarlink = verifiedCounts.find((r) => r.fleet === "mainline")?.count || 0;
+
   return {
     express: {
-      total: getMetaValue(db, "expressTotal", 0),
-      starlink: getMetaValue(db, "expressStarlink", 0),
-      percentage: getMetaValue(db, "expressPercentage", 0),
+      total: expressTotal,
+      starlink: expressStarlink,
+      percentage: expressTotal > 0 ? (expressStarlink / expressTotal) * 100 : 0,
     },
     mainline: {
-      total: getMetaValue(db, "mainlineTotal", 0),
-      starlink: getMetaValue(db, "mainlineStarlink", 0),
-      percentage: getMetaValue(db, "mainlinePercentage", 0),
+      total: mainlineTotal,
+      starlink: mainlineStarlink,
+      percentage: mainlineTotal > 0 ? (mainlineStarlink / mainlineTotal) * 100 : 0,
     },
   };
 }
