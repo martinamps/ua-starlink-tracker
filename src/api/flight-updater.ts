@@ -8,7 +8,7 @@ import {
 } from "../database/database";
 import type { Aircraft, Flight } from "../types";
 import { FLIGHT_DATA_SOURCE } from "../utils/constants";
-import { error, info } from "../utils/logger";
+import { error, info, warn } from "../utils/logger";
 import { FlightAwareAPI } from "./flightaware-api";
 import { FlightRadar24API } from "./flightradar24-api";
 
@@ -268,17 +268,114 @@ export async function checkNewPlanes() {
   );
 }
 
+/**
+ * Trickle-based flight updater
+ * Instead of bulk updates every 8 hours, continuously updates 1 plane at a time
+ * Much more polite to APIs and avoids rate limiting
+ */
 export function startFlightUpdater() {
-  const safeUpdateAllFlights = async () => {
+  const INTERVAL_MS = 30 * 1000; // 30 seconds between updates
+  const HEARTBEAT_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
+
+  const api = createFlightAPI();
+  if (!api) {
+    error("Failed to create flight API, flight updater disabled");
+    return;
+  }
+
+  let isRunning = false;
+  let lastHeartbeat = Date.now();
+  let totalUpdates = 0;
+  let totalErrors = 0;
+
+  const runSingleUpdate = async () => {
+    if (isRunning) {
+      warn("Skipping flight update - previous update still in progress");
+      return;
+    }
+
+    // Check circuit breaker
+    if (circuitBreakerOpenedAt) {
+      const timeSinceOpened = Date.now() - circuitBreakerOpenedAt;
+      if (timeSinceOpened < CIRCUIT_BREAKER_RESET_TIME) {
+        return; // Silently skip while circuit breaker is open
+      }
+      info("Circuit breaker reset, resuming flight updates...");
+      circuitBreakerOpenedAt = null;
+      consecutiveApiFailures = 0;
+    }
+
+    isRunning = true;
+
     try {
-      await updateAllFlights();
+      const db = initializeDatabase();
+
+      // Find a plane that needs updating
+      const planes = getStarlinkPlanes(db);
+      let planeToUpdate: Aircraft | null = null;
+
+      for (const plane of planes) {
+        if (!plane.TailNumber) continue;
+        if (needsFlightCheck(db, plane.TailNumber)) {
+          planeToUpdate = plane;
+          break;
+        }
+      }
+
+      db.close();
+
+      if (!planeToUpdate) {
+        // No planes need updates right now
+        return;
+      }
+
+      // Update this plane
+      const success = await updateFlightsForTailNumber(api, planeToUpdate.TailNumber);
+
+      if (success) {
+        consecutiveApiFailures = 0;
+        totalUpdates++;
+      } else {
+        consecutiveApiFailures++;
+        totalErrors++;
+        if (consecutiveApiFailures >= MAX_CONSECUTIVE_FAILURES) {
+          circuitBreakerOpenedAt = Date.now();
+          error(
+            `Circuit breaker opened after ${MAX_CONSECUTIVE_FAILURES} consecutive API failures`
+          );
+        }
+      }
+
+      // Heartbeat logging
+      const now = Date.now();
+      if (now - lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
+        info(`Flight updater heartbeat: ${totalUpdates} updates, ${totalErrors} errors`);
+        lastHeartbeat = now;
+      }
     } catch (err) {
-      error("Unhandled error in flight updater", err);
+      error("Error in flight updater", err);
+      consecutiveApiFailures++;
+      totalErrors++;
+    } finally {
+      isRunning = false;
     }
   };
 
-  safeUpdateAllFlights();
-  setInterval(safeUpdateAllFlights, 8 * 60 * 60 * 1000);
+  // Start the trickle updater
+  setInterval(() => {
+    runSingleUpdate().catch((err) => {
+      error("Unexpected error in flight updater scheduler", err);
+    });
+  }, INTERVAL_MS);
+
+  // Initial run after 15 seconds
+  setTimeout(() => {
+    runSingleUpdate().catch((err) => {
+      error("Initial flight update failed", err);
+    });
+  }, 15 * 1000);
+
+  info(`Flight updater started (trickle mode, every ${INTERVAL_MS / 1000}s)`);
 }
 
 // Export individual functions for manual use

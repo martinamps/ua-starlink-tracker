@@ -195,6 +195,12 @@ export async function fetchAllSheets() {
   const totalAircraftCount = expressTotal + mainlineTotal;
   const totalStarlinkCount = expressStarlink + mainlineStarlink;
 
+  // Update the spreadsheet cache with current tail numbers
+  const tailNumbers = starlinkAircraft
+    .map((a) => a.TailNumber)
+    .filter((t): t is string => typeof t === "string" && t.length > 0);
+  updateSpreadsheetCache(tailNumbers);
+
   return {
     totalAircraftCount,
     starlinkAircraft,
@@ -223,4 +229,46 @@ export function ensureDatabaseFileExists(dbPath: string) {
   if (!existsSync(dbPath)) {
     writeFileSync(dbPath, ""); // Create an empty file
   }
+}
+
+// ============================================
+// Spreadsheet Cache for Discovery Comparison
+// ============================================
+
+// In-memory cache of tail numbers from the spreadsheet
+// Updated hourly when fetchAllSheets() runs
+let spreadsheetTailsCache: Set<string> = new Set();
+let spreadsheetCacheUpdatedAt = 0;
+
+/**
+ * Update the spreadsheet tails cache
+ * Called automatically by fetchAllSheets()
+ */
+export function updateSpreadsheetCache(tailNumbers: string[]) {
+  spreadsheetTailsCache = new Set(tailNumbers);
+  spreadsheetCacheUpdatedAt = Date.now();
+}
+
+/**
+ * Check if a tail number is in the cached spreadsheet
+ */
+export function isInSpreadsheetCache(tailNumber: string): boolean {
+  return spreadsheetTailsCache.has(tailNumber);
+}
+
+/**
+ * Get all tail numbers from the cached spreadsheet
+ */
+export function getSpreadsheetCacheTails(): Set<string> {
+  return spreadsheetTailsCache;
+}
+
+/**
+ * Get cache metadata
+ */
+export function getSpreadsheetCacheInfo(): { size: number; updatedAt: number } {
+  return {
+    size: spreadsheetTailsCache.size,
+    updatedAt: spreadsheetCacheUpdatedAt,
+  };
 }

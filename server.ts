@@ -19,6 +19,7 @@ process.on("uncaughtException", (err) => {
 import { checkNewPlanes, startFlightUpdater } from "./src/api/flight-updater";
 import Page from "./src/components/page";
 import {
+  getFleetDiscoveryStats,
   getFleetStats,
   getLastUpdated,
   getStarlinkPlanes,
@@ -27,8 +28,11 @@ import {
   getVerificationSummary,
   getWifiMismatches,
   initializeDatabase,
+  syncSpreadsheetToFleet,
   updateDatabase,
 } from "./src/database/database";
+import { startFleetDiscovery } from "./src/scripts/fleet-discovery";
+import { startFleetSync } from "./src/scripts/fleet-sync";
 import { startStarlinkVerifier } from "./src/scripts/starlink-verifier";
 import type { ApiResponse, Flight } from "./src/types";
 import {
@@ -39,7 +43,11 @@ import {
   normalizeFlightNumber,
 } from "./src/utils/constants";
 import { getNotFoundHtml } from "./src/utils/not-found";
-import { fetchAllSheets } from "./src/utils/utils";
+import {
+  fetchAllSheets,
+  getSpreadsheetCacheInfo,
+  getSpreadsheetCacheTails,
+} from "./src/utils/utils";
 
 // Environment configuration
 const STATIC_DIR =
@@ -72,6 +80,12 @@ async function updateStarlinkData() {
     const { totalAircraftCount, starlinkAircraft, fleetStats } = await fetchAllSheets();
 
     updateDatabase(db, totalAircraftCount, starlinkAircraft, fleetStats);
+
+    // Sync spreadsheet planes to united_fleet for discovery
+    const synced = syncSpreadsheetToFleet(db);
+    if (synced > 0) {
+      info(`Synced ${synced} new planes to united_fleet`);
+    }
 
     info(
       `Updated data: ${starlinkAircraft.length} Starlink aircraft out of ${totalAircraftCount} total`
@@ -339,6 +353,79 @@ routes["/api/mismatches"] = (req) => {
   });
 };
 
+// API endpoint to get fleet discovery stats
+routes["/api/fleet-discovery"] = (req) => {
+  if (req.method !== "GET") {
+    return new Response(JSON.stringify({ error: "Method not allowed" }), {
+      status: 405,
+      headers: SECURITY_HEADERS.api,
+    });
+  }
+
+  const stats = getFleetDiscoveryStats(db);
+  const spreadsheetCache = getSpreadsheetCacheTails();
+  const cacheInfo = getSpreadsheetCacheInfo();
+
+  // Find planes confirmed as Starlink in united_fleet but NOT in spreadsheet cache
+  const confirmedStarlinkPlanes = db
+    .query(
+      `
+      SELECT tail_number, aircraft_type, verified_wifi, verified_at, first_seen_source, fleet, operated_by
+      FROM united_fleet
+      WHERE starlink_status = 'confirmed'
+      ORDER BY verified_at DESC
+    `
+    )
+    .all() as Array<{
+    tail_number: string;
+    aircraft_type: string | null;
+    verified_wifi: string | null;
+    verified_at: number | null;
+    first_seen_source: string;
+    fleet: string;
+    operated_by: string | null;
+  }>;
+
+  // Filter to only planes NOT in the spreadsheet cache
+  const newDiscoveries = confirmedStarlinkPlanes
+    .filter((p) => !spreadsheetCache.has(p.tail_number))
+    .map((p) => ({
+      tail_number: p.tail_number,
+      aircraft_type: p.aircraft_type,
+      verified_wifi: p.verified_wifi,
+      verified_at: p.verified_at,
+      verified_at_formatted: p.verified_at ? new Date(p.verified_at * 1000).toISOString() : null,
+      first_seen_source: p.first_seen_source,
+      fleet: p.fleet,
+      operated_by: p.operated_by,
+    }));
+
+  const response = {
+    ...stats,
+    // Override with accurate count based on cache
+    discovered_not_in_spreadsheet: newDiscoveries.length,
+    // New field: actual discoveries not in spreadsheet
+    new_discoveries: newDiscoveries,
+    // Cache info for debugging
+    spreadsheet_cache: {
+      size: cacheInfo.size,
+      updated_at: cacheInfo.updatedAt,
+      updated_at_formatted: cacheInfo.updatedAt
+        ? new Date(cacheInfo.updatedAt).toISOString()
+        : null,
+    },
+    recent_discoveries: stats.recent_discoveries.map((d) => ({
+      ...d,
+      in_spreadsheet: spreadsheetCache.has(d.tail_number),
+      verified_at_formatted: d.verified_at ? new Date(d.verified_at * 1000).toISOString() : null,
+    })),
+  };
+
+  return new Response(JSON.stringify(response, null, 2), {
+    headers: SECURITY_HEADERS.api,
+  });
+};
+
 // robots.txt route
 routes["/robots.txt"] = new Response(
   `User-agent: *
@@ -507,5 +594,7 @@ Bun.serve({
 // Start background jobs
 startFlightUpdater();
 startStarlinkVerifier();
+startFleetSync();
+startFleetDiscovery("maintenance");
 
 info(`Server running at http://localhost:${PORT}`);
