@@ -154,10 +154,11 @@ export default function Page({
     return `${dateStr} ${timeStr}`;
   };
 
-  // Compact flight time (just time, e.g., "2:30p")
+  // Compact flight time with day (e.g., "MON 2:30p")
   const formatCompactTime = (timestamp: number) => {
     const date = new Date(timestamp * 1000);
-    return date
+    const day = date.toLocaleDateString("en-US", { weekday: "short" }).toUpperCase();
+    const time = date
       .toLocaleTimeString("en-US", {
         hour: "numeric",
         minute: "2-digit",
@@ -165,6 +166,7 @@ export default function Page({
       })
       .replace(" AM", "a")
       .replace(" PM", "p");
+    return `${day} ${time}`;
   };
 
   // Helper function to render upcoming flights
@@ -666,7 +668,7 @@ export default function Page({
           <div className="col-span-3">Aircraft</div>
           <div className="col-span-2">Type</div>
           <div className="col-span-3">Operator</div>
-          <div className="col-span-4">Flights</div>
+          <div className="col-span-4">Upcoming Flights</div>
         </div>
 
         {/* Scrollable list */}
