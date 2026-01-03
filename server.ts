@@ -400,14 +400,48 @@ routes["/api/fleet-discovery"] = (req) => {
       operated_by: p.operated_by,
     }));
 
+  // Get pending planes breakdown
+  const pendingPlanes = db
+    .query(
+      `
+      SELECT tail_number, aircraft_type, verified_at, last_check_error
+      FROM united_fleet
+      WHERE starlink_status = 'unknown'
+      ORDER BY verified_at ASC NULLS FIRST
+    `
+    )
+    .all() as Array<{
+    tail_number: string;
+    aircraft_type: string | null;
+    verified_at: number | null;
+    last_check_error: string | null;
+  }>;
+
+  const pendingNoFlights = pendingPlanes.filter((p) =>
+    p.last_check_error?.includes("No upcoming flights")
+  );
+  const pendingCheckable = pendingPlanes.filter(
+    (p) => !p.last_check_error?.includes("No upcoming flights")
+  );
+
   const response = {
     // Fleet verification progress
     verification: {
       total_fleet: stats.total_fleet,
       verified_starlink: stats.verified_starlink,
       verified_non_starlink: stats.verified_non_starlink,
-      pending: stats.pending_verification,
+      pending_total: stats.pending_verification,
+      pending_no_flights: pendingNoFlights.length,
+      pending_checkable: pendingCheckable.length,
     },
+    // Pending planes detail
+    pending_planes: pendingPlanes.map((p) => ({
+      tail_number: p.tail_number,
+      aircraft_type: p.aircraft_type,
+      last_checked: p.verified_at,
+      last_checked_formatted: p.verified_at ? new Date(p.verified_at * 1000).toISOString() : null,
+      status: p.last_check_error?.includes("No upcoming flights") ? "no_flights" : "checkable",
+    })),
     // Discrepancies: planes we discovered with Starlink that aren't in the spreadsheet
     discovered_not_in_spreadsheet: newDiscoveries,
     // Spreadsheet cache info for debugging
