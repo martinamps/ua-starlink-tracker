@@ -8,6 +8,7 @@ import {
   syncSpreadsheetToFleet,
   upsertFleetAircraft,
 } from "../database/database";
+import { COUNTERS, metrics, withSpan } from "../observability";
 import { info, error as logError } from "../utils/logger";
 import { type FR24Aircraft, scrapeFlightRadar24Fleet } from "./flightradar24-scraper";
 
@@ -36,78 +37,89 @@ export async function syncFleetFromFR24(): Promise<{
   updated: number;
   error?: string;
 }> {
-  const result = {
-    success: false,
-    total: 0,
-    new: 0,
-    updated: 0,
-    error: undefined as string | undefined,
-  };
-
-  try {
-    info("Starting FR24 fleet sync...");
-
-    // Scrape FR24
-    const scrapeResult = await scrapeFlightRadar24Fleet();
-
-    if (!scrapeResult.success) {
-      result.error = scrapeResult.error || "FR24 scrape failed";
-      logError("FR24 scrape failed", result.error);
-      return result;
-    }
-
-    // Sanity check: United has 900+ aircraft, so anything below 100 is suspicious
-    const MIN_EXPECTED_AIRCRAFT = 100;
-    if (scrapeResult.aircraft.length < MIN_EXPECTED_AIRCRAFT) {
-      result.error = `Suspiciously low aircraft count: ${scrapeResult.aircraft.length} (expected ${MIN_EXPECTED_AIRCRAFT}+)`;
-      logError("FR24 sync aborted", result.error);
-      return result;
-    }
-
-    info(`FR24 returned ${scrapeResult.aircraft.length} aircraft`);
-
-    const db = initializeDatabase();
+  return withSpan("fleet_sync.fr24", async (span) => {
+    const result = {
+      success: false,
+      total: 0,
+      new: 0,
+      updated: 0,
+      error: undefined as string | undefined,
+    };
 
     try {
-      // Get existing tail numbers to track new vs updated
-      const existingTails = new Set(
-        (db.query("SELECT tail_number FROM united_fleet").all() as { tail_number: string }[]).map(
-          (r) => r.tail_number
-        )
-      );
+      info("Starting FR24 fleet sync...");
 
-      // Upsert each aircraft
-      for (const aircraft of scrapeResult.aircraft) {
-        const isNew = !existingTails.has(aircraft.registration);
+      // Scrape FR24
+      const scrapeResult = await scrapeFlightRadar24Fleet();
 
-        upsertFleetAircraft(
-          db,
-          aircraft.registration,
-          aircraft.aircraftType,
-          "fr24",
-          determineFleetType(aircraft.aircraftType)
-        );
-
-        if (isNew) {
-          result.new++;
-        } else {
-          result.updated++;
-        }
+      if (!scrapeResult.success) {
+        result.error = scrapeResult.error || "FR24 scrape failed";
+        logError("FR24 scrape failed", result.error);
+        span.setTag("error", true);
+        return result;
       }
 
-      result.total = scrapeResult.aircraft.length;
-      result.success = true;
+      // Sanity check: United has 900+ aircraft, so anything below 100 is suspicious
+      const MIN_EXPECTED_AIRCRAFT = 100;
+      if (scrapeResult.aircraft.length < MIN_EXPECTED_AIRCRAFT) {
+        result.error = `Suspiciously low aircraft count: ${scrapeResult.aircraft.length} (expected ${MIN_EXPECTED_AIRCRAFT}+)`;
+        logError("FR24 sync aborted", result.error);
+        span.setTag("error", true);
+        return result;
+      }
 
-      info(`FR24 sync complete: ${result.new} new, ${result.updated} updated`);
-    } finally {
-      db.close();
+      info(`FR24 returned ${scrapeResult.aircraft.length} aircraft`);
+      span.setTag("aircraft.count", scrapeResult.aircraft.length);
+
+      const db = initializeDatabase();
+
+      try {
+        // Get existing tail numbers to track new vs updated
+        const existingTails = new Set(
+          (db.query("SELECT tail_number FROM united_fleet").all() as { tail_number: string }[]).map(
+            (r) => r.tail_number
+          )
+        );
+
+        // Upsert each aircraft
+        for (const aircraft of scrapeResult.aircraft) {
+          const isNew = !existingTails.has(aircraft.registration);
+
+          upsertFleetAircraft(
+            db,
+            aircraft.registration,
+            aircraft.aircraftType,
+            "fr24",
+            determineFleetType(aircraft.aircraftType)
+          );
+
+          if (isNew) {
+            result.new++;
+            metrics.increment(COUNTERS.PLANES_DISCOVERED, { source: "fr24" });
+          } else {
+            result.updated++;
+          }
+        }
+
+        result.total = scrapeResult.aircraft.length;
+        result.success = true;
+
+        span.setTag("planes.new", result.new);
+        span.setTag("planes.updated", result.updated);
+        metrics.increment(COUNTERS.SCRAPER_SYNC, { source: "fr24" });
+
+        info(`FR24 sync complete: ${result.new} new, ${result.updated} updated`);
+      } finally {
+        db.close();
+      }
+    } catch (err) {
+      result.error = err instanceof Error ? err.message : String(err);
+      logError("FR24 sync error", result.error);
+      span.setTag("error", true);
     }
-  } catch (err) {
-    result.error = err instanceof Error ? err.message : String(err);
-    logError("FR24 sync error", result.error);
-  }
 
-  return result;
+    return result;
+  });
 }
 
 /**
@@ -169,20 +181,32 @@ export function startFleetSync() {
 
   const runSync = async () => {
     try {
-      info("Starting scheduled FR24 fleet sync...");
-      const result = await syncFullFleet();
+      await withSpan(
+        "fleet_sync.run",
+        async (span) => {
+          span.setTag("job.type", "background");
 
-      if (result.fr24.success) {
-        info(
-          `Scheduled fleet sync complete: ${result.fr24.total} aircraft (${result.fr24.new} new, ${result.fr24.updated} updated)`
-        );
-      } else {
-        logError("Scheduled FR24 sync failed", result.fr24.error);
-      }
+          info("Starting scheduled FR24 fleet sync...");
+          const result = await syncFullFleet();
 
-      if (result.spreadsheet.success) {
-        info(`Spreadsheet sync: ${result.spreadsheet.synced} new planes added to fleet`);
-      }
+          span.setTag("fr24.success", result.fr24.success ? 1 : 0);
+          span.setTag("fr24.total", result.fr24.total);
+          span.setTag("fr24.new", result.fr24.new);
+
+          if (result.fr24.success) {
+            info(
+              `Scheduled fleet sync complete: ${result.fr24.total} aircraft (${result.fr24.new} new, ${result.fr24.updated} updated)`
+            );
+          } else {
+            logError("Scheduled FR24 sync failed", result.fr24.error);
+          }
+
+          if (result.spreadsheet.success) {
+            info(`Spreadsheet sync: ${result.spreadsheet.synced} new planes added to fleet`);
+          }
+        },
+        { "job.type": "background" }
+      );
     } catch (err) {
       logError("Scheduled fleet sync error", err);
     }

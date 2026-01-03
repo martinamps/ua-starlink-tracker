@@ -3,6 +3,7 @@
  * Free API for fetching flight data by aircraft registration
  */
 
+import { COUNTERS, metrics } from "../observability";
 import type { Flight } from "../types";
 import { normalizeFlightNumber } from "../utils/constants";
 import { error, info, warn } from "../utils/logger";
@@ -100,7 +101,11 @@ export class FlightRadar24API {
     this.lastRequestTime = Date.now();
   }
 
-  private async retryWithBackoff<T>(operation: () => Promise<T>, maxRetries = 3): Promise<T> {
+  private async retryWithBackoff<T>(
+    operation: () => Promise<T>,
+    maxRetries = 3,
+    requestType = "flights"
+  ): Promise<T> {
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
         await this.waitForRateLimit();
@@ -108,6 +113,14 @@ export class FlightRadar24API {
       } catch (error: any) {
         const errorMessage = error?.message || String(error);
         const isRateLimit = errorMessage.includes("402");
+
+        if (isRateLimit) {
+          metrics.increment(COUNTERS.VENDOR_REQUEST, {
+            vendor: "fr24",
+            type: requestType,
+            status: "rate_limited",
+          });
+        }
 
         if (attempt < maxRetries) {
           const baseDelay = isRateLimit
@@ -148,11 +161,26 @@ export class FlightRadar24API {
       if (!response.ok) {
         if (response.status === 404) {
           info(`No flights found for tail number: ${tailNumber}`);
+          metrics.increment(COUNTERS.VENDOR_REQUEST, {
+            vendor: "fr24",
+            type: "flights",
+            status: "success",
+          });
           return [];
         }
+        metrics.increment(COUNTERS.VENDOR_REQUEST, {
+          vendor: "fr24",
+          type: "flights",
+          status: "error",
+        });
         throw new Error(`FlightRadar24 API error: ${response.status} ${response.statusText}`);
       }
 
+      metrics.increment(COUNTERS.VENDOR_REQUEST, {
+        vendor: "fr24",
+        type: "flights",
+        status: "success",
+      });
       const data: FR24Response = await response.json();
       const flights = data.result?.response?.data || [];
 

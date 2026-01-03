@@ -5,6 +5,7 @@
 
 import { spawn } from "node:child_process";
 import path from "node:path";
+import { COUNTERS, metrics } from "../observability";
 import type { StarlinkCheckResult } from "./united-starlink-checker";
 
 const SCRIPT_PATH = path.join(import.meta.dir, "united-starlink-checker.ts");
@@ -32,6 +33,11 @@ export async function checkStarlinkStatusSubprocess(
 
     const timeout = setTimeout(() => {
       child.kill("SIGKILL");
+      metrics.increment(COUNTERS.VENDOR_REQUEST, {
+        vendor: "united",
+        type: "verification",
+        status: "error",
+      });
       reject(new Error(`Timeout after ${TIMEOUT_MS / 1000}s`));
     }, TIMEOUT_MS);
 
@@ -39,25 +45,59 @@ export async function checkStarlinkStatusSubprocess(
       clearTimeout(timeout);
 
       if (signal === "SIGKILL") {
+        metrics.increment(COUNTERS.VENDOR_REQUEST, {
+          vendor: "united",
+          type: "verification",
+          status: "error",
+        });
         reject(new Error("Process killed (likely Playwright/bun FD bug)"));
         return;
       }
 
       if (code !== 0) {
+        metrics.increment(COUNTERS.VENDOR_REQUEST, {
+          vendor: "united",
+          type: "verification",
+          status: "error",
+        });
         reject(new Error(`Process exited with code ${code}`));
         return;
       }
 
       try {
         const result = JSON.parse(stdout) as StarlinkCheckResult;
+        // Emit metric based on result
+        if (result.error) {
+          metrics.increment(COUNTERS.VENDOR_REQUEST, {
+            vendor: "united",
+            type: "verification",
+            status: "error",
+          });
+        } else {
+          metrics.increment(COUNTERS.VENDOR_REQUEST, {
+            vendor: "united",
+            type: "verification",
+            status: "success",
+          });
+        }
         resolve(result);
       } catch (e) {
+        metrics.increment(COUNTERS.VENDOR_REQUEST, {
+          vendor: "united",
+          type: "verification",
+          status: "error",
+        });
         reject(new Error(`Failed to parse output: ${stdout}`));
       }
     });
 
     child.on("error", (err) => {
       clearTimeout(timeout);
+      metrics.increment(COUNTERS.VENDOR_REQUEST, {
+        vendor: "united",
+        type: "verification",
+        status: "error",
+      });
       reject(err);
     });
   });

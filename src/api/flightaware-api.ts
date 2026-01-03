@@ -1,3 +1,4 @@
+import { COUNTERS, metrics } from "../observability";
 import type { Flight } from "../types";
 import { normalizeFlightNumber } from "../utils/constants";
 import { info, warn } from "../utils/logger";
@@ -57,6 +58,12 @@ export class FlightAwareAPI {
         return await operation();
       } catch (error: any) {
         if (error.message?.includes("429") && attempt < maxRetries) {
+          metrics.increment(COUNTERS.VENDOR_REQUEST, {
+            vendor: "flightaware",
+            type: "flights",
+            status: "rate_limited",
+          });
+
           // Exponential backoff: 10s, 20s, 40s (max 60s) + 0-5s jitter
           const baseDelay = Math.min(60000, 2 ** attempt * 10000);
           const jitter = Math.random() * 5000;
@@ -88,11 +95,26 @@ export class FlightAwareAPI {
       if (!response.ok) {
         if (response.status === 404) {
           info(`No flights found for tail number: ${tailNumber}`);
+          metrics.increment(COUNTERS.VENDOR_REQUEST, {
+            vendor: "flightaware",
+            type: "flights",
+            status: "success",
+          });
           return [];
         }
+        metrics.increment(COUNTERS.VENDOR_REQUEST, {
+          vendor: "flightaware",
+          type: "flights",
+          status: "error",
+        });
         throw new Error(`FlightAware API error: ${response.status} ${response.statusText}`);
       }
 
+      metrics.increment(COUNTERS.VENDOR_REQUEST, {
+        vendor: "flightaware",
+        type: "flights",
+        status: "success",
+      });
       const data: FlightAwareResponse = await response.json();
 
       const now = new Date();

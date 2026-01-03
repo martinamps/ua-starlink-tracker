@@ -1,10 +1,82 @@
+// IMPORTANT: Tracer must be imported FIRST before any other imports
+import "./src/observability/tracer";
 import "dotenv/config";
 import fs from "node:fs";
 import path from "node:path";
 import React from "react";
 import ReactDOMServer from "react-dom/server";
 
+import { COUNTERS, metrics, withSpan } from "./src/observability";
 import { info, error as logError } from "./src/utils/logger";
+
+// ============ Route Tracing Helpers ============
+
+/**
+ * Allowlist of known routes for metrics (max ~25 to avoid cardinality explosion).
+ * Unknown routes (404s, bot probes) are mapped to "unknown" and NOT emitted as metrics.
+ */
+const KNOWN_ROUTES = new Set([
+  "/",
+  "/api/data",
+  "/api/check-flight",
+  "/api/mismatches",
+  "/api/fleet-discovery",
+  "/sitemap.xml",
+  "/robots.txt",
+  "/debug/files",
+  // Static assets are grouped
+  "/static/*",
+]);
+
+/**
+ * Normalize a route for metrics. Returns null for unknown routes (skip metrics).
+ */
+function normalizeRouteForMetrics(pathname: string): string | null {
+  if (KNOWN_ROUTES.has(pathname)) {
+    return pathname;
+  }
+  if (pathname.startsWith("/static/")) {
+    return "/static/*";
+  }
+  // Unknown route - don't emit metrics to avoid cardinality explosion
+  return null;
+}
+
+/**
+ * Wrap a route handler with tracing and metrics.
+ * Use this for API routes that need observability.
+ */
+function tracedRoute(
+  routePath: string,
+  handler: (req: Request) => Response | Promise<Response>
+): (req: Request) => Promise<Response> {
+  return async (req: Request) => {
+    return withSpan(
+      "http.request",
+      async (span) => {
+        span.setTag("http.method", req.method);
+        span.setTag("http.route", routePath);
+
+        const response = await handler(req);
+
+        span.setTag("http.status_code", response.status);
+
+        // Only emit metrics for known routes
+        const normalizedRoute = normalizeRouteForMetrics(routePath);
+        if (normalizedRoute) {
+          metrics.increment(COUNTERS.HTTP_REQUEST, {
+            method: req.method,
+            route: normalizedRoute,
+            status_code: response.status,
+          });
+        }
+
+        return response;
+      },
+      { "http.route": routePath }
+    );
+  };
+}
 
 // Global error handlers to prevent silent crashes
 process.on("unhandledRejection", (reason) => {
@@ -186,7 +258,7 @@ for (const file of staticFiles) {
 }
 
 // API endpoint
-routes["/api/data"] = (req) => {
+routes["/api/data"] = tracedRoute("/api/data", (req) => {
   if (req.method !== "GET") {
     return new Response(JSON.stringify({ error: "Method not allowed" }), {
       status: 405,
@@ -220,9 +292,9 @@ routes["/api/data"] = (req) => {
   return new Response(JSON.stringify(response), {
     headers: SECURITY_HEADERS.api,
   });
-};
+});
 
-routes["/api/check-flight"] = (req) => {
+routes["/api/check-flight"] = tracedRoute("/api/check-flight", (req) => {
   if (req.method !== "GET") {
     return new Response(JSON.stringify({ error: "Method not allowed" }), {
       status: 405,
@@ -321,10 +393,10 @@ routes["/api/check-flight"] = (req) => {
   return new Response(JSON.stringify(response), {
     headers: SECURITY_HEADERS.api,
   });
-};
+});
 
 // API endpoint to get verification mismatches
-routes["/api/mismatches"] = (req) => {
+routes["/api/mismatches"] = tracedRoute("/api/mismatches", (req) => {
   if (req.method !== "GET") {
     return new Response(JSON.stringify({ error: "Method not allowed" }), {
       status: 405,
@@ -351,10 +423,10 @@ routes["/api/mismatches"] = (req) => {
   return new Response(JSON.stringify(response, null, 2), {
     headers: SECURITY_HEADERS.api,
   });
-};
+});
 
 // API endpoint to get fleet discovery stats
-routes["/api/fleet-discovery"] = (req) => {
+routes["/api/fleet-discovery"] = tracedRoute("/api/fleet-discovery", (req) => {
   if (req.method !== "GET") {
     return new Response(JSON.stringify({ error: "Method not allowed" }), {
       status: 405,
@@ -452,7 +524,7 @@ routes["/api/fleet-discovery"] = (req) => {
   return new Response(JSON.stringify(response, null, 2), {
     headers: SECURITY_HEADERS.api,
   });
-};
+});
 
 // robots.txt route
 routes["/robots.txt"] = new Response(
@@ -471,7 +543,7 @@ Sitemap: https://unitedstarlinktracker.com/sitemap.xml`,
 );
 
 // sitemap.xml route
-routes["/sitemap.xml"] = (req) => {
+routes["/sitemap.xml"] = tracedRoute("/sitemap.xml", (req) => {
   const baseUrl = "https://unitedstarlinktracker.com";
   const lastUpdated = getLastUpdated(db);
 
@@ -491,10 +563,10 @@ routes["/sitemap.xml"] = (req) => {
       "Cache-Control": "public, max-age=3600",
     },
   });
-};
+});
 
 // Debug endpoint
-routes["/debug/files"] = (req) => {
+routes["/debug/files"] = tracedRoute("/debug/files", (req) => {
   const url = new URL(req.url);
   const token = url.searchParams.get("token");
   const isAuthorized =
@@ -518,7 +590,101 @@ routes["/debug/files"] = (req) => {
   return new Response(JSON.stringify(debugInfo, null, 2), {
     headers: { "Content-Type": "application/json" },
   });
-};
+});
+
+// Request handler for home page and static files
+async function handleRequest(req: Request): Promise<Response> {
+  const url = new URL(req.url);
+  const host = req.headers.get("host") || "unitedstarlinktracker.com";
+
+  // Home page
+  if (url.pathname === "/") {
+    if (req.method !== "GET") {
+      return new Response("Method not allowed", {
+        status: 405,
+        headers: { "Content-Type": "text/plain" },
+      });
+    }
+
+    const totalCount = getTotalCount(db);
+    const starlinkPlanes = getStarlinkPlanes(db);
+    const lastUpdated = getLastUpdated(db);
+    const fleetStats = getFleetStats(db);
+    const allFlights = getUpcomingFlights(db);
+
+    // Group flights by tail number for rendering
+    const flightsByTail: Record<string, Flight[]> = {};
+    for (const flight of allFlights) {
+      if (!flightsByTail[flight.tail_number]) {
+        flightsByTail[flight.tail_number] = [];
+      }
+      flightsByTail[flight.tail_number].push(flight);
+    }
+
+    const reactHtml = ReactDOMServer.renderToString(
+      React.createElement(Page, {
+        total: totalCount,
+        starlink: starlinkPlanes,
+        lastUpdated,
+        fleetStats,
+        isUnited: isUnitedDomain(host),
+        flightsByTail,
+      })
+    );
+
+    const metadata = getDomainContent(host);
+    const starlinkCount = starlinkPlanes.length;
+    const percentage = totalCount > 0 ? ((starlinkCount / totalCount) * 100).toFixed(2) : "0.00";
+
+    const htmlVariables = {
+      ...metadata,
+      html: reactHtml,
+      host,
+      totalCount: starlinkCount.toString(),
+      totalAircraftCount: totalCount.toString(),
+      lastUpdated: lastUpdated,
+      isUnited: isUnitedDomain(host).toString(),
+      currentDate: new Date().toLocaleDateString(),
+      mainlineCount: (fleetStats?.mainline.starlink || 0).toString(),
+      expressCount: (fleetStats?.express.starlink || 0).toString(),
+      percentage: percentage,
+      mainlinePercentage: (fleetStats?.mainline.percentage || 0).toFixed(2),
+      expressPercentage: (fleetStats?.express.percentage || 0).toFixed(2),
+    };
+
+    const template = await getHtmlTemplate();
+    const html = renderHtml(template, htmlVariables);
+    return new Response(html, { headers: SECURITY_HEADERS.html });
+  }
+
+  // Static files
+  if (url.pathname.startsWith("/static/")) {
+    const subPath = url.pathname.replace(/^\/static\//, "");
+    const filePath = path.join(STATIC_DIR, subPath);
+
+    try {
+      if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+        const ext = path.extname(filePath).toLowerCase().substring(1);
+        const contentType = CONTENT_TYPES[ext] || "application/octet-stream";
+
+        return new Response(Bun.file(filePath), {
+          headers: {
+            "Content-Type": contentType,
+            "Cache-Control": "public, max-age=86400",
+          },
+        });
+      }
+    } catch (err) {
+      logError(`Error serving static file ${filePath}`, err);
+    }
+  }
+
+  // 404 page
+  return new Response(getNotFoundHtml(host), {
+    status: 404,
+    headers: SECURITY_HEADERS.notFound,
+  });
+}
 
 // Start server
 Bun.serve({
@@ -527,95 +693,39 @@ Bun.serve({
 
   async fetch(req) {
     const url = new URL(req.url);
-    const host = req.headers.get("host") || "unitedstarlinktracker.com";
 
-    // Home page
-    if (url.pathname === "/") {
-      if (req.method !== "GET") {
-        return new Response("Method not allowed", {
-          status: 405,
-          headers: { "Content-Type": "text/plain" },
-        });
-      }
-
-      const totalCount = getTotalCount(db);
-      const starlinkPlanes = getStarlinkPlanes(db);
-      const lastUpdated = getLastUpdated(db);
-      const fleetStats = getFleetStats(db);
-      const allFlights = getUpcomingFlights(db);
-
-      // Group flights by tail number for rendering
-      const flightsByTail: Record<string, Flight[]> = {};
-      for (const flight of allFlights) {
-        if (!flightsByTail[flight.tail_number]) {
-          flightsByTail[flight.tail_number] = [];
-        }
-        flightsByTail[flight.tail_number].push(flight);
-      }
-
-      const reactHtml = ReactDOMServer.renderToString(
-        React.createElement(Page, {
-          total: totalCount,
-          starlink: starlinkPlanes,
-          lastUpdated,
-          fleetStats,
-          isUnited: isUnitedDomain(host),
-          flightsByTail,
-        })
-      );
-
-      const metadata = getDomainContent(host);
-      const starlinkCount = starlinkPlanes.length;
-      const percentage = totalCount > 0 ? ((starlinkCount / totalCount) * 100).toFixed(2) : "0.00";
-
-      const htmlVariables = {
-        ...metadata,
-        html: reactHtml,
-        host,
-        totalCount: starlinkCount.toString(),
-        totalAircraftCount: totalCount.toString(),
-        lastUpdated: lastUpdated,
-        isUnited: isUnitedDomain(host).toString(),
-        currentDate: new Date().toLocaleDateString(),
-        mainlineCount: (fleetStats?.mainline.starlink || 0).toString(),
-        expressCount: (fleetStats?.express.starlink || 0).toString(),
-        percentage: percentage,
-        mainlinePercentage: (fleetStats?.mainline.percentage || 0).toFixed(2),
-        expressPercentage: (fleetStats?.express.percentage || 0).toFixed(2),
-      };
-
-      const template = await getHtmlTemplate();
-      const html = renderHtml(template, htmlVariables);
-      return new Response(html, { headers: SECURITY_HEADERS.html });
+    // Determine route for tracing (home page, static files, or 404)
+    let route = "/";
+    if (url.pathname.startsWith("/static/")) {
+      route = "/static/*";
+    } else if (url.pathname !== "/") {
+      route = "/*"; // 404 catch-all
     }
 
-    // Static files
-    if (url.pathname.startsWith("/static/")) {
-      const subPath = url.pathname.replace(/^\/static\//, "");
-      const filePath = path.join(STATIC_DIR, subPath);
+    return withSpan(
+      "http.request",
+      async (span) => {
+        span.setTag("http.method", req.method);
+        span.setTag("http.route", route);
 
-      try {
-        if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
-          const ext = path.extname(filePath).toLowerCase().substring(1);
-          const contentType = CONTENT_TYPES[ext] || "application/octet-stream";
+        const response = await handleRequest(req);
 
-          return new Response(Bun.file(filePath), {
-            headers: {
-              "Content-Type": contentType,
-              "Cache-Control": "public, max-age=86400",
-            },
+        span.setTag("http.status_code", response.status);
+
+        // Only emit metrics for known routes (skip 404s from bots/scrapers)
+        const normalizedRoute = normalizeRouteForMetrics(route);
+        if (normalizedRoute) {
+          metrics.increment(COUNTERS.HTTP_REQUEST, {
+            method: req.method,
+            route: normalizedRoute,
+            status_code: response.status,
           });
         }
-      } catch (err) {
-        logError(`Error serving static file ${filePath}`, err);
-      }
-    }
 
-    // 404 page
-    return new Response(getNotFoundHtml(host), {
-      status: 404,
-      headers: SECURITY_HEADERS.notFound,
-    });
+        return response;
+      },
+      { "http.route": route }
+    );
   },
 });
 

@@ -18,6 +18,7 @@ import {
   updateFleetVerificationResult,
   updateFlights,
 } from "../database/database";
+import { COUNTERS, GAUGES, metrics, withSpan } from "../observability";
 import type { FleetAircraft, StarlinkStatus } from "../types";
 import { info, error as logError, warn } from "../utils/logger";
 import type { StarlinkCheckResult } from "./united-starlink-checker";
@@ -114,108 +115,133 @@ async function verifyPlane(
   db: Database,
   plane: FleetAircraft
 ): Promise<StarlinkCheckResult | null> {
-  // Get upcoming flights for this plane
-  const flightData = await getUpcomingFlightsForPlane(plane.tail_number);
+  return withSpan(
+    "fleet_discovery.verify_plane",
+    async (span) => {
+      span.setTag("tail_number", plane.tail_number);
 
-  if (!flightData) {
-    info(`No upcoming flights for ${plane.tail_number}, skipping`);
-    // Schedule for later check
-    updateFleetVerificationResult(db, plane.tail_number, {
-      starlinkStatus: plane.starlink_status as StarlinkStatus,
-      verifiedWifi: plane.verified_wifi,
-      error: "No upcoming flights",
-    });
-    return null;
-  }
+      // Get upcoming flights for this plane
+      const flightData = await getUpcomingFlightsForPlane(plane.tail_number);
 
-  const { forVerification, allFlights } = flightData;
+      if (!flightData) {
+        info(`No upcoming flights for ${plane.tail_number}, skipping`);
+        span.setTag("result", "no_flights");
+        // Schedule for later check
+        updateFleetVerificationResult(db, plane.tail_number, {
+          starlinkStatus: plane.starlink_status as StarlinkStatus,
+          verifiedWifi: plane.verified_wifi,
+          error: "No upcoming flights",
+        });
+        return null;
+      }
 
-  info(
-    `Checking ${plane.tail_number} via UA${forVerification.flightNumber} ${forVerification.origin}-${forVerification.destination} on ${forVerification.date}`
-  );
+      const { forVerification, allFlights } = flightData;
+      span.setTag("flight_number", `UA${forVerification.flightNumber}`);
+      span.setTag("route", `${forVerification.origin}-${forVerification.destination}`);
 
-  try {
-    const result = await checkStarlinkStatusSubprocess(
-      forVerification.flightNumber,
-      forVerification.date,
-      forVerification.origin,
-      forVerification.destination
-    );
-
-    // Log to verification log
-    logVerification(db, {
-      tail_number: plane.tail_number,
-      source: "united",
-      has_starlink: result.hasStarlink,
-      wifi_provider: result.wifiProvider,
-      aircraft_type: result.aircraftType || plane.aircraft_type,
-      flight_number: `UA${forVerification.flightNumber}`,
-      error: result.error || null,
-    });
-
-    // Determine status
-    let starlinkStatus: StarlinkStatus;
-    if (result.error) {
-      starlinkStatus = plane.starlink_status as StarlinkStatus;
-    } else if (result.hasStarlink) {
-      starlinkStatus = "confirmed";
-    } else {
-      starlinkStatus = "negative";
-    }
-
-    // Update fleet table
-    updateFleetVerificationResult(db, plane.tail_number, {
-      starlinkStatus,
-      verifiedWifi: result.wifiProvider || null,
-      error: result.error || undefined,
-    });
-
-    // If we discovered Starlink on a plane not in the spreadsheet, add it
-    if (result.hasStarlink && result.wifiProvider === "Starlink") {
-      addDiscoveredStarlinkPlane(
-        db,
-        plane.tail_number,
-        result.aircraftType || plane.aircraft_type,
-        "Starlink",
-        plane.operated_by,
-        plane.fleet === "mainline" ? "mainline" : "express"
+      info(
+        `Checking ${plane.tail_number} via UA${forVerification.flightNumber} ${forVerification.origin}-${forVerification.destination} on ${forVerification.date}`
       );
-      // Store the flights we already fetched so they show up on the website
-      updateFlights(db, plane.tail_number, allFlights);
-      info(`DISCOVERY: ${plane.tail_number} has Starlink! (stored ${allFlights.length} flights)`);
-    }
 
-    if (result.hasStarlink) {
-      info(`${plane.tail_number} confirmed Starlink (${result.wifiProvider})`);
-    } else if (result.error) {
-      warn(`${plane.tail_number} error: ${result.error}`);
-    } else {
-      info(`${plane.tail_number} no Starlink (${result.wifiProvider || "unknown"})`);
-    }
+      try {
+        const result = await checkStarlinkStatusSubprocess(
+          forVerification.flightNumber,
+          forVerification.date,
+          forVerification.origin,
+          forVerification.destination
+        );
 
-    return result;
-  } catch (err) {
-    const errorMessage = err instanceof Error ? err.message : String(err);
-    logError(`Error verifying ${plane.tail_number}`, errorMessage);
+        // Log to verification log
+        logVerification(db, {
+          tail_number: plane.tail_number,
+          source: "united",
+          has_starlink: result.hasStarlink,
+          wifi_provider: result.wifiProvider,
+          aircraft_type: result.aircraftType || plane.aircraft_type,
+          flight_number: `UA${forVerification.flightNumber}`,
+          error: result.error || null,
+        });
 
-    logVerification(db, {
-      tail_number: plane.tail_number,
-      source: "united",
-      has_starlink: null,
-      wifi_provider: null,
-      aircraft_type: plane.aircraft_type,
-      flight_number: null,
-      error: errorMessage,
-    });
+        // Determine status
+        let starlinkStatus: StarlinkStatus;
+        if (result.error) {
+          starlinkStatus = plane.starlink_status as StarlinkStatus;
+          span.setTag("result", "error");
+          metrics.increment(COUNTERS.VERIFICATION_CHECK, { result: "error" });
+        } else if (result.hasStarlink) {
+          starlinkStatus = "confirmed";
+          span.setTag("result", "starlink");
+          metrics.increment(COUNTERS.VERIFICATION_CHECK, { result: "success" });
+          metrics.increment(COUNTERS.PLANES_STARLINK_DETECTED);
+        } else {
+          starlinkStatus = "negative";
+          span.setTag("result", "not_starlink");
+          metrics.increment(COUNTERS.VERIFICATION_CHECK, { result: "success" });
+        }
 
-    updateFleetVerificationResult(db, plane.tail_number, {
-      starlinkStatus: plane.starlink_status as StarlinkStatus,
-      verifiedWifi: plane.verified_wifi,
-      error: errorMessage,
-    });
+        span.setTag("wifi_provider", result.wifiProvider || "unknown");
 
-    return null;
-  }
+        // Update fleet table
+        updateFleetVerificationResult(db, plane.tail_number, {
+          starlinkStatus,
+          verifiedWifi: result.wifiProvider || null,
+          error: result.error || undefined,
+        });
+
+        // If we discovered Starlink on a plane not in the spreadsheet, add it
+        if (result.hasStarlink && result.wifiProvider === "Starlink") {
+          addDiscoveredStarlinkPlane(
+            db,
+            plane.tail_number,
+            result.aircraftType || plane.aircraft_type,
+            "Starlink",
+            plane.operated_by,
+            plane.fleet === "mainline" ? "mainline" : "express"
+          );
+          // Store the flights we already fetched so they show up on the website
+          updateFlights(db, plane.tail_number, allFlights);
+          info(
+            `DISCOVERY: ${plane.tail_number} has Starlink! (stored ${allFlights.length} flights)`
+          );
+        }
+
+        if (result.hasStarlink) {
+          info(`${plane.tail_number} confirmed Starlink (${result.wifiProvider})`);
+        } else if (result.error) {
+          warn(`${plane.tail_number} error: ${result.error}`);
+        } else {
+          info(`${plane.tail_number} no Starlink (${result.wifiProvider || "unknown"})`);
+        }
+
+        return result;
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        logError(`Error verifying ${plane.tail_number}`, errorMessage);
+        span.setTag("error", true);
+        metrics.increment(COUNTERS.VERIFICATION_CHECK, { result: "error" });
+
+        logVerification(db, {
+          tail_number: plane.tail_number,
+          source: "united",
+          has_starlink: null,
+          wifi_provider: null,
+          aircraft_type: plane.aircraft_type,
+          flight_number: null,
+          error: errorMessage,
+        });
+
+        updateFleetVerificationResult(db, plane.tail_number, {
+          starlinkStatus: plane.starlink_status as StarlinkStatus,
+          verifiedWifi: plane.verified_wifi,
+          error: errorMessage,
+        });
+
+        // Return null to allow batch processing to continue
+        return null;
+      }
+    },
+    { tail_number: plane.tail_number }
+  );
 }
 
 /**
@@ -281,37 +307,55 @@ export function startFleetDiscovery(mode: "discovery" | "maintenance" = "mainten
     runCount++;
 
     try {
-      const stats = await runDiscoveryBatch(1);
+      await withSpan(
+        "fleet_discovery.run",
+        async (span) => {
+          span.setTag("job.type", "background");
+          span.setTag("mode", mode);
 
-      // Accumulate stats
-      totalStats.checked += stats.checked;
-      totalStats.starlink += stats.starlink;
-      totalStats.notStarlink += stats.notStarlink;
-      totalStats.errors += stats.errors;
-      totalStats.noFlights += stats.noFlights;
+          const stats = await runDiscoveryBatch(1);
 
-      if (stats.checked > 0) {
-        info(
-          `Batch complete: ${stats.starlink} Starlink, ${stats.notStarlink} not, ${stats.errors} errors`
-        );
-      }
+          // Accumulate stats
+          totalStats.checked += stats.checked;
+          totalStats.starlink += stats.starlink;
+          totalStats.notStarlink += stats.notStarlink;
+          totalStats.errors += stats.errors;
+          totalStats.noFlights += stats.noFlights;
 
-      // Heartbeat log
-      const now = Date.now();
-      if (now - lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
-        const db = initializeDatabase();
-        try {
-          const fleetStats = getFleetDiscoveryStats(db);
-          info(
-            `Heartbeat: ${runCount} runs, Total: ${fleetStats.total_fleet} fleet, ` +
-              `${fleetStats.verified_starlink} Starlink, ${fleetStats.verified_non_starlink} non-Starlink, ` +
-              `${fleetStats.pending_verification} pending`
-          );
-          lastHeartbeat = now;
-        } finally {
-          db.close();
-        }
-      }
+          span.setTag("checked", stats.checked);
+          span.setTag("starlink", stats.starlink);
+          span.setTag("errors", stats.errors);
+
+          if (stats.checked > 0) {
+            info(
+              `Batch complete: ${stats.starlink} Starlink, ${stats.notStarlink} not, ${stats.errors} errors`
+            );
+          }
+
+          // Heartbeat log
+          const now = Date.now();
+          if (now - lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
+            const db = initializeDatabase();
+            try {
+              const fleetStats = getFleetDiscoveryStats(db);
+              info(
+                `Heartbeat: ${runCount} runs, Total: ${fleetStats.total_fleet} fleet, ` +
+                  `${fleetStats.verified_starlink} Starlink, ${fleetStats.verified_non_starlink} non-Starlink, ` +
+                  `${fleetStats.pending_verification} pending`
+              );
+
+              // Emit gauge metrics
+              metrics.gauge(GAUGES.PLANES_TOTAL, fleetStats.total_fleet);
+              metrics.gauge(GAUGES.PLANES_PENDING, fleetStats.pending_verification);
+
+              lastHeartbeat = now;
+            } finally {
+              db.close();
+            }
+          }
+        },
+        { "job.type": "background", mode }
+      );
     } catch (err) {
       logError("Discovery batch failed", err);
     } finally {

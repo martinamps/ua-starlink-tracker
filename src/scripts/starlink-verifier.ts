@@ -14,6 +14,7 @@ import {
   needsVerification,
   updateVerifiedWifi,
 } from "../database/database";
+import { COUNTERS, metrics, withSpan } from "../observability";
 import { verifierLog } from "../utils/logger";
 import type { StarlinkCheckResult } from "./united-starlink-checker";
 import { checkStarlinkStatusSubprocess } from "./united-starlink-checker-subprocess";
@@ -133,70 +134,95 @@ export async function verifyPlaneStarlink(
     return null;
   }
 
-  const departureDate = new Date(flight.departure_time * 1000).toISOString().split("T")[0];
-  const flightNumber = extractFlightNumber(flight.flight_number);
-  const origin = icaoToIata(flight.departure_airport);
-  const destination = icaoToIata(flight.arrival_airport);
+  return withSpan(
+    "starlink_verifier.verify_plane",
+    async (span) => {
+      span.setTag("tail_number", tailNumber);
 
-  verifierLog.info(
-    `Checking ${tailNumber} via UA${flightNumber} ${origin}-${destination} on ${departureDate}`
-  );
+      const departureDate = new Date(flight.departure_time * 1000).toISOString().split("T")[0];
+      const flightNumber = extractFlightNumber(flight.flight_number);
+      const origin = icaoToIata(flight.departure_airport);
+      const destination = icaoToIata(flight.arrival_airport);
 
-  try {
-    const result = await checkStarlinkStatusSubprocess(
-      flightNumber,
-      departureDate,
-      origin,
-      destination
-    );
+      span.setTag("flight_number", `UA${flightNumber}`);
+      span.setTag("route", `${origin}-${destination}`);
 
-    // Log the verification result
-    logVerification(db, {
-      tail_number: tailNumber,
-      source: "united",
-      has_starlink: result.hasStarlink,
-      wifi_provider: result.wifiProvider,
-      aircraft_type: result.aircraftType,
-      flight_number: `UA${flightNumber}`,
-      error: result.error || null,
-    });
-
-    // Update the plane's verified_wifi status (only if no error)
-    if (!result.error && result.wifiProvider) {
-      updateVerifiedWifi(db, tailNumber, result.wifiProvider);
-    }
-
-    if (result.hasStarlink) {
-      verifierLog.info(`✓ ${tailNumber} confirmed Starlink (${result.wifiProvider})`);
-    } else if (result.error) {
-      verifierLog.warn(
-        `✗ ${tailNumber} error: ${result.error}`,
-        result.debugFile ? { debugFile: result.debugFile } : undefined
-      );
-    } else {
       verifierLog.info(
-        `✗ ${tailNumber} no Starlink (${result.wifiProvider || "unknown provider"})`,
-        result.debugFile ? { debugFile: result.debugFile } : undefined
+        `Checking ${tailNumber} via UA${flightNumber} ${origin}-${destination} on ${departureDate}`
       );
-    }
 
-    return result;
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    verifierLog.error(`Error verifying ${tailNumber}`, errorMessage);
+      try {
+        const result = await checkStarlinkStatusSubprocess(
+          flightNumber,
+          departureDate,
+          origin,
+          destination
+        );
 
-    logVerification(db, {
-      tail_number: tailNumber,
-      source: "united",
-      has_starlink: null,
-      wifi_provider: null,
-      aircraft_type: null,
-      flight_number: `UA${flightNumber}`,
-      error: errorMessage,
-    });
+        // Log the verification result
+        logVerification(db, {
+          tail_number: tailNumber,
+          source: "united",
+          has_starlink: result.hasStarlink,
+          wifi_provider: result.wifiProvider,
+          aircraft_type: result.aircraftType,
+          flight_number: `UA${flightNumber}`,
+          error: result.error || null,
+        });
 
-    return null;
-  }
+        // Update the plane's verified_wifi status (only if no error)
+        if (!result.error && result.wifiProvider) {
+          updateVerifiedWifi(db, tailNumber, result.wifiProvider);
+        }
+
+        // Emit metrics
+        if (result.error) {
+          metrics.increment(COUNTERS.VERIFICATION_CHECK, { result: "error" });
+          span.setTag("result", "error");
+        } else {
+          metrics.increment(COUNTERS.VERIFICATION_CHECK, { result: "success" });
+          span.setTag("result", result.hasStarlink ? "starlink" : "not_starlink");
+          span.setTag("wifi_provider", result.wifiProvider || "unknown");
+        }
+
+        if (result.hasStarlink) {
+          verifierLog.info(`✓ ${tailNumber} confirmed Starlink (${result.wifiProvider})`);
+        } else if (result.error) {
+          verifierLog.warn(
+            `✗ ${tailNumber} error: ${result.error}`,
+            result.debugFile ? { debugFile: result.debugFile } : undefined
+          );
+        } else {
+          verifierLog.info(
+            `✗ ${tailNumber} no Starlink (${result.wifiProvider || "unknown provider"})`,
+            result.debugFile ? { debugFile: result.debugFile } : undefined
+          );
+        }
+
+        return result;
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        verifierLog.error(`Error verifying ${tailNumber}`, errorMessage);
+        metrics.increment(COUNTERS.VERIFICATION_CHECK, { result: "error" });
+        span.setTag("error", true);
+        span.setTag("result", "error");
+
+        logVerification(db, {
+          tail_number: tailNumber,
+          source: "united",
+          has_starlink: null,
+          wifi_provider: null,
+          aircraft_type: null,
+          flight_number: `UA${flightNumber}`,
+          error: errorMessage,
+        });
+
+        // Return null to allow batch processing to continue
+        return null;
+      }
+    },
+    { tail_number: tailNumber }
+  );
 }
 
 /**
@@ -343,20 +369,32 @@ export function startStarlinkVerifier() {
     runCount++;
 
     try {
-      const stats = await runVerificationBatch(PLANES_PER_RUN, VERIFICATION_DELAY_MS);
+      await withSpan(
+        "starlink_verifier.run",
+        async (span) => {
+          span.setTag("job.type", "background");
 
-      if (stats.checked > 0) {
-        verifierLog.info(
-          `Batch complete: ${stats.starlink} Starlink, ${stats.notStarlink} not, ${stats.errors} errors`
-        );
-      }
+          const stats = await runVerificationBatch(PLANES_PER_RUN, VERIFICATION_DELAY_MS);
 
-      // Heartbeat log every 10 minutes to show scheduler is alive
-      const now = Date.now();
-      if (now - lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
-        verifierLog.info(`Heartbeat: ${runCount} runs completed, scheduler healthy`);
-        lastHeartbeat = now;
-      }
+          span.setTag("checked", stats.checked);
+          span.setTag("starlink", stats.starlink);
+          span.setTag("errors", stats.errors);
+
+          if (stats.checked > 0) {
+            verifierLog.info(
+              `Batch complete: ${stats.starlink} Starlink, ${stats.notStarlink} not, ${stats.errors} errors`
+            );
+          }
+
+          // Heartbeat log every 10 minutes to show scheduler is alive
+          const now = Date.now();
+          if (now - lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
+            verifierLog.info(`Heartbeat: ${runCount} runs completed, scheduler healthy`);
+            lastHeartbeat = now;
+          }
+        },
+        { "job.type": "background" }
+      );
     } catch (error) {
       verifierLog.error("Background verification failed", error);
     } finally {

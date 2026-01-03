@@ -6,6 +6,7 @@ import {
   updateFlights,
   updateLastFlightCheck,
 } from "../database/database";
+import { withSpan } from "../observability";
 import type { Aircraft, Flight } from "../types";
 import { FLIGHT_DATA_SOURCE } from "../utils/constants";
 import { error, info, warn } from "../utils/logger";
@@ -48,37 +49,47 @@ function createFlightAPI(): FlightAPI | null {
 }
 
 async function updateFlightsForTailNumber(api: FlightAPI, tailNumber: string): Promise<boolean> {
-  let success = false;
-  const db = initializeDatabase();
+  return withSpan(
+    "flight_updater.update_tail",
+    async (span) => {
+      span.setTag("tail_number", tailNumber);
+      let success = false;
+      const db = initializeDatabase();
 
-  try {
-    info(`Fetching upcoming flights for ${tailNumber}`);
-    const flights = await api.getUpcomingFlights(tailNumber);
+      try {
+        info(`Fetching upcoming flights for ${tailNumber}`);
+        const flights = await api.getUpcomingFlights(tailNumber);
 
-    if (flights.length === 0) {
-      info(`No upcoming flights found for ${tailNumber}`);
-    } else {
-      info(`Found ${flights.length} upcoming flights for ${tailNumber}`);
-    }
+        span.setTag("flights.count", flights.length);
 
-    updateFlights(db, tailNumber, flights);
-    updateLastFlightCheck(db, tailNumber, true);
+        if (flights.length === 0) {
+          info(`No upcoming flights found for ${tailNumber}`);
+        } else {
+          info(`Found ${flights.length} upcoming flights for ${tailNumber}`);
+        }
 
-    info(`Successfully updated ${flights.length} upcoming flights for ${tailNumber}`);
-    success = true;
-  } catch (err) {
-    error(`Failed to update flights for ${tailNumber}`, err);
+        updateFlights(db, tailNumber, flights);
+        updateLastFlightCheck(db, tailNumber, true);
 
-    try {
-      updateLastFlightCheck(db, tailNumber, false);
-    } catch (updateError) {
-      error(`Failed to update last check status for ${tailNumber}`, updateError);
-    }
-  } finally {
-    db.close();
-  }
+        info(`Successfully updated ${flights.length} upcoming flights for ${tailNumber}`);
+        success = true;
+      } catch (err) {
+        error(`Failed to update flights for ${tailNumber}`, err);
+        span.setTag("error", true);
 
-  return success;
+        try {
+          updateLastFlightCheck(db, tailNumber, false);
+        } catch (updateError) {
+          error(`Failed to update last check status for ${tailNumber}`, updateError);
+        }
+      } finally {
+        db.close();
+      }
+
+      return success;
+    },
+    { tail_number: tailNumber }
+  );
 }
 
 async function updateFlightsIfNeeded(
@@ -308,50 +319,62 @@ export function startFlightUpdater() {
     isRunning = true;
 
     try {
-      const db = initializeDatabase();
+      await withSpan(
+        "flight_updater.run",
+        async (span) => {
+          span.setTag("job.type", "background");
 
-      // Find a plane that needs updating
-      const planes = getStarlinkPlanes(db);
-      let planeToUpdate: Aircraft | null = null;
+          const db = initializeDatabase();
 
-      for (const plane of planes) {
-        if (!plane.TailNumber) continue;
-        if (needsFlightCheck(db, plane.TailNumber)) {
-          planeToUpdate = plane;
-          break;
-        }
-      }
+          // Find a plane that needs updating
+          const planes = getStarlinkPlanes(db);
+          let planeToUpdate: Aircraft | null = null;
 
-      db.close();
+          for (const plane of planes) {
+            if (!plane.TailNumber) continue;
+            if (needsFlightCheck(db, plane.TailNumber)) {
+              planeToUpdate = plane;
+              break;
+            }
+          }
 
-      if (!planeToUpdate) {
-        // No planes need updates right now
-        return;
-      }
+          db.close();
 
-      // Update this plane
-      const success = await updateFlightsForTailNumber(api, planeToUpdate.TailNumber);
+          if (!planeToUpdate) {
+            // No planes need updates right now
+            return;
+          }
 
-      if (success) {
-        consecutiveApiFailures = 0;
-        totalUpdates++;
-      } else {
-        consecutiveApiFailures++;
-        totalErrors++;
-        if (consecutiveApiFailures >= MAX_CONSECUTIVE_FAILURES) {
-          circuitBreakerOpenedAt = Date.now();
-          error(
-            `Circuit breaker opened after ${MAX_CONSECUTIVE_FAILURES} consecutive API failures`
-          );
-        }
-      }
+          span.setTag("tail_number", planeToUpdate.TailNumber);
 
-      // Heartbeat logging
-      const now = Date.now();
-      if (now - lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
-        info(`Flight updater heartbeat: ${totalUpdates} updates, ${totalErrors} errors`);
-        lastHeartbeat = now;
-      }
+          // Update this plane
+          const success = await updateFlightsForTailNumber(api, planeToUpdate.TailNumber);
+
+          if (success) {
+            consecutiveApiFailures = 0;
+            totalUpdates++;
+            span.setTag("result", "success");
+          } else {
+            consecutiveApiFailures++;
+            totalErrors++;
+            span.setTag("result", "failure");
+            if (consecutiveApiFailures >= MAX_CONSECUTIVE_FAILURES) {
+              circuitBreakerOpenedAt = Date.now();
+              error(
+                `Circuit breaker opened after ${MAX_CONSECUTIVE_FAILURES} consecutive API failures`
+              );
+            }
+          }
+
+          // Heartbeat logging
+          const now = Date.now();
+          if (now - lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
+            info(`Flight updater heartbeat: ${totalUpdates} updates, ${totalErrors} errors`);
+            lastHeartbeat = now;
+          }
+        },
+        { "job.type": "background" }
+      );
     } catch (err) {
       error("Error in flight updater", err);
       consecutiveApiFailures++;

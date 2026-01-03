@@ -32,7 +32,16 @@ COPY . .
 
 EXPOSE 3000
 
+# Coolify passes SOURCE_COMMIT automatically
+ARG SOURCE_COMMIT=unknown
+
 ENV NODE_ENV=production
 ENV LOG_DIR=/srv/ua-starlink-tracker/logs
+
+# Datadog APM configuration
+ENV DD_ENV=production
+ENV DD_SERVICE=ua-starlink-tracker
+ENV DD_VERSION=${SOURCE_COMMIT}
+ENV DD_TRACE_AGENT_HOSTNAME=host.docker.internal
 
 CMD ["bun", "run", "server.ts"]

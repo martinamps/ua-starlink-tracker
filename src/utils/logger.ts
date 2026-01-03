@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { injectTraceContext } from "../observability/tracer";
 
 export const LOG_DIR = process.env.LOG_DIR || "./logs";
 const LOG_PATH = path.join(LOG_DIR, "app.log");
@@ -34,10 +35,6 @@ function getCallerFile(): string {
   return "app";
 }
 
-function formatTimestamp(): string {
-  return new Date().toISOString();
-}
-
 function writeToFile(line: string) {
   try {
     fs.appendFileSync(LOG_PATH, line + "\n");
@@ -46,28 +43,32 @@ function writeToFile(line: string) {
   }
 }
 
-function formatData(data: unknown): string {
-  if (data === undefined) return "";
+function formatData(data: unknown): unknown {
+  if (data === undefined) return undefined;
   if (typeof data === "string") return data;
-  if (data instanceof Error) return data.stack || data.message;
-  try {
-    return JSON.stringify(data);
-  } catch {
-    return String(data);
-  }
+  if (data instanceof Error) return { error: data.message, stack: data.stack };
+  return data;
 }
 
 function log(level: LogLevel, message: string, data?: unknown) {
-  const timestamp = formatTimestamp();
-  const file = getCallerFile();
+  const record: Record<string, unknown> = {
+    timestamp: new Date().toISOString(),
+    level: level.toLowerCase(),
+    logger: getCallerFile(),
+    message,
+  };
 
-  // Console + file output: "2026-01-01T21:18:03.610Z INFO [flight-updater] Message"
-  let msg = `${timestamp} ${level} [${file}] ${message}`;
-  if (data !== undefined) {
-    msg += ` ${formatData(data)}`;
+  // Add data if present
+  const formattedData = formatData(data);
+  if (formattedData !== undefined) {
+    record.data = formattedData;
   }
 
-  writeToFile(msg);
+  // Inject trace context if active span exists
+  injectTraceContext(record);
+
+  const jsonLine = JSON.stringify(record);
+  writeToFile(jsonLine);
 
   // Skip debug logs in production
   if (level === "DEBUG" && process.env.NODE_ENV === "production") {
@@ -78,9 +79,9 @@ function log(level: LogLevel, message: string, data?: unknown) {
   const useStderr = process.env.SUBPROCESS_MODE === "1";
 
   if (useStderr || level === "ERROR" || level === "WARN") {
-    console.error(msg);
+    console.error(jsonLine);
   } else {
-    console.log(msg);
+    console.log(jsonLine);
   }
 }
 
