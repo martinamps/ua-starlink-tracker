@@ -148,32 +148,45 @@ info(`Server starting on port ${PORT}. Environment: ${process.env.NODE_ENV || "d
 
 // Data update function
 async function updateStarlinkData() {
-  try {
-    const { totalAircraftCount, starlinkAircraft, fleetStats } = await fetchAllSheets();
+  return withSpan(
+    "scraper.update_data",
+    async (span) => {
+      span.setTag("job.type", "background");
 
-    updateDatabase(db, totalAircraftCount, starlinkAircraft, fleetStats);
+      try {
+        const { totalAircraftCount, starlinkAircraft, fleetStats } = await fetchAllSheets();
 
-    // Sync spreadsheet planes to united_fleet for discovery
-    const synced = syncSpreadsheetToFleet(db);
-    if (synced > 0) {
-      info(`Synced ${synced} new planes to united_fleet`);
-    }
+        updateDatabase(db, totalAircraftCount, starlinkAircraft, fleetStats);
 
-    info(
-      `Updated data: ${starlinkAircraft.length} Starlink aircraft out of ${totalAircraftCount} total`
-    );
+        // Sync spreadsheet planes to united_fleet for discovery
+        const synced = syncSpreadsheetToFleet(db);
+        if (synced > 0) {
+          info(`Synced ${synced} new planes to united_fleet`);
+          span.setTag("synced_to_fleet", synced);
+        }
 
-    // scan new flights ~immediately
-    await checkNewPlanes();
+        span.setTag("total_aircraft", totalAircraftCount);
+        span.setTag("starlink_count", starlinkAircraft.length);
 
-    return {
-      total: totalAircraftCount,
-      starlinkCount: starlinkAircraft.length,
-    };
-  } catch (err) {
-    logError("Error updating starlink data", err);
-    return { total: 0, starlinkCount: 0 };
-  }
+        info(
+          `Updated data: ${starlinkAircraft.length} Starlink aircraft out of ${totalAircraftCount} total`
+        );
+
+        // scan new flights ~immediately
+        await checkNewPlanes();
+
+        return {
+          total: totalAircraftCount,
+          starlinkCount: starlinkAircraft.length,
+        };
+      } catch (err) {
+        logError("Error updating starlink data", err);
+        span.setTag("error", true);
+        return { total: 0, starlinkCount: 0 };
+      }
+    },
+    { "job.type": "background" }
+  );
 }
 
 // fill gaps we may have missed

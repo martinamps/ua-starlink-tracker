@@ -110,17 +110,19 @@ To add a new route, update the `KNOWN_ROUTES` set in `server.ts`. Keep the total
 ### Span Names
 
 Background job spans:
-- `flight_updater.run` - Flight data update cycle
+- `scraper.update_data` - Hourly spreadsheet scrape and database update
+- `flight_updater.run` - Flight data update cycle (trickle, every 30s)
 - `flight_updater.update_tail` - Single tail number update
+- `flight_updater.check_new_planes` - Check flights for newly discovered planes
 - `starlink_verifier.run` - Verification batch cycle
 - `starlink_verifier.verify_plane` - Single plane verification
-- `fleet_sync.run` - FR24 fleet sync cycle
+- `fleet_sync.run` - FR24 fleet sync cycle (daily)
 - `fleet_sync.fr24` - FR24 scrape operation
 - `fleet_discovery.run` - Discovery batch cycle
 - `fleet_discovery.verify_plane` - Single plane discovery check
 
 HTTP spans:
-- `http.request` - All incoming HTTP requests
+- `http.request` - All incoming HTTP requests (API routes and home page)
 
 ### Common Tags
 

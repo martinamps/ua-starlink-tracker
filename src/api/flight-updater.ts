@@ -248,34 +248,47 @@ export async function updateAllFlights() {
  * This runs immediately after scraping to provide faster updates for new aircraft
  */
 export async function checkNewPlanes() {
-  const api = createFlightAPI();
-  if (!api) {
-    info("Flight API not available, skipping new plane flight checks");
-    return;
-  }
+  return withSpan(
+    "flight_updater.check_new_planes",
+    async (span) => {
+      span.setTag("job.type", "background");
 
-  const db = initializeDatabase();
+      const api = createFlightAPI();
+      if (!api) {
+        info("Flight API not available, skipping new plane flight checks");
+        return;
+      }
 
-  // Get planes that have never been checked (last_flight_check = 0)
-  const newPlanes = db
-    .query(
-      `SELECT * FROM starlink_planes
-       WHERE last_flight_check = 0 OR last_flight_check IS NULL`
-    )
-    .all() as Aircraft[];
+      const db = initializeDatabase();
 
-  db.close();
+      // Get planes that have never been checked (last_flight_check = 0)
+      const newPlanes = db
+        .query(
+          `SELECT * FROM starlink_planes
+           WHERE last_flight_check = 0 OR last_flight_check IS NULL`
+        )
+        .all() as Aircraft[];
 
-  if (newPlanes.length === 0) {
-    return;
-  }
+      db.close();
 
-  info(`Found ${newPlanes.length} new plane(s), checking flights immediately...`);
+      span.setTag("new_planes_count", newPlanes.length);
 
-  const { updatedCount, apiCallCount } = await processPlanesInBatches(api, newPlanes, 5);
+      if (newPlanes.length === 0) {
+        return;
+      }
 
-  info(
-    `New plane flight check completed: ${updatedCount} planes updated, ${apiCallCount} API calls made`
+      info(`Found ${newPlanes.length} new plane(s), checking flights immediately...`);
+
+      const { updatedCount, apiCallCount } = await processPlanesInBatches(api, newPlanes, 5);
+
+      span.setTag("updated_count", updatedCount);
+      span.setTag("api_call_count", apiCallCount);
+
+      info(
+        `New plane flight check completed: ${updatedCount} planes updated, ${apiCallCount} API calls made`
+      );
+    },
+    { "job.type": "background" }
   );
 }
 

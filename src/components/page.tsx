@@ -18,7 +18,6 @@ const dateOverrides: Record<string, string> = {
 export default function Page({
   total,
   starlink,
-  lastUpdated: serverLastUpdated,
   fleetStats,
   isUnited = false,
   flightsByTail = {},
@@ -39,21 +38,74 @@ export default function Page({
     });
   };
 
-  // Format the timestamp from server to human-readable format
-  const formatLastUpdated = (isoTimestamp: string): string => {
-    try {
-      const date = new Date(isoTimestamp);
-      return date.toLocaleString();
-    } catch (e) {
-      return new Date().toLocaleString(); // Fallback
-    }
-  };
-
   // Server-side rendering uses props directly, no client state needed
   const starlinkData = applyDateOverrides(starlink);
   const x = starlinkData.length;
   const y = total;
   const percentage = y > 0 ? ((x / y) * 100).toFixed(2) : "0.00";
+
+  // Aggregate aircraft by model type for pie chart
+  const getAircraftByModel = () => {
+    const modelCounts: Record<string, number> = {};
+    for (const plane of starlinkData) {
+      // Normalize model names (e.g., "737-900" -> "737")
+      const fullModel = plane.Aircraft || "Unknown";
+      // Extract base model (first part before dash or space)
+      const baseModel = fullModel.split(/[-\s]/)[0];
+      modelCounts[baseModel] = (modelCounts[baseModel] || 0) + 1;
+    }
+    // Sort by count descending and return top models
+    return Object.entries(modelCounts)
+      .sort((a, b) => b[1] - a[1])
+      .map(([model, count]) => ({ model, count }));
+  };
+
+  const modelData = getAircraftByModel();
+  const pieColors = [
+    "#0ea5e9", // Accent cyan
+    "#22c55e", // Green
+    "#f59e0b", // Amber
+    "#8b5cf6", // Purple
+    "#ec4899", // Pink
+    "#06b6d4", // Teal
+  ];
+
+  // Format date as relative time (e.g., "3 days ago", "2 weeks ago")
+  const formatRelativeDate = (dateStr: string) => {
+    const date = new Date(dateStr);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+    if (diffDays === 0) return "Today";
+    if (diffDays === 1) return "Yesterday";
+    if (diffDays < 7) return `${diffDays} days ago`;
+    if (diffDays < 14) return "1 week ago";
+    if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
+    if (diffDays < 60) return "1 month ago";
+    return `${Math.floor(diffDays / 30)} months ago`;
+  };
+
+  // Get aircraft icon based on type
+  const getAircraftIcon = (type: string) => {
+    const t = type.toLowerCase();
+    if (
+      t.includes("737") ||
+      t.includes("757") ||
+      t.includes("767") ||
+      t.includes("a31") ||
+      t.includes("a32")
+    ) {
+      return "✈"; // Narrow body
+    }
+    if (t.includes("777") || t.includes("787") || t.includes("a35")) {
+      return "🛫"; // Wide body
+    }
+    if (t.includes("e1") || t.includes("crj") || t.includes("erj")) {
+      return "🛩"; // Regional
+    }
+    return "✈";
+  };
 
   // Helper function to clean airport codes (remove ICAO prefixes)
   const cleanAirportCode = (code: string) => {
@@ -87,8 +139,6 @@ export default function Page({
   // Helper function to format flight times
   const formatFlightTime = (timestamp: number) => {
     const date = new Date(timestamp * 1000);
-    const now = new Date();
-    const isToday = date.toDateString() === now.toDateString();
 
     const timeStr = date.toLocaleTimeString("en-US", {
       hour: "numeric",
@@ -96,13 +146,25 @@ export default function Page({
       hour12: true,
     });
 
-    // Always show the date for clarity
     const dateStr = date.toLocaleDateString("en-US", {
       month: "short",
       day: "numeric",
     });
 
     return `${dateStr} ${timeStr}`;
+  };
+
+  // Compact flight time (just time, e.g., "2:30p")
+  const formatCompactTime = (timestamp: number) => {
+    const date = new Date(timestamp * 1000);
+    return date
+      .toLocaleTimeString("en-US", {
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: true,
+      })
+      .replace(" AM", "a")
+      .replace(" PM", "p");
   };
 
   // Helper function to render upcoming flights
@@ -188,6 +250,93 @@ export default function Page({
     ]);
   };
 
+  // Compact inline flight pills for new table design (responsive + expandable)
+  const renderFlightPills = (tailNumber: string) => {
+    const flights = flightsByTail[tailNumber];
+
+    if (!flights || flights.length === 0) {
+      return <span className="text-muted text-xs italic font-mono">No flights scheduled</span>;
+    }
+
+    const containerId = `flights-${tailNumber}`;
+    // Mobile: 2, Tablet: 4, Desktop: 6
+    const mobileMax = 2;
+    const tabletMax = 4;
+    const desktopMax = 6;
+
+    const renderPill = (flight: (typeof flights)[0], idx: number) => {
+      const dep = cleanAirportCode(flight.departure_airport);
+      const arr = cleanAirportCode(flight.arrival_airport);
+
+      // Determine visibility classes
+      let visibilityClass = "inline-flex"; // Always visible
+      if (idx >= desktopMax) {
+        visibilityClass = "flight-extra hidden"; // Hidden until expanded
+      } else if (idx >= tabletMax) {
+        visibilityClass = "hidden xl:inline-flex"; // Desktop only (xl+)
+      } else if (idx >= mobileMax) {
+        visibilityClass = "hidden md:inline-flex"; // Tablet+ (md+)
+      }
+
+      return (
+        <a
+          key={idx}
+          href={`https://www.flightaware.com/live/flight/${flight.flight_number}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={`flight-pill font-mono items-center gap-1.5 px-2 py-1 bg-surface-elevated border border-subtle rounded text-xs text-secondary hover:text-accent hover:border-accent/50 transition-all ${visibilityClass}`}
+        >
+          <span className="text-accent font-medium">{dep}</span>
+          <span className="text-muted">→</span>
+          <span className="text-accent font-medium">{arr}</span>
+          <span className="text-muted text-[10px]">{formatCompactTime(flight.departure_time)}</span>
+        </a>
+      );
+    };
+
+    // Calculate remaining for each breakpoint
+    const mobileRemaining = Math.max(0, flights.length - mobileMax);
+    const tabletRemaining = Math.max(0, flights.length - tabletMax);
+    const desktopRemaining = Math.max(0, flights.length - desktopMax);
+
+    return (
+      <div className="flex flex-wrap gap-1.5" id={containerId}>
+        {flights.map((flight, idx) => renderPill(flight, idx))}
+        {/* Responsive expand buttons - show different counts based on screen size */}
+        {mobileRemaining > 0 && (
+          <button
+            type="button"
+            className="expand-flights md:hidden inline-flex items-center px-2 py-1 border border-accent/30 hover:border-accent rounded text-xs text-accent font-mono font-medium transition-all cursor-pointer hover:bg-accent/10"
+            data-target={containerId}
+            data-count={mobileRemaining}
+          >
+            +{mobileRemaining}
+          </button>
+        )}
+        {tabletRemaining > 0 && (
+          <button
+            type="button"
+            className="expand-flights hidden md:inline-flex xl:hidden items-center px-2 py-1 border border-accent/30 hover:border-accent rounded text-xs text-accent font-mono font-medium transition-all cursor-pointer hover:bg-accent/10"
+            data-target={containerId}
+            data-count={tabletRemaining}
+          >
+            +{tabletRemaining}
+          </button>
+        )}
+        {desktopRemaining > 0 && (
+          <button
+            type="button"
+            className="expand-flights hidden xl:inline-flex items-center px-2 py-1 border border-accent/30 hover:border-accent rounded text-xs text-accent font-mono font-medium transition-all cursor-pointer hover:bg-accent/10"
+            data-target={containerId}
+            data-count={desktopRemaining}
+          >
+            +{desktopRemaining}
+          </button>
+        )}
+      </div>
+    );
+  };
+
   // Mobile-specific flight display component
   const renderMobileFlights = (plane: Aircraft) => {
     const flights = flightsByTail[plane.TailNumber];
@@ -220,172 +369,290 @@ export default function Page({
   };
 
   return (
-    <div className="w-full mx-auto px-4 sm:px-6 md:px-8 bg-gray-50 text-gray-800 min-h-screen flex flex-col">
-      <header className="py-6 sm:py-8 md:py-10 text-center border-b border-gray-200 mb-6 sm:mb-8">
-        <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold text-united-blue mb-3 tracking-tight">
+    <div className="w-full mx-auto px-4 sm:px-6 md:px-8 bg-base min-h-screen flex flex-col relative">
+      {/* Subtle grid background */}
+      <div className="absolute inset-0 grid-pattern opacity-50 pointer-events-none" />
+
+      <header className="relative py-8 sm:py-12 md:py-16 text-center mb-8">
+        <h1 className="font-display text-4xl sm:text-5xl md:text-6xl font-bold text-primary mb-2 tracking-tight">
           {isUnited ? PAGE_CONTENT.pageTitle.united : PAGE_CONTENT.pageTitle.generic}
         </h1>
-        <p className="text-lg sm:text-xl text-gray-700 mb-4">
+        <p className="text-lg sm:text-xl text-secondary mb-8 font-display">
           {isUnited ? PAGE_CONTENT.pageSubtitle.united : PAGE_CONTENT.pageSubtitle.generic}
         </p>
-        <div className="max-w-4xl mx-auto px-5 py-4 bg-blue-50 rounded-xl text-gray-700 border border-blue-100 text-left shadow-sm">
-          <p className="mb-2">
-            United Airlines{" "}
+
+        {/* Feature stats - instrument panel style */}
+        <div className="max-w-3xl mx-auto">
+          <div className="grid grid-cols-4 gap-1 bg-surface rounded-lg border border-subtle overflow-hidden">
+            <div className="p-4 text-center border-r border-subtle">
+              <div className="font-mono text-2xl md:text-3xl font-semibold text-accent">250</div>
+              <div className="text-[10px] text-muted uppercase tracking-wider">Mbps</div>
+            </div>
+            <div className="p-4 text-center border-r border-subtle">
+              <div className="font-mono text-2xl md:text-3xl font-semibold text-accent">50×</div>
+              <div className="text-[10px] text-muted uppercase tracking-wider">Faster</div>
+            </div>
+            <div className="p-4 text-center border-r border-subtle">
+              <div className="font-mono text-2xl md:text-3xl font-semibold text-green-400">
+                FREE
+              </div>
+              <div className="text-[10px] text-muted uppercase tracking-wider">All Seats</div>
+            </div>
+            <div className="p-4 text-center">
+              <div className="font-mono text-2xl md:text-3xl font-semibold text-accent">40+</div>
+              <div className="text-[10px] text-muted uppercase tracking-wider">Per Month</div>
+            </div>
+          </div>
+          <p className="text-center text-xs text-muted mt-4 font-mono">
             <a
               href={PAGE_CONTENT.mainDescription.pressReleaseUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-united-blue hover:underline font-medium"
+              className="text-accent hover:underline"
             >
-              began equipping its fleet
+              Starlink installations
             </a>{" "}
-            with SpaceX's Starlink internet on March 7, 2025. The ultra-fast WiFi offers speeds up
-            to 250 Mbps—
-            <span className="font-bold">50 times faster</span> than previous systems. The airline
-            plans to install Starlink on over 40 regional aircraft monthly, completing its entire
-            two-cabin regional fleet by the end of 2025. Each installation takes only 8 hours,
-            making it 10 times faster than previous systems, and the lightweight 85-pound equipment
-            improves fuel efficiency compared to older 300-pound systems.
+            began March 7, 2025 · Works over oceans · No app required
           </p>
         </div>
       </header>
 
-      {/* Fleet Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6 mb-8">
-        {/* Mainline Fleet Card */}
-        <div className="bg-white rounded-xl p-6 shadow-md flex flex-col justify-center text-center relative overflow-hidden">
-          <div className="text-lg font-semibold mb-2 text-gray-700">
-            {PAGE_CONTENT.fleetLabels.mainline}
+      {/* Fleet Stats - Instrument Panel Style */}
+      <div className="relative grid grid-cols-2 lg:grid-cols-4 gap-px bg-subtle rounded-lg overflow-hidden mb-8 border border-subtle">
+        {/* Mainline Fleet */}
+        <div className="bg-surface p-4 flex flex-col justify-center text-center">
+          <div className="text-[10px] font-mono text-muted uppercase tracking-wider mb-2">
+            Mainline
           </div>
-          {/* Progress Ring */}
-          <div className="relative w-32 h-32 mx-auto mb-3">
+          <div className="relative w-20 h-20 mx-auto mb-2">
             <svg
-              className="w-32 h-32 transform -rotate-90"
+              className="w-20 h-20 transform -rotate-90"
               role="img"
-              aria-label="Mainline fleet progress ring showing percentage with Starlink"
+              aria-label="Mainline progress"
             >
-              <circle cx="64" cy="64" r="56" stroke="#e5e7eb" strokeWidth="12" fill="none" />
+              <circle cx="40" cy="40" r="34" stroke="#243044" strokeWidth="6" fill="none" />
               <circle
-                cx="64"
-                cy="64"
-                r="56"
-                stroke="#0066cc"
-                strokeWidth="12"
+                cx="40"
+                cy="40"
+                r="34"
+                stroke="#0ea5e9"
+                strokeWidth="6"
                 fill="none"
-                strokeDasharray={`${2 * Math.PI * 56}`}
-                strokeDashoffset={`${2 * Math.PI * 56 * (1 - (fleetStats?.mainline.percentage || 0) / 100)}`}
+                strokeDasharray={`${2 * Math.PI * 34}`}
+                strokeDashoffset={`${2 * Math.PI * 34 * (1 - (fleetStats?.mainline.percentage || 0) / 100)}`}
                 className="transition-all duration-1000 ease-out"
+                style={{ filter: "drop-shadow(0 0 6px rgba(14, 165, 233, 0.5))" }}
               />
             </svg>
             <div className="absolute inset-0 flex items-center justify-center">
-              <span className="text-3xl font-bold text-united-blue">
+              <span className="font-mono text-xl font-semibold text-primary">
                 {fleetStats?.mainline.percentage.toFixed(0)}%
               </span>
             </div>
           </div>
-          <div className="text-sm text-gray-600">
-            <span className="font-bold text-united-blue">{fleetStats?.mainline.starlink || 0}</span>{" "}
-            out of <span className="font-bold">{fleetStats?.mainline.total || 0}</span> planes
+          <div className="font-mono text-xs text-secondary">
+            <span className="text-accent">{fleetStats?.mainline.starlink || 0}</span>
+            <span className="text-muted"> / {fleetStats?.mainline.total || 0}</span>
           </div>
         </div>
 
-        {/* Express Fleet Card */}
-        <div className="bg-white rounded-xl p-6 shadow-md flex flex-col justify-center text-center relative overflow-hidden">
-          <div className="text-lg font-semibold mb-2 text-gray-700">
-            {PAGE_CONTENT.fleetLabels.express}
+        {/* Express Fleet */}
+        <div className="bg-surface p-4 flex flex-col justify-center text-center">
+          <div className="text-[10px] font-mono text-muted uppercase tracking-wider mb-2">
+            Express
           </div>
-          {/* Progress Ring */}
-          <div className="relative w-32 h-32 mx-auto mb-3">
+          <div className="relative w-20 h-20 mx-auto mb-2">
             <svg
-              className="w-32 h-32 transform -rotate-90"
+              className="w-20 h-20 transform -rotate-90"
               role="img"
-              aria-label="Express fleet progress ring showing percentage with Starlink"
+              aria-label="Express progress"
             >
-              <circle cx="64" cy="64" r="56" stroke="#e5e7eb" strokeWidth="12" fill="none" />
+              <circle cx="40" cy="40" r="34" stroke="#243044" strokeWidth="6" fill="none" />
               <circle
-                cx="64"
-                cy="64"
-                r="56"
-                stroke="#0066cc"
-                strokeWidth="12"
+                cx="40"
+                cy="40"
+                r="34"
+                stroke="#0ea5e9"
+                strokeWidth="6"
                 fill="none"
-                strokeDasharray={`${2 * Math.PI * 56}`}
-                strokeDashoffset={`${2 * Math.PI * 56 * (1 - (fleetStats?.express.percentage || 0) / 100)}`}
+                strokeDasharray={`${2 * Math.PI * 34}`}
+                strokeDashoffset={`${2 * Math.PI * 34 * (1 - (fleetStats?.express.percentage || 0) / 100)}`}
                 className="transition-all duration-1000 ease-out"
+                style={{ filter: "drop-shadow(0 0 6px rgba(14, 165, 233, 0.5))" }}
               />
             </svg>
             <div className="absolute inset-0 flex items-center justify-center">
-              <span className="text-3xl font-bold text-united-blue">
+              <span className="font-mono text-xl font-semibold text-primary">
                 {fleetStats?.express.percentage.toFixed(0)}%
               </span>
             </div>
           </div>
-          <div className="text-sm text-gray-600">
-            <span className="font-bold text-united-blue">{fleetStats?.express.starlink || 0}</span>{" "}
-            out of <span className="font-bold">{fleetStats?.express.total || 0}</span> planes
+          <div className="font-mono text-xs text-secondary">
+            <span className="text-accent">{fleetStats?.express.starlink || 0}</span>
+            <span className="text-muted"> / {fleetStats?.express.total || 0}</span>
           </div>
         </div>
 
         {/* Combined Stats */}
-        <div className="bg-white rounded-xl p-6 shadow-md flex flex-col justify-center text-center border-2 border-blue-100 relative overflow-hidden">
-          <div className="text-lg font-semibold mb-2 text-gray-700">
-            {PAGE_CONTENT.fleetLabels.combined}
+        <div className="bg-surface p-4 flex flex-col justify-center text-center">
+          <div className="text-[10px] font-mono text-muted uppercase tracking-wider mb-2">
+            Total Fleet
           </div>
-          {/* Progress Ring */}
-          <div className="relative w-32 h-32 mx-auto mb-3">
+          <div className="relative w-20 h-20 mx-auto mb-2">
             <svg
-              className="w-32 h-32 transform -rotate-90"
+              className="w-20 h-20 transform -rotate-90"
               role="img"
-              aria-label="Combined fleet progress ring showing overall percentage with Starlink"
+              aria-label="Combined progress"
             >
-              <circle cx="64" cy="64" r="56" stroke="#e5e7eb" strokeWidth="12" fill="none" />
+              <circle cx="40" cy="40" r="34" stroke="#243044" strokeWidth="6" fill="none" />
               <circle
-                cx="64"
-                cy="64"
-                r="56"
-                stroke="#0066cc"
-                strokeWidth="12"
+                cx="40"
+                cy="40"
+                r="34"
+                stroke="#22c55e"
+                strokeWidth="6"
                 fill="none"
-                strokeDasharray={`${2 * Math.PI * 56}`}
-                strokeDashoffset={`${2 * Math.PI * 56 * (1 - Number.parseFloat(percentage) / 100)}`}
+                strokeDasharray={`${2 * Math.PI * 34}`}
+                strokeDashoffset={`${2 * Math.PI * 34 * (1 - Number.parseFloat(percentage) / 100)}`}
                 className="transition-all duration-1000 ease-out"
                 strokeLinecap="round"
+                style={{ filter: "drop-shadow(0 0 6px rgba(34, 197, 94, 0.5))" }}
               />
             </svg>
             <div className="absolute inset-0 flex items-center justify-center">
-              <span className="text-3xl font-bold text-united-blue">
+              <span className="font-mono text-xl font-semibold text-green-400">
                 {Math.round(Number.parseFloat(percentage))}%
               </span>
             </div>
           </div>
-          <div className="text-sm text-gray-600">
-            <span className="font-bold text-united-blue">{x}</span> out of{" "}
-            <span className="font-bold">{y}</span> planes
+          <div className="font-mono text-xs text-secondary">
+            <span className="text-green-400">{x}</span>
+            <span className="text-muted"> / {y}</span>
           </div>
-          <div className="text-xs text-gray-500 mt-2">+40 monthly installations</div>
         </div>
-      </div>
 
-      {/* Last Updated - hidden by default */}
-      <div className="text-center mb-6 hidden">
-        <div className="text-sm text-gray-500 bg-gray-100 px-4 py-2 rounded-full inline-block">
-          Last updated:{" "}
-          {serverLastUpdated ? formatLastUpdated(serverLastUpdated) : new Date().toLocaleString()}
+        {/* Aircraft Models Pie Chart */}
+        <div className="bg-surface p-4 flex flex-col justify-center text-center">
+          <div className="text-[10px] font-mono text-muted uppercase tracking-wider mb-2">
+            By Type
+          </div>
+          {/* Pie Chart - styled like progress rings */}
+          <div className="relative w-20 h-20 mx-auto mb-2" id="pie-chart-container">
+            <svg
+              className="w-20 h-20 transform -rotate-90"
+              viewBox="0 0 80 80"
+              role="img"
+              aria-label="Aircraft types pie chart"
+            >
+              {/* Background ring */}
+              <circle cx="40" cy="40" r="34" stroke="#243044" strokeWidth="6" fill="none" />
+              {/* Colored segments using stroke-dasharray */}
+              {(() => {
+                const total = modelData.reduce((sum, d) => sum + d.count, 0);
+                const circumference = 2 * Math.PI * 34;
+                let offset = 0;
+
+                return modelData.map((item, idx) => {
+                  const pct = item.count / total;
+                  const segmentLength = pct * circumference;
+                  const dashArray = `${segmentLength} ${circumference - segmentLength}`;
+                  const dashOffset = -offset;
+                  offset += segmentLength;
+
+                  const pctDisplay = ((item.count / total) * 100).toFixed(0);
+                  return (
+                    <circle
+                      key={item.model}
+                      cx="40"
+                      cy="40"
+                      r="34"
+                      stroke={pieColors[idx % pieColors.length]}
+                      strokeWidth="6"
+                      fill="none"
+                      strokeDasharray={dashArray}
+                      strokeDashoffset={dashOffset}
+                      className="pie-slice transition-all duration-200 hover:opacity-70 cursor-pointer"
+                      style={{
+                        filter: `drop-shadow(0 0 4px ${pieColors[idx % pieColors.length]}50)`,
+                      }}
+                      data-model={item.model}
+                      data-count={item.count}
+                      data-pct={pctDisplay}
+                    />
+                  );
+                });
+              })()}
+            </svg>
+            {/* Center text overlay */}
+            <div className="absolute inset-0 flex items-center justify-center">
+              <span id="pie-center-text" className="font-mono text-xl font-semibold text-primary">
+                {x}
+              </span>
+            </div>
+          </div>
+          {/* Status line - shows model info on hover */}
+          <div
+            id="pie-status"
+            className="h-4 flex items-center justify-center text-[10px] font-mono"
+          >
+            <span id="pie-status-label" className="text-muted">
+              TOTAL
+            </span>
+          </div>
+          {/* Inline script for pie chart interactivity */}
+          <script
+            dangerouslySetInnerHTML={{
+              __html: `
+                (function() {
+                  var container = document.getElementById('pie-chart-container');
+                  if (!container) return;
+                  var centerText = document.getElementById('pie-center-text');
+                  var statusLabel = document.getElementById('pie-status-label');
+                  var defaultCount = centerText?.textContent || '';
+                  var slices = container.querySelectorAll('.pie-slice');
+
+                  function showSlice(el) {
+                    if (centerText) centerText.textContent = el.dataset.count;
+                    if (statusLabel) statusLabel.innerHTML = '<span style="color:#0ea5e9">' + el.dataset.model + '</span> <span style="color:#5a6a80">· ' + el.dataset.pct + '%</span>';
+                  }
+                  function resetCenter() {
+                    if (centerText) centerText.textContent = defaultCount;
+                    if (statusLabel) statusLabel.innerHTML = 'TOTAL';
+                  }
+
+                  slices.forEach(function(slice) {
+                    slice.addEventListener('mouseenter', function() { showSlice(this); });
+                    slice.addEventListener('mouseleave', resetCenter);
+                    slice.addEventListener('touchstart', function(e) {
+                      e.preventDefault();
+                      showSlice(this);
+                    }, { passive: false });
+                  });
+
+                  container.addEventListener('mouseleave', resetCenter);
+                  document.addEventListener('touchstart', function(e) {
+                    if (!container.contains(e.target)) resetCenter();
+                  });
+                })();
+              `,
+            }}
+          />
         </div>
       </div>
 
       {/* Search and Filter Section */}
-      <div className="mb-6 bg-white rounded-xl shadow-md p-4">
+      <div className="relative mb-6 bg-surface rounded-lg border border-subtle p-4">
         <div className="flex flex-col md:flex-row gap-4">
           <div className="flex-1">
             <div className="relative">
               <input
                 type="text"
-                placeholder="Search by tail number, aircraft type, or operator..."
-                className="w-full px-4 py-2 pl-10 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-united-blue focus:border-transparent"
+                id="aircraft-search"
+                placeholder="Search tail, type, operator, airport..."
+                className="w-full font-mono text-sm px-4 py-2.5 pl-10 bg-surface-elevated border border-subtle rounded text-primary placeholder-muted focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all"
               />
               <svg
-                className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400"
+                className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -404,281 +671,240 @@ export default function Page({
           <div className="flex gap-2">
             <button
               type="button"
-              className="px-4 py-2 rounded-lg font-medium transition-colors bg-united-blue text-white"
+              id="filter-all"
+              className="filter-btn font-mono text-xs px-4 py-2.5 rounded border transition-all bg-accent/20 border-accent text-accent"
               data-filter="all"
             >
-              All ({starlinkData.length})
+              ALL ({starlinkData.length})
             </button>
             <button
               type="button"
-              className="px-4 py-2 rounded-lg font-medium transition-colors bg-gray-100 text-gray-700 hover:bg-gray-200"
+              id="filter-mainline"
+              className="filter-btn font-mono text-xs px-4 py-2.5 rounded border transition-all bg-transparent border-subtle text-secondary hover:border-accent/50 hover:text-accent"
               data-filter="mainline"
             >
-              Mainline ({fleetStats?.mainline.starlink || 0})
+              MAINLINE ({fleetStats?.mainline.starlink || 0})
             </button>
             <button
               type="button"
-              className="px-4 py-2 rounded-lg font-medium transition-colors bg-gray-100 text-gray-700 hover:bg-gray-200"
+              id="filter-express"
+              className="filter-btn font-mono text-xs px-4 py-2.5 rounded border transition-all bg-transparent border-subtle text-secondary hover:border-accent/50 hover:text-accent"
               data-filter="express"
             >
-              Express ({fleetStats?.express.starlink || 0})
+              EXPRESS ({fleetStats?.express.starlink || 0})
             </button>
           </div>
         </div>
-        <div className="mt-2 text-sm text-gray-600" style={{ display: "none" }}>
-          {/* Will be updated by JavaScript */}
-        </div>
       </div>
 
-      <h2 className="text-2xl md:text-3xl font-bold mb-4 text-gray-800">
-        Which United Planes Have Starlink WiFi?
-      </h2>
+      {/* Aircraft List Header */}
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="font-display text-xl md:text-2xl font-bold text-primary">Active Fleet</h2>
+        <div className="font-mono text-xs text-muted">{starlinkData.length} AIRCRAFT</div>
+      </div>
 
-      {/* Desktop Table View */}
-      <div className="hidden md:block bg-white rounded-xl shadow-md mb-6">
-        <div className="overflow-auto" style={{ maxHeight: "60vh" }}>
-          <table className="w-full bg-white">
-            <thead className="sticky top-0 z-10">
-              <tr className="bg-united-blue">
-                <th className="py-3 px-4 text-left font-semibold text-sm lg:text-base text-white">
-                  Tail Number
-                </th>
-                <th className="py-3 px-4 text-left font-semibold text-sm lg:text-base text-white">
-                  Aircraft Type
-                </th>
-                <th className="py-3 px-4 text-left font-semibold text-sm lg:text-base text-white">
-                  Operated By
-                </th>
-                <th className="py-3 px-4 text-left font-semibold text-sm lg:text-base text-white">
-                  Installation Date
-                </th>
-                <th className="py-3 px-4 text-left font-semibold text-sm lg:text-base text-white">
-                  Upcoming Flights
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {starlinkData.length === 0 ? (
-                <tr>
-                  <td colSpan={5} className="p-8 text-center text-gray-600 bg-gray-50">
-                    No data available
-                  </td>
-                </tr>
-              ) : (
-                starlinkData.map((plane, idx) => (
-                  <tr
+      {/* Aircraft List */}
+      <div className="relative bg-surface rounded-lg border border-subtle overflow-hidden mb-6">
+        {/* Header row - desktop only */}
+        <div className="hidden md:grid md:grid-cols-12 gap-4 px-6 py-3 border-b border-subtle text-[10px] font-mono text-muted uppercase tracking-widest">
+          <div className="col-span-3">Aircraft</div>
+          <div className="col-span-2">Type</div>
+          <div className="col-span-3">Operator</div>
+          <div className="col-span-4">Flights</div>
+        </div>
+
+        {/* Scrollable list */}
+        <div className="overflow-auto" style={{ maxHeight: "65vh" }}>
+          {starlinkData.length === 0 ? (
+            <div className="p-12 text-center text-muted font-mono">No aircraft data available</div>
+          ) : (
+            <div className="divide-y divide-subtle">
+              {starlinkData.map((plane, idx) => {
+                // Build searchable airports string from flights
+                const flights = flightsByTail[plane.TailNumber] || [];
+                const airportsStr = flights
+                  .flatMap((f) => [
+                    cleanAirportCode(f.departure_airport),
+                    cleanAirportCode(f.arrival_airport),
+                  ])
+                  .join(" ")
+                  .toLowerCase();
+
+                return (
+                  <div
                     key={plane.TailNumber || idx}
-                    className={`border-b border-gray-200 ${
-                      idx % 2 === 0 ? "bg-gray-50" : "bg-white"
-                    } transition-colors`}
+                    className="aircraft-row group px-4 md:px-6 py-4 hover:bg-surface-elevated transition-all duration-200 cursor-default border-l-2 border-transparent hover:border-accent"
+                    data-tail={plane.TailNumber.toLowerCase()}
+                    data-aircraft={plane.Aircraft.toLowerCase()}
+                    data-operator={(plane.OperatedBy || "United Airlines").toLowerCase()}
+                    data-fleet={plane.fleet}
+                    data-airports={airportsStr}
                   >
-                    <td className="py-4 px-4 font-medium text-gray-700">
-                      <span className="inline-block px-3 py-1.5 rounded-full text-sm font-semibold bg-blue-50 text-united-blue border border-blue-100 shadow-sm">
-                        {plane.TailNumber}
-                      </span>
-                      {plane.fleet === "mainline" ? (
-                        <span className="inline-block ml-2 px-1.5 py-0.5 text-xs bg-united-blue text-white rounded">
-                          Mainline
-                        </span>
-                      ) : (
-                        <span className="inline-block ml-2 px-1.5 py-0.5 text-xs bg-blue-500 text-white rounded">
-                          Express
-                        </span>
-                      )}
-                    </td>
-                    <td className="py-4 px-4 text-gray-700 font-medium">{plane.Aircraft}</td>
-                    <td className="py-4 px-4 text-gray-700">
-                      {plane.OperatedBy || "United Airlines"}
-                    </td>
-                    <td
-                      className={`py-4 px-4 text-gray-700 text-sm whitespace-nowrap ${
-                        dateOverrides[plane.TailNumber] ? "font-medium" : ""
-                      }`}
-                    >
-                      {dateOverrides[plane.TailNumber]
-                        ? "Mar 7, 2025"
-                        : plane.DateFound
-                          ? new Date(plane.DateFound).toLocaleDateString("en-US", {
-                              year: "numeric",
-                              month: "short",
-                              day: "numeric",
-                              timeZone: "America/Los_Angeles",
-                            })
-                          : new Date().toLocaleDateString("en-US", {
-                              year: "numeric",
-                              month: "short",
-                              day: "numeric",
-                              timeZone: "America/Los_Angeles",
-                            })}
-                    </td>
-                    <td className="py-4 px-4">{renderUpcomingFlights(plane.TailNumber, false)}</td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+                    {/* Desktop Layout */}
+                    <div className="hidden md:grid md:grid-cols-12 gap-4 items-center">
+                      {/* Aircraft - Tail + Fleet badge */}
+                      <div className="col-span-3 flex items-center gap-3">
+                        <div className="status-dot flex-shrink-0" />
+                        <div>
+                          <div className="font-mono text-sm font-semibold text-primary group-hover:text-accent transition-colors">
+                            {plane.TailNumber}
+                          </div>
+                          <div className="text-[10px] font-mono text-muted uppercase">
+                            {plane.fleet === "mainline" ? "Mainline" : "Express"}
+                          </div>
+                        </div>
+                      </div>
 
-      {/* Mobile Card View */}
-      <div className="md:hidden mb-6">
-        <div className="overflow-auto" style={{ maxHeight: "70vh" }}>
-          <div className="space-y-4">
-            {starlinkData.length === 0 ? (
-              <div className="bg-white rounded-xl shadow-md p-6 text-center text-gray-600">
-                No data available
-              </div>
-            ) : (
-              starlinkData.map((plane, idx) => (
-                <div
-                  key={plane.TailNumber || idx}
-                  className="bg-white rounded-xl shadow-md p-4 border border-gray-200"
-                >
-                  {/* Header with tail number and fleet type */}
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2">
-                      <span className="inline-block px-3 py-1.5 rounded-full text-sm font-semibold bg-blue-50 text-united-blue border border-blue-100 shadow-sm">
-                        {plane.TailNumber}
-                      </span>
-                      {plane.fleet === "mainline" ? (
-                        <span className="inline-block px-1.5 py-0.5 text-xs bg-united-blue text-white rounded">
-                          Mainline
-                        </span>
-                      ) : (
-                        <span className="inline-block px-1.5 py-0.5 text-xs bg-blue-500 text-white rounded">
-                          Express
-                        </span>
-                      )}
+                      {/* Type */}
+                      <div className="col-span-2">
+                        <span className="font-mono text-sm text-secondary">{plane.Aircraft}</span>
+                      </div>
+
+                      {/* Operator */}
+                      <div className="col-span-3 text-sm text-muted">
+                        {plane.OperatedBy || "United Airlines"}
+                      </div>
+
+                      {/* Flights */}
+                      <div className="col-span-4">{renderFlightPills(plane.TailNumber)}</div>
+                    </div>
+
+                    {/* Mobile Layout */}
+                    <div className="md:hidden">
+                      <div className="flex items-start justify-between mb-3">
+                        <div className="flex items-center gap-3">
+                          <div className="status-dot flex-shrink-0" />
+                          <div>
+                            <div className="font-mono text-base font-bold text-primary">
+                              {plane.TailNumber}
+                            </div>
+                            <div className="font-mono text-xs text-secondary">{plane.Aircraft}</div>
+                          </div>
+                        </div>
+                        <div className="text-[10px] font-mono text-accent uppercase">
+                          {plane.fleet === "mainline" ? "Mainline" : "Express"}
+                        </div>
+                      </div>
+
+                      {/* Operator */}
+                      <div className="text-xs text-muted mb-3 pl-5">
+                        {plane.OperatedBy || "United Airlines"}
+                      </div>
+
+                      {/* Flights */}
+                      <div className="pt-3 border-t border-subtle">
+                        {renderFlightPills(plane.TailNumber)}
+                      </div>
                     </div>
                   </div>
-
-                  {/* Aircraft info grid */}
-                  <div className="grid grid-cols-1 gap-2 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-gray-600 font-medium">Aircraft:</span>
-                      <span className="text-gray-800 font-medium">{plane.Aircraft}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-600 font-medium">Operator:</span>
-                      <span className="text-gray-800">{plane.OperatedBy || "United Airlines"}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-600 font-medium">Installed:</span>
-                      <span
-                        className={`text-gray-800 ${dateOverrides[plane.TailNumber] ? "font-medium" : ""}`}
-                      >
-                        {dateOverrides[plane.TailNumber]
-                          ? "Mar 7, 2025"
-                          : plane.DateFound
-                            ? new Date(plane.DateFound).toLocaleDateString("en-US", {
-                                year: "numeric",
-                                month: "short",
-                                day: "numeric",
-                                timeZone: "America/Los_Angeles",
-                              })
-                            : new Date().toLocaleDateString("en-US", {
-                                year: "numeric",
-                                month: "short",
-                                day: "numeric",
-                                timeZone: "America/Los_Angeles",
-                              })}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Mobile flights display */}
-                  {renderMobileFlights(plane)}
-                </div>
-              ))
-            )}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
 
       {/* Chrome Extension CTA */}
-      <div className="mb-2 py-4 flex flex-col items-center gap-3">
-        <span className="text-sm text-gray-600 font-medium">Works with Google Flights.</span>
-        <a
-          href="https://chromewebstore.google.com/detail/google-flights-starlink-i/jjfljoifenkfdbldliakmmjhdkbhehoi"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <span className="inline-flex items-center gap-2 px-3 py-1.5 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-gray-800 transition-colors">
+      <div className="relative my-8 max-w-xl mx-auto bg-surface rounded-lg border border-subtle p-5">
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="text-center sm:text-left">
+            <div className="font-mono text-sm text-primary mb-0.5">
+              Annotate Google Flights automatically
+            </div>
+            <div className="text-xs text-muted">Adds a Starlink badge on equipped flights</div>
+          </div>
+          <a
+            href="https://chromewebstore.google.com/detail/google-flights-starlink-i/jjfljoifenkfdbldliakmmjhdkbhehoi"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-2 px-4 py-2 bg-surface-elevated text-xs sm:text-sm text-secondary font-mono rounded border border-subtle hover:border-accent hover:text-accent transition-colors whitespace-nowrap"
+          >
             <svg
-              className="w-7 h-7"
+              className="w-8 h-8"
               viewBox="0 0 48 48"
               xmlns="http://www.w3.org/2000/svg"
               role="img"
               aria-label="Chrome"
             >
+              <defs>
+                <linearGradient
+                  id="chrome-a"
+                  x1="3.2173"
+                  y1="15"
+                  x2="44.7812"
+                  y2="15"
+                  gradientUnits="userSpaceOnUse"
+                >
+                  <stop offset="0" stopColor="#d93025" />
+                  <stop offset="1" stopColor="#ea4335" />
+                </linearGradient>
+                <linearGradient
+                  id="chrome-b"
+                  x1="20.7219"
+                  y1="47.6791"
+                  x2="41.5039"
+                  y2="11.6837"
+                  gradientUnits="userSpaceOnUse"
+                >
+                  <stop offset="0" stopColor="#fcc934" />
+                  <stop offset="1" stopColor="#fbbc04" />
+                </linearGradient>
+                <linearGradient
+                  id="chrome-c"
+                  x1="26.5981"
+                  y1="46.5015"
+                  x2="5.8161"
+                  y2="10.506"
+                  gradientUnits="userSpaceOnUse"
+                >
+                  <stop offset="0" stopColor="#1e8e3e" />
+                  <stop offset="1" stopColor="#34a853" />
+                </linearGradient>
+              </defs>
+              <circle cx="24" cy="23.9947" r="12" fill="#fff" />
               <path
-                fill="#EA4335"
-                d="M24 12c6.627 0 12 5.373 12 12h-12V12z"
-                transform="rotate(-120 24 24)"
+                d="M24,12H44.7812a23.9939,23.9939,0,0,0-41.5639.0029L13.6079,30l.0093-.0024A11.9852,11.9852,0,0,1,24,12Z"
+                fill="url(#chrome-a)"
               />
-              <path fill="#4285F4" d="M24 12c6.627 0 12 5.373 12 12h-12V12z" />
+              <circle cx="24" cy="24" r="9.5" fill="#1a73e8" />
               <path
-                fill="#FBBC05"
-                d="M24 12c6.627 0 12 5.373 12 12h-12V12z"
-                transform="rotate(120 24 24)"
+                d="M34.3913,30.0029,24.0007,48A23.994,23.994,0,0,0,44.78,12.0031H23.9989l-.0025.0093A11.985,11.985,0,0,1,34.3913,30.0029Z"
+                fill="url(#chrome-b)"
               />
-              <path fill="#34A853" d="M12 24c0-3.314 1.343-6.314 3.515-8.485L24 24H12z" />
-              <path fill="#EA4335" d="M24 36c-3.314 0-6.314-1.343-8.485-3.515L24 24v12z" />
-              <path fill="#4285F4" d="M36 24c0 3.314-1.343 6.314-3.515 8.485L24 24h12z" />
-              <circle cx="24" cy="24" r="8" fill="#fff" />
-              <circle cx="24" cy="24" r="5" fill="#4285F4" />
+              <path
+                d="M13.6086,30.0031,3.218,12.006A23.994,23.994,0,0,0,24.0025,48L34.3931,30.0029l-.0067-.0068a11.9852,11.9852,0,0,1-20.7778.007Z"
+                fill="url(#chrome-c)"
+              />
             </svg>
             Add to Chrome
-          </span>
-        </a>
+          </a>
+        </div>
       </div>
 
-      {/* FAQ Section - Apple-inspired design */}
-      <div className="mt-4 mb-12">
-        <div className="text-center mb-12">
-          <h2 className="text-3xl md:text-4xl font-semibold text-gray-900 mb-3">
-            Everything you need to know
-          </h2>
-          <p className="text-lg text-gray-600">About United's Starlink WiFi rollout</p>
+      {/* FAQ Section */}
+      <div className="relative mb-12">
+        <div className="text-center mb-6">
+          <h2 className="font-display text-xl md:text-2xl font-semibold text-primary">FAQ</h2>
         </div>
 
-        <div className="max-w-4xl mx-auto">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-12">
-            {/* Quick Stats Cards */}
-            <div className="text-center">
-              <div className="text-4xl font-bold text-united-blue mb-2">{x}</div>
-              <div className="text-sm text-gray-600 font-medium">Aircraft Equipped</div>
-            </div>
-            <div className="text-center">
-              <div className="text-4xl font-bold text-united-blue mb-2">250 Mbps</div>
-              <div className="text-sm text-gray-600 font-medium">50x Faster</div>
-            </div>
-            <div className="text-center">
-              <div className="text-4xl font-bold text-united-blue mb-2">Free</div>
-              <div className="text-2xl">😍</div>
-            </div>
-          </div>
-
-          {/* Clean FAQ Items */}
-          <div className="space-y-0 divide-y divide-gray-200">
-            <details className="group py-6">
+        <div className="max-w-3xl mx-auto bg-surface rounded-lg border border-subtle p-4">
+          {/* FAQ Items */}
+          <div className="space-y-0 divide-y divide-subtle">
+            <details className="group py-4">
               <summary className="cursor-pointer list-none flex items-start justify-between">
                 <div>
-                  <h3 className="text-lg font-medium text-gray-900 group-hover:text-united-blue transition-colors">
+                  <h3 className="font-display text-base font-medium text-secondary group-hover:text-accent transition-colors">
                     How do I know if my flight has Starlink?
                   </h3>
-                  <p className="mt-1 text-sm text-gray-500 pr-8">
-                    Search by tail number, flight number, or route above
-                  </p>
                 </div>
-                <div className="ml-6 flex-shrink-0">
+                <div className="ml-4 flex-shrink-0">
                   <svg
-                    className="w-5 h-5 text-gray-400 group-open:rotate-45 transition-transform"
+                    className="w-4 h-4 text-muted group-open:rotate-45 transition-transform"
                     fill="none"
                     viewBox="0 0 24 24"
                     stroke="currentColor"
                     role="img"
-                    aria-label="Expand or collapse FAQ item"
+                    aria-label="Expand"
                   >
                     <path
                       strokeLinecap="round"
@@ -689,52 +915,29 @@ export default function Page({
                   </svg>
                 </div>
               </summary>
-              <div className="mt-4 text-gray-600 text-sm leading-relaxed">
+              <div className="mt-3 text-sm text-muted leading-relaxed">
                 <p>
-                  Check your boarding pass for the tail number (e.g., N127SY) and search above. You
-                  can also search by:
+                  Check your boarding pass for the tail number and search above. You can also search
+                  by flight number, airport codes, or aircraft type.
                 </p>
-                <ul className="mt-3 space-y-2">
-                  <li className="flex items-start">
-                    <span className="text-united-blue mr-2">•</span>
-                    <span>
-                      <strong>Flight number</strong> - UA123 or regional codes like SKW5573
-                    </span>
-                  </li>
-                  <li className="flex items-start">
-                    <span className="text-united-blue mr-2">•</span>
-                    <span>
-                      <strong>Airport codes</strong> - SFO, LAX, ORD, etc.
-                    </span>
-                  </li>
-                  <li className="flex items-start">
-                    <span className="text-united-blue mr-2">•</span>
-                    <span>
-                      <strong>Aircraft type</strong> - 737, E175, CRJ, etc.
-                    </span>
-                  </li>
-                </ul>
               </div>
             </details>
 
-            <details className="group py-6">
+            <details className="group py-4">
               <summary className="cursor-pointer list-none flex items-start justify-between">
                 <div>
-                  <h3 className="text-lg font-medium text-gray-900 group-hover:text-united-blue transition-colors">
+                  <h3 className="font-display text-base font-medium text-secondary group-hover:text-accent transition-colors">
                     When will my route get Starlink?
                   </h3>
-                  <p className="mt-1 text-sm text-gray-500 pr-8">
-                    United is installing on 40+ aircraft monthly
-                  </p>
                 </div>
-                <div className="ml-6 flex-shrink-0">
+                <div className="ml-4 flex-shrink-0">
                   <svg
-                    className="w-5 h-5 text-gray-400 group-open:rotate-45 transition-transform"
+                    className="w-4 h-4 text-muted group-open:rotate-45 transition-transform"
                     fill="none"
                     viewBox="0 0 24 24"
                     stroke="currentColor"
                     role="img"
-                    aria-label="Expand or collapse FAQ item"
+                    aria-label="Expand"
                   >
                     <path
                       strokeLinecap="round"
@@ -745,47 +948,33 @@ export default function Page({
                   </svg>
                 </div>
               </summary>
-              <div className="mt-4 text-gray-600 text-sm leading-relaxed">
-                <div className="space-y-3">
-                  <div className="flex items-start">
-                    <span className="text-green-500 mr-3">✓</span>
-                    <div>
-                      <strong>Now - End of 2025:</strong> Regional jets (E175, CRJ)
-                      <div className="text-xs text-gray-500 mt-1">
-                        Currently {fleetStats?.express.percentage.toFixed(0)}% complete
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex items-start">
-                    <span className="text-gray-400 mr-3">○</span>
-                    <div>
-                      <strong>2025 - 2026:</strong> Mainline fleet (737, 757, 767, 777, 787,
-                      A319/320)
-                      <div className="text-xs text-gray-500 mt-1">
-                        Currently {fleetStats?.mainline.percentage.toFixed(0)}% complete
-                      </div>
-                    </div>
-                  </div>
-                </div>
+              <div className="mt-3 text-sm text-muted leading-relaxed">
+                <p className="mb-2">
+                  <span className="text-green-400">●</span> Regional jets:{" "}
+                  {fleetStats?.express.percentage.toFixed(0)}% complete
+                </p>
+                <p>
+                  <span className="text-accent">●</span> Mainline fleet:{" "}
+                  {fleetStats?.mainline.percentage.toFixed(0)}% complete
+                </p>
               </div>
             </details>
 
-            <details className="group py-6">
+            <details className="group py-4">
               <summary className="cursor-pointer list-none flex items-start justify-between">
                 <div>
-                  <h3 className="text-lg font-medium text-gray-900 group-hover:text-united-blue transition-colors">
-                    What can I do with Starlink WiFi?
+                  <h3 className="font-display text-base font-medium text-secondary group-hover:text-accent transition-colors">
+                    Is United Starlink WiFi free?
                   </h3>
-                  <p className="mt-1 text-sm text-gray-500 pr-8">Everything you can do at home</p>
                 </div>
-                <div className="ml-6 flex-shrink-0">
+                <div className="ml-4 flex-shrink-0">
                   <svg
-                    className="w-5 h-5 text-gray-400 group-open:rotate-45 transition-transform"
+                    className="w-4 h-4 text-muted group-open:rotate-45 transition-transform"
                     fill="none"
                     viewBox="0 0 24 24"
                     stroke="currentColor"
                     role="img"
-                    aria-label="Expand or collapse FAQ item"
+                    aria-label="Expand"
                   >
                     <path
                       strokeLinecap="round"
@@ -796,67 +985,233 @@ export default function Page({
                   </svg>
                 </div>
               </summary>
-              <div className="mt-4 text-gray-600 text-sm leading-relaxed">
-                <p className="mb-3">With speeds up to 250 Mbps (50x faster than before):</p>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="flex items-center">
-                    <span className="text-green-500 mr-2">✓</span>
-                    <span>4K streaming</span>
-                  </div>
-                  <div className="flex items-center">
-                    <span className="text-green-500 mr-2">✓</span>
-                    <span>Video calls</span>
-                  </div>
-                  <div className="flex items-center">
-                    <span className="text-green-500 mr-2">✓</span>
-                    <span>Online gaming</span>
-                  </div>
-                  <div className="flex items-center">
-                    <span className="text-green-500 mr-2">✓</span>
-                    <span>Large downloads</span>
-                  </div>
+              <div className="mt-3 text-sm text-muted leading-relaxed">
+                <p>
+                  Yes, completely free for all passengers. No purchase required, no tiered plans -
+                  just connect and go.
+                </p>
+              </div>
+            </details>
+
+            <details className="group py-4">
+              <summary className="cursor-pointer list-none flex items-start justify-between">
+                <div>
+                  <h3 className="font-display text-base font-medium text-secondary group-hover:text-accent transition-colors">
+                    What can I do with Starlink WiFi?
+                  </h3>
                 </div>
+                <div className="ml-4 flex-shrink-0">
+                  <svg
+                    className="w-4 h-4 text-muted group-open:rotate-45 transition-transform"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    role="img"
+                    aria-label="Expand"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M12 6v6m0 0v6m0-6h6m-6 0H6"
+                    />
+                  </svg>
+                </div>
+              </summary>
+              <div className="mt-3 text-sm text-muted leading-relaxed">
+                <p>
+                  4K streaming, live sports, online gaming, large downloads - everything you can do
+                  at home.
+                </p>
+              </div>
+            </details>
+
+            <details className="group py-4">
+              <summary className="cursor-pointer list-none flex items-start justify-between">
+                <div>
+                  <h3 className="font-display text-base font-medium text-secondary group-hover:text-accent transition-colors">
+                    How does this tracker work?
+                  </h3>
+                </div>
+                <div className="ml-4 flex-shrink-0">
+                  <svg
+                    className="w-4 h-4 text-muted group-open:rotate-45 transition-transform"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    role="img"
+                    aria-label="Expand"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M12 6v6m0 0v6m0-6h6m-6 0H6"
+                    />
+                  </svg>
+                </div>
+              </summary>
+              <div className="mt-3 text-sm text-muted leading-relaxed">
+                <p>
+                  We aggregate data from multiple aviation data providers, cross-reference with
+                  flight schedules, and verify Starlink status against United's own systems. The
+                  data updates continuously throughout the day.
+                </p>
+                <p className="mt-2 text-xs">
+                  Hat tip to the{" "}
+                  <a
+                    href="https://sites.google.com/site/unitedfleetsite/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-accent hover:underline"
+                  >
+                    unitedfleetsite
+                  </a>{" "}
+                  community for the original fleet data that helped get this project started.
+                </p>
               </div>
             </details>
           </div>
         </div>
       </div>
 
-      <footer className="mt-12 py-6 text-center border-t border-gray-200 text-gray-600 text-sm">
-        <a
-          href="https://x.com/martinamps"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center text-gray-600 hover:text-gray-800 transition-colors"
-        >
-          Built with
-          <svg
-            className="w-4 h-4 mx-1 text-red-400"
-            xmlns="http://www.w3.org/2000/svg"
-            width="24"
-            height="24"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-label="Heart"
-            role="img"
-          >
-            <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z" />
-          </svg>
-          by @martinamps
-        </a>
-        <div className="mt-2 text-xs text-gray-500">
-          Made possible thanks to the enthusiasts maintaining{" "}
+      {/* Search, Filter, and Expand functionality */}
+      <script
+        dangerouslySetInnerHTML={{
+          __html: `
+            (function() {
+              // Search functionality
+              var searchInput = document.getElementById('aircraft-search');
+              var rows = document.querySelectorAll('.aircraft-row');
+              var filterBtns = document.querySelectorAll('.filter-btn');
+              var currentFilter = 'all';
+
+              function filterRows() {
+                var query = (searchInput?.value || '').toLowerCase().trim();
+                var visibleCount = 0;
+
+                rows.forEach(function(row) {
+                  var tail = row.dataset.tail || '';
+                  var aircraft = row.dataset.aircraft || '';
+                  var operator = row.dataset.operator || '';
+                  var fleet = row.dataset.fleet || '';
+                  var airports = row.dataset.airports || '';
+
+                  var matchesSearch = !query ||
+                    tail.includes(query) ||
+                    aircraft.includes(query) ||
+                    operator.includes(query) ||
+                    airports.includes(query);
+
+                  var matchesFilter = currentFilter === 'all' || fleet === currentFilter;
+
+                  if (matchesSearch && matchesFilter) {
+                    row.style.display = '';
+                    visibleCount++;
+                  } else {
+                    row.style.display = 'none';
+                  }
+                });
+              }
+
+              if (searchInput) {
+                searchInput.addEventListener('input', filterRows);
+              }
+
+              // Filter buttons
+              filterBtns.forEach(function(btn) {
+                btn.addEventListener('click', function() {
+                  currentFilter = this.dataset.filter;
+
+                  // Update button styles
+                  filterBtns.forEach(function(b) {
+                    if (b.dataset.filter === currentFilter) {
+                      b.className = b.className.replace('bg-gray-100 text-gray-700 hover:bg-gray-200', 'bg-united-blue text-white');
+                    } else {
+                      b.className = b.className.replace('bg-united-blue text-white', 'bg-gray-100 text-gray-700 hover:bg-gray-200');
+                    }
+                  });
+
+                  filterRows();
+                });
+              });
+
+              // Expand/collapse flights
+              document.addEventListener('click', function(e) {
+                var btn = e.target.closest('.expand-flights');
+                if (!btn) return;
+
+                var targetId = btn.dataset.target;
+                var container = document.getElementById(targetId);
+                if (!container) return;
+
+                var extras = container.querySelectorAll('.flight-extra');
+                var isExpanded = btn.textContent.includes('−');
+
+                if (isExpanded) {
+                  // Collapse
+                  extras.forEach(function(el) {
+                    el.classList.add('hidden');
+                    el.classList.remove('inline-flex');
+                  });
+                  btn.textContent = '+' + btn.dataset.count;
+                } else {
+                  // Expand
+                  extras.forEach(function(el) {
+                    el.classList.remove('hidden');
+                    el.classList.add('inline-flex');
+                  });
+                  btn.textContent = '−';
+                }
+              });
+            })();
+          `,
+        }}
+      />
+
+      <footer className="relative py-6 text-center border-t border-subtle text-muted text-sm">
+        <div className="flex items-center justify-center gap-4">
           <a
-            href="https://sites.google.com/site/unitedfleetsite/"
+            href="https://x.com/martinamps"
             target="_blank"
             rel="noopener noreferrer"
-            className="text-gray-600 hover:text-gray-800 hover:underline transition-colors"
+            className="inline-flex items-center text-secondary hover:text-primary transition-colors"
           >
-            unitedfleetsite
+            Built with
+            <svg
+              className="w-4 h-4 mx-1 text-red-400"
+              xmlns="http://www.w3.org/2000/svg"
+              width="24"
+              height="24"
+              viewBox="0 0 24 24"
+              fill="currentColor"
+              stroke="currentColor"
+              strokeWidth="0"
+              aria-label="Heart"
+              role="img"
+            >
+              <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z" />
+            </svg>
+            by @martinamps
+          </a>
+          <span className="text-muted">·</span>
+          <a
+            href="https://github.com/martinamps/ua-starlink-tracker"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 text-secondary hover:text-primary transition-colors"
+          >
+            <svg
+              className="w-4 h-4"
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="currentColor"
+              aria-label="GitHub"
+              role="img"
+            >
+              <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z" />
+            </svg>
+            GitHub
           </a>
         </div>
       </footer>

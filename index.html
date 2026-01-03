@@ -37,50 +37,134 @@
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     
+    <!-- Google Fonts: Rajdhani (display) + JetBrains Mono (data) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Rajdhani:wght@400;500;600;700&display=swap" rel="stylesheet">
+
     <!-- Tailwind CSS via CDN -->
     <script src="https://unpkg.com/@tailwindcss/browser@4"></script>
-    
+
     <style>
       * {
         box-sizing: border-box;
       }
+
+      :root {
+        --color-base: #0a0f1a;
+        --color-surface: #111827;
+        --color-surface-elevated: #1a2332;
+        --color-border: #243044;
+        --color-text-primary: #f0f4f8;
+        --color-text-secondary: #8b9cb3;
+        --color-text-muted: #5a6a80;
+        --color-accent: #0ea5e9;
+        --color-accent-dim: #0284c7;
+        --color-united-blue: #0066cc;
+        --color-success: #22c55e;
+        --font-display: 'Rajdhani', sans-serif;
+        --font-mono: 'JetBrains Mono', monospace;
+      }
+
       body {
         margin: 0;
         padding: 0;
-        background-color: #f9f9f9;
+        background-color: var(--color-base);
+        color: var(--color-text-primary);
         width: 100%;
-        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", system-ui, sans-serif;
+        font-family: 'Rajdhani', -apple-system, BlinkMacSystemFont, sans-serif;
+        font-weight: 500;
       }
-      @media (prefers-color-scheme: dark) {
-        body {
-          background-color: #1a1a1a;
-          color: #f0f0f0;
-        }
+
+      /* Typography utilities */
+      .font-display { font-family: var(--font-display); }
+      .font-mono { font-family: var(--font-mono); }
+
+      /* Custom color utilities */
+      .bg-base { background-color: var(--color-base); }
+      .bg-surface { background-color: var(--color-surface); }
+      .bg-surface-elevated { background-color: var(--color-surface-elevated); }
+      .border-subtle { border-color: var(--color-border); }
+      .text-primary { color: var(--color-text-primary); }
+      .text-secondary { color: var(--color-text-secondary); }
+      .text-muted { color: var(--color-text-muted); }
+      .text-accent { color: var(--color-accent); }
+      .bg-united-blue { background-color: var(--color-united-blue); }
+      .text-united-blue { color: var(--color-accent); }
+      .text-white { color: #ffffff; }
+
+      /* Glow effects */
+      .glow-accent {
+        box-shadow: 0 0 20px rgba(14, 165, 233, 0.15);
       }
-      
-      /* Custom Tailwind theme */
-      :root {
-        --color-united-blue: #0066cc;
+      .glow-accent-strong {
+        box-shadow: 0 0 30px rgba(14, 165, 233, 0.25);
       }
-      
-      /* Custom Tailwind classes */
-      .bg-united-blue {
-        background-color: #0066cc;
+
+      /* Grid background pattern */
+      .grid-pattern {
+        background-image:
+          linear-gradient(rgba(36, 48, 68, 0.3) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(36, 48, 68, 0.3) 1px, transparent 1px);
+        background-size: 40px 40px;
       }
-      .text-united-blue {
-        color: #0066cc;
+
+      /* Scan line effect */
+      .scanlines::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background: repeating-linear-gradient(
+          0deg,
+          transparent,
+          transparent 2px,
+          rgba(0, 0, 0, 0.1) 2px,
+          rgba(0, 0, 0, 0.1) 4px
+        );
+        pointer-events: none;
+        opacity: 0.3;
       }
-      .text-white {
-        color: #ffffff;
+
+      /* Status indicator */
+      .status-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background-color: var(--color-success);
+        box-shadow: 0 0 8px var(--color-success);
       }
-      
-      /* Custom animations */
+
+      /* Custom scrollbar */
+      ::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+      }
+      ::-webkit-scrollbar-track {
+        background: var(--color-surface);
+      }
+      ::-webkit-scrollbar-thumb {
+        background: var(--color-border);
+        border-radius: 4px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: var(--color-text-muted);
+      }
+
+      /* Animations */
       @keyframes spin {
         0% { transform: rotate(0deg); }
         100% { transform: rotate(360deg); }
       }
       .animate-spin {
         animation: spin 1s linear infinite;
+      }
+
+      @keyframes pulse-glow {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.5; }
+      }
+      .animate-pulse-glow {
+        animation: pulse-glow 2s ease-in-out infinite;
       }
     </style>
     
@@ -369,6 +453,7 @@
       "name": "{{ogTitle}}",
       "description": "{{siteDescription}}",
       "url": "https://{{host}}/",
+      "dateModified": "{{currentDate}}",
       "potentialAction": {
         "@type": "SearchAction",
         "target": "https://{{host}}/api/check-flight?flight_number={search_term_string}",
@@ -376,34 +461,67 @@
       }
     }
     </script>
-    
+
     <!-- FAQ Schema -->
     <script type="application/ld+json">
     {
       "@context": "https://schema.org",
       "@type": "FAQPage",
+      "dateModified": "{{currentDate}}",
       "mainEntity": [{
         "@type": "Question",
         "name": "Which United planes have Starlink WiFi?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "As of {{currentDate}}, {{totalCount}} United Airlines aircraft have Starlink WiFi installed. This includes {{mainlineCount}} mainline aircraft and {{expressCount}} United Express aircraft. The rollout began with Embraer E175 regional jets and will expand to the entire fleet by end of 2025."
+          "text": "As of {{currentDate}}, {{totalCount}} United Airlines aircraft have Starlink WiFi installed. This includes {{mainlineCount}} mainline aircraft and {{expressCount}} United Express aircraft. Search by tail number, flight number, or airport code to check if your flight has Starlink."
         }
       },{
         "@type": "Question",
         "name": "What is the status of United's Starlink rollout?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "United Airlines is installing Starlink on over 40 regional aircraft monthly. {{percentage}}% of the combined fleet now has Starlink ({{mainlinePercentage}}% mainline, {{expressPercentage}}% express). The entire two-cabin regional fleet will be complete by end of 2025."
+          "text": "United Airlines is installing Starlink on over 40 aircraft monthly. {{percentage}}% of the combined fleet now has Starlink ({{mainlinePercentage}}% mainline, {{expressPercentage}}% express). The rollout continues across both regional and mainline fleets."
+        }
+      },{
+        "@type": "Question",
+        "name": "Is United Starlink WiFi free?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Yes, United's Starlink WiFi is completely free for all passengers. No purchase required, no tiered plans, no data caps - just connect to the WiFi network and enjoy high-speed internet throughout your flight."
         }
       },{
         "@type": "Question",
         "name": "How fast is United's Starlink WiFi?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "United's Starlink WiFi offers speeds up to 250 Mbps, which is 50 times faster than previous systems. This enables streaming, video calls, gaming, and browsing without interruptions."
+          "text": "United's Starlink WiFi offers speeds up to 250 Mbps, which is 50 times faster than previous systems. This enables 4K streaming, live sports, online gaming, and large downloads."
+        }
+      },{
+        "@type": "Question",
+        "name": "How does this Starlink tracker work?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "We aggregate data from multiple aviation data providers, cross-reference with flight schedules, and verify Starlink status against United's own systems. The data updates continuously throughout the day to provide accurate, real-time tracking."
         }
       }]
+    }
+    </script>
+
+    <!-- Chrome Extension Schema -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "United Starlink Checker for Google Flights",
+      "operatingSystem": "Chrome",
+      "applicationCategory": "BrowserApplication",
+      "description": "Check which Google Flights results have Starlink WiFi. See Starlink availability while you search for United flights.",
+      "url": "https://chromewebstore.google.com/detail/google-flights-starlink-i/jjfljoifenkfdbldliakmmjhdkbhehoi",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD"
+      }
     }
     </script>
   </body>

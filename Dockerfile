@@ -43,5 +43,6 @@ ENV DD_ENV=production
 ENV DD_SERVICE=ua-starlink-tracker
 ENV DD_VERSION=${SOURCE_COMMIT}
 ENV DD_TRACE_AGENT_HOSTNAME=host.docker.internal
+ENV DD_RUNTIME_METRICS_ENABLED=false
 
 CMD ["bun", "run", "server.ts"]

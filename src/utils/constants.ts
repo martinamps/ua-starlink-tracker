@@ -32,7 +32,7 @@ export function normalizeFlightNumber(flightNumber: string): string {
   // Check if it starts with a known United Express carrier code
   for (const carrier of UNITED_EXPRESS_CARRIERS) {
     if (flightNumber.startsWith(carrier)) {
-      return "UA" + flightNumber.slice(carrier.length);
+      return `UA${flightNumber.slice(carrier.length)}`;
     }
   }
 
@@ -53,7 +53,7 @@ export const PAGE_CONTENT = {
   mainDescription: {
     pressReleaseUrl: "https://www.united.com/en/us/newsroom/announcements/cision-125370",
     united:
-      "United Airlines began equipping its fleet with SpaceX's Starlink internet on March 7, 2025. The ultra-fast WiFi offers speeds up to 250 Mbps—50 times faster than previous systems. The airline plans to install Starlink on over 40 regional aircraft monthly, completing its entire two-cabin regional fleet by the end of 2025. Each installation takes only 8 hours, making it 10 times faster than previous systems, and the lightweight 85-pound equipment improves fuel efficiency compared to older 300-pound systems.",
+      "United Airlines began equipping its fleet with SpaceX's Starlink internet on March 7, 2025. The ultra-fast WiFi offers speeds up to 250 Mbps—50 times faster than previous systems—with gaming-grade latency that works seamlessly over oceans on international routes. No app required: just connect like any WiFi. The airline continues installing on 40+ aircraft monthly, with the lightweight 85-pound equipment improving fuel efficiency compared to older 300-pound systems.",
   },
   fleetLabels: {
     mainline: "United Mainline Fleet",
