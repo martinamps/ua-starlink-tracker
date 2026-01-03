@@ -203,7 +203,7 @@ export class FlightRadar24API {
           const flightNumber = flight.identification.number.default || "";
 
           return {
-            flight_number: flightNumber, // Keep original carrier code for FlightAware links
+            flight_number: flightNumber,
             departure_airport:
               flight.airport.origin?.code.iata || flight.airport.origin?.code.icao || "",
             arrival_airport:

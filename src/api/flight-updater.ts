@@ -298,7 +298,7 @@ export async function checkNewPlanes() {
  * Much more polite to APIs and avoids rate limiting
  */
 export function startFlightUpdater() {
-  const INTERVAL_MS = 30 * 1000; // 30 seconds between updates
+  const INTERVAL_MS = 22.5 * 1000;
   const HEARTBEAT_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
 
   const api = createFlightAPI();

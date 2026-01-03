@@ -25,6 +25,7 @@ bun run discover --stats                         # Show discovery statistics
 ```bash
 bun run sync-fleet             # Full sync (FR24 + spreadsheet)
 bun run update-flights         # Bulk update flight data
+bun run reset-flights          # Reset flight cache, force re-fetch all
 ```
 
 ## Data Sources
@@ -43,7 +44,7 @@ bun run update-flights         # Bulk update flight data
 | Job | Interval | Purpose |
 |-----|----------|---------|
 | Spreadsheet scrape | 1 hour | Update plane list from Google Sheets |
-| Flight updater | 30 sec | Keep flight data fresh (1-8hr smart caching) |
+| Flight updater | 22.5 sec | Keep flight data fresh (1-8hr smart caching) |
 | Starlink verifier | 60 sec | Verify planes against United.com |
 | Fleet discovery | 90 sec | Find new Starlink planes |
 | Fleet sync | 24 hours | Sync full fleet from FR24 |
@@ -117,3 +118,9 @@ info("message");  // Auto-detects filename, writes to console + logs/app.log
 ```
 
 Format: `2026-01-03T21:18:03.610Z [filename] message`
+
+## Code Style
+
+- **No obvious comments** - don't add comments that just restate what the code does
+- **Self-documenting code** - use clear variable/function names instead of comments
+- **Comments for why, not what** - only comment non-obvious decisions or edge cases

@@ -124,7 +124,7 @@ export class FlightAwareAPI {
           return departureTime > now;
         })
         .map((flight) => ({
-          flight_number: flight.ident, // Keep original carrier code for FlightAware links
+          flight_number: flight.ident,
           departure_airport: flight.origin.code,
           arrival_airport: flight.destination.code,
           departure_time: Math.floor(new Date(flight.scheduled_out).getTime() / 1000),
