@@ -1133,49 +1133,51 @@ export default function Page({
                 }
               });
 
-              // Flight badge tooltips (fixed positioning to avoid overflow clipping)
-              var tooltip = null;
-              var currentPill = null;
+              // Flight badge tooltips - only on devices with hover (not touch/mobile)
+              if (window.matchMedia('(hover: hover)').matches) {
+                var tooltip = null;
+                var currentPill = null;
 
-              document.addEventListener('mouseover', function(e) {
-                var pill = e.target.closest('[data-flight-tooltip]');
-                if (pill && pill !== currentPill) {
-                  // Remove old tooltip if exists
+                document.addEventListener('mouseover', function(e) {
+                  var pill = e.target.closest('[data-flight-tooltip]');
+                  if (pill && pill !== currentPill) {
+                    // Remove old tooltip if exists
+                    if (tooltip && tooltip.parentNode) {
+                      tooltip.parentNode.removeChild(tooltip);
+                    }
+
+                    currentPill = pill;
+                    var text = pill.dataset.flightTooltip;
+                    if (!text) return;
+
+                    // Create tooltip
+                    tooltip = document.createElement('div');
+                    tooltip.textContent = text;
+                    tooltip.style.cssText = 'position:fixed;padding:4px 8px;background:#0ea5e9;color:#0a0f1a;font-size:11px;font-weight:600;font-family:JetBrains Mono,monospace;border-radius:4px;pointer-events:none;z-index:9999;white-space:nowrap;box-shadow:0 4px 6px rgba(0,0,0,0.3);';
+                    document.body.appendChild(tooltip);
+
+                    // Position above the element
+                    var rect = pill.getBoundingClientRect();
+                    tooltip.style.left = (rect.left + rect.width / 2 - tooltip.offsetWidth / 2) + 'px';
+                    tooltip.style.top = (rect.top - tooltip.offsetHeight - 6) + 'px';
+                  }
+                });
+
+                document.addEventListener('mouseout', function(e) {
+                  var pill = e.target.closest('[data-flight-tooltip]');
+                  if (!pill) return;
+
+                  // Check if we're leaving to something outside the pill
+                  var related = e.relatedTarget;
+                  if (related && pill.contains(related)) return;
+
                   if (tooltip && tooltip.parentNode) {
                     tooltip.parentNode.removeChild(tooltip);
+                    tooltip = null;
                   }
-
-                  currentPill = pill;
-                  var text = pill.dataset.flightTooltip;
-                  if (!text) return;
-
-                  // Create tooltip
-                  tooltip = document.createElement('div');
-                  tooltip.textContent = text;
-                  tooltip.style.cssText = 'position:fixed;padding:4px 8px;background:#0ea5e9;color:#0a0f1a;font-size:11px;font-weight:600;font-family:JetBrains Mono,monospace;border-radius:4px;pointer-events:none;z-index:9999;white-space:nowrap;box-shadow:0 4px 6px rgba(0,0,0,0.3);';
-                  document.body.appendChild(tooltip);
-
-                  // Position above the element
-                  var rect = pill.getBoundingClientRect();
-                  tooltip.style.left = (rect.left + rect.width / 2 - tooltip.offsetWidth / 2) + 'px';
-                  tooltip.style.top = (rect.top - tooltip.offsetHeight - 6) + 'px';
-                }
-              });
-
-              document.addEventListener('mouseout', function(e) {
-                var pill = e.target.closest('[data-flight-tooltip]');
-                if (!pill) return;
-
-                // Check if we're leaving to something outside the pill
-                var related = e.relatedTarget;
-                if (related && pill.contains(related)) return;
-
-                if (tooltip && tooltip.parentNode) {
-                  tooltip.parentNode.removeChild(tooltip);
-                  tooltip = null;
-                }
-                currentPill = null;
-              });
+                  currentPill = null;
+                });
+              }
 
               // Pie chart hover
               var pieContainer = document.getElementById('pie-chart-container');
