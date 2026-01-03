@@ -425,7 +425,17 @@ routes["/api/fleet-discovery"] = (req) => {
   );
 
   const response = {
-    // Fleet verification progress
+    // Planes we discovered with Starlink that aren't in the spreadsheet
+    discovered_not_in_spreadsheet: newDiscoveries,
+    // Spreadsheet cache info
+    spreadsheet_cache: {
+      size: cacheInfo.size,
+      updated_at: cacheInfo.updatedAt,
+      updated_at_formatted: cacheInfo.updatedAt
+        ? new Date(cacheInfo.updatedAt).toISOString()
+        : null,
+    },
+    // Fleet verification progress summary
     verification: {
       total_fleet: stats.total_fleet,
       verified_starlink: stats.verified_starlink,
@@ -434,24 +444,8 @@ routes["/api/fleet-discovery"] = (req) => {
       pending_no_flights: pendingNoFlights.length,
       pending_checkable: pendingCheckable.length,
     },
-    // Pending planes detail
-    pending_planes: pendingPlanes.map((p) => ({
-      tail_number: p.tail_number,
-      aircraft_type: p.aircraft_type,
-      last_checked: p.verified_at,
-      last_checked_formatted: p.verified_at ? new Date(p.verified_at * 1000).toISOString() : null,
-      status: p.last_check_error?.includes("No upcoming flights") ? "no_flights" : "checkable",
-    })),
-    // Discrepancies: planes we discovered with Starlink that aren't in the spreadsheet
-    discovered_not_in_spreadsheet: newDiscoveries,
-    // Spreadsheet cache info for debugging
-    spreadsheet_cache: {
-      size: cacheInfo.size,
-      updated_at: cacheInfo.updatedAt,
-      updated_at_formatted: cacheInfo.updatedAt
-        ? new Date(cacheInfo.updatedAt).toISOString()
-        : null,
-    },
+    // Sample of pending checkable planes (those with flights available)
+    pending_checkable_sample: pendingCheckable.slice(0, 10).map((p) => p.tail_number),
   };
 
   return new Response(JSON.stringify(response, null, 2), {
