@@ -373,47 +373,27 @@ export default function Page({
       {/* Subtle grid background */}
       <div className="absolute inset-0 grid-pattern opacity-50 pointer-events-none" />
 
-      <header className="relative py-8 sm:py-12 md:py-16 text-center mb-8">
-        <h1 className="font-display text-4xl sm:text-5xl md:text-6xl font-bold text-primary mb-2 tracking-tight">
+      <header className="relative py-6 sm:py-8 text-center mb-6">
+        <h1 className="font-display text-3xl sm:text-4xl md:text-5xl font-bold text-primary mb-1 tracking-tight">
           {isUnited ? PAGE_CONTENT.pageTitle.united : PAGE_CONTENT.pageTitle.generic}
         </h1>
-        <p className="text-lg sm:text-xl text-secondary mb-8 font-display">
+        <p className="text-base sm:text-lg text-secondary font-display mb-4">
           {isUnited ? PAGE_CONTENT.pageSubtitle.united : PAGE_CONTENT.pageSubtitle.generic}
         </p>
-
-        {/* Feature stats - instrument panel style */}
-        <div className="max-w-3xl mx-auto">
-          <div className="grid grid-cols-4 gap-1 bg-surface rounded-lg border border-subtle overflow-hidden">
-            <div className="p-4 text-center border-r border-subtle">
-              <div className="font-mono text-2xl md:text-3xl font-semibold text-accent">250</div>
-              <div className="text-[10px] text-muted uppercase tracking-wider">Mbps</div>
-            </div>
-            <div className="p-4 text-center border-r border-subtle">
-              <div className="font-mono text-2xl md:text-3xl font-semibold text-accent">50×</div>
-              <div className="text-[10px] text-muted uppercase tracking-wider">Faster</div>
-            </div>
-            <div className="p-4 text-center border-r border-subtle">
-              <div className="font-mono text-2xl md:text-3xl font-semibold text-green-400">
-                FREE
-              </div>
-              <div className="text-[10px] text-muted uppercase tracking-wider">All Seats</div>
-            </div>
-            <div className="p-4 text-center">
-              <div className="font-mono text-2xl md:text-3xl font-semibold text-accent">40+</div>
-              <div className="text-[10px] text-muted uppercase tracking-wider">Per Month</div>
-            </div>
-          </div>
-          <p className="text-center text-xs text-muted mt-4 font-mono">
-            <a
-              href={PAGE_CONTENT.mainDescription.pressReleaseUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-accent hover:underline"
-            >
-              Starlink installations
-            </a>{" "}
-            began March 7, 2025 · Works over oceans · No app required
-          </p>
+        <div className="flex items-center justify-center gap-3 sm:gap-6 text-xs sm:text-sm font-mono text-muted">
+          <span>
+            <span className="text-accent font-semibold">250</span> Mbps
+          </span>
+          <span className="text-subtle">·</span>
+          <span>
+            <span className="text-accent font-semibold">50×</span> faster
+          </span>
+          <span className="text-subtle">·</span>
+          <span className="text-green-400 font-semibold">FREE</span>
+          <span className="text-subtle hidden sm:inline">·</span>
+          <span className="hidden sm:inline">
+            <span className="text-accent font-semibold">40+</span>/month
+          </span>
         </div>
       </header>
 
@@ -536,44 +516,59 @@ export default function Page({
           <div className="text-[10px] font-mono text-muted uppercase tracking-wider mb-2">
             By Type
           </div>
-          {/* Pie Chart - styled like progress rings */}
+          {/* Pie Chart - using arc paths for proper hover */}
           <div className="relative w-20 h-20 mx-auto mb-2" id="pie-chart-container">
             <svg
-              className="w-20 h-20 transform -rotate-90"
+              className="w-20 h-20"
               viewBox="0 0 80 80"
               role="img"
               aria-label="Aircraft types pie chart"
             >
               {/* Background ring */}
               <circle cx="40" cy="40" r="34" stroke="#243044" strokeWidth="6" fill="none" />
-              {/* Colored segments using stroke-dasharray */}
+              {/* Arc segments */}
               {(() => {
                 const total = modelData.reduce((sum, d) => sum + d.count, 0);
-                const circumference = 2 * Math.PI * 34;
-                let offset = 0;
+                const outerR = 37;
+                const innerR = 31;
+                let currentAngle = -90; // Start from top
 
                 return modelData.map((item, idx) => {
-                  const pct = item.count / total;
-                  const segmentLength = pct * circumference;
-                  const dashArray = `${segmentLength} ${circumference - segmentLength}`;
-                  const dashOffset = -offset;
-                  offset += segmentLength;
+                  const sliceAngle = (item.count / total) * 360;
+                  const startAngle = currentAngle;
+                  const endAngle = currentAngle + sliceAngle;
+                  currentAngle = endAngle;
 
+                  // Convert to radians
+                  const startRad = (startAngle * Math.PI) / 180;
+                  const endRad = (endAngle * Math.PI) / 180;
+
+                  // Outer arc points
+                  const ox1 = 40 + outerR * Math.cos(startRad);
+                  const oy1 = 40 + outerR * Math.sin(startRad);
+                  const ox2 = 40 + outerR * Math.cos(endRad);
+                  const oy2 = 40 + outerR * Math.sin(endRad);
+
+                  // Inner arc points
+                  const ix1 = 40 + innerR * Math.cos(startRad);
+                  const iy1 = 40 + innerR * Math.sin(startRad);
+                  const ix2 = 40 + innerR * Math.cos(endRad);
+                  const iy2 = 40 + innerR * Math.sin(endRad);
+
+                  const largeArc = sliceAngle > 180 ? 1 : 0;
                   const pctDisplay = ((item.count / total) * 100).toFixed(0);
+
+                  // Path: outer arc, then inner arc (reverse), close
+                  const d = `M ${ox1} ${oy1} A ${outerR} ${outerR} 0 ${largeArc} 1 ${ox2} ${oy2} L ${ix2} ${iy2} A ${innerR} ${innerR} 0 ${largeArc} 0 ${ix1} ${iy1} Z`;
+
                   return (
-                    <circle
+                    <path
                       key={item.model}
-                      cx="40"
-                      cy="40"
-                      r="34"
-                      stroke={pieColors[idx % pieColors.length]}
-                      strokeWidth="6"
-                      fill="none"
-                      strokeDasharray={dashArray}
-                      strokeDashoffset={dashOffset}
-                      className="pie-slice transition-all duration-200 hover:opacity-70 cursor-pointer"
+                      d={d}
+                      fill={pieColors[idx % pieColors.length]}
+                      className="pie-slice transition-opacity duration-200 hover:opacity-70 cursor-pointer"
                       style={{
-                        filter: `drop-shadow(0 0 4px ${pieColors[idx % pieColors.length]}50)`,
+                        filter: `drop-shadow(0 0 3px ${pieColors[idx % pieColors.length]}40)`,
                       }}
                       data-model={item.model}
                       data-count={item.count}
@@ -599,44 +594,6 @@ export default function Page({
               TOTAL
             </span>
           </div>
-          {/* Inline script for pie chart interactivity */}
-          <script
-            dangerouslySetInnerHTML={{
-              __html: `
-                (function() {
-                  var container = document.getElementById('pie-chart-container');
-                  if (!container) return;
-                  var centerText = document.getElementById('pie-center-text');
-                  var statusLabel = document.getElementById('pie-status-label');
-                  var defaultCount = centerText?.textContent || '';
-                  var slices = container.querySelectorAll('.pie-slice');
-
-                  function showSlice(el) {
-                    if (centerText) centerText.textContent = el.dataset.count;
-                    if (statusLabel) statusLabel.innerHTML = '<span style="color:#0ea5e9">' + el.dataset.model + '</span> <span style="color:#5a6a80">· ' + el.dataset.pct + '%</span>';
-                  }
-                  function resetCenter() {
-                    if (centerText) centerText.textContent = defaultCount;
-                    if (statusLabel) statusLabel.innerHTML = 'TOTAL';
-                  }
-
-                  slices.forEach(function(slice) {
-                    slice.addEventListener('mouseenter', function() { showSlice(this); });
-                    slice.addEventListener('mouseleave', resetCenter);
-                    slice.addEventListener('touchstart', function(e) {
-                      e.preventDefault();
-                      showSlice(this);
-                    }, { passive: false });
-                  });
-
-                  container.addEventListener('mouseleave', resetCenter);
-                  document.addEventListener('touchstart', function(e) {
-                    if (!container.contains(e.target)) resetCenter();
-                  });
-                })();
-              `,
-            }}
-          />
         </div>
       </div>
 
@@ -648,7 +605,7 @@ export default function Page({
               <input
                 type="text"
                 id="aircraft-search"
-                placeholder="Search tail, type, operator, airport..."
+                placeholder="Search tail, flight, airport..."
                 className="w-full font-mono text-sm px-4 py-2.5 pl-10 bg-surface-elevated border border-subtle rounded text-primary placeholder-muted focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all"
               />
               <svg
@@ -720,13 +677,18 @@ export default function Page({
           ) : (
             <div className="divide-y divide-subtle">
               {starlinkData.map((plane, idx) => {
-                // Build searchable airports string from flights
+                // Build searchable strings from flights
                 const flights = flightsByTail[plane.TailNumber] || [];
                 const airportsStr = flights
                   .flatMap((f) => [
                     cleanAirportCode(f.departure_airport),
                     cleanAirportCode(f.arrival_airport),
                   ])
+                  .join(" ")
+                  .toLowerCase();
+                // Include both raw flight numbers and UA-normalized versions
+                const flightNumbersStr = flights
+                  .map((f) => `${f.flight_number} UA${f.flight_number.replace(/^[A-Z]+/, "")}`)
                   .join(" ")
                   .toLowerCase();
 
@@ -739,6 +701,7 @@ export default function Page({
                     data-operator={(plane.OperatedBy || "United Airlines").toLowerCase()}
                     data-fleet={plane.fleet}
                     data-airports={airportsStr}
+                    data-flights={flightNumbersStr}
                   >
                     {/* Desktop Layout */}
                     <div className="hidden md:grid md:grid-cols-12 gap-4 items-center">
@@ -1079,7 +1042,7 @@ export default function Page({
       <script
         dangerouslySetInnerHTML={{
           __html: `
-            (function() {
+            document.addEventListener('DOMContentLoaded', function() {
               // Search functionality
               var searchInput = document.getElementById('aircraft-search');
               var rows = document.querySelectorAll('.aircraft-row');
@@ -1096,12 +1059,14 @@ export default function Page({
                   var operator = row.dataset.operator || '';
                   var fleet = row.dataset.fleet || '';
                   var airports = row.dataset.airports || '';
+                  var flights = row.dataset.flights || '';
 
                   var matchesSearch = !query ||
                     tail.includes(query) ||
                     aircraft.includes(query) ||
                     operator.includes(query) ||
-                    airports.includes(query);
+                    airports.includes(query) ||
+                    flights.includes(query);
 
                   var matchesFilter = currentFilter === 'all' || fleet === currentFilter;
 
@@ -1164,7 +1129,29 @@ export default function Page({
                   btn.textContent = '−';
                 }
               });
-            })();
+
+              // Pie chart hover
+              var pieContainer = document.getElementById('pie-chart-container');
+              var pieCenterText = document.getElementById('pie-center-text');
+              var pieStatusLabel = document.getElementById('pie-status-label');
+
+              if (pieContainer && pieCenterText && pieStatusLabel) {
+                var defaultCount = pieCenterText.textContent || '';
+                var slices = pieContainer.querySelectorAll('.pie-slice');
+                console.log('Pie slices found:', slices.length);
+
+                slices.forEach(function(slice) {
+                  slice.addEventListener('mouseenter', function() {
+                    pieCenterText.textContent = this.dataset.count;
+                    pieStatusLabel.innerHTML = '<span style="color:#0ea5e9">' + this.dataset.model + '</span> <span style="color:#5a6a80">· ' + this.dataset.pct + '%</span>';
+                  });
+                  slice.addEventListener('mouseleave', function() {
+                    pieCenterText.textContent = defaultCount;
+                    pieStatusLabel.textContent = 'TOTAL';
+                  });
+                });
+              }
+            });
           `,
         }}
       />
