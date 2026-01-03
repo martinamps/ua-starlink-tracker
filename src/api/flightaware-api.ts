@@ -1,6 +1,5 @@
 import { COUNTERS, metrics } from "../observability";
 import type { Flight } from "../types";
-import { normalizeFlightNumber } from "../utils/constants";
 import { info, warn } from "../utils/logger";
 
 interface FlightAwareConfig {

@@ -39,7 +39,14 @@ export default function Page({
   };
 
   // Server-side rendering uses props directly, no client state needed
-  const starlinkData = applyDateOverrides(starlink);
+  // Sort by most recently updated flight data (freshest data first)
+  const starlinkData = applyDateOverrides(starlink).sort((a, b) => {
+    const flightsA = flightsByTail[a.TailNumber] || [];
+    const flightsB = flightsByTail[b.TailNumber] || [];
+    const updatedA = flightsA[0]?.last_updated || 0;
+    const updatedB = flightsB[0]?.last_updated || 0;
+    return updatedB - updatedA;
+  });
   const x = starlinkData.length;
   const y = total;
   const percentage = y > 0 ? ((x / y) * 100).toFixed(2) : "0.00";
@@ -280,14 +287,13 @@ export default function Page({
         visibilityClass = "hidden md:inline-flex"; // Tablet+ (md+)
       }
 
-      const flightNum = convertToUAFlightNumber(flight.flight_number);
       return (
         <a
           key={idx}
           href={`https://www.flightaware.com/live/flight/${flight.flight_number}`}
           target="_blank"
           rel="noopener noreferrer"
-          data-flight-tooltip={flightNum}
+          data-flight-tooltip={flight.flight_number}
           className={`flight-pill font-mono items-center gap-1.5 px-2 py-1 bg-surface-elevated border border-subtle rounded text-xs text-secondary hover:text-accent hover:border-accent/50 transition-all ${visibilityClass}`}
         >
           <span className="text-accent font-medium">{dep}</span>

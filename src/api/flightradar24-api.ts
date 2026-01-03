@@ -5,7 +5,6 @@
 
 import { COUNTERS, metrics } from "../observability";
 import type { Flight } from "../types";
-import { normalizeFlightNumber } from "../utils/constants";
 import { error, info, warn } from "../utils/logger";
 
 type FlightUpdate = Pick<
@@ -199,8 +198,12 @@ export class FlightRadar24API {
           return departureTime > now;
         })
         .map((flight) => {
-          // Extract and normalize flight number to UA prefix
-          const flightNumber = flight.identification.number.default || "";
+          // Use callsign (operating code like SKW4783) for FlightAware links, fallback to default
+          const flightNumber =
+            flight.identification.callsign ||
+            flight.identification.number.alternative ||
+            flight.identification.number.default ||
+            "";
 
           return {
             flight_number: flightNumber,
