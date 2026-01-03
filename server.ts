@@ -444,8 +444,9 @@ routes["/api/fleet-discovery"] = (req) => {
       pending_no_flights: pendingNoFlights.length,
       pending_checkable: pendingCheckable.length,
     },
-    // Sample of pending checkable planes (those with flights available)
+    // Samples of pending planes for debugging
     pending_checkable_sample: pendingCheckable.slice(0, 10).map((p) => p.tail_number),
+    pending_no_flights_sample: pendingNoFlights.slice(0, 10).map((p) => p.tail_number),
   };
 
   return new Response(JSON.stringify(response, null, 2), {
