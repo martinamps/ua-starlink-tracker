@@ -401,12 +401,16 @@ routes["/api/fleet-discovery"] = (req) => {
     }));
 
   const response = {
-    ...stats,
-    // Override with accurate count based on cache
-    discovered_not_in_spreadsheet: newDiscoveries.length,
-    // New field: actual discoveries not in spreadsheet
-    new_discoveries: newDiscoveries,
-    // Cache info for debugging
+    // Fleet verification progress
+    verification: {
+      total_fleet: stats.total_fleet,
+      verified_starlink: stats.verified_starlink,
+      verified_non_starlink: stats.verified_non_starlink,
+      pending: stats.pending_verification,
+    },
+    // Discrepancies: planes we discovered with Starlink that aren't in the spreadsheet
+    discovered_not_in_spreadsheet: newDiscoveries,
+    // Spreadsheet cache info for debugging
     spreadsheet_cache: {
       size: cacheInfo.size,
       updated_at: cacheInfo.updatedAt,
@@ -414,11 +418,6 @@ routes["/api/fleet-discovery"] = (req) => {
         ? new Date(cacheInfo.updatedAt).toISOString()
         : null,
     },
-    recent_discoveries: stats.recent_discoveries.map((d) => ({
-      ...d,
-      in_spreadsheet: spreadsheetCache.has(d.tail_number),
-      verified_at_formatted: d.verified_at ? new Date(d.verified_at * 1000).toISOString() : null,
-    })),
   };
 
   return new Response(JSON.stringify(response, null, 2), {
