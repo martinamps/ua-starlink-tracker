@@ -54,7 +54,7 @@ function formatRelative(timestamp: number): string {
 }
 
 function printOverview() {
-  console.log("\n" + "=".repeat(60));
+  console.log(`\n${"=".repeat(60)}`);
   console.log("DATABASE STATUS OVERVIEW");
   console.log("=".repeat(60));
 
@@ -186,11 +186,11 @@ function printOverview() {
     );
   }
 
-  console.log("\n" + "=".repeat(60) + "\n");
+  console.log(`\n${"=".repeat(60)}\n`);
 }
 
 function printFull() {
-  console.log("\n" + "=".repeat(100));
+  console.log(`\n${"=".repeat(100)}`);
   console.log("FULL DATABASE STATUS BY TAIL NUMBER");
   console.log("=".repeat(100));
 
@@ -239,16 +239,15 @@ function printFull() {
 
   // Print header
   console.log(
-    "\n" +
-      [
-        "Tail".padEnd(10),
-        "Aircraft".padEnd(12),
-        "Fleet".padEnd(10),
-        "Installed".padEnd(12),
-        "Flights".padEnd(8),
-        "Last Check".padEnd(12),
-        "Verified".padEnd(20),
-      ].join(" | ")
+    `\n${[
+      "Tail".padEnd(10),
+      "Aircraft".padEnd(12),
+      "Fleet".padEnd(10),
+      "Installed".padEnd(12),
+      "Flights".padEnd(8),
+      "Last Check".padEnd(12),
+      "Verified".padEnd(20),
+    ].join(" | ")}`
   );
   console.log("-".repeat(100));
 
@@ -293,7 +292,7 @@ function printFull() {
     }
   }
 
-  console.log("\n" + "=".repeat(100) + "\n");
+  console.log(`\n${"=".repeat(100)}\n`);
 }
 
 // Main

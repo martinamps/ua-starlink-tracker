@@ -1,230 +1,119 @@
-# CLAUDE.md
+# UA Starlink Tracker
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+**Open source project** - keep documentation clean and concise. See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for detailed setup.
 
-## Project Overview
-
-UA-Starlink-Tracker is a web application that tracks United Airlines' Starlink WiFi installation progress. It scrapes data from Google Sheets containing fleet information, processes it to identify aircraft with Starlink WiFi, and displays the information on a responsive web interface with statistics and real-time flight tracking.
+Tracks United Airlines' Starlink WiFi installation progress across their fleet. Live at [unitedstarlinktracker.com](https://unitedstarlinktracker.com).
 
 ## Commands
 
-### Development
-
 ```bash
-# Start the development server with hot reloading
-bun run dev
-
-# Run the server without hot reloading
-bun run start
-
-# Manually run the scraper to get current data (outputs to console)
-bun run scrape
-
-# Run Starlink verification manually (checks N planes against United.com)
-bun run verify-starlink         # Check up to 5 planes
-bun run verify-starlink 10      # Check up to 10 planes
-bun run verify-starlink --force # Force re-check all planes (ignore rate limits)
-bun run verify-starlink --tail=N12345  # Check a specific tail number
-
-# Check a single flight's Starlink status on United.com
-bun run check-starlink <flightNumber> <date> <origin> <destination>
-# Example: bun run check-starlink 4680 2026-01-01 AUS DEN
-
-# View database status including verification stats
-bun run db-status
+bun run dev                    # Dev server with hot reload
+bun run db-status              # Database overview (--full for details)
+bun run scrape                 # Fetch fleet data from Google Sheets
 ```
+
+### Verification & Discovery
+```bash
+bun run check-starlink 4680 2026-01-04 AUS DEN  # Check single flight
+bun run verify-starlink 10                       # Verify N planes against United.com
+bun run verify-starlink --tail=N12345            # Verify specific aircraft
+bun run discover --batch=5                       # Discover new Starlink planes
+bun run discover --stats                         # Show discovery statistics
+```
+
+### Fleet Sync
+```bash
+bun run sync-fleet             # Full sync (FR24 + spreadsheet)
+bun run update-flights         # Bulk update flight data
+```
+
+## Data Sources
+
+| Source | Purpose | Notes |
+|--------|---------|-------|
+| Google Sheets | Starlink status (source of truth) | Hourly scrape |
+| FlightRadar24 API | Flight schedules | Free, primary |
+| United.com | Verification | Playwright scraping |
+| FlightAware | Flight fallback | Paid, optional |
 
 ## Architecture
 
-### Core Components
+### Background Jobs (started by server.ts)
 
-1. **Data Fetching & Processing**
-   - `src/utils/utils.ts` - Contains `fetchAllSheets()` which scrapes Google Sheets for aircraft data
-   - `scrape.ts` - Command-line script to run data scraping and view results
+| Job | Interval | Purpose |
+|-----|----------|---------|
+| Spreadsheet scrape | 1 hour | Update plane list from Google Sheets |
+| Flight updater | 30 sec | Keep flight data fresh (1-8hr smart caching) |
+| Starlink verifier | 60 sec | Verify planes against United.com |
+| Fleet discovery | 90 sec | Find new Starlink planes |
+| Fleet sync | 24 hours | Sync full fleet from FR24 |
 
-2. **Database**
-   - `src/database/database.ts` - SQLite database operations for storing aircraft, statistics, and flight data
-   - `plane-data.sqlite` - Local SQLite database file with tables for aircraft, flights, and metadata
-   - Database includes `last_flight_check` column for smart flight data caching
+### Database Tables
 
-3. **API & Flight Data Integration**
-   - `src/api/flightaware-api.ts` - FlightAware AeroAPI integration with rate limiting and retry logic
-   - `src/api/flight-updater.ts` - Smart flight data updates with 6-hour caching and staggered checks
-   - Includes exponential backoff with jitter for API rate limiting (429 errors)
+| Table | Purpose |
+|-------|---------|
+| `starlink_planes` | Aircraft with Starlink |
+| `upcoming_flights` | Cached flight schedules |
+| `starlink_verification_log` | Verification audit trail |
+| `united_fleet` | Full fleet for discovery |
+| `meta` | Stats and timestamps |
 
-4. **Starlink Verification System**
-   - `src/scripts/starlink-verifier.ts` - Background verification runner that checks Starlink status against United.com
-   - `src/scripts/united-starlink-checker.ts` - Playwright-based scraper that visits United.com flight status pages to extract WiFi provider info
-   - Uses Playwright with stealth plugin to avoid detection
-   - Verifies spreadsheet data by checking actual flight status pages for WiFi provider (Starlink, Panasonic, Viasat, Gogo, or None)
-   - Stores verification results in `starlink_verification_log` table with `verified_wifi` column on planes
+### Key Files
 
-5. **Unified Logger** (`src/utils/logger.ts`)
-   - Auto-detects calling filename from stack trace - no manual prefixes needed
-   - Consistent format: `2026-01-01T21:18:03.610Z [filename] message`
-   - Log levels: `info`, `warn`, `error`, `debug`
-   - Writes to both console and `logs/app.log`
-   - Usage: `import { info, error } from "../utils/logger"; info("message");`
-
-6. **Type System**
-   - `src/types.ts` - Shared TypeScript interfaces for Aircraft, Flight, FleetStats, and ApiResponse
-   - Ensures type safety across the entire application
-
-7. **Web Server**
-   - `server.ts` - Bun HTTP server with improved template handling using `Bun.file()` and `import.meta.dir`
-   - `src/utils/constants.ts` - Configuration values, content strings, and security settings
-   - `src/utils/not-found.ts` - 404 page generator
-
-8. **Frontend**
-   - `src/components/page.tsx` - React component with responsive design and mobile-optimized flight display
-   - `index.html` - Simplified HTML template for server-side rendering
-   - Desktop: Table layout with full flight information
-   - Mobile: Card-based layout with collapsible flight details
-
-### Data Flow
-
-1. **Data Collection**: Application periodically scrapes Google Sheets containing United Airlines fleet data
-2. **Aircraft Identification**: Identifies aircraft with Starlink WiFi (marked as "StrLnk" in WiFi column)
-3. **Flight Data**: FlightAware API provides real-time upcoming flight information for each aircraft
-4. **Database Storage**: Data stored in SQLite with installation date preservation and flight caching
-5. **API Endpoints**: 
-   - `/api/data` - Returns all Starlink aircraft data with grouped flight information
-   - `/api/check-flight` - Checks if a specific flight number has Starlink on a given date
-6. **Frontend Rendering**: Server-side React rendering with minimal client-side JavaScript
-
-### Key Features
-
-#### Flight Tracking Integration
-- Real-time upcoming flights for each Starlink-equipped aircraft
-- Smart caching prevents API overuse (6-hour refresh threshold)
-- Links to FlightAware for detailed flight tracking
-- Clean airport code display (removes ICAO prefixes K, C, M)
-
-#### Installation Date Preservation
-- Maintains historical installation dates through data updates
-- Prevents accidental overwrites during scraping operations
-- Special handling for first Starlink installation (N127SY - Mar 7, 2025)
-
-#### Responsive Design
-- **Desktop**: Full table with flight information column showing 3 flights per aircraft
-- **Mobile**: Card-based layout with all aircraft details and 2 flights per card
-- Clean typography and visual hierarchy optimized for aviation enthusiasts
-
-#### Starlink Verification System
-The verifier cross-checks spreadsheet data against United.com to confirm WiFi providers:
-
-- **Background Process**: `startStarlinkVerifier()` runs automatically when the server starts
-- **Scheduling**: Checks 1 plane every ~60 seconds (±15s jitter) to distribute load
-- **Rate Limiting**: Each plane is re-verified every 48-96 hours (jittered around 72h)
-- **Data Source**: Fetches plane/flight data from the `/api/data` endpoint, then visits United.com flight status pages
-- **Playwright Scraping**: Uses `united-starlink-checker.ts` with stealth plugin to scrape flight status pages
-- **URL Pattern**: `https://www.united.com/en/us/flightstatus/details/{flightNumber}/{date}/{origin}/{destination}/UA`
-- **Detection**: Looks for "Internet by Starlink", "Internet by Panasonic", etc. in page content
-- **Storage**: Results stored in `starlink_verification_log` table; `verified_wifi` column updated on planes
-- **Mismatch Detection**: `getWifiMismatches()` finds planes where spreadsheet and United.com disagree
-- **Logging**: Writes to `logs/verifier.log` with structured JSON output
-
-#### Data Integrity
-- Database migration logic for schema updates
-- Automatic preservation of existing installation dates
-- Error handling and retry logic for external API calls
-
-### Configuration
-
-The application has different behaviors based on domain and environment:
-- When accessed via "unitedstarlinktracker" domains, it displays United-specific content
-- Production mode uses specific database paths and environment settings
-- Security headers are configured for production use
-- FlightAware API key required for flight data (set via environment variable)
-
-### Important Implementation Notes
-
-1. **Installation Date Bug Fix**: The scraper no longer overwrites DateFound - database handles date preservation
-2. **Bun-Native File Handling**: Uses `Bun.file()` and `import.meta.dir` instead of Node.js fs operations
-3. **Server-Side Rendering**: Minimal client-side JavaScript, primarily server-rendered for performance
-4. **Type Safety**: Shared types ensure consistency between database, API, and frontend components
-
-### Deployment
-
-The application can be deployed using Docker:
-```bash
-# Build the Docker image
-docker build -t ua-starlink-tracker .
-
-# Run the container
-docker run -p 3000:3000 -v /path/to/data:/srv/ua-starlink-tracker ua-starlink-tracker
+```
+server.ts                              # HTTP server, routes, job orchestration
+src/api/flightradar24-api.ts           # FR24 flight data (primary)
+src/api/flight-updater.ts              # Smart flight caching with backoff
+src/database/database.ts               # SQLite operations
+src/scripts/starlink-verifier.ts       # Background verification
+src/scripts/fleet-discovery.ts         # New plane discovery
+src/scripts/united-starlink-checker.ts # Playwright United.com scraper
+src/utils/utils.ts                     # Google Sheets scraping
+src/components/page.tsx                # React SSR frontend
 ```
 
-The Docker container runs in production mode and expects a mounted volume for the database file.
+## API
 
-### Environment Variables
+### `/api/check-flight` (Chrome extension uses this)
 
-- `FLIGHTAWARE_API_KEY` - Required for flight data integration
-- `NODE_ENV` - Set to "production" for production deployment
-- `PORT` - Server port (default: 3000)
-
-### Chrome Extension
-
-A companion Chrome extension is available that annotates Google Flights search results with Starlink availability:
-
-**Chrome Web Store:** https://chromewebstore.google.com/detail/google-flights-starlink-i/jjfljoifenkfdbldliakmmjhdkbhehoi
-
-The extension uses the `/api/check-flight` endpoint to check Starlink status for flights displayed on Google Flights. When modifying the API, ensure backwards compatibility to avoid breaking the extension.
-
-**API Contract (do not break):**
-- The `/api/check-flight` endpoint must continue to accept `flight_number` and `date` query parameters
-- The response must include `hasStarlink` (boolean) and `flights` (array) fields
-- CORS headers must allow requests from Google Flights domains
-
-### API Documentation
-
-#### `/api/check-flight`
-
-Checks if a specific flight has Starlink capability on a given date. Used by the Chrome extension to annotate Google Flights search results.
-
-**Method:** GET
-
-**Parameters:**
-- `flight_number` (required): The flight number (e.g., "UA123")
-- `date` (required): The date in YYYY-MM-DD format
-
-**Example Request:**
 ```
 GET /api/check-flight?flight_number=UA123&date=2025-06-07
 ```
 
-**Success Response (200 OK):**
-```json
-{
-  "hasStarlink": true,
-  "flights": [
-    {
-      "tail_number": "N127SY",
-      "aircraft_type": "737-900",
-      "flight_number": "UA123",
-      "departure_airport": "ORD",
-      "arrival_airport": "LAX",
-      "departure_time": 1749225600,
-      "arrival_time": 1749240000,
-      "departure_time_formatted": "2025-06-07T12:00:00.000Z",
-      "arrival_time_formatted": "2025-06-07T16:00:00.000Z",
-      "starlink_installed_date": "2025-03-07",
-      "operated_by": "United Airlines",
-      "fleet_type": "mainline"
-    }
-  ]
-}
+**Do not break this contract:**
+- Accept `flight_number` and `date` params
+- Return `{ hasStarlink: boolean, flights: [] }`
+- CORS headers for Google Flights domains
+
+### `/api/data`
+
+Returns all Starlink aircraft with upcoming flights.
+
+## Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `PORT` | No | Server port (default: 3000) |
+| `NODE_ENV` | No | Set to "production" for prod |
+| `AEROAPI_KEY` | No | FlightAware fallback (not used by default) |
+
+## Important Notes
+
+- **FlightRadar24 is primary** - switched from FlightAware to save $1xxs/mo
+- **Smart caching** - flight data refreshes based on proximity (1hr if flight <6hr away, up to 8hr otherwise)
+- **Verification jitter** - each plane re-verified every 48-96hr (deterministic per tail)
+- **Playwright stealth** - United.com scraping uses stealth plugin to avoid detection
+- **SSR only** - minimal client JS, server-rendered React
+
+## Chrome Extension
+
+[Chrome Web Store](https://chromewebstore.google.com/detail/google-flights-starlink-i/jjfljoifenkfdbldliakmmjhdkbhehoi) - annotates Google Flights with Starlink badges.
+
+## Logging
+
+```typescript
+import { info, error, debug } from "./utils/logger";
+info("message");  // Auto-detects filename, writes to console + logs/app.log
 ```
 
-**No Starlink Response (200 OK):**
-```json
-{
-  "hasStarlink": false,
-  "message": "No Starlink-equipped aircraft found for this flight on the specified date",
-  "flights": []
-}
-```
-
-**Error Responses:**
-- 400 Bad Request: Missing parameters or invalid date format
-- 405 Method Not Allowed: Non-GET request
+Format: `2026-01-03T21:18:03.610Z [filename] message`

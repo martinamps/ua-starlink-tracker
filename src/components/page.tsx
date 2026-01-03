@@ -278,12 +278,14 @@ export default function Page({
         visibilityClass = "hidden md:inline-flex"; // Tablet+ (md+)
       }
 
+      const flightNum = convertToUAFlightNumber(flight.flight_number);
       return (
         <a
           key={idx}
           href={`https://www.flightaware.com/live/flight/${flight.flight_number}`}
           target="_blank"
           rel="noopener noreferrer"
+          data-flight-tooltip={flightNum}
           className={`flight-pill font-mono items-center gap-1.5 px-2 py-1 bg-surface-elevated border border-subtle rounded text-xs text-secondary hover:text-accent hover:border-accent/50 transition-all ${visibilityClass}`}
         >
           <span className="text-accent font-medium">{dep}</span>
@@ -373,11 +375,11 @@ export default function Page({
       {/* Subtle grid background */}
       <div className="absolute inset-0 grid-pattern opacity-50 pointer-events-none" />
 
-      <header className="relative py-6 sm:py-8 text-center mb-6">
+      <header className="relative py-5 sm:py-6 text-center mb-2">
         <h1 className="font-display text-3xl sm:text-4xl md:text-5xl font-bold text-primary mb-1 tracking-tight">
           {isUnited ? PAGE_CONTENT.pageTitle.united : PAGE_CONTENT.pageTitle.generic}
         </h1>
-        <p className="text-base sm:text-lg text-secondary font-display mb-4">
+        <p className="text-base sm:text-lg text-secondary font-display mb-2">
           {isUnited ? PAGE_CONTENT.pageSubtitle.united : PAGE_CONTENT.pageSubtitle.generic}
         </p>
         <div className="flex items-center justify-center gap-3 sm:gap-6 text-xs sm:text-sm font-mono text-muted">
@@ -392,13 +394,13 @@ export default function Page({
           <span className="text-green-400 font-semibold">FREE</span>
           <span className="text-subtle hidden sm:inline">·</span>
           <span className="hidden sm:inline">
-            <span className="text-accent font-semibold">40+</span>/month
+            <span className="text-accent font-semibold">40+</span> installs/mo
           </span>
         </div>
       </header>
 
       {/* Fleet Stats - Instrument Panel Style */}
-      <div className="relative grid grid-cols-2 lg:grid-cols-4 gap-px bg-subtle rounded-lg overflow-hidden mb-8 border border-subtle">
+      <div className="relative grid grid-cols-2 lg:grid-cols-4 gap-px bg-subtle rounded-lg overflow-hidden mb-6 border border-subtle">
         {/* Mainline Fleet */}
         <div className="bg-surface p-4 flex flex-col justify-center text-center">
           <div className="text-[10px] font-mono text-muted uppercase tracking-wider mb-2">
@@ -578,35 +580,40 @@ export default function Page({
                 });
               })()}
             </svg>
-            {/* Center text overlay */}
-            <div className="absolute inset-0 flex items-center justify-center">
+            {/* Center text overlay - pointer-events-none so mouse reaches pie slices */}
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
               <span id="pie-center-text" className="font-mono text-xl font-semibold text-primary">
-                {x}
+                {modelData[0]?.count || x}
               </span>
             </div>
           </div>
-          {/* Status line - shows model info on hover */}
+          {/* Status line - shows model info on hover, defaults to largest slice */}
           <div
             id="pie-status"
             className="h-4 flex items-center justify-center text-[10px] font-mono"
           >
-            <span id="pie-status-label" className="text-muted">
-              TOTAL
+            <span id="pie-status-label">
+              <span style={{ color: "#0ea5e9" }}>{modelData[0]?.model || "ERJ"}</span>
+              <span style={{ color: "#5a6a80" }}>
+                {" "}
+                · {modelData[0] ? Math.round((modelData[0].count / x) * 100) : 0}%
+              </span>
             </span>
           </div>
         </div>
       </div>
 
-      {/* Search and Filter Section */}
-      <div className="relative mb-6 bg-surface rounded-lg border border-subtle p-4">
-        <div className="flex flex-col md:flex-row gap-4">
-          <div className="flex-1">
-            <div className="relative">
+      {/* Aircraft List with integrated search */}
+      <div className="relative bg-surface rounded-lg border border-subtle overflow-hidden mb-6">
+        {/* Integrated header with search and filters */}
+        <div className="px-4 md:px-6 py-3 border-b border-subtle">
+          <div className="flex flex-col sm:flex-row gap-3">
+            <div className="relative flex-1">
               <input
                 type="text"
                 id="aircraft-search"
                 placeholder="Search tail, flight, airport..."
-                className="w-full font-mono text-sm px-4 py-2.5 pl-10 bg-surface-elevated border border-subtle rounded text-primary placeholder-muted focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all"
+                className="w-full font-mono text-sm px-4 py-2 pl-9 bg-surface-elevated border border-subtle rounded text-primary placeholder-muted focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all"
               />
               <svg
                 className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted"
@@ -624,46 +631,38 @@ export default function Page({
                 />
               </svg>
             </div>
-          </div>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              id="filter-all"
-              className="filter-btn font-mono text-xs px-4 py-2.5 rounded border transition-all bg-accent/20 border-accent text-accent"
-              data-filter="all"
-            >
-              ALL ({starlinkData.length})
-            </button>
-            <button
-              type="button"
-              id="filter-mainline"
-              className="filter-btn font-mono text-xs px-4 py-2.5 rounded border transition-all bg-transparent border-subtle text-secondary hover:border-accent/50 hover:text-accent"
-              data-filter="mainline"
-            >
-              MAINLINE ({fleetStats?.mainline.starlink || 0})
-            </button>
-            <button
-              type="button"
-              id="filter-express"
-              className="filter-btn font-mono text-xs px-4 py-2.5 rounded border transition-all bg-transparent border-subtle text-secondary hover:border-accent/50 hover:text-accent"
-              data-filter="express"
-            >
-              EXPRESS ({fleetStats?.express.starlink || 0})
-            </button>
+            <div className="flex gap-1.5 sm:gap-2">
+              <button
+                type="button"
+                id="filter-all"
+                className="filter-btn font-mono text-[11px] px-3 py-2 rounded border transition-all bg-accent/20 border-accent text-accent"
+                data-filter="all"
+              >
+                ALL <span className="hidden sm:inline">({starlinkData.length})</span>
+              </button>
+              <button
+                type="button"
+                id="filter-mainline"
+                className="filter-btn font-mono text-[11px] px-3 py-2 rounded border transition-all bg-transparent border-subtle text-secondary hover:border-accent/50 hover:text-accent"
+                data-filter="mainline"
+              >
+                MAINLINE{" "}
+                <span className="hidden sm:inline">({fleetStats?.mainline.starlink || 0})</span>
+              </button>
+              <button
+                type="button"
+                id="filter-express"
+                className="filter-btn font-mono text-[11px] px-3 py-2 rounded border transition-all bg-transparent border-subtle text-secondary hover:border-accent/50 hover:text-accent"
+                data-filter="express"
+              >
+                EXPRESS{" "}
+                <span className="hidden sm:inline">({fleetStats?.express.starlink || 0})</span>
+              </button>
+            </div>
           </div>
         </div>
-      </div>
-
-      {/* Aircraft List Header */}
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="font-display text-xl md:text-2xl font-bold text-primary">Active Fleet</h2>
-        <div className="font-mono text-xs text-muted">{starlinkData.length} AIRCRAFT</div>
-      </div>
-
-      {/* Aircraft List */}
-      <div className="relative bg-surface rounded-lg border border-subtle overflow-hidden mb-6">
-        {/* Header row - desktop only */}
-        <div className="hidden md:grid md:grid-cols-12 gap-4 px-6 py-3 border-b border-subtle text-[10px] font-mono text-muted uppercase tracking-widest">
+        {/* Column headers - desktop only */}
+        <div className="hidden md:grid md:grid-cols-12 gap-4 px-6 py-2.5 border-b border-subtle bg-surface-elevated/50 text-[10px] font-mono text-muted uppercase tracking-widest">
           <div className="col-span-3">Aircraft</div>
           <div className="col-span-2">Type</div>
           <div className="col-span-3">Operator</div>
@@ -1083,7 +1082,11 @@ export default function Page({
                 searchInput.addEventListener('input', filterRows);
               }
 
-              // Filter buttons
+              // Filter buttons - use data attribute to track state
+              var baseClass = 'filter-btn font-mono text-[11px] px-3 py-2 rounded border transition-all';
+              var activeStyle = 'bg-accent/20 border-accent text-accent';
+              var inactiveStyle = 'bg-transparent border-subtle text-secondary hover:border-accent/50 hover:text-accent';
+
               filterBtns.forEach(function(btn) {
                 btn.addEventListener('click', function() {
                   currentFilter = this.dataset.filter;
@@ -1091,9 +1094,9 @@ export default function Page({
                   // Update button styles
                   filterBtns.forEach(function(b) {
                     if (b.dataset.filter === currentFilter) {
-                      b.className = b.className.replace('bg-gray-100 text-gray-700 hover:bg-gray-200', 'bg-united-blue text-white');
+                      b.className = baseClass + ' ' + activeStyle;
                     } else {
-                      b.className = b.className.replace('bg-united-blue text-white', 'bg-gray-100 text-gray-700 hover:bg-gray-200');
+                      b.className = baseClass + ' ' + inactiveStyle;
                     }
                   });
 
@@ -1130,25 +1133,79 @@ export default function Page({
                 }
               });
 
+              // Flight badge tooltips (fixed positioning to avoid overflow clipping)
+              var tooltip = null;
+              var currentPill = null;
+
+              document.addEventListener('mouseover', function(e) {
+                var pill = e.target.closest('[data-flight-tooltip]');
+                if (pill && pill !== currentPill) {
+                  // Remove old tooltip if exists
+                  if (tooltip && tooltip.parentNode) {
+                    tooltip.parentNode.removeChild(tooltip);
+                  }
+
+                  currentPill = pill;
+                  var text = pill.dataset.flightTooltip;
+                  if (!text) return;
+
+                  // Create tooltip
+                  tooltip = document.createElement('div');
+                  tooltip.textContent = text;
+                  tooltip.style.cssText = 'position:fixed;padding:4px 8px;background:#0ea5e9;color:#0a0f1a;font-size:11px;font-weight:600;font-family:JetBrains Mono,monospace;border-radius:4px;pointer-events:none;z-index:9999;white-space:nowrap;box-shadow:0 4px 6px rgba(0,0,0,0.3);';
+                  document.body.appendChild(tooltip);
+
+                  // Position above the element
+                  var rect = pill.getBoundingClientRect();
+                  tooltip.style.left = (rect.left + rect.width / 2 - tooltip.offsetWidth / 2) + 'px';
+                  tooltip.style.top = (rect.top - tooltip.offsetHeight - 6) + 'px';
+                }
+              });
+
+              document.addEventListener('mouseout', function(e) {
+                var pill = e.target.closest('[data-flight-tooltip]');
+                if (!pill) return;
+
+                // Check if we're leaving to something outside the pill
+                var related = e.relatedTarget;
+                if (related && pill.contains(related)) return;
+
+                if (tooltip && tooltip.parentNode) {
+                  tooltip.parentNode.removeChild(tooltip);
+                  tooltip = null;
+                }
+                currentPill = null;
+              });
+
               // Pie chart hover
               var pieContainer = document.getElementById('pie-chart-container');
               var pieCenterText = document.getElementById('pie-center-text');
               var pieStatusLabel = document.getElementById('pie-status-label');
 
               if (pieContainer && pieCenterText && pieStatusLabel) {
-                var defaultCount = pieCenterText.textContent || '';
                 var slices = pieContainer.querySelectorAll('.pie-slice');
-                console.log('Pie slices found:', slices.length);
+                // Default to largest slice (first one, since sorted by count desc)
+                var firstSlice = slices[0];
+                var currentCount = firstSlice ? firstSlice.dataset.count : pieCenterText.textContent;
+                var currentModel = firstSlice ? firstSlice.dataset.model : '';
+                var currentPct = firstSlice ? firstSlice.dataset.pct : '';
 
+                // Set initial state to largest slice
+                if (firstSlice) {
+                  pieCenterText.textContent = currentCount;
+                  pieStatusLabel.innerHTML = '<span style="color:#0ea5e9">' + currentModel + '</span> <span style="color:#5a6a80">· ' + currentPct + '%</span>';
+                }
+
+                // Sticky hover - remember last hovered slice
                 slices.forEach(function(slice) {
                   slice.addEventListener('mouseenter', function() {
-                    pieCenterText.textContent = this.dataset.count;
-                    pieStatusLabel.innerHTML = '<span style="color:#0ea5e9">' + this.dataset.model + '</span> <span style="color:#5a6a80">· ' + this.dataset.pct + '%</span>';
+                    currentCount = this.dataset.count;
+                    currentModel = this.dataset.model;
+                    currentPct = this.dataset.pct;
+                    pieCenterText.textContent = currentCount;
+                    pieStatusLabel.innerHTML = '<span style="color:#0ea5e9">' + currentModel + '</span> <span style="color:#5a6a80">· ' + currentPct + '%</span>';
                   });
-                  slice.addEventListener('mouseleave', function() {
-                    pieCenterText.textContent = defaultCount;
-                    pieStatusLabel.textContent = 'TOTAL';
-                  });
+                  // No mouseleave handler - keeps last hovered value
                 });
               }
             });

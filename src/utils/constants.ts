@@ -102,7 +102,8 @@ export const SECURITY_HEADERS = {
     "Content-Security-Policy":
       "default-src 'self' https://unpkg.com; connect-src 'self' https://analytics.martinamps.com; " +
       "script-src 'self' 'unsafe-inline' https://unpkg.com https://analytics.martinamps.com; " +
-      "style-src 'self' 'unsafe-inline'; img-src 'self' data: https://*;",
+      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
+      "font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https://*;",
     "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
     "Referrer-Policy": "no-referrer",
     "Cache-Control": "no-store, max-age=0",
@@ -117,7 +118,8 @@ export const SECURITY_HEADERS = {
     "Content-Security-Policy":
       "default-src 'self' https://unpkg.com; connect-src 'self' https://analytics.martinamps.com; " +
       "script-src 'self' 'unsafe-inline' https://unpkg.com https://analytics.martinamps.com; " +
-      "style-src 'self' 'unsafe-inline'; img-src 'self' data:;",
+      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
+      "font-src 'self' https://fonts.gstatic.com; img-src 'self' data:;",
     "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
     "Referrer-Policy": "no-referrer",
   },
@@ -126,7 +128,8 @@ export const SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Content-Security-Policy":
-      "default-src 'self'; style-src 'unsafe-inline'; img-src 'self' data:;",
+      "default-src 'self'; style-src 'unsafe-inline' https://fonts.googleapis.com; " +
+      "font-src 'self' https://fonts.gstatic.com; img-src 'self' data:;",
     "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
     "Referrer-Policy": "no-referrer",
   },

@@ -37,7 +37,7 @@ function getCallerFile(): string {
 
 function writeToFile(line: string) {
   try {
-    fs.appendFileSync(LOG_PATH, line + "\n");
+    fs.appendFileSync(LOG_PATH, `${line}\n`);
   } catch {
     // Silent fail for file writes
   }

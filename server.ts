@@ -578,33 +578,6 @@ routes["/sitemap.xml"] = tracedRoute("/sitemap.xml", (req) => {
   });
 });
 
-// Debug endpoint
-routes["/debug/files"] = tracedRoute("/debug/files", (req) => {
-  const url = new URL(req.url);
-  const token = url.searchParams.get("token");
-  const isAuthorized =
-    process.env.NODE_ENV !== "production" || token === "starlink-tracker-debug-1a2b3c";
-
-  if (!isAuthorized) {
-    return new Response("Unauthorized", { status: 401 });
-  }
-
-  const debugInfo = {
-    environment: {
-      nodeEnv: process.env.NODE_ENV,
-      staticDir: STATIC_DIR,
-    },
-    database: {
-      planes: getStarlinkPlanes(db).length,
-      lastUpdated: getLastUpdated(db),
-    },
-  };
-
-  return new Response(JSON.stringify(debugInfo, null, 2), {
-    headers: { "Content-Type": "application/json" },
-  });
-});
-
 // Request handler for home page and static files
 async function handleRequest(req: Request): Promise<Response> {
   const url = new URL(req.url);
