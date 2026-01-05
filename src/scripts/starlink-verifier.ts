@@ -159,24 +159,45 @@ export async function verifyPlaneStarlink(
           destination
         );
 
-        // Log the verification result
+        // Check if the aircraft on the flight matches what we expected
+        const actualTail = result.tailNumber;
+        const tailMatches = actualTail && actualTail.toUpperCase() === tailNumber.toUpperCase();
+        const tailMismatch = actualTail && !tailMatches;
+
+        if (tailMismatch) {
+          verifierLog.warn(
+            `Aircraft mismatch: expected ${tailNumber} but flight has ${actualTail} - skipping verification update`
+          );
+        }
+
+        // Log the verification result (always log, but note the mismatch)
         logVerification(db, {
           tail_number: tailNumber,
           source: "united",
-          has_starlink: result.hasStarlink,
-          wifi_provider: result.wifiProvider,
+          has_starlink: tailMismatch ? null : result.hasStarlink,
+          wifi_provider: tailMismatch ? null : result.wifiProvider,
           aircraft_type: result.aircraftType,
           flight_number: `UA${flightNumber}`,
-          error: result.error || null,
+          error: tailMismatch
+            ? `Aircraft mismatch: flight has ${actualTail}`
+            : result.error || null,
         });
 
-        // Update the plane's verified_wifi status (only if no error)
-        if (!result.error && result.wifiProvider) {
+        // Update the plane's verified_wifi status ONLY if:
+        // 1. No error
+        // 2. We got a wifiProvider
+        // 3. The tail number matches (or we couldn't extract tail from page)
+        if (!result.error && result.wifiProvider && !tailMismatch) {
           updateVerifiedWifi(db, tailNumber, result.wifiProvider);
         }
 
         // Emit metrics
-        if (result.error) {
+        if (tailMismatch) {
+          metrics.increment(COUNTERS.VERIFICATION_CHECK, { result: "aircraft_mismatch" });
+          span.setTag("result", "aircraft_mismatch");
+          span.setTag("expected_tail", tailNumber);
+          span.setTag("actual_tail", actualTail);
+        } else if (result.error) {
           metrics.increment(COUNTERS.VERIFICATION_CHECK, { result: "error" });
           span.setTag("result", "error");
         } else {
@@ -185,7 +206,12 @@ export async function verifyPlaneStarlink(
           span.setTag("wifi_provider", result.wifiProvider || "unknown");
         }
 
-        if (result.hasStarlink) {
+        if (tailMismatch) {
+          // Already logged above, just note we're not updating
+          verifierLog.debug(
+            `Flight ${flightNumber} aircraft: ${actualTail} (${result.wifiProvider || "unknown"})`
+          );
+        } else if (result.hasStarlink) {
           verifierLog.info(`✓ ${tailNumber} confirmed Starlink (${result.wifiProvider})`);
         } else if (result.error) {
           verifierLog.warn(

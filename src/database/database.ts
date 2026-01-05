@@ -876,6 +876,23 @@ export function getWifiMismatches(db: Database): WifiMismatch[] {
 }
 
 /**
+ * Clear verified_wifi for mismatched planes so they can be re-verified.
+ * Use this after fixing verification logic to allow re-verification.
+ */
+export function clearMismatchVerifications(db: Database): number {
+  const result = db
+    .query(`
+    UPDATE starlink_planes
+    SET verified_wifi = NULL, verified_at = NULL
+    WHERE verified_wifi IS NOT NULL
+      AND wifi = 'StrLnk'
+      AND verified_wifi != 'Starlink'
+  `)
+    .run();
+  return result.changes;
+}
+
+/**
  * Get planes that haven't been verified yet
  */
 export function getUnverifiedPlanes(db: Database, limit = 50): Aircraft[] {
