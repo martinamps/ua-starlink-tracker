@@ -65,7 +65,13 @@ export async function checkStarlinkStatusSubprocess(
       }
 
       try {
-        const result = JSON.parse(stdout) as StarlinkCheckResult;
+        // Extract JSON from stdout - Datadog tracer may prepend config output
+        // Look for our result object which contains hasStarlink
+        const jsonMatch = stdout.match(/\{[\s\S]*"hasStarlink"[\s\S]*\}/);
+        if (!jsonMatch) {
+          throw new Error("No valid result JSON found in output");
+        }
+        const result = JSON.parse(jsonMatch[0]) as StarlinkCheckResult;
         // Emit metric based on result
         if (result.error) {
           metrics.increment(COUNTERS.VENDOR_REQUEST, {
