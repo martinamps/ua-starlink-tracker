@@ -620,8 +620,8 @@ export default function Page({
               <input
                 type="text"
                 id="aircraft-search"
-                placeholder="Search tail, flight, route (sfo-lax)..."
-                className="w-full font-mono text-sm px-4 py-2 pl-9 bg-surface-elevated border border-subtle rounded text-primary placeholder-muted focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all"
+                placeholder="Search tail, route (sfo-lax), or combine terms..."
+                className="w-full font-mono text-sm px-4 py-2 pl-9 pr-8 bg-surface-elevated border border-subtle rounded text-primary placeholder-muted focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all"
               />
               <svg
                 className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted"
@@ -638,7 +638,18 @@ export default function Page({
                   d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
                 />
               </svg>
+              <button
+                type="button"
+                id="search-clear"
+                className="absolute right-2 top-1/2 transform -translate-y-1/2 w-5 h-5 text-muted hover:text-primary transition-colors hidden"
+                aria-label="Clear search"
+              >
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
             </div>
+            <div id="search-count" className="hidden sm:flex items-center text-xs font-mono text-muted whitespace-nowrap" />
             <div className="flex gap-1.5 sm:gap-2">
               <button
                 type="button"
@@ -1061,39 +1072,54 @@ export default function Page({
             document.addEventListener('DOMContentLoaded', function() {
               // Search functionality
               var searchInput = document.getElementById('aircraft-search');
+              var searchClear = document.getElementById('search-clear');
+              var searchCount = document.getElementById('search-count');
               var rows = document.querySelectorAll('.aircraft-row');
               var filterBtns = document.querySelectorAll('.filter-btn');
               var currentFilter = 'all';
+              var totalCount = rows.length;
+
+              function matchesTerm(term, row) {
+                var tail = row.dataset.tail || '';
+                var aircraft = row.dataset.aircraft || '';
+                var operator = row.dataset.operator || '';
+                var airports = row.dataset.airports || '';
+                var routes = row.dataset.routes || '';
+                var flights = row.dataset.flights || '';
+
+                // Check for route patterns: full (sfo-lax), departure (sfo-), arrival (-lax)
+                var fullRoute = term.match(/^([a-z]{3})-([a-z]{3})$/);
+                var departureRoute = term.match(/^([a-z]{3})-$/);
+                var arrivalRoute = term.match(/^-([a-z]{3})$/);
+
+                if (fullRoute) {
+                  return routes.includes(term);
+                } else if (departureRoute) {
+                  return routes.split(' ').some(function(r) { return r.startsWith(departureRoute[1] + '-'); });
+                } else if (arrivalRoute) {
+                  return routes.split(' ').some(function(r) { return r.endsWith('-' + arrivalRoute[1]); });
+                } else {
+                  return tail.includes(term) ||
+                    aircraft.includes(term) ||
+                    operator.includes(term) ||
+                    airports.includes(term) ||
+                    flights.includes(term);
+                }
+              }
 
               function filterRows() {
                 var query = (searchInput?.value || '').toLowerCase().trim();
                 var visibleCount = 0;
 
-                // Check if query looks like a route (e.g., "sfo-lax" or "san-den")
-                var routeMatch = query.match(/^([a-z]{3})-([a-z]{3})$/);
+                // Split into terms for AND matching
+                var terms = query.split(/\\s+/).filter(function(t) { return t.length > 0; });
 
                 rows.forEach(function(row) {
-                  var tail = row.dataset.tail || '';
-                  var aircraft = row.dataset.aircraft || '';
-                  var operator = row.dataset.operator || '';
                   var fleet = row.dataset.fleet || '';
-                  var airports = row.dataset.airports || '';
-                  var routes = row.dataset.routes || '';
-                  var flights = row.dataset.flights || '';
 
-                  var matchesSearch;
-                  if (routeMatch) {
-                    // Route search: match against routes data (already has both directions)
-                    matchesSearch = routes.includes(query);
-                  } else {
-                    // Regular text search
-                    matchesSearch = !query ||
-                      tail.includes(query) ||
-                      aircraft.includes(query) ||
-                      operator.includes(query) ||
-                      airports.includes(query) ||
-                      flights.includes(query);
-                  }
+                  var matchesSearch = terms.length === 0 || terms.every(function(term) {
+                    return matchesTerm(term, row);
+                  });
 
                   var matchesFilter = currentFilter === 'all' || fleet === currentFilter;
 
@@ -1104,11 +1130,70 @@ export default function Page({
                     row.style.display = 'none';
                   }
                 });
+
+                // Update result count
+                if (searchCount) {
+                  if (query || currentFilter !== 'all') {
+                    searchCount.textContent = visibleCount + ' of ' + totalCount;
+                    searchCount.style.display = '';
+                  } else {
+                    searchCount.textContent = '';
+                    searchCount.style.display = 'none';
+                  }
+                }
+
+                // Toggle clear button visibility
+                if (searchClear) {
+                  searchClear.classList.toggle('hidden', !query);
+                }
+
+                // Update URL
+                var url = new URL(window.location.href);
+                if (query) {
+                  url.searchParams.set('q', query);
+                } else {
+                  url.searchParams.delete('q');
+                }
+                window.history.replaceState({}, '', url);
               }
 
               if (searchInput) {
                 searchInput.addEventListener('input', filterRows);
+
+                // Load initial query from URL
+                var urlParams = new URLSearchParams(window.location.search);
+                var initialQuery = urlParams.get('q');
+                if (initialQuery) {
+                  searchInput.value = initialQuery;
+                  filterRows();
+                }
               }
+
+              // Clear button
+              if (searchClear) {
+                searchClear.addEventListener('click', function() {
+                  if (searchInput) {
+                    searchInput.value = '';
+                    searchInput.focus();
+                    filterRows();
+                  }
+                });
+              }
+
+              // Keyboard shortcut: / to focus search
+              document.addEventListener('keydown', function(e) {
+                if (e.key === '/' && document.activeElement !== searchInput &&
+                    !['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) {
+                  e.preventDefault();
+                  searchInput?.focus();
+                }
+                // Escape to clear and blur
+                if (e.key === 'Escape' && document.activeElement === searchInput) {
+                  searchInput.value = '';
+                  searchInput.blur();
+                  filterRows();
+                }
+              });
 
               // Filter buttons - use data attribute to track state
               var baseClass = 'filter-btn font-mono text-[11px] px-3 py-2 rounded border transition-all';
