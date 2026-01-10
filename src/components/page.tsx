@@ -620,7 +620,7 @@ export default function Page({
               <input
                 type="text"
                 id="aircraft-search"
-                placeholder="Search tail, flight, airport..."
+                placeholder="Search tail, flight, route (sfo-lax)..."
                 className="w-full font-mono text-sm px-4 py-2 pl-9 bg-surface-elevated border border-subtle rounded text-primary placeholder-muted focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all"
               />
               <svg
@@ -693,6 +693,14 @@ export default function Page({
                   ])
                   .join(" ")
                   .toLowerCase();
+                // Build routes string with both directions for route-agnostic search
+                const routesStr = flights
+                  .flatMap((f) => {
+                    const dep = cleanAirportCode(f.departure_airport).toLowerCase();
+                    const arr = cleanAirportCode(f.arrival_airport).toLowerCase();
+                    return [`${dep}-${arr}`, `${arr}-${dep}`];
+                  })
+                  .join(" ");
                 // Include both raw flight numbers and UA-normalized versions
                 const flightNumbersStr = flights
                   .map((f) => `${f.flight_number} UA${f.flight_number.replace(/^[A-Z]+/, "")}`)
@@ -708,6 +716,7 @@ export default function Page({
                     data-operator={(plane.OperatedBy || "United Airlines").toLowerCase()}
                     data-fleet={plane.fleet}
                     data-airports={airportsStr}
+                    data-routes={routesStr}
                     data-flights={flightNumbersStr}
                   >
                     {/* Desktop Layout */}
@@ -1060,20 +1069,31 @@ export default function Page({
                 var query = (searchInput?.value || '').toLowerCase().trim();
                 var visibleCount = 0;
 
+                // Check if query looks like a route (e.g., "sfo-lax" or "san-den")
+                var routeMatch = query.match(/^([a-z]{3})-([a-z]{3})$/);
+
                 rows.forEach(function(row) {
                   var tail = row.dataset.tail || '';
                   var aircraft = row.dataset.aircraft || '';
                   var operator = row.dataset.operator || '';
                   var fleet = row.dataset.fleet || '';
                   var airports = row.dataset.airports || '';
+                  var routes = row.dataset.routes || '';
                   var flights = row.dataset.flights || '';
 
-                  var matchesSearch = !query ||
-                    tail.includes(query) ||
-                    aircraft.includes(query) ||
-                    operator.includes(query) ||
-                    airports.includes(query) ||
-                    flights.includes(query);
+                  var matchesSearch;
+                  if (routeMatch) {
+                    // Route search: match against routes data (already has both directions)
+                    matchesSearch = routes.includes(query);
+                  } else {
+                    // Regular text search
+                    matchesSearch = !query ||
+                      tail.includes(query) ||
+                      aircraft.includes(query) ||
+                      operator.includes(query) ||
+                      airports.includes(query) ||
+                      flights.includes(query);
+                  }
 
                   var matchesFilter = currentFilter === 'all' || fleet === currentFilter;
 
