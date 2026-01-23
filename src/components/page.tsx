@@ -416,7 +416,7 @@ export default function Page({
           has Starlink, browse all equipped aircraft, or search by flight number and route. You can
           also{" "}
           <a href="/check-flight" className="text-accent hover:underline">
-            check a specific flight
+            check a specific flight number and date
           </a>
           .
         </p>
@@ -662,12 +662,26 @@ export default function Page({
                 className="absolute right-2 top-1/2 transform -translate-y-1/2 w-5 h-5 text-muted hover:text-primary transition-colors hidden"
                 aria-label="Clear search"
               >
-                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                <svg
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  role="img"
+                  aria-label="Clear"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M6 18L18 6M6 6l12 12"
+                  />
                 </svg>
               </button>
             </div>
-            <div id="search-count" className="hidden sm:flex items-center text-xs font-mono text-muted whitespace-nowrap" />
+            <div
+              id="search-count"
+              className="hidden sm:flex items-center text-xs font-mono text-muted whitespace-nowrap"
+            />
             <div className="flex gap-1.5 sm:gap-2">
               <button
                 type="button"
