@@ -17,12 +17,14 @@ import { info, error as logError } from "./src/utils/logger";
  */
 const KNOWN_ROUTES = new Set([
   "/",
+  "/check-flight",
   "/api/data",
   "/api/check-flight",
   "/api/mismatches",
   "/api/fleet-discovery",
   "/sitemap.xml",
   "/robots.txt",
+  "/llms.txt",
   "/debug/files",
   // Static assets are grouped
   "/static/*",
@@ -89,6 +91,7 @@ process.on("uncaughtException", (err) => {
 });
 
 import { checkNewPlanes, startFlightUpdater } from "./src/api/flight-updater";
+import CheckFlightPage from "./src/components/check-flight-page";
 import Page from "./src/components/page";
 import {
   getFleetDiscoveryStats,
@@ -340,31 +343,46 @@ routes["/api/check-flight"] = tracedRoute("/api/check-flight", (req) => {
   const startOfDay = Math.floor(dateObj.getTime() / 1000);
   const endOfDay = startOfDay + 86400;
 
-  // Normalize flight number to UA prefix for consistent matching
+  // Build list of possible flight number variants to search for
+  // DB stores operating carrier codes (SKW5212, OO5212, etc.) but users enter UA5212
   const normalizedFlightNumber = normalizeFlightNumber(flightNumber);
+  const flightNumberVariants: string[] = [normalizedFlightNumber];
 
+  // If user entered a UA number, also search for operating carrier equivalents
+  if (normalizedFlightNumber.startsWith("UA")) {
+    const numericPart = normalizedFlightNumber.slice(2);
+    // ICAO codes used in FR24 data
+    const icaoCarriers = ["SKW", "ASH", "RPA", "GJS", "PDT", "ACA", "ENY"];
+    // IATA codes also found in DB
+    const iataCarriers = ["OO", "YX", "YV", "G7"];
+    for (const carrier of [...icaoCarriers, ...iataCarriers]) {
+      flightNumberVariants.push(`${carrier}${numericPart}`);
+    }
+  }
+
+  const placeholders = flightNumberVariants.map(() => "?").join(", ");
   const matchingFlights = db
     .query(
       `
       SELECT
         uf.*,
-        sp.Aircraft,
+        sp.Aircraft as aircraft_type,
         sp.WiFi,
         sp.DateFound,
         sp.OperatedBy,
         sp.fleet
       FROM upcoming_flights uf
       INNER JOIN starlink_planes sp ON uf.tail_number = sp.TailNumber
-      WHERE uf.flight_number = ?
+      WHERE uf.flight_number IN (${placeholders})
         AND uf.departure_time >= ?
         AND uf.departure_time < ?
         AND (sp.verified_wifi IS NULL OR sp.verified_wifi = 'Starlink')
       ORDER BY uf.departure_time ASC
     `
     )
-    .all(normalizedFlightNumber, startOfDay, endOfDay) as Array<
+    .all(...flightNumberVariants, startOfDay, endOfDay) as Array<
     Flight & {
-      Aircraft: string;
+      aircraft_type: string;
       WiFi: string;
       DateFound: string;
       OperatedBy: string;
@@ -389,15 +407,15 @@ routes["/api/check-flight"] = tracedRoute("/api/check-flight", (req) => {
     hasStarlink: true,
     flights: matchingFlights.map((flight) => ({
       tail_number: flight.tail_number,
-      aircraft_type: flight.Aircraft,
+      aircraft_type: flight.aircraft_type,
       flight_number: flight.flight_number,
+      ua_flight_number: normalizeFlightNumber(flight.flight_number),
       departure_airport: flight.departure_airport,
       arrival_airport: flight.arrival_airport,
       departure_time: flight.departure_time,
       arrival_time: flight.arrival_time,
       departure_time_formatted: new Date(flight.departure_time * 1000).toISOString(),
       arrival_time_formatted: new Date(flight.arrival_time * 1000).toISOString(),
-      starlink_installed_date: flight.DateFound,
       operated_by: flight.OperatedBy,
       fleet_type: flight.fleet,
     })),
@@ -541,7 +559,22 @@ routes["/api/fleet-discovery"] = tracedRoute("/api/fleet-discovery", (req) => {
 
 // robots.txt route
 routes["/robots.txt"] = new Response(
-  `User-agent: *
+  `User-agent: GPTBot
+Allow: /
+Disallow: /api/
+Disallow: /debug/
+
+User-agent: ClaudeBot
+Allow: /
+Disallow: /api/
+Disallow: /debug/
+
+User-agent: PerplexityBot
+Allow: /
+Disallow: /api/
+Disallow: /debug/
+
+User-agent: *
 Allow: /
 Disallow: /api/
 Disallow: /debug/
@@ -550,6 +583,33 @@ Sitemap: https://unitedstarlinktracker.com/sitemap.xml`,
   {
     headers: {
       "Content-Type": "text/plain",
+      "Cache-Control": "public, max-age=86400",
+    },
+  }
+);
+
+// llms.txt route for AI chatbot discovery
+routes["/llms.txt"] = new Response(
+  `# United Starlink Tracker
+
+> Track which United Airlines flights have free Starlink WiFi. Live status for every Starlink-equipped aircraft, installation progress, and upcoming flight schedules.
+
+United Airlines began installing SpaceX Starlink WiFi on March 7, 2025. The service is completely free for all passengers with speeds up to 250 Mbps. This tracker monitors the rollout in real time, showing which aircraft have been equipped and their upcoming flight schedules.
+
+## Pages
+
+- [Homepage](https://unitedstarlinktracker.com/): Live tracker with all Starlink-equipped aircraft, fleet statistics, search by tail number/flight number/route
+- [Check a Flight](https://unitedstarlinktracker.com/check-flight): Check if a specific United flight has Starlink WiFi by flight number and date
+- [API - Check Flight](https://unitedstarlinktracker.com/api/check-flight?flight_number=UA123&date=2026-01-22): JSON API to check Starlink status for a specific flight
+- [API - Fleet Data](https://unitedstarlinktracker.com/api/data): Full JSON dataset of all Starlink-equipped aircraft and flights
+
+## Chrome Extension
+
+- [Google Flights Starlink Indicator](https://chromewebstore.google.com/detail/google-flights-starlink-i/jjfljoifenkfdbldliakmmjhdkbhehoi): Free Chrome extension that shows Starlink badges on Google Flights search results
+`,
+  {
+    headers: {
+      "Content-Type": "text/markdown; charset=utf-8",
       "Cache-Control": "public, max-age=86400",
     },
   }
@@ -568,6 +628,12 @@ routes["/sitemap.xml"] = tracedRoute("/sitemap.xml", (req) => {
     <changefreq>hourly</changefreq>
     <priority>1.0</priority>
   </url>
+  <url>
+    <loc>${baseUrl}/check-flight</loc>
+    <lastmod>${new Date().toISOString()}</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+  </url>
 </urlset>`;
 
   return new Response(sitemap, {
@@ -582,6 +648,65 @@ routes["/sitemap.xml"] = tracedRoute("/sitemap.xml", (req) => {
 async function handleRequest(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const host = req.headers.get("host") || "unitedstarlinktracker.com";
+
+  // Check Flight page (also handles /check-flight/UA123/2026-01-24 for shared links)
+  if (url.pathname === "/check-flight" || url.pathname.startsWith("/check-flight/")) {
+    if (req.method !== "GET") {
+      return new Response("Method not allowed", {
+        status: 405,
+        headers: { "Content-Type": "text/plain" },
+      });
+    }
+
+    const reactHtml = ReactDOMServer.renderToString(React.createElement(CheckFlightPage));
+
+    const fleetStats = getFleetStats(db);
+    const totalCount = getTotalCount(db);
+    const starlinkPlanes = getStarlinkPlanes(db);
+    const starlinkCount = starlinkPlanes.length;
+    const percentage = totalCount > 0 ? ((starlinkCount / totalCount) * 100).toFixed(2) : "0.00";
+
+    const htmlVariables: Record<string, string> = {
+      siteTitle: "Check If Your United Flight Has Starlink WiFi | United Starlink Tracker",
+      siteDescription:
+        "Enter your United Airlines flight number and date to check if your aircraft has free Starlink WiFi. Instant results from our live database of Starlink-equipped planes.",
+      keywords:
+        "check united flight starlink, does my united flight have starlink, united starlink checker, united wifi check",
+      ogTitle: "Check If Your United Flight Has Starlink WiFi",
+      ogDescription:
+        "Enter your flight number and date to check if your United Airlines aircraft has free Starlink WiFi.",
+      analyticsUrl: isUnitedDomain(host)
+        ? "unitedstarlinktracker.com"
+        : "airlinestarlinktracker.com",
+      html: reactHtml,
+      host,
+      totalCount: starlinkCount.toString(),
+      totalAircraftCount: totalCount.toString(),
+      lastUpdated: getLastUpdated(db),
+      isUnited: "true",
+      currentDate: new Date().toLocaleDateString(),
+      isoDate: new Date().toISOString(),
+      mainlineCount: (fleetStats?.mainline.starlink || 0).toString(),
+      expressCount: (fleetStats?.express.starlink || 0).toString(),
+      percentage: percentage,
+      mainlinePercentage: (fleetStats?.mainline.percentage || 0).toFixed(2),
+      expressPercentage: (fleetStats?.express.percentage || 0).toFixed(2),
+    };
+
+    let template = await getHtmlTemplate();
+    // Override canonical and og:url for this page
+    template = template
+      .replace(
+        `<link rel="canonical" href="https://{{host}}/" />`,
+        `<link rel="canonical" href="https://{{host}}/check-flight" />`
+      )
+      .replace(
+        `<meta property="og:url" content="https://{{host}}/" />`,
+        `<meta property="og:url" content="https://{{host}}/check-flight" />`
+      );
+    const html = renderHtml(template, htmlVariables);
+    return new Response(html, { headers: SECURITY_HEADERS.html });
+  }
 
   // Home page
   if (url.pathname === "/") {
@@ -631,6 +756,7 @@ async function handleRequest(req: Request): Promise<Response> {
       lastUpdated: lastUpdated,
       isUnited: isUnitedDomain(host).toString(),
       currentDate: new Date().toLocaleDateString(),
+      isoDate: new Date().toISOString(),
       mainlineCount: (fleetStats?.mainline.starlink || 0).toString(),
       expressCount: (fleetStats?.express.starlink || 0).toString(),
       percentage: percentage,
@@ -680,10 +806,12 @@ Bun.serve({
   async fetch(req) {
     const url = new URL(req.url);
 
-    // Determine route for tracing (home page, static files, or 404)
-    let route = "/";
+    // Determine route for tracing (pages, static files, or 404)
+    let route = url.pathname;
     if (url.pathname.startsWith("/static/")) {
       route = "/static/*";
+    } else if (url.pathname.startsWith("/check-flight")) {
+      route = "/check-flight";
     } else if (url.pathname !== "/") {
       route = "/*"; // 404 catch-all
     }

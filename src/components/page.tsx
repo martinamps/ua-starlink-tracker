@@ -18,6 +18,7 @@ const dateOverrides: Record<string, string> = {
 export default function Page({
   total,
   starlink,
+  lastUpdated,
   fleetStats,
   isUnited = false,
   flightsByTail = {},
@@ -407,6 +408,20 @@ export default function Page({
         </div>
       </header>
 
+      {/* Intro paragraph for SEO */}
+      {isUnited && (
+        <p className="relative text-sm text-secondary text-center max-w-2xl mx-auto mb-6 leading-relaxed">
+          United Airlines is rolling out free Starlink WiFi across its fleet — the fastest internet
+          ever available on a commercial airline. Use this tracker to check if your United flight
+          has Starlink, browse all equipped aircraft, or search by flight number and route. You can
+          also{" "}
+          <a href="/check-flight" className="text-accent hover:underline">
+            check a specific flight
+          </a>
+          .
+        </p>
+      )}
+
       {/* Fleet Stats - Instrument Panel Style */}
       <div className="relative grid grid-cols-2 lg:grid-cols-4 gap-px bg-subtle rounded-lg overflow-hidden mb-6 border border-subtle">
         {/* Mainline Fleet */}
@@ -613,6 +628,9 @@ export default function Page({
 
       {/* Aircraft List with integrated search */}
       <div className="relative bg-surface rounded-lg border border-subtle overflow-hidden mb-6">
+        <h2 className="font-display text-lg font-semibold text-primary px-4 md:px-6 pt-4 pb-0">
+          Starlink-Equipped Aircraft
+        </h2>
         {/* Integrated header with search and filters */}
         <div className="px-4 md:px-6 py-3 border-b border-subtle">
           <div className="flex flex-col sm:flex-row gap-3">
@@ -1061,9 +1079,242 @@ export default function Page({
                 </p>
               </div>
             </details>
+
+            <details className="group py-4">
+              <summary className="cursor-pointer list-none flex items-start justify-between">
+                <div>
+                  <h3 className="font-display text-base font-medium text-secondary group-hover:text-accent transition-colors">
+                    Does United have Starlink?
+                  </h3>
+                </div>
+                <div className="ml-4 flex-shrink-0">
+                  <svg
+                    className="w-4 h-4 text-muted group-open:rotate-45 transition-transform"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    role="img"
+                    aria-label="Expand"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M12 6v6m0 0v6m0-6h6m-6 0H6"
+                    />
+                  </svg>
+                </div>
+              </summary>
+              <div className="mt-3 text-sm text-muted leading-relaxed">
+                <p>
+                  Yes, United Airlines has been installing Starlink since March 2025. Currently{" "}
+                  <span className="text-accent">{x}</span> of {y} aircraft are equipped, with 40+
+                  new installations per month.
+                </p>
+              </div>
+            </details>
+
+            <details className="group py-4">
+              <summary className="cursor-pointer list-none flex items-start justify-between">
+                <div>
+                  <h3 className="font-display text-base font-medium text-secondary group-hover:text-accent transition-colors">
+                    How many United planes have Starlink?
+                  </h3>
+                </div>
+                <div className="ml-4 flex-shrink-0">
+                  <svg
+                    className="w-4 h-4 text-muted group-open:rotate-45 transition-transform"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    role="img"
+                    aria-label="Expand"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M12 6v6m0 0v6m0-6h6m-6 0H6"
+                    />
+                  </svg>
+                </div>
+              </summary>
+              <div className="mt-3 text-sm text-muted leading-relaxed">
+                <p>
+                  As of today, <span className="text-accent">{x}</span> United aircraft have
+                  Starlink WiFi — {fleetStats?.mainline.starlink || 0} mainline and{" "}
+                  {fleetStats?.express.starlink || 0} Express planes. That's {percentage}% of the
+                  fleet.
+                </p>
+              </div>
+            </details>
+
+            <details className="group py-4">
+              <summary className="cursor-pointer list-none flex items-start justify-between">
+                <div>
+                  <h3 className="font-display text-base font-medium text-secondary group-hover:text-accent transition-colors">
+                    Does my United flight have Starlink?
+                  </h3>
+                </div>
+                <div className="ml-4 flex-shrink-0">
+                  <svg
+                    className="w-4 h-4 text-muted group-open:rotate-45 transition-transform"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    role="img"
+                    aria-label="Expand"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M12 6v6m0 0v6m0-6h6m-6 0H6"
+                    />
+                  </svg>
+                </div>
+              </summary>
+              <div className="mt-3 text-sm text-muted leading-relaxed">
+                <p>
+                  Search above by flight number, tail number, or airport code. You can also install
+                  our{" "}
+                  <a
+                    href="https://chromewebstore.google.com/detail/google-flights-starlink-i/jjfljoifenkfdbldliakmmjhdkbhehoi"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-accent hover:underline"
+                  >
+                    Chrome extension
+                  </a>{" "}
+                  to see Starlink badges directly on Google Flights, or visit our{" "}
+                  <a href="/check-flight" className="text-accent hover:underline">
+                    check a flight
+                  </a>{" "}
+                  page.
+                </p>
+              </div>
+            </details>
+
+            <details className="group py-4">
+              <summary className="cursor-pointer list-none flex items-start justify-between">
+                <div>
+                  <h3 className="font-display text-base font-medium text-secondary group-hover:text-accent transition-colors">
+                    Do all United flights have Starlink?
+                  </h3>
+                </div>
+                <div className="ml-4 flex-shrink-0">
+                  <svg
+                    className="w-4 h-4 text-muted group-open:rotate-45 transition-transform"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    role="img"
+                    aria-label="Expand"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M12 6v6m0 0v6m0-6h6m-6 0H6"
+                    />
+                  </svg>
+                </div>
+              </summary>
+              <div className="mt-3 text-sm text-muted leading-relaxed">
+                <p>
+                  Not yet. United is installing Starlink on 40+ planes per month. Currently{" "}
+                  {percentage}% of the fleet is equipped. Starlink is available on both mainline and
+                  United Express aircraft.
+                </p>
+              </div>
+            </details>
+
+            <details className="group py-4">
+              <summary className="cursor-pointer list-none flex items-start justify-between">
+                <div>
+                  <h3 className="font-display text-base font-medium text-secondary group-hover:text-accent transition-colors">
+                    Does United have Starlink on international flights?
+                  </h3>
+                </div>
+                <div className="ml-4 flex-shrink-0">
+                  <svg
+                    className="w-4 h-4 text-muted group-open:rotate-45 transition-transform"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    role="img"
+                    aria-label="Expand"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M12 6v6m0 0v6m0-6h6m-6 0H6"
+                    />
+                  </svg>
+                </div>
+              </summary>
+              <div className="mt-3 text-sm text-muted leading-relaxed">
+                <p>
+                  Yes. Starlink works seamlessly over oceans, unlike previous WiFi systems. Check
+                  the aircraft list above — 787s and 777s with Starlink fly international routes.
+                </p>
+              </div>
+            </details>
+
+            <details className="group py-4">
+              <summary className="cursor-pointer list-none flex items-start justify-between">
+                <div>
+                  <h3 className="font-display text-base font-medium text-secondary group-hover:text-accent transition-colors">
+                    When will all United flights have Starlink?
+                  </h3>
+                </div>
+                <div className="ml-4 flex-shrink-0">
+                  <svg
+                    className="w-4 h-4 text-muted group-open:rotate-45 transition-transform"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    role="img"
+                    aria-label="Expand"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M12 6v6m0 0v6m0-6h6m-6 0H6"
+                    />
+                  </svg>
+                </div>
+              </summary>
+              <div className="mt-3 text-sm text-muted leading-relaxed">
+                <p>
+                  United is installing Starlink on 40+ aircraft per month across a fleet of {y}+
+                  planes. At the current pace, the full rollout will take until 2028–2029. Currently{" "}
+                  {percentage}% of the fleet is equipped. Regional jets and narrow-body aircraft are
+                  being equipped first.
+                </p>
+              </div>
+            </details>
           </div>
         </div>
       </div>
+
+      {/* Last updated timestamp for freshness signal */}
+      {lastUpdated && (
+        <div className="relative text-center mb-6">
+          <span className="text-xs font-mono text-muted">
+            Data last updated:{" "}
+            {new Date(lastUpdated).toLocaleDateString("en-US", {
+              month: "long",
+              day: "numeric",
+              year: "numeric",
+              hour: "numeric",
+              minute: "2-digit",
+            })}
+          </span>
+        </div>
+      )}
 
       {/* Search, Filter, and Expand functionality */}
       <script

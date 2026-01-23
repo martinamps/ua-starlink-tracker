@@ -462,6 +462,23 @@
     }
     </script>
 
+    <!-- WebPage schema with ISO date for freshness signal -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "WebPage",
+      "name": "{{siteTitle}}",
+      "description": "{{siteDescription}}",
+      "url": "https://{{host}}/",
+      "dateModified": "{{isoDate}}",
+      "isPartOf": {
+        "@type": "WebSite",
+        "name": "United Starlink Tracker",
+        "url": "https://unitedstarlinktracker.com/"
+      }
+    }
+    </script>
+
     <!-- FAQ Schema -->
     <script type="application/ld+json">
     {
@@ -502,6 +519,48 @@
         "acceptedAnswer": {
           "@type": "Answer",
           "text": "We aggregate data from multiple aviation data providers, cross-reference with flight schedules, and verify Starlink status against United's own systems. The data updates continuously throughout the day to provide accurate, real-time tracking."
+        }
+      },{
+        "@type": "Question",
+        "name": "Does United have Starlink?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Yes, United Airlines has been installing Starlink since March 2025. Currently {{totalCount}} of {{totalAircraftCount}} aircraft are equipped, with 40+ new installations per month."
+        }
+      },{
+        "@type": "Question",
+        "name": "How many United planes have Starlink?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "As of today, {{totalCount}} United aircraft have Starlink WiFi — {{mainlineCount}} mainline and {{expressCount}} Express planes. That's {{percentage}}% of the fleet."
+        }
+      },{
+        "@type": "Question",
+        "name": "Does my United flight have Starlink?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Search by flight number, tail number, or airport code on our tracker. You can also install our Chrome extension to see Starlink badges directly on Google Flights, or visit our check a flight page."
+        }
+      },{
+        "@type": "Question",
+        "name": "Do all United flights have Starlink?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Not yet. United is installing Starlink on 40+ planes per month. Currently {{percentage}}% of the fleet is equipped. Starlink is available on both mainline and United Express aircraft."
+        }
+      },{
+        "@type": "Question",
+        "name": "Does United have Starlink on international flights?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Yes. Starlink works seamlessly over oceans, unlike previous WiFi systems. 787s and 777s with Starlink fly international routes."
+        }
+      },{
+        "@type": "Question",
+        "name": "When will all United flights have Starlink?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "United is installing Starlink on 40+ aircraft per month across a fleet of {{totalAircraftCount}}+ planes. At the current pace, the full rollout will take until 2028–2029. Currently {{percentage}}% of the fleet is equipped. Regional jets and narrow-body aircraft are being equipped first."
         }
       }]
     }
