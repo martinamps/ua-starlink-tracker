@@ -1,13 +1,13 @@
 /**
  * Starlink Verification Runner
  * Verifies Starlink status for planes using United.com with rate limiting
- * Fetches plane/flight data from unitedstarlinktracker.com API
+ * Reads plane/flight data from local SQLite (including mismatched planes so they can self-heal)
  */
 
 import type { Database } from "bun:sqlite";
 import {
-  type VerificationSource,
-  getLastVerification,
+  getAllStarlinkPlanes,
+  getUpcomingFlights,
   getVerificationStats,
   initializeDatabase,
   logVerification,
@@ -20,7 +20,6 @@ import type { StarlinkCheckResult } from "./united-starlink-checker";
 import { checkStarlinkStatusSubprocess } from "./united-starlink-checker-subprocess";
 
 const VERIFICATION_DELAY_MS = 5000; // 5 seconds between checks to be polite
-const API_BASE_URL = "https://unitedstarlinktracker.com";
 
 /**
  * Convert ICAO airport code to IATA (remove K prefix for US airports)
@@ -64,49 +63,40 @@ interface Plane {
   fleet: string;
 }
 
-interface ApiDataResponse {
-  totalCount: number;
-  starlinkPlanes: Plane[];
-  lastUpdated: string;
-  flightsByTail: Record<string, Flight[]>;
-}
-
 /**
- * Fetch data from unitedstarlinktracker.com API
- */
-async function fetchTrackerData(): Promise<ApiDataResponse | null> {
-  try {
-    const response = await fetch(`${API_BASE_URL}/api/data`);
-    if (!response.ok) {
-      throw new Error(`API returned ${response.status}`);
-    }
-    return await response.json();
-  } catch (error) {
-    verifierLog.error("Failed to fetch tracker data", error);
-    return null;
-  }
-}
-
-/**
- * Get planes that need United verification based on local verification log
+ * Get planes that need United verification.
+ * Queries the local DB directly (including mismatched planes with
+ * verified_wifi != 'Starlink') so they can self-heal on re-verification.
+ *
+ * Previously this pulled from /api/data which filters out mismatches —
+ * creating a one-way door where a single false-negative permanently
+ * hid a plane.
  */
 function getPlanesNeedingVerification(
   db: Database,
-  planes: Plane[],
-  flightsByTail: Record<string, Flight[]>,
   limit: number,
   forceAll = false
 ): Array<{ plane: Plane; flight: Flight }> {
   const result: Array<{ plane: Plane; flight: Flight }> = [];
   const now = Math.floor(Date.now() / 1000);
 
+  // Pull ALL planes from starlink_planes (including mismatches)
+  const planes = getAllStarlinkPlanes(db) as Plane[];
+  const allFlights = getUpcomingFlights(db);
+
+  // Group flights by tail number
+  const flightsByTail = new Map<string, Flight[]>();
+  for (const f of allFlights) {
+    if (!flightsByTail.has(f.tail_number)) {
+      flightsByTail.set(f.tail_number, []);
+    }
+    flightsByTail.get(f.tail_number)!.push(f);
+  }
+
   for (const plane of planes) {
     if (result.length >= limit) break;
 
-    // Check if this plane has upcoming flights
-    const flights = flightsByTail[plane.TailNumber] || [];
-    if (flights.length === 0) continue;
-
+    const flights = flightsByTail.get(plane.TailNumber) || [];
     const futureFlights = flights.filter((f) => f.departure_time > now);
     if (futureFlights.length === 0) continue;
 
@@ -114,7 +104,6 @@ function getPlanesNeedingVerification(
       continue;
     }
 
-    // Use the first upcoming flight
     result.push({ plane, flight: futureFlights[0] });
   }
 
@@ -164,6 +153,11 @@ export async function verifyPlaneStarlink(
         const tailMatches = actualTail && actualTail.toUpperCase() === tailNumber.toUpperCase();
         const tailMismatch = actualTail && !tailMatches;
 
+        // If we couldn't extract a tail number from the page, we can't confirm
+        // the aircraft wasn't swapped. Only trust a POSITIVE Starlink result in
+        // that case (can't falsely hide a plane, only falsely show one — less bad).
+        const tailUnknown = !actualTail;
+
         if (tailMismatch) {
           verifierLog.warn(
             `Aircraft mismatch: expected ${tailNumber} but flight has ${actualTail} - skipping verification update`
@@ -186,9 +180,21 @@ export async function verifyPlaneStarlink(
         // Update the plane's verified_wifi status ONLY if:
         // 1. No error
         // 2. We got a wifiProvider
-        // 3. The tail number matches (or we couldn't extract tail from page)
-        if (!result.error && result.wifiProvider && !tailMismatch) {
+        // 3. The tail number matches (not swapped to a different plane)
+        // 4. If tail wasn't extracted, only trust positive Starlink results
+        //    (prevents hiding planes due to unconfirmed aircraft swaps)
+        const canTrustResult =
+          !result.error &&
+          result.wifiProvider &&
+          !tailMismatch &&
+          (!tailUnknown || result.wifiProvider === "Starlink");
+
+        if (canTrustResult) {
           updateVerifiedWifi(db, tailNumber, result.wifiProvider);
+        } else if (tailUnknown && result.wifiProvider && result.wifiProvider !== "Starlink") {
+          verifierLog.warn(
+            `${tailNumber}: got "${result.wifiProvider}" but couldn't confirm tail number — skipping update to avoid false negative`
+          );
         }
 
         // Emit metrics
@@ -270,26 +276,8 @@ export async function runVerificationBatch(
   const stats = { checked: 0, starlink: 0, notStarlink: 0, errors: 0, skipped: 0 };
 
   try {
-    // Fetch data from the API
-    verifierLog.debug(`Fetching data from ${API_BASE_URL}/api/data`);
-    const data = await fetchTrackerData();
-
-    if (!data) {
-      verifierLog.error("Failed to fetch tracker data");
-      return stats;
-    }
-
-    const flightCount = Object.values(data.flightsByTail).flat().length;
-    verifierLog.debug(`Found ${data.starlinkPlanes.length} planes, ${flightCount} flights`);
-
-    // Get planes that need verification
-    const toVerify = getPlanesNeedingVerification(
-      db,
-      data.starlinkPlanes,
-      data.flightsByTail,
-      maxPlanes,
-      forceAll
-    );
+    // Get planes that need verification (from local DB, includes mismatches so they can self-heal)
+    const toVerify = getPlanesNeedingVerification(db, maxPlanes, forceAll);
 
     if (toVerify.length === 0) {
       verifierLog.debug("No planes need verification at this time");

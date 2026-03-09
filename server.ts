@@ -261,7 +261,7 @@ const staticFiles = [
 ];
 
 // Generate routes
-const routes: Record<string, Response | ((req: Request) => Response)> = {};
+const routes: Record<string, Response | ((req: Request) => Response | Promise<Response>)> = {};
 
 // Add static file routes
 for (const file of staticFiles) {
@@ -349,13 +349,24 @@ routes["/api/check-flight"] = tracedRoute("/api/check-flight", (req) => {
   const flightNumberVariants: string[] = [normalizedFlightNumber];
 
   // If user entered a UA number, also search for operating carrier equivalents
-  if (normalizedFlightNumber.startsWith("UA")) {
+  // (FR24 stores callsigns/alternates which use various prefix formats)
+  if (/^UA\d+$/.test(normalizedFlightNumber)) {
     const numericPart = normalizedFlightNumber.slice(2);
-    // ICAO codes used in FR24 data
-    const icaoCarriers = ["SKW", "ASH", "RPA", "GJS", "PDT", "ACA", "ENY"];
-    // IATA codes also found in DB
-    const iataCarriers = ["OO", "YX", "YV", "G7"];
-    for (const carrier of [...icaoCarriers, ...iataCarriers]) {
+    const carrierPrefixes = [
+      "UAL", // United mainline ICAO callsign
+      "SKW",
+      "ASH",
+      "RPA",
+      "GJS",
+      "PDT",
+      "ACA",
+      "ENY", // Express ICAO
+      "OO",
+      "YX",
+      "YV",
+      "G7", // Express IATA
+    ];
+    for (const carrier of carrierPrefixes) {
       flightNumberVariants.push(`${carrier}${numericPart}`);
     }
   }
@@ -651,7 +662,7 @@ async function handleRequest(req: Request): Promise<Response> {
 
   // Check Flight page (also handles /check-flight/UA123/2026-01-24 for shared links)
   if (url.pathname === "/check-flight" || url.pathname.startsWith("/check-flight/")) {
-    if (req.method !== "GET") {
+    if (req.method !== "GET" && req.method !== "HEAD") {
       return new Response("Method not allowed", {
         status: 405,
         headers: { "Content-Type": "text/plain" },
@@ -710,7 +721,7 @@ async function handleRequest(req: Request): Promise<Response> {
 
   // Home page
   if (url.pathname === "/") {
-    if (req.method !== "GET") {
+    if (req.method !== "GET" && req.method !== "HEAD") {
       return new Response("Method not allowed", {
         status: 405,
         headers: { "Content-Type": "text/plain" },

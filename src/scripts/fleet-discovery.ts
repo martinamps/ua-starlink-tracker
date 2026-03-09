@@ -173,10 +173,17 @@ async function verifyPlane(
           span.setTag("result", "starlink");
           metrics.increment(COUNTERS.VERIFICATION_CHECK, { result: "success" });
           metrics.increment(COUNTERS.PLANES_STARLINK_DETECTED);
-        } else {
+        } else if (result.wifiProvider) {
+          // We got a definite answer (None/Panasonic/Viasat/Thales/Gogo)
           starlinkStatus = "negative";
           span.setTag("result", "not_starlink");
           metrics.increment(COUNTERS.VERIFICATION_CHECK, { result: "success" });
+        } else {
+          // wifiProvider was null — couldn't determine (unknown provider, page didn't load fully)
+          // Keep existing status, don't wrongly mark as negative
+          starlinkStatus = plane.starlink_status as StarlinkStatus;
+          span.setTag("result", "unknown");
+          metrics.increment(COUNTERS.VERIFICATION_CHECK, { result: "unknown" });
         }
 
         span.setTag("wifi_provider", result.wifiProvider || "unknown");

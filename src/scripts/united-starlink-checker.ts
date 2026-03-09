@@ -154,11 +154,23 @@ export async function checkStarlinkStatus(
 
     // Check if flight was found
     const pageContent = await page.content();
-    if (pageContent.includes("We couldn't find") || pageContent.includes("No flights found")) {
-      result.error = "No upcoming flights available";
-      // Save debug HTML for analysis
-      const bodyText = await page.evaluate(() => document.body.innerText);
-      result.debugFile = saveDebugHtml("unknown", flightNumber, pageContent, bodyText);
+    const bodyTextForErrors = await page.evaluate(() => document.body.innerText);
+
+    // If United redirected to the search page, the flight wasn't found
+    // (too far in future, wrong date, or no longer scheduled)
+    const redirectedToSearch =
+      bodyTextForErrors.includes("Search by Route or Flight Number") ||
+      bodyTextForErrors.includes("Flight status\nSearch by");
+
+    if (
+      pageContent.includes("We couldn't find") ||
+      pageContent.includes("No flights found") ||
+      redirectedToSearch
+    ) {
+      result.error = redirectedToSearch
+        ? "Flight not found (redirected to search page)"
+        : "No upcoming flights available";
+      result.debugFile = saveDebugHtml("unknown", flightNumber, pageContent, bodyTextForErrors);
       return result;
     }
 
@@ -176,6 +188,8 @@ export async function checkStarlinkStatus(
         bodyText.includes("Internet by Panasonic") || bodyText.includes("by Panasonic");
       const hasViasatText =
         bodyText.includes("Internet by Viasat") || bodyText.includes("by Viasat");
+      const hasThalesText =
+        bodyText.includes("Internet by Thales") || bodyText.includes("by Thales");
       const hasGogoText = bodyText.includes("by Gogo") || bodyText.includes("Gogo Wi-Fi");
 
       // Check for no WiFi
@@ -190,22 +204,27 @@ export async function checkStarlinkStatus(
         wifiProvider = "Panasonic";
       } else if (hasViasatText) {
         wifiProvider = "Viasat";
+      } else if (hasThalesText) {
+        wifiProvider = "Thales";
       } else if (hasGogoText) {
         wifiProvider = "Gogo";
       } else if (hasNoWifi) {
         wifiProvider = "None";
       }
 
-      // Extract tail number - look for pattern like "#N164SY" or "#3991"
+      // Extract tail number from "Aircraft details" section
+      // Express planes show registration directly: "Embraer E-175 | #N164SY"
+      // Mainline planes show ship number: "Boeing 737-700 | #3731" (NOT the tail number!)
+      // Only trust it if it looks like a US registration (N + 1-5 alphanumerics, not pure digits)
       let tailNumber: string | null = null;
       const tailMatch = bodyText.match(/\|\s*#([A-Z0-9]+)/);
       if (tailMatch) {
         const extracted = tailMatch[1];
-        // If it's just digits, it might be a ship number, prefix with N
-        tailNumber = extracted.match(/^\d+$/) ? `N${extracted}` : extracted;
-        // Ensure it starts with N for US registration
-        if (!tailNumber.startsWith("N")) {
-          tailNumber = `N${tailNumber}`;
+        // Only accept if it looks like a real N-number (starts with N, not just digits)
+        // Ship numbers like "3731" are NOT tail numbers — leave as null so the
+        // verifier's tail-mismatch protection doesn't get bypassed or confused.
+        if (/^N[0-9][0-9A-Z]{1,4}$/.test(extracted)) {
+          tailNumber = extracted;
         }
       }
 

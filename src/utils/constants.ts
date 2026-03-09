@@ -15,23 +15,40 @@ export type FlightDataSource = "flightradar24" | "flightaware";
 export const FLIGHT_DATA_SOURCE: FlightDataSource =
   (process.env.FLIGHT_DATA_SOURCE as FlightDataSource) || "flightradar24";
 
-// United Express operating carrier codes that should be normalized to UA
-const UNITED_EXPRESS_CARRIERS = ["SKW", "ASH", "RPA", "GJS", "PDT", "ACA", "ENY"];
+// United Express operating carrier prefixes that should be normalized to UA
+// ICAO 3-letter codes (from FR24 callsigns) and IATA 2-letter codes (from FR24 number.alternative)
+// Ordered longest-first so prefix matching works (UAL before UA, etc.)
+const UNITED_CARRIER_PREFIXES = [
+  // ICAO 3-letter (callsign format)
+  "UAL", // United Airlines mainline
+  "SKW", // SkyWest
+  "ASH", // Mesa
+  "RPA", // Republic
+  "GJS", // GoJet
+  "PDT", // Piedmont
+  "ACA", // Air Canada (codeshare)
+  "ENY", // Envoy
+  // IATA 2-letter
+  "OO", // SkyWest
+  "YX", // Republic
+  "YV", // Mesa
+  "G7", // GoJet
+];
 
 /**
  * Normalize flight numbers to UA marketing code
- * Converts operating carrier codes (SKW5882, ASH4054, RPA3712, GJS4467) to UA prefix
+ * Converts operating carrier codes (SKW5882, ASH4054, UAL544, OO4680) to UA prefix
  * This matches what customers see on their tickets
  */
 export function normalizeFlightNumber(flightNumber: string): string {
   if (!flightNumber) return flightNumber;
 
-  // Already UA-prefixed, return as-is
-  if (flightNumber.startsWith("UA")) return flightNumber;
+  // Already exact UA#### format (not UAL####), return as-is
+  if (/^UA\d+$/.test(flightNumber)) return flightNumber;
 
-  // Check if it starts with a known United Express carrier code
-  for (const carrier of UNITED_EXPRESS_CARRIERS) {
-    if (flightNumber.startsWith(carrier)) {
+  // Check if it starts with a known carrier prefix followed by digits
+  for (const carrier of UNITED_CARRIER_PREFIXES) {
+    if (flightNumber.startsWith(carrier) && /^\d+$/.test(flightNumber.slice(carrier.length))) {
       return `UA${flightNumber.slice(carrier.length)}`;
     }
   }
