@@ -691,32 +691,34 @@ export function planItinerary(
     frontier = nextFrontier.slice(0, 200);
   }
 
-  // --- Fallback: PARTIAL coverage when no full-Starlink path exists ---
-  if (itineraries.length === 0) {
-    // Find all Starlink-reachable paths TO dest (ignoring orig) — these are
-    // the final legs the user CAN get Starlink on. Positioning leg is mainline.
-    // Use a smaller 1-stop search TO dest for simplicity.
-    const intoDestLegs: ItineraryLeg[] = [];
-    for (const [hub, edges] of graph.entries()) {
-      const leg = edges.get(dest);
-      if (leg && leg.probability >= PARTIAL_FALLBACK_MIN_PROB && hub !== orig) {
-        intoDestLegs.push(leg);
-      }
+  // --- Partial-coverage baseline (1-stop positioning + Starlink leg) ---
+  // ALWAYS include up to 3 partial options as a baseline, even when full-coverage
+  // paths exist. This lets the agent show the tradeoff (2.5h Starlink on a
+  // "normal" 1-stop vs 8.8h on a 2-stop) in one call instead of forcing two.
+  // Full-coverage options still sort first.
+  const partialLimit = itineraries.length === 0 ? maxItineraries : 3;
+  const intoDestLegs: ItineraryLeg[] = [];
+  for (const [hub, edges] of graph.entries()) {
+    const leg = edges.get(dest);
+    if (leg && leg.probability >= PARTIAL_FALLBACK_MIN_PROB && hub !== orig) {
+      // Skip if we already have a full-coverage path through this hub (no value add)
+      if (itineraries.some((it) => it.via.length === 1 && it.via[0] === hub)) continue;
+      intoDestLegs.push(leg);
     }
-    intoDestLegs.sort((a, b) => b.probability - a.probability);
+  }
+  intoDestLegs.sort((a, b) => b.probability - a.probability);
 
-    for (const finalLeg of intoDestLegs.slice(0, maxItineraries)) {
-      const hub = finalLeg.route.split("-")[0];
-      const positioningLeg: ItineraryLeg = {
-        flight_number: "(any)",
-        route: `${orig}-${hub}`,
-        probability: DEFAULT_CONFIG.mainlineColdPrior,
-        confidence: "low",
-        n_observations: 0,
-        duration_hours: null, // unknown — mainline route outside our Starlink-tracked data
-      };
-      itineraries.push(computeItinerary([positioningLeg, finalLeg], "partial"));
-    }
+  for (const finalLeg of intoDestLegs.slice(0, partialLimit)) {
+    const hub = finalLeg.route.split("-")[0];
+    const positioningLeg: ItineraryLeg = {
+      flight_number: "(any)",
+      route: `${orig}-${hub}`,
+      probability: DEFAULT_CONFIG.mainlineColdPrior,
+      confidence: "low",
+      n_observations: 0,
+      duration_hours: null, // unknown — mainline route outside our Starlink-tracked data
+    };
+    itineraries.push(computeItinerary([positioningLeg, finalLeg], "partial"));
   }
 
   // Rank by EXPECTED STARLINK HOURS (what users actually want to maximize).
@@ -742,7 +744,10 @@ export function planItinerary(
     return a.legs.length - b.legs.length;
   });
 
-  return itineraries.slice(0, maxItineraries);
+  // Keep maxItineraries full-coverage + up to 3 partial baseline (additional, not counted)
+  const fullKept = itineraries.filter((it) => it.coverage === "full").slice(0, maxItineraries);
+  const partialKept = itineraries.filter((it) => it.coverage === "partial").slice(0, 3);
+  return [...fullKept, ...partialKept];
 }
 
 export type { Prediction };
