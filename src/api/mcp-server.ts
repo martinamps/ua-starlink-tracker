@@ -463,30 +463,50 @@ function toolPlanStarlinkItinerary(
   const fullItins = itineraries.filter((it) => it.coverage === "full");
   const partialItins = itineraries.filter((it) => it.coverage === "partial");
 
+  const fmtHours = (h: number): string => {
+    if (h >= 1) return `${h.toFixed(1)}h`;
+    return `${Math.round(h * 60)}m`;
+  };
+
   const renderLeg = (leg: (typeof itineraries)[number]["legs"][number]): string => {
     if (leg.flight_number === "(any)") {
-      return `position to ${leg.route.split("-")[1]} (mainline, ~2% Starlink)`;
+      return `position to ${leg.route.split("-")[1]} (mainline, ~2% Starlink, duration unknown — likely 3-6h)`;
     }
     const pct = (leg.probability * 100).toFixed(0);
     const fleetTag = inferFleet(leg.flight_number) === "mainline" ? " [Mainline]" : "";
-    return `${leg.flight_number}${fleetTag} (${leg.route}) — ${pct}% ${confidenceTag(leg.n_observations, leg.confidence)}`;
+    const dur = leg.duration_hours !== null ? ` ~${fmtHours(leg.duration_hours)}` : "";
+    return `${leg.flight_number}${fleetTag} (${leg.route}${dur}) — ${pct}% ${confidenceTag(leg.n_observations, leg.confidence)}`;
   };
 
   const renderItin = (it: (typeof itineraries)[number], i: number): string => {
-    // One decimal so displayed ranking matches sort order (avoids "72% below 71%" confusion)
+    // One decimal so displayed ranking matches sort order
     const jointPct = (it.joint_probability * 100).toFixed(1);
-    const atLeastPct = (it.at_least_one_probability * 100).toFixed(0);
     const stops = it.via.length;
     const viaLabel =
       stops === 0 ? "DIRECT" : `via ${it.via.join("→")} (${stops} stop${stops > 1 ? "s" : ""})`;
 
+    // Time-aware summary — this is what users actually care about for tradeoffs
+    let timeSummary: string;
+    if (it.total_flight_hours !== null && it.expected_starlink_hours !== null) {
+      timeSummary = ` · **~${fmtHours(it.expected_starlink_hours)} Starlink** / ~${fmtHours(it.total_flight_hours)} flying`;
+    } else if (it.coverage === "partial") {
+      // Positioning leg has unknown duration — show only the known Starlink leg time
+      const knownStarlink = it.legs.reduce(
+        (s, l) => (l.duration_hours !== null ? s + l.probability * l.duration_hours : s),
+        0
+      );
+      timeSummary = ` · ~${fmtHours(knownStarlink)} Starlink (on final leg only; positioning leg duration unknown)`;
+    } else {
+      timeSummary = "";
+    }
+
     let header: string;
     if (it.coverage === "partial") {
-      header = `${i + 1}. **${viaLabel}** — Starlink on final leg only (~${(it.legs[it.legs.length - 1].probability * 100).toFixed(0)}%)`;
+      header = `${i + 1}. **${viaLabel}**${timeSummary}`;
     } else if (stops === 0) {
-      header = `${i + 1}. **${viaLabel}** — **${jointPct}%** Starlink`;
+      header = `${i + 1}. **${viaLabel}** — ${jointPct}% Starlink${timeSummary}`;
     } else {
-      header = `${i + 1}. **${viaLabel}** — **${jointPct}%** all legs (${atLeastPct}% at least one)`;
+      header = `${i + 1}. **${viaLabel}** — ${jointPct}% joint${timeSummary}`;
     }
 
     const legLines = it.legs.map((l, idx) => `   · Leg ${idx + 1}: ${renderLeg(l)}`).join("\n");
@@ -495,14 +515,14 @@ function toolPlanStarlinkItinerary(
 
   const sections: string[] = [];
   if (fullItins.length > 0) {
-    sections.push(`**Full Starlink coverage** (ranked by joint probability; within 1pp, fewer stops wins):
+    sections.push(`**Full Starlink coverage**:
 
 ${fullItins.map(renderItin).join("\n\n")}`);
   }
   if (partialItins.length > 0) {
     const header =
       fullItins.length === 0
-        ? `**No all-Starlink path found within ${maxStops} stops** — all routes out of ${origin.toUpperCase()} in our Starlink data don't connect to ${destination.toUpperCase()}. Best partial options (position on non-Starlink leg, Starlink on connection):\n`
+        ? `**No all-Starlink path found within ${maxStops} stops.** Partial coverage options (positioning leg likely no Starlink, then Starlink on the connection):\n`
         : "**Partial coverage** (positioning leg needed):\n";
     sections.push(`${header}
 ${partialItins.map((it, i) => renderItin(it, fullItins.length + i)).join("\n\n")}`);
@@ -510,14 +530,14 @@ ${partialItins.map((it, i) => renderItin(it, fullItins.length + i)).join("\n\n")
 
   const hasMultiLeg = itineraries.some((it) => it.legs.length > 1);
   const timingNote = hasMultiLeg
-    ? "\n\n⚠️ Connection timing NOT validated — verify on united.com that the legs connect same-day before booking."
+    ? "\n\n⚠️ Connection timing NOT validated — verify legs actually connect same-day on united.com."
     : "";
 
   const text = `**Starlink routings: ${origin.toUpperCase()} → ${destination.toUpperCase()}**
 
 ${sections.join("\n\n---\n\n")}${timingNote}
 
-_Probabilities from historical aircraft assignments. Not guaranteed — use check_flight 1-2 days before departure for firm answers._`;
+**Key for trade-offs**: "~1.8h Starlink / ~7h flying" = expected Starlink time (Σ leg_prob × leg_duration) over total air time. A "92% leg" means little if that leg is 2h out of a 7h trip — compare expected Starlink hours, not leg percentages.`;
 
   return { content: [{ type: "text", text }] };
 }
@@ -750,13 +770,13 @@ function handleInitialize(
     instructions: `United Starlink tracker. Key facts:
 • Express/regional (UA3000-6999): ~${expressPct}% have Starlink
 • Mainline (UA1-2999, 737/787/etc): only ~${mainlinePct}% — assume NO Starlink on long-haul
-• Probability and confidence are INDEPENDENT: "92% (4 obs · medium)" is less certain than "79% (10 obs · high)", but still higher probability
+• Users want to MAXIMIZE STARLINK HOURS, not leg-level percentages. A "92% Starlink" 2h leg after a 5h no-Starlink leg ≈ 1.8h Starlink out of 7h. Compare expected Starlink hours (plan_starlink_itinerary computes this).
 
 Tool selection:
-• Routing questions ("best way to JAX with Starlink") → plan_starlink_itinerary first. Does multi-stop search (up to 3 stops) automatically.
+• Routing/tradeoff questions → plan_starlink_itinerary (multi-stop search, shows expected Starlink hours)
 • Future flight probability → predict_flight_starlink / predict_route_starlink
 • Firm confirmation (≤2 days out) → check_flight
-• search_starlink_flights = next ~2 days ONLY. Don't use for future dates.`,
+• search_starlink_flights = next ~2 days ONLY`,
   });
 }
 
