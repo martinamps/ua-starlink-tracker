@@ -532,7 +532,10 @@ const MIN_LEG_PROBABILITY = 0.3;
 // Minimum probability for the Starlink leg in partial-coverage fallback
 const PARTIAL_FALLBACK_MIN_PROB = 0.5;
 
-export type ItineraryLeg = BasePrediction & { route: string };
+export type ItineraryLeg = BasePrediction & {
+  route: string;
+  duration_hours: number | null; // null when we don't know (positioning legs on routes outside our data)
+};
 
 export interface Itinerary {
   via: string[]; // connection hub(s) in order, empty for direct
@@ -540,17 +543,23 @@ export interface Itinerary {
   joint_probability: number; // P(all legs have Starlink) = product of leg probs
   at_least_one_probability: number; // P(at least one leg has Starlink)
   coverage: "full" | "partial"; // "full"=all legs in Starlink graph, "partial"=positioning leg needed
+  // Time-aware metrics — these are what users actually care about for trade-off decisions.
+  // A "92% Starlink" 2-hour leg after a 5-hour no-Starlink leg is ~1.8h of Starlink out of 7h flying.
+  total_flight_hours: number | null; // null if any leg duration unknown
+  expected_starlink_hours: number | null; // Σ(leg_probability × leg_duration), null if any duration unknown
 }
 
 /**
  * Build the Starlink route adjacency graph: for each airport, the best
  * (highest-probability) flight number to each reachable destination.
- * One SQL query + one prediction per distinct route.
+ * One SQL query + one prediction per distinct route. Includes avg leg duration.
  */
 function buildRouteGraph(db: Database, minLegProb: number): Map<string, Map<string, ItineraryLeg>> {
   const rows = db
     .query(
-      `SELECT flight_number, departure_airport, arrival_airport, COUNT(*) as obs
+      `SELECT flight_number, departure_airport, arrival_airport,
+              COUNT(*) as obs,
+              AVG(arrival_time - departure_time) as avg_duration_sec
        FROM upcoming_flights
        GROUP BY flight_number, departure_airport, arrival_airport`
     )
@@ -559,6 +568,7 @@ function buildRouteGraph(db: Database, minLegProb: number): Map<string, Map<stri
     departure_airport: string;
     arrival_airport: string;
     obs: number;
+    avg_duration_sec: number;
   }>;
 
   // For each directed edge (dep → arr), keep the highest-probability flight
@@ -573,7 +583,11 @@ function buildRouteGraph(db: Database, minLegProb: number): Map<string, Map<stri
     const edges = graph.get(dep)!;
     const existing = edges.get(arr);
     if (!existing || pred.probability > existing.probability) {
-      edges.set(arr, { ...pred, route: `${dep}-${arr}` });
+      edges.set(arr, {
+        ...pred,
+        route: `${dep}-${arr}`,
+        duration_hours: r.avg_duration_sec / 3600,
+      });
     }
   }
   return graph;
@@ -582,14 +596,25 @@ function buildRouteGraph(db: Database, minLegProb: number): Map<string, Map<stri
 function computeItinerary(legs: ItineraryLeg[], coverage: "full" | "partial"): Itinerary {
   const joint = legs.reduce((p, l) => p * l.probability, 1);
   const atLeastOne = 1 - legs.reduce((p, l) => p * (1 - l.probability), 1);
-  // via = all intermediate airports (exclude origin and final dest)
   const via = legs.slice(0, -1).map((l) => l.route.split("-")[1]);
+
+  // Time-aware metrics. Null if any leg has unknown duration (positioning legs).
+  const allDurationsKnown = legs.every((l) => l.duration_hours !== null);
+  const totalHours = allDurationsKnown
+    ? legs.reduce((s, l) => s + (l.duration_hours as number), 0)
+    : null;
+  const expectedStarlinkHours = allDurationsKnown
+    ? legs.reduce((s, l) => s + l.probability * (l.duration_hours as number), 0)
+    : null;
+
   return {
     via,
     legs,
     joint_probability: joint,
     at_least_one_probability: atLeastOne,
     coverage,
+    total_flight_hours: totalHours,
+    expected_starlink_hours: expectedStarlinkHours,
   };
 }
 
@@ -688,21 +713,33 @@ export function planItinerary(
         probability: DEFAULT_CONFIG.mainlineColdPrior,
         confidence: "low",
         n_observations: 0,
+        duration_hours: null, // unknown — mainline route outside our Starlink-tracked data
       };
       itineraries.push(computeItinerary([positioningLeg, finalLeg], "partial"));
     }
   }
 
-  // Rank: full coverage first (by joint prob), then partial (by at-least-one prob)
-  // Within same coverage, prefer fewer stops as tiebreaker
+  // Rank by EXPECTED STARLINK HOURS (what users actually want to maximize).
+  // Full-coverage paths sort above partial. Within coverage: expected Starlink
+  // hours (descending), then fewer legs as tiebreaker. Falls back to joint prob
+  // when duration unknown.
   itineraries.sort((a, b) => {
     if (a.coverage !== b.coverage) return a.coverage === "full" ? -1 : 1;
-    const probDiff =
-      a.coverage === "full"
-        ? b.joint_probability - a.joint_probability
-        : b.at_least_one_probability - a.at_least_one_probability;
+
+    // Primary: expected Starlink hours (higher is better). Unknown sorts last.
+    const aE = a.expected_starlink_hours;
+    const bE = b.expected_starlink_hours;
+    if (aE !== null && bE !== null) {
+      if (Math.abs(bE - aE) > 0.05) return bE - aE;
+    } else if (aE !== null) return -1;
+    else if (bE !== null) return 1;
+
+    // Secondary: joint probability (for when durations tie or are unknown)
+    const probDiff = b.joint_probability - a.joint_probability;
     if (Math.abs(probDiff) > 0.01) return probDiff;
-    return a.legs.length - b.legs.length; // fewer stops wins ties
+
+    // Tertiary: fewer legs (simpler routing)
+    return a.legs.length - b.legs.length;
   });
 
   return itineraries.slice(0, maxItineraries);
