@@ -398,6 +398,31 @@ export function getStarlinkPlanes(db: Database): Aircraft[] {
     .all() as Aircraft[];
 }
 
+/**
+ * Get ALL starlink_planes including mismatches (verified_wifi = 'None'/'Panasonic'/etc).
+ * Used by the verifier and flight-updater so mismatched planes can still be
+ * re-verified and self-heal if United's data changes.
+ */
+export function getAllStarlinkPlanes(db: Database): Aircraft[] {
+  return db
+    .query(
+      `
+      SELECT aircraft as Aircraft,
+             wifi as WiFi,
+             sheet_gid,
+             sheet_type,
+             DateFound,
+             TailNumber,
+             OperatedBy,
+             fleet,
+             verified_wifi
+      FROM starlink_planes
+      ORDER BY DateFound DESC
+    `
+    )
+    .all() as Aircraft[];
+}
+
 export function getFleetStats(db: Database): FleetStats {
   // Get totals from spreadsheet data (accurate for fleet size)
   const expressTotal = getMetaValue(db, "expressTotal", 0);
@@ -865,10 +890,11 @@ export function getWifiMismatches(db: Database): WifiMismatch[] {
       WHERE verified_wifi IS NOT NULL
         AND (
           -- Spreadsheet says Starlink but verification says None or other provider
-          (wifi = 'StrLnk' AND verified_wifi != 'Starlink')
+          -- (express sheets use 'StrLnk', mainline sheets use 'Starlink')
+          (wifi IN ('StrLnk', 'Starlink') AND verified_wifi != 'Starlink')
           OR
           -- Spreadsheet says no Starlink but verification found it
-          (wifi != 'StrLnk' AND verified_wifi = 'Starlink')
+          (wifi NOT IN ('StrLnk', 'Starlink') AND verified_wifi = 'Starlink')
         )
       ORDER BY verified_at DESC
     `)
@@ -885,7 +911,7 @@ export function clearMismatchVerifications(db: Database): number {
     UPDATE starlink_planes
     SET verified_wifi = NULL, verified_at = NULL
     WHERE verified_wifi IS NOT NULL
-      AND wifi = 'StrLnk'
+      AND wifi IN ('StrLnk', 'Starlink')
       AND verified_wifi != 'Starlink'
   `)
     .run();
@@ -932,8 +958,8 @@ export function getVerificationSummary(db: Database): {
         SUM(CASE WHEN verified_wifi IS NOT NULL THEN 1 ELSE 0 END) as verified_count,
         SUM(CASE WHEN verified_wifi IS NULL THEN 1 ELSE 0 END) as unverified_count,
         SUM(CASE WHEN verified_wifi IS NOT NULL AND (
-          (wifi = 'StrLnk' AND verified_wifi != 'Starlink')
-          OR (wifi != 'StrLnk' AND verified_wifi = 'Starlink')
+          (wifi IN ('StrLnk', 'Starlink') AND verified_wifi != 'Starlink')
+          OR (wifi NOT IN ('StrLnk', 'Starlink') AND verified_wifi = 'Starlink')
         ) THEN 1 ELSE 0 END) as mismatches_count,
         SUM(CASE WHEN verified_wifi = 'Starlink' THEN 1 ELSE 0 END) as verified_starlink,
         SUM(CASE WHEN verified_wifi = 'None' THEN 1 ELSE 0 END) as verified_none,

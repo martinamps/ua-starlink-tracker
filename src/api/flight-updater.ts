@@ -1,6 +1,6 @@
 import "dotenv/config";
 import {
-  getStarlinkPlanes,
+  getAllStarlinkPlanes,
   initializeDatabase,
   needsFlightCheck,
   updateFlights,
@@ -230,7 +230,8 @@ export async function updateAllFlights() {
   }
 
   const db = initializeDatabase();
-  const planes = getStarlinkPlanes(db);
+  // Include mismatched planes so they keep getting fresh flight data for re-verification
+  const planes = getAllStarlinkPlanes(db);
   db.close();
 
   info(`Checking flight updates for ${planes.length} Starlink aircraft...`);
@@ -339,8 +340,8 @@ export function startFlightUpdater() {
 
           const db = initializeDatabase();
 
-          // Find a plane that needs updating
-          const planes = getStarlinkPlanes(db);
+          // Find a plane that needs updating (includes mismatches so they can be re-verified later)
+          const planes = getAllStarlinkPlanes(db);
           let planeToUpdate: Aircraft | null = null;
 
           for (const plane of planes) {
