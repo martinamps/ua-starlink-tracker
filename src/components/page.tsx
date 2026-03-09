@@ -408,18 +408,38 @@ export default function Page({
         </div>
       </header>
 
-      {/* Intro paragraph for SEO */}
+      {/* Intro paragraph + nav links */}
       {isUnited && (
-        <p className="relative text-sm text-secondary text-center max-w-2xl mx-auto mb-6 leading-relaxed">
-          United Airlines is rolling out free Starlink WiFi across its fleet — the fastest internet
-          ever available on a commercial airline. Use this tracker to check if your United flight
-          has Starlink, browse all equipped aircraft, or search by flight number and route. You can
-          also{" "}
-          <a href="/check-flight" className="text-accent hover:underline">
-            check a specific flight number and date
-          </a>
-          .
-        </p>
+        <div className="relative text-center max-w-2xl mx-auto mb-6">
+          <p className="text-sm text-secondary leading-relaxed mb-3">
+            United Airlines is rolling out free Starlink WiFi across its fleet — the fastest
+            internet ever available on a commercial airline. Use this tracker to browse all equipped
+            aircraft, check your flight, or plan a Starlink-maximizing itinerary.
+          </p>
+          <div className="flex flex-wrap items-center justify-center gap-2 text-sm font-display">
+            <a
+              href="/check-flight"
+              className="px-3 py-1.5 bg-surface border border-subtle rounded text-secondary hover:text-accent hover:border-accent transition-colors"
+            >
+              Check a Flight
+            </a>
+            <a
+              href="/route-planner"
+              className="px-3 py-1.5 bg-surface border border-subtle rounded text-secondary hover:text-accent hover:border-accent transition-colors inline-flex items-center gap-1.5"
+            >
+              Route Planner
+              <span className="text-[10px] font-mono px-1.5 py-0.5 bg-accent/20 text-accent rounded">
+                NEW
+              </span>
+            </a>
+            <a
+              href="#integrations"
+              className="px-3 py-1.5 bg-surface border border-subtle rounded text-secondary hover:text-accent hover:border-accent transition-colors"
+            >
+              Tools & MCP
+            </a>
+          </div>
+        </div>
       )}
 
       {/* Fleet Stats - Instrument Panel Style */}
@@ -826,80 +846,133 @@ export default function Page({
         </div>
       </div>
 
-      {/* Chrome Extension CTA */}
-      <div className="relative my-8 max-w-xl mx-auto bg-surface rounded-lg border border-subtle p-5">
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="text-center sm:text-left">
-            <div className="font-mono text-sm text-primary mb-0.5">
-              Annotate Google Flights automatically
-            </div>
-            <div className="text-xs text-muted">Adds a Starlink badge on equipped flights</div>
-          </div>
-          <a
-            href="https://chromewebstore.google.com/detail/google-flights-starlink-i/jjfljoifenkfdbldliakmmjhdkbhehoi"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 px-4 py-2 bg-surface-elevated text-xs sm:text-sm text-secondary font-mono rounded border border-subtle hover:border-accent hover:text-accent transition-colors whitespace-nowrap"
+      {/* Tools & Integrations */}
+      <div id="integrations" className="relative my-8 max-w-3xl mx-auto scroll-mt-4">
+        <h2 className="font-display text-lg font-semibold text-primary mb-3 text-center">
+          Tools & Integrations
+        </h2>
+        <div className="grid sm:grid-cols-2 gap-3">
+          {/* Chrome Extension */}
+          <div
+            id="chrome-extension"
+            className="bg-surface rounded-lg border border-subtle p-5 flex flex-col scroll-mt-4"
           >
-            <svg
-              className="w-8 h-8"
-              viewBox="0 0 48 48"
-              xmlns="http://www.w3.org/2000/svg"
-              role="img"
-              aria-label="Chrome"
+            <div className="flex items-start gap-3 mb-3">
+              <svg
+                className="w-8 h-8 flex-shrink-0"
+                viewBox="0 0 48 48"
+                xmlns="http://www.w3.org/2000/svg"
+                role="img"
+                aria-label="Chrome"
+              >
+                <defs>
+                  <linearGradient
+                    id="chrome-a"
+                    x1="3.2173"
+                    y1="15"
+                    x2="44.7812"
+                    y2="15"
+                    gradientUnits="userSpaceOnUse"
+                  >
+                    <stop offset="0" stopColor="#d93025" />
+                    <stop offset="1" stopColor="#ea4335" />
+                  </linearGradient>
+                  <linearGradient
+                    id="chrome-b"
+                    x1="20.7219"
+                    y1="47.6791"
+                    x2="41.5039"
+                    y2="11.6837"
+                    gradientUnits="userSpaceOnUse"
+                  >
+                    <stop offset="0" stopColor="#fcc934" />
+                    <stop offset="1" stopColor="#fbbc04" />
+                  </linearGradient>
+                  <linearGradient
+                    id="chrome-c"
+                    x1="26.5981"
+                    y1="46.5015"
+                    x2="5.8161"
+                    y2="10.506"
+                    gradientUnits="userSpaceOnUse"
+                  >
+                    <stop offset="0" stopColor="#1e8e3e" />
+                    <stop offset="1" stopColor="#34a853" />
+                  </linearGradient>
+                </defs>
+                <circle cx="24" cy="23.9947" r="12" fill="#fff" />
+                <path
+                  d="M24,12H44.7812a23.9939,23.9939,0,0,0-41.5639.0029L13.6079,30l.0093-.0024A11.9852,11.9852,0,0,1,24,12Z"
+                  fill="url(#chrome-a)"
+                />
+                <circle cx="24" cy="24" r="9.5" fill="#1a73e8" />
+                <path
+                  d="M34.3913,30.0029,24.0007,48A23.994,23.994,0,0,0,44.78,12.0031H23.9989l-.0025.0093A11.985,11.985,0,0,1,34.3913,30.0029Z"
+                  fill="url(#chrome-b)"
+                />
+                <path
+                  d="M13.6086,30.0031,3.218,12.006A23.994,23.994,0,0,0,24.0025,48L34.3931,30.0029l-.0067-.0068a11.9852,11.9852,0,0,1-20.7778.007Z"
+                  fill="url(#chrome-c)"
+                />
+              </svg>
+              <div>
+                <div className="font-display font-semibold text-primary text-sm">
+                  Chrome Extension
+                </div>
+                <div className="text-xs text-muted">For Google Flights</div>
+              </div>
+            </div>
+            <p className="text-xs text-muted leading-relaxed mb-4 flex-1">
+              See Starlink badges directly on Google Flights search results — no extra steps while
+              you shop for flights.
+            </p>
+            <a
+              href="https://chromewebstore.google.com/detail/google-flights-starlink-i/jjfljoifenkfdbldliakmmjhdkbhehoi"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs text-accent hover:underline font-mono"
             >
-              <defs>
-                <linearGradient
-                  id="chrome-a"
-                  x1="3.2173"
-                  y1="15"
-                  x2="44.7812"
-                  y2="15"
-                  gradientUnits="userSpaceOnUse"
+              Add to Chrome →
+            </a>
+          </div>
+
+          {/* MCP Server */}
+          <div
+            id="mcp"
+            className="bg-surface rounded-lg border border-subtle p-5 flex flex-col scroll-mt-4"
+          >
+            <div className="flex items-start gap-3 mb-3">
+              <div className="w-8 h-8 flex-shrink-0 rounded bg-accent/20 border border-accent/40 flex items-center justify-center">
+                <svg
+                  className="w-5 h-5 text-accent"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  role="img"
+                  aria-label="AI"
                 >
-                  <stop offset="0" stopColor="#d93025" />
-                  <stop offset="1" stopColor="#ea4335" />
-                </linearGradient>
-                <linearGradient
-                  id="chrome-b"
-                  x1="20.7219"
-                  y1="47.6791"
-                  x2="41.5039"
-                  y2="11.6837"
-                  gradientUnits="userSpaceOnUse"
-                >
-                  <stop offset="0" stopColor="#fcc934" />
-                  <stop offset="1" stopColor="#fbbc04" />
-                </linearGradient>
-                <linearGradient
-                  id="chrome-c"
-                  x1="26.5981"
-                  y1="46.5015"
-                  x2="5.8161"
-                  y2="10.506"
-                  gradientUnits="userSpaceOnUse"
-                >
-                  <stop offset="0" stopColor="#1e8e3e" />
-                  <stop offset="1" stopColor="#34a853" />
-                </linearGradient>
-              </defs>
-              <circle cx="24" cy="23.9947" r="12" fill="#fff" />
-              <path
-                d="M24,12H44.7812a23.9939,23.9939,0,0,0-41.5639.0029L13.6079,30l.0093-.0024A11.9852,11.9852,0,0,1,24,12Z"
-                fill="url(#chrome-a)"
-              />
-              <circle cx="24" cy="24" r="9.5" fill="#1a73e8" />
-              <path
-                d="M34.3913,30.0029,24.0007,48A23.994,23.994,0,0,0,44.78,12.0031H23.9989l-.0025.0093A11.985,11.985,0,0,1,34.3913,30.0029Z"
-                fill="url(#chrome-b)"
-              />
-              <path
-                d="M13.6086,30.0031,3.218,12.006A23.994,23.994,0,0,0,24.0025,48L34.3931,30.0029l-.0067-.0068a11.9852,11.9852,0,0,1-20.7778.007Z"
-                fill="url(#chrome-c)"
-              />
-            </svg>
-            Add to Chrome
-          </a>
+                  <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
+                </svg>
+              </div>
+              <div>
+                <div className="font-display font-semibold text-primary text-sm inline-flex items-center gap-1.5">
+                  MCP Server
+                  <span className="text-[10px] font-mono px-1.5 py-0.5 bg-accent/20 text-accent rounded">
+                    NEW
+                  </span>
+                </div>
+                <div className="text-xs text-muted">For Claude, Cursor & AI assistants</div>
+              </div>
+            </div>
+            <p className="text-xs text-muted leading-relaxed mb-4 flex-1">
+              Ask your AI assistant to check flights, predict Starlink probability, or plan routes —
+              live tracker data via the Model Context Protocol.
+            </p>
+            <a href="/mcp" className="text-xs text-accent hover:underline font-mono">
+              Setup instructions →
+            </a>
+          </div>
         </div>
       </div>
 
@@ -1190,8 +1263,13 @@ export default function Page({
               </summary>
               <div className="mt-3 text-sm text-muted leading-relaxed">
                 <p>
-                  Search above by flight number, tail number, or airport code. You can also install
-                  our{" "}
+                  Search above by flight number, tail number, or airport code. For a specific
+                  flight,{" "}
+                  <a href="/check-flight" className="text-accent hover:underline">
+                    check a flight by number and date
+                  </a>{" "}
+                  — if the flight is more than ~2 days out, you'll get a probability estimate based
+                  on 12,000+ historical aircraft assignments. You can also install our{" "}
                   <a
                     href="https://chromewebstore.google.com/detail/google-flights-starlink-i/jjfljoifenkfdbldliakmmjhdkbhehoi"
                     target="_blank"
@@ -1200,11 +1278,90 @@ export default function Page({
                   >
                     Chrome extension
                   </a>{" "}
-                  to see Starlink badges directly on Google Flights, or visit our{" "}
-                  <a href="/check-flight" className="text-accent hover:underline">
-                    check a flight
+                  to see Starlink badges on Google Flights.
+                </p>
+              </div>
+            </details>
+
+            <details className="group py-4">
+              <summary className="cursor-pointer list-none flex items-start justify-between">
+                <div>
+                  <h3 className="font-display text-base font-medium text-secondary group-hover:text-accent transition-colors">
+                    How do I maximize my chances of getting Starlink?
+                  </h3>
+                </div>
+                <div className="ml-4 flex-shrink-0">
+                  <svg
+                    className="w-4 h-4 text-muted group-open:rotate-45 transition-transform"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    role="img"
+                    aria-label="Expand"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M12 6v6m0 0v6m0-6h6m-6 0H6"
+                    />
+                  </svg>
+                </div>
+              </summary>
+              <div className="mt-3 text-sm text-muted leading-relaxed">
+                <p className="mb-2">
+                  Use the{" "}
+                  <a href="/route-planner" className="text-accent hover:underline">
+                    Route Planner
                   </a>{" "}
-                  page.
+                  — it finds direct flights and 1-stop connections ranked by Starlink probability.
+                  Express flights (UA3000-6999, regional jets) have ~
+                  {fleetStats?.express.percentage.toFixed(0)}% Starlink coverage vs ~
+                  {fleetStats?.mainline.percentage.toFixed(0)}% for mainline, so a connection
+                  through a hub can beat a direct mainline flight.
+                </p>
+                <p>
+                  For example: DEN→ORD direct is mainline (~2%), but DEN→ASE→ORD is ~90% Starlink on
+                  both legs.
+                </p>
+              </div>
+            </details>
+
+            <details className="group py-4">
+              <summary className="cursor-pointer list-none flex items-start justify-between">
+                <div>
+                  <h3 className="font-display text-base font-medium text-secondary group-hover:text-accent transition-colors">
+                    Can I use this with Claude, ChatGPT, or other AI assistants?
+                  </h3>
+                </div>
+                <div className="ml-4 flex-shrink-0">
+                  <svg
+                    className="w-4 h-4 text-muted group-open:rotate-45 transition-transform"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    role="img"
+                    aria-label="Expand"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M12 6v6m0 0v6m0-6h6m-6 0H6"
+                    />
+                  </svg>
+                </div>
+              </summary>
+              <div className="mt-3 text-sm text-muted leading-relaxed">
+                <p>
+                  Yes — there's a free{" "}
+                  <a href="/mcp" className="text-accent hover:underline">
+                    MCP server
+                  </a>{" "}
+                  that works with Claude Desktop, Cursor, and any MCP-compatible client. Once
+                  connected, you can ask your AI assistant things like "does UA4680 next week have
+                  Starlink?" or "find me the best way to fly SFO to JAX with Starlink" and get live
+                  tracker data.
                 </p>
               </div>
             </details>
