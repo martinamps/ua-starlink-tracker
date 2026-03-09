@@ -1,130 +1,160 @@
 import React from "react";
 
-const MCP_ENDPOINT = "https://unitedstarlinktracker.com/mcp";
-
-const CLAUDE_DESKTOP_CONFIG = `{
-  "mcpServers": {
-    "ua-starlink": {
-      "url": "${MCP_ENDPOINT}",
-      "transport": "http"
-    }
-  }
-}`;
-
-const TOOLS = [
-  {
-    name: "check_flight",
-    desc: "Firm answer: is this flight scheduled on a Starlink plane? (~2-day window)",
-    example: "Does UA4680 tomorrow have Starlink?",
-  },
-  {
-    name: "predict_flight_starlink",
-    desc: "Probability estimate for flights beyond our firm schedule window, based on 12k+ historical observations",
-    example: "What's the Starlink probability for UA3561 next month?",
-  },
-  {
-    name: "plan_starlink_itinerary",
-    desc: "Find direct flights + 1-stop connections ranked by Starlink probability — full and partial coverage options",
-    example: "Best way to fly SFO to JAX with Starlink?",
-  },
-  {
-    name: "predict_route_starlink",
-    desc: "List flight numbers on a route ranked by Starlink probability",
-    example: "Which flights to Denver usually get Starlink planes?",
-  },
-  {
-    name: "search_starlink_flights",
-    desc: "Confirmed Starlink flights in the next ~2 days from/to an airport",
-    example: "What Starlink flights leave ORD today?",
-  },
-  {
-    name: "get_fleet_stats",
-    desc: "Installation progress: how many aircraft have Starlink by fleet",
-    example: "What percentage of United's fleet has Starlink?",
-  },
-  {
-    name: "list_starlink_aircraft",
-    desc: "Enumerate all equipped aircraft with tail numbers and types",
-    example: "List all Starlink-equipped 737s",
-  },
-];
+const MCP_URL = "https://unitedstarlinktracker.com/mcp";
 
 export default function McpPage() {
   return (
     <div className="w-full mx-auto px-4 sm:px-6 md:px-8 bg-base min-h-screen flex flex-col relative">
       <div className="absolute inset-0 grid-pattern opacity-50 pointer-events-none" />
 
-      <header className="relative py-5 sm:py-6 text-center mb-6">
+      <header className="relative py-5 sm:py-6 text-center mb-4">
         <a href="/" className="block">
           <h1 className="font-display text-3xl sm:text-4xl font-bold text-primary mb-2 tracking-tight hover:text-accent transition-colors">
-            MCP Server for AI Assistants
+            Add Starlink Tracker to Claude
           </h1>
         </a>
-        <p className="text-base text-secondary font-display max-w-2xl mx-auto">
-          Connect Claude, Cursor, or any MCP-compatible client to live United Starlink tracker data
+        <p className="text-base text-secondary font-display max-w-xl mx-auto">
+          Ask your AI assistant to check flights, predict Starlink probability, or plan routes —
+          with live tracker data.
         </p>
       </header>
 
-      {/* Quick connect */}
+      {/* Quick URL copy */}
       <div className="relative max-w-2xl mx-auto w-full mb-8">
-        <div className="bg-surface rounded-lg border border-subtle p-6 glow-accent">
-          <div className="text-xs font-mono text-muted uppercase tracking-wider mb-2">Endpoint</div>
-          <div className="font-mono text-sm text-accent break-all mb-4">{MCP_ENDPOINT}</div>
+        <div className="bg-surface rounded-lg border border-subtle p-4 sm:p-5 glow-accent">
           <div className="text-xs font-mono text-muted uppercase tracking-wider mb-2">
-            Transport
+            Connector URL
           </div>
-          <div className="font-mono text-sm text-secondary">
-            Streamable HTTP · Stateless · No auth required
+          <div className="flex items-center gap-2">
+            <code className="flex-1 font-mono text-sm text-accent break-all select-all bg-base rounded px-3 py-2 border border-subtle">
+              {MCP_URL}
+            </code>
+            <button
+              type="button"
+              id="copy-url-btn"
+              className="px-3 py-2 bg-accent/20 border border-accent text-accent text-xs font-display rounded hover:bg-accent/30 transition-colors cursor-pointer whitespace-nowrap"
+            >
+              Copy
+            </button>
           </div>
         </div>
       </div>
 
-      {/* Setup instructions */}
+      {/* Visual walkthrough */}
+      <div className="relative max-w-2xl mx-auto w-full mb-8 space-y-8">
+        {/* Step 1 */}
+        <div>
+          <div className="flex items-center gap-3 mb-3">
+            <span className="w-7 h-7 rounded-full bg-accent/20 border border-accent text-accent font-mono text-sm flex items-center justify-center flex-shrink-0">
+              1
+            </span>
+            <h2 className="font-display text-lg font-semibold text-primary">
+              Open Claude Desktop → Settings → Connectors → click{" "}
+              <span className="text-accent">+</span>
+            </h2>
+          </div>
+        </div>
+
+        {/* Step 2 */}
+        <div>
+          <div className="flex items-center gap-3 mb-3">
+            <span className="w-7 h-7 rounded-full bg-accent/20 border border-accent text-accent font-mono text-sm flex items-center justify-center flex-shrink-0">
+              2
+            </span>
+            <h2 className="font-display text-lg font-semibold text-primary">
+              Paste the URL and click Add
+            </h2>
+          </div>
+          <img
+            src="/static/mcp-add-dialog.webp"
+            alt="Claude Desktop 'Add custom connector' dialog with Starlink Tracker name and unitedstarlinktracker.com/mcp URL filled in"
+            width="700"
+            height="548"
+            className="rounded-lg border border-subtle w-full max-w-lg mx-auto"
+            loading="lazy"
+          />
+        </div>
+
+        {/* Step 3 */}
+        <div>
+          <div className="flex items-center gap-3 mb-3">
+            <span className="w-7 h-7 rounded-full bg-accent/20 border border-accent text-accent font-mono text-sm flex items-center justify-center flex-shrink-0">
+              3
+            </span>
+            <h2 className="font-display text-lg font-semibold text-primary">
+              Done — 7 tools ready
+            </h2>
+          </div>
+          <img
+            src="/static/mcp-connectors.webp"
+            alt="Claude Desktop Connectors settings showing Starlink Tracker with 7 tools: check_flight, get_fleet_stats, list_starlink_aircraft, plan_starlink_itinerary, predict_flight_starlink, predict_route_starlink, search_starlink_flights"
+            width="1100"
+            height="780"
+            className="rounded-lg border border-subtle w-full"
+            loading="lazy"
+          />
+        </div>
+      </div>
+
+      {/* What to ask */}
       <div className="relative max-w-2xl mx-auto w-full mb-8">
         <div className="bg-surface rounded-lg border border-subtle p-6">
-          <h2 className="font-display text-lg font-semibold text-primary mb-4">Setup</h2>
+          <h2 className="font-display text-lg font-semibold text-primary mb-3">Try asking</h2>
+          <ul className="space-y-2 text-sm text-muted">
+            <li className="pl-4 -indent-4">
+              <span className="text-secondary">"</span>Does UA4680 next Tuesday have Starlink?
+              <span className="text-secondary">"</span>
+            </li>
+            <li className="pl-4 -indent-4">
+              <span className="text-secondary">"</span>I'm flying SFO to JAX on April 10 — what's my
+              best shot at Starlink?<span className="text-secondary">"</span>
+            </li>
+            <li className="pl-4 -indent-4">
+              <span className="text-secondary">"</span>I'd rather fly 7 hours with internet than 5
+              hours without — find me a routing from DEN to ORD
+              <span className="text-secondary">"</span>
+            </li>
+            <li className="pl-4 -indent-4">
+              <span className="text-secondary">"</span>What percentage of United's express fleet has
+              Starlink now?<span className="text-secondary">"</span>
+            </li>
+          </ul>
+        </div>
+      </div>
 
-          <div className="mb-6">
-            <h3 className="font-display text-sm font-medium text-secondary mb-2">Claude Desktop</h3>
-            <p className="text-xs text-muted mb-2">
-              Add to{" "}
-              <span className="font-mono text-secondary">
-                ~/Library/Application Support/Claude/claude_desktop_config.json
-              </span>{" "}
-              (macOS) or{" "}
-              <span className="font-mono text-secondary">
-                %APPDATA%\Claude\claude_desktop_config.json
-              </span>{" "}
-              (Windows):
+      {/* Other clients (collapsed) */}
+      <div className="relative max-w-2xl mx-auto w-full mb-8">
+        <details className="bg-surface rounded-lg border border-subtle p-4 group">
+          <summary className="cursor-pointer list-none flex items-center justify-between">
+            <span className="font-display text-sm font-medium text-secondary group-hover:text-accent transition-colors">
+              Using Cursor, Cline, or another MCP client?
+            </span>
+            <svg
+              className="w-4 h-4 text-muted group-open:rotate-45 transition-transform"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              role="img"
+              aria-label="Expand"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 6v6m0 0v6m0-6h6m-6 0H6"
+              />
+            </svg>
+          </summary>
+          <div className="mt-4 space-y-3 text-sm text-muted">
+            <p>
+              Add the same URL with <span className="font-mono text-secondary">http</span> transport
+              in your client's MCP settings. See your client's docs for the config format.
             </p>
-            <pre className="bg-base border border-subtle rounded p-3 text-xs font-mono text-secondary overflow-x-auto">
-              {CLAUDE_DESKTOP_CONFIG}
-            </pre>
-            <p className="text-xs text-muted mt-2">
-              Restart Claude Desktop. You'll see the tracker tools available in conversations.
-            </p>
-          </div>
-
-          <div className="mb-4">
-            <h3 className="font-display text-sm font-medium text-secondary mb-2">
-              Cursor, Continue, Cline & other MCP clients
-            </h3>
-            <p className="text-xs text-muted">
-              Add the endpoint URL with <span className="font-mono text-secondary">http</span>{" "}
-              transport to your client's MCP settings. See your client's docs for the exact config
-              format.
-            </p>
-          </div>
-
-          <div>
-            <h3 className="font-display text-sm font-medium text-secondary mb-2">
-              Programmatic access
-            </h3>
-            <p className="text-xs text-muted">
-              The server is a standard JSON-RPC 2.0 endpoint. POST a{" "}
-              <span className="font-mono text-secondary">tools/call</span> request with{" "}
+            <p>
+              For programmatic access: it's a standard JSON-RPC 2.0 endpoint. POST to{" "}
+              <span className="font-mono text-secondary">{MCP_URL}</span> with{" "}
               <span className="font-mono text-secondary">Content-Type: application/json</span>. No
-              SDK required.{" "}
+              auth, no SDK needed.{" "}
               <a
                 href="https://modelcontextprotocol.io/specification/2025-06-18/basic/transports"
                 target="_blank"
@@ -135,47 +165,7 @@ export default function McpPage() {
               </a>
             </p>
           </div>
-        </div>
-      </div>
-
-      {/* Tools */}
-      <div className="relative max-w-2xl mx-auto w-full mb-8">
-        <div className="bg-surface rounded-lg border border-subtle p-6">
-          <h2 className="font-display text-lg font-semibold text-primary mb-4">Available tools</h2>
-          <div className="space-y-4">
-            {TOOLS.map((tool) => (
-              <div key={tool.name} className="border-l-2 border-accent/30 pl-3">
-                <div className="font-mono text-sm text-accent">{tool.name}</div>
-                <div className="text-xs text-muted leading-relaxed">{tool.desc}</div>
-                <div className="text-xs text-secondary italic mt-0.5">"{tool.example}"</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Example prompts */}
-      <div className="relative max-w-2xl mx-auto w-full mb-8">
-        <div className="bg-surface rounded-lg border border-subtle p-6">
-          <h2 className="font-display text-lg font-semibold text-primary mb-3">
-            Things to ask your AI
-          </h2>
-          <ul className="space-y-2 text-sm text-muted">
-            <li className="pl-4 -indent-4">
-              "I'm flying SFO to JAX on April 10 — what's my best shot at Starlink?"
-            </li>
-            <li className="pl-4 -indent-4">
-              "Compare UA4680 vs UA5259 — which is more likely to have Starlink?"
-            </li>
-            <li className="pl-4 -indent-4">
-              "I'd rather fly 7 hours with internet than 5 hours without — find me a routing DEN to
-              ORD"
-            </li>
-            <li className="pl-4 -indent-4">
-              "What percentage of United's express fleet has Starlink now?"
-            </li>
-          </ul>
-        </div>
+        </details>
       </div>
 
       <div className="relative text-center mb-6">
@@ -205,6 +195,25 @@ export default function McpPage() {
           by @martinamps
         </a>
       </footer>
+
+      {/* Copy button handler */}
+      <script
+        dangerouslySetInnerHTML={{
+          __html: `
+        document.addEventListener('DOMContentLoaded', function() {
+          var btn = document.getElementById('copy-url-btn');
+          if (btn) {
+            btn.addEventListener('click', function() {
+              navigator.clipboard.writeText('${MCP_URL}').then(function() {
+                btn.textContent = 'Copied!';
+                setTimeout(function() { btn.textContent = 'Copy'; }, 2000);
+              });
+            });
+          }
+        });
+      `,
+        }}
+      />
     </div>
   );
 }
