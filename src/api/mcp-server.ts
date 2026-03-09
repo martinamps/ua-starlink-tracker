@@ -355,11 +355,13 @@ function toolCheckFlight(
   };
 }
 
-/** Human-readable label for a probability, consistent across all MCP tools. */
-function probabilityLabel(p: number): string {
-  if (p >= 0.7) return "Likely";
-  if (p >= 0.4) return "Possible";
-  return "Unlikely";
+/**
+ * Format confidence as a parenthetical qualifier — keeps it visually subordinate
+ * to the probability number so they don't get mentally merged.
+ * e.g. "92% (4 obs · medium confidence)" not "92% Likely — 4 obs, medium"
+ */
+function confidenceTag(nObs: number, confidence: string): string {
+  return `(${nObs} obs · ${confidence} confidence)`;
 }
 
 function toolPredictFlightStarlink(db: Database, args: { flight_number?: unknown }): ToolResult {
@@ -390,30 +392,20 @@ function toolPredictFlightStarlink(db: Database, args: { flight_number?: unknown
   }
 
   const pred = predictFlight(db, forPredict);
-
   const pct = (pred.probability * 100).toFixed(0);
-  const label = probabilityLabel(pred.probability);
 
-  let detail: string;
-  let reliabilityNote: string;
+  let text: string;
   if (pred.method !== "flight_history_smoothed") {
     const fleet = inferFleet(forPredict);
     const fleetLabel = fleet === "express" ? "express (regional)" : "mainline";
-    detail = `⚠️ No historical observations for this flight number — this is just the ${fleetLabel} fleet install rate, treat as an upper bound. If this flight has been operating for a while without appearing in our Starlink history, actual probability may be lower.`;
-    reliabilityNote = "Low reliability (no data).";
-  } else if (pred.confidence === "high") {
-    detail = `Based on ${pred.n_observations} historical observation${pred.n_observations === 1 ? "" : "s"} of aircraft assigned to this flight number over the past ~60 days.`;
-    reliabilityNote = "High reliability — strong consistent signal.";
+    text = `${forPredict}: **${pct}%** estimated Starlink probability (fleet prior · no historical data).
+
+This is the ${fleetLabel} fleet install rate, not flight-specific. Treat as an upper bound — absence from our 12k+ observation log is itself a weak negative signal.`;
   } else {
-    detail = `Based on ${pred.n_observations} historical observation${pred.n_observations === 1 ? "" : "s"} of aircraft assigned to this flight number.`;
-    reliabilityNote = `${pred.confidence === "medium" ? "Medium" : "Low"} reliability — limited data, estimate may be off by ±20pp.`;
+    text = `${forPredict}: **${pct}%** estimated Starlink probability ${confidenceTag(pred.n_observations, pred.confidence)}.
+
+From historical aircraft assignments over the past ~60 days. ${pred.confidence === "high" ? "Strong signal." : "Limited data — estimate may be off by ±20pp."}`;
   }
-
-  const text = `**${label}** — estimated **${pct}%** chance that ${forPredict} will be operated by a Starlink-equipped aircraft.
-
-${detail} ${reliabilityNote}
-
-_Not a guarantee — aircraft assignments can change up to departure. For high-confidence answers, use check_flight 1-2 days before travel._`;
 
   return { content: [{ type: "text", text }] };
 }
@@ -477,7 +469,7 @@ function toolPlanStarlinkItinerary(
     }
     const pct = (leg.probability * 100).toFixed(0);
     const fleetTag = inferFleet(leg.flight_number) === "mainline" ? " [Mainline]" : "";
-    return `${leg.flight_number}${fleetTag} (${leg.route}) — ${pct}% (${leg.n_observations} obs, ${leg.confidence})`;
+    return `${leg.flight_number}${fleetTag} (${leg.route}) — ${pct}% ${confidenceTag(leg.n_observations, leg.confidence)}`;
   };
 
   const renderItin = (it: (typeof itineraries)[number], i: number): string => {
@@ -569,7 +561,7 @@ function toolPredictRouteStarlink(
     const obsNote =
       f.n_observations === 0
         ? "(unobserved — fleet prior)"
-        : `(${f.n_observations} obs, ${f.confidence})`;
+        : confidenceTag(f.n_observations, f.confidence);
     return `  ${f.flight_number.padEnd(8)} ${fleetTag} (${f.route})  ${pct.padStart(3)}%  ${obsNote}`;
   });
 
@@ -580,13 +572,13 @@ function toolPredictRouteStarlink(
         ? `from ${result.origin}`
         : `to ${result.destination}`;
 
-  const text = `**Starlink probability by flight number ${routeDesc}** (ranked highest-first):
+  const text = `**Starlink probability ${routeDesc}** (ranked highest-first):
 
 ${lines.join("\n")}
 
 ${result.coverage_note}
 
-_High-confidence entries (5+ obs) are typically accurate; low-confidence entries are rough guesses. Aircraft assignments can change — use check_flight 1-2 days before departure for a firm answer._`;
+Probability and confidence are independent: 92% with 4 obs (medium) is a *less certain* estimate than 79% with 10 obs (high), but still indicates higher Starlink likelihood.`;
 
   return { content: [{ type: "text", text }] };
 }
@@ -755,7 +747,16 @@ function handleInitialize(
       name: "united-starlink-tracker",
       version: "1.0.0",
     },
-    instructions: `This server provides live data about which United Airlines aircraft have SpaceX Starlink WiFi installed.\n\nCRITICAL CONTEXT — the Starlink rollout is highly asymmetric:\n  • Express (regional jets, UA3000-6999): ~${expressPct}% have Starlink\n  • Mainline (737/787/etc, UA1-2999): only ~${mainlinePct}% have Starlink\nThis means long-haul legs between major cities (SFO→EWR, SFO→ORD, etc.) are almost always mainline and therefore almost NEVER have Starlink. Do NOT tell users that mainline or transcontinental flights have 'decent odds' — they don't. The only reliable Starlink coverage is on regional jet hops.\n\nTOOL SELECTION:\n  • For 'how do I get to X with Starlink' / 'find me a routing': ALWAYS START with plan_starlink_itinerary. It does the full search (direct + 1-stop) and honestly labels partial-coverage options (e.g., mainline positioning leg + Starlink regional leg).\n  • For 'does flight UA#### usually have Starlink': predict_flight_starlink\n  • For 'is UA#### on <date> confirmed Starlink' (within ~2 days): check_flight\n  • search_starlink_flights ONLY shows the next ~2 days of confirmed schedules — NOT useful for dates beyond that. For future dates use the predict_* tools instead.\n  • For current install %: get_fleet_stats (though current numbers are above)\n\nIf you're planning a trip with a mainline first leg: be upfront that the long leg almost certainly won't have Starlink, and the value is in the regional connection leg.`,
+    instructions: `United Starlink tracker. Key facts:
+• Express/regional (UA3000-6999): ~${expressPct}% have Starlink
+• Mainline (UA1-2999, 737/787/etc): only ~${mainlinePct}% — assume NO Starlink on long-haul
+• Probability and confidence are INDEPENDENT: "92% (4 obs · medium)" is less certain than "79% (10 obs · high)", but still higher probability
+
+Tool selection:
+• Routing questions ("best way to JAX with Starlink") → plan_starlink_itinerary first. Does multi-stop search (up to 3 stops) automatically.
+• Future flight probability → predict_flight_starlink / predict_route_starlink
+• Firm confirmation (≤2 days out) → check_flight
+• search_starlink_flights = next ~2 days ONLY. Don't use for future dates.`,
   });
 }
 
