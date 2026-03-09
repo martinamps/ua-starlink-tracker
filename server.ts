@@ -120,6 +120,8 @@ import type { ApiResponse, Flight } from "./src/types";
 import {
   CONTENT_TYPES,
   SECURITY_HEADERS,
+  buildFlightNumberVariants,
+  ensureUAPrefix,
   getDomainContent,
   isUnitedDomain,
   normalizeFlightNumber,
@@ -352,32 +354,8 @@ routes["/api/check-flight"] = tracedRoute("/api/check-flight", (req) => {
 
   // Build list of possible flight number variants to search for
   // DB stores operating carrier codes (SKW5212, OO5212, etc.) but users enter UA5212
-  const normalizedFlightNumber = normalizeFlightNumber(flightNumber);
-  const flightNumberVariants: string[] = [normalizedFlightNumber];
-
-  // If user entered a UA number, also search for operating carrier equivalents
-  // (FR24 stores callsigns/alternates which use various prefix formats)
-  if (/^UA\d+$/.test(normalizedFlightNumber)) {
-    const numericPart = normalizedFlightNumber.slice(2);
-    const carrierPrefixes = [
-      "UAL", // United mainline ICAO callsign
-      "SKW",
-      "ASH",
-      "RPA",
-      "GJS",
-      "PDT",
-      "ACA",
-      "ENY", // Express ICAO
-      "OO",
-      "YX",
-      "YV",
-      "G7", // Express IATA
-    ];
-    for (const carrier of carrierPrefixes) {
-      flightNumberVariants.push(`${carrier}${numericPart}`);
-    }
-  }
-
+  const normalizedFlightNumber = ensureUAPrefix(flightNumber);
+  const flightNumberVariants = buildFlightNumberVariants(normalizedFlightNumber);
   const placeholders = flightNumberVariants.map(() => "?").join(", ");
   const matchingFlights = db
     .query(
@@ -463,15 +441,7 @@ routes["/api/predict-flight"] = tracedRoute("/api/predict-flight", (req) => {
     });
   }
 
-  // Normalize to UA#### format for predictor
-  const normalized = normalizeFlightNumber(flightNumber);
-  const forPredict = /^UA\d+$/.test(normalized)
-    ? normalized
-    : /^\d+$/.test(normalized)
-      ? `UA${normalized}`
-      : normalized;
-
-  const pred = predictFlight(db, forPredict);
+  const pred = predictFlight(db, ensureUAPrefix(flightNumber));
 
   return new Response(
     JSON.stringify({

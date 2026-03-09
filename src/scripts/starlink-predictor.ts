@@ -5,18 +5,20 @@
  * that the scheduled aircraft will have Starlink WiFi.
  *
  * Model: hierarchical fallback with Bayesian smoothing
- *   1. Flight-number historical rate (time-decayed, smoothed toward fleet prior)
- *   2. Fall back to fleet-type prior (express ~39%, mainline ~2%)
+ *   1. Flight-number historical rate (Laplace-smoothed toward log-conditional prior)
+ *   2. Fall back to fleet-type prior (express ~49%, mainline ~2%)
  *
  * Trained on starlink_verification_log (12k+ historical checks of United.com).
  * Backtested by holding out the most recent N hours of observations.
  *
  * CLI:
  *   bun run src/scripts/starlink-predictor.ts --backtest           # Evaluate accuracy
- *   bun run src/scripts/starlink-predictor.ts --predict UA4680     # Get probability
+ *   bun run src/scripts/starlink-predictor.ts --predict=UA4680     # Get probability
+ *   bun run src/scripts/starlink-predictor.ts --cv                 # Cross-validate
  */
 
 import { Database } from "bun:sqlite";
+import { ensureUAPrefix, inferFleet } from "../utils/constants";
 
 // ============================================================================
 // Types
@@ -29,31 +31,18 @@ interface Observation {
   checked_at: number;
 }
 
+type PredictionMethod =
+  | "flight_history_smoothed"
+  | "fleet_prior_express"
+  | "fleet_prior_mainline"
+  | "fleet_prior_unknown";
+
 interface Prediction {
   flight_number: string;
   probability: number;
   confidence: "high" | "medium" | "low";
-  method: string;
+  method: PredictionMethod;
   n_observations: number;
-}
-
-// ============================================================================
-// Model
-// ============================================================================
-
-/**
- * Infer fleet type from flight number.
- * Express (regional) flights are typically 4-digit 3000-6999 range.
- * Mainline flights are typically 1-3 digit or 4-digit <3000.
- */
-function inferFleet(flightNumber: string): "express" | "mainline" | "unknown" {
-  const numMatch = flightNumber.match(/(\d+)$/);
-  if (!numMatch) return "unknown";
-  const num = Number.parseInt(numMatch[1], 10);
-  // United Express flight numbers are generally 3000-6999
-  // (SkyWest, Republic, Mesa, GoJet operate these)
-  if (num >= 3000 && num <= 6999) return "express";
-  return "mainline";
 }
 
 /**
@@ -132,7 +121,7 @@ export function buildModel(trainObs: Observation[], config: ModelConfig = DEFAUL
         flight_number: flightNumber,
         probability: coldPrior,
         confidence: "low",
-        method: `fleet_prior_${fleet}`,
+        method: `fleet_prior_${fleet}` as PredictionMethod,
         n_observations: 0,
       };
     }
@@ -280,8 +269,6 @@ function loadObservations(db: Database, beforeSec?: number, afterSec?: number): 
     sql += " AND checked_at >= ?";
     params.push(afterSec);
   }
-  sql += " ORDER BY checked_at";
-
   return db.query(sql).all(...params) as Observation[];
 }
 
@@ -331,35 +318,7 @@ export function backtest(
   const trainObs = loadObservations(db, cutoff);
   const testObs = loadObservations(db, undefined, cutoff);
 
-  // Derive smoothing priors from training data (log-conditional rates by fleet).
-  // The verification_log is biased (~77% express, ~0.4% mainline) — but that's the
-  // correct smoothing target for flights ALREADY in the log.
-  const smoothingByFleet = { express: { s: 0, t: 0 }, mainline: { s: 0, t: 0 } };
-  for (const obs of trainObs) {
-    const fleet = inferFleet(obs.flight_number);
-    if (fleet === "express" || fleet === "mainline") {
-      smoothingByFleet[fleet].s += obs.has_starlink;
-      smoothingByFleet[fleet].t += 1;
-    }
-  }
-
-  // Load true fleet install rates for cold-start (unseen flights)
-  const coldPriors = loadFleetPriors(db);
-
-  const derivedConfig: ModelConfig = {
-    ...config,
-    expressSmoothingPrior:
-      smoothingByFleet.express.t > 0
-        ? smoothingByFleet.express.s / smoothingByFleet.express.t
-        : config.expressSmoothingPrior,
-    mainlineSmoothingPrior:
-      smoothingByFleet.mainline.t > 0
-        ? smoothingByFleet.mainline.s / smoothingByFleet.mainline.t
-        : config.mainlineSmoothingPrior,
-    expressColdPrior: coldPriors.express,
-    mainlineColdPrior: coldPriors.mainline,
-  };
-
+  const derivedConfig = deriveConfig(db, trainObs, config);
   const { predict } = buildModel(trainObs, derivedConfig);
 
   const predictions = testObs.map((obs) => ({
@@ -405,20 +364,16 @@ export function backtest(
   return result;
 }
 
-// ============================================================================
-// Single-flight prediction (for MCP / API use)
-// ============================================================================
-
-// ============================================================================
-// Cached model for production use (rebuilt at most every MODEL_TTL_SEC)
-// ============================================================================
-
-const MODEL_TTL_SEC = 3600; // 1 hour — matches scrape cadence
-let cachedModel: { predict: (fn: string) => Prediction; builtAt: number } | null = null;
-
-function buildProductionModel(db: Database): { predict: (fn: string) => Prediction } {
-  const trainObs = loadObservations(db);
-
+/**
+ * Derive a ModelConfig by computing log-conditional smoothing priors from
+ * observations and loading cold-start priors from the meta table.
+ * Shared by backtest() and buildProductionModel().
+ */
+function deriveConfig(
+  db: Database,
+  trainObs: Observation[],
+  base: ModelConfig = DEFAULT_CONFIG
+): ModelConfig {
   const byFleet = { express: { s: 0, t: 0 }, mainline: { s: 0, t: 0 } };
   for (const obs of trainObs) {
     const f = inferFleet(obs.flight_number);
@@ -430,20 +385,29 @@ function buildProductionModel(db: Database): { predict: (fn: string) => Predicti
 
   const coldPriors = loadFleetPriors(db);
 
-  const config: ModelConfig = {
-    ...DEFAULT_CONFIG,
+  return {
+    ...base,
     expressSmoothingPrior:
-      byFleet.express.t > 0
-        ? byFleet.express.s / byFleet.express.t
-        : DEFAULT_CONFIG.expressSmoothingPrior,
+      byFleet.express.t > 0 ? byFleet.express.s / byFleet.express.t : base.expressSmoothingPrior,
     mainlineSmoothingPrior:
       byFleet.mainline.t > 0
         ? byFleet.mainline.s / byFleet.mainline.t
-        : DEFAULT_CONFIG.mainlineSmoothingPrior,
+        : base.mainlineSmoothingPrior,
     expressColdPrior: coldPriors.express,
     mainlineColdPrior: coldPriors.mainline,
   };
+}
 
+// ============================================================================
+// Cached model for production use (rebuilt at most every MODEL_TTL_SEC)
+// ============================================================================
+
+const MODEL_TTL_SEC = 3600; // 1 hour — matches scrape cadence
+let cachedModel: { predict: (fn: string) => Prediction; builtAt: number } | null = null;
+
+function buildProductionModel(db: Database): { predict: (fn: string) => Prediction } {
+  const trainObs = loadObservations(db);
+  const config = deriveConfig(db, trainObs);
   return buildModel(trainObs, config);
 }
 
@@ -463,11 +427,13 @@ export function predictFlight(db: Database, flightNumber: string): Prediction {
 // Route-based prediction
 // ============================================================================
 
-export interface RouteFlightPrediction {
-  flight_number: string;
-  probability: number;
-  confidence: "high" | "medium" | "low";
-  n_observations: number;
+/** Common fields across all prediction output shapes. */
+type BasePrediction = Pick<
+  Prediction,
+  "flight_number" | "probability" | "confidence" | "n_observations"
+>;
+
+export interface RouteFlightPrediction extends BasePrediction {
   route: string; // e.g. "SFO-BOI"
   route_observations: number; // times this flight seen on this specific route
 }
@@ -530,29 +496,14 @@ export function predictRoute(
     route_obs: number;
   }>;
 
-  // Normalize flight numbers to UA format for prediction lookup
-  // (upcoming_flights stores SKW/OO/UAL/etc prefixes)
-  const normalizeForPredict = (fn: string) => {
-    const match = fn.match(/(\d+)$/);
-    return match ? `UA${match[1]}` : fn;
-  };
-
-  // Predict each and de-dupe by normalized flight number (prefer higher route_obs)
+  // Predict each (upcoming_flights stores SKW/OO/UAL/etc, predictor wants UA####)
+  // De-dupe by normalized flight number, keeping highest route_obs
   const seen = new Map<string, RouteFlightPrediction>();
   for (const rf of routeFlights) {
-    const normalized = normalizeForPredict(rf.flight_number);
-    if (seen.has(normalized)) {
-      // Keep the one with more route observations
-      if (rf.route_obs > seen.get(normalized)!.route_observations) {
-        const pred = predictFlight(db, normalized);
-        seen.set(normalized, {
-          ...pred,
-          route: `${rf.departure_airport}-${rf.arrival_airport}`,
-          route_observations: rf.route_obs,
-        });
-      }
-      continue;
-    }
+    const normalized = ensureUAPrefix(rf.flight_number);
+    const existing = seen.get(normalized);
+    if (existing && rf.route_obs <= existing.route_observations) continue;
+
     const pred = predictFlight(db, normalized);
     seen.set(normalized, {
       ...pred,
@@ -576,13 +527,12 @@ export function predictRoute(
 // Itinerary planning (2-hop connection search)
 // ============================================================================
 
-export interface ItineraryLeg {
-  flight_number: string;
-  route: string;
-  probability: number;
-  confidence: "high" | "medium" | "low";
-  n_observations: number;
-}
+// Minimum leg probability to include in full-coverage itineraries
+const MIN_LEG_PROBABILITY = 0.3;
+// Minimum probability for the Starlink leg in partial-coverage fallback
+const PARTIAL_FALLBACK_MIN_PROB = 0.5;
+
+export type ItineraryLeg = BasePrediction & { route: string };
 
 export interface Itinerary {
   via: string | null; // connection hub, null for direct
@@ -614,7 +564,7 @@ export function planItinerary(
   const orig = origin.toUpperCase().trim();
   const dest = destination.toUpperCase().trim();
   const maxItineraries = options.maxItineraries ?? 10;
-  const minLegProb = options.minLegProbability ?? 0.3;
+  const minLegProb = options.minLegProbability ?? MIN_LEG_PROBABILITY;
 
   const itineraries: Itinerary[] = [];
 
@@ -675,7 +625,7 @@ export function planItinerary(
   if (itineraries.length === 0 && bestInbound.size > 0) {
     for (const [hub, leg2] of bestInbound.entries()) {
       if (hub === orig) continue;
-      if (leg2.probability < 0.5) continue; // Only suggest high-probability final legs
+      if (leg2.probability < PARTIAL_FALLBACK_MIN_PROB) continue;
 
       // We don't have Starlink data for origin→hub, so model it as a low-prob
       // "positioning" leg (mainline-ish prior). The user will book this on
@@ -683,7 +633,7 @@ export function planItinerary(
       const positioningLeg: ItineraryLeg = {
         flight_number: "(any)",
         route: `${orig}-${hub}`,
-        probability: 0.02, // Mainline prior — this leg likely won't have Starlink
+        probability: DEFAULT_CONFIG.mainlineColdPrior,
         confidence: "low",
         n_observations: 0,
       };
@@ -751,7 +701,8 @@ if (import.meta.main) {
   } else {
     console.log("Usage:");
     console.log("  --backtest [--holdout=48] [--db=path]   Evaluate model accuracy");
+    console.log("  --cv [--db=path]                        Cross-validate across 24-168h holdouts");
     console.log("  --predict=UA4680 [--db=path]            Predict one flight");
-    console.log("  --sweep [--db=path]                     Hyperparameter search");
+    console.log("  --sweep [--db=path]                     Hyperparameter search (priorStrength)");
   }
 }

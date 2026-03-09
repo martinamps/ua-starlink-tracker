@@ -20,7 +20,12 @@ import {
 } from "../database/database";
 import { planItinerary, predictFlight, predictRoute } from "../scripts/starlink-predictor";
 import type { Flight } from "../types";
-import { normalizeFlightNumber } from "../utils/constants";
+import {
+  buildFlightNumberVariants,
+  ensureUAPrefix,
+  inferFleet,
+  normalizeFlightNumber,
+} from "../utils/constants";
 import { debug, info } from "../utils/logger";
 
 // Protocol versions we support (newest first)
@@ -294,27 +299,8 @@ function toolCheckFlight(
   const endOfDay = startOfDay + 86400;
 
   // Build flight number variants (UA, UAL, express ICAO/IATA codes)
-  const normalized = normalizeFlightNumber(flightNumber);
-  const variants: string[] = [normalized];
-  if (/^UA\d+$/.test(normalized)) {
-    const num = normalized.slice(2);
-    const prefixes = [
-      "UAL",
-      "SKW",
-      "ASH",
-      "RPA",
-      "GJS",
-      "PDT",
-      "ACA",
-      "ENY",
-      "OO",
-      "YX",
-      "YV",
-      "G7",
-    ];
-    for (const p of prefixes) variants.push(`${p}${num}`);
-  }
-
+  const normalized = ensureUAPrefix(flightNumber);
+  const variants = buildFlightNumberVariants(normalized);
   const placeholders = variants.map(() => "?").join(",");
   const flights = db
     .query(
@@ -332,12 +318,7 @@ function toolCheckFlight(
 
   if (flights.length === 0) {
     // No schedule data — offer probability estimate instead
-    const forPredict = /^UA\d+$/.test(normalized)
-      ? normalized
-      : /^\d+$/.test(normalized)
-        ? `UA${normalized}`
-        : normalized;
-    const pred = predictFlight(db, forPredict);
+    const pred = predictFlight(db, normalized);
     const pct = (pred.probability * 100).toFixed(0);
 
     return {
@@ -366,6 +347,13 @@ function toolCheckFlight(
   };
 }
 
+/** Human-readable label for a probability, consistent across all MCP tools. */
+function probabilityLabel(p: number): string {
+  if (p >= 0.7) return "Likely";
+  if (p >= 0.4) return "Possible";
+  return "Unlikely";
+}
+
 function toolPredictFlightStarlink(db: Database, args: { flight_number?: unknown }): ToolResult {
   const input = typeof args.flight_number === "string" ? args.flight_number.trim() : "";
   if (!input) {
@@ -375,34 +363,18 @@ function toolPredictFlightStarlink(db: Database, args: { flight_number?: unknown
     };
   }
 
-  // Normalize to UA#### for lookup (log uses this format)
-  const normalized = normalizeFlightNumber(input);
-  // If still not UA-prefixed and has numeric suffix, force UA prefix for the predictor
-  const forPredict = /^UA\d+$/.test(normalized)
-    ? normalized
-    : /^\d+$/.test(normalized)
-      ? `UA${normalized}`
-      : normalized;
-
+  const forPredict = ensureUAPrefix(input);
   const pred = predictFlight(db, forPredict);
 
   const pct = (pred.probability * 100).toFixed(0);
-  const label =
-    pred.probability >= 0.7
-      ? "Likely"
-      : pred.probability >= 0.5
-        ? "Better than even"
-        : pred.probability >= 0.3
-          ? "Possible"
-          : pred.probability >= 0.1
-            ? "Unlikely"
-            : "Very unlikely";
+  const label = probabilityLabel(pred.probability);
 
   let detail: string;
   let reliabilityNote: string;
-  if (pred.method.startsWith("fleet_prior")) {
-    const fleet = pred.method.includes("express") ? "express (regional)" : "mainline";
-    detail = `⚠️ No historical observations for this flight number — this is just the ${fleet} fleet install rate, treat as an upper bound. If this flight has been operating for a while without appearing in our Starlink history, actual probability may be lower.`;
+  if (pred.method !== "flight_history_smoothed") {
+    const fleet = inferFleet(forPredict);
+    const fleetLabel = fleet === "express" ? "express (regional)" : "mainline";
+    detail = `⚠️ No historical observations for this flight number — this is just the ${fleetLabel} fleet install rate, treat as an upper bound. If this flight has been operating for a while without appearing in our Starlink history, actual probability may be lower.`;
     reliabilityNote = "Low reliability (no data).";
   } else if (pred.confidence === "high") {
     detail = `Based on ${pred.n_observations} historical observation${pred.n_observations === 1 ? "" : "s"} of aircraft assigned to this flight number over the past ~60 days.`;
@@ -543,7 +515,7 @@ function toolPredictRouteStarlink(
   const shown = result.flights.slice(0, limit);
   const lines = shown.map((f) => {
     const pct = (f.probability * 100).toFixed(0);
-    const label = f.probability >= 0.7 ? "Likely" : f.probability >= 0.5 ? "Possible" : "Unlikely";
+    const label = probabilityLabel(f.probability);
     return `  ${f.flight_number.padEnd(8)} (${f.route})  ${pct.padStart(3)}% ${label.padEnd(8)} — ${f.n_observations} obs, ${f.confidence}`;
   });
 
