@@ -20,10 +20,46 @@ import {
 } from "../database/database";
 import type { Flight } from "../types";
 import { normalizeFlightNumber } from "../utils/constants";
-import { info } from "../utils/logger";
+import { debug, info } from "../utils/logger";
 
 // Protocol versions we support (newest first)
 const SUPPORTED_PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26"];
+
+// Plausible server-side event tracking (client-side JS won't fire for API calls)
+const PLAUSIBLE_URL = "https://analytics.martinamps.com/api/event";
+const PLAUSIBLE_DOMAIN = "unitedstarlinktracker.com";
+
+/**
+ * Fire-and-forget Plausible event. Never awaited — analytics must not
+ * block or fail MCP responses.
+ *
+ * Uses a custom "MCP" goal with props so you can break down by tool in the
+ * Plausible dashboard (Behaviors → Goal Conversions → MCP → props).
+ */
+function trackMcpEvent(req: Request, props: { method: string; tool?: string }): void {
+  // Forward the client's UA and IP so Plausible can do bot filtering and
+  // unique-visitor counting as if this were a page view.
+  const ua = req.headers.get("user-agent") || "mcp-client/unknown";
+  const ip =
+    req.headers.get("x-forwarded-for")?.split(",")[0].trim() || req.headers.get("x-real-ip") || "";
+
+  fetch(PLAUSIBLE_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "User-Agent": ua,
+      ...(ip ? { "X-Forwarded-For": ip } : {}),
+    },
+    body: JSON.stringify({
+      name: "MCP",
+      url: `https://${PLAUSIBLE_DOMAIN}/mcp`,
+      domain: PLAUSIBLE_DOMAIN,
+      props,
+    }),
+  }).catch((err) => {
+    debug(`Plausible event failed (non-fatal): ${err instanceof Error ? err.message : err}`);
+  });
+}
 
 // ============================================================================
 // JSON-RPC types
@@ -513,6 +549,14 @@ export async function handleMcpRequest(req: Request, db: Database): Promise<Resp
     const message = err instanceof Error ? err.message : String(err);
     info(`MCP handler error: ${message}`);
     response = rpcError(msg.id ?? null, -32603, `Internal error: ${message}`);
+  }
+
+  // Track meaningful MCP usage in Plausible (skip ping & notifications — noise)
+  if (msg.method === "initialize" || msg.method === "tools/list") {
+    trackMcpEvent(req, { method: msg.method });
+  } else if (msg.method === "tools/call") {
+    const toolName = typeof msg.params?.name === "string" ? msg.params.name : "unknown";
+    trackMcpEvent(req, { method: "tools/call", tool: toolName });
   }
 
   // Notification (no id) → 202 Accepted, empty body
