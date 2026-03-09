@@ -468,6 +468,8 @@ routes["/api/plan-route"] = tracedRoute("/api/plan-route", (req) => {
   const url = new URL(req.url);
   const origin = url.searchParams.get("origin");
   const destination = url.searchParams.get("destination");
+  const maxStopsParam = url.searchParams.get("max_stops");
+  const maxStops = maxStopsParam ? Math.min(Number.parseInt(maxStopsParam, 10), 3) : 2;
 
   if (!origin || !destination) {
     return new Response(JSON.stringify({ error: "Missing origin or destination" }), {
@@ -476,7 +478,10 @@ routes["/api/plan-route"] = tracedRoute("/api/plan-route", (req) => {
     });
   }
 
-  const itineraries = planItinerary(db, origin, destination, { maxItineraries: 12 });
+  const itineraries = planItinerary(db, origin, destination, {
+    maxItineraries: 12,
+    maxStops,
+  });
 
   return new Response(JSON.stringify({ origin, destination, itineraries }), {
     headers: SECURITY_HEADERS.api,
@@ -628,14 +633,14 @@ routes["/mcp"] = tracedRoute("/mcp", async (req) => {
       McpPage,
       "/mcp",
       {
-        siteTitle: "United Starlink MCP Server — Connect Claude, Cursor & AI Assistants",
+        siteTitle: "Add Starlink Tracker to Claude — United Starlink MCP Connector",
         siteDescription:
-          "Free MCP server for United Starlink tracker data. Connect Claude Desktop, Cursor, or any MCP client to check flights, predict Starlink probability, and plan routes with AI assistants.",
+          "Add the United Starlink Tracker to Claude Desktop in 30 seconds — just paste one URL. Ask Claude to check flights, predict Starlink probability, or plan routes with live data.",
         keywords:
-          "united starlink mcp server, starlink mcp, claude united starlink, model context protocol starlink, ai assistant starlink flights, cursor starlink integration",
-        ogTitle: "MCP Server — United Starlink Tracker",
+          "claude starlink connector, united starlink mcp, claude united flights, starlink tracker claude, claude custom connector, ai assistant united wifi",
+        ogTitle: "Add Starlink Tracker to Claude",
         ogDescription:
-          "Connect your AI assistant to live United Starlink data. Check flights, predict probability, plan routes — via Model Context Protocol.",
+          "Paste one URL into Claude Desktop. Ask Claude about United Starlink flights, probabilities, and routing.",
       },
       host
     );

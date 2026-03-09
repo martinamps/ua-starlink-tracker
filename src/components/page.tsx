@@ -2,6 +2,48 @@ import React from "react";
 import type { Aircraft, FleetStats, Flight } from "../types";
 import { PAGE_CONTENT, isUnitedDomain } from "../utils/constants";
 
+// Reusable FAQ accordion item — eliminates ~30 lines of boilerplate per question
+function FaqItem({ q, children }: { q: string; children: React.ReactNode }) {
+  return (
+    <details className="group py-4">
+      <summary className="cursor-pointer list-none flex items-start justify-between">
+        <h3 className="font-display text-base font-medium text-secondary group-hover:text-accent transition-colors">
+          {q}
+        </h3>
+        <svg
+          className="w-4 h-4 text-muted group-open:rotate-45 transition-transform ml-4 flex-shrink-0"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          role="img"
+          aria-label="Expand"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M12 6v6m0 0v6m0-6h6m-6 0H6"
+          />
+        </svg>
+      </summary>
+      <div className="mt-3 text-sm text-muted leading-relaxed">{children}</div>
+    </details>
+  );
+}
+
+function FaqGroup({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="max-w-3xl mx-auto mb-4">
+      <h3 className="font-display text-xs font-semibold text-muted uppercase tracking-wider mb-2 px-1">
+        {title}
+      </h3>
+      <div className="bg-surface rounded-lg border border-subtle p-4">
+        <div className="space-y-0 divide-y divide-subtle">{children}</div>
+      </div>
+    </div>
+  );
+}
+
 interface PageProps {
   total: number;
   starlink: Aircraft[];
@@ -434,9 +476,12 @@ export default function Page({
             </a>
             <a
               href="#integrations"
-              className="px-3 py-1.5 bg-surface border border-subtle rounded text-secondary hover:text-accent hover:border-accent transition-colors"
+              className="px-3 py-1.5 bg-surface border border-subtle rounded text-secondary hover:text-accent hover:border-accent transition-colors inline-flex items-center gap-1.5"
             >
               Tools & MCP
+              <span className="text-[10px] font-mono px-1.5 py-0.5 bg-accent/20 text-accent rounded">
+                NEW
+              </span>
             </a>
           </div>
         </div>
@@ -982,493 +1027,146 @@ export default function Page({
           <h2 className="font-display text-xl md:text-2xl font-semibold text-primary">FAQ</h2>
         </div>
 
-        <div className="max-w-3xl mx-auto bg-surface rounded-lg border border-subtle p-4">
-          {/* FAQ Items */}
-          <div className="space-y-0 divide-y divide-subtle">
-            <details className="group py-4">
-              <summary className="cursor-pointer list-none flex items-start justify-between">
-                <div>
-                  <h3 className="font-display text-base font-medium text-secondary group-hover:text-accent transition-colors">
-                    How do I know if my flight has Starlink?
-                  </h3>
-                </div>
-                <div className="ml-4 flex-shrink-0">
-                  <svg
-                    className="w-4 h-4 text-muted group-open:rotate-45 transition-transform"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                    role="img"
-                    aria-label="Expand"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M12 6v6m0 0v6m0-6h6m-6 0H6"
-                    />
-                  </svg>
-                </div>
-              </summary>
-              <div className="mt-3 text-sm text-muted leading-relaxed">
-                <p>
-                  Check your boarding pass for the tail number and search above. You can also search
-                  by flight number, airport codes, or aircraft type.
-                </p>
-              </div>
-            </details>
+        <FaqGroup title="Checking your flight">
+          <FaqItem q="Does my United flight have Starlink?">
+            <p>
+              Search above by flight number, tail number, or airport code. For a specific flight,{" "}
+              <a href="/check-flight" className="text-accent hover:underline">
+                check a flight by number and date
+              </a>{" "}
+              — if the flight is more than ~2 days out, you'll get a probability estimate based on
+              12,000+ historical aircraft assignments. You can also install our{" "}
+              <a
+                href="https://chromewebstore.google.com/detail/google-flights-starlink-i/jjfljoifenkfdbldliakmmjhdkbhehoi"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-accent hover:underline"
+              >
+                Chrome extension
+              </a>{" "}
+              to see Starlink badges on Google Flights.
+            </p>
+          </FaqItem>
+          <FaqItem q="How do I know if my flight has Starlink?">
+            <p>
+              Check your boarding pass for the tail number and search above. You can also search by
+              flight number, airport codes, or aircraft type.
+            </p>
+          </FaqItem>
+          <FaqItem q="How do I maximize my chances of getting Starlink?">
+            <p className="mb-2">
+              Use the{" "}
+              <a href="/route-planner" className="text-accent hover:underline">
+                Route Planner
+              </a>{" "}
+              — it finds direct flights and 1-stop connections ranked by Starlink probability.
+              Express flights (UA3000-6999, regional jets) have ~
+              {fleetStats?.express.percentage.toFixed(0)}% Starlink coverage vs ~
+              {fleetStats?.mainline.percentage.toFixed(0)}% for mainline, so a connection through a
+              hub can beat a direct mainline flight.
+            </p>
+            <p>
+              For example: DEN→ORD direct is mainline (~2%), but DEN→ASE→ORD is ~90% Starlink on
+              both legs.
+            </p>
+          </FaqItem>
+        </FaqGroup>
 
-            <details className="group py-4">
-              <summary className="cursor-pointer list-none flex items-start justify-between">
-                <div>
-                  <h3 className="font-display text-base font-medium text-secondary group-hover:text-accent transition-colors">
-                    When will my route get Starlink?
-                  </h3>
-                </div>
-                <div className="ml-4 flex-shrink-0">
-                  <svg
-                    className="w-4 h-4 text-muted group-open:rotate-45 transition-transform"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                    role="img"
-                    aria-label="Expand"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M12 6v6m0 0v6m0-6h6m-6 0H6"
-                    />
-                  </svg>
-                </div>
-              </summary>
-              <div className="mt-3 text-sm text-muted leading-relaxed">
-                <p className="mb-2">
-                  <span className="text-green-400">●</span> Regional jets:{" "}
-                  {fleetStats?.express.percentage.toFixed(0)}% complete
-                </p>
-                <p>
-                  <span className="text-accent">●</span> Mainline fleet:{" "}
-                  {fleetStats?.mainline.percentage.toFixed(0)}% complete
-                </p>
-              </div>
-            </details>
+        <FaqGroup title="The rollout">
+          <FaqItem q="Does United have Starlink?">
+            <p>
+              Yes, United Airlines has been installing Starlink since March 2025. Currently{" "}
+              <span className="text-accent">{x}</span> of {y} aircraft are equipped, with 40+ new
+              installations per month.
+            </p>
+          </FaqItem>
+          <FaqItem q="How many United planes have Starlink?">
+            <p>
+              As of today, <span className="text-accent">{x}</span> United aircraft have Starlink
+              WiFi — {fleetStats?.mainline.starlink || 0} mainline and{" "}
+              {fleetStats?.express.starlink || 0} Express planes. That's {percentage}% of the fleet.
+            </p>
+          </FaqItem>
+          <FaqItem q="Do all United flights have Starlink?">
+            <p>
+              Not yet. United is installing Starlink on 40+ planes per month. Currently {percentage}
+              % of the fleet is equipped. Starlink is available on both mainline and United Express
+              aircraft.
+            </p>
+          </FaqItem>
+          <FaqItem q="When will my route get Starlink?">
+            <p className="mb-2">
+              <span className="text-green-400">●</span> Regional jets:{" "}
+              {fleetStats?.express.percentage.toFixed(0)}% complete
+            </p>
+            <p>
+              <span className="text-accent">●</span> Mainline fleet:{" "}
+              {fleetStats?.mainline.percentage.toFixed(0)}% complete
+            </p>
+          </FaqItem>
+          <FaqItem q="When will all United flights have Starlink?">
+            <p>
+              United is installing Starlink on 40+ aircraft per month across a fleet of {y}+ planes.
+              At the current pace, the full rollout will take until 2028–2029. Currently{" "}
+              {percentage}% of the fleet is equipped. Regional jets and narrow-body aircraft are
+              being equipped first.
+            </p>
+          </FaqItem>
+          <FaqItem q="Does United have Starlink on international flights?">
+            <p>
+              Yes. Starlink works seamlessly over oceans, unlike previous WiFi systems. Check the
+              aircraft list above — 787s and 777s with Starlink fly international routes.
+            </p>
+          </FaqItem>
+        </FaqGroup>
 
-            <details className="group py-4">
-              <summary className="cursor-pointer list-none flex items-start justify-between">
-                <div>
-                  <h3 className="font-display text-base font-medium text-secondary group-hover:text-accent transition-colors">
-                    Is United Starlink WiFi free?
-                  </h3>
-                </div>
-                <div className="ml-4 flex-shrink-0">
-                  <svg
-                    className="w-4 h-4 text-muted group-open:rotate-45 transition-transform"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                    role="img"
-                    aria-label="Expand"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M12 6v6m0 0v6m0-6h6m-6 0H6"
-                    />
-                  </svg>
-                </div>
-              </summary>
-              <div className="mt-3 text-sm text-muted leading-relaxed">
-                <p>
-                  Yes, completely free for all passengers. No purchase required, no tiered plans -
-                  just connect and go.
-                </p>
-              </div>
-            </details>
+        <FaqGroup title="About Starlink WiFi">
+          <FaqItem q="Is United Starlink WiFi free?">
+            <p>
+              Yes, completely free for all passengers. No purchase required, no tiered plans — just
+              connect and go.
+            </p>
+          </FaqItem>
+          <FaqItem q="What can I do with Starlink WiFi?">
+            <p>
+              4K streaming, live sports, online gaming, large downloads — everything you can do at
+              home.
+            </p>
+          </FaqItem>
+        </FaqGroup>
 
-            <details className="group py-4">
-              <summary className="cursor-pointer list-none flex items-start justify-between">
-                <div>
-                  <h3 className="font-display text-base font-medium text-secondary group-hover:text-accent transition-colors">
-                    What can I do with Starlink WiFi?
-                  </h3>
-                </div>
-                <div className="ml-4 flex-shrink-0">
-                  <svg
-                    className="w-4 h-4 text-muted group-open:rotate-45 transition-transform"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                    role="img"
-                    aria-label="Expand"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M12 6v6m0 0v6m0-6h6m-6 0H6"
-                    />
-                  </svg>
-                </div>
-              </summary>
-              <div className="mt-3 text-sm text-muted leading-relaxed">
-                <p>
-                  4K streaming, live sports, online gaming, large downloads - everything you can do
-                  at home.
-                </p>
-              </div>
-            </details>
-
-            <details className="group py-4">
-              <summary className="cursor-pointer list-none flex items-start justify-between">
-                <div>
-                  <h3 className="font-display text-base font-medium text-secondary group-hover:text-accent transition-colors">
-                    How does this tracker work?
-                  </h3>
-                </div>
-                <div className="ml-4 flex-shrink-0">
-                  <svg
-                    className="w-4 h-4 text-muted group-open:rotate-45 transition-transform"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                    role="img"
-                    aria-label="Expand"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M12 6v6m0 0v6m0-6h6m-6 0H6"
-                    />
-                  </svg>
-                </div>
-              </summary>
-              <div className="mt-3 text-sm text-muted leading-relaxed">
-                <p>
-                  We aggregate data from multiple aviation data providers, cross-reference with
-                  flight schedules, and verify Starlink status against United's own systems. The
-                  data updates continuously throughout the day.
-                </p>
-                <p className="mt-2 text-xs">
-                  Hat tip to the{" "}
-                  <a
-                    href="https://sites.google.com/site/unitedfleetsite/"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-accent hover:underline"
-                  >
-                    unitedfleetsite
-                  </a>{" "}
-                  community for the original fleet data that helped get this project started.
-                </p>
-              </div>
-            </details>
-
-            <details className="group py-4">
-              <summary className="cursor-pointer list-none flex items-start justify-between">
-                <div>
-                  <h3 className="font-display text-base font-medium text-secondary group-hover:text-accent transition-colors">
-                    Does United have Starlink?
-                  </h3>
-                </div>
-                <div className="ml-4 flex-shrink-0">
-                  <svg
-                    className="w-4 h-4 text-muted group-open:rotate-45 transition-transform"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                    role="img"
-                    aria-label="Expand"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M12 6v6m0 0v6m0-6h6m-6 0H6"
-                    />
-                  </svg>
-                </div>
-              </summary>
-              <div className="mt-3 text-sm text-muted leading-relaxed">
-                <p>
-                  Yes, United Airlines has been installing Starlink since March 2025. Currently{" "}
-                  <span className="text-accent">{x}</span> of {y} aircraft are equipped, with 40+
-                  new installations per month.
-                </p>
-              </div>
-            </details>
-
-            <details className="group py-4">
-              <summary className="cursor-pointer list-none flex items-start justify-between">
-                <div>
-                  <h3 className="font-display text-base font-medium text-secondary group-hover:text-accent transition-colors">
-                    How many United planes have Starlink?
-                  </h3>
-                </div>
-                <div className="ml-4 flex-shrink-0">
-                  <svg
-                    className="w-4 h-4 text-muted group-open:rotate-45 transition-transform"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                    role="img"
-                    aria-label="Expand"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M12 6v6m0 0v6m0-6h6m-6 0H6"
-                    />
-                  </svg>
-                </div>
-              </summary>
-              <div className="mt-3 text-sm text-muted leading-relaxed">
-                <p>
-                  As of today, <span className="text-accent">{x}</span> United aircraft have
-                  Starlink WiFi — {fleetStats?.mainline.starlink || 0} mainline and{" "}
-                  {fleetStats?.express.starlink || 0} Express planes. That's {percentage}% of the
-                  fleet.
-                </p>
-              </div>
-            </details>
-
-            <details className="group py-4">
-              <summary className="cursor-pointer list-none flex items-start justify-between">
-                <div>
-                  <h3 className="font-display text-base font-medium text-secondary group-hover:text-accent transition-colors">
-                    Does my United flight have Starlink?
-                  </h3>
-                </div>
-                <div className="ml-4 flex-shrink-0">
-                  <svg
-                    className="w-4 h-4 text-muted group-open:rotate-45 transition-transform"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                    role="img"
-                    aria-label="Expand"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M12 6v6m0 0v6m0-6h6m-6 0H6"
-                    />
-                  </svg>
-                </div>
-              </summary>
-              <div className="mt-3 text-sm text-muted leading-relaxed">
-                <p>
-                  Search above by flight number, tail number, or airport code. For a specific
-                  flight,{" "}
-                  <a href="/check-flight" className="text-accent hover:underline">
-                    check a flight by number and date
-                  </a>{" "}
-                  — if the flight is more than ~2 days out, you'll get a probability estimate based
-                  on 12,000+ historical aircraft assignments. You can also install our{" "}
-                  <a
-                    href="https://chromewebstore.google.com/detail/google-flights-starlink-i/jjfljoifenkfdbldliakmmjhdkbhehoi"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-accent hover:underline"
-                  >
-                    Chrome extension
-                  </a>{" "}
-                  to see Starlink badges on Google Flights.
-                </p>
-              </div>
-            </details>
-
-            <details className="group py-4">
-              <summary className="cursor-pointer list-none flex items-start justify-between">
-                <div>
-                  <h3 className="font-display text-base font-medium text-secondary group-hover:text-accent transition-colors">
-                    How do I maximize my chances of getting Starlink?
-                  </h3>
-                </div>
-                <div className="ml-4 flex-shrink-0">
-                  <svg
-                    className="w-4 h-4 text-muted group-open:rotate-45 transition-transform"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                    role="img"
-                    aria-label="Expand"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M12 6v6m0 0v6m0-6h6m-6 0H6"
-                    />
-                  </svg>
-                </div>
-              </summary>
-              <div className="mt-3 text-sm text-muted leading-relaxed">
-                <p className="mb-2">
-                  Use the{" "}
-                  <a href="/route-planner" className="text-accent hover:underline">
-                    Route Planner
-                  </a>{" "}
-                  — it finds direct flights and 1-stop connections ranked by Starlink probability.
-                  Express flights (UA3000-6999, regional jets) have ~
-                  {fleetStats?.express.percentage.toFixed(0)}% Starlink coverage vs ~
-                  {fleetStats?.mainline.percentage.toFixed(0)}% for mainline, so a connection
-                  through a hub can beat a direct mainline flight.
-                </p>
-                <p>
-                  For example: DEN→ORD direct is mainline (~2%), but DEN→ASE→ORD is ~90% Starlink on
-                  both legs.
-                </p>
-              </div>
-            </details>
-
-            <details className="group py-4">
-              <summary className="cursor-pointer list-none flex items-start justify-between">
-                <div>
-                  <h3 className="font-display text-base font-medium text-secondary group-hover:text-accent transition-colors">
-                    Can I use this with Claude, ChatGPT, or other AI assistants?
-                  </h3>
-                </div>
-                <div className="ml-4 flex-shrink-0">
-                  <svg
-                    className="w-4 h-4 text-muted group-open:rotate-45 transition-transform"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                    role="img"
-                    aria-label="Expand"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M12 6v6m0 0v6m0-6h6m-6 0H6"
-                    />
-                  </svg>
-                </div>
-              </summary>
-              <div className="mt-3 text-sm text-muted leading-relaxed">
-                <p>
-                  Yes — there's a free{" "}
-                  <a href="/mcp" className="text-accent hover:underline">
-                    MCP server
-                  </a>{" "}
-                  that works with Claude Desktop, Cursor, and any MCP-compatible client. Once
-                  connected, you can ask your AI assistant things like "does UA4680 next week have
-                  Starlink?" or "find me the best way to fly SFO to JAX with Starlink" and get live
-                  tracker data.
-                </p>
-              </div>
-            </details>
-
-            <details className="group py-4">
-              <summary className="cursor-pointer list-none flex items-start justify-between">
-                <div>
-                  <h3 className="font-display text-base font-medium text-secondary group-hover:text-accent transition-colors">
-                    Do all United flights have Starlink?
-                  </h3>
-                </div>
-                <div className="ml-4 flex-shrink-0">
-                  <svg
-                    className="w-4 h-4 text-muted group-open:rotate-45 transition-transform"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                    role="img"
-                    aria-label="Expand"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M12 6v6m0 0v6m0-6h6m-6 0H6"
-                    />
-                  </svg>
-                </div>
-              </summary>
-              <div className="mt-3 text-sm text-muted leading-relaxed">
-                <p>
-                  Not yet. United is installing Starlink on 40+ planes per month. Currently{" "}
-                  {percentage}% of the fleet is equipped. Starlink is available on both mainline and
-                  United Express aircraft.
-                </p>
-              </div>
-            </details>
-
-            <details className="group py-4">
-              <summary className="cursor-pointer list-none flex items-start justify-between">
-                <div>
-                  <h3 className="font-display text-base font-medium text-secondary group-hover:text-accent transition-colors">
-                    Does United have Starlink on international flights?
-                  </h3>
-                </div>
-                <div className="ml-4 flex-shrink-0">
-                  <svg
-                    className="w-4 h-4 text-muted group-open:rotate-45 transition-transform"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                    role="img"
-                    aria-label="Expand"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M12 6v6m0 0v6m0-6h6m-6 0H6"
-                    />
-                  </svg>
-                </div>
-              </summary>
-              <div className="mt-3 text-sm text-muted leading-relaxed">
-                <p>
-                  Yes. Starlink works seamlessly over oceans, unlike previous WiFi systems. Check
-                  the aircraft list above — 787s and 777s with Starlink fly international routes.
-                </p>
-              </div>
-            </details>
-
-            <details className="group py-4">
-              <summary className="cursor-pointer list-none flex items-start justify-between">
-                <div>
-                  <h3 className="font-display text-base font-medium text-secondary group-hover:text-accent transition-colors">
-                    When will all United flights have Starlink?
-                  </h3>
-                </div>
-                <div className="ml-4 flex-shrink-0">
-                  <svg
-                    className="w-4 h-4 text-muted group-open:rotate-45 transition-transform"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                    role="img"
-                    aria-label="Expand"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M12 6v6m0 0v6m0-6h6m-6 0H6"
-                    />
-                  </svg>
-                </div>
-              </summary>
-              <div className="mt-3 text-sm text-muted leading-relaxed">
-                <p>
-                  United is installing Starlink on 40+ aircraft per month across a fleet of {y}+
-                  planes. At the current pace, the full rollout will take until 2028–2029. Currently{" "}
-                  {percentage}% of the fleet is equipped. Regional jets and narrow-body aircraft are
-                  being equipped first.
-                </p>
-              </div>
-            </details>
-          </div>
-        </div>
+        <FaqGroup title="Using this tracker">
+          <FaqItem q="How does this tracker work?">
+            <p>
+              We aggregate data from multiple aviation data providers, cross-reference with flight
+              schedules, and verify Starlink status against United's own systems. The data updates
+              continuously throughout the day.
+            </p>
+            <p className="mt-2 text-xs">
+              Hat tip to the{" "}
+              <a
+                href="https://sites.google.com/site/unitedfleetsite/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-accent hover:underline"
+              >
+                unitedfleetsite
+              </a>{" "}
+              community for the original fleet data that helped get this project started.
+            </p>
+          </FaqItem>
+          <FaqItem q="Can I use this with Claude, ChatGPT, or other AI assistants?">
+            <p>
+              Yes — there's a free{" "}
+              <a href="/mcp" className="text-accent hover:underline">
+                MCP connector
+              </a>{" "}
+              that works with Claude Desktop, Cursor, and any MCP-compatible client. Once connected,
+              you can ask your AI assistant things like "does UA4680 next week have Starlink?" or
+              "find me the best way to fly SFO to JAX with Starlink" and get live tracker data.
+            </p>
+          </FaqItem>
+        </FaqGroup>
       </div>
 
       {/* Last updated timestamp for freshness signal */}

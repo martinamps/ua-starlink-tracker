@@ -1,6 +1,12 @@
-// Check if the current domain is for United Airlines specific tracking
+// Check if the current domain is for United Airlines specific tracking.
+// Treats localhost as United for local dev (the site only serves United content
+// in practice, and the generic "airline" variant is vestigial).
 export function isUnitedDomain(hostname: string): boolean {
-  return hostname.includes("unitedstarlinktracker");
+  return (
+    hostname.includes("unitedstarlinktracker") ||
+    hostname.startsWith("localhost") ||
+    hostname.startsWith("127.0.0.1")
+  );
 }
 
 // Database path

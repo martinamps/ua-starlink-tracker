@@ -185,14 +185,11 @@ const TOOLS = [
   {
     name: "plan_starlink_itinerary",
     description:
-      "PRIMARY TRAVEL-PLANNING TOOL — USE THIS FIRST for any 'how do I get to X with Starlink' " +
-      "or 'best routing for WiFi' question. Searches direct flights AND 1-stop connections, " +
-      "ranked by Starlink probability. Handles the mainline/express asymmetry honestly: when " +
-      "no all-Starlink path exists (common for long-haul — origin→hub legs are mainline, ~2% " +
-      "Starlink), returns PARTIAL coverage options that clearly label the positioning leg as " +
-      "'likely no Starlink' and highlight the Starlink-likely regional leg. Use this instead " +
-      "of composing predict_route_starlink calls yourself — it already does the hub search " +
-      "and gives honest coverage labels.",
+      "PRIMARY TRAVEL-PLANNING TOOL — use first for any 'routing to X with Starlink' question. " +
+      "Multi-stop graph search (up to 2 stops by default, 3 max) through the Starlink route " +
+      "network, ranked by joint probability of ALL legs having Starlink. Finds paths like " +
+      "SFO→SLC→IAH→JAX automatically. When no all-Starlink path exists, returns PARTIAL " +
+      "coverage options (mainline positioning leg + Starlink connection legs).",
     inputSchema: {
       type: "object",
       properties: {
@@ -203,6 +200,13 @@ const TOOLS = [
         destination: {
           type: "string",
           description: "Destination airport IATA code (e.g. 'JAX'). Required.",
+        },
+        max_stops: {
+          type: "integer",
+          minimum: 0,
+          maximum: 3,
+          description:
+            "Maximum number of connection stops (default 2, max 3). 0=direct only, 1=one connection, etc.",
         },
         max_results: {
           type: "integer",
@@ -368,6 +372,23 @@ function toolPredictFlightStarlink(db: Database, args: { flight_number?: unknown
   }
 
   const forPredict = ensureUAPrefix(input);
+
+  // Sanity check: United flight numbers are 1-4 digits (UA1-UA9999).
+  // 5+ digit numbers don't exist — don't return a confident "2% fleet prior"
+  // for fictional flights.
+  const numPart = forPredict.match(/\d+$/)?.[0];
+  if (numPart && numPart.length > 4) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: `${forPredict} is outside United's flight number range (UA1-UA9999). This flight likely doesn't exist.`,
+        },
+      ],
+      isError: true,
+    };
+  }
+
   const pred = predictFlight(db, forPredict);
 
   const pct = (pred.probability * 100).toFixed(0);
@@ -399,7 +420,7 @@ _Not a guarantee — aircraft assignments can change up to departure. For high-c
 
 function toolPlanStarlinkItinerary(
   db: Database,
-  args: { origin?: unknown; destination?: unknown; max_results?: unknown }
+  args: { origin?: unknown; destination?: unknown; max_results?: unknown; max_stops?: unknown }
 ): ToolResult {
   const origin = typeof args.origin === "string" ? args.origin.trim() : "";
   const destination = typeof args.destination === "string" ? args.destination.trim() : "";
@@ -407,6 +428,8 @@ function toolPlanStarlinkItinerary(
     typeof args.max_results === "number" && args.max_results > 0
       ? Math.min(args.max_results, 20)
       : 8;
+  const maxStops =
+    typeof args.max_stops === "number" && args.max_stops >= 0 ? Math.min(args.max_stops, 3) : 2;
 
   if (!origin || !destination) {
     return {
@@ -415,14 +438,31 @@ function toolPlanStarlinkItinerary(
     };
   }
 
-  const itineraries = planItinerary(db, origin, destination, { maxItineraries: maxResults });
-
-  if (itineraries.length === 0) {
+  if (origin.toUpperCase() === destination.toUpperCase()) {
     return {
       content: [
         {
           type: "text",
-          text: `No Starlink-likely routings found from ${origin.toUpperCase()} to ${destination.toUpperCase()}.\n\nThis means either: (a) neither the direct route nor any 1-stop connection through a Starlink-served hub has been observed in our ~65 days of Starlink flight data, or (b) all options are below 30% probability.\n\nTry predict_route_starlink with just destination="${destination.toUpperCase()}" to see which hubs DO have Starlink flights into ${destination.toUpperCase()} — you may be able to position there via a non-Starlink first leg.`,
+          text: `Origin and destination are the same (${origin.toUpperCase()}). Please specify a different destination.`,
+        },
+      ],
+      isError: true,
+    };
+  }
+
+  const itineraries = planItinerary(db, origin, destination, {
+    maxItineraries: maxResults,
+    maxStops,
+  });
+
+  if (itineraries.length === 0) {
+    const orig = origin.toUpperCase();
+    const dest = destination.toUpperCase();
+    return {
+      content: [
+        {
+          type: "text",
+          text: `No Starlink routings found from ${orig} to ${dest} within ${maxStops} stops.\n\nNeither the direct route nor any path through our Starlink route network (~738 observed routes) connects ${orig} to ${dest} above 30% leg probability. If both airports are outside the US regional network, United may not fly this route with Starlink-equipped aircraft at all.`,
         },
       ],
     };
@@ -431,57 +471,61 @@ function toolPlanStarlinkItinerary(
   const fullItins = itineraries.filter((it) => it.coverage === "full");
   const partialItins = itineraries.filter((it) => it.coverage === "partial");
 
-  const renderItin = (it: (typeof itineraries)[number], i: number): string => {
-    if (it.via === null) {
-      const leg = it.legs[0];
-      const pct = (leg.probability * 100).toFixed(0);
-      return `${i + 1}. **DIRECT** ${leg.flight_number} (${leg.route}) — **${pct}%** Starlink (${leg.n_observations} obs, ${leg.confidence})`;
+  const renderLeg = (leg: (typeof itineraries)[number]["legs"][number]): string => {
+    if (leg.flight_number === "(any)") {
+      return `position to ${leg.route.split("-")[1]} (mainline, ~2% Starlink)`;
     }
-    const [leg1, leg2] = it.legs;
-    const l1pct = (leg1.probability * 100).toFixed(0);
-    const l2pct = (leg2.probability * 100).toFixed(0);
-    const l1desc =
-      leg1.flight_number === "(any)"
-        ? `position to ${it.via} (mainline, likely no Starlink)`
-        : `${leg1.flight_number} (${leg1.route}) — ${l1pct}% (${leg1.confidence})`;
-    const l2desc = `${leg2.flight_number} (${leg2.route}) — ${l2pct}% (${leg2.confidence})`;
+    const pct = (leg.probability * 100).toFixed(0);
+    const fleetTag = inferFleet(leg.flight_number) === "mainline" ? " [Mainline]" : "";
+    return `${leg.flight_number}${fleetTag} (${leg.route}) — ${pct}% (${leg.n_observations} obs, ${leg.confidence})`;
+  };
 
-    if (it.coverage === "partial") {
-      return (
-        `${i + 1}. **via ${it.via}** — Starlink on leg 2 only (~${l2pct}%)\n` +
-        `   · Leg 1: ${l1desc}\n` +
-        `   · Leg 2: ${l2desc}`
-      );
-    }
-    const jointPct = (it.joint_probability * 100).toFixed(0);
+  const renderItin = (it: (typeof itineraries)[number], i: number): string => {
+    // One decimal so displayed ranking matches sort order (avoids "72% below 71%" confusion)
+    const jointPct = (it.joint_probability * 100).toFixed(1);
     const atLeastPct = (it.at_least_one_probability * 100).toFixed(0);
-    return (
-      `${i + 1}. **via ${it.via}** — **${jointPct}%** both legs Starlink (${atLeastPct}% at least one)\n` +
-      `   · Leg 1: ${l1desc}\n` +
-      `   · Leg 2: ${l2desc}`
-    );
+    const stops = it.via.length;
+    const viaLabel =
+      stops === 0 ? "DIRECT" : `via ${it.via.join("→")} (${stops} stop${stops > 1 ? "s" : ""})`;
+
+    let header: string;
+    if (it.coverage === "partial") {
+      header = `${i + 1}. **${viaLabel}** — Starlink on final leg only (~${(it.legs[it.legs.length - 1].probability * 100).toFixed(0)}%)`;
+    } else if (stops === 0) {
+      header = `${i + 1}. **${viaLabel}** — **${jointPct}%** Starlink`;
+    } else {
+      header = `${i + 1}. **${viaLabel}** — **${jointPct}%** all legs (${atLeastPct}% at least one)`;
+    }
+
+    const legLines = it.legs.map((l, idx) => `   · Leg ${idx + 1}: ${renderLeg(l)}`).join("\n");
+    return `${header}\n${legLines}`;
   };
 
   const sections: string[] = [];
   if (fullItins.length > 0) {
-    sections.push(`**Full Starlink coverage** (ranked by probability all legs have Starlink):
+    sections.push(`**Full Starlink coverage** (ranked by joint probability; within 1pp, fewer stops wins):
 
 ${fullItins.map(renderItin).join("\n\n")}`);
   }
   if (partialItins.length > 0) {
     const header =
       fullItins.length === 0
-        ? `**No all-Starlink path found** — ${origin.toUpperCase()} to major United hubs are mainline routes (Starlink coverage ~2%). Your best option is to position on a non-Starlink leg, then enjoy Starlink on the connection:\n`
-        : "**Partial coverage** (one leg likely Starlink):\n";
+        ? `**No all-Starlink path found within ${maxStops} stops** — all routes out of ${origin.toUpperCase()} in our Starlink data don't connect to ${destination.toUpperCase()}. Best partial options (position on non-Starlink leg, Starlink on connection):\n`
+        : "**Partial coverage** (positioning leg needed):\n";
     sections.push(`${header}
 ${partialItins.map((it, i) => renderItin(it, fullItins.length + i)).join("\n\n")}`);
   }
 
+  const hasMultiLeg = itineraries.some((it) => it.legs.length > 1);
+  const timingNote = hasMultiLeg
+    ? "\n\n⚠️ Connection timing NOT validated — verify on united.com that the legs connect same-day before booking."
+    : "";
+
   const text = `**Starlink routings: ${origin.toUpperCase()} → ${destination.toUpperCase()}**
 
-${sections.join("\n\n---\n\n")}
+${sections.join("\n\n---\n\n")}${timingNote}
 
-_Probabilities based on historical aircraft assignments. Not guaranteed — for firm answers, check each leg 1-2 days before departure with check_flight._`;
+_Probabilities from historical aircraft assignments. Not guaranteed — use check_flight 1-2 days before departure for firm answers._`;
 
   return { content: [{ type: "text", text }] };
 }
@@ -519,8 +563,14 @@ function toolPredictRouteStarlink(
   const shown = result.flights.slice(0, limit);
   const lines = shown.map((f) => {
     const pct = (f.probability * 100).toFixed(0);
-    const label = probabilityLabel(f.probability);
-    return `  ${f.flight_number.padEnd(8)} (${f.route})  ${pct.padStart(3)}% ${label.padEnd(8)} — ${f.n_observations} obs, ${f.confidence}`;
+    const fleet = inferFleet(f.flight_number);
+    const fleetTag = fleet === "mainline" ? "[Mainline]" : "          "; // align columns
+    // Distinguish "observed and confirmed 0%" from "unobserved (fleet prior)"
+    const obsNote =
+      f.n_observations === 0
+        ? "(unobserved — fleet prior)"
+        : `(${f.n_observations} obs, ${f.confidence})`;
+    return `  ${f.flight_number.padEnd(8)} ${fleetTag} (${f.route})  ${pct.padStart(3)}%  ${obsNote}`;
   });
 
   const routeDesc =
