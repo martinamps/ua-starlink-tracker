@@ -104,9 +104,11 @@ const TOOLS = [
   {
     name: "check_flight",
     description:
-      "Check whether a specific United Airlines flight has Starlink WiFi on a given date. " +
-      "Returns tail number, aircraft type, route, and departure time if the scheduled aircraft " +
-      "is known to have Starlink.",
+      "Check whether a specific United Airlines flight has Starlink WiFi on a given date — " +
+      "FIRM answer from confirmed aircraft assignments (only reliable within ~2 days of departure). " +
+      "If no firm assignment exists yet (flight too far out), automatically falls back to a " +
+      "probability estimate. For comparing multiple future flight options, use predict_flight_starlink " +
+      "or plan_starlink_itinerary instead.",
     inputSchema: {
       type: "object",
       properties: {
@@ -160,13 +162,12 @@ const TOOLS = [
   {
     name: "predict_flight_starlink",
     description:
-      "Predict the PROBABILITY that a United flight will have Starlink WiFi on a future date — " +
-      "even beyond our ~2-day schedule window. Returns a probability estimate (0-1) with confidence level " +
-      "based on 12,000+ historical observations of aircraft assignments. " +
-      "Use this when check_flight returns no data because the flight is too far out, or to compare " +
-      "multiple flight options when planning travel. Reliability varies: high-confidence predictions " +
-      "(5+ historical observations) are accurate ~85%+; low-confidence predictions (0-1 obs) are " +
-      "rough priors only.",
+      "Predict the PROBABILITY that a United flight number gets a Starlink plane — based on " +
+      "12,000+ historical observations. Works for any date (not limited to ~2-day window). " +
+      "Reliability varies: high-confidence (5+ obs) ~85%+ accurate; low-confidence (0-1 obs) " +
+      "is just the fleet prior. Quick heuristic: UA3000-6999 (express/regional) have good odds " +
+      "if history is positive; UA1-2999 (mainline) are almost always NOT Starlink (~2% fleet " +
+      "coverage) regardless of what you might expect.",
     inputSchema: {
       type: "object",
       properties: {
@@ -174,7 +175,8 @@ const TOOLS = [
           type: "string",
           description:
             "United flight number, e.g. 'UA4680' or '4680'. Express flights (UA3000-6999) " +
-            "have higher base rates (~50%) than mainline (~2%).",
+            "have good base rates when history is positive; mainline (UA1-2999) almost never " +
+            "have Starlink (~2% fleet).",
         },
       },
       required: ["flight_number"],
@@ -183,14 +185,14 @@ const TOOLS = [
   {
     name: "plan_starlink_itinerary",
     description:
-      "PRIMARY TRAVEL-PLANNING TOOL: find the best way to fly from origin to destination " +
-      "with maximum Starlink WiFi coverage. Searches direct flights AND 1-stop connections " +
-      "through United hubs, then ranks itineraries by the probability that ALL legs have " +
-      "Starlink (for users who want to be productive for the whole journey). " +
-      "Use this for questions like 'what's the best way to get to JAX with Starlink?' or " +
-      "'I'd rather fly 7 hours with internet than 5 hours without — find me a routing'. " +
-      "Returns: ranked itineraries with per-leg flight numbers, connection hub, and both " +
-      "joint probability (all legs Starlink) and at-least-one probability.",
+      "PRIMARY TRAVEL-PLANNING TOOL — USE THIS FIRST for any 'how do I get to X with Starlink' " +
+      "or 'best routing for WiFi' question. Searches direct flights AND 1-stop connections, " +
+      "ranked by Starlink probability. Handles the mainline/express asymmetry honestly: when " +
+      "no all-Starlink path exists (common for long-haul — origin→hub legs are mainline, ~2% " +
+      "Starlink), returns PARTIAL coverage options that clearly label the positioning leg as " +
+      "'likely no Starlink' and highlight the Starlink-likely regional leg. Use this instead " +
+      "of composing predict_route_starlink calls yourself — it already does the hub search " +
+      "and gives honest coverage labels.",
     inputSchema: {
       type: "object",
       properties: {
@@ -244,9 +246,11 @@ const TOOLS = [
   {
     name: "search_starlink_flights",
     description:
-      "Search upcoming flights operated by Starlink-equipped aircraft. Filter by route " +
-      "(origin and/or destination airport), or find all Starlink flights from a specific airport. " +
-      "Useful for answering 'which United flights from SFO have Starlink this week?'",
+      "Search CONFIRMED Starlink flights in the NEXT ~2 DAYS ONLY — this is a firm-schedule " +
+      "lookup, not a prediction. Data does NOT extend beyond ~2 days (aircraft assignments " +
+      "aren't published further out). For dates beyond that, DO NOT use this tool — use " +
+      "predict_route_starlink or plan_starlink_itinerary for probability-based planning instead. " +
+      "Use this for 'what confirmed Starlink flights leave ORD tomorrow?'",
     inputSchema: {
       type: "object",
       properties: {
@@ -628,13 +632,17 @@ function toolSearchStarlinkFlights(
   const total = flights.length;
   const shown = flights.slice(0, limit);
 
+  // Show the agent where our schedule data ends so it doesn't assume absence = no Starlink ever
+  const latestDeparture = flights.length > 0 ? flights[flights.length - 1].departure_time : now;
+  const dataHorizon = new Date(latestDeparture * 1000).toISOString().slice(0, 10);
+
   if (total === 0) {
     const routeDesc = origin && destination ? `${origin}→${destination}` : origin || destination;
     return {
       content: [
         {
           type: "text",
-          text: `No upcoming Starlink-equipped flights found for ${routeDesc}. Try a major United hub like ORD, DEN, IAH, EWR, or SFO.`,
+          text: `No confirmed Starlink flights found for ${routeDesc} in our ~2-day firm-schedule window.\n\nNote: this tool only sees confirmed assignments through ~${dataHorizon}. If you need dates beyond that, use predict_route_starlink or plan_starlink_itinerary for probability-based planning instead — absence from this tool does NOT mean no Starlink.`,
         },
       ],
     };
@@ -650,7 +658,7 @@ function toolSearchStarlinkFlights(
     content: [
       {
         type: "text",
-        text: `Found ${total} upcoming Starlink flight(s) for ${routeDesc} (showing ${shown.length}):\n\n${lines.join("\n")}`,
+        text: `Found ${total} confirmed Starlink flight(s) for ${routeDesc} (showing ${shown.length}):\n\n${lines.join("\n")}\n\nSchedule data extends through ~${dataHorizon}. For dates beyond that, use predict_route_starlink or plan_starlink_itinerary.`,
       },
     ],
   };
@@ -669,6 +677,7 @@ function rpcResult(id: string | number | null, result: unknown): JsonRpcSuccess 
 }
 
 function handleInitialize(
+  db: Database,
   id: string | number | null,
   params: Record<string, unknown> | undefined
 ): JsonRpcResponse {
@@ -681,6 +690,12 @@ function handleInitialize(
       ? clientVersion
       : SUPPORTED_PROTOCOL_VERSIONS[0];
 
+  // Include LIVE fleet stats in instructions so the agent has accurate priors
+  // and doesn't hallucinate about mainline coverage (which is ~2%, not "decent").
+  const fleetStats = getFleetStats(db);
+  const expressPct = fleetStats.express.percentage.toFixed(0);
+  const mainlinePct = fleetStats.mainline.percentage.toFixed(1);
+
   return rpcResult(id, {
     protocolVersion,
     capabilities: {
@@ -690,14 +705,7 @@ function handleInitialize(
       name: "united-starlink-tracker",
       version: "1.0.0",
     },
-    instructions:
-      "This server provides live data about which United Airlines aircraft have SpaceX Starlink WiFi installed. " +
-      "For travel planning: use plan_starlink_itinerary to find the best routing (including connections) " +
-      "that maximizes Starlink coverage, predict_route_starlink for per-leg probability details, " +
-      "and predict_flight_starlink for a specific flight number. " +
-      "For near-term confirmation: use check_flight (firm assignments, ~2 days out) and " +
-      "search_starlink_flights (next 2 days of confirmed Starlink flights). " +
-      "For reference: get_fleet_stats (install progress) and list_starlink_aircraft (equipped planes).",
+    instructions: `This server provides live data about which United Airlines aircraft have SpaceX Starlink WiFi installed.\n\nCRITICAL CONTEXT — the Starlink rollout is highly asymmetric:\n  • Express (regional jets, UA3000-6999): ~${expressPct}% have Starlink\n  • Mainline (737/787/etc, UA1-2999): only ~${mainlinePct}% have Starlink\nThis means long-haul legs between major cities (SFO→EWR, SFO→ORD, etc.) are almost always mainline and therefore almost NEVER have Starlink. Do NOT tell users that mainline or transcontinental flights have 'decent odds' — they don't. The only reliable Starlink coverage is on regional jet hops.\n\nTOOL SELECTION:\n  • For 'how do I get to X with Starlink' / 'find me a routing': ALWAYS START with plan_starlink_itinerary. It does the full search (direct + 1-stop) and honestly labels partial-coverage options (e.g., mainline positioning leg + Starlink regional leg).\n  • For 'does flight UA#### usually have Starlink': predict_flight_starlink\n  • For 'is UA#### on <date> confirmed Starlink' (within ~2 days): check_flight\n  • search_starlink_flights ONLY shows the next ~2 days of confirmed schedules — NOT useful for dates beyond that. For future dates use the predict_* tools instead.\n  • For current install %: get_fleet_stats (though current numbers are above)\n\nIf you're planning a trip with a mainline first leg: be upfront that the long leg almost certainly won't have Starlink, and the value is in the regional connection leg.`,
   });
 }
 
@@ -749,7 +757,7 @@ function dispatch(db: Database, msg: JsonRpcRequest): JsonRpcResponse | null {
 
   switch (msg.method) {
     case "initialize":
-      return handleInitialize(id, msg.params);
+      return handleInitialize(db, id, msg.params);
 
     case "notifications/initialized":
       // Stateless: acknowledge and discard
