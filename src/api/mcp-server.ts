@@ -523,7 +523,7 @@ ${fullItins.map(renderItin).join("\n\n")}`);
     const header =
       fullItins.length === 0
         ? `**No all-Starlink path found within ${maxStops} stops.** Partial coverage options (positioning leg likely no Starlink, then Starlink on the connection):\n`
-        : "**Partial coverage** (positioning leg needed):\n";
+        : "**Baseline: 1-stop positioning + Starlink connection** (for comparison — what a 'normal' routing gets you):\n";
     sections.push(`${header}
 ${partialItins.map((it, i) => renderItin(it, fullItins.length + i)).join("\n\n")}`);
   }
