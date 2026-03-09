@@ -13,6 +13,7 @@
     "discover-stats": "bun run src/scripts/fleet-discovery.ts --stats",
     "install-browser": "PLAYWRIGHT_BROWSERS_PATH=./.playwright-browsers bunx playwright install chromium",
     "db-status": "bun run src/scripts/db-status.ts",
+    "predict-backtest": "bun run src/scripts/starlink-predictor.ts --backtest",
     "reset-flights": "bun run src/scripts/reset-flight-checks.ts",
     "lint": "biome check .",
     "format": "biome format --write .",

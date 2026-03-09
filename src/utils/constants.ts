@@ -57,6 +57,41 @@ export function normalizeFlightNumber(flightNumber: string): string {
   return flightNumber;
 }
 
+/**
+ * Force a flight number into exact UA#### format for predictor lookup.
+ * Composes normalizeFlightNumber + bare-digit handling.
+ * "SKW5882" → "UA5882", "5882" → "UA5882", "UA5882" → "UA5882"
+ */
+export function ensureUAPrefix(flightNumber: string): string {
+  const normalized = normalizeFlightNumber(flightNumber.trim());
+  if (/^UA\d+$/.test(normalized)) return normalized;
+  if (/^\d+$/.test(normalized)) return `UA${normalized}`;
+  return normalized;
+}
+
+/**
+ * Build all carrier-prefix variants of a UA flight number for DB lookup.
+ * The DB stores operating-carrier codes (SKW5212, OO5212, UAL544) but users
+ * enter UA numbers. Returns [input, UAL###, SKW###, ..., OO###, ...].
+ */
+export function buildFlightNumberVariants(uaFlightNumber: string): string[] {
+  if (!/^UA\d+$/.test(uaFlightNumber)) return [uaFlightNumber];
+  const num = uaFlightNumber.slice(2);
+  return [uaFlightNumber, ...UNITED_CARRIER_PREFIXES.map((p) => `${p}${num}`)];
+}
+
+/**
+ * Infer fleet type from flight number range.
+ * United Express (regional) flights are typically UA3000-6999.
+ */
+export function inferFleet(flightNumber: string): "express" | "mainline" | "unknown" {
+  const numMatch = flightNumber.match(/(\d+)$/);
+  if (!numMatch) return "unknown";
+  const num = Number.parseInt(numMatch[1], 10);
+  if (num >= 3000 && num <= 6999) return "express";
+  return "mainline";
+}
+
 // Page-specific content that changes based on the domain
 export const PAGE_CONTENT = {
   pageTitle: {

@@ -18,8 +18,11 @@ import { info, error as logError } from "./src/utils/logger";
 const KNOWN_ROUTES = new Set([
   "/",
   "/check-flight",
+  "/route-planner",
   "/api/data",
   "/api/check-flight",
+  "/api/predict-flight",
+  "/api/plan-route",
   "/api/mismatches",
   "/api/fleet-discovery",
   "/mcp",
@@ -95,6 +98,7 @@ import { checkNewPlanes, startFlightUpdater } from "./src/api/flight-updater";
 import { handleMcpRequest } from "./src/api/mcp-server";
 import CheckFlightPage from "./src/components/check-flight-page";
 import Page from "./src/components/page";
+import RoutePlannerPage from "./src/components/route-planner-page";
 import {
   getFleetDiscoveryStats,
   getFleetStats,
@@ -110,11 +114,14 @@ import {
 } from "./src/database/database";
 import { startFleetDiscovery } from "./src/scripts/fleet-discovery";
 import { startFleetSync } from "./src/scripts/fleet-sync";
+import { planItinerary, predictFlight } from "./src/scripts/starlink-predictor";
 import { startStarlinkVerifier } from "./src/scripts/starlink-verifier";
 import type { ApiResponse, Flight } from "./src/types";
 import {
   CONTENT_TYPES,
   SECURITY_HEADERS,
+  buildFlightNumberVariants,
+  ensureUAPrefix,
   getDomainContent,
   isUnitedDomain,
   normalizeFlightNumber,
@@ -347,32 +354,8 @@ routes["/api/check-flight"] = tracedRoute("/api/check-flight", (req) => {
 
   // Build list of possible flight number variants to search for
   // DB stores operating carrier codes (SKW5212, OO5212, etc.) but users enter UA5212
-  const normalizedFlightNumber = normalizeFlightNumber(flightNumber);
-  const flightNumberVariants: string[] = [normalizedFlightNumber];
-
-  // If user entered a UA number, also search for operating carrier equivalents
-  // (FR24 stores callsigns/alternates which use various prefix formats)
-  if (/^UA\d+$/.test(normalizedFlightNumber)) {
-    const numericPart = normalizedFlightNumber.slice(2);
-    const carrierPrefixes = [
-      "UAL", // United mainline ICAO callsign
-      "SKW",
-      "ASH",
-      "RPA",
-      "GJS",
-      "PDT",
-      "ACA",
-      "ENY", // Express ICAO
-      "OO",
-      "YX",
-      "YV",
-      "G7", // Express IATA
-    ];
-    for (const carrier of carrierPrefixes) {
-      flightNumberVariants.push(`${carrier}${numericPart}`);
-    }
-  }
-
+  const normalizedFlightNumber = ensureUAPrefix(flightNumber);
+  const flightNumberVariants = buildFlightNumberVariants(normalizedFlightNumber);
   const placeholders = flightNumberVariants.map(() => "?").join(", ");
   const matchingFlights = db
     .query(
@@ -435,6 +418,66 @@ routes["/api/check-flight"] = tracedRoute("/api/check-flight", (req) => {
   };
 
   return new Response(JSON.stringify(response), {
+    headers: SECURITY_HEADERS.api,
+  });
+});
+
+// API endpoint: predict Starlink probability for a flight (beyond firm schedule window)
+routes["/api/predict-flight"] = tracedRoute("/api/predict-flight", (req) => {
+  if (req.method !== "GET") {
+    return new Response(JSON.stringify({ error: "Method not allowed" }), {
+      status: 405,
+      headers: SECURITY_HEADERS.api,
+    });
+  }
+
+  const url = new URL(req.url);
+  const flightNumber = url.searchParams.get("flight_number");
+
+  if (!flightNumber) {
+    return new Response(JSON.stringify({ error: "Missing flight_number" }), {
+      status: 400,
+      headers: SECURITY_HEADERS.api,
+    });
+  }
+
+  const pred = predictFlight(db, ensureUAPrefix(flightNumber));
+
+  return new Response(
+    JSON.stringify({
+      flight_number: pred.flight_number,
+      probability: pred.probability,
+      confidence: pred.confidence,
+      method: pred.method,
+      n_observations: pred.n_observations,
+    }),
+    { headers: SECURITY_HEADERS.api }
+  );
+});
+
+// API endpoint: plan itinerary (full/partial Starlink coverage, with connections)
+routes["/api/plan-route"] = tracedRoute("/api/plan-route", (req) => {
+  if (req.method !== "GET") {
+    return new Response(JSON.stringify({ error: "Method not allowed" }), {
+      status: 405,
+      headers: SECURITY_HEADERS.api,
+    });
+  }
+
+  const url = new URL(req.url);
+  const origin = url.searchParams.get("origin");
+  const destination = url.searchParams.get("destination");
+
+  if (!origin || !destination) {
+    return new Response(JSON.stringify({ error: "Missing origin or destination" }), {
+      status: 400,
+      headers: SECURITY_HEADERS.api,
+    });
+  }
+
+  const itineraries = planItinerary(db, origin, destination, { maxItineraries: 12 });
+
+  return new Response(JSON.stringify({ origin, destination, itineraries }), {
     headers: SECURITY_HEADERS.api,
   });
 });
@@ -616,13 +659,16 @@ United Airlines began installing SpaceX Starlink WiFi on March 7, 2025. The serv
 ## Pages
 
 - [Homepage](https://unitedstarlinktracker.com/): Live tracker with all Starlink-equipped aircraft, fleet statistics, search by tail number/flight number/route
-- [Check a Flight](https://unitedstarlinktracker.com/check-flight): Check if a specific United flight has Starlink WiFi by flight number and date
+- [Check a Flight](https://unitedstarlinktracker.com/check-flight): Check if a specific United flight has Starlink WiFi by flight number and date. Falls back to probability estimate for future flights.
+- [Route Planner](https://unitedstarlinktracker.com/route-planner): Find the best routing (direct or 1-stop) to maximize Starlink coverage. Ranks itineraries by probability.
 - [API - Check Flight](https://unitedstarlinktracker.com/api/check-flight?flight_number=UA123&date=2026-01-22): JSON API to check Starlink status for a specific flight
+- [API - Predict Flight](https://unitedstarlinktracker.com/api/predict-flight?flight_number=UA4680): Probability estimate based on 12k+ historical observations
+- [API - Plan Route](https://unitedstarlinktracker.com/api/plan-route?origin=SFO&destination=JAX): Full/partial coverage itinerary search
 - [API - Fleet Data](https://unitedstarlinktracker.com/api/data): Full JSON dataset of all Starlink-equipped aircraft and flights
 
 ## MCP Server (for AI assistants)
 
-- [MCP Endpoint](https://unitedstarlinktracker.com/mcp): Model Context Protocol server with tools for check_flight, get_fleet_stats, list_starlink_aircraft, search_starlink_flights. Transport: streamable HTTP (stateless).
+- [MCP Endpoint](https://unitedstarlinktracker.com/mcp): Model Context Protocol server with tools for check_flight, predict_flight_starlink, plan_starlink_itinerary, predict_route_starlink, get_fleet_stats, list_starlink_aircraft, search_starlink_flights. Transport: streamable HTTP (stateless).
 
 ## Chrome Extension
 
@@ -651,6 +697,12 @@ routes["/sitemap.xml"] = tracedRoute("/sitemap.xml", (req) => {
   </url>
   <url>
     <loc>${baseUrl}/check-flight</loc>
+    <lastmod>${new Date().toISOString()}</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>${baseUrl}/route-planner</loc>
     <lastmod>${new Date().toISOString()}</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.8</priority>
@@ -724,6 +776,64 @@ async function handleRequest(req: Request): Promise<Response> {
       .replace(
         `<meta property="og:url" content="https://{{host}}/" />`,
         `<meta property="og:url" content="https://{{host}}/check-flight" />`
+      );
+    const html = renderHtml(template, htmlVariables);
+    return new Response(html, { headers: SECURITY_HEADERS.html });
+  }
+
+  // Route Planner page (also handles /route-planner/SFO/JAX for shared links)
+  if (url.pathname === "/route-planner" || url.pathname.startsWith("/route-planner/")) {
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      return new Response("Method not allowed", {
+        status: 405,
+        headers: { "Content-Type": "text/plain" },
+      });
+    }
+
+    const reactHtml = ReactDOMServer.renderToString(React.createElement(RoutePlannerPage));
+
+    const fleetStats = getFleetStats(db);
+    const totalCount = getTotalCount(db);
+    const starlinkPlanes = getStarlinkPlanes(db);
+    const starlinkCount = starlinkPlanes.length;
+    const percentage = totalCount > 0 ? ((starlinkCount / totalCount) * 100).toFixed(2) : "0.00";
+
+    const htmlVariables: Record<string, string> = {
+      siteTitle: "Starlink Route Planner — Find United Flights With Starlink WiFi",
+      siteDescription:
+        "Find the best way to fly United with Starlink WiFi. Compare direct flights and smart connections ranked by Starlink probability. Plan productive travel with full-coverage routings.",
+      keywords:
+        "united starlink route planner, best united route for starlink, plan united starlink trip, starlink flight connections, united wifi routing",
+      ogTitle: "Starlink Route Planner — United Airlines",
+      ogDescription:
+        "Find direct flights and smart connections with the highest Starlink probability. Sometimes DEN→ASE→ORD beats flying direct.",
+      analyticsUrl: isUnitedDomain(host)
+        ? "unitedstarlinktracker.com"
+        : "airlinestarlinktracker.com",
+      html: reactHtml,
+      host,
+      totalCount: starlinkCount.toString(),
+      totalAircraftCount: totalCount.toString(),
+      lastUpdated: getLastUpdated(db),
+      isUnited: "true",
+      currentDate: new Date().toLocaleDateString(),
+      isoDate: new Date().toISOString(),
+      mainlineCount: (fleetStats?.mainline.starlink || 0).toString(),
+      expressCount: (fleetStats?.express.starlink || 0).toString(),
+      percentage: percentage,
+      mainlinePercentage: (fleetStats?.mainline.percentage || 0).toFixed(2),
+      expressPercentage: (fleetStats?.express.percentage || 0).toFixed(2),
+    };
+
+    let template = await getHtmlTemplate();
+    template = template
+      .replace(
+        `<link rel="canonical" href="https://{{host}}/" />`,
+        `<link rel="canonical" href="https://{{host}}/route-planner" />`
+      )
+      .replace(
+        `<meta property="og:url" content="https://{{host}}/" />`,
+        `<meta property="og:url" content="https://{{host}}/route-planner" />`
       );
     const html = renderHtml(template, htmlVariables);
     return new Response(html, { headers: SECURITY_HEADERS.html });
@@ -833,6 +943,8 @@ Bun.serve({
       route = "/static/*";
     } else if (url.pathname.startsWith("/check-flight")) {
       route = "/check-flight";
+    } else if (url.pathname.startsWith("/route-planner")) {
+      route = "/route-planner";
     } else if (url.pathname !== "/") {
       route = "/*"; // 404 catch-all
     }

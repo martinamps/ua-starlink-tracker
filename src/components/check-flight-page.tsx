@@ -336,13 +336,39 @@ export default function CheckFlightPage() {
                       '<div class="pt-2"><a href="' + faUrl + '" target="_blank" rel="noopener noreferrer" class="text-accent hover:underline text-xs">View on FlightAware →</a></div>' +
                       '</div></div>';
                   } else {
-                    resultDiv.innerHTML = '<div class="bg-surface-elevated border border-subtle rounded p-4">' +
-                      '<div class="flex items-center gap-2 mb-2">' +
-                      '<span class="text-muted text-lg">—</span>' +
-                      '<span class="font-display font-medium text-secondary">No Starlink found for this flight</span>' +
-                      '</div>' +
-                      '<p class="text-sm text-muted">This flight may not have a Starlink-equipped aircraft assigned yet, or the aircraft assignment hasn\\\'t been published. Try checking closer to your departure date.</p>' +
-                      '</div>';
+                    // No firm data — fetch probability estimate
+                    resultDiv.innerHTML = '<div class="text-sm text-muted font-mono">No firm assignment yet — estimating probability...</div>';
+                    fetch('/api/predict-flight?flight_number=' + encodeURIComponent(flightNumber))
+                      .then(function(r) { return r.json(); })
+                      .then(function(pred) {
+                        var pct = Math.round(pred.probability * 100);
+                        var isLikely = pct >= 70;
+                        var isPossible = pct >= 40 && pct < 70;
+                        var label = isLikely ? 'Likely' : isPossible ? 'Possible' : 'Unlikely';
+                        var barColor = isLikely ? 'bg-green-500' : isPossible ? 'bg-yellow-500' : 'bg-surface-elevated';
+                        var borderColor = isLikely ? 'border-green-700/50 bg-green-900/20' : isPossible ? 'border-yellow-700/50 bg-yellow-900/20' : 'border-subtle bg-surface-elevated';
+                        var iconColor = isLikely ? 'text-green-400' : isPossible ? 'text-yellow-400' : 'text-muted';
+                        var detail = pred.n_observations > 0
+                          ? 'Based on <span class="text-secondary">' + pred.n_observations + '</span> historical observation' + (pred.n_observations === 1 ? '' : 's') + ' of aircraft on this flight number (' + pred.confidence + ' confidence).'
+                          : 'No historical data for this flight number — this is the fleet install rate (treat as upper bound).';
+                        resultDiv.innerHTML = '<div class="rounded p-4 border ' + borderColor + '">' +
+                          '<div class="flex items-center gap-2 mb-3">' +
+                          '<span class="text-lg ' + iconColor + '">~</span>' +
+                          '<span class="font-display font-semibold ' + iconColor + '">' + label + ' — estimated ' + pct + '% chance of Starlink</span>' +
+                          '</div>' +
+                          '<div class="mb-3"><div class="w-full bg-base rounded-full h-2 overflow-hidden"><div class="' + barColor + ' h-2 rounded-full" style="width: ' + pct + '%"></div></div></div>' +
+                          '<p class="text-xs text-muted leading-relaxed">' + detail + ' Aircraft assignments firm up ~2 days before departure — check back then for a confirmed answer.</p>' +
+                          '</div>';
+                      })
+                      .catch(function() {
+                        resultDiv.innerHTML = '<div class="bg-surface-elevated border border-subtle rounded p-4">' +
+                          '<div class="flex items-center gap-2 mb-2">' +
+                          '<span class="text-muted text-lg">—</span>' +
+                          '<span class="font-display font-medium text-secondary">No Starlink found for this flight</span>' +
+                          '</div>' +
+                          '<p class="text-sm text-muted">Try checking closer to your departure date.</p>' +
+                          '</div>';
+                      });
                   }
                 })
                 .catch(function(err) {
