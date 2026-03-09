@@ -22,6 +22,7 @@ const KNOWN_ROUTES = new Set([
   "/api/check-flight",
   "/api/mismatches",
   "/api/fleet-discovery",
+  "/mcp",
   "/sitemap.xml",
   "/robots.txt",
   "/llms.txt",
@@ -91,6 +92,7 @@ process.on("uncaughtException", (err) => {
 });
 
 import { checkNewPlanes, startFlightUpdater } from "./src/api/flight-updater";
+import { handleMcpRequest } from "./src/api/mcp-server";
 import CheckFlightPage from "./src/components/check-flight-page";
 import Page from "./src/components/page";
 import {
@@ -261,7 +263,7 @@ const staticFiles = [
 ];
 
 // Generate routes
-const routes: Record<string, Response | ((req: Request) => Response)> = {};
+const routes: Record<string, Response | ((req: Request) => Response | Promise<Response>)> = {};
 
 // Add static file routes
 for (const file of staticFiles) {
@@ -557,6 +559,10 @@ routes["/api/fleet-discovery"] = tracedRoute("/api/fleet-discovery", (req) => {
   });
 });
 
+// MCP (Model Context Protocol) endpoint for AI assistants
+// Stateless streamable HTTP server — no sessions, tools-only
+routes["/mcp"] = tracedRoute("/mcp", (req) => handleMcpRequest(req, db));
+
 // robots.txt route
 routes["/robots.txt"] = new Response(
   `User-agent: GPTBot
@@ -602,6 +608,10 @@ United Airlines began installing SpaceX Starlink WiFi on March 7, 2025. The serv
 - [Check a Flight](https://unitedstarlinktracker.com/check-flight): Check if a specific United flight has Starlink WiFi by flight number and date
 - [API - Check Flight](https://unitedstarlinktracker.com/api/check-flight?flight_number=UA123&date=2026-01-22): JSON API to check Starlink status for a specific flight
 - [API - Fleet Data](https://unitedstarlinktracker.com/api/data): Full JSON dataset of all Starlink-equipped aircraft and flights
+
+## MCP Server (for AI assistants)
+
+- [MCP Endpoint](https://unitedstarlinktracker.com/mcp): Model Context Protocol server with tools for check_flight, get_fleet_stats, list_starlink_aircraft, search_starlink_flights. Transport: streamable HTTP (stateless).
 
 ## Chrome Extension
 
