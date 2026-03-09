@@ -97,6 +97,7 @@ process.on("uncaughtException", (err) => {
 import { checkNewPlanes, startFlightUpdater } from "./src/api/flight-updater";
 import { handleMcpRequest } from "./src/api/mcp-server";
 import CheckFlightPage from "./src/components/check-flight-page";
+import McpPage from "./src/components/mcp-page";
 import Page from "./src/components/page";
 import RoutePlannerPage from "./src/components/route-planner-page";
 import {
@@ -614,8 +615,33 @@ routes["/api/fleet-discovery"] = tracedRoute("/api/fleet-discovery", (req) => {
 });
 
 // MCP (Model Context Protocol) endpoint for AI assistants
-// Stateless streamable HTTP server — no sessions, tools-only
-routes["/mcp"] = tracedRoute("/mcp", (req) => handleMcpRequest(req, db));
+// Content-negotiated: browsers (Accept: text/html) get docs page,
+// MCP clients (POST with application/json) get JSON-RPC.
+// Stateless streamable HTTP — no sessions, tools-only.
+routes["/mcp"] = tracedRoute("/mcp", async (req) => {
+  // Browsers navigate with GET + Accept: text/html. Serve docs page.
+  // MCP clients: POST (JSON-RPC) or GET (SSE attempt → 405 from handleMcpRequest).
+  const accept = req.headers.get("accept") || "";
+  if (req.method === "GET" && accept.includes("text/html")) {
+    const host = req.headers.get("host") || "unitedstarlinktracker.com";
+    return renderSubPage(
+      McpPage,
+      "/mcp",
+      {
+        siteTitle: "United Starlink MCP Server — Connect Claude, Cursor & AI Assistants",
+        siteDescription:
+          "Free MCP server for United Starlink tracker data. Connect Claude Desktop, Cursor, or any MCP client to check flights, predict Starlink probability, and plan routes with AI assistants.",
+        keywords:
+          "united starlink mcp server, starlink mcp, claude united starlink, model context protocol starlink, ai assistant starlink flights, cursor starlink integration",
+        ogTitle: "MCP Server — United Starlink Tracker",
+        ogDescription:
+          "Connect your AI assistant to live United Starlink data. Check flights, predict probability, plan routes — via Model Context Protocol.",
+      },
+      host
+    );
+  }
+  return handleMcpRequest(req, db);
+});
 
 // robots.txt route
 routes["/robots.txt"] = new Response(
@@ -668,7 +694,8 @@ United Airlines began installing SpaceX Starlink WiFi on March 7, 2025. The serv
 
 ## MCP Server (for AI assistants)
 
-- [MCP Endpoint](https://unitedstarlinktracker.com/mcp): Model Context Protocol server with tools for check_flight, predict_flight_starlink, plan_starlink_itinerary, predict_route_starlink, get_fleet_stats, list_starlink_aircraft, search_starlink_flights. Transport: streamable HTTP (stateless).
+- [MCP Docs & Setup](https://unitedstarlinktracker.com/mcp): Setup instructions for Claude Desktop, Cursor, and other MCP clients
+- [MCP Endpoint](https://unitedstarlinktracker.com/mcp): Model Context Protocol server (POST with application/json). Tools: check_flight, predict_flight_starlink, plan_starlink_itinerary, predict_route_starlink, get_fleet_stats, list_starlink_aircraft, search_starlink_flights. Transport: streamable HTTP (stateless).
 
 ## Chrome Extension
 
@@ -707,6 +734,12 @@ routes["/sitemap.xml"] = tracedRoute("/sitemap.xml", (req) => {
     <changefreq>weekly</changefreq>
     <priority>0.8</priority>
   </url>
+  <url>
+    <loc>${baseUrl}/mcp</loc>
+    <lastmod>${new Date().toISOString()}</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
 </urlset>`;
 
   return new Response(sitemap, {
@@ -716,6 +749,64 @@ routes["/sitemap.xml"] = tracedRoute("/sitemap.xml", (req) => {
     },
   });
 });
+
+interface PageMeta {
+  siteTitle: string;
+  siteDescription: string;
+  keywords: string;
+  ogTitle: string;
+  ogDescription: string;
+}
+
+/**
+ * Render a sub-page (check-flight, route-planner, mcp) with shared boilerplate:
+ * fleet stats, template loading, canonical/og:url overrides.
+ */
+async function renderSubPage(
+  component: React.ComponentType,
+  canonicalPath: string,
+  meta: PageMeta,
+  host: string
+): Promise<Response> {
+  const reactHtml = ReactDOMServer.renderToString(React.createElement(component));
+
+  const fleetStats = getFleetStats(db);
+  const totalCount = getTotalCount(db);
+  const starlinkPlanes = getStarlinkPlanes(db);
+  const starlinkCount = starlinkPlanes.length;
+  const percentage = totalCount > 0 ? ((starlinkCount / totalCount) * 100).toFixed(2) : "0.00";
+
+  const htmlVariables: Record<string, string> = {
+    ...meta,
+    analyticsUrl: isUnitedDomain(host) ? "unitedstarlinktracker.com" : "airlinestarlinktracker.com",
+    html: reactHtml,
+    host,
+    totalCount: starlinkCount.toString(),
+    totalAircraftCount: totalCount.toString(),
+    lastUpdated: getLastUpdated(db),
+    isUnited: "true",
+    currentDate: new Date().toLocaleDateString(),
+    isoDate: new Date().toISOString(),
+    mainlineCount: (fleetStats?.mainline.starlink || 0).toString(),
+    expressCount: (fleetStats?.express.starlink || 0).toString(),
+    percentage: percentage,
+    mainlinePercentage: (fleetStats?.mainline.percentage || 0).toFixed(2),
+    expressPercentage: (fleetStats?.express.percentage || 0).toFixed(2),
+  };
+
+  let template = await getHtmlTemplate();
+  template = template
+    .replace(
+      `<link rel="canonical" href="https://{{host}}/" />`,
+      `<link rel="canonical" href="https://{{host}}${canonicalPath}" />`
+    )
+    .replace(
+      `<meta property="og:url" content="https://{{host}}/" />`,
+      `<meta property="og:url" content="https://{{host}}${canonicalPath}" />`
+    );
+  const html = renderHtml(template, htmlVariables);
+  return new Response(html, { headers: SECURITY_HEADERS.html });
+}
 
 // Request handler for home page and static files
 async function handleRequest(req: Request): Promise<Response> {
@@ -730,55 +821,21 @@ async function handleRequest(req: Request): Promise<Response> {
         headers: { "Content-Type": "text/plain" },
       });
     }
-
-    const reactHtml = ReactDOMServer.renderToString(React.createElement(CheckFlightPage));
-
-    const fleetStats = getFleetStats(db);
-    const totalCount = getTotalCount(db);
-    const starlinkPlanes = getStarlinkPlanes(db);
-    const starlinkCount = starlinkPlanes.length;
-    const percentage = totalCount > 0 ? ((starlinkCount / totalCount) * 100).toFixed(2) : "0.00";
-
-    const htmlVariables: Record<string, string> = {
-      siteTitle: "Check If Your United Flight Has Starlink WiFi | United Starlink Tracker",
-      siteDescription:
-        "Enter your United Airlines flight number and date to check if your aircraft has free Starlink WiFi. Instant results from our live database of Starlink-equipped planes.",
-      keywords:
-        "check united flight starlink, does my united flight have starlink, united starlink checker, united wifi check",
-      ogTitle: "Check If Your United Flight Has Starlink WiFi",
-      ogDescription:
-        "Enter your flight number and date to check if your United Airlines aircraft has free Starlink WiFi.",
-      analyticsUrl: isUnitedDomain(host)
-        ? "unitedstarlinktracker.com"
-        : "airlinestarlinktracker.com",
-      html: reactHtml,
-      host,
-      totalCount: starlinkCount.toString(),
-      totalAircraftCount: totalCount.toString(),
-      lastUpdated: getLastUpdated(db),
-      isUnited: "true",
-      currentDate: new Date().toLocaleDateString(),
-      isoDate: new Date().toISOString(),
-      mainlineCount: (fleetStats?.mainline.starlink || 0).toString(),
-      expressCount: (fleetStats?.express.starlink || 0).toString(),
-      percentage: percentage,
-      mainlinePercentage: (fleetStats?.mainline.percentage || 0).toFixed(2),
-      expressPercentage: (fleetStats?.express.percentage || 0).toFixed(2),
-    };
-
-    let template = await getHtmlTemplate();
-    // Override canonical and og:url for this page
-    template = template
-      .replace(
-        `<link rel="canonical" href="https://{{host}}/" />`,
-        `<link rel="canonical" href="https://{{host}}/check-flight" />`
-      )
-      .replace(
-        `<meta property="og:url" content="https://{{host}}/" />`,
-        `<meta property="og:url" content="https://{{host}}/check-flight" />`
-      );
-    const html = renderHtml(template, htmlVariables);
-    return new Response(html, { headers: SECURITY_HEADERS.html });
+    return renderSubPage(
+      CheckFlightPage,
+      "/check-flight",
+      {
+        siteTitle: "Check If Your United Flight Has Starlink WiFi | United Starlink Tracker",
+        siteDescription:
+          "Enter your United Airlines flight number and date to check if your aircraft has free Starlink WiFi. Instant results from our live database — or a probability estimate if your flight is more than 2 days out.",
+        keywords:
+          "check united flight starlink, does my united flight have starlink, united starlink checker, united wifi check, united starlink probability",
+        ogTitle: "Check If Your United Flight Has Starlink WiFi",
+        ogDescription:
+          "Enter your flight number and date to check if your United Airlines aircraft has free Starlink WiFi.",
+      },
+      host
+    );
   }
 
   // Route Planner page (also handles /route-planner/SFO/JAX for shared links)
@@ -789,54 +846,21 @@ async function handleRequest(req: Request): Promise<Response> {
         headers: { "Content-Type": "text/plain" },
       });
     }
-
-    const reactHtml = ReactDOMServer.renderToString(React.createElement(RoutePlannerPage));
-
-    const fleetStats = getFleetStats(db);
-    const totalCount = getTotalCount(db);
-    const starlinkPlanes = getStarlinkPlanes(db);
-    const starlinkCount = starlinkPlanes.length;
-    const percentage = totalCount > 0 ? ((starlinkCount / totalCount) * 100).toFixed(2) : "0.00";
-
-    const htmlVariables: Record<string, string> = {
-      siteTitle: "Starlink Route Planner — Find United Flights With Starlink WiFi",
-      siteDescription:
-        "Find the best way to fly United with Starlink WiFi. Compare direct flights and smart connections ranked by Starlink probability. Plan productive travel with full-coverage routings.",
-      keywords:
-        "united starlink route planner, best united route for starlink, plan united starlink trip, starlink flight connections, united wifi routing",
-      ogTitle: "Starlink Route Planner — United Airlines",
-      ogDescription:
-        "Find direct flights and smart connections with the highest Starlink probability. Sometimes DEN→ASE→ORD beats flying direct.",
-      analyticsUrl: isUnitedDomain(host)
-        ? "unitedstarlinktracker.com"
-        : "airlinestarlinktracker.com",
-      html: reactHtml,
-      host,
-      totalCount: starlinkCount.toString(),
-      totalAircraftCount: totalCount.toString(),
-      lastUpdated: getLastUpdated(db),
-      isUnited: "true",
-      currentDate: new Date().toLocaleDateString(),
-      isoDate: new Date().toISOString(),
-      mainlineCount: (fleetStats?.mainline.starlink || 0).toString(),
-      expressCount: (fleetStats?.express.starlink || 0).toString(),
-      percentage: percentage,
-      mainlinePercentage: (fleetStats?.mainline.percentage || 0).toFixed(2),
-      expressPercentage: (fleetStats?.express.percentage || 0).toFixed(2),
-    };
-
-    let template = await getHtmlTemplate();
-    template = template
-      .replace(
-        `<link rel="canonical" href="https://{{host}}/" />`,
-        `<link rel="canonical" href="https://{{host}}/route-planner" />`
-      )
-      .replace(
-        `<meta property="og:url" content="https://{{host}}/" />`,
-        `<meta property="og:url" content="https://{{host}}/route-planner" />`
-      );
-    const html = renderHtml(template, htmlVariables);
-    return new Response(html, { headers: SECURITY_HEADERS.html });
+    return renderSubPage(
+      RoutePlannerPage,
+      "/route-planner",
+      {
+        siteTitle: "Starlink Route Planner — Find United Flights With Starlink WiFi",
+        siteDescription:
+          "Find the best way to fly United with Starlink WiFi. Compare direct flights and smart connections ranked by Starlink probability. Plan productive travel with full-coverage routings.",
+        keywords:
+          "united starlink route planner, best united route for starlink, plan united starlink trip, starlink flight connections, united wifi routing",
+        ogTitle: "Starlink Route Planner — United Airlines",
+        ogDescription:
+          "Find direct flights and smart connections with the highest Starlink probability. Sometimes DEN→ASE→ORD beats flying direct.",
+      },
+      host
+    );
   }
 
   // Home page
