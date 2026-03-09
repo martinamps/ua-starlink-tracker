@@ -306,36 +306,38 @@ export default function RoutePlannerPage() {
             var atLeastPct = Math.round(it.at_least_one_probability * 100);
             var isFull = it.coverage === 'full';
             var legs = it.legs;
-            var isDirect = it.via === null;
+            var via = it.via || []; // string[] of connection airport codes
+            var nStops = via.length;
+            var isDirect = nStops === 0;
 
-            // Flight path visualization
+            // Flight path visualization — works for N legs
             var origCode = legs[0].route.split('-')[0];
             var destCode = legs[legs.length - 1].route.split('-')[1];
-            var leg1Color = probColor(legs[0].probability);
-            var leg2Color = legs.length > 1 ? probColor(legs[1].probability) : leg1Color;
-            var leg1Live = legs[0].probability >= 0.7;
-            var leg2Live = legs.length > 1 && legs[1].probability >= 0.7;
 
-            var pathHtml;
-            if (isDirect) {
-              pathHtml = '<div class="flight-path" style="color:' + leg1Color + '">' +
-                '<span class="flight-path__node flight-path__node--filled"></span>' +
-                '<span class="flight-path__line' + (leg1Live ? ' flight-path__line--live' : '') + '"></span>' +
-                '<span class="flight-path__node flight-path__node--filled"></span>' +
-                '</div>';
-            } else {
-              pathHtml = '<div class="flight-path">' +
-                '<span class="flight-path__node flight-path__node--filled" style="color:' + leg1Color + '"></span>' +
-                '<span class="flight-path__line' + (leg1Live ? ' flight-path__line--live' : '') + '" style="color:' + leg1Color + '"></span>' +
-                '<span class="flight-path__node" style="color:' + (leg1Live && leg2Live ? '#22c55e' : '#5a6a80') + '"></span>' +
-                '<span class="flight-path__line' + (leg2Live ? ' flight-path__line--live' : '') + '" style="color:' + leg2Color + '"></span>' +
-                '<span class="flight-path__node flight-path__node--filled" style="color:' + leg2Color + '"></span>' +
-                '</div>';
+            var pathParts = ['<div class="flight-path">'];
+            for (var li = 0; li < legs.length; li++) {
+              var leg = legs[li];
+              var color = probColor(leg.probability);
+              var live = leg.probability >= 0.7;
+              // Start node (only for first leg — subsequent legs share the previous end node)
+              if (li === 0) {
+                pathParts.push('<span class="flight-path__node flight-path__node--filled" style="color:' + color + '"></span>');
+              }
+              pathParts.push('<span class="flight-path__line' + (live ? ' flight-path__line--live' : '') + '" style="color:' + color + '"></span>');
+              // End node (hub or final dest)
+              var isLast = li === legs.length - 1;
+              var nodeFilled = isLast ? ' flight-path__node--filled' : '';
+              var nodeColor = isLast ? color : (live && legs[li+1].probability >= 0.7 ? '#22c55e' : '#5a6a80');
+              pathParts.push('<span class="flight-path__node' + nodeFilled + '" style="color:' + nodeColor + '"></span>');
             }
+            pathParts.push('</div>');
+            var pathHtml = pathParts.join('');
 
             var headerPct = isFull ? jointPct : atLeastPct;
-            var headerLabel = isFull ? (isDirect ? 'Starlink' : 'both legs') : 'leg 2 Starlink';
-            var headerColor = probColor(isFull ? it.joint_probability : (legs.length > 1 ? legs[1].probability : legs[0].probability));
+            var headerLabel = isFull
+              ? (isDirect ? 'Starlink' : 'all legs')
+              : 'final leg Starlink';
+            var headerColor = probColor(isFull ? it.joint_probability : legs[legs.length-1].probability);
 
             var legsHtml = legs.map(function(l) {
               return renderLeg(l, l.flight_number === '(any)');
@@ -343,7 +345,15 @@ export default function RoutePlannerPage() {
 
             var badge = isDirect
               ? '<span class="text-xs font-mono text-accent">DIRECT</span>'
-              : '<span class="text-xs font-mono text-muted">via ' + it.via + '</span>';
+              : '<span class="text-xs font-mono text-muted">via ' + via.join('→') + ' · ' + nStops + ' stop' + (nStops>1?'s':'') + '</span>';
+
+            // Airport labels above the path — origin, each hub, dest
+            var airportLabels = '<span>' + origCode + '</span>';
+            for (var vi = 0; vi < via.length; vi++) {
+              airportLabels += '<span class="text-center flex-1">' + via[vi] + '</span>';
+            }
+            if (via.length === 0) airportLabels += '<span class="flex-1"></span>';
+            airportLabels += '<span>' + destCode + '</span>';
 
             return '<div class="itin-card bg-surface border border-subtle rounded-lg p-4 mb-3 hover:border-accent/50 transition-colors">' +
               '<div class="flex items-center justify-between mb-3">' +
@@ -357,9 +367,7 @@ export default function RoutePlannerPage() {
               '</div>' +
               '<div class="mb-3">' +
               '<div class="flex items-center gap-2 text-xs font-mono text-muted mb-1">' +
-              '<span>' + origCode + '</span>' +
-              (it.via ? '<span class="text-center flex-1">' + it.via + '</span>' : '<span class="flex-1"></span>') +
-              '<span>' + destCode + '</span>' +
+              airportLabels +
               '</div>' +
               pathHtml +
               '</div>' +

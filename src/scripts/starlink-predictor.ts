@@ -517,14 +517,14 @@ export function predictRoute(
   const routeDesc = orig && dest ? `${orig}→${dest}` : orig ? `from ${orig}` : `to ${dest}`;
   const coverage_note =
     flights.length === 0
-      ? `No Starlink-equipped aircraft observed flying ${routeDesc} in our ~65-day history. This route is likely not currently served by Starlink planes — probability is near-zero.`
+      ? `Route ${routeDesc} is UNOBSERVED — no Starlink-equipped aircraft has flown it in our ~65-day history. Distinct from "0% observed": unobserved means no data. The fleet-prior baseline applies (mainline routes ~2%, express higher — see get_fleet_stats for current numbers).`
       : `Found ${flights.length} flight number(s) ${routeDesc} operated by Starlink-equipped aircraft in our history. These probabilities reflect how often each flight number gets a Starlink plane assigned.`;
 
   return { origin: orig, destination: dest, flights, coverage_note };
 }
 
 // ============================================================================
-// Itinerary planning (2-hop connection search)
+// Itinerary planning (multi-stop graph search)
 // ============================================================================
 
 // Minimum leg probability to include in full-coverage itineraries
@@ -535,101 +535,153 @@ const PARTIAL_FALLBACK_MIN_PROB = 0.5;
 export type ItineraryLeg = BasePrediction & { route: string };
 
 export interface Itinerary {
-  via: string | null; // connection hub, null for direct
+  via: string[]; // connection hub(s) in order, empty for direct
   legs: ItineraryLeg[];
   joint_probability: number; // P(all legs have Starlink) = product of leg probs
   at_least_one_probability: number; // P(at least one leg has Starlink)
-  coverage: "full" | "partial"; // "full"=both legs likely Starlink, "partial"=one leg likely
+  coverage: "full" | "partial"; // "full"=all legs in Starlink graph, "partial"=positioning leg needed
+}
+
+/**
+ * Build the Starlink route adjacency graph: for each airport, the best
+ * (highest-probability) flight number to each reachable destination.
+ * One SQL query + one prediction per distinct route.
+ */
+function buildRouteGraph(db: Database, minLegProb: number): Map<string, Map<string, ItineraryLeg>> {
+  const rows = db
+    .query(
+      `SELECT flight_number, departure_airport, arrival_airport, COUNT(*) as obs
+       FROM upcoming_flights
+       GROUP BY flight_number, departure_airport, arrival_airport`
+    )
+    .all() as Array<{
+    flight_number: string;
+    departure_airport: string;
+    arrival_airport: string;
+    obs: number;
+  }>;
+
+  // For each directed edge (dep → arr), keep the highest-probability flight
+  const graph = new Map<string, Map<string, ItineraryLeg>>();
+  for (const r of rows) {
+    const dep = r.departure_airport;
+    const arr = r.arrival_airport;
+    const pred = predictFlight(db, ensureUAPrefix(r.flight_number));
+    if (pred.probability < minLegProb) continue;
+
+    if (!graph.has(dep)) graph.set(dep, new Map());
+    const edges = graph.get(dep)!;
+    const existing = edges.get(arr);
+    if (!existing || pred.probability > existing.probability) {
+      edges.set(arr, { ...pred, route: `${dep}-${arr}` });
+    }
+  }
+  return graph;
+}
+
+function computeItinerary(legs: ItineraryLeg[], coverage: "full" | "partial"): Itinerary {
+  const joint = legs.reduce((p, l) => p * l.probability, 1);
+  const atLeastOne = 1 - legs.reduce((p, l) => p * (1 - l.probability), 1);
+  // via = all intermediate airports (exclude origin and final dest)
+  const via = legs.slice(0, -1).map((l) => l.route.split("-")[1]);
+  return {
+    via,
+    legs,
+    joint_probability: joint,
+    at_least_one_probability: atLeastOne,
+    coverage,
+  };
 }
 
 /**
  * Find the best Starlink-maximizing itineraries from origin to destination.
  *
- * Searches for direct flights AND 1-stop connections through hubs that serve
- * both endpoints. Returns ranked by joint Starlink probability (all legs).
+ * Multi-stop graph search: builds the full Starlink route graph once, then
+ * BFS up to max_stops depth. A path's score is the joint probability of all
+ * legs having Starlink. Returns the top-K distinct paths.
  *
- * For a user who wants to be productive on a flight, they want the itinerary
- * where BOTH legs likely have Starlink — that's the joint probability.
- * For a user who just wants *some* WiFi, at_least_one_probability is what matters.
+ * FALLBACK: if no all-Starlink path exists, suggests partial-coverage options
+ * (mainline positioning leg + Starlink connection legs).
  *
- * LIMITATION: only knows routes Starlink planes have flown. Routes never served
- * by Starlink aircraft are implicitly zero-probability (correctly filtered).
+ * LIMITATION: only knows routes Starlink planes have flown (~738 edges).
  */
 export function planItinerary(
   db: Database,
   origin: string,
   destination: string,
-  options: { maxItineraries?: number; minLegProbability?: number } = {}
+  options: { maxItineraries?: number; minLegProbability?: number; maxStops?: number } = {}
 ): Itinerary[] {
   const orig = origin.toUpperCase().trim();
   const dest = destination.toUpperCase().trim();
+  if (orig === dest) return []; // guard: can't plan A→A
+
   const maxItineraries = options.maxItineraries ?? 10;
   const minLegProb = options.minLegProbability ?? MIN_LEG_PROBABILITY;
+  const maxStops = Math.min(options.maxStops ?? 2, 3); // cap at 3 stops (4 legs)
 
+  const graph = buildRouteGraph(db, minLegProb);
   const itineraries: Itinerary[] = [];
 
-  // Build airport adjacency from upcoming_flights (all Starlink-observed routes)
-  // Keep the best flight for each directed edge
-  const bestOutbound = new Map<string, RouteFlightPrediction>(); // key: dest airport
-  for (const f of predictRoute(db, orig, null).flights) {
-    const hubCode = f.route.split("-")[1];
-    const existing = bestOutbound.get(hubCode);
-    if (!existing || f.probability > existing.probability) {
-      bestOutbound.set(hubCode, f);
+  // BFS: paths up to (maxStops + 1) legs. Track visited airports per-path
+  // to avoid cycles. Prune aggressively by joint probability.
+  type SearchState = { airport: string; legs: ItineraryLeg[]; joint: number };
+  let frontier: SearchState[] = [{ airport: orig, legs: [], joint: 1 }];
+  const seenPaths = new Set<string>();
+
+  for (let depth = 0; depth <= maxStops; depth++) {
+    const nextFrontier: SearchState[] = [];
+    for (const state of frontier) {
+      const edges = graph.get(state.airport);
+      if (!edges) continue;
+
+      for (const [nextAirport, leg] of edges.entries()) {
+        // No cycles (can't revisit an airport already in the path, including origin)
+        if (nextAirport === orig) continue;
+        if (state.legs.some((l) => l.route.split("-")[1] === nextAirport)) continue;
+
+        const newLegs = [...state.legs, leg];
+        const newJoint = state.joint * leg.probability;
+
+        if (nextAirport === dest) {
+          // Reached destination — record itinerary
+          const pathKey = newLegs.map((l) => l.route).join("|");
+          if (!seenPaths.has(pathKey)) {
+            seenPaths.add(pathKey);
+            itineraries.push(computeItinerary(newLegs, "full"));
+          }
+        } else if (depth < maxStops) {
+          // Continue search — but prune low-joint-prob branches to keep frontier bounded
+          // (if we already have maxItineraries full-coverage options, anything with
+          // lower joint prob won't make the cut)
+          if (itineraries.length >= maxItineraries) {
+            itineraries.sort((a, b) => b.joint_probability - a.joint_probability);
+            if (newJoint < itineraries[maxItineraries - 1].joint_probability) continue;
+          }
+          nextFrontier.push({ airport: nextAirport, legs: newLegs, joint: newJoint });
+        }
+      }
     }
+    // Sort frontier by joint prob and cap to keep search bounded (beam search)
+    nextFrontier.sort((a, b) => b.joint - a.joint);
+    frontier = nextFrontier.slice(0, 200);
   }
 
-  const bestInbound = new Map<string, RouteFlightPrediction>(); // key: origin airport (hub)
-  for (const f of predictRoute(db, null, dest).flights) {
-    const hubCode = f.route.split("-")[0];
-    const existing = bestInbound.get(hubCode);
-    if (!existing || f.probability > existing.probability) {
-      bestInbound.set(hubCode, f);
+  // --- Fallback: PARTIAL coverage when no full-Starlink path exists ---
+  if (itineraries.length === 0) {
+    // Find all Starlink-reachable paths TO dest (ignoring orig) — these are
+    // the final legs the user CAN get Starlink on. Positioning leg is mainline.
+    // Use a smaller 1-stop search TO dest for simplicity.
+    const intoDestLegs: ItineraryLeg[] = [];
+    for (const [hub, edges] of graph.entries()) {
+      const leg = edges.get(dest);
+      if (leg && leg.probability >= PARTIAL_FALLBACK_MIN_PROB && hub !== orig) {
+        intoDestLegs.push(leg);
+      }
     }
-  }
+    intoDestLegs.sort((a, b) => b.probability - a.probability);
 
-  // --- Direct flights ---
-  const directFlight = bestOutbound.get(dest);
-  if (directFlight && directFlight.probability >= minLegProb) {
-    itineraries.push({
-      via: null,
-      legs: [directFlight],
-      joint_probability: directFlight.probability,
-      at_least_one_probability: directFlight.probability,
-      coverage: "full",
-    });
-  }
-
-  // --- One-stop: both legs in Starlink route graph (FULL coverage) ---
-  for (const [hub, leg1] of bestOutbound.entries()) {
-    if (hub === dest) continue;
-    const leg2 = bestInbound.get(hub);
-    if (!leg2) continue;
-    if (leg1.probability < minLegProb && leg2.probability < minLegProb) continue;
-
-    itineraries.push({
-      via: hub,
-      legs: [leg1, leg2],
-      joint_probability: leg1.probability * leg2.probability,
-      at_least_one_probability: 1 - (1 - leg1.probability) * (1 - leg2.probability),
-      coverage:
-        leg1.probability >= minLegProb && leg2.probability >= minLegProb ? "full" : "partial",
-    });
-  }
-
-  // --- Fallback: PARTIAL coverage ---
-  // If we have no full-Starlink paths, suggest connecting through the best
-  // Starlink-served hub into the destination. The positioning leg (origin→hub)
-  // likely won't have Starlink (mainline route), but the user still gets
-  // Starlink on the hub→dest leg. Honest framing: "get yourself to X, then..."
-  if (itineraries.length === 0 && bestInbound.size > 0) {
-    for (const [hub, leg2] of bestInbound.entries()) {
-      if (hub === orig) continue;
-      if (leg2.probability < PARTIAL_FALLBACK_MIN_PROB) continue;
-
-      // We don't have Starlink data for origin→hub, so model it as a low-prob
-      // "positioning" leg (mainline-ish prior). The user will book this on
-      // United.com normally — we just flag it as "likely no Starlink".
+    for (const finalLeg of intoDestLegs.slice(0, maxItineraries)) {
+      const hub = finalLeg.route.split("-")[0];
       const positioningLeg: ItineraryLeg = {
         flight_number: "(any)",
         route: `${orig}-${hub}`,
@@ -637,22 +689,20 @@ export function planItinerary(
         confidence: "low",
         n_observations: 0,
       };
-
-      itineraries.push({
-        via: hub,
-        legs: [positioningLeg, leg2],
-        joint_probability: positioningLeg.probability * leg2.probability,
-        at_least_one_probability: 1 - (1 - positioningLeg.probability) * (1 - leg2.probability),
-        coverage: "partial",
-      });
+      itineraries.push(computeItinerary([positioningLeg, finalLeg], "partial"));
     }
   }
 
   // Rank: full coverage first (by joint prob), then partial (by at-least-one prob)
+  // Within same coverage, prefer fewer stops as tiebreaker
   itineraries.sort((a, b) => {
     if (a.coverage !== b.coverage) return a.coverage === "full" ? -1 : 1;
-    if (a.coverage === "full") return b.joint_probability - a.joint_probability;
-    return b.at_least_one_probability - a.at_least_one_probability;
+    const probDiff =
+      a.coverage === "full"
+        ? b.joint_probability - a.joint_probability
+        : b.at_least_one_probability - a.at_least_one_probability;
+    if (Math.abs(probDiff) > 0.01) return probDiff;
+    return a.legs.length - b.legs.length; // fewer stops wins ties
   });
 
   return itineraries.slice(0, maxItineraries);
