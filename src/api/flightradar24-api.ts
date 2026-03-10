@@ -222,6 +222,72 @@ export class FlightRadar24API {
   }
 
   /**
+   * Look up what route(s) a flight NUMBER operates around a given date.
+   * FR24 returns schedules ~1 week forward. We return all distinct routes
+   * in a ±36h window around the target date (or all upcoming if no date).
+   */
+  async getFlightRoutes(
+    flightNumber: string,
+    targetDateUnix?: number
+  ): Promise<Array<{ origin: string; destination: string; departure_time: number }>> {
+    // No retry/metrics wrapper — this is a best-effort lookup for MCP hints.
+    // A failure here degrades to "ask the user" which is acceptable.
+    const url = `${this.baseUrl}/flight/list.json?query=${encodeURIComponent(flightNumber)}&fetchBy=flight&page=1&limit=20`;
+
+    const response = await fetch(url, {
+      signal: AbortSignal.timeout(8000),
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        Accept: "application/json",
+      },
+    });
+
+    if (!response.ok) return [];
+
+    const data: FR24Response = await response.json();
+    const flights = data.result?.response?.data || [];
+
+    // Dedupe by (origin, destination), keep the departure closest to target date.
+    // Capture duration so callers can show trip time even for mainline routes
+    // (which don't appear in our Starlink-plane-only upcoming_flights table).
+    type Route = {
+      origin: string;
+      destination: string;
+      departure_time: number;
+      duration_sec: number;
+    };
+    const routes = new Map<string, Route>();
+
+    for (const f of flights) {
+      const origin = f.airport.origin?.code.iata;
+      const dest = f.airport.destination?.code.iata;
+      const depTime = f.time.scheduled.departure || f.time.estimated.departure || 0;
+      const arrTime = f.time.scheduled.arrival || f.time.estimated.arrival || 0;
+      if (!origin || !dest || depTime === 0) continue;
+
+      if (targetDateUnix && Math.abs(depTime - targetDateUnix) > 36 * 3600) continue;
+
+      const key = `${origin}-${dest}`;
+      const existing = routes.get(key);
+      if (
+        !existing ||
+        (targetDateUnix &&
+          Math.abs(depTime - targetDateUnix) < Math.abs(existing.departure_time - targetDateUnix))
+      ) {
+        routes.set(key, {
+          origin,
+          destination: dest,
+          departure_time: depTime,
+          duration_sec: arrTime > depTime ? arrTime - depTime : 0,
+        });
+      }
+    }
+
+    return [...routes.values()].sort((a, b) => a.departure_time - b.departure_time);
+  }
+
+  /**
    * Get flight data for multiple aircraft in batch
    * More efficient than calling getUpcomingFlights for each one
    */

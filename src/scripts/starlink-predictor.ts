@@ -554,9 +554,15 @@ export function predictRoute(
 
 // Minimum leg probability to include in the graph (full-coverage or partial)
 const MIN_LEG_PROBABILITY = 0.3;
-// Probability assigned to edges with a CONFIRMED near-term Starlink assignment.
-// Less than 1.0 to account for possible aircraft swaps before departure.
-const CONFIRMED_EDGE_PROBABILITY = 0.95;
+
+// Probability for confirmed near-term Starlink assignments (same-day in
+// upcoming_flights, verified-Starlink tail). Discount = observed aircraft-swap
+// rate from our own verification log ('Aircraft mismatch' errors).
+// Mainline rotates far more freely (~35% swap rate) than express (~9%).
+const CONFIRMED_PROB = {
+  express: 0.9, // 1 - 9.1% observed swap rate
+  mainline: 0.65, // 1 - 35.5% observed swap rate
+};
 
 export type ItineraryLeg = BasePrediction & {
   route: string;
@@ -595,7 +601,11 @@ export interface Itinerary {
  * Without (1), a flight like UA1358 ORD→MIA (0% history, but literally on a
  * Starlink plane tomorrow) gets filtered out and the planner says "no path."
  */
-function buildRouteGraph(db: Database, minLegProb: number): Map<string, Map<string, ItineraryLeg>> {
+function buildRouteGraph(
+  db: Database,
+  minLegProb: number,
+  targetDateUnix?: number
+): Map<string, Map<string, ItineraryLeg>> {
   // All edges (route + duration) from upcoming_flights
   const rows = db
     .query(
@@ -613,19 +623,36 @@ function buildRouteGraph(db: Database, minLegProb: number): Map<string, Map<stri
     avg_duration_sec: number;
   }>;
 
-  // Subset: edges where at least one flight is on a CONFIRMED Starlink tail.
-  // These get CONFIRMED_EDGE_PROBABILITY regardless of flight-number history.
-  const confirmedEdges = new Set<string>();
-  const confirmedRows = db
-    .query(
-      `SELECT DISTINCT uf.flight_number, uf.departure_airport, uf.arrival_airport
-       FROM upcoming_flights uf
-       JOIN starlink_planes sp ON uf.tail_number = sp.TailNumber
-       WHERE sp.verified_wifi IS NULL OR sp.verified_wifi = 'Starlink'`
-    )
-    .all() as Array<{ flight_number: string; departure_airport: string; arrival_airport: string }>;
-  for (const r of confirmedRows) {
-    confirmedEdges.add(`${r.flight_number}|${r.departure_airport}|${r.arrival_airport}`);
+  // Confirmed-edge seeding is only valid when the target date is covered by
+  // our upcoming_flights snapshot. Outside that window, today's tail
+  // assignment has no bearing — a mainline flight rotates tails freely.
+  // Without a target date (e.g. exploratory planning), skip confirmed seeding
+  // and rely on historical prediction, which is honest about uncertainty.
+  // Confirmed-edge seeding: same-day assignments on VERIFIED-Starlink tails only
+  // (verified_wifi = 'Starlink', not NULL — spreadsheet-listed-but-unverified
+  // planes don't get the confirmed tier). Fleet-aware swap discount applied.
+  const confirmedEdges = new Map<string, "express" | "mainline">();
+  if (targetDateUnix !== undefined) {
+    const startOfDay = targetDateUnix - (targetDateUnix % 86400);
+    const endOfDay = startOfDay + 86400;
+    const confirmedRows = db
+      .query(
+        `SELECT DISTINCT uf.flight_number, uf.departure_airport, uf.arrival_airport, sp.fleet
+         FROM upcoming_flights uf
+         JOIN starlink_planes sp ON uf.tail_number = sp.TailNumber
+         WHERE sp.verified_wifi = 'Starlink'
+           AND uf.departure_time >= ? AND uf.departure_time < ?`
+      )
+      .all(startOfDay, endOfDay) as Array<{
+      flight_number: string;
+      departure_airport: string;
+      arrival_airport: string;
+      fleet: string;
+    }>;
+    for (const r of confirmedRows) {
+      const fleet = r.fleet === "mainline" ? "mainline" : "express";
+      confirmedEdges.set(`${r.flight_number}|${r.departure_airport}|${r.arrival_airport}`, fleet);
+    }
   }
 
   const graph = new Map<string, Map<string, ItineraryLeg>>();
@@ -633,16 +660,27 @@ function buildRouteGraph(db: Database, minLegProb: number): Map<string, Map<stri
     const dep = r.departure_airport;
     const arr = r.arrival_airport;
     const uaNum = ensureUAPrefix(r.flight_number);
-    const isConfirmed = confirmedEdges.has(`${r.flight_number}|${dep}|${arr}`);
+    const confirmedFleet = confirmedEdges.get(`${r.flight_number}|${dep}|${arr}`);
 
-    const pred: BasePrediction = isConfirmed
-      ? {
-          flight_number: uaNum,
-          probability: CONFIRMED_EDGE_PROBABILITY,
-          confidence: "high",
-          n_observations: 1,
-        }
-      : predictFlight(db, uaNum);
+    let pred: BasePrediction;
+    if (confirmedFleet) {
+      // Use the MAX of (historical prediction, confirmed swap-adjusted) —
+      // a flight with 100% history shouldn't drop to 90% just because it's
+      // also in the snapshot.
+      const hist = predictFlight(db, uaNum);
+      const confirmedP = CONFIRMED_PROB[confirmedFleet];
+      pred =
+        hist.probability >= confirmedP
+          ? hist
+          : {
+              flight_number: uaNum,
+              probability: confirmedP,
+              confidence: "high",
+              n_observations: 1,
+            };
+    } else {
+      pred = predictFlight(db, uaNum);
+    }
 
     if (pred.probability < minLegProb) continue;
 
@@ -654,7 +692,7 @@ function buildRouteGraph(db: Database, minLegProb: number): Map<string, Map<stri
         ...pred,
         route: `${dep}-${arr}`,
         duration_hours: r.avg_duration_sec > 0 ? r.avg_duration_sec / 3600 : null,
-        confirmed: isConfirmed,
+        confirmed: confirmedFleet !== undefined,
       });
     }
   }
@@ -717,7 +755,12 @@ export function planItinerary(
   db: Database,
   origin: string,
   destination: string,
-  options: { maxItineraries?: number; minLegProbability?: number; maxStops?: number } = {}
+  options: {
+    maxItineraries?: number;
+    minLegProbability?: number;
+    maxStops?: number;
+    targetDateUnix?: number;
+  } = {}
 ): Itinerary[] {
   const orig = origin.toUpperCase().trim();
   const dest = destination.toUpperCase().trim();
@@ -727,7 +770,7 @@ export function planItinerary(
   const minLegProb = options.minLegProbability ?? MIN_LEG_PROBABILITY;
   const maxStops = Math.min(options.maxStops ?? 2, 3);
 
-  const graph = buildRouteGraph(db, minLegProb);
+  const graph = buildRouteGraph(db, minLegProb, options.targetDateUnix);
   const itineraries: Itinerary[] = [];
 
   // --- BFS up to maxStops+1 legs ---

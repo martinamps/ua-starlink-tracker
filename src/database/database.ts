@@ -158,6 +158,27 @@ function setupTables(db: Database) {
     ).run();
   }
 
+  // Persistent FR24 route lookup cache. Append-only: builds route knowledge over
+  // time (which routes a flight number operates, durations) and reduces FR24 calls.
+  // Also backfills mainline route data that upcoming_flights can't provide
+  // (we only track Starlink planes).
+  if (!tableExists(db, "flight_routes")) {
+    db.query(`
+      CREATE TABLE flight_routes (
+        flight_number TEXT NOT NULL,
+        origin TEXT NOT NULL,
+        destination TEXT NOT NULL,
+        duration_sec INTEGER,
+        first_seen_at INTEGER NOT NULL,
+        last_seen_at INTEGER NOT NULL,
+        seen_count INTEGER DEFAULT 1,
+        PRIMARY KEY (flight_number, origin, destination)
+      );
+      CREATE INDEX idx_fr_flight ON flight_routes(flight_number);
+      CREATE INDEX idx_fr_route ON flight_routes(origin, destination);
+    `).run();
+  }
+
   if (tableExists(db, "starlink_planes")) {
     const columns = db.query("PRAGMA table_info(starlink_planes)").all();
     const migrationsRun = [];

@@ -298,8 +298,9 @@ describe("MCP tools", () => {
       arguments: { flight_number: "UA5212", date: "2099-01-01" },
     });
     const text = json.result.content[0].text;
-    expect(text).toContain("No confirmed aircraft assignment");
-    expect(text).toContain("Probability estimate");
+    // UA5212 is high-prob (~90%) so no alternatives block — just probability
+    expect(text).toContain("Starlink probability");
+    expect(text).toContain("Aircraft assignment not yet published");
     expect(json.result.isError).toBeUndefined();
   });
 
@@ -320,7 +321,8 @@ describe("MCP tools", () => {
       arguments: { flight_number: `UA${unseen.n}` },
     });
     const text = json.result.content[0].text;
-    const pctMatch = text.match(/\*\*(\d+)%\*\*/);
+    // Format: **UAxxx**: ~N% Starlink probability (fleet prior). mainline fleet...
+    const pctMatch = text.match(/~(\d+)% Starlink probability/);
     expect(pctMatch).not.toBeNull();
     const pct = Number(pctMatch![1]);
     expect(pct).toBeLessThan(15);
@@ -328,15 +330,23 @@ describe("MCP tools", () => {
     expect(text).toContain("fleet");
   });
 
-  test("predict_flight_starlink: low-prob flight includes alternatives hint", async () => {
+  test("predict_flight_starlink: low-prob flight EMBEDS concrete alternatives", async () => {
     const json = await mcpCall("tools/call", {
       name: "predict_flight_starlink",
       arguments: { flight_number: "UA100" },
     });
     const text = json.result.content[0].text;
-    // Low probability → should suggest asking user for route
-    expect(text).toContain("ask the user");
-    expect(text).toContain("predict_route_starlink");
+    // Table comes LAST (recency), wrapped in present_verbatim. Probability first.
+    expect(text).toMatch(/^\*\*UA100\*\*/); // starts with the probability line
+    expect(text).toContain("<present_verbatim>");
+    expect(text).toContain("</present_verbatim>");
+    // Includes a markdown table with the key columns
+    expect(text).toContain("| Segment | Flights |");
+    expect(text).toContain("Starlink %");
+    // Explicitly warns against generic tips
+    expect(text.toLowerCase()).toContain("download offline");
+    // Should NOT tell agent to call another tool — alternatives are inline
+    expect(text).not.toContain("Call `plan_starlink_itinerary`");
   });
 
   test("predict_flight_starlink: rejects >4-digit flight numbers", async () => {
@@ -442,14 +452,18 @@ describe("MCP tools", () => {
     expect(text).toContain("in the past");
   });
 
-  test("predict_route_starlink: empty result suggests plan_starlink_itinerary when both endpoints given", async () => {
-    // Find a route NOT in our data
+  test("predict_route_starlink: empty result embeds connection alternatives (not a dead-end)", async () => {
+    // Use a real mainline route that has no direct Starlink but has connections
     const json = await mcpCall("tools/call", {
       name: "predict_route_starlink",
-      arguments: { origin: "ZZZ", destination: "YYY" },
+      arguments: { origin: "SFO", destination: "EWR" },
     });
     const text = json.result.content[0].text;
-    expect(text).toContain("plan_starlink_itinerary");
+    // Should inline connection-based alternatives, NOT give a dead-end
+    expect(text).toContain("<present_verbatim>");
+    expect(text).toContain("No DIRECT Starlink flight");
+    // Should include actual flight numbers from the connection search
+    expect(text).toMatch(/UA\d+/);
   });
 });
 
