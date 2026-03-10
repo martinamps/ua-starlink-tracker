@@ -17,6 +17,7 @@ import {
   logVerification,
   updateFleetVerificationResult,
   updateFlights,
+  updateVerifiedWifi,
 } from "../database/database";
 import { COUNTERS, GAUGES, metrics, withSpan } from "../observability";
 import type { FleetAircraft, StarlinkStatus } from "../types";
@@ -151,52 +152,71 @@ async function verifyPlane(
           forVerification.destination
         );
 
-        // Log to verification log
+        // Aircraft-swap detection: United.com returns the actual tail on the flight.
+        // If it doesn't match, the result is for a different plane — don't attribute it.
+        const actualTail = result.tailNumber;
+        const tailMismatch =
+          actualTail && actualTail.toUpperCase() !== plane.tail_number.toUpperCase();
+
+        if (tailMismatch) {
+          warn(
+            `Aircraft swap: expected ${plane.tail_number} but flight has ${actualTail} — skipping`
+          );
+        }
+
         logVerification(db, {
           tail_number: plane.tail_number,
           source: "united",
-          has_starlink: result.hasStarlink,
-          wifi_provider: result.wifiProvider,
+          has_starlink: tailMismatch ? null : result.hasStarlink,
+          wifi_provider: tailMismatch ? null : result.wifiProvider,
           aircraft_type: result.aircraftType || plane.aircraft_type,
           flight_number: `UA${forVerification.flightNumber}`,
-          error: result.error || null,
+          error: tailMismatch
+            ? `Aircraft mismatch: flight has ${actualTail}`
+            : result.error || null,
         });
 
-        // Determine status
+        // A result is trustworthy only if: no error, got a wifi provider, tail matches
+        const canTrustResult = !result.error && result.wifiProvider && !tailMismatch;
+
         let starlinkStatus: StarlinkStatus;
-        if (result.error) {
+        if (!canTrustResult) {
           starlinkStatus = plane.starlink_status as StarlinkStatus;
-          span.setTag("result", "error");
-          metrics.increment(COUNTERS.VERIFICATION_CHECK, { result: "error" });
+          span.setTag("result", tailMismatch ? "aircraft_mismatch" : "error");
+          metrics.increment(COUNTERS.VERIFICATION_CHECK, {
+            result: tailMismatch ? "aircraft_mismatch" : "error",
+          });
         } else if (result.hasStarlink) {
           starlinkStatus = "confirmed";
           span.setTag("result", "starlink");
           metrics.increment(COUNTERS.VERIFICATION_CHECK, { result: "success" });
           metrics.increment(COUNTERS.PLANES_STARLINK_DETECTED);
-        } else if (result.wifiProvider) {
-          // We got a definite answer (None/Panasonic/Viasat/Thales/Gogo)
+        } else {
           starlinkStatus = "negative";
           span.setTag("result", "not_starlink");
           metrics.increment(COUNTERS.VERIFICATION_CHECK, { result: "success" });
-        } else {
-          // wifiProvider was null — couldn't determine (unknown provider, page didn't load fully)
-          // Keep existing status, don't wrongly mark as negative
-          starlinkStatus = plane.starlink_status as StarlinkStatus;
-          span.setTag("result", "unknown");
-          metrics.increment(COUNTERS.VERIFICATION_CHECK, { result: "unknown" });
         }
 
         span.setTag("wifi_provider", result.wifiProvider || "unknown");
 
-        // Update fleet table
         updateFleetVerificationResult(db, plane.tail_number, {
           starlinkStatus,
-          verifiedWifi: result.wifiProvider || null,
-          error: result.error || undefined,
+          verifiedWifi: canTrustResult ? result.wifiProvider : plane.verified_wifi,
+          error: tailMismatch
+            ? `Aircraft mismatch: flight has ${actualTail}`
+            : result.error || undefined,
         });
 
-        // If we discovered Starlink on a plane not in the spreadsheet, add it
-        if (result.hasStarlink && result.wifiProvider === "Starlink") {
+        // CRITICAL: also update starlink_planes.verified_wifi when we get a trusted
+        // result for a plane that already exists there. Without this, the separate
+        // starlink-verifier loop sees our log entry in needsVerification() and skips
+        // the plane, so a stale 'None' in starlink_planes never heals.
+        if (canTrustResult && result.wifiProvider) {
+          updateVerifiedWifi(db, plane.tail_number, result.wifiProvider);
+        }
+
+        // If we discovered Starlink on a plane not yet in starlink_planes, add it
+        if (canTrustResult && result.hasStarlink && result.wifiProvider === "Starlink") {
           addDiscoveredStarlinkPlane(
             db,
             plane.tail_number,
@@ -205,7 +225,6 @@ async function verifyPlane(
             plane.operated_by,
             plane.fleet === "mainline" ? "mainline" : "express"
           );
-          // Store the flights we already fetched so they show up on the website
           updateFlights(db, plane.tail_number, allFlights);
           info(
             `DISCOVERY: ${plane.tail_number} has Starlink! (stored ${allFlights.length} flights)`

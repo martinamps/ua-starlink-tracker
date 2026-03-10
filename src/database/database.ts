@@ -14,10 +14,6 @@ import { info } from "../utils/logger";
 type MetaRow = { value: string };
 
 export function initializeDatabase() {
-  if (!Bun.file(DB_PATH).exists()) {
-    Bun.write(DB_PATH, "");
-  }
-
   const db = new Database(DB_PATH);
 
   // Enable WAL mode for better concurrent access (prevents SQLITE_BUSY errors)
@@ -520,7 +516,7 @@ export function updateLastFlightCheck(db: Database, tailNumber: string, success 
   }
 }
 
-export function needsFlightCheck(db: Database, tailNumber: string, hoursThreshold = 4): boolean {
+export function needsFlightCheck(db: Database, tailNumber: string): boolean {
   const now = Math.floor(Date.now() / 1000);
 
   // Single optimized query combining plane data with flight info
@@ -706,7 +702,7 @@ export function needsVerification(
   const lastCheck = db
     .query(`
     SELECT checked_at FROM starlink_verification_log
-    WHERE tail_number = ? AND source = ? AND checked_at > ?
+    WHERE tail_number = ? AND source = ? AND checked_at > ? AND error IS NULL
     ORDER BY checked_at DESC
     LIMIT 1
   `)

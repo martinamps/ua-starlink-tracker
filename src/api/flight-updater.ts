@@ -94,11 +94,10 @@ async function updateFlightsForTailNumber(api: FlightAPI, tailNumber: string): P
 
 async function updateFlightsIfNeeded(
   api: FlightAPI,
-  tailNumber: string,
-  hoursThreshold = 6
+  tailNumber: string
 ): Promise<{ updated: boolean; success: boolean }> {
   const db = initializeDatabase();
-  const needsUpdate = needsFlightCheck(db, tailNumber, hoursThreshold);
+  const needsUpdate = needsFlightCheck(db, tailNumber);
   db.close();
 
   if (needsUpdate) {

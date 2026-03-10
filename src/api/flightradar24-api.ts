@@ -111,7 +111,7 @@ export class FlightRadar24API {
         return await operation();
       } catch (error: any) {
         const errorMessage = error?.message || String(error);
-        const isRateLimit = errorMessage.includes("402");
+        const isRateLimit = errorMessage.includes("402") || errorMessage.includes("429");
 
         if (isRateLimit) {
           metrics.increment(COUNTERS.VENDOR_REQUEST, {
@@ -150,6 +150,7 @@ export class FlightRadar24API {
       const url = `${this.baseUrl}/flight/list.json?query=${tailNumber}&fetchBy=reg&page=1&limit=20`;
 
       const response = await fetch(url, {
+        signal: AbortSignal.timeout(30000),
         headers: {
           "User-Agent":
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",

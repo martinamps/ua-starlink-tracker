@@ -21,7 +21,7 @@ function determineFleetType(aircraftType: string): "express" | "mainline" | "unk
     return "express";
   }
   // Mainline aircraft
-  if (/737|757|767|777|787|A3[12][09]|A350/i.test(aircraftType)) {
+  if (/737|757|767|777|787|A3[12]\d|A350/i.test(aircraftType)) {
     return "mainline";
   }
   return "unknown";
