@@ -7,23 +7,34 @@ export default function McpPage() {
     <div className="w-full mx-auto px-4 sm:px-6 md:px-8 bg-base min-h-screen flex flex-col relative">
       <div className="absolute inset-0 grid-pattern opacity-50 pointer-events-none" />
 
-      <header className="relative py-5 sm:py-6 text-center mb-4">
+      <header className="relative py-5 sm:py-6 text-center mb-3">
         <a href="/" className="block">
           <h1 className="font-display text-3xl sm:text-4xl font-bold text-primary mb-2 tracking-tight hover:text-accent transition-colors">
-            Add Starlink Tracker to Claude
+            Starlink Tracker for Claude
           </h1>
         </a>
         <p className="text-base text-secondary font-display max-w-xl mx-auto">
-          Ask your AI assistant to check flights, predict Starlink probability, or plan routes —
-          with live tracker data.
+          Ask Claude which United flights have Starlink — and get ranked alternatives when they
+          don't.
         </p>
       </header>
 
-      {/* Quick URL copy */}
+      {/* Hero: show the result first */}
+      <div className="relative max-w-3xl mx-auto w-full mb-8">
+        <img
+          src="/static/mcp-demo.webp"
+          alt="Claude Desktop window: user asks 'I'm on UA642 on 3/13 — does it have Starlink?' Response shows ~1% for the nonstop (4.2h), then a ranked table with two 1-stop alternatives at 93-94% Starlink via Savannah or Richmond (~5.3h total)."
+          width="1676"
+          height="1802"
+          className="rounded-xl border border-subtle w-full shadow-2xl glow-accent"
+        />
+      </div>
+
+      {/* URL + one-line setup */}
       <div className="relative max-w-2xl mx-auto w-full mb-8">
-        <div className="bg-surface rounded-lg border border-subtle p-4 sm:p-5 glow-accent">
+        <div className="bg-surface rounded-lg border border-subtle p-4 sm:p-5">
           <div className="text-xs font-mono text-muted uppercase tracking-wider mb-2">
-            Connector URL
+            Claude Desktop · Settings → Connectors → Add
           </div>
           <div className="flex items-center gap-2">
             <code className="flex-1 font-mono text-sm text-accent break-all select-all bg-base rounded px-3 py-2 border border-subtle">
@@ -40,94 +51,37 @@ export default function McpPage() {
         </div>
       </div>
 
-      {/* Visual walkthrough */}
-      <div className="relative max-w-2xl mx-auto w-full mb-8 space-y-8">
-        {/* Step 1 */}
-        <div>
-          <div className="flex items-center gap-3 mb-3">
-            <span className="w-7 h-7 rounded-full bg-accent/20 border border-accent text-accent font-mono text-sm flex items-center justify-center flex-shrink-0">
-              1
-            </span>
-            <h2 className="font-display text-lg font-semibold text-primary">
-              Open Claude Desktop → Settings → Connectors → click{" "}
-              <span className="text-accent">+</span>
-            </h2>
-          </div>
-        </div>
-
-        {/* Step 2 */}
-        <div>
-          <div className="flex items-center gap-3 mb-3">
-            <span className="w-7 h-7 rounded-full bg-accent/20 border border-accent text-accent font-mono text-sm flex items-center justify-center flex-shrink-0">
-              2
-            </span>
-            <h2 className="font-display text-lg font-semibold text-primary">
-              Paste the URL and click Add
-            </h2>
-          </div>
-          <img
-            src="/static/mcp-add-dialog.webp"
-            alt="Claude Desktop 'Add custom connector' dialog with Starlink Tracker name and unitedstarlinktracker.com/mcp URL filled in"
-            width="700"
-            height="548"
-            className="rounded-lg border border-subtle w-full max-w-lg mx-auto"
-            loading="lazy"
-          />
-        </div>
-
-        {/* Step 3 */}
-        <div>
-          <div className="flex items-center gap-3 mb-3">
-            <span className="w-7 h-7 rounded-full bg-accent/20 border border-accent text-accent font-mono text-sm flex items-center justify-center flex-shrink-0">
-              3
-            </span>
-            <h2 className="font-display text-lg font-semibold text-primary">
-              Done — 7 tools ready
-            </h2>
-          </div>
-          <img
-            src="/static/mcp-connectors.webp"
-            alt="Claude Desktop Connectors settings showing Starlink Tracker with 7 tools: check_flight, get_fleet_stats, list_starlink_aircraft, plan_starlink_itinerary, predict_flight_starlink, predict_route_starlink, search_starlink_flights"
-            width="1100"
-            height="780"
-            className="rounded-lg border border-subtle w-full"
-            loading="lazy"
-          />
-        </div>
-      </div>
-
-      {/* What to ask */}
+      {/* Try asking — updated with the proven demo prompts */}
       <div className="relative max-w-2xl mx-auto w-full mb-8">
         <div className="bg-surface rounded-lg border border-subtle p-6">
           <h2 className="font-display text-lg font-semibold text-primary mb-3">Try asking</h2>
           <ul className="space-y-2 text-sm text-muted">
             <li className="pl-4 -indent-4">
-              <span className="text-secondary">"</span>Does UA4680 next Tuesday have Starlink?
+              <span className="text-secondary">"</span>I'm on UA642 on 3/13 — does it have Starlink?
+              If not, what are my options?<span className="text-secondary">"</span>
+            </li>
+            <li className="pl-4 -indent-4">
+              <span className="text-secondary">"</span>Flying SFO to EWR next month — plan me the
+              best Starlink routing<span className="text-secondary">"</span>
+            </li>
+            <li className="pl-4 -indent-4">
+              <span className="text-secondary">"</span>Does UA4680 tomorrow have Starlink?
               <span className="text-secondary">"</span>
             </li>
             <li className="pl-4 -indent-4">
-              <span className="text-secondary">"</span>I'm flying SFO to JAX on April 10 — what's my
-              best shot at Starlink?<span className="text-secondary">"</span>
-            </li>
-            <li className="pl-4 -indent-4">
-              <span className="text-secondary">"</span>I'd rather fly 7 hours with internet than 5
-              hours without — find me a routing from DEN to ORD
-              <span className="text-secondary">"</span>
-            </li>
-            <li className="pl-4 -indent-4">
-              <span className="text-secondary">"</span>What percentage of United's express fleet has
-              Starlink now?<span className="text-secondary">"</span>
+              <span className="text-secondary">"</span>What's the Starlink install rate on United's
+              regional fleet?<span className="text-secondary">"</span>
             </li>
           </ul>
         </div>
       </div>
 
-      {/* Other clients (collapsed) */}
+      {/* Setup details — collapsed */}
       <div className="relative max-w-2xl mx-auto w-full mb-8">
         <details className="bg-surface rounded-lg border border-subtle p-4 group">
           <summary className="cursor-pointer list-none flex items-center justify-between">
             <span className="font-display text-sm font-medium text-secondary group-hover:text-accent transition-colors">
-              Using Cursor, Cline, or another MCP client?
+              Setup walkthrough & other MCP clients
             </span>
             <svg
               className="w-4 h-4 text-muted group-open:rotate-45 transition-transform"
@@ -145,16 +99,33 @@ export default function McpPage() {
               />
             </svg>
           </summary>
-          <div className="mt-4 space-y-3 text-sm text-muted">
-            <p>
-              Add the same URL with <span className="font-mono text-secondary">http</span> transport
-              in your client's MCP settings. See your client's docs for the config format.
-            </p>
-            <p>
-              For programmatic access: it's a standard JSON-RPC 2.0 endpoint. POST to{" "}
-              <span className="font-mono text-secondary">{MCP_URL}</span> with{" "}
-              <span className="font-mono text-secondary">Content-Type: application/json</span>. No
-              auth, no SDK needed.{" "}
+          <div className="mt-4 space-y-4 text-sm text-muted">
+            <div>
+              <p className="text-secondary font-medium mb-2">
+                1. Open Claude Desktop → Settings → Connectors → click{" "}
+                <span className="text-accent">+</span>
+              </p>
+              <p>
+                2. Paste{" "}
+                <code className="font-mono text-xs text-accent bg-base px-1.5 py-0.5 rounded">
+                  {MCP_URL}
+                </code>{" "}
+                and name it "Starlink Tracker"
+              </p>
+              <p>3. That's it — 7 tools are live in your next chat.</p>
+            </div>
+            <img
+              src="/static/mcp-add-dialog.webp"
+              alt="Claude Desktop 'Add custom connector' dialog with Starlink Tracker URL filled in"
+              width="700"
+              height="548"
+              className="rounded-lg border border-subtle w-full max-w-md"
+              loading="lazy"
+            />
+            <p className="pt-2 border-t border-subtle">
+              <strong className="text-secondary">Other clients (Cursor, Cline, etc):</strong> same
+              URL, <code className="font-mono text-xs">http</code> transport. It's a standard
+              JSON-RPC 2.0 endpoint — no auth, no SDK.{" "}
               <a
                 href="https://modelcontextprotocol.io/specification/2025-06-18/basic/transports"
                 target="_blank"
@@ -198,6 +169,7 @@ export default function McpPage() {
 
       {/* Copy button handler */}
       <script
+        // biome-ignore lint/security/noDangerouslySetInnerHtml: static inline script, no user input
         dangerouslySetInnerHTML={{
           __html: `
         document.addEventListener('DOMContentLoaded', function() {
