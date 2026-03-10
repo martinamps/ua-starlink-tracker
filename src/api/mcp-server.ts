@@ -104,11 +104,11 @@ const TOOLS = [
   {
     name: "check_flight",
     description:
-      "Check whether a specific United Airlines flight has Starlink WiFi on a given date — " +
-      "FIRM answer from confirmed aircraft assignments (only reliable within ~2 days of departure). " +
-      "If no firm assignment exists yet (flight too far out), automatically falls back to a " +
-      "probability estimate. For comparing multiple future flight options, use predict_flight_starlink " +
-      "or plan_starlink_itinerary instead.",
+      "Check whether a specific United Airlines flight has Starlink WiFi on a given date. " +
+      "Returns FIRM YES if assigned to a verified-Starlink plane, FIRM NO if assigned to a " +
+      "verified non-Starlink plane, or a probability estimate if no assignment exists yet " +
+      "(we only track ~2 days of firm schedules). For dates >2 days out, prefer " +
+      "predict_flight_starlink directly.",
     inputSchema: {
       type: "object",
       properties: {
@@ -120,7 +120,7 @@ const TOOLS = [
         },
         date: {
           type: "string",
-          description: "Flight date in YYYY-MM-DD format (local departure date).",
+          description: "Flight date in YYYY-MM-DD format (matched as UTC calendar day).",
         },
       },
       required: ["flight_number", "date"],
@@ -139,8 +139,8 @@ const TOOLS = [
   {
     name: "list_starlink_aircraft",
     description:
-      "List all United Airlines aircraft currently equipped with Starlink WiFi. " +
-      "Optionally filter by fleet type or limit results. Returns tail numbers, aircraft types, " +
+      "List United Airlines aircraft currently equipped with Starlink WiFi " +
+      "(default: 50 most recent; pass limit up to 500). Returns tail numbers, aircraft types, " +
       "operators, and the date Starlink was first observed.",
     inputSchema: {
       type: "object",
@@ -163,7 +163,8 @@ const TOOLS = [
     name: "predict_flight_starlink",
     description:
       "Predict the PROBABILITY that a United flight number gets a Starlink plane — based on " +
-      "12,000+ historical observations. Works for any date (not limited to ~2-day window). " +
+      "12,000+ historical observations. Date-agnostic (no date parameter — prediction applies " +
+      "to any future date). " +
       "Reliability varies: high-confidence (5+ obs) ~85%+ accurate; low-confidence (0-1 obs) " +
       "is just the fleet prior. Quick heuristic: UA3000-6999 (express/regional) have good odds " +
       "if history is positive; UA1-2999 (mainline) are almost always NOT Starlink (~2% fleet " +
@@ -187,19 +188,20 @@ const TOOLS = [
     description:
       "PRIMARY TRAVEL-PLANNING TOOL — use first for any 'routing to X with Starlink' question. " +
       "Multi-stop graph search (up to 2 stops by default, 3 max) through the Starlink route " +
-      "network, ranked by joint probability of ALL legs having Starlink. Finds paths like " +
-      "SFO→SLC→IAH→JAX automatically. When no all-Starlink path exists, returns PARTIAL " +
-      "coverage options (mainline positioning leg + Starlink connection legs).",
+      "network, ranked by COVERAGE RATIO (expected Starlink hours / total flight hours) — a " +
+      "92% 1h direct scores the same as a 92% 10h multi-stop. Direct flights always shown first. " +
+      "When no all-Starlink path exists, returns PARTIAL options (positioning leg + Starlink leg, " +
+      "in either direction).",
     inputSchema: {
       type: "object",
       properties: {
         origin: {
           type: "string",
-          description: "Origin airport IATA code (e.g. 'SFO'). Required.",
+          description: "Origin airport IATA code (e.g. 'SFO').",
         },
         destination: {
           type: "string",
-          description: "Destination airport IATA code (e.g. 'JAX'). Required.",
+          description: "Destination airport IATA code (e.g. 'JAX').",
         },
         max_stops: {
           type: "integer",
@@ -212,7 +214,8 @@ const TOOLS = [
           type: "integer",
           minimum: 1,
           maximum: 20,
-          description: "Maximum number of itineraries to return (default 8).",
+          description:
+            "Maximum number of full-coverage itineraries (default 8). Up to 3 partial baselines may be appended.",
         },
       },
       required: ["origin", "destination"],
@@ -221,12 +224,12 @@ const TOOLS = [
   {
     name: "predict_route_starlink",
     description:
-      "PRIMITIVE: Find which United flight numbers on a single direct route are most likely to have " +
-      "Starlink. Returns a ranked list with probability for each flight number. For full trip planning " +
-      "(including connections), prefer plan_starlink_itinerary. Use this primitive when you need " +
-      "granular per-flight data for a specific leg, or when the user asks about a specific route " +
-      "without caring about connections. An empty result means the route isn't served by Starlink " +
-      "planes yet (near-zero probability).",
+      "PRIMITIVE: Find which United flight numbers on a route (or touching an airport) are most " +
+      "likely to have Starlink. Pass both origin+destination for a specific route, OR just origin " +
+      "for all Starlink flights OUT of an airport, OR just destination for all Starlink flights INTO " +
+      "an airport. Returns ranked list with probability per flight number. For trip planning with " +
+      "connections, prefer plan_starlink_itinerary. Empty result = route not served by Starlink planes. " +
+      "At least one of origin/destination is required.",
     inputSchema: {
       type: "object",
       properties: {
@@ -254,7 +257,8 @@ const TOOLS = [
       "lookup, not a prediction. Data does NOT extend beyond ~2 days (aircraft assignments " +
       "aren't published further out). For dates beyond that, DO NOT use this tool — use " +
       "predict_route_starlink or plan_starlink_itinerary for probability-based planning instead. " +
-      "Use this for 'what confirmed Starlink flights leave ORD tomorrow?'",
+      "Use this for 'what confirmed Starlink flights leave ORD tomorrow?' At least one of " +
+      "origin/destination is required.",
     inputSchema: {
       type: "object",
       properties: {
@@ -305,51 +309,112 @@ function toolCheckFlight(
 
   const startOfDay = Math.floor(dateObj.getTime() / 1000);
   const endOfDay = startOfDay + 86400;
+  const now = Math.floor(Date.now() / 1000);
 
-  // Build flight number variants (UA, UAL, express ICAO/IATA codes)
   const normalized = ensureUAPrefix(flightNumber);
-  const variants = buildFlightNumberVariants(normalized);
-  const placeholders = variants.map(() => "?").join(",");
-  const flights = db
-    .query(
-      `SELECT uf.*, sp.Aircraft as aircraft_type, sp.OperatedBy, sp.fleet
-       FROM upcoming_flights uf
-       INNER JOIN starlink_planes sp ON uf.tail_number = sp.TailNumber
-       WHERE uf.flight_number IN (${placeholders})
-         AND uf.departure_time >= ? AND uf.departure_time < ?
-         AND (sp.verified_wifi IS NULL OR sp.verified_wifi = 'Starlink')
-       ORDER BY uf.departure_time ASC`
-    )
-    .all(...variants, startOfDay, endOfDay) as Array<
-    Flight & { aircraft_type: string; OperatedBy: string; fleet: string }
-  >;
-
-  if (flights.length === 0) {
-    // No schedule data — offer probability estimate instead
-    const pred = predictFlight(db, normalized);
-    const pct = (pred.probability * 100).toFixed(0);
-
+  const numPart = normalized.match(/(\d+)$/)?.[1];
+  if (numPart && numPart.length > 4) {
     return {
       content: [
         {
           type: "text",
-          text: `No confirmed aircraft assignment for ${normalized} on ${date} in our database (we only track ~2 days of firm schedules).\n\n**Probability estimate**: ~${pct}% chance of Starlink based on ${pred.n_observations > 0 ? `${pred.n_observations} historical observation(s) of this flight number` : "fleet install rate"} (confidence: ${pred.confidence}). Check again 1-2 days before departure for a firm answer.`,
+          text: `${normalized} is outside United's flight number range (UA1-UA9999). This flight likely doesn't exist.`,
+        },
+      ],
+      isError: true,
+    };
+  }
+
+  const variants = buildFlightNumberVariants(normalized);
+  const placeholders = variants.map(() => "?").join(",");
+
+  // All assignments we have for this flight on this date, with verified_wifi status.
+  // We track flights only for planes in starlink_planes, so every row here is at
+  // least "spreadsheet says Starlink" — but verified_wifi may say otherwise.
+  const assignments = db
+    .query(
+      `SELECT uf.*, sp.Aircraft as aircraft_type, sp.OperatedBy, sp.fleet, sp.verified_wifi
+       FROM upcoming_flights uf
+       INNER JOIN starlink_planes sp ON uf.tail_number = sp.TailNumber
+       WHERE uf.flight_number IN (${placeholders})
+         AND uf.departure_time >= ? AND uf.departure_time < ?
+       ORDER BY uf.last_updated DESC`
+    )
+    .all(...variants, startOfDay, endOfDay) as Array<
+    Flight & {
+      aircraft_type: string;
+      OperatedBy: string;
+      fleet: string;
+      verified_wifi: string | null;
+    }
+  >;
+
+  // Dedupe by (departure_time) — stale cache can have two tails for same departure
+  // after an aircraft swap. Keep the most-recently-updated row (query is DESC).
+  const seen = new Set<number>();
+  const deduped = assignments.filter((a) => {
+    if (seen.has(a.departure_time)) return false;
+    seen.add(a.departure_time);
+    return true;
+  });
+
+  const starlink = deduped.filter(
+    (f) => f.verified_wifi === null || f.verified_wifi === "Starlink"
+  );
+  const nonStarlink = deduped.filter(
+    (f) => f.verified_wifi !== null && f.verified_wifi !== "Starlink"
+  );
+
+  // Firm YES: assigned to a verified (or unverified-but-presumed) Starlink plane
+  if (starlink.length > 0) {
+    const lines = starlink.map((f) => {
+      const dep = new Date(f.departure_time * 1000).toISOString();
+      const arr = new Date(f.arrival_time * 1000).toISOString();
+      const ac = f.aircraft_type || "aircraft";
+      return `- ${normalizeFlightNumber(f.flight_number)} (${f.departure_airport}→${f.arrival_airport}) on ${ac} tail ${f.tail_number}, operated by ${f.OperatedBy}. Departs ${dep}, arrives ${arr}.`;
+    });
+    return {
+      content: [
+        {
+          type: "text",
+          text: `✈️ Yes! Flight ${normalized} on ${date} is scheduled on a Starlink-equipped aircraft:\n\n${lines.join("\n")}\n\nStarlink WiFi is free on all equipped United flights.`,
         },
       ],
     };
   }
 
-  const lines = flights.map((f) => {
-    const dep = new Date(f.departure_time * 1000).toISOString();
-    const arr = new Date(f.arrival_time * 1000).toISOString();
-    return `- ${normalizeFlightNumber(f.flight_number)} (${f.departure_airport}→${f.arrival_airport}) on ${f.aircraft_type} tail ${f.tail_number}, operated by ${f.OperatedBy}. Departs ${dep}, arrives ${arr}.`;
-  });
+  // Firm NO: we have an assignment but it's a non-Starlink plane. This is
+  // stronger than "no data" — tell the agent so it doesn't say "check later."
+  if (nonStarlink.length > 0) {
+    const f = nonStarlink[0];
+    const ac = f.aircraft_type || "aircraft";
+    const altHint = buildAlternativesHint(db, normalized);
+    return {
+      content: [
+        {
+          type: "text",
+          text: `❌ No Starlink: ${normalized} on ${date} is assigned to tail ${f.tail_number} (${ac}), which is verified as ${f.verified_wifi} WiFi — NOT Starlink.\n\nNote: aircraft swaps do happen, so this could change before departure, but as of now the assignment is firm.${altHint}`,
+        },
+      ],
+    };
+  }
+
+  // No assignment data at all — fall back to probability
+  const pred = predictFlight(db, normalized);
+  const pct = (pred.probability * 100).toFixed(0);
+  const altHint = pred.probability < 0.5 ? buildAlternativesHint(db, normalized) : "";
+
+  // Past dates get different wording — "check again 1-2 days before" is nonsense for history
+  const isPast = endOfDay < now - 86400;
+  const timing = isPast
+    ? "This date is in the past; we don't retain historical assignments."
+    : "Check again 1-2 days before departure for a firm answer.";
 
   return {
     content: [
       {
         type: "text",
-        text: `✈️ Yes! Flight ${normalized} on ${date} is scheduled on a Starlink-equipped aircraft:\n\n${lines.join("\n")}\n\nStarlink WiFi is free on all equipped United flights.`,
+        text: `No confirmed aircraft assignment for ${normalized} on ${date} in our database (we only track ~2 days of firm schedules).\n\n**Probability estimate**: ~${pct}% chance of Starlink based on ${pred.n_observations > 0 ? `${pred.n_observations} historical observation(s) of this flight number` : "fleet install rate"} (confidence: ${pred.confidence}). ${timing}${altHint}`,
       },
     ],
   };
@@ -362,6 +427,40 @@ function toolCheckFlight(
  */
 function confidenceTag(nObs: number, confidence: string): string {
   return `(${nObs} obs · ${confidence} confidence)`;
+}
+
+/**
+ * Build a hint for the agent on how to suggest alternative flights when the
+ * user's flight has low/no Starlink probability.
+ *
+ * We CANNOT reliably infer route from flight number — our DB only captures
+ * flights that happened to land on ~300 Starlink planes in a ~2-day window.
+ * A single flight number commonly operates multiple routes (e.g. UA737 does
+ * SEA→SFO and SFO→EWR on different days). The user has a ticket; they know.
+ *
+ * So: tell the agent to ASK THE USER. If we happen to have ≥2 observations
+ * of a route, mention it as a weak hint only.
+ */
+function buildAlternativesHint(db: Database, uaFlightNumber: string): string {
+  const variants = buildFlightNumberVariants(uaFlightNumber);
+  const placeholders = variants.map(() => "?").join(",");
+  const rows = db
+    .query(
+      `SELECT departure_airport, arrival_airport, COUNT(*) as n
+       FROM upcoming_flights
+       WHERE flight_number IN (${placeholders})
+       GROUP BY departure_airport, arrival_airport
+       HAVING n >= 2
+       ORDER BY n DESC LIMIT 3`
+    )
+    .all(...variants) as Array<{ departure_airport: string; arrival_airport: string; n: number }>;
+
+  const observed =
+    rows.length > 0
+      ? ` (We've observed this flight number on ${rows.map((r) => `${r.departure_airport}→${r.arrival_airport}`).join(", ")}, but flight numbers operate multiple routes — confirm with the user.)`
+      : "";
+
+  return `\n\n**To suggest alternatives**: ask the user for their origin/destination, then call \`predict_route_starlink\` or \`plan_starlink_itinerary\` with those airports.${observed}`;
 }
 
 function toolPredictFlightStarlink(db: Database, args: { flight_number?: unknown }): ToolResult {
@@ -393,6 +492,7 @@ function toolPredictFlightStarlink(db: Database, args: { flight_number?: unknown
 
   const pred = predictFlight(db, forPredict);
   const pct = (pred.probability * 100).toFixed(0);
+  const altHint = pred.probability < 0.5 ? buildAlternativesHint(db, forPredict) : "";
 
   let text: string;
   if (pred.method !== "flight_history_smoothed") {
@@ -400,11 +500,11 @@ function toolPredictFlightStarlink(db: Database, args: { flight_number?: unknown
     const fleetLabel = fleet === "express" ? "express (regional)" : "mainline";
     text = `${forPredict}: **${pct}%** estimated Starlink probability (fleet prior · no historical data).
 
-This is the ${fleetLabel} fleet install rate, not flight-specific. Treat as an upper bound — absence from our 12k+ observation log is itself a weak negative signal.`;
+This is the ${fleetLabel} fleet install rate, not flight-specific. Treat as an upper bound — absence from our 12k+ observation log is itself a weak negative signal.${altHint}`;
   } else {
     text = `${forPredict}: **${pct}%** estimated Starlink probability ${confidenceTag(pred.n_observations, pred.confidence)}.
 
-From historical aircraft assignments over the past ~60 days. ${pred.confidence === "high" ? "Strong signal." : "Limited data — estimate may be off by ±20pp."}`;
+From historical aircraft assignments over the past ~60 days. ${pred.confidence === "high" ? "Strong signal." : "Limited data — estimate may be off by ±20pp."}${altHint}`;
   }
 
   return { content: [{ type: "text", text }] };
@@ -454,7 +554,7 @@ function toolPlanStarlinkItinerary(
       content: [
         {
           type: "text",
-          text: `No Starlink routings found from ${orig} to ${dest} within ${maxStops} stops.\n\nNeither the direct route nor any path through our Starlink route network (~738 observed routes) connects ${orig} to ${dest} above 30% leg probability. If both airports are outside the US regional network, United may not fly this route with Starlink-equipped aircraft at all.`,
+          text: `No Starlink routings found from ${orig} to ${dest} within ${maxStops} stops.\n\nNo path through our Starlink route graph connects these airports. This may be a mainline-only route (~2% Starlink fleet-wide).\n\n**Fallbacks**: (1) \`search_starlink_flights\` with just \`destination="${dest}"\` or \`origin="${orig}"\` — confirmed near-term assignments may exist even when historical probability is low; (2) if the user has a specific flight, \`predict_flight_starlink\` for a per-flight estimate; (3) otherwise advise booking the nonstop — no Starlink routing meaningfully improves odds on mainline-only routes.`,
         },
       ],
     };
@@ -470,12 +570,16 @@ function toolPlanStarlinkItinerary(
 
   const renderLeg = (leg: (typeof itineraries)[number]["legs"][number]): string => {
     if (leg.flight_number === "(any)") {
-      return `position to ${leg.route.split("-")[1]} (mainline, ~2% Starlink, duration unknown — likely 3-6h)`;
+      const [from, to] = leg.route.split("-");
+      return `position ${from}→${to} (mainline, ~2% Starlink, duration unknown)`;
     }
     const pct = (leg.probability * 100).toFixed(0);
     const fleetTag = inferFleet(leg.flight_number) === "mainline" ? " [Mainline]" : "";
     const dur = leg.duration_hours !== null ? ` ~${fmtHours(leg.duration_hours)}` : "";
-    return `${leg.flight_number}${fleetTag} (${leg.route}${dur}) — ${pct}% ${confidenceTag(leg.n_observations, leg.confidence)}`;
+    const tag = leg.confirmed
+      ? "(confirmed near-term assignment)"
+      : confidenceTag(leg.n_observations, leg.confidence);
+    return `${leg.flight_number}${fleetTag} (${leg.route}${dur}) — ${pct}% ${tag}`;
   };
 
   const renderItin = (it: (typeof itineraries)[number], i: number): string => {
@@ -488,14 +592,14 @@ function toolPlanStarlinkItinerary(
     // Time-aware summary — this is what users actually care about for tradeoffs
     let timeSummary: string;
     if (it.total_flight_hours !== null && it.expected_starlink_hours !== null) {
-      timeSummary = ` · **~${fmtHours(it.expected_starlink_hours)} Starlink** / ~${fmtHours(it.total_flight_hours)} flying`;
+      const ratio = it.coverage_ratio !== null ? ` (${(it.coverage_ratio * 100).toFixed(0)}%)` : "";
+      timeSummary = ` · **~${fmtHours(it.expected_starlink_hours)} Starlink** / ~${fmtHours(it.total_flight_hours)} flying${ratio}`;
     } else if (it.coverage === "partial") {
-      // Positioning leg has unknown duration — show only the known Starlink leg time
       const knownStarlink = it.legs.reduce(
         (s, l) => (l.duration_hours !== null ? s + l.probability * l.duration_hours : s),
         0
       );
-      timeSummary = ` · ~${fmtHours(knownStarlink)} Starlink (on final leg only; positioning leg duration unknown)`;
+      timeSummary = ` · ~${fmtHours(knownStarlink)} Starlink (positioning leg duration unknown)`;
     } else {
       timeSummary = "";
     }
@@ -522,7 +626,7 @@ ${fullItins.map(renderItin).join("\n\n")}`);
   if (partialItins.length > 0) {
     const header =
       fullItins.length === 0
-        ? `**No all-Starlink path found within ${maxStops} stops.** Partial coverage options (positioning leg likely no Starlink, then Starlink on the connection):\n`
+        ? `**No all-Starlink path found within ${maxStops} stops.** Partial coverage options (one positioning leg ~2% Starlink, one Starlink leg):\n`
         : "**Baseline: 1-stop positioning + Starlink connection** (for comparison — what a 'normal' routing gets you):\n";
     sections.push(`${header}
 ${partialItins.map((it, i) => renderItin(it, fullItins.length + i)).join("\n\n")}`);
@@ -537,7 +641,7 @@ ${partialItins.map((it, i) => renderItin(it, fullItins.length + i)).join("\n\n")
 
 ${sections.join("\n\n---\n\n")}${timingNote}
 
-**Key for trade-offs**: "~1.8h Starlink / ~7h flying" = expected Starlink time (Σ leg_prob × leg_duration) over total air time. A "92% leg" means little if that leg is 2h out of a 7h trip — compare expected Starlink hours, not leg percentages.`;
+**Ranking**: by coverage ratio (expected Starlink hours / total hours) — a 92% direct and a 92% multi-stop score the same. "~1.8h Starlink / ~7h flying (26%)" = 26% of flight time expected on Starlink. Compare the ratio, not raw hours.`;
 
   return { content: [{ type: "text", text }] };
 }
@@ -562,11 +666,16 @@ function toolPredictRouteStarlink(
   const result = predictRoute(db, origin || null, destination || null);
 
   if (result.flights.length === 0) {
+    // If both endpoints given, the user has a specific route in mind — steer to connections
+    const pivotHint =
+      origin && destination
+        ? ` For connection options through the Starlink network, try \`plan_starlink_itinerary\` with origin="${origin.toUpperCase()}", destination="${destination.toUpperCase()}".`
+        : "";
     return {
       content: [
         {
           type: "text",
-          text: `${result.coverage_note}\n\nIf you know a specific flight number for this route, try predict_flight_starlink for a fleet-prior estimate.`,
+          text: `${result.coverage_note}${pivotHint}\n\nIf you have a specific flight number, try predict_flight_starlink for a fleet-prior estimate.`,
         },
       ],
     };
@@ -611,7 +720,7 @@ function toolGetFleetStats(db: Database): ToolResult {
 
   const text = `United Airlines Starlink Installation Progress (as of ${lastUpdated}):
 
-**Combined Fleet**: ${starlinkPlanes.length} of ${totalCount} aircraft (${((starlinkPlanes.length / totalCount) * 100).toFixed(1)}%) have Starlink WiFi
+**Combined Fleet**: ${starlinkPlanes.length} of ${totalCount} aircraft (${totalCount > 0 ? ((starlinkPlanes.length / totalCount) * 100).toFixed(1) : "0.0"}%) have Starlink WiFi
 
 **Express (Regional) Fleet**: ${fleetStats.express.starlink} of ${fleetStats.express.total} aircraft (${fleetStats.express.percentage.toFixed(1)}%)
 **Mainline Fleet**: ${fleetStats.mainline.starlink} of ${fleetStats.mainline.total} aircraft (${fleetStats.mainline.percentage.toFixed(1)}%)
@@ -678,25 +787,23 @@ function toolSearchStarlinkFlights(
 
   const now = Math.floor(Date.now() / 1000);
   const starlinkTails = new Set(getStarlinkPlanes(db).map((p) => p.TailNumber));
-
-  let flights = getUpcomingFlights(db).filter(
+  const allFuture = getUpcomingFlights(db).filter(
     (f) => f.departure_time > now && starlinkTails.has(f.tail_number)
   );
 
-  if (origin) {
-    flights = flights.filter((f) => f.departure_airport.toUpperCase().includes(origin));
-  }
-  if (destination) {
-    flights = flights.filter((f) => f.arrival_airport.toUpperCase().includes(destination));
-  }
+  // Data horizon from the UNFILTERED set — showing now() when the filtered result
+  // is empty would wrongly imply we have zero forward data
+  const latestDeparture =
+    allFuture.length > 0 ? allFuture[allFuture.length - 1].departure_time : now;
+  const dataHorizon = new Date(latestDeparture * 1000).toISOString().slice(0, 10);
+
+  let flights = allFuture;
+  if (origin) flights = flights.filter((f) => f.departure_airport.toUpperCase() === origin);
+  if (destination) flights = flights.filter((f) => f.arrival_airport.toUpperCase() === destination);
 
   flights.sort((a, b) => a.departure_time - b.departure_time);
   const total = flights.length;
   const shown = flights.slice(0, limit);
-
-  // Show the agent where our schedule data ends so it doesn't assume absence = no Starlink ever
-  const latestDeparture = flights.length > 0 ? flights[flights.length - 1].departure_time : now;
-  const dataHorizon = new Date(latestDeparture * 1000).toISOString().slice(0, 10);
 
   if (total === 0) {
     const routeDesc = origin && destination ? `${origin}→${destination}` : origin || destination;
@@ -776,7 +883,9 @@ Tool selection:
 • Routing/tradeoff questions → plan_starlink_itinerary (multi-stop search, shows expected Starlink hours)
 • Future flight probability → predict_flight_starlink / predict_route_starlink
 • Firm confirmation (≤2 days out) → check_flight
-• search_starlink_flights = next ~2 days ONLY`,
+• search_starlink_flights = next ~2 days ONLY
+
+When a user's flight has low/no Starlink and they want alternatives: ask the user for their origin/destination (they have a ticket — they know), then call predict_route_starlink for same-route alternatives or plan_starlink_itinerary for connection options. Don't just say "download stuff offline" — suggest actual alternative flights.`,
   });
 }
 

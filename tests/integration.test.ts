@@ -1,0 +1,577 @@
+/**
+ * Integration tests — lock down public API contracts and MCP protocol.
+ *
+ * These tests run against a read-only copy of the production database at
+ * /tmp/ua-test.sqlite. They assert on RESPONSE SHAPES, not specific values,
+ * so they don't break as data changes.
+ *
+ * Critical contracts:
+ *  - /api/check-flight: Chrome extension depends on { hasStarlink, flights[] }
+ *  - /api/data: website depends on { totalCount, starlinkPlanes, fleetStats, flightsByTail }
+ *  - MCP: JSON-RPC 2.0 protocol + tool schemas
+ *
+ * Run with: bun test tests/
+ */
+
+import { Database } from "bun:sqlite";
+import { beforeAll, describe, expect, test } from "bun:test";
+import { handleMcpRequest } from "../src/api/mcp-server";
+import {
+  getFleetStats,
+  getLastUpdated,
+  getStarlinkPlanes,
+  getTotalCount,
+  getUpcomingFlights,
+} from "../src/database/database";
+import { planItinerary, predictFlight, predictRoute } from "../src/scripts/starlink-predictor";
+import type { ApiResponse, Flight } from "../src/types";
+import {
+  buildFlightNumberVariants,
+  ensureUAPrefix,
+  inferFleet,
+  normalizeFlightNumber,
+} from "../src/utils/constants";
+
+const TEST_DB = "/tmp/ua-test.sqlite";
+let db: Database;
+
+beforeAll(() => {
+  db = new Database(TEST_DB, { readonly: true });
+  // Sanity check: DB has data
+  const count = db.query("SELECT COUNT(*) as n FROM starlink_planes").get() as { n: number };
+  if (count.n < 10) {
+    throw new Error(`Test DB has only ${count.n} planes — did you copy prod data?`);
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// /api/check-flight contract — Chrome extension depends on this shape
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("/api/check-flight contract", () => {
+  // Reconstructs the handler's response shape using the same queries as server.ts.
+  // If someone changes the server.ts handler, they need to update this OR extract
+  // the handler to a testable module. Either way, the contract is documented here.
+  function checkFlightResponse(flightNumber: string, date: string) {
+    const dateObj = new Date(`${date}T00:00:00Z`);
+    const startOfDay = Math.floor(dateObj.getTime() / 1000);
+    const endOfDay = startOfDay + 86400;
+
+    const normalized = ensureUAPrefix(flightNumber);
+    const variants = buildFlightNumberVariants(normalized);
+    const placeholders = variants.map(() => "?").join(", ");
+
+    const rows = db
+      .query(
+        `SELECT uf.*, sp.Aircraft as aircraft_type, sp.WiFi, sp.DateFound, sp.OperatedBy, sp.fleet
+         FROM upcoming_flights uf
+         INNER JOIN starlink_planes sp ON uf.tail_number = sp.TailNumber
+         WHERE uf.flight_number IN (${placeholders})
+           AND uf.departure_time >= ? AND uf.departure_time < ?
+           AND (sp.verified_wifi IS NULL OR sp.verified_wifi = 'Starlink')
+         ORDER BY uf.departure_time ASC`
+      )
+      .all(...variants, startOfDay, endOfDay) as Array<
+      Flight & {
+        aircraft_type: string;
+        WiFi: string;
+        DateFound: string;
+        OperatedBy: string;
+        fleet: string;
+      }
+    >;
+
+    if (rows.length === 0) {
+      return { hasStarlink: false, flights: [] };
+    }
+
+    return {
+      hasStarlink: true,
+      flights: rows.map((f) => ({
+        tail_number: f.tail_number,
+        aircraft_type: f.aircraft_type,
+        flight_number: f.flight_number,
+        ua_flight_number: normalizeFlightNumber(f.flight_number),
+        departure_airport: f.departure_airport,
+        arrival_airport: f.arrival_airport,
+        departure_time: f.departure_time,
+        arrival_time: f.arrival_time,
+        departure_time_formatted: new Date(f.departure_time * 1000).toISOString(),
+        arrival_time_formatted: new Date(f.arrival_time * 1000).toISOString(),
+        operated_by: f.OperatedBy,
+        fleet_type: f.fleet,
+      })),
+    };
+  }
+
+  test("miss: returns { hasStarlink: false, flights: [] }", () => {
+    const resp = checkFlightResponse("UA99999", "2099-01-01");
+    expect(resp.hasStarlink).toBe(false);
+    expect(Array.isArray(resp.flights)).toBe(true);
+    expect(resp.flights.length).toBe(0);
+  });
+
+  test("hit: returns { hasStarlink: true, flights: [...] } with full field shape", () => {
+    // Find ANY real flight in the DB so this test is stable across data refreshes
+    const sample = db
+      .query(
+        `SELECT uf.flight_number, date(uf.departure_time, 'unixepoch') as d
+         FROM upcoming_flights uf
+         JOIN starlink_planes sp ON uf.tail_number = sp.TailNumber
+         WHERE sp.verified_wifi IS NULL OR sp.verified_wifi = 'Starlink'
+         LIMIT 1`
+      )
+      .get() as { flight_number: string; d: string } | null;
+
+    expect(sample).not.toBeNull();
+    const resp = checkFlightResponse(normalizeFlightNumber(sample!.flight_number), sample!.d);
+
+    expect(resp.hasStarlink).toBe(true);
+    expect(resp.flights.length).toBeGreaterThan(0);
+
+    const f = resp.flights[0];
+    // These fields are the Chrome extension contract — do not break
+    expect(typeof f.tail_number).toBe("string");
+    expect(typeof f.aircraft_type).toBe("string");
+    expect(typeof f.flight_number).toBe("string");
+    expect(typeof f.ua_flight_number).toBe("string");
+    expect(f.ua_flight_number).toMatch(/^UA\d+$/);
+    expect(typeof f.departure_airport).toBe("string");
+    expect(typeof f.arrival_airport).toBe("string");
+    expect(typeof f.departure_time).toBe("number");
+    expect(typeof f.arrival_time).toBe("number");
+    expect(typeof f.departure_time_formatted).toBe("string");
+    expect(typeof f.arrival_time_formatted).toBe("string");
+    expect(typeof f.operated_by).toBe("string");
+    expect(typeof f.fleet_type).toBe("string");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// /api/data contract — website depends on this shape
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("/api/data contract", () => {
+  test("returns ApiResponse shape", () => {
+    const resp: ApiResponse = {
+      totalCount: getTotalCount(db),
+      starlinkPlanes: getStarlinkPlanes(db),
+      lastUpdated: getLastUpdated(db),
+      fleetStats: getFleetStats(db),
+      flightsByTail: {},
+    };
+
+    // Group flights (same as server.ts)
+    for (const f of getUpcomingFlights(db)) {
+      if (!resp.flightsByTail[f.tail_number]) resp.flightsByTail[f.tail_number] = [];
+      resp.flightsByTail[f.tail_number].push(f);
+    }
+
+    expect(typeof resp.totalCount).toBe("number");
+    expect(resp.totalCount).toBeGreaterThan(0);
+    expect(Array.isArray(resp.starlinkPlanes)).toBe(true);
+    expect(resp.starlinkPlanes.length).toBeGreaterThan(0);
+    expect(typeof resp.lastUpdated).toBe("string");
+
+    // fleetStats shape
+    expect(typeof resp.fleetStats.express.total).toBe("number");
+    expect(typeof resp.fleetStats.express.starlink).toBe("number");
+    expect(typeof resp.fleetStats.express.percentage).toBe("number");
+    expect(typeof resp.fleetStats.mainline.total).toBe("number");
+    expect(typeof resp.fleetStats.mainline.starlink).toBe("number");
+    expect(typeof resp.fleetStats.mainline.percentage).toBe("number");
+
+    // Aircraft shape
+    const plane = resp.starlinkPlanes[0];
+    expect(typeof plane.Aircraft).toBe("string");
+    expect(typeof plane.TailNumber).toBe("string");
+    expect(typeof plane.OperatedBy).toBe("string");
+    expect(["express", "mainline"]).toContain(plane.fleet);
+
+    // flightsByTail shape (at least one tail with flights)
+    const tails = Object.keys(resp.flightsByTail);
+    expect(tails.length).toBeGreaterThan(0);
+    const f = resp.flightsByTail[tails[0]][0];
+    expect(typeof f.tail_number).toBe("string");
+    expect(typeof f.flight_number).toBe("string");
+    expect(typeof f.departure_airport).toBe("string");
+    expect(typeof f.arrival_airport).toBe("string");
+    expect(typeof f.departure_time).toBe("number");
+    expect(typeof f.arrival_time).toBe("number");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MCP protocol — JSON-RPC 2.0 envelope + tool schemas
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function mcpCall(method: string, params?: unknown) {
+  const req = new Request("http://localhost/mcp", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+  });
+  const resp = await handleMcpRequest(req, db);
+  return resp.json();
+}
+
+describe("MCP protocol", () => {
+  test("GET with JSON accept returns 405 (Streamable HTTP)", async () => {
+    const req = new Request("http://localhost/mcp", {
+      method: "GET",
+      headers: { Accept: "application/json" },
+    });
+    const resp = await handleMcpRequest(req, db);
+    expect(resp.status).toBe(405);
+  });
+
+  test("initialize returns capabilities, serverInfo, instructions", async () => {
+    const json = await mcpCall("initialize", {
+      protocolVersion: "2024-11-05",
+      capabilities: {},
+      clientInfo: { name: "test", version: "1.0.0" },
+    });
+
+    expect(json.jsonrpc).toBe("2.0");
+    expect(json.id).toBe(1);
+    expect(json.result).toBeDefined();
+    expect(json.result.protocolVersion).toBeDefined();
+    expect(json.result.serverInfo.name).toBe("united-starlink-tracker");
+    expect(typeof json.result.instructions).toBe("string");
+    expect(json.result.instructions.length).toBeGreaterThan(50);
+    // Instructions should include live fleet stats (% sign)
+    expect(json.result.instructions).toContain("%");
+  });
+
+  test("tools/list returns all expected tools with valid schemas", async () => {
+    const json = await mcpCall("tools/list");
+    expect(Array.isArray(json.result.tools)).toBe(true);
+
+    const names = json.result.tools.map((t: { name: string }) => t.name);
+    expect(names).toContain("check_flight");
+    expect(names).toContain("predict_flight_starlink");
+    expect(names).toContain("predict_route_starlink");
+    expect(names).toContain("plan_starlink_itinerary");
+    expect(names).toContain("search_starlink_flights");
+
+    // Every tool has description + inputSchema
+    for (const t of json.result.tools) {
+      expect(typeof t.description).toBe("string");
+      expect(t.description.length).toBeGreaterThan(10);
+      expect(t.inputSchema.type).toBe("object");
+      expect(t.inputSchema.properties).toBeDefined();
+    }
+  });
+
+  test("unknown method returns JSON-RPC error", async () => {
+    const json = await mcpCall("bogus/method");
+    expect(json.error).toBeDefined();
+    expect(json.error.code).toBeLessThan(0);
+  });
+
+  test("tools/call with unknown tool returns error", async () => {
+    const json = await mcpCall("tools/call", {
+      name: "nonexistent_tool",
+      arguments: {},
+    });
+    // Either jsonrpc error OR result with isError
+    expect(json.error || json.result?.isError).toBeTruthy();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MCP tool behavior — test each tool end-to-end
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("MCP tools", () => {
+  test("check_flight: missing params returns isError", async () => {
+    const json = await mcpCall("tools/call", {
+      name: "check_flight",
+      arguments: {},
+    });
+    expect(json.result.isError).toBe(true);
+  });
+
+  test("check_flight: future date returns probability fallback (no assignment)", async () => {
+    const json = await mcpCall("tools/call", {
+      name: "check_flight",
+      arguments: { flight_number: "UA5212", date: "2099-01-01" },
+    });
+    const text = json.result.content[0].text;
+    expect(text).toContain("No confirmed aircraft assignment");
+    expect(text).toContain("Probability estimate");
+    expect(json.result.isError).toBeUndefined();
+  });
+
+  test("predict_flight_starlink: unseen mainline flight gets low fleet prior", async () => {
+    // Pick a flight number in mainline range (1-2999) not in verification log
+    const unseen = db
+      .query(
+        `WITH RECURSIVE nums(n) AS (SELECT 100 UNION ALL SELECT n+1 FROM nums WHERE n<2900)
+         SELECT n FROM nums
+         WHERE 'UA'||n NOT IN (SELECT DISTINCT flight_number FROM starlink_verification_log WHERE flight_number IS NOT NULL)
+         LIMIT 1`
+      )
+      .get() as { n: number };
+    expect(unseen).not.toBeNull();
+
+    const json = await mcpCall("tools/call", {
+      name: "predict_flight_starlink",
+      arguments: { flight_number: `UA${unseen.n}` },
+    });
+    const text = json.result.content[0].text;
+    const pctMatch = text.match(/\*\*(\d+)%\*\*/);
+    expect(pctMatch).not.toBeNull();
+    const pct = Number(pctMatch![1]);
+    expect(pct).toBeLessThan(15);
+    expect(text).toContain("mainline");
+    expect(text).toContain("fleet");
+  });
+
+  test("predict_flight_starlink: low-prob flight includes alternatives hint", async () => {
+    const json = await mcpCall("tools/call", {
+      name: "predict_flight_starlink",
+      arguments: { flight_number: "UA100" },
+    });
+    const text = json.result.content[0].text;
+    // Low probability → should suggest asking user for route
+    expect(text).toContain("ask the user");
+    expect(text).toContain("predict_route_starlink");
+  });
+
+  test("predict_flight_starlink: rejects >4-digit flight numbers", async () => {
+    const json = await mcpCall("tools/call", {
+      name: "predict_flight_starlink",
+      arguments: { flight_number: "UA99999" },
+    });
+    expect(json.result.isError).toBe(true);
+  });
+
+  test("predict_route_starlink: returns flight list sorted by probability", async () => {
+    // Pick a real route from the DB
+    const route = db
+      .query(
+        `SELECT departure_airport, arrival_airport, COUNT(*) as n
+         FROM upcoming_flights
+         GROUP BY departure_airport, arrival_airport
+         ORDER BY n DESC LIMIT 1`
+      )
+      .get() as { departure_airport: string; arrival_airport: string };
+
+    const json = await mcpCall("tools/call", {
+      name: "predict_route_starlink",
+      arguments: { origin: route.departure_airport, destination: route.arrival_airport },
+    });
+    const text = json.result.content[0].text;
+    expect(text).toContain(route.departure_airport);
+    expect(text).toContain(route.arrival_airport);
+    expect(text).toMatch(/\d+(\.\d+)?%/); // contains percentages
+  });
+
+  test("plan_starlink_itinerary: origin=destination returns isError", async () => {
+    const json = await mcpCall("tools/call", {
+      name: "plan_starlink_itinerary",
+      arguments: { origin: "SFO", destination: "SFO" },
+    });
+    expect(json.result.isError).toBe(true);
+  });
+
+  test("plan_starlink_itinerary: returns expected Starlink hours in output", async () => {
+    // Use busiest route pair so we get multi-stop results
+    const routes = db
+      .query(
+        `SELECT departure_airport, arrival_airport, COUNT(*) as n
+         FROM upcoming_flights
+         GROUP BY departure_airport, arrival_airport
+         ORDER BY n DESC LIMIT 5`
+      )
+      .all() as Array<{ departure_airport: string; arrival_airport: string }>;
+
+    let found = false;
+    for (const r of routes) {
+      const json = await mcpCall("tools/call", {
+        name: "plan_starlink_itinerary",
+        arguments: { origin: r.departure_airport, destination: r.arrival_airport },
+      });
+      const text = json.result.content[0].text;
+      if (text.includes("Starlink") && /\d+(\.\d+)?h/.test(text)) {
+        found = true;
+        // Should include the "key for tradeoffs" footer
+        expect(text.toLowerCase()).toContain("expected starlink");
+        break;
+      }
+    }
+    expect(found).toBe(true);
+  });
+
+  test("search_starlink_flights: returns next-2-days results only", async () => {
+    const json = await mcpCall("tools/call", {
+      name: "search_starlink_flights",
+      arguments: { origin: "IAH" },
+    });
+    const text = json.result.content[0].text;
+    expect(text.length).toBeGreaterThan(10);
+    // Either has flights or says none — both are valid, just not an error
+    expect(json.result.isError).toBeUndefined();
+  });
+
+  test("search_starlink_flights: exact airport match (2-letter codes should return 0)", async () => {
+    const json = await mcpCall("tools/call", {
+      name: "search_starlink_flights",
+      arguments: { origin: "OR" },
+    });
+    const text = json.result.content[0].text;
+    expect(text).toContain("No confirmed Starlink flights");
+  });
+
+  test("check_flight: rejects 5-digit flight numbers", async () => {
+    const json = await mcpCall("tools/call", {
+      name: "check_flight",
+      arguments: { flight_number: "UA99999", date: "2026-06-01" },
+    });
+    expect(json.result.isError).toBe(true);
+  });
+
+  test("check_flight: past date doesn't say 'check 1-2 days before'", async () => {
+    const json = await mcpCall("tools/call", {
+      name: "check_flight",
+      arguments: { flight_number: "UA5685", date: "2020-01-01" },
+    });
+    const text = json.result.content[0].text;
+    expect(text).not.toContain("1-2 days before departure");
+    expect(text).toContain("in the past");
+  });
+
+  test("predict_route_starlink: empty result suggests plan_starlink_itinerary when both endpoints given", async () => {
+    // Find a route NOT in our data
+    const json = await mcpCall("tools/call", {
+      name: "predict_route_starlink",
+      arguments: { origin: "ZZZ", destination: "YYY" },
+    });
+    const text = json.result.content[0].text;
+    expect(text).toContain("plan_starlink_itinerary");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Predictor direct — shape + sanity bounds
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("predictor", () => {
+  test("predictFlight: probability in [0,1], confidence in enum", () => {
+    const p = predictFlight(db, "UA5212");
+    expect(p.probability).toBeGreaterThanOrEqual(0);
+    expect(p.probability).toBeLessThanOrEqual(1);
+    expect(["low", "medium", "high"]).toContain(p.confidence);
+    expect(typeof p.n_observations).toBe("number");
+  });
+
+  test("predictFlight: unknown mainline gets fleet prior < 10%", () => {
+    const p = predictFlight(db, "UA123");
+    expect(p.probability).toBeLessThan(0.1);
+  });
+
+  test("predictRoute: returns sorted flights with probabilities", () => {
+    const r = predictRoute(db, "IAH", "DEN");
+    if (r.flights.length > 1) {
+      // Sorted descending by probability
+      for (let i = 1; i < r.flights.length; i++) {
+        expect(r.flights[i].probability).toBeLessThanOrEqual(r.flights[i - 1].probability);
+      }
+    }
+  });
+
+  test("planItinerary: origin=dest returns empty", () => {
+    const its = planItinerary(db, "SFO", "SFO", { maxStops: 2, maxItineraries: 5 });
+    expect(its.length).toBe(0);
+  });
+
+  test("planItinerary: expected_starlink_hours is consistent with legs", () => {
+    const its = planItinerary(db, "SFO", "DEN", { maxStops: 2, maxItineraries: 5 });
+    for (const it of its) {
+      if (it.expected_starlink_hours !== null) {
+        const recomputed = it.legs.reduce(
+          (s, l) => (l.duration_hours !== null ? s + l.probability * l.duration_hours : s),
+          0
+        );
+        expect(Math.abs(it.expected_starlink_hours - recomputed)).toBeLessThan(0.01);
+      }
+    }
+  });
+
+  test("planItinerary: direct flight always in results when it exists", () => {
+    // Find ANY direct edge in the DB to test with
+    const edge = db
+      .query("SELECT departure_airport, arrival_airport FROM upcoming_flights LIMIT 1")
+      .get() as { departure_airport: string; arrival_airport: string };
+    const its = planItinerary(db, edge.departure_airport, edge.arrival_airport, {
+      maxStops: 2,
+      maxItineraries: 8,
+    });
+    const direct = its.find((it) => it.via.length === 0);
+    expect(direct).toBeDefined();
+    // Direct should be ranked first (among full-coverage)
+    const firstFull = its.find((it) => it.coverage === "full");
+    expect(firstFull?.via.length).toBe(0);
+  });
+
+  test("planItinerary: maxStops=0 returns no partial-coverage options", () => {
+    const its = planItinerary(db, "DEN", "ORD", { maxStops: 0, maxItineraries: 8 });
+    const partials = its.filter((it) => it.coverage === "partial");
+    expect(partials.length).toBe(0);
+  });
+
+  test("planItinerary: coverage_ratio computed when durations known", () => {
+    const its = planItinerary(db, "SFO", "DEN", { maxStops: 2, maxItineraries: 5 });
+    const withKnownTime = its.find(
+      (it) => it.total_flight_hours !== null && it.expected_starlink_hours !== null
+    );
+    if (withKnownTime) {
+      expect(withKnownTime.coverage_ratio).not.toBeNull();
+      expect(withKnownTime.coverage_ratio).toBeGreaterThan(0);
+      expect(withKnownTime.coverage_ratio).toBeLessThanOrEqual(1);
+    }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Flight number normalization — regression lock
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("flight number utils", () => {
+  test("ensureUAPrefix handles all input shapes", () => {
+    expect(ensureUAPrefix("5212")).toBe("UA5212");
+    expect(ensureUAPrefix("UA5212")).toBe("UA5212");
+    expect(ensureUAPrefix("SKW5212")).toBe("UA5212");
+    expect(ensureUAPrefix("OO5212")).toBe("UA5212");
+    expect(ensureUAPrefix("UAL544")).toBe("UA544");
+    expect(ensureUAPrefix(" UA5212 ")).toBe("UA5212");
+  });
+
+  test("normalizeFlightNumber: carrier prefix → UA", () => {
+    expect(normalizeFlightNumber("SKW5882")).toBe("UA5882");
+    expect(normalizeFlightNumber("ASH4054")).toBe("UA4054");
+    expect(normalizeFlightNumber("UAL544")).toBe("UA544");
+    expect(normalizeFlightNumber("UA1234")).toBe("UA1234");
+    expect(normalizeFlightNumber("OO4680")).toBe("UA4680");
+  });
+
+  test("buildFlightNumberVariants: UA number → all carrier variants", () => {
+    const v = buildFlightNumberVariants("UA5212");
+    expect(v).toContain("UA5212");
+    expect(v).toContain("SKW5212");
+    expect(v).toContain("OO5212");
+    expect(v).toContain("UAL5212");
+    expect(v.length).toBeGreaterThan(5);
+  });
+
+  test("inferFleet: flight number ranges", () => {
+    expect(inferFleet("UA100")).toBe("mainline");
+    expect(inferFleet("UA2999")).toBe("mainline");
+    expect(inferFleet("UA3000")).toBe("express");
+    expect(inferFleet("UA5212")).toBe("express");
+    expect(inferFleet("UA6999")).toBe("express");
+    expect(inferFleet("UA7000")).toBe("mainline");
+    expect(inferFleet("SKW4680")).toBe("express");
+  });
+});

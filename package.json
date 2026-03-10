@@ -15,6 +15,8 @@
     "db-status": "bun run src/scripts/db-status.ts",
     "predict-backtest": "bun run src/scripts/starlink-predictor.ts --backtest",
     "reset-flights": "bun run src/scripts/reset-flight-checks.ts",
+    "test": "bun test tests/",
+    "test:setup": "cp plane-data.production.sqlite /tmp/ua-test.sqlite && sqlite3 /tmp/ua-test.sqlite 'PRAGMA journal_mode=DELETE;'",
     "lint": "biome check .",
     "format": "biome format --write .",
     "lint:fix": "biome check --write .",

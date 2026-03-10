@@ -6,3 +6,5 @@ node_modules
 .playwright-browsers/
 tmp/
 logs/
+plane-data.production.sqlite*
+tsconfig.tsbuildinfo

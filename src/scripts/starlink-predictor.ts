@@ -82,7 +82,7 @@ interface ModelConfig {
 }
 
 const DEFAULT_CONFIG: ModelConfig = {
-  priorStrength: 2, // α=2 found optimal via Brier sweep
+  priorStrength: 3, // α=3 found optimal via Brier sweep (marginally beats α=2)
   expressSmoothingPrior: 0.768,
   mainlineSmoothingPrior: 0.004,
   expressColdPrior: 0.39,
@@ -312,8 +312,13 @@ export function backtest(
   config: ModelConfig = DEFAULT_CONFIG
 ): EvalResult {
   const db = new Database(dbPath, { readonly: true });
-  const now = Math.floor(Date.now() / 1000);
-  const cutoff = now - holdoutHours * 3600;
+  // Anchor to MAX(checked_at), not wall-clock — against frozen snapshots,
+  // wall-clock would shrink or erase the holdout window.
+  const maxRow = db
+    .query("SELECT MAX(checked_at) as m FROM starlink_verification_log WHERE source='united'")
+    .get() as { m: number } | null;
+  const anchor = maxRow?.m ?? Math.floor(Date.now() / 1000);
+  const cutoff = anchor - holdoutHours * 3600;
 
   const trainObs = loadObservations(db, cutoff);
   const testObs = loadObservations(db, undefined, cutoff);
@@ -374,8 +379,13 @@ function deriveConfig(
   trainObs: Observation[],
   base: ModelConfig = DEFAULT_CONFIG
 ): ModelConfig {
+  // Derive smoothing priors from log-conditional rates. Exclude 5-digit flight
+  // numbers (ferry/repositioning, ~3.5% of obs, all zero-Starlink) so they don't
+  // poison the mainline prior — they're not revenue flights.
   const byFleet = { express: { s: 0, t: 0 }, mainline: { s: 0, t: 0 } };
   for (const obs of trainObs) {
+    const numMatch = obs.flight_number.match(/(\d+)$/);
+    if (numMatch && numMatch[1].length > 4) continue;
     const f = inferFleet(obs.flight_number);
     if (f === "express" || f === "mainline") {
       byFleet[f].s += obs.has_starlink;
@@ -383,18 +393,33 @@ function deriveConfig(
     }
   }
 
-  const coldPriors = loadFleetPriors(db);
-
-  return {
-    ...base,
-    expressSmoothingPrior:
+  const logRate = {
+    express:
       byFleet.express.t > 0 ? byFleet.express.s / byFleet.express.t : base.expressSmoothingPrior,
-    mainlineSmoothingPrior:
+    mainline:
       byFleet.mainline.t > 0
         ? byFleet.mainline.s / byFleet.mainline.t
         : base.mainlineSmoothingPrior,
-    expressColdPrior: coldPriors.express,
-    mainlineColdPrior: coldPriors.mainline,
+  };
+  const fleetRate = loadFleetPriors(db);
+
+  return {
+    ...base,
+    // Express smoothing: log-conditional rate is correct (~0.76). The log
+    // over-samples Starlink-suspected planes by design.
+    expressSmoothingPrior: logRate.express,
+    // Mainline smoothing: use the FLEET rate (~0.018) as a floor. The raw
+    // log-conditional rate (~0.001) collapses predictions below the true install
+    // rate because mainline planes entering the log were checked early (before
+    // they had Starlink). Using fleetRate prevents "0.0005" predictions when
+    // actual is "0.015". Backtested: ECE -30% with this change.
+    mainlineSmoothingPrior: Math.max(logRate.mainline, fleetRate.mainline),
+    // Express cold start: blend fleet rate and log-conditional rate. A flight
+    // NEWLY entering the verification log is selection-biased — it was checked
+    // because it was on a Starlink-suspected tail. True rate for such flights
+    // is ~0.65, not the fleet-wide ~0.49. Backtested: optimal blend is ~0.5·each.
+    expressColdPrior: 0.5 * fleetRate.express + 0.5 * logRate.express,
+    mainlineColdPrior: fleetRate.mainline,
   };
 }
 
@@ -527,14 +552,18 @@ export function predictRoute(
 // Itinerary planning (multi-stop graph search)
 // ============================================================================
 
-// Minimum leg probability to include in full-coverage itineraries
+// Minimum leg probability to include in the graph (full-coverage or partial)
 const MIN_LEG_PROBABILITY = 0.3;
-// Minimum probability for the Starlink leg in partial-coverage fallback
-const PARTIAL_FALLBACK_MIN_PROB = 0.5;
+// Probability assigned to edges with a CONFIRMED near-term Starlink assignment.
+// Less than 1.0 to account for possible aircraft swaps before departure.
+const CONFIRMED_EDGE_PROBABILITY = 0.95;
 
 export type ItineraryLeg = BasePrediction & {
   route: string;
-  duration_hours: number | null; // null when we don't know (positioning legs on routes outside our data)
+  duration_hours: number | null;
+  // True if this leg comes from a confirmed near-term Starlink assignment in
+  // upcoming_flights (not historical prediction). Render differently.
+  confirmed?: boolean;
 };
 
 export interface Itinerary {
@@ -547,14 +576,27 @@ export interface Itinerary {
   // A "92% Starlink" 2-hour leg after a 5-hour no-Starlink leg is ~1.8h of Starlink out of 7h flying.
   total_flight_hours: number | null; // null if any leg duration unknown
   expected_starlink_hours: number | null; // Σ(leg_probability × leg_duration), null if any duration unknown
+  // coverage_ratio = expected_starlink_hours / total_flight_hours. This is the
+  // ranking metric: maximizing raw eSL hours pathologically prefers 10h 3-stop
+  // routes over a 1h 92% direct. Coverage ratio treats them fairly.
+  coverage_ratio: number | null;
 }
 
 /**
  * Build the Starlink route adjacency graph: for each airport, the best
  * (highest-probability) flight number to each reachable destination.
- * One SQL query + one prediction per distinct route. Includes avg leg duration.
+ *
+ * Probability comes from TWO sources, in priority order:
+ *  1. CONFIRMED assignment: if the flight is on a verified-Starlink tail in our
+ *     current upcoming_flights snapshot, use CONFIRMED_EDGE_PROBABILITY (0.95).
+ *     The flight number's history is irrelevant — we KNOW the near-term answer.
+ *  2. Historical prediction: predictFlight() from the verification log.
+ *
+ * Without (1), a flight like UA1358 ORD→MIA (0% history, but literally on a
+ * Starlink plane tomorrow) gets filtered out and the planner says "no path."
  */
 function buildRouteGraph(db: Database, minLegProb: number): Map<string, Map<string, ItineraryLeg>> {
+  // All edges (route + duration) from upcoming_flights
   const rows = db
     .query(
       `SELECT flight_number, departure_airport, arrival_airport,
@@ -571,12 +613,37 @@ function buildRouteGraph(db: Database, minLegProb: number): Map<string, Map<stri
     avg_duration_sec: number;
   }>;
 
-  // For each directed edge (dep → arr), keep the highest-probability flight
+  // Subset: edges where at least one flight is on a CONFIRMED Starlink tail.
+  // These get CONFIRMED_EDGE_PROBABILITY regardless of flight-number history.
+  const confirmedEdges = new Set<string>();
+  const confirmedRows = db
+    .query(
+      `SELECT DISTINCT uf.flight_number, uf.departure_airport, uf.arrival_airport
+       FROM upcoming_flights uf
+       JOIN starlink_planes sp ON uf.tail_number = sp.TailNumber
+       WHERE sp.verified_wifi IS NULL OR sp.verified_wifi = 'Starlink'`
+    )
+    .all() as Array<{ flight_number: string; departure_airport: string; arrival_airport: string }>;
+  for (const r of confirmedRows) {
+    confirmedEdges.add(`${r.flight_number}|${r.departure_airport}|${r.arrival_airport}`);
+  }
+
   const graph = new Map<string, Map<string, ItineraryLeg>>();
   for (const r of rows) {
     const dep = r.departure_airport;
     const arr = r.arrival_airport;
-    const pred = predictFlight(db, ensureUAPrefix(r.flight_number));
+    const uaNum = ensureUAPrefix(r.flight_number);
+    const isConfirmed = confirmedEdges.has(`${r.flight_number}|${dep}|${arr}`);
+
+    const pred: BasePrediction = isConfirmed
+      ? {
+          flight_number: uaNum,
+          probability: CONFIRMED_EDGE_PROBABILITY,
+          confidence: "high",
+          n_observations: 1,
+        }
+      : predictFlight(db, uaNum);
+
     if (pred.probability < minLegProb) continue;
 
     if (!graph.has(dep)) graph.set(dep, new Map());
@@ -586,7 +653,8 @@ function buildRouteGraph(db: Database, minLegProb: number): Map<string, Map<stri
       edges.set(arr, {
         ...pred,
         route: `${dep}-${arr}`,
-        duration_hours: r.avg_duration_sec / 3600,
+        duration_hours: r.avg_duration_sec > 0 ? r.avg_duration_sec / 3600 : null,
+        confirmed: isConfirmed,
       });
     }
   }
@@ -598,7 +666,6 @@ function computeItinerary(legs: ItineraryLeg[], coverage: "full" | "partial"): I
   const atLeastOne = 1 - legs.reduce((p, l) => p * (1 - l.probability), 1);
   const via = legs.slice(0, -1).map((l) => l.route.split("-")[1]);
 
-  // Time-aware metrics. Null if any leg has unknown duration (positioning legs).
   const allDurationsKnown = legs.every((l) => l.duration_hours !== null);
   const totalHours = allDurationsKnown
     ? legs.reduce((s, l) => s + (l.duration_hours as number), 0)
@@ -606,6 +673,10 @@ function computeItinerary(legs: ItineraryLeg[], coverage: "full" | "partial"): I
   const expectedStarlinkHours = allDurationsKnown
     ? legs.reduce((s, l) => s + l.probability * (l.duration_hours as number), 0)
     : null;
+  const coverageRatio =
+    totalHours !== null && expectedStarlinkHours !== null && totalHours > 0
+      ? expectedStarlinkHours / totalHours
+      : null;
 
   return {
     via,
@@ -615,20 +686,32 @@ function computeItinerary(legs: ItineraryLeg[], coverage: "full" | "partial"): I
     coverage,
     total_flight_hours: totalHours,
     expected_starlink_hours: expectedStarlinkHours,
+    coverage_ratio: coverageRatio,
+  };
+}
+
+function makePositioningLeg(route: string): ItineraryLeg {
+  return {
+    flight_number: "(any)",
+    route,
+    probability: DEFAULT_CONFIG.mainlineColdPrior,
+    confidence: "low",
+    n_observations: 0,
+    duration_hours: null,
   };
 }
 
 /**
  * Find the best Starlink-maximizing itineraries from origin to destination.
  *
- * Multi-stop graph search: builds the full Starlink route graph once, then
- * BFS up to max_stops depth. A path's score is the joint probability of all
- * legs having Starlink. Returns the top-K distinct paths.
+ * Multi-stop graph search over edges where a Starlink plane has flown or is
+ * currently confirmed. Ranked by COVERAGE RATIO (expected Starlink hours /
+ * total hours) — not raw hours, which would pathologically prefer 10-hour
+ * 3-stops over 1-hour 92% directs.
  *
- * FALLBACK: if no all-Starlink path exists, suggests partial-coverage options
- * (mainline positioning leg + Starlink connection legs).
- *
- * LIMITATION: only knows routes Starlink planes have flown (~738 edges).
+ * Guarantees: a direct flight in the graph is ALWAYS returned as option #1.
+ * Partial-coverage baselines (positioning + Starlink leg in either direction)
+ * are included when no strong direct exists.
  */
 export function planItinerary(
   db: Database,
@@ -638,17 +721,16 @@ export function planItinerary(
 ): Itinerary[] {
   const orig = origin.toUpperCase().trim();
   const dest = destination.toUpperCase().trim();
-  if (orig === dest) return []; // guard: can't plan A→A
+  if (orig === dest) return [];
 
   const maxItineraries = options.maxItineraries ?? 10;
   const minLegProb = options.minLegProbability ?? MIN_LEG_PROBABILITY;
-  const maxStops = Math.min(options.maxStops ?? 2, 3); // cap at 3 stops (4 legs)
+  const maxStops = Math.min(options.maxStops ?? 2, 3);
 
   const graph = buildRouteGraph(db, minLegProb);
   const itineraries: Itinerary[] = [];
 
-  // BFS: paths up to (maxStops + 1) legs. Track visited airports per-path
-  // to avoid cycles. Prune aggressively by joint probability.
+  // --- BFS up to maxStops+1 legs ---
   type SearchState = { airport: string; legs: ItineraryLeg[]; joint: number };
   let frontier: SearchState[] = [{ airport: orig, legs: [], joint: 1 }];
   const seenPaths = new Set<string>();
@@ -660,7 +742,6 @@ export function planItinerary(
       if (!edges) continue;
 
       for (const [nextAirport, leg] of edges.entries()) {
-        // No cycles (can't revisit an airport already in the path, including origin)
         if (nextAirport === orig) continue;
         if (state.legs.some((l) => l.route.split("-")[1] === nextAirport)) continue;
 
@@ -668,86 +749,100 @@ export function planItinerary(
         const newJoint = state.joint * leg.probability;
 
         if (nextAirport === dest) {
-          // Reached destination — record itinerary
           const pathKey = newLegs.map((l) => l.route).join("|");
           if (!seenPaths.has(pathKey)) {
             seenPaths.add(pathKey);
             itineraries.push(computeItinerary(newLegs, "full"));
           }
         } else if (depth < maxStops) {
-          // Continue search — but prune low-joint-prob branches to keep frontier bounded
-          // (if we already have maxItineraries full-coverage options, anything with
-          // lower joint prob won't make the cut)
-          if (itineraries.length >= maxItineraries) {
-            itineraries.sort((a, b) => b.joint_probability - a.joint_probability);
-            if (newJoint < itineraries[maxItineraries - 1].joint_probability) continue;
-          }
           nextFrontier.push({ airport: nextAirport, legs: newLegs, joint: newJoint });
         }
       }
     }
-    // Sort frontier by joint prob and cap to keep search bounded (beam search)
     nextFrontier.sort((a, b) => b.joint - a.joint);
     frontier = nextFrontier.slice(0, 200);
   }
 
-  // --- Partial-coverage baseline (1-stop positioning + Starlink leg) ---
-  // ALWAYS include up to 3 partial options as a baseline, even when full-coverage
-  // paths exist. This lets the agent show the tradeoff (2.5h Starlink on a
-  // "normal" 1-stop vs 8.8h on a 2-stop) in one call instead of forcing two.
-  // Full-coverage options still sort first.
-  const partialLimit = itineraries.length === 0 ? maxItineraries : 3;
-  const intoDestLegs: ItineraryLeg[] = [];
-  for (const [hub, edges] of graph.entries()) {
-    const leg = edges.get(dest);
-    if (leg && leg.probability >= PARTIAL_FALLBACK_MIN_PROB && hub !== orig) {
-      // Skip if we already have a full-coverage path through this hub (no value add)
+  // --- Partial-coverage baselines (both directions) ---
+  // Only when maxStops > 0 (respect user's "direct only" intent) and when
+  // we don't already have a strong direct (≥70% joint) — extra options
+  // are noise when a 92% direct exists.
+  const directIt = itineraries.find((it) => it.via.length === 0);
+  const showPartials = maxStops > 0 && (!directIt || directIt.joint_probability < 0.7);
+
+  if (showPartials) {
+    const partialLimit = itineraries.length === 0 ? maxItineraries : 3;
+    type PartialCandidate = { starlinkLeg: ItineraryLeg; hub: string; direction: "in" | "out" };
+    const candidates: PartialCandidate[] = [];
+
+    // Direction "in": (any) orig→hub, then Starlink hub→dest
+    for (const [hub, edges] of graph.entries()) {
+      const leg = edges.get(dest);
+      if (!leg || leg.probability < minLegProb || hub === orig) continue;
       if (itineraries.some((it) => it.via.length === 1 && it.via[0] === hub)) continue;
-      intoDestLegs.push(leg);
+      candidates.push({ starlinkLeg: leg, hub, direction: "in" });
+    }
+    // Direction "out": Starlink orig→hub, then (any) hub→dest
+    const outEdges = graph.get(orig);
+    if (outEdges) {
+      for (const [hub, leg] of outEdges.entries()) {
+        if (hub === dest || leg.probability < minLegProb) continue;
+        if (itineraries.some((it) => it.via.length === 1 && it.via[0] === hub)) continue;
+        candidates.push({ starlinkLeg: leg, hub, direction: "out" });
+      }
+    }
+
+    // Prefer longer Starlink legs (more hours) at similar probability
+    candidates.sort((a, b) => {
+      const aH = (a.starlinkLeg.duration_hours ?? 0) * a.starlinkLeg.probability;
+      const bH = (b.starlinkLeg.duration_hours ?? 0) * b.starlinkLeg.probability;
+      return bH - aH;
+    });
+
+    for (const c of candidates.slice(0, partialLimit)) {
+      const legs =
+        c.direction === "in"
+          ? [makePositioningLeg(`${orig}-${c.hub}`), c.starlinkLeg]
+          : [c.starlinkLeg, makePositioningLeg(`${c.hub}-${dest}`)];
+      itineraries.push(computeItinerary(legs, "partial"));
     }
   }
-  intoDestLegs.sort((a, b) => b.probability - a.probability);
 
-  for (const finalLeg of intoDestLegs.slice(0, partialLimit)) {
-    const hub = finalLeg.route.split("-")[0];
-    const positioningLeg: ItineraryLeg = {
-      flight_number: "(any)",
-      route: `${orig}-${hub}`,
-      probability: DEFAULT_CONFIG.mainlineColdPrior,
-      confidence: "low",
-      n_observations: 0,
-      duration_hours: null, // unknown — mainline route outside our Starlink-tracked data
-    };
-    itineraries.push(computeItinerary([positioningLeg, finalLeg], "partial"));
-  }
-
-  // Rank by EXPECTED STARLINK HOURS (what users actually want to maximize).
-  // Full-coverage paths sort above partial. Within coverage: expected Starlink
-  // hours (descending), then fewer legs as tiebreaker. Falls back to joint prob
-  // when duration unknown.
+  // --- Ranking ---
+  // Primary: COVERAGE RATIO (eSL / totalH). This treats a 1h 92% direct and a
+  // 10h 90% multi-stop as roughly equal quality — the user's EXPERIENCE is the
+  // same. Raw eSL would rank the 10h option absurdly higher.
+  // Secondary: fewer legs (users prefer simpler routings).
+  // Tertiary: more expected Starlink hours (breaks ties for similar ratios).
   itineraries.sort((a, b) => {
     if (a.coverage !== b.coverage) return a.coverage === "full" ? -1 : 1;
 
-    // Primary: expected Starlink hours (higher is better). Unknown sorts last.
-    const aE = a.expected_starlink_hours;
-    const bE = b.expected_starlink_hours;
-    if (aE !== null && bE !== null) {
-      if (Math.abs(bE - aE) > 0.05) return bE - aE;
-    } else if (aE !== null) return -1;
-    else if (bE !== null) return 1;
+    const aR = a.coverage_ratio;
+    const bR = b.coverage_ratio;
+    if (aR !== null && bR !== null) {
+      if (Math.abs(bR - aR) > 0.02) return bR - aR;
+    } else if (aR !== null) return -1;
+    else if (bR !== null) return 1;
 
-    // Secondary: joint probability (for when durations tie or are unknown)
-    const probDiff = b.joint_probability - a.joint_probability;
-    if (Math.abs(probDiff) > 0.01) return probDiff;
+    if (a.legs.length !== b.legs.length) return a.legs.length - b.legs.length;
 
-    // Tertiary: fewer legs (simpler routing)
-    return a.legs.length - b.legs.length;
+    const aE = a.expected_starlink_hours ?? 0;
+    const bE = b.expected_starlink_hours ?? 0;
+    return bE - aE;
   });
 
-  // Keep maxItineraries full-coverage + up to 3 partial baseline (additional, not counted)
-  const fullKept = itineraries.filter((it) => it.coverage === "full").slice(0, maxItineraries);
-  const partialKept = itineraries.filter((it) => it.coverage === "partial").slice(0, 3);
-  return [...fullKept, ...partialKept];
+  // Guarantee: direct flight (if in graph) is always in results, regardless of
+  // ratio rank. It's what users expect as the "baseline" option.
+  const fullSorted = itineraries.filter((it) => it.coverage === "full");
+  const partialSorted = itineraries.filter((it) => it.coverage === "partial");
+  const direct = fullSorted.find((it) => it.via.length === 0);
+  const nonDirect = fullSorted.filter((it) => it.via.length > 0);
+
+  const fullKept = direct
+    ? [direct, ...nonDirect.slice(0, maxItineraries - 1)]
+    : nonDirect.slice(0, maxItineraries);
+
+  return [...fullKept, ...partialSorted.slice(0, 3)];
 }
 
 export type { Prediction };
