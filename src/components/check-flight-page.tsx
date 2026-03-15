@@ -286,6 +286,41 @@ export default function CheckFlightPage() {
             document.getElementById('flight-number').value = urlFlight;
           }
 
+          function showPrediction(flightNumber, resultDiv) {
+            resultDiv.innerHTML = '<div class="text-sm text-muted font-mono">Estimating probability...</div>';
+            fetch('/api/predict-flight?flight_number=' + encodeURIComponent(flightNumber))
+              .then(function(r) { return r.json(); })
+              .then(function(pred) {
+                var pct = Math.round(pred.probability * 100);
+                var isLikely = pct >= 70;
+                var isPossible = pct >= 40 && pct < 70;
+                var label = isLikely ? 'Likely' : isPossible ? 'Possible' : 'Unlikely';
+                var barColor = isLikely ? 'bg-green-500' : isPossible ? 'bg-yellow-500' : 'bg-surface-elevated';
+                var borderColor = isLikely ? 'border-green-700/50 bg-green-900/20' : isPossible ? 'border-yellow-700/50 bg-yellow-900/20' : 'border-subtle bg-surface-elevated';
+                var iconColor = isLikely ? 'text-green-400' : isPossible ? 'text-yellow-400' : 'text-muted';
+                var detail = pred.n_observations > 0
+                  ? 'Based on <span class="text-secondary">' + pred.n_observations + '</span> historical observation' + (pred.n_observations === 1 ? '' : 's') + ' of aircraft on this flight number (' + pred.confidence + ' confidence).'
+                  : 'No historical data for this flight number — this is the fleet install rate (treat as upper bound).';
+                resultDiv.innerHTML = '<div class="rounded p-4 border ' + borderColor + '">' +
+                  '<div class="flex items-center gap-2 mb-3">' +
+                  '<span class="text-lg ' + iconColor + '">~</span>' +
+                  '<span class="font-display font-semibold ' + iconColor + '">' + label + ' — estimated ' + pct + '% chance of Starlink</span>' +
+                  '</div>' +
+                  '<div class="mb-3"><div class="w-full bg-base rounded-full h-2 overflow-hidden"><div class="' + barColor + ' h-2 rounded-full" style="width: ' + pct + '%"></div></div></div>' +
+                  '<p class="text-xs text-muted leading-relaxed">' + detail + ' Aircraft assignments firm up ~2 days before departure — check back then for a confirmed answer.</p>' +
+                  '</div>';
+              })
+              .catch(function() {
+                resultDiv.innerHTML = '<div class="bg-surface-elevated border border-subtle rounded p-4">' +
+                  '<div class="flex items-center gap-2 mb-2">' +
+                  '<span class="text-muted text-lg">—</span>' +
+                  '<span class="font-display font-medium text-secondary">No Starlink found for this flight</span>' +
+                  '</div>' +
+                  '<p class="text-sm text-muted">Try checking closer to your departure date.</p>' +
+                  '</div>';
+              });
+          }
+
           if (form) {
             form.addEventListener('submit', function(e) {
               e.preventDefault();
@@ -336,39 +371,57 @@ export default function CheckFlightPage() {
                       '<div class="pt-2"><a href="' + faUrl + '" target="_blank" rel="noopener noreferrer" class="text-accent hover:underline text-xs">View on FlightAware →</a></div>' +
                       '</div></div>';
                   } else {
-                    // No firm data — fetch probability estimate
-                    resultDiv.innerHTML = '<div class="text-sm text-muted font-mono">No firm assignment yet — estimating probability...</div>';
-                    fetch('/api/predict-flight?flight_number=' + encodeURIComponent(flightNumber))
-                      .then(function(r) { return r.json(); })
-                      .then(function(pred) {
-                        var pct = Math.round(pred.probability * 100);
-                        var isLikely = pct >= 70;
-                        var isPossible = pct >= 40 && pct < 70;
-                        var label = isLikely ? 'Likely' : isPossible ? 'Possible' : 'Unlikely';
-                        var barColor = isLikely ? 'bg-green-500' : isPossible ? 'bg-yellow-500' : 'bg-surface-elevated';
-                        var borderColor = isLikely ? 'border-green-700/50 bg-green-900/20' : isPossible ? 'border-yellow-700/50 bg-yellow-900/20' : 'border-subtle bg-surface-elevated';
-                        var iconColor = isLikely ? 'text-green-400' : isPossible ? 'text-yellow-400' : 'text-muted';
-                        var detail = pred.n_observations > 0
-                          ? 'Based on <span class="text-secondary">' + pred.n_observations + '</span> historical observation' + (pred.n_observations === 1 ? '' : 's') + ' of aircraft on this flight number (' + pred.confidence + ' confidence).'
-                          : 'No historical data for this flight number — this is the fleet install rate (treat as upper bound).';
-                        resultDiv.innerHTML = '<div class="rounded p-4 border ' + borderColor + '">' +
-                          '<div class="flex items-center gap-2 mb-3">' +
-                          '<span class="text-lg ' + iconColor + '">~</span>' +
-                          '<span class="font-display font-semibold ' + iconColor + '">' + label + ' — estimated ' + pct + '% chance of Starlink</span>' +
-                          '</div>' +
-                          '<div class="mb-3"><div class="w-full bg-base rounded-full h-2 overflow-hidden"><div class="' + barColor + ' h-2 rounded-full" style="width: ' + pct + '%"></div></div></div>' +
-                          '<p class="text-xs text-muted leading-relaxed">' + detail + ' Aircraft assignments firm up ~2 days before departure — check back then for a confirmed answer.</p>' +
-                          '</div>';
-                      })
-                      .catch(function() {
-                        resultDiv.innerHTML = '<div class="bg-surface-elevated border border-subtle rounded p-4">' +
-                          '<div class="flex items-center gap-2 mb-2">' +
-                          '<span class="text-muted text-lg">—</span>' +
-                          '<span class="font-display font-medium text-secondary">No Starlink found for this flight</span>' +
-                          '</div>' +
-                          '<p class="text-sm text-muted">Try checking closer to your departure date.</p>' +
-                          '</div>';
-                      });
+                    // No firm DB data — check if flight is within 2 days for real-time verification
+                    var flightDateMs = new Date(date + 'T00:00:00Z').getTime();
+                    var nowMs = Date.now();
+                    var isNearTerm = flightDateMs <= nowMs + 2 * 86400000 && flightDateMs >= nowMs - 86400000;
+
+                    if (isNearTerm) {
+                      // Real-time check against United.com
+                      resultDiv.innerHTML = '<div class="text-sm text-muted font-mono">Checking United.com in real-time (this may take 15-30 seconds)...</div>';
+                      fetch('/api/realtime-check?flight_number=' + encodeURIComponent(flightNumber) + '&date=' + encodeURIComponent(date))
+                        .then(function(r) { return r.json(); })
+                        .then(function(rt) {
+                          if (rt.hasStarlink) {
+                            var dep = rt.origin || '';
+                            var arr = rt.destination || '';
+                            var aircraftInfo = rt.aircraftType ? ' (' + rt.aircraftType + ')' : '';
+                            var tailInfo = rt.tailNumber ? rt.tailNumber : 'unknown';
+                            resultDiv.innerHTML = '<div class="bg-green-900/30 border border-green-700/50 rounded p-4">' +
+                              '<div class="flex items-center gap-2 mb-2">' +
+                              '<span class="text-green-400 text-lg">&#10003;</span>' +
+                              '<span class="font-display font-semibold text-green-400">Verified: This flight has Starlink WiFi!</span>' +
+                              '</div>' +
+                              '<div class="text-sm text-muted font-mono space-y-1">' +
+                              '<div>Flight: <span class="text-secondary">' + flightNumber + '</span> <span class="text-muted">(' + dep + ' → ' + arr + ')</span></div>' +
+                              '<div>WiFi: <span class="text-secondary">' + (rt.wifiProvider || 'Starlink') + '</span></div>' +
+                              '<div>Aircraft: <span class="text-secondary">' + tailInfo + aircraftInfo + '</span></div>' +
+                              '<p class="text-xs text-muted pt-2">Verified in real-time against United.com</p>' +
+                              '</div></div>';
+                          } else if (rt.wifiProvider && rt.wifiProvider !== 'Starlink') {
+                            resultDiv.innerHTML = '<div class="bg-surface-elevated border border-subtle rounded p-4">' +
+                              '<div class="flex items-center gap-2 mb-2">' +
+                              '<span class="text-muted text-lg">&#10007;</span>' +
+                              '<span class="font-display font-medium text-secondary">This flight does not have Starlink</span>' +
+                              '</div>' +
+                              '<div class="text-sm text-muted font-mono space-y-1">' +
+                              '<div>WiFi provider: <span class="text-secondary">' + rt.wifiProvider + '</span></div>' +
+                              (rt.aircraftType ? '<div>Aircraft: <span class="text-secondary">' + (rt.tailNumber || '') + ' (' + rt.aircraftType + ')</span></div>' : '') +
+                              '<p class="text-xs text-muted pt-2">Verified in real-time against United.com</p>' +
+                              '</div></div>';
+                          } else {
+                            // Real-time check inconclusive — fall back to prediction
+                            showPrediction(flightNumber, resultDiv);
+                          }
+                        })
+                        .catch(function() {
+                          // Real-time check failed — fall back to prediction
+                          showPrediction(flightNumber, resultDiv);
+                        });
+                    } else {
+                      // Flight is more than 2 days out — show prediction
+                      showPrediction(flightNumber, resultDiv);
+                    }
                   }
                 })
                 .catch(function(err) {

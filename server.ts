@@ -22,6 +22,7 @@ const KNOWN_ROUTES = new Set([
   "/api/data",
   "/api/check-flight",
   "/api/predict-flight",
+  "/api/realtime-check",
   "/api/plan-route",
   "/api/mismatches",
   "/api/fleet-discovery",
@@ -117,6 +118,8 @@ import { startFleetDiscovery } from "./src/scripts/fleet-discovery";
 import { startFleetSync } from "./src/scripts/fleet-sync";
 import { planItinerary, predictFlight } from "./src/scripts/starlink-predictor";
 import { startStarlinkVerifier } from "./src/scripts/starlink-verifier";
+import { checkStarlinkStatusSubprocess } from "./src/scripts/united-starlink-checker-subprocess";
+import { FlightRadar24API } from "./src/api/flightradar24-api";
 import type { ApiResponse, Flight } from "./src/types";
 import {
   CONTENT_TYPES,
@@ -421,6 +424,92 @@ routes["/api/check-flight"] = tracedRoute("/api/check-flight", (req) => {
   return new Response(JSON.stringify(response), {
     headers: SECURITY_HEADERS.api,
   });
+});
+
+// API endpoint: real-time Starlink check via United.com (for flights within ~48hrs with no DB match)
+const realtimeCheckFr24 = new FlightRadar24API();
+
+routes["/api/realtime-check"] = tracedRoute("/api/realtime-check", async (req) => {
+  if (req.method !== "GET") {
+    return new Response(JSON.stringify({ error: "Method not allowed" }), {
+      status: 405,
+      headers: SECURITY_HEADERS.api,
+    });
+  }
+
+  const url = new URL(req.url);
+  const flightNumber = url.searchParams.get("flight_number");
+  const date = url.searchParams.get("date");
+
+  if (!flightNumber || !date) {
+    return new Response(
+      JSON.stringify({ error: "Missing required parameters: flight_number and date" }),
+      { status: 400, headers: SECURITY_HEADERS.api }
+    );
+  }
+
+  const normalized = ensureUAPrefix(flightNumber);
+  const dateObj = new Date(`${date}T00:00:00Z`);
+  if (Number.isNaN(dateObj.getTime())) {
+    return new Response(JSON.stringify({ error: "Invalid date format" }), {
+      status: 400,
+      headers: SECURITY_HEADERS.api,
+    });
+  }
+
+  // Only allow real-time checks for flights within ~2 days
+  const now = Date.now();
+  const flightDate = dateObj.getTime();
+  const twoDaysMs = 2 * 24 * 60 * 60 * 1000;
+  if (flightDate > now + twoDaysMs || flightDate < now - 24 * 60 * 60 * 1000) {
+    return new Response(
+      JSON.stringify({ error: "Real-time check only available for flights within 2 days" }),
+      { status: 400, headers: SECURITY_HEADERS.api }
+    );
+  }
+
+  // Look up route via FR24
+  const targetUnix = Math.floor(dateObj.getTime() / 1000) + 43200; // noon on date
+  let routes: Array<{ origin: string; destination: string; departure_time: number }>;
+  try {
+    routes = await realtimeCheckFr24.getFlightRoutes(normalized, targetUnix);
+  } catch {
+    return new Response(
+      JSON.stringify({ error: "Could not look up flight route" }),
+      { status: 502, headers: SECURITY_HEADERS.api }
+    );
+  }
+
+  if (routes.length === 0) {
+    return new Response(
+      JSON.stringify({ error: "Flight route not found — try entering origin and destination manually" }),
+      { status: 404, headers: SECURITY_HEADERS.api }
+    );
+  }
+
+  const route = routes[0];
+  const numericFlight = normalized.replace(/^UA/, "");
+
+  try {
+    const result = await checkStarlinkStatusSubprocess(numericFlight, date, route.origin, route.destination);
+    return new Response(
+      JSON.stringify({
+        hasStarlink: result.hasStarlink,
+        wifiProvider: result.wifiProvider,
+        tailNumber: result.tailNumber,
+        aircraftType: result.aircraftType,
+        origin: route.origin,
+        destination: route.destination,
+        error: result.error || null,
+      }),
+      { headers: SECURITY_HEADERS.api }
+    );
+  } catch (err) {
+    return new Response(
+      JSON.stringify({ error: "Real-time check failed — United.com may be unavailable" }),
+      { status: 502, headers: SECURITY_HEADERS.api }
+    );
+  }
 });
 
 // API endpoint: predict Starlink probability for a flight (beyond firm schedule window)
