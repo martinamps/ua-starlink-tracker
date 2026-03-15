@@ -289,7 +289,7 @@ export default function CheckFlightPage() {
           if (form) {
             form.addEventListener('submit', function(e) {
               e.preventDefault();
-              var flightNumber = document.getElementById('flight-number').value.trim();
+              var flightNumber = document.getElementById('flight-number').value.trim().toUpperCase();
               var date = document.getElementById('flight-date').value;
 
               if (!flightNumber || !date) return;

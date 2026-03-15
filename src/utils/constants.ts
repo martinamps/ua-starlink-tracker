@@ -69,7 +69,7 @@ export function normalizeFlightNumber(flightNumber: string): string {
  * "SKW5882" → "UA5882", "5882" → "UA5882", "UA5882" → "UA5882"
  */
 export function ensureUAPrefix(flightNumber: string): string {
-  const normalized = normalizeFlightNumber(flightNumber.trim());
+  const normalized = normalizeFlightNumber(flightNumber.trim().toUpperCase());
   if (/^UA\d+$/.test(normalized)) return normalized;
   if (/^\d+$/.test(normalized)) return `UA${normalized}`;
   return normalized;
