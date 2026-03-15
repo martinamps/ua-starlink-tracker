@@ -7,5 +7,7 @@ node_modules
 tmp/
 logs/
 plane-data.production.sqlite*
+*.sqlite-shm
+*.sqlite-wal
 tsconfig.tsbuildinfo
 patches/

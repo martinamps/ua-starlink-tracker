@@ -288,6 +288,85 @@ export class FlightRadar24API {
   }
 
   /**
+   * Get individual flight assignments (tail numbers) for a flight number around
+   * a target date. Unlike getFlightRoutes this does NOT dedupe by route — if
+   * UA671 flies JAX→DEN then DEN→SBA on the same day, both are returned.
+   * Best-effort: returns [] on any failure.
+   */
+  async getFlightAssignments(
+    flightNumber: string,
+    targetDateUnix: number
+  ): Promise<
+    Array<{
+      origin: string;
+      destination: string;
+      departure_time: number;
+      arrival_time: number;
+      tail_number: string | null;
+      aircraft_model: string | null;
+    }>
+  > {
+    const url = `${this.baseUrl}/flight/list.json?query=${encodeURIComponent(flightNumber)}&fetchBy=flight&page=1&limit=25`;
+
+    try {
+      const response = await fetch(url, {
+        signal: AbortSignal.timeout(8000),
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          Accept: "application/json",
+        },
+      });
+
+      if (!response.ok) {
+        metrics.increment(COUNTERS.VENDOR_REQUEST, {
+          vendor: "fr24",
+          type: "assignments",
+          status: response.status === 402 || response.status === 429 ? "rate_limited" : "error",
+        });
+        return [];
+      }
+
+      metrics.increment(COUNTERS.VENDOR_REQUEST, {
+        vendor: "fr24",
+        type: "assignments",
+        status: "success",
+      });
+
+      const data: FR24Response = await response.json();
+      const flights = data.result?.response?.data || [];
+
+      const out = [];
+      for (const f of flights) {
+        const origin = f.airport?.origin?.code?.iata;
+        const dest = f.airport?.destination?.code?.iata;
+        const depTime = f.time?.scheduled?.departure || f.time?.estimated?.departure || 0;
+        const arrTime = f.time?.scheduled?.arrival || f.time?.estimated?.arrival || 0;
+        if (!origin || !dest || depTime === 0) continue;
+        if (Math.abs(depTime - targetDateUnix) > 24 * 3600) continue;
+
+        out.push({
+          origin,
+          destination: dest,
+          departure_time: depTime,
+          arrival_time: arrTime,
+          tail_number: f.aircraft?.registration || null,
+          aircraft_model: f.aircraft?.model?.text || null,
+        });
+      }
+
+      return out.sort((a, b) => a.departure_time - b.departure_time);
+    } catch {
+      metrics.increment(COUNTERS.VENDOR_REQUEST, {
+        vendor: "fr24",
+        type: "assignments",
+        status: "error",
+      });
+      return [];
+    }
+  }
+
+  /**
    * Get flight data for multiple aircraft in batch
    * More efficient than calling getUpcomingFlights for each one
    */

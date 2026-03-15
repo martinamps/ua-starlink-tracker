@@ -283,7 +283,7 @@ export default function CheckFlightPage() {
             dateInput.value = urlDate || new Date().toISOString().split('T')[0];
           }
           if (urlFlight && document.getElementById('flight-number')) {
-            document.getElementById('flight-number').value = urlFlight;
+            document.getElementById('flight-number').value = urlFlight.toUpperCase();
           }
 
           if (form) {
@@ -294,7 +294,8 @@ export default function CheckFlightPage() {
 
               if (!flightNumber || !date) return;
 
-              // Normalize: add UA prefix if just a number
+              // Normalize: uppercase + add UA prefix if just a number
+              flightNumber = flightNumber.toUpperCase();
               if (/^\\d+$/.test(flightNumber)) {
                 flightNumber = 'UA' + flightNumber;
               }
@@ -335,9 +336,32 @@ export default function CheckFlightPage() {
                       (flight.operated_by ? '<div>Operated by: <span class="text-secondary">' + flight.operated_by + '</span></div>' : '') +
                       '<div class="pt-2"><a href="' + faUrl + '" target="_blank" rel="noopener noreferrer" class="text-accent hover:underline text-xs">View on FlightAware →</a></div>' +
                       '</div></div>';
+                  } else if (data.fallback && data.fallback.segments && data.fallback.segments.length > 0) {
+                    // FR24 found the tail(s) but none are Starlink — show the actual aircraft.
+                    // tail_number/aircraft_model come from FR24's live API; escape before innerHTML.
+                    var esc = function(s) { var d = document.createElement('div'); d.textContent = String(s || ''); return d.innerHTML; };
+                    var seg = data.fallback.segments[0];
+                    var age = seg.verified_at ? Math.floor((Date.now()/1000 - seg.verified_at) / 86400) : null;
+                    var provider = esc(seg.verified_wifi || 'non-Starlink WiFi');
+                    var tail = esc(seg.tail_number);
+                    var model = seg.aircraft_model ? ' (' + esc(seg.aircraft_model) + ')' : '';
+                    var ageStr = age !== null ? ' ' + age + ' day' + (age === 1 ? '' : 's') + ' ago' : '';
+                    var note = (age !== null && age > 7)
+                      ? 'Retrofits happen mid-cycle — if you see Starlink onboard, we have flagged this plane for re-check.'
+                      : 'Aircraft swaps can happen, but this assignment is current.';
+                    resultDiv.innerHTML = '<div class="bg-surface-elevated border border-subtle rounded p-4">' +
+                      '<div class="font-display font-semibold text-secondary mb-2">Assigned aircraft: ' + tail + model + '</div>' +
+                      '<p class="text-sm text-muted">Last verified <span class="text-secondary">' + provider + '</span>' + ageStr + '. ' + note + '</p>' +
+                      '</div>';
                   } else {
                     // No firm data — fetch probability estimate
                     resultDiv.innerHTML = '<div class="text-sm text-muted font-mono">No firm assignment yet — estimating probability...</div>';
+                    var daysOut = (new Date(date + 'T00:00:00Z').getTime() - Date.now()) / 86400000;
+                    var timingNote = daysOut > 2
+                      ? 'Aircraft assignments firm up ~2 days before departure — check back then for a confirmed answer.'
+                      : daysOut >= -1
+                      ? 'No live tail assignment found — the flight may have an equipment swap in progress, or this flight number may be a codeshare.'
+                      : 'This date is in the past — we do not retain historical assignments.';
                     fetch('/api/predict-flight?flight_number=' + encodeURIComponent(flightNumber))
                       .then(function(r) { return r.json(); })
                       .then(function(pred) {
@@ -357,7 +381,7 @@ export default function CheckFlightPage() {
                           '<span class="font-display font-semibold ' + iconColor + '">' + label + ' — estimated ' + pct + '% chance of Starlink</span>' +
                           '</div>' +
                           '<div class="mb-3"><div class="w-full bg-base rounded-full h-2 overflow-hidden"><div class="' + barColor + ' h-2 rounded-full" style="width: ' + pct + '%"></div></div></div>' +
-                          '<p class="text-xs text-muted leading-relaxed">' + detail + ' Aircraft assignments firm up ~2 days before departure — check back then for a confirmed answer.</p>' +
+                          '<p class="text-xs text-muted leading-relaxed">' + detail + ' ' + timingNote + '</p>' +
                           '</div>';
                       })
                       .catch(function() {

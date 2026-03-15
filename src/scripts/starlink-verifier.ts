@@ -6,6 +6,7 @@
 
 import type { Database } from "bun:sqlite";
 import {
+  computeWifiConsensus,
   getAllStarlinkPlanes,
   getUpcomingFlights,
   getVerificationStats,
@@ -190,7 +191,23 @@ export async function verifyPlaneStarlink(
           (!tailUnknown || result.wifiProvider === "Starlink");
 
         if (canTrustResult) {
-          updateVerifiedWifi(db, tailNumber, result.wifiProvider);
+          // logVerification above already wrote this check into the log, so
+          // consensus includes it. Gate the column write on the 30-day consensus
+          // so a single flaky scrape can't hide a plane.
+          const consensus = computeWifiConsensus(db, tailNumber);
+          if (consensus.verdict !== null) {
+            updateVerifiedWifi(db, tailNumber, consensus.verdict);
+            verifierLog.info(
+              `${tailNumber}: verified_wifi → ${consensus.verdict} (${consensus.reason})`
+            );
+          } else {
+            // Ambiguous — clear to NULL so the check-flight filter
+            // (IS NULL OR = 'Starlink') falls through to spreadsheet trust.
+            updateVerifiedWifi(db, tailNumber, null);
+            verifierLog.info(
+              `${tailNumber}: consensus ambiguous, verified_wifi cleared (${consensus.reason})`
+            );
+          }
         } else if (tailUnknown && result.wifiProvider && result.wifiProvider !== "Starlink") {
           verifierLog.warn(
             `${tailNumber}: got "${result.wifiProvider}" but couldn't confirm tail number — skipping update to avoid false negative`

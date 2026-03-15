@@ -95,12 +95,15 @@ process.on("uncaughtException", (err) => {
 });
 
 import { checkNewPlanes, startFlightUpdater } from "./src/api/flight-updater";
+import { FlightRadar24API } from "./src/api/flightradar24-api";
 import { handleMcpRequest } from "./src/api/mcp-server";
 import CheckFlightPage from "./src/components/check-flight-page";
 import McpPage from "./src/components/mcp-page";
 import Page from "./src/components/page";
 import RoutePlannerPage from "./src/components/route-planner-page";
 import {
+  bumpDiscoveryPriority,
+  computeWifiConsensus,
   getFleetDiscoveryStats,
   getFleetStats,
   getLastUpdated,
@@ -320,7 +323,37 @@ routes["/api/data"] = tracedRoute("/api/data", (req) => {
   });
 });
 
-routes["/api/check-flight"] = tracedRoute("/api/check-flight", (req) => {
+// FR24 tail-number reverse lookup for check-flight fallback.
+// Promise-based cache dedupes concurrent requests; TTL 1hr per (flight, day).
+const fr24ForCheckFlight = new FlightRadar24API();
+type Assignment = Awaited<ReturnType<FlightRadar24API["getFlightAssignments"]>>;
+const assignmentCache = new Map<string, { promise: Promise<Assignment>; at: number }>();
+const ASSIGNMENT_CACHE_TTL = 3600;
+
+function cachedFlightAssignments(
+  flightNumber: string,
+  targetDateUnix: number
+): Promise<Assignment> {
+  const key = `${flightNumber}:${Math.floor(targetDateUnix / 86400)}`;
+  const now = Math.floor(Date.now() / 1000);
+  const cached = assignmentCache.get(key);
+  if (cached && now - cached.at < ASSIGNMENT_CACHE_TTL) return cached.promise;
+
+  // Opportunistic sweep: keys include the day, so entries for past dates never
+  // get re-hit. Chrome extension traffic from Google Flights means thousands
+  // of unique (flight, day) pairs/week. Cap at 500.
+  if (assignmentCache.size > 500) {
+    for (const [k, v] of assignmentCache) {
+      if (now - v.at >= ASSIGNMENT_CACHE_TTL) assignmentCache.delete(k);
+    }
+  }
+
+  const promise = fr24ForCheckFlight.getFlightAssignments(flightNumber, targetDateUnix);
+  assignmentCache.set(key, { promise, at: now });
+  return promise;
+}
+
+routes["/api/check-flight"] = tracedRoute("/api/check-flight", async (req) => {
   if (req.method !== "GET") {
     return new Response(JSON.stringify({ error: "Method not allowed" }), {
       status: 405,
@@ -388,6 +421,142 @@ routes["/api/check-flight"] = tracedRoute("/api/check-flight", (req) => {
   >;
 
   if (matchingFlights.length === 0) {
+    // FR24 reverse-lookup fallback: fetchBy=flight returns aircraft.registration,
+    // which we can look up in our own tables. No United.com scraping in-request.
+    // Gated to [today-1, today+3] — assignments don't exist further out and FR24
+    // drops flights older than ~1 day.
+    const nowSec = Math.floor(Date.now() / 1000);
+    const daysDelta = (startOfDay - nowSec) / 86400;
+    const inLookupWindow = daysDelta >= -1 && daysDelta <= 3;
+
+    if (inLookupWindow) {
+      const assignments = await cachedFlightAssignments(normalizedFlightNumber, startOfDay + 43200);
+
+      type Segment = {
+        tail_number: string;
+        aircraft_model: string | null;
+        origin: string;
+        destination: string;
+        departure_time: number;
+        arrival_time: number;
+        hasStarlink: boolean | null;
+        confidence: string;
+        verified_wifi?: string | null;
+        verified_at?: number | null;
+        operated_by?: string | null;
+        fleet_type?: string | null;
+      };
+      const segments: Segment[] = [];
+
+      for (const a of assignments) {
+        if (!a.tail_number) continue;
+
+        const base = {
+          tail_number: a.tail_number,
+          aircraft_model: a.aircraft_model,
+          origin: a.origin,
+          destination: a.destination,
+          departure_time: a.departure_time,
+          arrival_time: a.arrival_time,
+        };
+
+        const sp = db
+          .query("SELECT Aircraft, OperatedBy, fleet FROM starlink_planes WHERE TailNumber = ?")
+          .get(a.tail_number) as {
+          Aircraft: string;
+          OperatedBy: string;
+          fleet: string;
+        } | null;
+
+        if (sp) {
+          // In starlink_planes — use live consensus, not the stored column
+          // (which may have been overwritten by a single flaky check).
+          const consensus = computeWifiConsensus(db, a.tail_number);
+          const hasStarlink = consensus.verdict === "Starlink" || consensus.verdict === null;
+          segments.push({
+            ...base,
+            aircraft_model: sp.Aircraft || a.aircraft_model,
+            hasStarlink,
+            confidence:
+              consensus.verdict === "Starlink"
+                ? "verified"
+                : consensus.verdict === null
+                  ? "spreadsheet"
+                  : "disputed",
+            operated_by: sp.OperatedBy,
+            fleet_type: sp.fleet,
+          });
+          continue;
+        }
+
+        const uf = db
+          .query(
+            "SELECT starlink_status, verified_wifi, verified_at FROM united_fleet WHERE tail_number = ?"
+          )
+          .get(a.tail_number) as {
+          starlink_status: string;
+          verified_wifi: string | null;
+          verified_at: number | null;
+        } | null;
+
+        if (uf?.starlink_status === "confirmed") {
+          segments.push({ ...base, hasStarlink: true, confidence: "verified" });
+        } else if (uf?.starlink_status === "negative") {
+          // User checked → might be onboard noticing Starlink. Bump priority
+          // so discovery re-checks on the next 90s cycle, if the last verify
+          // is stale enough to justify the cost.
+          const stale = uf.verified_at && nowSec - uf.verified_at > 7 * 86400;
+          if (stale) bumpDiscoveryPriority(db, a.tail_number);
+          segments.push({
+            ...base,
+            hasStarlink: false,
+            confidence: "negative",
+            verified_wifi: uf.verified_wifi,
+            verified_at: uf.verified_at,
+          });
+        } else {
+          bumpDiscoveryPriority(db, a.tail_number);
+          segments.push({ ...base, hasStarlink: null, confidence: "unknown" });
+        }
+      }
+
+      const starlinkSegs = segments.filter((s) => s.hasStarlink);
+      if (starlinkSegs.length > 0) {
+        return new Response(
+          JSON.stringify({
+            hasStarlink: true,
+            method: "fr24_tail_lookup",
+            flights: starlinkSegs.map((s) => ({
+              tail_number: s.tail_number,
+              aircraft_type: s.aircraft_model,
+              flight_number: normalizedFlightNumber,
+              ua_flight_number: normalizedFlightNumber,
+              departure_airport: s.origin,
+              arrival_airport: s.destination,
+              departure_time: s.departure_time,
+              arrival_time: s.arrival_time,
+              departure_time_formatted: new Date(s.departure_time * 1000).toISOString(),
+              arrival_time_formatted: new Date(s.arrival_time * 1000).toISOString(),
+              operated_by: s.operated_by ?? null,
+              fleet_type: s.fleet_type ?? null,
+            })),
+          }),
+          { headers: SECURITY_HEADERS.api }
+        );
+      }
+      if (segments.length > 0) {
+        return new Response(
+          JSON.stringify({
+            hasStarlink: false,
+            method: "fr24_tail_lookup",
+            flights: [],
+            fallback: { segments },
+          }),
+          { headers: SECURITY_HEADERS.api }
+        );
+      }
+    }
+
     return new Response(
       JSON.stringify({
         hasStarlink: false,

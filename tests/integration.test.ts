@@ -17,6 +17,7 @@ import { Database } from "bun:sqlite";
 import { beforeAll, describe, expect, test } from "bun:test";
 import { handleMcpRequest } from "../src/api/mcp-server";
 import {
+  computeWifiConsensus,
   getFleetStats,
   getLastUpdated,
   getStarlinkPlanes,
@@ -452,6 +453,22 @@ describe("MCP tools", () => {
     expect(text).toContain("in the past");
   });
 
+  test("check_flight: near-term date doesn't say 'check 1-2 days before'", async () => {
+    // Today's date — if no assignment, the wording must NOT tell the user to
+    // "check back in 1-2 days" for a flight happening today.
+    const today = new Date().toISOString().slice(0, 10);
+    const json = await mcpCall("tools/call", {
+      name: "check_flight",
+      arguments: { flight_number: "UA9876", date: today },
+    });
+    const text = json.result.content[0].text;
+    // If fallback fired it'll say probability; if assignment exists it'll say yes/no.
+    // Either way the future-tense "check again 1-2 days before" is wrong for today.
+    if (text.includes("probability")) {
+      expect(text).not.toContain("1-2 days before departure");
+    }
+  });
+
   test("predict_route_starlink: empty result embeds connection alternatives (not a dead-end)", async () => {
     // Use a real mainline route that has no direct Starlink but has connections
     const json = await mcpCall("tools/call", {
@@ -552,6 +569,86 @@ describe("predictor", () => {
 // Flight number normalization — regression lock
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────────────
+// WiFi consensus — single-check verifier overwrite regression lock
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("computeWifiConsensus", () => {
+  test("returns shape { verdict, n, starlinkPct, reason }", () => {
+    // Pick any tail with log entries
+    const tail = db
+      .query(
+        `SELECT tail_number FROM starlink_verification_log
+         WHERE source='united' AND error IS NULL AND has_starlink IS NOT NULL
+           AND wifi_provider IS NOT NULL AND wifi_provider <> ''
+         GROUP BY tail_number HAVING COUNT(*) >= 2 LIMIT 1`
+      )
+      .get() as { tail_number: string } | null;
+    expect(tail).not.toBeNull();
+
+    const c = computeWifiConsensus(db, tail!.tail_number);
+    expect(typeof c.n).toBe("number");
+    expect(c.starlinkPct).toBeGreaterThanOrEqual(0);
+    expect(c.starlinkPct).toBeLessThanOrEqual(1);
+    expect(typeof c.reason).toBe("string");
+    // verdict is string | null
+    expect(c.verdict === null || typeof c.verdict === "string").toBe(true);
+  });
+
+  test("no observations → verdict null, 'insufficient' reason", () => {
+    const c = computeWifiConsensus(db, "N00000");
+    expect(c.verdict).toBeNull();
+    expect(c.n).toBe(0);
+    expect(c.reason).toContain("insufficient");
+  });
+
+  test("ambiguous zone returns null verdict (not a random single-check value)", () => {
+    // Find a plane with a split in the 30%-70% zone, if any exists in the snapshot.
+    // N87527 on 2026-03-15 had 3/5 Starlink — this is the bug that prompted this work.
+    const candidates = db
+      .query(
+        `SELECT tail_number,
+                SUM(has_starlink) as s, COUNT(*) as n
+         FROM starlink_verification_log
+         WHERE source='united' AND error IS NULL AND has_starlink IS NOT NULL
+           AND wifi_provider IS NOT NULL AND wifi_provider <> ''
+           AND checked_at >= strftime('%s','now') - 30*86400
+         GROUP BY tail_number
+         HAVING n >= 2 AND (CAST(s AS REAL)/n) > 0.3 AND (CAST(s AS REAL)/n) < 0.7
+         LIMIT 1`
+      )
+      .get() as { tail_number: string; s: number; n: number } | null;
+
+    if (candidates) {
+      const c = computeWifiConsensus(db, candidates.tail_number);
+      expect(c.verdict).toBeNull();
+      expect(c.reason).toContain("ambiguous");
+    }
+  });
+
+  test("strong positive consensus → verdict 'Starlink'", () => {
+    // Find a plane with ≥70% Starlink
+    const strong = db
+      .query(
+        `SELECT tail_number,
+                SUM(has_starlink) as s, COUNT(*) as n
+         FROM starlink_verification_log
+         WHERE source='united' AND error IS NULL AND has_starlink IS NOT NULL
+           AND wifi_provider IS NOT NULL AND wifi_provider <> ''
+           AND checked_at >= strftime('%s','now') - 30*86400
+         GROUP BY tail_number
+         HAVING n >= 2 AND (CAST(s AS REAL)/n) >= 0.7
+         LIMIT 1`
+      )
+      .get() as { tail_number: string } | null;
+
+    if (strong) {
+      const c = computeWifiConsensus(db, strong.tail_number);
+      expect(c.verdict).toBe("Starlink");
+    }
+  });
+});
+
 describe("flight number utils", () => {
   test("ensureUAPrefix handles all input shapes", () => {
     expect(ensureUAPrefix("5212")).toBe("UA5212");
@@ -560,6 +657,13 @@ describe("flight number utils", () => {
     expect(ensureUAPrefix("OO5212")).toBe("UA5212");
     expect(ensureUAPrefix("UAL544")).toBe("UA544");
     expect(ensureUAPrefix(" UA5212 ")).toBe("UA5212");
+  });
+
+  test("ensureUAPrefix: lowercase input is normalized (ua671 URL path bug)", () => {
+    expect(ensureUAPrefix("ua671")).toBe("UA671");
+    expect(ensureUAPrefix("ual544")).toBe("UA544");
+    expect(ensureUAPrefix("skw5212")).toBe("UA5212");
+    expect(ensureUAPrefix("  ua671  ")).toBe("UA671");
   });
 
   test("normalizeFlightNumber: carrier prefix → UA", () => {

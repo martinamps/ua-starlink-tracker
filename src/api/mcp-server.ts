@@ -438,9 +438,12 @@ async function toolCheckFlight(
   const pct = (pred.probability * 100).toFixed(0);
 
   const isPast = endOfDay < now - 86400;
+  const isNearTerm = startOfDay < now + 3 * 86400;
   const timing = isPast
     ? "This date is in the past; we don't retain historical assignments."
-    : "Check again 1-2 days before departure for a firm answer.";
+    : isNearTerm
+      ? "No assignment published — this is unusual for a near-term flight. The tail may not be in our Starlink-tracked set yet."
+      : "Check again 1-2 days before departure for a firm answer.";
 
   // Probability context FIRST, alternatives table LAST. Recency bias: the
   // agent's final impression is "here's the table to present", not "no data".

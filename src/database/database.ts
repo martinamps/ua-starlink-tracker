@@ -860,6 +860,98 @@ export function getVerificationStats(db: Database): {
   };
 }
 
+export interface WifiConsensus {
+  verdict: string | null;
+  n: number;
+  starlinkPct: number;
+  reason: string;
+}
+
+/**
+ * Compute wifi consensus from recent verification log entries.
+ * Filters wifi_provider <> '' because a clean scrape that found the page but
+ * missed the wifi section reports has_starlink=0, wifi_provider='' — that's
+ * noise, not signal.
+ * Returns verdict=null when n < minObs OR the split is in the ambiguous zone.
+ */
+export function computeWifiConsensus(
+  db: Database,
+  tailNumber: string,
+  opts = { windowDays: 30, minObs: 2, threshold: 0.7 }
+): WifiConsensus {
+  const cutoff = Math.floor(Date.now() / 1000) - opts.windowDays * 86400;
+  const obs = db
+    .query(`
+      SELECT has_starlink, wifi_provider
+      FROM starlink_verification_log
+      WHERE tail_number = ? AND source = 'united'
+        AND checked_at >= ?
+        AND error IS NULL
+        AND has_starlink IS NOT NULL
+        AND wifi_provider IS NOT NULL AND wifi_provider <> ''
+      ORDER BY checked_at DESC
+    `)
+    .all(tailNumber, cutoff) as Array<{ has_starlink: number; wifi_provider: string }>;
+
+  const n = obs.length;
+  const starlinkObs = obs.filter((o) => o.has_starlink === 1).length;
+  const starlinkPct = n > 0 ? starlinkObs / n : 0;
+
+  if (n < opts.minObs) {
+    return {
+      verdict: null,
+      n,
+      starlinkPct,
+      reason: `insufficient recent obs (${n} in last ${opts.windowDays}d, need ${opts.minObs})`,
+    };
+  }
+
+  if (starlinkPct >= opts.threshold) {
+    return {
+      verdict: "Starlink",
+      n,
+      starlinkPct,
+      reason: `${starlinkObs}/${n} recent obs Starlink (${(starlinkPct * 100).toFixed(0)}%)`,
+    };
+  }
+
+  if (1 - starlinkPct >= opts.threshold) {
+    const providerCounts = new Map<string, number>();
+    for (const o of obs) {
+      if (o.has_starlink === 0) {
+        providerCounts.set(o.wifi_provider, (providerCounts.get(o.wifi_provider) ?? 0) + 1);
+      }
+    }
+    const mostCommon = [...providerCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "None";
+    return {
+      verdict: mostCommon,
+      n,
+      starlinkPct,
+      reason: `${n - starlinkObs}/${n} recent obs NOT Starlink (${((1 - starlinkPct) * 100).toFixed(0)}%), provider: ${mostCommon}`,
+    };
+  }
+
+  return {
+    verdict: null,
+    n,
+    starlinkPct,
+    reason: `ambiguous: ${starlinkObs}/${n} Starlink recently — likely mid-retrofit or data noise`,
+  };
+}
+
+/**
+ * Bump discovery priority so a tail is re-checked on the next fleet-discovery
+ * cycle. Idempotent: only bumps if not already due.
+ */
+export function bumpDiscoveryPriority(db: Database, tailNumber: string): void {
+  const now = Math.floor(Date.now() / 1000);
+  db.query(`
+    UPDATE united_fleet
+    SET next_check_after = ?, discovery_priority = 1.0
+    WHERE tail_number = ? AND next_check_after > ?
+  `).run(now, tailNumber, now);
+}
+
 /**
  * Update the verified WiFi status for a plane
  */

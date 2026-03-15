@@ -11,6 +11,7 @@ import type { Database } from "bun:sqlite";
 import { FlightRadar24API } from "../api/flightradar24-api";
 import {
   addDiscoveredStarlinkPlane,
+  computeWifiConsensus,
   getFleetDiscoveryStats,
   getNextPlanesToVerify,
   initializeDatabase,
@@ -211,8 +212,14 @@ async function verifyPlane(
         // result for a plane that already exists there. Without this, the separate
         // starlink-verifier loop sees our log entry in needsVerification() and skips
         // the plane, so a stale 'None' in starlink_planes never heals.
+        // Consensus-gated so a single flaky scrape can't hide a plane.
         if (canTrustResult && result.wifiProvider) {
-          updateVerifiedWifi(db, plane.tail_number, result.wifiProvider);
+          const consensus = computeWifiConsensus(db, plane.tail_number);
+          if (consensus.verdict !== null) {
+            updateVerifiedWifi(db, plane.tail_number, consensus.verdict);
+          } else {
+            updateVerifiedWifi(db, plane.tail_number, null);
+          }
         }
 
         // If we discovered Starlink on a plane not yet in starlink_planes, add it
