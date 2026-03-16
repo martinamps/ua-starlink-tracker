@@ -649,6 +649,54 @@ describe("computeWifiConsensus", () => {
   });
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// FR24 fallback window — regression for UA671 midnight-rollover bug.
+// A request for "yesterday" at 00:04 UTC has daysDelta ≈ -1.003, which failed
+// the original >= -1 gate. FR24 keeps flights ~24h after departure, so a
+// flight that departed 23:59 yesterday is still queryable until ~23:59 today.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("FR24 fallback window math", () => {
+  // Mirror of server.ts:430. If you change the server.ts gate, update this.
+  const inLookupWindow = (startOfDay: number, endOfDay: number, nowSec: number) =>
+    endOfDay > nowSec - 86400 && startOfDay < nowSec + 3 * 86400;
+
+  const day = (dateStr: string) => {
+    const start = Math.floor(new Date(`${dateStr}T00:00:00Z`).getTime() / 1000);
+    return { start, end: start + 86400 };
+  };
+
+  test("yesterday at 00:04 UTC (the UA671 regression case)", () => {
+    const now = Math.floor(new Date("2026-03-16T00:04:00Z").getTime() / 1000);
+    const d = day("2026-03-15");
+    expect(inLookupWindow(d.start, d.end, now)).toBe(true);
+  });
+
+  test("yesterday at 23:00 UTC — date ended 23h ago, FR24 likely still has late-day flights", () => {
+    const now = Math.floor(new Date("2026-03-16T23:00:00Z").getTime() / 1000);
+    const d = day("2026-03-15");
+    expect(inLookupWindow(d.start, d.end, now)).toBe(true);
+  });
+
+  test("two days ago — date ended >24h ago, window closes", () => {
+    const now = Math.floor(new Date("2026-03-17T01:00:00Z").getTime() / 1000);
+    const d = day("2026-03-15");
+    expect(inLookupWindow(d.start, d.end, now)).toBe(false);
+  });
+
+  test("today always in window", () => {
+    const now = Math.floor(new Date("2026-03-15T14:00:00Z").getTime() / 1000);
+    const d = day("2026-03-15");
+    expect(inLookupWindow(d.start, d.end, now)).toBe(true);
+  });
+
+  test("+3 days in, +4 days out", () => {
+    const now = Math.floor(new Date("2026-03-15T12:00:00Z").getTime() / 1000);
+    expect(inLookupWindow(day("2026-03-18").start, day("2026-03-18").end, now)).toBe(true);
+    expect(inLookupWindow(day("2026-03-19").start, day("2026-03-19").end, now)).toBe(false);
+  });
+});
+
 describe("flight number utils", () => {
   test("ensureUAPrefix handles all input shapes", () => {
     expect(ensureUAPrefix("5212")).toBe("UA5212");

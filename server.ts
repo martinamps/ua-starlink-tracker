@@ -423,11 +423,12 @@ routes["/api/check-flight"] = tracedRoute("/api/check-flight", async (req) => {
   if (matchingFlights.length === 0) {
     // FR24 reverse-lookup fallback: fetchBy=flight returns aircraft.registration,
     // which we can look up in our own tables. No United.com scraping in-request.
-    // Gated to [today-1, today+3] — assignments don't exist further out and FR24
-    // drops flights older than ~1 day.
+    // Lower bound: FR24 keeps flights ~24h after departure. A flight "on March 15"
+    // can depart as late as 23:59 on the 15th, so it's still queryable until
+    // ~23:59 on the 16th — i.e., the date's end must be less than ~24h ago.
+    // Upper bound: assignments don't exist beyond ~3 days out.
     const nowSec = Math.floor(Date.now() / 1000);
-    const daysDelta = (startOfDay - nowSec) / 86400;
-    const inLookupWindow = daysDelta >= -1 && daysDelta <= 3;
+    const inLookupWindow = endOfDay > nowSec - 86400 && startOfDay < nowSec + 3 * 86400;
 
     if (inLookupWindow) {
       const assignments = await cachedFlightAssignments(normalizedFlightNumber, startOfDay + 43200);
@@ -450,6 +451,9 @@ routes["/api/check-flight"] = tracedRoute("/api/check-flight", async (req) => {
 
       for (const a of assignments) {
         if (!a.tail_number) continue;
+        // FR24's ±24h window can pull in adjacent-day legs; match the primary
+        // query's strict UTC-day filter.
+        if (a.departure_time < startOfDay || a.departure_time >= endOfDay) continue;
 
         const base = {
           tail_number: a.tail_number,

@@ -257,6 +257,7 @@ export function updateDatabase(
 ) {
   // Get existing data before clearing the table
   const existingDates = new Map<string, string>();
+  const existingAircraft = new Map<string, string>();
   const existingFlightChecks = new Map<
     string,
     { last_flight_check: number; last_check_successful: number; consecutive_failures: number }
@@ -268,11 +269,12 @@ export function updateDatabase(
 
   const existingPlanes = db
     .query(
-      "SELECT TailNumber, DateFound, last_flight_check, last_check_successful, consecutive_failures, verified_wifi, verified_at FROM starlink_planes"
+      "SELECT TailNumber, DateFound, aircraft, last_flight_check, last_check_successful, consecutive_failures, verified_wifi, verified_at FROM starlink_planes"
     )
     .all() as {
     TailNumber: string;
     DateFound: string;
+    aircraft: string | null;
     last_flight_check: number;
     last_check_successful: number;
     consecutive_failures: number;
@@ -284,6 +286,9 @@ export function updateDatabase(
     if (plane.TailNumber) {
       if (plane.DateFound) {
         existingDates.set(plane.TailNumber, plane.DateFound);
+      }
+      if (plane.aircraft) {
+        existingAircraft.set(plane.TailNumber, plane.aircraft);
       }
       // Preserve flight check data to avoid resetting on every scraper run
       existingFlightChecks.set(plane.TailNumber, {
@@ -297,6 +302,17 @@ export function updateDatabase(
         verified_at: plane.verified_at,
       });
     }
+  }
+
+  // Secondary source for aircraft type when sheet cell is blank: united_fleet
+  // is populated by FR24 fleet sync (f.aircraft.model.text).
+  const fleetAircraftTypes = new Map<string, string>();
+  for (const row of db
+    .query(
+      "SELECT tail_number, aircraft_type FROM united_fleet WHERE aircraft_type IS NOT NULL AND aircraft_type <> ''"
+    )
+    .all() as Array<{ tail_number: string; aircraft_type: string }>) {
+    fleetAircraftTypes.set(row.tail_number, row.aircraft_type);
   }
 
   // Update meta data
@@ -358,8 +374,17 @@ export function updateDatabase(
       verified_at: null,
     };
 
+    // Sheet value wins if present; otherwise preserve what we had; otherwise
+    // fall back to united_fleet (FR24-sourced). Prevents blank sheet cells
+    // from wiping a known type every hour.
+    const aircraftType =
+      aircraft.Aircraft ||
+      existingAircraft.get(tailNumber) ||
+      fleetAircraftTypes.get(tailNumber) ||
+      "";
+
     insertStmt.run(
-      aircraft.Aircraft ?? "",
+      aircraftType,
       aircraft.WiFi ?? "",
       aircraft.sheet_gid ?? "",
       aircraft.sheet_type ?? "",
