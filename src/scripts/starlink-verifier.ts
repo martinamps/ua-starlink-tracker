@@ -15,7 +15,14 @@ import {
   needsVerification,
   updateVerifiedWifi,
 } from "../database/database";
-import { COUNTERS, metrics, withSpan } from "../observability";
+import {
+  COUNTERS,
+  metrics,
+  normalizeAircraftType,
+  normalizeFleet,
+  normalizeWifiProvider,
+  withSpan,
+} from "../observability";
 import { verifierLog } from "../utils/logger";
 import type { StarlinkCheckResult } from "./united-starlink-checker";
 import { checkStarlinkStatusSubprocess } from "./united-starlink-checker-subprocess";
@@ -118,16 +125,22 @@ export async function verifyPlaneStarlink(
   db: Database,
   tailNumber: string,
   flight: Flight,
-  forceCheck = false
+  forceCheck = false,
+  context?: { aircraftType?: string | null; fleet?: string | null }
 ): Promise<StarlinkCheckResult | null> {
   if (!forceCheck && !needsVerification(db, tailNumber, "united")) {
     return null;
   }
 
+  const aircraftTypeTag = normalizeAircraftType(context?.aircraftType);
+  const fleetTag = normalizeFleet(context?.fleet);
+
   return withSpan(
     "starlink_verifier.verify_plane",
     async (span) => {
       span.setTag("tail_number", tailNumber);
+      span.setTag("aircraft_type", aircraftTypeTag);
+      span.setTag("fleet", fleetTag);
 
       const departureDate = new Date(flight.departure_time * 1000).toISOString().split("T")[0];
       const flightNumber = extractFlightNumber(flight.flight_number);
@@ -214,19 +227,28 @@ export async function verifyPlaneStarlink(
           );
         }
 
-        // Emit metrics
+        const wifiProviderTag = normalizeWifiProvider(result.wifiProvider);
+        const checkTags = {
+          fleet: fleetTag,
+          aircraft_type: aircraftTypeTag,
+          wifi_provider: wifiProviderTag,
+        };
+        span.setTag("wifi_provider", wifiProviderTag);
+
         if (tailMismatch) {
-          metrics.increment(COUNTERS.VERIFICATION_CHECK, { result: "aircraft_mismatch" });
+          metrics.increment(COUNTERS.VERIFICATION_CHECK, {
+            result: "aircraft_mismatch",
+            ...checkTags,
+          });
           span.setTag("result", "aircraft_mismatch");
           span.setTag("expected_tail", tailNumber);
           span.setTag("actual_tail", actualTail);
         } else if (result.error) {
-          metrics.increment(COUNTERS.VERIFICATION_CHECK, { result: "error" });
+          metrics.increment(COUNTERS.VERIFICATION_CHECK, { result: "error", ...checkTags });
           span.setTag("result", "error");
         } else {
-          metrics.increment(COUNTERS.VERIFICATION_CHECK, { result: "success" });
+          metrics.increment(COUNTERS.VERIFICATION_CHECK, { result: "success", ...checkTags });
           span.setTag("result", result.hasStarlink ? "starlink" : "not_starlink");
-          span.setTag("wifi_provider", result.wifiProvider || "unknown");
         }
 
         if (tailMismatch) {
@@ -252,7 +274,12 @@ export async function verifyPlaneStarlink(
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         verifierLog.error(`Error verifying ${tailNumber}`, errorMessage);
-        metrics.increment(COUNTERS.VERIFICATION_CHECK, { result: "error" });
+        metrics.increment(COUNTERS.VERIFICATION_CHECK, {
+          result: "error",
+          fleet: fleetTag,
+          aircraft_type: aircraftTypeTag,
+          wifi_provider: "unknown",
+        });
         span.setTag("error", true);
         span.setTag("result", "error");
 
@@ -305,7 +332,10 @@ export async function runVerificationBatch(
 
     for (let i = 0; i < toVerify.length; i++) {
       const { plane, flight } = toVerify[i];
-      const result = await verifyPlaneStarlink(db, plane.TailNumber, flight, forceAll);
+      const result = await verifyPlaneStarlink(db, plane.TailNumber, flight, forceAll, {
+        aircraftType: plane.Aircraft,
+        fleet: plane.fleet,
+      });
 
       if (result === null) {
         stats.skipped++;

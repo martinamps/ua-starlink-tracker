@@ -7,5 +7,12 @@
 
 export { tracer, withSpan, getActiveSpan, injectTraceContext } from "./tracer";
 export type { Span } from "./tracer";
-export { metrics, COUNTERS, GAUGES } from "./metrics";
+export {
+  metrics,
+  COUNTERS,
+  DISTRIBUTIONS,
+  normalizeAircraftType,
+  normalizeWifiProvider,
+  normalizeFleet,
+} from "./metrics";
 export type { Tags } from "./metrics";

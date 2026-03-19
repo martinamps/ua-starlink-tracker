@@ -5,11 +5,29 @@
 
 import { spawn } from "node:child_process";
 import path from "node:path";
-import { COUNTERS, metrics } from "../observability";
+import { COUNTERS, DISTRIBUTIONS, metrics } from "../observability";
 import type { StarlinkCheckResult } from "./united-starlink-checker";
 
 const SCRIPT_PATH = path.join(import.meta.dir, "united-starlink-checker.ts");
 const TIMEOUT_MS = 60000; // 60 second timeout
+
+// Distinct status values let us alert on specific failure modes
+// (e.g. a spike in `timeout` means United is slow; `killed` means
+// the Playwright/bun FD bug is flaring up).
+type UnitedStatus =
+  | "success"
+  | "scrape_error" // subprocess ran clean but result.error set (DOM parse etc)
+  | "timeout"
+  | "killed"
+  | "exit_error"
+  | "parse_error"
+  | "spawn_error";
+
+function emitUnitedMetrics(status: UnitedStatus, startedAt: number) {
+  const tags = { vendor: "united", type: "verification", status };
+  metrics.increment(COUNTERS.VENDOR_REQUEST, tags);
+  metrics.distribution(DISTRIBUTIONS.VENDOR_DURATION_MS, Date.now() - startedAt, tags);
+}
 
 export async function checkStarlinkStatusSubprocess(
   flightNumber: string,
@@ -17,27 +35,38 @@ export async function checkStarlinkStatusSubprocess(
   origin: string,
   destination: string
 ): Promise<StarlinkCheckResult> {
+  const startedAt = Date.now();
+
   return new Promise((resolve, reject) => {
     const args = [SCRIPT_PATH, flightNumber, date, origin, destination];
+    // No `timeout` option on spawn — we run our own timer so the SIGKILL shows
+    // up in the close handler with a known `timedOut` flag. Node's built-in
+    // timeout sends SIGTERM at the same instant and races, making timeouts
+    // nondeterministically look like exit_error.
     const child = spawn("bun", args, {
       stdio: ["ignore", "pipe", "inherit"], // inherit stderr for unbuffered logs
       env: { ...process.env, SUBPROCESS_MODE: "1" },
-      timeout: TIMEOUT_MS,
     });
 
     let stdout = "";
+    let timedOut = false;
+    let metricsEmitted = false;
+
+    // close fires after our timeout kills the child; guard so we emit exactly once.
+    const emit = (status: UnitedStatus) => {
+      if (metricsEmitted) return;
+      metricsEmitted = true;
+      emitUnitedMetrics(status, startedAt);
+    };
 
     child.stdout.on("data", (data) => {
       stdout += data.toString();
     });
 
     const timeout = setTimeout(() => {
+      timedOut = true;
       child.kill("SIGKILL");
-      metrics.increment(COUNTERS.VENDOR_REQUEST, {
-        vendor: "united",
-        type: "verification",
-        status: "error",
-      });
+      emit("timeout");
       reject(new Error(`Timeout after ${TIMEOUT_MS / 1000}s`));
     }, TIMEOUT_MS);
 
@@ -45,21 +74,20 @@ export async function checkStarlinkStatusSubprocess(
       clearTimeout(timeout);
 
       if (signal === "SIGKILL") {
-        metrics.increment(COUNTERS.VENDOR_REQUEST, {
-          vendor: "united",
-          type: "verification",
-          status: "error",
-        });
-        reject(new Error("Process killed (likely Playwright/bun FD bug)"));
+        // timedOut=true means we killed it; otherwise the OS/bun did (FD bug, OOM).
+        emit(timedOut ? "timeout" : "killed");
+        reject(
+          new Error(
+            timedOut
+              ? `Timeout after ${TIMEOUT_MS / 1000}s`
+              : "Process killed (likely Playwright/bun FD bug)"
+          )
+        );
         return;
       }
 
       if (code !== 0) {
-        metrics.increment(COUNTERS.VENDOR_REQUEST, {
-          vendor: "united",
-          type: "verification",
-          status: "error",
-        });
+        emit("exit_error");
         reject(new Error(`Process exited with code ${code}`));
         return;
       }
@@ -88,38 +116,17 @@ export async function checkStarlinkStatusSubprocess(
           throw new Error("No valid result JSON found in output");
         }
         const result = JSON.parse(jsonStr.trim()) as StarlinkCheckResult;
-        // Emit metric based on result
-        if (result.error) {
-          metrics.increment(COUNTERS.VENDOR_REQUEST, {
-            vendor: "united",
-            type: "verification",
-            status: "error",
-          });
-        } else {
-          metrics.increment(COUNTERS.VENDOR_REQUEST, {
-            vendor: "united",
-            type: "verification",
-            status: "success",
-          });
-        }
+        emit(result.error ? "scrape_error" : "success");
         resolve(result);
       } catch (e) {
-        metrics.increment(COUNTERS.VENDOR_REQUEST, {
-          vendor: "united",
-          type: "verification",
-          status: "error",
-        });
+        emit("parse_error");
         reject(new Error(`Failed to parse output: ${stdout}`));
       }
     });
 
     child.on("error", (err) => {
       clearTimeout(timeout);
-      metrics.increment(COUNTERS.VENDOR_REQUEST, {
-        vendor: "united",
-        type: "verification",
-        status: "error",
-      });
+      emit("spawn_error");
       reject(err);
     });
   });

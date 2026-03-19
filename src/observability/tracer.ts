@@ -20,6 +20,13 @@ if (isEnabled) {
     service: process.env.DD_SERVICE || "ua-starlink-tracker",
     env: process.env.DD_ENV || "development",
     version: process.env.DD_VERSION || "unknown",
+    // Global tags — auto-applied to every span and every dogstatsd metric.
+    // `airline` is constant today but gives us backwards-queryable history
+    // the day we add a second carrier (series with different tag sets don't
+    // join across the boundary in Datadog).
+    tags: {
+      airline: process.env.AIRLINE || "united",
+    },
     logInjection: true,
     profiling: false, // Required for Bun compatibility
     runtimeMetrics: false, // Required for Bun compatibility

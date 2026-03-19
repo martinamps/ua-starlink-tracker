@@ -20,7 +20,15 @@ import {
   updateFlights,
   updateVerifiedWifi,
 } from "../database/database";
-import { COUNTERS, GAUGES, metrics, withSpan } from "../observability";
+import {
+  COUNTERS,
+  DISTRIBUTIONS,
+  metrics,
+  normalizeAircraftType,
+  normalizeFleet,
+  normalizeWifiProvider,
+  withSpan,
+} from "../observability";
 import type { FleetAircraft, StarlinkStatus } from "../types";
 import { info, error as logError, warn } from "../utils/logger";
 import type { StarlinkCheckResult } from "./united-starlink-checker";
@@ -117,10 +125,15 @@ async function verifyPlane(
   db: Database,
   plane: FleetAircraft
 ): Promise<StarlinkCheckResult | null> {
+  const aircraftTypeTag = normalizeAircraftType(plane.aircraft_type);
+  const fleetTag = normalizeFleet(plane.fleet);
+
   return withSpan(
     "fleet_discovery.verify_plane",
     async (span) => {
       span.setTag("tail_number", plane.tail_number);
+      span.setTag("aircraft_type", aircraftTypeTag);
+      span.setTag("fleet", fleetTag);
 
       // Get upcoming flights for this plane
       const flightData = await getUpcomingFlightsForPlane(plane.tail_number);
@@ -180,25 +193,34 @@ async function verifyPlane(
         // A result is trustworthy only if: no error, got a wifi provider, tail matches
         const canTrustResult = !result.error && result.wifiProvider && !tailMismatch;
 
+        const wifiProviderTag = normalizeWifiProvider(result.wifiProvider);
+        const checkTags = {
+          fleet: fleetTag,
+          aircraft_type: aircraftTypeTag,
+          wifi_provider: wifiProviderTag,
+        };
+
         let starlinkStatus: StarlinkStatus;
         if (!canTrustResult) {
           starlinkStatus = plane.starlink_status as StarlinkStatus;
-          span.setTag("result", tailMismatch ? "aircraft_mismatch" : "error");
-          metrics.increment(COUNTERS.VERIFICATION_CHECK, {
-            result: tailMismatch ? "aircraft_mismatch" : "error",
-          });
+          const resultTag = tailMismatch ? "aircraft_mismatch" : "error";
+          span.setTag("result", resultTag);
+          metrics.increment(COUNTERS.VERIFICATION_CHECK, { result: resultTag, ...checkTags });
         } else if (result.hasStarlink) {
           starlinkStatus = "confirmed";
           span.setTag("result", "starlink");
-          metrics.increment(COUNTERS.VERIFICATION_CHECK, { result: "success" });
-          metrics.increment(COUNTERS.PLANES_STARLINK_DETECTED);
+          metrics.increment(COUNTERS.VERIFICATION_CHECK, { result: "success", ...checkTags });
+          metrics.increment(COUNTERS.PLANES_STARLINK_DETECTED, {
+            fleet: fleetTag,
+            aircraft_type: aircraftTypeTag,
+          });
         } else {
           starlinkStatus = "negative";
           span.setTag("result", "not_starlink");
-          metrics.increment(COUNTERS.VERIFICATION_CHECK, { result: "success" });
+          metrics.increment(COUNTERS.VERIFICATION_CHECK, { result: "success", ...checkTags });
         }
 
-        span.setTag("wifi_provider", result.wifiProvider || "unknown");
+        span.setTag("wifi_provider", wifiProviderTag);
 
         updateFleetVerificationResult(db, plane.tail_number, {
           starlinkStatus,
@@ -251,7 +273,12 @@ async function verifyPlane(
         const errorMessage = err instanceof Error ? err.message : String(err);
         logError(`Error verifying ${plane.tail_number}`, errorMessage);
         span.setTag("error", true);
-        metrics.increment(COUNTERS.VERIFICATION_CHECK, { result: "error" });
+        metrics.increment(COUNTERS.VERIFICATION_CHECK, {
+          result: "error",
+          fleet: fleetTag,
+          aircraft_type: aircraftTypeTag,
+          wifi_provider: "unknown",
+        });
 
         logVerification(db, {
           tail_number: plane.tail_number,
@@ -377,9 +404,21 @@ export function startFleetDiscovery(mode: "discovery" | "maintenance" = "mainten
                   `${fleetStats.pending_verification} pending`
               );
 
-              // Emit gauge metrics
-              metrics.gauge(GAUGES.PLANES_TOTAL, fleetStats.total_fleet);
-              metrics.gauge(GAUGES.PLANES_PENDING, fleetStats.pending_verification);
+              // Emit fleet-size snapshot broken down by fleet + starlink_status.
+              // Using a distribution (not gauge) so Datadog can sum/avg across
+              // tag dimensions correctly when graphing rollout over time.
+              const breakdown = db
+                .query(
+                  `SELECT fleet, starlink_status, COUNT(*) as cnt
+                   FROM united_fleet GROUP BY fleet, starlink_status`
+                )
+                .all() as Array<{ fleet: string; starlink_status: string; cnt: number }>;
+              for (const row of breakdown) {
+                metrics.distribution(DISTRIBUTIONS.FLEET_PLANES, row.cnt, {
+                  fleet: normalizeFleet(row.fleet),
+                  starlink_status: row.starlink_status || "unknown",
+                });
+              }
 
               lastHeartbeat = now;
             } finally {

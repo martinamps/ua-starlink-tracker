@@ -5,83 +5,139 @@
  * All metrics are prefixed with "starlink." for consistency.
  *
  * Naming Convention: starlink.{category}.{action}
+ *
+ * Tag cardinality budget (keep each tag ≤ ~20 values):
+ *   airline:         united (auto-applied globally via tracer.init)  (1, future: N)
+ *   fleet:           express | mainline | unknown                    (3)
+ *   aircraft_type:   normalized families (B737-800, E175, etc)      (~19)
+ *   wifi_provider:   starlink | viasat | panasonic | thales | none | unknown  (6)
+ *   starlink_status: confirmed | negative | unknown                  (3)
+ *   vendor:          fr24 | flightaware | united                     (3)
+ *   status:          success | error | rate_limited | timeout | ...  (~7)
  */
 
 import { tracer } from "./tracer";
 
 export type Tags = Record<string, string | number>;
 
-/**
- * Typed metrics helpers with consistent "starlink." prefix
- */
 export const metrics = {
-  /**
-   * Increment a counter by 1
-   * @param name - Metric name (will be prefixed with "starlink.")
-   * @param tags - Optional tags (low cardinality only!)
-   */
   increment: (name: string, tags?: Tags) => {
     tracer.dogstatsd.increment(`starlink.${name}`, 1, tags);
   },
 
-  /**
-   * Set a gauge value
-   * @param name - Metric name (will be prefixed with "starlink.")
-   * @param value - Gauge value
-   * @param tags - Optional tags
-   */
   gauge: (name: string, value: number, tags?: Tags) => {
     tracer.dogstatsd.gauge(`starlink.${name}`, value, tags);
   },
 
   /**
-   * Record a histogram value (for timing, sizes, etc.)
-   * @param name - Metric name (will be prefixed with "starlink.")
-   * @param value - Value to record
-   * @param tags - Optional tags
+   * Distribution — server-side aggregated, globally accurate percentiles.
+   * Use for: latencies, sizes, and periodic state snapshots you want to
+   * sum/avg across tag dimensions in Datadog.
    */
-  histogram: (name: string, value: number, tags?: Tags) => {
-    tracer.dogstatsd.histogram(`starlink.${name}`, value, tags);
+  distribution: (name: string, value: number, tags?: Tags) => {
+    tracer.dogstatsd.distribution(`starlink.${name}`, value, tags);
   },
 };
 
-// ============ Pre-defined Metric Names ============
+// ============ Tag normalizers ============
 
 /**
- * Counter metrics - increment on events
+ * Collapse raw aircraft type strings to a bounded set of families.
+ * Input examples (44 distinct in prod):
+ *   "Boeing 737-924(ER)", "Boeing 737-924", "Boeing 737-932(ER)" → all B737-900
+ *   "ERJ-175", "E175SC", "Embraer E-175", "Embraer E175LR"       → all E175
+ *   "Mitsubishi CRJ-701ER", "CRJ-700"                            → all CRJ-700
  *
- * Usage:
- *   metrics.increment(COUNTERS.SCRAPER_SYNC, { source: "spreadsheet" });
- *   metrics.increment(COUNTERS.VENDOR_REQUEST, { vendor: "flightaware", type: "flights", status: "success" });
+ * Ordered from most-specific to least-specific pattern — first match wins.
+ */
+const AIRCRAFT_FAMILIES: Array<[RegExp, string]> = [
+  [/737.?MAX.?10/i, "B737-MAX10"],
+  [/737.?MAX.?8/i, "B737-MAX8"],
+  [/737.?MAX.?9/i, "B737-MAX9"],
+  [/737-?7/i, "B737-700"],
+  [/737-?8/i, "B737-800"],
+  [/737-?9/i, "B737-900"],
+  [/757/i, "B757"],
+  [/767/i, "B767"],
+  [/777/i, "B777"],
+  [/787/i, "B787"],
+  [/A319/i, "A319"],
+  [/A320/i, "A320"],
+  [/A321/i, "A321"],
+  [/A350/i, "A350"],
+  [/E-?17[05]|ERJ.?17[05]/i, "E175"],
+  [/ERJ.?145/i, "ERJ-145"],
+  [/CRJ.?2/i, "CRJ-200"],
+  [/CRJ.?550/i, "CRJ-550"],
+  [/CRJ.?7/i, "CRJ-700"],
+];
+
+export function normalizeAircraftType(raw: string | null | undefined): string {
+  if (!raw) return "unknown";
+  for (const [pattern, family] of AIRCRAFT_FAMILIES) {
+    if (pattern.test(raw)) return family;
+  }
+  return "other";
+}
+
+/**
+ * Normalize wifi provider to a bounded lowercase set.
+ * Handles blank strings (common in DB) and case variance.
+ */
+export function normalizeWifiProvider(raw: string | null | undefined): string {
+  if (!raw || raw.trim() === "") return "unknown";
+  const lower = raw.trim().toLowerCase();
+  // Known providers pass through; anything unexpected buckets to "other"
+  if (["starlink", "viasat", "panasonic", "thales", "none"].includes(lower)) {
+    return lower;
+  }
+  return "other";
+}
+
+export function normalizeFleet(raw: string | null | undefined): string {
+  if (raw === "express" || raw === "mainline") return raw;
+  return "unknown";
+}
+
+// ============ Metric Names ============
+
+/**
+ * Counter metrics — increment on events
  */
 export const COUNTERS = {
   // Scraper events
-  SCRAPER_SYNC: "scraper.sync", // tags: source:spreadsheet|fr24
-  PLANES_DISCOVERED: "planes.discovered", // tags: source:spreadsheet|fr24
+  SCRAPER_SYNC: "scraper.sync", // tags: source
+  PLANES_DISCOVERED: "planes.discovered", // tags: source
+
+  // New Starlink installation detected on an aircraft
+  // tags: fleet, aircraft_type
   PLANES_STARLINK_DETECTED: "planes.starlink_detected",
 
-  // Verification events
-  VERIFICATION_CHECK: "verification.check", // tags: result:success|error
-  VERIFICATION_MISMATCH: "verification.mismatch",
+  // United.com verification check outcome
+  // tags: result (success|error|aircraft_mismatch), fleet, aircraft_type, wifi_provider
+  VERIFICATION_CHECK: "verification.check",
 
   // External API calls
-  // vendors: flightaware, fr24, united
-  // types: flights (flight data), fleet (aircraft list), verification (starlink check)
-  // status: success, rate_limited, error
+  // tags: vendor (fr24|flightaware|united), type, status
+  // united status values: success | timeout | killed | exit_error | parse_error | spawn_error
+  // fr24/flightaware status values: success | error | rate_limited
   VENDOR_REQUEST: "vendor.request",
 
   // HTTP requests
-  HTTP_REQUEST: "http.request", // tags: method, route, status_code
+  // tags: method, route (allowlisted), status_code
+  HTTP_REQUEST: "http.request",
 } as const;
 
 /**
- * Gauge metrics - set current values
- *
- * Usage:
- *   metrics.gauge(GAUGES.PLANES_TOTAL, 150);
+ * Distribution metrics — server-side aggregated, graph p50/p95/p99/sum/avg
  */
-export const GAUGES = {
-  PLANES_TOTAL: "planes.total",
-  PLANES_PENDING: "planes.pending",
-  PLANES_VERIFIED_STARLINK: "planes.verified_starlink",
+export const DISTRIBUTIONS = {
+  // Fleet size snapshot, emitted per heartbeat.
+  // tags: fleet, starlink_status (confirmed|negative|unknown)
+  // Graph as sum-by-fleet-and-status to see rollout progress over time.
+  FLEET_PLANES: "fleet.planes",
+
+  // Vendor request latency in milliseconds
+  // tags: vendor, type, status
+  VENDOR_DURATION_MS: "vendor.duration_ms",
 } as const;
