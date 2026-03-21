@@ -1642,9 +1642,12 @@ function computeFleetPageData(db: Database): FleetPageData {
 
 function computePulse(db: Database): FleetPageData["pulse"] {
   const nowSec = Math.floor(Date.now() / 1000);
-  // Clamp to a 72h window around now so outlier rows can't balloon the tick grid.
+  // Outer clamp guards against outlier rows ballooning the tick grid;
+  // actual sweep end is tightened to the last arrival below so the
+  // sparkline never pads trailing zeros past the data horizon (FR24
+  // fetchBy=reg only supplies ~47h forward).
   const winStart = nowSec - 6 * 3600;
-  const winEnd = nowSec + 66 * 3600;
+  const winCap = nowSec + 66 * 3600;
 
   const flights = db
     .query(
@@ -1654,7 +1657,7 @@ function computePulse(db: Database): FleetPageData["pulse"] {
        WHERE f.starlink_status = 'confirmed'
          AND uf.arrival_time >= ? AND uf.departure_time <= ?`
     )
-    .all(winStart, winEnd) as Array<{ d: number; a: number }>;
+    .all(winStart, winCap) as Array<{ d: number; a: number }>;
 
   if (flights.length === 0) {
     return { now: 0, sparkline: [], peak: 0, trough: 0, totalHours: 0 };
@@ -1662,12 +1665,15 @@ function computePulse(db: Database): FleetPageData["pulse"] {
 
   const events: Array<[number, number]> = [];
   let totalSec = 0;
+  let lastArrival = 0;
   for (const f of flights) {
     events.push([f.d, 1], [f.a + 1, -1]);
     totalSec += f.a - f.d;
+    if (f.a > lastArrival) lastArrival = f.a;
   }
   events.sort((a, b) => a[0] - b[0] || b[1] - a[1]);
 
+  const winEnd = Math.min(lastArrival, winCap);
   const step = 1800;
   const sparkline: number[] = [];
   let airborne = 0;

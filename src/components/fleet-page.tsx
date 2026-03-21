@@ -55,7 +55,7 @@ function Sparkline({ data, peak }: { data: number[]; peak: number }) {
       className="w-full h-16"
       preserveAspectRatio="none"
       role="img"
-      aria-label="Airborne Starlink planes over the next 72 hours"
+      aria-label="Airborne Starlink planes over the scheduled window"
     >
       <path d={area} fill="var(--color-accent)" opacity="0.15" />
       <path d={path} stroke="var(--color-accent)" strokeWidth="1.5" fill="none" />
