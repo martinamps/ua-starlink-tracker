@@ -377,7 +377,7 @@ function TailMonument({ allTails, totalFleet }: { allTails: FleetTail[]; totalFl
           )}
         </div>
       </div>
-      <div className="bg-surface border border-subtle rounded-lg p-4 font-mono text-[10px] leading-[1.6] columns-[14ch] gap-x-2">
+      <div className="bg-surface border border-subtle rounded-lg p-4 font-mono text-[10px] leading-[1.7] columns-[16ch] gap-x-3">
         {allTails.map((t) => (
           <a
             key={t.tail}
@@ -388,8 +388,8 @@ function TailMonument({ allTails, totalFleet }: { allTails: FleetTail[]; totalFl
             title={monumentTitle(t)}
             className={t.provider === "starlink" ? "tail-sl" : "tail-dim"}
           >
-            <span className="tail-dot">{t.provider === "starlink" ? "◉" : " "}</span>
-            {t.tail}
+            <span className="tail-dot">{t.provider === "starlink" ? "◉" : "\u00A0"}</span>
+            <span className="tail-num">{t.tail}</span>
             <span className="tail-abbr">{FAMILY_ABBR[t.family] || "—"}</span>
           </a>
         ))}
@@ -413,14 +413,15 @@ export default function FleetPage({ data }: { data: FleetPageData }) {
           .wifi-thales    { background: rgba(236, 72, 153, 0.5); }
           .wifi-none      { background: transparent; box-shadow: inset 0 0 0 1px rgba(90, 106, 128, 0.5); }
           .wifi-unknown   { background: transparent; box-shadow: inset 0 0 0 1px rgba(90, 106, 128, 0.25); }
-          .tail-sl, .tail-dim { display: inline-block; width: 100%; text-decoration: none; white-space: nowrap; }
+          .tail-sl, .tail-dim { display: flex; align-items: baseline; gap: 0.5em; text-decoration: none; }
           .tail-sl  { color: var(--color-accent); }
           .tail-dim { color: var(--color-text-muted); opacity: 0.3; transition: opacity .15s; }
-          .tail-sl:hover, .tail-dim:hover { opacity: 1; text-decoration: underline; }
+          .tail-sl:hover .tail-num, .tail-dim:hover .tail-num { text-decoration: underline; }
+          .tail-dim:hover { opacity: 1; }
           .tail-sl:target, .tail-dim:target { background: rgba(14, 165, 233, 0.2); opacity: 1; scroll-margin-top: 5rem; }
-          .tail-dot { display: inline-block; width: 1.2em; text-align: center; }
-          .tail-abbr { opacity: 0.35; font-size: 0.8em; }
-          .tail-abbr::before { content: "·"; margin: 0 0.3em; opacity: 0.6; }
+          .tail-dot { width: 0.8em; text-align: center; flex-shrink: 0; }
+          .tail-num { flex: 0 0 auto; }
+          .tail-abbr { opacity: 0.4; font-size: 0.75em; flex-shrink: 0; }
           /* Hangar floor: always-open blocks on desktop, collapsible details on mobile */
           .fam-summary::-webkit-details-marker { display: none; }
           .fam-caret { transition: transform .2s; }
