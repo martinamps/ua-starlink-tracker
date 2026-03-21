@@ -18,6 +18,7 @@ import { beforeAll, describe, expect, test } from "bun:test";
 import { handleMcpRequest } from "../src/api/mcp-server";
 import {
   computeWifiConsensus,
+  getFleetPageData,
   getFleetStats,
   getLastUpdated,
   getStarlinkPlanes,
@@ -739,5 +740,59 @@ describe("flight number utils", () => {
     expect(inferFleet("UA6999")).toBe("express");
     expect(inferFleet("UA7000")).toBe("mainline");
     expect(inferFleet("SKW4680")).toBe("express");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// /fleet page data aggregation
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("getFleetPageData", () => {
+  test("shape: families, carriers, pulse, bodyClass, allTails", () => {
+    const d = getFleetPageData(db);
+    expect(d.totalFleet).toBeGreaterThan(0);
+    expect(d.totalStarlink).toBeGreaterThanOrEqual(0);
+    expect(d.totalStarlink).toBeLessThanOrEqual(d.totalFleet);
+
+    expect(d.families.length).toBeGreaterThan(0);
+    const famTailSum = d.families.reduce((n, f) => n + f.tails.length, 0);
+    expect(famTailSum).toBe(d.totalFleet);
+    expect(d.allTails.length).toBe(d.totalFleet);
+
+    for (const c of d.carriers) {
+      expect(["SkyWest", "Republic", "Mesa", "GoJet"]).toContain(c.name);
+      expect(c.confirmed).toBeLessThanOrEqual(c.total);
+    }
+
+    for (const body of ["regional", "narrowbody", "widebody"] as const) {
+      const sum = Object.values(d.bodyClass[body]).reduce((a, b) => a + b, 0);
+      expect(sum).toBeGreaterThanOrEqual(0);
+      expect(Number.isNaN(sum)).toBe(false);
+    }
+
+    expect(d.pulse.peak).toBeGreaterThanOrEqual(d.pulse.trough);
+    expect(d.pulse.sparkline.length).toBeLessThanOrEqual(200);
+  });
+
+  test("families sorted by Starlink penetration, unknown last", () => {
+    const d = getFleetPageData(db);
+    const last = d.families[d.families.length - 1];
+    if (d.families.some((f) => f.family === "unknown")) {
+      expect(last.family).toBe("unknown");
+    }
+    const nonUnknown = d.families.filter((f) => f.family !== "unknown");
+    for (let i = 1; i < nonUnknown.length; i++) {
+      const prev = nonUnknown[i - 1].starlink / nonUnknown[i - 1].total;
+      const cur = nonUnknown[i].starlink / nonUnknown[i].total;
+      expect(cur).toBeLessThanOrEqual(prev);
+    }
+  });
+
+  test("all providers are valid WifiProvider (no 'other')", () => {
+    const d = getFleetPageData(db);
+    const valid = new Set(["starlink", "viasat", "panasonic", "thales", "none", "unknown"]);
+    for (const t of d.allTails) {
+      expect(valid.has(t.provider)).toBe(true);
+    }
   });
 });

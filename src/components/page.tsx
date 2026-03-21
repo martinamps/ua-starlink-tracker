@@ -467,9 +467,15 @@ export default function Page({
             </a>
             <a
               href="/route-planner"
-              className="px-3 py-1.5 bg-surface border border-subtle rounded text-secondary hover:text-accent hover:border-accent transition-colors inline-flex items-center gap-1.5"
+              className="px-3 py-1.5 bg-surface border border-subtle rounded text-secondary hover:text-accent hover:border-accent transition-colors"
             >
               Route Planner
+            </a>
+            <a
+              href="/fleet"
+              className="px-3 py-1.5 bg-surface border border-subtle rounded text-secondary hover:text-accent hover:border-accent transition-colors inline-flex items-center gap-1.5"
+            >
+              Fleet Rollout
               <span className="text-[10px] font-mono px-1.5 py-0.5 bg-accent/20 text-accent rounded">
                 NEW
               </span>

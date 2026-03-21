@@ -72,6 +72,53 @@ export interface FleetAircraft {
   last_check_error: string | null;
 }
 
+// ============ /fleet page data ============
+
+export type WifiProvider = "starlink" | "viasat" | "panasonic" | "thales" | "none" | "unknown";
+export type BodyClass = "regional" | "narrowbody" | "widebody";
+
+export interface FleetTail {
+  tail: string;
+  type: string; // raw aircraft_type
+  family: string; // normalized family
+  provider: WifiProvider;
+  fleet: "express" | "mainline" | "unknown";
+  verified_at: number | null;
+}
+
+export interface FleetFamily {
+  family: string;
+  body: BodyClass;
+  total: number;
+  starlink: number;
+  tails: FleetTail[];
+}
+
+export interface FleetCarrier {
+  name: string;
+  confirmed: number;
+  total: number;
+  pct: number;
+}
+
+export interface FleetPulse {
+  now: number;
+  sparkline: number[];
+  peak: number;
+  trough: number;
+  totalHours: number;
+}
+
+export interface FleetPageData {
+  pulse: FleetPulse;
+  families: FleetFamily[];
+  carriers: FleetCarrier[];
+  bodyClass: Record<BodyClass, Record<WifiProvider, number>>;
+  allTails: FleetTail[];
+  totalFleet: number;
+  totalStarlink: number;
+}
+
 export interface FleetDiscoveryStats {
   total_fleet: number;
   verified_starlink: number;

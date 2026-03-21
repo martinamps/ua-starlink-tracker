@@ -1,12 +1,23 @@
 import { Database } from "bun:sqlite";
+import {
+  normalizeAircraftType,
+  normalizeFleet,
+  normalizeWifiProvider,
+} from "../observability/metrics";
 import type {
   Aircraft,
+  BodyClass,
   FleetAircraft,
+  FleetCarrier,
   FleetDiscoveryStats,
+  FleetFamily,
+  FleetPageData,
   FleetSource,
   FleetStats,
+  FleetTail,
   Flight,
   StarlinkStatus,
+  WifiProvider,
 } from "../types";
 import { DB_PATH } from "../utils/constants";
 import { info } from "../utils/logger";
@@ -1495,4 +1506,186 @@ export function getFleetAircraft(db: Database, tailNumber: string): FleetAircraf
  */
 export function getAllFleetAircraft(db: Database): FleetAircraft[] {
   return db.query("SELECT * FROM united_fleet ORDER BY tail_number").all() as FleetAircraft[];
+}
+
+// ============ /fleet page aggregation ============
+
+const CARRIER_NAMES = ["SkyWest", "Republic", "Mesa", "GoJet"] as const;
+
+function normalizeCarrier(op: string | null): string | null {
+  const lower = (op || "").toLowerCase();
+  for (const name of CARRIER_NAMES) {
+    if (lower.includes(name.toLowerCase())) return name;
+  }
+  return null;
+}
+
+function bodyClassOf(family: string): BodyClass {
+  if (/^(B767|B777|B787|A350)/.test(family)) return "widebody";
+  if (/^(B737|B757|A319|A320|A321)/.test(family)) return "narrowbody";
+  if (/^(E175|ERJ|CRJ)/.test(family)) return "regional";
+  return "narrowbody"; // safer default for unknowns than inflating regional
+}
+
+let fleetPageCache: { data: FleetPageData; at: number } | null = null;
+const FLEET_PAGE_TTL_MS = 60_000;
+
+/**
+ * Aggregate all data needed for the /fleet page in a single pass.
+ * Returns families (sorted by Starlink penetration desc), express carrier
+ * leaderboard, body-class provider split, live-airborne pulse with a
+ * 30-min-bucketed sparkline, and the full tail list. Memoized for 60s.
+ */
+export function getFleetPageData(db: Database): FleetPageData {
+  const now = Date.now();
+  if (fleetPageCache && now - fleetPageCache.at < FLEET_PAGE_TTL_MS) {
+    return fleetPageCache.data;
+  }
+  const data = computeFleetPageData(db);
+  fleetPageCache = { data, at: now };
+  return data;
+}
+
+function computeFleetPageData(db: Database): FleetPageData {
+  const rows = db
+    .query(
+      `SELECT tail_number, aircraft_type, fleet, operated_by,
+              starlink_status, verified_wifi, verified_at
+       FROM united_fleet ORDER BY tail_number`
+    )
+    .all() as Array<{
+    tail_number: string;
+    aircraft_type: string | null;
+    fleet: string;
+    operated_by: string | null;
+    starlink_status: string;
+    verified_wifi: string | null;
+    verified_at: number | null;
+  }>;
+
+  const allTails: FleetTail[] = [];
+  const familyMap = new Map<string, FleetFamily>();
+  const carrierMap = new Map<string, { confirmed: number; total: number }>();
+  const bodyClass = {
+    regional: { starlink: 0, viasat: 0, panasonic: 0, thales: 0, none: 0, unknown: 0 },
+    narrowbody: { starlink: 0, viasat: 0, panasonic: 0, thales: 0, none: 0, unknown: 0 },
+    widebody: { starlink: 0, viasat: 0, panasonic: 0, thales: 0, none: 0, unknown: 0 },
+  } as Record<BodyClass, Record<WifiProvider, number>>;
+
+  let totalStarlink = 0;
+
+  for (const r of rows) {
+    const family = normalizeAircraftType(r.aircraft_type);
+    const rawProvider = normalizeWifiProvider(r.verified_wifi);
+    const provider: WifiProvider =
+      rawProvider === "other" ? "unknown" : (rawProvider as WifiProvider);
+    const body = bodyClassOf(family);
+
+    const tail: FleetTail = {
+      tail: r.tail_number,
+      type: r.aircraft_type || "",
+      family,
+      provider,
+      fleet: normalizeFleet(r.fleet) as FleetTail["fleet"],
+      verified_at: r.verified_at,
+    };
+    allTails.push(tail);
+
+    if (provider === "starlink") totalStarlink++;
+    bodyClass[body][provider]++;
+
+    let fam = familyMap.get(family);
+    if (!fam) {
+      fam = { family, body, total: 0, starlink: 0, tails: [] };
+      familyMap.set(family, fam);
+    }
+    fam.total++;
+    fam.tails.push(tail);
+    if (provider === "starlink") fam.starlink++;
+
+    const carrier = normalizeCarrier(r.operated_by);
+    if (carrier && r.fleet === "express") {
+      const c = carrierMap.get(carrier) || { confirmed: 0, total: 0 };
+      c.total++;
+      if (r.starlink_status === "confirmed") c.confirmed++;
+      carrierMap.set(carrier, c);
+    }
+  }
+
+  const families = [...familyMap.values()].sort((a, b) => {
+    if (a.family === "unknown") return 1;
+    if (b.family === "unknown") return -1;
+    return b.starlink / b.total - a.starlink / a.total || b.total - a.total;
+  });
+
+  const carriers: FleetCarrier[] = [...carrierMap.entries()]
+    .map(([name, c]) => ({
+      name,
+      confirmed: c.confirmed,
+      total: c.total,
+      pct: c.total > 0 ? (c.confirmed / c.total) * 100 : 0,
+    }))
+    .sort((a, b) => b.pct - a.pct);
+
+  const pulse = computePulse(db);
+
+  return {
+    pulse,
+    families,
+    carriers,
+    bodyClass,
+    allTails,
+    totalFleet: rows.length,
+    totalStarlink,
+  };
+}
+
+function computePulse(db: Database): FleetPageData["pulse"] {
+  const nowSec = Math.floor(Date.now() / 1000);
+  // Clamp to a 72h window around now so outlier rows can't balloon the tick grid.
+  const winStart = nowSec - 6 * 3600;
+  const winEnd = nowSec + 66 * 3600;
+
+  const flights = db
+    .query(
+      `SELECT uf.departure_time AS d, uf.arrival_time AS a
+       FROM upcoming_flights uf
+       JOIN united_fleet f ON f.tail_number = uf.tail_number
+       WHERE f.starlink_status = 'confirmed'
+         AND uf.arrival_time >= ? AND uf.departure_time <= ?`
+    )
+    .all(winStart, winEnd) as Array<{ d: number; a: number }>;
+
+  if (flights.length === 0) {
+    return { now: 0, sparkline: [], peak: 0, trough: 0, totalHours: 0 };
+  }
+
+  const events: Array<[number, number]> = [];
+  let totalSec = 0;
+  for (const f of flights) {
+    events.push([f.d, 1], [f.a + 1, -1]);
+    totalSec += f.a - f.d;
+  }
+  events.sort((a, b) => a[0] - b[0] || b[1] - a[1]);
+
+  const step = 1800;
+  const sparkline: number[] = [];
+  let airborne = 0;
+  let ei = 0;
+  let peak = 0;
+  let trough = Number.POSITIVE_INFINITY;
+  let airborneNow = 0;
+
+  for (let t = winStart; t <= winEnd; t += step) {
+    while (ei < events.length && events[ei][0] <= t) {
+      airborne += events[ei][1];
+      ei++;
+    }
+    sparkline.push(airborne);
+    if (airborne > peak) peak = airborne;
+    if (airborne < trough) trough = airborne;
+    if (t <= nowSec && nowSec < t + step) airborneNow = airborne;
+  }
+
+  return { now: airborneNow, sparkline, peak, trough, totalHours: totalSec / 3600 };
 }

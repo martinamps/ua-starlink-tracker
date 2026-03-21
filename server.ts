@@ -19,6 +19,7 @@ const KNOWN_ROUTES = new Set([
   "/",
   "/check-flight",
   "/route-planner",
+  "/fleet",
   "/api/data",
   "/api/check-flight",
   "/api/predict-flight",
@@ -98,6 +99,7 @@ import { checkNewPlanes, startFlightUpdater } from "./src/api/flight-updater";
 import { FlightRadar24API } from "./src/api/flightradar24-api";
 import { handleMcpRequest } from "./src/api/mcp-server";
 import CheckFlightPage from "./src/components/check-flight-page";
+import FleetPage from "./src/components/fleet-page";
 import McpPage from "./src/components/mcp-page";
 import Page from "./src/components/page";
 import RoutePlannerPage from "./src/components/route-planner-page";
@@ -105,6 +107,7 @@ import {
   bumpDiscoveryPriority,
   computeWifiConsensus,
   getFleetDiscoveryStats,
+  getFleetPageData,
   getFleetStats,
   getLastUpdated,
   getStarlinkPlanes,
@@ -865,6 +868,7 @@ United Airlines began installing SpaceX Starlink WiFi on March 7, 2025. The serv
 - [Homepage](https://unitedstarlinktracker.com/): Live tracker with all Starlink-equipped aircraft, fleet statistics, search by tail number/flight number/route
 - [Check a Flight](https://unitedstarlinktracker.com/check-flight): Check if a specific United flight has Starlink WiFi by flight number and date. Falls back to probability estimate for future flights.
 - [Route Planner](https://unitedstarlinktracker.com/route-planner): Find the best routing (direct or 1-stop) to maximize Starlink coverage. Ranks itineraries by probability.
+- [Fleet Rollout](https://unitedstarlinktracker.com/fleet): See all United aircraft colored by WiFi provider, live airborne Starlink count, express carrier leaderboard.
 - [API - Check Flight](https://unitedstarlinktracker.com/api/check-flight?flight_number=UA123&date=2026-01-22): JSON API to check Starlink status for a specific flight
 - [API - Predict Flight](https://unitedstarlinktracker.com/api/predict-flight?flight_number=UA4680): Probability estimate based on 12k+ historical observations
 - [API - Plan Route](https://unitedstarlinktracker.com/api/plan-route?origin=SFO&destination=JAX): Full/partial coverage itinerary search
@@ -913,6 +917,12 @@ routes["/sitemap.xml"] = tracedRoute("/sitemap.xml", (req) => {
     <priority>0.8</priority>
   </url>
   <url>
+    <loc>${baseUrl}/fleet</loc>
+    <lastmod>${new Date().toISOString()}</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
     <loc>${baseUrl}/mcp</loc>
     <lastmod>${new Date().toISOString()}</lastmod>
     <changefreq>monthly</changefreq>
@@ -940,13 +950,16 @@ interface PageMeta {
  * Render a sub-page (check-flight, route-planner, mcp) with shared boilerplate:
  * fleet stats, template loading, canonical/og:url overrides.
  */
-async function renderSubPage(
-  component: React.ComponentType,
+async function renderSubPage<P extends object = object>(
+  component: React.ComponentType<P>,
   canonicalPath: string,
   meta: PageMeta,
-  host: string
+  host: string,
+  props?: P
 ): Promise<Response> {
-  const reactHtml = ReactDOMServer.renderToString(React.createElement(component));
+  const reactHtml = ReactDOMServer.renderToString(
+    React.createElement(component, (props ?? {}) as P)
+  );
 
   const fleetStats = getFleetStats(db);
   const totalCount = getTotalCount(db);
@@ -1038,6 +1051,32 @@ async function handleRequest(req: Request): Promise<Response> {
           "Find direct flights and smart connections with the highest Starlink probability. Sometimes DEN→ASE→ORD beats flying direct.",
       },
       host
+    );
+  }
+
+  if (url.pathname === "/fleet") {
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      return new Response("Method not allowed", {
+        status: 405,
+        headers: { "Content-Type": "text/plain" },
+      });
+    }
+    const data = getFleetPageData(db);
+    return renderSubPage(
+      FleetPage,
+      "/fleet",
+      {
+        siteTitle: "United Fleet Starlink Rollout — Every Tail Number, Every WiFi Provider",
+        siteDescription:
+          "See all 1,500+ United Airlines aircraft at once, colored by WiFi provider. Track which aircraft types are done, which express carrier is winning, and how many Starlink planes are in the air right now.",
+        keywords:
+          "united fleet starlink, united airlines wifi by aircraft, starlink rollout progress, united express carrier starlink, united tail number wifi",
+        ogTitle: "United Fleet Starlink Rollout — The Hangar Floor View",
+        ogDescription:
+          "Every United tail number, colored by WiFi provider. Your 16-hour flight to Singapore still has Panasonic. Your 53-minute Duluth hop has Starlink.",
+      },
+      host,
+      { data }
     );
   }
 
