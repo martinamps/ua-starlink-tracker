@@ -73,7 +73,7 @@ const AIRCRAFT_FAMILIES: Array<[RegExp, string]> = [
 ];
 
 export function normalizeAircraftType(raw: string | null | undefined): string {
-  if (!raw) return "unknown";
+  if (!raw || /^unknown$/i.test(raw.trim())) return "unknown";
   for (const [pattern, family] of AIRCRAFT_FAMILIES) {
     if (pattern.test(raw)) return family;
   }

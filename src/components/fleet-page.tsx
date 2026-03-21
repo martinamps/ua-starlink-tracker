@@ -35,8 +35,30 @@ function cellTitle(t: FleetTail): string {
 }
 
 function monumentTitle(t: FleetTail): string {
-  return `${t.type || "type unknown"} · ${PROVIDER_LABEL[t.provider]} · ${t.fleet} · verified ${timeAgo(t.verified_at)}`;
+  return `${t.type || "type unknown"} · ${PROVIDER_LABEL[t.provider]} · ${t.fleet} · verified ${timeAgo(t.verified_at)} · click for live tracking`;
 }
+
+const FAMILY_ABBR: Record<string, string> = {
+  E175: "E75",
+  "ERJ-145": "E45",
+  "CRJ-200": "CR2",
+  "CRJ-550": "CR5",
+  "CRJ-700": "CR7",
+  "B737-700": "737",
+  "B737-800": "738",
+  "B737-900": "739",
+  "B737-MAX8": "M8",
+  "B737-MAX9": "M9",
+  "B737-MAX10": "M10",
+  B757: "757",
+  B767: "767",
+  B777: "777",
+  B787: "787",
+  A319: "319",
+  A320: "320",
+  A321: "321",
+  A350: "350",
+};
 
 function Sparkline({ data, peak }: { data: number[]; peak: number }) {
   if (data.length < 2 || peak === 0) {
@@ -325,27 +347,51 @@ function IronyStack({ bodyClass }: { bodyClass: FleetPageData["bodyClass"] }) {
 }
 
 function TailMonument({ allTails, totalFleet }: { allTails: FleetTail[]; totalFleet: number }) {
+  const byProvider: Record<WifiProvider, number> = {
+    starlink: 0,
+    viasat: 0,
+    panasonic: 0,
+    thales: 0,
+    none: 0,
+    unknown: 0,
+  };
+  for (const t of allTails) byProvider[t.provider]++;
+
   return (
     <section className={SECTION}>
       <div className="mb-4">
         <h2 className="font-display text-xl font-semibold text-primary mb-1">Tail Registry</h2>
-        <p className="text-xs text-muted">
-          All {totalFleet} United tail numbers.{" "}
+        <p className="text-xs text-muted mb-2">
+          All {totalFleet} tails —{" "}
           <kbd className="px-1 bg-surface border border-subtle rounded text-[10px]">⌘F</kbd> to find
-          yours. Cyan has Starlink.
+          yours, click to track on FlightAware. Cyan = Starlink, dim = everything else.
         </p>
+        <div className="flex flex-wrap gap-3 font-mono text-[10px] text-muted">
+          {PROVIDER_ORDER.map((p) =>
+            byProvider[p] > 0 ? (
+              <span key={p} className="inline-flex items-center gap-1">
+                <span className={`wifi-${p} w-2 h-2 rounded-[1px]`} />
+                {byProvider[p]} {PROVIDER_LABEL[p]}
+              </span>
+            ) : null
+          )}
+        </div>
       </div>
-      <div className="bg-surface border border-subtle rounded-lg p-4 font-mono text-[10px] leading-relaxed columns-[12ch] gap-x-2">
+      <div className="bg-surface border border-subtle rounded-lg p-4 font-mono text-[10px] leading-[1.6] columns-[14ch] gap-x-2">
         {allTails.map((t) => (
-          <span
+          <a
             key={t.tail}
             id={`t-${t.tail}`}
+            href={`https://flightaware.com/live/flight/${t.tail}`}
+            target="_blank"
+            rel="noreferrer noopener"
             title={monumentTitle(t)}
             className={t.provider === "starlink" ? "tail-sl" : "tail-dim"}
           >
-            {t.provider === "starlink" && "◉"}
+            {t.provider === "starlink" ? "◉" : " "}
             {t.tail}
-          </span>
+            <span className="tail-abbr">{FAMILY_ABBR[t.family] || "—"}</span>
+          </a>
         ))}
       </div>
     </section>
@@ -367,10 +413,11 @@ export default function FleetPage({ data }: { data: FleetPageData }) {
           .wifi-thales    { background: rgba(236, 72, 153, 0.5); }
           .wifi-none      { background: transparent; box-shadow: inset 0 0 0 1px rgba(90, 106, 128, 0.5); }
           .wifi-unknown   { background: transparent; box-shadow: inset 0 0 0 1px rgba(90, 106, 128, 0.25); }
-          .tail-sl  { display: inline-block; width: 100%; color: var(--color-accent); }
-          .tail-dim { display: inline-block; width: 100%; color: var(--color-text-muted); opacity: 0.3; transition: opacity .15s; }
-          .tail-dim:hover { opacity: 1; }
+          .tail-sl  { display: inline-block; width: 100%; color: var(--color-accent); text-decoration: none; white-space: pre; }
+          .tail-dim { display: inline-block; width: 100%; color: var(--color-text-muted); opacity: 0.3; transition: opacity .15s; text-decoration: none; white-space: pre; }
+          .tail-sl:hover, .tail-dim:hover { opacity: 1; text-decoration: underline; }
           .tail-sl:target, .tail-dim:target { background: rgba(14, 165, 233, 0.2); opacity: 1; scroll-margin-top: 5rem; }
+          .tail-abbr { opacity: 0.4; margin-left: 0.3em; font-size: 0.85em; }
           /* Hangar floor: always-open blocks on desktop, collapsible details on mobile */
           .fam-summary::-webkit-details-marker { display: none; }
           .fam-caret { transition: transform .2s; }
