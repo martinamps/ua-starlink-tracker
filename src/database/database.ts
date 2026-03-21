@@ -1612,9 +1612,11 @@ function computeFleetPageData(db: Database): FleetPageData {
     }
   }
 
+  const uncategorized = new Set(["unknown", "other"]);
   const families = [...familyMap.values()].sort((a, b) => {
-    if (a.family === "unknown") return 1;
-    if (b.family === "unknown") return -1;
+    const aU = uncategorized.has(a.family);
+    const bU = uncategorized.has(b.family);
+    if (aU !== bU) return aU ? 1 : -1;
     return b.starlink / b.total - a.starlink / a.total || b.total - a.total;
   });
 
