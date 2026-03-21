@@ -1,5 +1,6 @@
 import React from "react";
 import type { FleetFamily, FleetPageData, FleetTail, WifiProvider } from "../types";
+import { AIRCRAFT_SPECS, type AircraftSpec } from "../utils/aircraft-specs";
 
 const PROVIDER_LABEL: Record<WifiProvider, string> = {
   starlink: "Starlink",
@@ -117,14 +118,52 @@ function TailGrid({ tails }: { tails: FleetTail[] }) {
   );
 }
 
+function SpecCard({ family, spec }: { family: string; spec: AircraftSpec }) {
+  const row = (label: string, value: string | number, unit = "") => (
+    <div className="flex justify-between gap-4">
+      <span className="text-muted">{label}</span>
+      <span className="text-secondary text-right">
+        {value}
+        {unit && <span className="text-muted ml-0.5">{unit}</span>}
+      </span>
+    </div>
+  );
+  return (
+    <div className="spec-card absolute top-full left-0 mt-1 w-64 bg-surface-elevated border border-subtle rounded-lg p-3 text-[11px] font-mono shadow-xl z-20">
+      <div className="font-display text-sm font-semibold text-primary mb-2 tracking-wide">
+        {family}
+      </div>
+      <div className="space-y-1 mb-2">
+        {row("Seats", spec.seats)}
+        {row("Wingspan", spec.wingspan_ft, "ft")}
+        {row("Length", spec.length_ft, "ft")}
+        {row("Range", spec.range_mi.toLocaleString(), "mi")}
+        {row("Cruise", spec.cruise_mph, "mph")}
+        {row("First flight", spec.first_flight)}
+        {row("Engines", spec.engines)}
+      </div>
+      <p className="text-[10px] text-accent/80 leading-snug pt-2 border-t border-subtle">
+        {spec.fun_fact}
+      </p>
+    </div>
+  );
+}
+
 function FamilyBlock({ fam }: { fam: FleetFamily }) {
   const pct = Math.round((fam.starlink / fam.total) * 100);
+  const spec = AIRCRAFT_SPECS[fam.family];
   return (
     <details className="fam-block bg-surface border border-subtle rounded" open>
       <summary className="fam-summary list-none flex items-center justify-between gap-2 p-2">
         <div className="flex items-baseline gap-2">
-          <span className="font-display text-xs font-semibold text-secondary uppercase tracking-wide">
+          <span
+            className={`spec-trigger relative font-display text-xs font-semibold uppercase tracking-wide ${
+              spec ? "text-secondary hover:text-accent cursor-help" : "text-secondary"
+            }`}
+            tabIndex={spec ? 0 : -1}
+          >
             {fam.family}
+            {spec && <SpecCard family={fam.family} spec={spec} />}
           </span>
           <span className="font-mono text-[10px] text-muted">
             {fam.starlink}/{fam.total}
@@ -344,6 +383,22 @@ export default function FleetPage({ data }: { data: FleetPageData }) {
             .fam-block { width: 100%; }
             .fam-summary { cursor: pointer; padding: 0.75rem; }
             .fam-block[open] .fam-caret { transform: rotate(180deg); }
+          }
+          /* Aircraft spec popover — hover on desktop, focus (tap) on mobile */
+          .spec-trigger { pointer-events: auto; outline: none; }
+          .spec-card {
+            opacity: 0; pointer-events: none;
+            transform: translateY(-4px);
+            transition: opacity .15s, transform .15s;
+            text-transform: none; letter-spacing: normal; font-weight: 400;
+          }
+          .spec-trigger:hover .spec-card,
+          .spec-trigger:focus .spec-card,
+          .spec-trigger:focus-within .spec-card {
+            opacity: 1; pointer-events: auto; transform: translateY(0);
+          }
+          @media (max-width: 767px) {
+            .spec-card { left: 0; right: 0; width: auto; position: fixed; top: auto; bottom: 1rem; margin: 0 1rem; }
           }
           `,
         }}
