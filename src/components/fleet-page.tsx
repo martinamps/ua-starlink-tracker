@@ -39,25 +39,25 @@ function monumentTitle(t: FleetTail): string {
 }
 
 const FAMILY_ABBR: Record<string, string> = {
-  E175: "E75",
-  "ERJ-145": "E45",
-  "CRJ-200": "CR2",
-  "CRJ-550": "CR5",
-  "CRJ-700": "CR7",
-  "B737-700": "737",
-  "B737-800": "738",
-  "B737-900": "739",
-  "B737-MAX8": "M8",
-  "B737-MAX9": "M9",
-  "B737-MAX10": "M10",
+  E175: "E175",
+  "ERJ-145": "ERJ145",
+  "CRJ-200": "CRJ200",
+  "CRJ-550": "CRJ550",
+  "CRJ-700": "CRJ700",
+  "B737-700": "737-700",
+  "B737-800": "737-800",
+  "B737-900": "737-900",
+  "B737-MAX8": "MAX8",
+  "B737-MAX9": "MAX9",
+  "B737-MAX10": "MAX10",
   B757: "757",
   B767: "767",
   B777: "777",
   B787: "787",
-  A319: "319",
-  A320: "320",
-  A321: "321",
-  A350: "350",
+  A319: "A319",
+  A320: "A320",
+  A321: "A321",
+  A350: "A350",
 };
 
 function Sparkline({ data, peak }: { data: number[]; peak: number }) {
@@ -377,7 +377,7 @@ function TailMonument({ allTails, totalFleet }: { allTails: FleetTail[]; totalFl
           )}
         </div>
       </div>
-      <div className="bg-surface border border-subtle rounded-lg p-4 font-mono text-[10px] leading-[1.7] columns-[16ch] gap-x-3">
+      <div className="bg-surface border border-subtle rounded-lg p-4 font-mono text-[10px] leading-[1.7] columns-[18ch] gap-x-3">
         {allTails.map((t) => (
           <a
             key={t.tail}
