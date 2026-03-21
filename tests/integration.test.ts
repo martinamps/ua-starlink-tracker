@@ -774,15 +774,14 @@ describe("getFleetPageData", () => {
     expect(d.pulse.sparkline.length).toBeLessThanOrEqual(200);
   });
 
-  test("families sorted by Starlink penetration, uncategorized last", () => {
+  test("families sorted by Starlink penetration, unknown last, no 'other'", () => {
     const d = getFleetPageData(db);
-    const uncategorized = new Set(["unknown", "other"]);
-    const idx = d.families.map((f) => uncategorized.has(f.family));
-    const firstU = idx.indexOf(true);
-    if (firstU >= 0) {
-      expect(idx.slice(firstU).every(Boolean)).toBe(true);
+    expect(d.families.some((f) => f.family === "other")).toBe(false);
+    const last = d.families[d.families.length - 1];
+    if (d.families.some((f) => f.family === "unknown")) {
+      expect(last.family).toBe("unknown");
     }
-    const typed = d.families.filter((f) => !uncategorized.has(f.family));
+    const typed = d.families.filter((f) => f.family !== "unknown");
     for (let i = 1; i < typed.length; i++) {
       const prev = typed[i - 1].starlink / typed[i - 1].total;
       const cur = typed[i].starlink / typed[i].total;

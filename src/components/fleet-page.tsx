@@ -388,7 +388,7 @@ function TailMonument({ allTails, totalFleet }: { allTails: FleetTail[]; totalFl
             title={monumentTitle(t)}
             className={t.provider === "starlink" ? "tail-sl" : "tail-dim"}
           >
-            {t.provider === "starlink" ? "◉" : " "}
+            <span className="tail-dot">{t.provider === "starlink" ? "◉" : " "}</span>
             {t.tail}
             <span className="tail-abbr">{FAMILY_ABBR[t.family] || "—"}</span>
           </a>
@@ -413,11 +413,14 @@ export default function FleetPage({ data }: { data: FleetPageData }) {
           .wifi-thales    { background: rgba(236, 72, 153, 0.5); }
           .wifi-none      { background: transparent; box-shadow: inset 0 0 0 1px rgba(90, 106, 128, 0.5); }
           .wifi-unknown   { background: transparent; box-shadow: inset 0 0 0 1px rgba(90, 106, 128, 0.25); }
-          .tail-sl  { display: inline-block; width: 100%; color: var(--color-accent); text-decoration: none; white-space: pre; }
-          .tail-dim { display: inline-block; width: 100%; color: var(--color-text-muted); opacity: 0.3; transition: opacity .15s; text-decoration: none; white-space: pre; }
+          .tail-sl, .tail-dim { display: inline-block; width: 100%; text-decoration: none; white-space: nowrap; }
+          .tail-sl  { color: var(--color-accent); }
+          .tail-dim { color: var(--color-text-muted); opacity: 0.3; transition: opacity .15s; }
           .tail-sl:hover, .tail-dim:hover { opacity: 1; text-decoration: underline; }
           .tail-sl:target, .tail-dim:target { background: rgba(14, 165, 233, 0.2); opacity: 1; scroll-margin-top: 5rem; }
-          .tail-abbr { opacity: 0.4; margin-left: 0.3em; font-size: 0.85em; }
+          .tail-dot { display: inline-block; width: 1.2em; text-align: center; }
+          .tail-abbr { opacity: 0.35; font-size: 0.8em; }
+          .tail-abbr::before { content: "·"; margin: 0 0.3em; opacity: 0.6; }
           /* Hangar floor: always-open blocks on desktop, collapsible details on mobile */
           .fam-summary::-webkit-details-marker { display: none; }
           .fam-caret { transition: transform .2s; }

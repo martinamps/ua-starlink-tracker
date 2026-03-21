@@ -230,11 +230,14 @@ export async function checkStarlinkStatus(
 
       // Extract aircraft type from the "Aircraft details" section
       let aircraftType: string | null = null;
-      // Look for patterns like "Boeing 787-9", "Embraer E-175", "Airbus A320"
+      // Ordered most-specific to least. "Boeing 737 MAX 9" must match the MAX
+      // pattern before the bare "Boeing 737" fallback or we lose the variant.
       const typePatterns = [
-        /Boeing \d{3}-\d+/i,
-        /Embraer E-?\d+/i,
-        /Airbus A\d+/i,
+        /Boeing \d{3} MAX \d+/i,
+        /Boeing \d{3}-\d+\w*/i,
+        /Embraer E-?\d+\w*/i,
+        /Airbus A\d+\w*/i,
+        /(?:Mitsubishi |Bombardier )?CRJ[- ]?\d+/i,
         /Boeing \d{3}/i,
       ];
       for (const pattern of typePatterns) {

@@ -1182,13 +1182,15 @@ export function upsertFleetAircraft(
   operatedBy: string | null = null
 ): void {
   const now = Math.floor(Date.now() / 1000);
+  // Empty/placeholder type strings must not clobber a real value via COALESCE.
+  const type = aircraftType?.trim();
+  const safeType = type && !/^unknown$/i.test(type) ? type : null;
 
   const existing = db
     .query("SELECT id, starlink_status FROM united_fleet WHERE tail_number = ?")
     .get(tailNumber) as { id: number; starlink_status: StarlinkStatus } | null;
 
   if (existing) {
-    // Update existing record
     db.query(`
       UPDATE united_fleet
       SET aircraft_type = COALESCE(?, aircraft_type),
@@ -1198,22 +1200,21 @@ export function upsertFleetAircraft(
           discovery_priority = ?
       WHERE tail_number = ?
     `).run(
-      aircraftType,
+      safeType,
       now,
       fleet,
       operatedBy,
-      calculateDiscoveryPriority(aircraftType, existing.starlink_status, tailNumber),
+      calculateDiscoveryPriority(safeType, existing.starlink_status, tailNumber),
       tailNumber
     );
   } else {
-    // Insert new record
-    const priority = calculateDiscoveryPriority(aircraftType, "unknown", tailNumber);
+    const priority = calculateDiscoveryPriority(safeType, "unknown", tailNumber);
     db.query(`
       INSERT INTO united_fleet (
         tail_number, aircraft_type, first_seen_source, first_seen_at, last_seen_at,
         fleet, operated_by, starlink_status, discovery_priority
       ) VALUES (?, ?, ?, ?, ?, ?, ?, 'unknown', ?)
-    `).run(tailNumber, aircraftType, source, now, now, fleet, operatedBy, priority);
+    `).run(tailNumber, safeType, source, now, now, fleet, operatedBy, priority);
   }
 }
 
@@ -1338,10 +1339,11 @@ export function syncSpreadsheetToFleet(db: Database): number {
 
   const existsStmt = db.prepare("SELECT id FROM united_fleet WHERE tail_number = ?");
   // starlink_status is discovery-owned; only bootstrap it from the sheet when
-  // discovery hasn't touched the plane yet.
+  // discovery hasn't touched the plane yet. aircraft_type uses COALESCE so
+  // an empty/placeholder sheet value can't clobber a real FR24-sourced type.
   const updateStmt = db.prepare(`
     UPDATE united_fleet
-    SET aircraft_type = ?,
+    SET aircraft_type = COALESCE(?, aircraft_type),
         fleet = ?,
         operated_by = ?,
         verified_wifi = COALESCE(?, verified_wifi),
@@ -1356,16 +1358,22 @@ export function syncSpreadsheetToFleet(db: Database): number {
     ) VALUES (?, ?, 'spreadsheet', ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
+  const safeType = (t: string | null): string | null => {
+    const s = t?.trim();
+    return s && !/^unknown$/i.test(s) && normalizeAircraftType(s) !== "other" ? s : null;
+  };
+
   const sync = db.transaction(() => {
     for (const plane of spreadsheetPlanes) {
       const starlinkStatus: StarlinkStatus =
         plane.verified_wifi === "Starlink" || plane.verified_wifi === null
           ? "confirmed"
           : "negative";
+      const type = safeType(plane.aircraft);
 
       if (existsStmt.get(plane.TailNumber)) {
         updateStmt.run(
-          plane.aircraft,
+          type,
           plane.fleet,
           plane.OperatedBy,
           plane.verified_wifi,
@@ -1373,14 +1381,10 @@ export function syncSpreadsheetToFleet(db: Database): number {
           plane.TailNumber
         );
       } else {
-        const priority = calculateDiscoveryPriority(
-          plane.aircraft,
-          starlinkStatus,
-          plane.TailNumber
-        );
+        const priority = calculateDiscoveryPriority(type, starlinkStatus, plane.TailNumber);
         insertStmt.run(
           plane.TailNumber,
-          plane.aircraft,
+          type,
           now,
           now,
           plane.fleet,
@@ -1423,7 +1427,7 @@ export function addDiscoveredStarlinkPlane(
       verified_wifi, verified_at
     ) VALUES (?, 'StrLnk', 'discovery', 'discovery', ?, ?, ?, ?, ?, ?)
   `).run(
-    aircraftType || "Unknown",
+    aircraftType || null,
     now,
     tailNumber,
     operatedBy || "United Airlines",
@@ -1575,7 +1579,8 @@ function computeFleetPageData(db: Database): FleetPageData {
   let totalStarlink = 0;
 
   for (const r of rows) {
-    const family = normalizeAircraftType(r.aircraft_type);
+    const rawFamily = normalizeAircraftType(r.aircraft_type);
+    const family = rawFamily === "other" ? "unknown" : rawFamily;
     const rawProvider = normalizeWifiProvider(r.verified_wifi);
     const provider: WifiProvider =
       rawProvider === "other" ? "unknown" : (rawProvider as WifiProvider);
@@ -1612,11 +1617,9 @@ function computeFleetPageData(db: Database): FleetPageData {
     }
   }
 
-  const uncategorized = new Set(["unknown", "other"]);
   const families = [...familyMap.values()].sort((a, b) => {
-    const aU = uncategorized.has(a.family);
-    const bU = uncategorized.has(b.family);
-    if (aU !== bU) return aU ? 1 : -1;
+    if (a.family === "unknown") return 1;
+    if (b.family === "unknown") return -1;
     return b.starlink / b.total - a.starlink / a.total || b.total - a.total;
   });
 
