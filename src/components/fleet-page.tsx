@@ -28,7 +28,7 @@ function timeAgo(sec: number | null): string {
 
 const EYEBROW = "text-[10px] font-mono text-muted uppercase tracking-wider mb-3";
 const PANEL = "bg-surface border border-subtle rounded-lg p-5";
-const SECTION = "relative max-w-6xl mx-auto mb-10";
+const SECTION = "relative w-full max-w-6xl mx-auto mb-10";
 
 function cellTitle(t: FleetTail): string {
   return `${t.tail} · ${PROVIDER_LABEL[t.provider]}`;
@@ -154,24 +154,24 @@ function FamilyBlock({ fam }: { fam: FleetFamily }) {
   const spec = AIRCRAFT_SPECS[fam.family];
   return (
     <details className="fam-block bg-surface border border-subtle rounded" open>
-      <summary className="fam-summary list-none flex items-center justify-between gap-2 p-2">
-        <div className="flex items-baseline gap-2">
+      <summary className="fam-summary list-none flex items-start justify-between gap-2 p-2">
+        <div className="min-w-0">
           <span
-            className={`spec-trigger relative font-display text-xs font-semibold uppercase tracking-wide ${
+            className={`spec-trigger relative block font-display text-xs font-semibold uppercase tracking-wide ${
               spec ? "text-secondary hover:text-accent cursor-help" : "text-secondary"
             }`}
             tabIndex={spec ? 0 : -1}
           >
-            {fam.family}
+            <span className="block truncate">{fam.family}</span>
             {spec && <SpecCard family={fam.family} spec={spec} />}
           </span>
           <span className="font-mono text-[10px] text-muted">
             {fam.starlink}/{fam.total}
+            {pct > 0 && <span className="text-accent ml-1.5">{pct}%</span>}
           </span>
-          {pct > 0 && <span className="font-mono text-[10px] text-accent">{pct}%</span>}
         </div>
         <svg
-          className="fam-caret w-3 h-3 text-muted"
+          className="fam-caret w-3 h-3 text-muted shrink-0"
           viewBox="0 0 16 16"
           fill="currentColor"
           aria-hidden="true"
@@ -219,7 +219,7 @@ function HangarFloor({
         <Legend />
       </div>
 
-      <div className="flex flex-wrap gap-3 fam-container">
+      <div className="fam-container gap-3">
         {families.map((fam) => (
           <FamilyBlock key={fam.family} fam={fam} />
         ))}
@@ -374,13 +374,14 @@ export default function FleetPage({ data }: { data: FleetPageData }) {
           /* Hangar floor: always-open blocks on desktop, collapsible details on mobile */
           .fam-summary::-webkit-details-marker { display: none; }
           .fam-caret { transition: transform .2s; }
+          .fam-container { display: grid; }
           @media (min-width: 768px) {
-            .fam-summary { pointer-events: none; }
+            .fam-container { grid-template-columns: repeat(auto-fill, 118px); align-items: start; }
+            .fam-summary { pointer-events: none; min-height: 34px; }
             .fam-caret { display: none; }
           }
           @media (max-width: 767px) {
-            .fam-container { flex-direction: column; }
-            .fam-block { width: 100%; }
+            .fam-container { grid-template-columns: 1fr; }
             .fam-summary { cursor: pointer; padding: 0.75rem; }
             .fam-block[open] .fam-caret { transform: rotate(180deg); }
           }
