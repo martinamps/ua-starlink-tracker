@@ -208,16 +208,19 @@ export async function fetchAllSheets() {
       express: {
         total: expressTotal,
         starlink: expressStarlink,
+        unverified: 0,
         percentage: expressTotal > 0 ? (expressStarlink / expressTotal) * 100 : 0,
       },
       mainline: {
         total: mainlineTotal,
         starlink: mainlineStarlink,
+        unverified: 0,
         percentage: mainlineTotal > 0 ? (mainlineStarlink / mainlineTotal) * 100 : 0,
       },
       combined: {
         total: totalAircraftCount,
         starlink: totalStarlinkCount,
+        unverified: 0,
         percentage: totalAircraftCount > 0 ? (totalStarlinkCount / totalAircraftCount) * 100 : 0,
       },
     },

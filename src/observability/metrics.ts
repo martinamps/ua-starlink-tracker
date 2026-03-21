@@ -126,6 +126,20 @@ export const COUNTERS = {
   // HTTP requests
   // tags: method, route (allowlisted), status_code
   HTTP_REQUEST: "http.request",
+
+  // united_fleet.starlink_status changed (consensus verdict flipped)
+  // tags: fleet, from (confirmed|negative|unknown), to
+  FLEET_STATUS_CHANGE: "fleet.status_change",
+
+  // Consensus verdict disagrees with the Google Sheet's wifi claim
+  // tags: fleet, sheet_says (starlink|not_starlink), crawler_says
+  // When this goes quiet for a full 30-day cycle, the crawler is at least as
+  // accurate as the sheet.
+  FLEET_SHEET_DISAGREEMENT: "fleet.sheet_disagreement",
+
+  // A discovery check was skipped (couldn't run the United.com scrape)
+  // tags: fleet, reason (no_flights)
+  FLEET_CHECK_SKIPPED: "fleet.check_skipped",
 } as const;
 
 /**

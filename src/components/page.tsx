@@ -524,6 +524,11 @@ export default function Page({
             <span className="text-accent">{fleetStats?.mainline.starlink || 0}</span>
             <span className="text-muted"> / {fleetStats?.mainline.total || 0}</span>
           </div>
+          {(fleetStats?.mainline.unverified || 0) > 0 && (
+            <div className="font-mono text-[10px] text-muted mt-0.5">
+              +{fleetStats!.mainline.unverified} unconfirmed
+            </div>
+          )}
         </div>
 
         {/* Express Fleet */}
@@ -561,6 +566,11 @@ export default function Page({
             <span className="text-accent">{fleetStats?.express.starlink || 0}</span>
             <span className="text-muted"> / {fleetStats?.express.total || 0}</span>
           </div>
+          {(fleetStats?.express.unverified || 0) > 0 && (
+            <div className="font-mono text-[10px] text-muted mt-0.5">
+              +{fleetStats!.express.unverified} unconfirmed
+            </div>
+          )}
         </div>
 
         {/* Combined Stats */}

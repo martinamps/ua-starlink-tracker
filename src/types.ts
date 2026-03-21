@@ -30,6 +30,7 @@ export interface FleetStats {
 interface FleetMetrics {
   total: number;
   starlink: number;
+  unverified: number;
   percentage: number;
 }
 

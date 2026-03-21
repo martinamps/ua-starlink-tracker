@@ -470,33 +470,38 @@ export function getFleetStats(db: Database): FleetStats {
   const expressTotal = getMetaValue(db, "expressTotal", 0);
   const mainlineTotal = getMetaValue(db, "mainlineTotal", 0);
 
-  // Get Starlink counts from verified data (only count planes that are actually displayed)
-  const verifiedCounts = db
+  // united_fleet.starlink_status is the consensus-driven truth — same source
+  // as the Datadog metric. Unverified = sheet claims Starlink but crawler
+  // hasn't confirmed: either consensus hasn't settled (insufficient obs,
+  // mid-retrofit, grounded) or consensus disagrees (sheet stale).
+  const rows = db
     .query(
-      `
-      SELECT
-        fleet,
-        COUNT(*) as count
-      FROM starlink_planes
-      WHERE verified_wifi IS NULL OR verified_wifi = 'Starlink'
-      GROUP BY fleet
-    `
+      `SELECT
+         sp.fleet,
+         SUM(CASE WHEN uf.starlink_status = 'confirmed' THEN 1 ELSE 0 END) as confirmed,
+         SUM(CASE WHEN uf.starlink_status IS NOT 'confirmed' THEN 1 ELSE 0 END) as unverified
+       FROM starlink_planes sp
+       LEFT JOIN united_fleet uf ON sp.TailNumber = uf.tail_number
+       WHERE sp.verified_wifi IS NULL OR sp.verified_wifi = 'Starlink'
+       GROUP BY sp.fleet`
     )
-    .all() as Array<{ fleet: string; count: number }>;
+    .all() as Array<{ fleet: string; confirmed: number; unverified: number }>;
 
-  const expressStarlink = verifiedCounts.find((r) => r.fleet === "express")?.count || 0;
-  const mainlineStarlink = verifiedCounts.find((r) => r.fleet === "mainline")?.count || 0;
+  const express = rows.find((r) => r.fleet === "express") ?? { confirmed: 0, unverified: 0 };
+  const mainline = rows.find((r) => r.fleet === "mainline") ?? { confirmed: 0, unverified: 0 };
 
   return {
     express: {
       total: expressTotal,
-      starlink: expressStarlink,
-      percentage: expressTotal > 0 ? (expressStarlink / expressTotal) * 100 : 0,
+      starlink: express.confirmed,
+      unverified: express.unverified,
+      percentage: expressTotal > 0 ? (express.confirmed / expressTotal) * 100 : 0,
     },
     mainline: {
       total: mainlineTotal,
-      starlink: mainlineStarlink,
-      percentage: mainlineTotal > 0 ? (mainlineStarlink / mainlineTotal) * 100 : 0,
+      starlink: mainline.confirmed,
+      unverified: mainline.unverified,
+      percentage: mainlineTotal > 0 ? (mainline.confirmed / mainlineTotal) * 100 : 0,
     },
   };
 }
@@ -1234,6 +1239,7 @@ export function updateFleetVerificationResult(
     starlinkStatus: StarlinkStatus;
     verifiedWifi: string | null;
     error?: string | null;
+    needsMoreObs?: boolean;
   }
 ): void {
   const now = Math.floor(Date.now() / 1000);
@@ -1248,6 +1254,10 @@ export function updateFleetVerificationResult(
     const attempts = (current?.check_attempts || 0) + 1;
     // 1h, 2h, 4h, 8h, max 24h
     nextCheckDelay = Math.min(24 * 3600, 3600 * 2 ** (attempts - 1));
+  } else if (result.needsMoreObs) {
+    // Consensus is ambiguous/insufficient — re-check in ~36h so it converges
+    // within a few days instead of waiting 7-14 days between observations.
+    nextCheckDelay = 36 * 3600;
   } else if (result.starlinkStatus === "confirmed") {
     // Re-verify confirmed Starlink in 7 days
     nextCheckDelay = 7 * 24 * 3600;
@@ -1315,61 +1325,65 @@ export function syncSpreadsheetToFleet(db: Database): number {
     verified_wifi: string | null;
   }>;
 
-  for (const plane of spreadsheetPlanes) {
-    const existing = db
-      .query("SELECT id, starlink_status FROM united_fleet WHERE tail_number = ?")
-      .get(plane.TailNumber) as { id: number; starlink_status: string } | null;
+  const existsStmt = db.prepare("SELECT id FROM united_fleet WHERE tail_number = ?");
+  // starlink_status is discovery-owned; only bootstrap it from the sheet when
+  // discovery hasn't touched the plane yet.
+  const updateStmt = db.prepare(`
+    UPDATE united_fleet
+    SET aircraft_type = ?,
+        fleet = ?,
+        operated_by = ?,
+        verified_wifi = COALESCE(?, verified_wifi),
+        starlink_status = CASE WHEN starlink_status = 'unknown' THEN ? ELSE starlink_status END
+    WHERE tail_number = ?
+  `);
+  const insertStmt = db.prepare(`
+    INSERT INTO united_fleet (
+      tail_number, aircraft_type, first_seen_source, first_seen_at, last_seen_at,
+      fleet, operated_by, starlink_status, verified_wifi, discovery_priority,
+      next_check_after
+    ) VALUES (?, ?, 'spreadsheet', ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
 
-    // Determine status from verified_wifi or assume confirmed from spreadsheet
-    const starlinkStatus: StarlinkStatus =
-      plane.verified_wifi === "Starlink" || plane.verified_wifi === null ? "confirmed" : "negative";
+  const sync = db.transaction(() => {
+    for (const plane of spreadsheetPlanes) {
+      const starlinkStatus: StarlinkStatus =
+        plane.verified_wifi === "Starlink" || plane.verified_wifi === null
+          ? "confirmed"
+          : "negative";
 
-    if (existing) {
-      // Update if we have new verification info
-      if (existing.starlink_status === "unknown" || plane.verified_wifi) {
-        db.query(`
-          UPDATE united_fleet
-          SET aircraft_type = ?,
-              fleet = ?,
-              operated_by = ?,
-              starlink_status = ?,
-              verified_wifi = COALESCE(?, verified_wifi),
-              last_seen_at = ?
-          WHERE tail_number = ?
-        `).run(
+      if (existsStmt.get(plane.TailNumber)) {
+        updateStmt.run(
           plane.aircraft,
           plane.fleet,
           plane.OperatedBy,
-          starlinkStatus,
           plane.verified_wifi,
-          now,
+          starlinkStatus,
           plane.TailNumber
         );
+      } else {
+        const priority = calculateDiscoveryPriority(
+          plane.aircraft,
+          starlinkStatus,
+          plane.TailNumber
+        );
+        insertStmt.run(
+          plane.TailNumber,
+          plane.aircraft,
+          now,
+          now,
+          plane.fleet,
+          plane.OperatedBy,
+          starlinkStatus,
+          plane.verified_wifi || "Starlink",
+          priority,
+          now + 7 * 24 * 3600
+        );
+        synced++;
       }
-    } else {
-      // Insert new record from spreadsheet
-      const priority = calculateDiscoveryPriority(plane.aircraft, starlinkStatus, plane.TailNumber);
-      db.query(`
-        INSERT INTO united_fleet (
-          tail_number, aircraft_type, first_seen_source, first_seen_at, last_seen_at,
-          fleet, operated_by, starlink_status, verified_wifi, discovery_priority,
-          next_check_after
-        ) VALUES (?, ?, 'spreadsheet', ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        plane.TailNumber,
-        plane.aircraft,
-        now,
-        now,
-        plane.fleet,
-        plane.OperatedBy,
-        starlinkStatus,
-        plane.verified_wifi || "Starlink",
-        priority,
-        now + 7 * 24 * 3600 // Check in 7 days
-      );
-      synced++;
     }
-  }
+  });
+  sync();
 
   return synced;
 }

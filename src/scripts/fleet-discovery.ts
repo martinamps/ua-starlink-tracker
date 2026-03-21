@@ -43,6 +43,21 @@ const HEARTBEAT_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
 
 const fr24Api = new FlightRadar24API();
 
+function emitFleetSnapshot(db: Database) {
+  const breakdown = db
+    .query(
+      `SELECT fleet, starlink_status, COUNT(*) as cnt
+       FROM united_fleet GROUP BY fleet, starlink_status`
+    )
+    .all() as Array<{ fleet: string; starlink_status: string; cnt: number }>;
+  for (const row of breakdown) {
+    metrics.distribution(DISTRIBUTIONS.FLEET_PLANES, row.cnt, {
+      fleet: normalizeFleet(row.fleet),
+      starlink_status: row.starlink_status || "unknown",
+    });
+  }
+}
+
 /**
  * Convert ICAO airport code to IATA
  */
@@ -139,8 +154,16 @@ async function verifyPlane(
       const flightData = await getUpcomingFlightsForPlane(plane.tail_number);
 
       if (!flightData) {
-        info(`No upcoming flights for ${plane.tail_number}, skipping`);
+        const attempts = plane.check_attempts ?? 0;
+        if (attempts >= 20) {
+          warn(
+            `${plane.tail_number}: ${attempts} consecutive no-flights — likely grounded, manual review needed`
+          );
+        } else {
+          info(`No upcoming flights for ${plane.tail_number}, skipping`);
+        }
         span.setTag("result", "no_flights");
+        metrics.increment(COUNTERS.FLEET_CHECK_SKIPPED, { reason: "no_flights", fleet: fleetTag });
         // Schedule for later check
         updateFleetVerificationResult(db, plane.tail_number, {
           starlinkStatus: plane.starlink_status as StarlinkStatus,
@@ -200,52 +223,100 @@ async function verifyPlane(
           wifi_provider: wifiProviderTag,
         };
 
+        // Consensus includes the just-logged observation. The status is driven
+        // by the 30-day consensus, not this single check, so one flaky scrape
+        // can't bounce a plane between confirmed and negative.
+        const consensus = canTrustResult ? computeWifiConsensus(db, plane.tail_number) : null;
+
+        const prevStatus = plane.starlink_status as StarlinkStatus;
         let starlinkStatus: StarlinkStatus;
+        let needsMoreObs = false;
         if (!canTrustResult) {
-          starlinkStatus = plane.starlink_status as StarlinkStatus;
+          starlinkStatus = prevStatus;
           const resultTag = tailMismatch ? "aircraft_mismatch" : "error";
           span.setTag("result", resultTag);
           metrics.increment(COUNTERS.VERIFICATION_CHECK, { result: resultTag, ...checkTags });
-        } else if (result.hasStarlink) {
-          starlinkStatus = "confirmed";
-          span.setTag("result", "starlink");
-          metrics.increment(COUNTERS.VERIFICATION_CHECK, { result: "success", ...checkTags });
-          metrics.increment(COUNTERS.PLANES_STARLINK_DETECTED, {
-            fleet: fleetTag,
-            aircraft_type: aircraftTypeTag,
-          });
         } else {
-          starlinkStatus = "negative";
-          span.setTag("result", "not_starlink");
           metrics.increment(COUNTERS.VERIFICATION_CHECK, { result: "success", ...checkTags });
+          if (result.hasStarlink) {
+            span.setTag("result", "starlink");
+            metrics.increment(COUNTERS.PLANES_STARLINK_DETECTED, {
+              fleet: fleetTag,
+              aircraft_type: aircraftTypeTag,
+            });
+          } else {
+            span.setTag("result", "not_starlink");
+          }
+
+          if (consensus!.verdict === "Starlink") {
+            starlinkStatus = "confirmed";
+          } else if (consensus!.verdict !== null) {
+            starlinkStatus = "negative";
+          } else {
+            starlinkStatus = prevStatus;
+            needsMoreObs = true;
+          }
         }
 
         span.setTag("wifi_provider", wifiProviderTag);
 
+        const statusChanged = starlinkStatus !== prevStatus;
         updateFleetVerificationResult(db, plane.tail_number, {
           starlinkStatus,
-          verifiedWifi: canTrustResult ? result.wifiProvider : plane.verified_wifi,
+          verifiedWifi: consensus ? consensus.verdict : plane.verified_wifi,
           error: tailMismatch
             ? `Aircraft mismatch: flight has ${actualTail}`
             : result.error || undefined,
+          needsMoreObs,
         });
 
-        // CRITICAL: also update starlink_planes.verified_wifi when we get a trusted
-        // result for a plane that already exists there. Without this, the separate
-        // starlink-verifier loop sees our log entry in needsVerification() and skips
-        // the plane, so a stale 'None' in starlink_planes never heals.
-        // Consensus-gated so a single flaky scrape can't hide a plane.
-        if (canTrustResult && result.wifiProvider) {
-          const consensus = computeWifiConsensus(db, plane.tail_number);
-          if (consensus.verdict !== null) {
-            updateVerifiedWifi(db, plane.tail_number, consensus.verdict);
-          } else {
-            updateVerifiedWifi(db, plane.tail_number, null);
+        // starlink_planes.verified_wifi tracks the same consensus verdict so
+        // the website filter (IS NULL OR = 'Starlink') stays in sync.
+        if (consensus) {
+          updateVerifiedWifi(db, plane.tail_number, consensus.verdict);
+        }
+
+        if (statusChanged) {
+          info(
+            `STATUS CHANGE: ${plane.tail_number} ${prevStatus} → ${starlinkStatus} (${consensus?.reason ?? "n/a"})`
+          );
+          metrics.increment(COUNTERS.FLEET_STATUS_CHANGE, {
+            fleet: fleetTag,
+            from: prevStatus,
+            to: starlinkStatus,
+          });
+          emitFleetSnapshot(db);
+        }
+
+        // Sheet-independence KPI: flag whenever the crawler's consensus
+        // disagrees with what the Google Sheet claims. Exclude rows we added
+        // ourselves via discovery — those aren't sheet claims.
+        if (consensus?.verdict) {
+          const sheetClaim = db
+            .query(
+              "SELECT wifi FROM starlink_planes WHERE TailNumber = ? AND sheet_gid != 'discovery'"
+            )
+            .get(plane.tail_number) as { wifi: string } | null;
+          if (sheetClaim) {
+            const sheetSaysStarlink =
+              sheetClaim.wifi === "StrLnk" || sheetClaim.wifi === "Starlink";
+            const crawlerSaysStarlink = consensus.verdict === "Starlink";
+            if (sheetSaysStarlink !== crawlerSaysStarlink) {
+              metrics.increment(COUNTERS.FLEET_SHEET_DISAGREEMENT, {
+                fleet: fleetTag,
+                sheet_says: sheetSaysStarlink ? "starlink" : "not_starlink",
+                crawler_says: crawlerSaysStarlink ? "starlink" : "not_starlink",
+              });
+              info(
+                `SHEET DISAGREEMENT: ${plane.tail_number} sheet=${sheetClaim.wifi} crawler=${consensus.verdict} (${consensus.reason})`
+              );
+            }
           }
         }
 
-        // If we discovered Starlink on a plane not yet in starlink_planes, add it
-        if (canTrustResult && result.hasStarlink && result.wifiProvider === "Starlink") {
+        // First time consensus flips to Starlink → add to starlink_planes and
+        // seed its flight cache. Re-checks of already-confirmed planes skip this.
+        if (statusChanged && starlinkStatus === "confirmed") {
           addDiscoveredStarlinkPlane(
             db,
             plane.tail_number,
@@ -404,21 +475,7 @@ export function startFleetDiscovery(mode: "discovery" | "maintenance" = "mainten
                   `${fleetStats.pending_verification} pending`
               );
 
-              // Emit fleet-size snapshot broken down by fleet + starlink_status.
-              // Using a distribution (not gauge) so Datadog can sum/avg across
-              // tag dimensions correctly when graphing rollout over time.
-              const breakdown = db
-                .query(
-                  `SELECT fleet, starlink_status, COUNT(*) as cnt
-                   FROM united_fleet GROUP BY fleet, starlink_status`
-                )
-                .all() as Array<{ fleet: string; starlink_status: string; cnt: number }>;
-              for (const row of breakdown) {
-                metrics.distribution(DISTRIBUTIONS.FLEET_PLANES, row.cnt, {
-                  fleet: normalizeFleet(row.fleet),
-                  starlink_status: row.starlink_status || "unknown",
-                });
-              }
+              emitFleetSnapshot(db);
 
               lastHeartbeat = now;
             } finally {
