@@ -104,6 +104,8 @@ export async function fetchAllSheets() {
   let expressStarlink = 0;
   let mainlineStarlink = 0;
 
+  const failedGids: string[] = [];
+
   for (const sheet of exportUrls) {
     try {
       const response = await fetch(sheet.url, {
@@ -171,8 +173,9 @@ export async function fetchAllSheets() {
             if (regMatch?.[1]) {
               tailNumber = regMatch[1];
             } else {
-              // Last resort - use first part before space if nothing else found
-              tailNumber = aircraftStr.split(" ")[0] || "";
+              // Last resort - use first token, but only if it's a valid US N-number
+              const candidate = aircraftStr.split(" ")[0] || "";
+              tailNumber = /^N[0-9][0-9A-Z]{1,4}$/.test(candidate) ? candidate : "";
             }
           }
 
@@ -188,7 +191,14 @@ export async function fetchAllSheets() {
       }
     } catch (err) {
       logError(`Failed to fetch sheet with gid=${sheet.gid}`, err);
+      failedGids.push(String(sheet.gid));
     }
+  }
+
+  if (failedGids.length > 0) {
+    throw new Error(
+      `fetchAllSheets: ${failedGids.length} sheet(s) failed (gids: ${failedGids.join(", ")}); aborting to avoid partial DELETE in updateDatabase`
+    );
   }
 
   // Total counts across both fleets

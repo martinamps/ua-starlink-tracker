@@ -63,16 +63,17 @@ async function updateFlightsForTailNumber(api: FlightAPI, tailNumber: string): P
         span.setTag("flights.count", flights.length);
 
         if (flights.length === 0) {
-          info(`No upcoming flights found for ${tailNumber}`);
+          info(
+            `No upcoming flights found for ${tailNumber}; preserving cache and engaging backoff`
+          );
+          updateLastFlightCheck(db, tailNumber, false);
         } else {
           info(`Found ${flights.length} upcoming flights for ${tailNumber}`);
+          updateFlights(db, tailNumber, flights);
+          updateLastFlightCheck(db, tailNumber, true);
+          info(`Successfully updated ${flights.length} upcoming flights for ${tailNumber}`);
+          success = true;
         }
-
-        updateFlights(db, tailNumber, flights);
-        updateLastFlightCheck(db, tailNumber, true);
-
-        info(`Successfully updated ${flights.length} upcoming flights for ${tailNumber}`);
-        success = true;
       } catch (err) {
         error(`Failed to update flights for ${tailNumber}`, err);
         span.setTag("error", true);
