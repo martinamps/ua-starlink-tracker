@@ -603,9 +603,9 @@ describe("computeWifiConsensus", () => {
     expect(c.reason).toContain("insufficient");
   });
 
-  test("ambiguous zone returns null verdict (not a random single-check value)", () => {
-    // Find a plane with a split in the 30%-70% zone, if any exists in the snapshot.
-    // N87527 on 2026-03-15 had 3/5 Starlink — this is the bug that prompted this work.
+  test("ambiguous zone returns null OR recency-override verdict", () => {
+    // A 30%-70% split is ambiguous UNLESS the last 3 obs all agree (retrofit
+    // transition). Both outcomes are valid — just not a random single-check.
     const candidates = db
       .query(
         `SELECT tail_number,
@@ -622,8 +622,39 @@ describe("computeWifiConsensus", () => {
 
     if (candidates) {
       const c = computeWifiConsensus(db, candidates.tail_number);
-      expect(c.verdict).toBeNull();
-      expect(c.reason).toContain("ambiguous");
+      if (c.verdict === null) {
+        expect(c.reason).toContain("ambiguous");
+      } else {
+        expect(c.reason).toContain("consecutive");
+      }
+    }
+  });
+
+  test("recency override: last 3 consecutive same provider wins over 30d average", () => {
+    // Find a tail where last 3 clean obs agree but 30d pct is <70% — the
+    // retrofit-transition case this override was built for.
+    const candidate = db
+      .query(
+        `WITH ranked AS (
+           SELECT tail_number, has_starlink, wifi_provider,
+                  ROW_NUMBER() OVER (PARTITION BY tail_number ORDER BY checked_at DESC) as rn
+           FROM starlink_verification_log
+           WHERE source='united' AND error IS NULL AND has_starlink IS NOT NULL
+             AND wifi_provider IS NOT NULL AND wifi_provider <> ''
+             AND checked_at >= strftime('%s','now') - 30*86400
+         )
+         SELECT tail_number
+         FROM ranked WHERE rn <= 3
+         GROUP BY tail_number
+         HAVING COUNT(*) = 3 AND MIN(has_starlink) = MAX(has_starlink)
+         LIMIT 1`
+      )
+      .get() as { tail_number: string } | null;
+
+    if (candidate) {
+      const c = computeWifiConsensus(db, candidate.tail_number);
+      expect(c.verdict).not.toBeNull();
+      expect(c.reason).toMatch(/consecutive|recent obs/);
     }
   });
 

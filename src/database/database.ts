@@ -787,10 +787,15 @@ export function needsVerification(
   const now = Math.floor(Date.now() / 1000);
   const cutoff = now - threshold * 3600;
 
+  // Aircraft-mismatch is a completed check (we successfully scraped; the
+  // flight just had a swapped tail). Without this clause, a swapped-tail
+  // flight triggers a 60s retry storm until the swap resolves — that was
+  // the United.com rate spike (130+ scrapes/2.5h for one plane).
   const lastCheck = db
     .query(`
     SELECT checked_at FROM starlink_verification_log
-    WHERE tail_number = ? AND source = ? AND checked_at > ? AND error IS NULL
+    WHERE tail_number = ? AND source = ? AND checked_at > ?
+      AND (error IS NULL OR error LIKE 'Aircraft mismatch%')
     ORDER BY checked_at DESC
     LIMIT 1
   `)
@@ -971,6 +976,33 @@ export function computeWifiConsensus(
       starlinkPct,
       reason: `insufficient recent obs (${n} in last ${opts.windowDays}d, need ${opts.minObs})`,
     };
+  }
+
+  // Recency override: a fresh retrofit shows as old-provider→new-provider in
+  // the 30d window, dragging the average below threshold for weeks until the
+  // pre-retrofit obs age out. If the last 3 clean obs all agree, trust that —
+  // a monotonic transition is a stronger signal than the rolling percentage.
+  const streak = 3;
+  if (n >= streak) {
+    const recent = obs.slice(0, streak);
+    const allStarlink = recent.every((o) => o.has_starlink === 1);
+    const allSame = new Set(recent.map((o) => o.wifi_provider)).size === 1;
+    if (allStarlink) {
+      return {
+        verdict: "Starlink",
+        n,
+        starlinkPct,
+        reason: `last ${streak} consecutive obs all Starlink (retrofit transition)`,
+      };
+    }
+    if (allSame && recent[0].has_starlink === 0) {
+      return {
+        verdict: recent[0].wifi_provider,
+        n,
+        starlinkPct,
+        reason: `last ${streak} consecutive obs all ${recent[0].wifi_provider}`,
+      };
+    }
   }
 
   if (starlinkPct >= opts.threshold) {
