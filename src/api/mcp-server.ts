@@ -566,7 +566,15 @@ async function lookupFlightRoutes(
     }));
   })();
 
+  // Set immediately for in-flight dedup, but evict if the result is empty/error
+  // so the next request retries instead of serving a cached [] for 1hr.
   routeCache.set(cacheKey, { promise, at: now });
+  promise.then(
+    (result) => {
+      if (result.length === 0) routeCache.delete(cacheKey);
+    },
+    () => routeCache.delete(cacheKey)
+  );
   return promise;
 }
 

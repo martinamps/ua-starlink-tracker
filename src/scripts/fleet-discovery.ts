@@ -583,7 +583,12 @@ if (import.meta.main) {
   const args = process.argv.slice(2);
   const mode = args.find((a) => a === "--discovery" || a === "--maintenance") || "--maintenance";
   const batch = args.find((a) => a.startsWith("--batch="));
-  const batchSize = batch ? Number.parseInt(batch.split("=")[1], 10) : 0;
+  const force = args.includes("--force");
+  let batchSize = batch ? Number.parseInt(batch.split("=")[1], 10) : 0;
+  if (batchSize > 20 && !force) {
+    console.warn(`--batch=${batchSize} exceeds cap of 20; clamping. Use --force to override.`);
+    batchSize = 20;
+  }
   const tailArg = args.find((a) => a.startsWith("--tail="));
   const tailNumber = tailArg?.split("=")[1];
   const stats = args.includes("--stats");

@@ -83,21 +83,25 @@ interface FR24Response {
   };
 }
 
+// Module-scope so ALL FlightRadar24API instances share one rate-limit clock.
+// Four instances exist (server, mcp-server, flight-updater, scripts) — per-instance
+// state meant 4x the intended request rate.
+let lastRequestTime = 0;
+const MIN_REQUEST_INTERVAL = 2000; // 2s between requests to avoid 402 rate limits
+
 export class FlightRadar24API {
   private baseUrl = "https://api.flightradar24.com/common/v1";
-  private lastRequestTime = 0;
-  private minRequestInterval = 2000; // 2s between requests to avoid 402 rate limits
 
   private async waitForRateLimit() {
     const now = Date.now();
-    const timeSinceLastRequest = now - this.lastRequestTime;
+    const timeSinceLastRequest = now - lastRequestTime;
 
-    if (timeSinceLastRequest < this.minRequestInterval) {
-      const waitTime = this.minRequestInterval - timeSinceLastRequest;
+    if (timeSinceLastRequest < MIN_REQUEST_INTERVAL) {
+      const waitTime = MIN_REQUEST_INTERVAL - timeSinceLastRequest;
       await new Promise((resolve) => setTimeout(resolve, waitTime));
     }
 
-    this.lastRequestTime = Date.now();
+    lastRequestTime = Date.now();
   }
 
   private async retryWithBackoff<T>(
@@ -230,9 +234,11 @@ export class FlightRadar24API {
     flightNumber: string,
     targetDateUnix?: number
   ): Promise<Array<{ origin: string; destination: string; departure_time: number }>> {
-    // No retry/metrics wrapper — this is a best-effort lookup for MCP hints.
-    // A failure here degrades to "ask the user" which is acceptable.
+    // Best-effort lookup for MCP hints — a failure degrades to "ask the user".
+    // No retry wrapper, but still rate-limit + instrument so we stay a good citizen.
     const url = `${this.baseUrl}/flight/list.json?query=${encodeURIComponent(flightNumber)}&fetchBy=flight&page=1&limit=20`;
+
+    await this.waitForRateLimit();
 
     const response = await fetch(url, {
       signal: AbortSignal.timeout(8000),
@@ -243,10 +249,23 @@ export class FlightRadar24API {
       },
     });
 
-    if (!response.ok) return [];
+    if (!response.ok) {
+      metrics.increment(COUNTERS.VENDOR_REQUEST, {
+        vendor: "fr24",
+        type: "routes",
+        status: response.status === 402 || response.status === 429 ? "rate_limited" : "error",
+      });
+      return [];
+    }
 
     const data: FR24Response = await response.json();
     const flights = data.result?.response?.data || [];
+
+    metrics.increment(COUNTERS.VENDOR_REQUEST, {
+      vendor: "fr24",
+      type: "routes",
+      status: flights.length > 0 ? "success" : "empty",
+    });
 
     // Dedupe by (origin, destination), keep the departure closest to target date.
     // Capture duration so callers can show trip time even for mainline routes
@@ -309,59 +328,60 @@ export class FlightRadar24API {
     const url = `${this.baseUrl}/flight/list.json?query=${encodeURIComponent(flightNumber)}&fetchBy=flight&page=1&limit=25`;
 
     try {
-      const response = await fetch(url, {
-        signal: AbortSignal.timeout(8000),
-        headers: {
-          "User-Agent":
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-          Accept: "application/json",
+      return await this.retryWithBackoff(
+        async () => {
+          const response = await fetch(url, {
+            signal: AbortSignal.timeout(8000),
+            headers: {
+              "User-Agent":
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+              Accept: "application/json",
+            },
+          });
+
+          if (!response.ok) {
+            metrics.increment(COUNTERS.VENDOR_REQUEST, {
+              vendor: "fr24",
+              type: "assignments",
+              status: response.status === 402 || response.status === 429 ? "rate_limited" : "error",
+            });
+            throw new Error(`FR24 assignments error: ${response.status}`);
+          }
+
+          metrics.increment(COUNTERS.VENDOR_REQUEST, {
+            vendor: "fr24",
+            type: "assignments",
+            status: "success",
+          });
+
+          const data: FR24Response = await response.json();
+          const flights = data.result?.response?.data || [];
+
+          const out = [];
+          for (const f of flights) {
+            const origin = f.airport?.origin?.code?.iata;
+            const dest = f.airport?.destination?.code?.iata;
+            const depTime = f.time?.scheduled?.departure || f.time?.estimated?.departure || 0;
+            const arrTime = f.time?.scheduled?.arrival || f.time?.estimated?.arrival || 0;
+            if (!origin || !dest || depTime === 0) continue;
+            if (Math.abs(depTime - targetDateUnix) > 24 * 3600) continue;
+
+            out.push({
+              origin,
+              destination: dest,
+              departure_time: depTime,
+              arrival_time: arrTime,
+              tail_number: f.aircraft?.registration || null,
+              aircraft_model: f.aircraft?.model?.text || null,
+            });
+          }
+
+          return out.sort((a, b) => a.departure_time - b.departure_time);
         },
-      });
-
-      if (!response.ok) {
-        metrics.increment(COUNTERS.VENDOR_REQUEST, {
-          vendor: "fr24",
-          type: "assignments",
-          status: response.status === 402 || response.status === 429 ? "rate_limited" : "error",
-        });
-        return [];
-      }
-
-      metrics.increment(COUNTERS.VENDOR_REQUEST, {
-        vendor: "fr24",
-        type: "assignments",
-        status: "success",
-      });
-
-      const data: FR24Response = await response.json();
-      const flights = data.result?.response?.data || [];
-
-      const out = [];
-      for (const f of flights) {
-        const origin = f.airport?.origin?.code?.iata;
-        const dest = f.airport?.destination?.code?.iata;
-        const depTime = f.time?.scheduled?.departure || f.time?.estimated?.departure || 0;
-        const arrTime = f.time?.scheduled?.arrival || f.time?.estimated?.arrival || 0;
-        if (!origin || !dest || depTime === 0) continue;
-        if (Math.abs(depTime - targetDateUnix) > 24 * 3600) continue;
-
-        out.push({
-          origin,
-          destination: dest,
-          departure_time: depTime,
-          arrival_time: arrTime,
-          tail_number: f.aircraft?.registration || null,
-          aircraft_model: f.aircraft?.model?.text || null,
-        });
-      }
-
-      return out.sort((a, b) => a.departure_time - b.departure_time);
+        3,
+        "assignments"
+      );
     } catch {
-      metrics.increment(COUNTERS.VENDOR_REQUEST, {
-        vendor: "fr24",
-        type: "assignments",
-        status: "error",
-      });
       return [];
     }
   }

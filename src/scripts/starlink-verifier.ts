@@ -539,7 +539,11 @@ if (import.meta.main) {
       });
   } else {
     // Batch verification
-    const maxPlanes = Number.parseInt(args.find((a) => !a.startsWith("--")) || "5", 10);
+    let maxPlanes = Number.parseInt(args.find((a) => !a.startsWith("--")) || "5", 10);
+    if (maxPlanes > 20 && !forceAll) {
+      console.warn(`Batch size ${maxPlanes} exceeds cap of 20; clamping. Use --force to override.`);
+      maxPlanes = 20;
+    }
 
     console.log(
       `Running Starlink verification for up to ${maxPlanes} planes${forceAll ? " (FORCE ALL - ignoring rate limits)" : ""}...\n`

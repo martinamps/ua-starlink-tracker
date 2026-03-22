@@ -11,6 +11,10 @@ import type { StarlinkCheckResult } from "./united-starlink-checker";
 const SCRIPT_PATH = path.join(import.meta.dir, "united-starlink-checker.ts");
 const TIMEOUT_MS = 60000; // 60 second timeout
 
+// Process-wide mutex: only ONE Playwright subprocess may run at a time.
+// verifier + discovery + any ad-hoc caller all serialize through this.
+let inFlight: Promise<unknown> | null = null;
+
 // Distinct status values let us alert on specific failure modes
 // (e.g. a spike in `timeout` means United is slow; `killed` means
 // the Playwright/bun FD bug is flaring up).
@@ -30,6 +34,25 @@ function emitUnitedMetrics(status: UnitedStatus, startedAt: number) {
 }
 
 export async function checkStarlinkStatusSubprocess(
+  flightNumber: string,
+  date: string,
+  origin: string,
+  destination: string
+): Promise<StarlinkCheckResult> {
+  // Wait for any in-flight scrape to finish before starting ours.
+  while (inFlight) {
+    await inFlight.catch(() => {});
+  }
+
+  const run = runSubprocess(flightNumber, date, origin, destination);
+  inFlight = run;
+  run.finally(() => {
+    if (inFlight === run) inFlight = null;
+  });
+  return run;
+}
+
+function runSubprocess(
   flightNumber: string,
   date: string,
   origin: string,

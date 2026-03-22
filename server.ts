@@ -351,8 +351,16 @@ function cachedFlightAssignments(
     }
   }
 
+  // Set immediately for in-flight dedup, but evict if the result is empty/error
+  // so the next request retries instead of serving a cached [] for 1hr.
   const promise = fr24ForCheckFlight.getFlightAssignments(flightNumber, targetDateUnix);
   assignmentCache.set(key, { promise, at: now });
+  promise.then(
+    (result) => {
+      if (result.length === 0) assignmentCache.delete(key);
+    },
+    () => assignmentCache.delete(key)
+  );
   return promise;
 }
 
