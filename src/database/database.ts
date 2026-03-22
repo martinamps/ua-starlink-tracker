@@ -6,6 +6,7 @@ import {
 } from "../observability/metrics";
 import type {
   Aircraft,
+  AirportDepartures,
   BodyClass,
   FleetAircraft,
   FleetCarrier,
@@ -167,6 +168,23 @@ function setupTables(db: Database) {
         FOREIGN KEY (tail_number) REFERENCES starlink_planes(TailNumber)
       );`
     ).run();
+  }
+
+  // Rolling 30d log of departed Starlink flights, one row per departure.
+  // Populated by updateFlights() archiving rows whose departure_time has
+  // passed before the per-tail DELETE. Enables trailing-window queries
+  // that upcoming_flights (forward-only ~47h cache) can't answer.
+  if (!tableExists(db, "departure_log")) {
+    db.query(`
+      CREATE TABLE departure_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        tail_number TEXT NOT NULL,
+        airport TEXT NOT NULL,
+        departed_at INTEGER NOT NULL
+      );
+      CREATE INDEX idx_dl_departed ON departure_log(departed_at);
+      CREATE INDEX idx_dl_airport ON departure_log(airport);
+    `).run();
   }
 
   // Persistent FR24 route lookup cache. Append-only: builds route knowledge over
@@ -551,7 +569,24 @@ export function updateFlights(
     "flight_number" | "departure_airport" | "arrival_airport" | "departure_time" | "arrival_time"
   >[]
 ) {
+  const now = Math.floor(Date.now() / 1000);
   const updateFlightsTransaction = db.transaction(() => {
+    // Archive departed flights into departure_log before the DELETE so we
+    // build a trailing 30d window. INSERT OR IGNORE-equivalent via NOT EXISTS
+    // guard against double-logging when updateFlights runs twice before a
+    // flight departs.
+    db.query(`
+      INSERT INTO departure_log (tail_number, airport, departed_at)
+      SELECT tail_number, departure_airport, departure_time
+      FROM upcoming_flights
+      WHERE tail_number = ? AND departure_time < ?
+        AND NOT EXISTS (
+          SELECT 1 FROM departure_log dl
+          WHERE dl.tail_number = upcoming_flights.tail_number
+            AND dl.departed_at = upcoming_flights.departure_time
+        )
+    `).run(tailNumber, now);
+
     db.query("DELETE FROM upcoming_flights WHERE tail_number = ?").run(tailNumber);
 
     if (flights.length > 0) {
@@ -560,7 +595,6 @@ export function updateFlights(
         VALUES (?, ?, ?, ?, ?, ?, ?)
       `);
 
-      const now = Math.floor(Date.now() / 1000);
       for (const flight of flights) {
         insertStmt.run(
           tailNumber,
@@ -1610,20 +1644,25 @@ export function getFleetPageData(db: Database): FleetPageData {
   return data;
 }
 
-export function getAirportDepartures(db: Database): Array<{ airport: string; count: number }> {
+export function getAirportDepartures(db: Database): AirportDepartures {
   const now = Math.floor(Date.now() / 1000);
-  return db
+
+  // Trim departure_log to 30d. The log is collecting in the background via
+  // updateFlights() archival — not used for the treemap yet, but will be
+  // once it has enough history to beat the forward-48h window.
+  db.query("DELETE FROM departure_log WHERE departed_at < ?").run(now - 30 * 86400);
+
+  const rows = db
     .query(
       `SELECT uf.departure_airport AS airport, COUNT(*) AS count
        FROM upcoming_flights uf
        JOIN united_fleet f ON f.tail_number = uf.tail_number
-       WHERE f.starlink_status = 'confirmed'
-         AND uf.departure_time >= ?
-       GROUP BY uf.departure_airport
-       ORDER BY count DESC
-       LIMIT 30`
+       WHERE f.starlink_status = 'confirmed' AND uf.departure_time >= ?
+       GROUP BY uf.departure_airport ORDER BY count DESC LIMIT 30`
     )
     .all(now) as Array<{ airport: string; count: number }>;
+
+  return { rows, windowLabel: "next 48 hours" };
 }
 
 function computeFleetPageData(db: Database): FleetPageData {

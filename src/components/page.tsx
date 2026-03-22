@@ -1,5 +1,5 @@
 import React from "react";
-import type { Aircraft, AirportDeparture, FleetStats, Flight } from "../types";
+import type { Aircraft, AirportDeparture, AirportDepartures, FleetStats, Flight } from "../types";
 import { PAGE_CONTENT, isUnitedDomain } from "../utils/constants";
 
 // Reusable FAQ accordion item — eliminates ~30 lines of boilerplate per question
@@ -51,12 +51,12 @@ interface PageProps {
   fleetStats?: FleetStats;
   isUnited?: boolean;
   flightsByTail?: Record<string, Flight[]>;
-  airportDepartures?: AirportDeparture[];
+  airportDepartures?: AirportDepartures;
 }
 
 // Squarified treemap layout (Bruls et al.) — greedily add items to the current
 // row until the worst aspect ratio degrades, then commit along the shorter side.
-function AirportTreemap({ data }: { data: AirportDeparture[] }) {
+function AirportTreemap({ data, windowLabel }: { data: AirportDeparture[]; windowLabel: string }) {
   if (data.length === 0) return null;
 
   const W = 900;
@@ -143,10 +143,13 @@ function AirportTreemap({ data }: { data: AirportDeparture[] }) {
   }).join(",");
 
   return (
-    <div className="relative bg-surface rounded-lg border border-subtle p-4 md:p-6 mb-6">
+    <div
+      id="airports"
+      className="relative bg-surface rounded-lg border border-subtle p-4 md:p-6 mb-6 scroll-mt-4"
+    >
       <h2 className="font-display text-lg font-semibold text-primary mb-1">Starlink by Airport</h2>
       <p className="text-xs text-muted font-mono mb-4">
-        Scheduled departures on Starlink-equipped aircraft — next 48 hours
+        Departures on Starlink-equipped aircraft — {windowLabel}
       </p>
       <div className="relative mx-auto" style={{ width: W, height: H, maxWidth: "100%" }}>
         {layout.map((c) => {
@@ -219,7 +222,7 @@ export default function Page({
   fleetStats,
   isUnited = false,
   flightsByTail = {},
-  airportDepartures = [],
+  airportDepartures,
 }: PageProps) {
   // Apply date overrides to the aircraft data
   const applyDateOverrides = (data: Aircraft[]): Aircraft[] => {
@@ -1053,7 +1056,9 @@ export default function Page({
         </div>
       </div>
 
-      {airportDepartures.length > 0 && <AirportTreemap data={airportDepartures} />}
+      {airportDepartures && airportDepartures.rows.length > 0 && (
+        <AirportTreemap data={airportDepartures.rows} windowLabel={airportDepartures.windowLabel} />
+      )}
 
       {/* Tools & Integrations */}
       <div id="integrations" className="relative my-8 max-w-3xl mx-auto scroll-mt-4">

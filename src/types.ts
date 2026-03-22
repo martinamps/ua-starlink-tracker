@@ -120,6 +120,10 @@ export interface FleetPageData {
 }
 
 export type AirportDeparture = { airport: string; count: number };
+export type AirportDepartures = {
+  rows: AirportDeparture[];
+  windowLabel: string;
+};
 
 export interface FleetDiscoveryStats {
   total_fleet: number;
