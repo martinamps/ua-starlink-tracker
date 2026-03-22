@@ -8,6 +8,7 @@
     "update-flights": "bun -e \"import('./src/api/flight-updater.ts').then(m => m.updateAllFlights())\"",
     "check-starlink": "PLAYWRIGHT_BROWSERS_PATH=./.playwright-browsers bun run src/scripts/united-starlink-checker.ts",
     "verify-starlink": "PLAYWRIGHT_BROWSERS_PATH=./.playwright-browsers bun run src/scripts/starlink-verifier.ts",
+    "verify-tails": "PLAYWRIGHT_BROWSERS_PATH=./.playwright-browsers bun run src/scripts/verify-tails.ts",
     "sync-fleet": "PLAYWRIGHT_BROWSERS_PATH=./.playwright-browsers bun run src/scripts/fleet-sync.ts",
     "discover": "PLAYWRIGHT_BROWSERS_PATH=./.playwright-browsers bun run src/scripts/fleet-discovery.ts",
     "discover-stats": "bun run src/scripts/fleet-discovery.ts --stats",
