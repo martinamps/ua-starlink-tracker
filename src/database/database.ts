@@ -52,6 +52,7 @@ export interface VerificationLogEntry {
   aircraft_type: string | null;
   flight_number: string | null;
   error: string | null;
+  tail_confirmed?: number | null;
 }
 
 function setupTables(db: Database) {
@@ -76,6 +77,15 @@ function setupTables(db: Database) {
       CREATE INDEX idx_verification_tail_source
       ON starlink_verification_log(tail_number, source, checked_at DESC);
     `).run();
+  }
+
+  {
+    const columns = db.query("PRAGMA table_info(starlink_verification_log)").all();
+    const hasTailConfirmed = columns.some((col: any) => col.name === "tail_confirmed");
+    if (!hasTailConfirmed) {
+      db.query("ALTER TABLE starlink_verification_log ADD COLUMN tail_confirmed INTEGER").run();
+      info("Database migration: added starlink_verification_log.tail_confirmed");
+    }
   }
 
   if (!tableExists(db, "starlink_planes")) {
@@ -722,8 +732,8 @@ export function logVerification(
   const now = Math.floor(Date.now() / 1000);
   db.query(`
     INSERT INTO starlink_verification_log
-    (tail_number, source, checked_at, has_starlink, wifi_provider, aircraft_type, flight_number, error)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    (tail_number, source, checked_at, has_starlink, wifi_provider, aircraft_type, flight_number, error, tail_confirmed)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     entry.tail_number,
     entry.source,
@@ -732,7 +742,8 @@ export function logVerification(
     entry.wifi_provider,
     entry.aircraft_type,
     entry.flight_number,
-    entry.error
+    entry.error,
+    entry.tail_confirmed ?? null
   );
 }
 
@@ -986,18 +997,25 @@ export function computeWifiConsensus(
   opts = { windowDays: 30, minObs: 2, threshold: 0.7 }
 ): WifiConsensus {
   const cutoff = Math.floor(Date.now() / 1000) - opts.windowDays * 86400;
-  const obs = db
-    .query(`
-      SELECT has_starlink, wifi_provider
-      FROM starlink_verification_log
-      WHERE tail_number = ? AND source = 'united'
-        AND checked_at >= ?
-        AND error IS NULL
-        AND has_starlink IS NOT NULL
-        AND wifi_provider IS NOT NULL AND wifi_provider <> ''
-      ORDER BY checked_at DESC
-    `)
+  const baseWhere = `tail_number = ? AND source = 'united' AND checked_at >= ?
+    AND error IS NULL AND has_starlink IS NOT NULL
+    AND wifi_provider IS NOT NULL AND wifi_provider <> ''`;
+
+  // Primary: only tail_confirmed=1 (post-fix clean data)
+  let obs = db
+    .query(`SELECT has_starlink, wifi_provider FROM starlink_verification_log
+      WHERE ${baseWhere} AND tail_confirmed = 1 ORDER BY checked_at DESC`)
     .all(tailNumber, cutoff) as Array<{ has_starlink: number; wifi_provider: string }>;
+
+  // Grace fallback: if zero confirmed rows, trust legacy NULL rows so we don't
+  // show 0 obs for every tail during transition. Legacy ages out of the 30d
+  // window naturally.
+  if (obs.length === 0) {
+    obs = db
+      .query(`SELECT has_starlink, wifi_provider FROM starlink_verification_log
+        WHERE ${baseWhere} AND tail_confirmed IS NULL ORDER BY checked_at DESC`)
+      .all(tailNumber, cutoff) as Array<{ has_starlink: number; wifi_provider: string }>;
+  }
 
   const n = obs.length;
   const starlinkObs = obs.filter((o) => o.has_starlink === 1).length;

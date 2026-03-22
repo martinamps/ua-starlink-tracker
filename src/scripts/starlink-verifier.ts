@@ -171,6 +171,8 @@ export async function verifyPlaneStarlink(
         // the aircraft wasn't swapped. Only trust a POSITIVE Starlink result in
         // that case (can't falsely hide a plane, only falsely show one — less bad).
         const tailUnknown = !actualTail;
+        const untrustedNonStarlink =
+          tailUnknown && result.wifiProvider && result.wifiProvider !== "Starlink";
 
         if (tailMismatch) {
           verifierLog.warn(
@@ -182,14 +184,30 @@ export async function verifyPlaneStarlink(
         logVerification(db, {
           tail_number: tailNumber,
           source: "united",
-          has_starlink: tailMismatch ? null : result.hasStarlink,
-          wifi_provider: tailMismatch ? null : result.wifiProvider,
+          has_starlink: tailMismatch || untrustedNonStarlink ? null : result.hasStarlink,
+          wifi_provider: tailMismatch || untrustedNonStarlink ? null : result.wifiProvider,
           aircraft_type: result.aircraftType,
           flight_number: `UA${flightNumber}`,
+          tail_confirmed: tailMismatch ? 0 : tailUnknown ? null : 1,
           error: tailMismatch
             ? `Aircraft mismatch: flight has ${actualTail}`
-            : result.error || null,
+            : untrustedNonStarlink
+              ? "Tail not extracted — cannot attribute non-Starlink result"
+              : result.error || null,
         });
+
+        if (tailMismatch && actualTail && result.wifiProvider) {
+          logVerification(db, {
+            tail_number: actualTail,
+            source: "united",
+            has_starlink: result.hasStarlink,
+            wifi_provider: result.wifiProvider,
+            aircraft_type: result.aircraftType,
+            flight_number: `UA${flightNumber}`,
+            tail_confirmed: 1,
+            error: null,
+          });
+        }
 
         // Update the plane's verified_wifi status ONLY if:
         // 1. No error
@@ -246,6 +264,9 @@ export async function verifyPlaneStarlink(
         } else if (result.error) {
           metrics.increment(COUNTERS.VERIFICATION_CHECK, { result: "error", ...checkTags });
           span.setTag("result", "error");
+        } else if (tailUnknown) {
+          metrics.increment(COUNTERS.VERIFICATION_CHECK, { result: "tail_unknown", ...checkTags });
+          span.setTag("result", "tail_unknown");
         } else {
           metrics.increment(COUNTERS.VERIFICATION_CHECK, { result: "success", ...checkTags });
           span.setTag("result", result.hasStarlink ? "starlink" : "not_starlink");

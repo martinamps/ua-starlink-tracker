@@ -194,6 +194,9 @@ async function verifyPlane(
         const actualTail = result.tailNumber;
         const tailMismatch =
           actualTail && actualTail.toUpperCase() !== plane.tail_number.toUpperCase();
+        const tailUnknown = !actualTail;
+        const untrustedNonStarlink =
+          tailUnknown && result.wifiProvider && result.wifiProvider !== "Starlink";
 
         if (tailMismatch) {
           warn(
@@ -204,17 +207,35 @@ async function verifyPlane(
         logVerification(db, {
           tail_number: plane.tail_number,
           source: "united",
-          has_starlink: tailMismatch ? null : result.hasStarlink,
-          wifi_provider: tailMismatch ? null : result.wifiProvider,
+          has_starlink: tailMismatch || untrustedNonStarlink ? null : result.hasStarlink,
+          wifi_provider: tailMismatch || untrustedNonStarlink ? null : result.wifiProvider,
           aircraft_type: result.aircraftType || plane.aircraft_type,
           flight_number: `UA${forVerification.flightNumber}`,
+          tail_confirmed: tailMismatch ? 0 : tailUnknown ? null : 1,
           error: tailMismatch
             ? `Aircraft mismatch: flight has ${actualTail}`
-            : result.error || null,
+            : untrustedNonStarlink
+              ? "Tail not extracted — cannot attribute non-Starlink result"
+              : result.error || null,
         });
 
-        // A result is trustworthy only if: no error, got a wifi provider, tail matches
-        const canTrustResult = !result.error && result.wifiProvider && !tailMismatch;
+        if (tailMismatch && actualTail && result.wifiProvider) {
+          logVerification(db, {
+            tail_number: actualTail,
+            source: "united",
+            has_starlink: result.hasStarlink,
+            wifi_provider: result.wifiProvider,
+            aircraft_type: result.aircraftType || null,
+            flight_number: `UA${forVerification.flightNumber}`,
+            tail_confirmed: 1,
+            error: null,
+          });
+        }
+
+        // A result is trustworthy only if: no error, got a wifi provider, tail
+        // matches, and we could actually confirm attribution when non-Starlink.
+        const canTrustResult =
+          !result.error && result.wifiProvider && !tailMismatch && !untrustedNonStarlink;
 
         const wifiProviderTag = normalizeWifiProvider(result.wifiProvider);
         const checkTags = {
@@ -233,7 +254,11 @@ async function verifyPlane(
         let needsMoreObs = false;
         if (!canTrustResult) {
           starlinkStatus = prevStatus;
-          const resultTag = tailMismatch ? "aircraft_mismatch" : "error";
+          const resultTag = tailMismatch
+            ? "aircraft_mismatch"
+            : untrustedNonStarlink
+              ? "tail_unknown"
+              : "error";
           span.setTag("result", resultTag);
           metrics.increment(COUNTERS.VERIFICATION_CHECK, { result: resultTag, ...checkTags });
         } else {
@@ -266,7 +291,9 @@ async function verifyPlane(
           verifiedWifi: consensus ? consensus.verdict : plane.verified_wifi,
           error: tailMismatch
             ? `Aircraft mismatch: flight has ${actualTail}`
-            : result.error || undefined,
+            : untrustedNonStarlink
+              ? "Tail not extracted — cannot attribute non-Starlink result"
+              : result.error || undefined,
           needsMoreObs,
         });
 
