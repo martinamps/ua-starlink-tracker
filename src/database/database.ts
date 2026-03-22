@@ -1610,6 +1610,22 @@ export function getFleetPageData(db: Database): FleetPageData {
   return data;
 }
 
+export function getAirportDepartures(db: Database): Array<{ airport: string; count: number }> {
+  const now = Math.floor(Date.now() / 1000);
+  return db
+    .query(
+      `SELECT uf.departure_airport AS airport, COUNT(*) AS count
+       FROM upcoming_flights uf
+       JOIN united_fleet f ON f.tail_number = uf.tail_number
+       WHERE f.starlink_status = 'confirmed'
+         AND uf.departure_time >= ?
+       GROUP BY uf.departure_airport
+       ORDER BY count DESC
+       LIMIT 30`
+    )
+    .all(now) as Array<{ airport: string; count: number }>;
+}
+
 function computeFleetPageData(db: Database): FleetPageData {
   const rows = db
     .query(

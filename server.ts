@@ -106,6 +106,7 @@ import RoutePlannerPage from "./src/components/route-planner-page";
 import {
   bumpDiscoveryPriority,
   computeWifiConsensus,
+  getAirportDepartures,
   getFleetDiscoveryStats,
   getFleetPageData,
   getFleetStats,
@@ -1102,6 +1103,7 @@ async function handleRequest(req: Request): Promise<Response> {
     const lastUpdated = getLastUpdated(db);
     const fleetStats = getFleetStats(db);
     const allFlights = getUpcomingFlights(db);
+    const airportDepartures = getAirportDepartures(db);
 
     // Group flights by tail number for rendering
     const flightsByTail: Record<string, Flight[]> = {};
@@ -1120,6 +1122,7 @@ async function handleRequest(req: Request): Promise<Response> {
         fleetStats,
         isUnited: isUnitedDomain(host),
         flightsByTail,
+        airportDepartures,
       })
     );
 

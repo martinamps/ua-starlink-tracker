@@ -1,5 +1,5 @@
 import React from "react";
-import type { Aircraft, FleetStats, Flight } from "../types";
+import type { Aircraft, AirportDeparture, FleetStats, Flight } from "../types";
 import { PAGE_CONTENT, isUnitedDomain } from "../utils/constants";
 
 // Reusable FAQ accordion item — eliminates ~30 lines of boilerplate per question
@@ -51,6 +51,161 @@ interface PageProps {
   fleetStats?: FleetStats;
   isUnited?: boolean;
   flightsByTail?: Record<string, Flight[]>;
+  airportDepartures?: AirportDeparture[];
+}
+
+// Squarified treemap layout (Bruls et al.) — greedily add items to the current
+// row until the worst aspect ratio degrades, then commit along the shorter side.
+function AirportTreemap({ data }: { data: AirportDeparture[] }) {
+  if (data.length === 0) return null;
+
+  const W = 900;
+  const H = 300;
+  const GAP = 4;
+  const max = data[0].count;
+  const min = data[data.length - 1].count;
+  const total = data.reduce((a, d) => a + d.count, 0);
+
+  // Log-scale gradient: deep indigo → cyan. Guard against min==max.
+  const logMax = Math.log(max);
+  const logMin = Math.log(Math.max(1, min));
+  const logSpan = logMax - logMin || 1;
+  const logT = (n: number) => (Math.log(Math.max(1, n)) - logMin) / logSpan;
+  const colorFor = (n: number) => {
+    const t = logT(n);
+    const hue = 222 - t * 32;
+    const sat = 55 + t * 40;
+    const lit = 20 + t * 34;
+    return `hsl(${hue} ${sat}% ${lit}%)`;
+  };
+
+  type Item = { code: string; n: number; area: number };
+  type Cell = { code: string; n: number; x: number; y: number; w: number; h: number };
+
+  const items: Item[] = data.map((d) => ({
+    code: d.airport,
+    n: d.count,
+    area: (d.count / total) * W * H,
+  }));
+
+  const layout: Cell[] = [];
+  let x = 0;
+  let y = 0;
+  let w = W;
+  let h = H;
+  let i = 0;
+  while (i < items.length) {
+    const vertical = w < h;
+    const side = vertical ? w : h;
+    const row: Item[] = [items[i]];
+    let rowArea = items[i].area;
+    const worst = () => {
+      const rl = rowArea / side;
+      return Math.max(...row.map((it) => Math.max((rl * rl) / it.area, it.area / (rl * rl))));
+    };
+    let cur = worst();
+    while (i + row.length < items.length) {
+      const next = items[i + row.length];
+      row.push(next);
+      rowArea += next.area;
+      const nw = worst();
+      if (nw > cur) {
+        row.pop();
+        rowArea -= next.area;
+        break;
+      }
+      cur = nw;
+    }
+    const rl = rowArea / side;
+    let off = 0;
+    for (const it of row) {
+      const len = it.area / rl;
+      layout.push(
+        vertical
+          ? { code: it.code, n: it.n, x: x + off, y, w: len, h: rl }
+          : { code: it.code, n: it.n, x, y: y + off, w: rl, h: len }
+      );
+      off += len;
+    }
+    if (vertical) {
+      y += rl;
+      h -= rl;
+    } else {
+      x += rl;
+      w -= rl;
+    }
+    i += row.length;
+  }
+
+  const legendStops = Array.from({ length: 12 }, (_, k) => {
+    const n = Math.exp(logMin + (k / 11) * logSpan);
+    return `${colorFor(n)} ${((k / 11) * 100).toFixed(1)}%`;
+  }).join(",");
+
+  return (
+    <div className="relative bg-surface rounded-lg border border-subtle p-4 md:p-6 mb-6">
+      <h2 className="font-display text-lg font-semibold text-primary mb-1">Starlink by Airport</h2>
+      <p className="text-xs text-muted font-mono mb-4">
+        Scheduled departures on Starlink-equipped aircraft — next 48 hours
+      </p>
+      <div className="relative mx-auto" style={{ width: W, height: H, maxWidth: "100%" }}>
+        {layout.map((c) => {
+          const m = Math.min(c.w, c.h);
+          const t = logT(c.n);
+          const bright = t > 0.85;
+          return (
+            <div
+              key={c.code}
+              title={`${c.code} — ${c.n} departures`}
+              style={{
+                position: "absolute",
+                left: c.x,
+                top: c.y,
+                width: Math.max(0, c.w - GAP),
+                height: Math.max(0, c.h - GAP),
+                background: colorFor(c.n),
+                borderRadius: Math.max(3, Math.min(10, m * 0.08)),
+                fontSize: Math.max(9, Math.min(22, m * 0.22)),
+                display: "flex",
+                flexDirection: "column",
+                justifyContent: "center",
+                alignItems: "center",
+                fontWeight: 700,
+                color: bright ? "#05131f" : undefined,
+                textShadow: bright ? "none" : "0 1px 3px rgba(0,0,0,.6)",
+                boxShadow: "inset 0 1px 0 rgba(255,255,255,.08), inset 0 0 0 1px rgba(0,0,0,.25)",
+                cursor: "default",
+              }}
+            >
+              {m > 30 ? (
+                <>
+                  {c.code}
+                  <span
+                    style={{ fontSize: "0.68em", opacity: 0.85, fontWeight: 500, marginTop: 2 }}
+                  >
+                    {c.n}
+                  </span>
+                </>
+              ) : m > 16 ? (
+                c.code
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+      <div className="flex items-center gap-3 mt-4 text-xs text-muted font-mono">
+        <span>{min}</span>
+        <div
+          className="flex-1 h-2.5 rounded"
+          style={{
+            background: `linear-gradient(to right, ${legendStops})`,
+            boxShadow: "inset 0 0 0 1px rgba(0,0,0,.3)",
+          }}
+        />
+        <span>{max}</span>
+      </div>
+    </div>
+  );
 }
 
 const dateOverrides: Record<string, string> = {
@@ -64,6 +219,7 @@ export default function Page({
   fleetStats,
   isUnited = false,
   flightsByTail = {},
+  airportDepartures = [],
 }: PageProps) {
   // Apply date overrides to the aircraft data
   const applyDateOverrides = (data: Aircraft[]): Aircraft[] => {
@@ -896,6 +1052,8 @@ export default function Page({
           )}
         </div>
       </div>
+
+      {airportDepartures.length > 0 && <AirportTreemap data={airportDepartures} />}
 
       {/* Tools & Integrations */}
       <div id="integrations" className="relative my-8 max-w-3xl mx-auto scroll-mt-4">

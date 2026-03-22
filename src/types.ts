@@ -119,6 +119,8 @@ export interface FleetPageData {
   totalStarlink: number;
 }
 
+export type AirportDeparture = { airport: string; count: number };
+
 export interface FleetDiscoveryStats {
   total_fleet: number;
   verified_starlink: number;
