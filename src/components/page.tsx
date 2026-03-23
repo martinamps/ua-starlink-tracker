@@ -145,57 +145,86 @@ function AirportTreemap({ data, windowLabel }: { data: AirportDeparture[]; windo
   return (
     <div
       id="airports"
-      className="relative bg-surface rounded-lg border border-subtle p-4 md:p-6 mb-6 scroll-mt-4"
+      className="relative bg-surface rounded-lg border border-subtle p-4 md:p-6 mb-6 scroll-mt-4 overflow-hidden"
     >
       <h2 className="font-display text-lg font-semibold text-primary mb-1">Starlink by Airport</h2>
       <p className="text-xs text-muted font-mono mb-4">
         Departures on Starlink-equipped aircraft — {windowLabel}
       </p>
-      <div className="relative mx-auto" style={{ width: W, height: H, maxWidth: "100%" }}>
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        className="w-full h-auto block mx-auto font-display"
+        style={{ maxWidth: W }}
+        role="img"
+        aria-label="Treemap of Starlink departures by airport"
+      >
         {layout.map((c) => {
           const m = Math.min(c.w, c.h);
           const t = logT(c.n);
           const bright = t > 0.85;
+          const cw = Math.max(0, c.w - GAP);
+          const ch = Math.max(0, c.h - GAP);
+          const cx = c.x + cw / 2;
+          const cy = c.y + ch / 2;
+          const fs = Math.max(9, Math.min(22, m * 0.22));
           return (
-            <div
-              key={c.code}
-              title={`${c.code} — ${c.n} departures`}
-              style={{
-                position: "absolute",
-                left: c.x,
-                top: c.y,
-                width: Math.max(0, c.w - GAP),
-                height: Math.max(0, c.h - GAP),
-                background: colorFor(c.n),
-                borderRadius: Math.max(3, Math.min(10, m * 0.08)),
-                fontSize: Math.max(9, Math.min(22, m * 0.22)),
-                display: "flex",
-                flexDirection: "column",
-                justifyContent: "center",
-                alignItems: "center",
-                fontWeight: 700,
-                color: bright ? "#05131f" : undefined,
-                textShadow: bright ? "none" : "0 1px 3px rgba(0,0,0,.6)",
-                boxShadow: "inset 0 1px 0 rgba(255,255,255,.08), inset 0 0 0 1px rgba(0,0,0,.25)",
-                cursor: "default",
-              }}
-            >
+            <g key={c.code}>
+              <title>{`${c.code} — ${c.n} departures`}</title>
+              <rect
+                x={c.x}
+                y={c.y}
+                width={cw}
+                height={ch}
+                rx={Math.max(3, Math.min(10, m * 0.08))}
+                fill={colorFor(c.n)}
+                stroke="rgba(0,0,0,.25)"
+                strokeWidth="1"
+              />
               {m > 30 ? (
                 <>
-                  {c.code}
-                  <span
-                    style={{ fontSize: "0.68em", opacity: 0.85, fontWeight: 500, marginTop: 2 }}
+                  <text
+                    x={cx}
+                    y={cy - fs * 0.3}
+                    textAnchor="middle"
+                    dominantBaseline="central"
+                    fontSize={fs}
+                    fontWeight="700"
+                    fill={bright ? "#05131f" : "currentColor"}
+                    style={bright ? undefined : { textShadow: "0 1px 3px rgba(0,0,0,.6)" }}
+                  >
+                    {c.code}
+                  </text>
+                  <text
+                    x={cx}
+                    y={cy + fs * 0.55}
+                    textAnchor="middle"
+                    dominantBaseline="central"
+                    fontSize={fs * 0.68}
+                    fontWeight="500"
+                    opacity="0.85"
+                    fill={bright ? "#05131f" : "currentColor"}
                   >
                     {c.n}
-                  </span>
+                  </text>
                 </>
               ) : m > 16 ? (
-                c.code
+                <text
+                  x={cx}
+                  y={cy}
+                  textAnchor="middle"
+                  dominantBaseline="central"
+                  fontSize={fs}
+                  fontWeight="700"
+                  fill={bright ? "#05131f" : "currentColor"}
+                  style={bright ? undefined : { textShadow: "0 1px 3px rgba(0,0,0,.6)" }}
+                >
+                  {c.code}
+                </text>
               ) : null}
-            </div>
+            </g>
           );
         })}
-      </div>
+      </svg>
       <div className="flex items-center gap-3 mt-4 text-xs text-muted font-mono">
         <span>{min}</span>
         <div
