@@ -1017,19 +1017,31 @@ export function computeWifiConsensus(
       WHERE ${baseWhere} AND tail_confirmed = 1 ORDER BY checked_at DESC`)
     .all(tailNumber, cutoff) as Array<{ has_starlink: number; wifi_provider: string }>;
 
-  // Grace fallback: if zero confirmed rows, trust legacy NULL rows so we don't
-  // show 0 obs for every tail during transition. Legacy ages out of the 30d
-  // window naturally.
+  // Grace fallback: if zero confirmed rows, read legacy NULL rows so display
+  // counts (n, starlinkPct) aren't zero during the 30d transition. Legacy is
+  // the contaminated set, so it MUST NOT produce a verdict — otherwise tails
+  // reset to unknown get re-dragged to negative before clean data accumulates.
+  let usedLegacyFallback = false;
   if (obs.length === 0) {
     obs = db
       .query(`SELECT has_starlink, wifi_provider FROM starlink_verification_log
         WHERE ${baseWhere} AND tail_confirmed IS NULL ORDER BY checked_at DESC`)
       .all(tailNumber, cutoff) as Array<{ has_starlink: number; wifi_provider: string }>;
+    usedLegacyFallback = obs.length > 0;
   }
 
   const n = obs.length;
   const starlinkObs = obs.filter((o) => o.has_starlink === 1).length;
   const starlinkPct = n > 0 ? starlinkObs / n : 0;
+
+  if (usedLegacyFallback) {
+    return {
+      verdict: null,
+      n,
+      starlinkPct,
+      reason: `legacy obs only (${n} pre-tail_confirmed rows) — display-only, not settling`,
+    };
+  }
 
   if (n < opts.minObs) {
     return {
