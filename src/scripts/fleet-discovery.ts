@@ -31,6 +31,7 @@ import {
   withSpan,
 } from "../observability";
 import type { FleetAircraft, StarlinkStatus } from "../types";
+import { normalizeFlightNumber } from "../utils/constants";
 import { info, error as logError, warn } from "../utils/logger";
 import type { StarlinkCheckResult } from "./united-starlink-checker";
 import { checkStarlinkStatusSubprocess } from "./united-starlink-checker-subprocess";
@@ -73,11 +74,13 @@ function icaoToIata(icao: string): string {
 }
 
 /**
- * Extract numeric flight number
+ * Extract bare flight digits for United.com URL. Must strip carrier prefix
+ * FIRST: G74460 → 4460, not 74460 (which 404s). normalizeFlightNumber knows
+ * the 2-3 char prefixes (G7, OO, SKW, GJS, ...) so use it, then drop UA.
  */
 function extractFlightNumber(flightNumber: string): string {
-  const match = flightNumber.match(/(\d+)$/);
-  return match ? match[1] : flightNumber;
+  const normalized = normalizeFlightNumber(flightNumber);
+  return normalized.replace(/^UA/, "");
 }
 
 interface FlightInfo {

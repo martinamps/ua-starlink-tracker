@@ -46,9 +46,14 @@ export async function checkStarlinkStatusSubprocess(
 
   const run = runSubprocess(flightNumber, date, origin, destination);
   inFlight = run;
-  run.finally(() => {
-    if (inFlight === run) inFlight = null;
-  });
+  // .finally() returns a chained promise that also rejects when run rejects.
+  // Nothing consumes that chain → unhandled rejection. The caller already
+  // gets the rejection via `return run` below, so swallow the chain's copy.
+  run
+    .finally(() => {
+      if (inFlight === run) inFlight = null;
+    })
+    .catch(() => {});
   return run;
 }
 
@@ -128,7 +133,7 @@ function runSubprocess(
             inJson = true;
           }
           if (inJson) {
-            jsonStr += line + "\n";
+            jsonStr += `${line}\n`;
             braceCount += (line.match(/\{/g) || []).length;
             braceCount -= (line.match(/\}/g) || []).length;
             if (braceCount === 0) break;
