@@ -65,7 +65,12 @@ const log = (msg: string) => {
   console.log(`[${ts}] ${msg}`);
 };
 
-async function verifyTail(db: Database, tail: string): Promise<VerifyResult> {
+async function verifyTail(
+  db: Database,
+  tail: string,
+  maxAttempts = 1,
+  retryDelayMs = 2000
+): Promise<VerifyResult> {
   log(`━━━ ${tail} ━━━`);
 
   // 1. DB state
@@ -93,39 +98,45 @@ async function verifyTail(db: Database, tail: string): Promise<VerifyResult> {
       `last_obs=${dbState.last_obs}@${dbState.last_obs_date}`
   );
 
-  // 2. Find next upcoming flight — DB first, FR24 fallback if stale
-  let flight = db
+  // 2. Gather upcoming flights — DB first, then FR24 for freshness/fallback
+  type FlightCand = {
+    flight_number: string;
+    departure_airport: string;
+    arrival_airport: string;
+    fdate: string;
+  };
+  const dbFlights = db
     .query(
       `SELECT flight_number, departure_airport, arrival_airport,
               date(departure_time,'unixepoch') as fdate
        FROM upcoming_flights
        WHERE tail_number = ? AND departure_time >= strftime('%s','now')
-       ORDER BY departure_time LIMIT 1`
+       ORDER BY departure_time LIMIT ?`
     )
-    .get(tail) as {
-    flight_number: string;
-    departure_airport: string;
-    arrival_airport: string;
-    fdate: string;
-  } | null;
+    .all(tail, maxAttempts) as FlightCand[];
 
-  if (!flight) {
-    log("  no DB flight, fetching FR24...");
+  const candidates = dbFlights;
+  if (candidates.length < maxAttempts) {
+    log(`  ${candidates.length} DB flights, fetching FR24 for more...`);
     const fr24 = new FlightRadar24API();
     const upcoming = await fr24.getUpcomingFlights(tail);
-    const next = upcoming[0];
-    if (next) {
-      flight = {
-        flight_number: next.flight_number,
-        departure_airport: next.departure_airport,
-        arrival_airport: next.arrival_airport,
-        fdate: new Date(next.departure_time * 1000).toISOString().slice(0, 10),
-      };
-      log(`  FR24 found: ${flight.flight_number}`);
+    const seen = new Set(candidates.map((c) => c.flight_number + c.fdate));
+    for (const u of upcoming) {
+      const fdate = new Date(u.departure_time * 1000).toISOString().slice(0, 10);
+      const key = u.flight_number + fdate;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      candidates.push({
+        flight_number: u.flight_number,
+        departure_airport: u.departure_airport,
+        arrival_airport: u.arrival_airport,
+        fdate,
+      });
+      if (candidates.length >= maxAttempts) break;
     }
   }
 
-  if (!flight) {
+  if (candidates.length === 0) {
     log("  ✗ no upcoming flight (DB + FR24) — cannot verify");
     return {
       tail,
@@ -136,33 +147,41 @@ async function verifyTail(db: Database, tail: string): Promise<VerifyResult> {
     };
   }
 
-  // Subprocess wants bare digits; DB stores operator codes (OO5538, SKW4456).
-  const uaNum = normalizeFlightNumber(flight.flight_number).replace(/^UA/, "");
-  const f = {
-    number: uaNum,
-    date: flight.fdate,
-    origin: flight.departure_airport,
-    dest: flight.arrival_airport,
-  };
-  log(`  flight: ${flight.flight_number} (UA${uaNum}) ${f.origin}→${f.dest} on ${f.date}`);
+  // 3. Try each candidate until tail matches (express swaps ~60% of the time)
+  let lastMismatch: VerifyResult | null = null;
+  for (let i = 0; i < candidates.length; i++) {
+    if (i > 0) await new Promise((r) => setTimeout(r, retryDelayMs));
+    const flight = candidates[i];
+    const uaNum = normalizeFlightNumber(flight.flight_number).replace(/^UA/, "");
+    const f = {
+      number: uaNum,
+      date: flight.fdate,
+      origin: flight.departure_airport,
+      dest: flight.arrival_airport,
+    };
+    log(
+      `  [${i + 1}/${candidates.length}] ${flight.flight_number} (UA${uaNum}) ${f.origin}→${f.dest} ${f.date}`
+    );
 
-  // 3. Scrape United.com
-  const url = `https://www.united.com/en/us/flightstatus/details/${uaNum}/${f.date}/${f.origin}/${f.dest}`;
-  log(`  scraping: ${url}`);
+    const url = `https://www.united.com/en/us/flightstatus/details/${uaNum}/${f.date}/${f.origin}/${f.dest}`;
 
-  try {
-    const result = await checkStarlinkStatusSubprocess(f.number, f.date, f.origin, f.dest);
+    let result: Awaited<ReturnType<typeof checkStarlinkStatusSubprocess>>;
+    try {
+      result = await checkStarlinkStatusSubprocess(f.number, f.date, f.origin, f.dest);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log(`    ✗ scrape failed: ${msg}`);
+      continue;
+    }
+
     const tailMatch = result.tailNumber?.toUpperCase() === tail.toUpperCase();
-
-    log("  united.com shows:");
-    log(`    tail:     ${result.tailNumber ?? "(not found)"} ${tailMatch ? "✓" : "✗ MISMATCH"}`);
-    log(`    aircraft: ${result.aircraftType ?? "(not found)"}`);
-    log(`    wifi:     ${result.wifiProvider ?? "(not shown)"}`);
-    log(`    starlink: ${result.hasStarlink ? "YES" : "no"}`);
+    log(
+      `    tail=${result.tailNumber ?? "?"} ${tailMatch ? "✓" : "✗"} · ` +
+        `wifi=${result.wifiProvider ?? "?"} · starlink=${result.hasStarlink ? "YES" : "no"}`
+    );
 
     const verdict = !tailMatch ? "MISMATCH" : result.hasStarlink ? "STARLINK" : "NOT_STARLINK";
-
-    return {
+    const res: VerifyResult = {
       tail,
       db: dbState,
       flight: f,
@@ -176,22 +195,29 @@ async function verifyTail(db: Database, tail: string): Promise<VerifyResult> {
       },
       verdict,
     };
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    log(`  ✗ scrape failed: ${msg}`);
-    return {
+
+    if (tailMatch) return res;
+    lastMismatch = res;
+  }
+
+  log(`  ✗ all ${candidates.length} attempts swapped/failed`);
+  return (
+    lastMismatch ?? {
       tail,
       db: dbState,
-      flight: f,
-      scrape: { error: msg },
+      flight: null,
+      scrape: { error: "all attempts failed" },
       verdict: "ERROR",
-    };
-  }
+    }
+  );
 }
 
 async function main() {
   const args = process.argv.slice(2);
   const delayMs = Number(args.find((a) => a.startsWith("--delay="))?.split("=")[1] ?? 2000);
+  const maxAttempts = Number(
+    args.find((a) => a.startsWith("--retry-on-swap="))?.split("=")[1] ?? 1
+  );
   const fileArg = args.find((a) => a.startsWith("--file="))?.split("=")[1];
 
   let tails: string[];
@@ -204,17 +230,21 @@ async function main() {
   }
 
   if (tails.length === 0) {
-    console.error("Usage: bun run verify-tails N550GJ N549GJ ... [--delay=2000]");
+    console.error(
+      "Usage: bun run verify-tails N550GJ N549GJ ... [--delay=2000] [--retry-on-swap=5]"
+    );
     process.exit(1);
   }
 
-  log(`Verifying ${tails.length} tails with ${delayMs}ms delay between checks`);
+  log(
+    `Verifying ${tails.length} tails · ${delayMs}ms between tails · up to ${maxAttempts} flights/tail`
+  );
   const db = new Database(DB_PATH, { readonly: true });
   const results: VerifyResult[] = [];
 
   for (let i = 0; i < tails.length; i++) {
     if (i > 0) await new Promise((r) => setTimeout(r, delayMs));
-    results.push(await verifyTail(db, tails[i].toUpperCase()));
+    results.push(await verifyTail(db, tails[i].toUpperCase(), maxAttempts, delayMs));
   }
 
   // Summary table
