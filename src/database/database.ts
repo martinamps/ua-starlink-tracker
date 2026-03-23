@@ -842,15 +842,16 @@ export function needsVerification(
   const now = Math.floor(Date.now() / 1000);
   const cutoff = now - threshold * 3600;
 
-  // Aircraft-mismatch is a completed check (we successfully scraped; the
-  // flight just had a swapped tail). Without this clause, a swapped-tail
-  // flight triggers a 60s retry storm until the swap resolves — that was
-  // the United.com rate spike (130+ scrapes/2.5h for one plane).
+  // A tail is "recently checked" if we've logged ANY attempt for it, not
+  // just clean ones. Persistent errors (aircraft mismatch, subprocess crash,
+  // tail-not-extracted) won't resolve on retry — re-attempting every 60s
+  // just burns rate limit. N521GJ retry-stormed 108 times in 6h because
+  // "Process exited with code 1" wasn't in the old whitelist. The verifier's
+  // 48-96h jitter schedule is the right cadence for a second attempt.
   const lastCheck = db
     .query(`
     SELECT checked_at FROM starlink_verification_log
     WHERE tail_number = ? AND source = ? AND checked_at > ?
-      AND (error IS NULL OR error LIKE 'Aircraft mismatch%')
     ORDER BY checked_at DESC
     LIMIT 1
   `)
@@ -1497,8 +1498,16 @@ export function syncSpreadsheetToFleet(db: Database): number {
 
   const sync = db.transaction(() => {
     for (const plane of spreadsheetPlanes) {
+      // NULL verified_wifi means unverified — must map to 'unknown', not
+      // 'negative'. The UPDATE CASE guard bootstraps unknown→this value, so
+      // computing 'negative' here was dragging freshly-reset tails back every
+      // hour before consensus could accumulate clean observations.
       const starlinkStatus: StarlinkStatus =
-        plane.verified_wifi === "Starlink" ? "confirmed" : "negative";
+        plane.verified_wifi === "Starlink"
+          ? "confirmed"
+          : plane.verified_wifi === null
+            ? "unknown"
+            : "negative";
       const type = safeType(plane.aircraft);
 
       if (existsStmt.get(plane.TailNumber)) {
@@ -1511,10 +1520,7 @@ export function syncSpreadsheetToFleet(db: Database): number {
           plane.TailNumber
         );
       } else {
-        // NULL verified_wifi means unverified — bootstrap to 'unknown' so
-        // discovery owns the status, mirroring the UPDATE path's CASE guard.
-        const insertStatus: StarlinkStatus =
-          plane.verified_wifi === null ? "unknown" : starlinkStatus;
+        const insertStatus = starlinkStatus;
         const priority = calculateDiscoveryPriority(type, insertStatus, plane.TailNumber);
         insertStmt.run(
           plane.TailNumber,
