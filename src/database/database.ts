@@ -163,6 +163,16 @@ function setupTables(db: Database) {
     info("Created united_fleet table for fleet-wide discovery");
   }
 
+  {
+    const columns = db.query("PRAGMA table_info(united_fleet)").all();
+    const hasShipNumber = columns.some((col: any) => col.name === "ship_number");
+    if (!hasShipNumber) {
+      db.query("ALTER TABLE united_fleet ADD COLUMN ship_number TEXT").run();
+      db.query("CREATE INDEX IF NOT EXISTS idx_uf_ship ON united_fleet(ship_number)").run();
+      info("Database migration: added united_fleet.ship_number");
+    }
+  }
+
   if (!tableExists(db, "upcoming_flights")) {
     db.query(
       `
@@ -1622,6 +1632,24 @@ export function getFleetAircraft(db: Database, tailNumber: string): FleetAircraf
  */
 export function getAllFleetAircraft(db: Database): FleetAircraft[] {
   return db.query("SELECT * FROM united_fleet ORDER BY tail_number").all() as FleetAircraft[];
+}
+
+/**
+ * Map ship numbers → tail numbers. United.com shows ship numbers (#3237) for
+ * mainline flights instead of registrations; this lets the verifier resolve them.
+ */
+export function getShipToTailMap(db: Database): Map<string, string> {
+  const rows = db
+    .query("SELECT ship_number, tail_number FROM united_fleet WHERE ship_number IS NOT NULL")
+    .all() as Array<{ ship_number: string; tail_number: string }>;
+  return new Map(rows.map((r) => [r.ship_number, r.tail_number]));
+}
+
+export function updateShipNumber(db: Database, tailNumber: string, shipNumber: string): void {
+  db.query("UPDATE united_fleet SET ship_number = ? WHERE tail_number = ?").run(
+    shipNumber,
+    tailNumber
+  );
 }
 
 // ============ /fleet page aggregation ============

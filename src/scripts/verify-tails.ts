@@ -21,6 +21,7 @@
 import { Database } from "bun:sqlite";
 import { writeFileSync } from "node:fs";
 import { FlightRadar24API } from "../api/flightradar24-api";
+import { getShipToTailMap } from "../database/database";
 import { DB_PATH, normalizeFlightNumber } from "../utils/constants";
 import { checkStarlinkStatusSubprocess } from "./united-starlink-checker-subprocess";
 
@@ -174,9 +175,19 @@ async function verifyTail(
       continue;
     }
 
-    const tailMatch = result.tailNumber?.toUpperCase() === tail.toUpperCase();
+    // Mainline pages show ship numbers. Resolve via lookup.
+    let resolvedTail = result.tailNumber;
+    if (!resolvedTail && result.shipNumber) {
+      const shipMap = getShipToTailMap(db);
+      resolvedTail = shipMap.get(result.shipNumber) ?? null;
+      if (resolvedTail) {
+        log(`    resolved ship #${result.shipNumber} → ${resolvedTail}`);
+      }
+    }
+
+    const tailMatch = resolvedTail?.toUpperCase() === tail.toUpperCase();
     log(
-      `    tail=${result.tailNumber ?? "?"} ${tailMatch ? "✓" : "✗"} · ` +
+      `    tail=${resolvedTail ?? "?"} ${tailMatch ? "✓" : "✗"} · ` +
         `wifi=${result.wifiProvider ?? "?"} · starlink=${result.hasStarlink ? "YES" : "no"}`
     );
 
@@ -187,7 +198,7 @@ async function verifyTail(
       flight: f,
       scrape: {
         url,
-        tail_shown: result.tailNumber,
+        tail_shown: resolvedTail,
         aircraft_shown: result.aircraftType,
         has_starlink: result.hasStarlink,
         provider: result.wifiProvider ?? null,

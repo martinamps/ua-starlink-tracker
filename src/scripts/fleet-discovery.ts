@@ -14,6 +14,7 @@ import {
   computeWifiConsensus,
   getFleetDiscoveryStats,
   getNextPlanesToVerify,
+  getShipToTailMap,
   initializeDatabase,
   logVerification,
   updateFleetVerificationResult,
@@ -192,15 +193,26 @@ async function verifyPlane(
         // Aircraft-swap detection: United.com returns the actual tail on the flight.
         // If it doesn't match, the result is for a different plane — don't attribute it.
         const actualTail = result.tailNumber;
+
+        // Mainline pages show ship numbers. Resolve via lookup.
+        let resolvedTail = actualTail;
+        if (!resolvedTail && result.shipNumber) {
+          const shipMap = getShipToTailMap(db);
+          resolvedTail = shipMap.get(result.shipNumber) ?? null;
+          if (resolvedTail) {
+            info(`Resolved ship #${result.shipNumber} → ${resolvedTail}`);
+          }
+        }
+
         const tailMismatch =
-          actualTail && actualTail.toUpperCase() !== plane.tail_number.toUpperCase();
-        const tailUnknown = !actualTail;
+          resolvedTail && resolvedTail.toUpperCase() !== plane.tail_number.toUpperCase();
+        const tailUnknown = !resolvedTail;
         const untrustedNonStarlink =
           tailUnknown && result.wifiProvider && result.wifiProvider !== "Starlink";
 
         if (tailMismatch) {
           warn(
-            `Aircraft swap: expected ${plane.tail_number} but flight has ${actualTail} — skipping`
+            `Aircraft swap: expected ${plane.tail_number} but flight has ${resolvedTail} — skipping`
           );
         }
 
@@ -213,15 +225,15 @@ async function verifyPlane(
           flight_number: `UA${forVerification.flightNumber}`,
           tail_confirmed: tailMismatch ? 0 : tailUnknown ? null : 1,
           error: tailMismatch
-            ? `Aircraft mismatch: flight has ${actualTail}`
+            ? `Aircraft mismatch: flight has ${resolvedTail}`
             : untrustedNonStarlink
               ? "Tail not extracted — cannot attribute non-Starlink result"
               : result.error || null,
         });
 
-        if (tailMismatch && actualTail && result.wifiProvider) {
+        if (tailMismatch && resolvedTail && result.wifiProvider) {
           logVerification(db, {
-            tail_number: actualTail,
+            tail_number: resolvedTail,
             source: "united",
             has_starlink: result.hasStarlink,
             wifi_provider: result.wifiProvider,
@@ -290,7 +302,7 @@ async function verifyPlane(
           starlinkStatus,
           verifiedWifi: consensus ? consensus.verdict : plane.verified_wifi,
           error: tailMismatch
-            ? `Aircraft mismatch: flight has ${actualTail}`
+            ? `Aircraft mismatch: flight has ${resolvedTail}`
             : untrustedNonStarlink
               ? "Tail not extracted — cannot attribute non-Starlink result"
               : result.error || undefined,

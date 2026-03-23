@@ -124,6 +124,7 @@ import { startFleetDiscovery } from "./src/scripts/fleet-discovery";
 import { startFleetSync } from "./src/scripts/fleet-sync";
 import { planItinerary, predictFlight } from "./src/scripts/starlink-predictor";
 import { startStarlinkVerifier } from "./src/scripts/starlink-verifier";
+import { syncShipNumbers } from "./src/scripts/sync-ship-numbers";
 import type { ApiResponse, Flight } from "./src/types";
 import {
   CONTENT_TYPES,
@@ -1233,5 +1234,18 @@ startFlightUpdater();
 startStarlinkVerifier();
 startFleetSync();
 startFleetDiscovery("maintenance");
+
+// Ship number sync — the mainline ship→tail map rarely changes, daily is plenty.
+// First run delayed 10min so it doesn't compete with startup verification.
+setTimeout(
+  () => {
+    syncShipNumbers().catch((e) => logError("Ship number sync failed", e));
+    setInterval(
+      () => syncShipNumbers().catch((e) => logError("Ship number sync failed", e)),
+      24 * 3600 * 1000
+    );
+  },
+  10 * 60 * 1000
+);
 
 info(`Server running at http://localhost:${PORT}`);

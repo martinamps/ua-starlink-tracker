@@ -14,6 +14,7 @@ const RAW_LOG_DIR = path.join(LOG_DIR, "raw");
 export interface StarlinkCheckResult {
   hasStarlink: boolean;
   tailNumber: string | null;
+  shipNumber: string | null;
   aircraftType: string | null;
   wifiProvider: string | null;
   flightNumber: string;
@@ -72,6 +73,7 @@ export async function checkStarlinkStatus(
   const result: StarlinkCheckResult = {
     hasStarlink: false,
     tailNumber: null,
+    shipNumber: null,
     aircraftType: null,
     wifiProvider: null,
     flightNumber,
@@ -214,17 +216,17 @@ export async function checkStarlinkStatus(
 
       // Extract tail number from "Aircraft details" section
       // Express planes show registration directly: "Embraer E-175 | #N164SY"
-      // Mainline planes show ship number: "Boeing 737-700 | #3731" (NOT the tail number!)
-      // Only trust it if it looks like a US registration (N + 1-5 alphanumerics, not pure digits)
+      // Mainline planes show ship number: "Boeing 737-700 | #3731" — captured
+      // separately so callers can resolve via the ship→tail map.
       let tailNumber: string | null = null;
+      let shipNumber: string | null = null;
       const tailMatch = bodyText.match(/\|\s*#([A-Z0-9]+)/);
       if (tailMatch) {
         const extracted = tailMatch[1];
-        // Only accept if it looks like a real N-number (starts with N, not just digits)
-        // Ship numbers like "3731" are NOT tail numbers — leave as null so the
-        // verifier's tail-mismatch protection doesn't get bypassed or confused.
         if (/^N[0-9][0-9A-Z]{1,4}$/.test(extracted)) {
           tailNumber = extracted;
+        } else if (/^\d{3,4}$/.test(extracted)) {
+          shipNumber = extracted;
         }
       }
 
@@ -251,6 +253,7 @@ export async function checkStarlinkStatus(
       return {
         hasStarlink: hasStarlinkComponent || hasStarlinkText,
         tailNumber,
+        shipNumber,
         aircraftType,
         wifiProvider,
         bodyText,
@@ -259,6 +262,7 @@ export async function checkStarlinkStatus(
 
     result.hasStarlink = data.hasStarlink;
     result.tailNumber = data.tailNumber;
+    result.shipNumber = data.shipNumber;
     result.aircraftType = data.aircraftType;
     result.wifiProvider = data.wifiProvider;
 
