@@ -219,6 +219,17 @@ export async function verifyPlaneStarlink(
             tail_confirmed: 1,
             error: null,
           });
+          // Swapped-tail captures write the log but the intended-tail consensus
+          // block below never runs for resolvedTail. Without this, a tail that
+          // only ever shows up via swaps accumulates obs but needsVerification
+          // sees those log entries and skips the direct check — stuck forever.
+          const swapConsensus = computeWifiConsensus(db, resolvedTail);
+          if (swapConsensus.verdict !== null) {
+            updateVerifiedWifi(db, resolvedTail, swapConsensus.verdict);
+            verifierLog.info(
+              `${resolvedTail} (swap-captured): verified_wifi → ${swapConsensus.verdict} (${swapConsensus.reason})`
+            );
+          }
         }
 
         // Update the plane's verified_wifi status ONLY if:

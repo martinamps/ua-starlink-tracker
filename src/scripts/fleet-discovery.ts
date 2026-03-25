@@ -245,6 +245,16 @@ async function verifyPlane(
             tail_confirmed: 1,
             error: null,
           });
+          // Run consensus for the swap-captured tail so it settles without
+          // waiting for a direct check that needsVerification may skip (the
+          // log entry above makes the tail look recently-checked).
+          const swapConsensus = computeWifiConsensus(db, resolvedTail);
+          if (swapConsensus.verdict !== null) {
+            updateVerifiedWifi(db, resolvedTail, swapConsensus.verdict);
+            info(
+              `${resolvedTail} (swap-captured): verified_wifi → ${swapConsensus.verdict} (${swapConsensus.reason})`
+            );
+          }
         }
 
         // A result is trustworthy only if: no error, got a wifi provider, tail
