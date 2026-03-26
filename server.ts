@@ -117,6 +117,7 @@ import {
   getVerificationSummary,
   getWifiMismatches,
   initializeDatabase,
+  reconcileConsensus,
   syncSpreadsheetToFleet,
   updateDatabase,
 } from "./src/database/database";
@@ -184,6 +185,14 @@ async function updateStarlinkData() {
         if (synced > 0) {
           info(`Synced ${synced} new planes to united_fleet`);
           span.setTag("synced_to_fleet", synced);
+        }
+
+        // Reconciliation sweep — catches any verified_wifi drift that the
+        // write-triggered consensus paths missed (pre-deploy obs, edge cases).
+        const healed = reconcileConsensus(db);
+        if (healed > 0) {
+          info(`Consensus reconciliation healed ${healed} tails`);
+          span.setTag("consensus_healed", healed);
         }
 
         span.setTag("total_aircraft", totalAircraftCount);

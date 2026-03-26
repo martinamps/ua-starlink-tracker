@@ -1143,6 +1143,36 @@ export function updateVerifiedWifi(
 }
 
 /**
+ * Reconciliation sweep — recompute consensus for every sheet-listed tail with
+ * ≥2 tail_confirmed obs and heal any drift between the log and verified_wifi.
+ *
+ * Write-triggered consensus (verifier check, swap-capture) is the primary path
+ * but it only fires on new writes. This catches rows that crossed the threshold
+ * before a fix deployed, or any other path that adds obs without triggering
+ * consensus. Runs with the hourly sync — cheap enough to be the safety net.
+ */
+export function reconcileConsensus(db: Database): number {
+  const candidates = db
+    .query(`
+      SELECT sp.TailNumber as tail, sp.verified_wifi as current
+      FROM starlink_planes sp
+      WHERE (SELECT COUNT(*) FROM starlink_verification_log
+             WHERE tail_number = sp.TailNumber AND tail_confirmed = 1) >= 2
+    `)
+    .all() as Array<{ tail: string; current: string | null }>;
+
+  let healed = 0;
+  for (const { tail, current } of candidates) {
+    const consensus = computeWifiConsensus(db, tail);
+    if (consensus.verdict !== null && consensus.verdict !== current) {
+      updateVerifiedWifi(db, tail, consensus.verdict);
+      healed++;
+    }
+  }
+  return healed;
+}
+
+/**
  * Get mismatches between spreadsheet data and verified data
  * Returns planes where:
  * - Spreadsheet says Starlink but verification says otherwise
