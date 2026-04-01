@@ -87,19 +87,19 @@ function Sparkline({ data, peak }: { data: number[]; peak: number }) {
 }
 
 function LivePulse({ pulse }: { pulse: FleetPageData["pulse"] }) {
-  const live = pulse.now > 0;
+  const haveData = pulse.sparkline.length > 0;
   return (
     <section className="relative max-w-4xl mx-auto text-center mb-10">
       <div className={`${PANEL} p-6 glow-accent`}>
         <div className={EYEBROW}>Live Pulse</div>
         <div className="flex items-baseline justify-center gap-3 mb-2">
-          {live && <span className="status-dot animate-pulse-glow" />}
+          {pulse.now > 0 && <span className="status-dot animate-pulse-glow" />}
           <span className="font-display text-5xl sm:text-6xl font-bold text-accent tabular-nums">
-            {live ? pulse.now : "—"}
+            {haveData ? pulse.now : "—"}
           </span>
         </div>
         <p className="text-sm text-secondary mb-4">
-          {live
+          {haveData
             ? "Starlink planes in the air right now"
             : "Airborne count unavailable (data refreshing)"}
         </p>

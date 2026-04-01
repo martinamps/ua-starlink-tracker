@@ -196,11 +196,19 @@ export class FlightRadar24API {
 
       return flights
         .filter((flight) => {
-          // Get the scheduled or estimated departure time
           const departureTime =
             flight.time.scheduled.departure || flight.time.estimated.departure || 0;
-          // Only include future flights
-          return departureTime > now;
+          // Keep flights that haven't landed yet — including ones currently
+          // airborne. Filtering on departure alone evicts in-progress flights
+          // when updateFlights() does its DELETE+INSERT, which starves the
+          // /fleet live-airborne pulse. Use the LATEST known arrival
+          // (scheduled||estimated short-circuits on a past scheduled time
+          // for delayed flights).
+          const arrivalTime = Math.max(
+            flight.time.scheduled.arrival ?? 0,
+            flight.time.estimated.arrival ?? 0
+          );
+          return arrivalTime > now || departureTime > now;
         })
         .map((flight) => {
           // Use callsign (operating code like SKW4783) for FlightAware links, fallback to default
