@@ -43,6 +43,9 @@
     "lint-staged": "^16.2.3"
   },
   "lint-staged": {
-    "*.{ts,tsx,js,jsx,json}": ["biome check --write"]
+    "*.{ts,tsx,js,jsx,json}": ["biome check --write"],
+    "bun.lock": [
+      "sh -c '! grep -q artifactory \"$@\" || { echo \"ERROR: bun.lock contains artifactory URLs. Check your ~/.npmrc and re-run bun install.\"; exit 1; }' --"
+    ]
   }
 }
