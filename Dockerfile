@@ -25,7 +25,7 @@ COPY package.json .
 RUN bun install
 
 # Install Playwright's bundled Chromium to the same path used by scripts
-ENV PLAYWRIGHT_BROWSERS_PATH=/app/.playwright-browsers
+ENV PLAYWRIGHT_BROWSERS_PATH=/app/do_not_commit/playwright-browsers
 RUN bunx playwright install chromium
 
 COPY . .

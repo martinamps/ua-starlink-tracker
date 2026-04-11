@@ -2,7 +2,8 @@
 node_modules
 .env
 
-# Playwright browsers
+# Local-only artifacts (browser binaries, screenshots, scratch)
+do_not_commit/
 .playwright-browsers/
 tmp/
 logs/

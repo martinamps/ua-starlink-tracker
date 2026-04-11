@@ -8,7 +8,15 @@
   },
   "files": {
     "ignoreUnknown": false,
-    "ignore": ["node_modules", "*.sqlite", "dist", "build", ".playwright-browsers", "tmp"]
+    "ignore": [
+      "node_modules",
+      "*.sqlite",
+      "dist",
+      "build",
+      "do_not_commit",
+      ".playwright-browsers",
+      "tmp"
+    ]
   },
   "linter": {
     "enabled": true,
