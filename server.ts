@@ -96,7 +96,7 @@ process.on("uncaughtException", (err) => {
 });
 
 import { checkNewPlanes, startFlightUpdater } from "./src/api/flight-updater";
-import { FlightRadar24API } from "./src/api/flightradar24-api";
+import { lookupFlightTailVerdict } from "./src/api/flight-verdict";
 import { handleMcpRequest } from "./src/api/mcp-server";
 import CheckFlightPage from "./src/components/check-flight-page";
 import FleetPage from "./src/components/fleet-page";
@@ -104,8 +104,6 @@ import McpPage from "./src/components/mcp-page";
 import Page from "./src/components/page";
 import RoutePlannerPage from "./src/components/route-planner-page";
 import {
-  bumpDiscoveryPriority,
-  computeWifiConsensus,
   getAirportDepartures,
   getFleetDiscoveryStats,
   getFleetPageData,
@@ -359,44 +357,6 @@ routes["/api/data"] = tracedRoute("/api/data", (req) => {
   });
 });
 
-// FR24 tail-number reverse lookup for check-flight fallback.
-// Promise-based cache dedupes concurrent requests; TTL 1hr per (flight, day).
-const fr24ForCheckFlight = new FlightRadar24API();
-type Assignment = Awaited<ReturnType<FlightRadar24API["getFlightAssignments"]>>;
-const assignmentCache = new Map<string, { promise: Promise<Assignment>; at: number }>();
-const ASSIGNMENT_CACHE_TTL = 3600;
-
-function cachedFlightAssignments(
-  flightNumber: string,
-  targetDateUnix: number
-): Promise<Assignment> {
-  const key = `${flightNumber}:${Math.floor(targetDateUnix / 86400)}`;
-  const now = Math.floor(Date.now() / 1000);
-  const cached = assignmentCache.get(key);
-  if (cached && now - cached.at < ASSIGNMENT_CACHE_TTL) return cached.promise;
-
-  // Opportunistic sweep: keys include the day, so entries for past dates never
-  // get re-hit. Chrome extension traffic from Google Flights means thousands
-  // of unique (flight, day) pairs/week. Cap at 500.
-  if (assignmentCache.size > 500) {
-    for (const [k, v] of assignmentCache) {
-      if (now - v.at >= ASSIGNMENT_CACHE_TTL) assignmentCache.delete(k);
-    }
-  }
-
-  // Set immediately for in-flight dedup, but evict if the result is empty/error
-  // so the next request retries instead of serving a cached [] for 1hr.
-  const promise = fr24ForCheckFlight.getFlightAssignments(flightNumber, targetDateUnix);
-  assignmentCache.set(key, { promise, at: now });
-  promise.then(
-    (result) => {
-      if (result.length === 0) assignmentCache.delete(key);
-    },
-    () => assignmentCache.delete(key)
-  );
-  return promise;
-}
-
 routes["/api/check-flight"] = tracedRoute("/api/check-flight", async (req) => {
   if (req.method !== "GET") {
     return new Response(JSON.stringify({ error: "Method not allowed" }), {
@@ -444,7 +404,8 @@ routes["/api/check-flight"] = tracedRoute("/api/check-flight", async (req) => {
         sp.WiFi,
         sp.DateFound,
         sp.OperatedBy,
-        sp.fleet
+        sp.fleet,
+        sp.verified_wifi
       FROM upcoming_flights uf
       INNER JOIN starlink_planes sp ON uf.tail_number = sp.TailNumber
       WHERE uf.flight_number IN (${placeholders})
@@ -461,118 +422,27 @@ routes["/api/check-flight"] = tracedRoute("/api/check-flight", async (req) => {
       DateFound: string;
       OperatedBy: string;
       fleet: string;
+      verified_wifi: string | null;
     }
   >;
 
   if (matchingFlights.length === 0) {
-    // FR24 reverse-lookup fallback: fetchBy=flight returns aircraft.registration,
-    // which we can look up in our own tables. No United.com scraping in-request.
-    // Lower bound: FR24 keeps flights ~24h after departure. A flight "on March 15"
-    // can depart as late as 23:59 on the 15th, so it's still queryable until
-    // ~23:59 on the 16th — i.e., the date's end must be less than ~24h ago.
-    // Upper bound: assignments don't exist beyond ~3 days out.
-    const nowSec = Math.floor(Date.now() / 1000);
-    const inLookupWindow = endOfDay > nowSec - 86400 && startOfDay < nowSec + 3 * 86400;
+    const segments = await lookupFlightTailVerdict(
+      db,
+      normalizedFlightNumber,
+      startOfDay,
+      endOfDay
+    );
 
-    if (inLookupWindow) {
-      const assignments = await cachedFlightAssignments(normalizedFlightNumber, startOfDay + 43200);
-
-      type Segment = {
-        tail_number: string;
-        aircraft_model: string | null;
-        origin: string;
-        destination: string;
-        departure_time: number;
-        arrival_time: number;
-        hasStarlink: boolean | null;
-        confidence: string;
-        verified_wifi?: string | null;
-        verified_at?: number | null;
-        operated_by?: string | null;
-        fleet_type?: string | null;
-      };
-      const segments: Segment[] = [];
-
-      for (const a of assignments) {
-        if (!a.tail_number) continue;
-        // FR24's ±24h window can pull in adjacent-day legs; match the primary
-        // query's strict UTC-day filter.
-        if (a.departure_time < startOfDay || a.departure_time >= endOfDay) continue;
-
-        const base = {
-          tail_number: a.tail_number,
-          aircraft_model: a.aircraft_model,
-          origin: a.origin,
-          destination: a.destination,
-          departure_time: a.departure_time,
-          arrival_time: a.arrival_time,
-        };
-
-        const sp = db
-          .query("SELECT Aircraft, OperatedBy, fleet FROM starlink_planes WHERE TailNumber = ?")
-          .get(a.tail_number) as {
-          Aircraft: string;
-          OperatedBy: string;
-          fleet: string;
-        } | null;
-
-        if (sp) {
-          // In starlink_planes — use live consensus, not the stored column
-          // (which may have been overwritten by a single flaky check).
-          const consensus = computeWifiConsensus(db, a.tail_number);
-          const hasStarlink = consensus.verdict === "Starlink" || consensus.verdict === null;
-          segments.push({
-            ...base,
-            aircraft_model: sp.Aircraft || a.aircraft_model,
-            hasStarlink,
-            confidence:
-              consensus.verdict === "Starlink"
-                ? "verified"
-                : consensus.verdict === null
-                  ? "spreadsheet"
-                  : "disputed",
-            operated_by: sp.OperatedBy,
-            fleet_type: sp.fleet,
-          });
-          continue;
-        }
-
-        const uf = db
-          .query(
-            "SELECT starlink_status, verified_wifi, verified_at FROM united_fleet WHERE tail_number = ?"
-          )
-          .get(a.tail_number) as {
-          starlink_status: string;
-          verified_wifi: string | null;
-          verified_at: number | null;
-        } | null;
-
-        if (uf?.starlink_status === "confirmed") {
-          segments.push({ ...base, hasStarlink: true, confidence: "verified" });
-        } else if (uf?.starlink_status === "negative") {
-          // User checked → might be onboard noticing Starlink. Bump priority
-          // so discovery re-checks on the next 90s cycle, if the last verify
-          // is stale enough to justify the cost.
-          const stale = uf.verified_at && nowSec - uf.verified_at > 7 * 86400;
-          if (stale) bumpDiscoveryPriority(db, a.tail_number);
-          segments.push({
-            ...base,
-            hasStarlink: false,
-            confidence: "negative",
-            verified_wifi: uf.verified_wifi,
-            verified_at: uf.verified_at,
-          });
-        } else {
-          bumpDiscoveryPriority(db, a.tail_number);
-          segments.push({ ...base, hasStarlink: null, confidence: "unknown" });
-        }
-      }
-
+    if (segments !== null) {
       const starlinkSegs = segments.filter((s) => s.hasStarlink);
       if (starlinkSegs.length > 0) {
         return new Response(
           JSON.stringify({
             hasStarlink: true,
+            confidence: starlinkSegs.every((s) => s.confidence === "verified")
+              ? "verified"
+              : "likely",
             method: "fr24_tail_lookup",
             flights: starlinkSegs.map((s) => ({
               tail_number: s.tail_number,
@@ -619,6 +489,9 @@ routes["/api/check-flight"] = tracedRoute("/api/check-flight", async (req) => {
 
   const response = {
     hasStarlink: true,
+    confidence: matchingFlights.every((f) => f.verified_wifi === "Starlink")
+      ? "verified"
+      : "likely",
     flights: matchingFlights.map((flight) => ({
       tail_number: flight.tail_number,
       aircraft_type: flight.aircraft_type,

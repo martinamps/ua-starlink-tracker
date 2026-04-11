@@ -1119,11 +1119,15 @@ export function computeWifiConsensus(
  */
 export function bumpDiscoveryPriority(db: Database, tailNumber: string): void {
   const now = Math.floor(Date.now() / 1000);
-  db.query(`
-    UPDATE united_fleet
-    SET next_check_after = ?, discovery_priority = 1.0
-    WHERE tail_number = ? AND next_check_after > ?
-  `).run(now, tailNumber, now);
+  try {
+    db.query(`
+      UPDATE united_fleet
+      SET next_check_after = ?, discovery_priority = 1.0
+      WHERE tail_number = ? AND next_check_after > ?
+    `).run(now, tailNumber, now);
+  } catch {
+    // best-effort signal; readonly DBs (tests, MCP snapshot) just skip
+  }
 }
 
 /**

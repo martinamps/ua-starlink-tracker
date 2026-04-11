@@ -27,6 +27,7 @@ import {
   normalizeFlightNumber,
 } from "../utils/constants";
 import { debug, info } from "../utils/logger";
+import { lookupFlightTailVerdict } from "./flight-verdict";
 import { FlightRadar24API } from "./flightradar24-api";
 
 // Protocol versions we support (newest first)
@@ -430,6 +431,56 @@ async function toolCheckFlight(
         },
       ],
     };
+  }
+
+  // No upcoming_flights row — try the same FR24 tail-lookup fallback that
+  // /api/check-flight uses, so MCP and the extension API converge on the same
+  // firm answer when FR24 knows the assigned tail.
+  const fb = await lookupFlightTailVerdict(db, normalized, startOfDay, endOfDay, now);
+  if (fb && fb.length > 0) {
+    const yes = fb.filter((s) => s.hasStarlink);
+    const no = fb.filter((s) => s.hasStarlink === false);
+
+    const renderSeg = (s: (typeof fb)[number]) => {
+      const dep = new Date(s.departure_time * 1000).toISOString();
+      const ac = s.aircraft_model || "aircraft";
+      const conf =
+        s.confidence === "verified"
+          ? "verified Starlink"
+          : s.confidence === "spreadsheet"
+            ? "tracked as Starlink (unverified)"
+            : s.confidence === "negative"
+              ? `verified ${s.verified_wifi ?? "non-Starlink"} WiFi`
+              : s.confidence;
+      return `- ${normalized} (${s.origin}→${s.destination}) on ${ac} tail ${s.tail_number} — ${conf}. Departs ${dep}.`;
+    };
+
+    if (yes.length > 0) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `✈️ Yes! Flight ${normalized} on ${date} is assigned to a Starlink aircraft (via live tail lookup):\n\n${yes.map(renderSeg).join("\n")}\n\nStarlink WiFi is free on all equipped United flights.`,
+          },
+        ],
+      };
+    }
+    if (no.length > 0) {
+      const altBlock = buildAlternativesBlock(
+        db,
+        no.map((s) => ({ origin: s.origin, destination: s.destination })),
+        startOfDay + 43200
+      );
+      return {
+        content: [
+          {
+            type: "text",
+            text: `${altBlock}\n\n❌ No Starlink: ${normalized} on ${date} is assigned to ${no.map((s) => `tail ${s.tail_number} (${s.aircraft_model || "aircraft"}, ${s.verified_wifi ?? "non-Starlink"} WiFi)`).join("; ")} — NOT Starlink. Aircraft swaps can happen, but the assignment is currently firm.`,
+          },
+        ],
+      };
+    }
+    // All segments unknown → fall through to probability.
   }
 
   // No assignment data at all — probability fallback. If low, look up the route

@@ -15,6 +15,7 @@
 
 import { Database } from "bun:sqlite";
 import { beforeAll, describe, expect, test } from "bun:test";
+import { resolveTailVerdict } from "../src/api/flight-verdict";
 import { handleMcpRequest } from "../src/api/mcp-server";
 import {
   computeWifiConsensus,
@@ -593,6 +594,38 @@ describe("precision harness", () => {
     const r30 = computePrecision(db, 30);
     const r7 = computePrecision(db, 7);
     expect(r7.yes.n + r7.no.n).toBeLessThanOrEqual(r30.yes.n + r30.no.n);
+  });
+});
+
+describe("flight-verdict shared fallback", () => {
+  test("resolveTailVerdict: confirmed-starlink tail → hasStarlink=true, verified|spreadsheet", () => {
+    const tail = db
+      .query(
+        "SELECT tail_number FROM united_fleet WHERE starlink_status='confirmed' AND tail_number IN (SELECT TailNumber FROM starlink_planes) LIMIT 1"
+      )
+      .get() as { tail_number: string } | null;
+    if (!tail) return;
+    const v = resolveTailVerdict(db, tail.tail_number);
+    expect(v.hasStarlink).toBe(true);
+    expect(["verified", "spreadsheet"]).toContain(v.confidence);
+  });
+
+  test("resolveTailVerdict: negative tail not in starlink_planes → hasStarlink=false, negative", () => {
+    const tail = db
+      .query(
+        "SELECT tail_number FROM united_fleet WHERE starlink_status='negative' AND tail_number NOT IN (SELECT TailNumber FROM starlink_planes) LIMIT 1"
+      )
+      .get() as { tail_number: string } | null;
+    if (!tail) return;
+    const v = resolveTailVerdict(db, tail.tail_number);
+    expect(v.hasStarlink).toBe(false);
+    expect(v.confidence).toBe("negative");
+  });
+
+  test("resolveTailVerdict: unknown tail → hasStarlink=null, unknown", () => {
+    const v = resolveTailVerdict(db, "NXXXXX");
+    expect(v.hasStarlink).toBeNull();
+    expect(v.confidence).toBe("unknown");
   });
 });
 
