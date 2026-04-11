@@ -25,7 +25,9 @@ import {
   getTotalCount,
   getUpcomingFlights,
 } from "../src/database/database";
+import { computePrecision } from "../src/scripts/precision-backtest";
 import { planItinerary, predictFlight, predictRoute } from "../src/scripts/starlink-predictor";
+import { computeSurfaceContradictions } from "../src/scripts/surface-sweep";
 import type { ApiResponse, Flight } from "../src/types";
 import {
   buildFlightNumberVariants,
@@ -570,6 +572,47 @@ describe("predictor", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 // Flight number normalization — regression lock
 // ─────────────────────────────────────────────────────────────────────────────
+
+describe("precision harness", () => {
+  test("computePrecision: returns bounded shape", () => {
+    const r = computePrecision(db, 30);
+    expect(r.windowDays).toBe(30);
+    expect(r.anchor).toBeGreaterThan(0);
+    for (const b of [r.yes, r.no]) {
+      expect(b.n).toBeGreaterThanOrEqual(0);
+      expect(b.correct).toBeLessThanOrEqual(b.n);
+      expect(b.precision).toBeGreaterThanOrEqual(0);
+      expect(b.precision).toBeLessThanOrEqual(1);
+      expect(b.swapMisses + b.staleMisses + b.unattributedMisses).toBe(b.n - b.correct);
+    }
+    expect(r.legacyPriorPct).toBeGreaterThanOrEqual(0);
+    expect(r.legacyPriorPct).toBeLessThanOrEqual(1);
+  });
+
+  test("computePrecision: smaller window has fewer or equal observations", () => {
+    const r30 = computePrecision(db, 30);
+    const r7 = computePrecision(db, 7);
+    expect(r7.yes.n + r7.no.n).toBeLessThanOrEqual(r30.yes.n + r30.no.n);
+  });
+});
+
+describe("surface sweep", () => {
+  test("computeSurfaceContradictions: returns bounded shape", () => {
+    const r = computeSurfaceContradictions(db);
+    expect(r.scanned).toBeGreaterThan(0);
+    expect(Array.isArray(r.contradictions)).toBe(true);
+    const vectorTotal = Object.values(r.byVector).reduce((a, b) => a + b, 0);
+    let sumVectors = 0;
+    for (const c of r.contradictions) {
+      expect(c.vectors.length).toBeGreaterThan(0);
+      sumVectors += c.vectors.length;
+      for (const v of [c.A, c.B, c.C, c.D]) {
+        expect(["starlink", "not-starlink", "unknown"]).toContain(v);
+      }
+    }
+    expect(sumVectors).toBe(vectorTotal);
+  });
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // WiFi consensus — single-check verifier overwrite regression lock

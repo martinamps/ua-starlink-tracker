@@ -6,8 +6,13 @@ node_modules
 .playwright-browsers/
 tmp/
 logs/
+plane-data.sqlite
 plane-data.production.sqlite*
 *.sqlite-shm
 *.sqlite-wal
 tsconfig.tsbuildinfo
 patches/
+
+# internal
+ops/
+CLAUDE.local.md

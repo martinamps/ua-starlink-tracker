@@ -123,8 +123,10 @@ import {
 } from "./src/database/database";
 import { startFleetDiscovery } from "./src/scripts/fleet-discovery";
 import { startFleetSync } from "./src/scripts/fleet-sync";
+import { computePrecision, emitPrecisionGauges } from "./src/scripts/precision-backtest";
 import { planItinerary, predictFlight } from "./src/scripts/starlink-predictor";
 import { startStarlinkVerifier } from "./src/scripts/starlink-verifier";
+import { computeSurfaceContradictions, emitSweepGauges } from "./src/scripts/surface-sweep";
 import { syncShipNumbers } from "./src/scripts/sync-ship-numbers";
 import type { ApiResponse, Flight } from "./src/types";
 import {
@@ -193,6 +195,26 @@ async function updateStarlinkData() {
         if (healed > 0) {
           info(`Consensus reconciliation healed ${healed} tails`);
           span.setTag("consensus_healed", healed);
+        }
+
+        const precision = computePrecision(db, 14);
+        emitPrecisionGauges(precision);
+        span.setTag("precision_yes_14d", precision.yes.precision);
+        span.setTag("precision_no_14d", precision.no.precision);
+        info(
+          `Firm-call precision (14d): YES=${(precision.yes.precision * 100).toFixed(1)}% n=${precision.yes.n} · NO=${(precision.no.precision * 100).toFixed(1)}% n=${precision.no.n}`
+        );
+
+        const sweep = computeSurfaceContradictions(db);
+        emitSweepGauges(sweep);
+        span.setTag("surface_contradictions", sweep.contradictions.length);
+        if (sweep.contradictions.length > 0) {
+          info(
+            `Surface contradictions: ${sweep.contradictions.length} tails — ${sweep.contradictions
+              .slice(0, 5)
+              .map((c) => c.tail)
+              .join(", ")}${sweep.contradictions.length > 5 ? "…" : ""}`
+          );
         }
 
         span.setTag("total_aircraft", totalAircraftCount);

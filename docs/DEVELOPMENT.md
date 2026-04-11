@@ -4,8 +4,11 @@
 
 ```bash
 bun install
+cp plane-data.sqlite.example plane-data.sqlite
 bun run dev    # Development server with hot reload
 ```
+
+The example database is a small sampled subset (≈50 aircraft) so the app boots and renders. Background jobs will populate it further over time, or point `DB_PATH` at your own snapshot.
 
 ## Environment Variables
 

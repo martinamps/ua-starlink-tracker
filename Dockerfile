@@ -32,7 +32,6 @@ COPY . .
 
 EXPOSE 3000
 
-# Coolify passes SOURCE_COMMIT automatically
 ARG SOURCE_COMMIT=unknown
 
 ENV NODE_ENV=production

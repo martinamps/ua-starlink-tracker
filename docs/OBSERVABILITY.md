@@ -35,22 +35,20 @@ docker run -e DD_TRACE_ENABLED=true ...
 The Dockerfile sets these automatically:
 - `DD_ENV=production`
 - `DD_SERVICE=ua-starlink-tracker`
-- `DD_VERSION=<git-hash>` (from Coolify's `SOURCE_COMMIT` build arg)
+- `DD_VERSION=<git-hash>` (from the `SOURCE_COMMIT` build arg)
 - `DD_TRACE_AGENT_HOSTNAME=host.docker.internal`
 
 **Agent Setup:** The container connects to the Datadog agent on the Docker host via `host.docker.internal`. Run one agent on the host machine - no need for a sidecar per container.
 
-### Coolify Setup
+### Building
 
-1. Enable `SOURCE_COMMIT` in your app settings (it's excluded from Docker builds by default to preserve cache)
-2. Add `DD_TRACE_ENABLED=true` to your environment variables
+Pass the commit hash as a build arg so `DD_VERSION` is tagged correctly:
 
-See [Coolify Environment Variables](https://coolify.io/docs/knowledge-base/environment-variables) for all available build args.
-
-**Manual builds:** If not using Coolify, pass the commit hash manually:
 ```bash
 docker build --build-arg SOURCE_COMMIT=$(git rev-parse --short HEAD) -t ua-starlink-tracker .
 ```
+
+Most container platforms can inject the git SHA as a build arg automatically; set `DD_TRACE_ENABLED=true` in the runtime environment to enable APM.
 
 ### Environment Variables
 
@@ -59,7 +57,7 @@ docker build --build-arg SOURCE_COMMIT=$(git rev-parse --short HEAD) -t ua-starl
 | `DD_TRACE_ENABLED` | `false` | **Set this to `true` to enable tracing** |
 | `DD_ENV` | `development` | Environment tag (set by Dockerfile in prod) |
 | `DD_SERVICE` | `ua-starlink-tracker` | Service name (set by Dockerfile) |
-| `DD_VERSION` | `unknown` | Version tag (set automatically from Coolify's `SOURCE_COMMIT`) |
+| `DD_VERSION` | `unknown` | Version tag (from `SOURCE_COMMIT` build arg) |
 | `DD_TRACE_AGENT_HOSTNAME` | `localhost` | Agent hostname (set by Dockerfile to `host.docker.internal`) |
 | `DD_TRACE_AGENT_PORT` | `8126` | APM trace agent port |
 | `DD_DOGSTATSD_PORT` | `8125` | DogStatsD metrics port |

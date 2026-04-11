@@ -16,6 +16,8 @@
     "install-browser": "PLAYWRIGHT_BROWSERS_PATH=./.playwright-browsers bunx playwright install chromium",
     "db-status": "bun run src/scripts/db-status.ts",
     "predict-backtest": "bun run src/scripts/starlink-predictor.ts --backtest",
+    "precision": "bun run src/scripts/precision-backtest.ts",
+    "surface-sweep": "bun run src/scripts/surface-sweep.ts",
     "reset-flights": "bun run src/scripts/reset-flight-checks.ts",
     "test": "bun test tests/",
     "test:setup": "cp plane-data.production.sqlite /tmp/ua-test.sqlite && sqlite3 /tmp/ua-test.sqlite 'PRAGMA journal_mode=DELETE; CREATE TABLE IF NOT EXISTS flight_routes (flight_number TEXT NOT NULL, origin TEXT NOT NULL, destination TEXT NOT NULL, duration_sec INTEGER, first_seen_at INTEGER NOT NULL, last_seen_at INTEGER NOT NULL, seen_count INTEGER DEFAULT 1, PRIMARY KEY (flight_number, origin, destination)); CREATE TABLE IF NOT EXISTS departure_log (id INTEGER PRIMARY KEY AUTOINCREMENT, tail_number TEXT NOT NULL, airport TEXT NOT NULL, departed_at INTEGER NOT NULL);' && sqlite3 /tmp/ua-test.sqlite 'ALTER TABLE starlink_verification_log ADD COLUMN tail_confirmed INTEGER; ALTER TABLE united_fleet ADD COLUMN ship_number TEXT;' 2>/dev/null; sqlite3 /tmp/ua-test.sqlite 'UPDATE starlink_verification_log SET tail_confirmed=1 WHERE error IS NULL AND tail_confirmed IS NULL;'",
