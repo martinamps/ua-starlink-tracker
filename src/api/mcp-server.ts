@@ -302,7 +302,8 @@ const TOOLS = [
 
 async function toolCheckFlight(
   db: Database,
-  args: { flight_number?: unknown; date?: unknown }
+  args: { flight_number?: unknown; date?: unknown },
+  airline?: string
 ): Promise<ToolResult> {
   const flightNumber = typeof args.flight_number === "string" ? args.flight_number.trim() : "";
   const date = typeof args.date === "string" ? args.date.trim() : "";
@@ -1051,11 +1052,11 @@ Probability and confidence are independent: 92% with 4 obs (medium) is a *less c
   return { content: [{ type: "text", text }] };
 }
 
-function toolGetFleetStats(db: Database): ToolResult {
-  const totalCount = getTotalCount(db);
-  const starlinkPlanes = getStarlinkPlanes(db);
-  const fleetStats = getFleetStats(db);
-  const lastUpdated = getLastUpdated(db);
+function toolGetFleetStats(db: Database, airline?: string): ToolResult {
+  const totalCount = getTotalCount(db, airline);
+  const starlinkPlanes = getStarlinkPlanes(db, airline);
+  const fleetStats = getFleetStats(db, airline);
+  const lastUpdated = getLastUpdated(db, airline);
 
   const text = `United Airlines Starlink Installation Progress (as of ${lastUpdated}):
 
@@ -1071,12 +1072,13 @@ United began installing Starlink on March 7, 2025. The service offers free WiFi 
 
 function toolListStarlinkAircraft(
   db: Database,
-  args: { fleet?: unknown; limit?: unknown }
+  args: { fleet?: unknown; limit?: unknown },
+  airline?: string
 ): ToolResult {
   const fleet = args.fleet === "express" || args.fleet === "mainline" ? args.fleet : undefined;
   const limit = typeof args.limit === "number" && args.limit > 0 ? Math.min(args.limit, 500) : 50;
 
-  let planes = getStarlinkPlanes(db);
+  let planes = getStarlinkPlanes(db, airline);
   if (fleet) {
     planes = planes.filter((p) => p.fleet === fleet);
   }
@@ -1105,7 +1107,8 @@ function toolListStarlinkAircraft(
 
 function toolSearchStarlinkFlights(
   db: Database,
-  args: { origin?: unknown; destination?: unknown; limit?: unknown }
+  args: { origin?: unknown; destination?: unknown; limit?: unknown },
+  airline?: string
 ): ToolResult {
   const origin = typeof args.origin === "string" ? args.origin.toUpperCase().trim() : undefined;
   const destination =
@@ -1125,8 +1128,8 @@ function toolSearchStarlinkFlights(
   }
 
   const now = Math.floor(Date.now() / 1000);
-  const starlinkTails = new Set(getStarlinkPlanes(db).map((p) => p.TailNumber));
-  const allFuture = getUpcomingFlights(db).filter(
+  const starlinkTails = new Set(getStarlinkPlanes(db, airline).map((p) => p.TailNumber));
+  const allFuture = getUpcomingFlights(db, undefined, airline).filter(
     (f) => f.departure_time > now && starlinkTails.has(f.tail_number)
   );
 
@@ -1187,7 +1190,8 @@ function rpcResult(id: string | number | null, result: unknown): JsonRpcSuccess 
 function handleInitialize(
   db: Database,
   id: string | number | null,
-  params: Record<string, unknown> | undefined
+  params: Record<string, unknown> | undefined,
+  airline?: string
 ): JsonRpcResponse {
   const clientVersion =
     typeof params?.protocolVersion === "string" ? params.protocolVersion : undefined;
@@ -1200,7 +1204,7 @@ function handleInitialize(
 
   // Include LIVE fleet stats in instructions so the agent has accurate priors
   // and doesn't hallucinate about mainline coverage (which is ~2%, not "decent").
-  const fleetStats = getFleetStats(db);
+  const fleetStats = getFleetStats(db, airline);
   const expressPct = fleetStats.express.percentage.toFixed(0);
   const mainlinePct = fleetStats.mainline.percentage.toFixed(1);
 
@@ -1236,7 +1240,8 @@ When a tool wraps content in <present_verbatim>...</present_verbatim>, copy that
 async function handleToolsCall(
   db: Database,
   id: string | number | null,
-  params: Record<string, unknown> | undefined
+  params: Record<string, unknown> | undefined,
+  airline?: string
 ): Promise<JsonRpcResponse> {
   const toolName = typeof params?.name === "string" ? params.name : undefined;
   const args = (params?.arguments as Record<string, unknown>) || {};
@@ -1248,7 +1253,7 @@ async function handleToolsCall(
   let result: ToolResult;
   switch (toolName) {
     case "check_flight":
-      result = await toolCheckFlight(db, args);
+      result = await toolCheckFlight(db, args, airline);
       break;
     case "predict_flight_starlink":
       result = await toolPredictFlightStarlink(db, args);
@@ -1260,13 +1265,13 @@ async function handleToolsCall(
       result = toolPlanStarlinkItinerary(db, args);
       break;
     case "get_fleet_stats":
-      result = toolGetFleetStats(db);
+      result = toolGetFleetStats(db, airline);
       break;
     case "list_starlink_aircraft":
-      result = toolListStarlinkAircraft(db, args);
+      result = toolListStarlinkAircraft(db, args, airline);
       break;
     case "search_starlink_flights":
-      result = toolSearchStarlinkFlights(db, args);
+      result = toolSearchStarlinkFlights(db, args, airline);
       break;
     default:
       return rpcError(id, -32602, `Unknown tool: ${toolName}`);
@@ -1275,13 +1280,17 @@ async function handleToolsCall(
   return rpcResult(id, result);
 }
 
-async function dispatch(db: Database, msg: JsonRpcRequest): Promise<JsonRpcResponse | null> {
+async function dispatch(
+  db: Database,
+  msg: JsonRpcRequest,
+  airline?: string
+): Promise<JsonRpcResponse | null> {
   const id = msg.id ?? null;
   const isNotification = msg.id === undefined;
 
   switch (msg.method) {
     case "initialize":
-      return handleInitialize(db, id, msg.params);
+      return handleInitialize(db, id, msg.params, airline);
     case "notifications/initialized":
       return null;
     case "ping":
@@ -1289,7 +1298,7 @@ async function dispatch(db: Database, msg: JsonRpcRequest): Promise<JsonRpcRespo
     case "tools/list":
       return rpcResult(id, { tools: TOOLS });
     case "tools/call":
-      return handleToolsCall(db, id, msg.params);
+      return handleToolsCall(db, id, msg.params, airline);
     default:
       if (isNotification) return null;
       return rpcError(id, -32601, `Method not found: ${msg.method}`);
@@ -1306,7 +1315,11 @@ const JSON_HEADERS = { "Content-Type": "application/json" };
  * Handle an incoming MCP HTTP request.
  * Mount this at a single path (e.g. /mcp) in your Bun.serve router.
  */
-export async function handleMcpRequest(req: Request, db: Database): Promise<Response> {
+export async function handleMcpRequest(
+  req: Request,
+  db: Database,
+  airline?: string
+): Promise<Response> {
   // GET = open SSE stream for server→client push. We're stateless, no push.
   // DELETE = terminate session. We're stateless, no sessions.
   if (req.method === "GET" || req.method === "DELETE") {
@@ -1348,7 +1361,7 @@ export async function handleMcpRequest(req: Request, db: Database): Promise<Resp
   // Dispatch
   let response: JsonRpcResponse | null;
   try {
-    response = await dispatch(db, msg);
+    response = await dispatch(db, msg, airline);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     info(`MCP handler error: ${message}`);

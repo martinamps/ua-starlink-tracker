@@ -401,7 +401,7 @@ const apiFleetDiscovery: Handler = ({ req, reader }) => {
 };
 
 const mcp: Handler = async (ctx) => {
-  const { req, db } = ctx;
+  const { req, db, reader } = ctx;
   const accept = req.headers.get("accept") || "";
   if (req.method === "GET" && accept.includes("text/html")) {
     return renderSubPage(ctx, McpPage, "/mcp", {
@@ -415,7 +415,7 @@ const mcp: Handler = async (ctx) => {
         "Paste one URL into Claude Desktop. Ask Claude about United Starlink flights, probabilities, and routing.",
     });
   }
-  return handleMcpRequest(req, db);
+  return handleMcpRequest(req, db, reader.scope === "ALL" ? undefined : reader.scope);
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

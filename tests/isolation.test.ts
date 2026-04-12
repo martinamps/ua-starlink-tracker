@@ -101,9 +101,17 @@ describe("UA host never leaks canaries", () => {
     });
   }
 
-  test("MCP list_starlink_aircraft", async () => {
+  test("MCP list_starlink_aircraft (limit=500)", async () => {
     const r = await app.dispatch(
-      mcpReq(UA, "tools/call", { name: "list_starlink_aircraft", arguments: {} })
+      mcpReq(UA, "tools/call", { name: "list_starlink_aircraft", arguments: { limit: 500 } })
+    );
+    const text = await r.text();
+    for (const c of CANARIES) expect(text).not.toContain(c);
+  });
+
+  test("MCP search_starlink_flights origin=HNL", async () => {
+    const r = await app.dispatch(
+      mcpReq(UA, "tools/call", { name: "search_starlink_flights", arguments: { origin: "HNL" } })
     );
     const text = await r.text();
     for (const c of CANARIES) expect(text).not.toContain(c);
