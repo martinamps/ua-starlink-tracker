@@ -12,8 +12,9 @@
 
 import { Database } from "bun:sqlite";
 import { AIRLINES } from "../airlines/registry";
-import { hawaiianTypeToStarlink } from "../api/alaska-status";
-import { setMeta } from "../database/database";
+import { type HawaiianWifi, hawaiianTypeToStarlink } from "../api/alaska-status";
+import { addDiscoveredStarlinkPlane, setMeta, upsertFleetAircraft } from "../database/database";
+import type { StarlinkStatus } from "../types";
 import { DB_PATH } from "../utils/constants";
 import { info } from "../utils/logger";
 import { scrapeFlightRadar24Fleet } from "./flightradar24-scraper";
@@ -21,8 +22,8 @@ import { scrapeFlightRadar24Fleet } from "./flightradar24-scraper";
 interface SeedRow {
   tail: string;
   aircraftType: string;
-  verdict: "Starlink" | "None" | "pending";
-  status: "confirmed" | "negative" | "unknown";
+  verdict: HawaiianWifi;
+  status: StarlinkStatus;
 }
 
 async function buildRoster(): Promise<SeedRow[]> {
@@ -68,33 +69,38 @@ function printTable(rows: SeedRow[]) {
 }
 
 function apply(db: Database, rows: SeedRow[]) {
-  const now = Math.floor(Date.now() / 1000);
   const HA_INSTALL_DATE = "2024-09-24";
-  const fleetUpsert = db.query(`
-    INSERT INTO united_fleet
-      (tail_number, aircraft_type, first_seen_source, first_seen_at, last_seen_at,
-       fleet, operated_by, starlink_status, verified_wifi, verified_at, airline)
-    VALUES (?, ?, 'ha_seed', ?, ?, 'mainline', 'Hawaiian Airlines', ?, ?, ?, 'HA')
-    ON CONFLICT(tail_number) DO UPDATE SET
-      aircraft_type = COALESCE(excluded.aircraft_type, aircraft_type),
-      last_seen_at = excluded.last_seen_at,
-      starlink_status = excluded.starlink_status,
-      verified_wifi = excluded.verified_wifi,
-      verified_at = excluded.verified_at,
-      airline = 'HA'
-  `);
-  const planeUpsert = db.query(`
-    INSERT OR IGNORE INTO starlink_planes
-      (aircraft, wifi, sheet_gid, sheet_type, DateFound, TailNumber, OperatedBy, fleet, verified_wifi, airline)
-    VALUES (?, 'Starlink', 'ha_seed', 'HA-mainline', ?, ?, 'Hawaiian Airlines', 'mainline', 'Starlink', 'HA')
-  `);
 
   const tx = db.transaction(() => {
     for (const r of rows) {
       const wifi = r.verdict === "Starlink" ? "Starlink" : r.verdict === "None" ? "None" : null;
-      fleetUpsert.run(r.tail, r.aircraftType, now, now, r.status, wifi, wifi ? now : null);
+      upsertFleetAircraft(
+        db,
+        r.tail,
+        r.aircraftType,
+        "ha_seed",
+        "mainline",
+        "Hawaiian Airlines",
+        "HA",
+        {
+          starlinkStatus: r.status,
+          verifiedWifi: wifi,
+        }
+      );
       if (r.verdict === "Starlink") {
-        planeUpsert.run(r.aircraftType, HA_INSTALL_DATE, r.tail);
+        addDiscoveredStarlinkPlane(
+          db,
+          r.tail,
+          r.aircraftType,
+          "Starlink",
+          "Hawaiian Airlines",
+          "mainline",
+          {
+            sheetGid: "ha_seed",
+            dateFound: HA_INSTALL_DATE,
+            airline: "HA",
+          }
+        );
       }
     }
   });

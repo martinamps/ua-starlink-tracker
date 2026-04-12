@@ -16,6 +16,7 @@
  *   status:          success | error | rate_limited | timeout | ...  (~7)
  */
 
+import { AIRLINES } from "../airlines/registry";
 import { tracer } from "./tracer";
 
 export type Tags = Record<string, string | number>;
@@ -99,20 +100,14 @@ export function normalizeFleet(raw: string | null | undefined): string {
   return "unknown";
 }
 
-const AIRLINE_TAG: Record<string, string> = {
-  UA: "united",
-  HA: "hawaiian",
-  AS: "alaska",
-  QR: "qatar",
-};
-
 /**
  * Canonical lowercase-name airline tag for metrics. Preserves Datadog history
  * (the global default has always been `airline:united`, not `airline:UA`).
+ * Reads from AirlineConfig.metricTag so the registry stays the single source.
  */
 export function normalizeAirlineTag(code: string | null | undefined): string {
   if (!code) return "unknown";
-  return AIRLINE_TAG[code.toUpperCase()] ?? code.toLowerCase();
+  return AIRLINES[code.toUpperCase()]?.metricTag ?? code.toLowerCase();
 }
 
 // ============ Metric Names ============

@@ -2,41 +2,6 @@ import React from "react";
 import { ModelPie, StatRing, computeModelBreakdown } from "../../components/atoms";
 import type { AirlineContent, HeroProps } from "./index";
 
-function TotalFleetRing({ pct, x, y }: { pct: number; x: number; y: number }) {
-  return (
-    <div className="bg-surface p-4 flex flex-col justify-center text-center">
-      <div className="text-[10px] font-mono text-muted uppercase tracking-wider mb-2">
-        Total Fleet
-      </div>
-      <div className="relative w-20 h-20 mx-auto mb-2">
-        <svg className="w-20 h-20 transform -rotate-90" role="img" aria-label="Combined progress">
-          <circle cx="40" cy="40" r="34" stroke="#243044" strokeWidth="6" fill="none" />
-          <circle
-            cx="40"
-            cy="40"
-            r="34"
-            stroke="#22c55e"
-            strokeWidth="6"
-            fill="none"
-            strokeDasharray={`${2 * Math.PI * 34}`}
-            strokeDashoffset={`${2 * Math.PI * 34 * (1 - pct / 100)}`}
-            className="transition-all duration-1000 ease-out"
-            strokeLinecap="round"
-            style={{ filter: "drop-shadow(0 0 6px rgba(34, 197, 94, 0.5))" }}
-          />
-        </svg>
-        <div className="absolute inset-0 flex items-center justify-center">
-          <span className="font-mono text-xl font-semibold text-green-400">{Math.round(pct)}%</span>
-        </div>
-      </div>
-      <div className="font-mono text-xs text-secondary">
-        <span className="text-green-400">{x}</span>
-        <span className="text-muted"> / {y}</span>
-      </div>
-    </div>
-  );
-}
-
 const UAHero = ({ stats, starlinkData }: HeroProps) => {
   const { fleetStats, starlinkCount: x, totalCount: y, percentage } = stats;
   const modelData = computeModelBreakdown(starlinkData);
@@ -54,7 +19,14 @@ const UAHero = ({ stats, starlinkData }: HeroProps) => {
         starlink={fleetStats?.express.starlink || 0}
         total={fleetStats?.express.total || 0}
       />
-      <TotalFleetRing pct={Number.parseFloat(percentage)} x={x} y={y} />
+      <StatRing
+        label="Total Fleet"
+        pct={Number.parseFloat(percentage)}
+        starlink={x}
+        total={y}
+        color="#22c55e"
+        variant="total"
+      />
       <ModelPie data={modelData} total={x} />
     </div>
   );

@@ -36,6 +36,7 @@ import type {
   FleetPageData,
   FleetStats,
   Flight,
+  PerAirlineStat,
 } from "../types";
 
 export type { Database };
@@ -45,7 +46,7 @@ export type Scope = AirlineCode | "ALL";
 export interface ScopedReader {
   readonly scope: Scope;
   getStarlinkPlanes(): Aircraft[];
-  getPerAirlineStats(): { code: string; name: string; starlink: number; total: number }[];
+  getPerAirlineStats(): PerAirlineStat[];
   getUpcomingFlights(tailNumber?: string): Flight[];
   getFleetStats(): FleetStats;
   getTotalCount(): number;
@@ -75,8 +76,13 @@ export interface RequestContext {
 
 const enabledCodes = (): readonly AirlineCode[] => enabledAirlines().map((a) => a.code);
 
-function aggregateAll<T>(fn: (code: AirlineCode) => T, reduce: (vals: T[]) => T): T {
-  return reduce(enabledCodes().map(fn));
+function perAirlineStat(db: Database, cfg: AirlineConfig): PerAirlineStat {
+  return {
+    code: cfg.code,
+    name: cfg.name,
+    starlink: getStarlinkPlanes(db, cfg.code).length,
+    total: getTotalCount(db, cfg.code),
+  };
 }
 
 function buildReader(db: Database, scope: Scope): ScopedReader {
@@ -87,29 +93,26 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     scope,
     getStarlinkPlanes: () => getStarlinkPlanes(db, a),
     getPerAirlineStats: () =>
-      enabledAirlines().map((cfg) => ({
-        code: cfg.code,
-        name: cfg.name,
-        starlink: getStarlinkPlanes(db, cfg.code).length,
-        total: getTotalCount(db, cfg.code),
-      })),
+      scope === "ALL"
+        ? enabledAirlines().map((cfg) => perAirlineStat(db, cfg))
+        : enabledAirlines()
+            .filter((cfg) => cfg.code === scope)
+            .map((cfg) => perAirlineStat(db, cfg)),
     getUpcomingFlights: (t) => getUpcomingFlights(db, t, a),
     // FleetStats shape is UA-subfleet-specific (express/mainline); hub aggregation deferred until
     // getSubfleetStats lands. Hub callers should not rely on this.
     getFleetStats: () => getFleetStats(db, scope === "ALL" ? "UA" : scope),
     getTotalCount: () =>
       scope === "ALL"
-        ? aggregateAll(
-            (c) => getTotalCount(db, c),
-            (vs) => vs.reduce((s, n) => s + n, 0)
-          )
+        ? enabledCodes().reduce((s, c) => s + getTotalCount(db, c), 0)
         : getTotalCount(db, scope),
     getLastUpdated: () =>
       scope === "ALL"
-        ? aggregateAll(
-            (c) => getLastUpdated(db, c),
-            (vs) => vs.filter(Boolean).sort().reverse()[0] ?? ""
-          )
+        ? (enabledCodes()
+            .map((c) => getLastUpdated(db, c))
+            .filter(Boolean)
+            .sort()
+            .at(-1) ?? "")
         : getLastUpdated(db, scope),
     getFlightsByNumberAndDate: (v, s, e) => getFlightsByNumberAndDate(db, v, s, e, a),
     getFleetPageData: () => getFleetPageData(db, a),

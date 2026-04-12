@@ -1,5 +1,7 @@
 import React from "react";
-import type { Aircraft } from "../types";
+import type { Aircraft, PerAirlineStat } from "../types";
+
+export type { PerAirlineStat };
 
 export const PIE_COLORS = ["#0ea5e9", "#22c55e", "#f59e0b", "#8b5cf6", "#ec4899", "#06b6d4"];
 
@@ -9,13 +11,16 @@ export function StatRing({
   starlink,
   total,
   color = "#0ea5e9",
+  variant = "default",
 }: {
   label: string;
   pct: number;
   starlink: number;
   total: number;
   color?: string;
+  variant?: "default" | "total";
 }) {
+  const isTotal = variant === "total";
   return (
     <div className="bg-surface p-4 flex flex-col justify-center text-center">
       <div className="text-[10px] font-mono text-muted uppercase tracking-wider mb-2">{label}</div>
@@ -32,15 +37,20 @@ export function StatRing({
             strokeDasharray={`${2 * Math.PI * 34}`}
             strokeDashoffset={`${2 * Math.PI * 34 * (1 - pct / 100)}`}
             className="transition-all duration-1000 ease-out"
+            strokeLinecap={isTotal ? "round" : "inherit"}
             style={{ filter: `drop-shadow(0 0 6px ${color}80)` }}
           />
         </svg>
         <div className="absolute inset-0 flex items-center justify-center">
-          <span className="font-mono text-xl font-semibold text-primary">{pct.toFixed(0)}%</span>
+          <span
+            className={`font-mono text-xl font-semibold ${isTotal ? "text-green-400" : "text-primary"}`}
+          >
+            {isTotal ? Math.round(pct) : pct.toFixed(0)}%
+          </span>
         </div>
       </div>
       <div className="font-mono text-xs text-secondary">
-        <span className="text-accent">{starlink}</span>
+        <span className={isTotal ? "text-green-400" : "text-accent"}>{starlink}</span>
         <span className="text-muted"> / {total}</span>
       </div>
     </div>
@@ -154,7 +164,11 @@ export function TypeBreakdownRow({
       <span className="text-muted font-mono">—</span>
     );
   const label =
-    status === "starlink" ? "Starlink" : status === "pending" ? "Planned" : note || "No WiFi";
+    status === "starlink"
+      ? "Starlink"
+      : status === "pending"
+        ? note || "Planned"
+        : note || "No WiFi";
   return (
     <div className="flex items-center justify-between py-3 px-4 border-b border-subtle last:border-0">
       <div className="flex items-center gap-3">
@@ -173,13 +187,6 @@ export function TypeBreakdownRow({
       </div>
     </div>
   );
-}
-
-export interface PerAirlineStat {
-  code: string;
-  name: string;
-  starlink: number;
-  total: number;
 }
 
 export function AirlineSummaryCard({ a }: { a: PerAirlineStat }) {

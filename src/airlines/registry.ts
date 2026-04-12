@@ -48,6 +48,8 @@ export interface AirlineConfig {
   minFleetSanity: number;
   /** Per-flight wifi verification source; null = none (type-map only). */
   verifierBackend?: "united" | "alaska-json" | null;
+  /** Canonical lowercase tag for Datadog `airline:` — preserves history (`united`, not `UA`). */
+  metricTag: string;
   brand: PageBrand;
 }
 
@@ -103,6 +105,7 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
       return "unknown";
     },
     fr24Slug: "united-airlines-ual",
+    metricTag: "united",
     minFleetSanity: 800,
     verifierBackend: "united",
     brand: {
@@ -134,6 +137,7 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
     carrierPrefixes: ["HAL", "HA"],
     subfleets: [{ key: "mainline", label: "Hawaiian Fleet", match: () => true }],
     fr24Slug: "ha-hal",
+    metricTag: "hawaiian",
     minFleetSanity: 30,
     verifierBackend: "alaska-json",
     brand: {
@@ -169,6 +173,7 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
     carrierPrefixes: ["ASA", "QXE", "AS", "QX"],
     subfleets: [{ key: "mainline", label: "Alaska Fleet", match: () => true }],
     fr24Slug: "as-asa",
+    metricTag: "alaska",
     minFleetSanity: 200,
     verifierBackend: "alaska-json",
     brand: {
@@ -201,6 +206,7 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
     carrierPrefixes: ["QTR", "QR"],
     subfleets: [{ key: "mainline", label: "Qatar Fleet", match: () => true }],
     fr24Slug: "qr-qtr",
+    metricTag: "qatar",
     minFleetSanity: 200,
     verifierBackend: null,
     brand: {

@@ -25,7 +25,13 @@ export interface Flight {
 export interface FleetStats {
   express: FleetMetrics;
   mainline: FleetMetrics;
-  [subfleet: string]: FleetMetrics;
+}
+
+export interface PerAirlineStat {
+  code: string;
+  name: string;
+  starlink: number;
+  total: number;
 }
 
 interface FleetMetrics {

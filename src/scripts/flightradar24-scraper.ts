@@ -6,6 +6,7 @@
 import type { Browser, Page } from "playwright";
 import { chromium } from "playwright-extra";
 import StealthPlugin from "puppeteer-extra-plugin-stealth";
+import { AIRLINES } from "../airlines/registry";
 
 chromium.use(StealthPlugin());
 
@@ -24,7 +25,9 @@ export interface FR24ScrapeResult {
 /**
  * Scrape United Airlines fleet from FlightRadar24
  */
-export async function scrapeFlightRadar24Fleet(slug = "ua-ual"): Promise<FR24ScrapeResult> {
+export async function scrapeFlightRadar24Fleet(
+  slug = AIRLINES.UA.fr24Slug as string
+): Promise<FR24ScrapeResult> {
   const result: FR24ScrapeResult = {
     success: false,
     aircraft: [],

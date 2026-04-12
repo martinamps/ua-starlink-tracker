@@ -1489,7 +1489,12 @@ export function upsertFleetAircraft(
   source: FleetSource,
   fleet = "unknown",
   operatedBy: string | null = null,
-  airline = "UA"
+  airline = "UA",
+  // Type-map seeds (e.g. Hawaiian) where wifi status is press-release-grade per
+  // aircraft type and the verifier loop does not apply. Applied on insert only —
+  // re-runs do NOT clobber an existing status (avoids the documented
+  // starlink_status tug-of-war between writers).
+  seedVerdict?: { starlinkStatus: StarlinkStatus; verifiedWifi: string | null }
 ): void {
   const now = Math.floor(Date.now() / 1000);
   // Empty/placeholder type strings must not clobber a real value via COALESCE.
@@ -1517,14 +1522,43 @@ export function upsertFleetAircraft(
       calculateDiscoveryPriority(safeType, existing.starlink_status, tailNumber),
       tailNumber
     );
+    if (seedVerdict && existing.starlink_status === "unknown") {
+      db.query(`
+        UPDATE united_fleet
+        SET starlink_status = ?, verified_wifi = ?, verified_at = ?, next_check_after = ?
+        WHERE tail_number = ?
+      `).run(
+        seedVerdict.starlinkStatus,
+        seedVerdict.verifiedWifi,
+        seedVerdict.verifiedWifi ? now : null,
+        now + 365 * 24 * 3600,
+        tailNumber
+      );
+    }
   } else {
-    const priority = calculateDiscoveryPriority(safeType, "unknown", tailNumber);
+    const status = seedVerdict?.starlinkStatus ?? "unknown";
+    const priority = calculateDiscoveryPriority(safeType, status, tailNumber);
     db.query(`
       INSERT INTO united_fleet (
         tail_number, aircraft_type, first_seen_source, first_seen_at, last_seen_at,
-        fleet, operated_by, starlink_status, discovery_priority, airline
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'unknown', ?, ?)
-    `).run(tailNumber, safeType, source, now, now, fleet, operatedBy, priority, airline);
+        fleet, operated_by, starlink_status, verified_wifi, verified_at,
+        next_check_after, discovery_priority, airline
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      tailNumber,
+      safeType,
+      source,
+      now,
+      now,
+      fleet,
+      operatedBy,
+      status,
+      seedVerdict?.verifiedWifi ?? null,
+      seedVerdict?.verifiedWifi ? now : null,
+      seedVerdict ? now + 365 * 24 * 3600 : 0,
+      priority,
+      airline
+    );
   }
 }
 
@@ -1731,27 +1765,31 @@ export function addDiscoveredStarlinkPlane(
   aircraftType: string | null,
   wifiProvider: string,
   operatedBy: string | null = null,
-  fleet: "express" | "mainline" = "express"
+  fleet = "express",
+  opts?: { sheetGid?: string; dateFound?: string; airline?: string }
 ): void {
   // Check if already in starlink_planes
   const existing = db.query("SELECT id FROM starlink_planes WHERE TailNumber = ?").get(tailNumber);
   if (existing) return;
 
-  const now = new Date().toISOString().split("T")[0]; // Today's date
+  const today = new Date().toISOString().split("T")[0];
 
   db.query(`
     INSERT INTO starlink_planes (
       aircraft, wifi, sheet_gid, sheet_type, DateFound, TailNumber, OperatedBy, fleet,
-      verified_wifi, verified_at
-    ) VALUES (?, 'StrLnk', 'discovery', 'discovery', ?, ?, ?, ?, ?, ?)
+      verified_wifi, verified_at, airline
+    ) VALUES (?, 'StrLnk', ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     aircraftType || null,
-    now,
+    opts?.sheetGid ?? "discovery",
+    opts?.sheetGid ?? "discovery",
+    opts?.dateFound ?? today,
     tailNumber,
     operatedBy || "United Airlines",
     fleet,
     wifiProvider,
-    Math.floor(Date.now() / 1000)
+    Math.floor(Date.now() / 1000),
+    opts?.airline ?? "UA"
   );
 }
 

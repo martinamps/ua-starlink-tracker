@@ -15,7 +15,7 @@
  * shipped here so the client and the seed-hawaiian type map land together.
  */
 
-import { COUNTERS, DISTRIBUTIONS, metrics } from "../observability";
+import { COUNTERS, DISTRIBUTIONS, metrics, normalizeAirlineTag } from "../observability";
 import { error as logError, warn } from "../utils/logger";
 
 export interface AlaskaFlightStatus {
@@ -55,10 +55,12 @@ function hydrate(data: unknown[], idx: number): unknown {
 
 export async function fetchAlaskaFlightStatus(
   flightNumber: number | string,
-  dateISO: string
+  dateISO: string,
+  airline: string
 ): Promise<AlaskaFlightStatus | null> {
   const url = `https://www.alaskaair.com/status/${flightNumber}/${dateISO}/__data.json`;
   const start = Date.now();
+  const airlineTag = normalizeAirlineTag(airline);
   let status = "error";
   try {
     const res = await fetch(url, {
@@ -104,12 +106,9 @@ export async function fetchAlaskaFlightStatus(
     return null;
   } finally {
     const duration = Date.now() - start;
-    metrics.increment(COUNTERS.VENDOR_REQUEST, { vendor: "alaska", type: "status", status });
-    metrics.distribution(DISTRIBUTIONS.VENDOR_DURATION_MS, duration, {
-      vendor: "alaska",
-      type: "status",
-      status,
-    });
+    const tags = { vendor: "alaska", type: "status", status, airline: airlineTag };
+    metrics.increment(COUNTERS.VENDOR_REQUEST, tags);
+    metrics.distribution(DISTRIBUTIONS.VENDOR_DURATION_MS, duration, tags);
   }
 }
 
