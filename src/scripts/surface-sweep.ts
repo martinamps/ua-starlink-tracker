@@ -55,7 +55,7 @@ function diff(a: Verdict, b: Verdict): boolean {
   return a !== "unknown" && b !== "unknown" && a !== b;
 }
 
-export function computeSurfaceContradictions(db: Database): SweepResult {
+export function computeSurfaceContradictions(db: Database, airline = "UA"): SweepResult {
   const rows = db
     .query(`
       SELECT
@@ -65,8 +65,9 @@ export function computeSurfaceContradictions(db: Database): SweepResult {
         uf.starlink_status AS uf_status
       FROM united_fleet uf
       LEFT JOIN starlink_planes sp ON sp.TailNumber = uf.tail_number
+      WHERE uf.airline = ?
     `)
-    .all() as {
+    .all(airline) as {
     tail: string;
     sp_wifi: string | null;
     uf_wifi: string | null;

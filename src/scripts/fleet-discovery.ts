@@ -49,7 +49,7 @@ function emitFleetSnapshot(db: Database) {
   const breakdown = db
     .query(
       `SELECT fleet, starlink_status, COUNT(*) as cnt
-       FROM united_fleet GROUP BY fleet, starlink_status`
+       FROM united_fleet WHERE airline = 'UA' GROUP BY fleet, starlink_status`
     )
     .all() as Array<{ fleet: string; starlink_status: string; cnt: number }>;
   for (const row of breakdown) {
@@ -520,7 +520,7 @@ export function startFleetDiscovery(mode: "discovery" | "maintenance" = "mainten
           if (now - lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
             const db = initializeDatabase();
             try {
-              const fleetStats = getFleetDiscoveryStats(db);
+              const fleetStats = getFleetDiscoveryStats(db, "UA");
               info(
                 `Heartbeat: ${runCount} runs, Total: ${fleetStats.total_fleet} fleet, ` +
                   `${fleetStats.verified_starlink} Starlink, ${fleetStats.verified_non_starlink} non-Starlink, ` +
@@ -654,7 +654,7 @@ if (import.meta.main) {
   } else if (stats) {
     // Just show stats
     const db = initializeDatabase();
-    const fleetStats = getFleetDiscoveryStats(db);
+    const fleetStats = getFleetDiscoveryStats(db, "UA");
     db.close();
 
     console.log("\n=== Fleet Discovery Stats ===");

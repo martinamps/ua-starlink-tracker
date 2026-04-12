@@ -104,7 +104,7 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
       if (/737|757|767|777|787|A3[12]\d|A350/i.test(t)) return "mainline";
       return "unknown";
     },
-    fr24Slug: "united-airlines-ual",
+    fr24Slug: "ua-ual",
     metricTag: "united",
     minFleetSanity: 800,
     verifierBackend: "united",
