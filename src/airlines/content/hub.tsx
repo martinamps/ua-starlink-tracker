@@ -53,31 +53,86 @@ export const content: AirlineContent = {
 
   faq: [
     {
-      title: "About this tracker",
+      title: "Which airlines have Starlink",
       items: [
         {
           q: "Which airlines have Starlink WiFi?",
           a: ({ starlinkCount }) => (
             <p>
-              United Airlines is mid-rollout across its mainline and Express fleets. Hawaiian
-              Airlines completed its Airbus rollout in 2024. Alaska Airlines has announced a
-              fleet-wide rollout for 2025–2027. We currently track{" "}
-              <span className="text-accent">{starlinkCount}</span> Starlink-equipped aircraft across
-              these carriers.
+              <strong>United Airlines</strong> is mid-rollout — most United Express regional jets
+              have it, with mainline 737s and widebodies being equipped through 2026.{" "}
+              <strong>Hawaiian Airlines</strong> finished in September 2024: every A330 and A321neo
+              has Starlink. <strong>Alaska Airlines</strong> is rolling out across its 737 fleet
+              through 2027. <strong>Qatar Airways</strong> is equipping its 777 and A350 fleet. We
+              currently track <span className="text-accent">{starlinkCount}</span> Starlink-equipped
+              aircraft.
             </p>
           ),
-          ld: "United Airlines is mid-rollout across its mainline and Express fleets. Hawaiian Airlines completed its Airbus rollout in 2024. Alaska Airlines has announced a fleet-wide rollout for 2025–2027.",
+          ld: "United Airlines is mid-rollout across mainline and Express fleets. Hawaiian Airlines completed its rollout in September 2024 — every A330 and A321neo has Starlink. Alaska Airlines is rolling out through 2027. Qatar Airways is equipping its 777 and A350 fleet.",
         },
+        {
+          q: "Hawaiian says rollout is complete — why does it show 69%?",
+          a: () => (
+            <p>
+              Hawaiian completed Starlink on <strong>100% of its Airbus fleet</strong> (24 A330s +
+              18 A321neos = 42 aircraft). The remaining 19 are Boeing 717s flying short interisland
+              hops — those were never in scope for any WiFi provider and are being retired. So 42 of
+              42 in-scope aircraft are done; the 69% figure just includes the 717s in the
+              denominator.
+            </p>
+          ),
+          ld: "Hawaiian completed Starlink on 100% of its Airbus fleet (42 aircraft). The remaining 19 Boeing 717s fly short interisland routes and were never in scope for WiFi.",
+        },
+        {
+          q: "Does Delta have Starlink?",
+          a: () => (
+            <p>
+              No. Delta announced a partnership with <strong>Amazon's Project Kuiper</strong> (a
+              Starlink competitor) for in-flight WiFi starting around 2028. Delta is not currently
+              tracked here.
+            </p>
+          ),
+          ld: "No. Delta has partnered with Amazon's Project Kuiper, not Starlink, with service expected around 2028.",
+        },
+        {
+          q: "Is Starlink WiFi free on these airlines?",
+          a: () => (
+            <p>
+              Yes — United, Hawaiian, Alaska, and Qatar all offer Starlink free to every passenger,
+              gate-to-gate, with no login wall or loyalty requirement. This is a deliberate contrast
+              with the paid legacy WiFi most carriers still use.
+            </p>
+          ),
+          ld: "Yes. United, Hawaiian, Alaska, and Qatar all offer Starlink WiFi free to every passenger, gate-to-gate.",
+        },
+      ],
+    },
+    {
+      title: "About this tracker",
+      items: [
         {
           q: "How is this data collected?",
           a: () => (
             <p>
               Fleet rosters and flight schedules come from public aviation data. Starlink status is
-              verified per-tail against each airline's own systems where available, and against
-              public rollout announcements where the install is type-complete.
+              verified per-tail against each airline's own flight-status systems where available
+              (United, Alaska), and against official rollout announcements where the install is
+              type-complete (Hawaiian). Data refreshes hourly.
             </p>
           ),
-          ld: "Fleet rosters and flight schedules come from public aviation data. Starlink status is verified per-tail against each airline's own systems where available.",
+          ld: "Fleet rosters and flight schedules come from public aviation data. Starlink status is verified per-tail against each airline's own systems where available, and against official announcements where the install is type-complete.",
+        },
+        {
+          q: "How accurate is this?",
+          a: () => (
+            <p>
+              For United we measure precision continuously against united.com — currently above 96%
+              on firm yes/no calls. Hawaiian is type-deterministic (if it's an Airbus, it has
+              Starlink), so accuracy is effectively 100%. Aircraft swaps close to departure are the
+              main source of uncertainty on any airline.
+            </p>
+          ),
+          ld: "United precision is measured continuously against united.com (currently above 96%). Hawaiian is type-deterministic, so accuracy is effectively 100%. Aircraft swaps close to departure are the main uncertainty.",
         },
       ],
     },

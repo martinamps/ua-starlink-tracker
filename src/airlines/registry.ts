@@ -111,14 +111,14 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
     brand: {
       title: "United Airlines Starlink Tracker",
       tagline: "Tracking United Airlines aircraft with Starlink WiFi",
-      siteTitle: "United Starlink Tracker — Which Flights Have Free Starlink WiFi?",
+      siteTitle: "United Starlink Tracker — Does My United Flight Have Starlink WiFi?",
       description:
-        "Track which United Airlines flights have free Starlink WiFi. Live status for every Starlink-equipped aircraft, installation progress, and upcoming flight schedules.",
-      ogTitle: "United Airlines Starlink Tracker",
+        "Check whether your United Airlines flight has free Starlink WiFi. Per-aircraft status verified against united.com, live installation progress across mainline and Express fleets, and upcoming flight schedules for every Starlink-equipped tail.",
+      ogTitle: "Does my United flight have Starlink? — United Starlink Tracker",
       ogDescription:
-        "Live statistics showing United Airlines Starlink WiFi installation progress across mainline and express fleets.",
+        "Check any United flight for free Starlink WiFi. Per-tail status verified against united.com, live rollout progress, and which routes to book for fast in-flight internet.",
       keywords:
-        "which united planes have starlink, united starlink status, United Airlines Starlink WiFi, united starlink tracker, united starlink rollout, E175 starlink, CRJ-550 starlink, united mainline starlink, united express starlink, check united flight starlink",
+        "does my united flight have starlink, united starlink wifi, which united planes have starlink, united starlink tracker, united express starlink, E175 starlink, CRJ-550 starlink, united 737 starlink, check united flight wifi",
       accentColor: "#0ea5e9",
       accentColorDim: "#0284c7",
       faviconPath: "/favicon.ico",
@@ -143,14 +143,14 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
     brand: {
       title: "Hawaiian Airlines Starlink Tracker",
       tagline: "Tracking Hawaiian Airlines aircraft with Starlink WiFi",
-      siteTitle: "Hawaiian Starlink Tracker — Which Flights Have Free Starlink WiFi?",
+      siteTitle: "Hawaiian Airlines Starlink — Every A330 and A321neo Has Free WiFi",
       description:
-        "Track which Hawaiian Airlines flights have free Starlink WiFi. Live status for every Starlink-equipped aircraft and upcoming flight schedules.",
-      ogTitle: "Hawaiian Airlines Starlink Tracker",
+        "Hawaiian Airlines completed its Starlink rollout in September 2024. Every Airbus A330 and A321neo has free, gate-to-gate Starlink WiFi; the 717 interisland fleet does not have WiFi. See which aircraft is on your flight.",
+      ogTitle: "Hawaiian Airlines Starlink — Rollout Complete",
       ogDescription:
-        "Live statistics showing Hawaiian Airlines Starlink WiFi installation progress across the fleet.",
+        "Every Hawaiian Airlines A330 and A321neo has free gate-to-gate Starlink WiFi — the first major U.S. carrier to finish a fleet-wide install. 717 interisland flights do not have WiFi.",
       keywords:
-        "hawaiian airlines starlink, hawaiian starlink tracker, hawaiian wifi, A330 starlink, hawaiian flight wifi, check hawaiian flight starlink",
+        "hawaiian airlines starlink, hawaiian airlines wifi, does hawaiian have wifi, hawaiian a330 starlink, hawaiian a321neo wifi, hawaiian 717 wifi, hawaiian interisland wifi, free wifi hawaiian airlines",
       accentColor: "#413691",
       accentColorDim: "#6b5fb3",
       faviconPath: "/static/ha/favicon.ico",
@@ -238,15 +238,15 @@ export const HUB_HOSTS = ["airlinestarlinktracker.com", "www.airlinestarlinktrac
 
 const HUB_BRAND: PageBrand = {
   title: "Airline Starlink Tracker",
-  tagline: "Tracking major airlines' rollout of Starlink WiFi",
-  siteTitle: "Airline Starlink Tracker | United, Delta & All Airlines WiFi Rollout",
+  tagline: "Which airlines and flights have Starlink WiFi — by tail number",
+  siteTitle: "Airline Starlink Tracker — Which Flights Have Starlink WiFi?",
   description:
-    "Track the rollout of SpaceX's Starlink WiFi on major airlines. See live statistics on United Airlines, Delta and more as they equip their fleets with high-speed satellite internet.",
-  ogTitle: "Airline Starlink Tracker - United, Delta & More",
+    "Per-aircraft Starlink WiFi status across United, Hawaiian, and Alaska Airlines. Check whether your flight has fast, free in-flight internet, see each airline's rollout progress, and find which routes to book to stay connected.",
+  ogTitle: "Which flights have Starlink? — Airline Starlink Tracker",
   ogDescription:
-    "Live statistics tracking SpaceX's Starlink WiFi rollout across major airlines like United and Delta.",
+    "Per-aircraft Starlink status across United, Hawaiian, and Alaska. Check your flight, compare airline rollouts, and find routes with fast free in-flight WiFi.",
   keywords:
-    "Airlines, Starlink, WiFi, Internet, SpaceX, Aircraft, United, Delta, In-flight WiFi, Satellite Internet",
+    "which airlines have starlink, starlink wifi airlines, does my flight have starlink, in-flight starlink wifi, united starlink, hawaiian starlink, alaska airlines starlink, starlink airline tracker, free airplane wifi",
   accentColor: "#0ea5e9",
   accentColorDim: "#0284c7",
   faviconPath: "/favicon.ico",
