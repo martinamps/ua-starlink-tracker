@@ -103,6 +103,8 @@ if (JOBS_ENABLED) {
   info("Checking for new planes...");
   checkNewPlanes().catch((err) => logError("Error checking new planes on startup", err));
 
+  // updateStarlinkData (Google Sheets scrape) is UA-only — no other airline has
+  // a community sheet. updateDatabase() is airline-scoped so HA rows survive.
   updateStarlinkData();
   setInterval(
     () => {
@@ -113,10 +115,14 @@ if (JOBS_ENABLED) {
   );
 
   startFlightUpdater();
+  // Verifier + discovery are UA-only (verifierBackend === 'united' Playwright path).
+  // HA is type-deterministic; AS uses alaska-json (Phase 2 next slice).
   startStarlinkVerifier();
-  startFleetSync();
   startFleetDiscovery("maintenance");
+  // Fleet sync iterates enabledAirlines() internally.
+  startFleetSync();
 
+  // Ship-number resolution is UA-specific (United's ship→tail Google Sheet).
   setTimeout(
     () => {
       syncShipNumbers().catch((e) => logError("Ship number sync failed", e));

@@ -356,7 +356,8 @@ export function updateDatabase(
   db: Database,
   totalAircraftCount: number,
   starlinkAircraft: Partial<Aircraft>[],
-  fleetStats: FleetStats
+  fleetStats: FleetStats,
+  airline = "UA"
 ) {
   db.transaction(() => {
     // Get existing data before clearing the table
@@ -373,9 +374,9 @@ export function updateDatabase(
 
     const existingPlanes = db
       .query(
-        "SELECT TailNumber, DateFound, aircraft, last_flight_check, last_check_successful, consecutive_failures, verified_wifi, verified_at FROM starlink_planes"
+        "SELECT TailNumber, DateFound, aircraft, last_flight_check, last_check_successful, consecutive_failures, verified_wifi, verified_at FROM starlink_planes WHERE airline = ?"
       )
-      .all() as {
+      .all(airline) as {
       TailNumber: string;
       DateFound: string;
       aircraft: string | null;
@@ -413,30 +414,41 @@ export function updateDatabase(
     const fleetAircraftTypes = new Map<string, string>();
     for (const row of db
       .query(
-        "SELECT tail_number, aircraft_type FROM united_fleet WHERE aircraft_type IS NOT NULL AND aircraft_type <> ''"
+        "SELECT tail_number, aircraft_type FROM united_fleet WHERE aircraft_type IS NOT NULL AND aircraft_type <> '' AND airline = ?"
       )
-      .all() as Array<{ tail_number: string; aircraft_type: string }>) {
+      .all(airline) as Array<{ tail_number: string; aircraft_type: string }>) {
       fleetAircraftTypes.set(row.tail_number, row.aircraft_type);
     }
 
     // Update meta data
     // Only delete spreadsheet planes, preserve discovered ones (sheet_gid = 'discovery')
-    db.query("DELETE FROM starlink_planes WHERE sheet_gid != 'discovery'").run();
-    setMeta(db, "totalAircraftCount", totalAircraftCount);
-    setMeta(db, "lastUpdated", new Date().toISOString());
+    db.query("DELETE FROM starlink_planes WHERE sheet_gid != 'discovery' AND airline = ?").run(
+      airline
+    );
+    setMeta(db, "totalAircraftCount", totalAircraftCount, airline);
+    setMeta(db, "lastUpdated", new Date().toISOString(), airline);
 
     // Store fleet statistics
     for (const [fleetType, stats] of Object.entries(fleetStats)) {
       for (const [metric, value] of Object.entries(stats)) {
         const key = `${fleetType}${metric.charAt(0).toUpperCase() + metric.slice(1)}`;
-        setMeta(db, key, metric === "percentage" ? (value as number).toFixed(2) : String(value));
+        setMeta(
+          db,
+          key,
+          metric === "percentage" ? (value as number).toFixed(2) : String(value),
+          airline
+        );
       }
     }
 
     // Get discovered planes so we don't duplicate them
     const discoveredTails = new Set(
       (
-        db.query("SELECT TailNumber FROM starlink_planes WHERE sheet_gid = 'discovery'").all() as {
+        db
+          .query(
+            "SELECT TailNumber FROM starlink_planes WHERE sheet_gid = 'discovery' AND airline = ?"
+          )
+          .all(airline) as {
           TailNumber: string;
         }[]
       ).map((r) => r.TailNumber)
@@ -444,8 +456,8 @@ export function updateDatabase(
 
     // Insert aircraft data
     const insertStmt = db.prepare(`
-      INSERT INTO starlink_planes (aircraft, wifi, sheet_gid, sheet_type, DateFound, TailNumber, OperatedBy, fleet, last_flight_check, last_check_successful, consecutive_failures, verified_wifi, verified_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO starlink_planes (aircraft, wifi, sheet_gid, sheet_type, DateFound, TailNumber, OperatedBy, fleet, last_flight_check, last_check_successful, consecutive_failures, verified_wifi, verified_at, airline)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     // Sheet now lists a plane that discovery found first: promote the row with
@@ -453,7 +465,7 @@ export function updateDatabase(
     const updateDiscoveredStmt = db.prepare(`
       UPDATE starlink_planes
       SET aircraft = ?, OperatedBy = ?, fleet = ?, sheet_gid = ?, sheet_type = ?, wifi = ?
-      WHERE TailNumber = ? AND sheet_gid = 'discovery'
+      WHERE TailNumber = ? AND sheet_gid = 'discovery' AND airline = ?
     `);
 
     for (const aircraft of starlinkAircraft) {
@@ -476,7 +488,8 @@ export function updateDatabase(
           aircraft.sheet_gid ?? "",
           aircraft.sheet_type ?? "",
           aircraft.WiFi ?? "",
-          tailNumber
+          tailNumber,
+          airline
         );
         continue;
       }
@@ -513,14 +526,15 @@ export function updateDatabase(
         flightCheckData.last_check_successful,
         flightCheckData.consecutive_failures,
         verificationData.verified_wifi,
-        verificationData.verified_at
+        verificationData.verified_at,
+        airline
       );
     }
 
     // Purge discovery false-positives that have since verified as not-Starlink
     db.query(
-      "DELETE FROM starlink_planes WHERE sheet_gid = 'discovery' AND verified_wifi IS NOT NULL AND verified_wifi != 'Starlink'"
-    ).run();
+      "DELETE FROM starlink_planes WHERE sheet_gid = 'discovery' AND verified_wifi IS NOT NULL AND verified_wifi != 'Starlink' AND airline = ?"
+    ).run(airline);
   })();
 }
 
@@ -1450,7 +1464,8 @@ export function upsertFleetAircraft(
   aircraftType: string | null,
   source: FleetSource,
   fleet: "express" | "mainline" | "unknown" = "unknown",
-  operatedBy: string | null = null
+  operatedBy: string | null = null,
+  airline = "UA"
 ): void {
   const now = Math.floor(Date.now() / 1000);
   // Empty/placeholder type strings must not clobber a real value via COALESCE.
@@ -1483,22 +1498,22 @@ export function upsertFleetAircraft(
     db.query(`
       INSERT INTO united_fleet (
         tail_number, aircraft_type, first_seen_source, first_seen_at, last_seen_at,
-        fleet, operated_by, starlink_status, discovery_priority
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'unknown', ?)
-    `).run(tailNumber, safeType, source, now, now, fleet, operatedBy, priority);
+        fleet, operated_by, starlink_status, discovery_priority, airline
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'unknown', ?, ?)
+    `).run(tailNumber, safeType, source, now, now, fleet, operatedBy, priority, airline);
   }
 }
 
 /**
  * Get next planes to verify based on priority and scheduling
  */
-export function getNextPlanesToVerify(db: Database, limit = 10): FleetAircraft[] {
+export function getNextPlanesToVerify(db: Database, limit = 10, airline = "UA"): FleetAircraft[] {
   const now = Math.floor(Date.now() / 1000);
 
   return db
     .query(`
     SELECT * FROM united_fleet
-    WHERE next_check_after <= ?
+    WHERE next_check_after <= ? AND airline = ?
     ORDER BY
       CASE starlink_status
         WHEN 'unknown' THEN 0
@@ -1509,7 +1524,7 @@ export function getNextPlanesToVerify(db: Database, limit = 10): FleetAircraft[]
       last_seen_at DESC
     LIMIT ?
   `)
-    .all(now, limit) as FleetAircraft[];
+    .all(now, airline, limit) as FleetAircraft[];
 }
 
 /**
@@ -1599,6 +1614,7 @@ export function syncSpreadsheetToFleet(db: Database): number {
     .query(`
     SELECT TailNumber, aircraft, OperatedBy, fleet, verified_wifi
     FROM starlink_planes
+    WHERE airline = 'UA'
   `)
     .all() as Array<{
     TailNumber: string;

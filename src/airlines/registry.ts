@@ -119,7 +119,7 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
   HA: {
     code: "HA",
     name: "Hawaiian Airlines",
-    enabled: false,
+    enabled: true,
     hosts: ["hawaiianstarlinktracker.com", "www.hawaiianstarlinktracker.com"],
     canonicalHost: "hawaiianstarlinktracker.com",
     iata: "HA",

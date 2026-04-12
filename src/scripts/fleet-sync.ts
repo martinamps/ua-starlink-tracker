@@ -3,6 +3,7 @@
  * Syncs United Airlines fleet from FlightRadar24 and spreadsheet to united_fleet table
  */
 
+import { AIRLINES, type AirlineConfig, enabledAirlines } from "../airlines/registry";
 import {
   initializeDatabase,
   syncSpreadsheetToFleet,
@@ -28,9 +29,10 @@ function determineFleetType(aircraftType: string): "express" | "mainline" | "unk
 }
 
 /**
- * Sync fleet from FlightRadar24 to united_fleet table
+ * Sync fleet from FlightRadar24 to united_fleet table for one airline.
  */
-export async function syncFleetFromFR24(): Promise<{
+export async function syncFleetFromFR24(cfg: AirlineConfig = AIRLINES.UA): Promise<{
+  airline: string;
   success: boolean;
   total: number;
   new: number;
@@ -38,7 +40,9 @@ export async function syncFleetFromFR24(): Promise<{
   error?: string;
 }> {
   return withSpan("fleet_sync.fr24", async (span) => {
+    span.setTag("airline", cfg.code);
     const result = {
+      airline: cfg.code,
       success: false,
       total: 0,
       new: 0,
@@ -46,42 +50,44 @@ export async function syncFleetFromFR24(): Promise<{
       error: undefined as string | undefined,
     };
 
-    try {
-      info("Starting FR24 fleet sync...");
+    if (!cfg.fr24Slug) {
+      result.error = `${cfg.code}: no fr24Slug configured`;
+      return result;
+    }
 
-      // Scrape FR24
-      const scrapeResult = await scrapeFlightRadar24Fleet();
+    try {
+      info(`Starting FR24 fleet sync for ${cfg.code} (${cfg.fr24Slug})...`);
+
+      const scrapeResult = await scrapeFlightRadar24Fleet(cfg.fr24Slug);
 
       if (!scrapeResult.success) {
         result.error = scrapeResult.error || "FR24 scrape failed";
-        logError("FR24 scrape failed", result.error);
+        logError(`FR24 scrape failed (${cfg.code})`, result.error);
         span.setTag("error", true);
         return result;
       }
 
-      // Sanity check: United has 900+ aircraft, so anything below 100 is suspicious
-      const MIN_EXPECTED_AIRCRAFT = 100;
-      if (scrapeResult.aircraft.length < MIN_EXPECTED_AIRCRAFT) {
-        result.error = `Suspiciously low aircraft count: ${scrapeResult.aircraft.length} (expected ${MIN_EXPECTED_AIRCRAFT}+)`;
-        logError("FR24 sync aborted", result.error);
+      if (scrapeResult.aircraft.length < cfg.minFleetSanity) {
+        result.error = `Suspiciously low aircraft count: ${scrapeResult.aircraft.length} (expected ${cfg.minFleetSanity}+)`;
+        logError(`FR24 sync aborted (${cfg.code})`, result.error);
         span.setTag("error", true);
         return result;
       }
 
-      info(`FR24 returned ${scrapeResult.aircraft.length} aircraft`);
+      info(`FR24 returned ${scrapeResult.aircraft.length} aircraft for ${cfg.code}`);
       span.setTag("aircraft.count", scrapeResult.aircraft.length);
 
       const db = initializeDatabase();
 
       try {
-        // Get existing tail numbers to track new vs updated
         const existingTails = new Set(
-          (db.query("SELECT tail_number FROM united_fleet").all() as { tail_number: string }[]).map(
-            (r) => r.tail_number
-          )
+          (
+            db.query("SELECT tail_number FROM united_fleet WHERE airline = ?").all(cfg.code) as {
+              tail_number: string;
+            }[]
+          ).map((r) => r.tail_number)
         );
 
-        // Upsert each aircraft
         for (const aircraft of scrapeResult.aircraft) {
           const isNew = !existingTails.has(aircraft.registration);
 
@@ -90,12 +96,14 @@ export async function syncFleetFromFR24(): Promise<{
             aircraft.registration,
             aircraft.aircraftType,
             "fr24",
-            determineFleetType(aircraft.aircraftType)
+            determineFleetType(aircraft.aircraftType),
+            cfg.name,
+            cfg.code
           );
 
           if (isNew) {
             result.new++;
-            metrics.increment(COUNTERS.PLANES_DISCOVERED, { source: "fr24" });
+            metrics.increment(COUNTERS.PLANES_DISCOVERED, { source: "fr24", airline: cfg.code });
           } else {
             result.updated++;
           }
@@ -106,15 +114,15 @@ export async function syncFleetFromFR24(): Promise<{
 
         span.setTag("planes.new", result.new);
         span.setTag("planes.updated", result.updated);
-        metrics.increment(COUNTERS.SCRAPER_SYNC, { source: "fr24" });
+        metrics.increment(COUNTERS.SCRAPER_SYNC, { source: "fr24", airline: cfg.code });
 
-        info(`FR24 sync complete: ${result.new} new, ${result.updated} updated`);
+        info(`FR24 sync complete (${cfg.code}): ${result.new} new, ${result.updated} updated`);
       } finally {
         db.close();
       }
     } catch (err) {
       result.error = err instanceof Error ? err.message : String(err);
-      logError("FR24 sync error", result.error);
+      logError(`FR24 sync error (${cfg.code})`, result.error);
       span.setTag("error", true);
     }
 
@@ -153,22 +161,29 @@ export async function syncFromSpreadsheet(): Promise<{
 }
 
 /**
- * Full fleet sync: FR24 + spreadsheet
+ * Full fleet sync: FR24 (per enabled airline) + spreadsheet (UA-only)
  */
 export async function syncFullFleet(): Promise<{
-  fr24: { success: boolean; total: number; new: number; updated: number; error?: string };
+  fr24: Array<{
+    airline: string;
+    success: boolean;
+    total: number;
+    new: number;
+    updated: number;
+    error?: string;
+  }>;
   spreadsheet: { success: boolean; synced: number; error?: string };
 }> {
-  // Sync from FR24 first (gets all aircraft)
-  const fr24Result = await syncFleetFromFR24();
+  const fr24: Awaited<ReturnType<typeof syncFleetFromFR24>>[] = [];
+  for (const cfg of enabledAirlines()) {
+    if (!cfg.fr24Slug) continue;
+    fr24.push(await syncFleetFromFR24(cfg));
+  }
 
-  // Then sync from spreadsheet (marks known Starlink planes)
+  // Spreadsheet sync remains UA-only — no other airline has a community sheet.
   const spreadsheetResult = await syncFromSpreadsheet();
 
-  return {
-    fr24: fr24Result,
-    spreadsheet: spreadsheetResult,
-  };
+  return { fr24, spreadsheet: spreadsheetResult };
 }
 
 /**
@@ -189,16 +204,17 @@ export function startFleetSync() {
           info("Starting scheduled FR24 fleet sync...");
           const result = await syncFullFleet();
 
-          span.setTag("fr24.success", result.fr24.success ? 1 : 0);
-          span.setTag("fr24.total", result.fr24.total);
-          span.setTag("fr24.new", result.fr24.new);
-
-          if (result.fr24.success) {
-            info(
-              `Scheduled fleet sync complete: ${result.fr24.total} aircraft (${result.fr24.new} new, ${result.fr24.updated} updated)`
-            );
-          } else {
-            logError("Scheduled FR24 sync failed", result.fr24.error);
+          for (const r of result.fr24) {
+            span.setTag(`fr24.${r.airline}.success`, r.success ? 1 : 0);
+            span.setTag(`fr24.${r.airline}.total`, r.total);
+            span.setTag(`fr24.${r.airline}.new`, r.new);
+            if (r.success) {
+              info(
+                `Scheduled fleet sync (${r.airline}): ${r.total} aircraft (${r.new} new, ${r.updated} updated)`
+              );
+            } else {
+              logError(`Scheduled FR24 sync failed (${r.airline})`, r.error);
+            }
           }
 
           if (result.spreadsheet.success) {
@@ -264,13 +280,14 @@ if (import.meta.main) {
     syncFullFleet()
       .then((result) => {
         console.log("\n=== Full Fleet Sync Results ===");
-        console.log("\nFR24:");
-        console.log(`  Success: ${result.fr24.success}`);
-        console.log(`  Total: ${result.fr24.total}`);
-        console.log(`  New: ${result.fr24.new}`);
-        console.log(`  Updated: ${result.fr24.updated}`);
-        if (result.fr24.error) console.log(`  Error: ${result.fr24.error}`);
-
+        for (const r of result.fr24) {
+          console.log(`\nFR24 (${r.airline}):`);
+          console.log(`  Success: ${r.success}`);
+          console.log(`  Total: ${r.total}`);
+          console.log(`  New: ${r.new}`);
+          console.log(`  Updated: ${r.updated}`);
+          if (r.error) console.log(`  Error: ${r.error}`);
+        }
         console.log("\nSpreadsheet:");
         console.log(`  Success: ${result.spreadsheet.success}`);
         console.log(`  Synced: ${result.spreadsheet.synced}`);

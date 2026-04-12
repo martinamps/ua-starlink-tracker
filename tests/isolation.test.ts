@@ -9,13 +9,18 @@
 
 import { Database } from "bun:sqlite";
 import { beforeAll, describe, expect, test } from "bun:test";
+import { copyFileSync } from "node:fs";
+import { updateDatabase } from "../src/database/database";
 import { createApp } from "../src/server/app";
+import type { FleetStats } from "../src/types";
 
 const TEST_DB = "/tmp/ua-test.sqlite";
 const UA = "unitedstarlinktracker.com";
+const HA_HOST = "hawaiianstarlinktracker.com";
 const HUB = "airlinestatustracker.com";
 const EVIL = "evil.example.com";
 const CANARIES = ["N999HA", "HA9999", "N644AS", "AS118", "A7-TST", "QR9999"];
+const REAL_HA_TAILS = ["N380HA", "N382HA", "N389HA", "N202HA", "N215HA"];
 
 let app: ReturnType<typeof createApp>;
 let db: Database;
@@ -145,6 +150,90 @@ describe("UA host never leaks canaries", () => {
     expect(d.n_observations).toBe(0);
     expect(text).not.toContain("N999HA");
     expect(text).not.toContain("A7-TST");
+  });
+});
+
+describe("real HA fleet — UA host never leaks, HA host shows", () => {
+  test("/api/data on UA host contains zero real HA tails", async () => {
+    const { text } = await bodyOf("/api/data", UA);
+    for (const t of REAL_HA_TAILS) expect(text).not.toContain(t);
+  });
+
+  test("MCP list_starlink_aircraft limit=500 on UA host has zero real HA tails", async () => {
+    const r = await app.dispatch(
+      mcpReq(UA, "tools/call", { name: "list_starlink_aircraft", arguments: { limit: 500 } })
+    );
+    const text = await r.text();
+    for (const t of REAL_HA_TAILS) expect(text).not.toContain(t);
+  });
+
+  test("/api/data on HA host contains real HA tails and zero UA tails", async () => {
+    const { status, text } = await bodyOf("/api/data", HA_HOST);
+    expect(status).toBe(200);
+    for (const t of REAL_HA_TAILS) expect(text).toContain(t);
+    const j = JSON.parse(text);
+    const haPlanes = j.starlinkPlanes as Array<{ TailNumber: string; OperatedBy: string }>;
+    expect(haPlanes.length).toBeGreaterThanOrEqual(REAL_HA_TAILS.length);
+    for (const p of haPlanes) {
+      expect(p.OperatedBy).not.toMatch(/United/i);
+    }
+  });
+
+  test("/fleet on HA host renders without UA leak", async () => {
+    const { status, text } = await bodyOf("/fleet", HA_HOST);
+    expect(status).toBe(200);
+    expect(text).toContain("N380HA");
+  });
+});
+
+describe("write-path safety — UA scrape cannot wipe HA rows", () => {
+  test("updateDatabase(..., 'UA') leaves HA starlink_planes untouched", () => {
+    const tmp = "/tmp/ua-writepath.sqlite";
+    copyFileSync(TEST_DB, tmp);
+    const wdb = new Database(tmp);
+    const haBefore = (
+      wdb.query("SELECT COUNT(*) n FROM starlink_planes WHERE airline='HA'").get() as { n: number }
+    ).n;
+    expect(haBefore).toBeGreaterThan(0);
+    const uaBefore = (
+      wdb.query("SELECT COUNT(*) n FROM starlink_planes WHERE airline='UA'").get() as { n: number }
+    ).n;
+
+    const fakeStats: FleetStats = {
+      express: { total: 50, starlink: 10, percentage: 20 },
+      mainline: { total: 50, starlink: 0, percentage: 0 },
+    };
+    updateDatabase(
+      wdb,
+      100,
+      [
+        {
+          TailNumber: "N00000",
+          Aircraft: "Embraer ERJ-175",
+          WiFi: "Starlink",
+          OperatedBy: "Test Express",
+          fleet: "express",
+          sheet_gid: "test",
+          sheet_type: "test",
+          DateFound: "2026-04-12",
+        },
+      ],
+      fakeStats,
+      "UA"
+    );
+
+    const haAfter = (
+      wdb.query("SELECT COUNT(*) n FROM starlink_planes WHERE airline='HA'").get() as { n: number }
+    ).n;
+    const uaAfter = (
+      wdb.query("SELECT COUNT(*) n FROM starlink_planes WHERE airline='UA'").get() as { n: number }
+    ).n;
+    wdb.close();
+
+    expect(haAfter).toBe(haBefore);
+    // UA scrape replaced spreadsheet rows with the single fake (+ any discovery rows)
+    expect(uaAfter).toBeLessThan(uaBefore);
+    expect(uaAfter).toBeGreaterThan(0);
   });
 });
 

@@ -29,6 +29,33 @@ INSERT OR IGNORE INTO upcoming_flights (tail_number, flight_number, departure_ai
   VALUES ('N999HA', 'HA9999', 'HNL', 'LAX', 1774200000, 1774220000, 1774190000, 'HA'),
          ('N644AS', 'AS118',  'SEA', 'SAN', 1774200000, 1774215000, 1774190000, 'AS'),
          ('A7-TST', 'QR9999', 'DOH', 'LHR', 1774200000, 1774230000, 1774190000, 'QR');
+
+-- Real HA fleet sample (subset of seed-hawaiian output) — hermetic stand-in for
+-- the live FR24 scrape so isolation tests exercise real tails without network.
+INSERT OR IGNORE INTO united_fleet (tail_number, aircraft_type, fleet, operated_by, starlink_status, verified_wifi, verified_at, first_seen_source, first_seen_at, last_seen_at, airline) VALUES
+  ('N380HA','Airbus A330-243','mainline','Hawaiian Airlines','confirmed','Starlink',1727136000,'ha_seed',1727136000,1774190000,'HA'),
+  ('N382HA','Airbus A330-243','mainline','Hawaiian Airlines','confirmed','Starlink',1727136000,'ha_seed',1727136000,1774190000,'HA'),
+  ('N383HA','Airbus A330-243','mainline','Hawaiian Airlines','confirmed','Starlink',1727136000,'ha_seed',1727136000,1774190000,'HA'),
+  ('N385HA','Airbus A330-243','mainline','Hawaiian Airlines','confirmed','Starlink',1727136000,'ha_seed',1727136000,1774190000,'HA'),
+  ('N389HA','Airbus A330-243','mainline','Hawaiian Airlines','confirmed','Starlink',1727136000,'ha_seed',1727136000,1774190000,'HA'),
+  ('N393HA','Airbus A330-243','mainline','Hawaiian Airlines','confirmed','Starlink',1727136000,'ha_seed',1727136000,1774190000,'HA'),
+  ('N202HA','Airbus A321-271N','mainline','Hawaiian Airlines','confirmed','Starlink',1727136000,'ha_seed',1727136000,1774190000,'HA'),
+  ('N205HA','Airbus A321-271N','mainline','Hawaiian Airlines','confirmed','Starlink',1727136000,'ha_seed',1727136000,1774190000,'HA'),
+  ('N215HA','Airbus A321-271N','mainline','Hawaiian Airlines','confirmed','Starlink',1727136000,'ha_seed',1727136000,1774190000,'HA'),
+  ('N475HA','Boeing 717-22A','mainline','Hawaiian Airlines','negative','None',1727136000,'ha_seed',1727136000,1774190000,'HA'),
+  ('N488HA','Boeing 717-22A','mainline','Hawaiian Airlines','negative','None',1727136000,'ha_seed',1727136000,1774190000,'HA'),
+  ('N490HA','Boeing 717-22A','mainline','Hawaiian Airlines','negative','None',1727136000,'ha_seed',1727136000,1774190000,'HA');
+
+INSERT OR IGNORE INTO starlink_planes (aircraft, wifi, sheet_gid, sheet_type, DateFound, TailNumber, OperatedBy, fleet, verified_wifi, airline) VALUES
+  ('Airbus A330-243','Starlink','ha_seed','HA-mainline','2024-09-24','N380HA','Hawaiian Airlines','mainline','Starlink','HA'),
+  ('Airbus A330-243','Starlink','ha_seed','HA-mainline','2024-09-24','N382HA','Hawaiian Airlines','mainline','Starlink','HA'),
+  ('Airbus A330-243','Starlink','ha_seed','HA-mainline','2024-09-24','N383HA','Hawaiian Airlines','mainline','Starlink','HA'),
+  ('Airbus A330-243','Starlink','ha_seed','HA-mainline','2024-09-24','N385HA','Hawaiian Airlines','mainline','Starlink','HA'),
+  ('Airbus A330-243','Starlink','ha_seed','HA-mainline','2024-09-24','N389HA','Hawaiian Airlines','mainline','Starlink','HA'),
+  ('Airbus A330-243','Starlink','ha_seed','HA-mainline','2024-09-24','N393HA','Hawaiian Airlines','mainline','Starlink','HA'),
+  ('Airbus A321-271N','Starlink','ha_seed','HA-mainline','2024-09-24','N202HA','Hawaiian Airlines','mainline','Starlink','HA'),
+  ('Airbus A321-271N','Starlink','ha_seed','HA-mainline','2024-09-24','N205HA','Hawaiian Airlines','mainline','Starlink','HA'),
+  ('Airbus A321-271N','Starlink','ha_seed','HA-mainline','2024-09-24','N215HA','Hawaiian Airlines','mainline','Starlink','HA');
 SQL
 
 echo "test DB ready at $DB"
