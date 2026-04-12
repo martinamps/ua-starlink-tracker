@@ -239,19 +239,21 @@ async function updateStarlinkData() {
   );
 }
 
-// fill gaps we may have missed
-info("Checking for new planes...");
-checkNewPlanes().catch((err) => logError("Error checking new planes on startup", err));
+const JOBS_ENABLED = process.env.DISABLE_JOBS !== "1";
 
-// Initialize data and schedule updates
-updateStarlinkData();
-setInterval(
-  () => {
-    info("Running scheduled update...");
-    updateStarlinkData();
-  },
-  60 * 60 * 1000
-); // 1 hour
+if (JOBS_ENABLED) {
+  info("Checking for new planes...");
+  checkNewPlanes().catch((err) => logError("Error checking new planes on startup", err));
+
+  updateStarlinkData();
+  setInterval(
+    () => {
+      info("Running scheduled update...");
+      updateStarlinkData();
+    },
+    60 * 60 * 1000
+  );
+}
 
 // HTML template rendering
 function renderHtml(template: string, variables: Record<string, string>): string {
@@ -1133,23 +1135,24 @@ Bun.serve({
   },
 });
 
-// Start background jobs
-startFlightUpdater();
-startStarlinkVerifier();
-startFleetSync();
-startFleetDiscovery("maintenance");
+if (JOBS_ENABLED) {
+  startFlightUpdater();
+  startStarlinkVerifier();
+  startFleetSync();
+  startFleetDiscovery("maintenance");
 
-// Ship number sync — the mainline ship→tail map rarely changes, daily is plenty.
-// First run delayed 10min so it doesn't compete with startup verification.
-setTimeout(
-  () => {
-    syncShipNumbers().catch((e) => logError("Ship number sync failed", e));
-    setInterval(
-      () => syncShipNumbers().catch((e) => logError("Ship number sync failed", e)),
-      24 * 3600 * 1000
-    );
-  },
-  10 * 60 * 1000
-);
+  setTimeout(
+    () => {
+      syncShipNumbers().catch((e) => logError("Ship number sync failed", e));
+      setInterval(
+        () => syncShipNumbers().catch((e) => logError("Ship number sync failed", e)),
+        24 * 3600 * 1000
+      );
+    },
+    10 * 60 * 1000
+  );
+} else {
+  info("Background jobs disabled (DISABLE_JOBS=1)");
+}
 
 info(`Server running at http://localhost:${PORT}`);

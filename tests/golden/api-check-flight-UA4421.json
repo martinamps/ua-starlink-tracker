@@ -1,0 +1,20 @@
+{
+  "hasStarlink": true,
+  "confidence": "verified",
+  "flights": [
+    {
+      "tail_number": "N580GJ",
+      "aircraft_type": "Unknown",
+      "flight_number": "G74421",
+      "ua_flight_number": "UA4421",
+      "departure_airport": "SGF",
+      "arrival_airport": "ORD",
+      "departure_time": 1774183500,
+      "arrival_time": 1774190400,
+      "departure_time_formatted": "2026-03-22T12:45:00.000Z",
+      "arrival_time_formatted": "2026-03-22T14:40:00.000Z",
+      "operated_by": "United Airlines",
+      "fleet_type": "express"
+    }
+  ]
+}

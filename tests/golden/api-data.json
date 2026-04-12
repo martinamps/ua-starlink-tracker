@@ -1,0 +1,3401 @@
+{
+  "totalCount": 1788,
+  "starlinkPlanes": [
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2026-03-21",
+      "TailNumber": "N792YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "Boeing 737-800",
+      "WiFi": "StrLnk",
+      "sheet_gid": "discovery",
+      "sheet_type": "discovery",
+      "DateFound": "2026-03-18",
+      "TailNumber": "N14235",
+      "OperatedBy": "United Airlines",
+      "fleet": "mainline"
+    },
+    {
+      "Aircraft": "Boeing 737-824",
+      "WiFi": "Starlink",
+      "sheet_gid": "4",
+      "sheet_type": "",
+      "DateFound": "2026-03-18",
+      "TailNumber": "N14237",
+      "OperatedBy": "United Airlines",
+      "fleet": "mainline"
+    },
+    {
+      "Aircraft": "Boeing 737-800",
+      "WiFi": "StrLnk",
+      "sheet_gid": "discovery",
+      "sheet_type": "discovery",
+      "DateFound": "2026-03-16",
+      "TailNumber": "N13227",
+      "OperatedBy": "United Airlines",
+      "fleet": "mainline"
+    },
+    {
+      "Aircraft": "Boeing 737-800",
+      "WiFi": "StrLnk",
+      "sheet_gid": "discovery",
+      "sheet_type": "discovery",
+      "DateFound": "2026-03-12",
+      "TailNumber": "N35236",
+      "OperatedBy": "United Airlines",
+      "fleet": "mainline"
+    },
+    {
+      "Aircraft": "Boeing 737-700",
+      "WiFi": "StrLnk",
+      "sheet_gid": "discovery",
+      "sheet_type": "discovery",
+      "DateFound": "2026-03-06",
+      "TailNumber": "N14731",
+      "OperatedBy": "United Airlines",
+      "fleet": "mainline"
+    },
+    {
+      "Aircraft": "Airbus A321-271NX",
+      "WiFi": "Starlink",
+      "sheet_gid": "948315825",
+      "sheet_type": "",
+      "DateFound": "2026-03-05",
+      "TailNumber": "N24542",
+      "OperatedBy": "United Airlines",
+      "fleet": "mainline"
+    },
+    {
+      "Aircraft": "Boeing 737-824",
+      "WiFi": "Starlink",
+      "sheet_gid": "4",
+      "sheet_type": "",
+      "DateFound": "2026-03-05",
+      "TailNumber": "N27246",
+      "OperatedBy": "United Airlines",
+      "fleet": "mainline"
+    },
+    {
+      "Aircraft": "Boeing 737-824",
+      "WiFi": "Starlink",
+      "sheet_gid": "4",
+      "sheet_type": "",
+      "DateFound": "2026-03-05",
+      "TailNumber": "N14250",
+      "OperatedBy": "United Airlines",
+      "fleet": "mainline"
+    },
+    {
+      "Aircraft": "Boeing 737-824",
+      "WiFi": "Starlink",
+      "sheet_gid": "4",
+      "sheet_type": "",
+      "DateFound": "2026-03-05",
+      "TailNumber": "N77258",
+      "OperatedBy": "United Airlines",
+      "fleet": "mainline"
+    },
+    {
+      "Aircraft": "Boeing 737-800",
+      "WiFi": "Starlink",
+      "sheet_gid": "4",
+      "sheet_type": "",
+      "DateFound": "2026-03-05",
+      "TailNumber": "N33294",
+      "OperatedBy": "United Airlines",
+      "fleet": "mainline"
+    },
+    {
+      "Aircraft": "Boeing 737-824",
+      "WiFi": "Starlink",
+      "sheet_gid": "4",
+      "sheet_type": "",
+      "DateFound": "2026-03-05",
+      "TailNumber": "N77296",
+      "OperatedBy": "United Airlines",
+      "fleet": "mainline"
+    },
+    {
+      "Aircraft": "Boeing 737-924(ER)",
+      "WiFi": "Starlink",
+      "sheet_gid": "5",
+      "sheet_type": "",
+      "DateFound": "2026-03-05",
+      "TailNumber": "N53442",
+      "OperatedBy": "United Airlines",
+      "fleet": "mainline"
+    },
+    {
+      "Aircraft": "Boeing 737-800",
+      "WiFi": "Starlink",
+      "sheet_gid": "4",
+      "sheet_type": "",
+      "DateFound": "2026-03-04",
+      "TailNumber": "N17233",
+      "OperatedBy": "United Airlines",
+      "fleet": "mainline"
+    },
+    {
+      "Aircraft": "Mitsubishi CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "discovery",
+      "sheet_type": "discovery",
+      "DateFound": "2026-03-03",
+      "TailNumber": "N574GJ",
+      "OperatedBy": "United Airlines",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "Boeing 737-800",
+      "WiFi": "Starlink",
+      "sheet_gid": "4",
+      "sheet_type": "",
+      "DateFound": "2026-03-02",
+      "TailNumber": "N37252",
+      "OperatedBy": "United Airlines",
+      "fleet": "mainline"
+    },
+    {
+      "Aircraft": "Boeing 737-800",
+      "WiFi": "StrLnk",
+      "sheet_gid": "discovery",
+      "sheet_type": "discovery",
+      "DateFound": "2026-02-28",
+      "TailNumber": "N17229",
+      "OperatedBy": "United Airlines",
+      "fleet": "mainline"
+    },
+    {
+      "Aircraft": "Boeing 737-800",
+      "WiFi": "StrLnk",
+      "sheet_gid": "discovery",
+      "sheet_type": "discovery",
+      "DateFound": "2026-02-28",
+      "TailNumber": "N14228",
+      "OperatedBy": "United Airlines",
+      "fleet": "mainline"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2026-02-28",
+      "TailNumber": "N516GJ",
+      "OperatedBy": "GoJet dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "Mitsubishi CRJ-701ER",
+      "WiFi": "StrLnk",
+      "sheet_gid": "discovery",
+      "sheet_type": "discovery",
+      "DateFound": "2026-02-25",
+      "TailNumber": "N796SK",
+      "OperatedBy": "United Airlines",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "Boeing 737-800",
+      "WiFi": "Starlink",
+      "sheet_gid": "4",
+      "sheet_type": "",
+      "DateFound": "2026-02-20",
+      "TailNumber": "N26226",
+      "OperatedBy": "United Airlines",
+      "fleet": "mainline"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2026-02-18",
+      "TailNumber": "N716EV",
+      "OperatedBy": "SkyWest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "Boeing 737-800",
+      "WiFi": "Starlink",
+      "sheet_gid": "4",
+      "sheet_type": "",
+      "DateFound": "2026-02-16",
+      "TailNumber": "N33209",
+      "OperatedBy": "United Airlines",
+      "fleet": "mainline"
+    },
+    {
+      "Aircraft": "Boeing 737-800",
+      "WiFi": "Starlink",
+      "sheet_gid": "4",
+      "sheet_type": "",
+      "DateFound": "2026-02-16",
+      "TailNumber": "N73251",
+      "OperatedBy": "United Airlines",
+      "fleet": "mainline"
+    },
+    {
+      "Aircraft": "Boeing 737-900",
+      "WiFi": "Starlink",
+      "sheet_gid": "5",
+      "sheet_type": "",
+      "DateFound": "2026-02-16",
+      "TailNumber": "N75436",
+      "OperatedBy": "United Airlines",
+      "fleet": "mainline"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2026-02-14",
+      "TailNumber": "N753EV",
+      "OperatedBy": "SkyWest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2026-02-12",
+      "TailNumber": "N552GJ",
+      "OperatedBy": "GoJet dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2026-02-11",
+      "TailNumber": "N569GJ",
+      "OperatedBy": "GoJet dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "Boeing 737-800",
+      "WiFi": "Starlink",
+      "sheet_gid": "4",
+      "sheet_type": "",
+      "DateFound": "2026-02-11",
+      "TailNumber": "N37287",
+      "OperatedBy": "United Airlines",
+      "fleet": "mainline"
+    },
+    {
+      "Aircraft": "Boeing 737-800",
+      "WiFi": "Starlink",
+      "sheet_gid": "4",
+      "sheet_type": "",
+      "DateFound": "2026-02-11",
+      "TailNumber": "N33289",
+      "OperatedBy": "United Airlines",
+      "fleet": "mainline"
+    },
+    {
+      "Aircraft": "Mitsubishi CRJ-701ER",
+      "WiFi": "StrLnk",
+      "sheet_gid": "discovery",
+      "sheet_type": "discovery",
+      "DateFound": "2026-02-10",
+      "TailNumber": "N789SK",
+      "OperatedBy": "United Airlines",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2026-02-08",
+      "TailNumber": "N739YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "Boeing 737-824",
+      "WiFi": "Starlink",
+      "sheet_gid": "4",
+      "sheet_type": "",
+      "DateFound": "2026-02-08",
+      "TailNumber": "N87527",
+      "OperatedBy": "United Airlines",
+      "fleet": "mainline"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2026-02-07",
+      "TailNumber": "N556GJ",
+      "OperatedBy": "GoJet dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "Embraer E-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "discovery",
+      "sheet_type": "discovery",
+      "DateFound": "2026-02-05",
+      "TailNumber": "N87302",
+      "OperatedBy": "United Airlines",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2026-02-05",
+      "TailNumber": "N128SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2026-02-05",
+      "TailNumber": "N209SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "Embraer E-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "discovery",
+      "sheet_type": "discovery",
+      "DateFound": "2026-02-04",
+      "TailNumber": "N133SY",
+      "OperatedBy": "United Airlines",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2026-02-01",
+      "TailNumber": "N543GJ",
+      "OperatedBy": "GoJet dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2026-02-01",
+      "TailNumber": "N565GJ",
+      "OperatedBy": "GoJet dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2026-02-01",
+      "TailNumber": "N579GJ",
+      "OperatedBy": "GoJet dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "Embraer E-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "discovery",
+      "sheet_type": "discovery",
+      "DateFound": "2026-01-31",
+      "TailNumber": "N88310",
+      "OperatedBy": "United Airlines",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "Embraer E-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "discovery",
+      "sheet_type": "discovery",
+      "DateFound": "2026-01-30",
+      "TailNumber": "N758YX",
+      "OperatedBy": "United Airlines",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "Mitsubishi CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "discovery",
+      "sheet_type": "discovery",
+      "DateFound": "2026-01-30",
+      "TailNumber": "N571GJ",
+      "OperatedBy": "SkyWest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2026-01-27",
+      "TailNumber": "N558GJ",
+      "OperatedBy": "SkyWest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2026-01-21",
+      "TailNumber": "N80343",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2026-01-21",
+      "TailNumber": "N755YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "Embraer E-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "discovery",
+      "sheet_type": "discovery",
+      "DateFound": "2026-01-18",
+      "TailNumber": "N624UX",
+      "OperatedBy": "United Airlines",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2026-01-18",
+      "TailNumber": "N85340",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "Embraer E-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "discovery",
+      "sheet_type": "discovery",
+      "DateFound": "2026-01-16",
+      "TailNumber": "N136SY",
+      "OperatedBy": "United Airlines",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "Embraer E-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "discovery",
+      "sheet_type": "discovery",
+      "DateFound": "2026-01-16",
+      "TailNumber": "N756YX",
+      "OperatedBy": "United Airlines",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2026-01-15",
+      "TailNumber": "N732YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2026-01-15",
+      "TailNumber": "N559GJ",
+      "OperatedBy": "GoJet dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2026-01-11",
+      "TailNumber": "N85356",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2026-01-11",
+      "TailNumber": "N731YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2026-01-11",
+      "TailNumber": "N637SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2026-01-11",
+      "TailNumber": "N519GJ",
+      "OperatedBy": "GoJet dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2026-01-11",
+      "TailNumber": "N566GJ",
+      "OperatedBy": "GoJet dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2026-01-10",
+      "TailNumber": "N548GJ",
+      "OperatedBy": "GoJet dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2026-01-10",
+      "TailNumber": "N568GJ",
+      "OperatedBy": "GoJet dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "Embraer E-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "discovery",
+      "sheet_type": "discovery",
+      "DateFound": "2026-01-09",
+      "TailNumber": "N86344",
+      "OperatedBy": "United Airlines",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2026-01-09",
+      "TailNumber": "N87353",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2026-01-07",
+      "TailNumber": "N132SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2026-01-07",
+      "TailNumber": "N86309",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2026-01-06",
+      "TailNumber": "N730YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2026-01-06",
+      "TailNumber": "N89349",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "Mitsubishi CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "discovery",
+      "sheet_type": "discovery",
+      "DateFound": "2026-01-05",
+      "TailNumber": "N570GJ",
+      "OperatedBy": "United Airlines",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "Embraer E-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "discovery",
+      "sheet_type": "discovery",
+      "DateFound": "2026-01-05",
+      "TailNumber": "N754YX",
+      "OperatedBy": "United Airlines",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "Embraer E-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "discovery",
+      "sheet_type": "discovery",
+      "DateFound": "2026-01-05",
+      "TailNumber": "N625UX",
+      "OperatedBy": "United Airlines",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2026-01-05",
+      "TailNumber": "N638SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "Unknown",
+      "WiFi": "StrLnk",
+      "sheet_gid": "discovery",
+      "sheet_type": "discovery",
+      "DateFound": "2026-01-02",
+      "TailNumber": "N580GJ",
+      "OperatedBy": "United Airlines",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "Mitsubishi CRJ-701ER",
+      "WiFi": "StrLnk",
+      "sheet_gid": "discovery",
+      "sheet_type": "discovery",
+      "DateFound": "2026-01-02",
+      "TailNumber": "N576GJ",
+      "OperatedBy": "United Airlines",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "Boeing 737-800",
+      "WiFi": "StrLnk",
+      "sheet_gid": "discovery",
+      "sheet_type": "discovery",
+      "DateFound": "2026-01-02",
+      "TailNumber": "N33284",
+      "OperatedBy": "United Airlines",
+      "fleet": "mainline"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2026-01-02",
+      "TailNumber": "N544GJ",
+      "OperatedBy": "GoJet dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2026-01-02",
+      "TailNumber": "N546GJ",
+      "OperatedBy": "GoJet dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2026-01-02",
+      "TailNumber": "N563GJ",
+      "OperatedBy": "GoJet dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2026-01-02",
+      "TailNumber": "N779SK",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2026-01-01",
+      "TailNumber": "N788YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-12-29",
+      "TailNumber": "N605UX",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-12-29",
+      "TailNumber": "N89304",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2025-12-29",
+      "TailNumber": "N506GJ",
+      "OperatedBy": "GoJet dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2025-12-29",
+      "TailNumber": "N522GJ",
+      "OperatedBy": "GoJet dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2025-12-29",
+      "TailNumber": "N540GJ",
+      "OperatedBy": "GoJet dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-12-28",
+      "TailNumber": "N86311",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2025-12-26",
+      "TailNumber": "N513GJ",
+      "OperatedBy": "GoJet dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2025-12-26",
+      "TailNumber": "N521GJ",
+      "OperatedBy": "GoJet dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2025-12-26",
+      "TailNumber": "N535GJ",
+      "OperatedBy": "GoJet dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2025-12-26",
+      "TailNumber": "N536GJ",
+      "OperatedBy": "GoJet dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2025-12-26",
+      "TailNumber": "N537GJ",
+      "OperatedBy": "GoJet dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2025-12-26",
+      "TailNumber": "N538GJ",
+      "OperatedBy": "GoJet dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2025-12-26",
+      "TailNumber": "N541GJ",
+      "OperatedBy": "GoJet dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2025-12-26",
+      "TailNumber": "N542GJ",
+      "OperatedBy": "GoJet dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2025-12-26",
+      "TailNumber": "N545GJ",
+      "OperatedBy": "GoJet dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2025-12-26",
+      "TailNumber": "N554GJ",
+      "OperatedBy": "GoJet dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2025-12-26",
+      "TailNumber": "N562GJ",
+      "OperatedBy": "GoJet dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2025-12-26",
+      "TailNumber": "N564GJ",
+      "OperatedBy": "GoJet dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-24",
+      "TailNumber": "N131SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-19",
+      "TailNumber": "N87345",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-19",
+      "TailNumber": "N80348",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-17",
+      "TailNumber": "N789YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-14",
+      "TailNumber": "N130SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-14",
+      "TailNumber": "N89342",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-12-14",
+      "TailNumber": "N621UX",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-12-14",
+      "TailNumber": "N623UX",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-12-14",
+      "TailNumber": "N87367",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-12-14",
+      "TailNumber": "N88301",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2025-12-14",
+      "TailNumber": "N504GJ",
+      "OperatedBy": "GoJet dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2025-12-14",
+      "TailNumber": "N526GJ",
+      "OperatedBy": "GoJet dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2025-12-14",
+      "TailNumber": "N539GJ",
+      "OperatedBy": "GoJet dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2025-12-14",
+      "TailNumber": "N547GJ",
+      "OperatedBy": "GoJet dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-13",
+      "TailNumber": "N86347",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-13",
+      "TailNumber": "N728YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-10",
+      "TailNumber": "N88346",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-10",
+      "TailNumber": "N727YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-10",
+      "TailNumber": "N769YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2025-12-06",
+      "TailNumber": "N501GJ",
+      "OperatedBy": "GoJet dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2025-12-06",
+      "TailNumber": "N507GJ",
+      "OperatedBy": "GoJet dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2025-12-06",
+      "TailNumber": "N524GJ",
+      "OperatedBy": "GoJet dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N106SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N107SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N109SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N114SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N117SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N119SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N120SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N121SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N124SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N125SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N127SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N134SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N135SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N138SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N139SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N140SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N141SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N142SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N143SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N144SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N146SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N148SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N149SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N150SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N151SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N152SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N153SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N154SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N156SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N157SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N160SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N161SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N162SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N163SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N164SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N165SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N166SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N167SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N168SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N200SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N202SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N203SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N204SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N205SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N206SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N207SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N208SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N211SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N213SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N84307",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N89315",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N87318",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N88326",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N82333",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N86334",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N88335",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N87339",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N85351",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N85352",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N85354",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N85355",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N89357",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N85358",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N88359",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N87360",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N721YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N722YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N723YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N724YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N725YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N726YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N729YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N733YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N736YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N740YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N741YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N742YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N743YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N744YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N745YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N746YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N747YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N748YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N749YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N750YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N751YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N752YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N753YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N757YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N760YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N761YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N762YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N763YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N764YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N765YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N766YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N767YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N768YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N770YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N771YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N772YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N773YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N774YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N775YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N776YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N778YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N779YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N780YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N781YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N782YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N783YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N784YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N785YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N786YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "ERJ-175",
+      "WiFi": "StrLnk",
+      "sheet_gid": "13",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N787YX",
+      "OperatedBy": "Republic dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N82338",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N723EV",
+      "OperatedBy": "SkyWest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-700",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2025-12-03",
+      "TailNumber": "N793SK",
+      "OperatedBy": "SkyWest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2025-11-29",
+      "TailNumber": "N553GJ",
+      "OperatedBy": "GoJet dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-11-19",
+      "TailNumber": "N88331",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-11-19",
+      "TailNumber": "N86350",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2025-11-19",
+      "TailNumber": "N550GJ",
+      "OperatedBy": "GoJet dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2025-11-19",
+      "TailNumber": "N551GJ",
+      "OperatedBy": "GoJet dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2025-11-17",
+      "TailNumber": "N762SK",
+      "OperatedBy": "SkyWest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2025-11-14",
+      "TailNumber": "N511GJ",
+      "OperatedBy": "GoJet dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-11-08",
+      "TailNumber": "N619UX",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-11-08",
+      "TailNumber": "N620UX",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-11-08",
+      "TailNumber": "N622UX",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-11-08",
+      "TailNumber": "N634SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-11-08",
+      "TailNumber": "N87303",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-11-08",
+      "TailNumber": "N88332",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-11-08",
+      "TailNumber": "N86336",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2025-11-08",
+      "TailNumber": "N520GJ",
+      "OperatedBy": "GoJet dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2025-11-08",
+      "TailNumber": "N557GJ",
+      "OperatedBy": "GoJet dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-700",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2025-11-08",
+      "TailNumber": "N791SK",
+      "OperatedBy": "SkyWest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2025-11-03",
+      "TailNumber": "N773SK",
+      "OperatedBy": "SkyWest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2025-11-01",
+      "TailNumber": "N523GJ",
+      "OperatedBy": "GoJet dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2025-11-01",
+      "TailNumber": "N534GJ",
+      "OperatedBy": "GoJet dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2025-10-29",
+      "TailNumber": "N767SK",
+      "OperatedBy": "SkyWest floater",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2025-10-24",
+      "TailNumber": "N503GJ",
+      "OperatedBy": "GoJet dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-700",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2025-10-24",
+      "TailNumber": "N792SK",
+      "OperatedBy": "SkyWest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2025-10-23",
+      "TailNumber": "N783SK",
+      "OperatedBy": "SkyWest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2025-10-22",
+      "TailNumber": "N578GJ",
+      "OperatedBy": "GoJet dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-10-19",
+      "TailNumber": "N618UX",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2025-10-19",
+      "TailNumber": "N561GJ",
+      "OperatedBy": "GoJet dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2025-10-19",
+      "TailNumber": "N531GJ",
+      "OperatedBy": "SkyWest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-10-18",
+      "TailNumber": "N632SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2025-10-18",
+      "TailNumber": "N530GJ",
+      "OperatedBy": "SkyWest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "Boeing 737-800",
+      "WiFi": "Starlink",
+      "sheet_gid": "4",
+      "sheet_type": "",
+      "DateFound": "2025-10-16",
+      "TailNumber": "N77525",
+      "OperatedBy": "United Airlines",
+      "fleet": "mainline"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-10-15",
+      "TailNumber": "N83329",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-10-12",
+      "TailNumber": "N88328",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2025-10-12",
+      "TailNumber": "N573GJ",
+      "OperatedBy": "SkyWest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2025-10-12",
+      "TailNumber": "N771SK",
+      "OperatedBy": "SkyWest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-10-11",
+      "TailNumber": "N613UX",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2025-10-10",
+      "TailNumber": "N533GJ",
+      "OperatedBy": "SkyWest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2025-10-10",
+      "TailNumber": "N572GJ",
+      "OperatedBy": "SkyWest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-10-09",
+      "TailNumber": "N617UX",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-10-03",
+      "TailNumber": "N85374",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-09-30",
+      "TailNumber": "N88330",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-09-27",
+      "TailNumber": "N615UX",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-09-27",
+      "TailNumber": "N88327",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2025-09-27",
+      "TailNumber": "N532GJ",
+      "OperatedBy": "SkyWest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2025-09-27",
+      "TailNumber": "N575GJ",
+      "OperatedBy": "SkyWest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-09-23",
+      "TailNumber": "N88325",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-09-21",
+      "TailNumber": "N78361",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-09-21",
+      "TailNumber": "N86324",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-09-19",
+      "TailNumber": "N84378",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "CRJ-550",
+      "WiFi": "StrLnk",
+      "sheet_gid": "6",
+      "sheet_type": "",
+      "DateFound": "2025-09-18",
+      "TailNumber": "N577GJ",
+      "OperatedBy": "GoJet dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-09-17",
+      "TailNumber": "N85323",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-09-16",
+      "TailNumber": "N612UX",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-09-15",
+      "TailNumber": "N86372",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-09-13",
+      "TailNumber": "N85373",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-09-12",
+      "TailNumber": "N87365",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-09-11",
+      "TailNumber": "N86375",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-09-11",
+      "TailNumber": "N85379",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-09-08",
+      "TailNumber": "N85370",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-09-07",
+      "TailNumber": "N608UX",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-09-04",
+      "TailNumber": "N89362",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-09-04",
+      "TailNumber": "N86322",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-09-02",
+      "TailNumber": "N85369",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-09-02",
+      "TailNumber": "N87380",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-08-29",
+      "TailNumber": "N601UX",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-08-29",
+      "TailNumber": "N602UX",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-08-27",
+      "TailNumber": "N89317",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-08-26",
+      "TailNumber": "N604UX",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-08-26",
+      "TailNumber": "N82314",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-08-25",
+      "TailNumber": "N85377",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-08-22",
+      "TailNumber": "N607UX",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-08-21",
+      "TailNumber": "N85376",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-08-21",
+      "TailNumber": "N87306",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-08-16",
+      "TailNumber": "N82366",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-08-16",
+      "TailNumber": "N89313",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-08-15",
+      "TailNumber": "N611UX",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-08-13",
+      "TailNumber": "N610UX",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-08-12",
+      "TailNumber": "N609UX",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-08-12",
+      "TailNumber": "N86312",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-08-09",
+      "TailNumber": "N89308",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-08-08",
+      "TailNumber": "N87368",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-08-04",
+      "TailNumber": "N603UX",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-08-04",
+      "TailNumber": "N85363",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-07-31",
+      "TailNumber": "N86371",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-07-31",
+      "TailNumber": "N87337",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-07-29",
+      "TailNumber": "N606UX",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-07-25",
+      "TailNumber": "N85320",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-07-19",
+      "TailNumber": "N93305",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-07-16",
+      "TailNumber": "N630SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-07-14",
+      "TailNumber": "N86316",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-07-12",
+      "TailNumber": "N631SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-07-12",
+      "TailNumber": "N87364",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-07-02",
+      "TailNumber": "N89321",
+      "OperatedBy": "Mesa dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-05-22",
+      "TailNumber": "N110SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-05-20",
+      "TailNumber": "N105SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-05-18",
+      "TailNumber": "N103SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-03-14",
+      "TailNumber": "N108SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-03-14",
+      "TailNumber": "N113SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-03-14",
+      "TailNumber": "N116SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-03-14",
+      "TailNumber": "N626SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-03-14",
+      "TailNumber": "N627SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-03-14",
+      "TailNumber": "N628SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    },
+    {
+      "Aircraft": "E175SC",
+      "WiFi": "StrLnk",
+      "sheet_gid": "1106195214",
+      "sheet_type": "",
+      "DateFound": "2025-03-14",
+      "TailNumber": "N629SY",
+      "OperatedBy": "Skywest dba UAX",
+      "fleet": "express"
+    }
+  ],
+  "lastUpdated": "2026-03-21T05:23:24.097Z",
+  "fleetStats": {
+    "express": {
+      "total": 653,
+      "starlink": 305,
+      "unverified": 8,
+      "percentage": 46.70750382848392
+    },
+    "mainline": {
+      "total": 1135,
+      "starlink": 18,
+      "unverified": 7,
+      "percentage": 1.5859030837004406
+    }
+  },
+  "flightsByTail": {}
+}

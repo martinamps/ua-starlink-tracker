@@ -11,9 +11,10 @@ export function isUnitedDomain(hostname: string): boolean {
 
 // Database path
 export const DB_PATH =
-  process.env.NODE_ENV === "production"
-    ? "/srv/ua-starlink-tracker/plane-data.sqlite" // Container path
-    : "./plane-data.sqlite"; // Local path
+  process.env.DB_PATH ??
+  (process.env.NODE_ENV === "production"
+    ? "/srv/ua-starlink-tracker/plane-data.sqlite"
+    : "./plane-data.sqlite");
 
 // Flight data source configuration
 // Options: "flightradar24" (free) or "flightaware" (requires API key)
