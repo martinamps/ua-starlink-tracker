@@ -1,8 +1,68 @@
 import React from "react";
-import type { AirlineContent } from "./index";
+import { TypeBreakdownRow } from "../../components/atoms";
+import type { AirlineContent, HeroProps } from "./index";
+
+const HAHero = ({ stats }: HeroProps) => {
+  const { starlinkCount } = stats;
+  return (
+    <div className="relative mb-6 grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="md:col-span-1 bg-surface border border-green-400/30 rounded-lg p-6 flex flex-col items-center justify-center text-center">
+        <div className="w-12 h-12 rounded-full bg-green-400/15 flex items-center justify-center mb-3">
+          <svg
+            className="w-7 h-7 text-green-400"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            role="img"
+            aria-label="Complete"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+          </svg>
+        </div>
+        <div className="font-display text-lg text-primary font-semibold">Rollout Complete</div>
+        <div className="text-xs font-mono text-muted mt-1">September 2024</div>
+        <div className="mt-3 font-mono text-sm">
+          <span className="text-green-400 font-semibold">{starlinkCount}</span>
+          <span className="text-secondary"> Airbus aircraft equipped</span>
+        </div>
+        <div className="text-[10px] font-mono text-muted mt-2 max-w-[200px]">
+          First major U.S. carrier to finish a fleet-wide Starlink install
+        </div>
+      </div>
+      <div className="md:col-span-2 bg-surface border border-subtle rounded-lg overflow-hidden">
+        <div className="text-[10px] font-mono text-muted uppercase tracking-wider px-4 pt-4 pb-1">
+          Fleet by aircraft type
+        </div>
+        <TypeBreakdownRow type="Airbus A330-200" count={24} status="starlink" />
+        <TypeBreakdownRow type="Airbus A321neo" count={18} status="starlink" />
+        <TypeBreakdownRow
+          type="Boeing 717-200"
+          count={19}
+          status="none"
+          note="No WiFi (interisland)"
+        />
+        <TypeBreakdownRow type="Boeing 787-9" status="pending" note="Transferring to Alaska" />
+      </div>
+    </div>
+  );
+};
 
 export const content: AirlineContent = {
   showNavLinks: false,
+
+  headerStats: [
+    <span key="mbps">
+      <span className="text-accent font-semibold">250</span> Mbps
+    </span>,
+    <span key="free" className="text-green-400 font-semibold">
+      FREE
+    </span>,
+    <span key="g2g">Gate-to-gate</span>,
+    <span key="done" className="hidden sm:inline">
+      <span className="text-green-400 font-semibold">Complete</span> Sep 2024
+    </span>,
+  ],
 
   intro: () => (
     <p className="text-sm text-secondary leading-relaxed mb-3">
@@ -13,7 +73,11 @@ export const content: AirlineContent = {
     </p>
   ),
 
-  statCards: [{ key: "mainline", label: "A330 + A321neo" }],
+  Hero: HAHero,
+
+  rowBadge: () => null,
+
+  subfleetFilters: [],
 
   faq: [
     {

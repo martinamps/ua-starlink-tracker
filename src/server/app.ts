@@ -639,6 +639,7 @@ const homePage: Handler = async (ctx) => {
       fleetStats: reader.getFleetStats(),
       brand,
       content,
+      perAirlineStats: tenant === "ALL" ? reader.getPerAirlineStats() : undefined,
       flightsByTail,
       airportDepartures: reader.getAirportDepartures(),
     })

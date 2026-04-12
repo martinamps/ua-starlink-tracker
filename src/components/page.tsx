@@ -2,6 +2,7 @@ import React from "react";
 import { type AirlineContent, type ContentStats, getContent } from "../airlines/content";
 import { AIRLINES, type PageBrand } from "../airlines/registry";
 import type { Aircraft, AirportDeparture, AirportDepartures, FleetStats, Flight } from "../types";
+import { HeaderStatStrip, type PerAirlineStat } from "./atoms";
 
 // Reusable FAQ accordion item — eliminates ~30 lines of boilerplate per question
 function FaqItem({ q, children }: { q: string; children: React.ReactNode }) {
@@ -45,48 +46,6 @@ function FaqGroup({ title, children }: { title: string; children: React.ReactNod
   );
 }
 
-function StatRing({
-  label,
-  pct,
-  starlink,
-  total,
-}: {
-  label: string;
-  pct: number;
-  starlink: number;
-  total: number;
-}) {
-  return (
-    <div className="bg-surface p-4 flex flex-col justify-center text-center">
-      <div className="text-[10px] font-mono text-muted uppercase tracking-wider mb-2">{label}</div>
-      <div className="relative w-20 h-20 mx-auto mb-2">
-        <svg className="w-20 h-20 transform -rotate-90" role="img" aria-label={`${label} progress`}>
-          <circle cx="40" cy="40" r="34" stroke="#243044" strokeWidth="6" fill="none" />
-          <circle
-            cx="40"
-            cy="40"
-            r="34"
-            stroke="#0ea5e9"
-            strokeWidth="6"
-            fill="none"
-            strokeDasharray={`${2 * Math.PI * 34}`}
-            strokeDashoffset={`${2 * Math.PI * 34 * (1 - pct / 100)}`}
-            className="transition-all duration-1000 ease-out"
-            style={{ filter: "drop-shadow(0 0 6px rgba(14, 165, 233, 0.5))" }}
-          />
-        </svg>
-        <div className="absolute inset-0 flex items-center justify-center">
-          <span className="font-mono text-xl font-semibold text-primary">{pct.toFixed(0)}%</span>
-        </div>
-      </div>
-      <div className="font-mono text-xs text-secondary">
-        <span className="text-accent">{starlink}</span>
-        <span className="text-muted"> / {total}</span>
-      </div>
-    </div>
-  );
-}
-
 interface PageProps {
   total: number;
   starlink: Aircraft[];
@@ -94,6 +53,7 @@ interface PageProps {
   fleetStats?: FleetStats;
   brand?: PageBrand;
   content?: AirlineContent;
+  perAirlineStats?: PerAirlineStat[];
   flightsByTail?: Record<string, Flight[]>;
   airportDepartures?: AirportDepartures;
 }
@@ -295,6 +255,7 @@ export default function Page({
   fleetStats,
   brand = AIRLINES.UA.brand,
   content = getContent(AIRLINES.UA),
+  perAirlineStats,
   flightsByTail = {},
   airportDepartures,
 }: PageProps) {
@@ -328,34 +289,11 @@ export default function Page({
   const percentage = y > 0 ? ((x / y) * 100).toFixed(2) : "0.00";
   const stats: ContentStats = { starlinkCount: x, totalCount: y, percentage, fleetStats };
   const subfleetCounts = Object.fromEntries(
-    content.statCards.map((c) => [c.key, starlinkData.filter((p) => p.fleet === c.key).length])
+    content.subfleetFilters.map((c) => [
+      c.key,
+      starlinkData.filter((p) => p.fleet === c.key).length,
+    ])
   );
-
-  // Aggregate aircraft by model type for pie chart
-  const getAircraftByModel = () => {
-    const modelCounts: Record<string, number> = {};
-    for (const plane of starlinkData) {
-      // Normalize model names (e.g., "737-900" -> "737")
-      const fullModel = plane.Aircraft || "Unknown";
-      // Extract base model (first part before dash or space)
-      const baseModel = fullModel.split(/[-\s]/)[0];
-      modelCounts[baseModel] = (modelCounts[baseModel] || 0) + 1;
-    }
-    // Sort by count descending and return top models
-    return Object.entries(modelCounts)
-      .sort((a, b) => b[1] - a[1])
-      .map(([model, count]) => ({ model, count }));
-  };
-
-  const modelData = getAircraftByModel();
-  const pieColors = [
-    "#0ea5e9", // Accent cyan
-    "#22c55e", // Green
-    "#f59e0b", // Amber
-    "#8b5cf6", // Purple
-    "#ec4899", // Pink
-    "#06b6d4", // Teal
-  ];
 
   // Format date as relative time (e.g., "3 days ago", "2 weeks ago")
   const formatRelativeDate = (dateStr: string) => {
@@ -668,21 +606,7 @@ export default function Page({
           {brand.title}
         </h1>
         <p className="text-base sm:text-lg text-secondary font-display mb-2">{brand.tagline}</p>
-        <div className="flex items-center justify-center gap-3 sm:gap-6 text-xs sm:text-sm font-mono text-muted">
-          <span>
-            <span className="text-accent font-semibold">250</span> Mbps
-          </span>
-          <span className="text-subtle">·</span>
-          <span>
-            <span className="text-accent font-semibold">50×</span> faster
-          </span>
-          <span className="text-subtle">·</span>
-          <span className="text-green-400 font-semibold">FREE</span>
-          <span className="text-subtle hidden sm:inline">·</span>
-          <span className="hidden sm:inline">
-            <span className="text-accent font-semibold">40+</span> installs/mo
-          </span>
-        </div>
+        <HeaderStatStrip items={content.headerStats} />
       </header>
 
       {/* Intro paragraph + nav links */}
@@ -724,148 +648,8 @@ export default function Page({
         )}
       </div>
 
-      {/* Fleet Stats - Instrument Panel Style */}
-      <div className="relative grid grid-cols-2 lg:grid-cols-4 gap-px bg-subtle rounded-lg overflow-hidden mb-6 border border-subtle">
-        {content.statCards.map((card) => {
-          const m = fleetStats?.[card.key];
-          return (
-            <StatRing
-              key={card.key}
-              label={card.label}
-              pct={m?.percentage || 0}
-              starlink={m?.starlink || 0}
-              total={m?.total || 0}
-            />
-          );
-        })}
-
-        {/* Combined Stats */}
-        <div className="bg-surface p-4 flex flex-col justify-center text-center">
-          <div className="text-[10px] font-mono text-muted uppercase tracking-wider mb-2">
-            Total Fleet
-          </div>
-          <div className="relative w-20 h-20 mx-auto mb-2">
-            <svg
-              className="w-20 h-20 transform -rotate-90"
-              role="img"
-              aria-label="Combined progress"
-            >
-              <circle cx="40" cy="40" r="34" stroke="#243044" strokeWidth="6" fill="none" />
-              <circle
-                cx="40"
-                cy="40"
-                r="34"
-                stroke="#22c55e"
-                strokeWidth="6"
-                fill="none"
-                strokeDasharray={`${2 * Math.PI * 34}`}
-                strokeDashoffset={`${2 * Math.PI * 34 * (1 - Number.parseFloat(percentage) / 100)}`}
-                className="transition-all duration-1000 ease-out"
-                strokeLinecap="round"
-                style={{ filter: "drop-shadow(0 0 6px rgba(34, 197, 94, 0.5))" }}
-              />
-            </svg>
-            <div className="absolute inset-0 flex items-center justify-center">
-              <span className="font-mono text-xl font-semibold text-green-400">
-                {Math.round(Number.parseFloat(percentage))}%
-              </span>
-            </div>
-          </div>
-          <div className="font-mono text-xs text-secondary">
-            <span className="text-green-400">{x}</span>
-            <span className="text-muted"> / {y}</span>
-          </div>
-        </div>
-
-        {/* Aircraft Models Pie Chart */}
-        <div className="bg-surface p-4 flex flex-col justify-center text-center">
-          <div className="text-[10px] font-mono text-muted uppercase tracking-wider mb-2">
-            By Type
-          </div>
-          {/* Pie Chart - using arc paths for proper hover */}
-          <div className="relative w-20 h-20 mx-auto mb-2" id="pie-chart-container">
-            <svg
-              className="w-20 h-20"
-              viewBox="0 0 80 80"
-              role="img"
-              aria-label="Aircraft types pie chart"
-            >
-              {/* Background ring */}
-              <circle cx="40" cy="40" r="34" stroke="#243044" strokeWidth="6" fill="none" />
-              {/* Arc segments */}
-              {(() => {
-                const total = modelData.reduce((sum, d) => sum + d.count, 0);
-                const outerR = 37;
-                const innerR = 31;
-                let currentAngle = -90; // Start from top
-
-                return modelData.map((item, idx) => {
-                  const sliceAngle = (item.count / total) * 360;
-                  const startAngle = currentAngle;
-                  const endAngle = currentAngle + sliceAngle;
-                  currentAngle = endAngle;
-
-                  // Convert to radians
-                  const startRad = (startAngle * Math.PI) / 180;
-                  const endRad = (endAngle * Math.PI) / 180;
-
-                  // Outer arc points
-                  const ox1 = 40 + outerR * Math.cos(startRad);
-                  const oy1 = 40 + outerR * Math.sin(startRad);
-                  const ox2 = 40 + outerR * Math.cos(endRad);
-                  const oy2 = 40 + outerR * Math.sin(endRad);
-
-                  // Inner arc points
-                  const ix1 = 40 + innerR * Math.cos(startRad);
-                  const iy1 = 40 + innerR * Math.sin(startRad);
-                  const ix2 = 40 + innerR * Math.cos(endRad);
-                  const iy2 = 40 + innerR * Math.sin(endRad);
-
-                  const largeArc = sliceAngle > 180 ? 1 : 0;
-                  const pctDisplay = ((item.count / total) * 100).toFixed(0);
-
-                  // Path: outer arc, then inner arc (reverse), close
-                  const d = `M ${ox1} ${oy1} A ${outerR} ${outerR} 0 ${largeArc} 1 ${ox2} ${oy2} L ${ix2} ${iy2} A ${innerR} ${innerR} 0 ${largeArc} 0 ${ix1} ${iy1} Z`;
-
-                  return (
-                    <path
-                      key={item.model}
-                      d={d}
-                      fill={pieColors[idx % pieColors.length]}
-                      className="pie-slice transition-opacity duration-200 hover:opacity-70 cursor-pointer"
-                      style={{
-                        filter: `drop-shadow(0 0 3px ${pieColors[idx % pieColors.length]}40)`,
-                      }}
-                      data-model={item.model}
-                      data-count={item.count}
-                      data-pct={pctDisplay}
-                    />
-                  );
-                });
-              })()}
-            </svg>
-            {/* Center text overlay - pointer-events-none so mouse reaches pie slices */}
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <span id="pie-center-text" className="font-mono text-xl font-semibold text-primary">
-                {modelData[0]?.count || x}
-              </span>
-            </div>
-          </div>
-          {/* Status line - shows model info on hover, defaults to largest slice */}
-          <div
-            id="pie-status"
-            className="h-4 flex items-center justify-center text-[10px] font-mono"
-          >
-            <span id="pie-status-label">
-              <span style={{ color: "#0ea5e9" }}>{modelData[0]?.model || "ERJ"}</span>
-              <span style={{ color: "#5a6a80" }}>
-                {" "}
-                · {modelData[0] ? Math.round((modelData[0].count / x) * 100) : 0}%
-              </span>
-            </span>
-          </div>
-        </div>
-      </div>
+      {/* Per-airline stat panel — bespoke composition */}
+      <content.Hero stats={stats} starlinkData={starlinkData} perAirlineStats={perAirlineStats} />
 
       {/* Aircraft List with integrated search */}
       <div className="relative bg-surface rounded-lg border border-subtle overflow-hidden mb-6">
@@ -932,8 +716,8 @@ export default function Page({
               >
                 ALL <span className="hidden sm:inline">({starlinkData.length})</span>
               </button>
-              {content.statCards.length > 1 &&
-                content.statCards.map((card) => (
+              {content.subfleetFilters.length > 1 &&
+                content.subfleetFilters.map((card) => (
                   <button
                     key={card.key}
                     type="button"
@@ -1007,9 +791,11 @@ export default function Page({
                           <div className="font-mono text-sm font-semibold text-primary group-hover:text-accent transition-colors">
                             {plane.TailNumber}
                           </div>
-                          <div className="text-[10px] font-mono text-muted uppercase">
-                            {plane.fleet === "mainline" ? "Mainline" : "Express"}
-                          </div>
+                          {content.rowBadge(plane) && (
+                            <div className="text-[10px] font-mono text-muted uppercase">
+                              {content.rowBadge(plane)}
+                            </div>
+                          )}
                         </div>
                       </div>
 
@@ -1039,9 +825,11 @@ export default function Page({
                             <div className="font-mono text-xs text-secondary">{plane.Aircraft}</div>
                           </div>
                         </div>
-                        <div className="text-[10px] font-mono text-accent uppercase">
-                          {plane.fleet === "mainline" ? "Mainline" : "Express"}
-                        </div>
+                        {content.rowBadge(plane) && (
+                          <div className="text-[10px] font-mono text-accent uppercase">
+                            {content.rowBadge(plane)}
+                          </div>
+                        )}
                       </div>
 
                       {/* Operator */}

@@ -56,6 +56,14 @@ INSERT OR IGNORE INTO starlink_planes (aircraft, wifi, sheet_gid, sheet_type, Da
   ('Airbus A321-271N','Starlink','ha_seed','HA-mainline','2024-09-24','N202HA','Hawaiian Airlines','mainline','Starlink','HA'),
   ('Airbus A321-271N','Starlink','ha_seed','HA-mainline','2024-09-24','N205HA','Hawaiian Airlines','mainline','Starlink','HA'),
   ('Airbus A321-271N','Starlink','ha_seed','HA-mainline','2024-09-24','N215HA','Hawaiian Airlines','mainline','Starlink','HA');
+
+-- HA meta keys (so previews/tests render real percentages, not 0%).
+INSERT OR REPLACE INTO meta (key, value) VALUES
+  ('HA:totalAircraftCount', '12'),
+  ('HA:mainlineStarlink', '9'),
+  ('HA:mainlineTotal', '12'),
+  ('HA:mainlinePercentage', '75.00'),
+  ('HA:lastUpdated', '2026-04-12T00:00:00.000Z');
 SQL
 
 echo "test DB ready at $DB"

@@ -45,6 +45,7 @@ export type Scope = AirlineCode | "ALL";
 export interface ScopedReader {
   readonly scope: Scope;
   getStarlinkPlanes(): Aircraft[];
+  getPerAirlineStats(): { code: string; name: string; starlink: number; total: number }[];
   getUpcomingFlights(tailNumber?: string): Flight[];
   getFleetStats(): FleetStats;
   getTotalCount(): number;
@@ -85,6 +86,13 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
   const r: ScopedReader = {
     scope,
     getStarlinkPlanes: () => getStarlinkPlanes(db, a),
+    getPerAirlineStats: () =>
+      enabledAirlines().map((cfg) => ({
+        code: cfg.code,
+        name: cfg.name,
+        starlink: getStarlinkPlanes(db, cfg.code).length,
+        total: getTotalCount(db, cfg.code),
+      })),
     getUpcomingFlights: (t) => getUpcomingFlights(db, t, a),
     // FleetStats shape is UA-subfleet-specific (express/mainline); hub aggregation deferred until
     // getSubfleetStats lands. Hub callers should not rely on this.

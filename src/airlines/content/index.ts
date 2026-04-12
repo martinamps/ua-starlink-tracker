@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
-import type { FleetStats } from "../../types";
+import type { PerAirlineStat } from "../../components/atoms";
+import type { Aircraft, FleetStats } from "../../types";
 import type { Tenant } from "../registry";
 import { content as ha } from "./ha";
 import { content as hub } from "./hub";
@@ -12,17 +13,9 @@ export interface ContentStats {
   fleetStats?: FleetStats;
 }
 
-export interface StatCard {
-  /** key into FleetStats — e.g. 'mainline', 'express' */
-  key: string;
-  /** card heading + filter button label */
-  label: string;
-}
-
 export interface FaqEntry {
   q: string;
   a: (s: ContentStats) => ReactNode;
-  /** plain-text answer for JSON-LD (template-var substitution applied later) */
   ld: string;
 }
 
@@ -31,12 +24,29 @@ export interface FaqSection {
   items: FaqEntry[];
 }
 
+export interface SubfleetFilter {
+  key: string;
+  label: string;
+}
+
+export interface HeroProps {
+  stats: ContentStats;
+  starlinkData: Aircraft[];
+  perAirlineStats?: PerAirlineStat[];
+}
+
 export interface AirlineContent {
   intro: (s: ContentStats) => ReactNode;
-  /** show the check-flight / route-planner / fleet / mcp nav pills */
+  /** Stat strip under the tagline (each entry rendered with · separators). */
+  headerStats: ReactNode[];
+  /** Show check-flight / route-planner / fleet / mcp nav pills. */
   showNavLinks: boolean;
-  /** subfleet ring cards (Total Fleet + By Type are always appended) */
-  statCards: StatCard[];
+  /** Bespoke stat panel — each airline composes its own from shared atoms. */
+  Hero: (p: HeroProps) => ReactNode;
+  /** Optional per-row badge under tail number (e.g. UA mainline/express). null = no badge. */
+  rowBadge: (plane: Aircraft) => string | null;
+  /** Filter buttons next to search (UA: mainline/express). Empty = ALL only. */
+  subfleetFilters: SubfleetFilter[];
   faq: FaqSection[];
 }
 
