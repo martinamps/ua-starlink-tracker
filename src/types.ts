@@ -38,6 +38,14 @@ export interface PerAirlineStat {
   canonicalHost?: string;
 }
 
+export interface RecentInstall {
+  airline: string;
+  TailNumber: string;
+  Aircraft: string;
+  OperatedBy: string;
+  DateFound: string;
+}
+
 interface FleetMetrics {
   total: number;
   starlink: number;

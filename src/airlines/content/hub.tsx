@@ -52,9 +52,12 @@ const HubHero = ({ stats, perAirlineStats = [], recentInstalls = [] }: HeroProps
                 .then(function(r){return r.json()})
                 .then(function(d){
                   if (d.error) { cr.innerHTML = '<span class="text-amber-400">' + esc(d.error) + '</span>'; return; }
-                  var c = d.hasStarlink ? 'text-green-400' : 'text-muted';
-                  var v = d.hasStarlink ? 'Starlink' : 'No Starlink';
-                  cr.innerHTML = '<span class="' + c + '">' + v + '</span> · ' + esc(d.airline || '') + ' · ' + esc(d.reason || d.message || '');
+                  var label, cls;
+                  if (d.hasStarlink === true) { label = 'Starlink'; cls = 'text-green-400'; }
+                  else if (d.hasStarlink === false) { label = 'No Starlink'; cls = 'text-muted'; }
+                  else if (typeof d.probability === 'number') { label = '~' + Math.round(d.probability * 100) + '% Starlink'; cls = 'text-accent'; }
+                  else { label = 'Unknown'; cls = 'text-muted'; }
+                  cr.innerHTML = '<span class="' + cls + '">' + label + '</span> · ' + esc(d.airline || '') + ' · ' + esc(d.reason || d.message || '');
                 })
                 .catch(function(){ cr.textContent = 'Lookup failed.'; });
             });

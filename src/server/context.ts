@@ -15,7 +15,6 @@ import {
 import {
   type CheckFlightRow,
   type HubAirlineStat,
-  type RecentInstall,
   getAirlineByTail,
   getAirportDepartures,
   getConfirmedFleetTails,
@@ -42,6 +41,7 @@ import type {
   FleetStats,
   Flight,
   PerAirlineStat,
+  RecentInstall,
 } from "../types";
 
 export type { Database };
@@ -62,6 +62,13 @@ export interface ScopedReader {
     variants: string[],
     startOfDay: number,
     endOfDay: number
+  ): CheckFlightRow[];
+  /** Hub-only: query a *specific* airline regardless of reader scope (caller-detected from flight prefix). */
+  getFlightsByNumberAndDateForAirline(
+    variants: string[],
+    startOfDay: number,
+    endOfDay: number,
+    code: AirlineCode
   ): CheckFlightRow[];
   getFleetPageData(): FleetPageData;
   getAirportDepartures(): AirportDepartures;
@@ -132,6 +139,8 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
             .at(-1) ?? "")
         : getLastUpdated(db, scope),
     getFlightsByNumberAndDate: (v, s, e) => getFlightsByNumberAndDate(db, v, s, e, a),
+    getFlightsByNumberAndDateForAirline: (v, s, e, code) =>
+      getFlightsByNumberAndDate(db, v, s, e, code),
     getFleetPageData: () => getFleetPageData(db, a),
     getAirportDepartures: () => getAirportDepartures(db, a),
     getFleetDiscoveryStats: () => getFleetDiscoveryStats(db, a),

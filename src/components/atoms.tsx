@@ -1,5 +1,5 @@
 import React from "react";
-import type { RecentInstall } from "../database/database";
+import type { RecentInstall } from "../types";
 import type { Aircraft, PerAirlineStat } from "../types";
 
 export type { PerAirlineStat };
@@ -181,15 +181,6 @@ export function FlightCheckInput() {
       <div id="hub-check-result" className="mt-3 text-sm font-mono hidden" />
     </div>
   );
-}
-
-export interface RouteCompareResult {
-  airline: string;
-  name: string;
-  probability: number;
-  reason: string;
-  aircraftType?: string;
-  accentColor?: string;
 }
 
 export function RouteComparePanel() {
@@ -408,27 +399,6 @@ export function TypeBreakdownRow({
         className={`text-xs font-mono ${status === "starlink" ? "text-green-400" : "text-muted"}`}
       >
         {label}
-      </div>
-    </div>
-  );
-}
-
-export function AirlineSummaryCard({ a }: { a: PerAirlineStat }) {
-  const pct = a.total > 0 ? (a.starlink / a.total) * 100 : 0;
-  return (
-    <div className="bg-surface border border-subtle rounded-lg p-5 min-w-[200px] flex-1">
-      <div className="text-[10px] font-mono text-muted uppercase tracking-wider mb-1">{a.code}</div>
-      <div className="font-display text-base text-primary mb-3">{a.name}</div>
-      <div className="font-mono text-2xl font-semibold text-accent mb-1">{pct.toFixed(0)}%</div>
-      <div className="font-mono text-xs text-secondary mb-3">
-        <span className="text-accent">{a.starlink}</span>
-        <span className="text-muted"> of {a.total} aircraft</span>
-      </div>
-      <div className="h-1.5 bg-surface-elevated rounded overflow-hidden">
-        <div
-          className="h-full bg-accent transition-all"
-          style={{ width: `${Math.min(100, pct)}%` }}
-        />
       </div>
     </div>
   );

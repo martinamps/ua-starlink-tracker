@@ -1,7 +1,5 @@
 import type { ReactNode } from "react";
-import type { PerAirlineStat } from "../../components/atoms";
-import type { RecentInstall } from "../../database/database";
-import type { Aircraft, FleetStats } from "../../types";
+import type { Aircraft, FleetStats, PerAirlineStat, RecentInstall } from "../../types";
 import type { Tenant } from "../registry";
 import { content as ha } from "./ha";
 import { content as hub } from "./hub";

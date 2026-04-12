@@ -17,7 +17,7 @@ import type {
   FleetStats,
   FleetTail,
   Flight,
-  PerAirlineStat,
+  RecentInstall,
   StarlinkStatus,
   WifiProvider,
 } from "../types";
@@ -592,14 +592,6 @@ export function getAirlineByTail(db: Database, airline?: AirlineFilter): Record<
   return Object.fromEntries(rows.map((r) => [r.TailNumber, r.airline]));
 }
 
-export interface RecentInstall {
-  airline: string;
-  TailNumber: string;
-  Aircraft: string;
-  OperatedBy: string;
-  DateFound: string;
-}
-
 export function getRecentInstalls(
   db: Database,
   airline: AirlineFilter,
@@ -614,7 +606,10 @@ export function getRecentInstalls(
     .all(...q.params, limit) as RecentInstall[];
 }
 
-export interface HubAirlineStat extends PerAirlineStat {
+export interface HubAirlineStat {
+  code: string;
+  starlink: number;
+  total: number;
   fleetTotal: number;
   installs30d: number;
 }
@@ -630,14 +625,15 @@ export function getHubStats(db: Database, codes: readonly string[]): HubAirlineS
   const v = db
     .query(
       `SELECT airline, COUNT(*) n FROM starlink_planes
-       WHERE DateFound >= date('now','-30 day') AND airline IN (${codes.map(() => "?").join(",")})
+       WHERE DateFound >= date('now','-30 day')
+         AND (verified_wifi IS NULL OR verified_wifi = 'Starlink')
+         AND airline IN (${codes.map(() => "?").join(",")})
        GROUP BY airline`
     )
     .all(...codes) as { airline: string; n: number }[];
   const v30 = Object.fromEntries(v.map((r) => [r.airline, r.n]));
   return fleet.map((f) => ({
     code: f.airline,
-    name: "",
     starlink: f.equipped,
     total: getTotalCount(db, f.airline) || f.total,
     fleetTotal: f.total,

@@ -1,9 +1,16 @@
 import type React from "react";
 import { type AirlineContent, type ContentStats, getContent } from "../airlines/content";
 import { AIRLINES, type PageBrand } from "../airlines/registry";
-import type { RecentInstall } from "../database/database";
-import type { Aircraft, AirportDeparture, AirportDepartures, FleetStats, Flight } from "../types";
-import { HeaderStatStrip, type PerAirlineStat } from "./atoms";
+import type {
+  Aircraft,
+  AirportDeparture,
+  AirportDepartures,
+  FleetStats,
+  Flight,
+  PerAirlineStat,
+  RecentInstall,
+} from "../types";
+import { HeaderStatStrip } from "./atoms";
 
 // Reusable FAQ accordion item — eliminates ~30 lines of boilerplate per question
 function FaqItem({ q, children }: { q: string; children: React.ReactNode }) {

@@ -34,7 +34,6 @@ import FleetPage from "../components/fleet-page";
 import McpPage from "../components/mcp-page";
 import Page from "../components/page";
 import RoutePlannerPage from "../components/route-planner-page";
-import { getFlightsByNumberAndDate } from "../database/database";
 import { COUNTERS, metrics, withSpan } from "../observability";
 import { compareRoute, planItinerary, predictFlight } from "../scripts/starlink-predictor";
 import type { ApiResponse, Flight } from "../types";
@@ -285,7 +284,7 @@ const hubOnly = (tenant: RequestContext["tenant"]): Response | null =>
         headers: SECURITY_HEADERS.api,
       });
 
-const apiCheckAnyFlight: Handler = ({ req, url, db, tenant }) => {
+const apiCheckAnyFlight: Handler = ({ req, url, db, reader, tenant }) => {
   if (req.method !== "GET") return methodNotAllowed(true);
   const guard = hubOnly(tenant);
   if (guard) return guard;
@@ -323,7 +322,12 @@ const apiCheckAnyFlight: Handler = ({ req, url, db, tenant }) => {
 
   const normalized = ensureAirlinePrefix(cfg, flightNumber);
   const variants = buildAirlineFlightNumberVariants(cfg, normalized);
-  const matching = getFlightsByNumberAndDate(db, variants, startOfDay, endOfDay, cfg.code);
+  const matching = reader.getFlightsByNumberAndDateForAirline(
+    variants,
+    startOfDay,
+    endOfDay,
+    cfg.code
+  );
 
   if (matching.length > 0) {
     const f = matching[0];
@@ -357,11 +361,19 @@ const apiCheckAnyFlight: Handler = ({ req, url, db, tenant }) => {
     );
   }
 
+  // No schedule row and no type rule — fall back to historical probability
+  // rather than a confident "No Starlink" (upcoming_flights only covers ~47h).
+  const pred = predictFlight(db, normalized);
   return new Response(
     JSON.stringify({
-      hasStarlink: false,
+      hasStarlink: null,
       airline: cfg.name,
-      message: "No Starlink-equipped aircraft found for this flight on the specified date.",
+      probability: pred.probability,
+      confidence: pred.confidence,
+      reason:
+        pred.n_observations > 0
+          ? `No schedule data for this date; ~${Math.round(pred.probability * 100)}% based on ${pred.n_observations} historical observation${pred.n_observations === 1 ? "" : "s"}.`
+          : `No schedule data for this date; ~${Math.round(pred.probability * 100)}% based on ${cfg.name} fleet rollout rate.`,
     }),
     { headers: SECURITY_HEADERS.api }
   );
@@ -602,29 +614,22 @@ const llmsTxt: Handler = ({ tenant }) => {
   const name = cfg?.name ?? "major airlines";
   const isHub = tenant === "ALL";
 
-  const pages = [
-    `- [Homepage](https://${host}/): Live tracker with all Starlink-equipped aircraft, fleet statistics, search by tail number/flight number/route`,
-    `- [API - Fleet Data](https://${host}/api/data): Full JSON dataset of all Starlink-equipped aircraft and flights`,
-  ];
-  if (cfg) {
-    pages.splice(
-      1,
-      0,
-      `- [Check a Flight](https://${host}/check-flight): Check if a specific ${cfg.name} flight has Starlink WiFi by flight number and date. Falls back to probability estimate for future flights.`,
-      `- [Route Planner](https://${host}/route-planner): Find the best routing (direct or 1-stop) to maximize Starlink coverage. Ranks itineraries by probability.`,
-      `- [Fleet Rollout](https://${host}/fleet): See all ${cfg.name} aircraft colored by WiFi provider.`,
-      `- [API - Check Flight](https://${host}/api/check-flight?flight_number=${cfg.iata}123&date=2026-01-22): JSON API to check Starlink status for a specific flight`,
-      `- [API - Predict Flight](https://${host}/api/predict-flight?flight_number=${cfg.iata}4680): Probability estimate based on historical observations`,
-      `- [API - Plan Route](https://${host}/api/plan-route?origin=SFO&destination=JAX): Full/partial coverage itinerary search`
-    );
-  } else {
-    pages.splice(
-      1,
-      0,
-      `- [API - Check Any Flight](https://${host}/api/check-any-flight?flight_number=UA123&date=2026-01-22): Check Starlink status for a flight on any tracked airline`,
-      `- [API - Compare Route](https://${host}/api/compare-route?origin=SFO&destination=HNL): Per-airline Starlink probability for a city pair`
-    );
-  }
+  const homepage = `- [Homepage](https://${host}/): Live tracker with all Starlink-equipped aircraft, fleet statistics, search by tail number/flight number/route`;
+  const apiData = `- [API - Fleet Data](https://${host}/api/data): Full JSON dataset of all Starlink-equipped aircraft and flights`;
+  const tenantPages = cfg
+    ? [
+        `- [Check a Flight](https://${host}/check-flight): Check if a specific ${cfg.name} flight has Starlink WiFi by flight number and date. Falls back to probability estimate for future flights.`,
+        `- [Route Planner](https://${host}/route-planner): Find the best routing (direct or 1-stop) to maximize Starlink coverage. Ranks itineraries by probability.`,
+        `- [Fleet Rollout](https://${host}/fleet): See all ${cfg.name} aircraft colored by WiFi provider.`,
+        `- [API - Check Flight](https://${host}/api/check-flight?flight_number=${cfg.iata}123&date=2026-01-22): JSON API to check Starlink status for a specific flight`,
+        `- [API - Predict Flight](https://${host}/api/predict-flight?flight_number=${cfg.iata}4680): Probability estimate based on historical observations`,
+        `- [API - Plan Route](https://${host}/api/plan-route?origin=SFO&destination=JAX): Full/partial coverage itinerary search`,
+      ]
+    : [
+        `- [API - Check Any Flight](https://${host}/api/check-any-flight?flight_number=UA123&date=2026-01-22): Check Starlink status for a flight on any tracked airline`,
+        `- [API - Compare Route](https://${host}/api/compare-route?origin=SFO&destination=HNL): Per-airline Starlink probability for a city pair`,
+      ];
+  const pages = [homepage, ...tenantPages, apiData];
 
   return new Response(
     `# ${brand.title}

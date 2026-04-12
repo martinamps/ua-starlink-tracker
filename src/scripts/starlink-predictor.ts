@@ -18,6 +18,7 @@
  */
 
 import { Database } from "bun:sqlite";
+import type { AirlineConfig } from "../airlines/registry";
 import { getMeta } from "../database/database";
 import { ensureUAPrefix, inferFleet } from "../utils/constants";
 
@@ -572,7 +573,7 @@ export function compareRoute(
   db: Database,
   origin: string,
   destination: string,
-  airlines: import("../airlines/registry").AirlineConfig[]
+  airlines: AirlineConfig[]
 ): RouteCompareResult[] {
   const o = origin.toUpperCase().trim();
   const d = destination.toUpperCase().trim();
@@ -586,9 +587,11 @@ export function compareRoute(
                        WHERE sp.TailNumber = uf.tail_number
                          AND (sp.verified_wifi IS NULL OR sp.verified_wifi = 'Starlink')) AS sl
          FROM upcoming_flights uf
-         WHERE uf.departure_airport = ? AND uf.arrival_airport = ? AND uf.airline = ?`
+         WHERE ((uf.departure_airport = ? AND uf.arrival_airport = ?)
+             OR (uf.departure_airport = ? AND uf.arrival_airport = ?))
+           AND uf.airline = ?`
       )
-      .all(o, d, cfg.code) as { tail_number: string; sl: number }[];
+      .all(o, d, d, o, cfg.code) as { tail_number: string; sl: number }[];
 
     let probability: number;
     let reason: string;
