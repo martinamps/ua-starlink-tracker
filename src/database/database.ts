@@ -891,23 +891,16 @@ export interface VerificationObservation {
 
 export function getVerificationObservations(
   db: Database,
-  airline?: AirlineFilter,
-  beforeSec?: number,
-  afterSec?: number
+  airline?: AirlineFilter
 ): VerificationObservation[] {
-  let sql = `SELECT flight_number, tail_number, has_starlink, checked_at
-             FROM starlink_verification_log
-             WHERE flight_number IS NOT NULL AND source = 'united' AND has_starlink IS NOT NULL`;
-  const params: (string | number)[] = [];
-  if (beforeSec !== undefined) {
-    sql += " AND checked_at < ?";
-    params.push(beforeSec);
-  }
-  if (afterSec !== undefined) {
-    sql += " AND checked_at >= ?";
-    params.push(afterSec);
-  }
-  const q = withAirline(sql, airline, "", params);
+  const q = withAirline(
+    `SELECT flight_number, tail_number, has_starlink, checked_at
+     FROM starlink_verification_log
+     WHERE flight_number IS NOT NULL AND source = 'united' AND has_starlink IS NOT NULL`,
+    airline,
+    "",
+    []
+  );
   return db.query(q.sql).all(...q.params) as VerificationObservation[];
 }
 

@@ -7,7 +7,7 @@
  * /api/check-flight and MCP check_flight so the two surfaces converge.
  */
 
-import type { ScopedReader } from "../server/context";
+import type { ScopedReader } from "../database/reader";
 import { FlightRadar24API } from "./flightradar24-api";
 
 const fr24 = new FlightRadar24API();

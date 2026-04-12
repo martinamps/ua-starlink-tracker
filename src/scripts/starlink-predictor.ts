@@ -20,7 +20,7 @@
 import { Database } from "bun:sqlite";
 import { enabledAirlines } from "../airlines/registry";
 import type { VerificationObservation as Observation } from "../database/database";
-import { type Scope, type ScopedReader, createReaderFactory } from "../server/context";
+import { type Scope, type ScopedReader, createReaderFactory } from "../database/reader";
 import { ensureUAPrefix, inferFleet } from "../utils/constants";
 
 // ============================================================================

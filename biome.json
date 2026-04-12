@@ -32,7 +32,7 @@
           "level": "error",
           "options": {
             "paths": {
-              "bun:sqlite": "Route handlers must use ctx.reader (ScopedReader) — raw Database access is restricted to src/database/**, src/server/context.ts, src/scripts/**, tests/**, and server.ts."
+              "bun:sqlite": "Route handlers must use ctx.reader (ScopedReader) — raw Database access is restricted to src/database/**, src/scripts/**, tests/**, and server.ts."
             }
           }
         }
@@ -70,14 +70,7 @@
       }
     },
     {
-      "include": [
-        "src/database/**",
-        "src/server/context.ts",
-        "src/scripts/**",
-        "tests/**",
-        "scripts/**",
-        "server.ts"
-      ],
+      "include": ["src/database/**", "src/scripts/**", "tests/**", "scripts/**", "server.ts"],
       "linter": {
         "rules": {
           "nursery": {

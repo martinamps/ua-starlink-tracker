@@ -11,8 +11,8 @@
  */
 
 import { AIRLINES } from "../airlines/registry";
+import type { ScopedReader } from "../database/reader";
 import { planItinerary, predictFlight, predictRoute } from "../scripts/starlink-predictor";
-import type { ScopedReader } from "../server/context";
 import {
   buildFlightNumberVariants,
   ensureUAPrefix,
