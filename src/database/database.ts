@@ -679,14 +679,21 @@ export function updateFlights(
   >[]
 ) {
   const now = Math.floor(Date.now() / 1000);
+  const airline =
+    (
+      db.query("SELECT airline FROM starlink_planes WHERE TailNumber = ?").get(tailNumber) as
+        | { airline: string }
+        | undefined
+    )?.airline ?? "UA";
+
   const updateFlightsTransaction = db.transaction(() => {
     // Archive departed flights into departure_log before the DELETE so we
     // build a trailing 30d window. INSERT OR IGNORE-equivalent via NOT EXISTS
     // guard against double-logging when updateFlights runs twice before a
     // flight departs.
     db.query(`
-      INSERT INTO departure_log (tail_number, airport, departed_at)
-      SELECT tail_number, departure_airport, departure_time
+      INSERT INTO departure_log (tail_number, airport, departed_at, airline)
+      SELECT tail_number, departure_airport, departure_time, airline
       FROM upcoming_flights
       WHERE tail_number = ? AND departure_time < ?
         AND NOT EXISTS (
@@ -700,8 +707,8 @@ export function updateFlights(
 
     if (flights.length > 0) {
       const insertStmt = db.prepare(`
-        INSERT INTO upcoming_flights (tail_number, flight_number, departure_airport, arrival_airport, departure_time, arrival_time, last_updated)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO upcoming_flights (tail_number, flight_number, departure_airport, arrival_airport, departure_time, arrival_time, last_updated, airline)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       for (const flight of flights) {
@@ -712,7 +719,8 @@ export function updateFlights(
           flight.arrival_airport,
           flight.departure_time,
           flight.arrival_time,
-          now
+          now,
+          airline
         );
       }
     }

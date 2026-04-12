@@ -10,7 +10,7 @@
 import { Database } from "bun:sqlite";
 import { beforeAll, describe, expect, test } from "bun:test";
 import { copyFileSync } from "node:fs";
-import { updateDatabase } from "../src/database/database";
+import { updateDatabase, updateFlights } from "../src/database/database";
 import { createApp } from "../src/server/app";
 import type { FleetStats } from "../src/types";
 
@@ -234,6 +234,37 @@ describe("write-path safety — UA scrape cannot wipe HA rows", () => {
     // UA scrape replaced spreadsheet rows with the single fake (+ any discovery rows)
     expect(uaAfter).toBeLessThan(uaBefore);
     expect(uaAfter).toBeGreaterThan(0);
+  });
+
+  test("updateFlights stamps airline from starlink_planes (HA tail → airline='HA')", () => {
+    const tmp = "/tmp/ua-writepath-flights.sqlite";
+    copyFileSync(TEST_DB, tmp);
+    const wdb = new Database(tmp);
+
+    const haTail = (
+      wdb.query("SELECT TailNumber FROM starlink_planes WHERE airline='HA' LIMIT 1").get() as {
+        TailNumber: string;
+      }
+    ).TailNumber;
+
+    updateFlights(wdb, haTail, [
+      {
+        flight_number: "HA100",
+        departure_airport: "HNL",
+        arrival_airport: "LAX",
+        departure_time: Math.floor(Date.now() / 1000) + 3600,
+        arrival_time: Math.floor(Date.now() / 1000) + 21600,
+      },
+    ]);
+
+    const row = wdb
+      .query(
+        "SELECT airline FROM upcoming_flights WHERE tail_number = ? AND flight_number = 'HA100'"
+      )
+      .get(haTail) as { airline: string };
+    wdb.close();
+
+    expect(row.airline).toBe("HA");
   });
 });
 
