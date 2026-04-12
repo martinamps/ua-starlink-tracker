@@ -1,78 +1,79 @@
 /**
- * Golden snapshots — pre-refactor baseline.
- *
+ * Golden snapshots — the multi-airline refactor must produce byte-identical
+ * UA-host responses to what server.ts produced before any of it shipped.
  * Fixtures captured by `bun scripts/capture-golden.ts` against the test
- * snapshot before the multi-airline refactor. These lock the public-contract
- * response shapes so the refactor can be diffed against them. Once
- * createApp(db) exists, this file will assert dispatch() output equals the
- * fixtures byte-for-byte (modulo volatile fields).
+ * snapshot BEFORE canary seeding.
  */
 
-import { describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { beforeAll, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import { createApp } from "../src/server/app";
 
 const G = "tests/golden";
+const TEST_DB = "/tmp/ua-test.sqlite";
+const UA = "unitedstarlinktracker.com";
 const load = (name: string) => JSON.parse(readFileSync(`${G}/${name}`, "utf8"));
 
-describe("golden snapshots (pre-refactor baseline)", () => {
-  test("api-data: top-level shape", () => {
-    const d = load("api-data.json");
-    expect(typeof d.totalCount).toBe("number");
-    expect(Array.isArray(d.starlinkPlanes)).toBe(true);
-    expect(d.starlinkPlanes.length).toBeGreaterThan(0);
-    expect(typeof d.lastUpdated).toBe("string");
-    expect(d.fleetStats).toBeDefined();
-    expect(d.flightsByTail).toBeDefined();
+let app: ReturnType<typeof createApp>;
+
+beforeAll(() => {
+  const db = new Database(TEST_DB, { readonly: true });
+  app = createApp(db);
+});
+
+function req(path: string, init: RequestInit = {}) {
+  return new Request(`http://x${path}`, {
+    ...init,
+    headers: { Host: UA, ...(init.headers as Record<string, string>) },
+  });
+}
+
+async function getJSON(path: string) {
+  const r = await app.dispatch(req(path));
+  expect(r.status).toBe(200);
+  return r.json();
+}
+
+async function postMcp(method: string, params: unknown) {
+  const r = await app.dispatch(
+    req("/mcp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+    })
+  );
+  expect(r.status).toBe(200);
+  return r.json();
+}
+
+describe("golden snapshots (refactor must be byte-identical)", () => {
+  test("/api/data", async () => {
+    const live = await getJSON("/api/data");
+    expect(live).toEqual(load("api-data.json"));
   });
 
-  test("api-check-flight: false-case shape", () => {
-    const d = load("api-check-flight-UA123.json");
-    expect(d.hasStarlink).toBe(false);
-    expect(Array.isArray(d.flights)).toBe(true);
-    expect(d.flights.length).toBe(0);
+  test("/api/check-flight UA123 (false)", async () => {
+    const live = await getJSON("/api/check-flight?flight_number=UA123&date=2026-03-20");
+    expect(live).toEqual(load("api-check-flight-UA123.json"));
   });
 
-  test("api-check-flight: true-case shape with confidence", () => {
-    const d = load("api-check-flight-UA4421.json");
-    expect(d.hasStarlink).toBe(true);
-    expect(["verified", "likely"]).toContain(d.confidence);
-    expect(Array.isArray(d.flights)).toBe(true);
-    expect(d.flights.length).toBeGreaterThan(0);
-    const f = d.flights[0];
-    for (const k of [
-      "tail_number",
-      "aircraft_type",
-      "flight_number",
-      "ua_flight_number",
-      "departure_airport",
-      "arrival_airport",
-      "departure_time",
-      "arrival_time",
-    ]) {
-      expect(f[k]).toBeDefined();
-    }
+  test("/api/check-flight UA4421 (true, verified)", async () => {
+    const live = await getJSON("/api/check-flight?flight_number=UA4421&date=2026-03-22");
+    expect(live).toEqual(load("api-check-flight-UA4421.json"));
   });
 
-  test("mcp-initialize: serverInfo + instructions", () => {
-    const d = load("mcp-initialize.json");
-    expect(d.result.serverInfo.name).toBeDefined();
-    expect(typeof d.result.instructions).toBe("string");
-    expect(d.result.capabilities.tools).toBeDefined();
+  test("MCP initialize", async () => {
+    const live = await postMcp("initialize", {
+      protocolVersion: "2024-11-05",
+      capabilities: {},
+      clientInfo: { name: "golden", version: "1" },
+    });
+    expect(live).toEqual(load("mcp-initialize.json"));
   });
 
-  test("mcp-tools-list: 7 tools with stable names", () => {
-    const d = load("mcp-tools-list.json");
-    const names = d.result.tools.map((t: { name: string }) => t.name).sort();
-    expect(names).toEqual(
-      [
-        "check_flight",
-        "get_fleet_stats",
-        "list_starlink_aircraft",
-        "plan_starlink_itinerary",
-        "predict_flight_starlink",
-        "predict_route_starlink",
-        "search_starlink_flights",
-      ].sort()
-    );
+  test("MCP tools/list", async () => {
+    const live = await postMcp("tools/list", {});
+    expect(live).toEqual(load("mcp-tools-list.json"));
   });
 });

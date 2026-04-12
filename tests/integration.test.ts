@@ -159,15 +159,15 @@ describe("/api/check-flight contract", () => {
 describe("/api/data contract", () => {
   test("returns ApiResponse shape", () => {
     const resp: ApiResponse = {
-      totalCount: getTotalCount(db),
-      starlinkPlanes: getStarlinkPlanes(db),
-      lastUpdated: getLastUpdated(db),
-      fleetStats: getFleetStats(db),
+      totalCount: getTotalCount(db, "UA"),
+      starlinkPlanes: getStarlinkPlanes(db, "UA"),
+      lastUpdated: getLastUpdated(db, "UA"),
+      fleetStats: getFleetStats(db, "UA"),
       flightsByTail: {},
     };
 
     // Group flights (same as server.ts)
-    for (const f of getUpcomingFlights(db)) {
+    for (const f of getUpcomingFlights(db, undefined, "UA")) {
       if (!resp.flightsByTail[f.tail_number]) resp.flightsByTail[f.tail_number] = [];
       resp.flightsByTail[f.tail_number].push(f);
     }
@@ -857,7 +857,7 @@ describe("flight number utils", () => {
 
 describe("getFleetPageData", () => {
   test("shape: families, carriers, pulse, bodyClass, allTails", () => {
-    const d = getFleetPageData(db);
+    const d = getFleetPageData(db, "UA");
     expect(d.totalFleet).toBeGreaterThan(0);
     expect(d.totalStarlink).toBeGreaterThanOrEqual(0);
     expect(d.totalStarlink).toBeLessThanOrEqual(d.totalFleet);
@@ -883,7 +883,7 @@ describe("getFleetPageData", () => {
   });
 
   test("families sorted by Starlink penetration, unknown last, no 'other'", () => {
-    const d = getFleetPageData(db);
+    const d = getFleetPageData(db, "UA");
     expect(d.families.some((f) => f.family === "other")).toBe(false);
     const last = d.families[d.families.length - 1];
     if (d.families.some((f) => f.family === "unknown")) {
@@ -898,7 +898,7 @@ describe("getFleetPageData", () => {
   });
 
   test("all providers are valid WifiProvider (no 'other')", () => {
-    const d = getFleetPageData(db);
+    const d = getFleetPageData(db, "UA");
     const valid = new Set(["starlink", "viasat", "panasonic", "thales", "none", "unknown"]);
     for (const t of d.allTails) {
       expect(valid.has(t.provider)).toBe(true);

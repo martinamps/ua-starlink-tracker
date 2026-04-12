@@ -27,6 +27,16 @@
         "useConst": "error",
         "useTemplate": "warn"
       },
+      "nursery": {
+        "noRestrictedImports": {
+          "level": "error",
+          "options": {
+            "paths": {
+              "bun:sqlite": "Route handlers must use ctx.reader (ScopedReader) — raw Database access is restricted to src/database/**, src/server/context.ts, src/scripts/**, tests/**, and server.ts."
+            }
+          }
+        }
+      },
       "complexity": {
         "noBannedTypes": "off"
       },
@@ -55,6 +65,24 @@
         "rules": {
           "security": {
             "noDangerouslySetInnerHtml": "off"
+          }
+        }
+      }
+    },
+    {
+      "include": [
+        "src/database/**",
+        "src/server/context.ts",
+        "src/scripts/**",
+        "src/api/**",
+        "tests/**",
+        "scripts/**",
+        "server.ts"
+      ],
+      "linter": {
+        "rules": {
+          "nursery": {
+            "noRestrictedImports": "off"
           }
         }
       }
