@@ -156,7 +156,10 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
     canonicalHost: "alaskastarlinktracker.com",
     iata: "AS",
     icao: "ASA",
-    carrierPrefixes: ["ASA", "QXE", "SKW", "AS", "QX", "OO"],
+    // SkyWest (OO/SKW) intentionally excluded — shared with UA, tail_number is
+    // UNIQUE on united_fleet. AS regionals via SkyWest are out of scope until
+    // the Phase-3 composite-PK migration; AS Starlink is mainline-first anyway.
+    carrierPrefixes: ["ASA", "QXE", "AS", "QX"],
     subfleets: [{ key: "mainline", label: "Alaska Fleet", match: () => true }],
     fr24Slug: "as-asa",
     minFleetSanity: 200,
