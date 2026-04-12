@@ -15,6 +15,7 @@ import ReactDOMServer from "react-dom/server";
 import { buildFaqJsonLd, getContent } from "../airlines/content";
 import {
   buildAirlineFlightNumberVariants,
+  detectAirline,
   ensureAirlinePrefix,
   normalizeAirlineFlightNumber,
 } from "../airlines/flight-number";
@@ -22,6 +23,7 @@ import {
   AIRLINES,
   HUB_HOSTS,
   brandMetadata,
+  enabledAirlines,
   resolveTenant,
   tenantBrand,
 } from "../airlines/registry";
@@ -32,8 +34,9 @@ import FleetPage from "../components/fleet-page";
 import McpPage from "../components/mcp-page";
 import Page from "../components/page";
 import RoutePlannerPage from "../components/route-planner-page";
+import { getFlightsByNumberAndDate } from "../database/database";
 import { COUNTERS, metrics, withSpan } from "../observability";
-import { planItinerary, predictFlight } from "../scripts/starlink-predictor";
+import { compareRoute, planItinerary, predictFlight } from "../scripts/starlink-predictor";
 import type { ApiResponse, Flight } from "../types";
 import { CONTENT_TYPES, SECURITY_HEADERS } from "../utils/constants";
 import { error as logError } from "../utils/logger";
@@ -274,6 +277,121 @@ const apiCheckFlight: Handler = async ({ req, url, reader, db, tenant }) => {
   return new Response(JSON.stringify(response), { headers: SECURITY_HEADERS.api });
 };
 
+const hubOnly = (tenant: RequestContext["tenant"]): Response | null =>
+  tenant === "ALL"
+    ? null
+    : new Response(JSON.stringify({ error: "Not found" }), {
+        status: 404,
+        headers: SECURITY_HEADERS.api,
+      });
+
+const apiCheckAnyFlight: Handler = ({ req, url, db, tenant }) => {
+  if (req.method !== "GET") return methodNotAllowed(true);
+  const guard = hubOnly(tenant);
+  if (guard) return guard;
+
+  const flightNumber = url.searchParams.get("flight_number");
+  const date = url.searchParams.get("date");
+  if (!flightNumber || !date) {
+    return new Response(
+      JSON.stringify({ error: "Missing required parameters: flight_number and date" }),
+      { status: 400, headers: SECURITY_HEADERS.api }
+    );
+  }
+
+  const cfg = detectAirline(flightNumber);
+  if (!cfg) {
+    return new Response(
+      JSON.stringify({
+        error: `Airline not tracked. Tracked: ${enabledAirlines()
+          .map((a) => a.iata)
+          .join(", ")}`,
+      }),
+      { status: 200, headers: SECURITY_HEADERS.api }
+    );
+  }
+
+  const dateObj = new Date(`${date}T00:00:00Z`);
+  if (Number.isNaN(dateObj.getTime())) {
+    return new Response(JSON.stringify({ error: "Invalid date format. Use YYYY-MM-DD" }), {
+      status: 400,
+      headers: SECURITY_HEADERS.api,
+    });
+  }
+  const startOfDay = Math.floor(dateObj.getTime() / 1000);
+  const endOfDay = startOfDay + 86400;
+
+  const normalized = ensureAirlinePrefix(cfg, flightNumber);
+  const variants = buildAirlineFlightNumberVariants(cfg, normalized);
+  const matching = getFlightsByNumberAndDate(db, variants, startOfDay, endOfDay, cfg.code);
+
+  if (matching.length > 0) {
+    const f = matching[0];
+    return new Response(
+      JSON.stringify({
+        hasStarlink: true,
+        airline: cfg.name,
+        confidence: f.verified_wifi === "Starlink" ? "verified" : "likely",
+        reason: `${f.tail_number} (${f.aircraft_type}) — ${f.departure_airport} → ${f.arrival_airport}`,
+        flights: matching.map((m) => ({
+          tail_number: m.tail_number,
+          aircraft_type: m.aircraft_type,
+          departure_airport: m.departure_airport,
+          arrival_airport: m.arrival_airport,
+          departure_time: m.departure_time,
+        })),
+      }),
+      { headers: SECURITY_HEADERS.api }
+    );
+  }
+
+  if (cfg.routeTypeRule) {
+    return new Response(
+      JSON.stringify({
+        hasStarlink: null,
+        airline: cfg.name,
+        confidence: "type",
+        reason: `No schedule data; ${cfg.name} Starlink status is type-determined — check the aircraft type on your booking.`,
+      }),
+      { headers: SECURITY_HEADERS.api }
+    );
+  }
+
+  return new Response(
+    JSON.stringify({
+      hasStarlink: false,
+      airline: cfg.name,
+      message: "No Starlink-equipped aircraft found for this flight on the specified date.",
+    }),
+    { headers: SECURITY_HEADERS.api }
+  );
+};
+
+const apiCompareRoute: Handler = ({ req, url, db, tenant }) => {
+  if (req.method !== "GET") return methodNotAllowed(true);
+  const guard = hubOnly(tenant);
+  if (guard) return guard;
+
+  const origin = url.searchParams.get("origin");
+  const destination = url.searchParams.get("destination");
+  if (!origin || !destination || origin.length !== 3 || destination.length !== 3) {
+    return new Response(
+      JSON.stringify({ error: "origin and destination must be 3-letter IATA codes" }),
+      { status: 400, headers: SECURITY_HEADERS.api }
+    );
+  }
+
+  const results = compareRoute(db, origin, destination, enabledAirlines());
+  return new Response(
+    JSON.stringify({
+      origin: origin.toUpperCase(),
+      destination: destination.toUpperCase(),
+      results,
+    }),
+    { headers: SECURITY_HEADERS.api }
+  );
+};
+
 const apiPredictFlight: Handler = ({ req, url, db, tenant }) => {
   if (req.method !== "GET") return methodNotAllowed(true);
   const flightNumber = url.searchParams.get("flight_number");
@@ -477,34 +595,53 @@ const sitemap: Handler = ({ reader, tenant }) => {
   });
 };
 
-const llmsTxt: Handler = () =>
-  new Response(
-    `# United Starlink Tracker
+const llmsTxt: Handler = ({ tenant }) => {
+  const cfg = tenantConfig(tenant);
+  const brand = tenantBrand(tenant);
+  const host = cfg?.canonicalHost ?? HUB_HOSTS[0];
+  const name = cfg?.name ?? "major airlines";
+  const isHub = tenant === "ALL";
 
-> Track which United Airlines flights have free Starlink WiFi. Live status for every Starlink-equipped aircraft, installation progress, and upcoming flight schedules.
+  const pages = [
+    `- [Homepage](https://${host}/): Live tracker with all Starlink-equipped aircraft, fleet statistics, search by tail number/flight number/route`,
+    `- [API - Fleet Data](https://${host}/api/data): Full JSON dataset of all Starlink-equipped aircraft and flights`,
+  ];
+  if (cfg) {
+    pages.splice(
+      1,
+      0,
+      `- [Check a Flight](https://${host}/check-flight): Check if a specific ${cfg.name} flight has Starlink WiFi by flight number and date. Falls back to probability estimate for future flights.`,
+      `- [Route Planner](https://${host}/route-planner): Find the best routing (direct or 1-stop) to maximize Starlink coverage. Ranks itineraries by probability.`,
+      `- [Fleet Rollout](https://${host}/fleet): See all ${cfg.name} aircraft colored by WiFi provider.`,
+      `- [API - Check Flight](https://${host}/api/check-flight?flight_number=${cfg.iata}123&date=2026-01-22): JSON API to check Starlink status for a specific flight`,
+      `- [API - Predict Flight](https://${host}/api/predict-flight?flight_number=${cfg.iata}4680): Probability estimate based on historical observations`,
+      `- [API - Plan Route](https://${host}/api/plan-route?origin=SFO&destination=JAX): Full/partial coverage itinerary search`
+    );
+  } else {
+    pages.splice(
+      1,
+      0,
+      `- [API - Check Any Flight](https://${host}/api/check-any-flight?flight_number=UA123&date=2026-01-22): Check Starlink status for a flight on any tracked airline`,
+      `- [API - Compare Route](https://${host}/api/compare-route?origin=SFO&destination=HNL): Per-airline Starlink probability for a city pair`
+    );
+  }
 
-United Airlines began installing SpaceX Starlink WiFi on March 7, 2025. The service is completely free for all passengers with speeds up to 250 Mbps. This tracker monitors the rollout in real time, showing which aircraft have been equipped and their upcoming flight schedules.
+  return new Response(
+    `# ${brand.title}
+
+> ${brand.description}
+
+${isHub ? "Per-aircraft Starlink WiFi status across multiple airlines." : `Tracks the ${name} Starlink WiFi rollout in real time, showing which aircraft have been equipped and their upcoming flight schedules.`} The service is free for all passengers with speeds up to 250 Mbps.
 
 ## Pages
 
-- [Homepage](https://unitedstarlinktracker.com/): Live tracker with all Starlink-equipped aircraft, fleet statistics, search by tail number/flight number/route
-- [Check a Flight](https://unitedstarlinktracker.com/check-flight): Check if a specific United flight has Starlink WiFi by flight number and date. Falls back to probability estimate for future flights.
-- [Route Planner](https://unitedstarlinktracker.com/route-planner): Find the best routing (direct or 1-stop) to maximize Starlink coverage. Ranks itineraries by probability.
-- [Fleet Rollout](https://unitedstarlinktracker.com/fleet): See all United aircraft colored by WiFi provider, live airborne Starlink count, express carrier leaderboard.
-- [API - Check Flight](https://unitedstarlinktracker.com/api/check-flight?flight_number=UA123&date=2026-01-22): JSON API to check Starlink status for a specific flight
-- [API - Predict Flight](https://unitedstarlinktracker.com/api/predict-flight?flight_number=UA4680): Probability estimate based on 12k+ historical observations
-- [API - Plan Route](https://unitedstarlinktracker.com/api/plan-route?origin=SFO&destination=JAX): Full/partial coverage itinerary search
-- [API - Fleet Data](https://unitedstarlinktracker.com/api/data): Full JSON dataset of all Starlink-equipped aircraft and flights
+${pages.join("\n")}
 
 ## MCP Server (for AI assistants)
 
-- [MCP Docs & Setup](https://unitedstarlinktracker.com/mcp): Setup instructions for Claude Desktop, Cursor, and other MCP clients
-- [MCP Endpoint](https://unitedstarlinktracker.com/mcp): Model Context Protocol server (POST with application/json). Tools: check_flight, predict_flight_starlink, plan_starlink_itinerary, predict_route_starlink, get_fleet_stats, list_starlink_aircraft, search_starlink_flights. Transport: streamable HTTP (stateless).
-
-## Chrome Extension
-
-- [Google Flights Starlink Indicator](https://chromewebstore.google.com/detail/google-flights-starlink-i/jjfljoifenkfdbldliakmmjhdkbhehoi): Free Chrome extension that shows Starlink badges on Google Flights search results
-`,
+- [MCP Docs & Setup](https://${host}/mcp): Setup instructions for Claude Desktop, Cursor, and other MCP clients
+- [MCP Endpoint](https://${host}/mcp): Model Context Protocol server (POST with application/json). Tools: check_flight, predict_flight_starlink, plan_starlink_itinerary, predict_route_starlink, get_fleet_stats, list_starlink_aircraft, search_starlink_flights. Transport: streamable HTTP (stateless).
+${cfg?.code === "UA" ? "\n## Chrome Extension\n\n- [Google Flights Starlink Indicator](https://chromewebstore.google.com/detail/google-flights-starlink-i/jjfljoifenkfdbldliakmmjhdkbhehoi): Free Chrome extension that shows Starlink badges on Google Flights search results\n" : ""}`,
     {
       headers: {
         "Content-Type": "text/markdown; charset=utf-8",
@@ -512,6 +649,7 @@ United Airlines began installing SpaceX Starlink WiFi on March 7, 2025. The serv
       },
     }
   );
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HTML page handlers
@@ -575,53 +713,64 @@ async function renderSubPage<P extends object = object>(
   return new Response(renderHtml(template, htmlVariables), { headers: SECURITY_HEADERS.html });
 }
 
+function subPageMeta(
+  tenant: RequestContext["tenant"],
+  page: "check-flight" | "route-planner" | "fleet"
+): PageMeta {
+  const cfg = tenantConfig(tenant);
+  const brand = tenantBrand(tenant);
+  const name = cfg?.name ?? "any tracked airline";
+  const short = cfg?.name ?? "Airline";
+  if (page === "check-flight")
+    return {
+      siteTitle: `Check If Your ${short} Flight Has Starlink WiFi | ${brand.title}`,
+      siteDescription: `Enter your ${name} flight number and date to check if your aircraft has free Starlink WiFi. Instant results from our live database — or a probability estimate if your flight is more than 2 days out.`,
+      keywords: `check ${cfg?.iata ?? "airline"} flight starlink, does my flight have starlink, starlink checker, ${name} wifi check`,
+      ogTitle: `Check If Your ${short} Flight Has Starlink WiFi`,
+      ogDescription: `Enter your flight number and date to check if your ${name} aircraft has free Starlink WiFi.`,
+    };
+  if (page === "route-planner")
+    return {
+      siteTitle: `Starlink Route Planner — Find ${short} Flights With Starlink WiFi`,
+      siteDescription: `Find the best way to fly ${name} with Starlink WiFi. Compare direct flights and smart connections ranked by Starlink probability. Plan productive travel with full-coverage routings.`,
+      keywords: `starlink route planner, best route for starlink, plan starlink trip, ${name} starlink connections`,
+      ogTitle: `Starlink Route Planner — ${short}`,
+      ogDescription:
+        "Find direct flights and smart connections with the highest Starlink probability.",
+    };
+  return {
+    siteTitle: `${short} Fleet Starlink Rollout — Every Tail Number, Every WiFi Provider`,
+    siteDescription: `See every ${name} aircraft at once, colored by WiFi provider. Track which aircraft types are done and how many Starlink planes are in the air right now.`,
+    keywords: `${name} fleet starlink, wifi by aircraft, starlink rollout progress, tail number wifi`,
+    ogTitle: `${short} Fleet Starlink Rollout`,
+    ogDescription: `Every ${name} tail number, colored by WiFi provider.`,
+  };
+}
+
 const checkFlightPage: Handler = (ctx) => {
   if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
-  return renderSubPage(ctx, CheckFlightPage, "/check-flight", {
-    siteTitle: "Check If Your United Flight Has Starlink WiFi | United Starlink Tracker",
-    siteDescription:
-      "Enter your United Airlines flight number and date to check if your aircraft has free Starlink WiFi. Instant results from our live database — or a probability estimate if your flight is more than 2 days out.",
-    keywords:
-      "check united flight starlink, does my united flight have starlink, united starlink checker, united wifi check, united starlink probability",
-    ogTitle: "Check If Your United Flight Has Starlink WiFi",
-    ogDescription:
-      "Enter your flight number and date to check if your United Airlines aircraft has free Starlink WiFi.",
-  });
+  return renderSubPage(
+    ctx,
+    CheckFlightPage,
+    "/check-flight",
+    subPageMeta(ctx.tenant, "check-flight")
+  );
 };
 
 const routePlannerPage: Handler = (ctx) => {
   if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
-  return renderSubPage(ctx, RoutePlannerPage, "/route-planner", {
-    siteTitle: "Starlink Route Planner — Find United Flights With Starlink WiFi",
-    siteDescription:
-      "Find the best way to fly United with Starlink WiFi. Compare direct flights and smart connections ranked by Starlink probability. Plan productive travel with full-coverage routings.",
-    keywords:
-      "united starlink route planner, best united route for starlink, plan united starlink trip, starlink flight connections, united wifi routing",
-    ogTitle: "Starlink Route Planner — United Airlines",
-    ogDescription:
-      "Find direct flights and smart connections with the highest Starlink probability. Sometimes DEN→ASE→ORD beats flying direct.",
-  });
+  return renderSubPage(
+    ctx,
+    RoutePlannerPage,
+    "/route-planner",
+    subPageMeta(ctx.tenant, "route-planner")
+  );
 };
 
 const fleetPage: Handler = (ctx) => {
   if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
   const data = ctx.reader.getFleetPageData();
-  return renderSubPage(
-    ctx,
-    FleetPage,
-    "/fleet",
-    {
-      siteTitle: "United Fleet Starlink Rollout — Every Tail Number, Every WiFi Provider",
-      siteDescription:
-        "See all 1,500+ United Airlines aircraft at once, colored by WiFi provider. Track which aircraft types are done, which express carrier is winning, and how many Starlink planes are in the air right now.",
-      keywords:
-        "united fleet starlink, united airlines wifi by aircraft, starlink rollout progress, united express carrier starlink, united tail number wifi",
-      ogTitle: "United Fleet Starlink Rollout — The Hangar Floor View",
-      ogDescription:
-        "Every United tail number, colored by WiFi provider. Your 16-hour flight to Singapore still has Panasonic. Your 53-minute Duluth hop has Starlink.",
-    },
-    { data }
-  );
+  return renderSubPage(ctx, FleetPage, "/fleet", subPageMeta(ctx.tenant, "fleet"), { data });
 };
 
 const homePage: Handler = async (ctx) => {
@@ -637,6 +786,7 @@ const homePage: Handler = async (ctx) => {
     flightsByTail[flight.tail_number].push(flight);
   }
 
+  const isHub = tenant === "ALL";
   const reactHtml = ReactDOMServer.renderToString(
     React.createElement(Page, {
       total: reader.getTotalCount(),
@@ -645,7 +795,9 @@ const homePage: Handler = async (ctx) => {
       fleetStats: reader.getFleetStats(),
       brand,
       content,
-      perAirlineStats: tenant === "ALL" ? reader.getPerAirlineStats() : undefined,
+      airlineByTail: reader.getAirlineByTail(),
+      perAirlineStats: isHub ? reader.getPerAirlineStats() : undefined,
+      recentInstalls: isHub ? reader.getRecentInstalls(25) : undefined,
       flightsByTail,
       airportDepartures: reader.getAirportDepartures(),
     })
@@ -700,6 +852,8 @@ export function createApp(db: Database): App {
     "/fleet": fleetPage,
     "/api/data": apiData,
     "/api/check-flight": apiCheckFlight,
+    "/api/check-any-flight": apiCheckAnyFlight,
+    "/api/compare-route": apiCompareRoute,
     "/api/predict-flight": apiPredictFlight,
     "/api/plan-route": apiPlanRoute,
     "/api/mismatches": apiMismatches,

@@ -1,6 +1,7 @@
-import React from "react";
+import type React from "react";
 import { type AirlineContent, type ContentStats, getContent } from "../airlines/content";
 import { AIRLINES, type PageBrand } from "../airlines/registry";
+import type { RecentInstall } from "../database/database";
 import type { Aircraft, AirportDeparture, AirportDepartures, FleetStats, Flight } from "../types";
 import { HeaderStatStrip, type PerAirlineStat } from "./atoms";
 
@@ -53,7 +54,9 @@ interface PageProps {
   fleetStats?: FleetStats;
   brand?: PageBrand;
   content?: AirlineContent;
+  airlineByTail?: Record<string, string>;
   perAirlineStats?: PerAirlineStat[];
+  recentInstalls?: RecentInstall[];
   flightsByTail?: Record<string, Flight[]>;
   airportDepartures?: AirportDepartures;
 }
@@ -255,7 +258,9 @@ export default function Page({
   fleetStats,
   brand = AIRLINES.UA.brand,
   content = getContent(AIRLINES.UA),
+  airlineByTail = {},
   perAirlineStats,
+  recentInstalls,
   flightsByTail = {},
   airportDepartures,
 }: PageProps) {
@@ -288,49 +293,13 @@ export default function Page({
   const y = total;
   const percentage = y > 0 ? ((x / y) * 100).toFixed(2) : "0.00";
   const stats: ContentStats = { starlinkCount: x, totalCount: y, percentage, fleetStats };
+  const airlineOf = (p: Aircraft) => airlineByTail[p.TailNumber] || "UA";
   const subfleetCounts = Object.fromEntries(
     content.subfleetFilters.map((c) => [
       c.key,
-      starlinkData.filter((p) => p.fleet === c.key).length,
+      starlinkData.filter((p) => p.fleet === c.key || airlineOf(p) === c.key).length,
     ])
   );
-
-  // Format date as relative time (e.g., "3 days ago", "2 weeks ago")
-  const formatRelativeDate = (dateStr: string) => {
-    const date = new Date(dateStr);
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-
-    if (diffDays === 0) return "Today";
-    if (diffDays === 1) return "Yesterday";
-    if (diffDays < 7) return `${diffDays} days ago`;
-    if (diffDays < 14) return "1 week ago";
-    if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
-    if (diffDays < 60) return "1 month ago";
-    return `${Math.floor(diffDays / 30)} months ago`;
-  };
-
-  // Get aircraft icon based on type
-  const getAircraftIcon = (type: string) => {
-    const t = type.toLowerCase();
-    if (
-      t.includes("737") ||
-      t.includes("757") ||
-      t.includes("767") ||
-      t.includes("a31") ||
-      t.includes("a32")
-    ) {
-      return "✈"; // Narrow body
-    }
-    if (t.includes("777") || t.includes("787") || t.includes("a35")) {
-      return "🛫"; // Wide body
-    }
-    if (t.includes("e1") || t.includes("crj") || t.includes("erj")) {
-      return "🛩"; // Regional
-    }
-    return "✈";
-  };
 
   // Helper function to clean airport codes (remove ICAO prefixes)
   const cleanAirportCode = (code: string) => {
@@ -340,43 +309,6 @@ export default function Page({
       if (code.startsWith("M")) return code.substring(1);
     }
     return code;
-  };
-
-  // Helper function to convert regional carrier codes to UA flight numbers
-  const convertToUAFlightNumber = (flightNumber: string) => {
-    // Common regional carrier prefixes that operate UA Express flights
-    const regionalCarrierPrefixes = ["SKW", "RPA", "GJS", "ASQ", "ENY", "AWI", "UCA"];
-
-    for (const prefix of regionalCarrierPrefixes) {
-      if (flightNumber.startsWith(prefix)) {
-        // Extract the numeric part and prepend with UA
-        const numericPart = flightNumber.substring(prefix.length);
-        if (/^\d+$/.test(numericPart)) {
-          return `UA${numericPart}`;
-        }
-      }
-    }
-
-    // Return original if not a regional carrier or already UA
-    return flightNumber;
-  };
-
-  // Helper function to format flight times
-  const formatFlightTime = (timestamp: number) => {
-    const date = new Date(timestamp * 1000);
-
-    const timeStr = date.toLocaleTimeString("en-US", {
-      hour: "numeric",
-      minute: "2-digit",
-      hour12: true,
-    });
-
-    const dateStr = date.toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-    });
-
-    return `${dateStr} ${timeStr}`;
   };
 
   // Compact flight time with day (e.g., "MON 2:30p")
@@ -392,89 +324,6 @@ export default function Page({
       .replace(" AM", "a")
       .replace(" PM", "p");
     return `${day} ${time}`;
-  };
-
-  // Helper function to render upcoming flights
-  const renderUpcomingFlights = (tailNumber: string, isMobileView = false) => {
-    const flights = flightsByTail[tailNumber];
-
-    if (!flights || flights.length === 0) {
-      return React.createElement(
-        "span",
-        { className: "text-gray-400 text-sm" },
-        "No upcoming flights"
-      );
-    }
-
-    // Show more flights on desktop, fewer on mobile
-    const maxFlights = isMobileView ? 2 : 3;
-    const flightsToShow = flights.slice(0, maxFlights);
-    const remainingCount = flights.length - maxFlights;
-
-    return React.createElement("div", { className: "space-y-2" }, [
-      ...flightsToShow.map((flight, idx) => {
-        const cleanDeparture = cleanAirportCode(flight.departure_airport);
-        const cleanArrival = cleanAirportCode(flight.arrival_airport);
-
-        return React.createElement(
-          "div",
-          {
-            key: `flight-${idx}`,
-            className: `text-sm ${idx === 0 ? "border-l-2 border-blue-500 pl-2" : "pl-3"}`,
-          },
-          [
-            React.createElement(
-              "div",
-              { className: "flex items-center justify-between", key: "flight-info" },
-              [
-                React.createElement(
-                  "a",
-                  {
-                    href: `https://www.flightaware.com/live/flight/${flight.flight_number}`,
-                    target: "_blank",
-                    rel: "noopener noreferrer",
-                    className: "font-medium text-united-blue hover:underline",
-                    key: "flight-link",
-                  },
-                  convertToUAFlightNumber(flight.flight_number)
-                ),
-                React.createElement(
-                  "span",
-                  {
-                    className: "text-gray-500 text-xs",
-                    key: "time",
-                  },
-                  formatFlightTime(flight.departure_time)
-                ),
-              ]
-            ),
-            React.createElement(
-              "div",
-              {
-                className: "text-gray-600 text-xs",
-                key: "route",
-              },
-              `${cleanDeparture} → ${cleanArrival}`
-            ),
-          ]
-        );
-      }),
-      ...(remainingCount > 0
-        ? [
-            React.createElement(
-              "span",
-              {
-                className:
-                  "text-united-blue hover:text-blue-700 text-xs pl-3 hover:underline cursor-pointer",
-                key: "remaining",
-                "data-tail": tailNumber,
-                "data-flights": JSON.stringify(flights.slice(maxFlights)),
-              },
-              `+${remainingCount} more flights`
-            ),
-          ]
-        : []),
-    ]);
   };
 
   // Compact inline flight pills for new table design (responsive + expandable)
@@ -565,37 +414,6 @@ export default function Page({
     );
   };
 
-  // Mobile-specific flight display component
-  const renderMobileFlights = (plane: Aircraft) => {
-    const flights = flightsByTail[plane.TailNumber];
-
-    if (!flights || flights.length === 0) {
-      return null;
-    }
-
-    return React.createElement("div", { className: "mt-3 pt-3 border-t border-gray-200" }, [
-      React.createElement(
-        "div",
-        {
-          className: "text-xs font-semibold text-gray-700 mb-2 flex items-center gap-1",
-          key: "header",
-        },
-        [
-          React.createElement("span", { key: "emoji" }, "✈️ Upcoming Flights"),
-          React.createElement(
-            "span",
-            {
-              className: "text-gray-400 font-normal",
-              key: "count",
-            },
-            `(${flights.length})`
-          ),
-        ]
-      ),
-      React.createElement("div", { key: "flights" }, renderUpcomingFlights(plane.TailNumber, true)),
-    ]);
-  };
-
   return (
     <div className="w-full mx-auto px-4 sm:px-6 md:px-8 bg-base min-h-screen flex flex-col relative">
       {/* Subtle grid background */}
@@ -649,7 +467,12 @@ export default function Page({
       </div>
 
       {/* Per-airline stat panel — bespoke composition */}
-      <content.Hero stats={stats} starlinkData={starlinkData} perAirlineStats={perAirlineStats} />
+      <content.Hero
+        stats={stats}
+        starlinkData={starlinkData}
+        perAirlineStats={perAirlineStats}
+        recentInstalls={recentInstalls}
+      />
 
       {/* Aircraft List with integrated search */}
       <div className="relative bg-surface rounded-lg border border-subtle overflow-hidden mb-6">
@@ -747,7 +570,8 @@ export default function Page({
           ) : (
             <div className="divide-y divide-subtle">
               {starlinkData.map((plane, idx) => {
-                // Build searchable strings from flights
+                const airline = airlineOf(plane);
+                const badge = content.rowBadge(plane, airline);
                 const flights = flightsByTail[plane.TailNumber] || [];
                 const airportsStr = flights
                   .flatMap((f) => [
@@ -756,7 +580,6 @@ export default function Page({
                   ])
                   .join(" ")
                   .toLowerCase();
-                // Build routes string with both directions for route-agnostic search
                 const routesStr = flights
                   .flatMap((f) => {
                     const dep = cleanAirportCode(f.departure_airport).toLowerCase();
@@ -764,9 +587,11 @@ export default function Page({
                     return [`${dep}-${arr}`, `${arr}-${dep}`];
                   })
                   .join(" ");
-                // Include both raw flight numbers and UA-normalized versions
+                // Index raw + marketing-airline-prefix variant for search
                 const flightNumbersStr = flights
-                  .map((f) => `${f.flight_number} UA${f.flight_number.replace(/^[A-Z]+/, "")}`)
+                  .map(
+                    (f) => `${f.flight_number} ${airline}${f.flight_number.replace(/^[A-Z]+/, "")}`
+                  )
                   .join(" ")
                   .toLowerCase();
 
@@ -776,8 +601,9 @@ export default function Page({
                     className="aircraft-row group px-4 md:px-6 py-4 hover:bg-surface-elevated transition-all duration-200 cursor-default border-l-2 border-transparent hover:border-accent"
                     data-tail={plane.TailNumber.toLowerCase()}
                     data-aircraft={plane.Aircraft.toLowerCase()}
-                    data-operator={(plane.OperatedBy || "United Airlines").toLowerCase()}
+                    data-operator={(plane.OperatedBy || "").toLowerCase()}
                     data-fleet={plane.fleet}
+                    data-airline={airline}
                     data-airports={airportsStr}
                     data-routes={routesStr}
                     data-flights={flightNumbersStr}
@@ -791,9 +617,9 @@ export default function Page({
                           <div className="font-mono text-sm font-semibold text-primary group-hover:text-accent transition-colors">
                             {plane.TailNumber}
                           </div>
-                          {content.rowBadge(plane) && (
+                          {badge && (
                             <div className="text-[10px] font-mono text-muted uppercase">
-                              {content.rowBadge(plane)}
+                              {badge}
                             </div>
                           )}
                         </div>
@@ -805,9 +631,7 @@ export default function Page({
                       </div>
 
                       {/* Operator */}
-                      <div className="col-span-3 text-sm text-muted">
-                        {plane.OperatedBy || "United Airlines"}
-                      </div>
+                      <div className="col-span-3 text-sm text-muted">{plane.OperatedBy || "—"}</div>
 
                       {/* Flights */}
                       <div className="col-span-4">{renderFlightPills(plane.TailNumber)}</div>
@@ -825,17 +649,13 @@ export default function Page({
                             <div className="font-mono text-xs text-secondary">{plane.Aircraft}</div>
                           </div>
                         </div>
-                        {content.rowBadge(plane) && (
-                          <div className="text-[10px] font-mono text-accent uppercase">
-                            {content.rowBadge(plane)}
-                          </div>
+                        {badge && (
+                          <div className="text-[10px] font-mono text-accent uppercase">{badge}</div>
                         )}
                       </div>
 
                       {/* Operator */}
-                      <div className="text-xs text-muted mb-3 pl-5">
-                        {plane.OperatedBy || "United Airlines"}
-                      </div>
+                      <div className="text-xs text-muted mb-3 pl-5">{plane.OperatedBy || "—"}</div>
 
                       {/* Flights */}
                       <div className="pt-3 border-t border-subtle">
@@ -854,135 +674,137 @@ export default function Page({
         <AirportTreemap data={airportDepartures.rows} windowLabel={airportDepartures.windowLabel} />
       )}
 
-      {/* Tools & Integrations */}
-      <div id="integrations" className="relative my-8 max-w-3xl mx-auto scroll-mt-4">
-        <h2 className="font-display text-lg font-semibold text-primary mb-3 text-center">
-          Tools & Integrations
-        </h2>
-        <div className="grid sm:grid-cols-2 gap-3">
-          {/* Chrome Extension */}
-          <div
-            id="chrome-extension"
-            className="bg-surface rounded-lg border border-subtle p-5 flex flex-col scroll-mt-4"
-          >
-            <div className="flex items-start gap-3 mb-3">
-              <svg
-                className="w-8 h-8 flex-shrink-0"
-                viewBox="0 0 48 48"
-                xmlns="http://www.w3.org/2000/svg"
-                role="img"
-                aria-label="Chrome"
-              >
-                <defs>
-                  <linearGradient
-                    id="chrome-a"
-                    x1="3.2173"
-                    y1="15"
-                    x2="44.7812"
-                    y2="15"
-                    gradientUnits="userSpaceOnUse"
-                  >
-                    <stop offset="0" stopColor="#d93025" />
-                    <stop offset="1" stopColor="#ea4335" />
-                  </linearGradient>
-                  <linearGradient
-                    id="chrome-b"
-                    x1="20.7219"
-                    y1="47.6791"
-                    x2="41.5039"
-                    y2="11.6837"
-                    gradientUnits="userSpaceOnUse"
-                  >
-                    <stop offset="0" stopColor="#fcc934" />
-                    <stop offset="1" stopColor="#fbbc04" />
-                  </linearGradient>
-                  <linearGradient
-                    id="chrome-c"
-                    x1="26.5981"
-                    y1="46.5015"
-                    x2="5.8161"
-                    y2="10.506"
-                    gradientUnits="userSpaceOnUse"
-                  >
-                    <stop offset="0" stopColor="#1e8e3e" />
-                    <stop offset="1" stopColor="#34a853" />
-                  </linearGradient>
-                </defs>
-                <circle cx="24" cy="23.9947" r="12" fill="#fff" />
-                <path
-                  d="M24,12H44.7812a23.9939,23.9939,0,0,0-41.5639.0029L13.6079,30l.0093-.0024A11.9852,11.9852,0,0,1,24,12Z"
-                  fill="url(#chrome-a)"
-                />
-                <circle cx="24" cy="24" r="9.5" fill="#1a73e8" />
-                <path
-                  d="M34.3913,30.0029,24.0007,48A23.994,23.994,0,0,0,44.78,12.0031H23.9989l-.0025.0093A11.985,11.985,0,0,1,34.3913,30.0029Z"
-                  fill="url(#chrome-b)"
-                />
-                <path
-                  d="M13.6086,30.0031,3.218,12.006A23.994,23.994,0,0,0,24.0025,48L34.3931,30.0029l-.0067-.0068a11.9852,11.9852,0,0,1-20.7778.007Z"
-                  fill="url(#chrome-c)"
-                />
-              </svg>
-              <div>
-                <div className="font-display font-semibold text-primary text-sm">
-                  Chrome Extension
-                </div>
-                <div className="text-xs text-muted">For Google Flights</div>
-              </div>
-            </div>
-            <p className="text-xs text-muted leading-relaxed mb-4 flex-1">
-              See Starlink badges directly on Google Flights search results — no extra steps while
-              you shop for flights.
-            </p>
-            <a
-              href="https://chromewebstore.google.com/detail/google-flights-starlink-i/jjfljoifenkfdbldliakmmjhdkbhehoi"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-xs text-accent hover:underline font-mono"
+      {/* Tools & Integrations — UA-specific (Chrome ext is UA-only, MCP only on UA host today) */}
+      {content.showNavLinks && (
+        <div id="integrations" className="relative my-8 max-w-3xl mx-auto scroll-mt-4">
+          <h2 className="font-display text-lg font-semibold text-primary mb-3 text-center">
+            Tools & Integrations
+          </h2>
+          <div className="grid sm:grid-cols-2 gap-3">
+            {/* Chrome Extension */}
+            <div
+              id="chrome-extension"
+              className="bg-surface rounded-lg border border-subtle p-5 flex flex-col scroll-mt-4"
             >
-              Add to Chrome →
-            </a>
-          </div>
-
-          {/* MCP Server */}
-          <div
-            id="mcp"
-            className="bg-surface rounded-lg border border-subtle p-5 flex flex-col scroll-mt-4"
-          >
-            <div className="flex items-start gap-3 mb-3">
-              <div className="w-8 h-8 flex-shrink-0 rounded bg-accent/20 border border-accent/40 flex items-center justify-center">
+              <div className="flex items-start gap-3 mb-3">
                 <svg
-                  className="w-5 h-5 text-accent"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
+                  className="w-8 h-8 flex-shrink-0"
+                  viewBox="0 0 48 48"
+                  xmlns="http://www.w3.org/2000/svg"
                   role="img"
-                  aria-label="AI"
+                  aria-label="Chrome"
                 >
-                  <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
+                  <defs>
+                    <linearGradient
+                      id="chrome-a"
+                      x1="3.2173"
+                      y1="15"
+                      x2="44.7812"
+                      y2="15"
+                      gradientUnits="userSpaceOnUse"
+                    >
+                      <stop offset="0" stopColor="#d93025" />
+                      <stop offset="1" stopColor="#ea4335" />
+                    </linearGradient>
+                    <linearGradient
+                      id="chrome-b"
+                      x1="20.7219"
+                      y1="47.6791"
+                      x2="41.5039"
+                      y2="11.6837"
+                      gradientUnits="userSpaceOnUse"
+                    >
+                      <stop offset="0" stopColor="#fcc934" />
+                      <stop offset="1" stopColor="#fbbc04" />
+                    </linearGradient>
+                    <linearGradient
+                      id="chrome-c"
+                      x1="26.5981"
+                      y1="46.5015"
+                      x2="5.8161"
+                      y2="10.506"
+                      gradientUnits="userSpaceOnUse"
+                    >
+                      <stop offset="0" stopColor="#1e8e3e" />
+                      <stop offset="1" stopColor="#34a853" />
+                    </linearGradient>
+                  </defs>
+                  <circle cx="24" cy="23.9947" r="12" fill="#fff" />
+                  <path
+                    d="M24,12H44.7812a23.9939,23.9939,0,0,0-41.5639.0029L13.6079,30l.0093-.0024A11.9852,11.9852,0,0,1,24,12Z"
+                    fill="url(#chrome-a)"
+                  />
+                  <circle cx="24" cy="24" r="9.5" fill="#1a73e8" />
+                  <path
+                    d="M34.3913,30.0029,24.0007,48A23.994,23.994,0,0,0,44.78,12.0031H23.9989l-.0025.0093A11.985,11.985,0,0,1,34.3913,30.0029Z"
+                    fill="url(#chrome-b)"
+                  />
+                  <path
+                    d="M13.6086,30.0031,3.218,12.006A23.994,23.994,0,0,0,24.0025,48L34.3931,30.0029l-.0067-.0068a11.9852,11.9852,0,0,1-20.7778.007Z"
+                    fill="url(#chrome-c)"
+                  />
                 </svg>
-              </div>
-              <div>
-                <div className="font-display font-semibold text-primary text-sm inline-flex items-center gap-1.5">
-                  MCP Server
-                  <span className="text-[10px] font-mono px-1.5 py-0.5 bg-accent/20 text-accent rounded">
-                    NEW
-                  </span>
+                <div>
+                  <div className="font-display font-semibold text-primary text-sm">
+                    Chrome Extension
+                  </div>
+                  <div className="text-xs text-muted">For Google Flights</div>
                 </div>
-                <div className="text-xs text-muted">For Claude, Cursor & AI assistants</div>
               </div>
+              <p className="text-xs text-muted leading-relaxed mb-4 flex-1">
+                See Starlink badges directly on Google Flights search results — no extra steps while
+                you shop for flights.
+              </p>
+              <a
+                href="https://chromewebstore.google.com/detail/google-flights-starlink-i/jjfljoifenkfdbldliakmmjhdkbhehoi"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-accent hover:underline font-mono"
+              >
+                Add to Chrome →
+              </a>
             </div>
-            <p className="text-xs text-muted leading-relaxed mb-4 flex-1">
-              Ask your AI assistant to check flights, predict Starlink probability, or plan routes —
-              live tracker data via the Model Context Protocol.
-            </p>
-            <a href="/mcp" className="text-xs text-accent hover:underline font-mono">
-              Setup instructions →
-            </a>
+
+            {/* MCP Server */}
+            <div
+              id="mcp"
+              className="bg-surface rounded-lg border border-subtle p-5 flex flex-col scroll-mt-4"
+            >
+              <div className="flex items-start gap-3 mb-3">
+                <div className="w-8 h-8 flex-shrink-0 rounded bg-accent/20 border border-accent/40 flex items-center justify-center">
+                  <svg
+                    className="w-5 h-5 text-accent"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    role="img"
+                    aria-label="AI"
+                  >
+                    <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
+                  </svg>
+                </div>
+                <div>
+                  <div className="font-display font-semibold text-primary text-sm inline-flex items-center gap-1.5">
+                    MCP Server
+                    <span className="text-[10px] font-mono px-1.5 py-0.5 bg-accent/20 text-accent rounded">
+                      NEW
+                    </span>
+                  </div>
+                  <div className="text-xs text-muted">For Claude, Cursor & AI assistants</div>
+                </div>
+              </div>
+              <p className="text-xs text-muted leading-relaxed mb-4 flex-1">
+                Ask your AI assistant to check flights, predict Starlink probability, or plan routes
+                — live tracker data via the Model Context Protocol.
+              </p>
+              <a href="/mcp" className="text-xs text-accent hover:underline font-mono">
+                Setup instructions →
+              </a>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* FAQ Section */}
       <div className="relative mb-12">
@@ -1068,12 +890,13 @@ export default function Page({
 
                 rows.forEach(function(row) {
                   var fleet = row.dataset.fleet || '';
+                  var airline = row.dataset.airline || '';
 
                   var matchesSearch = terms.length === 0 || terms.every(function(term) {
                     return matchesTerm(term, row);
                   });
 
-                  var matchesFilter = currentFilter === 'all' || fleet === currentFilter;
+                  var matchesFilter = currentFilter === 'all' || fleet === currentFilter || airline === currentFilter;
 
                   if (matchesSearch && matchesFilter) {
                     row.style.display = '';
@@ -1218,7 +1041,7 @@ export default function Page({
                     // Create tooltip
                     tooltip = document.createElement('div');
                     tooltip.textContent = text;
-                    tooltip.style.cssText = 'position:fixed;padding:4px 8px;background:#0ea5e9;color:#0a0f1a;font-size:11px;font-weight:600;font-family:JetBrains Mono,monospace;border-radius:4px;pointer-events:none;z-index:9999;white-space:nowrap;box-shadow:0 4px 6px rgba(0,0,0,0.3);';
+                    tooltip.style.cssText = 'position:fixed;padding:4px 8px;background:var(--color-accent);color:#0a0f1a;font-size:11px;font-weight:600;font-family:JetBrains Mono,monospace;border-radius:4px;pointer-events:none;z-index:9999;white-space:nowrap;box-shadow:0 4px 6px rgba(0,0,0,0.3);';
                     document.body.appendChild(tooltip);
 
                     // Position above the element

@@ -153,6 +153,72 @@ describe("UA host never leaks canaries", () => {
   });
 });
 
+describe("hub-only endpoints", () => {
+  test("/api/check-any-flight: 404 on UA host", async () => {
+    const { status } = await bodyOf(
+      "/api/check-any-flight?flight_number=UA5212&date=2026-04-12",
+      UA
+    );
+    expect(status).toBe(404);
+  });
+
+  test("/api/check-any-flight: works on hub, detects HA", async () => {
+    const { status, text } = await bodyOf(
+      "/api/check-any-flight?flight_number=HA9999&date=2026-03-22",
+      HUB
+    );
+    expect(status).toBe(200);
+    const d = JSON.parse(text);
+    expect(d.airline).toBe("Hawaiian Airlines");
+  });
+
+  test("/api/check-any-flight: works on hub, detects UA", async () => {
+    const { status, text } = await bodyOf(
+      "/api/check-any-flight?flight_number=UA4421&date=2026-03-22",
+      HUB
+    );
+    expect(status).toBe(200);
+    const d = JSON.parse(text);
+    expect(d.airline).toBe("United Airlines");
+  });
+
+  test("/api/check-any-flight: untracked airline → error message", async () => {
+    const { status, text } = await bodyOf(
+      "/api/check-any-flight?flight_number=DL123&date=2026-04-12",
+      HUB
+    );
+    expect(status).toBe(200);
+    const d = JSON.parse(text);
+    expect(d.error).toContain("not tracked");
+  });
+
+  test("/api/compare-route: 404 on UA host", async () => {
+    const { status } = await bodyOf("/api/compare-route?origin=SFO&destination=HNL", UA);
+    expect(status).toBe(404);
+  });
+
+  test("/api/compare-route: works on hub, returns sorted results", async () => {
+    const { status, text } = await bodyOf("/api/compare-route?origin=SFO&destination=HNL", HUB);
+    expect(status).toBe(200);
+    const d = JSON.parse(text);
+    expect(Array.isArray(d.results)).toBe(true);
+    // HA routeTypeRule should give 100% for non-interisland; results sorted desc
+    if (d.results.length > 1) {
+      expect(d.results[0].probability).toBeGreaterThanOrEqual(d.results[1].probability);
+    }
+    const ha = d.results.find((r: { airline: string }) => r.airline === "HA");
+    expect(ha?.probability).toBe(1);
+  });
+
+  test("/api/compare-route: HA interisland → 0%", async () => {
+    const { text } = await bodyOf("/api/compare-route?origin=HNL&destination=OGG", HUB);
+    const d = JSON.parse(text);
+    const ha = d.results.find((r: { airline: string }) => r.airline === "HA");
+    expect(ha?.probability).toBe(0);
+    expect(ha?.reason).toContain("717");
+  });
+});
+
 describe("real HA fleet — UA host never leaks, HA host shows", () => {
   test("/api/data on UA host contains zero real HA tails", async () => {
     const { text } = await bodyOf("/api/data", UA);
@@ -188,7 +254,7 @@ describe("real HA fleet — UA host never leaks, HA host shows", () => {
 
 describe("write-path safety — UA scrape cannot wipe HA rows", () => {
   test("updateDatabase(..., 'UA') leaves HA starlink_planes untouched", () => {
-    const tmp = "/tmp/ua-writepath.sqlite";
+    const tmp = `/tmp/ua-writepath-${process.pid}-${Date.now()}.sqlite`;
     copyFileSync(TEST_DB, tmp);
     const wdb = new Database(tmp);
     const haBefore = (
@@ -237,7 +303,7 @@ describe("write-path safety — UA scrape cannot wipe HA rows", () => {
   });
 
   test("updateFlights stamps airline from starlink_planes (HA tail → airline='HA')", () => {
-    const tmp = "/tmp/ua-writepath-flights.sqlite";
+    const tmp = `/tmp/ua-writepath-flights-${process.pid}-${Date.now()}.sqlite`;
     copyFileSync(TEST_DB, tmp);
     const wdb = new Database(tmp);
 
@@ -293,6 +359,8 @@ describe("route-table coverage", () => {
         "/mcp",
         "/api/plan-route",
         "/api/predict-flight",
+        "/api/check-any-flight",
+        "/api/compare-route",
       ])
     );
     // /api/plan-route + /api/predict-flight are exercised separately above —

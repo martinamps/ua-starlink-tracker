@@ -1,12 +1,18 @@
 import React from "react";
-import { AirlineSummaryCard } from "../../components/atoms";
+import {
+  FlightCheckInput,
+  RecentInstallsFeed,
+  RolloutLeaderboard,
+  RouteComparePanel,
+} from "../../components/atoms";
+import { enabledAirlines } from "../registry";
 import type { AirlineContent, HeroProps } from "./index";
 
-const HubHero = ({ stats, perAirlineStats = [] }: HeroProps) => {
+const HubHero = ({ stats, perAirlineStats = [], recentInstalls = [] }: HeroProps) => {
   const { starlinkCount, totalCount } = stats;
   return (
-    <div className="relative mb-6">
-      <div className="text-center mb-4">
+    <div className="relative mb-6 space-y-4">
+      <div className="text-center">
         <div className="font-mono text-sm text-secondary">
           Tracking <span className="text-accent font-semibold">{starlinkCount}</span> Starlink
           aircraft across{" "}
@@ -15,11 +21,66 @@ const HubHero = ({ stats, perAirlineStats = [] }: HeroProps) => {
           <span className="text-muted">{totalCount} total fleet</span>
         </div>
       </div>
-      <div className="flex flex-wrap gap-4 justify-center">
-        {perAirlineStats.map((a) => (
-          <AirlineSummaryCard key={a.code} a={a} />
-        ))}
+
+      <div className="grid lg:grid-cols-2 gap-4">
+        <FlightCheckInput />
+        <RouteComparePanel />
       </div>
+
+      <div className="grid lg:grid-cols-3 gap-4">
+        <div className="lg:col-span-2">
+          <RolloutLeaderboard stats={perAirlineStats} />
+        </div>
+        <RecentInstallsFeed items={recentInstalls} airlines={perAirlineStats} />
+      </div>
+
+      {/* Client-side wiring for flight-check + route-compare forms */}
+      <script
+        // biome-ignore lint/security/noDangerouslySetInnerHtml: SSR client wiring, no user input
+        dangerouslySetInnerHTML={{
+          __html: `
+          document.addEventListener('DOMContentLoaded', function() {
+            function esc(s){var d=document.createElement('div');d.textContent=String(s==null?'':s);return d.innerHTML;}
+            var cf = document.getElementById('hub-check-flight');
+            var cr = document.getElementById('hub-check-result');
+            if (cf) cf.addEventListener('submit', function(e) {
+              e.preventDefault();
+              var fd = new FormData(cf);
+              cr.classList.remove('hidden');
+              cr.textContent = 'Checking…';
+              fetch('/api/check-any-flight?flight_number=' + encodeURIComponent(fd.get('flight_number')) + '&date=' + encodeURIComponent(fd.get('date')))
+                .then(function(r){return r.json()})
+                .then(function(d){
+                  if (d.error) { cr.innerHTML = '<span class="text-amber-400">' + esc(d.error) + '</span>'; return; }
+                  var c = d.hasStarlink ? 'text-green-400' : 'text-muted';
+                  var v = d.hasStarlink ? 'Starlink' : 'No Starlink';
+                  cr.innerHTML = '<span class="' + c + '">' + v + '</span> · ' + esc(d.airline || '') + ' · ' + esc(d.reason || d.message || '');
+                })
+                .catch(function(){ cr.textContent = 'Lookup failed.'; });
+            });
+            var rf = document.getElementById('hub-compare-route');
+            var rr = document.getElementById('hub-compare-result');
+            if (rf) rf.addEventListener('submit', function(e) {
+              e.preventDefault();
+              var fd = new FormData(rf);
+              rr.classList.remove('hidden');
+              rr.textContent = 'Comparing…';
+              fetch('/api/compare-route?origin=' + encodeURIComponent(fd.get('origin')) + '&destination=' + encodeURIComponent(fd.get('destination')))
+                .then(function(r){return r.json()})
+                .then(function(d){
+                  if (d.error) { rr.innerHTML = '<span class="text-amber-400 font-mono text-xs">' + esc(d.error) + '</span>'; return; }
+                  rr.innerHTML = (d.results || []).map(function(a){
+                    var pct = Math.round(a.probability * 100);
+                    var bar = '<div class="h-1.5 bg-surface-elevated rounded overflow-hidden mt-1"><div class="h-full" style="width:'+pct+'%;background:'+esc(a.accentColor||'#0ea5e9')+'"></div></div>';
+                    return '<div class="mb-2"><div class="flex justify-between font-mono text-xs"><span class="text-primary">'+esc(a.name)+'</span><span class="text-accent">'+pct+'%</span></div><div class="font-mono text-[10px] text-muted">'+esc(a.reason)+'</div>'+bar+'</div>';
+                  }).join('') || '<span class="font-mono text-xs text-muted">No tracked airline serves this route.</span>';
+                })
+                .catch(function(){ rr.textContent = 'Lookup failed.'; });
+            });
+          });
+        `,
+        }}
+      />
     </div>
   );
 };
@@ -47,9 +108,9 @@ export const content: AirlineContent = {
 
   Hero: HubHero,
 
-  rowBadge: (p) => p.OperatedBy?.split(" ")[0]?.toUpperCase() || null,
+  rowBadge: (_p, airline) => airline,
 
-  subfleetFilters: [],
+  subfleetFilters: enabledAirlines().map((a) => ({ key: a.code, label: a.name })),
 
   faq: [
     {
@@ -71,17 +132,17 @@ export const content: AirlineContent = {
           ld: "United Airlines is mid-rollout across mainline and Express fleets. Hawaiian Airlines completed its rollout in September 2024 — every A330 and A321neo has Starlink. Alaska Airlines is rolling out through 2027. Qatar Airways is equipping its 777 and A350 fleet.",
         },
         {
-          q: "Hawaiian says rollout is complete — why does it show 69%?",
+          q: "Hawaiian's rollout is complete — why isn't it 100%?",
           a: () => (
             <p>
-              Hawaiian completed Starlink on <strong>100% of its Airbus fleet</strong> (24 A330s +
-              18 A321neos = 42 aircraft). The remaining 19 are Boeing 717s flying short interisland
-              hops — those were never in scope for any WiFi provider and are being retired. So 42 of
-              42 in-scope aircraft are done; the 69% figure just includes the 717s in the
+              Hawaiian completed Starlink on <strong>100% of its Airbus fleet</strong> — every A330
+              and A321neo. The remaining aircraft are Boeing 717s flying short interisland hops;
+              those were never in scope for any WiFi provider and are being retired. So every
+              in-scope aircraft is done; the headline percentage just includes the 717s in the
               denominator.
             </p>
           ),
-          ld: "Hawaiian completed Starlink on 100% of its Airbus fleet (42 aircraft). The remaining 19 Boeing 717s fly short interisland routes and were never in scope for WiFi.",
+          ld: "Hawaiian completed Starlink on 100% of its Airbus fleet. The remaining Boeing 717s fly short interisland routes and were never in scope for WiFi.",
         },
         {
           q: "Does Delta have Starlink?",

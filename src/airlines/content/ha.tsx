@@ -2,6 +2,20 @@ import React from "react";
 import { TypeBreakdownRow } from "../../components/atoms";
 import type { AirlineContent, HeroProps } from "./index";
 
+// Aircraft-type counts come from press-release figures (rollout is complete and
+// type-deterministic). starlinkData length confirms the live-tracked subset.
+const HA_TYPES: Array<{
+  type: string;
+  count?: number;
+  status: "starlink" | "none" | "pending";
+  note?: string;
+}> = [
+  { type: "Airbus A330-200", count: 24, status: "starlink" },
+  { type: "Airbus A321neo", count: 18, status: "starlink" },
+  { type: "Boeing 717-200", count: 19, status: "none", note: "No WiFi (interisland)" },
+  { type: "Boeing 787-9", status: "pending", note: "Transferring to Alaska" },
+];
+
 const HAHero = ({ stats }: HeroProps) => {
   const { starlinkCount } = stats;
   return (
@@ -34,15 +48,9 @@ const HAHero = ({ stats }: HeroProps) => {
         <div className="text-[10px] font-mono text-muted uppercase tracking-wider px-4 pt-4 pb-1">
           Fleet by aircraft type
         </div>
-        <TypeBreakdownRow type="Airbus A330-200" count={24} status="starlink" />
-        <TypeBreakdownRow type="Airbus A321neo" count={18} status="starlink" />
-        <TypeBreakdownRow
-          type="Boeing 717-200"
-          count={19}
-          status="none"
-          note="No WiFi (interisland)"
-        />
-        <TypeBreakdownRow type="Boeing 787-9" status="pending" note="Transferring to Alaska" />
+        {HA_TYPES.map((t) => (
+          <TypeBreakdownRow key={t.type} {...t} />
+        ))}
       </div>
     </div>
   );

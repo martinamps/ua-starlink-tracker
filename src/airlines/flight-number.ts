@@ -3,7 +3,28 @@
  * the AirlineConfig — adding a carrier means adding a config, not editing here.
  */
 
-import type { AirlineConfig } from "./registry";
+import { type AirlineConfig, enabledAirlines } from "./registry";
+
+/**
+ * Detect which airline a flight number belongs to via longest-prefix match
+ * across all enabled airlines' carrierPrefixes. Returns null if none match.
+ */
+export function detectAirline(flightNumber: string): AirlineConfig | null {
+  const fn = flightNumber.trim().toUpperCase();
+  let best: { cfg: AirlineConfig; len: number } | null = null;
+  for (const cfg of enabledAirlines()) {
+    for (const prefix of [cfg.iata, ...cfg.carrierPrefixes]) {
+      if (
+        fn.startsWith(prefix) &&
+        /^\d+$/.test(fn.slice(prefix.length)) &&
+        prefix.length > (best?.len ?? 0)
+      ) {
+        best = { cfg, len: prefix.length };
+      }
+    }
+  }
+  return best?.cfg ?? null;
+}
 
 function iataExact(cfg: AirlineConfig): RegExp {
   return new RegExp(`^${cfg.iata}\\d+$`);

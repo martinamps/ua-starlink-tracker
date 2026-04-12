@@ -17,6 +17,7 @@ import type {
   FleetStats,
   FleetTail,
   Flight,
+  PerAirlineStat,
   StarlinkStatus,
   WifiProvider,
 } from "../types";
@@ -583,6 +584,65 @@ export function getMetaValue(
 
 export function getLastUpdated(db: Database, airline = "UA"): string {
   return getMeta(db, "lastUpdated", airline) ?? new Date().toISOString();
+}
+
+export function getAirlineByTail(db: Database, airline?: AirlineFilter): Record<string, string> {
+  const q = withAirline("SELECT TailNumber, airline FROM starlink_planes WHERE 1=1", airline);
+  const rows = db.query(q.sql).all(...q.params) as { TailNumber: string; airline: string }[];
+  return Object.fromEntries(rows.map((r) => [r.TailNumber, r.airline]));
+}
+
+export interface RecentInstall {
+  airline: string;
+  TailNumber: string;
+  Aircraft: string;
+  OperatedBy: string;
+  DateFound: string;
+}
+
+export function getRecentInstalls(
+  db: Database,
+  airline: AirlineFilter,
+  limit = 25
+): RecentInstall[] {
+  const q = withAirline(
+    "SELECT airline, TailNumber, aircraft as Aircraft, OperatedBy, DateFound FROM starlink_planes WHERE (verified_wifi IS NULL OR verified_wifi = 'Starlink')",
+    airline
+  );
+  return db
+    .query(`${q.sql} ORDER BY DateFound DESC LIMIT ?`)
+    .all(...q.params, limit) as RecentInstall[];
+}
+
+export interface HubAirlineStat extends PerAirlineStat {
+  fleetTotal: number;
+  installs30d: number;
+}
+
+export function getHubStats(db: Database, codes: readonly string[]): HubAirlineStat[] {
+  const fleet = db
+    .query(
+      `SELECT airline, COUNT(*) total, SUM(starlink_status='confirmed') equipped
+       FROM united_fleet WHERE airline IN (${codes.map(() => "?").join(",")})
+       GROUP BY airline`
+    )
+    .all(...codes) as { airline: string; total: number; equipped: number }[];
+  const v = db
+    .query(
+      `SELECT airline, COUNT(*) n FROM starlink_planes
+       WHERE DateFound >= date('now','-30 day') AND airline IN (${codes.map(() => "?").join(",")})
+       GROUP BY airline`
+    )
+    .all(...codes) as { airline: string; n: number }[];
+  const v30 = Object.fromEntries(v.map((r) => [r.airline, r.n]));
+  return fleet.map((f) => ({
+    code: f.airline,
+    name: "",
+    starlink: f.equipped,
+    total: getTotalCount(db, f.airline) || f.total,
+    fleetTotal: f.total,
+    installs30d: v30[f.airline] ?? 0,
+  }));
 }
 
 export function getStarlinkPlanes(db: Database, airline?: AirlineFilter): Aircraft[] {

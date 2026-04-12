@@ -32,6 +32,10 @@ export interface PerAirlineStat {
   name: string;
   starlink: number;
   total: number;
+  fleetTotal?: number;
+  installs30d?: number;
+  accentColor?: string;
+  canonicalHost?: string;
 }
 
 interface FleetMetrics {

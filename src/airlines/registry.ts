@@ -48,6 +48,8 @@ export interface AirlineConfig {
   minFleetSanity: number;
   /** Per-flight wifi verification source; null = none (type-map only). */
   verifierBackend?: "united" | "alaska-json" | null;
+  /** Type-deterministic route rule for airlines whose Starlink status depends only on aircraft type / route class, not per-tail observation. */
+  routeTypeRule?: (origin: string, destination: string) => { probability: number; reason: string };
   /** Canonical lowercase tag for Datadog `airline:` — preserves history (`united`, not `UA`). */
   metricTag: string;
   brand: PageBrand;
@@ -140,6 +142,12 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
     metricTag: "hawaiian",
     minFleetSanity: 30,
     verifierBackend: "alaska-json",
+    routeTypeRule: (o, d) => {
+      const HI = new Set(["HNL", "OGG", "KOA", "LIH", "ITO", "MKK", "LNY"]);
+      return HI.has(o) && HI.has(d)
+        ? { probability: 0, reason: "Interisland — Boeing 717, no WiFi" }
+        : { probability: 1, reason: "All Hawaiian A330/A321neo have Starlink" };
+    },
     brand: {
       title: "Hawaiian Airlines Starlink Tracker",
       tagline: "Tracking Hawaiian Airlines aircraft with Starlink WiFi",

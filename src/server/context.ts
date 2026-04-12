@@ -14,14 +14,19 @@ import {
 } from "../airlines/registry";
 import {
   type CheckFlightRow,
+  type HubAirlineStat,
+  type RecentInstall,
+  getAirlineByTail,
   getAirportDepartures,
   getConfirmedFleetTails,
   getFleetDiscoveryStats,
   getFleetPageData,
   getFleetStats,
   getFlightsByNumberAndDate,
+  getHubStats,
   getLastUpdated,
   getPendingFleetTails,
+  getRecentInstalls,
   getStarlinkPlanes,
   getTotalCount,
   getUpcomingFlights,
@@ -46,6 +51,8 @@ export type Scope = AirlineCode | "ALL";
 export interface ScopedReader {
   readonly scope: Scope;
   getStarlinkPlanes(): Aircraft[];
+  getAirlineByTail(): Record<string, string>;
+  getRecentInstalls(limit?: number): RecentInstall[];
   getPerAirlineStats(): PerAirlineStat[];
   getUpcomingFlights(tailNumber?: string): Flight[];
   getFleetStats(): FleetStats;
@@ -76,13 +83,26 @@ export interface RequestContext {
 
 const enabledCodes = (): readonly AirlineCode[] => enabledAirlines().map((a) => a.code);
 
-function perAirlineStat(db: Database, cfg: AirlineConfig): PerAirlineStat {
-  return {
-    code: cfg.code,
-    name: cfg.name,
-    starlink: getStarlinkPlanes(db, cfg.code).length,
-    total: getTotalCount(db, cfg.code),
-  };
+function buildPerAirlineStats(db: Database, codes: readonly AirlineCode[]): PerAirlineStat[] {
+  const hub = getHubStats(db, codes);
+  const byCode = Object.fromEntries(hub.map((h) => [h.code, h]));
+  const out: PerAirlineStat[] = [];
+  for (const code of codes) {
+    const cfg = enabledAirlines().find((c) => c.code === code);
+    if (!cfg) continue;
+    const h: HubAirlineStat | undefined = byCode[code];
+    out.push({
+      code,
+      name: cfg.name,
+      starlink: h?.starlink ?? getStarlinkPlanes(db, code).length,
+      total: h?.total ?? getTotalCount(db, code),
+      fleetTotal: h?.fleetTotal,
+      installs30d: h?.installs30d,
+      accentColor: cfg.brand.accentColor,
+      canonicalHost: cfg.canonicalHost,
+    });
+  }
+  return out;
 }
 
 function buildReader(db: Database, scope: Scope): ScopedReader {
@@ -92,12 +112,9 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
   const r: ScopedReader = {
     scope,
     getStarlinkPlanes: () => getStarlinkPlanes(db, a),
-    getPerAirlineStats: () =>
-      scope === "ALL"
-        ? enabledAirlines().map((cfg) => perAirlineStat(db, cfg))
-        : enabledAirlines()
-            .filter((cfg) => cfg.code === scope)
-            .map((cfg) => perAirlineStat(db, cfg)),
+    getAirlineByTail: () => getAirlineByTail(db, a),
+    getRecentInstalls: (limit) => getRecentInstalls(db, a, limit),
+    getPerAirlineStats: () => buildPerAirlineStats(db, scope === "ALL" ? enabledCodes() : [scope]),
     getUpcomingFlights: (t) => getUpcomingFlights(db, t, a),
     // FleetStats shape is UA-subfleet-specific (express/mainline); hub aggregation deferred until
     // getSubfleetStats lands. Hub callers should not rely on this.

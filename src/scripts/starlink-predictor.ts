@@ -552,6 +552,75 @@ export function predictRoute(
 // ============================================================================
 
 // Minimum leg probability to include in the graph (full-coverage or partial)
+export interface RouteCompareResult {
+  airline: string;
+  name: string;
+  probability: number;
+  reason: string;
+  n: number;
+  accentColor: string;
+  canonicalHost: string;
+}
+
+/**
+ * Per-airline Starlink probability for an O-D pair. Hub-only — answers
+ * "should I fly UA or HA on SFO-HNL?". Uses observed upcoming_flights when
+ * available, falls back to routeTypeRule for type-deterministic airlines,
+ * skips airlines that neither serve the route nor have a rule.
+ */
+export function compareRoute(
+  db: Database,
+  origin: string,
+  destination: string,
+  airlines: import("../airlines/registry").AirlineConfig[]
+): RouteCompareResult[] {
+  const o = origin.toUpperCase().trim();
+  const d = destination.toUpperCase().trim();
+  const results: RouteCompareResult[] = [];
+
+  for (const cfg of airlines) {
+    const rows = db
+      .query(
+        `SELECT uf.tail_number,
+                EXISTS(SELECT 1 FROM starlink_planes sp
+                       WHERE sp.TailNumber = uf.tail_number
+                         AND (sp.verified_wifi IS NULL OR sp.verified_wifi = 'Starlink')) AS sl
+         FROM upcoming_flights uf
+         WHERE uf.departure_airport = ? AND uf.arrival_airport = ? AND uf.airline = ?`
+      )
+      .all(o, d, cfg.code) as { tail_number: string; sl: number }[];
+
+    let probability: number;
+    let reason: string;
+    let n = rows.length;
+
+    if (rows.length > 0) {
+      const sl = rows.filter((r) => r.sl).length;
+      probability = sl / rows.length;
+      reason = `${sl} of ${rows.length} scheduled flights on Starlink-equipped aircraft (next ~48h)`;
+    } else if (cfg.routeTypeRule) {
+      const rule = cfg.routeTypeRule(o, d);
+      probability = rule.probability;
+      reason = rule.reason;
+      n = 0;
+    } else {
+      continue;
+    }
+
+    results.push({
+      airline: cfg.code,
+      name: cfg.name,
+      probability,
+      reason,
+      n,
+      accentColor: cfg.brand.accentColor,
+      canonicalHost: cfg.canonicalHost,
+    });
+  }
+
+  return results.sort((a, b) => b.probability - a.probability);
+}
+
 const MIN_LEG_PROBABILITY = 0.3;
 
 // Probability for confirmed near-term Starlink assignments (same-day in

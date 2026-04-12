@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { PerAirlineStat } from "../../components/atoms";
+import type { RecentInstall } from "../../database/database";
 import type { Aircraft, FleetStats } from "../../types";
 import type { Tenant } from "../registry";
 import { content as ha } from "./ha";
@@ -33,6 +34,7 @@ export interface HeroProps {
   stats: ContentStats;
   starlinkData: Aircraft[];
   perAirlineStats?: PerAirlineStat[];
+  recentInstalls?: RecentInstall[];
 }
 
 export interface AirlineContent {
@@ -44,7 +46,7 @@ export interface AirlineContent {
   /** Bespoke stat panel — each airline composes its own from shared atoms. */
   Hero: (p: HeroProps) => ReactNode;
   /** Optional per-row badge under tail number (e.g. UA mainline/express). null = no badge. */
-  rowBadge: (plane: Aircraft) => string | null;
+  rowBadge: (plane: Aircraft, airline: string) => string | null;
   /** Filter buttons next to search (UA: mainline/express). Empty = ALL only. */
   subfleetFilters: SubfleetFilter[];
   faq: FaqSection[];
