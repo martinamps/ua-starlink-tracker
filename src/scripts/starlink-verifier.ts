@@ -89,9 +89,10 @@ function getPlanesNeedingVerification(
   const result: Array<{ plane: Plane; flight: Flight }> = [];
   const now = Math.floor(Date.now() / 1000);
 
-  // Pull ALL planes from starlink_planes (including mismatches)
-  const planes = getAllStarlinkPlanes(db) as Plane[];
-  const allFlights = getUpcomingFlights(db);
+  // Pull ALL planes from starlink_planes (including mismatches) — UA only;
+  // HA is type-deterministic and AS uses alaska-json, neither needs united.com checks.
+  const planes = getAllStarlinkPlanes(db, "UA") as Plane[];
+  const allFlights = getUpcomingFlights(db, undefined, "UA");
 
   // Group flights by tail number
   const flightsByTail = new Map<string, Flight[]>();
