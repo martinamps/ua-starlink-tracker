@@ -12,6 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import React from "react";
 import ReactDOMServer from "react-dom/server";
+import { buildFaqJsonLd, getContent } from "../airlines/content";
 import {
   buildAirlineFlightNumberVariants,
   ensureAirlinePrefix,
@@ -535,6 +536,7 @@ function buildBaseTemplateVars(ctx: RequestContext, reactHtml: string): Record<s
     percentage,
     mainlinePercentage: (fleetStats?.mainline.percentage || 0).toFixed(2),
     expressPercentage: (fleetStats?.express.percentage || 0).toFixed(2),
+    faqJsonLd: "",
   };
 }
 
@@ -620,6 +622,7 @@ const homePage: Handler = async (ctx) => {
   const { req, reader, tenant } = ctx;
   if (req.method !== "GET" && req.method !== "HEAD") return methodNotAllowed();
   const brand = tenantBrand(tenant);
+  const content = getContent(tenant);
 
   const allFlights = reader.getUpcomingFlights();
   const flightsByTail: Record<string, Flight[]> = {};
@@ -635,15 +638,21 @@ const homePage: Handler = async (ctx) => {
       lastUpdated: reader.getLastUpdated(),
       fleetStats: reader.getFleetStats(),
       brand,
+      content,
       flightsByTail,
       airportDepartures: reader.getAirportDepartures(),
     })
   );
 
   const template = await getHtmlTemplate();
-  return new Response(renderHtml(template, buildBaseTemplateVars(ctx, reactHtml)), {
-    headers: SECURITY_HEADERS.html,
-  });
+  const baseVars = buildBaseTemplateVars(ctx, reactHtml);
+  return new Response(
+    renderHtml(template, {
+      ...baseVars,
+      faqJsonLd: renderHtml(buildFaqJsonLd(content, baseVars.currentDate), baseVars),
+    }),
+    { headers: SECURITY_HEADERS.html }
+  );
 };
 
 const staticDir: Handler = ({ url, tenant }) => {

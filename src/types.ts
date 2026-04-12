@@ -25,6 +25,7 @@ export interface Flight {
 export interface FleetStats {
   express: FleetMetrics;
   mainline: FleetMetrics;
+  [subfleet: string]: FleetMetrics;
 }
 
 interface FleetMetrics {

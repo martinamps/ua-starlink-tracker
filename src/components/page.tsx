@@ -1,4 +1,5 @@
 import React from "react";
+import { type AirlineContent, type ContentStats, getContent } from "../airlines/content";
 import { AIRLINES, type PageBrand } from "../airlines/registry";
 import type { Aircraft, AirportDeparture, AirportDepartures, FleetStats, Flight } from "../types";
 
@@ -44,12 +45,55 @@ function FaqGroup({ title, children }: { title: string; children: React.ReactNod
   );
 }
 
+function StatRing({
+  label,
+  pct,
+  starlink,
+  total,
+}: {
+  label: string;
+  pct: number;
+  starlink: number;
+  total: number;
+}) {
+  return (
+    <div className="bg-surface p-4 flex flex-col justify-center text-center">
+      <div className="text-[10px] font-mono text-muted uppercase tracking-wider mb-2">{label}</div>
+      <div className="relative w-20 h-20 mx-auto mb-2">
+        <svg className="w-20 h-20 transform -rotate-90" role="img" aria-label={`${label} progress`}>
+          <circle cx="40" cy="40" r="34" stroke="#243044" strokeWidth="6" fill="none" />
+          <circle
+            cx="40"
+            cy="40"
+            r="34"
+            stroke="#0ea5e9"
+            strokeWidth="6"
+            fill="none"
+            strokeDasharray={`${2 * Math.PI * 34}`}
+            strokeDashoffset={`${2 * Math.PI * 34 * (1 - pct / 100)}`}
+            className="transition-all duration-1000 ease-out"
+            style={{ filter: "drop-shadow(0 0 6px rgba(14, 165, 233, 0.5))" }}
+          />
+        </svg>
+        <div className="absolute inset-0 flex items-center justify-center">
+          <span className="font-mono text-xl font-semibold text-primary">{pct.toFixed(0)}%</span>
+        </div>
+      </div>
+      <div className="font-mono text-xs text-secondary">
+        <span className="text-accent">{starlink}</span>
+        <span className="text-muted"> / {total}</span>
+      </div>
+    </div>
+  );
+}
+
 interface PageProps {
   total: number;
   starlink: Aircraft[];
   lastUpdated?: string;
   fleetStats?: FleetStats;
   brand?: PageBrand;
+  content?: AirlineContent;
   flightsByTail?: Record<string, Flight[]>;
   airportDepartures?: AirportDepartures;
 }
@@ -250,11 +294,10 @@ export default function Page({
   lastUpdated,
   fleetStats,
   brand = AIRLINES.UA.brand,
+  content = getContent(AIRLINES.UA),
   flightsByTail = {},
   airportDepartures,
 }: PageProps) {
-  // FAQ/intro copy below is still UA-specific (Phase-2: per-airline content blocks).
-  const isUnited = brand === AIRLINES.UA.brand;
   // Apply date overrides to the aircraft data
   const applyDateOverrides = (data: Aircraft[]): Aircraft[] => {
     return data.map((aircraft) => {
@@ -283,6 +326,10 @@ export default function Page({
   const x = starlinkData.length;
   const y = total;
   const percentage = y > 0 ? ((x / y) * 100).toFixed(2) : "0.00";
+  const stats: ContentStats = { starlinkCount: x, totalCount: y, percentage, fleetStats };
+  const subfleetCounts = Object.fromEntries(
+    content.statCards.map((c) => [c.key, starlinkData.filter((p) => p.fleet === c.key).length])
+  );
 
   // Aggregate aircraft by model type for pie chart
   const getAircraftByModel = () => {
@@ -639,13 +686,9 @@ export default function Page({
       </header>
 
       {/* Intro paragraph + nav links */}
-      {isUnited && (
-        <div className="relative text-center max-w-2xl mx-auto mb-6">
-          <p className="text-sm text-secondary leading-relaxed mb-3">
-            United Airlines is rolling out free Starlink WiFi across its fleet — the fastest
-            internet ever available on a commercial airline. Use this tracker to browse all equipped
-            aircraft, check your flight, or plan a Starlink-maximizing itinerary.
-          </p>
+      <div className="relative text-center max-w-2xl mx-auto mb-6">
+        {content.intro(stats)}
+        {content.showNavLinks && (
           <div className="flex flex-wrap items-center justify-center gap-2 text-sm font-display">
             <a
               href="/check-flight"
@@ -678,84 +721,23 @@ export default function Page({
               </span>
             </a>
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Fleet Stats - Instrument Panel Style */}
       <div className="relative grid grid-cols-2 lg:grid-cols-4 gap-px bg-subtle rounded-lg overflow-hidden mb-6 border border-subtle">
-        {/* Mainline Fleet */}
-        <div className="bg-surface p-4 flex flex-col justify-center text-center">
-          <div className="text-[10px] font-mono text-muted uppercase tracking-wider mb-2">
-            Mainline
-          </div>
-          <div className="relative w-20 h-20 mx-auto mb-2">
-            <svg
-              className="w-20 h-20 transform -rotate-90"
-              role="img"
-              aria-label="Mainline progress"
-            >
-              <circle cx="40" cy="40" r="34" stroke="#243044" strokeWidth="6" fill="none" />
-              <circle
-                cx="40"
-                cy="40"
-                r="34"
-                stroke="#0ea5e9"
-                strokeWidth="6"
-                fill="none"
-                strokeDasharray={`${2 * Math.PI * 34}`}
-                strokeDashoffset={`${2 * Math.PI * 34 * (1 - (fleetStats?.mainline.percentage || 0) / 100)}`}
-                className="transition-all duration-1000 ease-out"
-                style={{ filter: "drop-shadow(0 0 6px rgba(14, 165, 233, 0.5))" }}
-              />
-            </svg>
-            <div className="absolute inset-0 flex items-center justify-center">
-              <span className="font-mono text-xl font-semibold text-primary">
-                {fleetStats?.mainline.percentage.toFixed(0)}%
-              </span>
-            </div>
-          </div>
-          <div className="font-mono text-xs text-secondary">
-            <span className="text-accent">{fleetStats?.mainline.starlink || 0}</span>
-            <span className="text-muted"> / {fleetStats?.mainline.total || 0}</span>
-          </div>
-        </div>
-
-        {/* Express Fleet */}
-        <div className="bg-surface p-4 flex flex-col justify-center text-center">
-          <div className="text-[10px] font-mono text-muted uppercase tracking-wider mb-2">
-            Express
-          </div>
-          <div className="relative w-20 h-20 mx-auto mb-2">
-            <svg
-              className="w-20 h-20 transform -rotate-90"
-              role="img"
-              aria-label="Express progress"
-            >
-              <circle cx="40" cy="40" r="34" stroke="#243044" strokeWidth="6" fill="none" />
-              <circle
-                cx="40"
-                cy="40"
-                r="34"
-                stroke="#0ea5e9"
-                strokeWidth="6"
-                fill="none"
-                strokeDasharray={`${2 * Math.PI * 34}`}
-                strokeDashoffset={`${2 * Math.PI * 34 * (1 - (fleetStats?.express.percentage || 0) / 100)}`}
-                className="transition-all duration-1000 ease-out"
-                style={{ filter: "drop-shadow(0 0 6px rgba(14, 165, 233, 0.5))" }}
-              />
-            </svg>
-            <div className="absolute inset-0 flex items-center justify-center">
-              <span className="font-mono text-xl font-semibold text-primary">
-                {fleetStats?.express.percentage.toFixed(0)}%
-              </span>
-            </div>
-          </div>
-          <div className="font-mono text-xs text-secondary">
-            <span className="text-accent">{fleetStats?.express.starlink || 0}</span>
-            <span className="text-muted"> / {fleetStats?.express.total || 0}</span>
-          </div>
-        </div>
+        {content.statCards.map((card) => {
+          const m = fleetStats?.[card.key];
+          return (
+            <StatRing
+              key={card.key}
+              label={card.label}
+              pct={m?.percentage || 0}
+              starlink={m?.starlink || 0}
+              total={m?.total || 0}
+            />
+          );
+        })}
 
         {/* Combined Stats */}
         <div className="bg-surface p-4 flex flex-col justify-center text-center">
@@ -950,24 +932,19 @@ export default function Page({
               >
                 ALL <span className="hidden sm:inline">({starlinkData.length})</span>
               </button>
-              <button
-                type="button"
-                id="filter-mainline"
-                className="filter-btn font-mono text-[11px] px-3 py-2 rounded border transition-all bg-transparent border-subtle text-secondary hover:border-accent/50 hover:text-accent"
-                data-filter="mainline"
-              >
-                MAINLINE{" "}
-                <span className="hidden sm:inline">({fleetStats?.mainline.starlink || 0})</span>
-              </button>
-              <button
-                type="button"
-                id="filter-express"
-                className="filter-btn font-mono text-[11px] px-3 py-2 rounded border transition-all bg-transparent border-subtle text-secondary hover:border-accent/50 hover:text-accent"
-                data-filter="express"
-              >
-                EXPRESS{" "}
-                <span className="hidden sm:inline">({fleetStats?.express.starlink || 0})</span>
-              </button>
+              {content.statCards.length > 1 &&
+                content.statCards.map((card) => (
+                  <button
+                    key={card.key}
+                    type="button"
+                    id={`filter-${card.key}`}
+                    className="filter-btn font-mono text-[11px] px-3 py-2 rounded border transition-all bg-transparent border-subtle text-secondary hover:border-accent/50 hover:text-accent"
+                    data-filter={card.key}
+                  >
+                    {card.label.toUpperCase()}{" "}
+                    <span className="hidden sm:inline">({subfleetCounts[card.key] || 0})</span>
+                  </button>
+                ))}
             </div>
           </div>
         </div>
@@ -1225,146 +1202,15 @@ export default function Page({
           <h2 className="font-display text-xl md:text-2xl font-semibold text-primary">FAQ</h2>
         </div>
 
-        <FaqGroup title="Checking your flight">
-          <FaqItem q="Does my United flight have Starlink?">
-            <p>
-              Search above by flight number, tail number, or airport code. For a specific flight,{" "}
-              <a href="/check-flight" className="text-accent hover:underline">
-                check a flight by number and date
-              </a>{" "}
-              — if the flight is more than ~2 days out, you'll get a probability estimate based on
-              12,000+ historical aircraft assignments. You can also install our{" "}
-              <a
-                href="https://chromewebstore.google.com/detail/google-flights-starlink-i/jjfljoifenkfdbldliakmmjhdkbhehoi"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-accent hover:underline"
-              >
-                Chrome extension
-              </a>{" "}
-              to see Starlink badges on Google Flights.
-            </p>
-          </FaqItem>
-          <FaqItem q="How do I know if my flight has Starlink?">
-            <p>
-              Check your boarding pass for the tail number and search above. You can also search by
-              flight number, airport codes, or aircraft type.
-            </p>
-          </FaqItem>
-          <FaqItem q="How do I maximize my chances of getting Starlink?">
-            <p className="mb-2">
-              Use the{" "}
-              <a href="/route-planner" className="text-accent hover:underline">
-                Route Planner
-              </a>{" "}
-              — it finds direct flights and 1-stop connections ranked by Starlink probability.
-              Express flights (UA3000-6999, regional jets) have ~
-              {fleetStats?.express.percentage.toFixed(0)}% Starlink coverage vs ~
-              {fleetStats?.mainline.percentage.toFixed(0)}% for mainline, so a connection through a
-              hub can beat a direct mainline flight.
-            </p>
-            <p>
-              For example: DEN→ORD direct is mainline (~2%), but DEN→ASE→ORD is ~90% Starlink on
-              both legs.
-            </p>
-          </FaqItem>
-        </FaqGroup>
-
-        <FaqGroup title="The rollout">
-          <FaqItem q="Does United have Starlink?">
-            <p>
-              Yes, United Airlines has been installing Starlink since March 2025. Currently{" "}
-              <span className="text-accent">{x}</span> of {y} aircraft are equipped, with 40+ new
-              installations per month.
-            </p>
-          </FaqItem>
-          <FaqItem q="How many United planes have Starlink?">
-            <p>
-              As of today, <span className="text-accent">{x}</span> United aircraft have Starlink
-              WiFi — {fleetStats?.mainline.starlink || 0} mainline and{" "}
-              {fleetStats?.express.starlink || 0} Express planes. That's {percentage}% of the fleet.
-            </p>
-          </FaqItem>
-          <FaqItem q="Do all United flights have Starlink?">
-            <p>
-              Not yet. United is installing Starlink on 40+ planes per month. Currently {percentage}
-              % of the fleet is equipped. Starlink is available on both mainline and United Express
-              aircraft.
-            </p>
-          </FaqItem>
-          <FaqItem q="When will my route get Starlink?">
-            <p className="mb-2">
-              <span className="text-green-400">●</span> Regional jets:{" "}
-              {fleetStats?.express.percentage.toFixed(0)}% complete
-            </p>
-            <p>
-              <span className="text-accent">●</span> Mainline fleet:{" "}
-              {fleetStats?.mainline.percentage.toFixed(0)}% complete
-            </p>
-          </FaqItem>
-          <FaqItem q="When will all United flights have Starlink?">
-            <p>
-              United is installing Starlink on 40+ aircraft per month across a fleet of {y}+ planes.
-              At the current pace, the full rollout will take until 2028–2029. Currently{" "}
-              {percentage}% of the fleet is equipped. Regional jets and narrow-body aircraft are
-              being equipped first.
-            </p>
-          </FaqItem>
-          <FaqItem q="Does United have Starlink on international flights?">
-            <p>
-              Yes. Starlink works seamlessly over oceans, unlike previous WiFi systems. Check the
-              aircraft list above — 787s and 777s with Starlink fly international routes.
-            </p>
-          </FaqItem>
-        </FaqGroup>
-
-        <FaqGroup title="About Starlink WiFi">
-          <FaqItem q="Is United Starlink WiFi free?">
-            <p>
-              Yes, completely free for all passengers. No purchase required, no tiered plans — just
-              connect and go.
-            </p>
-          </FaqItem>
-          <FaqItem q="What can I do with Starlink WiFi?">
-            <p>
-              4K streaming, live sports, online gaming, large downloads — everything you can do at
-              home.
-            </p>
-          </FaqItem>
-        </FaqGroup>
-
-        <FaqGroup title="Using this tracker">
-          <FaqItem q="How does this tracker work?">
-            <p>
-              We aggregate data from multiple aviation data providers, cross-reference with flight
-              schedules, and verify Starlink status against United's own systems. The data updates
-              continuously throughout the day.
-            </p>
-            <p className="mt-2 text-xs">
-              Hat tip to the{" "}
-              <a
-                href="https://sites.google.com/site/unitedfleetsite/"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-accent hover:underline"
-              >
-                unitedfleetsite
-              </a>{" "}
-              community for the original fleet data that helped get this project started.
-            </p>
-          </FaqItem>
-          <FaqItem q="Can I use this with Claude, ChatGPT, or other AI assistants?">
-            <p>
-              Yes — there's a free{" "}
-              <a href="/mcp" className="text-accent hover:underline">
-                MCP connector
-              </a>{" "}
-              that works with Claude Desktop, Cursor, and any MCP-compatible client. Once connected,
-              you can ask your AI assistant things like "does UA4680 next week have Starlink?" or
-              "find me the best way to fly SFO to JAX with Starlink" and get live tracker data.
-            </p>
-          </FaqItem>
-        </FaqGroup>
+        {content.faq.map((section) => (
+          <FaqGroup key={section.title} title={section.title}>
+            {section.items.map((item) => (
+              <FaqItem key={item.q} q={item.q}>
+                {item.a(stats)}
+              </FaqItem>
+            ))}
+          </FaqGroup>
+        ))}
       </div>
 
       {/* Last updated timestamp for freshness signal */}

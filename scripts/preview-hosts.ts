@@ -30,19 +30,21 @@ const server = spawn("bun", ["server.ts"], {
   stdio: ["ignore", "pipe", "pipe"],
 });
 
+const resolverRules = hosts.map((h) => `MAP ${h.host} 127.0.0.1`).join(",");
+
 let browser: Browser | undefined;
 try {
   await new Promise((r) => setTimeout(r, 2000));
-  browser = await chromium.launch({ args: ["--host-resolver-rules=MAP * 127.0.0.1"] });
+  browser = await chromium.launch({ args: [`--host-resolver-rules=${resolverRules}`] });
 
   for (const { host, name } of hosts) {
     const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
     try {
       await page.goto(`http://${host}:${port}${urlPath}`, {
-        waitUntil: "domcontentloaded",
-        timeout: 10000,
+        waitUntil: "networkidle",
+        timeout: 15000,
       });
-      await page.waitForTimeout(400);
+      await page.waitForTimeout(500);
       const out = `do_not_commit/preview-${name}${urlPath.replace(/\//g, "_")}.png`;
       await page.screenshot({ path: out });
       const tails = await page.evaluate(
