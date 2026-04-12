@@ -11,6 +11,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { AIRLINES } from "../airlines/registry";
 import {
   getFleetStats,
   getLastUpdated,
@@ -1092,9 +1093,10 @@ function toolListStarlinkAircraft(
       `${p.TailNumber} — ${p.Aircraft || "Unknown type"} (${p.fleet}, ${p.OperatedBy}, first seen ${p.DateFound})`
   );
 
+  const carrier = airline ? AIRLINES[airline]?.name || airline : "tracked airlines";
   const header = fleet
-    ? `${total} Starlink-equipped aircraft in United's ${fleet} fleet`
-    : `${total} Starlink-equipped aircraft in United's fleet`;
+    ? `${total} Starlink-equipped aircraft in the ${carrier} ${fleet} fleet`
+    : `${total} Starlink-equipped aircraft (${carrier})`;
 
   return {
     content: [

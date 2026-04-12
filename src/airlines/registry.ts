@@ -25,6 +25,8 @@ export interface PageBrand {
   accentColor: string;
   accentColorDim: string;
   faviconPath: string;
+  /** og:image / twitter:image path. Defaults to shared /static/social-image.webp until per-airline assets exist. */
+  socialImagePath?: string;
   analyticsDomain: string;
   pressReleaseUrl?: string;
 }
@@ -161,7 +163,7 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
         "hawaiian airlines starlink, hawaiian airlines wifi, does hawaiian have wifi, hawaiian a330 starlink, hawaiian a321neo wifi, hawaiian 717 wifi, hawaiian interisland wifi, free wifi hawaiian airlines",
       accentColor: "#413691",
       accentColorDim: "#6b5fb3",
-      faviconPath: "/static/ha/favicon.ico",
+      faviconPath: "/favicon.ico",
       analyticsDomain: "hawaiianstarlinktracker.com",
       pressReleaseUrl:
         "https://newsroom.hawaiianairlines.com/releases/hawaiian-airlines-launches-fast-and-free-starlink-internet",
@@ -197,7 +199,7 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
         "alaska airlines starlink, alaska starlink tracker, alaska wifi, 737 MAX starlink, E175 starlink, check alaska flight starlink",
       accentColor: "#01426a",
       accentColorDim: "#2b6a8f",
-      faviconPath: "/static/as/favicon.ico",
+      faviconPath: "/favicon.ico",
       analyticsDomain: "alaskastarlinktracker.com",
       pressReleaseUrl:
         "https://news.alaskaair.com/company/alaska-airlines-and-hawaiian-airlines-to-offer-free-starlink-wi-fi/",
@@ -230,7 +232,7 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
         "qatar airways starlink, qatar starlink tracker, qatar wifi, B777 starlink, A350 starlink, check qatar flight starlink",
       accentColor: "#5c0632",
       accentColorDim: "#8a2851",
-      faviconPath: "/static/qr/favicon.ico",
+      faviconPath: "/favicon.ico",
       analyticsDomain: "qatarstarlinktracker.com",
       pressReleaseUrl:
         "https://www.qatarairways.com/en/press-releases/2024/october/starlink-b777.html",
@@ -277,6 +279,8 @@ export function brandMetadata(brand: PageBrand) {
     siteName: brand.title,
     accentColor: brand.accentColor,
     accentColorDim: brand.accentColorDim,
+    faviconPath: brand.faviconPath,
+    socialImagePath: brand.socialImagePath ?? "/static/social-image.webp",
   };
 }
 
