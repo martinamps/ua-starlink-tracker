@@ -24,7 +24,7 @@ export interface FR24ScrapeResult {
 /**
  * Scrape United Airlines fleet from FlightRadar24
  */
-export async function scrapeFlightRadar24Fleet(): Promise<FR24ScrapeResult> {
+export async function scrapeFlightRadar24Fleet(slug = "ua-ual"): Promise<FR24ScrapeResult> {
   const result: FR24ScrapeResult = {
     success: false,
     aircraft: [],
@@ -57,7 +57,7 @@ export async function scrapeFlightRadar24Fleet(): Promise<FR24ScrapeResult> {
 
     // Navigate to fleet page
     console.log("Navigating to FlightRadar24...");
-    await page.goto("https://www.flightradar24.com/data/airlines/ua-ual/fleet", {
+    await page.goto(`https://www.flightradar24.com/data/airlines/${slug}/fleet`, {
       waitUntil: "domcontentloaded",
       timeout: 45000,
     });

@@ -1,9 +1,10 @@
 /**
  * Tenant isolation matrix.
  *
- * Canary rows N999HA/HA9999 (HA) and A7-TST/QR9999 (QR) are seeded into the
- * test DB by scripts/test-setup.sh. These tests assert they NEVER appear on
- * unitedstarlinktracker.com responses and DO appear on the hub.
+ * Canary rows N999HA/HA9999 (HA), N644AS/AS118 (AS), and A7-TST/QR9999 (QR)
+ * are seeded into the test DB by scripts/test-setup.sh. These tests assert
+ * they NEVER appear on unitedstarlinktracker.com responses and DO appear on
+ * the hub.
  */
 
 import { Database } from "bun:sqlite";
@@ -14,7 +15,7 @@ const TEST_DB = "/tmp/ua-test.sqlite";
 const UA = "unitedstarlinktracker.com";
 const HUB = "airlinestatustracker.com";
 const EVIL = "evil.example.com";
-const CANARIES = ["N999HA", "HA9999", "A7-TST", "QR9999"];
+const CANARIES = ["N999HA", "HA9999", "N644AS", "AS118", "A7-TST", "QR9999"];
 
 let app: ReturnType<typeof createApp>;
 let db: Database;
@@ -151,12 +152,14 @@ describe("hub host shows all airlines", () => {
   test("/api/data contains canaries", async () => {
     const { text } = await bodyOf("/api/data", HUB);
     expect(text).toContain("N999HA");
+    expect(text).toContain("N644AS");
     expect(text).toContain("A7-TST");
   });
 
   test("/fleet page contains canaries", async () => {
     const { text } = await bodyOf("/fleet", HUB);
     expect(text).toContain("N999HA");
+    expect(text).toContain("N644AS");
     expect(text).toContain("A7-TST");
   });
 });

@@ -44,8 +44,8 @@ export interface AirlineConfig {
   fr24Slug?: string;
   /** Reject fleet-sync results below this size as obviously wrong. */
   minFleetSanity: number;
-  /** Website-scraping verifier for this airline; null = FR24-consensus only. */
-  verifierBackend?: "united" | null;
+  /** Per-flight wifi verification source; null = none (type-map only). */
+  verifierBackend?: "united" | "alaska-json" | null;
   brand: PageBrand;
 }
 
@@ -126,9 +126,9 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
     icao: "HAL",
     carrierPrefixes: ["HAL", "HA"],
     subfleets: [{ key: "mainline", label: "Hawaiian Fleet", match: () => true }],
-    fr24Slug: "hawaiian-airlines-hal",
+    fr24Slug: "ha-hal",
     minFleetSanity: 30,
-    verifierBackend: null,
+    verifierBackend: "alaska-json",
     brand: {
       title: "Hawaiian Airlines Starlink Tracker",
       tagline: "Tracking Hawaiian Airlines aircraft with Starlink WiFi",
@@ -148,6 +148,38 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
         "https://newsroom.hawaiianairlines.com/releases/hawaiian-airlines-launches-fast-and-free-starlink-internet",
     },
   },
+  AS: {
+    code: "AS",
+    name: "Alaska Airlines",
+    enabled: false,
+    hosts: ["alaskastarlinktracker.com", "www.alaskastarlinktracker.com"],
+    canonicalHost: "alaskastarlinktracker.com",
+    iata: "AS",
+    icao: "ASA",
+    carrierPrefixes: ["ASA", "QXE", "SKW", "AS", "QX", "OO"],
+    subfleets: [{ key: "mainline", label: "Alaska Fleet", match: () => true }],
+    fr24Slug: "as-asa",
+    minFleetSanity: 200,
+    verifierBackend: "alaska-json",
+    brand: {
+      title: "Alaska Airlines Starlink Tracker",
+      tagline: "Tracking Alaska Airlines aircraft with Starlink WiFi",
+      siteTitle: "Alaska Starlink Tracker — Which Flights Have Free Starlink WiFi?",
+      description:
+        "Track which Alaska Airlines flights have free Starlink WiFi. Live status for every Starlink-equipped aircraft, installation progress, and upcoming flight schedules.",
+      ogTitle: "Alaska Airlines Starlink Tracker",
+      ogDescription:
+        "Live statistics showing Alaska Airlines Starlink WiFi installation progress across the fleet.",
+      keywords:
+        "alaska airlines starlink, alaska starlink tracker, alaska wifi, 737 MAX starlink, E175 starlink, check alaska flight starlink",
+      accentColor: "#01426a",
+      accentColorDim: "#2b6a8f",
+      faviconPath: "/static/as/favicon.ico",
+      analyticsDomain: "alaskastarlinktracker.com",
+      pressReleaseUrl:
+        "https://news.alaskaair.com/company/alaska-airlines-and-hawaiian-airlines-to-offer-free-starlink-wi-fi/",
+    },
+  },
   QR: {
     code: "QR",
     name: "Qatar Airways",
@@ -158,7 +190,7 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
     icao: "QTR",
     carrierPrefixes: ["QTR", "QR"],
     subfleets: [{ key: "mainline", label: "Qatar Fleet", match: () => true }],
-    fr24Slug: "qatar-airways-qtr",
+    fr24Slug: "qr-qtr",
     minFleetSanity: 200,
     verifierBackend: null,
     brand: {

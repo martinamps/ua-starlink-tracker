@@ -18,6 +18,7 @@
     "predict-backtest": "bun run src/scripts/starlink-predictor.ts --backtest",
     "precision": "bun run src/scripts/precision-backtest.ts",
     "surface-sweep": "bun run src/scripts/surface-sweep.ts",
+    "seed-hawaiian": "PLAYWRIGHT_BROWSERS_PATH=./do_not_commit/playwright-browsers bun run src/scripts/seed-hawaiian.ts",
     "reset-flights": "bun run src/scripts/reset-flight-checks.ts",
     "test": "bun test tests/",
     "test:setup": "bash scripts/test-setup.sh",
