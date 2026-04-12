@@ -33,9 +33,10 @@ import { error as logError } from "../utils/logger";
 import { getNotFoundHtml } from "../utils/not-found";
 import { getSpreadsheetCacheInfo, getSpreadsheetCacheTails } from "../utils/utils";
 import {
+  type Database,
   type RequestContext,
   type ScopedReader,
-  getScopedReader,
+  createReaderFactory,
   tenantConfig,
   tenantScope,
 } from "./context";
@@ -57,30 +58,6 @@ const STATIC_DIR =
   process.env.NODE_ENV === "production"
     ? "/app/static"
     : path.join(import.meta.dir, "..", "..", "static");
-
-const KNOWN_ROUTES = new Set([
-  "/",
-  "/check-flight",
-  "/route-planner",
-  "/fleet",
-  "/api/data",
-  "/api/check-flight",
-  "/api/predict-flight",
-  "/api/plan-route",
-  "/api/mismatches",
-  "/api/fleet-discovery",
-  "/mcp",
-  "/sitemap.xml",
-  "/robots.txt",
-  "/llms.txt",
-  "/static/*",
-]);
-
-function normalizeRouteForMetrics(pathname: string): string | null {
-  if (KNOWN_ROUTES.has(pathname)) return pathname;
-  if (pathname.startsWith("/static/")) return "/static/*";
-  return null;
-}
 
 const htmlTemplateFile = Bun.file(path.join(import.meta.dir, "..", "..", "index.html"));
 let htmlTemplateCache: string;
@@ -719,9 +696,8 @@ export interface App {
   dispatch(req: Request): Promise<Response>;
 }
 
-type OpaqueDb = unknown;
-
-export function createApp(db: OpaqueDb): App {
+export function createApp(db: Database): App {
+  const getReader = createReaderFactory(db);
   const routes: RouteTable = {
     "/": homePage,
     "/check-flight": checkFlightPage,
@@ -769,7 +745,7 @@ export function createApp(db: OpaqueDb): App {
       });
     }
 
-    const reader: ScopedReader = getScopedReader(db, tenantScope(tenant));
+    const reader: ScopedReader = getReader(tenantScope(tenant));
     const ctx: RequestContext = { req, url, tenant, reader, db };
 
     const m = match(url.pathname);
@@ -790,11 +766,10 @@ export function createApp(db: OpaqueDb): App {
             });
 
         span.setTag("http.status_code", response.status);
-        const normalized = normalizeRouteForMetrics(route);
-        if (normalized) {
+        if (m) {
           metrics.increment(COUNTERS.HTTP_REQUEST, {
             method: req.method,
-            route: normalized,
+            route: m.route === "/static" ? "/static/*" : m.route,
             status_code: response.status,
             tenant: tenantScope(tenant),
           });

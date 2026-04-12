@@ -23,6 +23,7 @@ import {
   getVerificationSummary,
   getWifiMismatches,
 } from "../database/database";
+import type { WifiMismatch } from "../database/database";
 import type {
   Aircraft,
   AirportDepartures,
@@ -30,8 +31,9 @@ import type {
   FleetPageData,
   FleetStats,
   Flight,
-  WifiMismatch,
 } from "../types";
+
+export type { Database };
 
 export type Scope = AirlineCode | "ALL";
 
@@ -67,10 +69,10 @@ export interface RequestContext {
 
 function buildReader(db: Database, scope: Scope): ScopedReader {
   const a = scope === "ALL" ? undefined : scope;
-  return Object.freeze({
+  const r: ScopedReader = {
     scope,
     getStarlinkPlanes: () => getStarlinkPlanes(db, a),
-    getUpcomingFlights: (t?: string) => getUpcomingFlights(db, t, a),
+    getUpcomingFlights: (t) => getUpcomingFlights(db, t, a),
     getFleetStats: () => getFleetStats(db, a ?? "UA"),
     getTotalCount: () => getTotalCount(db, a ?? "UA"),
     getLastUpdated: () => getLastUpdated(db, a ?? "UA"),
@@ -82,18 +84,20 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     getPendingFleetTails: () => getPendingFleetTails(db, a),
     getVerificationSummary: () => getVerificationSummary(db, a),
     getWifiMismatches: () => getWifiMismatches(db, a),
-  });
+  };
+  return Object.freeze(r);
 }
 
-const readerCache = new Map<Scope, ScopedReader>();
-
-export function getScopedReader(db: Database, scope: Scope): ScopedReader {
-  let r = readerCache.get(scope);
-  if (!r) {
-    r = buildReader(db, scope);
-    readerCache.set(scope, r);
-  }
-  return r;
+export function createReaderFactory(db: Database): (scope: Scope) => ScopedReader {
+  const cache = new Map<Scope, ScopedReader>();
+  return (scope) => {
+    let r = cache.get(scope);
+    if (!r) {
+      r = buildReader(db, scope);
+      cache.set(scope, r);
+    }
+    return r;
+  };
 }
 
 export function tenantScope(tenant: Tenant): Scope {

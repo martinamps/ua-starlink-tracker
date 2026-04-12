@@ -117,6 +117,19 @@ describe("UA host never leaks canaries", () => {
     for (const c of CANARIES) expect(text).not.toContain(c);
   });
 
+  test("MCP check_flight HA9999 on canary date — no tail leak", async () => {
+    const r = await app.dispatch(
+      mcpReq(UA, "tools/call", {
+        name: "check_flight",
+        arguments: { flight_number: "HA9999", date: "2026-03-22" },
+      })
+    );
+    const text = await r.text();
+    expect(text).not.toContain("N999HA");
+    expect(text).not.toContain("A7-TST");
+    expect(text).not.toContain("Hawaiian Airlines");
+  });
+
   test("MCP get_fleet_stats", async () => {
     const r = await app.dispatch(
       mcpReq(UA, "tools/call", { name: "get_fleet_stats", arguments: {} })

@@ -343,20 +343,21 @@ async function toolCheckFlight(
 
   const variants = buildFlightNumberVariants(normalized);
   const placeholders = variants.map(() => "?").join(",");
+  const airlineClause = airline ? " AND uf.airline = ?" : "";
+  const queryParams = airline
+    ? [...variants, startOfDay, endOfDay, airline]
+    : [...variants, startOfDay, endOfDay];
 
-  // All assignments we have for this flight on this date, with verified_wifi status.
-  // We track flights only for planes in starlink_planes, so every row here is at
-  // least "spreadsheet says Starlink" — but verified_wifi may say otherwise.
   const assignments = db
     .query(
       `SELECT uf.*, sp.Aircraft as aircraft_type, sp.OperatedBy, sp.fleet, sp.verified_wifi
        FROM upcoming_flights uf
        INNER JOIN starlink_planes sp ON uf.tail_number = sp.TailNumber
        WHERE uf.flight_number IN (${placeholders})
-         AND uf.departure_time >= ? AND uf.departure_time < ?
+         AND uf.departure_time >= ? AND uf.departure_time < ?${airlineClause}
        ORDER BY uf.last_updated DESC`
     )
-    .all(...variants, startOfDay, endOfDay) as Array<
+    .all(...queryParams) as Array<
     Flight & {
       aircraft_type: string;
       OperatedBy: string;
