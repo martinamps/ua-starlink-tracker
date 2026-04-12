@@ -32,6 +32,8 @@ export interface PageBrand {
 export interface AirlineConfig {
   code: AirlineCode;
   name: string;
+  /** Background jobs (scrape/verify/discover/sync) skip airlines with enabled=false. resolveTenant still resolves them. */
+  enabled: boolean;
   hosts: string[];
   canonicalHost: string;
   iata: string;
@@ -56,6 +58,7 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
   UA: {
     code: "UA",
     name: "United Airlines",
+    enabled: true,
     hosts: ["unitedstarlinktracker.com", "www.unitedstarlinktracker.com"],
     canonicalHost: "unitedstarlinktracker.com",
     iata: "UA",
@@ -113,11 +116,79 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
       pressReleaseUrl: "https://www.united.com/en/us/newsroom/announcements/cision-125370",
     },
   },
+  HA: {
+    code: "HA",
+    name: "Hawaiian Airlines",
+    enabled: false,
+    hosts: ["hawaiianstarlinktracker.com", "www.hawaiianstarlinktracker.com"],
+    canonicalHost: "hawaiianstarlinktracker.com",
+    iata: "HA",
+    icao: "HAL",
+    carrierPrefixes: ["HAL", "HA"],
+    subfleets: [{ key: "mainline", label: "Hawaiian Fleet", match: () => true }],
+    fr24Slug: "hawaiian-airlines-hal",
+    minFleetSanity: 30,
+    verifierBackend: null,
+    brand: {
+      title: "Hawaiian Airlines Starlink Tracker",
+      tagline: "Tracking Hawaiian Airlines aircraft with Starlink WiFi",
+      siteTitle: "Hawaiian Starlink Tracker — Which Flights Have Free Starlink WiFi?",
+      description:
+        "Track which Hawaiian Airlines flights have free Starlink WiFi. Live status for every Starlink-equipped aircraft and upcoming flight schedules.",
+      ogTitle: "Hawaiian Airlines Starlink Tracker",
+      ogDescription:
+        "Live statistics showing Hawaiian Airlines Starlink WiFi installation progress across the fleet.",
+      keywords:
+        "hawaiian airlines starlink, hawaiian starlink tracker, hawaiian wifi, A330 starlink, hawaiian flight wifi, check hawaiian flight starlink",
+      accentColor: "#413691",
+      accentColorDim: "#6b5fb3",
+      faviconPath: "/static/ha/favicon.ico",
+      analyticsDomain: "hawaiianstarlinktracker.com",
+      pressReleaseUrl:
+        "https://newsroom.hawaiianairlines.com/releases/hawaiian-airlines-launches-fast-and-free-starlink-internet",
+    },
+  },
+  QR: {
+    code: "QR",
+    name: "Qatar Airways",
+    enabled: false,
+    hosts: ["qatarstarlinktracker.com", "www.qatarstarlinktracker.com"],
+    canonicalHost: "qatarstarlinktracker.com",
+    iata: "QR",
+    icao: "QTR",
+    carrierPrefixes: ["QTR", "QR"],
+    subfleets: [{ key: "mainline", label: "Qatar Fleet", match: () => true }],
+    fr24Slug: "qatar-airways-qtr",
+    minFleetSanity: 200,
+    verifierBackend: null,
+    brand: {
+      title: "Qatar Airways Starlink Tracker",
+      tagline: "Tracking Qatar Airways aircraft with Starlink WiFi",
+      siteTitle: "Qatar Starlink Tracker — Which Flights Have Free Starlink WiFi?",
+      description:
+        "Track which Qatar Airways flights have free Starlink WiFi. Live status for every Starlink-equipped aircraft and upcoming flight schedules.",
+      ogTitle: "Qatar Airways Starlink Tracker",
+      ogDescription:
+        "Live statistics showing Qatar Airways Starlink WiFi installation progress across the fleet.",
+      keywords:
+        "qatar airways starlink, qatar starlink tracker, qatar wifi, B777 starlink, A350 starlink, check qatar flight starlink",
+      accentColor: "#5c0632",
+      accentColorDim: "#8a2851",
+      faviconPath: "/static/qr/favicon.ico",
+      analyticsDomain: "qatarstarlinktracker.com",
+      pressReleaseUrl:
+        "https://www.qatarairways.com/en/press-releases/2024/october/starlink-b777.html",
+    },
+  },
 };
 
-export const HUB_HOSTS = ["airlinestatustracker.com", "www.airlinestatustracker.com"];
+export function enabledAirlines(): AirlineConfig[] {
+  return Object.values(AIRLINES).filter((a) => a.enabled);
+}
 
-export const HUB_BRAND: PageBrand = {
+const HUB_HOSTS = ["airlinestatustracker.com", "www.airlinestatustracker.com"];
+
+const HUB_BRAND: PageBrand = {
   title: "Airline Starlink Tracker",
   tagline: "Tracking major airlines' rollout of Starlink WiFi",
   siteTitle: "Airline Starlink Tracker | United, Delta & All Airlines WiFi Rollout",

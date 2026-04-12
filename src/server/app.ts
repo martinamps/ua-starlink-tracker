@@ -510,36 +510,24 @@ United Airlines began installing SpaceX Starlink WiFi on March 7, 2025. The serv
 // HTML page handlers
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function renderSubPage<P extends object = object>(
-  ctx: RequestContext,
-  component: React.ComponentType<P>,
-  canonicalPath: string,
-  meta: PageMeta,
-  props?: P
-): Promise<Response> {
+function buildBaseTemplateVars(ctx: RequestContext, reactHtml: string): Record<string, string> {
   const { reader, req, tenant } = ctx;
   const brand = tenantBrand(tenant);
   const cfg = tenantConfig(tenant);
   const host = req.headers.get("host") || cfg?.canonicalHost || "airlinestatustracker.com";
-  const reactHtml = ReactDOMServer.renderToString(
-    React.createElement(component, { brand, ...(props ?? {}) } as P)
-  );
 
   const fleetStats = reader.getFleetStats();
   const totalCount = reader.getTotalCount();
-  const starlinkPlanes = reader.getStarlinkPlanes();
-  const starlinkCount = starlinkPlanes.length;
+  const starlinkCount = reader.getStarlinkPlanes().length;
   const percentage = totalCount > 0 ? ((starlinkCount / totalCount) * 100).toFixed(2) : "0.00";
 
-  const htmlVariables: Record<string, string> = {
+  return {
     ...brandMetadata(brand),
-    ...meta,
     html: reactHtml,
     host,
     totalCount: starlinkCount.toString(),
     totalAircraftCount: totalCount.toString(),
     lastUpdated: reader.getLastUpdated(),
-    isUnited: "true",
     currentDate: new Date().toLocaleDateString(),
     isoDate: new Date().toISOString(),
     mainlineCount: (fleetStats?.mainline.starlink || 0).toString(),
@@ -547,6 +535,23 @@ async function renderSubPage<P extends object = object>(
     percentage,
     mainlinePercentage: (fleetStats?.mainline.percentage || 0).toFixed(2),
     expressPercentage: (fleetStats?.express.percentage || 0).toFixed(2),
+  };
+}
+
+async function renderSubPage<P extends object = object>(
+  ctx: RequestContext,
+  component: React.ComponentType<P>,
+  canonicalPath: string,
+  meta: PageMeta,
+  props?: P
+): Promise<Response> {
+  const brand = tenantBrand(ctx.tenant);
+  const reactHtml = ReactDOMServer.renderToString(
+    React.createElement(component, { brand, ...(props ?? {}) } as P)
+  );
+  const htmlVariables: Record<string, string> = {
+    ...buildBaseTemplateVars(ctx, reactHtml),
+    ...meta,
   };
 
   let template = await getHtmlTemplate();
@@ -615,16 +620,8 @@ const homePage: Handler = async (ctx) => {
   const { req, reader, tenant } = ctx;
   if (req.method !== "GET" && req.method !== "HEAD") return methodNotAllowed();
   const brand = tenantBrand(tenant);
-  const cfg = tenantConfig(tenant);
-  const host = req.headers.get("host") || cfg?.canonicalHost || "airlinestatustracker.com";
 
-  const totalCount = reader.getTotalCount();
-  const starlinkPlanes = reader.getStarlinkPlanes();
-  const lastUpdated = reader.getLastUpdated();
-  const fleetStats = reader.getFleetStats();
   const allFlights = reader.getUpcomingFlights();
-  const airportDepartures = reader.getAirportDepartures();
-
   const flightsByTail: Record<string, Flight[]> = {};
   for (const flight of allFlights) {
     if (!flightsByTail[flight.tail_number]) flightsByTail[flight.tail_number] = [];
@@ -633,38 +630,20 @@ const homePage: Handler = async (ctx) => {
 
   const reactHtml = ReactDOMServer.renderToString(
     React.createElement(Page, {
-      total: totalCount,
-      starlink: starlinkPlanes,
-      lastUpdated,
-      fleetStats,
+      total: reader.getTotalCount(),
+      starlink: reader.getStarlinkPlanes(),
+      lastUpdated: reader.getLastUpdated(),
+      fleetStats: reader.getFleetStats(),
       brand,
       flightsByTail,
-      airportDepartures,
+      airportDepartures: reader.getAirportDepartures(),
     })
   );
 
-  const starlinkCount = starlinkPlanes.length;
-  const percentage = totalCount > 0 ? ((starlinkCount / totalCount) * 100).toFixed(2) : "0.00";
-
-  const htmlVariables = {
-    ...brandMetadata(brand),
-    html: reactHtml,
-    host,
-    totalCount: starlinkCount.toString(),
-    totalAircraftCount: totalCount.toString(),
-    lastUpdated,
-    isUnited: "true",
-    currentDate: new Date().toLocaleDateString(),
-    isoDate: new Date().toISOString(),
-    mainlineCount: (fleetStats?.mainline.starlink || 0).toString(),
-    expressCount: (fleetStats?.express.starlink || 0).toString(),
-    percentage,
-    mainlinePercentage: (fleetStats?.mainline.percentage || 0).toFixed(2),
-    expressPercentage: (fleetStats?.express.percentage || 0).toFixed(2),
-  };
-
   const template = await getHtmlTemplate();
-  return new Response(renderHtml(template, htmlVariables), { headers: SECURITY_HEADERS.html });
+  return new Response(renderHtml(template, buildBaseTemplateVars(ctx, reactHtml)), {
+    headers: SECURITY_HEADERS.html,
+  });
 };
 
 const staticDir: Handler = ({ url, tenant }) => {

@@ -6,7 +6,12 @@
  */
 
 import type { Database } from "bun:sqlite";
-import type { AirlineCode, AirlineConfig, Tenant } from "../airlines/registry";
+import {
+  type AirlineCode,
+  type AirlineConfig,
+  type Tenant,
+  enabledAirlines,
+} from "../airlines/registry";
 import {
   type CheckFlightRow,
   getAirportDepartures,
@@ -67,15 +72,33 @@ export interface RequestContext {
   db: Database;
 }
 
+function aggregateAll<T>(fn: (code: AirlineCode) => T, reduce: (vals: T[]) => T): T {
+  return reduce(enabledAirlines().map((a) => fn(a.code)));
+}
+
 function buildReader(db: Database, scope: Scope): ScopedReader {
   const a = scope === "ALL" ? undefined : scope;
   const r: ScopedReader = {
     scope,
     getStarlinkPlanes: () => getStarlinkPlanes(db, a),
     getUpcomingFlights: (t) => getUpcomingFlights(db, t, a),
+    // FleetStats shape is UA-subfleet-specific (express/mainline); hub aggregation deferred until
+    // getSubfleetStats lands. Hub callers should not rely on this.
     getFleetStats: () => getFleetStats(db, a ?? "UA"),
-    getTotalCount: () => getTotalCount(db, a ?? "UA"),
-    getLastUpdated: () => getLastUpdated(db, a ?? "UA"),
+    getTotalCount: () =>
+      a !== undefined
+        ? getTotalCount(db, a)
+        : aggregateAll(
+            (c) => getTotalCount(db, c),
+            (vs) => vs.reduce((s, n) => s + n, 0)
+          ),
+    getLastUpdated: () =>
+      a !== undefined
+        ? getLastUpdated(db, a)
+        : aggregateAll(
+            (c) => getLastUpdated(db, c),
+            (vs) => vs.filter(Boolean).sort().reverse()[0] ?? ""
+          ),
     getFlightsByNumberAndDate: (v, s, e) => getFlightsByNumberAndDate(db, v, s, e, a),
     getFleetPageData: () => getFleetPageData(db, a),
     getAirportDepartures: () => getAirportDepartures(db, a),

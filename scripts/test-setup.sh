@@ -6,45 +6,12 @@ SRC=plane-data.production.sqlite
 
 cp "$SRC" "$DB"
 
-sqlite3 "$DB" <<'SQL'
-PRAGMA journal_mode=DELETE;
+sqlite3 "$DB" 'PRAGMA journal_mode=DELETE;'
 
-CREATE TABLE IF NOT EXISTS flight_routes (
-  flight_number TEXT NOT NULL,
-  origin TEXT NOT NULL,
-  destination TEXT NOT NULL,
-  duration_sec INTEGER,
-  first_seen_at INTEGER NOT NULL,
-  last_seen_at INTEGER NOT NULL,
-  seen_count INTEGER DEFAULT 1,
-  PRIMARY KEY (flight_number, origin, destination)
-);
-
-CREATE TABLE IF NOT EXISTS departure_log (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  tail_number TEXT NOT NULL,
-  airport TEXT NOT NULL,
-  departed_at INTEGER NOT NULL
-);
-SQL
-
-# Prior-snapshot column backfills (idempotent — ignore "duplicate column" errors)
-sqlite3 "$DB" 'ALTER TABLE starlink_verification_log ADD COLUMN tail_confirmed INTEGER;' 2>/dev/null || true
-sqlite3 "$DB" 'ALTER TABLE united_fleet ADD COLUMN ship_number TEXT;' 2>/dev/null || true
-
-# Multi-airline Phase-1 columns
-for T in starlink_planes united_fleet upcoming_flights starlink_verification_log departure_log; do
-  sqlite3 "$DB" "ALTER TABLE $T ADD COLUMN airline TEXT NOT NULL DEFAULT 'UA';" 2>/dev/null || true
-done
+# Run the real migration path so test schema can never drift from prod.
+DB_PATH="$DB" DISABLE_JOBS=1 bun -e 'import {initializeDatabase} from "./src/database/database"; initializeDatabase().close()'
 
 sqlite3 "$DB" <<'SQL'
-CREATE INDEX IF NOT EXISTS idx_sp_airline   ON starlink_planes(airline);
-CREATE INDEX IF NOT EXISTS idx_uf_airline   ON united_fleet(airline, starlink_status);
-CREATE INDEX IF NOT EXISTS idx_upf_airline  ON upcoming_flights(airline, flight_number);
-CREATE INDEX IF NOT EXISTS idx_vlog_airline ON starlink_verification_log(airline, tail_number);
-
-UPDATE meta SET key = 'UA:' || key WHERE key NOT LIKE '%:%';
-
 UPDATE starlink_verification_log SET tail_confirmed=1 WHERE error IS NULL AND tail_confirmed IS NULL;
 
 -- Canary rows: must NEVER appear on a UA-scoped surface. Isolation tests grep for these.

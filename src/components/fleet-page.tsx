@@ -1,5 +1,4 @@
 import React from "react";
-import type { PageBrand } from "../airlines/registry";
 import type { FleetFamily, FleetPageData, FleetTail, WifiProvider } from "../types";
 import { AIRCRAFT_SPECS, type AircraftSpec } from "../utils/aircraft-specs";
 
@@ -399,7 +398,7 @@ function TailMonument({ allTails, totalFleet }: { allTails: FleetTail[]; totalFl
   );
 }
 
-export default function FleetPage({ data }: { data: FleetPageData; brand?: PageBrand }) {
+export default function FleetPage({ data }: { data: FleetPageData }) {
   return (
     <div className="w-full mx-auto px-4 sm:px-6 md:px-8 bg-base min-h-screen flex flex-col relative">
       <div className="absolute inset-0 grid-pattern opacity-50 pointer-events-none" />
