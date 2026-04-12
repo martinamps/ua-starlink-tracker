@@ -18,7 +18,13 @@ import {
   ensureAirlinePrefix,
   normalizeAirlineFlightNumber,
 } from "../airlines/flight-number";
-import { AIRLINES, brandMetadata, resolveTenant, tenantBrand } from "../airlines/registry";
+import {
+  AIRLINES,
+  HUB_HOSTS,
+  brandMetadata,
+  resolveTenant,
+  tenantBrand,
+} from "../airlines/registry";
 import { lookupFlightTailVerdict } from "../api/flight-verdict";
 import { handleMcpRequest } from "../api/mcp-server";
 import CheckFlightPage from "../components/check-flight-page";
@@ -402,7 +408,7 @@ const mcp: Handler = async (ctx) => {
 
 const robotsTxt: Handler = ({ tenant }) => {
   const cfg = tenantConfig(tenant);
-  const host = cfg?.canonicalHost ?? "airlinestatustracker.com";
+  const host = cfg?.canonicalHost ?? HUB_HOSTS[0];
   return new Response(
     `User-agent: GPTBot
 Allow: /
@@ -431,7 +437,7 @@ Sitemap: https://${host}/sitemap.xml`,
 
 const sitemap: Handler = ({ reader, tenant }) => {
   const cfg = tenantConfig(tenant);
-  const baseUrl = `https://${cfg?.canonicalHost ?? "airlinestatustracker.com"}`;
+  const baseUrl = `https://${cfg?.canonicalHost ?? HUB_HOSTS[0]}`;
   const lastUpdated = reader.getLastUpdated();
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
@@ -515,7 +521,7 @@ function buildBaseTemplateVars(ctx: RequestContext, reactHtml: string): Record<s
   const { reader, req, tenant } = ctx;
   const brand = tenantBrand(tenant);
   const cfg = tenantConfig(tenant);
-  const host = req.headers.get("host") || cfg?.canonicalHost || "airlinestatustracker.com";
+  const host = req.headers.get("host") || cfg?.canonicalHost || HUB_HOSTS[0];
 
   const fleetStats = reader.getFleetStats();
   const totalCount = reader.getTotalCount();

@@ -234,7 +234,7 @@ export function enabledAirlines(): AirlineConfig[] {
   return Object.values(AIRLINES).filter((a) => a.enabled);
 }
 
-export const HUB_HOSTS = ["airlinestatustracker.com", "www.airlinestatustracker.com"];
+export const HUB_HOSTS = ["airlinestarlinktracker.com", "www.airlinestarlinktracker.com"];
 
 const HUB_BRAND: PageBrand = {
   title: "Airline Starlink Tracker",

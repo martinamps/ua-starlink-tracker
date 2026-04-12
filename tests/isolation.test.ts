@@ -17,7 +17,7 @@ import type { FleetStats } from "../src/types";
 const TEST_DB = "/tmp/ua-test.sqlite";
 const UA = "unitedstarlinktracker.com";
 const HA_HOST = "hawaiianstarlinktracker.com";
-const HUB = "airlinestatustracker.com";
+const HUB = "airlinestarlinktracker.com";
 const EVIL = "evil.example.com";
 const CANARIES = ["N999HA", "HA9999", "N644AS", "AS118", "A7-TST", "QR9999"];
 const REAL_HA_TAILS = ["N380HA", "N382HA", "N389HA", "N202HA", "N215HA"];
