@@ -715,8 +715,9 @@ export interface App {
   dispatch(req: Request): Promise<Response>;
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: opaque DB handle, scoped via context.ts
-export function createApp(db: any): App {
+type OpaqueDb = unknown;
+
+export function createApp(db: OpaqueDb): App {
   const routes: RouteTable = {
     "/": homePage,
     "/check-flight": checkFlightPage,
