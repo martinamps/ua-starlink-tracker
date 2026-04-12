@@ -3,8 +3,8 @@
  *
  * Canary rows N999HA/HA9999 (HA), N644AS/AS118 (AS), and A7-TST/QR9999 (QR)
  * are seeded into the test DB by scripts/test-setup.sh. These tests assert
- * they NEVER appear on unitedstarlinktracker.com responses and DO appear on
- * the hub.
+ * they NEVER appear on unitedstarlinktracker.com responses; the hub shows
+ * enabled-airline canaries only (HA), not disabled (AS/QR).
  */
 
 import { Database } from "bun:sqlite";
@@ -237,19 +237,19 @@ describe("write-path safety — UA scrape cannot wipe HA rows", () => {
   });
 });
 
-describe("hub host shows all airlines", () => {
-  test("/api/data contains canaries", async () => {
+describe("hub host shows enabled airlines only", () => {
+  test("/api/data contains enabled-airline canaries, not disabled", async () => {
     const { text } = await bodyOf("/api/data", HUB);
     expect(text).toContain("N999HA");
-    expect(text).toContain("N644AS");
-    expect(text).toContain("A7-TST");
+    expect(text).not.toContain("N644AS");
+    expect(text).not.toContain("A7-TST");
   });
 
-  test("/fleet page contains canaries", async () => {
+  test("/fleet page contains enabled-airline canaries, not disabled", async () => {
     const { text } = await bodyOf("/fleet", HUB);
     expect(text).toContain("N999HA");
-    expect(text).toContain("N644AS");
-    expect(text).toContain("A7-TST");
+    expect(text).not.toContain("N644AS");
+    expect(text).not.toContain("A7-TST");
   });
 });
 

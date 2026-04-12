@@ -10,10 +10,13 @@
  * `isHawaiian` + `equipmentType` (not a backend field), so this endpoint is a
  * tail/type oracle, not an independent per-tail wifi source. See
  * ops/hawaiian-sourcing.md.
+ *
+ * fetchAlaskaFlightStatus is consumed by the alaska-json verifier (next slice);
+ * shipped here so the client and the seed-hawaiian type map land together.
  */
 
-import { COUNTERS, DISTRIBUTIONS, metrics } from "../observability/metrics";
-import { debug } from "../utils/logger";
+import { COUNTERS, DISTRIBUTIONS, metrics } from "../observability";
+import { error as logError, warn } from "../utils/logger";
 
 export interface AlaskaFlightStatus {
   flightNumber: string;
@@ -64,11 +67,12 @@ export async function fetchAlaskaFlightStatus(
     });
     if (!res.ok) {
       status = res.status === 429 ? "rate_limited" : "error";
-      debug(`alaska-status ${flightNumber}/${dateISO} → HTTP ${res.status}`);
+      warn(`alaska-status ${flightNumber}/${dateISO} → HTTP ${res.status}`);
       return null;
     }
     const body = (await res.json()) as SvelteKitData;
-    const node = body.nodes?.find((n) => n?.type === "data");
+    // SvelteKit emits root→leaf; the page node (with `flights`) is last.
+    const node = [...(body.nodes ?? [])].reverse().find((n) => n?.type === "data");
     if (!node?.data) {
       status = "parse_error";
       return null;
@@ -96,7 +100,7 @@ export async function fetchAlaskaFlightStatus(
       ),
     };
   } catch (err) {
-    debug(`alaska-status ${flightNumber}/${dateISO} failed: ${(err as Error).message}`);
+    logError(`alaska-status ${flightNumber}/${dateISO} failed`, err);
     return null;
   } finally {
     const duration = Date.now() - start;

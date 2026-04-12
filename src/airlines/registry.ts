@@ -41,6 +41,8 @@ export interface AirlineConfig {
   /** All operating-carrier prefixes (ICAO + IATA) that map to this marketing carrier. Longest-first. */
   carrierPrefixes: string[];
   subfleets: SubfleetDef[];
+  /** Map FR24/ICAO aircraft-type strings to a subfleet key for fleet-sync. Defaults to 'mainline'. */
+  classifyFleet?: (aircraftType: string) => string;
   fr24Slug?: string;
   /** Reject fleet-sync results below this size as obviously wrong. */
   minFleetSanity: number;
@@ -95,6 +97,11 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
         },
       },
     ],
+    classifyFleet: (t) => {
+      if (/E175|ERJ.?175|CRJ|CR[27]|EMB/i.test(t)) return "express";
+      if (/737|757|767|777|787|A3[12]\d|A350/i.test(t)) return "mainline";
+      return "unknown";
+    },
     fr24Slug: "united-airlines-ual",
     minFleetSanity: 800,
     verifierBackend: "united",

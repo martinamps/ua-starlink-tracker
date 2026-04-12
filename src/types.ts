@@ -43,7 +43,7 @@ export interface ApiResponse {
 }
 
 // Fleet discovery types
-export type FleetSource = "fr24" | "spreadsheet";
+export type FleetSource = "fr24" | "spreadsheet" | "ha_seed" | "canary";
 export type StarlinkStatus = "confirmed" | "negative" | "unknown";
 
 export interface FleetAircraft {

@@ -9,24 +9,9 @@ import {
   syncSpreadsheetToFleet,
   upsertFleetAircraft,
 } from "../database/database";
-import { COUNTERS, metrics, withSpan } from "../observability";
+import { COUNTERS, metrics, normalizeAirlineTag, withSpan } from "../observability";
 import { info, error as logError } from "../utils/logger";
-import { type FR24Aircraft, scrapeFlightRadar24Fleet } from "./flightradar24-scraper";
-
-/**
- * Determine fleet type based on aircraft type
- */
-function determineFleetType(aircraftType: string): "express" | "mainline" | "unknown" {
-  // Regional jets = Express
-  if (/E175|ERJ.?175|CRJ|CR[27]|EMB/i.test(aircraftType)) {
-    return "express";
-  }
-  // Mainline aircraft
-  if (/737|757|767|777|787|A3[12]\d|A350/i.test(aircraftType)) {
-    return "mainline";
-  }
-  return "unknown";
-}
+import { scrapeFlightRadar24Fleet } from "./flightradar24-scraper";
 
 /**
  * Sync fleet from FlightRadar24 to united_fleet table for one airline.
@@ -39,8 +24,9 @@ export async function syncFleetFromFR24(cfg: AirlineConfig = AIRLINES.UA): Promi
   updated: number;
   error?: string;
 }> {
+  const airlineTag = normalizeAirlineTag(cfg.code);
   return withSpan("fleet_sync.fr24", async (span) => {
-    span.setTag("airline", cfg.code);
+    span.setTag("airline", airlineTag);
     const result = {
       airline: cfg.code,
       success: false,
@@ -96,14 +82,14 @@ export async function syncFleetFromFR24(cfg: AirlineConfig = AIRLINES.UA): Promi
             aircraft.registration,
             aircraft.aircraftType,
             "fr24",
-            determineFleetType(aircraft.aircraftType),
+            cfg.classifyFleet?.(aircraft.aircraftType) ?? "mainline",
             cfg.name,
             cfg.code
           );
 
           if (isNew) {
             result.new++;
-            metrics.increment(COUNTERS.PLANES_DISCOVERED, { source: "fr24", airline: cfg.code });
+            metrics.increment(COUNTERS.PLANES_DISCOVERED, { source: "fr24", airline: airlineTag });
           } else {
             result.updated++;
           }
@@ -114,7 +100,7 @@ export async function syncFleetFromFR24(cfg: AirlineConfig = AIRLINES.UA): Promi
 
         span.setTag("planes.new", result.new);
         span.setTag("planes.updated", result.updated);
-        metrics.increment(COUNTERS.SCRAPER_SYNC, { source: "fr24", airline: cfg.code });
+        metrics.increment(COUNTERS.SCRAPER_SYNC, { source: "fr24", airline: airlineTag });
 
         info(`FR24 sync complete (${cfg.code}): ${result.new} new, ${result.updated} updated`);
       } finally {

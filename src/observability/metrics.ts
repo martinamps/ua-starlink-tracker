@@ -99,6 +99,22 @@ export function normalizeFleet(raw: string | null | undefined): string {
   return "unknown";
 }
 
+const AIRLINE_TAG: Record<string, string> = {
+  UA: "united",
+  HA: "hawaiian",
+  AS: "alaska",
+  QR: "qatar",
+};
+
+/**
+ * Canonical lowercase-name airline tag for metrics. Preserves Datadog history
+ * (the global default has always been `airline:united`, not `airline:UA`).
+ */
+export function normalizeAirlineTag(code: string | null | undefined): string {
+  if (!code) return "unknown";
+  return AIRLINE_TAG[code.toUpperCase()] ?? code.toLowerCase();
+}
+
 // ============ Metric Names ============
 
 /**

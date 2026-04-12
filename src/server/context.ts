@@ -72,33 +72,37 @@ export interface RequestContext {
   db: Database;
 }
 
+const enabledCodes = (): readonly AirlineCode[] => enabledAirlines().map((a) => a.code);
+
 function aggregateAll<T>(fn: (code: AirlineCode) => T, reduce: (vals: T[]) => T): T {
-  return reduce(enabledAirlines().map((a) => fn(a.code)));
+  return reduce(enabledCodes().map(fn));
 }
 
 function buildReader(db: Database, scope: Scope): ScopedReader {
-  const a = scope === "ALL" ? undefined : scope;
+  // Hub ('ALL') is the union of *enabled* airlines, not every row in the DB —
+  // disabled-airline canaries/test data stay invisible until that airline ships.
+  const a = scope === "ALL" ? enabledCodes() : scope;
   const r: ScopedReader = {
     scope,
     getStarlinkPlanes: () => getStarlinkPlanes(db, a),
     getUpcomingFlights: (t) => getUpcomingFlights(db, t, a),
     // FleetStats shape is UA-subfleet-specific (express/mainline); hub aggregation deferred until
     // getSubfleetStats lands. Hub callers should not rely on this.
-    getFleetStats: () => getFleetStats(db, a ?? "UA"),
+    getFleetStats: () => getFleetStats(db, scope === "ALL" ? "UA" : scope),
     getTotalCount: () =>
-      a !== undefined
-        ? getTotalCount(db, a)
-        : aggregateAll(
+      scope === "ALL"
+        ? aggregateAll(
             (c) => getTotalCount(db, c),
             (vs) => vs.reduce((s, n) => s + n, 0)
-          ),
+          )
+        : getTotalCount(db, scope),
     getLastUpdated: () =>
-      a !== undefined
-        ? getLastUpdated(db, a)
-        : aggregateAll(
+      scope === "ALL"
+        ? aggregateAll(
             (c) => getLastUpdated(db, c),
             (vs) => vs.filter(Boolean).sort().reverse()[0] ?? ""
-          ),
+          )
+        : getLastUpdated(db, scope),
     getFlightsByNumberAndDate: (v, s, e) => getFlightsByNumberAndDate(db, v, s, e, a),
     getFleetPageData: () => getFleetPageData(db, a),
     getAirportDepartures: () => getAirportDepartures(db, a),

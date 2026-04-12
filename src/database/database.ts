@@ -26,15 +26,27 @@ import { info } from "../utils/logger";
 type MetaRow = { value: string };
 
 /** Append `AND <alias.>airline = ?` and the param when scope is set. */
+export type AirlineFilter = string | readonly string[] | undefined;
+
+function filterKey(f: AirlineFilter): string {
+  if (f === undefined) return "ALL";
+  return Array.isArray(f) ? f.join(",") : (f as string);
+}
+
 function withAirline(
   sql: string,
-  airline: string | undefined,
+  airline: AirlineFilter,
   alias = "",
   params: (string | number)[] = []
 ): { sql: string; params: (string | number)[] } {
-  if (!airline) return { sql, params };
+  if (airline === undefined) return { sql, params };
   const col = alias ? `${alias}.airline` : "airline";
-  return { sql: `${sql} AND ${col} = ?`, params: [...params, airline] };
+  if (typeof airline === "string") {
+    return { sql: `${sql} AND ${col} = ?`, params: [...params, airline] };
+  }
+  if (airline.length === 0) return { sql: `${sql} AND 1=0`, params };
+  const placeholders = airline.map(() => "?").join(",");
+  return { sql: `${sql} AND ${col} IN (${placeholders})`, params: [...params, ...airline] };
 }
 
 export function initializeDatabase() {
@@ -573,7 +585,7 @@ export function getLastUpdated(db: Database, airline = "UA"): string {
   return getMeta(db, "lastUpdated", airline) ?? new Date().toISOString();
 }
 
-export function getStarlinkPlanes(db: Database, airline?: string): Aircraft[] {
+export function getStarlinkPlanes(db: Database, airline?: AirlineFilter): Aircraft[] {
   const q = withAirline(
     `SELECT aircraft as Aircraft,
             wifi as WiFi,
@@ -595,7 +607,7 @@ export function getStarlinkPlanes(db: Database, airline?: string): Aircraft[] {
  * Used by the verifier and flight-updater so mismatched planes can still be
  * re-verified and self-heal if United's data changes.
  */
-export function getAllStarlinkPlanes(db: Database, airline?: string): Aircraft[] {
+export function getAllStarlinkPlanes(db: Database, airline?: AirlineFilter): Aircraft[] {
   const q = withAirline(
     `SELECT aircraft as Aircraft,
             wifi as WiFi,
@@ -709,7 +721,11 @@ export function updateFlights(
   updateFlightsTransaction();
 }
 
-export function getUpcomingFlights(db: Database, tailNumber?: string, airline?: string): Flight[] {
+export function getUpcomingFlights(
+  db: Database,
+  tailNumber?: string,
+  airline?: AirlineFilter
+): Flight[] {
   const now = Math.floor(Date.now() / 1000);
   const minValidTimestamp = 946684800;
 
@@ -738,7 +754,7 @@ export function getFlightsByNumberAndDate(
   flightNumberVariants: string[],
   startOfDay: number,
   endOfDay: number,
-  airline?: string
+  airline?: AirlineFilter
 ): CheckFlightRow[] {
   const placeholders = flightNumberVariants.map(() => "?").join(", ");
   const q = withAirline(
@@ -1310,7 +1326,7 @@ export interface WifiMismatch {
   DateFound: string;
 }
 
-export function getWifiMismatches(db: Database, airline?: string): WifiMismatch[] {
+export function getWifiMismatches(db: Database, airline?: AirlineFilter): WifiMismatch[] {
   const q = withAirline(
     `SELECT
        TailNumber,
@@ -1375,7 +1391,7 @@ export function getUnverifiedPlanes(db: Database, limit = 50): Aircraft[] {
  */
 export function getVerificationSummary(
   db: Database,
-  airline?: string
+  airline?: AirlineFilter
 ): {
   total_planes: number;
   verified_count: number;
@@ -1463,7 +1479,7 @@ export function upsertFleetAircraft(
   tailNumber: string,
   aircraftType: string | null,
   source: FleetSource,
-  fleet: "express" | "mainline" | "unknown" = "unknown",
+  fleet = "unknown",
   operatedBy: string | null = null,
   airline = "UA"
 ): void {
@@ -1734,7 +1750,7 @@ export function addDiscoveredStarlinkPlane(
 /**
  * Get fleet discovery statistics
  */
-export function getFleetDiscoveryStats(db: Database, airline?: string): FleetDiscoveryStats {
+export function getFleetDiscoveryStats(db: Database, airline?: AirlineFilter): FleetDiscoveryStats {
   const q1 = withAirline(
     `SELECT
        COUNT(*) as total_fleet,
@@ -1790,7 +1806,7 @@ export function getFleetDiscoveryStats(db: Database, airline?: string): FleetDis
 
 export function getConfirmedFleetTails(
   db: Database,
-  airline?: string
+  airline?: AirlineFilter
 ): Array<{
   tail_number: string;
   aircraft_type: string | null;
@@ -1813,7 +1829,7 @@ export function getConfirmedFleetTails(
 
 export function getPendingFleetTails(
   db: Database,
-  airline?: string
+  airline?: AirlineFilter
 ): Array<{
   tail_number: string;
   aircraft_type: string | null;
@@ -1893,9 +1909,9 @@ const FLEET_PAGE_TTL_MS = 60_000;
  * leaderboard, body-class provider split, live-airborne pulse with a
  * 30-min-bucketed sparkline, and the full tail list. Memoized for 60s.
  */
-export function getFleetPageData(db: Database, airline?: string): FleetPageData {
+export function getFleetPageData(db: Database, airline?: AirlineFilter): FleetPageData {
   const now = Date.now();
-  const key = airline ?? "ALL";
+  const key = filterKey(airline);
   const cached = fleetPageCache.get(key);
   if (cached && now - cached.at < FLEET_PAGE_TTL_MS) {
     return cached.data;
@@ -1905,7 +1921,7 @@ export function getFleetPageData(db: Database, airline?: string): FleetPageData 
   return data;
 }
 
-export function getAirportDepartures(db: Database, airline?: string): AirportDepartures {
+export function getAirportDepartures(db: Database, airline?: AirlineFilter): AirportDepartures {
   const now = Math.floor(Date.now() / 1000);
   try {
     db.query("DELETE FROM departure_log WHERE departed_at < ?").run(now - 30 * 86400);
@@ -1929,7 +1945,7 @@ export function getAirportDepartures(db: Database, airline?: string): AirportDep
   return { rows, windowLabel: "next 48 hours" };
 }
 
-function computeFleetPageData(db: Database, airline?: string): FleetPageData {
+function computeFleetPageData(db: Database, airline?: AirlineFilter): FleetPageData {
   const q = withAirline(
     `SELECT tail_number, aircraft_type, fleet, operated_by,
             starlink_status, verified_wifi, verified_at
@@ -2024,7 +2040,7 @@ function computeFleetPageData(db: Database, airline?: string): FleetPageData {
   };
 }
 
-function computePulse(db: Database, airline?: string): FleetPageData["pulse"] {
+function computePulse(db: Database, airline?: AirlineFilter): FleetPageData["pulse"] {
   const nowSec = Math.floor(Date.now() / 1000);
   const winStart = nowSec - 6 * 3600;
   const winCap = nowSec + 66 * 3600;
