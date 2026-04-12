@@ -296,6 +296,48 @@ function setupTables(db: Database) {
       info(`Database migrations completed: ${migrationsRun.join(", ")}`);
     }
   }
+
+  migrateMultiAirline(db);
+}
+
+function hasColumn(db: Database, table: string, column: string): boolean {
+  return (db.query(`PRAGMA table_info(${table})`).all() as { name: string }[]).some(
+    (c) => c.name === column
+  );
+}
+
+function migrateMultiAirline(db: Database) {
+  const tables = [
+    "starlink_planes",
+    "united_fleet",
+    "upcoming_flights",
+    "starlink_verification_log",
+    "departure_log",
+  ];
+  const added: string[] = [];
+  for (const t of tables) {
+    if (!hasColumn(db, t, "airline")) {
+      db.query(`ALTER TABLE ${t} ADD COLUMN airline TEXT NOT NULL DEFAULT 'UA'`).run();
+      added.push(t);
+    }
+  }
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_sp_airline   ON starlink_planes(airline);
+    CREATE INDEX IF NOT EXISTS idx_uf_airline   ON united_fleet(airline, starlink_status);
+    CREATE INDEX IF NOT EXISTS idx_upf_airline  ON upcoming_flights(airline, flight_number);
+    CREATE INDEX IF NOT EXISTS idx_vlog_airline ON starlink_verification_log(airline, tail_number);
+  `);
+
+  const renamed = db
+    .query("UPDATE meta SET key = 'UA:' || key WHERE key NOT LIKE '%:%'")
+    .run().changes;
+
+  if (added.length > 0 || renamed > 0) {
+    info(
+      `Database migration: airline column added to [${added.join(", ")}]; ${renamed} meta keys namespaced`
+    );
+  }
 }
 
 export function updateDatabase(
@@ -368,20 +410,14 @@ export function updateDatabase(
     // Update meta data
     // Only delete spreadsheet planes, preserve discovered ones (sheet_gid = 'discovery')
     db.query("DELETE FROM starlink_planes WHERE sheet_gid != 'discovery'").run();
-    db.query(`INSERT OR REPLACE INTO meta (key, value) VALUES ('totalAircraftCount', ?)`).run(
-      String(totalAircraftCount)
-    );
-    db.query(`INSERT OR REPLACE INTO meta (key, value) VALUES ('lastUpdated', ?)`).run(
-      new Date().toISOString()
-    );
+    setMeta(db, "totalAircraftCount", totalAircraftCount);
+    setMeta(db, "lastUpdated", new Date().toISOString());
 
     // Store fleet statistics
     for (const [fleetType, stats] of Object.entries(fleetStats)) {
       for (const [metric, value] of Object.entries(stats)) {
         const key = `${fleetType}${metric.charAt(0).toUpperCase() + metric.slice(1)}`;
-        const formattedValue =
-          metric === "percentage" ? (value as number).toFixed(2) : String(value);
-        db.query("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)").run(key, formattedValue);
+        setMeta(db, key, metric === "percentage" ? (value as number).toFixed(2) : String(value));
       }
     }
 
@@ -476,23 +512,34 @@ export function updateDatabase(
   })();
 }
 
+export function getMeta(db: Database, key: string, airline = "UA"): string | null {
+  const namespaced = db
+    .query("SELECT value FROM meta WHERE key = ?")
+    .get(`${airline}:${key}`) as MetaRow | null;
+  if (namespaced?.value != null) return namespaced.value;
+  const bare = db.query("SELECT value FROM meta WHERE key = ?").get(key) as MetaRow | null;
+  return bare?.value ?? null;
+}
+
+export function setMeta(db: Database, key: string, value: string | number, airline = "UA"): void {
+  db.query("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)").run(
+    `${airline}:${key}`,
+    String(value)
+  );
+}
+
 export function getTotalCount(db: Database): number {
-  const row = db
-    .query(`SELECT value FROM meta WHERE key = 'totalAircraftCount'`)
-    .get() as MetaRow | null;
-  return row?.value ? Number.parseInt(row.value, 10) : 0;
+  const v = getMeta(db, "totalAircraftCount");
+  return v ? Number.parseInt(v, 10) : 0;
 }
 
 export function getMetaValue(db: Database, key: string, defaultValue: number): number {
-  const row = db.query("SELECT value FROM meta WHERE key = ?").get(key) as MetaRow | null;
-  return row?.value ? Number.parseFloat(row.value) : defaultValue;
+  const v = getMeta(db, key);
+  return v ? Number.parseFloat(v) : defaultValue;
 }
 
 export function getLastUpdated(db: Database): string {
-  const lastUpdated = db
-    .query(`SELECT value FROM meta WHERE key = 'lastUpdated'`)
-    .get() as MetaRow | null;
-  return lastUpdated?.value ? lastUpdated.value : new Date().toISOString();
+  return getMeta(db, "lastUpdated") ?? new Date().toISOString();
 }
 
 export function getStarlinkPlanes(db: Database): Aircraft[] {

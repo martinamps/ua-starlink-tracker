@@ -18,6 +18,7 @@
  */
 
 import { Database } from "bun:sqlite";
+import { getMeta } from "../database/database";
 import { ensureUAPrefix, inferFleet } from "../utils/constants";
 
 // ============================================================================
@@ -278,17 +279,15 @@ function loadObservations(db: Database, beforeSec?: number, afterSec?: number): 
  * unlike the heavily biased verification_log.
  */
 function loadFleetPriors(db: Database): { express: number; mainline: number } {
-  const get = (key: string) => {
-    const row = db.query("SELECT value FROM meta WHERE key = ?").get(key) as {
-      value: string;
-    } | null;
-    return row ? Number.parseFloat(row.value) : null;
+  const num = (key: string) => {
+    const v = getMeta(db, key);
+    return v ? Number.parseFloat(v) : null;
   };
 
-  const expressStarlink = get("expressStarlink");
-  const expressTotal = get("expressTotal");
-  const mainlineStarlink = get("mainlineStarlink");
-  const mainlineTotal = get("mainlineTotal");
+  const expressStarlink = num("expressStarlink");
+  const expressTotal = num("expressTotal");
+  const mainlineStarlink = num("mainlineStarlink");
+  const mainlineTotal = num("mainlineTotal");
 
   return {
     express:
