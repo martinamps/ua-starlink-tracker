@@ -13,6 +13,7 @@
 import { Database } from "bun:sqlite";
 import { AIRLINES } from "../airlines/registry";
 import { hawaiianTypeToStarlink } from "../api/alaska-status";
+import { setMeta } from "../database/database";
 import { DB_PATH } from "../utils/constants";
 import { info } from "../utils/logger";
 import { scrapeFlightRadar24Fleet } from "./flightradar24-scraper";
@@ -98,9 +99,16 @@ function apply(db: Database, rows: SeedRow[]) {
     }
   });
   tx();
-  info(
-    `Applied ${rows.length} HA tails (${rows.filter((r) => r.verdict === "Starlink").length} → starlink_planes)`
-  );
+
+  const starlinkCount = rows.filter((r) => r.verdict === "Starlink").length;
+  const total = rows.length;
+  setMeta(db, "totalAircraftCount", total, "HA");
+  setMeta(db, "mainlineStarlink", starlinkCount, "HA");
+  setMeta(db, "mainlineTotal", total, "HA");
+  setMeta(db, "mainlinePercentage", ((starlinkCount / total) * 100).toFixed(2), "HA");
+  setMeta(db, "lastUpdated", new Date().toISOString(), "HA");
+
+  info(`Applied ${total} HA tails (${starlinkCount} → starlink_planes)`);
 }
 
 if (import.meta.main) {
