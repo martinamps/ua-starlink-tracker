@@ -29,6 +29,7 @@ import {
 import { computePrecision } from "../src/scripts/precision-backtest";
 import { planItinerary, predictFlight, predictRoute } from "../src/scripts/starlink-predictor";
 import { computeSurfaceContradictions } from "../src/scripts/surface-sweep";
+import { type ScopedReader, createReaderFactory } from "../src/server/context";
 import type { ApiResponse, Flight } from "../src/types";
 import {
   buildFlightNumberVariants,
@@ -39,9 +40,11 @@ import {
 
 const TEST_DB = "/tmp/ua-test.sqlite";
 let db: Database;
+let reader: ScopedReader;
 
 beforeAll(() => {
   db = new Database(TEST_DB, { readonly: true });
+  reader = createReaderFactory(db)("UA");
   // Sanity check: DB has data
   const count = db.query("SELECT COUNT(*) as n FROM starlink_planes").get() as { n: number };
   if (count.n < 10) {
@@ -217,7 +220,7 @@ async function mcpCall(method: string, params?: unknown) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
   });
-  const resp = await handleMcpRequest(req, db);
+  const resp = await handleMcpRequest(req, reader);
   return resp.json();
 }
 
@@ -227,7 +230,7 @@ describe("MCP protocol", () => {
       method: "GET",
       headers: { Accept: "application/json" },
     });
-    const resp = await handleMcpRequest(req, db);
+    const resp = await handleMcpRequest(req, reader);
     expect(resp.status).toBe(405);
   });
 
@@ -495,7 +498,7 @@ describe("MCP tools", () => {
 
 describe("predictor", () => {
   test("predictFlight: probability in [0,1], confidence in enum", () => {
-    const p = predictFlight(db, "UA5212");
+    const p = predictFlight(reader, "UA5212");
     expect(p.probability).toBeGreaterThanOrEqual(0);
     expect(p.probability).toBeLessThanOrEqual(1);
     expect(["low", "medium", "high"]).toContain(p.confidence);
@@ -503,12 +506,12 @@ describe("predictor", () => {
   });
 
   test("predictFlight: unknown mainline gets fleet prior < 10%", () => {
-    const p = predictFlight(db, "UA123");
+    const p = predictFlight(reader, "UA123");
     expect(p.probability).toBeLessThan(0.1);
   });
 
   test("predictRoute: returns sorted flights with probabilities", () => {
-    const r = predictRoute(db, "IAH", "DEN");
+    const r = predictRoute(reader, "IAH", "DEN");
     if (r.flights.length > 1) {
       // Sorted descending by probability
       for (let i = 1; i < r.flights.length; i++) {
@@ -518,12 +521,12 @@ describe("predictor", () => {
   });
 
   test("planItinerary: origin=dest returns empty", () => {
-    const its = planItinerary(db, "SFO", "SFO", { maxStops: 2, maxItineraries: 5 });
+    const its = planItinerary(reader, "SFO", "SFO", { maxStops: 2, maxItineraries: 5 });
     expect(its.length).toBe(0);
   });
 
   test("planItinerary: expected_starlink_hours is consistent with legs", () => {
-    const its = planItinerary(db, "SFO", "DEN", { maxStops: 2, maxItineraries: 5 });
+    const its = planItinerary(reader, "SFO", "DEN", { maxStops: 2, maxItineraries: 5 });
     for (const it of its) {
       if (it.expected_starlink_hours !== null) {
         const recomputed = it.legs.reduce(
@@ -540,7 +543,7 @@ describe("predictor", () => {
     const edge = db
       .query("SELECT departure_airport, arrival_airport FROM upcoming_flights LIMIT 1")
       .get() as { departure_airport: string; arrival_airport: string };
-    const its = planItinerary(db, edge.departure_airport, edge.arrival_airport, {
+    const its = planItinerary(reader, edge.departure_airport, edge.arrival_airport, {
       maxStops: 2,
       maxItineraries: 8,
     });
@@ -552,13 +555,13 @@ describe("predictor", () => {
   });
 
   test("planItinerary: maxStops=0 returns no partial-coverage options", () => {
-    const its = planItinerary(db, "DEN", "ORD", { maxStops: 0, maxItineraries: 8 });
+    const its = planItinerary(reader, "DEN", "ORD", { maxStops: 0, maxItineraries: 8 });
     const partials = its.filter((it) => it.coverage === "partial");
     expect(partials.length).toBe(0);
   });
 
   test("planItinerary: coverage_ratio computed when durations known", () => {
-    const its = planItinerary(db, "SFO", "DEN", { maxStops: 2, maxItineraries: 5 });
+    const its = planItinerary(reader, "SFO", "DEN", { maxStops: 2, maxItineraries: 5 });
     const withKnownTime = its.find(
       (it) => it.total_flight_hours !== null && it.expected_starlink_hours !== null
     );
@@ -605,7 +608,7 @@ describe("flight-verdict shared fallback", () => {
       )
       .get() as { tail_number: string } | null;
     if (!tail) return;
-    const v = resolveTailVerdict(db, tail.tail_number);
+    const v = resolveTailVerdict(reader, tail.tail_number);
     expect(v.hasStarlink).toBe(true);
     expect(["verified", "spreadsheet"]).toContain(v.confidence);
   });
@@ -617,13 +620,13 @@ describe("flight-verdict shared fallback", () => {
       )
       .get() as { tail_number: string } | null;
     if (!tail) return;
-    const v = resolveTailVerdict(db, tail.tail_number);
+    const v = resolveTailVerdict(reader, tail.tail_number);
     expect(v.hasStarlink).toBe(false);
     expect(v.confidence).toBe("negative");
   });
 
   test("resolveTailVerdict: unknown tail → hasStarlink=null, unknown", () => {
-    const v = resolveTailVerdict(db, "NXXXXX");
+    const v = resolveTailVerdict(reader, "NXXXXX");
     expect(v.hasStarlink).toBeNull();
     expect(v.confidence).toBe("unknown");
   });

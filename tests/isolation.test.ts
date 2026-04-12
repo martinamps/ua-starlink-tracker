@@ -348,6 +348,16 @@ describe("hub host shows enabled airlines only", () => {
     expect(text).not.toContain("N644AS");
     expect(text).not.toContain("A7-TST");
   });
+
+  test("MCP list_starlink_aircraft limit=500 — enabled-only (no AS/QR canaries)", async () => {
+    const r = await app.dispatch(
+      mcpReq(HUB, "tools/call", { name: "list_starlink_aircraft", arguments: { limit: 500 } })
+    );
+    const text = await r.text();
+    expect(text).toContain("N999HA");
+    expect(text).not.toContain("N644AS");
+    expect(text).not.toContain("A7-TST");
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

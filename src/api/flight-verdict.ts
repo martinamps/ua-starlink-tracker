@@ -7,8 +7,7 @@
  * /api/check-flight and MCP check_flight so the two surfaces converge.
  */
 
-import type { Database } from "bun:sqlite";
-import { bumpDiscoveryPriority, computeWifiConsensus } from "../database/database";
+import type { ScopedReader } from "../server/context";
 import { FlightRadar24API } from "./flightradar24-api";
 
 const fr24 = new FlightRadar24API();
@@ -65,7 +64,7 @@ export interface FallbackSegment {
  * hitting FR24.
  */
 export function resolveTailVerdict(
-  db: Database,
+  reader: ScopedReader,
   tail: string,
   nowSec = Math.floor(Date.now() / 1000)
 ): {
@@ -77,12 +76,10 @@ export function resolveTailVerdict(
   verified_wifi?: string | null;
   verified_at?: number | null;
 } {
-  const sp = db
-    .query("SELECT Aircraft, OperatedBy, fleet FROM starlink_planes WHERE TailNumber = ?")
-    .get(tail) as { Aircraft: string; OperatedBy: string; fleet: string } | null;
+  const sp = reader.getStarlinkPlaneByTail(tail);
 
   if (sp) {
-    const consensus = computeWifiConsensus(db, tail);
+    const consensus = reader.computeWifiConsensus(tail);
     const hasStarlink = consensus.verdict === "Starlink" || consensus.verdict === null;
     return {
       hasStarlink,
@@ -98,22 +95,14 @@ export function resolveTailVerdict(
     };
   }
 
-  const uf = db
-    .query(
-      "SELECT starlink_status, verified_wifi, verified_at FROM united_fleet WHERE tail_number = ?"
-    )
-    .get(tail) as {
-    starlink_status: string;
-    verified_wifi: string | null;
-    verified_at: number | null;
-  } | null;
+  const uf = reader.getFleetEntryByTail(tail);
 
   if (uf?.starlink_status === "confirmed") {
     return { hasStarlink: true, confidence: "verified" };
   }
   if (uf?.starlink_status === "negative") {
     const stale = uf.verified_at && nowSec - uf.verified_at > 7 * 86400;
-    if (stale) bumpDiscoveryPriority(db, tail);
+    if (stale) reader.bumpDiscoveryPriority(tail);
     return {
       hasStarlink: false,
       confidence: "negative",
@@ -121,7 +110,7 @@ export function resolveTailVerdict(
       verified_at: uf.verified_at,
     };
   }
-  bumpDiscoveryPriority(db, tail);
+  reader.bumpDiscoveryPriority(tail);
   return { hasStarlink: null, confidence: "unknown" };
 }
 
@@ -131,7 +120,7 @@ export function resolveTailVerdict(
  * tail-assigned legs on that UTC day, otherwise one FallbackSegment per leg.
  */
 export async function lookupFlightTailVerdict(
-  db: Database,
+  reader: ScopedReader,
   normalizedFlightNumber: string,
   startOfDay: number,
   endOfDay: number,
@@ -147,7 +136,7 @@ export async function lookupFlightTailVerdict(
     if (!a.tail_number) continue;
     if (a.departure_time < startOfDay || a.departure_time >= endOfDay) continue;
 
-    const v = resolveTailVerdict(db, a.tail_number, nowSec);
+    const v = resolveTailVerdict(reader, a.tail_number, nowSec);
     segments.push({
       tail_number: a.tail_number,
       aircraft_model: v.aircraft_model || a.aircraft_model,

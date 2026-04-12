@@ -18,20 +18,14 @@
  */
 
 import { Database } from "bun:sqlite";
-import type { AirlineConfig } from "../airlines/registry";
-import { getMeta } from "../database/database";
+import { enabledAirlines } from "../airlines/registry";
+import type { VerificationObservation as Observation } from "../database/database";
+import { type Scope, type ScopedReader, createReaderFactory } from "../server/context";
 import { ensureUAPrefix, inferFleet } from "../utils/constants";
 
 // ============================================================================
 // Types
 // ============================================================================
-
-interface Observation {
-  flight_number: string;
-  tail_number: string;
-  has_starlink: number; // 0 or 1
-  checked_at: number;
-}
 
 type PredictionMethod =
   | "flight_history_smoothed"
@@ -254,34 +248,14 @@ function evaluate(predictions: Array<{ pred: Prediction; actual: number }>): Eva
 // Data loading
 // ============================================================================
 
-function loadObservations(db: Database, beforeSec?: number, afterSec?: number): Observation[] {
-  let sql = `
-    SELECT flight_number, tail_number, has_starlink, checked_at
-    FROM starlink_verification_log
-    WHERE flight_number IS NOT NULL
-      AND source = 'united'
-      AND has_starlink IS NOT NULL
-  `;
-  const params: number[] = [];
-  if (beforeSec !== undefined) {
-    sql += " AND checked_at < ?";
-    params.push(beforeSec);
-  }
-  if (afterSec !== undefined) {
-    sql += " AND checked_at >= ?";
-    params.push(afterSec);
-  }
-  return db.query(sql).all(...params) as Observation[];
-}
-
 /**
  * Load true fleet-stat priors from the meta table (actual Starlink install rate
  * per fleet). These are updated hourly by the scraper and reflect ground truth,
  * unlike the heavily biased verification_log.
  */
-function loadFleetPriors(db: Database): { express: number; mainline: number } {
+function loadFleetPriors(reader: ScopedReader): { express: number; mainline: number } {
   const num = (key: string) => {
-    const v = getMeta(db, key);
+    const v = reader.getMeta(key);
     return v ? Number.parseFloat(v) : null;
   };
 
@@ -312,18 +286,18 @@ export function backtest(
   config: ModelConfig = DEFAULT_CONFIG
 ): EvalResult {
   const db = new Database(dbPath, { readonly: true });
+  const reader = createReaderFactory(db)("UA");
   // Anchor to MAX(checked_at), not wall-clock — against frozen snapshots,
   // wall-clock would shrink or erase the holdout window.
-  const maxRow = db
-    .query("SELECT MAX(checked_at) as m FROM starlink_verification_log WHERE source='united'")
-    .get() as { m: number } | null;
-  const anchor = maxRow?.m ?? Math.floor(Date.now() / 1000);
+  const allObs = reader.getVerificationObservations();
+  const anchor =
+    allObs.reduce((m, o) => Math.max(m, o.checked_at), 0) || Math.floor(Date.now() / 1000);
   const cutoff = anchor - holdoutHours * 3600;
 
-  const trainObs = loadObservations(db, cutoff);
-  const testObs = loadObservations(db, undefined, cutoff);
+  const trainObs = allObs.filter((o) => o.checked_at < cutoff);
+  const testObs = allObs.filter((o) => o.checked_at >= cutoff);
 
-  const derivedConfig = deriveConfig(db, trainObs, config);
+  const derivedConfig = deriveConfig(reader, trainObs, config);
   const { predict } = buildModel(trainObs, derivedConfig);
 
   const predictions = testObs.map((obs) => ({
@@ -375,7 +349,7 @@ export function backtest(
  * Shared by backtest() and buildProductionModel().
  */
 function deriveConfig(
-  db: Database,
+  reader: ScopedReader,
   trainObs: Observation[],
   base: ModelConfig = DEFAULT_CONFIG
 ): ModelConfig {
@@ -401,7 +375,7 @@ function deriveConfig(
         ? byFleet.mainline.s / byFleet.mainline.t
         : base.mainlineSmoothingPrior,
   };
-  const fleetRate = loadFleetPriors(db);
+  const fleetRate = loadFleetPriors(reader);
 
   return {
     ...base,
@@ -428,24 +402,26 @@ function deriveConfig(
 // ============================================================================
 
 const MODEL_TTL_SEC = 3600; // 1 hour — matches scrape cadence
-let cachedModel: { predict: (fn: string) => Prediction; builtAt: number } | null = null;
+const modelCache = new Map<Scope, { predict: (fn: string) => Prediction; builtAt: number }>();
 
-function buildProductionModel(db: Database): { predict: (fn: string) => Prediction } {
-  const trainObs = loadObservations(db);
-  const config = deriveConfig(db, trainObs);
+function buildProductionModel(reader: ScopedReader): { predict: (fn: string) => Prediction } {
+  const trainObs = reader.getVerificationObservations();
+  const config = deriveConfig(reader, trainObs);
   return buildModel(trainObs, config);
 }
 
 /**
  * Predict Starlink probability for a flight number.
- * Caches the model for MODEL_TTL_SEC to avoid reloading 12k+ rows per call.
+ * Caches the model per reader scope for MODEL_TTL_SEC to avoid reloading 12k+ rows per call.
  */
-export function predictFlight(db: Database, flightNumber: string): Prediction {
+export function predictFlight(reader: ScopedReader, flightNumber: string): Prediction {
   const now = Math.floor(Date.now() / 1000);
-  if (!cachedModel || now - cachedModel.builtAt > MODEL_TTL_SEC) {
-    cachedModel = { ...buildProductionModel(db), builtAt: now };
+  let cached = modelCache.get(reader.scope);
+  if (!cached || now - cached.builtAt > MODEL_TTL_SEC) {
+    cached = { ...buildProductionModel(reader), builtAt: now };
+    modelCache.set(reader.scope, cached);
   }
-  return cachedModel.predict(flightNumber);
+  return cached.predict(flightNumber);
 }
 
 // ============================================================================
@@ -481,7 +457,7 @@ export interface RoutePrediction {
  * or both for a specific route.
  */
 export function predictRoute(
-  db: Database,
+  reader: ScopedReader,
   origin: string | null,
   destination: string | null
 ): RoutePrediction {
@@ -497,29 +473,7 @@ export function predictRoute(
     };
   }
 
-  // Find all flight numbers seen on this route, with observation counts
-  let sql = `
-    SELECT flight_number, departure_airport, arrival_airport, COUNT(*) as route_obs
-    FROM upcoming_flights
-    WHERE 1=1
-  `;
-  const params: string[] = [];
-  if (orig) {
-    sql += " AND departure_airport = ?";
-    params.push(orig);
-  }
-  if (dest) {
-    sql += " AND arrival_airport = ?";
-    params.push(dest);
-  }
-  sql += " GROUP BY flight_number, departure_airport, arrival_airport ORDER BY route_obs DESC";
-
-  const routeFlights = db.query(sql).all(...params) as Array<{
-    flight_number: string;
-    departure_airport: string;
-    arrival_airport: string;
-    route_obs: number;
-  }>;
+  const routeFlights = reader.getRouteFlights(orig, dest);
 
   // Predict each (upcoming_flights stores SKW/OO/UAL/etc, predictor wants UA####)
   // De-dupe by normalized flight number, keeping highest route_obs
@@ -529,7 +483,7 @@ export function predictRoute(
     const existing = seen.get(normalized);
     if (existing && rf.route_obs <= existing.route_observations) continue;
 
-    const pred = predictFlight(db, normalized);
+    const pred = predictFlight(reader, normalized);
     seen.set(normalized, {
       ...pred,
       route: `${rf.departure_airport}-${rf.arrival_airport}`,
@@ -570,28 +524,17 @@ export interface RouteCompareResult {
  * skips airlines that neither serve the route nor have a rule.
  */
 export function compareRoute(
-  db: Database,
+  reader: ScopedReader,
   origin: string,
-  destination: string,
-  airlines: AirlineConfig[]
+  destination: string
 ): RouteCompareResult[] {
   const o = origin.toUpperCase().trim();
   const d = destination.toUpperCase().trim();
   const results: RouteCompareResult[] = [];
+  const airlines = enabledAirlines().filter((a) => reader.airlines.includes(a.code));
 
   for (const cfg of airlines) {
-    const rows = db
-      .query(
-        `SELECT uf.tail_number,
-                EXISTS(SELECT 1 FROM starlink_planes sp
-                       WHERE sp.TailNumber = uf.tail_number
-                         AND (sp.verified_wifi IS NULL OR sp.verified_wifi = 'Starlink')) AS sl
-         FROM upcoming_flights uf
-         WHERE ((uf.departure_airport = ? AND uf.arrival_airport = ?)
-             OR (uf.departure_airport = ? AND uf.arrival_airport = ?))
-           AND uf.airline = ?`
-      )
-      .all(o, d, d, o, cfg.code) as { tail_number: string; sl: number }[];
+    const rows = reader.getRouteAirlineCoverage(o, d, cfg.code);
 
     let probability: number;
     let reason: string;
@@ -673,26 +616,11 @@ export interface Itinerary {
  * Starlink plane tomorrow) gets filtered out and the planner says "no path."
  */
 function buildRouteGraph(
-  db: Database,
+  reader: ScopedReader,
   minLegProb: number,
   targetDateUnix?: number
 ): Map<string, Map<string, ItineraryLeg>> {
-  // All edges (route + duration) from upcoming_flights
-  const rows = db
-    .query(
-      `SELECT flight_number, departure_airport, arrival_airport,
-              COUNT(*) as obs,
-              AVG(arrival_time - departure_time) as avg_duration_sec
-       FROM upcoming_flights
-       GROUP BY flight_number, departure_airport, arrival_airport`
-    )
-    .all() as Array<{
-    flight_number: string;
-    departure_airport: string;
-    arrival_airport: string;
-    obs: number;
-    avg_duration_sec: number;
-  }>;
+  const rows = reader.getRouteGraphEdges();
 
   // Confirmed-edge seeding is only valid when the target date is covered by
   // our upcoming_flights snapshot. Outside that window, today's tail
@@ -706,20 +634,7 @@ function buildRouteGraph(
   if (targetDateUnix !== undefined) {
     const startOfDay = targetDateUnix - (targetDateUnix % 86400);
     const endOfDay = startOfDay + 86400;
-    const confirmedRows = db
-      .query(
-        `SELECT DISTINCT uf.flight_number, uf.departure_airport, uf.arrival_airport, sp.fleet
-         FROM upcoming_flights uf
-         JOIN starlink_planes sp ON uf.tail_number = sp.TailNumber
-         WHERE sp.verified_wifi = 'Starlink'
-           AND uf.departure_time >= ? AND uf.departure_time < ?`
-      )
-      .all(startOfDay, endOfDay) as Array<{
-      flight_number: string;
-      departure_airport: string;
-      arrival_airport: string;
-      fleet: string;
-    }>;
+    const confirmedRows = reader.getConfirmedStarlinkEdges(startOfDay, endOfDay);
     for (const r of confirmedRows) {
       const fleet = r.fleet === "mainline" ? "mainline" : "express";
       confirmedEdges.set(`${r.flight_number}|${r.departure_airport}|${r.arrival_airport}`, fleet);
@@ -738,7 +653,7 @@ function buildRouteGraph(
       // Use the MAX of (historical prediction, confirmed swap-adjusted) —
       // a flight with 100% history shouldn't drop to 90% just because it's
       // also in the snapshot.
-      const hist = predictFlight(db, uaNum);
+      const hist = predictFlight(reader, uaNum);
       const confirmedP = CONFIRMED_PROB[confirmedFleet];
       pred =
         hist.probability >= confirmedP
@@ -750,7 +665,7 @@ function buildRouteGraph(
               n_observations: 1,
             };
     } else {
-      pred = predictFlight(db, uaNum);
+      pred = predictFlight(reader, uaNum);
     }
 
     if (pred.probability < minLegProb) continue;
@@ -823,7 +738,7 @@ function makePositioningLeg(route: string): ItineraryLeg {
  * are included when no strong direct exists.
  */
 export function planItinerary(
-  db: Database,
+  reader: ScopedReader,
   origin: string,
   destination: string,
   options: {
@@ -841,7 +756,7 @@ export function planItinerary(
   const minLegProb = options.minLegProbability ?? MIN_LEG_PROBABILITY;
   const maxStops = Math.min(options.maxStops ?? 2, 3);
 
-  const graph = buildRouteGraph(db, minLegProb, options.targetDateUnix);
+  const graph = buildRouteGraph(reader, minLegProb, options.targetDateUnix);
   const itineraries: Itinerary[] = [];
 
   // --- BFS up to maxStops+1 legs ---
@@ -979,7 +894,7 @@ if (import.meta.main) {
     const flightArg = args.find((a) => a.startsWith("--predict="))!;
     const flightNumber = flightArg.split("=")[1];
     const db = new Database(dbPath, { readonly: true });
-    const pred = predictFlight(db, flightNumber);
+    const pred = predictFlight(createReaderFactory(db)("UA"), flightNumber);
     db.close();
     console.log(JSON.stringify(pred, null, 2));
   } else if (args.includes("--sweep")) {

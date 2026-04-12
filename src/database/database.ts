@@ -843,6 +843,290 @@ export function getFlightsByNumberAndDate(
   return db.query(`${q.sql} ORDER BY uf.departure_time ASC`).all(...q.params) as CheckFlightRow[];
 }
 
+export type FlightAssignmentRow = Flight & {
+  aircraft_type: string;
+  OperatedBy: string;
+  fleet: string;
+  verified_wifi: string | null;
+};
+
+/**
+ * MCP check_flight assignments lookup — same join as getFlightsByNumberAndDate
+ * but WITHOUT the verified_wifi filter (MCP renders three confidence tiers from
+ * the same set) and ordered by last_updated DESC (for swap dedup).
+ */
+export function getFlightAssignments(
+  db: Database,
+  flightNumberVariants: string[],
+  startOfDay: number,
+  endOfDay: number,
+  airline?: AirlineFilter
+): FlightAssignmentRow[] {
+  const placeholders = flightNumberVariants.map(() => "?").join(", ");
+  const q = withAirline(
+    `SELECT uf.*, sp.Aircraft as aircraft_type, sp.OperatedBy, sp.fleet, sp.verified_wifi
+     FROM upcoming_flights uf
+     INNER JOIN starlink_planes sp ON uf.tail_number = sp.TailNumber
+     WHERE uf.flight_number IN (${placeholders})
+       AND uf.departure_time >= ? AND uf.departure_time < ?`,
+    airline,
+    "uf",
+    [...flightNumberVariants, startOfDay, endOfDay]
+  );
+  return db
+    .query(`${q.sql} ORDER BY uf.last_updated DESC`)
+    .all(...q.params) as FlightAssignmentRow[];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Predictor / route-graph readers (scoped by airline; consumed via ScopedReader)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface VerificationObservation {
+  flight_number: string;
+  tail_number: string;
+  has_starlink: number;
+  checked_at: number;
+}
+
+export function getVerificationObservations(
+  db: Database,
+  airline?: AirlineFilter,
+  beforeSec?: number,
+  afterSec?: number
+): VerificationObservation[] {
+  let sql = `SELECT flight_number, tail_number, has_starlink, checked_at
+             FROM starlink_verification_log
+             WHERE flight_number IS NOT NULL AND source = 'united' AND has_starlink IS NOT NULL`;
+  const params: (string | number)[] = [];
+  if (beforeSec !== undefined) {
+    sql += " AND checked_at < ?";
+    params.push(beforeSec);
+  }
+  if (afterSec !== undefined) {
+    sql += " AND checked_at >= ?";
+    params.push(afterSec);
+  }
+  const q = withAirline(sql, airline, "", params);
+  return db.query(q.sql).all(...q.params) as VerificationObservation[];
+}
+
+export interface RouteFlightRow {
+  flight_number: string;
+  departure_airport: string;
+  arrival_airport: string;
+  route_obs: number;
+}
+
+export function getRouteFlights(
+  db: Database,
+  origin: string | null,
+  destination: string | null,
+  airline?: AirlineFilter
+): RouteFlightRow[] {
+  let sql = `SELECT flight_number, departure_airport, arrival_airport, COUNT(*) as route_obs
+             FROM upcoming_flights WHERE 1=1`;
+  const params: (string | number)[] = [];
+  if (origin) {
+    sql += " AND departure_airport = ?";
+    params.push(origin);
+  }
+  if (destination) {
+    sql += " AND arrival_airport = ?";
+    params.push(destination);
+  }
+  const q = withAirline(sql, airline, "", params);
+  return db
+    .query(
+      `${q.sql} GROUP BY flight_number, departure_airport, arrival_airport ORDER BY route_obs DESC`
+    )
+    .all(...q.params) as RouteFlightRow[];
+}
+
+export interface RouteGraphEdge {
+  flight_number: string;
+  departure_airport: string;
+  arrival_airport: string;
+  obs: number;
+  avg_duration_sec: number;
+}
+
+export function getRouteGraphEdges(db: Database, airline?: AirlineFilter): RouteGraphEdge[] {
+  const q = withAirline(
+    `SELECT flight_number, departure_airport, arrival_airport,
+            COUNT(*) as obs, AVG(arrival_time - departure_time) as avg_duration_sec
+     FROM upcoming_flights WHERE 1=1`,
+    airline
+  );
+  return db
+    .query(`${q.sql} GROUP BY flight_number, departure_airport, arrival_airport`)
+    .all(...q.params) as RouteGraphEdge[];
+}
+
+export interface ConfirmedEdge {
+  flight_number: string;
+  departure_airport: string;
+  arrival_airport: string;
+  fleet: string;
+}
+
+export function getConfirmedStarlinkEdges(
+  db: Database,
+  startOfDay: number,
+  endOfDay: number,
+  airline?: AirlineFilter
+): ConfirmedEdge[] {
+  const q = withAirline(
+    `SELECT DISTINCT uf.flight_number, uf.departure_airport, uf.arrival_airport, sp.fleet
+     FROM upcoming_flights uf
+     JOIN starlink_planes sp ON uf.tail_number = sp.TailNumber
+     WHERE sp.verified_wifi = 'Starlink'
+       AND uf.departure_time >= ? AND uf.departure_time < ?`,
+    airline,
+    "uf",
+    [startOfDay, endOfDay]
+  );
+  return db.query(q.sql).all(...q.params) as ConfirmedEdge[];
+}
+
+export function getRouteAirlineCoverage(
+  db: Database,
+  origin: string,
+  destination: string,
+  airline: string
+): { tail_number: string; sl: number }[] {
+  return db
+    .query(
+      `SELECT uf.tail_number,
+              EXISTS(SELECT 1 FROM starlink_planes sp
+                     WHERE sp.TailNumber = uf.tail_number
+                       AND (sp.verified_wifi IS NULL OR sp.verified_wifi = 'Starlink')) AS sl
+       FROM upcoming_flights uf
+       WHERE ((uf.departure_airport = ? AND uf.arrival_airport = ?)
+           OR (uf.departure_airport = ? AND uf.arrival_airport = ?))
+         AND uf.airline = ?`
+    )
+    .all(origin, destination, destination, origin, airline) as {
+    tail_number: string;
+    sl: number;
+  }[];
+}
+
+export interface DirectRouteEdge {
+  flight_number: string;
+  dur_sec: number;
+}
+
+export function getDirectRouteEdge(
+  db: Database,
+  origin: string,
+  destination: string,
+  airline?: AirlineFilter
+): DirectRouteEdge | null {
+  const q = withAirline(
+    `SELECT flight_number, AVG(arrival_time - departure_time) as dur_sec
+     FROM upcoming_flights
+     WHERE departure_airport = ? AND arrival_airport = ?`,
+    airline,
+    "",
+    [origin, destination]
+  );
+  return db
+    .query(`${q.sql} GROUP BY flight_number LIMIT 1`)
+    .get(...q.params) as DirectRouteEdge | null;
+}
+
+export interface RouteEntryRow {
+  origin: string;
+  destination: string;
+  duration_sec: number | null;
+}
+
+/** flight_routes cache lookup (last_seen_at > freshAfter). flight_routes is airline-agnostic (PK includes IATA prefix). */
+export function getCachedFlightRoutes(
+  db: Database,
+  flightNumber: string,
+  freshAfter: number
+): RouteEntryRow[] {
+  return db
+    .query(
+      `SELECT origin, destination, duration_sec FROM flight_routes
+       WHERE flight_number = ? AND last_seen_at > ? ORDER BY seen_count DESC`
+    )
+    .all(flightNumber, freshAfter) as RouteEntryRow[];
+}
+
+/** Best-effort upsert into flight_routes cache. Readonly-safe (swallows write errors). */
+export function cacheFlightRoute(
+  db: Database,
+  flightNumber: string,
+  origin: string,
+  destination: string,
+  durationSec: number | null,
+  now = Math.floor(Date.now() / 1000)
+): void {
+  try {
+    db.query(`
+      INSERT INTO flight_routes (flight_number, origin, destination, duration_sec, first_seen_at, last_seen_at, seen_count)
+      VALUES (?, ?, ?, ?, ?, ?, 1)
+      ON CONFLICT (flight_number, origin, destination) DO UPDATE SET
+        duration_sec = COALESCE(excluded.duration_sec, duration_sec),
+        last_seen_at = excluded.last_seen_at,
+        seen_count = seen_count + 1
+    `).run(flightNumber, origin, destination, durationSec, now, now);
+  } catch {
+    // readonly DB (tests/snapshots) — skip persist
+  }
+}
+
+/** L3 fallback for route lookup: distinct routes for these flight-number variants in our own snapshot. */
+export function getRoutesForFlightVariants(
+  db: Database,
+  variants: string[],
+  airline?: AirlineFilter
+): { departure_airport: string; arrival_airport: string; dur_sec: number }[] {
+  const placeholders = variants.map(() => "?").join(",");
+  const q = withAirline(
+    `SELECT DISTINCT departure_airport, arrival_airport,
+            AVG(arrival_time - departure_time) as dur_sec
+     FROM upcoming_flights WHERE flight_number IN (${placeholders})`,
+    airline,
+    "",
+    [...variants]
+  );
+  return db
+    .query(`${q.sql} GROUP BY departure_airport, arrival_airport LIMIT 3`)
+    .all(...q.params) as { departure_airport: string; arrival_airport: string; dur_sec: number }[];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Single-tail lookups (tail_number is UNIQUE so airline scope unnecessary)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function getStarlinkPlaneByTail(
+  db: Database,
+  tail: string
+): { Aircraft: string; OperatedBy: string; fleet: string } | null {
+  return db
+    .query("SELECT Aircraft, OperatedBy, fleet FROM starlink_planes WHERE TailNumber = ?")
+    .get(tail) as { Aircraft: string; OperatedBy: string; fleet: string } | null;
+}
+
+export function getFleetEntryByTail(
+  db: Database,
+  tail: string
+): { starlink_status: string; verified_wifi: string | null; verified_at: number | null } | null {
+  return db
+    .query(
+      "SELECT starlink_status, verified_wifi, verified_at FROM united_fleet WHERE tail_number = ?"
+    )
+    .get(tail) as {
+    starlink_status: string;
+    verified_wifi: string | null;
+    verified_at: number | null;
+  } | null;
+}
+
 export function updateLastFlightCheck(db: Database, tailNumber: string, success = true) {
   const now = Math.floor(Date.now() / 1000);
   if (success) {

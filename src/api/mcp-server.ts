@@ -10,17 +10,9 @@
  *   { "url": "https://unitedstarlinktracker.com/mcp", "transport": "http" }
  */
 
-import type { Database } from "bun:sqlite";
 import { AIRLINES } from "../airlines/registry";
-import {
-  getFleetStats,
-  getLastUpdated,
-  getStarlinkPlanes,
-  getTotalCount,
-  getUpcomingFlights,
-} from "../database/database";
 import { planItinerary, predictFlight, predictRoute } from "../scripts/starlink-predictor";
-import type { Flight } from "../types";
+import type { ScopedReader } from "../server/context";
 import {
   buildFlightNumberVariants,
   ensureUAPrefix,
@@ -302,9 +294,8 @@ const TOOLS = [
 // ============================================================================
 
 async function toolCheckFlight(
-  db: Database,
-  args: { flight_number?: unknown; date?: unknown },
-  airline?: string
+  reader: ScopedReader,
+  args: { flight_number?: unknown; date?: unknown }
 ): Promise<ToolResult> {
   const flightNumber = typeof args.flight_number === "string" ? args.flight_number.trim() : "";
   const date = typeof args.date === "string" ? args.date.trim() : "";
@@ -343,29 +334,7 @@ async function toolCheckFlight(
   }
 
   const variants = buildFlightNumberVariants(normalized);
-  const placeholders = variants.map(() => "?").join(",");
-  const airlineClause = airline ? " AND uf.airline = ?" : "";
-  const queryParams = airline
-    ? [...variants, startOfDay, endOfDay, airline]
-    : [...variants, startOfDay, endOfDay];
-
-  const assignments = db
-    .query(
-      `SELECT uf.*, sp.Aircraft as aircraft_type, sp.OperatedBy, sp.fleet, sp.verified_wifi
-       FROM upcoming_flights uf
-       INNER JOIN starlink_planes sp ON uf.tail_number = sp.TailNumber
-       WHERE uf.flight_number IN (${placeholders})
-         AND uf.departure_time >= ? AND uf.departure_time < ?${airlineClause}
-       ORDER BY uf.last_updated DESC`
-    )
-    .all(...queryParams) as Array<
-    Flight & {
-      aircraft_type: string;
-      OperatedBy: string;
-      fleet: string;
-      verified_wifi: string | null;
-    }
-  >;
+  const assignments = reader.getFlightAssignments(variants, startOfDay, endOfDay);
 
   // Dedupe by (departure_time) — stale cache can have two tails for same departure
   // after an aircraft swap. Keep the most-recently-updated row (query is DESC).
@@ -422,7 +391,7 @@ async function toolCheckFlight(
     const f = nonStarlink[0];
     const ac = f.aircraft_type || "aircraft";
     const altBlock = buildAlternativesBlock(
-      db,
+      reader,
       [{ origin: f.departure_airport, destination: f.arrival_airport }],
       startOfDay + 43200
     );
@@ -439,7 +408,7 @@ async function toolCheckFlight(
   // No upcoming_flights row — try the same FR24 tail-lookup fallback that
   // /api/check-flight uses, so MCP and the extension API converge on the same
   // firm answer when FR24 knows the assigned tail.
-  const fb = await lookupFlightTailVerdict(db, normalized, startOfDay, endOfDay, now);
+  const fb = await lookupFlightTailVerdict(reader, normalized, startOfDay, endOfDay, now);
   if (fb && fb.length > 0) {
     const yes = fb.filter((s) => s.hasStarlink);
     const no = fb.filter((s) => s.hasStarlink === false);
@@ -470,7 +439,7 @@ async function toolCheckFlight(
     }
     if (no.length > 0) {
       const altBlock = buildAlternativesBlock(
-        db,
+        reader,
         no.map((s) => ({ origin: s.origin, destination: s.destination })),
         startOfDay + 43200
       );
@@ -488,7 +457,7 @@ async function toolCheckFlight(
 
   // No assignment data at all — probability fallback. If low, look up the route
   // from FR24 (cached) so we can give the agent a concrete next step.
-  const pred = predictFlight(db, normalized);
+  const pred = predictFlight(reader, normalized);
   const pct = (pred.probability * 100).toFixed(0);
 
   const isPast = endOfDay < now - 86400;
@@ -505,8 +474,8 @@ async function toolCheckFlight(
 
   let altBlock = "";
   if (pred.probability < 0.2 && !isPast) {
-    const routes = await lookupFlightRoutes(db, normalized, startOfDay + 43200);
-    altBlock = `\n\n${buildAlternativesBlock(db, routes, startOfDay + 43200)}`;
+    const routes = await lookupFlightRoutes(reader, normalized, startOfDay + 43200);
+    altBlock = `\n\n${buildAlternativesBlock(reader, routes, startOfDay + 43200)}`;
   }
 
   return {
@@ -534,7 +503,7 @@ const routeCache = new Map<string, { promise: Promise<RouteEntry[]>; at: number 
 const ROUTE_CACHE_TTL = 3600;
 
 async function lookupFlightRoutes(
-  db: Database,
+  reader: ScopedReader,
   uaFlightNumber: string,
   targetDateUnix?: number
 ): Promise<RouteEntry[]> {
@@ -545,19 +514,7 @@ async function lookupFlightRoutes(
 
   const promise = (async (): Promise<RouteEntry[]> => {
     // L1: persistent SQLite cache (builds up over time, survives restarts).
-    // Use if we have data fresher than 7 days.
-    const sqliteCached = db
-      .query(
-        `SELECT origin, destination, duration_sec
-         FROM flight_routes
-         WHERE flight_number = ? AND last_seen_at > ?
-         ORDER BY seen_count DESC`
-      )
-      .all(uaFlightNumber, now - 7 * 86400) as Array<{
-      origin: string;
-      destination: string;
-      duration_sec: number | null;
-    }>;
+    const sqliteCached = reader.getCachedFlightRoutes(uaFlightNumber, now - 7 * 86400);
     if (sqliteCached.length > 0) {
       return sqliteCached.map((r) => ({
         origin: r.origin,
@@ -570,20 +527,8 @@ async function lookupFlightRoutes(
     try {
       const found = await fr24.getFlightRoutes(uaFlightNumber, targetDateUnix);
       if (found.length > 0) {
-        const upsert = db.query(`
-          INSERT INTO flight_routes (flight_number, origin, destination, duration_sec, first_seen_at, last_seen_at, seen_count)
-          VALUES (?, ?, ?, ?, ?, ?, 1)
-          ON CONFLICT (flight_number, origin, destination) DO UPDATE SET
-            duration_sec = COALESCE(excluded.duration_sec, duration_sec),
-            last_seen_at = excluded.last_seen_at,
-            seen_count = seen_count + 1
-        `);
         for (const r of found) {
-          try {
-            upsert.run(uaFlightNumber, r.origin, r.destination, r.duration_sec || null, now, now);
-          } catch {
-            // Readonly DB (e.g. tests) — skip persist, use result directly
-          }
+          reader.cacheFlightRoute(uaFlightNumber, r.origin, r.destination, r.duration_sec || null);
         }
         return found.map((r) => ({
           origin: r.origin,
@@ -596,23 +541,7 @@ async function lookupFlightRoutes(
     }
 
     // L3: our own upcoming_flights (sparse, ~2-day Starlink-plane snapshot)
-    const variants = buildFlightNumberVariants(uaFlightNumber);
-    const placeholders = variants.map(() => "?").join(",");
-    const rows = db
-      .query(
-        `SELECT DISTINCT departure_airport, arrival_airport,
-                AVG(arrival_time - departure_time) as dur_sec
-         FROM upcoming_flights
-         WHERE flight_number IN (${placeholders})
-         GROUP BY departure_airport, arrival_airport
-         LIMIT 3`
-      )
-      .all(...variants) as Array<{
-      departure_airport: string;
-      arrival_airport: string;
-      dur_sec: number;
-    }>;
-
+    const rows = reader.getRoutesForFlightVariants(buildFlightNumberVariants(uaFlightNumber));
     return rows.map((r) => ({
       origin: r.departure_airport,
       destination: r.arrival_airport,
@@ -640,7 +569,7 @@ async function lookupFlightRoutes(
  * One tool call → complete answer.
  */
 function buildAlternativesBlock(
-  db: Database,
+  reader: ScopedReader,
   routes: RouteEntry[],
   targetDateUnix?: number
 ): string {
@@ -663,7 +592,7 @@ function buildAlternativesBlock(
 
   for (const r of routes.slice(0, 3)) {
     const segment = `${r.origin}→${r.destination}`;
-    const its = planItinerary(db, r.origin, r.destination, {
+    const its = planItinerary(reader, r.origin, r.destination, {
       maxStops: 2,
       maxItineraries: 2,
       targetDateUnix,
@@ -681,17 +610,10 @@ function buildAlternativesBlock(
       // Duration: try upcoming_flights first (has it if any Starlink plane has
       // flown the route), else use the FR24-supplied duration from the route
       // lookup itself.
-      const directEdge = db
-        .query(
-          `SELECT flight_number, AVG(arrival_time - departure_time) as dur_sec
-           FROM upcoming_flights
-           WHERE departure_airport = ? AND arrival_airport = ?
-           GROUP BY flight_number LIMIT 1`
-        )
-        .get(r.origin, r.destination) as { flight_number: string; dur_sec: number } | null;
+      const directEdge = reader.getDirectRouteEdge(r.origin, r.destination);
 
       const directProb = directEdge
-        ? predictFlight(db, ensureUAPrefix(directEdge.flight_number)).probability
+        ? predictFlight(reader, ensureUAPrefix(directEdge.flight_number)).probability
         : 0.02;
 
       const durH = directEdge ? directEdge.dur_sec / 3600 : (r.duration_hours ?? null);
@@ -771,7 +693,7 @@ Render the table above in your response EXACTLY — do not summarize it into pro
 }
 
 async function toolPredictFlightStarlink(
-  db: Database,
+  reader: ScopedReader,
   args: { flight_number?: unknown; date?: unknown }
 ): Promise<ToolResult> {
   const input = typeof args.flight_number === "string" ? args.flight_number.trim() : "";
@@ -796,7 +718,7 @@ async function toolPredictFlightStarlink(
     };
   }
 
-  const pred = predictFlight(db, forPredict);
+  const pred = predictFlight(reader, forPredict);
   const pct = (pred.probability * 100).toFixed(0);
 
   let details: string;
@@ -820,15 +742,15 @@ async function toolPredictFlightStarlink(
       dateObj && !Number.isNaN(dateObj.getTime())
         ? Math.floor(dateObj.getTime() / 1000)
         : undefined;
-    const routes = await lookupFlightRoutes(db, forPredict, dateUnix);
-    altBlock = `\n\n${buildAlternativesBlock(db, routes, dateUnix)}`;
+    const routes = await lookupFlightRoutes(reader, forPredict, dateUnix);
+    altBlock = `\n\n${buildAlternativesBlock(reader, routes, dateUnix)}`;
   }
 
   return { content: [{ type: "text", text: `${probLine}${altBlock}` }] };
 }
 
 function toolPlanStarlinkItinerary(
-  db: Database,
+  reader: ScopedReader,
   args: {
     origin?: unknown;
     destination?: unknown;
@@ -872,7 +794,7 @@ function toolPlanStarlinkItinerary(
     };
   }
 
-  const itineraries = planItinerary(db, origin, destination, {
+  const itineraries = planItinerary(reader, origin, destination, {
     maxItineraries: maxResults,
     maxStops,
     targetDateUnix,
@@ -978,7 +900,7 @@ ${sections.join("\n\n---\n\n")}${timingNote}
 }
 
 function toolPredictRouteStarlink(
-  db: Database,
+  reader: ScopedReader,
   args: { origin?: unknown; destination?: unknown; limit?: unknown }
 ): ToolResult {
   const origin = typeof args.origin === "string" ? args.origin.trim() : undefined;
@@ -994,14 +916,14 @@ function toolPredictRouteStarlink(
     };
   }
 
-  const result = predictRoute(db, origin || null, destination || null);
+  const result = predictRoute(reader, origin || null, destination || null);
 
   if (result.flights.length === 0) {
     // No DIRECT Starlink flights on this route. If both endpoints given,
     // inline the connection-based alternatives so the agent never sees a
     // dead-end that contradicts check_flight's embedded alternatives.
     if (origin && destination) {
-      const alt = buildAlternativesBlock(db, [
+      const alt = buildAlternativesBlock(reader, [
         { origin: origin.toUpperCase(), destination: destination.toUpperCase() },
       ]);
       return {
@@ -1054,11 +976,11 @@ Probability and confidence are independent: 92% with 4 obs (medium) is a *less c
   return { content: [{ type: "text", text }] };
 }
 
-function toolGetFleetStats(db: Database, airline?: string): ToolResult {
-  const totalCount = getTotalCount(db, airline);
-  const starlinkPlanes = getStarlinkPlanes(db, airline);
-  const fleetStats = getFleetStats(db, airline);
-  const lastUpdated = getLastUpdated(db, airline);
+function toolGetFleetStats(reader: ScopedReader): ToolResult {
+  const totalCount = reader.getTotalCount();
+  const starlinkPlanes = reader.getStarlinkPlanes();
+  const fleetStats = reader.getFleetStats();
+  const lastUpdated = reader.getLastUpdated();
 
   const text = `United Airlines Starlink Installation Progress (as of ${lastUpdated}):
 
@@ -1073,14 +995,13 @@ United began installing Starlink on March 7, 2025. The service offers free WiFi 
 }
 
 function toolListStarlinkAircraft(
-  db: Database,
-  args: { fleet?: unknown; limit?: unknown },
-  airline?: string
+  reader: ScopedReader,
+  args: { fleet?: unknown; limit?: unknown }
 ): ToolResult {
   const fleet = args.fleet === "express" || args.fleet === "mainline" ? args.fleet : undefined;
   const limit = typeof args.limit === "number" && args.limit > 0 ? Math.min(args.limit, 500) : 50;
 
-  let planes = getStarlinkPlanes(db, airline);
+  let planes = reader.getStarlinkPlanes();
   if (fleet) {
     planes = planes.filter((p) => p.fleet === fleet);
   }
@@ -1093,7 +1014,8 @@ function toolListStarlinkAircraft(
       `${p.TailNumber} — ${p.Aircraft || "Unknown type"} (${p.fleet}, ${p.OperatedBy}, first seen ${p.DateFound})`
   );
 
-  const carrier = airline ? AIRLINES[airline]?.name || airline : "tracked airlines";
+  const carrier =
+    reader.scope === "ALL" ? "tracked airlines" : AIRLINES[reader.scope]?.name || reader.scope;
   const header = fleet
     ? `${total} Starlink-equipped aircraft in the ${carrier} ${fleet} fleet`
     : `${total} Starlink-equipped aircraft (${carrier})`;
@@ -1109,9 +1031,8 @@ function toolListStarlinkAircraft(
 }
 
 function toolSearchStarlinkFlights(
-  db: Database,
-  args: { origin?: unknown; destination?: unknown; limit?: unknown },
-  airline?: string
+  reader: ScopedReader,
+  args: { origin?: unknown; destination?: unknown; limit?: unknown }
 ): ToolResult {
   const origin = typeof args.origin === "string" ? args.origin.toUpperCase().trim() : undefined;
   const destination =
@@ -1131,10 +1052,10 @@ function toolSearchStarlinkFlights(
   }
 
   const now = Math.floor(Date.now() / 1000);
-  const starlinkTails = new Set(getStarlinkPlanes(db, airline).map((p) => p.TailNumber));
-  const allFuture = getUpcomingFlights(db, undefined, airline).filter(
-    (f) => f.departure_time > now && starlinkTails.has(f.tail_number)
-  );
+  const starlinkTails = new Set(reader.getStarlinkPlanes().map((p) => p.TailNumber));
+  const allFuture = reader
+    .getUpcomingFlights()
+    .filter((f) => f.departure_time > now && starlinkTails.has(f.tail_number));
 
   // Data horizon from the UNFILTERED set — showing now() when the filtered result
   // is empty would wrongly imply we have zero forward data
@@ -1191,10 +1112,9 @@ function rpcResult(id: string | number | null, result: unknown): JsonRpcSuccess 
 }
 
 function handleInitialize(
-  db: Database,
+  reader: ScopedReader,
   id: string | number | null,
-  params: Record<string, unknown> | undefined,
-  airline?: string
+  params: Record<string, unknown> | undefined
 ): JsonRpcResponse {
   const clientVersion =
     typeof params?.protocolVersion === "string" ? params.protocolVersion : undefined;
@@ -1207,7 +1127,7 @@ function handleInitialize(
 
   // Include LIVE fleet stats in instructions so the agent has accurate priors
   // and doesn't hallucinate about mainline coverage (which is ~2%, not "decent").
-  const fleetStats = getFleetStats(db, airline);
+  const fleetStats = reader.getFleetStats();
   const expressPct = fleetStats.express.percentage.toFixed(0);
   const mainlinePct = fleetStats.mainline.percentage.toFixed(1);
 
@@ -1241,10 +1161,9 @@ When a tool wraps content in <present_verbatim>...</present_verbatim>, copy that
 }
 
 async function handleToolsCall(
-  db: Database,
+  reader: ScopedReader,
   id: string | number | null,
-  params: Record<string, unknown> | undefined,
-  airline?: string
+  params: Record<string, unknown> | undefined
 ): Promise<JsonRpcResponse> {
   const toolName = typeof params?.name === "string" ? params.name : undefined;
   const args = (params?.arguments as Record<string, unknown>) || {};
@@ -1256,25 +1175,25 @@ async function handleToolsCall(
   let result: ToolResult;
   switch (toolName) {
     case "check_flight":
-      result = await toolCheckFlight(db, args, airline);
+      result = await toolCheckFlight(reader, args);
       break;
     case "predict_flight_starlink":
-      result = await toolPredictFlightStarlink(db, args);
+      result = await toolPredictFlightStarlink(reader, args);
       break;
     case "predict_route_starlink":
-      result = toolPredictRouteStarlink(db, args);
+      result = toolPredictRouteStarlink(reader, args);
       break;
     case "plan_starlink_itinerary":
-      result = toolPlanStarlinkItinerary(db, args);
+      result = toolPlanStarlinkItinerary(reader, args);
       break;
     case "get_fleet_stats":
-      result = toolGetFleetStats(db, airline);
+      result = toolGetFleetStats(reader);
       break;
     case "list_starlink_aircraft":
-      result = toolListStarlinkAircraft(db, args, airline);
+      result = toolListStarlinkAircraft(reader, args);
       break;
     case "search_starlink_flights":
-      result = toolSearchStarlinkFlights(db, args, airline);
+      result = toolSearchStarlinkFlights(reader, args);
       break;
     default:
       return rpcError(id, -32602, `Unknown tool: ${toolName}`);
@@ -1284,16 +1203,15 @@ async function handleToolsCall(
 }
 
 async function dispatch(
-  db: Database,
-  msg: JsonRpcRequest,
-  airline?: string
+  reader: ScopedReader,
+  msg: JsonRpcRequest
 ): Promise<JsonRpcResponse | null> {
   const id = msg.id ?? null;
   const isNotification = msg.id === undefined;
 
   switch (msg.method) {
     case "initialize":
-      return handleInitialize(db, id, msg.params, airline);
+      return handleInitialize(reader, id, msg.params);
     case "notifications/initialized":
       return null;
     case "ping":
@@ -1301,7 +1219,7 @@ async function dispatch(
     case "tools/list":
       return rpcResult(id, { tools: TOOLS });
     case "tools/call":
-      return handleToolsCall(db, id, msg.params, airline);
+      return handleToolsCall(reader, id, msg.params);
     default:
       if (isNotification) return null;
       return rpcError(id, -32601, `Method not found: ${msg.method}`);
@@ -1318,11 +1236,7 @@ const JSON_HEADERS = { "Content-Type": "application/json" };
  * Handle an incoming MCP HTTP request.
  * Mount this at a single path (e.g. /mcp) in your Bun.serve router.
  */
-export async function handleMcpRequest(
-  req: Request,
-  db: Database,
-  airline?: string
-): Promise<Response> {
+export async function handleMcpRequest(req: Request, reader: ScopedReader): Promise<Response> {
   // GET = open SSE stream for server→client push. We're stateless, no push.
   // DELETE = terminate session. We're stateless, no sessions.
   if (req.method === "GET" || req.method === "DELETE") {
@@ -1364,7 +1278,7 @@ export async function handleMcpRequest(
   // Dispatch
   let response: JsonRpcResponse | null;
   try {
-    response = await dispatch(db, msg, airline);
+    response = await dispatch(reader, msg);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     info(`MCP handler error: ${message}`);

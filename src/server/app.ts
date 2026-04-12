@@ -168,7 +168,7 @@ const apiData: Handler = ({ req, reader }) => {
   return new Response(JSON.stringify(response), { headers: SECURITY_HEADERS.api });
 };
 
-const apiCheckFlight: Handler = async ({ req, url, reader, db, tenant }) => {
+const apiCheckFlight: Handler = async ({ req, url, reader, tenant }) => {
   if (req.method !== "GET") return methodNotAllowed(true);
   // TODO Phase-2: hub ('ALL') should infer airline from flight-number prefix.
   const cfg = tenantConfig(tenant) ?? AIRLINES.UA;
@@ -198,7 +198,7 @@ const apiCheckFlight: Handler = async ({ req, url, reader, db, tenant }) => {
 
   if (matchingFlights.length === 0) {
     const segments = await lookupFlightTailVerdict(
-      db,
+      reader,
       normalizedFlightNumber,
       startOfDay,
       endOfDay
@@ -284,7 +284,7 @@ const hubOnly = (tenant: RequestContext["tenant"]): Response | null =>
         headers: SECURITY_HEADERS.api,
       });
 
-const apiCheckAnyFlight: Handler = ({ req, url, db, reader, tenant }) => {
+const apiCheckAnyFlight: Handler = ({ req, url, reader, getReader, tenant }) => {
   if (req.method !== "GET") return methodNotAllowed(true);
   const guard = hubOnly(tenant);
   if (guard) return guard;
@@ -363,7 +363,7 @@ const apiCheckAnyFlight: Handler = ({ req, url, db, reader, tenant }) => {
 
   // No schedule row and no type rule — fall back to historical probability
   // rather than a confident "No Starlink" (upcoming_flights only covers ~47h).
-  const pred = predictFlight(db, normalized);
+  const pred = predictFlight(getReader(cfg.code), normalized);
   return new Response(
     JSON.stringify({
       hasStarlink: null,
@@ -379,7 +379,7 @@ const apiCheckAnyFlight: Handler = ({ req, url, db, reader, tenant }) => {
   );
 };
 
-const apiCompareRoute: Handler = ({ req, url, db, tenant }) => {
+const apiCompareRoute: Handler = ({ req, url, reader, tenant }) => {
   if (req.method !== "GET") return methodNotAllowed(true);
   const guard = hubOnly(tenant);
   if (guard) return guard;
@@ -393,7 +393,7 @@ const apiCompareRoute: Handler = ({ req, url, db, tenant }) => {
     );
   }
 
-  const results = compareRoute(db, origin, destination, enabledAirlines());
+  const results = compareRoute(reader, origin, destination);
   return new Response(
     JSON.stringify({
       origin: origin.toUpperCase(),
@@ -404,7 +404,7 @@ const apiCompareRoute: Handler = ({ req, url, db, tenant }) => {
   );
 };
 
-const apiPredictFlight: Handler = ({ req, url, db, tenant }) => {
+const apiPredictFlight: Handler = ({ req, url, reader, tenant }) => {
   if (req.method !== "GET") return methodNotAllowed(true);
   const flightNumber = url.searchParams.get("flight_number");
   if (!flightNumber) {
@@ -415,7 +415,7 @@ const apiPredictFlight: Handler = ({ req, url, db, tenant }) => {
   }
   // TODO Phase-2: hub should infer airline from prefix; predictor itself is still UA-only.
   const cfg = tenantConfig(tenant) ?? AIRLINES.UA;
-  const pred = predictFlight(db, ensureAirlinePrefix(cfg, flightNumber));
+  const pred = predictFlight(reader, ensureAirlinePrefix(cfg, flightNumber));
   return new Response(
     JSON.stringify({
       flight_number: pred.flight_number,
@@ -428,7 +428,7 @@ const apiPredictFlight: Handler = ({ req, url, db, tenant }) => {
   );
 };
 
-const apiPlanRoute: Handler = ({ req, url, db }) => {
+const apiPlanRoute: Handler = ({ req, url, reader }) => {
   if (req.method !== "GET") return methodNotAllowed(true);
   const origin = url.searchParams.get("origin");
   const destination = url.searchParams.get("destination");
@@ -440,7 +440,7 @@ const apiPlanRoute: Handler = ({ req, url, db }) => {
       headers: SECURITY_HEADERS.api,
     });
   }
-  const itineraries = planItinerary(db, origin, destination, { maxItineraries: 12, maxStops });
+  const itineraries = planItinerary(reader, origin, destination, { maxItineraries: 12, maxStops });
   return new Response(JSON.stringify({ origin, destination, itineraries }), {
     headers: SECURITY_HEADERS.api,
   });
@@ -515,7 +515,7 @@ const apiFleetDiscovery: Handler = ({ req, reader }) => {
 };
 
 const mcp: Handler = async (ctx) => {
-  const { req, db, reader } = ctx;
+  const { req, reader } = ctx;
   const accept = req.headers.get("accept") || "";
   if (req.method === "GET" && accept.includes("text/html")) {
     return renderSubPage(ctx, McpPage, "/mcp", {
@@ -529,7 +529,7 @@ const mcp: Handler = async (ctx) => {
         "Paste one URL into Claude Desktop. Ask Claude about United Starlink flights, probabilities, and routing.",
     });
   }
-  return handleMcpRequest(req, db, reader.scope === "ALL" ? undefined : reader.scope);
+  return handleMcpRequest(req, reader);
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -900,7 +900,7 @@ export function createApp(db: Database): App {
     }
 
     const reader: ScopedReader = getReader(tenantScope(tenant));
-    const ctx: RequestContext = { req, url, tenant, reader, db };
+    const ctx: RequestContext = { req, url, tenant, reader, getReader };
 
     const m = match(url.pathname);
     const route = m?.route ?? "/*";
