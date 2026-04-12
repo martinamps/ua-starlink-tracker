@@ -1,16 +1,14 @@
-import { getDomainContent } from "./constants";
+import type { PageBrand } from "../airlines/registry";
 
 /**
- * Generates a 404 Not Found HTML page with domain-specific content
+ * Generates a 404 Not Found HTML page with brand-specific content
  */
-export function getNotFoundHtml(host: string): string {
-  const content = getDomainContent(host);
-
+export function getNotFoundHtml(brand: PageBrand): string {
   return `
   <!DOCTYPE html>
   <html lang="en">
     <head>
-      <title>404 - Page Not Found | ${content.siteName}</title>
+      <title>404 - Page Not Found | ${brand.title}</title>
       <meta charset="UTF-8" />
       <meta name="viewport" content="width=device-width, initial-scale=1.0" />
       <meta name="robots" content="noindex, nofollow" />
@@ -40,7 +38,7 @@ export function getNotFoundHtml(host: string): string {
       <div class="container">
         <h1>404 - Page Not Found</h1>
         <p>The page you're looking for doesn't exist.</p>
-        <p><a href="/">Return to ${content.siteName}</a></p>
+        <p><a href="/">Return to ${brand.title}</a></p>
       </div>
     </body>
   </html>

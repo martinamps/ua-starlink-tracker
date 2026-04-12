@@ -1,6 +1,6 @@
 import React from "react";
+import { AIRLINES, type PageBrand } from "../airlines/registry";
 import type { Aircraft, AirportDeparture, AirportDepartures, FleetStats, Flight } from "../types";
-import { PAGE_CONTENT, isUnitedDomain } from "../utils/constants";
 
 // Reusable FAQ accordion item — eliminates ~30 lines of boilerplate per question
 function FaqItem({ q, children }: { q: string; children: React.ReactNode }) {
@@ -49,7 +49,7 @@ interface PageProps {
   starlink: Aircraft[];
   lastUpdated?: string;
   fleetStats?: FleetStats;
-  isUnited?: boolean;
+  brand?: PageBrand;
   flightsByTail?: Record<string, Flight[]>;
   airportDepartures?: AirportDepartures;
 }
@@ -249,10 +249,12 @@ export default function Page({
   starlink,
   lastUpdated,
   fleetStats,
-  isUnited = false,
+  brand = AIRLINES.UA.brand,
   flightsByTail = {},
   airportDepartures,
 }: PageProps) {
+  // FAQ/intro copy below is still UA-specific (Phase-2: per-airline content blocks).
+  const isUnited = brand === AIRLINES.UA.brand;
   // Apply date overrides to the aircraft data
   const applyDateOverrides = (data: Aircraft[]): Aircraft[] => {
     return data.map((aircraft) => {
@@ -616,11 +618,9 @@ export default function Page({
 
       <header className="relative py-5 sm:py-6 text-center mb-2">
         <h1 className="font-display text-3xl sm:text-4xl md:text-5xl font-bold text-primary mb-1 tracking-tight">
-          {isUnited ? PAGE_CONTENT.pageTitle.united : PAGE_CONTENT.pageTitle.generic}
+          {brand.title}
         </h1>
-        <p className="text-base sm:text-lg text-secondary font-display mb-2">
-          {isUnited ? PAGE_CONTENT.pageSubtitle.united : PAGE_CONTENT.pageSubtitle.generic}
-        </p>
+        <p className="text-base sm:text-lg text-secondary font-display mb-2">{brand.tagline}</p>
         <div className="flex items-center justify-center gap-3 sm:gap-6 text-xs sm:text-sm font-mono text-muted">
           <span>
             <span className="text-accent font-semibold">250</span> Mbps

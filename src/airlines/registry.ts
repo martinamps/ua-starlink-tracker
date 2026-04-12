@@ -12,10 +12,18 @@ export interface SubfleetDef {
 }
 
 export interface PageBrand {
+  /** Display title (rendered in-page) */
   title: string;
   tagline: string;
+  /** SEO `<title>` tag */
+  siteTitle: string;
+  /** Meta description / og:description fallback */
   description: string;
+  ogTitle: string;
+  ogDescription: string;
+  keywords: string;
   accentColor: string;
+  accentColorDim: string;
   faviconPath: string;
   analyticsDomain: string;
   pressReleaseUrl?: string;
@@ -90,9 +98,16 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
     brand: {
       title: "United Airlines Starlink Tracker",
       tagline: "Tracking United Airlines aircraft with Starlink WiFi",
+      siteTitle: "United Starlink Tracker — Which Flights Have Free Starlink WiFi?",
       description:
         "Track which United Airlines flights have free Starlink WiFi. Live status for every Starlink-equipped aircraft, installation progress, and upcoming flight schedules.",
+      ogTitle: "United Airlines Starlink Tracker",
+      ogDescription:
+        "Live statistics showing United Airlines Starlink WiFi installation progress across mainline and express fleets.",
+      keywords:
+        "which united planes have starlink, united starlink status, United Airlines Starlink WiFi, united starlink tracker, united starlink rollout, E175 starlink, CRJ-550 starlink, united mainline starlink, united express starlink, check united flight starlink",
       accentColor: "#0ea5e9",
+      accentColorDim: "#0284c7",
       faviconPath: "/favicon.ico",
       analyticsDomain: "unitedstarlinktracker.com",
       pressReleaseUrl: "https://www.united.com/en/us/newsroom/announcements/cision-125370",
@@ -101,6 +116,42 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
 };
 
 export const HUB_HOSTS = ["airlinestatustracker.com", "www.airlinestatustracker.com"];
+
+export const HUB_BRAND: PageBrand = {
+  title: "Airline Starlink Tracker",
+  tagline: "Tracking major airlines' rollout of Starlink WiFi",
+  siteTitle: "Airline Starlink Tracker | United, Delta & All Airlines WiFi Rollout",
+  description:
+    "Track the rollout of SpaceX's Starlink WiFi on major airlines. See live statistics on United Airlines, Delta and more as they equip their fleets with high-speed satellite internet.",
+  ogTitle: "Airline Starlink Tracker - United, Delta & More",
+  ogDescription:
+    "Live statistics tracking SpaceX's Starlink WiFi rollout across major airlines like United and Delta.",
+  keywords:
+    "Airlines, Starlink, WiFi, Internet, SpaceX, Aircraft, United, Delta, In-flight WiFi, Satellite Internet",
+  accentColor: "#0ea5e9",
+  accentColorDim: "#0284c7",
+  faviconPath: "/favicon.ico",
+  analyticsDomain: "airlinestarlinktracker.com",
+};
+
+export function tenantBrand(tenant: Tenant): PageBrand {
+  return tenant === "ALL" ? HUB_BRAND : tenant.brand;
+}
+
+/** Produce the template-variable map that index.html `{{...}}` placeholders expect. */
+export function brandMetadata(brand: PageBrand) {
+  return {
+    siteTitle: brand.siteTitle,
+    siteDescription: brand.description,
+    ogTitle: brand.ogTitle,
+    ogDescription: brand.ogDescription,
+    keywords: brand.keywords,
+    analyticsUrl: brand.analyticsDomain,
+    siteName: brand.title,
+    accentColor: brand.accentColor,
+    accentColorDim: brand.accentColorDim,
+  };
+}
 
 const LOCAL_HOSTS = ["localhost", "127.0.0.1", "0.0.0.0"];
 

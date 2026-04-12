@@ -12,7 +12,12 @@ import fs from "node:fs";
 import path from "node:path";
 import React from "react";
 import ReactDOMServer from "react-dom/server";
-import { resolveTenant } from "../airlines/registry";
+import {
+  buildAirlineFlightNumberVariants,
+  ensureAirlinePrefix,
+  normalizeAirlineFlightNumber,
+} from "../airlines/flight-number";
+import { AIRLINES, brandMetadata, resolveTenant, tenantBrand } from "../airlines/registry";
 import { lookupFlightTailVerdict } from "../api/flight-verdict";
 import { handleMcpRequest } from "../api/mcp-server";
 import CheckFlightPage from "../components/check-flight-page";
@@ -23,15 +28,7 @@ import RoutePlannerPage from "../components/route-planner-page";
 import { COUNTERS, metrics, withSpan } from "../observability";
 import { planItinerary, predictFlight } from "../scripts/starlink-predictor";
 import type { ApiResponse, Flight } from "../types";
-import {
-  CONTENT_TYPES,
-  SECURITY_HEADERS,
-  buildFlightNumberVariants,
-  ensureUAPrefix,
-  getDomainContent,
-  isUnitedDomain,
-  normalizeFlightNumber,
-} from "../utils/constants";
+import { CONTENT_TYPES, SECURITY_HEADERS } from "../utils/constants";
 import { error as logError } from "../utils/logger";
 import { getNotFoundHtml } from "../utils/not-found";
 import { getSpreadsheetCacheInfo, getSpreadsheetCacheTails } from "../utils/utils";
@@ -185,8 +182,10 @@ const apiData: Handler = ({ req, reader }) => {
   return new Response(JSON.stringify(response), { headers: SECURITY_HEADERS.api });
 };
 
-const apiCheckFlight: Handler = async ({ req, url, reader, db }) => {
+const apiCheckFlight: Handler = async ({ req, url, reader, db, tenant }) => {
   if (req.method !== "GET") return methodNotAllowed(true);
+  // TODO Phase-2: hub ('ALL') should infer airline from flight-number prefix.
+  const cfg = tenantConfig(tenant) ?? AIRLINES.UA;
 
   const flightNumber = url.searchParams.get("flight_number");
   const date = url.searchParams.get("date");
@@ -207,8 +206,8 @@ const apiCheckFlight: Handler = async ({ req, url, reader, db }) => {
   const startOfDay = Math.floor(dateObj.getTime() / 1000);
   const endOfDay = startOfDay + 86400;
 
-  const normalizedFlightNumber = ensureUAPrefix(flightNumber);
-  const variants = buildFlightNumberVariants(normalizedFlightNumber);
+  const normalizedFlightNumber = ensureAirlinePrefix(cfg, flightNumber);
+  const variants = buildAirlineFlightNumberVariants(cfg, normalizedFlightNumber);
   const matchingFlights = reader.getFlightsByNumberAndDate(variants, startOfDay, endOfDay);
 
   if (matchingFlights.length === 0) {
@@ -277,7 +276,7 @@ const apiCheckFlight: Handler = async ({ req, url, reader, db }) => {
       tail_number: flight.tail_number,
       aircraft_type: flight.aircraft_type,
       flight_number: flight.flight_number,
-      ua_flight_number: normalizeFlightNumber(flight.flight_number),
+      ua_flight_number: normalizeAirlineFlightNumber(cfg, flight.flight_number),
       departure_airport: flight.departure_airport,
       arrival_airport: flight.arrival_airport,
       departure_time: flight.departure_time,
@@ -291,7 +290,7 @@ const apiCheckFlight: Handler = async ({ req, url, reader, db }) => {
   return new Response(JSON.stringify(response), { headers: SECURITY_HEADERS.api });
 };
 
-const apiPredictFlight: Handler = ({ req, url, db }) => {
+const apiPredictFlight: Handler = ({ req, url, db, tenant }) => {
   if (req.method !== "GET") return methodNotAllowed(true);
   const flightNumber = url.searchParams.get("flight_number");
   if (!flightNumber) {
@@ -300,7 +299,9 @@ const apiPredictFlight: Handler = ({ req, url, db }) => {
       headers: SECURITY_HEADERS.api,
     });
   }
-  const pred = predictFlight(db, ensureUAPrefix(flightNumber));
+  // TODO Phase-2: hub should infer airline from prefix; predictor itself is still UA-only.
+  const cfg = tenantConfig(tenant) ?? AIRLINES.UA;
+  const pred = predictFlight(db, ensureAirlinePrefix(cfg, flightNumber));
   return new Response(
     JSON.stringify({
       flight_number: pred.flight_number,
@@ -539,10 +540,12 @@ async function renderSubPage<P extends object = object>(
   meta: PageMeta,
   props?: P
 ): Promise<Response> {
-  const { reader, req } = ctx;
-  const host = req.headers.get("host") || "unitedstarlinktracker.com";
+  const { reader, req, tenant } = ctx;
+  const brand = tenantBrand(tenant);
+  const cfg = tenantConfig(tenant);
+  const host = req.headers.get("host") || cfg?.canonicalHost || "airlinestatustracker.com";
   const reactHtml = ReactDOMServer.renderToString(
-    React.createElement(component, (props ?? {}) as P)
+    React.createElement(component, { brand, ...(props ?? {}) } as P)
   );
 
   const fleetStats = reader.getFleetStats();
@@ -552,8 +555,8 @@ async function renderSubPage<P extends object = object>(
   const percentage = totalCount > 0 ? ((starlinkCount / totalCount) * 100).toFixed(2) : "0.00";
 
   const htmlVariables: Record<string, string> = {
+    ...brandMetadata(brand),
     ...meta,
-    analyticsUrl: isUnitedDomain(host) ? "unitedstarlinktracker.com" : "airlinestarlinktracker.com",
     html: reactHtml,
     host,
     totalCount: starlinkCount.toString(),
@@ -632,9 +635,11 @@ const fleetPage: Handler = (ctx) => {
 };
 
 const homePage: Handler = async (ctx) => {
-  const { req, reader } = ctx;
+  const { req, reader, tenant } = ctx;
   if (req.method !== "GET" && req.method !== "HEAD") return methodNotAllowed();
-  const host = req.headers.get("host") || "unitedstarlinktracker.com";
+  const brand = tenantBrand(tenant);
+  const cfg = tenantConfig(tenant);
+  const host = req.headers.get("host") || cfg?.canonicalHost || "airlinestatustracker.com";
 
   const totalCount = reader.getTotalCount();
   const starlinkPlanes = reader.getStarlinkPlanes();
@@ -655,24 +660,23 @@ const homePage: Handler = async (ctx) => {
       starlink: starlinkPlanes,
       lastUpdated,
       fleetStats,
-      isUnited: isUnitedDomain(host),
+      brand,
       flightsByTail,
       airportDepartures,
     })
   );
 
-  const metadata = getDomainContent(host);
   const starlinkCount = starlinkPlanes.length;
   const percentage = totalCount > 0 ? ((starlinkCount / totalCount) * 100).toFixed(2) : "0.00";
 
   const htmlVariables = {
-    ...metadata,
+    ...brandMetadata(brand),
     html: reactHtml,
     host,
     totalCount: starlinkCount.toString(),
     totalAircraftCount: totalCount.toString(),
     lastUpdated,
-    isUnited: isUnitedDomain(host).toString(),
+    isUnited: "true",
     currentDate: new Date().toLocaleDateString(),
     isoDate: new Date().toISOString(),
     mainlineCount: (fleetStats?.mainline.starlink || 0).toString(),
@@ -686,7 +690,7 @@ const homePage: Handler = async (ctx) => {
   return new Response(renderHtml(template, htmlVariables), { headers: SECURITY_HEADERS.html });
 };
 
-const staticDir: Handler = ({ url }) => {
+const staticDir: Handler = ({ url, tenant }) => {
   const subPath = url.pathname.replace(/^\/static\//, "");
   const filePath = path.join(STATIC_DIR, subPath);
   try {
@@ -700,7 +704,7 @@ const staticDir: Handler = ({ url }) => {
   } catch (err) {
     logError(`Error serving static file ${filePath}`, err);
   }
-  return new Response(getNotFoundHtml(url.host), {
+  return new Response(getNotFoundHtml(tenantBrand(tenant)), {
     status: 404,
     headers: SECURITY_HEADERS.notFound,
   });
@@ -780,7 +784,7 @@ export function createApp(db: OpaqueDb): App {
 
         const response = m
           ? await m.handler(ctx)
-          : new Response(getNotFoundHtml(url.host), {
+          : new Response(getNotFoundHtml(tenantBrand(tenant)), {
               status: 404,
               headers: SECURITY_HEADERS.notFound,
             });
@@ -792,6 +796,7 @@ export function createApp(db: OpaqueDb): App {
             method: req.method,
             route: normalized,
             status_code: response.status,
+            tenant: tenantScope(tenant),
           });
         }
         return response;
