@@ -138,6 +138,9 @@ export const COUNTERS = {
   // tags: method, route (allowlisted), status_code
   HTTP_REQUEST: "http.request",
 
+  // Per-IP rate limit triggered on /api/* — tags: route, tenant
+  HTTP_RATE_LIMITED: "http.rate_limited",
+
   // united_fleet.starlink_status changed (consensus verdict flipped)
   // tags: fleet, from (confirmed|negative|unknown), to
   FLEET_STATUS_CHANGE: "fleet.status_change",

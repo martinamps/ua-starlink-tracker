@@ -543,21 +543,25 @@ const robotsTxt: Handler = ({ tenant }) => {
     `User-agent: GPTBot
 Allow: /
 Disallow: /api/
+Disallow: /mcp
 Disallow: /debug/
 
 User-agent: ClaudeBot
 Allow: /
 Disallow: /api/
+Disallow: /mcp
 Disallow: /debug/
 
 User-agent: PerplexityBot
 Allow: /
 Disallow: /api/
+Disallow: /mcp
 Disallow: /debug/
 
 User-agent: *
 Allow: /
 Disallow: /api/
+Disallow: /mcp
 Disallow: /debug/
 
 Sitemap: https://${host}/sitemap.xml`,
@@ -848,8 +852,47 @@ export interface App {
   dispatch(req: Request): Promise<Response>;
 }
 
+// Per-IP sliding-window rate limit for /api/* paths. Tuned well above real
+// usage (Chrome extension on a busy Google Flights page bursts ~20-30; humans
+// hit 2-5). Catches bulk scrapers without ever touching a real traveler.
+const API_RATE_LIMIT = 60;
+const API_RATE_WINDOW_MS = 60_000;
+const LOCAL_IPS = new Set(["127.0.0.1", "::1", "localhost"]);
+
+function clientIp(req: Request): string {
+  return (
+    req.headers.get("cf-connecting-ip") ||
+    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+    req.headers.get("x-real-ip") ||
+    "unknown"
+  );
+}
+
 export function createApp(db: Database): App {
   const getReader = createReaderFactory(db);
+  const ipHits = new Map<string, number[]>();
+  let lastSweep = 0;
+
+  function rateLimited(ip: string, now: number): boolean {
+    if (LOCAL_IPS.has(ip)) return false;
+    if (now - lastSweep > API_RATE_WINDOW_MS) {
+      for (const [k, ts] of ipHits) {
+        const kept = ts.filter((t) => now - t < API_RATE_WINDOW_MS);
+        if (kept.length === 0) ipHits.delete(k);
+        else ipHits.set(k, kept);
+      }
+      lastSweep = now;
+    }
+    const hits = (ipHits.get(ip) ?? []).filter((t) => now - t < API_RATE_WINDOW_MS);
+    if (hits.length >= API_RATE_LIMIT) {
+      ipHits.set(ip, hits);
+      return true;
+    }
+    hits.push(now);
+    ipHits.set(ip, hits);
+    return false;
+  }
+
   const routes: RouteTable = {
     "/": homePage,
     "/check-flight": checkFlightPage,
@@ -899,11 +942,22 @@ export function createApp(db: Database): App {
       });
     }
 
-    const reader: ScopedReader = getReader(tenantScope(tenant));
-    const ctx: RequestContext = { req, url, tenant, reader, getReader };
-
     const m = match(url.pathname);
     const route = m?.route ?? "/*";
+
+    if (url.pathname.startsWith("/api/")) {
+      const ip = clientIp(req);
+      if (rateLimited(ip, Date.now())) {
+        metrics.increment(COUNTERS.HTTP_RATE_LIMITED, { route, tenant: tenantScope(tenant) });
+        return new Response(JSON.stringify({ error: "rate limit exceeded" }), {
+          status: 429,
+          headers: { ...SECURITY_HEADERS.api, "Retry-After": "60" },
+        });
+      }
+    }
+
+    const reader: ScopedReader = getReader(tenantScope(tenant));
+    const ctx: RequestContext = { req, url, tenant, reader, getReader };
 
     return withSpan(
       "http.request",
