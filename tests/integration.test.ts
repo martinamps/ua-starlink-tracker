@@ -126,7 +126,8 @@ describe("/api/check-flight contract", () => {
         `SELECT uf.flight_number, date(uf.departure_time, 'unixepoch') as d
          FROM upcoming_flights uf
          JOIN starlink_planes sp ON uf.tail_number = sp.TailNumber
-         WHERE sp.verified_wifi IS NULL OR sp.verified_wifi = 'Starlink'
+         WHERE uf.airline = 'UA'
+           AND (sp.verified_wifi IS NULL OR sp.verified_wifi = 'Starlink')
          LIMIT 1`
       )
       .get() as { flight_number: string; d: string } | null;
@@ -541,7 +542,9 @@ describe("predictor", () => {
   test("planItinerary: direct flight always in results when it exists", () => {
     // Find ANY direct edge in the DB to test with
     const edge = db
-      .query("SELECT departure_airport, arrival_airport FROM upcoming_flights LIMIT 1")
+      .query(
+        "SELECT departure_airport, arrival_airport FROM upcoming_flights WHERE airline = 'UA' LIMIT 1"
+      )
       .get() as { departure_airport: string; arrival_airport: string };
     const its = planItinerary(reader, edge.departure_airport, edge.arrival_airport, {
       maxStops: 2,

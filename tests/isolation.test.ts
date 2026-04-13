@@ -210,8 +210,11 @@ describe("hub-only endpoints", () => {
     expect(ha?.probability).toBe(1);
   });
 
-  test("/api/compare-route: HA interisland → 0%", async () => {
-    const { text } = await bodyOf("/api/compare-route?origin=HNL&destination=OGG", HUB);
+  test("/api/compare-route: HA interisland routeTypeRule → 0%", async () => {
+    // OGG-KOA: real interisland route Hawaiian operates only on 717s, so no
+    // tracked tails fly it → falls through to routeTypeRule. (HNL-spoke routes
+    // get occasional Airbus rotations and would observe 100%.)
+    const { text } = await bodyOf("/api/compare-route?origin=OGG&destination=KOA", HUB);
     const d = JSON.parse(text);
     const ha = d.results.find((r: { airline: string }) => r.airline === "HA");
     expect(ha?.probability).toBe(0);

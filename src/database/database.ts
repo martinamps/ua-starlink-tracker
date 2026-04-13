@@ -2016,16 +2016,18 @@ export function syncSpreadsheetToFleet(db: Database): number {
   }>;
 
   const existsStmt = db.prepare("SELECT id FROM united_fleet WHERE tail_number = ?");
-  // starlink_status is discovery-owned; only bootstrap it from the sheet when
-  // discovery hasn't touched the plane yet. aircraft_type uses COALESCE so
-  // an empty/placeholder sheet value can't clobber a real FR24-sourced type.
+  // starlink_status follows verified_wifi (the consensus-driven column) so
+  // retrofit transitions converge hourly instead of waiting 7-14d for discovery.
+  // When verified_wifi is NULL (unverified) we leave status alone — avoids the
+  // NULL→negative drag (3a41095). aircraft_type COALESCE so an empty sheet value
+  // can't clobber a real FR24-sourced type.
   const updateStmt = db.prepare(`
     UPDATE united_fleet
     SET aircraft_type = COALESCE(?, aircraft_type),
         fleet = ?,
         operated_by = ?,
         verified_wifi = COALESCE(?, verified_wifi),
-        starlink_status = CASE WHEN starlink_status = 'unknown' THEN ? ELSE starlink_status END
+        starlink_status = CASE WHEN ? != 'unknown' THEN ? ELSE starlink_status END
     WHERE tail_number = ?
   `);
   const insertStmt = db.prepare(`
@@ -2061,6 +2063,7 @@ export function syncSpreadsheetToFleet(db: Database): number {
           plane.fleet,
           plane.OperatedBy,
           plane.verified_wifi,
+          starlinkStatus,
           starlinkStatus,
           plane.TailNumber
         );

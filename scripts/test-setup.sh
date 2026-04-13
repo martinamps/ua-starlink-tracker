@@ -57,6 +57,11 @@ INSERT OR IGNORE INTO starlink_planes (aircraft, wifi, sheet_gid, sheet_type, Da
   ('Airbus A321-271N','Starlink','ha_seed','HA-mainline','2024-09-24','N205HA','Hawaiian Airlines','mainline','Starlink','HA'),
   ('Airbus A321-271N','Starlink','ha_seed','HA-mainline','2024-09-24','N215HA','Hawaiian Airlines','mainline','Starlink','HA');
 
+-- Seed flight_routes cache for UA100 so predict_flight_starlink test never
+-- falls through to live FR24 (the one network-dependent flake).
+INSERT OR REPLACE INTO flight_routes (flight_number, origin, destination, duration_sec, first_seen_at, last_seen_at, seen_count)
+  VALUES ('UA100', 'EWR', 'TLV', 39600, strftime('%s','now'), strftime('%s','now'), 1);
+
 -- HA meta keys (so previews/tests render real percentages, not 0%).
 INSERT OR REPLACE INTO meta (key, value) VALUES
   ('HA:totalAircraftCount', '12'),
