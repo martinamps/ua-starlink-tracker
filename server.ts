@@ -121,7 +121,7 @@ if (JOBS_ENABLED) {
   startFleetDiscovery("maintenance");
   // alaska-json verifier: serves HA (type-deterministic confirmation) and AS
   // (tail/type oracle until alaskaair.com exposes per-tail wifi).
-  startAlaskaVerifier(db);
+  startAlaskaVerifier();
   // Fleet sync iterates enabledAirlines() internally.
   startFleetSync();
 

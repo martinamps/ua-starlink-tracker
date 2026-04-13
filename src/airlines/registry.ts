@@ -46,6 +46,8 @@ export interface AirlineConfig {
   /** Map FR24/ICAO aircraft-type strings to a subfleet key for fleet-sync. Defaults to 'mainline'. */
   classifyFleet?: (aircraftType: string) => string;
   fr24Slug?: string;
+  /** Wholly-owned regional carriers with their own FR24 roster (Horizon for AS, etc.). fleet-sync + seed scripts iterate these in addition to fr24Slug. */
+  regionalCarriers?: { fr24Slug: string; name: string; subfleet: string }[];
   /** Reject fleet-sync results below this size as obviously wrong. */
   minFleetSanity: number;
   /** Per-flight wifi verification source; null = none (type-map only). */
@@ -201,6 +203,7 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
     ],
     classifyFleet: (t) => (/E175|ERJ.?175|EMB/i.test(t) ? "horizon" : "mainline"),
     fr24Slug: "as-asa",
+    regionalCarriers: [{ fr24Slug: "qx-qxe", name: "Horizon Air", subfleet: "horizon" }],
     metricTag: "alaska",
     minFleetSanity: 200,
     verifierBackend: "alaska-json",

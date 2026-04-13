@@ -24,21 +24,25 @@ import { scrapeFlightRadar24Fleet } from "./flightradar24-scraper";
 interface SeedRow {
   tail: string;
   aircraftType: string;
-  subfleet: string;
+  subfleet: "mainline" | "horizon";
   operator: string;
 }
-
-const HORIZON_SLUG = "qx-qxe";
 
 async function buildRoster(): Promise<SeedRow[]> {
   const cfg = AIRLINES.AS;
   if (!cfg.fr24Slug) throw new Error("AS.fr24Slug missing");
 
+  const sources = [
+    { slug: cfg.fr24Slug, subfleet: "mainline" as const, operator: cfg.name },
+    ...(cfg.regionalCarriers ?? []).map((r) => ({
+      slug: r.fr24Slug,
+      subfleet: r.subfleet as "horizon",
+      operator: r.name,
+    })),
+  ];
+
   const rows: SeedRow[] = [];
-  for (const [slug, subfleet, operator] of [
-    [cfg.fr24Slug, "mainline", "Alaska Airlines"],
-    [HORIZON_SLUG, "horizon", "Horizon Air"],
-  ] as const) {
+  for (const { slug, subfleet, operator } of sources) {
     info(`Fetching FR24 roster for ${slug}...`);
     const scrape = await scrapeFlightRadar24Fleet(slug);
     if (!scrape.success) throw new Error(`FR24 scrape failed (${slug}): ${scrape.error}`);
@@ -64,7 +68,7 @@ function printTable(rows: SeedRow[]) {
     console.log(`  ${k.padEnd(26)} ${String(n).padStart(3)}`);
   }
   const bySub = { mainline: 0, horizon: 0 };
-  for (const r of rows) bySub[r.subfleet as keyof typeof bySub]++;
+  for (const r of rows) bySub[r.subfleet]++;
   console.log(
     `\n  mainline=${bySub.mainline}  horizon=${bySub.horizon}  total=${rows.length}  (all status=unknown — per-tail rollout)\n`
   );

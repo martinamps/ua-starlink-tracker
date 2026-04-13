@@ -41,27 +41,51 @@ export async function syncFleetFromFR24(cfg: AirlineConfig = AIRLINES.UA): Promi
       return result;
     }
 
+    const sources = [
+      { slug: cfg.fr24Slug, operator: cfg.name, subfleet: undefined as string | undefined },
+      ...(cfg.regionalCarriers ?? []).map((r) => ({
+        slug: r.fr24Slug,
+        operator: r.name,
+        subfleet: r.subfleet,
+      })),
+    ];
+
     try {
-      info(`Starting FR24 fleet sync for ${cfg.code} (${cfg.fr24Slug})...`);
-
-      const scrapeResult = await scrapeFlightRadar24Fleet(cfg.fr24Slug);
-
-      if (!scrapeResult.success) {
-        result.error = scrapeResult.error || "FR24 scrape failed";
-        logError(`FR24 scrape failed (${cfg.code})`, result.error);
-        span.setTag("error", true);
-        return result;
+      type Scraped = {
+        registration: string;
+        aircraftType: string;
+        subfleet: string;
+        operator: string;
+      };
+      const allAircraft: Scraped[] = [];
+      for (const src of sources) {
+        info(`Starting FR24 fleet sync for ${cfg.code} (${src.slug})...`);
+        const scrapeResult = await scrapeFlightRadar24Fleet(src.slug);
+        if (!scrapeResult.success) {
+          result.error = scrapeResult.error || "FR24 scrape failed";
+          logError(`FR24 scrape failed (${cfg.code}/${src.slug})`, result.error);
+          span.setTag("error", true);
+          return result;
+        }
+        info(`FR24 returned ${scrapeResult.aircraft.length} aircraft for ${cfg.code}/${src.slug}`);
+        for (const a of scrapeResult.aircraft) {
+          allAircraft.push({
+            registration: a.registration,
+            aircraftType: a.aircraftType,
+            subfleet: src.subfleet ?? cfg.classifyFleet?.(a.aircraftType) ?? "mainline",
+            operator: src.operator,
+          });
+        }
       }
 
-      if (scrapeResult.aircraft.length < cfg.minFleetSanity) {
-        result.error = `Suspiciously low aircraft count: ${scrapeResult.aircraft.length} (expected ${cfg.minFleetSanity}+)`;
+      if (allAircraft.length < cfg.minFleetSanity) {
+        result.error = `Suspiciously low aircraft count: ${allAircraft.length} (expected ${cfg.minFleetSanity}+)`;
         logError(`FR24 sync aborted (${cfg.code})`, result.error);
         span.setTag("error", true);
         return result;
       }
 
-      info(`FR24 returned ${scrapeResult.aircraft.length} aircraft for ${cfg.code}`);
-      span.setTag("aircraft.count", scrapeResult.aircraft.length);
+      span.setTag("aircraft.count", allAircraft.length);
 
       const db = initializeDatabase();
 
@@ -74,19 +98,17 @@ export async function syncFleetFromFR24(cfg: AirlineConfig = AIRLINES.UA): Promi
           ).map((r) => r.tail_number)
         );
 
-        for (const aircraft of scrapeResult.aircraft) {
+        for (const aircraft of allAircraft) {
           const isNew = !existingTails.has(aircraft.registration);
-
           upsertFleetAircraft(
             db,
             aircraft.registration,
             aircraft.aircraftType,
             "fr24",
-            cfg.classifyFleet?.(aircraft.aircraftType) ?? "mainline",
-            cfg.name,
+            aircraft.subfleet,
+            aircraft.operator,
             cfg.code
           );
-
           if (isNew) {
             result.new++;
             metrics.increment(COUNTERS.PLANES_DISCOVERED, { source: "fr24", airline: airlineTag });
@@ -95,7 +117,7 @@ export async function syncFleetFromFR24(cfg: AirlineConfig = AIRLINES.UA): Promi
           }
         }
 
-        result.total = scrapeResult.aircraft.length;
+        result.total = allAircraft.length;
         result.success = true;
 
         span.setTag("planes.new", result.new);

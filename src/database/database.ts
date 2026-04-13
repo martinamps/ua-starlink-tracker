@@ -1237,36 +1237,41 @@ export function logVerification(
 export function getNextAlaskaVerifyTarget(
   db: Database,
   airline: "AS" | "HA"
-): { tail_number: string; aircraft_type: string | null; verified_at: number | null } | null {
+): { tail_number: string; aircraft_type: string | null; fleet: string | null } | null {
+  const now = Math.floor(Date.now() / 1000);
   return db
     .query(`
-      SELECT uf.tail_number, uf.aircraft_type, uf.verified_at
+      SELECT uf.tail_number, uf.aircraft_type, uf.fleet
       FROM united_fleet uf
       WHERE uf.airline = ?
+        AND (uf.verified_at IS NULL OR uf.verified_at < ?)
         AND EXISTS (SELECT 1 FROM upcoming_flights f WHERE f.tail_number = uf.tail_number AND f.departure_time > ?)
       ORDER BY uf.verified_at IS NOT NULL, uf.verified_at ASC
       LIMIT 1
     `)
-    .get(airline, Math.floor(Date.now() / 1000)) as {
+    .get(airline, now - ALASKA_VERIFY_THRESHOLD_HOURS * 3600, now) as {
     tail_number: string;
     aircraft_type: string | null;
-    verified_at: number | null;
+    fleet: string | null;
   } | null;
 }
+
+export const ALASKA_VERIFY_THRESHOLD_HOURS = 168;
 
 export function getNextFlightForTail(
   db: Database,
   tail: string
-): { flight_number: string; departure_time: number } | null {
+): { flight_number: string; departure_time: number; departure_airport: string } | null {
   return db
     .query(`
-      SELECT flight_number, departure_time FROM upcoming_flights
+      SELECT flight_number, departure_time, departure_airport FROM upcoming_flights
       WHERE tail_number = ? AND departure_time > ?
       ORDER BY departure_time ASC LIMIT 1
     `)
     .get(tail, Math.floor(Date.now() / 1000)) as {
     flight_number: string;
     departure_time: number;
+    departure_airport: string;
   } | null;
 }
 
@@ -1274,16 +1279,19 @@ export function setFleetVerified(
   db: Database,
   tail: string,
   wifi: string | null,
-  status?: StarlinkStatus
+  status: StarlinkStatus
 ): void {
   const now = Math.floor(Date.now() / 1000);
-  if (status) {
-    db.query(
-      "UPDATE united_fleet SET verified_wifi = ?, verified_at = ?, starlink_status = ? WHERE tail_number = ?"
-    ).run(wifi, now, status, tail);
-  } else {
-    db.query("UPDATE united_fleet SET verified_at = ? WHERE tail_number = ?").run(now, tail);
-  }
+  db.query(
+    "UPDATE united_fleet SET verified_wifi = ?, verified_at = ?, starlink_status = ? WHERE tail_number = ?"
+  ).run(wifi, now, status, tail);
+}
+
+export function touchFleetVerifiedAt(db: Database, tail: string): void {
+  db.query("UPDATE united_fleet SET verified_at = ? WHERE tail_number = ?").run(
+    Math.floor(Date.now() / 1000),
+    tail
+  );
 }
 
 /**
@@ -1358,7 +1366,7 @@ export function needsVerification(
     united: 72, // 3 days for United (to avoid spam)
     flightradar24: 24, // 1 day for FR24
     spreadsheet: 1, // 1 hour for spreadsheet (primary source)
-    alaska: 168, // 7 days — alaska-json is a tail/type oracle, low-churn
+    alaska: ALASKA_VERIFY_THRESHOLD_HOURS,
   };
 
   const baseThreshold = hoursThreshold ?? baseThresholds[source];

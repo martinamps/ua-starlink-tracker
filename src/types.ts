@@ -1,5 +1,7 @@
 // Shared types for the application
 
+export type SubfleetKey = "mainline" | "express" | "horizon" | "unknown";
+
 export interface Aircraft {
   Aircraft: string;
   WiFi: string;
@@ -8,7 +10,7 @@ export interface Aircraft {
   DateFound: string;
   TailNumber: string;
   OperatedBy: string;
-  fleet: string;
+  fleet: SubfleetKey;
 }
 
 export interface Flight {
@@ -76,7 +78,7 @@ export interface FleetAircraft {
   last_seen_at: number;
 
   // Fleet info
-  fleet: "express" | "mainline" | "unknown";
+  fleet: SubfleetKey;
   operated_by: string | null;
 
   // Verification state
@@ -101,7 +103,7 @@ export interface FleetTail {
   type: string; // raw aircraft_type
   family: string; // normalized family
   provider: WifiProvider;
-  fleet: "express" | "mainline" | "unknown";
+  fleet: SubfleetKey;
   verified_at: number | null;
 }
 
