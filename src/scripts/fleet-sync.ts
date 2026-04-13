@@ -11,12 +11,15 @@ import {
 } from "../database/database";
 import { COUNTERS, metrics, normalizeAirlineTag, withSpan } from "../observability";
 import { info, error as logError } from "../utils/logger";
-import { scrapeFlightRadar24Fleet } from "./flightradar24-scraper";
+import { launchFR24Browser, scrapeFlightRadar24Fleet } from "./flightradar24-scraper";
 
 /**
  * Sync fleet from FlightRadar24 to united_fleet table for one airline.
  */
-export async function syncFleetFromFR24(cfg: AirlineConfig = AIRLINES.UA): Promise<{
+export async function syncFleetFromFR24(
+  cfg: AirlineConfig = AIRLINES.UA,
+  sharedBrowser?: import("playwright").Browser
+): Promise<{
   airline: string;
   success: boolean;
   total: number;
@@ -58,9 +61,10 @@ export async function syncFleetFromFR24(cfg: AirlineConfig = AIRLINES.UA): Promi
         operator: string;
       };
       const allAircraft: Scraped[] = [];
-      for (const src of sources) {
+      for (const [i, src] of sources.entries()) {
+        if (i > 0) await new Promise((r) => setTimeout(r, 5000));
         info(`Starting FR24 fleet sync for ${cfg.code} (${src.slug})...`);
-        const scrapeResult = await scrapeFlightRadar24Fleet(src.slug);
+        const scrapeResult = await scrapeFlightRadar24Fleet(src.slug, sharedBrowser);
         if (!scrapeResult.success) {
           result.error = scrapeResult.error || "FR24 scrape failed";
           logError(`FR24 scrape failed (${cfg.code}/${src.slug})`, result.error);
@@ -183,9 +187,15 @@ export async function syncFullFleet(): Promise<{
   spreadsheet: { success: boolean; synced: number; error?: string };
 }> {
   const fr24: Awaited<ReturnType<typeof syncFleetFromFR24>>[] = [];
-  for (const cfg of enabledAirlines()) {
-    if (!cfg.fr24Slug) continue;
-    fr24.push(await syncFleetFromFR24(cfg));
+  const browser = await launchFR24Browser();
+  try {
+    for (const [i, cfg] of enabledAirlines().entries()) {
+      if (!cfg.fr24Slug) continue;
+      if (i > 0) await new Promise((r) => setTimeout(r, 5000));
+      fr24.push(await syncFleetFromFR24(cfg, browser));
+    }
+  } finally {
+    await browser.close().catch(() => {});
   }
 
   // Spreadsheet sync remains UA-only — no other airline has a community sheet.

@@ -19,7 +19,7 @@ import { AIRLINES } from "../airlines/registry";
 import { setMeta, upsertFleetAircraft } from "../database/database";
 import { DB_PATH } from "../utils/constants";
 import { info } from "../utils/logger";
-import { scrapeFlightRadar24Fleet } from "./flightradar24-scraper";
+import { launchFR24Browser, scrapeFlightRadar24Fleet } from "./flightradar24-scraper";
 
 interface SeedRow {
   tail: string;
@@ -42,13 +42,18 @@ async function buildRoster(): Promise<SeedRow[]> {
   ];
 
   const rows: SeedRow[] = [];
-  for (const { slug, subfleet, operator } of sources) {
-    info(`Fetching FR24 roster for ${slug}...`);
-    const scrape = await scrapeFlightRadar24Fleet(slug);
-    if (!scrape.success) throw new Error(`FR24 scrape failed (${slug}): ${scrape.error}`);
-    for (const a of scrape.aircraft) {
-      rows.push({ tail: a.registration, aircraftType: a.aircraftType, subfleet, operator });
+  const browser = await launchFR24Browser();
+  try {
+    for (const { slug, subfleet, operator } of sources) {
+      info(`Fetching FR24 roster for ${slug}...`);
+      const scrape = await scrapeFlightRadar24Fleet(slug, browser);
+      if (!scrape.success) throw new Error(`FR24 scrape failed (${slug}): ${scrape.error}`);
+      for (const a of scrape.aircraft) {
+        rows.push({ tail: a.registration, aircraftType: a.aircraftType, subfleet, operator });
+      }
     }
+  } finally {
+    await browser.close().catch(() => {});
   }
 
   if (rows.length < cfg.minFleetSanity) {

@@ -22,11 +22,25 @@ export interface FR24ScrapeResult {
   error?: string;
 }
 
+export async function launchFR24Browser(): Promise<Browser> {
+  return chromium.launch({
+    headless: true,
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-blink-features=AutomationControlled",
+    ],
+  });
+}
+
 /**
- * Scrape United Airlines fleet from FlightRadar24
+ * Scrape an airline's fleet roster from FlightRadar24.
+ * Pass `sharedBrowser` when calling sequentially for multiple slugs — repeated
+ * chromium.launch() in one process is unreliable under playwright-extra+stealth.
  */
 export async function scrapeFlightRadar24Fleet(
-  slug = AIRLINES.UA.fr24Slug as string
+  slug = AIRLINES.UA.fr24Slug as string,
+  sharedBrowser?: Browser
 ): Promise<FR24ScrapeResult> {
   const result: FR24ScrapeResult = {
     success: false,
@@ -36,18 +50,12 @@ export async function scrapeFlightRadar24Fleet(
 
   let browser: Browser | null = null;
   let page: Page | null = null;
+  const ownsBrowser = !sharedBrowser;
 
   try {
     console.log("Starting FlightRadar24 fleet scrape...");
 
-    browser = await chromium.launch({
-      headless: true,
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-blink-features=AutomationControlled",
-      ],
-    });
+    browser = sharedBrowser ?? (await launchFR24Browser());
 
     const context = await browser.newContext({
       userAgent:
@@ -180,8 +188,8 @@ export async function scrapeFlightRadar24Fleet(
     result.error = error instanceof Error ? error.message : String(error);
     console.error("Scrape error:", result.error);
   } finally {
-    if (page) await page.close();
-    if (browser) await browser.close();
+    if (page) await page.close().catch(() => {});
+    if (browser && ownsBrowser) await browser.close().catch(() => {});
   }
 
   return result;
