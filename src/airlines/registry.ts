@@ -172,16 +172,34 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
   AS: {
     code: "AS",
     name: "Alaska Airlines",
-    enabled: false,
+    enabled: true,
     hosts: ["alaskastarlinktracker.com", "www.alaskastarlinktracker.com"],
     canonicalHost: "alaskastarlinktracker.com",
     iata: "AS",
     icao: "ASA",
     // SkyWest (OO/SKW) intentionally excluded — shared with UA, tail_number is
     // UNIQUE on united_fleet. AS regionals via SkyWest are out of scope until
-    // the Phase-3 composite-PK migration; AS Starlink is mainline-first anyway.
+    // the Phase-3 composite-PK migration.
     carrierPrefixes: ["ASA", "QXE", "AS", "QX"],
-    subfleets: [{ key: "mainline", label: "Alaska Fleet", match: () => true }],
+    subfleets: [
+      {
+        key: "mainline",
+        label: "Mainline (737/787)",
+        match: (fn) => {
+          const n = flightNum(fn);
+          return Number.isFinite(n) && n < 2000;
+        },
+      },
+      {
+        key: "horizon",
+        label: "Horizon (E175)",
+        match: (fn) => {
+          const n = flightNum(fn);
+          return Number.isFinite(n) && n >= 2000;
+        },
+      },
+    ],
+    classifyFleet: (t) => (/E175|ERJ.?175|EMB/i.test(t) ? "horizon" : "mainline"),
     fr24Slug: "as-asa",
     metricTag: "alaska",
     minFleetSanity: 200,

@@ -115,6 +115,18 @@ export async function fetchAlaskaFlightStatus(
 export type HawaiianWifi = "Starlink" | "None" | "pending";
 
 /**
+ * Alaska's rollout is per-tail, not per-type (E175 first Dec 2025, then 737s,
+ * ~24 done by Jan 2026, target end-2027). The `__data.json` endpoint has NO
+ * wifi field — Alaska's page still hardcodes `isHawaiian ? 'Starlink' : 'Wi-Fi'`
+ * client-side. So aircraft type alone cannot determine Starlink status for AS.
+ * Returns null until Alaska exposes a real per-tail signal; the verifier
+ * records tail/type confirmation only and we monitor the JS bundle for change.
+ */
+export function alaskaTypeToStarlink(_equipmentType: string | null | undefined): null {
+  return null;
+}
+
+/**
  * Hawaiian's rollout is type-deterministic and complete (Sep 2024) for the
  * Airbus fleet. This encodes the same rule alaskaair.com hardcodes in its
  * status page bundle.

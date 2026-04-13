@@ -8,7 +8,7 @@ export interface Aircraft {
   DateFound: string;
   TailNumber: string;
   OperatedBy: string;
-  fleet: "express" | "mainline";
+  fleet: string;
 }
 
 export interface Flight {
@@ -62,7 +62,7 @@ export interface ApiResponse {
 }
 
 // Fleet discovery types
-export type FleetSource = "fr24" | "spreadsheet" | "ha_seed" | "canary";
+export type FleetSource = "fr24" | "spreadsheet" | "ha_seed" | "as_seed" | "canary";
 export type StarlinkStatus = "confirmed" | "negative" | "unknown";
 
 export interface FleetAircraft {

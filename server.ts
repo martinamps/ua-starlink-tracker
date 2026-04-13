@@ -10,6 +10,7 @@ import {
   updateDatabase,
 } from "./src/database/database";
 import { withSpan } from "./src/observability";
+import { startAlaskaVerifier } from "./src/scripts/alaska-verifier";
 import { startFleetDiscovery } from "./src/scripts/fleet-discovery";
 import { startFleetSync } from "./src/scripts/fleet-sync";
 import { computePrecision, emitPrecisionGauges } from "./src/scripts/precision-backtest";
@@ -115,10 +116,12 @@ if (JOBS_ENABLED) {
   );
 
   startFlightUpdater();
-  // Verifier + discovery are UA-only (verifierBackend === 'united' Playwright path).
-  // HA is type-deterministic; AS uses alaska-json (Phase 2 next slice).
+  // United verifier + discovery: UA-only Playwright path.
   startStarlinkVerifier();
   startFleetDiscovery("maintenance");
+  // alaska-json verifier: serves HA (type-deterministic confirmation) and AS
+  // (tail/type oracle until alaskaair.com exposes per-tail wifi).
+  startAlaskaVerifier(db);
   // Fleet sync iterates enabledAirlines() internally.
   startFleetSync();
 

@@ -19,6 +19,7 @@
     "precision": "bun run src/scripts/precision-backtest.ts",
     "surface-sweep": "bun run src/scripts/surface-sweep.ts",
     "seed-hawaiian": "PLAYWRIGHT_BROWSERS_PATH=./do_not_commit/playwright-browsers bun run src/scripts/seed-hawaiian.ts",
+    "seed-alaska": "PLAYWRIGHT_BROWSERS_PATH=./do_not_commit/playwright-browsers bun run src/scripts/seed-alaska.ts",
     "preview-hosts": "PLAYWRIGHT_BROWSERS_PATH=./do_not_commit/playwright-browsers bun scripts/preview-hosts.ts",
     "reset-flights": "bun run src/scripts/reset-flight-checks.ts",
     "test": "bun test tests/",

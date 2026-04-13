@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import type { Aircraft, FleetStats, PerAirlineStat, RecentInstall } from "../../types";
 import type { Tenant } from "../registry";
+import { content as as } from "./as";
 import { content as ha } from "./ha";
 import { content as hub } from "./hub";
 import { content as ua } from "./ua";
@@ -53,6 +54,7 @@ export interface AirlineContent {
 const CONTENT: Record<string, AirlineContent> = {
   UA: ua,
   HA: ha,
+  AS: as,
 };
 
 export function getContent(tenant: Tenant): AirlineContent {

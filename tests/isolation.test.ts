@@ -17,10 +17,12 @@ import type { FleetStats } from "../src/types";
 const TEST_DB = "/tmp/ua-test.sqlite";
 const UA = "unitedstarlinktracker.com";
 const HA_HOST = "hawaiianstarlinktracker.com";
+const AS_HOST = "alaskastarlinktracker.com";
 const HUB = "airlinestarlinktracker.com";
 const EVIL = "evil.example.com";
 const CANARIES = ["N999HA", "HA9999", "N644AS", "AS118", "A7-TST", "QR9999"];
 const REAL_HA_TAILS = ["N380HA", "N382HA", "N389HA", "N202HA", "N215HA"];
+const REAL_AS_TAILS = ["N654QX", "N658QX"];
 
 let app: ReturnType<typeof createApp>;
 let db: Database;
@@ -341,25 +343,63 @@ describe("hub host shows enabled airlines only", () => {
   test("/api/data contains enabled-airline canaries, not disabled", async () => {
     const { text } = await bodyOf("/api/data", HUB);
     expect(text).toContain("N999HA");
-    expect(text).not.toContain("N644AS");
+    expect(text).toContain("N644AS");
     expect(text).not.toContain("A7-TST");
   });
 
   test("/fleet page contains enabled-airline canaries, not disabled", async () => {
     const { text } = await bodyOf("/fleet", HUB);
     expect(text).toContain("N999HA");
-    expect(text).not.toContain("N644AS");
+    expect(text).toContain("N644AS");
     expect(text).not.toContain("A7-TST");
   });
 
-  test("MCP list_starlink_aircraft limit=500 — enabled-only (no AS/QR canaries)", async () => {
+  test("MCP list_starlink_aircraft limit=500 — enabled-only (no QR canary)", async () => {
     const r = await app.dispatch(
       mcpReq(HUB, "tools/call", { name: "list_starlink_aircraft", arguments: { limit: 500 } })
     );
     const text = await r.text();
     expect(text).toContain("N999HA");
-    expect(text).not.toContain("N644AS");
+    expect(text).toContain("N644AS");
     expect(text).not.toContain("A7-TST");
+  });
+});
+
+describe("AS host isolation", () => {
+  test("/api/data on AS host shows only AS tails", async () => {
+    const { status, text } = await bodyOf("/api/data", AS_HOST);
+    expect(status).toBe(200);
+    for (const t of REAL_AS_TAILS) expect(text).toContain(t);
+    for (const t of REAL_HA_TAILS) expect(text).not.toContain(t);
+    expect(text).not.toMatch(/N\d{3}HA/);
+  });
+
+  test("UA host /api/data has zero AS tails", async () => {
+    const { text } = await bodyOf("/api/data", UA);
+    for (const t of REAL_AS_TAILS) expect(text).not.toContain(t);
+    expect(text).not.toContain("N644AS");
+  });
+
+  test("AS host MCP list_starlink_aircraft → AS-only", async () => {
+    const r = await app.dispatch(
+      mcpReq(AS_HOST, "tools/call", { name: "list_starlink_aircraft", arguments: { limit: 500 } })
+    );
+    const text = await r.text();
+    expect(text).toContain("Alaska");
+    expect(text).toContain("N654QX");
+    expect(text).not.toContain("N382HA");
+    for (const t of REAL_HA_TAILS) expect(text).not.toContain(t);
+  });
+
+  test("HA host /api/data has zero AS tails", async () => {
+    const { text } = await bodyOf("/api/data", HA_HOST);
+    for (const t of REAL_AS_TAILS) expect(text).not.toContain(t);
+    expect(text).not.toContain("N644AS");
+  });
+
+  test("hub /api/data includes AS tails", async () => {
+    const { text } = await bodyOf("/api/data", HUB);
+    for (const t of REAL_AS_TAILS) expect(text).toContain(t);
   });
 });
 

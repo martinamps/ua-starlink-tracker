@@ -62,13 +62,35 @@ INSERT OR IGNORE INTO starlink_planes (aircraft, wifi, sheet_gid, sheet_type, Da
 INSERT OR REPLACE INTO flight_routes (flight_number, origin, destination, duration_sec, first_seen_at, last_seen_at, seen_count)
   VALUES ('UA100', 'EWR', 'TLV', 39600, strftime('%s','now'), strftime('%s','now'), 1);
 
--- HA meta keys (so previews/tests render real percentages, not 0%).
+-- Real AS fleet sample — mid-rollout: Horizon E175s confirmed (first to ship),
+-- mainline 737s mostly unknown.
+INSERT OR IGNORE INTO united_fleet (tail_number, aircraft_type, fleet, operated_by, starlink_status, verified_wifi, verified_at, first_seen_source, first_seen_at, last_seen_at, airline) VALUES
+  ('N654QX','Embraer ERJ-175LR','horizon','Horizon Air','confirmed','Starlink',1774190000,'as_seed',1774190000,1774190000,'AS'),
+  ('N658QX','Embraer ERJ-175LR','horizon','Horizon Air','confirmed','Starlink',1774190000,'as_seed',1774190000,1774190000,'AS'),
+  ('N292AK','Boeing 737-900ER','mainline','Alaska Airlines','unknown',NULL,NULL,'as_seed',1774190000,1774190000,'AS'),
+  ('N915AK','Boeing 737-9 MAX','mainline','Alaska Airlines','unknown',NULL,NULL,'as_seed',1774190000,1774190000,'AS'),
+  ('N613AS','Boeing 737-700','mainline','Alaska Airlines','unknown',NULL,NULL,'as_seed',1774190000,1774190000,'AS');
+
+INSERT OR IGNORE INTO starlink_planes (aircraft, wifi, sheet_gid, sheet_type, DateFound, TailNumber, OperatedBy, fleet, verified_wifi, airline) VALUES
+  ('Embraer ERJ-175LR','Starlink','as_seed','AS-horizon','2025-12-15','N654QX','Horizon Air','horizon','Starlink','AS'),
+  ('Embraer ERJ-175LR','Starlink','as_seed','AS-horizon','2025-12-15','N658QX','Horizon Air','horizon','Starlink','AS');
+
+INSERT OR IGNORE INTO upcoming_flights (tail_number, flight_number, departure_airport, arrival_airport, departure_time, arrival_time, last_updated, airline) VALUES
+  ('N654QX','QX2304','SEA','PDX',1774200000,1774206000,1774190000,'AS'),
+  ('N292AK','AS307','SEA','LAX',1774200000,1774215000,1774190000,'AS');
+
+-- HA + AS meta keys (so previews/tests render real percentages, not 0%).
 INSERT OR REPLACE INTO meta (key, value) VALUES
   ('HA:totalAircraftCount', '12'),
   ('HA:mainlineStarlink', '9'),
   ('HA:mainlineTotal', '12'),
   ('HA:mainlinePercentage', '75.00'),
-  ('HA:lastUpdated', '2026-04-12T00:00:00.000Z');
+  ('HA:lastUpdated', '2026-04-12T00:00:00.000Z'),
+  ('AS:totalAircraftCount', '6'),
+  ('AS:mainlineStarlink', '3'),
+  ('AS:mainlineTotal', '6'),
+  ('AS:mainlinePercentage', '50.00'),
+  ('AS:lastUpdated', '2026-04-12T00:00:00.000Z');
 SQL
 
 echo "test DB ready at $DB"

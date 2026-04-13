@@ -65,7 +65,7 @@ function tableExists(db: Database, tableName: string) {
   return db.query("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(tableName);
 }
 
-export type VerificationSource = "united" | "flightradar24" | "spreadsheet";
+export type VerificationSource = "united" | "flightradar24" | "spreadsheet" | "alaska";
 
 export interface VerificationLogEntry {
   id?: number;
@@ -78,6 +78,7 @@ export interface VerificationLogEntry {
   flight_number: string | null;
   error: string | null;
   tail_confirmed?: number | null;
+  airline?: string;
 }
 
 function setupTables(db: Database) {
@@ -1217,8 +1218,8 @@ export function logVerification(
   const now = Math.floor(Date.now() / 1000);
   db.query(`
     INSERT INTO starlink_verification_log
-    (tail_number, source, checked_at, has_starlink, wifi_provider, aircraft_type, flight_number, error, tail_confirmed)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    (tail_number, source, checked_at, has_starlink, wifi_provider, aircraft_type, flight_number, error, tail_confirmed, airline)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     entry.tail_number,
     entry.source,
@@ -1228,8 +1229,61 @@ export function logVerification(
     entry.aircraft_type,
     entry.flight_number,
     entry.error,
-    entry.tail_confirmed ?? null
+    entry.tail_confirmed ?? null,
+    entry.airline ?? "UA"
   );
+}
+
+export function getNextAlaskaVerifyTarget(
+  db: Database,
+  airline: "AS" | "HA"
+): { tail_number: string; aircraft_type: string | null; verified_at: number | null } | null {
+  return db
+    .query(`
+      SELECT uf.tail_number, uf.aircraft_type, uf.verified_at
+      FROM united_fleet uf
+      WHERE uf.airline = ?
+        AND EXISTS (SELECT 1 FROM upcoming_flights f WHERE f.tail_number = uf.tail_number AND f.departure_time > ?)
+      ORDER BY uf.verified_at IS NOT NULL, uf.verified_at ASC
+      LIMIT 1
+    `)
+    .get(airline, Math.floor(Date.now() / 1000)) as {
+    tail_number: string;
+    aircraft_type: string | null;
+    verified_at: number | null;
+  } | null;
+}
+
+export function getNextFlightForTail(
+  db: Database,
+  tail: string
+): { flight_number: string; departure_time: number } | null {
+  return db
+    .query(`
+      SELECT flight_number, departure_time FROM upcoming_flights
+      WHERE tail_number = ? AND departure_time > ?
+      ORDER BY departure_time ASC LIMIT 1
+    `)
+    .get(tail, Math.floor(Date.now() / 1000)) as {
+    flight_number: string;
+    departure_time: number;
+  } | null;
+}
+
+export function setFleetVerified(
+  db: Database,
+  tail: string,
+  wifi: string | null,
+  status?: StarlinkStatus
+): void {
+  const now = Math.floor(Date.now() / 1000);
+  if (status) {
+    db.query(
+      "UPDATE united_fleet SET verified_wifi = ?, verified_at = ?, starlink_status = ? WHERE tail_number = ?"
+    ).run(wifi, now, status, tail);
+  } else {
+    db.query("UPDATE united_fleet SET verified_at = ? WHERE tail_number = ?").run(now, tail);
+  }
 }
 
 /**
@@ -1304,6 +1358,7 @@ export function needsVerification(
     united: 72, // 3 days for United (to avoid spam)
     flightradar24: 24, // 1 day for FR24
     spreadsheet: 1, // 1 hour for spreadsheet (primary source)
+    alaska: 168, // 7 days — alaska-json is a tail/type oracle, low-churn
   };
 
   const baseThreshold = hoursThreshold ?? baseThresholds[source];
@@ -1446,6 +1501,7 @@ export function getVerificationStats(db: Database): {
     united: 0,
     flightradar24: 0,
     spreadsheet: 0,
+    alaska: 0,
   };
   for (const row of bySource) {
     if (row.source in sourceMap) {
