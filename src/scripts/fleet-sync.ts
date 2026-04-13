@@ -66,10 +66,16 @@ export async function syncFleetFromFR24(
         info(`Starting FR24 fleet sync for ${cfg.code} (${src.slug})...`);
         const scrapeResult = await scrapeFlightRadar24Fleet(src.slug, sharedBrowser);
         if (!scrapeResult.success) {
-          result.error = scrapeResult.error || "FR24 scrape failed";
-          logError(`FR24 scrape failed (${cfg.code}/${src.slug})`, result.error);
+          const err = scrapeResult.error || "FR24 scrape failed";
+          logError(`FR24 scrape failed (${cfg.code}/${src.slug})`, err);
           span.setTag("error", true);
-          return result;
+          if (i === 0) {
+            result.error = err;
+            return result;
+          }
+          // Regional carrier failed — keep mainline result, note the partial.
+          result.error = `partial: ${src.slug} ${err}`;
+          continue;
         }
         info(`FR24 returned ${scrapeResult.aircraft.length} aircraft for ${cfg.code}/${src.slug}`);
         for (const a of scrapeResult.aircraft) {
