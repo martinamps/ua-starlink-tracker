@@ -9,10 +9,13 @@ import { type AirlineConfig, enabledAirlines } from "./registry";
  * Detect which airline a flight number belongs to via longest-prefix match
  * across all enabled airlines' carrierPrefixes. Returns null if none match.
  */
-export function detectAirline(flightNumber: string): AirlineConfig | null {
+export function detectAirline(
+  flightNumber: string,
+  airlines: readonly AirlineConfig[] = enabledAirlines()
+): AirlineConfig | null {
   const fn = flightNumber.trim().toUpperCase();
   let best: { cfg: AirlineConfig; len: number } | null = null;
-  for (const cfg of enabledAirlines()) {
+  for (const cfg of airlines) {
     for (const prefix of [cfg.iata, ...cfg.carrierPrefixes]) {
       if (
         fn.startsWith(prefix) &&

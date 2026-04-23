@@ -31,11 +31,40 @@ export interface PageBrand {
   pressReleaseUrl?: string;
 }
 
+export interface AnalyticsConfig {
+  scriptSrc: string;
+  dataDomain: string;
+  eventApiUrl?: string;
+}
+
+export interface SiteFeatures {
+  homeNav: boolean;
+  checkFlightPage: boolean;
+  routePlannerPage: boolean;
+  fleetPage: boolean;
+  mcpPage: boolean;
+  chromeExtension: boolean;
+}
+
+export interface SiteConfig {
+  key: string;
+  scope: AirlineCode | "ALL";
+  live: boolean;
+  hosts: string[];
+  canonicalHost: string;
+  brand: PageBrand;
+  analytics: AnalyticsConfig | null;
+  features: SiteFeatures;
+  headSnippet?: string;
+}
+
 export interface AirlineConfig {
   code: AirlineCode;
   name: string;
   /** Background jobs (scrape/verify/discover/sync) skip airlines with enabled=false. resolveTenant still resolves them. */
   enabled: boolean;
+  /** Included on public hub surfaces and hub-only APIs. */
+  publicInHub: boolean;
   hosts: string[];
   canonicalHost: string;
   iata: string;
@@ -51,7 +80,7 @@ export interface AirlineConfig {
   /** Reject fleet-sync results below this size as obviously wrong. */
   minFleetSanity: number;
   /** Per-flight wifi verification source; null = none (type-map only). */
-  verifierBackend?: "united" | "alaska-json" | null;
+  verifierBackend?: "united" | "alaska-json" | "qatar-fltstatus" | null;
   /** Type-deterministic route rule for airlines whose Starlink status depends only on aircraft type / route class, not per-tail observation. */
   routeTypeRule?: (origin: string, destination: string) => { probability: number; reason: string };
   /** Canonical lowercase tag for Datadog `airline:` — preserves history (`united`, not `UA`). */
@@ -69,6 +98,7 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
     code: "UA",
     name: "United Airlines",
     enabled: true,
+    publicInHub: true,
     hosts: ["unitedstarlinktracker.com", "www.unitedstarlinktracker.com"],
     canonicalHost: "unitedstarlinktracker.com",
     iata: "UA",
@@ -136,6 +166,7 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
     code: "HA",
     name: "Hawaiian Airlines",
     enabled: true,
+    publicInHub: true,
     hosts: ["hawaiianstarlinktracker.com", "www.hawaiianstarlinktracker.com"],
     canonicalHost: "hawaiianstarlinktracker.com",
     iata: "HA",
@@ -175,6 +206,7 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
     code: "AS",
     name: "Alaska Airlines",
     enabled: true,
+    publicInHub: true,
     hosts: ["alaskastarlinktracker.com", "www.alaskastarlinktracker.com"],
     canonicalHost: "alaskastarlinktracker.com",
     iata: "AS",
@@ -229,34 +261,42 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
   QR: {
     code: "QR",
     name: "Qatar Airways",
-    enabled: false,
+    enabled: true,
+    publicInHub: false,
     hosts: ["qatarstarlinktracker.com", "www.qatarstarlinktracker.com"],
     canonicalHost: "qatarstarlinktracker.com",
     iata: "QR",
     icao: "QTR",
     carrierPrefixes: ["QTR", "QR"],
+    // QR runs the same flight number across very different equipment day-to-day
+    // (DOH-CAI may be 359 on QR1303 and 788 on QR1301 same date), so flight-
+    // number partition is meaningless. One bucket; UI can break out by type.
     subfleets: [{ key: "mainline", label: "Qatar Fleet", match: () => true }],
+    classifyFleet: () => "mainline",
     fr24Slug: "qr-qtr",
     metricTag: "qatar",
+    // 274 aircraft on FR24 (Apr 2026); minus ~37 freighters leaves ~237. Set
+    // floor at 200 so a partial scrape still passes sanity but a near-empty
+    // one doesn't blow away the roster.
     minFleetSanity: 200,
-    verifierBackend: null,
+    verifierBackend: "qatar-fltstatus",
     brand: {
       title: "Qatar Airways Starlink Tracker",
       tagline: "Tracking Qatar Airways aircraft with Starlink WiFi",
       siteTitle: "Qatar Starlink Tracker — Which Flights Have Free Starlink WiFi?",
       description:
-        "Track which Qatar Airways flights have free Starlink WiFi. Live status for every Starlink-equipped aircraft and upcoming flight schedules.",
+        "Track which Qatar Airways flights have free Starlink WiFi. Every Boeing 777 and Airbus A350 has Starlink (rollout complete December 2025); the Boeing 787 fleet is mid-installation. Check your flight by number and date.",
       ogTitle: "Qatar Airways Starlink Tracker",
       ogDescription:
-        "Live statistics showing Qatar Airways Starlink WiFi installation progress across the fleet.",
+        "Boeing 777 + A350 fleets are 100% Starlink-equipped; B787 rollout in progress. Check your QR flight to see which aircraft is scheduled.",
       keywords:
-        "qatar airways starlink, qatar starlink tracker, qatar wifi, B777 starlink, A350 starlink, check qatar flight starlink",
+        "qatar airways starlink, qatar starlink tracker, qatar wifi, B777 starlink, A350 starlink, B787 starlink, check qatar flight starlink, qr wifi",
       accentColor: "#5c0632",
       accentColorDim: "#8a2851",
       faviconPath: "/favicon.ico",
       analyticsDomain: "qatarstarlinktracker.com",
       pressReleaseUrl:
-        "https://www.qatarairways.com/en/press-releases/2024/october/starlink-b777.html",
+        "https://www.qatarairways.com/press-releases/en-WW/259315-qatar-airways-launches-world-s-first-starlink-equipped-boeing-787-and-completes-airbus-a350-starlink-rollout-connecting-over-11-millio/",
     },
   },
 };
@@ -265,7 +305,9 @@ export function enabledAirlines(): AirlineConfig[] {
   return Object.values(AIRLINES).filter((a) => a.enabled);
 }
 
-export const HUB_HOSTS = ["airlinestarlinktracker.com", "www.airlinestarlinktracker.com"];
+export function publicAirlines(): AirlineConfig[] {
+  return enabledAirlines().filter((a) => a.publicInHub);
+}
 
 const HUB_BRAND: PageBrand = {
   title: "Airline Starlink Tracker",
@@ -284,6 +326,116 @@ const HUB_BRAND: PageBrand = {
   analyticsDomain: "airlinestarlinktracker.com",
 };
 
+const DEFAULT_ANALYTICS_SCRIPT = "https://analytics.martinamps.com/js/script.js";
+const DEFAULT_ANALYTICS_EVENT_API = "https://analytics.martinamps.com/api/event";
+
+const AIRLINE_SITE_FEATURES: SiteFeatures = {
+  homeNav: true,
+  checkFlightPage: true,
+  routePlannerPage: true,
+  fleetPage: true,
+  mcpPage: false,
+  chromeExtension: false,
+};
+
+export const SITES: Record<string, SiteConfig> = {
+  united: {
+    key: "united",
+    scope: "UA",
+    live: true,
+    hosts: ["unitedstarlinktracker.com", "www.unitedstarlinktracker.com"],
+    canonicalHost: "unitedstarlinktracker.com",
+    brand: AIRLINES.UA.brand,
+    analytics: {
+      scriptSrc: DEFAULT_ANALYTICS_SCRIPT,
+      dataDomain: AIRLINES.UA.brand.analyticsDomain,
+      eventApiUrl: DEFAULT_ANALYTICS_EVENT_API,
+    },
+    features: {
+      ...AIRLINE_SITE_FEATURES,
+      mcpPage: true,
+      chromeExtension: true,
+    },
+  },
+  airline: {
+    key: "airline",
+    scope: "ALL",
+    live: true,
+    hosts: ["airlinestarlinktracker.com", "www.airlinestarlinktracker.com"],
+    canonicalHost: "airlinestarlinktracker.com",
+    brand: HUB_BRAND,
+    analytics: {
+      scriptSrc: DEFAULT_ANALYTICS_SCRIPT,
+      dataDomain: HUB_BRAND.analyticsDomain,
+      eventApiUrl: DEFAULT_ANALYTICS_EVENT_API,
+    },
+    features: {
+      homeNav: false,
+      checkFlightPage: false,
+      routePlannerPage: false,
+      fleetPage: true,
+      mcpPage: false,
+      chromeExtension: false,
+    },
+  },
+  hawaiian: {
+    key: "hawaiian",
+    scope: "HA",
+    live: false,
+    hosts: ["hawaiianstarlinktracker.com", "www.hawaiianstarlinktracker.com"],
+    canonicalHost: "hawaiianstarlinktracker.com",
+    brand: AIRLINES.HA.brand,
+    analytics: {
+      scriptSrc: DEFAULT_ANALYTICS_SCRIPT,
+      dataDomain: AIRLINES.HA.brand.analyticsDomain,
+      eventApiUrl: DEFAULT_ANALYTICS_EVENT_API,
+    },
+    features: AIRLINE_SITE_FEATURES,
+  },
+  alaska: {
+    key: "alaska",
+    scope: "AS",
+    live: false,
+    hosts: ["alaskastarlinktracker.com", "www.alaskastarlinktracker.com"],
+    canonicalHost: "alaskastarlinktracker.com",
+    brand: AIRLINES.AS.brand,
+    analytics: {
+      scriptSrc: DEFAULT_ANALYTICS_SCRIPT,
+      dataDomain: AIRLINES.AS.brand.analyticsDomain,
+      eventApiUrl: DEFAULT_ANALYTICS_EVENT_API,
+    },
+    features: AIRLINE_SITE_FEATURES,
+  },
+  qatar: {
+    key: "qatar",
+    scope: "QR",
+    live: false,
+    hosts: ["qatarstarlinktracker.com", "www.qatarstarlinktracker.com"],
+    canonicalHost: "qatarstarlinktracker.com",
+    brand: AIRLINES.QR.brand,
+    analytics: {
+      scriptSrc: DEFAULT_ANALYTICS_SCRIPT,
+      dataDomain: AIRLINES.QR.brand.analyticsDomain,
+      eventApiUrl: DEFAULT_ANALYTICS_EVENT_API,
+    },
+    // Route planner reads flight_routes/departure_log, both empty for QR until
+    // we ingest historical assignments. Hide the page rather than ship a
+    // permanently-empty UX.
+    features: { ...AIRLINE_SITE_FEATURES, routePlannerPage: false },
+  },
+};
+
+function allSites(): SiteConfig[] {
+  return Object.values(SITES);
+}
+
+function siteForScope(scope: AirlineCode | "ALL", liveOnly = false): SiteConfig | null {
+  if (liveOnly) {
+    return allSites().find((site) => site.scope === scope && site.live) ?? null;
+  }
+  return allSites().find((site) => site.scope === scope) ?? null;
+}
+
 export function tenantBrand(tenant: Tenant): PageBrand {
   return tenant === "ALL" ? HUB_BRAND : tenant.brand;
 }
@@ -296,7 +448,6 @@ export function brandMetadata(brand: PageBrand) {
     ogTitle: brand.ogTitle,
     ogDescription: brand.ogDescription,
     keywords: brand.keywords,
-    analyticsUrl: brand.analyticsDomain,
     siteName: brand.title,
     accentColor: brand.accentColor,
     accentColorDim: brand.accentColorDim,
@@ -309,25 +460,86 @@ const LOCAL_HOSTS = ["localhost", "127.0.0.1", "0.0.0.0"];
 
 export type Tenant = AirlineConfig | "ALL";
 
+export function siteTenant(site: SiteConfig): Tenant {
+  return site.scope === "ALL" ? "ALL" : AIRLINES[site.scope];
+}
+
+export function resolveSite(host: string | null): SiteConfig | null {
+  if (!host) return null;
+  const h = host.split(":")[0].toLowerCase();
+
+  for (const site of allSites()) {
+    if (site.hosts.includes(h)) return site;
+  }
+
+  if (LOCAL_HOSTS.includes(h)) {
+    const devSite = process.env.DEV_SITE;
+    if (devSite && SITES[devSite]) return SITES[devSite];
+
+    const dev = process.env.DEV_TENANT;
+    if (dev === "ALL") return siteForScope("ALL", true) ?? SITES.airline;
+
+    if (dev && AIRLINES[dev]) {
+      return siteForScope(dev, true) ?? siteForScope(dev) ?? SITES.united;
+    }
+
+    return SITES.united;
+  }
+
+  return null;
+}
+
+export function siteForAirline(code: AirlineCode, liveOnly = false): SiteConfig | null {
+  return siteForScope(code, liveOnly);
+}
+
+export function airlineHomeUrl(
+  code: AirlineCode,
+  query?: Record<string, string | number | undefined>
+): string {
+  const liveSite = siteForAirline(code, true);
+  const targetHost = liveSite?.canonicalHost ?? SITES.airline.canonicalHost;
+  const url = new URL(`https://${targetHost}/`);
+
+  if (!liveSite) {
+    url.searchParams.set("filter", code);
+  }
+
+  for (const [key, value] of Object.entries(query ?? {})) {
+    if (value !== undefined && value !== "") {
+      url.searchParams.set(key, String(value));
+    }
+  }
+
+  return url.toString();
+}
+
+export function analyticsOrigins() {
+  const scriptOrigins = new Set<string>();
+  const connectOrigins = new Set<string>();
+
+  for (const site of allSites()) {
+    if (!site.analytics) continue;
+    scriptOrigins.add(new URL(site.analytics.scriptSrc).origin);
+    if (site.analytics.eventApiUrl) {
+      connectOrigins.add(new URL(site.analytics.eventApiUrl).origin);
+    }
+  }
+
+  return {
+    scriptOrigins: [...scriptOrigins].sort(),
+    connectOrigins: [...connectOrigins].sort(),
+  };
+}
+
 /**
  * Resolve the tenant from an incoming Host header.
  * - Matches an airline's hosts → that AirlineConfig
- * - Matches HUB_HOSTS → 'ALL'
+ * - Matches the hub site's hosts → 'ALL'
  * - localhost → AIRLINES[DEV_TENANT ?? 'UA']
  * - Anything else → null (caller responds 421)
  */
 export function resolveTenant(host: string | null): Tenant | null {
-  if (!host) return null;
-  const h = host.split(":")[0].toLowerCase();
-
-  for (const cfg of Object.values(AIRLINES)) {
-    if (cfg.hosts.includes(h)) return cfg;
-  }
-  if (HUB_HOSTS.includes(h)) return "ALL";
-  if (LOCAL_HOSTS.includes(h)) {
-    const dev = process.env.DEV_TENANT;
-    if (dev === "ALL") return "ALL";
-    return AIRLINES[dev ?? "UA"] ?? AIRLINES.UA;
-  }
-  return null;
+  const site = resolveSite(host);
+  return site ? siteTenant(site) : null;
 }

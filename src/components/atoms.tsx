@@ -1,4 +1,5 @@
 import React from "react";
+import { airlineHomeUrl } from "../airlines/registry";
 import type { RecentInstall } from "../types";
 import type { Aircraft, PerAirlineStat } from "../types";
 
@@ -27,11 +28,7 @@ export function RolloutLeaderboard({ stats }: { stats: PerAirlineStat[] }) {
       </div>
       <div className="space-y-3">
         {ranked.map((a) => (
-          <a
-            key={a.code}
-            href={a.canonicalHost ? `https://${a.canonicalHost}/` : "#"}
-            className="block group"
-          >
+          <a key={a.code} href={a.href || "#"} className="block group">
             <div className="flex items-baseline justify-between mb-1.5">
               <div className="flex items-baseline gap-2">
                 <span
@@ -112,9 +109,7 @@ export function RecentInstallsFeed({
                 return (
                   <a
                     key={r.TailNumber}
-                    href={
-                      cfg?.canonicalHost ? `https://${cfg.canonicalHost}/?q=${r.TailNumber}` : "#"
-                    }
+                    href={cfg ? airlineHomeUrl(cfg.code, { q: r.TailNumber }) : "#"}
                     className="flex items-center gap-2 px-2 py-1 rounded hover:bg-surface-elevated transition-colors group"
                   >
                     <span
