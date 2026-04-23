@@ -79,6 +79,17 @@ describe("tenant resolution", () => {
     expect([200, 404]).toContain(r.status); // 404 if static file absent in test env, but never 421
     expect(r.status).not.toBe(421);
   });
+
+  test("site.webmanifest is branded per host", async () => {
+    const uaManifest = await app.dispatch(req("/site.webmanifest", UA));
+    const hubManifest = await app.dispatch(req("/site.webmanifest", HUB));
+
+    expect(uaManifest.status).toBe(200);
+    expect(hubManifest.status).toBe(200);
+
+    expect(await uaManifest.json()).toMatchObject({ name: "United Airlines Starlink Tracker" });
+    expect(await hubManifest.json()).toMatchObject({ name: "Airline Starlink Tracker" });
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -363,6 +374,110 @@ describe("hub host shows enabled airlines only", () => {
     expect(text).toContain("N644AS");
     expect(text).not.toContain("A7-TST");
   });
+
+  test("homepage links stay on the live generic hub for unlaunched airlines", async () => {
+    const { text } = await bodyOf("/", HUB);
+    expect(text).toContain("https://airlinestarlinktracker.com/?filter=HA");
+    expect(text).toContain("https://airlinestarlinktracker.com/?filter=AS");
+    expect(text).not.toContain("https://hawaiianstarlinktracker.com/");
+    expect(text).not.toContain("https://alaskastarlinktracker.com/");
+    expect(text).not.toContain("https://qatarstarlinktracker.com/");
+  });
+
+  test("hub sitemap stays generic", async () => {
+    const { text } = await bodyOf("/sitemap.xml", HUB);
+    expect(text).toContain("<loc>https://airlinestarlinktracker.com/</loc>");
+    expect(text).toContain("<loc>https://airlinestarlinktracker.com/fleet</loc>");
+    expect(text).not.toContain("/check-flight</loc>");
+    expect(text).not.toContain("/route-planner</loc>");
+    expect(text).not.toContain("/mcp</loc>");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("MCP per-host branding + scope override", () => {
+  const QR_HOST = "qatarstarlinktracker.com";
+
+  async function mcpInit(host: string, query = "") {
+    const r = await app.dispatch(
+      new Request(`http://x/mcp${query}`, {
+        method: "POST",
+        headers: { Host: host, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t" } },
+        }),
+      })
+    );
+    return r.json();
+  }
+
+  test("UA host: serverInfo.name = united-starlink-tracker", async () => {
+    const j = await mcpInit(UA);
+    expect(j.result.serverInfo.name).toBe("united-starlink-tracker");
+    expect(j.result.instructions).toContain("Scope: United Airlines");
+  });
+
+  test("QR host: serverInfo + instructions reflect Qatar", async () => {
+    const j = await mcpInit(QR_HOST);
+    expect(j.result.serverInfo.name).toBe("qatar-starlink-tracker");
+    expect(j.result.instructions).toContain("Scope: Qatar Airways");
+    expect(j.result.instructions).not.toContain("UNITED ONLY");
+  });
+
+  test("hub host: serverInfo = airline-starlink-tracker", async () => {
+    const j = await mcpInit(HUB);
+    expect(j.result.serverInfo.name).toBe("airline-starlink-tracker");
+    expect(j.result.instructions).toContain("Scope: tracked airlines");
+  });
+
+  test("?scope=ALL on QR host overrides to hub scope", async () => {
+    const j = await mcpInit(QR_HOST, "?scope=ALL");
+    expect(j.result.serverInfo.name).toBe("airline-starlink-tracker");
+    expect(j.result.instructions).toContain("override of host default");
+  });
+
+  test("?scope=UA on hub host overrides to UA scope", async () => {
+    const j = await mcpInit(HUB, "?scope=UA");
+    expect(j.result.serverInfo.name).toBe("united-starlink-tracker");
+    expect(j.result.instructions).toContain("override of host default via ?scope=UA");
+  });
+
+  test("invalid ?scope= silently falls back to host scope", async () => {
+    const j = await mcpInit(QR_HOST, "?scope=BOGUS");
+    expect(j.result.serverInfo.name).toBe("qatar-starlink-tracker");
+  });
+
+  test("tools/list descriptions are templated with airline name", async () => {
+    const r = await app.dispatch(mcpReq(QR_HOST, "tools/list", {}));
+    const j = await r.json();
+    const checkFlight = j.result.tools.find((t: { name: string }) => t.name === "check_flight");
+    expect(checkFlight.description).toContain("Qatar Airways");
+    expect(checkFlight.description).not.toContain("United Airlines");
+  });
+});
+
+describe("QR site features", () => {
+  const QR_HOST = "qatarstarlinktracker.com";
+
+  test("/route-planner is disabled (404) on QR host", async () => {
+    const r = await app.dispatch(req("/route-planner", QR_HOST));
+    expect(r.status).toBe(404);
+  });
+
+  test("/check-flight remains enabled on QR host", async () => {
+    const r = await app.dispatch(req("/check-flight", QR_HOST));
+    expect(r.status).toBe(200);
+  });
+
+  test("QR sitemap omits /route-planner", async () => {
+    const { text } = await bodyOf("/sitemap.xml", QR_HOST);
+    expect(text).toContain("<loc>https://qatarstarlinktracker.com/check-flight</loc>");
+    expect(text).not.toContain("/route-planner</loc>");
+  });
 });
 
 describe("AS host isolation", () => {
@@ -410,6 +525,7 @@ describe("route-table coverage", () => {
     const tested = new Set(
       ENDPOINTS.map((e) => e.split("?")[0]).concat([
         "/mcp",
+        "/site.webmanifest",
         "/api/plan-route",
         "/api/predict-flight",
         "/api/check-any-flight",

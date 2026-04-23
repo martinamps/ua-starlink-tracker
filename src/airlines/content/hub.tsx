@@ -5,7 +5,7 @@ import {
   RolloutLeaderboard,
   RouteComparePanel,
 } from "../../components/atoms";
-import { enabledAirlines } from "../registry";
+import { publicAirlines } from "../registry";
 import type { AirlineContent, HeroProps } from "./index";
 
 const HubHero = ({ stats, perAirlineStats = [], recentInstalls = [] }: HeroProps) => {
@@ -113,7 +113,7 @@ export const content: AirlineContent = {
 
   rowBadge: (_p, airline) => airline,
 
-  subfleetFilters: enabledAirlines().map((a) => ({ key: a.code, label: a.name })),
+  subfleetFilters: publicAirlines().map((a) => ({ key: a.code, label: a.name })),
 
   faq: [
     {
@@ -127,12 +127,11 @@ export const content: AirlineContent = {
               have it, with mainline 737s and widebodies being equipped through 2026.{" "}
               <strong>Hawaiian Airlines</strong> finished in September 2024: every A330 and A321neo
               has Starlink. <strong>Alaska Airlines</strong> is rolling out across its 737 fleet
-              through 2027. <strong>Qatar Airways</strong> is equipping its 777 and A350 fleet. We
-              currently track <span className="text-accent">{starlinkCount}</span> Starlink-equipped
-              aircraft.
+              through 2027. We currently track <span className="text-accent">{starlinkCount}</span>{" "}
+              Starlink-equipped aircraft.
             </p>
           ),
-          ld: "United Airlines is mid-rollout across mainline and Express fleets. Hawaiian Airlines completed its rollout in September 2024 — every A330 and A321neo has Starlink. Alaska Airlines is rolling out through 2027. Qatar Airways is equipping its 777 and A350 fleet.",
+          ld: "United Airlines is mid-rollout across mainline and Express fleets. Hawaiian Airlines completed its rollout in September 2024 — every A330 and A321neo has Starlink. Alaska Airlines is rolling out through 2027.",
         },
         {
           q: "Hawaiian's rollout is complete — why isn't it 100%?",
@@ -162,12 +161,12 @@ export const content: AirlineContent = {
           q: "Is Starlink WiFi free on these airlines?",
           a: () => (
             <p>
-              Yes — United, Hawaiian, Alaska, and Qatar all offer Starlink free to every passenger,
+              Yes — United, Hawaiian, and Alaska all offer Starlink free to every passenger,
               gate-to-gate, with no login wall or loyalty requirement. This is a deliberate contrast
               with the paid legacy WiFi most carriers still use.
             </p>
           ),
-          ld: "Yes. United, Hawaiian, Alaska, and Qatar all offer Starlink WiFi free to every passenger, gate-to-gate.",
+          ld: "Yes. United, Hawaiian, and Alaska all offer Starlink WiFi free to every passenger, gate-to-gate.",
         },
       ],
     },

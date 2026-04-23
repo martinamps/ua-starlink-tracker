@@ -21,14 +21,14 @@ import {
 } from "../airlines/flight-number";
 import {
   AIRLINES,
-  HUB_HOSTS,
+  type SiteConfig,
   brandMetadata,
-  enabledAirlines,
-  resolveTenant,
-  tenantBrand,
+  publicAirlines,
+  resolveSite,
 } from "../airlines/registry";
 import { lookupFlightTailVerdict } from "../api/flight-verdict";
 import { handleMcpRequest } from "../api/mcp-server";
+import { qatarEquipmentName, qatarEquipmentToWifi } from "../api/qatar-status";
 import CheckFlightPage from "../components/check-flight-page";
 import FleetPage from "../components/fleet-page";
 import McpPage from "../components/mcp-page";
@@ -99,17 +99,94 @@ function methodNotAllowed(json = false): Response {
       });
 }
 
+function analyticsSnippet(site: SiteConfig): string {
+  const analytics = site.analytics;
+  if (!analytics) return "";
+  return `<script defer data-domain="${analytics.dataDomain}" src="${analytics.scriptSrc}"></script>`;
+}
+
+function jsonLdBlock(payload: unknown): string {
+  return `<script type="application/ld+json">${JSON.stringify(payload)}</script>`;
+}
+
+function chromeExtensionJsonLd(site: SiteConfig): string {
+  if (!site.features.chromeExtension) return "";
+  return jsonLdBlock({
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    name: "United Starlink Checker for Google Flights",
+    operatingSystem: "Chrome",
+    applicationCategory: "BrowserApplication",
+    description:
+      "Check which Google Flights results have Starlink WiFi. See Starlink availability while you search for United flights.",
+    url: "https://chromewebstore.google.com/detail/google-flights-starlink-i/jjfljoifenkfdbldliakmmjhdkbhehoi",
+    offers: {
+      "@type": "Offer",
+      price: "0",
+      priceCurrency: "USD",
+    },
+  });
+}
+
+function siteWebJsonLd(site: SiteConfig): string {
+  return jsonLdBlock({
+    "@context": "https://schema.org",
+    "@type": "WebSite",
+    name: site.brand.title,
+    description: site.brand.description,
+    url: `https://${site.canonicalHost}/`,
+    potentialAction: {
+      "@type": "SearchAction",
+      target: `https://${site.canonicalHost}/?q={search_term_string}`,
+      "query-input": "required name=search_term_string",
+    },
+  });
+}
+
+function sitePageJsonLd(site: SiteConfig, isoDate: string): string {
+  return jsonLdBlock({
+    "@context": "https://schema.org",
+    "@type": "WebPage",
+    name: site.brand.siteTitle,
+    description: site.brand.description,
+    url: `https://${site.canonicalHost}/`,
+    dateModified: isoDate,
+    isPartOf: {
+      "@type": "WebSite",
+      name: site.brand.title,
+      url: `https://${site.canonicalHost}/`,
+    },
+  });
+}
+
+function siteManifest(site: SiteConfig): Response {
+  return new Response(
+    JSON.stringify({
+      name: site.brand.title,
+      short_name: site.brand.title.replace(/ Starlink Tracker$/i, ""),
+      icons: [
+        { src: "/android-chrome-192x192.png", sizes: "192x192", type: "image/png" },
+        { src: "/android-chrome-512x512.png", sizes: "512x512", type: "image/png" },
+      ],
+      theme_color: site.brand.accentColor,
+      background_color: "#0a0f1a",
+      display: "standalone",
+    }),
+    {
+      headers: {
+        "Content-Type": "application/manifest+json",
+        "Cache-Control": "public, max-age=86400",
+      },
+    }
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Static-file routes (tenant-agnostic)
 // ─────────────────────────────────────────────────────────────────────────────
 
 const STATIC_FILES = [
   { path: "/favicon.ico", filename: "favicon.ico", contentType: "image/x-icon" },
-  {
-    path: "/site.webmanifest",
-    filename: "site.webmanifest",
-    contentType: "application/manifest+json",
-  },
   { path: "/apple-touch-icon.png", filename: "apple-touch-icon.png", contentType: "image/png" },
   {
     path: "/android-chrome-192x192.png",
@@ -168,6 +245,103 @@ const apiData: Handler = ({ req, reader }) => {
   return new Response(JSON.stringify(response), { headers: SECURITY_HEADERS.api });
 };
 
+/**
+ * QR's data shape doesn't fit the upcoming_flights → starlink_planes JOIN that
+ * other carriers use (no per-tail signal from QR's flight-status API). Serve
+ * straight from qatar_schedule, which the ingester keeps fresh hourly.
+ *
+ * Contract divergence: the UA endpoint returns `hasStarlink: boolean`. This
+ * one returns `boolean | null` — null is the right answer when QR ships a
+ * "rolling" subfleet (787) where we have no per-tail signal, or when distinct
+ * equipment types are scheduled on the same flight number. Callers on the QR
+ * host should expect tri-state. The Chrome extension only hits the UA host,
+ * so its boolean contract isn't affected.
+ */
+function apiCheckFlightQatar(
+  reader: ScopedReader,
+  cfg: typeof AIRLINES.QR,
+  flightNumber: string,
+  startOfDay: number,
+  endOfDay: number
+): Response {
+  const normalized = ensureAirlinePrefix(cfg, flightNumber);
+  const numeric = normalized.replace(/^[A-Z]+/, "");
+  // Match both unpadded and zero-padded forms ("QR1" and "QR001") since the
+  // ingester writes "QR1" but users may type either.
+  const padded = `QR${numeric.padStart(3, "0")}`;
+  const stripped = `QR${String(Number.parseInt(numeric, 10) || 0)}`;
+  const variants = Array.from(new Set([normalized, padded, stripped]));
+  const rows = reader.getQatarScheduleByFlight(variants, startOfDay, endOfDay);
+
+  if (rows.length === 0) {
+    return new Response(
+      JSON.stringify({
+        hasStarlink: null,
+        airline: cfg.name,
+        confidence: "no_data",
+        reason:
+          "No schedule data for this Qatar flight. Coverage is limited to high-traffic routes for the next ~48h; check back closer to departure.",
+        flights: [],
+      }),
+      { headers: SECURITY_HEADERS.api }
+    );
+  }
+
+  const verdicts = rows.map((r) => r.wifi_verdict);
+  const allStarlink = verdicts.every((v) => v === "Starlink");
+  const anyRolling = verdicts.some((v) => v === "Rolling");
+  const allNone = verdicts.every((v) => v === "None");
+  const distinctEquipment = [...new Set(rows.map((r) => qatarEquipmentName(r.equipment_code)))];
+
+  let hasStarlink: boolean | null;
+  let confidence: string;
+  let reason: string;
+  if (allStarlink) {
+    hasStarlink = true;
+    confidence = "verified";
+    reason = `${distinctEquipment.join(", ")} — Qatar Airways completed Starlink installation on this aircraft type.`;
+  } else if (allNone) {
+    hasStarlink = false;
+    confidence = "verified";
+    reason = `${distinctEquipment.join(", ")} — not part of Qatar's Starlink rollout.`;
+  } else if (anyRolling) {
+    hasStarlink = null;
+    confidence = "rolling";
+    reason = `${distinctEquipment.join(", ")} — Qatar's 787 Starlink rollout is in progress; this aircraft may or may not be equipped yet.`;
+  } else {
+    hasStarlink = null;
+    confidence = "mixed";
+    reason = `Mixed equipment scheduled (${distinctEquipment.join(", ")}) — outcome depends on which aircraft operates.`;
+  }
+
+  return new Response(
+    JSON.stringify({
+      hasStarlink,
+      airline: cfg.name,
+      confidence,
+      reason,
+      flights: rows.map((r) => ({
+        flight_number: r.flight_number,
+        aircraft_type: qatarEquipmentName(r.equipment_code),
+        equipment_code: r.equipment_code,
+        wifi_verdict: r.wifi_verdict,
+        departure_airport: r.departure_airport,
+        arrival_airport: r.arrival_airport,
+        departure_time: r.departure_time,
+        arrival_time: r.arrival_time,
+        departure_time_formatted: r.departure_time
+          ? new Date(r.departure_time * 1000).toISOString()
+          : null,
+        arrival_time_formatted: r.arrival_time
+          ? new Date(r.arrival_time * 1000).toISOString()
+          : null,
+        flight_status: r.flight_status,
+      })),
+    }),
+    { headers: SECURITY_HEADERS.api }
+  );
+}
+
 const apiCheckFlight: Handler = async ({ req, url, reader, tenant }) => {
   if (req.method !== "GET") return methodNotAllowed(true);
   // TODO Phase-2: hub ('ALL') should infer airline from flight-number prefix.
@@ -191,6 +365,10 @@ const apiCheckFlight: Handler = async ({ req, url, reader, tenant }) => {
   }
   const startOfDay = Math.floor(dateObj.getTime() / 1000);
   const endOfDay = startOfDay + 86400;
+
+  if (cfg.code === "QR") {
+    return apiCheckFlightQatar(reader, cfg, flightNumber, startOfDay, endOfDay);
+  }
 
   const normalizedFlightNumber = ensureAirlinePrefix(cfg, flightNumber);
   const variants = buildAirlineFlightNumberVariants(cfg, normalizedFlightNumber);
@@ -298,13 +476,12 @@ const apiCheckAnyFlight: Handler = ({ req, url, reader, getReader, tenant }) => 
     );
   }
 
-  const cfg = detectAirline(flightNumber);
+  const publicHubAirlines = publicAirlines();
+  const cfg = detectAirline(flightNumber, publicHubAirlines);
   if (!cfg) {
     return new Response(
       JSON.stringify({
-        error: `Airline not tracked. Tracked: ${enabledAirlines()
-          .map((a) => a.iata)
-          .join(", ")}`,
+        error: `Airline not tracked. Tracked: ${publicHubAirlines.map((a) => a.iata).join(", ")}`,
       }),
       { status: 200, headers: SECURITY_HEADERS.api }
     );
@@ -319,6 +496,10 @@ const apiCheckAnyFlight: Handler = ({ req, url, reader, getReader, tenant }) => 
   }
   const startOfDay = Math.floor(dateObj.getTime() / 1000);
   const endOfDay = startOfDay + 86400;
+
+  // No QR branch here: QR is publicInHub:false, so detectAirline(flightNumber,
+  // publicHubAirlines) above never returns QR. QR-specific check-flight is
+  // served only by the per-host /api/check-flight on qatarstarlinktracker.com.
 
   const normalized = ensureAirlinePrefix(cfg, flightNumber);
   const variants = buildAirlineFlightNumberVariants(cfg, normalized);
@@ -515,9 +696,15 @@ const apiFleetDiscovery: Handler = ({ req, reader }) => {
 };
 
 const mcp: Handler = async (ctx) => {
-  const { req, reader } = ctx;
+  const { req, getReader, site, tenant } = ctx;
   const accept = req.headers.get("accept") || "";
   if (req.method === "GET" && accept.includes("text/html")) {
+    if (!site.features.mcpPage) {
+      return new Response(getNotFoundHtml(site.brand), {
+        status: 404,
+        headers: SECURITY_HEADERS.notFound,
+      });
+    }
     return renderSubPage(ctx, McpPage, "/mcp", {
       siteTitle: "Add Starlink Tracker to Claude — United Starlink MCP Connector",
       siteDescription:
@@ -529,16 +716,14 @@ const mcp: Handler = async (ctx) => {
         "Paste one URL into Claude Desktop. Ask Claude about United Starlink flights, probabilities, and routing.",
     });
   }
-  return handleMcpRequest(req, reader);
+  return handleMcpRequest(req, tenantScope(tenant), getReader, site.analytics);
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SEO / text routes
 // ─────────────────────────────────────────────────────────────────────────────
 
-const robotsTxt: Handler = ({ tenant }) => {
-  const cfg = tenantConfig(tenant);
-  const host = cfg?.canonicalHost ?? HUB_HOSTS[0];
+const robotsTxt: Handler = ({ site }) => {
   return new Response(
     `User-agent: GPTBot
 Allow: /
@@ -564,76 +749,87 @@ Disallow: /api/
 Disallow: /mcp
 Disallow: /debug/
 
-Sitemap: https://${host}/sitemap.xml`,
+Sitemap: https://${site.canonicalHost}/sitemap.xml`,
     { headers: { "Content-Type": "text/plain", "Cache-Control": "public, max-age=86400" } }
   );
 };
 
-const sitemap: Handler = ({ reader, tenant }) => {
-  const cfg = tenantConfig(tenant);
-  const baseUrl = `https://${cfg?.canonicalHost ?? HUB_HOSTS[0]}`;
+const sitemap: Handler = ({ reader, site }) => {
+  const baseUrl = `https://${site.canonicalHost}`;
   const lastUpdated = reader.getLastUpdated();
+  const entries = [
+    { path: "/", changefreq: "hourly", priority: "1.0", lastmod: lastUpdated },
+    ...(site.features.checkFlightPage
+      ? [{ path: "/check-flight", changefreq: "weekly", priority: "0.8" }]
+      : []),
+    ...(site.features.routePlannerPage
+      ? [{ path: "/route-planner", changefreq: "weekly", priority: "0.8" }]
+      : []),
+    ...(site.features.fleetPage ? [{ path: "/fleet", changefreq: "daily", priority: "0.7" }] : []),
+    ...(site.features.mcpPage ? [{ path: "/mcp", changefreq: "monthly", priority: "0.6" }] : []),
+  ];
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url>
-    <loc>${baseUrl}/</loc>
-    <lastmod>${lastUpdated ? new Date(lastUpdated).toISOString() : new Date().toISOString()}</lastmod>
-    <changefreq>hourly</changefreq>
-    <priority>1.0</priority>
-  </url>
-  <url>
-    <loc>${baseUrl}/check-flight</loc>
-    <lastmod>${new Date().toISOString()}</lastmod>
-    <changefreq>weekly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>${baseUrl}/route-planner</loc>
-    <lastmod>${new Date().toISOString()}</lastmod>
-    <changefreq>weekly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>${baseUrl}/fleet</loc>
-    <lastmod>${new Date().toISOString()}</lastmod>
-    <changefreq>daily</changefreq>
-    <priority>0.7</priority>
-  </url>
-  <url>
-    <loc>${baseUrl}/mcp</loc>
-    <lastmod>${new Date().toISOString()}</lastmod>
-    <changefreq>monthly</changefreq>
-    <priority>0.6</priority>
-  </url>
+${entries
+  .map(
+    (entry) => `  <url>
+    <loc>${baseUrl}${entry.path}</loc>
+    <lastmod>${entry.lastmod ? new Date(entry.lastmod).toISOString() : new Date().toISOString()}</lastmod>
+    <changefreq>${entry.changefreq}</changefreq>
+    <priority>${entry.priority}</priority>
+  </url>`
+  )
+  .join("\n")}
 </urlset>`;
   return new Response(xml, {
     headers: { "Content-Type": "application/xml", "Cache-Control": "public, max-age=3600" },
   });
 };
 
-const llmsTxt: Handler = ({ tenant }) => {
+const llmsTxt: Handler = ({ site, tenant }) => {
   const cfg = tenantConfig(tenant);
-  const brand = tenantBrand(tenant);
-  const host = cfg?.canonicalHost ?? HUB_HOSTS[0];
+  const brand = site.brand;
+  const host = site.canonicalHost;
   const name = cfg?.name ?? "major airlines";
   const isHub = tenant === "ALL";
 
   const homepage = `- [Homepage](https://${host}/): Live tracker with all Starlink-equipped aircraft, fleet statistics, search by tail number/flight number/route`;
   const apiData = `- [API - Fleet Data](https://${host}/api/data): Full JSON dataset of all Starlink-equipped aircraft and flights`;
-  const tenantPages = cfg
-    ? [
-        `- [Check a Flight](https://${host}/check-flight): Check if a specific ${cfg.name} flight has Starlink WiFi by flight number and date. Falls back to probability estimate for future flights.`,
-        `- [Route Planner](https://${host}/route-planner): Find the best routing (direct or 1-stop) to maximize Starlink coverage. Ranks itineraries by probability.`,
-        `- [Fleet Rollout](https://${host}/fleet): See all ${cfg.name} aircraft colored by WiFi provider.`,
-        `- [API - Check Flight](https://${host}/api/check-flight?flight_number=${cfg.iata}123&date=2026-01-22): JSON API to check Starlink status for a specific flight`,
-        `- [API - Predict Flight](https://${host}/api/predict-flight?flight_number=${cfg.iata}4680): Probability estimate based on historical observations`,
-        `- [API - Plan Route](https://${host}/api/plan-route?origin=SFO&destination=JAX): Full/partial coverage itinerary search`,
-      ]
-    : [
-        `- [API - Check Any Flight](https://${host}/api/check-any-flight?flight_number=UA123&date=2026-01-22): Check Starlink status for a flight on any tracked airline`,
-        `- [API - Compare Route](https://${host}/api/compare-route?origin=SFO&destination=HNL): Per-airline Starlink probability for a city pair`,
-      ];
+  const tenantPages = [
+    ...(cfg && site.features.checkFlightPage
+      ? [
+          `- [Check a Flight](https://${host}/check-flight): Check if a specific ${cfg.name} flight has Starlink WiFi by flight number and date. Falls back to probability estimate for future flights.`,
+        ]
+      : []),
+    ...(cfg && site.features.routePlannerPage
+      ? [
+          `- [Route Planner](https://${host}/route-planner): Find the best routing (direct or 1-stop) to maximize Starlink coverage. Ranks itineraries by probability.`,
+        ]
+      : []),
+    ...(site.features.fleetPage
+      ? [
+          `- [Fleet Rollout](https://${host}/fleet): See all ${cfg?.name ?? "tracked-airline"} aircraft colored by WiFi provider.`,
+        ]
+      : []),
+    ...(cfg
+      ? [
+          `- [API - Check Flight](https://${host}/api/check-flight?flight_number=${cfg.iata}123&date=2026-01-22): JSON API to check Starlink status for a specific flight`,
+          `- [API - Predict Flight](https://${host}/api/predict-flight?flight_number=${cfg.iata}4680): Probability estimate based on historical observations`,
+          `- [API - Plan Route](https://${host}/api/plan-route?origin=SFO&destination=JAX): Full/partial coverage itinerary search`,
+        ]
+      : [
+          `- [API - Check Any Flight](https://${host}/api/check-any-flight?flight_number=UA123&date=2026-01-22): Check Starlink status for a flight on any tracked airline`,
+          `- [API - Compare Route](https://${host}/api/compare-route?origin=SFO&destination=HNL): Per-airline Starlink probability for a city pair`,
+        ]),
+  ];
   const pages = [homepage, ...tenantPages, apiData];
+  const mcpSection = site.features.mcpPage
+    ? `\n## MCP Server (for AI assistants)\n\n- [MCP Docs & Setup](https://${host}/mcp): Setup instructions for Claude Desktop, Cursor, and other MCP clients\n- [MCP Endpoint](https://${host}/mcp): Model Context Protocol server (POST with application/json). Tools: check_flight, predict_flight_starlink, plan_starlink_itinerary, predict_route_starlink, get_fleet_stats, list_starlink_aircraft, search_starlink_flights. Transport: streamable HTTP (stateless).\n`
+    : "";
+  const chromeSection =
+    site.features.chromeExtension && cfg?.code === "UA"
+      ? "\n## Chrome Extension\n\n- [Google Flights Starlink Indicator](https://chromewebstore.google.com/detail/google-flights-starlink-i/jjfljoifenkfdbldliakmmjhdkbhehoi): Free Chrome extension that shows Starlink badges on Google Flights search results\n"
+      : "";
 
   return new Response(
     `# ${brand.title}
@@ -644,13 +840,7 @@ ${isHub ? "Per-aircraft Starlink WiFi status across multiple airlines." : `Track
 
 ## Pages
 
-${pages.join("\n")}
-
-## MCP Server (for AI assistants)
-
-- [MCP Docs & Setup](https://${host}/mcp): Setup instructions for Claude Desktop, Cursor, and other MCP clients
-- [MCP Endpoint](https://${host}/mcp): Model Context Protocol server (POST with application/json). Tools: check_flight, predict_flight_starlink, plan_starlink_itinerary, predict_route_starlink, get_fleet_stats, list_starlink_aircraft, search_starlink_flights. Transport: streamable HTTP (stateless).
-${cfg?.code === "UA" ? "\n## Chrome Extension\n\n- [Google Flights Starlink Indicator](https://chromewebstore.google.com/detail/google-flights-starlink-i/jjfljoifenkfdbldliakmmjhdkbhehoi): Free Chrome extension that shows Starlink badges on Google Flights search results\n" : ""}`,
+${pages.join("\n")}${mcpSection}${chromeSection}`,
     {
       headers: {
         "Content-Type": "text/markdown; charset=utf-8",
@@ -665,30 +855,34 @@ ${cfg?.code === "UA" ? "\n## Chrome Extension\n\n- [Google Flights Starlink Indi
 // ─────────────────────────────────────────────────────────────────────────────
 
 function buildBaseTemplateVars(ctx: RequestContext, reactHtml: string): Record<string, string> {
-  const { reader, req, tenant } = ctx;
-  const brand = tenantBrand(tenant);
-  const cfg = tenantConfig(tenant);
-  const host = req.headers.get("host") || cfg?.canonicalHost || HUB_HOSTS[0];
+  const { reader, site } = ctx;
+  const brand = site.brand;
 
   const fleetStats = reader.getFleetStats();
   const totalCount = reader.getTotalCount();
   const starlinkCount = reader.getStarlinkPlanes().length;
   const percentage = totalCount > 0 ? ((starlinkCount / totalCount) * 100).toFixed(2) : "0.00";
+  const isoDate = new Date().toISOString();
 
   return {
     ...brandMetadata(brand),
     html: reactHtml,
-    host,
+    host: site.canonicalHost,
     totalCount: starlinkCount.toString(),
     totalAircraftCount: totalCount.toString(),
     lastUpdated: reader.getLastUpdated(),
     currentDate: new Date().toLocaleDateString(),
-    isoDate: new Date().toISOString(),
+    isoDate,
     mainlineCount: (fleetStats?.mainline.starlink || 0).toString(),
     expressCount: (fleetStats?.express.starlink || 0).toString(),
     percentage,
     mainlinePercentage: (fleetStats?.mainline.percentage || 0).toFixed(2),
     expressPercentage: (fleetStats?.express.percentage || 0).toFixed(2),
+    analyticsSnippet: analyticsSnippet(site),
+    headSnippet: site.headSnippet ?? "",
+    webSiteJsonLd: siteWebJsonLd(site),
+    webPageJsonLd: sitePageJsonLd(site, isoDate),
+    chromeExtensionJsonLd: chromeExtensionJsonLd(site),
     faqJsonLd: "",
   };
 }
@@ -700,9 +894,8 @@ async function renderSubPage<P extends object = object>(
   meta: PageMeta,
   props?: P
 ): Promise<Response> {
-  const brand = tenantBrand(ctx.tenant);
   const reactHtml = ReactDOMServer.renderToString(
-    React.createElement(component, { brand, ...(props ?? {}) } as P)
+    React.createElement(component, { brand: ctx.site.brand, site: ctx.site, ...(props ?? {}) } as P)
   );
   const htmlVariables: Record<string, string> = {
     ...buildBaseTemplateVars(ctx, reactHtml),
@@ -723,13 +916,14 @@ async function renderSubPage<P extends object = object>(
 }
 
 function subPageMeta(
-  tenant: RequestContext["tenant"],
+  ctx: RequestContext,
   page: "check-flight" | "route-planner" | "fleet"
 ): PageMeta {
+  const tenant = ctx.tenant;
   const cfg = tenantConfig(tenant);
-  const brand = tenantBrand(tenant);
-  const name = cfg?.name ?? "any tracked airline";
-  const short = cfg?.name ?? "Airline";
+  const brand = ctx.site.brand;
+  const name = cfg?.name ?? "tracked airlines";
+  const short = cfg?.name ?? "Tracked Fleets";
   if (page === "check-flight")
     return {
       siteTitle: `Check If Your ${short} Flight Has Starlink WiFi | ${brand.title}`,
@@ -758,34 +952,41 @@ function subPageMeta(
 
 const checkFlightPage: Handler = (ctx) => {
   if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
-  return renderSubPage(
-    ctx,
-    CheckFlightPage,
-    "/check-flight",
-    subPageMeta(ctx.tenant, "check-flight")
-  );
+  if (!ctx.site.features.checkFlightPage) {
+    return new Response(getNotFoundHtml(ctx.site.brand), {
+      status: 404,
+      headers: SECURITY_HEADERS.notFound,
+    });
+  }
+  return renderSubPage(ctx, CheckFlightPage, "/check-flight", subPageMeta(ctx, "check-flight"));
 };
 
 const routePlannerPage: Handler = (ctx) => {
   if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
-  return renderSubPage(
-    ctx,
-    RoutePlannerPage,
-    "/route-planner",
-    subPageMeta(ctx.tenant, "route-planner")
-  );
+  if (!ctx.site.features.routePlannerPage) {
+    return new Response(getNotFoundHtml(ctx.site.brand), {
+      status: 404,
+      headers: SECURITY_HEADERS.notFound,
+    });
+  }
+  return renderSubPage(ctx, RoutePlannerPage, "/route-planner", subPageMeta(ctx, "route-planner"));
 };
 
 const fleetPage: Handler = (ctx) => {
   if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
+  if (!ctx.site.features.fleetPage) {
+    return new Response(getNotFoundHtml(ctx.site.brand), {
+      status: 404,
+      headers: SECURITY_HEADERS.notFound,
+    });
+  }
   const data = ctx.reader.getFleetPageData();
-  return renderSubPage(ctx, FleetPage, "/fleet", subPageMeta(ctx.tenant, "fleet"), { data });
+  return renderSubPage(ctx, FleetPage, "/fleet", subPageMeta(ctx, "fleet"), { data });
 };
 
 const homePage: Handler = async (ctx) => {
-  const { req, reader, tenant } = ctx;
+  const { req, reader, tenant, site } = ctx;
   if (req.method !== "GET" && req.method !== "HEAD") return methodNotAllowed();
-  const brand = tenantBrand(tenant);
   const content = getContent(tenant);
 
   const allFlights = reader.getUpcomingFlights();
@@ -802,7 +1003,8 @@ const homePage: Handler = async (ctx) => {
       starlink: reader.getStarlinkPlanes(),
       lastUpdated: reader.getLastUpdated(),
       fleetStats: reader.getFleetStats(),
-      brand,
+      brand: site.brand,
+      site,
       content,
       airlineByTail: reader.getAirlineByTail(),
       perAirlineStats: isHub ? reader.getPerAirlineStats() : undefined,
@@ -823,7 +1025,7 @@ const homePage: Handler = async (ctx) => {
   );
 };
 
-const staticDir: Handler = ({ url, tenant }) => {
+const staticDir: Handler = ({ url, site }) => {
   const subPath = url.pathname.replace(/^\/static\//, "");
   const filePath = path.join(STATIC_DIR, subPath);
   try {
@@ -837,7 +1039,7 @@ const staticDir: Handler = ({ url, tenant }) => {
   } catch (err) {
     logError(`Error serving static file ${filePath}`, err);
   }
-  return new Response(getNotFoundHtml(tenantBrand(tenant)), {
+  return new Response(getNotFoundHtml(site.brand), {
     status: 404,
     headers: SECURITY_HEADERS.notFound,
   });
@@ -910,6 +1112,7 @@ export function createApp(db: Database): App {
     "/robots.txt": robotsTxt,
     "/llms.txt": llmsTxt,
     "/sitemap.xml": sitemap,
+    "/site.webmanifest": ({ site }) => siteManifest(site),
   };
 
   const prefixRoutes: Array<[string, Handler]> = [
@@ -934,13 +1137,14 @@ export function createApp(db: Database): App {
     const staticRes = staticResponses.get(url.pathname);
     if (staticRes) return staticRes.clone();
 
-    const tenant = resolveTenant(req.headers.get("host"));
-    if (tenant === null) {
+    const site = resolveSite(req.headers.get("host"));
+    if (site === null) {
       return new Response("Misdirected Request", {
         status: 421,
         headers: { "Content-Type": "text/plain" },
       });
     }
+    const tenant = site.scope === "ALL" ? "ALL" : AIRLINES[site.scope];
 
     const m = match(url.pathname);
     const route = m?.route ?? "/*";
@@ -957,7 +1161,7 @@ export function createApp(db: Database): App {
     }
 
     const reader: ScopedReader = getReader(tenantScope(tenant));
-    const ctx: RequestContext = { req, url, tenant, reader, getReader };
+    const ctx: RequestContext = { req, url, site, tenant, reader, getReader };
 
     return withSpan(
       "http.request",
@@ -968,7 +1172,7 @@ export function createApp(db: Database): App {
 
         const response = m
           ? await m.handler(ctx)
-          : new Response(getNotFoundHtml(tenantBrand(tenant)), {
+          : new Response(getNotFoundHtml(site.brand), {
               status: 404,
               headers: SECURITY_HEADERS.notFound,
             });

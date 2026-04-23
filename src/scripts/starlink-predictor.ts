@@ -18,7 +18,7 @@
  */
 
 import { Database } from "bun:sqlite";
-import { enabledAirlines } from "../airlines/registry";
+import { airlineHomeUrl, enabledAirlines } from "../airlines/registry";
 import type { VerificationObservation as Observation } from "../database/database";
 import { type Scope, type ScopedReader, createReaderFactory } from "../database/reader";
 import { ensureUAPrefix, inferFleet } from "../utils/constants";
@@ -560,7 +560,7 @@ export function compareRoute(
       reason,
       n,
       accentColor: cfg.brand.accentColor,
-      canonicalHost: cfg.canonicalHost,
+      canonicalHost: new URL(airlineHomeUrl(cfg.code)).host,
     });
   }
 

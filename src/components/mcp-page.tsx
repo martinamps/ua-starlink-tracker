@@ -1,8 +1,15 @@
 import React from "react";
+import { AIRLINES, type PageBrand, type SiteConfig } from "../airlines/registry";
 
-const MCP_URL = "https://unitedstarlinktracker.com/mcp";
+interface McpPageProps {
+  brand?: PageBrand;
+  site?: SiteConfig;
+}
 
-export default function McpPage() {
+export default function McpPage({ brand, site }: McpPageProps) {
+  const cfg = site?.scope && site.scope !== "ALL" ? AIRLINES[site.scope] : AIRLINES.UA;
+  const homeTitle = brand?.title ?? cfg.brand.title;
+  const mcpUrl = `https://${site?.canonicalHost ?? cfg.canonicalHost}/mcp`;
   return (
     <div className="w-full mx-auto px-4 sm:px-6 md:px-8 bg-base min-h-screen flex flex-col relative">
       <div className="absolute inset-0 grid-pattern opacity-50 pointer-events-none" />
@@ -38,7 +45,7 @@ export default function McpPage() {
           </div>
           <div className="flex items-center gap-2">
             <code className="flex-1 font-mono text-sm text-accent break-all select-all bg-base rounded px-3 py-2 border border-subtle">
-              {MCP_URL}
+              {mcpUrl}
             </code>
             <button
               type="button"
@@ -108,7 +115,7 @@ export default function McpPage() {
               <p>
                 2. Paste{" "}
                 <code className="font-mono text-xs text-accent bg-base px-1.5 py-0.5 rounded">
-                  {MCP_URL}
+                  {mcpUrl}
                 </code>{" "}
                 and name it "Starlink Tracker"
               </p>
@@ -141,7 +148,7 @@ export default function McpPage() {
 
       <div className="relative text-center mb-6">
         <a href="/" className="text-sm text-accent hover:underline font-display">
-          ← Back to United Starlink Tracker
+          ← Back to {homeTitle}
         </a>
       </div>
 
@@ -176,7 +183,7 @@ export default function McpPage() {
           var btn = document.getElementById('copy-url-btn');
           if (btn) {
             btn.addEventListener('click', function() {
-              navigator.clipboard.writeText('${MCP_URL}').then(function() {
+              navigator.clipboard.writeText('${mcpUrl}').then(function() {
                 btn.textContent = 'Copied!';
                 setTimeout(function() { btn.textContent = 'Copy'; }, 2000);
               });

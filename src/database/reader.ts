@@ -7,7 +7,7 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { type AirlineCode, enabledAirlines } from "../airlines/registry";
+import { AIRLINES, type AirlineCode, airlineHomeUrl, publicAirlines } from "../airlines/registry";
 import type {
   Aircraft,
   AirportDepartures,
@@ -24,6 +24,7 @@ import {
   type DirectRouteEdge,
   type FlightAssignmentRow,
   type HubAirlineStat,
+  type QatarScheduleRow,
   type RouteEntryRow,
   type RouteFlightRow,
   type RouteGraphEdge,
@@ -49,6 +50,9 @@ import {
   getLastUpdated,
   getMeta,
   getPendingFleetTails,
+  getQatarScheduleByFlight,
+  getQatarScheduleByRoute,
+  getQatarScheduleStats,
   getRecentInstalls,
   getRouteAirlineCoverage,
   getRouteFlights,
@@ -139,16 +143,38 @@ export interface ScopedReader {
   ): { starlink_status: string; verified_wifi: string | null; verified_at: number | null } | null;
   computeWifiConsensus(tail: string): WifiConsensus;
   bumpDiscoveryPriority(tail: string): void;
+
+  // Qatar uses a separate schedule cache (per-flight equipment, no per-tail).
+  // These are airline-agnostic on the reader because qatar_schedule has no
+  // airline column — it's QR-only by definition. Handlers gate on cfg.code.
+  getQatarScheduleByFlight(
+    variants: string[],
+    startOfDay: number,
+    endOfDay: number
+  ): QatarScheduleRow[];
+  getQatarScheduleByRoute(
+    origin: string,
+    destination: string,
+    startOfDay: number,
+    endOfDay: number
+  ): QatarScheduleRow[];
+  getQatarScheduleStats(): {
+    total: number;
+    starlink: number;
+    rolling: number;
+    none: number;
+    lastUpdated: number | null;
+  };
 }
 
-const enabledCodes = (): readonly AirlineCode[] => enabledAirlines().map((a) => a.code);
+const publicCodes = (): readonly AirlineCode[] => publicAirlines().map((a) => a.code);
 
 function buildPerAirlineStats(db: Database, codes: readonly AirlineCode[]): PerAirlineStat[] {
   const hub = getHubStats(db, codes);
   const byCode = Object.fromEntries(hub.map((h) => [h.code, h]));
   const out: PerAirlineStat[] = [];
   for (const code of codes) {
-    const cfg = enabledAirlines().find((c) => c.code === code);
+    const cfg = AIRLINES[code];
     if (!cfg) continue;
     const h: HubAirlineStat | undefined = byCode[code];
     out.push({
@@ -159,7 +185,7 @@ function buildPerAirlineStats(db: Database, codes: readonly AirlineCode[]): PerA
       fleetTotal: h?.fleetTotal,
       installs30d: h?.installs30d,
       accentColor: cfg.brand.accentColor,
-      canonicalHost: cfg.canonicalHost,
+      href: airlineHomeUrl(code),
     });
   }
   return out;
@@ -168,7 +194,7 @@ function buildPerAirlineStats(db: Database, codes: readonly AirlineCode[]): PerA
 function buildReader(db: Database, scope: Scope): ScopedReader {
   // Hub ('ALL') is the union of *enabled* airlines, not every row in the DB —
   // disabled-airline canaries/test data stay invisible until that airline ships.
-  const airlines = scope === "ALL" ? enabledCodes() : ([scope] as const);
+  const airlines = scope === "ALL" ? publicCodes() : ([scope] as const);
   // Meta keys are namespaced per-airline; ALL has no single namespace.
   const metaCode = scope === "ALL" ? "UA" : scope;
   const r: ScopedReader = {
@@ -222,6 +248,10 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     getFleetEntryByTail: (tail) => getFleetEntryByTail(db, tail),
     computeWifiConsensus: (tail) => computeWifiConsensus(db, tail),
     bumpDiscoveryPriority: (tail) => bumpDiscoveryPriority(db, tail),
+
+    getQatarScheduleByFlight: (v, s, e) => getQatarScheduleByFlight(db, v, s, e),
+    getQatarScheduleByRoute: (o, d, s, e) => getQatarScheduleByRoute(db, o, d, s, e),
+    getQatarScheduleStats: () => getQatarScheduleStats(db),
   };
   return Object.freeze(r);
 }

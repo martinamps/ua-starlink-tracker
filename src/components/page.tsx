@@ -1,6 +1,6 @@
 import type React from "react";
 import { type AirlineContent, type ContentStats, getContent } from "../airlines/content";
-import { AIRLINES, type PageBrand } from "../airlines/registry";
+import { AIRLINES, type PageBrand, type SiteConfig } from "../airlines/registry";
 import type {
   Aircraft,
   AirportDeparture,
@@ -60,6 +60,7 @@ interface PageProps {
   lastUpdated?: string;
   fleetStats?: FleetStats;
   brand?: PageBrand;
+  site?: SiteConfig;
   content?: AirlineContent;
   airlineByTail?: Record<string, string>;
   perAirlineStats?: PerAirlineStat[];
@@ -264,6 +265,7 @@ export default function Page({
   lastUpdated,
   fleetStats,
   brand = AIRLINES.UA.brand,
+  site,
   content = getContent(AIRLINES.UA),
   airlineByTail = {},
   perAirlineStats,
@@ -301,6 +303,17 @@ export default function Page({
   const percentage = y > 0 ? ((x / y) * 100).toFixed(2) : "0.00";
   const stats: ContentStats = { starlinkCount: x, totalCount: y, percentage, fleetStats };
   const airlineOf = (p: Aircraft) => airlineByTail[p.TailNumber] || "UA";
+  const features = site?.features;
+  const navLinks = [
+    ...(features?.checkFlightPage
+      ? [{ href: "/check-flight", label: "Check a Flight", badge: "" }]
+      : []),
+    ...(features?.routePlannerPage
+      ? [{ href: "/route-planner", label: "Route Planner", badge: "" }]
+      : []),
+    ...(features?.fleetPage ? [{ href: "/fleet", label: "Fleet Rollout", badge: "NEW" }] : []),
+    ...(features?.mcpPage ? [{ href: "/mcp", label: "Tools & MCP", badge: "NEW" }] : []),
+  ];
   const subfleetCounts = Object.fromEntries(
     content.subfleetFilters.map((c) => [
       c.key,
@@ -437,38 +450,22 @@ export default function Page({
       {/* Intro paragraph + nav links */}
       <div className="relative text-center max-w-2xl mx-auto mb-6">
         {content.intro(stats)}
-        {content.showNavLinks && (
+        {navLinks.length > 0 && (features?.homeNav ?? content.showNavLinks) && (
           <div className="flex flex-wrap items-center justify-center gap-2 text-sm font-display">
-            <a
-              href="/check-flight"
-              className="px-3 py-1.5 bg-surface border border-subtle rounded text-secondary hover:text-accent hover:border-accent transition-colors"
-            >
-              Check a Flight
-            </a>
-            <a
-              href="/route-planner"
-              className="px-3 py-1.5 bg-surface border border-subtle rounded text-secondary hover:text-accent hover:border-accent transition-colors"
-            >
-              Route Planner
-            </a>
-            <a
-              href="/fleet"
-              className="px-3 py-1.5 bg-surface border border-subtle rounded text-secondary hover:text-accent hover:border-accent transition-colors inline-flex items-center gap-1.5"
-            >
-              Fleet Rollout
-              <span className="text-[10px] font-mono px-1.5 py-0.5 bg-accent/20 text-accent rounded">
-                NEW
-              </span>
-            </a>
-            <a
-              href="#integrations"
-              className="px-3 py-1.5 bg-surface border border-subtle rounded text-secondary hover:text-accent hover:border-accent transition-colors inline-flex items-center gap-1.5"
-            >
-              Tools & MCP
-              <span className="text-[10px] font-mono px-1.5 py-0.5 bg-accent/20 text-accent rounded">
-                NEW
-              </span>
-            </a>
+            {navLinks.map((link) => (
+              <a
+                key={link.href}
+                href={link.href === "/mcp" ? "#integrations" : link.href}
+                className="px-3 py-1.5 bg-surface border border-subtle rounded text-secondary hover:text-accent hover:border-accent transition-colors inline-flex items-center gap-1.5"
+              >
+                {link.label}
+                {link.badge && (
+                  <span className="text-[10px] font-mono px-1.5 py-0.5 bg-accent/20 text-accent rounded">
+                    {link.badge}
+                  </span>
+                )}
+              </a>
+            ))}
           </div>
         )}
       </div>
@@ -682,133 +679,135 @@ export default function Page({
       )}
 
       {/* Tools & Integrations — UA-specific (Chrome ext is UA-only, MCP only on UA host today) */}
-      {content.showNavLinks && (
+      {(features?.chromeExtension || features?.mcpPage) && (
         <div id="integrations" className="relative my-8 max-w-3xl mx-auto scroll-mt-4">
           <h2 className="font-display text-lg font-semibold text-primary mb-3 text-center">
             Tools & Integrations
           </h2>
           <div className="grid sm:grid-cols-2 gap-3">
-            {/* Chrome Extension */}
-            <div
-              id="chrome-extension"
-              className="bg-surface rounded-lg border border-subtle p-5 flex flex-col scroll-mt-4"
-            >
-              <div className="flex items-start gap-3 mb-3">
-                <svg
-                  className="w-8 h-8 flex-shrink-0"
-                  viewBox="0 0 48 48"
-                  xmlns="http://www.w3.org/2000/svg"
-                  role="img"
-                  aria-label="Chrome"
-                >
-                  <defs>
-                    <linearGradient
-                      id="chrome-a"
-                      x1="3.2173"
-                      y1="15"
-                      x2="44.7812"
-                      y2="15"
-                      gradientUnits="userSpaceOnUse"
-                    >
-                      <stop offset="0" stopColor="#d93025" />
-                      <stop offset="1" stopColor="#ea4335" />
-                    </linearGradient>
-                    <linearGradient
-                      id="chrome-b"
-                      x1="20.7219"
-                      y1="47.6791"
-                      x2="41.5039"
-                      y2="11.6837"
-                      gradientUnits="userSpaceOnUse"
-                    >
-                      <stop offset="0" stopColor="#fcc934" />
-                      <stop offset="1" stopColor="#fbbc04" />
-                    </linearGradient>
-                    <linearGradient
-                      id="chrome-c"
-                      x1="26.5981"
-                      y1="46.5015"
-                      x2="5.8161"
-                      y2="10.506"
-                      gradientUnits="userSpaceOnUse"
-                    >
-                      <stop offset="0" stopColor="#1e8e3e" />
-                      <stop offset="1" stopColor="#34a853" />
-                    </linearGradient>
-                  </defs>
-                  <circle cx="24" cy="23.9947" r="12" fill="#fff" />
-                  <path
-                    d="M24,12H44.7812a23.9939,23.9939,0,0,0-41.5639.0029L13.6079,30l.0093-.0024A11.9852,11.9852,0,0,1,24,12Z"
-                    fill="url(#chrome-a)"
-                  />
-                  <circle cx="24" cy="24" r="9.5" fill="#1a73e8" />
-                  <path
-                    d="M34.3913,30.0029,24.0007,48A23.994,23.994,0,0,0,44.78,12.0031H23.9989l-.0025.0093A11.985,11.985,0,0,1,34.3913,30.0029Z"
-                    fill="url(#chrome-b)"
-                  />
-                  <path
-                    d="M13.6086,30.0031,3.218,12.006A23.994,23.994,0,0,0,24.0025,48L34.3931,30.0029l-.0067-.0068a11.9852,11.9852,0,0,1-20.7778.007Z"
-                    fill="url(#chrome-c)"
-                  />
-                </svg>
-                <div>
-                  <div className="font-display font-semibold text-primary text-sm">
-                    Chrome Extension
-                  </div>
-                  <div className="text-xs text-muted">For Google Flights</div>
-                </div>
-              </div>
-              <p className="text-xs text-muted leading-relaxed mb-4 flex-1">
-                See Starlink badges directly on Google Flights search results — no extra steps while
-                you shop for flights.
-              </p>
-              <a
-                href="https://chromewebstore.google.com/detail/google-flights-starlink-i/jjfljoifenkfdbldliakmmjhdkbhehoi"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-xs text-accent hover:underline font-mono"
+            {features?.chromeExtension && (
+              <div
+                id="chrome-extension"
+                className="bg-surface rounded-lg border border-subtle p-5 flex flex-col scroll-mt-4"
               >
-                Add to Chrome →
-              </a>
-            </div>
-
-            {/* MCP Server */}
-            <div
-              id="mcp"
-              className="bg-surface rounded-lg border border-subtle p-5 flex flex-col scroll-mt-4"
-            >
-              <div className="flex items-start gap-3 mb-3">
-                <div className="w-8 h-8 flex-shrink-0 rounded bg-accent/20 border border-accent/40 flex items-center justify-center">
+                <div className="flex items-start gap-3 mb-3">
                   <svg
-                    className="w-5 h-5 text-accent"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
+                    className="w-8 h-8 flex-shrink-0"
+                    viewBox="0 0 48 48"
+                    xmlns="http://www.w3.org/2000/svg"
                     role="img"
-                    aria-label="AI"
+                    aria-label="Chrome"
                   >
-                    <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
+                    <defs>
+                      <linearGradient
+                        id="chrome-a"
+                        x1="3.2173"
+                        y1="15"
+                        x2="44.7812"
+                        y2="15"
+                        gradientUnits="userSpaceOnUse"
+                      >
+                        <stop offset="0" stopColor="#d93025" />
+                        <stop offset="1" stopColor="#ea4335" />
+                      </linearGradient>
+                      <linearGradient
+                        id="chrome-b"
+                        x1="20.7219"
+                        y1="47.6791"
+                        x2="41.5039"
+                        y2="11.6837"
+                        gradientUnits="userSpaceOnUse"
+                      >
+                        <stop offset="0" stopColor="#fcc934" />
+                        <stop offset="1" stopColor="#fbbc04" />
+                      </linearGradient>
+                      <linearGradient
+                        id="chrome-c"
+                        x1="26.5981"
+                        y1="46.5015"
+                        x2="5.8161"
+                        y2="10.506"
+                        gradientUnits="userSpaceOnUse"
+                      >
+                        <stop offset="0" stopColor="#1e8e3e" />
+                        <stop offset="1" stopColor="#34a853" />
+                      </linearGradient>
+                    </defs>
+                    <circle cx="24" cy="23.9947" r="12" fill="#fff" />
+                    <path
+                      d="M24,12H44.7812a23.9939,23.9939,0,0,0-41.5639.0029L13.6079,30l.0093-.0024A11.9852,11.9852,0,0,1,24,12Z"
+                      fill="url(#chrome-a)"
+                    />
+                    <circle cx="24" cy="24" r="9.5" fill="#1a73e8" />
+                    <path
+                      d="M34.3913,30.0029,24.0007,48A23.994,23.994,0,0,0,44.78,12.0031H23.9989l-.0025.0093A11.985,11.985,0,0,1,34.3913,30.0029Z"
+                      fill="url(#chrome-b)"
+                    />
+                    <path
+                      d="M13.6086,30.0031,3.218,12.006A23.994,23.994,0,0,0,24.0025,48L34.3931,30.0029l-.0067-.0068a11.9852,11.9852,0,0,1-20.7778.007Z"
+                      fill="url(#chrome-c)"
+                    />
                   </svg>
-                </div>
-                <div>
-                  <div className="font-display font-semibold text-primary text-sm inline-flex items-center gap-1.5">
-                    MCP Server
-                    <span className="text-[10px] font-mono px-1.5 py-0.5 bg-accent/20 text-accent rounded">
-                      NEW
-                    </span>
+                  <div>
+                    <div className="font-display font-semibold text-primary text-sm">
+                      Chrome Extension
+                    </div>
+                    <div className="text-xs text-muted">For Google Flights</div>
                   </div>
-                  <div className="text-xs text-muted">For Claude, Cursor & AI assistants</div>
                 </div>
+                <p className="text-xs text-muted leading-relaxed mb-4 flex-1">
+                  See Starlink badges directly on Google Flights search results — no extra steps
+                  while you shop for flights.
+                </p>
+                <a
+                  href="https://chromewebstore.google.com/detail/google-flights-starlink-i/jjfljoifenkfdbldliakmmjhdkbhehoi"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-accent hover:underline font-mono"
+                >
+                  Add to Chrome →
+                </a>
               </div>
-              <p className="text-xs text-muted leading-relaxed mb-4 flex-1">
-                Ask your AI assistant to check flights, predict Starlink probability, or plan routes
-                — live tracker data via the Model Context Protocol.
-              </p>
-              <a href="/mcp" className="text-xs text-accent hover:underline font-mono">
-                Setup instructions →
-              </a>
-            </div>
+            )}
+
+            {features?.mcpPage && (
+              <div
+                id="mcp"
+                className="bg-surface rounded-lg border border-subtle p-5 flex flex-col scroll-mt-4"
+              >
+                <div className="flex items-start gap-3 mb-3">
+                  <div className="w-8 h-8 flex-shrink-0 rounded bg-accent/20 border border-accent/40 flex items-center justify-center">
+                    <svg
+                      className="w-5 h-5 text-accent"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      role="img"
+                      aria-label="AI"
+                    >
+                      <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
+                    </svg>
+                  </div>
+                  <div>
+                    <div className="font-display font-semibold text-primary text-sm inline-flex items-center gap-1.5">
+                      MCP Server
+                      <span className="text-[10px] font-mono px-1.5 py-0.5 bg-accent/20 text-accent rounded">
+                        NEW
+                      </span>
+                    </div>
+                    <div className="text-xs text-muted">For Claude, Cursor & AI assistants</div>
+                  </div>
+                </div>
+                <p className="text-xs text-muted leading-relaxed mb-4 flex-1">
+                  Ask your AI assistant to check flights, predict Starlink probability, or plan
+                  routes — live tracker data via the Model Context Protocol.
+                </p>
+                <a href="/mcp" className="text-xs text-accent hover:underline font-mono">
+                  Setup instructions →
+                </a>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -859,6 +858,9 @@ export default function Page({
               var filterBtns = document.querySelectorAll('.filter-btn');
               var currentFilter = 'all';
               var totalCount = rows.length;
+              var baseClass = 'filter-btn font-mono text-[11px] px-3 py-2 rounded border transition-all';
+              var activeStyle = 'bg-accent/20 border-accent text-accent';
+              var inactiveStyle = 'bg-transparent border-subtle text-secondary hover:border-accent/50 hover:text-accent';
 
               function matchesTerm(term, row) {
                 var tail = row.dataset.tail || '';
@@ -886,6 +888,21 @@ export default function Page({
                     airports.includes(term) ||
                     flights.includes(term);
                 }
+              }
+
+              function applyInitialFilter() {
+                var urlParams = new URLSearchParams(window.location.search);
+                var initialFilter = urlParams.get('filter');
+                if (!initialFilter) return;
+
+                currentFilter = initialFilter;
+                filterBtns.forEach(function(b) {
+                  if (b.dataset.filter === currentFilter) {
+                    b.className = baseClass + ' ' + activeStyle;
+                  } else {
+                    b.className = baseClass + ' ' + inactiveStyle;
+                  }
+                });
               }
 
               function filterRows() {
@@ -936,6 +953,11 @@ export default function Page({
                 } else {
                   url.searchParams.delete('q');
                 }
+                if (currentFilter !== 'all') {
+                  url.searchParams.set('filter', currentFilter);
+                } else {
+                  url.searchParams.delete('filter');
+                }
                 window.history.replaceState({}, '', url);
               }
 
@@ -947,9 +969,11 @@ export default function Page({
                 var initialQuery = urlParams.get('q');
                 if (initialQuery) {
                   searchInput.value = initialQuery;
-                  filterRows();
                 }
               }
+
+              applyInitialFilter();
+              filterRows();
 
               // Clear button
               if (searchClear) {
@@ -978,10 +1002,6 @@ export default function Page({
               });
 
               // Filter buttons - use data attribute to track state
-              var baseClass = 'filter-btn font-mono text-[11px] px-3 py-2 rounded border transition-all';
-              var activeStyle = 'bg-accent/20 border-accent text-accent';
-              var inactiveStyle = 'bg-transparent border-subtle text-secondary hover:border-accent/50 hover:text-accent';
-
               filterBtns.forEach(function(btn) {
                 btn.addEventListener('click', function() {
                   currentFilter = this.dataset.filter;

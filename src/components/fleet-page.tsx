@@ -1,4 +1,5 @@
 import React from "react";
+import { AIRLINES, type PageBrand, type SiteConfig } from "../airlines/registry";
 import type { FleetFamily, FleetPageData, FleetTail, WifiProvider } from "../types";
 import { AIRCRAFT_SPECS, type AircraftSpec } from "../utils/aircraft-specs";
 
@@ -225,18 +226,20 @@ function HangarFloor({
   families,
   totalFleet,
   totalStarlink,
+  scopeLabel,
 }: {
   families: FleetFamily[];
   totalFleet: number;
   totalStarlink: number;
+  scopeLabel: string;
 }) {
   return (
     <section className={SECTION}>
       <div className="mb-4">
         <h2 className="font-display text-xl font-semibold text-primary mb-1">The Hangar Floor</h2>
         <p className="text-xs text-muted mb-3">
-          Every United tail number is one cell. {totalStarlink} of {totalFleet} have Starlink. The
-          cyan stops where Express ends and Mainline begins.
+          Every {scopeLabel} tail number is one cell. {totalStarlink} of {totalFleet} currently show
+          Starlink. The color tells you which WiFi system is installed today.
         </p>
         <Legend />
       </div>
@@ -261,7 +264,7 @@ function CarrierLeaderboard({ carriers }: { carriers: FleetPageData["carriers"] 
   const max = Math.max(...carriers.map((c) => c.total));
   return (
     <div className={PANEL}>
-      <div className={EYEBROW}>Express Carrier Race</div>
+      <div className={EYEBROW}>Operating Carriers</div>
       <div className="space-y-3">
         {carriers.map((c, i) => {
           const widthPct = (c.total / max) * 100;
@@ -301,7 +304,7 @@ function IronyStack({ bodyClass }: { bodyClass: FleetPageData["bodyClass"] }) {
   ];
   return (
     <div className={PANEL}>
-      <div className={EYEBROW}>The Long-Haul Irony</div>
+      <div className={EYEBROW}>WiFi by Aircraft Size</div>
       <div className="space-y-4">
         {rows.map((r) => {
           const data = bodyClass[r.key];
@@ -339,8 +342,8 @@ function IronyStack({ bodyClass }: { bodyClass: FleetPageData["bodyClass"] }) {
         })}
       </div>
       <p className="text-[11px] text-muted mt-4 italic leading-snug">
-        Your 16-hour flight to Singapore still has Panasonic. Your 53-minute hop from Duluth has
-        Starlink.
+        Retrofit timing is uneven: smaller fleets often finish first, while long-haul cabins take
+        longer to convert.
       </p>
     </div>
   );
@@ -398,7 +401,19 @@ function TailMonument({ allTails, totalFleet }: { allTails: FleetTail[]; totalFl
   );
 }
 
-export default function FleetPage({ data }: { data: FleetPageData }) {
+interface FleetPageProps {
+  data: FleetPageData;
+  brand?: PageBrand;
+  site?: SiteConfig;
+}
+
+export default function FleetPage({ data, brand, site }: FleetPageProps) {
+  const scopeCode = site?.scope && site.scope !== "ALL" ? site.scope : null;
+  const scopeLabel = scopeCode ? AIRLINES[scopeCode].name : "tracked";
+  const headerTitle = scopeCode
+    ? `${AIRLINES[scopeCode].name} Fleet · Starlink Rollout`
+    : "Tracked Fleets · Starlink Rollout";
+  const backLabel = brand?.title ?? "Starlink Tracker";
   return (
     <div className="w-full mx-auto px-4 sm:px-6 md:px-8 bg-base min-h-screen flex flex-col relative">
       <div className="absolute inset-0 grid-pattern opacity-50 pointer-events-none" />
@@ -459,7 +474,7 @@ export default function FleetPage({ data }: { data: FleetPageData }) {
       <header className="relative py-5 sm:py-6 text-center mb-6">
         <a href="/" className="block">
           <h1 className="font-display text-3xl sm:text-4xl font-bold text-primary mb-2 tracking-tight hover:text-accent transition-colors">
-            United Fleet · Starlink Rollout
+            {headerTitle}
           </h1>
         </a>
         <p className="text-base text-secondary font-display">
@@ -472,6 +487,7 @@ export default function FleetPage({ data }: { data: FleetPageData }) {
         families={data.families}
         totalFleet={data.totalFleet}
         totalStarlink={data.totalStarlink}
+        scopeLabel={scopeLabel}
       />
 
       <section className={`${SECTION} grid md:grid-cols-2 gap-4`}>
@@ -483,7 +499,7 @@ export default function FleetPage({ data }: { data: FleetPageData }) {
 
       <footer className="relative py-6 text-center border-t border-subtle text-muted text-sm">
         <a href="/" className="text-accent hover:underline font-display">
-          ← back to tracker
+          ← Back to {backLabel}
         </a>
       </footer>
     </div>

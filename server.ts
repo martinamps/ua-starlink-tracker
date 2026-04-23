@@ -14,6 +14,7 @@ import { startAlaskaVerifier } from "./src/scripts/alaska-verifier";
 import { startFleetDiscovery } from "./src/scripts/fleet-discovery";
 import { startFleetSync } from "./src/scripts/fleet-sync";
 import { computePrecision, emitPrecisionGauges } from "./src/scripts/precision-backtest";
+import { startQatarScheduleIngester } from "./src/scripts/qatar-schedule-ingester";
 import { startStarlinkVerifier } from "./src/scripts/starlink-verifier";
 import { computeSurfaceContradictions, emitSweepGauges } from "./src/scripts/surface-sweep";
 import { syncShipNumbers } from "./src/scripts/sync-ship-numbers";
@@ -122,6 +123,9 @@ if (JOBS_ENABLED) {
   // alaska-json verifier: serves HA (type-deterministic confirmation) and AS
   // (tail/type oracle until alaskaair.com exposes per-tail wifi).
   startAlaskaVerifier();
+  // Qatar schedule ingester: pulls per-flight equipment from QR's flight-status
+  // API for top routes; populates qatar_schedule which /api/check-flight reads.
+  startQatarScheduleIngester();
   // Fleet sync iterates enabledAirlines() internally.
   startFleetSync();
 

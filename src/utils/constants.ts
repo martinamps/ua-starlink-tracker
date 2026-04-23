@@ -4,7 +4,7 @@ import {
   inferSubfleet,
   normalizeAirlineFlightNumber,
 } from "../airlines/flight-number";
-import { AIRLINES } from "../airlines/registry";
+import { AIRLINES, analyticsOrigins } from "../airlines/registry";
 
 // Database path
 export const DB_PATH =
@@ -37,16 +37,19 @@ export const inferFleet = (fn: string): "express" | "mainline" | "unknown" =>
   inferSubfleet(AIRLINES.UA, fn) as "express" | "mainline" | "unknown";
 
 // Security headers
+const { scriptOrigins: ANALYTICS_SCRIPT_ORIGINS, connectOrigins: ANALYTICS_CONNECT_ORIGINS } =
+  analyticsOrigins();
+const CONNECT_SRC = ["'self'", ...ANALYTICS_CONNECT_ORIGINS].join(" ");
+const SCRIPT_SRC = ["'self'", "'unsafe-inline'", "https://unpkg.com", ...ANALYTICS_SCRIPT_ORIGINS]
+  .filter(Boolean)
+  .join(" ");
+
 export const SECURITY_HEADERS = {
   api: {
     "Content-Type": "application/json",
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
-    "Content-Security-Policy":
-      "default-src 'self' https://unpkg.com; connect-src 'self' https://analytics.martinamps.com; " +
-      "script-src 'self' 'unsafe-inline' https://unpkg.com https://analytics.martinamps.com; " +
-      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
-      "font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https://*;",
+    "Content-Security-Policy": `default-src 'self' https://unpkg.com; connect-src ${CONNECT_SRC}; script-src ${SCRIPT_SRC}; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https://*;`,
     "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
     "Referrer-Policy": "no-referrer",
     "Cache-Control": "no-store, max-age=0",
@@ -58,11 +61,7 @@ export const SECURITY_HEADERS = {
     "Content-Type": "text/html",
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
-    "Content-Security-Policy":
-      "default-src 'self' https://unpkg.com; connect-src 'self' https://analytics.martinamps.com; " +
-      "script-src 'self' 'unsafe-inline' https://unpkg.com https://analytics.martinamps.com; " +
-      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
-      "font-src 'self' https://fonts.gstatic.com; img-src 'self' data:;",
+    "Content-Security-Policy": `default-src 'self' https://unpkg.com; connect-src ${CONNECT_SRC}; script-src ${SCRIPT_SRC}; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:;`,
     "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
     "Referrer-Policy": "no-referrer",
   },

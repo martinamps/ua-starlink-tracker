@@ -8,10 +8,20 @@
  *
  * Connect from any MCP client with:
  *   { "url": "https://unitedstarlinktracker.com/mcp", "transport": "http" }
+ *
+ * Tenancy:
+ *   - Each `/mcp` host serves that host's airline scope by default (UA host →
+ *     UA reader, QR host → QR reader, hub host → ALL).
+ *   - Clients can override with `?scope=ALL|UA|HA|AS|QR` to widen or pin scope.
+ *   - serverInfo / instructions / tool descriptions reflect the resolved scope.
+ *   - Tool *implementations* (predictFlight, planItinerary, ensureUAPrefix, etc.)
+ *     are still UA-flavored; non-UA scopes return whatever data the scoped reader
+ *     surfaces, which today is mostly empty for HA/AS/QR. This is a known
+ *     Phase-2 gap, not a regression.
  */
 
-import { AIRLINES } from "../airlines/registry";
-import type { ScopedReader } from "../database/reader";
+import { AIRLINES, type AirlineCode, type AnalyticsConfig } from "../airlines/registry";
+import type { Scope, ScopedReader } from "../database/reader";
 import { planItinerary, predictFlight, predictRoute } from "../scripts/starlink-predictor";
 import {
   buildFlightNumberVariants,
@@ -26,9 +36,11 @@ import { FlightRadar24API } from "./flightradar24-api";
 // Protocol versions we support (newest first)
 const SUPPORTED_PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26"];
 
-// Plausible server-side event tracking (client-side JS won't fire for API calls)
-const PLAUSIBLE_URL = "https://analytics.martinamps.com/api/event";
-const PLAUSIBLE_DOMAIN = "unitedstarlinktracker.com";
+const DEFAULT_ANALYTICS: AnalyticsConfig = {
+  scriptSrc: "https://analytics.martinamps.com/js/script.js",
+  dataDomain: "unitedstarlinktracker.com",
+  eventApiUrl: "https://analytics.martinamps.com/api/event",
+};
 
 /**
  * Fire-and-forget Plausible event. Never awaited — analytics must not
@@ -37,14 +49,19 @@ const PLAUSIBLE_DOMAIN = "unitedstarlinktracker.com";
  * Uses a custom "MCP" goal with props so you can break down by tool in the
  * Plausible dashboard (Behaviors → Goal Conversions → MCP → props).
  */
-function trackMcpEvent(req: Request, props: { method: string; tool?: string }): void {
+function trackMcpEvent(
+  req: Request,
+  analytics: AnalyticsConfig | null | undefined,
+  props: { method: string; tool?: string }
+): void {
+  if (!analytics?.eventApiUrl) return;
   // Forward the client's UA and IP so Plausible can do bot filtering and
   // unique-visitor counting as if this were a page view.
   const ua = req.headers.get("user-agent") || "mcp-client/unknown";
   const ip =
     req.headers.get("x-forwarded-for")?.split(",")[0].trim() || req.headers.get("x-real-ip") || "";
 
-  fetch(PLAUSIBLE_URL, {
+  fetch(analytics.eventApiUrl, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -53,8 +70,8 @@ function trackMcpEvent(req: Request, props: { method: string; tool?: string }): 
     },
     body: JSON.stringify({
       name: "MCP",
-      url: `https://${PLAUSIBLE_DOMAIN}/mcp`,
-      domain: PLAUSIBLE_DOMAIN,
+      url: `https://${analytics.dataDomain}/mcp`,
+      domain: analytics.dataDomain,
       props,
     }),
   }).catch((err) => {
@@ -95,199 +112,228 @@ type ToolResult = { content: TextContent[]; isError?: boolean };
 // Tool definitions (JSON Schema 2020-12)
 // ============================================================================
 
-const TOOLS = [
-  {
-    name: "check_flight",
-    description:
-      "Check whether a specific United Airlines flight has Starlink WiFi on a given date. " +
-      "Returns FIRM YES if assigned to a verified-Starlink plane, FIRM NO if assigned to a " +
-      "verified non-Starlink plane, or a probability estimate if no assignment exists yet " +
-      "(aircraft assignments are only published ~2 days in advance). For dates further out, " +
-      "call predict_flight_starlink directly — check_flight would just fall through to the same " +
-      "probability estimate with extra latency.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        flight_number: {
-          type: "string",
-          description:
-            "United flight number, e.g. 'UA544' or just '544'. Also accepts operating-carrier " +
-            "codes like SKW5212, OO4680, UAL544.",
+const VALID_SCOPES: readonly Scope[] = ["ALL", "UA", "HA", "AS", "QR"] as const;
+
+function isValidScope(s: string): s is Scope {
+  return (VALID_SCOPES as readonly string[]).includes(s);
+}
+
+/**
+ * Resolve `?scope=` from an MCP request URL. Falls back to the host's scope.
+ * Returns the resolved scope plus a boolean for whether the override was applied
+ * (used in serverInfo / instructions to surface the active scope to the AI).
+ */
+function resolveScope(req: Request, hostScope: Scope): { scope: Scope; overridden: boolean } {
+  try {
+    const raw = new URL(req.url).searchParams.get("scope");
+    if (!raw) return { scope: hostScope, overridden: false };
+    const upper = raw.toUpperCase();
+    if (isValidScope(upper) && upper !== hostScope) return { scope: upper, overridden: true };
+    return { scope: hostScope, overridden: false };
+  } catch {
+    return { scope: hostScope, overridden: false };
+  }
+}
+
+/** Human label for a scope. Used in tool descriptions and result text. */
+function scopeLabel(scope: Scope): string {
+  if (scope === "ALL") return "tracked airlines";
+  return AIRLINES[scope as AirlineCode]?.name ?? scope;
+}
+
+/** Title-case label for the start of a sentence ("Airline" vs. "tracked airlines"). */
+function scopeTitle(scope: Scope): string {
+  if (scope === "ALL") return "Multi-airline";
+  return AIRLINES[scope as AirlineCode]?.name ?? scope;
+}
+
+/** Sample flight number for a scope (used in inputSchema descriptions). */
+function exampleFlightNumber(scope: Scope): string {
+  if (scope === "ALL") return "UA544";
+  return `${scope}${scope === "UA" ? "544" : "1"}`;
+}
+
+function buildTools(scope: Scope) {
+  const carrier = scopeLabel(scope);
+  const example = exampleFlightNumber(scope);
+  // The carrier-prefix examples in inputSchema are UA-flavored because the
+  // codebase only knows operating-carrier mappings for UA today.
+  const prefixHint =
+    scope === "UA" || scope === "ALL"
+      ? " Also accepts operating-carrier codes like SKW5212, OO4680, UAL544."
+      : "";
+
+  return [
+    {
+      name: "check_flight",
+      description: `Check whether a specific ${carrier} flight has Starlink WiFi on a given date. Returns FIRM YES if assigned to a verified-Starlink plane, FIRM NO if assigned to a verified non-Starlink plane, or a probability estimate if no assignment exists yet (aircraft assignments are only published ~2 days in advance). For dates further out, call predict_flight_starlink directly — check_flight would just fall through to the same probability estimate with extra latency.`,
+      inputSchema: {
+        type: "object",
+        properties: {
+          flight_number: {
+            type: "string",
+            description: `Flight number, e.g. '${example}' or just the digits.${prefixHint}`,
+          },
+          date: {
+            type: "string",
+            description: "Flight date in YYYY-MM-DD format (matched as UTC calendar day).",
+          },
         },
-        date: {
-          type: "string",
-          description: "Flight date in YYYY-MM-DD format (matched as UTC calendar day).",
+        required: ["flight_number", "date"],
+      },
+    },
+    {
+      name: "get_fleet_stats",
+      description: `Get current ${carrier} Starlink installation statistics: how many aircraft have Starlink across mainline and express fleets, with percentages. Use for overall rollout questions ('how far along is Starlink?'), not for per-flight checks.`,
+      inputSchema: {
+        type: "object",
+        properties: {},
+      },
+    },
+    {
+      name: "list_starlink_aircraft",
+      description: `List ${carrier} aircraft currently equipped with Starlink WiFi (default: 50 most recent; pass limit up to 500). Returns tail numbers, aircraft types, operators, and install date. Use when the question is about the planes themselves (tail numbers, aircraft types), not for finding flights.`,
+      inputSchema: {
+        type: "object",
+        properties: {
+          fleet: {
+            type: "string",
+            enum: ["express", "mainline"],
+            description: "Filter to only express (regional) or mainline aircraft.",
+          },
+          limit: {
+            type: "integer",
+            minimum: 1,
+            maximum: 500,
+            description: "Maximum number of aircraft to return (default 50).",
+          },
         },
       },
-      required: ["flight_number", "date"],
     },
-  },
-  {
-    name: "get_fleet_stats",
-    description:
-      "Get current United Airlines Starlink installation statistics: how many aircraft have " +
-      "Starlink across mainline and express fleets, with percentages. Use for overall rollout " +
-      "questions ('how far along is Starlink?'), not for per-flight checks.",
-    inputSchema: {
-      type: "object",
-      properties: {},
-    },
-  },
-  {
-    name: "list_starlink_aircraft",
-    description:
-      "List United Airlines aircraft currently equipped with Starlink WiFi " +
-      "(default: 50 most recent; pass limit up to 500). Returns tail numbers, aircraft types, " +
-      "operators, and install date. Use when the question is about the planes themselves " +
-      "(tail numbers, aircraft types), not for finding flights.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        fleet: {
-          type: "string",
-          enum: ["express", "mainline"],
-          description: "Filter to only express (regional) or mainline aircraft.",
+    {
+      name: "predict_flight_starlink",
+      description: `Predict the PROBABILITY that a ${carrier} flight number gets a Starlink plane — based on historical observations. Reliability varies: high-confidence (5+ obs) ~85%+ accurate; low-confidence (0-1 obs) is just the fleet prior.${
+        scope === "UA" || scope === "ALL"
+          ? " UA1-2999 (mainline) are almost always NOT Starlink (~2% fleet coverage)."
+          : ""
+      }`,
+      inputSchema: {
+        type: "object",
+        properties: {
+          flight_number: {
+            type: "string",
+            description: `Flight number, e.g. '${example}' or just the digits.${prefixHint}`,
+          },
+          date: {
+            type: "string",
+            description:
+              "Optional YYYY-MM-DD. ALWAYS PASS if known — the probability is date-agnostic, " +
+              "but when the result is low (<20%) the tool uses this date to look up the actual " +
+              "route and returns a ready-to-run plan_starlink_itinerary call with origin/dest " +
+              "pre-filled, so alternatives can be presented in one turn.",
+          },
         },
-        limit: {
-          type: "integer",
-          minimum: 1,
-          maximum: 500,
-          description: "Maximum number of aircraft to return (default 50).",
-        },
+        required: ["flight_number"],
       },
     },
-  },
-  {
-    name: "predict_flight_starlink",
-    description:
-      "Predict the PROBABILITY that a United flight number gets a Starlink plane — based on " +
-      "12,000+ historical observations. Reliability varies: high-confidence (5+ obs) ~85%+ " +
-      "accurate; low-confidence (0-1 obs) is just the fleet prior. UA1-2999 (mainline) are " +
-      "almost always NOT Starlink (~2% fleet coverage).",
-    inputSchema: {
-      type: "object",
-      properties: {
-        flight_number: {
-          type: "string",
-          description:
-            "United flight number, e.g. 'UA4680' or '4680'. Also accepts operating-carrier " +
-            "codes (SKW5212, OO4680).",
+    {
+      name: "plan_starlink_itinerary",
+      description:
+        "PRIMARY TRAVEL-PLANNING TOOL — use first for any 'routing to X with Starlink' question. " +
+        "Multi-stop search (up to 2 stops default, 3 max) ranked by COVERAGE RATIO (expected " +
+        "Starlink hours / total flight hours) — a 92% 1h direct scores the same as a 92% 10h " +
+        "multi-stop. Direct flights always shown first. Returns probability-ranked routings, NOT " +
+        "bookable itineraries — connection timing isn't validated; verify on the airline's site.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          origin: {
+            type: "string",
+            description: "Origin airport IATA code (e.g. 'SFO').",
+          },
+          destination: {
+            type: "string",
+            description: "Destination airport IATA code (e.g. 'JAX').",
+          },
+          max_stops: {
+            type: "integer",
+            minimum: 0,
+            maximum: 3,
+            description:
+              "Maximum number of connection stops (default 2, max 3). 0=direct only, 1=one connection, etc.",
+          },
+          max_results: {
+            type: "integer",
+            minimum: 1,
+            maximum: 20,
+            description:
+              "Maximum number of full-coverage itineraries (default 8). Up to 3 partial baselines may be appended.",
+          },
+          date: {
+            type: "string",
+            description:
+              "Optional YYYY-MM-DD travel date. When within ~2 days (the aircraft-assignment " +
+              "window), uses confirmed tail assignments for higher accuracy. Beyond that, uses " +
+              "historical prediction only — confirmed assignments don't apply to future dates.",
+          },
         },
-        date: {
-          type: "string",
-          description:
-            "Optional YYYY-MM-DD. ALWAYS PASS if known — the probability is date-agnostic, " +
-            "but when the result is low (<20%) the tool uses this date to look up the actual " +
-            "route and returns a ready-to-run plan_starlink_itinerary call with origin/dest " +
-            "pre-filled, so alternatives can be presented in one turn.",
-        },
+        required: ["origin", "destination"],
       },
-      required: ["flight_number"],
     },
-  },
-  {
-    name: "plan_starlink_itinerary",
-    description:
-      "PRIMARY TRAVEL-PLANNING TOOL — use first for any 'routing to X with Starlink' question. " +
-      "Multi-stop search (up to 2 stops default, 3 max) ranked by COVERAGE RATIO (expected " +
-      "Starlink hours / total flight hours) — a 92% 1h direct scores the same as a 92% 10h " +
-      "multi-stop. Direct flights always shown first. Returns probability-ranked routings, NOT " +
-      "bookable itineraries — connection timing isn't validated; verify on united.com.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        origin: {
-          type: "string",
-          description: "Origin airport IATA code (e.g. 'SFO').",
+    {
+      name: "predict_route_starlink",
+      description: `Single-route lookup: find which ${carrier} flight numbers on a route (or touching an airport) are most likely to have Starlink. Pass both origin+destination for a specific route, OR just one to list all Starlink flights from/into an airport. Returns ranked list with probability per flight number. For trip planning with connections, use plan_starlink_itinerary instead — this tool has no connection logic or coverage-ratio ranking. Empty result = route not served by Starlink planes.`,
+      inputSchema: {
+        type: "object",
+        properties: {
+          origin: {
+            type: "string",
+            description: "Origin airport IATA code (e.g. 'SFO', 'ORD'). Case-insensitive.",
+          },
+          destination: {
+            type: "string",
+            description: "Destination airport IATA code (e.g. 'EWR', 'DEN'). Case-insensitive.",
+          },
+          limit: {
+            type: "integer",
+            minimum: 1,
+            maximum: 50,
+            description: "Maximum number of flight numbers to return (default 10).",
+          },
         },
-        destination: {
-          type: "string",
-          description: "Destination airport IATA code (e.g. 'JAX').",
-        },
-        max_stops: {
-          type: "integer",
-          minimum: 0,
-          maximum: 3,
-          description:
-            "Maximum number of connection stops (default 2, max 3). 0=direct only, 1=one connection, etc.",
-        },
-        max_results: {
-          type: "integer",
-          minimum: 1,
-          maximum: 20,
-          description:
-            "Maximum number of full-coverage itineraries (default 8). Up to 3 partial baselines may be appended.",
-        },
-        date: {
-          type: "string",
-          description:
-            "Optional YYYY-MM-DD travel date. When within ~2 days (the aircraft-assignment " +
-            "window), uses confirmed tail assignments for higher accuracy. Beyond that, uses " +
-            "historical prediction only — confirmed assignments don't apply to future dates.",
-        },
+        anyOf: [{ required: ["origin"] }, { required: ["destination"] }],
       },
-      required: ["origin", "destination"],
     },
-  },
-  {
-    name: "predict_route_starlink",
-    description:
-      "Single-route lookup: find which United flight numbers on a route (or touching an " +
-      "airport) are most likely to have Starlink. Pass both origin+destination for a specific " +
-      "route, OR just one to list all Starlink flights from/into an airport. Returns ranked " +
-      "list with probability per flight number. For trip planning with connections, use " +
-      "plan_starlink_itinerary instead — this tool has no connection logic or coverage-ratio " +
-      "ranking. Empty result = route not served by Starlink planes.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        origin: {
-          type: "string",
-          description: "Origin airport IATA code (e.g. 'SFO', 'ORD'). Case-insensitive.",
+    {
+      name: "search_starlink_flights",
+      description:
+        "Search CONFIRMED Starlink flights in the next ~2 days — firm schedule, not prediction. " +
+        "Aircraft assignments aren't published further out, so for later dates use " +
+        "predict_route_starlink or plan_starlink_itinerary instead. Example: 'what confirmed " +
+        "Starlink flights leave ORD tomorrow?'",
+      inputSchema: {
+        type: "object",
+        properties: {
+          origin: {
+            type: "string",
+            description: "Origin airport IATA code (e.g. 'SFO', 'ORD'). Case-insensitive.",
+          },
+          destination: {
+            type: "string",
+            description: "Destination airport IATA code (e.g. 'LAX', 'DEN'). Case-insensitive.",
+          },
+          limit: {
+            type: "integer",
+            minimum: 1,
+            maximum: 100,
+            description: "Maximum number of flights to return (default 20).",
+          },
         },
-        destination: {
-          type: "string",
-          description: "Destination airport IATA code (e.g. 'EWR', 'DEN'). Case-insensitive.",
-        },
-        limit: {
-          type: "integer",
-          minimum: 1,
-          maximum: 50,
-          description: "Maximum number of flight numbers to return (default 10).",
-        },
+        anyOf: [{ required: ["origin"] }, { required: ["destination"] }],
       },
-      anyOf: [{ required: ["origin"] }, { required: ["destination"] }],
     },
-  },
-  {
-    name: "search_starlink_flights",
-    description:
-      "Search CONFIRMED Starlink flights in the next ~2 days — firm schedule, not prediction. " +
-      "Aircraft assignments aren't published further out, so for later dates use " +
-      "predict_route_starlink or plan_starlink_itinerary instead. Example: 'what confirmed " +
-      "Starlink flights leave ORD tomorrow?'",
-    inputSchema: {
-      type: "object",
-      properties: {
-        origin: {
-          type: "string",
-          description: "Origin airport IATA code (e.g. 'SFO', 'ORD'). Case-insensitive.",
-        },
-        destination: {
-          type: "string",
-          description: "Destination airport IATA code (e.g. 'LAX', 'DEN'). Case-insensitive.",
-        },
-        limit: {
-          type: "integer",
-          minimum: 1,
-          maximum: 100,
-          description: "Maximum number of flights to return (default 20).",
-        },
-      },
-      anyOf: [{ required: ["origin"] }, { required: ["destination"] }],
-    },
-  },
-] as const;
+  ];
+}
 
 // ============================================================================
 // Tool implementations
@@ -1113,6 +1159,8 @@ function rpcResult(id: string | number | null, result: unknown): JsonRpcSuccess 
 
 function handleInitialize(
   reader: ScopedReader,
+  scope: Scope,
+  hostScope: Scope,
   id: string | number | null,
   params: Record<string, unknown> | undefined
 ): JsonRpcResponse {
@@ -1125,11 +1173,37 @@ function handleInitialize(
       ? clientVersion
       : SUPPORTED_PROTOCOL_VERSIONS[0];
 
+  const carrier = scopeLabel(scope);
+  // serverInfo.name uses the airline's metricTag ("united", "qatar", "alaska",
+  // "hawaiian"), with "airline" for ALL — gives stable, recognizable names that
+  // don't shift if we ever rename a code.
+  const slug =
+    scope === "ALL" ? "airline" : (AIRLINES[scope as AirlineCode]?.metricTag ?? "airline");
+
   // Include LIVE fleet stats in instructions so the agent has accurate priors
-  // and doesn't hallucinate about mainline coverage (which is ~2%, not "decent").
+  // and doesn't hallucinate about coverage levels.
   const fleetStats = reader.getFleetStats();
   const expressPct = fleetStats.express.percentage.toFixed(0);
   const mainlinePct = fleetStats.mainline.percentage.toFixed(1);
+  const hasFleetSplit = fleetStats.express.total > 0 || fleetStats.mainline.total > 0;
+
+  // UA-specific fleet realities only make sense for UA scope. For other
+  // single-airline scopes the express/mainline split may be empty, and for ALL
+  // it's a sum that doesn't have a clean narrative — so omit it.
+  const fleetParagraph =
+    scope === "UA"
+      ? `Fleet reality:\n• Express/regional (UA3000-6999): ~${expressPct}% Starlink\n• Mainline (UA1-2999, 737/787/etc): only ~${mainlinePct}% — assume NO Starlink on long-haul\n\n`
+      : hasFleetSplit && scope !== "ALL"
+        ? `Fleet reality (${carrier}):\n• Mainline: ~${mainlinePct}% Starlink\n• Express/regional: ~${expressPct}% Starlink\n\n`
+        : "";
+
+  const scopeNotice =
+    scope === hostScope
+      ? `Scope: ${carrier}.`
+      : `Scope: ${carrier} (override of host default via ?scope=${scope}).`;
+
+  const overrideOptions = VALID_SCOPES.filter((s) => s !== scope).join("|");
+  const overrideHint = `To change scope, append \`?scope=${overrideOptions}\` to the connector URL.`;
 
   return rpcResult(id, {
     protocolVersion,
@@ -1137,16 +1211,12 @@ function handleInitialize(
       tools: {},
     },
     serverInfo: {
-      name: "united-starlink-tracker",
+      name: `${slug}-starlink-tracker`,
       version: "1.0.0",
     },
-    instructions: `United Airlines Starlink tracker — UNITED ONLY. For other carriers (Delta, American, JetBlue, international), decline: this tracker has no data on them.
+    instructions: `${scopeTitle(scope)} Starlink tracker. ${scopeNotice} ${overrideHint}
 
-Fleet reality:
-• Express/regional (UA3000-6999): ~${expressPct}% Starlink
-• Mainline (UA1-2999, 737/787/etc): only ~${mainlinePct}% — assume NO Starlink on long-haul
-
-Default assumption: people who install this connector want to MAXIMIZE Starlink hours and accept extra stops for it. When plan_starlink_itinerary returns a 2-stop with higher coverage, present it confidently — don't hedge toward the nonstop unless asked. Compare coverage ratio (expected Starlink hours / total hours), not leg percentages.
+${fleetParagraph}Default assumption: people who install this connector want to MAXIMIZE Starlink hours and accept extra stops for it. When plan_starlink_itinerary returns a 2-stop with higher coverage, present it confidently — don't hedge toward the nonstop unless asked. Compare coverage ratio (expected Starlink hours / total hours), not leg percentages.
 
 Tool selection:
 • Routing/tradeoff → plan_starlink_itinerary (multi-stop, coverage ratio)
@@ -1204,6 +1274,8 @@ async function handleToolsCall(
 
 async function dispatch(
   reader: ScopedReader,
+  scope: Scope,
+  hostScope: Scope,
   msg: JsonRpcRequest
 ): Promise<JsonRpcResponse | null> {
   const id = msg.id ?? null;
@@ -1211,13 +1283,13 @@ async function dispatch(
 
   switch (msg.method) {
     case "initialize":
-      return handleInitialize(reader, id, msg.params);
+      return handleInitialize(reader, scope, hostScope, id, msg.params);
     case "notifications/initialized":
       return null;
     case "ping":
       return rpcResult(id, {});
     case "tools/list":
-      return rpcResult(id, { tools: TOOLS });
+      return rpcResult(id, { tools: buildTools(scope) });
     case "tools/call":
       return handleToolsCall(reader, id, msg.params);
     default:
@@ -1235,8 +1307,18 @@ const JSON_HEADERS = { "Content-Type": "application/json" };
 /**
  * Handle an incoming MCP HTTP request.
  * Mount this at a single path (e.g. /mcp) in your Bun.serve router.
+ *
+ * @param hostScope The scope derived from the host header (UA, HA, AS, QR, ALL).
+ * @param getReader Factory minting a reader for any scope; used to honor
+ *                  `?scope=` overrides without bypassing the dispatcher's
+ *                  scoping guarantees.
  */
-export async function handleMcpRequest(req: Request, reader: ScopedReader): Promise<Response> {
+export async function handleMcpRequest(
+  req: Request,
+  hostScope: Scope,
+  getReader: (scope: Scope) => ScopedReader,
+  analytics: AnalyticsConfig | null = DEFAULT_ANALYTICS
+): Promise<Response> {
   // GET = open SSE stream for server→client push. We're stateless, no push.
   // DELETE = terminate session. We're stateless, no sessions.
   if (req.method === "GET" || req.method === "DELETE") {
@@ -1275,10 +1357,13 @@ export async function handleMcpRequest(req: Request, reader: ScopedReader): Prom
     );
   }
 
+  const { scope } = resolveScope(req, hostScope);
+  const reader = getReader(scope);
+
   // Dispatch
   let response: JsonRpcResponse | null;
   try {
-    response = await dispatch(reader, msg);
+    response = await dispatch(reader, scope, hostScope, msg);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     info(`MCP handler error: ${message}`);
@@ -1287,10 +1372,10 @@ export async function handleMcpRequest(req: Request, reader: ScopedReader): Prom
 
   // Track meaningful MCP usage in Plausible (skip ping & notifications — noise)
   if (msg.method === "initialize" || msg.method === "tools/list") {
-    trackMcpEvent(req, { method: msg.method });
+    trackMcpEvent(req, analytics, { method: msg.method });
   } else if (msg.method === "tools/call") {
     const toolName = typeof msg.params?.name === "string" ? msg.params.name : "unknown";
-    trackMcpEvent(req, { method: "tools/call", tool: toolName });
+    trackMcpEvent(req, analytics, { method: "tools/call", tool: toolName });
   }
 
   // Notification (no id) → 202 Accepted, empty body

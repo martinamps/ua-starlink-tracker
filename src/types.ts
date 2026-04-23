@@ -37,7 +37,7 @@ export interface PerAirlineStat {
   fleetTotal?: number;
   installs30d?: number;
   accentColor?: string;
-  canonicalHost?: string;
+  href?: string;
 }
 
 export interface RecentInstall {

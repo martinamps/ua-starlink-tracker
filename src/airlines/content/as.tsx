@@ -1,5 +1,6 @@
 import React from "react";
 import { ModelPie, StatRing, computeModelBreakdown } from "../../components/atoms";
+import { airlineHomeUrl } from "../registry";
 import type { AirlineContent, HeroProps } from "./index";
 
 const ASHero = ({ stats, starlinkData }: HeroProps) => {
@@ -94,7 +95,7 @@ export const content: AirlineContent = {
             <p>
               Following the 2024 merger, Hawaiian-branded routes are flown by the Hawaiian Airbus
               fleet (A330, A321neo) — those aircraft <strong>all have Starlink already</strong>. See{" "}
-              <a href="https://hawaiianstarlinktracker.com" className="text-accent hover:underline">
+              <a href={airlineHomeUrl("HA")} className="text-accent hover:underline">
                 the Hawaiian tracker
               </a>{" "}
               for that fleet. Some 787-9s originally ordered by Hawaiian are transferring to

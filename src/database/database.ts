@@ -254,6 +254,33 @@ function setupTables(db: Database) {
     `).run();
   }
 
+  // Qatar's flight-status API exposes per-flight equipment but no tail, so the
+  // upcoming_flights → starlink_planes JOIN that other carriers use doesn't
+  // fit. qatar_schedule caches QR's equipment-code-per-flight directly so the
+  // API serves from the DB (per CLAUDE.md "upstream citizenship") instead of
+  // proxying live calls.
+  if (!tableExists(db, "qatar_schedule")) {
+    db.query(`
+      CREATE TABLE qatar_schedule (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        flight_number TEXT NOT NULL,
+        scheduled_date TEXT NOT NULL,
+        departure_airport TEXT,
+        arrival_airport TEXT,
+        departure_time INTEGER,
+        arrival_time INTEGER,
+        equipment_code TEXT,
+        wifi_verdict TEXT,
+        flight_status TEXT,
+        last_updated INTEGER NOT NULL,
+        UNIQUE(flight_number, scheduled_date)
+      );
+      CREATE INDEX idx_qs_dep_time ON qatar_schedule(departure_time);
+      CREATE INDEX idx_qs_route ON qatar_schedule(departure_airport, arrival_airport, departure_time);
+      CREATE INDEX idx_qs_flight ON qatar_schedule(flight_number, scheduled_date);
+    `).run();
+  }
+
   if (tableExists(db, "starlink_planes")) {
     const columns = db.query("PRAGMA table_info(starlink_planes)").all();
     const migrationsRun = [];
@@ -2538,4 +2565,136 @@ function computePulse(db: Database, airline?: AirlineFilter): FleetPageData["pul
   }
 
   return { now: airborneNow, sparkline, peak, trough, totalHours: totalSec / 3600 };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Qatar schedule cache — equipment-per-flight from QR's flight-status API.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface QatarScheduleRow {
+  flight_number: string;
+  scheduled_date: string;
+  departure_airport: string | null;
+  arrival_airport: string | null;
+  departure_time: number | null;
+  arrival_time: number | null;
+  equipment_code: string | null;
+  wifi_verdict: string | null;
+  flight_status: string | null;
+  last_updated: number;
+}
+
+export function upsertQatarSchedule(db: Database, row: QatarScheduleRow): void {
+  db.query(
+    `INSERT INTO qatar_schedule
+       (flight_number, scheduled_date, departure_airport, arrival_airport,
+        departure_time, arrival_time, equipment_code, wifi_verdict,
+        flight_status, last_updated)
+     VALUES (?,?,?,?,?,?,?,?,?,?)
+     ON CONFLICT(flight_number, scheduled_date) DO UPDATE SET
+       departure_airport = excluded.departure_airport,
+       arrival_airport   = excluded.arrival_airport,
+       departure_time    = excluded.departure_time,
+       arrival_time      = excluded.arrival_time,
+       equipment_code    = excluded.equipment_code,
+       wifi_verdict      = excluded.wifi_verdict,
+       flight_status     = excluded.flight_status,
+       last_updated      = excluded.last_updated`
+  ).run(
+    row.flight_number,
+    row.scheduled_date,
+    row.departure_airport,
+    row.arrival_airport,
+    row.departure_time,
+    row.arrival_time,
+    row.equipment_code,
+    row.wifi_verdict,
+    row.flight_status,
+    row.last_updated
+  );
+}
+
+/**
+ * Look up QR flights for a date range. Matches by flight_number (variants
+ * passed in pre-normalized, e.g. ["QR1", "QR001"]) AND by departure_time
+ * window — same shape /api/check-flight uses for other carriers.
+ */
+export function getQatarScheduleByFlight(
+  db: Database,
+  flightNumberVariants: string[],
+  startOfDay: number,
+  endOfDay: number
+): QatarScheduleRow[] {
+  if (flightNumberVariants.length === 0) return [];
+  const placeholders = flightNumberVariants.map(() => "?").join(",");
+  return db
+    .query(
+      `SELECT * FROM qatar_schedule
+       WHERE flight_number IN (${placeholders})
+         AND departure_time >= ?
+         AND departure_time < ?
+       ORDER BY departure_time ASC`
+    )
+    .all(...flightNumberVariants, startOfDay, endOfDay) as QatarScheduleRow[];
+}
+
+export function getQatarScheduleByRoute(
+  db: Database,
+  origin: string,
+  destination: string,
+  startOfDay: number,
+  endOfDay: number
+): QatarScheduleRow[] {
+  return db
+    .query(
+      `SELECT * FROM qatar_schedule
+       WHERE departure_airport = ?
+         AND arrival_airport = ?
+         AND departure_time >= ?
+         AND departure_time < ?
+       ORDER BY departure_time ASC`
+    )
+    .all(
+      origin.toUpperCase(),
+      destination.toUpperCase(),
+      startOfDay,
+      endOfDay
+    ) as QatarScheduleRow[];
+}
+
+export function pruneQatarScheduleBefore(db: Database, beforeEpoch: number): number {
+  return db.query("DELETE FROM qatar_schedule WHERE departure_time < ?").run(beforeEpoch).changes;
+}
+
+export function getQatarScheduleStats(db: Database): {
+  total: number;
+  starlink: number;
+  rolling: number;
+  none: number;
+  lastUpdated: number | null;
+} {
+  const counts = db
+    .query(
+      `SELECT
+         COUNT(*) AS total,
+         SUM(CASE WHEN wifi_verdict = 'Starlink' THEN 1 ELSE 0 END) AS starlink,
+         SUM(CASE WHEN wifi_verdict = 'Rolling'  THEN 1 ELSE 0 END) AS rolling,
+         SUM(CASE WHEN wifi_verdict = 'None'     THEN 1 ELSE 0 END) AS none,
+         MAX(last_updated) AS lastUpdated
+       FROM qatar_schedule`
+    )
+    .get() as {
+    total: number;
+    starlink: number;
+    rolling: number;
+    none: number;
+    lastUpdated: number | null;
+  };
+  return {
+    total: counts.total ?? 0,
+    starlink: counts.starlink ?? 0,
+    rolling: counts.rolling ?? 0,
+    none: counts.none ?? 0,
+    lastUpdated: counts.lastUpdated ?? null,
+  };
 }

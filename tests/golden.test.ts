@@ -7,12 +7,13 @@
 
 import { Database } from "bun:sqlite";
 import { beforeAll, describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { createApp } from "../src/server/app";
 
 const G = "tests/golden";
 const TEST_DB = "/tmp/ua-test.sqlite";
 const UA = "unitedstarlinktracker.com";
+const HAS_PROD_SNAPSHOT = existsSync("plane-data.production.sqlite");
 const load = (name: string) => JSON.parse(readFileSync(`${G}/${name}`, "utf8"));
 
 let app: ReturnType<typeof createApp>;
@@ -48,6 +49,13 @@ async function postMcp(method: string, params: unknown) {
 }
 
 describe("golden snapshots (refactor must be byte-identical)", () => {
+  if (!HAS_PROD_SNAPSHOT) {
+    test("requires plane-data.production.sqlite", () => {
+      expect(HAS_PROD_SNAPSHOT).toBe(false);
+    });
+    return;
+  }
+
   test("/api/data", async () => {
     const live = await getJSON("/api/data");
     const fixture = load("api-data.json");

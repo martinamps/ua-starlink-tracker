@@ -4,6 +4,10 @@ set -euo pipefail
 DB=/tmp/ua-test.sqlite
 SRC=plane-data.production.sqlite
 
+if [[ ! -f "$SRC" ]]; then
+  SRC=plane-data.sqlite.example
+fi
+
 cp "$SRC" "$DB"
 
 sqlite3 "$DB" 'PRAGMA journal_mode=DELETE;'

@@ -9,41 +9,77 @@
  * - profiling and runtimeMetrics must be disabled
  */
 
-import tracer, { type Span } from "dd-trace";
-import formats from "dd-trace/ext/formats";
+export type Span = import("dd-trace").Span;
+
+type TraceTags = Record<string, string | number>;
+type TraceContextCarrier = Record<string, unknown>;
+
+interface TracerLike {
+  dogstatsd: {
+    increment(name: string, value: number, tags?: TraceTags): void;
+    gauge(name: string, value: number, tags?: TraceTags): void;
+    distribution(name: string, value: number, tags?: TraceTags): void;
+  };
+  inject(context: unknown, format: unknown, record: TraceContextCarrier): void;
+  scope(): { active(): Span | null };
+  trace<T>(name: string, fn: (span: Span) => T | Promise<T>): T | Promise<T>;
+}
 
 const isEnabled = process.env.DD_TRACE_ENABLED === "true";
 
-// Only initialize tracer when enabled to avoid overhead in development
+const noopSpan = {
+  addTags(_tags: TraceTags) {},
+  context() {
+    return null;
+  },
+  setTag(_name: string, _value: unknown) {},
+} as unknown as Span;
+
+const noopTracer: TracerLike = {
+  dogstatsd: {
+    distribution(_name, _value, _tags) {},
+    gauge(_name, _value, _tags) {},
+    increment(_name, _value, _tags) {},
+  },
+  inject(_context, _format, _record) {},
+  scope() {
+    return { active: () => null };
+  },
+  trace(_name, fn) {
+    return fn(noopSpan);
+  },
+};
+
+let tracer: TracerLike = noopTracer;
+let logFormat: unknown = null;
+
 if (isEnabled) {
-  tracer.init({
+  const [{ default: ddTracer }, { default: ddFormats }] = await Promise.all([
+    import("dd-trace"),
+    import("dd-trace/ext/formats"),
+  ]);
+
+  ddTracer.init({
     service: process.env.DD_SERVICE || "ua-starlink-tracker",
     env: process.env.DD_ENV || "development",
     version: process.env.DD_VERSION || "unknown",
-    // Global tags — auto-applied to every span and every dogstatsd metric.
-    // `airline` is constant today but gives us backwards-queryable history
-    // the day we add a second carrier (series with different tag sets don't
-    // join across the boundary in Datadog).
     tags: {
       airline: process.env.AIRLINE || "united",
     },
     logInjection: true,
-    profiling: false, // Required for Bun compatibility
-    runtimeMetrics: false, // Required for Bun compatibility
+    profiling: false,
+    runtimeMetrics: false,
     startupLogs: true,
   });
+
+  tracer = ddTracer as unknown as TracerLike;
+  logFormat = ddFormats.LOG;
 }
 
-// ============ Ergonomic Helpers ============
-
-/**
- * Wrap an async function in a trace span - cleaner than tracer.trace() directly
- * Automatically handles errors and sets common tags
- */
 export async function withSpan<T>(
   name: string,
   fn: (span: Span) => Promise<T>,
-  tags?: Record<string, string | number>
+  tags?: TraceTags
 ): Promise<T> {
   return tracer.trace(name, async (span) => {
     if (tags) {
@@ -55,25 +91,18 @@ export async function withSpan<T>(
       span.setTag("error", err);
       throw err;
     }
-  });
+  }) as Promise<T>;
 }
 
-/**
- * Get current active span for trace context injection
- */
 export function getActiveSpan(): Span | null {
   return tracer.scope().active();
 }
 
-/**
- * Inject trace context into a log record for correlation
- */
-export function injectTraceContext(record: Record<string, unknown>): void {
+export function injectTraceContext(record: TraceContextCarrier): void {
   const span = tracer.scope().active();
-  if (span) {
-    tracer.inject(span.context(), formats.LOG, record);
+  if (span && logFormat) {
+    tracer.inject(span.context(), logFormat, record);
   }
 }
 
 export { tracer };
-export type { Span };

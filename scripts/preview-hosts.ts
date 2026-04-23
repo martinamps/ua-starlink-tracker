@@ -11,17 +11,17 @@
 
 import { spawn } from "node:child_process";
 import { type Browser, chromium } from "playwright";
-import { HUB_HOSTS, enabledAirlines } from "../src/airlines/registry";
+import { SITES } from "../src/airlines/registry";
 
 const args = process.argv.slice(2);
 const dbPath = args.find((a) => a.startsWith("--db="))?.slice(5) ?? "/tmp/ua-test.sqlite";
 const urlPath = args.find((a) => a.startsWith("--path="))?.slice(7) ?? "/";
 const port = 39920;
 
-const hosts = [
-  ...enabledAirlines().map((a) => ({ host: a.canonicalHost, name: a.code.toLowerCase() })),
-  { host: HUB_HOSTS[0], name: "hub" },
-];
+const hosts = Object.values(SITES).map((site) => ({
+  host: site.canonicalHost,
+  name: site.key,
+}));
 
 console.log(`\n=== preview-hosts · db=${dbPath} path=${urlPath} ===`);
 
