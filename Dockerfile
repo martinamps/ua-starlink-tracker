@@ -1,4 +1,4 @@
-FROM oven/bun:slim
+FROM oven/bun:1.3.13-slim
 
 WORKDIR /app
 
@@ -44,4 +44,4 @@ ENV DD_VERSION=${SOURCE_COMMIT}
 ENV DD_TRACE_AGENT_HOSTNAME=host.docker.internal
 ENV DD_RUNTIME_METRICS_ENABLED=false
 
-CMD ["bun", "run", "server.ts"]
+CMD ["bun", "--smol", "server.ts"]
