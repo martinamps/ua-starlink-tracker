@@ -558,6 +558,14 @@ async function lookupFlightRoutes(
   const cached = routeCache.get(cacheKey);
   if (cached && now - cached.at < ROUTE_CACHE_TTL) return cached.promise;
 
+  // Keyspace is flightNumber × day → unbounded over time. Sweep stale entries
+  // once the cache gets large (matches assignmentCache in flight-verdict.ts).
+  if (routeCache.size > 500) {
+    for (const [k, v] of routeCache) {
+      if (now - v.at >= ROUTE_CACHE_TTL) routeCache.delete(k);
+    }
+  }
+
   const promise = (async (): Promise<RouteEntry[]> => {
     // L1: persistent SQLite cache (builds up over time, survives restarts).
     const sqliteCached = reader.getCachedFlightRoutes(uaFlightNumber, now - 7 * 86400);
