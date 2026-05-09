@@ -64,6 +64,9 @@ export const SECURITY_HEADERS = {
     "Content-Security-Policy": `default-src 'self' https://unpkg.com; connect-src ${CONNECT_SRC}; script-src ${SCRIPT_SRC}; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:;`,
     "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
     "Referrer-Policy": "no-referrer",
+    // Underlying data refreshes hourly; 5min browser / 10min CDN absorbs
+    // refresh-loop bots and wallboard tabs without going stale.
+    "Cache-Control": "public, max-age=300, s-maxage=600",
   },
   notFound: {
     "Content-Type": "text/html",

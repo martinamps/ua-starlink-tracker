@@ -102,7 +102,15 @@ function methodNotAllowed(json = false): Response {
 function analyticsSnippet(site: SiteConfig): string {
   const analytics = site.analytics;
   if (!analytics) return "";
-  return `<script defer data-domain="${analytics.dataDomain}" src="${analytics.scriptSrc}"></script>`;
+  // Manual mode + 30s/path debounce: refresh-loop bots and wallboard tabs fire
+  // a pageview on every reload; this dedupes them client-side so the dashboard
+  // tracks visits, not refresh rates.
+  const manualSrc = analytics.scriptSrc.replace(/script\.js$/, "script.manual.js");
+  const debounce =
+    "window.plausible=window.plausible||function(){(window.plausible.q=window.plausible.q||[]).push(arguments)};" +
+    '(function(){try{var k="pv:"+location.pathname,n=Date.now(),t=+sessionStorage.getItem(k)||0;' +
+    'if(n-t<3e4)return;sessionStorage.setItem(k,n)}catch(e){}plausible("pageview")})();';
+  return `<script defer data-domain="${analytics.dataDomain}" src="${manualSrc}"></script><script>${debounce}</script>`;
 }
 
 function jsonLdBlock(payload: unknown): string {
