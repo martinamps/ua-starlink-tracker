@@ -257,19 +257,27 @@ describe("MCP protocol", () => {
     const json = await mcpCall("tools/list");
     expect(Array.isArray(json.result.tools)).toBe(true);
 
-    const names = json.result.tools.map((t: { name: string }) => t.name);
-    expect(names).toContain("check_flight");
-    expect(names).toContain("predict_flight_starlink");
-    expect(names).toContain("predict_route_starlink");
-    expect(names).toContain("plan_starlink_itinerary");
-    expect(names).toContain("search_starlink_flights");
+    // Tool names are a public contract — clients cache schemas at connect time.
+    const names = json.result.tools.map((t: { name: string }) => t.name).sort();
+    expect(names).toEqual([
+      "check_flight",
+      "get_fleet_stats",
+      "list_starlink_aircraft",
+      "plan_starlink_itinerary",
+      "predict_flight_starlink",
+      "predict_route_starlink",
+      "search_starlink_flights",
+    ]);
 
-    // Every tool has description + inputSchema
     for (const t of json.result.tools) {
       expect(typeof t.description).toBe("string");
       expect(t.description.length).toBeGreaterThan(10);
       expect(t.inputSchema.type).toBe("object");
       expect(t.inputSchema.properties).toBeDefined();
+      // Anthropic API rejects these at the top level — see issue #13.
+      for (const k of ["oneOf", "allOf", "anyOf", "not", "$ref", "if", "then", "else"]) {
+        expect(t.inputSchema).not.toHaveProperty(k);
+      }
     }
   });
 
