@@ -11,6 +11,7 @@ import {
 } from "./src/database/database";
 import { withSpan } from "./src/observability";
 import { startAlaskaVerifier } from "./src/scripts/alaska-verifier";
+import { startFreshnessEmitter } from "./src/scripts/data-freshness";
 import { startFleetDiscovery } from "./src/scripts/fleet-discovery";
 import { startFleetSync } from "./src/scripts/fleet-sync";
 import { computePrecision, emitPrecisionGauges } from "./src/scripts/precision-backtest";
@@ -128,6 +129,10 @@ if (JOBS_ENABLED) {
   startQatarScheduleIngester();
   // Fleet sync iterates enabledAirlines() internally.
   startFleetSync();
+
+  // Data-freshness gauges: derived from MAX(timestamp) in the DB, not a
+  // ran-at heartbeat — catches "loop alive but writes nothing" silent failures.
+  startFreshnessEmitter(db);
 
   // Ship-number resolution is UA-specific (United's ship→tail Google Sheet).
   setTimeout(
