@@ -5,6 +5,7 @@ import "dotenv/config";
 import { checkNewPlanes, startFlightUpdater } from "./src/api/flight-updater";
 import {
   initializeDatabase,
+  pruneCrashRows,
   reconcileConsensus,
   syncSpreadsheetToFleet,
   updateDatabase,
@@ -139,6 +140,15 @@ if (JOBS_ENABLED) {
       );
     },
     10 * 60 * 1000
+  );
+
+  // Daily prune of subprocess-crash log rows (no observation, just noise).
+  setInterval(
+    () => {
+      const n = pruneCrashRows(db);
+      if (n > 0) info(`Pruned ${n} stale crash rows from verification log`);
+    },
+    24 * 3600 * 1000
   );
 } else {
   info("Background jobs disabled (DISABLE_JOBS=1)");
