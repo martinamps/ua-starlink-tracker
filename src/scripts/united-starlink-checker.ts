@@ -307,13 +307,35 @@ if (import.meta.main) {
   }
 
   const [flightNumber, date, origin, destination] = args;
+  // The subprocess parent reads result.error from stdout JSON. A non-zero exit
+  // makes it discard that JSON and surface only "Process exited with code 1",
+  // hiding the real reason (e.g. "Flight not found"). Reserve exit 1 for the
+  // direct-CLI case where a human reads $?.
+  const isSubprocess = process.env.SUBPROCESS_MODE === "1";
+  const emptyResult = (errorMsg: string): StarlinkCheckResult => ({
+    hasStarlink: false,
+    tailNumber: null,
+    shipNumber: null,
+    aircraftType: null,
+    wifiProvider: null,
+    flightNumber,
+    date,
+    origin,
+    destination,
+    error: errorMsg,
+  });
   checkStarlinkStatus(flightNumber, date, origin, destination)
     .then((result) => {
       console.log(JSON.stringify(result, null, 2));
-      process.exit(result.error ? 1 : 0);
+      process.exit(isSubprocess ? 0 : result.error ? 1 : 0);
     })
     .catch((err) => {
+      // checkStarlinkStatus catches its own errors; this only fires on
+      // module-level/launch failures. Still emit JSON so the parent gets a
+      // string instead of an opaque exit code.
+      const message = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+      console.log(JSON.stringify(emptyResult(`Unhandled: ${message}`), null, 2));
       console.error(err);
-      process.exit(1);
+      process.exit(isSubprocess ? 0 : 1);
     });
 }

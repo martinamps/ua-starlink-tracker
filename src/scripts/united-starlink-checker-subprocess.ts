@@ -6,6 +6,7 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { COUNTERS, DISTRIBUTIONS, metrics } from "../observability";
+import { warn } from "../utils/logger";
 import type { StarlinkCheckResult } from "./united-starlink-checker";
 
 const SCRIPT_PATH = path.join(import.meta.dir, "united-starlink-checker.ts");
@@ -57,6 +58,34 @@ export async function checkStarlinkStatusSubprocess(
   return run;
 }
 
+// Datadog tracer may prepend config lines; scan for the first JSON object
+// on its own line and balance braces so we don't grab a partial object.
+function extractResultJson(stdout: string): StarlinkCheckResult | null {
+  const lines = stdout.split("\n");
+  let jsonStr = "";
+  let inJson = false;
+  let braceCount = 0;
+
+  for (const line of lines) {
+    if (!inJson && line.trim().startsWith("{") && !line.includes("DATADOG")) {
+      inJson = true;
+    }
+    if (inJson) {
+      jsonStr += `${line}\n`;
+      braceCount += (line.match(/\{/g) || []).length;
+      braceCount -= (line.match(/\}/g) || []).length;
+      if (braceCount === 0) break;
+    }
+  }
+
+  if (!jsonStr || !jsonStr.includes("hasStarlink")) return null;
+  try {
+    return JSON.parse(jsonStr.trim()) as StarlinkCheckResult;
+  } catch {
+    return null;
+  }
+}
+
 function runSubprocess(
   flightNumber: string,
   date: string,
@@ -72,11 +101,14 @@ function runSubprocess(
     // timeout sends SIGTERM at the same instant and races, making timeouts
     // nondeterministically look like exit_error.
     const child = spawn("bun", args, {
-      stdio: ["ignore", "pipe", "inherit"], // inherit stderr for unbuffered logs
+      // Pipe stderr so launch/Playwright errors land in our structured logger
+      // instead of vanishing into the container's stdout stream.
+      stdio: ["ignore", "pipe", "pipe"],
       env: { ...process.env, SUBPROCESS_MODE: "1" },
     });
 
     let stdout = "";
+    let stderr = "";
     let timedOut = false;
     let metricsEmitted = false;
 
@@ -89,6 +121,9 @@ function runSubprocess(
 
     child.stdout.on("data", (data) => {
       stdout += data.toString();
+    });
+    child.stderr?.on("data", (data) => {
+      stderr += data.toString();
     });
 
     const timeout = setTimeout(() => {
@@ -114,42 +149,37 @@ function runSubprocess(
         return;
       }
 
+      const result = extractResultJson(stdout);
+
       if (code !== 0) {
+        // Subprocess mode now exits 0 even on scrape errors, so a non-zero
+        // exit means a hard crash (module load, OOM). Prefer whatever the
+        // child managed to write before dying; fall back to its stderr so
+        // the log row carries the real reason instead of just the code.
+        if (stderr.trim()) {
+          warn(`Checker subprocess exited ${code}`, { stderr: stderr.slice(-2000) });
+        }
+        if (result) {
+          emit("scrape_error");
+          resolve(result.error ? result : { ...result, error: `Process exited with code ${code}` });
+          return;
+        }
         emit("exit_error");
-        reject(new Error(`Process exited with code ${code}`));
+        const detail = stderr.trim().split("\n").slice(-3).join(" | ").slice(0, 500);
+        reject(new Error(`Process exited with code ${code}${detail ? `: ${detail}` : ""}`));
         return;
       }
 
-      try {
-        // Extract JSON from stdout - Datadog tracer may prepend config output
-        // Find the JSON object starting on its own line (not embedded in Datadog output)
-        const lines = stdout.split("\n");
-        let jsonStr = "";
-        let inJson = false;
-        let braceCount = 0;
-
-        for (const line of lines) {
-          if (!inJson && line.trim().startsWith("{") && !line.includes("DATADOG")) {
-            inJson = true;
-          }
-          if (inJson) {
-            jsonStr += `${line}\n`;
-            braceCount += (line.match(/\{/g) || []).length;
-            braceCount -= (line.match(/\}/g) || []).length;
-            if (braceCount === 0) break;
-          }
-        }
-
-        if (!jsonStr || !jsonStr.includes("hasStarlink")) {
-          throw new Error("No valid result JSON found in output");
-        }
-        const result = JSON.parse(jsonStr.trim()) as StarlinkCheckResult;
-        emit(result.error ? "scrape_error" : "success");
-        resolve(result);
-      } catch (e) {
+      if (!result) {
         emit("parse_error");
+        if (stderr.trim()) {
+          warn("Checker subprocess produced no parseable JSON", { stderr: stderr.slice(-2000) });
+        }
         reject(new Error(`Failed to parse output: ${stdout}`));
+        return;
       }
+      emit(result.error ? "scrape_error" : "success");
+      resolve(result);
     });
 
     child.on("error", (err) => {
