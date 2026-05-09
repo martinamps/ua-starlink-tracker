@@ -6,6 +6,7 @@
 import { COUNTERS, metrics } from "../observability";
 import type { Flight } from "../types";
 import { error, info, warn } from "../utils/logger";
+import { fr24Fetch } from "./fr24-browser-transport";
 
 type FlightUpdate = Pick<
   Flight,
@@ -153,14 +154,7 @@ export class FlightRadar24API {
       // but works fine with the full registration
       const url = `${this.baseUrl}/flight/list.json?query=${tailNumber}&fetchBy=reg&page=1&limit=20`;
 
-      const response = await fetch(url, {
-        signal: AbortSignal.timeout(30000),
-        headers: {
-          "User-Agent":
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-          Accept: "application/json",
-        },
-      });
+      const response = await fr24Fetch(url, 30000);
 
       if (!response.ok) {
         if (response.status === 404) {
@@ -177,7 +171,7 @@ export class FlightRadar24API {
           type: "flights",
           status: "error",
         });
-        throw new Error(`FlightRadar24 API error: ${response.status} ${response.statusText}`);
+        throw new Error(`FlightRadar24 API error: ${response.status}`);
       }
 
       metrics.increment(COUNTERS.VENDOR_REQUEST, {
@@ -185,7 +179,7 @@ export class FlightRadar24API {
         type: "flights",
         status: "success",
       });
-      const data: FR24Response = await response.json();
+      const data: FR24Response = JSON.parse(response.body);
       const flights = data.result?.response?.data || [];
 
       if (flights.length === 0) {
@@ -248,14 +242,17 @@ export class FlightRadar24API {
 
     await this.waitForRateLimit();
 
-    const response = await fetch(url, {
-      signal: AbortSignal.timeout(8000),
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        Accept: "application/json",
-      },
-    });
+    let response: Awaited<ReturnType<typeof fr24Fetch>>;
+    try {
+      response = await fr24Fetch(url, 8000);
+    } catch {
+      metrics.increment(COUNTERS.VENDOR_REQUEST, {
+        vendor: "fr24",
+        type: "routes",
+        status: "error",
+      });
+      return [];
+    }
 
     if (!response.ok) {
       metrics.increment(COUNTERS.VENDOR_REQUEST, {
@@ -266,7 +263,7 @@ export class FlightRadar24API {
       return [];
     }
 
-    const data: FR24Response = await response.json();
+    const data: FR24Response = JSON.parse(response.body);
     const flights = data.result?.response?.data || [];
 
     metrics.increment(COUNTERS.VENDOR_REQUEST, {
@@ -338,14 +335,7 @@ export class FlightRadar24API {
     try {
       return await this.retryWithBackoff(
         async () => {
-          const response = await fetch(url, {
-            signal: AbortSignal.timeout(8000),
-            headers: {
-              "User-Agent":
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-              Accept: "application/json",
-            },
-          });
+          const response = await fr24Fetch(url, 8000);
 
           if (!response.ok) {
             metrics.increment(COUNTERS.VENDOR_REQUEST, {
@@ -362,7 +352,7 @@ export class FlightRadar24API {
             status: "success",
           });
 
-          const data: FR24Response = await response.json();
+          const data: FR24Response = JSON.parse(response.body);
           const flights = data.result?.response?.data || [];
 
           const out = [];
