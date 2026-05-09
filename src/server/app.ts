@@ -1313,6 +1313,9 @@ export function createApp(db: Database): App {
         span.setTag("http.method", req.method);
         span.setTag("http.route", route);
         span.setTag("tenant", tenantScope(tenant));
+        span.setTag("http.client_ip", clientIp(req));
+        const ua = req.headers.get("user-agent");
+        if (ua) span.setTag("http.useragent", ua);
 
         const response = m
           ? await m.handler(ctx)
