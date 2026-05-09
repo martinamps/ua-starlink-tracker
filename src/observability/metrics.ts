@@ -7,10 +7,12 @@
  * Naming Convention: starlink.{category}.{action}
  *
  * Tag cardinality budget (keep each tag ≤ ~20 values):
- *   airline:         united | hawaiian | alaska | qatar | unmapped | unknown  (~6)
+ *   airline:         united | hawaiian | alaska | qatar | all | unmapped | unknown  (~7)
+ *                    `all` = hub-scope emits (db.table_rows, mcp.tool_call)
  *   tenant:          UA | HA | AS | QR | ALL  (~5) — used on http.* only; the
  *                    hub host serves all carriers under scope ALL, which isn't
- *                    an airline, so http metrics carry tenant instead of airline.
+ *                    an airline, so http metrics carry tenant in addition to the
+ *                    per-call default `airline:unmapped` injected by withDefaultAirline.
  *   fleet:           express | mainline | unknown                    (3)
  *   aircraft_type:   normalized families (B737-800, E175, etc)      (~19)
  *   wifi_provider:   starlink | viasat | panasonic | thales | none | other | unknown  (7)
@@ -18,11 +20,12 @@
  *   vendor:          fr24 | flightaware | united | qatar | alaska    (5)
  *   status:          success | error | rate_limited | timeout | killed |
  *                    exit_error | parse_error | spawn_error | partial |
- *                    aborted | scrape_error                          (~14)
+ *                    aborted | scrape_error                          (~11)
  *   result:          success | error | aircraft_mismatch | tail_unknown  (4)
  *   client_class:    bot | claude | extension | browser | unknown    (5)
  *   confidence:      high | medium | low | none                      (4)
  *   outcome:         verified_yes | verified_no | predicted | no_data | error  (5)
+ *   tool:            7 MCP tool names (TOOL_NAMES) | unknown         (~8)
  */
 
 import { AIRLINES } from "../airlines/registry";
@@ -244,6 +247,6 @@ export const DISTRIBUTIONS = {
   MCP_TOOL_DURATION_MS: "mcp.tool_duration_ms",
 
   // Distribution of probabilities served to users — surfaces cold-start floods.
-  // tags: confidence (high|medium|low), method (flight_history|fleet_prior|confirmed), airline
+  // tags: confidence (high|medium|low), method (flight_history|fleet_prior), airline
   PREDICTION_PROBABILITY: "prediction.probability",
 } as const;

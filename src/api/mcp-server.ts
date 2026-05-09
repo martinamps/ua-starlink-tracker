@@ -1321,8 +1321,9 @@ function recordMcpToolCall(
   outcome: "success" | "error" | "unknown_tool",
   startMs: number
 ): void {
+  // Bound the `tool` tag — /mcp is public and `params.name` is caller-controlled.
   const tags = {
-    tool,
+    tool: TOOL_NAMES.includes(tool) ? tool : "unknown",
     airline: scope === "ALL" ? "all" : normalizeAirlineTag(scope),
     outcome,
   };

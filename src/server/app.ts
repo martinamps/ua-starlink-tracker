@@ -325,11 +325,7 @@ function recordPrediction(
   pred: { probability: number; confidence: "high" | "medium" | "low"; method: string },
   airlineCode: string
 ): void {
-  const method = pred.method.startsWith("fleet_prior")
-    ? "fleet_prior"
-    : pred.method.startsWith("flight_history")
-      ? "flight_history"
-      : "confirmed";
+  const method = pred.method.startsWith("fleet_prior") ? "fleet_prior" : "flight_history";
   metrics.distribution(DISTRIBUTIONS.PREDICTION_PROBABILITY, pred.probability, {
     confidence: pred.confidence,
     method,

@@ -75,9 +75,12 @@ if (isEnabled) {
   });
 
   tracer = ddTracer as unknown as TracerLike;
-  // Outbound API latency is useful, but Qatar ingester emits ~6.7k spans/day —
-  // sample heavily; vendor.request counter keeps full-rate success/error data.
-  tracer.use("fetch", { sampleRate: 0.1 });
+  // The Qatar schedule ingester hits one endpoint ~6.7k times/day; blocklist it
+  // (the fetch plugin has no per-plugin sampleRate). vendor.request keeps
+  // full-rate success/error/latency for those calls.
+  tracer.use("fetch", {
+    blocklist: [/qoreservices\.qatarairways\.com/],
+  });
   logFormat = ddFormats.LOG;
 }
 
