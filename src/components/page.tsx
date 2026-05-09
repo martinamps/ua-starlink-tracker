@@ -304,6 +304,8 @@ export default function Page({
   const stats: ContentStats = { starlinkCount: x, totalCount: y, percentage, fleetStats };
   const airlineOf = (p: Aircraft) => airlineByTail[p.TailNumber] || "UA";
   const features = site?.features;
+  const searchCarrier =
+    site?.scope && site.scope !== "ALL" ? AIRLINES[site.scope].iata : AIRLINES.UA.iata;
   const navLinks = [
     ...(features?.checkFlightPage
       ? [{ href: "/check-flight", label: "Check a Flight", badge: "" }]
@@ -446,6 +448,68 @@ export default function Page({
         <p className="text-base sm:text-lg text-secondary font-display mb-2">{brand.tagline}</p>
         <HeaderStatStrip items={content.headerStats} />
       </header>
+
+      {(features?.checkFlightPage ?? true) && (
+        <div className="relative max-w-xl mx-auto w-full mb-6">
+          <form
+            id="home-flight-search"
+            method="GET"
+            action="/check-flight"
+            className="bg-surface rounded-lg border border-subtle p-3 sm:p-4"
+          >
+            <label
+              htmlFor="home-flight-number"
+              className="block text-xs font-mono text-muted uppercase tracking-wider mb-2 text-center"
+            >
+              Does your flight have Starlink?
+            </label>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <input
+                type="text"
+                id="home-flight-number"
+                name="flight_number"
+                placeholder={`${searchCarrier}881`}
+                autoComplete="off"
+                autoCapitalize="characters"
+                spellCheck={false}
+                inputMode="text"
+                className="flex-1 min-w-0 bg-base border border-subtle rounded px-3 py-2 text-primary font-mono text-sm focus:outline-none focus:border-accent"
+              />
+              <input
+                type="date"
+                id="home-flight-date"
+                name="date"
+                className="bg-base border border-subtle rounded px-3 py-2 text-primary font-mono text-sm focus:outline-none focus:border-accent sm:w-40"
+              />
+              <button
+                type="submit"
+                className="px-5 py-2 bg-accent/20 border border-accent text-accent font-display font-semibold rounded hover:bg-accent/30 transition-colors cursor-pointer whitespace-nowrap"
+              >
+                Check
+              </button>
+            </div>
+          </form>
+          <script
+            dangerouslySetInnerHTML={{
+              __html: `
+            document.addEventListener('DOMContentLoaded', function() {
+              var form = document.getElementById('home-flight-search');
+              if (!form) return;
+              var carrierPrefix = ${JSON.stringify(searchCarrier)};
+              form.addEventListener('submit', function(e) {
+                var fn = document.getElementById('home-flight-number').value.trim().toUpperCase();
+                if (!fn) { e.preventDefault(); return; }
+                if (/^\\d+$/.test(fn)) fn = carrierPrefix + fn;
+                var date = document.getElementById('home-flight-date').value;
+                e.preventDefault();
+                window.location.href = '/check-flight/' + encodeURIComponent(fn) + (date ? '/' + encodeURIComponent(date) : '');
+              });
+            });
+          `,
+            }}
+          />
+        </div>
+      )}
 
       {/* Intro paragraph + nav links */}
       <div className="relative text-center max-w-2xl mx-auto mb-6">
