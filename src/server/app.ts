@@ -109,7 +109,8 @@ function analyticsSnippet(site: SiteConfig): string {
 }
 
 function jsonLdBlock(payload: unknown): string {
-  return `<script type="application/ld+json">${JSON.stringify(payload)}</script>`;
+  // Escape `<` so a `</script>` in any string value can't terminate the block.
+  return `<script type="application/ld+json">${JSON.stringify(payload).replace(/</g, "\\u003c")}</script>`;
 }
 
 function chromeExtensionJsonLd(site: SiteConfig): string {
@@ -992,17 +993,31 @@ function parseCheckFlightPath(pathname: string): string | null {
   const rest = pathname.slice("/check-flight/".length).replace(/\/+$/, "");
   if (!rest) return null;
   const [first] = rest.split("/");
-  const fn = decodeURIComponent(first ?? "")
-    .trim()
-    .toUpperCase();
+  let fn: string;
+  try {
+    fn = decodeURIComponent(first ?? "")
+      .trim()
+      .toUpperCase();
+  } catch {
+    return null; // malformed % escape — fall through to the generic page
+  }
   return /^[A-Z]{2}\d{1,4}$/.test(fn) ? fn : null;
 }
+
+const AIRPORT_CODE_RE = /^[A-Z0-9]{3,4}$/;
 
 function flightPageMeta(ctx: RequestContext, flightNumber: string, cfg: AirlineConfig): PageMeta {
   const brand = ctx.site.brand;
   const reader = ctx.tenant === "ALL" ? ctx.getReader(cfg.code) : ctx.reader;
   const variants = buildAirlineFlightNumberVariants(cfg, flightNumber);
-  const route = reader.getRoutesForFlightVariants(variants)[0] ?? null;
+  // Airport codes feed both <meta> attributes and JSON-LD; only use them if
+  // they look like real IATA/ICAO codes.
+  const route =
+    reader
+      .getRoutesForFlightVariants(variants)
+      .find(
+        (r) => AIRPORT_CODE_RE.test(r.departure_airport) && AIRPORT_CODE_RE.test(r.arrival_airport)
+      ) ?? null;
   const routeLabel = route ? ` (${route.departure_airport} → ${route.arrival_airport})` : "";
 
   let probLabel = "";
