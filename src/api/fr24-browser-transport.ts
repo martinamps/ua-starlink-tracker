@@ -1,14 +1,5 @@
 /**
  * FR24 browser-routed transport.
- *
- * Cloudflare on api.flightradar24.com blocks any client whose TLS ClientHello
- * (JA3/JA4) and HTTP/2 fingerprint don't match a real browser. Bun's BoringSSL
- * fingerprint is blocked regardless of HTTP version, headers, or even a valid
- * cf_clearance cookie (CF binds clearance to the TLS fingerprint that solved it).
- *
- * The fix: route the JSON API request through a persistent headless Chromium
- * page via page.evaluate(fetch()). That uses Chrome's actual network stack —
- * passes CF's fingerprint check with no challenge solving needed (~250ms/req).
  */
 
 import path from "node:path";
@@ -16,11 +7,6 @@ import type { Browser, Page } from "playwright";
 import { COUNTERS, metrics } from "../observability";
 import { error, info, warn } from "../utils/logger";
 
-// Browser binaries live in the project-local, gitignored cache so the server
-// process finds them without a PLAYWRIGHT_BROWSERS_PATH= prefix on
-// `bun run dev`/`start`. Playwright reads this env var at module import time —
-// playwright-extra is therefore dynamically imported in launch() (below) so the
-// env var is set first, and tests that never hit FR24 never pay to load it.
 process.env.PLAYWRIGHT_BROWSERS_PATH ??= path.resolve(
   import.meta.dir,
   "../../do_not_commit/playwright-browsers"

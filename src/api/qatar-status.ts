@@ -78,6 +78,13 @@ function normalize(raw: RawFlight): QatarFlight {
   };
 }
 
+// p95 latency is ~300ms; 5s is already 16× that. 2 retries with short backoff
+// shave a ~3.5% transient timeout rate (server-process contention at boot) to
+// ~0.04% without meaningfully slowing the once-hourly ingest run.
+const FETCH_TIMEOUT_MS = 5_000;
+const MAX_RETRIES = 2;
+const RETRY_BACKOFF_MS = 1_500;
+
 async function postStatus(
   body: object,
   queryType: "flight" | "route"
@@ -90,33 +97,50 @@ async function postStatus(
     airline: normalizeAirlineTag("QR"),
   };
   try {
-    const res = await fetch(API_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Origin: "https://fs.qatarairways.com",
-        Referer: "https://fs.qatarairways.com/flightstatus/search",
-        "User-Agent": UA_HEADER,
-        Accept: "application/json",
-      },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!res.ok) {
-      tags.status = res.status === 429 ? "rate_limited" : "http_error";
-      warn(`qatar-status HTTP ${res.status}`);
-      return null;
+    let lastErr: unknown;
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      if (attempt > 0) {
+        await new Promise((r) => setTimeout(r, RETRY_BACKOFF_MS));
+      }
+      try {
+        const res = await fetch(API_URL, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Origin: "https://fs.qatarairways.com",
+            Referer: "https://fs.qatarairways.com/flightstatus/search",
+            "User-Agent": UA_HEADER,
+            Accept: "application/json",
+          },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+        });
+        if (!res.ok) {
+          // 429/5xx are worth retrying; 4xx (other than 429) won't change.
+          if (attempt < MAX_RETRIES && (res.status === 429 || res.status >= 500)) {
+            lastErr = new Error(`HTTP ${res.status}`);
+            continue;
+          }
+          tags.status = res.status === 429 ? "rate_limited" : "http_error";
+          warn(`qatar-status HTTP ${res.status}`);
+          return null;
+        }
+        const json = (await res.json()) as RawResponse;
+        if (json.captchaRequired) {
+          tags.status = "captcha";
+          warn("qatar-status captcha required — endpoint behavior changed");
+          return null;
+        }
+        tags.status = "success";
+        return json;
+      } catch (err) {
+        lastErr = err;
+        if (attempt < MAX_RETRIES) {
+          warn(`qatar-status attempt ${attempt + 1} failed, retrying: ${(err as Error)?.message}`);
+        }
+      }
     }
-    const json = (await res.json()) as RawResponse;
-    if (json.captchaRequired) {
-      tags.status = "captcha";
-      warn("qatar-status captcha required — endpoint behavior changed");
-      return null;
-    }
-    tags.status = "success";
-    return json;
-  } catch (err) {
-    logError("qatar-status fetch failed", err);
+    logError("qatar-status fetch failed after retries", lastErr);
     return null;
   } finally {
     const duration = Date.now() - start;
