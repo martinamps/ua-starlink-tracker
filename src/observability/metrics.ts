@@ -21,13 +21,20 @@ import { tracer } from "./tracer";
 
 export type Tags = Record<string, string | number>;
 
+// Default `airline` injected per-call instead of globally in tracer.init(),
+// because DogStatsD concatenates global + per-call tags (`airline:hawaiian,united`).
+function withDefaultAirline(tags?: Tags): Tags {
+  if (tags && "airline" in tags) return tags;
+  return { ...tags, airline: "unmapped" };
+}
+
 export const metrics = {
   increment: (name: string, tags?: Tags) => {
-    tracer.dogstatsd.increment(`starlink.${name}`, 1, tags);
+    tracer.dogstatsd.increment(`starlink.${name}`, 1, withDefaultAirline(tags));
   },
 
   gauge: (name: string, value: number, tags?: Tags) => {
-    tracer.dogstatsd.gauge(`starlink.${name}`, value, tags);
+    tracer.dogstatsd.gauge(`starlink.${name}`, value, withDefaultAirline(tags));
   },
 
   /**
@@ -36,7 +43,7 @@ export const metrics = {
    * sum/avg across tag dimensions in Datadog.
    */
   distribution: (name: string, value: number, tags?: Tags) => {
-    tracer.dogstatsd.distribution(`starlink.${name}`, value, tags);
+    tracer.dogstatsd.distribution(`starlink.${name}`, value, withDefaultAirline(tags));
   },
 };
 
@@ -107,7 +114,7 @@ export function normalizeFleet(raw: string | null | undefined): string {
  */
 export function normalizeAirlineTag(code: string | null | undefined): string {
   if (!code) return "unknown";
-  return AIRLINES[code.toUpperCase()]?.metricTag ?? code.toLowerCase();
+  return AIRLINES[code.toUpperCase()]?.metricTag ?? "unmapped";
 }
 
 // ============ Metric Names ============

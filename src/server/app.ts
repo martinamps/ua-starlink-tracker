@@ -1364,8 +1364,10 @@ export function createApp(db: Database): App {
     const reader: ScopedReader = getReader(tenantScope(tenant));
     const ctx: RequestContext = { req, url, site, tenant, reader, getReader };
 
+    // "web.request" not "http.request" — the latter collides with dd-trace's
+    // auto-instrumented outbound fetch spans. `type: web` marks it service-entry.
     return withSpan(
-      "http.request",
+      "web.request",
       async (span) => {
         span.setTag("http.method", req.method);
         span.setTag("http.route", route);
@@ -1392,7 +1394,7 @@ export function createApp(db: Database): App {
         }
         return response;
       },
-      { "http.route": route }
+      { "span.type": "web" }
     );
   }
 

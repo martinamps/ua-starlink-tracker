@@ -2,11 +2,7 @@
  * Datadog APM Tracer Module
  *
  * IMPORTANT: This module must be imported FIRST in server.ts before any other imports.
- *
- * Bun Compatibility Notes:
- * - dd-trace works with Bun v1.1.6+ but with limitations
- * - Automatic instrumentation does NOT work - must use manual tracing
- * - profiling and runtimeMetrics must be disabled
+ * profiling and runtimeMetrics must stay disabled under Bun.
  */
 
 export type Span = import("dd-trace").Span;
@@ -23,6 +19,7 @@ interface TracerLike {
   inject(context: unknown, format: unknown, record: TraceContextCarrier): void;
   scope(): { active(): Span | null };
   trace<T>(name: string, fn: (span: Span) => T | Promise<T>): T | Promise<T>;
+  use(plugin: string, config?: Record<string, unknown>): TracerLike;
 }
 
 const isEnabled = process.env.DD_TRACE_ENABLED === "true";
@@ -48,6 +45,9 @@ const noopTracer: TracerLike = {
   trace(_name, fn) {
     return fn(noopSpan);
   },
+  use(_plugin, _config) {
+    return noopTracer;
+  },
 };
 
 let tracer: TracerLike = noopTracer;
@@ -63,16 +63,21 @@ if (isEnabled) {
     service: process.env.DD_SERVICE || "ua-starlink-tracker",
     env: process.env.DD_ENV || "development",
     version: process.env.DD_VERSION || "unknown",
-    tags: {
-      airline: process.env.AIRLINE || "united",
-    },
+    // No global `airline` tag: DogStatsD concatenates global + per-call tags
+    // (airline:hawaiian,united). The default is injected per-call in metrics.ts.
     logInjection: true,
     profiling: false,
     runtimeMetrics: false,
     startupLogs: true,
+    // Disable auto-instrumentation by default — `net`/`dns` plugins trace
+    // Playwright pipe FDs (tcp.connect localhost:0 noise). Re-enable only fetch.
+    plugins: false,
   });
 
   tracer = ddTracer as unknown as TracerLike;
+  // Outbound API latency is useful, but Qatar ingester emits ~6.7k spans/day —
+  // sample heavily; vendor.request counter keeps full-rate success/error data.
+  tracer.use("fetch", { sampleRate: 0.1 });
   logFormat = ddFormats.LOG;
 }
 
