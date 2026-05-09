@@ -21,6 +21,7 @@ import {
 } from "../airlines/flight-number";
 import {
   AIRLINES,
+  type AirlineConfig,
   type SiteConfig,
   brandMetadata,
   publicAirlines,
@@ -59,6 +60,8 @@ interface PageMeta {
   keywords: string;
   ogTitle: string;
   ogDescription: string;
+  /** Optional page-specific JSON-LD block (e.g. schema.org Flight). */
+  pageJsonLd?: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -754,9 +757,32 @@ Sitemap: https://${site.canonicalHost}/sitemap.xml`,
   );
 };
 
-const sitemap: Handler = ({ reader, site }) => {
+/** Top-N marketing flight numbers by upcoming-flight count, for sitemap permalinks. */
+function topFlightNumbers(reader: ScopedReader, cfg: AirlineConfig | null, limit = 50): string[] {
+  if (!cfg) return [];
+  const counts = new Map<string, number>();
+  for (const f of reader.getUpcomingFlights()) {
+    const fn = ensureAirlinePrefix(cfg, f.flight_number);
+    if (!fn.startsWith(cfg.iata)) continue;
+    counts.set(fn, (counts.get(fn) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit)
+    .map(([fn]) => fn);
+}
+
+const sitemap: Handler = ({ reader, site, tenant }) => {
   const baseUrl = `https://${site.canonicalHost}`;
   const lastUpdated = reader.getLastUpdated();
+  const cfg = tenantConfig(tenant);
+  const flightEntries = site.features.checkFlightPage
+    ? topFlightNumbers(reader, cfg).map((fn) => ({
+        path: `/check-flight/${fn}`,
+        changefreq: "weekly",
+        priority: "0.6",
+      }))
+    : [];
   const entries = [
     { path: "/", changefreq: "hourly", priority: "1.0", lastmod: lastUpdated },
     ...(site.features.checkFlightPage
@@ -767,6 +793,7 @@ const sitemap: Handler = ({ reader, site }) => {
       : []),
     ...(site.features.fleetPage ? [{ path: "/fleet", changefreq: "daily", priority: "0.7" }] : []),
     ...(site.features.mcpPage ? [{ path: "/mcp", changefreq: "monthly", priority: "0.6" }] : []),
+    ...flightEntries,
   ];
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
@@ -884,6 +911,7 @@ function buildBaseTemplateVars(ctx: RequestContext, reactHtml: string): Record<s
     webPageJsonLd: sitePageJsonLd(site, isoDate),
     chromeExtensionJsonLd: chromeExtensionJsonLd(site),
     faqJsonLd: "",
+    pageJsonLd: "",
   };
 }
 
@@ -950,6 +978,66 @@ function subPageMeta(
   };
 }
 
+/** Resolve the carrier config a check-flight permalink belongs to. Tenant hosts
+ * are pinned; the hub host detects the carrier from the flight-number prefix. */
+function resolveFlightCfg(ctx: RequestContext, flightNumber: string): AirlineConfig | null {
+  const tenantCfg = tenantConfig(ctx.tenant);
+  if (tenantCfg) return flightNumber.startsWith(tenantCfg.iata) ? tenantCfg : null;
+  return detectAirline(flightNumber);
+}
+
+/** Parse `/check-flight/{flightNumber}[/{date}]` and return the normalized
+ * flight number, or null if the path is the bare page or malformed. */
+function parseCheckFlightPath(pathname: string): string | null {
+  const rest = pathname.slice("/check-flight/".length).replace(/\/+$/, "");
+  if (!rest) return null;
+  const [first] = rest.split("/");
+  const fn = decodeURIComponent(first ?? "")
+    .trim()
+    .toUpperCase();
+  return /^[A-Z]{2}\d{1,4}$/.test(fn) ? fn : null;
+}
+
+function flightPageMeta(ctx: RequestContext, flightNumber: string, cfg: AirlineConfig): PageMeta {
+  const brand = ctx.site.brand;
+  const reader = ctx.tenant === "ALL" ? ctx.getReader(cfg.code) : ctx.reader;
+  const variants = buildAirlineFlightNumberVariants(cfg, flightNumber);
+  const route = reader.getRoutesForFlightVariants(variants)[0] ?? null;
+  const routeLabel = route ? ` (${route.departure_airport} → ${route.arrival_airport})` : "";
+
+  let probLabel = "";
+  try {
+    const pred = predictFlight(reader, flightNumber);
+    if (pred.n_observations > 0 || pred.confidence !== "low") {
+      probLabel = ` Historically it gets a Starlink-equipped aircraft about ${Math.round(pred.probability * 100)}% of the time.`;
+    }
+  } catch {
+    // Best-effort — meta still works without a probability.
+  }
+
+  const pageJsonLd = route
+    ? jsonLdBlock({
+        "@context": "https://schema.org",
+        "@type": "Flight",
+        name: `${cfg.name} ${flightNumber}`,
+        flightNumber: flightNumber.replace(cfg.iata, ""),
+        provider: { "@type": "Airline", name: cfg.name, iataCode: cfg.iata },
+        departureAirport: { "@type": "Airport", iataCode: route.departure_airport },
+        arrivalAirport: { "@type": "Airport", iataCode: route.arrival_airport },
+        url: `https://${ctx.site.canonicalHost}/check-flight/${flightNumber}`,
+      })
+    : "";
+
+  return {
+    siteTitle: `Does ${flightNumber} Have Starlink WiFi? | ${brand.title}`,
+    siteDescription: `Check whether ${cfg.name} ${flightNumber}${routeLabel} has free Starlink WiFi.${probLabel} Pick a specific date for a firm answer once aircraft assignments are published.`,
+    keywords: `${flightNumber} starlink, does ${flightNumber} have wifi, ${flightNumber} wifi, ${cfg.name} ${flightNumber} starlink`,
+    ogTitle: `Does ${flightNumber} Have Starlink WiFi?`,
+    ogDescription: `${cfg.name} ${flightNumber}${routeLabel} — check Starlink availability and get a probability estimate.`,
+    pageJsonLd,
+  };
+}
+
 const checkFlightPage: Handler = (ctx) => {
   if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
   if (!ctx.site.features.checkFlightPage) {
@@ -957,6 +1045,14 @@ const checkFlightPage: Handler = (ctx) => {
       status: 404,
       headers: SECURITY_HEADERS.notFound,
     });
+  }
+  // Per-flight permalinks: /check-flight/UA881[/{date}] gets flight-specific
+  // meta + Flight JSON-LD; the date-less URL is canonical so date variants
+  // don't dilute it. Anything malformed falls back to the generic page.
+  const fn = parseCheckFlightPath(ctx.url.pathname);
+  const cfg = fn ? resolveFlightCfg(ctx, fn) : null;
+  if (fn && cfg) {
+    return renderSubPage(ctx, CheckFlightPage, `/check-flight/${fn}`, flightPageMeta(ctx, fn, cfg));
   }
   return renderSubPage(ctx, CheckFlightPage, "/check-flight", subPageMeta(ctx, "check-flight"));
 };
