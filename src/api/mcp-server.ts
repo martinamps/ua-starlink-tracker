@@ -166,33 +166,37 @@ function buildTools(scope: Scope) {
   return [
     {
       name: "check_flight",
-      description: `Check whether a specific ${carrier} flight has Starlink WiFi on a given date. Returns FIRM YES if assigned to a verified-Starlink plane, FIRM NO if assigned to a verified non-Starlink plane, or a probability estimate if no assignment exists yet (aircraft assignments are only published ~2 days in advance). For dates further out, call predict_flight_starlink directly — check_flight would just fall through to the same probability estimate with extra latency.`,
+      description: `Use when the user asks "does my flight have Starlink/WiFi?" with a specific ${carrier} flight number and date. Returns FIRM YES if assigned to a verified-Starlink plane, FIRM NO if assigned to a verified non-Starlink plane, or a probability estimate if no assignment exists yet (assignments publish ~2 days out). For dates further out, call predict_flight_starlink directly — check_flight just falls through to the same estimate with extra latency.`,
       inputSchema: {
         type: "object",
         properties: {
           flight_number: {
             type: "string",
             description: `Flight number, e.g. '${example}' or just the digits.${prefixHint}`,
+            examples: [example, example.replace(/\D/g, "")],
           },
           date: {
             type: "string",
             description: "Flight date in YYYY-MM-DD format (matched as UTC calendar day).",
+            examples: ["2026-05-15"],
           },
         },
         required: ["flight_number", "date"],
+        examples: [{ flight_number: example, date: "2026-05-15" }],
       },
     },
     {
       name: "get_fleet_stats",
-      description: `Get current ${carrier} Starlink installation statistics: how many aircraft have Starlink across mainline and express fleets, with percentages. Use for overall rollout questions ('how far along is Starlink?'), not for per-flight checks.`,
+      description: `Use when the user asks "how far along is the Starlink rollout?" or wants overall fleet numbers. Returns ${carrier} Starlink installation counts and percentages across mainline and express fleets. Not for per-flight checks — use check_flight for that.`,
       inputSchema: {
         type: "object",
         properties: {},
+        examples: [{}],
       },
     },
     {
       name: "list_starlink_aircraft",
-      description: `List ${carrier} aircraft currently equipped with Starlink WiFi (default: 50 most recent; pass limit up to 500). Returns tail numbers, aircraft types, operators, and install date. Use when the question is about the planes themselves (tail numbers, aircraft types), not for finding flights.`,
+      description: `Use when the user asks about the planes themselves — "which tail numbers have Starlink?", "which aircraft types are equipped?". Returns ${carrier} tail numbers, aircraft types, operators, and install dates (default 50 most recent; pass limit up to 500). Not for finding flights — use search_starlink_flights for that.`,
       inputSchema: {
         type: "object",
         properties: {
@@ -200,19 +204,22 @@ function buildTools(scope: Scope) {
             type: "string",
             enum: ["express", "mainline"],
             description: "Filter to only express (regional) or mainline aircraft.",
+            examples: ["express"],
           },
           limit: {
             type: "integer",
             minimum: 1,
             maximum: 500,
             description: "Maximum number of aircraft to return (default 50).",
+            examples: [100],
           },
         },
+        examples: [{ fleet: "express", limit: 100 }, {}],
       },
     },
     {
       name: "predict_flight_starlink",
-      description: `Predict the PROBABILITY that a ${carrier} flight number gets a Starlink plane — based on historical observations. Reliability varies: high-confidence (5+ obs) ~85%+ accurate; low-confidence (0-1 obs) is just the fleet prior.${
+      description: `Use when the user asks "will my flight have Starlink?" for a date too far out for a confirmed assignment, or with no date at all. Returns the probability that a ${carrier} flight number gets a Starlink plane, from historical observations. Reliability varies: high-confidence (5+ obs) ~85%+ accurate; low-confidence (0-1 obs) is just the fleet prior.${
         scope === "UA" || scope === "ALL"
           ? " UA1-2999 (mainline) are almost always NOT Starlink (~2% fleet coverage)."
           : ""
@@ -223,6 +230,7 @@ function buildTools(scope: Scope) {
           flight_number: {
             type: "string",
             description: `Flight number, e.g. '${example}' or just the digits.${prefixHint}`,
+            examples: [example],
           },
           date: {
             type: "string",
@@ -231,29 +239,33 @@ function buildTools(scope: Scope) {
               "but when the result is low (<20%) the tool uses this date to look up the actual " +
               "route and returns a ready-to-run plan_starlink_itinerary call with origin/dest " +
               "pre-filled, so alternatives can be presented in one turn.",
+            examples: ["2026-06-01"],
           },
         },
         required: ["flight_number"],
+        examples: [{ flight_number: example, date: "2026-06-01" }, { flight_number: example }],
       },
     },
     {
       name: "plan_starlink_itinerary",
       description:
-        "PRIMARY TRAVEL-PLANNING TOOL — use first for any 'routing to X with Starlink' question. " +
-        "Multi-stop search (up to 2 stops default, 3 max) ranked by COVERAGE RATIO (expected " +
-        "Starlink hours / total flight hours) — a 92% 1h direct scores the same as a 92% 10h " +
-        "multi-stop. Direct flights always shown first. Returns probability-ranked routings, NOT " +
-        "bookable itineraries — connection timing isn't validated; verify on the airline's site.",
+        'Use when the user asks "what\'s the best way to fly X to Y with Starlink?" or wants ranked alternatives. ' +
+        "PRIMARY TRAVEL-PLANNING TOOL — multi-stop search (up to 2 stops default, 3 max) ranked by " +
+        "COVERAGE RATIO (expected Starlink hours / total flight hours) so a 92% 1h direct scores the " +
+        "same as a 92% 10h multi-stop. Direct flights always shown first. Returns probability-ranked " +
+        "routings, NOT bookable itineraries — connection timing isn't validated; verify on the airline's site.",
       inputSchema: {
         type: "object",
         properties: {
           origin: {
             type: "string",
             description: "Origin airport IATA code (e.g. 'SFO').",
+            examples: ["SFO"],
           },
           destination: {
             type: "string",
             description: "Destination airport IATA code (e.g. 'JAX').",
+            examples: ["JAX"],
           },
           max_stops: {
             type: "integer",
@@ -261,6 +273,7 @@ function buildTools(scope: Scope) {
             maximum: 3,
             description:
               "Maximum number of connection stops (default 2, max 3). 0=direct only, 1=one connection, etc.",
+            examples: [1],
           },
           max_results: {
             type: "integer",
@@ -268,6 +281,7 @@ function buildTools(scope: Scope) {
             maximum: 20,
             description:
               "Maximum number of full-coverage itineraries (default 8). Up to 3 partial baselines may be appended.",
+            examples: [8],
           },
           date: {
             type: "string",
@@ -275,64 +289,115 @@ function buildTools(scope: Scope) {
               "Optional YYYY-MM-DD travel date. When within ~2 days (the aircraft-assignment " +
               "window), uses confirmed tail assignments for higher accuracy. Beyond that, uses " +
               "historical prediction only — confirmed assignments don't apply to future dates.",
+            examples: ["2026-05-20"],
           },
         },
         required: ["origin", "destination"],
+        examples: [
+          { origin: "SFO", destination: "EWR" },
+          { origin: "ORD", destination: "JAX", date: "2026-05-20", max_stops: 1 },
+        ],
       },
     },
     {
       name: "predict_route_starlink",
-      description: `Single-route lookup: find which ${carrier} flight numbers on a route (or touching an airport) are most likely to have Starlink. Pass both origin+destination for a specific route, OR just one to list all Starlink flights from/into an airport. Returns ranked list with probability per flight number. For trip planning with connections, use plan_starlink_itinerary instead — this tool has no connection logic or coverage-ratio ranking. Empty result = route not served by Starlink planes.`,
+      description: `Use when the user asks "which flights between X and Y have Starlink?" or "what Starlink flights serve airport X?". Single-route lookup: returns ${carrier} flight numbers on a route (or touching an airport) ranked by Starlink probability. Pass both origin+destination for a specific route, OR just one to list all Starlink flights from/into an airport. For trip planning with connections, use plan_starlink_itinerary instead — this tool has no connection logic or coverage-ratio ranking. Empty result = route not served by Starlink planes.`,
       inputSchema: {
         type: "object",
         properties: {
           origin: {
             type: "string",
             description: "Origin airport IATA code (e.g. 'SFO', 'ORD'). Case-insensitive.",
+            examples: ["SFO"],
           },
           destination: {
             type: "string",
             description: "Destination airport IATA code (e.g. 'EWR', 'DEN'). Case-insensitive.",
+            examples: ["EWR"],
           },
           limit: {
             type: "integer",
             minimum: 1,
             maximum: 50,
             description: "Maximum number of flight numbers to return (default 10).",
+            examples: [10],
           },
         },
         anyOf: [{ required: ["origin"] }, { required: ["destination"] }],
+        examples: [{ origin: "SFO", destination: "EWR" }, { origin: "ORD" }],
       },
     },
     {
       name: "search_starlink_flights",
       description:
-        "Search CONFIRMED Starlink flights in the next ~2 days — firm schedule, not prediction. " +
+        'Use when the user asks "what Starlink flights leave from X tomorrow?" or wants confirmed near-term departures. ' +
+        "Returns CONFIRMED Starlink flights in the next ~2 days — firm schedule, not prediction. " +
         "Aircraft assignments aren't published further out, so for later dates use " +
-        "predict_route_starlink or plan_starlink_itinerary instead. Example: 'what confirmed " +
-        "Starlink flights leave ORD tomorrow?'",
+        "predict_route_starlink or plan_starlink_itinerary instead.",
       inputSchema: {
         type: "object",
         properties: {
           origin: {
             type: "string",
             description: "Origin airport IATA code (e.g. 'SFO', 'ORD'). Case-insensitive.",
+            examples: ["ORD"],
           },
           destination: {
             type: "string",
             description: "Destination airport IATA code (e.g. 'LAX', 'DEN'). Case-insensitive.",
+            examples: ["LAX"],
           },
           limit: {
             type: "integer",
             minimum: 1,
             maximum: 100,
             description: "Maximum number of flights to return (default 20).",
+            examples: [20],
           },
         },
         anyOf: [{ required: ["origin"] }, { required: ["destination"] }],
+        examples: [{ origin: "ORD" }, { origin: "SFO", destination: "EWR" }],
       },
     },
   ];
+}
+
+const TOOL_NAMES = buildTools("UA").map((t) => t.name);
+
+// Cheap edit-distance for "did you mean" — tool names are short, so O(n*m) is fine.
+function levenshtein(a: string, b: string): number {
+  const m = a.length;
+  const n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  let prev = Array.from({ length: n + 1 }, (_, j) => j);
+  for (let i = 1; i <= m; i++) {
+    const curr = [i];
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      curr[j] = Math.min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost);
+    }
+    prev = curr;
+  }
+  return prev[n];
+}
+
+function suggestTool(unknown: string): string | null {
+  const lower = unknown.toLowerCase();
+  // Exact substring match first — catches "predict_flight" → "predict_flight_starlink".
+  const sub = TOOL_NAMES.find((t) => t.includes(lower) || lower.includes(t));
+  if (sub) return sub;
+  let best: string | null = null;
+  let bestDist = Number.POSITIVE_INFINITY;
+  for (const t of TOOL_NAMES) {
+    const d = levenshtein(lower, t);
+    if (d < bestDist) {
+      bestDist = d;
+      best = t;
+    }
+  }
+  // Only suggest when plausibly a typo, not for completely unrelated names.
+  return bestDist <= Math.max(4, Math.floor(unknown.length / 2)) ? best : null;
 }
 
 // ============================================================================
@@ -1273,8 +1338,15 @@ async function handleToolsCall(
     case "search_starlink_flights":
       result = toolSearchStarlinkFlights(reader, args);
       break;
-    default:
-      return rpcError(id, -32602, `Unknown tool: ${toolName}`);
+    default: {
+      const suggestion = suggestTool(toolName);
+      const hint = suggestion ? ` Did you mean "${suggestion}"?` : "";
+      return rpcError(
+        id,
+        -32602,
+        `Unknown tool "${toolName}".${hint} Available tools: ${TOOL_NAMES.join(", ")}.`
+      );
+    }
   }
 
   return rpcResult(id, result);
