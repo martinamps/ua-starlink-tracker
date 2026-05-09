@@ -1,4 +1,6 @@
 import { Database } from "bun:sqlite";
+import { ensureAirlinePrefix } from "../airlines/flight-number";
+import { AIRLINES } from "../airlines/registry";
 import {
   normalizeAircraftType,
   normalizeFleet,
@@ -811,6 +813,23 @@ export function updateFlights(
   });
 
   updateFlightsTransaction();
+
+  // Mirror routes into the long-lived flight_routes cache so it accumulates
+  // independently of the FR24 cache-miss path in mcp-server.lookupFlightRoutes.
+  // Stored under the marketing-carrier code (UA123) — that's what
+  // getCachedFlightRoutes is queried with.
+  const cfg = AIRLINES[airline];
+  for (const flight of flights) {
+    if (!flight.flight_number || !flight.departure_airport || !flight.arrival_airport) continue;
+    const normalized = cfg
+      ? ensureAirlinePrefix(cfg, flight.flight_number)
+      : flight.flight_number.trim().toUpperCase();
+    const dur =
+      flight.arrival_time > flight.departure_time && flight.departure_time > 0
+        ? flight.arrival_time - flight.departure_time
+        : null;
+    cacheFlightRoute(db, normalized, flight.departure_airport, flight.arrival_airport, dur, now);
+  }
 }
 
 export function getUpcomingFlights(
