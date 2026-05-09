@@ -1280,6 +1280,25 @@ export function logVerification(
   );
 }
 
+/**
+ * Drop subprocess-crash rows that carry no observation. Aircraft-mismatch
+ * rows are kept — they document tail-on-flight assignments. The 7-day window
+ * stays above needsVerification's max ~96h jitter so retry-storm protection
+ * holds.
+ */
+export function pruneCrashRows(db: Database): number {
+  const cutoff = Math.floor(Date.now() / 1000) - 7 * 86400;
+  const result = db
+    .query(`
+      DELETE FROM starlink_verification_log
+      WHERE has_starlink IS NULL
+        AND error LIKE 'Process exited with code%'
+        AND checked_at < ?
+    `)
+    .run(cutoff);
+  return result.changes;
+}
+
 export function getNextAlaskaVerifyTarget(
   db: Database,
   airline: "AS" | "HA"

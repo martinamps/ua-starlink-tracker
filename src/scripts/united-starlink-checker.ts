@@ -194,9 +194,9 @@ export async function checkStarlinkStatus(
         bodyText.includes("Internet by Thales") || bodyText.includes("by Thales");
       const hasGogoText = bodyText.includes("by Gogo") || bodyText.includes("Gogo Wi-Fi");
 
-      // Check for no WiFi
-      const hasNoWifi =
-        bodyText.includes("Wi-Fi\n\nNot offered") || bodyText.includes("Wi-Fi: Not offered");
+      // Check for no WiFi. Whitespace between the label and value varies
+      // (single vs double newline depending on render timing), so match loosely.
+      const hasNoWifi = /Wi-?Fi[\s:]*Not offered/i.test(bodyText);
 
       // Determine WiFi provider
       let wifiProvider: string | null = null;
