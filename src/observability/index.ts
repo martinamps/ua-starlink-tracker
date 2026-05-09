@@ -16,5 +16,6 @@ export {
   normalizeWifiProvider,
   normalizeFleet,
   normalizeAirlineTag,
+  normalizeStarlinkStatus,
 } from "./metrics";
 export type { Tags } from "./metrics";

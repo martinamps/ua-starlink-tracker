@@ -18,7 +18,7 @@
  */
 
 import { Database } from "bun:sqlite";
-import { metrics } from "../observability/metrics";
+import { GAUGES, metrics, normalizeAirlineTag } from "../observability/metrics";
 import { info } from "../utils/logger";
 
 interface CallBucket {
@@ -136,22 +136,26 @@ export function computePrecision(db: Database, windowDays = 30): PrecisionResult
 }
 
 export function emitPrecisionGauges(r: PrecisionResult) {
-  const base = { airline: "united", window: `${r.windowDays}d` };
+  const base = { airline: normalizeAirlineTag("UA"), window: `${r.windowDays}d` };
   for (const [call, b] of [
     ["yes", r.yes],
     ["no", r.no],
   ] as const) {
-    metrics.gauge("precision.firm_call", b.precision, { ...base, call });
-    metrics.gauge("precision.firm_call.n", b.n, { ...base, call });
-    metrics.gauge("precision.firm_call.miss", b.swapMisses, { ...base, call, cause: "swap" });
-    metrics.gauge("precision.firm_call.miss", b.staleMisses, { ...base, call, cause: "stale" });
-    metrics.gauge("precision.firm_call.miss", b.unattributedMisses, {
+    metrics.gauge(GAUGES.PRECISION_FIRM_CALL, b.precision, { ...base, call });
+    metrics.gauge(GAUGES.PRECISION_FIRM_CALL_N, b.n, { ...base, call });
+    metrics.gauge(GAUGES.PRECISION_FIRM_CALL_MISS, b.swapMisses, { ...base, call, cause: "swap" });
+    metrics.gauge(GAUGES.PRECISION_FIRM_CALL_MISS, b.staleMisses, {
+      ...base,
+      call,
+      cause: "stale",
+    });
+    metrics.gauge(GAUGES.PRECISION_FIRM_CALL_MISS, b.unattributedMisses, {
       ...base,
       call,
       cause: "unattributed",
     });
   }
-  metrics.gauge("precision.legacy_prior_pct", r.legacyPriorPct, base);
+  metrics.gauge(GAUGES.PRECISION_LEGACY_PRIOR_PCT, r.legacyPriorPct, base);
 }
 
 function fmt(b: CallBucket, label: string) {

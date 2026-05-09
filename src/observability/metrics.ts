@@ -107,6 +107,11 @@ export function normalizeFleet(raw: string | null | undefined): string {
   return "unknown";
 }
 
+export function normalizeStarlinkStatus(raw: string | null | undefined): string {
+  if (raw === "confirmed" || raw === "negative") return raw;
+  return "unknown";
+}
+
 /**
  * Canonical lowercase-name airline tag for metrics. Preserves Datadog history
  * (the global default has always been `airline:united`, not `airline:UA`).
@@ -172,6 +177,17 @@ export const GAUGES = {
   // prove the loop is alive; this proves it's still producing data.
   // tags: job (flight_updater|verifier|departures), airline
   DATA_FRESHNESS_SECONDS: "data.freshness_seconds",
+
+  // Backtest precision of firm "yes/no Starlink" calls — tags: airline, window, call
+  PRECISION_FIRM_CALL: "precision.firm_call",
+  PRECISION_FIRM_CALL_N: "precision.firm_call.n",
+  // Misses by cause — tags: airline, window, call, cause (swap|stale|unattributed)
+  PRECISION_FIRM_CALL_MISS: "precision.firm_call.miss",
+  PRECISION_LEGACY_PRIOR_PCT: "precision.legacy_prior_pct",
+
+  // Surface contradiction sweep — tags: airline, vector
+  SURFACE_CONTRADICTION_TOTAL: "surface_contradiction.total",
+  SURFACE_CONTRADICTION_COUNT: "surface_contradiction.count",
 } as const;
 
 /**

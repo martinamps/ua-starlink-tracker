@@ -68,13 +68,14 @@ export async function syncFleetFromFR24(
         if (!scrapeResult.success) {
           const err = scrapeResult.error || "FR24 scrape failed";
           logError(`FR24 scrape failed (${cfg.code}/${src.slug})`, err);
-          span.setTag("error", true);
           if (i === 0) {
+            // Only mainline failure is a full-span error — regional gaps are partial.
+            span.setTag("error", true);
             result.error = err;
             return result;
           }
-          // Regional carrier failed — keep mainline result, note the partial.
           result.error = `partial: ${src.slug} ${err}`;
+          span.setTag("partial", true);
           continue;
         }
         info(`FR24 returned ${scrapeResult.aircraft.length} aircraft for ${cfg.code}/${src.slug}`);

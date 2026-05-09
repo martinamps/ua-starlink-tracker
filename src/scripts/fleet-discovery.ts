@@ -26,7 +26,9 @@ import {
   DISTRIBUTIONS,
   metrics,
   normalizeAircraftType,
+  normalizeAirlineTag,
   normalizeFleet,
+  normalizeStarlinkStatus,
   normalizeWifiProvider,
   withSpan,
 } from "../observability";
@@ -55,7 +57,8 @@ function emitFleetSnapshot(db: Database) {
   for (const row of breakdown) {
     metrics.distribution(DISTRIBUTIONS.FLEET_PLANES, row.cnt, {
       fleet: normalizeFleet(row.fleet),
-      starlink_status: row.starlink_status || "unknown",
+      starlink_status: normalizeStarlinkStatus(row.starlink_status),
+      airline: normalizeAirlineTag("UA"),
     });
   }
 }
@@ -267,6 +270,8 @@ async function verifyPlane(
           fleet: fleetTag,
           aircraft_type: aircraftTypeTag,
           wifi_provider: wifiProviderTag,
+          source: "united",
+          airline: normalizeAirlineTag("UA"),
         };
 
         // Consensus includes the just-logged observation. The status is driven
@@ -401,6 +406,8 @@ async function verifyPlane(
           fleet: fleetTag,
           aircraft_type: aircraftTypeTag,
           wifi_provider: "unknown",
+          source: "united",
+          airline: normalizeAirlineTag("UA"),
         });
 
         logVerification(db, {

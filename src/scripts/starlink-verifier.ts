@@ -20,6 +20,7 @@ import {
   COUNTERS,
   metrics,
   normalizeAircraftType,
+  normalizeAirlineTag,
   normalizeFleet,
   normalizeWifiProvider,
   withSpan,
@@ -274,6 +275,8 @@ export async function verifyPlaneStarlink(
           fleet: fleetTag,
           aircraft_type: aircraftTypeTag,
           wifi_provider: wifiProviderTag,
+          source: "united",
+          airline: normalizeAirlineTag("UA"),
         };
         span.setTag("wifi_provider", wifiProviderTag);
 
@@ -324,6 +327,8 @@ export async function verifyPlaneStarlink(
           fleet: fleetTag,
           aircraft_type: aircraftTypeTag,
           wifi_provider: "unknown",
+          source: "united",
+          airline: normalizeAirlineTag("UA"),
         });
         span.setTag("error", true);
         span.setTag("result", "error");
