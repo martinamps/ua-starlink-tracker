@@ -823,8 +823,84 @@ const llmsTxt: Handler = ({ site, tenant }) => {
         ]),
   ];
   const pages = [homepage, ...tenantPages, apiData];
+
+  // Concrete request/response shapes so an LLM can call the API without trial-and-error.
+  const iata = cfg?.iata ?? "UA";
+  const apiSection = cfg
+    ? `
+## API examples
+
+All endpoints are GET, return JSON, no auth, CORS enabled. Rate limit: 60 req/min/IP.
+
+### GET /api/check-flight?flight_number=${iata}123&date=2026-06-01
+
+Definitive answer when an aircraft assignment is published (~2 days out), otherwise falls through.
+
+\`\`\`json
+{
+  "hasStarlink": true,
+  "confidence": "verified",
+  "flights": [{
+    "tail_number": "N127SY",
+    "aircraft_type": "Embraer E175",
+    "flight_number": "${iata}123",
+    "departure_airport": "SFO",
+    "arrival_airport": "DEN",
+    "departure_time": 1751400000,
+    "arrival_time": 1751409600,
+    "departure_time_formatted": "2026-06-01T14:00:00.000Z",
+    "arrival_time_formatted": "2026-06-01T16:40:00.000Z",
+    "operated_by": "SkyWest",
+    "fleet_type": "express"
+  }]
+}
+\`\`\`
+
+When no assignment exists yet: \`{ "hasStarlink": false, "message": "...", "flights": [] }\`. Use /api/predict-flight for a probability estimate instead.
+
+### GET /api/predict-flight?flight_number=${iata}4680
+
+Historical probability estimate for any date.
+
+\`\`\`json
+{
+  "flight_number": "${iata}4680",
+  "probability": 0.87,
+  "confidence": "high",
+  "method": "historical_observations",
+  "n_observations": 12
+}
+\`\`\`
+
+\`confidence\` is \`high\` (5+ observations), \`medium\` (2-4), or \`low\` (fleet prior only).
+
+### GET /api/plan-route?origin=SFO&destination=JAX
+
+Direct and connecting itineraries ranked by Starlink coverage.
+
+\`\`\`json
+{
+  "origin": "SFO",
+  "destination": "JAX",
+  "itineraries": [{
+    "via": ["IAH"],
+    "legs": [
+      { "route": "SFO-IAH", "flight_number": "${iata}1234", "probability": 0.91, "duration_hours": 3.8 },
+      { "route": "IAH-JAX", "flight_number": "${iata}5678", "probability": 0.94, "duration_hours": 2.1 }
+    ],
+    "joint_probability": 0.86,
+    "at_least_one_probability": 0.99,
+    "coverage": "full",
+    "total_flight_hours": 5.9,
+    "expected_starlink_hours": 5.4
+  }]
+}
+\`\`\`
+`
+    : "";
+
   const mcpSection = site.features.mcpPage
-    ? `\n## MCP Server (for AI assistants)\n\n- [MCP Docs & Setup](https://${host}/mcp): Setup instructions for Claude Desktop, Cursor, and other MCP clients\n- [MCP Endpoint](https://${host}/mcp): Model Context Protocol server (POST with application/json). Tools: check_flight, predict_flight_starlink, plan_starlink_itinerary, predict_route_starlink, get_fleet_stats, list_starlink_aircraft, search_starlink_flights. Transport: streamable HTTP (stateless).\n`
+    ? `\n## MCP Server (for AI assistants)\n\n- [MCP Docs & Setup](https://${host}/mcp): Setup instructions for Claude Desktop, Cursor, and other MCP clients\n- [MCP Endpoint](https://${host}/mcp): Model Context Protocol server (POST with application/json). Tools: check_flight, predict_flight_starlink, plan_starlink_itinerary, predict_route_starlink, get_fleet_stats, list_starlink_aircraft, search_starlink_flights. Transport: streamable HTTP (stateless).\n\nFor stateless single calls, prefer the JSON API above; use MCP for multi-turn agentic sessions.\n`
     : "";
   const chromeSection =
     site.features.chromeExtension && cfg?.code === "UA"
@@ -840,7 +916,7 @@ ${isHub ? "Per-aircraft Starlink WiFi status across multiple airlines." : `Track
 
 ## Pages
 
-${pages.join("\n")}${mcpSection}${chromeSection}`,
+${pages.join("\n")}${apiSection}${mcpSection}${chromeSection}`,
     {
       headers: {
         "Content-Type": "text/markdown; charset=utf-8",

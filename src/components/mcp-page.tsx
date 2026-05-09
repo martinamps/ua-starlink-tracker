@@ -10,6 +10,7 @@ export default function McpPage({ brand, site }: McpPageProps) {
   const cfg = site?.scope && site.scope !== "ALL" ? AIRLINES[site.scope] : AIRLINES.UA;
   const homeTitle = brand?.title ?? cfg.brand.title;
   const mcpUrl = `https://${site?.canonicalHost ?? cfg.canonicalHost}/mcp`;
+  const claudeConnectorsUrl = "https://claude.ai/settings/connectors?modal=add-custom-connector";
   return (
     <div className="w-full mx-auto px-4 sm:px-6 md:px-8 bg-base min-h-screen flex flex-col relative">
       <div className="absolute inset-0 grid-pattern opacity-50 pointer-events-none" />
@@ -54,6 +55,18 @@ export default function McpPage({ brand, site }: McpPageProps) {
             >
               Copy
             </button>
+          </div>
+          <div className="flex items-center gap-2 mt-3 pt-3 border-t border-subtle text-xs text-muted">
+            <span className="whitespace-nowrap">Using Claude.ai or mobile?</span>
+            <a
+              href={claudeConnectorsUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-3 py-1.5 bg-accent/20 border border-accent text-accent font-display rounded hover:bg-accent/30 transition-colors whitespace-nowrap"
+            >
+              Open Connectors →
+            </a>
+            <span>then paste the URL above.</span>
           </div>
         </div>
       </div>
@@ -130,9 +143,10 @@ export default function McpPage({ brand, site }: McpPageProps) {
               loading="lazy"
             />
             <p className="pt-2 border-t border-subtle">
-              <strong className="text-secondary">Other clients (Cursor, Cline, etc):</strong> same
-              URL, <code className="font-mono text-xs">http</code> transport. It's a standard
-              JSON-RPC 2.0 endpoint — no auth, no SDK.{" "}
+              <strong className="text-secondary">ChatGPT &amp; other MCP clients:</strong> same URL,{" "}
+              <code className="font-mono text-xs">http</code> transport. It's a standard JSON-RPC
+              2.0 endpoint — no auth, no SDK. In ChatGPT, enable Developer Mode in Advanced
+              settings, then Settings → Connectors → Create.{" "}
               <a
                 href="https://modelcontextprotocol.io/specification/2025-06-18/basic/transports"
                 target="_blank"
