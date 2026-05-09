@@ -355,6 +355,16 @@ export async function verifyPlaneStarlink(
  * Run verification for planes that need checking
  * Fetches data from unitedstarlinktracker.com API
  */
+// Cheap pre-flight so the background loop can skip span creation on no-op ticks.
+export function hasVerificationWork(maxPlanes: number, forceAll = false): boolean {
+  const db = initializeDatabase();
+  try {
+    return getPlanesNeedingVerification(db, maxPlanes, forceAll).length > 0;
+  } finally {
+    db.close();
+  }
+}
+
 export async function runVerificationBatch(
   maxPlanes = 5,
   delayMs = VERIFICATION_DELAY_MS,
@@ -480,11 +490,19 @@ export function startStarlinkVerifier() {
     runCount++;
 
     try {
+      // Heartbeat log every 10 minutes to show scheduler is alive
+      const now = Date.now();
+      if (now - lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
+        verifierLog.info(`Heartbeat: ${runCount} runs completed, scheduler healthy`);
+        lastHeartbeat = now;
+      }
+
+      // ~97% of ticks find nothing to do — skip span creation on no-op runs.
+      if (!hasVerificationWork(PLANES_PER_RUN)) return;
+
       await withSpan(
         "starlink_verifier.run",
         async (span) => {
-          span.setTag("job.type", "background");
-
           const stats = await runVerificationBatch(PLANES_PER_RUN, VERIFICATION_DELAY_MS);
 
           span.setTag("checked", stats.checked);
@@ -495,13 +513,6 @@ export function startStarlinkVerifier() {
             verifierLog.info(
               `Batch complete: ${stats.starlink} Starlink, ${stats.notStarlink} not, ${stats.errors} errors`
             );
-          }
-
-          // Heartbeat log every 10 minutes to show scheduler is alive
-          const now = Date.now();
-          if (now - lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
-            verifierLog.info(`Heartbeat: ${runCount} runs completed, scheduler healthy`);
-            lastHeartbeat = now;
           }
         },
         { "job.type": "background" }

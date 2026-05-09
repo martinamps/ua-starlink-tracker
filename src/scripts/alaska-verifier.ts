@@ -191,9 +191,24 @@ export function startAlaskaVerifier(): void {
   );
 
   let cursor = 0;
-  const tick = () => {
+  const tick = async () => {
     const airline = targets[cursor % targets.length];
     cursor++;
+    // Most ticks find nothing to verify — skip span creation on no-op runs.
+    let target: ReturnType<typeof getNextAlaskaVerifyTarget> = null;
+    try {
+      const db = initializeDatabase();
+      try {
+        target = getNextAlaskaVerifyTarget(db, airline);
+      } finally {
+        db.close();
+      }
+    } catch (e) {
+      logError(`alaska-verifier ${airline} pre-check failed`, e);
+      return;
+    }
+    if (!target) return;
+
     return withSpan(
       "alaska_verifier.run",
       async (span) => {

@@ -337,11 +337,7 @@ async function verifyPlane(
           info(
             `STATUS CHANGE: ${plane.tail_number} ${prevStatus} → ${starlinkStatus} (${consensus?.reason ?? "n/a"})`
           );
-          metrics.increment(COUNTERS.FLEET_STATUS_CHANGE, {
-            fleet: fleetTag,
-            from: prevStatus,
-            to: starlinkStatus,
-          });
+          // FLEET_STATUS_CHANGE is emitted at the DB write site (updateFleetVerificationResult).
           emitFleetSnapshot(db);
         }
 

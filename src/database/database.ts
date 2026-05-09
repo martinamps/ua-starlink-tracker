@@ -2,8 +2,12 @@ import { Database } from "bun:sqlite";
 import { ensureAirlinePrefix } from "../airlines/flight-number";
 import { AIRLINES } from "../airlines/registry";
 import {
+  COUNTERS,
+  metrics,
   normalizeAircraftType,
+  normalizeAirlineTag,
   normalizeFleet,
+  normalizeStarlinkStatus,
   normalizeWifiProvider,
 } from "../observability/metrics";
 import type {
@@ -1340,6 +1344,34 @@ export function getNextFlightForTail(
   } | null;
 }
 
+// Emit fleet.status_change at the write site so every mutator path is
+// covered, not just the discovery scan (which can be starved during outages).
+function emitFleetStatusChange(
+  prev: { starlink_status: string | null; fleet: string | null; airline: string | null } | null,
+  next: StarlinkStatus
+): void {
+  if (!prev || prev.starlink_status === next) return;
+  metrics.increment(COUNTERS.FLEET_STATUS_CHANGE, {
+    fleet: normalizeFleet(prev.fleet),
+    from: normalizeStarlinkStatus(prev.starlink_status),
+    to: normalizeStarlinkStatus(next),
+    airline: normalizeAirlineTag(prev.airline),
+  });
+}
+
+function getFleetStatusRow(
+  db: Database,
+  tail: string
+): { starlink_status: string | null; fleet: string | null; airline: string | null } | null {
+  return db
+    .query("SELECT starlink_status, fleet, airline FROM united_fleet WHERE tail_number = ?")
+    .get(tail) as {
+    starlink_status: string | null;
+    fleet: string | null;
+    airline: string | null;
+  } | null;
+}
+
 export function setFleetVerified(
   db: Database,
   tail: string,
@@ -1347,9 +1379,11 @@ export function setFleetVerified(
   status: StarlinkStatus
 ): void {
   const now = Math.floor(Date.now() / 1000);
+  const prev = getFleetStatusRow(db, tail);
   db.query(
     "UPDATE united_fleet SET verified_wifi = ?, verified_at = ?, starlink_status = ? WHERE tail_number = ?"
   ).run(wifi, now, status, tail);
+  emitFleetStatusChange(prev, status);
 }
 
 export function touchFleetVerifiedAt(db: Database, tail: string): void {
@@ -1964,8 +1998,13 @@ export function upsertFleetAircraft(
   const safeType = type && !/^unknown$/i.test(type) ? type : null;
 
   const existing = db
-    .query("SELECT id, starlink_status FROM united_fleet WHERE tail_number = ?")
-    .get(tailNumber) as { id: number; starlink_status: StarlinkStatus } | null;
+    .query("SELECT id, starlink_status, fleet, airline FROM united_fleet WHERE tail_number = ?")
+    .get(tailNumber) as {
+    id: number;
+    starlink_status: StarlinkStatus;
+    fleet: string | null;
+    airline: string | null;
+  } | null;
 
   if (existing) {
     db.query(`
@@ -1996,6 +2035,7 @@ export function upsertFleetAircraft(
         now + 365 * 24 * 3600,
         tailNumber
       );
+      emitFleetStatusChange(existing, seedVerdict.starlinkStatus);
     }
   } else {
     const status = seedVerdict?.starlinkStatus ?? "unknown";
@@ -2108,6 +2148,7 @@ export function updateFleetVerificationResult(
       WHERE tail_number = ?
     `).run(result.error, nextCheckAfter, priority, tailNumber);
   } else {
+    const prev = getFleetStatusRow(db, tailNumber);
     db.query(`
       UPDATE united_fleet
       SET starlink_status = ?,
@@ -2119,6 +2160,7 @@ export function updateFleetVerificationResult(
           discovery_priority = ?
       WHERE tail_number = ?
     `).run(result.starlinkStatus, result.verifiedWifi, now, nextCheckAfter, priority, tailNumber);
+    emitFleetStatusChange(prev, result.starlinkStatus);
   }
 }
 
@@ -2144,7 +2186,9 @@ export function syncSpreadsheetToFleet(db: Database): number {
     verified_wifi: string | null;
   }>;
 
-  const existsStmt = db.prepare("SELECT id FROM united_fleet WHERE tail_number = ?");
+  const existsStmt = db.prepare(
+    "SELECT id, starlink_status, fleet, airline FROM united_fleet WHERE tail_number = ?"
+  );
   // starlink_status follows verified_wifi (the consensus-driven column) so
   // retrofit transitions converge hourly instead of waiting 7-14d for discovery.
   // When verified_wifi is NULL (unverified) we leave status alone — avoids the
@@ -2172,6 +2216,13 @@ export function syncSpreadsheetToFleet(db: Database): number {
     return s && !/^unknown$/i.test(s) && normalizeAircraftType(s) !== "other" ? s : null;
   };
 
+  // Defer metric emit until the transaction commits so DogStatsD never reports
+  // a transition that gets rolled back.
+  const transitions: Array<{
+    prev: { starlink_status: string | null; fleet: string | null; airline: string | null };
+    next: StarlinkStatus;
+  }> = [];
+
   const sync = db.transaction(() => {
     for (const plane of spreadsheetPlanes) {
       // NULL verified_wifi means unverified — must map to 'unknown', not
@@ -2186,7 +2237,16 @@ export function syncSpreadsheetToFleet(db: Database): number {
             : "negative";
       const type = safeType(plane.aircraft);
 
-      if (existsStmt.get(plane.TailNumber)) {
+      const existing = existsStmt.get(plane.TailNumber) as {
+        id: number;
+        starlink_status: string | null;
+        fleet: string | null;
+        airline: string | null;
+      } | null;
+      if (existing) {
+        if (starlinkStatus !== "unknown" && existing.starlink_status !== starlinkStatus) {
+          transitions.push({ prev: existing, next: starlinkStatus });
+        }
         updateStmt.run(
           type,
           plane.fleet,
@@ -2216,6 +2276,8 @@ export function syncSpreadsheetToFleet(db: Database): number {
     }
   });
   sync();
+
+  for (const t of transitions) emitFleetStatusChange(t.prev, t.next);
 
   return synced;
 }
