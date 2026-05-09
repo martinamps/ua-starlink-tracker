@@ -27,6 +27,39 @@ const FRESHNESS_QUERIES: Record<FreshnessJob, string> = {
     GROUP BY airline`,
 };
 
+// Tables sampled by the row-count gauge. flight_routes/qatar_schedule have no
+// airline column — those report under airline:all.
+const ROW_COUNT_TABLES: Array<{ table: string; hasAirline: boolean }> = [
+  { table: "upcoming_flights", hasAirline: true },
+  { table: "starlink_verification_log", hasAirline: true },
+  { table: "departure_log", hasAirline: true },
+  { table: "flight_routes", hasAirline: false },
+  { table: "qatar_schedule", hasAirline: false },
+];
+
+function emitRowCounts(db: Database): void {
+  for (const { table, hasAirline } of ROW_COUNT_TABLES) {
+    try {
+      if (hasAirline) {
+        const rows = db
+          .query(`SELECT airline, COUNT(*) AS cnt FROM ${table} GROUP BY airline`)
+          .all() as Array<{ airline: string; cnt: number }>;
+        for (const row of rows) {
+          metrics.gauge(GAUGES.DB_TABLE_ROWS, row.cnt, {
+            table,
+            airline: normalizeAirlineTag(row.airline),
+          });
+        }
+      } else {
+        const row = db.query(`SELECT COUNT(*) AS cnt FROM ${table}`).get() as { cnt: number };
+        metrics.gauge(GAUGES.DB_TABLE_ROWS, row.cnt, { table, airline: "all" });
+      }
+    } catch (err) {
+      logError(`Row count query failed for table=${table}`, err);
+    }
+  }
+}
+
 export function emitDataFreshness(db: Database): void {
   const now = Math.floor(Date.now() / 1000);
   for (const [job, sql] of Object.entries(FRESHNESS_QUERIES)) {
@@ -44,6 +77,7 @@ export function emitDataFreshness(db: Database): void {
       logError(`Freshness query failed for job=${job}`, err);
     }
   }
+  emitRowCounts(db);
 }
 
 export function startFreshnessEmitter(db: Database): void {

@@ -112,6 +112,17 @@ export function normalizeStarlinkStatus(raw: string | null | undefined): string 
   return "unknown";
 }
 
+// Bounded user-agent classification (≤6 buckets, never the raw UA).
+const BOT_UA = /bot|spider|crawler|curl|wget|python-requests|go-http-client|headless|httpclient/i;
+export function classifyUserAgent(ua: string | null | undefined): string {
+  if (!ua) return "unknown";
+  if (/Claude-User|ClaudeBot|anthropic/i.test(ua)) return "claude";
+  if (/UA-Starlink-Extension|starlink-tracker-ext/i.test(ua)) return "extension";
+  if (BOT_UA.test(ua)) return "bot";
+  if (/Mozilla|AppleWebKit|Gecko|Chrome|Safari|Firefox/i.test(ua)) return "browser";
+  return "unknown";
+}
+
 /**
  * Canonical lowercase-name airline tag for metrics. Preserves Datadog history
  * (the global default has always been `airline:united`, not `airline:UA`).
@@ -166,6 +177,17 @@ export const COUNTERS = {
   // A discovery check was skipped (couldn't run the United.com scrape)
   // tags: fleet, reason (no_flights)
   FLEET_CHECK_SKIPPED: "fleet.check_skipped",
+
+  // User-facing flight lookup outcome — how often we actually answer the question.
+  // tags: endpoint (api_check|api_predict|mcp), outcome (verified_yes|verified_no|
+  //   predicted|no_data|error), confidence (high|medium|low|none), airline
+  FLIGHT_LOOKUP_RESULT: "flight.lookup_result",
+
+  // MCP tool dispatch — tags: tool, airline, outcome (success|error|unknown_tool)
+  MCP_TOOL_CALL: "mcp.tool_call",
+
+  // Route lookup fallback chain hit source — tags: source (memory|sqlite|fr24|upcoming|miss), airline
+  ROUTE_LOOKUP: "route.lookup",
 } as const;
 
 /**
@@ -188,6 +210,10 @@ export const GAUGES = {
   // Surface contradiction sweep — tags: airline, vector
   SURFACE_CONTRADICTION_TOTAL: "surface_contradiction.total",
   SURFACE_CONTRADICTION_COUNT: "surface_contradiction.count",
+
+  // Row counts for key tables, sampled with the 5-min freshness sweep.
+  // tags: table, airline (or "all" if the table has no airline column)
+  DB_TABLE_ROWS: "db.table_rows",
 } as const;
 
 /**
@@ -202,4 +228,11 @@ export const DISTRIBUTIONS = {
   // Vendor request latency in milliseconds
   // tags: vendor, type, status
   VENDOR_DURATION_MS: "vendor.duration_ms",
+
+  // MCP tool latency in milliseconds — tags: tool, airline, outcome
+  MCP_TOOL_DURATION_MS: "mcp.tool_duration_ms",
+
+  // Distribution of probabilities served to users — surfaces cold-start floods.
+  // tags: confidence (high|medium|low), method (flight_history|fleet_prior|confirmed), airline
+  PREDICTION_PROBABILITY: "prediction.probability",
 } as const;

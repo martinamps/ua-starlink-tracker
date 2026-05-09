@@ -17,5 +17,6 @@ export {
   normalizeFleet,
   normalizeAirlineTag,
   normalizeStarlinkStatus,
+  classifyUserAgent,
 } from "./metrics";
 export type { Tags } from "./metrics";
