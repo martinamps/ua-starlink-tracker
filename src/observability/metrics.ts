@@ -157,6 +157,17 @@ export const COUNTERS = {
 } as const;
 
 /**
+ * Gauge metrics — periodic state snapshots, last-write-wins per flush window
+ */
+export const GAUGES = {
+  // Seconds since the last successful data write per pipeline, derived from the
+  // DB itself (MAX(timestamp)) — not from a "last ran at" heartbeat. Heartbeats
+  // prove the loop is alive; this proves it's still producing data.
+  // tags: job (flight_updater|verifier|departures), airline
+  DATA_FRESHNESS_SECONDS: "data.freshness_seconds",
+} as const;
+
+/**
  * Distribution metrics — server-side aggregated, graph p50/p95/p99/sum/avg
  */
 export const DISTRIBUTIONS = {
