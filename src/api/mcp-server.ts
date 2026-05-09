@@ -323,7 +323,6 @@ function buildTools(scope: Scope) {
             examples: [10],
           },
         },
-        anyOf: [{ required: ["origin"] }, { required: ["destination"] }],
         examples: [{ origin: "SFO", destination: "EWR" }, { origin: "ORD" }],
       },
     },
@@ -332,6 +331,7 @@ function buildTools(scope: Scope) {
       description:
         'Use when the user asks "what Starlink flights leave from X tomorrow?" or wants confirmed near-term departures. ' +
         "Returns CONFIRMED Starlink flights in the next ~2 days — firm schedule, not prediction. " +
+        "Pass at least one of origin or destination (both narrows to a single route). " +
         "Aircraft assignments aren't published further out, so for later dates use " +
         "predict_route_starlink or plan_starlink_itinerary instead.",
       inputSchema: {
@@ -355,7 +355,6 @@ function buildTools(scope: Scope) {
             examples: [20],
           },
         },
-        anyOf: [{ required: ["origin"] }, { required: ["destination"] }],
         examples: [{ origin: "ORD" }, { origin: "SFO", destination: "EWR" }],
       },
     },
