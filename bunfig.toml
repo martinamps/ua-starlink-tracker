@@ -1,3 +1,9 @@
+# Pin Playwright to the project-local browser cache before module resolution.
+preload = ["./src/playwright-env.ts"]
+
+[test]
+preload = ["./src/playwright-env.ts"]
+
 [install]
 registry = "https://registry.npmjs.org/"
 

@@ -2,15 +2,9 @@
  * FR24 browser-routed transport.
  */
 
-import path from "node:path";
 import type { Browser, Page } from "playwright";
 import { COUNTERS, metrics } from "../observability";
 import { error, info, warn } from "../utils/logger";
-
-process.env.PLAYWRIGHT_BROWSERS_PATH ??= path.resolve(
-  import.meta.dir,
-  "../../do_not_commit/playwright-browsers"
-);
 
 type ChromiumLauncher = typeof import("playwright-extra")["chromium"];
 let chromiumLauncher: ChromiumLauncher | null = null;
