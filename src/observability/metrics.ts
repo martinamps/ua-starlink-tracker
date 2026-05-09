@@ -7,13 +7,22 @@
  * Naming Convention: starlink.{category}.{action}
  *
  * Tag cardinality budget (keep each tag ≤ ~20 values):
- *   airline:         united (auto-applied globally via tracer.init)  (1, future: N)
+ *   airline:         united | hawaiian | alaska | qatar | unmapped | unknown  (~6)
+ *   tenant:          UA | HA | AS | QR | ALL  (~5) — used on http.* only; the
+ *                    hub host serves all carriers under scope ALL, which isn't
+ *                    an airline, so http metrics carry tenant instead of airline.
  *   fleet:           express | mainline | unknown                    (3)
  *   aircraft_type:   normalized families (B737-800, E175, etc)      (~19)
- *   wifi_provider:   starlink | viasat | panasonic | thales | none | unknown  (6)
+ *   wifi_provider:   starlink | viasat | panasonic | thales | none | other | unknown  (7)
  *   starlink_status: confirmed | negative | unknown                  (3)
- *   vendor:          fr24 | flightaware | united                     (3)
- *   status:          success | error | rate_limited | timeout | ...  (~7)
+ *   vendor:          fr24 | flightaware | united | qatar | alaska    (5)
+ *   status:          success | error | rate_limited | timeout | killed |
+ *                    exit_error | parse_error | spawn_error | partial |
+ *                    aborted | scrape_error                          (~14)
+ *   result:          success | error | aircraft_mismatch | tail_unknown  (4)
+ *   client_class:    bot | claude | extension | browser | unknown    (5)
+ *   confidence:      high | medium | low | none                      (4)
+ *   outcome:         verified_yes | verified_no | predicted | no_data | error  (5)
  */
 
 import { AIRLINES } from "../airlines/registry";
@@ -140,32 +149,34 @@ export function normalizeAirlineTag(code: string | null | undefined): string {
  */
 export const COUNTERS = {
   // Scraper events
-  SCRAPER_SYNC: "scraper.sync", // tags: source
-  PLANES_DISCOVERED: "planes.discovered", // tags: source
+  SCRAPER_SYNC: "scraper.sync", // tags: source, airline, status (success|partial|aborted|error)
+  PLANES_DISCOVERED: "planes.discovered", // tags: source, airline
 
   // New Starlink installation detected on an aircraft
   // tags: fleet, aircraft_type
   PLANES_STARLINK_DETECTED: "planes.starlink_detected",
 
-  // United.com verification check outcome
-  // tags: result (success|error|aircraft_mismatch), fleet, aircraft_type, wifi_provider
+  // Per-tail verification check outcome
+  // tags: result (success|error|aircraft_mismatch|tail_unknown), fleet,
+  //   aircraft_type, wifi_provider, source (united|alaska), airline
   VERIFICATION_CHECK: "verification.check",
 
   // External API calls
-  // tags: vendor (fr24|flightaware|united), type, status
+  // tags: vendor (fr24|flightaware|united|qatar|alaska), type, status
   // united status values: success | timeout | killed | exit_error | parse_error | spawn_error
   // fr24/flightaware status values: success | error | rate_limited
+  // qatar status values: success | error | partial
   VENDOR_REQUEST: "vendor.request",
 
   // HTTP requests
-  // tags: method, route (allowlisted), status_code
+  // tags: method, route (allowlisted), status_code, tenant, client_class
   HTTP_REQUEST: "http.request",
 
   // Per-IP rate limit triggered on /api/* — tags: route, tenant
   HTTP_RATE_LIMITED: "http.rate_limited",
 
   // united_fleet.starlink_status changed (consensus verdict flipped)
-  // tags: fleet, from (confirmed|negative|unknown), to
+  // tags: fleet, from (confirmed|negative|unknown), to, airline
   FLEET_STATUS_CHANGE: "fleet.status_change",
 
   // Consensus verdict disagrees with the Google Sheet's wifi claim
@@ -221,7 +232,7 @@ export const GAUGES = {
  */
 export const DISTRIBUTIONS = {
   // Fleet size snapshot, emitted per heartbeat.
-  // tags: fleet, starlink_status (confirmed|negative|unknown)
+  // tags: fleet, starlink_status (confirmed|negative|unknown), airline
   // Graph as sum-by-fleet-and-status to see rollout progress over time.
   FLEET_PLANES: "fleet.planes",
 
