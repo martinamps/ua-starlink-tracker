@@ -100,6 +100,7 @@ const ENDPOINTS = [
   "/check-flight",
   "/route-planner",
   "/api/data",
+  "/api/fleet-summary",
   "/api/check-flight?flight_number=HA9999&date=2026-03-22",
   "/api/check-flight?flight_number=QR9999&date=2026-03-22",
   "/api/mismatches",

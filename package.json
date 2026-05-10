@@ -28,7 +28,8 @@
     "lint": "biome check .",
     "format": "biome format --write .",
     "lint:fix": "biome check --write .",
-    "prepare": "husky"
+    "prepare": "husky",
+    "generate-og": "bun scripts/generate-og-images.ts"
   },
   "dependencies": {
     "dd-trace": "^5.32.0",

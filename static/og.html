@@ -1,0 +1,180 @@
+<!doctype html>
+<!--
+  OG card template. Rendered headless by scripts/generate-og-images.ts at
+  exactly 1200x630, then saved as static/social-image*.webp. Self-contained:
+  no external assets so the screenshot is deterministic.
+
+  Query params:
+    layout=count   single hero number + sparkline (per-airline pages)
+    layout=grid    4 status cards (hub page)
+    label          top-left label, e.g. "UNITED STARLINK TRACKER"
+    domain         bottom-left domain
+    accent         hex color e.g. 0ea5e9
+    count          hero number (count layout)
+    sub            caption under the number (count layout)
+    series         comma-separated cumulative install counts for the sparkline (count layout)
+    cards          JSON array [{name,pct,accent}] (grid layout)
+    caption        small caption under the cards (grid layout)
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  :root {
+    --bg: #0a0f1a;
+    --surface: #141925;
+    --border: #232c40;
+    --text: #f3f6fb;
+    --muted: #7b8aa3;
+    --accent: #0ea5e9;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 1200px; height: 630px; overflow: hidden; }
+  body {
+    background: var(--bg);
+    font-family: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, monospace;
+    color: var(--text);
+    position: relative;
+  }
+  .grid-bg {
+    position: absolute; inset: 0;
+    background-image:
+      linear-gradient(rgba(123,138,163,0.05) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(123,138,163,0.05) 1px, transparent 1px);
+    background-size: 48px 48px;
+    mask-image: radial-gradient(ellipse 90% 80% at 30% 50%, black 40%, transparent 100%);
+  }
+  .label {
+    position: absolute; top: 56px; left: 64px;
+    font-size: 22px; letter-spacing: 0.32em; color: var(--muted);
+    text-transform: uppercase; font-weight: 500;
+  }
+  .domain {
+    position: absolute; bottom: 52px; left: 64px;
+    font-size: 19px; letter-spacing: 0.06em; color: var(--muted);
+  }
+  .sat {
+    position: absolute; bottom: 48px; right: 56px;
+    width: 56px; height: 56px; opacity: 0.55;
+  }
+  .sat path { stroke: var(--accent); }
+
+  /* ── count layout ── */
+  .count-wrap { position: absolute; left: 64px; top: 50%; transform: translateY(-46%); }
+  .count {
+    font-family: "Inter", "SF Pro Display", -apple-system, "Helvetica Neue", sans-serif;
+    font-size: 220px; font-weight: 800; line-height: 0.92; letter-spacing: -0.025em;
+    font-variant-numeric: tabular-nums;
+  }
+  .underline { width: 480px; height: 5px; background: var(--accent); margin: 26px 0 24px 6px; border-radius: 3px; }
+  .sub { font-size: 24px; letter-spacing: 0.26em; color: var(--muted); text-transform: uppercase; padding-left: 6px; }
+  .chart { position: absolute; right: 0; bottom: 0; }
+
+  /* ── grid layout ── */
+  .cards { position: absolute; left: 64px; right: 64px; top: 50%; transform: translateY(-54%); display: flex; gap: 28px; }
+  .card {
+    flex: 1; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 14px; padding: 34px 24px 30px; text-align: center;
+  }
+  .card .name { font-size: 18px; letter-spacing: 0.28em; color: var(--muted); text-transform: uppercase; margin-bottom: 18px; }
+  .card .pct {
+    font-family: "Inter", "SF Pro Display", -apple-system, sans-serif;
+    font-size: 76px; font-weight: 800; letter-spacing: -0.02em; line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+  .card .bar { height: 12px; background: #1e2638; border-radius: 6px; margin-top: 26px; overflow: hidden; }
+  .card .bar-fill { height: 100%; border-radius: 6px; }
+  .caption {
+    position: absolute; left: 0; right: 0; bottom: 138px; text-align: center;
+    font-size: 21px; letter-spacing: 0.26em; color: var(--muted); text-transform: uppercase;
+  }
+</style>
+</head>
+<body>
+  <div class="grid-bg"></div>
+  <div class="label" id="label"></div>
+  <div id="content"></div>
+  <div class="domain" id="domain"></div>
+  <svg class="sat" viewBox="0 0 24 24" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M13 7 9 3 5 7l4 4" /><path d="m17 11 4 4-4 4-4-4" /><path d="m8 12 4 4 6-6-4-4Z" />
+    <path d="m16 8 3-3" /><path d="M9 21a6 6 0 0 0-6-6" /><path d="M9 17a2 2 0 0 0-2-2" />
+  </svg>
+
+<script>
+// This template is loaded headlessly by scripts/generate-og-images.ts with
+// trusted data, not served to users (it's not in the STATIC_FILES allowlist).
+// Escape anyway so a future server route can't turn it into stored XSS.
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const hexOnly = (s, fb) => /^[0-9a-fA-F]{3,8}$/.test(s || "") ? s : fb;
+
+const q = new URLSearchParams(location.search);
+const accent = "#" + hexOnly(q.get("accent"), "0ea5e9");
+document.documentElement.style.setProperty("--accent", accent);
+document.getElementById("label").textContent = q.get("label") || "STARLINK TRACKER";
+document.getElementById("domain").textContent = q.get("domain") || "";
+
+const content = document.getElementById("content");
+const layout = q.get("layout") || "count";
+
+if (layout === "count") {
+  const count = esc(q.get("count") || "—");
+  const sub = esc(q.get("sub") || "AIRCRAFT WITH STARLINK");
+  const series = (q.get("series") || "").split(",").map(Number).filter((n) => !Number.isNaN(n));
+
+  let chartSvg = "";
+  if (series.length > 1) {
+    const W = 660, H = 470, PAD = 8;
+    const max = Math.max(...series), min = Math.min(...series);
+    const span = Math.max(1, max - min);
+    const pts = series.map((v, i) => {
+      const x = PAD + (i / (series.length - 1)) * (W - PAD * 2);
+      const y = H - PAD - ((v - min) / span) * (H - PAD * 2);
+      return [x, y];
+    });
+    const line = pts.map((p, i) => `${i === 0 ? "M" : "L"}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" ");
+    const area = `${line} L${W - PAD},${H} L${PAD},${H} Z`;
+    const [lx, ly] = pts[pts.length - 1];
+    chartSvg = `
+      <svg class="chart" width="${W}" height="${H + 40}" viewBox="0 0 ${W} ${H + 40}">
+        <defs>
+          <linearGradient id="fill" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="${accent}" stop-opacity="0.32"/>
+            <stop offset="100%" stop-color="${accent}" stop-opacity="0"/>
+          </linearGradient>
+        </defs>
+        <g transform="translate(0,40)">
+          <path d="${area}" fill="url(#fill)"/>
+          <path d="${line}" fill="none" stroke="${accent}" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+          <circle cx="${lx}" cy="${ly}" r="9" fill="${accent}" opacity="0.25"/>
+          <circle cx="${lx}" cy="${ly}" r="4.5" fill="${accent}"/>
+        </g>
+      </svg>`;
+  }
+
+  content.innerHTML = `
+    <div class="count-wrap">
+      <div class="count">${count}</div>
+      <div class="underline"></div>
+      <div class="sub">${sub}</div>
+    </div>${chartSvg}`;
+} else {
+  let cards = [];
+  try { cards = JSON.parse(q.get("cards") || "[]"); } catch {}
+  const caption = esc(q.get("caption") || "PER-AIRCRAFT STARLINK WIFI STATUS");
+  content.innerHTML = `
+    <div class="cards">
+      ${cards.map((c) => {
+        const pct = Math.max(0, Math.min(100, Number(c.pct) || 0));
+        return `
+        <div class="card">
+          <div class="name">${esc(c.name)}</div>
+          <div class="pct">${pct}<span style="font-size:0.55em;font-weight:700">%</span></div>
+          <div class="bar"><div class="bar-fill" style="width:${pct}%;background:#${hexOnly(c.accent, "0ea5e9")}"></div></div>
+        </div>`;
+      }).join("")}
+    </div>
+    <div class="caption">${caption}</div>`;
+}
+</script>
+</body>
+</html>
