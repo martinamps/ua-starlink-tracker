@@ -208,7 +208,28 @@ const STATIC_FILES = [
   },
   { path: "/favicon-16x16.png", filename: "favicon-16x16.png", contentType: "image/png" },
   { path: "/favicon-32x32.png", filename: "favicon-32x32.png", contentType: "image/png" },
+  // OG cards: regenerated daily from /api/fleet-summary by scripts/generate-og-images.ts.
   { path: "/static/social-image.webp", filename: "social-image.webp", contentType: "image/webp" },
+  {
+    path: "/static/social-image-hub.webp",
+    filename: "social-image-hub.webp",
+    contentType: "image/webp",
+  },
+  {
+    path: "/static/social-image-ha.webp",
+    filename: "social-image-ha.webp",
+    contentType: "image/webp",
+  },
+  {
+    path: "/static/social-image-as.webp",
+    filename: "social-image-as.webp",
+    contentType: "image/webp",
+  },
+  {
+    path: "/static/social-image-qr.webp",
+    filename: "social-image-qr.webp",
+    contentType: "image/webp",
+  },
 ];
 
 const staticResponses = new Map<string, Response>();
@@ -251,6 +272,27 @@ const apiData: Handler = ({ req, reader }) => {
     flightsByTail,
   };
   return new Response(JSON.stringify(response), { headers: SECURITY_HEADERS.api });
+};
+
+// Per-airline rollout summary — used by the OG image generator and any
+// cross-airline UI. Cheap to compute per-request.
+const apiFleetSummary: Handler = ({ req, getReader }) => {
+  if (req.method !== "GET") return methodNotAllowed(true);
+  const airlines = publicAirlines().map((cfg) => {
+    const r = getReader(cfg.code);
+    const installed = r.getStarlinkPlanes().length;
+    const total = r.getTotalCount();
+    return {
+      code: cfg.code,
+      name: cfg.name,
+      installed,
+      total,
+      percentage: total > 0 ? Math.round((installed / total) * 1000) / 10 : 0,
+    };
+  });
+  return new Response(JSON.stringify({ airlines, generatedAt: new Date().toISOString() }), {
+    headers: { ...SECURITY_HEADERS.api, "Cache-Control": "public, max-age=300" },
+  });
 };
 
 /**
@@ -1259,6 +1301,7 @@ export function createApp(db: Database): App {
     "/route-planner": routePlannerPage,
     "/fleet": fleetPage,
     "/api/data": apiData,
+    "/api/fleet-summary": apiFleetSummary,
     "/api/check-flight": apiCheckFlight,
     "/api/check-any-flight": apiCheckAnyFlight,
     "/api/compare-route": apiCompareRoute,

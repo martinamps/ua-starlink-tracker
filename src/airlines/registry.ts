@@ -332,6 +332,7 @@ const HUB_BRAND: PageBrand = {
   accentColorDim: "#0284c7",
   faviconPath: "/favicon.ico",
   analyticsDomain: "airlinestarlinktracker.com",
+  socialImagePath: "/static/social-image-hub.webp",
 };
 
 const DEFAULT_ANALYTICS_SCRIPT = "https://analytics.martinamps.com/js/script.js";
