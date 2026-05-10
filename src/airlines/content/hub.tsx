@@ -70,6 +70,10 @@ const HubHero = ({ stats, perAirlineStats = [], recentInstalls = [] }: HeroProps
               var color = a.accentColor || '#0ea5e9';
               var inferred = a.kind === 'inferred_absent';
               var rpHref = '/route-planner?from='+O+'&to='+D;
+              if (a.kind === 'no_data') {
+                return '<div class="mb-3 opacity-60"><div class="flex justify-between items-center font-mono text-xs"><span class="text-muted">'+esc(a.name)+pill(rpHref,'check route planner',color)+'</span><span class="text-muted">\\u2014</span></div>'
+                     + '<div class="font-mono text-[10px] text-muted">No route data yet</div></div>';
+              }
               if (a.kind === 'observed_mixed') {
                 var head = '<div class="flex justify-between items-center font-mono text-xs"><span class="text-primary">'+esc(a.name)+'</span>'
                          + '<span class="text-accent" title="Depends on which aircraft type operates your flight">'+Math.round(a.lo*100)+'\\u2013'+Math.round(a.hi*100)+'%</span></div>'
@@ -81,7 +85,7 @@ const HubHero = ({ stats, perAirlineStats = [], recentInstalls = [] }: HeroProps
                   var best = i===0 && br>=50 ? ' <span class="text-[8px] px-1 py-px rounded" style="background:color-mix(in srgb,'+esc(color)+' 18%,transparent);color:'+esc(color)+'">best bet</span>' : '';
                   return '<div class="mt-1.5 ml-3"><div class="flex justify-between font-mono text-[10px]">'
                        + '<span class="text-secondary cursor-help" title="'+lblTip+'">'+esc(shorten(b.label))+best+'</span>'
-                       + '<span class="text-accent cursor-help" title="'+numTip+'">'+br+'% \\u00b7 '+esc(b.equipped)+'/'+esc(b.total)+'</span></div>'+bar(br,color,false)+'</div>';
+                       + '<span class="text-accent" title="'+numTip+'">'+esc(b.equipped)+'/'+esc(b.total)+' aircraft \\u00b7 '+br+'%</span></div>'+bar(br,color,false)+'</div>';
                 }).join('');
                 return '<div class="mb-3">'+head+rows+'</div>';
               }

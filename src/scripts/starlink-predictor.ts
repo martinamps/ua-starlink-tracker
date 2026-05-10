@@ -510,7 +510,8 @@ export type RouteCompareKind =
   | "type_rule"
   | "observed_single"
   | "observed_mixed"
-  | "inferred_absent";
+  | "inferred_absent"
+  | "no_data";
 
 export interface SubfleetBreakdown {
   key: string;
@@ -566,12 +567,13 @@ export function compareRoute(
 
   for (const cfg of publicAirlines()) {
     const reader = getReader(cfg.code);
+    const prefixes = [cfg.iata, cfg.icao, ...cfg.carrierPrefixes];
 
     // ---- 1. Type-deterministic carriers (HA today) ----
     if (cfg.routeTypeRule) {
       const rule = cfg.routeTypeRule(o, d);
       if (!rule) continue;
-      if (!reader.airlineServesAirports(o, d)) continue;
+      if (!reader.airlineServesAirports(prefixes, o, d)) continue;
       out.push({
         ...brand(cfg),
         kind: "type_rule",
@@ -601,7 +603,6 @@ export function compareRoute(
     ceilings.set(cfg.code, maxPct);
 
     // ---- 3. Which subfleet(s) fly this nonstop? ----
-    const prefixes = [cfg.iata, cfg.icao, ...cfg.carrierPrefixes];
     const fns = reader.getObservedDirectFlightNumbers(prefixes, o, d);
     const seen = new Set<string>();
     for (const fn of fns) {
@@ -641,18 +642,32 @@ export function compareRoute(
       // Gate B: max subfleet penetration ≥ 0.5. With ≥50% of a subfleet tracked
       //   over ~65 days, a daily nonstop on that subfleet would have appeared
       //   with P > 1 - 0.5^65 ≈ 1. Absence ⇒ that subfleet does not fly the route.
-      if (!reader.airlineServesAirports(o, d)) continue;
-      if (maxPct < 0.5) continue;
-      // Both subfleets ≥50% would mean BOTH are ruled out by the same
-      // absence argument — i.e. the airline doesn't fly the nonstop. Omit.
-      if (minSub.pct >= 0.5) continue;
-      out.push({
-        ...brand(cfg),
-        kind: "inferred_absent",
-        probability: minSub.pct,
-        breakdown: [minSub],
-        reason: `${fmt(minSub.equipped)} of ${fmt(minSub.total)} aircraft equipped`,
-      });
+      if (
+        reader.airlineServesAirports(prefixes, o, d) &&
+        maxPct >= 0.5 &&
+        // Both subfleets ≥50% would mean BOTH are ruled out by the same
+        // absence argument — i.e. the airline doesn't fly the nonstop. no_data.
+        minSub.pct < 0.5
+      ) {
+        out.push({
+          ...brand(cfg),
+          kind: "inferred_absent",
+          probability: minSub.pct,
+          breakdown: [minSub],
+          reason: `${fmt(minSub.equipped)} of ${fmt(minSub.total)} aircraft equipped`,
+        });
+      } else {
+        // Always render every public airline so the panel is symmetric — a
+        // missing carrier reads as inconsistent ("why is AS shown but UA
+        // isn't on the same route?"). no_data is honest about the gap.
+        out.push({
+          ...brand(cfg),
+          kind: "no_data",
+          probability: -1,
+          breakdown: [],
+          reason: "No route data yet",
+        });
+      }
     }
   }
 
@@ -660,7 +675,7 @@ export function compareRoute(
   // No non-rule result may exceed that airline's best-equipped subfleet rate.
   // This is the bug class we're fixing (UA SFO-AUS at 97% > 64% express ceiling).
   for (const r of out) {
-    if (r.kind === "type_rule") continue;
+    if (r.kind === "type_rule" || r.kind === "no_data") continue;
     const ceil = ceilings.get(r.airline) ?? 1;
     const top = r.hi ?? r.probability;
     if (top > ceil + 1e-6) {
@@ -670,8 +685,13 @@ export function compareRoute(
     }
   }
 
-  // Sort: confident kinds by upper bound desc; inferred_absent always last.
-  const rank = (r: RouteCompareResult) => (r.kind === "inferred_absent" ? 0 : 1);
+  // Every-carrier-no_data ⇒ garbage route ⇒ empty (the panel's empty-state copy
+  // covers it). If ANY carrier has data, keep the no_data rows for symmetry.
+  if (out.every((r) => r.kind === "no_data")) return [];
+
+  // Sort: confident kinds by upper bound desc; inferred_absent then no_data last.
+  const rank = (r: RouteCompareResult) =>
+    r.kind === "no_data" ? -1 : r.kind === "inferred_absent" ? 0 : 1;
   return out.sort((a, b) => rank(b) - rank(a) || (b.hi ?? b.probability) - (a.hi ?? a.probability));
 }
 

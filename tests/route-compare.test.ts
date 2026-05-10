@@ -105,7 +105,7 @@ describe("compareRoute", () => {
       pHi: 1,
       why: "transpacific A330/A321neo",
     },
-    { o: "SFO", d: "HNL", code: "UA", kind: "omitted", why: "UA@HNL=0 (widebodies only)" },
+    { o: "SFO", d: "HNL", code: "UA", kind: "no_data", why: "UA@HNL=0 (widebodies only)" },
 
     // OGG-KOA: HA interisland 717
     {
@@ -117,7 +117,7 @@ describe("compareRoute", () => {
       pHi: 0,
       why: "interisland 717, no WiFi",
     },
-    { o: "OGG", d: "KOA", code: "UA", kind: "omitted", why: "UA does not touch OGG/KOA" },
+    { o: "OGG", d: "KOA", code: "UA", kind: "no_data", why: "UA does not touch OGG/KOA" },
 
     // ORD-LAX: UA mainline-only trunk route. Second regression guard.
     {
@@ -129,13 +129,18 @@ describe("compareRoute", () => {
       pHi: 0.4,
       why: "UA1967/UA353 observed, both <3000 → mainline only, NOT ~100%",
     },
-    { o: "ORD", d: "LAX", code: "AS", kind: "omitted", why: "AS@ORD=0" },
+    { o: "ORD", d: "LAX", code: "AS", kind: "no_data", why: "AS@ORD=0" },
   ];
 
   test.each(CASES)("$o-$d $code → $kind ($why)", (c) => {
     const r = find(c.o, c.d, c.code);
     if (c.kind === "omitted") {
       expect(r).toBeUndefined();
+      return;
+    }
+    if (c.kind === "no_data") {
+      expect(r?.kind).toBe("no_data");
+      expect(r?.probability).toBeLessThan(0);
       return;
     }
     expect(r).toBeDefined();
@@ -217,6 +222,32 @@ describe("compareRoute", () => {
 
   test("nonexistent airports → empty", () => {
     expect(compareRoute(getReader, "ZZZ", "YYY")).toEqual([]);
+  });
+
+  test("symmetry: every non-routeTypeRule carrier appears on every real route", () => {
+    // The bug this guards: AS shows on SFO-HNL but UA doesn't, despite both
+    // flying it. Now every carrier without a routeTypeRule renders as one of
+    // observed_*/inferred_absent/no_data — never silently absent.
+    for (const [o, d] of [
+      ["SFO", "AUS"],
+      ["SFO", "HNL"],
+      ["SEA", "SFO"],
+      ["ORD", "LAX"],
+    ]) {
+      const codes = compareRoute(getReader, o, d).map((r) => r.airline);
+      expect(codes).toContain("UA");
+      expect(codes).toContain("AS");
+    }
+  });
+
+  test("no_data rows sort after everything", () => {
+    const r = compareRoute(getReader, "SFO", "HNL");
+    const noDataIdx = r.findIndex((x) => x.kind === "no_data");
+    if (noDataIdx >= 0) {
+      for (let i = noDataIdx; i < r.length; i++) {
+        expect(r[i].kind).toBe("no_data");
+      }
+    }
   });
 });
 

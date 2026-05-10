@@ -118,7 +118,7 @@ export interface ScopedReader {
   getRouteFlights(origin: string | null, destination: string | null): RouteFlightRow[];
   getRouteGraphEdges(): RouteGraphEdge[];
   getConfirmedStarlinkEdges(startOfDay: number, endOfDay: number): ConfirmedEdge[];
-  airlineServesAirports(...airports: string[]): boolean;
+  airlineServesAirports(prefixes: readonly string[], ...airports: string[]): boolean;
   getSubfleetPenetration(): Map<string, SubfleetPenetration>;
   getObservedDirectFlightNumbers(
     prefixes: readonly string[],
@@ -252,7 +252,7 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     getRouteFlights: (o, d) => getRouteFlights(db, o, d, airlines),
     getRouteGraphEdges: () => getRouteGraphEdges(db, airlines),
     getConfirmedStarlinkEdges: (s, e) => getConfirmedStarlinkEdges(db, s, e, airlines),
-    airlineServesAirports: (...aps) => airlineServesAirports(db, soleAirline(), ...aps),
+    airlineServesAirports: (px, ...aps) => airlineServesAirports(db, soleAirline(), px, ...aps),
     getSubfleetPenetration: () => getSubfleetPenetration(db, soleAirline()),
     getObservedDirectFlightNumbers: (px, o, d) =>
       getObservedDirectFlightNumbers(db, soleAirline(), px, o, d),

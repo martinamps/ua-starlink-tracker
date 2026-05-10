@@ -1162,20 +1162,34 @@ export function getObservedDirectFlightNumbers(
   return [...seen];
 }
 
-/** True if the airline has any scheduled flight at both airports — gates the
- * routeTypeRule fallback so it never fires for routes the airline doesn't serve. */
+/** True if the airline serves both airports — gates inferred_absent so it
+ * never fires for routes the airline doesn't fly. Checks flight_routes (the
+ * historical cache, populated by any lookup) in addition to upcoming_flights
+ * (Starlink-only, ~48h) so coverage is symmetric across carriers. */
 export function airlineServesAirports(
   db: Database,
   airline: string,
+  prefixes: readonly string[],
   ...airports: string[]
 ): boolean {
+  const globClauses = prefixes.map(() => "flight_number GLOB ?").join(" OR ");
+  const globParams = prefixes.map((p) => `${p}[0-9]*`);
   for (const ap of airports) {
-    const row = db
-      .query(
-        `SELECT 1 FROM upcoming_flights
-         WHERE airline = ? AND (departure_airport = ? OR arrival_airport = ?) LIMIT 1`
-      )
-      .get(airline, ap, ap);
+    const row =
+      db
+        .query(
+          `SELECT 1 FROM upcoming_flights
+           WHERE airline = ? AND (departure_airport = ? OR arrival_airport = ?) LIMIT 1`
+        )
+        .get(airline, ap, ap) ??
+      (globClauses
+        ? db
+            .query(
+              `SELECT 1 FROM flight_routes
+               WHERE (origin = ? OR destination = ?) AND (${globClauses}) LIMIT 1`
+            )
+            .get(ap, ap, ...globParams)
+        : undefined);
     if (!row) return false;
   }
   return true;
