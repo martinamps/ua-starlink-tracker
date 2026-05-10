@@ -1,8 +1,8 @@
 import React from "react";
 import {
+  AirlineStatusCards,
   FlightCheckInput,
   RecentInstallsFeed,
-  RolloutLeaderboard,
   RouteComparePanel,
 } from "../../components/atoms";
 import { publicAirlines } from "../registry";
@@ -15,26 +15,18 @@ const HubHero = ({ stats, perAirlineStats = [], recentInstalls = [] }: HeroProps
       <div className="text-center">
         <div className="font-mono text-sm text-secondary">
           Tracking <span className="text-accent font-semibold">{starlinkCount}</span> Starlink
-          aircraft across{" "}
+          aircraft across <span className="text-muted">{totalCount}</span> planes over{" "}
           <span className="text-accent font-semibold">{perAirlineStats.length}</span> airline
-          {perAirlineStats.length === 1 ? "" : "s"} ·{" "}
-          <span className="text-muted">{totalCount} total fleet</span>
+          {perAirlineStats.length === 1 ? "" : "s"}
         </div>
       </div>
 
-      <div className="grid lg:grid-cols-2 gap-4">
-        <FlightCheckInput />
-        <RouteComparePanel />
-      </div>
+      <AirlineStatusCards stats={perAirlineStats} />
+      <RouteComparePanel />
+      <FlightCheckInput />
+      <RecentInstallsFeed items={recentInstalls} airlines={perAirlineStats} />
 
-      <div className="grid lg:grid-cols-3 gap-4">
-        <div className="lg:col-span-2">
-          <RolloutLeaderboard stats={perAirlineStats} />
-        </div>
-        <RecentInstallsFeed items={recentInstalls} airlines={perAirlineStats} />
-      </div>
-
-      {/* Client-side wiring for flight-check + route-compare forms */}
+      {/* Client-side wiring for flight-check + route-compare forms + preset chips */}
       <script
         // biome-ignore lint/security/noDangerouslySetInnerHtml: SSR client wiring, no user input
         dangerouslySetInnerHTML={{
@@ -63,22 +55,58 @@ const HubHero = ({ stats, perAirlineStats = [], recentInstalls = [] }: HeroProps
             });
             var rf = document.getElementById('hub-compare-route');
             var rr = document.getElementById('hub-compare-result');
-            if (rf) rf.addEventListener('submit', function(e) {
-              e.preventDefault();
-              var fd = new FormData(rf);
+            var rfoot = document.getElementById('hub-compare-footer');
+            var rplnk = document.getElementById('hub-compare-rp');
+            function bar(pct, color, dotted) {
+              var style = 'width:'+pct+'%;background:'+esc(color);
+              if (dotted) style = 'width:'+pct+'%;border-top:2px dotted '+esc(color)+';background:transparent';
+              return '<div class="h-1.5 bg-surface-elevated rounded overflow-hidden mt-1"><div class="h-full" style="'+style+'"></div></div>';
+            }
+            function renderResult(a) {
+              var color = a.accentColor || '#0ea5e9';
+              var inferred = a.kind === 'inferred_absent';
+              var chip = inferred ? ' <span class="text-[9px] px-1 py-0.5 bg-surface-elevated border border-subtle rounded text-muted">inferred</span>' : '';
+              if (a.kind === 'observed_mixed') {
+                var head = '<div class="flex justify-between font-mono text-xs"><span class="text-primary">'+esc(a.name)+'</span><span class="text-accent">'+Math.round(a.lo*100)+'\\u2013'+Math.round(a.hi*100)+'%</span></div>'
+                         + '<div class="font-mono text-[10px] text-muted">'+esc(a.reason)+'</div>';
+                var rows = (a.breakdown||[]).map(function(b){
+                  var bp = Math.round(b.pct*100);
+                  return '<div class="mt-1.5 ml-3"><div class="flex justify-between font-mono text-[10px]"><span class="text-secondary">'+esc(b.hint||'')+': '+esc(b.label)+'</span><span class="text-accent">'+bp+'% ('+b.equipped+'/'+b.total+')</span></div>'+bar(bp,color,false)+'</div>';
+                }).join('');
+                return '<div class="mb-3">'+head+rows+'</div>';
+              }
+              var pct = Math.round(a.probability*100);
+              return '<div class="mb-3"><div class="flex justify-between font-mono text-xs"><span class="text-primary">'+esc(a.name)+chip+'</span><span class="text-accent">'+pct+'%</span></div>'
+                   + '<div class="font-mono text-[10px] text-muted">'+esc(a.reason)+'</div>'+bar(pct,color,inferred)+'</div>';
+            }
+            function doCompare(origin, dest) {
               rr.classList.remove('hidden');
               rr.textContent = 'Comparing…';
-              fetch('/api/compare-route?origin=' + encodeURIComponent(fd.get('origin')) + '&destination=' + encodeURIComponent(fd.get('destination')))
+              fetch('/api/compare-route?origin=' + encodeURIComponent(origin) + '&destination=' + encodeURIComponent(dest))
                 .then(function(r){return r.json()})
                 .then(function(d){
                   if (d.error) { rr.innerHTML = '<span class="text-amber-400 font-mono text-xs">' + esc(d.error) + '</span>'; return; }
-                  rr.innerHTML = (d.results || []).map(function(a){
-                    var pct = Math.round(a.probability * 100);
-                    var bar = '<div class="h-1.5 bg-surface-elevated rounded overflow-hidden mt-1"><div class="h-full" style="width:'+pct+'%;background:'+esc(a.accentColor||'#0ea5e9')+'"></div></div>';
-                    return '<div class="mb-2"><div class="flex justify-between font-mono text-xs"><span class="text-primary">'+esc(a.name)+'</span><span class="text-accent">'+pct+'%</span></div><div class="font-mono text-[10px] text-muted">'+esc(a.reason)+'</div>'+bar+'</div>';
-                  }).join('') || '<span class="font-mono text-xs text-muted">No tracked airline serves this route.</span>';
+                  var O = esc((d.origin||'').toUpperCase()), D = esc((d.destination||'').toUpperCase());
+                  var html = (d.results||[]).map(renderResult).join('');
+                  rr.innerHTML = html || '<span class="font-mono text-xs text-muted">No tracked airline shows a Starlink-equipped nonstop on '+O+' \\u21c4 '+D+' yet.</span>';
+                  if (rfoot) rfoot.classList.remove('hidden');
+                  if (rplnk) rplnk.href = '/route-planner?from='+O+'&to='+D;
                 })
                 .catch(function(){ rr.textContent = 'Lookup failed.'; });
+            }
+            if (rf) rf.addEventListener('submit', function(e) {
+              e.preventDefault();
+              var fd = new FormData(rf);
+              doCompare(fd.get('origin'), fd.get('destination'));
+            });
+            if (rf) Array.prototype.forEach.call(document.querySelectorAll('.hub-route-preset'), function(btn) {
+              btn.addEventListener('click', function() {
+                var o = btn.getAttribute('data-preset-origin') || '';
+                var d = btn.getAttribute('data-preset-dest') || '';
+                rf.elements.origin.value = o;
+                rf.elements.destination.value = d;
+                doCompare(o, d);
+              });
             });
           });
         `,
@@ -98,14 +126,12 @@ export const content: AirlineContent = {
     <span key="mbps">
       <span className="text-accent font-semibold">250</span> Mbps
     </span>,
-    <span key="leo">Low-Earth-orbit</span>,
   ],
 
   intro: () => (
     <p className="text-sm text-secondary leading-relaxed mb-3">
-      Tracking the rollout of SpaceX Starlink in-flight WiFi across major airlines. Browse every
-      equipped aircraft by airline and tail number, with live flight schedules so you can see which
-      flights have fast, free connectivity.
+      Live rollout status for SpaceX Starlink in-flight WiFi across United, Hawaiian, and Alaska —
+      by fleet segment, with per-tail verification.
     </p>
   ),
 
@@ -134,17 +160,18 @@ export const content: AirlineContent = {
           ld: "United Airlines is mid-rollout across mainline and Express fleets. Hawaiian Airlines completed its rollout in September 2024 — every A330 and A321neo has Starlink. Alaska Airlines is rolling out through 2027.",
         },
         {
-          q: "Hawaiian's rollout is complete — why isn't it 100%?",
+          q: "Hawaiian shows under 100% but says 'Complete' — why?",
           a: () => (
             <p>
-              Hawaiian completed Starlink on <strong>100% of its Airbus fleet</strong> — every A330
-              and A321neo. The remaining aircraft are Boeing 717s flying short interisland hops;
-              those were never in scope for any WiFi provider and are being retired. So every
-              in-scope aircraft is done; the headline percentage just includes the 717s in the
-              denominator.
+              Hawaiian's Starlink rollout is <strong>finished</strong>: every A330 and A321neo has
+              it, gate-to-gate, since September 2024. The Boeing 717 interisland jets were never in
+              scope — short hops, no WiFi, and the type is being retired. The card's percentage is
+              over Hawaiian's <em>whole</em> fleet so you can read it as "odds on a random Hawaiian
+              flight." The Complete badge means every plane that's ever going to get Starlink
+              already has it.
             </p>
           ),
-          ld: "Hawaiian completed Starlink on 100% of its Airbus fleet. The remaining Boeing 717s fly short interisland routes and were never in scope for WiFi.",
+          ld: "Hawaiian's Starlink rollout is finished: every A330 and A321neo has it since September 2024. The Boeing 717 interisland fleet was never in scope and is being retired. The percentage is over the whole fleet; the Complete badge means every plane that will ever get Starlink already has it.",
         },
         {
           q: "Does Delta have Starlink?",

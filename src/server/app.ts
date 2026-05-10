@@ -665,7 +665,7 @@ const apiCheckAnyFlight: Handler = ({ req, url, reader, getReader, tenant }) => 
   );
 };
 
-const apiCompareRoute: Handler = ({ req, url, reader, tenant }) => {
+const apiCompareRoute: Handler = ({ req, url, getReader, tenant }) => {
   if (req.method !== "GET") return methodNotAllowed(true);
   const guard = hubOnly(tenant);
   if (guard) return guard;
@@ -679,7 +679,7 @@ const apiCompareRoute: Handler = ({ req, url, reader, tenant }) => {
     );
   }
 
-  const results = compareRoute(reader, origin, destination);
+  const results = compareRoute(getReader, origin, destination);
   return new Response(
     JSON.stringify({
       origin: origin.toUpperCase(),
@@ -1270,7 +1270,7 @@ const homePage: Handler = async (ctx) => {
       content,
       airlineByTail: reader.getAirlineByTail(),
       perAirlineStats: isHub ? reader.getPerAirlineStats() : undefined,
-      recentInstalls: isHub ? reader.getRecentInstalls(25) : undefined,
+      recentInstalls: isHub ? reader.getRecentInstalls(15, 5) : undefined,
       flightsByTail,
       airportDepartures: reader.getAirportDepartures(),
     })

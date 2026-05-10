@@ -629,12 +629,25 @@ export function getAirlineByTail(db: Database, airline?: AirlineFilter): Record<
 export function getRecentInstalls(
   db: Database,
   airline: AirlineFilter,
-  limit = 25
+  limit = 25,
+  perAirlineCap?: number
 ): RecentInstall[] {
-  const q = withAirline(
-    "SELECT airline, TailNumber, aircraft as Aircraft, OperatedBy, DateFound FROM starlink_planes WHERE (verified_wifi IS NULL OR verified_wifi = 'Starlink')",
-    airline
-  );
+  const cols = "airline, TailNumber, aircraft as Aircraft, OperatedBy, DateFound";
+  const filter = "(verified_wifi IS NULL OR verified_wifi = 'Starlink')";
+  if (perAirlineCap && perAirlineCap > 0) {
+    const q = withAirline(
+      `SELECT ${cols}, ROW_NUMBER() OVER (PARTITION BY airline ORDER BY DateFound DESC) AS rn
+       FROM starlink_planes WHERE ${filter}`,
+      airline
+    );
+    return db
+      .query(
+        `SELECT airline, TailNumber, Aircraft, OperatedBy, DateFound FROM (${q.sql})
+         WHERE rn <= ? ORDER BY DateFound DESC LIMIT ?`
+      )
+      .all(...q.params, perAirlineCap, limit) as RecentInstall[];
+  }
+  const q = withAirline(`SELECT ${cols} FROM starlink_planes WHERE ${filter}`, airline);
   return db
     .query(`${q.sql} ORDER BY DateFound DESC LIMIT ?`)
     .all(...q.params, limit) as RecentInstall[];
@@ -649,30 +662,48 @@ export interface HubAirlineStat {
 }
 
 export function getHubStats(db: Database, codes: readonly string[]): HubAirlineStat[] {
+  const placeholders = codes.map(() => "?").join(",");
   const fleet = db
     .query(
-      `SELECT airline, COUNT(*) total, SUM(starlink_status='confirmed') equipped
-       FROM united_fleet WHERE airline IN (${codes.map(() => "?").join(",")})
+      `SELECT airline, COUNT(*) total FROM united_fleet
+       WHERE airline IN (${placeholders}) GROUP BY airline`
+    )
+    .all(...codes) as { airline: string; total: number }[];
+  // Equipped count from starlink_planes — the authoritative table — not from
+  // united_fleet.starlink_status, which lags during reconcile cycles. Same
+  // source /api/fleet-summary uses, so the cards never contradict it.
+  const equipped = db
+    .query(
+      `SELECT airline, COUNT(*) n FROM starlink_planes
+       WHERE (verified_wifi IS NULL OR verified_wifi = 'Starlink')
+         AND airline IN (${placeholders})
        GROUP BY airline`
     )
-    .all(...codes) as { airline: string; total: number; equipped: number }[];
+    .all(...codes) as { airline: string; n: number }[];
+  const equippedBy = Object.fromEntries(equipped.map((r) => [r.airline, r.n]));
+  // Exclude seed batches (sheet_gid '*_seed') — those bootstrap a known-equipped
+  // fleet on a single date and would otherwise read as a 90-aircraft "install spike".
   const v = db
     .query(
       `SELECT airline, COUNT(*) n FROM starlink_planes
        WHERE DateFound >= date('now','-30 day')
          AND (verified_wifi IS NULL OR verified_wifi = 'Starlink')
-         AND airline IN (${codes.map(() => "?").join(",")})
+         AND (sheet_gid IS NULL OR sheet_gid NOT LIKE '%\\_seed' ESCAPE '\\')
+         AND airline IN (${placeholders})
        GROUP BY airline`
     )
     .all(...codes) as { airline: string; n: number }[];
   const v30 = Object.fromEntries(v.map((r) => [r.airline, r.n]));
-  return fleet.map((f) => ({
-    code: f.airline,
-    starlink: f.equipped,
-    total: getTotalCount(db, f.airline) || f.total,
-    fleetTotal: f.total,
-    installs30d: v30[f.airline] ?? 0,
-  }));
+  return fleet.map((f) => {
+    const starlink = equippedBy[f.airline] ?? 0;
+    return {
+      code: f.airline,
+      starlink,
+      total: getTotalCount(db, f.airline) || f.total,
+      fleetTotal: f.total,
+      installs30d: v30[f.airline] ?? 0,
+    };
+  });
 }
 
 export function getStarlinkPlanes(db: Database, airline?: AirlineFilter): Aircraft[] {
@@ -1045,27 +1076,109 @@ export function getConfirmedStarlinkEdges(
   return db.query(q.sql).all(...q.params) as ConfirmedEdge[];
 }
 
-export function getRouteAirlineCoverage(
+export interface SubfleetPenetration {
+  equipped: number;
+  total: number;
+  pct: number;
+}
+
+/**
+ * Unbiased per-subfleet Starlink install rate from the FULL fleet roster
+ * (united_fleet), not from any Starlink-biased observation table. Numerator
+ * is the same starlink_planes count getHubStats() uses (united_fleet's
+ * starlink_status lags during reconcile cycles), so the route-compare
+ * percentages and the hub cards directly above them can never disagree.
+ */
+export function getSubfleetPenetration(
   db: Database,
-  origin: string,
-  destination: string,
   airline: string
-): { tail_number: string; sl: number }[] {
-  return db
+): Map<string, SubfleetPenetration> {
+  const rows = db
     .query(
-      `SELECT uf.tail_number,
-              EXISTS(SELECT 1 FROM starlink_planes sp
-                     WHERE sp.TailNumber = uf.tail_number
-                       AND (sp.verified_wifi IS NULL OR sp.verified_wifi = 'Starlink')) AS sl
-       FROM upcoming_flights uf
-       WHERE ((uf.departure_airport = ? AND uf.arrival_airport = ?)
-           OR (uf.departure_airport = ? AND uf.arrival_airport = ?))
-         AND uf.airline = ?`
+      `SELECT uf.fleet, COUNT(*) AS total,
+              SUM(CASE WHEN sp.TailNumber IS NOT NULL THEN 1 ELSE 0 END) AS equipped
+       FROM united_fleet uf
+       LEFT JOIN starlink_planes sp
+              ON sp.TailNumber = uf.tail_number
+             AND sp.airline = uf.airline
+             AND (sp.verified_wifi IS NULL OR sp.verified_wifi = 'Starlink')
+       WHERE uf.airline = ?
+       GROUP BY uf.fleet`
     )
-    .all(origin, destination, destination, origin, airline) as {
-    tail_number: string;
-    sl: number;
-  }[];
+    .all(airline) as { fleet: string; total: number; equipped: number }[];
+  const out = new Map<string, SubfleetPenetration>();
+  for (const r of rows) {
+    out.set(r.fleet, {
+      equipped: r.equipped,
+      total: r.total,
+      pct: r.total > 0 ? r.equipped / r.total : 0,
+    });
+  }
+  return out;
+}
+
+/**
+ * All flight numbers observed flying NONSTOP between two airports (either
+ * direction) for a given marketing carrier. Union of upcoming_flights
+ * (operator-correct, ~48h window) and flight_routes (longer history,
+ * filtered by carrier-prefix GLOB since it has no airline column).
+ * Returns bare numeric strings so OO5579/SKW5579/UA5579 dedupe.
+ */
+export function getObservedDirectFlightNumbers(
+  db: Database,
+  airline: string,
+  prefixes: readonly string[],
+  origin: string,
+  destination: string
+): string[] {
+  const upcoming = db
+    .query(
+      `SELECT DISTINCT flight_number FROM upcoming_flights
+       WHERE airline = ?
+         AND ((departure_airport = ? AND arrival_airport = ?)
+           OR (departure_airport = ? AND arrival_airport = ?))`
+    )
+    .all(airline, origin, destination, destination, origin) as { flight_number: string }[];
+
+  const globClauses = prefixes.map(() => "flight_number GLOB ?").join(" OR ");
+  const globParams = prefixes.map((p) => `${p}[0-9]*`);
+  const cached = globClauses
+    ? (db
+        .query(
+          `SELECT DISTINCT flight_number FROM flight_routes
+           WHERE ((origin = ? AND destination = ?) OR (origin = ? AND destination = ?))
+             AND (${globClauses})`
+        )
+        .all(origin, destination, destination, origin, ...globParams) as {
+        flight_number: string;
+      }[])
+    : [];
+
+  const seen = new Set<string>();
+  for (const r of [...upcoming, ...cached]) {
+    const m = r.flight_number.match(/(\d+)$/);
+    if (m) seen.add(m[1]);
+  }
+  return [...seen];
+}
+
+/** True if the airline has any scheduled flight at both airports — gates the
+ * routeTypeRule fallback so it never fires for routes the airline doesn't serve. */
+export function airlineServesAirports(
+  db: Database,
+  airline: string,
+  ...airports: string[]
+): boolean {
+  for (const ap of airports) {
+    const row = db
+      .query(
+        `SELECT 1 FROM upcoming_flights
+         WHERE airline = ? AND (departure_airport = ? OR arrival_airport = ?) LIMIT 1`
+      )
+      .get(airline, ap, ap);
+    if (!row) return false;
+  }
+  return true;
 }
 
 export interface DirectRouteEdge {
