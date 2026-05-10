@@ -533,8 +533,6 @@ export interface RouteCompareResult {
   hi?: number;
   breakdown: SubfleetBreakdown[];
   reason: string;
-  /** observed_mixed only: the high-penetration subfleet's FN range, for the chip. */
-  bestPick?: { hint: string; pct: number };
 }
 
 const fmt = (n: number) => n.toLocaleString("en-US");
@@ -634,9 +632,6 @@ export function compareRoute(
         lo,
         hi,
         breakdown: bd,
-        // The chip surfaces the high-penetration subfleet's flight-number range
-        // as the actionable hint; the breakdown rows show the rest.
-        bestPick: { hint: bd[0].hint ?? "", pct: bd[0].pct },
         reason: "Depends on flight number",
       });
     } else {

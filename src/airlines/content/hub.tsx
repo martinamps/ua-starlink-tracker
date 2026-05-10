@@ -65,24 +65,32 @@ const HubHero = ({ stats, perAirlineStats = [], recentInstalls = [] }: HeroProps
             function pill(href, txt, color) {
               return '<a href="'+esc(href)+'" class="ml-2 font-mono text-[9px] px-1.5 py-0.5 rounded-full whitespace-nowrap hover:underline" style="color:'+esc(color)+';background:color-mix(in srgb,'+esc(color)+' 14%,transparent);border:1px solid color-mix(in srgb,'+esc(color)+' 40%,transparent)">'+esc(txt)+' \\u2192</a>';
             }
+            function shorten(label){return String(label||'').replace(/\\s*Fleet$/i,'').trim();}
             function renderResult(a, O, D) {
               var color = a.accentColor || '#0ea5e9';
               var inferred = a.kind === 'inferred_absent';
               var rpHref = '/route-planner?from='+O+'&to='+D;
               if (a.kind === 'observed_mixed') {
-                var bp = a.bestPick;
-                var chipM = bp && bp.hint ? pill(rpHref, 'book '+bp.hint+' \\u2248 '+Math.round(bp.pct*100)+'%', color) : '';
-                var head = '<div class="flex justify-between items-center font-mono text-xs"><span class="text-primary">'+esc(a.name)+chipM+'</span><span class="text-accent">'+Math.round(a.lo*100)+'\\u2013'+Math.round(a.hi*100)+'%</span></div>'
+                var head = '<div class="flex justify-between items-center font-mono text-xs"><span class="text-primary">'+esc(a.name)+'</span>'
+                         + '<span class="text-accent" title="Depends on which aircraft type operates your flight">'+Math.round(a.lo*100)+'\\u2013'+Math.round(a.hi*100)+'%</span></div>'
                          + '<div class="font-mono text-[10px] text-muted">'+esc(a.reason)+'</div>';
-                var rows = (a.breakdown||[]).map(function(b){
+                var rows = (a.breakdown||[]).map(function(b,i){
                   var br = Math.round(b.pct*100);
-                  return '<div class="mt-1.5 ml-3"><div class="flex justify-between font-mono text-[10px]"><span class="text-secondary">'+esc(b.hint||'')+'</span><span class="text-accent">'+br+'% \\u00b7 '+b.equipped+'/'+b.total+'</span></div>'+bar(br,color,false)+'</div>';
+                  var lblTip = b.hint ? esc(shorten(b.label))+' \\u2014 flight numbers '+esc(b.hint) : esc(shorten(b.label));
+                  var numTip = esc(b.equipped)+' of '+esc(b.total)+' aircraft in this group have Starlink';
+                  var best = i===0 && br>=50 ? ' <span class="text-[8px] px-1 py-px rounded" style="background:color-mix(in srgb,'+esc(color)+' 18%,transparent);color:'+esc(color)+'">best bet</span>' : '';
+                  return '<div class="mt-1.5 ml-3"><div class="flex justify-between font-mono text-[10px]">'
+                       + '<span class="text-secondary cursor-help" title="'+lblTip+'">'+esc(shorten(b.label))+best+'</span>'
+                       + '<span class="text-accent cursor-help" title="'+numTip+'">'+br+'% \\u00b7 '+esc(b.equipped)+'/'+esc(b.total)+'</span></div>'+bar(br,color,false)+'</div>';
                 }).join('');
                 return '<div class="mb-3">'+head+rows+'</div>';
               }
               var pct = Math.round(a.probability*100);
+              var bd0 = (a.breakdown||[])[0]||{};
+              var pctTip = (bd0.equipped!=null) ? esc(bd0.equipped)+' of '+esc(bd0.total)+' '+esc(shorten(bd0.label||'aircraft'))+' aircraft have Starlink' : '';
               var chipL = (pct < 50 && a.kind !== 'type_rule') ? pill(rpHref, 'try a connection', color) : '';
-              return '<div class="mb-3"><div class="flex justify-between items-center font-mono text-xs"><span class="text-primary">'+esc(a.name)+chipL+'</span><span class="text-accent">'+pct+'%</span></div>'
+              return '<div class="mb-3"><div class="flex justify-between items-center font-mono text-xs"><span class="text-primary">'+esc(a.name)+chipL+'</span>'
+                   + '<span class="text-accent cursor-help" title="'+pctTip+'">'+pct+'%</span></div>'
                    + '<div class="font-mono text-[10px] text-muted">'+esc(a.reason)+'</div>'+bar(pct,color,inferred)+'</div>';
             }
             function doCompare(origin, dest) {
