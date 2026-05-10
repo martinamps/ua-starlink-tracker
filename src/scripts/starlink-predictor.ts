@@ -431,7 +431,7 @@ export function predictFlight(reader: ScopedReader, flightNumber: string): Predi
 /** Common fields across all prediction output shapes. */
 type BasePrediction = Pick<
   Prediction,
-  "flight_number" | "probability" | "confidence" | "n_observations"
+  "flight_number" | "probability" | "confidence" | "n_observations" | "method"
 >;
 
 export interface RouteFlightPrediction extends BasePrediction {

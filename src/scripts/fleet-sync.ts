@@ -68,13 +68,19 @@ export async function syncFleetFromFR24(
         if (!scrapeResult.success) {
           const err = scrapeResult.error || "FR24 scrape failed";
           logError(`FR24 scrape failed (${cfg.code}/${src.slug})`, err);
-          span.setTag("error", true);
           if (i === 0) {
+            // Only mainline failure is a full-span error — regional gaps are partial.
+            span.setTag("error", true);
             result.error = err;
+            metrics.increment(COUNTERS.SCRAPER_SYNC, {
+              source: "fr24",
+              airline: airlineTag,
+              status: "error",
+            });
             return result;
           }
-          // Regional carrier failed — keep mainline result, note the partial.
           result.error = `partial: ${src.slug} ${err}`;
+          span.setTag("partial", true);
           continue;
         }
         info(`FR24 returned ${scrapeResult.aircraft.length} aircraft for ${cfg.code}/${src.slug}`);
@@ -92,6 +98,11 @@ export async function syncFleetFromFR24(
         result.error = `Suspiciously low aircraft count: ${allAircraft.length} (expected ${cfg.minFleetSanity}+)`;
         logError(`FR24 sync aborted (${cfg.code})`, result.error);
         span.setTag("error", true);
+        metrics.increment(COUNTERS.SCRAPER_SYNC, {
+          source: "fr24",
+          airline: airlineTag,
+          status: "aborted",
+        });
         return result;
       }
 
@@ -132,7 +143,11 @@ export async function syncFleetFromFR24(
 
         span.setTag("planes.new", result.new);
         span.setTag("planes.updated", result.updated);
-        metrics.increment(COUNTERS.SCRAPER_SYNC, { source: "fr24", airline: airlineTag });
+        metrics.increment(COUNTERS.SCRAPER_SYNC, {
+          source: "fr24",
+          airline: airlineTag,
+          status: result.error ? "partial" : "success",
+        });
 
         info(`FR24 sync complete (${cfg.code}): ${result.new} new, ${result.updated} updated`);
       } finally {
@@ -142,6 +157,11 @@ export async function syncFleetFromFR24(
       result.error = err instanceof Error ? err.message : String(err);
       logError(`FR24 sync error (${cfg.code})`, result.error);
       span.setTag("error", true);
+      metrics.increment(COUNTERS.SCRAPER_SYNC, {
+        source: "fr24",
+        airline: airlineTag,
+        status: "error",
+      });
     }
 
     return result;

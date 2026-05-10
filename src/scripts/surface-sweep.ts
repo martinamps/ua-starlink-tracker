@@ -17,7 +17,7 @@
 
 import { Database } from "bun:sqlite";
 import { computeWifiConsensus } from "../database/database";
-import { metrics } from "../observability/metrics";
+import { GAUGES, metrics, normalizeAirlineTag } from "../observability/metrics";
 import { info } from "../utils/logger";
 
 type Verdict = "starlink" | "not-starlink" | "unknown";
@@ -101,10 +101,10 @@ export function computeSurfaceContradictions(db: Database, airline = "UA"): Swee
 }
 
 export function emitSweepGauges(r: SweepResult) {
-  const base = { airline: "united" };
-  metrics.gauge("surface_contradiction.total", r.contradictions.length, base);
+  const base = { airline: normalizeAirlineTag("UA") };
+  metrics.gauge(GAUGES.SURFACE_CONTRADICTION_TOTAL, r.contradictions.length, base);
   for (const v of VECTORS) {
-    metrics.gauge("surface_contradiction.count", r.byVector[v], { ...base, vector: v });
+    metrics.gauge(GAUGES.SURFACE_CONTRADICTION_COUNT, r.byVector[v], { ...base, vector: v });
   }
 }
 

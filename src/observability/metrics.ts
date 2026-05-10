@@ -7,13 +7,25 @@
  * Naming Convention: starlink.{category}.{action}
  *
  * Tag cardinality budget (keep each tag ≤ ~20 values):
- *   airline:         united (auto-applied globally via tracer.init)  (1, future: N)
+ *   airline:         united | hawaiian | alaska | qatar | all | unmapped | unknown  (~7)
+ *                    `all` = hub-scope emits (db.table_rows, mcp.tool_call)
+ *   tenant:          UA | HA | AS | QR | ALL  (~5) — used on http.* only; the
+ *                    hub host serves all carriers under scope ALL, which isn't
+ *                    an airline, so http metrics carry tenant in addition to the
+ *                    per-call default `airline:unmapped` injected by withDefaultAirline.
  *   fleet:           express | mainline | unknown                    (3)
  *   aircraft_type:   normalized families (B737-800, E175, etc)      (~19)
- *   wifi_provider:   starlink | viasat | panasonic | thales | none | unknown  (6)
+ *   wifi_provider:   starlink | viasat | panasonic | thales | none | other | unknown  (7)
  *   starlink_status: confirmed | negative | unknown                  (3)
- *   vendor:          fr24 | flightaware | united                     (3)
- *   status:          success | error | rate_limited | timeout | ...  (~7)
+ *   vendor:          fr24 | flightaware | united | qatar | alaska    (5)
+ *   status:          success | error | rate_limited | timeout | killed |
+ *                    exit_error | parse_error | spawn_error | partial |
+ *                    aborted | scrape_error                          (~11)
+ *   result:          success | error | aircraft_mismatch | tail_unknown  (4)
+ *   client_class:    bot | claude | extension | browser | unknown    (5)
+ *   confidence:      high | medium | low | none                      (4)
+ *   outcome:         verified_yes | verified_no | predicted | no_data | error  (5)
+ *   tool:            7 MCP tool names (TOOL_NAMES) | unknown         (~8)
  */
 
 import { AIRLINES } from "../airlines/registry";
@@ -21,13 +33,20 @@ import { tracer } from "./tracer";
 
 export type Tags = Record<string, string | number>;
 
+// Default `airline` injected per-call instead of globally in tracer.init(),
+// because DogStatsD concatenates global + per-call tags (`airline:hawaiian,united`).
+function withDefaultAirline(tags?: Tags): Tags {
+  if (tags && "airline" in tags) return tags;
+  return { ...tags, airline: "unmapped" };
+}
+
 export const metrics = {
   increment: (name: string, tags?: Tags) => {
-    tracer.dogstatsd.increment(`starlink.${name}`, 1, tags);
+    tracer.dogstatsd.increment(`starlink.${name}`, 1, withDefaultAirline(tags));
   },
 
   gauge: (name: string, value: number, tags?: Tags) => {
-    tracer.dogstatsd.gauge(`starlink.${name}`, value, tags);
+    tracer.dogstatsd.gauge(`starlink.${name}`, value, withDefaultAirline(tags));
   },
 
   /**
@@ -36,7 +55,7 @@ export const metrics = {
    * sum/avg across tag dimensions in Datadog.
    */
   distribution: (name: string, value: number, tags?: Tags) => {
-    tracer.dogstatsd.distribution(`starlink.${name}`, value, tags);
+    tracer.dogstatsd.distribution(`starlink.${name}`, value, withDefaultAirline(tags));
   },
 };
 
@@ -100,6 +119,22 @@ export function normalizeFleet(raw: string | null | undefined): string {
   return "unknown";
 }
 
+export function normalizeStarlinkStatus(raw: string | null | undefined): string {
+  if (raw === "confirmed" || raw === "negative") return raw;
+  return "unknown";
+}
+
+// Bounded user-agent classification (≤6 buckets, never the raw UA).
+const BOT_UA = /bot|spider|crawler|curl|wget|python-requests|go-http-client|headless|httpclient/i;
+export function classifyUserAgent(ua: string | null | undefined): string {
+  if (!ua) return "unknown";
+  if (/Claude-User|ClaudeBot|anthropic/i.test(ua)) return "claude";
+  if (/UA-Starlink-Extension|starlink-tracker-ext/i.test(ua)) return "extension";
+  if (BOT_UA.test(ua)) return "bot";
+  if (/Mozilla|AppleWebKit|Gecko|Chrome|Safari|Firefox/i.test(ua)) return "browser";
+  return "unknown";
+}
+
 /**
  * Canonical lowercase-name airline tag for metrics. Preserves Datadog history
  * (the global default has always been `airline:united`, not `airline:UA`).
@@ -107,7 +142,7 @@ export function normalizeFleet(raw: string | null | undefined): string {
  */
 export function normalizeAirlineTag(code: string | null | undefined): string {
   if (!code) return "unknown";
-  return AIRLINES[code.toUpperCase()]?.metricTag ?? code.toLowerCase();
+  return AIRLINES[code.toUpperCase()]?.metricTag ?? "unmapped";
 }
 
 // ============ Metric Names ============
@@ -117,32 +152,34 @@ export function normalizeAirlineTag(code: string | null | undefined): string {
  */
 export const COUNTERS = {
   // Scraper events
-  SCRAPER_SYNC: "scraper.sync", // tags: source
-  PLANES_DISCOVERED: "planes.discovered", // tags: source
+  SCRAPER_SYNC: "scraper.sync", // tags: source, airline, status (success|partial|aborted|error)
+  PLANES_DISCOVERED: "planes.discovered", // tags: source, airline
 
   // New Starlink installation detected on an aircraft
   // tags: fleet, aircraft_type
   PLANES_STARLINK_DETECTED: "planes.starlink_detected",
 
-  // United.com verification check outcome
-  // tags: result (success|error|aircraft_mismatch), fleet, aircraft_type, wifi_provider
+  // Per-tail verification check outcome
+  // tags: result (success|error|aircraft_mismatch|tail_unknown), fleet,
+  //   aircraft_type, wifi_provider, source (united|alaska), airline
   VERIFICATION_CHECK: "verification.check",
 
   // External API calls
-  // tags: vendor (fr24|flightaware|united), type, status
+  // tags: vendor (fr24|flightaware|united|qatar|alaska), type, status
   // united status values: success | timeout | killed | exit_error | parse_error | spawn_error
   // fr24/flightaware status values: success | error | rate_limited
+  // qatar status values: success | error | partial
   VENDOR_REQUEST: "vendor.request",
 
   // HTTP requests
-  // tags: method, route (allowlisted), status_code
+  // tags: method, route (allowlisted), status_code, tenant, client_class
   HTTP_REQUEST: "http.request",
 
   // Per-IP rate limit triggered on /api/* — tags: route, tenant
   HTTP_RATE_LIMITED: "http.rate_limited",
 
   // united_fleet.starlink_status changed (consensus verdict flipped)
-  // tags: fleet, from (confirmed|negative|unknown), to
+  // tags: fleet, from (confirmed|negative|unknown), to, airline
   FLEET_STATUS_CHANGE: "fleet.status_change",
 
   // Consensus verdict disagrees with the Google Sheet's wifi claim
@@ -154,6 +191,17 @@ export const COUNTERS = {
   // A discovery check was skipped (couldn't run the United.com scrape)
   // tags: fleet, reason (no_flights)
   FLEET_CHECK_SKIPPED: "fleet.check_skipped",
+
+  // User-facing flight lookup outcome — how often we actually answer the question.
+  // tags: endpoint (api_check|api_predict|mcp), outcome (verified_yes|verified_no|
+  //   predicted|no_data|error), confidence (high|medium|low|none), airline
+  FLIGHT_LOOKUP_RESULT: "flight.lookup_result",
+
+  // MCP tool dispatch — tags: tool, airline, outcome (success|error|unknown_tool)
+  MCP_TOOL_CALL: "mcp.tool_call",
+
+  // Route lookup fallback chain hit source — tags: source (memory|sqlite|fr24|upcoming|miss), airline
+  ROUTE_LOOKUP: "route.lookup",
 } as const;
 
 /**
@@ -165,6 +213,21 @@ export const GAUGES = {
   // prove the loop is alive; this proves it's still producing data.
   // tags: job (flight_updater|verifier|departures), airline
   DATA_FRESHNESS_SECONDS: "data.freshness_seconds",
+
+  // Backtest precision of firm "yes/no Starlink" calls — tags: airline, window, call
+  PRECISION_FIRM_CALL: "precision.firm_call",
+  PRECISION_FIRM_CALL_N: "precision.firm_call.n",
+  // Misses by cause — tags: airline, window, call, cause (swap|stale|unattributed)
+  PRECISION_FIRM_CALL_MISS: "precision.firm_call.miss",
+  PRECISION_LEGACY_PRIOR_PCT: "precision.legacy_prior_pct",
+
+  // Surface contradiction sweep — tags: airline, vector
+  SURFACE_CONTRADICTION_TOTAL: "surface_contradiction.total",
+  SURFACE_CONTRADICTION_COUNT: "surface_contradiction.count",
+
+  // Row counts for key tables, sampled with the 5-min freshness sweep.
+  // tags: table, airline (or "all" if the table has no airline column)
+  DB_TABLE_ROWS: "db.table_rows",
 } as const;
 
 /**
@@ -172,11 +235,18 @@ export const GAUGES = {
  */
 export const DISTRIBUTIONS = {
   // Fleet size snapshot, emitted per heartbeat.
-  // tags: fleet, starlink_status (confirmed|negative|unknown)
+  // tags: fleet, starlink_status (confirmed|negative|unknown), airline
   // Graph as sum-by-fleet-and-status to see rollout progress over time.
   FLEET_PLANES: "fleet.planes",
 
   // Vendor request latency in milliseconds
   // tags: vendor, type, status
   VENDOR_DURATION_MS: "vendor.duration_ms",
+
+  // MCP tool latency in milliseconds — tags: tool, airline, outcome
+  MCP_TOOL_DURATION_MS: "mcp.tool_duration_ms",
+
+  // Distribution of probabilities served to users — surfaces cold-start floods.
+  // tags: confidence (high|medium|low), method (flight_history|fleet_prior), airline
+  PREDICTION_PROBABILITY: "prediction.probability",
 } as const;

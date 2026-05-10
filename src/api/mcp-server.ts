@@ -22,6 +22,7 @@
 
 import { AIRLINES, type AirlineCode, type AnalyticsConfig } from "../airlines/registry";
 import type { Scope, ScopedReader } from "../database/reader";
+import { COUNTERS, DISTRIBUTIONS, metrics, normalizeAirlineTag } from "../observability";
 import { planItinerary, predictFlight, predictRoute } from "../scripts/starlink-predictor";
 import {
   buildFlightNumberVariants,
@@ -403,6 +404,44 @@ function suggestTool(unknown: string): string | null {
 // Tool implementations
 // ============================================================================
 
+// Shared scope→airline-tag mapping for MCP metrics. ALL is a hub scope, not an
+// airline, so it gets its own bucket instead of falling into "unmapped".
+function mcpAirlineTag(scope: Scope): string {
+  return scope === "ALL" ? "all" : normalizeAirlineTag(scope);
+}
+
+type LookupOutcome = "verified_yes" | "verified_no" | "predicted" | "no_data" | "error";
+type LookupConfidence = "high" | "medium" | "low" | "none";
+
+// MCP-side mirror of app.ts recordFlightLookup — same metric, endpoint=mcp,
+// so the cross-channel "did we answer the user's question" view includes /mcp.
+function recordMcpFlightLookup(
+  scope: Scope,
+  outcome: LookupOutcome,
+  confidence: LookupConfidence
+): void {
+  metrics.increment(COUNTERS.FLIGHT_LOOKUP_RESULT, {
+    endpoint: "mcp",
+    outcome,
+    confidence,
+    airline: mcpAirlineTag(scope),
+  });
+}
+
+// MCP-side mirror of app.ts recordPrediction — surfaces what's actually served
+// over /mcp (~1.4k calls/wk), not just the REST predict handlers.
+function recordMcpPrediction(
+  scope: Scope,
+  pred: { probability: number; confidence: "high" | "medium" | "low"; method: string }
+): void {
+  const method = pred.method.startsWith("fleet_prior") ? "fleet_prior" : "flight_history";
+  metrics.distribution(DISTRIBUTIONS.PREDICTION_PROBABILITY, pred.probability, {
+    confidence: pred.confidence,
+    method,
+    airline: mcpAirlineTag(scope),
+  });
+}
+
 async function toolCheckFlight(
   reader: ScopedReader,
   args: { flight_number?: unknown; date?: unknown }
@@ -472,6 +511,7 @@ async function toolCheckFlight(
 
   // Firm YES: assigned to a united.com-verified Starlink tail
   if (verified.length > 0) {
+    recordMcpFlightLookup(reader.scope, "verified_yes", "high");
     return {
       content: [
         {
@@ -485,6 +525,7 @@ async function toolCheckFlight(
   // Likely YES: spreadsheet says Starlink but not yet confirmed on united.com.
   // Spreadsheet is usually right (~80-90%) but not a firm answer.
   if (unverified.length > 0) {
+    recordMcpFlightLookup(reader.scope, "verified_yes", "medium");
     return {
       content: [
         {
@@ -505,6 +546,7 @@ async function toolCheckFlight(
       [{ origin: f.departure_airport, destination: f.arrival_airport }],
       startOfDay + 43200
     );
+    recordMcpFlightLookup(reader.scope, "verified_no", "high");
     return {
       content: [
         {
@@ -538,6 +580,12 @@ async function toolCheckFlight(
     };
 
     if (yes.length > 0) {
+      const allVerified = yes.every((s) => s.confidence === "verified");
+      recordMcpFlightLookup(
+        reader.scope,
+        allVerified ? "verified_yes" : "predicted",
+        allVerified ? "high" : "medium"
+      );
       return {
         content: [
           {
@@ -553,6 +601,7 @@ async function toolCheckFlight(
         no.map((s) => ({ origin: s.origin, destination: s.destination })),
         startOfDay + 43200
       );
+      recordMcpFlightLookup(reader.scope, "verified_no", "medium");
       return {
         content: [
           {
@@ -568,6 +617,8 @@ async function toolCheckFlight(
   // No assignment data at all — probability fallback. If low, look up the route
   // from FR24 (cached) so we can give the agent a concrete next step.
   const pred = predictFlight(reader, normalized);
+  recordMcpFlightLookup(reader.scope, "predicted", pred.confidence);
+  recordMcpPrediction(reader.scope, pred);
   const pct = (pred.probability * 100).toFixed(0);
 
   const isPast = endOfDay < now - 86400;
@@ -612,6 +663,15 @@ type RouteEntry = { origin: string; destination: string; duration_hours?: number
 const routeCache = new Map<string, { promise: Promise<RouteEntry[]>; at: number }>();
 const ROUTE_CACHE_TTL = 3600;
 
+// Records which fallback layer answered — surfaces a stale cache or a vendor
+// outage that would otherwise just look like silently-degraded results.
+function recordRouteLookup(
+  scope: Scope,
+  source: "memory" | "sqlite" | "fr24" | "upcoming" | "miss"
+): void {
+  metrics.increment(COUNTERS.ROUTE_LOOKUP, { source, airline: mcpAirlineTag(scope) });
+}
+
 async function lookupFlightRoutes(
   reader: ScopedReader,
   uaFlightNumber: string,
@@ -620,7 +680,10 @@ async function lookupFlightRoutes(
   const cacheKey = `${uaFlightNumber}:${targetDateUnix ? Math.floor(targetDateUnix / 86400) : "any"}`;
   const now = Math.floor(Date.now() / 1000);
   const cached = routeCache.get(cacheKey);
-  if (cached && now - cached.at < ROUTE_CACHE_TTL) return cached.promise;
+  if (cached && now - cached.at < ROUTE_CACHE_TTL) {
+    recordRouteLookup(reader.scope, "memory");
+    return cached.promise;
+  }
 
   // Keyspace is flightNumber × day → unbounded over time. Sweep stale entries
   // once the cache gets large (matches assignmentCache in flight-verdict.ts).
@@ -634,6 +697,7 @@ async function lookupFlightRoutes(
     // L1: persistent SQLite cache (builds up over time, survives restarts).
     const sqliteCached = reader.getCachedFlightRoutes(uaFlightNumber, now - 7 * 86400);
     if (sqliteCached.length > 0) {
+      recordRouteLookup(reader.scope, "sqlite");
       return sqliteCached.map((r) => ({
         origin: r.origin,
         destination: r.destination,
@@ -648,6 +712,7 @@ async function lookupFlightRoutes(
         for (const r of found) {
           reader.cacheFlightRoute(uaFlightNumber, r.origin, r.destination, r.duration_sec || null);
         }
+        recordRouteLookup(reader.scope, "fr24");
         return found.map((r) => ({
           origin: r.origin,
           destination: r.destination,
@@ -660,6 +725,7 @@ async function lookupFlightRoutes(
 
     // L3: our own upcoming_flights (sparse, ~2-day Starlink-plane snapshot)
     const rows = reader.getRoutesForFlightVariants(buildFlightNumberVariants(uaFlightNumber));
+    recordRouteLookup(reader.scope, rows.length > 0 ? "upcoming" : "miss");
     return rows.map((r) => ({
       origin: r.departure_airport,
       destination: r.arrival_airport,
@@ -837,6 +903,12 @@ async function toolPredictFlightStarlink(
   }
 
   const pred = predictFlight(reader, forPredict);
+  recordMcpFlightLookup(
+    reader.scope,
+    pred.n_observations > 0 ? "predicted" : "no_data",
+    pred.confidence
+  );
+  recordMcpPrediction(reader.scope, pred);
   const pct = (pred.probability * 100).toFixed(0);
 
   let details: string;
@@ -917,6 +989,19 @@ function toolPlanStarlinkItinerary(
     maxStops,
     targetDateUnix,
   });
+
+  // Itinerary planning is graph-search prediction; map coverage to confidence
+  // so the cross-channel lookup metric still distinguishes "found a path" from
+  // "no Starlink routing exists on this O-D pair".
+  recordMcpFlightLookup(
+    reader.scope,
+    itineraries.length > 0 ? "predicted" : "no_data",
+    itineraries.length === 0
+      ? "none"
+      : itineraries.some((it) => it.coverage === "full")
+        ? "medium"
+        : "low"
+  );
 
   if (itineraries.length === 0) {
     const orig = origin.toUpperCase();
@@ -1037,6 +1122,7 @@ function toolPredictRouteStarlink(
   const result = predictRoute(reader, origin || null, destination || null);
 
   if (result.flights.length === 0) {
+    recordMcpFlightLookup(reader.scope, "no_data", "none");
     // No DIRECT Starlink flights on this route. If both endpoints given,
     // inline the connection-based alternatives so the agent never sees a
     // dead-end that contradicts check_flight's embedded alternatives.
@@ -1064,6 +1150,10 @@ function toolPredictRouteStarlink(
   }
 
   const shown = result.flights.slice(0, limit);
+  // Top-ranked flight is the headline answer; per-flight points feed the
+  // probability distribution so MCP-served route predictions are visible.
+  recordMcpFlightLookup(reader.scope, "predicted", shown[0].confidence);
+  for (const f of shown) recordMcpPrediction(reader.scope, f);
   const lines = shown.map((f) => {
     const pct = (f.probability * 100).toFixed(0);
     const fleet = inferFleet(f.flight_number);
@@ -1302,8 +1392,28 @@ When a tool wraps content in <present_verbatim>...</present_verbatim>, copy that
   });
 }
 
+function recordMcpToolCall(
+  tool: string,
+  scope: Scope,
+  outcome: "success" | "error" | "unknown_tool",
+  startMs: number
+): void {
+  // Bound the `tool` tag — /mcp is public and `params.name` is caller-controlled.
+  const tags = {
+    tool: TOOL_NAMES.includes(tool) ? tool : "unknown",
+    airline: mcpAirlineTag(scope),
+    outcome,
+  };
+  metrics.increment(COUNTERS.MCP_TOOL_CALL, tags);
+  // unknown_tool durations are just switch overhead — meaningless distribution noise.
+  if (outcome !== "unknown_tool") {
+    metrics.distribution(DISTRIBUTIONS.MCP_TOOL_DURATION_MS, performance.now() - startMs, tags);
+  }
+}
+
 async function handleToolsCall(
   reader: ScopedReader,
+  scope: Scope,
   id: string | number | null,
   params: Record<string, unknown> | undefined
 ): Promise<JsonRpcResponse> {
@@ -1314,40 +1424,48 @@ async function handleToolsCall(
     return rpcError(id, -32602, "Missing required param: name");
   }
 
+  const startMs = performance.now();
   let result: ToolResult;
-  switch (toolName) {
-    case "check_flight":
-      result = await toolCheckFlight(reader, args);
-      break;
-    case "predict_flight_starlink":
-      result = await toolPredictFlightStarlink(reader, args);
-      break;
-    case "predict_route_starlink":
-      result = toolPredictRouteStarlink(reader, args);
-      break;
-    case "plan_starlink_itinerary":
-      result = toolPlanStarlinkItinerary(reader, args);
-      break;
-    case "get_fleet_stats":
-      result = toolGetFleetStats(reader);
-      break;
-    case "list_starlink_aircraft":
-      result = toolListStarlinkAircraft(reader, args);
-      break;
-    case "search_starlink_flights":
-      result = toolSearchStarlinkFlights(reader, args);
-      break;
-    default: {
-      const suggestion = suggestTool(toolName);
-      const hint = suggestion ? ` Did you mean "${suggestion}"?` : "";
-      return rpcError(
-        id,
-        -32602,
-        `Unknown tool "${toolName}".${hint} Available tools: ${TOOL_NAMES.join(", ")}.`
-      );
+  try {
+    switch (toolName) {
+      case "check_flight":
+        result = await toolCheckFlight(reader, args);
+        break;
+      case "predict_flight_starlink":
+        result = await toolPredictFlightStarlink(reader, args);
+        break;
+      case "predict_route_starlink":
+        result = toolPredictRouteStarlink(reader, args);
+        break;
+      case "plan_starlink_itinerary":
+        result = toolPlanStarlinkItinerary(reader, args);
+        break;
+      case "get_fleet_stats":
+        result = toolGetFleetStats(reader);
+        break;
+      case "list_starlink_aircraft":
+        result = toolListStarlinkAircraft(reader, args);
+        break;
+      case "search_starlink_flights":
+        result = toolSearchStarlinkFlights(reader, args);
+        break;
+      default: {
+        recordMcpToolCall(toolName, scope, "unknown_tool", startMs);
+        const suggestion = suggestTool(toolName);
+        const hint = suggestion ? ` Did you mean "${suggestion}"?` : "";
+        return rpcError(
+          id,
+          -32602,
+          `Unknown tool "${toolName}".${hint} Available tools: ${TOOL_NAMES.join(", ")}.`
+        );
+      }
     }
+  } catch (err) {
+    recordMcpToolCall(toolName, scope, "error", startMs);
+    throw err;
   }
 
+  recordMcpToolCall(toolName, scope, result.isError ? "error" : "success", startMs);
   return rpcResult(id, result);
 }
 
@@ -1370,7 +1488,7 @@ async function dispatch(
     case "tools/list":
       return rpcResult(id, { tools: buildTools(scope) });
     case "tools/call":
-      return handleToolsCall(reader, id, msg.params);
+      return handleToolsCall(reader, scope, id, msg.params);
     default:
       if (isNotification) return null;
       return rpcError(id, -32601, `Method not found: ${msg.method}`);

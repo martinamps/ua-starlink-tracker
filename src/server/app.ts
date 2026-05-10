@@ -35,7 +35,14 @@ import FleetPage from "../components/fleet-page";
 import McpPage from "../components/mcp-page";
 import Page from "../components/page";
 import RoutePlannerPage from "../components/route-planner-page";
-import { COUNTERS, metrics, withSpan } from "../observability";
+import {
+  COUNTERS,
+  DISTRIBUTIONS,
+  classifyUserAgent,
+  metrics,
+  normalizeAirlineTag,
+  withSpan,
+} from "../observability";
 import { compareRoute, planItinerary, predictFlight } from "../scripts/starlink-predictor";
 import type { ApiResponse, Flight } from "../types";
 import { CONTENT_TYPES, SECURITY_HEADERS } from "../utils/constants";
@@ -295,6 +302,36 @@ const apiFleetSummary: Handler = ({ req, getReader }) => {
   });
 };
 
+// Single product-truth metric: how often a user actually got an answer.
+type LookupOutcome = "verified_yes" | "verified_no" | "predicted" | "no_data" | "error";
+type LookupConfidence = "high" | "medium" | "low" | "none";
+function recordFlightLookup(
+  endpoint: "api_check" | "api_predict" | "mcp",
+  outcome: LookupOutcome,
+  confidence: LookupConfidence,
+  airlineCode: string
+): void {
+  metrics.increment(COUNTERS.FLIGHT_LOOKUP_RESULT, {
+    endpoint,
+    outcome,
+    confidence,
+    airline: normalizeAirlineTag(airlineCode),
+  });
+}
+
+// Surfaces what's actually served — a flood of 2% fleet-prior cold-starts
+// is invisible in success-rate metrics but is a real product problem.
+function recordPrediction(
+  pred: { probability: number; confidence: "high" | "medium" | "low"; method: string },
+  airlineCode: string
+): void {
+  const method = pred.method.startsWith("fleet_prior") ? "fleet_prior" : "flight_history";
+  metrics.distribution(DISTRIBUTIONS.PREDICTION_PROBABILITY, pred.probability, {
+    confidence: pred.confidence,
+    method,
+    airline: normalizeAirlineTag(airlineCode),
+  });
+}
 /**
  * QR's data shape doesn't fit the upcoming_flights → starlink_planes JOIN that
  * other carriers use (no per-tail signal from QR's flight-status API). Serve
@@ -324,6 +361,7 @@ function apiCheckFlightQatar(
   const rows = reader.getQatarScheduleByFlight(variants, startOfDay, endOfDay);
 
   if (rows.length === 0) {
+    recordFlightLookup("api_check", "no_data", "none", cfg.code);
     return new Response(
       JSON.stringify({
         hasStarlink: null,
@@ -350,18 +388,22 @@ function apiCheckFlightQatar(
     hasStarlink = true;
     confidence = "verified";
     reason = `${distinctEquipment.join(", ")} — Qatar Airways completed Starlink installation on this aircraft type.`;
+    recordFlightLookup("api_check", "verified_yes", "high", cfg.code);
   } else if (allNone) {
     hasStarlink = false;
     confidence = "verified";
     reason = `${distinctEquipment.join(", ")} — not part of Qatar's Starlink rollout.`;
+    recordFlightLookup("api_check", "verified_no", "high", cfg.code);
   } else if (anyRolling) {
     hasStarlink = null;
     confidence = "rolling";
     reason = `${distinctEquipment.join(", ")} — Qatar's 787 Starlink rollout is in progress; this aircraft may or may not be equipped yet.`;
+    recordFlightLookup("api_check", "predicted", "low", cfg.code);
   } else {
     hasStarlink = null;
     confidence = "mixed";
     reason = `Mixed equipment scheduled (${distinctEquipment.join(", ")}) — outcome depends on which aircraft operates.`;
+    recordFlightLookup("api_check", "predicted", "low", cfg.code);
   }
 
   return new Response(
@@ -434,12 +476,17 @@ const apiCheckFlight: Handler = async ({ req, url, reader, tenant }) => {
     if (segments !== null) {
       const starlinkSegs = segments.filter((s) => s.hasStarlink);
       if (starlinkSegs.length > 0) {
+        const allVerified = starlinkSegs.every((s) => s.confidence === "verified");
+        recordFlightLookup(
+          "api_check",
+          allVerified ? "verified_yes" : "predicted",
+          allVerified ? "high" : "medium",
+          cfg.code
+        );
         return new Response(
           JSON.stringify({
             hasStarlink: true,
-            confidence: starlinkSegs.every((s) => s.confidence === "verified")
-              ? "verified"
-              : "likely",
+            confidence: allVerified ? "verified" : "likely",
             method: "fr24_tail_lookup",
             flights: starlinkSegs.map((s) => ({
               tail_number: s.tail_number,
@@ -460,6 +507,7 @@ const apiCheckFlight: Handler = async ({ req, url, reader, tenant }) => {
         );
       }
       if (segments.length > 0) {
+        recordFlightLookup("api_check", "verified_no", "medium", cfg.code);
         return new Response(
           JSON.stringify({
             hasStarlink: false,
@@ -471,6 +519,7 @@ const apiCheckFlight: Handler = async ({ req, url, reader, tenant }) => {
         );
       }
     }
+    recordFlightLookup("api_check", "no_data", "none", cfg.code);
     return new Response(
       JSON.stringify({
         hasStarlink: false,
@@ -481,11 +530,11 @@ const apiCheckFlight: Handler = async ({ req, url, reader, tenant }) => {
     );
   }
 
+  const allVerified = matchingFlights.every((f) => f.verified_wifi === "Starlink");
+  recordFlightLookup("api_check", "verified_yes", allVerified ? "high" : "medium", cfg.code);
   const response = {
     hasStarlink: true,
-    confidence: matchingFlights.every((f) => f.verified_wifi === "Starlink")
-      ? "verified"
-      : "likely",
+    confidence: allVerified ? "verified" : "likely",
     flights: matchingFlights.map((flight) => ({
       tail_number: flight.tail_number,
       aircraft_type: flight.aircraft_type,
@@ -562,11 +611,13 @@ const apiCheckAnyFlight: Handler = ({ req, url, reader, getReader, tenant }) => 
 
   if (matching.length > 0) {
     const f = matching[0];
+    const verified = f.verified_wifi === "Starlink";
+    recordFlightLookup("api_check", "verified_yes", verified ? "high" : "medium", cfg.code);
     return new Response(
       JSON.stringify({
         hasStarlink: true,
         airline: cfg.name,
-        confidence: f.verified_wifi === "Starlink" ? "verified" : "likely",
+        confidence: verified ? "verified" : "likely",
         reason: `${f.tail_number} (${f.aircraft_type}) — ${f.departure_airport} → ${f.arrival_airport}`,
         flights: matching.map((m) => ({
           tail_number: m.tail_number,
@@ -581,6 +632,7 @@ const apiCheckAnyFlight: Handler = ({ req, url, reader, getReader, tenant }) => 
   }
 
   if (cfg.routeTypeRule) {
+    recordFlightLookup("api_check", "no_data", "none", cfg.code);
     return new Response(
       JSON.stringify({
         hasStarlink: null,
@@ -595,6 +647,8 @@ const apiCheckAnyFlight: Handler = ({ req, url, reader, getReader, tenant }) => 
   // No schedule row and no type rule — fall back to historical probability
   // rather than a confident "No Starlink" (upcoming_flights only covers ~47h).
   const pred = predictFlight(getReader(cfg.code), normalized);
+  recordFlightLookup("api_check", "predicted", pred.confidence, cfg.code);
+  recordPrediction(pred, cfg.code);
   return new Response(
     JSON.stringify({
       hasStarlink: null,
@@ -647,6 +701,13 @@ const apiPredictFlight: Handler = ({ req, url, reader, tenant }) => {
   // TODO Phase-2: hub should infer airline from prefix; predictor itself is still UA-only.
   const cfg = tenantConfig(tenant) ?? AIRLINES.UA;
   const pred = predictFlight(reader, ensureAirlinePrefix(cfg, flightNumber));
+  recordFlightLookup(
+    "api_predict",
+    pred.n_observations > 0 ? "predicted" : "no_data",
+    pred.confidence,
+    cfg.code
+  );
+  recordPrediction(pred, cfg.code);
   return new Response(
     JSON.stringify({
       flight_number: pred.flight_number,
@@ -1364,8 +1425,10 @@ export function createApp(db: Database): App {
     const reader: ScopedReader = getReader(tenantScope(tenant));
     const ctx: RequestContext = { req, url, site, tenant, reader, getReader };
 
+    // "web.request" not "http.request" — the latter collides with dd-trace's
+    // auto-instrumented outbound fetch spans. `type: web` marks it service-entry.
     return withSpan(
-      "http.request",
+      "web.request",
       async (span) => {
         span.setTag("http.method", req.method);
         span.setTag("http.route", route);
@@ -1388,11 +1451,12 @@ export function createApp(db: Database): App {
             route: m.route === "/static" ? "/static/*" : m.route,
             status_code: response.status,
             tenant: tenantScope(tenant),
+            client_class: classifyUserAgent(ua),
           });
         }
         return response;
       },
-      { "http.route": route }
+      { "span.type": "web" }
     );
   }
 

@@ -10,10 +10,13 @@ export type { Span } from "./tracer";
 export {
   metrics,
   COUNTERS,
+  GAUGES,
   DISTRIBUTIONS,
   normalizeAircraftType,
   normalizeWifiProvider,
   normalizeFleet,
   normalizeAirlineTag,
+  normalizeStarlinkStatus,
+  classifyUserAgent,
 } from "./metrics";
 export type { Tags } from "./metrics";

@@ -48,6 +48,15 @@ function createFlightAPI(): FlightAPI | null {
   return null;
 }
 
+// Distinguishes vendor outages (Cloudflare blocks, timeouts) from app bugs in DD.
+function classifyUpdateError(err: unknown): string {
+  const msg = (err instanceof Error ? `${err.name}: ${err.message}` : String(err)).toLowerCase();
+  if (/cloudflare|403|blocked|captcha|rate.?limit|429/.test(msg)) return "vendor_block";
+  if (/timeout|timed.?out|aborted|econnreset|etimedout|socket/.test(msg)) return "timeout";
+  if (/json|parse|unexpected.?token|invalid.?response/.test(msg)) return "parse_error";
+  return "unknown";
+}
+
 async function updateFlightsForTailNumber(api: FlightAPI, tailNumber: string): Promise<boolean> {
   return withSpan(
     "flight_updater.update_tail",
@@ -77,6 +86,7 @@ async function updateFlightsForTailNumber(api: FlightAPI, tailNumber: string): P
       } catch (err) {
         error(`Failed to update flights for ${tailNumber}`, err);
         span.setTag("error", true);
+        span.setTag("error.type", classifyUpdateError(err));
 
         try {
           updateLastFlightCheck(db, tailNumber, false);
