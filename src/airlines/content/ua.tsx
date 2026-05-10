@@ -67,6 +67,9 @@ export const content: AirlineContent = {
     { key: "express", label: "Express" },
   ],
 
+  // ld strings are the FAQPage JSON-LD copy; keep them in sync with the visible a()
+  // body — Google requires markup to match rendered content. {{...}} placeholders in
+  // ld resolve against buildBaseTemplateVars() in renderHtml().
   faq: [
     {
       title: "Checking your flight",
@@ -75,12 +78,14 @@ export const content: AirlineContent = {
           q: "Does my United flight have Starlink?",
           a: () => (
             <p>
-              Search above by flight number, tail number, or airport code. For a specific flight,{" "}
+              Search your flight number and date above for a live answer. Within roughly two days of
+              departure the exact aircraft is usually assigned, so you get a firm yes or no; further
+              out you get a probability estimate built from 12,000+ historical aircraft assignments
+              on that route. You can also{" "}
               <a href="/check-flight" className="text-accent hover:underline">
                 check a flight by number and date
               </a>{" "}
-              — if the flight is more than ~2 days out, you'll get a probability estimate based on
-              12,000+ historical aircraft assignments. You can also install our{" "}
+              or install our{" "}
               <a
                 href="https://chromewebstore.google.com/detail/google-flights-starlink-i/jjfljoifenkfdbldliakmmjhdkbhehoi"
                 target="_blank"
@@ -89,20 +94,10 @@ export const content: AirlineContent = {
               >
                 Chrome extension
               </a>{" "}
-              to see Starlink badges on Google Flights.
+              to see Starlink badges right on Google Flights.
             </p>
           ),
-          ld: "Check a flight by number and date — if it's within 2 days you'll get a firm answer, otherwise a probability estimate based on 12,000+ historical aircraft assignments. You can also search the tracker by tail number or route, install our Chrome extension for Google Flights, or use the Route Planner to find the best Starlink routing.",
-        },
-        {
-          q: "How do I know if my flight has Starlink?",
-          a: () => (
-            <p>
-              Check your boarding pass for the tail number and search above. You can also search by
-              flight number, airport codes, or aircraft type.
-            </p>
-          ),
-          ld: "Check your boarding pass for the tail number and search the tracker. You can also search by flight number, airport codes, or aircraft type.",
+          ld: "Search your flight number and date for a live answer. Within roughly two days of departure the exact aircraft is usually assigned, so you get a firm yes or no; further out you get a probability estimate built from 12,000+ historical aircraft assignments on that route. You can also check a flight by number and date or install our Chrome extension to see Starlink badges right on Google Flights.",
         },
         {
           q: "How do I maximize my chances of getting Starlink?",
@@ -134,36 +129,42 @@ export const content: AirlineContent = {
       items: [
         {
           q: "Does United have Starlink?",
-          a: ({ starlinkCount, totalCount }) => (
+          a: ({ starlinkCount, totalCount, percentage }) => (
             <p>
-              Yes, United Airlines has been installing Starlink since March 2025. Currently{" "}
-              <span className="text-accent">{starlinkCount}</span> of {totalCount} aircraft are
-              equipped, with 40+ new installations per month.
+              Yes. United started installing Starlink in March 2025 and currently has it live on{" "}
+              <span className="text-accent">{starlinkCount}</span> of {totalCount} aircraft (
+              {percentage}% of the fleet), across both mainline and United Express jets.
             </p>
           ),
-          ld: "Yes, United Airlines has been installing Starlink since March 2025. Currently {{totalCount}} of {{totalAircraftCount}} aircraft are equipped, with 40+ new installations per month.",
+          ld: "Yes. United started installing Starlink in March 2025 and currently has it live on {{starlinkCount}} of {{totalAircraftCount}} aircraft ({{percentage}}% of the fleet), across both mainline and United Express jets.",
         },
         {
           q: "How many United planes have Starlink?",
-          a: ({ starlinkCount, percentage, fleetStats }) => (
+          a: ({ starlinkCount, totalCount, percentage }) => (
             <p>
-              As of today, <span className="text-accent">{starlinkCount}</span> United aircraft have
-              Starlink WiFi — {fleetStats?.mainline.starlink || 0} mainline and{" "}
-              {fleetStats?.express.starlink || 0} Express planes. That's {percentage}% of the fleet.
+              As of {new Date().toLocaleDateString()},{" "}
+              <span className="text-accent">{starlinkCount}</span> United aircraft have Starlink —{" "}
+              {percentage}% of the {totalCount}-plane fleet, split across mainline and United
+              Express. The count updates here as new tails are verified against United's own
+              systems.
             </p>
           ),
-          ld: "As of today, {{totalCount}} United aircraft have Starlink WiFi — {{mainlineCount}} mainline and {{expressCount}} Express planes. That's {{percentage}}% of the fleet.",
+          ld: "As of {{currentDate}}, {{starlinkCount}} United aircraft have Starlink — {{percentage}}% of the {{totalAircraftCount}}-plane fleet, split across mainline and United Express. The count updates here as new tails are verified against United's own systems.",
         },
         {
           q: "Do all United flights have Starlink?",
-          a: ({ percentage }) => (
+          a: ({ percentage, fleetStats }) => (
             <p>
-              Not yet. United is installing Starlink on 40+ planes per month. Currently {percentage}
-              % of the fleet is equipped. Starlink is available on both mainline and United Express
-              aircraft.
+              Not yet — {percentage}% of the fleet is equipped today. United Express regional jets
+              (E175, CRJ-550) are at {(fleetStats?.express.percentage || 0).toFixed(2)}%; mainline
+              narrowbodies and widebodies are following. The{" "}
+              <a href="/fleet" className="text-accent hover:underline">
+                fleet page
+              </a>{" "}
+              lists every verified tail.
             </p>
           ),
-          ld: "Not yet. United is installing Starlink on 40+ planes per month. Currently {{percentage}}% of the fleet is equipped. Starlink is available on both mainline and United Express aircraft.",
+          ld: "Not yet — {{percentage}}% of the fleet is equipped today. United Express regional jets (E175, CRJ-550) are at {{expressPercentage}}%; mainline narrowbodies and widebodies are following. The fleet page lists every verified tail.",
         },
         {
           q: "When will my route get Starlink?",
@@ -185,23 +186,30 @@ export const content: AirlineContent = {
           q: "When will all United flights have Starlink?",
           a: ({ totalCount, percentage }) => (
             <p>
-              United is installing Starlink on 40+ aircraft per month across a fleet of {totalCount}
-              + planes. At the current pace, the full rollout will take until 2028–2029. Currently{" "}
-              {percentage}% of the fleet is equipped. Regional jets and narrow-body aircraft are
-              being equipped first.
+              United hasn't published a completion date. Currently {percentage}% of the {totalCount}
+              -plane fleet is equipped — regional jets and narrow-body aircraft are being equipped
+              first, with widebodies to follow. The count on this page updates as new tails are
+              verified.
             </p>
           ),
-          ld: "United is installing Starlink on 40+ aircraft per month across a fleet of {{totalAircraftCount}}+ planes. At the current pace, the full rollout will take until 2028–2029. Currently {{percentage}}% of the fleet is equipped. Regional jets and narrow-body aircraft are being equipped first.",
+          ld: "United hasn't published a completion date. Currently {{percentage}}% of the {{totalAircraftCount}}-plane fleet is equipped — regional jets and narrow-body aircraft are being equipped first, with widebodies to follow. The count on this page updates as new tails are verified.",
         },
         {
           q: "Does United have Starlink on international flights?",
           a: () => (
             <p>
-              Yes. Starlink works seamlessly over oceans, unlike previous WiFi systems. Check the
-              aircraft list above — 787s and 777s with Starlink fly international routes.
+              Not on widebody international routes yet. Starlink works over oceans and at the poles
+              — unlike older Ku/Ka-band systems with coverage gaps — so it's a matter of when, but
+              787, 777, and 767 installs haven't started. Today's equipped aircraft are E175 and
+              CRJ-550 regional jets on near-international routes to Canada, Mexico, and the
+              Caribbean. Check the{" "}
+              <a href="/fleet" className="text-accent hover:underline">
+                fleet page
+              </a>{" "}
+              for current coverage.
             </p>
           ),
-          ld: "Yes. Starlink works seamlessly over oceans, unlike previous WiFi systems. 787s and 777s with Starlink fly international routes.",
+          ld: "Not on widebody international routes yet. Starlink works over oceans and at the poles — unlike older Ku/Ka-band systems with coverage gaps — so it's a matter of when, but 787, 777, and 767 installs haven't started. Today's equipped aircraft are E175 and CRJ-550 regional jets on near-international routes to Canada, Mexico, and the Caribbean. Check the fleet page for current coverage.",
         },
       ],
     },
@@ -212,11 +220,11 @@ export const content: AirlineContent = {
           q: "Is United Starlink WiFi free?",
           a: () => (
             <p>
-              Yes, completely free for all passengers. No purchase required, no tiered plans — just
-              connect and go.
+              Yes — free for MileagePlus members, and MileagePlus is free to join. No purchase, no
+              tiers, no data caps.
             </p>
           ),
-          ld: "Yes, United's Starlink WiFi is completely free for all passengers. No purchase required, no tiered plans, no data caps - just connect to the WiFi network and enjoy high-speed internet throughout your flight.",
+          ld: "Yes — free for MileagePlus members, and MileagePlus is free to join. No purchase, no tiers, no data caps.",
         },
         {
           q: "What can I do with Starlink WiFi?",

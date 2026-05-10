@@ -84,8 +84,12 @@ async function getHtmlTemplate(): Promise<string> {
 
 function renderHtml(template: string, variables: Record<string, string>): string {
   let result = template;
-  for (const [key, value] of Object.entries(variables)) {
-    result = result.replace(new RegExp(`{{${key}}}`, "g"), value);
+  // Two passes so a value that itself contains placeholders (e.g. siteTitle
+  // embedding {{starlinkCount}}) resolves regardless of object insertion order.
+  for (let pass = 0; pass < 2; pass++) {
+    for (const [key, value] of Object.entries(variables)) {
+      result = result.replace(new RegExp(`{{${key}}}`, "g"), value);
+    }
   }
   return result;
 }
@@ -814,10 +818,16 @@ ${entries
   });
 };
 
-const llmsTxt: Handler = ({ site, tenant }) => {
+const llmsTxt: Handler = ({ site, tenant, reader }) => {
   const cfg = tenantConfig(tenant);
   const brand = site.brand;
   const host = site.canonicalHost;
+  // brand.description can carry {{starlinkCount}}/{{totalAircraftCount}} for HTML
+  // pages; resolve them here too so llms.txt never ships raw placeholders.
+  const description = renderHtml(brand.description, {
+    starlinkCount: reader.getStarlinkPlanes().length.toString(),
+    totalAircraftCount: reader.getTotalCount().toString(),
+  });
   const name = cfg?.name ?? "major airlines";
   const isHub = tenant === "ALL";
   const iata = cfg?.iata ?? "UA";
@@ -890,7 +900,7 @@ For one-off lookups without MCP, the JSON API is open (no auth, CORS enabled, ~6
   return new Response(
     `# ${brand.title}
 
-> ${brand.description}
+> ${description}
 
 ${isHub ? "Per-aircraft Starlink WiFi status across multiple airlines." : `Tracks the ${name} Starlink WiFi rollout aircraft-by-aircraft and answers "does my flight have Starlink?" with live data.`}
 
@@ -929,6 +939,9 @@ function buildBaseTemplateVars(ctx: RequestContext, reactHtml: string): Record<s
     ...brandMetadata(brand),
     html: reactHtml,
     host: site.canonicalHost,
+    // {{totalCount}} historically held the Starlink count (not the fleet total).
+    // {{starlinkCount}} is the unambiguous alias; keep totalCount for back-compat.
+    starlinkCount: starlinkCount.toString(),
     totalCount: starlinkCount.toString(),
     totalAircraftCount: totalCount.toString(),
     lastUpdated: reader.getLastUpdated(),
@@ -985,14 +998,15 @@ function subPageMeta(
   const cfg = tenantConfig(tenant);
   const brand = ctx.site.brand;
   const name = cfg?.name ?? "tracked airlines";
-  const short = cfg?.name ?? "Tracked Fleets";
+  // shortName keeps the lead under ~50 chars so the keyword survives mobile SERP truncation.
+  const short = cfg?.shortName ?? "Tracked Fleets";
   if (page === "check-flight")
     return {
-      siteTitle: `Check If Your ${short} Flight Has Starlink WiFi | ${brand.title}`,
-      siteDescription: `Enter your ${name} flight number and date to check if your aircraft has free Starlink WiFi. Instant results from our live database — or a probability estimate if your flight is more than 2 days out.`,
-      keywords: `check ${cfg?.iata ?? "airline"} flight starlink, does my flight have starlink, starlink checker, ${name} wifi check`,
-      ogTitle: `Check If Your ${short} Flight Has Starlink WiFi`,
-      ogDescription: `Enter your flight number and date to check if your ${name} aircraft has free Starlink WiFi.`,
+      siteTitle: `Check Your ${short} Flight for Starlink WiFi | ${brand.title}`,
+      siteDescription: `Enter a ${short} flight number and date to see if it has Starlink. Confirmed within ~2 days of departure; estimate from 12,000+ past assignments before that.`,
+      keywords: `check ${cfg?.iata ?? "airline"} flight starlink, does my flight have starlink, ${name} wifi check`,
+      ogTitle: `Check Your ${short} Flight for Starlink WiFi`,
+      ogDescription: `Enter a ${short} flight number and date to see if your aircraft has free Starlink WiFi.`,
     };
   if (page === "route-planner")
     return {

@@ -29,6 +29,7 @@ import {
 import { computePrecision } from "../src/scripts/precision-backtest";
 import { planItinerary, predictFlight, predictRoute } from "../src/scripts/starlink-predictor";
 import { computeSurfaceContradictions } from "../src/scripts/surface-sweep";
+import { createApp } from "../src/server/app";
 import { type ScopedReader, createReaderFactory } from "../src/server/context";
 import type { ApiResponse, Flight } from "../src/types";
 import {
@@ -915,5 +916,61 @@ describe("getFleetPageData", () => {
     for (const t of d.allTails) {
       expect(valid.has(t.provider)).toBe(true);
     }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SEO meta — title/description/JSON-LD must resolve {{count}} placeholders
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("SEO meta", () => {
+  let app: ReturnType<typeof createApp>;
+  const UA_HOST = "unitedstarlinktracker.com";
+
+  beforeAll(() => {
+    app = createApp(db);
+  });
+
+  async function getHtml(path: string): Promise<string> {
+    const res = await app.dispatch(new Request(`http://x${path}`, { headers: { Host: UA_HOST } }));
+    expect(res.status).toBe(200);
+    return res.text();
+  }
+
+  test("homepage <title> embeds the live count and has no unresolved {{vars}}", async () => {
+    const html = await getHtml("/");
+    const title = html.match(/<title>([^<]+)<\/title>/)?.[1] ?? "";
+    expect(title).toMatch(/\d+ Aircraft/);
+    expect(title).not.toContain("{{");
+    expect(html).not.toContain("{{starlinkCount}}");
+    expect(html).not.toContain("{{totalAircraftCount}}");
+  });
+
+  test("homepage emits FAQPage JSON-LD with no unresolved {{vars}}", async () => {
+    const html = await getHtml("/");
+    const ld = html.match(
+      /<script type="application\/ld\+json">([^<]*"@type":"FAQPage"[^<]*)<\/script>/
+    )?.[1];
+    expect(ld).toBeDefined();
+    expect(ld).not.toContain("{{");
+    const parsed = JSON.parse(ld as string);
+    expect(parsed["@type"]).toBe("FAQPage");
+    expect(parsed.mainEntity.length).toBeGreaterThan(3);
+  });
+
+  test("/check-flight title leads with the verb and short brand name", async () => {
+    const html = await getHtml("/check-flight");
+    const title = html.match(/<title>([^<]+)<\/title>/)?.[1] ?? "";
+    expect(title.startsWith("Check Your United Flight for Starlink WiFi")).toBe(true);
+    expect(title).not.toContain("{{");
+  });
+
+  test("/llms.txt resolves count placeholders", async () => {
+    const res = await app.dispatch(
+      new Request("http://x/llms.txt", { headers: { Host: UA_HOST } })
+    );
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).not.toContain("{{");
   });
 });

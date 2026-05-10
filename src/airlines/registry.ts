@@ -61,6 +61,9 @@ export interface SiteConfig {
 export interface AirlineConfig {
   code: AirlineCode;
   name: string;
+  /** Brand-only short form ("United", "Alaska") for titles where the full
+   * legal name pushes the keyword past mobile SERP truncation (~50–55 chars). */
+  shortName: string;
   /** Background jobs (scrape/verify/discover/sync) skip airlines with enabled=false. resolveTenant still resolves them. */
   enabled: boolean;
   /** Included on public hub surfaces and hub-only APIs. */
@@ -97,6 +100,7 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
   UA: {
     code: "UA",
     name: "United Airlines",
+    shortName: "United",
     enabled: true,
     publicInHub: true,
     hosts: ["unitedstarlinktracker.com", "www.unitedstarlinktracker.com"],
@@ -147,14 +151,15 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
     brand: {
       title: "United Airlines Starlink Tracker",
       tagline: "Tracking United Airlines aircraft with Starlink WiFi",
-      siteTitle: "United Starlink Tracker — Does My United Flight Have Starlink WiFi?",
+      // {{starlinkCount}}/{{totalAircraftCount}} resolve in buildBaseTemplateVars();
+      // og:title intentionally has no count — social platforms cache OG metadata.
+      siteTitle: "United Starlink Tracker — {{starlinkCount}} Aircraft Have Starlink Today",
       description:
-        "Check whether your United Airlines flight has free Starlink WiFi. Per-aircraft status verified against united.com, live installation progress across mainline and Express fleets, and upcoming flight schedules for every Starlink-equipped tail.",
-      ogTitle: "Does my United flight have Starlink? — United Starlink Tracker",
+        "{{starlinkCount}} of {{totalAircraftCount}} United aircraft have Starlink today, verified against united.com. Check any flight by number, browse the fleet, and watch the install rate.",
+      ogTitle: "United Starlink Tracker — Live Fleet Rollout",
       ogDescription:
         "Check any United flight for free Starlink WiFi. Per-tail status verified against united.com, live rollout progress, and which routes to book for fast in-flight internet.",
-      keywords:
-        "does my united flight have starlink, united starlink wifi, which united planes have starlink, united starlink tracker, united express starlink, E175 starlink, CRJ-550 starlink, united 737 starlink, check united flight wifi",
+      keywords: "united starlink tracker, united starlink wifi",
       accentColor: "#0ea5e9",
       accentColorDim: "#0284c7",
       faviconPath: "/favicon.ico",
@@ -165,6 +170,7 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
   HA: {
     code: "HA",
     name: "Hawaiian Airlines",
+    shortName: "Hawaiian",
     enabled: true,
     publicInHub: true,
     hosts: ["hawaiianstarlinktracker.com", "www.hawaiianstarlinktracker.com"],
@@ -205,6 +211,7 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
   AS: {
     code: "AS",
     name: "Alaska Airlines",
+    shortName: "Alaska",
     enabled: true,
     publicInHub: true,
     hosts: ["alaskastarlinktracker.com", "www.alaskastarlinktracker.com"],
@@ -261,6 +268,7 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
   QR: {
     code: "QR",
     name: "Qatar Airways",
+    shortName: "Qatar",
     enabled: true,
     publicInHub: false,
     hosts: ["qatarstarlinktracker.com", "www.qatarstarlinktracker.com"],
@@ -447,6 +455,8 @@ export function brandMetadata(brand: PageBrand) {
     siteDescription: brand.description,
     ogTitle: brand.ogTitle,
     ogDescription: brand.ogDescription,
+    // Stable alt text; social platforms cache OG metadata, so keep counts out.
+    ogImageAlt: brand.title,
     keywords: brand.keywords,
     siteName: brand.title,
     accentColor: brand.accentColor,
