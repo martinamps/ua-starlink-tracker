@@ -32,7 +32,7 @@ const HubHero = ({ stats, perAirlineStats = [], recentInstalls = [] }: HeroProps
         dangerouslySetInnerHTML={{
           __html: `
           document.addEventListener('DOMContentLoaded', function() {
-            function esc(s){var d=document.createElement('div');d.textContent=String(s==null?'':s);return d.innerHTML;}
+            function esc(s){var d=document.createElement('div');d.textContent=String(s==null?'':s);return d.innerHTML.replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
             var cf = document.getElementById('hub-check-flight');
             var cr = document.getElementById('hub-check-result');
             if (cf) cf.addEventListener('submit', function(e) {
@@ -62,21 +62,27 @@ const HubHero = ({ stats, perAirlineStats = [], recentInstalls = [] }: HeroProps
               if (dotted) style = 'width:'+pct+'%;border-top:2px dotted '+esc(color)+';background:transparent';
               return '<div class="h-1.5 bg-surface-elevated rounded overflow-hidden mt-1"><div class="h-full" style="'+style+'"></div></div>';
             }
-            function renderResult(a) {
+            function pill(href, txt, color) {
+              return '<a href="'+esc(href)+'" class="ml-2 font-mono text-[9px] px-1.5 py-0.5 rounded-full whitespace-nowrap hover:underline" style="color:'+esc(color)+';background:color-mix(in srgb,'+esc(color)+' 14%,transparent);border:1px solid color-mix(in srgb,'+esc(color)+' 40%,transparent)">'+esc(txt)+' \\u2192</a>';
+            }
+            function renderResult(a, O, D) {
               var color = a.accentColor || '#0ea5e9';
               var inferred = a.kind === 'inferred_absent';
-              var chip = inferred ? ' <span class="text-[9px] px-1 py-0.5 bg-surface-elevated border border-subtle rounded text-muted">inferred</span>' : '';
+              var rpHref = '/route-planner?from='+O+'&to='+D;
               if (a.kind === 'observed_mixed') {
-                var head = '<div class="flex justify-between font-mono text-xs"><span class="text-primary">'+esc(a.name)+'</span><span class="text-accent">'+Math.round(a.lo*100)+'\\u2013'+Math.round(a.hi*100)+'%</span></div>'
+                var bp = a.bestPick;
+                var chipM = bp && bp.hint ? pill(rpHref, 'book '+bp.hint+' \\u2248 '+Math.round(bp.pct*100)+'%', color) : '';
+                var head = '<div class="flex justify-between items-center font-mono text-xs"><span class="text-primary">'+esc(a.name)+chipM+'</span><span class="text-accent">'+Math.round(a.lo*100)+'\\u2013'+Math.round(a.hi*100)+'%</span></div>'
                          + '<div class="font-mono text-[10px] text-muted">'+esc(a.reason)+'</div>';
                 var rows = (a.breakdown||[]).map(function(b){
-                  var bp = Math.round(b.pct*100);
-                  return '<div class="mt-1.5 ml-3"><div class="flex justify-between font-mono text-[10px]"><span class="text-secondary">'+esc(b.hint||'')+': '+esc(b.label)+'</span><span class="text-accent">'+bp+'% ('+b.equipped+'/'+b.total+')</span></div>'+bar(bp,color,false)+'</div>';
+                  var br = Math.round(b.pct*100);
+                  return '<div class="mt-1.5 ml-3"><div class="flex justify-between font-mono text-[10px]"><span class="text-secondary">'+esc(b.hint||'')+'</span><span class="text-accent">'+br+'% \\u00b7 '+b.equipped+'/'+b.total+'</span></div>'+bar(br,color,false)+'</div>';
                 }).join('');
                 return '<div class="mb-3">'+head+rows+'</div>';
               }
               var pct = Math.round(a.probability*100);
-              return '<div class="mb-3"><div class="flex justify-between font-mono text-xs"><span class="text-primary">'+esc(a.name)+chip+'</span><span class="text-accent">'+pct+'%</span></div>'
+              var chipL = (pct < 50 && a.kind !== 'type_rule') ? pill(rpHref, 'try a connection', color) : '';
+              return '<div class="mb-3"><div class="flex justify-between items-center font-mono text-xs"><span class="text-primary">'+esc(a.name)+chipL+'</span><span class="text-accent">'+pct+'%</span></div>'
                    + '<div class="font-mono text-[10px] text-muted">'+esc(a.reason)+'</div>'+bar(pct,color,inferred)+'</div>';
             }
             function doCompare(origin, dest) {
@@ -87,7 +93,7 @@ const HubHero = ({ stats, perAirlineStats = [], recentInstalls = [] }: HeroProps
                 .then(function(d){
                   if (d.error) { rr.innerHTML = '<span class="text-amber-400 font-mono text-xs">' + esc(d.error) + '</span>'; return; }
                   var O = esc((d.origin||'').toUpperCase()), D = esc((d.destination||'').toUpperCase());
-                  var html = (d.results||[]).map(renderResult).join('');
+                  var html = (d.results||[]).map(function(r){return renderResult(r,O,D)}).join('');
                   rr.innerHTML = html || '<span class="font-mono text-xs text-muted">No tracked airline shows a Starlink-equipped nonstop on '+O+' \\u21c4 '+D+' yet.</span>';
                   if (rfoot) rfoot.classList.remove('hidden');
                   if (rplnk) rplnk.href = '/route-planner?from='+O+'&to='+D;

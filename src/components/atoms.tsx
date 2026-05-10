@@ -262,11 +262,10 @@ export function RouteComparePanel() {
   return (
     <div className="bg-surface border border-subtle rounded-lg p-5">
       <div className="text-[10px] font-mono text-muted uppercase tracking-wider mb-1">
-        Starlink odds by airline — nonstop
+        Starlink odds by airline
       </div>
       <div className="text-[10px] font-mono text-muted leading-relaxed mb-3">
-        Install rate across the aircraft each carrier flies nonstop on this route. Tails rotate
-        daily, so this is fleet penetration, not a per-flight guarantee.
+        Share of each carrier's planes on this nonstop route that have Starlink today.
       </div>
       <form id="hub-compare-route" className="flex flex-col sm:flex-row gap-2">
         <input
@@ -310,8 +309,7 @@ export function RouteComparePanel() {
         id="hub-compare-footer"
         className="mt-3 text-[10px] font-mono text-muted leading-relaxed hidden"
       >
-        Don't see your airline? We can only confirm an airline at an airport once one of its
-        Starlink aircraft has flown there. For connecting itineraries, try the{" "}
+        Carrier missing? It only shows up once one of its Starlink planes has flown here.{" "}
         <a id="hub-compare-rp" href="/route-planner" className="text-accent hover:underline">
           Route Planner →
         </a>

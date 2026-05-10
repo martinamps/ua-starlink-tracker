@@ -533,6 +533,8 @@ export interface RouteCompareResult {
   hi?: number;
   breakdown: SubfleetBreakdown[];
   reason: string;
+  /** observed_mixed only: the high-penetration subfleet's FN range, for the chip. */
+  bestPick?: { hint: string; pct: number };
 }
 
 const fmt = (n: number) => n.toLocaleString("en-US");
@@ -616,7 +618,7 @@ export function compareRoute(
         kind: "observed_single",
         probability: sf.pct,
         breakdown: [sf],
-        reason: `Nonstop on ${sf.label} — ${fmt(sf.equipped)} of ${fmt(sf.total)} equipped`,
+        reason: `${fmt(sf.equipped)} of ${fmt(sf.total)} aircraft equipped`,
       });
     } else if (seen.size >= 2) {
       // Do NOT frequency-weight by observed FN count: the observation set is
@@ -632,7 +634,10 @@ export function compareRoute(
         lo,
         hi,
         breakdown: bd,
-        reason: "Mixed equipment — depends on flight number",
+        // The chip surfaces the high-penetration subfleet's flight-number range
+        // as the actionable hint; the breakdown rows show the rest.
+        bestPick: { hint: bd[0].hint ?? "", pct: bd[0].pct },
+        reason: "Depends on flight number",
       });
     } else {
       // ---- 4. Unobserved nonstop ----
@@ -651,7 +656,7 @@ export function compareRoute(
         kind: "inferred_absent",
         probability: minSub.pct,
         breakdown: [minSub],
-        reason: `No Starlink-equipped ${cfg.shortName} aircraft seen on this route — likely ${minSub.label} (${fmt(minSub.equipped)} of ${fmt(minSub.total)} equipped)`,
+        reason: `${fmt(minSub.equipped)} of ${fmt(minSub.total)} aircraft equipped`,
       });
     }
   }
