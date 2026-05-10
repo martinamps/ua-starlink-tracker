@@ -118,7 +118,7 @@ const layout = q.get("layout") || "count";
 
 if (layout === "count") {
   const count = esc(q.get("count") || "—");
-  const sub = esc(q.get("sub") || "AIRCRAFT WITH STARLINK · LIVE");
+  const sub = esc(q.get("sub") || "AIRCRAFT WITH STARLINK");
   const series = (q.get("series") || "").split(",").map(Number).filter((n) => !Number.isNaN(n));
 
   let chartSvg = "";
@@ -160,7 +160,7 @@ if (layout === "count") {
 } else {
   let cards = [];
   try { cards = JSON.parse(q.get("cards") || "[]"); } catch {}
-  const caption = esc(q.get("caption") || "PER-AIRCRAFT STARLINK WIFI STATUS · LIVE");
+  const caption = esc(q.get("caption") || "PER-AIRCRAFT STARLINK WIFI STATUS");
   content.innerHTML = `
     <div class="cards">
       ${cards.map((c) => {

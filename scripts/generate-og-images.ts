@@ -116,7 +116,7 @@ async function main() {
       domain: cfg.canonicalHost,
       accent: cfg.brand.accentColor.replace("#", ""),
       count: String(a.installed),
-      sub: "AIRCRAFT WITH STARLINK · LIVE",
+      sub: "AIRCRAFT WITH STARLINK",
       series: series.join(","),
     });
     const file = `social-image${a.code === "UA" ? "" : `-${a.code.toLowerCase()}`}.webp`;
@@ -136,7 +136,7 @@ async function main() {
     domain: HUB_HOST,
     accent: SITES.airline.brand.accentColor.replace("#", ""),
     cards: JSON.stringify(cards),
-    caption: "PER-AIRCRAFT STARLINK WIFI STATUS · LIVE",
+    caption: "PER-AIRCRAFT STARLINK WIFI STATUS",
   });
   await renderWebp(page, hubParams, path.join(OUT_DIR, "social-image-hub.webp"));
   generated.push(`social-image-hub.webp  ${cards.map((c) => `${c.name}=${c.pct}%`).join(" ")}`);
