@@ -158,7 +158,7 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
         "{{starlinkCount}} of {{totalAircraftCount}} United aircraft have Starlink today, verified against united.com. Check any flight by number, browse the fleet, and watch the install rate.",
       ogTitle: "United Starlink Tracker — Live Fleet Rollout",
       ogDescription:
-        "Check any United flight for free Starlink WiFi. Per-tail status verified against united.com, live rollout progress, and which routes to book for fast in-flight internet.",
+        "Check any United flight for free Starlink WiFi. Per-tail status verified against united.com, live rollout progress, and the best routes for fast internet.",
       keywords: "united starlink tracker, united starlink wifi",
       accentColor: "#0ea5e9",
       accentColorDim: "#0284c7",
@@ -197,7 +197,7 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
         "Hawaiian Airlines completed its Starlink rollout in September 2024. Every Airbus A330 and A321neo has free, gate-to-gate Starlink WiFi; the 717 interisland fleet does not have WiFi. See which aircraft is on your flight.",
       ogTitle: "Hawaiian Airlines Starlink — Rollout Complete",
       ogDescription:
-        "Every Hawaiian Airlines A330 and A321neo has free gate-to-gate Starlink WiFi — the first major U.S. carrier to finish a fleet-wide install. 717 interisland flights do not have WiFi.",
+        "Every Hawaiian A330 and A321neo has free gate-to-gate Starlink — the first U.S. carrier with a full fleet install. 717 interisland flights have no WiFi.",
       keywords:
         "hawaiian airlines starlink, hawaiian airlines wifi, does hawaiian have wifi, hawaiian a330 starlink, hawaiian a321neo wifi, hawaiian 717 wifi, hawaiian interisland wifi, free wifi hawaiian airlines",
       accentColor: "#413691",
