@@ -741,7 +741,19 @@ export function getFleetStats(db: Database, airline = "UA"): FleetStats {
     unverified: number;
   }>;
 
-  const express = rows.find((r) => r.fleet === "express") ?? { confirmed: 0, unverified: 0 };
+  // FleetStats has a fixed two-bucket shape (express/mainline). Per-airline
+  // subfleet labels vary ("express", "horizon", ...) so anything non-mainline
+  // rolls into express. The original label survives on starlink_planes.fleet
+  // for UI badges (e.g. as.tsx reads p.fleet === "horizon").
+  const express = rows
+    .filter((r) => r.fleet !== "mainline")
+    .reduce(
+      (a, r) => ({ confirmed: a.confirmed + r.confirmed, unverified: a.unverified + r.unverified }),
+      {
+        confirmed: 0,
+        unverified: 0,
+      }
+    );
   const mainline = rows.find((r) => r.fleet === "mainline") ?? { confirmed: 0, unverified: 0 };
 
   return {

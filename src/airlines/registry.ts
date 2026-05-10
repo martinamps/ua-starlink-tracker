@@ -3,6 +3,11 @@
  * Adding an airline = adding a config object here, not editing scattered code.
  */
 
+// Single E175 matcher shared by AS classifyFleet() and alaskaTypeToStarlink()
+// so the verdict and subfleet can never disagree. Covers FR24 ("Embraer
+// E175LR"), alaskaair.com ("E175"/"ERJ-175"), and 3-char IATA ("E75").
+export const ALASKA_E175_RE = /E175|ERJ.?175|EMB.?175|^E75\b/i;
+
 export type AirlineCode = string;
 
 export interface SubfleetDef {
@@ -218,9 +223,9 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
     canonicalHost: "alaskastarlinktracker.com",
     iata: "AS",
     icao: "ASA",
-    // SkyWest (OO/SKW) intentionally excluded — shared with UA, tail_number is
-    // UNIQUE on united_fleet. AS regionals via SkyWest are out of scope until
-    // the Phase-3 composite-PK migration.
+    // SkyWest-for-Alaska tails are tracked (CPA-dedicated, disjoint from UA's),
+    // but SKW/OO stay out of carrierPrefixes — we don't resolve SkyWest-operated
+    // AS flight numbers to tails yet.
     carrierPrefixes: ["ASA", "QXE", "AS", "QX"],
     subfleets: [
       {
@@ -240,7 +245,7 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
         },
       },
     ],
-    classifyFleet: (t) => (/E175|ERJ.?175|EMB/i.test(t) ? "horizon" : "mainline"),
+    classifyFleet: (t) => (ALASKA_E175_RE.test(t) ? "horizon" : "mainline"),
     fr24Slug: "as-asa",
     regionalCarriers: [{ fr24Slug: "qx-qxe", name: "Horizon Air", subfleet: "horizon" }],
     metricTag: "alaska",

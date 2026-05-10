@@ -17,3 +17,4 @@ patches/
 # internal
 ops/
 CLAUDE.local.md
+.claude/
