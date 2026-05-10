@@ -480,6 +480,12 @@ export function siteTenant(site: SiteConfig): Tenant {
   return site.scope === "ALL" ? "ALL" : AIRLINES[site.scope];
 }
 
+// Hosts that resolve here but aren't tenants yet — 301 to the hub until the
+// airline has data. Promote to a tenant config and remove the entry when ready.
+export const HOST_REDIRECTS: Record<string, string> = {
+  "deltastarlinktracker.com": "https://airlinestarlinktracker.com",
+};
+
 export function resolveSite(host: string | null): SiteConfig | null {
   if (!host) return null;
   const h = host.split(":")[0].toLowerCase();

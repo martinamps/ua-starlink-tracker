@@ -22,6 +22,7 @@ import {
 import {
   AIRLINES,
   type AirlineConfig,
+  HOST_REDIRECTS,
   type SiteConfig,
   brandMetadata,
   publicAirlines,
@@ -1399,7 +1400,12 @@ export function createApp(db: Database): App {
     const staticRes = staticResponses.get(url.pathname);
     if (staticRes) return staticRes.clone();
 
-    const site = resolveSite(req.headers.get("host"));
+    const reqHost = req.headers.get("host");
+    const redirectTo = HOST_REDIRECTS[reqHost?.replace(/^www\./, "") ?? ""];
+    if (redirectTo) {
+      return Response.redirect(`${redirectTo}${url.pathname}${url.search}`, 301);
+    }
+    const site = resolveSite(reqHost);
     if (site === null) {
       return new Response("Misdirected Request", {
         status: 421,
