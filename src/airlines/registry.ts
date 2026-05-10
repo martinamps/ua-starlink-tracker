@@ -18,6 +18,9 @@ export interface SubfleetDef {
   match: (flightNumber: string) => boolean;
   /** Display-only flight-number-range hint for the route-compare "mixed equipment" row. */
   flightNumberHint?: string;
+  /** Fixed Starlink rate when this subfleet flies on another carrier's metal
+   * (e.g. AS800-899 on Hawaiian A330/A321neo). */
+  penetrationOverride?: number;
 }
 
 export interface PageBrand {
@@ -261,13 +264,26 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
     // AS flight numbers to tails yet.
     carrierPrefixes: ["ASA", "QXE", "AS", "QX"],
     subfleets: [
+      // AS800-899 are AS-marketed flights on Hawaiian A330/A321neo metal
+      // post-merger — every one of those aircraft has Starlink. Listed first
+      // so it wins the find() over mainline.
+      {
+        key: "hawaiian_metal",
+        label: "Hawaiian-operated (A330/A321neo)",
+        flightNumberHint: "AS800-899",
+        penetrationOverride: 1,
+        match: (fn) => {
+          const n = flightNum(fn);
+          return Number.isFinite(n) && n >= 800 && n <= 899;
+        },
+      },
       {
         key: "mainline",
         label: "Mainline (737/787)",
         flightNumberHint: "AS1-1999",
         match: (fn) => {
           const n = flightNum(fn);
-          return Number.isFinite(n) && n < 2000;
+          return Number.isFinite(n) && n < 2000 && !(n >= 800 && n <= 899);
         },
       },
       {

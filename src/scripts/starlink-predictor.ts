@@ -537,6 +537,7 @@ export interface RouteCompareResult {
 }
 
 const fmt = (n: number) => n.toLocaleString("en-US");
+const shortLabel = (s: string) => s.replace(/\s*Fleet$/i, "").trim();
 
 function brand(cfg: AirlineConfig) {
   return {
@@ -567,20 +568,26 @@ export function compareRoute(
 
   for (const cfg of publicAirlines()) {
     const reader = getReader(cfg.code);
-    const prefixes = [cfg.iata, cfg.icao, ...cfg.carrierPrefixes];
+    // flight_routes has no airline column, so the prefix glob would attribute
+    // shared-regional rows (OO/SKW for SkyWest, ENY/PDT etc.) to UA. flight_routes
+    // is written via ensureAirlinePrefix → marketing IATA, so iata+icao is enough.
+    const prefixes = [cfg.iata, cfg.icao];
 
     // ---- 1. Type-deterministic carriers (HA today) ----
     if (cfg.routeTypeRule) {
       const rule = cfg.routeTypeRule(o, d);
-      if (!rule) continue;
-      if (!reader.airlineServesAirports(prefixes, o, d)) continue;
-      out.push({
-        ...brand(cfg),
-        kind: "type_rule",
-        probability: rule.probability,
-        breakdown: [],
-        reason: rule.reason,
-      });
+      if (rule && reader.airlineServesAirports(prefixes, o, d)) {
+        out.push({
+          ...brand(cfg),
+          kind: "type_rule",
+          probability: rule.probability,
+          breakdown: [],
+          reason: rule.reason,
+        });
+      } else {
+        // Symmetry: HA renders no_data on mainland-mainland instead of vanishing.
+        out.push({ ...brand(cfg), kind: "no_data", probability: -1, breakdown: [], reason: "" });
+      }
       continue;
     }
 
@@ -588,7 +595,13 @@ export function compareRoute(
     const pen = reader.getSubfleetPenetration();
     if (pen.size === 0) continue;
     const penArr: SubfleetBreakdown[] = cfg.subfleets.map((sf) => {
-      const p = pen.get(sf.key) ?? { equipped: 0, total: 0, pct: 0 };
+      // penetrationOverride: subfleets that fly on another carrier's metal
+      // (e.g. AS800-899 on Hawaiian A330/A321neo) — the roster has those tails
+      // under the operating airline, not the marketing one.
+      const p =
+        sf.penetrationOverride != null
+          ? { equipped: 1, total: 1, pct: sf.penetrationOverride }
+          : (pen.get(sf.key) ?? { equipped: 0, total: 0, pct: 0 });
       return {
         key: sf.key,
         label: sf.label,
@@ -612,13 +625,31 @@ export function compareRoute(
 
     if (seen.size === 1) {
       const sf = penArr.find((p) => seen.has(p.key))!;
-      out.push({
-        ...brand(cfg),
-        kind: "observed_single",
-        probability: sf.pct,
-        breakdown: [sf],
-        reason: `${fmt(sf.equipped)} of ${fmt(sf.total)} aircraft equipped`,
-      });
+      // We can prove the high-pen subfleet flies the route, but NOT that the
+      // low-pen one doesn't (it's invisible to us). When the seen subfleet is
+      // the high one and a low-pen (<50%) sibling exists, show the honest
+      // range — otherwise SEA-ANC reads "AS 100%" when it's mostly 737s at 0%.
+      const lowSibling = penArr.find((p) => p.key !== sf.key && p.pct < 0.5);
+      if (sf.pct === maxPct && lowSibling) {
+        const bd = [sf, lowSibling].sort((a, b) => b.pct - a.pct);
+        out.push({
+          ...brand(cfg),
+          kind: "observed_mixed",
+          probability: (sf.pct + lowSibling.pct) / 2,
+          lo: lowSibling.pct,
+          hi: sf.pct,
+          breakdown: bd,
+          reason: "Depends on flight number",
+        });
+      } else {
+        out.push({
+          ...brand(cfg),
+          kind: "observed_single",
+          probability: sf.pct,
+          breakdown: [sf],
+          reason: `${shortLabel(sf.label)} on this route — ${fmt(sf.equipped)} of ${fmt(sf.total)} equipped`,
+        });
+      }
     } else if (seen.size >= 2) {
       // Do NOT frequency-weight by observed FN count: the observation set is
       // Starlink-biased toward the high-penetration subfleet, so weighting

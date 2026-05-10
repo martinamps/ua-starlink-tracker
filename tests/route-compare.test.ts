@@ -71,7 +71,7 @@ describe("compareRoute", () => {
       pHi: 0.4,
       why: "AS serves both, horizon 100% would have appeared → mainline rate",
     },
-    { o: "SFO", d: "AUS", code: "HA", kind: "omitted", why: "neither endpoint in HI" },
+    { o: "SFO", d: "AUS", code: "HA", kind: "no_data", why: "neither endpoint in HI" },
 
     // SEA-SFO: UA mixed (express + mainline both observed)
     {
@@ -93,7 +93,7 @@ describe("compareRoute", () => {
       pHi: 0.4,
       why: "AS serves both, no AS-prefix direct observed → mainline rate",
     },
-    { o: "SEA", d: "SFO", code: "HA", kind: "omitted", why: "routeTypeRule null on mainland-only" },
+    { o: "SEA", d: "SFO", code: "HA", kind: "no_data", why: "routeTypeRule null on mainland-only" },
 
     // SFO-HNL: HA type rule fires; UA/AS omitted (no Starlink tail at HNL)
     {
@@ -165,16 +165,17 @@ describe("compareRoute", () => {
     expect(find("SFO", "HNL", "HA")?.reason).toMatch(/A330|A321/i);
   });
 
-  // AS on SFO-HNL is open_question #1 in the spec: AS811-822 are HA-operated
-  // post-merger but cached in flight_routes with the AS prefix. Either omitted
-  // (if the snapshot lacks those rows) or observed_single at the AS-mainline
-  // rate is acceptable; both are materially honest. What's NOT acceptable is
-  // a high number.
-  test("AS SFO-HNL: omitted or low — never high", () => {
+  // AS on SFO-HNL: AS800-899 are AS-marketed flights on Hawaiian A330/A321neo
+  // metal post-merger (verified: tails N209HA, N213HA in upcoming_flights for
+  // AS8xx). When the fixture has those routes cached, AS should map to the
+  // hawaiian_metal subfleet at ~100%, NOT mainline 0%.
+  test("AS SFO-HNL: maps to hawaiian_metal subfleet, not mainline", () => {
     const r = find("SFO", "HNL", "AS");
-    if (r) {
-      expect(r.kind).not.toBe("observed_mixed");
-      expect(r.probability).toBeLessThan(0.1);
+    if (r && r.kind !== "no_data" && r.kind !== "inferred_absent") {
+      // hawaiian_metal observed: AS800-899 should resolve to ≥90%
+      const ha = r.breakdown.find((b) => b.key === "hawaiian_metal");
+      expect(ha).toBeDefined();
+      expect(ha!.pct).toBeGreaterThanOrEqual(0.9);
     }
   });
 
@@ -182,12 +183,25 @@ describe("compareRoute", () => {
     expect(find("OGG", "KOA", "HA")?.reason).toMatch(/717/);
   });
 
-  test("inferred_absent rows sort after confident rows", () => {
-    const results = compareRoute(getReader, "SEA", "SFO");
-    let seenInferred = false;
-    for (const r of results) {
-      if (r.kind === "inferred_absent") seenInferred = true;
-      else expect(seenInferred).toBe(false);
+  test("rows sort: confident → inferred → no_data", () => {
+    const rank = {
+      type_rule: 2,
+      observed_single: 2,
+      observed_mixed: 2,
+      inferred_absent: 1,
+      no_data: 0,
+    };
+    for (const [o, d] of [
+      ["SEA", "SFO"],
+      ["SFO", "HNL"],
+      ["SFO", "AUS"],
+    ]) {
+      let prev = 99;
+      for (const r of compareRoute(getReader, o, d)) {
+        const cur = rank[r.kind];
+        expect(cur).toBeLessThanOrEqual(prev);
+        prev = cur;
+      }
     }
   });
 
@@ -208,11 +222,14 @@ describe("compareRoute", () => {
     for (const cfg of publicAirlines()) {
       if (cfg.routeTypeRule) continue;
       const pen = getSubfleetPenetration(db, cfg.code);
-      ceiling.set(cfg.code, Math.max(0, ...[...pen.values()].map((p) => p.pct)));
+      // Same ceiling the model uses: max over per-subfleet penetration,
+      // including any penetrationOverride (e.g. AS800-899 on HA metal).
+      const pcts = cfg.subfleets.map((sf) => sf.penetrationOverride ?? pen.get(sf.key)?.pct ?? 0);
+      ceiling.set(cfg.code, Math.max(0, ...pcts));
     }
     for (const [o, d] of ROUTES) {
       for (const r of compareRoute(getReader, o, d)) {
-        if (r.kind === "type_rule") continue;
+        if (r.kind === "type_rule" || r.kind === "no_data") continue;
         const ceil = ceiling.get(r.airline);
         expect(ceil).toBeDefined();
         expect(r.hi ?? r.probability).toBeLessThanOrEqual(ceil! + 1e-6);
@@ -222,6 +239,40 @@ describe("compareRoute", () => {
 
   test("nonexistent airports → empty", () => {
     expect(compareRoute(getReader, "ZZZ", "YYY")).toEqual([]);
+  });
+
+  // OO/SKW prefix collision regression: SkyWest (OO) operates for Alaska,
+  // Delta, and American — not just United. The flight_routes glob must NOT
+  // attribute OO-prefixed rows to UA Express. Pre-fix, BOI-SEA showed UA at
+  // 65% (phantom — UA doesn't fly it).
+  test.each([
+    ["SEA", "PDX"],
+    ["BOI", "SEA"],
+  ])("OO collision guard: UA on %s-%s is not observed_*", (o, d) => {
+    const r = find(o, d, "UA");
+    expect(["no_data", "inferred_absent", undefined]).toContain(r?.kind);
+  });
+
+  // SEA-ANC overstatement regression: AS flies it on ~10x daily mainline 737
+  // (0% Starlink, structurally invisible) plus ~1x Horizon E175 (100%, the
+  // only observable). Pre-fix, observed_single said "AS 100%". Now: when ONLY
+  // the high-pen subfleet is seen and a <50% sibling exists, render a range.
+  test("low-pen-sibling guard: never observed_single ≥50% when a <50% sibling exists", () => {
+    for (const [o, d] of [
+      ["SEA", "ANC"],
+      ["DEN", "SAN"],
+      ["SEA", "LAX"],
+      ["SFO", "HNL"],
+      ["PDX", "SFO"],
+    ]) {
+      for (const code of ["AS", "UA"]) {
+        const r = find(o, d, code);
+        if (r?.kind === "observed_single") {
+          // Single is only allowed for the LOW-pen subfleet (no overstatement risk).
+          expect(r.probability).toBeLessThan(0.5);
+        }
+      }
+    }
   });
 
   test("symmetry: every non-routeTypeRule carrier appears on every real route", () => {
