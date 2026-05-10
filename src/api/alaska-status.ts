@@ -15,6 +15,7 @@
  * shipped here so the client and the seed-hawaiian type map land together.
  */
 
+import { ALASKA_E175_RE } from "../airlines/registry";
 import { COUNTERS, DISTRIBUTIONS, metrics, normalizeAirlineTag } from "../observability";
 import { error as logError, warn } from "../utils/logger";
 
@@ -113,17 +114,19 @@ export async function fetchAlaskaFlightStatus(
 }
 
 export type HawaiianWifi = "Starlink" | "None" | "pending";
+export type AlaskaWifi = "Starlink" | null;
 
 /**
- * Alaska's rollout is per-tail, not per-type (E175 first Dec 2025, then 737s,
- * ~24 done by Jan 2026, target end-2027). The `__data.json` endpoint has NO
- * wifi field — Alaska's page still hardcodes `isHawaiian ? 'Starlink' : 'Wi-Fi'`
- * client-side. So aircraft type alone cannot determine Starlink status for AS.
- * Returns null until Alaska exposes a real per-tail signal; the verifier
- * records tail/type confirmation only and we monitor the JS bundle for change.
+ * Alaska's regional E175 fleet (Horizon + SkyWest-for-Alaska, ~90 jets) is
+ * fully Starlink-equipped per the Q1 2026 earnings call (April 21, 2026).
+ * Mainline (737/787) is per-tail mid-rollout and alaskaair.com exposes no
+ * wifi field, so there is no oracle: returns null (unknown), not 'None'.
+ * Uses the same E175 matcher as AS classifyFleet() so verdict and subfleet
+ * can never disagree.
  */
-export function alaskaTypeToStarlink(_equipmentType: string | null | undefined): null {
-  return null;
+export function alaskaTypeToStarlink(equipmentType: string | null | undefined): AlaskaWifi {
+  if (!equipmentType) return null;
+  return ALASKA_E175_RE.test(equipmentType) ? "Starlink" : null;
 }
 
 /**
