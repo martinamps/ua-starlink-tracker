@@ -18,7 +18,12 @@
  */
 
 import { Database } from "bun:sqlite";
-import { type AirlineConfig, airlineHomeUrl, publicAirlines } from "../airlines/registry";
+import {
+  type AirlineConfig,
+  airlineHomeUrl,
+  publicAirlines,
+  siteForAirline,
+} from "../airlines/registry";
 import type { VerificationObservation as Observation } from "../database/database";
 import { type Scope, type ScopedReader, createReaderFactory } from "../database/reader";
 import { ensureUAPrefix, inferFleet } from "../utils/constants";
@@ -525,8 +530,10 @@ export interface SubfleetBreakdown {
 export interface RouteCompareResult {
   airline: string;
   name: string;
+  shortName: string;
   accentColor: string;
   canonicalHost: string;
+  routePlannerBase: string | null;
   kind: RouteCompareKind;
   /** Point value (or midpoint of [lo,hi] for observed_mixed) — sort key only. */
   probability: number;
@@ -540,11 +547,18 @@ const fmt = (n: number) => n.toLocaleString("en-US");
 const shortLabel = (s: string) => s.replace(/\s*Fleet$/i, "").trim();
 
 function brand(cfg: AirlineConfig) {
+  const site = siteForAirline(cfg.code, true);
   return {
     airline: cfg.code,
     name: cfg.name,
+    shortName: cfg.shortName,
     accentColor: cfg.brand.accentColor,
     canonicalHost: new URL(airlineHomeUrl(cfg.code)).host,
+    // Path-style URL the per-airline route planner reads; null when that
+    // tenant doesn't have a planner page (the chip hides).
+    routePlannerBase: site?.features.routePlannerPage
+      ? `https://${site.canonicalHost}/route-planner`
+      : null,
   };
 }
 
