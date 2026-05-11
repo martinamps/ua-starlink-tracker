@@ -23,6 +23,7 @@ import {
   AIRLINES,
   type AirlineConfig,
   HOST_REDIRECTS,
+  HUB_BRAND,
   type SiteConfig,
   brandMetadata,
   publicAirlines,
@@ -202,20 +203,6 @@ function siteManifest(site: SiteConfig): Response {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const STATIC_FILES = [
-  { path: "/favicon.ico", filename: "favicon.ico", contentType: "image/x-icon" },
-  { path: "/apple-touch-icon.png", filename: "apple-touch-icon.png", contentType: "image/png" },
-  {
-    path: "/android-chrome-192x192.png",
-    filename: "android-chrome-192x192.png",
-    contentType: "image/png",
-  },
-  {
-    path: "/android-chrome-512x512.png",
-    filename: "android-chrome-512x512.png",
-    contentType: "image/png",
-  },
-  { path: "/favicon-16x16.png", filename: "favicon-16x16.png", contentType: "image/png" },
-  { path: "/favicon-32x32.png", filename: "favicon-32x32.png", contentType: "image/png" },
   // OG cards: regenerated daily from /api/fleet-summary by scripts/generate-og-images.ts.
   { path: "/static/social-image.webp", filename: "social-image.webp", contentType: "image/webp" },
   {
@@ -251,6 +238,40 @@ for (const f of STATIC_FILES) {
       })
     );
   }
+}
+
+// Per-tenant favicons. Standard discovery paths (/favicon.ico,
+// /apple-touch-icon.png, …) resolve via the request's tenant so each site
+// gets its airline-colored icon without per-tenant URLs in the markup.
+const FAVICON_ROUTES: Record<string, { suffix: string; type: string }> = {
+  "/favicon.svg": { suffix: ".svg", type: "image/svg+xml" },
+  "/favicon.ico": { suffix: "-32.png", type: "image/png" },
+  "/favicon-16x16.png": { suffix: "-16.png", type: "image/png" },
+  "/favicon-32x32.png": { suffix: "-32.png", type: "image/png" },
+  "/apple-touch-icon.png": { suffix: "-180.png", type: "image/png" },
+  "/android-chrome-192x192.png": { suffix: "-192.png", type: "image/png" },
+  "/android-chrome-512x512.png": { suffix: "-512.png", type: "image/png" },
+};
+const faviconCache = new Map<string, Response>();
+function serveFavicon(tenantCode: string, urlPath: string): Response | null {
+  const route = FAVICON_ROUTES[urlPath];
+  if (!route) return null;
+  const code = (tenantCode === "ALL" ? "hub" : tenantCode).toLowerCase();
+  const key = `${code}${route.suffix}`;
+  let r = faviconCache.get(key);
+  if (!r) {
+    const fp = path.join(STATIC_DIR, "favicons", key);
+    if (!fs.existsSync(fp)) return null;
+    r = new Response(Bun.file(fp), {
+      headers: {
+        "Content-Type": route.type,
+        "Cache-Control": "public, max-age=86400",
+        Vary: "Host",
+      },
+    });
+    faviconCache.set(key, r);
+  }
+  return r.clone();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1406,6 +1427,37 @@ export function createApp(db: Database): App {
       return Response.redirect(`${redirectTo}${url.pathname}${url.search}`, 301);
     }
     const site = resolveSite(reqHost);
+
+    if (FAVICON_ROUTES[url.pathname]) {
+      const fav = serveFavicon(site?.scope ?? "ALL", url.pathname);
+      if (fav) return fav;
+    }
+
+    if (url.pathname === "/site.webmanifest") {
+      const brand = site?.brand ?? HUB_BRAND;
+      const cfg = site?.scope && site.scope !== "ALL" ? AIRLINES[site.scope] : undefined;
+      return Response.json(
+        {
+          name: brand.title,
+          short_name: cfg ? `${cfg.shortName} Starlink` : "Starlink Tracker",
+          icons: [
+            { src: "/android-chrome-192x192.png", sizes: "192x192", type: "image/png" },
+            { src: "/android-chrome-512x512.png", sizes: "512x512", type: "image/png" },
+          ],
+          theme_color: brand.faviconAccent ?? brand.accentColor,
+          background_color: "#0a0f1a",
+          display: "standalone",
+        },
+        {
+          headers: {
+            "Content-Type": "application/manifest+json",
+            "Cache-Control": "public, max-age=86400",
+            Vary: "Host",
+          },
+        }
+      );
+    }
+
     if (site === null) {
       return new Response("Misdirected Request", {
         status: 421,

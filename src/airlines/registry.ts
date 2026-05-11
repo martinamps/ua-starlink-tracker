@@ -36,7 +36,9 @@ export interface PageBrand {
   keywords: string;
   accentColor: string;
   accentColorDim: string;
-  faviconPath: string;
+  /** Brand color tuned for the favicon's glowing arc on a dark tile —
+   * defaults to accentColor when omitted. */
+  faviconAccent?: string;
   /** og:image / twitter:image path. Defaults to shared /static/social-image.webp until per-airline assets exist. */
   socialImagePath?: string;
   analyticsDomain: string;
@@ -193,7 +195,7 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
       keywords: "united starlink tracker, united starlink wifi",
       accentColor: "#0ea5e9",
       accentColorDim: "#0284c7",
-      faviconPath: "/favicon.ico",
+      faviconAccent: "#1d70c9", // United "Pacific Blue" — closer to brand than the site's sky-500
       analyticsDomain: "unitedstarlinktracker.com",
       pressReleaseUrl: "https://www.united.com/en/us/newsroom/announcements/cision-125370",
     },
@@ -243,7 +245,7 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
         "hawaiian airlines starlink, hawaiian airlines wifi, does hawaiian have wifi, hawaiian a330 starlink, hawaiian a321neo wifi, hawaiian 717 wifi, hawaiian interisland wifi, free wifi hawaiian airlines",
       accentColor: "#413691",
       accentColorDim: "#6b5fb3",
-      faviconPath: "/favicon.ico",
+      faviconAccent: "#9d4edd", // Pualani purple, lifted to glow on dark
       analyticsDomain: "hawaiianstarlinktracker.com",
       pressReleaseUrl:
         "https://newsroom.hawaiianairlines.com/releases/hawaiian-airlines-launches-fast-and-free-starlink-internet",
@@ -321,7 +323,7 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
         "alaska airlines starlink, alaska starlink tracker, alaska wifi, 737 MAX starlink, E175 starlink, check alaska flight starlink",
       accentColor: "#01426a",
       accentColorDim: "#2b6a8f",
-      faviconPath: "/favicon.ico",
+      faviconAccent: "#00b2e3", // Alaska secondary brand blue — primary #01426a is too dark to glow
       analyticsDomain: "alaskastarlinktracker.com",
       pressReleaseUrl:
         "https://news.alaskaair.com/company/alaska-airlines-and-hawaiian-airlines-to-offer-free-starlink-wi-fi/",
@@ -363,7 +365,7 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
         "qatar airways starlink, qatar starlink tracker, qatar wifi, B777 starlink, A350 starlink, B787 starlink, check qatar flight starlink, qr wifi",
       accentColor: "#5c0632",
       accentColorDim: "#8a2851",
-      faviconPath: "/favicon.ico",
+      faviconAccent: "#a3204e", // Qatar oryx burgundy, lifted
       analyticsDomain: "qatarstarlinktracker.com",
       pressReleaseUrl:
         "https://www.qatarairways.com/press-releases/en-WW/259315-qatar-airways-launches-world-s-first-starlink-equipped-boeing-787-and-completes-airbus-a350-starlink-rollout-connecting-over-11-millio/",
@@ -379,7 +381,7 @@ export function publicAirlines(): AirlineConfig[] {
   return enabledAirlines().filter((a) => a.publicInHub);
 }
 
-const HUB_BRAND: PageBrand = {
+export const HUB_BRAND: PageBrand = {
   title: "Airline Starlink Tracker",
   tagline: "Which airlines and flights have Starlink WiFi — by tail number",
   siteTitle: "Airline Starlink Tracker — Which Flights Have Starlink WiFi?",
@@ -392,7 +394,6 @@ const HUB_BRAND: PageBrand = {
     "which airlines have starlink, starlink wifi airlines, does my flight have starlink, in-flight starlink wifi, united starlink, hawaiian starlink, alaska airlines starlink, starlink airline tracker, free airplane wifi",
   accentColor: "#0ea5e9",
   accentColorDim: "#0284c7",
-  faviconPath: "/favicon.ico",
   analyticsDomain: "airlinestarlinktracker.com",
   socialImagePath: "/static/social-image-hub.webp",
 };
@@ -524,7 +525,6 @@ export function brandMetadata(brand: PageBrand) {
     siteName: brand.title,
     accentColor: brand.accentColor,
     accentColorDim: brand.accentColorDim,
-    faviconPath: brand.faviconPath,
     socialImagePath: brand.socialImagePath ?? "/static/social-image.webp",
   };
 }
