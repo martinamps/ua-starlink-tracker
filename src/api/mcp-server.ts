@@ -56,6 +56,10 @@ function trackMcpEvent(
   props: { method: string; tool?: string }
 ): void {
   if (!analytics?.eventApiUrl) return;
+  // Tests dispatch /mcp through createApp() with real per-tenant analytics
+  // configs; without this guard every `bun test` run (local + CI) posts live
+  // events to Plausible — including for unregistered domains.
+  if (process.env.NODE_ENV !== "production") return;
   // Forward the client's UA and IP so Plausible can do bot filtering and
   // unique-visitor counting as if this were a page view.
   const ua = req.headers.get("user-agent") || "mcp-client/unknown";
