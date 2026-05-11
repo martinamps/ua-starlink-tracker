@@ -29,6 +29,8 @@ export interface FleetStats {
   mainline: FleetMetrics;
 }
 
+export type RolloutStatus = "complete" | "phase_done" | "in_progress";
+
 export interface PerAirlineStat {
   code: string;
   name: string;
@@ -36,6 +38,9 @@ export interface PerAirlineStat {
   total: number;
   fleetTotal?: number;
   installs30d?: number;
+  status?: RolloutStatus;
+  statusLabel?: string;
+  phaseNote?: string;
   accentColor?: string;
   href?: string;
 }

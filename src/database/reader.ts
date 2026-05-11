@@ -28,9 +28,11 @@ import {
   type RouteEntryRow,
   type RouteFlightRow,
   type RouteGraphEdge,
+  type SubfleetPenetration,
   type VerificationObservation,
   type WifiConsensus,
   type WifiMismatch,
+  airlineServesAirports,
   bumpDiscoveryPriority,
   cacheFlightRoute,
   computeWifiConsensus,
@@ -49,17 +51,18 @@ import {
   getHubStats,
   getLastUpdated,
   getMeta,
+  getObservedDirectFlightNumbers,
   getPendingFleetTails,
   getQatarScheduleByFlight,
   getQatarScheduleByRoute,
   getQatarScheduleStats,
   getRecentInstalls,
-  getRouteAirlineCoverage,
   getRouteFlights,
   getRouteGraphEdges,
   getRoutesForFlightVariants,
   getStarlinkPlaneByTail,
   getStarlinkPlanes,
+  getSubfleetPenetration,
   getTotalCount,
   getUpcomingFlights,
   getVerificationObservations,
@@ -77,7 +80,7 @@ export interface ScopedReader {
   readonly airlines: readonly AirlineCode[];
   getStarlinkPlanes(): Aircraft[];
   getAirlineByTail(): Record<string, string>;
-  getRecentInstalls(limit?: number): RecentInstall[];
+  getRecentInstalls(limit?: number, perAirlineCap?: number): RecentInstall[];
   getPerAirlineStats(): PerAirlineStat[];
   getUpcomingFlights(tailNumber?: string): Flight[];
   getFleetStats(): FleetStats;
@@ -115,11 +118,13 @@ export interface ScopedReader {
   getRouteFlights(origin: string | null, destination: string | null): RouteFlightRow[];
   getRouteGraphEdges(): RouteGraphEdge[];
   getConfirmedStarlinkEdges(startOfDay: number, endOfDay: number): ConfirmedEdge[];
-  getRouteAirlineCoverage(
+  airlineServesAirports(prefixes: readonly string[], ...airports: string[]): boolean;
+  getSubfleetPenetration(): Map<string, SubfleetPenetration>;
+  getObservedDirectFlightNumbers(
+    prefixes: readonly string[],
     origin: string,
-    destination: string,
-    code: AirlineCode
-  ): { tail_number: string; sl: number }[];
+    destination: string
+  ): string[];
   getDirectRouteEdge(origin: string, destination: string): DirectRouteEdge | null;
 
   // flight_routes cache (airline-agnostic; PK carries IATA prefix)
@@ -184,6 +189,9 @@ function buildPerAirlineStats(db: Database, codes: readonly AirlineCode[]): PerA
       total: h?.total ?? getTotalCount(db, code),
       fleetTotal: h?.fleetTotal,
       installs30d: h?.installs30d,
+      status: cfg.rollout?.status,
+      statusLabel: cfg.rollout?.statusLabel,
+      phaseNote: cfg.rollout?.phaseNote,
       accentColor: cfg.brand.accentColor,
       href: airlineHomeUrl(code),
     });
@@ -197,12 +205,19 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
   const airlines = scope === "ALL" ? publicCodes() : ([scope] as const);
   // Meta keys are namespaced per-airline; ALL has no single namespace.
   const metaCode = scope === "ALL" ? "UA" : scope;
+  // Route-compare methods are only meaningful per-airline; assert it.
+  const soleAirline = () => {
+    if (airlines.length !== 1)
+      throw new Error(`ScopedReader method requires a single-airline scope, got ${scope}`);
+    return airlines[0];
+  };
   const r: ScopedReader = {
     scope,
     airlines,
     getStarlinkPlanes: () => getStarlinkPlanes(db, airlines),
     getAirlineByTail: () => getAirlineByTail(db, airlines),
-    getRecentInstalls: (limit) => getRecentInstalls(db, airlines, limit),
+    getRecentInstalls: (limit, perAirlineCap) =>
+      getRecentInstalls(db, airlines, limit, perAirlineCap),
     getPerAirlineStats: () => buildPerAirlineStats(db, airlines),
     getUpcomingFlights: (t) => getUpcomingFlights(db, t, airlines),
     // FleetStats shape is UA-subfleet-specific (express/mainline); hub aggregation deferred until
@@ -237,7 +252,10 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     getRouteFlights: (o, d) => getRouteFlights(db, o, d, airlines),
     getRouteGraphEdges: () => getRouteGraphEdges(db, airlines),
     getConfirmedStarlinkEdges: (s, e) => getConfirmedStarlinkEdges(db, s, e, airlines),
-    getRouteAirlineCoverage: (o, d, code) => getRouteAirlineCoverage(db, o, d, code),
+    airlineServesAirports: (px, ...aps) => airlineServesAirports(db, soleAirline(), px, ...aps),
+    getSubfleetPenetration: () => getSubfleetPenetration(db, soleAirline()),
+    getObservedDirectFlightNumbers: (px, o, d) =>
+      getObservedDirectFlightNumbers(db, soleAirline(), px, o, d),
     getDirectRouteEdge: (o, d) => getDirectRouteEdge(db, o, d, airlines),
 
     getCachedFlightRoutes: (fn, after) => getCachedFlightRoutes(db, fn, after),

@@ -8,12 +8,19 @@
 // E175LR"), alaskaair.com ("E175"/"ERJ-175"), and 3-char IATA ("E75").
 export const ALASKA_E175_RE = /E175|ERJ.?175|EMB.?175|^E75\b/i;
 
+import type { RolloutStatus } from "../types";
+
 export type AirlineCode = string;
 
 export interface SubfleetDef {
   key: string;
   label: string;
   match: (flightNumber: string) => boolean;
+  /** Display-only flight-number-range hint for the route-compare "mixed equipment" row. */
+  flightNumberHint?: string;
+  /** Fixed Starlink rate when this subfleet flies on another carrier's metal
+   * (e.g. AS800-899 on Hawaiian A330/A321neo). */
+  penetrationOverride?: number;
 }
 
 export interface PageBrand {
@@ -90,9 +97,19 @@ export interface AirlineConfig {
   /** Per-flight wifi verification source; null = none (type-map only). */
   verifierBackend?: "united" | "alaska-json" | "qatar-fltstatus" | null;
   /** Type-deterministic route rule for airlines whose Starlink status depends only on aircraft type / route class, not per-tail observation. */
-  routeTypeRule?: (origin: string, destination: string) => { probability: number; reason: string };
+  routeTypeRule?: (
+    origin: string,
+    destination: string
+  ) => { probability: number; reason: string } | null;
   /** Canonical lowercase tag for Datadog `airline:` — preserves history (`united`, not `UA`). */
   metricTag: string;
+  /** Hub status-card config — editorial label + prose, plus a structured status
+   * discriminant so the UI doesn't parse the label string. */
+  rollout?: {
+    status: RolloutStatus;
+    statusLabel: string;
+    phaseNote: string;
+  };
   brand: PageBrand;
 }
 
@@ -130,6 +147,7 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
       {
         key: "express",
         label: "United Express Fleet",
+        flightNumberHint: "UA3000-6999",
         match: (fn) => {
           const n = flightNum(fn);
           return n >= 3000 && n <= 6999;
@@ -138,6 +156,7 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
       {
         key: "mainline",
         label: "United Mainline Fleet",
+        flightNumberHint: "UA1-2999",
         match: (fn) => {
           const n = flightNum(fn);
           return Number.isFinite(n) && !(n >= 3000 && n <= 6999);
@@ -153,6 +172,13 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
     metricTag: "united",
     minFleetSanity: 800,
     verifierBackend: "united",
+    // Whole fleet eligible — Express + mainline both in the program.
+    rollout: {
+      status: "in_progress",
+      statusLabel: "In progress",
+      phaseNote:
+        "Started with regional jets in early 2025; rolling out across United Express and mainline.",
+    },
     brand: {
       title: "United Airlines Starlink Tracker",
       tagline: "Tracking United Airlines aircraft with Starlink WiFi",
@@ -188,8 +214,18 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
     metricTag: "hawaiian",
     minFleetSanity: 30,
     verifierBackend: "alaska-json",
+    // 717 interisland fleet was never in scope (no WiFi provider) and is being retired —
+    // see HA's own press release. Denominator is the Airbus fleet only.
+    rollout: {
+      status: "complete",
+      statusLabel: "Complete",
+      phaseNote: "Every A330 and A321neo has Starlink. The 717 interisland jets won't get it.",
+    },
     routeTypeRule: (o, d) => {
+      // Hawaiian's network is hub-and-spoke from Hawai'i — every route touches
+      // an island airport. Routes between two mainland cities aren't HA routes.
       const HI = new Set(["HNL", "OGG", "KOA", "LIH", "ITO", "MKK", "LNY"]);
+      if (!HI.has(o) && !HI.has(d)) return null;
       return HI.has(o) && HI.has(d)
         ? { probability: 0, reason: "Interisland — Boeing 717, no WiFi" }
         : { probability: 1, reason: "All Hawaiian A330/A321neo have Starlink" };
@@ -228,17 +264,32 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
     // AS flight numbers to tails yet.
     carrierPrefixes: ["ASA", "QXE", "AS", "QX"],
     subfleets: [
+      // AS800-899 are AS-marketed flights on Hawaiian A330/A321neo metal
+      // post-merger — every one of those aircraft has Starlink. Listed first
+      // so it wins the find() over mainline.
+      {
+        key: "hawaiian_metal",
+        label: "Hawaiian-operated (A330/A321neo)",
+        flightNumberHint: "AS800-899",
+        penetrationOverride: 1,
+        match: (fn) => {
+          const n = flightNum(fn);
+          return Number.isFinite(n) && n >= 800 && n <= 899;
+        },
+      },
       {
         key: "mainline",
         label: "Mainline (737/787)",
+        flightNumberHint: "AS1-1999",
         match: (fn) => {
           const n = flightNum(fn);
-          return Number.isFinite(n) && n < 2000;
+          return Number.isFinite(n) && n < 2000 && !(n >= 800 && n <= 899);
         },
       },
       {
         key: "horizon",
         label: "Horizon (E175)",
+        flightNumberHint: "AS2000+",
         match: (fn) => {
           const n = flightNum(fn);
           return Number.isFinite(n) && n >= 2000;
@@ -251,6 +302,12 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
     metricTag: "alaska",
     minFleetSanity: 200,
     verifierBackend: "alaska-json",
+    // Phase 1 (E175 regional) complete. Update status/phaseNote when 737/787 mainline starts.
+    rollout: {
+      status: "phase_done",
+      statusLabel: "Regional fleet done",
+      phaseNote: "All 90 regional E175s have Starlink. Mainline 737s and 787s start later in 2026.",
+    },
     brand: {
       title: "Alaska Airlines Starlink Tracker",
       tagline: "Tracking Alaska Airlines aircraft with Starlink WiFi",

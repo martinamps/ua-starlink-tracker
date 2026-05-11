@@ -18,7 +18,12 @@
  */
 
 import { Database } from "bun:sqlite";
-import { airlineHomeUrl, enabledAirlines } from "../airlines/registry";
+import {
+  type AirlineConfig,
+  airlineHomeUrl,
+  publicAirlines,
+  siteForAirline,
+} from "../airlines/registry";
 import type { VerificationObservation as Observation } from "../database/database";
 import { type Scope, type ScopedReader, createReaderFactory } from "../database/reader";
 import { ensureUAPrefix, inferFleet } from "../utils/constants";
@@ -503,69 +508,241 @@ export function predictRoute(
 }
 
 // ============================================================================
-// Itinerary planning (multi-stop graph search)
+// Route comparison (per-airline subfleet penetration on a nonstop)
 // ============================================================================
 
-// Minimum leg probability to include in the graph (full-coverage or partial)
+export type RouteCompareKind =
+  | "type_rule"
+  | "observed_single"
+  | "observed_mixed"
+  | "inferred_absent"
+  | "no_data";
+
+export interface SubfleetBreakdown {
+  key: string;
+  label: string;
+  hint?: string;
+  equipped: number;
+  total: number;
+  pct: number;
+}
+
 export interface RouteCompareResult {
   airline: string;
   name: string;
-  probability: number;
-  reason: string;
-  n: number;
+  shortName: string;
   accentColor: string;
   canonicalHost: string;
+  routePlannerBase: string | null;
+  kind: RouteCompareKind;
+  /** Point value (or midpoint of [lo,hi] for observed_mixed) — sort key only. */
+  probability: number;
+  lo?: number;
+  hi?: number;
+  breakdown: SubfleetBreakdown[];
+  reason: string;
+}
+
+const fmt = (n: number) => n.toLocaleString("en-US");
+const shortLabel = (s: string) => s.replace(/\s*Fleet$/i, "").trim();
+
+function brand(cfg: AirlineConfig) {
+  const site = siteForAirline(cfg.code, true);
+  return {
+    airline: cfg.code,
+    name: cfg.name,
+    shortName: cfg.shortName,
+    accentColor: cfg.brand.accentColor,
+    canonicalHost: new URL(airlineHomeUrl(cfg.code)).host,
+    // Path-style URL the per-airline route planner reads; null when that
+    // tenant doesn't have a planner page (the chip hides).
+    routePlannerBase: site?.features.routePlannerPage
+      ? `https://${site.canonicalHost}/route-planner`
+      : null,
+  };
 }
 
 /**
- * Per-airline Starlink probability for an O-D pair. Hub-only — answers
- * "should I fly UA or HA on SFO-HNL?". Uses observed upcoming_flights when
- * available, falls back to routeTypeRule for type-deterministic airlines,
- * skips airlines that neither serve the route nor have a rule.
+ * Per-airline Starlink odds for a NONSTOP O-D pair. Hub-only.
+ *
+ * Reports the install rate across the subfleet(s) each carrier flies nonstop
+ * on this route — equipped tails ÷ all tails in that subfleet, from the full
+ * fleet roster. NOT a best-case-routing optimizer (the previous planItinerary
+ * approach returned 97% for UA SFO-AUS via OMA, which nobody books).
  */
 export function compareRoute(
-  reader: ScopedReader,
+  getReader: (code: string) => ScopedReader,
   origin: string,
   destination: string
 ): RouteCompareResult[] {
   const o = origin.toUpperCase().trim();
   const d = destination.toUpperCase().trim();
-  const results: RouteCompareResult[] = [];
-  const airlines = enabledAirlines().filter((a) => reader.airlines.includes(a.code));
+  const out: RouteCompareResult[] = [];
+  const ceilings = new Map<string, number>();
 
-  for (const cfg of airlines) {
-    const rows = reader.getRouteAirlineCoverage(o, d, cfg.code);
+  for (const cfg of publicAirlines()) {
+    const reader = getReader(cfg.code);
+    // flight_routes has no airline column, so the prefix glob would attribute
+    // shared-regional rows (OO/SKW for SkyWest, ENY/PDT etc.) to UA. flight_routes
+    // is written via ensureAirlinePrefix → marketing IATA, so iata+icao is enough.
+    const prefixes = [cfg.iata, cfg.icao];
 
-    let probability: number;
-    let reason: string;
-    let n = rows.length;
-
-    if (rows.length > 0) {
-      const sl = rows.filter((r) => r.sl).length;
-      probability = sl / rows.length;
-      reason = `${sl} of ${rows.length} scheduled flights on Starlink-equipped aircraft (next ~48h)`;
-    } else if (cfg.routeTypeRule) {
+    // ---- 1. Type-deterministic carriers (HA today) ----
+    if (cfg.routeTypeRule) {
       const rule = cfg.routeTypeRule(o, d);
-      probability = rule.probability;
-      reason = rule.reason;
-      n = 0;
-    } else {
+      if (rule && reader.airlineServesAirports(prefixes, o, d)) {
+        out.push({
+          ...brand(cfg),
+          kind: "type_rule",
+          probability: rule.probability,
+          breakdown: [],
+          reason: rule.reason,
+        });
+      } else {
+        // Symmetry: HA renders no_data on mainland-mainland instead of vanishing.
+        out.push({ ...brand(cfg), kind: "no_data", probability: -1, breakdown: [], reason: "" });
+      }
       continue;
     }
 
-    results.push({
-      airline: cfg.code,
-      name: cfg.name,
-      probability,
-      reason,
-      n,
-      accentColor: cfg.brand.accentColor,
-      canonicalHost: new URL(airlineHomeUrl(cfg.code)).host,
+    // ---- 2. Unbiased per-subfleet penetration from full roster ----
+    const pen = reader.getSubfleetPenetration();
+    if (pen.size === 0) continue;
+    const penArr: SubfleetBreakdown[] = cfg.subfleets.map((sf) => {
+      // penetrationOverride: subfleets that fly on another carrier's metal
+      // (e.g. AS800-899 on Hawaiian A330/A321neo) — the roster has those tails
+      // under the operating airline, not the marketing one.
+      const p =
+        sf.penetrationOverride != null
+          ? { equipped: 1, total: 1, pct: sf.penetrationOverride }
+          : (pen.get(sf.key) ?? { equipped: 0, total: 0, pct: 0 });
+      return {
+        key: sf.key,
+        label: sf.label,
+        hint: sf.flightNumberHint,
+        equipped: p.equipped,
+        total: p.total,
+        pct: p.pct,
+      };
     });
+    const maxPct = Math.max(...penArr.map((p) => p.pct));
+    const minSub = penArr.reduce((a, b) => (a.pct <= b.pct ? a : b));
+    ceilings.set(cfg.code, maxPct);
+
+    // ---- 3. Which subfleet(s) fly this nonstop? ----
+    const fns = reader.getObservedDirectFlightNumbers(prefixes, o, d);
+    const seen = new Set<string>();
+    for (const fn of fns) {
+      const sf = cfg.subfleets.find((s) => s.match(fn));
+      if (sf) seen.add(sf.key);
+    }
+
+    if (seen.size === 1) {
+      const sf = penArr.find((p) => seen.has(p.key))!;
+      // We can prove the high-pen subfleet flies the route, but NOT that the
+      // low-pen one doesn't (it's invisible to us). When the seen subfleet is
+      // the high one and a low-pen (<50%) sibling exists, show the honest
+      // range — otherwise SEA-ANC reads "AS 100%" when it's mostly 737s at 0%.
+      const lowSibling = penArr.find((p) => p.key !== sf.key && p.pct < 0.5);
+      if (sf.pct === maxPct && lowSibling) {
+        const bd = [sf, lowSibling].sort((a, b) => b.pct - a.pct);
+        out.push({
+          ...brand(cfg),
+          kind: "observed_mixed",
+          probability: (sf.pct + lowSibling.pct) / 2,
+          lo: lowSibling.pct,
+          hi: sf.pct,
+          breakdown: bd,
+          reason: "Depends on flight number",
+        });
+      } else {
+        out.push({
+          ...brand(cfg),
+          kind: "observed_single",
+          probability: sf.pct,
+          breakdown: [sf],
+          reason: `${shortLabel(sf.label)} on this route — ${fmt(sf.equipped)} of ${fmt(sf.total)} equipped`,
+        });
+      }
+    } else if (seen.size >= 2) {
+      // Do NOT frequency-weight by observed FN count: the observation set is
+      // Starlink-biased toward the high-penetration subfleet, so weighting
+      // would systematically overstate. Show the honest range + the rule.
+      const bd = penArr.filter((p) => seen.has(p.key)).sort((a, b) => b.pct - a.pct);
+      const lo = Math.min(...bd.map((b) => b.pct));
+      const hi = Math.max(...bd.map((b) => b.pct));
+      out.push({
+        ...brand(cfg),
+        kind: "observed_mixed",
+        probability: (lo + hi) / 2,
+        lo,
+        hi,
+        breakdown: bd,
+        reason: "Depends on flight number",
+      });
+    } else {
+      // ---- 4. Unobserved nonstop ----
+      // Gate A: airline must touch both airports (Starlink-biased; failure
+      //   mode is omission, not a wrong number — covered by footer copy).
+      // Gate B: max subfleet penetration ≥ 0.5. With ≥50% of a subfleet tracked
+      //   over ~65 days, a daily nonstop on that subfleet would have appeared
+      //   with P > 1 - 0.5^65 ≈ 1. Absence ⇒ that subfleet does not fly the route.
+      if (
+        reader.airlineServesAirports(prefixes, o, d) &&
+        maxPct >= 0.5 &&
+        // Both subfleets ≥50% would mean BOTH are ruled out by the same
+        // absence argument — i.e. the airline doesn't fly the nonstop. no_data.
+        minSub.pct < 0.5
+      ) {
+        out.push({
+          ...brand(cfg),
+          kind: "inferred_absent",
+          probability: minSub.pct,
+          breakdown: [minSub],
+          reason: `${fmt(minSub.equipped)} of ${fmt(minSub.total)} aircraft equipped`,
+        });
+      } else {
+        // Always render every public airline so the panel is symmetric — a
+        // missing carrier reads as inconsistent ("why is AS shown but UA
+        // isn't on the same route?"). no_data is honest about the gap.
+        out.push({
+          ...brand(cfg),
+          kind: "no_data",
+          probability: -1,
+          breakdown: [],
+          reason: "No route data yet",
+        });
+      }
+    }
   }
 
-  return results.sort((a, b) => b.probability - a.probability);
+  // ---- 5. Invariant guard ----
+  // No non-rule result may exceed that airline's best-equipped subfleet rate.
+  // This is the bug class we're fixing (UA SFO-AUS at 97% > 64% express ceiling).
+  for (const r of out) {
+    if (r.kind === "type_rule" || r.kind === "no_data") continue;
+    const ceil = ceilings.get(r.airline) ?? 1;
+    const top = r.hi ?? r.probability;
+    if (top > ceil + 1e-6) {
+      throw new Error(
+        `compareRoute invariant: ${r.airline} ${o}-${d} = ${top.toFixed(3)} > ceiling ${ceil.toFixed(3)}`
+      );
+    }
+  }
+
+  // Every-carrier-no_data ⇒ garbage route ⇒ empty (the panel's empty-state copy
+  // covers it). If ANY carrier has data, keep the no_data rows for symmetry.
+  if (out.every((r) => r.kind === "no_data")) return [];
+
+  // Sort: confident kinds by upper bound desc; inferred_absent then no_data last.
+  const rank = (r: RouteCompareResult) =>
+    r.kind === "no_data" ? -1 : r.kind === "inferred_absent" ? 0 : 1;
+  return out.sort((a, b) => rank(b) - rank(a) || (b.hi ?? b.probability) - (a.hi ?? a.probability));
 }
+
+// ============================================================================
+// Itinerary planning (multi-stop graph search)
+// ============================================================================
 
 const MIN_LEG_PROBABILITY = 0.3;
 

@@ -31,8 +31,23 @@ INSERT OR IGNORE INTO starlink_planes (aircraft, wifi, sheet_gid, sheet_type, Da
 
 INSERT OR IGNORE INTO upcoming_flights (tail_number, flight_number, departure_airport, arrival_airport, departure_time, arrival_time, last_updated, airline)
   VALUES ('N999HA', 'HA9999', 'HNL', 'LAX', 1774200000, 1774220000, 1774190000, 'HA'),
+         -- Establish HA's network footprint so airlineServesAirports() gates the
+         -- routeTypeRule correctly (compare-route tests need SFO + interisland).
+         ('N999HA', 'HA0011', 'HNL', 'SFO', 1774200000, 1774220000, 1774190000, 'HA'),
+         ('N999HA', 'HA0012', 'HNL', 'OGG', 1774200000, 1774206000, 1774190000, 'HA'),
+         ('N999HA', 'HA0013', 'HNL', 'KOA', 1774200000, 1774206000, 1774190000, 'HA'),
          ('N644AS', 'AS118',  'SEA', 'SAN', 1774200000, 1774215000, 1774190000, 'AS'),
-         ('A7-TST', 'QR9999', 'DOH', 'LHR', 1774200000, 1774230000, 1774190000, 'QR');
+         ('A7-TST', 'QR9999', 'DOH', 'LHR', 1774200000, 1774230000, 1774190000, 'QR'),
+         -- compareRoute fixtures: UA must touch SEA + AUS (no direct SFO-AUS so
+         -- inferred_absent fires); SEA-SFO needs both mainline and express flight
+         -- numbers; ORD-LAX needs mainline only. AS needs SFO + AUS reach.
+         ('N12345', 'UA499',  'SEA', 'SFO', 1774200000, 1774206000, 1774190000, 'UA'),
+         ('N12345', 'UA5301', 'SEA', 'SFO', 1774200000, 1774206000, 1774190000, 'UA'),
+         ('N12345', 'UA1967', 'ORD', 'LAX', 1774200000, 1774215000, 1774190000, 'UA'),
+         ('N12345', 'UA353',  'ORD', 'LAX', 1774200000, 1774215000, 1774190000, 'UA'),
+         ('N12345', 'UA4422', 'IAH', 'AUS', 1774200000, 1774203000, 1774190000, 'UA'),
+         ('N654QX', 'QX2402', 'PDX', 'SFO', 1774200000, 1774206000, 1774190000, 'AS'),
+         ('N654QX', 'QX2403', 'SAN', 'AUS', 1774200000, 1774208000, 1774190000, 'AS');
 
 -- Real HA fleet sample (subset of seed-hawaiian output) — hermetic stand-in for
 -- the live FR24 scrape so isolation tests exercise real tails without network.

@@ -5,126 +5,197 @@ import type { Aircraft, PerAirlineStat } from "../types";
 
 export type { PerAirlineStat };
 
-function fmtEta(starlink: number, fleetTotal: number, installs30d: number): string {
-  if (fleetTotal > 0 && starlink >= fleetTotal) return "Complete";
-  if (installs30d <= 0) return "—";
-  const remaining = fleetTotal - starlink;
-  const days = Math.ceil(remaining / (installs30d / 30));
-  const eta = new Date(Date.now() + days * 86400_000);
-  return `est. ${eta.toLocaleDateString("en-US", { month: "short", year: "numeric" })}`;
-}
+/**
+ * Hub status cards — one per airline, equal-height grid. % is over the FULL
+ * fleet so a viewer can read it as "odds on a random flight"; the status pill
+ * + prose explain the nuance (HA at 69% but Complete: 717s won't get it).
+ */
+const STATUS_TONE = {
+  complete: { color: "#3fb950", bg: "rgba(63,185,80,.12)" },
+  phase_done: { color: "#d4a72c", bg: "rgba(212,167,44,.12)" },
+  in_progress: { color: "#58a6ff", bg: "rgba(88,166,255,.12)" },
+} as const;
 
-export function RolloutLeaderboard({ stats }: { stats: PerAirlineStat[] }) {
+export function AirlineStatusCards({ stats }: { stats: PerAirlineStat[] }) {
   const ranked = [...stats]
-    .map((a) => ({
-      ...a,
-      pct: (a.fleetTotal ?? a.total) > 0 ? (a.starlink / (a.fleetTotal ?? a.total)) * 100 : 0,
-    }))
+    .map((a) => {
+      const fleet = a.fleetTotal ?? a.total;
+      return { ...a, fleet, pct: fleet > 0 ? (a.starlink / fleet) * 100 : 0 };
+    })
     .sort((a, b) => b.pct - a.pct);
+
+  const r = 30;
+  const c = 2 * Math.PI * r;
+
   return (
-    <div className="bg-surface border border-subtle rounded-lg p-5">
-      <div className="text-[10px] font-mono text-muted uppercase tracking-wider mb-3">
-        Rollout progress by airline
+    <section>
+      <div className="text-[10px] font-mono text-muted uppercase tracking-wider mb-2">
+        Where each rollout stands
       </div>
-      <div className="space-y-3">
-        {ranked.map((a) => (
-          <a key={a.code} href={a.href || "#"} className="block group">
-            <div className="flex items-baseline justify-between mb-1.5">
-              <div className="flex items-baseline gap-2">
-                <span
-                  className="font-mono text-xs px-1.5 py-0.5 rounded"
-                  style={{
-                    color: a.accentColor,
-                    background: `color-mix(in srgb, ${a.accentColor} 15%, transparent)`,
-                  }}
-                >
-                  {a.code}
-                </span>
-                <span className="font-display text-sm text-primary group-hover:text-accent transition-colors">
-                  {a.name}
-                </span>
-                {(a.installs30d ?? 0) > 0 && (
-                  <span className="font-mono text-[10px] text-green-400">+{a.installs30d}/30d</span>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {ranked.map((a) => {
+          const tone = STATUS_TONE[a.status ?? "in_progress"];
+          return (
+            <a
+              key={a.code}
+              href={a.href || "#"}
+              className="group relative bg-surface border border-subtle rounded-xl overflow-hidden flex flex-col hover:border-accent transition-all hover:-translate-y-0.5"
+              style={{
+                boxShadow: "inset 0 1px 0 0 rgba(255,255,255,.03)",
+              }}
+            >
+              {/* Accent top edge */}
+              <div
+                className="h-[3px] w-full"
+                style={{
+                  background: `linear-gradient(90deg, ${a.accentColor}, ${a.accentColor}40)`,
+                  boxShadow: `0 1px 8px ${a.accentColor}60`,
+                }}
+              />
+              {/* Subtle accent wash */}
+              <div
+                className="absolute inset-0 pointer-events-none opacity-[0.04]"
+                style={{
+                  background: `radial-gradient(circle at 0% 0%, ${a.accentColor}, transparent 60%)`,
+                }}
+              />
+
+              <div className="relative p-4 flex flex-col gap-3">
+                {/* Header: chip + name + status pill */}
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span
+                      className="font-mono text-xs px-1.5 py-0.5 rounded shrink-0"
+                      style={{
+                        color: a.accentColor,
+                        background: `color-mix(in srgb, ${a.accentColor} 18%, transparent)`,
+                      }}
+                    >
+                      {a.code}
+                    </span>
+                    <span className="font-display text-sm text-primary truncate group-hover:text-accent transition-colors">
+                      {a.name}
+                    </span>
+                  </div>
+                  <span
+                    className="font-mono text-[10px] uppercase tracking-wide px-2 py-1 rounded-full shrink-0"
+                    style={{ color: tone.color, background: tone.bg }}
+                  >
+                    {a.statusLabel ?? "In progress"}
+                  </span>
+                </div>
+
+                {/* Hero: ring + counts */}
+                <div className="flex items-center gap-4">
+                  <div className="relative w-[72px] h-[72px] shrink-0">
+                    <svg
+                      width="72"
+                      height="72"
+                      viewBox="0 0 72 72"
+                      className="-rotate-90"
+                      role="img"
+                      aria-label={`${a.name} ${Math.round(a.pct)}% Starlink`}
+                    >
+                      <circle cx="36" cy="36" r={r} stroke="#1d2536" strokeWidth="7" fill="none" />
+                      <circle
+                        cx="36"
+                        cy="36"
+                        r={r}
+                        stroke={a.accentColor}
+                        strokeWidth="7"
+                        fill="none"
+                        strokeLinecap="round"
+                        strokeDasharray={c}
+                        strokeDashoffset={c * (1 - Math.min(100, a.pct) / 100)}
+                        style={{ filter: `drop-shadow(0 0 5px ${a.accentColor}90)` }}
+                      />
+                    </svg>
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <span className="font-mono text-lg font-semibold text-primary">
+                        {Math.round(Math.min(100, a.pct))}
+                        <span className="text-[10px] text-muted">%</span>
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-1 min-w-0">
+                    <div className="font-mono text-2xl font-semibold text-primary leading-none">
+                      {a.starlink}
+                      <span className="text-sm text-muted font-normal"> / {a.fleet}</span>
+                    </div>
+                    <div className="font-mono text-[10px] text-muted uppercase tracking-wider">
+                      aircraft equipped
+                    </div>
+                    {(a.installs30d ?? 0) > 0 ? (
+                      <div className="font-mono text-[11px] mt-1" style={{ color: tone.color }}>
+                        +{a.installs30d} in the last 30 days
+                      </div>
+                    ) : (
+                      <div className="font-mono text-[11px] text-muted mt-1">
+                        {a.status === "complete" ? "rollout finished" : "—"}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Prose */}
+                {a.phaseNote && (
+                  <p className="text-[11.5px] text-secondary leading-snug border-t border-subtle pt-2.5 mt-auto">
+                    {a.phaseNote}
+                  </p>
                 )}
               </div>
-              <span className="font-mono text-xs text-muted">
-                {fmtEta(a.starlink, a.fleetTotal ?? a.total, a.installs30d ?? 0)}
-              </span>
-            </div>
-            <div className="flex items-center gap-3">
-              <div className="flex-1 h-2 bg-surface-elevated rounded overflow-hidden">
-                <div
-                  className="h-full transition-all"
-                  style={{
-                    width: `${Math.min(100, a.pct)}%`,
-                    background: a.accentColor,
-                    boxShadow: `0 0 8px ${a.accentColor}80`,
-                  }}
-                />
-              </div>
-              <span className="font-mono text-sm font-semibold text-primary w-12 text-right">
-                {a.pct.toFixed(0)}%
-              </span>
-              <span className="font-mono text-[10px] text-muted w-20 text-right">
-                {a.starlink} / {a.fleetTotal ?? a.total}
-              </span>
-            </div>
-          </a>
-        ))}
+            </a>
+          );
+        })}
       </div>
-    </div>
+    </section>
   );
-}
-
-function relativeBucket(dateStr: string): string {
-  const days = Math.floor((Date.now() - new Date(dateStr).getTime()) / 86400_000);
-  if (days < 7) return "This week";
-  if (days < 14) return "Last week";
-  return "Earlier";
 }
 
 export function RecentInstallsFeed({
   items,
   airlines,
 }: { items: RecentInstall[]; airlines: PerAirlineStat[] }) {
-  const cfgByCode = Object.fromEntries(airlines.map((a) => [a.code, a]));
-  const buckets = ["This week", "Last week", "Earlier"];
-  const grouped = buckets
-    .map((b) => ({ b, rows: items.filter((i) => relativeBucket(i.DateFound) === b) }))
+  // Group once per airline — the per-row airline name was 90%+ "United Airlines".
+  const grouped = airlines
+    .map((a) => ({ cfg: a, rows: items.filter((i) => i.airline === a.code) }))
     .filter((g) => g.rows.length > 0);
   return (
     <div className="bg-surface border border-subtle rounded-lg p-5">
       <div className="text-[10px] font-mono text-muted uppercase tracking-wider mb-3">
-        Latest installs
+        Recent installs
       </div>
       {grouped.length === 0 ? (
         <div className="text-xs text-muted font-mono">No recent installs</div>
       ) : (
-        grouped.map((g) => (
-          <div key={g.b} className="mb-3 last:mb-0">
-            <div className="text-[10px] font-mono text-muted mb-1.5">{g.b}</div>
-            <div className="space-y-1">
-              {g.rows.map((r) => {
-                const cfg = cfgByCode[r.airline];
-                return (
+        <>
+          {grouped.map((g) => (
+            <div key={g.cfg.code} className="mb-3 last:mb-0">
+              <div className="flex items-center gap-1.5 text-[10px] font-mono text-muted mb-1.5">
+                <span
+                  className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+                  style={{ background: g.cfg.accentColor || "#5a6a80" }}
+                />
+                {g.cfg.name}
+              </div>
+              <div className="space-y-1">
+                {g.rows.map((r) => (
                   <a
                     key={r.TailNumber}
-                    href={cfg ? airlineHomeUrl(cfg.code, { q: r.TailNumber }) : "#"}
+                    href={airlineHomeUrl(g.cfg.code, { q: r.TailNumber })}
                     className="flex items-center gap-2 px-2 py-1 rounded hover:bg-surface-elevated transition-colors group"
                   >
-                    <span
-                      className="w-1.5 h-1.5 rounded-full flex-shrink-0"
-                      style={{ background: cfg?.accentColor || "#5a6a80" }}
-                    />
                     <span className="font-mono text-xs text-primary group-hover:text-accent transition-colors w-16">
                       {r.TailNumber}
                     </span>
                     <span className="font-mono text-[10px] text-muted flex-1 truncate">
                       {r.Aircraft}
                     </span>
-                    <span className="font-mono text-[10px] text-secondary">
-                      {cfg?.name || r.airline}
-                    </span>
+                    {r.OperatedBy && (
+                      <span className="font-mono text-[10px] text-secondary truncate hidden sm:inline">
+                        {r.OperatedBy}
+                      </span>
+                    )}
                     <span className="font-mono text-[10px] text-muted w-12 text-right">
                       {new Date(r.DateFound).toLocaleDateString("en-US", {
                         month: "short",
@@ -132,11 +203,11 @@ export function RecentInstallsFeed({
                       })}
                     </span>
                   </a>
-                );
-              })}
+                ))}
+              </div>
             </div>
-          </div>
-        ))
+          ))}
+        </>
       )}
     </div>
   );
@@ -145,12 +216,13 @@ export function RecentInstallsFeed({
 /**
  * Universal flight-number check input. Renders an inert form; client-side
  * script in hub.tsx fetches /api/check-any-flight and renders the result.
+ * Compact variant — secondary action below route compare.
  */
 export function FlightCheckInput() {
   return (
-    <div className="bg-surface border border-subtle rounded-lg p-5">
-      <div className="text-[10px] font-mono text-muted uppercase tracking-wider mb-3">
-        Check any flight
+    <div className="bg-surface border border-subtle rounded-lg p-3">
+      <div className="text-[10px] font-mono text-muted uppercase tracking-wider mb-2">
+        Already booked? Check a flight
       </div>
       <form id="hub-check-flight" className="flex flex-col sm:flex-row gap-2">
         <input
@@ -173,16 +245,27 @@ export function FlightCheckInput() {
           Check
         </button>
       </form>
-      <div id="hub-check-result" className="mt-3 text-sm font-mono hidden" />
+      <div id="hub-check-result" className="mt-2 text-sm font-mono hidden" />
     </div>
   );
 }
 
+// Preset chips: pick city pairs that exercise the comparison — mainland routes
+// with UA-vs-AS overlap, plus one Hawai'i route where HA is the answer.
+const PRESET_ROUTES: { o: string; d: string }[] = [
+  { o: "SEA", d: "SFO" },
+  { o: "DEN", d: "SAN" },
+  { o: "SFO", d: "HNL" },
+];
+
 export function RouteComparePanel() {
   return (
     <div className="bg-surface border border-subtle rounded-lg p-5">
-      <div className="text-[10px] font-mono text-muted uppercase tracking-wider mb-3">
-        Compare airlines on a route
+      <div className="text-[10px] font-mono text-muted uppercase tracking-wider mb-1">
+        Starlink odds by airline
+      </div>
+      <div className="text-[10px] font-mono text-muted leading-relaxed mb-3">
+        Share of each carrier's planes on this nonstop route that have Starlink today.
       </div>
       <form id="hub-compare-route" className="flex flex-col sm:flex-row gap-2">
         <input
@@ -208,7 +291,29 @@ export function RouteComparePanel() {
           Compare
         </button>
       </form>
+      <div className="flex flex-wrap items-center gap-2 mt-2">
+        {PRESET_ROUTES.map((r) => (
+          <button
+            key={`${r.o}-${r.d}`}
+            type="button"
+            data-preset-origin={r.o}
+            data-preset-dest={r.d}
+            className="hub-route-preset font-mono text-xs px-2.5 py-1.5 bg-surface-elevated border border-subtle rounded text-secondary hover:text-accent hover:border-accent transition-colors"
+          >
+            {r.o} → {r.d}
+          </button>
+        ))}
+      </div>
       <div id="hub-compare-result" className="mt-3 hidden" />
+      <div
+        id="hub-compare-footer"
+        className="mt-3 text-[10px] font-mono text-muted leading-relaxed hidden"
+      >
+        Carrier missing? It only shows up once one of its Starlink planes has flown here.{" "}
+        <a id="hub-compare-rp" href="/route-planner" className="text-accent hover:underline">
+          Route Planner →
+        </a>
+      </div>
     </div>
   );
 }
