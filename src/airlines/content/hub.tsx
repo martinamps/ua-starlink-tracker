@@ -69,6 +69,10 @@ const HubHero = ({ stats, perAirlineStats = [], recentInstalls = [] }: HeroProps
             function fleetTip(a, b){
               return esc(b.total)+' '+esc(shorten(b.label))+' aircraft in '+esc(a.shortName||a.name)+'\\u2019s fleet \\u2014 '+esc(b.equipped)+' have Starlink';
             }
+            function tip(cls, tipText, inner){
+              if (!tipText) return '<span class="'+cls+'">'+inner+'</span>';
+              return '<span class="'+cls+' tip" tabindex="0" data-tip="'+tipText+'">'+inner+'</span>';
+            }
             function renderResult(a, O, D) {
               var color = a.accentColor || '#0ea5e9';
               var inferred = a.kind === 'inferred_absent';
@@ -83,10 +87,10 @@ const HubHero = ({ stats, perAirlineStats = [], recentInstalls = [] }: HeroProps
                 var rows = (a.breakdown||[]).map(function(b,i){
                   var br = Math.round(b.pct*100);
                   var lblTip = b.hint ? 'Flight numbers '+esc(b.hint) : '';
-                  var best = i===0 && br>=50 ? ' <span class="text-[8px] px-1 py-px rounded" title="Pick a flight in this group for the best Starlink odds" style="background:color-mix(in srgb,'+esc(color)+' 18%,transparent);color:'+esc(color)+'">best bet</span>' : '';
+                  var best = i===0 && br>=50 ? ' '+tip('text-[8px] px-1 py-px rounded no-underline','Pick a flight in this group for the best Starlink odds','<span style="background:color-mix(in srgb,'+esc(color)+' 18%,transparent);color:'+esc(color)+';padding:1px 4px;border-radius:3px">best bet</span>') : '';
                   return '<div class="mt-1.5 ml-3"><div class="flex justify-between font-mono text-[10px]">'
-                       + '<span class="text-secondary" title="'+lblTip+'">'+esc(shorten(b.label))+best+'</span>'
-                       + '<span class="text-accent" title="'+fleetTip(a,b)+'">'+esc(b.equipped)+'/'+esc(b.total)+' aircraft \\u00b7 '+br+'%</span></div>'+bar(br,color,false)+'</div>';
+                       + '<span>'+tip('text-secondary',lblTip,esc(shorten(b.label)))+best+'</span>'
+                       + tip('text-accent tip-l',fleetTip(a,b),esc(b.equipped)+'/'+esc(b.total)+' aircraft \\u00b7 '+br+'%')+'</div>'+bar(br,color,false)+'</div>';
                 }).join('');
                 return '<div class="mb-3">'+head+rows+'</div>';
               }
@@ -95,7 +99,7 @@ const HubHero = ({ stats, perAirlineStats = [], recentInstalls = [] }: HeroProps
               var pctTip = (bd0.equipped!=null) ? fleetTip(a,bd0) : '';
               var chipL = (pct < 50 && a.kind !== 'type_rule' && rp) ? pill(rp, 'try a connection', color) : '';
               return '<div class="mb-3"><div class="flex justify-between items-center font-mono text-xs"><span class="text-primary">'+esc(a.name)+chipL+'</span>'
-                   + '<span class="text-accent" title="'+pctTip+'">'+pct+'%</span></div>'
+                   + tip('text-accent tip-l',pctTip,pct+'%')+'</div>'
                    + '<div class="font-mono text-[10px] text-muted">'+esc(a.reason)+'</div>'+bar(pct,color,inferred)+'</div>';
             }
             function doCompare(origin, dest) {
