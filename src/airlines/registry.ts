@@ -140,10 +140,14 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
       "PDT",
       "ACA",
       "ENY",
+      "UCA",
+      "AWI",
       "OO",
       "YX",
       "YV",
       "G7",
+      "C5",
+      "ZW",
     ],
     subfleets: [
       {

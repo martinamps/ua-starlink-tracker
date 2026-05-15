@@ -26,6 +26,7 @@ import {
   getTotalCount,
   getUpcomingFlights,
 } from "../src/database/database";
+import { pickVerifiableFlight } from "../src/scripts/fleet-discovery";
 import { computePrecision } from "../src/scripts/precision-backtest";
 import { planItinerary, predictFlight, predictRoute } from "../src/scripts/starlink-predictor";
 import { computeSurfaceContradictions } from "../src/scripts/surface-sweep";
@@ -836,12 +837,56 @@ describe("flight number utils", () => {
     expect(ensureUAPrefix("  ua671  ")).toBe("UA671");
   });
 
-  test("normalizeFlightNumber: carrier prefix → UA", () => {
-    expect(normalizeFlightNumber("SKW5882")).toBe("UA5882");
-    expect(normalizeFlightNumber("ASH4054")).toBe("UA4054");
-    expect(normalizeFlightNumber("UAL544")).toBe("UA544");
-    expect(normalizeFlightNumber("UA1234")).toBe("UA1234");
-    expect(normalizeFlightNumber("OO4680")).toBe("UA4680");
+  test.each([
+    ["SKW5882", "UA5882"],
+    ["ASH4054", "UA4054"],
+    ["UAL544", "UA544"],
+    ["UA1234", "UA1234"],
+    ["OO4680", "UA4680"],
+    ["C54287", "UA4287"],
+    ["UCA4259", "UA4259"],
+    ["AWI3625", "UA3625"],
+    ["ZW4412", "UA4412"],
+    // ATC-suffixed callsigns can't map to a marketing number — must pass through
+    // unchanged so callers can detect and skip them.
+    ["SKW578A", "SKW578A"],
+  ])("normalizeFlightNumber: %s → %s", (input, expected) => {
+    expect(normalizeFlightNumber(input)).toBe(expected);
+  });
+
+  test.each<[string, { fn: string; days: number }[], string | undefined]>([
+    [
+      "skips ATC callsign, picks next",
+      [
+        { fn: "SKW578A", days: 0.5 },
+        { fn: "UA1268", days: 1 },
+      ],
+      "UA1268",
+    ],
+    [
+      "skips >2.5d-out, picks next",
+      [
+        { fn: "UA314", days: 4 },
+        { fn: "OO4680", days: 2 },
+      ],
+      "OO4680",
+    ],
+    ["normalizes regional prefix in-window", [{ fn: "C54287", days: 1 }], "C54287"],
+    [
+      "nothing usable → undefined",
+      [
+        { fn: "SKW578A", days: 1 },
+        { fn: "UA314", days: 3 },
+      ],
+      undefined,
+    ],
+  ])("pickVerifiableFlight: %s", (_, flights, expected) => {
+    const now = 1_700_000_000;
+    const picked = pickVerifiableFlight(
+      flights.map((f) => ({ flight_number: f.fn, departure_time: now + f.days * 86400 })),
+      now
+    );
+    expect(picked?.flight_number).toBe(expected);
   });
 
   test("buildFlightNumberVariants: UA number → all carrier variants", () => {
