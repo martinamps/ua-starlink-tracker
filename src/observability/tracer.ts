@@ -68,7 +68,7 @@ if (isEnabled) {
     logInjection: true,
     profiling: false,
     runtimeMetrics: false,
-    startupLogs: true,
+    startupLogs: false,
     // Disable auto-instrumentation by default — `net`/`dns` plugins trace
     // Playwright pipe FDs (tcp.connect localhost:0 noise). Re-enable only fetch.
     plugins: false,

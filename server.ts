@@ -24,7 +24,10 @@ import { createApp } from "./src/server/app";
 import { info, error as logError } from "./src/utils/logger";
 import { fetchAllSheets } from "./src/utils/utils";
 
-process.on("unhandledRejection", (reason) => logError("Unhandled Rejection", reason));
+process.on("unhandledRejection", (reason) => {
+  const err = reason instanceof Error ? reason : new Error(String(reason));
+  logError("Unhandled Rejection", err);
+});
 process.on("uncaughtException", (err) => logError("Uncaught Exception", err));
 
 const PORT = process.env.PORT ? Number.parseInt(process.env.PORT, 10) : 3000;

@@ -210,7 +210,7 @@ export function startAlaskaVerifier(): void {
     if (!target) return;
 
     return withSpan(
-      "alaska_verifier.run",
+      "airline_verifier.run",
       async (span) => {
         span.setTag("airline", normalizeAirlineTag(airline));
         try {
