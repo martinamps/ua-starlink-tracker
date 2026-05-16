@@ -41,6 +41,8 @@ ENV LOG_DIR=/srv/ua-starlink-tracker/logs
 ENV DD_ENV=prod
 ENV DD_SERVICE=ua-starlink-tracker
 ENV DD_VERSION=${SOURCE_COMMIT}
+ENV DD_GIT_COMMIT_SHA=${SOURCE_COMMIT}
+ENV DD_GIT_REPOSITORY_URL=github.com/martinamps/ua-starlink-tracker
 ENV DD_TRACE_AGENT_HOSTNAME=host.docker.internal
 ENV DD_RUNTIME_METRICS_ENABLED=false
 

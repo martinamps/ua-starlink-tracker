@@ -1490,6 +1490,7 @@ export function createApp(db: Database): App {
       async (span) => {
         span.setTag("http.method", req.method);
         span.setTag("http.route", route);
+        span.setTag("resource.name", `${req.method} ${route}`);
         span.setTag("tenant", tenantScope(tenant));
         span.setTag("http.client_ip", clientIp(req));
         const ua = req.headers.get("user-agent");
