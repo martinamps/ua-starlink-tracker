@@ -1,6 +1,7 @@
 import "dotenv/config";
 import {
   getAllStarlinkPlanes,
+  getNextFleetTailNeedingFlights,
   initializeDatabase,
   needsFlightCheck,
   updateFlights,
@@ -127,6 +128,19 @@ let consecutiveApiFailures = 0;
 const MAX_CONSECUTIVE_FAILURES = 5;
 const CIRCUIT_BREAKER_RESET_TIME = 30 * 60 * 1000; // 30 minutes
 let circuitBreakerOpenedAt: number | null = null;
+
+// Per-tail backoff for the alaska-json fleet fallback so a stored/maintenance
+// tail with no FR24 flights doesn't pin the queue.
+const FLEET_TAIL_ATTEMPT_TTL_MS = 60 * 60 * 1000;
+const fleetTailAttempts = new Map<string, number>();
+function recentlyAttemptedFleetTails(): string[] {
+  const cutoff = Date.now() - FLEET_TAIL_ATTEMPT_TTL_MS;
+  for (const [t, at] of fleetTailAttempts) if (at < cutoff) fleetTailAttempts.delete(t);
+  return [...fleetTailAttempts.keys()];
+}
+function markFleetTailAttempted(tail: string) {
+  fleetTailAttempts.set(tail, Date.now());
+}
 
 async function processPlanesInBatches(api: FlightAPI, planes: Aircraft[], batchSize = 3) {
   let updatedCount = 0;
@@ -352,27 +366,35 @@ export function startFlightUpdater() {
 
           // Find a plane that needs updating (includes mismatches so they can be re-verified later)
           const planes = getAllStarlinkPlanes(db);
-          let planeToUpdate: Aircraft | null = null;
+          let tailToUpdate: string | null = null;
 
           for (const plane of planes) {
             if (!plane.TailNumber) continue;
             if (needsFlightCheck(db, plane.TailNumber)) {
-              planeToUpdate = plane;
+              tailToUpdate = plane.TailNumber;
               break;
             }
           }
 
+          // alaska-json airlines need upcoming_flights for verification but their unknowns
+          // aren't in starlink_planes — pick one when the primary queue is empty.
+          if (!tailToUpdate) {
+            const recent = recentlyAttemptedFleetTails();
+            tailToUpdate = getNextFleetTailNeedingFlights(db, recent);
+            if (tailToUpdate) markFleetTailAttempted(tailToUpdate);
+          }
+
           db.close();
 
-          if (!planeToUpdate) {
+          if (!tailToUpdate) {
             // No planes need updates right now
             return;
           }
 
-          span.setTag("tail_number", planeToUpdate.TailNumber);
+          span.setTag("tail_number", tailToUpdate);
 
           // Update this plane
-          const success = await updateFlightsForTailNumber(api, planeToUpdate.TailNumber);
+          const success = await updateFlightsForTailNumber(api, tailToUpdate);
 
           if (success) {
             consecutiveApiFailures = 0;

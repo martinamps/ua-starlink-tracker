@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { ensureAirlinePrefix } from "../airlines/flight-number";
-import { AIRLINES } from "../airlines/registry";
+import { AIRLINES, enabledAirlines } from "../airlines/registry";
 import {
   COUNTERS,
   metrics,
@@ -817,7 +817,13 @@ export function updateFlights(
       db.query("SELECT airline FROM starlink_planes WHERE TailNumber = ?").get(tailNumber) as
         | { airline: string }
         | undefined
-    )?.airline ?? "UA";
+    )?.airline ??
+    (
+      db.query("SELECT airline FROM united_fleet WHERE tail_number = ?").get(tailNumber) as
+        | { airline: string }
+        | undefined
+    )?.airline ??
+    "UA";
 
   const updateFlightsTransaction = db.transaction(() => {
     // Archive departed flights into departure_log before the DELETE so we
@@ -1442,6 +1448,41 @@ export function pruneCrashRows(db: Database): number {
   return result.changes;
 }
 
+/**
+ * Next united_fleet tail (alaska-json airlines) that has no future upcoming_flights row.
+ * Breaks the circular dep where getNextAlaskaVerifyTarget requires upcoming_flights but
+ * the flight-updater only populates upcoming_flights for starlink_planes tails.
+ */
+export function getNextFleetTailNeedingFlights(
+  db: Database,
+  exclude: string[] = []
+): string | null {
+  const codes = enabledAirlines()
+    .filter((a) => a.verifierBackend === "alaska-json")
+    .map((a) => a.code);
+  if (codes.length === 0) return null;
+  const now = Math.floor(Date.now() / 1000);
+  const codePh = codes.map(() => "?").join(",");
+  const exPh = exclude.length
+    ? `AND uf.tail_number NOT IN (${exclude.map(() => "?").join(",")})`
+    : "";
+  const row = db
+    .query(`
+      SELECT uf.tail_number
+      FROM united_fleet uf
+      WHERE uf.airline IN (${codePh})
+        ${exPh}
+        AND NOT EXISTS (
+          SELECT 1 FROM upcoming_flights f
+          WHERE f.tail_number = uf.tail_number AND f.departure_time > ?
+        )
+      ORDER BY uf.verified_at IS NOT NULL, uf.verified_at ASC, uf.tail_number
+      LIMIT 1
+    `)
+    .get(...codes, ...exclude, now) as { tail_number: string } | null;
+  return row?.tail_number ?? null;
+}
+
 export function getNextAlaskaVerifyTarget(
   db: Database,
   airline: "AS" | "HA"
@@ -1921,6 +1962,39 @@ export function updateVerifiedWifi(
     SET verified_wifi = ?, verified_at = ?
     WHERE TailNumber = ?
   `).run(verifiedWifi, now, tailNumber);
+}
+
+export function reconcileTypeDeterministicFleets(db: Database): number {
+  let total = 0;
+  for (const a of enabledAirlines()) {
+    if (!a.typeDeterministicWifi) continue;
+    const rows = db
+      .query(
+        "SELECT tail_number, aircraft_type, starlink_status, fleet, airline FROM united_fleet WHERE airline = ? AND aircraft_type IS NOT NULL"
+      )
+      .all(a.code) as Array<{
+      tail_number: string;
+      aircraft_type: string;
+      starlink_status: string | null;
+      fleet: string | null;
+      airline: string | null;
+    }>;
+    const update = db.query(
+      "UPDATE united_fleet SET starlink_status = ?, verified_at = ? WHERE tail_number = ? AND airline = ?"
+    );
+    const now = Math.floor(Date.now() / 1000);
+    let changed = 0;
+    for (const r of rows) {
+      const next = a.typeDeterministicWifi(r.aircraft_type);
+      if (next === null || next === r.starlink_status) continue;
+      update.run(next, now, r.tail_number, a.code);
+      emitFleetStatusChange(r, next);
+      changed++;
+    }
+    if (changed > 0) info(`Type-deterministic reconcile: ${a.code} ${changed} tails updated`);
+    total += changed;
+  }
+  return total;
 }
 
 /**

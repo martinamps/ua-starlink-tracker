@@ -7,6 +7,7 @@ import {
   initializeDatabase,
   pruneCrashRows,
   reconcileConsensus,
+  reconcileTypeDeterministicFleets,
   syncSpreadsheetToFleet,
   updateDatabase,
 } from "./src/database/database";
@@ -15,6 +16,7 @@ import { startAlaskaVerifier } from "./src/scripts/alaska-verifier";
 import { startFreshnessEmitter } from "./src/scripts/data-freshness";
 import { startFleetDiscovery } from "./src/scripts/fleet-discovery";
 import { startFleetSync } from "./src/scripts/fleet-sync";
+import { syncQatarFlyertalk } from "./src/scripts/flyertalk-qatar";
 import { computePrecision, emitPrecisionGauges } from "./src/scripts/precision-backtest";
 import { startQatarScheduleIngester } from "./src/scripts/qatar-schedule-ingester";
 import { startStarlinkVerifier } from "./src/scripts/starlink-verifier";
@@ -67,6 +69,9 @@ async function updateStarlinkData() {
           info(`Consensus reconciliation healed ${healed} tails`);
           span.setTag("consensus_healed", healed);
         }
+
+        const typeReconciled = reconcileTypeDeterministicFleets(db);
+        if (typeReconciled > 0) span.setTag("type_reconciled", typeReconciled);
 
         const precision = computePrecision(db, 14);
         emitPrecisionGauges(precision);
@@ -138,12 +143,17 @@ if (JOBS_ENABLED) {
   // ran-at heartbeat — catches "loop alive but writes nothing" silent failures.
   startFreshnessEmitter(db);
 
-  // Ship-number resolution is UA-specific (United's ship→tail Google Sheet).
+  // Daily one-shot syncs: UA ship→tail sheet + QR FlyerTalk tail confirmations.
   setTimeout(
     () => {
       syncShipNumbers().catch((e) => logError("Ship number sync failed", e));
+      syncQatarFlyertalk(db).catch((e) => logError("Qatar FlyerTalk sync failed", e));
       setInterval(
         () => syncShipNumbers().catch((e) => logError("Ship number sync failed", e)),
+        24 * 3600 * 1000
+      );
+      setInterval(
+        () => syncQatarFlyertalk(db).catch((e) => logError("Qatar FlyerTalk sync failed", e)),
         24 * 3600 * 1000
       );
     },
