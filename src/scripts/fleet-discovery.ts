@@ -44,6 +44,8 @@ const DISCOVERY_INTERVAL_MS = 30 * 1000; // 30 seconds
 const MAINTENANCE_INTERVAL_MS = 90 * 1000; // 90 seconds
 // Heartbeat interval for logging
 const HEARTBEAT_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
+// united.com flight-status only resolves flights ≤2 days out
+const MAX_VERIFIABLE_HORIZON_SEC = 2.5 * 86400;
 
 const fr24Api = new FlightRadar24API();
 
@@ -86,6 +88,19 @@ function extractFlightNumber(flightNumber: string): string {
   return normalized.replace(/^UA/, "");
 }
 
+type RawFlight = { flight_number: string; departure_time: number };
+
+/** First flight whose number normalizes to bare digits and departs within the united.com lookup horizon. */
+export function pickVerifiableFlight<T extends RawFlight>(
+  flights: T[],
+  nowSec = Date.now() / 1000
+): T | undefined {
+  const horizon = nowSec + MAX_VERIFIABLE_HORIZON_SEC;
+  return flights.find(
+    (f) => /^\d+$/.test(extractFlightNumber(f.flight_number)) && f.departure_time < horizon
+  );
+}
+
 interface FlightInfo {
   flightNumber: string;
   date: string;
@@ -116,15 +131,24 @@ async function getUpcomingFlightsForPlane(tailNumber: string): Promise<{
       return null;
     }
 
-    const firstFlight = flights[0];
-    const departureDate = new Date(firstFlight.departure_time * 1000).toISOString().split("T")[0];
+    // FR24 returns operator callsigns (SKW578A, C54287) and flights weeks out;
+    // pick the first one that united.com can actually resolve.
+    const verifiable = pickVerifiableFlight(flights);
+    if (!verifiable) {
+      info(
+        `No verifiable flight for ${tailNumber} (next: ${flights[0].flight_number} on ${new Date(flights[0].departure_time * 1000).toISOString().split("T")[0]})`
+      );
+      return null;
+    }
+
+    const departureDate = new Date(verifiable.departure_time * 1000).toISOString().split("T")[0];
 
     return {
       forVerification: {
-        flightNumber: extractFlightNumber(firstFlight.flight_number),
+        flightNumber: extractFlightNumber(verifiable.flight_number),
         date: departureDate,
-        origin: icaoToIata(firstFlight.departure_airport),
-        destination: icaoToIata(firstFlight.arrival_airport),
+        origin: icaoToIata(verifiable.departure_airport),
+        destination: icaoToIata(verifiable.arrival_airport),
       },
       allFlights: flights.map((f) => ({
         flight_number: f.flight_number,
@@ -384,10 +408,12 @@ async function verifyPlane(
           );
         }
 
-        if (result.hasStarlink) {
-          info(`${plane.tail_number} confirmed Starlink (${result.wifiProvider})`);
-        } else if (result.error) {
+        if (result.error) {
           warn(`${plane.tail_number} error: ${result.error}`);
+        } else if (tailMismatch) {
+          info(`${plane.tail_number} skipped (aircraft swap to ${resolvedTail})`);
+        } else if (result.hasStarlink) {
+          info(`${plane.tail_number} confirmed Starlink (${result.wifiProvider})`);
         } else {
           info(`${plane.tail_number} no Starlink (${result.wifiProvider || "unknown"})`);
         }
