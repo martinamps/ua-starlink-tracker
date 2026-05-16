@@ -45,7 +45,9 @@ const MAINTENANCE_INTERVAL_MS = 90 * 1000; // 90 seconds
 // Heartbeat interval for logging
 const HEARTBEAT_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
 // united.com flight-status only resolves flights ≤2 days out
-const MAX_VERIFIABLE_HORIZON_SEC = 2.5 * 86400;
+// united.com flight-status resolves today/tomorrow/day-after in *US local time*,
+// so a flight 2.2 days away by UTC seconds can still be calendar-day +3 → 404.
+const MAX_VERIFIABLE_HORIZON_SEC = 2 * 86400;
 
 const fr24Api = new FlightRadar24API();
 

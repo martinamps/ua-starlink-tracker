@@ -864,14 +864,21 @@ describe("flight number utils", () => {
       "UA1268",
     ],
     [
-      "skips >2.5d-out, picks next",
+      "skips >2d-out, picks next",
       [
         { fn: "UA314", days: 4 },
-        { fn: "OO4680", days: 2 },
+        { fn: "OO4680", days: 1.5 },
       ],
       "OO4680",
     ],
     ["normalizes regional prefix in-window", [{ fn: "C54287", days: 1 }], "C54287"],
+    [
+      // N76265 prod regression: UA2236 on calendar-day+3 was 2.2d away by UTC
+      // seconds — passed the old 2.5d horizon but united.com still 404'd.
+      "rejects 2.2d-out (calendar-day +3 in US local)",
+      [{ fn: "UA2236", days: 2.2 }],
+      undefined,
+    ],
     [
       "nothing usable → undefined",
       [
