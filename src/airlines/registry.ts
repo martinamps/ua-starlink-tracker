@@ -8,7 +8,7 @@
 // E175LR"), alaskaair.com ("E175"/"ERJ-175"), and 3-char IATA ("E75").
 export const ALASKA_E175_RE = /E175|ERJ.?175|EMB.?175|^E75\b/i;
 
-import type { RolloutStatus } from "../types";
+import type { RolloutStatus, StarlinkStatus } from "../types";
 
 export type AirlineCode = string;
 
@@ -98,6 +98,9 @@ export interface AirlineConfig {
   minFleetSanity: number;
   /** Per-flight wifi verification source; null = none (type-map only). */
   verifierBackend?: "united" | "alaska-json" | "qatar-fltstatus" | null;
+  /** For airlines whose Starlink status is fully determined by aircraft type
+   * (no per-tail observation needed). null = leave as unknown (in progress). */
+  typeDeterministicWifi?: (aircraftType: string) => StarlinkStatus | null;
   /** Type-deterministic route rule for airlines whose Starlink status depends only on aircraft type / route class, not per-tail observation. */
   routeTypeRule?: (
     origin: string,
@@ -356,6 +359,7 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
     // one doesn't blow away the roster.
     minFleetSanity: 200,
     verifierBackend: "qatar-fltstatus",
+    typeDeterministicWifi: qatarTypeToStarlink,
     brand: {
       title: "Qatar Airways Starlink Tracker",
       tagline: "Tracking Qatar Airways aircraft with Starlink WiFi",
@@ -376,6 +380,17 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
     },
   },
 };
+
+/** QR rollout: 777 + A350 pax fleets 100% done (Dec 2025); 787 in progress.
+ * Freighters (777-F) and narrowbodies have no Starlink. null → leave unknown. */
+export function qatarTypeToStarlink(aircraftType: string): StarlinkStatus | null {
+  const t = aircraftType.toUpperCase();
+  if (/777-F/.test(t)) return "negative";
+  if (/777-[23]/.test(t)) return "confirmed";
+  if (/A350/.test(t)) return "confirmed";
+  if (/787/.test(t)) return null;
+  return "negative";
+}
 
 export function enabledAirlines(): AirlineConfig[] {
   return Object.values(AIRLINES).filter((a) => a.enabled);

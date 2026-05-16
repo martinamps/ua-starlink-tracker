@@ -15,6 +15,7 @@
 
 import { Database } from "bun:sqlite";
 import { beforeAll, describe, expect, test } from "bun:test";
+import { qatarTypeToStarlink } from "../src/airlines/registry";
 import { resolveTailVerdict } from "../src/api/flight-verdict";
 import { handleMcpRequest } from "../src/api/mcp-server";
 import {
@@ -1024,5 +1025,24 @@ describe("SEO meta", () => {
     expect(res.status).toBe(200);
     const text = await res.text();
     expect(text).not.toContain("{{");
+  });
+});
+
+describe("airline type maps", () => {
+  test.each([
+    ["Boeing 777-3DZ(ER)", "confirmed"],
+    ["Boeing 777-2DZ(LR)", "confirmed"],
+    ["Boeing 777-367(ER)", "confirmed"],
+    ["Airbus A350-941", "confirmed"],
+    ["Airbus A350-1041", "confirmed"],
+    ["Boeing 777-FDZ", "negative"],
+    ["Boeing 777-F", "negative"],
+    ["Boeing 787-8 Dreamliner", null],
+    ["Boeing 787-9 Dreamliner", null],
+    ["Airbus A320-232", "negative"],
+    ["Airbus A380-861", "negative"],
+    ["Boeing 737 MAX 8", "negative"],
+  ])("qatarTypeToStarlink: %s → %s", (input, expected) => {
+    expect(qatarTypeToStarlink(input)).toBe(expected);
   });
 });
