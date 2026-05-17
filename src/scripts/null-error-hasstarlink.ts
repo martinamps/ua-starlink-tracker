@@ -1,16 +1,8 @@
 /**
- * One-shot: null out has_starlink on rows where the checker errored.
- *
- * Before the checker returned hasStarlink=null on error, the redirected-to-
- * search and catch paths returned the init value `false`, so error rows landed
- * as has_starlink=0. computeWifiConsensus already filters error IS NULL, but
- * db-status, getVerificationObservations, and getVerificationStats read
- * has_starlink directly and miscount these as real "no Starlink" observations.
- *
- * Prod check (2026-05-17): 1,728 such rows, all wifi_provider=NULL — no real
- * observation lost.
- *
- * Run with: bun run src/scripts/null-error-hasstarlink.ts
+ * One-shot: null out has_starlink on rows where the checker errored. Before
+ * hasStarlink defaulted to null, error paths leaked the init `false` → 0,
+ * miscounted by readers that don't gate on `error IS NULL`.
+ * Run: bun run src/scripts/null-error-hasstarlink.ts
  */
 import { Database } from "bun:sqlite";
 import { DB_PATH } from "../utils/constants";
