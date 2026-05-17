@@ -1316,6 +1316,16 @@ export function getFleetEntryByTail(
   } | null;
 }
 
+export function getStarlinkTailsByCheckAge(db: Database): string[] {
+  return (
+    db
+      .query(
+        "SELECT TailNumber FROM starlink_planes WHERE TailNumber IS NOT NULL ORDER BY last_flight_check ASC"
+      )
+      .all() as { TailNumber: string }[]
+  ).map((r) => r.TailNumber);
+}
+
 export function updateLastFlightCheck(db: Database, tailNumber: string, success = true) {
   const now = Math.floor(Date.now() / 1000);
   if (success) {
