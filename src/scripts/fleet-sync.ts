@@ -6,6 +6,7 @@
 import { AIRLINES, type AirlineConfig, enabledAirlines } from "../airlines/registry";
 import {
   initializeDatabase,
+  refreshFleetMeta,
   syncSpreadsheetToFleet,
   upsertFleetAircraft,
 } from "../database/database";
@@ -140,6 +141,10 @@ export async function syncFleetFromFR24(
 
         result.total = allAircraft.length;
         result.success = true;
+
+        // UA meta totals come from the spreadsheet scrape; for everyone else
+        // FR24 is the roster of record, so refresh meta here or it goes stale.
+        if (cfg.code !== "UA") refreshFleetMeta(db, cfg.code);
 
         span.setTag("planes.new", result.new);
         span.setTag("planes.updated", result.updated);

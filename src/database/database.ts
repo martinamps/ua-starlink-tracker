@@ -601,6 +601,51 @@ export function setMeta(db: Database, key: string, value: string | number, airli
   );
 }
 
+/**
+ * Recompute meta totals + lastUpdated for an airline from united_fleet rows.
+ * UA's meta is owned by the hourly spreadsheet scrape (updateDatabase) and QR's
+ * lastUpdated by the schedule ingester; for HA/AS this is the only periodic
+ * writer — without it their meta freezes at seed time.
+ */
+export function refreshFleetMeta(db: Database, airline: string): void {
+  const rows = db
+    .query(`
+      SELECT fleet,
+             COUNT(*) AS total,
+             SUM(CASE WHEN starlink_status = 'confirmed' THEN 1 ELSE 0 END) AS confirmed
+      FROM united_fleet
+      WHERE airline = ?
+      GROUP BY fleet
+    `)
+    .all(airline) as Array<{ fleet: string; total: number; confirmed: number }>;
+
+  let mainlineTotal = 0;
+  let mainlineStarlink = 0;
+  let expressTotal = 0;
+  let expressStarlink = 0;
+  for (const r of rows) {
+    if (r.fleet === "mainline") {
+      mainlineTotal += r.total;
+      mainlineStarlink += r.confirmed;
+    } else {
+      expressTotal += r.total;
+      expressStarlink += r.confirmed;
+    }
+  }
+  const total = mainlineTotal + expressTotal;
+  if (total === 0) return;
+  const pct = (n: number, d: number) => (d > 0 ? ((n / d) * 100).toFixed(2) : "0.00");
+
+  setMeta(db, "totalAircraftCount", total, airline);
+  setMeta(db, "mainlineTotal", mainlineTotal, airline);
+  setMeta(db, "mainlineStarlink", mainlineStarlink, airline);
+  setMeta(db, "mainlinePercentage", pct(mainlineStarlink, mainlineTotal), airline);
+  setMeta(db, "expressTotal", expressTotal, airline);
+  setMeta(db, "expressStarlink", expressStarlink, airline);
+  setMeta(db, "expressPercentage", pct(expressStarlink, expressTotal), airline);
+  setMeta(db, "lastUpdated", new Date().toISOString(), airline);
+}
+
 export function getTotalCount(db: Database, airline = "UA"): number {
   const v = getMeta(db, "totalAircraftCount", airline);
   return v ? Number.parseInt(v, 10) : 0;

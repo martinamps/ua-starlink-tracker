@@ -17,7 +17,11 @@
 import { Database } from "bun:sqlite";
 import { AIRLINES } from "../airlines/registry";
 import type { AlaskaWifi } from "../api/alaska-status";
-import { addDiscoveredStarlinkPlane, setMeta, upsertFleetAircraft } from "../database/database";
+import {
+  addDiscoveredStarlinkPlane,
+  refreshFleetMeta,
+  upsertFleetAircraft,
+} from "../database/database";
 import { DB_PATH } from "../utils/constants";
 import { info } from "../utils/logger";
 import { launchFR24Browser, scrapeFlightRadar24Fleet } from "./flightradar24-scraper";
@@ -141,29 +145,13 @@ function apply(db: Database, rows: SeedRow[]) {
   });
   tx();
 
-  const total = rows.length;
-  const horizonRows = rows.filter((r) => r.subfleet === "horizon");
-  const mainlineRows = rows.filter((r) => r.subfleet === "mainline");
-  const expressTotal = horizonRows.length;
-  const expressStarlink = horizonRows.filter((r) => r.verdict === "Starlink").length;
-  const mainlineTotal = mainlineRows.length;
+  refreshFleetMeta(db, "AS");
 
-  setMeta(db, "totalAircraftCount", total, "AS");
-  setMeta(db, "expressTotal", expressTotal, "AS");
-  setMeta(db, "expressStarlink", expressStarlink, "AS");
-  setMeta(db, "expressPercentage", percent(expressStarlink, expressTotal), "AS");
-  setMeta(db, "mainlineTotal", mainlineTotal, "AS");
-  setMeta(db, "mainlineStarlink", 0, "AS");
-  setMeta(db, "mainlinePercentage", "0.00", "AS");
-  setMeta(db, "lastUpdated", new Date().toISOString(), "AS");
-
+  const horizon = rows.filter((r) => r.subfleet === "horizon").length;
+  const mainline = rows.filter((r) => r.subfleet === "mainline").length;
   info(
-    `Applied ${total} AS tails: ${expressStarlink} regional E175 → confirmed, ${mainlineTotal} mainline → unknown`
+    `Applied ${rows.length} AS tails: ${horizon} regional E175 → confirmed, ${mainline} mainline → unknown`
   );
-}
-
-function percent(n: number, d: number): string {
-  return d > 0 ? ((n / d) * 100).toFixed(2) : "0.00";
 }
 
 if (import.meta.main) {
