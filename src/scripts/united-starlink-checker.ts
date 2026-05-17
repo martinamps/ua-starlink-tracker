@@ -3,6 +3,7 @@ import path from "node:path";
 import type { Browser, Page } from "playwright";
 import { chromium } from "playwright-extra";
 import StealthPlugin from "puppeteer-extra-plugin-stealth";
+import { BROWSER_USER_AGENT } from "../utils/constants";
 import { LOG_DIR, info, warn } from "../utils/logger";
 
 // Add stealth plugin to avoid detection
@@ -100,8 +101,7 @@ export async function checkStarlinkStatus(
 
     // Create context with realistic settings
     const context = await browser.newContext({
-      userAgent:
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      userAgent: BROWSER_USER_AGENT,
       viewport: { width: 1920, height: 1080 },
       locale: "en-US",
       timezoneId: "America/Chicago",

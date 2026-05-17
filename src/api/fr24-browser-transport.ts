@@ -4,6 +4,7 @@
 
 import type { Browser, Page } from "playwright";
 import { COUNTERS, metrics } from "../observability";
+import { BROWSER_USER_AGENT } from "../utils/constants";
 import { error, info, warn } from "../utils/logger";
 
 type ChromiumLauncher = typeof import("playwright-extra")["chromium"];
@@ -18,9 +19,6 @@ async function getChromium(): Promise<ChromiumLauncher> {
   }
   return chromiumLauncher;
 }
-
-const FR24_USER_AGENT =
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
 // Bootstrap to a same-origin URL so subsequent fetch() calls are same-origin —
 // no CORS dependency, plausible Referer. Cheap (~1KB) since the tail is fake.
@@ -84,7 +82,7 @@ async function launch(): Promise<Page> {
     });
 
     const ctx = await browser.newContext({
-      userAgent: FR24_USER_AGENT,
+      userAgent: BROWSER_USER_AGENT,
       locale: "en-US",
       viewport: { width: 1280, height: 720 },
     });
