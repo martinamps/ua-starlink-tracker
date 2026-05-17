@@ -475,7 +475,8 @@ export function updateDatabase(
     setMeta(db, "totalAircraftCount", totalAircraftCount, airline);
     setMeta(db, "lastUpdated", new Date().toISOString(), airline);
 
-    // Store fleet statistics
+    // Raw sheet tallies (pre-dedup, pre-verification). Display/API counts come
+    // from getStarlinkPlanes()/getFleetStats() — these meta keys are diagnostic.
     for (const [fleetType, stats] of Object.entries(fleetStats)) {
       for (const [metric, value] of Object.entries(stats)) {
         const key = `${fleetType}${metric.charAt(0).toUpperCase() + metric.slice(1)}`;
@@ -751,10 +752,9 @@ export function getFleetStats(db: Database, airline = "UA"): FleetStats {
   const expressTotal = getMetaValue(db, "expressTotal", 0, airline);
   const mainlineTotal = getMetaValue(db, "mainlineTotal", 0, airline);
 
-  // united_fleet.starlink_status is the consensus-driven truth — same source
-  // as the Datadog metric. Unverified = sheet claims Starlink but crawler
-  // hasn't confirmed: either consensus hasn't settled (insufficient obs,
-  // mid-retrofit, grounded) or consensus disagrees (sheet stale).
+  // `starlink` is the per-fleet slice of getStarlinkPlanes() so the hero rings
+  // satisfy express + mainline = headline. The united_fleet JOIN only annotates
+  // how many of those rows still lack a 'confirmed' consensus (unverified).
   const q = withAirline(
     `SELECT
        sp.fleet,
@@ -786,19 +786,21 @@ export function getFleetStats(db: Database, airline = "UA"): FleetStats {
       }
     );
   const mainline = rows.find((r) => r.fleet === "mainline") ?? { confirmed: 0, unverified: 0 };
+  const expressStarlink = express.confirmed + express.unverified;
+  const mainlineStarlink = mainline.confirmed + mainline.unverified;
 
   return {
     express: {
       total: expressTotal,
-      starlink: express.confirmed,
+      starlink: expressStarlink,
       unverified: express.unverified,
-      percentage: expressTotal > 0 ? (express.confirmed / expressTotal) * 100 : 0,
+      percentage: expressTotal > 0 ? (expressStarlink / expressTotal) * 100 : 0,
     },
     mainline: {
       total: mainlineTotal,
-      starlink: mainline.confirmed,
+      starlink: mainlineStarlink,
       unverified: mainline.unverified,
-      percentage: mainlineTotal > 0 ? (mainline.confirmed / mainlineTotal) * 100 : 0,
+      percentage: mainlineTotal > 0 ? (mainlineStarlink / mainlineTotal) * 100 : 0,
     },
   };
 }
