@@ -254,29 +254,21 @@ function evaluate(predictions: Array<{ pred: Prediction; actual: number }>): Eva
 // ============================================================================
 
 /**
- * Load true fleet-stat priors from the meta table (actual Starlink install rate
- * per fleet). These are updated hourly by the scraper and reflect ground truth,
- * unlike the heavily biased verification_log.
+ * Fleet-penetration priors from getFleetStats() — same definition the UI shows,
+ * so a user cross-checking a "low" prediction against the homepage % sees the
+ * same number. meta.*Starlink is the raw sheet claim (includes verified
+ * mismatches) and overcounts.
  */
 function loadFleetPriors(reader: ScopedReader): { express: number; mainline: number } {
-  const num = (key: string) => {
-    const v = reader.getMeta(key);
-    return v ? Number.parseFloat(v) : null;
-  };
-
-  const expressStarlink = num("expressStarlink");
-  const expressTotal = num("expressTotal");
-  const mainlineStarlink = num("mainlineStarlink");
-  const mainlineTotal = num("mainlineTotal");
-
+  const stats = reader.getFleetStats();
   return {
     express:
-      expressStarlink && expressTotal && expressTotal > 0
-        ? expressStarlink / expressTotal
+      stats.express.total > 0
+        ? stats.express.starlink / stats.express.total
         : DEFAULT_CONFIG.expressColdPrior,
     mainline:
-      mainlineStarlink && mainlineTotal && mainlineTotal > 0
-        ? mainlineStarlink / mainlineTotal
+      stats.mainline.total > 0
+        ? stats.mainline.starlink / stats.mainline.total
         : DEFAULT_CONFIG.mainlineColdPrior,
   };
 }

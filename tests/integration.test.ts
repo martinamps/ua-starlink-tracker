@@ -192,6 +192,10 @@ describe("/api/data contract", () => {
     expect(typeof resp.fleetStats.mainline.total).toBe("number");
     expect(typeof resp.fleetStats.mainline.starlink).toBe("number");
     expect(typeof resp.fleetStats.mainline.percentage).toBe("number");
+    // Subfleet breakdown must sum to the headline so the hero rings agree.
+    expect(resp.fleetStats.express.starlink + resp.fleetStats.mainline.starlink).toBe(
+      resp.starlinkPlanes.length
+    );
 
     // Aircraft shape
     const plane = resp.starlinkPlanes[0];
