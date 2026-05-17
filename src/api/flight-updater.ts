@@ -2,6 +2,7 @@ import "dotenv/config";
 import {
   getAllStarlinkPlanes,
   getNextFleetTailNeedingFlights,
+  getStarlinkTailsByCheckAge,
   initializeDatabase,
   needsFlightCheck,
   updateFlights,
@@ -364,14 +365,14 @@ export function startFlightUpdater() {
 
           const db = initializeDatabase();
 
-          // Find a plane that needs updating (includes mismatches so they can be re-verified later)
-          const planes = getAllStarlinkPlanes(db);
+          // Stalest-first so no airline starves; DateFound DESC left HA permanently
+          // queued behind ~470 UA/AS tails whose 1-8h cache churn saturates the trickle.
+          const tails = getStarlinkTailsByCheckAge(db);
           let tailToUpdate: string | null = null;
 
-          for (const plane of planes) {
-            if (!plane.TailNumber) continue;
-            if (needsFlightCheck(db, plane.TailNumber)) {
-              tailToUpdate = plane.TailNumber;
+          for (const tail of tails) {
+            if (needsFlightCheck(db, tail)) {
+              tailToUpdate = tail;
               break;
             }
           }
