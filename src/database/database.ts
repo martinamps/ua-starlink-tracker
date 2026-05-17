@@ -1316,9 +1316,6 @@ export function getFleetEntryByTail(
   } | null;
 }
 
-// Stalest-first ordering for the trickle updater. getAllStarlinkPlanes orders by
-// DateFound DESC which starves airlines whose tails were all added on one old date
-// (HA sat at indices 473-514 and never got picked while UA/AS churn saturated the queue).
 export function getStarlinkTailsByCheckAge(db: Database): string[] {
   return (
     db

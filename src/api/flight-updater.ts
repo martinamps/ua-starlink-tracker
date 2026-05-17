@@ -365,8 +365,7 @@ export function startFlightUpdater() {
 
           const db = initializeDatabase();
 
-          // Stalest-first so no airline starves; DateFound DESC left HA permanently
-          // queued behind ~470 UA/AS tails whose 1-8h cache churn saturates the trickle.
+          // Stalest-first so no airline starves behind the UA/AS DateFound-ordered block.
           const tails = getStarlinkTailsByCheckAge(db);
           let tailToUpdate: string | null = null;
 
