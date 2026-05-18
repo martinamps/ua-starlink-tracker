@@ -13,7 +13,11 @@
 import { Database } from "bun:sqlite";
 import { AIRLINES } from "../airlines/registry";
 import { type HawaiianWifi, hawaiianTypeToStarlink } from "../api/alaska-status";
-import { addDiscoveredStarlinkPlane, setMeta, upsertFleetAircraft } from "../database/database";
+import {
+  addDiscoveredStarlinkPlane,
+  refreshFleetMeta,
+  upsertFleetAircraft,
+} from "../database/database";
 import type { StarlinkStatus } from "../types";
 import { DB_PATH } from "../utils/constants";
 import { info } from "../utils/logger";
@@ -106,15 +110,10 @@ function apply(db: Database, rows: SeedRow[]) {
   });
   tx();
 
-  const starlinkCount = rows.filter((r) => r.verdict === "Starlink").length;
-  const total = rows.length;
-  setMeta(db, "totalAircraftCount", total, "HA");
-  setMeta(db, "mainlineStarlink", starlinkCount, "HA");
-  setMeta(db, "mainlineTotal", total, "HA");
-  setMeta(db, "mainlinePercentage", ((starlinkCount / total) * 100).toFixed(2), "HA");
-  setMeta(db, "lastUpdated", new Date().toISOString(), "HA");
+  refreshFleetMeta(db, "HA");
 
-  info(`Applied ${total} HA tails (${starlinkCount} → starlink_planes)`);
+  const starlinkCount = rows.filter((r) => r.verdict === "Starlink").length;
+  info(`Applied ${rows.length} HA tails (${starlinkCount} → starlink_planes)`);
 }
 
 if (import.meta.main) {
