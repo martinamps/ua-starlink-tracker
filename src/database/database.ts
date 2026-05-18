@@ -2100,6 +2100,17 @@ export interface WifiMismatch {
   DateFound: string;
 }
 
+// Excludes 'None': united.com flaps Starlink↔None on regionals, so 'None' isn't
+// an actionable sheet contradiction. Shared by getWifiMismatches +
+// getVerificationSummary so /api/mismatches list and summary.count can't drift.
+const WIFI_MISMATCH_PREDICATE = `verified_wifi IS NOT NULL
+       AND verified_wifi != 'None'
+       AND (
+         (wifi IN ('StrLnk', 'Starlink') AND verified_wifi != 'Starlink')
+         OR
+         (wifi NOT IN ('StrLnk', 'Starlink') AND verified_wifi = 'Starlink')
+       )`;
+
 export function getWifiMismatches(db: Database, airline?: AirlineFilter): WifiMismatch[] {
   const q = withAirline(
     `SELECT
@@ -2111,13 +2122,7 @@ export function getWifiMismatches(db: Database, airline?: AirlineFilter): WifiMi
        verified_at,
        DateFound
      FROM starlink_planes
-     WHERE verified_wifi IS NOT NULL
-       AND verified_wifi != 'None'
-       AND (
-         (wifi IN ('StrLnk', 'Starlink') AND verified_wifi != 'Starlink')
-         OR
-         (wifi NOT IN ('StrLnk', 'Starlink') AND verified_wifi = 'Starlink')
-       )`,
+     WHERE ${WIFI_MISMATCH_PREDICATE}`,
     airline
   );
   return db.query(`${q.sql} ORDER BY verified_at DESC`).all(...q.params) as WifiMismatch[];
@@ -2133,6 +2138,7 @@ export function clearMismatchVerifications(db: Database): number {
     UPDATE starlink_planes
     SET verified_wifi = NULL, verified_at = NULL
     WHERE verified_wifi IS NOT NULL
+      AND verified_wifi != 'None'
       AND wifi IN ('StrLnk', 'Starlink')
       AND verified_wifi != 'Starlink'
   `)
@@ -2181,10 +2187,7 @@ export function getVerificationSummary(
        COUNT(*) as total_planes,
        SUM(CASE WHEN verified_wifi IS NOT NULL THEN 1 ELSE 0 END) as verified_count,
        SUM(CASE WHEN verified_wifi IS NULL THEN 1 ELSE 0 END) as unverified_count,
-       SUM(CASE WHEN verified_wifi IS NOT NULL AND verified_wifi != 'None' AND (
-         (wifi IN ('StrLnk', 'Starlink') AND verified_wifi != 'Starlink')
-         OR (wifi NOT IN ('StrLnk', 'Starlink') AND verified_wifi = 'Starlink')
-       ) THEN 1 ELSE 0 END) as mismatches_count,
+       SUM(CASE WHEN ${WIFI_MISMATCH_PREDICATE} THEN 1 ELSE 0 END) as mismatches_count,
        SUM(CASE WHEN verified_wifi = 'Starlink' THEN 1 ELSE 0 END) as verified_starlink,
        SUM(CASE WHEN verified_wifi = 'None' THEN 1 ELSE 0 END) as verified_none,
        SUM(CASE WHEN verified_wifi IS NOT NULL AND verified_wifi NOT IN ('Starlink', 'None') THEN 1 ELSE 0 END) as verified_other
