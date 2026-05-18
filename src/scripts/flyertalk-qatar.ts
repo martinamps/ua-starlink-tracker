@@ -95,15 +95,14 @@ export function applyQatarFlyertalkTails(db: Database, tails: string[]): number 
   return written;
 }
 
-export async function syncQatarFlyertalk(db?: Database): Promise<number> {
-  const owns = !db;
-  const handle = db ?? initializeDatabase();
+async function syncQatarFlyertalk(): Promise<number> {
+  const db = initializeDatabase();
   try {
     const tails = await fetchQatarFlyertalkTails();
     info(`FlyerTalk QR: scraped ${tails.length} unique tails`);
-    return applyQatarFlyertalkTails(handle, tails);
+    return applyQatarFlyertalkTails(db, tails);
   } finally {
-    if (owns) handle.close();
+    db.close();
   }
 }
 

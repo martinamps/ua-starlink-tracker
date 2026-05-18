@@ -97,17 +97,16 @@ export function applyAlaskaFlyertalkTails(db: Database, tails: string[]): number
   return written;
 }
 
-export async function syncAlaskaFlyertalk(db?: Database): Promise<number> {
-  const owns = !db;
-  const handle = db ?? initializeDatabase();
+async function syncAlaskaFlyertalk(): Promise<number> {
+  const db = initializeDatabase();
   try {
     const tails = await fetchAlaskaFlyertalkTails();
     info(`FlyerTalk AS: scraped ${tails.length} installed tails from wikipost`);
-    const n = applyAlaskaFlyertalkTails(handle, tails);
-    if (n > 0) refreshFleetMeta(handle, "AS");
+    const n = applyAlaskaFlyertalkTails(db, tails);
+    if (n > 0) refreshFleetMeta(db, "AS");
     return n;
   } finally {
-    if (owns) handle.close();
+    db.close();
   }
 }
 
