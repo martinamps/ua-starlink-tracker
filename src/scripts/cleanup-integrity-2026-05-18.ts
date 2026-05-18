@@ -21,11 +21,13 @@ const allTails = db
 const bad = allTails.map((r) => r.TailNumber).filter((t) => !looksLikeValidTailNumber(t));
 if (bad.length) {
   const ph = bad.map(() => "?").join(",");
-  const r1 = db.run(`DELETE FROM starlink_planes WHERE TailNumber IN (${ph})`, bad);
-  const r2 = db.run(`DELETE FROM upcoming_flights WHERE tail_number IN (${ph})`, bad);
-  info(
-    `dropped invalid registrations ${bad.join(", ")}: ${r1.changes} planes, ${r2.changes} flights`
-  );
+  db.transaction(() => {
+    const r1 = db.run(`DELETE FROM starlink_planes WHERE TailNumber IN (${ph})`, bad);
+    const r2 = db.run(`DELETE FROM upcoming_flights WHERE tail_number IN (${ph})`, bad);
+    info(
+      `dropped invalid registrations ${bad.join(", ")}: ${r1.changes} planes, ${r2.changes} flights`
+    );
+  })();
 } else {
   info("no invalid registrations found");
 }
@@ -41,19 +43,21 @@ const haNeo = db
 
 if (haNeo.length) {
   const ph = haNeo.map(() => "?").join(",");
-  const r1 = db.run(
-    `UPDATE starlink_verification_log SET has_starlink = NULL, wifi_provider = NULL
-     WHERE source = 'alaska' AND wifi_provider = 'None' AND tail_number IN (${ph})`,
-    haNeo
-  );
-  const r2 = db.run(
-    `UPDATE united_fleet SET verified_wifi = NULL, next_check_after = 0
-     WHERE tail_number IN (${ph})`,
-    haNeo
-  );
-  info(
-    `reset ${haNeo.length} HA A321neo tails for re-verify: ${r1.changes} log rows nulled, ${r2.changes} fleet rows reset`
-  );
+  db.transaction(() => {
+    const r1 = db.run(
+      `UPDATE starlink_verification_log SET has_starlink = NULL, wifi_provider = NULL
+       WHERE source = 'alaska' AND wifi_provider = 'None' AND tail_number IN (${ph})`,
+      haNeo
+    );
+    const r2 = db.run(
+      `UPDATE united_fleet SET verified_wifi = NULL, next_check_after = 0
+       WHERE tail_number IN (${ph})`,
+      haNeo
+    );
+    info(
+      `reset ${haNeo.length} HA A321neo tails for re-verify: ${r1.changes} log rows nulled, ${r2.changes} fleet rows reset`
+    );
+  })();
 } else {
   info("no HA A321neo false-None rows found");
 }

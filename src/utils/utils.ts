@@ -181,9 +181,8 @@ export async function fetchAllSheets() {
             if (regMatch?.[1]) {
               tailNumber = regMatch[1];
             } else {
-              // Last resort - use first token, but only if it's a valid US N-number
               const candidate = aircraftStr.split(" ")[0] || "";
-              tailNumber = /^N[0-9][0-9A-Z]{1,4}$/.test(candidate) ? candidate : "";
+              tailNumber = looksLikeValidTailNumber(candidate) ? candidate : "";
             }
           }
 

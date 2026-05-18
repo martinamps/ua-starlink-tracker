@@ -882,22 +882,7 @@ export function updateFlights(
     "UA";
 
   const updateFlightsTransaction = db.transaction(() => {
-    // Archive departed flights into departure_log before the DELETE so we
-    // build a trailing 30d window. INSERT OR IGNORE-equivalent via NOT EXISTS
-    // guard against double-logging when updateFlights runs twice before a
-    // flight departs.
-    db.query(`
-      INSERT INTO departure_log (tail_number, airport, departed_at, airline)
-      SELECT tail_number, departure_airport, departure_time, airline
-      FROM upcoming_flights
-      WHERE tail_number = ? AND departure_time < ?
-        AND NOT EXISTS (
-          SELECT 1 FROM departure_log dl
-          WHERE dl.tail_number = upcoming_flights.tail_number
-            AND dl.departed_at = upcoming_flights.departure_time
-        )
-    `).run(tailNumber, now);
-
+    archivePastDepartures(db, now, tailNumber);
     db.query("DELETE FROM upcoming_flights WHERE tail_number = ?").run(tailNumber);
 
     if (flights.length > 0) {
@@ -941,19 +926,27 @@ export function updateFlights(
   }
 }
 
-// Decoupled from per-tail refresh so airlines whose tails rarely have
-// near-term flights (AS regional, QR long-haul) still archive promptly.
-export function archivePastDepartures(db: Database, now = Math.floor(Date.now() / 1000)): number {
+// Archive departed flights into departure_log before they're deleted from
+// upcoming_flights. NOT-EXISTS dedupe guards against double-logging on the
+// per-tail path; the global call (no tailNumber) lets airlines whose tails
+// rarely have near-term flights (AS regional, QR long-haul) archive promptly.
+export function archivePastDepartures(
+  db: Database,
+  now = Math.floor(Date.now() / 1000),
+  tailNumber?: string
+): number {
+  const params: (string | number)[] = [now];
+  if (tailNumber) params.push(tailNumber);
   return db.run(
     `INSERT INTO departure_log (tail_number, airport, departed_at, airline)
      SELECT tail_number, departure_airport, departure_time, airline
      FROM upcoming_flights uf
-     WHERE departure_time < ?
+     WHERE departure_time < ?${tailNumber ? " AND tail_number = ?" : ""}
        AND NOT EXISTS (
          SELECT 1 FROM departure_log dl
          WHERE dl.tail_number = uf.tail_number AND dl.departed_at = uf.departure_time
        )`,
-    [now]
+    params
   ).changes;
 }
 
@@ -2077,12 +2070,9 @@ export function reconcileTypeDeterministicFleets(db: Database): number {
           r.tail_number,
           r.aircraft_type,
           "Starlink",
-          r.airline,
-          r.fleet,
-          {
-            sheetGid: "type_deterministic",
-            airline: a.code,
-          }
+          a.name,
+          r.fleet ?? "mainline",
+          { sheetGid: "type_deterministic", airline: a.code }
         );
       }
       changed++;

@@ -4,6 +4,7 @@ import "dotenv/config";
 
 import { checkNewPlanes, startFlightUpdater } from "./src/api/flight-updater";
 import {
+  archivePastDepartures,
   initializeDatabase,
   pruneCrashRows,
   reconcileConsensus,
@@ -142,6 +143,17 @@ if (JOBS_ENABLED) {
   // Data-freshness gauges: derived from MAX(timestamp) in the DB, not a
   // ran-at heartbeat — catches "loop alive but writes nothing" silent failures.
   startFreshnessEmitter(db);
+
+  setInterval(
+    () => {
+      try {
+        archivePastDepartures(db);
+      } catch (e) {
+        logError("archivePastDepartures failed", e);
+      }
+    },
+    5 * 60 * 1000
+  );
 
   // Daily UA ship→tail sheet sync. (FlyerTalk QR/AS scrapes run via
   // residential-sync from a non-OVH IP — prod gets 403.)
