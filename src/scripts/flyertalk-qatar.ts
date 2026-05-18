@@ -64,40 +64,44 @@ export async function fetchQatarFlyertalkTails(): Promise<string[]> {
   return [...seen].sort();
 }
 
+export function applyQatarFlyertalkTails(db: Database, tails: string[]): number {
+  if (tails.length === 0) return 0;
+
+  const typeOf = db.query<{ aircraft_type: string | null }, [string]>(
+    "SELECT aircraft_type FROM united_fleet WHERE tail_number = ?"
+  );
+
+  let written = 0;
+  const tx = db.transaction((rows: string[]) => {
+    for (const tail of rows) {
+      const type = typeOf.get(tail)?.aircraft_type ?? null;
+      // Forum posts are uncurated; only confirm tails the type rule already
+      // says should be Starlink. 787s/freighters/A380s/unknown types skipped.
+      if (qatarTypeToStarlink(type ?? "") !== "confirmed") continue;
+      upsertFleetAircraft(db, tail, type, "flyertalk_qr", "mainline", "Qatar Airways", "QR", {
+        starlinkStatus: "confirmed",
+        verifiedWifi: "Starlink",
+      });
+      addDiscoveredStarlinkPlane(db, tail, type, "Starlink", "Qatar Airways", "mainline", {
+        sheetGid: "flyertalk_qr",
+        airline: "QR",
+      });
+      written++;
+    }
+  });
+  tx(tails);
+
+  info(`FlyerTalk QR sync: ${written}/${tails.length} tails written (type-gated)`);
+  return written;
+}
+
 export async function syncQatarFlyertalk(db?: Database): Promise<number> {
   const owns = !db;
   const handle = db ?? initializeDatabase();
   try {
     const tails = await fetchQatarFlyertalkTails();
     info(`FlyerTalk QR: scraped ${tails.length} unique tails`);
-    if (tails.length === 0) return 0;
-
-    const typeOf = handle.query<{ aircraft_type: string | null }, [string]>(
-      "SELECT aircraft_type FROM united_fleet WHERE tail_number = ?"
-    );
-
-    let written = 0;
-    const tx = handle.transaction((rows: string[]) => {
-      for (const tail of rows) {
-        const type = typeOf.get(tail)?.aircraft_type ?? null;
-        // Forum posts are uncurated; only confirm tails the type rule already
-        // says should be Starlink. 787s/freighters/A380s/unknown types skipped.
-        if (qatarTypeToStarlink(type ?? "") !== "confirmed") continue;
-        upsertFleetAircraft(handle, tail, type, "flyertalk_qr", "mainline", "Qatar Airways", "QR", {
-          starlinkStatus: "confirmed",
-          verifiedWifi: "Starlink",
-        });
-        addDiscoveredStarlinkPlane(handle, tail, type, "Starlink", "Qatar Airways", "mainline", {
-          sheetGid: "flyertalk_qr",
-          airline: "QR",
-        });
-        written++;
-      }
-    });
-    tx(tails);
-
-    info(`FlyerTalk QR sync: ${written}/${tails.length} tails written (type-gated)`);
-    return written;
+    return applyQatarFlyertalkTails(handle, tails);
   } finally {
     if (owns) handle.close();
   }
