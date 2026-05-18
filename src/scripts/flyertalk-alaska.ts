@@ -2,18 +2,11 @@
 /**
  * Sync Alaska mainline Starlink tails from FlyerTalk thread #2201647.
  *
- * alaskaair.com exposes no per-tail wifi field on any surface (status
- * __data.json, shopping, seat-map, our-aircraft) — verified by diffing a
- * known-Starlink E175 flight against a 737: byte-identical generic "Wi-Fi"
- * badge. The FlyerTalk wikipost is the only public per-tail oracle for the
- * 737/787 rollout (began 4/2026). Same fidelity tradeoff as flyertalk-qatar.
- *
- * Unlike QR (empty wikipost, walk all pages), this thread's wikipost is the
- * curated list and renders on page 1, so we fetch once and parse only the
- * "Starlink Installed" section. Body-post sightings are ignored — they include
- * E175s (already covered by alaskaTypeToStarlink) and unrelated sidebar tails.
- *
- * FlyerTalk 403s the prod ASN; ship via residential-sync.
+ * alaskaair.com exposes no per-tail wifi-provider field on any surface; the
+ * FlyerTalk wikipost is the only public oracle for the 737/787 rollout. Same
+ * fidelity tradeoff as flyertalk-qatar. The wikipost is the curated list and
+ * renders on page 1, so we fetch once and parse only the "Starlink Installed"
+ * section. FlyerTalk 403s the prod ASN; ship via residential-sync.
  */
 
 import type { Database } from "bun:sqlite";
@@ -23,7 +16,6 @@ import {
   refreshFleetMeta,
   upsertFleetAircraft,
 } from "../database/database";
-import { COUNTERS, metrics } from "../observability";
 import { BROWSER_USER_AGENT } from "../utils/constants";
 import { info, error as logError } from "../utils/logger";
 
@@ -41,12 +33,14 @@ const HEADERS = {
 function extractInstalled(html: string): string[] {
   const wiki = html.match(new RegExp(`id="wikipost-${THREAD_ID}"[\\s\\S]*?END WIKIPOST`, "i"))?.[0];
   if (!wiki) throw new Error("wikipost block not found — page layout changed");
-  // Only the curated "Installed" list confirms in-service Starlink. Stop at the
-  // next section header so "in progress"/"planned" tails are never flipped.
+  // Only the curated "Installed" list confirms in-service Starlink. Require an
+  // explicit terminator header — an editor renaming one would otherwise let the
+  // slice swallow in-progress tails (which pass the AS-mainline DB-gate).
   const installed = wiki.match(
-    /Starlink Installed[\s\S]*?(?=Installations in Progress|Installations Planned|No Starlink Planned|$)/i
+    /Starlink Installed[\s\S]*?(?=Installations in Progress|Installations Planned|No Starlink Planned)/i
   )?.[0];
-  if (!installed) throw new Error('"Starlink Installed" heading not found in wikipost');
+  if (!installed)
+    throw new Error('"Starlink Installed" section bounds not found — wikipost headings changed');
   return [...new Set(installed.match(AS_TAIL_RE) ?? [])].sort();
 }
 
@@ -99,18 +93,6 @@ export function applyAlaskaFlyertalkTails(db: Database, tails: string[]): number
   });
   tx(tails);
 
-  metrics.increment(COUNTERS.SCRAPER_SYNC, {
-    source: "flyertalk_as",
-    airline: "alaska",
-    status: written > 0 ? "success" : "partial",
-  });
-  if (written > 0) {
-    metrics.increment(
-      COUNTERS.PLANES_DISCOVERED,
-      { source: "flyertalk_as", airline: "alaska" },
-      written
-    );
-  }
   info(`FlyerTalk AS sync: ${written}/${tails.length} tails written (AS-mainline-gated)`);
   return written;
 }

@@ -228,12 +228,12 @@ async function ingest(): Promise<void> {
           "mainline"
         )
       );
+      setMeta(db, "residentialSyncAt", payload.fetchedAt, "AS");
+      setMeta(db, "residentialSyncFrom", payload.fetchedFrom, "AS");
     }
 
     setMeta(db, "residentialSyncAt", payload.fetchedAt, "QR");
     setMeta(db, "residentialSyncFrom", payload.fetchedFrom, "QR");
-    setMeta(db, "residentialSyncAt", payload.fetchedAt, "AS");
-    setMeta(db, "residentialSyncFrom", payload.fetchedFrom, "AS");
 
     const result: IngestResult = { ok: true, results, snapshot, fetchedAt: payload.fetchedAt };
     console.log(JSON.stringify(result));
@@ -267,13 +267,22 @@ async function run(dryRun: boolean): Promise<void> {
   validateQr(qrTails, prod.qr.confirmed || undefined);
   reportNew("QR", qrTails, prod.qr);
 
-  const asTails = await withRetry(fetchAlaskaFlyertalkTails, "flyertalk_as");
-  validateAs(asTails, prod.as.confirmed || undefined);
-  reportNew("AS", asTails, prod.as);
+  let asTails: string[] | undefined;
+  try {
+    asTails = await withRetry(fetchAlaskaFlyertalkTails, "flyertalk_as");
+    validateAs(asTails, prod.as.confirmed || undefined);
+    reportNew("AS", asTails, prod.as);
+  } catch (e) {
+    warn(`flyertalk_as skipped: ${(e as Error).message} — shipping QR only`);
+    asTails = undefined;
+  }
 
   const payload: Payload = {
     v: 1,
-    sources: { flyertalk_qr: { tails: qrTails }, flyertalk_as: { tails: asTails } },
+    sources: {
+      flyertalk_qr: { tails: qrTails },
+      ...(asTails ? { flyertalk_as: { tails: asTails } } : {}),
+    },
     fetchedAt: new Date().toISOString(),
     fetchedFrom: hostname(),
   };
