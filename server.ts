@@ -16,7 +16,6 @@ import { startAlaskaVerifier } from "./src/scripts/alaska-verifier";
 import { startFreshnessEmitter } from "./src/scripts/data-freshness";
 import { startFleetDiscovery } from "./src/scripts/fleet-discovery";
 import { startFleetSync } from "./src/scripts/fleet-sync";
-import { syncQatarFlyertalk } from "./src/scripts/flyertalk-qatar";
 import { computePrecision, emitPrecisionGauges } from "./src/scripts/precision-backtest";
 import { startQatarScheduleIngester } from "./src/scripts/qatar-schedule-ingester";
 import { startStarlinkVerifier } from "./src/scripts/starlink-verifier";
@@ -64,6 +63,19 @@ async function updateStarlinkData() {
           span.setTag("synced_to_fleet", synced);
         }
 
+        // Sweep before the healers so the gauge measures pre-heal drift, not 0.
+        const sweep = computeSurfaceContradictions(db);
+        emitSweepGauges(sweep);
+        span.setTag("surface_contradictions", sweep.contradictions.length);
+        if (sweep.contradictions.length > 0) {
+          info(
+            `Surface contradictions: ${sweep.contradictions.length} tails — ${sweep.contradictions
+              .slice(0, 5)
+              .map((c) => c.tail)
+              .join(", ")}${sweep.contradictions.length > 5 ? "…" : ""}`
+          );
+        }
+
         const healed = reconcileConsensus(db);
         if (healed > 0) {
           info(`Consensus reconciliation healed ${healed} tails`);
@@ -80,18 +92,6 @@ async function updateStarlinkData() {
         info(
           `Firm-call precision (14d): YES=${(precision.yes.precision * 100).toFixed(1)}% n=${precision.yes.n} · NO=${(precision.no.precision * 100).toFixed(1)}% n=${precision.no.n}`
         );
-
-        const sweep = computeSurfaceContradictions(db);
-        emitSweepGauges(sweep);
-        span.setTag("surface_contradictions", sweep.contradictions.length);
-        if (sweep.contradictions.length > 0) {
-          info(
-            `Surface contradictions: ${sweep.contradictions.length} tails — ${sweep.contradictions
-              .slice(0, 5)
-              .map((c) => c.tail)
-              .join(", ")}${sweep.contradictions.length > 5 ? "…" : ""}`
-          );
-        }
 
         span.setTag("total_aircraft", totalAircraftCount);
         span.setTag("starlink_count", starlinkAircraft.length);
@@ -143,17 +143,13 @@ if (JOBS_ENABLED) {
   // ran-at heartbeat — catches "loop alive but writes nothing" silent failures.
   startFreshnessEmitter(db);
 
-  // Daily one-shot syncs: UA ship→tail sheet + QR FlyerTalk tail confirmations.
+  // Daily UA ship→tail sheet sync. (FlyerTalk QR/AS scrapes run via
+  // residential-sync from a non-OVH IP — prod gets 403.)
   setTimeout(
     () => {
       syncShipNumbers().catch((e) => logError("Ship number sync failed", e));
-      syncQatarFlyertalk(db).catch((e) => logError("Qatar FlyerTalk sync failed", e));
       setInterval(
         () => syncShipNumbers().catch((e) => logError("Ship number sync failed", e)),
-        24 * 3600 * 1000
-      );
-      setInterval(
-        () => syncQatarFlyertalk(db).catch((e) => logError("Qatar FlyerTalk sync failed", e)),
         24 * 3600 * 1000
       );
     },

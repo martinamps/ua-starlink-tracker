@@ -28,7 +28,8 @@ import type {
   WifiProvider,
 } from "../types";
 import { DB_PATH } from "../utils/constants";
-import { info } from "../utils/logger";
+import { info, warn } from "../utils/logger";
+import { looksLikeValidTailNumber } from "../utils/utils";
 
 type MetaRow = { value: string };
 
@@ -518,6 +519,10 @@ export function updateDatabase(
 
     for (const aircraft of starlinkAircraft) {
       const tailNumber = aircraft.TailNumber || "";
+      if (!looksLikeValidTailNumber(tailNumber)) {
+        warn(`skipping invalid tail '${tailNumber}' from sheet ${aircraft.sheet_gid}`);
+        continue;
+      }
 
       // Sheet value wins if present; otherwise preserve what we had; otherwise
       // fall back to united_fleet (FR24-sourced). Prevents blank sheet cells
@@ -762,8 +767,12 @@ export function getStarlinkPlanes(db: Database, airline?: AirlineFilter): Aircra
             TailNumber,
             OperatedBy,
             fleet
-     FROM starlink_planes
-     WHERE (verified_wifi IS NULL OR verified_wifi = 'Starlink')`,
+     FROM starlink_planes sp
+     WHERE (sp.verified_wifi IS NULL OR sp.verified_wifi = 'Starlink')
+       AND NOT EXISTS (
+         SELECT 1 FROM united_fleet uf
+         WHERE uf.tail_number = sp.TailNumber AND uf.starlink_status = 'negative'
+       )`,
     airline
   );
   return db.query(`${q.sql} ORDER BY DateFound DESC`).all(...q.params) as Aircraft[];
@@ -930,6 +939,22 @@ export function updateFlights(
         : null;
     cacheFlightRoute(db, normalized, flight.departure_airport, flight.arrival_airport, dur, now);
   }
+}
+
+// Decoupled from per-tail refresh so airlines whose tails rarely have
+// near-term flights (AS regional, QR long-haul) still archive promptly.
+export function archivePastDepartures(db: Database, now = Math.floor(Date.now() / 1000)): number {
+  return db.run(
+    `INSERT INTO departure_log (tail_number, airport, departed_at, airline)
+     SELECT tail_number, departure_airport, departure_time, airline
+     FROM upcoming_flights uf
+     WHERE departure_time < ?
+       AND NOT EXISTS (
+         SELECT 1 FROM departure_log dl
+         WHERE dl.tail_number = uf.tail_number AND dl.departed_at = uf.departure_time
+       )`,
+    [now]
+  ).changes;
 }
 
 export function getUpcomingFlights(
@@ -2046,6 +2071,20 @@ export function reconcileTypeDeterministicFleets(db: Database): number {
       if (next === null || next === r.starlink_status) continue;
       update.run(next, now, r.tail_number, a.code);
       emitFleetStatusChange(r, next);
+      if (next === "confirmed") {
+        addDiscoveredStarlinkPlane(
+          db,
+          r.tail_number,
+          r.aircraft_type,
+          "Starlink",
+          r.airline,
+          r.fleet,
+          {
+            sheetGid: "type_deterministic",
+            airline: a.code,
+          }
+        );
+      }
       changed++;
     }
     if (changed > 0) info(`Type-deterministic reconcile: ${a.code} ${changed} tails updated`);

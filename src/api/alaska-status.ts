@@ -137,7 +137,7 @@ export function hawaiianTypeToStarlink(equipmentType: string | null | undefined)
   if (!equipmentType) return "None";
   const t = equipmentType.toUpperCase();
   if (/\bA330|^A332\b/.test(t)) return "Starlink";
-  if (/\bA321[-\s]?2\d{2}N|\bA321\s?NEO|^A21N\b/.test(t)) return "Starlink";
+  if (/\bA321[-\s]?2\d{2}N|\bA321[-\s]?NEO|^(A21N|32Q)\b/.test(t)) return "Starlink";
   if (/\b787|^B789\b/.test(t)) return "pending";
   if (/\b717|^B712\b/.test(t)) return "None";
   return "None";

@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { archivePastDepartures } from "../database/database";
 import { GAUGES, metrics, normalizeAirlineTag } from "../observability/metrics";
 import { info, error as logError } from "../utils/logger";
 
@@ -62,6 +63,7 @@ function emitRowCounts(db: Database): void {
 
 export function emitDataFreshness(db: Database): void {
   const now = Math.floor(Date.now() / 1000);
+  archivePastDepartures(db, now);
   for (const [job, sql] of Object.entries(FRESHNESS_QUERIES)) {
     try {
       const rows = db.query(sql).all() as Array<{ airline: string; ts: number | null }>;
