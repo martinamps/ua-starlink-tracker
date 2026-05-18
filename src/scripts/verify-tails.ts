@@ -52,7 +52,7 @@ type VerifyResult = {
         url: string;
         tail_shown: string | null;
         aircraft_shown: string | null;
-        has_starlink: boolean;
+        has_starlink: boolean | null;
         provider: string | null;
         tail_match: boolean;
       }

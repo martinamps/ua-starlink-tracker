@@ -12,7 +12,8 @@ chromium.use(StealthPlugin());
 const RAW_LOG_DIR = path.join(LOG_DIR, "raw");
 
 export interface StarlinkCheckResult {
-  hasStarlink: boolean;
+  // null when error is set — the page produced no observation
+  hasStarlink: boolean | null;
   tailNumber: string | null;
   shipNumber: string | null;
   aircraftType: string | null;
@@ -71,7 +72,7 @@ export async function checkStarlinkStatus(
   destination: string
 ): Promise<StarlinkCheckResult> {
   const result: StarlinkCheckResult = {
-    hasStarlink: false,
+    hasStarlink: null,
     tailNumber: null,
     shipNumber: null,
     aircraftType: null,
@@ -313,7 +314,7 @@ if (import.meta.main) {
   // direct-CLI case where a human reads $?.
   const isSubprocess = process.env.SUBPROCESS_MODE === "1";
   const emptyResult = (errorMsg: string): StarlinkCheckResult => ({
-    hasStarlink: false,
+    hasStarlink: null,
     tailNumber: null,
     shipNumber: null,
     aircraftType: null,
