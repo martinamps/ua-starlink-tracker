@@ -87,9 +87,16 @@ async function sshJson<T>(cmd: string, stdin?: string): Promise<T> {
     throw Object.assign(new Error(`ssh '${cmd.slice(0, 40)}…' exited ${code}: ${err || out}`), {
       code: 3,
     });
-  const line = out.split("\n").find((l) => l.startsWith("{"));
-  if (!line) throw Object.assign(new Error(`no JSON in remote output: ${out}`), { code: 3 });
-  return JSON.parse(line) as T;
+  // Remote stdout interleaves logger JSON with the result JSON; pick the last
+  // line that parses and isn't a log record.
+  for (const l of out.split("\n").reverse()) {
+    if (!l.startsWith("{")) continue;
+    try {
+      const o = JSON.parse(l);
+      if (!("level" in o && "timestamp" in o)) return o as T;
+    } catch {}
+  }
+  throw Object.assign(new Error(`no result JSON in remote output: ${out}`), { code: 3 });
 }
 
 function validateQr(tails: string[], prodConfirmed?: number): void {
