@@ -2112,6 +2112,7 @@ export function getWifiMismatches(db: Database, airline?: AirlineFilter): WifiMi
        DateFound
      FROM starlink_planes
      WHERE verified_wifi IS NOT NULL
+       AND verified_wifi != 'None'
        AND (
          (wifi IN ('StrLnk', 'Starlink') AND verified_wifi != 'Starlink')
          OR
@@ -2180,7 +2181,7 @@ export function getVerificationSummary(
        COUNT(*) as total_planes,
        SUM(CASE WHEN verified_wifi IS NOT NULL THEN 1 ELSE 0 END) as verified_count,
        SUM(CASE WHEN verified_wifi IS NULL THEN 1 ELSE 0 END) as unverified_count,
-       SUM(CASE WHEN verified_wifi IS NOT NULL AND (
+       SUM(CASE WHEN verified_wifi IS NOT NULL AND verified_wifi != 'None' AND (
          (wifi IN ('StrLnk', 'Starlink') AND verified_wifi != 'Starlink')
          OR (wifi NOT IN ('StrLnk', 'Starlink') AND verified_wifi = 'Starlink')
        ) THEN 1 ELSE 0 END) as mismatches_count,
