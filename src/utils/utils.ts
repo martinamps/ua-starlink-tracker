@@ -1,4 +1,5 @@
 import { existsSync, writeFileSync } from "node:fs";
+import { BROWSER_USER_AGENT } from "./constants";
 import { error as logError } from "./logger";
 
 /**
@@ -111,8 +112,7 @@ export async function fetchAllSheets() {
       const response = await fetch(sheet.url, {
         redirect: "follow",
         headers: {
-          // Add browser-like headers to avoid being blocked
-          "User-Agent": "Mozilla/5.0",
+          "User-Agent": BROWSER_USER_AGENT,
           Accept: "text/html,application/xhtml+xml,application/xml;q=0.9",
           "Accept-Language": "en-US,en;q=0.5",
           "Cache-Control": "no-cache",

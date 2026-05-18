@@ -17,6 +17,7 @@
 
 import { ALASKA_E175_RE } from "../airlines/registry";
 import { COUNTERS, DISTRIBUTIONS, metrics, normalizeAirlineTag } from "../observability";
+import { BROWSER_USER_AGENT } from "../utils/constants";
 import { error as logError, warn } from "../utils/logger";
 
 export interface AlaskaFlightStatus {
@@ -29,9 +30,6 @@ export interface AlaskaFlightStatus {
   isHawaiian: boolean;
   codeshares: { marketingAirlineCode: string; marketingFlightNumber: string }[];
 }
-
-const UA_HEADER =
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36";
 
 type SvelteKitData = {
   type: "data";
@@ -65,7 +63,7 @@ export async function fetchAlaskaFlightStatus(
   let status = "error";
   try {
     const res = await fetch(url, {
-      headers: { "User-Agent": UA_HEADER, Accept: "application/json" },
+      headers: { "User-Agent": BROWSER_USER_AGENT, Accept: "application/json" },
       signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) {

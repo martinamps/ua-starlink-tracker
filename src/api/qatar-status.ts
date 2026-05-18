@@ -23,11 +23,10 @@
  */
 
 import { COUNTERS, DISTRIBUTIONS, metrics, normalizeAirlineTag } from "../observability";
+import { BROWSER_USER_AGENT } from "../utils/constants";
 import { error as logError, warn } from "../utils/logger";
 
 const API_URL = "https://qoreservices.qatarairways.com/fltstatus-services/flight/getStatus";
-const UA_HEADER =
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36";
 
 export interface QatarFlight {
   flightNumber: string;
@@ -109,7 +108,7 @@ async function postStatus(
             "Content-Type": "application/json",
             Origin: "https://fs.qatarairways.com",
             Referer: "https://fs.qatarairways.com/flightstatus/search",
-            "User-Agent": UA_HEADER,
+            "User-Agent": BROWSER_USER_AGENT,
             Accept: "application/json",
           },
           body: JSON.stringify(body),

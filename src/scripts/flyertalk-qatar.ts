@@ -20,6 +20,7 @@ import {
   initializeDatabase,
   upsertFleetAircraft,
 } from "../database/database";
+import { BROWSER_USER_AGENT } from "../utils/constants";
 import { info, error as logError } from "../utils/logger";
 
 const ALLOWED_HOST = "www.flyertalk.com";
@@ -40,7 +41,7 @@ function nextPageUrl(html: string, base: string): string | null {
 }
 
 const HEADERS = {
-  "User-Agent": "Mozilla/5.0",
+  "User-Agent": BROWSER_USER_AGENT,
   Accept: "text/html",
   "Accept-Language": "en-US,en;q=0.5",
 };

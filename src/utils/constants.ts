@@ -13,6 +13,12 @@ export const DB_PATH =
     ? "/srv/ua-starlink-tracker/plane-data.sqlite"
     : "./plane-data.sqlite");
 
+// Shared User-Agent for outbound HTTP and Playwright contexts. Bare
+// "Mozilla/5.0" trips bot heuristics on several upstreams; one realistic
+// Chrome string keeps the call sites from drifting.
+export const BROWSER_USER_AGENT =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
 // Flight data source configuration
 // Options: "flightradar24" (free) or "flightaware" (requires API key)
 export type FlightDataSource = "flightradar24" | "flightaware";

@@ -10,6 +10,7 @@
  */
 
 import { initializeDatabase, updateShipNumber } from "../database/database";
+import { BROWSER_USER_AGENT } from "../utils/constants";
 import { info, error as logError } from "../utils/logger";
 
 const SHIP_SHEET_ID = "1ZlYgN_IZmd6CSx_nXnuP0L0PiodapDRx3RmNkIpxXAo";
@@ -24,7 +25,7 @@ async function fetchSheet(gid: number): Promise<string> {
   const res = await fetch(url, {
     redirect: "follow",
     headers: {
-      "User-Agent": "Mozilla/5.0",
+      "User-Agent": BROWSER_USER_AGENT,
       Accept: "text/html,application/xhtml+xml,application/xml;q=0.9",
       "Accept-Language": "en-US,en;q=0.5",
       "Cache-Control": "no-cache",

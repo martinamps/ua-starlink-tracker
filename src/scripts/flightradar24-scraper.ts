@@ -7,6 +7,7 @@ import type { Browser, Page } from "playwright";
 import { chromium } from "playwright-extra";
 import StealthPlugin from "puppeteer-extra-plugin-stealth";
 import { AIRLINES } from "../airlines/registry";
+import { BROWSER_USER_AGENT } from "../utils/constants";
 
 chromium.use(StealthPlugin());
 
@@ -58,8 +59,7 @@ export async function scrapeFlightRadar24Fleet(
     browser = sharedBrowser ?? (await launchFR24Browser());
 
     const context = await browser.newContext({
-      userAgent:
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      userAgent: BROWSER_USER_AGENT,
       viewport: { width: 1920, height: 1080 },
       locale: "en-US",
     });
