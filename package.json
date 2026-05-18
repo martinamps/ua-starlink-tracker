@@ -4,6 +4,7 @@
     "dev": "bun --watch server.ts",
     "start": "bun server.ts",
     "scrape": "bun run scrape.ts",
+    "residential-sync": "bun run src/scripts/residential-sync.ts",
     "scrape-fr24": "PLAYWRIGHT_BROWSERS_PATH=./do_not_commit/playwright-browsers bun run src/scripts/flightradar24-scraper.ts",
     "update-flights": "bun -e \"import('./src/api/flight-updater.ts').then(m => m.updateAllFlights())\"",
     "check-starlink": "PLAYWRIGHT_BROWSERS_PATH=./do_not_commit/playwright-browsers bun run src/scripts/united-starlink-checker.ts",
