@@ -291,7 +291,7 @@ describe("write-path safety — UA scrape cannot wipe HA rows", () => {
       100,
       [
         {
-          TailNumber: "N00000",
+          TailNumber: "N10000",
           Aircraft: "Embraer ERJ-175",
           WiFi: "Starlink",
           OperatedBy: "Test Express",

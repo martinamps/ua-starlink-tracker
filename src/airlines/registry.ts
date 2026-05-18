@@ -129,12 +129,6 @@ function flightNum(fn: string): number {
   return m ? Number.parseInt(m[1], 10) : Number.NaN;
 }
 
-let _tailPatterns: RegExp[] | undefined;
-export function looksLikeValidTailNumber(tail: string): boolean {
-  _tailPatterns ??= [...new Set(Object.values(AIRLINES).map((a) => a.tailPattern))];
-  return _tailPatterns.some((re) => re.test(tail));
-}
-
 export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
   UA: {
     code: "UA",
@@ -414,6 +408,10 @@ export function enabledAirlines(): AirlineConfig[] {
 
 export function publicAirlines(): AirlineConfig[] {
   return enabledAirlines().filter((a) => a.publicInHub);
+}
+
+export function looksLikeValidTailNumber(tail: string): boolean {
+  return Object.values(AIRLINES).some((a) => a.tailPattern.test(tail));
 }
 
 export const HUB_BRAND: PageBrand = {

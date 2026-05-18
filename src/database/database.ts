@@ -676,6 +676,18 @@ export function getAirlineByTail(db: Database, airline?: AirlineFilter): Record<
   return Object.fromEntries(rows.map((r) => [r.TailNumber, r.airline]));
 }
 
+// Shared "this row counts as Starlink-equipped" predicate for starlink_planes
+// reads. Excludes tails united_fleet has settled as 'negative' so the headline
+// list, hero rings, hub cards, and check-flight all agree. `_neg` alias avoids
+// collisions with callers that already join united_fleet/upcoming_flights as uf.
+function equippedFilter(sp: string): string {
+  return `(${sp}.verified_wifi IS NULL OR ${sp}.verified_wifi = 'Starlink')
+    AND NOT EXISTS (
+      SELECT 1 FROM united_fleet _neg
+      WHERE _neg.tail_number = ${sp}.TailNumber AND _neg.starlink_status = 'negative'
+    )`;
+}
+
 export function getRecentInstalls(
   db: Database,
   airline: AirlineFilter,
@@ -683,7 +695,7 @@ export function getRecentInstalls(
   perAirlineCap?: number
 ): RecentInstall[] {
   const cols = "airline, TailNumber, aircraft as Aircraft, OperatedBy, DateFound";
-  const filter = "(verified_wifi IS NULL OR verified_wifi = 'Starlink')";
+  const filter = equippedFilter("starlink_planes");
   if (perAirlineCap && perAirlineCap > 0) {
     const q = withAirline(
       `SELECT ${cols}, ROW_NUMBER() OVER (PARTITION BY airline ORDER BY DateFound DESC) AS rn
@@ -725,7 +737,7 @@ export function getHubStats(db: Database, codes: readonly string[]): HubAirlineS
   const equipped = db
     .query(
       `SELECT airline, COUNT(*) n FROM starlink_planes
-       WHERE (verified_wifi IS NULL OR verified_wifi = 'Starlink')
+       WHERE ${equippedFilter("starlink_planes")}
          AND airline IN (${placeholders})
        GROUP BY airline`
     )
@@ -737,7 +749,7 @@ export function getHubStats(db: Database, codes: readonly string[]): HubAirlineS
     .query(
       `SELECT airline, COUNT(*) n FROM starlink_planes
        WHERE DateFound >= date('now','-30 day')
-         AND (verified_wifi IS NULL OR verified_wifi = 'Starlink')
+         AND ${equippedFilter("starlink_planes")}
          AND (sheet_gid IS NULL OR sheet_gid NOT LIKE '%\\_seed' ESCAPE '\\')
          AND airline IN (${placeholders})
        GROUP BY airline`
@@ -767,11 +779,7 @@ export function getStarlinkPlanes(db: Database, airline?: AirlineFilter): Aircra
             OperatedBy,
             fleet
      FROM starlink_planes sp
-     WHERE (sp.verified_wifi IS NULL OR sp.verified_wifi = 'Starlink')
-       AND NOT EXISTS (
-         SELECT 1 FROM united_fleet uf
-         WHERE uf.tail_number = sp.TailNumber AND uf.starlink_status = 'negative'
-       )`,
+     WHERE ${equippedFilter("sp")}`,
     airline
   );
   return db.query(`${q.sql} ORDER BY DateFound DESC`).all(...q.params) as Aircraft[];
@@ -815,7 +823,7 @@ export function getFleetStats(db: Database, airline = "UA"): FleetStats {
        SUM(CASE WHEN uf.starlink_status IS NOT 'confirmed' THEN 1 ELSE 0 END) as unverified
      FROM starlink_planes sp
      LEFT JOIN united_fleet uf ON sp.TailNumber = uf.tail_number
-     WHERE (sp.verified_wifi IS NULL OR sp.verified_wifi = 'Starlink')`,
+     WHERE ${equippedFilter("sp")}`,
     airline,
     "sp"
   );
@@ -1000,7 +1008,7 @@ export function getFlightsByNumberAndDate(
      WHERE uf.flight_number IN (${placeholders})
        AND uf.departure_time >= ?
        AND uf.departure_time < ?
-       AND (sp.verified_wifi IS NULL OR sp.verified_wifi = 'Starlink')`,
+       AND ${equippedFilter("sp")}`,
     airline,
     "uf",
     [...flightNumberVariants, startOfDay, endOfDay]
@@ -1172,7 +1180,7 @@ export function getSubfleetPenetration(
        LEFT JOIN starlink_planes sp
               ON sp.TailNumber = uf.tail_number
              AND sp.airline = uf.airline
-             AND (sp.verified_wifi IS NULL OR sp.verified_wifi = 'Starlink')
+             AND ${equippedFilter("sp")}
        WHERE uf.airline = ?
        GROUP BY uf.fleet`
     )
