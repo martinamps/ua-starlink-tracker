@@ -118,7 +118,8 @@ export type AlaskaWifi = "Starlink" | null;
  * Alaska's regional E175 fleet (Horizon + SkyWest-for-Alaska, ~90 jets) is
  * fully Starlink-equipped per the Q1 2026 earnings call (April 21, 2026).
  * Mainline (737/787) is per-tail mid-rollout and alaskaair.com exposes no
- * wifi field, so there is no oracle: returns null (unknown), not 'None'.
+ * wifi field, so this returns null; mainline tails are settled by
+ * src/scripts/flyertalk-alaska.ts (FlyerTalk wikipost) instead.
  * Uses the same E175 matcher as AS classifyFleet() so verdict and subfleet
  * can never disagree.
  */
