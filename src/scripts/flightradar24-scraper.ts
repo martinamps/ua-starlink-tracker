@@ -105,10 +105,14 @@ export async function scrapeFlightRadar24Fleet(
 
     await page.waitForTimeout(2000);
 
-    // Wait for fleet table to load
+    // FR24 can report a 0-aircraft roster (e.g. a regional whose tails are listed
+    // under the parent), so accept the fleet-count header as a ready signal too.
     console.log("Waiting for fleet data...");
     await page.waitForFunction(
-      () => document.querySelectorAll('a[href*="/data/aircraft/"]').length > 0,
+      () =>
+        document.querySelectorAll('a[href*="/data/aircraft/"]').length > 0 ||
+        /Number of aircraft/i.test(document.body?.textContent ?? ""),
+      undefined,
       { timeout: 15000 }
     );
 
@@ -117,7 +121,7 @@ export async function scrapeFlightRadar24Fleet(
     await page.waitForTimeout(1000);
 
     // Check if all aircraft are visible or if we need to expand sections
-    let totalExpected = 0;
+    let totalExpected = -1;
     try {
       const countText = await page
         .locator("text=/Number of aircraft in fleet:\\s*\\d+/")
@@ -181,7 +185,7 @@ export async function scrapeFlightRadar24Fleet(
     });
 
     result.aircraft = aircraft;
-    result.success = aircraft.length > 0;
+    result.success = aircraft.length > 0 || totalExpected === 0;
 
     console.log(`Successfully scraped ${aircraft.length} aircraft`);
   } catch (error) {
