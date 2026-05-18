@@ -15,6 +15,7 @@
 
 import { Database } from "bun:sqlite";
 import { beforeAll, describe, expect, test } from "bun:test";
+import { copyFileSync } from "node:fs";
 import { qatarTypeToStarlink } from "../src/airlines/registry";
 import { resolveTailVerdict } from "../src/api/flight-verdict";
 import { handleMcpRequest } from "../src/api/mcp-server";
@@ -22,7 +23,9 @@ import {
   computeWifiConsensus,
   getFleetPageData,
   getFleetStats,
+  getHubStats,
   getLastUpdated,
+  getRecentInstalls,
   getStarlinkPlanes,
   getTotalCount,
   getUpcomingFlights,
@@ -1048,5 +1051,51 @@ describe("airline type maps", () => {
     ["Boeing 737 MAX 8", "negative"],
   ])("qatarTypeToStarlink: %s → %s", (input, expected) => {
     expect(qatarTypeToStarlink(input)).toBe(expected);
+  });
+});
+
+describe("equipped-count surfaces agree on negative-status tails", () => {
+  // Synthesizes the divergent state (sp.verified_wifi=NULL + uf.starlink_status=
+  // 'negative') instead of relying on the snapshot happening to contain one, so
+  // the equippedFilter() invariant is exercised on every run.
+  const NEG = "N99NEG";
+  let wdb: Database;
+
+  beforeAll(() => {
+    const tmp = `/tmp/ua-equipped-${process.pid}-${Date.now()}.sqlite`;
+    copyFileSync("/tmp/ua-test.sqlite", tmp);
+    wdb = new Database(tmp);
+    wdb
+      .query(
+        `INSERT INTO starlink_planes (TailNumber, aircraft, WiFi, OperatedBy, fleet, airline, DateFound)
+         VALUES (?, 'B737', 'Starlink', 'Test', 'mainline', 'UA', date('now'))`
+      )
+      .run(NEG);
+    wdb
+      .query(
+        `INSERT INTO united_fleet
+           (tail_number, aircraft_type, airline, fleet, starlink_status, verified_wifi,
+            first_seen_source, first_seen_at, last_seen_at)
+         VALUES (?, 'B737', 'UA', 'mainline', 'negative', 'Thales', 'test', 0, 0)`
+      )
+      .run(NEG);
+  });
+
+  test("getStarlinkPlanes excludes it", () => {
+    expect(getStarlinkPlanes(wdb, "UA").some((p) => p.TailNumber === NEG)).toBe(false);
+  });
+
+  test("getFleetStats matches getStarlinkPlanes (hero-ring invariant)", () => {
+    const fs = getFleetStats(wdb, "UA");
+    expect(fs.express.starlink + fs.mainline.starlink).toBe(getStarlinkPlanes(wdb, "UA").length);
+  });
+
+  test("getHubStats starlink count matches", () => {
+    const hub = getHubStats(wdb, ["UA"])[0];
+    expect(hub.starlink).toBe(getStarlinkPlanes(wdb, "UA").length);
+  });
+
+  test("getRecentInstalls excludes it", () => {
+    expect(getRecentInstalls(wdb, "UA", 500).some((r) => r.TailNumber === NEG)).toBe(false);
   });
 });
