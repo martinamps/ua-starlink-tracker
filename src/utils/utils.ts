@@ -1,14 +1,7 @@
 import { existsSync, writeFileSync } from "node:fs";
+import { looksLikeValidTailNumber } from "../airlines/registry";
 import { BROWSER_USER_AGENT } from "./constants";
 import { error as logError } from "./logger";
-
-// FAA N-numbers are N + 1-5 alphanumeric (no I/O in suffix); A7- is Qatar.
-// Guards against sheet typos like N7943SK (6 chars) being ingested as real.
-const TAIL_PATTERNS = [/^N[1-9][0-9A-HJ-NP-Z]{0,4}$/, /^A7-[A-Z]{3}$/];
-
-export function looksLikeValidTailNumber(tail: string): boolean {
-  return TAIL_PATTERNS.some((re) => re.test(tail));
-}
 
 /**
  * CSV Fetch & Parse Logic

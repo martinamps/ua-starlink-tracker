@@ -3,12 +3,15 @@
  * Adding an airline = adding a config object here, not editing scattered code.
  */
 
+import type { RolloutStatus, StarlinkStatus } from "../types";
+
 // Single E175 matcher shared by AS classifyFleet() and alaskaTypeToStarlink()
 // so the verdict and subfleet can never disagree. Covers FR24 ("Embraer
 // E175LR"), alaskaair.com ("E175"/"ERJ-175"), and 3-char IATA ("E75").
 export const ALASKA_E175_RE = /E175|ERJ.?175|EMB.?175|^E75\b/i;
 
-import type { RolloutStatus, StarlinkStatus } from "../types";
+// FAA N-numbers: N + 1-5 alphanumeric, first 1-9, no I/O in suffix.
+const FAA_N_NUMBER = /^N[1-9][0-9A-HJ-NP-Z]{0,4}$/;
 
 export type AirlineCode = string;
 
@@ -108,6 +111,9 @@ export interface AirlineConfig {
   ) => { probability: number; reason: string } | null;
   /** Canonical lowercase tag for Datadog `airline:` — preserves history (`united`, not `UA`). */
   metricTag: string;
+  /** Registration format for tails operated by this airline. Used to reject
+   * sheet typos at ingest and gate cleanup scripts. */
+  tailPattern: RegExp;
   /** Hub status-card config — editorial label + prose, plus a structured status
    * discriminant so the UI doesn't parse the label string. */
   rollout?: {
@@ -121,6 +127,12 @@ export interface AirlineConfig {
 function flightNum(fn: string): number {
   const m = fn.match(/(\d+)$/);
   return m ? Number.parseInt(m[1], 10) : Number.NaN;
+}
+
+let _tailPatterns: RegExp[] | undefined;
+export function looksLikeValidTailNumber(tail: string): boolean {
+  _tailPatterns ??= [...new Set(Object.values(AIRLINES).map((a) => a.tailPattern))];
+  return _tailPatterns.some((re) => re.test(tail));
 }
 
 export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
@@ -179,6 +191,7 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
     },
     fr24Slug: "ua-ual",
     metricTag: "united",
+    tailPattern: FAA_N_NUMBER,
     minFleetSanity: 800,
     verifierBackend: "united",
     // Whole fleet eligible — Express + mainline both in the program.
@@ -221,6 +234,7 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
     subfleets: [{ key: "mainline", label: "Hawaiian Fleet", match: () => true }],
     fr24Slug: "ha-hal",
     metricTag: "hawaiian",
+    tailPattern: FAA_N_NUMBER,
     minFleetSanity: 30,
     verifierBackend: "alaska-json",
     // 717 interisland fleet was never in scope (no WiFi provider) and is being retired —
@@ -309,6 +323,7 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
     fr24Slug: "as-asa",
     regionalCarriers: [{ fr24Slug: "qx-qxe", name: "Horizon Air", subfleet: "horizon" }],
     metricTag: "alaska",
+    tailPattern: FAA_N_NUMBER,
     minFleetSanity: 200,
     verifierBackend: "alaska-json",
     // Phase 1 (E175 regional) complete. Update status/phaseNote when 737/787 mainline starts.
@@ -354,6 +369,7 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
     classifyFleet: () => "mainline",
     fr24Slug: "qr-qtr",
     metricTag: "qatar",
+    tailPattern: /^A7-[A-Z]{3}$/,
     // 274 aircraft on FR24 (Apr 2026); minus ~37 freighters leaves ~237. Set
     // floor at 200 so a partial scrape still passes sanity but a near-empty
     // one doesn't blow away the roster.

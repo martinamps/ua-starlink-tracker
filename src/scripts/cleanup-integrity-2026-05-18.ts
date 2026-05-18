@@ -3,17 +3,17 @@
  * One-shot cleanup for the 2026-05-18 integrity audit.
  * - Drops invalid-registration starlink_planes rows (e.g. N7943SK).
  * - Nulls the false 'None' verification rows for HA A321neos written before
- *   the A321-NEO regex fix, and resets their next_check_after so they
- *   re-verify on the fixed code path.
+ *   the A321-NEO regex fix, and clears verified_at/starlink_status so the
+ *   alaska-verifier (which schedules on verified_at, not next_check_after)
+ *   re-verifies them immediately on the fixed code path.
  * Run: bun run src/scripts/cleanup-integrity-2026-05-18.ts
  */
 
-import { Database } from "bun:sqlite";
-import { DB_PATH } from "../utils/constants";
+import { looksLikeValidTailNumber } from "../airlines/registry";
+import { initializeDatabase } from "../database/database";
 import { info } from "../utils/logger";
-import { looksLikeValidTailNumber } from "../utils/utils";
 
-const db = new Database(DB_PATH);
+const db = initializeDatabase();
 
 const allTails = db
   .query<{ TailNumber: string }, []>("SELECT DISTINCT TailNumber FROM starlink_planes")
@@ -22,8 +22,8 @@ const bad = allTails.map((r) => r.TailNumber).filter((t) => !looksLikeValidTailN
 if (bad.length) {
   const ph = bad.map(() => "?").join(",");
   db.transaction(() => {
-    const r1 = db.run(`DELETE FROM starlink_planes WHERE TailNumber IN (${ph})`, bad);
-    const r2 = db.run(`DELETE FROM upcoming_flights WHERE tail_number IN (${ph})`, bad);
+    const r1 = db.query(`DELETE FROM starlink_planes WHERE TailNumber IN (${ph})`).run(...bad);
+    const r2 = db.query(`DELETE FROM upcoming_flights WHERE tail_number IN (${ph})`).run(...bad);
     info(
       `dropped invalid registrations ${bad.join(", ")}: ${r1.changes} planes, ${r2.changes} flights`
     );
@@ -44,16 +44,19 @@ const haNeo = db
 if (haNeo.length) {
   const ph = haNeo.map(() => "?").join(",");
   db.transaction(() => {
-    const r1 = db.run(
-      `UPDATE starlink_verification_log SET has_starlink = NULL, wifi_provider = NULL
-       WHERE source = 'alaska' AND wifi_provider = 'None' AND tail_number IN (${ph})`,
-      haNeo
-    );
-    const r2 = db.run(
-      `UPDATE united_fleet SET verified_wifi = NULL, next_check_after = 0
-       WHERE tail_number IN (${ph})`,
-      haNeo
-    );
+    const r1 = db
+      .query(
+        `UPDATE starlink_verification_log SET has_starlink = NULL, wifi_provider = NULL
+         WHERE source = 'alaska' AND wifi_provider = 'None' AND tail_number IN (${ph})`
+      )
+      .run(...haNeo);
+    const r2 = db
+      .query(
+        `UPDATE united_fleet
+         SET verified_wifi = NULL, verified_at = NULL, starlink_status = 'unknown'
+         WHERE tail_number IN (${ph})`
+      )
+      .run(...haNeo);
     info(
       `reset ${haNeo.length} HA A321neo tails for re-verify: ${r1.changes} log rows nulled, ${r2.changes} fleet rows reset`
     );

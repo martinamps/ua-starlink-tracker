@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { ensureAirlinePrefix } from "../airlines/flight-number";
-import { AIRLINES, enabledAirlines } from "../airlines/registry";
+import { AIRLINES, enabledAirlines, looksLikeValidTailNumber } from "../airlines/registry";
 import {
   COUNTERS,
   metrics,
@@ -29,7 +29,6 @@ import type {
 } from "../types";
 import { DB_PATH } from "../utils/constants";
 import { info, warn } from "../utils/logger";
-import { looksLikeValidTailNumber } from "../utils/utils";
 
 type MetaRow = { value: string };
 
@@ -937,17 +936,18 @@ export function archivePastDepartures(
 ): number {
   const params: (string | number)[] = [now];
   if (tailNumber) params.push(tailNumber);
-  return db.run(
-    `INSERT INTO departure_log (tail_number, airport, departed_at, airline)
-     SELECT tail_number, departure_airport, departure_time, airline
-     FROM upcoming_flights uf
-     WHERE departure_time < ?${tailNumber ? " AND tail_number = ?" : ""}
-       AND NOT EXISTS (
-         SELECT 1 FROM departure_log dl
-         WHERE dl.tail_number = uf.tail_number AND dl.departed_at = uf.departure_time
-       )`,
-    params
-  ).changes;
+  return db
+    .query(
+      `INSERT INTO departure_log (tail_number, airport, departed_at, airline)
+       SELECT tail_number, departure_airport, departure_time, airline
+       FROM upcoming_flights uf
+       WHERE departure_time < ?${tailNumber ? " AND tail_number = ?" : ""}
+         AND NOT EXISTS (
+           SELECT 1 FROM departure_log dl
+           WHERE dl.tail_number = uf.tail_number AND dl.departed_at = uf.departure_time
+         )`
+    )
+    .run(...params).changes;
 }
 
 export function getUpcomingFlights(
