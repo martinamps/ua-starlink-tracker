@@ -25,7 +25,7 @@ import {
   normalizeWifiProvider,
   withSpan,
 } from "../observability";
-import { normalizeFlightNumber } from "../utils/constants";
+import { extractFlightNumber, pickVerifiableFlight, unitedLookupDate } from "../utils/constants";
 import { verifierLog } from "../utils/logger";
 import type { StarlinkCheckResult } from "./united-starlink-checker";
 import { checkStarlinkStatusSubprocess } from "./united-starlink-checker-subprocess";
@@ -44,15 +44,6 @@ function icaoToIata(icao: string): string {
     return icao.substring(1);
   }
   return icao;
-}
-
-/**
- * Extract bare flight digits for United.com URL. Must strip carrier prefix
- * FIRST: G74460 → 4460, not 74460 (regex-trailing-digits grabs the 7 from
- * the G7 prefix → 404). normalizeFlightNumber knows the 2-3 char prefixes.
- */
-function extractFlightNumber(flightNumber: string): string {
-  return normalizeFlightNumber(flightNumber).replace(/^UA/, "");
 }
 
 interface Flight {
@@ -108,14 +99,19 @@ function getPlanesNeedingVerification(
     if (result.length >= limit) break;
 
     const flights = flightsByTail.get(plane.TailNumber) || [];
-    const futureFlights = flights.filter((f) => f.departure_time > now);
-    if (futureFlights.length === 0) continue;
+    // Skip flights united.com can't resolve yet (lookup date too far out) —
+    // checking them is a guaranteed "redirected to search page" error.
+    const candidate = pickVerifiableFlight(
+      flights.filter((f) => f.departure_time > now),
+      now
+    );
+    if (!candidate) continue;
 
     if (!forceAll && !needsVerification(db, plane.TailNumber, "united")) {
       continue;
     }
 
-    result.push({ plane, flight: futureFlights[0] });
+    result.push({ plane, flight: candidate });
   }
 
   return result;
@@ -145,7 +141,7 @@ export async function verifyPlaneStarlink(
       span.setTag("aircraft_type", aircraftTypeTag);
       span.setTag("fleet", fleetTag);
 
-      const departureDate = new Date(flight.departure_time * 1000).toISOString().split("T")[0];
+      const departureDate = unitedLookupDate(flight.departure_time);
       const flightNumber = extractFlightNumber(flight.flight_number);
       const origin = icaoToIata(flight.departure_airport);
       const destination = icaoToIata(flight.arrival_airport);

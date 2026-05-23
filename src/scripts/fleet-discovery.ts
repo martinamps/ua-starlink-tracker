@@ -33,7 +33,7 @@ import {
   withSpan,
 } from "../observability";
 import type { FleetAircraft, StarlinkStatus } from "../types";
-import { normalizeFlightNumber } from "../utils/constants";
+import { extractFlightNumber, pickVerifiableFlight, unitedLookupDate } from "../utils/constants";
 import { info, error as logError, warn } from "../utils/logger";
 import type { StarlinkCheckResult } from "./united-starlink-checker";
 import { checkStarlinkStatusSubprocess } from "./united-starlink-checker-subprocess";
@@ -44,10 +44,6 @@ const DISCOVERY_INTERVAL_MS = 30 * 1000; // 30 seconds
 const MAINTENANCE_INTERVAL_MS = 90 * 1000; // 90 seconds
 // Heartbeat interval for logging
 const HEARTBEAT_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
-// united.com flight-status only resolves flights ≤2 days out
-// united.com flight-status resolves today/tomorrow/day-after in *US local time*,
-// so a flight 2.2 days away by UTC seconds can still be calendar-day +3 → 404.
-const MAX_VERIFIABLE_HORIZON_SEC = 2 * 86400;
 
 const fr24Api = new FlightRadar24API();
 
@@ -78,29 +74,6 @@ function icaoToIata(icao: string): string {
     return icao.substring(1);
   }
   return icao;
-}
-
-/**
- * Extract bare flight digits for United.com URL. Must strip carrier prefix
- * FIRST: G74460 → 4460, not 74460 (which 404s). normalizeFlightNumber knows
- * the 2-3 char prefixes (G7, OO, SKW, GJS, ...) so use it, then drop UA.
- */
-function extractFlightNumber(flightNumber: string): string {
-  const normalized = normalizeFlightNumber(flightNumber);
-  return normalized.replace(/^UA/, "");
-}
-
-type RawFlight = { flight_number: string; departure_time: number };
-
-/** First flight whose number normalizes to bare digits and departs within the united.com lookup horizon. */
-export function pickVerifiableFlight<T extends RawFlight>(
-  flights: T[],
-  nowSec = Date.now() / 1000
-): T | undefined {
-  const horizon = nowSec + MAX_VERIFIABLE_HORIZON_SEC;
-  return flights.find(
-    (f) => /^\d+$/.test(extractFlightNumber(f.flight_number)) && f.departure_time < horizon
-  );
 }
 
 interface FlightInfo {
@@ -138,12 +111,12 @@ async function getUpcomingFlightsForPlane(tailNumber: string): Promise<{
     const verifiable = pickVerifiableFlight(flights);
     if (!verifiable) {
       info(
-        `No verifiable flight for ${tailNumber} (next: ${flights[0].flight_number} on ${new Date(flights[0].departure_time * 1000).toISOString().split("T")[0]})`
+        `No verifiable flight for ${tailNumber} (next: ${flights[0].flight_number} on ${unitedLookupDate(flights[0].departure_time)})`
       );
       return null;
     }
 
-    const departureDate = new Date(verifiable.departure_time * 1000).toISOString().split("T")[0];
+    const departureDate = unitedLookupDate(verifiable.departure_time);
 
     return {
       forVerification: {
@@ -507,17 +480,26 @@ export function startFleetDiscovery(mode: "discovery" | "maintenance" = "mainten
   const intervalMs = mode === "discovery" ? DISCOVERY_INTERVAL_MS : MAINTENANCE_INTERVAL_MS;
 
   let runCount = 0;
-  let isRunning = false;
+  // 0 = idle; otherwise the start time of the in-progress run. A never-settling
+  // vendor call must not hold the loop forever — past the deadline, abandon it.
+  let runningSince = 0;
   let lastHeartbeat = Date.now();
   const totalStats = { checked: 0, starlink: 0, notStarlink: 0, errors: 0, noFlights: 0 };
+  const STUCK_RUN_TIMEOUT_MS = 15 * 60 * 1000;
 
   const runVerification = async () => {
-    if (isRunning) {
-      info("Skipping run - previous verification still in progress");
-      return;
+    if (runningSince) {
+      if (Date.now() - runningSince < STUCK_RUN_TIMEOUT_MS) {
+        info("Skipping run - previous verification still in progress");
+        return;
+      }
+      logError(
+        `Discovery run stuck for ${Math.round((Date.now() - runningSince) / 60000)}min — abandoning it and starting a new run`
+      );
     }
 
-    isRunning = true;
+    const myRun = Date.now();
+    runningSince = myRun;
     runCount++;
 
     try {
@@ -571,7 +553,8 @@ export function startFleetDiscovery(mode: "discovery" | "maintenance" = "mainten
     } catch (err) {
       logError("Discovery batch failed", err);
     } finally {
-      isRunning = false;
+      // An abandoned run that finally settles must not clear its successor's flag.
+      if (runningSince === myRun) runningSince = 0;
     }
   };
 

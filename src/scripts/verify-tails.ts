@@ -22,7 +22,7 @@ import { Database } from "bun:sqlite";
 import { writeFileSync } from "node:fs";
 import { FlightRadar24API } from "../api/flightradar24-api";
 import { getShipToTailMap } from "../database/database";
-import { DB_PATH, normalizeFlightNumber } from "../utils/constants";
+import { DB_PATH, extractFlightNumber, unitedLookupDate } from "../utils/constants";
 import { checkStarlinkStatusSubprocess } from "./united-starlink-checker-subprocess";
 
 // The subprocess mutex's .finally() chain can leak an unhandled rejection when
@@ -123,7 +123,7 @@ async function verifyTail(
     const upcoming = await fr24.getUpcomingFlights(tail);
     const seen = new Set(candidates.map((c) => c.flight_number + c.fdate));
     for (const u of upcoming) {
-      const fdate = new Date(u.departure_time * 1000).toISOString().slice(0, 10);
+      const fdate = unitedLookupDate(u.departure_time);
       const key = u.flight_number + fdate;
       if (seen.has(key)) continue;
       seen.add(key);
@@ -153,7 +153,7 @@ async function verifyTail(
   for (let i = 0; i < candidates.length; i++) {
     if (i > 0) await new Promise((r) => setTimeout(r, retryDelayMs));
     const flight = candidates[i];
-    const uaNum = normalizeFlightNumber(flight.flight_number).replace(/^UA/, "");
+    const uaNum = extractFlightNumber(flight.flight_number);
     const f = {
       number: uaNum,
       date: flight.fdate,

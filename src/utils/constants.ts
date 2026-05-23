@@ -42,6 +42,33 @@ export const buildFlightNumberVariants = (fn: string): string[] =>
 export const inferFleet = (fn: string): "express" | "mainline" | "unknown" =>
   inferSubfleet(AIRLINES.UA, fn) as "express" | "mainline" | "unknown";
 
+/** UTC calendar date string used for united.com flight-status lookups. */
+export const unitedLookupDate = (epochSec: number): string =>
+  new Date(epochSec * 1000).toISOString().slice(0, 10);
+
+// united.com redirects flight-status lookups dated past UTC-today+1 to the search
+// page. Compare calendar dates, not seconds: 1.9d away by seconds can be day +2.
+function isWithinUnitedLookupWindow(departureTimeSec: number, nowSec: number): boolean {
+  return unitedLookupDate(departureTimeSec) <= unitedLookupDate(nowSec + 86400);
+}
+
+/** Bare flight digits for united.com URLs. Strip the carrier prefix first: G74460 → 4460, not 74460 (404s). */
+export function extractFlightNumber(flightNumber: string): string {
+  return normalizeFlightNumber(flightNumber).replace(/^UA/, "");
+}
+
+/** First flight whose number normalizes to bare digits and whose lookup date united.com can resolve. */
+export function pickVerifiableFlight<T extends { flight_number: string; departure_time: number }>(
+  flights: T[],
+  nowSec = Date.now() / 1000
+): T | undefined {
+  return flights.find(
+    (f) =>
+      /^\d+$/.test(extractFlightNumber(f.flight_number)) &&
+      isWithinUnitedLookupWindow(f.departure_time, nowSec)
+  );
+}
+
 // Security headers
 const { scriptOrigins: ANALYTICS_SCRIPT_ORIGINS, connectOrigins: ANALYTICS_CONNECT_ORIGINS } =
   analyticsOrigins();

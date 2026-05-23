@@ -31,6 +31,17 @@ let browser: Browser | null = null;
 let page: Page | null = null;
 let launching: Promise<Page> | null = null;
 let consecutiveFailures = 0;
+// Bumped to disown an in-flight launch; a disowned launch must not publish to
+// module state or tear it down — it closes whatever it created and bails.
+let launchGen = 0;
+// Browser an in-flight launch() has spawned but not yet published. Lets the
+// launch deadline kill a Chromium whose setup calls never settle, instead of
+// leaking one orphaned process per abandoned launch.
+let pendingBrowser: Browser | null = null;
+
+// A launch that neither resolves nor rejects would leave `launching` set forever
+// and wedge every FR24 caller (19h flight-data outage on 2026-05-20).
+const LAUNCH_TIMEOUT_MS = 60_000;
 
 export interface FR24FetchResult {
   status: number;
@@ -52,14 +63,18 @@ async function teardown(): Promise<void> {
   }
 }
 
+// Builds the browser in locals and publishes to module state only once fully
+// ready, so a concurrent teardown() can never strand a half-initialized launch.
 async function launch(): Promise<Page> {
+  const gen = ++launchGen;
   await teardown();
   info("Launching FR24 browser transport...");
   const t0 = Date.now();
 
+  let b: Browser | null = null;
   try {
     const chromium = await getChromium();
-    browser = await chromium.launch({
+    b = await chromium.launch({
       headless: true,
       args: [
         "--no-sandbox",
@@ -74,21 +89,26 @@ async function launch(): Promise<Page> {
         "--js-flags=--max-old-space-size=128",
       ],
     });
+    if (gen === launchGen) pendingBrowser = b;
 
-    browser.on("disconnected", () => {
-      warn("FR24 browser disconnected");
-      browser = null;
-      page = null;
-    });
-
-    const ctx = await browser.newContext({
+    const ctx = await b.newContext({
       userAgent: BROWSER_USER_AGENT,
       locale: "en-US",
       viewport: { width: 1280, height: 720 },
     });
-    page = await ctx.newPage();
+    const pg = await ctx.newPage();
+    await pg.goto(BOOTSTRAP_URL, { waitUntil: "domcontentloaded", timeout: 30000 });
 
-    await page.goto(BOOTSTRAP_URL, { waitUntil: "domcontentloaded", timeout: 30000 });
+    if (gen !== launchGen) throw new Error("launch superseded");
+
+    b.on("disconnected", () => {
+      warn("FR24 browser disconnected");
+      browser = null;
+      page = null;
+    });
+    browser = b;
+    page = pg;
+    pendingBrowser = null;
 
     info(`FR24 browser transport ready in ${Date.now() - t0}ms`);
     metrics.increment(COUNTERS.VENDOR_REQUEST, {
@@ -96,14 +116,15 @@ async function launch(): Promise<Page> {
       type: "browser_launch",
       status: "success",
     });
-    return page;
+    return pg;
   } catch (err) {
     metrics.increment(COUNTERS.VENDOR_REQUEST, {
       vendor: "fr24",
       type: "browser_launch",
       status: "error",
     });
-    await teardown();
+    if (pendingBrowser === b) pendingBrowser = null;
+    if (b) await b.close().catch(() => {});
     throw err;
   }
 }
@@ -111,7 +132,20 @@ async function launch(): Promise<Page> {
 async function ensurePage(): Promise<Page> {
   if (isAlive()) return page as Page;
   if (!launching) {
-    launching = launch().finally(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        error(`FR24 browser launch exceeded ${LAUNCH_TIMEOUT_MS}ms, abandoning it`);
+        launchGen++;
+        // Closing the half-built browser also rejects its hung setup calls,
+        // letting the abandoned launch promise settle.
+        void pendingBrowser?.close().catch(() => {});
+        pendingBrowser = null;
+        reject(new Error("fr24 browser launch timeout"));
+      }, LAUNCH_TIMEOUT_MS);
+    });
+    launching = Promise.race([launch(), deadline]).finally(() => {
+      clearTimeout(timer);
       launching = null;
     });
   }
@@ -156,8 +190,9 @@ export async function fr24Fetch(url: string, timeoutMs = 15000): Promise<FR24Fet
     return result;
   } catch (err) {
     consecutiveFailures++;
-    // Likely a dead/navigated/hung page. Tear down so the next call relaunches.
-    if (consecutiveFailures >= 3 || !isAlive()) {
+    // Likely a dead/navigated/hung page. Tear down so the next call relaunches —
+    // unless a relaunch is already underway (teardown would be a no-op anyway).
+    if ((consecutiveFailures >= 3 || !isAlive()) && !launching) {
       error("FR24 browser transport unhealthy, tearing down", err);
       metrics.increment(COUNTERS.VENDOR_REQUEST, {
         vendor: "fr24",
