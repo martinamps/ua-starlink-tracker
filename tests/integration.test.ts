@@ -125,6 +125,35 @@ describe("/api/check-flight contract", () => {
     expect(resp.flights.length).toBe(0);
   });
 
+  test("no-assignment miss: contract fields intact, prediction rides along", async () => {
+    // A date far outside both lookup windows (no upcoming_flights row, FR24
+    // fallback skipped) exercises the predictor fallback without any network.
+    const farOut = new Date(Date.now() + 60 * 86400 * 1000).toISOString().slice(0, 10);
+    const app = createApp(db);
+    const res = await app.dispatch(
+      new Request(`http://x/api/check-flight?flight_number=UA1234&date=${farOut}`, {
+        headers: { Host: "unitedstarlinktracker.com" },
+      })
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      hasStarlink: boolean;
+      flights: unknown[];
+      confidence?: string;
+      prediction?: { probability: number; confidence: string; n_observations: number };
+    };
+    // Chrome extension contract — must not break
+    expect(body.hasStarlink).toBe(false);
+    expect(Array.isArray(body.flights)).toBe(true);
+    // Additive prediction block
+    expect(body.confidence).toBe("predicted");
+    expect(typeof body.prediction?.probability).toBe("number");
+    expect(body.prediction!.probability).toBeGreaterThanOrEqual(0);
+    expect(body.prediction!.probability).toBeLessThanOrEqual(1);
+    expect(["high", "medium", "low"]).toContain(body.prediction!.confidence);
+    expect(typeof body.prediction?.n_observations).toBe("number");
+  });
+
   test("hit: returns { hasStarlink: true, flights: [...] } with full field shape", () => {
     // Find ANY real flight in the DB so this test is stable across data refreshes
     const sample = db

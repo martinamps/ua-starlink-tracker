@@ -68,9 +68,17 @@ describe("golden snapshots (refactor must be byte-identical)", () => {
     expect(Object.keys(liveF).sort()).toEqual(Object.keys(fixtureF).sort());
   });
 
-  test("/api/check-flight UA123 (false)", async () => {
+  test("/api/check-flight UA123 (miss → prediction fallback)", async () => {
     const live = await getJSON("/api/check-flight?flight_number=UA123&date=2026-03-20");
-    expect(live).toEqual(load("api-check-flight-UA123.json"));
+    // The miss response intentionally changed (2026-05): it now carries a
+    // prediction block whose values are recomputed from the verification log on
+    // every snapshot. Compare shape, not values — same softening as the
+    // /api/data flightsByTail comparison above.
+    const { prediction, message, ...rest } = live;
+    expect(rest).toEqual({ hasStarlink: false, confidence: "predicted", flights: [] });
+    expect(typeof prediction.probability).toBe("number");
+    expect(typeof prediction.n_observations).toBe("number");
+    expect(typeof message).toBe("string");
   });
 
   test("/api/check-flight UA4421 (true, verified)", async () => {

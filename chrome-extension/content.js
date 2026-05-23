@@ -49,8 +49,9 @@ async function checkFlightForStarlink(flightNumber, date) {
 
     const hasStarlink = response.data.hasStarlink || false;
     const confidence = response.data.confidence || (hasStarlink ? "verified" : undefined);
+    const prediction = response.data.prediction;
 
-    const result = { hasStarlink, confidence, timestamp: Date.now() };
+    const result = { hasStarlink, confidence, prediction, timestamp: Date.now() };
     flightCache.set(cacheKey, result);
     return result;
   } catch (error) {
@@ -59,13 +60,30 @@ async function checkFlightForStarlink(flightNumber, date) {
   }
 }
 
-function createStarlinkBadge(confidence) {
-  const likely = confidence === "likely";
+// Aircraft assignments only exist ~2 days before departure. Above this
+// historical rate we show a "likely" badge instead of nothing.
+const PREDICTION_BADGE_THRESHOLD = 0.8;
+
+// Mobile has no tooltips, so the predicted badge carries the percentage in its
+// text — "Starlink ~85%" — instead of the firm-assignment "(likely)" wording.
+function badgeLabel(confidence, prediction) {
+  if (confidence === "predicted") return `Starlink ~${Math.round(prediction.probability * 100)}%`;
+  return confidence === "likely" ? "Starlink (likely)" : "Starlink";
+}
+
+function badgeTitle(confidence, prediction) {
+  if (confidence === "predicted")
+    return `~${Math.round(prediction.probability * 100)}% of recent departures of this flight used a Starlink-equipped aircraft. United assigns the actual aircraft ~2 days before departure.`;
+  if (confidence === "likely")
+    return "Tracked as Starlink-equipped; not yet verified against united.com";
+  return "Verified Starlink WiFi";
+}
+
+function createStarlinkBadge(confidence, prediction) {
+  const likely = confidence === "likely" || confidence === "predicted";
   const badge = document.createElement("span");
   badge.className = `starlink-wifi-badge${likely ? " starlink-wifi-badge--likely" : ""}`;
-  badge.title = likely
-    ? "Tracked as Starlink-equipped; not yet verified against united.com"
-    : "Verified Starlink WiFi";
+  badge.title = badgeTitle(confidence, prediction);
   badge.style.cssText = `
     margin-left: 12px;
     display: inline-flex;
@@ -80,15 +98,15 @@ function createStarlinkBadge(confidence) {
   const icon = likely
     ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="vertical-align: -2px; margin-right: 4px;"><path d="M11 17h2v2h-2zm0-10h2v8h-2zM12 2a10 10 0 100 20 10 10 0 000-20zm0 18a8 8 0 110-16 8 8 0 010 16z"/></svg>'
     : '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="vertical-align: -2px; margin-right: 4px;"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>';
-  badge.innerHTML = `${icon}Starlink${likely ? " (likely)" : ""}`;
+  badge.innerHTML = `${icon}${badgeLabel(confidence, prediction)}`;
   return badge;
 }
 
-function addStarlinkBadge(card, confidence) {
+function addStarlinkBadge(card, confidence, prediction) {
   if (card.querySelector(".starlink-wifi-badge")) return;
 
-  const badge = createStarlinkBadge(confidence);
-  const likely = confidence === "likely";
+  const badge = createStarlinkBadge(confidence, prediction);
+  const likely = confidence === "likely" || confidence === "predicted";
   const isDesktop = window.innerWidth >= 1024;
 
   if (isDesktop) {
@@ -121,7 +139,7 @@ function addStarlinkBadge(card, confidence) {
       z-index: 10;
       box-shadow: 0 1px 2px rgba(0,0,0,0.08);
     `;
-    badge.innerHTML = likely ? "Starlink (likely)" : "Starlink";
+    badge.textContent = badgeLabel(confidence, prediction);
     liElement.insertBefore(badge, liElement.firstChild);
   }
 }
@@ -189,11 +207,25 @@ async function processFlights() {
       processedElements.add(card);
       processedCount++;
 
-      const { hasStarlink, confidence } = await checkFlightForStarlink(flightNumber, date);
+      const { hasStarlink, confidence, prediction } = await checkFlightForStarlink(
+        flightNumber,
+        date
+      );
       if (hasStarlink) {
         starlinkCount++;
         addStarlinkBadge(card, confidence);
         if (!DEBUG) console.log(`✈️ ${flightNumber} has Starlink WiFi (${confidence})`);
+      } else if (
+        prediction &&
+        prediction.probability >= PREDICTION_BADGE_THRESHOLD &&
+        prediction.confidence !== "low"
+      ) {
+        starlinkCount++;
+        addStarlinkBadge(card, "predicted", prediction);
+        if (!DEBUG)
+          console.log(
+            `✈️ ${flightNumber} likely Starlink (${Math.round(prediction.probability * 100)}%, ${prediction.n_observations} obs)`
+          );
       }
     }
 
