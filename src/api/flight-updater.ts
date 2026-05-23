@@ -333,17 +333,15 @@ export function startFlightUpdater() {
     return;
   }
 
-  let isRunning = false;
+  // 0 = idle; otherwise the start time of the in-progress run. A wedged vendor
+  // call held this for 19h on 2026-05-20 — past the deadline, abandon the run.
+  let runningSince = 0;
   let lastHeartbeat = Date.now();
   let totalUpdates = 0;
   let totalErrors = 0;
+  const STUCK_RUN_TIMEOUT_MS = 15 * 60 * 1000;
 
   const runSingleUpdate = async () => {
-    if (isRunning) {
-      warn("Skipping flight update - previous update still in progress");
-      return;
-    }
-
     // Check circuit breaker
     if (circuitBreakerOpenedAt) {
       const timeSinceOpened = Date.now() - circuitBreakerOpenedAt;
@@ -355,7 +353,18 @@ export function startFlightUpdater() {
       consecutiveApiFailures = 0;
     }
 
-    isRunning = true;
+    if (runningSince) {
+      if (Date.now() - runningSince < STUCK_RUN_TIMEOUT_MS) {
+        warn("Skipping flight update - previous update still in progress");
+        return;
+      }
+      error(
+        `Flight update stuck for ${Math.round((Date.now() - runningSince) / 60000)}min — abandoning it and starting a new run`
+      );
+    }
+
+    const myRun = Date.now();
+    runningSince = myRun;
 
     try {
       await withSpan(
@@ -426,7 +435,8 @@ export function startFlightUpdater() {
       consecutiveApiFailures++;
       totalErrors++;
     } finally {
-      isRunning = false;
+      // An abandoned run that finally settles must not clear its successor's flag.
+      if (runningSince === myRun) runningSince = 0;
     }
   };
 

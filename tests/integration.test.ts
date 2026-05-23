@@ -30,7 +30,6 @@ import {
   getTotalCount,
   getUpcomingFlights,
 } from "../src/database/database";
-import { pickVerifiableFlight } from "../src/scripts/fleet-discovery";
 import { computePrecision } from "../src/scripts/precision-backtest";
 import { planItinerary, predictFlight, predictRoute } from "../src/scripts/starlink-predictor";
 import { computeSurfaceContradictions } from "../src/scripts/surface-sweep";
@@ -42,6 +41,7 @@ import {
   ensureUAPrefix,
   inferFleet,
   normalizeFlightNumber,
+  pickVerifiableFlight,
 } from "../src/utils/constants";
 
 const TEST_DB = "/tmp/ua-test.sqlite";
@@ -862,6 +862,9 @@ describe("flight number utils", () => {
     expect(normalizeFlightNumber(input)).toBe(expected);
   });
 
+  // The window is a calendar-date comparison on the UTC date string sent to
+  // united.com: lookup date must be ≤ UTC-today + 1. Raw seconds don't matter.
+  // now = 2023-11-14T22:13:20Z → dates 11-14 and 11-15 are verifiable.
   test.each<[string, { fn: string; days: number }[], string | undefined]>([
     [
       "skips ATC callsign, picks next",
@@ -872,18 +875,26 @@ describe("flight number utils", () => {
       "UA1268",
     ],
     [
-      "skips >2d-out, picks next",
+      "skips far-out flights, picks the in-window one",
       [
         { fn: "UA314", days: 4 },
-        { fn: "OO4680", days: 1.5 },
+        { fn: "OO4680", days: 0.9 },
       ],
       "OO4680",
     ],
     ["normalizes regional prefix in-window", [{ fn: "C54287", days: 1 }], "C54287"],
     [
+      // 2026-05-23 prod regression: at 04:40Z the verifier asked united.com for
+      // flights dated UTC-today+2 (1.5–2d away by seconds) and every one was
+      // redirected to the search page. >50% error rate nightly, 00:00–08:00 UTC.
+      "rejects calendar-day +2 even when <2d away by seconds",
+      [{ fn: "UA930", days: 1.5 }],
+      undefined,
+    ],
+    [
       // N76265 prod regression: UA2236 on calendar-day+3 was 2.2d away by UTC
-      // seconds — passed the old 2.5d horizon but united.com still 404'd.
-      "rejects 2.2d-out (calendar-day +3 in US local)",
+      // seconds — passed the old seconds-based horizon but united.com still 404'd.
+      "rejects 2.2d-out (calendar-day +3)",
       [{ fn: "UA2236", days: 2.2 }],
       undefined,
     ],
@@ -902,6 +913,15 @@ describe("flight number utils", () => {
       now
     );
     expect(picked?.flight_number).toBe(expected);
+  });
+
+  test("pickVerifiableFlight: accepts UTC-today+1 even when nearly 2d away by seconds", () => {
+    // now just after UTC midnight; flight departs 23:00Z the next day (1.96d away).
+    const now = Date.UTC(2026, 4, 23, 0, 30, 0) / 1000;
+    const dep = Date.UTC(2026, 4, 24, 23, 0, 0) / 1000;
+    expect(
+      pickVerifiableFlight([{ flight_number: "UA930", departure_time: dep }], now)
+    ).toBeDefined();
   });
 
   test("buildFlightNumberVariants: UA number → all carrier variants", () => {
