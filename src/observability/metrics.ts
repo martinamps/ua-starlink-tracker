@@ -145,6 +145,18 @@ export function normalizeAirlineTag(code: string | null | undefined): string {
   return AIRLINES[code.toUpperCase()]?.metricTag ?? "unmapped";
 }
 
+/** Bounded-cardinality bucket for how many calendar days ahead a flight lookup's date is. */
+export function bucketDaysOut(days: number): string {
+  if (!Number.isFinite(days)) return "unknown";
+  const d = Math.floor(days);
+  if (d < 0) return "past";
+  if (d <= 3) return String(d);
+  if (d <= 7) return "4_7";
+  if (d <= 14) return "8_14";
+  if (d <= 30) return "15_30";
+  return "31_plus";
+}
+
 // ============ Metric Names ============
 
 /**
@@ -194,7 +206,8 @@ export const COUNTERS = {
 
   // User-facing flight lookup outcome — how often we actually answer the question.
   // tags: endpoint (api_check|api_predict|mcp), outcome (verified_yes|verified_no|
-  //   predicted|no_data|error), confidence (high|medium|low|none), airline
+  //   predicted|no_data|error), confidence (high|medium|low|none), airline,
+  //   days_out (past|0..3|4_7|8_14|15_30|31_plus — only the /api/check-flight handler, non-QR)
   FLIGHT_LOOKUP_RESULT: "flight.lookup_result",
 
   // MCP tool dispatch — tags: tool, airline, outcome (success|error|unknown_tool)

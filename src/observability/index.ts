@@ -18,5 +18,6 @@ export {
   normalizeAirlineTag,
   normalizeStarlinkStatus,
   classifyUserAgent,
+  bucketDaysOut,
 } from "./metrics";
 export type { Tags } from "./metrics";

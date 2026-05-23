@@ -40,6 +40,7 @@ import RoutePlannerPage from "../components/route-planner-page";
 import {
   COUNTERS,
   DISTRIBUTIONS,
+  bucketDaysOut,
   classifyUserAgent,
   metrics,
   normalizeAirlineTag,
@@ -331,13 +332,15 @@ function recordFlightLookup(
   endpoint: "api_check" | "api_predict" | "mcp",
   outcome: LookupOutcome,
   confidence: LookupConfidence,
-  airlineCode: string
+  airlineCode: string,
+  daysOut?: number
 ): void {
   metrics.increment(COUNTERS.FLIGHT_LOOKUP_RESULT, {
     endpoint,
     outcome,
     confidence,
     airline: normalizeAirlineTag(airlineCode),
+    ...(daysOut !== undefined && { days_out: bucketDaysOut(daysOut) }),
   });
 }
 
@@ -479,6 +482,8 @@ const apiCheckFlight: Handler = async ({ req, url, reader, tenant }) => {
   }
   const startOfDay = Math.floor(dateObj.getTime() / 1000);
   const endOfDay = startOfDay + 86400;
+  // Calendar days between the queried date and today (UTC) — drives the days_out tag.
+  const daysOut = Math.floor(startOfDay / 86400) - Math.floor(Date.now() / 1000 / 86400);
 
   if (cfg.code === "QR") {
     return apiCheckFlightQatar(reader, cfg, flightNumber, startOfDay, endOfDay);
@@ -503,7 +508,8 @@ const apiCheckFlight: Handler = async ({ req, url, reader, tenant }) => {
           "api_check",
           allVerified ? "verified_yes" : "predicted",
           allVerified ? "high" : "medium",
-          cfg.code
+          cfg.code,
+          daysOut
         );
         return new Response(
           JSON.stringify({
@@ -528,8 +534,10 @@ const apiCheckFlight: Handler = async ({ req, url, reader, tenant }) => {
           { headers: SECURITY_HEADERS.api }
         );
       }
-      if (segments.length > 0) {
-        recordFlightLookup("api_check", "verified_no", "medium", cfg.code);
+      // Segments whose tail we know nothing about are not a "no" — only a
+      // verified non-Starlink tail is. Otherwise fall through to probability.
+      if (segments.some((s) => s.hasStarlink === false)) {
+        recordFlightLookup("api_check", "verified_no", "medium", cfg.code, daysOut);
         return new Response(
           JSON.stringify({
             hasStarlink: false,
@@ -541,11 +549,33 @@ const apiCheckFlight: Handler = async ({ req, url, reader, tenant }) => {
         );
       }
     }
-    recordFlightLookup("api_check", "no_data", "none", cfg.code);
+
+    // No assignment anywhere — tails aren't published until ~2 days out, so
+    // serve the historical probability. hasStarlink stays false (the extension
+    // contract is boolean and means "firm assignment"); prediction is additive.
+    const pred = predictFlight(reader, normalizedFlightNumber);
+    recordFlightLookup(
+      "api_check",
+      pred.n_observations > 0 ? "predicted" : "no_data",
+      pred.n_observations > 0 ? pred.confidence : "none",
+      cfg.code,
+      daysOut
+    );
+    recordPrediction(pred, cfg.code);
+    const pct = Math.round(pred.probability * 100);
     return new Response(
       JSON.stringify({
         hasStarlink: false,
-        message: "No Starlink-equipped aircraft found for this flight on the specified date",
+        confidence: "predicted",
+        prediction: {
+          probability: pred.probability,
+          confidence: pred.confidence,
+          n_observations: pred.n_observations,
+        },
+        message:
+          pred.n_observations > 0
+            ? `Aircraft assignment not yet published — ${cfg.name} assigns aircraft ~2 days before departure. ~${pct}% of recent departures of this flight used a Starlink-equipped aircraft (${pred.n_observations} observation${pred.n_observations === 1 ? "" : "s"}).`
+            : `Aircraft assignment not yet published — ${cfg.name} assigns aircraft ~2 days before departure. No history for this flight number; ~${pct}% reflects the fleet-wide install rate.`,
         flights: [],
       }),
       { headers: SECURITY_HEADERS.api }
@@ -553,7 +583,13 @@ const apiCheckFlight: Handler = async ({ req, url, reader, tenant }) => {
   }
 
   const allVerified = matchingFlights.every((f) => f.verified_wifi === "Starlink");
-  recordFlightLookup("api_check", "verified_yes", allVerified ? "high" : "medium", cfg.code);
+  recordFlightLookup(
+    "api_check",
+    "verified_yes",
+    allVerified ? "high" : "medium",
+    cfg.code,
+    daysOut
+  );
   const response = {
     hasStarlink: true,
     confidence: allVerified ? "verified" : "likely",
