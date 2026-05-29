@@ -2421,8 +2421,10 @@ export function updateFleetVerificationResult(
       .query("SELECT check_attempts FROM united_fleet WHERE tail_number = ?")
       .get(tailNumber) as { check_attempts: number } | null;
     const attempts = (current?.check_attempts || 0) + 1;
-    // 1h, 2h, 4h, 8h, max 24h
-    nextCheckDelay = Math.min(24 * 3600, 3600 * 2 ** (attempts - 1));
+    // 1h, 2h, 4h, 8h, max 24h — but 20+ consecutive failures means parked/stored,
+    // and weekly is enough to catch a return to service.
+    nextCheckDelay =
+      attempts >= 20 ? 7 * 24 * 3600 : Math.min(24 * 3600, 3600 * 2 ** (attempts - 1));
   } else if (result.needsMoreObs) {
     // Consensus is ambiguous/insufficient — re-check in ~36h so it converges
     // within a few days instead of waiting 7-14 days between observations.
