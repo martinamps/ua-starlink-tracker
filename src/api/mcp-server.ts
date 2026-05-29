@@ -24,6 +24,7 @@ import { AIRLINES, type AirlineCode, type AnalyticsConfig } from "../airlines/re
 import type { Scope, ScopedReader } from "../database/reader";
 import { COUNTERS, DISTRIBUTIONS, metrics, normalizeAirlineTag } from "../observability";
 import { planItinerary, predictFlight, predictRoute } from "../scripts/starlink-predictor";
+import { filterToLocalDate, localDateWindow } from "../utils/airport-time";
 import {
   buildFlightNumberVariants,
   ensureUAPrefix,
@@ -487,7 +488,13 @@ async function toolCheckFlight(
   }
 
   const variants = buildFlightNumberVariants(normalized);
-  const assignments = reader.getFlightAssignments(variants, startOfDay, endOfDay);
+  // Query a widened UTC window, then keep legs on the requested airport-local
+  // date — a US evening departure lives on the next UTC calendar day.
+  const window = localDateWindow(date);
+  const assignments = filterToLocalDate(
+    reader.getFlightAssignments(variants, window.startSec, window.endSec),
+    date
+  );
 
   // Dedupe by (departure_time) — stale cache can have two tails for same departure
   // after an aircraft swap. Keep the most-recently-updated row (query is DESC).

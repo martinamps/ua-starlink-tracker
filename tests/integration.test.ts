@@ -36,6 +36,7 @@ import { computeSurfaceContradictions } from "../src/scripts/surface-sweep";
 import { createApp } from "../src/server/app";
 import { type ScopedReader, createReaderFactory } from "../src/server/context";
 import type { ApiResponse, Flight } from "../src/types";
+import { departsOnLocalDate, filterToLocalDate, localDateWindow } from "../src/utils/airport-time";
 import {
   buildFlightNumberVariants,
   ensureUAPrefix,
@@ -854,6 +855,49 @@ describe("FR24 fallback window math", () => {
     const now = Math.floor(new Date("2026-03-15T12:00:00Z").getTime() / 1000);
     expect(inLookupWindow(day("2026-03-18").start, day("2026-03-18").end, now)).toBe(true);
     expect(inLookupWindow(day("2026-03-19").start, day("2026-03-19").end, now)).toBe(false);
+  });
+});
+
+describe("airport-local date matching", () => {
+  // 2026-06-15 19:30 PDT = 2026-06-16 02:30 UTC — the Google Flights date and
+  // the UTC calendar date disagree; local must win.
+  const sfoEvening = Date.UTC(2026, 5, 16, 2, 30) / 1000;
+
+  test.each<[string, number, string, string, boolean]>([
+    ["SFO evening matches its local date", sfoEvening, "SFO", "2026-06-15", true],
+    ["SFO evening does not match its UTC date", sfoEvening, "SFO", "2026-06-16", false],
+    ["LHR morning matches same-day", Date.UTC(2026, 5, 15, 8, 0) / 1000, "LHR", "2026-06-15", true],
+    [
+      "HNL late evening matches its local date",
+      Date.UTC(2026, 5, 16, 9, 30) / 1000,
+      "HNL",
+      "2026-06-15",
+      true,
+    ],
+    ["unknown airport falls back to UTC date", sfoEvening, "XXX", "2026-06-16", true],
+    [
+      "ORD winter date handles CST offset",
+      Date.UTC(2026, 0, 16, 4, 0) / 1000,
+      "ORD",
+      "2026-01-15",
+      true,
+    ],
+  ])("%s", (_, dep, airport, date, expected) => {
+    expect(departsOnLocalDate(dep, airport, date)).toBe(expected);
+  });
+
+  test("localDateWindow brackets every served timezone", () => {
+    const w = localDateWindow("2026-06-15");
+    expect(w.startSec).toBeLessThanOrEqual(Date.UTC(2026, 5, 14, 11, 0) / 1000);
+    expect(w.endSec).toBeGreaterThanOrEqual(Date.UTC(2026, 5, 16, 10, 0) / 1000);
+  });
+
+  test("filterToLocalDate keeps only the requested local date", () => {
+    const rows = [
+      { departure_time: sfoEvening, departure_airport: "SFO", id: "evening" },
+      { departure_time: Date.UTC(2026, 5, 16, 15, 0) / 1000, departure_airport: "SFO", id: "next" },
+    ];
+    expect(filterToLocalDate(rows, "2026-06-15").map((r) => r.id)).toEqual(["evening"]);
   });
 });
 

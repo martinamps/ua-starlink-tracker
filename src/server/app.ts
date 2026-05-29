@@ -48,6 +48,7 @@ import {
 } from "../observability";
 import { compareRoute, planItinerary, predictFlight } from "../scripts/starlink-predictor";
 import type { ApiResponse, Flight } from "../types";
+import { filterToLocalDate, localDateWindow } from "../utils/airport-time";
 import { CONTENT_TYPES, SECURITY_HEADERS } from "../utils/constants";
 import { error as logError } from "../utils/logger";
 import { getNotFoundHtml } from "../utils/not-found";
@@ -491,7 +492,14 @@ const apiCheckFlight: Handler = async ({ req, url, reader, tenant }) => {
 
   const normalizedFlightNumber = ensureAirlinePrefix(cfg, flightNumber);
   const variants = buildAirlineFlightNumberVariants(cfg, normalizedFlightNumber);
-  const matchingFlights = reader.getFlightsByNumberAndDate(variants, startOfDay, endOfDay);
+  // Users pass the airport-local date (what Google Flights shows); a US evening
+  // departure lives on the next UTC calendar day. Query a widened UTC window,
+  // then keep only legs that fall on the requested local date.
+  const window = localDateWindow(date);
+  const matchingFlights = filterToLocalDate(
+    reader.getFlightsByNumberAndDate(variants, window.startSec, window.endSec),
+    date
+  );
 
   if (matchingFlights.length === 0) {
     const segments = await lookupFlightTailVerdict(
