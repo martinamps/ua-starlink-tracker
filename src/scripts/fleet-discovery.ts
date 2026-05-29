@@ -160,11 +160,11 @@ async function verifyPlane(
       const flightData = await getUpcomingFlightsForPlane(plane.tail_number);
 
       if (!flightData) {
-        const attempts = plane.check_attempts ?? 0;
-        if (attempts >= 20) {
-          warn(
-            `${plane.tail_number}: ${attempts} consecutive no-flights — likely grounded, manual review needed`
-          );
+        // Counting this check, to match the increment updateFleetVerificationResult applies.
+        const failures = (plane.check_attempts ?? 0) + 1;
+        if (failures === 20) {
+          // Warn once at the parked threshold; after that it's weekly backoff and repeats are noise.
+          warn(`${plane.tail_number}: ${failures} consecutive no-flights — likely parked/stored`);
         } else {
           info(`No upcoming flights for ${plane.tail_number}, skipping`);
         }
