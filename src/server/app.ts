@@ -502,12 +502,7 @@ const apiCheckFlight: Handler = async ({ req, url, reader, tenant }) => {
   );
 
   if (matchingFlights.length === 0) {
-    const segments = await lookupFlightTailVerdict(
-      reader,
-      normalizedFlightNumber,
-      startOfDay,
-      endOfDay
-    );
+    const segments = await lookupFlightTailVerdict(reader, normalizedFlightNumber, date);
     if (segments !== null) {
       const starlinkSegs = segments.filter((s) => s.hasStarlink);
       if (starlinkSegs.length > 0) {

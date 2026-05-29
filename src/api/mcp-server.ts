@@ -571,7 +571,7 @@ async function toolCheckFlight(
   // No upcoming_flights row — try the same FR24 tail-lookup fallback that
   // /api/check-flight uses, so MCP and the extension API converge on the same
   // firm answer when FR24 knows the assigned tail.
-  const fb = await lookupFlightTailVerdict(reader, normalized, startOfDay, endOfDay, now);
+  const fb = await lookupFlightTailVerdict(reader, normalized, date, now);
   if (fb && fb.length > 0) {
     const yes = fb.filter((s) => s.hasStarlink);
     const no = fb.filter((s) => s.hasStarlink === false);

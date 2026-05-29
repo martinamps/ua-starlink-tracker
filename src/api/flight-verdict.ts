@@ -8,6 +8,7 @@
  */
 
 import type { ScopedReader } from "../database/reader";
+import { departsOnLocalDate, localDateWindow } from "../utils/airport-time";
 import { FlightRadar24API } from "./flightradar24-api";
 
 const fr24 = new FlightRadar24API();
@@ -117,24 +118,25 @@ export function resolveTailVerdict(
 /**
  * FR24 reverse-lookup fallback. Returns null when the date is outside FR24's
  * useful window (~24h past to ~3d future), [] when in-window but FR24 found no
- * tail-assigned legs on that UTC day, otherwise one FallbackSegment per leg.
+ * tail-assigned legs on that airport-local date, otherwise one FallbackSegment per leg.
  */
 export async function lookupFlightTailVerdict(
   reader: ScopedReader,
   normalizedFlightNumber: string,
-  startOfDay: number,
-  endOfDay: number,
+  dateISO: string,
   nowSec = Math.floor(Date.now() / 1000)
 ): Promise<FallbackSegment[] | null> {
-  const inLookupWindow = endOfDay > nowSec - 86400 && startOfDay < nowSec + 3 * 86400;
+  const utcNoon = Math.floor(new Date(`${dateISO}T12:00:00Z`).getTime() / 1000);
+  const window = localDateWindow(dateISO);
+  const inLookupWindow = window.endSec > nowSec - 86400 && window.startSec < nowSec + 3 * 86400;
   if (!inLookupWindow) return null;
 
-  const assignments = await cachedFlightAssignments(normalizedFlightNumber, startOfDay + 43200);
+  const assignments = await cachedFlightAssignments(normalizedFlightNumber, utcNoon);
   const segments: FallbackSegment[] = [];
 
   for (const a of assignments) {
     if (!a.tail_number) continue;
-    if (a.departure_time < startOfDay || a.departure_time >= endOfDay) continue;
+    if (!departsOnLocalDate(a.departure_time, a.origin, dateISO)) continue;
 
     const v = resolveTailVerdict(reader, a.tail_number, nowSec);
     segments.push({

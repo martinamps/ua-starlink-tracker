@@ -1,7 +1,7 @@
 /**
  * Airport-local time helpers. Flight searches (Google Flights, airline sites)
  * are keyed on the departure airport's LOCAL date, while the DB stores UTC
- * epochs — a US evening departure belongs to the previous UTC calendar day.
+ * epochs — a US evening departure falls on the next UTC calendar day.
  */
 
 const Z = {
@@ -51,13 +51,22 @@ const AIRPORT_TZ: Record<string, string> = {
   ...mapTo("America/Edmonton", "YYC YEG"),
   // Mexico, Caribbean, Central & South America
   ...mapTo("America/Monterrey", "MTY"),
-  ...mapTo("America/Mexico_City", "MEX GDL"),
-  ...mapTo("America/Mazatlan", "SJD PVR"),
+  ...mapTo("America/Mexico_City", "MEX GDL PVR"),
+  ...mapTo("America/Mazatlan", "SJD"),
   ...mapTo("America/Cancun", "CUN CZM"),
-  ...mapTo("America/Puerto_Rico", "SJU STT STX"),
+  ...mapTo("America/Guatemala", "GUA"),
+  ...mapTo("America/El_Salvador", "SAL"),
+  ...mapTo("America/Costa_Rica", "SJO LIR"),
+  ...mapTo("America/Belize", "BZE"),
+  ...mapTo("America/Tegucigalpa", "SAP RTB"),
+  ...mapTo("America/Puerto_Rico", "SJU STT STX SXM AUA CUR"),
+  ...mapTo("America/Santo_Domingo", "PUJ SDQ STI"),
+  ...mapTo("America/Jamaica", "MBJ KIN GCM"),
+  ...mapTo("America/Nassau", "NAS"),
   ...mapTo("America/Panama", "PTY"),
   ...mapTo("America/Bogota", "BOG"),
   ...mapTo("America/Lima", "LIM"),
+  ...mapTo("Pacific/Pago_Pago", "PPG"),
   ...mapTo("America/Santiago", "SCL"),
   ...mapTo("America/Sao_Paulo", "GRU GIG"),
   ...mapTo("America/Argentina/Buenos_Aires", "EZE"),
