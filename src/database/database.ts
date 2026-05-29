@@ -23,7 +23,11 @@ import type {
   FleetStats,
   FleetTail,
   Flight,
+  InstallPace,
+  InstallPaceWeek,
   RecentInstall,
+  RouteSchedule,
+  RouteScheduleRow,
   StarlinkStatus,
   WifiProvider,
 } from "../types";
@@ -2831,6 +2835,99 @@ export function getAirportDepartures(db: Database, airline?: AirlineFilter): Air
   return { rows, windowLabel: "next 48 hours" };
 }
 
+/** Scheduled departures on confirmed-Starlink aircraft, grouped by origin→destination. */
+export function getRouteStarlinkSchedule(
+  db: Database,
+  airline?: AirlineFilter,
+  nowSec = Math.floor(Date.now() / 1000)
+): RouteSchedule {
+  const q = withAirline(
+    `SELECT uf.departure_airport AS origin, uf.arrival_airport AS destination,
+            COUNT(*) AS departures,
+            COUNT(DISTINCT uf.flight_number) AS flight_numbers,
+            MIN(uf.departure_time) AS next_departure
+     FROM upcoming_flights uf
+     JOIN united_fleet f ON f.tail_number = uf.tail_number
+     WHERE f.starlink_status = 'confirmed' AND uf.departure_time >= ?`,
+    airline,
+    "uf",
+    [nowSec]
+  );
+  const rows = db
+    .query(
+      `${q.sql} GROUP BY uf.departure_airport, uf.arrival_airport
+       ORDER BY departures DESC, flight_numbers DESC, origin ASC LIMIT 60`
+    )
+    .all(...q.params) as RouteScheduleRow[];
+
+  return { rows, windowLabel: "next 48 hours" };
+}
+
+function computeInstallPace(
+  db: Database,
+  airline: AirlineFilter | undefined,
+  fleetGroups: Record<"express" | "mainline", { starlink: number; total: number }>
+): InstallPace {
+  const q = withAirline(
+    `SELECT DateFound AS d, fleet FROM starlink_planes
+     WHERE DateFound IS NOT NULL AND DateFound >= date('now', '-77 days')`,
+    airline
+  );
+  const found = db.query(q.sql).all(...q.params) as Array<{ d: string; fleet: string | null }>;
+
+  // Bucket by week starting Monday, then fill the trailing 10 weeks so
+  // zero-install weeks are visible instead of silently skipped.
+  const weekStartOf = (date: Date): string => {
+    const day = (date.getUTCDay() + 6) % 7;
+    const monday = new Date(date.getTime() - day * 86400_000);
+    return monday.toISOString().slice(0, 10);
+  };
+  const byWeek = new Map<string, number>();
+  const mainlineByWeek = new Map<string, number>();
+  for (const r of found) {
+    const dt = new Date(`${r.d}T00:00:00Z`);
+    if (Number.isNaN(dt.getTime())) continue;
+    const wk = weekStartOf(dt);
+    byWeek.set(wk, (byWeek.get(wk) || 0) + 1);
+    if (normalizeFleet(r.fleet) === "mainline")
+      mainlineByWeek.set(wk, (mainlineByWeek.get(wk) || 0) + 1);
+  }
+
+  const currentWeek = weekStartOf(new Date());
+  const weeks: InstallPaceWeek[] = [];
+  for (let i = 9; i >= 0; i--) {
+    const wk = weekStartOf(new Date(Date.now() - i * 7 * 86400_000));
+    weeks.push({ weekStart: wk, installs: byWeek.get(wk) || 0 });
+  }
+
+  // Pace: average of the 6 most recent *complete* weeks of mainline installs.
+  const fullWeeks = weeks.filter((w) => w.weekStart !== currentWeek).slice(-6);
+  const mainlinePaceWk =
+    fullWeeks.length > 0
+      ? fullWeeks.reduce((s, w) => s + (mainlineByWeek.get(w.weekStart) || 0), 0) / fullWeeks.length
+      : 0;
+
+  const remainingMainline = Math.max(0, fleetGroups.mainline.total - fleetGroups.mainline.starlink);
+  let projectedFinishMonth: string | null = null;
+  if (mainlinePaceWk >= 0.5 && remainingMainline > 0) {
+    const finish = new Date(Date.now() + (remainingMainline / mainlinePaceWk) * 7 * 86400_000);
+    projectedFinishMonth = finish.toLocaleDateString("en-US", {
+      month: "long",
+      year: "numeric",
+      timeZone: "UTC",
+    });
+  }
+
+  return {
+    weeks,
+    express: fleetGroups.express,
+    mainline: fleetGroups.mainline,
+    mainlinePaceWk: Math.round(mainlinePaceWk * 10) / 10,
+    remainingMainline,
+    projectedFinishMonth,
+  };
+}
+
 function computeFleetPageData(db: Database, airline?: AirlineFilter): FleetPageData {
   const q = withAirline(
     `SELECT tail_number, aircraft_type, fleet, operated_by,
@@ -2856,6 +2953,10 @@ function computeFleetPageData(db: Database, airline?: AirlineFilter): FleetPageD
     narrowbody: { starlink: 0, viasat: 0, panasonic: 0, thales: 0, none: 0, unknown: 0 },
     widebody: { starlink: 0, viasat: 0, panasonic: 0, thales: 0, none: 0, unknown: 0 },
   } as Record<BodyClass, Record<WifiProvider, number>>;
+  const fleetGroups = {
+    express: { starlink: 0, total: 0 },
+    mainline: { starlink: 0, total: 0 },
+  };
 
   let totalStarlink = 0;
 
@@ -2879,6 +2980,10 @@ function computeFleetPageData(db: Database, airline?: AirlineFilter): FleetPageD
 
     if (provider === "starlink") totalStarlink++;
     bodyClass[body][provider]++;
+    if (tail.fleet === "express" || tail.fleet === "mainline") {
+      fleetGroups[tail.fleet].total++;
+      if (provider === "starlink") fleetGroups[tail.fleet].starlink++;
+    }
 
     let fam = familyMap.get(family);
     if (!fam) {
@@ -2914,6 +3019,7 @@ function computeFleetPageData(db: Database, airline?: AirlineFilter): FleetPageD
     .sort((a, b) => b.pct - a.pct);
 
   const pulse = computePulse(db, airline);
+  const installPace = computeInstallPace(db, airline, fleetGroups);
 
   return {
     pulse,
@@ -2923,6 +3029,7 @@ function computeFleetPageData(db: Database, airline?: AirlineFilter): FleetPageD
     allTails,
     totalFleet: rows.length,
     totalStarlink,
+    installPace,
   };
 }
 

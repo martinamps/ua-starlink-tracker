@@ -142,6 +142,20 @@ export interface FleetPulse {
   totalHours: number;
 }
 
+export interface InstallPaceWeek {
+  weekStart: string;
+  installs: number;
+}
+
+export interface InstallPace {
+  weeks: InstallPaceWeek[];
+  express: { starlink: number; total: number };
+  mainline: { starlink: number; total: number };
+  mainlinePaceWk: number;
+  remainingMainline: number;
+  projectedFinishMonth: string | null;
+}
+
 export interface FleetPageData {
   pulse: FleetPulse;
   families: FleetFamily[];
@@ -150,6 +164,20 @@ export interface FleetPageData {
   allTails: FleetTail[];
   totalFleet: number;
   totalStarlink: number;
+  installPace: InstallPace;
+}
+
+export interface RouteScheduleRow {
+  origin: string;
+  destination: string;
+  departures: number;
+  flight_numbers: number;
+  next_departure: number;
+}
+
+export interface RouteSchedule {
+  rows: RouteScheduleRow[];
+  windowLabel: string;
 }
 
 export type AirportDeparture = { airport: string; count: number };

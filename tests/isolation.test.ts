@@ -97,6 +97,7 @@ describe("tenant resolution", () => {
 const ENDPOINTS = [
   "/",
   "/fleet",
+  "/routes",
   "/check-flight",
   "/route-planner",
   "/api/data",

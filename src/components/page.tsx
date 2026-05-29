@@ -313,7 +313,8 @@ export default function Page({
     ...(features?.routePlannerPage
       ? [{ href: "/route-planner", label: "Route Planner", badge: "" }]
       : []),
-    ...(features?.fleetPage ? [{ href: "/fleet", label: "Fleet Rollout", badge: "NEW" }] : []),
+    ...(features?.fleetPage ? [{ href: "/fleet", label: "Fleet Rollout", badge: "" }] : []),
+    ...(features?.routesPage ? [{ href: "/routes", label: "Live Routes", badge: "NEW" }] : []),
     ...(features?.mcpPage ? [{ href: "/mcp", label: "Tools & MCP", badge: "NEW" }] : []),
   ];
   const subfleetCounts = Object.fromEntries(

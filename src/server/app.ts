@@ -37,6 +37,7 @@ import FleetPage from "../components/fleet-page";
 import McpPage from "../components/mcp-page";
 import Page from "../components/page";
 import RoutePlannerPage from "../components/route-planner-page";
+import RoutesPage from "../components/routes-page";
 import {
   COUNTERS,
   DISTRIBUTIONS,
@@ -958,6 +959,9 @@ const sitemap: Handler = ({ reader, site, tenant }) => {
       ? [{ path: "/route-planner", changefreq: "weekly", priority: "0.8" }]
       : []),
     ...(site.features.fleetPage ? [{ path: "/fleet", changefreq: "daily", priority: "0.7" }] : []),
+    ...(site.features.routesPage
+      ? [{ path: "/routes", changefreq: "hourly", priority: "0.7" }]
+      : []),
     ...(site.features.mcpPage ? [{ path: "/mcp", changefreq: "monthly", priority: "0.6" }] : []),
     ...flightEntries,
   ];
@@ -1153,7 +1157,7 @@ async function renderSubPage<P extends object = object>(
 
 function subPageMeta(
   ctx: RequestContext,
-  page: "check-flight" | "route-planner" | "fleet"
+  page: "check-flight" | "route-planner" | "fleet" | "routes"
 ): PageMeta {
   const tenant = ctx.tenant;
   const cfg = tenantConfig(tenant);
@@ -1168,6 +1172,14 @@ function subPageMeta(
       keywords: `check ${cfg?.iata ?? "airline"} flight starlink, does my flight have starlink, ${name} wifi check`,
       ogTitle: `Check Your ${short} Flight for Starlink WiFi`,
       ogDescription: `Enter a ${short} flight number and date to see if your aircraft has free Starlink WiFi.`,
+    };
+  if (page === "routes")
+    return {
+      siteTitle: `Where ${short} Starlink Is Flying Today — Live Routes | ${brand.title}`,
+      siteDescription: `Every ${name} departure scheduled on a Starlink-equipped aircraft over the next 48 hours, grouped by route and counted from live tail assignments.`,
+      keywords: `${name} starlink routes, which routes have starlink, ${cfg?.iata ?? "airline"} starlink flights today, starlink wifi routes`,
+      ogTitle: `Where ${short} Starlink Is Flying Today`,
+      ogDescription: `Live count of ${name} departures on Starlink-equipped aircraft by route, next 48 hours.`,
     };
   if (page === "route-planner")
     return {
@@ -1303,6 +1315,18 @@ const fleetPage: Handler = (ctx) => {
   return renderSubPage(ctx, FleetPage, "/fleet", subPageMeta(ctx, "fleet"), { data });
 };
 
+const routesPage: Handler = (ctx) => {
+  if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
+  if (!ctx.site.features.routesPage) {
+    return new Response(getNotFoundHtml(ctx.site.brand), {
+      status: 404,
+      headers: SECURITY_HEADERS.notFound,
+    });
+  }
+  const schedule = ctx.reader.getRouteStarlinkSchedule();
+  return renderSubPage(ctx, RoutesPage, "/routes", subPageMeta(ctx, "routes"), { schedule });
+};
+
 const homePage: Handler = async (ctx) => {
   const { req, reader, tenant, site } = ctx;
   if (req.method !== "GET" && req.method !== "HEAD") return methodNotAllowed();
@@ -1419,6 +1443,7 @@ export function createApp(db: Database): App {
     "/check-flight": checkFlightPage,
     "/route-planner": routePlannerPage,
     "/fleet": fleetPage,
+    "/routes": routesPage,
     "/api/data": apiData,
     "/api/fleet-summary": apiFleetSummary,
     "/api/check-flight": apiCheckFlight,

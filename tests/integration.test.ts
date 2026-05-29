@@ -26,6 +26,7 @@ import {
   getHubStats,
   getLastUpdated,
   getRecentInstalls,
+  getRouteStarlinkSchedule,
   getStarlinkPlanes,
   getTotalCount,
   getUpcomingFlights,
@@ -1025,6 +1026,68 @@ describe("getFleetPageData", () => {
     for (const t of d.allTails) {
       expect(valid.has(t.provider)).toBe(true);
     }
+  });
+
+  test("installPace: 10 filled weeks, consistent group totals, sane projection fields", () => {
+    const d = getFleetPageData(db, "UA");
+    const p = d.installPace;
+    expect(p.weeks.length).toBe(10);
+    for (const w of p.weeks) {
+      expect(w.weekStart).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(w.installs).toBeGreaterThanOrEqual(0);
+    }
+    for (let i = 1; i < p.weeks.length; i++) {
+      expect(p.weeks[i].weekStart > p.weeks[i - 1].weekStart).toBe(true);
+    }
+    for (const g of [p.express, p.mainline]) {
+      expect(g.starlink).toBeGreaterThanOrEqual(0);
+      expect(g.starlink).toBeLessThanOrEqual(g.total);
+    }
+    expect(p.express.total + p.mainline.total).toBeLessThanOrEqual(d.totalFleet);
+    expect(p.remainingMainline).toBe(p.mainline.total - p.mainline.starlink);
+    expect(p.mainlinePaceWk).toBeGreaterThanOrEqual(0);
+    if (p.projectedFinishMonth !== null) {
+      expect(p.projectedFinishMonth).toMatch(/^[A-Z][a-z]+ \d{4}$/);
+    }
+  });
+});
+
+describe("getRouteStarlinkSchedule", () => {
+  test("groups confirmed-Starlink legs by route with consistent counts", () => {
+    // Anchor the window at the snapshot's oldest departure so the assertion
+    // exercises real rows regardless of how stale the snapshot is.
+    const oldest = db
+      .query("SELECT MIN(departure_time) AS t FROM upcoming_flights WHERE airline='UA'")
+      .get() as { t: number | null };
+    const s = getRouteStarlinkSchedule(db, "UA", oldest.t ?? undefined);
+    expect(typeof s.windowLabel).toBe("string");
+    expect(Array.isArray(s.rows)).toBe(true);
+    expect(s.rows.length).toBeLessThanOrEqual(60);
+    for (const r of s.rows) {
+      expect(r.origin).toMatch(/^[A-Z0-9]{3,4}$/);
+      expect(r.destination).toMatch(/^[A-Z0-9]{3,4}$/);
+      expect(r.departures).toBeGreaterThan(0);
+      expect(r.flight_numbers).toBeGreaterThan(0);
+      expect(r.flight_numbers).toBeLessThanOrEqual(r.departures);
+      expect(r.next_departure).toBeGreaterThanOrEqual(oldest.t ?? 0);
+    }
+    for (let i = 1; i < s.rows.length; i++) {
+      expect(s.rows[i].departures).toBeLessThanOrEqual(s.rows[i - 1].departures);
+    }
+  });
+
+  test("/routes renders on tenant sites and 404s where the feature is off", async () => {
+    const app = createApp(db);
+    const ua = await app.dispatch(
+      new Request("http://x/routes", { headers: { Host: "unitedstarlinktracker.com" } })
+    );
+    expect(ua.status).toBe(200);
+    expect(await ua.text()).toContain("Starlink");
+
+    const hub = await app.dispatch(
+      new Request("http://x/routes", { headers: { Host: "airlinestarlinktracker.com" } })
+    );
+    expect(hub.status).toBe(404);
   });
 });
 
