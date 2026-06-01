@@ -305,11 +305,14 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
       },
       {
         key: "horizon",
-        label: "Horizon (E175)",
+        // Covers Horizon- and SkyWest-operated E175s; both are in the completed
+        // regional rollout.
+        label: "Regional E175",
         flightNumberHint: "AS2000+",
-        // Rollout complete (see rollout.phaseNote), but our Horizon roster is
-        // structurally incomplete — FR24's qx-qxe fleet page times out, so
-        // united_fleet only has the handful of E175s found via other paths.
+        // Rollout complete (see rollout.phaseNote). The override exists because
+        // our verification coverage of this subfleet is sparse — only E175s that
+        // surface via flight lookups enter the roster, so a roster-derived rate
+        // would rest on a handful of tails, not the fleet.
         penetrationOverride: 1,
         match: (fn) => {
           const n = flightNum(fn);

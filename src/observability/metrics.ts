@@ -260,6 +260,14 @@ export const DISTRIBUTIONS = {
   MCP_TOOL_DURATION_MS: "mcp.tool_duration_ms",
 
   // Distribution of probabilities served to users — surfaces cold-start floods.
-  // tags: confidence (high|medium|low), method (flight_history|fleet_prior), airline
+  // tags: confidence (high|medium|low),
+  //   method (flight_history|fleet_prior|subfleet_penetration), airline
   PREDICTION_PROBABILITY: "prediction.probability",
 } as const;
+
+/** Collapse Prediction.method values into the documented metric tag values above. */
+export function normalizePredictionMethod(method: string): string {
+  if (method.startsWith("fleet_prior")) return "fleet_prior";
+  if (method === "subfleet_penetration") return "subfleet_penetration";
+  return "flight_history";
+}

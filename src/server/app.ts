@@ -44,9 +44,15 @@ import {
   classifyUserAgent,
   metrics,
   normalizeAirlineTag,
+  normalizePredictionMethod,
   withSpan,
 } from "../observability";
-import { compareRoute, planItinerary, predictFlight } from "../scripts/starlink-predictor";
+import {
+  compareRoute,
+  isInformativePrediction,
+  planItinerary,
+  predictFlight,
+} from "../scripts/starlink-predictor";
 import type { ApiResponse, Flight } from "../types";
 import { CONTENT_TYPES, SECURITY_HEADERS } from "../utils/constants";
 import { error as logError } from "../utils/logger";
@@ -350,14 +356,9 @@ function recordPrediction(
   pred: { probability: number; confidence: "high" | "medium" | "low"; method: string },
   airlineCode: string
 ): void {
-  const method = pred.method.startsWith("fleet_prior")
-    ? "fleet_prior"
-    : pred.method === "subfleet_penetration"
-      ? "subfleet_penetration"
-      : "flight_history";
   metrics.distribution(DISTRIBUTIONS.PREDICTION_PROBABILITY, pred.probability, {
     confidence: pred.confidence,
-    method,
+    method: normalizePredictionMethod(pred.method),
     airline: normalizeAirlineTag(airlineCode),
   });
 }
@@ -558,9 +559,7 @@ const apiCheckFlight: Handler = async ({ req, url, reader, tenant }) => {
     // serve the historical probability. hasStarlink stays false (the extension
     // contract is boolean and means "firm assignment"); prediction is additive.
     const pred = predictFlight(reader, normalizedFlightNumber);
-    // A subfleet-penetration answer (e.g. "all Horizon E175s are equipped") is a
-    // real prediction even with zero flight-number history.
-    const informative = pred.n_observations > 0 || pred.method === "subfleet_penetration";
+    const informative = isInformativePrediction(pred);
     recordFlightLookup(
       "api_check",
       informative ? "predicted" : "no_data",
@@ -584,7 +583,7 @@ const apiCheckFlight: Handler = async ({ req, url, reader, tenant }) => {
           pred.n_observations > 0
             ? `${preamble} ~${pct}% of recent departures of this flight used a Starlink-equipped aircraft (${pred.n_observations} observation${pred.n_observations === 1 ? "" : "s"}).`
             : pred.method === "subfleet_penetration"
-              ? `${preamble} ~${pct}% of the ${pred.subfleet ?? "fleet"} that operates this flight number is Starlink-equipped.`
+              ? `${preamble} ~${pct}% of the ${pred.subfleet ?? "regional"} fleet that operates this flight number range is Starlink-equipped.`
               : `${preamble} No history for this flight number; ~${pct}% reflects the fleet-wide install rate.`,
         flights: [],
       }),
@@ -715,8 +714,14 @@ const apiCheckAnyFlight: Handler = ({ req, url, reader, getReader, tenant }) => 
   // No schedule row and no type rule — fall back to historical probability
   // rather than a confident "No Starlink" (upcoming_flights only covers ~47h).
   const pred = predictFlight(getReader(cfg.code), normalized);
-  recordFlightLookup("api_check", "predicted", pred.confidence, cfg.code);
+  recordFlightLookup(
+    "api_check",
+    isInformativePrediction(pred) ? "predicted" : "no_data",
+    pred.confidence,
+    cfg.code
+  );
   recordPrediction(pred, cfg.code);
+  const pctAny = Math.round(pred.probability * 100);
   return new Response(
     JSON.stringify({
       hasStarlink: null,
@@ -725,8 +730,10 @@ const apiCheckAnyFlight: Handler = ({ req, url, reader, getReader, tenant }) => 
       confidence: pred.confidence,
       reason:
         pred.n_observations > 0
-          ? `No schedule data for this date; ~${Math.round(pred.probability * 100)}% based on ${pred.n_observations} historical observation${pred.n_observations === 1 ? "" : "s"}.`
-          : `No schedule data for this date; ~${Math.round(pred.probability * 100)}% based on ${cfg.name} fleet rollout rate.`,
+          ? `No schedule data for this date; ~${pctAny}% based on ${pred.n_observations} historical observation${pred.n_observations === 1 ? "" : "s"}.`
+          : pred.method === "subfleet_penetration"
+            ? `No schedule data for this date; ~${pctAny}% based on the ${pred.subfleet ?? "subfleet"} install rate for this flight number range.`
+            : `No schedule data for this date; ~${pctAny}% based on ${cfg.name} fleet rollout rate.`,
     }),
     { headers: SECURITY_HEADERS.api }
   );
@@ -771,7 +778,7 @@ const apiPredictFlight: Handler = ({ req, url, reader, tenant }) => {
   const pred = predictFlight(reader, ensureAirlinePrefix(cfg, flightNumber));
   recordFlightLookup(
     "api_predict",
-    pred.n_observations > 0 ? "predicted" : "no_data",
+    isInformativePrediction(pred) ? "predicted" : "no_data",
     pred.confidence,
     cfg.code
   );
@@ -783,6 +790,7 @@ const apiPredictFlight: Handler = ({ req, url, reader, tenant }) => {
       confidence: pred.confidence,
       method: pred.method,
       n_observations: pred.n_observations,
+      ...(pred.subfleet && { subfleet: pred.subfleet }),
     }),
     { headers: SECURITY_HEADERS.api }
   );
@@ -1241,8 +1249,12 @@ function flightPageMeta(ctx: RequestContext, flightNumber: string, cfg: AirlineC
   let probLabel = "";
   try {
     const pred = predictFlight(reader, flightNumber);
-    if (pred.n_observations > 0 || pred.confidence !== "low") {
+    // "Historically" is only true with actual flight history; subfleet rates get
+    // their own wording, and bare fleet priors get none.
+    if (pred.n_observations > 0) {
       probLabel = ` Historically it gets a Starlink-equipped aircraft about ${Math.round(pred.probability * 100)}% of the time.`;
+    } else if (pred.method === "subfleet_penetration" && pred.confidence !== "low") {
+      probLabel = ` About ${Math.round(pred.probability * 100)}% of the ${pred.subfleet ?? "regional"} fleet that operates this flight number is Starlink-equipped.`;
     }
   } catch {
     // Best-effort — meta still works without a probability.

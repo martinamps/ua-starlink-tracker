@@ -22,7 +22,13 @@
 
 import { AIRLINES, type AirlineCode, type AnalyticsConfig } from "../airlines/registry";
 import type { Scope, ScopedReader } from "../database/reader";
-import { COUNTERS, DISTRIBUTIONS, metrics, normalizeAirlineTag } from "../observability";
+import {
+  COUNTERS,
+  DISTRIBUTIONS,
+  metrics,
+  normalizeAirlineTag,
+  normalizePredictionMethod,
+} from "../observability";
 import { planItinerary, predictFlight, predictRoute } from "../scripts/starlink-predictor";
 import {
   buildFlightNumberVariants,
@@ -438,14 +444,9 @@ function recordMcpPrediction(
   scope: Scope,
   pred: { probability: number; confidence: "high" | "medium" | "low"; method: string }
 ): void {
-  const method = pred.method.startsWith("fleet_prior")
-    ? "fleet_prior"
-    : pred.method === "subfleet_penetration"
-      ? "subfleet_penetration"
-      : "flight_history";
   metrics.distribution(DISTRIBUTIONS.PREDICTION_PROBABILITY, pred.probability, {
     confidence: pred.confidence,
-    method,
+    method: normalizePredictionMethod(pred.method),
     airline: mcpAirlineTag(scope),
   });
 }
@@ -639,7 +640,13 @@ async function toolCheckFlight(
 
   // Probability context FIRST, alternatives table LAST. Recency bias: the
   // agent's final impression is "here's the table to present", not "no data".
-  const probLine = `**${normalized} on ${date}**: ~${pct}% Starlink probability ${pred.n_observations > 0 ? `(${pred.n_observations} historical obs)` : "(fleet install rate)"}. Aircraft assignment not yet published — that happens ~2 days out. ${timing}`;
+  const probSource =
+    pred.n_observations > 0
+      ? `(${pred.n_observations} historical obs)`
+      : pred.method === "subfleet_penetration"
+        ? `(${pred.subfleet ?? "subfleet"} install rate)`
+        : "(fleet install rate)";
+  const probLine = `**${normalized} on ${date}**: ~${pct}% Starlink probability ${probSource}. Aircraft assignment not yet published — that happens ~2 days out. ${timing}`;
 
   let altBlock = "";
   if (pred.probability < 0.2 && !isPast) {

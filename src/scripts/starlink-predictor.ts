@@ -413,9 +413,12 @@ function buildProductionModel(reader: ScopedReader): { predict: (fn: string) => 
   // UA's cold priors are backtested against its own express/mainline split.
   // Other airlines' flight numbers would be misclassified by those UA-shaped
   // rules, so their cold start uses the airline's own per-subfleet penetration
-  // (e.g. AS2000+ = Horizon E175 = 100% equipped).
+  // (e.g. AS2000+ = regional E175). Only airlines whose flight numbers actually
+  // discriminate equipment qualify — type-rule carriers (HA) and single-subfleet
+  // airlines would get one blended rate that is wrong for every flight.
   const cfg = reader.scope !== "ALL" ? AIRLINES[reader.scope] : undefined;
-  if (!cfg || cfg.code === "UA") return baseModel;
+  const flightNumberDiscriminates = cfg && !cfg.routeTypeRule && cfg.subfleets.length > 1;
+  if (!cfg || cfg.code === "UA" || !flightNumberDiscriminates) return baseModel;
 
   const pen = reader.getSubfleetPenetration();
   return {
@@ -425,20 +428,31 @@ function buildProductionModel(reader: ScopedReader): { predict: (fn: string) => 
 
       const sf = cfg.subfleets.find((s) => s.match(fn));
       if (!sf) return base;
-      const subfleetPen = pen.get(sf.key);
-      const rate = sf.penetrationOverride ?? subfleetPen?.pct;
+      const roster = pen.get(sf.key);
+      // Overrides are deliberate registry assertions (e.g. a publicly completed
+      // rollout) and pass through as-is; roster-derived rates are estimates from
+      // our own verification coverage and never claim certainty.
+      const rate =
+        sf.penetrationOverride ?? (roster ? Math.min(0.97, Math.max(0.02, roster.pct)) : undefined);
       if (rate == null) return base;
 
-      const rosterIsSubstantial = sf.penetrationOverride != null || (subfleetPen?.total ?? 0) >= 20;
+      const trustworthy =
+        sf.penetrationOverride != null ||
+        ((roster?.total ?? 0) >= 20 && (roster?.equipped ?? 0) > 0);
       return {
         ...base,
         probability: rate,
-        confidence: rosterIsSubstantial ? "medium" : "low",
+        confidence: trustworthy ? "medium" : "low",
         method: "subfleet_penetration",
         subfleet: sf.label,
       };
     },
   };
+}
+
+/** A prediction carrying real signal (history or a subfleet rate) vs a bare fleet prior. */
+export function isInformativePrediction(pred: Prediction): boolean {
+  return pred.n_observations > 0 || pred.method === "subfleet_penetration";
 }
 
 /**
@@ -635,13 +649,19 @@ export function compareRoute(
     const pen = reader.getSubfleetPenetration();
     if (pen.size === 0) continue;
     const penArr: SubfleetBreakdown[] = cfg.subfleets.map((sf) => {
-      // penetrationOverride: subfleets that fly on another carrier's metal
-      // (e.g. AS800-899 on Hawaiian A330/A321neo) — the roster has those tails
-      // under the operating airline, not the marketing one.
+      // penetrationOverride: deliberate registry assertions for subfleets whose
+      // roster can't speak for itself (another carrier's metal, or a structurally
+      // incomplete roster). Show real roster counts when we have them — the {1,1}
+      // sentinel is only for genuinely empty rosters.
+      const roster = pen.get(sf.key);
       const p =
         sf.penetrationOverride != null
-          ? { equipped: 1, total: 1, pct: sf.penetrationOverride }
-          : (pen.get(sf.key) ?? { equipped: 0, total: 0, pct: 0 });
+          ? {
+              equipped: roster?.total ? roster.equipped : 1,
+              total: roster?.total ? roster.total : 1,
+              pct: sf.penetrationOverride,
+            }
+          : (roster ?? { equipped: 0, total: 0, pct: 0 });
       return {
         key: sf.key,
         label: sf.label,

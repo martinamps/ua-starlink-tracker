@@ -390,7 +390,9 @@ export default function CheckFlightPage({ brand, site }: CheckFlightPageProps) {
                         var iconColor = isLikely ? 'text-green-400' : isPossible ? 'text-yellow-400' : 'text-muted';
                         var detail = pred.n_observations > 0
                           ? 'Based on <span class="text-secondary">' + pred.n_observations + '</span> historical observation' + (pred.n_observations === 1 ? '' : 's') + ' of aircraft on this flight number (' + pred.confidence + ' confidence).'
-                          : 'No historical data for this flight number — this is the fleet install rate (treat as upper bound).';
+                          : pred.method === 'subfleet_penetration'
+                            ? 'No history for this flight number yet — this is the install rate for the ' + (pred.subfleet || 'subfleet') + ' fleet that operates this flight number range.'
+                            : 'No historical data for this flight number — this is the fleet install rate (treat as upper bound).';
                         resultDiv.innerHTML = '<div class="rounded p-4 border ' + borderColor + '">' +
                           '<div class="flex items-center gap-2 mb-3">' +
                           '<span class="text-lg ' + iconColor + '">~</span>' +
