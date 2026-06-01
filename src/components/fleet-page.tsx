@@ -260,18 +260,22 @@ function HangarFloor({
 }
 
 function InstallPaceSection({ pace }: { pace: FleetPageData["installPace"] }) {
+  if (!pace) return null;
   const totalRecent = pace.weeks.reduce((s, w) => s + w.installs, 0);
   if (totalRecent === 0 && pace.express.starlink === 0 && pace.mainline.starlink === 0) return null;
   const peak = Math.max(1, ...pace.weeks.map((w) => w.installs));
+  const currentWeekStart = pace.weeks[pace.weeks.length - 1]?.weekStart;
   const monthDay = (iso: string) =>
     new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-US", {
       month: "short",
       day: "numeric",
       timeZone: "UTC",
     });
+  // Labels mirror the homepage rings (getFleetStats buckets), which fold every
+  // regional subfleet into "express" — keep them generic, not type-specific.
   const groups = [
-    { label: "Express (E175 & regional)", g: pace.express },
-    { label: "Mainline (737 & widebody)", g: pace.mainline },
+    { label: "Express & regional", g: pace.express },
+    { label: "Mainline", g: pace.mainline },
   ].filter((x) => x.g.total > 0);
 
   return (
@@ -279,8 +283,8 @@ function InstallPaceSection({ pace }: { pace: FleetPageData["installPace"] }) {
       <div className="mb-4">
         <h2 className="font-display text-xl font-semibold text-primary mb-1">Install Pace</h2>
         <p className="text-xs text-muted">
-          Newly Starlink-equipped aircraft per week, from first appearance in the tracked fleet
-          data. {totalRecent} added in the last 10 weeks.
+          Newly Starlink-equipped aircraft per week, by first appearance in the tracked fleet data —
+          installs typically surface within a few days. {totalRecent} added in the last 10 weeks.
         </p>
       </div>
       <div className="grid md:grid-cols-2 gap-4">
@@ -293,7 +297,9 @@ function InstallPaceSection({ pace }: { pace: FleetPageData["installPace"] }) {
                   {w.installs > 0 ? w.installs : ""}
                 </span>
                 <div
-                  className="w-full bg-[var(--color-accent)] rounded-t opacity-80"
+                  className={`w-full bg-[var(--color-accent)] rounded-t ${
+                    w.weekStart === currentWeekStart ? "opacity-40" : "opacity-80"
+                  }`}
                   style={{ height: `${(w.installs / peak) * 80}px` }}
                 />
               </div>
@@ -301,7 +307,9 @@ function InstallPaceSection({ pace }: { pace: FleetPageData["installPace"] }) {
           </div>
           <div className="flex justify-between font-mono text-[9px] text-muted mt-1">
             <span>{monthDay(pace.weeks[0].weekStart)}</span>
-            <span>{monthDay(pace.weeks[pace.weeks.length - 1].weekStart)} (this week)</span>
+            <span>
+              {monthDay(pace.weeks[pace.weeks.length - 1].weekStart)} (this week, partial)
+            </span>
           </div>
         </div>
         <div className={PANEL}>
@@ -329,10 +337,10 @@ function InstallPaceSection({ pace }: { pace: FleetPageData["installPace"] }) {
           {pace.projectedFinishMonth && (
             <p className="text-[11px] text-muted mt-4 leading-snug">
               At the recent mainline pace of ~{pace.mainlinePaceWk}/week, the remaining{" "}
-              {pace.remainingMainline} mainline aircraft would finish around{" "}
+              {pace.remainingMainline} mainline aircraft would wrap up around{" "}
               <span className="text-accent">{pace.projectedFinishMonth}</span>. Straight-line
-              estimate from the last six weeks — installation rates change as more hangar lines
-              open.
+              estimate from the last six weeks of tracked installs — rates change as hangar lines
+              open and close.
             </p>
           )}
         </div>

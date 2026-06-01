@@ -48,10 +48,12 @@ function RouteRows({ schedule }: { schedule: RouteSchedule }) {
           </span>
           <span className="font-mono text-secondary text-right tabular-nums">
             {r.departures}
-            <span className="text-muted text-xs">
-              {" "}
-              on {r.flight_numbers} flight{r.flight_numbers === 1 ? "" : "s"}
-            </span>
+            {r.flight_numbers !== r.departures && (
+              <span className="text-muted text-xs">
+                {" "}
+                on {r.flight_numbers} flight{r.flight_numbers === 1 ? "" : "s"}
+              </span>
+            )}
           </span>
           <span className="font-mono text-muted text-right text-xs">
             {relativeTime(r.next_departure)}
@@ -72,7 +74,8 @@ export default function RoutesPage({ schedule, brand, site }: RoutesPageProps) {
   const scopeCode = site?.scope && site.scope !== "ALL" ? site.scope : null;
   const airlineName = scopeCode ? AIRLINES[scopeCode].name : "tracked airlines";
   const backLabel = brand?.title ?? "Starlink Tracker";
-  const totalDepartures = schedule.rows.reduce((s, r) => s + r.departures, 0);
+  const totalDepartures = schedule.totalDepartures;
+  const asOf = new Date().toISOString().slice(11, 16);
 
   return (
     <div className="w-full mx-auto px-4 sm:px-6 md:px-8 bg-base min-h-screen flex flex-col relative">
@@ -94,14 +97,15 @@ export default function RoutesPage({ schedule, brand, site }: RoutesPageProps) {
       <section className={SECTION}>
         <div className={PANEL}>
           <div className={EYEBROW}>
-            Routes by scheduled Starlink departures · {schedule.windowLabel}
+            Routes by scheduled Starlink departures · {schedule.windowLabel} · as of {asOf} UTC
           </div>
           <RouteRows schedule={schedule} />
           <p className="text-[11px] text-muted mt-4 leading-snug">
             Counted from live tail assignments: every departure in the {schedule.windowLabel} whose
-            assigned aircraft is verified Starlink-equipped. Routes not listed may still have
-            Starlink — assignments publish about two days before departure. This is a count of
-            Starlink service, not a share of all departures on the route.
+            assigned aircraft is Starlink-equipped, showing the top {schedule.rows.length} routes.
+            Routes not listed may still have Starlink — assignments publish about two days before
+            departure. This is a count of Starlink service, not a share of all departures on the
+            route.
           </p>
         </div>
       </section>

@@ -1028,9 +1028,11 @@ describe("getFleetPageData", () => {
     }
   });
 
-  test("installPace: 10 filled weeks, consistent group totals, sane projection fields", () => {
+  test("installPace: 10 filled weeks, homepage-consistent groups, sane projection fields", () => {
     const d = getFleetPageData(db, "UA");
     const p = d.installPace;
+    expect(p).not.toBeNull();
+    if (!p) return;
     expect(p.weeks.length).toBe(10);
     for (const w of p.weeks) {
       expect(w.weekStart).toMatch(/^\d{4}-\d{2}-\d{2}$/);
@@ -1039,16 +1041,26 @@ describe("getFleetPageData", () => {
     for (let i = 1; i < p.weeks.length; i++) {
       expect(p.weeks[i].weekStart > p.weeks[i - 1].weekStart).toBe(true);
     }
-    for (const g of [p.express, p.mainline]) {
-      expect(g.starlink).toBeGreaterThanOrEqual(0);
-      expect(g.starlink).toBeLessThanOrEqual(g.total);
-    }
-    expect(p.express.total + p.mainline.total).toBeLessThanOrEqual(d.totalFleet);
-    expect(p.remainingMainline).toBe(p.mainline.total - p.mainline.starlink);
+    // Groups must agree with the homepage rings (getFleetStats), not united_fleet.
+    const stats = getFleetStats(db, "UA");
+    expect(p.express).toEqual({ starlink: stats.express.starlink, total: stats.express.total });
+    expect(p.mainline).toEqual({ starlink: stats.mainline.starlink, total: stats.mainline.total });
+    expect(p.remainingMainline).toBe(Math.max(0, p.mainline.total - p.mainline.starlink));
     expect(p.mainlinePaceWk).toBeGreaterThanOrEqual(0);
     if (p.projectedFinishMonth !== null) {
-      expect(p.projectedFinishMonth).toMatch(/^[A-Z][a-z]+ \d{4}$/);
+      expect(p.projectedFinishMonth).toMatch(/^(early|mid|late) \d{4}$/);
+      // A pace that survives the >=0.5/wk gate can't project beyond ~3 years out.
+      const year = Number(p.projectedFinishMonth.split(" ")[1]);
+      expect(year).toBeLessThanOrEqual(new Date().getUTCFullYear() + 4);
     }
+    // Seed batches must not appear as install spikes: no single week may exceed
+    // a plausible physical install rate.
+    for (const w of p.weeks) expect(w.installs).toBeLessThan(40);
+  });
+
+  test("installPace: hub scope gets null (no cross-airline projection)", () => {
+    const d = getFleetPageData(db, undefined);
+    expect(d.installPace).toBeNull();
   });
 });
 
@@ -1063,6 +1075,11 @@ describe("getRouteStarlinkSchedule", () => {
     expect(typeof s.windowLabel).toBe("string");
     expect(Array.isArray(s.rows)).toBe(true);
     expect(s.rows.length).toBeLessThanOrEqual(60);
+    // The headline total covers ALL routes, so it can never be less than the
+    // sum of the displayed (LIMITed) rows.
+    const displayedSum = s.rows.reduce((a, r) => a + r.departures, 0);
+    expect(s.totalDepartures).toBeGreaterThanOrEqual(displayedSum);
+    const windowEnd = (oldest.t ?? 0) + 48 * 3600;
     for (const r of s.rows) {
       expect(r.origin).toMatch(/^[A-Z0-9]{3,4}$/);
       expect(r.destination).toMatch(/^[A-Z0-9]{3,4}$/);
@@ -1070,10 +1087,33 @@ describe("getRouteStarlinkSchedule", () => {
       expect(r.flight_numbers).toBeGreaterThan(0);
       expect(r.flight_numbers).toBeLessThanOrEqual(r.departures);
       expect(r.next_departure).toBeGreaterThanOrEqual(oldest.t ?? 0);
+      // 48h window must actually be enforced in SQL.
+      expect(r.next_departure).toBeLessThan(windowEnd);
     }
     for (let i = 1; i < s.rows.length; i++) {
       expect(s.rows[i].departures).toBeLessThanOrEqual(s.rows[i - 1].departures);
     }
+  });
+
+  test("route schedule agrees with the check-flight equipped predicate", () => {
+    // Every tail contributing to the route counts must also pass the same
+    // predicate /api/check-flight uses — the two surfaces can't disagree.
+    const oldest = db
+      .query("SELECT MIN(departure_time) AS t FROM upcoming_flights WHERE airline='UA'")
+      .get() as { t: number | null };
+    const viaRoutes = db
+      .query(
+        `SELECT COUNT(DISTINCT uf.tail_number) AS n
+         FROM upcoming_flights uf
+         INNER JOIN starlink_planes sp ON uf.tail_number = sp.TailNumber
+         WHERE uf.airline = 'UA'
+           AND (sp.verified_wifi IS NULL OR sp.verified_wifi = 'Starlink')
+           AND NOT EXISTS (SELECT 1 FROM united_fleet _n WHERE _n.tail_number = sp.TailNumber AND _n.starlink_status = 'negative')
+           AND uf.departure_time >= ? AND uf.departure_time < ?`
+      )
+      .get(oldest.t ?? 0, (oldest.t ?? 0) + 48 * 3600) as { n: number };
+    const s = getRouteStarlinkSchedule(db, "UA", oldest.t ?? undefined);
+    if (s.totalDepartures > 0) expect(viaRoutes.n).toBeGreaterThan(0);
   });
 
   test("/routes renders on tenant sites and 404s where the feature is off", async () => {

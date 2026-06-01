@@ -164,7 +164,8 @@ export interface FleetPageData {
   allTails: FleetTail[];
   totalFleet: number;
   totalStarlink: number;
-  installPace: InstallPace;
+  /** null on the hub site — install pace is a single-airline narrative. */
+  installPace: InstallPace | null;
 }
 
 export interface RouteScheduleRow {
@@ -177,6 +178,8 @@ export interface RouteScheduleRow {
 
 export interface RouteSchedule {
   rows: RouteScheduleRow[];
+  /** All departures matching the window/predicate — not capped by the row LIMIT. */
+  totalDepartures: number;
   windowLabel: string;
 }
 
