@@ -350,7 +350,11 @@ function recordPrediction(
   pred: { probability: number; confidence: "high" | "medium" | "low"; method: string },
   airlineCode: string
 ): void {
-  const method = pred.method.startsWith("fleet_prior") ? "fleet_prior" : "flight_history";
+  const method = pred.method.startsWith("fleet_prior")
+    ? "fleet_prior"
+    : pred.method === "subfleet_penetration"
+      ? "subfleet_penetration"
+      : "flight_history";
   metrics.distribution(DISTRIBUTIONS.PREDICTION_PROBABILITY, pred.probability, {
     confidence: pred.confidence,
     method,
@@ -554,15 +558,19 @@ const apiCheckFlight: Handler = async ({ req, url, reader, tenant }) => {
     // serve the historical probability. hasStarlink stays false (the extension
     // contract is boolean and means "firm assignment"); prediction is additive.
     const pred = predictFlight(reader, normalizedFlightNumber);
+    // A subfleet-penetration answer (e.g. "all Horizon E175s are equipped") is a
+    // real prediction even with zero flight-number history.
+    const informative = pred.n_observations > 0 || pred.method === "subfleet_penetration";
     recordFlightLookup(
       "api_check",
-      pred.n_observations > 0 ? "predicted" : "no_data",
-      pred.n_observations > 0 ? pred.confidence : "none",
+      informative ? "predicted" : "no_data",
+      informative ? pred.confidence : "none",
       cfg.code,
       daysOut
     );
     recordPrediction(pred, cfg.code);
     const pct = Math.round(pred.probability * 100);
+    const preamble = `Aircraft assignment not yet published — ${cfg.name} assigns aircraft ~2 days before departure.`;
     return new Response(
       JSON.stringify({
         hasStarlink: false,
@@ -574,8 +582,10 @@ const apiCheckFlight: Handler = async ({ req, url, reader, tenant }) => {
         },
         message:
           pred.n_observations > 0
-            ? `Aircraft assignment not yet published — ${cfg.name} assigns aircraft ~2 days before departure. ~${pct}% of recent departures of this flight used a Starlink-equipped aircraft (${pred.n_observations} observation${pred.n_observations === 1 ? "" : "s"}).`
-            : `Aircraft assignment not yet published — ${cfg.name} assigns aircraft ~2 days before departure. No history for this flight number; ~${pct}% reflects the fleet-wide install rate.`,
+            ? `${preamble} ~${pct}% of recent departures of this flight used a Starlink-equipped aircraft (${pred.n_observations} observation${pred.n_observations === 1 ? "" : "s"}).`
+            : pred.method === "subfleet_penetration"
+              ? `${preamble} ~${pct}% of the ${pred.subfleet ?? "fleet"} that operates this flight number is Starlink-equipped.`
+              : `${preamble} No history for this flight number; ~${pct}% reflects the fleet-wide install rate.`,
         flights: [],
       }),
       { headers: SECURITY_HEADERS.api }

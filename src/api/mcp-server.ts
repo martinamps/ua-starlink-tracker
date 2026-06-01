@@ -438,7 +438,11 @@ function recordMcpPrediction(
   scope: Scope,
   pred: { probability: number; confidence: "high" | "medium" | "low"; method: string }
 ): void {
-  const method = pred.method.startsWith("fleet_prior") ? "fleet_prior" : "flight_history";
+  const method = pred.method.startsWith("fleet_prior")
+    ? "fleet_prior"
+    : pred.method === "subfleet_penetration"
+      ? "subfleet_penetration"
+      : "flight_history";
   metrics.distribution(DISTRIBUTIONS.PREDICTION_PROBABILITY, pred.probability, {
     confidence: pred.confidence,
     method,
@@ -909,14 +913,16 @@ async function toolPredictFlightStarlink(
   const pred = predictFlight(reader, forPredict);
   recordMcpFlightLookup(
     reader.scope,
-    pred.n_observations > 0 ? "predicted" : "no_data",
+    pred.n_observations > 0 || pred.method === "subfleet_penetration" ? "predicted" : "no_data",
     pred.confidence
   );
   recordMcpPrediction(reader.scope, pred);
   const pct = (pred.probability * 100).toFixed(0);
 
   let details: string;
-  if (pred.method !== "flight_history_smoothed") {
+  if (pred.method === "subfleet_penetration") {
+    details = `${pred.subfleet ?? "Subfleet"} install rate — not flight-specific.`;
+  } else if (pred.method !== "flight_history_smoothed") {
     const fleet = inferFleet(forPredict);
     const fleetLabel = fleet === "express" ? "express (regional)" : "mainline";
     details = `${fleetLabel} fleet install rate — not flight-specific.`;
@@ -925,7 +931,13 @@ async function toolPredictFlightStarlink(
       pred.n_observations >= 5 ? "Sample size is solid." : "Limited data — estimate may drift.";
   }
 
-  const probLine = `**${forPredict}**: ~${pct}% Starlink probability ${pred.method === "flight_history_smoothed" ? confidenceTag(pred.n_observations, pred.confidence) : "(fleet prior)"}. ${details}`;
+  const tag =
+    pred.method === "flight_history_smoothed"
+      ? confidenceTag(pred.n_observations, pred.confidence)
+      : pred.method === "subfleet_penetration"
+        ? "(subfleet rate)"
+        : "(fleet prior)";
+  const probLine = `**${forPredict}**: ~${pct}% Starlink probability ${tag}. ${details}`;
 
   // Alternatives LAST so it's the agent's final impression (recency bias).
   let altBlock = "";

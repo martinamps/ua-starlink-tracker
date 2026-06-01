@@ -19,6 +19,7 @@
 
 import { Database } from "bun:sqlite";
 import {
+  AIRLINES,
   type AirlineConfig,
   airlineHomeUrl,
   publicAirlines,
@@ -36,7 +37,8 @@ type PredictionMethod =
   | "flight_history_smoothed"
   | "fleet_prior_express"
   | "fleet_prior_mainline"
-  | "fleet_prior_unknown";
+  | "fleet_prior_unknown"
+  | "subfleet_penetration";
 
 interface Prediction {
   flight_number: string;
@@ -44,6 +46,8 @@ interface Prediction {
   confidence: "high" | "medium" | "low";
   method: PredictionMethod;
   n_observations: number;
+  /** Only for method=subfleet_penetration: the matched subfleet's display label. */
+  subfleet?: string;
 }
 
 /**
@@ -404,7 +408,37 @@ const modelCache = new Map<Scope, { predict: (fn: string) => Prediction; builtAt
 function buildProductionModel(reader: ScopedReader): { predict: (fn: string) => Prediction } {
   const trainObs = reader.getVerificationObservations();
   const config = deriveConfig(reader, trainObs);
-  return buildModel(trainObs, config);
+  const baseModel = buildModel(trainObs, config);
+
+  // UA's cold priors are backtested against its own express/mainline split.
+  // Other airlines' flight numbers would be misclassified by those UA-shaped
+  // rules, so their cold start uses the airline's own per-subfleet penetration
+  // (e.g. AS2000+ = Horizon E175 = 100% equipped).
+  const cfg = reader.scope !== "ALL" ? AIRLINES[reader.scope] : undefined;
+  if (!cfg || cfg.code === "UA") return baseModel;
+
+  const pen = reader.getSubfleetPenetration();
+  return {
+    predict: (fn: string): Prediction => {
+      const base = baseModel.predict(fn);
+      if (base.n_observations > 0) return base;
+
+      const sf = cfg.subfleets.find((s) => s.match(fn));
+      if (!sf) return base;
+      const subfleetPen = pen.get(sf.key);
+      const rate = sf.penetrationOverride ?? subfleetPen?.pct;
+      if (rate == null) return base;
+
+      const rosterIsSubstantial = sf.penetrationOverride != null || (subfleetPen?.total ?? 0) >= 20;
+      return {
+        ...base,
+        probability: rate,
+        confidence: rosterIsSubstantial ? "medium" : "low",
+        method: "subfleet_penetration",
+        subfleet: sf.label,
+      };
+    },
+  };
 }
 
 /**

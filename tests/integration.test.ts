@@ -558,6 +558,35 @@ describe("predictor", () => {
     expect(p.probability).toBeLessThan(0.1);
   });
 
+  test("predictFlight: AS Horizon cold start uses subfleet penetration, not UA priors", () => {
+    const asReader = createReaderFactory(db)("AS");
+    // AS2000+ = Horizon E175. Snapshot has the full AS roster, so the cold
+    // start must classify by AS's own flight-number rules. With Horizon's
+    // rollout complete this is ~1.0; assert "well above any UA-shaped prior"
+    // rather than an exact value so the test survives data drift.
+    const p = predictFlight(asReader, "AS2052");
+    if (p.n_observations === 0) {
+      expect(p.method).toBe("subfleet_penetration");
+      expect(p.probability).toBeGreaterThan(0.5);
+      expect(typeof p.subfleet).toBe("string");
+    }
+  });
+
+  test("predictFlight: AS marketing numbers on Hawaiian metal use the override", () => {
+    const asReader = createReaderFactory(db)("AS");
+    const p = predictFlight(asReader, "AS801");
+    if (p.n_observations === 0) {
+      expect(p.method).toBe("subfleet_penetration");
+      expect(p.probability).toBe(1);
+      expect(p.confidence).toBe("medium");
+    }
+  });
+
+  test("predictFlight: UA cold start is unchanged by the subfleet path", () => {
+    const p = predictFlight(reader, "UA99987");
+    expect(p.method).not.toBe("subfleet_penetration");
+  });
+
   test("predictRoute: returns sorted flights with probabilities", () => {
     const r = predictRoute(reader, "IAH", "DEN");
     if (r.flights.length > 1) {

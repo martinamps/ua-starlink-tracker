@@ -307,6 +307,10 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
         key: "horizon",
         label: "Horizon (E175)",
         flightNumberHint: "AS2000+",
+        // Rollout complete (see rollout.phaseNote), but our Horizon roster is
+        // structurally incomplete — FR24's qx-qxe fleet page times out, so
+        // united_fleet only has the handful of E175s found via other paths.
+        penetrationOverride: 1,
         match: (fn) => {
           const n = flightNum(fn);
           return Number.isFinite(n) && n >= 2000;
