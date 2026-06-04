@@ -1,9 +1,4 @@
-import {
-  buildAirlineFlightNumberVariants,
-  ensureAirlinePrefix,
-  inferSubfleet,
-  normalizeAirlineFlightNumber,
-} from "../airlines/flight-number";
+import { normalizeAirlineFlightNumber } from "../airlines/flight-number";
 import { AIRLINES, analyticsOrigins } from "../airlines/registry";
 
 // Database path
@@ -25,23 +20,6 @@ export type FlightDataSource = "flightradar24" | "flightaware";
 export const FLIGHT_DATA_SOURCE: FlightDataSource =
   (process.env.FLIGHT_DATA_SOURCE as FlightDataSource) || "flightradar24";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// UA-bound shims over the airline-agnostic helpers in src/airlines/flight-number.
-// Kept so existing UA-only callers (scripts, predictor, mcp-server) don't change
-// in this slice. New code in app.ts uses the cfg-taking versions directly.
-// ─────────────────────────────────────────────────────────────────────────────
-
-export const normalizeFlightNumber = (fn: string): string =>
-  normalizeAirlineFlightNumber(AIRLINES.UA, fn);
-
-export const ensureUAPrefix = (fn: string): string => ensureAirlinePrefix(AIRLINES.UA, fn);
-
-export const buildFlightNumberVariants = (fn: string): string[] =>
-  buildAirlineFlightNumberVariants(AIRLINES.UA, fn);
-
-export const inferFleet = (fn: string): "express" | "mainline" | "unknown" =>
-  inferSubfleet(AIRLINES.UA, fn) as "express" | "mainline" | "unknown";
-
 /** UTC calendar date string used for united.com flight-status lookups. */
 export const unitedLookupDate = (epochSec: number): string =>
   new Date(epochSec * 1000).toISOString().slice(0, 10);
@@ -54,7 +32,7 @@ function isWithinUnitedLookupWindow(departureTimeSec: number, nowSec: number): b
 
 /** Bare flight digits for united.com URLs. Strip the carrier prefix first: G74460 → 4460, not 74460 (404s). */
 export function extractFlightNumber(flightNumber: string): string {
-  return normalizeFlightNumber(flightNumber).replace(/^UA/, "");
+  return normalizeAirlineFlightNumber(AIRLINES.UA, flightNumber).replace(/^UA/, "");
 }
 
 /** First flight whose number normalizes to bare digits and whose lookup date united.com can resolve. */

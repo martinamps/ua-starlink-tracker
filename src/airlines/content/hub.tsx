@@ -88,9 +88,10 @@ const HubHero = ({ stats, perAirlineStats = [], recentInstalls = [] }: HeroProps
                   var br = Math.round(b.pct*100);
                   var lblTip = b.hint ? 'Flight numbers '+esc(b.hint) : '';
                   var best = i===0 && br>=50 ? ' '+tip('text-[8px] px-1 py-px rounded no-underline','Pick a flight in this group for the best Starlink odds','<span style="background:color-mix(in srgb,'+esc(color)+' 18%,transparent);color:'+esc(color)+';padding:1px 4px;border-radius:3px">best bet</span>') : '';
+                  var counts = b.equipped!=null ? esc(b.equipped)+'/'+esc(b.total)+' aircraft \\u00b7 ' : '';
                   return '<div class="mt-1.5 ml-3"><div class="flex justify-between font-mono text-[10px]">'
                        + '<span>'+tip('text-secondary',lblTip,esc(shorten(b.label)))+best+'</span>'
-                       + tip('text-accent tip-l',fleetTip(a,b),esc(b.equipped)+'/'+esc(b.total)+' aircraft \\u00b7 '+br+'%')+'</div>'+bar(br,color,false)+'</div>';
+                       + tip('text-accent tip-l',b.equipped!=null?fleetTip(a,b):'',counts+br+'%')+'</div>'+bar(br,color,false)+'</div>';
                 }).join('');
                 return '<div class="mb-3">'+head+rows+'</div>';
               }

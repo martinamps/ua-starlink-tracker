@@ -3,15 +3,23 @@
  * Adding an airline = adding a config object here, not editing scattered code.
  */
 
+import type { VerificationSource } from "../database/database";
 import type { RolloutStatus, StarlinkStatus } from "../types";
+import { normalizeAircraftType } from "./aircraft-families";
 
-// Single E175 matcher shared by AS classifyFleet() and alaskaTypeToStarlink()
-// so the verdict and subfleet can never disagree. Covers FR24 ("Embraer
-// E175LR"), alaskaair.com ("E175"/"ERJ-175"), and 3-char IATA ("E75").
-export const ALASKA_E175_RE = /E175|ERJ.?175|EMB.?175|^E75\b/i;
+// Registration patterns are stored as unanchored bodies; the anchored
+// validation pattern and the global scan pattern (for pulling registrations
+// out of prose) both derive from the same body, so they can never disagree.
+function tailPatterns(body: string): { tailPattern: RegExp; tailScanPattern: RegExp } {
+  return {
+    tailPattern: new RegExp(`^${body}$`),
+    tailScanPattern: new RegExp(`\\b(?:${body})\\b`, "g"),
+  };
+}
 
 // FAA N-numbers: N + 1-5 alphanumeric, first 1-9, no I/O in suffix.
-const FAA_N_NUMBER = /^N[1-9][0-9A-HJ-NP-Z]{0,4}$/;
+const FAA_TAIL = tailPatterns("N[1-9][0-9A-HJ-NP-Z]{0,4}");
+const QATAR_TAIL = tailPatterns("A7-[A-Z]{3}");
 
 export type AirlineCode = string;
 
@@ -87,8 +95,6 @@ export interface AirlineConfig {
   enabled: boolean;
   /** Included on public hub surfaces and hub-only APIs. */
   publicInHub: boolean;
-  hosts: string[];
-  canonicalHost: string;
   iata: string;
   icao: string;
   /** All operating-carrier prefixes (ICAO + IATA) that map to this marketing carrier. Longest-first. */
@@ -103,6 +109,12 @@ export interface AirlineConfig {
   minFleetSanity: number;
   /** Per-flight wifi verification source; null = none (type-map only). */
   verifierBackend?: "united" | "alaska-json" | "qatar-fltstatus" | null;
+  /** A per-flight Starlink probability model exists, trained on THIS airline's
+   * observation log. False → prediction surfaces answer from type rules and
+   * subfleet penetration instead; another carrier's priors never apply. */
+  flightHistoryModel: boolean;
+  /** Site users should double-check answers on (flight status / WiFi pages). */
+  verifySite: string;
   /** For airlines whose Starlink status is fully determined by aircraft type
    * (no per-tail observation needed). null = leave as unknown (in progress). */
   typeDeterministicWifi?: (aircraftType: string) => StarlinkStatus | null;
@@ -113,9 +125,14 @@ export interface AirlineConfig {
   ) => { probability: number; reason: string } | null;
   /** Canonical lowercase tag for Datadog `airline:` — preserves history (`united`, not `UA`). */
   metricTag: string;
-  /** Registration format for tails operated by this airline. Used to reject
-   * sheet typos at ingest and gate cleanup scripts. */
+  /** Anchored registration format for tails operated by this airline. Used to
+   * reject sheet typos at ingest and gate cleanup scripts. Built by
+   * tailPatterns() from the same body as tailScanPattern. */
   tailPattern: RegExp;
+  /** Global word-boundary scan variant of tailPattern, for pulling
+   * registrations out of prose (FlyerTalk posts, wikiposts). Safe to share:
+   * String.match(/g/) and matchAll don't depend on lastIndex. */
+  tailScanPattern: RegExp;
   /** Rollout story — hub status card + llms.txt copy. Required so a new
    * airline without a rollout story is a compile error, not missing prose. */
   rollout: {
@@ -138,8 +155,6 @@ const AIRLINE_DEFS = {
     shortName: "United",
     enabled: true,
     publicInHub: true,
-    hosts: ["unitedstarlinktracker.com", "www.unitedstarlinktracker.com"],
-    canonicalHost: "unitedstarlinktracker.com",
     iata: "UA",
     icao: "UAL",
     carrierPrefixes: [
@@ -187,9 +202,11 @@ const AIRLINE_DEFS = {
     },
     fr24Slug: "ua-ual",
     metricTag: "united",
-    tailPattern: FAA_N_NUMBER,
+    ...FAA_TAIL,
     minFleetSanity: 800,
     verifierBackend: "united",
+    flightHistoryModel: true,
+    verifySite: "united.com",
     // Whole fleet eligible — Express + mainline both in the program.
     rollout: {
       status: "in_progress",
@@ -223,17 +240,18 @@ const AIRLINE_DEFS = {
     shortName: "Hawaiian",
     enabled: true,
     publicInHub: true,
-    hosts: ["hawaiianstarlinktracker.com", "www.hawaiianstarlinktracker.com"],
-    canonicalHost: "hawaiianstarlinktracker.com",
     iata: "HA",
     icao: "HAL",
     carrierPrefixes: ["HAL", "HA"],
     subfleets: [{ key: "mainline", label: "Hawaiian Fleet", match: () => true }],
     fr24Slug: "ha-hal",
     metricTag: "hawaiian",
-    tailPattern: FAA_N_NUMBER,
+    ...FAA_TAIL,
     minFleetSanity: 30,
     verifierBackend: "alaska-json",
+    flightHistoryModel: false,
+    verifySite: "hawaiianairlines.com",
+    typeDeterministicWifi: hawaiianTypeToWifi,
     // 717 interisland fleet was never in scope (no WiFi provider) and is being retired —
     // see HA's own press release. Denominator is the Airbus fleet only.
     rollout: {
@@ -276,8 +294,6 @@ const AIRLINE_DEFS = {
     shortName: "Alaska",
     enabled: true,
     publicInHub: true,
-    hosts: ["alaskastarlinktracker.com", "www.alaskastarlinktracker.com"],
-    canonicalHost: "alaskastarlinktracker.com",
     iata: "AS",
     icao: "ASA",
     // SkyWest-for-Alaska tails are tracked (CPA-dedicated, disjoint from UA's),
@@ -317,13 +333,17 @@ const AIRLINE_DEFS = {
         },
       },
     ],
-    classifyFleet: (t) => (ALASKA_E175_RE.test(t) ? "horizon" : "mainline"),
+    // Same matcher as alaskaTypeToWifi so verdict and subfleet can't disagree.
+    classifyFleet: (t) => (normalizeAircraftType(t) === "E175" ? "horizon" : "mainline"),
     fr24Slug: "as-asa",
     regionalCarriers: [{ fr24Slug: "qx-qxe", name: "Horizon Air", subfleet: "horizon" }],
     metricTag: "alaska",
-    tailPattern: FAA_N_NUMBER,
+    ...FAA_TAIL,
     minFleetSanity: 200,
     verifierBackend: "alaska-json",
+    flightHistoryModel: false,
+    verifySite: "alaskaair.com",
+    typeDeterministicWifi: alaskaTypeToWifi,
     // Phase 1 (E175 regional) complete. Update status/phaseNote when 737/787 mainline starts.
     rollout: {
       status: "phase_done",
@@ -356,8 +376,6 @@ const AIRLINE_DEFS = {
     shortName: "Qatar",
     enabled: true,
     publicInHub: false,
-    hosts: ["qatarstarlinktracker.com", "www.qatarstarlinktracker.com"],
-    canonicalHost: "qatarstarlinktracker.com",
     iata: "QR",
     icao: "QTR",
     carrierPrefixes: ["QTR", "QR"],
@@ -368,12 +386,14 @@ const AIRLINE_DEFS = {
     classifyFleet: () => "mainline",
     fr24Slug: "qr-qtr",
     metricTag: "qatar",
-    tailPattern: /^A7-[A-Z]{3}$/,
+    ...QATAR_TAIL,
     // 274 aircraft on FR24 (Apr 2026); minus ~37 freighters leaves ~237. Set
     // floor at 200 so a partial scrape still passes sanity but a near-empty
     // one doesn't blow away the roster.
     minFleetSanity: 200,
     verifierBackend: "qatar-fltstatus",
+    flightHistoryModel: false,
+    verifySite: "qatarairways.com",
     typeDeterministicWifi: qatarTypeToStarlink,
     rollout: {
       status: "phase_done",
@@ -410,16 +430,194 @@ export type KnownAirlineCode = keyof typeof AIRLINE_DEFS;
 
 export const AIRLINES: Record<AirlineCode, AirlineConfig> = AIRLINE_DEFS;
 
-// Catch-all is null so an FR24 type-string format drift produces no
-// observation instead of mass-flipping confirmed tails on reconcile.
-export function qatarTypeToStarlink(aircraftType: string): StarlinkStatus | null {
-  const t = aircraftType.toUpperCase();
-  if (/777-F/.test(t)) return "negative";
-  if (/777-[23]/.test(t)) return "confirmed";
-  if (/A350/.test(t)) return "confirmed";
-  if (/A3[12]\d|A380|737/.test(t)) return "negative";
+/** Every subfleet key any airline registers — the vocabulary normalizeFleet
+ * and the fleet pages accept. Derived, never hand-enumerated. */
+export const SUBFLEET_KEYS: ReadonlySet<string> = new Set(
+  Object.values(AIRLINE_DEFS).flatMap((a) => a.subfleets.map((s) => s.key))
+);
+
+/** Literal list backing the SubfleetKey type (src/types.ts derives from it).
+ * tests/vocabulary.test.ts pins it equal to the runtime-derived SUBFLEET_KEYS. */
+export const SUBFLEET_KEY_LIST = ["mainline", "express", "horizon", "hawaiian_metal"] as const;
+
+// ── Canonical type→Starlink program state ────────────────────────────────────
+// One phase table per type-deterministic airline, keyed by the families that
+// normalizeAircraftType (the single free-text matcher) produces. Keyspace
+// adapters: free text resolves via normalizeAircraftType, IATA equipment
+// codes via QATAR_EQUIPMENT. A program change is one edit here, never a
+// per-module sweep.
+
+export type WifiPhase = "confirmed" | "rolling" | "negative";
+
+// QR program truth. 787 completion (target end-2026): flip B787 to
+// "confirmed" — both the FR24-name path (typeDeterministicWifi) and the
+// IATA-code path (qatarEquipmentToWifi) read this table.
+const QATAR_PHASE_BY_FAMILY: Record<string, WifiPhase> = {
+  B777: "confirmed", // rollout complete Q2 2025
+  A350: "confirmed", // rollout complete Dec 2025
+  B787: "rolling", // mid-install — per-flight equipment alone can't decide
+  B777F: "negative", // Qatar Cargo — no passenger service
+  B747F: "negative",
+  A380: "negative", // no installation plan announced
+  A330: "negative",
+  A320: "negative",
+  B737: "negative",
+};
+
+// Collapse normalizeAircraftType's granular families to QR program families:
+// the program treats the whole 737/A320 lineups uniformly.
+function qatarProgramFamily(family: string): string {
+  if (family.startsWith("B737")) return "B737";
+  if (family === "A319" || family === "A321") return "A320";
+  return family;
+}
+
+// Every IATA equipment code QR's API returns (qoreservices keyspace), mapped
+// once to canonical family (phase-table key) + display name. Adding a QR
+// equipment code is one row here. 351/359 are both A350-900 — QR's API
+// returns either; 77F/77X/74Y/74F are Qatar Cargo freighters.
+const QATAR_EQUIPMENT: Record<string, { family: string; name: string }> = {
+  "77W": { family: "B777", name: "Boeing 777-300ER" },
+  "77L": { family: "B777", name: "Boeing 777-200LR" },
+  "77F": { family: "B777F", name: "Boeing 777 Freighter" },
+  "77X": { family: "B777F", name: "Boeing 777 Freighter" },
+  "74Y": { family: "B747F", name: "Boeing 747 Freighter" },
+  "74F": { family: "B747F", name: "Boeing 747 Freighter" },
+  "351": { family: "A350", name: "Airbus A350-900" },
+  "359": { family: "A350", name: "Airbus A350-900" },
+  "35K": { family: "A350", name: "Airbus A350-1000" },
+  "788": { family: "B787", name: "Boeing 787-8" },
+  "789": { family: "B787", name: "Boeing 787-9" },
+  "388": { family: "A380", name: "Airbus A380-800" },
+  "332": { family: "A330", name: "Airbus A330-200" },
+  "333": { family: "A330", name: "Airbus A330-300" },
+  "320": { family: "A320", name: "Airbus A320" },
+  "321": { family: "A320", name: "Airbus A321" },
+  "21N": { family: "A320", name: "Airbus A321neo" },
+  "38M": { family: "B737", name: "Boeing 737 MAX 8" },
+  "73H": { family: "B737", name: "Boeing 737 MAX 8" },
+};
+
+export function qatarEquipment(
+  code: string | null | undefined
+): { family: string; name: string } | null {
+  if (!code) return null;
+  return QATAR_EQUIPMENT[code.toUpperCase()] ?? null;
+}
+
+export function qatarStarlinkPhase(family: string | null): WifiPhase | null {
+  return family ? (QATAR_PHASE_BY_FAMILY[family] ?? null) : null;
+}
+
+/**
+ * Family→phase table for type-deterministic airlines; null for carriers whose
+ * program isn't a per-type table (UA per-tail, AS per-subfleet). When the
+ * phases span confirmed AND negative/rolling, no single per-flight probability
+ * is honest — prediction surfaces must render the split instead of a blend.
+ */
+export function wifiPhaseFamilies(code: AirlineCode): Record<string, WifiPhase> | null {
+  if (code === "QR") return QATAR_PHASE_BY_FAMILY;
+  if (code === "HA") return HAWAIIAN_PHASE_BY_FAMILY;
   return null;
 }
+
+/** Narrow a program phase to a settleable status. "rolling" (and unrecognized
+ * input → null) stays null: mid-rollout is per-tail, not type-decidable, and
+ * a format drift must never settle a tail. */
+export function phaseToStatus(phase: WifiPhase | null): StarlinkStatus | null {
+  return phase === "confirmed" || phase === "negative" ? phase : null;
+}
+
+/** Wifi-provider keyspace label for a settled status; null when unsettled. */
+export function providerLabel(status: StarlinkStatus | null): "Starlink" | "None" | null {
+  return status === "confirmed" ? "Starlink" : status === "negative" ? "None" : null;
+}
+
+// Catch-all is null so an FR24 type-string format drift produces no
+// observation instead of mass-flipping confirmed tails on reconcile
+// (unrecognized strings normalize to "other"/"unknown" — no phase).
+export function qatarTypeToStarlink(aircraftType: string): StarlinkStatus | null {
+  return phaseToStatus(qatarStarlinkPhase(qatarProgramFamily(normalizeAircraftType(aircraftType))));
+}
+
+// HA program truth: Airbus fleet complete (Sep 2024), 787s pending install,
+// 717 interisland jets never in scope. HA operates only A321neos, so the
+// whole A321 family is confirmed.
+const HAWAIIAN_PHASE_BY_FAMILY: Record<string, WifiPhase> = {
+  A330: "confirmed",
+  A321: "confirmed",
+  B787: "rolling",
+  B717: "negative",
+};
+
+export function hawaiianStarlinkPhase(equipmentType: string | null | undefined): WifiPhase | null {
+  if (!equipmentType) return null;
+  return HAWAIIAN_PHASE_BY_FAMILY[normalizeAircraftType(equipmentType)] ?? null;
+}
+
+function hawaiianTypeToWifi(aircraftType: string): StarlinkStatus | null {
+  return phaseToStatus(hawaiianStarlinkPhase(aircraftType));
+}
+
+// AS: regional E175s 100% equipped (Q1 2026 earnings call). Mainline 737/787
+// is per-tail mid-rollout — null, settled by FlyerTalk/verifier evidence.
+function alaskaTypeToWifi(aircraftType: string): StarlinkStatus | null {
+  return normalizeAircraftType(aircraftType) === "E175" ? "confirmed" : null;
+}
+
+// What each verifier backend writes to starlink_verification_log.source.
+const VERIFIER_SOURCE_TAG: Record<
+  NonNullable<AirlineConfig["verifierBackend"]>,
+  VerificationSource
+> = {
+  united: "united",
+  "alaska-json": "alaska",
+  "qatar-fltstatus": "qatar",
+};
+
+/** The source tag this airline's verifier writes to starlink_verification_log.
+ * Throws for airlines without a verifier backend — calling this at a write
+ * site for such an airline is a programming error. */
+export function verifierSourceTag(cfg: AirlineConfig): VerificationSource {
+  if (!cfg.verifierBackend) {
+    throw new Error(`${cfg.code} has no verifier backend — no verification source tag`);
+  }
+  return VERIFIER_SOURCE_TAG[cfg.verifierBackend];
+}
+
+/** Verification-log source tags whose evidence consensus may weigh — derived
+ * from the enabled airlines' verifier backends. */
+export const VERIFICATION_SOURCES: readonly VerificationSource[] = [
+  ...new Set(
+    enabledAirlines()
+      .filter((a) => a.verifierBackend)
+      .map((a) => verifierSourceTag(a))
+  ),
+].sort();
+
+// What kind of evidence each backend's wifi field carries. united scrapes the
+// actual wifi banner off united.com; alaska-json and qatar-fltstatus only see
+// equipment type, so their wifi field is derived from the type rule.
+const VERIFIER_EVIDENCE: Record<
+  NonNullable<AirlineConfig["verifierBackend"]>,
+  "observed_wifi" | "type_derived"
+> = {
+  united: "observed_wifi",
+  "alaska-json": "type_derived",
+  "qatar-fltstatus": "type_derived",
+};
+
+/** Sources whose wifi field is an actually-observed signal — the only
+ * evidence allowed to WRITE verified_wifi via consensus. Type-derived truth
+ * flows through reconcileTypeDeterministicFleets instead, so a type inference
+ * can never masquerade as a per-tail observation (the wrong-yes bug class). */
+export const OBSERVED_WIFI_SOURCES: readonly VerificationSource[] = [
+  ...new Set(
+    enabledAirlines()
+      .filter((a) => a.verifierBackend && VERIFIER_EVIDENCE[a.verifierBackend] === "observed_wifi")
+      .map((a) => verifierSourceTag(a))
+  ),
+].sort();
 
 export function enabledAirlines(): AirlineConfig[] {
   return Object.values(AIRLINES).filter((a) => a.enabled);

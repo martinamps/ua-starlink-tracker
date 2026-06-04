@@ -58,7 +58,16 @@ import {
   normalizeAirlineTag,
   withSpan,
 } from "../observability";
-import { compareRoute, planItinerary, predictFlight } from "../scripts/starlink-predictor";
+import {
+  carrierPrediction,
+  carrierPredictionTelemetry,
+  carrierRouteAnswer,
+  compareRoute,
+  describeCarrierPrediction,
+  joinSentences,
+  planItinerary,
+  predictFlight,
+} from "../scripts/starlink-predictor";
 import type { ApiResponse, Flight } from "../types";
 import { CONTENT_TYPES, SECURITY_HEADERS } from "../utils/constants";
 import { error as logError } from "../utils/logger";
@@ -601,13 +610,13 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant }) 
         { headers: SECURITY_HEADERS.api }
       );
     }
-    case "type_no_data": {
+    case "no_model": {
       return new Response(
         JSON.stringify({
           hasStarlink: null,
           ...hubAirline,
           confidence: "type",
-          message: verdict.reason,
+          message: describeCarrierPrediction(cfg, verdict.answer),
           flights: [],
         }),
         { headers: SECURITY_HEADERS.api }
@@ -736,13 +745,13 @@ const apiCheckAnyFlight: Handler = async ({ req, url, reader, getReader, tenant 
         { headers: SECURITY_HEADERS.api }
       );
     }
-    case "type_no_data": {
+    case "no_model": {
       return new Response(
         JSON.stringify({
           hasStarlink: null,
           airline: cfg.name,
           confidence: "type",
-          reason: verdict.reason,
+          reason: describeCarrierPrediction(cfg, verdict.answer),
           flights: [],
         }),
         { headers: SECURITY_HEADERS.api }
@@ -819,14 +828,19 @@ const apiPredictFlight: Handler = ({ req, url, reader, getReader, tenant }) => {
   const carrier = resolveCarrier(tenant, flightNumber, reader, getReader);
   if (carrier instanceof Response) return carrier;
   const { cfg } = carrier;
-  if (cfg.routeTypeRule) {
-    // Type-determined airlines (e.g. HA) have no per-flight probability model
-    // — mirror check-flight's type_no_data instead of UA-calibrated noise.
+  if (!cfg.flightHistoryModel) {
+    // No flight-history model for this carrier — answer from the registry
+    // (subfleet penetration / type story), mirroring check-flight's no_model.
+    const normalized = ensureAirlinePrefix(cfg, flightNumber);
+    const answer = carrierPrediction(cfg, carrier.reader, normalized);
+    const t = carrierPredictionTelemetry(answer);
+    recordFlightLookup("api_predict", t.outcome, t.confidence, cfg.code);
     return new Response(
       JSON.stringify({
-        flight_number: ensureAirlinePrefix(cfg, flightNumber),
+        flight_number: normalized,
+        ...(answer.kind === "penetration" ? { probability: answer.pen.pct } : {}),
         confidence: "type",
-        message: `${cfg.name} Starlink status is type-determined — check the aircraft type on your booking.`,
+        message: describeCarrierPrediction(cfg, answer),
       }),
       { headers: SECURITY_HEADERS.api }
     );
@@ -851,7 +865,7 @@ const apiPredictFlight: Handler = ({ req, url, reader, getReader, tenant }) => {
   );
 };
 
-const apiPlanRoute: Handler = ({ req, url, reader }) => {
+const apiPlanRoute: Handler = ({ req, url, reader, tenant }) => {
   if (req.method !== "GET") return methodNotAllowed(true);
   const origin = url.searchParams.get("origin");
   const destination = url.searchParams.get("destination");
@@ -860,6 +874,23 @@ const apiPlanRoute: Handler = ({ req, url, reader }) => {
   if (!origin || !destination) {
     return new Response(JSON.stringify({ error: "Missing origin or destination" }), {
       status: 400,
+      headers: SECURITY_HEADERS.api,
+    });
+  }
+  // The itinerary planner runs on the flight-history model. Model-less
+  // tenants get the registry route answer as prose (additive `message`
+  // field; itineraries stays [] so the page's empty-state contract holds).
+  // The message carries registry text only — the page injects it as HTML.
+  const cfg = tenantConfig(tenant);
+  if (cfg && !cfg.flightHistoryModel) {
+    const r = carrierRouteAnswer(cfg, reader, origin, destination);
+    const message = r
+      ? joinSentences(`~${Math.round(r.probability * 100)}% Starlink — ${r.reason}`)
+      : joinSentences(
+          `Route predictions for ${cfg.name} are determined by aircraft type`,
+          cfg.rollout.phaseNote
+        );
+    return new Response(JSON.stringify({ origin, destination, itineraries: [], message }), {
       headers: SECURITY_HEADERS.api,
     });
   }
@@ -1349,9 +1380,18 @@ function flightPageMeta(ctx: RequestContext, flightNumber: string, cfg: AirlineC
 
   let probLabel = "";
   try {
-    const pred = predictFlight(reader, flightNumber);
-    if (pred.n_observations > 0 || pred.confidence !== "low") {
-      probLabel = ` Historically it gets a Starlink-equipped aircraft about ${Math.round(pred.probability * 100)}% of the time.`;
+    if (cfg.flightHistoryModel) {
+      const pred = predictFlight(reader, flightNumber);
+      if (pred.n_observations > 0 || pred.confidence !== "low") {
+        probLabel = ` Historically it gets a Starlink-equipped aircraft about ${Math.round(pred.probability * 100)}% of the time.`;
+      }
+    } else {
+      // Model-less carriers: only a uniform subfleet penetration is an honest
+      // number for meta copy; split/no-model carriers get none.
+      const answer = carrierPrediction(cfg, reader, flightNumber);
+      if (answer.kind === "penetration") {
+        probLabel = ` About ${Math.round(answer.pen.pct * 100)}% of this fleet group has Starlink.`;
+      }
     }
   } catch {
     // Best-effort — meta still works without a probability.

@@ -9,6 +9,7 @@
  *   col[1] = tail number, col[2] = ship number
  */
 
+import { AIRLINES } from "../airlines/registry";
 import { initializeDatabase, updateShipNumber } from "../database/database";
 import { BROWSER_USER_AGENT } from "../utils/constants";
 import { info, error as logError } from "../utils/logger";
@@ -17,8 +18,6 @@ const SHIP_SHEET_ID = "1ZlYgN_IZmd6CSx_nXnuP0L0PiodapDRx3RmNkIpxXAo";
 const SHIP_SHEET_GIDS = [
   0, 1, 948315825, 735685210, 3, 4, 5, 6, 70572532, 7, 8, 10, 12, 15, 13, 2098141434,
 ];
-
-const TAIL_RE = /^N[0-9A-Z]{2,5}$/;
 
 async function fetchSheet(gid: number): Promise<string> {
   const url = `https://docs.google.com/spreadsheets/d/${SHIP_SHEET_ID}/export?format=csv&gid=${gid}`;
@@ -73,7 +72,7 @@ export async function syncShipNumbers(): Promise<number> {
         const cols = parseCsvLine(lines[i]);
         const tail = cols[1]?.replace(/"/g, "").trim();
         const ship = cols[2]?.replace(/"/g, "").trim();
-        if (!tail || !ship || !TAIL_RE.test(tail)) continue;
+        if (!tail || !ship || !AIRLINES.UA.tailPattern.test(tail)) continue;
         updateShipNumber(db, tail, ship);
         updated++;
       }

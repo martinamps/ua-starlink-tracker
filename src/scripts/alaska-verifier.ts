@@ -12,12 +12,8 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { enabledAirlines } from "../airlines/registry";
-import {
-  alaskaTypeToStarlink,
-  fetchAlaskaFlightStatus,
-  hawaiianTypeToStarlink,
-} from "../api/alaska-status";
+import { AIRLINES, enabledAirlines, providerLabel, verifierSourceTag } from "../airlines/registry";
+import { fetchAlaskaFlightStatus } from "../api/alaska-status";
 import {
   getNextAlaskaVerifyTarget,
   getNextFlightForTail,
@@ -46,12 +42,10 @@ function shiftDate(iso: string, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-function deriveWifi(airline: string, equipmentType: string | null): string | null {
-  if (airline === "HA") {
-    const v = hawaiianTypeToStarlink(equipmentType);
-    return v === "Starlink" ? "Starlink" : v === "None" ? "None" : null;
-  }
-  return alaskaTypeToStarlink(equipmentType);
+// Adapter: registry verdict → the wifi-provider keyspace the log/fleet store.
+function deriveWifi(airline: "AS" | "HA", equipmentType: string | null): string | null {
+  if (!equipmentType) return null;
+  return providerLabel(AIRLINES[airline].typeDeterministicWifi?.(equipmentType) ?? null);
 }
 
 export async function checkOne(
@@ -97,9 +91,10 @@ export async function checkOne(
   const wifi = tailConfirmed === 1 ? deriveWifi(airline, equipmentType) : null;
   const hasStarlink = wifi === "Starlink" ? true : wifi === "None" ? false : null;
 
+  const sourceTag = verifierSourceTag(AIRLINES[airline]);
   logVerification(db, {
     tail_number: target.tail_number,
-    source: "alaska",
+    source: sourceTag,
     has_starlink: hasStarlink,
     wifi_provider: wifi,
     aircraft_type: equipmentType,
@@ -132,7 +127,7 @@ export async function checkOne(
     aircraft_type: normalizeAircraftType(equipmentType),
     wifi_provider: normalizeWifiProvider(wifi),
     result,
-    source: "alaska",
+    source: sourceTag,
     airline: normalizeAirlineTag(airline),
   });
 

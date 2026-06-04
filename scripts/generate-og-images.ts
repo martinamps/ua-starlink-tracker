@@ -8,7 +8,7 @@
 import "../src/playwright-env";
 import path from "node:path";
 import { type Page, chromium } from "playwright";
-import { AIRLINES, SITES } from "../src/airlines/registry";
+import { AIRLINES, SITES, siteForAirline } from "../src/airlines/registry";
 
 const OG_HTML = path.resolve(import.meta.dir, "../static/og.html");
 const OUT_DIR = path.resolve(import.meta.dir, "../static");
@@ -103,17 +103,23 @@ async function main() {
   for (const a of summary.airlines) {
     if (a.installed === 0) continue; // no point in a "0 aircraft" hero number
     const cfg = AIRLINES[a.code];
-    if (!cfg) continue;
+    const host = siteForAirline(a.code)?.canonicalHost;
+    if (!cfg || !host) {
+      console.warn(
+        `og-images: no ${cfg ? "site" : "registry"} entry for airline ${a.code} — skipping card`
+      );
+      continue;
+    }
 
     // Fetch the rollout history from the tenant's own host if it resolves;
     // otherwise skip the sparkline — the count alone is still useful.
-    const data = await getJson<ApiData>(`https://${cfg.canonicalHost}/api/data`);
+    const data = await getJson<ApiData>(`https://${host}/api/data`);
     const series = data ? rolloutSeries(data.starlinkPlanes) : [];
 
     const params = new URLSearchParams({
       layout: "count",
       label: `${cfg.name.toUpperCase()} STARLINK TRACKER`,
-      domain: cfg.canonicalHost,
+      domain: host,
       accent: cfg.brand.accentColor.replace("#", ""),
       count: String(a.installed),
       sub: "AIRCRAFT WITH STARLINK",

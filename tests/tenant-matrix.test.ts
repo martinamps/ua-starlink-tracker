@@ -12,9 +12,9 @@ import { beforeAll, describe, expect, test } from "bun:test";
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { getContent } from "../src/airlines/content";
-import { AIRLINES, SITES, type SiteConfig } from "../src/airlines/registry";
+import { AIRLINES, SITES, type SiteConfig, siteForAirline } from "../src/airlines/registry";
 import { createApp } from "../src/server/app";
-import { jsonOf, mcpReq, openSnapshot, postMcp, req } from "./helpers";
+import { jsonOf, openSnapshot, postMcp, req } from "./helpers";
 
 let app: ReturnType<typeof createApp>;
 
@@ -58,10 +58,15 @@ const BANNED_PATTERNS: Array<{
     re: UA_DEFAULT_RE,
     allowlist: new Map([
       ["src/airlines/registry.ts", 3], // SITES.united derives from AIRLINES.UA (2) + resolveTenant doc comment (1)
-      ["src/utils/constants.ts", 4], // UA-bound shim definitions; deleted when MCP tools take a cfg
-      ["src/api/mcp-server.ts", 1], // hub-scope MCP stays UA-bound (phase-2 per-airline threading)
+      ["src/utils/constants.ts", 1], // extractFlightNumber builds united.com URLs — UA-bound by definition
+      ["src/api/mcp-server.ts", 1], // scopeCfg: hub-scope MCP stays UA-bound (phase-2 per-airline threading)
+      ["src/scripts/starlink-predictor.ts", 1], // prediction model trained on UA observations only
       ["src/scripts/fleet-sync.ts", 1], // CLI default argument for the UA sync job
       ["src/scripts/flightradar24-scraper.ts", 1], // CLI default slug for the UA scraper
+      ["src/scripts/verify-tails.ts", 1], // united.com ground-truth CLI — UA-bound by definition
+      ["src/scripts/starlink-verifier.ts", 1], // united.com verifier — UA-bound by definition
+      ["src/scripts/sync-ship-numbers.ts", 1], // United mainline ship-number sheet — UA-bound by definition
+      ["src/scripts/fleet-discovery.ts", 1], // united.com discovery checker — UA-bound by definition
     ]),
     why:
       "A UA default on a missing tenant/airline is the og:image bug class: the row or response " +
@@ -80,11 +85,8 @@ const BANNED_PATTERNS: Array<{
   {
     name: "UA-bound flight-number shims",
     re: /\b(ensureUAPrefix|normalizeFlightNumber|buildFlightNumberVariants|inferFleet)\b/,
-    allowlist: new Map([
-      ["src/utils/constants.ts", 5], // the shim definitions themselves (+ header comment)
-      ["src/api/mcp-server.ts", 14], // MCP tool impls UA-bound pending class-5 per-airline threading
-      ["src/scripts/starlink-predictor.ts", 5], // predictor model is UA-only (trained on UA observations)
-    ]),
+    // The shims were deleted in the class-5 sweep — any reappearance is a regression.
+    allowlist: new Map<string, number>(),
     why:
       "These shims hard-bind AIRLINES.UA and launder it past the AIRLINES.UA grep. Use the " +
       "cfg-taking versions in src/airlines/flight-number.ts instead.",
@@ -198,9 +200,9 @@ function foreignAirlines(site: SiteConfig) {
 function assertNoForeignTenant(site: SiteConfig, route: string, body: string) {
   for (const other of foreignAirlines(site)) {
     expect(body, `${site.key} ${route} leaks "${other.name}"`).not.toContain(other.name);
-    expect(body, `${site.key} ${route} links ${other.canonicalHost}`).not.toContain(
-      other.canonicalHost
-    );
+    const otherHost = siteForAirline(other.code)?.canonicalHost;
+    expect(otherHost, `no site registered for airline ${other.code}`).toBeDefined();
+    expect(body, `${site.key} ${route} links ${otherHost}`).not.toContain(otherHost as string);
   }
 }
 
@@ -311,12 +313,28 @@ describe("hub /api/check-flight + /api/predict-flight detect the airline", () =>
     }
   });
 
-  test("hub /api/predict-flight on a type-determined airline returns the type answer, not predictor output", async () => {
+  test("hub /api/predict-flight on a split-phase airline returns the type split, never a number", async () => {
     const d = await getJSON(hub, "/api/predict-flight?flight_number=HA9999");
-    expect(d.probability).toBeUndefined();
+    // Never model output (no method/n_observations) and never a blended
+    // probability — HA's program spans confirmed (A330/A321) and negative (717).
+    expect(d.method).toBeUndefined();
     expect(d.n_observations).toBeUndefined();
+    expect(d.probability).toBeUndefined();
     expect(d.confidence).toBe("type");
-    expect(d.message).toContain("type-determined");
+    expect(d.message).toContain("A330");
+    expect(d.message).toContain("717");
+  });
+
+  test("hub /api/check-flight on an AS flight with no schedule answers from the registry (deliberate wire change)", async () => {
+    // The UA-host /api/check-flight shape is the Chrome-extension contract,
+    // tenant-pinned elsewhere — this change only affects model-less carriers.
+    const d = await getJSON(hub, "/api/check-flight?flight_number=AS9999&date=2026-03-22");
+    expect(d.hasStarlink).toBeNull();
+    expect(d.flights).toEqual([]);
+    expect(d.confidence).toBe("type");
+    expect(d.airline).toBe("Alaska Airlines");
+    expect(typeof d.message).toBe("string");
+    expect(d.message).not.toContain("United");
   });
 
   test("hub /api/data pins fleetStats: null (deliberate wire change)", async () => {
@@ -328,29 +346,142 @@ describe("hub /api/check-flight + /api/predict-flight detect the airline", () =>
     expect(Array.isArray(d.starlinkPlanes)).toBe(true);
     expect(d.starlinkPlanes.length).toBeGreaterThan(0);
   });
+});
 
-  test("MCP get_fleet_stats is tenant-branded on every airline scope", async () => {
-    for (const site of [SITES.alaska, SITES.hawaiian, SITES.qatar]) {
-      const j = await postMcp(app, site.canonicalHost, "tools/call", {
-        name: "get_fleet_stats",
-        arguments: {},
-      });
-      const text = j.result.content[0].text as string;
-      const cfg = AIRLINES[site.scope as string];
-      expect(text, site.key).toContain(cfg.name);
-      expect(text, `${site.key} leaks United branding`).not.toContain("United");
+// ─────────────────────────────────────────────────────────────────────────────
+// Per-scope MCP: every tool answers under the tenant's own carrier — bare
+// flight numbers normalize to the tenant's IATA code, prose comes from the
+// config, and the UA-trained prediction model never leaks onto other scopes.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function expectNoUaLeak(text: string, label: string) {
+  expect(text, `${label}: United literal`).not.toContain("United");
+  expect(text, `${label}: united.com link`).not.toContain("united.com");
+  expect(text, `${label}: UA flight number`).not.toMatch(/\bUA\d/);
+}
+
+describe("MCP tools are scope-correct on non-UA tenants", () => {
+  const nonUaSites = [SITES.alaska, SITES.hawaiian, SITES.qatar];
+  // Route the tenant plausibly serves — HA's pair exercises its routeTypeRule.
+  const ROUTE_FOR: Record<string, { origin: string; destination: string }> = {
+    alaska: { origin: "SEA", destination: "JFK" },
+    hawaiian: { origin: "HNL", destination: "LAX" },
+    qatar: { origin: "DOH", destination: "LHR" },
+  };
+
+  // Exact predict branch per scope. Split-phase carriers (HA, QR) must NEVER
+  // show a blended number; AS850 quotes the registry penetrationOverride, so
+  // the pinned value is registry-driven, not snapshot-data-driven.
+  const PREDICT_PIN: Record<
+    string,
+    | { flight: string; branch: "split"; groups: string[] }
+    | { flight: string; branch: "number"; probability: number; mentions: string }
+  > = {
+    alaska: { flight: "850", branch: "number", probability: 1, mentions: "Hawaiian-operated" },
+    hawaiian: { flight: "1", branch: "split", groups: ["A330", "717"] },
+    qatar: { flight: "1", branch: "split", groups: ["777", "787"] },
+  };
+
+  test("tools/list: same tool names as UA, zero United literals", async () => {
+    const ua = await postMcp(app, SITES.united.canonicalHost, "tools/list", {});
+    const uaNames = ua.result.tools.map((t: { name: string }) => t.name).sort();
+    for (const site of nonUaSites) {
+      const j = await postMcp(app, site.canonicalHost, "tools/list", {});
+      expect(
+        j.result.tools.map((t: { name: string }) => t.name).sort(),
+        `${site.key} tool names drifted from UA's`
+      ).toEqual(uaNames);
+      expect(JSON.stringify(j.result), `${site.key} tools/list mentions United`).not.toContain(
+        "United"
+      );
     }
   });
 
-  test("AS-scoped MCP check_flight runs Alaska's config, not United's", async () => {
-    const res = await app.dispatch(
-      mcpReq(SITES.alaska.canonicalHost, "tools/call", {
-        name: "check_flight",
-        arguments: { flight_number: "118", date: "2026-03-22" },
-      })
-    );
-    const text = await res.text();
-    expect(text).toContain("AS118");
-    expect(text).not.toContain("UA118");
+  for (const site of nonUaSites) {
+    const cfg = AIRLINES[site.scope as string];
+    const call = async (name: string, args: Record<string, unknown>) => {
+      const j = await postMcp(app, site.canonicalHost, "tools/call", { name, arguments: args });
+      return j.result.content[0].text as string;
+    };
+
+    describe(`${site.key} (${cfg.iata})`, () => {
+      test("check_flight('1') answers about the tenant's flight, not UA1", async () => {
+        const t = await call("check_flight", { flight_number: "1", date: "2026-03-22" });
+        expect(t).toContain(`${cfg.iata}1`);
+        expectNoUaLeak(t, `${site.key} check_flight`);
+      });
+
+      test("predict_flight_starlink('1'): registry-driven answer, no UA priors", async () => {
+        const t = await call("predict_flight_starlink", { flight_number: "1" });
+        expectNoUaLeak(t, `${site.key} predict_flight`);
+        // UA-model fingerprints must not appear on other scopes.
+        expect(t).not.toContain("fleet prior");
+        expect(t).not.toContain("obs ·");
+      });
+
+      test("REST /api/predict-flight agrees with MCP predict (same registry answer)", async () => {
+        const d = await getJSON(site, "/api/predict-flight?flight_number=1");
+        const t = await call("predict_flight_starlink", { flight_number: "1" });
+        // Never model output on either surface; MCP renders the same prose.
+        expect(d.method).toBeUndefined();
+        expect(d.n_observations).toBeUndefined();
+        expect(typeof d.message).toBe("string");
+        expect(t, `${site.key}: MCP text drifted from REST message`).toContain(d.message);
+      });
+
+      const pin = PREDICT_PIN[site.key];
+      test(`predict pins the ${pin.branch} branch exactly`, async () => {
+        const d = await getJSON(site, `/api/predict-flight?flight_number=${pin.flight}`);
+        const t = await call("predict_flight_starlink", { flight_number: pin.flight });
+        if (pin.branch === "split") {
+          expect(d.probability, `${site.key}: split must not carry a number`).toBeUndefined();
+          expect(t).not.toMatch(/~\d+% Starlink probability/);
+          for (const g of pin.groups) {
+            expect(d.message, `${site.key} REST names ${g}`).toContain(g);
+            expect(t, `${site.key} MCP names ${g}`).toContain(g);
+          }
+        } else {
+          expect(d.probability).toBe(pin.probability);
+          expect(d.message).toContain(pin.mentions);
+          expect(t).toContain(`~${(pin.probability * 100).toFixed(0)}% Starlink probability`);
+          expect(t).toContain(pin.mentions);
+        }
+      });
+
+      for (const tool of ["plan_starlink_itinerary", "predict_route_starlink"] as const) {
+        test(`${tool}: registry route answer, never the UA planner`, async () => {
+          const t = await call(tool, ROUTE_FOR[site.key]);
+          expect(t).toContain(cfg.name);
+          expectNoUaLeak(t, `${site.key} ${tool}`);
+        });
+      }
+
+      test("search_starlink_flights: scoped data, no United branding", async () => {
+        const t = await call("search_starlink_flights", { origin: ROUTE_FOR[site.key].origin });
+        expectNoUaLeak(t, `${site.key} search`);
+      });
+
+      test("list_starlink_aircraft: tenant-labeled header", async () => {
+        const t = await call("list_starlink_aircraft", {});
+        expect(t).toContain(cfg.name);
+        expectNoUaLeak(t, `${site.key} list_aircraft`);
+      });
+
+      test("get_fleet_stats: tenant-branded", async () => {
+        const t = await call("get_fleet_stats", {});
+        expect(t).toContain(cfg.name);
+        expectNoUaLeak(t, `${site.key} fleet_stats`);
+      });
+    });
+  }
+
+  test("HA routeTypeRule drives the HNL→LAX answer (not the UA planner)", async () => {
+    const j = await postMcp(app, SITES.hawaiian.canonicalHost, "tools/call", {
+      name: "plan_starlink_itinerary",
+      arguments: { origin: "HNL", destination: "LAX" },
+    });
+    const t = j.result.content[0].text as string;
+    expect(t).toContain("A330");
+    expect(t).toContain("~100% Starlink");
   });
 });

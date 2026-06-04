@@ -5,6 +5,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { AIRLINES, OBSERVED_WIFI_SOURCES, verifierSourceTag } from "../airlines/registry";
 import {
   computeWifiConsensus,
   getAllStarlinkPlanes,
@@ -31,6 +32,9 @@ import type { StarlinkCheckResult } from "./united-starlink-checker";
 import { checkStarlinkStatusSubprocess } from "./united-starlink-checker-subprocess";
 
 const VERIFICATION_DELAY_MS = 5000; // 5 seconds between checks to be polite
+
+// united.com verifier — UA-bound by definition.
+const UNITED_SOURCE = verifierSourceTag(AIRLINES.UA);
 
 /**
  * Convert ICAO airport code to IATA (remove K prefix for US airports)
@@ -107,7 +111,7 @@ function getPlanesNeedingVerification(
     );
     if (!candidate) continue;
 
-    if (!forceAll && !needsVerification(db, plane.TailNumber, "united")) {
+    if (!forceAll && !needsVerification(db, plane.TailNumber, UNITED_SOURCE)) {
       continue;
     }
 
@@ -127,7 +131,7 @@ export async function verifyPlaneStarlink(
   forceCheck = false,
   context?: { aircraftType?: string | null; fleet?: string | null }
 ): Promise<StarlinkCheckResult | null> {
-  if (!forceCheck && !needsVerification(db, tailNumber, "united")) {
+  if (!forceCheck && !needsVerification(db, tailNumber, UNITED_SOURCE)) {
     return null;
   }
 
@@ -194,7 +198,7 @@ export async function verifyPlaneStarlink(
         logVerification(db, {
           tail_number: tailNumber,
           airline: "UA",
-          source: "united",
+          source: UNITED_SOURCE,
           has_starlink: tailMismatch || untrustedNonStarlink ? null : result.hasStarlink,
           wifi_provider: tailMismatch || untrustedNonStarlink ? null : result.wifiProvider,
           aircraft_type: result.aircraftType,
@@ -211,7 +215,7 @@ export async function verifyPlaneStarlink(
           logVerification(db, {
             tail_number: resolvedTail,
             airline: "UA",
-            source: "united",
+            source: UNITED_SOURCE,
             has_starlink: result.hasStarlink,
             wifi_provider: result.wifiProvider,
             aircraft_type: result.aircraftType,
@@ -223,7 +227,9 @@ export async function verifyPlaneStarlink(
           // block below never runs for resolvedTail. Without this, a tail that
           // only ever shows up via swaps accumulates obs but needsVerification
           // sees those log entries and skips the direct check — stuck forever.
-          const swapConsensus = computeWifiConsensus(db, resolvedTail);
+          const swapConsensus = computeWifiConsensus(db, resolvedTail, {
+            sources: OBSERVED_WIFI_SOURCES,
+          });
           if (swapConsensus.verdict !== null) {
             updateVerifiedWifi(db, resolvedTail, swapConsensus.verdict);
             verifierLog.info(
@@ -248,7 +254,9 @@ export async function verifyPlaneStarlink(
           // logVerification above already wrote this check into the log, so
           // consensus includes it. Gate the column write on the 30-day consensus
           // so a single flaky scrape can't hide a plane.
-          const consensus = computeWifiConsensus(db, tailNumber);
+          const consensus = computeWifiConsensus(db, tailNumber, {
+            sources: OBSERVED_WIFI_SOURCES,
+          });
           if (consensus.verdict !== null) {
             updateVerifiedWifi(db, tailNumber, consensus.verdict);
             verifierLog.info(
@@ -273,7 +281,7 @@ export async function verifyPlaneStarlink(
           fleet: fleetTag,
           aircraft_type: aircraftTypeTag,
           wifi_provider: wifiProviderTag,
-          source: "united",
+          source: UNITED_SOURCE,
           airline: normalizeAirlineTag("UA"),
         };
         span.setTag("wifi_provider", wifiProviderTag);
@@ -325,7 +333,7 @@ export async function verifyPlaneStarlink(
           fleet: fleetTag,
           aircraft_type: aircraftTypeTag,
           wifi_provider: "unknown",
-          source: "united",
+          source: UNITED_SOURCE,
           airline: normalizeAirlineTag("UA"),
         });
         span.setTag("error", true);
@@ -334,7 +342,7 @@ export async function verifyPlaneStarlink(
         logVerification(db, {
           tail_number: tailNumber,
           airline: "UA",
-          source: "united",
+          source: UNITED_SOURCE,
           has_starlink: null,
           wifi_provider: null,
           aircraft_type: null,

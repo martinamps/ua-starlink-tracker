@@ -20,6 +20,7 @@
 
 import { Database } from "bun:sqlite";
 import { writeFileSync } from "node:fs";
+import { AIRLINES } from "../airlines/registry";
 import { FlightRadar24API } from "../api/flightradar24-api";
 import { getShipToTailMap } from "../database/database";
 import { DB_PATH, extractFlightNumber, unitedLookupDate } from "../utils/constants";
@@ -231,13 +232,12 @@ async function main() {
   );
   const fileArg = args.find((a) => a.startsWith("--file="))?.split("=")[1];
 
+  const isUaTail = (t: string) => AIRLINES.UA.tailPattern.test(t.toUpperCase());
   let tails: string[];
   if (fileArg) {
-    tails = (await Bun.file(fileArg).text())
-      .split(/\s+/)
-      .filter((t) => /^N[0-9A-Z]{2,5}$/i.test(t));
+    tails = (await Bun.file(fileArg).text()).split(/\s+/).filter(isUaTail);
   } else {
-    tails = args.filter((a) => /^N[0-9A-Z]{2,5}$/i.test(a));
+    tails = args.filter(isUaTail);
   }
 
   if (tails.length === 0) {

@@ -22,6 +22,7 @@
  * latency. fs.qatarairways.com itself is robots-allowed.
  */
 
+import { qatarEquipment, qatarStarlinkPhase } from "../airlines/registry";
 import { COUNTERS, DISTRIBUTIONS, metrics, normalizeAirlineTag } from "../observability";
 import { BROWSER_USER_AGENT } from "../utils/constants";
 import { error as logError, warn } from "../utils/logger";
@@ -215,32 +216,17 @@ export async function fetchByRoute(
 export type QatarWifi = "Starlink" | "Rolling" | "None";
 
 /**
- * Map an IATA equipment code to QR's published Starlink state. Source of truth:
- *
- *   - Boeing 777-300ER (77W) + 777-200LR (77L): rollout complete Q2 2025
- *     (qatarairways.com/press-releases — "all 54 Boeing 777s")
- *   - Airbus A350-900 (351, 359) + A350-1000 (35K): rollout complete Dec 2025
- *     ("entire A350 fleet within record-breaking eight months")
- *   - Boeing 787-8 (788) + 787-9 (789): rolling — 3+ tails as of Jan 2026,
- *     end-2026 target. Equipment alone cannot decide individual flights.
- *   - Airbus A380 (388), A330 (332/333), A320 family (320/321/21N), 737 MAX
- *     (38M, 73H): no installation plan announced.
+ * IATA-equipment-code adapter over the registry's canonical QR phase table
+ * (QATAR_PHASE_BY_FAMILY — program changes happen there, not here).
  *
  * "Rolling" callers should render as "may have Starlink" rather than a
  * yes/no — the answer flips per-tail and we have no per-tail signal yet.
- *
- * Why two A350-900 codes? QR's API returns 351 for some flights and 359 for
- * others (both A350-900). We treat them identically.
+ * Unknown codes return None so they sort with non-equipped aircraft.
  */
 export function qatarEquipmentToWifi(equipmentCode: string | null | undefined): QatarWifi {
-  if (!equipmentCode) return "None";
-  const c = equipmentCode.toUpperCase();
-  if (c === "77W" || c === "77L") return "Starlink";
-  if (c === "351" || c === "359" || c === "35K") return "Starlink";
-  if (c === "788" || c === "789") return "Rolling";
-  // 77F / 77X / 74Y are Qatar Cargo freighters — no passenger service. Their
-  // Starlink status is moot but we return None so they sort with non-equipped
-  // aircraft if a freighter slip past the ingester filter.
+  const phase = qatarStarlinkPhase(qatarEquipment(equipmentCode)?.family ?? null);
+  if (phase === "confirmed") return "Starlink";
+  if (phase === "rolling") return "Rolling";
   return "None";
 }
 
@@ -250,49 +236,13 @@ export function qatarEquipmentToWifi(equipmentCode: string | null | undefined): 
  * filter freighters at ingest because they're not bookable by passengers.
  */
 export function isQatarFreighterEquipment(equipmentCode: string | null | undefined): boolean {
-  if (!equipmentCode) return false;
-  const c = equipmentCode.toUpperCase();
-  return c === "77F" || c === "77X" || c === "74Y" || c === "74F";
+  const family = qatarEquipment(equipmentCode)?.family;
+  return family === "B777F" || family === "B747F";
 }
 
+/** Display name from the registry's QATAR_EQUIPMENT table; unknown codes
+ * render as-is so new equipment is visible rather than hidden. */
 export function qatarEquipmentName(equipmentCode: string | null | undefined): string {
   if (!equipmentCode) return "Unknown";
-  switch (equipmentCode.toUpperCase()) {
-    case "77W":
-      return "Boeing 777-300ER";
-    case "77L":
-      return "Boeing 777-200LR";
-    case "351":
-    case "359":
-      return "Airbus A350-900";
-    case "35K":
-      return "Airbus A350-1000";
-    case "788":
-      return "Boeing 787-8";
-    case "789":
-      return "Boeing 787-9";
-    case "388":
-      return "Airbus A380-800";
-    case "332":
-      return "Airbus A330-200";
-    case "333":
-      return "Airbus A330-300";
-    case "320":
-      return "Airbus A320";
-    case "321":
-      return "Airbus A321";
-    case "21N":
-      return "Airbus A321neo";
-    case "38M":
-    case "73H":
-      return "Boeing 737 MAX 8";
-    case "77F":
-    case "77X":
-      return "Boeing 777 Freighter";
-    case "74Y":
-    case "74F":
-      return "Boeing 747 Freighter";
-    default:
-      return equipmentCode;
-  }
+  return qatarEquipment(equipmentCode)?.name ?? equipmentCode;
 }

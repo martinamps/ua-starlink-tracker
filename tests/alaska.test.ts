@@ -11,7 +11,7 @@
 
 import type { Database } from "bun:sqlite";
 import { beforeAll, describe, expect, test } from "bun:test";
-import { alaskaTypeToStarlink } from "../src/api/alaska-status";
+import { AIRLINES } from "../src/airlines/registry";
 import { createApp } from "../src/server/app";
 import { openSnapshot } from "./helpers";
 
@@ -32,30 +32,30 @@ function asReq(path: string) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// alaskaTypeToStarlink — Q1 2026 earnings call: full regional E175 fleet equipped
+// AS type→Starlink rule — Q1 2026 earnings call: full regional E175 fleet equipped
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("alaskaTypeToStarlink", () => {
-  test.each<[string, "Starlink" | null]>([
-    ["Embraer E175LR", "Starlink"],
-    ["E175", "Starlink"],
-    ["ERJ-175LR", "Starlink"],
-    ["ERJ175", "Starlink"],
-    ["E75", "Starlink"], // FR24 short type code
-    ["e175", "Starlink"], // case-insensitive
+describe("AS typeDeterministicWifi", () => {
+  test.each<[string, "confirmed" | null]>([
+    ["Embraer E175LR", "confirmed"],
+    ["E175", "confirmed"],
+    ["ERJ-175LR", "confirmed"],
+    ["ERJ175", "confirmed"],
+    ["E75", "confirmed"], // FR24 short type code
+    ["E75L", "confirmed"], // IATA E175 long-wing variant
+    ["E75S", "confirmed"], // IATA E175 short-wing variant
+    ["e175", "confirmed"], // case-insensitive
     ["Boeing 737-990ER", null],
     ["Boeing 737 MAX 9", null],
     ["Boeing 737-890", null],
     ["Boeing 787-9 Dreamliner", null],
     ["A321neo", null],
   ])("%s → %p", (type, want) => {
-    expect(alaskaTypeToStarlink(type)).toBe(want);
+    expect(AIRLINES.AS.typeDeterministicWifi?.(type) ?? null).toBe(want);
   });
 
-  test("null/undefined/empty → null (no oracle for mainline)", () => {
-    expect(alaskaTypeToStarlink(null)).toBeNull();
-    expect(alaskaTypeToStarlink(undefined)).toBeNull();
-    expect(alaskaTypeToStarlink("")).toBeNull();
+  test("empty string → null (no oracle for mainline)", () => {
+    expect(AIRLINES.AS.typeDeterministicWifi?.("") ?? null).toBeNull();
   });
 });
 

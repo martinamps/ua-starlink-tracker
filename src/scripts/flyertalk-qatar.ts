@@ -14,7 +14,7 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { qatarTypeToStarlink } from "../airlines/registry";
+import { AIRLINES, qatarTypeToStarlink } from "../airlines/registry";
 import {
   addDiscoveredStarlinkPlane,
   initializeDatabase,
@@ -25,7 +25,6 @@ import { info, error as logError } from "../utils/logger";
 
 const ALLOWED_HOST = "www.flyertalk.com";
 const THREAD_URL = `https://${ALLOWED_HOST}/forum/qatar-airways-privilege-club/2162391-qr-starlink-now-live.html`;
-const QR_TAIL_RE = /\bA7-[A-Z]{3}\b/g;
 const NEXT_RE = /rel="next"\s+href="([^"]+)"/i;
 const MAX_PAGES = 60;
 
@@ -56,7 +55,7 @@ export async function fetchQatarFlyertalkTails(): Promise<string[]> {
     if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
     // FlyerTalk serves windows-1252; treat as bytes and only keep ASCII matches.
     const html = new TextDecoder("latin1").decode(new Uint8Array(await res.arrayBuffer()));
-    for (const m of html.matchAll(QR_TAIL_RE)) seen.add(m[0]);
+    for (const m of html.matchAll(AIRLINES.QR.tailScanPattern)) seen.add(m[0]);
     url = nextPageUrl(html, url);
     pages++;
   }

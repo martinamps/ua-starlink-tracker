@@ -1,6 +1,10 @@
 // Shared types for the application
 
-export type SubfleetKey = "mainline" | "express" | "horizon" | "unknown";
+import type { SUBFLEET_KEY_LIST } from "./airlines/registry";
+
+// Derived from the registry's literal key list (which tests/vocabulary.test.ts
+// pins against the runtime-derived SUBFLEET_KEYS) — no third copy to drift.
+export type SubfleetKey = (typeof SUBFLEET_KEY_LIST)[number] | "unknown";
 
 export interface Aircraft {
   Aircraft: string;

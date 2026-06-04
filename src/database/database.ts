@@ -1,6 +1,13 @@
 import { Database } from "bun:sqlite";
 import { ensureAirlinePrefix } from "../airlines/flight-number";
-import { AIRLINES, enabledAirlines, looksLikeValidTailNumber } from "../airlines/registry";
+import {
+  AIRLINES,
+  OBSERVED_WIFI_SOURCES,
+  VERIFICATION_SOURCES,
+  enabledAirlines,
+  looksLikeValidTailNumber,
+  verifierSourceTag,
+} from "../airlines/registry";
 import {
   COUNTERS,
   metrics,
@@ -71,7 +78,7 @@ function tableExists(db: Database, tableName: string) {
   return db.query("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(tableName);
 }
 
-export type VerificationSource = "united" | "flightradar24" | "spreadsheet" | "alaska";
+export type VerificationSource = "united" | "flightradar24" | "spreadsheet" | "alaska" | "qatar";
 
 export interface VerificationLogEntry {
   id?: number;
@@ -732,7 +739,8 @@ export function getRecentInstalls(
   perAirlineCap?: number
 ): RecentInstall[] {
   const cols = "airline, TailNumber, aircraft as Aircraft, OperatedBy, DateFound";
-  const filter = equippedFilter("starlink_planes");
+  // DateFound NULL = type-rule settle, not a dated install — never "recent".
+  const filter = `${equippedFilter("starlink_planes")} AND DateFound IS NOT NULL`;
   if (perAirlineCap && perAirlineCap > 0) {
     const q = withAirline(
       `SELECT ${cols}, ROW_NUMBER() OVER (PARTITION BY airline ORDER BY DateFound DESC) AS rn
@@ -1074,13 +1082,28 @@ export function getVerificationObservations(
   db: Database,
   airline?: AirlineFilter
 ): VerificationObservation[] {
+  // Sources derive from each scoped airline's verifier backend, so a non-UA
+  // predictor reads its own verifier's rows instead of silently getting none.
+  const codes =
+    airline === undefined
+      ? enabledAirlines().map((a) => a.code)
+      : typeof airline === "string"
+        ? [airline]
+        : airline;
+  const sources = [
+    ...new Set(
+      codes.filter((c) => AIRLINES[c]?.verifierBackend).map((c) => verifierSourceTag(AIRLINES[c]))
+    ),
+  ];
+  if (sources.length === 0) return [];
   const q = withAirline(
     `SELECT flight_number, tail_number, has_starlink, checked_at
      FROM starlink_verification_log
-     WHERE flight_number IS NOT NULL AND source = 'united' AND has_starlink IS NOT NULL`,
+     WHERE flight_number IS NOT NULL AND source IN (${sources.map(() => "?").join(",")})
+       AND has_starlink IS NOT NULL`,
     airline,
     "",
-    []
+    sources
   );
   return db.query(q.sql).all(...q.params) as VerificationObservation[];
 }
@@ -1739,6 +1762,7 @@ export function needsVerification(
     flightradar24: 24, // 1 day for FR24
     spreadsheet: 1, // 1 hour for spreadsheet (primary source)
     alaska: ALASKA_VERIFY_THRESHOLD_HOURS,
+    qatar: 24, // qatar-fltstatus is schedule-grade; daily is plenty
   };
 
   const baseThreshold = hoursThreshold ?? baseThresholds[source];
@@ -1884,6 +1908,7 @@ export function getVerificationStats(db: Database): {
     flightradar24: 0,
     spreadsheet: 0,
     alaska: 0,
+    qatar: 0,
   };
   for (const row of bySource) {
     if (row.source in sourceMap) {
@@ -1918,10 +1943,22 @@ export interface WifiConsensus {
 export function computeWifiConsensus(
   db: Database,
   tailNumber: string,
-  opts = { windowDays: 30, minObs: 2, threshold: 0.7 }
+  opts: {
+    windowDays?: number;
+    minObs?: number;
+    threshold?: number;
+    /** Default (display surfaces): all registry verifier sources. WRITE paths
+     * must pass OBSERVED_WIFI_SOURCES so type-derived rows never gain
+     * verified_wifi write authority. */
+    sources?: readonly VerificationSource[];
+  } = {}
 ): WifiConsensus {
-  const cutoff = Math.floor(Date.now() / 1000) - opts.windowDays * 86400;
-  const baseWhere = `tail_number = ? AND source = 'united' AND checked_at >= ?
+  const { windowDays = 30, minObs = 2, threshold = 0.7, sources = VERIFICATION_SOURCES } = opts;
+  const cutoff = Math.floor(Date.now() / 1000) - windowDays * 86400;
+  // Accepted sources derive from the registry (each enabled airline's
+  // verifier backend), so AS/HA evidence weighs in — not just united rows.
+  const baseWhere = `tail_number = ? AND source IN (${sources.map(() => "?").join(",")})
+    AND checked_at >= ?
     AND error IS NULL AND has_starlink IS NOT NULL
     AND wifi_provider IS NOT NULL AND wifi_provider <> ''`;
 
@@ -1929,7 +1966,10 @@ export function computeWifiConsensus(
   let obs = db
     .query(`SELECT has_starlink, wifi_provider FROM starlink_verification_log
       WHERE ${baseWhere} AND tail_confirmed = 1 ORDER BY checked_at DESC`)
-    .all(tailNumber, cutoff) as Array<{ has_starlink: number; wifi_provider: string }>;
+    .all(tailNumber, ...sources, cutoff) as Array<{
+    has_starlink: number;
+    wifi_provider: string;
+  }>;
 
   // Grace fallback: if zero confirmed rows, read legacy NULL rows so display
   // counts (n, starlinkPct) aren't zero during the 30d transition. Legacy is
@@ -1940,7 +1980,10 @@ export function computeWifiConsensus(
     obs = db
       .query(`SELECT has_starlink, wifi_provider FROM starlink_verification_log
         WHERE ${baseWhere} AND tail_confirmed IS NULL ORDER BY checked_at DESC`)
-      .all(tailNumber, cutoff) as Array<{ has_starlink: number; wifi_provider: string }>;
+      .all(tailNumber, ...sources, cutoff) as Array<{
+      has_starlink: number;
+      wifi_provider: string;
+    }>;
     usedLegacyFallback = obs.length > 0;
   }
 
@@ -1957,12 +2000,12 @@ export function computeWifiConsensus(
     };
   }
 
-  if (n < opts.minObs) {
+  if (n < minObs) {
     return {
       verdict: null,
       n,
       starlinkPct,
-      reason: `insufficient recent obs (${n} in last ${opts.windowDays}d, need ${opts.minObs})`,
+      reason: `insufficient recent obs (${n} in last ${windowDays}d, need ${minObs})`,
     };
   }
 
@@ -1993,7 +2036,7 @@ export function computeWifiConsensus(
     }
   }
 
-  if (starlinkPct >= opts.threshold) {
+  if (starlinkPct >= threshold) {
     return {
       verdict: "Starlink",
       n,
@@ -2002,7 +2045,7 @@ export function computeWifiConsensus(
     };
   }
 
-  if (1 - starlinkPct >= opts.threshold) {
+  if (1 - starlinkPct >= threshold) {
     const providerCounts = new Map<string, number>();
     for (const o of obs) {
       if (o.has_starlink === 0) {
@@ -2074,29 +2117,39 @@ export function reconcileTypeDeterministicFleets(db: Database): number {
       fleet: string | null;
       airline: string | null;
     }>;
+    // Deliberately does NOT stamp united_fleet.verified_at: a type-rule
+    // settle is not a per-tail verification, and the verifier queue serves
+    // NULL verified_at first so these tails get real checks promptly.
     const update = db.query(
-      "UPDATE united_fleet SET starlink_status = ?, verified_at = ? WHERE tail_number = ? AND airline = ?"
+      "UPDATE united_fleet SET starlink_status = ? WHERE tail_number = ? AND airline = ?"
     );
-    const now = Math.floor(Date.now() / 1000);
     let changed = 0;
-    for (const r of rows) {
-      const next = a.typeDeterministicWifi(r.aircraft_type);
-      if (next === null || next === r.starlink_status) continue;
-      update.run(next, now, r.tail_number, a.code);
-      emitFleetStatusChange(r, next);
-      if (next === "confirmed") {
-        addDiscoveredStarlinkPlane(
-          db,
-          r.tail_number,
-          r.aircraft_type,
-          "Starlink",
-          a.name,
-          r.fleet ?? "mainline",
-          { sheetGid: "type_deterministic", airline: a.code }
-        );
+    const apply = db.transaction(
+      (pending: Array<(typeof rows)[number] & { next: StarlinkStatus }>) => {
+        for (const r of pending) {
+          update.run(r.next, r.tail_number, a.code);
+          emitFleetStatusChange(r, r.next);
+          if (r.next === "confirmed") {
+            addDiscoveredStarlinkPlane(
+              db,
+              r.tail_number,
+              r.aircraft_type,
+              "Starlink",
+              a.name,
+              r.fleet ?? "mainline",
+              { airline: a.code, evidence: "type_rule" }
+            );
+          }
+          changed++;
+        }
       }
-      changed++;
-    }
+    );
+    apply(
+      rows.flatMap((r) => {
+        const next = a.typeDeterministicWifi?.(r.aircraft_type) ?? null;
+        return next === null || next === r.starlink_status ? [] : [{ ...r, next }];
+      })
+    );
     if (changed > 0) info(`Type-deterministic reconcile: ${a.code} ${changed} tails updated`);
     total += changed;
   }
@@ -2124,7 +2177,9 @@ export function reconcileConsensus(db: Database): number {
 
   let healed = 0;
   for (const { tail, current } of candidates) {
-    const consensus = computeWifiConsensus(db, tail);
+    // Write authority: only observed-wifi sources. Type-derived rows (alaska
+    // wifi = type inference) must not flip verified_wifi from here.
+    const consensus = computeWifiConsensus(db, tail, { sources: OBSERVED_WIFI_SOURCES });
     if (consensus.verdict !== null && consensus.verdict !== current) {
       updateVerifiedWifi(db, tail, consensus.verdict);
       healed++;
@@ -2618,12 +2673,24 @@ export function addDiscoveredStarlinkPlane(
   wifiProvider: string,
   operatedBy: string | null,
   fleet: string,
-  opts: { airline: string; sheetGid?: string; dateFound?: string }
+  opts: {
+    airline: string;
+    sheetGid?: string;
+    dateFound?: string;
+    /** 'type_rule' = settled by a program rule, not observed on this tail:
+     * no DateFound (a deploy-day batch would fabricate a rollout cliff in
+     * rolloutSeries/installs30d) and no verified_* stamp (per-tail
+     * verification hasn't happened; the verifier queue serves NULL
+     * verified_at first, so these get real checks promptly). */
+    evidence?: "observed" | "type_rule";
+  }
 ): void {
   // Check if already in starlink_planes
   const existing = db.query("SELECT id FROM starlink_planes WHERE TailNumber = ?").get(tailNumber);
   if (existing) return;
 
+  const typeRule = opts.evidence === "type_rule";
+  const gid = opts.sheetGid ?? (typeRule ? "type_deterministic" : "discovery");
   const today = new Date().toISOString().split("T")[0];
 
   db.query(`
@@ -2633,14 +2700,14 @@ export function addDiscoveredStarlinkPlane(
     ) VALUES (?, 'StrLnk', ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     aircraftType || null,
-    opts.sheetGid ?? "discovery",
-    opts.sheetGid ?? "discovery",
-    opts.dateFound ?? today,
+    gid,
+    gid,
+    typeRule ? null : (opts.dateFound ?? today),
     tailNumber,
     operatedBy || (AIRLINES[opts.airline]?.name ?? opts.airline),
     fleet,
-    wifiProvider,
-    Math.floor(Date.now() / 1000),
+    typeRule ? null : wifiProvider,
+    typeRule ? null : Math.floor(Date.now() / 1000),
     opts.airline
   );
 }

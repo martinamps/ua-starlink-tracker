@@ -14,7 +14,12 @@ import { buildAirlineFlightNumberVariants, ensureAirlinePrefix } from "../airlin
 import type { AirlineConfig } from "../airlines/registry";
 import type { FlightAssignmentRow, QatarScheduleRow } from "../database/database";
 import type { ScopedReader } from "../database/reader";
-import { predictFlight } from "../scripts/starlink-predictor";
+import {
+  type CarrierPrediction,
+  carrierPrediction,
+  carrierPredictionTelemetry,
+  predictFlight,
+} from "../scripts/starlink-predictor";
 import { matchesLocalDate } from "../utils/airport-tz";
 import { error as logError } from "../utils/logger";
 import { type FallbackSegment, lookupFlightTailVerdict } from "./flight-verdict";
@@ -85,10 +90,11 @@ export type FlightVerdict =
   | { kind: "fr24"; window: FlightDateWindow; normalized: string; starlink: FallbackSegment[] }
   | { kind: "fr24_no"; window: FlightDateWindow; normalized: string; segments: FallbackSegment[] }
   | {
-      kind: "type_no_data";
+      kind: "no_model";
       window: FlightDateWindow;
       normalized: string;
-      reason: string;
+      /** Registry-driven answer for carriers without a flight-history model. */
+      answer: CarrierPrediction;
       fr24Error: boolean;
     }
   | {
@@ -159,8 +165,9 @@ export function verdictTelemetry(
         confidence: informative ? verdict.pred.confidence : "none",
       };
     }
-    case "type_no_data":
-      return { outcome: verdict.fr24Error ? "error" : "no_data", confidence: "none" };
+    case "no_model":
+      if (verdict.fr24Error) return { outcome: "error", confidence: "none" };
+      return carrierPredictionTelemetry(verdict.answer);
     case "qatar_no_data":
       return { outcome: "no_data", confidence: "none" };
     case "qatar":
@@ -270,14 +277,14 @@ export async function resolveFlightVerdict(
     return { kind: "scheduled_no", window, normalized, flights: nonStarlink, fr24Error };
   }
 
-  // Type-determined airlines (e.g. HA) have no per-flight probability model —
-  // the answer is "check the aircraft type", not a fleet prior.
-  if (cfg.routeTypeRule) {
+  // Carriers without a flight-history model get the registry-driven answer
+  // (type rules / subfleet penetration) — never another carrier's priors.
+  if (!cfg.flightHistoryModel) {
     return {
-      kind: "type_no_data",
+      kind: "no_model",
       window,
       normalized,
-      reason: `No schedule data; ${cfg.name} Starlink status is type-determined — check the aircraft type on your booking.`,
+      answer: carrierPrediction(cfg, reader, normalized),
       fr24Error,
     };
   }

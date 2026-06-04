@@ -14,23 +14,37 @@
  *     UA reader, QR host → QR reader, hub host → ALL).
  *   - Clients can override with `?scope=ALL|UA|HA|AS|QR` to widen or pin scope.
  *   - serverInfo / instructions / tool descriptions reflect the resolved scope.
- *   - Tool *implementations* (predictFlight, planItinerary, ensureUAPrefix, etc.)
- *     are still UA-flavored; non-UA scopes return whatever data the scoped reader
- *     surfaces, which today is mostly empty for HA/AS/QR. This is a known
- *     Phase-2 gap, not a regression.
+ *   - Tool implementations resolve the scope's AirlineConfig: flight numbers
+ *     normalize per-carrier and prose is templated from the config. The
+ *     prediction model is UA-trained, so prediction tools answer non-UA scopes
+ *     from registry type rules / subfleet penetration — never UA priors.
  */
 
-import { AIRLINES, type AirlineCode, type AnalyticsConfig } from "../airlines/registry";
+import {
+  buildAirlineFlightNumberVariants,
+  ensureAirlinePrefix,
+  inferSubfleet,
+  normalizeAirlineFlightNumber,
+} from "../airlines/flight-number";
+import {
+  AIRLINES,
+  type AirlineCode,
+  type AirlineConfig,
+  type AnalyticsConfig,
+} from "../airlines/registry";
 import type { FlightAssignmentRow } from "../database/database";
 import { type Scope, type ScopedReader, aggregatePenetration } from "../database/reader";
 import { COUNTERS, DISTRIBUTIONS, metrics, normalizeAirlineTag } from "../observability";
-import { planItinerary, predictFlight, predictRoute } from "../scripts/starlink-predictor";
 import {
-  buildFlightNumberVariants,
-  ensureUAPrefix,
-  inferFleet,
-  normalizeFlightNumber,
-} from "../utils/constants";
+  carrierPrediction,
+  carrierPredictionTelemetry,
+  carrierRouteAnswer,
+  describeCarrierPrediction,
+  joinSentences,
+  planItinerary,
+  predictFlight,
+  predictRoute,
+} from "../scripts/starlink-predictor";
 import { debug, info } from "../utils/logger";
 import {
   type FlightVerdict,
@@ -424,6 +438,19 @@ function mcpAirlineTag(scope: Scope): string {
   return scope === "ALL" ? "all" : normalizeAirlineTag(scope);
 }
 
+// Hub MCP stays UA-bound for now (Phase-2 gap, allowlisted in the guardrail
+// test); airline scopes use their own config — never United's config against
+// another airline's reader.
+function scopeCfg(scope: Scope): AirlineConfig | null {
+  return scope === "ALL" ? AIRLINES.UA : (AIRLINES[scope] ?? null);
+}
+
+// "alternatives block first, verdict second" — both firm-no renderings share
+// this and must tolerate an empty block (non-UA scopes get no planner table).
+function withAlt(altBlock: string, message: string): string {
+  return altBlock ? `${altBlock}\n\n${message}` : message;
+}
+
 type LookupOutcome = "verified_yes" | "verified_no" | "predicted" | "no_data" | "error";
 type LookupConfidence = "high" | "medium" | "low" | "none";
 
@@ -470,10 +497,7 @@ async function toolCheckFlight(
     };
   }
 
-  // Hub MCP stays UA-bound for now (Phase-2 gap, allowlisted in the
-  // guardrail test); airline scopes use their own config — never United's
-  // config against another airline's reader.
-  const cfg = reader.scope === "ALL" ? AIRLINES.UA : AIRLINES[reader.scope];
+  const cfg = scopeCfg(reader.scope);
   if (!cfg) return scopeConfigError(reader.scope);
   const verdict = await resolveFlightVerdict(cfg, reader, flightNumber, date);
 
@@ -510,7 +534,7 @@ async function toolCheckFlight(
     const dep = new Date(f.departure_time * 1000).toISOString();
     const arr = new Date(f.arrival_time * 1000).toISOString();
     const ac = f.aircraft_type || "aircraft";
-    return `- ${normalizeFlightNumber(f.flight_number)} (${f.departure_airport}→${f.arrival_airport}) on ${ac} tail ${f.tail_number}, operated by ${f.OperatedBy}. Departs ${dep}, arrives ${arr}.`;
+    return `- ${normalizeAirlineFlightNumber(cfg, f.flight_number)} (${f.departure_airport}→${f.arrival_airport}) on ${ac} tail ${f.tail_number}, operated by ${f.OperatedBy}. Departs ${dep}, arrives ${arr}.`;
   };
 
   const renderSeg = (s: FallbackSegment): string => {
@@ -536,7 +560,7 @@ async function toolCheckFlight(
           content: [
             {
               type: "text",
-              text: `✈️ Yes! Flight ${normalized} on ${date} is scheduled on a verified Starlink aircraft:\n\n${verdict.verified.map(renderAssignment).join("\n")}\n\nStarlink WiFi is free on all equipped United flights.`,
+              text: `✈️ Yes! Flight ${normalized} on ${date} is scheduled on a verified Starlink aircraft:\n\n${verdict.verified.map(renderAssignment).join("\n")}\n\nStarlink WiFi is free on all equipped ${cfg.shortName} flights.`,
             },
           ],
         };
@@ -545,7 +569,7 @@ async function toolCheckFlight(
         content: [
           {
             type: "text",
-            text: `Likely yes — ${normalized} on ${date} is assigned to a tail tracked as Starlink in the fleet spreadsheet (not yet verified against united.com):\n\n${verdict.unverified.map(renderAssignment).join("\n")}\n\nSpreadsheet data is usually accurate but unverified. Check united.com or the flight status 24h out to confirm.`,
+            text: `Likely yes — ${normalized} on ${date} is assigned to a tail tracked as Starlink in the fleet spreadsheet (not yet verified against ${cfg.verifySite}):\n\n${verdict.unverified.map(renderAssignment).join("\n")}\n\nSpreadsheet data is usually accurate but unverified. Check ${cfg.verifySite} or the flight status 24h out to confirm.`,
           },
         ],
       };
@@ -557,6 +581,7 @@ async function toolCheckFlight(
       const f = verdict.flights[0];
       const ac = f.aircraft_type || "aircraft";
       const altBlock = buildAlternativesBlock(
+        cfg,
         reader,
         [{ origin: f.departure_airport, destination: f.arrival_airport }],
         mid
@@ -565,7 +590,10 @@ async function toolCheckFlight(
         content: [
           {
             type: "text",
-            text: `${altBlock}\n\n❌ No Starlink: ${normalized} on ${date} is assigned to tail ${f.tail_number} (${ac}), verified as ${negativeWifi(f)} WiFi — NOT Starlink. Aircraft swaps can happen, but the assignment is currently firm.`,
+            text: withAlt(
+              altBlock,
+              `❌ No Starlink: ${normalized} on ${date} is assigned to tail ${f.tail_number} (${ac}), verified as ${negativeWifi(f)} WiFi — NOT Starlink. Aircraft swaps can happen, but the assignment is currently firm.`
+            ),
           },
         ],
       };
@@ -579,7 +607,7 @@ async function toolCheckFlight(
         content: [
           {
             type: "text",
-            text: `✈️ Yes! Flight ${normalized} on ${date} is assigned to a Starlink aircraft (via live tail lookup):\n\n${verdict.starlink.map(renderSeg).join("\n")}\n\nStarlink WiFi is free on all equipped United flights.`,
+            text: `✈️ Yes! Flight ${normalized} on ${date} is assigned to a Starlink aircraft (via live tail lookup):\n\n${verdict.starlink.map(renderSeg).join("\n")}\n\nStarlink WiFi is free on all equipped ${cfg.shortName} flights.`,
           },
         ],
       };
@@ -588,6 +616,7 @@ async function toolCheckFlight(
     case "fr24_no": {
       const no = verdict.segments.filter((s) => s.hasStarlink === false);
       const altBlock = buildAlternativesBlock(
+        cfg,
         reader,
         no.map((s) => ({ origin: s.origin, destination: s.destination })),
         mid
@@ -596,15 +625,23 @@ async function toolCheckFlight(
         content: [
           {
             type: "text",
-            text: `${altBlock}\n\n❌ No Starlink: ${normalized} on ${date} is assigned to ${no.map((s) => `tail ${s.tail_number} (${s.aircraft_model || "aircraft"}, ${s.verified_wifi ?? "non-Starlink"} WiFi)`).join("; ")} — NOT Starlink. Aircraft swaps can happen, but the assignment is currently firm.`,
+            text: withAlt(
+              altBlock,
+              `❌ No Starlink: ${normalized} on ${date} is assigned to ${no.map((s) => `tail ${s.tail_number} (${s.aircraft_model || "aircraft"}, ${s.verified_wifi ?? "non-Starlink"} WiFi)`).join("; ")} — NOT Starlink. Aircraft swaps can happen, but the assignment is currently firm.`
+            ),
           },
         ],
       };
     }
 
-    case "type_no_data": {
+    case "no_model": {
       return {
-        content: [{ type: "text", text: `${normalized} on ${date}: ${verdict.reason}` }],
+        content: [
+          {
+            type: "text",
+            text: `${normalized} on ${date}: no assignment data. ${describeCarrierPrediction(cfg, verdict.answer)}`,
+          },
+        ],
       };
     }
 
@@ -634,8 +671,9 @@ async function toolCheckFlight(
 
       let altBlock = "";
       if (pred.probability < 0.2 && !isPast) {
-        const routes = await lookupFlightRoutes(reader, normalized, mid);
-        altBlock = `\n\n${buildAlternativesBlock(reader, routes, mid)}`;
+        const routes = await lookupFlightRoutes(cfg, reader, normalized, mid);
+        const alt = buildAlternativesBlock(cfg, reader, routes, mid);
+        if (alt) altBlock = `\n\n${alt}`;
       }
 
       return {
@@ -709,6 +747,7 @@ function recordRouteLookup(
 }
 
 async function lookupFlightRoutes(
+  cfg: AirlineConfig,
   reader: ScopedReader,
   uaFlightNumber: string,
   targetDateUnix?: number
@@ -760,7 +799,9 @@ async function lookupFlightRoutes(
     }
 
     // L3: our own upcoming_flights (sparse, ~2-day Starlink-plane snapshot)
-    const rows = reader.getRoutesForFlightVariants(buildFlightNumberVariants(uaFlightNumber));
+    const rows = reader.getRoutesForFlightVariants(
+      buildAirlineFlightNumberVariants(cfg, uaFlightNumber)
+    );
     recordRouteLookup(reader.scope, rows.length > 0 ? "upcoming" : "miss");
     return rows.map((r) => ({
       origin: r.departure_airport,
@@ -789,10 +830,15 @@ async function lookupFlightRoutes(
  * One tool call → complete answer.
  */
 function buildAlternativesBlock(
+  cfg: AirlineConfig,
   reader: ScopedReader,
   routes: RouteEntry[],
   targetDateUnix?: number
 ): string {
+  // The itinerary planner runs on the flight-history model; embedding its
+  // table on a model-less carrier's scope would be foreign priors in
+  // disguise. Callers tolerate "".
+  if (!cfg.flightHistoryModel) return "";
   if (routes.length === 0) {
     return "**Starlink alternatives**: route lookup failed. Ask the person for origin/destination, then call plan_starlink_itinerary.";
   }
@@ -833,13 +879,13 @@ function buildAlternativesBlock(
       const directEdge = reader.getDirectRouteEdge(r.origin, r.destination);
 
       const directProb = directEdge
-        ? predictFlight(reader, ensureUAPrefix(directEdge.flight_number)).probability
+        ? predictFlight(reader, ensureAirlinePrefix(cfg, directEdge.flight_number)).probability
         : 0.02;
 
       const durH = directEdge ? directEdge.dur_sec / 3600 : (r.duration_hours ?? null);
       rows.push({
         segment,
-        flights: directEdge ? ensureUAPrefix(directEdge.flight_number) : "nonstop",
+        flights: directEdge ? ensureAirlinePrefix(cfg, directEdge.flight_number) : "nonstop",
         via: "direct — baseline",
         stops: 0,
         starlinkPct: `~${(directProb * 100).toFixed(0)}%`,
@@ -909,7 +955,66 @@ function buildAlternativesBlock(
 ${tableRows}
 </present_verbatim>
 
-Render the table above in your response EXACTLY — do not summarize it into prose, do not drop columns.${segmentNote} This is the complete answer: no more tool calls, no "download offline" / "use legacy WiFi" / "mobile hotspot" tips (non-responsive — they asked for better FLIGHTS). Verify timing on united.com before rebooking. Starlink % = coverage ratio (Starlink hrs / total hrs).`;
+Render the table above in your response EXACTLY — do not summarize it into prose, do not drop columns.${segmentNote} This is the complete answer: no more tool calls, no "download offline" / "use legacy WiFi" / "mobile hotspot" tips (non-responsive — they asked for better FLIGHTS). Verify timing on ${cfg.verifySite} before rebooking. Starlink % = coverage ratio (Starlink hrs / total hrs).`;
+}
+
+/** Format carrierPrediction for MCP — model-less carriers' predict answer. */
+function formatCarrierPrediction(
+  cfg: AirlineConfig,
+  reader: ScopedReader,
+  normalized: string
+): ToolResult {
+  const answer = carrierPrediction(cfg, reader, normalized);
+  const t = carrierPredictionTelemetry(answer);
+  recordMcpFlightLookup(reader.scope, t.outcome, t.confidence);
+  const text =
+    answer.kind === "penetration"
+      ? `**${normalized}**: ${joinSentences(describeCarrierPrediction(cfg, answer), "For a firm answer, use check_flight with a date to see the scheduled aircraft")}`
+      : joinSentences(
+          describeCarrierPrediction(cfg, answer),
+          "Use check_flight with a date to see the scheduled aircraft"
+        );
+  return { content: [{ type: "text", text }] };
+}
+
+/** Format carrierRouteAnswer for MCP — model-less carriers' route answer. */
+function formatCarrierRoute(
+  cfg: AirlineConfig,
+  reader: ScopedReader,
+  origin: string | null,
+  destination: string | null
+): ToolResult {
+  const r = origin && destination ? carrierRouteAnswer(cfg, reader, origin, destination) : null;
+  const t = carrierPredictionTelemetry(r);
+  recordMcpFlightLookup(reader.scope, t.outcome, t.confidence);
+  if (!r) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: joinSentences(
+            `Route-level prediction isn't available for ${cfg.name} — Starlink status is determined by aircraft type, not route history`,
+            cfg.rollout.phaseNote,
+            "Use check_flight with a flight number and date to see the scheduled aircraft"
+          ),
+        },
+      ],
+    };
+  }
+
+  const route = `${origin}→${destination}`;
+  const pct = (p: number) => `${(p * 100).toFixed(0)}%`;
+  const footer = "For a specific flight, use check_flight with the flight number and date.";
+  let text: string;
+  if (r.kind === "observed_mixed" && r.lo != null && r.hi != null) {
+    const breakdown = r.breakdown
+      .map((b) => `- ${b.label}${b.hint ? ` (${b.hint})` : ""}: ~${pct(b.pct)}`)
+      .join("\n");
+    text = `**${route} (${cfg.name})**: ${pct(r.lo)}–${pct(r.hi)} Starlink — ${r.reason.toLowerCase()}:\n${breakdown}\n${footer}`;
+  } else {
+    text = `**${route} (${cfg.name})**: ${joinSentences(`~${pct(r.probability)} Starlink — ${r.reason}`, footer)}`;
+  }
+  return { content: [{ type: "text", text }] };
 }
 
 async function toolPredictFlightStarlink(
@@ -924,7 +1029,9 @@ async function toolPredictFlightStarlink(
     };
   }
 
-  const forPredict = ensureUAPrefix(input);
+  const cfg = scopeCfg(reader.scope);
+  if (!cfg) return scopeConfigError(reader.scope);
+  const forPredict = ensureAirlinePrefix(cfg, input);
   // Same 1-4 digit bound the check-flight core enforces — prevents agents
   // driving FR24 route lookups with junk numbers.
   const numPart = forPredict.match(/\d+$/)?.[0];
@@ -933,12 +1040,15 @@ async function toolPredictFlightStarlink(
       content: [
         {
           type: "text",
-          text: `${forPredict} is outside United's flight number range (UA1-UA9999). This flight likely doesn't exist.`,
+          text: `${forPredict} is outside ${cfg.shortName}'s flight number range (${cfg.iata}1-${cfg.iata}9999). This flight likely doesn't exist.`,
         },
       ],
       isError: true,
     };
   }
+
+  // No flight-history model → registry-driven answer, same seam as the core.
+  if (!cfg.flightHistoryModel) return formatCarrierPrediction(cfg, reader, forPredict);
 
   const pred = predictFlight(reader, forPredict);
   recordMcpFlightLookup(
@@ -951,7 +1061,7 @@ async function toolPredictFlightStarlink(
 
   let details: string;
   if (pred.method !== "flight_history_smoothed") {
-    const fleet = inferFleet(forPredict);
+    const fleet = inferSubfleet(cfg, forPredict);
     const fleetLabel = fleet === "express" ? "express (regional)" : "mainline";
     details = `${fleetLabel} fleet install rate — not flight-specific.`;
   } else {
@@ -967,8 +1077,8 @@ async function toolPredictFlightStarlink(
     const date = typeof args.date === "string" ? args.date.trim() : "";
     const window = date ? flightDateWindow(date) : null;
     const dateUnix = window ? window.mid : undefined;
-    const routes = await lookupFlightRoutes(reader, forPredict, dateUnix);
-    altBlock = `\n\n${buildAlternativesBlock(reader, routes, dateUnix)}`;
+    const routes = await lookupFlightRoutes(cfg, reader, forPredict, dateUnix);
+    altBlock = `\n\n${buildAlternativesBlock(cfg, reader, routes, dateUnix)}`;
   }
 
   return { content: [{ type: "text", text: `${probLine}${altBlock}` }] };
@@ -1018,6 +1128,14 @@ function toolPlanStarlinkItinerary(
     };
   }
 
+  const cfg = scopeCfg(reader.scope);
+  if (!cfg) return scopeConfigError(reader.scope);
+  // The itinerary planner runs on the flight-history model. Model-less
+  // carriers answer the nonstop from the registry (route rule / penetration).
+  if (!cfg.flightHistoryModel) {
+    return formatCarrierRoute(cfg, reader, origin.toUpperCase(), destination.toUpperCase());
+  }
+
   const itineraries = planItinerary(reader, origin, destination, {
     maxItineraries: maxResults,
     maxStops,
@@ -1064,7 +1182,7 @@ function toolPlanStarlinkItinerary(
       return `position ${from}→${to} (mainline, ~2% Starlink, duration unknown)`;
     }
     const pct = (leg.probability * 100).toFixed(0);
-    const fleetTag = inferFleet(leg.flight_number) === "mainline" ? " [Mainline]" : "";
+    const fleetTag = inferSubfleet(cfg, leg.flight_number) === "mainline" ? " [Mainline]" : "";
     const dur = leg.duration_hours !== null ? ` ~${fmtHours(leg.duration_hours)}` : "";
     const tag = leg.confirmed
       ? "(confirmed near-term assignment)"
@@ -1124,7 +1242,7 @@ ${partialItins.map((it, i) => renderItin(it, fullItins.length + i)).join("\n\n")
 
   const hasMultiLeg = itineraries.some((it) => it.legs.length > 1);
   const timingNote = hasMultiLeg
-    ? "\n\n⚠️ Connection timing NOT validated — verify legs actually connect same-day on united.com."
+    ? `\n\n⚠️ Connection timing NOT validated — verify legs actually connect same-day on ${cfg.verifySite}.`
     : "";
 
   const text = `**Starlink routings: ${origin.toUpperCase()} → ${destination.toUpperCase()}**
@@ -1153,6 +1271,19 @@ function toolPredictRouteStarlink(
     };
   }
 
+  const cfg = scopeCfg(reader.scope);
+  if (!cfg) return scopeConfigError(reader.scope);
+  // predictRoute ranks flights with the flight-history model — model-less
+  // carriers get the registry answer (route rule / penetration) instead.
+  if (!cfg.flightHistoryModel) {
+    return formatCarrierRoute(
+      cfg,
+      reader,
+      origin ? origin.toUpperCase() : null,
+      destination ? destination.toUpperCase() : null
+    );
+  }
+
   const result = predictRoute(reader, origin || null, destination || null);
 
   if (result.flights.length === 0) {
@@ -1161,7 +1292,7 @@ function toolPredictRouteStarlink(
     // inline the connection-based alternatives so the agent never sees a
     // dead-end that contradicts check_flight's embedded alternatives.
     if (origin && destination) {
-      const alt = buildAlternativesBlock(reader, [
+      const alt = buildAlternativesBlock(cfg, reader, [
         { origin: origin.toUpperCase(), destination: destination.toUpperCase() },
       ]);
       return {
@@ -1190,7 +1321,7 @@ function toolPredictRouteStarlink(
   for (const f of shown) recordMcpPrediction(reader.scope, f);
   const lines = shown.map((f) => {
     const pct = (f.probability * 100).toFixed(0);
-    const fleet = inferFleet(f.flight_number);
+    const fleet = inferSubfleet(cfg, f.flight_number);
     const fleetTag = fleet === "mainline" ? "[Mainline]" : "          "; // align columns
     // Distinguish "observed and confirmed 0%" from "unobserved (fleet prior)"
     const obsNote =
@@ -1367,9 +1498,11 @@ function toolSearchStarlinkFlights(
     };
   }
 
+  const cfg = scopeCfg(reader.scope);
+  if (!cfg) return scopeConfigError(reader.scope);
   const lines = shown.map((f) => {
     const dep = new Date(f.departure_time * 1000).toISOString().slice(0, 16).replace("T", " ");
-    return `${normalizeFlightNumber(f.flight_number)} ${f.departure_airport}→${f.arrival_airport} dep ${dep}Z (tail ${f.tail_number})`;
+    return `${normalizeAirlineFlightNumber(cfg, f.flight_number)} ${f.departure_airport}→${f.arrival_airport} dep ${dep}Z (tail ${f.tail_number})`;
   });
 
   const routeDesc = origin && destination ? `${origin}→${destination}` : origin || destination;

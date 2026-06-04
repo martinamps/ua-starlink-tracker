@@ -16,6 +16,13 @@
 import { Database } from "bun:sqlite";
 import { beforeAll, describe, expect, test } from "bun:test";
 import { copyFileSync } from "node:fs";
+import {
+  buildAirlineFlightNumberVariants,
+  ensureAirlinePrefix,
+  inferSubfleet,
+  normalizeAirlineFlightNumber,
+} from "../src/airlines/flight-number";
+import { AIRLINES } from "../src/airlines/registry";
 import { resolveTailVerdict } from "../src/api/flight-verdict";
 import { handleMcpRequest } from "../src/api/mcp-server";
 import {
@@ -32,14 +39,15 @@ import { computeSurfaceContradictions } from "../src/scripts/surface-sweep";
 import { createApp } from "../src/server/app";
 import { type ScopedReader, createReaderFactory } from "../src/server/context";
 import { airportLocalDate } from "../src/utils/airport-tz";
-import {
-  buildFlightNumberVariants,
-  ensureUAPrefix,
-  inferFleet,
-  normalizeFlightNumber,
-  pickVerifiableFlight,
-} from "../src/utils/constants";
+import { pickVerifiableFlight } from "../src/utils/constants";
 import { TEST_DB, jsonOf, mcpReq, openSnapshot } from "./helpers";
+
+// UA-bound conveniences — these unit tests pin United's carrier-prefix mappings.
+const UA_CFG = AIRLINES.UA;
+const ensureUAPrefix = (fn: string) => ensureAirlinePrefix(UA_CFG, fn);
+const normalizeFlightNumber = (fn: string) => normalizeAirlineFlightNumber(UA_CFG, fn);
+const buildFlightNumberVariants = (fn: string) => buildAirlineFlightNumberVariants(UA_CFG, fn);
+const inferFleet = (fn: string) => inferSubfleet(UA_CFG, fn);
 
 let db: Database;
 let reader: ScopedReader;

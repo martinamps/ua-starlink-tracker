@@ -8,6 +8,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { AIRLINES, OBSERVED_WIFI_SOURCES, verifierSourceTag } from "../airlines/registry";
 import { FlightRadar24API } from "../api/flightradar24-api";
 import {
   addDiscoveredStarlinkPlane,
@@ -37,6 +38,8 @@ import { extractFlightNumber, pickVerifiableFlight, unitedLookupDate } from "../
 import { info, error as logError, warn } from "../utils/logger";
 import type { StarlinkCheckResult } from "./united-starlink-checker";
 import { checkStarlinkStatusSubprocess } from "./united-starlink-checker-subprocess";
+
+const UNITED_SOURCE = verifierSourceTag(AIRLINES.UA);
 
 // Discovery mode: faster checks for unknown planes
 const DISCOVERY_INTERVAL_MS = 30 * 1000; // 30 seconds
@@ -223,7 +226,7 @@ async function verifyPlane(
 
         logVerification(db, {
           tail_number: plane.tail_number,
-          source: "united",
+          source: UNITED_SOURCE,
           airline: "UA",
           has_starlink: tailMismatch || untrustedNonStarlink ? null : result.hasStarlink,
           wifi_provider: tailMismatch || untrustedNonStarlink ? null : result.wifiProvider,
@@ -240,7 +243,7 @@ async function verifyPlane(
         if (tailMismatch && resolvedTail && result.wifiProvider) {
           logVerification(db, {
             tail_number: resolvedTail,
-            source: "united",
+            source: UNITED_SOURCE,
             airline: "UA",
             has_starlink: result.hasStarlink,
             wifi_provider: result.wifiProvider,
@@ -252,7 +255,9 @@ async function verifyPlane(
           // Run consensus for the swap-captured tail so it settles without
           // waiting for a direct check that needsVerification may skip (the
           // log entry above makes the tail look recently-checked).
-          const swapConsensus = computeWifiConsensus(db, resolvedTail);
+          const swapConsensus = computeWifiConsensus(db, resolvedTail, {
+            sources: OBSERVED_WIFI_SOURCES,
+          });
           if (swapConsensus.verdict !== null) {
             updateVerifiedWifi(db, resolvedTail, swapConsensus.verdict);
             info(
@@ -271,14 +276,16 @@ async function verifyPlane(
           fleet: fleetTag,
           aircraft_type: aircraftTypeTag,
           wifi_provider: wifiProviderTag,
-          source: "united",
+          source: UNITED_SOURCE,
           airline: normalizeAirlineTag("UA"),
         };
 
         // Consensus includes the just-logged observation. The status is driven
         // by the 30-day consensus, not this single check, so one flaky scrape
         // can't bounce a plane between confirmed and negative.
-        const consensus = canTrustResult ? computeWifiConsensus(db, plane.tail_number) : null;
+        const consensus = canTrustResult
+          ? computeWifiConsensus(db, plane.tail_number, { sources: OBSERVED_WIFI_SOURCES })
+          : null;
 
         const prevStatus = plane.starlink_status as StarlinkStatus;
         let starlinkStatus: StarlinkStatus;
@@ -406,13 +413,13 @@ async function verifyPlane(
           fleet: fleetTag,
           aircraft_type: aircraftTypeTag,
           wifi_provider: "unknown",
-          source: "united",
+          source: UNITED_SOURCE,
           airline: normalizeAirlineTag("UA"),
         });
 
         logVerification(db, {
           tail_number: plane.tail_number,
-          source: "united",
+          source: UNITED_SOURCE,
           airline: "UA",
           has_starlink: null,
           wifi_provider: null,

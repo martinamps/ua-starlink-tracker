@@ -372,8 +372,12 @@ export default function RoutePlannerPage({ site }: RoutePlannerPageProps) {
             if (!itins || itins.length === 0) {
               resultsDiv.innerHTML = '<div class="bg-surface border border-subtle rounded-lg p-6 text-center">' +
                 '<div class="text-secondary font-display font-medium mb-2">No Starlink routings found</div>' +
-                '<p class="text-sm text-muted">Neither the direct route nor available connections have shown a strong Starlink pattern on this routing yet.</p>' +
+                '<p class="text-sm text-muted"></p>' +
                 '</div>';
+              // message is server-built registry prose (no user input); set via
+              // textContent anyway so this stays injection-proof.
+              resultsDiv.querySelector('p').textContent = data.message ||
+                'Neither the direct route nor available connections have shown a strong Starlink pattern on this routing yet.';
               return;
             }
 

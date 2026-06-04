@@ -27,6 +27,8 @@ jobs:
           PLAYWRIGHT_BROWSERS_PATH: do_not_commit/playwright-browsers
       - run: bun run generate-og
       - name: Commit if changed
+        # The social-image*.webp glob is a pinned convention: every registry
+        # socialImagePath basename must match it (tests/vocabulary.test.ts).
         run: |
           if git diff --quiet static/social-image*.webp; then
             echo "no changes"

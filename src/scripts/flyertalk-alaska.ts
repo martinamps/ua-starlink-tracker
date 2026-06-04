@@ -10,6 +10,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { AIRLINES } from "../airlines/registry";
 import {
   addDiscoveredStarlinkPlane,
   initializeDatabase,
@@ -22,7 +23,6 @@ import { info, error as logError } from "../utils/logger";
 const ALLOWED_HOST = "www.flyertalk.com";
 const THREAD_ID = 2201647;
 const THREAD_URL = `https://${ALLOWED_HOST}/forum/alaska-airlines-atmos-rewards/${THREAD_ID}-starlink-wi-fi-e75s-began-12-2025-737s-began-4-2026-a.html`;
-const AS_TAIL_RE = /\bN\d{3}[A-Z]{2}\b/g;
 
 const HEADERS = {
   "User-Agent": BROWSER_USER_AGENT,
@@ -41,7 +41,9 @@ function extractInstalled(html: string): string[] {
   )?.[0];
   if (!installed)
     throw new Error('"Starlink Installed" section bounds not found — wikipost headings changed');
-  return [...new Set(installed.match(AS_TAIL_RE) ?? [])].sort();
+  // Scan with the registry pattern; prose noise (e.g. "N1" engine-speed talk)
+  // is rejected by the AS-mainline DB-gate in applyAlaskaFlyertalkTails.
+  return [...new Set(installed.match(AIRLINES.AS.tailScanPattern) ?? [])].sort();
 }
 
 export async function fetchAlaskaFlyertalkTails(): Promise<string[]> {
@@ -63,7 +65,7 @@ export function applyAlaskaFlyertalkTails(db: Database, tails: string[]): number
     for (const tail of rows) {
       const known = lookup.get(tail);
       // DB-gate: only confirm tails fleet-sync already knows as AS mainline.
-      // E175s are type-deterministic via alaskaTypeToStarlink — skip to keep
+      // E175s are type-deterministic via AS typeDeterministicWifi — skip to keep
       // this writer scoped to the gap it fills.
       if (!known || known.fleet !== "mainline") continue;
       upsertFleetAircraft(

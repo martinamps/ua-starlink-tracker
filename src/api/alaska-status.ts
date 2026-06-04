@@ -15,7 +15,7 @@
  * shipped here so the client and the seed-hawaiian type map land together.
  */
 
-import { ALASKA_E175_RE } from "../airlines/registry";
+import { hawaiianStarlinkPhase, phaseToStatus, providerLabel } from "../airlines/registry";
 import { COUNTERS, DISTRIBUTIONS, metrics, normalizeAirlineTag } from "../observability";
 import { BROWSER_USER_AGENT } from "../utils/constants";
 import { error as logError, warn } from "../utils/logger";
@@ -120,33 +120,14 @@ export type HawaiianWifi = "Starlink" | "None" | "pending";
 export type AlaskaWifi = "Starlink" | null;
 
 /**
- * Alaska's regional E175 fleet (Horizon + SkyWest-for-Alaska, ~90 jets) is
- * fully Starlink-equipped per the Q1 2026 earnings call (April 21, 2026).
- * Mainline (737/787) is per-tail mid-rollout and alaskaair.com exposes no
- * wifi field, so this returns null; mainline tails are settled by
- * src/scripts/flyertalk-alaska.ts (FlyerTalk wikipost) instead.
- * Uses the same E175 matcher as AS classifyFleet() so verdict and subfleet
- * can never disagree.
- */
-export function alaskaTypeToStarlink(equipmentType: string | null | undefined): AlaskaWifi {
-  if (!equipmentType) return null;
-  return ALASKA_E175_RE.test(equipmentType) ? "Starlink" : null;
-}
-
-/**
- * Hawaiian's rollout is type-deterministic and complete (Sep 2024) for the
- * Airbus fleet. This encodes the same rule alaskaair.com hardcodes in its
- * status page bundle. Missing/unrecognized types return null — only a
- * recognized non-Starlink type (717) is negative evidence.
+ * Thin keyspace adapter over the registry's canonical HA phase table.
+ * Missing/unrecognized types return null — only a recognized non-Starlink
+ * type (717) is negative evidence.
  */
 export function hawaiianTypeToStarlink(
   equipmentType: string | null | undefined
 ): HawaiianWifi | null {
-  if (!equipmentType) return null;
-  const t = equipmentType.toUpperCase();
-  if (/\bA330|^A332\b/.test(t)) return "Starlink";
-  if (/\bA321[-\s]?2\d{2}N|\bA321[-\s]?NEO|^(A21N|32Q)\b/.test(t)) return "Starlink";
-  if (/\b787|^B789\b/.test(t)) return "pending";
-  if (/\b717|^B712\b/.test(t)) return "None";
-  return null;
+  const phase = hawaiianStarlinkPhase(equipmentType);
+  if (phase === "rolling") return "pending";
+  return providerLabel(phaseToStatus(phase));
 }

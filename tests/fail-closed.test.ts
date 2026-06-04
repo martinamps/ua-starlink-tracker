@@ -14,7 +14,15 @@ import type { AlaskaFlightStatus, fetchAlaskaFlightStatus } from "../src/api/ala
 import { resolveFlightVerdict, verdictTelemetry } from "../src/api/check-flight-core";
 import { Fr24UnavailableError } from "../src/api/flightradar24-api";
 import type { QatarFlight, fetchByRoute } from "../src/api/qatar-status";
-import { SHEET_ROSTER_WHERE, getMeta, setMeta, updateDatabase } from "../src/database/database";
+import {
+  SHEET_ROSTER_WHERE,
+  getHubStats,
+  getMeta,
+  getNextAlaskaVerifyTarget,
+  reconcileTypeDeterministicFleets,
+  setMeta,
+  updateDatabase,
+} from "../src/database/database";
 import { createReaderFactory } from "../src/database/reader";
 import { checkOne } from "../src/scripts/alaska-verifier";
 import { ingestQatarSchedule } from "../src/scripts/qatar-schedule-ingester";
@@ -51,6 +59,7 @@ describe("qatarTypeToStarlink", () => {
     ["Boeing 777-F", "negative"],
     ["Airbus A320-232", "negative"],
     ["Airbus A321-231", "negative"],
+    ["Airbus A330-202", "negative"], // covered by the canonical family table
     ["Airbus A380-861", "negative"],
     ["Boeing 737 MAX 8", "negative"], // QR's MAX fleet is real and non-Starlink
     ["Boeing 787-8 Dreamliner", null], // rollout in progress — per-tail, not type
@@ -279,6 +288,73 @@ describe("updateDatabase roster floor", () => {
     expect(refusal === null).toBe(replaced);
     expect(sheetCount(db)).toBe(replaced ? parsed : existing);
     expect(getMeta(db, "lastUpdated", "UA") === "OLD").toBe(!replaced);
+    db.close();
+  });
+});
+
+describe("type-settled is not verified", () => {
+  test("first HA reconcile: status settles, no verification-grade stamps, no install spike", () => {
+    const db = makeSyntheticDb();
+    addFleet(db, "N380HA", "unknown", {
+      airline: "HA",
+      aircraftType: "Airbus A330-243",
+      verifiedAt: null,
+    });
+    addFleet(db, "N488HA", "unknown", {
+      airline: "HA",
+      aircraftType: "Boeing 717-22A",
+      verifiedAt: null,
+    });
+
+    expect(reconcileTypeDeterministicFleets(db)).toBe(2);
+
+    const a330 = fleetRow(db, "N380HA");
+    expect(a330.starlink_status).toBe("confirmed");
+    expect(a330.verified_at).toBeNull(); // NOT stamped — verifier still owes a real check
+    expect(fleetRow(db, "N488HA").starlink_status).toBe("negative");
+
+    const sp = db
+      .query(
+        `SELECT sheet_gid, sheet_type, DateFound, verified_wifi, verified_at
+         FROM starlink_planes WHERE TailNumber = 'N380HA'`
+      )
+      .get() as Record<string, string | null>;
+    expect(sp.sheet_gid).toBe("type_deterministic");
+    expect(sp.sheet_type).toBe("type_deterministic");
+    expect(sp.DateFound).toBeNull(); // no fabricated deploy-day rollout cliff
+    expect(sp.verified_wifi).toBeNull(); // type rule ≠ per-tail verification
+    expect(sp.verified_at).toBeNull();
+
+    // negative settles never enter starlink_planes
+    const neg = db
+      .query("SELECT COUNT(*) AS n FROM starlink_planes WHERE TailNumber = 'N488HA'")
+      .get() as { n: number };
+    expect(neg.n).toBe(0);
+
+    // counts as equipped, but not as a 30-day install
+    const hub = getHubStats(db, ["HA"]);
+    expect(hub[0].starlink).toBe(1);
+    expect(hub[0].installs30d).toBe(0);
+    db.close();
+  });
+
+  test("verify queue serves type-settled (verified_at NULL) tails before stale ones", () => {
+    const db = makeSyntheticDb();
+    const now = Math.floor(Date.now() / 1000);
+    addFleet(db, "N532AS", "confirmed", {
+      airline: "AS",
+      aircraftType: "Embraer ERJ-175LR",
+      verifiedAt: null,
+    });
+    addFleet(db, "N533AS", "confirmed", {
+      airline: "AS",
+      aircraftType: "Embraer ERJ-175LR",
+      verifiedAt: now - 30 * 86400,
+    });
+    addFlight(db, "N532AS", "AS2301", "SEA", now + 6 * 3600, { airline: "AS" });
+    addFlight(db, "N533AS", "AS2302", "SEA", now + 6 * 3600, { airline: "AS" });
+
+    expect(getNextAlaskaVerifyTarget(db, "AS")?.tail_number).toBe("N532AS");
     db.close();
   });
 });
