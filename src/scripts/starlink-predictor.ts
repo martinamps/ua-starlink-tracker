@@ -18,15 +18,34 @@
  */
 
 import { Database } from "bun:sqlite";
+import { ensureAirlinePrefix, inferSubfleet } from "../airlines/flight-number";
 import {
+  AIRLINES,
   type AirlineConfig,
+  type SubfleetDef,
+  type WifiPhase,
   airlineHomeUrl,
   publicAirlines,
   siteForAirline,
+  wifiPhaseFamilies,
 } from "../airlines/registry";
-import type { VerificationObservation as Observation } from "../database/database";
-import { type Scope, type ScopedReader, createReaderFactory } from "../database/reader";
-import { ensureUAPrefix, inferFleet } from "../utils/constants";
+import type {
+  VerificationObservation as Observation,
+  SubfleetPenetration,
+} from "../database/database";
+import {
+  type Scope,
+  type ScopedReader,
+  aggregatePenetration,
+  createReaderFactory,
+} from "../database/reader";
+import { flightDateWindow, matchesLocalDate } from "../utils/airport-tz";
+
+// The prediction model is trained exclusively on United verification
+// observations — its fleet split and priors are UA-bound by design.
+const UA_CFG = AIRLINES.UA;
+const uaSubfleet = (fn: string) => inferSubfleet(UA_CFG, fn) as "express" | "mainline" | "unknown";
+const uaPrefix = (fn: string) => ensureAirlinePrefix(UA_CFG, fn);
 
 // ============================================================================
 // Types
@@ -107,7 +126,7 @@ export function buildModel(trainObs: Observation[], config: ModelConfig = DEFAUL
   }
 
   function predict(flightNumber: string): Prediction {
-    const fleet = inferFleet(flightNumber);
+    const fleet = uaSubfleet(flightNumber);
 
     const stats = flightStats.get(flightNumber);
     if (!stats || stats.n === 0) {
@@ -261,6 +280,14 @@ function evaluate(predictions: Array<{ pred: Prediction; actual: number }>): Eva
  */
 function loadFleetPriors(reader: ScopedReader): { express: number; mainline: number } {
   const stats = reader.getFleetStats();
+  // Null = hub scope: no per-airline subfleet split exists. Use the
+  // cross-airline penetration rate as both priors — a real aggregate, never
+  // one airline's stats standing in for the hub's.
+  if (stats === null) {
+    const rate =
+      aggregatePenetration(reader.getPerAirlineStats()).rate ?? DEFAULT_CONFIG.mainlineColdPrior;
+    return { express: rate, mainline: rate };
+  }
   return {
     express:
       stats.express.total > 0
@@ -357,7 +384,7 @@ function deriveConfig(
   for (const obs of trainObs) {
     const numMatch = obs.flight_number.match(/(\d+)$/);
     if (numMatch && numMatch[1].length > 4) continue;
-    const f = inferFleet(obs.flight_number);
+    const f = uaSubfleet(obs.flight_number);
     if (f === "express" || f === "mainline") {
       byFleet[f].s += obs.has_starlink;
       byFleet[f].t += 1;
@@ -476,7 +503,7 @@ export function predictRoute(
   // De-dupe by normalized flight number, keeping highest route_obs
   const seen = new Map<string, RouteFlightPrediction>();
   for (const rf of routeFlights) {
-    const normalized = ensureUAPrefix(rf.flight_number);
+    const normalized = uaPrefix(rf.flight_number);
     const existing = seen.get(normalized);
     if (existing && rf.route_obs <= existing.route_observations) continue;
 
@@ -510,14 +537,17 @@ export type RouteCompareKind =
   | "inferred_absent"
   | "no_data";
 
-export interface SubfleetBreakdown {
+/**
+ * Per-subfleet penetration row. `synthetic` rows come from penetrationOverride
+ * (tails counted under the operating carrier's roster) — they carry no
+ * equipped/total, so printing counts on one is a type error, not a convention.
+ */
+export type SubfleetBreakdown = {
   key: string;
   label: string;
   hint?: string;
-  equipped: number;
-  total: number;
   pct: number;
-}
+} & ({ synthetic: true } | { synthetic: false; equipped: number; total: number });
 
 export interface RouteCompareResult {
   airline: string;
@@ -554,172 +584,304 @@ function brand(cfg: AirlineConfig) {
   };
 }
 
+/** Join prose fragments with exactly one terminal period each. */
+export function joinSentences(...parts: Array<string | null | undefined | false>): string {
+  return parts
+    .map((p) => (p || "").trim())
+    .filter(Boolean)
+    .map((p) => (/[.!?]$/.test(p) ? p : `${p}.`))
+    .join(" ");
+}
+
 /**
- * Per-airline Starlink odds for a NONSTOP O-D pair. Hub-only.
+ * Penetration with a sentinel-free shape: synthetic (penetrationOverride)
+ * rows have no roster denominator — the tails fly on another carrier's metal
+ * (e.g. AS800-899 on Hawaiian A330/A321neo), so equipped/total don't exist
+ * and the type forbids printing them.
+ */
+export type ResolvedPenetration =
+  | { synthetic: true; pct: number }
+  | { synthetic: false; equipped: number; total: number; pct: number };
+
+export function subfleetPenetration(
+  pen: Map<string, SubfleetPenetration>,
+  sf: SubfleetDef
+): ResolvedPenetration | null {
+  if (sf.penetrationOverride != null) {
+    return { synthetic: true, pct: sf.penetrationOverride };
+  }
+  const p = pen.get(sf.key);
+  return p ? { synthetic: false, ...p } : null;
+}
+
+// Below this many rostered tails, penetration is dominated by discovery bias:
+// a roster fed only by the equipped-tail discovery pipeline is "100% equipped"
+// by construction. Don't quote a number off it.
+const MIN_PENETRATION_TOTAL = 5;
+
+/**
+ * Per-flight answer for carriers without a flight-history model
+ * (cfg.flightHistoryModel === false). Registry-driven only — the UA-trained
+ * predictor is never consulted. Phase-split carriers (families in both
+ * confirmed and negative/rolling phases) get the split, never a blended
+ * number; otherwise subfleet penetration; otherwise an honest no-model.
+ */
+export type CarrierPrediction =
+  | { kind: "penetration"; sf: SubfleetDef; pen: ResolvedPenetration }
+  | { kind: "type_split"; groups: { phase: WifiPhase; families: string[] }[] }
+  | { kind: "no_model"; reason: string };
+
+const PHASE_ORDER: readonly WifiPhase[] = ["confirmed", "rolling", "negative"];
+
+/**
+ * Phase groups when the carrier's family table spans BOTH confirmed and
+ * negative/rolling: a flight number (or route, absent a route rule) doesn't
+ * pin the family, so any single penetration number would blend "always yes"
+ * types with "never" types (HA50 on an A330 ≠ a 717 interisland hop).
+ * Null = no table, or the program is phase-uniform.
+ */
+function phaseSplit(cfg: AirlineConfig): { phase: WifiPhase; families: string[] }[] | null {
+  const table = wifiPhaseFamilies(cfg.code);
+  if (!table) return null;
+  const byPhase = new Map<WifiPhase, string[]>();
+  for (const [family, phase] of Object.entries(table)) {
+    byPhase.set(phase, [...(byPhase.get(phase) ?? []), family]);
+  }
+  if (!byPhase.has("confirmed") || !(byPhase.has("negative") || byPhase.has("rolling"))) {
+    return null;
+  }
+  return PHASE_ORDER.filter((p) => byPhase.has(p)).map((p) => ({
+    phase: p,
+    families: byPhase.get(p) as string[],
+  }));
+}
+
+export function carrierPrediction(
+  cfg: AirlineConfig,
+  reader: ScopedReader,
+  flightNumber: string
+): CarrierPrediction {
+  const noModel: CarrierPrediction = {
+    kind: "no_model",
+    reason: `No per-flight prediction model exists for ${cfg.name} — Starlink status is determined by aircraft type, not flight-number history. ${cfg.rollout.phaseNote}`,
+  };
+  // Defensive: a reader scoped to another airline (e.g. a hub caller that
+  // skipped resolveCarrier) must never produce that airline's roster counts
+  // as this carrier's answer.
+  if (reader.scope !== cfg.code) return noModel;
+
+  const groups = phaseSplit(cfg);
+  if (groups) return { kind: "type_split", groups };
+
+  const sf = cfg.subfleets.find((s) => s.match(flightNumber));
+  const pen = sf ? subfleetPenetration(reader.getSubfleetPenetration(), sf) : null;
+  if (sf && pen && (pen.synthetic || pen.total >= MIN_PENETRATION_TOTAL)) {
+    return { kind: "penetration", sf, pen };
+  }
+  return noModel;
+}
+
+/** One outcome/confidence mapping for registry-driven carrier answers — REST,
+ * MCP, and verdictTelemetry all tag through here. */
+export function carrierPredictionTelemetry(answer: CarrierPrediction | RouteCompareResult | null): {
+  outcome: "predicted" | "no_data";
+  confidence: "low" | "none";
+} {
+  const informative = answer !== null && answer.kind !== "no_model";
+  return informative
+    ? { outcome: "predicted", confidence: "low" }
+    : { outcome: "no_data", confidence: "none" };
+}
+
+const PHASE_LABEL: Record<WifiPhase, string> = {
+  confirmed: "Starlink (rollout complete)",
+  rolling: "mid-installation",
+  negative: "no Starlink",
+};
+
+/** One-sentence prose for a CarrierPrediction — keeps REST and MCP wording identical. */
+export function describeCarrierPrediction(cfg: AirlineConfig, answer: CarrierPrediction): string {
+  if (answer.kind === "no_model") return answer.reason;
+  if (answer.kind === "type_split") {
+    const parts = answer.groups.map((g) => `${g.families.join("/")}: ${PHASE_LABEL[g.phase]}`);
+    return joinSentences(
+      `Starlink on ${cfg.name} is determined by aircraft type — ${parts.join("; ")}`,
+      "Check a specific flight and date to see which aircraft type is scheduled"
+    );
+  }
+  const { sf, pen } = answer;
+  const pct = (pen.pct * 100).toFixed(0);
+  const hint = sf.flightNumberHint ? ` (${sf.flightNumberHint})` : "";
+  const basis = pen.synthetic
+    ? `${sf.label}${hint} — Starlink status is set by the operating subfleet`
+    : `${pen.equipped} of ${pen.total} ${sf.label}${hint} aircraft equipped`;
+  return joinSentences(`~${pct}% Starlink probability (${basis})`, cfg.rollout.phaseNote);
+}
+
+/**
+ * One airline's Starlink odds on a NONSTOP O-D pair.
  *
- * Reports the install rate across the subfleet(s) each carrier flies nonstop
+ * Reports the install rate across the subfleet(s) the carrier flies nonstop
  * on this route — equipped tails ÷ all tails in that subfleet, from the full
  * fleet roster. NOT a best-case-routing optimizer (the previous planItinerary
  * approach returned 97% for UA SFO-AUS via OMA, which nobody books).
+ * Returns null when the roster has no penetration data for the carrier.
  */
+export function compareRouteForAirline(
+  cfg: AirlineConfig,
+  reader: ScopedReader,
+  origin: string,
+  destination: string
+): RouteCompareResult | null {
+  const o = origin.toUpperCase().trim();
+  const d = destination.toUpperCase().trim();
+  // flight_routes has no airline column, so the prefix glob would attribute
+  // shared-regional rows (OO/SKW for SkyWest, ENY/PDT etc.) to UA. flight_routes
+  // is written via ensureAirlinePrefix → marketing IATA, so iata+icao is enough.
+  const prefixes = [cfg.iata, cfg.icao];
+
+  // ---- 1. Type-deterministic carriers (HA today) ----
+  if (cfg.routeTypeRule) {
+    const rule = cfg.routeTypeRule(o, d);
+    if (rule && reader.airlineServesAirports(prefixes, o, d)) {
+      return {
+        ...brand(cfg),
+        kind: "type_rule",
+        probability: rule.probability,
+        breakdown: [],
+        reason: rule.reason,
+      };
+    }
+    // Symmetry: HA renders no_data on mainland-mainland instead of vanishing.
+    return { ...brand(cfg), kind: "no_data", probability: -1, breakdown: [], reason: "" };
+  }
+
+  // ---- 2. Unbiased per-subfleet penetration from full roster ----
+  const penMap = reader.getSubfleetPenetration();
+  if (penMap.size === 0) return null;
+  const penArr: SubfleetBreakdown[] = cfg.subfleets.map((sf) => {
+    const p = subfleetPenetration(penMap, sf) ?? {
+      synthetic: false as const,
+      equipped: 0,
+      total: 0,
+      pct: 0,
+    };
+    return { key: sf.key, label: sf.label, hint: sf.flightNumberHint, ...p };
+  });
+  const maxPct = Math.max(...penArr.map((p) => p.pct));
+  const minSub = penArr.reduce((a, b) => (a.pct <= b.pct ? a : b));
+
+  // ---- 3. Which subfleet(s) fly this nonstop? ----
+  const fns = reader.getObservedDirectFlightNumbers(prefixes, o, d);
+  const seen = new Set<string>();
+  for (const fn of fns) {
+    const sf = cfg.subfleets.find((s) => s.match(fn));
+    if (sf) seen.add(sf.key);
+  }
+
+  let result: RouteCompareResult;
+  if (seen.size === 1) {
+    const sf = penArr.find((p) => seen.has(p.key))!;
+    // We can prove the high-pen subfleet flies the route, but NOT that the
+    // low-pen one doesn't (it's invisible to us). When the seen subfleet is
+    // the high one and a low-pen (<50%) sibling exists, show the honest
+    // range — otherwise SEA-ANC reads "AS 100%" when it's mostly 737s at 0%.
+    const lowSibling = penArr.find((p) => p.key !== sf.key && p.pct < 0.5);
+    if (sf.pct === maxPct && lowSibling) {
+      const bd = [sf, lowSibling].sort((a, b) => b.pct - a.pct);
+      result = {
+        ...brand(cfg),
+        kind: "observed_mixed",
+        probability: (sf.pct + lowSibling.pct) / 2,
+        lo: lowSibling.pct,
+        hi: sf.pct,
+        breakdown: bd,
+        reason: "Depends on flight number",
+      };
+    } else {
+      result = {
+        ...brand(cfg),
+        kind: "observed_single",
+        probability: sf.pct,
+        breakdown: [sf],
+        reason: sf.synthetic
+          ? `${shortLabel(sf.label)} on this route — Starlink-equipped fleet`
+          : `${shortLabel(sf.label)} on this route — ${fmt(sf.equipped)} of ${fmt(sf.total)} equipped`,
+      };
+    }
+  } else if (seen.size >= 2) {
+    // Do NOT frequency-weight by observed FN count: the observation set is
+    // Starlink-biased toward the high-penetration subfleet, so weighting
+    // would systematically overstate. Show the honest range + the rule.
+    const bd = penArr.filter((p) => seen.has(p.key)).sort((a, b) => b.pct - a.pct);
+    const lo = Math.min(...bd.map((b) => b.pct));
+    const hi = Math.max(...bd.map((b) => b.pct));
+    result = {
+      ...brand(cfg),
+      kind: "observed_mixed",
+      probability: (lo + hi) / 2,
+      lo,
+      hi,
+      breakdown: bd,
+      reason: "Depends on flight number",
+    };
+  } else if (
+    // ---- 4. Unobserved nonstop ----
+    // Gate A: airline must touch both airports (Starlink-biased; failure
+    //   mode is omission, not a wrong number — covered by footer copy).
+    // Gate B: max subfleet penetration ≥ 0.5. With ≥50% of a subfleet tracked
+    //   over ~65 days, a daily nonstop on that subfleet would have appeared
+    //   with P > 1 - 0.5^65 ≈ 1. Absence ⇒ that subfleet does not fly the route.
+    reader.airlineServesAirports(prefixes, o, d) &&
+    maxPct >= 0.5 &&
+    // Both subfleets ≥50% would mean BOTH are ruled out by the same
+    // absence argument — i.e. the airline doesn't fly the nonstop. no_data.
+    minSub.pct < 0.5
+  ) {
+    result = {
+      ...brand(cfg),
+      kind: "inferred_absent",
+      probability: minSub.pct,
+      breakdown: [minSub],
+      reason: minSub.synthetic
+        ? `${shortLabel(minSub.label)} subfleet`
+        : `${fmt(minSub.equipped)} of ${fmt(minSub.total)} aircraft equipped`,
+    };
+  } else {
+    // Always render every public airline so the panel is symmetric — a
+    // missing carrier reads as inconsistent ("why is AS shown but UA
+    // isn't on the same route?"). no_data is honest about the gap.
+    result = {
+      ...brand(cfg),
+      kind: "no_data",
+      probability: -1,
+      breakdown: [],
+      reason: "No route data yet",
+    };
+  }
+
+  // ---- 5. Invariant guard ----
+  // No non-rule result may exceed this airline's best-equipped subfleet rate.
+  // This is the bug class we're fixing (UA SFO-AUS at 97% > 64% express ceiling).
+  const top = result.hi ?? result.probability;
+  if (result.kind !== "no_data" && top > maxPct + 1e-6) {
+    throw new Error(
+      `compareRoute invariant: ${cfg.code} ${o}-${d} = ${top.toFixed(3)} > ceiling ${maxPct.toFixed(3)}`
+    );
+  }
+  return result;
+}
+
+/** Per-airline Starlink odds for a NONSTOP O-D pair across all public carriers. Hub-only. */
 export function compareRoute(
   getReader: (code: string) => ScopedReader,
   origin: string,
   destination: string
 ): RouteCompareResult[] {
-  const o = origin.toUpperCase().trim();
-  const d = destination.toUpperCase().trim();
   const out: RouteCompareResult[] = [];
-  const ceilings = new Map<string, number>();
-
   for (const cfg of publicAirlines()) {
-    const reader = getReader(cfg.code);
-    // flight_routes has no airline column, so the prefix glob would attribute
-    // shared-regional rows (OO/SKW for SkyWest, ENY/PDT etc.) to UA. flight_routes
-    // is written via ensureAirlinePrefix → marketing IATA, so iata+icao is enough.
-    const prefixes = [cfg.iata, cfg.icao];
-
-    // ---- 1. Type-deterministic carriers (HA today) ----
-    if (cfg.routeTypeRule) {
-      const rule = cfg.routeTypeRule(o, d);
-      if (rule && reader.airlineServesAirports(prefixes, o, d)) {
-        out.push({
-          ...brand(cfg),
-          kind: "type_rule",
-          probability: rule.probability,
-          breakdown: [],
-          reason: rule.reason,
-        });
-      } else {
-        // Symmetry: HA renders no_data on mainland-mainland instead of vanishing.
-        out.push({ ...brand(cfg), kind: "no_data", probability: -1, breakdown: [], reason: "" });
-      }
-      continue;
-    }
-
-    // ---- 2. Unbiased per-subfleet penetration from full roster ----
-    const pen = reader.getSubfleetPenetration();
-    if (pen.size === 0) continue;
-    const penArr: SubfleetBreakdown[] = cfg.subfleets.map((sf) => {
-      // penetrationOverride: subfleets that fly on another carrier's metal
-      // (e.g. AS800-899 on Hawaiian A330/A321neo) — the roster has those tails
-      // under the operating airline, not the marketing one.
-      const p =
-        sf.penetrationOverride != null
-          ? { equipped: 1, total: 1, pct: sf.penetrationOverride }
-          : (pen.get(sf.key) ?? { equipped: 0, total: 0, pct: 0 });
-      return {
-        key: sf.key,
-        label: sf.label,
-        hint: sf.flightNumberHint,
-        equipped: p.equipped,
-        total: p.total,
-        pct: p.pct,
-      };
-    });
-    const maxPct = Math.max(...penArr.map((p) => p.pct));
-    const minSub = penArr.reduce((a, b) => (a.pct <= b.pct ? a : b));
-    ceilings.set(cfg.code, maxPct);
-
-    // ---- 3. Which subfleet(s) fly this nonstop? ----
-    const fns = reader.getObservedDirectFlightNumbers(prefixes, o, d);
-    const seen = new Set<string>();
-    for (const fn of fns) {
-      const sf = cfg.subfleets.find((s) => s.match(fn));
-      if (sf) seen.add(sf.key);
-    }
-
-    if (seen.size === 1) {
-      const sf = penArr.find((p) => seen.has(p.key))!;
-      // We can prove the high-pen subfleet flies the route, but NOT that the
-      // low-pen one doesn't (it's invisible to us). When the seen subfleet is
-      // the high one and a low-pen (<50%) sibling exists, show the honest
-      // range — otherwise SEA-ANC reads "AS 100%" when it's mostly 737s at 0%.
-      const lowSibling = penArr.find((p) => p.key !== sf.key && p.pct < 0.5);
-      if (sf.pct === maxPct && lowSibling) {
-        const bd = [sf, lowSibling].sort((a, b) => b.pct - a.pct);
-        out.push({
-          ...brand(cfg),
-          kind: "observed_mixed",
-          probability: (sf.pct + lowSibling.pct) / 2,
-          lo: lowSibling.pct,
-          hi: sf.pct,
-          breakdown: bd,
-          reason: "Depends on flight number",
-        });
-      } else {
-        out.push({
-          ...brand(cfg),
-          kind: "observed_single",
-          probability: sf.pct,
-          breakdown: [sf],
-          reason: `${shortLabel(sf.label)} on this route — ${fmt(sf.equipped)} of ${fmt(sf.total)} equipped`,
-        });
-      }
-    } else if (seen.size >= 2) {
-      // Do NOT frequency-weight by observed FN count: the observation set is
-      // Starlink-biased toward the high-penetration subfleet, so weighting
-      // would systematically overstate. Show the honest range + the rule.
-      const bd = penArr.filter((p) => seen.has(p.key)).sort((a, b) => b.pct - a.pct);
-      const lo = Math.min(...bd.map((b) => b.pct));
-      const hi = Math.max(...bd.map((b) => b.pct));
-      out.push({
-        ...brand(cfg),
-        kind: "observed_mixed",
-        probability: (lo + hi) / 2,
-        lo,
-        hi,
-        breakdown: bd,
-        reason: "Depends on flight number",
-      });
-    } else {
-      // ---- 4. Unobserved nonstop ----
-      // Gate A: airline must touch both airports (Starlink-biased; failure
-      //   mode is omission, not a wrong number — covered by footer copy).
-      // Gate B: max subfleet penetration ≥ 0.5. With ≥50% of a subfleet tracked
-      //   over ~65 days, a daily nonstop on that subfleet would have appeared
-      //   with P > 1 - 0.5^65 ≈ 1. Absence ⇒ that subfleet does not fly the route.
-      if (
-        reader.airlineServesAirports(prefixes, o, d) &&
-        maxPct >= 0.5 &&
-        // Both subfleets ≥50% would mean BOTH are ruled out by the same
-        // absence argument — i.e. the airline doesn't fly the nonstop. no_data.
-        minSub.pct < 0.5
-      ) {
-        out.push({
-          ...brand(cfg),
-          kind: "inferred_absent",
-          probability: minSub.pct,
-          breakdown: [minSub],
-          reason: `${fmt(minSub.equipped)} of ${fmt(minSub.total)} aircraft equipped`,
-        });
-      } else {
-        // Always render every public airline so the panel is symmetric — a
-        // missing carrier reads as inconsistent ("why is AS shown but UA
-        // isn't on the same route?"). no_data is honest about the gap.
-        out.push({
-          ...brand(cfg),
-          kind: "no_data",
-          probability: -1,
-          breakdown: [],
-          reason: "No route data yet",
-        });
-      }
-    }
-  }
-
-  // ---- 5. Invariant guard ----
-  // No non-rule result may exceed that airline's best-equipped subfleet rate.
-  // This is the bug class we're fixing (UA SFO-AUS at 97% > 64% express ceiling).
-  for (const r of out) {
-    if (r.kind === "type_rule" || r.kind === "no_data") continue;
-    const ceil = ceilings.get(r.airline) ?? 1;
-    const top = r.hi ?? r.probability;
-    if (top > ceil + 1e-6) {
-      throw new Error(
-        `compareRoute invariant: ${r.airline} ${o}-${d} = ${top.toFixed(3)} > ceiling ${ceil.toFixed(3)}`
-      );
-    }
+    const r = compareRouteForAirline(cfg, getReader(cfg.code), origin, destination);
+    if (r) out.push(r);
   }
 
   // Every-carrier-no_data ⇒ garbage route ⇒ empty (the panel's empty-state copy
@@ -730,6 +892,41 @@ export function compareRoute(
   const rank = (r: RouteCompareResult) =>
     r.kind === "no_data" ? -1 : r.kind === "inferred_absent" ? 0 : 1;
   return out.sort((a, b) => rank(b) - rank(a) || (b.hi ?? b.probability) - (a.hi ?? a.probability));
+}
+
+/**
+ * Route answer for carriers without a flight-history model. Unlike
+ * compareRoute, the type rule answers WITHOUT the serves-this-route gate:
+ * it encodes "IF this carrier flies o→d, the equipment class decides", which
+ * is the right answer to a direct question even when our route observations
+ * haven't seen the pair. Null = nothing better than "no model" to say.
+ */
+export function carrierRouteAnswer(
+  cfg: AirlineConfig,
+  reader: ScopedReader,
+  origin: string,
+  destination: string
+): RouteCompareResult | null {
+  const o = origin.toUpperCase().trim();
+  const d = destination.toUpperCase().trim();
+  if (cfg.routeTypeRule) {
+    const rule = cfg.routeTypeRule(o, d);
+    return rule
+      ? {
+          ...brand(cfg),
+          kind: "type_rule",
+          probability: rule.probability,
+          breakdown: [],
+          reason: rule.reason,
+        }
+      : null;
+  }
+  // A split-phase carrier without a route rule (QR): the route doesn't pin
+  // the family either, so a roster-penetration number would be the same
+  // dishonest blend the predict path refuses — say no-model instead.
+  if (phaseSplit(cfg)) return null;
+  const r = compareRouteForAirline(cfg, reader, o, d);
+  return r && r.kind !== "no_data" ? r : null;
 }
 
 // ============================================================================
@@ -801,12 +998,24 @@ function buildRouteGraph(
   // planes don't get the confirmed tier). Fleet-aware swap discount applied.
   const confirmedEdges = new Map<string, "express" | "mainline">();
   if (targetDateUnix !== undefined) {
-    const startOfDay = targetDateUnix - (targetDateUnix % 86400);
-    const endOfDay = startOfDay + 86400;
-    const confirmedRows = reader.getConfirmedStarlinkEdges(startOfDay, endOfDay);
-    for (const r of confirmedRows) {
-      const fleet = r.fleet === "mainline" ? "mainline" : "express";
-      confirmedEdges.set(`${r.flight_number}|${r.departure_airport}|${r.arrival_airport}`, fleet);
+    // targetDateUnix is noon UTC of the traveler's date (flightDateWindow.mid),
+    // so its UTC date IS the queried date. Match rows on the departure
+    // airport's LOCAL date over the widened bounds, same as check-flight core
+    // — a strict UTC day window drops verified evening departures (SFO 6pm =
+    // 01:00Z next day) and seeds the wrong day's tail instead.
+    const date = new Date(targetDateUnix * 1000).toISOString().slice(0, 10);
+    const window = flightDateWindow(date);
+    if (window) {
+      const confirmedRows = reader.getConfirmedStarlinkEdges(window.queryStart, window.queryEnd);
+      for (const r of confirmedRows) {
+        if (
+          !matchesLocalDate(date, r.departure_airport, r.departure_time, window.start, window.end)
+        ) {
+          continue;
+        }
+        const fleet = r.fleet === "mainline" ? "mainline" : "express";
+        confirmedEdges.set(`${r.flight_number}|${r.departure_airport}|${r.arrival_airport}`, fleet);
+      }
     }
   }
 
@@ -814,7 +1023,7 @@ function buildRouteGraph(
   for (const r of rows) {
     const dep = r.departure_airport;
     const arr = r.arrival_airport;
-    const uaNum = ensureUAPrefix(r.flight_number);
+    const uaNum = uaPrefix(r.flight_number);
     const confirmedFleet = confirmedEdges.get(`${r.flight_number}|${dep}|${arr}`);
 
     let pred: BasePrediction;

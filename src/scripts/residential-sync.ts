@@ -13,7 +13,8 @@
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
-import { initializeDatabase, refreshFleetMeta, setMeta } from "../database/database";
+import { AIRLINES } from "../airlines/registry";
+import { initializeDatabase, setMeta } from "../database/database";
 import { info, error as logError, warn } from "../utils/logger";
 import { applyAlaskaFlyertalkTails, fetchAlaskaFlyertalkTails } from "./flyertalk-alaska";
 import { applyQatarFlyertalkTails, fetchQatarFlyertalkTails } from "./flyertalk-qatar";
@@ -23,9 +24,7 @@ const CONTAINER = "$(sudo docker ps -q --filter name=c4wg48 | head -1)";
 const REMOTE = (flag: string) =>
   `sudo docker exec -i ${CONTAINER} bun run /app/src/scripts/residential-sync.ts ${flag}`;
 
-const QR_TAIL_RE = /^A7-[A-Z]{3}$/;
 const QR_FLOOR = 30;
-const AS_TAIL_RE = /^N\d{3}[A-Z]{2}$/;
 const AS_FLOOR = 1;
 const CEILING_MULT = 2;
 const FETCH_ATTEMPTS = 3;
@@ -125,8 +124,10 @@ function validateTails(
     );
 }
 
-const validateQr = (t: string[], c?: number) => validateTails("QR", t, QR_TAIL_RE, QR_FLOOR, c);
-const validateAs = (t: string[], c?: number) => validateTails("AS", t, AS_TAIL_RE, AS_FLOOR, c);
+const validateQr = (t: string[], c?: number) =>
+  validateTails("QR", t, AIRLINES.QR.tailPattern, QR_FLOOR, c);
+const validateAs = (t: string[], c?: number) =>
+  validateTails("AS", t, AIRLINES.AS.tailPattern, AS_FLOOR, c);
 
 // ---- prod-side handlers ----
 
@@ -178,7 +179,8 @@ function ingestSource(
       new Error(`integrity: ${airline} confirmed dropped ${before.confirmed}→${after.confirmed}`),
       { code: 4 }
     );
-  refreshFleetMeta(db, airline);
+  // No refreshFleetMeta here — applyFlyertalkTails owns it (runs it whenever
+  // it writes), so the meta refresh can't be double-stamped or forgotten.
   return {
     source,
     scraped: tails.length,

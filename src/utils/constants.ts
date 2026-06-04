@@ -1,10 +1,6 @@
-import {
-  buildAirlineFlightNumberVariants,
-  ensureAirlinePrefix,
-  inferSubfleet,
-  normalizeAirlineFlightNumber,
-} from "../airlines/flight-number";
+import { normalizeAirlineFlightNumber } from "../airlines/flight-number";
 import { AIRLINES, analyticsOrigins } from "../airlines/registry";
+import { airportTimezone, icaoToIata, localDateISO } from "./airport-tz";
 
 // Database path
 export const DB_PATH =
@@ -25,47 +21,41 @@ export type FlightDataSource = "flightradar24" | "flightaware";
 export const FLIGHT_DATA_SOURCE: FlightDataSource =
   (process.env.FLIGHT_DATA_SOURCE as FlightDataSource) || "flightradar24";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// UA-bound shims over the airline-agnostic helpers in src/airlines/flight-number.
-// Kept so existing UA-only callers (scripts, predictor, mcp-server) don't change
-// in this slice. New code in app.ts uses the cfg-taking versions directly.
-// ─────────────────────────────────────────────────────────────────────────────
-
-export const normalizeFlightNumber = (fn: string): string =>
-  normalizeAirlineFlightNumber(AIRLINES.UA, fn);
-
-export const ensureUAPrefix = (fn: string): string => ensureAirlinePrefix(AIRLINES.UA, fn);
-
-export const buildFlightNumberVariants = (fn: string): string[] =>
-  buildAirlineFlightNumberVariants(AIRLINES.UA, fn);
-
-export const inferFleet = (fn: string): "express" | "mainline" | "unknown" =>
-  inferSubfleet(AIRLINES.UA, fn) as "express" | "mainline" | "unknown";
-
-/** UTC calendar date string used for united.com flight-status lookups. */
-export const unitedLookupDate = (epochSec: number): string =>
-  new Date(epochSec * 1000).toISOString().slice(0, 10);
+/**
+ * Date segment for united.com flight-status lookups. united.com keys flight
+ * instances by the LOCAL departure date (the boarding-pass date) — a UTC date
+ * queries the NEXT day's airframe for evening US departures. Accepts the
+ * origin as IATA or ICAO (FR24 reports KEWR-style codes); unknown airports
+ * fall back to the UTC calendar day, the pre-fix behavior.
+ */
+export const unitedLookupDate = (epochSec: number, origin?: string): string => {
+  const tz = origin ? airportTimezone(icaoToIata(origin)) : undefined;
+  return tz ? localDateISO(epochSec, tz) : new Date(epochSec * 1000).toISOString().slice(0, 10);
+};
 
 // united.com redirects flight-status lookups dated past UTC-today+1 to the search
 // page. Compare calendar dates, not seconds: 1.9d away by seconds can be day +2.
-function isWithinUnitedLookupWindow(departureTimeSec: number, nowSec: number): boolean {
-  return unitedLookupDate(departureTimeSec) <= unitedLookupDate(nowSec + 86400);
+function isWithinUnitedLookupWindow(
+  departureTimeSec: number,
+  nowSec: number,
+  origin?: string
+): boolean {
+  return unitedLookupDate(departureTimeSec, origin) <= unitedLookupDate(nowSec + 86400);
 }
 
 /** Bare flight digits for united.com URLs. Strip the carrier prefix first: G74460 → 4460, not 74460 (404s). */
 export function extractFlightNumber(flightNumber: string): string {
-  return normalizeFlightNumber(flightNumber).replace(/^UA/, "");
+  return normalizeAirlineFlightNumber(AIRLINES.UA, flightNumber).replace(/^UA/, "");
 }
 
 /** First flight whose number normalizes to bare digits and whose lookup date united.com can resolve. */
-export function pickVerifiableFlight<T extends { flight_number: string; departure_time: number }>(
-  flights: T[],
-  nowSec = Date.now() / 1000
-): T | undefined {
+export function pickVerifiableFlight<
+  T extends { flight_number: string; departure_time: number; departure_airport?: string },
+>(flights: T[], nowSec = Date.now() / 1000): T | undefined {
   return flights.find(
     (f) =>
       /^\d+$/.test(extractFlightNumber(f.flight_number)) &&
-      isWithinUnitedLookupWindow(f.departure_time, nowSec)
+      isWithinUnitedLookupWindow(f.departure_time, nowSec, f.departure_airport)
   );
 }
 
@@ -77,36 +67,45 @@ const SCRIPT_SRC = ["'self'", "'unsafe-inline'", "https://unpkg.com", ...ANALYTI
   .filter(Boolean)
   .join(" ");
 
+// Baseline filled in by dispatch's finalize wrapper on every response where
+// the handler set nothing; the SECURITY_HEADERS variants below build on it so
+// the two can never drift. The CSP here is the non-HTML default — variants
+// override it with their page CSP.
+export const BASE_RESPONSE_HEADERS: Record<string, string> = {
+  "X-Content-Type-Options": "nosniff",
+  "X-Frame-Options": "DENY",
+  "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
+  "Referrer-Policy": "no-referrer",
+  "Content-Security-Policy": "default-src 'none'",
+};
+
+// The /api/* CORS contract (Chrome extension + Google Flights embedding).
+// Spread into SECURITY_HEADERS.api and mirrored verbatim by OPTIONS preflight.
+export const API_CORS_HEADERS: Record<string, string> = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
+};
+
 export const SECURITY_HEADERS = {
   api: {
+    ...BASE_RESPONSE_HEADERS,
+    ...API_CORS_HEADERS,
     "Content-Type": "application/json",
-    "X-Content-Type-Options": "nosniff",
-    "X-Frame-Options": "DENY",
     "Content-Security-Policy": `default-src 'self' https://unpkg.com; connect-src ${CONNECT_SRC}; script-src ${SCRIPT_SRC}; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https://*;`,
-    "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
-    "Referrer-Policy": "no-referrer",
     "Cache-Control": "no-store, max-age=0",
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
   },
   html: {
+    ...BASE_RESPONSE_HEADERS,
     "Content-Type": "text/html",
-    "X-Content-Type-Options": "nosniff",
-    "X-Frame-Options": "DENY",
     "Content-Security-Policy": `default-src 'self' https://unpkg.com; connect-src ${CONNECT_SRC}; script-src ${SCRIPT_SRC}; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:;`,
-    "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
-    "Referrer-Policy": "no-referrer",
   },
   notFound: {
+    ...BASE_RESPONSE_HEADERS,
     "Content-Type": "text/html",
-    "X-Content-Type-Options": "nosniff",
-    "X-Frame-Options": "DENY",
     "Content-Security-Policy":
       "default-src 'self'; style-src 'unsafe-inline' https://fonts.googleapis.com; " +
       "font-src 'self' https://fonts.gstatic.com; img-src 'self' data:;",
-    "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
-    "Referrer-Policy": "no-referrer",
   },
 };
 

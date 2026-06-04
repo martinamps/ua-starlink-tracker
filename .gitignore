@@ -9,6 +9,7 @@ tmp/
 logs/
 plane-data.sqlite
 plane-data.production.sqlite*
+.test-snapshot.sqlite
 *.sqlite-shm
 *.sqlite-wal
 tsconfig.tsbuildinfo
@@ -18,3 +19,4 @@ patches/
 ops/
 CLAUDE.local.md
 .claude/
+tsconfig.review.tsbuildinfo

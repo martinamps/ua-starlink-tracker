@@ -8,7 +8,7 @@ Tracks United Airlines' Starlink WiFi rollout and answers "does my flight have S
 
 ```bash
 bun run dev                    # Dev server with hot reload
-bun run test:setup             # Snapshot DB → /tmp/ua-test.sqlite (run before tests)
+bun run test:setup             # Snapshot DB → .test-snapshot.sqlite (run before tests)
 bun run test                   # Integration tests (49, against readonly snapshot)
 bun run db-status              # Database overview (--full for details)
 bun run scrape                 # Fetch fleet data from Google Sheets

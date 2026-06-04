@@ -1,7 +1,8 @@
 /**
  * Static aircraft specs keyed by normalized family name
- * (see normalizeAircraftType in observability/metrics.ts).
- * Seat counts reflect United/United Express configurations.
+ * (see normalizeAircraftType in airlines/aircraft-families.ts).
+ * Seat counts reflect the operating carrier's configuration (United for the
+ * shared families, Hawaiian for A330/B717, Qatar for A380).
  */
 
 export interface AircraftSpec {
@@ -90,7 +91,40 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
     fun_fact:
       "Pilots love it — absurdly overpowered, climbs like a rocket, out of production since 2004.",
   },
+  B717: {
+    seats: 128,
+    wingspan_ft: 93.3,
+    length_ft: 124.0,
+    range_mi: 2060,
+    cruise_mph: 504,
+    first_flight: 1998,
+    engines: "2× RR BR715",
+    fun_fact:
+      "Really a McDonnell Douglas MD-95 — Boeing inherited it in the merger and renamed it rather than cancel the orders.",
+  },
   // Boeing widebody
+  B747: {
+    seats: "364–467",
+    wingspan_ft: 224.4,
+    length_ft: 250.2,
+    range_mi: 8920,
+    cruise_mph: 570,
+    first_flight: 1969,
+    engines: "4× GEnx-2B67",
+    fun_fact:
+      "The original jumbo — designed in 16 months by 50,000 people in a factory built around the unfinished plane.",
+  },
+  B747F: {
+    seats: "—",
+    wingspan_ft: 224.4,
+    length_ft: 250.2,
+    range_mi: 5050,
+    cruise_mph: 570,
+    first_flight: 2010,
+    engines: "4× GEnx-2B67",
+    fun_fact:
+      "The nose swings up so cargo loads straight through the front — the hump existed so freight could one day do exactly this.",
+  },
   B767: {
     seats: "167–240",
     wingspan_ft: "156.1–170.3",
@@ -112,6 +146,17 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
     engines: "2× PW4000 or GE90-115B",
     fun_fact:
       "Each engine is wider than the entire body of a 737 — the most powerful jet engines ever.",
+  },
+  B777F: {
+    seats: "—",
+    wingspan_ft: 212.6,
+    length_ft: 209.1,
+    range_mi: 5720,
+    cruise_mph: 560,
+    first_flight: 2008,
+    engines: "2× GE90-110B1",
+    fun_fact:
+      "Carries 102 tonnes of freight on two engines — it killed the four-engine freighter business almost single-handedly.",
   },
   B787: {
     seats: "243–318",
@@ -156,6 +201,17 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
     engines: "2× PW1133G-JM",
     fun_fact: "First plane where United let you pair your AirPods to the seatback screen.",
   },
+  A330: {
+    seats: 278,
+    wingspan_ft: 197.8,
+    length_ft: 193.0,
+    range_mi: 8390,
+    cruise_mph: 541,
+    first_flight: 1992,
+    engines: "2× PW4000 or RR Trent 700",
+    fun_fact:
+      "Shares its fuselage cross-section with the 1972 A300 — Airbus has been stretching the same tube for 50 years.",
+  },
   A350: {
     seats: "—",
     wingspan_ft: 212.4,
@@ -166,6 +222,17 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
     engines: "2× RR Trent XWB-84",
     fun_fact:
       "Over half the plane is carbon fiber — the wings bend upward 13 feet in flight. United has none yet.",
+  },
+  A380: {
+    seats: 517,
+    wingspan_ft: 261.6,
+    length_ft: 238.5,
+    range_mi: 9200,
+    cruise_mph: 561,
+    first_flight: 2005,
+    engines: "4× RR Trent 900 or EA GP7200",
+    fun_fact:
+      "So big most airports had to rebuild gates and taxiways for it — production ended after just 251 built.",
   },
   // Regional jets
   E175: {
