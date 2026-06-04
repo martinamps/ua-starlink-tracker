@@ -16,12 +16,16 @@ import { Fr24UnavailableError } from "../src/api/flightradar24-api";
 import type { QatarFlight, fetchByRoute } from "../src/api/qatar-status";
 import {
   SHEET_ROSTER_WHERE,
+  addDiscoveredStarlinkPlane,
   getHubStats,
   getMeta,
   getNextAlaskaVerifyTarget,
+  getNextPlanesToVerify,
+  getVerificationObservations,
   reconcileTypeDeterministicFleets,
   setMeta,
   updateDatabase,
+  upsertFleetAircraft,
 } from "../src/database/database";
 import { createReaderFactory } from "../src/database/reader";
 import { checkOne } from "../src/scripts/alaska-verifier";
@@ -88,6 +92,29 @@ describe("hawaiianTypeToStarlink", () => {
     [undefined, null],
   ])("%p → %p", (type, want) => {
     expect(hawaiianTypeToStarlink(type)).toBe(want);
+  });
+});
+
+describe("getVerificationObservations", () => {
+  test("excludes error rows and empty wifi_provider (consensus parity)", () => {
+    const db = makeSyntheticDb();
+    const now = Math.floor(Date.now() / 1000);
+    const ins = db.query(
+      `INSERT INTO starlink_verification_log
+         (tail_number, flight_number, source, has_starlink, wifi_provider, error, checked_at, airline)
+       VALUES (?, ?, 'united', ?, ?, ?, ?, 'UA')`
+    );
+    ins.run("N111UA", "UA1", 1, "Starlink", null, now); // clean positive
+    ins.run("N222UA", "UA2", 0, "", null, now); // scrape missed the wifi section — noise
+    ins.run("N333UA", "UA3", 0, "Panasonic", "timeout", now); // errored check — noise
+    ins.run("N444UA", "UA4", 0, "Panasonic", null, now); // clean negative
+
+    const tails = getVerificationObservations(db, "UA").map((o) => o.tail_number);
+    expect(tails).toContain("N111UA");
+    expect(tails).toContain("N444UA");
+    expect(tails).not.toContain("N222UA");
+    expect(tails).not.toContain("N333UA");
+    db.close();
   });
 });
 
@@ -174,6 +201,60 @@ describe("alaska-verifier checkOne", () => {
     const row = fleetRow(db, "N488HA");
     expect(row.starlink_status).toBe("negative");
     expect(row.verified_wifi).toBe("None");
+    db.close();
+  });
+
+  test("mapped airport never probes +1 — skew retry is the prior day only", async () => {
+    const db = makeSyntheticDb();
+    setupTarget(db, "AS", "N644AS", "Boeing 737-890"); // SEA — mapped
+
+    const tried: string[] = [];
+    const stub = (async (_fn: string, date: string) => {
+      tried.push(date);
+      return null;
+    }) as unknown as typeof fetchAlaskaFlightStatus;
+
+    const result = await checkOne(db, "AS", stub);
+
+    expect(result).toBe("not_published");
+    expect(tried.length).toBe(2);
+    expect(tried[1] < tried[0]).toBe(true); // second probe is D-1, never D+1
+    db.close();
+  });
+
+  test("unmapped eastern airport, early-local-morning departure: +1 day retry resolves", async () => {
+    const db = makeSyntheticDb();
+    addFleet(db, "N654QX", "unknown", {
+      airline: "AS",
+      aircraftType: "E175",
+      verifiedAt: STALE_AT,
+    });
+    // 05:30Z = 21:30 the PREVIOUS day in the LA fallback zone, but 00:30 on
+    // the UTC date at an unmapped eastern station — the published local date
+    // is one day AFTER the computed fallback date.
+    addFlight(db, "N654QX", "AS123", "ZZZ", utc("2027-01-15T05:30:00Z"), { airline: "AS" });
+
+    const tried: string[] = [];
+    const stub = (async (_fn: string, date: string): Promise<AlaskaFlightStatus | null> => {
+      tried.push(date);
+      if (date !== "2027-01-15") return null;
+      return {
+        flightNumber: "AS123",
+        tailNumber: "N654QX",
+        carrierCode: "AS",
+        equipmentType: "E175",
+        equipmentName: null,
+        operatingAirlineCode: "QX",
+        isHawaiian: false,
+        codeshares: [],
+      };
+    }) as unknown as typeof fetchAlaskaFlightStatus;
+
+    const result = await checkOne(db, "AS", stub);
+
+    expect(tried).toEqual(["2027-01-14", "2027-01-13", "2027-01-15"]);
+    expect(result).toBe("success");
+    expect(fleetRow(db, "N654QX").starlink_status).toBe("confirmed");
     db.close();
   });
 });
@@ -355,6 +436,121 @@ describe("type-settled is not verified", () => {
     addFlight(db, "N533AS", "AS2302", "SEA", now + 6 * 3600, { airline: "AS" });
 
     expect(getNextAlaskaVerifyTarget(db, "AS")?.tail_number).toBe("N532AS");
+    db.close();
+  });
+});
+
+describe("seed evidence tiers (set E NULL-stamp convention)", () => {
+  test("type_rule seed: status settles, verified stamps NULL, verifier-eligible", () => {
+    const db = makeSyntheticDb();
+    upsertFleetAircraft(db, "N777QX", "Embraer E175", "as_seed", "horizon", "Horizon Air", "AS", {
+      starlinkStatus: "confirmed",
+      verifiedWifi: null,
+      evidence: "type_rule",
+    });
+
+    const row = db
+      .query(
+        "SELECT starlink_status, verified_wifi, verified_at, next_check_after FROM united_fleet WHERE tail_number = 'N777QX'"
+      )
+      .get() as {
+      starlink_status: string;
+      verified_wifi: string | null;
+      verified_at: number | null;
+      next_check_after: number;
+    };
+    expect(row.starlink_status).toBe("confirmed");
+    expect(row.verified_wifi).toBeNull();
+    expect(row.verified_at).toBeNull();
+    expect(row.next_check_after).toBe(0); // not parked — verifier picks it up
+
+    const queue = getNextPlanesToVerify(db, 50, "AS").map((p) => p.tail_number);
+    expect(queue).toContain("N777QX");
+
+    // starlink_planes side: no DateFound (would fabricate a rollout cliff)
+    // and no verified_* stamps, even when a sheetGid is supplied.
+    addDiscoveredStarlinkPlane(db, "N777QX", "Embraer E175", "Starlink", "Horizon Air", "horizon", {
+      sheetGid: "as_seed",
+      airline: "AS",
+      evidence: "type_rule",
+    });
+    const sp = db
+      .query(
+        "SELECT DateFound, verified_wifi, verified_at, sheet_gid FROM starlink_planes WHERE TailNumber = 'N777QX'"
+      )
+      .get() as {
+      DateFound: string | null;
+      verified_wifi: string | null;
+      verified_at: number | null;
+      sheet_gid: string;
+    };
+    expect(sp.DateFound).toBeNull();
+    expect(sp.verified_wifi).toBeNull();
+    expect(sp.verified_at).toBeNull();
+    expect(sp.sheet_gid).toBe("as_seed");
+    db.close();
+  });
+
+  test("type_rule seed settling an existing unknown row also leaves stamps NULL", () => {
+    const db = makeSyntheticDb();
+    addFleet(db, "N778QX", "unknown", {
+      airline: "AS",
+      aircraftType: "Embraer E175",
+      verifiedAt: null,
+    });
+    upsertFleetAircraft(db, "N778QX", "Embraer E175", "as_seed", "horizon", "Horizon Air", "AS", {
+      starlinkStatus: "confirmed",
+      verifiedWifi: null,
+      evidence: "type_rule",
+    });
+    const row = fleetRow(db, "N778QX");
+    expect(row.starlink_status).toBe("confirmed");
+    expect(row.verified_wifi).toBeNull();
+    expect(row.verified_at).toBeNull();
+    db.close();
+  });
+
+  test("observed seed (FlyerTalk-style) keeps observation semantics: stamps + parking", () => {
+    const db = makeSyntheticDb();
+    upsertFleetAircraft(
+      db,
+      "A7-ALX",
+      "Airbus A350-941",
+      "flyertalk_qr",
+      "mainline",
+      "Qatar Airways",
+      "QR",
+      { starlinkStatus: "confirmed", verifiedWifi: "Starlink", evidence: "observed" }
+    );
+    const row = db
+      .query(
+        "SELECT starlink_status, verified_wifi, verified_at, next_check_after FROM united_fleet WHERE tail_number = 'A7-ALX'"
+      )
+      .get() as {
+      starlink_status: string;
+      verified_wifi: string | null;
+      verified_at: number | null;
+      next_check_after: number;
+    };
+    expect(row.starlink_status).toBe("confirmed");
+    expect(row.verified_wifi).toBe("Starlink");
+    expect(row.verified_at).not.toBeNull();
+    expect(row.next_check_after).toBeGreaterThan(Math.floor(Date.now() / 1000)); // parked
+    db.close();
+  });
+
+  test("addDiscoveredStarlinkPlane without evidence throws at runtime", () => {
+    // Ad-hoc callers (bun -e, untyped scripts) bypass tsc; a silent
+    // 'observed' default is the rollout-cliff fabrication path.
+    const db = makeSyntheticDb();
+    expect(() =>
+      addDiscoveredStarlinkPlane(db, "N779QX", "Embraer E175", "Starlink", null, "horizon", {
+        airline: "AS",
+      } as Parameters<typeof addDiscoveredStarlinkPlane>[6])
+    ).toThrow(/evidence/);
+    expect(
+      db.query("SELECT COUNT(*) AS n FROM starlink_planes WHERE TailNumber = 'N779QX'").get()
+    ).toEqual({ n: 0 });
     db.close();
   });
 });

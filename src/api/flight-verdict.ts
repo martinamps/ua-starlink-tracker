@@ -7,12 +7,27 @@
  * /api/check-flight and MCP check_flight so the two surfaces converge.
  */
 
+import { OBSERVED_WIFI_SOURCES } from "../airlines/registry";
 import type { ScopedReader } from "../database/reader";
 import { matchesLocalDate } from "../utils/airport-tz";
 import { FlightRadar24API } from "./flightradar24-api";
 
 const fr24 = new FlightRadar24API();
 type Assignment = Awaited<ReturnType<FlightRadar24API["getFlightAssignments"]>>;
+type AssignmentFetcher = (flightNumber: string, targetDateUnix: number) => Promise<Assignment>;
+
+const defaultFetcher: AssignmentFetcher = (flightNumber, targetDateUnix) =>
+  fr24.getFlightAssignments(flightNumber, targetDateUnix);
+let fetchAssignments: AssignmentFetcher = defaultFetcher;
+
+// Test seam as a setter (not an injected param) because the cache is already
+// module-global: a swapped fetcher must clear it or stale entries leak across.
+// null restores the default.
+export function setAssignmentFetcher(fetcher: AssignmentFetcher | null): void {
+  fetchAssignments = fetcher ?? defaultFetcher;
+  assignmentCache.clear();
+}
+
 const assignmentCache = new Map<
   string,
   { promise: Promise<Assignment>; at: number; failedAt?: number }
@@ -20,14 +35,15 @@ const assignmentCache = new Map<
 const ASSIGNMENT_CACHE_TTL = 3600;
 // During an outage, replay the rejection briefly instead of re-running the
 // full retry ladder on every request.
-const ASSIGNMENT_FAILURE_TTL = 60;
+export const ASSIGNMENT_FAILURE_TTL = 60;
 
 export function cachedFlightAssignments(
   flightNumber: string,
-  targetDateUnix: number
+  targetDateUnix: number,
+  nowSec = Math.floor(Date.now() / 1000)
 ): Promise<Assignment> {
   const key = `${flightNumber}:${Math.floor(targetDateUnix / 86400)}`;
-  const now = Math.floor(Date.now() / 1000);
+  const now = nowSec;
   const cached = assignmentCache.get(key);
   if (cached) {
     const failed = cached.failedAt !== undefined;
@@ -41,7 +57,7 @@ export function cachedFlightAssignments(
     }
   }
 
-  const promise = fr24.getFlightAssignments(flightNumber, targetDateUnix);
+  const promise = fetchAssignments(flightNumber, targetDateUnix);
   const entry: { promise: Promise<Assignment>; at: number; failedAt?: number } = {
     promise,
     at: now,
@@ -49,15 +65,16 @@ export function cachedFlightAssignments(
   assignmentCache.set(key, entry);
   // Empties don't stay cached — unpublished assignments appear close to
   // departure, so re-polling is intentional. Rejections become a short-TTL
-  // failure marker; this rejection handler also keeps the stored promise from
-  // ever surfacing as an unhandled rejection.
+  // failure marker stamped from the injected clock, so the stamp and the TTL
+  // compare share one timebase; this rejection handler also keeps the stored
+  // promise from ever surfacing as an unhandled rejection.
   promise.then(
     (result) => {
       if (result.length === 0) assignmentCache.delete(key);
     },
     () => {
       if (assignmentCache.get(key) === entry) {
-        entry.failedAt = Math.floor(Date.now() / 1000);
+        entry.failedAt = now;
       }
     }
   );
@@ -95,9 +112,17 @@ export function resolveTailVerdict(
 
   if (sp) {
     const base = { aircraft_model: sp.Aircraft, operated_by: sp.OperatedBy, fleet_type: sp.fleet };
-    const consensus = reader.computeWifiConsensus(tail);
-    if (consensus.verdict === "Starlink") {
+    // "verified" is reserved for actually-observed wifi evidence. Type-derived
+    // sources (alaska-json/qatar equipment inference) may still settle the
+    // verdict, but at the spreadsheet/'likely' tier — a type rule must never
+    // wear the same label as a united.com-observed banner.
+    const observed = reader.computeWifiConsensus(tail, { sources: OBSERVED_WIFI_SOURCES });
+    if (observed.verdict === "Starlink") {
       return { hasStarlink: true, confidence: "verified", ...base };
+    }
+    const consensus = observed.verdict !== null ? observed : reader.computeWifiConsensus(tail);
+    if (consensus.verdict === "Starlink") {
+      return { hasStarlink: true, confidence: "spreadsheet", ...base };
     }
     if (consensus.verdict !== null) {
       return { hasStarlink: false, confidence: "disputed", ...base };
@@ -174,7 +199,11 @@ export async function lookupFlightTailVerdict(
   const inLookupWindow = endOfDay > nowSec - 86400 && startOfDay < nowSec + 3 * 86400;
   if (!inLookupWindow) return null;
 
-  const assignments = await cachedFlightAssignments(normalizedFlightNumber, startOfDay + 43200);
+  const assignments = await cachedFlightAssignments(
+    normalizedFlightNumber,
+    startOfDay + 43200,
+    nowSec
+  );
   const segments: FallbackSegment[] = [];
 
   for (const a of assignments) {

@@ -13,6 +13,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { getContent } from "../src/airlines/content";
 import { AIRLINES, SITES, type SiteConfig, siteForAirline } from "../src/airlines/registry";
+import { COUNTERS, metrics } from "../src/observability/metrics";
 import { createApp } from "../src/server/app";
 import { jsonOf, openSnapshot, postMcp, req } from "./helpers";
 
@@ -64,9 +65,8 @@ const BANNED_PATTERNS: Array<{
       ["src/scripts/fleet-sync.ts", 1], // CLI default argument for the UA sync job
       ["src/scripts/flightradar24-scraper.ts", 1], // CLI default slug for the UA scraper
       ["src/scripts/verify-tails.ts", 1], // united.com ground-truth CLI — UA-bound by definition
-      ["src/scripts/starlink-verifier.ts", 1], // united.com verifier — UA-bound by definition
       ["src/scripts/sync-ship-numbers.ts", 1], // United mainline ship-number sheet — UA-bound by definition
-      ["src/scripts/fleet-discovery.ts", 1], // united.com discovery checker — UA-bound by definition
+      ["src/scripts/united-verdict.ts", 1], // shared united.com verdict core — UA-bound by definition
     ]),
     why:
       "A UA default on a missing tenant/airline is the og:image bug class: the row or response " +
@@ -337,6 +337,56 @@ describe("hub /api/check-flight + /api/predict-flight detect the airline", () =>
     expect(d.message).not.toContain("United");
   });
 
+  test("hub MCP flight tools apply the same carrier gate as hub REST", async () => {
+    const call = async (name: string, args: Record<string, unknown>) => {
+      const j = await postMcp(app, hub.canonicalHost, "tools/call", { name, arguments: args });
+      return j.result as { content: Array<{ text: string }>; isError?: boolean };
+    };
+
+    // AS2000 on hub MCP: registry answer matching hub REST — never a UA-model
+    // blend (the pre-fix scopeCfg('ALL')→UA path served UA priors here).
+    const d = await getJSON(hub, "/api/predict-flight?flight_number=AS2000");
+    expect(d.method).toBeUndefined();
+    expect(d.n_observations).toBeUndefined();
+    const predict = await call("predict_flight_starlink", { flight_number: "AS2000" });
+    const predictText = predict.content[0].text;
+    expect(predictText).toContain(d.message);
+    expect(predictText).not.toContain("fleet prior");
+    expect(predictText).not.toContain("United");
+
+    // QR is publicInHub:false — hub MCP check_flight refuses, like hub REST.
+    const qr = await call("check_flight", { flight_number: "QR123", date: "2026-03-22" });
+    expect(qr.isError).toBe(true);
+    expect(qr.content[0].text).toContain("not tracked");
+    expect(qr.content[0].text).not.toContain("QR (");
+
+    // Digits-only on the hub is undetectable — clean error listing carriers.
+    const bare = await call("check_flight", { flight_number: "123", date: "2026-03-22" });
+    expect(bare.isError).toBe(true);
+    expect(bare.content[0].text).toContain("UA (United Airlines)");
+
+    // Genuinely-UA numbers keep answering as before.
+    const ua = await call("check_flight", { flight_number: "UA4421", date: "2026-03-22" });
+    expect(ua.isError).not.toBe(true);
+    expect(ua.content[0].text).toContain("UA4421");
+  });
+
+  test("hub /api/check-any-flight tags days_out like /api/check-flight", async () => {
+    const calls: Array<{ name: string; tags?: Record<string, string | number> }> = [];
+    const original = metrics.increment;
+    metrics.increment = (name, tags) => {
+      calls.push({ name, tags });
+    };
+    try {
+      await getJSON(hub, "/api/check-any-flight?flight_number=UA4421&date=2026-03-22");
+    } finally {
+      metrics.increment = original;
+    }
+    const lookup = calls.find((c) => c.name === COUNTERS.FLIGHT_LOOKUP_RESULT);
+    expect(lookup).toBeDefined();
+    expect(lookup?.tags?.days_out).toBeDefined();
+  });
+
   test("hub /api/data pins fleetStats: null (deliberate wire change)", async () => {
     // Pre-Set-C the hub served UA's subfleet stats masquerading as the hub's.
     // null is the honest shape — no cross-airline subfleet aggregate exists.
@@ -409,6 +459,28 @@ describe("MCP tools are scope-correct on non-UA tenants", () => {
         const t = await call("check_flight", { flight_number: "1", date: "2026-03-22" });
         expect(t).toContain(`${cfg.iata}1`);
         expectNoUaLeak(t, `${site.key} check_flight`);
+      });
+
+      test("check_flight('UA123'): foreign marketing prefix refused, matching REST's 404", async () => {
+        const j = await postMcp(app, site.canonicalHost, "tools/call", {
+          name: "check_flight",
+          arguments: { flight_number: "UA123", date: "2026-03-22" },
+        });
+        expect(j.result.isError).toBe(true);
+        // Pinned refusal names ONLY this carrier — no competitor brand list.
+        expect(j.result.content[0].text).toContain(`This server covers ${cfg.name}`);
+        expect(j.result.content[0].text).not.toContain("United Airlines");
+        const res = await get(site, "/api/check-flight?flight_number=UA123&date=2026-03-22");
+        expect(res.status).toBe(404);
+      });
+
+      test(`check_flight('${cfg.iata}123'): own prefix still proceeds`, async () => {
+        const j = await postMcp(app, site.canonicalHost, "tools/call", {
+          name: "check_flight",
+          arguments: { flight_number: `${cfg.iata}123`, date: "2026-03-22" },
+        });
+        expect(j.result.isError).not.toBe(true);
+        expect(j.result.content[0].text).toContain(`${cfg.iata}123`);
       });
 
       test("predict_flight_starlink('1'): registry-driven answer, no UA priors", async () => {

@@ -7,9 +7,10 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { enabledAirlines } from "../src/airlines/registry";
+import { AIRLINES, enabledAirlines } from "../src/airlines/registry";
 import { checkNewPlanes } from "../src/api/flight-updater";
 import { FlightRadar24API } from "../src/api/flightradar24-api";
+import type { QatarFlight, fetchByRoute } from "../src/api/qatar-status";
 import {
   type getNextAlaskaVerifyTarget,
   getStarlinkTailsByCheckAge,
@@ -21,10 +22,17 @@ import { makeAlaskaTick } from "../src/scripts/alaska-verifier";
 import {
   FRESHNESS_COVERAGE,
   FRESHNESS_QUERIES,
+  buildFreshnessCoverage,
+  buildFreshnessQueries,
   emitDataFreshness,
 } from "../src/scripts/data-freshness";
+import { buildRoster } from "../src/scripts/fleet-sync";
+import { ingestQatarSchedule } from "../src/scripts/qatar-schedule-ingester";
+import { type SheetScrapeResult, runSheetScrape } from "../src/scripts/sheet-scrape";
+import type { FleetStats } from "../src/types";
 import { type JobClock, createOutageBreaker, startJob } from "../src/utils/job-runner";
-import { makeSyntheticDb } from "./helpers";
+import type { fetchAllSheets } from "../src/utils/utils";
+import { addQatarRow, makeSyntheticDb } from "./helpers";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // startJob runner — fake clock, ticks driven manually
@@ -242,6 +250,170 @@ describe("startJob runner", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Zombie-run isolation: an abandoned (stuck-escaped) run whose fetch settles
+// late must not DELETE/re-INSERT the roster or stamp lastUpdated — that
+// silently regresses the successor's data under a fresh freshness gauge.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function deferredVal<T>() {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+const sheetRoster = (tails: string[]) =>
+  tails.map((t) => ({
+    TailNumber: t,
+    Aircraft: "Boeing 737-900",
+    WiFi: "Starlink",
+    OperatedBy: "United Airlines",
+    fleet: "mainline",
+    sheet_gid: "test",
+    sheet_type: "test",
+    DateFound: "2026-04-12",
+  }));
+
+const SHEET_STATS: FleetStats = {
+  express: { total: 100, starlink: 30, unverified: 0, percentage: 30 },
+  mainline: { total: 100, starlink: 30, unverified: 0, percentage: 30 },
+};
+
+const uaSheetTails = (db: ReturnType<typeof makeSyntheticDb>) =>
+  (
+    db
+      .query(
+        "SELECT TailNumber FROM starlink_planes WHERE airline = 'UA' AND sheet_gid != 'discovery'"
+      )
+      .all() as Array<{ TailNumber: string }>
+  )
+    .map((r) => r.TailNumber)
+    .sort();
+
+describe("zombie runs cannot regress successor data", () => {
+  test("sheet_scrape: abandoned run's late fetch leaves roster + meta untouched", async () => {
+    const db = makeSyntheticDb();
+    const fc = fakeClock();
+    const zombieFetch = deferredVal<Awaited<ReturnType<typeof fetchAllSheets>>>();
+    const results: SheetScrapeResult[] = [];
+
+    let call = 0;
+    const fetchSheets = (() => {
+      call++;
+      if (call === 1) return zombieFetch.promise; // run 1 wedges on the sheet fetch
+      return Promise.resolve({
+        totalAircraftCount: 900,
+        starlinkAircraft: sheetRoster(["N50001", "N50002"]),
+        fleetStats: SHEET_STATS,
+      });
+    }) as unknown as typeof fetchAllSheets;
+
+    const job = startJob({
+      name: "t_sheet_zombie",
+      intervalMs: 3_600_000,
+      stuckTimeoutMs: 60_000,
+      clock: fc.clock,
+      run: async (ctx) => {
+        results.push(await runSheetScrape(db, fetchSheets, ctx));
+      },
+    });
+
+    const first = job.tick(); // run 1 in flight, fetch pending
+    fc.advance(60_000);
+    await job.tick(); // abandons run 1; run 2 (successor) writes its roster
+
+    expect(results).toHaveLength(1);
+    expect(results[0].outcome).toBe("success");
+    expect(uaSheetTails(db)).toEqual(["N50001", "N50002"]);
+    const metaAfterSuccessor = db
+      .query("SELECT value FROM meta WHERE key = 'UA:lastUpdated'")
+      .get() as { value: string } | null;
+
+    // Zombie's fetch finally resolves with a DIFFERENT roster — must discard.
+    zombieFetch.resolve({
+      totalAircraftCount: 900,
+      starlinkAircraft: sheetRoster(["N66666"]),
+      fleetStats: SHEET_STATS,
+    } as Awaited<ReturnType<typeof fetchAllSheets>>);
+    await first;
+
+    expect(results).toHaveLength(2);
+    expect(results[1].outcome).toBe("abandoned");
+    expect(uaSheetTails(db)).toEqual(["N50001", "N50002"]);
+    expect(
+      (db.query("SELECT value FROM meta WHERE key = 'UA:lastUpdated'").get() as { value: string })
+        ?.value
+    ).toBe(metaAfterSuccessor?.value as string);
+    job.stop();
+    db.close();
+  });
+
+  test("qatar ingester: abandoned run's late fetch leaves schedule + meta untouched", async () => {
+    const db = makeSyntheticDb();
+    const fc = fakeClock();
+    const now = Math.floor(Date.now() / 1000);
+    const zombieFetch = deferredVal<QatarFlight[] | null>();
+    const results: Awaited<ReturnType<typeof ingestQatarSchedule>>[] = [];
+
+    // Successor-equivalent state the zombie must not disturb.
+    addQatarRow(db, "QR701", now + 6 * 3600, "Starlink");
+    setMeta(db, "lastUpdated", "2026-06-04T00:00:00.000Z", "QR");
+
+    let run = 0;
+    const fetchRoute = (() => {
+      if (run === 1) return zombieFetch.promise; // run 1 wedges on its first route
+      return Promise.resolve(null); // run 2: total outage — no writes, fast
+    }) as unknown as typeof fetchByRoute;
+
+    const job = startJob({
+      name: "t_qr_zombie",
+      intervalMs: 3_600_000,
+      stuckTimeoutMs: 60_000,
+      clock: fc.clock,
+      run: async (ctx) => {
+        run++;
+        results.push(await ingestQatarSchedule(db, fetchRoute, ctx));
+      },
+    });
+
+    const first = job.tick(); // run 1 pending on route fetch
+    fc.advance(60_000);
+    await job.tick(); // abandons run 1; run 2 is a fast no-op outage
+
+    expect(results).toHaveLength(1);
+    expect(results[0].outcome).toBe("error");
+
+    // Zombie's fetch resolves with a flight that would upsert + prune + stamp.
+    zombieFetch.resolve([
+      {
+        flightNumber: "0702",
+        departureAirport: "DOH",
+        arrivalAirport: "JFK",
+        scheduledDeparture: now + 7200,
+        scheduledArrival: now + 7 * 3600,
+        equipmentCode: "77W",
+        flightStatus: "Scheduled",
+      } as QatarFlight,
+    ]);
+    await first;
+
+    expect(results).toHaveLength(2);
+    expect(results[1].outcome).toBe("abandoned");
+    const rows = db.query("SELECT flight_number FROM qatar_schedule").all() as Array<{
+      flight_number: string;
+    }>;
+    expect(rows).toEqual([{ flight_number: "QR701" }]);
+    expect(
+      (db.query("SELECT value FROM meta WHERE key = 'QR:lastUpdated'").get() as { value: string })
+        .value
+    ).toBe("2026-06-04T00:00:00.000Z");
+    job.stop();
+    db.close();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // checkNewPlanes — enqueue-only (the 22.5s trickle does the fetching)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -418,7 +590,6 @@ describe("data-freshness coverage", () => {
         ).run(ts, airline);
         break;
       case "verifier":
-        // has_starlink NOT NULL — the query filters crash/error rows.
         db.query(
           "INSERT INTO starlink_verification_log (tail_number, source, checked_at, has_starlink, airline) VALUES ('N1', 'test', ?, 1, ?)"
         ).run(ts, airline);
@@ -463,6 +634,24 @@ describe("data-freshness coverage", () => {
     db.close();
   });
 
+  test("verifier freshness counts NULL-wifi checks — the check happened", () => {
+    // An alaska-json verifier without type-table coverage logs rows with
+    // has_starlink NULL forever; the gauge must still see those checks
+    // instead of going mute (a dead verifier and a wifi-less one must both
+    // be visible, and the timestamp distinguishes them).
+    const db = makeSyntheticDb();
+    const ts = 1_750_000_000;
+    db.query(
+      "INSERT INTO starlink_verification_log (tail_number, source, checked_at, has_starlink, airline) VALUES ('N1', 'alaska', ?, NULL, 'AS')"
+    ).run(ts);
+    const rows = db.query(FRESHNESS_QUERIES.verifier).all() as Array<{
+      airline: string;
+      ts: number | null;
+    }>;
+    expect(rows).toEqual([{ airline: "AS", ts }]);
+    db.close();
+  });
+
   test("qatar_ingester gauge tracks MAX(last_updated) in qatar_schedule", () => {
     const db = makeSyntheticDb();
     db.query(
@@ -486,14 +675,17 @@ describe("data-freshness coverage", () => {
 describe("qatar_ingester freshness sentinel", () => {
   type GaugeCall = { name: string; value: number; tags?: Record<string, string | number> };
 
-  function captureGauges(db: ReturnType<typeof makeSyntheticDb>): GaugeCall[] {
+  function captureGauges(
+    db: ReturnType<typeof makeSyntheticDb>,
+    queries?: Record<string, string>
+  ): GaugeCall[] {
     const calls: GaugeCall[] = [];
     const original = metrics.gauge;
     metrics.gauge = (name, value, tags) => {
       calls.push({ name, value, tags });
     };
     try {
-      emitDataFreshness(db);
+      emitDataFreshness(db, queries);
     } finally {
       metrics.gauge = original;
     }
@@ -533,5 +725,59 @@ describe("qatar_ingester freshness sentinel", () => {
     const call = qatarGauge(captureGauges(db));
     expect(call?.value as number).toBeLessThan(300);
     db.close();
+  });
+
+  test("QR disabled → no qatar_ingester query, coverage, or gauge emission", () => {
+    expect(Object.keys(buildFreshnessQueries(false))).not.toContain("qatar_ingester");
+    expect(Object.keys(buildFreshnessCoverage(false))).not.toContain("qatar_ingester");
+
+    const db = makeSyntheticDb();
+    // Empty table + no meta = maximally stale; a disabled QR must still go
+    // quiet instead of paging forever.
+    const call = qatarGauge(captureGauges(db, buildFreshnessQueries(false)));
+    expect(call).toBeUndefined();
+    db.close();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// fleet-sync buildRoster — qx-qxe/as-asa overlap dedupe + src-derived operator
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("fleet-sync buildRoster", () => {
+  const AS = AIRLINES.AS;
+  const e175 = (reg: string) => ({ registration: reg, aircraftType: "Embraer E175LR" });
+  const b737 = (reg: string) => ({ registration: reg, aircraftType: "Boeing 737-890" });
+
+  test("overlapping source pages dedupe by tail (no double-count)", () => {
+    const roster = buildRoster(AS, [
+      // Primary livery page lists the full fleet, regional E175s included.
+      { aircraft: [b737("N644AS"), e175("N654QX")] },
+      // Regional page overlaps on N654QX.
+      { subfleet: "horizon", aircraft: [e175("N654QX"), e175("N658QX")] },
+    ]);
+    expect(roster.length).toBe(3);
+  });
+
+  test("operator is src-derived only: qx-qxe rows get Horizon Air, as-asa rows emit null", () => {
+    const roster = buildRoster(AS, [
+      { aircraft: [b737("N644AS"), e175("N654QX")] },
+      { subfleet: "horizon", aircraft: [e175("N658QX")] },
+    ]);
+    // as-asa-sourced E175: type-classified subfleet, but operator stays null
+    // so COALESCE keeps the DB value (SkyWest-operated AS E175s exist).
+    const livery = roster.find((r) => r.registration === "N654QX");
+    expect(livery?.subfleet).toBe("horizon");
+    expect(livery?.operator).toBeNull();
+    // qx-qxe-sourced tail: the page itself proves the operator.
+    const regional = roster.find((r) => r.registration === "N658QX");
+    expect(regional?.subfleet).toBe("horizon");
+    expect(regional?.operator).toBe("Horizon Air");
+    expect(roster.find((r) => r.registration === "N644AS")?.operator).toBeNull();
+  });
+
+  test("configured page subfleet beats the type classifier", () => {
+    const roster = buildRoster(AS, [{ subfleet: "horizon", aircraft: [b737("N999XX")] }]);
+    expect(roster[0].subfleet).toBe("horizon");
   });
 });

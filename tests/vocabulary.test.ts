@@ -10,6 +10,7 @@
 import { describe, expect, test } from "bun:test";
 import { getContent } from "../src/airlines/content";
 import { content as hubContent } from "../src/airlines/content/hub";
+import { detectAirline } from "../src/airlines/flight-number";
 import {
   AIRLINES,
   HUB_BRAND,
@@ -21,6 +22,7 @@ import {
 } from "../src/airlines/registry";
 import {
   computeWifiConsensus,
+  getRecentInstalls,
   logVerification,
   reconcileConsensus,
 } from "../src/database/database";
@@ -98,6 +100,39 @@ describe("carrier prefixes", () => {
         owner.set(prefix, a.code);
       }
     }
+  });
+
+  test("foreign-carrier prefixes resolve to no airline (ACA/PDT/ENY are not United Express)", () => {
+    for (const fn of ["ACA123", "PDT123", "ENY123"]) {
+      expect(detectAirline(fn), fn).toBeNull();
+    }
+  });
+});
+
+// ── bulk sheet_gids: write-side vocabulary ties to the INSTALL_FILTER read ──
+
+describe("bulk writer sheet_gids are excluded from install surfaces", () => {
+  // Every gid a bulk writer stamps (one run date across many tails: seeds,
+  // type rules, FlyerTalk backfills). A new bulk writer must pick a gid
+  // matching INSTALL_FILTER's exclusion patterns ('%_seed',
+  // 'type_deterministic', 'flyertalk_%') and join this list.
+  const BULK_GIDS = ["ha_seed", "as_seed", "flyertalk_qr", "flyertalk_as", "type_deterministic"];
+
+  test("bulk gids never read as recent installs; discovery does", () => {
+    const db = makeSyntheticDb();
+    const ins = db.query(
+      `INSERT INTO starlink_planes (TailNumber, aircraft, wifi, OperatedBy, fleet, airline, sheet_gid, DateFound)
+       VALUES (?, 'B737', 'Starlink', 'Test', 'mainline', 'UA', ?, date('now'))`
+    );
+    BULK_GIDS.forEach((gid, i) => ins.run(`N9${i}BULK`, gid));
+    ins.run("N99DISC", "discovery");
+
+    const tails = getRecentInstalls(db, "UA", 500).map((r) => r.TailNumber);
+    BULK_GIDS.forEach((gid, i) =>
+      expect(tails.includes(`N9${i}BULK`), `${gid} surfaced as a recent install`).toBe(false)
+    );
+    expect(tails).toContain("N99DISC");
+    db.close();
   });
 });
 

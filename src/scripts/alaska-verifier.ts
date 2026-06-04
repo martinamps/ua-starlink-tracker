@@ -81,8 +81,9 @@ export async function checkOne(
   }
 
   const flightNum = flight.flight_number.replace(/[^0-9]/g, "");
+  const mappedTz = airportTimezone(flight.departure_airport);
   // Default to AS's home tz for unmapped airports (pre-existing behavior).
-  const tz = airportTimezone(flight.departure_airport) ?? "America/Los_Angeles";
+  const tz = mappedTz ?? "America/Los_Angeles";
   const dateLocal = localDateISO(flight.departure_time, tz);
 
   // fetchStatus throws on transport failure and returns null when the fetch
@@ -93,11 +94,20 @@ export async function checkOne(
   try {
     status = await fetchStatus(flightNum, dateLocal, airline);
     if (!status) {
-      // tz-map gaps or schedule-vs-published date skew — try the prior local
-      // day before recording a not-published observation.
-      const prev = shiftDate(dateLocal, -1);
-      status = await fetchStatus(flightNum, prev, airline);
-      if (status) dateUsed = prev;
+      // Schedule-vs-published date skew: try the prior local day. The +1
+      // probe is the unmapped-fallback strategy only — the LA default
+      // computes a date one day EARLY for eastern stations with 00:00-03:00
+      // local departures, so D-1 alone would never find those flights.
+      // Mapped airports compute the true local date and never need +1.
+      const deltas = mappedTz ? [-1] : [-1, +1];
+      for (const delta of deltas) {
+        const shifted = shiftDate(dateLocal, delta);
+        status = await fetchStatus(flightNum, shifted, airline);
+        if (status) {
+          dateUsed = shifted;
+          break;
+        }
+      }
     }
   } catch (e) {
     fetchFailed = true;

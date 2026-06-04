@@ -202,6 +202,85 @@ describe("CORS preflight", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Rate limiter coverage: /mcp protocol traffic and check-flight permalinks are
+// metered like /api/* (POST /mcp drives live FR24 lookups; permalink SSR runs
+// predictions per request). GET /mcp (the HTML setup page) stays unmetered.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("rate limiter covers /mcp and permalinks", () => {
+  const UA = "unitedstarlinktracker.com";
+
+  // Distinct IPs so each flood gets its own limiter bucket.
+  const FLOODS: Array<[string, () => Request]> = [
+    [
+      "POST /mcp",
+      () =>
+        req("/mcp", UA, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-forwarded-for": "10.99.1.1" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" }),
+        }),
+    ],
+    [
+      "OPTIONS /mcp",
+      () => req("/mcp", UA, { method: "OPTIONS", headers: { "x-forwarded-for": "10.99.1.2" } }),
+    ],
+    [
+      "GET /check-flight/UA1 permalink",
+      () => req("/check-flight/UA1", UA, { headers: { "x-forwarded-for": "10.99.1.3" } }),
+    ],
+  ];
+
+  test.each(FLOODS)("%s: 61st request from one IP → 429", async (_name, mk) => {
+    let last = 0;
+    for (let i = 0; i < 61; i++) {
+      last = (await app.dispatch(mk())).status;
+      if (i === 0) expect(last).not.toBe(429);
+    }
+    expect(last).toBe(429);
+  });
+
+  test("GET /mcp setup page is NOT metered", async () => {
+    for (let i = 0; i < 65; i++) {
+      const res = await get("/mcp", UA);
+      expect(res.status).toBe(200);
+    }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Dispatch last-resort error handling: a deliberately rethrowing handler must
+// leave as a finalized 500 (security headers + CORS), never a bare Bun 500.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("dispatch wraps handler throws", () => {
+  test("throwing /api handler → 500 JSON with nosniff + ACAO", async () => {
+    const isolated = createApp(openSnapshot());
+    isolated.routes["/api/data"] = () => {
+      throw new Error("deliberate rethrow");
+    };
+    const res = await isolated.dispatch(req("/api/data", "unitedstarlinktracker.com"));
+    expect(res.status).toBe(500);
+    expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBe("*");
+    expect(await res.json()).toEqual({ error: "internal" });
+  });
+
+  test("throwing page handler → 500 without leaking the error", async () => {
+    const isolated = createApp(openSnapshot());
+    isolated.routes["/fleet"] = () => {
+      throw new Error("secret detail");
+    };
+    const res = await isolated.dispatch(req("/fleet", "unitedstarlinktracker.com"));
+    expect(res.status).toBe(500);
+    expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
+    const text = await res.text();
+    expect(text).not.toContain("secret detail");
+    expect(JSON.parse(text)).toEqual({ error: "internal" });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Canonical-host redirects
 // ─────────────────────────────────────────────────────────────────────────────
 

@@ -14,13 +14,14 @@ import {
   updateDatabase,
 } from "../database/database";
 import { COUNTERS, metrics, normalizeAirlineTag, withSpan } from "../observability";
+import type { JobRunContext } from "../utils/job-runner";
 import { info, error as logError } from "../utils/logger";
 import { fetchAllSheets } from "../utils/utils";
 import { computePrecision, emitPrecisionGauges } from "./precision-backtest";
 import { computeSurfaceContradictions, emitSweepGauges } from "./surface-sweep";
 
 export interface SheetScrapeResult {
-  outcome: "success" | "refused" | "error";
+  outcome: "success" | "refused" | "error" | "abandoned";
   refusal?: string;
   total: number;
   starlinkCount: number;
@@ -28,7 +29,8 @@ export interface SheetScrapeResult {
 
 export async function runSheetScrape(
   db: Database,
-  fetchSheets: typeof fetchAllSheets = fetchAllSheets
+  fetchSheets: typeof fetchAllSheets = fetchAllSheets,
+  ctx?: JobRunContext
 ): Promise<SheetScrapeResult> {
   return withSpan(
     "scraper.update_data",
@@ -36,6 +38,15 @@ export async function runSheetScrape(
       span.setTag("job.type", "background");
       try {
         const { totalAircraftCount, starlinkAircraft, fleetStats } = await fetchSheets();
+        // A run the job runner has abandoned (stuck escape) can still have its
+        // sheet fetch resolve minutes later. Its DELETE/re-INSERT + lastUpdated
+        // stamp would silently regress the successor's roster under a fresh
+        // freshness gauge — log and discard before any write.
+        if (ctx && !ctx.isCurrent()) {
+          info("sheet-scrape: run was abandoned mid-fetch; discarding results, no writes");
+          span.setTag("result", "abandoned");
+          return { outcome: "abandoned", total: 0, starlinkCount: 0 };
+        }
         const refusal = updateDatabase(db, totalAircraftCount, starlinkAircraft, fleetStats);
         if (refusal) {
           // Roster sanity floor tripped (e.g. 200-with-HTML parsed to ~0 rows)

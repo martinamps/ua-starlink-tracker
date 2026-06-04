@@ -13,7 +13,7 @@ import { runSheetScrape } from "./src/scripts/sheet-scrape";
 import { startStarlinkVerifier } from "./src/scripts/starlink-verifier";
 import { syncShipNumbers } from "./src/scripts/sync-ship-numbers";
 import { createApp } from "./src/server/app";
-import { type JobHandle, startJob } from "./src/utils/job-runner";
+import { type JobHandle, type JobRunContext, startJob } from "./src/utils/job-runner";
 import { info, error as logError } from "./src/utils/logger";
 
 process.on("unhandledRejection", (reason) => {
@@ -39,11 +39,11 @@ Bun.serve({
 // Background jobs (raw db; not request-scoped)
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function updateStarlinkData() {
-  const result = await runSheetScrape(db);
+async function updateStarlinkData(ctx?: JobRunContext) {
+  const result = await runSheetScrape(db, undefined, ctx);
   // A refused roster replace still scanned/healed; only a hard error (sheet
-  // fetch threw) skips the discovery pass.
-  if (result.outcome !== "error") {
+  // fetch threw) or an abandoned (stuck-escaped) run skips the discovery pass.
+  if (result.outcome === "success" || result.outcome === "refused") {
     await checkNewPlanes(db).catch((err) => logError("Error checking new planes", err));
   }
   return result;
@@ -62,9 +62,9 @@ if (JOBS_ENABLED) {
       name: "sheet_scrape",
       intervalMs: 60 * 60 * 1000,
       initialDelayMs: 0,
-      run: async () => {
+      run: async (ctx) => {
         info("Running scheduled update...");
-        await updateStarlinkData();
+        await updateStarlinkData(ctx);
       },
     })
   );

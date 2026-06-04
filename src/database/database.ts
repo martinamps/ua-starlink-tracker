@@ -746,6 +746,19 @@ function equippedFilter(sp: string): string {
     )`;
 }
 
+// DateFound records when WE found the tail, not when the antenna went on.
+// Bulk writers — seed batches (sheet_gid '*_seed'), type-rule settles, and
+// FlyerTalk backfills — stamp a single run date across many tails, so any
+// "recent installs" surface must exclude them or a one-day import reads as an
+// install spike. (Set E made type_rule writes DateFound NULL; the predicate
+// still excludes legacy 'type_deterministic' rows with a stamped date.)
+const INSTALL_FILTER = `DateFound IS NOT NULL
+    AND (sheet_gid IS NULL OR (
+      sheet_gid NOT LIKE '%\\_seed' ESCAPE '\\'
+      AND sheet_gid <> 'type_deterministic'
+      AND sheet_gid NOT LIKE 'flyertalk\\_%' ESCAPE '\\'
+    ))`;
+
 export function getRecentInstalls(
   db: Database,
   airline: AirlineFilter,
@@ -753,8 +766,7 @@ export function getRecentInstalls(
   perAirlineCap?: number
 ): RecentInstall[] {
   const cols = "airline, TailNumber, aircraft as Aircraft, OperatedBy, DateFound";
-  // DateFound NULL = type-rule settle, not a dated install — never "recent".
-  const filter = `${equippedFilter("starlink_planes")} AND DateFound IS NOT NULL`;
+  const filter = `${equippedFilter("starlink_planes")} AND ${INSTALL_FILTER}`;
   if (perAirlineCap && perAirlineCap > 0) {
     const q = withAirline(
       `SELECT ${cols}, ROW_NUMBER() OVER (PARTITION BY airline ORDER BY DateFound DESC) AS rn
@@ -802,14 +814,12 @@ export function getHubStats(db: Database, codes: readonly string[]): HubAirlineS
     )
     .all(...codes) as { airline: string; n: number }[];
   const equippedBy = Object.fromEntries(equipped.map((r) => [r.airline, r.n]));
-  // Exclude seed batches (sheet_gid '*_seed') — those bootstrap a known-equipped
-  // fleet on a single date and would otherwise read as a 90-aircraft "install spike".
   const v = db
     .query(
       `SELECT airline, COUNT(*) n FROM starlink_planes
        WHERE DateFound >= date('now','-30 day')
          AND ${equippedFilter("starlink_planes")}
-         AND (sheet_gid IS NULL OR sheet_gid NOT LIKE '%\\_seed' ESCAPE '\\')
+         AND ${INSTALL_FILTER}
          AND airline IN (${placeholders})
        GROUP BY airline`
     )
@@ -925,6 +935,10 @@ export function getFleetStats(db: Database, airline = "UA"): FleetStats {
   };
 }
 
+// FR24 has shipped epoch-0 / half-parsed departure rows before. Enforce the
+// floor at the insert so the invariant lives in the table, not on every read.
+const MIN_VALID_DEPARTURE_TS = 946684800; // 2000-01-01
+
 export function updateFlights(
   db: Database,
   tailNumber: string,
@@ -934,6 +948,10 @@ export function updateFlights(
   >[]
 ) {
   const now = Math.floor(Date.now() / 1000);
+  const valid = flights.filter((f) => f.departure_time >= MIN_VALID_DEPARTURE_TS);
+  if (valid.length < flights.length) {
+    info(`updateFlights ${tailNumber}: dropped ${flights.length - valid.length} pre-2000 rows`);
+  }
   const airline =
     (
       db.query("SELECT airline FROM starlink_planes WHERE TailNumber = ?").get(tailNumber) as
@@ -951,13 +969,13 @@ export function updateFlights(
     archivePastDepartures(db, now, tailNumber);
     db.query("DELETE FROM upcoming_flights WHERE tail_number = ?").run(tailNumber);
 
-    if (flights.length > 0) {
+    if (valid.length > 0) {
       const insertStmt = db.prepare(`
         INSERT INTO upcoming_flights (tail_number, flight_number, departure_airport, arrival_airport, departure_time, arrival_time, last_updated, airline)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
-      for (const flight of flights) {
+      for (const flight of valid) {
         insertStmt.run(
           tailNumber,
           flight.flight_number,
@@ -979,13 +997,15 @@ export function updateFlights(
   // Stored under the marketing-carrier code (UA123) — that's what
   // getCachedFlightRoutes is queried with.
   const cfg = AIRLINES[airline];
+  // All rows with valid airports feed the route cache — a half-parsed
+  // departure_time invalidates the schedule row, not the route knowledge.
   for (const flight of flights) {
     if (!flight.flight_number || !flight.departure_airport || !flight.arrival_airport) continue;
     const normalized = cfg
       ? ensureAirlinePrefix(cfg, flight.flight_number)
       : flight.flight_number.trim().toUpperCase();
     const dur =
-      flight.arrival_time > flight.departure_time && flight.departure_time > 0
+      flight.arrival_time > flight.departure_time && flight.departure_time >= MIN_VALID_DEPARTURE_TS
         ? flight.arrival_time - flight.departure_time
         : null;
     cacheFlightRoute(db, normalized, flight.departure_airport, flight.arrival_airport, dur, now);
@@ -1023,10 +1043,9 @@ export function getUpcomingFlights(
   airline?: AirlineFilter
 ): Flight[] {
   const now = Math.floor(Date.now() / 1000);
-  const minValidTimestamp = 946684800;
 
-  let sql = "SELECT * FROM upcoming_flights WHERE departure_time > ? AND departure_time > ?";
-  const params: (string | number)[] = [now, minValidTimestamp];
+  let sql = "SELECT * FROM upcoming_flights WHERE departure_time > ?";
+  const params: (string | number)[] = [now];
   if (tailNumber) {
     sql += " AND tail_number = ?";
     params.push(tailNumber);
@@ -1092,6 +1111,16 @@ export interface VerificationObservation {
   checked_at: number;
 }
 
+// A clean observation: the check reached the vendor (error IS NULL), parsed a
+// verdict, and saw a real provider string. has_starlink=0 with an empty
+// wifi_provider is a scrape that missed the wifi section, not a negative.
+// Shared by the predictor (here), computeWifiConsensus, and the precision
+// harness so training, settling, and scoring all see the same population.
+// Columns are unqualified — embed only where the enclosing FROM scope is the
+// verification log itself (single table, correlated subqueries included).
+export const CLEAN_OBSERVATION_WHERE = `error IS NULL AND has_starlink IS NOT NULL
+    AND wifi_provider IS NOT NULL AND wifi_provider <> ''`;
+
 export function getVerificationObservations(
   db: Database,
   airline?: AirlineFilter
@@ -1114,7 +1143,7 @@ export function getVerificationObservations(
     `SELECT flight_number, tail_number, has_starlink, checked_at
      FROM starlink_verification_log
      WHERE flight_number IS NOT NULL AND source IN (${sources.map(() => "?").join(",")})
-       AND has_starlink IS NOT NULL`,
+       AND ${CLEAN_OBSERVATION_WHERE}`,
     airline,
     "",
     sources
@@ -1407,27 +1436,41 @@ export function getRoutesForFlightVariants(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Single-tail lookups (tail_number is UNIQUE so airline scope unnecessary)
+// Single-tail lookups. tail_number is UNIQUE, but the airline filter is still
+// load-bearing: without it, a tenant's FR24 fallback can resolve ANOTHER
+// airline's tail to "verified yes" under its own branding (cross-tenant leak).
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function getStarlinkPlaneByTail(
   db: Database,
-  tail: string
+  tail: string,
+  airline?: AirlineFilter
 ): { Aircraft: string; OperatedBy: string; fleet: string } | null {
-  return db
-    .query("SELECT Aircraft, OperatedBy, fleet FROM starlink_planes WHERE TailNumber = ?")
-    .get(tail) as { Aircraft: string; OperatedBy: string; fleet: string } | null;
+  const q = withAirline(
+    "SELECT Aircraft, OperatedBy, fleet FROM starlink_planes WHERE TailNumber = ?",
+    airline,
+    "",
+    [tail]
+  );
+  return db.query(q.sql).get(...q.params) as {
+    Aircraft: string;
+    OperatedBy: string;
+    fleet: string;
+  } | null;
 }
 
 export function getFleetEntryByTail(
   db: Database,
-  tail: string
+  tail: string,
+  airline?: AirlineFilter
 ): { starlink_status: string; verified_wifi: string | null; verified_at: number | null } | null {
-  return db
-    .query(
-      "SELECT starlink_status, verified_wifi, verified_at FROM united_fleet WHERE tail_number = ?"
-    )
-    .get(tail) as {
+  const q = withAirline(
+    "SELECT starlink_status, verified_wifi, verified_at FROM united_fleet WHERE tail_number = ?",
+    airline,
+    "",
+    [tail]
+  );
+  return db.query(q.sql).get(...q.params) as {
     starlink_status: string;
     verified_wifi: string | null;
     verified_at: number | null;
@@ -1948,10 +1991,7 @@ export interface WifiConsensus {
 }
 
 /**
- * Compute wifi consensus from recent verification log entries.
- * Filters wifi_provider <> '' because a clean scrape that found the page but
- * missed the wifi section reports has_starlink=0, wifi_provider='' — that's
- * noise, not signal.
+ * Compute wifi consensus from recent CLEAN_OBSERVATION_WHERE log entries.
  * Returns verdict=null when n < minObs OR the split is in the ambiguous zone.
  */
 export function computeWifiConsensus(
@@ -1965,22 +2005,28 @@ export function computeWifiConsensus(
      * must pass OBSERVED_WIFI_SOURCES so type-derived rows never gain
      * verified_wifi write authority. */
     sources?: readonly VerificationSource[];
+    /** Scope the evidence rows to the reading tenant's airline(s). */
+    airline?: AirlineFilter;
   } = {}
 ): WifiConsensus {
   const { windowDays = 30, minObs = 2, threshold = 0.7, sources = VERIFICATION_SOURCES } = opts;
   const cutoff = Math.floor(Date.now() / 1000) - windowDays * 86400;
   // Accepted sources derive from the registry (each enabled airline's
   // verifier backend), so AS/HA evidence weighs in — not just united rows.
-  const baseWhere = `tail_number = ? AND source IN (${sources.map(() => "?").join(",")})
+  const base = withAirline(
+    `tail_number = ? AND source IN (${sources.map(() => "?").join(",")})
     AND checked_at >= ?
-    AND error IS NULL AND has_starlink IS NOT NULL
-    AND wifi_provider IS NOT NULL AND wifi_provider <> ''`;
+    AND ${CLEAN_OBSERVATION_WHERE}`,
+    opts.airline,
+    "",
+    [tailNumber, ...sources, cutoff]
+  );
 
   // Primary: only tail_confirmed=1 (post-fix clean data)
   let obs = db
     .query(`SELECT has_starlink, wifi_provider FROM starlink_verification_log
-      WHERE ${baseWhere} AND tail_confirmed = 1 ORDER BY checked_at DESC`)
-    .all(tailNumber, ...sources, cutoff) as Array<{
+      WHERE ${base.sql} AND tail_confirmed = 1 ORDER BY checked_at DESC`)
+    .all(...base.params) as Array<{
     has_starlink: number;
     wifi_provider: string;
   }>;
@@ -1993,8 +2039,8 @@ export function computeWifiConsensus(
   if (obs.length === 0) {
     obs = db
       .query(`SELECT has_starlink, wifi_provider FROM starlink_verification_log
-        WHERE ${baseWhere} AND tail_confirmed IS NULL ORDER BY checked_at DESC`)
-      .all(tailNumber, ...sources, cutoff) as Array<{
+        WHERE ${base.sql} AND tail_confirmed IS NULL ORDER BY checked_at DESC`)
+      .all(...base.params) as Array<{
       has_starlink: number;
       wifi_provider: string;
     }>;
@@ -2087,14 +2133,22 @@ export function computeWifiConsensus(
  * Bump discovery priority so a tail is re-checked on the next fleet-discovery
  * cycle. Idempotent: only bumps if not already due.
  */
-export function bumpDiscoveryPriority(db: Database, tailNumber: string): void {
+export function bumpDiscoveryPriority(
+  db: Database,
+  tailNumber: string,
+  airline?: AirlineFilter
+): void {
   const now = Math.floor(Date.now() / 1000);
   try {
-    db.query(`
-      UPDATE united_fleet
+    const q = withAirline(
+      `UPDATE united_fleet
       SET next_check_after = ?, discovery_priority = 1.0
-      WHERE tail_number = ? AND next_check_after > ?
-    `).run(now, tailNumber, now);
+      WHERE tail_number = ? AND next_check_after > ?`,
+      airline,
+      "",
+      [now, tailNumber, now]
+    );
+    db.query(q.sql).run(...q.params);
   } catch {
     // best-effort signal; readonly DBs (tests, MCP snapshot) just skip
   }
@@ -2378,11 +2432,21 @@ export function upsertFleetAircraft(
   fleet = "unknown",
   operatedBy: string | null = null,
   airline = "UA",
-  // Type-map seeds (e.g. Hawaiian) where wifi status is press-release-grade per
-  // aircraft type and the verifier loop does not apply. Applied on insert only —
-  // re-runs do NOT clobber an existing status (avoids the documented
-  // starlink_status tug-of-war between writers).
-  seedVerdict?: { starlinkStatus: StarlinkStatus; verifiedWifi: string | null }
+  // Seed verdicts settle starlink_status without the verifier loop. Applied on
+  // insert only — re-runs do NOT clobber an existing status (avoids the
+  // documented starlink_status tug-of-war between writers). Evidence tiers:
+  //  - "observed" (community-spotted tails, e.g. FlyerTalk): the wifi was seen
+  //    on this tail, so verified_wifi/verified_at are stamped and the tail is
+  //    parked out of the verifier queue for a year.
+  //  - "type_rule": the status is a fleet-program inference, not a per-tail
+  //    observation. Mirrors reconcileTypeDeterministicFleets: verified stamps
+  //    stay NULL and the tail stays verifier-eligible (no parking), so the
+  //    per-tail verifier confirms it organically.
+  seedVerdict?: {
+    starlinkStatus: StarlinkStatus;
+    verifiedWifi: string | null;
+    evidence: "observed" | "type_rule";
+  }
 ): void {
   const now = Math.floor(Date.now() / 1000);
   // Empty/placeholder type strings must not clobber a real value via COALESCE.
@@ -2416,21 +2480,23 @@ export function upsertFleetAircraft(
       tailNumber
     );
     if (seedVerdict && existing.starlink_status === "unknown") {
+      const observed = seedVerdict.evidence === "observed";
       db.query(`
         UPDATE united_fleet
         SET starlink_status = ?, verified_wifi = ?, verified_at = ?, next_check_after = ?
         WHERE tail_number = ?
       `).run(
         seedVerdict.starlinkStatus,
-        seedVerdict.verifiedWifi,
-        seedVerdict.verifiedWifi ? now : null,
-        now + 365 * 24 * 3600,
+        observed ? seedVerdict.verifiedWifi : null,
+        observed && seedVerdict.verifiedWifi ? now : null,
+        observed ? now + 365 * 24 * 3600 : 0,
         tailNumber
       );
       emitFleetStatusChange(existing, seedVerdict.starlinkStatus);
     }
   } else {
     const status = seedVerdict?.starlinkStatus ?? "unknown";
+    const observed = seedVerdict?.evidence === "observed";
     const priority = calculateDiscoveryPriority(safeType, status, tailNumber);
     db.query(`
       INSERT INTO united_fleet (
@@ -2447,9 +2513,9 @@ export function upsertFleetAircraft(
       fleet,
       operatedBy,
       status,
-      seedVerdict?.verifiedWifi ?? null,
-      seedVerdict?.verifiedWifi ? now : null,
-      seedVerdict ? now + 365 * 24 * 3600 : 0,
+      observed ? (seedVerdict?.verifiedWifi ?? null) : null,
+      observed && seedVerdict?.verifiedWifi ? now : null,
+      observed ? now + 365 * 24 * 3600 : 0,
       priority,
       airline
     );
@@ -2691,14 +2757,24 @@ export function addDiscoveredStarlinkPlane(
     airline: string;
     sheetGid?: string;
     dateFound?: string;
-    /** 'type_rule' = settled by a program rule, not observed on this tail:
+    /** Required — defaulting to 'observed' is exactly the rollout-cliff
+     * fabrication path this field exists to prevent.
+     * 'type_rule' = settled by a program rule, not observed on this tail:
      * no DateFound (a deploy-day batch would fabricate a rollout cliff in
      * rolloutSeries/installs30d) and no verified_* stamp (per-tail
      * verification hasn't happened; the verifier queue serves NULL
      * verified_at first, so these get real checks promptly). */
-    evidence?: "observed" | "type_rule";
+    evidence: "observed" | "type_rule";
   }
 ): void {
+  // Runtime guard too: ad-hoc callers (bun -e, untyped scripts) bypass tsc,
+  // and a silently-defaulted 'observed' is the fabrication path.
+  if (opts.evidence !== "observed" && opts.evidence !== "type_rule") {
+    throw new Error(
+      `addDiscoveredStarlinkPlane(${tailNumber}): opts.evidence must be "observed" or "type_rule"`
+    );
+  }
+
   // Check if already in starlink_planes
   const existing = db.query("SELECT id FROM starlink_planes WHERE TailNumber = ?").get(tailNumber);
   if (existing) return;

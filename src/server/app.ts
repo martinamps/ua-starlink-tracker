@@ -16,7 +16,6 @@ import { buildFaqJsonLd, getContent } from "../airlines/content";
 import {
   buildAirlineFlightNumberVariants,
   detectAirline,
-  detectMarketingCarrier,
   ensureAirlinePrefix,
   normalizeAirlineFlightNumber,
 } from "../airlines/flight-number";
@@ -37,7 +36,11 @@ import {
   siteAirline,
 } from "../airlines/registry";
 import {
+  FR24_OUTAGE_NOTE,
   type FlightVerdict,
+  SWAP_DEGRADED_NOTE,
+  carrierReader,
+  decideCarrier,
   negativeWifi,
   resolveFlightVerdict,
   scheduledFlights,
@@ -120,16 +123,12 @@ async function getHtmlTemplate(): Promise<string> {
   return await htmlTemplateFile.text();
 }
 
-function renderHtml(template: string, variables: Record<string, string>): string {
-  let result = template;
-  // Two passes so a value that itself contains placeholders (e.g. siteTitle
-  // embedding {{starlinkCount}}) resolves regardless of object insertion order.
-  for (let pass = 0; pass < 2; pass++) {
-    for (const [key, value] of Object.entries(variables)) {
-      result = result.replace(new RegExp(`{{${key}}}`, "g"), value);
-    }
-  }
-  return result;
+// Single pass over the template only, with a function replacement: data-sourced
+// values containing `{{...}}` or `$`-patterns ($&, $\`) pass through literally
+// instead of re-expanding or corrupting the document. Brand copy that embeds
+// count placeholders is pre-resolved in buildBaseTemplateVars.
+export function renderHtml(template: string, variables: Record<string, string>): string {
+  return template.replace(/{{(\w+)}}/g, (_, key) => variables[key] ?? "");
 }
 
 const notFound = (site: SiteConfig): Response =>
@@ -177,12 +176,23 @@ function chromeExtensionJsonLd(site: SiteConfig): string {
   });
 }
 
-function siteWebJsonLd(site: SiteConfig): string {
+// llms.txt's brand-description resolver. Its vocabulary is deliberately just
+// the two count vars — llms copy has never used the rest of statVars. HTML
+// pages resolve the same string against the full statVars in
+// buildBaseTemplateVars; unknown placeholders render empty on both paths.
+function resolveBrandDescription(brand: PageBrand, reader: ScopedReader): string {
+  return renderHtml(brand.description, {
+    starlinkCount: reader.getStarlinkPlanes().length.toString(),
+    totalAircraftCount: reader.getTotalCount().toString(),
+  });
+}
+
+function siteWebJsonLd(site: SiteConfig, description: string): string {
   return jsonLdBlock({
     "@context": "https://schema.org",
     "@type": "WebSite",
     name: site.brand.title,
-    description: site.brand.description,
+    description,
     url: `https://${site.canonicalHost}/`,
     potentialAction: {
       "@type": "SearchAction",
@@ -192,14 +202,17 @@ function siteWebJsonLd(site: SiteConfig): string {
   });
 }
 
-function sitePageJsonLd(site: SiteConfig, isoDate: string): string {
+function sitePageJsonLd(
+  site: SiteConfig,
+  page: { path: string; name: string; description: string; isoDate: string }
+): string {
   return jsonLdBlock({
     "@context": "https://schema.org",
     "@type": "WebPage",
-    name: site.brand.siteTitle,
-    description: site.brand.description,
-    url: `https://${site.canonicalHost}/`,
-    dateModified: isoDate,
+    name: page.name,
+    description: page.description,
+    url: `https://${site.canonicalHost}${page.path}`,
+    dateModified: page.isoDate,
     isPartOf: {
       "@type": "WebSite",
       name: site.brand.title,
@@ -483,10 +496,16 @@ function checkFlightWireFlight(f: {
   };
 }
 
-/** Resolve the carrier for a flight-number-scoped API. Airline hosts are
- * pinned to their tenant; the hub detects the carrier from the flight-number
- * prefix and answers from that airline's reader — never a United default.
- * Returns the not-tracked error Response when the carrier can't be attributed. */
+function notTrackedResponse(status: 200 | 404, tracked: readonly AirlineConfig[]): Response {
+  return new Response(
+    JSON.stringify({
+      error: `Airline not tracked. Tracked: ${tracked.map((a) => a.iata).join(", ")}`,
+    }),
+    { status, headers: SECURITY_HEADERS.api }
+  );
+}
+
+/** REST renderer over decideCarrier (check-flight-core owns the policy). */
 function resolveCarrier(
   tenant: Tenant,
   flightNumber: string,
@@ -494,21 +513,11 @@ function resolveCarrier(
   getReader: RequestContext["getReader"],
   notTrackedStatus: 200 | 404 = 404
 ): { cfg: AirlineConfig; reader: ScopedReader } | Response {
-  const tenantCfg = tenantConfig(tenant);
-  // Marketing codes only on the hub: operating prefixes (OO/SKW/YX…) fly for
-  // several marketing carriers and must not resolve to any single one.
-  const cfg = tenantCfg ?? detectMarketingCarrier(flightNumber, publicAirlines());
-  if (!cfg) {
-    return new Response(
-      JSON.stringify({
-        error: `Airline not tracked. Tracked: ${publicAirlines()
-          .map((a) => a.iata)
-          .join(", ")}`,
-      }),
-      { status: notTrackedStatus, headers: SECURITY_HEADERS.api }
-    );
+  const decision = decideCarrier(tenantConfig(tenant), flightNumber);
+  if (decision.outcome === "not_tracked") {
+    return notTrackedResponse(notTrackedStatus, decision.tracked);
   }
-  return { cfg, reader: tenantCfg ? reader : getReader(cfg.code) };
+  return { cfg: decision.cfg, reader: carrierReader(decision, reader, getReader) };
 }
 
 const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant }) => {
@@ -591,7 +600,7 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant }) 
           hasStarlink: false,
           ...hubAirline,
           confidence: "verified",
-          message: `${verdict.normalized} is assigned to tail ${f.tail_number}, verified as ${negativeWifi(f)} WiFi — not Starlink.`,
+          message: `${verdict.normalized} is assigned to tail ${f.tail_number}, verified as ${negativeWifi(f)} WiFi — not Starlink.${verdict.fr24Error ? ` ${SWAP_DEGRADED_NOTE}` : ""}`,
           flights: [],
         }),
         { headers: SECURITY_HEADERS.api }
@@ -635,12 +644,17 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant }) 
       );
     }
     case "no_model": {
+      // Same outage honesty as the prediction branch: "no assignment data"
+      // would be a lie when FR24 simply couldn't be consulted.
+      const message = verdict.fr24Error
+        ? `${FR24_OUTAGE_NOTE} ${describeCarrierPrediction(cfg, verdict.answer)}`
+        : describeCarrierPrediction(cfg, verdict.answer);
       return new Response(
         JSON.stringify({
           hasStarlink: null,
           ...hubAirline,
           confidence: "type",
-          message: describeCarrierPrediction(cfg, verdict.answer),
+          message,
           flights: [],
         }),
         { headers: SECURITY_HEADERS.api }
@@ -656,7 +670,7 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant }) 
       // During an FR24 outage we genuinely don't know whether an assignment
       // exists — don't claim it isn't published yet.
       const assignmentNote = verdict.fr24Error
-        ? "We couldn't confirm the aircraft assignment right now — try again shortly."
+        ? FR24_OUTAGE_NOTE
         : `Aircraft assignment not yet published — ${cfg.name} assigns aircraft ~2 days before departure.`;
       return new Response(
         JSON.stringify({
@@ -733,7 +747,7 @@ const apiCheckAnyFlight: Handler = async ({ req, url, reader, getReader, tenant 
   }
 
   const t = verdictTelemetry(verdict);
-  recordFlightLookup("api_check", t.outcome, t.confidence, cfg.code);
+  recordFlightLookup("api_check", t.outcome, t.confidence, cfg.code, verdict.window.daysOut);
 
   switch (verdict.kind) {
     case "scheduled": {
@@ -1204,12 +1218,7 @@ const llmsTxt: Handler = ({ site, tenant, reader }) => {
   const cfg = tenantConfig(tenant);
   const brand = site.brand;
   const host = site.canonicalHost;
-  // brand.description can carry {{starlinkCount}}/{{totalAircraftCount}} for HTML
-  // pages; resolve them here too so llms.txt never ships raw placeholders.
-  const description = renderHtml(brand.description, {
-    starlinkCount: reader.getStarlinkPlanes().length.toString(),
-    totalAircraftCount: reader.getTotalCount().toString(),
-  });
+  const description = resolveBrandDescription(brand, reader);
   if (!cfg) return hubLlmsTxt(site, description);
 
   const name = cfg.name;
@@ -1306,7 +1315,21 @@ ${mcpSection}${chromeSection}${pages}
 // HTML page handlers
 // ─────────────────────────────────────────────────────────────────────────────
 
-function buildBaseTemplateVars(ctx: RequestContext, reactHtml: string): Record<string, string> {
+// canonicalPath lands in href/content attributes; today every caller passes a
+// literal or a regex-validated flight number, but escape at the boundary so a
+// future caller passing raw URL input can't break out of the attribute.
+function escapeHtmlAttr(s: string): string {
+  return s.replace(
+    /[&"'<>]/g,
+    (c) => ({ "&": "&amp;", '"': "&quot;", "'": "&#39;", "<": "&lt;", ">": "&gt;" })[c] as string
+  );
+}
+
+function buildBaseTemplateVars(
+  ctx: RequestContext,
+  reactHtml: string,
+  canonicalPath = "/"
+): Record<string, string> {
   const { reader, site } = ctx;
   const brand = site.brand;
 
@@ -1316,11 +1339,7 @@ function buildBaseTemplateVars(ctx: RequestContext, reactHtml: string): Record<s
   const percentage = totalCount > 0 ? ((starlinkCount / totalCount) * 100).toFixed(2) : "0.00";
   const isoDate = new Date().toISOString();
 
-  return {
-    ...brandMetadata(brand),
-    socialImagePath: resolveSocialImage(brand),
-    html: reactHtml,
-    host: site.canonicalHost,
+  const statVars: Record<string, string> = {
     // {{totalCount}} historically held the Starlink count (not the fleet total).
     // {{starlinkCount}} is the unambiguous alias; keep totalCount for back-compat.
     starlinkCount: starlinkCount.toString(),
@@ -1334,10 +1353,31 @@ function buildBaseTemplateVars(ctx: RequestContext, reactHtml: string): Record<s
     percentage,
     mainlinePercentage: (fleetStats?.mainline.percentage || 0).toFixed(2),
     expressPercentage: (fleetStats?.express.percentage || 0).toFixed(2),
+  };
+
+  // Brand copy is registry-authored and may embed count placeholders (e.g.
+  // "{{starlinkCount}} Aircraft Have Starlink Today") — resolve them here so
+  // renderHtml stays single-pass and data values never re-expand.
+  const brandVars = Object.fromEntries(
+    Object.entries(brandMetadata(brand)).map(([k, v]) => [k, renderHtml(v, statVars)])
+  ) as ReturnType<typeof brandMetadata>;
+
+  return {
+    ...brandVars,
+    ...statVars,
+    socialImagePath: resolveSocialImage(brand),
+    html: reactHtml,
+    host: site.canonicalHost,
+    canonicalPath: escapeHtmlAttr(canonicalPath),
     analyticsSnippet: analyticsSnippet(site),
     headSnippet: site.headSnippet ?? "",
-    webSiteJsonLd: siteWebJsonLd(site),
-    webPageJsonLd: sitePageJsonLd(site, isoDate),
+    webSiteJsonLd: siteWebJsonLd(site, brandVars.siteDescription),
+    webPageJsonLd: sitePageJsonLd(site, {
+      path: canonicalPath,
+      name: brandVars.siteTitle,
+      description: brandVars.siteDescription,
+      isoDate,
+    }),
     chromeExtensionJsonLd: chromeExtensionJsonLd(site),
     faqJsonLd: "",
     pageJsonLd: "",
@@ -1355,20 +1395,19 @@ async function renderSubPage<P extends { site: SiteConfig }>(
     React.createElement(component, { site: ctx.site, ...(props ?? {}) } as unknown as P)
   );
   const htmlVariables: Record<string, string> = {
-    ...buildBaseTemplateVars(ctx, reactHtml),
+    ...buildBaseTemplateVars(ctx, reactHtml, canonicalPath),
     ...meta,
   };
+  // Rebuild AFTER the meta merge: the WebPage JSON-LD must claim the page's
+  // own title/description, not the homepage copy baked into the base vars.
+  htmlVariables.webPageJsonLd = sitePageJsonLd(ctx.site, {
+    path: canonicalPath,
+    name: htmlVariables.siteTitle,
+    description: htmlVariables.siteDescription,
+    isoDate: htmlVariables.isoDate,
+  });
 
-  let template = await getHtmlTemplate();
-  template = template
-    .replace(
-      `<link rel="canonical" href="https://{{host}}/" />`,
-      `<link rel="canonical" href="https://{{host}}${canonicalPath}" />`
-    )
-    .replace(
-      `<meta property="og:url" content="https://{{host}}/" />`,
-      `<meta property="og:url" content="https://{{host}}${canonicalPath}" />`
-    );
+  const template = await getHtmlTemplate();
   return new Response(renderHtml(template, htmlVariables), { headers: SECURITY_HEADERS.html });
 }
 
@@ -1409,7 +1448,9 @@ function subPageMeta(
 }
 
 /** Resolve the carrier config a check-flight permalink belongs to. Tenant hosts
- * are pinned; the hub host detects the carrier from the flight-number prefix. */
+ * are pinned; the hub host detects the carrier from the flight-number prefix.
+ * Deliberately looser than decideCarrier (check-flight-core): this only picks
+ * page meta — operating-prefix permalinks still render the generic page. */
 function resolveFlightCfg(ctx: RequestContext, flightNumber: string): AirlineConfig | null {
   const tenantCfg = tenantConfig(ctx.tenant);
   if (tenantCfg) return flightNumber.startsWith(tenantCfg.iata) ? tenantCfg : null;
@@ -1665,9 +1706,11 @@ function corsPreflight(pathname: string): Response {
   });
 }
 
-// Per-IP sliding-window rate limit for /api/* paths. Tuned well above real
-// usage (Chrome extension on a busy Google Flights page bursts ~20-30; humans
-// hit 2-5). Catches bulk scrapers without ever touching a real traveler.
+// Per-IP sliding-window rate limit for the data-serving surfaces. Tuned well
+// above real usage (Chrome extension on a busy Google Flights page bursts
+// ~20-30; humans hit 2-5). Catches bulk scrapers without ever touching a real
+// traveler. Each surface class gets its own bucket so an extension burst on
+// /api/* can't starve a legitimate MCP client (and vice versa).
 const API_RATE_LIMIT = 60;
 const API_RATE_WINDOW_MS = 60_000;
 const LOCAL_IPS = new Set(["127.0.0.1", "::1", "localhost"]);
@@ -1686,8 +1729,9 @@ export function createApp(db: Database): App {
   const ipHits = new Map<string, number[]>();
   let lastSweep = 0;
 
-  function rateLimited(ip: string, now: number): boolean {
+  function rateLimited(ip: string, bucket: string, now: number): boolean {
     if (LOCAL_IPS.has(ip)) return false;
+    const key = `${bucket}:${ip}`;
     if (now - lastSweep > API_RATE_WINDOW_MS) {
       for (const [k, ts] of ipHits) {
         const kept = ts.filter((t) => now - t < API_RATE_WINDOW_MS);
@@ -1696,13 +1740,13 @@ export function createApp(db: Database): App {
       }
       lastSweep = now;
     }
-    const hits = (ipHits.get(ip) ?? []).filter((t) => now - t < API_RATE_WINDOW_MS);
+    const hits = (ipHits.get(key) ?? []).filter((t) => now - t < API_RATE_WINDOW_MS);
     if (hits.length >= API_RATE_LIMIT) {
-      ipHits.set(ip, hits);
+      ipHits.set(key, hits);
       return true;
     }
     hits.push(now);
-    ipHits.set(ip, hits);
+    ipHits.set(key, hits);
     return false;
   }
 
@@ -1745,21 +1789,39 @@ export function createApp(db: Database): App {
   // baseline impossible to forget per-handler: it fills in base security
   // headers (and Vary: Host on per-tenant responses) only where the handler
   // didn't already set them — page-specific CSP/CORS always win.
+  //
+  // Last-resort catch: handlers deliberately rethrow on programming errors
+  // (fail-closed discipline), but those must still leave as a finalized 500 —
+  // a raw Bun.serve 500 carries no security headers and no CORS, which the
+  // extension sees as an opaque cross-origin failure.
   async function dispatch(req: Request): Promise<Response> {
     const url = new URL(req.url);
+    try {
+      // Canonical-host 301s run before anything is served: parked domains
+      // (HOST_REDIRECTS) and www aliases must redirect, never serve content.
+      const redirect = hostRedirect(req, url);
+      if (redirect) return finalizeResponse(redirect, true);
 
-    // Canonical-host 301s run before anything is served: parked domains
-    // (HOST_REDIRECTS) and www aliases must redirect, never serve content.
-    const redirect = hostRedirect(req, url);
-    if (redirect) return finalizeResponse(redirect, true);
+      // Tenant-agnostic static assets bypass tenancy resolution — crawlers
+      // fetch og images from odd hosts and must not 421. The only responses
+      // that don't vary by Host.
+      const staticRes = staticResponses.get(url.pathname);
+      if (staticRes) return finalizeResponse(staticRes.clone(), false);
 
-    // Tenant-agnostic static assets bypass tenancy resolution — crawlers
-    // fetch og images from odd hosts and must not 421. The only responses
-    // that don't vary by Host.
-    const staticRes = staticResponses.get(url.pathname);
-    if (staticRes) return finalizeResponse(staticRes.clone(), false);
-
-    return finalizeResponse(await dispatchTenant(req, url), true);
+      return finalizeResponse(await dispatchTenant(req, url), true);
+    } catch (err) {
+      logError(`Unhandled error dispatching ${req.method} ${url.pathname}`, err);
+      // API-shaped headers (incl. CORS) on every path: /api/* consumers need
+      // ACAO to even see the failure; on pages the JSON body is still honest.
+      const headers =
+        url.pathname === "/mcp"
+          ? { ...SECURITY_HEADERS.api, ...MCP_CORS_HEADERS }
+          : SECURITY_HEADERS.api;
+      return finalizeResponse(
+        new Response(JSON.stringify({ error: "internal" }), { status: 500, headers }),
+        true
+      );
+    }
   }
 
   async function dispatchTenant(req: Request, url: URL): Promise<Response> {
@@ -1784,9 +1846,20 @@ export function createApp(db: Database): App {
     const m = match(url.pathname);
     const route = m?.route ?? "/*";
 
-    if (url.pathname.startsWith("/api/")) {
+    // Metered surfaces: every /api/* call; /mcp protocol traffic (POST tool
+    // calls drive live FR24 reverse lookups, OPTIONS preflights ride the same
+    // budget — GET is the HTML setup page and stays unmetered like other
+    // pages); /check-flight/{fn} permalink SSR (runs predictions per request).
+    const meterClass = url.pathname.startsWith("/api/")
+      ? "api"
+      : url.pathname === "/mcp" && req.method !== "GET" && req.method !== "HEAD"
+        ? "mcp"
+        : url.pathname.startsWith("/check-flight/")
+          ? "page"
+          : null;
+    if (meterClass) {
       const ip = clientIp(req);
-      if (rateLimited(ip, Date.now())) {
+      if (rateLimited(ip, meterClass, Date.now())) {
         metrics.increment(COUNTERS.HTTP_RATE_LIMITED, { route, tenant: tenantScope(tenant) });
         return new Response(JSON.stringify({ error: "rate limit exceeded" }), {
           status: 429,

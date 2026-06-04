@@ -74,11 +74,12 @@ function printTable(rows: SeedRow[]) {
 }
 
 function apply(db: Database, rows: SeedRow[]) {
-  const HA_INSTALL_DATE = "2024-09-24";
-
   const tx = db.transaction(() => {
     for (const r of rows) {
-      const wifi = r.verdict === "Starlink" ? "Starlink" : r.verdict === "None" ? "None" : null;
+      // Verdicts come from the type→wifi map (press-release-grade per TYPE),
+      // not per-tail observation — evidence:'type_rule' keeps verified stamps
+      // NULL and the tails verifier-eligible, matching
+      // reconcileTypeDeterministicFleets' convention.
       upsertFleetAircraft(
         db,
         r.tail,
@@ -89,7 +90,8 @@ function apply(db: Database, rows: SeedRow[]) {
         "HA",
         {
           starlinkStatus: r.status,
-          verifiedWifi: wifi,
+          verifiedWifi: null,
+          evidence: "type_rule",
         }
       );
       if (r.verdict === "Starlink") {
@@ -102,8 +104,8 @@ function apply(db: Database, rows: SeedRow[]) {
           "mainline",
           {
             sheetGid: "ha_seed",
-            dateFound: HA_INSTALL_DATE,
             airline: "HA",
+            evidence: "type_rule",
           }
         );
       }

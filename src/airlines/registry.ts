@@ -164,15 +164,15 @@ const AIRLINE_DEFS = {
     publicInHub: true,
     iata: "UA",
     icao: "UAL",
+    // ACA (Air Canada), PDT (Piedmont), and ENY (Envoy) are deliberately
+    // absent — they don't operate United Express, so e.g. ACA123 must never
+    // resolve to UA123.
     carrierPrefixes: [
       "UAL",
       "SKW",
       "ASH",
       "RPA",
       "GJS",
-      "PDT",
-      "ACA",
-      "ENY",
       "UCA",
       "AWI",
       "OO",
@@ -336,6 +336,10 @@ const AIRLINE_DEFS = {
         key: "horizon",
         label: "Horizon (E175)",
         flightNumberHint: "AS2000+",
+        // Phase complete (rollout.phaseNote): every E175 has Starlink. The
+        // override keeps predictions right even before the type reconcile
+        // settles a fresh roster's statuses.
+        penetrationOverride: 1,
         match: (fn) => {
           const n = flightNum(fn);
           return Number.isFinite(n) && n >= 2000;
@@ -578,6 +582,9 @@ function alaskaTypeToWifi(aircraftType: string): StarlinkStatus | null {
 }
 
 // What each verifier backend writes to starlink_verification_log.source.
+// 'qatar-fltstatus' has no verification-log writer yet: QR evidence flows
+// through qatar_schedule (schedule ingester) instead, so the 'qatar' tag is
+// read-side only — it matches zero log rows until a QR verifier loop exists.
 const VERIFIER_SOURCE_TAG: Record<
   NonNullable<AirlineConfig["verifierBackend"]>,
   VerificationSource

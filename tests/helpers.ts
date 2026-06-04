@@ -93,6 +93,24 @@ export const stubPredict = (n = 0) =>
     n_observations: n,
   })) as unknown as typeof predictFlight;
 
+/**
+ * Seed a starlink_planes row. The wifi literal is 'StrLnk' — the raw sheet
+ * value, which is what updateDatabase and addDiscoveredStarlinkPlane write
+ * (the snapshot also carries 'Starlink' from non-sheet seed rows).
+ */
+export function addPlane(
+  db: Database,
+  tail: string,
+  verifiedWifi: string | null = null,
+  opts: { airline?: string; aircraft?: string } = {}
+): void {
+  const { airline = "UA", aircraft = "Boeing 737-900" } = opts;
+  db.query(
+    `INSERT INTO starlink_planes (aircraft, wifi, DateFound, TailNumber, OperatedBy, fleet, verified_wifi, airline)
+     VALUES (?, 'StrLnk', '2026-01-01', ?, 'United Airlines', 'mainline', ?, ?)`
+  ).run(aircraft, tail, verifiedWifi, airline);
+}
+
 export function addFleet(
   db: Database,
   tail: string,

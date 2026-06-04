@@ -14,7 +14,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { AIRLINES } from "../airlines/registry";
-import { initializeDatabase, refreshFleetMeta, setMeta } from "../database/database";
+import { initializeDatabase, setMeta } from "../database/database";
 import { info, error as logError, warn } from "../utils/logger";
 import { applyAlaskaFlyertalkTails, fetchAlaskaFlyertalkTails } from "./flyertalk-alaska";
 import { applyQatarFlyertalkTails, fetchQatarFlyertalkTails } from "./flyertalk-qatar";
@@ -179,7 +179,8 @@ function ingestSource(
       new Error(`integrity: ${airline} confirmed dropped ${before.confirmed}→${after.confirmed}`),
       { code: 4 }
     );
-  refreshFleetMeta(db, airline);
+  // No refreshFleetMeta here — applyFlyertalkTails owns it (runs it whenever
+  // it writes), so the meta refresh can't be double-stamped or forgotten.
   return {
     source,
     scraped: tails.length,

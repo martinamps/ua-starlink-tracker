@@ -47,7 +47,11 @@ import {
 } from "../scripts/starlink-predictor";
 import { debug, info } from "../utils/logger";
 import {
+  FR24_OUTAGE_NOTE,
   type FlightVerdict,
+  SWAP_DEGRADED_NOTE,
+  carrierReader,
+  decideCarrier,
   flightDateWindow,
   negativeWifi,
   resolveFlightVerdict,
@@ -438,11 +442,42 @@ function mcpAirlineTag(scope: Scope): string {
   return scope === "ALL" ? "all" : normalizeAirlineTag(scope);
 }
 
-// Hub MCP stays UA-bound for now (Phase-2 gap, allowlisted in the guardrail
-// test); airline scopes use their own config — never United's config against
-// another airline's reader.
+// Hub MCP stays UA-bound for the fleet-wide/route tools (Phase-2 gap,
+// allowlisted in the guardrail test); airline scopes use their own config —
+// never United's config against another airline's reader. The flight-taking
+// tools do NOT use this on the hub — they resolve the carrier from the flight
+// number via resolveFlightToolCarrier, same gate as hub REST.
 function scopeCfg(scope: Scope): AirlineConfig | null {
   return scope === "ALL" ? AIRLINES.UA : (AIRLINES[scope] ?? null);
+}
+
+type GetReader = (scope: Scope) => ScopedReader;
+
+/** MCP renderer over decideCarrier (check-flight-core owns the policy) for
+ * the flight-number-taking tools (check_flight, predict_flight_starlink). */
+function resolveFlightToolCarrier(
+  reader: ScopedReader,
+  getReader: GetReader,
+  flightNumber: string
+): { cfg: AirlineConfig; reader: ScopedReader } | ToolResult {
+  let pinnedCfg: AirlineConfig | null = null;
+  if (reader.scope !== "ALL") {
+    pinnedCfg = scopeCfg(reader.scope);
+    if (!pinnedCfg) return scopeConfigError(reader.scope);
+  }
+  const decision = decideCarrier(pinnedCfg, flightNumber);
+  if (decision.outcome === "not_tracked") {
+    // Single-airline surface: name only the pinned carrier — never list
+    // competitor brands on its server. The hub is multi-airline, so its
+    // refusal legitimately enumerates the tracked carriers.
+    const text = decision.pinnedCfg
+      ? `This server covers ${decision.pinnedCfg.name} flights (${decision.pinnedCfg.iata} + flight number, e.g. ${decision.pinnedCfg.iata}123). For other carriers, use that airline's tracker or airlinestarlinktracker.com.`
+      : `Airline not tracked. Tracked carriers: ${decision.tracked
+          .map((a) => `${a.iata} (${a.name})`)
+          .join(", ")}. Prefix the flight number with the carrier code, e.g. UA123.`;
+    return { content: [{ type: "text", text }], isError: true };
+  }
+  return { cfg: decision.cfg, reader: carrierReader(decision, reader, getReader) };
 }
 
 // "alternatives block first, verdict second" — both firm-no renderings share
@@ -484,7 +519,8 @@ function recordMcpPrediction(
 }
 
 async function toolCheckFlight(
-  reader: ScopedReader,
+  hostReader: ScopedReader,
+  getReader: GetReader,
   args: { flight_number?: unknown; date?: unknown }
 ): Promise<ToolResult> {
   const flightNumber = typeof args.flight_number === "string" ? args.flight_number.trim() : "";
@@ -497,8 +533,9 @@ async function toolCheckFlight(
     };
   }
 
-  const cfg = scopeCfg(reader.scope);
-  if (!cfg) return scopeConfigError(reader.scope);
+  const carrier = resolveFlightToolCarrier(hostReader, getReader, flightNumber);
+  if ("content" in carrier) return carrier;
+  const { cfg, reader } = carrier;
   const verdict = await resolveFlightVerdict(cfg, reader, flightNumber, date);
 
   if (verdict.kind === "invalid_date") {
@@ -592,7 +629,7 @@ async function toolCheckFlight(
             type: "text",
             text: withAlt(
               altBlock,
-              `❌ No Starlink: ${normalized} on ${date} is assigned to tail ${f.tail_number} (${ac}), verified as ${negativeWifi(f)} WiFi — NOT Starlink. Aircraft swaps can happen, but the assignment is currently firm.`
+              `❌ No Starlink: ${normalized} on ${date} is assigned to tail ${f.tail_number} (${ac}), verified as ${negativeWifi(f)} WiFi — NOT Starlink. Aircraft swaps can happen, but the assignment is currently firm.${verdict.fr24Error ? ` ${SWAP_DEGRADED_NOTE}` : ""}`
             ),
           },
         ],
@@ -635,11 +672,14 @@ async function toolCheckFlight(
     }
 
     case "no_model": {
+      // "no assignment data" would be a lie during an FR24 outage — the same
+      // couldn't-confirm caveat the prediction branch uses.
+      const lead = verdict.fr24Error ? FR24_OUTAGE_NOTE : "no assignment data.";
       return {
         content: [
           {
             type: "text",
-            text: `${normalized} on ${date}: no assignment data. ${describeCarrierPrediction(cfg, verdict.answer)}`,
+            text: `${normalized} on ${date}: ${lead} ${describeCarrierPrediction(cfg, verdict.answer)}`,
           },
         ],
       };
@@ -662,7 +702,7 @@ async function toolCheckFlight(
       // During an FR24 outage we genuinely don't know whether an assignment
       // exists — don't claim it isn't published yet.
       const assignmentNote = verdict.fr24Error
-        ? "We couldn't confirm the aircraft assignment right now — try again shortly."
+        ? FR24_OUTAGE_NOTE
         : `Aircraft assignment not yet published — that happens ~2 days out. ${timing}`;
 
       // Probability context FIRST, alternatives table LAST. Recency bias: the
@@ -1018,7 +1058,8 @@ function formatCarrierRoute(
 }
 
 async function toolPredictFlightStarlink(
-  reader: ScopedReader,
+  hostReader: ScopedReader,
+  getReader: GetReader,
   args: { flight_number?: unknown; date?: unknown }
 ): Promise<ToolResult> {
   const input = typeof args.flight_number === "string" ? args.flight_number.trim() : "";
@@ -1029,8 +1070,9 @@ async function toolPredictFlightStarlink(
     };
   }
 
-  const cfg = scopeCfg(reader.scope);
-  if (!cfg) return scopeConfigError(reader.scope);
+  const carrier = resolveFlightToolCarrier(hostReader, getReader, input);
+  if ("content" in carrier) return carrier;
+  const { cfg, reader } = carrier;
   const forPredict = ensureAirlinePrefix(cfg, input);
   // Same 1-4 digit bound the check-flight core enforces — prevents agents
   // driving FR24 route lookups with junk numbers.
@@ -1624,6 +1666,7 @@ function recordMcpToolCall(
 
 async function handleToolsCall(
   reader: ScopedReader,
+  getReader: GetReader,
   scope: Scope,
   id: string | number | null,
   params: Record<string, unknown> | undefined
@@ -1640,10 +1683,10 @@ async function handleToolsCall(
   try {
     switch (toolName) {
       case "check_flight":
-        result = await toolCheckFlight(reader, args);
+        result = await toolCheckFlight(reader, getReader, args);
         break;
       case "predict_flight_starlink":
-        result = await toolPredictFlightStarlink(reader, args);
+        result = await toolPredictFlightStarlink(reader, getReader, args);
         break;
       case "predict_route_starlink":
         result = toolPredictRouteStarlink(reader, args);
@@ -1682,6 +1725,7 @@ async function handleToolsCall(
 
 async function dispatch(
   reader: ScopedReader,
+  getReader: GetReader,
   scope: Scope,
   hostScope: Scope,
   msg: JsonRpcRequest
@@ -1699,7 +1743,7 @@ async function dispatch(
     case "tools/list":
       return rpcResult(id, { tools: buildTools(scope) });
     case "tools/call":
-      return handleToolsCall(reader, scope, id, msg.params);
+      return handleToolsCall(reader, getReader, scope, id, msg.params);
     default:
       if (isNotification) return null;
       return rpcError(id, -32601, `Method not found: ${msg.method}`);
@@ -1771,7 +1815,7 @@ export async function handleMcpRequest(
   // Dispatch
   let response: JsonRpcResponse | null;
   try {
-    response = await dispatch(reader, scope, hostScope, msg);
+    response = await dispatch(reader, getReader, scope, hostScope, msg);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     info(`MCP handler error: ${message}`);

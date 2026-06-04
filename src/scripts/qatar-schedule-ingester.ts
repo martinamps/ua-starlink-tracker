@@ -22,6 +22,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { AIRLINES } from "../airlines/registry";
 import {
   type QatarFlight,
   fetchByRoute,
@@ -37,7 +38,7 @@ import {
 } from "../database/database";
 import { COUNTERS, metrics, normalizeAirlineTag, withSpan } from "../observability";
 import { localDateISO } from "../utils/airport-tz";
-import { type JobHandle, startJob } from "../utils/job-runner";
+import { type JobHandle, type JobRunContext, startJob } from "../utils/job-runner";
 import { info, error as logError } from "../utils/logger";
 
 const INTERVAL_MS = 60 * 60 * 1000; // 1 hour
@@ -219,12 +220,13 @@ interface IngestStats {
   flights_upserted: number;
   by_verdict: { Starlink: number; Rolling: number; None: number };
   pruned: number;
-  outcome: "success" | "partial" | "error";
+  outcome: "success" | "partial" | "error" | "abandoned";
 }
 
 export async function ingestQatarSchedule(
   db: Database,
-  fetchRoute: typeof fetchByRoute = fetchByRoute
+  fetchRoute: typeof fetchByRoute = fetchByRoute,
+  ctx?: JobRunContext
 ): Promise<IngestStats> {
   const stats: IngestStats = {
     routes_attempted: 0,
@@ -243,6 +245,16 @@ export async function ingestQatarSchedule(
     for (const date of dates) {
       stats.routes_attempted++;
       const flights = await fetchRoute(origin, destination, date);
+      // A run the job runner has abandoned (stuck escape) settles its fetches
+      // late — its upserts/prune/stamp would regress the successor's schedule
+      // under a fresh lastUpdated. Log and discard before any further write.
+      if (ctx && !ctx.isCurrent()) {
+        logError(
+          "qatar-schedule-ingester: run was abandoned mid-fetch; discarding results, no writes"
+        );
+        stats.outcome = "abandoned";
+        return stats;
+      }
       if (flights === null) {
         stats.routes_failed++;
         continue;
@@ -271,6 +283,14 @@ export async function ingestQatarSchedule(
         ? "error"
         : "partial";
 
+  // Final gate before the destructive phase — abandonment can also land
+  // during the inter-route delays after the last fetch resolved.
+  if (ctx && !ctx.isCurrent()) {
+    logError("qatar-schedule-ingester: run was abandoned; skipping prune + meta stamp");
+    stats.outcome = "abandoned";
+    return stats;
+  }
+
   // Total fetch failure = an outage, not an observation: no prune (would
   // drain the table) and no lastUpdated stamp (would mask staleness).
   if (stats.outcome === "error") {
@@ -296,11 +316,15 @@ export async function ingestQatarSchedule(
   return stats;
 }
 
-export function startQatarScheduleIngester(): JobHandle {
+export function startQatarScheduleIngester(): JobHandle | undefined {
+  if (!AIRLINES.QR.enabled) {
+    info("qatar-schedule-ingester: QR disabled in registry; not starting");
+    return undefined;
+  }
   info(
     `qatar-schedule-ingester: starting (${INTERVAL_MS / 60_000}min interval, ${ROUTES.length} routes × ${FORWARD_DAYS} days, +${STARTUP_DELAY_MS / 1000}s startup delay)`
   );
-  const tick = () =>
+  const tick = (ctx: JobRunContext) =>
     withSpan(
       "qatar_schedule.ingest",
       async (span) => {
@@ -308,7 +332,7 @@ export function startQatarScheduleIngester(): JobHandle {
         try {
           const db = initializeDatabase();
           try {
-            const stats = await ingestQatarSchedule(db);
+            const stats = await ingestQatarSchedule(db, undefined, ctx);
             span.setTag("flights_upserted", stats.flights_upserted);
             span.setTag("routes_failed", stats.routes_failed);
             span.setTag("pruned", stats.pruned);

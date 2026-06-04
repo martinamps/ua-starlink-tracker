@@ -20,6 +20,59 @@ import { type JobHandle, startJob } from "../utils/job-runner";
 import { info, error as logError } from "../utils/logger";
 import { launchFR24Browser, scrapeFlightRadar24Fleet } from "./flightradar24-scraper";
 
+export interface RosterSource {
+  /** Regional pages carry their configured subfleet; the primary page none. */
+  subfleet?: string;
+  aircraft: { registration: string; aircraftType: string }[];
+}
+
+export interface RosterEntry {
+  registration: string;
+  aircraftType: string;
+  subfleet: string;
+  /** Set only for tails sourced from a regional carrier's own roster page.
+   * null otherwise, so upsert's COALESCE preserves any existing operated_by —
+   * SkyWest-operated AS E175s must not become "Horizon Air" by type. */
+  operator: string | null;
+}
+
+/** FR24 pages to scrape for an airline: primary livery page first (fleet-sync
+ * treats its failure as fatal), then regional-carrier pages. */
+export function rosterSources(cfg: AirlineConfig): Array<{ slug: string; subfleet?: string }> {
+  if (!cfg.fr24Slug) return [];
+  return [
+    { slug: cfg.fr24Slug },
+    ...(cfg.regionalCarriers ?? []).map((r) => ({ slug: r.fr24Slug, subfleet: r.subfleet })),
+  ];
+}
+
+/**
+ * Dedupe FR24 source pages into one roster. The primary livery page lists
+ * regional tails too (as-asa includes Horizon E175s), so tails dedupe by
+ * registration — the overlap can't double-count or inflate the minFleetSanity
+ * input. A source page's configured subfleet beats the type classifier;
+ * operator is asserted only where the source page proves it.
+ */
+export function buildRoster(cfg: AirlineConfig, sources: RosterSource[]): RosterEntry[] {
+  const byTail = new Map<string, RosterEntry>();
+  for (const src of sources) {
+    for (const a of src.aircraft) {
+      if (byTail.has(a.registration)) continue;
+      const subfleet = src.subfleet ?? cfg.classifyFleet?.(a.aircraftType) ?? "mainline";
+      const operator = src.subfleet
+        ? (cfg.regionalCarriers?.find((r) => r.subfleet === src.subfleet)?.name ?? null)
+        : null;
+      byTail.set(a.registration, {
+        registration: a.registration,
+        aircraftType: a.aircraftType,
+        subfleet,
+        operator,
+      });
+    }
+  }
+  return [...byTail.values()];
+}
+
 /**
  * Sync fleet from FlightRadar24 to united_fleet table for one airline.
  */
@@ -51,23 +104,10 @@ export async function syncFleetFromFR24(
       return result;
     }
 
-    const sources = [
-      { slug: cfg.fr24Slug, operator: cfg.name, subfleet: undefined as string | undefined },
-      ...(cfg.regionalCarriers ?? []).map((r) => ({
-        slug: r.fr24Slug,
-        operator: r.name,
-        subfleet: r.subfleet,
-      })),
-    ];
+    const sources = rosterSources(cfg);
 
     try {
-      type Scraped = {
-        registration: string;
-        aircraftType: string;
-        subfleet: string;
-        operator: string;
-      };
-      const allAircraft: Scraped[] = [];
+      const scraped: RosterSource[] = [];
       for (const [i, src] of sources.entries()) {
         if (i > 0) await new Promise((r) => setTimeout(r, 5000));
         info(`Starting FR24 fleet sync for ${cfg.code} (${src.slug})...`);
@@ -91,15 +131,10 @@ export async function syncFleetFromFR24(
           continue;
         }
         info(`FR24 returned ${scrapeResult.aircraft.length} aircraft for ${cfg.code}/${src.slug}`);
-        for (const a of scrapeResult.aircraft) {
-          allAircraft.push({
-            registration: a.registration,
-            aircraftType: a.aircraftType,
-            subfleet: src.subfleet ?? cfg.classifyFleet?.(a.aircraftType) ?? "mainline",
-            operator: src.operator,
-          });
-        }
+        scraped.push({ subfleet: src.subfleet, aircraft: scrapeResult.aircraft });
       }
+
+      const allAircraft = buildRoster(cfg, scraped);
 
       if (allAircraft.length < cfg.minFleetSanity) {
         result.error = `Suspiciously low aircraft count: ${allAircraft.length} (expected ${cfg.minFleetSanity}+)`;

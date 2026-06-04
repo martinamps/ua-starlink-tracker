@@ -1046,3 +1046,43 @@ describe("equipped-count surfaces agree on negative-status tails", () => {
     expect(getRecentInstalls(wdb, "UA", 500).some((r) => r.TailNumber === NEG)).toBe(false);
   });
 });
+
+describe("bulk-import rows are not 'recent installs'", () => {
+  // Seed batches, type-rule settles, and FlyerTalk backfills stamp one run
+  // date across many tails — DateFound there is a discovery date, not an
+  // install date. INSTALL_FILTER keeps them off both install surfaces.
+  const BULK: Array<[string, string]> = [
+    ["N81SEED", "as_seed"],
+    ["N82TYPE", "type_deterministic"],
+    ["N83FLYR", "flyertalk_qr"],
+  ];
+  const ORGANIC = "N84DISC";
+  let wdb: Database;
+  let installs30dBefore: number;
+
+  beforeAll(() => {
+    const tmp = `/tmp/ua-installs-${process.pid}-${Date.now()}.sqlite`;
+    copyFileSync(TEST_DB, tmp);
+    wdb = new Database(tmp);
+    installs30dBefore = getHubStats(wdb, ["UA"])[0].installs30d;
+
+    const ins = wdb.query(
+      `INSERT INTO starlink_planes (TailNumber, aircraft, WiFi, OperatedBy, fleet, airline, sheet_gid, DateFound)
+       VALUES (?, 'B737', 'Starlink', 'Test', 'mainline', 'UA', ?, date('now'))`
+    );
+    for (const [tail, gid] of BULK) ins.run(tail, gid);
+    ins.run(ORGANIC, "discovery");
+  });
+
+  test("getRecentInstalls excludes bulk gids, keeps the discovery row", () => {
+    const tails = getRecentInstalls(wdb, "UA", 500).map((r) => r.TailNumber);
+    for (const [tail, gid] of BULK) {
+      expect(tails.includes(tail), `${gid} row surfaced as a recent install`).toBe(false);
+    }
+    expect(tails).toContain(ORGANIC);
+  });
+
+  test("getHubStats installs30d counts only the discovery row", () => {
+    expect(getHubStats(wdb, ["UA"])[0].installs30d).toBe(installs30dBefore + 1);
+  });
+});

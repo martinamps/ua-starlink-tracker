@@ -29,6 +29,7 @@ import {
   type RouteGraphEdge,
   type SubfleetPenetration,
   type VerificationObservation,
+  type VerificationSource,
   type WifiConsensus,
   type WifiMismatch,
   airlineServesAirports,
@@ -127,14 +128,18 @@ export interface ScopedReader {
     variants: string[]
   ): { departure_airport: string; arrival_airport: string; dur_sec: number }[];
 
-  // Single-tail lookups + best-effort writes (tail_number UNIQUE → scope-safe)
+  // Single-tail lookups + best-effort writes. Airline-scoped like everything
+  // else: a tenant's FR24 fallback must not resolve another airline's tail.
   getStarlinkPlaneByTail(
     tail: string
   ): { Aircraft: string; OperatedBy: string; fleet: string } | null;
   getFleetEntryByTail(
     tail: string
   ): { starlink_status: string; verified_wifi: string | null; verified_at: number | null } | null;
-  computeWifiConsensus(tail: string): WifiConsensus;
+  computeWifiConsensus(
+    tail: string,
+    opts?: { sources?: readonly VerificationSource[] }
+  ): WifiConsensus;
   bumpDiscoveryPriority(tail: string): void;
 
   // Qatar uses a separate schedule cache (per-flight equipment, no per-tail).
@@ -260,10 +265,11 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     cacheFlightRoute: (fn, o, d, dur) => cacheFlightRoute(db, fn, o, d, dur),
     getRoutesForFlightVariants: (v) => getRoutesForFlightVariants(db, v, airlines),
 
-    getStarlinkPlaneByTail: (tail) => getStarlinkPlaneByTail(db, tail),
-    getFleetEntryByTail: (tail) => getFleetEntryByTail(db, tail),
-    computeWifiConsensus: (tail) => computeWifiConsensus(db, tail),
-    bumpDiscoveryPriority: (tail) => bumpDiscoveryPriority(db, tail),
+    getStarlinkPlaneByTail: (tail) => getStarlinkPlaneByTail(db, tail, airlines),
+    getFleetEntryByTail: (tail) => getFleetEntryByTail(db, tail, airlines),
+    computeWifiConsensus: (tail, opts) =>
+      computeWifiConsensus(db, tail, { ...opts, airline: airlines }),
+    bumpDiscoveryPriority: (tail) => bumpDiscoveryPriority(db, tail, airlines),
 
     getQatarScheduleByFlight: (v, s, e) => getQatarScheduleByFlight(db, v, s, e),
     getQatarScheduleByRoute: (o, d, s, e) => getQatarScheduleByRoute(db, o, d, s, e),

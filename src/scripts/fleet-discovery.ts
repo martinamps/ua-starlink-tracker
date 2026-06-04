@@ -8,19 +8,15 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { AIRLINES, OBSERVED_WIFI_SOURCES, verifierSourceTag } from "../airlines/registry";
 import { FlightRadar24API } from "../api/flightradar24-api";
 import {
+  type WifiConsensus,
   addDiscoveredStarlinkPlane,
-  computeWifiConsensus,
   getFleetDiscoveryStats,
   getNextPlanesToVerify,
-  getShipToTailMap,
   initializeDatabase,
-  logVerification,
   updateFleetVerificationResult,
   updateFlights,
-  updateVerifiedWifi,
 } from "../database/database";
 import {
   COUNTERS,
@@ -39,8 +35,40 @@ import { type JobHandle, startJob } from "../utils/job-runner";
 import { info, error as logError, warn } from "../utils/logger";
 import type { StarlinkCheckResult } from "./united-starlink-checker";
 import { checkStarlinkStatusSubprocess } from "./united-starlink-checker-subprocess";
+import {
+  UNITED_SOURCE,
+  type UnitedCheckCategory,
+  applyUnitedObservation,
+  classifyUnitedCheck,
+  logUnitedCheckFailure,
+} from "./united-verdict";
 
-const UNITED_SOURCE = verifierSourceTag(AIRLINES.UA);
+// Wrappers (not method refs) so shared verdict-core log lines keep this
+// file's logger tag — the logger derives the tag from the call-site file.
+// Block bodies on purpose: a single-expression arrow is a proper tail call
+// in JSC and its stack frame (the tag source) gets elided.
+const verdictLog = {
+  info: (m: string) => {
+    info(m);
+  },
+  warn: (m: string) => {
+    warn(m);
+  },
+};
+
+// Discovery-mode metric tags per verdict category. The mode difference vs
+// the verifier is deliberate: a tail-unknown positive counts as "success"
+// here, and the degenerate empty-provider cells count as "error".
+const DISCOVERY_RESULT_TAG: Record<UnitedCheckCategory, string> = {
+  trusted_starlink: "success",
+  trusted_other: "success",
+  tail_unknown_positive: "success",
+  unattributable: "tail_unknown",
+  tail_unknown: "error",
+  no_provider: "error",
+  mismatch: "aircraft_mismatch",
+  error: "error",
+};
 
 // Discovery mode: faster checks for unknown planes
 const DISCOVERY_INTERVAL_MS = 30 * 1000; // 30 seconds
@@ -143,13 +171,21 @@ async function getUpcomingFlightsForPlane(tailNumber: string): Promise<{
   }
 }
 
+export interface VerifyPlaneDeps {
+  checker?: typeof checkStarlinkStatusSubprocess;
+  getFlights?: typeof getUpcomingFlightsForPlane;
+}
+
 /**
  * Verify a single plane's Starlink status
  */
-async function verifyPlane(
+export async function verifyPlane(
   db: Database,
-  plane: FleetAircraft
+  plane: FleetAircraft,
+  deps: VerifyPlaneDeps = {}
 ): Promise<StarlinkCheckResult | null> {
+  const checker = deps.checker ?? checkStarlinkStatusSubprocess;
+  const getFlights = deps.getFlights ?? getUpcomingFlightsForPlane;
   const aircraftTypeTag = normalizeAircraftType(plane.aircraft_type);
   const fleetTag = normalizeFleet(plane.fleet);
 
@@ -161,7 +197,7 @@ async function verifyPlane(
       span.setTag("fleet", fleetTag);
 
       // Get upcoming flights for this plane
-      const flightData = await getUpcomingFlightsForPlane(plane.tail_number);
+      const flightData = await getFlights(plane.tail_number);
 
       if (!flightData) {
         // Counting this check, to match the increment updateFleetVerificationResult applies.
@@ -192,85 +228,51 @@ async function verifyPlane(
       );
 
       try {
-        const result = await checkStarlinkStatusSubprocess(
+        const result = await checker(
           forVerification.flightNumber,
           forVerification.date,
           forVerification.origin,
           forVerification.destination
         );
 
-        // Aircraft-swap detection: United.com returns the actual tail on the flight.
-        // If it doesn't match, the result is for a different plane — don't attribute it.
-        const actualTail = result.tailNumber;
+        // Aircraft-swap detection: United.com returns the actual tail on the
+        // flight. A mismatched result is for a different plane — don't
+        // attribute it.
+        const verdict = classifyUnitedCheck(db, result, plane.tail_number, verdictLog);
+        const { tailMismatch, resolvedTail } = verdict;
 
-        // Mainline pages show ship numbers. Resolve via lookup.
-        let resolvedTail = actualTail;
-        if (!resolvedTail && result.shipNumber) {
-          const shipMap = getShipToTailMap(db);
-          resolvedTail = shipMap.get(result.shipNumber) ?? null;
-          if (resolvedTail) {
-            info(`Resolved ship #${result.shipNumber} → ${resolvedTail}`);
-          }
-        }
-
-        const tailMismatch =
-          resolvedTail && resolvedTail.toUpperCase() !== plane.tail_number.toUpperCase();
-        const tailUnknown = !resolvedTail;
-        const untrustedNonStarlink =
-          tailUnknown && result.wifiProvider && result.wifiProvider !== "Starlink";
-
-        if (tailMismatch) {
-          warn(
-            `Aircraft swap: expected ${plane.tail_number} but flight has ${resolvedTail} — skipping`
-          );
-        }
-
-        logVerification(db, {
-          tail_number: plane.tail_number,
-          source: UNITED_SOURCE,
-          airline: "UA",
-          has_starlink: tailMismatch || untrustedNonStarlink ? null : result.hasStarlink,
-          wifi_provider: tailMismatch || untrustedNonStarlink ? null : result.wifiProvider,
-          aircraft_type: result.aircraftType || plane.aircraft_type,
-          flight_number: `UA${forVerification.flightNumber}`,
-          tail_confirmed: tailMismatch ? 0 : tailUnknown ? null : 1,
-          error: tailMismatch
-            ? `Aircraft mismatch: flight has ${resolvedTail}`
-            : untrustedNonStarlink
-              ? "Tail not extracted — cannot attribute non-Starlink result"
-              : result.error || null,
-        });
-
-        if (tailMismatch && resolvedTail && result.wifiProvider) {
-          logVerification(db, {
-            tail_number: resolvedTail,
-            source: UNITED_SOURCE,
-            airline: "UA",
-            has_starlink: result.hasStarlink,
-            wifi_provider: result.wifiProvider,
-            aircraft_type: result.aircraftType || null,
-            flight_number: `UA${forVerification.flightNumber}`,
-            tail_confirmed: 1,
-            error: null,
+        // Discovery mode settles united_fleet.starlink_status from the same
+        // consensus the shared writer computes; one transaction over the log
+        // row(s), the starlink_planes settle, and the united_fleet write so
+        // the two tables can't diverge mid-check.
+        const prevStatus = plane.starlink_status as StarlinkStatus;
+        let consensus: WifiConsensus | null = null;
+        let starlinkStatus: StarlinkStatus = prevStatus;
+        let needsMoreObs = false;
+        db.transaction(() => {
+          consensus = applyUnitedObservation(db, verdict, {
+            flightNumber: `UA${forVerification.flightNumber}`,
+            aircraftType: result.aircraftType || plane.aircraft_type,
+            log: verdictLog,
           });
-          // Run consensus for the swap-captured tail so it settles without
-          // waiting for a direct check that needsVerification may skip (the
-          // log entry above makes the tail look recently-checked).
-          const swapConsensus = computeWifiConsensus(db, resolvedTail, {
-            sources: OBSERVED_WIFI_SOURCES,
-          });
-          if (swapConsensus.verdict !== null) {
-            updateVerifiedWifi(db, resolvedTail, swapConsensus.verdict);
-            info(
-              `${resolvedTail} (swap-captured): verified_wifi → ${swapConsensus.verdict} (${swapConsensus.reason})`
-            );
-          }
-        }
 
-        // A result is trustworthy only if: no error, got a wifi provider, tail
-        // matches, and we could actually confirm attribution when non-Starlink.
-        const canTrustResult =
-          !result.error && result.wifiProvider && !tailMismatch && !untrustedNonStarlink;
+          if (verdict.trusted) {
+            if (consensus?.verdict === "Starlink") {
+              starlinkStatus = "confirmed";
+            } else if (consensus?.verdict != null) {
+              starlinkStatus = "negative";
+            } else {
+              needsMoreObs = true;
+            }
+          }
+
+          updateFleetVerificationResult(db, plane.tail_number, {
+            starlinkStatus,
+            verifiedWifi: consensus ? consensus.verdict : plane.verified_wifi,
+            error: verdict.observation.error ?? undefined,
+            needsMoreObs,
+          });
+        })();
 
         const wifiProviderTag = normalizeWifiProvider(result.wifiProvider);
         const checkTags = {
@@ -281,66 +283,23 @@ async function verifyPlane(
           airline: normalizeAirlineTag("UA"),
         };
 
-        // Consensus includes the just-logged observation. The status is driven
-        // by the 30-day consensus, not this single check, so one flaky scrape
-        // can't bounce a plane between confirmed and negative.
-        const consensus = canTrustResult
-          ? computeWifiConsensus(db, plane.tail_number, { sources: OBSERVED_WIFI_SOURCES })
-          : null;
-
-        const prevStatus = plane.starlink_status as StarlinkStatus;
-        let starlinkStatus: StarlinkStatus;
-        let needsMoreObs = false;
-        if (!canTrustResult) {
-          starlinkStatus = prevStatus;
-          const resultTag = tailMismatch
-            ? "aircraft_mismatch"
-            : untrustedNonStarlink
-              ? "tail_unknown"
-              : "error";
+        const resultTag = DISCOVERY_RESULT_TAG[verdict.category];
+        metrics.increment(COUNTERS.VERIFICATION_CHECK, { result: resultTag, ...checkTags });
+        if (!verdict.trusted) {
           span.setTag("result", resultTag);
-          metrics.increment(COUNTERS.VERIFICATION_CHECK, { result: resultTag, ...checkTags });
+        } else if (result.hasStarlink) {
+          span.setTag("result", "starlink");
+          metrics.increment(COUNTERS.PLANES_STARLINK_DETECTED, {
+            fleet: fleetTag,
+            aircraft_type: aircraftTypeTag,
+          });
         } else {
-          metrics.increment(COUNTERS.VERIFICATION_CHECK, { result: "success", ...checkTags });
-          if (result.hasStarlink) {
-            span.setTag("result", "starlink");
-            metrics.increment(COUNTERS.PLANES_STARLINK_DETECTED, {
-              fleet: fleetTag,
-              aircraft_type: aircraftTypeTag,
-            });
-          } else {
-            span.setTag("result", "not_starlink");
-          }
-
-          if (consensus!.verdict === "Starlink") {
-            starlinkStatus = "confirmed";
-          } else if (consensus!.verdict !== null) {
-            starlinkStatus = "negative";
-          } else {
-            starlinkStatus = prevStatus;
-            needsMoreObs = true;
-          }
+          span.setTag("result", "not_starlink");
         }
 
         span.setTag("wifi_provider", wifiProviderTag);
 
         const statusChanged = starlinkStatus !== prevStatus;
-        updateFleetVerificationResult(db, plane.tail_number, {
-          starlinkStatus,
-          verifiedWifi: consensus ? consensus.verdict : plane.verified_wifi,
-          error: tailMismatch
-            ? `Aircraft mismatch: flight has ${resolvedTail}`
-            : untrustedNonStarlink
-              ? "Tail not extracted — cannot attribute non-Starlink result"
-              : result.error || undefined,
-          needsMoreObs,
-        });
-
-        // starlink_planes.verified_wifi tracks the same consensus verdict so
-        // the website filter (IS NULL OR = 'Starlink') stays in sync.
-        if (consensus) {
-          updateVerifiedWifi(db, plane.tail_number, consensus.verdict);
-        }
 
         if (statusChanged) {
           info(
@@ -386,7 +345,7 @@ async function verifyPlane(
             "Starlink",
             plane.operated_by,
             plane.fleet === "mainline" ? "mainline" : "express",
-            { airline: "UA" }
+            { airline: "UA", evidence: "observed" }
           );
           updateFlights(db, plane.tail_number, allFlights);
           info(
@@ -418,15 +377,9 @@ async function verifyPlane(
           airline: normalizeAirlineTag("UA"),
         });
 
-        logVerification(db, {
-          tail_number: plane.tail_number,
-          source: UNITED_SOURCE,
-          airline: "UA",
-          has_starlink: null,
-          wifi_provider: null,
-          aircraft_type: plane.aircraft_type,
-          flight_number: null,
-          error: errorMessage,
+        logUnitedCheckFailure(db, plane.tail_number, errorMessage, {
+          flightNumber: `UA${forVerification.flightNumber}`,
+          aircraftType: plane.aircraft_type,
         });
 
         updateFleetVerificationResult(db, plane.tail_number, {
@@ -621,7 +574,7 @@ async function verifySpecificTail(tailNumber: string): Promise<void> {
           "Starlink",
           null,
           "express",
-          { airline: "UA" }
+          { airline: "UA", evidence: "observed" }
         );
         updateFlights(db, tailNumber, allFlights);
       }

@@ -11,14 +11,10 @@
 
 import type { Database } from "bun:sqlite";
 import { AIRLINES } from "../airlines/registry";
-import {
-  addDiscoveredStarlinkPlane,
-  initializeDatabase,
-  refreshFleetMeta,
-  upsertFleetAircraft,
-} from "../database/database";
+import { initializeDatabase } from "../database/database";
 import { BROWSER_USER_AGENT } from "../utils/constants";
 import { info, error as logError } from "../utils/logger";
+import { applyFlyertalkTails } from "./flyertalk-common";
 
 const ALLOWED_HOST = "www.flyertalk.com";
 const THREAD_ID = 2201647;
@@ -54,49 +50,23 @@ export async function fetchAlaskaFlyertalkTails(): Promise<string[]> {
 }
 
 export function applyAlaskaFlyertalkTails(db: Database, tails: string[]): number {
-  if (tails.length === 0) return 0;
-
   const lookup = db.query<{ aircraft_type: string | null; fleet: string }, [string]>(
     "SELECT aircraft_type, fleet FROM united_fleet WHERE tail_number = ? AND airline = 'AS'"
   );
 
-  let written = 0;
-  const tx = db.transaction((rows: string[]) => {
-    for (const tail of rows) {
+  return applyFlyertalkTails(db, tails, {
+    airline: "AS",
+    gid: "flyertalk_as",
+    operator: "Alaska Airlines",
+    gateLabel: "AS-mainline-gated",
+    gate: (tail) => {
       const known = lookup.get(tail);
       // DB-gate: only confirm tails fleet-sync already knows as AS mainline.
       // E175s are type-deterministic via AS typeDeterministicWifi — skip to keep
       // this writer scoped to the gap it fills.
-      if (!known || known.fleet !== "mainline") continue;
-      upsertFleetAircraft(
-        db,
-        tail,
-        known.aircraft_type,
-        "flyertalk_as",
-        "mainline",
-        "Alaska Airlines",
-        "AS",
-        { starlinkStatus: "confirmed", verifiedWifi: "Starlink" }
-      );
-      addDiscoveredStarlinkPlane(
-        db,
-        tail,
-        known.aircraft_type,
-        "Starlink",
-        "Alaska Airlines",
-        "mainline",
-        {
-          sheetGid: "flyertalk_as",
-          airline: "AS",
-        }
-      );
-      written++;
-    }
+      return known && known.fleet === "mainline" ? { aircraftType: known.aircraft_type } : null;
+    },
   });
-  tx(tails);
-
-  info(`FlyerTalk AS sync: ${written}/${tails.length} tails written (AS-mainline-gated)`);
-  return written;
 }
 
 async function syncAlaskaFlyertalk(): Promise<number> {
@@ -104,9 +74,7 @@ async function syncAlaskaFlyertalk(): Promise<number> {
   try {
     const tails = await fetchAlaskaFlyertalkTails();
     info(`FlyerTalk AS: scraped ${tails.length} installed tails from wikipost`);
-    const n = applyAlaskaFlyertalkTails(db, tails);
-    if (n > 0) refreshFleetMeta(db, "AS");
-    return n;
+    return applyAlaskaFlyertalkTails(db, tails);
   } finally {
     db.close();
   }

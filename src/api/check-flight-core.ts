@@ -10,10 +10,14 @@
  * airport's local date; unmapped airports keep the strict UTC window.
  */
 
-import { buildAirlineFlightNumberVariants, ensureAirlinePrefix } from "../airlines/flight-number";
-import type { AirlineConfig } from "../airlines/registry";
+import {
+  buildAirlineFlightNumberVariants,
+  detectMarketingCarrier,
+  ensureAirlinePrefix,
+} from "../airlines/flight-number";
+import { type AirlineConfig, enabledAirlines, publicAirlines } from "../airlines/registry";
 import type { FlightAssignmentRow, QatarScheduleRow } from "../database/database";
-import type { ScopedReader } from "../database/reader";
+import type { Scope, ScopedReader } from "../database/reader";
 import {
   type CarrierPrediction,
   carrierPrediction,
@@ -57,6 +61,74 @@ export function flightDateWindow(
 }
 
 type Prediction = ReturnType<typeof predictFlight>;
+
+// Outage caveat copy shared by the REST and MCP renderers so the two surfaces
+// can't drift. FR24_OUTAGE_NOTE replaces "no assignment data / not yet
+// published" claims; SWAP_DEGRADED_NOTE qualifies a firm no whose swap
+// re-check couldn't run.
+export const FR24_OUTAGE_NOTE =
+  "We couldn't confirm the aircraft assignment right now — try again shortly.";
+export const SWAP_DEGRADED_NOTE =
+  "Note: aircraft-swap detection is degraded right now — the live assignment check couldn't run.";
+
+/**
+ * One carrier-resolution decision shared by the flight-number-taking API
+ * surfaces it owns — REST /api/check-flight, /api/check-any-flight,
+ * /api/predict-flight and MCP check_flight / predict_flight_starlink — whose
+ * entry points are renderers over this (404 Response vs tool error). The
+ * SEO/permalink routing (resolveFlightCfg in app.ts) is deliberately looser
+ * and NOT covered.
+ *
+ *  - Pinned scope (tenant host / airline MCP scope): a flight number carrying
+ *    ANOTHER registered airline's marketing prefix is refused — answering it
+ *    under this carrier's branding is the cross-tenant leak. Digits-only,
+ *    own-prefix, and operating-carrier (OO/SKW/YX…) numbers proceed.
+ *  - Unpinned (hub): detect the marketing carrier across publicly-tracked
+ *    airlines; undetectable numbers (incl. digits-only and shared operating
+ *    prefixes) fail closed rather than defaulting to any carrier.
+ *
+ * `pinned: false` tells the caller to swap readers via carrierReader.
+ * `not_tracked` carries what a renderer needs (the pinned carrier, if any,
+ * and the publicly-tracked list) so renderers don't re-derive policy.
+ */
+export type CarrierDecision =
+  | { outcome: "resolved"; cfg: AirlineConfig; pinned: boolean }
+  | {
+      outcome: "not_tracked";
+      pinnedCfg: AirlineConfig | null;
+      tracked: readonly AirlineConfig[];
+    };
+
+// Registry is process-static — snapshot the airline lists once.
+const ENABLED_AIRLINES: readonly AirlineConfig[] = enabledAirlines();
+const PUBLIC_AIRLINES: readonly AirlineConfig[] = publicAirlines();
+
+export function decideCarrier(
+  pinnedCfg: AirlineConfig | null,
+  flightNumber: string
+): CarrierDecision {
+  if (pinnedCfg) {
+    const marketing = detectMarketingCarrier(flightNumber, ENABLED_AIRLINES);
+    if (marketing && marketing.code !== pinnedCfg.code) {
+      return { outcome: "not_tracked", pinnedCfg, tracked: PUBLIC_AIRLINES };
+    }
+    return { outcome: "resolved", cfg: pinnedCfg, pinned: true };
+  }
+  const cfg = detectMarketingCarrier(flightNumber, PUBLIC_AIRLINES);
+  if (!cfg) return { outcome: "not_tracked", pinnedCfg: null, tracked: PUBLIC_AIRLINES };
+  return { outcome: "resolved", cfg, pinned: false };
+}
+
+/** The reader a resolved decision answers from: the pinned scope's own, or a
+ * swap to the detected carrier's. Shared by the REST and MCP renderers so the
+ * security-relevant swap isn't copy-pasted. */
+export function carrierReader(
+  decision: Extract<CarrierDecision, { outcome: "resolved" }>,
+  pinnedReader: ScopedReader,
+  getReader: (scope: Scope) => ScopedReader
+): ScopedReader {
+  return decision.pinned ? pinnedReader : getReader(decision.cfg.code);
+}
 
 /** Why a row landed in the firm-no bucket. */
 export type NegativeReason = "settled" | "verified_other";

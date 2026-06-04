@@ -22,9 +22,9 @@ import { Database } from "bun:sqlite";
 import { writeFileSync } from "node:fs";
 import { AIRLINES } from "../airlines/registry";
 import { FlightRadar24API } from "../api/flightradar24-api";
-import { getShipToTailMap } from "../database/database";
 import { DB_PATH, extractFlightNumber, unitedLookupDate } from "../utils/constants";
 import { checkStarlinkStatusSubprocess } from "./united-starlink-checker-subprocess";
+import { classifyUnitedCheck } from "./united-verdict";
 
 // The subprocess mutex's .finally() chain can leak an unhandled rejection when
 // the child exits non-zero. Swallow it so one failed scrape doesn't kill the
@@ -176,17 +176,14 @@ async function verifyTail(
       continue;
     }
 
-    // Mainline pages show ship numbers. Resolve via lookup.
-    let resolvedTail = result.tailNumber;
-    if (!resolvedTail && result.shipNumber) {
-      const shipMap = getShipToTailMap(db);
-      resolvedTail = shipMap.get(result.shipNumber) ?? null;
-      if (resolvedTail) {
-        log(`    resolved ship #${result.shipNumber} → ${resolvedTail}`);
-      }
-    }
-
-    const tailMatch = resolvedTail?.toUpperCase() === tail.toUpperCase();
+    // Same ship-resolve + tail-match ladder as production. CLI semantics
+    // deliberately differ from the verifier in one way: an unresolved tail
+    // counts as not-matched (retry the next flight) instead of positive-only
+    // trust — this is a ground-truth oracle, not an observation writer.
+    const cliLog = { info: (m: string) => log(`    ${m}`), warn: (m: string) => log(`    ${m}`) };
+    const classified = classifyUnitedCheck(db, result, tail, cliLog);
+    const resolvedTail = classified.resolvedTail;
+    const tailMatch = !classified.tailUnknown && !classified.tailMismatch;
     log(
       `    tail=${resolvedTail ?? "?"} ${tailMatch ? "✓" : "✗"} · ` +
         `wifi=${result.wifiProvider ?? "?"} · starlink=${result.hasStarlink ? "YES" : "no"}`

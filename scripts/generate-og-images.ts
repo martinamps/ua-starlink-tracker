@@ -16,7 +16,7 @@ const HUB_HOST = SITES.airline.canonicalHost;
 const W = 1200;
 const H = 630;
 
-interface Summary {
+export interface Summary {
   airlines: Array<{
     code: string;
     name: string;
@@ -25,8 +25,14 @@ interface Summary {
     percentage: number;
   }>;
 }
-interface ApiData {
+export interface ApiData {
   starlinkPlanes: Array<{ DateFound: string }>;
+}
+
+export interface CardSpec {
+  file: string;
+  params: URLSearchParams;
+  desc: string;
 }
 
 async function getJson<T>(url: string): Promise<T | null> {
@@ -42,14 +48,14 @@ async function getJson<T>(url: string): Promise<T | null> {
 }
 
 /** Cumulative install count over time, downsampled to ~120 points. */
-function rolloutSeries(planes: ApiData["starlinkPlanes"]): number[] {
+export function rolloutSeries(planes: ApiData["starlinkPlanes"], nowMs = Date.now()): number[] {
   const dates = planes
     .map((p) => p.DateFound)
     .filter((d) => d && /^\d{4}-\d{2}-\d{2}/.test(d))
     .sort();
   if (dates.length < 2) return [];
   const start = new Date(dates[0] as string).getTime();
-  const end = Date.now();
+  const end = nowMs;
   const n = Math.min(120, Math.max(2, Math.ceil((end - start) / 86400000)));
   const series: number[] = [];
   let cursor = 0;
@@ -88,16 +94,18 @@ async function renderWebp(page: Page, params: URLSearchParams, out: string) {
   await Bun.write(out, Buffer.from(webpBase64, "base64"));
 }
 
-async function main() {
-  const summary = await getJson<Summary>(`https://${HUB_HOST}/api/fleet-summary`);
-  if (!summary) {
-    console.error(`fatal: could not fetch https://${HUB_HOST}/api/fleet-summary`);
-    process.exit(1);
-  }
-
-  const browser = await chromium.launch({ headless: true, args: ["--no-sandbox"] });
-  const page = await browser.newPage({ viewport: { width: W, height: H }, deviceScaleFactor: 2 });
-  const generated: string[] = [];
+/**
+ * Card derivation: summary → one spec per renderable tenant card, hub card
+ * last. The injected getData fetches a tenant's rollout history — it is only
+ * called for tenants that pass the skip rules, so the fetch list and the
+ * card list cannot drift. No browser; tests pass a stub fetcher.
+ */
+export async function buildCardSpecs(
+  summary: Summary,
+  getData: (code: string, host: string) => Promise<ApiData | null>,
+  nowMs = Date.now()
+): Promise<CardSpec[]> {
+  const specs: CardSpec[] = [];
 
   // ── per-airline cards ───────────────────────────────────────────────────────
   for (const a of summary.airlines) {
@@ -111,23 +119,24 @@ async function main() {
       continue;
     }
 
-    // Fetch the rollout history from the tenant's own host if it resolves;
-    // otherwise skip the sparkline — the count alone is still useful.
-    const data = await getJson<ApiData>(`https://${host}/api/data`);
-    const series = data ? rolloutSeries(data.starlinkPlanes) : [];
+    // Sparkline only when the tenant's rollout history resolved — the count
+    // alone is still useful.
+    const data = await getData(a.code, host);
+    const series = data ? rolloutSeries(data.starlinkPlanes, nowMs) : [];
 
-    const params = new URLSearchParams({
-      layout: "count",
-      label: `${cfg.name.toUpperCase()} STARLINK TRACKER`,
-      domain: host,
-      accent: cfg.brand.accentColor.replace("#", ""),
-      count: String(a.installed),
-      sub: "AIRCRAFT WITH STARLINK",
-      series: series.join(","),
+    specs.push({
+      file: path.basename(cfg.brand.socialImagePath),
+      params: new URLSearchParams({
+        layout: "count",
+        label: `${cfg.name.toUpperCase()} STARLINK TRACKER`,
+        domain: host,
+        accent: cfg.brand.accentColor.replace("#", ""),
+        count: String(a.installed),
+        sub: "AIRCRAFT WITH STARLINK",
+        series: series.join(","),
+      }),
+      desc: `${a.code} count=${a.installed} sparkline=${series.length > 1}`,
     });
-    const file = path.basename(cfg.brand.socialImagePath);
-    await renderWebp(page, params, path.join(OUT_DIR, file));
-    generated.push(`${file}  ${a.code} count=${a.installed} sparkline=${series.length > 1}`);
   }
 
   // ── hub card ────────────────────────────────────────────────────────────────
@@ -136,20 +145,48 @@ async function main() {
     pct: Math.round(a.percentage),
     accent: AIRLINES[a.code]?.brand.accentColor.replace("#", "") ?? "0ea5e9",
   }));
-  const hubParams = new URLSearchParams({
-    layout: "grid",
-    label: "AIRLINE STARLINK TRACKER",
-    domain: HUB_HOST,
-    accent: SITES.airline.brand.accentColor.replace("#", ""),
-    cards: JSON.stringify(cards),
-    caption: "PER-AIRCRAFT STARLINK WIFI STATUS",
+  specs.push({
+    file: path.basename(SITES.airline.brand.socialImagePath),
+    params: new URLSearchParams({
+      layout: "grid",
+      label: "AIRLINE STARLINK TRACKER",
+      domain: HUB_HOST,
+      accent: SITES.airline.brand.accentColor.replace("#", ""),
+      cards: JSON.stringify(cards),
+      caption: "PER-AIRCRAFT STARLINK WIFI STATUS",
+    }),
+    desc: cards.map((c) => `${c.name}=${c.pct}%`).join(" "),
   });
-  const hubFile = path.basename(SITES.airline.brand.socialImagePath);
-  await renderWebp(page, hubParams, path.join(OUT_DIR, hubFile));
-  generated.push(`${hubFile}  ${cards.map((c) => `${c.name}=${c.pct}%`).join(" ")}`);
+
+  return specs;
+}
+
+async function main() {
+  const summary = await getJson<Summary>(`https://${HUB_HOST}/api/fleet-summary`);
+  if (!summary) {
+    console.error(`fatal: could not fetch https://${HUB_HOST}/api/fleet-summary`);
+    process.exit(1);
+  }
+
+  const specs = await buildCardSpecs(summary, (_code, host) =>
+    getJson<ApiData>(`https://${host}/api/data`)
+  );
+
+  const browser = await chromium.launch({ headless: true, args: ["--no-sandbox"] });
+  const page = await browser.newPage({ viewport: { width: W, height: H }, deviceScaleFactor: 2 });
+  const generated: string[] = [];
+  for (const spec of specs) {
+    await renderWebp(page, spec.params, path.join(OUT_DIR, spec.file));
+    generated.push(`${spec.file}  ${spec.desc}`);
+  }
 
   await browser.close();
   console.log(`Generated ${generated.length} OG images @ ${W}x${H}:\n  ${generated.join("\n  ")}`);
 }
 
-main();
+if (import.meta.main) {
+  main().catch((e) => {
+    console.error(e);
+    process.exit(1);
+  });
+}
