@@ -13,8 +13,8 @@ import { copyFileSync } from "node:fs";
 import { SHEET_ROSTER_WHERE, updateDatabase, updateFlights } from "../src/database/database";
 import { createApp } from "../src/server/app";
 import type { FleetStats } from "../src/types";
+import { TEST_DB, bodyOf as bodyOfApp, mcpReq, openSnapshot, req } from "./helpers";
 
-const TEST_DB = "/tmp/ua-test.sqlite";
 const UA = "unitedstarlinktracker.com";
 const HA_HOST = "hawaiianstarlinktracker.com";
 const AS_HOST = "alaskastarlinktracker.com";
@@ -28,7 +28,7 @@ let app: ReturnType<typeof createApp>;
 let db: Database;
 
 beforeAll(() => {
-  db = new Database(TEST_DB, { readonly: true });
+  db = openSnapshot();
   app = createApp(db);
   const c = db
     .query("SELECT COUNT(*) as n FROM starlink_planes WHERE airline IN ('HA','QR')")
@@ -36,25 +36,7 @@ beforeAll(() => {
   if (c.n < 2) throw new Error("Canary rows missing — run `bun run test:setup`");
 });
 
-function req(path: string, host: string, init: RequestInit = {}) {
-  return new Request(`http://x${path}`, {
-    ...init,
-    headers: { Host: host, ...(init.headers as Record<string, string>) },
-  });
-}
-
-async function bodyOf(path: string, host: string, init?: RequestInit) {
-  const r = await app.dispatch(req(path, host, init));
-  return { status: r.status, text: await r.text() };
-}
-
-function mcpReq(host: string, method: string, params: unknown) {
-  return req("/mcp", host, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-  });
-}
+const bodyOf = (path: string, host: string, init?: RequestInit) => bodyOfApp(app, path, host, init);
 
 // ─────────────────────────────────────────────────────────────────────────────
 

@@ -3,18 +3,18 @@
  * /api/check-flight + /api/fleet-summary surfaces.
  *
  * Type-map tests are deterministic and DB-free. Integration tests run against
- * the read-only snapshot at /tmp/ua-test.sqlite (see scripts/test-setup.sh).
+ * the read-only snapshot at TEST_DB (see tests/helpers.ts + scripts/test-setup.sh).
  * The hermetic AS fixture seeds two confirmed Horizon E175s (N654QX, N658QX)
  * plus the canary 737 (N644AS); the prod snapshot post-seed has ~90 E175s.
  * Tests assert shape + a snapshot-relative lower bound, not absolute counts.
  */
 
-import { Database } from "bun:sqlite";
+import type { Database } from "bun:sqlite";
 import { beforeAll, describe, expect, test } from "bun:test";
 import { alaskaTypeToStarlink } from "../src/api/alaska-status";
 import { createApp } from "../src/server/app";
+import { openSnapshot } from "./helpers";
 
-const TEST_DB = "/tmp/ua-test.sqlite";
 const AS_HOST = "alaskastarlinktracker.com";
 // Hermetic E175 row from scripts/test-setup.sh; also exists on a prod snapshot.
 const HORIZON_E175_FLIGHT = { flight: "QX2304", date: "2026-03-22" };
@@ -23,7 +23,7 @@ let app: ReturnType<typeof createApp>;
 let db: Database;
 
 beforeAll(() => {
-  db = new Database(TEST_DB, { readonly: true });
+  db = openSnapshot();
   app = createApp(db);
 });
 

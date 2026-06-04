@@ -1,16 +1,31 @@
 /**
- * Shared test fixtures. The snapshot schema DDL is read once at module load;
+ * Shared test fixtures. The snapshot schema DDL is read once on first use;
  * makeSyntheticDb() returns a fresh in-memory clone per call so write-path
  * tests never touch the shared readonly snapshot.
  */
 
 import { Database } from "bun:sqlite";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import type { predictFlight } from "../src/scripts/starlink-predictor";
 
-export const TEST_DB = "/tmp/ua-test.sqlite";
+// Snapshot lives inside the checkout (gitignored) so parallel worktrees never
+// truncate each other's open readonly connection via test:setup's `cp`.
+// scripts/test-setup.sh derives the same path from its own location.
+export const TEST_DB = join(import.meta.dir, "..", ".test-snapshot.sqlite");
 
-const SNAPSHOT_DDL: string[] = (() => {
-  const src = new Database(TEST_DB, { readonly: true });
+/** Readonly handle on the shared snapshot; fails loud when test:setup hasn't run. */
+export function openSnapshot(): Database {
+  if (!existsSync(TEST_DB)) {
+    throw new Error(`missing test snapshot at ${TEST_DB} — run \`bun run test:setup\``);
+  }
+  return new Database(TEST_DB, { readonly: true });
+}
+
+let snapshotDdl: string[] | undefined;
+
+function loadSnapshotDdl(): string[] {
+  const src = openSnapshot();
   const rows = src
     .query(
       "SELECT sql FROM sqlite_master WHERE type='table' AND sql IS NOT NULL AND name <> 'sqlite_sequence'"
@@ -18,15 +33,56 @@ const SNAPSHOT_DDL: string[] = (() => {
     .all() as { sql: string }[];
   src.close();
   return rows.map((r) => r.sql);
-})();
+}
 
 export function makeSyntheticDb(): Database {
+  snapshotDdl ??= loadSnapshotDdl();
   const db = new Database(":memory:");
-  for (const sql of SNAPSHOT_DDL) db.exec(sql);
+  for (const sql of snapshotDdl) db.exec(sql);
   return db;
 }
 
 export const utc = (iso: string) => Math.floor(Date.parse(iso) / 1000);
+
+// ── dispatch helpers (shared by isolation + tenant-matrix) ──────────────────
+
+interface Dispatcher {
+  dispatch(req: Request): Promise<Response>;
+}
+
+export function req(path: string, host: string, init: RequestInit = {}): Request {
+  return new Request(`http://x${path}`, {
+    ...init,
+    headers: { Host: host, ...(init.headers as Record<string, string>) },
+  });
+}
+
+export async function bodyOf(app: Dispatcher, path: string, host: string, init?: RequestInit) {
+  const r = await app.dispatch(req(path, host, init));
+  return { status: r.status, text: await r.text() };
+}
+
+/** bodyOf + 200 check + JSON.parse; throws (failing the test) on non-200. */
+export async function jsonOf(app: Dispatcher, path: string, host: string, init?: RequestInit) {
+  const { status, text } = await bodyOf(app, path, host, init);
+  if (status !== 200) throw new Error(`${path} → ${status}: ${text.slice(0, 200)}`);
+  return JSON.parse(text);
+}
+
+export function mcpReq(host: string, method: string, params: unknown): Request {
+  return req("/mcp", host, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+  });
+}
+
+/** mcpReq dispatch + 200 check + parsed body (JSON-RPC errors ride in 200s). */
+export async function postMcp(app: Dispatcher, host: string, method: string, params?: unknown) {
+  const r = await app.dispatch(mcpReq(host, method, params));
+  if (r.status !== 200) throw new Error(`mcp ${method} → ${r.status}`);
+  return r.json();
+}
 
 export const stubPredict = (n = 0) =>
   ((_reader: unknown, flightNumber: string) => ({

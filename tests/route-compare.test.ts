@@ -1,9 +1,9 @@
 /**
- * Route-compare + planner behavior tests against the hermetic /tmp/ua-test.sqlite
- * snapshot. Asserts shapes and bounded ranges (not exact values) so they
+ * Route-compare + planner behavior tests against the hermetic readonly
+ * snapshot at TEST_DB (see tests/helpers.ts). Asserts shapes and bounded ranges (not exact values) so they
  * survive data drift; the SFO-AUS regression guard is the load-bearing case.
  */
-import { Database } from "bun:sqlite";
+import type { Database } from "bun:sqlite";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { publicAirlines } from "../src/airlines/registry";
 import { getSubfleetPenetration } from "../src/database/database";
@@ -13,14 +13,14 @@ import {
   planItinerary,
 } from "../src/scripts/starlink-predictor";
 import { createReaderFactory } from "../src/server/context";
+import { openSnapshot } from "./helpers";
 
-const TEST_DB = "/tmp/ua-test.sqlite";
 let db: Database;
 let hubReader: ReturnType<ReturnType<typeof createReaderFactory>>;
 let getReader: (code: string) => ReturnType<ReturnType<typeof createReaderFactory>>;
 
 beforeAll(() => {
-  db = new Database(TEST_DB, { readonly: true });
+  db = openSnapshot();
   const factory = createReaderFactory(db);
   hubReader = factory("ALL");
   getReader = (code: string) => factory(code);

@@ -1,8 +1,8 @@
 /**
  * Integration tests — lock down public API contracts and MCP protocol.
  *
- * These tests run against a read-only copy of the production database at
- * /tmp/ua-test.sqlite. They assert on RESPONSE SHAPES, not specific values,
+ * These tests run against the read-only snapshot at TEST_DB (see
+ * tests/helpers.ts). They assert on RESPONSE SHAPES, not specific values,
  * so they don't break as data changes.
  *
  * Critical contracts:
@@ -23,18 +23,15 @@ import {
   getFleetPageData,
   getFleetStats,
   getHubStats,
-  getLastUpdated,
   getRecentInstalls,
   getStarlinkPlanes,
-  getTotalCount,
-  getUpcomingFlights,
 } from "../src/database/database";
 import { computePrecision } from "../src/scripts/precision-backtest";
 import { planItinerary, predictFlight, predictRoute } from "../src/scripts/starlink-predictor";
 import { computeSurfaceContradictions } from "../src/scripts/surface-sweep";
 import { createApp } from "../src/server/app";
 import { type ScopedReader, createReaderFactory } from "../src/server/context";
-import type { ApiResponse, Flight } from "../src/types";
+import { airportLocalDate } from "../src/utils/airport-tz";
 import {
   buildFlightNumberVariants,
   ensureUAPrefix,
@@ -42,13 +39,13 @@ import {
   normalizeFlightNumber,
   pickVerifiableFlight,
 } from "../src/utils/constants";
+import { TEST_DB, jsonOf, mcpReq, openSnapshot } from "./helpers";
 
-const TEST_DB = "/tmp/ua-test.sqlite";
 let db: Database;
 let reader: ScopedReader;
 
 beforeAll(() => {
-  db = new Database(TEST_DB, { readonly: true });
+  db = openSnapshot();
   reader = createReaderFactory(db)("UA");
   // Sanity check: DB has data
   const count = db.query("SELECT COUNT(*) as n FROM starlink_planes").get() as { n: number };
@@ -62,120 +59,80 @@ beforeAll(() => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("/api/check-flight contract", () => {
-  // Reconstructs the handler's response shape using the same queries as server.ts.
-  // If someone changes the server.ts handler, they need to update this OR extract
-  // the handler to a testable module. Either way, the contract is documented here.
-  function checkFlightResponse(flightNumber: string, date: string) {
-    const dateObj = new Date(`${date}T00:00:00Z`);
-    const startOfDay = Math.floor(dateObj.getTime() / 1000);
-    const endOfDay = startOfDay + 86400;
+  // Dispatches through the real handler — a reconstructed query here can stay
+  // green while the handler regresses. Assertions are shape-only.
+  const UA_HOST = "unitedstarlinktracker.com";
+  let app: ReturnType<typeof createApp>;
 
-    const normalized = ensureUAPrefix(flightNumber);
-    const variants = buildFlightNumberVariants(normalized);
-    const placeholders = variants.map(() => "?").join(", ");
+  beforeAll(() => {
+    app = createApp(db);
+  });
 
-    const rows = db
-      .query(
-        `SELECT uf.*, sp.Aircraft as aircraft_type, sp.WiFi, sp.DateFound, sp.OperatedBy, sp.fleet
-         FROM upcoming_flights uf
-         INNER JOIN starlink_planes sp ON uf.tail_number = sp.TailNumber
-         WHERE uf.flight_number IN (${placeholders})
-           AND uf.departure_time >= ? AND uf.departure_time < ?
-           AND (sp.verified_wifi IS NULL OR sp.verified_wifi = 'Starlink')
-         ORDER BY uf.departure_time ASC`
-      )
-      .all(...variants, startOfDay, endOfDay) as Array<
-      Flight & {
-        aircraft_type: string;
-        WiFi: string;
-        DateFound: string;
-        OperatedBy: string;
-        fleet: string;
-      }
-    >;
-
-    if (rows.length === 0) {
-      return { hasStarlink: false, flights: [] };
-    }
-
-    return {
-      hasStarlink: true,
-      flights: rows.map((f) => ({
-        tail_number: f.tail_number,
-        aircraft_type: f.aircraft_type,
-        flight_number: f.flight_number,
-        ua_flight_number: normalizeFlightNumber(f.flight_number),
-        departure_airport: f.departure_airport,
-        arrival_airport: f.arrival_airport,
-        departure_time: f.departure_time,
-        arrival_time: f.arrival_time,
-        departure_time_formatted: new Date(f.departure_time * 1000).toISOString(),
-        arrival_time_formatted: new Date(f.arrival_time * 1000).toISOString(),
-        operated_by: f.OperatedBy,
-        fleet_type: f.fleet,
-      })),
-    };
+  function checkFlight(flightNumber: string, date: string) {
+    return jsonOf(app, `/api/check-flight?flight_number=${flightNumber}&date=${date}`, UA_HOST);
   }
 
-  test("miss: returns { hasStarlink: false, flights: [] }", () => {
-    const resp = checkFlightResponse("UA99999", "2099-01-01");
-    expect(resp.hasStarlink).toBe(false);
-    expect(Array.isArray(resp.flights)).toBe(true);
-    expect(resp.flights.length).toBe(0);
-  });
-
-  test("no-assignment miss: contract fields intact, prediction rides along", async () => {
-    // A date far outside both lookup windows (no upcoming_flights row, FR24
-    // fallback skipped) exercises the predictor fallback without any network.
-    const farOut = new Date(Date.now() + 60 * 86400 * 1000).toISOString().slice(0, 10);
-    const app = createApp(db);
-    const res = await app.dispatch(
-      new Request(`http://x/api/check-flight?flight_number=UA1234&date=${farOut}`, {
-        headers: { Host: "unitedstarlinktracker.com" },
-      })
-    );
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as {
-      hasStarlink: boolean;
-      flights: unknown[];
-      confidence?: string;
-      prediction?: { probability: number; confidence: string; n_observations: number };
-    };
-    // Chrome extension contract — must not break
+  // Both dates sit outside FR24's lookup window (~24h past to ~3d future), so
+  // the no-assignment path degrades to the predictor without any network.
+  test.each([
+    ["past date", "2024-01-15"],
+    ["far-future date", new Date(Date.now() + 60 * 86400 * 1000).toISOString().slice(0, 10)],
+  ])("miss (%s): exact key set, prediction rides along", async (_label, date) => {
+    const body = await checkFlight("UA1234", date);
+    // Chrome extension contract core + the additive prediction block — an
+    // unexpected new key here is a wire change, fail loudly.
+    expect(Object.keys(body).sort()).toEqual([
+      "confidence",
+      "flights",
+      "hasStarlink",
+      "message",
+      "prediction",
+    ]);
     expect(body.hasStarlink).toBe(false);
-    expect(Array.isArray(body.flights)).toBe(true);
-    // Additive prediction block
+    expect(body.flights).toEqual([]);
     expect(body.confidence).toBe("predicted");
-    expect(typeof body.prediction?.probability).toBe("number");
-    expect(body.prediction!.probability).toBeGreaterThanOrEqual(0);
-    expect(body.prediction!.probability).toBeLessThanOrEqual(1);
-    expect(["high", "medium", "low"]).toContain(body.prediction!.confidence);
-    expect(typeof body.prediction?.n_observations).toBe("number");
+    expect(body.prediction.probability).toBeGreaterThanOrEqual(0);
+    expect(body.prediction.probability).toBeLessThanOrEqual(1);
+    expect(["high", "medium", "low"]).toContain(body.prediction.confidence);
+    expect(typeof body.prediction.n_observations).toBe("number");
+    expect(typeof body.message).toBe("string");
   });
 
-  test("hit: returns { hasStarlink: true, flights: [...] } with full field shape", () => {
-    // Find ANY real flight in the DB so this test is stable across data refreshes
+  test("hit: returns { hasStarlink: true, flights: [...] } with full field shape", async () => {
+    // Find ANY equipped flight in the snapshot so this survives data refreshes;
+    // query with the departure airport's LOCAL date — the handler matches the
+    // traveler's printed date, not the UTC date.
+    // Equipped-tail selection mirrors database.ts equippedFilter: the NOT
+    // EXISTS keeps a surface-contradiction tail (sheet says Starlink, consensus
+    // settled negative) from picking a flight the handler will firm-no.
     const sample = db
       .query(
-        `SELECT uf.flight_number, date(uf.departure_time, 'unixepoch') as d
+        `SELECT uf.flight_number, uf.departure_airport, uf.departure_time
          FROM upcoming_flights uf
          JOIN starlink_planes sp ON uf.tail_number = sp.TailNumber
          WHERE uf.airline = 'UA'
            AND (sp.verified_wifi IS NULL OR sp.verified_wifi = 'Starlink')
+           AND NOT EXISTS (
+             SELECT 1 FROM united_fleet _neg
+             WHERE _neg.tail_number = sp.TailNumber AND _neg.starlink_status = 'negative'
+           )
          LIMIT 1`
       )
-      .get() as { flight_number: string; d: string } | null;
+      .get() as { flight_number: string; departure_airport: string; departure_time: number } | null;
 
     expect(sample).not.toBeNull();
-    const resp = checkFlightResponse(normalizeFlightNumber(sample!.flight_number), sample!.d);
+    const date =
+      airportLocalDate(sample!.departure_airport, sample!.departure_time) ??
+      new Date(sample!.departure_time * 1000).toISOString().slice(0, 10);
+    const body = await checkFlight(normalizeFlightNumber(sample!.flight_number), date);
 
-    expect(resp.hasStarlink).toBe(true);
-    expect(resp.flights.length).toBeGreaterThan(0);
+    expect(body.hasStarlink).toBe(true);
+    expect(Array.isArray(body.flights)).toBe(true);
+    expect(body.flights.length).toBeGreaterThan(0);
 
-    const f = resp.flights[0];
+    const f = body.flights[0];
     // These fields are the Chrome extension contract — do not break
     expect(typeof f.tail_number).toBe("string");
-    expect(typeof f.aircraft_type).toBe("string");
     expect(typeof f.flight_number).toBe("string");
     expect(typeof f.ua_flight_number).toBe("string");
     expect(f.ua_flight_number).toMatch(/^UA\d+$/);
@@ -185,81 +142,31 @@ describe("/api/check-flight contract", () => {
     expect(typeof f.arrival_time).toBe("number");
     expect(typeof f.departure_time_formatted).toBe("string");
     expect(typeof f.arrival_time_formatted).toBe("string");
-    expect(typeof f.operated_by).toBe("string");
-    expect(typeof f.fleet_type).toBe("string");
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// /api/data contract — website depends on this shape
-// ─────────────────────────────────────────────────────────────────────────────
-
-describe("/api/data contract", () => {
-  test("returns ApiResponse shape", () => {
-    const resp: ApiResponse = {
-      totalCount: getTotalCount(db, "UA"),
-      starlinkPlanes: getStarlinkPlanes(db, "UA"),
-      lastUpdated: getLastUpdated(db, "UA"),
-      fleetStats: getFleetStats(db, "UA"),
-      flightsByTail: {},
-    };
-
-    // Group flights (same as server.ts)
-    for (const f of getUpcomingFlights(db, undefined, "UA")) {
-      if (!resp.flightsByTail[f.tail_number]) resp.flightsByTail[f.tail_number] = [];
-      resp.flightsByTail[f.tail_number].push(f);
-    }
-
-    expect(typeof resp.totalCount).toBe("number");
-    expect(resp.totalCount).toBeGreaterThan(0);
-    expect(Array.isArray(resp.starlinkPlanes)).toBe(true);
-    expect(resp.starlinkPlanes.length).toBeGreaterThan(0);
-    expect(typeof resp.lastUpdated).toBe("string");
-
-    // fleetStats shape
-    expect(typeof resp.fleetStats.express.total).toBe("number");
-    expect(typeof resp.fleetStats.express.starlink).toBe("number");
-    expect(typeof resp.fleetStats.express.percentage).toBe("number");
-    expect(typeof resp.fleetStats.mainline.total).toBe("number");
-    expect(typeof resp.fleetStats.mainline.starlink).toBe("number");
-    expect(typeof resp.fleetStats.mainline.percentage).toBe("number");
-    // Subfleet breakdown must sum to the headline so the hero rings agree.
-    expect(resp.fleetStats.express.starlink + resp.fleetStats.mainline.starlink).toBe(
-      resp.starlinkPlanes.length
-    );
-
-    // Aircraft shape
-    const plane = resp.starlinkPlanes[0];
-    expect(typeof plane.Aircraft).toBe("string");
-    expect(typeof plane.TailNumber).toBe("string");
-    expect(typeof plane.OperatedBy).toBe("string");
-    expect(["express", "mainline"]).toContain(plane.fleet);
-
-    // flightsByTail shape — skip if snapshot's upcoming_flights is stale/empty
-    const tails = Object.keys(resp.flightsByTail);
-    if (tails.length > 0) {
-      const f = resp.flightsByTail[tails[0]][0];
-      expect(typeof f.tail_number).toBe("string");
-      expect(typeof f.flight_number).toBe("string");
-      expect(typeof f.departure_airport).toBe("string");
-      expect(typeof f.arrival_airport).toBe("string");
-      expect(typeof f.departure_time).toBe("number");
-      expect(typeof f.arrival_time).toBe("number");
+    // Nullable in the wire shape — must be present, string when set
+    for (const key of ["aircraft_type", "operated_by", "fleet_type"] as const) {
+      expect(key in f).toBe(true);
+      if (f[key] !== null) expect(typeof f[key]).toBe("string");
     }
   });
 });
+
+// /api/data contract: pinned once, through app.dispatch, in tests/golden.test.ts
+// ("/api/data structural contract") — a reconstructed copy here could stay
+// green while the real handler regresses.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MCP protocol — JSON-RPC 2.0 envelope + tool schemas
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function mcpCall(method: string, params?: unknown) {
-  const req = new Request("http://localhost/mcp", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-  });
-  const resp = await handleMcpRequest(req, "UA", () => reader);
+  // Direct handleMcpRequest (not app.dispatch) — these tests pin the MCP layer
+  // against a known scoped reader; the request itself is the shared builder.
+  const resp = await handleMcpRequest(
+    mcpReq("unitedstarlinktracker.com", method, params),
+    "UA",
+    () => reader
+  );
+  expect(resp.status).toBe(200);
   return resp.json();
 }
 
@@ -508,20 +415,21 @@ describe("MCP tools", () => {
     expect(text).toContain("in the past");
   });
 
-  test("check_flight: near-term date doesn't say 'check 1-2 days before'", async () => {
-    // Today's date — if no assignment, the wording must NOT tell the user to
-    // "check back in 1-2 days" for a flight happening today.
-    const today = new Date().toISOString().slice(0, 10);
+  test("check_flight: far-future date says 'check 1-2 days before'", async () => {
+    // +10d is outside the FR24 lookup window (~24h past to ~3d future), so the
+    // prediction fallback runs with NO network. A today-date variant of this
+    // test was the suite's one live-FR24 dependency — keep dates out of
+    // [now-1d, now+3d] here. UA5212's express prior is ≥20%, so the low-prob
+    // alternatives block (its own live FR24 route lookup) doesn't fire either.
+    const farOut = new Date(Date.now() + 10 * 86400 * 1000).toISOString().slice(0, 10);
     const json = await mcpCall("tools/call", {
       name: "check_flight",
-      arguments: { flight_number: "UA9876", date: today },
+      arguments: { flight_number: "UA5212", date: farOut },
     });
     const text = json.result.content[0].text;
-    // If fallback fired it'll say probability; if assignment exists it'll say yes/no.
-    // Either way the future-tense "check again 1-2 days before" is wrong for today.
-    if (text.includes("probability")) {
-      expect(text).not.toContain("1-2 days before departure");
-    }
+    expect(text).toContain("Starlink probability");
+    expect(text).toContain("1-2 days before departure");
+    expect(json.result.isError).toBeUndefined();
   });
 
   test("predict_route_starlink: empty result embeds connection alternatives (not a dead-end)", async () => {
@@ -1094,7 +1002,7 @@ describe("equipped-count surfaces agree on negative-status tails", () => {
 
   beforeAll(() => {
     const tmp = `/tmp/ua-equipped-${process.pid}-${Date.now()}.sqlite`;
-    copyFileSync("/tmp/ua-test.sqlite", tmp);
+    copyFileSync(TEST_DB, tmp);
     wdb = new Database(tmp);
     wdb
       .query(

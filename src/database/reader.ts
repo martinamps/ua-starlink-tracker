@@ -81,9 +81,11 @@ export interface ScopedReader {
   getRecentInstalls(limit?: number, perAirlineCap?: number): RecentInstall[];
   getPerAirlineStats(): PerAirlineStat[];
   getUpcomingFlights(tailNumber?: string): Flight[];
-  getFleetStats(): FleetStats;
+  /** Per-airline subfleet split; null on the hub (no cross-airline aggregate exists). */
+  getFleetStats(): FleetStats | null;
   getTotalCount(): number;
   getLastUpdated(): string;
+  /** Meta keys are namespaced per-airline; null on the hub (no single namespace). */
   getMeta(key: string): string | null;
   /** Check-flight assignments without the verified_wifi filter (the core classifies tiers). */
   getFlightAssignments(
@@ -160,6 +162,20 @@ export interface ScopedReader {
 
 const publicCodes = (): readonly AirlineCode[] => publicAirlines().map((a) => a.code);
 
+/** Cross-airline Starlink penetration. `rate` is null when nothing is tracked
+ * — the single zero-total rule; callers map null to their own fallback. */
+export function aggregatePenetration(
+  per: ReadonlyArray<Pick<PerAirlineStat, "starlink" | "total">>
+): {
+  starlink: number;
+  total: number;
+  rate: number | null;
+} {
+  const starlink = per.reduce((s, a) => s + a.starlink, 0);
+  const total = per.reduce((s, a) => s + a.total, 0);
+  return { starlink, total, rate: total > 0 ? starlink / total : null };
+}
+
 function buildPerAirlineStats(db: Database, codes: readonly AirlineCode[]): PerAirlineStat[] {
   const hub = getHubStats(db, codes);
   const byCode = Object.fromEntries(hub.map((h) => [h.code, h]));
@@ -175,9 +191,9 @@ function buildPerAirlineStats(db: Database, codes: readonly AirlineCode[]): PerA
       total: h?.total ?? getTotalCount(db, code),
       fleetTotal: h?.fleetTotal,
       installs30d: h?.installs30d,
-      status: cfg.rollout?.status,
-      statusLabel: cfg.rollout?.statusLabel,
-      phaseNote: cfg.rollout?.phaseNote,
+      status: cfg.rollout.status,
+      statusLabel: cfg.rollout.statusLabel,
+      phaseNote: cfg.rollout.phaseNote,
       accentColor: cfg.brand.accentColor,
       href: airlineHomeUrl(code),
     });
@@ -189,8 +205,6 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
   // Hub ('ALL') is the union of *enabled* airlines, not every row in the DB —
   // disabled-airline canaries/test data stay invisible until that airline ships.
   const airlines = scope === "ALL" ? publicCodes() : ([scope] as const);
-  // Meta keys are namespaced per-airline; ALL has no single namespace.
-  const metaCode = scope === "ALL" ? "UA" : scope;
   // Route-compare methods are only meaningful per-airline; assert it.
   const soleAirline = () => {
     if (airlines.length !== 1)
@@ -206,9 +220,10 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
       getRecentInstalls(db, airlines, limit, perAirlineCap),
     getPerAirlineStats: () => buildPerAirlineStats(db, airlines),
     getUpcomingFlights: (t) => getUpcomingFlights(db, t, airlines),
-    // FleetStats shape is UA-subfleet-specific (express/mainline); hub aggregation deferred until
-    // getSubfleetStats lands. Hub callers should not rely on this.
-    getFleetStats: () => getFleetStats(db, metaCode),
+    // FleetStats shape is subfleet-specific (express/mainline); there is no
+    // hub aggregate — null forces callers to handle the hub case explicitly
+    // instead of receiving one airline's stats as the hub's.
+    getFleetStats: () => (scope === "ALL" ? null : getFleetStats(db, scope)),
     getTotalCount: () =>
       scope === "ALL"
         ? airlines.reduce((s, c) => s + getTotalCount(db, c), 0)
@@ -221,7 +236,7 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
             .sort()
             .at(-1) ?? "")
         : getLastUpdated(db, scope),
-    getMeta: (key) => getMeta(db, key, metaCode),
+    getMeta: (key) => (scope === "ALL" ? null : getMeta(db, key, scope)),
     getFlightAssignments: (v, s, e) => getFlightAssignments(db, v, s, e, airlines),
     getFleetPageData: () => getFleetPageData(db, airlines),
     getAirportDepartures: () => getAirportDepartures(db, airlines),

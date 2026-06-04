@@ -224,6 +224,7 @@ async function verifyPlane(
         logVerification(db, {
           tail_number: plane.tail_number,
           source: "united",
+          airline: "UA",
           has_starlink: tailMismatch || untrustedNonStarlink ? null : result.hasStarlink,
           wifi_provider: tailMismatch || untrustedNonStarlink ? null : result.wifiProvider,
           aircraft_type: result.aircraftType || plane.aircraft_type,
@@ -240,6 +241,7 @@ async function verifyPlane(
           logVerification(db, {
             tail_number: resolvedTail,
             source: "united",
+            airline: "UA",
             has_starlink: result.hasStarlink,
             wifi_provider: result.wifiProvider,
             aircraft_type: result.aircraftType || null,
@@ -375,7 +377,8 @@ async function verifyPlane(
             result.aircraftType || plane.aircraft_type,
             "Starlink",
             plane.operated_by,
-            plane.fleet === "mainline" ? "mainline" : "express"
+            plane.fleet === "mainline" ? "mainline" : "express",
+            { airline: "UA" }
           );
           updateFlights(db, plane.tail_number, allFlights);
           info(
@@ -410,6 +413,7 @@ async function verifyPlane(
         logVerification(db, {
           tail_number: plane.tail_number,
           source: "united",
+          airline: "UA",
           has_starlink: null,
           wifi_provider: null,
           aircraft_type: plane.aircraft_type,
@@ -631,7 +635,8 @@ async function verifySpecificTail(tailNumber: string): Promise<void> {
           result.aircraftType || null,
           "Starlink",
           null,
-          "express"
+          "express",
+          { airline: "UA" }
         );
         updateFlights(db, tailNumber, allFlights);
       }

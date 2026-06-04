@@ -193,6 +193,7 @@ export async function verifyPlaneStarlink(
         // Log the verification result (always log, but note the mismatch)
         logVerification(db, {
           tail_number: tailNumber,
+          airline: "UA",
           source: "united",
           has_starlink: tailMismatch || untrustedNonStarlink ? null : result.hasStarlink,
           wifi_provider: tailMismatch || untrustedNonStarlink ? null : result.wifiProvider,
@@ -209,6 +210,7 @@ export async function verifyPlaneStarlink(
         if (tailMismatch && resolvedTail && result.wifiProvider) {
           logVerification(db, {
             tail_number: resolvedTail,
+            airline: "UA",
             source: "united",
             has_starlink: result.hasStarlink,
             wifi_provider: result.wifiProvider,
@@ -331,6 +333,7 @@ export async function verifyPlaneStarlink(
 
         logVerification(db, {
           tail_number: tailNumber,
+          airline: "UA",
           source: "united",
           has_starlink: null,
           wifi_provider: null,
@@ -429,6 +432,7 @@ export async function runVerificationBatch(
 export function logFR24Verification(db: Database, tailNumber: string, aircraftType: string): void {
   logVerification(db, {
     tail_number: tailNumber,
+    airline: "UA",
     source: "flightradar24",
     has_starlink: null, // FR24 doesn't tell us Starlink status
     wifi_provider: null,
@@ -449,6 +453,7 @@ export function logSpreadsheetVerification(
 ): void {
   logVerification(db, {
     tail_number: tailNumber,
+    airline: "UA",
     source: "spreadsheet",
     has_starlink: hasStarlink,
     wifi_provider: hasStarlink ? "Starlink" : null,

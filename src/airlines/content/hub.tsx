@@ -143,8 +143,6 @@ const HubHero = ({ stats, perAirlineStats = [], recentInstalls = [] }: HeroProps
 };
 
 export const content: AirlineContent = {
-  showNavLinks: false,
-
   headerStats: [
     <span key="free" className="text-green-400 font-semibold">
       FREE

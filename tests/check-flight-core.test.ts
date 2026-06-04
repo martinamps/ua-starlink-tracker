@@ -5,7 +5,7 @@
  * tests assert shapes only.
  */
 
-import { Database } from "bun:sqlite";
+import type { Database } from "bun:sqlite";
 import { beforeAll, describe, expect, test } from "bun:test";
 import { AIRLINES } from "../src/airlines/registry";
 import {
@@ -24,11 +24,11 @@ import { createReaderFactory } from "../src/database/reader";
 import { createApp } from "../src/server/app";
 import { airportLocalDate, matchesLocalDate } from "../src/utils/airport-tz";
 import {
-  TEST_DB,
   addFleet,
   addFlight,
   addQatarRow,
   makeSyntheticDb,
+  openSnapshot,
   stubPredict,
   utc,
 } from "./helpers";
@@ -362,7 +362,7 @@ describe("REST==MCP equivalence on snapshot data", () => {
   let app: ReturnType<typeof createApp>;
 
   beforeAll(() => {
-    db = new Database(TEST_DB, { readonly: true });
+    db = openSnapshot();
     app = createApp(db);
   });
 

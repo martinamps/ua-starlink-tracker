@@ -1,16 +1,15 @@
 import React from "react";
-import { AIRLINES, type PageBrand, type SiteConfig } from "../airlines/registry";
+import { type SiteConfig, siteAirline } from "../airlines/registry";
 
 interface RoutePlannerPageProps {
-  brand?: PageBrand;
-  site?: SiteConfig;
+  site: SiteConfig;
 }
 
-export default function RoutePlannerPage({ brand, site }: RoutePlannerPageProps) {
-  const cfg = site?.scope && site.scope !== "ALL" ? AIRLINES[site.scope] : AIRLINES.UA;
+export default function RoutePlannerPage({ site }: RoutePlannerPageProps) {
+  const cfg = siteAirline(site);
   const airlineName = cfg.name;
-  const shortName = airlineName.replace(/ Airlines?$/i, "");
-  const homeTitle = brand?.title ?? cfg.brand.title;
+  const shortName = cfg.shortName;
+  const homeTitle = site.brand.title;
 
   return (
     <div className="w-full mx-auto px-4 sm:px-6 md:px-8 bg-base min-h-screen flex flex-col relative">

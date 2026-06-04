@@ -64,7 +64,8 @@ export interface ApiResponse {
   totalCount: number;
   starlinkPlanes: Aircraft[];
   lastUpdated: string;
-  fleetStats: FleetStats;
+  /** Per-airline subfleet split; null on the hub (no cross-airline aggregate). */
+  fleetStats: FleetStats | null;
   flightsByTail: Record<string, Flight[]>;
 }
 

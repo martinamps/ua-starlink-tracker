@@ -15,8 +15,12 @@
 
 import { Database } from "bun:sqlite";
 import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
-const TEST_DB = "/tmp/ua-test.sqlite";
+// Same derivation as tests/helpers.ts TEST_DB (canonical); inlined because
+// src/ must not import from tests/ (dockerignored, layering).
+const TEST_DB = join(import.meta.dir, "../..", ".test-snapshot.sqlite");
+
 const RECENT_DAYS = 30;
 const MIN_OBS = 2;
 const CONSENSUS_THRESHOLD = 0.7;

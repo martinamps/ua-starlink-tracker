@@ -14,7 +14,7 @@
  *
  *   bun run precision                      # 30d window on default DB
  *   bun run precision -- --days=7
- *   bun run precision -- --db=/tmp/ua-test.sqlite --emit
+ *   bun run precision -- --db=.test-snapshot.sqlite --emit
  */
 
 import { Database } from "bun:sqlite";

@@ -22,7 +22,7 @@
 
 import { AIRLINES, type AirlineCode, type AnalyticsConfig } from "../airlines/registry";
 import type { FlightAssignmentRow } from "../database/database";
-import type { Scope, ScopedReader } from "../database/reader";
+import { type Scope, type ScopedReader, aggregatePenetration } from "../database/reader";
 import { COUNTERS, DISTRIBUTIONS, metrics, normalizeAirlineTag } from "../observability";
 import { planItinerary, predictFlight, predictRoute } from "../scripts/starlink-predictor";
 import {
@@ -191,7 +191,8 @@ function buildTools(scope: Scope) {
           },
           date: {
             type: "string",
-            description: "Flight date in YYYY-MM-DD format (matched as UTC calendar day).",
+            description:
+              "Flight date in YYYY-MM-DD format, matched to the departure airport's local calendar date (UTC fallback for unmapped airports).",
             examples: ["2026-05-15"],
           },
         },
@@ -469,10 +470,11 @@ async function toolCheckFlight(
     };
   }
 
-  // Tool impls are still UA-flavored (Phase-2 gap); QR is special-cased here
-  // because its schedule lives in qatar_schedule and the UA path can never
-  // answer for it — REST on the same host already could.
-  const cfg = reader.scope === "QR" ? AIRLINES.QR : AIRLINES.UA;
+  // Hub MCP stays UA-bound for now (Phase-2 gap, allowlisted in the
+  // guardrail test); airline scopes use their own config — never United's
+  // config against another airline's reader.
+  const cfg = reader.scope === "ALL" ? AIRLINES.UA : AIRLINES[reader.scope];
+  if (!cfg) return scopeConfigError(reader.scope);
   const verdict = await resolveFlightVerdict(cfg, reader, flightNumber, date);
 
   if (verdict.kind === "invalid_date") {
@@ -1216,20 +1218,62 @@ Probability and confidence are independent: 92% with 4 obs (medium) is a *less c
   return { content: [{ type: "text", text }] };
 }
 
+// A scope can be registered (VALID_SCOPES) before its airline config exists —
+// fail closed with a clean tool error, not a TypeError 500.
+function scopeConfigError(scope: Scope): ToolResult {
+  return {
+    content: [{ type: "text", text: `Error: no airline registered for scope "${scope}".` }],
+    isError: true,
+  };
+}
+
 function toolGetFleetStats(reader: ScopedReader): ToolResult {
+  const lastUpdated = reader.getLastUpdated();
+  const pct = (starlink: number, total: number) =>
+    total > 0 ? ((starlink / total) * 100).toFixed(1) : "0.0";
+
+  // Null fleetStats = hub scope: per-airline breakdown — there is no
+  // single-airline subfleet split, and the hub must never present one
+  // airline's as its own.
+  const fleetStats = reader.getFleetStats();
+  if (!fleetStats) {
+    const per = reader.getPerAirlineStats();
+    const agg = aggregatePenetration(per);
+    const lines = per.map(
+      (a) =>
+        `**${a.name}**: ${a.starlink} of ${a.total} aircraft (${pct(a.starlink, a.total)}%)${a.phaseNote ? ` — ${a.phaseNote}` : ""}`
+    );
+    const text = `Starlink Installation Progress (as of ${lastUpdated}):
+
+**All tracked airlines**: ${agg.starlink} of ${agg.total} aircraft (${pct(agg.starlink, agg.total)}%) have Starlink WiFi
+
+${lines.join("\n")}`;
+    return { content: [{ type: "text", text }] };
+  }
+
+  // Single-airline scope: branding and rollout prose come from the registry
+  // config — no airline literals (this text serves every /mcp host).
+  const cfg = AIRLINES[reader.scope];
+  if (!cfg) return scopeConfigError(reader.scope);
   const totalCount = reader.getTotalCount();
   const starlinkPlanes = reader.getStarlinkPlanes();
-  const fleetStats = reader.getFleetStats();
-  const lastUpdated = reader.getLastUpdated();
-
-  const text = `United Airlines Starlink Installation Progress (as of ${lastUpdated}):
-
-**Combined Fleet**: ${starlinkPlanes.length} of ${totalCount} aircraft (${totalCount > 0 ? ((starlinkPlanes.length / totalCount) * 100).toFixed(1) : "0.0"}%) have Starlink WiFi
-
-**Express (Regional) Fleet**: ${fleetStats.express.starlink} of ${fleetStats.express.total} aircraft (${fleetStats.express.percentage.toFixed(1)}%)
-**Mainline Fleet**: ${fleetStats.mainline.starlink} of ${fleetStats.mainline.total} aircraft (${fleetStats.mainline.percentage.toFixed(1)}%)
-
-United began installing Starlink on March 7, 2025. The service offers free WiFi at speeds up to 250 Mbps. Installation continues at roughly 40+ aircraft per month.`;
+  const subfleetLines = [
+    fleetStats.express.total > 0
+      ? `**Express (Regional) Fleet**: ${fleetStats.express.starlink} of ${fleetStats.express.total} aircraft (${fleetStats.express.percentage.toFixed(1)}%)`
+      : null,
+    fleetStats.mainline.total > 0
+      ? `**Mainline Fleet**: ${fleetStats.mainline.starlink} of ${fleetStats.mainline.total} aircraft (${fleetStats.mainline.percentage.toFixed(1)}%)`
+      : null,
+  ].filter((l) => l !== null);
+  const text = [
+    `${cfg.name} Starlink Installation Progress (as of ${lastUpdated}):`,
+    `**Combined Fleet**: ${starlinkPlanes.length} of ${totalCount} aircraft (${pct(starlinkPlanes.length, totalCount)}%) have Starlink WiFi`,
+    subfleetLines.join("\n"),
+    `**Rollout**: ${cfg.rollout.statusLabel} — ${cfg.rollout.phaseNote}`,
+    "Starlink WiFi is free for passengers on equipped aircraft.",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 
   return { content: [{ type: "text", text }] };
 }
@@ -1375,21 +1419,23 @@ function handleInitialize(
     scope === "ALL" ? "airline" : (AIRLINES[scope as AirlineCode]?.metricTag ?? "airline");
 
   // Include LIVE fleet stats in instructions so the agent has accurate priors
-  // and doesn't hallucinate about coverage levels.
+  // and doesn't hallucinate about coverage levels. UA-specific fleet realities
+  // only make sense for UA scope; for other single-airline scopes the
+  // express/mainline split may be empty, and on the hub there is no split at
+  // all (getFleetStats is null) — so omit it.
+  let fleetParagraph = "";
   const fleetStats = reader.getFleetStats();
-  const expressPct = fleetStats.express.percentage.toFixed(0);
-  const mainlinePct = fleetStats.mainline.percentage.toFixed(1);
-  const hasFleetSplit = fleetStats.express.total > 0 || fleetStats.mainline.total > 0;
-
-  // UA-specific fleet realities only make sense for UA scope. For other
-  // single-airline scopes the express/mainline split may be empty, and for ALL
-  // it's a sum that doesn't have a clean narrative — so omit it.
-  const fleetParagraph =
-    scope === "UA"
-      ? `Fleet reality:\n• Express/regional (UA3000-6999): ~${expressPct}% Starlink\n• Mainline (UA1-2999, 737/787/etc): only ~${mainlinePct}% — assume NO Starlink on long-haul\n\n`
-      : hasFleetSplit && scope !== "ALL"
-        ? `Fleet reality (${carrier}):\n• Mainline: ~${mainlinePct}% Starlink\n• Express/regional: ~${expressPct}% Starlink\n\n`
-        : "";
+  if (fleetStats) {
+    const expressPct = fleetStats.express.percentage.toFixed(0);
+    const mainlinePct = fleetStats.mainline.percentage.toFixed(1);
+    const hasFleetSplit = fleetStats.express.total > 0 || fleetStats.mainline.total > 0;
+    fleetParagraph =
+      scope === "UA"
+        ? `Fleet reality:\n• Express/regional (UA3000-6999): ~${expressPct}% Starlink\n• Mainline (UA1-2999, 737/787/etc): only ~${mainlinePct}% — assume NO Starlink on long-haul\n\n`
+        : hasFleetSplit
+          ? `Fleet reality (${carrier}):\n• Mainline: ~${mainlinePct}% Starlink\n• Express/regional: ~${expressPct}% Starlink\n\n`
+          : "";
+  }
 
   const scopeNotice =
     scope === hostScope

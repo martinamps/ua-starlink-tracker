@@ -116,9 +116,9 @@ export interface AirlineConfig {
   /** Registration format for tails operated by this airline. Used to reject
    * sheet typos at ingest and gate cleanup scripts. */
   tailPattern: RegExp;
-  /** Hub status-card config — editorial label + prose, plus a structured status
-   * discriminant so the UI doesn't parse the label string. */
-  rollout?: {
+  /** Rollout story — hub status card + llms.txt copy. Required so a new
+   * airline without a rollout story is a compile error, not missing prose. */
+  rollout: {
     status: RolloutStatus;
     statusLabel: string;
     phaseNote: string;
@@ -131,7 +131,7 @@ function flightNum(fn: string): number {
   return m ? Number.parseInt(m[1], 10) : Number.NaN;
 }
 
-export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
+const AIRLINE_DEFS = {
   UA: {
     code: "UA",
     name: "United Airlines",
@@ -375,6 +375,12 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
     minFleetSanity: 200,
     verifierBackend: "qatar-fltstatus",
     typeDeterministicWifi: qatarTypeToStarlink,
+    rollout: {
+      status: "phase_done",
+      statusLabel: "Widebodies done",
+      phaseNote:
+        "Every Boeing 777 and Airbus A350 has Starlink (rollout completed December 2025); the 787 fleet is mid-installation. Narrowbodies and freighters are not in the program.",
+    },
     brand: {
       title: "Qatar Airways Starlink Tracker",
       tagline: "Tracking Qatar Airways aircraft with Starlink WiFi",
@@ -395,7 +401,14 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
         "https://www.qatarairways.com/press-releases/en-WW/259315-qatar-airways-launches-world-s-first-starlink-equipped-boeing-787-and-completes-airbus-a350-starlink-rollout-connecting-over-11-millio/",
     },
   },
-};
+} satisfies Record<string, AirlineConfig>;
+
+/** Literal union of registered airline codes. Type per-airline maps as
+ * Record<KnownAirlineCode, T> so a missing airline is a compile error, not a
+ * silent fallback to another tenant's data (the og:image bug class). */
+export type KnownAirlineCode = keyof typeof AIRLINE_DEFS;
+
+export const AIRLINES: Record<AirlineCode, AirlineConfig> = AIRLINE_DEFS;
 
 // Catch-all is null so an FR24 type-string format drift produces no
 // observation instead of mass-flipping confirmed tails on reconcile.
@@ -575,6 +588,16 @@ export type Tenant = AirlineConfig | "ALL";
 
 export function siteTenant(site: SiteConfig): Tenant {
   return site.scope === "ALL" ? "ALL" : AIRLINES[site.scope];
+}
+
+/** The single airline a site is bound to. Throws on the hub — airline-scoped
+ * pages must never render under a site with no airline binding. */
+export function siteAirline(site: SiteConfig): AirlineConfig {
+  const tenant = siteTenant(site);
+  if (tenant === "ALL") {
+    throw new Error(`site "${site.key}" has no airline binding — this page is airline-scoped`);
+  }
+  return tenant;
 }
 
 // Hosts that resolve here but aren't tenants yet — 301 to the hub until the

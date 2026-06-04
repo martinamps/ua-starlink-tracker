@@ -84,7 +84,9 @@ export interface VerificationLogEntry {
   flight_number: string | null;
   error: string | null;
   tail_confirmed?: number | null;
-  airline?: string;
+  /** Required: a verification row without an explicit airline would silently
+   * be attributed to the wrong carrier (same bug class as the og:image leak). */
+  airline: string;
 }
 
 function setupTables(db: Database) {
@@ -569,7 +571,7 @@ export function updateDatabase(
       if (discoveredTails.has(tailNumber)) {
         updateDiscoveredStmt.run(
           aircraftType,
-          aircraft.OperatedBy ?? "United Airlines",
+          aircraft.OperatedBy ?? AIRLINES[airline]?.name ?? airline,
           aircraft.fleet ?? "express",
           aircraft.sheet_gid ?? "",
           aircraft.sheet_type ?? "",
@@ -606,7 +608,7 @@ export function updateDatabase(
         aircraft.sheet_type ?? "",
         dateFound,
         tailNumber,
-        aircraft.OperatedBy ?? "United Airlines",
+        aircraft.OperatedBy ?? AIRLINES[airline]?.name ?? airline,
         aircraft.fleet ?? "express",
         flightCheckData.last_flight_check,
         flightCheckData.last_check_successful,
@@ -1514,7 +1516,7 @@ export function logVerification(
     entry.flight_number,
     entry.error,
     entry.tail_confirmed ?? null,
-    entry.airline ?? "UA"
+    entry.airline
   );
 }
 
@@ -1687,6 +1689,7 @@ export function getLastVerification(
     aircraft_type: string | null;
     flight_number: string | null;
     error: string | null;
+    airline: string;
   } | null;
 
   if (!row) return null;
@@ -1701,6 +1704,7 @@ export function getLastVerification(
     aircraft_type: row.aircraft_type,
     flight_number: row.flight_number,
     error: row.error,
+    airline: row.airline,
   };
 }
 
@@ -1791,6 +1795,7 @@ export function getVerificationHistory(
     aircraft_type: string | null;
     flight_number: string | null;
     error: string | null;
+    airline: string;
   }>;
 
   return rows.map((row) => ({
@@ -1803,6 +1808,7 @@ export function getVerificationHistory(
     aircraft_type: row.aircraft_type,
     flight_number: row.flight_number,
     error: row.error,
+    airline: row.airline,
   }));
 }
 
@@ -2610,9 +2616,9 @@ export function addDiscoveredStarlinkPlane(
   tailNumber: string,
   aircraftType: string | null,
   wifiProvider: string,
-  operatedBy: string | null = null,
-  fleet = "express",
-  opts?: { sheetGid?: string; dateFound?: string; airline?: string }
+  operatedBy: string | null,
+  fleet: string,
+  opts: { airline: string; sheetGid?: string; dateFound?: string }
 ): void {
   // Check if already in starlink_planes
   const existing = db.query("SELECT id FROM starlink_planes WHERE TailNumber = ?").get(tailNumber);
@@ -2627,15 +2633,15 @@ export function addDiscoveredStarlinkPlane(
     ) VALUES (?, 'StrLnk', ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     aircraftType || null,
-    opts?.sheetGid ?? "discovery",
-    opts?.sheetGid ?? "discovery",
-    opts?.dateFound ?? today,
+    opts.sheetGid ?? "discovery",
+    opts.sheetGid ?? "discovery",
+    opts.dateFound ?? today,
     tailNumber,
-    operatedBy || "United Airlines",
+    operatedBy || (AIRLINES[opts.airline]?.name ?? opts.airline),
     fleet,
     wifiProvider,
     Math.floor(Date.now() / 1000),
-    opts?.airline ?? "UA"
+    opts.airline
   );
 }
 

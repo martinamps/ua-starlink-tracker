@@ -25,7 +25,12 @@ import {
   siteForAirline,
 } from "../airlines/registry";
 import type { VerificationObservation as Observation } from "../database/database";
-import { type Scope, type ScopedReader, createReaderFactory } from "../database/reader";
+import {
+  type Scope,
+  type ScopedReader,
+  aggregatePenetration,
+  createReaderFactory,
+} from "../database/reader";
 import { ensureUAPrefix, inferFleet } from "../utils/constants";
 
 // ============================================================================
@@ -261,6 +266,14 @@ function evaluate(predictions: Array<{ pred: Prediction; actual: number }>): Eva
  */
 function loadFleetPriors(reader: ScopedReader): { express: number; mainline: number } {
   const stats = reader.getFleetStats();
+  // Null = hub scope: no per-airline subfleet split exists. Use the
+  // cross-airline penetration rate as both priors — a real aggregate, never
+  // one airline's stats standing in for the hub's.
+  if (stats === null) {
+    const rate =
+      aggregatePenetration(reader.getPerAirlineStats()).rate ?? DEFAULT_CONFIG.mainlineColdPrior;
+    return { express: rate, mainline: rate };
+  }
   return {
     express:
       stats.express.total > 0

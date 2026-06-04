@@ -1,19 +1,18 @@
 import React from "react";
-import { AIRLINES, type PageBrand, type SiteConfig } from "../airlines/registry";
+import { type SiteConfig, siteAirline } from "../airlines/registry";
 
 interface CheckFlightPageProps {
-  brand?: PageBrand;
-  site?: SiteConfig;
+  site: SiteConfig;
 }
 
-export default function CheckFlightPage({ brand, site }: CheckFlightPageProps) {
-  const cfg = site?.scope && site.scope !== "ALL" ? AIRLINES[site.scope] : AIRLINES.UA;
+export default function CheckFlightPage({ site }: CheckFlightPageProps) {
+  const cfg = siteAirline(site);
   const airlineName = cfg.name;
-  const homeTitle = brand?.title ?? cfg.brand.title;
-  const host = site?.canonicalHost ?? cfg.canonicalHost;
+  const homeTitle = site.brand.title;
+  const host = site.canonicalHost;
   const flightExample = `${cfg.iata}123`;
-  const shortName = airlineName.replace(/ Airlines?$/i, "");
-  const showChromeExtension = site?.features.chromeExtension ?? cfg.code === "UA";
+  const shortName = cfg.shortName;
+  const showChromeExtension = site.features.chromeExtension;
   const accuracyCopy =
     cfg.verifierBackend === "united"
       ? "We verify Starlink status against united.com and cross-reference with flight schedules from aviation data providers."
