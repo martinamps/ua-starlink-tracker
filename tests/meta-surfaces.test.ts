@@ -83,6 +83,16 @@ for (const site of Object.values(SITES)) {
       }
     });
 
+    test("every sitemap URL answers HEAD < 400 (crawlers pre-fetch with HEAD)", async () => {
+      // /mcp regression: the page branch only matched GET+Accept:text/html, so
+      // HEAD fell through to the MCP protocol handler's 405 on a
+      // sitemap-advertised URL.
+      for (const path of await sitemapPaths(site)) {
+        const res = await app.dispatch(req(path, site.canonicalHost, { method: "HEAD" }));
+        expect(res.status, `${site.key} HEAD ${path} → ${res.status}`).toBeLessThan(400);
+      }
+    });
+
     test("every llms.txt URL on a tracked host serves < 400", async () => {
       const res = await get("/llms.txt", site.canonicalHost);
       expect(res.status).toBe(200);

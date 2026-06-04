@@ -39,6 +39,7 @@ import {
   aggregatePenetration,
   createReaderFactory,
 } from "../database/reader";
+import { flightDateWindow, matchesLocalDate } from "../utils/airport-tz";
 
 // The prediction model is trained exclusively on United verification
 // observations — its fleet split and priors are UA-bound by design.
@@ -997,12 +998,24 @@ function buildRouteGraph(
   // planes don't get the confirmed tier). Fleet-aware swap discount applied.
   const confirmedEdges = new Map<string, "express" | "mainline">();
   if (targetDateUnix !== undefined) {
-    const startOfDay = targetDateUnix - (targetDateUnix % 86400);
-    const endOfDay = startOfDay + 86400;
-    const confirmedRows = reader.getConfirmedStarlinkEdges(startOfDay, endOfDay);
-    for (const r of confirmedRows) {
-      const fleet = r.fleet === "mainline" ? "mainline" : "express";
-      confirmedEdges.set(`${r.flight_number}|${r.departure_airport}|${r.arrival_airport}`, fleet);
+    // targetDateUnix is noon UTC of the traveler's date (flightDateWindow.mid),
+    // so its UTC date IS the queried date. Match rows on the departure
+    // airport's LOCAL date over the widened bounds, same as check-flight core
+    // — a strict UTC day window drops verified evening departures (SFO 6pm =
+    // 01:00Z next day) and seeds the wrong day's tail instead.
+    const date = new Date(targetDateUnix * 1000).toISOString().slice(0, 10);
+    const window = flightDateWindow(date);
+    if (window) {
+      const confirmedRows = reader.getConfirmedStarlinkEdges(window.queryStart, window.queryEnd);
+      for (const r of confirmedRows) {
+        if (
+          !matchesLocalDate(date, r.departure_airport, r.departure_time, window.start, window.end)
+        ) {
+          continue;
+        }
+        const fleet = r.fleet === "mainline" ? "mainline" : "express";
+        confirmedEdges.set(`${r.flight_number}|${r.departure_airport}|${r.arrival_airport}`, fleet);
+      }
     }
   }
 

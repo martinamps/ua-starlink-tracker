@@ -759,6 +759,12 @@ const INSTALL_FILTER = `DateFound IS NOT NULL
       AND sheet_gid NOT LIKE 'flyertalk\\_%' ESCAPE '\\'
     ))`;
 
+/** JS mirror of INSTALL_FILTER's sheet_gid exclusions for non-SQL surfaces
+ * (OG sparkline). Agreement with the SQL is pinned in tests/vocabulary.test.ts. */
+export function isBulkGid(gid: string | null | undefined): boolean {
+  return !!gid && /_seed$|^type_deterministic$|^flyertalk_/.test(gid);
+}
+
 export function getRecentInstalls(
   db: Database,
   airline: AirlineFilter,
@@ -1207,24 +1213,27 @@ export interface ConfirmedEdge {
   flight_number: string;
   departure_airport: string;
   arrival_airport: string;
+  departure_time: number;
   fleet: string;
 }
 
+/** Bounds are the WIDENED window (flightDateWindow queryStart/queryEnd) —
+ * callers must filter rows by the departure airport's local date. */
 export function getConfirmedStarlinkEdges(
   db: Database,
-  startOfDay: number,
-  endOfDay: number,
+  queryStart: number,
+  queryEnd: number,
   airline?: AirlineFilter
 ): ConfirmedEdge[] {
   const q = withAirline(
-    `SELECT DISTINCT uf.flight_number, uf.departure_airport, uf.arrival_airport, sp.fleet
+    `SELECT DISTINCT uf.flight_number, uf.departure_airport, uf.arrival_airport, uf.departure_time, sp.fleet
      FROM upcoming_flights uf
      JOIN starlink_planes sp ON uf.tail_number = sp.TailNumber
      WHERE sp.verified_wifi = 'Starlink'
        AND uf.departure_time >= ? AND uf.departure_time < ?`,
     airline,
     "uf",
-    [startOfDay, endOfDay]
+    [queryStart, queryEnd]
   );
   return db.query(q.sql).all(...q.params) as ConfirmedEdge[];
 }

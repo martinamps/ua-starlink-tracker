@@ -31,6 +31,7 @@ import {
   type AirlineCode,
   type AirlineConfig,
   type AnalyticsConfig,
+  enabledAirlines,
 } from "../airlines/registry";
 import type { FlightAssignmentRow } from "../database/database";
 import { type Scope, type ScopedReader, aggregatePenetration } from "../database/reader";
@@ -39,6 +40,7 @@ import {
   carrierPrediction,
   carrierPredictionTelemetry,
   carrierRouteAnswer,
+  compareRoute,
   describeCarrierPrediction,
   joinSentences,
   planItinerary,
@@ -144,7 +146,9 @@ type ToolResult = { content: TextContent[]; isError?: boolean };
 // Tool definitions (JSON Schema 2020-12)
 // ============================================================================
 
-const VALID_SCOPES: readonly Scope[] = ["ALL", "UA", "HA", "AS", "QR"] as const;
+// Registry-derived (pinned in tests/vocabulary.test.ts): a newly enabled
+// airline is overridable via ?scope= without editing this file.
+export const VALID_SCOPES: readonly Scope[] = ["ALL", ...enabledAirlines().map((a) => a.code)];
 
 function isValidScope(s: string): s is Scope {
   return (VALID_SCOPES as readonly string[]).includes(s);
@@ -282,11 +286,15 @@ function buildTools(scope: Scope) {
     {
       name: "plan_starlink_itinerary",
       description:
-        'Use when the user asks "what\'s the best way to fly X to Y with Starlink?" or wants ranked alternatives. ' +
-        "PRIMARY TRAVEL-PLANNING TOOL — multi-stop search (up to 2 stops default, 3 max) ranked by " +
-        "COVERAGE RATIO (expected Starlink hours / total flight hours) so a 92% 1h direct scores the " +
-        "same as a 92% 10h multi-stop. Direct flights always shown first. Returns probability-ranked " +
-        "routings, NOT bookable itineraries — connection timing isn't validated; verify on the airline's site.",
+        scope === "ALL"
+          ? 'Use when the user asks "what\'s the best way to fly X to Y with Starlink?". ' +
+            "Compares Starlink odds on the route across every tracked airline (nonstop, per-carrier). " +
+            "For multi-stop UA routings, connect to unitedstarlinktracker.com/mcp."
+          : 'Use when the user asks "what\'s the best way to fly X to Y with Starlink?" or wants ranked alternatives. ' +
+            "PRIMARY TRAVEL-PLANNING TOOL — multi-stop search (up to 2 stops default, 3 max) ranked by " +
+            "COVERAGE RATIO (expected Starlink hours / total flight hours) so a 92% 1h direct scores the " +
+            "same as a 92% 10h multi-stop. Direct flights always shown first. Returns probability-ranked " +
+            "routings, NOT bookable itineraries — connection timing isn't validated; verify on the airline's site.",
       inputSchema: {
         type: "object",
         properties: {
@@ -334,7 +342,7 @@ function buildTools(scope: Scope) {
     },
     {
       name: "predict_route_starlink",
-      description: `Use when the user asks "which flights between X and Y have Starlink?" or "what Starlink flights serve airport X?". Single-route lookup: returns ${carrier} flight numbers on a route (or touching an airport) ranked by Starlink probability. Pass both origin+destination for a specific route, OR just one to list all Starlink flights from/into an airport. For trip planning with connections, use plan_starlink_itinerary instead — this tool has no connection logic or coverage-ratio ranking. Empty result = route not served by Starlink planes.`,
+      description: `Use when the user asks "which flights between X and Y have Starlink?" or "what Starlink flights serve airport X?". Single-route lookup: returns ${carrier} flight numbers on a route (or touching an airport) ranked by Starlink probability. ${scope === "ALL" ? "Both origin and destination are required (per-airline route comparison)." : "Pass both origin+destination for a specific route, OR just one to list all Starlink flights from/into an airport."} For trip planning with connections, use plan_starlink_itinerary instead — this tool has no connection logic or coverage-ratio ranking. Empty result = route not served by Starlink planes.`,
       inputSchema: {
         type: "object",
         properties: {
@@ -442,13 +450,12 @@ function mcpAirlineTag(scope: Scope): string {
   return scope === "ALL" ? "all" : normalizeAirlineTag(scope);
 }
 
-// Hub MCP stays UA-bound for the fleet-wide/route tools (Phase-2 gap,
-// allowlisted in the guardrail test); airline scopes use their own config —
-// never United's config against another airline's reader. The flight-taking
-// tools do NOT use this on the hub — they resolve the carrier from the flight
-// number via resolveFlightToolCarrier, same gate as hub REST.
+// Airline scopes use their own config — never United's config against another
+// airline's reader. The hub has NO single config: flight-taking tools resolve
+// the carrier from the flight number (resolveFlightToolCarrier), route tools
+// answer per-airline via compareRoute, and search normalizes per row.
 function scopeCfg(scope: Scope): AirlineConfig | null {
-  return scope === "ALL" ? AIRLINES.UA : (AIRLINES[scope] ?? null);
+  return scope === "ALL" ? null : (AIRLINES[scope] ?? null);
 }
 
 type GetReader = (scope: Scope) => ScopedReader;
@@ -536,7 +543,16 @@ async function toolCheckFlight(
   const carrier = resolveFlightToolCarrier(hostReader, getReader, flightNumber);
   if ("content" in carrier) return carrier;
   const { cfg, reader } = carrier;
-  const verdict = await resolveFlightVerdict(cfg, reader, flightNumber, date);
+  // The hub never does FR24 reverse lookups — same gate as hub REST
+  // /api/check-flight and /api/check-any-flight (lookupTail: null), so the
+  // same flight+date can't get contradictory verdicts by protocol.
+  const verdict = await resolveFlightVerdict(
+    cfg,
+    reader,
+    flightNumber,
+    date,
+    hostReader.scope === "ALL" ? { lookupTail: null } : undefined
+  );
 
   if (verdict.kind === "invalid_date") {
     return {
@@ -637,8 +653,8 @@ async function toolCheckFlight(
     }
 
     // No upcoming_flights row — the core already ran the same FR24 tail-lookup
-    // fallback that /api/check-flight uses, so MCP and the extension API
-    // converge on the same firm answer when FR24 knows the assigned tail.
+    // fallback that /api/check-flight uses (disabled on the hub for both, see
+    // toolCheckFlight), so MCP and the extension API converge per host.
     case "fr24": {
       return {
         content: [
@@ -1057,6 +1073,61 @@ function formatCarrierRoute(
   return { content: [{ type: "text", text }] };
 }
 
+/**
+ * Hub route answer: per-airline nonstop odds from the registry/penetration
+ * (same engine as the hub's /api/compare-route). The itinerary planner and
+ * predictRoute run the UA-trained model — on the ALL-scope reader they would
+ * score other airlines' flights with United's priors.
+ */
+function formatHubRouteComparison(
+  getReader: GetReader,
+  origin: string | null,
+  destination: string | null
+): ToolResult {
+  if (!origin || !destination) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: "On the multi-airline server, route predictions compare carriers on a specific O-D pair — both origin and destination are required. For one-sided searches, use an airline-specific scope (e.g. ?scope=UA on the connector URL).",
+        },
+      ],
+      isError: true,
+    };
+  }
+  const results = compareRoute(getReader, origin, destination);
+  recordMcpFlightLookup(
+    "ALL",
+    results.length > 0 ? "predicted" : "no_data",
+    results.length > 0 ? "low" : "none"
+  );
+  if (results.length === 0) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: `No route data for ${origin}→${destination} on any tracked airline yet. For a specific flight, use check_flight with the flight number and date.`,
+        },
+      ],
+    };
+  }
+  const pct = (p: number) => `${(p * 100).toFixed(0)}%`;
+  const lines = results.map((r) => {
+    if (r.kind === "no_data") return `- **${r.name}**: no route data yet`;
+    const range =
+      r.lo != null && r.hi != null ? `${pct(r.lo)}–${pct(r.hi)}` : `~${pct(r.probability)}`;
+    return `- **${r.name}**: ${range} Starlink${r.reason ? ` — ${r.reason}` : ""}`;
+  });
+  return {
+    content: [
+      {
+        type: "text",
+        text: `**${origin}→${destination} — Starlink odds by airline (nonstop)**\n\n${lines.join("\n")}\n\nFor itinerary planning or flight-level detail, use an airline-specific scope (e.g. \`?scope=UA\`) or check_flight with a flight number and date.`,
+      },
+    ],
+  };
+}
+
 async function toolPredictFlightStarlink(
   hostReader: ScopedReader,
   getReader: GetReader,
@@ -1128,6 +1199,7 @@ async function toolPredictFlightStarlink(
 
 function toolPlanStarlinkItinerary(
   reader: ScopedReader,
+  getReader: GetReader,
   args: {
     origin?: unknown;
     destination?: unknown;
@@ -1170,6 +1242,11 @@ function toolPlanStarlinkItinerary(
     };
   }
 
+  // Hub scope: per-airline comparison — the planner is the UA model and must
+  // not score the multi-airline reader's edges.
+  if (reader.scope === "ALL") {
+    return formatHubRouteComparison(getReader, origin.toUpperCase(), destination.toUpperCase());
+  }
   const cfg = scopeCfg(reader.scope);
   if (!cfg) return scopeConfigError(reader.scope);
   // The itinerary planner runs on the flight-history model. Model-less
@@ -1298,6 +1375,7 @@ ${sections.join("\n\n---\n\n")}${timingNote}
 
 function toolPredictRouteStarlink(
   reader: ScopedReader,
+  getReader: GetReader,
   args: { origin?: unknown; destination?: unknown; limit?: unknown }
 ): ToolResult {
   const origin = typeof args.origin === "string" ? args.origin.trim() : undefined;
@@ -1313,6 +1391,15 @@ function toolPredictRouteStarlink(
     };
   }
 
+  // Hub scope: per-airline comparison — predictRoute is the UA model and must
+  // not rank other airlines' flights with United's priors.
+  if (reader.scope === "ALL") {
+    return formatHubRouteComparison(
+      getReader,
+      origin ? origin.toUpperCase() : null,
+      destination ? destination.toUpperCase() : null
+    );
+  }
   const cfg = scopeCfg(reader.scope);
   if (!cfg) return scopeConfigError(reader.scope);
   // predictRoute ranks flights with the flight-history model — model-less
@@ -1466,9 +1553,11 @@ function toolListStarlinkAircraft(
   const total = planes.length;
   const shown = planes.slice(0, limit);
 
+  // Type-settled rows carry DateFound NULL by design — omit the clause rather
+  // than render "first seen null".
   const lines = shown.map(
     (p) =>
-      `${p.TailNumber} — ${p.Aircraft || "Unknown type"} (${p.fleet}, ${p.OperatedBy}, first seen ${p.DateFound})`
+      `${p.TailNumber} — ${p.Aircraft || "Unknown type"} (${p.fleet}, ${p.OperatedBy}${p.DateFound ? `, first seen ${p.DateFound}` : ""})`
   );
 
   const carrier =
@@ -1540,11 +1629,16 @@ function toolSearchStarlinkFlights(
     };
   }
 
-  const cfg = scopeCfg(reader.scope);
-  if (!cfg) return scopeConfigError(reader.scope);
+  // Hub rows span airlines — normalize each flight number under its OWN
+  // carrier's config (never United's against another airline's rows).
+  // scopeCfg is null on the hub by design, not a config error.
+  const pinnedCfg = scopeCfg(reader.scope);
+  if (reader.scope !== "ALL" && !pinnedCfg) return scopeConfigError(reader.scope);
   const lines = shown.map((f) => {
+    const rowCfg = pinnedCfg ?? AIRLINES[f.airline] ?? null;
+    const fn = rowCfg ? normalizeAirlineFlightNumber(rowCfg, f.flight_number) : f.flight_number;
     const dep = new Date(f.departure_time * 1000).toISOString().slice(0, 16).replace("T", " ");
-    return `${normalizeAirlineFlightNumber(cfg, f.flight_number)} ${f.departure_airport}→${f.arrival_airport} dep ${dep}Z (tail ${f.tail_number})`;
+    return `${fn} ${f.departure_airport}→${f.arrival_airport} dep ${dep}Z (tail ${f.tail_number})`;
   });
 
   const routeDesc = origin && destination ? `${origin}→${destination}` : origin || destination;
@@ -1689,10 +1783,10 @@ async function handleToolsCall(
         result = await toolPredictFlightStarlink(reader, getReader, args);
         break;
       case "predict_route_starlink":
-        result = toolPredictRouteStarlink(reader, args);
+        result = toolPredictRouteStarlink(reader, getReader, args);
         break;
       case "plan_starlink_itinerary":
-        result = toolPlanStarlinkItinerary(reader, args);
+        result = toolPlanStarlinkItinerary(reader, getReader, args);
         break;
       case "get_fleet_stats":
         result = toolGetFleetStats(reader);

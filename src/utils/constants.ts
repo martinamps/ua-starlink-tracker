@@ -1,5 +1,6 @@
 import { normalizeAirlineFlightNumber } from "../airlines/flight-number";
 import { AIRLINES, analyticsOrigins } from "../airlines/registry";
+import { airportTimezone, icaoToIata, localDateISO } from "./airport-tz";
 
 // Database path
 export const DB_PATH =
@@ -20,14 +21,26 @@ export type FlightDataSource = "flightradar24" | "flightaware";
 export const FLIGHT_DATA_SOURCE: FlightDataSource =
   (process.env.FLIGHT_DATA_SOURCE as FlightDataSource) || "flightradar24";
 
-/** UTC calendar date string used for united.com flight-status lookups. */
-export const unitedLookupDate = (epochSec: number): string =>
-  new Date(epochSec * 1000).toISOString().slice(0, 10);
+/**
+ * Date segment for united.com flight-status lookups. united.com keys flight
+ * instances by the LOCAL departure date (the boarding-pass date) — a UTC date
+ * queries the NEXT day's airframe for evening US departures. Accepts the
+ * origin as IATA or ICAO (FR24 reports KEWR-style codes); unknown airports
+ * fall back to the UTC calendar day, the pre-fix behavior.
+ */
+export const unitedLookupDate = (epochSec: number, origin?: string): string => {
+  const tz = origin ? airportTimezone(icaoToIata(origin)) : undefined;
+  return tz ? localDateISO(epochSec, tz) : new Date(epochSec * 1000).toISOString().slice(0, 10);
+};
 
 // united.com redirects flight-status lookups dated past UTC-today+1 to the search
 // page. Compare calendar dates, not seconds: 1.9d away by seconds can be day +2.
-function isWithinUnitedLookupWindow(departureTimeSec: number, nowSec: number): boolean {
-  return unitedLookupDate(departureTimeSec) <= unitedLookupDate(nowSec + 86400);
+function isWithinUnitedLookupWindow(
+  departureTimeSec: number,
+  nowSec: number,
+  origin?: string
+): boolean {
+  return unitedLookupDate(departureTimeSec, origin) <= unitedLookupDate(nowSec + 86400);
 }
 
 /** Bare flight digits for united.com URLs. Strip the carrier prefix first: G74460 → 4460, not 74460 (404s). */
@@ -36,14 +49,13 @@ export function extractFlightNumber(flightNumber: string): string {
 }
 
 /** First flight whose number normalizes to bare digits and whose lookup date united.com can resolve. */
-export function pickVerifiableFlight<T extends { flight_number: string; departure_time: number }>(
-  flights: T[],
-  nowSec = Date.now() / 1000
-): T | undefined {
+export function pickVerifiableFlight<
+  T extends { flight_number: string; departure_time: number; departure_airport?: string },
+>(flights: T[], nowSec = Date.now() / 1000): T | undefined {
   return flights.find(
     (f) =>
       /^\d+$/.test(extractFlightNumber(f.flight_number)) &&
-      isWithinUnitedLookupWindow(f.departure_time, nowSec)
+      isWithinUnitedLookupWindow(f.departure_time, nowSec, f.departure_airport)
   );
 }
 

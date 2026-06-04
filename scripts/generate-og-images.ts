@@ -9,6 +9,7 @@ import "../src/playwright-env";
 import path from "node:path";
 import { type Page, chromium } from "playwright";
 import { AIRLINES, SITES, siteForAirline } from "../src/airlines/registry";
+import { isBulkGid } from "../src/database/database";
 
 const OG_HTML = path.resolve(import.meta.dir, "../static/og.html");
 const OUT_DIR = path.resolve(import.meta.dir, "../static");
@@ -26,7 +27,7 @@ export interface Summary {
   }>;
 }
 export interface ApiData {
-  starlinkPlanes: Array<{ DateFound: string }>;
+  starlinkPlanes: Array<{ DateFound: string | null; sheet_gid?: string | null }>;
 }
 
 export interface CardSpec {
@@ -47,11 +48,14 @@ async function getJson<T>(url: string): Promise<T | null> {
   }
 }
 
-/** Cumulative install count over time, downsampled to ~120 points. */
+/** Cumulative install count over time, downsampled to ~120 points. Bulk-gid
+ * rows (seeds, type-rule settles, FlyerTalk backfills) are excluded — they
+ * stamp one run date across many tails and would chart a fabricated cliff. */
 export function rolloutSeries(planes: ApiData["starlinkPlanes"], nowMs = Date.now()): number[] {
   const dates = planes
+    .filter((p) => !isBulkGid(p.sheet_gid))
     .map((p) => p.DateFound)
-    .filter((d) => d && /^\d{4}-\d{2}-\d{2}/.test(d))
+    .filter((d): d is string => !!d && /^\d{4}-\d{2}-\d{2}/.test(d))
     .sort();
   if (dates.length < 2) return [];
   const start = new Date(dates[0] as string).getTime();

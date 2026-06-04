@@ -22,6 +22,7 @@ import {
   normalizeWifiProvider,
   withSpan,
 } from "../observability";
+import { icaoToIata } from "../utils/airport-tz";
 import { extractFlightNumber, pickVerifiableFlight, unitedLookupDate } from "../utils/constants";
 import { type JobHandle, startJob } from "../utils/job-runner";
 import { verifierLog } from "../utils/logger";
@@ -67,20 +68,6 @@ const VERIFIER_RESULT_TAG: Record<UnitedCheckCategory, string> = {
   mismatch: "aircraft_mismatch",
   error: "error",
 };
-
-/**
- * Convert ICAO airport code to IATA (remove K prefix for US airports)
- */
-function icaoToIata(icao: string): string {
-  if (icao.length === 4 && icao.startsWith("K")) {
-    return icao.substring(1);
-  }
-  // Handle Canadian airports (start with C/Y)
-  if (icao.length === 4 && icao.startsWith("C")) {
-    return icao.substring(1);
-  }
-  return icao;
-}
 
 interface Flight {
   tail_number: string;
@@ -179,7 +166,7 @@ export async function verifyPlaneStarlink(
       span.setTag("aircraft_type", aircraftTypeTag);
       span.setTag("fleet", fleetTag);
 
-      const departureDate = unitedLookupDate(flight.departure_time);
+      const departureDate = unitedLookupDate(flight.departure_time, flight.departure_airport);
       const flightNumber = extractFlightNumber(flight.flight_number);
       const origin = icaoToIata(flight.departure_airport);
       const destination = icaoToIata(flight.arrival_airport);

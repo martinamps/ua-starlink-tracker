@@ -106,7 +106,7 @@ export interface ScopedReader {
   getVerificationObservations(): VerificationObservation[];
   getRouteFlights(origin: string | null, destination: string | null): RouteFlightRow[];
   getRouteGraphEdges(): RouteGraphEdge[];
-  getConfirmedStarlinkEdges(startOfDay: number, endOfDay: number): ConfirmedEdge[];
+  getConfirmedStarlinkEdges(queryStart: number, queryEnd: number): ConfirmedEdge[];
   airlineServesAirports(prefixes: readonly string[], ...airports: string[]): boolean;
   getSubfleetPenetration(): Map<string, SubfleetPenetration>;
   getObservedDirectFlightNumbers(

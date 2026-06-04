@@ -136,4 +136,21 @@ describe("rolloutSeries", () => {
     expect(rolloutSeries(planes("2026-05-01"), NOW)).toEqual([]);
     expect(rolloutSeries(planes("garbage", "also-bad"), NOW)).toEqual([]);
   });
+
+  test("bulk-gid rows (seeds, type-settles, flyertalk) never shape the curve", () => {
+    // Bulk writers stamp one run date across many tails — charting them
+    // renders a fabricated install cliff (the live AS card bug).
+    const organic = planes("2026-05-01", "2026-05-20");
+    const bulk: ApiData["starlinkPlanes"] = [
+      { DateFound: "2026-04-21", sheet_gid: "as_seed" },
+      { DateFound: "2026-04-21", sheet_gid: "ha_seed" },
+      { DateFound: "2026-05-18", sheet_gid: "flyertalk_as" },
+      { DateFound: "2026-05-19", sheet_gid: "type_deterministic" },
+    ];
+    const series = rolloutSeries([...bulk, ...organic], NOW);
+    expect(series).toEqual(rolloutSeries(organic, NOW));
+    expect(series.at(-1)).toBe(2);
+    // An all-bulk roster (AS today: 90 as_seed + 7 flyertalk) draws nothing.
+    expect(rolloutSeries(bulk, NOW)).toEqual([]);
+  });
 });

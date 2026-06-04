@@ -11,7 +11,8 @@ export interface Aircraft {
   WiFi: string;
   sheet_gid: string;
   sheet_type: string;
-  DateFound: string;
+  /** NULL for type-settled rows — renderers must not interpolate it raw. */
+  DateFound: string | null;
   TailNumber: string;
   OperatedBy: string;
   fleet: SubfleetKey;
@@ -26,6 +27,7 @@ export interface Flight {
   departure_time: number;
   arrival_time: number;
   last_updated: number;
+  airline: string;
 }
 
 export interface FleetStats {

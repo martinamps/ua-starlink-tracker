@@ -30,6 +30,7 @@ import {
   withSpan,
 } from "../observability";
 import type { FleetAircraft, StarlinkStatus } from "../types";
+import { icaoToIata } from "../utils/airport-tz";
 import { extractFlightNumber, pickVerifiableFlight, unitedLookupDate } from "../utils/constants";
 import { type JobHandle, startJob } from "../utils/job-runner";
 import { info, error as logError, warn } from "../utils/logger";
@@ -95,19 +96,6 @@ function emitFleetSnapshot(db: Database) {
   }
 }
 
-/**
- * Convert ICAO airport code to IATA
- */
-function icaoToIata(icao: string): string {
-  if (icao.length === 4 && icao.startsWith("K")) {
-    return icao.substring(1);
-  }
-  if (icao.length === 4 && icao.startsWith("C")) {
-    return icao.substring(1);
-  }
-  return icao;
-}
-
 interface FlightInfo {
   flightNumber: string;
   date: string;
@@ -143,12 +131,12 @@ async function getUpcomingFlightsForPlane(tailNumber: string): Promise<{
     const verifiable = pickVerifiableFlight(flights);
     if (!verifiable) {
       info(
-        `No verifiable flight for ${tailNumber} (next: ${flights[0].flight_number} on ${unitedLookupDate(flights[0].departure_time)})`
+        `No verifiable flight for ${tailNumber} (next: ${flights[0].flight_number} on ${unitedLookupDate(flights[0].departure_time, flights[0].departure_airport)})`
       );
       return null;
     }
 
-    const departureDate = unitedLookupDate(verifiable.departure_time);
+    const departureDate = unitedLookupDate(verifiable.departure_time, verifiable.departure_airport);
 
     return {
       forVerification: {

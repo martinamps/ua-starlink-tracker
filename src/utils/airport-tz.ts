@@ -336,6 +336,14 @@ export function airportTimezone(iata: string): string | undefined {
   return AIRPORT_TZ[iata.toUpperCase()];
 }
 
+/** ICAO → IATA for US/Canada codes (KEWR → EWR, CYVR → YVR); others pass through. */
+export function icaoToIata(icao: string): string {
+  if (icao.length === 4 && (icao.startsWith("K") || icao.startsWith("C"))) {
+    return icao.substring(1);
+  }
+  return icao;
+}
+
 /** YYYY-MM-DD in the given zone (en-CA locale formats ISO-style). */
 export function localDateISO(epochSec: number, timeZone: string): string {
   return formatterFor(timeZone).format(new Date(epochSec * 1000));
@@ -345,6 +353,36 @@ export function localDateISO(epochSec: number, timeZone: string): string {
 export function airportLocalDate(iata: string, unixSec: number): string | null {
   const tz = airportTimezone(iata);
   return tz ? localDateISO(unixSec, tz) : null;
+}
+
+export interface FlightDateWindow {
+  /** Strict UTC bounds of the calendar date — kept for FR24 fallback + days_out math. */
+  start: number;
+  end: number;
+  /** Noon UTC of the date — anchor for FR24/route lookups and planner seeding. */
+  mid: number;
+  /** Widened SQL bounds: every UTC instant whose local date can equal the queried date. */
+  queryStart: number;
+  queryEnd: number;
+  daysOut: number;
+}
+
+export function flightDateWindow(
+  date: string,
+  nowSec = Math.floor(Date.now() / 1000)
+): FlightDateWindow | null {
+  const t = Date.parse(`${date}T00:00:00Z`);
+  if (Number.isNaN(t)) return null;
+  const start = Math.floor(t / 1000);
+  const end = start + 86400;
+  return {
+    start,
+    end,
+    mid: start + 43200,
+    queryStart: start - 14 * 3600, // UTC+14: local date starts up to 14h before the UTC date
+    queryEnd: end + 12 * 3600, // UTC-12: local date ends up to 12h after
+    daysOut: Math.floor(start / 86400) - Math.floor(nowSec / 86400),
+  };
 }
 
 /**

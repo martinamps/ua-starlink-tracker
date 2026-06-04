@@ -139,7 +139,14 @@ export function resolveTailVerdict(
   const uf = reader.getFleetEntryByTail(tail);
 
   if (uf?.starlink_status === "confirmed") {
-    return { hasStarlink: true, confidence: "verified" };
+    // Same tier rule as the sp branch above: alaska-verifier writes
+    // type-derived 'confirmed' (registry typeDeterministicWifi), so without
+    // observed-wifi evidence this is a type rule, not a united.com banner.
+    const observed = reader.computeWifiConsensus(tail, { sources: OBSERVED_WIFI_SOURCES });
+    return {
+      hasStarlink: true,
+      confidence: observed.verdict === "Starlink" ? "verified" : "spreadsheet",
+    };
   }
   if (uf?.starlink_status === "negative") {
     return negativeTailVerdict(reader, tail, uf, nowSec, "negative");

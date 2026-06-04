@@ -13,9 +13,10 @@ import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { getContent } from "../src/airlines/content";
 import { AIRLINES, SITES, type SiteConfig, siteForAirline } from "../src/airlines/registry";
+import { setAssignmentFetcher } from "../src/api/flight-verdict";
 import { COUNTERS, metrics } from "../src/observability/metrics";
 import { createApp } from "../src/server/app";
-import { jsonOf, openSnapshot, postMcp, req } from "./helpers";
+import { jsonOf, makeSyntheticDb, openSnapshot, postMcp, req } from "./helpers";
 
 let app: ReturnType<typeof createApp>;
 
@@ -60,7 +61,6 @@ const BANNED_PATTERNS: Array<{
     allowlist: new Map([
       ["src/airlines/registry.ts", 3], // SITES.united derives from AIRLINES.UA (2) + resolveTenant doc comment (1)
       ["src/utils/constants.ts", 1], // extractFlightNumber builds united.com URLs — UA-bound by definition
-      ["src/api/mcp-server.ts", 1], // scopeCfg: hub-scope MCP stays UA-bound (phase-2 per-airline threading)
       ["src/scripts/starlink-predictor.ts", 1], // prediction model trained on UA observations only
       ["src/scripts/fleet-sync.ts", 1], // CLI default argument for the UA sync job
       ["src/scripts/flightradar24-scraper.ts", 1], // CLI default slug for the UA scraper
@@ -385,6 +385,83 @@ describe("hub /api/check-flight + /api/predict-flight detect the airline", () =>
     const lookup = calls.find((c) => c.name === COUNTERS.FLIGHT_LOOKUP_RESULT);
     expect(lookup).toBeDefined();
     expect(lookup?.tags?.days_out).toBeDefined();
+  });
+
+  test("hub /api/plan-route fails closed (404) — the planner is the UA model", async () => {
+    // routePlannerPage is false on the hub; the API mirrors the page gate.
+    // Pre-fix, tenantConfig("ALL")→null skipped the model-less branch and ran
+    // planItinerary (UA priors) over the ALL-scope reader.
+    const res = await get(hub, "/api/plan-route?origin=HNL&destination=LAX");
+    expect(res.status).toBe(404);
+    expect(await res.text()).not.toContain("itineraries");
+  });
+
+  test("hub MCP route tools answer per-airline (compare), never the UA planner", async () => {
+    for (const name of ["plan_starlink_itinerary", "predict_route_starlink"]) {
+      const j = await postMcp(app, hub.canonicalHost, "tools/call", {
+        name,
+        arguments: { origin: "SEA", destination: "LAX" },
+      });
+      const text = j.result.content[0].text as string;
+      // UA-model fingerprints must not appear on the hub scope.
+      expect(text, `${name}: UA fleet prior leaked`).not.toContain("fleet prior");
+      expect(text, `${name}: UA subfleet tag leaked`).not.toContain("[Mainline]");
+      expect(text, `${name}: per-airline header`).toContain("Starlink odds by airline");
+    }
+    // One-sided hub predict_route can't compare carriers — clean tool error.
+    const oneSided = await postMcp(app, hub.canonicalHost, "tools/call", {
+      name: "predict_route_starlink",
+      arguments: { origin: "SEA" },
+    });
+    expect(oneSided.result.isError).toBe(true);
+    expect(oneSided.result.content[0].text).toContain("both origin and destination");
+
+    // search is reader-scoped (multi-airline rows, per-row normalization) —
+    // it must answer on the hub without a pinned carrier config.
+    const search = await postMcp(app, hub.canonicalHost, "tools/call", {
+      name: "search_starlink_flights",
+      arguments: { origin: "SEA" },
+    });
+    expect(search.result.isError).not.toBe(true);
+  });
+
+  // Pins the reverse-tail-lookup seam only; the low-probability alternatives
+  // block has a separate live FR24 route-lookup path with no test seam (it
+  // feeds alternatives, never the verdict) — pre-existing on every scope.
+  test("hub MCP check_flight skips the FR24 tail lookup, matching hub REST (in-window date)", async () => {
+    // Existing fixtures use past dates, which skip the FR24 window check
+    // entirely — this pins the seam with an in-window date and a recording
+    // fetcher (no network).
+    const db = makeSyntheticDb();
+    const sapp = createApp(db);
+    const calls: string[] = [];
+    setAssignmentFetcher(async (fn) => {
+      calls.push(fn);
+      return [];
+    });
+    try {
+      // Express-band number: the empty-DB prediction lands on the express cold
+      // prior (≥ 0.2), so the renderer skips the alternatives block — whose
+      // route lookup is a live FR24 path with no test seam.
+      const today = new Date().toISOString().slice(0, 10);
+      const onHub = await postMcp(sapp, hub.canonicalHost, "tools/call", {
+        name: "check_flight",
+        arguments: { flight_number: "UA4123", date: today },
+      });
+      expect(onHub.result.isError).not.toBe(true);
+      expect(calls, "hub MCP must not run FR24 reverse lookups").toEqual([]);
+
+      // Positive control: the same call on the UA host exercises the fetcher,
+      // proving the date is inside the FR24 window.
+      await postMcp(sapp, SITES.united.canonicalHost, "tools/call", {
+        name: "check_flight",
+        arguments: { flight_number: "UA4123", date: today },
+      });
+      expect(calls.length).toBeGreaterThan(0);
+    } finally {
+      setAssignmentFetcher(null);
+      db.close();
+    }
   });
 
   test("hub /api/data pins fleetStats: null (deliberate wire change)", async () => {

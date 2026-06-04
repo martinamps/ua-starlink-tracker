@@ -15,6 +15,10 @@ import { resolveFlightVerdict, verdictTelemetry } from "../src/api/check-flight-
 import { Fr24UnavailableError } from "../src/api/flightradar24-api";
 import type { QatarFlight, fetchByRoute } from "../src/api/qatar-status";
 import {
+  fetchByFlight as qatarFetchByFlight,
+  fetchByRoute as qatarFetchByRoute,
+} from "../src/api/qatar-status";
+import {
   SHEET_ROSTER_WHERE,
   addDiscoveredStarlinkPlane,
   getHubStats,
@@ -32,6 +36,7 @@ import { checkOne } from "../src/scripts/alaska-verifier";
 import { ingestQatarSchedule } from "../src/scripts/qatar-schedule-ingester";
 import { runSheetScrape } from "../src/scripts/sheet-scrape";
 import type { FleetStats } from "../src/types";
+import { isInSpreadsheetCache, updateSpreadsheetCache } from "../src/utils/utils";
 import type { fetchAllSheets } from "../src/utils/utils";
 import { addFleet, addFlight, addQatarRow, makeSyntheticDb, stubPredict, utc } from "./helpers";
 
@@ -256,6 +261,33 @@ describe("alaska-verifier checkOne", () => {
     expect(result).toBe("success");
     expect(fleetRow(db, "N654QX").starlink_status).toBe("confirmed");
     db.close();
+  });
+});
+
+describe("qatar-status errorObject responses", () => {
+  // 200-with-errorObject is the API's in-band failure channel. Anything other
+  // than FS_NOT_FOUND must be null (outage → ingester's routes_failed gate),
+  // never a success-shaped [] that prunes rows and stamps QR lastUpdated.
+  const jsonFetch = (body: unknown) =>
+    (async () =>
+      new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })) as unknown as typeof fetch;
+
+  test("non-FS_NOT_FOUND errorObject → null; FS_NOT_FOUND → empty success", async () => {
+    const realFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = jsonFetch({ errorObject: [{ errorName: "SYSTEM_ERROR" }] });
+      expect(await qatarFetchByRoute("DOH", "LHR", "2026-06-05")).toBeNull();
+      expect(await qatarFetchByFlight(1, "2026-06-05")).toBeNull();
+
+      globalThis.fetch = jsonFetch({ errorObject: [{ errorName: "FS_NOT_FOUND" }] });
+      expect(await qatarFetchByRoute("DOH", "LHR", "2026-06-05")).toEqual([]);
+      expect(await qatarFetchByFlight(1, "2026-06-05")).toEqual([]);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
   });
 });
 
@@ -567,10 +599,14 @@ describe("runSheetScrape refusal still runs maintenance", () => {
       fleetStats: STATS,
     })) as unknown as typeof fetchAllSheets;
 
+    updateSpreadsheetCache(["N12345"]);
     const result = await runSheetScrape(db, emptySheets);
 
     expect(result.outcome).toBe("refused");
     expect(fleetRow(db, "A7-ALA").starlink_status).toBe("confirmed");
+    // Cache shares the DB refusal decision — a refused replace must not
+    // desync /api/fleet-discovery by emptying or replacing the cache.
+    expect(isInSpreadsheetCache("N12345")).toBe(true);
     db.close();
   });
 

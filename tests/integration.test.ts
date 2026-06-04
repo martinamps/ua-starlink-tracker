@@ -39,7 +39,7 @@ import { computeSurfaceContradictions } from "../src/scripts/surface-sweep";
 import { createApp } from "../src/server/app";
 import { type ScopedReader, createReaderFactory } from "../src/server/context";
 import { airportLocalDate } from "../src/utils/airport-tz";
-import { pickVerifiableFlight } from "../src/utils/constants";
+import { pickVerifiableFlight, unitedLookupDate } from "../src/utils/constants";
 import { TEST_DB, jsonOf, mcpReq, openSnapshot } from "./helpers";
 
 // UA-bound conveniences — these unit tests pin United's carrier-prefix mappings.
@@ -866,6 +866,17 @@ describe("flight number utils", () => {
     expect(
       pickVerifiableFlight([{ flight_number: "UA930", departure_time: dep }], now)
     ).toBeDefined();
+  });
+
+  test("unitedLookupDate: evening US departure uses the boarding-pass LOCAL date", () => {
+    // DEN 18:06 local on 2026-06-04 = 00:06Z on the 5th. united.com keys the
+    // instance by the local date — the UTC date queries tomorrow's airframe
+    // (live A/B: UA1541 DEN served ship 4285 for D vs 4053 for D+1).
+    const dep = Date.UTC(2026, 5, 5, 0, 6, 0) / 1000;
+    expect(unitedLookupDate(dep, "DEN")).toBe("2026-06-04");
+    expect(unitedLookupDate(dep, "KDEN")).toBe("2026-06-04"); // FR24 ICAO form
+    expect(unitedLookupDate(dep)).toBe("2026-06-05"); // no origin → UTC fallback
+    expect(unitedLookupDate(dep, "ZZZ")).toBe("2026-06-05"); // unmapped → UTC fallback
   });
 
   test("buildFlightNumberVariants: UA number → all carrier variants", () => {

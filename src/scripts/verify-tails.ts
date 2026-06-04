@@ -107,15 +107,19 @@ async function verifyTail(
     arrival_airport: string;
     fdate: string;
   };
-  const dbFlights = db
-    .query(
-      `SELECT flight_number, departure_airport, arrival_airport,
-              date(departure_time,'unixepoch') as fdate
+  const dbFlights: FlightCand[] = (
+    db
+      .query(
+        `SELECT flight_number, departure_airport, arrival_airport, departure_time
        FROM upcoming_flights
        WHERE tail_number = ? AND departure_time >= strftime('%s','now')
        ORDER BY departure_time LIMIT ?`
-    )
-    .all(tail, maxAttempts) as FlightCand[];
+      )
+      .all(tail, maxAttempts) as Array<Omit<FlightCand, "fdate"> & { departure_time: number }>
+  ).map(({ departure_time, ...f }) => ({
+    ...f,
+    fdate: unitedLookupDate(departure_time, f.departure_airport),
+  }));
 
   const candidates = dbFlights;
   if (candidates.length < maxAttempts) {
@@ -124,7 +128,7 @@ async function verifyTail(
     const upcoming = await fr24.getUpcomingFlights(tail);
     const seen = new Set(candidates.map((c) => c.flight_number + c.fdate));
     for (const u of upcoming) {
-      const fdate = unitedLookupDate(u.departure_time);
+      const fdate = unitedLookupDate(u.departure_time, u.departure_airport);
       const key = u.flight_number + fdate;
       if (seen.has(key)) continue;
       seen.add(key);

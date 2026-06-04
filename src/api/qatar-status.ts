@@ -150,6 +150,20 @@ async function postStatus(
 }
 
 /**
+ * Map a 200-with-errorObject response to the caller's return: FS_NOT_FOUND is
+ * the normal "no flight on that date" ([]); any other in-band error
+ * (maintenance, schema change, soft block) is an outage (null) so the
+ * ingester's routes_failed gate fires instead of pruning and stamping success
+ * over a drained table. undefined = no in-band error, proceed.
+ */
+function inBandError(r: RawResponse, label: string): QatarFlight[] | null | undefined {
+  if (!r.errorObject?.length) return undefined;
+  if (r.errorObject.some((e) => e.errorName === "FS_NOT_FOUND")) return [];
+  warn(`qatar-status ${label}: ${r.errorObject.map((e) => e.errorName).join(",")}`);
+  return null;
+}
+
+/**
  * Fetch all QR flights matching a 3-digit flight number on a given date (DOH
  * local — the API treats `scheduledDate` as the operating-day key, which for
  * QR0xx out of DOH equals DOH local; westbound returns can resolve to the
@@ -171,15 +185,8 @@ export async function fetchByFlight(
     "flight"
   );
   if (!r) return null;
-  if (r.errorObject?.length) {
-    // FS_NOT_FOUND is the normal "no flight on that date" — don't log noise.
-    if (!r.errorObject.some((e) => e.errorName === "FS_NOT_FOUND")) {
-      warn(
-        `qatar-status by-flight QR${fn}/${dateISO}: ${r.errorObject.map((e) => e.errorName).join(",")}`
-      );
-    }
-    return [];
-  }
+  const err = inBandError(r, `by-flight QR${fn}/${dateISO}`);
+  if (err !== undefined) return err;
   return (r.flights ?? []).map(normalize);
 }
 
@@ -202,14 +209,8 @@ export async function fetchByRoute(
     "route"
   );
   if (!r) return null;
-  if (r.errorObject?.length) {
-    if (!r.errorObject.some((e) => e.errorName === "FS_NOT_FOUND")) {
-      warn(
-        `qatar-status by-route ${origin}-${destination}/${dateISO}: ${r.errorObject.map((e) => e.errorName).join(",")}`
-      );
-    }
-    return [];
-  }
+  const err = inBandError(r, `by-route ${origin}-${destination}/${dateISO}`);
+  if (err !== undefined) return err;
   return (r.flights ?? []).map(normalize);
 }
 

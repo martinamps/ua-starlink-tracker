@@ -905,6 +905,17 @@ const apiPredictFlight: Handler = ({ req, url, reader, getReader, tenant }) => {
 
 const apiPlanRoute: Handler = ({ req, url, reader, tenant }) => {
   if (req.method !== "GET") return methodNotAllowed(true);
+  const cfg = tenantConfig(tenant);
+  // Hub: fail closed like the disabled route-planner page (routePlannerPage is
+  // false there). planItinerary is the UA-trained model — running it over the
+  // ALL-scope reader scores other airlines' edges with United's priors.
+  // Per-airline route answers live at /api/compare-route.
+  if (!cfg) {
+    return new Response(JSON.stringify({ error: "Not found" }), {
+      status: 404,
+      headers: SECURITY_HEADERS.api,
+    });
+  }
   const origin = url.searchParams.get("origin");
   const destination = url.searchParams.get("destination");
   const maxStopsParam = url.searchParams.get("max_stops");
@@ -919,8 +930,7 @@ const apiPlanRoute: Handler = ({ req, url, reader, tenant }) => {
   // tenants get the registry route answer as prose (additive `message`
   // field; itineraries stays [] so the page's empty-state contract holds).
   // The message carries registry text only — the page injects it as HTML.
-  const cfg = tenantConfig(tenant);
-  if (cfg && !cfg.flightHistoryModel) {
+  if (!cfg.flightHistoryModel) {
     const r = carrierRouteAnswer(cfg, reader, origin, destination);
     const message = r
       ? joinSentences(`~${Math.round(r.probability * 100)}% Starlink — ${r.reason}`)
@@ -1009,7 +1019,10 @@ const apiFleetDiscovery: Handler = ({ req, reader }) => {
 const mcp: Handler = async (ctx) => {
   const { req, getReader, site, tenant } = ctx;
   const accept = req.headers.get("accept") || "";
-  if (req.method === "GET" && accept.includes("text/html")) {
+  // HEAD always takes the page branch (like every other page handler — /mcp is
+  // sitemap-advertised, so link checkers must not see 405): the MCP protocol
+  // has no HEAD method, and HEAD clients (curl -I) don't send Accept: text/html.
+  if (req.method === "HEAD" || (req.method === "GET" && accept.includes("text/html"))) {
     if (!site.features.mcpPage) {
       return notFound(site);
     }

@@ -24,6 +24,7 @@ import {
 } from "../src/api/flight-verdict";
 import { Fr24UnavailableError } from "../src/api/flightradar24-api";
 import { createReaderFactory } from "../src/database/reader";
+import { planItinerary } from "../src/scripts/starlink-predictor";
 import { createApp } from "../src/server/app";
 import { airportLocalDate, matchesLocalDate } from "../src/utils/airport-tz";
 import {
@@ -258,16 +259,26 @@ describe("resolveTailVerdict negative fold-in (synthetic DB)", () => {
          VALUES ('N2003', 'united', ?, 1, 'Starlink', 1, 'UA')`
       ).run(now - 100 - i);
     }
-    addFleet(db, "N2004", "confirmed"); // fleet-confirmed, no sp row
+    addFleet(db, "N2004", "confirmed"); // fleet-confirmed, no sp row, no observed evidence
     addFleet(db, "N2005", "negative", { verifiedWifi: "Viasat" }); // fleet-negative, no sp row
+    addFleet(db, "N2006", "confirmed"); // fleet-confirmed + united-observed consensus
+    for (let i = 0; i < 3; i++) {
+      db.query(
+        `INSERT INTO starlink_verification_log (tail_number, source, checked_at, has_starlink, wifi_provider, tail_confirmed, airline)
+         VALUES ('N2006', 'united', ?, 1, 'Starlink', 1, 'UA')`
+      ).run(now - 100 - i);
+    }
   });
 
   const cases: [string, boolean | null, string][] = [
     ["N2001", true, "spreadsheet"],
     ["N2002", false, "disputed"], // sp row + uf negative + null consensus
     ["N2003", true, "verified"], // consensus 'Starlink' is NOT overridden by uf negative
-    ["N2004", true, "verified"],
+    // uf-only 'confirmed' without observed-wifi evidence is a type rule
+    // (alaska-json writes it) — same tier gate as the sp branch.
+    ["N2004", true, "spreadsheet"],
     ["N2005", false, "negative"],
+    ["N2006", true, "verified"], // uf-only confirmed + united-observed → still 'verified'
     ["NXXXX", null, "unknown"],
   ];
 
@@ -275,6 +286,28 @@ describe("resolveTailVerdict negative fold-in (synthetic DB)", () => {
     const v = resolveTailVerdict(reader, tail);
     expect(v.hasStarlink).toBe(hasStarlink);
     expect(v.confidence).toBe(confidence);
+  });
+});
+
+describe("confirmed-edge seeding matches the traveler's local date (synthetic DB)", () => {
+  // UA1111 departs SFO 18:00 PDT on 2026-07-10 = 01:00Z on the 11th — the
+  // strict UTC day window seeded this verified leg for the WRONG date.
+  test("evening departure seeds the traveler's date, not the UTC day", () => {
+    const db = makeSyntheticDb();
+    const reader = createReaderFactory(db)("UA");
+    addPlane(db, "N7777", "Starlink");
+    addFlight(db, "N7777", "UA1111", "SFO", utc("2026-07-11T01:00:00Z"), {
+      arrivalAirport: "GEG",
+    });
+
+    const legFor = (date: string) =>
+      planItinerary(reader, "SFO", "GEG", { targetDateUnix: utc(`${date}T12:00:00Z`) })[0]?.legs[0];
+
+    // Traveler's printed date: confirmed (0.65 mainline swap-adjusted ≥ minLegProb).
+    expect(legFor("2026-07-10")?.confirmed).toBe(true);
+    // The UTC day: no confirmed seed — the 2% mainline prior drops the edge.
+    expect(legFor("2026-07-11")?.confirmed ?? false).toBe(false);
+    db.close();
   });
 });
 

@@ -20,9 +20,11 @@ import {
   enabledAirlines,
   verifierSourceTag,
 } from "../src/airlines/registry";
+import { VALID_SCOPES } from "../src/api/mcp-server";
 import {
   computeWifiConsensus,
   getRecentInstalls,
+  isBulkGid,
   logVerification,
   reconcileConsensus,
 } from "../src/database/database";
@@ -133,6 +135,39 @@ describe("bulk writer sheet_gids are excluded from install surfaces", () => {
     );
     expect(tails).toContain("N99DISC");
     db.close();
+  });
+
+  test("isBulkGid (JS mirror) agrees with INSTALL_FILTER (SQL) over the known gid set", () => {
+    // The OG sparkline filters in JS; install surfaces filter in SQL. For
+    // every known gid, a row surfaces as a recent install iff isBulkGid says
+    // it isn't bulk — the two vocabularies cannot drift.
+    const db = makeSyntheticDb();
+    const allGids = [...BULK_GIDS, "discovery", "100", "flyertalk", "seed_x"];
+    const ins = db.query(
+      `INSERT INTO starlink_planes (TailNumber, aircraft, wifi, OperatedBy, fleet, airline, sheet_gid, DateFound)
+       VALUES (?, 'B737', 'Starlink', 'Test', 'mainline', 'UA', ?, date('now'))`
+    );
+    allGids.forEach((gid, i) => ins.run(`N8${i}GID`, gid));
+
+    const surfaced = new Set(getRecentInstalls(db, "UA", 500).map((r) => r.TailNumber));
+    allGids.forEach((gid, i) =>
+      expect(isBulkGid(gid), `isBulkGid(${gid}) disagrees with INSTALL_FILTER`).toBe(
+        !surfaced.has(`N8${i}GID`)
+      )
+    );
+    db.close();
+  });
+});
+
+// ── MCP scopes: ?scope= vocabulary derives from the registry ────────────────
+
+describe("MCP scope vocabulary", () => {
+  // A hand-enumerated list compiles clean when an airline is registered but
+  // silently ignores its ?scope= override (falls back to the host scope).
+  test("VALID_SCOPES = ALL + every enabled airline", () => {
+    expect([...VALID_SCOPES].sort()).toEqual(
+      ["ALL", ...enabledAirlines().map((a) => a.code)].sort()
+    );
   });
 });
 
