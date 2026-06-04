@@ -42,9 +42,10 @@ export interface PageBrand {
   /** Brand color tuned for the favicon's glowing arc on a dark tile —
    * defaults to accentColor when omitted. */
   faviconAccent?: string;
-  /** og:image / twitter:image path. The server falls back to the hub card if
-   * the asset hasn't been generated yet (see buildBaseTemplateVars). */
-  socialImagePath?: string;
+  /** og:image / twitter:image path. Filenames are derived from this everywhere
+   * (static routes, generate-og-images output). The server falls back to the
+   * hub card if the asset hasn't been generated yet (see resolveSocialImage). */
+  socialImagePath: string;
   analyticsDomain: string;
   pressReleaseUrl?: string;
 }
@@ -563,7 +564,8 @@ export function brandMetadata(brand: PageBrand) {
     siteName: brand.title,
     accentColor: brand.accentColor,
     accentColorDim: brand.accentColorDim,
-    socialImagePath: brand.socialImagePath ?? "/static/social-image.webp",
+    // socialImagePath is intentionally absent: resolveSocialImage (app.ts) is
+    // the single resolver, with the missing-asset fallback.
   };
 }
 

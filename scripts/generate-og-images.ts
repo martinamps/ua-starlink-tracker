@@ -119,7 +119,7 @@ async function main() {
       sub: "AIRCRAFT WITH STARLINK",
       series: series.join(","),
     });
-    const file = `social-image${a.code === "UA" ? "" : `-${a.code.toLowerCase()}`}.webp`;
+    const file = path.basename(cfg.brand.socialImagePath);
     await renderWebp(page, params, path.join(OUT_DIR, file));
     generated.push(`${file}  ${a.code} count=${a.installed} sparkline=${series.length > 1}`);
   }
@@ -138,8 +138,9 @@ async function main() {
     cards: JSON.stringify(cards),
     caption: "PER-AIRCRAFT STARLINK WIFI STATUS",
   });
-  await renderWebp(page, hubParams, path.join(OUT_DIR, "social-image-hub.webp"));
-  generated.push(`social-image-hub.webp  ${cards.map((c) => `${c.name}=${c.pct}%`).join(" ")}`);
+  const hubFile = path.basename(SITES.airline.brand.socialImagePath);
+  await renderWebp(page, hubParams, path.join(OUT_DIR, hubFile));
+  generated.push(`${hubFile}  ${cards.map((c) => `${c.name}=${c.pct}%`).join(" ")}`);
 
   await browser.close();
   console.log(`Generated ${generated.length} OG images @ ${W}x${H}:\n  ${generated.join("\n  ")}`);

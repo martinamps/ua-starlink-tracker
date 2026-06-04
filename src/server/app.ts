@@ -204,39 +204,22 @@ function siteManifest(site: SiteConfig): Response {
 // Static-file routes (tenant-agnostic)
 // ─────────────────────────────────────────────────────────────────────────────
 
-const STATIC_FILES = [
-  // OG cards: regenerated daily from /api/fleet-summary by scripts/generate-og-images.ts.
-  { path: "/static/social-image.webp", filename: "social-image.webp", contentType: "image/webp" },
-  {
-    path: "/static/social-image-hub.webp",
-    filename: "social-image-hub.webp",
-    contentType: "image/webp",
-  },
-  {
-    path: "/static/social-image-ha.webp",
-    filename: "social-image-ha.webp",
-    contentType: "image/webp",
-  },
-  {
-    path: "/static/social-image-as.webp",
-    filename: "social-image-as.webp",
-    contentType: "image/webp",
-  },
-  {
-    path: "/static/social-image-qr.webp",
-    filename: "social-image-qr.webp",
-    contentType: "image/webp",
-  },
+// OG cards: regenerated daily from /api/fleet-summary by scripts/generate-og-images.ts.
+// Routes derive from the registry so they can't drift from brand config.
+const SOCIAL_IMAGE_PATHS = [
+  ...new Set(
+    [HUB_BRAND, ...Object.values(AIRLINES).map((a) => a.brand)].map((b) => b.socialImagePath)
+  ),
 ];
 
 const staticResponses = new Map<string, Response>();
-for (const f of STATIC_FILES) {
-  const fp = path.join(STATIC_DIR, f.filename);
+for (const p of SOCIAL_IMAGE_PATHS) {
+  const fp = path.join(STATIC_DIR, path.basename(p));
   if (fs.existsSync(fp)) {
     staticResponses.set(
-      f.path,
+      p,
       new Response(Bun.file(fp), {
-        headers: { "Content-Type": f.contentType, "Cache-Control": "public, max-age=86400" },
+        headers: { "Content-Type": "image/webp", "Cache-Control": "public, max-age=86400" },
       })
     );
   }
@@ -244,10 +227,11 @@ for (const f of STATIC_FILES) {
 
 // A tenant whose OG card hasn't been generated yet (QR is excluded from
 // /api/fleet-summary, so generate-og-images never renders one) gets the
-// neutral hub card — never another airline's.
+// neutral hub card — never another airline's. Checked live, not at boot, so a
+// card landing on disk mid-run is picked up without a restart.
 function resolveSocialImage(brand: PageBrand): string {
-  const p = brand.socialImagePath ?? "/static/social-image.webp";
-  return staticResponses.has(p) ? p : "/static/social-image-hub.webp";
+  const p = brand.socialImagePath;
+  return fs.existsSync(path.join(STATIC_DIR, path.basename(p))) ? p : HUB_BRAND.socialImagePath;
 }
 
 // Per-tenant favicons. Standard discovery paths (/favicon.ico,
