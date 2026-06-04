@@ -99,6 +99,7 @@ export async function syncFleetFromFR24(
         result.error = `Suspiciously low aircraft count: ${allAircraft.length} (expected ${cfg.minFleetSanity}+)`;
         logError(`FR24 sync aborted (${cfg.code})`, result.error);
         span.setTag("error", true);
+        span.setTag("abort_reason", result.error);
         metrics.increment(COUNTERS.SCRAPER_SYNC, {
           source: "fr24",
           airline: airlineTag,

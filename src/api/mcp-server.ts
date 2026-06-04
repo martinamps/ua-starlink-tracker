@@ -620,10 +620,15 @@ async function toolCheckFlight(
         : isNearTerm
           ? "No assignment published — this is unusual for a near-term flight. The tail may not be in our Starlink-tracked set yet."
           : "Check again 1-2 days before departure for a firm answer.";
+      // During an FR24 outage we genuinely don't know whether an assignment
+      // exists — don't claim it isn't published yet.
+      const assignmentNote = verdict.fr24Error
+        ? "We couldn't confirm the aircraft assignment right now — try again shortly."
+        : `Aircraft assignment not yet published — that happens ~2 days out. ${timing}`;
 
       // Probability context FIRST, alternatives table LAST. Recency bias: the
       // agent's final impression is "here's the table to present", not "no data".
-      const probLine = `**${normalized} on ${date}**: ~${pct}% Starlink probability ${pred.n_observations > 0 ? `(${pred.n_observations} historical obs)` : "(fleet install rate)"}. Aircraft assignment not yet published — that happens ~2 days out. ${timing}`;
+      const probLine = `**${normalized} on ${date}**: ~${pct}% Starlink probability ${pred.n_observations > 0 ? `(${pred.n_observations} historical obs)` : "(fleet install rate)"}. ${assignmentNote}`;
 
       let altBlock = "";
       if (pred.probability < 0.2 && !isPast) {

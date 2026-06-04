@@ -28,7 +28,7 @@ import type {
   WifiProvider,
 } from "../types";
 import { DB_PATH } from "../utils/constants";
-import { info, warn } from "../utils/logger";
+import { info, error as logError, warn } from "../utils/logger";
 
 type MetaRow = { value: string };
 
@@ -399,13 +399,49 @@ function migrateMultiAirline(db: Database) {
   }
 }
 
+/**
+ * Refusal reason for a destructive roster replace, or null when sane.
+ * A 200-with-HTML body parses to 0 rows; replacing the roster with it would
+ * irreversibly reset DateFound/verified state on the next good run. The sheet
+ * roster has no fixed healthy size, so the rule is relative shrink plus a
+ * non-empty floor (fleet-sync's minFleetSanity covers the FR24 path).
+ */
+function rosterReplaceRefusal(newCount: number, existingCount: number): string | null {
+  if (newCount === 0) {
+    return "parsed 0 rows";
+  }
+  if (existingCount > 20 && newCount < existingCount / 2) {
+    return `parsed ${newCount} rows < 50% of existing ${existingCount}`;
+  }
+  return null;
+}
+
+/** Sheet-roster rows for one airline (discovery rows excluded). Shared by the
+ * floor COUNT and the destructive DELETE so they can never drift apart. */
+export const SHEET_ROSTER_WHERE = "sheet_gid != 'discovery' AND airline = ?";
+
+/** Returns the refusal reason when the parsed roster fails the sanity floor
+ * (nothing written), or null when the replace proceeded. */
 export function updateDatabase(
   db: Database,
   totalAircraftCount: number,
   starlinkAircraft: Partial<Aircraft>[],
   fleetStats: FleetStats,
   airline = "UA"
-) {
+): string | null {
+  const existingSheetRows = (
+    db
+      .query(`SELECT COUNT(*) AS n FROM starlink_planes WHERE ${SHEET_ROSTER_WHERE}`)
+      .get(airline) as { n: number }
+  ).n;
+  const refusal = rosterReplaceRefusal(starlinkAircraft.length, existingSheetRows);
+  if (refusal) {
+    logError(
+      `updateDatabase(${airline}): refusing roster replace — ${refusal}; keeping existing data`
+    );
+    return refusal;
+  }
+
   db.transaction(() => {
     // Get existing data before clearing the table
     const existingDates = new Map<string, string>();
@@ -469,9 +505,7 @@ export function updateDatabase(
 
     // Update meta data
     // Only delete spreadsheet planes, preserve discovered ones (sheet_gid = 'discovery')
-    db.query("DELETE FROM starlink_planes WHERE sheet_gid != 'discovery' AND airline = ?").run(
-      airline
-    );
+    db.query(`DELETE FROM starlink_planes WHERE ${SHEET_ROSTER_WHERE}`).run(airline);
     setMeta(db, "totalAircraftCount", totalAircraftCount, airline);
     setMeta(db, "lastUpdated", new Date().toISOString(), airline);
 
@@ -588,6 +622,7 @@ export function updateDatabase(
       "DELETE FROM starlink_planes WHERE sheet_gid = 'discovery' AND verified_wifi IS NOT NULL AND verified_wifi != 'Starlink' AND airline = ?"
     ).run(airline);
   })();
+  return null;
 }
 
 export function getMeta(db: Database, key: string, airline = "UA"): string | null {
@@ -3046,8 +3081,24 @@ export function getQatarScheduleByRoute(
     ) as QatarScheduleRow[];
 }
 
-export function pruneQatarScheduleBefore(db: Database, beforeEpoch: number): number {
-  return db.query("DELETE FROM qatar_schedule WHERE departure_time < ?").run(beforeEpoch).changes;
+/**
+ * Drop departed rows, but only for the given routes — a route whose fetch
+ * failed this run keeps its stale rows (bounded growth, heals on recovery,
+ * and the freshness gauge stays honest because old timestamps survive).
+ */
+export function pruneQatarScheduleBefore(
+  db: Database,
+  beforeEpoch: number,
+  routes: ReadonlyArray<readonly [string, string]>
+): number {
+  const stmt = db.query(
+    "DELETE FROM qatar_schedule WHERE departure_time < ? AND departure_airport = ? AND arrival_airport = ?"
+  );
+  let pruned = 0;
+  for (const [origin, destination] of routes) {
+    pruned += stmt.run(beforeEpoch, origin, destination).changes;
+  }
+  return pruned;
 }
 
 export function getQatarScheduleStats(db: Database): {

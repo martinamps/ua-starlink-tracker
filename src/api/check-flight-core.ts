@@ -16,7 +16,9 @@ import type { FlightAssignmentRow, QatarScheduleRow } from "../database/database
 import type { ScopedReader } from "../database/reader";
 import { predictFlight } from "../scripts/starlink-predictor";
 import { matchesLocalDate } from "../utils/airport-tz";
+import { error as logError } from "../utils/logger";
 import { type FallbackSegment, lookupFlightTailVerdict } from "./flight-verdict";
+import { Fr24UnavailableError } from "./flightradar24-api";
 import { qatarEquipmentName } from "./qatar-status";
 
 export interface FlightDateWindow {
@@ -77,11 +79,25 @@ export type FlightVerdict =
       window: FlightDateWindow;
       normalized: string;
       flights: ScheduledNoRow[];
+      /** Swap detection degraded — the firm no stands, but FR24 couldn't be consulted. */
+      fr24Error: boolean;
     }
   | { kind: "fr24"; window: FlightDateWindow; normalized: string; starlink: FallbackSegment[] }
   | { kind: "fr24_no"; window: FlightDateWindow; normalized: string; segments: FallbackSegment[] }
-  | { kind: "type_no_data"; window: FlightDateWindow; normalized: string; reason: string }
-  | { kind: "prediction"; window: FlightDateWindow; normalized: string; pred: Prediction }
+  | {
+      kind: "type_no_data";
+      window: FlightDateWindow;
+      normalized: string;
+      reason: string;
+      fr24Error: boolean;
+    }
+  | {
+      kind: "prediction";
+      window: FlightDateWindow;
+      normalized: string;
+      pred: Prediction;
+      fr24Error: boolean;
+    }
   | {
       kind: "qatar";
       window: FlightDateWindow;
@@ -114,7 +130,7 @@ export function verdictConfidence(
 }
 
 export interface VerdictTelemetry {
-  outcome: "verified_yes" | "verified_no" | "predicted" | "no_data";
+  outcome: "verified_yes" | "verified_no" | "predicted" | "no_data" | "error";
   confidence: "high" | "medium" | "low" | "none";
 }
 
@@ -136,11 +152,15 @@ export function verdictTelemetry(
         : { outcome: "predicted", confidence: "medium" };
     case "fr24_no":
       return { outcome: "verified_no", confidence: "medium" };
-    case "prediction":
-      return verdict.pred.n_observations > 0
-        ? { outcome: "predicted", confidence: verdict.pred.confidence }
-        : { outcome: "no_data", confidence: "none" };
+    case "prediction": {
+      const informative = verdict.pred.n_observations > 0;
+      return {
+        outcome: verdict.fr24Error ? "error" : informative ? "predicted" : "no_data",
+        confidence: informative ? verdict.pred.confidence : "none",
+      };
+    }
     case "type_no_data":
+      return { outcome: verdict.fr24Error ? "error" : "no_data", confidence: "none" };
     case "qatar_no_data":
       return { outcome: "no_data", confidence: "none" };
     case "qatar":
@@ -219,9 +239,19 @@ export async function resolveFlightVerdict(
   // FR24 runs whenever there are no equipped rows: with firm-no rows it can
   // still discover an aircraft swap onto a Starlink tail; with no rows at all
   // it is the primary fallback.
+  let fr24Error = false;
   if (deps.lookupTail !== null) {
     const lookup = deps.lookupTail ?? lookupFlightTailVerdict;
-    const segments = await lookup(reader, normalized, date, window.start, window.end, now);
+    let segments: FallbackSegment[] | null = null;
+    try {
+      segments = await lookup(reader, normalized, date, window.start, window.end, now);
+    } catch (err) {
+      // FR24 outage ≠ "no assignment published" — never a confident no.
+      // Anything else (e.g. a DB error) must not masquerade as an outage.
+      if (!(err instanceof Fr24UnavailableError)) throw err;
+      fr24Error = true;
+      logError(`FR24 lookup failed for ${normalized} ${date}; degrading to prediction path`, err);
+    }
     if (segments !== null) {
       const starlink = segments.filter((s) => s.hasStarlink);
       if (starlink.length > 0) {
@@ -237,7 +267,7 @@ export async function resolveFlightVerdict(
   }
 
   if (nonStarlink.length > 0) {
-    return { kind: "scheduled_no", window, normalized, flights: nonStarlink };
+    return { kind: "scheduled_no", window, normalized, flights: nonStarlink, fr24Error };
   }
 
   // Type-determined airlines (e.g. HA) have no per-flight probability model —
@@ -248,11 +278,12 @@ export async function resolveFlightVerdict(
       window,
       normalized,
       reason: `No schedule data; ${cfg.name} Starlink status is type-determined — check the aircraft type on your booking.`,
+      fr24Error,
     };
   }
 
   const predict = deps.predict ?? predictFlight;
-  return { kind: "prediction", window, normalized, pred: predict(reader, normalized) };
+  return { kind: "prediction", window, normalized, pred: predict(reader, normalized), fr24Error };
 }
 
 function resolveQatarVerdict(

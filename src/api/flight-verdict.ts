@@ -13,8 +13,14 @@ import { FlightRadar24API } from "./flightradar24-api";
 
 const fr24 = new FlightRadar24API();
 type Assignment = Awaited<ReturnType<FlightRadar24API["getFlightAssignments"]>>;
-const assignmentCache = new Map<string, { promise: Promise<Assignment>; at: number }>();
+const assignmentCache = new Map<
+  string,
+  { promise: Promise<Assignment>; at: number; failedAt?: number }
+>();
 const ASSIGNMENT_CACHE_TTL = 3600;
+// During an outage, replay the rejection briefly instead of re-running the
+// full retry ladder on every request.
+const ASSIGNMENT_FAILURE_TTL = 60;
 
 export function cachedFlightAssignments(
   flightNumber: string,
@@ -23,7 +29,11 @@ export function cachedFlightAssignments(
   const key = `${flightNumber}:${Math.floor(targetDateUnix / 86400)}`;
   const now = Math.floor(Date.now() / 1000);
   const cached = assignmentCache.get(key);
-  if (cached && now - cached.at < ASSIGNMENT_CACHE_TTL) return cached.promise;
+  if (cached) {
+    const failed = cached.failedAt !== undefined;
+    const age = now - (failed ? (cached.failedAt as number) : cached.at);
+    if (age < (failed ? ASSIGNMENT_FAILURE_TTL : ASSIGNMENT_CACHE_TTL)) return cached.promise;
+  }
 
   if (assignmentCache.size > 500) {
     for (const [k, v] of assignmentCache) {
@@ -32,12 +42,24 @@ export function cachedFlightAssignments(
   }
 
   const promise = fr24.getFlightAssignments(flightNumber, targetDateUnix);
-  assignmentCache.set(key, { promise, at: now });
+  const entry: { promise: Promise<Assignment>; at: number; failedAt?: number } = {
+    promise,
+    at: now,
+  };
+  assignmentCache.set(key, entry);
+  // Empties don't stay cached — unpublished assignments appear close to
+  // departure, so re-polling is intentional. Rejections become a short-TTL
+  // failure marker; this rejection handler also keeps the stored promise from
+  // ever surfacing as an unhandled rejection.
   promise.then(
     (result) => {
       if (result.length === 0) assignmentCache.delete(key);
     },
-    () => assignmentCache.delete(key)
+    () => {
+      if (assignmentCache.get(key) === entry) {
+        entry.failedAt = Math.floor(Date.now() / 1000);
+      }
+    }
   );
   return promise;
 }
@@ -137,6 +159,9 @@ function negativeTailVerdict(
  * tail-assigned legs on the queried local date, otherwise one FallbackSegment
  * per leg. Legs are matched on the origin airport's local date, falling back
  * to the [startOfDay, endOfDay) UTC window for unmapped airports.
+ *
+ * Throws when FR24 itself is unavailable — callers must degrade to the
+ * prediction path, not a confident no.
  */
 export async function lookupFlightTailVerdict(
   reader: ScopedReader,

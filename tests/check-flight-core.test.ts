@@ -19,36 +19,21 @@ import {
   type lookupFlightTailVerdict,
   resolveTailVerdict,
 } from "../src/api/flight-verdict";
+import { Fr24UnavailableError } from "../src/api/flightradar24-api";
 import { createReaderFactory } from "../src/database/reader";
-import type { predictFlight } from "../src/scripts/starlink-predictor";
 import { createApp } from "../src/server/app";
 import { airportLocalDate, matchesLocalDate } from "../src/utils/airport-tz";
+import {
+  TEST_DB,
+  addFleet,
+  addFlight,
+  addQatarRow,
+  makeSyntheticDb,
+  stubPredict,
+  utc,
+} from "./helpers";
 
-const TEST_DB = "/tmp/ua-test.sqlite";
 const UA_HOST = "unitedstarlinktracker.com";
-
-const utc = (iso: string) => Math.floor(Date.parse(iso) / 1000);
-
-const stubPredict = ((_reader: unknown, flightNumber: string) => ({
-  flight_number: flightNumber,
-  probability: 0.5,
-  confidence: "low" as const,
-  method: "fleet_prior_unknown",
-  n_observations: 0,
-})) as unknown as typeof predictFlight;
-
-function makeSyntheticDb(): Database {
-  const src = new Database(TEST_DB, { readonly: true });
-  const ddl = src
-    .query(
-      "SELECT sql FROM sqlite_master WHERE type='table' AND sql IS NOT NULL AND name <> 'sqlite_sequence'"
-    )
-    .all() as { sql: string }[];
-  src.close();
-  const db = new Database(":memory:");
-  for (const { sql } of ddl) db.exec(sql);
-  return db;
-}
 
 function addPlane(db: Database, tail: string, verifiedWifi: string | null = null): void {
   db.query(
@@ -62,57 +47,6 @@ function addPlane(db: Database, tail: string, verifiedWifi: string | null = null
     "United Airlines",
     "mainline",
     verifiedWifi
-  );
-}
-
-function addFlight(
-  db: Database,
-  tail: string,
-  flightNumber: string,
-  departureAirport: string,
-  departureTimeSec: number
-): void {
-  db.query(
-    `INSERT INTO upcoming_flights (tail_number, flight_number, departure_airport, arrival_airport, departure_time, arrival_time, last_updated, airline)
-     VALUES (?, ?, ?, 'EWR', ?, ?, ?, 'UA')`
-  ).run(
-    tail,
-    flightNumber,
-    departureAirport,
-    departureTimeSec,
-    departureTimeSec + 3 * 3600,
-    departureTimeSec
-  );
-}
-
-function addFleet(
-  db: Database,
-  tail: string,
-  status: string,
-  verifiedWifi: string | null = null
-): void {
-  db.query(
-    `INSERT INTO united_fleet (tail_number, aircraft_type, first_seen_source, first_seen_at, last_seen_at, starlink_status, verified_wifi, verified_at, airline)
-     VALUES (?, 'Boeing 737-900', 'test', 1, 1, ?, ?, 1, 'UA')`
-  ).run(tail, status, verifiedWifi);
-}
-
-function addQatarRow(
-  db: Database,
-  flightNumber: string,
-  departureTimeSec: number,
-  wifiVerdict: string
-): void {
-  db.query(
-    `INSERT INTO qatar_schedule (flight_number, scheduled_date, departure_airport, arrival_airport, departure_time, arrival_time, equipment_code, wifi_verdict, flight_status, last_updated)
-     VALUES (?, ?, 'DOH', 'LHR', ?, ?, '77W', ?, 'Scheduled', ?)`
-  ).run(
-    flightNumber,
-    new Date(departureTimeSec * 1000).toISOString().slice(0, 10),
-    departureTimeSec,
-    departureTimeSec + 7 * 3600,
-    wifiVerdict,
-    departureTimeSec
   );
 }
 
@@ -180,7 +114,7 @@ describe("resolveFlightVerdict ladder (synthetic DB)", () => {
     addFlight(db, "N1001", "UA111", "SFO", utc("2027-06-10T05:35:00Z"));
     // Spreadsheet tail with a settled united_fleet negative.
     addPlane(db, "N1002", null);
-    addFleet(db, "N1002", "negative", "Viasat");
+    addFleet(db, "N1002", "negative", { verifiedWifi: "Viasat" });
     addFlight(db, "N1002", "UA222", "SFO", utc("2027-06-10T05:35:00Z"));
     // Unmapped airport: 23:00Z stays on the UTC date.
     addPlane(db, "N1003", "Starlink");
@@ -189,7 +123,7 @@ describe("resolveFlightVerdict ladder (synthetic DB)", () => {
     addQatarRow(db, "QR701", utc("2027-03-05T21:30:00Z"), "Starlink");
   });
 
-  const opts = { lookupTail: null, predict: stubPredict };
+  const opts = { lookupTail: null, predict: stubPredict(0) };
 
   test("evening US departure found by its printed local date", async () => {
     const v = await resolveFlightVerdict(AIRLINES.UA, reader, "UA111", "2027-06-09", opts);
@@ -260,27 +194,27 @@ describe("resolveFlightVerdict ladder (synthetic DB)", () => {
 
   test("FR24 fallback: starlink segment → fr24, negative-only → fr24_no, null → prediction", async () => {
     const yes = await resolveFlightVerdict(AIRLINES.UA, reader, "UA999", "2027-06-09", {
-      predict: stubPredict,
+      predict: stubPredict(0),
       lookupTail: lookupReturning([seg({ hasStarlink: true, confidence: "verified" })]),
     });
     expect(yes.kind).toBe("fr24");
     if (yes.kind === "fr24") expect(verdictConfidence(yes)).toBe("verified");
 
     const no = await resolveFlightVerdict(AIRLINES.UA, reader, "UA999", "2027-06-09", {
-      predict: stubPredict,
+      predict: stubPredict(0),
       lookupTail: lookupReturning([seg({ hasStarlink: false, confidence: "negative" })]),
     });
     expect(no.kind).toBe("fr24_no");
 
     const none = await resolveFlightVerdict(AIRLINES.UA, reader, "UA999", "2027-06-09", {
-      predict: stubPredict,
+      predict: stubPredict(0),
       lookupTail: lookupReturning(null),
     });
     expect(none.kind).toBe("prediction");
 
     // Unknown-tail segments are not a "no" — fall through to probability.
     const unknown = await resolveFlightVerdict(AIRLINES.UA, reader, "UA999", "2027-06-09", {
-      predict: stubPredict,
+      predict: stubPredict(0),
       lookupTail: lookupReturning([seg({})]),
     });
     expect(unknown.kind).toBe("prediction");
@@ -290,7 +224,7 @@ describe("resolveFlightVerdict ladder (synthetic DB)", () => {
     // UA222's only assignment is a settled-negative tail; FR24 reports the
     // flight actually swapped onto a Starlink tail → firm yes wins.
     const swapped = await resolveFlightVerdict(AIRLINES.UA, reader, "UA222", "2027-06-09", {
-      predict: stubPredict,
+      predict: stubPredict(0),
       lookupTail: lookupReturning([seg({ hasStarlink: true, confidence: "verified" })]),
     });
     expect(swapped.kind).toBe("fr24");
@@ -298,10 +232,20 @@ describe("resolveFlightVerdict ladder (synthetic DB)", () => {
 
     // FR24 agreeing (negative-only segments) keeps our own firm no.
     const agreed = await resolveFlightVerdict(AIRLINES.UA, reader, "UA222", "2027-06-09", {
-      predict: stubPredict,
+      predict: stubPredict(0),
       lookupTail: lookupReturning([seg({ hasStarlink: false, confidence: "negative" })]),
     });
     expect(agreed.kind).toBe("scheduled_no");
+    if (agreed.kind === "scheduled_no") expect(agreed.fr24Error).toBe(false);
+  });
+
+  test("FR24 outage with firm-no rows: the no stands, swap-degradation flagged", async () => {
+    const v = await resolveFlightVerdict(AIRLINES.UA, reader, "UA222", "2027-06-09", {
+      predict: stubPredict(0),
+      lookupTail: () => Promise.reject(new Fr24UnavailableError("FR24 down")),
+    });
+    expect(v.kind).toBe("scheduled_no");
+    if (v.kind === "scheduled_no") expect(v.fr24Error).toBe(true);
   });
 });
 
@@ -316,9 +260,9 @@ describe("resolveTailVerdict negative fold-in (synthetic DB)", () => {
 
     addPlane(db, "N2001"); // sp row only
     addPlane(db, "N2002"); // sp row + uf negative, consensus unsettled
-    addFleet(db, "N2002", "negative", "Viasat");
+    addFleet(db, "N2002", "negative", { verifiedWifi: "Viasat" });
     addPlane(db, "N2003"); // sp row + uf negative, but consensus says Starlink
-    addFleet(db, "N2003", "negative", "Viasat");
+    addFleet(db, "N2003", "negative", { verifiedWifi: "Viasat" });
     for (let i = 0; i < 3; i++) {
       db.query(
         `INSERT INTO starlink_verification_log (tail_number, source, checked_at, has_starlink, wifi_provider, tail_confirmed, airline)
@@ -326,7 +270,7 @@ describe("resolveTailVerdict negative fold-in (synthetic DB)", () => {
       ).run(now - 100 - i);
     }
     addFleet(db, "N2004", "confirmed"); // fleet-confirmed, no sp row
-    addFleet(db, "N2005", "negative", "Viasat"); // fleet-negative, no sp row
+    addFleet(db, "N2005", "negative", { verifiedWifi: "Viasat" }); // fleet-negative, no sp row
   });
 
   const cases: [string, boolean | null, string][] = [

@@ -217,28 +217,35 @@ interface IngestStats {
   flights_upserted: number;
   by_verdict: { Starlink: number; Rolling: number; None: number };
   pruned: number;
+  outcome: "success" | "partial" | "error";
 }
 
-export async function ingestQatarSchedule(db: Database): Promise<IngestStats> {
+export async function ingestQatarSchedule(
+  db: Database,
+  fetchRoute: typeof fetchByRoute = fetchByRoute
+): Promise<IngestStats> {
   const stats: IngestStats = {
     routes_attempted: 0,
     routes_failed: 0,
     flights_upserted: 0,
     by_verdict: { Starlink: 0, Rolling: 0, None: 0 },
     pruned: 0,
+    outcome: "success",
   };
 
   const now = Date.now();
   const dates = Array.from({ length: FORWARD_DAYS }, (_, i) => dohDateISO(now + i * 86400_000));
+  const fetchedRoutes = new Map<string, [string, string]>();
 
   for (const [origin, destination] of ROUTES) {
     for (const date of dates) {
       stats.routes_attempted++;
-      const flights = await fetchByRoute(origin, destination, date);
+      const flights = await fetchRoute(origin, destination, date);
       if (flights === null) {
         stats.routes_failed++;
         continue;
       }
+      fetchedRoutes.set(`${origin}-${destination}`, [origin, destination]);
       const tx = db.transaction(() => {
         for (const f of flights) {
           if (!f.flightNumber || !f.scheduledDeparture) continue;
@@ -255,10 +262,28 @@ export async function ingestQatarSchedule(db: Database): Promise<IngestStats> {
     }
   }
 
-  // Drop schedule rows whose departure has passed by >2h. Keeps the table at
-  // ~few-thousand rows and drops historical noise that /api/check-flight
-  // shouldn't return anyway.
-  stats.pruned = pruneQatarScheduleBefore(db, Math.floor(now / 1000) - 7200);
+  stats.outcome =
+    stats.routes_failed === 0
+      ? "success"
+      : stats.routes_failed === stats.routes_attempted
+        ? "error"
+        : "partial";
+
+  // Total fetch failure = an outage, not an observation: no prune (would
+  // drain the table) and no lastUpdated stamp (would mask staleness).
+  if (stats.outcome === "error") {
+    logError(
+      `qatar-schedule-ingester: all ${stats.routes_attempted} route fetches failed; leaving qatar_schedule and meta untouched`
+    );
+    return stats;
+  }
+
+  // Drop schedule rows whose departure has passed by >2h, but only on routes
+  // we successfully fetched this run — a failing route keeps its stale rows
+  // instead of draining toward empty during a partial outage.
+  stats.pruned = pruneQatarScheduleBefore(db, Math.floor(now / 1000) - 7200, [
+    ...fetchedRoutes.values(),
+  ]);
 
   setMeta(db, "lastUpdated", new Date().toISOString(), "QR");
   setMeta(db, "scheduleFlights", stats.flights_upserted, "QR");
@@ -288,7 +313,7 @@ export function startQatarScheduleIngester(): void {
             metrics.increment(COUNTERS.VENDOR_REQUEST, {
               vendor: "qatar",
               type: "ingest_run",
-              status: stats.routes_failed === 0 ? "success" : "partial",
+              status: stats.outcome,
               airline: normalizeAirlineTag("QR"),
             });
             info(

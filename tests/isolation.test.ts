@@ -10,7 +10,7 @@
 import { Database } from "bun:sqlite";
 import { beforeAll, describe, expect, test } from "bun:test";
 import { copyFileSync } from "node:fs";
-import { updateDatabase, updateFlights } from "../src/database/database";
+import { SHEET_ROSTER_WHERE, updateDatabase, updateFlights } from "../src/database/database";
 import { createApp } from "../src/server/app";
 import type { FleetStats } from "../src/types";
 
@@ -307,24 +307,24 @@ describe("write-path safety — UA scrape cannot wipe HA rows", () => {
       express: { total: 50, starlink: 10, percentage: 20 },
       mainline: { total: 50, starlink: 0, percentage: 0 },
     };
-    updateDatabase(
-      wdb,
-      100,
-      [
-        {
-          TailNumber: "N10000",
-          Aircraft: "Embraer ERJ-175",
-          WiFi: "Starlink",
-          OperatedBy: "Test Express",
-          fleet: "express",
-          sheet_gid: "test",
-          sheet_type: "test",
-          DateFound: "2026-04-12",
-        },
-      ],
-      fakeStats,
-      "UA"
-    );
+    // Enough rows to clear the roster-replace floor — a tiny parse is now
+    // refused outright (see updateDatabase's rosterReplaceRefusal).
+    const uaSheetBefore = (
+      wdb.query(`SELECT COUNT(*) n FROM starlink_planes WHERE ${SHEET_ROSTER_WHERE}`).get("UA") as {
+        n: number;
+      }
+    ).n;
+    const fakeRows = Array.from({ length: Math.max(1, uaSheetBefore) }, (_, i) => ({
+      TailNumber: `N${10000 + i}`,
+      Aircraft: "Embraer ERJ-175",
+      WiFi: "Starlink",
+      OperatedBy: "Test Express",
+      fleet: "express",
+      sheet_gid: "test",
+      sheet_type: "test",
+      DateFound: "2026-04-12",
+    }));
+    updateDatabase(wdb, 100, fakeRows, fakeStats, "UA");
 
     const haAfter = (
       wdb.query("SELECT COUNT(*) n FROM starlink_planes WHERE airline='HA'").get() as { n: number }
@@ -332,12 +332,18 @@ describe("write-path safety — UA scrape cannot wipe HA rows", () => {
     const uaAfter = (
       wdb.query("SELECT COUNT(*) n FROM starlink_planes WHERE airline='UA'").get() as { n: number }
     ).n;
+    const fakePresent = (
+      wdb.query("SELECT COUNT(*) n FROM starlink_planes WHERE TailNumber='N10000'").get() as {
+        n: number;
+      }
+    ).n;
     wdb.close();
 
     expect(haAfter).toBe(haBefore);
-    // UA scrape replaced spreadsheet rows with the single fake (+ any discovery rows)
-    expect(uaAfter).toBeLessThan(uaBefore);
+    // UA scrape replaced spreadsheet rows with the fakes (+ any discovery rows)
     expect(uaAfter).toBeGreaterThan(0);
+    expect(uaAfter).toBeLessThanOrEqual(uaBefore);
+    expect(fakePresent).toBe(1);
   });
 
   test("updateFlights stamps airline from starlink_planes (HA tail → airline='HA')", () => {

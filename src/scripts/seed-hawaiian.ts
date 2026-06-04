@@ -26,7 +26,7 @@ import { scrapeFlightRadar24Fleet } from "./flightradar24-scraper";
 interface SeedRow {
   tail: string;
   aircraftType: string;
-  verdict: HawaiianWifi;
+  verdict: HawaiianWifi | null;
   status: StarlinkStatus;
 }
 
@@ -47,7 +47,8 @@ async function buildRoster(): Promise<SeedRow[]> {
       tail: a.registration,
       aircraftType: a.aircraftType,
       verdict,
-      status: verdict === "Starlink" ? "confirmed" : verdict === "pending" ? "unknown" : "negative",
+      // null verdict (unrecognized type) is unknown, never negative.
+      status: verdict === "Starlink" ? "confirmed" : verdict === "None" ? "negative" : "unknown",
     };
   });
 }
@@ -56,7 +57,7 @@ function printTable(rows: SeedRow[]) {
   const byType = new Map<string, { verdict: string; n: number }>();
   for (const r of rows) {
     const k = r.aircraftType || "(unknown)";
-    const e = byType.get(k) ?? { verdict: r.verdict, n: 0 };
+    const e = byType.get(k) ?? { verdict: r.verdict ?? "unknown", n: 0 };
     e.n++;
     byType.set(k, e);
   }
@@ -65,10 +66,10 @@ function printTable(rows: SeedRow[]) {
   for (const [k, v] of [...byType.entries()].sort((a, b) => b[1].n - a[1].n)) {
     console.log(`  ${k.padEnd(20)} ${String(v.n).padStart(3)}   ${v.verdict}`);
   }
-  const counts = { Starlink: 0, None: 0, pending: 0 };
-  for (const r of rows) counts[r.verdict]++;
+  const counts = { Starlink: 0, None: 0, pending: 0, unknown: 0 };
+  for (const r of rows) counts[r.verdict ?? "unknown"]++;
   console.log(
-    `\n  Starlink=${counts.Starlink}  None=${counts.None}  pending=${counts.pending}  total=${rows.length}\n`
+    `\n  Starlink=${counts.Starlink}  None=${counts.None}  pending=${counts.pending}  unknown=${counts.unknown}  total=${rows.length}\n`
   );
 }
 

@@ -172,7 +172,7 @@ export const COUNTERS = {
   PLANES_STARLINK_DETECTED: "planes.starlink_detected",
 
   // Per-tail verification check outcome
-  // tags: result (success|error|aircraft_mismatch|tail_unknown), fleet,
+  // tags: result (success|error|aircraft_mismatch|tail_unknown|not_published), fleet,
   //   aircraft_type, wifi_provider, source (united|alaska), airline
   VERIFICATION_CHECK: "verification.check",
 

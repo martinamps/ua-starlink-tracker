@@ -397,15 +397,15 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
   },
 };
 
-/** QR rollout: 777 + A350 pax fleets 100% done (Dec 2025); 787 in progress.
- * Freighters (777-F) and narrowbodies have no Starlink. null → leave unknown. */
+// Catch-all is null so an FR24 type-string format drift produces no
+// observation instead of mass-flipping confirmed tails on reconcile.
 export function qatarTypeToStarlink(aircraftType: string): StarlinkStatus | null {
   const t = aircraftType.toUpperCase();
   if (/777-F/.test(t)) return "negative";
   if (/777-[23]/.test(t)) return "confirmed";
   if (/A350/.test(t)) return "confirmed";
-  if (/787/.test(t)) return null;
-  return "negative";
+  if (/A3[12]\d|A380|737/.test(t)) return "negative";
+  return null;
 }
 
 export function enabledAirlines(): AirlineConfig[] {

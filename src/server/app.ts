@@ -570,6 +570,11 @@ const apiCheckFlight: Handler = async ({ req, url, reader, tenant }) => {
       const pred = verdict.pred;
       recordPrediction(pred, cfg.code);
       const pct = Math.round(pred.probability * 100);
+      // During an FR24 outage we genuinely don't know whether an assignment
+      // exists — don't claim it isn't published yet.
+      const assignmentNote = verdict.fr24Error
+        ? "We couldn't confirm the aircraft assignment right now — try again shortly."
+        : `Aircraft assignment not yet published — ${cfg.name} assigns aircraft ~2 days before departure.`;
       return new Response(
         JSON.stringify({
           hasStarlink: false,
@@ -581,8 +586,8 @@ const apiCheckFlight: Handler = async ({ req, url, reader, tenant }) => {
           },
           message:
             pred.n_observations > 0
-              ? `Aircraft assignment not yet published — ${cfg.name} assigns aircraft ~2 days before departure. ~${pct}% of recent departures of this flight used a Starlink-equipped aircraft (${pred.n_observations} observation${pred.n_observations === 1 ? "" : "s"}).`
-              : `Aircraft assignment not yet published — ${cfg.name} assigns aircraft ~2 days before departure. No history for this flight number; ~${pct}% reflects the fleet-wide install rate.`,
+              ? `${assignmentNote} ~${pct}% of recent departures of this flight used a Starlink-equipped aircraft (${pred.n_observations} observation${pred.n_observations === 1 ? "" : "s"}).`
+              : `${assignmentNote} No history for this flight number; ~${pct}% reflects the fleet-wide install rate.`,
           flights: [],
         }),
         { headers: SECURITY_HEADERS.api }

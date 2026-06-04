@@ -54,7 +54,11 @@ function deriveWifi(airline: string, equipmentType: string | null): string | nul
   return alaskaTypeToStarlink(equipmentType);
 }
 
-async function checkOne(db: Database, airline: "AS" | "HA"): Promise<string> {
+export async function checkOne(
+  db: Database,
+  airline: "AS" | "HA",
+  fetchStatus: typeof fetchAlaskaFlightStatus = fetchAlaskaFlightStatus
+): Promise<string> {
   const target = getNextAlaskaVerifyTarget(db, airline);
   if (!target) return "no_target";
 
@@ -69,14 +73,23 @@ async function checkOne(db: Database, airline: "AS" | "HA"): Promise<string> {
   const tz = airportTimezone(flight.departure_airport) ?? "America/Los_Angeles";
   const dateLocal = localDateISO(flight.departure_time, tz);
 
-  let status = await fetchAlaskaFlightStatus(flightNum, dateLocal, airline);
+  // fetchStatus throws on transport failure and returns null when the fetch
+  // succeeded but no flight is published — two different states.
+  let status: Awaited<ReturnType<typeof fetchAlaskaFlightStatus>> = null;
   let dateUsed = dateLocal;
-  if (!status) {
-    // tz-map gaps or schedule-vs-published date skew — try the prior local day
-    // before recording a failure/swap.
-    const prev = shiftDate(dateLocal, -1);
-    status = await fetchAlaskaFlightStatus(flightNum, prev, airline);
-    if (status) dateUsed = prev;
+  let fetchFailed = false;
+  try {
+    status = await fetchStatus(flightNum, dateLocal, airline);
+    if (!status) {
+      // tz-map gaps or schedule-vs-published date skew — try the prior local
+      // day before recording a not-published observation.
+      const prev = shiftDate(dateLocal, -1);
+      status = await fetchStatus(flightNum, prev, airline);
+      if (status) dateUsed = prev;
+    }
+  } catch (e) {
+    fetchFailed = true;
+    logError(`alaska-verifier ${airline} fetch failed for ${flightNum}@${dateLocal}`, e);
   }
 
   const tailConfirmed = status?.tailNumber === target.tail_number ? 1 : status ? 0 : null;
@@ -91,18 +104,29 @@ async function checkOne(db: Database, airline: "AS" | "HA"): Promise<string> {
     wifi_provider: wifi,
     aircraft_type: equipmentType,
     flight_number: flight.flight_number,
-    error: status ? null : "fetch_failed",
+    error: status ? null : fetchFailed ? "fetch_failed" : "not_published",
     tail_confirmed: tailConfirmed,
     airline,
   });
 
   if (tailConfirmed === 1 && wifi !== null) {
     setFleetVerified(db, target.tail_number, wifi, wifi === "Starlink" ? "confirmed" : "negative");
-  } else {
+  } else if (!fetchFailed) {
+    // Real but inconclusive observation (mismatch / no wifi oracle / nothing
+    // published for the flight) — defer ~7 days.
     touchFleetVerifiedAt(db, target.tail_number);
   }
+  // Transport failure: leave verified_at untouched so the next tick retries —
+  // the whole queue fails equally during an outage, so nothing starves, and
+  // an outage hour must not cycle the roster 7 days out.
 
-  const result = status ? (tailConfirmed === 1 ? "success" : "aircraft_mismatch") : "error";
+  const result = fetchFailed
+    ? "error"
+    : status
+      ? tailConfirmed === 1
+        ? "success"
+        : "aircraft_mismatch"
+      : "not_published";
   metrics.increment(COUNTERS.VERIFICATION_CHECK, {
     fleet: normalizeFleet(target.fleet),
     aircraft_type: normalizeAircraftType(equipmentType),
@@ -116,7 +140,9 @@ async function checkOne(db: Database, airline: "AS" | "HA"): Promise<string> {
     `alaska-verifier ${airline} ${target.tail_number} ${flight.flight_number}@${dateUsed}(${tz}) → ${
       status
         ? `tail=${status.tailNumber} type=${equipmentType} wifi=${wifi ?? "unknown"}`
-        : "fetch_failed"
+        : fetchFailed
+          ? "fetch_failed"
+          : "not_published"
     }`
   );
 
