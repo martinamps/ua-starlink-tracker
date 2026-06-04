@@ -32,9 +32,27 @@ import {
   withSpan,
 } from "../observability";
 import { airportTimezone, localDateISO } from "../utils/airport-tz";
+import {
+  type BreakerOutcome,
+  type JobHandle,
+  type JobRunContext,
+  type OutageBreaker,
+  createOutageBreaker,
+  startJob,
+} from "../utils/job-runner";
 import { info, error as logError } from "../utils/logger";
 
 const INTERVAL_MS = 90_000;
+const OUTAGE_FAILURE_THRESHOLD = 5;
+const OUTAGE_SKIP_TICKS = 10;
+
+// checkOne result → breaker outcome. no_target/no_flight never reached the
+// vendor, so they leave the failure streak untouched.
+function breakerOutcome(result: string): BreakerOutcome {
+  if (result === "error") return "failure";
+  if (result === "no_target" || result === "no_flight") return "neutral";
+  return "success";
+}
 
 function shiftDate(iso: string, days: number): string {
   const d = new Date(`${iso}T12:00:00Z`);
@@ -144,28 +162,43 @@ export async function checkOne(
   return result;
 }
 
-export function startAlaskaVerifier(): void {
-  const targets = enabledAirlines()
-    .filter((a) => a.verifierBackend === "alaska-json")
-    .map((a) => a.code as "AS" | "HA");
-  if (targets.length === 0) {
-    info("alaska-verifier: no enabled airlines with verifierBackend=alaska-json; not starting");
-    return;
-  }
-  info(
-    `alaska-verifier: starting (${INTERVAL_MS / 1000}s interval, airlines: ${targets.join(",")})`
-  );
+interface AlaskaTickDeps {
+  openDb: typeof initializeDatabase;
+  getTarget: typeof getNextAlaskaVerifyTarget;
+  check: (db: Database, airline: "AS" | "HA") => Promise<string>;
+  breakerFor: () => OutageBreaker;
+}
 
+/**
+ * Round-robin AS/HA verification tick. Breaker state is per airline: an
+ * AS-only outage interleaved with healthy HA ticks must still trip, and a
+ * tripped AS must not pause HA. shouldSkip is consulted AFTER airline
+ * selection so a skip burns only that airline's turn — the rotation proceeds.
+ */
+export function makeAlaskaTick(
+  targets: Array<"AS" | "HA">,
+  deps: Partial<AlaskaTickDeps> = {}
+): (ctx?: JobRunContext) => Promise<void> {
+  const openDb = deps.openDb ?? initializeDatabase;
+  const getTarget = deps.getTarget ?? getNextAlaskaVerifyTarget;
+  const check = deps.check ?? checkOne;
+  const breakerFor =
+    deps.breakerFor ?? (() => createOutageBreaker(OUTAGE_FAILURE_THRESHOLD, OUTAGE_SKIP_TICKS));
+  const breakers = new Map(targets.map((a) => [a, breakerFor()]));
   let cursor = 0;
-  const tick = async () => {
+
+  return async (ctx?: JobRunContext) => {
     const airline = targets[cursor % targets.length];
     cursor++;
+    const breaker = breakers.get(airline) as OutageBreaker;
+    if (breaker.shouldSkip()) return;
+
     // Most ticks find nothing to verify — skip span creation on no-op runs.
     let target: ReturnType<typeof getNextAlaskaVerifyTarget> = null;
     try {
-      const db = initializeDatabase();
+      const db = openDb();
       try {
-        target = getNextAlaskaVerifyTarget(db, airline);
+        target = getTarget(db, airline);
       } finally {
         db.close();
       }
@@ -180,10 +213,17 @@ export function startAlaskaVerifier(): void {
       async (span) => {
         span.setTag("airline", normalizeAirlineTag(airline));
         try {
-          const db = initializeDatabase();
+          const db = openDb();
           try {
-            const result = await checkOne(db, airline);
+            const result = await check(db, airline);
             span.setTag("result", result);
+            // An abandoned run settling late must not feed the breaker its
+            // successor reads.
+            if ((ctx?.isCurrent() ?? true) && breaker.record(breakerOutcome(result))) {
+              logError(
+                `alaska-verifier ${airline}: consecutive fetch failures tripped the outage breaker — skipping its upcoming ticks`
+              );
+            }
           } finally {
             db.close();
           }
@@ -195,9 +235,26 @@ export function startAlaskaVerifier(): void {
       { "job.type": "background" }
     );
   };
+}
 
-  setTimeout(tick, 30_000);
-  setInterval(tick, INTERVAL_MS);
+export function startAlaskaVerifier(): JobHandle | undefined {
+  const targets = enabledAirlines()
+    .filter((a) => a.verifierBackend === "alaska-json")
+    .map((a) => a.code as "AS" | "HA");
+  if (targets.length === 0) {
+    info("alaska-verifier: no enabled airlines with verifierBackend=alaska-json; not starting");
+    return undefined;
+  }
+  info(
+    `alaska-verifier: starting (${INTERVAL_MS / 1000}s interval, airlines: ${targets.join(",")})`
+  );
+
+  return startJob({
+    name: "alaska_verifier",
+    intervalMs: INTERVAL_MS,
+    initialDelayMs: 30_000,
+    run: makeAlaskaTick(targets),
+  });
 }
 
 if (import.meta.main) {

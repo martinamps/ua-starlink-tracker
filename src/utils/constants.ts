@@ -55,36 +55,45 @@ const SCRIPT_SRC = ["'self'", "'unsafe-inline'", "https://unpkg.com", ...ANALYTI
   .filter(Boolean)
   .join(" ");
 
+// Baseline filled in by dispatch's finalize wrapper on every response where
+// the handler set nothing; the SECURITY_HEADERS variants below build on it so
+// the two can never drift. The CSP here is the non-HTML default — variants
+// override it with their page CSP.
+export const BASE_RESPONSE_HEADERS: Record<string, string> = {
+  "X-Content-Type-Options": "nosniff",
+  "X-Frame-Options": "DENY",
+  "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
+  "Referrer-Policy": "no-referrer",
+  "Content-Security-Policy": "default-src 'none'",
+};
+
+// The /api/* CORS contract (Chrome extension + Google Flights embedding).
+// Spread into SECURITY_HEADERS.api and mirrored verbatim by OPTIONS preflight.
+export const API_CORS_HEADERS: Record<string, string> = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
+};
+
 export const SECURITY_HEADERS = {
   api: {
+    ...BASE_RESPONSE_HEADERS,
+    ...API_CORS_HEADERS,
     "Content-Type": "application/json",
-    "X-Content-Type-Options": "nosniff",
-    "X-Frame-Options": "DENY",
     "Content-Security-Policy": `default-src 'self' https://unpkg.com; connect-src ${CONNECT_SRC}; script-src ${SCRIPT_SRC}; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https://*;`,
-    "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
-    "Referrer-Policy": "no-referrer",
     "Cache-Control": "no-store, max-age=0",
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
   },
   html: {
+    ...BASE_RESPONSE_HEADERS,
     "Content-Type": "text/html",
-    "X-Content-Type-Options": "nosniff",
-    "X-Frame-Options": "DENY",
     "Content-Security-Policy": `default-src 'self' https://unpkg.com; connect-src ${CONNECT_SRC}; script-src ${SCRIPT_SRC}; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:;`,
-    "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
-    "Referrer-Policy": "no-referrer",
   },
   notFound: {
+    ...BASE_RESPONSE_HEADERS,
     "Content-Type": "text/html",
-    "X-Content-Type-Options": "nosniff",
-    "X-Frame-Options": "DENY",
     "Content-Security-Policy":
       "default-src 'self'; style-src 'unsafe-inline' https://fonts.googleapis.com; " +
       "font-src 'self' https://fonts.gstatic.com; img-src 'self' data:;",
-    "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
-    "Referrer-Policy": "no-referrer",
   },
 };
 

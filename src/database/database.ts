@@ -2,9 +2,11 @@ import { Database } from "bun:sqlite";
 import { ensureAirlinePrefix } from "../airlines/flight-number";
 import {
   AIRLINES,
+  type LastUpdatedOwner,
   OBSERVED_WIFI_SOURCES,
   VERIFICATION_SOURCES,
   enabledAirlines,
+  lastUpdatedOwner,
   looksLikeValidTailNumber,
   verifierSourceTag,
 } from "../airlines/registry";
@@ -516,7 +518,7 @@ export function updateDatabase(
     // Only delete spreadsheet planes, preserve discovered ones (sheet_gid = 'discovery')
     db.query(`DELETE FROM starlink_planes WHERE ${SHEET_ROSTER_WHERE}`).run(airline);
     setMeta(db, "totalAircraftCount", totalAircraftCount, airline);
-    setMeta(db, "lastUpdated", new Date().toISOString(), airline);
+    stampLastUpdated(db, airline, "sheet-scrape");
 
     // Raw sheet tallies (pre-dedup, pre-verification). Display/API counts come
     // from getStarlinkPlanes()/getFleetStats() — these meta keys are diagnostic.
@@ -651,10 +653,22 @@ export function setMeta(db: Database, key: string, value: string | number, airli
 }
 
 /**
- * Recompute meta totals + lastUpdated for an airline from united_fleet rows.
- * UA's meta is owned by the hourly spreadsheet scrape (updateDatabase) and QR's
- * lastUpdated by the schedule ingester; for HA/AS this is the only periodic
- * writer — without it their meta freezes at seed time.
+ * Single enforcement point for lastUpdated ownership: stamps only when the
+ * calling pipeline IS the registry-declared owner for the airline, so a
+ * secondary writer (daily fleet sync, residential sync) can never mask a
+ * dead primary pipeline's staleness.
+ */
+export function stampLastUpdated(db: Database, airline: string, writer: LastUpdatedOwner): void {
+  if (lastUpdatedOwner(airline) === writer) {
+    setMeta(db, "lastUpdated", new Date().toISOString(), airline);
+  }
+}
+
+/**
+ * Recompute meta totals for an airline from united_fleet rows. UA's meta is
+ * owned by the hourly spreadsheet scrape (updateDatabase); for HA/AS this is
+ * the only periodic writer — without it their meta freezes at seed time.
+ * lastUpdated goes through stampLastUpdated as the "fleet-meta" writer.
  */
 export function refreshFleetMeta(db: Database, airline: string): void {
   const rows = db
@@ -692,7 +706,7 @@ export function refreshFleetMeta(db: Database, airline: string): void {
   setMeta(db, "expressTotal", expressTotal, airline);
   setMeta(db, "expressStarlink", expressStarlink, airline);
   setMeta(db, "expressPercentage", pct(expressStarlink, expressTotal), airline);
-  setMeta(db, "lastUpdated", new Date().toISOString(), airline);
+  stampLastUpdated(db, airline, "fleet-meta");
 }
 
 export function getTotalCount(db: Database, airline = "UA"): number {

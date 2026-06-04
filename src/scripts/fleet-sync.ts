@@ -3,7 +3,12 @@
  * Syncs United Airlines fleet from FlightRadar24 and spreadsheet to united_fleet table
  */
 
-import { AIRLINES, type AirlineConfig, enabledAirlines } from "../airlines/registry";
+import {
+  AIRLINES,
+  type AirlineConfig,
+  enabledAirlines,
+  lastUpdatedOwner,
+} from "../airlines/registry";
 import {
   initializeDatabase,
   refreshFleetMeta,
@@ -11,6 +16,7 @@ import {
   upsertFleetAircraft,
 } from "../database/database";
 import { COUNTERS, metrics, normalizeAirlineTag, withSpan } from "../observability";
+import { type JobHandle, startJob } from "../utils/job-runner";
 import { info, error as logError } from "../utils/logger";
 import { launchFR24Browser, scrapeFlightRadar24Fleet } from "./flightradar24-scraper";
 
@@ -143,9 +149,12 @@ export async function syncFleetFromFR24(
         result.total = allAircraft.length;
         result.success = true;
 
-        // UA meta totals come from the spreadsheet scrape; for everyone else
-        // FR24 is the roster of record, so refresh meta here or it goes stale.
-        if (cfg.code !== "UA") refreshFleetMeta(db, cfg.code);
+        // Meta totals follow the lastUpdated owner: the sheet scrape owns
+        // UA's; for everyone else FR24 is the roster of record, so refresh
+        // meta here or it goes stale. (refreshFleetMeta itself only stamps
+        // lastUpdated for fleet-meta-owned airlines — QR's stays with the
+        // schedule ingester.)
+        if (lastUpdatedOwner(cfg.code) !== "sheet-scrape") refreshFleetMeta(db, cfg.code);
 
         span.setTag("planes.new", result.new);
         span.setTag("planes.updated", result.updated);
@@ -240,7 +249,7 @@ export async function syncFullFleet(): Promise<{
  * Start automatic daily fleet sync
  * Runs FR24 sync once per day to keep united_fleet populated
  */
-export function startFleetSync() {
+export function startFleetSync(): JobHandle {
   const SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
   const INITIAL_DELAY_MS = 5 * 60 * 1000; // 5 minutes after startup
 
@@ -278,19 +287,18 @@ export function startFleetSync() {
     }
   };
 
-  // Run daily
-  setInterval(() => {
-    runSync().catch((err) => logError("Fleet sync scheduler error", err));
-  }, SYNC_INTERVAL_MS);
-
-  // Initial sync after 5 minutes (give server time to stabilize)
-  setTimeout(() => {
-    runSync().catch((err) => logError("Initial fleet sync failed", err));
-  }, INITIAL_DELAY_MS);
+  const handle = startJob({
+    name: "fleet_sync",
+    intervalMs: SYNC_INTERVAL_MS,
+    // Initial sync after 5 minutes (give server time to stabilize)
+    initialDelayMs: INITIAL_DELAY_MS,
+    run: runSync,
+  });
 
   info(
     `Fleet sync scheduled (every ${SYNC_INTERVAL_MS / 1000 / 3600}h, first run in ${INITIAL_DELAY_MS / 1000 / 60}min)`
   );
+  return handle;
 }
 
 // CLI usage

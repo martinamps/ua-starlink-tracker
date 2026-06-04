@@ -188,7 +188,7 @@ export const GAUGES = {
   // Seconds since the last successful data write per pipeline, derived from the
   // DB itself (MAX(timestamp)) — not from a "last ran at" heartbeat. Heartbeats
   // prove the loop is alive; this proves it's still producing data.
-  // tags: job (flight_updater|verifier|departures), airline
+  // tags: job (flight_updater|verifier|departures|qatar_ingester), airline
   DATA_FRESHNESS_SECONDS: "data.freshness_seconds",
 
   // Backtest precision of firm "yes/no Starlink" calls — tags: airline, window, call

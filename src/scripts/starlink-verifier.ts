@@ -27,6 +27,7 @@ import {
   withSpan,
 } from "../observability";
 import { extractFlightNumber, pickVerifiableFlight, unitedLookupDate } from "../utils/constants";
+import { type JobHandle, startJob } from "../utils/job-runner";
 import { verifierLog } from "../utils/logger";
 import type { StarlinkCheckResult } from "./united-starlink-checker";
 import { checkStarlinkStatusSubprocess } from "./united-starlink-checker-subprocess";
@@ -476,82 +477,58 @@ export function logSpreadsheetVerification(
  * Runs every ~60 seconds, checking 1 plane per run
  * With ~100 planes, full cycle takes ~100 minutes
  * Combined with 48-96hr jitter per plane, this spreads load nicely
- *
- * Uses setInterval for robustness - ensures scheduler can't die from errors
  */
-export function startStarlinkVerifier() {
+export function startStarlinkVerifier(): JobHandle {
   const BASE_INTERVAL_MS = 60 * 1000; // 60 seconds
   const HEARTBEAT_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
   const PLANES_PER_RUN = 1;
 
   let runCount = 0;
-  let isRunning = false;
   let lastHeartbeat = Date.now();
 
   const runVerification = async () => {
-    // Prevent overlapping runs
-    if (isRunning) {
-      verifierLog.debug("Skipping run - previous verification still in progress");
-      return;
-    }
-
-    isRunning = true;
     runCount++;
 
-    try {
-      // Heartbeat log every 10 minutes to show scheduler is alive
-      const now = Date.now();
-      if (now - lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
-        verifierLog.info(`Heartbeat: ${runCount} runs completed, scheduler healthy`);
-        lastHeartbeat = now;
-      }
-
-      // ~97% of ticks find nothing to do — skip span creation on no-op runs.
-      if (!hasVerificationWork(PLANES_PER_RUN)) return;
-
-      await withSpan(
-        "starlink_verifier.run",
-        async (span) => {
-          const stats = await runVerificationBatch(PLANES_PER_RUN, VERIFICATION_DELAY_MS);
-
-          span.setTag("checked", stats.checked);
-          span.setTag("starlink", stats.starlink);
-          span.setTag("errors", stats.errors);
-
-          if (stats.checked > 0) {
-            verifierLog.info(
-              `Batch complete: ${stats.starlink} Starlink, ${stats.notStarlink} not, ${stats.errors} errors`
-            );
-          }
-        },
-        { "job.type": "background" }
-      );
-    } catch (error) {
-      verifierLog.error("Background verification failed", error);
-    } finally {
-      isRunning = false;
+    // Heartbeat log every 10 minutes to show scheduler is alive
+    const now = Date.now();
+    if (now - lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
+      verifierLog.info(`Heartbeat: ${runCount} runs completed, scheduler healthy`);
+      lastHeartbeat = now;
     }
+
+    // ~97% of ticks find nothing to do — skip span creation on no-op runs.
+    if (!hasVerificationWork(PLANES_PER_RUN)) return;
+
+    await withSpan(
+      "starlink_verifier.run",
+      async (span) => {
+        const stats = await runVerificationBatch(PLANES_PER_RUN, VERIFICATION_DELAY_MS);
+
+        span.setTag("checked", stats.checked);
+        span.setTag("starlink", stats.starlink);
+        span.setTag("errors", stats.errors);
+
+        if (stats.checked > 0) {
+          verifierLog.info(
+            `Batch complete: ${stats.starlink} Starlink, ${stats.notStarlink} not, ${stats.errors} errors`
+          );
+        }
+      },
+      { "job.type": "background" }
+    );
   };
 
-  // Use setInterval for robust scheduling - won't die if one run fails
-  setInterval(() => {
-    runVerification().catch((error) => {
-      // This catch should never trigger (runVerification has its own try/catch)
-      // but adding it as an extra safety layer
-      verifierLog.error("Unexpected error in verification scheduler", error);
-    });
-  }, BASE_INTERVAL_MS);
-
-  // Initial run after 5 seconds
-  setTimeout(() => {
-    runVerification().catch((error) => {
-      verifierLog.error("Initial verification run failed", error);
-    });
-  }, 5 * 1000);
+  const handle = startJob({
+    name: "starlink_verifier",
+    intervalMs: BASE_INTERVAL_MS,
+    initialDelayMs: 5 * 1000,
+    run: runVerification,
+  });
 
   verifierLog.info(
     `Background verifier started (every ${BASE_INTERVAL_MS / 1000}s, ${PLANES_PER_RUN} plane/run)`
   );
+  return handle;
 }
 
 // CLI usage

@@ -35,6 +35,7 @@ import {
 } from "../observability";
 import type { FleetAircraft, StarlinkStatus } from "../types";
 import { extractFlightNumber, pickVerifiableFlight, unitedLookupDate } from "../utils/constants";
+import { type JobHandle, startJob } from "../utils/job-runner";
 import { info, error as logError, warn } from "../utils/logger";
 import type { StarlinkCheckResult } from "./united-starlink-checker";
 import { checkStarlinkStatusSubprocess } from "./united-starlink-checker-subprocess";
@@ -487,30 +488,14 @@ export async function runDiscoveryBatch(limit = 1): Promise<{
 /**
  * Start the fleet discovery background process
  */
-export function startFleetDiscovery(mode: "discovery" | "maintenance" = "maintenance") {
+export function startFleetDiscovery(mode: "discovery" | "maintenance" = "maintenance"): JobHandle {
   const intervalMs = mode === "discovery" ? DISCOVERY_INTERVAL_MS : MAINTENANCE_INTERVAL_MS;
 
   let runCount = 0;
-  // 0 = idle; otherwise the start time of the in-progress run. A never-settling
-  // vendor call must not hold the loop forever — past the deadline, abandon it.
-  let runningSince = 0;
   let lastHeartbeat = Date.now();
   const totalStats = { checked: 0, starlink: 0, notStarlink: 0, errors: 0, noFlights: 0 };
-  const STUCK_RUN_TIMEOUT_MS = 15 * 60 * 1000;
 
   const runVerification = async () => {
-    if (runningSince) {
-      if (Date.now() - runningSince < STUCK_RUN_TIMEOUT_MS) {
-        info("Skipping run - previous verification still in progress");
-        return;
-      }
-      logError(
-        `Discovery run stuck for ${Math.round((Date.now() - runningSince) / 60000)}min — abandoning it and starting a new run`
-      );
-    }
-
-    const myRun = Date.now();
-    runningSince = myRun;
     runCount++;
 
     try {
@@ -563,27 +548,20 @@ export function startFleetDiscovery(mode: "discovery" | "maintenance" = "mainten
       );
     } catch (err) {
       logError("Discovery batch failed", err);
-    } finally {
-      // An abandoned run that finally settles must not clear its successor's flag.
-      if (runningSince === myRun) runningSince = 0;
     }
   };
 
-  // Start the interval
-  setInterval(() => {
-    runVerification().catch((err) => {
-      logError("Unexpected error in discovery scheduler", err);
-    });
-  }, intervalMs);
-
-  // Initial run after 10 seconds
-  setTimeout(() => {
-    runVerification().catch((err) => {
-      logError("Initial discovery run failed", err);
-    });
-  }, 10 * 1000);
+  // A never-settling vendor call must not hold the loop forever — the
+  // runner's stuck-run escape abandons it past the deadline.
+  const handle = startJob({
+    name: "fleet_discovery",
+    intervalMs,
+    initialDelayMs: 10 * 1000,
+    run: runVerification,
+  });
 
   info(`Fleet discovery started in ${mode} mode (every ${intervalMs / 1000}s)`);
+  return handle;
 }
 
 /**

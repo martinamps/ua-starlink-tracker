@@ -535,7 +535,6 @@ describe("route-table coverage", () => {
     const tested = new Set(
       ENDPOINTS.map((e) => e.split("?")[0]).concat([
         "/mcp",
-        "/site.webmanifest",
         "/api/plan-route",
         "/api/predict-flight",
         "/api/check-any-flight",

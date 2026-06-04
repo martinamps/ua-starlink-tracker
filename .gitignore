@@ -19,3 +19,4 @@ patches/
 ops/
 CLAUDE.local.md
 .claude/
+tsconfig.review.tsbuildinfo

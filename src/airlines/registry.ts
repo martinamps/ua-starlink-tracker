@@ -85,6 +85,8 @@ export interface SiteConfig {
   headSnippet?: string;
 }
 
+export type LastUpdatedOwner = "fleet-meta" | "sheet-scrape" | "schedule-ingester";
+
 export interface AirlineConfig {
   code: AirlineCode;
   name: string;
@@ -109,6 +111,11 @@ export interface AirlineConfig {
   minFleetSanity: number;
   /** Per-flight wifi verification source; null = none (type-map only). */
   verifierBackend?: "united" | "alaska-json" | "qatar-fltstatus" | null;
+  /** Sole writer of this airline's `lastUpdated` meta. Every writer stamps
+   * via stampLastUpdated, which no-ops unless the caller IS the owner — so a
+   * daily fleet sync can't mask a dead primary pipeline. Default "fleet-meta"
+   * (refreshFleetMeta); UA = "sheet-scrape", QR = "schedule-ingester". */
+  lastUpdatedOwner?: LastUpdatedOwner;
   /** A per-flight Starlink probability model exists, trained on THIS airline's
    * observation log. False → prediction surfaces answer from type rules and
    * subfleet penetration instead; another carrier's priors never apply. */
@@ -205,6 +212,8 @@ const AIRLINE_DEFS = {
     ...FAA_TAIL,
     minFleetSanity: 800,
     verifierBackend: "united",
+    // UA meta (totals + lastUpdated) comes from the community sheet, not FR24.
+    lastUpdatedOwner: "sheet-scrape",
     flightHistoryModel: true,
     verifySite: "united.com",
     // Whole fleet eligible — Express + mainline both in the program.
@@ -392,6 +401,9 @@ const AIRLINE_DEFS = {
     // one doesn't blow away the roster.
     minFleetSanity: 200,
     verifierBackend: "qatar-fltstatus",
+    // QR freshness = "the schedule cache is current", not "the roster row
+    // count changed" — the hourly ingester owns the stamp (gated on outcome).
+    lastUpdatedOwner: "schedule-ingester",
     flightHistoryModel: false,
     verifySite: "qatarairways.com",
     typeDeterministicWifi: qatarTypeToStarlink,
@@ -618,6 +630,10 @@ export const OBSERVED_WIFI_SOURCES: readonly VerificationSource[] = [
       .map((a) => verifierSourceTag(a))
   ),
 ].sort();
+
+export function lastUpdatedOwner(code: string): LastUpdatedOwner {
+  return AIRLINES[code]?.lastUpdatedOwner ?? "fleet-meta";
+}
 
 export function enabledAirlines(): AirlineConfig[] {
   return Object.values(AIRLINES).filter((a) => a.enabled);

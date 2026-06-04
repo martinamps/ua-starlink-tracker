@@ -32,10 +32,12 @@ import {
   initializeDatabase,
   pruneQatarScheduleBefore,
   setMeta,
+  stampLastUpdated,
   upsertQatarSchedule,
 } from "../database/database";
 import { COUNTERS, metrics, normalizeAirlineTag, withSpan } from "../observability";
 import { localDateISO } from "../utils/airport-tz";
+import { type JobHandle, startJob } from "../utils/job-runner";
 import { info, error as logError } from "../utils/logger";
 
 const INTERVAL_MS = 60 * 60 * 1000; // 1 hour
@@ -285,7 +287,7 @@ export async function ingestQatarSchedule(
     ...fetchedRoutes.values(),
   ]);
 
-  setMeta(db, "lastUpdated", new Date().toISOString(), "QR");
+  stampLastUpdated(db, "QR", "schedule-ingester");
   setMeta(db, "scheduleFlights", stats.flights_upserted, "QR");
   setMeta(db, "scheduleStarlink", stats.by_verdict.Starlink, "QR");
   setMeta(db, "scheduleRolling", stats.by_verdict.Rolling, "QR");
@@ -294,7 +296,7 @@ export async function ingestQatarSchedule(
   return stats;
 }
 
-export function startQatarScheduleIngester(): void {
+export function startQatarScheduleIngester(): JobHandle {
   info(
     `qatar-schedule-ingester: starting (${INTERVAL_MS / 60_000}min interval, ${ROUTES.length} routes × ${FORWARD_DAYS} days, +${STARTUP_DELAY_MS / 1000}s startup delay)`
   );
@@ -331,8 +333,15 @@ export function startQatarScheduleIngester(): void {
       },
       { "job.type": "background" }
     );
-  setTimeout(tick, STARTUP_DELAY_MS);
-  setInterval(tick, INTERVAL_MS);
+  return startJob({
+    name: "qatar_schedule_ingester",
+    intervalMs: INTERVAL_MS,
+    initialDelayMs: STARTUP_DELAY_MS,
+    // A full-outage run (280 fetches all timing out) can legitimately exceed
+    // the hourly interval — don't declare it stuck until it misses two ticks.
+    stuckTimeoutMs: 2 * INTERVAL_MS,
+    run: tick,
+  });
 }
 
 if (import.meta.main) {
