@@ -19,7 +19,6 @@ import type {
   RecentInstall,
 } from "../types";
 import {
-  type CheckFlightRow,
   type ConfirmedEdge,
   type DirectRouteEdge,
   type FlightAssignmentRow,
@@ -47,7 +46,6 @@ import {
   getFleetPageData,
   getFleetStats,
   getFlightAssignments,
-  getFlightsByNumberAndDate,
   getHubStats,
   getLastUpdated,
   getMeta,
@@ -87,19 +85,7 @@ export interface ScopedReader {
   getTotalCount(): number;
   getLastUpdated(): string;
   getMeta(key: string): string | null;
-  getFlightsByNumberAndDate(
-    variants: string[],
-    startOfDay: number,
-    endOfDay: number
-  ): CheckFlightRow[];
-  /** Hub-only: query a *specific* airline regardless of reader scope (caller-detected from flight prefix). */
-  getFlightsByNumberAndDateForAirline(
-    variants: string[],
-    startOfDay: number,
-    endOfDay: number,
-    code: AirlineCode
-  ): CheckFlightRow[];
-  /** MCP check_flight: assignments without the verified_wifi filter (renders three confidence tiers). */
+  /** Check-flight assignments without the verified_wifi filter (the core classifies tiers). */
   getFlightAssignments(
     variants: string[],
     startOfDay: number,
@@ -236,9 +222,6 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
             .at(-1) ?? "")
         : getLastUpdated(db, scope),
     getMeta: (key) => getMeta(db, key, metaCode),
-    getFlightsByNumberAndDate: (v, s, e) => getFlightsByNumberAndDate(db, v, s, e, airlines),
-    getFlightsByNumberAndDateForAirline: (v, s, e, code) =>
-      getFlightsByNumberAndDate(db, v, s, e, code),
     getFlightAssignments: (v, s, e) => getFlightAssignments(db, v, s, e, airlines),
     getFleetPageData: () => getFleetPageData(db, airlines),
     getAirportDepartures: () => getAirportDepartures(db, airlines),

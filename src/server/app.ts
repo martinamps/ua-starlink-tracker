@@ -30,7 +30,14 @@ import {
   publicAirlines,
   resolveSite,
 } from "../airlines/registry";
-import { lookupFlightTailVerdict } from "../api/flight-verdict";
+import {
+  type FlightVerdict,
+  negativeWifi,
+  resolveFlightVerdict,
+  scheduledFlights,
+  verdictConfidence,
+  verdictTelemetry,
+} from "../api/check-flight-core";
 import { handleMcpRequest } from "../api/mcp-server";
 import { qatarEquipmentName, qatarEquipmentToWifi } from "../api/qatar-status";
 import CheckFlightPage from "../components/check-flight-page";
@@ -362,24 +369,12 @@ function recordPrediction(
  * host should expect tri-state. The Chrome extension only hits the UA host,
  * so its boolean contract isn't affected.
  */
-function apiCheckFlightQatar(
-  reader: ScopedReader,
-  cfg: typeof AIRLINES.QR,
-  flightNumber: string,
-  startOfDay: number,
-  endOfDay: number
+function qatarCheckFlightResponse(
+  verdict: Extract<FlightVerdict, { kind: "qatar" } | { kind: "qatar_no_data" }>
 ): Response {
-  const normalized = ensureAirlinePrefix(cfg, flightNumber);
-  const numeric = normalized.replace(/^[A-Z]+/, "");
-  // Match both unpadded and zero-padded forms ("QR1" and "QR001") since the
-  // ingester writes "QR1" but users may type either.
-  const padded = `QR${numeric.padStart(3, "0")}`;
-  const stripped = `QR${String(Number.parseInt(numeric, 10) || 0)}`;
-  const variants = Array.from(new Set([normalized, padded, stripped]));
-  const rows = reader.getQatarScheduleByFlight(variants, startOfDay, endOfDay);
+  const cfg = AIRLINES.QR;
 
-  if (rows.length === 0) {
-    recordFlightLookup("api_check", "no_data", "none", cfg.code);
+  if (verdict.kind === "qatar_no_data") {
     return new Response(
       JSON.stringify({
         hasStarlink: null,
@@ -393,44 +388,13 @@ function apiCheckFlightQatar(
     );
   }
 
-  const verdicts = rows.map((r) => r.wifi_verdict);
-  const allStarlink = verdicts.every((v) => v === "Starlink");
-  const anyRolling = verdicts.some((v) => v === "Rolling");
-  const allNone = verdicts.every((v) => v === "None");
-  const distinctEquipment = [...new Set(rows.map((r) => qatarEquipmentName(r.equipment_code)))];
-
-  let hasStarlink: boolean | null;
-  let confidence: string;
-  let reason: string;
-  if (allStarlink) {
-    hasStarlink = true;
-    confidence = "verified";
-    reason = `${distinctEquipment.join(", ")} — Qatar Airways completed Starlink installation on this aircraft type.`;
-    recordFlightLookup("api_check", "verified_yes", "high", cfg.code);
-  } else if (allNone) {
-    hasStarlink = false;
-    confidence = "verified";
-    reason = `${distinctEquipment.join(", ")} — not part of Qatar's Starlink rollout.`;
-    recordFlightLookup("api_check", "verified_no", "high", cfg.code);
-  } else if (anyRolling) {
-    hasStarlink = null;
-    confidence = "rolling";
-    reason = `${distinctEquipment.join(", ")} — Qatar's 787 Starlink rollout is in progress; this aircraft may or may not be equipped yet.`;
-    recordFlightLookup("api_check", "predicted", "low", cfg.code);
-  } else {
-    hasStarlink = null;
-    confidence = "mixed";
-    reason = `Mixed equipment scheduled (${distinctEquipment.join(", ")}) — outcome depends on which aircraft operates.`;
-    recordFlightLookup("api_check", "predicted", "low", cfg.code);
-  }
-
   return new Response(
     JSON.stringify({
-      hasStarlink,
+      hasStarlink: verdict.hasStarlink,
       airline: cfg.name,
-      confidence,
-      reason,
-      flights: rows.map((r) => ({
+      confidence: verdict.confidence,
+      reason: verdict.reason,
+      flights: verdict.rows.map((r) => ({
         flight_number: r.flight_number,
         aircraft_type: qatarEquipmentName(r.equipment_code),
         equipment_code: r.equipment_code,
@@ -452,6 +416,36 @@ function apiCheckFlightQatar(
   );
 }
 
+// The /api/check-flight flights[] wire object — the Chrome-extension contract
+// shape lives here once; scheduled and fr24 cases both feed it.
+function checkFlightWireFlight(f: {
+  tail_number: string;
+  aircraft_type: string | null;
+  flight_number: string;
+  ua_flight_number: string;
+  departure_airport: string;
+  arrival_airport: string;
+  departure_time: number;
+  arrival_time: number;
+  operated_by: string | null;
+  fleet_type: string | null;
+}) {
+  return {
+    tail_number: f.tail_number,
+    aircraft_type: f.aircraft_type,
+    flight_number: f.flight_number,
+    ua_flight_number: f.ua_flight_number,
+    departure_airport: f.departure_airport,
+    arrival_airport: f.arrival_airport,
+    departure_time: f.departure_time,
+    arrival_time: f.arrival_time,
+    departure_time_formatted: new Date(f.departure_time * 1000).toISOString(),
+    arrival_time_formatted: new Date(f.arrival_time * 1000).toISOString(),
+    operated_by: f.operated_by,
+    fleet_type: f.fleet_type,
+  };
+}
+
 const apiCheckFlight: Handler = async ({ req, url, reader, tenant }) => {
   if (req.method !== "GET") return methodNotAllowed(true);
   // TODO Phase-2: hub ('ALL') should infer airline from flight-number prefix.
@@ -466,142 +460,139 @@ const apiCheckFlight: Handler = async ({ req, url, reader, tenant }) => {
     );
   }
 
-  const dateObj = new Date(`${date}T00:00:00Z`);
-  if (Number.isNaN(dateObj.getTime())) {
+  const verdict = await resolveFlightVerdict(cfg, reader, flightNumber, date);
+  if (verdict.kind === "invalid_date") {
     return new Response(JSON.stringify({ error: "Invalid date format. Use YYYY-MM-DD" }), {
       status: 400,
       headers: SECURITY_HEADERS.api,
     });
   }
-  const startOfDay = Math.floor(dateObj.getTime() / 1000);
-  const endOfDay = startOfDay + 86400;
-  // Calendar days between the queried date and today (UTC) — drives the days_out tag.
-  const daysOut = Math.floor(startOfDay / 86400) - Math.floor(Date.now() / 1000 / 86400);
-
-  if (cfg.code === "QR") {
-    return apiCheckFlightQatar(reader, cfg, flightNumber, startOfDay, endOfDay);
+  if (verdict.kind === "invalid_flight_number") {
+    return new Response(
+      JSON.stringify({ error: `Invalid flight number ${verdict.normalized} — use 1-4 digits.` }),
+      { status: 400, headers: SECURITY_HEADERS.api }
+    );
   }
 
-  const normalizedFlightNumber = ensureAirlinePrefix(cfg, flightNumber);
-  const variants = buildAirlineFlightNumberVariants(cfg, normalizedFlightNumber);
-  const matchingFlights = reader.getFlightsByNumberAndDate(variants, startOfDay, endOfDay);
+  const t = verdictTelemetry(verdict);
+  recordFlightLookup("api_check", t.outcome, t.confidence, cfg.code, verdict.window.daysOut);
 
-  if (matchingFlights.length === 0) {
-    const segments = await lookupFlightTailVerdict(
-      reader,
-      normalizedFlightNumber,
-      startOfDay,
-      endOfDay
-    );
-    if (segments !== null) {
-      const starlinkSegs = segments.filter((s) => s.hasStarlink);
-      if (starlinkSegs.length > 0) {
-        const allVerified = starlinkSegs.every((s) => s.confidence === "verified");
-        recordFlightLookup(
-          "api_check",
-          allVerified ? "verified_yes" : "predicted",
-          allVerified ? "high" : "medium",
-          cfg.code,
-          daysOut
-        );
-        return new Response(
-          JSON.stringify({
-            hasStarlink: true,
-            confidence: allVerified ? "verified" : "likely",
-            method: "fr24_tail_lookup",
-            flights: starlinkSegs.map((s) => ({
+  if (verdict.kind === "qatar" || verdict.kind === "qatar_no_data") {
+    return qatarCheckFlightResponse(verdict);
+  }
+
+  switch (verdict.kind) {
+    case "scheduled": {
+      return new Response(
+        JSON.stringify({
+          hasStarlink: true,
+          confidence: verdictConfidence(verdict),
+          flights: scheduledFlights(verdict).map((flight) =>
+            checkFlightWireFlight({
+              tail_number: flight.tail_number,
+              aircraft_type: flight.aircraft_type,
+              flight_number: flight.flight_number,
+              ua_flight_number: normalizeAirlineFlightNumber(cfg, flight.flight_number),
+              departure_airport: flight.departure_airport,
+              arrival_airport: flight.arrival_airport,
+              departure_time: flight.departure_time,
+              arrival_time: flight.arrival_time,
+              operated_by: flight.OperatedBy,
+              fleet_type: flight.fleet,
+            })
+          ),
+        }),
+        { headers: SECURITY_HEADERS.api }
+      );
+    }
+    case "scheduled_no": {
+      const f = verdict.flights[0];
+      return new Response(
+        JSON.stringify({
+          hasStarlink: false,
+          confidence: "verified",
+          message: `${verdict.normalized} is assigned to tail ${f.tail_number}, verified as ${negativeWifi(f)} WiFi — not Starlink.`,
+          flights: [],
+        }),
+        { headers: SECURITY_HEADERS.api }
+      );
+    }
+    case "fr24": {
+      return new Response(
+        JSON.stringify({
+          hasStarlink: true,
+          confidence: verdictConfidence(verdict),
+          method: "fr24_tail_lookup",
+          flights: verdict.starlink.map((s) =>
+            checkFlightWireFlight({
               tail_number: s.tail_number,
               aircraft_type: s.aircraft_model,
-              flight_number: normalizedFlightNumber,
-              ua_flight_number: normalizedFlightNumber,
+              flight_number: verdict.normalized,
+              ua_flight_number: verdict.normalized,
               departure_airport: s.origin,
               arrival_airport: s.destination,
               departure_time: s.departure_time,
               arrival_time: s.arrival_time,
-              departure_time_formatted: new Date(s.departure_time * 1000).toISOString(),
-              arrival_time_formatted: new Date(s.arrival_time * 1000).toISOString(),
               operated_by: s.operated_by ?? null,
               fleet_type: s.fleet_type ?? null,
-            })),
-          }),
-          { headers: SECURITY_HEADERS.api }
-        );
-      }
-      // Segments whose tail we know nothing about are not a "no" — only a
-      // verified non-Starlink tail is. Otherwise fall through to probability.
-      if (segments.some((s) => s.hasStarlink === false)) {
-        recordFlightLookup("api_check", "verified_no", "medium", cfg.code, daysOut);
-        return new Response(
-          JSON.stringify({
-            hasStarlink: false,
-            method: "fr24_tail_lookup",
-            flights: [],
-            fallback: { segments },
-          }),
-          { headers: SECURITY_HEADERS.api }
-        );
-      }
+            })
+          ),
+        }),
+        { headers: SECURITY_HEADERS.api }
+      );
     }
-
-    // No assignment anywhere — tails aren't published until ~2 days out, so
-    // serve the historical probability. hasStarlink stays false (the extension
-    // contract is boolean and means "firm assignment"); prediction is additive.
-    const pred = predictFlight(reader, normalizedFlightNumber);
-    recordFlightLookup(
-      "api_check",
-      pred.n_observations > 0 ? "predicted" : "no_data",
-      pred.n_observations > 0 ? pred.confidence : "none",
-      cfg.code,
-      daysOut
-    );
-    recordPrediction(pred, cfg.code);
-    const pct = Math.round(pred.probability * 100);
-    return new Response(
-      JSON.stringify({
-        hasStarlink: false,
-        confidence: "predicted",
-        prediction: {
-          probability: pred.probability,
-          confidence: pred.confidence,
-          n_observations: pred.n_observations,
-        },
-        message:
-          pred.n_observations > 0
-            ? `Aircraft assignment not yet published — ${cfg.name} assigns aircraft ~2 days before departure. ~${pct}% of recent departures of this flight used a Starlink-equipped aircraft (${pred.n_observations} observation${pred.n_observations === 1 ? "" : "s"}).`
-            : `Aircraft assignment not yet published — ${cfg.name} assigns aircraft ~2 days before departure. No history for this flight number; ~${pct}% reflects the fleet-wide install rate.`,
-        flights: [],
-      }),
-      { headers: SECURITY_HEADERS.api }
-    );
+    case "fr24_no": {
+      return new Response(
+        JSON.stringify({
+          hasStarlink: false,
+          method: "fr24_tail_lookup",
+          flights: [],
+          fallback: { segments: verdict.segments },
+        }),
+        { headers: SECURITY_HEADERS.api }
+      );
+    }
+    case "type_no_data": {
+      return new Response(
+        JSON.stringify({
+          hasStarlink: null,
+          confidence: "type",
+          message: verdict.reason,
+          flights: [],
+        }),
+        { headers: SECURITY_HEADERS.api }
+      );
+    }
+    case "prediction": {
+      // No assignment anywhere — tails aren't published until ~2 days out, so
+      // serve the historical probability. hasStarlink stays false (the extension
+      // contract is boolean and means "firm assignment"); prediction is additive.
+      const pred = verdict.pred;
+      recordPrediction(pred, cfg.code);
+      const pct = Math.round(pred.probability * 100);
+      return new Response(
+        JSON.stringify({
+          hasStarlink: false,
+          confidence: "predicted",
+          prediction: {
+            probability: pred.probability,
+            confidence: pred.confidence,
+            n_observations: pred.n_observations,
+          },
+          message:
+            pred.n_observations > 0
+              ? `Aircraft assignment not yet published — ${cfg.name} assigns aircraft ~2 days before departure. ~${pct}% of recent departures of this flight used a Starlink-equipped aircraft (${pred.n_observations} observation${pred.n_observations === 1 ? "" : "s"}).`
+              : `Aircraft assignment not yet published — ${cfg.name} assigns aircraft ~2 days before departure. No history for this flight number; ~${pct}% reflects the fleet-wide install rate.`,
+          flights: [],
+        }),
+        { headers: SECURITY_HEADERS.api }
+      );
+    }
+    default: {
+      const exhaustive: never = verdict;
+      return exhaustive;
+    }
   }
-
-  const allVerified = matchingFlights.every((f) => f.verified_wifi === "Starlink");
-  recordFlightLookup(
-    "api_check",
-    "verified_yes",
-    allVerified ? "high" : "medium",
-    cfg.code,
-    daysOut
-  );
-  const response = {
-    hasStarlink: true,
-    confidence: allVerified ? "verified" : "likely",
-    flights: matchingFlights.map((flight) => ({
-      tail_number: flight.tail_number,
-      aircraft_type: flight.aircraft_type,
-      flight_number: flight.flight_number,
-      ua_flight_number: normalizeAirlineFlightNumber(cfg, flight.flight_number),
-      departure_airport: flight.departure_airport,
-      arrival_airport: flight.arrival_airport,
-      departure_time: flight.departure_time,
-      arrival_time: flight.arrival_time,
-      departure_time_formatted: new Date(flight.departure_time * 1000).toISOString(),
-      arrival_time_formatted: new Date(flight.arrival_time * 1000).toISOString(),
-      operated_by: flight.OperatedBy,
-      fleet_type: flight.fleet,
-    })),
-  };
-  return new Response(JSON.stringify(response), { headers: SECURITY_HEADERS.api });
 };
 
 const hubOnly = (tenant: RequestContext["tenant"]): Response | null =>
@@ -612,7 +603,7 @@ const hubOnly = (tenant: RequestContext["tenant"]): Response | null =>
         headers: SECURITY_HEADERS.api,
       });
 
-const apiCheckAnyFlight: Handler = ({ req, url, reader, getReader, tenant }) => {
+const apiCheckAnyFlight: Handler = async ({ req, url, getReader, tenant }) => {
   if (req.method !== "GET") return methodNotAllowed(true);
   const guard = hubOnly(tenant);
   if (guard) return guard;
@@ -637,82 +628,107 @@ const apiCheckAnyFlight: Handler = ({ req, url, reader, getReader, tenant }) => 
     );
   }
 
-  const dateObj = new Date(`${date}T00:00:00Z`);
-  if (Number.isNaN(dateObj.getTime())) {
+  // No QR branch here: QR is publicInHub:false, so detectAirline(flightNumber,
+  // publicHubAirlines) above never returns QR. QR-specific check-flight is
+  // served only by the per-host /api/check-flight on qatarstarlinktracker.com.
+  // The hub never does FR24 reverse lookups (lookupTail: null).
+  const verdict = await resolveFlightVerdict(cfg, getReader(cfg.code), flightNumber, date, {
+    lookupTail: null,
+  });
+  if (verdict.kind === "invalid_date") {
     return new Response(JSON.stringify({ error: "Invalid date format. Use YYYY-MM-DD" }), {
       status: 400,
       headers: SECURITY_HEADERS.api,
     });
   }
-  const startOfDay = Math.floor(dateObj.getTime() / 1000);
-  const endOfDay = startOfDay + 86400;
-
-  // No QR branch here: QR is publicInHub:false, so detectAirline(flightNumber,
-  // publicHubAirlines) above never returns QR. QR-specific check-flight is
-  // served only by the per-host /api/check-flight on qatarstarlinktracker.com.
-
-  const normalized = ensureAirlinePrefix(cfg, flightNumber);
-  const variants = buildAirlineFlightNumberVariants(cfg, normalized);
-  const matching = reader.getFlightsByNumberAndDateForAirline(
-    variants,
-    startOfDay,
-    endOfDay,
-    cfg.code
-  );
-
-  if (matching.length > 0) {
-    const f = matching[0];
-    const verified = f.verified_wifi === "Starlink";
-    recordFlightLookup("api_check", "verified_yes", verified ? "high" : "medium", cfg.code);
+  if (verdict.kind === "invalid_flight_number") {
     return new Response(
-      JSON.stringify({
-        hasStarlink: true,
-        airline: cfg.name,
-        confidence: verified ? "verified" : "likely",
-        reason: `${f.tail_number} (${f.aircraft_type}) — ${f.departure_airport} → ${f.arrival_airport}`,
-        flights: matching.map((m) => ({
-          tail_number: m.tail_number,
-          aircraft_type: m.aircraft_type,
-          departure_airport: m.departure_airport,
-          arrival_airport: m.arrival_airport,
-          departure_time: m.departure_time,
-        })),
-      }),
-      { headers: SECURITY_HEADERS.api }
+      JSON.stringify({ error: `Invalid flight number ${verdict.normalized} — use 1-4 digits.` }),
+      { status: 400, headers: SECURITY_HEADERS.api }
     );
   }
 
-  if (cfg.routeTypeRule) {
-    recordFlightLookup("api_check", "no_data", "none", cfg.code);
-    return new Response(
-      JSON.stringify({
-        hasStarlink: null,
-        airline: cfg.name,
-        confidence: "type",
-        reason: `No schedule data; ${cfg.name} Starlink status is type-determined — check the aircraft type on your booking.`,
-      }),
-      { headers: SECURITY_HEADERS.api }
-    );
-  }
+  const t = verdictTelemetry(verdict);
+  recordFlightLookup("api_check", t.outcome, t.confidence, cfg.code);
 
-  // No schedule row and no type rule — fall back to historical probability
-  // rather than a confident "No Starlink" (upcoming_flights only covers ~47h).
-  const pred = predictFlight(getReader(cfg.code), normalized);
-  recordFlightLookup("api_check", "predicted", pred.confidence, cfg.code);
-  recordPrediction(pred, cfg.code);
-  return new Response(
-    JSON.stringify({
-      hasStarlink: null,
-      airline: cfg.name,
-      probability: pred.probability,
-      confidence: pred.confidence,
-      reason:
-        pred.n_observations > 0
-          ? `No schedule data for this date; ~${Math.round(pred.probability * 100)}% based on ${pred.n_observations} historical observation${pred.n_observations === 1 ? "" : "s"}.`
-          : `No schedule data for this date; ~${Math.round(pred.probability * 100)}% based on ${cfg.name} fleet rollout rate.`,
-    }),
-    { headers: SECURITY_HEADERS.api }
-  );
+  switch (verdict.kind) {
+    case "scheduled": {
+      const flights = scheduledFlights(verdict);
+      const f = flights[0];
+      return new Response(
+        JSON.stringify({
+          hasStarlink: true,
+          airline: cfg.name,
+          confidence: verdictConfidence(verdict),
+          reason: `${f.tail_number} (${f.aircraft_type}) — ${f.departure_airport} → ${f.arrival_airport}`,
+          flights: flights.map((m) => ({
+            tail_number: m.tail_number,
+            aircraft_type: m.aircraft_type,
+            departure_airport: m.departure_airport,
+            arrival_airport: m.arrival_airport,
+            departure_time: m.departure_time,
+          })),
+        }),
+        { headers: SECURITY_HEADERS.api }
+      );
+    }
+    case "scheduled_no": {
+      const f = verdict.flights[0];
+      return new Response(
+        JSON.stringify({
+          hasStarlink: false,
+          airline: cfg.name,
+          confidence: "verified",
+          reason: `${f.tail_number} (${f.aircraft_type}) — verified ${negativeWifi(f)} WiFi, not Starlink.`,
+          flights: [],
+        }),
+        { headers: SECURITY_HEADERS.api }
+      );
+    }
+    case "type_no_data": {
+      return new Response(
+        JSON.stringify({
+          hasStarlink: null,
+          airline: cfg.name,
+          confidence: "type",
+          reason: verdict.reason,
+          flights: [],
+        }),
+        { headers: SECURITY_HEADERS.api }
+      );
+    }
+    case "prediction": {
+      // No schedule row and no type rule — fall back to historical probability
+      // rather than a confident "No Starlink" (upcoming_flights only covers ~47h).
+      const pred = verdict.pred;
+      recordPrediction(pred, cfg.code);
+      return new Response(
+        JSON.stringify({
+          hasStarlink: null,
+          airline: cfg.name,
+          probability: pred.probability,
+          confidence: pred.confidence,
+          reason:
+            pred.n_observations > 0
+              ? `No schedule data for this date; ~${Math.round(pred.probability * 100)}% based on ${pred.n_observations} historical observation${pred.n_observations === 1 ? "" : "s"}.`
+              : `No schedule data for this date; ~${Math.round(pred.probability * 100)}% based on ${cfg.name} fleet rollout rate.`,
+          flights: [],
+        }),
+        { headers: SECURITY_HEADERS.api }
+      );
+    }
+    // Structurally unreachable on the hub: lookupTail is null (no FR24 kinds)
+    // and detectAirline never returns QR here.
+    case "fr24":
+    case "fr24_no":
+    case "qatar":
+    case "qatar_no_data":
+      throw new Error(`unexpected verdict kind ${verdict.kind} on hub check-any-flight`);
+    default: {
+      const exhaustive: never = verdict;
+      return exhaustive;
+    }
+  }
 };
 
 const apiCompareRoute: Handler = ({ req, url, getReader, tenant }) => {

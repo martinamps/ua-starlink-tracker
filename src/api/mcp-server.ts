@@ -21,6 +21,7 @@
  */
 
 import { AIRLINES, type AirlineCode, type AnalyticsConfig } from "../airlines/registry";
+import type { FlightAssignmentRow } from "../database/database";
 import type { Scope, ScopedReader } from "../database/reader";
 import { COUNTERS, DISTRIBUTIONS, metrics, normalizeAirlineTag } from "../observability";
 import { planItinerary, predictFlight, predictRoute } from "../scripts/starlink-predictor";
@@ -31,8 +32,16 @@ import {
   normalizeFlightNumber,
 } from "../utils/constants";
 import { debug, info } from "../utils/logger";
-import { lookupFlightTailVerdict } from "./flight-verdict";
+import {
+  type FlightVerdict,
+  flightDateWindow,
+  negativeWifi,
+  resolveFlightVerdict,
+  verdictTelemetry,
+} from "./check-flight-core";
+import type { FallbackSegment } from "./flight-verdict";
 import { FlightRadar24API } from "./flightradar24-api";
+import { qatarEquipmentName } from "./qatar-status";
 
 // Protocol versions we support (newest first)
 const SUPPORTED_PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26"];
@@ -460,152 +469,127 @@ async function toolCheckFlight(
     };
   }
 
-  const dateObj = new Date(`${date}T00:00:00Z`);
-  if (Number.isNaN(dateObj.getTime())) {
+  // Tool impls are still UA-flavored (Phase-2 gap); QR is special-cased here
+  // because its schedule lives in qatar_schedule and the UA path can never
+  // answer for it — REST on the same host already could.
+  const cfg = reader.scope === "QR" ? AIRLINES.QR : AIRLINES.UA;
+  const verdict = await resolveFlightVerdict(cfg, reader, flightNumber, date);
+
+  if (verdict.kind === "invalid_date") {
     return {
       content: [{ type: "text", text: "Error: invalid date format. Use YYYY-MM-DD." }],
       isError: true,
     };
   }
-
-  const startOfDay = Math.floor(dateObj.getTime() / 1000);
-  const endOfDay = startOfDay + 86400;
-  const now = Math.floor(Date.now() / 1000);
-
-  const normalized = ensureUAPrefix(flightNumber);
-  const numPart = normalized.match(/(\d+)$/)?.[1];
-  if (numPart && numPart.length > 4) {
+  if (verdict.kind === "invalid_flight_number") {
     return {
       content: [
         {
           type: "text",
-          text: `${normalized} is outside United's flight number range (UA1-UA9999). This flight likely doesn't exist.`,
+          text: `${verdict.normalized} is outside the ${cfg.iata}1-${cfg.iata}9999 flight number range. This flight likely doesn't exist.`,
         },
       ],
       isError: true,
     };
   }
 
-  const variants = buildFlightNumberVariants(normalized);
-  const assignments = reader.getFlightAssignments(variants, startOfDay, endOfDay);
+  const t = verdictTelemetry(verdict);
+  recordMcpFlightLookup(reader.scope, t.outcome, t.confidence);
 
-  // Dedupe by (departure_time) — stale cache can have two tails for same departure
-  // after an aircraft swap. Keep the most-recently-updated row (query is DESC).
-  const seen = new Set<number>();
-  const deduped = assignments.filter((a) => {
-    if (seen.has(a.departure_time)) return false;
-    seen.add(a.departure_time);
-    return true;
-  });
+  if (verdict.kind === "qatar" || verdict.kind === "qatar_no_data") {
+    return renderQatarCheckFlight(verdict, date);
+  }
 
-  // Verified-Starlink: united.com confirmed. Unverified: in spreadsheet but
-  // verified_wifi is NULL (never checked). Different confidence levels.
-  const verified = deduped.filter((f) => f.verified_wifi === "Starlink");
-  const unverified = deduped.filter((f) => f.verified_wifi === null);
-  const nonStarlink = deduped.filter(
-    (f) => f.verified_wifi !== null && f.verified_wifi !== "Starlink"
-  );
+  const { mid, start: startOfDay, end: endOfDay } = verdict.window;
+  const now = Math.floor(Date.now() / 1000);
+  const normalized = verdict.normalized;
 
-  const renderAssignment = (f: (typeof deduped)[number]): string => {
+  const renderAssignment = (f: FlightAssignmentRow): string => {
     const dep = new Date(f.departure_time * 1000).toISOString();
     const arr = new Date(f.arrival_time * 1000).toISOString();
     const ac = f.aircraft_type || "aircraft";
     return `- ${normalizeFlightNumber(f.flight_number)} (${f.departure_airport}→${f.arrival_airport}) on ${ac} tail ${f.tail_number}, operated by ${f.OperatedBy}. Departs ${dep}, arrives ${arr}.`;
   };
 
-  // Firm YES: assigned to a united.com-verified Starlink tail
-  if (verified.length > 0) {
-    recordMcpFlightLookup(reader.scope, "verified_yes", "high");
-    return {
-      content: [
-        {
-          type: "text",
-          text: `✈️ Yes! Flight ${normalized} on ${date} is scheduled on a verified Starlink aircraft:\n\n${verified.map(renderAssignment).join("\n")}\n\nStarlink WiFi is free on all equipped United flights.`,
-        },
-      ],
-    };
-  }
+  const renderSeg = (s: FallbackSegment): string => {
+    const dep = new Date(s.departure_time * 1000).toISOString();
+    const ac = s.aircraft_model || "aircraft";
+    const conf =
+      s.confidence === "verified"
+        ? "verified Starlink"
+        : s.confidence === "spreadsheet"
+          ? "tracked as Starlink (unverified)"
+          : s.confidence === "negative"
+            ? `verified ${s.verified_wifi ?? "non-Starlink"} WiFi`
+            : s.confidence;
+    return `- ${normalized} (${s.origin}→${s.destination}) on ${ac} tail ${s.tail_number} — ${conf}. Departs ${dep}.`;
+  };
 
-  // Likely YES: spreadsheet says Starlink but not yet confirmed on united.com.
-  // Spreadsheet is usually right (~80-90%) but not a firm answer.
-  if (unverified.length > 0) {
-    recordMcpFlightLookup(reader.scope, "verified_yes", "medium");
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Likely yes — ${normalized} on ${date} is assigned to a tail tracked as Starlink in the fleet spreadsheet (not yet verified against united.com):\n\n${unverified.map(renderAssignment).join("\n")}\n\nSpreadsheet data is usually accurate but unverified. Check united.com or the flight status 24h out to confirm.`,
-        },
-      ],
-    };
-  }
+  switch (verdict.kind) {
+    case "scheduled": {
+      // Firm YES: united.com-verified tail. Likely YES: spreadsheet says
+      // Starlink but not yet confirmed (usually right ~80-90%, not firm).
+      if (verdict.verified.length > 0) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `✈️ Yes! Flight ${normalized} on ${date} is scheduled on a verified Starlink aircraft:\n\n${verdict.verified.map(renderAssignment).join("\n")}\n\nStarlink WiFi is free on all equipped United flights.`,
+            },
+          ],
+        };
+      }
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Likely yes — ${normalized} on ${date} is assigned to a tail tracked as Starlink in the fleet spreadsheet (not yet verified against united.com):\n\n${verdict.unverified.map(renderAssignment).join("\n")}\n\nSpreadsheet data is usually accurate but unverified. Check united.com or the flight status 24h out to confirm.`,
+          },
+        ],
+      };
+    }
 
-  // Firm NO: we have an assignment but it's a non-Starlink plane. We also
-  // already know the route from the assignment — no lookup needed.
-  if (nonStarlink.length > 0) {
-    const f = nonStarlink[0];
-    const ac = f.aircraft_type || "aircraft";
-    const altBlock = buildAlternativesBlock(
-      reader,
-      [{ origin: f.departure_airport, destination: f.arrival_airport }],
-      startOfDay + 43200
-    );
-    recordMcpFlightLookup(reader.scope, "verified_no", "high");
-    return {
-      content: [
-        {
-          type: "text",
-          text: `${altBlock}\n\n❌ No Starlink: ${normalized} on ${date} is assigned to tail ${f.tail_number} (${ac}), verified as ${f.verified_wifi} WiFi — NOT Starlink. Aircraft swaps can happen, but the assignment is currently firm.`,
-        },
-      ],
-    };
-  }
-
-  // No upcoming_flights row — try the same FR24 tail-lookup fallback that
-  // /api/check-flight uses, so MCP and the extension API converge on the same
-  // firm answer when FR24 knows the assigned tail.
-  const fb = await lookupFlightTailVerdict(reader, normalized, startOfDay, endOfDay, now);
-  if (fb && fb.length > 0) {
-    const yes = fb.filter((s) => s.hasStarlink);
-    const no = fb.filter((s) => s.hasStarlink === false);
-
-    const renderSeg = (s: (typeof fb)[number]) => {
-      const dep = new Date(s.departure_time * 1000).toISOString();
-      const ac = s.aircraft_model || "aircraft";
-      const conf =
-        s.confidence === "verified"
-          ? "verified Starlink"
-          : s.confidence === "spreadsheet"
-            ? "tracked as Starlink (unverified)"
-            : s.confidence === "negative"
-              ? `verified ${s.verified_wifi ?? "non-Starlink"} WiFi`
-              : s.confidence;
-      return `- ${normalized} (${s.origin}→${s.destination}) on ${ac} tail ${s.tail_number} — ${conf}. Departs ${dep}.`;
-    };
-
-    if (yes.length > 0) {
-      const allVerified = yes.every((s) => s.confidence === "verified");
-      recordMcpFlightLookup(
-        reader.scope,
-        allVerified ? "verified_yes" : "predicted",
-        allVerified ? "high" : "medium"
+    case "scheduled_no": {
+      // Firm NO: we have an assignment but it's a non-Starlink plane. We also
+      // already know the route from the assignment — no lookup needed.
+      const f = verdict.flights[0];
+      const ac = f.aircraft_type || "aircraft";
+      const altBlock = buildAlternativesBlock(
+        reader,
+        [{ origin: f.departure_airport, destination: f.arrival_airport }],
+        mid
       );
       return {
         content: [
           {
             type: "text",
-            text: `✈️ Yes! Flight ${normalized} on ${date} is assigned to a Starlink aircraft (via live tail lookup):\n\n${yes.map(renderSeg).join("\n")}\n\nStarlink WiFi is free on all equipped United flights.`,
+            text: `${altBlock}\n\n❌ No Starlink: ${normalized} on ${date} is assigned to tail ${f.tail_number} (${ac}), verified as ${negativeWifi(f)} WiFi — NOT Starlink. Aircraft swaps can happen, but the assignment is currently firm.`,
           },
         ],
       };
     }
-    if (no.length > 0) {
+
+    // No upcoming_flights row — the core already ran the same FR24 tail-lookup
+    // fallback that /api/check-flight uses, so MCP and the extension API
+    // converge on the same firm answer when FR24 knows the assigned tail.
+    case "fr24": {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `✈️ Yes! Flight ${normalized} on ${date} is assigned to a Starlink aircraft (via live tail lookup):\n\n${verdict.starlink.map(renderSeg).join("\n")}\n\nStarlink WiFi is free on all equipped United flights.`,
+          },
+        ],
+      };
+    }
+
+    case "fr24_no": {
+      const no = verdict.segments.filter((s) => s.hasStarlink === false);
       const altBlock = buildAlternativesBlock(
         reader,
         no.map((s) => ({ origin: s.origin, destination: s.destination })),
-        startOfDay + 43200
+        mid
       );
-      recordMcpFlightLookup(reader.scope, "verified_no", "medium");
       return {
         content: [
           {
@@ -615,36 +599,77 @@ async function toolCheckFlight(
         ],
       };
     }
-    // All segments unknown → fall through to probability.
+
+    case "type_no_data": {
+      return {
+        content: [{ type: "text", text: `${normalized} on ${date}: ${verdict.reason}` }],
+      };
+    }
+
+    case "prediction": {
+      // No assignment data at all — probability fallback. If low, look up the
+      // route from FR24 (cached) so we can give the agent a concrete next step.
+      const pred = verdict.pred;
+      recordMcpPrediction(reader.scope, pred);
+      const pct = (pred.probability * 100).toFixed(0);
+
+      const isPast = endOfDay < now - 86400;
+      const isNearTerm = startOfDay < now + 3 * 86400;
+      const timing = isPast
+        ? "This date is in the past; we don't retain historical assignments."
+        : isNearTerm
+          ? "No assignment published — this is unusual for a near-term flight. The tail may not be in our Starlink-tracked set yet."
+          : "Check again 1-2 days before departure for a firm answer.";
+
+      // Probability context FIRST, alternatives table LAST. Recency bias: the
+      // agent's final impression is "here's the table to present", not "no data".
+      const probLine = `**${normalized} on ${date}**: ~${pct}% Starlink probability ${pred.n_observations > 0 ? `(${pred.n_observations} historical obs)` : "(fleet install rate)"}. Aircraft assignment not yet published — that happens ~2 days out. ${timing}`;
+
+      let altBlock = "";
+      if (pred.probability < 0.2 && !isPast) {
+        const routes = await lookupFlightRoutes(reader, normalized, mid);
+        altBlock = `\n\n${buildAlternativesBlock(reader, routes, mid)}`;
+      }
+
+      return {
+        content: [{ type: "text", text: `${probLine}${altBlock}` }],
+      };
+    }
+
+    default: {
+      const exhaustive: never = verdict;
+      return exhaustive;
+    }
+  }
+}
+
+function renderQatarCheckFlight(
+  verdict: Extract<FlightVerdict, { kind: "qatar" } | { kind: "qatar_no_data" }>,
+  date: string
+): ToolResult {
+  if (verdict.kind === "qatar_no_data") {
+    return {
+      content: [
+        {
+          type: "text",
+          text: `${verdict.normalized} on ${date}: no schedule data. Coverage is limited to high-traffic Qatar Airways routes for the next ~48h; check back closer to departure.`,
+        },
+      ],
+    };
   }
 
-  // No assignment data at all — probability fallback. If low, look up the route
-  // from FR24 (cached) so we can give the agent a concrete next step.
-  const pred = predictFlight(reader, normalized);
-  recordMcpFlightLookup(reader.scope, "predicted", pred.confidence);
-  recordMcpPrediction(reader.scope, pred);
-  const pct = (pred.probability * 100).toFixed(0);
-
-  const isPast = endOfDay < now - 86400;
-  const isNearTerm = startOfDay < now + 3 * 86400;
-  const timing = isPast
-    ? "This date is in the past; we don't retain historical assignments."
-    : isNearTerm
-      ? "No assignment published — this is unusual for a near-term flight. The tail may not be in our Starlink-tracked set yet."
-      : "Check again 1-2 days before departure for a firm answer.";
-
-  // Probability context FIRST, alternatives table LAST. Recency bias: the
-  // agent's final impression is "here's the table to present", not "no data".
-  const probLine = `**${normalized} on ${date}**: ~${pct}% Starlink probability ${pred.n_observations > 0 ? `(${pred.n_observations} historical obs)` : "(fleet install rate)"}. Aircraft assignment not yet published — that happens ~2 days out. ${timing}`;
-
-  let altBlock = "";
-  if (pred.probability < 0.2 && !isPast) {
-    const routes = await lookupFlightRoutes(reader, normalized, startOfDay + 43200);
-    altBlock = `\n\n${buildAlternativesBlock(reader, routes, startOfDay + 43200)}`;
-  }
-
+  const lines = verdict.rows.map((r) => {
+    const dep = r.departure_time ? new Date(r.departure_time * 1000).toISOString() : "unknown";
+    return `- ${r.flight_number} (${r.departure_airport ?? "?"}→${r.arrival_airport ?? "?"}) on ${qatarEquipmentName(r.equipment_code)}. Departs ${dep}.`;
+  });
+  const headline =
+    verdict.hasStarlink === true
+      ? `✈️ Yes! Flight ${verdict.normalized} on ${date} is scheduled on a Starlink-equipped aircraft type.`
+      : verdict.hasStarlink === false
+        ? `❌ No Starlink: ${verdict.normalized} on ${date}.`
+        : `Maybe — ${verdict.normalized} on ${date}.`;
   return {
-    content: [{ type: "text", text: `${probLine}${altBlock}` }],
+    content: [{ type: "text", text: `${headline} ${verdict.reason}\n\n${lines.join("\n")}` }],
   };
 }
 
@@ -893,6 +918,8 @@ async function toolPredictFlightStarlink(
   }
 
   const forPredict = ensureUAPrefix(input);
+  // Same 1-4 digit bound the check-flight core enforces — prevents agents
+  // driving FR24 route lookups with junk numbers.
   const numPart = forPredict.match(/\d+$/)?.[0];
   if (numPart && numPart.length > 4) {
     return {
@@ -931,11 +958,8 @@ async function toolPredictFlightStarlink(
   let altBlock = "";
   if (pred.probability < 0.2) {
     const date = typeof args.date === "string" ? args.date.trim() : "";
-    const dateObj = date ? new Date(`${date}T12:00:00Z`) : null;
-    const dateUnix =
-      dateObj && !Number.isNaN(dateObj.getTime())
-        ? Math.floor(dateObj.getTime() / 1000)
-        : undefined;
+    const window = date ? flightDateWindow(date) : null;
+    const dateUnix = window ? window.mid : undefined;
     const routes = await lookupFlightRoutes(reader, forPredict, dateUnix);
     altBlock = `\n\n${buildAlternativesBlock(reader, routes, dateUnix)}`;
   }
@@ -965,9 +989,8 @@ function toolPlanStarlinkItinerary(
   // Optional date for confirmed-edge seeding. Without a date (or outside the
   // ~2-day snapshot window), the planner uses historical prediction only.
   const dateStr = typeof args.date === "string" ? args.date.trim() : "";
-  const dateObj = dateStr ? new Date(`${dateStr}T12:00:00Z`) : null;
-  const targetDateUnix =
-    dateObj && !Number.isNaN(dateObj.getTime()) ? Math.floor(dateObj.getTime() / 1000) : undefined;
+  const dateWindow = dateStr ? flightDateWindow(dateStr) : null;
+  const targetDateUnix = dateWindow ? dateWindow.mid : undefined;
 
   if (!origin || !destination) {
     return {

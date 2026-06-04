@@ -8,6 +8,7 @@
  */
 
 import type { ScopedReader } from "../database/reader";
+import { matchesLocalDate } from "../utils/airport-tz";
 import { FlightRadar24API } from "./flightradar24-api";
 
 const fr24 = new FlightRadar24API();
@@ -67,32 +68,25 @@ export function resolveTailVerdict(
   reader: ScopedReader,
   tail: string,
   nowSec = Math.floor(Date.now() / 1000)
-): {
-  hasStarlink: boolean | null;
-  confidence: SegmentConfidence;
-  aircraft_model?: string | null;
-  operated_by?: string | null;
-  fleet_type?: string | null;
-  verified_wifi?: string | null;
-  verified_at?: number | null;
-} {
+): TailVerdict {
   const sp = reader.getStarlinkPlaneByTail(tail);
 
   if (sp) {
+    const base = { aircraft_model: sp.Aircraft, operated_by: sp.OperatedBy, fleet_type: sp.fleet };
     const consensus = reader.computeWifiConsensus(tail);
-    const hasStarlink = consensus.verdict === "Starlink" || consensus.verdict === null;
-    return {
-      hasStarlink,
-      confidence:
-        consensus.verdict === "Starlink"
-          ? "verified"
-          : consensus.verdict === null
-            ? "spreadsheet"
-            : "disputed",
-      aircraft_model: sp.Aircraft,
-      operated_by: sp.OperatedBy,
-      fleet_type: sp.fleet,
-    };
+    if (consensus.verdict === "Starlink") {
+      return { hasStarlink: true, confidence: "verified", ...base };
+    }
+    if (consensus.verdict !== null) {
+      return { hasStarlink: false, confidence: "disputed", ...base };
+    }
+    // Consensus unsettled: a settled negative in united_fleet (the verifier's
+    // direct observation) outranks the spreadsheet listing.
+    const uf = reader.getFleetEntryByTail(tail);
+    if (uf?.starlink_status === "negative") {
+      return negativeTailVerdict(reader, tail, uf, nowSec, "disputed", base);
+    }
+    return { hasStarlink: true, confidence: "spreadsheet", ...base };
   }
 
   const uf = reader.getFleetEntryByTail(tail);
@@ -101,27 +95,53 @@ export function resolveTailVerdict(
     return { hasStarlink: true, confidence: "verified" };
   }
   if (uf?.starlink_status === "negative") {
-    const stale = uf.verified_at && nowSec - uf.verified_at > 7 * 86400;
-    if (stale) reader.bumpDiscoveryPriority(tail);
-    return {
-      hasStarlink: false,
-      confidence: "negative",
-      verified_wifi: uf.verified_wifi,
-      verified_at: uf.verified_at,
-    };
+    return negativeTailVerdict(reader, tail, uf, nowSec, "negative");
   }
   reader.bumpDiscoveryPriority(tail);
   return { hasStarlink: null, confidence: "unknown" };
 }
 
+interface TailVerdict {
+  hasStarlink: boolean | null;
+  confidence: SegmentConfidence;
+  aircraft_model?: string | null;
+  operated_by?: string | null;
+  fleet_type?: string | null;
+  verified_wifi?: string | null;
+  verified_at?: number | null;
+}
+
+/** Shared united_fleet-negative verdict: re-queue stale settles for discovery. */
+function negativeTailVerdict(
+  reader: ScopedReader,
+  tail: string,
+  uf: { verified_wifi: string | null; verified_at: number | null },
+  nowSec: number,
+  confidence: SegmentConfidence,
+  base: Partial<TailVerdict> = {}
+): TailVerdict {
+  const stale = uf.verified_at && nowSec - uf.verified_at > 7 * 86400;
+  if (stale) reader.bumpDiscoveryPriority(tail);
+  return {
+    hasStarlink: false,
+    confidence,
+    verified_wifi: uf.verified_wifi,
+    verified_at: uf.verified_at,
+    ...base,
+  };
+}
+
 /**
  * FR24 reverse-lookup fallback. Returns null when the date is outside FR24's
  * useful window (~24h past to ~3d future), [] when in-window but FR24 found no
- * tail-assigned legs on that UTC day, otherwise one FallbackSegment per leg.
+ * tail-assigned legs on the queried local date, otherwise one FallbackSegment
+ * per leg. Legs are matched on the origin airport's local date, falling back
+ * to the [startOfDay, endOfDay) UTC window for unmapped airports.
  */
 export async function lookupFlightTailVerdict(
   reader: ScopedReader,
   normalizedFlightNumber: string,
+  date: string,
   startOfDay: number,
   endOfDay: number,
   nowSec = Math.floor(Date.now() / 1000)
@@ -134,7 +154,7 @@ export async function lookupFlightTailVerdict(
 
   for (const a of assignments) {
     if (!a.tail_number) continue;
-    if (a.departure_time < startOfDay || a.departure_time >= endOfDay) continue;
+    if (!matchesLocalDate(date, a.origin, a.departure_time, startOfDay, endOfDay)) continue;
 
     const v = resolveTailVerdict(reader, a.tail_number, nowSec);
     segments.push({

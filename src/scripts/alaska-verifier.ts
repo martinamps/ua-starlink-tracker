@@ -35,66 +35,10 @@ import {
   normalizeWifiProvider,
   withSpan,
 } from "../observability";
+import { airportTimezone, localDateISO } from "../utils/airport-tz";
 import { info, error as logError } from "../utils/logger";
 
 const INTERVAL_MS = 90_000;
-
-// IANA timezones for AS/HA-served airports. alaskaair.com/status/{flight}/{date}
-// keys on the LOCAL scheduled departure date, so deriving the date from a UTC
-// epoch needs the origin's tz. Default to AS's home tz for unknowns.
-const AIRPORT_TZ: Record<string, string> = {
-  // Hawaii (UTC-10, no DST)
-  HNL: "Pacific/Honolulu",
-  OGG: "Pacific/Honolulu",
-  KOA: "Pacific/Honolulu",
-  LIH: "Pacific/Honolulu",
-  ITO: "Pacific/Honolulu",
-  // Alaska (UTC-9/-8)
-  ANC: "America/Anchorage",
-  FAI: "America/Anchorage",
-  JNU: "America/Anchorage",
-  KTN: "America/Anchorage",
-  SIT: "America/Anchorage",
-  // Pacific (UTC-8/-7) — AS hubs + west coast
-  SEA: "America/Los_Angeles",
-  PDX: "America/Los_Angeles",
-  SFO: "America/Los_Angeles",
-  LAX: "America/Los_Angeles",
-  SAN: "America/Los_Angeles",
-  SJC: "America/Los_Angeles",
-  OAK: "America/Los_Angeles",
-  LAS: "America/Los_Angeles",
-  // Mountain (UTC-7/-6)
-  PHX: "America/Phoenix",
-  DEN: "America/Denver",
-  SLC: "America/Denver",
-  // Central (UTC-6/-5)
-  ORD: "America/Chicago",
-  DFW: "America/Chicago",
-  AUS: "America/Chicago",
-  MSP: "America/Chicago",
-  // Eastern (UTC-5/-4)
-  JFK: "America/New_York",
-  EWR: "America/New_York",
-  BOS: "America/New_York",
-  DCA: "America/New_York",
-  IAD: "America/New_York",
-  MIA: "America/New_York",
-  MCO: "America/New_York",
-};
-
-export function airportTimezone(iata: string): string {
-  return AIRPORT_TZ[iata.toUpperCase()] ?? "America/Los_Angeles";
-}
-
-export function localDateISO(epochSec: number, timeZone: string): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date(epochSec * 1000));
-}
 
 function shiftDate(iso: string, days: number): string {
   const d = new Date(`${iso}T12:00:00Z`);
@@ -121,7 +65,8 @@ async function checkOne(db: Database, airline: "AS" | "HA"): Promise<string> {
   }
 
   const flightNum = flight.flight_number.replace(/[^0-9]/g, "");
-  const tz = airportTimezone(flight.departure_airport);
+  // Default to AS's home tz for unmapped airports (pre-existing behavior).
+  const tz = airportTimezone(flight.departure_airport) ?? "America/Los_Angeles";
   const dateLocal = localDateISO(flight.departure_time, tz);
 
   let status = await fetchAlaskaFlightStatus(flightNum, dateLocal, airline);

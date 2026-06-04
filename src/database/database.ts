@@ -976,57 +976,24 @@ export function getUpcomingFlights(
   return db.query(`${q.sql} ORDER BY departure_time ASC`).all(...q.params) as Flight[];
 }
 
-export type CheckFlightRow = Flight & {
-  aircraft_type: string;
-  WiFi: string;
-  DateFound: string;
-  OperatedBy: string;
-  fleet: string;
-  verified_wifi: string | null;
-};
-
-/** Primary lookup for /api/check-flight and MCP check_flight. */
-export function getFlightsByNumberAndDate(
-  db: Database,
-  flightNumberVariants: string[],
-  startOfDay: number,
-  endOfDay: number,
-  airline?: AirlineFilter
-): CheckFlightRow[] {
-  const placeholders = flightNumberVariants.map(() => "?").join(", ");
-  const q = withAirline(
-    `SELECT
-       uf.*,
-       sp.Aircraft as aircraft_type,
-       sp.WiFi,
-       sp.DateFound,
-       sp.OperatedBy,
-       sp.fleet,
-       sp.verified_wifi
-     FROM upcoming_flights uf
-     INNER JOIN starlink_planes sp ON uf.tail_number = sp.TailNumber
-     WHERE uf.flight_number IN (${placeholders})
-       AND uf.departure_time >= ?
-       AND uf.departure_time < ?
-       AND ${equippedFilter("sp")}`,
-    airline,
-    "uf",
-    [...flightNumberVariants, startOfDay, endOfDay]
-  );
-  return db.query(`${q.sql} ORDER BY uf.departure_time ASC`).all(...q.params) as CheckFlightRow[];
-}
-
 export type FlightAssignmentRow = Flight & {
   aircraft_type: string;
   OperatedBy: string;
   fleet: string;
   verified_wifi: string | null;
+  /** 1 when united_fleet has settled the tail 'negative' — see equippedFilter. */
+  settled_negative: number;
+  /** united_fleet.verified_wifi for settled-negative tails (names the actual provider). */
+  settled_wifi: string | null;
 };
 
 /**
- * MCP check_flight assignments lookup — same join as getFlightsByNumberAndDate
- * but WITHOUT the verified_wifi filter (MCP renders three confidence tiers from
- * the same set) and ordered by last_updated DESC (for swap dedup).
+ * Check-flight assignments lookup (REST + MCP via check-flight-core). No
+ * verified_wifi filter — the core classifies rows into confidence tiers —
+ * and ordered by last_updated DESC (for swap dedup). `settled_negative`
+ * mirrors equippedFilter's NOT EXISTS clause (the canonical negative-settle
+ * rule) so callers don't re-derive it per row; the LEFT JOIN can't fan out
+ * because united_fleet.tail_number is UNIQUE.
  */
 export function getFlightAssignments(
   db: Database,
@@ -1037,9 +1004,13 @@ export function getFlightAssignments(
 ): FlightAssignmentRow[] {
   const placeholders = flightNumberVariants.map(() => "?").join(", ");
   const q = withAirline(
-    `SELECT uf.*, sp.Aircraft as aircraft_type, sp.OperatedBy, sp.fleet, sp.verified_wifi
+    `SELECT uf.*, sp.Aircraft as aircraft_type, sp.OperatedBy, sp.fleet, sp.verified_wifi,
+       CASE WHEN _neg.tail_number IS NOT NULL THEN 1 ELSE 0 END as settled_negative,
+       _neg.verified_wifi as settled_wifi
      FROM upcoming_flights uf
      INNER JOIN starlink_planes sp ON uf.tail_number = sp.TailNumber
+     LEFT JOIN united_fleet _neg
+       ON _neg.tail_number = sp.TailNumber AND _neg.starlink_status = 'negative'
      WHERE uf.flight_number IN (${placeholders})
        AND uf.departure_time >= ? AND uf.departure_time < ?`,
     airline,

@@ -491,10 +491,10 @@ describe("MCP tools", () => {
     expect(text).toContain("No confirmed Starlink flights");
   });
 
-  test("check_flight: rejects 5-digit flight numbers", async () => {
+  test("check_flight: rejects 5-digit flight numbers (REST 400s too — see core tests)", async () => {
     const json = await mcpCall("tools/call", {
       name: "check_flight",
-      arguments: { flight_number: "UA99999", date: "2026-06-01" },
+      arguments: { flight_number: "UA99999", date: "2099-01-01" },
     });
     expect(json.result.isError).toBe(true);
   });

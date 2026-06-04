@@ -35,6 +35,7 @@ import {
   upsertQatarSchedule,
 } from "../database/database";
 import { COUNTERS, metrics, normalizeAirlineTag, withSpan } from "../observability";
+import { localDateISO } from "../utils/airport-tz";
 import { info, error as logError } from "../utils/logger";
 
 const INTERVAL_MS = 60 * 60 * 1000; // 1 hour
@@ -191,12 +192,7 @@ const ROUTES: Array<[string, string]> = [
 
 /** YYYY-MM-DD in DOH local time (UTC+3, no DST) for an epoch-ms instant. */
 function dohDateISO(ms: number): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Qatar",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date(ms));
+  return localDateISO(Math.floor(ms / 1000), "Asia/Qatar");
 }
 
 function flightToRow(f: QatarFlight, scheduledDate: string) {
