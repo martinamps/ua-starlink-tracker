@@ -42,7 +42,8 @@ export interface PageBrand {
   /** Brand color tuned for the favicon's glowing arc on a dark tile —
    * defaults to accentColor when omitted. */
   faviconAccent?: string;
-  /** og:image / twitter:image path. Defaults to shared /static/social-image.webp until per-airline assets exist. */
+  /** og:image / twitter:image path. The server falls back to the hub card if
+   * the asset hasn't been generated yet (see buildBaseTemplateVars). */
   socialImagePath?: string;
   analyticsDomain: string;
   pressReleaseUrl?: string;
@@ -210,6 +211,7 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
       accentColor: "#0ea5e9",
       accentColorDim: "#0284c7",
       faviconAccent: "#1d70c9", // United "Pacific Blue" — closer to brand than the site's sky-500
+      socialImagePath: "/static/social-image.webp",
       analyticsDomain: "unitedstarlinktracker.com",
       pressReleaseUrl: "https://www.united.com/en/us/newsroom/announcements/cision-125370",
     },
@@ -261,6 +263,7 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
       accentColor: "#413691",
       accentColorDim: "#6b5fb3",
       faviconAccent: "#9d4edd", // Pualani purple, lifted to glow on dark
+      socialImagePath: "/static/social-image-ha.webp",
       analyticsDomain: "hawaiianstarlinktracker.com",
       pressReleaseUrl:
         "https://newsroom.hawaiianairlines.com/releases/hawaiian-airlines-launches-fast-and-free-starlink-internet",
@@ -340,6 +343,7 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
       accentColor: "#01426a",
       accentColorDim: "#2b6a8f",
       faviconAccent: "#00b2e3", // Alaska secondary brand blue — primary #01426a is too dark to glow
+      socialImagePath: "/static/social-image-as.webp",
       analyticsDomain: "alaskastarlinktracker.com",
       pressReleaseUrl:
         "https://news.alaskaair.com/company/alaska-airlines-and-hawaiian-airlines-to-offer-free-starlink-wi-fi/",
@@ -384,6 +388,7 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
       accentColor: "#5c0632",
       accentColorDim: "#8a2851",
       faviconAccent: "#a3204e", // Qatar oryx burgundy, lifted
+      socialImagePath: "/static/social-image-qr.webp",
       analyticsDomain: "qatarstarlinktracker.com",
       pressReleaseUrl:
         "https://www.qatarairways.com/press-releases/en-WW/259315-qatar-airways-launches-world-s-first-starlink-equipped-boeing-787-and-completes-airbus-a350-starlink-rollout-connecting-over-11-millio/",

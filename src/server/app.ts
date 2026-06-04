@@ -24,6 +24,7 @@ import {
   type AirlineConfig,
   HOST_REDIRECTS,
   HUB_BRAND,
+  type PageBrand,
   type SiteConfig,
   brandMetadata,
   publicAirlines,
@@ -239,6 +240,14 @@ for (const f of STATIC_FILES) {
       })
     );
   }
+}
+
+// A tenant whose OG card hasn't been generated yet (QR is excluded from
+// /api/fleet-summary, so generate-og-images never renders one) gets the
+// neutral hub card — never another airline's.
+function resolveSocialImage(brand: PageBrand): string {
+  const p = brand.socialImagePath ?? "/static/social-image.webp";
+  return staticResponses.has(p) ? p : "/static/social-image-hub.webp";
 }
 
 // Per-tenant favicons. Standard discovery paths (/favicon.ico,
@@ -1098,6 +1107,7 @@ function buildBaseTemplateVars(ctx: RequestContext, reactHtml: string): Record<s
 
   return {
     ...brandMetadata(brand),
+    socialImagePath: resolveSocialImage(brand),
     html: reactHtml,
     host: site.canonicalHost,
     // {{totalCount}} historically held the Starlink count (not the fleet total).

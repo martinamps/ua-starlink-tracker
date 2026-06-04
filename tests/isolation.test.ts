@@ -94,6 +94,27 @@ describe("tenant resolution", () => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+describe("og:image is tenant-branded", () => {
+  const cases: Array<[string, string]> = [
+    [UA, "/static/social-image.webp"],
+    [HA_HOST, "/static/social-image-ha.webp"],
+    [AS_HOST, "/static/social-image-as.webp"],
+    [HUB, "/static/social-image-hub.webp"],
+    // QR card is never generated (not in /api/fleet-summary) → hub fallback.
+    ["qatarstarlinktracker.com", "/static/social-image-hub.webp"],
+  ];
+  for (const [host, img] of cases) {
+    test(`${host} serves ${img}`, async () => {
+      const { status, text } = await bodyOf("/", host);
+      expect(status).toBe(200);
+      expect(text).toContain(`property="og:image" content="https://${host}${img}"`);
+      expect(text).toContain(`name="twitter:image" content="https://${host}${img}"`);
+    });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 const ENDPOINTS = [
   "/",
   "/fleet",
