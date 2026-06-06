@@ -26,7 +26,7 @@ import { Fr24UnavailableError } from "../src/api/flightradar24-api";
 import { createReaderFactory } from "../src/database/reader";
 import { planItinerary } from "../src/scripts/starlink-predictor";
 import { createApp } from "../src/server/app";
-import { airportLocalDate, matchesLocalDate } from "../src/utils/airport-tz";
+import { AIRPORT_TZ, airportLocalDate, matchesLocalDate } from "../src/utils/airport-tz";
 import {
   addFleet,
   addFlight,
@@ -64,6 +64,14 @@ describe("flightDateWindow", () => {
 });
 
 describe("airport local dates", () => {
+  test("every AIRPORT_TZ zone is valid in this runtime's ICU", () => {
+    // A typo'd zone throws RangeError at request time inside formatterFor and
+    // 500s /api/check-flight; this is the only gate between review and prod.
+    for (const [iata, zone] of Object.entries(AIRPORT_TZ)) {
+      expect(() => new Intl.DateTimeFormat("en-CA", { timeZone: zone }), iata).not.toThrow();
+    }
+  });
+
   // 2027-06-10 05:35Z is 2027-06-09 22:35 PDT — the printed date is the 9th.
   const eveningPdt = utc("2027-06-10T05:35:00Z");
 

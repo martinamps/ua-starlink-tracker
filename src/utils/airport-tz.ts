@@ -9,7 +9,7 @@
 
 import { debug } from "./logger";
 
-const AIRPORT_TZ: Record<string, string> = {
+export const AIRPORT_TZ: Record<string, string> = {
   // Hawaii (no DST)
   HNL: "Pacific/Honolulu",
   OGG: "Pacific/Honolulu",
@@ -27,7 +27,6 @@ const AIRPORT_TZ: Record<string, string> = {
   ROR: "Pacific/Palau",
   YAP: "Pacific/Chuuk",
   PPG: "Pacific/Pago_Pago",
-  PPT: "Pacific/Tahiti",
   // Alaska
   ANC: "America/Anchorage",
   FAI: "America/Anchorage",
@@ -344,6 +343,7 @@ const AIRPORT_TZ: Record<string, string> = {
   // Oceania
   ADL: "Australia/Adelaide",
   AKL: "Pacific/Auckland",
+  PPT: "Pacific/Tahiti",
   BNE: "Australia/Brisbane",
   MEL: "Australia/Melbourne",
   PER: "Australia/Perth",
