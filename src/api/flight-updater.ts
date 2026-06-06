@@ -11,7 +11,8 @@ import {
 import { withSpan } from "../observability";
 import type { Aircraft, Flight } from "../types";
 import { FLIGHT_DATA_SOURCE } from "../utils/constants";
-import { error, info, warn } from "../utils/logger";
+import { type JobHandle, type JobRunContext, startJob } from "../utils/job-runner";
+import { error, info } from "../utils/logger";
 import { FlightAwareAPI } from "./flightaware-api";
 import { FlightRadar24API } from "./flightradar24-api";
 
@@ -125,6 +126,9 @@ function createJitteredDelay(baseMs: number, jitterMs = 500): number {
   return baseMs + Math.random() * jitterMs;
 }
 
+// Wall-clock circuit breaker (opens for 30 min) shared by the trickle loop
+// and the manual bulk path — distinct from job-runner's tick-count
+// createOutageBreaker, which has different reset semantics.
 let consecutiveApiFailures = 0;
 const MAX_CONSECUTIVE_FAILURES = 5;
 const CIRCUIT_BREAKER_RESET_TIME = 30 * 60 * 1000; // 30 minutes
@@ -270,49 +274,33 @@ export async function updateAllFlights() {
 }
 
 /**
- * Check flights for newly discovered planes (those with last_flight_check = 0)
- * This runs immediately after scraping to provide faster updates for new aircraft
+ * Report newly discovered planes (last_flight_check = 0) waiting in the
+ * trickle queue. Enqueue-only: rows insert at last_flight_check=0, which
+ * sorts first in getStarlinkTailsByCheckAge and passes needsFlightCheck
+ * unconditionally, so the 22.5s trickle picks them up on its next ticks.
+ * Fetching here used to race the trickle on the identical tails (duplicate
+ * simultaneous FR24 calls + diluted circuit breaker).
  */
-export async function checkNewPlanes() {
+export async function checkNewPlanes(db: ReturnType<typeof initializeDatabase>): Promise<number> {
   return withSpan(
     "flight_updater.check_new_planes",
     async (span) => {
       span.setTag("job.type", "background");
 
-      const api = createFlightAPI();
-      if (!api) {
-        info("Flight API not available, skipping new plane flight checks");
-        return;
-      }
-
-      const db = initializeDatabase();
-
-      // Get planes that have never been checked (last_flight_check = 0)
-      const newPlanes = db
+      const row = db
         .query(
-          `SELECT * FROM starlink_planes
+          `SELECT COUNT(*) AS cnt FROM starlink_planes
            WHERE last_flight_check = 0 OR last_flight_check IS NULL`
         )
-        .all() as Aircraft[];
+        .get() as { cnt: number };
+      const enqueued = row.cnt;
 
-      db.close();
+      span.setTag("new_planes_count", enqueued);
 
-      span.setTag("new_planes_count", newPlanes.length);
-
-      if (newPlanes.length === 0) {
-        return;
+      if (enqueued > 0) {
+        info(`${enqueued} new plane(s) queued for the trickle updater (last_flight_check=0)`);
       }
-
-      info(`Found ${newPlanes.length} new plane(s), checking flights immediately...`);
-
-      const { updatedCount, apiCallCount } = await processPlanesInBatches(api, newPlanes, 5);
-
-      span.setTag("updated_count", updatedCount);
-      span.setTag("api_call_count", apiCallCount);
-
-      info(
-        `New plane flight check completed: ${updatedCount} planes updated, ${apiCallCount} API calls made`
-      );
+      return enqueued;
     },
     { "job.type": "background" }
   );
@@ -323,25 +311,21 @@ export async function checkNewPlanes() {
  * Instead of bulk updates every 8 hours, continuously updates 1 plane at a time
  * Much more polite to APIs and avoids rate limiting
  */
-export function startFlightUpdater() {
+export function startFlightUpdater(): JobHandle | undefined {
   const INTERVAL_MS = 22.5 * 1000;
   const HEARTBEAT_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
 
   const api = createFlightAPI();
   if (!api) {
     error("Failed to create flight API, flight updater disabled");
-    return;
+    return undefined;
   }
 
-  // 0 = idle; otherwise the start time of the in-progress run. A wedged vendor
-  // call held this for 19h on 2026-05-20 — past the deadline, abandon the run.
-  let runningSince = 0;
   let lastHeartbeat = Date.now();
   let totalUpdates = 0;
   let totalErrors = 0;
-  const STUCK_RUN_TIMEOUT_MS = 15 * 60 * 1000;
 
-  const runSingleUpdate = async () => {
+  const runSingleUpdate = async (ctx: JobRunContext) => {
     // Check circuit breaker
     if (circuitBreakerOpenedAt) {
       const timeSinceOpened = Date.now() - circuitBreakerOpenedAt;
@@ -352,19 +336,6 @@ export function startFlightUpdater() {
       circuitBreakerOpenedAt = null;
       consecutiveApiFailures = 0;
     }
-
-    if (runningSince) {
-      if (Date.now() - runningSince < STUCK_RUN_TIMEOUT_MS) {
-        warn("Skipping flight update - previous update still in progress");
-        return;
-      }
-      error(
-        `Flight update stuck for ${Math.round((Date.now() - runningSince) / 60000)}min — abandoning it and starting a new run`
-      );
-    }
-
-    const myRun = Date.now();
-    runningSince = myRun;
 
     try {
       await withSpan(
@@ -405,6 +376,14 @@ export function startFlightUpdater() {
           // Update this plane
           const success = await updateFlightsForTailNumber(api, tailToUpdate);
 
+          // Abandoned (stuck-escaped) runs settling late must not feed the
+          // breaker/counters the successor reads — stacked orphans settling in
+          // a burst could open the breaker against a healthy API.
+          if (!ctx.isCurrent()) {
+            span.setTag("result", "abandoned");
+            return;
+          }
+
           if (success) {
             consecutiveApiFailures = 0;
             totalUpdates++;
@@ -432,29 +411,24 @@ export function startFlightUpdater() {
       );
     } catch (err) {
       error("Error in flight updater", err);
-      consecutiveApiFailures++;
-      totalErrors++;
-    } finally {
-      // An abandoned run that finally settles must not clear its successor's flag.
-      if (runningSince === myRun) runningSince = 0;
+      if (ctx.isCurrent()) {
+        consecutiveApiFailures++;
+        totalErrors++;
+      }
     }
   };
 
-  // Start the trickle updater
-  setInterval(() => {
-    runSingleUpdate().catch((err) => {
-      error("Unexpected error in flight updater scheduler", err);
-    });
-  }, INTERVAL_MS);
-
-  // Initial run after 15 seconds
-  setTimeout(() => {
-    runSingleUpdate().catch((err) => {
-      error("Initial flight update failed", err);
-    });
-  }, 15 * 1000);
+  // A wedged vendor call held the in-progress flag for 19h on 2026-05-20 —
+  // the runner's stuck-run escape is load-bearing here.
+  const handle = startJob({
+    name: "flight_updater",
+    intervalMs: INTERVAL_MS,
+    initialDelayMs: 15 * 1000,
+    run: runSingleUpdate,
+  });
 
   info(`Flight updater started (trickle mode, every ${INTERVAL_MS / 1000}s)`);
+  return handle;
 }
 
 // Export individual functions for manual use

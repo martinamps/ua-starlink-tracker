@@ -1,16 +1,17 @@
 import type { ReactNode } from "react";
 import type { Aircraft, FleetStats, PerAirlineStat, RecentInstall } from "../../types";
-import type { Tenant } from "../registry";
+import type { AirlineCode, KnownAirlineCode, Tenant } from "../registry";
 import { content as as } from "./as";
 import { content as ha } from "./ha";
 import { content as hub } from "./hub";
+import { content as qr } from "./qr";
 import { content as ua } from "./ua";
 
 export interface ContentStats {
   starlinkCount: number;
   totalCount: number;
   percentage: string;
-  fleetStats?: FleetStats;
+  fleetStats?: FleetStats | null;
 }
 
 export interface FaqEntry {
@@ -40,8 +41,6 @@ export interface AirlineContent {
   intro: (s: ContentStats) => ReactNode;
   /** Stat strip under the tagline (each entry rendered with · separators). */
   headerStats: ReactNode[];
-  /** Show check-flight / route-planner / fleet / mcp nav pills. */
-  showNavLinks: boolean;
   /** Bespoke stat panel — each airline composes its own from shared atoms. */
   Hero: (p: HeroProps) => ReactNode;
   /** Optional per-row badge under tail number (e.g. UA mainline/express). null = no badge. */
@@ -51,15 +50,26 @@ export interface AirlineContent {
   faq: FaqSection[];
 }
 
-const CONTENT: Record<string, AirlineContent> = {
+// Exhaustive over the registry: adding an airline without homepage content is
+// a compile error, never a silent fallback to another tenant's copy.
+const CONTENT: Record<KnownAirlineCode, AirlineContent> = {
   UA: ua,
   HA: ha,
   AS: as,
+  QR: qr,
 };
+
+// Widened view for runtime lookup by arbitrary code — typed possibly-undefined
+// so the guard below stays honest (no cast pretending the key is known).
+const contentByCode: Partial<Record<AirlineCode, AirlineContent>> = CONTENT;
 
 export function getContent(tenant: Tenant): AirlineContent {
   if (tenant === "ALL") return hub;
-  return CONTENT[tenant.code] ?? hub;
+  const content = contentByCode[tenant.code];
+  if (!content) {
+    throw new Error(`no homepage content registered for airline ${tenant.code}`);
+  }
+  return content;
 }
 
 export function buildFaqJsonLd(content: AirlineContent, currentDate: string): string {

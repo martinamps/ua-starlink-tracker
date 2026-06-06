@@ -10,11 +10,22 @@
 import { Database } from "bun:sqlite";
 import { beforeAll, describe, expect, test } from "bun:test";
 import { copyFileSync } from "node:fs";
-import { updateDatabase, updateFlights } from "../src/database/database";
+import { setAssignmentFetcher } from "../src/api/flight-verdict";
+import { SHEET_ROSTER_WHERE, updateDatabase, updateFlights } from "../src/database/database";
 import { createApp } from "../src/server/app";
 import type { FleetStats } from "../src/types";
+import {
+  TEST_DB,
+  addFleet,
+  addPlane,
+  bodyOf as bodyOfApp,
+  makeSyntheticDb,
+  mcpReq,
+  openSnapshot,
+  postMcp,
+  req,
+} from "./helpers";
 
-const TEST_DB = "/tmp/ua-test.sqlite";
 const UA = "unitedstarlinktracker.com";
 const HA_HOST = "hawaiianstarlinktracker.com";
 const AS_HOST = "alaskastarlinktracker.com";
@@ -28,7 +39,7 @@ let app: ReturnType<typeof createApp>;
 let db: Database;
 
 beforeAll(() => {
-  db = new Database(TEST_DB, { readonly: true });
+  db = openSnapshot();
   app = createApp(db);
   const c = db
     .query("SELECT COUNT(*) as n FROM starlink_planes WHERE airline IN ('HA','QR')")
@@ -36,25 +47,7 @@ beforeAll(() => {
   if (c.n < 2) throw new Error("Canary rows missing — run `bun run test:setup`");
 });
 
-function req(path: string, host: string, init: RequestInit = {}) {
-  return new Request(`http://x${path}`, {
-    ...init,
-    headers: { Host: host, ...(init.headers as Record<string, string>) },
-  });
-}
-
-async function bodyOf(path: string, host: string, init?: RequestInit) {
-  const r = await app.dispatch(req(path, host, init));
-  return { status: r.status, text: await r.text() };
-}
-
-function mcpReq(host: string, method: string, params: unknown) {
-  return req("/mcp", host, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-  });
-}
+const bodyOf = (path: string, host: string, init?: RequestInit) => bodyOfApp(app, path, host, init);
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -90,6 +83,27 @@ describe("tenant resolution", () => {
     expect(await uaManifest.json()).toMatchObject({ name: "United Airlines Starlink Tracker" });
     expect(await hubManifest.json()).toMatchObject({ name: "Airline Starlink Tracker" });
   });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("og:image is tenant-branded", () => {
+  const cases: Array<[string, string]> = [
+    [UA, "/static/social-image.webp"],
+    [HA_HOST, "/static/social-image-ha.webp"],
+    [AS_HOST, "/static/social-image-as.webp"],
+    [HUB, "/static/social-image-hub.webp"],
+    // QR card is never generated (not in /api/fleet-summary) → hub fallback.
+    ["qatarstarlinktracker.com", "/static/social-image-hub.webp"],
+  ];
+  for (const [host, img] of cases) {
+    test(`${host} serves ${img}`, async () => {
+      const { status, text } = await bodyOf("/", host);
+      expect(status).toBe(200);
+      expect(text).toContain(`property="og:image" content="https://${host}${img}"`);
+      expect(text).toContain(`name="twitter:image" content="https://${host}${img}"`);
+    });
+  }
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -138,17 +152,25 @@ describe("UA host never leaks canaries", () => {
     for (const c of CANARIES) expect(text).not.toContain(c);
   });
 
-  test("MCP check_flight HA9999 on canary date — no tail leak", async () => {
-    const r = await app.dispatch(
-      mcpReq(UA, "tools/call", {
-        name: "check_flight",
-        arguments: { flight_number: "HA9999", date: "2026-03-22" },
-      })
-    );
-    const text = await r.text();
-    expect(text).not.toContain("N999HA");
-    expect(text).not.toContain("A7-TST");
-    expect(text).not.toContain("Hawaiian Airlines");
+  test("MCP check_flight HA9999 on the UA scope — refused, no cross-brand leak", async () => {
+    // Foreign marketing prefixes are refused on pinned MCP scopes (parity
+    // with REST's 404). The refusal names ONLY the pinned carrier.
+    const j = await postMcp(app, UA, "tools/call", {
+      name: "check_flight",
+      arguments: { flight_number: "HA9999", date: "2026-03-22" },
+    });
+    expect(j.result.isError).toBe(true);
+    const text = j.result.content[0].text as string;
+    expect(text).toContain("This server covers United Airlines");
+    // Single-airline surface: never advertise competitor brands.
+    for (const brand of ["Hawaiian Airlines", "Alaska Airlines", "Qatar Airways"]) {
+      expect(text).not.toContain(brand);
+    }
+    // Full response body carries no TAIL canaries (flight-number canaries
+    // excluded — a refusal legitimately echoes the requested number).
+    const body = JSON.stringify(j);
+    expect(body).not.toContain("N999HA");
+    expect(body).not.toContain("A7-TST");
   });
 
   test("MCP get_fleet_stats", async () => {
@@ -159,10 +181,12 @@ describe("UA host never leaks canaries", () => {
     for (const c of CANARIES) expect(text).not.toContain(c);
   });
 
-  test("/api/predict-flight echoes input but leaks no HA data", async () => {
-    const { text } = await bodyOf("/api/predict-flight?flight_number=HA9999", UA);
-    const d = JSON.parse(text);
-    expect(d.n_observations).toBe(0);
+  test("/api/predict-flight rejects a foreign-prefix number outright (404)", async () => {
+    // Pre-fix this ran HA9999 through the UA model; now the marketing-prefix
+    // gate fails closed before any model or FR24 work.
+    const { status, text } = await bodyOf("/api/predict-flight?flight_number=HA9999", UA);
+    expect(status).toBe(404);
+    expect(text).toContain("not tracked");
     expect(text).not.toContain("N999HA");
     expect(text).not.toContain("A7-TST");
   });
@@ -287,24 +311,24 @@ describe("write-path safety — UA scrape cannot wipe HA rows", () => {
       express: { total: 50, starlink: 10, percentage: 20 },
       mainline: { total: 50, starlink: 0, percentage: 0 },
     };
-    updateDatabase(
-      wdb,
-      100,
-      [
-        {
-          TailNumber: "N10000",
-          Aircraft: "Embraer ERJ-175",
-          WiFi: "Starlink",
-          OperatedBy: "Test Express",
-          fleet: "express",
-          sheet_gid: "test",
-          sheet_type: "test",
-          DateFound: "2026-04-12",
-        },
-      ],
-      fakeStats,
-      "UA"
-    );
+    // Enough rows to clear the roster-replace floor — a tiny parse is now
+    // refused outright (see updateDatabase's rosterReplaceRefusal).
+    const uaSheetBefore = (
+      wdb.query(`SELECT COUNT(*) n FROM starlink_planes WHERE ${SHEET_ROSTER_WHERE}`).get("UA") as {
+        n: number;
+      }
+    ).n;
+    const fakeRows = Array.from({ length: Math.max(1, uaSheetBefore) }, (_, i) => ({
+      TailNumber: `N${10000 + i}`,
+      Aircraft: "Embraer ERJ-175",
+      WiFi: "Starlink",
+      OperatedBy: "Test Express",
+      fleet: "express",
+      sheet_gid: "test",
+      sheet_type: "test",
+      DateFound: "2026-04-12",
+    }));
+    updateDatabase(wdb, 100, fakeRows, fakeStats, "UA");
 
     const haAfter = (
       wdb.query("SELECT COUNT(*) n FROM starlink_planes WHERE airline='HA'").get() as { n: number }
@@ -312,12 +336,18 @@ describe("write-path safety — UA scrape cannot wipe HA rows", () => {
     const uaAfter = (
       wdb.query("SELECT COUNT(*) n FROM starlink_planes WHERE airline='UA'").get() as { n: number }
     ).n;
+    const fakePresent = (
+      wdb.query("SELECT COUNT(*) n FROM starlink_planes WHERE TailNumber='N10000'").get() as {
+        n: number;
+      }
+    ).n;
     wdb.close();
 
     expect(haAfter).toBe(haBefore);
-    // UA scrape replaced spreadsheet rows with the single fake (+ any discovery rows)
-    expect(uaAfter).toBeLessThan(uaBefore);
+    // UA scrape replaced spreadsheet rows with the fakes (+ any discovery rows)
     expect(uaAfter).toBeGreaterThan(0);
+    expect(uaAfter).toBeLessThanOrEqual(uaBefore);
+    expect(fakePresent).toBe(1);
   });
 
   test("updateFlights stamps airline from starlink_planes (HA tail → airline='HA')", () => {
@@ -349,6 +379,56 @@ describe("write-path safety — UA scrape cannot wipe HA rows", () => {
     wdb.close();
 
     expect(row.airline).toBe("HA");
+  });
+
+  test("updateFlights drops pre-2000 departure_time rows at the insert", () => {
+    const tmp = `/tmp/ua-floor-flights-${process.pid}-${Date.now()}.sqlite`;
+    copyFileSync(TEST_DB, tmp);
+    const wdb = new Database(tmp);
+
+    const tail = (
+      wdb.query("SELECT TailNumber FROM starlink_planes WHERE airline='UA' LIMIT 1").get() as {
+        TailNumber: string;
+      }
+    ).TailNumber;
+    const future = Math.floor(Date.now() / 1000) + 3600;
+
+    updateFlights(wdb, tail, [
+      // FR24 half-parse: epoch-0 departure must never reach the table.
+      {
+        flight_number: "UA900",
+        departure_airport: "SFO",
+        arrival_airport: "EWR",
+        departure_time: 0,
+        arrival_time: 3600,
+      },
+      {
+        flight_number: "UA901",
+        departure_airport: "SFO",
+        arrival_airport: "EWR",
+        departure_time: future,
+        arrival_time: future + 21600,
+      },
+    ]);
+
+    const flightNumbers = (
+      wdb.query("SELECT flight_number FROM upcoming_flights WHERE tail_number = ?").all(tail) as {
+        flight_number: string;
+      }[]
+    ).map((r) => r.flight_number);
+    // A garbage departure_time invalidates the schedule row, not the route
+    // knowledge — the airports are real, so the route cache still learns.
+    const route = wdb
+      .query(
+        "SELECT duration_sec FROM flight_routes WHERE flight_number = 'UA900' AND origin = 'SFO' AND destination = 'EWR'"
+      )
+      .get() as { duration_sec: number | null } | null;
+    wdb.close();
+
+    expect(flightNumbers).toContain("UA901");
+    expect(flightNumbers).not.toContain("UA900");
+    expect(route).not.toBeNull();
+    expect(route?.duration_sec).toBeNull(); // duration from epoch-0 is garbage
   });
 });
 
@@ -521,13 +601,101 @@ describe("AS host isolation", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Per-host foreign-prefix gate: a tenant host must refuse flight numbers
+// carrying ANOTHER registered airline's marketing prefix instead of running
+// them through its own ladder (the AS-host-answers-UA1 tenant leak).
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("per-host foreign-prefix gate", () => {
+  const PAST_DATE = "2026-03-22"; // outside FR24's window — fully hermetic
+
+  test("UA flight on AS host → 404 not-tracked (check + predict)", async () => {
+    for (const path of [
+      `/api/check-flight?flight_number=UA1&date=${PAST_DATE}`,
+      "/api/predict-flight?flight_number=UA1",
+    ]) {
+      const { status, text } = await bodyOf(path, AS_HOST);
+      expect(status, path).toBe(404);
+      expect(text).toContain("not tracked");
+      expect(text).not.toContain("United");
+    }
+  });
+
+  test("QR flight on AS host → 404 (enabled-but-hub-hidden carriers also rejected)", async () => {
+    const { status } = await bodyOf(
+      `/api/check-flight?flight_number=QR123&date=${PAST_DATE}`,
+      AS_HOST
+    );
+    expect(status).toBe(404);
+  });
+
+  test("own-prefix and digits-only numbers proceed unchanged", async () => {
+    const own = await bodyOf(`/api/check-flight?flight_number=AS123&date=${PAST_DATE}`, AS_HOST);
+    expect(own.status).toBe(200);
+    const bare = await bodyOf(`/api/check-flight?flight_number=123&date=${PAST_DATE}`, AS_HOST);
+    expect(bare.status).toBe(200);
+    const ua = await bodyOf(`/api/check-flight?flight_number=UA1&date=${PAST_DATE}`, UA);
+    expect(ua.status).toBe(200);
+  });
+
+  test("operating-carrier prefixes are not treated as foreign (SKW on UA host)", async () => {
+    const { status } = await bodyOf(
+      `/api/check-flight?flight_number=SKW5882&date=${PAST_DATE}`,
+      UA
+    );
+    expect(status).toBe(200);
+  });
+
+  test("a seeded foreign tail cannot surface through another tenant's FR24 fallback", async () => {
+    // Synthetic DB: one verified UA Starlink tail. FR24 reports that tail for
+    // a digits-only lookup on the AS host — the airline-scoped tail ladder
+    // must not resolve it, so the AS host cannot answer "verified yes" with
+    // United inventory. The same fetch on the UA host proves the seam works.
+    const db = makeSyntheticDb();
+    addPlane(db, "N91234", "Starlink");
+    addFleet(db, "N91234", "confirmed", { verifiedWifi: "Starlink" });
+    const sapp = createApp(db);
+
+    const nowSec = Math.floor(Date.now() / 1000);
+    const today = new Date(nowSec * 1000).toISOString().slice(0, 10);
+    setAssignmentFetcher(async () => [
+      {
+        tail_number: "N91234",
+        aircraft_model: "Boeing 737-900",
+        origin: "ZZZ",
+        destination: "ZZX",
+        departure_time: nowSec,
+        arrival_time: nowSec + 3 * 3600,
+      },
+    ]);
+    try {
+      const ua = await bodyOfApp(sapp, `/api/check-flight?flight_number=123&date=${today}`, UA);
+      expect(ua.status).toBe(200);
+      expect(JSON.parse(ua.text).hasStarlink).toBe(true);
+
+      const as = await bodyOfApp(
+        sapp,
+        `/api/check-flight?flight_number=123&date=${today}`,
+        AS_HOST
+      );
+      expect(as.status).toBe(200);
+      const d = JSON.parse(as.text);
+      expect(d.hasStarlink).not.toBe(true);
+      expect(as.text).not.toContain("N91234");
+    } finally {
+      setAssignmentFetcher(null);
+    }
+    db.close();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 describe("route-table coverage", () => {
   test("every app.routes key is exercised by isolation matrix", () => {
     const tested = new Set(
       ENDPOINTS.map((e) => e.split("?")[0]).concat([
         "/mcp",
-        "/site.webmanifest",
         "/api/plan-route",
         "/api/predict-flight",
         "/api/check-any-flight",

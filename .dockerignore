@@ -1,0 +1,14 @@
+# Never bake secrets, git history, data, or dev artifacts into the image
+# (COPY . .). do_not_commit/ also protects the image's own Playwright install
+# from being overlaid by host-platform browsers; node_modules/ protects the
+# image's linux install from the darwin one.
+.git/
+.env
+.env.*
+node_modules/
+*.sqlite
+.test-snapshot.sqlite
+logs/
+docs/
+tests/
+do_not_commit/

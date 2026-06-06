@@ -24,34 +24,32 @@ import {
 } from "../database/database";
 import { DB_PATH } from "../utils/constants";
 import { info } from "../utils/logger";
+import { type RosterSource, buildRoster, rosterSources } from "./fleet-sync";
 import { launchFR24Browser, scrapeFlightRadar24Fleet } from "./flightradar24-scraper";
 
 interface SeedRow {
   tail: string;
   aircraftType: string;
   subfleet: "mainline" | "horizon";
-  operator: string;
+  /** null = source page didn't prove an operator; writes preserve/fall back. */
+  operator: string | null;
   verdict: AlaskaWifi;
 }
 
-async function buildRoster(): Promise<SeedRow[]> {
+async function scrapeRoster(): Promise<SeedRow[]> {
   const cfg = AIRLINES.AS;
   if (!cfg.fr24Slug) throw new Error("AS.fr24Slug missing");
 
-  // Regional sources first so Horizon E175s pick up the correct operator
-  // before the broader as-asa page (which also lists them) fills in the rest.
-  const sources = [
-    ...(cfg.regionalCarriers ?? []).map((r) => ({ slug: r.fr24Slug, operator: r.name })),
-    { slug: cfg.fr24Slug, operator: cfg.name },
-  ];
+  const sources = rosterSources(cfg);
 
-  // FR24's as-asa page covers the full Alaska livery fleet (including regional
-  // E175s); qx-qxe overlaps. Dedupe by tail so the meta counts don't inflate.
-  const byTail = new Map<string, SeedRow>();
+  // buildRoster dedupes the as-asa/qx-qxe overlap; operator is asserted only
+  // for qx-qxe-sourced tails, so as-asa rows can't misattribute Horizon E175s
+  // to "Alaska Airlines" or inflate the counts.
+  const scraped: RosterSource[] = [];
   const failures: string[] = [];
   const browser = await launchFR24Browser();
   try {
-    for (const { slug, operator } of sources) {
+    for (const { slug, subfleet } of sources) {
       info(`Fetching FR24 roster for ${slug}...`);
       const scrape = await scrapeFlightRadar24Fleet(slug, browser);
       if (!scrape.success) {
@@ -62,31 +60,22 @@ async function buildRoster(): Promise<SeedRow[]> {
         failures.push(slug);
         continue;
       }
-      for (const a of scrape.aircraft) {
-        if (byTail.has(a.registration)) continue;
-        // Classify by aircraft type, not source slug or registration suffix —
-        // SkyWest-for-Alaska E175s and N***MK Horizon tails both belong in
-        // the horizon subfleet despite not being QX-registered.
-        const subfleet = (cfg.classifyFleet?.(a.aircraftType) ?? "mainline") as
-          | "mainline"
-          | "horizon";
-        byTail.set(a.registration, {
-          tail: a.registration,
-          aircraftType: a.aircraftType,
-          subfleet,
-          // Operator is type-derived, not source-derived: when qx-qxe times out
-          // the regional rows would otherwise carry as-asa's "Alaska Airlines".
-          operator:
-            subfleet === "horizon" ? (cfg.regionalCarriers?.[0]?.name ?? operator) : operator,
-          // Verdict derived from subfleet so they can never disagree.
-          verdict: subfleet === "horizon" ? "Starlink" : null,
-        });
-      }
+      scraped.push({ subfleet, aircraft: scrape.aircraft });
     }
   } finally {
     await browser.close().catch(() => {});
   }
-  const rows = [...byTail.values()];
+
+  const rows = buildRoster(cfg, scraped).map(
+    (r): SeedRow => ({
+      tail: r.registration,
+      aircraftType: r.aircraftType,
+      subfleet: r.subfleet as "mainline" | "horizon",
+      operator: r.operator,
+      // Verdict derived from subfleet so they can never disagree.
+      verdict: r.subfleet === "horizon" ? "Starlink" : null,
+    })
+  );
 
   if (rows.length < cfg.minFleetSanity) {
     const failed = failures.length ? ` (FR24 failed for: ${failures.join(", ")})` : "";
@@ -116,12 +105,14 @@ function printTable(rows: SeedRow[]) {
 }
 
 function apply(db: Database, rows: SeedRow[]) {
-  // Q1 2026 earnings call (April 21, 2026): full regional E175 fleet is Starlink-equipped.
-  const AS_E175_CONFIRM_DATE = "2026-04-21";
-
   const tx = db.transaction(() => {
     for (const r of rows) {
       const isStarlink = r.verdict === "Starlink";
+      // The Horizon verdict is a TYPE rule (earnings-call "all regional E175s
+      // are equipped"), not a per-tail observation — evidence:'type_rule'
+      // keeps verified stamps NULL and leaves the tails verifier-eligible so
+      // the per-tail verifier confirms them organically. Contrast
+      // flyertalk-common, whose tails were individually spotted ('observed').
       upsertFleetAircraft(
         db,
         r.tail,
@@ -130,15 +121,17 @@ function apply(db: Database, rows: SeedRow[]) {
         r.subfleet,
         r.operator,
         "AS",
-        isStarlink ? { starlinkStatus: "confirmed", verifiedWifi: "Starlink" } : undefined
+        isStarlink
+          ? { starlinkStatus: "confirmed", verifiedWifi: null, evidence: "type_rule" }
+          : undefined
       );
       if (isStarlink) {
         // fleet keeps the airline-correct subfleet ("horizon") — getFleetStats()
         // rolls non-mainline into express, and the AS UI reads p.fleet === "horizon".
         addDiscoveredStarlinkPlane(db, r.tail, r.aircraftType, "Starlink", r.operator, r.subfleet, {
           sheetGid: "as_seed",
-          dateFound: AS_E175_CONFIRM_DATE,
           airline: "AS",
+          evidence: "type_rule",
         });
       }
     }
@@ -159,7 +152,7 @@ if (import.meta.main) {
   const dbPath = args.find((a) => a.startsWith("--db="))?.slice(5) ?? DB_PATH;
   const doApply = args.includes("--apply");
 
-  const rows = await buildRoster();
+  const rows = await scrapeRoster();
   printTable(rows);
 
   if (doApply) {

@@ -1,5 +1,5 @@
 import React from "react";
-import { AIRLINES, type PageBrand, type SiteConfig } from "../airlines/registry";
+import { AIRLINES, type SiteConfig } from "../airlines/registry";
 import type { FleetFamily, FleetPageData, FleetTail, WifiProvider } from "../types";
 import { AIRCRAFT_SPECS, type AircraftSpec } from "../utils/aircraft-specs";
 
@@ -493,17 +493,16 @@ function TailMonument({ allTails, totalFleet }: { allTails: FleetTail[]; totalFl
 
 interface FleetPageProps {
   data: FleetPageData;
-  brand?: PageBrand;
-  site?: SiteConfig;
+  site: SiteConfig;
 }
 
-export default function FleetPage({ data, brand, site }: FleetPageProps) {
-  const scopeCode = site?.scope && site.scope !== "ALL" ? site.scope : null;
+export default function FleetPage({ data, site }: FleetPageProps) {
+  const scopeCode = site.scope !== "ALL" ? site.scope : null;
   const scopeLabel = scopeCode ? AIRLINES[scopeCode].name : "tracked";
   const headerTitle = scopeCode
     ? `${AIRLINES[scopeCode].name} Fleet · Starlink Rollout`
     : "Tracked Fleets · Starlink Rollout";
-  const backLabel = brand?.title ?? "Starlink Tracker";
+  const backLabel = site.brand.title;
   return (
     <div className="w-full mx-auto px-4 sm:px-6 md:px-8 bg-base min-h-screen flex flex-col relative">
       <div className="absolute inset-0 grid-pattern opacity-50 pointer-events-none" />

@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DB=/tmp/ua-test.sqlite
+# Same derivation as tests/helpers.ts TEST_DB: snapshot lives inside the
+# checkout so parallel worktrees never clobber each other's open snapshot.
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+DB="$ROOT/.test-snapshot.sqlite"
 SRC=plane-data.production.sqlite
 
 if [[ ! -f "$SRC" ]]; then

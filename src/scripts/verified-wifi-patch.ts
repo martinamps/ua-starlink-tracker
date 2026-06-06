@@ -15,8 +15,13 @@
 
 import { Database } from "bun:sqlite";
 import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { CLEAN_OBSERVATION_WHERE } from "../database/database";
 
-const TEST_DB = "/tmp/ua-test.sqlite";
+// Same derivation as tests/helpers.ts TEST_DB (canonical); inlined because
+// src/ must not import from tests/ (dockerignored, layering).
+const TEST_DB = join(import.meta.dir, "../..", ".test-snapshot.sqlite");
+
 const RECENT_DAYS = 30;
 const MIN_OBS = 2;
 const CONSENSUS_THRESHOLD = 0.7;
@@ -52,8 +57,7 @@ for (const p of nullPlanes) {
        FROM starlink_verification_log
        WHERE tail_number = ? AND source = 'united'
          AND checked_at >= ?
-         AND error IS NULL
-         AND has_starlink IS NOT NULL
+         AND ${CLEAN_OBSERVATION_WHERE}
        ORDER BY checked_at DESC`
     )
     .all(p.TailNumber, cutoff) as Array<{

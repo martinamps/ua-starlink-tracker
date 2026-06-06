@@ -14,10 +14,11 @@
  *
  *   bun run precision                      # 30d window on default DB
  *   bun run precision -- --days=7
- *   bun run precision -- --db=/tmp/ua-test.sqlite --emit
+ *   bun run precision -- --db=.test-snapshot.sqlite --emit
  */
 
 import { Database } from "bun:sqlite";
+import { CLEAN_OBSERVATION_WHERE } from "../database/database";
 import { GAUGES, metrics, normalizeAirlineTag } from "../observability/metrics";
 import { info } from "../utils/logger";
 
@@ -69,8 +70,7 @@ export function computePrecision(db: Database, windowDays = 30): PrecisionResult
            FROM starlink_verification_log p
           WHERE p.tail_number = v.tail_number
             AND p.source = 'united'
-            AND p.error IS NULL
-            AND p.has_starlink IS NOT NULL
+            AND ${CLEAN_OBSERVATION_WHERE}
             AND (p.tail_confirmed = 1 OR p.tail_confirmed IS NULL)
             AND p.checked_at < v.checked_at
           ORDER BY p.checked_at DESC
@@ -79,16 +79,14 @@ export function computePrecision(db: Database, windowDays = 30): PrecisionResult
            FROM starlink_verification_log p
           WHERE p.tail_number = v.tail_number
             AND p.source = 'united'
-            AND p.error IS NULL
-            AND p.has_starlink IS NOT NULL
+            AND ${CLEAN_OBSERVATION_WHERE}
             AND (p.tail_confirmed = 1 OR p.tail_confirmed IS NULL)
             AND p.checked_at < v.checked_at
           ORDER BY p.checked_at DESC
           LIMIT 1) AS prior_confirmed
       FROM starlink_verification_log v
       WHERE v.source = 'united'
-        AND v.error IS NULL
-        AND v.has_starlink IS NOT NULL
+        AND ${CLEAN_OBSERVATION_WHERE}
         AND v.checked_at > ?
       ORDER BY v.checked_at
     `)

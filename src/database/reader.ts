@@ -20,7 +20,6 @@ import type {
   RouteSchedule,
 } from "../types";
 import {
-  type CheckFlightRow,
   type ConfirmedEdge,
   type DirectRouteEdge,
   type FlightAssignmentRow,
@@ -31,6 +30,7 @@ import {
   type RouteGraphEdge,
   type SubfleetPenetration,
   type VerificationObservation,
+  type VerificationSource,
   type WifiConsensus,
   type WifiMismatch,
   airlineServesAirports,
@@ -48,7 +48,6 @@ import {
   getFleetPageData,
   getFleetStats,
   getFlightAssignments,
-  getFlightsByNumberAndDate,
   getHubStats,
   getLastUpdated,
   getMeta,
@@ -85,23 +84,13 @@ export interface ScopedReader {
   getRecentInstalls(limit?: number, perAirlineCap?: number): RecentInstall[];
   getPerAirlineStats(): PerAirlineStat[];
   getUpcomingFlights(tailNumber?: string): Flight[];
-  getFleetStats(): FleetStats;
+  /** Per-airline subfleet split; null on the hub (no cross-airline aggregate exists). */
+  getFleetStats(): FleetStats | null;
   getTotalCount(): number;
   getLastUpdated(): string;
+  /** Meta keys are namespaced per-airline; null on the hub (no single namespace). */
   getMeta(key: string): string | null;
-  getFlightsByNumberAndDate(
-    variants: string[],
-    startOfDay: number,
-    endOfDay: number
-  ): CheckFlightRow[];
-  /** Hub-only: query a *specific* airline regardless of reader scope (caller-detected from flight prefix). */
-  getFlightsByNumberAndDateForAirline(
-    variants: string[],
-    startOfDay: number,
-    endOfDay: number,
-    code: AirlineCode
-  ): CheckFlightRow[];
-  /** MCP check_flight: assignments without the verified_wifi filter (renders three confidence tiers). */
+  /** Check-flight assignments without the verified_wifi filter (the core classifies tiers). */
   getFlightAssignments(
     variants: string[],
     startOfDay: number,
@@ -120,7 +109,7 @@ export interface ScopedReader {
   getVerificationObservations(): VerificationObservation[];
   getRouteFlights(origin: string | null, destination: string | null): RouteFlightRow[];
   getRouteGraphEdges(): RouteGraphEdge[];
-  getConfirmedStarlinkEdges(startOfDay: number, endOfDay: number): ConfirmedEdge[];
+  getConfirmedStarlinkEdges(queryStart: number, queryEnd: number): ConfirmedEdge[];
   airlineServesAirports(prefixes: readonly string[], ...airports: string[]): boolean;
   getSubfleetPenetration(): Map<string, SubfleetPenetration>;
   getObservedDirectFlightNumbers(
@@ -142,14 +131,18 @@ export interface ScopedReader {
     variants: string[]
   ): { departure_airport: string; arrival_airport: string; dur_sec: number }[];
 
-  // Single-tail lookups + best-effort writes (tail_number UNIQUE → scope-safe)
+  // Single-tail lookups + best-effort writes. Airline-scoped like everything
+  // else: a tenant's FR24 fallback must not resolve another airline's tail.
   getStarlinkPlaneByTail(
     tail: string
   ): { Aircraft: string; OperatedBy: string; fleet: string } | null;
   getFleetEntryByTail(
     tail: string
   ): { starlink_status: string; verified_wifi: string | null; verified_at: number | null } | null;
-  computeWifiConsensus(tail: string): WifiConsensus;
+  computeWifiConsensus(
+    tail: string,
+    opts?: { sources?: readonly VerificationSource[] }
+  ): WifiConsensus;
   bumpDiscoveryPriority(tail: string): void;
 
   // Qatar uses a separate schedule cache (per-flight equipment, no per-tail).
@@ -177,6 +170,20 @@ export interface ScopedReader {
 
 const publicCodes = (): readonly AirlineCode[] => publicAirlines().map((a) => a.code);
 
+/** Cross-airline Starlink penetration. `rate` is null when nothing is tracked
+ * — the single zero-total rule; callers map null to their own fallback. */
+export function aggregatePenetration(
+  per: ReadonlyArray<Pick<PerAirlineStat, "starlink" | "total">>
+): {
+  starlink: number;
+  total: number;
+  rate: number | null;
+} {
+  const starlink = per.reduce((s, a) => s + a.starlink, 0);
+  const total = per.reduce((s, a) => s + a.total, 0);
+  return { starlink, total, rate: total > 0 ? starlink / total : null };
+}
+
 function buildPerAirlineStats(db: Database, codes: readonly AirlineCode[]): PerAirlineStat[] {
   const hub = getHubStats(db, codes);
   const byCode = Object.fromEntries(hub.map((h) => [h.code, h]));
@@ -192,9 +199,9 @@ function buildPerAirlineStats(db: Database, codes: readonly AirlineCode[]): PerA
       total: h?.total ?? getTotalCount(db, code),
       fleetTotal: h?.fleetTotal,
       installs30d: h?.installs30d,
-      status: cfg.rollout?.status,
-      statusLabel: cfg.rollout?.statusLabel,
-      phaseNote: cfg.rollout?.phaseNote,
+      status: cfg.rollout.status,
+      statusLabel: cfg.rollout.statusLabel,
+      phaseNote: cfg.rollout.phaseNote,
       accentColor: cfg.brand.accentColor,
       href: airlineHomeUrl(code),
     });
@@ -206,8 +213,6 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
   // Hub ('ALL') is the union of *enabled* airlines, not every row in the DB —
   // disabled-airline canaries/test data stay invisible until that airline ships.
   const airlines = scope === "ALL" ? publicCodes() : ([scope] as const);
-  // Meta keys are namespaced per-airline; ALL has no single namespace.
-  const metaCode = scope === "ALL" ? "UA" : scope;
   // Route-compare methods are only meaningful per-airline; assert it.
   const soleAirline = () => {
     if (airlines.length !== 1)
@@ -223,9 +228,10 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
       getRecentInstalls(db, airlines, limit, perAirlineCap),
     getPerAirlineStats: () => buildPerAirlineStats(db, airlines),
     getUpcomingFlights: (t) => getUpcomingFlights(db, t, airlines),
-    // FleetStats shape is UA-subfleet-specific (express/mainline); hub aggregation deferred until
-    // getSubfleetStats lands. Hub callers should not rely on this.
-    getFleetStats: () => getFleetStats(db, metaCode),
+    // FleetStats shape is subfleet-specific (express/mainline); there is no
+    // hub aggregate — null forces callers to handle the hub case explicitly
+    // instead of receiving one airline's stats as the hub's.
+    getFleetStats: () => (scope === "ALL" ? null : getFleetStats(db, scope)),
     getTotalCount: () =>
       scope === "ALL"
         ? airlines.reduce((s, c) => s + getTotalCount(db, c), 0)
@@ -238,10 +244,7 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
             .sort()
             .at(-1) ?? "")
         : getLastUpdated(db, scope),
-    getMeta: (key) => getMeta(db, key, metaCode),
-    getFlightsByNumberAndDate: (v, s, e) => getFlightsByNumberAndDate(db, v, s, e, airlines),
-    getFlightsByNumberAndDateForAirline: (v, s, e, code) =>
-      getFlightsByNumberAndDate(db, v, s, e, code),
+    getMeta: (key) => (scope === "ALL" ? null : getMeta(db, key, scope)),
     getFlightAssignments: (v, s, e) => getFlightAssignments(db, v, s, e, airlines),
     getFleetPageData: () => getFleetPageData(db, airlines),
     getAirportDepartures: () => getAirportDepartures(db, airlines),
@@ -266,10 +269,11 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     cacheFlightRoute: (fn, o, d, dur) => cacheFlightRoute(db, fn, o, d, dur),
     getRoutesForFlightVariants: (v) => getRoutesForFlightVariants(db, v, airlines),
 
-    getStarlinkPlaneByTail: (tail) => getStarlinkPlaneByTail(db, tail),
-    getFleetEntryByTail: (tail) => getFleetEntryByTail(db, tail),
-    computeWifiConsensus: (tail) => computeWifiConsensus(db, tail),
-    bumpDiscoveryPriority: (tail) => bumpDiscoveryPriority(db, tail),
+    getStarlinkPlaneByTail: (tail) => getStarlinkPlaneByTail(db, tail, airlines),
+    getFleetEntryByTail: (tail) => getFleetEntryByTail(db, tail, airlines),
+    computeWifiConsensus: (tail, opts) =>
+      computeWifiConsensus(db, tail, { ...opts, airline: airlines }),
+    bumpDiscoveryPriority: (tail) => bumpDiscoveryPriority(db, tail, airlines),
 
     getQatarScheduleByFlight: (v, s, e) => getQatarScheduleByFlight(db, v, s, e),
     getQatarScheduleByRoute: (o, d, s, e) => getQatarScheduleByRoute(db, o, d, s, e),

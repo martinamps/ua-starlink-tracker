@@ -1,13 +1,18 @@
 // Shared types for the application
 
-export type SubfleetKey = "mainline" | "express" | "horizon" | "unknown";
+import type { SUBFLEET_KEY_LIST } from "./airlines/registry";
+
+// Derived from the registry's literal key list (which tests/vocabulary.test.ts
+// pins against the runtime-derived SUBFLEET_KEYS) — no third copy to drift.
+export type SubfleetKey = (typeof SUBFLEET_KEY_LIST)[number] | "unknown";
 
 export interface Aircraft {
   Aircraft: string;
   WiFi: string;
   sheet_gid: string;
   sheet_type: string;
-  DateFound: string;
+  /** NULL for type-settled rows — renderers must not interpolate it raw. */
+  DateFound: string | null;
   TailNumber: string;
   OperatedBy: string;
   fleet: SubfleetKey;
@@ -22,6 +27,7 @@ export interface Flight {
   departure_time: number;
   arrival_time: number;
   last_updated: number;
+  airline: string;
 }
 
 export interface FleetStats {
@@ -64,7 +70,8 @@ export interface ApiResponse {
   totalCount: number;
   starlinkPlanes: Aircraft[];
   lastUpdated: string;
-  fleetStats: FleetStats;
+  /** Per-airline subfleet split; null on the hub (no cross-airline aggregate). */
+  fleetStats: FleetStats | null;
   flightsByTail: Record<string, Flight[]>;
 }
 

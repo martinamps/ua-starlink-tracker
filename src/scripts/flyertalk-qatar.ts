@@ -14,18 +14,14 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { qatarTypeToStarlink } from "../airlines/registry";
-import {
-  addDiscoveredStarlinkPlane,
-  initializeDatabase,
-  upsertFleetAircraft,
-} from "../database/database";
+import { AIRLINES, qatarTypeToStarlink } from "../airlines/registry";
+import { initializeDatabase } from "../database/database";
 import { BROWSER_USER_AGENT } from "../utils/constants";
 import { info, error as logError } from "../utils/logger";
+import { applyFlyertalkTails } from "./flyertalk-common";
 
 const ALLOWED_HOST = "www.flyertalk.com";
 const THREAD_URL = `https://${ALLOWED_HOST}/forum/qatar-airways-privilege-club/2162391-qr-starlink-now-live.html`;
-const QR_TAIL_RE = /\bA7-[A-Z]{3}\b/g;
 const NEXT_RE = /rel="next"\s+href="([^"]+)"/i;
 const MAX_PAGES = 60;
 
@@ -56,7 +52,7 @@ export async function fetchQatarFlyertalkTails(): Promise<string[]> {
     if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
     // FlyerTalk serves windows-1252; treat as bytes and only keep ASCII matches.
     const html = new TextDecoder("latin1").decode(new Uint8Array(await res.arrayBuffer()));
-    for (const m of html.matchAll(QR_TAIL_RE)) seen.add(m[0]);
+    for (const m of html.matchAll(AIRLINES.QR.tailScanPattern)) seen.add(m[0]);
     url = nextPageUrl(html, url);
     pages++;
   }
@@ -65,34 +61,22 @@ export async function fetchQatarFlyertalkTails(): Promise<string[]> {
 }
 
 export function applyQatarFlyertalkTails(db: Database, tails: string[]): number {
-  if (tails.length === 0) return 0;
-
   const typeOf = db.query<{ aircraft_type: string | null }, [string]>(
     "SELECT aircraft_type FROM united_fleet WHERE tail_number = ?"
   );
 
-  let written = 0;
-  const tx = db.transaction((rows: string[]) => {
-    for (const tail of rows) {
+  return applyFlyertalkTails(db, tails, {
+    airline: "QR",
+    gid: "flyertalk_qr",
+    operator: "Qatar Airways",
+    gateLabel: "type-gated",
+    gate: (tail) => {
       const type = typeOf.get(tail)?.aircraft_type ?? null;
       // Forum posts are uncurated; only confirm tails the type rule already
       // says should be Starlink. 787s/freighters/A380s/unknown types skipped.
-      if (qatarTypeToStarlink(type ?? "") !== "confirmed") continue;
-      upsertFleetAircraft(db, tail, type, "flyertalk_qr", "mainline", "Qatar Airways", "QR", {
-        starlinkStatus: "confirmed",
-        verifiedWifi: "Starlink",
-      });
-      addDiscoveredStarlinkPlane(db, tail, type, "Starlink", "Qatar Airways", "mainline", {
-        sheetGid: "flyertalk_qr",
-        airline: "QR",
-      });
-      written++;
-    }
+      return qatarTypeToStarlink(type ?? "") === "confirmed" ? { aircraftType: type } : null;
+    },
   });
-  tx(tails);
-
-  info(`FlyerTalk QR sync: ${written}/${tails.length} tails written (type-gated)`);
-  return written;
 }
 
 async function syncQatarFlyertalk(): Promise<number> {

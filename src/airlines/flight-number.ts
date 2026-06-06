@@ -5,18 +5,15 @@
 
 import { type AirlineConfig, enabledAirlines } from "./registry";
 
-/**
- * Detect which airline a flight number belongs to via longest-prefix match
- * across all enabled airlines' carrierPrefixes. Returns null if none match.
- */
-export function detectAirline(
+function detectByPrefixes(
   flightNumber: string,
-  airlines: readonly AirlineConfig[] = enabledAirlines()
+  airlines: readonly AirlineConfig[],
+  prefixesOf: (cfg: AirlineConfig) => string[]
 ): AirlineConfig | null {
   const fn = flightNumber.trim().toUpperCase();
   let best: { cfg: AirlineConfig; len: number } | null = null;
   for (const cfg of airlines) {
-    for (const prefix of [cfg.iata, ...cfg.carrierPrefixes]) {
+    for (const prefix of prefixesOf(cfg)) {
       if (
         fn.startsWith(prefix) &&
         /^\d+$/.test(fn.slice(prefix.length)) &&
@@ -27,6 +24,30 @@ export function detectAirline(
     }
   }
   return best?.cfg ?? null;
+}
+
+/**
+ * Detect which airline a flight number belongs to via longest-prefix match
+ * across all enabled airlines' carrierPrefixes. Returns null if none match.
+ */
+export function detectAirline(
+  flightNumber: string,
+  airlines: readonly AirlineConfig[] = enabledAirlines()
+): AirlineConfig | null {
+  return detectByPrefixes(flightNumber, airlines, (cfg) => [cfg.iata, ...cfg.carrierPrefixes]);
+}
+
+/**
+ * Host-less detection (hub APIs): only the airline's own marketing IATA/ICAO
+ * codes count. Operating-carrier prefixes (OO/SKW/YX…) fly for multiple
+ * marketing carriers, so matching them would silently attribute a shared
+ * regional flight to one airline — fail closed instead.
+ */
+export function detectMarketingCarrier(
+  flightNumber: string,
+  airlines: readonly AirlineConfig[] = enabledAirlines()
+): AirlineConfig | null {
+  return detectByPrefixes(flightNumber, airlines, (cfg) => [cfg.iata, cfg.icao]);
 }
 
 function iataExact(cfg: AirlineConfig): RegExp {
