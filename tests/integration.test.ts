@@ -31,7 +31,9 @@ import {
   getFleetStats,
   getHubStats,
   getRecentInstalls,
+  getRouteStarlinkSchedule,
   getStarlinkPlanes,
+  isBulkGid,
 } from "../src/database/database";
 import { computePrecision } from "../src/scripts/precision-backtest";
 import { planItinerary, predictFlight, predictRoute } from "../src/scripts/starlink-predictor";
@@ -951,6 +953,96 @@ describe("getFleetPageData", () => {
     for (const t of d.allTails) {
       expect(valid.has(t.provider)).toBe(true);
     }
+  });
+
+  test("installPace: 10 filled weeks, homepage-consistent groups, sane projection fields", () => {
+    const d = getFleetPageData(db, "UA");
+    const p = d.installPace;
+    expect(p).not.toBeNull();
+    if (!p) return;
+    expect(p.weeks.length).toBe(10);
+    for (const w of p.weeks) {
+      expect(w.weekStart).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(w.installs).toBeGreaterThanOrEqual(0);
+    }
+    for (let i = 1; i < p.weeks.length; i++) {
+      expect(p.weeks[i].weekStart > p.weeks[i - 1].weekStart).toBe(true);
+    }
+    // Groups must agree with the homepage rings (getFleetStats), not united_fleet.
+    const stats = getFleetStats(db, "UA");
+    expect(p.express).toEqual({ starlink: stats.express.starlink, total: stats.express.total });
+    expect(p.mainline).toEqual({ starlink: stats.mainline.starlink, total: stats.mainline.total });
+    expect(p.remainingMainline).toBe(Math.max(0, p.mainline.total - p.mainline.starlink));
+    expect(p.mainlinePaceWk).toBeGreaterThanOrEqual(0);
+    if (p.projectedFinishMonth !== null) {
+      expect(p.projectedFinishMonth).toMatch(/^(early|mid|late) \d{4}$/);
+      // A pace that survives the >=0.5/wk gate can't project beyond ~3 years out.
+      const year = Number(p.projectedFinishMonth.split(" ")[1]);
+      expect(year).toBeLessThanOrEqual(new Date().getUTCFullYear() + 4);
+    }
+    // Bulk writers (seed / type-rule / flyertalk) must be excluded — their
+    // shared DateFound would render as a fabricated install spike. Pin against
+    // isBulkGid, the canonical JS mirror of INSTALL_FILTER.
+    const recent = db
+      .query(
+        `SELECT sheet_gid FROM starlink_planes
+         WHERE airline='UA' AND DateFound >= date('now', '-77 days')`
+      )
+      .all() as Array<{ sheet_gid: string | null }>;
+    const nonBulk = recent.filter((r) => !isBulkGid(r.sheet_gid)).length;
+    const totalInstalls = p.weeks.reduce((s, w) => s + w.installs, 0);
+    expect(totalInstalls).toBeLessThanOrEqual(nonBulk);
+  });
+
+  test("installPace: hub scope gets null (no cross-airline projection)", () => {
+    const d = getFleetPageData(db, undefined);
+    expect(d.installPace).toBeNull();
+  });
+});
+
+describe("getRouteStarlinkSchedule", () => {
+  test("groups confirmed-Starlink legs by route with consistent counts", () => {
+    // Anchor the window at the snapshot's oldest departure so the assertion
+    // exercises real rows regardless of how stale the snapshot is.
+    const oldest = db
+      .query("SELECT MIN(departure_time) AS t FROM upcoming_flights WHERE airline='UA'")
+      .get() as { t: number | null };
+    const s = getRouteStarlinkSchedule(db, "UA", oldest.t ?? undefined);
+    expect(typeof s.windowLabel).toBe("string");
+    expect(Array.isArray(s.rows)).toBe(true);
+    expect(s.rows.length).toBeLessThanOrEqual(60);
+    // The headline total covers ALL routes, so it can never be less than the
+    // sum of the displayed (LIMITed) rows.
+    const displayedSum = s.rows.reduce((a, r) => a + r.departures, 0);
+    expect(s.totalDepartures).toBeGreaterThanOrEqual(displayedSum);
+    const windowEnd = (oldest.t ?? 0) + 48 * 3600;
+    for (const r of s.rows) {
+      expect(r.origin).toMatch(/^[A-Z0-9]{3,4}$/);
+      expect(r.destination).toMatch(/^[A-Z0-9]{3,4}$/);
+      expect(r.departures).toBeGreaterThan(0);
+      expect(r.flight_numbers).toBeGreaterThan(0);
+      expect(r.flight_numbers).toBeLessThanOrEqual(r.departures);
+      expect(r.next_departure).toBeGreaterThanOrEqual(oldest.t ?? 0);
+      // 48h window must actually be enforced in SQL.
+      expect(r.next_departure).toBeLessThan(windowEnd);
+    }
+    for (let i = 1; i < s.rows.length; i++) {
+      expect(s.rows[i].departures).toBeLessThanOrEqual(s.rows[i - 1].departures);
+    }
+  });
+
+  test("/routes renders on tenant sites and 404s where the feature is off", async () => {
+    const app = createApp(db);
+    const ua = await app.dispatch(
+      new Request("http://x/routes", { headers: { Host: "unitedstarlinktracker.com" } })
+    );
+    expect(ua.status).toBe(200);
+    expect(await ua.text()).toContain("Starlink");
+
+    const hub = await app.dispatch(
+      new Request("http://x/routes", { headers: { Host: "airlinestarlinktracker.com" } })
+    );
+    expect(hub.status).toBe(404);
   });
 });
 

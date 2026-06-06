@@ -17,6 +17,7 @@ import type {
   Flight,
   PerAirlineStat,
   RecentInstall,
+  RouteSchedule,
 } from "../types";
 import {
   type ConfirmedEdge,
@@ -58,6 +59,7 @@ import {
   getRecentInstalls,
   getRouteFlights,
   getRouteGraphEdges,
+  getRouteStarlinkSchedule,
   getRoutesForFlightVariants,
   getStarlinkPlaneByTail,
   getStarlinkPlanes,
@@ -96,6 +98,7 @@ export interface ScopedReader {
   ): FlightAssignmentRow[];
   getFleetPageData(): FleetPageData;
   getAirportDepartures(): AirportDepartures;
+  getRouteStarlinkSchedule(): RouteSchedule;
   getFleetDiscoveryStats(): FleetDiscoveryStats;
   getConfirmedFleetTails(): ReturnType<typeof getConfirmedFleetTails>;
   getPendingFleetTails(): ReturnType<typeof getPendingFleetTails>;
@@ -245,6 +248,7 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     getFlightAssignments: (v, s, e) => getFlightAssignments(db, v, s, e, airlines),
     getFleetPageData: () => getFleetPageData(db, airlines),
     getAirportDepartures: () => getAirportDepartures(db, airlines),
+    getRouteStarlinkSchedule: () => getRouteStarlinkSchedule(db, airlines),
     getFleetDiscoveryStats: () => getFleetDiscoveryStats(db, airlines),
     getConfirmedFleetTails: () => getConfirmedFleetTails(db, airlines),
     getPendingFleetTails: () => getPendingFleetTails(db, airlines),

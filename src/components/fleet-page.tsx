@@ -259,6 +259,109 @@ function HangarFloor({
   );
 }
 
+function InstallPaceSection({ pace }: { pace: FleetPageData["installPace"] }) {
+  if (!pace) return null;
+  const totalRecent = pace.weeks.reduce((s, w) => s + w.installs, 0);
+  if (totalRecent === 0 && pace.express.starlink === 0 && pace.mainline.starlink === 0) return null;
+  const peak = Math.max(1, ...pace.weeks.map((w) => w.installs));
+  const currentWeekStart = pace.weeks[pace.weeks.length - 1]?.weekStart;
+  const monthDay = (iso: string) =>
+    new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      timeZone: "UTC",
+    });
+  // Labels mirror the homepage rings (getFleetStats buckets), which fold every
+  // regional subfleet into "express" — keep them generic, not type-specific.
+  // A missing fleet-total meta key must degrade to a count, not hide equipped
+  // aircraft the homepage rings and the tail list on this page both show.
+  const groups = [
+    { label: "Express & regional", g: pace.express },
+    { label: "Mainline", g: pace.mainline },
+  ].filter((x) => x.g.total > 0 || x.g.starlink > 0);
+
+  return (
+    <section className={SECTION}>
+      <div className="mb-4">
+        <h2 className="font-display text-xl font-semibold text-primary mb-1">Install Pace</h2>
+        <p className="text-xs text-muted">
+          Newly Starlink-equipped aircraft per week, by first appearance in the tracked fleet data —
+          installs typically surface within a few days. {totalRecent} added in the last 10 weeks.
+        </p>
+      </div>
+      <div className="grid md:grid-cols-2 gap-4">
+        <div className={PANEL}>
+          <div className={EYEBROW}>Installs per week</div>
+          <div className="flex items-end gap-1.5 h-28">
+            {pace.weeks.map((w) => (
+              <div key={w.weekStart} className="flex-1 flex flex-col items-center gap-1">
+                <span className="font-mono text-[10px] text-secondary">
+                  {w.installs > 0 ? w.installs : ""}
+                </span>
+                <div
+                  className={`w-full bg-[var(--color-accent)] rounded-t ${
+                    w.weekStart === currentWeekStart ? "opacity-40" : "opacity-80"
+                  }`}
+                  style={{ height: `${(w.installs / peak) * 80}px` }}
+                />
+              </div>
+            ))}
+          </div>
+          <div className="flex justify-between font-mono text-[9px] text-muted mt-1">
+            <span>{monthDay(pace.weeks[0].weekStart)}</span>
+            <span>
+              {monthDay(pace.weeks[pace.weeks.length - 1].weekStart)} (this week, partial)
+            </span>
+          </div>
+        </div>
+        <div className={PANEL}>
+          <div className={EYEBROW}>Rollout progress</div>
+          <div className="space-y-4">
+            {groups.map(({ label, g }) => {
+              const pct = g.total > 0 ? Math.round((g.starlink / g.total) * 100) : null;
+              return (
+                <div key={label}>
+                  <div className="flex items-baseline justify-between mb-1">
+                    <span className="font-display text-sm font-semibold text-secondary">
+                      {label}
+                    </span>
+                    <span className="font-mono text-[10px] text-muted">
+                      {pct !== null ? (
+                        <>
+                          {g.starlink}/{g.total} <span className="text-accent">{pct}%</span>
+                        </>
+                      ) : (
+                        <>{g.starlink} equipped</>
+                      )}
+                    </span>
+                  </div>
+                  {pct !== null && (
+                    <div className="h-2 bg-surface-elevated rounded overflow-hidden">
+                      <div
+                        className="h-full bg-[var(--color-accent)]"
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          {pace.projectedFinishMonth && (
+            <p className="text-[11px] text-muted mt-4 leading-snug">
+              At the recent mainline pace of ~{pace.mainlinePaceWk}/week, the remaining{" "}
+              {pace.remainingMainline} mainline aircraft would wrap up around{" "}
+              <span className="text-accent">{pace.projectedFinishMonth}</span>. Straight-line
+              estimate from the last six weeks of tracked installs — rates change as hangar lines
+              open and close.
+            </p>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function CarrierLeaderboard({ carriers }: { carriers: FleetPageData["carriers"] }) {
   if (carriers.length === 0) return null;
   const max = Math.max(...carriers.map((c) => c.total));
@@ -482,6 +585,7 @@ export default function FleetPage({ data, site }: FleetPageProps) {
       </header>
 
       <LivePulse pulse={data.pulse} />
+      <InstallPaceSection pace={data.installPace} />
       <HangarFloor
         families={data.families}
         totalFleet={data.totalFleet}

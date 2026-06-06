@@ -32,7 +32,11 @@ import type {
   FleetStats,
   FleetTail,
   Flight,
+  InstallPace,
+  InstallPaceWeek,
   RecentInstall,
+  RouteSchedule,
+  RouteScheduleRow,
   StarlinkStatus,
   WifiProvider,
 } from "../types";
@@ -2985,28 +2989,158 @@ export function getFleetPageData(db: Database, airline?: AirlineFilter): FleetPa
   return data;
 }
 
-export function getAirportDepartures(db: Database, airline?: AirlineFilter): AirportDepartures {
-  const now = Math.floor(Date.now() / 1000);
+// One definition of "departure on a Starlink-equipped aircraft, next 48h":
+// the same equipped predicate /api/check-flight uses, with a real upper bound.
+// The homepage airports panel and /routes both render from this base, so the
+// two surfaces can never disagree under the same window label.
+const DEPARTURE_WINDOW_HOURS = 48;
+const EQUIPPED_DEPARTURES_SQL = `
+     FROM upcoming_flights uf
+     INNER JOIN starlink_planes sp ON uf.tail_number = sp.TailNumber
+     WHERE ${equippedFilter("sp")}
+       AND uf.departure_time >= ? AND uf.departure_time < ?`;
+
+export function getAirportDepartures(
+  db: Database,
+  airline?: AirlineFilter,
+  nowSec = Math.floor(Date.now() / 1000)
+): AirportDepartures {
   try {
-    db.query("DELETE FROM departure_log WHERE departed_at < ?").run(now - 30 * 86400);
+    db.query("DELETE FROM departure_log WHERE departed_at < ?").run(nowSec - 30 * 86400);
   } catch {
     // readonly DB (tests/snapshots) — trim is best-effort housekeeping
   }
 
   const q = withAirline(
-    `SELECT uf.departure_airport AS airport, COUNT(*) AS count
-     FROM upcoming_flights uf
-     JOIN united_fleet f ON f.tail_number = uf.tail_number
-     WHERE f.starlink_status = 'confirmed' AND uf.departure_time >= ?`,
+    `SELECT uf.departure_airport AS airport,
+            COUNT(DISTINCT uf.flight_number || ':' || uf.departure_time) AS count${EQUIPPED_DEPARTURES_SQL}`,
     airline,
     "uf",
-    [now]
+    [nowSec, nowSec + DEPARTURE_WINDOW_HOURS * 3600]
   );
   const rows = db
     .query(`${q.sql} GROUP BY uf.departure_airport ORDER BY count DESC LIMIT 30`)
     .all(...q.params) as Array<{ airport: string; count: number }>;
 
-  return { rows, windowLabel: "next 48 hours" };
+  return { rows, windowLabel: `next ${DEPARTURE_WINDOW_HOURS} hours` };
+}
+
+export function getRouteStarlinkSchedule(
+  db: Database,
+  airline?: AirlineFilter,
+  nowSec = Math.floor(Date.now() / 1000)
+): RouteSchedule {
+  const windowEnd = nowSec + DEPARTURE_WINDOW_HOURS * 3600;
+  // The DISTINCT pair count dedupes tail-swap leftovers (multiple rows for one
+  // physical departure).
+  const baseSql = EQUIPPED_DEPARTURES_SQL;
+  const q = withAirline(
+    `SELECT uf.departure_airport AS origin, uf.arrival_airport AS destination,
+            COUNT(DISTINCT uf.flight_number || ':' || uf.departure_time) AS departures,
+            COUNT(DISTINCT uf.flight_number) AS flight_numbers,
+            MIN(uf.departure_time) AS next_departure${baseSql}`,
+    airline,
+    "uf",
+    [nowSec, windowEnd]
+  );
+  const rows = db
+    .query(
+      `${q.sql} GROUP BY uf.departure_airport, uf.arrival_airport
+       ORDER BY departures DESC, flight_numbers DESC, origin ASC LIMIT 60`
+    )
+    .all(...q.params) as RouteScheduleRow[];
+
+  // Headline total uses the same predicate without the LIMIT, so the header
+  // never disagrees with what a user could count by paging the rows.
+  const totalQ = withAirline(
+    `SELECT COUNT(DISTINCT uf.flight_number || ':' || uf.departure_time) AS n${baseSql}`,
+    airline,
+    "uf",
+    [nowSec, windowEnd]
+  );
+  const totalDepartures = (db.query(totalQ.sql).get(...totalQ.params) as { n: number }).n;
+
+  return { rows, totalDepartures, windowLabel: `next ${DEPARTURE_WINDOW_HOURS} hours` };
+}
+
+function computeInstallPace(
+  db: Database,
+  airline: AirlineFilter | undefined,
+  fleetStats: FleetStats
+): InstallPace {
+  // Same filters as getRecentInstalls — INSTALL_FILTER excludes every bulk
+  // writer (seed, type_deterministic, flyertalk) whose shared DateFound would
+  // render as a one-week "install spike".
+  const q = withAirline(
+    `SELECT DateFound AS d, fleet FROM starlink_planes
+     WHERE DateFound >= date('now', '-77 days')
+       AND ${equippedFilter("starlink_planes")}
+       AND ${INSTALL_FILTER}`,
+    airline
+  );
+  const found = db.query(q.sql).all(...q.params) as Array<{ d: string; fleet: string | null }>;
+
+  // Bucket by week starting Monday, then fill the trailing 10 weeks so
+  // zero-install weeks are visible instead of silently skipped.
+  const weekStartOf = (date: Date): string => {
+    const day = (date.getUTCDay() + 6) % 7;
+    const monday = new Date(date.getTime() - day * 86400_000);
+    return monday.toISOString().slice(0, 10);
+  };
+  const byWeek = new Map<string, number>();
+  const mainlineByWeek = new Map<string, number>();
+  for (const r of found) {
+    const dt = new Date(`${r.d}T00:00:00Z`);
+    if (Number.isNaN(dt.getTime())) continue;
+    const wk = weekStartOf(dt);
+    byWeek.set(wk, (byWeek.get(wk) || 0) + 1);
+    if (normalizeFleet(r.fleet) === "mainline")
+      mainlineByWeek.set(wk, (mainlineByWeek.get(wk) || 0) + 1);
+  }
+
+  const currentWeek = weekStartOf(new Date());
+  const weeks: InstallPaceWeek[] = [];
+  for (let i = 9; i >= 0; i--) {
+    const wk = weekStartOf(new Date(Date.now() - i * 7 * 86400_000));
+    weeks.push({ weekStart: wk, installs: byWeek.get(wk) || 0 });
+  }
+
+  // Pace: average of the 6 most recent *complete* weeks of mainline installs.
+  const fullWeeks = weeks.filter((w) => w.weekStart !== currentWeek).slice(-6);
+  const rawPace =
+    fullWeeks.length > 0
+      ? fullWeeks.reduce((s, w) => s + (mainlineByWeek.get(w.weekStart) || 0), 0) / fullWeeks.length
+      : 0;
+  // Round before projecting so a reader recomputing from the displayed pace
+  // lands on the same answer.
+  const mainlinePaceWk = Math.round(rawPace * 10) / 10;
+
+  // express/mainline mirror getFleetStats — the same numbers the homepage rings
+  // show, so the two pages can never disagree.
+  const express = { starlink: fleetStats.express.starlink, total: fleetStats.express.total };
+  const mainline = { starlink: fleetStats.mainline.starlink, total: fleetStats.mainline.total };
+
+  const remainingMainline = Math.max(0, mainline.total - mainline.starlink);
+  let projectedFinishMonth: string | null = null;
+  if (mainlinePaceWk >= 0.5 && remainingMainline > 0) {
+    const weeksLeft = remainingMainline / mainlinePaceWk;
+    // Beyond ~3 years a straight-line extrapolation is noise, not a projection.
+    if (weeksLeft <= 156) {
+      const finish = new Date(Date.now() + weeksLeft * 7 * 86400_000);
+      const m = finish.getUTCMonth();
+      const season = m <= 3 ? "early" : m <= 7 ? "mid" : "late";
+      projectedFinishMonth = `${season} ${finish.getUTCFullYear()}`;
+    }
+  }
+
+  return {
+    weeks,
+    express,
+    mainline,
+    mainlinePaceWk,
+    remainingMainline,
+    projectedFinishMonth,
+  };
 }
 
 function computeFleetPageData(db: Database, airline?: AirlineFilter): FleetPageData {
@@ -3092,6 +3226,14 @@ function computeFleetPageData(db: Database, airline?: AirlineFilter): FleetPageD
     .sort((a, b) => b.pct - a.pct);
 
   const pulse = computePulse(db, airline);
+  // Install pace is a single-airline narrative (its projection extrapolates one
+  // airline's retrofit program); the hub's mixed fleet gets no pace section.
+  // Tenant readers pass a one-element array, direct callers pass a string code.
+  const soleAirline =
+    typeof airline === "string" ? airline : airline?.length === 1 ? airline[0] : null;
+  const installPace = soleAirline
+    ? computeInstallPace(db, airline, getFleetStats(db, soleAirline))
+    : null;
 
   return {
     pulse,
@@ -3101,6 +3243,7 @@ function computeFleetPageData(db: Database, airline?: AirlineFilter): FleetPageD
     allTails,
     totalFleet: rows.length,
     totalStarlink,
+    installPace,
   };
 }
 

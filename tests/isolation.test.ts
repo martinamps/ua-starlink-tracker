@@ -111,6 +111,7 @@ describe("og:image is tenant-branded", () => {
 const ENDPOINTS = [
   "/",
   "/fleet",
+  "/routes",
   "/check-flight",
   "/route-planner",
   "/api/data",

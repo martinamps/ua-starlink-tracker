@@ -69,6 +69,7 @@ export interface SiteFeatures {
   checkFlightPage: boolean;
   routePlannerPage: boolean;
   fleetPage: boolean;
+  routesPage: boolean;
   mcpPage: boolean;
   chromeExtension: boolean;
 }
@@ -681,6 +682,7 @@ const AIRLINE_SITE_FEATURES: SiteFeatures = {
   checkFlightPage: true,
   routePlannerPage: true,
   fleetPage: true,
+  routesPage: true,
   mcpPage: false,
   chromeExtension: false,
 };
@@ -721,6 +723,7 @@ export const SITES: Record<string, SiteConfig> = {
       checkFlightPage: false,
       routePlannerPage: false,
       fleetPage: true,
+      routesPage: false,
       mcpPage: false,
       chromeExtension: false,
     },
@@ -765,10 +768,10 @@ export const SITES: Record<string, SiteConfig> = {
       dataDomain: AIRLINES.QR.brand.analyticsDomain,
       eventApiUrl: DEFAULT_ANALYTICS_EVENT_API,
     },
-    // Route planner reads flight_routes/departure_log, both empty for QR until
-    // we ingest historical assignments. Hide the page rather than ship a
-    // permanently-empty UX.
-    features: { ...AIRLINE_SITE_FEATURES, routePlannerPage: false },
+    // Route planner reads flight_routes/departure_log and the routes page reads
+    // upcoming_flights joined to starlink_planes — all empty for QR (schedule
+    // lives in qatar_schedule). Hide both rather than ship a permanently-empty UX.
+    features: { ...AIRLINE_SITE_FEATURES, routePlannerPage: false, routesPage: false },
   },
 };
 

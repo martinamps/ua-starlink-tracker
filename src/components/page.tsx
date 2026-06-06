@@ -313,7 +313,12 @@ export default function Page({
     ...(features.routePlannerPage
       ? [{ href: "/route-planner", label: "Route Planner", badge: "" }]
       : []),
-    ...(features.fleetPage ? [{ href: "/fleet", label: "Fleet Rollout", badge: "NEW" }] : []),
+    // The NEW badge hands off from Fleet Rollout to Live Routes — but only on
+    // sites that have the routes page; elsewhere Fleet Rollout keeps it.
+    ...(features.fleetPage
+      ? [{ href: "/fleet", label: "Fleet Rollout", badge: features.routesPage ? "" : "NEW" }]
+      : []),
+    ...(features.routesPage ? [{ href: "/routes", label: "Live Routes", badge: "NEW" }] : []),
     ...(features.mcpPage ? [{ href: "/mcp", label: "Tools & MCP", badge: "NEW" }] : []),
   ];
   const subfleetCounts = Object.fromEntries(
