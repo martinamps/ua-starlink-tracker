@@ -5,16 +5,21 @@
  * host-resolver-rules (so the real Host header reaches dispatch), and reports
  * tail counts per host so you can see UA/HA/hub isolation at a glance.
  *
- *   bun scripts/preview-hosts.ts                       # /tmp/ua-test.sqlite
+ *   bun scripts/preview-hosts.ts                       # test snapshot (tests/helpers.ts TEST_DB)
  *   bun scripts/preview-hosts.ts --db=./plane-data.sqlite --path=/fleet
  */
 
 import { spawn } from "node:child_process";
+import { join } from "node:path";
 import { type Browser, chromium } from "playwright";
 import { SITES } from "../src/airlines/registry";
 
+// Same derivation as tests/helpers.ts TEST_DB (canonical); inlined so this
+// script has no tests/ dependency.
+const TEST_DB = join(import.meta.dir, "..", ".test-snapshot.sqlite");
+
 const args = process.argv.slice(2);
-const dbPath = args.find((a) => a.startsWith("--db="))?.slice(5) ?? "/tmp/ua-test.sqlite";
+const dbPath = args.find((a) => a.startsWith("--db="))?.slice(5) ?? TEST_DB;
 const urlPath = args.find((a) => a.startsWith("--path="))?.slice(7) ?? "/";
 const port = 39920;
 

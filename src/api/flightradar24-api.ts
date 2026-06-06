@@ -5,13 +5,22 @@
 
 import { COUNTERS, metrics } from "../observability";
 import type { Flight } from "../types";
-import { error, info, warn } from "../utils/logger";
+import { info, warn } from "../utils/logger";
 import { fr24Fetch } from "./fr24-browser-transport";
 
 type FlightUpdate = Pick<
   Flight,
   "flight_number" | "departure_airport" | "arrival_airport" | "departure_time" | "arrival_time"
 >;
+
+/** FR24 transport/HTTP/parse failure — never "no data published". Callers
+ * catch exactly this so DB errors can't masquerade as vendor outages. */
+export class Fr24UnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "Fr24UnavailableError";
+  }
+}
 
 interface FR24Flight {
   identification: {
@@ -315,7 +324,8 @@ export class FlightRadar24API {
    * Get individual flight assignments (tail numbers) for a flight number around
    * a target date. Unlike getFlightRoutes this does NOT dedupe by route — if
    * UA671 flies JAX→DEN then DEN→SBA on the same day, both are returned.
-   * Best-effort: returns [] on any failure.
+   * Throws Fr24UnavailableError after retries are exhausted: an FR24 outage
+   * must stay distinguishable from "no assignment published" (= empty array).
    */
   async getFlightAssignments(
     flightNumber: string,
@@ -346,13 +356,14 @@ export class FlightRadar24API {
             throw new Error(`FR24 assignments error: ${response.status}`);
           }
 
+          // Parse before counting success: a 200 Cloudflare interstitial is
+          // still a vendor failure.
+          const data: FR24Response = JSON.parse(response.body);
           metrics.increment(COUNTERS.VENDOR_REQUEST, {
             vendor: "fr24",
             type: "assignments",
             status: "success",
           });
-
-          const data: FR24Response = JSON.parse(response.body);
           const flights = data.result?.response?.data || [];
 
           const out = [];
@@ -379,37 +390,8 @@ export class FlightRadar24API {
         3,
         "assignments"
       );
-    } catch {
-      return [];
+    } catch (err) {
+      throw new Fr24UnavailableError(err instanceof Error ? err.message : String(err));
     }
-  }
-
-  /**
-   * Get flight data for multiple aircraft in batch
-   * More efficient than calling getUpcomingFlights for each one
-   */
-  async getFlightsForMultipleAircraft(
-    tailNumbers: string[],
-    onProgress?: (current: number, total: number, tailNumber: string) => void
-  ): Promise<Map<string, FlightUpdate[]>> {
-    const results = new Map<string, FlightUpdate[]>();
-
-    for (let i = 0; i < tailNumbers.length; i++) {
-      const tailNumber = tailNumbers[i];
-
-      if (onProgress) {
-        onProgress(i + 1, tailNumbers.length, tailNumber);
-      }
-
-      try {
-        const flights = await this.getUpcomingFlights(tailNumber);
-        results.set(tailNumber, flights);
-      } catch (err) {
-        error(`Error fetching flights for ${tailNumber}`, err);
-        results.set(tailNumber, []);
-      }
-    }
-
-    return results;
   }
 }

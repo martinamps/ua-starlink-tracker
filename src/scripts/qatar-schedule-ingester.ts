@@ -22,6 +22,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { AIRLINES } from "../airlines/registry";
 import {
   type QatarFlight,
   fetchByRoute,
@@ -32,9 +33,12 @@ import {
   initializeDatabase,
   pruneQatarScheduleBefore,
   setMeta,
+  stampLastUpdated,
   upsertQatarSchedule,
 } from "../database/database";
 import { COUNTERS, metrics, normalizeAirlineTag, withSpan } from "../observability";
+import { localDateISO } from "../utils/airport-tz";
+import { type JobHandle, type JobRunContext, startJob } from "../utils/job-runner";
 import { info, error as logError } from "../utils/logger";
 
 const INTERVAL_MS = 60 * 60 * 1000; // 1 hour
@@ -191,12 +195,7 @@ const ROUTES: Array<[string, string]> = [
 
 /** YYYY-MM-DD in DOH local time (UTC+3, no DST) for an epoch-ms instant. */
 function dohDateISO(ms: number): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Qatar",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date(ms));
+  return localDateISO(Math.floor(ms / 1000), "Asia/Qatar");
 }
 
 function flightToRow(f: QatarFlight, scheduledDate: string) {
@@ -221,28 +220,46 @@ interface IngestStats {
   flights_upserted: number;
   by_verdict: { Starlink: number; Rolling: number; None: number };
   pruned: number;
+  outcome: "success" | "partial" | "error" | "abandoned";
 }
 
-export async function ingestQatarSchedule(db: Database): Promise<IngestStats> {
+export async function ingestQatarSchedule(
+  db: Database,
+  fetchRoute: typeof fetchByRoute = fetchByRoute,
+  ctx?: JobRunContext
+): Promise<IngestStats> {
   const stats: IngestStats = {
     routes_attempted: 0,
     routes_failed: 0,
     flights_upserted: 0,
     by_verdict: { Starlink: 0, Rolling: 0, None: 0 },
     pruned: 0,
+    outcome: "success",
   };
 
   const now = Date.now();
   const dates = Array.from({ length: FORWARD_DAYS }, (_, i) => dohDateISO(now + i * 86400_000));
+  const fetchedRoutes = new Map<string, [string, string]>();
 
   for (const [origin, destination] of ROUTES) {
     for (const date of dates) {
       stats.routes_attempted++;
-      const flights = await fetchByRoute(origin, destination, date);
+      const flights = await fetchRoute(origin, destination, date);
+      // A run the job runner has abandoned (stuck escape) settles its fetches
+      // late — its upserts/prune/stamp would regress the successor's schedule
+      // under a fresh lastUpdated. Log and discard before any further write.
+      if (ctx && !ctx.isCurrent()) {
+        logError(
+          "qatar-schedule-ingester: run was abandoned mid-fetch; discarding results, no writes"
+        );
+        stats.outcome = "abandoned";
+        return stats;
+      }
       if (flights === null) {
         stats.routes_failed++;
         continue;
       }
+      fetchedRoutes.set(`${origin}-${destination}`, [origin, destination]);
       const tx = db.transaction(() => {
         for (const f of flights) {
           if (!f.flightNumber || !f.scheduledDeparture) continue;
@@ -259,12 +276,38 @@ export async function ingestQatarSchedule(db: Database): Promise<IngestStats> {
     }
   }
 
-  // Drop schedule rows whose departure has passed by >2h. Keeps the table at
-  // ~few-thousand rows and drops historical noise that /api/check-flight
-  // shouldn't return anyway.
-  stats.pruned = pruneQatarScheduleBefore(db, Math.floor(now / 1000) - 7200);
+  stats.outcome =
+    stats.routes_failed === 0
+      ? "success"
+      : stats.routes_failed === stats.routes_attempted
+        ? "error"
+        : "partial";
 
-  setMeta(db, "lastUpdated", new Date().toISOString(), "QR");
+  // Final gate before the destructive phase — abandonment can also land
+  // during the inter-route delays after the last fetch resolved.
+  if (ctx && !ctx.isCurrent()) {
+    logError("qatar-schedule-ingester: run was abandoned; skipping prune + meta stamp");
+    stats.outcome = "abandoned";
+    return stats;
+  }
+
+  // Total fetch failure = an outage, not an observation: no prune (would
+  // drain the table) and no lastUpdated stamp (would mask staleness).
+  if (stats.outcome === "error") {
+    logError(
+      `qatar-schedule-ingester: all ${stats.routes_attempted} route fetches failed; leaving qatar_schedule and meta untouched`
+    );
+    return stats;
+  }
+
+  // Drop schedule rows whose departure has passed by >2h, but only on routes
+  // we successfully fetched this run — a failing route keeps its stale rows
+  // instead of draining toward empty during a partial outage.
+  stats.pruned = pruneQatarScheduleBefore(db, Math.floor(now / 1000) - 7200, [
+    ...fetchedRoutes.values(),
+  ]);
+
+  stampLastUpdated(db, "QR", "schedule-ingester");
   setMeta(db, "scheduleFlights", stats.flights_upserted, "QR");
   setMeta(db, "scheduleStarlink", stats.by_verdict.Starlink, "QR");
   setMeta(db, "scheduleRolling", stats.by_verdict.Rolling, "QR");
@@ -273,11 +316,15 @@ export async function ingestQatarSchedule(db: Database): Promise<IngestStats> {
   return stats;
 }
 
-export function startQatarScheduleIngester(): void {
+export function startQatarScheduleIngester(): JobHandle | undefined {
+  if (!AIRLINES.QR.enabled) {
+    info("qatar-schedule-ingester: QR disabled in registry; not starting");
+    return undefined;
+  }
   info(
     `qatar-schedule-ingester: starting (${INTERVAL_MS / 60_000}min interval, ${ROUTES.length} routes × ${FORWARD_DAYS} days, +${STARTUP_DELAY_MS / 1000}s startup delay)`
   );
-  const tick = () =>
+  const tick = (ctx: JobRunContext) =>
     withSpan(
       "qatar_schedule.ingest",
       async (span) => {
@@ -285,14 +332,14 @@ export function startQatarScheduleIngester(): void {
         try {
           const db = initializeDatabase();
           try {
-            const stats = await ingestQatarSchedule(db);
+            const stats = await ingestQatarSchedule(db, undefined, ctx);
             span.setTag("flights_upserted", stats.flights_upserted);
             span.setTag("routes_failed", stats.routes_failed);
             span.setTag("pruned", stats.pruned);
             metrics.increment(COUNTERS.VENDOR_REQUEST, {
               vendor: "qatar",
               type: "ingest_run",
-              status: stats.routes_failed === 0 ? "success" : "partial",
+              status: stats.outcome,
               airline: normalizeAirlineTag("QR"),
             });
             info(
@@ -310,8 +357,15 @@ export function startQatarScheduleIngester(): void {
       },
       { "job.type": "background" }
     );
-  setTimeout(tick, STARTUP_DELAY_MS);
-  setInterval(tick, INTERVAL_MS);
+  return startJob({
+    name: "qatar_schedule_ingester",
+    intervalMs: INTERVAL_MS,
+    initialDelayMs: STARTUP_DELAY_MS,
+    // A full-outage run (280 fetches all timing out) can legitimately exceed
+    // the hourly interval — don't declare it stuck until it misses two ticks.
+    stuckTimeoutMs: 2 * INTERVAL_MS,
+    run: tick,
+  });
 }
 
 if (import.meta.main) {

@@ -20,10 +20,11 @@
 
 import { Database } from "bun:sqlite";
 import { writeFileSync } from "node:fs";
+import { AIRLINES } from "../airlines/registry";
 import { FlightRadar24API } from "../api/flightradar24-api";
-import { getShipToTailMap } from "../database/database";
 import { DB_PATH, extractFlightNumber, unitedLookupDate } from "../utils/constants";
 import { checkStarlinkStatusSubprocess } from "./united-starlink-checker-subprocess";
+import { classifyUnitedCheck } from "./united-verdict";
 
 // The subprocess mutex's .finally() chain can leak an unhandled rejection when
 // the child exits non-zero. Swallow it so one failed scrape doesn't kill the
@@ -106,15 +107,19 @@ async function verifyTail(
     arrival_airport: string;
     fdate: string;
   };
-  const dbFlights = db
-    .query(
-      `SELECT flight_number, departure_airport, arrival_airport,
-              date(departure_time,'unixepoch') as fdate
+  const dbFlights: FlightCand[] = (
+    db
+      .query(
+        `SELECT flight_number, departure_airport, arrival_airport, departure_time
        FROM upcoming_flights
        WHERE tail_number = ? AND departure_time >= strftime('%s','now')
        ORDER BY departure_time LIMIT ?`
-    )
-    .all(tail, maxAttempts) as FlightCand[];
+      )
+      .all(tail, maxAttempts) as Array<Omit<FlightCand, "fdate"> & { departure_time: number }>
+  ).map(({ departure_time, ...f }) => ({
+    ...f,
+    fdate: unitedLookupDate(departure_time, f.departure_airport),
+  }));
 
   const candidates = dbFlights;
   if (candidates.length < maxAttempts) {
@@ -123,7 +128,7 @@ async function verifyTail(
     const upcoming = await fr24.getUpcomingFlights(tail);
     const seen = new Set(candidates.map((c) => c.flight_number + c.fdate));
     for (const u of upcoming) {
-      const fdate = unitedLookupDate(u.departure_time);
+      const fdate = unitedLookupDate(u.departure_time, u.departure_airport);
       const key = u.flight_number + fdate;
       if (seen.has(key)) continue;
       seen.add(key);
@@ -175,17 +180,14 @@ async function verifyTail(
       continue;
     }
 
-    // Mainline pages show ship numbers. Resolve via lookup.
-    let resolvedTail = result.tailNumber;
-    if (!resolvedTail && result.shipNumber) {
-      const shipMap = getShipToTailMap(db);
-      resolvedTail = shipMap.get(result.shipNumber) ?? null;
-      if (resolvedTail) {
-        log(`    resolved ship #${result.shipNumber} → ${resolvedTail}`);
-      }
-    }
-
-    const tailMatch = resolvedTail?.toUpperCase() === tail.toUpperCase();
+    // Same ship-resolve + tail-match ladder as production. CLI semantics
+    // deliberately differ from the verifier in one way: an unresolved tail
+    // counts as not-matched (retry the next flight) instead of positive-only
+    // trust — this is a ground-truth oracle, not an observation writer.
+    const cliLog = { info: (m: string) => log(`    ${m}`), warn: (m: string) => log(`    ${m}`) };
+    const classified = classifyUnitedCheck(db, result, tail, cliLog);
+    const resolvedTail = classified.resolvedTail;
+    const tailMatch = !classified.tailUnknown && !classified.tailMismatch;
     log(
       `    tail=${resolvedTail ?? "?"} ${tailMatch ? "✓" : "✗"} · ` +
         `wifi=${result.wifiProvider ?? "?"} · starlink=${result.hasStarlink ? "YES" : "no"}`
@@ -231,13 +233,12 @@ async function main() {
   );
   const fileArg = args.find((a) => a.startsWith("--file="))?.split("=")[1];
 
+  const isUaTail = (t: string) => AIRLINES.UA.tailPattern.test(t.toUpperCase());
   let tails: string[];
   if (fileArg) {
-    tails = (await Bun.file(fileArg).text())
-      .split(/\s+/)
-      .filter((t) => /^N[0-9A-Z]{2,5}$/i.test(t));
+    tails = (await Bun.file(fileArg).text()).split(/\s+/).filter(isUaTail);
   } else {
-    tails = args.filter((a) => /^N[0-9A-Z]{2,5}$/i.test(a));
+    tails = args.filter(isUaTail);
   }
 
   if (tails.length === 0) {

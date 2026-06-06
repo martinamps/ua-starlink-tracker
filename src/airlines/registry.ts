@@ -3,15 +3,23 @@
  * Adding an airline = adding a config object here, not editing scattered code.
  */
 
+import type { VerificationSource } from "../database/database";
 import type { RolloutStatus, StarlinkStatus } from "../types";
+import { normalizeAircraftType } from "./aircraft-families";
 
-// Single E175 matcher shared by AS classifyFleet() and alaskaTypeToStarlink()
-// so the verdict and subfleet can never disagree. Covers FR24 ("Embraer
-// E175LR"), alaskaair.com ("E175"/"ERJ-175"), and 3-char IATA ("E75").
-export const ALASKA_E175_RE = /E175|ERJ.?175|EMB.?175|^E75\b/i;
+// Registration patterns are stored as unanchored bodies; the anchored
+// validation pattern and the global scan pattern (for pulling registrations
+// out of prose) both derive from the same body, so they can never disagree.
+function tailPatterns(body: string): { tailPattern: RegExp; tailScanPattern: RegExp } {
+  return {
+    tailPattern: new RegExp(`^${body}$`),
+    tailScanPattern: new RegExp(`\\b(?:${body})\\b`, "g"),
+  };
+}
 
 // FAA N-numbers: N + 1-5 alphanumeric, first 1-9, no I/O in suffix.
-const FAA_N_NUMBER = /^N[1-9][0-9A-HJ-NP-Z]{0,4}$/;
+const FAA_TAIL = tailPatterns("N[1-9][0-9A-HJ-NP-Z]{0,4}");
+const QATAR_TAIL = tailPatterns("A7-[A-Z]{3}");
 
 export type AirlineCode = string;
 
@@ -42,8 +50,10 @@ export interface PageBrand {
   /** Brand color tuned for the favicon's glowing arc on a dark tile —
    * defaults to accentColor when omitted. */
   faviconAccent?: string;
-  /** og:image / twitter:image path. Defaults to shared /static/social-image.webp until per-airline assets exist. */
-  socialImagePath?: string;
+  /** og:image / twitter:image path. Filenames are derived from this everywhere
+   * (static routes, generate-og-images output). The server falls back to the
+   * hub card if the asset hasn't been generated yet (see resolveSocialImage). */
+  socialImagePath: string;
   analyticsDomain: string;
   pressReleaseUrl?: string;
 }
@@ -75,6 +85,8 @@ export interface SiteConfig {
   headSnippet?: string;
 }
 
+export type LastUpdatedOwner = "fleet-meta" | "sheet-scrape" | "schedule-ingester";
+
 export interface AirlineConfig {
   code: AirlineCode;
   name: string;
@@ -85,8 +97,6 @@ export interface AirlineConfig {
   enabled: boolean;
   /** Included on public hub surfaces and hub-only APIs. */
   publicInHub: boolean;
-  hosts: string[];
-  canonicalHost: string;
   iata: string;
   icao: string;
   /** All operating-carrier prefixes (ICAO + IATA) that map to this marketing carrier. Longest-first. */
@@ -101,6 +111,17 @@ export interface AirlineConfig {
   minFleetSanity: number;
   /** Per-flight wifi verification source; null = none (type-map only). */
   verifierBackend?: "united" | "alaska-json" | "qatar-fltstatus" | null;
+  /** Sole writer of this airline's `lastUpdated` meta. Every writer stamps
+   * via stampLastUpdated, which no-ops unless the caller IS the owner — so a
+   * daily fleet sync can't mask a dead primary pipeline. Default "fleet-meta"
+   * (refreshFleetMeta); UA = "sheet-scrape", QR = "schedule-ingester". */
+  lastUpdatedOwner?: LastUpdatedOwner;
+  /** A per-flight Starlink probability model exists, trained on THIS airline's
+   * observation log. False → prediction surfaces answer from type rules and
+   * subfleet penetration instead; another carrier's priors never apply. */
+  flightHistoryModel: boolean;
+  /** Site users should double-check answers on (flight status / WiFi pages). */
+  verifySite: string;
   /** For airlines whose Starlink status is fully determined by aircraft type
    * (no per-tail observation needed). null = leave as unknown (in progress). */
   typeDeterministicWifi?: (aircraftType: string) => StarlinkStatus | null;
@@ -111,12 +132,17 @@ export interface AirlineConfig {
   ) => { probability: number; reason: string } | null;
   /** Canonical lowercase tag for Datadog `airline:` — preserves history (`united`, not `UA`). */
   metricTag: string;
-  /** Registration format for tails operated by this airline. Used to reject
-   * sheet typos at ingest and gate cleanup scripts. */
+  /** Anchored registration format for tails operated by this airline. Used to
+   * reject sheet typos at ingest and gate cleanup scripts. Built by
+   * tailPatterns() from the same body as tailScanPattern. */
   tailPattern: RegExp;
-  /** Hub status-card config — editorial label + prose, plus a structured status
-   * discriminant so the UI doesn't parse the label string. */
-  rollout?: {
+  /** Global word-boundary scan variant of tailPattern, for pulling
+   * registrations out of prose (FlyerTalk posts, wikiposts). Safe to share:
+   * String.match(/g/) and matchAll don't depend on lastIndex. */
+  tailScanPattern: RegExp;
+  /** Rollout story — hub status card + llms.txt copy. Required so a new
+   * airline without a rollout story is a compile error, not missing prose. */
+  rollout: {
     status: RolloutStatus;
     statusLabel: string;
     phaseNote: string;
@@ -129,26 +155,24 @@ function flightNum(fn: string): number {
   return m ? Number.parseInt(m[1], 10) : Number.NaN;
 }
 
-export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
+const AIRLINE_DEFS = {
   UA: {
     code: "UA",
     name: "United Airlines",
     shortName: "United",
     enabled: true,
     publicInHub: true,
-    hosts: ["unitedstarlinktracker.com", "www.unitedstarlinktracker.com"],
-    canonicalHost: "unitedstarlinktracker.com",
     iata: "UA",
     icao: "UAL",
+    // ACA (Air Canada), PDT (Piedmont), and ENY (Envoy) are deliberately
+    // absent — they don't operate United Express, so e.g. ACA123 must never
+    // resolve to UA123.
     carrierPrefixes: [
       "UAL",
       "SKW",
       "ASH",
       "RPA",
       "GJS",
-      "PDT",
-      "ACA",
-      "ENY",
       "UCA",
       "AWI",
       "OO",
@@ -185,9 +209,13 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
     },
     fr24Slug: "ua-ual",
     metricTag: "united",
-    tailPattern: FAA_N_NUMBER,
+    ...FAA_TAIL,
     minFleetSanity: 800,
     verifierBackend: "united",
+    // UA meta (totals + lastUpdated) comes from the community sheet, not FR24.
+    lastUpdatedOwner: "sheet-scrape",
+    flightHistoryModel: true,
+    verifySite: "united.com",
     // Whole fleet eligible — Express + mainline both in the program.
     rollout: {
       status: "in_progress",
@@ -210,6 +238,7 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
       accentColor: "#0ea5e9",
       accentColorDim: "#0284c7",
       faviconAccent: "#1d70c9", // United "Pacific Blue" — closer to brand than the site's sky-500
+      socialImagePath: "/static/social-image.webp",
       analyticsDomain: "unitedstarlinktracker.com",
       pressReleaseUrl: "https://www.united.com/en/us/newsroom/announcements/cision-125370",
     },
@@ -220,17 +249,18 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
     shortName: "Hawaiian",
     enabled: true,
     publicInHub: true,
-    hosts: ["hawaiianstarlinktracker.com", "www.hawaiianstarlinktracker.com"],
-    canonicalHost: "hawaiianstarlinktracker.com",
     iata: "HA",
     icao: "HAL",
     carrierPrefixes: ["HAL", "HA"],
     subfleets: [{ key: "mainline", label: "Hawaiian Fleet", match: () => true }],
     fr24Slug: "ha-hal",
     metricTag: "hawaiian",
-    tailPattern: FAA_N_NUMBER,
+    ...FAA_TAIL,
     minFleetSanity: 30,
     verifierBackend: "alaska-json",
+    flightHistoryModel: false,
+    verifySite: "hawaiianairlines.com",
+    typeDeterministicWifi: hawaiianTypeToWifi,
     // 717 interisland fleet was never in scope (no WiFi provider) and is being retired —
     // see HA's own press release. Denominator is the Airbus fleet only.
     rollout: {
@@ -261,6 +291,7 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
       accentColor: "#413691",
       accentColorDim: "#6b5fb3",
       faviconAccent: "#9d4edd", // Pualani purple, lifted to glow on dark
+      socialImagePath: "/static/social-image-ha.webp",
       analyticsDomain: "hawaiianstarlinktracker.com",
       pressReleaseUrl:
         "https://newsroom.hawaiianairlines.com/releases/hawaiian-airlines-launches-fast-and-free-starlink-internet",
@@ -272,8 +303,6 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
     shortName: "Alaska",
     enabled: true,
     publicInHub: true,
-    hosts: ["alaskastarlinktracker.com", "www.alaskastarlinktracker.com"],
-    canonicalHost: "alaskastarlinktracker.com",
     iata: "AS",
     icao: "ASA",
     // SkyWest-for-Alaska tails are tracked (CPA-dedicated, disjoint from UA's),
@@ -307,19 +336,27 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
         key: "horizon",
         label: "Horizon (E175)",
         flightNumberHint: "AS2000+",
+        // Phase complete (rollout.phaseNote): every E175 has Starlink. The
+        // override keeps predictions right even before the type reconcile
+        // settles a fresh roster's statuses.
+        penetrationOverride: 1,
         match: (fn) => {
           const n = flightNum(fn);
           return Number.isFinite(n) && n >= 2000;
         },
       },
     ],
-    classifyFleet: (t) => (ALASKA_E175_RE.test(t) ? "horizon" : "mainline"),
+    // Same matcher as alaskaTypeToWifi so verdict and subfleet can't disagree.
+    classifyFleet: (t) => (normalizeAircraftType(t) === "E175" ? "horizon" : "mainline"),
     fr24Slug: "as-asa",
     regionalCarriers: [{ fr24Slug: "qx-qxe", name: "Horizon Air", subfleet: "horizon" }],
     metricTag: "alaska",
-    tailPattern: FAA_N_NUMBER,
+    ...FAA_TAIL,
     minFleetSanity: 200,
     verifierBackend: "alaska-json",
+    flightHistoryModel: false,
+    verifySite: "alaskaair.com",
+    typeDeterministicWifi: alaskaTypeToWifi,
     // Phase 1 (E175 regional) complete. Update status/phaseNote when 737/787 mainline starts.
     rollout: {
       status: "phase_done",
@@ -340,6 +377,7 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
       accentColor: "#01426a",
       accentColorDim: "#2b6a8f",
       faviconAccent: "#00b2e3", // Alaska secondary brand blue — primary #01426a is too dark to glow
+      socialImagePath: "/static/social-image-as.webp",
       analyticsDomain: "alaskastarlinktracker.com",
       pressReleaseUrl:
         "https://news.alaskaair.com/company/alaska-airlines-and-hawaiian-airlines-to-offer-free-starlink-wi-fi/",
@@ -351,8 +389,6 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
     shortName: "Qatar",
     enabled: true,
     publicInHub: false,
-    hosts: ["qatarstarlinktracker.com", "www.qatarstarlinktracker.com"],
-    canonicalHost: "qatarstarlinktracker.com",
     iata: "QR",
     icao: "QTR",
     carrierPrefixes: ["QTR", "QR"],
@@ -363,13 +399,24 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
     classifyFleet: () => "mainline",
     fr24Slug: "qr-qtr",
     metricTag: "qatar",
-    tailPattern: /^A7-[A-Z]{3}$/,
+    ...QATAR_TAIL,
     // 274 aircraft on FR24 (Apr 2026); minus ~37 freighters leaves ~237. Set
     // floor at 200 so a partial scrape still passes sanity but a near-empty
     // one doesn't blow away the roster.
     minFleetSanity: 200,
     verifierBackend: "qatar-fltstatus",
+    // QR freshness = "the schedule cache is current", not "the roster row
+    // count changed" — the hourly ingester owns the stamp (gated on outcome).
+    lastUpdatedOwner: "schedule-ingester",
+    flightHistoryModel: false,
+    verifySite: "qatarairways.com",
     typeDeterministicWifi: qatarTypeToStarlink,
+    rollout: {
+      status: "phase_done",
+      statusLabel: "Widebodies done",
+      phaseNote:
+        "Every Boeing 777 and Airbus A350 has Starlink (rollout completed December 2025); the 787 fleet is mid-installation. Narrowbodies and freighters are not in the program.",
+    },
     brand: {
       title: "Qatar Airways Starlink Tracker",
       tagline: "Tracking Qatar Airways aircraft with Starlink WiFi",
@@ -384,22 +431,215 @@ export const AIRLINES: Record<AirlineCode, AirlineConfig> = {
       accentColor: "#5c0632",
       accentColorDim: "#8a2851",
       faviconAccent: "#a3204e", // Qatar oryx burgundy, lifted
+      socialImagePath: "/static/social-image-qr.webp",
       analyticsDomain: "qatarstarlinktracker.com",
       pressReleaseUrl:
         "https://www.qatarairways.com/press-releases/en-WW/259315-qatar-airways-launches-world-s-first-starlink-equipped-boeing-787-and-completes-airbus-a350-starlink-rollout-connecting-over-11-millio/",
     },
   },
+} satisfies Record<string, AirlineConfig>;
+
+/** Literal union of registered airline codes. Type per-airline maps as
+ * Record<KnownAirlineCode, T> so a missing airline is a compile error, not a
+ * silent fallback to another tenant's data (the og:image bug class). */
+export type KnownAirlineCode = keyof typeof AIRLINE_DEFS;
+
+export const AIRLINES: Record<AirlineCode, AirlineConfig> = AIRLINE_DEFS;
+
+/** Every subfleet key any airline registers — the vocabulary normalizeFleet
+ * and the fleet pages accept. Derived, never hand-enumerated. */
+export const SUBFLEET_KEYS: ReadonlySet<string> = new Set(
+  Object.values(AIRLINE_DEFS).flatMap((a) => a.subfleets.map((s) => s.key))
+);
+
+/** Literal list backing the SubfleetKey type (src/types.ts derives from it).
+ * tests/vocabulary.test.ts pins it equal to the runtime-derived SUBFLEET_KEYS. */
+export const SUBFLEET_KEY_LIST = ["mainline", "express", "horizon", "hawaiian_metal"] as const;
+
+// ── Canonical type→Starlink program state ────────────────────────────────────
+// One phase table per type-deterministic airline, keyed by the families that
+// normalizeAircraftType (the single free-text matcher) produces. Keyspace
+// adapters: free text resolves via normalizeAircraftType, IATA equipment
+// codes via QATAR_EQUIPMENT. A program change is one edit here, never a
+// per-module sweep.
+
+export type WifiPhase = "confirmed" | "rolling" | "negative";
+
+// QR program truth. 787 completion (target end-2026): flip B787 to
+// "confirmed" — both the FR24-name path (typeDeterministicWifi) and the
+// IATA-code path (qatarEquipmentToWifi) read this table.
+const QATAR_PHASE_BY_FAMILY: Record<string, WifiPhase> = {
+  B777: "confirmed", // rollout complete Q2 2025
+  A350: "confirmed", // rollout complete Dec 2025
+  B787: "rolling", // mid-install — per-flight equipment alone can't decide
+  B777F: "negative", // Qatar Cargo — no passenger service
+  B747F: "negative",
+  A380: "negative", // no installation plan announced
+  A330: "negative",
+  A320: "negative",
+  B737: "negative",
 };
 
-/** QR rollout: 777 + A350 pax fleets 100% done (Dec 2025); 787 in progress.
- * Freighters (777-F) and narrowbodies have no Starlink. null → leave unknown. */
+// Collapse normalizeAircraftType's granular families to QR program families:
+// the program treats the whole 737/A320 lineups uniformly.
+function qatarProgramFamily(family: string): string {
+  if (family.startsWith("B737")) return "B737";
+  if (family === "A319" || family === "A321") return "A320";
+  return family;
+}
+
+// Every IATA equipment code QR's API returns (qoreservices keyspace), mapped
+// once to canonical family (phase-table key) + display name. Adding a QR
+// equipment code is one row here. 351/359 are both A350-900 — QR's API
+// returns either; 77F/77X/74Y/74F are Qatar Cargo freighters.
+const QATAR_EQUIPMENT: Record<string, { family: string; name: string }> = {
+  "77W": { family: "B777", name: "Boeing 777-300ER" },
+  "77L": { family: "B777", name: "Boeing 777-200LR" },
+  "77F": { family: "B777F", name: "Boeing 777 Freighter" },
+  "77X": { family: "B777F", name: "Boeing 777 Freighter" },
+  "74Y": { family: "B747F", name: "Boeing 747 Freighter" },
+  "74F": { family: "B747F", name: "Boeing 747 Freighter" },
+  "351": { family: "A350", name: "Airbus A350-900" },
+  "359": { family: "A350", name: "Airbus A350-900" },
+  "35K": { family: "A350", name: "Airbus A350-1000" },
+  "788": { family: "B787", name: "Boeing 787-8" },
+  "789": { family: "B787", name: "Boeing 787-9" },
+  "388": { family: "A380", name: "Airbus A380-800" },
+  "332": { family: "A330", name: "Airbus A330-200" },
+  "333": { family: "A330", name: "Airbus A330-300" },
+  "320": { family: "A320", name: "Airbus A320" },
+  "321": { family: "A320", name: "Airbus A321" },
+  "21N": { family: "A320", name: "Airbus A321neo" },
+  "38M": { family: "B737", name: "Boeing 737 MAX 8" },
+  "73H": { family: "B737", name: "Boeing 737 MAX 8" },
+};
+
+export function qatarEquipment(
+  code: string | null | undefined
+): { family: string; name: string } | null {
+  if (!code) return null;
+  return QATAR_EQUIPMENT[code.toUpperCase()] ?? null;
+}
+
+export function qatarStarlinkPhase(family: string | null): WifiPhase | null {
+  return family ? (QATAR_PHASE_BY_FAMILY[family] ?? null) : null;
+}
+
+/**
+ * Family→phase table for type-deterministic airlines; null for carriers whose
+ * program isn't a per-type table (UA per-tail, AS per-subfleet). When the
+ * phases span confirmed AND negative/rolling, no single per-flight probability
+ * is honest — prediction surfaces must render the split instead of a blend.
+ */
+export function wifiPhaseFamilies(code: AirlineCode): Record<string, WifiPhase> | null {
+  if (code === "QR") return QATAR_PHASE_BY_FAMILY;
+  if (code === "HA") return HAWAIIAN_PHASE_BY_FAMILY;
+  return null;
+}
+
+/** Narrow a program phase to a settleable status. "rolling" (and unrecognized
+ * input → null) stays null: mid-rollout is per-tail, not type-decidable, and
+ * a format drift must never settle a tail. */
+export function phaseToStatus(phase: WifiPhase | null): StarlinkStatus | null {
+  return phase === "confirmed" || phase === "negative" ? phase : null;
+}
+
+/** Wifi-provider keyspace label for a settled status; null when unsettled. */
+export function providerLabel(status: StarlinkStatus | null): "Starlink" | "None" | null {
+  return status === "confirmed" ? "Starlink" : status === "negative" ? "None" : null;
+}
+
+// Catch-all is null so an FR24 type-string format drift produces no
+// observation instead of mass-flipping confirmed tails on reconcile
+// (unrecognized strings normalize to "other"/"unknown" — no phase).
 export function qatarTypeToStarlink(aircraftType: string): StarlinkStatus | null {
-  const t = aircraftType.toUpperCase();
-  if (/777-F/.test(t)) return "negative";
-  if (/777-[23]/.test(t)) return "confirmed";
-  if (/A350/.test(t)) return "confirmed";
-  if (/787/.test(t)) return null;
-  return "negative";
+  return phaseToStatus(qatarStarlinkPhase(qatarProgramFamily(normalizeAircraftType(aircraftType))));
+}
+
+// HA program truth: Airbus fleet complete (Sep 2024), 787s pending install,
+// 717 interisland jets never in scope. HA operates only A321neos, so the
+// whole A321 family is confirmed.
+const HAWAIIAN_PHASE_BY_FAMILY: Record<string, WifiPhase> = {
+  A330: "confirmed",
+  A321: "confirmed",
+  B787: "rolling",
+  B717: "negative",
+};
+
+export function hawaiianStarlinkPhase(equipmentType: string | null | undefined): WifiPhase | null {
+  if (!equipmentType) return null;
+  return HAWAIIAN_PHASE_BY_FAMILY[normalizeAircraftType(equipmentType)] ?? null;
+}
+
+function hawaiianTypeToWifi(aircraftType: string): StarlinkStatus | null {
+  return phaseToStatus(hawaiianStarlinkPhase(aircraftType));
+}
+
+// AS: regional E175s 100% equipped (Q1 2026 earnings call). Mainline 737/787
+// is per-tail mid-rollout — null, settled by FlyerTalk/verifier evidence.
+function alaskaTypeToWifi(aircraftType: string): StarlinkStatus | null {
+  return normalizeAircraftType(aircraftType) === "E175" ? "confirmed" : null;
+}
+
+// What each verifier backend writes to starlink_verification_log.source.
+// 'qatar-fltstatus' has no verification-log writer yet: QR evidence flows
+// through qatar_schedule (schedule ingester) instead, so the 'qatar' tag is
+// read-side only — it matches zero log rows until a QR verifier loop exists.
+const VERIFIER_SOURCE_TAG: Record<
+  NonNullable<AirlineConfig["verifierBackend"]>,
+  VerificationSource
+> = {
+  united: "united",
+  "alaska-json": "alaska",
+  "qatar-fltstatus": "qatar",
+};
+
+/** The source tag this airline's verifier writes to starlink_verification_log.
+ * Throws for airlines without a verifier backend — calling this at a write
+ * site for such an airline is a programming error. */
+export function verifierSourceTag(cfg: AirlineConfig): VerificationSource {
+  if (!cfg.verifierBackend) {
+    throw new Error(`${cfg.code} has no verifier backend — no verification source tag`);
+  }
+  return VERIFIER_SOURCE_TAG[cfg.verifierBackend];
+}
+
+/** Verification-log source tags whose evidence consensus may weigh — derived
+ * from the enabled airlines' verifier backends. */
+export const VERIFICATION_SOURCES: readonly VerificationSource[] = [
+  ...new Set(
+    enabledAirlines()
+      .filter((a) => a.verifierBackend)
+      .map((a) => verifierSourceTag(a))
+  ),
+].sort();
+
+// What kind of evidence each backend's wifi field carries. united scrapes the
+// actual wifi banner off united.com; alaska-json and qatar-fltstatus only see
+// equipment type, so their wifi field is derived from the type rule.
+const VERIFIER_EVIDENCE: Record<
+  NonNullable<AirlineConfig["verifierBackend"]>,
+  "observed_wifi" | "type_derived"
+> = {
+  united: "observed_wifi",
+  "alaska-json": "type_derived",
+  "qatar-fltstatus": "type_derived",
+};
+
+/** Sources whose wifi field is an actually-observed signal — the only
+ * evidence allowed to WRITE verified_wifi via consensus. Type-derived truth
+ * flows through reconcileTypeDeterministicFleets instead, so a type inference
+ * can never masquerade as a per-tail observation (the wrong-yes bug class). */
+export const OBSERVED_WIFI_SOURCES: readonly VerificationSource[] = [
+  ...new Set(
+    enabledAirlines()
+      .filter((a) => a.verifierBackend && VERIFIER_EVIDENCE[a.verifierBackend] === "observed_wifi")
+      .map((a) => verifierSourceTag(a))
+  ),
+].sort();
+
+export function lastUpdatedOwner(code: string): LastUpdatedOwner {
+  return AIRLINES[code]?.lastUpdatedOwner ?? "fleet-meta";
 }
 
 export function enabledAirlines(): AirlineConfig[] {
@@ -558,7 +798,8 @@ export function brandMetadata(brand: PageBrand) {
     siteName: brand.title,
     accentColor: brand.accentColor,
     accentColorDim: brand.accentColorDim,
-    socialImagePath: brand.socialImagePath ?? "/static/social-image.webp",
+    // socialImagePath is intentionally absent: resolveSocialImage (app.ts) is
+    // the single resolver, with the missing-asset fallback.
   };
 }
 
@@ -568,6 +809,16 @@ export type Tenant = AirlineConfig | "ALL";
 
 export function siteTenant(site: SiteConfig): Tenant {
   return site.scope === "ALL" ? "ALL" : AIRLINES[site.scope];
+}
+
+/** The single airline a site is bound to. Throws on the hub — airline-scoped
+ * pages must never render under a site with no airline binding. */
+export function siteAirline(site: SiteConfig): AirlineConfig {
+  const tenant = siteTenant(site);
+  if (tenant === "ALL") {
+    throw new Error(`site "${site.key}" has no airline binding — this page is airline-scoped`);
+  }
+  return tenant;
 }
 
 // Hosts that resolve here but aren't tenants yet — 301 to the hub until the

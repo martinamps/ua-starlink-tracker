@@ -1,15 +1,14 @@
 import React from "react";
-import { AIRLINES, type PageBrand, type SiteConfig } from "../airlines/registry";
+import { type SiteConfig, siteAirline } from "../airlines/registry";
 
 interface McpPageProps {
-  brand?: PageBrand;
-  site?: SiteConfig;
+  site: SiteConfig;
 }
 
-export default function McpPage({ brand, site }: McpPageProps) {
-  const cfg = site?.scope && site.scope !== "ALL" ? AIRLINES[site.scope] : AIRLINES.UA;
-  const homeTitle = brand?.title ?? cfg.brand.title;
-  const mcpUrl = `https://${site?.canonicalHost ?? cfg.canonicalHost}/mcp`;
+export default function McpPage({ site }: McpPageProps) {
+  const cfg = siteAirline(site);
+  const homeTitle = site.brand.title;
+  const mcpUrl = `https://${site.canonicalHost}/mcp`;
   const claudeConnectorsUrl = "https://claude.ai/settings/connectors?modal=add-custom-connector";
   return (
     <div className="w-full mx-auto px-4 sm:px-6 md:px-8 bg-base min-h-screen flex flex-col relative">
@@ -22,8 +21,8 @@ export default function McpPage({ brand, site }: McpPageProps) {
           </h1>
         </a>
         <p className="text-base text-secondary font-display max-w-xl mx-auto">
-          Ask Claude which United flights have Starlink — and get ranked alternatives when they
-          don't.
+          Ask Claude which {cfg.shortName} flights have Starlink — and get ranked alternatives when
+          they don't.
         </p>
       </header>
 
@@ -77,20 +76,20 @@ export default function McpPage({ brand, site }: McpPageProps) {
           <h2 className="font-display text-lg font-semibold text-primary mb-3">Try asking</h2>
           <ul className="space-y-2 text-sm text-muted">
             <li className="pl-4 -indent-4">
-              <span className="text-secondary">"</span>I'm on UA642 on 3/13 — does it have Starlink?
-              If not, what are my options?<span className="text-secondary">"</span>
+              <span className="text-secondary">"</span>I'm on {cfg.iata}642 on 3/13 — does it have
+              Starlink? If not, what are my options?<span className="text-secondary">"</span>
             </li>
             <li className="pl-4 -indent-4">
               <span className="text-secondary">"</span>Flying SFO to EWR next month — plan me the
               best Starlink routing<span className="text-secondary">"</span>
             </li>
             <li className="pl-4 -indent-4">
-              <span className="text-secondary">"</span>Does UA4680 tomorrow have Starlink?
+              <span className="text-secondary">"</span>Does {cfg.iata}4680 tomorrow have Starlink?
               <span className="text-secondary">"</span>
             </li>
             <li className="pl-4 -indent-4">
-              <span className="text-secondary">"</span>What's the Starlink install rate on United's
-              regional fleet?<span className="text-secondary">"</span>
+              <span className="text-secondary">"</span>What's the Starlink install rate on{" "}
+              {cfg.shortName}'s fleet?<span className="text-secondary">"</span>
             </li>
           </ul>
         </div>

@@ -57,8 +57,6 @@ const HAHero = ({ stats }: HeroProps) => {
 };
 
 export const content: AirlineContent = {
-  showNavLinks: false,
-
   headerStats: [
     <span key="mbps">
       <span className="text-accent font-semibold">250</span> Mbps

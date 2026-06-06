@@ -15,7 +15,7 @@
  * shipped here so the client and the seed-hawaiian type map land together.
  */
 
-import { ALASKA_E175_RE } from "../airlines/registry";
+import { hawaiianStarlinkPhase, phaseToStatus, providerLabel } from "../airlines/registry";
 import { COUNTERS, DISTRIBUTIONS, metrics, normalizeAirlineTag } from "../observability";
 import { BROWSER_USER_AGENT } from "../utils/constants";
 import { error as logError, warn } from "../utils/logger";
@@ -52,6 +52,11 @@ function hydrate(data: unknown[], idx: number): unknown {
   return v;
 }
 
+/**
+ * Returns null only when the fetch SUCCEEDED but no flight is published for
+ * that number/date — that is a real observation. Transport/HTTP/parse
+ * failures THROW so callers can leave verification state untouched and retry.
+ */
 export async function fetchAlaskaFlightStatus(
   flightNumber: number | string,
   dateISO: string,
@@ -69,14 +74,14 @@ export async function fetchAlaskaFlightStatus(
     if (!res.ok) {
       status = res.status === 429 ? "rate_limited" : "error";
       warn(`alaska-status ${flightNumber}/${dateISO} → HTTP ${res.status}`);
-      return null;
+      throw new Error(`alaska-status HTTP ${res.status}`);
     }
     const body = (await res.json()) as SvelteKitData;
     // SvelteKit emits root→leaf; the page node (with `flights`) is last.
     const node = [...(body.nodes ?? [])].reverse().find((n) => n?.type === "data");
     if (!node?.data) {
       status = "parse_error";
-      return null;
+      throw new Error(`alaska-status ${flightNumber}/${dateISO}: unparseable payload`);
     }
     const root = hydrate(node.data, 0) as {
       flightNumber?: string;
@@ -102,7 +107,7 @@ export async function fetchAlaskaFlightStatus(
     };
   } catch (err) {
     logError(`alaska-status ${flightNumber}/${dateISO} failed`, err);
-    return null;
+    throw err;
   } finally {
     const duration = Date.now() - start;
     const tags = { vendor: "alaska", type: "status", status, airline: airlineTag };
@@ -115,30 +120,14 @@ export type HawaiianWifi = "Starlink" | "None" | "pending";
 export type AlaskaWifi = "Starlink" | null;
 
 /**
- * Alaska's regional E175 fleet (Horizon + SkyWest-for-Alaska, ~90 jets) is
- * fully Starlink-equipped per the Q1 2026 earnings call (April 21, 2026).
- * Mainline (737/787) is per-tail mid-rollout and alaskaair.com exposes no
- * wifi field, so this returns null; mainline tails are settled by
- * src/scripts/flyertalk-alaska.ts (FlyerTalk wikipost) instead.
- * Uses the same E175 matcher as AS classifyFleet() so verdict and subfleet
- * can never disagree.
+ * Thin keyspace adapter over the registry's canonical HA phase table.
+ * Missing/unrecognized types return null — only a recognized non-Starlink
+ * type (717) is negative evidence.
  */
-export function alaskaTypeToStarlink(equipmentType: string | null | undefined): AlaskaWifi {
-  if (!equipmentType) return null;
-  return ALASKA_E175_RE.test(equipmentType) ? "Starlink" : null;
-}
-
-/**
- * Hawaiian's rollout is type-deterministic and complete (Sep 2024) for the
- * Airbus fleet. This encodes the same rule alaskaair.com hardcodes in its
- * status page bundle.
- */
-export function hawaiianTypeToStarlink(equipmentType: string | null | undefined): HawaiianWifi {
-  if (!equipmentType) return "None";
-  const t = equipmentType.toUpperCase();
-  if (/\bA330|^A332\b/.test(t)) return "Starlink";
-  if (/\bA321[-\s]?2\d{2}N|\bA321[-\s]?NEO|^(A21N|32Q)\b/.test(t)) return "Starlink";
-  if (/\b787|^B789\b/.test(t)) return "pending";
-  if (/\b717|^B712\b/.test(t)) return "None";
-  return "None";
+export function hawaiianTypeToStarlink(
+  equipmentType: string | null | undefined
+): HawaiianWifi | null {
+  const phase = hawaiianStarlinkPhase(equipmentType);
+  if (phase === "rolling") return "pending";
+  return providerLabel(phaseToStatus(phase));
 }

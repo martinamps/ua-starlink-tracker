@@ -1,26 +1,29 @@
 /**
- * Route-compare + planner behavior tests against the hermetic /tmp/ua-test.sqlite
- * snapshot. Asserts shapes and bounded ranges (not exact values) so they
+ * Route-compare + planner behavior tests against the hermetic readonly
+ * snapshot at TEST_DB (see tests/helpers.ts). Asserts shapes and bounded ranges (not exact values) so they
  * survive data drift; the SFO-AUS regression guard is the load-bearing case.
  */
-import { Database } from "bun:sqlite";
+import type { Database } from "bun:sqlite";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { publicAirlines } from "../src/airlines/registry";
+import { AIRLINES, publicAirlines } from "../src/airlines/registry";
 import { getSubfleetPenetration } from "../src/database/database";
 import {
   type RouteCompareResult,
+  carrierPrediction,
   compareRoute,
+  joinSentences,
   planItinerary,
+  subfleetPenetration,
 } from "../src/scripts/starlink-predictor";
 import { createReaderFactory } from "../src/server/context";
+import { makeSyntheticDb, openSnapshot } from "./helpers";
 
-const TEST_DB = "/tmp/ua-test.sqlite";
 let db: Database;
 let hubReader: ReturnType<ReturnType<typeof createReaderFactory>>;
 let getReader: (code: string) => ReturnType<ReturnType<typeof createReaderFactory>>;
 
 beforeAll(() => {
-  db = new Database(TEST_DB, { readonly: true });
+  db = openSnapshot();
   const factory = createReaderFactory(db);
   hubReader = factory("ALL");
   getReader = (code: string) => factory(code);
@@ -344,5 +347,75 @@ describe("planItinerary", () => {
   test("origin == destination returns empty", () => {
     expect(planItinerary(hubReader, "SEA", "SEA")).toEqual([]);
     expect(planItinerary(hubReader, "sea", "SEA")).toEqual([]);
+  });
+});
+
+// ── carrierPrediction (registry answers for model-less carriers) ─────────────
+
+describe("carrierPrediction", () => {
+  function asReaderWithMainline(tails: number) {
+    const sdb = makeSyntheticDb();
+    const insert = sdb.query(
+      `INSERT INTO united_fleet (tail_number, aircraft_type, first_seen_source, first_seen_at, last_seen_at, fleet, airline)
+       VALUES (?, 'Boeing 737-900', 'test', 1, 1, 'mainline', 'AS')`
+    );
+    for (let i = 0; i < tails; i++) insert.run(`N${100 + i}AS`);
+    return { sdb, reader: createReaderFactory(sdb)("AS") };
+  }
+
+  test("penetration floor: below MIN total → no_model, at floor → penetration", () => {
+    const small = asReaderWithMainline(4);
+    expect(carrierPrediction(AIRLINES.AS, small.reader, "AS1").kind).toBe("no_model");
+    small.sdb.close();
+
+    const enough = asReaderWithMainline(5);
+    const answer = carrierPrediction(AIRLINES.AS, enough.reader, "AS1");
+    if (answer.kind !== "penetration") throw new Error(`expected penetration, got ${answer.kind}`);
+    expect(answer.pen.synthetic).toBe(false);
+    if (!answer.pen.synthetic) {
+      expect(answer.pen.total).toBe(5);
+      expect(answer.pen.equipped).toBe(0);
+    }
+    enough.sdb.close();
+  });
+
+  test("mismatched reader scope fails closed to no_model (never another roster's counts)", () => {
+    const answer = carrierPrediction(AIRLINES.AS, getReader("HA"), "AS1");
+    expect(answer.kind).toBe("no_model");
+  });
+
+  test("split-phase carriers return type_split, never a blended number", () => {
+    for (const [cfg, confirmedFamily, otherFamily] of [
+      [AIRLINES.HA, "A330", "B717"],
+      [AIRLINES.QR, "B777", "B787"],
+    ] as const) {
+      const answer = carrierPrediction(cfg, getReader(cfg.code), `${cfg.iata}50`);
+      if (answer.kind !== "type_split") throw new Error(`${cfg.code}: expected type_split`);
+      const phases = answer.groups.map((g) => g.phase);
+      expect(phases).toContain("confirmed");
+      expect(phases.some((p) => p === "negative" || p === "rolling")).toBe(true);
+      const families = answer.groups.flatMap((g) => g.families);
+      expect(families).toContain(confirmedFamily);
+      expect(families).toContain(otherFamily);
+    }
+  });
+
+  test("override subfleets resolve synthetic — counts are not even present", () => {
+    const sf = AIRLINES.AS.subfleets.find((s) => s.key === "hawaiian_metal");
+    if (!sf) throw new Error("hawaiian_metal subfleet missing");
+    const pen = subfleetPenetration(new Map(), sf);
+    if (!pen?.synthetic) throw new Error("expected synthetic penetration");
+    expect(pen.pct).toBe(1);
+    expect("equipped" in pen).toBe(false);
+    expect("total" in pen).toBe(false);
+  });
+});
+
+describe("joinSentences", () => {
+  test("exactly one terminal period whether the fragment has one or not", () => {
+    expect(joinSentences("No trailing period", "Already has one.")).toBe(
+      "No trailing period. Already has one."
+    );
+    expect(joinSentences("Ends with bang!", null, "", "last")).toBe("Ends with bang! last.");
   });
 });
