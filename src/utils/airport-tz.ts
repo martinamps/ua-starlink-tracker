@@ -9,13 +9,24 @@
 
 import { debug } from "./logger";
 
-const AIRPORT_TZ: Record<string, string> = {
+export const AIRPORT_TZ: Record<string, string> = {
   // Hawaii (no DST)
   HNL: "Pacific/Honolulu",
   OGG: "Pacific/Honolulu",
   KOA: "Pacific/Honolulu",
   LIH: "Pacific/Honolulu",
   ITO: "Pacific/Honolulu",
+  // US Pacific territories / Micronesia (United Guam hub + island hopper)
+  GUM: "Pacific/Guam",
+  SPN: "Pacific/Guam",
+  MAJ: "Pacific/Majuro",
+  KWA: "Pacific/Kwajalein",
+  KSA: "Pacific/Kosrae",
+  PNI: "Pacific/Pohnpei",
+  TKK: "Pacific/Chuuk",
+  ROR: "Pacific/Palau",
+  YAP: "Pacific/Chuuk",
+  PPG: "Pacific/Pago_Pago",
   // Alaska
   ANC: "America/Anchorage",
   FAI: "America/Anchorage",
@@ -219,7 +230,25 @@ const AIRPORT_TZ: Record<string, string> = {
   TQO: "America/Cancun",
   GCM: "America/Cayman",
   SDQ: "America/Santo_Domingo",
+  PUJ: "America/Santo_Domingo",
+  STI: "America/Santo_Domingo",
   SJO: "America/Costa_Rica",
+  LIR: "America/Costa_Rica",
+  GUA: "America/Guatemala",
+  SAL: "America/El_Salvador",
+  BZE: "America/Belize",
+  SAP: "America/Tegucigalpa",
+  RTB: "America/Tegucigalpa",
+  PTY: "America/Panama",
+  SJU: "America/Puerto_Rico",
+  STT: "America/Puerto_Rico",
+  STX: "America/Puerto_Rico",
+  SXM: "America/Lower_Princes",
+  AUA: "America/Aruba",
+  CUR: "America/Curacao",
+  MBJ: "America/Jamaica",
+  KIN: "America/Jamaica",
+  NAS: "America/Nassau",
   // South America
   BOG: "America/Bogota",
   EZE: "America/Argentina/Buenos_Aires",
@@ -229,6 +258,8 @@ const AIRPORT_TZ: Record<string, string> = {
   SCL: "America/Santiago",
   // Europe
   AMS: "Europe/Amsterdam",
+  KEF: "Atlantic/Reykjavik",
+  NCE: "Europe/Paris",
   ARN: "Europe/Stockholm",
   ATH: "Europe/Athens",
   BCN: "Europe/Madrid",
@@ -256,6 +287,7 @@ const AIRPORT_TZ: Record<string, string> = {
   ZRH: "Europe/Zurich",
   // Middle East / Africa (Qatar network)
   DOH: "Asia/Qatar",
+  TLV: "Asia/Jerusalem",
   AMM: "Asia/Amman",
   AUH: "Asia/Dubai",
   BAH: "Asia/Bahrain",
@@ -307,9 +339,11 @@ const AIRPORT_TZ: Record<string, string> = {
   HND: "Asia/Tokyo",
   KIX: "Asia/Tokyo",
   NRT: "Asia/Tokyo",
+  TPE: "Asia/Taipei",
   // Oceania
   ADL: "Australia/Adelaide",
   AKL: "Pacific/Auckland",
+  PPT: "Pacific/Tahiti",
   BNE: "Australia/Brisbane",
   MEL: "Australia/Melbourne",
   PER: "Australia/Perth",
