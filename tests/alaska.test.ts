@@ -3,18 +3,18 @@
  * /api/check-flight + /api/fleet-summary surfaces.
  *
  * Type-map tests are deterministic and DB-free. Integration tests run against
- * the read-only snapshot at /tmp/ua-test.sqlite (see scripts/test-setup.sh).
+ * the read-only snapshot at TEST_DB (see tests/helpers.ts + scripts/test-setup.sh).
  * The hermetic AS fixture seeds two confirmed Horizon E175s (N654QX, N658QX)
  * plus the canary 737 (N644AS); the prod snapshot post-seed has ~90 E175s.
  * Tests assert shape + a snapshot-relative lower bound, not absolute counts.
  */
 
-import { Database } from "bun:sqlite";
+import type { Database } from "bun:sqlite";
 import { beforeAll, describe, expect, test } from "bun:test";
-import { alaskaTypeToStarlink } from "../src/api/alaska-status";
+import { AIRLINES } from "../src/airlines/registry";
 import { createApp } from "../src/server/app";
+import { openSnapshot } from "./helpers";
 
-const TEST_DB = "/tmp/ua-test.sqlite";
 const AS_HOST = "alaskastarlinktracker.com";
 // Hermetic E175 row from scripts/test-setup.sh; also exists on a prod snapshot.
 const HORIZON_E175_FLIGHT = { flight: "QX2304", date: "2026-03-22" };
@@ -23,7 +23,7 @@ let app: ReturnType<typeof createApp>;
 let db: Database;
 
 beforeAll(() => {
-  db = new Database(TEST_DB, { readonly: true });
+  db = openSnapshot();
   app = createApp(db);
 });
 
@@ -32,30 +32,30 @@ function asReq(path: string) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// alaskaTypeToStarlink — Q1 2026 earnings call: full regional E175 fleet equipped
+// AS type→Starlink rule — Q1 2026 earnings call: full regional E175 fleet equipped
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("alaskaTypeToStarlink", () => {
-  test.each<[string, "Starlink" | null]>([
-    ["Embraer E175LR", "Starlink"],
-    ["E175", "Starlink"],
-    ["ERJ-175LR", "Starlink"],
-    ["ERJ175", "Starlink"],
-    ["E75", "Starlink"], // FR24 short type code
-    ["e175", "Starlink"], // case-insensitive
+describe("AS typeDeterministicWifi", () => {
+  test.each<[string, "confirmed" | null]>([
+    ["Embraer E175LR", "confirmed"],
+    ["E175", "confirmed"],
+    ["ERJ-175LR", "confirmed"],
+    ["ERJ175", "confirmed"],
+    ["E75", "confirmed"], // FR24 short type code
+    ["E75L", "confirmed"], // IATA E175 long-wing variant
+    ["E75S", "confirmed"], // IATA E175 short-wing variant
+    ["e175", "confirmed"], // case-insensitive
     ["Boeing 737-990ER", null],
     ["Boeing 737 MAX 9", null],
     ["Boeing 737-890", null],
     ["Boeing 787-9 Dreamliner", null],
     ["A321neo", null],
   ])("%s → %p", (type, want) => {
-    expect(alaskaTypeToStarlink(type)).toBe(want);
+    expect(AIRLINES.AS.typeDeterministicWifi?.(type) ?? null).toBe(want);
   });
 
-  test("null/undefined/empty → null (no oracle for mainline)", () => {
-    expect(alaskaTypeToStarlink(null)).toBeNull();
-    expect(alaskaTypeToStarlink(undefined)).toBeNull();
-    expect(alaskaTypeToStarlink("")).toBeNull();
+  test("empty string → null (no oracle for mainline)", () => {
+    expect(AIRLINES.AS.typeDeterministicWifi?.("") ?? null).toBeNull();
   });
 });
 

@@ -1,6 +1,6 @@
 import type React from "react";
-import { type AirlineContent, type ContentStats, getContent } from "../airlines/content";
-import { AIRLINES, type PageBrand, type SiteConfig } from "../airlines/registry";
+import type { AirlineContent, ContentStats } from "../airlines/content";
+import { type SiteConfig, siteAirline } from "../airlines/registry";
 import type {
   Aircraft,
   AirportDeparture,
@@ -58,10 +58,9 @@ interface PageProps {
   total: number;
   starlink: Aircraft[];
   lastUpdated?: string;
-  fleetStats?: FleetStats;
-  brand?: PageBrand;
-  site?: SiteConfig;
-  content?: AirlineContent;
+  fleetStats?: FleetStats | null;
+  site: SiteConfig;
+  content: AirlineContent;
   airlineByTail?: Record<string, string>;
   perAirlineStats?: PerAirlineStat[];
   recentInstalls?: RecentInstall[];
@@ -264,9 +263,8 @@ export default function Page({
   starlink,
   lastUpdated,
   fleetStats,
-  brand = AIRLINES.UA.brand,
   site,
-  content = getContent(AIRLINES.UA),
+  content,
   airlineByTail = {},
   perAirlineStats,
   recentInstalls,
@@ -303,18 +301,20 @@ export default function Page({
   const percentage = y > 0 ? ((x / y) * 100).toFixed(2) : "0.00";
   const stats: ContentStats = { starlinkCount: x, totalCount: y, percentage, fleetStats };
   const airlineOf = (p: Aircraft) => airlineByTail[p.TailNumber] || "UA";
-  const features = site?.features;
-  const searchCarrier =
-    site?.scope && site.scope !== "ALL" ? AIRLINES[site.scope].iata : AIRLINES.UA.iata;
+  const brand = site.brand;
+  const features = site.features;
+  // Hub never renders the flight-search form (checkFlightPage is off), so the
+  // prefix is only read on airline-scoped sites.
+  const searchCarrier = site.scope !== "ALL" ? siteAirline(site).iata : "";
   const navLinks = [
-    ...(features?.checkFlightPage
+    ...(features.checkFlightPage
       ? [{ href: "/check-flight", label: "Check a Flight", badge: "" }]
       : []),
-    ...(features?.routePlannerPage
+    ...(features.routePlannerPage
       ? [{ href: "/route-planner", label: "Route Planner", badge: "" }]
       : []),
-    ...(features?.fleetPage ? [{ href: "/fleet", label: "Fleet Rollout", badge: "NEW" }] : []),
-    ...(features?.mcpPage ? [{ href: "/mcp", label: "Tools & MCP", badge: "NEW" }] : []),
+    ...(features.fleetPage ? [{ href: "/fleet", label: "Fleet Rollout", badge: "NEW" }] : []),
+    ...(features.mcpPage ? [{ href: "/mcp", label: "Tools & MCP", badge: "NEW" }] : []),
   ];
   const subfleetCounts = Object.fromEntries(
     content.subfleetFilters.map((c) => [
@@ -449,7 +449,7 @@ export default function Page({
         <HeaderStatStrip items={content.headerStats} />
       </header>
 
-      {(features?.checkFlightPage ?? true) && (
+      {features.checkFlightPage && (
         <div className="relative max-w-xl mx-auto w-full mb-6">
           <form
             id="home-flight-search"
@@ -514,7 +514,7 @@ export default function Page({
       {/* Intro paragraph + nav links */}
       <div className="relative text-center max-w-2xl mx-auto mb-6">
         {content.intro(stats)}
-        {navLinks.length > 0 && (features?.homeNav ?? content.showNavLinks) && (
+        {navLinks.length > 0 && features.homeNav && (
           <div className="flex flex-wrap items-center justify-center gap-2 text-sm font-display">
             {navLinks.map((link) => (
               <a
@@ -743,13 +743,13 @@ export default function Page({
       )}
 
       {/* Tools & Integrations — UA-specific (Chrome ext is UA-only, MCP only on UA host today) */}
-      {(features?.chromeExtension || features?.mcpPage) && (
+      {(features.chromeExtension || features.mcpPage) && (
         <div id="integrations" className="relative my-8 max-w-3xl mx-auto scroll-mt-4">
           <h2 className="font-display text-lg font-semibold text-primary mb-3 text-center">
             Tools & Integrations
           </h2>
           <div className="grid sm:grid-cols-2 gap-3">
-            {features?.chromeExtension && (
+            {features.chromeExtension && (
               <div
                 id="chrome-extension"
                 className="bg-surface rounded-lg border border-subtle p-5 flex flex-col scroll-mt-4"
@@ -834,7 +834,7 @@ export default function Page({
               </div>
             )}
 
-            {features?.mcpPage && (
+            {features.mcpPage && (
               <div
                 id="mcp"
                 className="bg-surface rounded-lg border border-subtle p-5 flex flex-col scroll-mt-4"

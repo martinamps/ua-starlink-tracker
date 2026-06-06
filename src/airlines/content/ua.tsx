@@ -33,8 +33,6 @@ const UAHero = ({ stats, starlinkData }: HeroProps) => {
 };
 
 export const content: AirlineContent = {
-  showNavLinks: true,
-
   headerStats: [
     <span key="mbps">
       <span className="text-accent font-semibold">250</span> Mbps

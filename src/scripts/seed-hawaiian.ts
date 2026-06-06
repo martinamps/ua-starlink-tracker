@@ -26,7 +26,7 @@ import { scrapeFlightRadar24Fleet } from "./flightradar24-scraper";
 interface SeedRow {
   tail: string;
   aircraftType: string;
-  verdict: HawaiianWifi;
+  verdict: HawaiianWifi | null;
   status: StarlinkStatus;
 }
 
@@ -47,7 +47,8 @@ async function buildRoster(): Promise<SeedRow[]> {
       tail: a.registration,
       aircraftType: a.aircraftType,
       verdict,
-      status: verdict === "Starlink" ? "confirmed" : verdict === "pending" ? "unknown" : "negative",
+      // null verdict (unrecognized type) is unknown, never negative.
+      status: verdict === "Starlink" ? "confirmed" : verdict === "None" ? "negative" : "unknown",
     };
   });
 }
@@ -56,7 +57,7 @@ function printTable(rows: SeedRow[]) {
   const byType = new Map<string, { verdict: string; n: number }>();
   for (const r of rows) {
     const k = r.aircraftType || "(unknown)";
-    const e = byType.get(k) ?? { verdict: r.verdict, n: 0 };
+    const e = byType.get(k) ?? { verdict: r.verdict ?? "unknown", n: 0 };
     e.n++;
     byType.set(k, e);
   }
@@ -65,19 +66,20 @@ function printTable(rows: SeedRow[]) {
   for (const [k, v] of [...byType.entries()].sort((a, b) => b[1].n - a[1].n)) {
     console.log(`  ${k.padEnd(20)} ${String(v.n).padStart(3)}   ${v.verdict}`);
   }
-  const counts = { Starlink: 0, None: 0, pending: 0 };
-  for (const r of rows) counts[r.verdict]++;
+  const counts = { Starlink: 0, None: 0, pending: 0, unknown: 0 };
+  for (const r of rows) counts[r.verdict ?? "unknown"]++;
   console.log(
-    `\n  Starlink=${counts.Starlink}  None=${counts.None}  pending=${counts.pending}  total=${rows.length}\n`
+    `\n  Starlink=${counts.Starlink}  None=${counts.None}  pending=${counts.pending}  unknown=${counts.unknown}  total=${rows.length}\n`
   );
 }
 
 function apply(db: Database, rows: SeedRow[]) {
-  const HA_INSTALL_DATE = "2024-09-24";
-
   const tx = db.transaction(() => {
     for (const r of rows) {
-      const wifi = r.verdict === "Starlink" ? "Starlink" : r.verdict === "None" ? "None" : null;
+      // Verdicts come from the type→wifi map (press-release-grade per TYPE),
+      // not per-tail observation — evidence:'type_rule' keeps verified stamps
+      // NULL and the tails verifier-eligible, matching
+      // reconcileTypeDeterministicFleets' convention.
       upsertFleetAircraft(
         db,
         r.tail,
@@ -88,7 +90,8 @@ function apply(db: Database, rows: SeedRow[]) {
         "HA",
         {
           starlinkStatus: r.status,
-          verifiedWifi: wifi,
+          verifiedWifi: null,
+          evidence: "type_rule",
         }
       );
       if (r.verdict === "Starlink") {
@@ -101,8 +104,8 @@ function apply(db: Database, rows: SeedRow[]) {
           "mainline",
           {
             sheetGid: "ha_seed",
-            dateFound: HA_INSTALL_DATE,
             airline: "HA",
+            evidence: "type_rule",
           }
         );
       }

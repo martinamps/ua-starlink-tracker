@@ -1,16 +1,15 @@
 import React from "react";
-import { AIRLINES, type PageBrand, type SiteConfig } from "../airlines/registry";
+import { type SiteConfig, siteAirline } from "../airlines/registry";
 
 interface RoutePlannerPageProps {
-  brand?: PageBrand;
-  site?: SiteConfig;
+  site: SiteConfig;
 }
 
-export default function RoutePlannerPage({ brand, site }: RoutePlannerPageProps) {
-  const cfg = site?.scope && site.scope !== "ALL" ? AIRLINES[site.scope] : AIRLINES.UA;
+export default function RoutePlannerPage({ site }: RoutePlannerPageProps) {
+  const cfg = siteAirline(site);
   const airlineName = cfg.name;
-  const shortName = airlineName.replace(/ Airlines?$/i, "");
-  const homeTitle = brand?.title ?? cfg.brand.title;
+  const shortName = cfg.shortName;
+  const homeTitle = site.brand.title;
 
   return (
     <div className="w-full mx-auto px-4 sm:px-6 md:px-8 bg-base min-h-screen flex flex-col relative">
@@ -373,8 +372,12 @@ export default function RoutePlannerPage({ brand, site }: RoutePlannerPageProps)
             if (!itins || itins.length === 0) {
               resultsDiv.innerHTML = '<div class="bg-surface border border-subtle rounded-lg p-6 text-center">' +
                 '<div class="text-secondary font-display font-medium mb-2">No Starlink routings found</div>' +
-                '<p class="text-sm text-muted">Neither the direct route nor available connections have shown a strong Starlink pattern on this routing yet.</p>' +
+                '<p class="text-sm text-muted"></p>' +
                 '</div>';
+              // message is server-built registry prose (no user input); set via
+              // textContent anyway so this stays injection-proof.
+              resultsDiv.querySelector('p').textContent = data.message ||
+                'Neither the direct route nor available connections have shown a strong Starlink pattern on this routing yet.';
               return;
             }
 

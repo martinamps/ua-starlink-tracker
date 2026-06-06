@@ -1,19 +1,18 @@
 import React from "react";
-import { AIRLINES, type PageBrand, type SiteConfig } from "../airlines/registry";
+import { type SiteConfig, siteAirline } from "../airlines/registry";
 
 interface CheckFlightPageProps {
-  brand?: PageBrand;
-  site?: SiteConfig;
+  site: SiteConfig;
 }
 
-export default function CheckFlightPage({ brand, site }: CheckFlightPageProps) {
-  const cfg = site?.scope && site.scope !== "ALL" ? AIRLINES[site.scope] : AIRLINES.UA;
+export default function CheckFlightPage({ site }: CheckFlightPageProps) {
+  const cfg = siteAirline(site);
   const airlineName = cfg.name;
-  const homeTitle = brand?.title ?? cfg.brand.title;
-  const host = site?.canonicalHost ?? cfg.canonicalHost;
+  const homeTitle = site.brand.title;
+  const host = site.canonicalHost;
   const flightExample = `${cfg.iata}123`;
-  const shortName = airlineName.replace(/ Airlines?$/i, "");
-  const showChromeExtension = site?.features.chromeExtension ?? cfg.code === "UA";
+  const shortName = cfg.shortName;
+  const showChromeExtension = site.features.chromeExtension;
   const accuracyCopy =
     cfg.verifierBackend === "united"
       ? "We verify Starlink status against united.com and cross-reference with flight schedules from aviation data providers."
@@ -300,7 +299,9 @@ export default function CheckFlightPage({ brand, site }: CheckFlightPageProps) {
           var urlDate = pathParts.length >= 3 ? decodeURIComponent(pathParts[2]) : null;
 
           if (dateInput) {
-            dateInput.value = urlDate || new Date().toISOString().split('T')[0];
+            // en-CA formats the user's LOCAL date as YYYY-MM-DD; toISOString()
+            // is the UTC day, which pre-fills tomorrow for evening US users.
+            dateInput.value = urlDate || new Date().toLocaleDateString('en-CA');
           }
           if (urlFlight && document.getElementById('flight-number')) {
             document.getElementById('flight-number').value = urlFlight.toUpperCase();
@@ -328,6 +329,7 @@ export default function CheckFlightPage({ brand, site }: CheckFlightPageProps) {
               fetch('/api/check-flight?flight_number=' + encodeURIComponent(flightNumber) + '&date=' + encodeURIComponent(date))
                 .then(function(res) { return res.json(); })
                 .then(function(data) {
+                  var esc = function(s) { var d = document.createElement('div'); d.textContent = String(s || ''); return d.innerHTML; };
                   if (data.hasStarlink) {
                     var flight = data.flights[0] || {};
                     var depTime = flight.departure_time ? new Date(flight.departure_time * 1000) : null;
@@ -356,7 +358,6 @@ export default function CheckFlightPage({ brand, site }: CheckFlightPageProps) {
                       '<div class="pt-2"><a href="' + faUrl + '" target="_blank" rel="noopener noreferrer" class="text-accent hover:underline text-xs">View on FlightAware →</a></div>' +
                       '</div></div>';
                   } else if (data.fallback && data.fallback.segments && data.fallback.segments.length > 0) {
-                    var esc = function(s) { var d = document.createElement('div'); d.textContent = String(s || ''); return d.innerHTML; };
                     var seg = data.fallback.segments[0];
                     var age = seg.verified_at ? Math.floor((Date.now()/1000 - seg.verified_at) / 86400) : null;
                     var provider = esc(seg.verified_wifi || 'non-Starlink WiFi');
@@ -370,6 +371,17 @@ export default function CheckFlightPage({ brand, site }: CheckFlightPageProps) {
                       '<div class="font-display font-semibold text-secondary mb-2">Assigned aircraft: ' + tail + model + '</div>' +
                       '<p class="text-sm text-muted">Last verified <span class="text-secondary">' + provider + '</span>' + ageStr + '. ' + note + '</p>' +
                       '</div>';
+                  } else if (data.confidence === 'verified' && data.hasStarlink === false) {
+                    // scheduled_no: a firm verified-no with no fallback segments.
+                    // Estimating a probability against it would contradict the
+                    // verified answer the API just returned.
+                    resultDiv.innerHTML = '<div class="bg-surface-elevated border border-subtle rounded p-4">' +
+                      '<div class="flex items-center gap-2 mb-2">' +
+                      '<span class="text-muted text-lg">&#10007;</span>' +
+                      '<span class="font-display font-semibold text-secondary">No Starlink on this flight</span>' +
+                      '</div>' +
+                      '<p class="text-sm text-muted">' + esc(data.message || data.reason || 'The assigned aircraft is verified as non-Starlink WiFi.') + '</p>' +
+                      '</div>';
                   } else {
                     resultDiv.innerHTML = '<div class="text-sm text-muted font-mono">No firm assignment yet — estimating probability...</div>';
                     var daysOut = (new Date(date + 'T00:00:00Z').getTime() - Date.now()) / 86400000;
@@ -381,6 +393,14 @@ export default function CheckFlightPage({ brand, site }: CheckFlightPageProps) {
                     fetch('/api/predict-flight?flight_number=' + encodeURIComponent(flightNumber))
                       .then(function(r) { return r.json(); })
                       .then(function(pred) {
+                        if (typeof pred.probability !== 'number') {
+                          // type_split / no_model answers carry a message but no
+                          // probability — rendering Math.round(undefined*100) is "NaN%".
+                          resultDiv.innerHTML = '<div class="bg-surface-elevated border border-subtle rounded p-4">' +
+                            '<p class="text-sm text-muted">' + esc(pred.message || 'No per-flight prediction available — Starlink status depends on the scheduled aircraft type.') + '</p>' +
+                            '</div>';
+                          return;
+                        }
                         var pct = Math.round(pred.probability * 100);
                         var isLikely = pct >= 70;
                         var isPossible = pct >= 40 && pct < 70;
@@ -390,9 +410,7 @@ export default function CheckFlightPage({ brand, site }: CheckFlightPageProps) {
                         var iconColor = isLikely ? 'text-green-400' : isPossible ? 'text-yellow-400' : 'text-muted';
                         var detail = pred.n_observations > 0
                           ? 'Based on <span class="text-secondary">' + pred.n_observations + '</span> historical observation' + (pred.n_observations === 1 ? '' : 's') + ' of aircraft on this flight number (' + pred.confidence + ' confidence).'
-                          : pred.method === 'subfleet_penetration'
-                            ? 'No history for this flight number yet — this is the install rate for the ' + (pred.subfleet || 'subfleet') + ' fleet that operates this flight number range.'
-                            : 'No historical data for this flight number — this is the fleet install rate (treat as upper bound).';
+                          : 'No historical data for this flight number — this is the fleet install rate (treat as upper bound).';
                         resultDiv.innerHTML = '<div class="rounded p-4 border ' + borderColor + '">' +
                           '<div class="flex items-center gap-2 mb-3">' +
                           '<span class="text-lg ' + iconColor + '">~</span>' +

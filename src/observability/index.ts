@@ -16,7 +16,6 @@ export {
   normalizeWifiProvider,
   normalizeFleet,
   normalizeAirlineTag,
-  normalizePredictionMethod,
   normalizeStarlinkStatus,
   classifyUserAgent,
   bucketDaysOut,

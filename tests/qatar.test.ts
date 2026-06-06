@@ -24,7 +24,7 @@ import {
   upsertQatarSchedule,
 } from "../src/database/database";
 
-// In-memory DB so tests don't pollute /tmp/ua-test.sqlite
+// In-memory DB so tests don't pollute the shared readonly snapshot
 const DB_FILE = ":memory:";
 
 describe("qatarEquipmentToWifi", () => {
