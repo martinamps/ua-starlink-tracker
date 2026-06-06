@@ -2989,47 +2989,51 @@ export function getFleetPageData(db: Database, airline?: AirlineFilter): FleetPa
   return data;
 }
 
-export function getAirportDepartures(db: Database, airline?: AirlineFilter): AirportDepartures {
-  const now = Math.floor(Date.now() / 1000);
+// One definition of "departure on a Starlink-equipped aircraft, next 48h":
+// the same equipped predicate /api/check-flight uses, with a real upper bound.
+// The homepage airports panel and /routes both render from this base, so the
+// two surfaces can never disagree under the same window label.
+const DEPARTURE_WINDOW_HOURS = 48;
+const EQUIPPED_DEPARTURES_SQL = `
+     FROM upcoming_flights uf
+     INNER JOIN starlink_planes sp ON uf.tail_number = sp.TailNumber
+     WHERE ${equippedFilter("sp")}
+       AND uf.departure_time >= ? AND uf.departure_time < ?`;
+
+export function getAirportDepartures(
+  db: Database,
+  airline?: AirlineFilter,
+  nowSec = Math.floor(Date.now() / 1000)
+): AirportDepartures {
   try {
-    db.query("DELETE FROM departure_log WHERE departed_at < ?").run(now - 30 * 86400);
+    db.query("DELETE FROM departure_log WHERE departed_at < ?").run(nowSec - 30 * 86400);
   } catch {
     // readonly DB (tests/snapshots) — trim is best-effort housekeeping
   }
 
   const q = withAirline(
-    `SELECT uf.departure_airport AS airport, COUNT(*) AS count
-     FROM upcoming_flights uf
-     JOIN united_fleet f ON f.tail_number = uf.tail_number
-     WHERE f.starlink_status = 'confirmed' AND uf.departure_time >= ?`,
+    `SELECT uf.departure_airport AS airport,
+            COUNT(DISTINCT uf.flight_number || ':' || uf.departure_time) AS count${EQUIPPED_DEPARTURES_SQL}`,
     airline,
     "uf",
-    [now]
+    [nowSec, nowSec + DEPARTURE_WINDOW_HOURS * 3600]
   );
   const rows = db
     .query(`${q.sql} GROUP BY uf.departure_airport ORDER BY count DESC LIMIT 30`)
     .all(...q.params) as Array<{ airport: string; count: number }>;
 
-  return { rows, windowLabel: "next 48 hours" };
+  return { rows, windowLabel: `next ${DEPARTURE_WINDOW_HOURS} hours` };
 }
-
-/** Scheduled departures on confirmed-Starlink aircraft, grouped by origin→destination. */
-const ROUTE_SCHEDULE_WINDOW_HOURS = 48;
 
 export function getRouteStarlinkSchedule(
   db: Database,
   airline?: AirlineFilter,
   nowSec = Math.floor(Date.now() / 1000)
 ): RouteSchedule {
-  const windowEnd = nowSec + ROUTE_SCHEDULE_WINDOW_HOURS * 3600;
-  // Same equipped predicate as /api/check-flight, so a route listed here always
-  // agrees with checking one of its flights individually. The DISTINCT pair count
-  // dedupes tail-swap leftovers (multiple rows for one physical departure).
-  const baseSql = `
-     FROM upcoming_flights uf
-     INNER JOIN starlink_planes sp ON uf.tail_number = sp.TailNumber
-     WHERE ${equippedFilter("sp")}
-       AND uf.departure_time >= ? AND uf.departure_time < ?`;
+  const windowEnd = nowSec + DEPARTURE_WINDOW_HOURS * 3600;
+  // The DISTINCT pair count dedupes tail-swap leftovers (multiple rows for one
+  // physical departure).
+  const baseSql = EQUIPPED_DEPARTURES_SQL;
   const q = withAirline(
     `SELECT uf.departure_airport AS origin, uf.arrival_airport AS destination,
             COUNT(DISTINCT uf.flight_number || ':' || uf.departure_time) AS departures,
@@ -3056,7 +3060,7 @@ export function getRouteStarlinkSchedule(
   );
   const totalDepartures = (db.query(totalQ.sql).get(...totalQ.params) as { n: number }).n;
 
-  return { rows, totalDepartures, windowLabel: `next ${ROUTE_SCHEDULE_WINDOW_HOURS} hours` };
+  return { rows, totalDepartures, windowLabel: `next ${DEPARTURE_WINDOW_HOURS} hours` };
 }
 
 function computeInstallPace(
@@ -3064,13 +3068,14 @@ function computeInstallPace(
   airline: AirlineFilter | undefined,
   fleetStats: FleetStats
 ): InstallPace {
-  // Same filters as getRecentInstalls: equipped planes only, and exclude seed
-  // batches whose shared DateFound would render as a one-week "install spike".
+  // Same filters as getRecentInstalls — INSTALL_FILTER excludes every bulk
+  // writer (seed, type_deterministic, flyertalk) whose shared DateFound would
+  // render as a one-week "install spike".
   const q = withAirline(
     `SELECT DateFound AS d, fleet FROM starlink_planes
-     WHERE DateFound IS NOT NULL AND DateFound >= date('now', '-77 days')
+     WHERE DateFound >= date('now', '-77 days')
        AND ${equippedFilter("starlink_planes")}
-       AND (sheet_gid IS NULL OR sheet_gid NOT LIKE '%\\_seed' ESCAPE '\\')`,
+       AND ${INSTALL_FILTER}`,
     airline
   );
   const found = db.query(q.sql).all(...q.params) as Array<{ d: string; fleet: string | null }>;

@@ -33,6 +33,7 @@ import {
   getRecentInstalls,
   getRouteStarlinkSchedule,
   getStarlinkPlanes,
+  isBulkGid,
 } from "../src/database/database";
 import { computePrecision } from "../src/scripts/precision-backtest";
 import { planItinerary, predictFlight, predictRoute } from "../src/scripts/starlink-predictor";
@@ -979,9 +980,18 @@ describe("getFleetPageData", () => {
       const year = Number(p.projectedFinishMonth.split(" ")[1]);
       expect(year).toBeLessThanOrEqual(new Date().getUTCFullYear() + 4);
     }
-    // Seed batches must not appear as install spikes: no single week may exceed
-    // a plausible physical install rate.
-    for (const w of p.weeks) expect(w.installs).toBeLessThan(40);
+    // Bulk writers (seed / type-rule / flyertalk) must be excluded — their
+    // shared DateFound would render as a fabricated install spike. Pin against
+    // isBulkGid, the canonical JS mirror of INSTALL_FILTER.
+    const recent = db
+      .query(
+        `SELECT sheet_gid FROM starlink_planes
+         WHERE airline='UA' AND DateFound >= date('now', '-77 days')`
+      )
+      .all() as Array<{ sheet_gid: string | null }>;
+    const nonBulk = recent.filter((r) => !isBulkGid(r.sheet_gid)).length;
+    const totalInstalls = p.weeks.reduce((s, w) => s + w.installs, 0);
+    expect(totalInstalls).toBeLessThanOrEqual(nonBulk);
   });
 
   test("installPace: hub scope gets null (no cross-airline projection)", () => {
@@ -1019,27 +1029,6 @@ describe("getRouteStarlinkSchedule", () => {
     for (let i = 1; i < s.rows.length; i++) {
       expect(s.rows[i].departures).toBeLessThanOrEqual(s.rows[i - 1].departures);
     }
-  });
-
-  test("route schedule agrees with the check-flight equipped predicate", () => {
-    // Every tail contributing to the route counts must also pass the same
-    // predicate /api/check-flight uses — the two surfaces can't disagree.
-    const oldest = db
-      .query("SELECT MIN(departure_time) AS t FROM upcoming_flights WHERE airline='UA'")
-      .get() as { t: number | null };
-    const viaRoutes = db
-      .query(
-        `SELECT COUNT(DISTINCT uf.tail_number) AS n
-         FROM upcoming_flights uf
-         INNER JOIN starlink_planes sp ON uf.tail_number = sp.TailNumber
-         WHERE uf.airline = 'UA'
-           AND (sp.verified_wifi IS NULL OR sp.verified_wifi = 'Starlink')
-           AND NOT EXISTS (SELECT 1 FROM united_fleet _n WHERE _n.tail_number = sp.TailNumber AND _n.starlink_status = 'negative')
-           AND uf.departure_time >= ? AND uf.departure_time < ?`
-      )
-      .get(oldest.t ?? 0, (oldest.t ?? 0) + 48 * 3600) as { n: number };
-    const s = getRouteStarlinkSchedule(db, "UA", oldest.t ?? undefined);
-    if (s.totalDepartures > 0) expect(viaRoutes.n).toBeGreaterThan(0);
   });
 
   test("/routes renders on tenant sites and 404s where the feature is off", async () => {

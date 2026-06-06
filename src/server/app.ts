@@ -1598,10 +1598,7 @@ const fleetPage: Handler = (ctx) => {
 const routesPage: Handler = (ctx) => {
   if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
   if (!ctx.site.features.routesPage) {
-    return new Response(getNotFoundHtml(ctx.site.brand), {
-      status: 404,
-      headers: SECURITY_HEADERS.notFound,
-    });
+    return notFound(ctx.site);
   }
   const schedule = ctx.reader.getRouteStarlinkSchedule();
   return renderSubPage(ctx, RoutesPage, "/routes", subPageMeta(ctx, "routes"), { schedule });

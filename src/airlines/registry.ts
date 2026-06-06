@@ -769,8 +769,8 @@ export const SITES: Record<string, SiteConfig> = {
       eventApiUrl: DEFAULT_ANALYTICS_EVENT_API,
     },
     // Route planner reads flight_routes/departure_log and the routes page reads
-    // upcoming_flights+united_fleet — all empty for QR (schedule lives in
-    // qatar_schedule). Hide both rather than ship a permanently-empty UX.
+    // upcoming_flights joined to starlink_planes — all empty for QR (schedule
+    // lives in qatar_schedule). Hide both rather than ship a permanently-empty UX.
     features: { ...AIRLINE_SITE_FEATURES, routePlannerPage: false, routesPage: false },
   },
 };

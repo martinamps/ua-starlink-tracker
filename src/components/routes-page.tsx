@@ -1,5 +1,5 @@
 import React from "react";
-import { AIRLINES, type PageBrand, type SiteConfig } from "../airlines/registry";
+import { AIRLINES, type SiteConfig } from "../airlines/registry";
 import type { RouteSchedule } from "../types";
 
 const EYEBROW = "text-[10px] font-mono text-muted uppercase tracking-wider mb-3";
@@ -66,14 +66,13 @@ function RouteRows({ schedule }: { schedule: RouteSchedule }) {
 
 interface RoutesPageProps {
   schedule: RouteSchedule;
-  brand?: PageBrand;
   site?: SiteConfig;
 }
 
-export default function RoutesPage({ schedule, brand, site }: RoutesPageProps) {
+export default function RoutesPage({ schedule, site }: RoutesPageProps) {
   const scopeCode = site?.scope && site.scope !== "ALL" ? site.scope : null;
   const airlineName = scopeCode ? AIRLINES[scopeCode].name : "tracked airlines";
-  const backLabel = brand?.title ?? "Starlink Tracker";
+  const backLabel = site?.brand.title ?? "Starlink Tracker";
   const totalDepartures = schedule.totalDepartures;
   const asOf = new Date().toISOString().slice(11, 16);
 

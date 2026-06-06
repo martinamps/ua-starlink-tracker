@@ -273,10 +273,12 @@ function InstallPaceSection({ pace }: { pace: FleetPageData["installPace"] }) {
     });
   // Labels mirror the homepage rings (getFleetStats buckets), which fold every
   // regional subfleet into "express" — keep them generic, not type-specific.
+  // A missing fleet-total meta key must degrade to a count, not hide equipped
+  // aircraft the homepage rings and the tail list on this page both show.
   const groups = [
     { label: "Express & regional", g: pace.express },
     { label: "Mainline", g: pace.mainline },
-  ].filter((x) => x.g.total > 0);
+  ].filter((x) => x.g.total > 0 || x.g.starlink > 0);
 
   return (
     <section className={SECTION}>
@@ -316,7 +318,7 @@ function InstallPaceSection({ pace }: { pace: FleetPageData["installPace"] }) {
           <div className={EYEBROW}>Rollout progress</div>
           <div className="space-y-4">
             {groups.map(({ label, g }) => {
-              const pct = g.total > 0 ? Math.round((g.starlink / g.total) * 100) : 0;
+              const pct = g.total > 0 ? Math.round((g.starlink / g.total) * 100) : null;
               return (
                 <div key={label}>
                   <div className="flex items-baseline justify-between mb-1">
@@ -324,12 +326,23 @@ function InstallPaceSection({ pace }: { pace: FleetPageData["installPace"] }) {
                       {label}
                     </span>
                     <span className="font-mono text-[10px] text-muted">
-                      {g.starlink}/{g.total} <span className="text-accent">{pct}%</span>
+                      {pct !== null ? (
+                        <>
+                          {g.starlink}/{g.total} <span className="text-accent">{pct}%</span>
+                        </>
+                      ) : (
+                        <>{g.starlink} equipped</>
+                      )}
                     </span>
                   </div>
-                  <div className="h-2 bg-surface-elevated rounded overflow-hidden">
-                    <div className="h-full bg-[var(--color-accent)]" style={{ width: `${pct}%` }} />
-                  </div>
+                  {pct !== null && (
+                    <div className="h-2 bg-surface-elevated rounded overflow-hidden">
+                      <div
+                        className="h-full bg-[var(--color-accent)]"
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                  )}
                 </div>
               );
             })}
