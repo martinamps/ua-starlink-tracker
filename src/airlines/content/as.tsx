@@ -1,6 +1,6 @@
 import React from "react";
 import { ModelPie, StatRing, computeModelBreakdown } from "../../components/atoms";
-import { airlineHomeUrl } from "../registry";
+import { AIRLINES, airlineHomeUrl } from "../registry";
 import type { AirlineContent, HeroProps } from "./index";
 
 const ASHero = ({ stats, starlinkData }: HeroProps) => {
@@ -52,12 +52,15 @@ export const content: AirlineContent = {
 
   Hero: ASHero,
 
-  rowBadge: (p) => (p.fleet === "horizon" ? "Horizon" : null),
+  // Horizon and SkyWest both operate AS regional E175s — badge the row's real
+  // operator, never a hardcoded one.
+  rowBadge: (p) =>
+    p.fleet === "horizon" ? p.OperatedBy?.replace(/ Air(lines)?$/, "") || "Regional" : null,
 
-  subfleetFilters: [
-    { key: "mainline", label: "Mainline (737/787)" },
-    { key: "horizon", label: "Horizon (E175)" },
-  ],
+  // hawaiian_metal tails live in HA's roster, so its chip would always be empty.
+  subfleetFilters: AIRLINES.AS.subfleets
+    .filter((sf) => sf.key !== "hawaiian_metal")
+    .map((sf) => ({ key: sf.key, label: sf.label })),
 
   faq: [
     {

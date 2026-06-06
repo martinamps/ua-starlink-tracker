@@ -335,7 +335,9 @@ const AIRLINE_DEFS = {
       },
       {
         key: "horizon",
-        label: "Horizon (E175)",
+        // Horizon- and SkyWest-operated E175s both fly AS2000+ — don't credit
+        // one operator in user-facing copy.
+        label: "Regional E175",
         flightNumberHint: "AS2000+",
         // Phase complete (rollout.phaseNote): every E175 has Starlink. The
         // override keeps predictions right even before the type reconcile
