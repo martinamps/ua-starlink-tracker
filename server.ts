@@ -6,6 +6,7 @@ import { checkNewPlanes, startFlightUpdater } from "./src/api/flight-updater";
 import { archivePastDepartures, initializeDatabase, pruneCrashRows } from "./src/database/database";
 import { startAlaskaVerifier } from "./src/scripts/alaska-verifier";
 import { startFreshnessEmitter } from "./src/scripts/data-freshness";
+import { startFaaRegistryJob } from "./src/scripts/faa-registry";
 import { startFleetDiscovery } from "./src/scripts/fleet-discovery";
 import { startFleetProgressJob } from "./src/scripts/fleet-progress";
 import { startFleetSync } from "./src/scripts/fleet-sync";
@@ -108,6 +109,9 @@ if (JOBS_ENABLED) {
 
   // Daily UA install-pipeline counts from the fleet-site progress workbooks.
   track(startFleetProgressJob(db));
+
+  // Daily FAA registry slice: existence/dereg hygiene + Mode-S hex per tail.
+  track(startFaaRegistryJob(db));
 
   // Daily prune of subprocess-crash log rows (no observation, just noise).
   track(

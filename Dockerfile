@@ -3,7 +3,9 @@ FROM oven/bun:1.3.13-slim
 WORKDIR /app
 
 # Install Chromium runtime dependencies (required for Playwright's browser)
+# plus curl + unzip (FAA registry job downloads and streams the daily bulk zip)
 RUN apt-get update && apt-get install -y \
+    curl \
     libnss3 \
     libatk1.0-0 \
     libatk-bridge2.0-0 \
@@ -19,6 +21,7 @@ RUN apt-get update && apt-get install -y \
     libpango-1.0-0 \
     libcairo2 \
     libxshmfence1 \
+    unzip \
     && rm -rf /var/lib/apt/lists/*
 
 COPY package.json .

@@ -609,6 +609,11 @@ describe("data-freshness coverage", () => {
           "INSERT INTO fleet_progress (airline, segment, type_code, total, starlink_complete, fetched_at) VALUES (?, 'mainline_nb', 'Totals', 878, 67, ?)"
         ).run(airline, ts);
         break;
+      case "faa_registry":
+        db.query(
+          "INSERT INTO faa_registry (tail_number, faa_status, last_refreshed) VALUES ('N73275', 'V', ?)"
+        ).run(ts);
+        break;
       default:
         throw new Error(`no seeder for freshness job ${job} — add one with the query`);
     }

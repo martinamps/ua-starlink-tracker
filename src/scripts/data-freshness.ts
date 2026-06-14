@@ -37,6 +37,10 @@ export function buildFreshnessQueries(qrEnabled = AIRLINES.QR.enabled): Record<s
       SELECT airline, MAX(fetched_at) AS seg_ts
       FROM fleet_progress GROUP BY airline, segment
     ) GROUP BY airline`,
+    // faa_registry has no airline column (national registry); attribute to UA.
+    faa_registry: `
+    SELECT 'UA' AS airline, MAX(last_refreshed) AS ts
+    FROM faa_registry`,
   };
   // QR writes none of the airline-column tables — only qatar_schedule, whose
   // last_updated is touched solely on successful upserts. Without this gauge
@@ -63,6 +67,7 @@ export function buildFreshnessCoverage(
     verifier: ["UA", "HA", "AS"],
     departures: ["UA", "HA", "AS"],
     fleet_progress: ["UA"],
+    faa_registry: ["UA"],
   };
   if (qrEnabled) coverage.qatar_ingester = ["QR"];
   return coverage;
@@ -122,12 +127,12 @@ export function emitDataFreshness(db: Database, queries = FRESHNESS_QUERIES): vo
       for (const row of rows) {
         let ts = row.ts;
         if (ts == null) {
-          // GROUP BY queries skip airlines with no rows. The fixed-airline QR
-          // query instead returns a null MAX on an empty table — the maximally
-          // stale state must still emit: fall back to the meta stamp, else
-          // epoch 0 so the monitor definitely fires.
-          if (job !== "qatar_ingester") continue;
-          ts = metaLastUpdatedEpoch(db, row.airline) ?? 0;
+          // GROUP BY queries skip airlines with no rows. Fixed-airline queries
+          // return a null MAX on an empty table — the maximally stale state must
+          // still emit so the monitor can fire (epoch 0 / meta-stamp fallback).
+          if (job === "qatar_ingester") ts = metaLastUpdatedEpoch(db, row.airline) ?? 0;
+          else if (job === "faa_registry") ts = 0;
+          else continue;
         }
         const ageSec = Math.max(0, now - ts);
         metrics.gauge(GAUGES.DATA_FRESHNESS_SECONDS, ageSec, {
