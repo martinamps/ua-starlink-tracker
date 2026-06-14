@@ -1,6 +1,12 @@
 import React from "react";
 import { AIRLINES, type SiteConfig } from "../airlines/registry";
-import type { FleetFamily, FleetPageData, FleetTail, WifiProvider } from "../types";
+import type {
+  FleetFamily,
+  FleetPageData,
+  FleetProgressRow,
+  FleetTail,
+  WifiProvider,
+} from "../types";
 import { AIRCRAFT_SPECS, type AircraftSpec } from "../utils/aircraft-specs";
 
 const PROVIDER_LABEL: Record<WifiProvider, string> = {
@@ -504,6 +510,73 @@ function TailMonument({ allTails, totalFleet }: { allTails: FleetTail[]; totalFl
   );
 }
 
+const PROGRESS_SEGMENT_LABELS: Record<string, string> = {
+  mainline_nb: "Mainline narrowbody",
+  mainline_wb: "Mainline widebody",
+  express: "Express & regional",
+};
+
+// Forward-looking install pipeline (in mod / awaiting verification) — the
+// historical counterpart is InstallPaceSection.
+function InstallPipelineSection({ progress }: { progress: FleetProgressRow[] }) {
+  const totals = progress.filter((r) => r.type_code === "Totals");
+  if (totals.length === 0) return null;
+  const updated = totals.find((r) => r.sheet_updated)?.sheet_updated;
+  const inModTypes = progress.filter(
+    (r) => r.type_code !== "Totals" && ((r.in_mod ?? 0) > 0 || (r.verification_needed ?? 0) > 0)
+  );
+
+  return (
+    <section className={SECTION}>
+      <div className="mb-4">
+        <h2 className="font-display text-xl font-semibold text-primary mb-1">Install Pipeline</h2>
+        <p className="text-xs text-muted">
+          Per the community fleet-site progress sheets{updated ? ` (updated ${updated} ET)` : ""} —
+          aircraft currently in a mod line show up here before they appear as equipped.
+        </p>
+      </div>
+      <div className="grid md:grid-cols-3 gap-4">
+        {totals.map((seg) => {
+          const pct =
+            seg.total && seg.starlink_complete !== null
+              ? Math.round((seg.starlink_complete / seg.total) * 100)
+              : null;
+          return (
+            <div key={seg.segment} className={PANEL}>
+              <div className={EYEBROW}>{PROGRESS_SEGMENT_LABELS[seg.segment] ?? seg.segment}</div>
+              <div className="font-display text-2xl font-bold text-primary">
+                {seg.starlink_complete ?? 0}
+                <span className="text-sm font-normal text-muted">
+                  {" "}
+                  of {seg.total ?? "?"} complete
+                </span>
+              </div>
+              <div className="font-mono text-[11px] text-secondary mt-2 space-y-1">
+                <div>{seg.in_mod ?? 0} in mod line now</div>
+                <div>{seg.verification_needed ?? 0} awaiting verification</div>
+                {pct !== null && <div className="text-muted">{pct}% of segment</div>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {inModTypes.length > 0 && (
+        <div className={`${PANEL} mt-4`}>
+          <div className={EYEBROW}>Active mod lines by type</div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 font-mono text-[11px] text-secondary">
+            {inModTypes.map((r) => (
+              <div key={`${r.segment}-${r.type_code}`}>
+                {r.type_code}: {r.in_mod ?? 0} in mod
+                {(r.verification_needed ?? 0) > 0 ? `, ${r.verification_needed} verifying` : ""}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 interface FleetPageProps {
   data: FleetPageData;
   site: SiteConfig;
@@ -586,6 +659,7 @@ export default function FleetPage({ data, site }: FleetPageProps) {
 
       <LivePulse pulse={data.pulse} />
       <InstallPaceSection pace={data.installPace} />
+      <InstallPipelineSection progress={data.progress} />
       <HangarFloor
         families={data.families}
         totalFleet={data.totalFleet}

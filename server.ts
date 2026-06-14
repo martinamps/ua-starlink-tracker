@@ -7,6 +7,7 @@ import { archivePastDepartures, initializeDatabase, pruneCrashRows } from "./src
 import { startAlaskaVerifier } from "./src/scripts/alaska-verifier";
 import { startFreshnessEmitter } from "./src/scripts/data-freshness";
 import { startFleetDiscovery } from "./src/scripts/fleet-discovery";
+import { startFleetProgressJob } from "./src/scripts/fleet-progress";
 import { startFleetSync } from "./src/scripts/fleet-sync";
 import { startQatarScheduleIngester } from "./src/scripts/qatar-schedule-ingester";
 import { runSheetScrape } from "./src/scripts/sheet-scrape";
@@ -104,6 +105,9 @@ if (JOBS_ENABLED) {
       run: () => syncShipNumbers(),
     })
   );
+
+  // Daily UA install-pipeline counts from the fleet-site progress workbooks.
+  track(startFleetProgressJob(db));
 
   // Daily prune of subprocess-crash log rows (no observation, just noise).
   track(

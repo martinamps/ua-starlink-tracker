@@ -30,6 +30,13 @@ export function buildFreshnessQueries(qrEnabled = AIRLINES.QR.enabled): Record<s
     SELECT airline, MAX(departed_at) AS ts
     FROM departure_log
     GROUP BY airline`,
+    // MIN over per-segment maxima: one segment failing to refresh must age the
+    // gauge even while the other segments keep writing.
+    fleet_progress: `
+    SELECT airline, MIN(seg_ts) AS ts FROM (
+      SELECT airline, MAX(fetched_at) AS seg_ts
+      FROM fleet_progress GROUP BY airline, segment
+    ) GROUP BY airline`,
   };
   // QR writes none of the airline-column tables — only qatar_schedule, whose
   // last_updated is touched solely on successful upserts. Without this gauge
@@ -55,6 +62,7 @@ export function buildFreshnessCoverage(
     flight_updater: ["UA", "HA", "AS"],
     verifier: ["UA", "HA", "AS"],
     departures: ["UA", "HA", "AS"],
+    fleet_progress: ["UA"],
   };
   if (qrEnabled) coverage.qatar_ingester = ["QR"];
   return coverage;

@@ -205,6 +205,10 @@ export const GAUGES = {
   // Row counts for key tables, sampled with the 5-min freshness sweep.
   // tags: table, airline (or "all" if the table has no airline column)
   DB_TABLE_ROWS: "db.table_rows",
+
+  // Install-pipeline rollup from the fleet-progress sheets.
+  // tags: segment (mainline_nb|mainline_wb|express), state (total|complete|in_mod|verification_needed), airline
+  FLEET_PROGRESS_COUNT: "fleet_progress.count",
 } as const;
 
 /**

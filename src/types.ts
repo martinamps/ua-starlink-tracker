@@ -173,6 +173,21 @@ export interface FleetPageData {
   totalStarlink: number;
   /** null on the hub site — install pace is a single-airline narrative. */
   installPace: InstallPace | null;
+  /** Per-type install pipeline rows (empty until the fleet-progress job has run). */
+  progress: FleetProgressRow[];
+}
+
+/** One per-type row of the install pipeline (United Fleet Site progress workbooks). */
+export interface FleetProgressRow {
+  airline: string;
+  segment: string;
+  type_code: string;
+  total: number | null;
+  starlink_complete: number | null;
+  in_mod: number | null;
+  verification_needed: number | null;
+  sheet_updated: string | null;
+  fetched_at: number;
 }
 
 export interface RouteScheduleRow {
