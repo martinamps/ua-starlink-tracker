@@ -18,6 +18,8 @@
  *   wifi_provider:   starlink | viasat | panasonic | thales | none | other | unknown  (7)
  *   starlink_status: confirmed | negative | unknown                  (3)
  *   vendor:          fr24 | flightaware | united | qatar | alaska | adsb    (6)
+ *   op_carrier:      ua | oo | yx | g7 | c5 | yv | zw | other | unknown      (9)
+ *   kind:            missing_from_fleet | inactive_in_fleet                 (2)
  *   status:          success | error | rate_limited | timeout | killed |
  *                    exit_error | parse_error | spawn_error | partial |
  *                    aborted | scrape_error                          (~11)
@@ -86,6 +88,14 @@ export function normalizeFleet(raw: string | null | undefined): string {
 export function normalizeStarlinkStatus(raw: string | null | undefined): string {
   if (raw === "confirmed" || raw === "negative") return raw;
   return "unknown";
+}
+
+// UA mainline plus its Express operators; anything else buckets to "other".
+const UA_OPERATING_CARRIERS = new Set(["UA", "OO", "YX", "G7", "C5", "YV", "ZW"]);
+export function normalizeOpCarrier(raw: string | null | undefined): string {
+  if (!raw || raw.trim() === "") return "unknown";
+  const code = raw.trim().toUpperCase();
+  return UA_OPERATING_CARRIERS.has(code) ? code.toLowerCase() : "other";
 }
 
 // Bounded user-agent classification (≤6 buckets, never the raw UA).
@@ -219,6 +229,10 @@ export const GAUGES = {
   // ADS-B shadow sweep vs upcoming_flights assignments.
   // tags: result (match|mismatch|no_assignment|no_callsign|airborne_total), airline
   ADSB_SHADOW_OBSERVATIONS: "adsb_shadow.observations",
+
+  // BTS monthly shadow ingest. tags: op_carrier, airline / kind (missing_from_fleet|inactive_in_fleet), airline
+  BTS_ACTIVE_TAILS: "bts.active_tails",
+  BTS_FLEET_DELTA: "bts.fleet_delta",
 } as const;
 
 /**

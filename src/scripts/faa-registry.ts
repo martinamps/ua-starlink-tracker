@@ -6,13 +6,11 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
+import { rmSync } from "node:fs";
 import { replaceFaaRegistry } from "../database/database";
 import { COUNTERS, GAUGES, metrics, normalizeAirlineTag, withSpan } from "../observability";
 import type { FaaRegistryRow } from "../types";
-import { BROWSER_USER_AGENT } from "../utils/constants";
+import { downloadZipToTemp, spawnLines } from "../utils/bulk-data";
 import { type JobHandle, startJob } from "../utils/job-runner";
 import { info, error as logError, warn } from "../utils/logger";
 
@@ -180,60 +178,6 @@ export function buildFaaRecords(opts: {
   return { rows, flags };
 }
 
-async function* spawnLines(cmd: string[]): AsyncGenerator<string> {
-  const proc = Bun.spawn(cmd, { stdout: "pipe", stderr: "ignore" });
-  try {
-    const decoder = new TextDecoder();
-    let buf = "";
-    for await (const chunk of proc.stdout) {
-      buf += decoder.decode(chunk, { stream: true });
-      let nl = buf.indexOf("\n");
-      while (nl !== -1) {
-        yield buf.slice(0, nl).replace(/\r$/, "");
-        buf = buf.slice(nl + 1);
-        nl = buf.indexOf("\n");
-      }
-    }
-    if (buf.trim() !== "") yield buf;
-    const code = await proc.exited;
-    if (code !== 0) throw new Error(`${cmd.join(" ")} exited with ${code}`);
-  } finally {
-    // Covers consumers that stop iterating early — never leave unzip blocked
-    // on an undrained pipe.
-    proc.kill();
-    await proc.exited;
-  }
-}
-
-async function downloadRegistryZip(): Promise<{ dir: string; zipPath: string }> {
-  const dir = mkdtempSync(path.join(tmpdir(), "faa-registry-"));
-  const zipPath = path.join(dir, "ReleasableAircraft.zip");
-  // curl, not fetch: the FAA host needs a browser User-Agent (503s otherwise)
-  // and Bun's fetch stalls indefinitely streaming this particular 73 MB body.
-  const proc = Bun.spawn(
-    [
-      "curl",
-      "-sSL",
-      "--fail",
-      "--max-time",
-      "600",
-      "-A",
-      BROWSER_USER_AGENT,
-      "-o",
-      zipPath,
-      REGISTRY_ZIP_URL,
-    ],
-    { stdout: "ignore", stderr: "pipe" }
-  );
-  const code = await proc.exited;
-  if (code !== 0) {
-    const stderr = await new Response(proc.stderr).text();
-    rmSync(dir, { recursive: true, force: true });
-    throw new Error(`registry download failed (curl exit ${code}): ${stderr.slice(0, 200)}`);
-  }
-  return { dir, zipPath };
-}
-
 function trackedTails(db: Database): { tails: string[]; starlinkTails: Set<string> } {
   const fleet = db.query("SELECT tail_number, starlink_status FROM united_fleet").all() as Array<{
     tail_number: string;
@@ -272,7 +216,9 @@ export async function runFaaRegistrySync(
       try {
         let loadLines = deps.loadLines;
         if (!loadLines) {
-          const { dir, zipPath } = await downloadRegistryZip();
+          const downloaded = await downloadZipToTemp(REGISTRY_ZIP_URL, { prefix: "faa-registry-" });
+          if (!downloaded) throw new Error("registry download returned no file");
+          const { dir, zipPath } = downloaded;
           cleanup = () => rmSync(dir, { recursive: true, force: true });
           loadLines = (file) => spawnLines(["unzip", "-p", zipPath, file]);
         }

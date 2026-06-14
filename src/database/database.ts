@@ -25,6 +25,7 @@ import type {
   Aircraft,
   AirportDepartures,
   BodyClass,
+  BtsMonthAggregates,
   FaaRegistryRow,
   FleetAircraft,
   FleetAnchorRow,
@@ -379,6 +380,37 @@ export function setupTables(db: Database) {
         last_refreshed INTEGER NOT NULL
       );
     `).run();
+  }
+
+  // BTS FGK monthly shadow aggregates (per-operator, per-tail, per-route).
+  if (!tableExists(db, "bts_monthly_operators")) {
+    db.exec(`
+      CREATE TABLE bts_monthly_operators (
+        month TEXT NOT NULL,
+        op_carrier TEXT NOT NULL,
+        flights INTEGER NOT NULL,
+        performed INTEGER NOT NULL,
+        distinct_tails INTEGER NOT NULL,
+        ingested_at INTEGER NOT NULL,
+        UNIQUE(month, op_carrier)
+      );
+      CREATE TABLE bts_monthly_tails (
+        month TEXT NOT NULL,
+        tail_number TEXT NOT NULL,
+        op_carrier TEXT NOT NULL,
+        departures INTEGER NOT NULL,
+        UNIQUE(month, tail_number)
+      );
+      CREATE TABLE bts_monthly_routes (
+        month TEXT NOT NULL,
+        origin TEXT NOT NULL,
+        dest TEXT NOT NULL,
+        performed INTEGER NOT NULL,
+        UNIQUE(month, origin, dest)
+      );
+      CREATE INDEX idx_bts_tails_month ON bts_monthly_tails(month);
+      CREATE INDEX idx_bts_routes_month ON bts_monthly_routes(month);
+    `);
   }
 
   // ADS-B shadow sweep audit trail: one aggregate row per sweep plus the
@@ -3083,7 +3115,7 @@ function normalizeCarrier(op: string | null): string | null {
   return null;
 }
 
-function bodyClassOf(family: string): BodyClass {
+export function bodyClassOf(family: string): BodyClass {
   if (/^(B767|B777|B787|A350)/.test(family)) return "widebody";
   if (/^(B737|B757|A319|A320|A321)/.test(family)) return "narrowbody";
   if (/^(E175|ERJ|CRJ)/.test(family)) return "regional";
@@ -3247,6 +3279,42 @@ export function getFaaRegistryByTail(db: Database, tail: string): FaaRegistryRow
       .query("SELECT * FROM faa_registry WHERE tail_number = ?")
       .get(tail) as FaaRegistryRow | null) ?? null
   );
+}
+
+/** Replace one month's BTS aggregates in a single transaction. */
+export function replaceBtsMonth(db: Database, month: string, agg: BtsMonthAggregates): void {
+  const now = Math.floor(Date.now() / 1000);
+  db.transaction(() => {
+    db.query("DELETE FROM bts_monthly_operators WHERE month = ?").run(month);
+    db.query("DELETE FROM bts_monthly_tails WHERE month = ?").run(month);
+    db.query("DELETE FROM bts_monthly_routes WHERE month = ?").run(month);
+    for (const o of agg.operators) {
+      db.query(`
+        INSERT INTO bts_monthly_operators (month, op_carrier, flights, performed, distinct_tails, ingested_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(month, o.op_carrier, o.flights, o.performed, o.distinct_tails, now);
+    }
+    for (const t of agg.tails) {
+      db.query(`
+        INSERT INTO bts_monthly_tails (month, tail_number, op_carrier, departures)
+        VALUES (?, ?, ?, ?)
+      `).run(month, t.tail_number, t.op_carrier, t.departures);
+    }
+    for (const r of agg.routes) {
+      db.query(`
+        INSERT INTO bts_monthly_routes (month, origin, dest, performed)
+        VALUES (?, ?, ?, ?)
+      `).run(month, r.origin, r.dest, r.performed);
+    }
+  })();
+}
+
+export function getBtsIngestedMonths(db: Database): string[] {
+  return (
+    db
+      .query("SELECT DISTINCT month FROM bts_monthly_operators ORDER BY month DESC")
+      .all() as Array<{ month: string }>
+  ).map((r) => r.month);
 }
 
 const ADSB_OBSERVATION_RETENTION_DAYS = 7;
