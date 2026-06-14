@@ -209,6 +209,9 @@ export const GAUGES = {
   // Install-pipeline rollup from the fleet-progress sheets.
   // tags: segment (mainline_nb|mainline_wb|express), state (total|complete|in_mod|verification_needed), airline
   FLEET_PROGRESS_COUNT: "fleet_progress.count",
+
+  // FAA registry sync results. tags: state (resolved|not_in_master|starlink_flagged), airline
+  FAA_REGISTRY_TAILS: "faa_registry.tails",
 } as const;
 
 /**

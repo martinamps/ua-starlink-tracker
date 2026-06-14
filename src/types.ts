@@ -190,6 +190,21 @@ export interface FleetProgressRow {
   fetched_at: number;
 }
 
+/** One tracked tail's slice of the FAA Releasable Aircraft Registry. */
+export interface FaaRegistryRow {
+  tail_number: string;
+  mode_s_hex: string | null;
+  serial: string | null;
+  year_mfr: string | null;
+  /** MASTER status code ("V" = valid) or "NOT_IN_MASTER". */
+  faa_status: string;
+  registrant: string | null;
+  faa_model: string | null;
+  expiration_date: string | null;
+  dereg_date: string | null;
+  last_refreshed: number;
+}
+
 export interface RouteScheduleRow {
   origin: string;
   destination: string;

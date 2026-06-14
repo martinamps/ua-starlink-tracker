@@ -23,6 +23,7 @@ import type {
   Aircraft,
   AirportDepartures,
   BodyClass,
+  FaaRegistryRow,
   FleetAircraft,
   FleetCarrier,
   FleetDiscoveryStats,
@@ -103,7 +104,9 @@ export interface VerificationLogEntry {
   airline: string;
 }
 
-function setupTables(db: Database) {
+// Exported so tests' synthetic in-memory DBs pick up tables added after the
+// last `test:setup` snapshot, instead of failing on a stale schema.
+export function setupTables(db: Database) {
   // Create starlink_verification_log table
   if (!tableExists(db, "starlink_verification_log")) {
     db.query(`
@@ -319,6 +322,25 @@ function setupTables(db: Database) {
         sheet_updated TEXT,
         fetched_at INTEGER NOT NULL,
         UNIQUE(airline, segment, type_code)
+      );
+    `).run();
+  }
+
+  // FAA Releasable Aircraft Registry slice for tracked tails (no airline column —
+  // the registry is national; tails are globally unique).
+  if (!tableExists(db, "faa_registry")) {
+    db.query(`
+      CREATE TABLE faa_registry (
+        tail_number TEXT PRIMARY KEY,
+        mode_s_hex TEXT,
+        serial TEXT,
+        year_mfr TEXT,
+        faa_status TEXT NOT NULL,
+        registrant TEXT,
+        faa_model TEXT,
+        expiration_date TEXT,
+        dereg_date TEXT,
+        last_refreshed INTEGER NOT NULL
       );
     `).run();
   }
@@ -3054,6 +3076,44 @@ export function getFleetProgress(db: Database, airline?: AirlineFilter): FleetPr
     airline
   );
   return db.query(`${q.sql} ORDER BY segment, type_code`).all(...q.params) as FleetProgressRow[];
+}
+
+/** Replace the FAA registry slice with the latest pull (full refresh, one transaction). */
+export function replaceFaaRegistry(
+  db: Database,
+  rows: Array<Omit<FaaRegistryRow, "last_refreshed">>
+): void {
+  const now = Math.floor(Date.now() / 1000);
+  db.transaction(() => {
+    db.query("DELETE FROM faa_registry").run();
+    for (const r of rows) {
+      db.query(`
+        INSERT INTO faa_registry
+          (tail_number, mode_s_hex, serial, year_mfr, faa_status, registrant, faa_model,
+           expiration_date, dereg_date, last_refreshed)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        r.tail_number,
+        r.mode_s_hex,
+        r.serial,
+        r.year_mfr,
+        r.faa_status,
+        r.registrant,
+        r.faa_model,
+        r.expiration_date,
+        r.dereg_date,
+        now
+      );
+    }
+  })();
+}
+
+export function getFaaRegistryByTail(db: Database, tail: string): FaaRegistryRow | null {
+  return (
+    (db
+      .query("SELECT * FROM faa_registry WHERE tail_number = ?")
+      .get(tail) as FaaRegistryRow | null) ?? null
+  );
 }
 
 // One definition of "departure on a Starlink-equipped aircraft, next 48h":

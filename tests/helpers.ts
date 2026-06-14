@@ -7,6 +7,7 @@
 import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { setupTables } from "../src/database/database";
 import type { predictFlight } from "../src/scripts/starlink-predictor";
 
 // Snapshot lives inside the checkout (gitignored) so parallel worktrees never
@@ -39,6 +40,9 @@ export function makeSyntheticDb(): Database {
   snapshotDdl ??= loadSnapshotDdl();
   const db = new Database(":memory:");
   for (const sql of snapshotDdl) db.exec(sql);
+  // Tables added since the snapshot was generated (setupTables is idempotent),
+  // so a stale .test-snapshot.sqlite doesn't fail write-path tests.
+  setupTables(db);
   return db;
 }
 
