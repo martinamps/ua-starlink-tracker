@@ -9,6 +9,7 @@ import {
   getAllStarlinkPlanes,
   getUpcomingFlights,
   getVerificationStats,
+  getWifiMismatches,
   initializeDatabase,
   logVerification,
   needsVerification,
@@ -87,6 +88,10 @@ interface Plane {
   fleet: string;
 }
 
+// Tails where the sheet and the united.com consensus disagree are usually fresh
+// retrofits united's feed hasn't caught up on — re-check daily instead of ~72h.
+const DISPUTED_RECHECK_HOURS = 24;
+
 /**
  * Get planes that need United verification.
  * Queries the local DB directly (including mismatched planes with
@@ -100,13 +105,18 @@ function getPlanesNeedingVerification(
   db: Database,
   limit: number,
   forceAll = false
-): Array<{ plane: Plane; flight: Flight }> {
-  const result: Array<{ plane: Plane; flight: Flight }> = [];
+): Array<{ plane: Plane; flight: Flight; recheckHours?: number }> {
+  const result: Array<{ plane: Plane; flight: Flight; recheckHours?: number }> = [];
   const now = Math.floor(Date.now() / 1000);
 
   // Pull ALL planes from starlink_planes (including mismatches) — UA only;
   // HA is type-deterministic and AS uses alaska-json, neither needs united.com checks.
-  const planes = getAllStarlinkPlanes(db, "UA") as Plane[];
+  // Disputed tails (sheet vs verified_wifi mismatch) go first so they self-heal
+  // ahead of routine re-checks.
+  const disputed = new Set(getWifiMismatches(db, "UA").map((m) => m.TailNumber));
+  const planes = (getAllStarlinkPlanes(db, "UA") as Plane[]).sort(
+    (a, b) => Number(disputed.has(b.TailNumber)) - Number(disputed.has(a.TailNumber))
+  );
   const allFlights = getUpcomingFlights(db, undefined, "UA");
 
   // Group flights by tail number
@@ -130,11 +140,12 @@ function getPlanesNeedingVerification(
     );
     if (!candidate) continue;
 
-    if (!forceAll && !needsVerification(db, plane.TailNumber, UNITED_SOURCE)) {
+    const recheckHours = disputed.has(plane.TailNumber) ? DISPUTED_RECHECK_HOURS : undefined;
+    if (!forceAll && !needsVerification(db, plane.TailNumber, UNITED_SOURCE, recheckHours)) {
       continue;
     }
 
-    result.push({ plane, flight: candidate });
+    result.push({ plane, flight: candidate, recheckHours });
   }
 
   return result;
@@ -148,11 +159,11 @@ export async function verifyPlaneStarlink(
   tailNumber: string,
   flight: Flight,
   forceCheck = false,
-  context?: { aircraftType?: string | null; fleet?: string | null },
+  context?: { aircraftType?: string | null; fleet?: string | null; recheckHours?: number },
   deps: VerifyPlaneStarlinkDeps = {}
 ): Promise<StarlinkCheckResult | null> {
   const checker = deps.checker ?? checkStarlinkStatusSubprocess;
-  if (!forceCheck && !needsVerification(db, tailNumber, UNITED_SOURCE)) {
+  if (!forceCheck && !needsVerification(db, tailNumber, UNITED_SOURCE, context?.recheckHours)) {
     return null;
   }
 
@@ -218,7 +229,9 @@ export async function verifyPlaneStarlink(
             `Flight ${flightNumber} aircraft: ${resolvedTail} (${result.wifiProvider || "unknown"})`
           );
         } else if (result.hasStarlink) {
-          verifierLog.info(`✓ ${tailNumber} confirmed Starlink (${result.wifiProvider})`);
+          verifierLog.info(
+            `✓ ${tailNumber} confirmed Starlink (${result.wifiProvider} via ${result.providerSource})`
+          );
         } else if (result.error) {
           verifierLog.warn(
             `✗ ${tailNumber} error: ${result.error}`,
@@ -226,7 +239,11 @@ export async function verifyPlaneStarlink(
           );
         } else {
           verifierLog.info(
-            `✗ ${tailNumber} no Starlink (${result.wifiProvider || "unknown provider"})`,
+            `✗ ${tailNumber} no Starlink (${
+              result.wifiProvider
+                ? `${result.wifiProvider} via ${result.providerSource}`
+                : "unknown provider"
+            })`,
             result.debugFile ? { debugFile: result.debugFile } : undefined
           );
         }
@@ -299,10 +316,11 @@ export async function runVerificationBatch(
     verifierLog.info(`${toVerify.length} plane(s) need verification`);
 
     for (let i = 0; i < toVerify.length; i++) {
-      const { plane, flight } = toVerify[i];
+      const { plane, flight, recheckHours } = toVerify[i];
       const result = await verifyPlaneStarlink(db, plane.TailNumber, flight, forceAll, {
         aircraftType: plane.Aircraft,
         fleet: plane.fleet,
+        recheckHours,
       });
 
       if (result === null) {

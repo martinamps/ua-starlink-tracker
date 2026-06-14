@@ -3,6 +3,7 @@ import path from "node:path";
 import type { Browser, Page } from "playwright";
 import { chromium } from "playwright-extra";
 import StealthPlugin from "puppeteer-extra-plugin-stealth";
+import { looksLikeValidTailNumber } from "../airlines/registry";
 import { BROWSER_USER_AGENT } from "../utils/constants";
 import { LOG_DIR, info, warn } from "../utils/logger";
 
@@ -19,12 +20,75 @@ export interface StarlinkCheckResult {
   shipNumber: string | null;
   aircraftType: string | null;
   wifiProvider: string | null;
+  // Where the provider came from: united's flight-status XHR or scraped page text
+  providerSource?: "status_api" | "page";
   flightNumber: string;
   date: string;
   origin: string;
   destination: string;
   error?: string;
   debugFile?: string;
+}
+
+export interface StatusApiEquipment {
+  wifiProvider: string | null;
+  tailNumber: string | null;
+  shipNumber: string | null;
+  aircraftType: string | null;
+}
+
+// Same bounded vocabulary the page scrape produces, so downstream string
+// matching (consensus, mismatch exclusion) never sees raw vendor spellings.
+const PROVIDER_PATTERNS: Array<[RegExp, string]> = [
+  [/starlink/i, "Starlink"],
+  [/panasonic/i, "Panasonic"],
+  [/viasat/i, "Viasat"],
+  [/thales/i, "Thales"],
+  [/gogo/i, "Gogo"],
+  [/^(none|not offered|no ?wi-?fi)$/i, "None"],
+];
+
+function canonicalProvider(raw: string): string | null {
+  if (!raw) return null;
+  for (const [pattern, name] of PROVIDER_PATTERNS) {
+    if (pattern.test(raw)) return name;
+  }
+  return raw;
+}
+
+/**
+ * Extract the Equipment block from united's /api/flightstatus/status response.
+ * WifiPrvdr there drives the page's Starlink banner; the "Inflight amenities"
+ * text comes from a separate aircraft-amenities feed that lags retrofits.
+ */
+export function parseStatusApiResponse(
+  json: unknown,
+  origin: string,
+  destination: string
+): StatusApiEquipment | null {
+  const legs = (json as any)?.data?.flightLegs;
+  if (!Array.isArray(legs)) return null;
+  const segments: any[] = legs.flatMap((leg) => leg?.OperationalFlightSegments ?? []);
+  // Require a leg match when the payload has several segments — falling back to
+  // an arbitrary leg would attribute another aircraft's provider to this one.
+  const segment =
+    segments.find(
+      (s) => s?.DepartureAirport?.IATACode === origin && s?.ArrivalAirport?.IATACode === destination
+    ) ?? (segments.length === 1 ? segments[0] : undefined);
+  const equipment = segment?.Equipment;
+  if (!equipment) return null;
+
+  const rawProvider =
+    typeof equipment.Amenities?.WifiPrvdr === "string" ? equipment.Amenities.WifiPrvdr.trim() : "";
+  const tail = typeof equipment.TailNumber === "string" ? equipment.TailNumber.toUpperCase() : "";
+  const ship = equipment.NoseNumber ?? equipment.ShipNumber;
+  return {
+    wifiProvider: canonicalProvider(rawProvider),
+    tailNumber: looksLikeValidTailNumber(tail) ? tail : null,
+    shipNumber: ship != null && /^\d{3,4}$/.test(String(ship)) ? String(ship) : null,
+    aircraftType:
+      typeof equipment.Model?.Description === "string" ? equipment.Model.Description : null,
+  };
 }
 
 /**
@@ -124,6 +188,14 @@ export async function checkStarlinkStatus(
     if (process.env.SUBPROCESS_MODE !== "1") {
       info(`Fetching: ${url}`);
     }
+
+    // Capture the flight-status XHR the page makes for itself; registered
+    // before goto so the response can't be missed.
+    const statusApiPromise: Promise<StatusApiEquipment | null> = page
+      .waitForResponse((r) => r.url().includes("/api/flightstatus/status/"), { timeout: 25000 })
+      .then((r) => r.json())
+      .then((json) => parseStatusApiResponse(json, origin, destination))
+      .catch(() => null);
 
     // Navigate with a longer timeout
     await page.goto(url, {
@@ -267,9 +339,24 @@ export async function checkStarlinkStatus(
     result.aircraftType = data.aircraftType;
     result.wifiProvider = data.wifiProvider;
 
-    if (!data.wifiProvider || (!data.hasStarlink && !data.wifiProvider)) {
+    // The status XHR drives the page's own banner — prefer it over scraped text.
+    const statusApi = await statusApiPromise;
+    if (statusApi) {
+      if (statusApi.wifiProvider) {
+        result.hasStarlink = statusApi.wifiProvider === "Starlink";
+        result.wifiProvider = statusApi.wifiProvider;
+      }
+      result.tailNumber = statusApi.tailNumber || result.tailNumber;
+      result.shipNumber = statusApi.shipNumber || result.shipNumber;
+      result.aircraftType = statusApi.aircraftType || result.aircraftType;
+    }
+    if (result.wifiProvider) {
+      result.providerSource = statusApi?.wifiProvider ? "status_api" : "page";
+    }
+
+    if (!result.wifiProvider) {
       result.debugFile = saveDebugHtml(
-        data.tailNumber || "unknown",
+        result.tailNumber || "unknown",
         flightNumber,
         pageContent,
         data.bodyText
