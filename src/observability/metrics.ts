@@ -151,6 +151,9 @@ export const COUNTERS = {
   // tags: method, route (allowlisted), status_code, tenant, client_class
   HTTP_REQUEST: "http.request",
 
+  // A new SEC filing surfaced for anchor review — tags: company, form, airline
+  SEC_FILING_SEEN: "sec.filing_seen",
+
   // Per-IP rate limit triggered on /api/* — tags: route, tenant
   HTTP_RATE_LIMITED: "http.rate_limited",
 

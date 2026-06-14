@@ -25,6 +25,7 @@ import type {
   BodyClass,
   FaaRegistryRow,
   FleetAircraft,
+  FleetAnchorRow,
   FleetCarrier,
   FleetDiscoveryStats,
   FleetFamily,
@@ -39,6 +40,7 @@ import type {
   RecentInstall,
   RouteSchedule,
   RouteScheduleRow,
+  SecFilingRow,
   StarlinkStatus,
   WifiProvider,
 } from "../types";
@@ -322,6 +324,38 @@ export function setupTables(db: Database) {
         sheet_updated TEXT,
         fetched_at INTEGER NOT NULL,
         UNIQUE(airline, segment, type_code)
+      );
+    `).run();
+  }
+
+  // Officially-reported fleet/Starlink figures from SEC filings, plus the
+  // watcher's record of which filings have already been seen.
+  if (!tableExists(db, "fleet_anchors")) {
+    db.query(`
+      CREATE TABLE fleet_anchors (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        airline TEXT NOT NULL,
+        as_of_date TEXT NOT NULL,
+        scope TEXT NOT NULL,
+        metric TEXT NOT NULL,
+        value TEXT NOT NULL,
+        source_form TEXT NOT NULL,
+        source_url TEXT NOT NULL,
+        added_at INTEGER NOT NULL,
+        UNIQUE(airline, metric, as_of_date)
+      );
+    `).run();
+  }
+  if (!tableExists(db, "sec_filings_seen")) {
+    db.query(`
+      CREATE TABLE sec_filings_seen (
+        accession TEXT PRIMARY KEY,
+        cik TEXT NOT NULL,
+        company TEXT NOT NULL,
+        form TEXT NOT NULL,
+        filed_date TEXT NOT NULL,
+        primary_doc_url TEXT NOT NULL,
+        seen_at INTEGER NOT NULL
       );
     `).run();
   }
@@ -3108,6 +3142,60 @@ export function replaceFaaRegistry(
   })();
 }
 
+/** Upsert anchors keyed by (airline, metric, as-of date) — editing SEED_ANCHORS
+ * and redeploying is the whole correction story, no manual SQL. */
+export function seedFleetAnchors(
+  db: Database,
+  rows: Array<Omit<FleetAnchorRow, "added_at">>
+): void {
+  const now = Math.floor(Date.now() / 1000);
+  db.transaction(() => {
+    for (const r of rows) {
+      db.query(`
+        INSERT INTO fleet_anchors
+          (airline, as_of_date, scope, metric, value, source_form, source_url, added_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(airline, metric, as_of_date) DO UPDATE SET
+          scope = excluded.scope,
+          value = excluded.value,
+          source_form = excluded.source_form,
+          source_url = excluded.source_url
+      `).run(r.airline, r.as_of_date, r.scope, r.metric, r.value, r.source_form, r.source_url, now);
+    }
+  })();
+}
+
+export function getFleetAnchors(db: Database, airline?: AirlineFilter): FleetAnchorRow[] {
+  const q = withAirline(
+    `SELECT airline, as_of_date, scope, metric, value, source_form, source_url, added_at
+     FROM fleet_anchors WHERE 1=1`,
+    airline
+  );
+  return db.query(`${q.sql} ORDER BY as_of_date DESC, metric`).all(...q.params) as FleetAnchorRow[];
+}
+
+/** Record filings not seen before; returns only the newly inserted ones. */
+export function recordSecFilings(
+  db: Database,
+  filings: Array<Omit<SecFilingRow, "seen_at">>
+): Array<Omit<SecFilingRow, "seen_at">> {
+  const now = Math.floor(Date.now() / 1000);
+  const fresh: Array<Omit<SecFilingRow, "seen_at">> = [];
+  db.transaction(() => {
+    for (const f of filings) {
+      const result = db
+        .query(`
+          INSERT OR IGNORE INTO sec_filings_seen
+            (accession, cik, company, form, filed_date, primary_doc_url, seen_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `)
+        .run(f.accession, f.cik, f.company, f.form, f.filed_date, f.primary_doc_url, now);
+      if (result.changes > 0) fresh.push(f);
+    }
+  })();
+  return fresh;
+}
+
 export function getFaaRegistryByTail(db: Database, tail: string): FaaRegistryRow | null {
   return (
     (db
@@ -3374,6 +3462,7 @@ function computeFleetPageData(db: Database, airline?: AirlineFilter): FleetPageD
     // Single-airline narrative like installPace — the hub page must not show
     // one airline's pipeline as if it covered every tracked fleet.
     progress: soleAirline ? getFleetProgress(db, airline) : [],
+    anchors: soleAirline ? getFleetAnchors(db, airline) : [],
   };
 }
 

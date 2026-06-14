@@ -175,6 +175,8 @@ export interface FleetPageData {
   installPace: InstallPace | null;
   /** Per-type install pipeline rows (empty until the fleet-progress job has run). */
   progress: FleetProgressRow[];
+  /** Officially-reported fleet/Starlink figures (single-airline pages only). */
+  anchors: FleetAnchorRow[];
 }
 
 /** One per-type row of the install pipeline (United Fleet Site progress workbooks). */
@@ -188,6 +190,29 @@ export interface FleetProgressRow {
   verification_needed: number | null;
   sheet_updated: string | null;
   fetched_at: number;
+}
+
+/** An officially-reported fleet/Starlink figure from an SEC filing. */
+export interface FleetAnchorRow {
+  airline: string;
+  as_of_date: string;
+  scope: string;
+  metric: string;
+  value: string;
+  source_form: string;
+  source_url: string;
+  added_at: number;
+}
+
+/** A filing the SEC watcher has already surfaced for review. */
+export interface SecFilingRow {
+  accession: string;
+  cik: string;
+  company: string;
+  form: string;
+  filed_date: string;
+  primary_doc_url: string;
+  seen_at: number;
 }
 
 /** One tracked tail's slice of the FAA Releasable Aircraft Registry. */
