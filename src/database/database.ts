@@ -28,6 +28,7 @@ import type {
   FleetDiscoveryStats,
   FleetFamily,
   FleetPageData,
+  FleetProgressRow,
   FleetSource,
   FleetStats,
   FleetTail,
@@ -299,6 +300,26 @@ function setupTables(db: Database) {
       CREATE INDEX idx_qs_dep_time ON qatar_schedule(departure_time);
       CREATE INDEX idx_qs_route ON qatar_schedule(departure_airport, arrival_airport, departure_time);
       CREATE INDEX idx_qs_flight ON qatar_schedule(flight_number, scheduled_date);
+    `).run();
+  }
+
+  // Per-type Starlink install pipeline from the United Fleet Site progress
+  // workbooks (Complete / In Mod / Verification needed), refreshed daily.
+  if (!tableExists(db, "fleet_progress")) {
+    db.query(`
+      CREATE TABLE fleet_progress (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        airline TEXT NOT NULL,
+        segment TEXT NOT NULL,
+        type_code TEXT NOT NULL,
+        total INTEGER,
+        starlink_complete INTEGER,
+        in_mod INTEGER,
+        verification_needed INTEGER,
+        sheet_updated TEXT,
+        fetched_at INTEGER NOT NULL,
+        UNIQUE(airline, segment, type_code)
+      );
     `).run();
   }
 
@@ -2989,6 +3010,52 @@ export function getFleetPageData(db: Database, airline?: AirlineFilter): FleetPa
   return data;
 }
 
+/** Replace an airline's install-pipeline rows, per segment, so types dropped
+ * from the sheet don't linger as stale rows. */
+export function replaceFleetProgress(
+  db: Database,
+  airline: string,
+  rows: Array<Omit<FleetProgressRow, "airline" | "fetched_at">>
+): void {
+  const now = Math.floor(Date.now() / 1000);
+  db.transaction(() => {
+    for (const segment of new Set(rows.map((r) => r.segment))) {
+      db.query("DELETE FROM fleet_progress WHERE airline = ? AND segment = ?").run(
+        airline,
+        segment
+      );
+    }
+    for (const r of rows) {
+      db.query(`
+        INSERT INTO fleet_progress
+          (airline, segment, type_code, total, starlink_complete, in_mod, verification_needed,
+           sheet_updated, fetched_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        airline,
+        r.segment,
+        r.type_code,
+        r.total,
+        r.starlink_complete,
+        r.in_mod,
+        r.verification_needed,
+        r.sheet_updated,
+        now
+      );
+    }
+  })();
+}
+
+export function getFleetProgress(db: Database, airline?: AirlineFilter): FleetProgressRow[] {
+  const q = withAirline(
+    `SELECT airline, segment, type_code, total, starlink_complete, in_mod, verification_needed,
+            sheet_updated, fetched_at
+     FROM fleet_progress WHERE 1=1`,
+    airline
+  );
+  return db.query(`${q.sql} ORDER BY segment, type_code`).all(...q.params) as FleetProgressRow[];
+}
+
 // One definition of "departure on a Starlink-equipped aircraft, next 48h":
 // the same equipped predicate /api/check-flight uses, with a real upper bound.
 // The homepage airports panel and /routes both render from this base, so the
@@ -3244,6 +3311,9 @@ function computeFleetPageData(db: Database, airline?: AirlineFilter): FleetPageD
     totalFleet: rows.length,
     totalStarlink,
     installPace,
+    // Single-airline narrative like installPace — the hub page must not show
+    // one airline's pipeline as if it covered every tracked fleet.
+    progress: soleAirline ? getFleetProgress(db, airline) : [],
   };
 }
 

@@ -95,6 +95,27 @@ function parseCSV(csvText: string) {
   return { headers, rows };
 }
 
+/** Fetch one Google Sheets tab as CSV via the export endpoint, with the same
+ * browser-imitating headers the roster scrape uses. */
+export async function fetchSheetCsv(docId: string, gid: number): Promise<string> {
+  const response = await fetch(
+    `https://docs.google.com/spreadsheets/d/${docId}/export?format=csv&gid=${gid}`,
+    {
+      redirect: "follow",
+      headers: {
+        "User-Agent": BROWSER_USER_AGENT,
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9",
+        "Accept-Language": "en-US,en;q=0.5",
+        "Cache-Control": "no-cache",
+      },
+    }
+  );
+  if (!response.ok) {
+    throw new Error(`HTTP error! Status: ${response.status}`);
+  }
+  return response.text();
+}
+
 // Function to fetch all CSV data and filter for Starlink WiFi
 export async function fetchAllSheets() {
   const exportUrls = createCsvExportUrls();
