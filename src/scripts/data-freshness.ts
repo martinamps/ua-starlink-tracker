@@ -41,6 +41,9 @@ export function buildFreshnessQueries(qrEnabled = AIRLINES.QR.enabled): Record<s
     faa_registry: `
     SELECT 'UA' AS airline, MAX(last_refreshed) AS ts
     FROM faa_registry`,
+    adsb_sweep: `
+    SELECT 'UA' AS airline, MAX(swept_at) AS ts
+    FROM adsb_sweeps`,
   };
   // QR writes none of the airline-column tables — only qatar_schedule, whose
   // last_updated is touched solely on successful upserts. Without this gauge
@@ -68,6 +71,7 @@ export function buildFreshnessCoverage(
     departures: ["UA", "HA", "AS"],
     fleet_progress: ["UA"],
     faa_registry: ["UA"],
+    adsb_sweep: ["UA"],
   };
   if (qrEnabled) coverage.qatar_ingester = ["QR"];
   return coverage;
@@ -131,7 +135,7 @@ export function emitDataFreshness(db: Database, queries = FRESHNESS_QUERIES): vo
           // return a null MAX on an empty table — the maximally stale state must
           // still emit so the monitor can fire (epoch 0 / meta-stamp fallback).
           if (job === "qatar_ingester") ts = metaLastUpdatedEpoch(db, row.airline) ?? 0;
-          else if (job === "faa_registry") ts = 0;
+          else if (job === "faa_registry" || job === "adsb_sweep") ts = 0;
           else continue;
         }
         const ageSec = Math.max(0, now - ts);

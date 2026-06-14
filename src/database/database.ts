@@ -20,6 +20,8 @@ import {
   normalizeWifiProvider,
 } from "../observability/metrics";
 import type {
+  AdsbObservationRecord,
+  AdsbSweepRecord,
   Aircraft,
   AirportDepartures,
   BodyClass,
@@ -377,6 +379,49 @@ export function setupTables(db: Database) {
         last_refreshed INTEGER NOT NULL
       );
     `).run();
+  }
+
+  // ADS-B shadow sweep audit trail: one aggregate row per sweep plus the
+  // per-aircraft observations it classified against upcoming_flights.
+  if (!tableExists(db, "adsb_sweeps")) {
+    db.exec(`
+      CREATE TABLE adsb_sweeps (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        swept_at INTEGER NOT NULL,
+        provider TEXT NOT NULL,
+        requests INTEGER NOT NULL,
+        latency_ms INTEGER NOT NULL,
+        tails_queried INTEGER NOT NULL,
+        observed INTEGER NOT NULL,
+        airborne INTEGER NOT NULL,
+        matched INTEGER NOT NULL,
+        mismatched INTEGER NOT NULL,
+        no_assignment INTEGER NOT NULL,
+        no_callsign INTEGER NOT NULL
+      );
+      CREATE INDEX idx_adsb_sweeps_at ON adsb_sweeps(swept_at);
+    `);
+  }
+  if (!tableExists(db, "adsb_observations")) {
+    db.exec(`
+      CREATE TABLE adsb_observations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        observed_at INTEGER NOT NULL,
+        tail_number TEXT NOT NULL,
+        callsign TEXT,
+        hex TEXT,
+        airborne INTEGER NOT NULL,
+        ground_speed REAL,
+        lat REAL,
+        lon REAL,
+        aircraft_type TEXT,
+        provider TEXT NOT NULL,
+        shadow_result TEXT,
+        assigned_flight TEXT
+      );
+      CREATE INDEX idx_adsb_obs_tail ON adsb_observations(tail_number, observed_at);
+      CREATE INDEX idx_adsb_obs_at ON adsb_observations(observed_at);
+    `);
   }
 
   if (tableExists(db, "starlink_planes")) {
@@ -3202,6 +3247,62 @@ export function getFaaRegistryByTail(db: Database, tail: string): FaaRegistryRow
       .query("SELECT * FROM faa_registry WHERE tail_number = ?")
       .get(tail) as FaaRegistryRow | null) ?? null
   );
+}
+
+const ADSB_OBSERVATION_RETENTION_DAYS = 7;
+const ADSB_SWEEP_RETENTION_DAYS = 90;
+
+/** Persist one shadow sweep + its observations and prune old audit rows. */
+export function recordAdsbSweep(
+  db: Database,
+  sweep: AdsbSweepRecord,
+  observations: Array<Omit<AdsbObservationRecord, "id">>
+): void {
+  const obsCutoff = sweep.swept_at - ADSB_OBSERVATION_RETENTION_DAYS * 86400;
+  const sweepCutoff = sweep.swept_at - ADSB_SWEEP_RETENTION_DAYS * 86400;
+  db.transaction(() => {
+    db.query(`
+      INSERT INTO adsb_sweeps
+        (swept_at, provider, requests, latency_ms, tails_queried, observed, airborne,
+         matched, mismatched, no_assignment, no_callsign)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      sweep.swept_at,
+      sweep.provider,
+      sweep.requests,
+      sweep.latency_ms,
+      sweep.tails_queried,
+      sweep.observed,
+      sweep.airborne,
+      sweep.matched,
+      sweep.mismatched,
+      sweep.no_assignment,
+      sweep.no_callsign
+    );
+    for (const o of observations) {
+      db.query(`
+        INSERT INTO adsb_observations
+          (observed_at, tail_number, callsign, hex, airborne, ground_speed, lat, lon,
+           aircraft_type, provider, shadow_result, assigned_flight)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        o.observed_at,
+        o.tail_number,
+        o.callsign,
+        o.hex,
+        o.airborne,
+        o.ground_speed,
+        o.lat,
+        o.lon,
+        o.aircraft_type,
+        o.provider,
+        o.shadow_result,
+        o.assigned_flight
+      );
+    }
+    db.query("DELETE FROM adsb_observations WHERE observed_at < ?").run(obsCutoff);
+    db.query("DELETE FROM adsb_sweeps WHERE swept_at < ?").run(sweepCutoff);
+  })();
 }
 
 // One definition of "departure on a Starlink-equipped aircraft, next 48h":

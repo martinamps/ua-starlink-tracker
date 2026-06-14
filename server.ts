@@ -4,6 +4,7 @@ import "dotenv/config";
 
 import { checkNewPlanes, startFlightUpdater } from "./src/api/flight-updater";
 import { archivePastDepartures, initializeDatabase, pruneCrashRows } from "./src/database/database";
+import { startAdsbSweepJob } from "./src/scripts/adsb-sweep";
 import { startAlaskaVerifier } from "./src/scripts/alaska-verifier";
 import { startFreshnessEmitter } from "./src/scripts/data-freshness";
 import { startFaaRegistryJob } from "./src/scripts/faa-registry";
@@ -117,6 +118,10 @@ if (JOBS_ENABLED) {
   // Daily SEC filings watcher: keeps the officially-reported anchors seeded and
   // flags new UAL/SkyWest/Republic filings for review.
   track(startSecAnchorsJob(db));
+
+  // ADS-B shadow sweep: compares live callsigns against FR24-derived
+  // assignments, metrics-only — FR24 stays the serving source.
+  track(startAdsbSweepJob(db));
 
   // Daily prune of subprocess-crash log rows (no observation, just noise).
   track(

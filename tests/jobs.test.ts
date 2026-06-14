@@ -614,6 +614,11 @@ describe("data-freshness coverage", () => {
           "INSERT INTO faa_registry (tail_number, faa_status, last_refreshed) VALUES ('N73275', 'V', ?)"
         ).run(ts);
         break;
+      case "adsb_sweep":
+        db.query(
+          "INSERT INTO adsb_sweeps (swept_at, provider, requests, latency_ms, tails_queried, observed, airborne, matched, mismatched, no_assignment, no_callsign) VALUES (?, 'airplanes.live', 1, 250, 425, 40, 36, 11, 0, 25, 0)"
+        ).run(ts);
+        break;
       default:
         throw new Error(`no seeder for freshness job ${job} — add one with the query`);
     }
