@@ -215,6 +215,39 @@ export interface SecFilingRow {
   seen_at: number;
 }
 
+/** One ADS-B shadow sweep (aggregate row; observations carry the per-aircraft detail). */
+export interface AdsbSweepRecord {
+  swept_at: number;
+  provider: string;
+  requests: number;
+  latency_ms: number;
+  tails_queried: number;
+  observed: number;
+  airborne: number;
+  matched: number;
+  mismatched: number;
+  no_assignment: number;
+  no_callsign: number;
+}
+
+/** One aircraft seen during an ADS-B shadow sweep. */
+export interface AdsbObservationRecord {
+  id?: number;
+  observed_at: number;
+  tail_number: string;
+  callsign: string | null;
+  hex: string | null;
+  airborne: number;
+  ground_speed: number | null;
+  lat: number | null;
+  lon: number | null;
+  aircraft_type: string | null;
+  provider: string;
+  /** match | mismatch | no_assignment | no_callsign; null for on-ground observations. */
+  shadow_result: string | null;
+  assigned_flight: string | null;
+}
+
 /** One tracked tail's slice of the FAA Releasable Aircraft Registry. */
 export interface FaaRegistryRow {
   tail_number: string;

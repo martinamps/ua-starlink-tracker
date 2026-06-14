@@ -17,7 +17,7 @@
  *   aircraft_type:   normalized families (B737-800, E175, etc)      (~25)
  *   wifi_provider:   starlink | viasat | panasonic | thales | none | other | unknown  (7)
  *   starlink_status: confirmed | negative | unknown                  (3)
- *   vendor:          fr24 | flightaware | united | qatar | alaska    (5)
+ *   vendor:          fr24 | flightaware | united | qatar | alaska | adsb    (6)
  *   status:          success | error | rate_limited | timeout | killed |
  *                    exit_error | parse_error | spawn_error | partial |
  *                    aborted | scrape_error                          (~11)
@@ -141,9 +141,9 @@ export const COUNTERS = {
   VERIFICATION_CHECK: "verification.check",
 
   // External API calls
-  // tags: vendor (fr24|flightaware|united|qatar|alaska), type, status
+  // tags: vendor (fr24|flightaware|united|qatar|alaska|adsb), type, status
   // united status values: success | timeout | killed | exit_error | parse_error | spawn_error
-  // fr24/flightaware status values: success | error | rate_limited
+  // fr24/flightaware/adsb status values: success | error | rate_limited
   // qatar status values: success | error | partial
   VENDOR_REQUEST: "vendor.request",
 
@@ -215,6 +215,10 @@ export const GAUGES = {
 
   // FAA registry sync results. tags: state (resolved|not_in_master|starlink_flagged), airline
   FAA_REGISTRY_TAILS: "faa_registry.tails",
+
+  // ADS-B shadow sweep vs upcoming_flights assignments.
+  // tags: result (match|mismatch|no_assignment|no_callsign|airborne_total), airline
+  ADSB_SHADOW_OBSERVATIONS: "adsb_shadow.observations",
 } as const;
 
 /**
