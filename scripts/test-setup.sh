@@ -80,10 +80,10 @@ INSERT OR IGNORE INTO starlink_planes (aircraft, wifi, sheet_gid, sheet_type, Da
   ('Airbus A321-271N','Starlink','ha_seed','HA-mainline','2024-09-24','N205HA','Hawaiian Airlines','mainline','Starlink','HA'),
   ('Airbus A321-271N','Starlink','ha_seed','HA-mainline','2024-09-24','N215HA','Hawaiian Airlines','mainline','Starlink','HA');
 
--- Seed flight_routes cache for UA100 so predict_flight_starlink test never
--- falls through to live FR24 (the one network-dependent flake).
+-- Seed flight_routes for UA100 so the predict test never needs live FR24;
+-- far-future last_seen_at keeps it inside the lookup's 7-day freshness window.
 INSERT OR REPLACE INTO flight_routes (flight_number, origin, destination, duration_sec, first_seen_at, last_seen_at, seen_count)
-  VALUES ('UA100', 'EWR', 'TLV', 39600, strftime('%s','now'), strftime('%s','now'), 1);
+  VALUES ('UA100', 'EWR', 'TLV', 39600, strftime('%s','now'), strftime('%s','now','+10 years'), 1);
 
 -- Real AS fleet sample — mid-rollout: Horizon E175s confirmed (first to ship),
 -- mainline 737s mostly unknown.
