@@ -1,6 +1,7 @@
 import React from "react";
 import { AIRLINES, type SiteConfig } from "../airlines/registry";
 import type {
+  FleetAnchorRow,
   FleetFamily,
   FleetPageData,
   FleetProgressRow,
@@ -577,6 +578,45 @@ function InstallPipelineSection({ progress }: { progress: FleetProgressRow[] }) 
   );
 }
 
+// The handful of figures the airline itself has put in SEC filings — the
+// citable cross-check next to our scraped counts.
+function OfficialAnchorsSection({ anchors }: { anchors: FleetAnchorRow[] }) {
+  // Latest figure per metric (rows arrive ordered by as_of_date DESC), so a
+  // freshly seeded quarter replaces the old one without touching this list.
+  const latestByMetric = new Map<string, FleetAnchorRow>();
+  for (const a of anchors) {
+    if (!latestByMetric.has(a.metric)) latestByMetric.set(a.metric, a);
+  }
+  const shown = [...latestByMetric.values()].slice(0, 6);
+  if (shown.length === 0) return null;
+
+  return (
+    <section className={SECTION}>
+      <div className={PANEL}>
+        <div className={EYEBROW}>Officially reported (SEC filings)</div>
+        <div className="font-mono text-[11px] text-secondary space-y-1">
+          {shown.map((a) => (
+            <div key={a.metric}>
+              {a.scope}:{" "}
+              <a
+                href={a.source_url}
+                target="_blank"
+                rel="noreferrer"
+                className="text-accent hover:underline"
+              >
+                {a.value}
+              </a>{" "}
+              <span className="text-muted">
+                ({a.source_form}, as of {a.as_of_date})
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 interface FleetPageProps {
   data: FleetPageData;
   site: SiteConfig;
@@ -660,6 +700,7 @@ export default function FleetPage({ data, site }: FleetPageProps) {
       <LivePulse pulse={data.pulse} />
       <InstallPaceSection pace={data.installPace} />
       <InstallPipelineSection progress={data.progress} />
+      <OfficialAnchorsSection anchors={data.anchors} />
       <HangarFloor
         families={data.families}
         totalFleet={data.totalFleet}

@@ -11,6 +11,7 @@ import { startFleetDiscovery } from "./src/scripts/fleet-discovery";
 import { startFleetProgressJob } from "./src/scripts/fleet-progress";
 import { startFleetSync } from "./src/scripts/fleet-sync";
 import { startQatarScheduleIngester } from "./src/scripts/qatar-schedule-ingester";
+import { startSecAnchorsJob } from "./src/scripts/sec-anchors";
 import { runSheetScrape } from "./src/scripts/sheet-scrape";
 import { startStarlinkVerifier } from "./src/scripts/starlink-verifier";
 import { syncShipNumbers } from "./src/scripts/sync-ship-numbers";
@@ -112,6 +113,10 @@ if (JOBS_ENABLED) {
 
   // Daily FAA registry slice: existence/dereg hygiene + Mode-S hex per tail.
   track(startFaaRegistryJob(db));
+
+  // Daily SEC filings watcher: keeps the officially-reported anchors seeded and
+  // flags new UAL/SkyWest/Republic filings for review.
+  track(startSecAnchorsJob(db));
 
   // Daily prune of subprocess-crash log rows (no observation, just noise).
   track(
