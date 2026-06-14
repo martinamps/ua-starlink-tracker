@@ -6,6 +6,7 @@ import { checkNewPlanes, startFlightUpdater } from "./src/api/flight-updater";
 import { archivePastDepartures, initializeDatabase, pruneCrashRows } from "./src/database/database";
 import { startAdsbSweepJob } from "./src/scripts/adsb-sweep";
 import { startAlaskaVerifier } from "./src/scripts/alaska-verifier";
+import { startBtsSyncJob } from "./src/scripts/bts-sync";
 import { startFreshnessEmitter } from "./src/scripts/data-freshness";
 import { startFaaRegistryJob } from "./src/scripts/faa-registry";
 import { startFleetDiscovery } from "./src/scripts/fleet-discovery";
@@ -122,6 +123,9 @@ if (JOBS_ENABLED) {
   // ADS-B shadow sweep: compares live callsigns against FR24-derived
   // assignments, metrics-only — FR24 stays the serving source.
   track(startAdsbSweepJob(db));
+
+  // BTS FGK monthly shadow ingest (daily check; ingests when a new month posts).
+  track(startBtsSyncJob(db));
 
   // Daily prune of subprocess-crash log rows (no observation, just noise).
   track(

@@ -215,6 +215,19 @@ export interface SecFilingRow {
   seen_at: number;
 }
 
+/** Aggregates kept from one month of BTS FGK data (raw per-flight rows are not stored). */
+export interface BtsMonthAggregates {
+  rows: number;
+  operators: Array<{
+    op_carrier: string;
+    flights: number;
+    performed: number;
+    distinct_tails: number;
+  }>;
+  tails: Array<{ tail_number: string; op_carrier: string; departures: number }>;
+  routes: Array<{ origin: string; dest: string; performed: number }>;
+}
+
 /** One ADS-B shadow sweep (aggregate row; observations carry the per-aircraft detail). */
 export interface AdsbSweepRecord {
   swept_at: number;
