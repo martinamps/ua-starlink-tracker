@@ -13,11 +13,15 @@ export { createReaderFactory };
 export interface RequestContext {
   req: Request;
   url: URL;
+  /** Server-observed client IP (cf-connecting-ip). */
+  ip: string;
   site: SiteConfig;
   tenant: Tenant;
   reader: ScopedReader;
   /** Mint a reader for a specific airline (hub endpoints that detect airline from flight-number prefix). */
   getReader: (scope: Scope) => ScopedReader;
+  /** Server-observed: `ip` is in the Starlink geofeed. */
+  onStarlinkIp: boolean;
 }
 
 export function tenantScope(tenant: Tenant): Scope {

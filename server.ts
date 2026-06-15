@@ -15,9 +15,11 @@ import { startFleetSync } from "./src/scripts/fleet-sync";
 import { startQatarScheduleIngester } from "./src/scripts/qatar-schedule-ingester";
 import { startSecAnchorsJob } from "./src/scripts/sec-anchors";
 import { runSheetScrape } from "./src/scripts/sheet-scrape";
+import { startGeofeedJob } from "./src/scripts/starlink-geofeed";
 import { startStarlinkVerifier } from "./src/scripts/starlink-verifier";
 import { syncShipNumbers } from "./src/scripts/sync-ship-numbers";
 import { createApp } from "./src/server/app";
+import { passengerVerifyEnabled } from "./src/server/passenger-detect";
 import { type JobHandle, type JobRunContext, startJob } from "./src/utils/job-runner";
 import { info, error as logError } from "./src/utils/logger";
 
@@ -126,6 +128,9 @@ if (JOBS_ENABLED) {
 
   // BTS FGK monthly shadow ingest (daily check; ingests when a new month posts).
   track(startBtsSyncJob(db));
+
+  // Starlink RFC 8805 geofeed → backs the passenger-verify dark-launch probe.
+  if (passengerVerifyEnabled) track(startGeofeedJob(db));
 
   // Daily prune of subprocess-crash log rows (no observation, just noise).
   track(

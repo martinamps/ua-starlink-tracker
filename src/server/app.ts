@@ -92,6 +92,12 @@ import {
   tenantConfig,
   tenantScope,
 } from "./context";
+import {
+  PROBE_SNIPPET,
+  StarlinkIpDetector,
+  handlePassengerProbe,
+  passengerVerifyEnabled,
+} from "./passenger-detect";
 
 type Handler = (ctx: RequestContext) => Response | Promise<Response>;
 type RouteTable = Record<string, Handler>;
@@ -1393,6 +1399,8 @@ function buildBaseTemplateVars(
     canonicalPath: escapeHtmlAttr(canonicalPath),
     analyticsSnippet: analyticsSnippet(site),
     headSnippet: site.headSnippet ?? "",
+    // Dark-launch probe is UA-only; the onboard portal URL is United's.
+    passengerProbeSnippet: ctx.onStarlinkIp && site.scope === "UA" ? PROBE_SNIPPET : "",
     webSiteJsonLd: siteWebJsonLd(site, brandVars.siteDescription),
     webPageJsonLd: sitePageJsonLd(site, {
       path: canonicalPath,
@@ -1765,8 +1773,28 @@ function clientIp(req: Request): string {
 
 export function createApp(db: Database): App {
   const getReader = createReaderFactory(db);
+  const detector = passengerVerifyEnabled ? new StarlinkIpDetector(db) : null;
   const ipHits = new Map<string, number[]>();
   let lastSweep = 0;
+
+  const apiPassengerProbe: Handler = async ({ req, ip, onStarlinkIp }) => {
+    if (req.method !== "POST") return methodNotAllowed(true);
+    let body: unknown;
+    try {
+      // sendBeacon posts text/plain; req.json() handles that.
+      body = await req.json();
+    } catch {
+      body = {};
+    }
+    handlePassengerProbe(
+      db,
+      ip,
+      onStarlinkIp,
+      req.headers.get("user-agent"),
+      (body ?? {}) as Record<string, unknown>
+    );
+    return new Response(null, { status: 202, headers: SECURITY_HEADERS.api });
+  };
 
   function rateLimited(ip: string, bucket: string, now: number): boolean {
     if (LOCAL_IPS.has(ip)) return false;
@@ -1804,6 +1832,7 @@ export function createApp(db: Database): App {
     "/api/plan-route": apiPlanRoute,
     "/api/mismatches": apiMismatches,
     "/api/fleet-discovery": apiFleetDiscovery,
+    "/api/passenger-probe": apiPassengerProbe,
     "/mcp": mcp,
     "/robots.txt": robotsTxt,
     "/llms.txt": llmsTxt,
@@ -1897,8 +1926,8 @@ export function createApp(db: Database): App {
         : url.pathname.startsWith("/check-flight/")
           ? "page"
           : null;
+    const ip = clientIp(req);
     if (meterClass) {
-      const ip = clientIp(req);
       if (rateLimited(ip, meterClass, Date.now())) {
         metrics.increment(COUNTERS.HTTP_RATE_LIMITED, { route, tenant: tenantScope(tenant) });
         return new Response(JSON.stringify({ error: "rate limit exceeded" }), {
@@ -1926,8 +1955,15 @@ export function createApp(db: Database): App {
       return response;
     }
 
+    const onStarlinkIp = detector?.match(ip) ?? false;
+    if (onStarlinkIp) {
+      metrics.increment(COUNTERS.PASSENGER_DETECT, {
+        tenant: tenantScope(tenant),
+        client_class: classifyUserAgent(req.headers.get("user-agent")),
+      });
+    }
     const reader: ScopedReader = getReader(tenantScope(tenant));
-    const ctx: RequestContext = { req, url, site, tenant, reader, getReader };
+    const ctx: RequestContext = { req, url, ip, site, tenant, reader, getReader, onStarlinkIp };
 
     // "web.request" not "http.request" — the latter collides with dd-trace's
     // auto-instrumented outbound fetch spans. `type: web` marks it service-entry.
@@ -1938,7 +1974,8 @@ export function createApp(db: Database): App {
         span.setTag("http.route", route);
         span.setTag("resource.name", `${req.method} ${route}`);
         span.setTag("tenant", tenantScope(tenant));
-        span.setTag("http.client_ip", clientIp(req));
+        span.setTag("http.client_ip", ip);
+        if (onStarlinkIp) span.setTag("starlink_ip", true);
         const ua = req.headers.get("user-agent");
         if (ua) span.setTag("http.useragent", ua);
 
