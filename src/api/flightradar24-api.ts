@@ -125,13 +125,18 @@ export class FlightRadar24API {
         return await operation();
       } catch (error: any) {
         const errorMessage = error?.message || String(error);
-        const isRateLimit = errorMessage.includes("402") || errorMessage.includes("429");
+        // FR24 throttles a busy session with bare 400s (not 429): every retry
+        // inside the same window fails, the same query succeeds minutes later.
+        // Space those retries like rate limits instead of hammering at 2-8s.
+        const throttleCode = errorMessage.match(/error: (400|402|429)$/)?.[1];
+        const isRateLimit = throttleCode !== undefined;
 
         if (isRateLimit) {
           metrics.increment(COUNTERS.VENDOR_REQUEST, {
             vendor: "fr24",
             type: requestType,
             status: "rate_limited",
+            http_status: throttleCode,
           });
         }
 
@@ -179,6 +184,7 @@ export class FlightRadar24API {
           vendor: "fr24",
           type: "flights",
           status: "error",
+          http_status: String(response.status),
         });
         throw new Error(`FlightRadar24 API error: ${response.status}`);
       }
@@ -268,6 +274,7 @@ export class FlightRadar24API {
         vendor: "fr24",
         type: "routes",
         status: response.status === 402 || response.status === 429 ? "rate_limited" : "error",
+        http_status: String(response.status),
       });
       return [];
     }
@@ -352,6 +359,7 @@ export class FlightRadar24API {
               vendor: "fr24",
               type: "assignments",
               status: response.status === 402 || response.status === 429 ? "rate_limited" : "error",
+              http_status: String(response.status),
             });
             throw new Error(`FR24 assignments error: ${response.status}`);
           }
@@ -387,7 +395,10 @@ export class FlightRadar24API {
 
           return out.sort((a, b) => a.departure_time - b.departure_time);
         },
-        3,
+        // Awaited inline by /api/check-flight: one (throttle-spaced) retry keeps
+        // the worst case bounded; cross-request spacing comes from the 60s
+        // failure cache in flight-verdict.
+        1,
         "assignments"
       );
     } catch (err) {

@@ -23,6 +23,8 @@
  *   status:          success | error | rate_limited | timeout | killed |
  *                    exit_error | parse_error | spawn_error | partial |
  *                    aborted | scrape_error                          (~11)
+ *   http_status:     upstream HTTP status code on vendor.request error/
+ *                    rate_limited emits (fr24 only)                  (~10)
  *   result:          success | error | aircraft_mismatch | tail_unknown  (4)
  *   client_class:    bot | claude | extension | browser | unknown    (5)
  *   confidence:      high | medium | low | none                      (4)
