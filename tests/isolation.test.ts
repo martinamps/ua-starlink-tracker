@@ -700,6 +700,9 @@ describe("route-table coverage", () => {
         "/api/predict-flight",
         "/api/check-any-flight",
         "/api/compare-route",
+        // Write-only beacon; reads upcoming_flights cross-airline by design
+        // (only to set a stored boolean; nothing leaves the 202 body).
+        "/api/passenger-probe",
       ])
     );
     // /api/plan-route + /api/predict-flight are exercised separately above —

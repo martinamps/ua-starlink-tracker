@@ -59,10 +59,16 @@ export function pickVerifiableFlight<
   );
 }
 
+// Hosts the passenger-verify probe fetch reaches; also imported by the snippet
+// builder so the CSP allowlist and the script URL can never drift apart. Only
+// added to connect-src when the feature isn't disabled.
+export const PROBE_CONNECT_ORIGINS = ["https://onboard.united.com"] as const;
+const probeOrigins = process.env.PASSENGER_VERIFY === "off" ? [] : PROBE_CONNECT_ORIGINS;
+
 // Security headers
 const { scriptOrigins: ANALYTICS_SCRIPT_ORIGINS, connectOrigins: ANALYTICS_CONNECT_ORIGINS } =
   analyticsOrigins();
-const CONNECT_SRC = ["'self'", ...ANALYTICS_CONNECT_ORIGINS].join(" ");
+const CONNECT_SRC = ["'self'", ...probeOrigins, ...ANALYTICS_CONNECT_ORIGINS].join(" ");
 const SCRIPT_SRC = ["'self'", "'unsafe-inline'", "https://unpkg.com", ...ANALYTICS_SCRIPT_ORIGINS]
   .filter(Boolean)
   .join(" ");

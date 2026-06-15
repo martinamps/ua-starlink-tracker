@@ -456,6 +456,44 @@ export function setupTables(db: Database) {
     `);
   }
 
+  // Starlink RFC 8805 geofeed prefixes — backs isStarlinkIp().
+  if (!tableExists(db, "starlink_prefixes")) {
+    db.exec(`
+      CREATE TABLE starlink_prefixes (
+        cidr TEXT PRIMARY KEY,
+        lo TEXT NOT NULL,
+        hi TEXT NOT NULL,
+        v6 INTEGER NOT NULL,
+        fetched_at INTEGER NOT NULL
+      );
+    `);
+  }
+
+  // Passenger-verify dark-launch probe results. Everything except ip / in_geofeed
+  // is client-asserted; trust filtering happens at read time.
+  if (!tableExists(db, "passenger_reports")) {
+    db.exec(`
+      CREATE TABLE passenger_reports (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        reported_at INTEGER NOT NULL,
+        ip TEXT NOT NULL,
+        ip_prefix TEXT NOT NULL,
+        in_geofeed INTEGER NOT NULL,
+        source TEXT NOT NULL,
+        outcome TEXT NOT NULL,
+        claimed_flight TEXT,
+        claimed_tail TEXT,
+        claimed_date TEXT,
+        router_id TEXT,
+        ua_hash TEXT,
+        airborne_match INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE INDEX idx_passenger_reports_prefix ON passenger_reports(ip_prefix, reported_at);
+      CREATE INDEX idx_passenger_reports_tail ON passenger_reports(claimed_tail, reported_at);
+      CREATE INDEX idx_passenger_reports_at ON passenger_reports(reported_at);
+    `);
+  }
+
   if (tableExists(db, "starlink_planes")) {
     const columns = db.query("PRAGMA table_info(starlink_planes)").all();
     const migrationsRun = [];
@@ -3217,6 +3255,105 @@ export function replaceFaaRegistry(
       );
     }
   })();
+}
+
+export function replaceStarlinkPrefixes(
+  db: Database,
+  rows: ReadonlyArray<{ cidr: string; lo: bigint; hi: bigint; v6: boolean }>
+): void {
+  const now = Math.floor(Date.now() / 1000);
+  db.transaction(() => {
+    db.query("DELETE FROM starlink_prefixes").run();
+    for (const r of rows) {
+      db.query(
+        "INSERT OR REPLACE INTO starlink_prefixes (cidr, lo, hi, v6, fetched_at) VALUES (?, ?, ?, ?, ?)"
+      ).run(r.cidr, r.lo.toString(), r.hi.toString(), r.v6 ? 1 : 0, now);
+    }
+  })();
+}
+
+export function getStarlinkPrefixes(
+  db: Database
+): Array<{ cidr: string; lo: bigint; hi: bigint; v6: boolean }> {
+  const rows = db.query("SELECT cidr, lo, hi, v6 FROM starlink_prefixes").all() as Array<{
+    cidr: string;
+    lo: string;
+    hi: string;
+    v6: number;
+  }>;
+  return rows.map((r) => ({ cidr: r.cidr, lo: BigInt(r.lo), hi: BigInt(r.hi), v6: r.v6 === 1 }));
+}
+
+export interface PassengerReportInsert {
+  ip: string;
+  ip_prefix: string;
+  in_geofeed: boolean;
+  source: string;
+  outcome: string;
+  claimed_flight: string | null;
+  claimed_tail: string | null;
+  claimed_date: string | null;
+  router_id: string | null;
+  ua_hash: string | null;
+  airborne_match: boolean;
+}
+
+export function recordPassengerReport(db: Database, r: PassengerReportInsert): void {
+  db.query(`
+    INSERT INTO passenger_reports
+      (reported_at, ip, ip_prefix, in_geofeed, source, outcome,
+       claimed_flight, claimed_tail, claimed_date, router_id, ua_hash, airborne_match)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    Math.floor(Date.now() / 1000),
+    r.ip,
+    r.ip_prefix,
+    r.in_geofeed ? 1 : 0,
+    r.source,
+    r.outcome,
+    r.claimed_flight,
+    r.claimed_tail,
+    r.claimed_date,
+    r.router_id,
+    r.ua_hash,
+    r.airborne_match ? 1 : 0
+  );
+}
+
+export function isFlightAirborne(
+  db: Database,
+  variants: readonly string[],
+  nowSec = Math.floor(Date.now() / 1000)
+): boolean {
+  if (variants.length === 0) return false;
+  const placeholders = variants.map(() => "?").join(",");
+  return (
+    db
+      .query(
+        `SELECT 1 FROM upcoming_flights
+         WHERE flight_number IN (${placeholders}) AND departure_time <= ? AND arrival_time >= ?
+         LIMIT 1`
+      )
+      .get(...variants, nowSec, nowSec) !== null
+  );
+}
+
+/** Per-prefix per-tail dedupe window — limits ballot-stuffing within one flight. */
+export function passengerReportSeenRecently(
+  db: Database,
+  ipPrefix: string,
+  tail: string | null,
+  windowSec: number
+): boolean {
+  const since = Math.floor(Date.now() / 1000) - windowSec;
+  const row = db
+    .query(
+      `SELECT 1 FROM passenger_reports
+       WHERE ip_prefix = ? AND reported_at > ? AND claimed_tail IS ?
+       LIMIT 1`
+    )
+    .get(ipPrefix, since, tail);
+  return row !== null;
 }
 
 /** Upsert anchors keyed by (airline, metric, as-of date) — editing SEED_ANCHORS

@@ -100,6 +100,23 @@ export function normalizeOpCarrier(raw: string | null | undefined): string {
   return UA_OPERATING_CARRIERS.has(code) ? code.toLowerCase() : "other";
 }
 
+// passenger.probe outcome is client-supplied — closed enum or it's a cardinality bomb.
+const PROBE_OUTCOMES = new Set([
+  "onboard_api",
+  "onboard_noflight",
+  "cors_blocked",
+  "csp_blocked",
+  "fetch_error",
+  "timeout",
+  "unknown",
+]);
+export function normalizeProbeOutcome(raw: string | null | undefined): string {
+  if (!raw) return "unknown";
+  if (PROBE_OUTCOMES.has(raw)) return raw;
+  if (/^onboard_http_\d{3}$/.test(raw)) return raw;
+  return "other";
+}
+
 // Bounded user-agent classification (≤6 buckets, never the raw UA).
 const BOT_UA = /bot|spider|crawler|curl|wget|python-requests|go-http-client|headless|httpclient/i;
 export function classifyUserAgent(ua: string | null | undefined): string {
@@ -194,6 +211,13 @@ export const COUNTERS = {
 
   // Route lookup fallback chain hit source — tags: source (memory|sqlite|fr24|upcoming|miss), airline
   ROUTE_LOOKUP: "route.lookup",
+
+  // Passenger-verify dark launch: HTML request whose cf-connecting-ip is in the
+  // Starlink geofeed — tags: tenant, client_class
+  PASSENGER_DETECT: "passenger.detect",
+  // Probe beacon outcome — tags: outcome (onboard_api|cors_blocked|csp_blocked|
+  //   fetch_error|timeout|onboard_http_*|onboard_noflight|unknown), in_geofeed (0|1), airline
+  PASSENGER_PROBE: "passenger.probe",
 } as const;
 
 /**
@@ -235,6 +259,9 @@ export const GAUGES = {
   // BTS monthly shadow ingest. tags: op_carrier, airline / kind (missing_from_fleet|inactive_in_fleet), airline
   BTS_ACTIVE_TAILS: "bts.active_tails",
   BTS_FLEET_DELTA: "bts.fleet_delta",
+
+  // Starlink RFC 8805 geofeed prefix count — tags: airline:all
+  GEOFEED_PREFIXES: "geofeed.prefixes",
 } as const;
 
 /**
