@@ -11,6 +11,7 @@ import type {
   RecentInstall,
 } from "../types";
 import { HeaderStatStrip } from "./atoms";
+import { PassengerBanner } from "./passenger-banner";
 
 // Reusable FAQ accordion item — eliminates ~30 lines of boilerplate per question
 function FaqItem({ q, children }: { q: string; children: React.ReactNode }) {
@@ -66,6 +67,7 @@ interface PageProps {
   recentInstalls?: RecentInstall[];
   flightsByTail?: Record<string, Flight[]>;
   airportDepartures?: AirportDepartures;
+  showPassengerBanner?: boolean;
 }
 
 // Squarified treemap layout (Bruls et al.) — greedily add items to the current
@@ -270,6 +272,7 @@ export default function Page({
   recentInstalls,
   flightsByTail = {},
   airportDepartures,
+  showPassengerBanner = false,
 }: PageProps) {
   // Apply date overrides to the aircraft data
   const applyDateOverrides = (data: Aircraft[]): Aircraft[] => {
@@ -445,6 +448,8 @@ export default function Page({
     <div className="w-full mx-auto px-4 sm:px-6 md:px-8 bg-base min-h-screen flex flex-col relative">
       {/* Subtle grid background */}
       <div className="absolute inset-0 grid-pattern opacity-50 pointer-events-none" />
+
+      {showPassengerBanner && <PassengerBanner />}
 
       <header className="relative py-5 sm:py-6 text-center mb-2">
         <h1 className="font-display text-3xl sm:text-4xl md:text-5xl font-bold text-primary mb-1 tracking-tight">
