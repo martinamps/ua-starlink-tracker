@@ -104,6 +104,9 @@ export const SECURITY_HEADERS = {
   html: {
     ...BASE_RESPONSE_HEADERS,
     "Content-Type": "text/html",
+    // Rendered HTML varies by client IP (passenger banner/probe) — never let
+    // an edge cache serve one visitor's render to another.
+    "Cache-Control": "private, no-store",
     "Content-Security-Policy": `default-src 'self' https://unpkg.com; connect-src ${CONNECT_SRC}; script-src ${SCRIPT_SRC}; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:;`,
   },
   notFound: {

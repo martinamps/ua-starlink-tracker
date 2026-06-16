@@ -108,6 +108,7 @@ const PROBE_OUTCOMES = new Set([
   "csp_blocked",
   "fetch_error",
   "timeout",
+  "manual_report",
   "unknown",
 ]);
 export function normalizeProbeOutcome(raw: string | null | undefined): string {

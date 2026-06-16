@@ -28,6 +28,11 @@ import { info } from "../utils/logger";
 
 export const PASSENGER_VERIFY_MODE = process.env.PASSENGER_VERIFY ?? "probe";
 export const passengerVerifyEnabled = PASSENGER_VERIFY_MODE !== "off";
+
+/** Single audience gate for both the auto-probe snippet and the visible banner. */
+export function isPassengerVerifyAudience(onStarlinkIp: boolean, siteScope: string): boolean {
+  return passengerVerifyEnabled && onStarlinkIp && siteScope === "UA";
+}
 const DEDUPE_WINDOW_SEC = 6 * 3600;
 const RELOAD_TTL_MS = 10 * 60 * 1000;
 

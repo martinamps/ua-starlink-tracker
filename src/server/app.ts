@@ -96,6 +96,7 @@ import {
   PROBE_SNIPPET,
   StarlinkIpDetector,
   handlePassengerProbe,
+  isPassengerVerifyAudience,
   passengerVerifyEnabled,
 } from "./passenger-detect";
 
@@ -1400,7 +1401,9 @@ function buildBaseTemplateVars(
     analyticsSnippet: analyticsSnippet(site),
     headSnippet: site.headSnippet ?? "",
     // Dark-launch probe is UA-only; the onboard portal URL is United's.
-    passengerProbeSnippet: ctx.onStarlinkIp && site.scope === "UA" ? PROBE_SNIPPET : "",
+    passengerProbeSnippet: isPassengerVerifyAudience(ctx.onStarlinkIp, site.scope)
+      ? PROBE_SNIPPET
+      : "",
     webSiteJsonLd: siteWebJsonLd(site, brandVars.siteDescription),
     webPageJsonLd: sitePageJsonLd(site, {
       path: canonicalPath,
@@ -1638,6 +1641,7 @@ const homePage: Handler = async (ctx) => {
       recentInstalls: isHub ? reader.getRecentInstalls(15, 5) : undefined,
       flightsByTail,
       airportDepartures: reader.getAirportDepartures(),
+      showPassengerBanner: isPassengerVerifyAudience(ctx.onStarlinkIp, site.scope),
     })
   );
 
