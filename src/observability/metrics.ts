@@ -22,7 +22,7 @@
  *   kind:            missing_from_fleet | inactive_in_fleet                 (2)
  *   status:          success | error | rate_limited | timeout | killed |
  *                    exit_error | parse_error | spawn_error | partial |
- *                    aborted | scrape_error                          (~11)
+ *                    aborted | scrape_error | noop                   (~12)
  *   http_status:     upstream HTTP status code on vendor.request error/
  *                    rate_limited emits (fr24 only)                  (~10)
  *   result:          success | error | aircraft_mismatch | tail_unknown  (4)
@@ -102,20 +102,15 @@ export function normalizeOpCarrier(raw: string | null | undefined): string {
 
 // passenger.probe outcome is client-supplied — closed enum or it's a cardinality bomb.
 const PROBE_OUTCOMES = new Set([
-  "onboard_api",
-  "onboard_noflight",
-  "cors_blocked",
-  "csp_blocked",
-  "fetch_error",
+  "onboard_reachable",
+  "onboard_unreachable",
   "timeout",
   "manual_report",
   "unknown",
 ]);
 export function normalizeProbeOutcome(raw: string | null | undefined): string {
   if (!raw) return "unknown";
-  if (PROBE_OUTCOMES.has(raw)) return raw;
-  if (/^onboard_http_\d{3}$/.test(raw)) return raw;
-  return "other";
+  return PROBE_OUTCOMES.has(raw) ? raw : "other";
 }
 
 // Bounded user-agent classification (≤6 buckets, never the raw UA).
@@ -158,7 +153,7 @@ export function bucketDaysOut(days: number): string {
  */
 export const COUNTERS = {
   // Scraper events
-  SCRAPER_SYNC: "scraper.sync", // tags: source, airline, status (success|partial|aborted|error)
+  SCRAPER_SYNC: "scraper.sync", // tags: source, airline, status (success|partial|aborted|error|noop)
   PLANES_DISCOVERED: "planes.discovered", // tags: source, airline
 
   // New Starlink installation detected on an aircraft

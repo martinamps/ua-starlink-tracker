@@ -3338,10 +3338,13 @@ export function isFlightAirborne(
   );
 }
 
-/** Per-prefix per-tail dedupe window — limits ballot-stuffing within one flight. */
+/** Per-(prefix, source, tail) dedupe window — limits ballot-stuffing within
+ * one flight without letting the page-load probe row swallow a later manual
+ * submission from the same client. */
 export function passengerReportSeenRecently(
   db: Database,
   ipPrefix: string,
+  source: string,
   tail: string | null,
   windowSec: number
 ): boolean {
@@ -3349,10 +3352,10 @@ export function passengerReportSeenRecently(
   const row = db
     .query(
       `SELECT 1 FROM passenger_reports
-       WHERE ip_prefix = ? AND reported_at > ? AND claimed_tail IS ?
+       WHERE ip_prefix = ? AND reported_at > ? AND source = ? AND claimed_tail IS ?
        LIMIT 1`
     )
-    .get(ipPrefix, since, tail);
+    .get(ipPrefix, since, source, tail);
   return row !== null;
 }
 
