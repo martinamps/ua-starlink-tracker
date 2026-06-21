@@ -34,6 +34,7 @@ import { icaoToIata } from "../utils/airport-tz";
 import { extractFlightNumber, pickVerifiableFlight, unitedLookupDate } from "../utils/constants";
 import { type JobHandle, startJob } from "../utils/job-runner";
 import { info, error as logError, warn } from "../utils/logger";
+import { notifyNewStarlinkPlane } from "../utils/notify";
 import type { StarlinkCheckResult } from "./united-starlink-checker";
 import { checkStarlinkStatusSubprocess } from "./united-starlink-checker-subprocess";
 import {
@@ -295,6 +296,19 @@ export async function verifyPlane(
           );
           // FLEET_STATUS_CHANGE is emitted at the DB write site (updateFleetVerificationResult).
           emitFleetSnapshot(db);
+          if (starlinkStatus === "confirmed") {
+            void notifyNewStarlinkPlane({
+              tail: plane.tail_number,
+              aircraftType: result.aircraftType || plane.aircraft_type,
+              fleet: plane.fleet,
+              prevStatus,
+              firstFlight: forVerification && {
+                flight_number: `UA${forVerification.flightNumber}`,
+                origin: forVerification.origin,
+                dest: forVerification.destination,
+              },
+            });
+          }
         }
 
         // Sheet-independence KPI: flag whenever the crawler's consensus
