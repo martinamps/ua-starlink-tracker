@@ -137,6 +137,7 @@ if (JOBS_ENABLED) {
     startJob({
       name: "prune_crash_rows",
       intervalMs: 24 * 3600 * 1000,
+      initialDelayMs: 60 * 60 * 1000,
       run: () => {
         const n = pruneCrashRows(db);
         if (n > 0) info(`Pruned ${n} stale crash rows from verification log`);

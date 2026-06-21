@@ -57,21 +57,14 @@ export class StarlinkIpDetector {
   }
 }
 
-// Single-fire send() guard so a >4s response can't double-beacon (timeout
-// then onboard_api would land in different dedupe buckets).
+// Browsers report a CORS reject as a bare TypeError, so the only readable
+// signal is opaque resolve vs reject — that's all we beacon.
 export const PROBE_SNIPPET = `<script>(function(){try{
 var done=0,send=function(o){if(done)return;done=1;try{navigator.sendBeacon&&navigator.sendBeacon("/api/passenger-probe",JSON.stringify(o))}catch(e){}};
 setTimeout(function(){send({source:"probe",outcome:"timeout"})},4000);
-fetch("${PROBE_CONNECT_ORIGINS[0]}/api/auth/token",{credentials:"omit",cache:"no-store"})
- .then(function(r){return r.ok?r.json().then(function(d){return{ok:1,d:d}}):{ok:0,status:r.status}})
- .then(function(r){
-   if(r.ok&&r.d&&r.d.flightInfo){var f=r.d.flightInfo;
-     send({source:"probe",outcome:"onboard_api",claimed_flight:(f.airlineCode||"")+(f.flightNumber||""),claimed_tail:f.tailNumber||null,claimed_date:f.flightDate||null});
-   }else{send({source:"probe",outcome:r.ok?"onboard_noflight":"onboard_http_"+r.status});}
- })
- .catch(function(e){var m=String(e&&e.message||e);
-   send({source:"probe",outcome:m.indexOf("CSP")>=0||m.indexOf("Content Security")>=0?"csp_blocked":m.indexOf("CORS")>=0||m.indexOf("cross-origin")>=0?"cors_blocked":"fetch_error"});
- });
+fetch("${PROBE_CONNECT_ORIGINS[0]}/api/auth/token",{mode:"no-cors",credentials:"omit",cache:"no-store"})
+ .then(function(){send({source:"probe",outcome:"onboard_reachable"})})
+ .catch(function(){send({source:"probe",outcome:"onboard_unreachable"})});
 }catch(e){}})();</script>`;
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -117,17 +110,18 @@ export function handlePassengerProbe(
     ? createHash("sha256").update(userAgent).digest("hex").slice(0, 16)
     : null;
 
-  // Dedupe stops one device (or one fabricated curl loop) from stuffing the
-  // table; rate-limiting per IP is already applied by the /api/* meter.
-  if (passengerReportSeenRecently(db, ipPrefix, claimedTail, DEDUPE_WINDOW_SEC)) {
-    return "duplicate";
-  }
-
+  // Metric first so deduped beacons stay visible in DD; the dedupe key
+  // includes source so the auto-probe row can never swallow a manual submit.
   metrics.increment(COUNTERS.PASSENGER_PROBE, {
     outcome,
+    source,
     in_geofeed: inGeofeed ? "1" : "0",
     airline: normalizeAirlineTag(carrier?.code ?? null),
   });
+
+  if (passengerReportSeenRecently(db, ipPrefix, source, claimedTail, DEDUPE_WINDOW_SEC)) {
+    return "duplicate";
+  }
 
   const variants =
     carrier && claimedFlight ? buildAirlineFlightNumberVariants(carrier, claimedFlight) : [];

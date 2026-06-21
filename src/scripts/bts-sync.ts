@@ -256,6 +256,13 @@ export async function runBtsSync(db: Database, deps: BtsSyncDeps = {}): Promise<
         span.setTag("error", true);
         return { outcome: "error", month: null, rows: 0 };
       }
+      // Emit a noop counter so a dead job is distinguishable from "month not
+      // published yet" — without it both look like zero scraper.sync events.
+      metrics.increment(COUNTERS.SCRAPER_SYNC, {
+        source: "bts",
+        airline: airlineTag,
+        status: "noop",
+      });
       span.setTag("result", "noop");
       return { outcome: "noop", month: null, rows: 0 };
     },

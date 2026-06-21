@@ -122,13 +122,23 @@ describe("passenger-probe trust model", () => {
     expect(row.airborne_match).toBe(0);
   });
 
-  test("dedupes by /56 prefix + tail within the window", () => {
+  test("dedupes by /56 prefix + source + tail; auto-probe never swallows manual", () => {
     const { db } = seeded();
-    const body = { source: "probe", outcome: "onboard_api", claimed_tail: "N73275" };
-    handlePassengerProbe(db, ONBOARD_IP_V6, true, null, body);
-    const dup = handlePassengerProbe(db, "2605:59ca:8015:b40::1", true, null, body);
-    expect(dup).toBe("duplicate");
-    expect(db.query("SELECT COUNT(*) AS n FROM passenger_reports").get()).toEqual({ n: 1 });
+    const probe = { source: "probe", outcome: "onboard_unreachable" };
+    handlePassengerProbe(db, ONBOARD_IP_V6, true, null, probe);
+    expect(handlePassengerProbe(db, "2605:59ca:8015:b40::1", true, null, probe)).toBe("duplicate");
+    // The page-load probe row must NOT dedupe out a manual banner submission
+    // seconds later (both have claimed_tail=null but different source).
+    const manual = handlePassengerProbe(db, ONBOARD_IP_V6, true, null, {
+      source: "manual",
+      outcome: "manual_report",
+      claimed_flight: "UA2019",
+    });
+    expect(manual).toBe("stored");
+    expect(db.query("SELECT source FROM passenger_reports ORDER BY id").all()).toEqual([
+      { source: "probe" },
+      { source: "manual" },
+    ]);
   });
 
   test("rejects malformed claims by clamping to null, not erroring", () => {
