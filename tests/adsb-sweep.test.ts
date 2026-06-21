@@ -8,7 +8,7 @@ import {
   deriveCallsignFlight,
   runAdsbSweepShadow,
 } from "../src/scripts/adsb-sweep";
-import { addFlight, addPlane, makeSyntheticDb } from "./helpers";
+import { addFleet, addFlight, makeSyntheticDb } from "./helpers";
 
 describe("callsign matching", () => {
   test.each([
@@ -44,11 +44,16 @@ describe("classifyObservation", () => {
     aircraftType: "B738",
   });
 
-  test("classifies match, mismatch, no_assignment, and no_callsign", () => {
+  test("classifies match, mismatch, no_assignment, no_callsign, non_revenue, low_speed", () => {
     expect(classifyObservation(aircraft("UAL1326"), ["UAL1326"]).result).toBe("match");
     expect(classifyObservation(aircraft("UAL1326"), ["UAL2436"]).result).toBe("mismatch");
     expect(classifyObservation(aircraft("UAL1326"), []).result).toBe("no_assignment");
     expect(classifyObservation(aircraft(null), ["UAL1326"]).result).toBe("no_callsign");
+    expect(classifyObservation(aircraft("UAL8114"), ["UAL2436"]).result).toBe("non_revenue");
+    expect(classifyObservation(aircraft("SKW9001"), []).result).toBe("non_revenue");
+    expect(classifyObservation({ ...aircraft("UAL1326"), gs: 80 }, ["UAL1326"]).result).toBe(
+      "low_speed"
+    );
   });
 });
 
@@ -56,9 +61,10 @@ describe("runAdsbSweepShadow", () => {
   function seedDb() {
     const db = makeSyntheticDb();
     const now = Math.floor(Date.now() / 1000);
-    addPlane(db, "N73275", "Starlink", { aircraft: "Boeing 737-824" });
-    addPlane(db, "N106SY", "Starlink", { aircraft: "E175" });
-    // One in-progress long sector (departed 5h ago, lands in 1h) and one about to depart.
+    // Sweep reads united_fleet (full fleet, not just Starlink tails).
+    addFleet(db, "N73275", "confirmed", { aircraftType: "Boeing 737-824" });
+    addFleet(db, "N106SY", "confirmed", { aircraftType: "E175" });
+    // One in-progress sector and one about to depart.
     addFlight(db, "N73275", "UAL1326", "AUS", now - 5 * 3600, { arrivalAirport: "IAH" });
     db.query("UPDATE upcoming_flights SET arrival_time = ? WHERE tail_number = 'N73275'").run(
       now + 3600
@@ -82,7 +88,7 @@ describe("runAdsbSweepShadow", () => {
       {
         r: "N106SY",
         hex: "abc123",
-        flight: "SKW9999",
+        flight: "SKW5425",
         alt_baro: 20000,
         gs: 380,
         lat: 37,
