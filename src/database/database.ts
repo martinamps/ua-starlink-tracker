@@ -91,6 +91,11 @@ function tableExists(db: Database, tableName: string) {
   return db.query("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(tableName);
 }
 
+function addColumn(db: Database, table: string, column: string, ddl: string): void {
+  if (hasColumn(db, table, column)) return;
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
+}
+
 export type VerificationSource = "united" | "flightradar24" | "spreadsheet" | "alaska" | "qatar";
 
 export interface VerificationLogEntry {
@@ -455,6 +460,8 @@ export function setupTables(db: Database) {
       CREATE INDEX idx_adsb_obs_at ON adsb_observations(observed_at);
     `);
   }
+  addColumn(db, "adsb_sweeps", "non_revenue", "INTEGER NOT NULL DEFAULT 0");
+  addColumn(db, "adsb_sweeps", "low_speed", "INTEGER NOT NULL DEFAULT 0");
 
   // Starlink RFC 8805 geofeed prefixes — backs isStarlinkIp().
   if (!tableExists(db, "starlink_prefixes")) {
@@ -3457,6 +3464,15 @@ export function getBtsIngestedMonths(db: Database): string[] {
   ).map((r) => r.month);
 }
 
+export function getFleetTailsWithStatus(
+  db: Database,
+  airline: string
+): Array<{ tail_number: string; starlink_status: string }> {
+  return db
+    .query("SELECT tail_number, starlink_status FROM united_fleet WHERE airline = ?")
+    .all(airline) as Array<{ tail_number: string; starlink_status: string }>;
+}
+
 const ADSB_OBSERVATION_RETENTION_DAYS = 7;
 const ADSB_SWEEP_RETENTION_DAYS = 90;
 
@@ -3472,8 +3488,8 @@ export function recordAdsbSweep(
     db.query(`
       INSERT INTO adsb_sweeps
         (swept_at, provider, requests, latency_ms, tails_queried, observed, airborne,
-         matched, mismatched, no_assignment, no_callsign)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         matched, mismatched, no_assignment, no_callsign, non_revenue, low_speed)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       sweep.swept_at,
       sweep.provider,
@@ -3485,7 +3501,9 @@ export function recordAdsbSweep(
       sweep.matched,
       sweep.mismatched,
       sweep.no_assignment,
-      sweep.no_callsign
+      sweep.no_callsign,
+      sweep.non_revenue,
+      sweep.low_speed
     );
     for (const o of observations) {
       db.query(`

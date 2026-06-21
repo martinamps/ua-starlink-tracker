@@ -241,6 +241,8 @@ export interface AdsbSweepRecord {
   mismatched: number;
   no_assignment: number;
   no_callsign: number;
+  non_revenue: number;
+  low_speed: number;
 }
 
 /** One aircraft seen during an ADS-B shadow sweep. */
@@ -256,7 +258,7 @@ export interface AdsbObservationRecord {
   lon: number | null;
   aircraft_type: string | null;
   provider: string;
-  /** match | mismatch | no_assignment | no_callsign; null for on-ground observations. */
+  /** match | mismatch | no_assignment | no_callsign | non_revenue | low_speed; null on-ground. */
   shadow_result: string | null;
   assigned_flight: string | null;
 }

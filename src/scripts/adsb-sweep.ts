@@ -9,7 +9,7 @@
 
 import type { Database } from "bun:sqlite";
 import { looksLikeValidTailNumber } from "../airlines/registry";
-import { getAllStarlinkPlanes, recordAdsbSweep } from "../database/database";
+import { getFleetTailsWithStatus, recordAdsbSweep } from "../database/database";
 import {
   COUNTERS,
   DISTRIBUTIONS,
@@ -162,14 +162,31 @@ export function callsignMatchesAssignment(
   });
 }
 
-export type ShadowResult = "match" | "mismatch" | "no_assignment" | "no_callsign";
+export type ShadowResult =
+  | "match"
+  | "mismatch"
+  | "no_assignment"
+  | "no_callsign"
+  | "non_revenue"
+  | "low_speed";
+
+// ≥8000 idents are ferry/maintenance/repo across UA + Express operators.
+const NON_REVENUE_MIN_NUM = 8000;
 
 export function classifyObservation(
   aircraft: AdsbAircraft,
   assignedFlights: string[]
 ): { result: ShadowResult; assignedFlight: string | null } {
-  if (!aircraft.callsign || !deriveCallsignFlight(aircraft.callsign)) {
+  // FMS may still show the previous leg's ident through taxi/climb-out.
+  if (aircraft.gs != null && aircraft.gs < 120) {
+    return { result: "low_speed", assignedFlight: null };
+  }
+  const derived = deriveCallsignFlight(aircraft.callsign ?? null);
+  if (!derived) {
     return { result: "no_callsign", assignedFlight: assignedFlights[0] ?? null };
+  }
+  if (derived.num >= NON_REVENUE_MIN_NUM) {
+    return { result: "non_revenue", assignedFlight: null };
   }
   if (assignedFlights.length === 0) {
     return { result: "no_assignment", assignedFlight: null };
@@ -180,9 +197,9 @@ export function classifyObservation(
     : { result: "mismatch", assignedFlight: assignedFlights[0] };
 }
 
-// A flight covers the observation if it's in progress (departed but not yet
-// arrived, with grace) or departs soon — long sectors must stay matchable.
-const ASSIGNMENT_LOOKAHEAD_SEC = 4 * 3600;
+// 1h lookahead (was 4h) — tighter than rotation-slip noise but still covers
+// scheduled-vs-actual departure lag from FR24's stale rows.
+const ASSIGNMENT_LOOKAHEAD_SEC = 3600;
 const ASSIGNMENT_ARRIVAL_GRACE_SEC = 3600;
 
 export interface AdsbShadowResult {
@@ -206,9 +223,12 @@ export async function runAdsbSweepShadow(
         mismatch: 0,
         no_assignment: 0,
         no_callsign: 0,
+        non_revenue: 0,
+        low_speed: 0,
       };
-      const tails = getAllStarlinkPlanes(db, "UA")
-        .map((p) => p.TailNumber)
+      // Full UA fleet — Starlink-only is blind to wrong-yes tail swaps.
+      const tails = getFleetTailsWithStatus(db, "UA")
+        .map((r) => r.tail_number)
         .filter((t) => looksLikeValidTailNumber(t));
       if (tails.length === 0) {
         return { outcome: "success", observed: 0, airborne: 0, counts };
@@ -252,7 +272,7 @@ export async function runAdsbSweepShadow(
         const assignmentRows = db
           .query(
             `SELECT tail_number, flight_number FROM upcoming_flights
-             WHERE departure_time <= ? AND arrival_time >= ?
+             WHERE departure_time <= ? AND arrival_time >= ? AND airline = 'UA'
              ORDER BY ABS(departure_time - ?) ASC`
           )
           .all(now + ASSIGNMENT_LOOKAHEAD_SEC, now - ASSIGNMENT_ARRIVAL_GRACE_SEC, now) as Array<{
@@ -267,7 +287,6 @@ export async function runAdsbSweepShadow(
 
         const observations: Array<Omit<AdsbObservationRecord, "id">> = [];
         for (const ac of aircraft) {
-          // Only airborne aircraft are comparable to a flight assignment.
           let result: ShadowResult | null = null;
           let assignedFlight: string | null = null;
           if (ac.airborne) {
@@ -313,6 +332,8 @@ export async function runAdsbSweepShadow(
             mismatched: counts.mismatch,
             no_assignment: counts.no_assignment,
             no_callsign: counts.no_callsign,
+            non_revenue: counts.non_revenue,
+            low_speed: counts.low_speed,
           },
           observations
         );
