@@ -12,7 +12,6 @@ import { FlightRadar24API } from "../api/flightradar24-api";
 import {
   type WifiConsensus,
   addDiscoveredStarlinkPlane,
-  cascadeSubfleetDiscovery,
   getFleetDiscoveryStats,
   getNextPlanesToVerify,
   initializeDatabase,
@@ -351,10 +350,8 @@ export async function verifyPlane(
             { airline: "UA", evidence: "observed" }
           );
           updateFlights(db, plane.tail_number, allFlights);
-          const bumped = cascadeSubfleetDiscovery(db, plane.tail_number, plane.aircraft_type, "UA");
-          const cascade = bumped ? `, first-of-family — bumped ${bumped} siblings` : "";
           info(
-            `DISCOVERY: ${plane.tail_number} has Starlink! (stored ${allFlights.length} flights${cascade})`
+            `DISCOVERY: ${plane.tail_number} has Starlink! (stored ${allFlights.length} flights)`
           );
         }
 

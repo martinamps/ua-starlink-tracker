@@ -1923,17 +1923,35 @@ function emitFleetStatusChange(
   });
 }
 
-function getFleetStatusRow(
-  db: Database,
-  tail: string
-): { starlink_status: string | null; fleet: string | null; airline: string | null } | null {
+interface FleetStatusRow {
+  starlink_status: string | null;
+  fleet: string | null;
+  airline: string | null;
+  aircraft_type: string | null;
+}
+
+function getFleetStatusRow(db: Database, tail: string): FleetStatusRow | null {
   return db
-    .query("SELECT starlink_status, fleet, airline FROM united_fleet WHERE tail_number = ?")
-    .get(tail) as {
-    starlink_status: string | null;
-    fleet: string | null;
-    airline: string | null;
-  } | null;
+    .query(
+      "SELECT starlink_status, fleet, airline, aircraft_type FROM united_fleet WHERE tail_number = ?"
+    )
+    .get(tail) as FleetStatusRow | null;
+}
+
+// Covers every observation-driven status write so the cascade can't be missed
+// by adding a new write path (the metric emit already follows this pattern).
+function onFleetStatusWrite(
+  db: Database,
+  tail: string,
+  prev: FleetStatusRow | null,
+  next: StarlinkStatus
+): void {
+  emitFleetStatusChange(prev, next);
+  if (prev?.airline && prev.starlink_status !== "confirmed" && next === "confirmed") {
+    const n = cascadeSubfleetDiscovery(db, tail, prev.aircraft_type, prev.airline);
+    if (n)
+      info(`first-of-family ${normalizeAircraftType(prev.aircraft_type)}: bumped ${n} siblings`);
+  }
 }
 
 export function setFleetVerified(
@@ -1947,7 +1965,7 @@ export function setFleetVerified(
   db.query(
     "UPDATE united_fleet SET verified_wifi = ?, verified_at = ?, starlink_status = ? WHERE tail_number = ?"
   ).run(wifi, now, status, tail);
-  emitFleetStatusChange(prev, status);
+  onFleetStatusWrite(db, tail, prev, status);
 }
 
 export function touchFleetVerifiedAt(db: Database, tail: string): void {
@@ -2505,8 +2523,10 @@ export function reconcileConsensus(db: Database): number {
     // Write authority: only observed-wifi sources. Type-derived rows (alaska
     // wifi = type inference) must not flip verified_wifi from here.
     const consensus = computeWifiConsensus(db, tail, { sources: OBSERVED_WIFI_SOURCES });
-    if (consensus.verdict !== null && consensus.verdict !== current) {
+    const status = consensusToFleetStatus(consensus.verdict);
+    if (status !== null && consensus.verdict !== current) {
       updateVerifiedWifi(db, tail, consensus.verdict);
+      setFleetVerified(db, tail, consensus.verdict, status);
       healed++;
     }
   }
@@ -2838,11 +2858,7 @@ export function updateFleetVerificationResult(
   // A long error streak clearing is a return-to-service: hold a tight re-check
   // window for a week so a retrofit isn't missed by the 14d negative cadence.
   const returnedToService = !result.error && (prev?.check_attempts ?? 0) >= RTS_STREAK_THRESHOLD;
-  const rtsUntil = returnedToService
-    ? now + RTS_GRACE_SECS
-    : result.error
-      ? null
-      : (prev?.rts_until ?? null);
+  const rtsUntil = returnedToService ? now + RTS_GRACE_SECS : (prev?.rts_until ?? null);
 
   let nextCheckDelay: number;
   if (result.error) {
@@ -2860,7 +2876,8 @@ export function updateFleetVerificationResult(
   } else {
     nextCheckDelay = 14 * 24 * 3600;
   }
-  if (rtsUntil && rtsUntil > now) nextCheckDelay = Math.min(nextCheckDelay, 24 * 3600);
+  if (!result.error && rtsUntil && rtsUntil > now)
+    nextCheckDelay = Math.min(nextCheckDelay, 24 * 3600);
 
   const jitter = (Math.random() - 0.5) * 0.2 * nextCheckDelay;
   const nextCheckAfter = now + nextCheckDelay + jitter;
@@ -2902,7 +2919,7 @@ export function updateFleetVerificationResult(
       rtsUntil,
       tailNumber
     );
-    emitFleetStatusChange(prev, result.starlinkStatus);
+    onFleetStatusWrite(db, tailNumber, prev, result.starlinkStatus);
   }
 }
 
