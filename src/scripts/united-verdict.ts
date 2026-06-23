@@ -15,8 +15,10 @@ import { AIRLINES, OBSERVED_WIFI_SOURCES, verifierSourceTag } from "../airlines/
 import {
   type WifiConsensus,
   computeWifiConsensus,
+  consensusToFleetStatus,
   getShipToTailMap,
   logVerification,
+  setFleetVerified,
   updateVerifiedWifi,
 } from "../database/database";
 import { info, warn } from "../utils/logger";
@@ -224,15 +226,7 @@ export function applyUnitedObservation(
       // Swap-captured tails never get a direct check soon — needsVerification
       // sees the log entry above and skips them — so settle their consensus
       // here or they'd be stuck accumulating obs forever.
-      const swapConsensus = computeWifiConsensus(db, verdict.swapCapture.tail_number, {
-        sources: OBSERVED_WIFI_SOURCES,
-      });
-      if (swapConsensus.verdict !== null) {
-        updateVerifiedWifi(db, verdict.swapCapture.tail_number, swapConsensus.verdict);
-        log.info(
-          `${verdict.swapCapture.tail_number} (swap-captured): verified_wifi → ${swapConsensus.verdict} (${swapConsensus.reason})`
-        );
-      }
+      settleConsensus(db, verdict.swapCapture.tail_number, log, " (swap-captured)");
     }
 
     if (!verdict.trusted) {
@@ -247,24 +241,24 @@ export function applyUnitedObservation(
     // The log row above is already in the window, so consensus includes this
     // check. Gating the column write on the 30-day consensus means one flaky
     // scrape can't hide a plane.
-    const consensus = computeWifiConsensus(db, verdict.expectedTail, {
-      sources: OBSERVED_WIFI_SOURCES,
-    });
-    if (consensus.verdict !== null) {
-      updateVerifiedWifi(db, verdict.expectedTail, consensus.verdict);
-      log.info(
-        `${verdict.expectedTail}: verified_wifi → ${consensus.verdict} (${consensus.reason})`
-      );
-    } else {
-      // Ambiguous — clear to NULL so the check-flight filter
-      // (IS NULL OR = 'Starlink') falls through to spreadsheet trust.
-      updateVerifiedWifi(db, verdict.expectedTail, null);
-      log.info(
-        `${verdict.expectedTail}: consensus ambiguous, verified_wifi cleared (${consensus.reason})`
-      );
-    }
-    return consensus;
+    return settleConsensus(db, verdict.expectedTail, log);
   })();
+}
+
+function settleConsensus(db: Database, tail: string, log: VerdictLog, tag = ""): WifiConsensus {
+  const consensus = computeWifiConsensus(db, tail, { sources: OBSERVED_WIFI_SOURCES });
+  const status = consensusToFleetStatus(consensus.verdict);
+  if (status !== null) {
+    updateVerifiedWifi(db, tail, consensus.verdict);
+    setFleetVerified(db, tail, consensus.verdict, status);
+    log.info(`${tail}${tag}: verified_wifi → ${consensus.verdict} (${consensus.reason})`);
+  } else {
+    // Ambiguous — clear to NULL so the check-flight filter
+    // (IS NULL OR = 'Starlink') falls through to spreadsheet trust.
+    updateVerifiedWifi(db, tail, null);
+    log.info(`${tail}${tag}: consensus ambiguous, verified_wifi cleared (${consensus.reason})`);
+  }
+  return consensus;
 }
 
 /**
