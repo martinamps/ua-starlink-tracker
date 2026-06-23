@@ -233,6 +233,7 @@ export function setupTables(db: Database) {
       info("Database migration: added united_fleet.ship_number");
     }
   }
+  addColumn(db, "united_fleet", "rts_until", "INTEGER");
 
   if (!tableExists(db, "upcoming_flights")) {
     db.query(
@@ -2341,6 +2342,52 @@ export function computeWifiConsensus(
   };
 }
 
+export function consensusToFleetStatus(verdict: string | null): StarlinkStatus | null {
+  return verdict === null ? null : verdict === "Starlink" ? "confirmed" : "negative";
+}
+
+/**
+ * On the first confirmed tail of an aircraft family, pull every negative
+ * sibling forward in the discovery queue. Returns the number of tails bumped
+ * (0 when not first-of-family). Priority 0.9 keeps user-triggered bumps (1.0)
+ * ahead of a large cascade.
+ */
+export function cascadeSubfleetDiscovery(
+  db: Database,
+  confirmedTail: string,
+  aircraftType: string | null,
+  airline: string
+): number {
+  const family = normalizeAircraftType(aircraftType);
+  if (family === "unknown" || family === "other") return 0;
+
+  const peers = db
+    .query(
+      "SELECT tail_number, aircraft_type, starlink_status FROM united_fleet WHERE airline = ? AND tail_number != ?"
+    )
+    .all(airline, confirmedTail) as Array<{
+    tail_number: string;
+    aircraft_type: string | null;
+    starlink_status: string;
+  }>;
+  const sameFamily = peers.filter((p) => normalizeAircraftType(p.aircraft_type) === family);
+  if (sameFamily.some((p) => p.starlink_status === "confirmed")) return 0;
+
+  const toBump = sameFamily
+    .filter((p) => p.starlink_status === "negative")
+    .map((p) => p.tail_number);
+  if (toBump.length === 0) return 0;
+
+  const now = Math.floor(Date.now() / 1000);
+  db.query(
+    `UPDATE united_fleet
+     SET next_check_after = MIN(next_check_after, ?),
+         discovery_priority = MAX(discovery_priority, 0.9)
+     WHERE tail_number IN (${toBump.map(() => "?").join(",")})`
+  ).run(now, ...toBump);
+  return toBump.length;
+}
+
 /**
  * Bump discovery priority so a tail is re-checked on the next fleet-discovery
  * cycle. Idempotent: only bumps if not already due.
@@ -2757,6 +2804,11 @@ export function getNextPlanesToVerify(db: Database, limit = 10, airline = "UA"):
     .all(now, airline, limit) as FleetAircraft[];
 }
 
+// 10 consecutive errors with the 1h→24h backoff is ~6 days off the schedule —
+// long enough to mean grounded/maintenance, short of the 20-attempt parked tier.
+const RTS_STREAK_THRESHOLD = 10;
+const RTS_GRACE_SECS = 7 * 24 * 3600;
+
 /**
  * Update fleet verification result
  */
@@ -2772,14 +2824,27 @@ export function updateFleetVerificationResult(
 ): void {
   const now = Math.floor(Date.now() / 1000);
 
-  // Calculate next check time based on status
+  const prev = db
+    .query(
+      "SELECT aircraft_type, check_attempts, rts_until, starlink_status, fleet, airline FROM united_fleet WHERE tail_number = ?"
+    )
+    .get(tailNumber) as {
+    aircraft_type: string | null;
+    check_attempts: number;
+    rts_until: number | null;
+    starlink_status: string | null;
+    fleet: string | null;
+    airline: string | null;
+  } | null;
+
+  // A long error streak clearing is a return-to-service: hold a tight re-check
+  // window for a week so a retrofit isn't missed by the 14d negative cadence.
+  const returnedToService = !result.error && (prev?.check_attempts ?? 0) >= RTS_STREAK_THRESHOLD;
+  const rtsUntil = returnedToService ? now + RTS_GRACE_SECS : (prev?.rts_until ?? null);
+
   let nextCheckDelay: number;
   if (result.error) {
-    // Exponential backoff for errors: get current attempts
-    const current = db
-      .query("SELECT check_attempts FROM united_fleet WHERE tail_number = ?")
-      .get(tailNumber) as { check_attempts: number } | null;
-    const attempts = (current?.check_attempts || 0) + 1;
+    const attempts = (prev?.check_attempts ?? 0) + 1;
     // 1h, 2h, 4h, 8h, max 24h — but 20+ consecutive failures means parked/stored,
     // and weekly is enough to catch a return to service.
     nextCheckDelay =
@@ -2789,23 +2854,18 @@ export function updateFleetVerificationResult(
     // within a few days instead of waiting 7-14 days between observations.
     nextCheckDelay = 36 * 3600;
   } else if (result.starlinkStatus === "confirmed") {
-    // Re-verify confirmed Starlink in 7 days
     nextCheckDelay = 7 * 24 * 3600;
   } else {
-    // Re-verify non-Starlink in 14 days
     nextCheckDelay = 14 * 24 * 3600;
   }
+  if (!result.error && rtsUntil && rtsUntil > now)
+    nextCheckDelay = Math.min(nextCheckDelay, 24 * 3600);
 
-  // Add jitter (±10%)
   const jitter = (Math.random() - 0.5) * 0.2 * nextCheckDelay;
   const nextCheckAfter = now + nextCheckDelay + jitter;
 
-  // Recalculate priority
-  const current = db
-    .query("SELECT aircraft_type FROM united_fleet WHERE tail_number = ?")
-    .get(tailNumber) as { aircraft_type: string | null } | null;
   const priority = calculateDiscoveryPriority(
-    current?.aircraft_type || null,
+    prev?.aircraft_type ?? null,
     result.starlinkStatus,
     tailNumber
   );
@@ -2820,7 +2880,6 @@ export function updateFleetVerificationResult(
       WHERE tail_number = ?
     `).run(result.error, nextCheckAfter, priority, tailNumber);
   } else {
-    const prev = getFleetStatusRow(db, tailNumber);
     db.query(`
       UPDATE united_fleet
       SET starlink_status = ?,
@@ -2829,9 +2888,18 @@ export function updateFleetVerificationResult(
           check_attempts = 0,
           last_check_error = NULL,
           next_check_after = ?,
-          discovery_priority = ?
+          discovery_priority = ?,
+          rts_until = ?
       WHERE tail_number = ?
-    `).run(result.starlinkStatus, result.verifiedWifi, now, nextCheckAfter, priority, tailNumber);
+    `).run(
+      result.starlinkStatus,
+      result.verifiedWifi,
+      now,
+      nextCheckAfter,
+      priority,
+      rtsUntil,
+      tailNumber
+    );
     emitFleetStatusChange(prev, result.starlinkStatus);
   }
 }

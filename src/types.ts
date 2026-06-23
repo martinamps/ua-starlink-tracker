@@ -110,6 +110,7 @@ export interface FleetAircraft {
   next_check_after: number;
   check_attempts: number;
   last_check_error: string | null;
+  rts_until?: number | null;
 }
 
 // ============ /fleet page data ============

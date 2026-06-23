@@ -10,7 +10,12 @@
 
 import type { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-import { logVerification, updateShipNumber } from "../src/database/database";
+import {
+  cascadeSubfleetDiscovery,
+  logVerification,
+  updateFleetVerificationResult,
+  updateShipNumber,
+} from "../src/database/database";
 import { type VerifyPlaneDeps, verifyPlane } from "../src/scripts/fleet-discovery";
 import { verifyPlaneStarlink } from "../src/scripts/starlink-verifier";
 import type { StarlinkCheckResult } from "../src/scripts/united-starlink-checker";
@@ -420,13 +425,29 @@ describe("verifyPlaneStarlink write paths (injected checker)", () => {
     db.close();
   });
 
-  test("verification mode never touches united_fleet", async () => {
+  test("verification mode bumps united_fleet for re-check when consensus disagrees with status", async () => {
     const db = setup(null);
+    db.query("UPDATE united_fleet SET next_check_after = ? WHERE tail_number = ?").run(
+      Math.floor(Date.now() / 1000) + 14 * 86400,
+      TAIL
+    );
     addPriors(db, TAIL, "Viasat");
     await run(db, viasatOn(TAIL));
     const uf = fleetRow(db, TAIL);
+    // Discovery owns status writes; verifier only queues a re-check.
     expect(uf.starlink_status).toBe("unknown");
-    expect(uf.verified_at).toBe(1); // addFleet seed value
+    expect(uf.verified_at).toBe(1);
+    expect(uf.next_check_after).toBeLessThan(Math.floor(Date.now() / 1000) + 60);
+    db.close();
+  });
+
+  test("verification mode leaves united_fleet alone when consensus is ambiguous", async () => {
+    const db = setup("Starlink");
+    await run(db, viasatOn(TAIL)); // single obs < minObs
+    const uf = fleetRow(db, TAIL);
+    expect(uf.starlink_status).toBe("unknown");
+    expect(uf.verified_at).toBe(1);
+    expect(uf.next_check_after).toBe(0);
     db.close();
   });
 
@@ -638,6 +659,96 @@ describe("verifyPlane (discovery) write paths (injected checker + flights)", () 
     const tags = await captureLoggerTags(() => run(db, makePlane(), viasatOn(null)));
     expect(tags.has("fleet-discovery")).toBe(true);
     expect(tags.has("united-verdict")).toBe(false);
+    db.close();
+  });
+
+  test("swap-captured tail with disagreeing consensus is bumped for discovery re-check", async () => {
+    const db = makeSyntheticDb();
+    addFleet(db, TAIL, "unknown");
+    addFleet(db, SWAP_TAIL, "negative", { verifiedWifi: "Viasat" });
+    db.query("UPDATE united_fleet SET next_check_after = ? WHERE tail_number = ?").run(
+      NOW + 14 * 86400,
+      SWAP_TAIL
+    );
+    addPlane(db, SWAP_TAIL, null);
+    addPriors(db, SWAP_TAIL, "Starlink");
+    await run(db, makePlane(), starlinkOn(SWAP_TAIL));
+    expect(fleetRow(db, SWAP_TAIL).starlink_status).toBe("negative");
+    expect(fleetRow(db, SWAP_TAIL).next_check_after).toBeLessThan(NOW + 60);
+    db.close();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Discovery scheduling: return-to-service grace + first-of-family cascade.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("discovery scheduling", () => {
+  const NOW = Math.floor(Date.now() / 1000);
+
+  function nextCheckHours(db: Database, tail: string): number {
+    return (fleetRow(db, tail).next_check_after - NOW) / 3600;
+  }
+
+  test("return-to-service: long error streak → 24h grace, survives transient errors", () => {
+    const db = makeSyntheticDb();
+    addFleet(db, TAIL, "negative");
+    db.query("UPDATE united_fleet SET check_attempts = 12 WHERE tail_number = ?").run(TAIL);
+
+    updateFleetVerificationResult(db, TAIL, { starlinkStatus: "negative", verifiedWifi: "Viasat" });
+    expect(nextCheckHours(db, TAIL)).toBeLessThan(30);
+    expect(fleetRow(db, TAIL).check_attempts).toBe(0);
+
+    updateFleetVerificationResult(db, TAIL, {
+      starlinkStatus: "negative",
+      verifiedWifi: null,
+      error: "timeout",
+    });
+    updateFleetVerificationResult(db, TAIL, { starlinkStatus: "negative", verifiedWifi: "Viasat" });
+    expect(nextCheckHours(db, TAIL)).toBeLessThan(30);
+    db.close();
+  });
+
+  test("short error streak does not arm grace", () => {
+    const db = makeSyntheticDb();
+    addFleet(db, TAIL, "negative");
+    db.query("UPDATE united_fleet SET check_attempts = 3 WHERE tail_number = ?").run(TAIL);
+    updateFleetVerificationResult(db, TAIL, { starlinkStatus: "negative", verifiedWifi: "Viasat" });
+    expect(nextCheckHours(db, TAIL)).toBeGreaterThan(11 * 24);
+    db.close();
+  });
+
+  test("cascade: first-of-family bumps negative siblings; later confirm is a no-op", () => {
+    const db = makeSyntheticDb();
+    addFleet(db, "N777A", "negative", { aircraftType: "Boeing 777-224(ER)" });
+    addFleet(db, "N777B", "negative", { aircraftType: "Boeing 777-222" });
+    addFleet(db, "N777C", "negative", { aircraftType: "Boeing 777-322(ER)" });
+    addFleet(db, "N777D", "unknown", { aircraftType: "Boeing 777-222" });
+    addFleet(db, "N321A", "negative", { aircraftType: "Airbus A321-271NX" });
+    const FAR = NOW + 14 * 86400;
+    db.query("UPDATE united_fleet SET next_check_after = ?").run(FAR);
+
+    expect(cascadeSubfleetDiscovery(db, "N777A", "Boeing 777-224(ER)", "UA")).toBe(2);
+    expect(fleetRow(db, "N777B").next_check_after).toBeLessThan(NOW + 60);
+    expect(fleetRow(db, "N777C").next_check_after).toBeLessThan(NOW + 60);
+    expect(fleetRow(db, "N777D").next_check_after).toBe(FAR); // unknown left alone
+    expect(fleetRow(db, "N321A").next_check_after).toBe(FAR); // other family left alone
+
+    db.query("UPDATE united_fleet SET starlink_status='confirmed' WHERE tail_number='N777A'").run();
+    expect(cascadeSubfleetDiscovery(db, "N777B", "Boeing 777-222", "UA")).toBe(0);
+    db.close();
+  });
+
+  test("cascade preserves higher-priority bumps", () => {
+    const db = makeSyntheticDb();
+    addFleet(db, "N777A", "negative", { aircraftType: "Boeing 777-222" });
+    addFleet(db, "N777B", "negative", { aircraftType: "Boeing 777-222" });
+    db.query("UPDATE united_fleet SET discovery_priority = 1.0 WHERE tail_number = 'N777B'").run();
+    cascadeSubfleetDiscovery(db, "N777A", "Boeing 777-222", "UA");
+    const prio = db
+      .query("SELECT discovery_priority FROM united_fleet WHERE tail_number = 'N777B'")
+      .get() as { discovery_priority: number };
+    expect(prio.discovery_priority).toBe(1.0);
     db.close();
   });
 });
