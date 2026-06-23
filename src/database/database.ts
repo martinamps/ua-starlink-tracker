@@ -1923,35 +1923,17 @@ function emitFleetStatusChange(
   });
 }
 
-interface FleetStatusRow {
-  starlink_status: string | null;
-  fleet: string | null;
-  airline: string | null;
-  aircraft_type: string | null;
-}
-
-function getFleetStatusRow(db: Database, tail: string): FleetStatusRow | null {
-  return db
-    .query(
-      "SELECT starlink_status, fleet, airline, aircraft_type FROM united_fleet WHERE tail_number = ?"
-    )
-    .get(tail) as FleetStatusRow | null;
-}
-
-// Covers every observation-driven status write so the cascade can't be missed
-// by adding a new write path (the metric emit already follows this pattern).
-function onFleetStatusWrite(
+function getFleetStatusRow(
   db: Database,
-  tail: string,
-  prev: FleetStatusRow | null,
-  next: StarlinkStatus
-): void {
-  emitFleetStatusChange(prev, next);
-  if (prev?.airline && prev.starlink_status !== "confirmed" && next === "confirmed") {
-    const n = cascadeSubfleetDiscovery(db, tail, prev.aircraft_type, prev.airline);
-    if (n)
-      info(`first-of-family ${normalizeAircraftType(prev.aircraft_type)}: bumped ${n} siblings`);
-  }
+  tail: string
+): { starlink_status: string | null; fleet: string | null; airline: string | null } | null {
+  return db
+    .query("SELECT starlink_status, fleet, airline FROM united_fleet WHERE tail_number = ?")
+    .get(tail) as {
+    starlink_status: string | null;
+    fleet: string | null;
+    airline: string | null;
+  } | null;
 }
 
 export function setFleetVerified(
@@ -1965,7 +1947,7 @@ export function setFleetVerified(
   db.query(
     "UPDATE united_fleet SET verified_wifi = ?, verified_at = ?, starlink_status = ? WHERE tail_number = ?"
   ).run(wifi, now, status, tail);
-  onFleetStatusWrite(db, tail, prev, status);
+  emitFleetStatusChange(prev, status);
 }
 
 export function touchFleetVerifiedAt(db: Database, tail: string): void {
@@ -2398,7 +2380,9 @@ export function cascadeSubfleetDiscovery(
 
   const now = Math.floor(Date.now() / 1000);
   db.query(
-    `UPDATE united_fleet SET next_check_after = ?, discovery_priority = 0.9
+    `UPDATE united_fleet
+     SET next_check_after = MIN(next_check_after, ?),
+         discovery_priority = MAX(discovery_priority, 0.9)
      WHERE tail_number IN (${toBump.map(() => "?").join(",")})`
   ).run(now, ...toBump);
   return toBump.length;
@@ -2523,10 +2507,8 @@ export function reconcileConsensus(db: Database): number {
     // Write authority: only observed-wifi sources. Type-derived rows (alaska
     // wifi = type inference) must not flip verified_wifi from here.
     const consensus = computeWifiConsensus(db, tail, { sources: OBSERVED_WIFI_SOURCES });
-    const status = consensusToFleetStatus(consensus.verdict);
-    if (status !== null && consensus.verdict !== current) {
+    if (consensus.verdict !== null && consensus.verdict !== current) {
       updateVerifiedWifi(db, tail, consensus.verdict);
-      setFleetVerified(db, tail, consensus.verdict, status);
       healed++;
     }
   }
@@ -2894,8 +2876,7 @@ export function updateFleetVerificationResult(
       SET check_attempts = check_attempts + 1,
           last_check_error = ?,
           next_check_after = ?,
-          discovery_priority = ?,
-          rts_until = NULL
+          discovery_priority = ?
       WHERE tail_number = ?
     `).run(result.error, nextCheckAfter, priority, tailNumber);
   } else {
@@ -2919,7 +2900,7 @@ export function updateFleetVerificationResult(
       rtsUntil,
       tailNumber
     );
-    onFleetStatusWrite(db, tailNumber, prev, result.starlinkStatus);
+    emitFleetStatusChange(prev, result.starlinkStatus);
   }
 }
 

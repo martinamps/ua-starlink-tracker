@@ -14,11 +14,12 @@ import type { Database } from "bun:sqlite";
 import { AIRLINES, OBSERVED_WIFI_SOURCES, verifierSourceTag } from "../airlines/registry";
 import {
   type WifiConsensus,
+  bumpDiscoveryPriority,
   computeWifiConsensus,
   consensusToFleetStatus,
+  getFleetEntryByTail,
   getShipToTailMap,
   logVerification,
-  setFleetVerified,
   updateVerifiedWifi,
 } from "../database/database";
 import { info, warn } from "../utils/logger";
@@ -226,7 +227,10 @@ export function applyUnitedObservation(
       // Swap-captured tails never get a direct check soon — needsVerification
       // sees the log entry above and skips them — so settle their consensus
       // here or they'd be stuck accumulating obs forever.
-      settleConsensus(db, verdict.swapCapture.tail_number, log, " (swap-captured)");
+      settleConsensus(db, verdict.swapCapture.tail_number, log, {
+        tag: " (swap-captured)",
+        clearOnAmbiguous: false,
+      });
     }
 
     if (!verdict.trusted) {
@@ -245,14 +249,24 @@ export function applyUnitedObservation(
   })();
 }
 
-function settleConsensus(db: Database, tail: string, log: VerdictLog, tag = ""): WifiConsensus {
+function settleConsensus(
+  db: Database,
+  tail: string,
+  log: VerdictLog,
+  opts: { tag?: string; clearOnAmbiguous?: boolean } = {}
+): WifiConsensus {
+  const { tag = "", clearOnAmbiguous = true } = opts;
   const consensus = computeWifiConsensus(db, tail, { sources: OBSERVED_WIFI_SOURCES });
   const status = consensusToFleetStatus(consensus.verdict);
   if (status !== null) {
     updateVerifiedWifi(db, tail, consensus.verdict);
-    setFleetVerified(db, tail, consensus.verdict, status);
     log.info(`${tail}${tag}: verified_wifi → ${consensus.verdict} (${consensus.reason})`);
-  } else {
+    // Discovery is the sole united_fleet status writer; queue a re-check when
+    // its row disagrees so the verifier/swap path can't leave it stale.
+    if (getFleetEntryByTail(db, tail)?.starlink_status !== status) {
+      bumpDiscoveryPriority(db, tail);
+    }
+  } else if (clearOnAmbiguous) {
     // Ambiguous — clear to NULL so the check-flight filter
     // (IS NULL OR = 'Starlink') falls through to spreadsheet trust.
     updateVerifiedWifi(db, tail, null);
