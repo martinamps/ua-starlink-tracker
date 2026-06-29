@@ -2839,14 +2839,8 @@ export function updateFleetVerificationResult(
 
   // A long error streak clearing is a return-to-service: hold a tight re-check
   // window for a week so a retrofit isn't missed by the 14d negative cadence.
-  // Grace ends once the tail confirms — that's the transition it exists to catch.
   const returnedToService = !result.error && (prev?.check_attempts ?? 0) >= RTS_STREAK_THRESHOLD;
-  const rtsUntil =
-    result.starlinkStatus === "confirmed"
-      ? null
-      : returnedToService
-        ? now + RTS_GRACE_SECS
-        : (prev?.rts_until ?? null);
+  const rtsUntil = returnedToService ? now + RTS_GRACE_SECS : (prev?.rts_until ?? null);
 
   let nextCheckDelay: number;
   if (result.error) {
@@ -2864,7 +2858,7 @@ export function updateFleetVerificationResult(
   } else {
     nextCheckDelay = 14 * 24 * 3600;
   }
-  if (!result.error && rtsUntil && rtsUntil > now)
+  if (!result.error && result.starlinkStatus !== "confirmed" && rtsUntil && rtsUntil > now)
     nextCheckDelay = Math.min(nextCheckDelay, 24 * 3600);
 
   const jitter = (Math.random() - 0.5) * 0.2 * nextCheckDelay;
