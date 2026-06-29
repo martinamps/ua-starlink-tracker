@@ -706,6 +706,12 @@ describe("discovery scheduling", () => {
     });
     updateFleetVerificationResult(db, TAIL, { starlinkStatus: "negative", verifiedWifi: "Viasat" });
     expect(nextCheckHours(db, TAIL)).toBeLessThan(30);
+
+    updateFleetVerificationResult(db, TAIL, {
+      starlinkStatus: "confirmed",
+      verifiedWifi: "Starlink",
+    });
+    expect(nextCheckHours(db, TAIL)).toBeGreaterThan(6 * 24);
     db.close();
   });
 
