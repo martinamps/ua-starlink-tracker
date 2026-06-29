@@ -2858,7 +2858,7 @@ export function updateFleetVerificationResult(
   } else {
     nextCheckDelay = 14 * 24 * 3600;
   }
-  if (!result.error && rtsUntil && rtsUntil > now)
+  if (!result.error && result.starlinkStatus !== "confirmed" && rtsUntil && rtsUntil > now)
     nextCheckDelay = Math.min(nextCheckDelay, 24 * 3600);
 
   const jitter = (Math.random() - 0.5) * 0.2 * nextCheckDelay;
