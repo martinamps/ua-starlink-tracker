@@ -22,6 +22,7 @@ import type {
 import {
   type ConfirmedEdge,
   type DirectRouteEdge,
+  type FleetRosterEntry,
   type FlightAssignmentRow,
   type HubAirlineStat,
   type QatarScheduleRow,
@@ -46,6 +47,7 @@ import {
   getFleetDiscoveryStats,
   getFleetEntryByTail,
   getFleetPageData,
+  getFleetRoster,
   getFleetStats,
   getFlightAssignments,
   getHubStats,
@@ -87,6 +89,8 @@ export interface ScopedReader {
   getUpcomingFlights(tailNumber?: string): Flight[];
   /** Per-airline subfleet split; null on the hub (no cross-airline aggregate exists). */
   getFleetStats(): FleetStats | null;
+  /** Typed airframe roster; empty on the hub (no cross-airline roster exists). */
+  getFleetRoster(): FleetRosterEntry[];
   getTotalCount(): number;
   getLastUpdated(): string;
   /** Meta keys are namespaced per-airline; null on the hub (no single namespace). */
@@ -235,6 +239,7 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     // hub aggregate — null forces callers to handle the hub case explicitly
     // instead of receiving one airline's stats as the hub's.
     getFleetStats: () => (scope === "ALL" ? null : getFleetStats(db, scope)),
+    getFleetRoster: () => (scope === "ALL" ? [] : getFleetRoster(db, scope)),
     getTotalCount: () =>
       scope === "ALL"
         ? airlines.reduce((s, c) => s + getTotalCount(db, c), 0)

@@ -1159,6 +1159,27 @@ export function getFleetStats(db: Database, airline = "UA"): FleetStats {
   };
 }
 
+export interface FleetRosterEntry {
+  tail_number: string;
+  aircraft_type: string;
+  verified_wifi: string | null;
+}
+
+/**
+ * The scoped carrier's typed airframe roster from united_fleet. The predictor
+ * derives each tail's current Starlink status from the verification log
+ * (point-in-time in backtests); verified_wifi is only the fallback for tails
+ * the log has never observed.
+ */
+export function getFleetRoster(db: Database, airline?: AirlineFilter): FleetRosterEntry[] {
+  const q = withAirline(
+    `SELECT tail_number, aircraft_type, verified_wifi FROM united_fleet
+     WHERE aircraft_type IS NOT NULL AND aircraft_type <> ''`,
+    airline
+  );
+  return db.query(q.sql).all(...q.params) as FleetRosterEntry[];
+}
+
 // FR24 has shipped epoch-0 / half-parsed departure rows before. Enforce the
 // floor at the insert so the invariant lives in the table, not on every read.
 const MIN_VALID_DEPARTURE_TS = 946684800; // 2000-01-01

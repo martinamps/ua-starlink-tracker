@@ -4,12 +4,19 @@
  * Given a flight_number (and optionally route/date), estimate the probability
  * that the scheduled aircraft will have Starlink WiFi.
  *
- * Model: hierarchical fallback with Bayesian smoothing
- *   1. Flight-number historical rate (Laplace-smoothed toward log-conditional prior)
- *   2. Fall back to fleet-type prior (express ~49%, mainline ~2%)
- *
- * Trained on starlink_verification_log (12k+ historical checks of United.com).
- * Backtested by holding out the most recent N hours of observations.
+ * Model (aircraft-type-aware): Starlink is a property of the AIRFRAME and the
+ * rollout goes type-by-type, so both subfleets are bimodal mixtures a single
+ * express/mainline prior cannot represent (E175/CRJ-550 ~100% vs ERJ-145/
+ * CRJ-200 0%; 737NG/A321neo ~20-25% vs 787/777/767/757/MAX 0%). For each
+ * flight number:
+ *   1. Relabel its historical tail assignments by each tail's CURRENT status
+ *      ("does the tail this flight draws have Starlink NOW"), recency-decayed.
+ *      "Did it have Starlink when it flew" goes stale mid-retrofit and made
+ *      the model predict ~3% on routes that were actually ~20%.
+ *   2. Smooth toward the type-mix prior: sum over the aircraft types this
+ *      flight has drawn of P(type|flight) * penetration(type).
+ * A scope with no census roster falls back to the flight-history + subfleet
+ * prior model; `--backtest` / `--cv` below measure both against a holdout.
  *
  * CLI:
  *   bun run src/scripts/starlink-predictor.ts --backtest           # Evaluate accuracy
@@ -18,6 +25,7 @@
  */
 
 import { Database } from "bun:sqlite";
+import { normalizeAircraftType } from "../airlines/aircraft-families";
 import { ensureAirlinePrefix, inferSubfleet } from "../airlines/flight-number";
 import {
   AIRLINES,
@@ -30,6 +38,7 @@ import {
   wifiPhaseFamilies,
 } from "../airlines/registry";
 import type {
+  FleetRosterEntry,
   VerificationObservation as Observation,
   SubfleetPenetration,
 } from "../database/database";
@@ -67,14 +76,8 @@ interface Prediction {
 }
 
 /**
- * Bayesian smoothing (Laplace-style): blend empirical rate with prior.
- * With few observations, trust the prior more. With many, trust the data.
- *
- * Uses RAW observation counts, not time-weighted. Empirical backtesting found
- * all-history beats time-decayed variants (Brier 0.102 vs 0.126) — aircraft
- * rotation patterns are stable over our ~65-day window, and time-decay washed
- * out consistent evidence too aggressively (e.g., 5 all-negative obs pulled
- * to 50% by aggressive decay + strong prior).
+ * Bayesian smoothing (Laplace-style): blend the empirical rate with a prior.
+ * With few observations trust the prior; with many, trust the data.
  */
 function smoothedRate(
   nStarlink: number,
@@ -110,66 +113,177 @@ const DEFAULT_CONFIG: ModelConfig = {
   mainlineColdPrior: 0.02,
 };
 
-/**
- * Build a prediction model from training observations.
- * Returns a predict() function that takes a flight_number and returns probability.
- */
-export function buildModel(trainObs: Observation[], config: ModelConfig = DEFAULT_CONFIG) {
-  // Pre-aggregate: for each flight_number, count Starlink hits and total obs
-  const flightStats = new Map<string, { nStarlink: number; n: number }>();
+// How fast the flight-number -> tail-draw distribution goes stale. Swept over
+// 5/10/20/30/40d half-lives in the rolling backtest; 30d is the Brier optimum.
+const ASSIGNMENT_HALF_LIFE_DAYS = 30;
 
+const confidenceFor = (n: number) => (n >= 5 ? "high" : n >= 2 ? "medium" : "low") as const;
+
+/** Subfleet cold-start install rate: all we know with no usable history. */
+function coldPrior(flightNumber: string, config: ModelConfig): number {
+  const fleet = uaSubfleet(flightNumber);
+  return fleet === "express"
+    ? config.expressColdPrior
+    : fleet === "mainline"
+      ? config.mainlineColdPrior
+      : (config.expressColdPrior + config.mainlineColdPrior) / 2;
+}
+
+function coldPrediction(flightNumber: string, config: ModelConfig): Prediction {
+  return {
+    flight_number: flightNumber,
+    probability: coldPrior(flightNumber, config),
+    confidence: "low",
+    method: `fleet_prior_${uaSubfleet(flightNumber)}` as PredictionMethod,
+    n_observations: 0,
+  };
+}
+
+/**
+ * The type-aware predictor (see the file header). Returns null when the
+ * roster is empty, so the caller falls back to the legacy model.
+ */
+function buildTypeAwarePredict(
+  trainObs: Observation[],
+  config: ModelConfig,
+  roster: FleetRosterEntry[]
+): ((flightNumber: string) => Prediction) | null {
+  if (roster.length === 0) return null;
+
+  // Newest observation per tail = its point-in-time status; anchoring the
+  // decay there keeps backtests honest with no extra plumbing.
+  let anchor = 0;
+  const tailLatest = new Map<string, { at: number; starlink: number }>();
   for (const obs of trainObs) {
-    const key = obs.flight_number;
-    const cur = flightStats.get(key) || { nStarlink: 0, n: 0 };
-    cur.nStarlink += obs.has_starlink;
-    cur.n += 1;
-    flightStats.set(key, cur);
+    if (obs.checked_at > anchor) anchor = obs.checked_at;
+    if (!obs.tail_number) continue;
+    const cur = tailLatest.get(obs.tail_number);
+    if (!cur || obs.checked_at >= cur.at) {
+      tailLatest.set(obs.tail_number, { at: obs.checked_at, starlink: obs.has_starlink });
+    }
   }
 
-  function predict(flightNumber: string): Prediction {
-    const fleet = uaSubfleet(flightNumber);
+  // Types collapse to families so spelling variants of one airframe share a
+  // bucket; the roster's verified_wifi (derived from these same log rows, so
+  // never fresher) only covers tails the training window never observed.
+  const tails = new Map<string, { type: string; starlink: number }>();
+  for (const r of roster) {
+    tails.set(r.tail_number, {
+      type: normalizeAircraftType(r.aircraft_type),
+      starlink: tailLatest.get(r.tail_number)?.starlink ?? (r.verified_wifi === "Starlink" ? 1 : 0),
+    });
+  }
 
-    const stats = flightStats.get(flightNumber);
-    if (!stats || stats.n === 0) {
-      // No history — use cold-start prior (true fleet install rate)
-      const coldPrior =
-        fleet === "express"
-          ? config.expressColdPrior
-          : fleet === "mainline"
-            ? config.mainlineColdPrior
-            : (config.expressColdPrior + config.mainlineColdPrior) / 2;
-      return {
-        flight_number: flightNumber,
-        probability: coldPrior,
-        confidence: "low",
-        method: `fleet_prior_${fleet}` as PredictionMethod,
-        n_observations: 0,
-      };
+  // Penetration per family, over the whole roster.
+  const typePen = new Map<string, { s: number; n: number }>();
+  for (const t of tails.values()) {
+    const agg = typePen.get(t.type) ?? { s: 0, n: 0 };
+    agg.s += t.starlink;
+    agg.n += 1;
+    typePen.set(t.type, agg);
+  }
+
+  // Per flight number: the family mix of its tail draws, plus the
+  // recency-weighted draws whose tail carries Starlink NOW.
+  const flights = new Map<
+    string,
+    { mix: Map<string, number>; s: number; n: number; raw: number }
+  >();
+  for (const obs of trainObs) {
+    // A tail missing from the roster still has a known current status from
+    // the log — only its family is unknown, so it just doesn't feed the mix.
+    const tail = tails.get(obs.tail_number);
+    const starlink = tail?.starlink ?? tailLatest.get(obs.tail_number)?.starlink;
+    if (starlink === undefined) continue;
+    let f = flights.get(obs.flight_number);
+    if (!f) {
+      f = { mix: new Map(), s: 0, n: 0, raw: 0 };
+      flights.set(obs.flight_number, f);
     }
+    if (tail) f.mix.set(tail.type, (f.mix.get(tail.type) ?? 0) + 1);
+    const w = 0.5 ** ((anchor - obs.checked_at) / 86400 / ASSIGNMENT_HALF_LIFE_DAYS);
+    f.s += starlink * w;
+    f.n += w;
+    f.raw += 1;
+  }
+
+  // Everything is determined at build time, so predict is a lookup.
+  // Confidence reflects the DECAYED evidence weight: six draws from months
+  // ago back the number far less than six from this week.
+  const predictions = new Map<string, Prediction>();
+  for (const [flightNumber, f] of flights) {
+    let prior = coldPrior(flightNumber, config);
+    if (f.mix.size > 0) {
+      let n = 0;
+      let s = 0;
+      for (const [type, count] of f.mix) {
+        const pen = typePen.get(type);
+        n += count;
+        s += count * (pen ? pen.s / pen.n : 0);
+      }
+      prior = s / n;
+    }
+    predictions.set(flightNumber, {
+      flight_number: flightNumber,
+      probability: smoothedRate(f.s, f.n, prior, config.priorStrength),
+      confidence: confidenceFor(f.n),
+      method: "flight_history_smoothed",
+      n_observations: f.raw,
+    });
+  }
+
+  return (flightNumber: string): Prediction =>
+    predictions.get(flightNumber) ?? coldPrediction(flightNumber, config);
+}
+
+/** The pre-roster model: per-flight-number rate smoothed toward a subfleet prior. */
+function buildLegacyPredict(
+  trainObs: Observation[],
+  config: ModelConfig
+): (flightNumber: string) => Prediction {
+  const flightStats = new Map<string, { nStarlink: number; n: number }>();
+  for (const obs of trainObs) {
+    const cur = flightStats.get(obs.flight_number) || { nStarlink: 0, n: 0 };
+    cur.nStarlink += obs.has_starlink;
+    cur.n += 1;
+    flightStats.set(obs.flight_number, cur);
+  }
+
+  return (flightNumber: string): Prediction => {
+    const stats = flightStats.get(flightNumber);
+    if (!stats || stats.n === 0) return coldPrediction(flightNumber, config);
 
     // Has history — smooth toward log-conditional rate (not fleet rate),
     // since the log is biased toward Starlink-suspected planes
+    const fleet = uaSubfleet(flightNumber);
     const smoothPrior =
       fleet === "express"
         ? config.expressSmoothingPrior
         : fleet === "mainline"
           ? config.mainlineSmoothingPrior
           : (config.expressSmoothingPrior + config.mainlineSmoothingPrior) / 2;
-
-    const prob = smoothedRate(stats.nStarlink, stats.n, smoothPrior, config.priorStrength);
-
-    const confidence = stats.n >= 5 ? "high" : stats.n >= 2 ? "medium" : "low";
-
     return {
       flight_number: flightNumber,
-      probability: prob,
-      confidence,
+      probability: smoothedRate(stats.nStarlink, stats.n, smoothPrior, config.priorStrength),
+      confidence: confidenceFor(stats.n),
       method: "flight_history_smoothed",
       n_observations: stats.n,
     };
-  }
+  };
+}
 
-  return { predict, flightStats };
+/**
+ * Build a prediction model from training observations.
+ * Returns a predict() function that takes a flight_number and returns probability.
+ */
+export function buildModel(
+  trainObs: Observation[],
+  config: ModelConfig = DEFAULT_CONFIG,
+  roster: FleetRosterEntry[] = []
+) {
+  const predict =
+    buildTypeAwarePredict(trainObs, config, roster) ?? buildLegacyPredict(trainObs, config);
+  return { predict };
 }
 
 // ============================================================================
@@ -323,7 +437,7 @@ export function backtest(
   const testObs = allObs.filter((o) => o.checked_at >= cutoff);
 
   const derivedConfig = deriveConfig(reader, trainObs, config);
-  const { predict } = buildModel(trainObs, derivedConfig);
+  const { predict } = buildModel(trainObs, derivedConfig, censusRoster(reader));
 
   const predictions = testObs.map((obs) => ({
     pred: predict(obs.flight_number),
@@ -429,10 +543,21 @@ function deriveConfig(
 const MODEL_TTL_SEC = 3600; // 1 hour — matches scrape cadence
 const modelCache = new Map<Scope, { predict: (fn: string) => Prediction; builtAt: number }>();
 
+/**
+ * The type-aware model needs united_fleet to be a CENSUS, not a sample — a
+ * partial roster gives biased per-type penetration. minFleetSanity is the same
+ * completeness floor fleet-sync enforces on this table, so the two stay coupled.
+ */
+function censusRoster(reader: ScopedReader): FleetRosterEntry[] {
+  if (reader.scope === "ALL") return [];
+  const roster = reader.getFleetRoster();
+  return roster.length >= AIRLINES[reader.scope].minFleetSanity ? roster : [];
+}
+
 function buildProductionModel(reader: ScopedReader): { predict: (fn: string) => Prediction } {
   const trainObs = reader.getVerificationObservations();
   const config = deriveConfig(reader, trainObs);
-  return buildModel(trainObs, config);
+  return buildModel(trainObs, config, censusRoster(reader));
 }
 
 /**
