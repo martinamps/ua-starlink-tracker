@@ -48,6 +48,7 @@ import {
   aggregatePenetration,
   createReaderFactory,
 } from "../database/reader";
+import { airportDistanceMiles, detourBoundMiles } from "../utils/airport-geo";
 import { flightDateWindow, matchesLocalDate } from "../utils/airport-tz";
 
 // The prediction model is trained exclusively on United verification
@@ -1239,6 +1240,10 @@ function makePositioningLeg(route: string): ItineraryLeg {
  * Guarantees: a direct flight in the graph is ALWAYS returned as option #1.
  * Partial-coverage baselines (positioning + Starlink leg in either direction)
  * are included when no strong direct exists.
+ *
+ * Every connection is gated on a geographic detour bound (airport-geo). The
+ * coverage-ratio ranking is blind to geography and happily proposed OGG->SFO
+ * via San Antonio; when no on-the-way routing exists, nothing IS the answer.
  */
 export function planItinerary(
   reader: ScopedReader,
@@ -1259,12 +1264,28 @@ export function planItinerary(
   const minLegProb = options.minLegProbability ?? MIN_LEG_PROBABILITY;
   const maxStops = Math.min(options.maxStops ?? 2, 3);
 
+  // Detour gate. Unknown airports null the bound / the running path total,
+  // which disables pruning for that query / that path (fail open).
+  const directMiles = airportDistanceMiles(orig, dest);
+  const bound = directMiles !== null ? detourBoundMiles(directMiles) : null;
+  const pathMiles = (flown: number | null, from: string, to: string): number | null => {
+    const leg = airportDistanceMiles(from, to);
+    return flown === null || leg === null ? null : flown + leg;
+  };
+  // A*-admissible: flown + straight-line remainder never understates the
+  // finished path, so exceeding the bound here can't drop a valid option.
+  const exceedsBound = (flown: number | null, at: string): boolean => {
+    if (bound === null || flown === null) return false;
+    const remaining = airportDistanceMiles(at, dest);
+    return remaining !== null && flown + remaining > bound;
+  };
+
   const graph = buildRouteGraph(reader, minLegProb, options.targetDateUnix);
   const itineraries: Itinerary[] = [];
 
   // --- BFS up to maxStops+1 legs ---
-  type SearchState = { airport: string; legs: ItineraryLeg[]; joint: number };
-  let frontier: SearchState[] = [{ airport: orig, legs: [], joint: 1 }];
+  type SearchState = { airport: string; legs: ItineraryLeg[]; joint: number; flown: number | null };
+  let frontier: SearchState[] = [{ airport: orig, legs: [], joint: 1, flown: 0 }];
   const seenPaths = new Set<string>();
 
   for (let depth = 0; depth <= maxStops; depth++) {
@@ -1277,6 +1298,9 @@ export function planItinerary(
         if (nextAirport === orig) continue;
         if (state.legs.some((l) => l.route.split("-")[1] === nextAirport)) continue;
 
+        const flown = pathMiles(state.flown, state.airport, nextAirport);
+        if (exceedsBound(flown, nextAirport)) continue;
+
         const newLegs = [...state.legs, leg];
         const newJoint = state.joint * leg.probability;
 
@@ -1287,7 +1311,7 @@ export function planItinerary(
             itineraries.push(computeItinerary(newLegs, "full"));
           }
         } else if (depth < maxStops) {
-          nextFrontier.push({ airport: nextAirport, legs: newLegs, joint: newJoint });
+          nextFrontier.push({ airport: nextAirport, legs: newLegs, joint: newJoint, flown });
         }
       }
     }
@@ -1307,10 +1331,18 @@ export function planItinerary(
     type PartialCandidate = { starlinkLeg: ItineraryLeg; hub: string; direction: "in" | "out" };
     const candidates: PartialCandidate[] = [];
 
+    // A partial synthesizes orig->hub->dest, so the hub must be on the way AND
+    // its "(any)" positioning leg must be a route the carrier actually flies
+    // (null = no census for this scope = can't validate = never rejects).
+    const hubOnPath = (hub: string) => !exceedsBound(pathMiles(0, orig, hub), hub);
+    const served = reader.getServedRoutePairs();
+    const isServed = (a: string, b: string) => served === null || served.has(`${a}-${b}`);
+
     // Direction "in": (any) orig→hub, then Starlink hub→dest
     for (const [hub, edges] of graph.entries()) {
       const leg = edges.get(dest);
       if (!leg || leg.probability < minLegProb || hub === orig) continue;
+      if (!hubOnPath(hub) || !isServed(orig, hub)) continue;
       if (itineraries.some((it) => it.via.length === 1 && it.via[0] === hub)) continue;
       candidates.push({ starlinkLeg: leg, hub, direction: "in" });
     }
@@ -1319,6 +1351,7 @@ export function planItinerary(
     if (outEdges) {
       for (const [hub, leg] of outEdges.entries()) {
         if (hub === dest || leg.probability < minLegProb) continue;
+        if (!hubOnPath(hub) || !isServed(hub, dest)) continue;
         if (itineraries.some((it) => it.via.length === 1 && it.via[0] === hub)) continue;
         candidates.push({ starlinkLeg: leg, hub, direction: "out" });
       }
