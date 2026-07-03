@@ -61,6 +61,7 @@ import {
   getRouteGraphEdges,
   getRouteStarlinkSchedule,
   getRoutesForFlightVariants,
+  getServedRoutePairs,
   getStarlinkPlaneByTail,
   getStarlinkPlanes,
   getSubfleetPenetration,
@@ -109,6 +110,8 @@ export interface ScopedReader {
   getVerificationObservations(): VerificationObservation[];
   getRouteFlights(origin: string | null, destination: string | null): RouteFlightRow[];
   getRouteGraphEdges(): RouteGraphEdge[];
+  /** Every ORIG-DEST the carrier flies; null when no route census exists for the scope. */
+  getServedRoutePairs(): ReadonlySet<string> | null;
   getConfirmedStarlinkEdges(queryStart: number, queryEnd: number): ConfirmedEdge[];
   airlineServesAirports(prefixes: readonly string[], ...airports: string[]): boolean;
   getSubfleetPenetration(): Map<string, SubfleetPenetration>;
@@ -258,6 +261,7 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     getVerificationObservations: () => getVerificationObservations(db, airlines),
     getRouteFlights: (o, d) => getRouteFlights(db, o, d, airlines),
     getRouteGraphEdges: () => getRouteGraphEdges(db, airlines),
+    getServedRoutePairs: () => getServedRoutePairs(db, airlines),
     getConfirmedStarlinkEdges: (s, e) => getConfirmedStarlinkEdges(db, s, e, airlines),
     airlineServesAirports: (px, ...aps) => airlineServesAirports(db, soleAirline(), px, ...aps),
     getSubfleetPenetration: () => getSubfleetPenetration(db, soleAirline()),

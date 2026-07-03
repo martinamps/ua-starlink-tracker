@@ -16,7 +16,8 @@ import {
   subfleetPenetration,
 } from "../src/scripts/starlink-predictor";
 import { createReaderFactory } from "../src/server/context";
-import { makeSyntheticDb, openSnapshot } from "./helpers";
+import { airportDistanceMiles, detourBoundMiles } from "../src/utils/airport-geo";
+import { addFlight, makeSyntheticDb, openSnapshot } from "./helpers";
 
 let db: Database;
 let hubReader: ReturnType<ReturnType<typeof createReaderFactory>>;
@@ -305,19 +306,38 @@ describe("compareRoute", () => {
   });
 });
 
-// ── planItinerary (unchanged behavior) ────────────────────────────────────────
+// ── planItinerary ─────────────────────────────────────────────────────────────
 
 describe("planItinerary", () => {
   const CASES: Array<[string, string, number, string]> = [
     ["SEA", "LAX", 1, "direct AS route"],
     ["HNL", "LAX", 1, "direct HA route"],
-    ["SEA", "BOI", 1, "AS spoke"],
     ["ZZZ", "YYY", 0, "nonexistent → empty"],
   ];
+  // SEA→BOI is a 400 mi hop whose only Starlink path in the snapshot
+  // backtracks through SFO, so the detour gate is right to return nothing —
+  // it stays in the invariant sweep but has no meaningful count to assert.
+  const PAIRS = [...CASES.map(([o, d]) => [o, d]), ["SEA", "BOI"]];
 
   test.each(CASES)("%s → %s: ≥%d itineraries", (o, d, minN) => {
     const its = planItinerary(hubReader, o, d, { maxItineraries: 5 });
     expect(its.length).toBeGreaterThanOrEqual(minN);
+  });
+
+  test("no itinerary exceeds the geographic detour bound", () => {
+    for (const [o, d] of PAIRS) {
+      const direct = airportDistanceMiles(o, d);
+      if (direct === null) continue;
+      for (const it of planItinerary(hubReader, o, d, { maxItineraries: 10 })) {
+        let path = 0;
+        for (const leg of it.legs) {
+          const [a, b] = leg.route.split("-");
+          path += airportDistanceMiles(a, b) ?? 0;
+        }
+        // +1 mi absorbs float noise; the bound is what matters.
+        expect(path).toBeLessThanOrEqual(detourBoundMiles(direct) + 1);
+      }
+    }
   });
 
   test("itinerary shape: legs, joint probability, totals", () => {
@@ -347,6 +367,76 @@ describe("planItinerary", () => {
   test("origin == destination returns empty", () => {
     expect(planItinerary(hubReader, "SEA", "SEA")).toEqual([]);
     expect(planItinerary(hubReader, "sea", "SEA")).toEqual([]);
+  });
+});
+
+// ── planItinerary detour + census gates (synthetic, deterministic) ────────────
+// Real airports (the static coord table drives the geometry) with
+// `minLegProbability: 0` so the probability model can't hide an edge.
+
+describe("planItinerary geographic gates", () => {
+  let sdb: Database;
+  let reader: ReturnType<typeof getReader>;
+  const NO_PROB = { maxItineraries: 10, minLegProbability: 0 } as const;
+  const vias = (o: string, d: string) =>
+    planItinerary(reader, o, d, NO_PROB).map((it) => it.via.join(","));
+
+  beforeAll(() => {
+    sdb = makeSyntheticDb();
+    let n = 5000;
+    const edge = (dep: string, arr: string) =>
+      addFlight(sdb, `N${n}X`, `UA${n++}`, dep, 1, { arrivalAirport: arr });
+    // Direct OGG→SFO, plus two Starlink-flown detours that must never be
+    // offered for OGG→SFO: OGG→ORD→SFO (2.6x) and a SAT→SFO leg the partial
+    // fallback would otherwise pair with a fabricated OGG→SAT positioning hop.
+    edge("OGG", "SFO");
+    edge("OGG", "ORD");
+    edge("ORD", "SFO");
+    edge("SAT", "SFO");
+    // LAX is genuinely on the way OGG→SFO (1.12x); its Starlink LAX→SFO leg
+    // is the one partial the gates should keep.
+    edge("LAX", "SFO");
+    reader = createReaderFactory(sdb)("UA");
+  });
+  afterAll(() => sdb.close());
+
+  test("direct survives; the ORD backtrack and the fabricated SAT hop do not", () => {
+    const v = vias("OGG", "SFO");
+    expect(v).toContain("");
+    expect(v).not.toContain("ORD");
+    expect(v).not.toContain("SAT");
+  });
+
+  test("an on-the-way partial survives while no census exists to refute it", () => {
+    // bts_monthly_routes is empty → getServedRoutePairs() is null → the
+    // route-existence gate fails OPEN and keeps the geographically-valid LAX option.
+    expect(reader.getServedRoutePairs()).toBeNull();
+    expect(vias("OGG", "SFO")).toContain("LAX");
+  });
+
+  test("the census never applies to a scope that is not exactly UA", () => {
+    // bts_monthly_routes is UA-marketed; using it to judge an AS/HA/hub
+    // positioning leg would reject every route United does not fly.
+    expect(createReaderFactory(sdb)("ALL").getServedRoutePairs()).toBeNull();
+  });
+
+  test("an origin outside the coordinate table disables the detour gate, not the planner", () => {
+    // QQQ has no coordinates, so nothing can be proven a detour. The SAT→SFO
+    // leg must come back as a partial rather than the planner returning [].
+    expect(vias("QQQ", "SFO").length).toBeGreaterThan(0);
+  });
+
+  // Mutates the census, so it must stay LAST in this describe.
+  test("the census rejects a positioning leg on a route United never flies", () => {
+    const ins = sdb.query(
+      "INSERT INTO bts_monthly_routes (month, origin, dest, performed) VALUES ('2026-05', ?, ?, 1)"
+    );
+    // A non-empty census that omits OGG-LAX proves the positioning leg is
+    // fabricated; adding it brings the option back.
+    ins.run("SFO", "LAX");
+    expect(vias("OGG", "SFO")).not.toContain("LAX");
+    ins.run("OGG", "LAX");
+    expect(vias("OGG", "SFO")).toContain("LAX");
   });
 });
 

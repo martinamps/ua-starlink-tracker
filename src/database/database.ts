@@ -76,6 +76,20 @@ function withAirline(
   return { sql: `${sql} AND ${col} IN (${placeholders})`, params: [...params, ...airline] };
 }
 
+/** Resolve an AirlineFilter to concrete airline codes (undefined = all enabled). */
+function airlineCodes(airline: AirlineFilter): readonly string[] {
+  if (airline === undefined) return enabledAirlines().map((a) => a.code);
+  return typeof airline === "string" ? [airline] : airline;
+}
+
+/** `flight_number GLOB` clause matching any of the given carrier prefixes. */
+function flightNumberGlob(prefixes: readonly string[]): { clause: string; params: string[] } {
+  return {
+    clause: prefixes.map(() => "flight_number GLOB ?").join(" OR "),
+    params: prefixes.map((p) => `${p}[0-9]*`),
+  };
+}
+
 export function initializeDatabase() {
   const db = new Database(DB_PATH);
 
@@ -1337,12 +1351,7 @@ export function getVerificationObservations(
 ): VerificationObservation[] {
   // Sources derive from each scoped airline's verifier backend, so a non-UA
   // predictor reads its own verifier's rows instead of silently getting none.
-  const codes =
-    airline === undefined
-      ? enabledAirlines().map((a) => a.code)
-      : typeof airline === "string"
-        ? [airline]
-        : airline;
+  const codes = airlineCodes(airline);
   const sources = [
     ...new Set(
       codes.filter((c) => AIRLINES[c]?.verifierBackend).map((c) => verifierSourceTag(AIRLINES[c]))
@@ -1411,6 +1420,50 @@ export function getRouteGraphEdges(db: Database, airline?: AirlineFilter): Route
   return db
     .query(`${q.sql} GROUP BY flight_number, departure_airport, arrival_airport`)
     .all(...q.params) as RouteGraphEdge[];
+}
+
+/**
+ * Every ORIG-DEST pair the carrier flies. Only proves absence when a route
+ * census exists — that's United's BTS T-100 only (bts_monthly_routes has no
+ * airline column) — so any other scope, or an empty census, returns null.
+ * upcoming_flights + the flight_routes lookup cache only ADD pairs on top.
+ */
+export function getServedRoutePairs(db: Database, airline?: AirlineFilter): Set<string> | null {
+  const codes = airlineCodes(airline);
+  if (codes.length !== 1 || codes[0] !== "UA") return null;
+
+  // Last 12 ingested months: recent enough to keep seasonal routes, bounded
+  // so the scan doesn't grow with every month bts-sync appends.
+  const pairs = new Set<string>(
+    (
+      db
+        .query(
+          `SELECT DISTINCT origin || '-' || dest AS r FROM bts_monthly_routes
+           WHERE month IN (SELECT DISTINCT month FROM bts_monthly_routes ORDER BY month DESC LIMIT 12)`
+        )
+        .all() as { r: string }[]
+    ).map((row) => row.r)
+  );
+  if (pairs.size === 0) return null;
+
+  const uf = withAirline(
+    "SELECT DISTINCT departure_airport || '-' || arrival_airport AS r FROM upcoming_flights WHERE 1=1",
+    airline
+  );
+  for (const row of db.query(uf.sql).all(...uf.params) as { r: string }[]) pairs.add(row.r);
+
+  // codes[0] is "UA" (guarded above) — resolved, never a default.
+  const cfg = AIRLINES[codes[0]];
+  if (cfg) {
+    const glob = flightNumberGlob([cfg.iata, cfg.icao]);
+    const rows = db
+      .query(
+        `SELECT DISTINCT origin || '-' || destination AS r FROM flight_routes WHERE ${glob.clause}`
+      )
+      .all(...glob.params) as { r: string }[];
+    for (const row of rows) pairs.add(row.r);
+  }
+  return pairs;
 }
 
 export interface ConfirmedEdge {
@@ -1506,16 +1559,15 @@ export function getObservedDirectFlightNumbers(
     )
     .all(airline, origin, destination, destination, origin) as { flight_number: string }[];
 
-  const globClauses = prefixes.map(() => "flight_number GLOB ?").join(" OR ");
-  const globParams = prefixes.map((p) => `${p}[0-9]*`);
-  const cached = globClauses
+  const glob = flightNumberGlob(prefixes);
+  const cached = glob.clause
     ? (db
         .query(
           `SELECT DISTINCT flight_number FROM flight_routes
            WHERE ((origin = ? AND destination = ?) OR (origin = ? AND destination = ?))
-             AND (${globClauses})`
+             AND (${glob.clause})`
         )
-        .all(origin, destination, destination, origin, ...globParams) as {
+        .all(origin, destination, destination, origin, ...glob.params) as {
         flight_number: string;
       }[])
     : [];
@@ -1538,8 +1590,7 @@ export function airlineServesAirports(
   prefixes: readonly string[],
   ...airports: string[]
 ): boolean {
-  const globClauses = prefixes.map(() => "flight_number GLOB ?").join(" OR ");
-  const globParams = prefixes.map((p) => `${p}[0-9]*`);
+  const glob = flightNumberGlob(prefixes);
   for (const ap of airports) {
     const row =
       db
@@ -1548,13 +1599,13 @@ export function airlineServesAirports(
            WHERE airline = ? AND (departure_airport = ? OR arrival_airport = ?) LIMIT 1`
         )
         .get(airline, ap, ap) ??
-      (globClauses
+      (glob.clause
         ? db
             .query(
               `SELECT 1 FROM flight_routes
-               WHERE (origin = ? OR destination = ?) AND (${globClauses}) LIMIT 1`
+               WHERE (origin = ? OR destination = ?) AND (${glob.clause}) LIMIT 1`
             )
-            .get(ap, ap, ...globParams)
+            .get(ap, ap, ...glob.params)
         : undefined);
     if (!row) return false;
   }
