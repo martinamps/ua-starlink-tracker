@@ -81,9 +81,11 @@ function parseCsvGrid(csvText: string): string[][] {
   return rows;
 }
 
+// A percentage is never a count: the mainline tab ends with an "Of Total"
+// column whose "2.3%" must not become "2 in mod" (github issue #64).
 function toCount(raw: string | undefined): number | null {
-  if (raw === undefined) return null;
-  const cleaned = raw.replace(/[,%\s]/g, "");
+  if (raw === undefined || raw.includes("%")) return null;
+  const cleaned = raw.replace(/[,\s]/g, "");
   if (cleaned === "") return null;
   const n = Number(cleaned);
   return Number.isFinite(n) ? Math.round(n) : null;
@@ -117,7 +119,11 @@ export function parseProgressCsv(csvText: string, segment: ProgressSegment): Pro
   const columns: Array<{ col: number; type: string }> = [];
   for (let col = 1; col < header.length; col++) {
     const name = cleanTypeCode(header[col] ?? "");
-    if (name) columns.push({ col, type: name });
+    if (!name) continue;
+    // "Of Total" (the %-of-total view) is not an aircraft type — only the
+    // exact "Totals" rollup column survives (github issue #64).
+    if (/^total$/i.test(name)) continue;
+    columns.push({ col, type: name });
   }
   if (columns.length === 0) return [];
 
