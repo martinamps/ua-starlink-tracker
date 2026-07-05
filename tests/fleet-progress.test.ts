@@ -6,8 +6,9 @@ import { getFleetProgress, replaceFleetProgress } from "../src/database/database
 import { parseProgressCsv, runFleetProgressSync } from "../src/scripts/fleet-progress";
 import { makeSyntheticDb } from "./helpers";
 
+// Mirrors the real tab shape, including the trailing "Of Total" % column.
 const MAINLINE_NB_CSV = [
-  '"Type","73G","738","738","Totals",""',
+  '"Type","73G","738","738","Totals","Of Total"',
   '"Total","40","67","74","181","100.0%"',
   '"Starlink Complete","0","16","21","37","20.4%"',
   '"W/O Starlink","40","51","53","144","79.6%"',
@@ -60,6 +61,13 @@ describe("parseProgressCsv", () => {
     // row (tail listing) must not overwrite the summary value.
     const e175 = rows.find((r) => r.type_code === "E175");
     expect(e175?.starlink_complete).toBe(125);
+  });
+
+  // Regression, github issue #64: the "Of Total" percentage column rendered as
+  // a fake type row ("Total: 2 in mod") because "2.3%" was parsed as a count.
+  test("the Of Total percentage column never becomes a type row", () => {
+    const rows = parseProgressCsv(MAINLINE_NB_CSV, "mainline_nb");
+    expect(rows.map((r) => r.type_code).sort()).toEqual(["738", "73G", "Totals"]);
   });
 
   test("returns no rows for content without a Totals header", () => {
