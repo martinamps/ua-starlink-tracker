@@ -662,6 +662,9 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant }) 
           hasStarlink: null,
           ...hubAirline,
           confidence: "type",
+          ...(verdict.answer.kind === "penetration"
+            ? { prediction: { probability: verdict.answer.pen.pct } }
+            : {}),
           message,
           flights: [],
         }),
