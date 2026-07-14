@@ -9,7 +9,7 @@
 
 import { beforeAll, describe, expect, test } from "bun:test";
 import { HOST_REDIRECTS, SITES, type SiteConfig, resolveSite } from "../src/airlines/registry";
-import { createApp } from "../src/server/app";
+import { API_RATE_LIMIT, createApp } from "../src/server/app";
 import { mcpReq, openSnapshot, req } from "./helpers";
 
 let app: ReturnType<typeof createApp>;
@@ -203,7 +203,7 @@ describe("CORS preflight", () => {
   test("OPTIONS on /api/* counts against the rate-limit budget", async () => {
     const ip = "10.99.0.1"; // unique bucket — doesn't pollute other tests
     let last = 0;
-    for (let i = 0; i < 61; i++) {
+    for (let i = 0; i <= API_RATE_LIMIT; i++) {
       last = (await options("/api/data", ip)).status;
       if (i === 0) expect(last).toBe(204);
     }
@@ -241,9 +241,9 @@ describe("rate limiter covers /mcp and permalinks", () => {
     ],
   ];
 
-  test.each(FLOODS)("%s: 61st request from one IP → 429", async (_name, mk) => {
+  test.each(FLOODS)("%s: request past the budget from one IP → 429", async (_name, mk) => {
     let last = 0;
-    for (let i = 0; i < 61; i++) {
+    for (let i = 0; i <= API_RATE_LIMIT; i++) {
       last = (await app.dispatch(mk())).status;
       if (i === 0) expect(last).not.toBe(429);
     }
@@ -251,7 +251,7 @@ describe("rate limiter covers /mcp and permalinks", () => {
   });
 
   test("GET /mcp setup page is NOT metered", async () => {
-    for (let i = 0; i < 65; i++) {
+    for (let i = 0; i <= API_RATE_LIMIT; i++) {
       const res = await get("/mcp", UA);
       expect(res.status).toBe(200);
     }

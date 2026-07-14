@@ -1757,12 +1757,7 @@ function corsPreflight(pathname: string): Response {
   });
 }
 
-// Per-IP sliding-window rate limit for the data-serving surfaces. Tuned well
-// above real usage (Chrome extension on a busy Google Flights page bursts
-// ~20-30; humans hit 2-5). Catches bulk scrapers without ever touching a real
-// traveler. Each surface class gets its own bucket so an extension burst on
-// /api/* can't starve a legitimate MCP client (and vice versa).
-const API_RATE_LIMIT = 60;
+export const API_RATE_LIMIT = 600;
 const API_RATE_WINDOW_MS = 60_000;
 const LOCAL_IPS = new Set(["127.0.0.1", "::1", "localhost"]);
 
