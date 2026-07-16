@@ -1760,7 +1760,7 @@ function corsPreflight(pathname: string): Response {
   });
 }
 
-export const API_RATE_LIMIT = 600;
+export const API_RATE_LIMIT = 100;
 const API_RATE_WINDOW_MS = 60_000;
 const LOCAL_IPS = new Set(["127.0.0.1", "::1", "localhost"]);
 
