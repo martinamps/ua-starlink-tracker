@@ -1385,6 +1385,8 @@ function buildBaseTemplateVars(
     percentage,
     mainlinePercentage: (fleetStats?.mainline.percentage || 0).toFixed(2),
     expressPercentage: (fleetStats?.express.percentage || 0).toFixed(2),
+    mainlinePercentageRounded: (fleetStats?.mainline.percentage || 0).toFixed(0),
+    expressPercentageRounded: (fleetStats?.express.percentage || 0).toFixed(0),
   };
 
   // Brand copy is registry-authored and may embed count placeholders (e.g.
