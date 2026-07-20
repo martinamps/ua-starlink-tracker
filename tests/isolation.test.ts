@@ -457,12 +457,12 @@ describe("hub host shows enabled airlines only", () => {
     expect(text).not.toContain("A7-TST");
   });
 
-  test("homepage links stay on the live generic hub for unlaunched airlines", async () => {
+  test("homepage links go to live airline sites, hub-filtered for unlaunched", async () => {
     const { text } = await bodyOf("/", HUB);
     expect(text).toContain("https://airlinestarlinktracker.com/?filter=HA");
-    expect(text).toContain("https://airlinestarlinktracker.com/?filter=AS");
+    expect(text).toContain("https://alaskastarlinktracker.com/");
     expect(text).not.toContain("https://hawaiianstarlinktracker.com/");
-    expect(text).not.toContain("https://alaskastarlinktracker.com/");
+    expect(text).not.toContain("https://airlinestarlinktracker.com/?filter=AS");
     expect(text).not.toContain("https://qatarstarlinktracker.com/");
   });
 
