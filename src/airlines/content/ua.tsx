@@ -2,6 +2,10 @@ import React from "react";
 import { ModelPie, StatRing, computeModelBreakdown } from "../../components/atoms";
 import type { AirlineContent, HeroProps } from "./index";
 
+// Rough observed install cadence — shown in the stat strip and the rollout FAQ,
+// so both go stale together when the rate changes.
+const INSTALLS_PER_MONTH = "40+";
+
 const UAHero = ({ stats, starlinkData }: HeroProps) => {
   const { fleetStats, starlinkCount: x, totalCount: y, percentage } = stats;
   const modelData = computeModelBreakdown(starlinkData);
@@ -44,7 +48,7 @@ export const content: AirlineContent = {
       FREE
     </span>,
     <span key="installs" className="hidden sm:inline">
-      <span className="text-accent font-semibold">40+</span> installs/mo
+      <span className="text-accent font-semibold">{INSTALLS_PER_MONTH}</span> installs/mo
     </span>,
   ],
 
@@ -72,6 +76,27 @@ export const content: AirlineContent = {
     {
       title: "Checking your flight",
       items: [
+        {
+          q: "Which United flights have Starlink?",
+          a: ({ fleetStats }) => (
+            <p>
+              Mostly United Express flights (UA3000–6999) so far —{" "}
+              {(fleetStats?.express.percentage || 0).toFixed(0)}% of the Express regional fleet
+              (E175, CRJ-550) is equipped, versus{" "}
+              {(fleetStats?.mainline.percentage || 0).toFixed(0)}% of mainline. To find out about a
+              specific flight,{" "}
+              <a href="/check-flight" className="text-accent hover:underline">
+                check it by number and date
+              </a>
+              , or browse the{" "}
+              <a href="/fleet" className="text-accent hover:underline">
+                fleet page
+              </a>{" "}
+              for every equipped tail number.
+            </p>
+          ),
+          ld: "Mostly United Express flights (UA3000-6999) so far — {{expressPercentageRounded}}% of the Express regional fleet (E175, CRJ-550) is equipped, versus {{mainlinePercentageRounded}}% of mainline. Check a specific flight by number and date at /check-flight, or browse the fleet page for every equipped tail number.",
+        },
         {
           q: "Does my United flight have Starlink?",
           a: () => (
@@ -163,6 +188,22 @@ export const content: AirlineContent = {
             </p>
           ),
           ld: "Not yet — {{percentage}}% of the fleet is equipped today. United Express regional jets (E175, CRJ-550) are at {{expressPercentage}}%; mainline narrowbodies and widebodies are following. The fleet page lists every verified tail.",
+        },
+        {
+          q: "How fast is United's Starlink rollout?",
+          a: ({ starlinkCount }) => (
+            <p>
+              About {INSTALLS_PER_MONTH} installs a month. United's first Starlink install was March
+              2025; <span className="text-accent">{starlinkCount}</span> aircraft are equipped
+              today. The{" "}
+              <a href="/fleet" className="text-accent hover:underline">
+                fleet page
+              </a>{" "}
+              charts the rollout tail by tail, and the counters above update as new installs are
+              verified.
+            </p>
+          ),
+          ld: `About ${INSTALLS_PER_MONTH} installs a month. United's first Starlink install was March 2025; {{starlinkCount}} aircraft are equipped today. The fleet page charts the rollout tail by tail, and this page's counters update as new installs are verified.`,
         },
         {
           q: "When will my route get Starlink?",

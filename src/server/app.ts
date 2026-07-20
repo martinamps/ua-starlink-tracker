@@ -1385,6 +1385,8 @@ function buildBaseTemplateVars(
     percentage,
     mainlinePercentage: (fleetStats?.mainline.percentage || 0).toFixed(2),
     expressPercentage: (fleetStats?.express.percentage || 0).toFixed(2),
+    mainlinePercentageRounded: (fleetStats?.mainline.percentage || 0).toFixed(0),
+    expressPercentageRounded: (fleetStats?.express.percentage || 0).toFixed(0),
   };
 
   // Brand copy is registry-authored and may embed count placeholders (e.g.
@@ -1475,10 +1477,10 @@ function subPageMeta(
     };
   if (page === "route-planner")
     return {
-      siteTitle: `Starlink Route Planner — Find ${short} Flights With Starlink WiFi`,
-      siteDescription: `Find the best way to fly ${name} with Starlink WiFi. Compare direct flights and smart connections ranked by Starlink probability. Plan productive travel with full-coverage routings.`,
-      keywords: `starlink route planner, best route for starlink, plan starlink trip, ${name} starlink connections`,
-      ogTitle: `Starlink Route Planner — ${short}`,
+      siteTitle: `${short} Starlink Route Planner — Find Flights With Starlink WiFi`,
+      siteDescription: `See which ${name} routes and flights have Starlink WiFi. Compare direct flights and one-stop connections between any two cities, ranked by Starlink probability, and book the routing with coverage the whole way.`,
+      keywords: `${name} starlink route planner, which ${cfg?.iata ?? "airline"} flights have starlink, ${name} starlink routes, best route for starlink, plan starlink trip`,
+      ogTitle: `${short} Starlink Route Planner`,
       ogDescription:
         "Find direct flights and smart connections with the highest Starlink probability.",
     };
