@@ -2,8 +2,8 @@ import React from "react";
 import { ModelPie, StatRing, computeModelBreakdown } from "../../components/atoms";
 import type { AirlineContent, HeroProps } from "./index";
 
-// Rough observed install cadence — shown in the stat strip and the rollout FAQ;
-// update both go stale together.
+// Rough observed install cadence — shown in the stat strip and the rollout FAQ,
+// so both go stale together when the rate changes.
 const INSTALLS_PER_MONTH = "40+";
 
 const UAHero = ({ stats, starlinkData }: HeroProps) => {
