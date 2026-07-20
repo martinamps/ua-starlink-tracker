@@ -17,7 +17,7 @@
  *   aircraft_type:   normalized families (B737-800, E175, etc)      (~25)
  *   wifi_provider:   starlink | viasat | panasonic | thales | none | other | unknown  (7)
  *   starlink_status: confirmed | negative | unknown                  (3)
- *   vendor:          fr24 | flightaware | united | qatar | alaska | adsb    (6)
+ *   vendor:          fr24 | flightaware | united | qatar | alaska | adsb | indexnow (7)
  *   op_carrier:      ua | oo | yx | g7 | c5 | yv | zw | other | unknown      (9)
  *   kind:            missing_from_fleet | inactive_in_fleet                 (2)
  *   status:          success | error | rate_limited | timeout | killed |
@@ -168,9 +168,9 @@ export const COUNTERS = {
   VERIFICATION_CHECK: "verification.check",
 
   // External API calls
-  // tags: vendor (fr24|flightaware|united|qatar|alaska|adsb), type, status
+  // tags: vendor (fr24|flightaware|united|qatar|alaska|adsb|indexnow), type, status
   // united status values: success | timeout | killed | exit_error | parse_error | spawn_error
-  // fr24/flightaware/adsb status values: success | error | rate_limited
+  // fr24/flightaware/adsb/indexnow status values: success | error | rate_limited
   // qatar status values: success | error | partial
   VENDOR_REQUEST: "vendor.request",
 

@@ -20,6 +20,7 @@ import { startStarlinkVerifier } from "./src/scripts/starlink-verifier";
 import { syncShipNumbers } from "./src/scripts/sync-ship-numbers";
 import { createApp } from "./src/server/app";
 import { passengerVerifyEnabled } from "./src/server/passenger-detect";
+import { pingIndexNow } from "./src/utils/indexnow";
 import { type JobHandle, type JobRunContext, startJob } from "./src/utils/job-runner";
 import { info, error as logError } from "./src/utils/logger";
 
@@ -71,7 +72,10 @@ if (JOBS_ENABLED) {
       initialDelayMs: 0,
       run: async (ctx) => {
         info("Running scheduled update...");
-        await updateStarlinkData(ctx);
+        const result = await updateStarlinkData(ctx);
+        // A successful scrape re-stamps lastUpdated and can settle wifi
+        // statuses — the pages whose lastmod just moved are / and /fleet.
+        if (result.outcome === "success") pingIndexNow("UA", ["/", "/fleet"]);
       },
     })
   );

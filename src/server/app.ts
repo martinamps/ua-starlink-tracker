@@ -1090,8 +1090,6 @@ interface SitePage {
   feature: keyof SiteFeatures | null;
   changefreq: string;
   priority: string;
-  /** Stamp the sitemap entry with the data's lastUpdated (vs. render time). */
-  lastmod?: boolean;
   /** llms.txt "Pages" bullet; pages without one (/mcp) have their own section. */
   llmsLine?: (host: string) => string;
 }
@@ -1102,7 +1100,6 @@ const SITE_PAGES: SitePage[] = [
     feature: null,
     changefreq: "hourly",
     priority: "1.0",
-    lastmod: true,
     llmsLine: (h) => `- [Homepage](https://${h}/) — rollout progress and live counts`,
   },
   {
@@ -1170,38 +1167,28 @@ Sitemap: https://${site.canonicalHost}/sitemap.xml`,
   );
 };
 
-/** Top-N marketing flight numbers by upcoming-flight count, for sitemap permalinks. */
-function topFlightNumbers(reader: ScopedReader, cfg: AirlineConfig | null, limit = 50): string[] {
-  if (!cfg) return [];
-  const counts = new Map<string, number>();
-  for (const f of reader.getUpcomingFlights()) {
-    const fn = ensureAirlinePrefix(cfg, f.flight_number);
-    if (!fn.startsWith(cfg.iata)) continue;
-    counts.set(fn, (counts.get(fn) ?? 0) + 1);
-  }
-  return [...counts.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, limit)
-    .map(([fn]) => fn);
-}
-
 const sitemap: Handler = ({ reader, site, tenant }) => {
   const baseUrl = `https://${site.canonicalHost}`;
-  const lastUpdated = reader.getLastUpdated();
-  const cfg = tenantConfig(tenant);
-  const flightEntries = site.features.checkFlightPage
-    ? topFlightNumbers(reader, cfg).map((fn) => ({
-        path: `/check-flight/${fn}`,
-        changefreq: "weekly",
-        priority: "0.6",
-      }))
-    : [];
+  // Static pages render from the tracker data, so the data's lastUpdated is
+  // their honest lastmod; per-flight entries carry the latest write to that
+  // flight's rows. Never the request time — a lastmod that always equals
+  // "now" teaches crawlers to ignore the field.
+  const lastUpdated = new Date(reader.getLastUpdated()).toISOString();
+  const flightEntries =
+    site.features.checkFlightPage && tenantConfig(tenant)
+      ? reader.getSitemapFlights().map((f) => ({
+          path: `/check-flight/${f.flight_number}`,
+          changefreq: "weekly",
+          priority: "0.6",
+          lastmod: f.last_touched ? new Date(f.last_touched * 1000).toISOString() : undefined,
+        }))
+      : [];
   const entries: Array<{ path: string; changefreq: string; priority: string; lastmod?: string }> = [
     ...sitePages(site).map((p) => ({
       path: p.path,
       changefreq: p.changefreq,
       priority: p.priority,
-      ...(p.lastmod ? { lastmod: lastUpdated } : {}),
+      lastmod: lastUpdated,
     })),
     ...flightEntries,
   ];
@@ -1211,8 +1198,7 @@ ${entries
   .map(
     (entry) => `  <url>
     <loc>${baseUrl}${entry.path}</loc>
-    <lastmod>${entry.lastmod ? new Date(entry.lastmod).toISOString() : new Date().toISOString()}</lastmod>
-    <changefreq>${entry.changefreq}</changefreq>
+${entry.lastmod ? `    <lastmod>${entry.lastmod}</lastmod>\n` : ""}    <changefreq>${entry.changefreq}</changefreq>
     <priority>${entry.priority}</priority>
   </url>`
   )
@@ -1868,6 +1854,17 @@ export function createApp(db: Database): App {
     "/llms.txt": llmsTxt,
     "/sitemap.xml": sitemap,
   };
+
+  // IndexNow key file — the spec requires GET https://<host>/{key}.txt to echo
+  // the key on every host we ping for. Read once here: the route table is
+  // static, and an unset key simply means no route (feature off).
+  const indexNowKey = process.env.INDEXNOW_KEY;
+  if (indexNowKey) {
+    routes[`/${indexNowKey}.txt`] = () =>
+      new Response(indexNowKey, {
+        headers: { "Content-Type": "text/plain", "Cache-Control": "public, max-age=86400" },
+      });
+  }
 
   const prefixRoutes: Array<[string, Handler]> = [
     ["/check-flight/", checkFlightPage],

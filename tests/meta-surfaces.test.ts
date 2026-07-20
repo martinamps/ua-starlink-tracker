@@ -18,8 +18,11 @@ beforeAll(() => {
   app = createApp(openSnapshot());
 });
 
+// Sweeps fetch every advertised URL — with flight permalinks enumerated in
+// the sitemap that exceeds the per-IP page budget, so identify as localhost
+// (limiter-exempt). Rate-limit tests below use their own non-local IPs.
 const get = (path: string, host: string, accept = "text/html") =>
-  app.dispatch(req(path, host, { headers: { Accept: accept } }));
+  app.dispatch(req(path, host, { headers: { Accept: accept, "x-forwarded-for": "127.0.0.1" } }));
 
 function extractUrls(text: string): URL[] {
   const matches = text.match(/https?:\/\/[^\s)\]`"'<>]+/g) ?? [];
@@ -88,7 +91,12 @@ for (const site of Object.values(SITES)) {
       // HEAD fell through to the MCP protocol handler's 405 on a
       // sitemap-advertised URL.
       for (const path of await sitemapPaths(site)) {
-        const res = await app.dispatch(req(path, site.canonicalHost, { method: "HEAD" }));
+        const res = await app.dispatch(
+          req(path, site.canonicalHost, {
+            method: "HEAD",
+            headers: { "x-forwarded-for": "127.0.0.1" },
+          })
+        );
         expect(res.status, `${site.key} HEAD ${path} → ${res.status}`).toBeLessThan(400);
       }
     });
@@ -111,6 +119,51 @@ for (const site of Object.values(SITES)) {
     });
   });
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sitemap shape: flight permalinks are enumerated from real data with honest
+// lastmod values, never request-time stamps.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("sitemap flight permalinks", () => {
+  const permalinkSites = Object.values(SITES).filter(
+    (s) => s.features.checkFlightPage && s.scope !== "ALL"
+  );
+
+  test.each(permalinkSites.map((s) => [s.key, s] as const))(
+    "%s: enumerates flight pages beyond the static list",
+    async (_key, site) => {
+      const paths = await sitemapPaths(site);
+      const flights = paths.filter((p) => p.startsWith("/check-flight/"));
+      expect(flights.length).toBeGreaterThan(0);
+      expect(paths.length).toBeGreaterThan(flights.length); // static pages still present
+      for (const p of flights) {
+        expect(p).toMatch(new RegExp(`^/check-flight/${site.scope}\\d{1,4}$`));
+      }
+    }
+  );
+
+  test("lastmod derives from data, not the request clock", async () => {
+    const site = SITES.united;
+    const first = await (await get("/sitemap.xml", site.canonicalHost)).text();
+    await new Promise((r) => setTimeout(r, 5));
+    const second = await (await get("/sitemap.xml", site.canonicalHost)).text();
+    // Date.now() stamping would differ at ms precision between the two fetches.
+    expect(second).toBe(first);
+
+    const urls = first.split("<url>").slice(1);
+    const now = Date.now();
+    for (const block of urls) {
+      const stamps = [...block.matchAll(/<lastmod>([^<]+)<\/lastmod>/g)].map((m) => m[1]);
+      expect(stamps.length).toBeLessThanOrEqual(1);
+      for (const stamp of stamps) {
+        const t = Date.parse(stamp);
+        expect(Number.isNaN(t)).toBe(false);
+        expect(t).toBeLessThanOrEqual(now);
+      }
+    }
+  });
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Dispatch wrapper: base headers on every response

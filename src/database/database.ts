@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { ensureAirlinePrefix } from "../airlines/flight-number";
 import {
   AIRLINES,
+  type AirlineCode,
   type LastUpdatedOwner,
   OBSERVED_WIFI_SOURCES,
   VERIFICATION_SOURCES,
@@ -1718,6 +1719,51 @@ export function getRoutesForFlightVariants(
   return db
     .query(`${q.sql} GROUP BY departure_airport, arrival_airport LIMIT 3`)
     .all(...q.params) as { departure_airport: string; arrival_airport: string; dur_sec: number }[];
+}
+
+export interface SitemapFlight {
+  flight_number: string;
+  /** Latest data touch (unix sec); 0 when unknown — emit no <lastmod> rather than lie. */
+  last_touched: number;
+}
+
+/**
+ * Flight numbers with real data behind /check-flight/{fn} — the live schedule
+ * window (upcoming_flights) plus the accumulated route cache (flight_routes)
+ * — with the latest write per flight, so sitemap <lastmod> reflects when the
+ * data changed, not when the sitemap was requested. flight_routes is matched
+ * by marketing IATA only: operating prefixes (OO/SKW…) fly for multiple
+ * carriers and the table has no airline column to disambiguate.
+ */
+export function getSitemapFlights(db: Database, airline: AirlineCode): SitemapFlight[] {
+  const cfg = AIRLINES[airline];
+  if (!cfg) return [];
+  const nowSec = Math.floor(Date.now() / 1000);
+  const marketing = new RegExp(`^${cfg.iata}\\d+$`);
+  const latest = new Map<string, number>();
+  const touch = (raw: string, t: number | null) => {
+    const fn = ensureAirlinePrefix(cfg, raw);
+    if (!marketing.test(fn)) return;
+    // Future timestamps are corrupt rows — treat as unknown, keep the page.
+    const sane = t && t <= nowSec ? t : 0;
+    latest.set(fn, Math.max(latest.get(fn) ?? 0, sane));
+  };
+  const upcoming = db
+    .query(
+      `SELECT flight_number, MAX(last_updated) AS t FROM upcoming_flights
+       WHERE airline = ? AND flight_number IS NOT NULL GROUP BY flight_number`
+    )
+    .all(airline) as { flight_number: string; t: number | null }[];
+  const cached = db
+    .query(
+      `SELECT flight_number, MAX(last_seen_at) AS t FROM flight_routes
+       WHERE flight_number GLOB ? GROUP BY flight_number`
+    )
+    .all(`${cfg.iata}[0-9]*`) as { flight_number: string; t: number | null }[];
+  for (const r of [...upcoming, ...cached]) touch(r.flight_number, r.t);
+  return [...latest]
+    .map(([flight_number, last_touched]) => ({ flight_number, last_touched }))
+    .sort((a, b) => a.flight_number.localeCompare(b.flight_number, undefined, { numeric: true }));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

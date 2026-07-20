@@ -29,6 +29,7 @@ import {
   type RouteEntryRow,
   type RouteFlightRow,
   type RouteGraphEdge,
+  type SitemapFlight,
   type SubfleetPenetration,
   type VerificationObservation,
   type VerificationSource,
@@ -64,6 +65,7 @@ import {
   getRouteStarlinkSchedule,
   getRoutesForFlightVariants,
   getServedRoutePairs,
+  getSitemapFlights,
   getStarlinkPlaneByTail,
   getStarlinkPlanes,
   getSubfleetPenetration,
@@ -93,6 +95,8 @@ export interface ScopedReader {
   getFleetRoster(): FleetRosterEntry[];
   getTotalCount(): number;
   getLastUpdated(): string;
+  /** Flight permalinks worth advertising, with real per-flight lastmod; empty on the hub (permalinks are tenant pages). */
+  getSitemapFlights(): SitemapFlight[];
   /** Meta keys are namespaced per-airline; null on the hub (no single namespace). */
   getMeta(key: string): string | null;
   /** Check-flight assignments without the verified_wifi filter (the core classifies tiers). */
@@ -252,6 +256,7 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
             .sort()
             .at(-1) ?? "")
         : getLastUpdated(db, scope),
+    getSitemapFlights: () => (scope === "ALL" ? [] : getSitemapFlights(db, scope)),
     getMeta: (key) => (scope === "ALL" ? null : getMeta(db, key, scope)),
     getFlightAssignments: (v, s, e) => getFlightAssignments(db, v, s, e, airlines),
     getFleetPageData: () => getFleetPageData(db, airlines),
