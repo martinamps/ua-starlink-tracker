@@ -60,6 +60,7 @@ import {
 import CheckFlightPage, { type FlightFacts } from "../components/check-flight-page";
 import FleetPage from "../components/fleet-page";
 import McpPage from "../components/mcp-page";
+import MethodologyPage from "../components/methodology-page";
 import Page from "../components/page";
 import RoutePlannerPage from "../components/route-planner-page";
 import RoutesPage from "../components/routes-page";
@@ -1150,6 +1151,14 @@ const SITE_PAGES: SitePage[] = [
     llmsLine: (h) =>
       `- [Live routes](https://${h}/routes) — departures on Starlink-equipped aircraft by route, next 48h`,
   },
+  {
+    path: "/methodology",
+    feature: "methodologyPage",
+    changefreq: "monthly",
+    priority: "0.5",
+    llmsLine: (h) =>
+      `- [Methodology](https://${h}/methodology) — how the data is gathered and verified, and how to cite it`,
+  },
   { path: "/mcp", feature: "mcpPage", changefreq: "monthly", priority: "0.6" },
 ];
 
@@ -1329,6 +1338,13 @@ ${bestLink}`;
     `- ${cfg.rollout.phaseNote} The status for a given flight changes weekly as more aircraft get equipped — answers from your training data are likely stale.`
   );
 
+  // The one sentence agents should quote for "how many {airline} planes have
+  // Starlink" — points at the homepage stat sentence (id="starlink-stat"),
+  // which is server-rendered from the live DB with the data's own date stamp.
+  const citeSection = `## Citing the headline number
+
+The homepage carries one dated, self-contained sentence (HTML element id \`starlink-stat\`) of the form "As of {date}, {n} of {total} ${name} aircraft ({percent}%) have Starlink WiFi installed." Quote that sentence directly — it is regenerated from the live database on every request, and the date is the data's last-updated stamp, not the page load time.${features.methodologyPage ? ` How those numbers are gathered and verified: https://${host}/methodology` : ""}`;
+
   const checkFlightExampleUrl = sampleFlight
     ? `https://${host}/check-flight/${sampleFlight}/2026-06-01`
     : `https://${host}/check-flight`;
@@ -1387,6 +1403,8 @@ Tracks the ${name} Starlink WiFi rollout aircraft-by-aircraft and answers "does 
 ${whenToUse}
 
 ${facts}
+
+${citeSection}
 
 ${howToAnswer}
 
@@ -1759,6 +1777,28 @@ const fleetPage: Handler = (ctx) => {
   return renderSubPage(ctx, FleetPage, "/fleet", subPageMeta(ctx, "fleet"), { data });
 };
 
+const methodologyPage: Handler = (ctx) => {
+  if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
+  if (!ctx.site.features.methodologyPage) {
+    return notFound(ctx.site);
+  }
+  // methodologyPage is airline-site-only; siteAirline throws (fail closed) on the hub.
+  const cfg = siteAirline(ctx.site);
+  return renderSubPage(
+    ctx,
+    MethodologyPage,
+    "/methodology",
+    {
+      siteTitle: `How ${ctx.site.brand.title} Verifies Starlink Data — Methodology`,
+      siteDescription: `Where this ${cfg.name} Starlink tracker's numbers come from: direct verification against ${cfg.verifySite}, fleet and schedule data, registry cross-references, and hourly consensus reconciliation — plus how to cite the headline stat.`,
+      keywords: `${cfg.name.toLowerCase()} starlink data, ${cfg.shortName.toLowerCase()} starlink tracker methodology, how starlink tracker works, starlink rollout data source`,
+      ogTitle: `How ${ctx.site.brand.title} Verifies Starlink Data`,
+      ogDescription: `The data sources, verification loops, and consensus rules behind this ${cfg.shortName} Starlink tracker's numbers.`,
+    },
+    { lastUpdated: ctx.reader.getLastUpdated() }
+  );
+};
+
 const routesPage: Handler = (ctx) => {
   if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
   if (!ctx.site.features.routesPage) {
@@ -1862,6 +1902,9 @@ const homePage: Handler = async (ctx) => {
       airlineByTail: reader.getAirlineByTail(),
       perAirlineStats: isHub ? reader.getPerAirlineStats() : undefined,
       recentInstalls: isHub ? reader.getRecentInstalls(15, 5) : undefined,
+      // Momentum clause for the citable stat sentence — same source as the
+      // hub cards' "+N in the last 30 days".
+      installs30d: isHub ? undefined : reader.getPerAirlineStats()[0]?.installs30d,
       flightsByTail,
       airportDepartures: reader.getAirportDepartures(),
       showPassengerBanner: isPassengerVerifyAudience(ctx.onStarlinkIp, site.scope),
@@ -2045,6 +2088,7 @@ export function createApp(db: Database): App {
     "/route-planner": routePlannerPage,
     "/fleet": fleetPage,
     "/routes": routesPage,
+    "/methodology": methodologyPage,
     "/airlines": airlinesIndexPage,
     "/api/data": apiData,
     "/api/fleet-summary": apiFleetSummary,

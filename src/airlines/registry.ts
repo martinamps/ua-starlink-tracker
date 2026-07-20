@@ -74,6 +74,10 @@ export interface SiteFeatures {
   chromeExtension: boolean;
   /** Hub-only /airlines comparison index + per-airline rollout pages. */
   airlinesPages: boolean;
+  /** /methodology — only where a per-tail verification loop actually runs
+   * (UA united.com, AS alaskaair.com). HA/QR status is type-determined, so a
+   * "how we verify" page there would overstate. */
+  methodologyPage: boolean;
 }
 
 export interface SiteConfig {
@@ -692,6 +696,7 @@ const AIRLINE_SITE_FEATURES: SiteFeatures = {
   mcpPage: false,
   chromeExtension: false,
   airlinesPages: false,
+  methodologyPage: false,
 };
 
 export const SITES: Record<string, SiteConfig> = {
@@ -711,6 +716,7 @@ export const SITES: Record<string, SiteConfig> = {
       ...AIRLINE_SITE_FEATURES,
       mcpPage: true,
       chromeExtension: true,
+      methodologyPage: true,
     },
   },
   airline: {
@@ -734,6 +740,7 @@ export const SITES: Record<string, SiteConfig> = {
       mcpPage: false,
       chromeExtension: false,
       airlinesPages: true,
+      methodologyPage: false,
     },
   },
   hawaiian: {
@@ -762,7 +769,7 @@ export const SITES: Record<string, SiteConfig> = {
       dataDomain: AIRLINES.AS.brand.analyticsDomain,
       eventApiUrl: DEFAULT_ANALYTICS_EVENT_API,
     },
-    features: AIRLINE_SITE_FEATURES,
+    features: { ...AIRLINE_SITE_FEATURES, methodologyPage: true },
   },
   qatar: {
     key: "qatar",
