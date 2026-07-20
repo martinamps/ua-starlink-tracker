@@ -67,6 +67,7 @@ const BANNED_PATTERNS: Array<{
       ["src/scripts/verify-tails.ts", 1], // united.com ground-truth CLI — UA-bound by definition
       ["src/scripts/sync-ship-numbers.ts", 1], // United mainline ship-number sheet — UA-bound by definition
       ["src/scripts/united-verdict.ts", 1], // shared united.com verdict core — UA-bound by definition
+      ["src/scripts/fleet-discovery.ts", 1], // united.com discovery job — UA-bound by definition (IndexNow permalink gate)
     ]),
     why:
       "A UA default on a missing tenant/airline is the og:image bug class: the row or response " +
@@ -178,6 +179,7 @@ const ROUTES: Array<[route: string, feature: keyof SiteConfig["features"] | null
   ["/route-planner", "routePlannerPage"],
   ["/fleet", "fleetPage"],
   ["/routes", "routesPage"],
+  ["/airlines", "airlinesPages"],
   ["/mcp", "mcpPage"],
 ];
 const isHtmlRoute = (route: string) => !route.startsWith("/api/") && !route.endsWith(".txt");
@@ -198,7 +200,16 @@ function foreignAirlines(site: SiteConfig) {
 // leak so far (og:image, hub FAQ JSON-LD) carried them. Bare short names are
 // deliberately NOT canaries — shared aircraft-spec fun facts legitimately say
 // "on Alaska in 2024" on any tenant's fleet page.
-function assertNoForeignTenant(site: SiteConfig, route: string, body: string) {
+//
+// The footer's cross-site links (atoms.tsx CrossSiteLinks) are a deliberate
+// cross-tenant mention on every site — strip that marked block so the sweep
+// still catches hosts leaking anywhere else in the page.
+function stripCrossSiteLinks(body: string): string {
+  return body.replace(/<div data-cross-site-links[\s\S]*?<\/div>/g, "");
+}
+
+function assertNoForeignTenant(site: SiteConfig, route: string, rawBody: string) {
+  const body = stripCrossSiteLinks(rawBody);
   for (const other of foreignAirlines(site)) {
     expect(body, `${site.key} ${route} leaks "${other.name}"`).not.toContain(other.name);
     const otherHost = siteForAirline(other.code)?.canonicalHost;

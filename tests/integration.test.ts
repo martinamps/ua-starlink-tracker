@@ -1185,10 +1185,10 @@ describe("SEO meta", () => {
     expect(parsed.mainEntity.length).toBeGreaterThan(3);
   });
 
-  test("/check-flight title leads with the verb and short brand name", async () => {
+  test("/check-flight title leads with the question and short brand name", async () => {
     const html = await getHtml("/check-flight");
     const title = html.match(/<title>([^<]+)<\/title>/)?.[1] ?? "";
-    expect(title.startsWith("Check Your United Flight for Starlink WiFi")).toBe(true);
+    expect(title.startsWith("Does My United Flight Have Starlink?")).toBe(true);
     expect(title).not.toContain("{{");
   });
 

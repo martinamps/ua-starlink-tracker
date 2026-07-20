@@ -10,7 +10,7 @@ import type {
   PerAirlineStat,
   RecentInstall,
 } from "../types";
-import { HeaderStatStrip } from "./atoms";
+import { CrossSiteLinks, HeaderStatStrip } from "./atoms";
 import { PassengerBanner } from "./passenger-banner";
 
 // Reusable FAQ accordion item — eliminates ~30 lines of boilerplate per question
@@ -68,6 +68,51 @@ interface PageProps {
   flightsByTail?: Record<string, Flight[]>;
   airportDepartures?: AirportDepartures;
   showPassengerBanner?: boolean;
+  installs30d?: number;
+}
+
+/**
+ * The one sentence AI answer engines should quote: dated (from the data's
+ * lastUpdated, never request time), self-contained, plain server-rendered
+ * text. Airline sites only — the hub has no single-fleet number.
+ */
+function StatSentence({
+  site,
+  stats,
+  lastUpdated,
+  installs30d,
+}: {
+  site: SiteConfig;
+  stats: ContentStats;
+  lastUpdated?: string;
+  installs30d?: number;
+}) {
+  const stamped = new Date(lastUpdated ?? "");
+  if (Number.isNaN(stamped.getTime()) || stats.totalCount === 0) return null;
+  const cfg = siteAirline(site);
+  const date = stamped.toLocaleDateString("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  });
+  const pct = Math.round(Number.parseFloat(stats.percentage));
+  return (
+    <p id="starlink-stat" className="text-sm text-secondary leading-relaxed mb-3">
+      As of {date}, {stats.starlinkCount.toLocaleString("en-US")} of{" "}
+      {stats.totalCount.toLocaleString("en-US")} {cfg.name} aircraft ({pct}%) have Starlink WiFi
+      installed
+      {installs30d ? <>, including {installs30d} in the last 30 days</> : null}, per this site's
+      live{" "}
+      {site.features.methodologyPage ? (
+        <a href="/methodology" className="text-accent hover:underline">
+          verification data
+        </a>
+      ) : (
+        "tracking data"
+      )}
+      .
+    </p>
+  );
 }
 
 // Squarified treemap layout (Bruls et al.) — greedily add items to the current
@@ -256,6 +301,13 @@ function AirportTreemap({ data, windowLabel }: { data: AirportDeparture[]; windo
   );
 }
 
+// SSR'ing every fleet row made the homepage a ~5 MB document with thousands of
+// outbound links. The list is sorted freshest-first, so the first rows carry
+// nearly all the value; /fleet renders the complete fleet. Search/filter run
+// over the SSR'd DOM and therefore cover only the rendered rows — the cap
+// notice points anyone hunting a specific tail at /fleet.
+const AIRCRAFT_LIST_CAP = 100;
+
 const dateOverrides: Record<string, string> = {
   N127SY: "2025-03-07", // First Starlink installation per press release
 };
@@ -273,6 +325,7 @@ export default function Page({
   flightsByTail = {},
   airportDepartures,
   showPassengerBanner = false,
+  installs30d,
 }: PageProps) {
   // Apply date overrides to the aircraft data
   const applyDateOverrides = (data: Aircraft[]): Aircraft[] => {
@@ -299,6 +352,7 @@ export default function Page({
     const updatedB = flightsB[0]?.last_updated || 0;
     return updatedB - updatedA;
   });
+  const displayedAircraft = starlinkData.slice(0, AIRCRAFT_LIST_CAP);
   const x = starlinkData.length;
   const y = total;
   const percentage = y > 0 ? ((x / y) * 100).toFixed(2) : "0.00";
@@ -324,10 +378,12 @@ export default function Page({
     ...(features.routesPage ? [{ href: "/routes", label: "Live Routes", badge: "NEW" }] : []),
     ...(features.mcpPage ? [{ href: "/mcp", label: "Tools & MCP", badge: "NEW" }] : []),
   ];
+  // Filter buttons act on the rendered rows, so their counts must describe the
+  // capped list — full-fleet numbers live in the hero and on /fleet.
   const subfleetCounts = Object.fromEntries(
     content.subfleetFilters.map((c) => [
       c.key,
-      starlinkData.filter((p) => p.fleet === c.key || airlineOf(p) === c.key).length,
+      displayedAircraft.filter((p) => p.fleet === c.key || airlineOf(p) === c.key).length,
     ])
   );
 
@@ -389,7 +445,7 @@ export default function Page({
           key={idx}
           href={`https://www.flightaware.com/live/flight/${flight.flight_number}`}
           target="_blank"
-          rel="noopener noreferrer"
+          rel="nofollow noopener noreferrer"
           data-flight-tooltip={flight.flight_number}
           className={`flight-pill font-mono items-center gap-1.5 px-2 py-1 bg-surface-elevated border border-subtle rounded text-xs text-secondary hover:text-accent hover:border-accent/50 transition-all ${visibilityClass}`}
         >
@@ -524,6 +580,14 @@ export default function Page({
       {/* Intro paragraph + nav links */}
       <div className="relative text-center max-w-2xl mx-auto mb-6">
         {content.intro(stats)}
+        {site.scope !== "ALL" && (
+          <StatSentence
+            site={site}
+            stats={stats}
+            lastUpdated={lastUpdated}
+            installs30d={installs30d}
+          />
+        )}
         {navLinks.length > 0 && features.homeNav && (
           <div className="flex flex-wrap items-center justify-center gap-2 text-sm font-display">
             {navLinks.map((link) => (
@@ -615,7 +679,7 @@ export default function Page({
                 className="filter-btn font-mono text-[11px] px-3 py-2 rounded border transition-all bg-accent/20 border-accent text-accent"
                 data-filter="all"
               >
-                ALL <span className="hidden sm:inline">({starlinkData.length})</span>
+                ALL <span className="hidden sm:inline">({displayedAircraft.length})</span>
               </button>
               {content.subfleetFilters.length > 1 &&
                 content.subfleetFilters.map((card) => (
@@ -647,7 +711,7 @@ export default function Page({
             <div className="p-12 text-center text-muted font-mono">No aircraft data available</div>
           ) : (
             <div className="divide-y divide-subtle">
-              {starlinkData.map((plane, idx) => {
+              {displayedAircraft.map((plane, idx) => {
                 const airline = airlineOf(plane);
                 const badge = content.rowBadge(plane, airline);
                 const flights = flightsByTail[plane.TailNumber] || [];
@@ -746,6 +810,20 @@ export default function Page({
             </div>
           )}
         </div>
+        {starlinkData.length > displayedAircraft.length && (
+          <div className="px-4 md:px-6 py-3 border-t border-subtle text-center text-xs font-mono text-muted">
+            Showing the {displayedAircraft.length} most recently active of {starlinkData.length}{" "}
+            Starlink aircraft
+            {features.fleetPage && (
+              <>
+                {" · "}
+                <a href="/fleet" className="text-accent hover:underline">
+                  See the full fleet →
+                </a>
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       {airportDepartures && airportDepartures.rows.length > 0 && (
@@ -1248,7 +1326,19 @@ export default function Page({
             </svg>
             GitHub
           </a>
+          {features.methodologyPage && (
+            <>
+              <span className="text-muted">·</span>
+              <a
+                href="/methodology"
+                className="text-secondary hover:text-primary transition-colors"
+              >
+                Methodology
+              </a>
+            </>
+          )}
         </div>
+        <CrossSiteLinks site={site} />
       </footer>
     </div>
   );

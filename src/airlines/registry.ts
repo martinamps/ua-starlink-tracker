@@ -72,6 +72,12 @@ export interface SiteFeatures {
   routesPage: boolean;
   mcpPage: boolean;
   chromeExtension: boolean;
+  /** Hub-only /airlines comparison index + per-airline rollout pages. */
+  airlinesPages: boolean;
+  /** /methodology — only where a per-tail verification loop actually runs
+   * (UA united.com, AS alaskaair.com). HA/QR status is type-determined, so a
+   * "how we verify" page there would overstate. */
+  methodologyPage: boolean;
 }
 
 export interface SiteConfig {
@@ -657,17 +663,21 @@ export function looksLikeValidTailNumber(tail: string): boolean {
   return Object.values(AIRLINES).some((a) => a.tailPattern.test(tail));
 }
 
+// The hub targets the cross-airline comparison intent ("which airlines have
+// starlink") and funnels airline-specific queries to the dedicated tracker
+// sites — its copy deliberately avoids "<airline> starlink tracker" phrasing
+// so it never outranks its own tenants on their brand queries.
 export const HUB_BRAND: PageBrand = {
   title: "Airline Starlink Tracker",
-  tagline: "Which airlines and flights have Starlink WiFi — by tail number",
-  siteTitle: "Airline Starlink Tracker — Which Flights Have Starlink WiFi?",
+  tagline: "Which airlines have Starlink WiFi — every rollout, compared",
+  siteTitle: "Starlink WiFi by Airline — Which Airlines Have Starlink in 2026?",
   description:
-    "Per-aircraft Starlink WiFi status across United, Hawaiian, and Alaska Airlines. Check whether your flight has fast, free in-flight internet, see each airline's rollout progress, and find which routes to book to stay connected.",
-  ogTitle: "Which flights have Starlink? — Airline Starlink Tracker",
+    "The list of airlines with Starlink WiFi and where each rollout stands: United and Alaska tracked live tail-by-tail, Hawaiian's completed fleet, and more carriers as they launch. Compare fleet counts and percent equipped side by side.",
+  ogTitle: "Which Airlines Have Starlink WiFi? — Full List & Comparison",
   ogDescription:
-    "Per-aircraft Starlink status across United, Hawaiian, and Alaska. Check your flight, compare airline rollouts, and find routes with fast free in-flight WiFi.",
+    "Every airline with Starlink WiFi, compared: fleet counts, percent equipped, and rollout status — with live per-aircraft tracking where available.",
   keywords:
-    "which airlines have starlink, starlink wifi airlines, does my flight have starlink, in-flight starlink wifi, united starlink, hawaiian starlink, alaska airlines starlink, starlink airline tracker, free airplane wifi",
+    "which airlines have starlink, starlink wifi airlines list, airlines with starlink wifi, airline starlink comparison, in-flight starlink wifi, free airplane wifi",
   accentColor: "#0ea5e9",
   accentColorDim: "#0284c7",
   analyticsDomain: "airlinestarlinktracker.com",
@@ -685,6 +695,8 @@ const AIRLINE_SITE_FEATURES: SiteFeatures = {
   routesPage: true,
   mcpPage: false,
   chromeExtension: false,
+  airlinesPages: false,
+  methodologyPage: false,
 };
 
 export const SITES: Record<string, SiteConfig> = {
@@ -704,6 +716,7 @@ export const SITES: Record<string, SiteConfig> = {
       ...AIRLINE_SITE_FEATURES,
       mcpPage: true,
       chromeExtension: true,
+      methodologyPage: true,
     },
   },
   airline: {
@@ -726,6 +739,8 @@ export const SITES: Record<string, SiteConfig> = {
       routesPage: false,
       mcpPage: false,
       chromeExtension: false,
+      airlinesPages: true,
+      methodologyPage: false,
     },
   },
   hawaiian: {
@@ -754,7 +769,7 @@ export const SITES: Record<string, SiteConfig> = {
       dataDomain: AIRLINES.AS.brand.analyticsDomain,
       eventApiUrl: DEFAULT_ANALYTICS_EVENT_API,
     },
-    features: AIRLINE_SITE_FEATURES,
+    features: { ...AIRLINE_SITE_FEATURES, methodologyPage: true },
   },
   qatar: {
     key: "qatar",
@@ -859,6 +874,19 @@ export function resolveSite(host: string | null): SiteConfig | null {
 
 export function siteForAirline(code: AirlineCode, liveOnly = false): SiteConfig | null {
   return siteForScope(code, liveOnly);
+}
+
+/** Canonical hub airline-page slug (/airlines/{slug}) — brand short name,
+ * lowercased, so URLs read as names ("united"), not codes ("ua"). */
+export function airlineSlug(cfg: AirlineConfig): string {
+  return cfg.shortName.toLowerCase();
+}
+
+/** Live airline-scoped sites, registry order — the cross-site footer's source. */
+export function liveAirlineSites(): Array<{ site: SiteConfig; airline: AirlineConfig }> {
+  return allSites()
+    .filter((s) => s.live && s.scope !== "ALL")
+    .map((s) => ({ site: s, airline: AIRLINES[s.scope] }));
 }
 
 export function airlineHomeUrl(

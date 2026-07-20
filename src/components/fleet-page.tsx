@@ -497,7 +497,7 @@ function TailMonument({ allTails, totalFleet }: { allTails: FleetTail[]; totalFl
             id={`t-${t.tail}`}
             href={`https://flightaware.com/live/flight/${t.tail}`}
             target="_blank"
-            rel="noreferrer noopener"
+            rel="nofollow noreferrer noopener"
             title={monumentTitle(t)}
             className={t.provider === "starlink" ? "tail-sl" : "tail-dim"}
           >

@@ -8,11 +8,14 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { buildFlightLookupVariants, stripFlightNumberZeros } from "../airlines/flight-number";
+import { AIRLINES } from "../airlines/registry";
 import { FlightRadar24API } from "../api/flightradar24-api";
 import {
   type WifiConsensus,
   addDiscoveredStarlinkPlane,
   cascadeSubfleetDiscovery,
+  flightNumberHasData,
   getFleetDiscoveryStats,
   getNextPlanesToVerify,
   initializeDatabase,
@@ -33,6 +36,7 @@ import {
 import type { FleetAircraft, StarlinkStatus } from "../types";
 import { icaoToIata } from "../utils/airport-tz";
 import { extractFlightNumber, pickVerifiableFlight, unitedLookupDate } from "../utils/constants";
+import { pingIndexNow } from "../utils/indexnow";
 import { type JobHandle, startJob } from "../utils/job-runner";
 import { info, error as logError, warn } from "../utils/logger";
 import { notifyNewStarlinkPlane } from "../utils/notify";
@@ -302,6 +306,23 @@ export async function verifyPlane(
           );
           // FLEET_STATUS_CHANGE is emitted at the DB write site (updateFleetVerificationResult).
           emitFleetSnapshot(db);
+          // A flip changes the answer on / and /fleet, and on this tail's
+          // flight permalink when we know one — tell IndexNow so Bing-family
+          // engines recrawl before the hourly sitemap cycle. The permalink is
+          // pinged in its canonical (zero-stripped) spelling and only when it
+          // passes the same existence gate the page serves behind — never a
+          // URL that would answer noindex.
+          const permalinkFn = stripFlightNumberZeros(`UA${forVerification.flightNumber}`);
+          const permalinkServes = flightNumberHasData(
+            db,
+            buildFlightLookupVariants(AIRLINES.UA, permalinkFn),
+            "UA"
+          );
+          pingIndexNow("UA", [
+            "/",
+            "/fleet",
+            ...(permalinkServes ? [`/check-flight/${permalinkFn}`] : []),
+          ]);
           if (starlinkStatus === "confirmed") {
             void notifyNewStarlinkPlane({
               tail: plane.tail_number,

@@ -24,11 +24,14 @@ import {
   type DirectRouteEdge,
   type FleetRosterEntry,
   type FlightAssignmentRow,
+  type FlightHistorySummary,
+  type FlightRoutePair,
   type HubAirlineStat,
   type QatarScheduleRow,
   type RouteEntryRow,
   type RouteFlightRow,
   type RouteGraphEdge,
+  type SitemapFlight,
   type SubfleetPenetration,
   type VerificationObservation,
   type VerificationSource,
@@ -38,6 +41,7 @@ import {
   bumpDiscoveryPriority,
   cacheFlightRoute,
   computeWifiConsensus,
+  flightNumberHasData,
   getAirlineByTail,
   getAirportDepartures,
   getCachedFlightRoutes,
@@ -50,6 +54,8 @@ import {
   getFleetRoster,
   getFleetStats,
   getFlightAssignments,
+  getFlightHistorySummary,
+  getFlightRoutePairs,
   getHubStats,
   getLastUpdated,
   getMeta,
@@ -64,6 +70,7 @@ import {
   getRouteStarlinkSchedule,
   getRoutesForFlightVariants,
   getServedRoutePairs,
+  getSitemapFlights,
   getStarlinkPlaneByTail,
   getStarlinkPlanes,
   getSubfleetPenetration,
@@ -93,6 +100,12 @@ export interface ScopedReader {
   getFleetRoster(): FleetRosterEntry[];
   getTotalCount(): number;
   getLastUpdated(): string;
+  /** Raw lastUpdated stamp — null when never stamped. getLastUpdated's now()
+   * fallback is fine for display copy but would let sitemaps stamp request
+   * time; freshness surfaces must use this and omit the field when null. */
+  getLastUpdatedRaw(): string | null;
+  /** Flight permalinks worth advertising, with real per-flight lastmod; empty on the hub (permalinks are tenant pages). */
+  getSitemapFlights(): SitemapFlight[];
   /** Meta keys are namespaced per-airline; null on the hub (no single namespace). */
   getMeta(key: string): string | null;
   /** Check-flight assignments without the verified_wifi filter (the core classifies tiers). */
@@ -137,6 +150,11 @@ export interface ScopedReader {
   getRoutesForFlightVariants(
     variants: string[]
   ): { departure_airport: string; arrival_airport: string; dur_sec: number }[];
+
+  // Flight-permalink SSR: existence gate + observed history + route census.
+  flightNumberHasData(variants: string[]): boolean;
+  getFlightHistorySummary(variants: string[]): FlightHistorySummary;
+  getFlightRoutePairs(variants: string[]): FlightRoutePair[];
 
   // Single-tail lookups + best-effort writes. Airline-scoped like everything
   // else: a tenant's FR24 fallback must not resolve another airline's tail.
@@ -252,6 +270,13 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
             .sort()
             .at(-1) ?? "")
         : getLastUpdated(db, scope),
+    getLastUpdatedRaw: () =>
+      airlines
+        .map((c) => getMeta(db, "lastUpdated", c))
+        .filter((v): v is string => v !== null)
+        .sort()
+        .at(-1) ?? null,
+    getSitemapFlights: () => (scope === "ALL" ? [] : getSitemapFlights(db, scope)),
     getMeta: (key) => (scope === "ALL" ? null : getMeta(db, key, scope)),
     getFlightAssignments: (v, s, e) => getFlightAssignments(db, v, s, e, airlines),
     getFleetPageData: () => getFleetPageData(db, airlines),
@@ -277,6 +302,10 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     getCachedFlightRoutes: (fn, after) => getCachedFlightRoutes(db, fn, after),
     cacheFlightRoute: (fn, o, d, dur) => cacheFlightRoute(db, fn, o, d, dur),
     getRoutesForFlightVariants: (v) => getRoutesForFlightVariants(db, v, airlines),
+
+    flightNumberHasData: (v) => flightNumberHasData(db, v, airlines),
+    getFlightHistorySummary: (v) => getFlightHistorySummary(db, v, airlines),
+    getFlightRoutePairs: (v) => getFlightRoutePairs(db, v, airlines),
 
     getStarlinkPlaneByTail: (tail) => getStarlinkPlaneByTail(db, tail, airlines),
     getFleetEntryByTail: (tail) => getFleetEntryByTail(db, tail, airlines),
