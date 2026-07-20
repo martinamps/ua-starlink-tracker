@@ -335,6 +335,7 @@ export async function verifyPlane(
                 fleet: fleetTag,
                 sheet_says: sheetSaysStarlink ? "starlink" : "not_starlink",
                 crawler_says: crawlerSaysStarlink ? "starlink" : "not_starlink",
+                airline: normalizeAirlineTag("UA"),
               });
               info(
                 `SHEET DISAGREEMENT: ${plane.tail_number} sheet=${sheetClaim.wifi} crawler=${consensus.verdict} (${consensus.reason})`
