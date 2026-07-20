@@ -370,15 +370,37 @@ const apiFleetSummary: Handler = ({ req, getReader }) => {
     const r = getReader(cfg.code);
     const installed = r.getStarlinkPlanes().length;
     const total = r.getTotalCount();
+    const families = r.getFleetPageData().families.map((f) => ({
+      family: f.family,
+      body: f.body,
+      installed: f.starlink,
+      total: f.total,
+      percentage: f.total > 0 ? Math.round((f.starlink / f.total) * 1000) / 10 : 0,
+    }));
     return {
       code: cfg.code,
       name: cfg.name,
       installed,
       total,
       percentage: total > 0 ? Math.round((installed / total) * 1000) / 10 : 0,
+      families,
     };
   });
   return new Response(JSON.stringify({ airlines, generatedAt: new Date().toISOString() }), {
+    headers: { ...SECURITY_HEADERS.api, "Cache-Control": "public, max-age=300" },
+  });
+};
+
+const apiRoutes: Handler = ({ req, site, reader }) => {
+  if (req.method !== "GET") return methodNotAllowed(true);
+  if (!site.features.routesPage) {
+    return new Response(JSON.stringify({ error: "Not found" }), {
+      status: 404,
+      headers: SECURITY_HEADERS.api,
+    });
+  }
+  const schedule = reader.getRouteStarlinkSchedule();
+  return new Response(JSON.stringify(schedule), {
     headers: { ...SECURITY_HEADERS.api, "Cache-Control": "public, max-age=300" },
   });
 };
@@ -1832,6 +1854,7 @@ export function createApp(db: Database): App {
     "/routes": routesPage,
     "/api/data": apiData,
     "/api/fleet-summary": apiFleetSummary,
+    "/api/routes": apiRoutes,
     "/api/check-flight": apiCheckFlight,
     "/api/check-any-flight": apiCheckAnyFlight,
     "/api/compare-route": apiCompareRoute,

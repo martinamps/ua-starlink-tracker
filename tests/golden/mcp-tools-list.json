@@ -31,7 +31,7 @@
       },
       {
         "name": "get_fleet_stats",
-        "description": "Use when the user asks \"how far along is the Starlink rollout?\" or wants overall fleet numbers. Returns United Airlines Starlink installation counts and percentages across mainline and express fleets. Not for per-flight checks — use check_flight for that.",
+        "description": "Use when the user asks \"how far along is the Starlink rollout?\" or wants overall fleet numbers. Returns United Airlines Starlink installation counts and percentages across mainline and express fleets, plus a per-aircraft-type breakdown (installed/total per family). Not for per-flight checks — use check_flight for that.",
         "inputSchema": {
           "type": "object",
           "properties": {},

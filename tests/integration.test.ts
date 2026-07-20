@@ -277,6 +277,14 @@ describe("MCP tools", () => {
     expect(json.result.isError).toBeUndefined();
   });
 
+  test("get_fleet_stats: includes per-aircraft-type breakdown", async () => {
+    const json = await mcpCall("tools/call", { name: "get_fleet_stats", arguments: {} });
+    const text = json.result.content[0].text as string;
+    expect(text).toContain("**By Aircraft Type**");
+    expect(text).toMatch(/- \S+: \d+ of \d+ \(\d+\.\d%\)/);
+    expect(text).not.toContain("unknown");
+  });
+
   test("predict_flight_starlink: unseen mainline flight gets low fleet prior", async () => {
     // Pick a flight number in mainline range (1-2999) not in verification log
     const unseen = db
@@ -1043,6 +1051,98 @@ describe("getRouteStarlinkSchedule", () => {
       new Request("http://x/routes", { headers: { Host: "airlinestarlinktracker.com" } })
     );
     expect(hub.status).toBe(404);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// /api/fleet-summary — per-family installed/total breakdown
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("/api/fleet-summary families", () => {
+  test("each airline entry carries a per-family installed/total breakdown", async () => {
+    const app = createApp(db);
+    const res = await app.dispatch(
+      new Request("http://x/api/fleet-summary", {
+        headers: { Host: "unitedstarlinktracker.com" },
+      })
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      airlines: {
+        code: string;
+        installed: number;
+        total: number;
+        families: {
+          family: string;
+          body: string;
+          installed: number;
+          total: number;
+          percentage: number;
+        }[];
+      }[];
+    };
+    const ua = body.airlines.find((a) => a.code === "UA");
+    expect(ua).toBeDefined();
+    if (!ua) return;
+
+    expect(ua.families.length).toBeGreaterThan(1);
+    for (const f of ua.families) {
+      expect(f.family.length).toBeGreaterThan(0);
+      expect(f.installed).toBeGreaterThanOrEqual(0);
+      expect(f.installed).toBeLessThanOrEqual(f.total);
+      expect(f.percentage).toBeGreaterThanOrEqual(0);
+      expect(f.percentage).toBeLessThanOrEqual(100);
+    }
+    expect(ua.families.some((f) => f.installed > 0)).toBe(true);
+    const famTotal = ua.families.reduce((s, f) => s + f.total, 0);
+    expect(famTotal).toBeGreaterThan(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// /api/routes — machine-readable form of the /routes schedule
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("/api/routes", () => {
+  test("returns the ranked Starlink route schedule", async () => {
+    const app = createApp(db);
+    const res = await app.dispatch(
+      new Request("http://x/api/routes", { headers: { Host: "unitedstarlinktracker.com" } })
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      rows: {
+        origin: string;
+        destination: string;
+        departures: number;
+        flight_numbers: number;
+        next_departure: number;
+      }[];
+      totalDepartures: number;
+      windowLabel: string;
+    };
+    expect(typeof body.totalDepartures).toBe("number");
+    expect(typeof body.windowLabel).toBe("string");
+    expect(Array.isArray(body.rows)).toBe(true);
+    expect(body.rows.length).toBeLessThanOrEqual(60);
+    for (const r of body.rows) {
+      expect(r.origin).toMatch(/^[A-Z0-9]{3,4}$/);
+      expect(r.destination).toMatch(/^[A-Z0-9]{3,4}$/);
+      expect(r.departures).toBeGreaterThan(0);
+      expect(r.flight_numbers).toBeGreaterThan(0);
+      expect(typeof r.next_departure).toBe("number");
+    }
+    for (let i = 1; i < body.rows.length; i++) {
+      expect(body.rows[i].departures).toBeLessThanOrEqual(body.rows[i - 1].departures);
+    }
+  });
+
+  test("404s where the routes feature is off", async () => {
+    const app = createApp(db);
+    const res = await app.dispatch(
+      new Request("http://x/api/routes", { headers: { Host: "airlinestarlinktracker.com" } })
+    );
+    expect(res.status).toBe(404);
   });
 });
 

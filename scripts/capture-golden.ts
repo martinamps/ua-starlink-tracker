@@ -12,12 +12,15 @@
 
 import { Database } from "bun:sqlite";
 import { mkdir, writeFile } from "node:fs/promises";
+import { setupTables } from "../src/database/database";
 import { createApp } from "../src/server/app";
 import { mcpReq } from "../tests/helpers";
 
 const OUT = "tests/golden";
 
-const app = createApp(new Database(":memory:"));
+const db = new Database(":memory:");
+setupTables(db);
+const app = createApp(db);
 const r = await app.dispatch(mcpReq("unitedstarlinktracker.com", "tools/list", {}));
 if (r.status !== 200) throw new Error(`mcp tools/list → ${r.status}`);
 
