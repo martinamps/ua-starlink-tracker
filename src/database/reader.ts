@@ -24,6 +24,8 @@ import {
   type DirectRouteEdge,
   type FleetRosterEntry,
   type FlightAssignmentRow,
+  type FlightHistorySummary,
+  type FlightRoutePair,
   type HubAirlineStat,
   type QatarScheduleRow,
   type RouteEntryRow,
@@ -39,6 +41,7 @@ import {
   bumpDiscoveryPriority,
   cacheFlightRoute,
   computeWifiConsensus,
+  flightNumberHasData,
   getAirlineByTail,
   getAirportDepartures,
   getCachedFlightRoutes,
@@ -51,6 +54,8 @@ import {
   getFleetRoster,
   getFleetStats,
   getFlightAssignments,
+  getFlightHistorySummary,
+  getFlightRoutePairs,
   getHubStats,
   getLastUpdated,
   getMeta,
@@ -141,6 +146,11 @@ export interface ScopedReader {
   getRoutesForFlightVariants(
     variants: string[]
   ): { departure_airport: string; arrival_airport: string; dur_sec: number }[];
+
+  // Flight-permalink SSR: existence gate + observed history + route census.
+  flightNumberHasData(variants: string[]): boolean;
+  getFlightHistorySummary(variants: string[]): FlightHistorySummary;
+  getFlightRoutePairs(variants: string[]): FlightRoutePair[];
 
   // Single-tail lookups + best-effort writes. Airline-scoped like everything
   // else: a tenant's FR24 fallback must not resolve another airline's tail.
@@ -282,6 +292,10 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     getCachedFlightRoutes: (fn, after) => getCachedFlightRoutes(db, fn, after),
     cacheFlightRoute: (fn, o, d, dur) => cacheFlightRoute(db, fn, o, d, dur),
     getRoutesForFlightVariants: (v) => getRoutesForFlightVariants(db, v, airlines),
+
+    flightNumberHasData: (v) => flightNumberHasData(db, v, airlines),
+    getFlightHistorySummary: (v) => getFlightHistorySummary(db, v, airlines),
+    getFlightRoutePairs: (v) => getFlightRoutePairs(db, v, airlines),
 
     getStarlinkPlaneByTail: (tail) => getStarlinkPlaneByTail(db, tail, airlines),
     getFleetEntryByTail: (tail) => getFleetEntryByTail(db, tail, airlines),

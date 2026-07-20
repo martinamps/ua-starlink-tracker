@@ -94,6 +94,26 @@ export function buildAirlineFlightNumberVariants(
   return [flightNumber, ...cfg.carrierPrefixes.map((p) => `${p}${num}`)];
 }
 
+/** Strip zero-padding so each flight has exactly one spelling (HA0011 → HA11).
+ * Permalinks 301 to this form and the sitemap advertises it. */
+export function stripFlightNumberZeros(flightNumber: string): string {
+  return flightNumber.replace(/^([A-Z]+)0+(?=\d)/, "$1");
+}
+
+/**
+ * Carrier-prefix variants plus zero-padded spellings for DB lookup. Schedule
+ * feeds store some carriers' numbers zero-padded (HA11 arrives as HA0011), so
+ * a canonical flight number must still match those rows.
+ */
+export function buildFlightLookupVariants(cfg: AirlineConfig, flightNumber: string): string[] {
+  const variants = new Set(buildAirlineFlightNumberVariants(cfg, flightNumber));
+  for (const v of [...variants]) {
+    const m = v.match(/^([A-Z]+)(\d{1,3})$/);
+    if (m) variants.add(`${m[1]}${m[2].padStart(4, "0")}`);
+  }
+  return [...variants];
+}
+
 /**
  * Infer subfleet from flight number using the airline's subfleet match rules.
  * First matching subfleet wins; "unknown" if none match.

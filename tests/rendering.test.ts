@@ -6,6 +6,7 @@
  */
 
 import { beforeAll, describe, expect, test } from "bun:test";
+import { createReaderFactory } from "../src/database/reader";
 import { createApp, renderHtml } from "../src/server/app";
 import { openSnapshot, req } from "./helpers";
 
@@ -31,28 +32,53 @@ describe("renderHtml", () => {
 describe("canonical / og:url / WebPage JSON-LD claim the page path", () => {
   const HOST = "unitedstarlinktracker.com";
   let app: ReturnType<typeof createApp>;
+  // Picked from the snapshot at run time — a hardcoded flight number would
+  // drift out of the data and trip the existence gate.
+  let realFlight: string;
 
   beforeAll(() => {
-    app = createApp(openSnapshot());
+    const db = openSnapshot();
+    app = createApp(db);
+    realFlight = createReaderFactory(db)("UA").getSitemapFlights()[0]?.flight_number ?? "";
+    expect(realFlight).toMatch(/^UA\d{1,4}$/);
   });
 
-  test.each(["/", "/check-flight", "/check-flight/UA123", "/fleet", "/route-planner"])(
-    "%s",
-    async (path) => {
-      const res = await app.dispatch(req(path, HOST));
-      expect(res.status).toBe(200);
-      const html = await res.text();
-      const expected = `https://${HOST}${path}`;
+  test.each(["/", "/check-flight", "/fleet", "/route-planner"])("%s", async (path) => {
+    const res = await app.dispatch(req(path, HOST));
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    const expected = `https://${HOST}${path}`;
 
-      expect(html.match(/<link rel="canonical" href="([^"]+)"/)?.[1]).toBe(expected);
-      expect(html.match(/<meta property="og:url" content="([^"]+)"/)?.[1]).toBe(expected);
-      // First "url" after the WebPage type is the page's own claim (isPartOf
-      // carries the site root separately).
-      expect(html.match(/"@type":"WebPage".*?"url":"([^"]+)"/s)?.[1]).toBe(expected);
-      // Brand copy embeds count placeholders — all of them must have resolved.
-      expect(html).not.toContain("{{");
-    }
-  );
+    expect(html.match(/<link rel="canonical" href="([^"]+)"/)?.[1]).toBe(expected);
+    expect(html.match(/<meta property="og:url" content="([^"]+)"/)?.[1]).toBe(expected);
+    // First "url" after the WebPage type is the page's own claim (isPartOf
+    // carries the site root separately).
+    expect(html.match(/"@type":"WebPage".*?"url":"([^"]+)"/s)?.[1]).toBe(expected);
+    // Brand copy embeds count placeholders — all of them must have resolved.
+    expect(html).not.toContain("{{");
+  });
+
+  test("flight permalink with data → 200, self-canonical, flight-specific H1", async () => {
+    const path = `/check-flight/${realFlight}`;
+    const res = await app.dispatch(req(path, HOST));
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    const expected = `https://${HOST}${path}`;
+    expect(html.match(/<link rel="canonical" href="([^"]+)"/)?.[1]).toBe(expected);
+    expect(html.match(/<meta property="og:url" content="([^"]+)"/)?.[1]).toBe(expected);
+    expect(html).toContain(`Does ${realFlight} Have Starlink WiFi?`);
+    expect(html).not.toContain("0% of the time");
+  });
+
+  test("dated flight page canonicalizes to the undated flight page", async () => {
+    const res = await app.dispatch(req(`/check-flight/${realFlight}/2027-01-15`, HOST));
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html.match(/<link rel="canonical" href="([^"]+)"/)?.[1]).toBe(
+      `https://${HOST}/check-flight/${realFlight}`
+    );
+    expect(html).toContain(`Does ${realFlight} Have Starlink WiFi?`);
+  });
 
   test("WebPage JSON-LD carries the page's own title, not homepage copy", async () => {
     const res = await app.dispatch(req("/fleet", HOST));
@@ -78,6 +104,65 @@ describe("canonical / og:url / WebPage JSON-LD claim the page path", () => {
     expect(html).not.toContain('"><script>x');
     expect(html.match(/<link rel="canonical" href="([^"]+)"/)?.[1]).toBe(
       `https://${HOST}/check-flight`
+    );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Flight permalinks: existence gate (no data → hard 404, never a soft-404 200)
+// and URL normalization (one canonical spelling per flight, everything else 301).
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("flight permalink gate + normalization", () => {
+  const HOST = "unitedstarlinktracker.com";
+  let app: ReturnType<typeof createApp>;
+  let ghostFlight: string;
+
+  beforeAll(() => {
+    const db = openSnapshot();
+    app = createApp(db);
+    // A number whose digits appear in NO schedule/route row (any prefix or
+    // zero-padding) — guaranteed to fail the gate regardless of data drift.
+    const used = new Set(
+      (
+        db
+          .query(
+            `SELECT flight_number FROM upcoming_flights
+             UNION SELECT flight_number FROM flight_routes`
+          )
+          .all() as { flight_number: string | null }[]
+      ).map((r) => String(r.flight_number).replace(/^\D*0*/, ""))
+    );
+    let n = 9999;
+    while (used.has(String(n))) n--;
+    ghostFlight = `UA${n}`;
+  });
+
+  test("flight number with no data → 404, noindex, helpful body", async () => {
+    const res = await app.dispatch(req(`/check-flight/${ghostFlight}`, HOST));
+    expect(res.status).toBe(404);
+    const html = await res.text();
+    expect(html).toContain("noindex");
+    expect(html).toContain(ghostFlight);
+    expect(html).toContain("/check-flight");
+  });
+
+  test("zero-padded spelling → 301 to the canonical flight URL", async () => {
+    const digits = ghostFlight.slice(2);
+    const res = await app.dispatch(req(`/check-flight/UA0${digits.slice(0, 3)}`, HOST));
+    expect(res.status).toBe(301);
+    expect(res.headers.get("Location")).toBe(
+      `https://${HOST}/check-flight/UA${Number(digits.slice(0, 3))}`
+    );
+  });
+
+  test("lowercase spelling → 301, date segment preserved", async () => {
+    const res = await app.dispatch(
+      req(`/check-flight/${ghostFlight.toLowerCase()}/2027-06-01`, HOST)
+    );
+    expect(res.status).toBe(301);
+    expect(res.headers.get("Location")).toBe(
+      `https://${HOST}/check-flight/${ghostFlight}/2027-06-01`
     );
   });
 });

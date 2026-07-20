@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { ensureAirlinePrefix } from "../airlines/flight-number";
+import { ensureAirlinePrefix, stripFlightNumberZeros } from "../airlines/flight-number";
 import {
   AIRLINES,
   type AirlineCode,
@@ -1367,18 +1367,22 @@ export interface VerificationObservation {
 export const CLEAN_OBSERVATION_WHERE = `error IS NULL AND has_starlink IS NOT NULL
     AND wifi_provider IS NOT NULL AND wifi_provider <> ''`;
 
-export function getVerificationObservations(
-  db: Database,
-  airline?: AirlineFilter
-): VerificationObservation[] {
-  // Sources derive from each scoped airline's verifier backend, so a non-UA
-  // predictor reads its own verifier's rows instead of silently getting none.
+// Sources derive from each scoped airline's verifier backend, so a non-UA
+// consumer reads its own verifier's rows instead of silently getting none.
+function verifierSources(airline: AirlineFilter): string[] {
   const codes = airlineCodes(airline);
-  const sources = [
+  return [
     ...new Set(
       codes.filter((c) => AIRLINES[c]?.verifierBackend).map((c) => verifierSourceTag(AIRLINES[c]))
     ),
   ];
+}
+
+export function getVerificationObservations(
+  db: Database,
+  airline?: AirlineFilter
+): VerificationObservation[] {
+  const sources = verifierSources(airline);
   if (sources.length === 0) return [];
   const q = withAirline(
     `SELECT flight_number, tail_number, has_starlink, checked_at
@@ -1742,7 +1746,9 @@ export function getSitemapFlights(db: Database, airline: AirlineCode): SitemapFl
   const marketing = new RegExp(`^${cfg.iata}\\d+$`);
   const latest = new Map<string, number>();
   const touch = (raw: string, t: number | null) => {
-    const fn = ensureAirlinePrefix(cfg, raw);
+    // Zero-padded spellings collapse onto the canonical permalink (HA0011 →
+    // /check-flight/HA11); the padded URL 301s there.
+    const fn = stripFlightNumberZeros(ensureAirlinePrefix(cfg, raw));
     if (!marketing.test(fn)) return;
     // Future timestamps are corrupt rows — treat as unknown, keep the page.
     const sane = t && t <= nowSec ? t : 0;
@@ -1764,6 +1770,133 @@ export function getSitemapFlights(db: Database, airline: AirlineCode): SitemapFl
   return [...latest]
     .map(([flight_number, last_touched]) => ({ flight_number, last_touched }))
     .sort((a, b) => a.flight_number.localeCompare(b.flight_number, undefined, { numeric: true }));
+}
+
+/**
+ * Single-flight form of the getSitemapFlights data test: rows in
+ * upcoming_flights (airline-scoped) or flight_routes back /check-flight/{fn}.
+ * Pages and sitemap must agree on which permalinks exist — anything else is an
+ * unbounded thin-page space, so no-data flight numbers 404.
+ */
+export function flightNumberHasData(
+  db: Database,
+  variants: string[],
+  airline?: AirlineFilter
+): boolean {
+  const placeholders = variants.map(() => "?").join(",");
+  const q = withAirline(
+    `SELECT 1 FROM upcoming_flights WHERE flight_number IN (${placeholders})`,
+    airline,
+    "",
+    [...variants]
+  );
+  if (db.query(`${q.sql} LIMIT 1`).get(...q.params)) return true;
+  return Boolean(
+    db
+      .query(`SELECT 1 FROM flight_routes WHERE flight_number IN (${placeholders}) LIMIT 1`)
+      .get(...variants)
+  );
+}
+
+export interface FlightRoutePair {
+  departure_airport: string;
+  arrival_airport: string;
+  /** Times we've seen this flight number on this leg (route cache + live window). */
+  times: number;
+  dur_sec: number | null;
+}
+
+/** Route pairs a flight number flies, most-flown first — the accumulated
+ * flight_routes cache unioned with the live upcoming_flights window (which
+ * covers legs the cache hasn't recorded yet). */
+export function getFlightRoutePairs(
+  db: Database,
+  variants: string[],
+  airline?: AirlineFilter
+): FlightRoutePair[] {
+  const placeholders = variants.map(() => "?").join(",");
+  const upcoming = withAirline(
+    `SELECT departure_airport, arrival_airport, COUNT(*) AS times,
+            CAST(AVG(arrival_time - departure_time) AS INTEGER) AS dur_sec
+     FROM upcoming_flights WHERE flight_number IN (${placeholders})`,
+    airline,
+    "",
+    [...variants]
+  );
+  return db
+    .query(
+      `SELECT departure_airport, arrival_airport, SUM(times) AS times, MAX(dur_sec) AS dur_sec
+       FROM (
+         SELECT origin AS departure_airport, destination AS arrival_airport,
+                seen_count AS times, duration_sec AS dur_sec
+         FROM flight_routes WHERE flight_number IN (${placeholders})
+         UNION ALL
+         ${upcoming.sql} GROUP BY departure_airport, arrival_airport
+       )
+       GROUP BY departure_airport, arrival_airport
+       ORDER BY times DESC LIMIT 4`
+    )
+    .all(...variants, ...upcoming.params) as FlightRoutePair[];
+}
+
+export interface FlightHistorySummary {
+  /** Clean verified observations of aircraft flying this number. */
+  total: number;
+  starlink: number;
+  /** Aircraft types recently seen on the number, newest first. */
+  aircraft_types: string[];
+  last_starlink: { tail_number: string; checked_at: number } | null;
+}
+
+/** Observed Starlink record for one flight number, from the same clean-row
+ * population the predictor trains on (so page copy and predictions agree). */
+export function getFlightHistorySummary(
+  db: Database,
+  variants: string[],
+  airline?: AirlineFilter
+): FlightHistorySummary {
+  const empty: FlightHistorySummary = {
+    total: 0,
+    starlink: 0,
+    aircraft_types: [],
+    last_starlink: null,
+  };
+  const sources = verifierSources(airline);
+  if (sources.length === 0) return empty;
+  const placeholders = variants.map(() => "?").join(",");
+  const where = withAirline(
+    `flight_number IN (${placeholders})
+       AND source IN (${sources.map(() => "?").join(",")}) AND ${CLEAN_OBSERVATION_WHERE}`,
+    airline,
+    "",
+    [...variants, ...sources]
+  );
+  const counts = db
+    .query(
+      `SELECT COUNT(*) AS total, COALESCE(SUM(has_starlink), 0) AS starlink
+       FROM starlink_verification_log WHERE ${where.sql}`
+    )
+    .get(...where.params) as { total: number; starlink: number } | null;
+  if (!counts || counts.total === 0) return empty;
+  const types = db
+    .query(
+      `SELECT aircraft_type FROM starlink_verification_log
+       WHERE ${where.sql} AND aircraft_type IS NOT NULL AND aircraft_type <> ''
+       GROUP BY aircraft_type ORDER BY MAX(checked_at) DESC LIMIT 4`
+    )
+    .all(...where.params) as { aircraft_type: string }[];
+  const last = db
+    .query(
+      `SELECT tail_number, checked_at FROM starlink_verification_log
+       WHERE ${where.sql} AND has_starlink = 1 ORDER BY checked_at DESC LIMIT 1`
+    )
+    .get(...where.params) as { tail_number: string; checked_at: number } | null;
+  return {
+    total: counts.total,
+    starlink: counts.starlink,
+    aircraft_types: types.map((t) => t.aircraft_type),
+    last_starlink: last,
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
