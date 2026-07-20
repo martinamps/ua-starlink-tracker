@@ -1486,11 +1486,11 @@ function subPageMeta(
   const short = cfg?.shortName ?? "Tracked Fleets";
   if (page === "check-flight")
     return {
-      siteTitle: `Check Your ${short} Flight for Starlink WiFi | ${brand.title}`,
-      siteDescription: `Enter a ${short} flight number and date to see if it has Starlink. Confirmed within ~2 days of departure; estimate from 12,000+ past assignments before that.`,
-      keywords: `check ${cfg?.iata ?? "airline"} flight starlink, does my flight have starlink, ${name} wifi check`,
-      ogTitle: `Check Your ${short} Flight for Starlink WiFi`,
-      ogDescription: `Enter a ${short} flight number and date to see if your aircraft has free Starlink WiFi.`,
+      siteTitle: `Does My ${short} Flight Have Starlink? Check Any Flight — Live`,
+      siteDescription: `Does my flight have Starlink? Enter a ${short} flight number and date for a live answer — verified within ~2 days of departure, predicted from 12,000+ past flights.`,
+      keywords: `does my flight have starlink, does my ${short.toLowerCase()} flight have starlink, check ${cfg?.iata ?? "airline"} flight starlink, ${name} wifi check`,
+      ogTitle: `Does My ${short} Flight Have Starlink?`,
+      ogDescription: `Check any ${short} flight by number and date — live answer for whether your aircraft has free Starlink WiFi.`,
     };
   if (page === "routes")
     return {

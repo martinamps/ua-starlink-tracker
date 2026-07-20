@@ -354,7 +354,7 @@ export default function CheckFlightPage({ site }: CheckFlightPageProps) {
                       '<div>Departs: <span class="text-secondary">' + dateStr + ' at ' + timeStr + '</span></div>' +
                       '<div>Aircraft: <span class="text-secondary">' + (flight.tail_number || '') + aircraftInfo + '</span></div>' +
                       (flight.operated_by ? '<div>Operated by: <span class="text-secondary">' + flight.operated_by + '</span></div>' : '') +
-                      '<div class="pt-2"><a href="' + faUrl + '" target="_blank" rel="noopener noreferrer" class="text-accent hover:underline text-xs">View on FlightAware →</a></div>' +
+                      '<div class="pt-2"><a href="' + faUrl + '" target="_blank" rel="nofollow noopener noreferrer" class="text-accent hover:underline text-xs">View on FlightAware →</a></div>' +
                       '</div></div>';
                   } else if (data.fallback && data.fallback.segments && data.fallback.segments.length > 0) {
                     var seg = data.fallback.segments[0];

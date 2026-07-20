@@ -256,6 +256,13 @@ function AirportTreemap({ data, windowLabel }: { data: AirportDeparture[]; windo
   );
 }
 
+// SSR'ing every fleet row made the homepage a ~5 MB document with thousands of
+// outbound links. The list is sorted freshest-first, so the first rows carry
+// nearly all the value; /fleet renders the complete fleet. Search/filter run
+// over the SSR'd DOM and therefore cover only the rendered rows — the cap
+// notice points anyone hunting a specific tail at /fleet.
+const AIRCRAFT_LIST_CAP = 100;
+
 const dateOverrides: Record<string, string> = {
   N127SY: "2025-03-07", // First Starlink installation per press release
 };
@@ -299,6 +306,7 @@ export default function Page({
     const updatedB = flightsB[0]?.last_updated || 0;
     return updatedB - updatedA;
   });
+  const displayedAircraft = starlinkData.slice(0, AIRCRAFT_LIST_CAP);
   const x = starlinkData.length;
   const y = total;
   const percentage = y > 0 ? ((x / y) * 100).toFixed(2) : "0.00";
@@ -324,10 +332,12 @@ export default function Page({
     ...(features.routesPage ? [{ href: "/routes", label: "Live Routes", badge: "NEW" }] : []),
     ...(features.mcpPage ? [{ href: "/mcp", label: "Tools & MCP", badge: "NEW" }] : []),
   ];
+  // Filter buttons act on the rendered rows, so their counts must describe the
+  // capped list — full-fleet numbers live in the hero and on /fleet.
   const subfleetCounts = Object.fromEntries(
     content.subfleetFilters.map((c) => [
       c.key,
-      starlinkData.filter((p) => p.fleet === c.key || airlineOf(p) === c.key).length,
+      displayedAircraft.filter((p) => p.fleet === c.key || airlineOf(p) === c.key).length,
     ])
   );
 
@@ -389,7 +399,7 @@ export default function Page({
           key={idx}
           href={`https://www.flightaware.com/live/flight/${flight.flight_number}`}
           target="_blank"
-          rel="noopener noreferrer"
+          rel="nofollow noopener noreferrer"
           data-flight-tooltip={flight.flight_number}
           className={`flight-pill font-mono items-center gap-1.5 px-2 py-1 bg-surface-elevated border border-subtle rounded text-xs text-secondary hover:text-accent hover:border-accent/50 transition-all ${visibilityClass}`}
         >
@@ -615,7 +625,7 @@ export default function Page({
                 className="filter-btn font-mono text-[11px] px-3 py-2 rounded border transition-all bg-accent/20 border-accent text-accent"
                 data-filter="all"
               >
-                ALL <span className="hidden sm:inline">({starlinkData.length})</span>
+                ALL <span className="hidden sm:inline">({displayedAircraft.length})</span>
               </button>
               {content.subfleetFilters.length > 1 &&
                 content.subfleetFilters.map((card) => (
@@ -647,7 +657,7 @@ export default function Page({
             <div className="p-12 text-center text-muted font-mono">No aircraft data available</div>
           ) : (
             <div className="divide-y divide-subtle">
-              {starlinkData.map((plane, idx) => {
+              {displayedAircraft.map((plane, idx) => {
                 const airline = airlineOf(plane);
                 const badge = content.rowBadge(plane, airline);
                 const flights = flightsByTail[plane.TailNumber] || [];
@@ -746,6 +756,20 @@ export default function Page({
             </div>
           )}
         </div>
+        {starlinkData.length > displayedAircraft.length && (
+          <div className="px-4 md:px-6 py-3 border-t border-subtle text-center text-xs font-mono text-muted">
+            Showing the {displayedAircraft.length} most recently active of {starlinkData.length}{" "}
+            Starlink aircraft
+            {features.fleetPage && (
+              <>
+                {" · "}
+                <a href="/fleet" className="text-accent hover:underline">
+                  See the full fleet →
+                </a>
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       {airportDepartures && airportDepartures.rows.length > 0 && (
