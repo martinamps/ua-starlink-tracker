@@ -745,7 +745,7 @@ export const SITES: Record<string, SiteConfig> = {
   alaska: {
     key: "alaska",
     scope: "AS",
-    live: false,
+    live: true,
     hosts: ["alaskastarlinktracker.com", "www.alaskastarlinktracker.com"],
     canonicalHost: "alaskastarlinktracker.com",
     brand: AIRLINES.AS.brand,
