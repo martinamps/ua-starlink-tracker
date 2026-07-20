@@ -178,6 +178,7 @@ const ROUTES: Array<[route: string, feature: keyof SiteConfig["features"] | null
   ["/route-planner", "routePlannerPage"],
   ["/fleet", "fleetPage"],
   ["/routes", "routesPage"],
+  ["/airlines", "airlinesPages"],
   ["/mcp", "mcpPage"],
 ];
 const isHtmlRoute = (route: string) => !route.startsWith("/api/") && !route.endsWith(".txt");
@@ -198,7 +199,16 @@ function foreignAirlines(site: SiteConfig) {
 // leak so far (og:image, hub FAQ JSON-LD) carried them. Bare short names are
 // deliberately NOT canaries — shared aircraft-spec fun facts legitimately say
 // "on Alaska in 2024" on any tenant's fleet page.
-function assertNoForeignTenant(site: SiteConfig, route: string, body: string) {
+//
+// The footer's cross-site links (atoms.tsx CrossSiteLinks) are a deliberate
+// cross-tenant mention on every site — strip that marked block so the sweep
+// still catches hosts leaking anywhere else in the page.
+function stripCrossSiteLinks(body: string): string {
+  return body.replace(/<div data-cross-site-links[\s\S]*?<\/div>/g, "");
+}
+
+function assertNoForeignTenant(site: SiteConfig, route: string, rawBody: string) {
+  const body = stripCrossSiteLinks(rawBody);
   for (const other of foreignAirlines(site)) {
     expect(body, `${site.key} ${route} leaks "${other.name}"`).not.toContain(other.name);
     const otherHost = siteForAirline(other.code)?.canonicalHost;

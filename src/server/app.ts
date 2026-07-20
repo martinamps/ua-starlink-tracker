@@ -31,10 +31,12 @@ import {
   type SiteFeatures,
   type Tenant,
   airlineHomeUrl,
+  airlineSlug,
   brandMetadata,
   publicAirlines,
   resolveSite,
   siteAirline,
+  siteForAirline,
 } from "../airlines/registry";
 import {
   FR24_OUTAGE_NOTE,
@@ -50,6 +52,11 @@ import {
 } from "../api/check-flight-core";
 import { handleMcpRequest } from "../api/mcp-server";
 import { qatarEquipmentName, qatarEquipmentToWifi } from "../api/qatar-status";
+import {
+  AirlineDetailPage,
+  type AirlineOverview,
+  AirlinesIndexPage,
+} from "../components/airlines-page";
 import CheckFlightPage, { type FlightFacts } from "../components/check-flight-page";
 import FleetPage from "../components/fleet-page";
 import McpPage from "../components/mcp-page";
@@ -1128,6 +1135,14 @@ const SITE_PAGES: SitePage[] = [
       `- [Fleet rollout](https://${h}/fleet) — every aircraft, colored by WiFi provider`,
   },
   {
+    path: "/airlines",
+    feature: "airlinesPages",
+    changefreq: "daily",
+    priority: "0.8",
+    llmsLine: (h) =>
+      `- [Airlines with Starlink](https://${h}/airlines) — every airline's rollout status, compared`,
+  },
+  {
     path: "/routes",
     feature: "routesPage",
     changefreq: "hourly",
@@ -1168,7 +1183,7 @@ Sitemap: https://${site.canonicalHost}/sitemap.xml`,
   );
 };
 
-const sitemap: Handler = ({ reader, site, tenant }) => {
+const sitemap: Handler = ({ reader, site, tenant, getReader }) => {
   const baseUrl = `https://${site.canonicalHost}`;
   // Static pages render from the tracker data, so the data's lastUpdated is
   // their honest lastmod; per-flight entries carry the latest write to that
@@ -1184,6 +1199,20 @@ const sitemap: Handler = ({ reader, site, tenant }) => {
           lastmod: f.last_touched ? new Date(f.last_touched * 1000).toISOString() : undefined,
         }))
       : [];
+  // Each hub airline page's lastmod is that airline's own data freshness, not
+  // the hub-wide max — QR (or any airline without a stamp yet) omits lastmod
+  // rather than borrowing another airline's.
+  const airlineEntries = site.features.airlinesPages
+    ? Object.values(AIRLINES).map((cfg) => {
+        const stamped = Date.parse(getReader(cfg.code).getLastUpdated() || "");
+        return {
+          path: `/airlines/${airlineSlug(cfg)}`,
+          changefreq: "daily",
+          priority: "0.7",
+          lastmod: Number.isFinite(stamped) ? new Date(stamped).toISOString() : undefined,
+        };
+      })
+    : [];
   const entries: Array<{ path: string; changefreq: string; priority: string; lastmod?: string }> = [
     ...sitePages(site).map((p) => ({
       path: p.path,
@@ -1191,6 +1220,7 @@ const sitemap: Handler = ({ reader, site, tenant }) => {
       priority: p.priority,
       lastmod: lastUpdated,
     })),
+    ...airlineEntries,
     ...flightEntries,
   ];
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
@@ -1738,6 +1768,76 @@ const routesPage: Handler = (ctx) => {
   return renderSubPage(ctx, RoutesPage, "/routes", subPageMeta(ctx, "routes"), { schedule });
 };
 
+// ── Hub /airlines pages ──────────────────────────────────────────────────────
+// Registry + DB only (upstream citizenship). Each page's job is to answer the
+// comparison query and hand airline-brand intent to the dedicated tracker.
+
+function airlineOverview(
+  getReader: RequestContext["getReader"],
+  cfg: AirlineConfig
+): AirlineOverview {
+  return {
+    cfg,
+    stat: getReader(cfg.code).getPerAirlineStats()[0],
+    trackerHost: siteForAirline(cfg.code, true)?.canonicalHost ?? null,
+  };
+}
+
+const airlinesIndexPage: Handler = (ctx) => {
+  if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
+  if (!ctx.site.features.airlinesPages) return notFound(ctx.site);
+  const overviews = Object.values(AIRLINES).map((cfg) => airlineOverview(ctx.getReader, cfg));
+  const names = overviews.map((o) => o.cfg.name);
+  return renderSubPage(
+    ctx,
+    AirlinesIndexPage,
+    "/airlines",
+    {
+      siteTitle: "Which Airlines Have Starlink WiFi? Full List & Rollout Comparison",
+      siteDescription: `Airlines with Starlink WiFi compared side by side — ${names.join(", ")} — with fleet counts, percent equipped, and where each rollout stands.`,
+      keywords:
+        "which airlines have starlink, starlink wifi airlines list, airlines with starlink, airline starlink comparison, starlink rollout by airline",
+      ogTitle: "Which Airlines Have Starlink WiFi?",
+      ogDescription: `Starlink rollouts compared across ${names.join(", ")} — fleet counts, percent equipped, and status.`,
+    },
+    { airlines: overviews }
+  );
+};
+
+const airlineDetailPage: Handler = (ctx) => {
+  if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
+  if (!ctx.site.features.airlinesPages) return notFound(ctx.site);
+  let seg: string;
+  try {
+    seg = decodeURIComponent(ctx.url.pathname.slice("/airlines/".length)).replace(/\/+$/, "");
+  } catch {
+    return notFound(ctx.site);
+  }
+  const lower = seg.toLowerCase();
+  const cfg = Object.values(AIRLINES).find(
+    (a) => airlineSlug(a) === lower || a.iata.toLowerCase() === lower
+  );
+  if (!cfg) return notFound(ctx.site);
+  // One indexable URL per airline: IATA and case variants 301 to the slug.
+  if (seg !== airlineSlug(cfg)) {
+    return Response.redirect(`https://${ctx.site.canonicalHost}/airlines/${airlineSlug(cfg)}`, 301);
+  }
+  const overview = airlineOverview(ctx.getReader, cfg);
+  return renderSubPage(
+    ctx,
+    AirlineDetailPage,
+    `/airlines/${airlineSlug(cfg)}`,
+    {
+      siteTitle: `${cfg.name} Starlink WiFi — Rollout Status & Fleet Progress`,
+      siteDescription: `Where the ${cfg.name} Starlink rollout stands: ${cfg.rollout.phaseNote} Fleet counts and percent equipped, updated continuously.`,
+      keywords: `${cfg.name.toLowerCase()} starlink, does ${cfg.shortName.toLowerCase()} have starlink, ${cfg.shortName.toLowerCase()} starlink wifi, ${cfg.shortName.toLowerCase()} starlink rollout`,
+      ogTitle: `${cfg.name} Starlink WiFi — Rollout Status`,
+      ogDescription: cfg.rollout.phaseNote,
+    },
+    { overview }
+  );
+};
+
 const homePage: Handler = async (ctx) => {
   const { req, reader, tenant, site } = ctx;
   if (req.method !== "GET" && req.method !== "HEAD") return methodNotAllowed();
@@ -1945,6 +2045,7 @@ export function createApp(db: Database): App {
     "/route-planner": routePlannerPage,
     "/fleet": fleetPage,
     "/routes": routesPage,
+    "/airlines": airlinesIndexPage,
     "/api/data": apiData,
     "/api/fleet-summary": apiFleetSummary,
     "/api/routes": apiRoutes,
@@ -1976,6 +2077,7 @@ export function createApp(db: Database): App {
   const prefixRoutes: Array<[string, Handler]> = [
     ["/check-flight/", checkFlightPage],
     ["/route-planner/", routePlannerPage],
+    ["/airlines/", airlineDetailPage],
     ["/static/", staticDir],
   ];
 

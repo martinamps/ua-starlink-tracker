@@ -1,16 +1,49 @@
 import React from "react";
-import { airlineHomeUrl } from "../airlines/registry";
+import { SITES, type SiteConfig, airlineHomeUrl, liveAirlineSites } from "../airlines/registry";
 import type { RecentInstall } from "../types";
 import type { Aircraft, PerAirlineStat } from "../types";
 
 export type { PerAirlineStat };
 
 /**
+ * One-line cross-domain footer links, rendered on every site. Registry-derived
+ * (live sites only) and plain followed links — the sister domains are the same
+ * publisher, so no nofollow. The hub's /airlines link stays relative on the
+ * hub itself.
+ */
+export function CrossSiteLinks({ site }: { site: SiteConfig }) {
+  const sisters = liveAirlineSites().filter(({ site: s }) => s.key !== site.key);
+  const hubHost = SITES.airline.canonicalHost;
+  const airlinesHref = site.scope === "ALL" ? "/airlines" : `https://${hubHost}/airlines`;
+  // data-cross-site-links marks the block as a deliberate cross-tenant
+  // mention — the tenant-matrix canary sweep strips it before scanning.
+  return (
+    <div data-cross-site-links className="mt-3 text-xs text-muted">
+      Also tracking:{" "}
+      {sisters.map(({ site: s, airline }) => (
+        <React.Fragment key={s.key}>
+          <a
+            href={`https://${s.canonicalHost}/`}
+            className="text-secondary hover:text-primary transition-colors"
+          >
+            {airline.shortName} Starlink tracker
+          </a>
+          <span className="mx-1.5 text-subtle">·</span>
+        </React.Fragment>
+      ))}
+      <a href={airlinesHref} className="text-secondary hover:text-primary transition-colors">
+        All airlines with Starlink
+      </a>
+    </div>
+  );
+}
+
+/**
  * Hub status cards — one per airline, equal-height grid. % is over the FULL
  * fleet so a viewer can read it as "odds on a random flight"; the status pill
  * + prose explain the nuance (HA at 69% but Complete: 717s won't get it).
  */
-const STATUS_TONE = {
+export const STATUS_TONE = {
   complete: { color: "#3fb950", bg: "rgba(63,185,80,.12)" },
   phase_done: { color: "#d4a72c", bg: "rgba(212,167,44,.12)" },
   in_progress: { color: "#58a6ff", bg: "rgba(88,166,255,.12)" },

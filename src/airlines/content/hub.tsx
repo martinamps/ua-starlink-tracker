@@ -22,6 +22,11 @@ const HubHero = ({ stats, perAirlineStats = [], recentInstalls = [] }: HeroProps
       </div>
 
       <AirlineStatusCards stats={perAirlineStats} />
+      <div className="text-center">
+        <a href="/airlines" className="font-mono text-xs text-accent hover:underline">
+          Which airlines have Starlink? Full list &amp; rollout comparison →
+        </a>
+      </div>
       <RouteComparePanel />
       <FlightCheckInput />
       <RecentInstallsFeed items={recentInstalls} airlines={perAirlineStats} />

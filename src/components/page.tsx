@@ -10,7 +10,7 @@ import type {
   PerAirlineStat,
   RecentInstall,
 } from "../types";
-import { HeaderStatStrip } from "./atoms";
+import { CrossSiteLinks, HeaderStatStrip } from "./atoms";
 import { PassengerBanner } from "./passenger-banner";
 
 // Reusable FAQ accordion item — eliminates ~30 lines of boilerplate per question
@@ -1273,6 +1273,7 @@ export default function Page({
             GitHub
           </a>
         </div>
+        <CrossSiteLinks site={site} />
       </footer>
     </div>
   );
