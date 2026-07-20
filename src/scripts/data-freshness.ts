@@ -139,8 +139,12 @@ export function emitDataFreshness(db: Database, queries = FRESHNESS_QUERIES): vo
           else continue;
         }
         const ageSec = Math.max(0, now - ts);
+        // dataset mirrors job: DD monitors/dashboards group this gauge by
+        // dataset, which read N/A while only job was emitted. job stays so
+        // existing series and queries keep working.
         metrics.gauge(GAUGES.DATA_FRESHNESS_SECONDS, ageSec, {
           job,
+          dataset: job,
           airline: normalizeAirlineTag(row.airline),
         });
       }
