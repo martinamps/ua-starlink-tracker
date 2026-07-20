@@ -199,7 +199,11 @@ export async function verifyPlane(
           info(`No upcoming flights for ${plane.tail_number}, skipping`);
         }
         span.setTag("result", "no_flights");
-        metrics.increment(COUNTERS.FLEET_CHECK_SKIPPED, { reason: "no_flights", fleet: fleetTag });
+        metrics.increment(COUNTERS.FLEET_CHECK_SKIPPED, {
+          reason: "no_flights",
+          fleet: fleetTag,
+          airline: normalizeAirlineTag("UA"),
+        });
         // Schedule for later check
         updateFleetVerificationResult(db, plane.tail_number, {
           starlinkStatus: plane.starlink_status as StarlinkStatus,
@@ -282,6 +286,7 @@ export async function verifyPlane(
           metrics.increment(COUNTERS.PLANES_STARLINK_DETECTED, {
             fleet: fleetTag,
             aircraft_type: aircraftTypeTag,
+            airline: checkTags.airline,
           });
         } else {
           span.setTag("result", "not_starlink");

@@ -503,9 +503,11 @@ function recordMcpFlightLookup(
   outcome: LookupOutcome,
   confidence: LookupConfidence
 ): void {
+  // result mirrors outcome — see app.ts recordFlightLookup.
   metrics.increment(COUNTERS.FLIGHT_LOOKUP_RESULT, {
     endpoint: "mcp",
     outcome,
+    result: outcome,
     confidence,
     airline: mcpAirlineTag(scope),
   });

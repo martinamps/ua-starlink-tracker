@@ -393,9 +393,12 @@ function recordFlightLookup(
   airlineCode: string,
   daysOut?: number
 ): void {
+  // result mirrors outcome: DD monitors group this counter by result, which
+  // read N/A while only outcome was emitted. outcome stays for existing series.
   metrics.increment(COUNTERS.FLIGHT_LOOKUP_RESULT, {
     endpoint,
     outcome,
+    result: outcome,
     confidence,
     airline: normalizeAirlineTag(airlineCode),
     ...(daysOut !== undefined && { days_out: bucketDaysOut(daysOut) }),

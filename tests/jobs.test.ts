@@ -715,6 +715,7 @@ describe("qatar_ingester freshness sentinel", () => {
     const call = qatarGauge(captureGauges(db));
     expect(call).toBeDefined();
     expect(call?.tags?.airline).toBe("qatar");
+    expect(call?.tags?.dataset).toBe("qatar_ingester");
     // ts fell back to 0 — staleness is the full epoch age, decades not hours.
     expect(call?.value as number).toBeGreaterThan(50 * 365 * 24 * 3600);
     db.close();

@@ -26,6 +26,8 @@
  *   http_status:     upstream HTTP status code on vendor.request error/
  *                    rate_limited emits (fr24 only)                  (~10)
  *   result:          success | error | aircraft_mismatch | tail_unknown  (4)
+ *                    on flight.lookup_result it mirrors `outcome` (+5)
+ *   dataset:         mirrors `job` on data.freshness_seconds             (~7)
  *   client_class:    bot | claude | extension | browser | unknown    (5)
  *   confidence:      high | medium | low | none                      (4)
  *   outcome:         verified_yes | verified_no | predicted | no_data | error  (5)
@@ -157,7 +159,7 @@ export const COUNTERS = {
   PLANES_DISCOVERED: "planes.discovered", // tags: source, airline
 
   // New Starlink installation detected on an aircraft
-  // tags: fleet, aircraft_type
+  // tags: fleet, aircraft_type, airline
   PLANES_STARLINK_DETECTED: "planes.starlink_detected",
 
   // Per-tail verification check outcome
@@ -193,12 +195,13 @@ export const COUNTERS = {
   FLEET_SHEET_DISAGREEMENT: "fleet.sheet_disagreement",
 
   // A discovery check was skipped (couldn't run the United.com scrape)
-  // tags: fleet, reason (no_flights)
+  // tags: fleet, reason (no_flights), airline
   FLEET_CHECK_SKIPPED: "fleet.check_skipped",
 
   // User-facing flight lookup outcome — how often we actually answer the question.
   // tags: endpoint (api_check|api_predict|mcp), outcome (verified_yes|verified_no|
-  //   predicted|no_data|error), confidence (high|medium|low|none), airline,
+  //   predicted|no_data|error), result (mirrors outcome — DD monitors group by
+  //   result), confidence (high|medium|low|none), airline,
   //   days_out (past|0..3|4_7|8_14|15_30|31_plus — only the /api/check-flight handler, non-QR)
   FLIGHT_LOOKUP_RESULT: "flight.lookup_result",
 
@@ -223,7 +226,8 @@ export const GAUGES = {
   // Seconds since the last successful data write per pipeline, derived from the
   // DB itself (MAX(timestamp)) — not from a "last ran at" heartbeat. Heartbeats
   // prove the loop is alive; this proves it's still producing data.
-  // tags: job (flight_updater|verifier|departures|qatar_ingester), airline
+  // tags: job (flight_updater|verifier|departures|qatar_ingester), dataset
+  //   (mirrors job — DD monitors group by dataset), airline
   DATA_FRESHNESS_SECONDS: "data.freshness_seconds",
 
   // Backtest precision of firm "yes/no Starlink" calls — tags: airline, window, call
