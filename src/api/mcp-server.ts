@@ -224,7 +224,7 @@ function buildTools(scope: Scope) {
     },
     {
       name: "get_fleet_stats",
-      description: `Use when the user asks "how far along is the Starlink rollout?" or wants overall fleet numbers. Returns ${carrier} Starlink installation counts and percentages across mainline and express fleets. Not for per-flight checks — use check_flight for that.`,
+      description: `Use when the user asks "how far along is the Starlink rollout?" or wants overall fleet numbers. Returns ${carrier} Starlink installation counts and percentages across mainline and express fleets, plus a per-aircraft-type breakdown (installed/total per family). Not for per-flight checks — use check_flight for that.`,
       inputSchema: {
         type: "object",
         properties: {},
@@ -1527,10 +1527,15 @@ ${lines.join("\n")}`;
       ? `**Mainline Fleet**: ${fleetStats.mainline.starlink} of ${fleetStats.mainline.total} aircraft (${fleetStats.mainline.percentage.toFixed(1)}%)`
       : null,
   ].filter((l) => l !== null);
+  const familyLines = reader
+    .getFleetPageData()
+    .families.filter((f) => f.family !== "unknown")
+    .map((f) => `- ${f.family}: ${f.starlink} of ${f.total} (${pct(f.starlink, f.total)}%)`);
   const text = [
     `${cfg.name} Starlink Installation Progress (as of ${lastUpdated}):`,
     `**Combined Fleet**: ${starlinkPlanes.length} of ${totalCount} aircraft (${pct(starlinkPlanes.length, totalCount)}%) have Starlink WiFi`,
     subfleetLines.join("\n"),
+    familyLines.length > 0 ? `**By Aircraft Type**:\n${familyLines.join("\n")}` : null,
     `**Rollout**: ${cfg.rollout.statusLabel} — ${cfg.rollout.phaseNote}`,
     "Starlink WiFi is free for passengers on equipped aircraft.",
   ]
