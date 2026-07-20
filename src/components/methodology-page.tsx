@@ -1,5 +1,6 @@
 import type React from "react";
 import { type SiteConfig, siteAirline } from "../airlines/registry";
+import { PageFooter } from "./atoms";
 
 interface MethodologyPageProps {
   site: SiteConfig;
@@ -14,8 +15,8 @@ interface DataSource {
 
 // Source lists mirror what actually runs per airline (registry verifierBackend
 // + server.ts jobs) at the level the public README already describes — what we
-// check and how often, not scraping mechanics. The feature gate guarantees
-// only airlines listed here render this page.
+// check and how often, not scraping mechanics. hasMethodology gates the route
+// on membership here, so the feature flag and content can't drift apart.
 const SOURCES: Record<string, DataSource[]> = {
   UA: [
     {
@@ -28,7 +29,7 @@ const SOURCES: Record<string, DataSource[]> = {
       name: "Community fleet spreadsheet",
       cadence: "hourly",
       detail:
-        "The united fleet community maintains a per-tail equipment sheet. We sync it hourly; its Starlink claims count as reported installs until our own verification confirms or contradicts them.",
+        "The United fleet community maintains a per-tail equipment sheet. We sync it hourly; its Starlink claims count as reported installs until our own verification confirms or contradicts them.",
     },
     {
       name: "Flightradar24 fleet and schedule data",
@@ -70,6 +71,13 @@ const SOURCES: Record<string, DataSource[]> = {
     },
   ],
 };
+
+/** True when SOURCES documents this airline — the /methodology handler 404s
+ * otherwise, so a feature gate flipped on without content can't silently
+ * render an empty-source page. */
+export function hasMethodology(code: string): boolean {
+  return code in SOURCES;
+}
 
 export default function MethodologyPage({ site, lastUpdated }: MethodologyPageProps) {
   const cfg = siteAirline(site);
@@ -208,27 +216,7 @@ export default function MethodologyPage({ site, lastUpdated }: MethodologyPagePr
         </a>
       </div>
 
-      <footer className="relative py-6 text-center border-t border-subtle text-muted text-sm">
-        <a
-          href="https://x.com/martinamps"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center text-secondary hover:text-primary transition-colors"
-        >
-          Built with
-          <svg
-            className="w-4 h-4 mx-1 text-red-400"
-            xmlns="http://www.w3.org/2000/svg"
-            viewBox="0 0 24 24"
-            fill="currentColor"
-            aria-label="Heart"
-            role="img"
-          >
-            <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z" />
-          </svg>
-          by @martinamps
-        </a>
-      </footer>
+      <PageFooter site={site} />
     </div>
   );
 }

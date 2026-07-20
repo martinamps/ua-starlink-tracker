@@ -4,7 +4,13 @@
  */
 
 import { beforeAll, describe, expect, test } from "bun:test";
-import { AIRLINES, SITES, airlineSlug, siteForAirline } from "../src/airlines/registry";
+import {
+  AIRLINES,
+  SITES,
+  airlineSlug,
+  publicAirlines,
+  siteForAirline,
+} from "../src/airlines/registry";
 import { createApp } from "../src/server/app";
 import { openSnapshot, req } from "./helpers";
 
@@ -18,14 +24,24 @@ const hub = SITES.airline;
 const get = (path: string, host: string) =>
   app.dispatch(req(path, host, { headers: { Accept: "text/html" } }));
 
+// The /airlines population is the hub homepage's: publicInHub only. Anything
+// else (QR today) must be invisible — no card, no detail page, no sitemap row.
+const hiddenAirlines = () => Object.values(AIRLINES).filter((a) => !publicAirlines().includes(a));
+
 describe("hub /airlines index", () => {
-  test("serves on the hub and lists every registry airline", async () => {
+  test("serves on the hub and lists every public airline, never a hidden one", async () => {
     const res = await get("/airlines", hub.canonicalHost);
     expect(res.status).toBe(200);
     const body = await res.text();
-    for (const cfg of Object.values(AIRLINES)) {
+    for (const cfg of publicAirlines()) {
       expect(body, `index missing ${cfg.name}`).toContain(cfg.name);
       expect(body, `index missing link to ${airlineSlug(cfg)}`).toContain(
+        `/airlines/${airlineSlug(cfg)}`
+      );
+    }
+    for (const cfg of hiddenAirlines()) {
+      expect(body, `index leaks ${cfg.name}`).not.toContain(cfg.name);
+      expect(body, `index links hidden ${airlineSlug(cfg)}`).not.toContain(
         `/airlines/${airlineSlug(cfg)}`
       );
     }
@@ -40,8 +56,8 @@ describe("hub /airlines index", () => {
 });
 
 describe("hub /airlines/{slug} detail pages", () => {
-  test("every registry airline serves, funneling to its live tracker where one exists", async () => {
-    for (const cfg of Object.values(AIRLINES)) {
+  test("every public airline serves, funneling to its live tracker where one exists", async () => {
+    for (const cfg of publicAirlines()) {
       const res = await get(`/airlines/${airlineSlug(cfg)}`, hub.canonicalHost);
       expect(res.status, cfg.code).toBe(200);
       const body = await res.text();
@@ -55,7 +71,7 @@ describe("hub /airlines/{slug} detail pages", () => {
   });
 
   test("IATA and case variants 301 to the canonical slug", async () => {
-    for (const cfg of Object.values(AIRLINES)) {
+    for (const cfg of publicAirlines()) {
       for (const variant of [cfg.iata.toLowerCase(), airlineSlug(cfg).toUpperCase()]) {
         const res = await get(`/airlines/${variant}`, hub.canonicalHost);
         expect(res.status, variant).toBe(301);
@@ -70,18 +86,30 @@ describe("hub /airlines/{slug} detail pages", () => {
     const res = await get("/airlines/delta", hub.canonicalHost);
     expect(res.status).toBe(404);
   });
+
+  test("hidden (publicInHub false) airlines 404 like unknown ones", async () => {
+    for (const cfg of hiddenAirlines()) {
+      for (const seg of [airlineSlug(cfg), cfg.iata.toLowerCase()]) {
+        const res = await get(`/airlines/${seg}`, hub.canonicalHost);
+        expect(res.status, seg).toBe(404);
+      }
+    }
+  });
 });
 
 describe("sitemaps", () => {
-  test("hub sitemap advertises the index and every airline page", async () => {
+  test("hub sitemap advertises the index and every public airline page, no hidden ones", async () => {
     const res = await get("/sitemap.xml", hub.canonicalHost);
     expect(res.status).toBe(200);
     const xml = await res.text();
     expect(xml).toContain(`<loc>https://${hub.canonicalHost}/airlines</loc>`);
-    for (const cfg of Object.values(AIRLINES)) {
+    for (const cfg of publicAirlines()) {
       expect(xml, cfg.code).toContain(
         `<loc>https://${hub.canonicalHost}/airlines/${airlineSlug(cfg)}</loc>`
       );
+    }
+    for (const cfg of hiddenAirlines()) {
+      expect(xml, cfg.code).not.toContain(`/airlines/${airlineSlug(cfg)}`);
     }
   });
 

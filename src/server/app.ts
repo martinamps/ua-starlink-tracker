@@ -60,7 +60,7 @@ import {
 import CheckFlightPage, { type FlightFacts } from "../components/check-flight-page";
 import FleetPage from "../components/fleet-page";
 import McpPage from "../components/mcp-page";
-import MethodologyPage from "../components/methodology-page";
+import MethodologyPage, { hasMethodology } from "../components/methodology-page";
 import Page from "../components/page";
 import RoutePlannerPage from "../components/route-planner-page";
 import RoutesPage from "../components/routes-page";
@@ -91,7 +91,7 @@ import {
   SECURITY_HEADERS,
 } from "../utils/constants";
 import { error as logError } from "../utils/logger";
-import { getFlightNotFoundHtml, getNotFoundHtml } from "../utils/not-found";
+import { getNotFoundHtml } from "../utils/not-found";
 import { getSpreadsheetCacheInfo, getSpreadsheetCacheTails } from "../utils/utils";
 import {
   type Database,
@@ -120,6 +120,8 @@ interface PageMeta {
   ogDescription: string;
   /** Optional page-specific JSON-LD block (e.g. schema.org Flight). */
   pageJsonLd?: string;
+  /** Override the default "index, follow" (e.g. soft-gated flight permalinks). */
+  robotsMeta?: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1197,8 +1199,13 @@ const sitemap: Handler = ({ reader, site, tenant, getReader }) => {
   // Static pages render from the tracker data, so the data's lastUpdated is
   // their honest lastmod; per-flight entries carry the latest write to that
   // flight's rows. Never the request time — a lastmod that always equals
-  // "now" teaches crawlers to ignore the field.
-  const lastUpdated = new Date(reader.getLastUpdated()).toISOString();
+  // "now" teaches crawlers to ignore the field — so this reads the RAW stamp
+  // and omits the field entirely when a tenant has never been stamped.
+  const stampedIso = (raw: string | null): string | undefined => {
+    const t = Date.parse(raw ?? "");
+    return Number.isFinite(t) ? new Date(t).toISOString() : undefined;
+  };
+  const lastUpdated = stampedIso(reader.getLastUpdatedRaw());
   const flightEntries =
     site.features.checkFlightPage && tenantConfig(tenant)
       ? reader.getSitemapFlights().map((f) => ({
@@ -1209,18 +1216,16 @@ const sitemap: Handler = ({ reader, site, tenant, getReader }) => {
         }))
       : [];
   // Each hub airline page's lastmod is that airline's own data freshness, not
-  // the hub-wide max — QR (or any airline without a stamp yet) omits lastmod
-  // rather than borrowing another airline's.
+  // the hub-wide max — an airline without a stamp yet omits lastmod rather
+  // than borrowing another airline's. Same population as the hub homepage:
+  // publicInHub false (QR) never gets advertised.
   const airlineEntries = site.features.airlinesPages
-    ? Object.values(AIRLINES).map((cfg) => {
-        const stamped = Date.parse(getReader(cfg.code).getLastUpdated() || "");
-        return {
-          path: `/airlines/${airlineSlug(cfg)}`,
-          changefreq: "daily",
-          priority: "0.7",
-          lastmod: Number.isFinite(stamped) ? new Date(stamped).toISOString() : undefined,
-        };
-      })
+    ? publicAirlines().map((cfg) => ({
+        path: `/airlines/${airlineSlug(cfg)}`,
+        changefreq: "daily",
+        priority: "0.7",
+        lastmod: stampedIso(getReader(cfg.code).getLastUpdatedRaw()),
+      }))
     : [];
   const entries: Array<{ path: string; changefreq: string; priority: string; lastmod?: string }> = [
     ...sitePages(site).map((p) => ({
@@ -1474,6 +1479,7 @@ function buildBaseTemplateVars(
     html: reactHtml,
     host: site.canonicalHost,
     canonicalPath: escapeHtmlAttr(canonicalPath),
+    robotsMeta: "index, follow",
     analyticsSnippet: analyticsSnippet(site),
     headSnippet: site.headSnippet ?? "",
     // Dark-launch probe is UA-only; the onboard portal URL is United's.
@@ -1716,12 +1722,6 @@ function flightPageMeta(
   };
 }
 
-const flightNotFound = (site: SiteConfig, flightNumber: string): Response =>
-  new Response(getFlightNotFoundHtml(site.brand, flightNumber), {
-    status: 404,
-    headers: SECURITY_HEADERS.notFound,
-  });
-
 const checkFlightPage: Handler = (ctx) => {
   if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
   if (!ctx.site.features.checkFlightPage) {
@@ -1729,7 +1729,7 @@ const checkFlightPage: Handler = (ctx) => {
   }
   // Per-flight permalinks: /check-flight/UA881[/{date}] renders flight-specific
   // content + meta + Flight JSON-LD; the date-less URL is canonical so date
-  // variants don't dilute it. Anything malformed falls back to the generic page.
+  // variants don't dilute it.
   const parsed = parseCheckFlightPath(ctx.url.pathname);
   if (parsed) {
     const { raw, fn, date } = parsed;
@@ -1741,22 +1741,34 @@ const checkFlightPage: Handler = (ctx) => {
       );
     }
     const cfg = resolveFlightCfg(ctx, fn);
-    if (cfg) {
-      const reader = ctx.tenant === "ALL" ? ctx.getReader(cfg.code) : ctx.reader;
-      const variants = buildFlightLookupVariants(cfg, fn);
-      // Existence gate (same data test as the sitemap): no rows behind the
-      // flight number → hard 404, never an indexable thin page.
-      if (!reader.flightNumberHasData(variants)) return flightNotFound(ctx.site, fn);
-      const facts = buildFlightFacts(reader, cfg, fn, variants);
-      return renderSubPage(
-        ctx,
-        CheckFlightPage,
-        `/check-flight/${fn}`,
-        flightPageMeta(ctx, reader, fn, cfg, facts),
-        { flight: facts }
-      );
+    if (!cfg) return notFound(ctx.site);
+    const reader = ctx.tenant === "ALL" ? ctx.getReader(cfg.code) : ctx.reader;
+    const variants = buildFlightLookupVariants(cfg, fn);
+    // Existence gate (same data test as the sitemap): no rows behind the
+    // flight number → no flight-specific SSR facts, but the /api/check-flight
+    // FR24 fallback can still answer a real flight outside our schedule
+    // window, and the homepage form + permalink replaceState both mint these
+    // URLs — so serve the interactive generic page instead of dead-ending.
+    // noindex + canonical to /check-flight keeps it out of the index (the
+    // sitemap never advertises ungated flights).
+    if (!reader.flightNumberHasData(variants)) {
+      return renderSubPage(ctx, CheckFlightPage, "/check-flight", {
+        ...subPageMeta(ctx, "check-flight"),
+        robotsMeta: "noindex, follow",
+      });
     }
+    const facts = buildFlightFacts(reader, cfg, fn, variants);
+    return renderSubPage(
+      ctx,
+      CheckFlightPage,
+      `/check-flight/${fn}`,
+      flightPageMeta(ctx, reader, fn, cfg, facts),
+      { flight: facts }
+    );
   }
+  // Bare /check-flight is the generic indexable page; anything else under the
+  // prefix is a malformed segment (bad escape, not a flight number) → hard 404.
+  if (ctx.url.pathname.replace(/\/+$/, "") !== "/check-flight") return notFound(ctx.site);
   return renderSubPage(ctx, CheckFlightPage, "/check-flight", subPageMeta(ctx, "check-flight"));
 };
 
@@ -1784,6 +1796,9 @@ const methodologyPage: Handler = (ctx) => {
   }
   // methodologyPage is airline-site-only; siteAirline throws (fail closed) on the hub.
   const cfg = siteAirline(ctx.site);
+  // Gate on content, not just the feature flag — a SOURCES-less airline would
+  // otherwise render an empty "where the data comes from" page.
+  if (!hasMethodology(cfg.code)) return notFound(ctx.site);
   return renderSubPage(
     ctx,
     MethodologyPage,
@@ -1826,18 +1841,21 @@ function airlineOverview(
 const airlinesIndexPage: Handler = (ctx) => {
   if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
   if (!ctx.site.features.airlinesPages) return notFound(ctx.site);
-  const overviews = Object.values(AIRLINES).map((cfg) => airlineOverview(ctx.getReader, cfg));
+  // Same population as the hub homepage — publicInHub false stays unpublished.
+  const overviews = publicAirlines().map((cfg) => airlineOverview(ctx.getReader, cfg));
   const names = overviews.map((o) => o.cfg.name);
+  // "Which airlines have Starlink" is the hub HOMEPAGE's query — titling this
+  // page for it too would cannibalize it, so this one takes the list angle.
   return renderSubPage(
     ctx,
     AirlinesIndexPage,
     "/airlines",
     {
-      siteTitle: "Which Airlines Have Starlink WiFi? Full List & Rollout Comparison",
-      siteDescription: `Airlines with Starlink WiFi compared side by side — ${names.join(", ")} — with fleet counts, percent equipped, and where each rollout stands.`,
+      siteTitle: "Starlink WiFi by Airline — Full List & Rollout Comparison",
+      siteDescription: `The full list of airlines with Starlink WiFi, compared side by side — ${names.join(", ")} — with fleet counts, percent equipped, and where each rollout stands.`,
       keywords:
-        "which airlines have starlink, starlink wifi airlines list, airlines with starlink, airline starlink comparison, starlink rollout by airline",
-      ogTitle: "Which Airlines Have Starlink WiFi?",
+        "starlink wifi airlines list, airlines with starlink, airline starlink comparison, starlink rollout by airline",
+      ogTitle: "Starlink WiFi by Airline — Full List & Comparison",
       ogDescription: `Starlink rollouts compared across ${names.join(", ")} — fleet counts, percent equipped, and status.`,
     },
     { airlines: overviews }
@@ -1854,7 +1872,8 @@ const airlineDetailPage: Handler = (ctx) => {
     return notFound(ctx.site);
   }
   const lower = seg.toLowerCase();
-  const cfg = Object.values(AIRLINES).find(
+  // publicInHub false resolves like an unknown airline — no detail page either.
+  const cfg = publicAirlines().find(
     (a) => airlineSlug(a) === lower || a.iata.toLowerCase() === lower
   );
   if (!cfg) return notFound(ctx.site);

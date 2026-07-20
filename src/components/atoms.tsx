@@ -38,6 +38,36 @@ export function CrossSiteLinks({ site }: { site: SiteConfig }) {
   );
 }
 
+/** Shared footer for secondary pages (methodology, hub /airlines). The
+ * homepage footer in page.tsx stays inline — it carries extra links (GitHub,
+ * methodology) and is the reference markup. */
+export function PageFooter({ site }: { site: SiteConfig }) {
+  return (
+    <footer className="relative py-6 text-center border-t border-subtle text-muted text-sm">
+      <a
+        href="https://x.com/martinamps"
+        target="_blank"
+        rel="noopener noreferrer"
+        className="inline-flex items-center text-secondary hover:text-primary transition-colors"
+      >
+        Built with
+        <svg
+          className="w-4 h-4 mx-1 text-red-400"
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 24 24"
+          fill="currentColor"
+          aria-label="Heart"
+          role="img"
+        >
+          <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z" />
+        </svg>
+        by @martinamps
+      </a>
+      <CrossSiteLinks site={site} />
+    </footer>
+  );
+}
+
 /**
  * Hub status cards — one per airline, equal-height grid. % is over the FULL
  * fleet so a viewer can read it as "odds on a random flight"; the status pill

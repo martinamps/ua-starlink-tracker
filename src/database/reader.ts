@@ -100,6 +100,10 @@ export interface ScopedReader {
   getFleetRoster(): FleetRosterEntry[];
   getTotalCount(): number;
   getLastUpdated(): string;
+  /** Raw lastUpdated stamp — null when never stamped. getLastUpdated's now()
+   * fallback is fine for display copy but would let sitemaps stamp request
+   * time; freshness surfaces must use this and omit the field when null. */
+  getLastUpdatedRaw(): string | null;
   /** Flight permalinks worth advertising, with real per-flight lastmod; empty on the hub (permalinks are tenant pages). */
   getSitemapFlights(): SitemapFlight[];
   /** Meta keys are namespaced per-airline; null on the hub (no single namespace). */
@@ -266,6 +270,12 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
             .sort()
             .at(-1) ?? "")
         : getLastUpdated(db, scope),
+    getLastUpdatedRaw: () =>
+      airlines
+        .map((c) => getMeta(db, "lastUpdated", c))
+        .filter((v): v is string => v !== null)
+        .sort()
+        .at(-1) ?? null,
     getSitemapFlights: () => (scope === "ALL" ? [] : getSitemapFlights(db, scope)),
     getMeta: (key) => (scope === "ALL" ? null : getMeta(db, key, scope)),
     getFlightAssignments: (v, s, e) => getFlightAssignments(db, v, s, e, airlines),

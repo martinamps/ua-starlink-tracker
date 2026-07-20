@@ -54,8 +54,12 @@ const fmtDeparture = (sec: number) =>
     timeZone: "UTC",
   })} UTC`;
 
-const fmtDuration = (sec: number) =>
-  `${Math.floor(sec / 3600)}h ${String(Math.round((sec % 3600) / 60)).padStart(2, "0")}m`;
+// Round total minutes BEFORE splitting into h/m — rounding the remainder
+// alone renders 2h59m30s as "2h 60m".
+const fmtDuration = (sec: number) => {
+  const mins = Math.round(sec / 60);
+  return `${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, "0")}m`;
+};
 
 function flightSummary(flight: FlightFacts): string {
   const { flightNumber, observedStarlink: s, observedTotal: n } = flight;

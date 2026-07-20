@@ -143,26 +143,30 @@ describe("sitemap flight permalinks", () => {
     }
   );
 
-  test("lastmod derives from data, not the request clock", async () => {
-    const site = SITES.united;
-    const first = await (await get("/sitemap.xml", site.canonicalHost)).text();
-    await new Promise((r) => setTimeout(r, 5));
-    const second = await (await get("/sitemap.xml", site.canonicalHost)).text();
-    // Date.now() stamping would differ at ms precision between the two fetches.
-    expect(second).toBe(first);
+  // qatar included deliberately: a tenant with no lastUpdated stamp must omit
+  // <lastmod> rather than fall back to the request clock.
+  test.each([SITES.united, SITES.qatar].map((s) => [s.key, s] as const))(
+    "%s: lastmod derives from data, not the request clock",
+    async (_key, site) => {
+      const first = await (await get("/sitemap.xml", site.canonicalHost)).text();
+      await new Promise((r) => setTimeout(r, 5));
+      const second = await (await get("/sitemap.xml", site.canonicalHost)).text();
+      // Date.now() stamping would differ at ms precision between the two fetches.
+      expect(second).toBe(first);
 
-    const urls = first.split("<url>").slice(1);
-    const now = Date.now();
-    for (const block of urls) {
-      const stamps = [...block.matchAll(/<lastmod>([^<]+)<\/lastmod>/g)].map((m) => m[1]);
-      expect(stamps.length).toBeLessThanOrEqual(1);
-      for (const stamp of stamps) {
-        const t = Date.parse(stamp);
-        expect(Number.isNaN(t)).toBe(false);
-        expect(t).toBeLessThanOrEqual(now);
+      const urls = first.split("<url>").slice(1);
+      const now = Date.now();
+      for (const block of urls) {
+        const stamps = [...block.matchAll(/<lastmod>([^<]+)<\/lastmod>/g)].map((m) => m[1]);
+        expect(stamps.length).toBeLessThanOrEqual(1);
+        for (const stamp of stamps) {
+          const t = Date.parse(stamp);
+          expect(Number.isNaN(t)).toBe(false);
+          expect(t).toBeLessThanOrEqual(now);
+        }
       }
     }
-  });
+  );
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

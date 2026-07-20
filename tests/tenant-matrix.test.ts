@@ -67,6 +67,7 @@ const BANNED_PATTERNS: Array<{
       ["src/scripts/verify-tails.ts", 1], // united.com ground-truth CLI — UA-bound by definition
       ["src/scripts/sync-ship-numbers.ts", 1], // United mainline ship-number sheet — UA-bound by definition
       ["src/scripts/united-verdict.ts", 1], // shared united.com verdict core — UA-bound by definition
+      ["src/scripts/fleet-discovery.ts", 1], // united.com discovery job — UA-bound by definition (IndexNow permalink gate)
     ]),
     why:
       "A UA default on a missing tenant/airline is the og:image bug class: the row or response " +

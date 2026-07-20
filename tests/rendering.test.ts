@@ -95,22 +95,21 @@ describe("canonical / og:url / WebPage JSON-LD claim the page path", () => {
   });
 
   // Attribute-breakout input in the permalink segment must never reach the
-  // markup raw: validation rejects it (generic-page fallback) and
-  // escapeHtmlAttr guards the template-var boundary behind that.
-  test("attribute-breakout path falls back and never appears in markup", async () => {
+  // markup raw: validation rejects it (hard 404) and escapeHtmlAttr guards
+  // the template-var boundary behind that.
+  test("attribute-breakout path 404s and never appears in markup", async () => {
     const res = await app.dispatch(req("/check-flight/UA123%22%3E%3Cscript%3Ex", HOST));
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(404);
     const html = await res.text();
     expect(html).not.toContain('"><script>x');
-    expect(html.match(/<link rel="canonical" href="([^"]+)"/)?.[1]).toBe(
-      `https://${HOST}/check-flight`
-    );
   });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Flight permalinks: existence gate (no data → hard 404, never a soft-404 200)
-// and URL normalization (one canonical spelling per flight, everything else 301).
+// Flight permalinks: existence gate (no data → interactive soft page, noindex,
+// canonical to /check-flight — the client-side FR24 lookup can still answer;
+// malformed/other-carrier segments hard-404) and URL normalization (one
+// canonical spelling per flight, everything else 301).
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("flight permalink gate + normalization", () => {
@@ -138,13 +137,24 @@ describe("flight permalink gate + normalization", () => {
     ghostFlight = `UA${n}`;
   });
 
-  test("flight number with no data → 404, noindex, helpful body", async () => {
+  test("valid-format flight with no data → 200 soft page, noindex, canonical to /check-flight", async () => {
     const res = await app.dispatch(req(`/check-flight/${ghostFlight}`, HOST));
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain("noindex");
-    expect(html).toContain(ghostFlight);
-    expect(html).toContain("/check-flight");
+    expect(html.match(/<meta name="robots" content="([^"]+)"/)?.[1]).toContain("noindex");
+    expect(html.match(/<link rel="canonical" href="([^"]+)"/)?.[1]).toBe(
+      `https://${HOST}/check-flight`
+    );
+    // The interactive lookup form still serves — the URL is not a dead end.
+    expect(html).toContain('id="check-flight-form"');
+  });
+
+  test("malformed and other-carrier segments → hard 404", async () => {
+    for (const seg of ["UA123X", "banana", "AA123"]) {
+      const res = await app.dispatch(req(`/check-flight/${seg}`, HOST));
+      expect(res.status, seg).toBe(404);
+      expect(await res.text(), seg).toContain("noindex");
+    }
   });
 
   test("zero-padded spelling → 301 to the canonical flight URL", async () => {

@@ -13,7 +13,7 @@ import {
   airlineSlug,
 } from "../airlines/registry";
 import type { PerAirlineStat } from "../types";
-import { CrossSiteLinks, STATUS_TONE } from "./atoms";
+import { PageFooter, STATUS_TONE } from "./atoms";
 
 const PANEL = "bg-surface border border-subtle rounded-lg p-5";
 const SECTION = "relative w-full max-w-3xl mx-auto mb-8";
@@ -96,12 +96,12 @@ function PageShell({
 
       {children}
 
-      <footer className="relative py-6 text-center border-t border-subtle text-muted text-sm mt-auto">
-        <a href="/" className="text-accent hover:underline font-display">
+      <div className="relative text-center mt-auto mb-6">
+        <a href="/" className="text-sm text-accent hover:underline font-display">
           ← Back to {site.brand.title}
         </a>
-        <CrossSiteLinks site={site} />
-      </footer>
+      </div>
+      <PageFooter site={site} />
     </div>
   );
 }

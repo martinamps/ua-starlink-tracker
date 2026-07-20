@@ -102,14 +102,21 @@ export function stripFlightNumberZeros(flightNumber: string): string {
 
 /**
  * Carrier-prefix variants plus zero-padded spellings for DB lookup. Schedule
- * feeds store some carriers' numbers zero-padded (HA11 arrives as HA0011), so
- * a canonical flight number must still match those rows.
+ * feeds store some carriers' numbers zero-padded (HA11 arrives as HA0011) at
+ * inconsistent widths, so every width from the natural spelling up to 5 digits
+ * is generated — the sitemap strips ANY padding when it advertises a
+ * permalink, and the existence gate must match whatever padded row produced
+ * that entry or an advertised URL would 404.
  */
 export function buildFlightLookupVariants(cfg: AirlineConfig, flightNumber: string): string[] {
   const variants = new Set(buildAirlineFlightNumberVariants(cfg, flightNumber));
   for (const v of [...variants]) {
-    const m = v.match(/^([A-Z]+)(\d{1,3})$/);
-    if (m) variants.add(`${m[1]}${m[2].padStart(4, "0")}`);
+    const m = v.match(/^([A-Z]+)(\d+)$/);
+    if (!m) continue;
+    const digits = m[2].replace(/^0+(?=\d)/, "");
+    for (let width = digits.length; width <= 5; width++) {
+      variants.add(`${m[1]}${digits.padStart(width, "0")}`);
+    }
   }
   return [...variants];
 }
