@@ -73,6 +73,27 @@ export const content: AirlineContent = {
       title: "Checking your flight",
       items: [
         {
+          q: "Which United flights have Starlink?",
+          a: ({ fleetStats }) => (
+            <p>
+              Mostly United Express flights (UA3000–6999) so far —{" "}
+              {(fleetStats?.express.percentage || 0).toFixed(0)}% of the Express regional fleet
+              (E175, CRJ-550) is equipped, versus{" "}
+              {(fleetStats?.mainline.percentage || 0).toFixed(0)}% of mainline. To find out about a
+              specific flight,{" "}
+              <a href="/check-flight" className="text-accent hover:underline">
+                check it by number and date
+              </a>
+              , or browse the{" "}
+              <a href="/fleet" className="text-accent hover:underline">
+                fleet page
+              </a>{" "}
+              for every equipped tail number.
+            </p>
+          ),
+          ld: "Mostly United Express flights (UA3000-6999) so far — {{expressPercentage}}% of the Express regional fleet (E175, CRJ-550) is equipped, versus {{mainlinePercentage}}% of mainline. Check a specific flight by number and date at /check-flight, or browse the fleet page for every equipped tail number.",
+        },
+        {
           q: "Does my United flight have Starlink?",
           a: () => (
             <p>
@@ -163,6 +184,21 @@ export const content: AirlineContent = {
             </p>
           ),
           ld: "Not yet — {{percentage}}% of the fleet is equipped today. United Express regional jets (E175, CRJ-550) are at {{expressPercentage}}%; mainline narrowbodies and widebodies are following. The fleet page lists every verified tail.",
+        },
+        {
+          q: "How fast is United's Starlink rollout?",
+          a: ({ starlinkCount }) => (
+            <p>
+              About 40+ installs a month. United's first Starlink install was March 2025;{" "}
+              <span className="text-accent">{starlinkCount}</span> aircraft are equipped today. The{" "}
+              <a href="/fleet" className="text-accent hover:underline">
+                fleet page
+              </a>{" "}
+              charts the rollout tail by tail, and the counters above update as new installs are
+              verified.
+            </p>
+          ),
+          ld: "About 40+ installs a month. United's first Starlink install was March 2025; {{starlinkCount}} aircraft are equipped today. The fleet page charts the rollout tail by tail, and this page's counters update as new installs are verified.",
         },
         {
           q: "When will my route get Starlink?",
