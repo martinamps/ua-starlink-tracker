@@ -57,7 +57,10 @@ import {
   type AirlineOverview,
   AirlinesIndexPage,
 } from "../components/airlines-page";
-import CheckFlightPage, { type FlightFacts } from "../components/check-flight-page";
+import CheckFlightPage, {
+  type FlightFacts,
+  type InvalidFlightQuery,
+} from "../components/check-flight-page";
 import FleetPage from "../components/fleet-page";
 import McpPage from "../components/mcp-page";
 import MethodologyPage, { hasMethodology } from "../components/methodology-page";
@@ -1504,7 +1507,8 @@ async function renderSubPage<P extends { site: SiteConfig }>(
   component: React.ComponentType<P>,
   canonicalPath: string,
   meta: PageMeta,
-  props?: Omit<P, "site">
+  props?: Omit<P, "site">,
+  status = 200
 ): Promise<Response> {
   const reactHtml = ReactDOMServer.renderToString(
     React.createElement(component, { site: ctx.site, ...(props ?? {}) } as unknown as P)
@@ -1523,7 +1527,12 @@ async function renderSubPage<P extends { site: SiteConfig }>(
   });
 
   const template = await getHtmlTemplate();
-  return new Response(renderHtml(template, htmlVariables), { headers: SECURITY_HEADERS.html });
+  return new Response(renderHtml(template, htmlVariables), {
+    status,
+    // Keep the HTML CSP even on 404s: this page runs the inline lookup script,
+    // which SECURITY_HEADERS.notFound would block.
+    headers: SECURITY_HEADERS.html,
+  });
 }
 
 function subPageMeta(
@@ -1580,27 +1589,36 @@ function resolveFlightCfg(ctx: RequestContext, flightNumber: string): AirlineCon
   return detectAirline(flightNumber);
 }
 
+type CheckFlightPath =
+  | { kind: "bare" }
+  | { kind: "flight"; raw: string; fn: string; date: string | null }
+  | { kind: "invalid"; raw: string | null };
+
 /** Parse `/check-flight/{flightNumber}[/{date}]`. `raw` is the segment as
  * requested, `fn` its canonical spelling (uppercase, zero-padding stripped) —
- * a mismatch means 301, so each flight has exactly one indexable URL. Returns
- * null for the bare page or a malformed segment. */
-function parseCheckFlightPath(
-  pathname: string
-): { raw: string; fn: string; date: string | null } | null {
+ * a mismatch means 301, so each flight has exactly one indexable URL. A segment
+ * that isn't a flight number is `invalid` (raw null when it wouldn't decode) so
+ * the handler can explain itself instead of dead-ending on a bare 404. */
+function parseCheckFlightPath(pathname: string): CheckFlightPath {
   const rest = pathname.slice("/check-flight/".length).replace(/\/+$/, "");
-  if (!rest) return null;
+  if (!rest) return { kind: "bare" };
   const [first, second] = rest.split("/");
   let raw: string;
   try {
     raw = decodeURIComponent(first ?? "").trim();
   } catch {
-    return null; // malformed % escape — fall through to the generic page
+    return { kind: "invalid", raw: null }; // malformed % escape
   }
   const fn = stripFlightNumberZeros(raw.toUpperCase());
-  if (!/^[A-Z]{2}\d{1,4}$/.test(fn)) return null;
+  if (!/^[A-Z]{2}\d{1,4}$/.test(fn)) return { kind: "invalid", raw };
   const date = second && /^\d{4}-\d{2}-\d{2}$/.test(second) ? second : null;
-  return { raw, fn, date };
+  return { kind: "flight", raw, fn, date };
 }
+
+/** Cap what an invalid segment can echo back into the page. React escapes it;
+ * this only keeps a pasted essay from wrecking the layout. */
+const echoQuery = (raw: string | null): string | null =>
+  raw ? (raw.length > 24 ? `${raw.slice(0, 24)}…` : raw) : null;
 
 const AIRPORT_CODE_RE = /^[A-Z0-9]{3,4}$/;
 
@@ -1731,7 +1749,28 @@ const checkFlightPage: Handler = (ctx) => {
   // content + meta + Flight JSON-LD; the date-less URL is canonical so date
   // variants don't dilute it.
   const parsed = parseCheckFlightPath(ctx.url.pathname);
-  if (parsed) {
+  // A segment that isn't a flight number (an airport code, a city, a typo —
+  // the homepage form navigates here with whatever was typed) still 404s, but
+  // renders the real page with a notice and the working lookup form instead of
+  // the bare not-found document.
+  const invalidPage = (invalid: InvalidFlightQuery) =>
+    renderSubPage(
+      ctx,
+      CheckFlightPage,
+      "/check-flight",
+      { ...subPageMeta(ctx, "check-flight"), robotsMeta: "noindex, nofollow" },
+      { invalid },
+      404
+    );
+  if (parsed.kind === "invalid") {
+    const query = echoQuery(parsed.raw);
+    return invalidPage({
+      query,
+      reason: "not-a-flight-number",
+      airportHint: query !== null && AIRPORT_CODE_RE.test(query.toUpperCase()),
+    });
+  }
+  if (parsed.kind === "flight") {
     const { raw, fn, date } = parsed;
     if (raw !== fn) {
       // Non-canonical spellings (ua123, UA0123) 301 home, date preserved.
@@ -1741,7 +1780,10 @@ const checkFlightPage: Handler = (ctx) => {
       );
     }
     const cfg = resolveFlightCfg(ctx, fn);
-    if (!cfg) return notFound(ctx.site);
+    // Shape-valid but carrying another carrier's prefix on this host. The
+    // notice never names that carrier — a tenant host must not confirm what
+    // else exists (same rule the /api foreign-prefix gate follows).
+    if (!cfg) return invalidPage({ query: fn, reason: "other-carrier", airportHint: false });
     const reader = ctx.tenant === "ALL" ? ctx.getReader(cfg.code) : ctx.reader;
     const variants = buildFlightLookupVariants(cfg, fn);
     // Existence gate (same data test as the sitemap): no rows behind the
@@ -1766,9 +1808,8 @@ const checkFlightPage: Handler = (ctx) => {
       { flight: facts }
     );
   }
-  // Bare /check-flight is the generic indexable page; anything else under the
-  // prefix is a malformed segment (bad escape, not a flight number) → hard 404.
-  if (ctx.url.pathname.replace(/\/+$/, "") !== "/check-flight") return notFound(ctx.site);
+  // Bare /check-flight (with or without a trailing slash) — the generic
+  // indexable page.
   return renderSubPage(ctx, CheckFlightPage, "/check-flight", subPageMeta(ctx, "check-flight"));
 };
 
