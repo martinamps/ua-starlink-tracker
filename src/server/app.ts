@@ -62,8 +62,10 @@ import FleetPage from "../components/fleet-page";
 import McpPage from "../components/mcp-page";
 import MethodologyPage, { hasMethodology } from "../components/methodology-page";
 import Page from "../components/page";
+import RoutePage, { routeVerdict } from "../components/route-page";
 import RoutePlannerPage from "../components/route-planner-page";
 import RoutesPage from "../components/routes-page";
+import { ROUTE_AIRPORT_RE, type RouteSummary } from "../database/database";
 import {
   COUNTERS,
   DISTRIBUTIONS,
@@ -1215,6 +1217,15 @@ const sitemap: Handler = ({ reader, site, tenant, getReader }) => {
           lastmod: f.last_touched ? new Date(f.last_touched * 1000).toISOString() : undefined,
         }))
       : [];
+  const routeEntries =
+    site.features.routePlannerPage && tenantConfig(tenant)
+      ? reader.getSitemapRoutes().map((r) => ({
+          path: `/route-planner/${r.origin}/${r.destination}`,
+          changefreq: "weekly",
+          priority: "0.6",
+          lastmod: r.last_touched ? new Date(r.last_touched * 1000).toISOString() : undefined,
+        }))
+      : [];
   // Each hub airline page's lastmod is that airline's own data freshness, not
   // the hub-wide max — an airline without a stamp yet omits lastmod rather
   // than borrowing another airline's. Same population as the hub homepage:
@@ -1236,6 +1247,7 @@ const sitemap: Handler = ({ reader, site, tenant, getReader }) => {
     })),
     ...airlineEntries,
     ...flightEntries,
+    ...routeEntries,
   ];
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
@@ -1772,10 +1784,68 @@ const checkFlightPage: Handler = (ctx) => {
   return renderSubPage(ctx, CheckFlightPage, "/check-flight", subPageMeta(ctx, "check-flight"));
 };
 
+/** `/route-planner/SFO/EWR` → `{ origin, destination }`; anything else → null. */
+export function parseRoutePath(pathname: string): { origin: string; destination: string } | null {
+  const rest = pathname.slice("/route-planner".length).replace(/^\/+|\/+$/g, "");
+  if (!rest) return null;
+  const parts = rest.split("/");
+  if (parts.length !== 2) return null;
+  const [origin, destination] = parts.map((p) => p.toUpperCase());
+  if (!ROUTE_AIRPORT_RE.test(origin) || !ROUTE_AIRPORT_RE.test(destination)) return null;
+  if (origin === destination) return null;
+  return { origin, destination };
+}
+
+function routePageMeta(ctx: RequestContext, cfg: AirlineConfig, route: RouteSummary): PageMeta {
+  const pair = `${route.origin} to ${route.destination}`;
+  const verdict = routeVerdict(route, cfg.name);
+  const numbers = route.flightNumbers.slice(0, 6).map((f) => f.flight_number);
+  return {
+    siteTitle: `${pair} Starlink WiFi — ${cfg.shortName} Flights`,
+    siteDescription: `Does ${cfg.name} fly Starlink on ${pair}? ${verdict}${
+      numbers.length ? ` Flight numbers on this route: ${numbers.join(", ")}.` : ""
+    }`,
+    keywords: `${route.origin} ${route.destination} starlink, ${pair} wifi, ${cfg.shortName.toLowerCase()} ${route.origin} ${route.destination} starlink`,
+    ogTitle: `${pair} — Starlink WiFi on ${cfg.shortName}`,
+    ogDescription: verdict,
+    pageJsonLd: jsonLdBlock({
+      "@context": "https://schema.org",
+      "@type": "ItemList",
+      name: `${cfg.name} flights on ${route.origin} → ${route.destination}`,
+      numberOfItems: route.flightNumbers.length,
+      itemListElement: route.flightNumbers.slice(0, 25).map((f, i) => ({
+        "@type": "ListItem",
+        position: i + 1,
+        url: `https://${ctx.site.canonicalHost}/check-flight/${f.flight_number}`,
+        name: `${cfg.name} ${f.flight_number}`,
+      })),
+    }),
+  };
+}
+
 const routePlannerPage: Handler = (ctx) => {
   if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
   if (!ctx.site.features.routePlannerPage) {
     return notFound(ctx.site);
+  }
+  // Per-route permalinks: /route-planner/{origin}/{destination}. The prefix used
+  // to swallow every sub-path and render the planner, so ~10k internal links off
+  // the flight permalinks all resolved to one duplicate page and Google logged
+  // them as soft 404s. Unknown pairs now 404 so the URL space stays bounded.
+  const trimmed = ctx.url.pathname.replace(/\/+$/, "");
+  if (trimmed !== "/route-planner") {
+    const parsed = parseRoutePath(ctx.url.pathname);
+    if (!parsed) return notFound(ctx.site);
+    const cfg = siteAirline(ctx.site);
+    if (!ctx.reader.routeHasData(parsed.origin, parsed.destination)) return notFound(ctx.site);
+    const route = ctx.reader.getRouteSummary(parsed.origin, parsed.destination);
+    return renderSubPage(
+      ctx,
+      RoutePage,
+      `/route-planner/${parsed.origin}/${parsed.destination}`,
+      routePageMeta(ctx, cfg, route),
+      { route }
+    );
   }
   return renderSubPage(ctx, RoutePlannerPage, "/route-planner", subPageMeta(ctx, "route-planner"));
 };
