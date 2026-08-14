@@ -1694,7 +1694,6 @@ function flightPageMeta(
   cfg: AirlineConfig,
   facts: FlightFacts
 ): PageMeta {
-  const brand = ctx.site.brand;
   const route = facts.routes[0] ?? null;
   const routeLabel = route ? ` (${route.departure_airport} → ${route.arrival_airport})` : "";
   const answer = flightMetaAnswer(reader, cfg, flightNumber, facts);
@@ -1712,11 +1711,14 @@ function flightPageMeta(
       })
     : "";
 
+  // The route pair carries both the WiFi intent and the flight-status intent
+  // people actually type, and it fits well inside the ~60 chars Google renders
+  // once the brand suffix is gone (Google appends the site name itself).
   return {
-    siteTitle: `Does ${flightNumber} Have Starlink WiFi? | ${brand.title}`,
+    siteTitle: `Does ${flightNumber}${routeLabel} Have Starlink WiFi?`,
     siteDescription: `Does ${cfg.name} ${flightNumber}${routeLabel} have free Starlink WiFi?${answer} Pick a date for a firm answer once aircraft assignments publish.`,
     keywords: `${flightNumber} starlink, does ${flightNumber} have wifi, ${flightNumber} wifi, ${cfg.name} ${flightNumber} starlink`,
-    ogTitle: `Does ${flightNumber} Have Starlink WiFi?`,
+    ogTitle: `Does ${flightNumber}${routeLabel} Have Starlink WiFi?`,
     ogDescription: `${cfg.name} ${flightNumber}${routeLabel} — check Starlink availability and get a probability estimate.`,
     pageJsonLd,
   };
