@@ -1798,6 +1798,207 @@ export function flightNumberHasData(
   );
 }
 
+/**
+ * Airport codes eligible for a route URL: IATA only, so one airport is exactly
+ * one URL. Rows carrying 4-letter ICAO codes are skipped by both the sitemap
+ * and the page gate, which keeps the two in agreement.
+ */
+export const ROUTE_AIRPORT_RE = /^[A-Z]{3}$/;
+
+export interface SitemapRoute {
+  origin: string;
+  destination: string;
+  /** Newest data-touch across the pair; 0 when unknown so callers omit lastmod. */
+  last_touched: number;
+}
+
+/**
+ * Directed route pairs worth advertising, with real per-route lastmod.
+ *
+ * Anchored on flight_routes rather than the live upcoming_flights window: the
+ * window only covers 48 hours, so gating on it would add and drop thousands of
+ * URLs every couple of days. flight_routes is airline-agnostic (the PK carries
+ * the IATA prefix), so scoping is a GLOB on flight_number — same trick
+ * getSitemapFlights uses.
+ */
+export function getSitemapRoutes(db: Database, airline: string): SitemapRoute[] {
+  const cfg = AIRLINES[airline];
+  if (!cfg) return [];
+  const nowSec = Math.floor(Date.now() / 1000);
+  const latest = new Map<string, number>();
+  const touch = (origin: string, destination: string, t: number | null) => {
+    if (!ROUTE_AIRPORT_RE.test(origin) || !ROUTE_AIRPORT_RE.test(destination)) return;
+    if (origin === destination) return;
+    // Future timestamps are corrupt rows — treat as unknown, keep the route.
+    const sane = t && t <= nowSec ? t : 0;
+    const key = `${origin}-${destination}`;
+    latest.set(key, Math.max(latest.get(key) ?? 0, sane));
+  };
+  const cached = db
+    .query(
+      `SELECT origin, destination, MAX(last_seen_at) AS t FROM flight_routes
+       WHERE flight_number GLOB ? GROUP BY origin, destination`
+    )
+    .all(`${cfg.iata}[0-9]*`) as { origin: string; destination: string; t: number | null }[];
+  const upcoming = db
+    .query(
+      `SELECT departure_airport AS origin, arrival_airport AS destination,
+              MAX(last_updated) AS t
+       FROM upcoming_flights
+       WHERE airline = ? AND departure_airport IS NOT NULL AND arrival_airport IS NOT NULL
+       GROUP BY departure_airport, arrival_airport`
+    )
+    .all(airline) as { origin: string; destination: string; t: number | null }[];
+  for (const r of [...cached, ...upcoming]) touch(r.origin, r.destination, r.t);
+  return [...latest]
+    .map(([key, last_touched]) => {
+      const [origin, destination] = key.split("-");
+      return { origin, destination, last_touched };
+    })
+    .sort((a, b) => a.origin.localeCompare(b.origin) || a.destination.localeCompare(b.destination));
+}
+
+/**
+ * Single-route form of the getSitemapRoutes data test. Pages and sitemap must
+ * agree on which route URLs exist — /route-planner/{o}/{d} is otherwise an
+ * unbounded thin-page space, so unknown pairs 404.
+ */
+export function routeHasData(
+  db: Database,
+  origin: string,
+  destination: string,
+  airline: string
+): boolean {
+  const q = withAirline(
+    "SELECT 1 FROM upcoming_flights WHERE departure_airport = ? AND arrival_airport = ?",
+    airline,
+    "",
+    [origin, destination]
+  );
+  if (db.query(`${q.sql} LIMIT 1`).get(...q.params)) return true;
+  const cfg = AIRLINES[airline];
+  if (!cfg) return false;
+  return Boolean(
+    db
+      .query(
+        `SELECT 1 FROM flight_routes
+         WHERE origin = ? AND destination = ? AND flight_number GLOB ? LIMIT 1`
+      )
+      .get(origin, destination, `${cfg.iata}[0-9]*`)
+  );
+}
+
+export interface RouteSummary {
+  origin: string;
+  destination: string;
+  /** Marketing flight numbers observed on the pair, most-flown first. */
+  flightNumbers: Array<{ flight_number: string; times: number; scheduled: number }>;
+  /** Median-ish block time across observations, seconds. */
+  durationSec: number | null;
+  /** Departures on a Starlink-equipped tail in the live window. */
+  equippedDepartures: number;
+  /** All departures in the live window, equipped or not. */
+  totalDepartures: number;
+  windowLabel: string;
+}
+
+/** Everything a /route-planner/{origin}/{destination} page renders. */
+export function getRouteSummary(
+  db: Database,
+  origin: string,
+  destination: string,
+  airline: string,
+  nowSec = Math.floor(Date.now() / 1000)
+): RouteSummary {
+  const cfg = AIRLINES[airline];
+  const cached = cfg
+    ? (db
+        .query(
+          `SELECT flight_number, seen_count AS times, duration_sec
+           FROM flight_routes
+           WHERE origin = ? AND destination = ? AND flight_number GLOB ?`
+        )
+        .all(origin, destination, `${cfg.iata}[0-9]*`) as Array<{
+        flight_number: string;
+        times: number;
+        duration_sec: number | null;
+      }>)
+    : [];
+  const liveQ = withAirline(
+    `SELECT flight_number, COUNT(*) AS times,
+            CAST(AVG(arrival_time - departure_time) AS INTEGER) AS duration_sec
+     FROM upcoming_flights
+     WHERE departure_airport = ? AND arrival_airport = ? AND flight_number IS NOT NULL`,
+    airline,
+    "",
+    [origin, destination]
+  );
+  const live = db.query(`${liveQ.sql} GROUP BY flight_number`).all(...liveQ.params) as Array<{
+    flight_number: string;
+    times: number;
+    duration_sec: number | null;
+  }>;
+
+  // Marketing numbers only, normalized the same way getSitemapFlights does.
+  // upcoming_flights also carries operating-carrier numbers (SKW4726 for a
+  // United Express leg); those have no /check-flight permalink, so rendering
+  // them would put broken internal links on every affected route page.
+  const marketing = cfg ? new RegExp(`^${cfg.iata}\\d+$`) : null;
+  const merged = new Map<string, { times: number; scheduled: number }>();
+  const add = (raw: string, times: number, scheduled: number) => {
+    if (!cfg || !marketing) return;
+    const fn = stripFlightNumberZeros(ensureAirlinePrefix(cfg, raw));
+    if (!marketing.test(fn)) return;
+    const prev = merged.get(fn);
+    merged.set(fn, {
+      times: (prev?.times ?? 0) + times,
+      scheduled: Math.max(prev?.scheduled ?? 0, scheduled),
+    });
+  };
+  for (const r of cached) add(r.flight_number, r.times, 0);
+  for (const r of live) add(r.flight_number, r.times, 1);
+  const flightNumbers = [...merged]
+    .map(([flight_number, v]) => ({ flight_number, ...v }))
+    .sort((a, b) => b.scheduled - a.scheduled || b.times - a.times);
+
+  const durations = [...cached, ...live]
+    .map((r) => r.duration_sec)
+    .filter((d): d is number => typeof d === "number" && d > 0)
+    .sort((a, b) => a - b);
+  const durationSec = durations.length ? durations[Math.floor(durations.length / 2)] : null;
+
+  const windowEnd = nowSec + DEPARTURE_WINDOW_HOURS * 3600;
+  const equippedQ = withAirline(
+    `SELECT COUNT(DISTINCT uf.flight_number || ':' || uf.departure_time) AS n${EQUIPPED_DEPARTURES_SQL}
+       AND uf.departure_airport = ? AND uf.arrival_airport = ?`,
+    airline,
+    "uf",
+    [nowSec, windowEnd, origin, destination]
+  );
+  const equippedDepartures = (db.query(equippedQ.sql).get(...equippedQ.params) as { n: number }).n;
+
+  const totalQ = withAirline(
+    `SELECT COUNT(DISTINCT uf.flight_number || ':' || uf.departure_time) AS n
+     FROM upcoming_flights uf
+     WHERE uf.departure_time >= ? AND uf.departure_time < ?
+       AND uf.departure_airport = ? AND uf.arrival_airport = ?`,
+    airline,
+    "uf",
+    [nowSec, windowEnd, origin, destination]
+  );
+  const totalDepartures = (db.query(totalQ.sql).get(...totalQ.params) as { n: number }).n;
+
+  return {
+    origin,
+    destination,
+    flightNumbers,
+    durationSec,
+    equippedDepartures,
+    totalDepartures,
+    windowLabel: `next ${DEPARTURE_WINDOW_HOURS} hours`,
+  };
+}
+
 export interface FlightRoutePair {
   departure_airport: string;
   arrival_airport: string;

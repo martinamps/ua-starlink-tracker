@@ -31,7 +31,9 @@ import {
   type RouteEntryRow,
   type RouteFlightRow,
   type RouteGraphEdge,
+  type RouteSummary,
   type SitemapFlight,
+  type SitemapRoute,
   type SubfleetPenetration,
   type VerificationObservation,
   type VerificationSource,
@@ -68,9 +70,11 @@ import {
   getRouteFlights,
   getRouteGraphEdges,
   getRouteStarlinkSchedule,
+  getRouteSummary,
   getRoutesForFlightVariants,
   getServedRoutePairs,
   getSitemapFlights,
+  getSitemapRoutes,
   getStarlinkPlaneByTail,
   getStarlinkPlanes,
   getSubfleetPenetration,
@@ -79,6 +83,7 @@ import {
   getVerificationObservations,
   getVerificationSummary,
   getWifiMismatches,
+  routeHasData,
 } from "./database";
 
 export type { Database };
@@ -106,6 +111,8 @@ export interface ScopedReader {
   getLastUpdatedRaw(): string | null;
   /** Flight permalinks worth advertising, with real per-flight lastmod; empty on the hub (permalinks are tenant pages). */
   getSitemapFlights(): SitemapFlight[];
+  /** Route permalinks worth advertising, with real per-route lastmod; empty on the hub (route pages are tenant pages). */
+  getSitemapRoutes(): SitemapRoute[];
   /** Meta keys are namespaced per-airline; null on the hub (no single namespace). */
   getMeta(key: string): string | null;
   /** Check-flight assignments without the verified_wifi filter (the core classifies tiers). */
@@ -153,6 +160,9 @@ export interface ScopedReader {
 
   // Flight-permalink SSR: existence gate + observed history + route census.
   flightNumberHasData(variants: string[]): boolean;
+  /** Existence gate for /route-planner/{origin}/{destination}; mirrors getSitemapRoutes. */
+  routeHasData(origin: string, destination: string): boolean;
+  getRouteSummary(origin: string, destination: string): RouteSummary;
   getFlightHistorySummary(variants: string[]): FlightHistorySummary;
   getFlightRoutePairs(variants: string[]): FlightRoutePair[];
 
@@ -277,6 +287,7 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
         .sort()
         .at(-1) ?? null,
     getSitemapFlights: () => (scope === "ALL" ? [] : getSitemapFlights(db, scope)),
+    getSitemapRoutes: () => (scope === "ALL" ? [] : getSitemapRoutes(db, scope)),
     getMeta: (key) => (scope === "ALL" ? null : getMeta(db, key, scope)),
     getFlightAssignments: (v, s, e) => getFlightAssignments(db, v, s, e, airlines),
     getFleetPageData: () => getFleetPageData(db, airlines),
@@ -304,6 +315,8 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     getRoutesForFlightVariants: (v) => getRoutesForFlightVariants(db, v, airlines),
 
     flightNumberHasData: (v) => flightNumberHasData(db, v, airlines),
+    routeHasData: (o, d) => routeHasData(db, o, d, soleAirline()),
+    getRouteSummary: (o, d) => getRouteSummary(db, o, d, soleAirline()),
     getFlightHistorySummary: (v) => getFlightHistorySummary(db, v, airlines),
     getFlightRoutePairs: (v) => getFlightRoutePairs(db, v, airlines),
 
