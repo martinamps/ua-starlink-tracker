@@ -2005,11 +2005,20 @@ export interface FlightRoutePair {
   /** Times we've seen this flight number on this leg (route cache + live window). */
   times: number;
   dur_sec: number | null;
+  /** 1 when the leg appears in the live schedule window, 0 when it is only history. */
+  scheduled: number;
 }
 
-/** Route pairs a flight number flies, most-flown first — the accumulated
- * flight_routes cache unioned with the live upcoming_flights window (which
- * covers legs the cache hasn't recorded yet). */
+/** Route pairs a flight number flies, currently-scheduled legs first and
+ * most-flown within that — the accumulated flight_routes cache unioned with the
+ * live upcoming_flights window (which covers legs the cache hasn't recorded yet).
+ *
+ * Ordering leads with `scheduled` rather than raw frequency because
+ * flight_routes.seen_count accumulates for the life of a flight number. When a
+ * number is reassigned to a new city pair, the retired leg keeps out-counting
+ * the current one indefinitely, so callers that take routes[0] as "the" route —
+ * page titles, meta descriptions, Flight JSON-LD — would advertise a route the
+ * flight no longer flies. */
 export function getFlightRoutePairs(
   db: Database,
   variants: string[],
@@ -2018,7 +2027,8 @@ export function getFlightRoutePairs(
   const placeholders = variants.map(() => "?").join(",");
   const upcoming = withAirline(
     `SELECT departure_airport, arrival_airport, COUNT(*) AS times,
-            CAST(AVG(arrival_time - departure_time) AS INTEGER) AS dur_sec
+            CAST(AVG(arrival_time - departure_time) AS INTEGER) AS dur_sec,
+            1 AS scheduled
      FROM upcoming_flights WHERE flight_number IN (${placeholders})`,
     airline,
     "",
@@ -2026,16 +2036,17 @@ export function getFlightRoutePairs(
   );
   return db
     .query(
-      `SELECT departure_airport, arrival_airport, SUM(times) AS times, MAX(dur_sec) AS dur_sec
+      `SELECT departure_airport, arrival_airport, SUM(times) AS times, MAX(dur_sec) AS dur_sec,
+              MAX(scheduled) AS scheduled
        FROM (
          SELECT origin AS departure_airport, destination AS arrival_airport,
-                seen_count AS times, duration_sec AS dur_sec
+                seen_count AS times, duration_sec AS dur_sec, 0 AS scheduled
          FROM flight_routes WHERE flight_number IN (${placeholders})
          UNION ALL
          ${upcoming.sql} GROUP BY departure_airport, arrival_airport
        )
        GROUP BY departure_airport, arrival_airport
-       ORDER BY times DESC LIMIT 4`
+       ORDER BY scheduled DESC, times DESC LIMIT 4`
     )
     .all(...variants, ...upcoming.params) as FlightRoutePair[];
 }

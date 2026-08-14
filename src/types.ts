@@ -41,7 +41,11 @@ export interface PerAirlineStat {
   code: string;
   name: string;
   starlink: number;
+  /** Published fleet size — the denominator every surface must divide by. */
   total: number;
+  /** Tails we actually hold rows for. Smaller than `total`; the gap is a
+   * coverage signal, NOT a denominator. Dividing by it makes the hub quote a
+   * higher percentage than the airline's own tracker for the same airline. */
   fleetTotal?: number;
   installs30d?: number;
   status?: RolloutStatus;

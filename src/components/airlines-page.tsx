@@ -26,9 +26,11 @@ export interface AirlineOverview {
 }
 
 function fleetShare(stat: PerAirlineStat): { fleet: number; pct: number } {
-  // % over the FULL fleet (same convention as the hub status cards) so it
-  // reads as "odds on a random flight".
-  const fleet = stat.fleetTotal ?? stat.total;
+  // % over the FULL fleet so it reads as "odds on a random flight". `total` is
+  // the same denominator the airline's own tracker publishes; fleetTotal counts
+  // only the tails we hold rows for, which is smaller and would make the hub
+  // quote a higher percentage than the tenant site for the same airline.
+  const fleet = stat.total;
   return { fleet, pct: fleet > 0 ? Math.round((stat.starlink / fleet) * 100) : 0 };
 }
 

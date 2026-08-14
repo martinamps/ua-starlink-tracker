@@ -82,7 +82,9 @@ export const STATUS_TONE = {
 export function AirlineStatusCards({ stats }: { stats: PerAirlineStat[] }) {
   const ranked = [...stats]
     .map((a) => {
-      const fleet = a.fleetTotal ?? a.total;
+      // `total`, not fleetTotal — see fleetShare in airlines-page: the hub must
+      // quote the same denominator the airline's own tracker publishes.
+      const fleet = a.total;
       return { ...a, fleet, pct: fleet > 0 ? (a.starlink / fleet) * 100 : 0 };
     })
     .sort((a, b) => b.pct - a.pct);
