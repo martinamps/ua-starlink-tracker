@@ -11,6 +11,7 @@ import {
   looksLikeValidTailNumber,
   verifierSourceTag,
 } from "../airlines/registry";
+import { instrumentDatabase } from "../observability/db-timing";
 import {
   COUNTERS,
   metrics,
@@ -99,6 +100,9 @@ export function initializeDatabase() {
   db.exec("PRAGMA busy_timeout = 5000"); // Wait up to 5s if database is locked
 
   setupTables(db);
+  // Folds each query's duration into whatever span is already open, so page
+  // latency can be attributed to SQL. No new spans — see db-timing.ts.
+  instrumentDatabase(db);
   return db;
 }
 

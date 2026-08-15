@@ -26,7 +26,6 @@ import {
   predictFlight,
 } from "../scripts/starlink-predictor";
 import { type FlightDateWindow, flightDateWindow, matchesLocalDate } from "../utils/airport-tz";
-import { warn } from "../utils/logger";
 import { type FallbackSegment, lookupFlightTailVerdict } from "./flight-verdict";
 import { Fr24UnavailableError } from "./flightradar24-api";
 import { qatarEquipmentName } from "./qatar-status";
@@ -320,13 +319,13 @@ export async function resolveFlightVerdict(
       // FR24 outage ≠ "no assignment published" — never a confident no.
       // Anything else (e.g. a DB error) must not masquerade as an outage.
       if (!(err instanceof Fr24UnavailableError)) throw err;
+      // Not logged here. cachedFlightAssignments caches a rejection for
+      // ASSIGNMENT_FAILURE_TTL and replays it to every request in that window,
+      // and concurrent requests await the same promise — so a consumer-side log
+      // fired 3-4 times per real failure. It is logged once, at the producer,
+      // in flight-verdict.ts. The degradation is still visible to the caller
+      // via fr24Error -> FR24_OUTAGE_NOTE.
       fr24Error = true;
-      // warn, not error: this is the handled degradation the line above
-      // describes, and the caller surfaces FR24_OUTAGE_NOTE to the user. At
-      // ERROR it was 72 of the service's 81 logged errors — enough noise to
-      // make the error stream useless for spotting a real fault. The outage
-      // itself is still tracked as vendor.request{vendor:fr24,status:error}.
-      warn(`FR24 lookup failed for ${normalized} ${date}; degrading to prediction path`, err);
     }
     if (segments !== null) {
       const starlink = segments.filter((s) => s.hasStarlink);
