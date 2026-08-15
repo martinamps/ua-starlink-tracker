@@ -44,6 +44,7 @@ import {
   SWAP_DEGRADED_NOTE,
   carrierReader,
   decideCarrier,
+  isPlausibleFlightNumber,
   negativeWifi,
   resolveFlightVerdict,
   scheduledFlights,
@@ -711,8 +712,12 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant }) 
     }
     case "prediction": {
       // No assignment anywhere — tails aren't published until ~2 days out, so
-      // serve the historical probability. hasStarlink stays false (the extension
-      // contract is boolean and means "firm assignment"); prediction is additive.
+      // serve the historical probability. hasStarlink is null, not false: false
+      // is reserved for a *verified* negative (scheduled_no / fr24_no), and
+      // returning it here asserted "no Starlink" for flights the model puts at
+      // 99%. Matches the carrier-agnostic prediction branch below. The extension
+      // reads `hasStarlink || false` so null is behaviourally identical for it,
+      // and null is already part of this contract (no_model, type branches).
       const pred = verdict.pred;
       recordPrediction(pred, cfg.code);
       const pct = Math.round(pred.probability * 100);
@@ -723,7 +728,7 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant }) 
         : `Aircraft assignment not yet published — ${cfg.name} assigns aircraft ~2 days before departure.`;
       return new Response(
         JSON.stringify({
-          hasStarlink: false,
+          hasStarlink: null,
           ...hubAirline,
           confidence: "predicted",
           prediction: {
@@ -915,6 +920,14 @@ const apiPredictFlight: Handler = ({ req, url, reader, getReader, tenant }) => {
   const carrier = resolveCarrier(tenant, flightNumber, reader, getReader);
   if (carrier instanceof Response) return carrier;
   const { cfg } = carrier;
+  // Same shape gate resolveFlightVerdict applies — /api/predict-flight had none,
+  // so UA4680A and UA00004680 returned a fleet prior for a non-flight-number.
+  if (!isPlausibleFlightNumber(cfg, ensureAirlinePrefix(cfg, flightNumber))) {
+    return new Response(JSON.stringify({ error: "Invalid flight number" }), {
+      status: 400,
+      headers: SECURITY_HEADERS.api,
+    });
+  }
   if (!cfg.flightHistoryModel) {
     // No flight-history model for this carrier — answer from the registry
     // (subfleet penetration / type story), mirroring check-flight's no_model.

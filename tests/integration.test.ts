@@ -98,7 +98,12 @@ describe("/api/check-flight contract", () => {
       "message",
       "prediction",
     ]);
-    expect(body.hasStarlink).toBe(false);
+    // null, not false: false is reserved for a *verified* negative
+    // (scheduled_no / fr24_no). On the prediction branch there is no assignment
+    // to verify, and false asserted "no Starlink" for flights the model puts
+    // near-certain. The key set above — the actual wire contract — is unchanged,
+    // and the extension reads `hasStarlink || false`, so null is inert for it.
+    expect(body.hasStarlink).toBe(null);
     expect(body.flights).toEqual([]);
     expect(body.confidence).toBe("predicted");
     expect(body.prediction.probability).toBeGreaterThanOrEqual(0);

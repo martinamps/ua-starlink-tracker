@@ -14,6 +14,7 @@ import {
   buildAirlineFlightNumberVariants,
   detectMarketingCarrier,
   ensureAirlinePrefix,
+  prefixBelongsTo,
 } from "../airlines/flight-number";
 import { type AirlineConfig, enabledAirlines, publicAirlines } from "../airlines/registry";
 import type { FlightAssignmentRow, QatarScheduleRow } from "../database/database";
@@ -86,11 +87,31 @@ export function decideCarrier(
     if (marketing && marketing.code !== pinnedCfg.code) {
       return { outcome: "not_tracked", pinnedCfg, tracked: PUBLIC_AIRLINES };
     }
+    // An unrecognised carrier prefix is not this carrier's flight either.
+    // Without this, untracked carriers (DL, AA, B6) fell through to the pinned
+    // airline's model and were answered with its priors.
+    if (!marketing && !prefixBelongsTo(pinnedCfg, flightNumber)) {
+      return { outcome: "not_tracked", pinnedCfg, tracked: PUBLIC_AIRLINES };
+    }
     return { outcome: "resolved", cfg: pinnedCfg, pinned: true };
   }
   const cfg = detectMarketingCarrier(flightNumber, PUBLIC_AIRLINES);
   if (!cfg) return { outcome: "not_tracked", pinnedCfg: null, tracked: PUBLIC_AIRLINES };
   return { outcome: "resolved", cfg, pinned: false };
+}
+
+/**
+ * Is this a shape a real flight number could take for `cfg`?
+ *
+ * Exactly `{IATA}` + 1-4 digits. An unbounded number would let callers drive
+ * arbitrary FR24 lookups through the public surfaces, and a trailing-letter
+ * form (UA4680A) parsed as subfleet "unknown" and returned the express/mainline
+ * midpoint for a string that is not a flight number. Shared by the verdict path
+ * and /api/predict-flight so the two cannot drift.
+ */
+export function isPlausibleFlightNumber(cfg: AirlineConfig, normalized: string): boolean {
+  const m = normalized.match(/^([A-Z]+)(\d{1,4})$/);
+  return m !== null && m[1] === cfg.iata;
 }
 
 /** The reader a resolved decision answers from: the pinned scope's own, or a
@@ -242,10 +263,7 @@ export async function resolveFlightVerdict(
   if (!window) return { kind: "invalid_date" };
 
   const normalized = ensureAirlinePrefix(cfg, flightNumber);
-  // Real flight numbers are 1-4 digits; an unbounded number would let callers
-  // drive arbitrary FR24 lookups through the public surfaces.
-  const numPart = normalized.match(/(\d+)$/)?.[1];
-  if (!numPart || numPart.length > 4) {
+  if (!isPlausibleFlightNumber(cfg, normalized)) {
     return { kind: "invalid_flight_number", normalized };
   }
 

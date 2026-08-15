@@ -55,6 +55,23 @@ function iataExact(cfg: AirlineConfig): RegExp {
 }
 
 /**
+ * Does this flight number's carrier prefix belong to `cfg`?
+ *
+ * detectMarketingCarrier only recognises airlines we track, so an untracked
+ * carrier's number (DL100, B6100) looked prefix-less and got answered from the
+ * pinned carrier's model — B6100 was reported as 70% Starlink because
+ * inferSubfleet read "6100" as a United Express number. Bare digits stay true:
+ * they carry no carrier claim, so the pinned carrier owns them.
+ */
+export function prefixBelongsTo(cfg: AirlineConfig, flightNumber: string): boolean {
+  const fn = flightNumber.trim().toUpperCase();
+  const m = fn.match(/^([A-Z]+)\d+$/);
+  if (!m) return true;
+  const prefix = m[1];
+  return prefix === cfg.iata || prefix === cfg.icao || cfg.carrierPrefixes.includes(prefix);
+}
+
+/**
  * Normalize an operating-carrier flight number to the marketing-carrier code.
  * e.g. for UA: SKW5882 → UA5882, UAL544 → UA544, UA1234 → UA1234.
  */
@@ -75,8 +92,13 @@ export function normalizeAirlineFlightNumber(cfg: AirlineConfig, flightNumber: s
  */
 export function ensureAirlinePrefix(cfg: AirlineConfig, flightNumber: string): string {
   const normalized = normalizeAirlineFlightNumber(cfg, flightNumber.trim().toUpperCase());
-  if (iataExact(cfg).test(normalized)) return normalized;
-  if (/^\d+$/.test(normalized)) return `${cfg.iata}${normalized}`;
+  // Zero-padding is stripped here, not just at the permalink layer: boarding
+  // passes and GDS itineraries print UA0100, the verification log stores UA100
+  // (the DB writer strips too), so a padded query silently missed every row and
+  // fell through to the fleet prior. buildFlightLookupVariants re-adds every
+  // padding width for the DB lookup, so canonicalizing first is lossless.
+  if (iataExact(cfg).test(normalized)) return stripFlightNumberZeros(normalized);
+  if (/^\d+$/.test(normalized)) return `${cfg.iata}${normalized.replace(/^0+(?=\d)/, "")}`;
   return normalized;
 }
 
