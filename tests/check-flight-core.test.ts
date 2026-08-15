@@ -463,8 +463,9 @@ describe("/api/check-flight boundary + contract through dispatch (synthetic DB)"
     // Far-future date keeps FR24 out of its lookup window — no network.
     const res = await get("/api/check-flight?flight_number=UA111&date=2027-06-10");
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { hasStarlink: boolean; flights: unknown[] };
-    expect(body.hasStarlink).toBe(false);
+    const body = (await res.json()) as { hasStarlink: boolean | null; flights: unknown[] };
+    // Prediction branch → null (unknown), not false (verified negative).
+    expect(body.hasStarlink).toBe(null);
     expect(Array.isArray(body.flights)).toBe(true);
     expect(body.flights.length).toBe(0);
   });
