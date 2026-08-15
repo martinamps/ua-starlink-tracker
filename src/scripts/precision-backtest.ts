@@ -175,6 +175,15 @@ if (import.meta.main) {
 
   const anchorIso = new Date(r.anchor * 1000).toISOString().slice(0, 16).replace("T", " ");
   console.log(`\n=== Firm-call precision · ${days}d window ending ${anchorIso} ===`);
+  // An empty sample used to print "precision=0.00%" and "North-star bar: FAIL",
+  // which reads as a real regression rather than "there is no data here" — the
+  // exact failure mode you hit running this against an empty local DB.
+  if (r.yes.n === 0 && r.no.n === 0) {
+    console.error(
+      `\n  NO DATA: no firm calls in the ${days}d window (db=${dbPath}). Nothing was measured — this is not a precision result.\n`
+    );
+    process.exit(2);
+  }
   console.log(fmt(r.yes, "YES"));
   console.log(fmt(r.no, "NO"));
   console.log(`  (no firm call possible: ${r.noFirmCall} obs — first sighting of tail)`);

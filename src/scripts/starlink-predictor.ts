@@ -65,7 +65,11 @@ type PredictionMethod =
   | "flight_history_smoothed"
   | "fleet_prior_express"
   | "fleet_prior_mainline"
-  | "fleet_prior_unknown";
+  | "fleet_prior_unknown"
+  /** Priced from a confirmed same-day assignment, discounted by the swap rate —
+   * not from history or a prior. Route-planner legs only. Additive: these legs
+   * previously omitted `method` entirely, so no consumer can be relying on it. */
+  | "confirmed_assignment";
 
 interface Prediction {
   flight_number: string;
@@ -450,6 +454,15 @@ export function backtest(
 
   console.log(`\n=== Backtest: holdout=${holdoutHours}h ===`);
   console.log(`Train: ${trainObs.length} obs | Test: ${testObs.length} obs`);
+  // Zero observations used to print "Accuracy: 0.0%" and "Brier score: 0.0000",
+  // which look like measurements. Fail loudly instead.
+  if (testObs.length === 0 || trainObs.length === 0) {
+    console.error(
+      "\nNO DATA: the train or test split is empty — nothing was measured. " +
+        "Point --db at a populated database.\n"
+    );
+    process.exit(2);
+  }
   console.log(
     `Smoothing priors: express=${derivedConfig.expressSmoothingPrior.toFixed(3)}, mainline=${derivedConfig.mainlineSmoothingPrior.toFixed(3)}`
   );
@@ -646,7 +659,7 @@ export function predictRoute(
   const routeDesc = orig && dest ? `${orig}→${dest}` : orig ? `from ${orig}` : `to ${dest}`;
   const coverage_note =
     flights.length === 0
-      ? `Route ${routeDesc} is UNOBSERVED — no Starlink-equipped aircraft has flown it in our ~65-day history. Distinct from "0% observed": unobserved means no data. The fleet-prior baseline applies (mainline routes ~2%, express higher — see get_fleet_stats for current numbers).`
+      ? `Route ${routeDesc} is UNOBSERVED — no Starlink-equipped aircraft has flown it in the observed history. Distinct from "0% observed": unobserved means no data. The fleet-prior baseline applies — mainline is materially lower than express; call get_fleet_stats for the current rates.`
       : `Found ${flights.length} flight number(s) ${routeDesc} operated by Starlink-equipped aircraft in our history. These probabilities reflect how often each flight number gets a Starlink plane assigned.`;
 
   return { origin: orig, destination: dest, flights, coverage_note };
@@ -1064,10 +1077,19 @@ const MIN_LEG_PROBABILITY = 0.3;
 // Probability for confirmed near-term Starlink assignments (same-day in
 // upcoming_flights, verified-Starlink tail). Discount = observed aircraft-swap
 // rate from our own verification log ('Aircraft mismatch' errors).
-// Mainline rotates far more freely (~35% swap rate) than express (~9%).
+//
+// Re-measured from verification.check{result:aircraft_mismatch} by fleet:
+//   30d  express 381/4,233 = 9.00%   mainline 261/5,235 = 4.99%
+//   90d  express 971/12,178 = 7.97%  mainline 760/13,685 = 5.56%
+// Corroborated by adsb_shadow.observations at 8.4% overall.
+//
+// The old mainline value (0.65, from an assumed ~35% swap rate) was ~30 points
+// too low and had the ordering backwards — mainline now swaps LESS than
+// express. It sits between MIN_LEG_PROBABILITY and the 0.7 strong-direct gate,
+// so it was materially changing which itineraries got shown.
 const CONFIRMED_PROB = {
-  express: 0.9, // 1 - 9.1% observed swap rate
-  mainline: 0.65, // 1 - 35.5% observed swap rate
+  express: 0.9, // 1 - ~9% observed swap rate
+  mainline: 0.95, // 1 - ~5% observed swap rate
 };
 
 export type ItineraryLeg = BasePrediction & {
@@ -1149,6 +1171,9 @@ function buildRouteGraph(
   for (const r of rows) {
     const dep = r.departure_airport;
     const arr = r.arrival_airport;
+    // A row whose origin equals its destination is bad upstream data; letting
+    // it into the graph is what let the planner emit self-loop legs.
+    if (!dep || !arr || dep === arr) continue;
     const uaNum = uaPrefix(r.flight_number);
     const confirmedFleet = confirmedEdges.get(`${r.flight_number}|${dep}|${arr}`);
 
@@ -1166,6 +1191,9 @@ function buildRouteGraph(
               flight_number: uaNum,
               probability: confirmedP,
               confidence: "high",
+              // Was omitted, which tsc flags: BasePrediction requires it and
+              // the field was simply missing from the wire response.
+              method: "confirmed_assignment",
               n_observations: 1,
             };
     } else {
@@ -1218,12 +1246,23 @@ function computeItinerary(legs: ItineraryLeg[], coverage: "full" | "partial"): I
   };
 }
 
-function makePositioningLeg(route: string): ItineraryLeg {
+/**
+ * A leg we have no Starlink data for, priced at the carrier's live mainline
+ * cold prior.
+ *
+ * Was hardcoded to DEFAULT_CONFIG.mainlineColdPrior (0.02) — the *fallback*
+ * constant, not the derived one — while the live value is ~0.157. That is 7.8x
+ * low, and it propagates into joint_probability on every partial itinerary.
+ * `method` was also missing, which is a real type error the compiler already
+ * flags on this literal.
+ */
+function makePositioningLeg(route: string, config: ModelConfig = DEFAULT_CONFIG): ItineraryLeg {
   return {
     flight_number: "(any)",
     route,
-    probability: DEFAULT_CONFIG.mainlineColdPrior,
+    probability: config.mainlineColdPrior,
     confidence: "low",
+    method: "fleet_prior_mainline",
     n_observations: 0,
     duration_hours: null,
   };
@@ -1341,7 +1380,9 @@ export function planItinerary(
     // Direction "in": (any) orig→hub, then Starlink hub→dest
     for (const [hub, edges] of graph.entries()) {
       const leg = edges.get(dest);
-      if (!leg || leg.probability < minLegProb || hub === orig) continue;
+      // hub === dest as well as hub === orig: without the former the planner
+      // emitted a MIA-MIA self-loop leg ("fly ORD->MIA, then fly MIA->MIA").
+      if (!leg || leg.probability < minLegProb || hub === orig || hub === dest) continue;
       if (!hubOnPath(hub) || !isServed(orig, hub)) continue;
       if (itineraries.some((it) => it.via.length === 1 && it.via[0] === hub)) continue;
       candidates.push({ starlinkLeg: leg, hub, direction: "in" });

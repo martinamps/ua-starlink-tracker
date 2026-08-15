@@ -69,7 +69,7 @@
       },
       {
         "name": "predict_flight_starlink",
-        "description": "Use when the user asks \"will my flight have Starlink?\" for a date too far out for a confirmed assignment, or with no date at all. Returns the probability that a United Airlines flight number gets a Starlink plane, from historical observations. Reliability varies: high-confidence (5+ obs) ~85%+ accurate; low-confidence (0-1 obs) is just the fleet prior. UA1-2999 (mainline) are almost always NOT Starlink (~2% fleet coverage).",
+        "description": "Use when the user asks \"will my flight have Starlink?\" for a date too far out for a confirmed assignment, or with no date at all. Returns the probability that a United Airlines flight number gets a Starlink plane, from historical observations. Reliability varies: high-confidence (5+ obs) is the most reliable tier but is not a guarantee; low-confidence (0-1 obs) is just the fleet prior. UA1-2999 (mainline) has materially lower coverage than UA3000-6999 (express) — call get_fleet_stats for the current split rather than assuming a rate.",
         "inputSchema": {
           "type": "object",
           "properties": {
