@@ -25,7 +25,7 @@ import {
   predictFlight,
 } from "../scripts/starlink-predictor";
 import { type FlightDateWindow, flightDateWindow, matchesLocalDate } from "../utils/airport-tz";
-import { error as logError } from "../utils/logger";
+import { warn } from "../utils/logger";
 import { type FallbackSegment, lookupFlightTailVerdict } from "./flight-verdict";
 import { Fr24UnavailableError } from "./flightradar24-api";
 import { qatarEquipmentName } from "./qatar-status";
@@ -303,7 +303,12 @@ export async function resolveFlightVerdict(
       // Anything else (e.g. a DB error) must not masquerade as an outage.
       if (!(err instanceof Fr24UnavailableError)) throw err;
       fr24Error = true;
-      logError(`FR24 lookup failed for ${normalized} ${date}; degrading to prediction path`, err);
+      // warn, not error: this is the handled degradation the line above
+      // describes, and the caller surfaces FR24_OUTAGE_NOTE to the user. At
+      // ERROR it was 72 of the service's 81 logged errors — enough noise to
+      // make the error stream useless for spotting a real fault. The outage
+      // itself is still tracked as vendor.request{vendor:fr24,status:error}.
+      warn(`FR24 lookup failed for ${normalized} ${date}; degrading to prediction path`, err);
     }
     if (segments !== null) {
       const starlink = segments.filter((s) => s.hasStarlink);

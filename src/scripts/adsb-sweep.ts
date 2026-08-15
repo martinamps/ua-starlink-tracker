@@ -21,7 +21,7 @@ import {
 import type { AdsbObservationRecord } from "../types";
 import { BROWSER_USER_AGENT } from "../utils/constants";
 import { type JobHandle, createOutageBreaker, startJob } from "../utils/job-runner";
-import { info, error as logError, warn } from "../utils/logger";
+import { debug, info, error as logError, warn } from "../utils/logger";
 
 interface AdsbProvider {
   name: string;
@@ -296,7 +296,11 @@ export async function runAdsbSweepShadow(
             assignedFlight = classified.assignedFlight;
             counts[result]++;
             if (result === "mismatch") {
-              warn(
+              // debug: this re-fired every sweep for the same aircraft (top
+              // offender 43x/week) and was 11% of all log volume. The count is
+              // already carried by adsb_shadow.observations{result:mismatch},
+              // and the per-aircraft detail is written to adsb_observations.
+              debug(
                 `adsb-shadow: ${ac.tail} flying ${ac.callsign} but upcoming_flights says ${assignedFlight}`
               );
             }

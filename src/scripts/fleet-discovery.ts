@@ -38,7 +38,7 @@ import { icaoToIata } from "../utils/airport-tz";
 import { extractFlightNumber, pickVerifiableFlight, unitedLookupDate } from "../utils/constants";
 import { pingIndexNow } from "../utils/indexnow";
 import { type JobHandle, startJob } from "../utils/job-runner";
-import { info, error as logError, warn } from "../utils/logger";
+import { debug, info, error as logError, warn } from "../utils/logger";
 import { notifyNewStarlinkPlane } from "../utils/notify";
 import type { StarlinkCheckResult } from "./united-starlink-checker";
 import { checkStarlinkStatusSubprocess } from "./united-starlink-checker-subprocess";
@@ -445,7 +445,9 @@ export async function runDiscoveryBatch(limit = 1): Promise<{
     const planes = getNextPlanesToVerify(db, limit);
 
     if (planes.length === 0) {
-      info("No planes need verification at this time");
+      // debug, matching starlink-verifier.ts which already logs the idle
+      // tick at debug — the two paths disagreed and this one ran every 90s.
+      debug("No planes need verification at this time");
       return stats;
     }
 
@@ -503,8 +505,14 @@ export function startFleetDiscovery(mode: "discovery" | "maintenance" = "mainten
           span.setTag("starlink", stats.starlink);
           span.setTag("errors", stats.errors);
 
-          if (stats.checked > 0) {
+          // Only worth an info line when something actually changed; half of
+          // these batches were "0 Starlink, 0/1 not, 0 errors".
+          if (stats.starlink > 0 || stats.errors > 0) {
             info(
+              `Batch complete: ${stats.starlink} Starlink, ${stats.notStarlink} not, ${stats.errors} errors`
+            );
+          } else if (stats.checked > 0) {
+            debug(
               `Batch complete: ${stats.starlink} Starlink, ${stats.notStarlink} not, ${stats.errors} errors`
             );
           }
@@ -515,11 +523,16 @@ export function startFleetDiscovery(mode: "discovery" | "maintenance" = "mainten
             const db = initializeDatabase();
             try {
               const fleetStats = getFleetDiscoveryStats(db, "UA");
-              info(
-                `Heartbeat: ${runCount} runs, Total: ${fleetStats.total_fleet} fleet, ` +
-                  `${fleetStats.verified_starlink} Starlink, ${fleetStats.verified_non_starlink} non-Starlink, ` +
-                  `${fleetStats.pending_verification} pending`
-              );
+              // Counters live in the data field, not the message: an
+              // incrementing runCount inside the string makes every line a
+              // distinct message and defeats Datadog pattern grouping.
+              info("Heartbeat: fleet-discovery scheduler healthy", {
+                runs: runCount,
+                fleet: fleetStats.total_fleet,
+                starlink: fleetStats.verified_starlink,
+                nonStarlink: fleetStats.verified_non_starlink,
+                pending: fleetStats.pending_verification,
+              });
 
               emitFleetSnapshot(db);
 

@@ -410,7 +410,9 @@ export function startStarlinkVerifier(): JobHandle {
     // Heartbeat log every 10 minutes to show scheduler is alive
     const now = Date.now();
     if (now - lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
-      verifierLog.info(`Heartbeat: ${runCount} runs completed, scheduler healthy`);
+      // See fleet-discovery: the counter belongs in the data field so the
+      // 2,950 heartbeat lines/week group as one pattern instead of 2,950.
+      verifierLog.info("Heartbeat: verifier scheduler healthy", { runs: runCount });
       lastHeartbeat = now;
     }
 
@@ -426,8 +428,13 @@ export function startStarlinkVerifier(): JobHandle {
         span.setTag("starlink", stats.starlink);
         span.setTag("errors", stats.errors);
 
-        if (stats.checked > 0) {
+        // See fleet-discovery: a no-change batch is a debug-level fact.
+        if (stats.starlink > 0 || stats.errors > 0) {
           verifierLog.info(
+            `Batch complete: ${stats.starlink} Starlink, ${stats.notStarlink} not, ${stats.errors} errors`
+          );
+        } else if (stats.checked > 0) {
+          verifierLog.debug(
             `Batch complete: ${stats.starlink} Starlink, ${stats.notStarlink} not, ${stats.errors} errors`
           );
         }
