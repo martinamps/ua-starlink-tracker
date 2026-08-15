@@ -4004,7 +4004,18 @@ export function getFleetTailsWithStatus(
     .all(airline) as Array<{ tail_number: string; starlink_status: string }>;
 }
 
-const ADSB_OBSERVATION_RETENTION_DAYS = 7;
+/**
+ * 90 days, matching the sweep aggregates.
+ *
+ * These rows are the only unbiased flight-number-to-tail record the project
+ * has: the ADS-B sweep covers the whole fleet, whereas starlink_verification_log
+ * only holds tails the verifier chose to check (Starlink-suspected ones), which
+ * is the selection bias the predictor's global priors exist to paper over. At
+ * ~56k no_assignment observations a week there is far more signal here than in
+ * the verification log, and at 7 days it was all being discarded before it
+ * could be used. Raised now so the history accumulates.
+ */
+const ADSB_OBSERVATION_RETENTION_DAYS = 90;
 const ADSB_SWEEP_RETENTION_DAYS = 90;
 
 /** Persist one shadow sweep + its observations and prune old audit rows. */

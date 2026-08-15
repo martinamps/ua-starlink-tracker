@@ -2,11 +2,13 @@
 // Shadow only: nothing here may touch the serving tables.
 
 import { describe, expect, test } from "bun:test";
+import { metrics } from "../src/observability/metrics";
 import {
   callsignMatchesAssignment,
   classifyObservation,
   deriveCallsignFlight,
   runAdsbSweepShadow,
+  sweepAdsbProviders,
 } from "../src/scripts/adsb-sweep";
 import { addFleet, addFlight, makeSyntheticDb } from "./helpers";
 
@@ -129,5 +131,87 @@ describe("runAdsbSweepShadow", () => {
     const result = await runAdsbSweepShadow(db, fetcher);
     expect(result.outcome).toBe("error");
     expect(db.query("SELECT COUNT(*) AS n FROM adsb_sweeps").get()).toEqual({ n: 0 });
+  });
+});
+
+describe("provider failover", () => {
+  // Fetcher that fails for the named providers (matched on host) and serves an
+  // empty-but-valid payload otherwise, recording the order it was called in.
+  function fetcherFailing(failHosts: string[], order: string[]): typeof fetch {
+    return (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const host = new URL(url).host;
+      order.push(host);
+      if (failHosts.some((h) => host.includes(h))) {
+        return new Response("nope", { status: 503 });
+      }
+      return new Response(JSON.stringify({ ac: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+  }
+
+  test("adsb.fi is tried first — the two that fail in production come after", async () => {
+    const order: string[] = [];
+    const res = await sweepAdsbProviders(["N12345"], fetcherFailing([], order));
+    expect(order[0]).toContain("adsb.fi");
+    expect(res.stats.provider).toBe("adsb.fi");
+  });
+
+  test("falls over to the next provider and reports the one that answered", async () => {
+    const order: string[] = [];
+    const res = await sweepAdsbProviders(["N12345"], fetcherFailing(["adsb.fi"], order));
+    expect(res.stats.provider).toBe("airplanes.live");
+    expect(order.length).toBe(2);
+  });
+
+  test("emits a per-provider error metric, not just a warn", async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const original = metrics.increment;
+    metrics.increment = (name, tags) => {
+      if (name === "vendor.request") calls.push((tags ?? {}) as Record<string, unknown>);
+      original(name, tags);
+    };
+    try {
+      await sweepAdsbProviders(["N12345"], fetcherFailing(["adsb.fi", "airplanes.live"], []));
+    } finally {
+      metrics.increment = original;
+    }
+    // The monitor watches vendor:adsb + status:error. Before this, only a total
+    // blackout emitted it, so ~1,470 real failures/day read as zero.
+    const failures = calls.filter((t) => t.vendor === "adsb" && t.status === "error");
+    expect(failures.length).toBe(2);
+    expect(failures.map((t) => t.provider).sort()).toEqual(["adsb.fi", "airplanes.live"]);
+    expect(failures.every((t) => t.type === "provider")).toBe(true);
+  });
+
+  test("latencyMs spans the whole failover, not just the winning provider", async () => {
+    const slow = (async (input: RequestInfo | URL) => {
+      const host = new URL(String(input)).host;
+      if (host.includes("adsb.fi")) {
+        await new Promise((r) => setTimeout(r, 60));
+        return new Response("nope", { status: 503 });
+      }
+      return new Response(JSON.stringify({ ac: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+    const res = await sweepAdsbProviders(["N12345"], slow);
+    expect(res.stats.provider).toBe("airplanes.live");
+    // Must include the 60ms burned on the failed first provider.
+    expect(res.stats.latencyMs).toBeGreaterThanOrEqual(55);
+  });
+
+  test("throws only when every provider fails", async () => {
+    const order: string[] = [];
+    await expect(
+      sweepAdsbProviders(
+        ["N12345"],
+        fetcherFailing(["adsb.fi", "airplanes.live", "adsb.lol"], order)
+      )
+    ).rejects.toThrow(/all ADS-B providers failed/);
+    expect(order.length).toBe(3);
   });
 });
