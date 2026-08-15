@@ -30,7 +30,17 @@ interface AdsbProvider {
   maxRegsPerRequest: number;
 }
 
+// Order is failover order, and it is measured, not alphabetical: over 24h in
+// production airplanes.live and adsb.lol failed on essentially every sweep
+// (~1,470 failures/day between them) while adsb.fi served it. Trying the two
+// dead ones first meant every sweep paid both timeouts before doing any work.
+// The others stay as fallbacks — they are free when adsb.fi answers.
 const PROVIDERS: AdsbProvider[] = [
+  {
+    name: "adsb.fi",
+    buildUrl: (regs) => `https://opendata.adsb.fi/api/v2/registration/${regs.join(",")}`,
+    maxRegsPerRequest: 100,
+  },
   {
     name: "airplanes.live",
     buildUrl: (regs) => `https://api.airplanes.live/v2/reg/${regs.join(",")}`,
@@ -41,14 +51,13 @@ const PROVIDERS: AdsbProvider[] = [
     buildUrl: (regs) => `https://api.adsb.lol/v2/reg/${regs.join(",")}`,
     maxRegsPerRequest: 100,
   },
-  {
-    name: "adsb.fi",
-    buildUrl: (regs) => `https://opendata.adsb.fi/api/v2/registration/${regs.join(",")}`,
-    maxRegsPerRequest: 100,
-  },
 ];
 
 const PROVIDER_RATE_GAP_MS = 1100;
+/** Per-request ceiling. Failover is serial across three providers and each may
+ * page through the fleet, so an unbounded request is what let one slow upstream
+ * push a whole sweep past its 5-minute interval. */
+const PROVIDER_REQUEST_TIMEOUT_MS = 20_000;
 
 export interface AdsbAircraft {
   tail: string;
@@ -81,6 +90,10 @@ async function queryProvider(
     const chunk = tails.slice(i, i + provider.maxRegsPerRequest);
     const res = await fetcher(provider.buildUrl(chunk), {
       headers: { "User-Agent": BROWSER_USER_AGENT, Accept: "application/json" },
+      // Without this a hung upstream parked the whole sweep. Failover is serial,
+      // so one unresponsive provider could push a sweep past its own interval
+      // and then past the 15-minute job watchdog.
+      signal: AbortSignal.timeout(PROVIDER_REQUEST_TIMEOUT_MS),
     });
     requests++;
     if (!res.ok) throw new Error(`${provider.name} HTTP ${res.status}`);
@@ -107,11 +120,16 @@ async function queryProvider(
 /** One full sweep with provider failover. */
 export async function sweepAdsbProviders(
   tails: string[],
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = fetch,
+  airlineTag = "unmapped"
 ): Promise<{ aircraft: AdsbAircraft[]; stats: AdsbSweepStats }> {
   let lastErr: unknown = null;
+  // Timed around the whole failover, not around the winning provider. The old
+  // placement reported only the successful attempt, so a sweep that burned two
+  // provider timeouts before succeeding reported the last leg's few seconds —
+  // p95 read 22.9s while the real sweep span was 319.8s, past its own interval.
+  const started = Date.now();
   for (const provider of PROVIDERS) {
-    const started = Date.now();
     try {
       const { aircraft, requests } = await queryProvider(provider, tails, fetcher);
       return {
@@ -120,6 +138,16 @@ export async function sweepAdsbProviders(
       };
     } catch (err) {
       lastErr = err;
+      // Per-provider failures previously emitted only a warn, so the metric a
+      // monitor watches (vendor.request{vendor:adsb,status:error}) fired only on
+      // a total blackout — ~1,470 real failures/day read as zero.
+      metrics.increment(COUNTERS.VENDOR_REQUEST, {
+        vendor: "adsb",
+        type: "provider",
+        status: "error",
+        provider: provider.name,
+        airline: airlineTag,
+      });
       warn(`adsb-sweep: ${provider.name} failed, trying next provider`, err);
     }
   }
@@ -238,7 +266,7 @@ export async function runAdsbSweepShadow(
       // double-counted as a vendor error.
       let swept: Awaited<ReturnType<typeof sweepAdsbProviders>>;
       try {
-        swept = await sweepAdsbProviders(tails, fetcher);
+        swept = await sweepAdsbProviders(tails, fetcher, airlineTag);
       } catch (err) {
         logError("adsb-shadow sweep failed", err);
         metrics.increment(COUNTERS.VENDOR_REQUEST, {
@@ -378,6 +406,13 @@ export function startAdsbSweepJob(db: Database): JobHandle {
     name: "adsb_sweep",
     intervalMs: 5 * 60 * 1000,
     initialDelayMs: 2 * 60 * 1000,
+    // A sweep now has a bounded worst case: 3 providers x their paging, each
+    // request capped at PROVIDER_REQUEST_TIMEOUT_MS. The default 15-minute
+    // watchdog fired twice in 24h and abandons without aborting, leaving an
+    // orphaned run writing alongside its successor — the exact overlap the
+    // runner exists to prevent. Sized above the real worst case, not the
+    // observed p95, so it only trips on a genuine hang.
+    stuckTimeoutMs: 8 * 60 * 1000,
     run: async () => {
       if (breaker.shouldSkip()) return;
       const result = await runAdsbSweepShadow(db);
