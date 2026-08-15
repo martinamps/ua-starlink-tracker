@@ -10,6 +10,7 @@
 import { OBSERVED_WIFI_SOURCES } from "../airlines/registry";
 import type { ScopedReader } from "../database/reader";
 import { matchesLocalDate } from "../utils/airport-tz";
+import { warn } from "../utils/logger";
 import { FlightRadar24API } from "./flightradar24-api";
 
 const fr24 = new FlightRadar24API();
@@ -72,10 +73,17 @@ export function cachedFlightAssignments(
     (result) => {
       if (result.length === 0) assignmentCache.delete(key);
     },
-    () => {
+    (err) => {
       if (assignmentCache.get(key) === entry) {
         entry.failedAt = now;
       }
+      // Logged here — where the failure is PRODUCED — not in the consumer.
+      // A rejection is cached for ASSIGNMENT_FAILURE_TTL and replayed to every
+      // request in that window, and concurrent requests all await this same
+      // promise, so logging at the consumer produced 3-4 identical lines per
+      // real failure (observed: three at the same millisecond). This handler
+      // runs exactly once per actual fetch.
+      warn(`FR24 assignment lookup failed for ${flightNumber}; degrading to prediction path`, err);
     }
   );
   return promise;
