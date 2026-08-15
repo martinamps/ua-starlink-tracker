@@ -155,6 +155,12 @@ export function renderHtml(template: string, variables: Record<string, string>):
 const notFound = (site: SiteConfig): Response =>
   new Response(getNotFoundHtml(site.brand), { status: 404, headers: SECURITY_HEADERS.notFound });
 
+/** Bounded `route` tag for HTTP_REQUEST — unmatched paths collapse to "/*". */
+function metricRoute(m: { route: string } | null): string {
+  if (!m) return "/*";
+  return m.route === "/static" ? "/static/*" : m.route;
+}
+
 function methodNotAllowed(json = false): Response {
   return json
     ? new Response(JSON.stringify({ error: "Method not allowed" }), {
@@ -351,7 +357,7 @@ function serveFavicon(tenantCode: string, urlPath: string): Response | null {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const apiData: Handler = ({ req, reader }) => {
-  if (req.method !== "GET") return methodNotAllowed(true);
+  if (req.method !== "GET" && req.method !== "HEAD") return methodNotAllowed(true);
 
   const totalCount = reader.getTotalCount();
   const starlinkPlanes = reader.getStarlinkPlanes();
@@ -378,7 +384,7 @@ const apiData: Handler = ({ req, reader }) => {
 // Per-airline rollout summary — used by the OG image generator and any
 // cross-airline UI. Cheap to compute per-request.
 const apiFleetSummary: Handler = ({ req, getReader }) => {
-  if (req.method !== "GET") return methodNotAllowed(true);
+  if (req.method !== "GET" && req.method !== "HEAD") return methodNotAllowed(true);
   const airlines = publicAirlines().map((cfg) => {
     const r = getReader(cfg.code);
     const installed = r.getStarlinkPlanes().length;
@@ -405,7 +411,7 @@ const apiFleetSummary: Handler = ({ req, getReader }) => {
 };
 
 const apiRoutes: Handler = ({ req, site, reader }) => {
-  if (req.method !== "GET") return methodNotAllowed(true);
+  if (req.method !== "GET" && req.method !== "HEAD") return methodNotAllowed(true);
   if (!site.features.routesPage) {
     return new Response(JSON.stringify({ error: "Not found" }), {
       status: 404,
@@ -567,7 +573,7 @@ function resolveCarrier(
 }
 
 const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant }) => {
-  if (req.method !== "GET") return methodNotAllowed(true);
+  if (req.method !== "GET" && req.method !== "HEAD") return methodNotAllowed(true);
 
   const flightNumber = url.searchParams.get("flight_number");
   const date = url.searchParams.get("date");
@@ -756,7 +762,7 @@ const hubOnly = (tenant: RequestContext["tenant"]): Response | null =>
       });
 
 const apiCheckAnyFlight: Handler = async ({ req, url, reader, getReader, tenant }) => {
-  if (req.method !== "GET") return methodNotAllowed(true);
+  if (req.method !== "GET" && req.method !== "HEAD") return methodNotAllowed(true);
   const guard = hubOnly(tenant);
   if (guard) return guard;
 
@@ -879,7 +885,7 @@ const apiCheckAnyFlight: Handler = async ({ req, url, reader, getReader, tenant 
 };
 
 const apiCompareRoute: Handler = ({ req, url, getReader, tenant }) => {
-  if (req.method !== "GET") return methodNotAllowed(true);
+  if (req.method !== "GET" && req.method !== "HEAD") return methodNotAllowed(true);
   const guard = hubOnly(tenant);
   if (guard) return guard;
 
@@ -904,7 +910,7 @@ const apiCompareRoute: Handler = ({ req, url, getReader, tenant }) => {
 };
 
 const apiPredictFlight: Handler = ({ req, url, reader, getReader, tenant }) => {
-  if (req.method !== "GET") return methodNotAllowed(true);
+  if (req.method !== "GET" && req.method !== "HEAD") return methodNotAllowed(true);
   const flightNumber = url.searchParams.get("flight_number");
   if (!flightNumber) {
     return new Response(JSON.stringify({ error: "Missing flight_number" }), {
@@ -953,7 +959,7 @@ const apiPredictFlight: Handler = ({ req, url, reader, getReader, tenant }) => {
 };
 
 const apiPlanRoute: Handler = ({ req, url, reader, tenant }) => {
-  if (req.method !== "GET") return methodNotAllowed(true);
+  if (req.method !== "GET" && req.method !== "HEAD") return methodNotAllowed(true);
   const cfg = tenantConfig(tenant);
   // Hub: fail closed like the disabled route-planner page (routePlannerPage is
   // false there). planItinerary is the UA-trained model — running it over the
@@ -998,7 +1004,7 @@ const apiPlanRoute: Handler = ({ req, url, reader, tenant }) => {
 };
 
 const apiMismatches: Handler = ({ req, reader }) => {
-  if (req.method !== "GET") return methodNotAllowed(true);
+  if (req.method !== "GET" && req.method !== "HEAD") return methodNotAllowed(true);
   const summary = reader.getVerificationSummary();
   const mismatches = reader.getWifiMismatches();
   const response = {
@@ -1017,7 +1023,7 @@ const apiMismatches: Handler = ({ req, reader }) => {
 };
 
 const apiFleetDiscovery: Handler = ({ req, reader }) => {
-  if (req.method !== "GET") return methodNotAllowed(true);
+  if (req.method !== "GET" && req.method !== "HEAD") return methodNotAllowed(true);
   const stats = reader.getFleetDiscoveryStats();
   const spreadsheetCache = getSpreadsheetCacheTails();
   const cacheInfo = getSpreadsheetCacheInfo();
@@ -2314,15 +2320,13 @@ export function createApp(db: Database): App {
     // visible in dashboards; just not worth a full trace span.
     if (req.method === "OPTIONS" && (url.pathname.startsWith("/api/") || url.pathname === "/mcp")) {
       const response = corsPreflight(url.pathname);
-      if (m) {
-        metrics.increment(COUNTERS.HTTP_REQUEST, {
-          method: req.method,
-          route: m.route === "/static" ? "/static/*" : m.route,
-          status_code: response.status,
-          tenant: tenantScope(tenant),
-          client_class: classifyUserAgent(req.headers.get("user-agent")),
-        });
-      }
+      metrics.increment(COUNTERS.HTTP_REQUEST, {
+        method: req.method,
+        route: metricRoute(m),
+        status_code: response.status,
+        tenant: tenantScope(tenant),
+        client_class: classifyUserAgent(req.headers.get("user-agent")),
+      });
       return response;
     }
 
@@ -2349,19 +2353,26 @@ export function createApp(db: Database): App {
         if (onStarlinkIp) span.setTag("starlink_ip", true);
         const ua = req.headers.get("user-agent");
         if (ua) span.setTag("http.useragent", ua);
+        // The requested path, not just the matched route. Without it "which
+        // URLs are 404ing" is unanswerable — the span only carried the matched
+        // prefix, and an unmatched path carried "/*". Pathname only: query
+        // strings can hold caller-supplied values and this tag is high-volume.
+        span.setTag("http.url", url.pathname);
 
         const response = m ? await m.handler(ctx) : notFound(site);
 
         span.setTag("http.status_code", response.status);
-        if (m) {
-          metrics.increment(COUNTERS.HTTP_REQUEST, {
-            method: req.method,
-            route: m.route === "/static" ? "/static/*" : m.route,
-            status_code: response.status,
-            tenant: tenantScope(tenant),
-            client_class: classifyUserAgent(ua),
-          });
-        }
+        // Emitted for unmatched paths too. Gating this on `m` hid every 404 on a
+        // path that matched no route — measured at ~82% of all 404s, i.e. a 5.4x
+        // undercount — from every metric-backed dashboard and monitor. `route`
+        // stays a bounded allowlist: unmatched collapses to "/*".
+        metrics.increment(COUNTERS.HTTP_REQUEST, {
+          method: req.method,
+          route: metricRoute(m),
+          status_code: response.status,
+          tenant: tenantScope(tenant),
+          client_class: classifyUserAgent(ua),
+        });
         return response;
       },
       { "span.type": "web" }

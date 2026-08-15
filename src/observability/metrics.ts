@@ -115,12 +115,31 @@ export function normalizeProbeOutcome(raw: string | null | undefined): string {
   return PROBE_OUTCOMES.has(raw) ? raw : "other";
 }
 
-// Bounded user-agent classification (≤6 buckets, never the raw UA).
+// Bounded user-agent classification, most-specific first. Still a fixed enum —
+// never the raw UA — but the named crawlers are split out: collapsing every
+// crawler into one `bot` bucket meant no metric could see a single engine's
+// behaviour change, so a Bingbot surge that was a third of all traffic was
+// invisible to every dashboard and monitor.
 const BOT_UA = /bot|spider|crawler|curl|wget|python-requests|go-http-client|headless|httpclient/i;
+
+/** Order matters: GoogleOther/Google-Extended must be tested before Googlebot. */
+const NAMED_CRAWLERS: ReadonlyArray<readonly [string, RegExp]> = [
+  ["claude", /Claude-User|ClaudeBot|anthropic/i],
+  ["googleother", /GoogleOther|Google-Extended/i],
+  ["googlebot", /Googlebot|Storebot-Google|Google-InspectionTool/i],
+  ["bingbot", /bingbot|adidxbot|BingPreview/i],
+  ["gptbot", /GPTBot|OAI-SearchBot|ChatGPT-User/i],
+  ["perplexity", /PerplexityBot|Perplexity-User/i],
+  ["seo-crawler", /AhrefsBot|SemrushBot|DotBot|MJ12bot|PetalBot|DataForSeoBot|BLEXBot/i],
+  ["social", /facebookexternalhit|meta-externalagent|Twitterbot|Slackbot|Discordbot/i],
+];
+
 export function classifyUserAgent(ua: string | null | undefined): string {
   if (!ua) return "unknown";
-  if (/Claude-User|ClaudeBot|anthropic/i.test(ua)) return "claude";
   if (/UA-Starlink-Extension|starlink-tracker-ext/i.test(ua)) return "extension";
+  for (const [bucket, re] of NAMED_CRAWLERS) {
+    if (re.test(ua)) return bucket;
+  }
   if (BOT_UA.test(ua)) return "bot";
   if (/Mozilla|AppleWebKit|Gecko|Chrome|Safari|Firefox/i.test(ua)) return "browser";
   return "unknown";
