@@ -12,7 +12,7 @@ import { withSpan } from "../observability";
 import type { Aircraft, Flight } from "../types";
 import { FLIGHT_DATA_SOURCE } from "../utils/constants";
 import { type JobHandle, type JobRunContext, startJob } from "../utils/job-runner";
-import { error, info } from "../utils/logger";
+import { debug, error, info } from "../utils/logger";
 import { FlightAwareAPI } from "./flightaware-api";
 import { FlightRadar24API } from "./flightradar24-api";
 
@@ -69,7 +69,11 @@ async function updateFlightsForTailNumber(api: FlightAPI, tailNumber: string): P
       const db = initializeDatabase();
 
       try {
-        info(`Fetching upcoming flights for ${tailNumber}`);
+        // debug, not info: this trio fired 3x per tail on a 22.5s loop and was
+        // 69.5% of the service's entire log volume. The same facts are already
+        // in this span (tail_number, flights.count) and in
+        // starlink.data.freshness_seconds{job:flight_updater}.
+        debug(`Fetching upcoming flights for ${tailNumber}`);
         const flights = await api.getUpcomingFlights(tailNumber);
 
         span.setTag("flights.count", flights.length);
@@ -80,10 +84,10 @@ async function updateFlightsForTailNumber(api: FlightAPI, tailNumber: string): P
           );
           updateLastFlightCheck(db, tailNumber, false);
         } else {
-          info(`Found ${flights.length} upcoming flights for ${tailNumber}`);
+          debug(`Found ${flights.length} upcoming flights for ${tailNumber}`);
           updateFlights(db, tailNumber, flights);
           updateLastFlightCheck(db, tailNumber, true);
-          info(`Successfully updated ${flights.length} upcoming flights for ${tailNumber}`);
+          debug(`Successfully updated ${flights.length} upcoming flights for ${tailNumber}`);
           success = true;
         }
       } catch (err) {
