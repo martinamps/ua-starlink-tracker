@@ -256,9 +256,9 @@ function buildTools(scope: Scope) {
     },
     {
       name: "predict_flight_starlink",
-      description: `Use when the user asks "will my flight have Starlink?" for a date too far out for a confirmed assignment, or with no date at all. Returns the probability that a ${carrier} flight number gets a Starlink plane, from historical observations. Reliability varies: high-confidence (5+ obs) ~85%+ accurate; low-confidence (0-1 obs) is just the fleet prior.${
+      description: `Use when the user asks "will my flight have Starlink?" for a date too far out for a confirmed assignment, or with no date at all. Returns the probability that a ${carrier} flight number gets a Starlink plane, from historical observations. Reliability varies: high-confidence (5+ obs) is the most reliable tier but is not a guarantee; low-confidence (0-1 obs) is just the fleet prior.${
         scope === "UA" || scope === "ALL"
-          ? " UA1-2999 (mainline) are almost always NOT Starlink (~2% fleet coverage)."
+          ? " UA1-2999 (mainline) has materially lower coverage than UA3000-6999 (express) — call get_fleet_stats for the current split rather than assuming a rate."
           : ""
       }`,
       inputSchema: {
@@ -936,9 +936,12 @@ function buildAlternativesBlock(
       // lookup itself.
       const directEdge = reader.getDirectRouteEdge(r.origin, r.destination);
 
+      // Was hardcoded 0.02 while the live mainline rate is ~0.157 — a 7.8x
+      // understatement on the row an LLM is told to render verbatim, which
+      // systematically pushed users off the nonstop and onto connections.
       const directProb = directEdge
         ? predictFlight(reader, ensureAirlinePrefix(cfg, directEdge.flight_number)).probability
-        : 0.02;
+        : mainlineBaseline(reader);
 
       const durH = directEdge ? directEdge.dur_sec / 3600 : (r.duration_hours ?? null);
       rows.push({
@@ -1283,7 +1286,7 @@ function toolPlanStarlinkItinerary(
       content: [
         {
           type: "text",
-          text: `No Starlink routings found from ${orig} to ${dest} within ${maxStops} stops.\n\nNo path through the Starlink route graph connects these airports. This may be a mainline-only route (~2% Starlink fleet-wide).\n\n**Fallbacks**: (1) \`search_starlink_flights\` with just \`destination="${dest}"\` or \`origin="${orig}"\` — confirmed near-term assignments may exist even when historical probability is low; (2) if the user has a specific flight, \`predict_flight_starlink\` for a per-flight estimate; (3) otherwise advise booking the nonstop — no Starlink routing meaningfully improves odds on mainline-only routes.`,
+          text: `No Starlink routings found from ${orig} to ${dest} within ${maxStops} stops.\n\nNo path through the Starlink route graph connects these airports. This may be a mainline-only route, where fleet-wide coverage is much lower than on express.\n\n**Fallbacks**: (1) \`search_starlink_flights\` with just \`destination="${dest}"\` or \`origin="${orig}"\` — confirmed near-term assignments may exist even when historical probability is low; (2) if the user has a specific flight, \`predict_flight_starlink\` for a per-flight estimate; (3) otherwise advise booking the nonstop — no Starlink routing meaningfully improves odds on mainline-only routes.`,
         },
       ],
     };
@@ -1300,7 +1303,7 @@ function toolPlanStarlinkItinerary(
   const renderLeg = (leg: (typeof itineraries)[number]["legs"][number]): string => {
     if (leg.flight_number === "(any)") {
       const [from, to] = leg.route.split("-");
-      return `position ${from}→${to} (mainline, ~2% Starlink, duration unknown)`;
+      return `position ${from}→${to} (mainline, ~${(leg.probability * 100).toFixed(0)}% Starlink, duration unknown)`;
     }
     const pct = (leg.probability * 100).toFixed(0);
     const fleetTag = inferSubfleet(cfg, leg.flight_number) === "mainline" ? " [Mainline]" : "";
@@ -1355,7 +1358,7 @@ ${fullItins.map(renderItin).join("\n\n")}`);
   if (partialItins.length > 0) {
     const header =
       fullItins.length === 0
-        ? `**No all-Starlink path found within ${maxStops} stops.** Partial coverage options (one positioning leg ~2% Starlink, one Starlink leg):\n`
+        ? `**No all-Starlink path found within ${maxStops} stops.** Partial coverage options (one low-probability positioning leg, one Starlink leg):\n`
         : "**Baseline: 1-stop positioning + Starlink connection** (for comparison — what a 'normal' routing gets you):\n";
     sections.push(`${header}
 ${partialItins.map((it, i) => renderItin(it, fullItins.length + i)).join("\n\n")}`);
@@ -1543,6 +1546,21 @@ ${lines.join("\n")}`;
     .join("\n\n");
 
   return { content: [{ type: "text", text }] };
+}
+
+/**
+ * Live mainline install rate, for the "direct — baseline" comparison row.
+ *
+ * Replaces a hardcoded 0.02 that dated from an earlier phase of the rollout;
+ * mainline is now ~15.6% and climbing ~4.5pp/month, so the frozen number
+ * understated the nonstop by an order of magnitude on the exact row an LLM is
+ * instructed to render verbatim. Falls back to the model default only when the
+ * scope has no fleet stats (hub).
+ */
+function mainlineBaseline(reader: ScopedReader): number {
+  const stats = reader.getFleetStats();
+  if (!stats || stats.mainline.total <= 0) return 0.02;
+  return stats.mainline.starlink / stats.mainline.total;
 }
 
 function toolListStarlinkAircraft(

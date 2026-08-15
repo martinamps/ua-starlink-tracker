@@ -138,12 +138,13 @@ export const content: AirlineContent = {
                 a hub can beat a direct mainline flight.
               </p>
               <p>
-                For example: DEN→ORD direct is mainline (~2%), but DEN→ASE→ORD is ~90% Starlink on
-                both legs.
+                For example: DEN→ORD direct is mainline (~
+                {fleetStats?.mainline.percentage.toFixed(0)}%), but DEN→ASE→ORD is express on both
+                legs.
               </p>
             </>
           ),
-          ld: "Use the Route Planner to compare direct flights and 1-stop connections ranked by Starlink probability. Express flights (UA3000-6999, regional jets) have much higher coverage than mainline — a connection through a hub can beat a direct mainline flight. For example: DEN→ORD direct is ~2%, but DEN→ASE→ORD is ~90% Starlink on both legs.",
+          ld: "Use the Route Planner to compare direct flights and 1-stop connections ranked by Starlink probability. Express flights (UA3000-6999, regional jets) have much higher coverage than mainline — a connection through a hub can beat a direct mainline flight. For example: DEN→ORD direct is mainline, but DEN→ASE→ORD is express on both legs.",
         },
       ],
     },
