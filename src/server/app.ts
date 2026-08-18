@@ -156,10 +156,19 @@ export function renderHtml(template: string, variables: Record<string, string>):
 const notFound = (site: SiteConfig): Response =>
   new Response(getNotFoundHtml(site.brand), { status: 404, headers: SECURITY_HEADERS.notFound });
 
-/** Bounded `route` tag for HTTP_REQUEST — unmatched paths collapse to "/*". */
+/**
+ * Bounded `route` tag for HTTP_REQUEST.
+ *
+ * No `*` in the value: Datadog STRIPS `*` from tag values, so "/*" arrived as
+ * "/" and silently merged every unmatched-path request into the homepage series
+ * (measured: 1,811 of the homepage's 404s in 24h were never homepage requests),
+ * and "/static/*" arrived as "/static/". Counting them was the point — merging
+ * them into a real route is worse than the original bug of not counting them at
+ * all, because it corrupts a series someone reads.
+ */
 function metricRoute(m: { route: string } | null): string {
-  if (!m) return "/*";
-  return m.route === "/static" ? "/static/*" : m.route;
+  if (!m) return "unmatched";
+  return m.route === "/static" ? "/static" : m.route;
 }
 
 function methodNotAllowed(json = false): Response {
