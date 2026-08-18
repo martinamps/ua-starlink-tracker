@@ -37,9 +37,12 @@ function RouteRows({ schedule }: { schedule: RouteSchedule }) {
           key={`${r.origin}-${r.destination}`}
           className="grid grid-cols-[1fr_auto_auto] sm:grid-cols-[7rem_1fr_auto_auto] gap-x-4 items-center text-sm"
         >
-          <span className="font-display font-semibold text-secondary tabular-nums">
+          <a
+            href={`/route-planner/${r.origin}/${r.destination}`}
+            className="font-display font-semibold text-secondary tabular-nums hover:text-accent transition-colors"
+          >
             {r.origin}–{r.destination}
-          </span>
+          </a>
           <span className="hidden sm:block h-2 bg-surface-elevated rounded overflow-hidden">
             <span
               className="block h-full bg-[var(--color-accent)] opacity-70"
