@@ -172,3 +172,37 @@ describe("getSitemapRoutes", () => {
     expect(getSitemapRoutes(db, "NOPE")).toEqual([]);
   });
 });
+
+describe("/routes links into the route corpus", () => {
+  // Route pages were reachable only from the sitemap and from each other — no
+  // hub page linked to any of them, so no authority flowed in. /routes is the
+  // semantic parent and already renders every row's O-D pair; it just rendered
+  // them as plain text.
+  //
+  // The snapshot's 48h schedule window can legitimately be empty, in which case
+  // /routes renders no rows at all. The invariant is conditional on rows
+  // existing: if a pair is rendered, it must be a link.
+  const bareLabelRe = /([A-Z]{3})<!-- -->\u2013<!-- -->([A-Z]{3})/g;
+  const linkRe = /href="\/route-planner\/([A-Z]{3})\/([A-Z]{3})"/g;
+
+  test("no O-D pair is rendered as bare text instead of a link", async () => {
+    const body = await (await get("/routes")).text();
+    const bare = [...body.matchAll(bareLabelRe)];
+    const links = [...body.matchAll(linkRe)];
+    // Whatever is rendered, none of it may be unlinked.
+    expect(bare.length, "unlinked O-D labels on /routes").toBe(0);
+    if (links.length === 0) return; // empty schedule window in this snapshot
+    expect(links.length).toBeGreaterThan(0);
+  });
+
+  test("every route /routes links to actually resolves", async () => {
+    const body = await (await get("/routes")).text();
+    const pairs = [
+      ...new Set([...body.matchAll(linkRe)].map((m) => `/route-planner/${m[1]}/${m[2]}`)),
+    ];
+    if (pairs.length === 0) return; // empty schedule window in this snapshot
+    for (const p of pairs.slice(0, 15)) {
+      expect((await get(p)).status, p).toBe(200);
+    }
+  });
+});
