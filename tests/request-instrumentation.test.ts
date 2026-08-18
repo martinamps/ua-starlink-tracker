@@ -98,22 +98,32 @@ describe("http.request metric coverage", () => {
   const httpCalls = (calls: Array<{ name: string; tags: Record<string, unknown> }>) =>
     calls.filter((c) => c.name === "http.request");
 
-  test("an unmatched path emits the metric, tagged route:/*", async () => {
+  test("an unmatched path emits the metric, tagged route:unmatched", async () => {
     const { calls } = captureIncrements();
     await app.dispatch(req("/definitely-not-a-route-xyz", UA));
     const http = httpCalls(calls);
     expect(http.length).toBe(1);
-    expect(http[0].tags.route).toBe("/*");
+    expect(http[0].tags.route).toBe("unmatched");
     expect(http[0].tags.status_code).toBe(404);
   });
 
-  test("a matched path still reports its own route, not /*", async () => {
+  test("a matched path still reports its own route, not the unmatched bucket", async () => {
     const { calls } = captureIncrements();
     await app.dispatch(req("/api/data", UA));
     const http = httpCalls(calls);
     expect(http.length).toBe(1);
     expect(http[0].tags.route).toBe("/api/data");
     expect(http[0].tags.status_code).toBe(200);
+  });
+
+  test("no route tag value contains '*' — Datadog strips it and merges series", async () => {
+    const { calls } = captureIncrements();
+    for (const p of ["/", "/api/data", "/definitely-not-a-route-xyz", "/static/og.webp"]) {
+      await app.dispatch(req(p, UA));
+    }
+    const routes = httpCalls(calls).map((c) => String(c.tags.route));
+    expect(routes.length).toBeGreaterThan(0);
+    for (const r of routes) expect(r, r).not.toContain("*");
   });
 
   test("the crawler bucket reaches the metric tags", async () => {
