@@ -61,6 +61,9 @@ const verdictLog = {
   warn: (m: string) => {
     warn(m);
   },
+  debug: (m: string) => {
+    debug(m);
+  },
 };
 
 // Discovery-mode metric tags per verdict category. The mode difference vs
@@ -200,7 +203,7 @@ export async function verifyPlane(
           // Warn once at the parked threshold; after that it's weekly backoff and repeats are noise.
           warn(`${plane.tail_number}: ${failures} consecutive no-flights — likely parked/stored`);
         } else {
-          info(`No upcoming flights for ${plane.tail_number}, skipping`);
+          debug(`No upcoming flights for ${plane.tail_number}, skipping`);
         }
         span.setTag("result", "no_flights");
         metrics.increment(COUNTERS.FLEET_CHECK_SKIPPED, {
@@ -392,7 +395,7 @@ export async function verifyPlane(
         } else if (result.hasStarlink) {
           info(`${plane.tail_number} confirmed Starlink (${result.wifiProvider})`);
         } else {
-          info(`${plane.tail_number} no Starlink (${result.wifiProvider || "unknown"})`);
+          debug(`${plane.tail_number} no Starlink (${result.wifiProvider || "unknown"})`);
         }
 
         return result;

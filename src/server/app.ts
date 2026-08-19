@@ -2350,7 +2350,22 @@ export function createApp(db: Database): App {
     const ip = clientIp(req);
     if (meterClass) {
       if (rateLimited(ip, meterClass, Date.now())) {
-        metrics.increment(COUNTERS.HTTP_RATE_LIMITED, { route, tenant: tenantScope(tenant) });
+        // metricRoute, not the span route: the span form is "/*", and Datadog
+        // strips '*' from tag values (see metricRoute). Also counted in
+        // HTTP_REQUEST — this early return previously bypassed the
+        // count-every-request emit, so 429s were invisible in the request
+        // metric (357 fired in one incident, zero appeared).
+        metrics.increment(COUNTERS.HTTP_RATE_LIMITED, {
+          route: metricRoute(m),
+          tenant: tenantScope(tenant),
+        });
+        metrics.increment(COUNTERS.HTTP_REQUEST, {
+          method: req.method,
+          route: metricRoute(m),
+          status_code: 429,
+          tenant: tenantScope(tenant),
+          client_class: classifyUserAgent(req.headers.get("user-agent")),
+        });
         return new Response(JSON.stringify({ error: "rate limit exceeded" }), {
           status: 429,
           headers: { ...SECURITY_HEADERS.api, "Retry-After": "60" },

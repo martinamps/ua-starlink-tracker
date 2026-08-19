@@ -22,7 +22,7 @@ import {
   logVerification,
   updateVerifiedWifi,
 } from "../database/database";
-import { info, warn } from "../utils/logger";
+import { debug, info, warn } from "../utils/logger";
 import type { StarlinkCheckResult } from "./united-starlink-checker";
 
 export const UNITED_SOURCE = verifierSourceTag(AIRLINES.UA);
@@ -35,9 +35,11 @@ export const UNITED_SOURCE = verifierSourceTag(AIRLINES.UA);
 export interface VerdictLog {
   info: (msg: string) => void;
   warn: (msg: string) => void;
+  /** Optional: callers without a debug channel fall back to info. */
+  debug?: (msg: string) => void;
 }
 
-const ownLog: VerdictLog = { info: (m) => info(m), warn: (m) => warn(m) };
+const ownLog: VerdictLog = { info: (m) => info(m), warn: (m) => warn(m), debug: (m) => debug(m) };
 
 /**
  * One category per matrix cell; callers map category → mode-specific metric
@@ -259,8 +261,22 @@ function settleConsensus(
   const consensus = computeWifiConsensus(db, tail, { sources: OBSERVED_WIFI_SOURCES });
   const status = consensusToFleetStatus(consensus.verdict);
   if (status !== null) {
+    // Change-gated: a re-confirmation of the value already on file is a debug
+    // fact, a transition is the event worth an info line. The un-gated version
+    // re-logged every settle and was a top log-volume shape (~80/day of
+    // "verified_wifi → Starlink" for tails that were already Starlink).
+    // Read starlink_planes, NOT united_fleet: updateVerifiedWifi writes
+    // starlink_planes.verified_wifi, and the two tables both carry the column.
+    const prev =
+      (
+        db.query("SELECT verified_wifi FROM starlink_planes WHERE TailNumber = ?").get(tail) as {
+          verified_wifi: string | null;
+        } | null
+      )?.verified_wifi ?? null;
     updateVerifiedWifi(db, tail, consensus.verdict);
-    log.info(`${tail}${tag}: verified_wifi → ${consensus.verdict} (${consensus.reason})`);
+    const line = `${tail}${tag}: verified_wifi → ${consensus.verdict} (${consensus.reason})`;
+    if (prev === consensus.verdict) (log.debug ?? log.info)(line);
+    else log.info(line);
     // Discovery is the sole united_fleet status writer; queue a re-check when
     // its row disagrees so the verifier/swap path can't leave it stale.
     if (getFleetEntryByTail(db, tail)?.starlink_status !== status) {
