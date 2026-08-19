@@ -149,12 +149,41 @@ describe("flight permalink gate + normalization", () => {
     expect(html).toContain('id="check-flight-form"');
   });
 
-  test("malformed and other-carrier segments → hard 404", async () => {
+  test("malformed and other-carrier segments → 404, noindex", async () => {
     for (const seg of ["UA123X", "banana", "AA123"]) {
       const res = await app.dispatch(req(`/check-flight/${seg}`, HOST));
       expect(res.status, seg).toBe(404);
       expect(await res.text(), seg).toContain("noindex");
     }
+  });
+
+  // A 404 must still be usable: the segment users actually mistype (an airport
+  // code from the homepage form) explains itself and offers the lookup again.
+  test("non-flight-number segment → 404 page with notice, form, and route-planner hint", async () => {
+    const res = await app.dispatch(req("/check-flight/PHX", HOST));
+    expect(res.status).toBe(404);
+    const html = await res.text();
+    expect(html).toContain("isn&#x27;t a flight number");
+    expect(html).toContain("PHX");
+    expect(html).toContain('id="check-flight-form"');
+    expect(html).toContain('href="/route-planner"');
+    expect(html).not.toContain("The page you&#x27;re looking for doesn&#x27;t exist");
+  });
+
+  test("non-airport garbage → 404 page with notice but no route-planner hint", async () => {
+    const res = await app.dispatch(req("/check-flight/phoenix%20arizona", HOST));
+    expect(res.status).toBe(404);
+    const html = await res.text();
+    expect(html).toContain("isn&#x27;t a flight number");
+    expect(html).not.toContain('href="/route-planner"');
+  });
+
+  test("other-carrier segment → 404 page that never names the other carrier", async () => {
+    const res = await app.dispatch(req("/check-flight/AA123", HOST));
+    expect(res.status).toBe(404);
+    const html = await res.text();
+    expect(html).toContain("AA123");
+    expect(html).not.toContain("American");
   });
 
   test("zero-padded spelling → 301 to the canonical flight URL", async () => {
