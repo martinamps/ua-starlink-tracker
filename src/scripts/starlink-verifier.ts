@@ -54,6 +54,9 @@ const verdictLog = {
   warn: (m: string) => {
     verifierLog.warn(m);
   },
+  debug: (m: string) => {
+    verifierLog.debug(m);
+  },
 };
 
 // Verification-mode metric tags per verdict category. The mode difference vs
@@ -185,7 +188,7 @@ export async function verifyPlaneStarlink(
       span.setTag("flight_number", `UA${flightNumber}`);
       span.setTag("route", `${origin}-${destination}`);
 
-      verifierLog.info(
+      verifierLog.debug(
         `Checking ${tailNumber} via UA${flightNumber} ${origin}-${destination} on ${departureDate}`
       );
 
@@ -229,7 +232,9 @@ export async function verifyPlaneStarlink(
             `Flight ${flightNumber} aircraft: ${resolvedTail} (${result.wifiProvider || "unknown"})`
           );
         } else if (result.hasStarlink) {
-          verifierLog.info(
+          // debug: overwhelmingly re-confirmations. The state CHANGE line
+          // (verified_wifi → X in united-verdict) stays at info.
+          verifierLog.debug(
             `✓ ${tailNumber} confirmed Starlink (${result.wifiProvider} via ${result.providerSource})`
           );
         } else if (result.error) {
@@ -238,7 +243,7 @@ export async function verifyPlaneStarlink(
             result.debugFile ? { debugFile: result.debugFile } : undefined
           );
         } else {
-          verifierLog.info(
+          verifierLog.debug(
             `✗ ${tailNumber} no Starlink (${
               result.wifiProvider
                 ? `${result.wifiProvider} via ${result.providerSource}`
@@ -313,7 +318,7 @@ export async function runVerificationBatch(
       return stats;
     }
 
-    verifierLog.info(`${toVerify.length} plane(s) need verification`);
+    verifierLog.debug(`${toVerify.length} plane(s) need verification`);
 
     for (let i = 0; i < toVerify.length; i++) {
       const { plane, flight, recheckHours } = toVerify[i];
@@ -343,7 +348,7 @@ export async function runVerificationBatch(
 
     // Log verification stats
     const dbStats = getVerificationStats(db);
-    verifierLog.info(
+    verifierLog.debug(
       `Stats: ${dbStats.total_checks} total checks, ${dbStats.last_24h_checks} in last 24h`
     );
   } finally {
