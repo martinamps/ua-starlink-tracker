@@ -375,7 +375,14 @@ export function RouteComparePanel() {
         className="mt-3 text-[10px] font-mono text-muted leading-relaxed hidden"
       >
         Carrier missing? It only shows up once one of its Starlink planes has flown here.{" "}
-        <a id="hub-compare-rp" href="/route-planner" className="text-accent hover:underline">
+        {/* Static href must be a real page: /route-planner 404s on the hub, and
+            crawlers see this SSR value — client JS only rewrites it to the
+            per-route URL after a comparison runs. */}
+        <a
+          id="hub-compare-rp"
+          href={`https://${SITES.united.canonicalHost}/route-planner`}
+          className="text-accent hover:underline"
+        >
           Route Planner →
         </a>
       </div>

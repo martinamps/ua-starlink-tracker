@@ -16,16 +16,35 @@ export function formatDuration(sec: number | null): string | null {
 
 /** The one-line answer the page exists to give. */
 export function routeVerdict(route: RouteSummary, airlineName: string): string {
+  const pair = `${route.origin} → ${route.destination}`;
   if (route.totalDepartures === 0) {
-    return `No ${airlineName} departures are in the schedule window for ${route.origin} → ${route.destination} right now. Aircraft assignments publish about two days out.`;
+    // Lead with what we durably know. The schedule window is only 48h, so a
+    // route with real history spends most of its life "empty" — opening on the
+    // negative made ~43% of the corpus read as a no-data page (and gave every
+    // one of them a near-identical meta description).
+    const fns = route.flightNumbers;
+    if (fns.length > 0) {
+      const sample = fns
+        .slice(0, 3)
+        .map((f) => f.flight_number)
+        .join(", ");
+      return `${airlineName} flies ${pair} — ${fns.length} flight number${fns.length === 1 ? "" : "s"} on record (${sample}). No departures are in the next-48h assignment window yet; aircraft assignments publish about two days out.`;
+    }
+    return `No ${airlineName} departures are in the schedule window for ${pair} right now. Aircraft assignments publish about two days out.`;
+  }
+  // "All 1 scheduled departures" shipped on ~10% of route pages.
+  if (route.totalDepartures === 1) {
+    return route.equippedDepartures === 1
+      ? `The only scheduled ${pair} departure in the ${route.windowLabel} is on a Starlink-equipped aircraft.`
+      : `The only scheduled ${pair} departure in the ${route.windowLabel} is not on a Starlink-equipped aircraft.`;
   }
   if (route.equippedDepartures === 0) {
-    return `None of the ${route.totalDepartures} scheduled ${route.origin} → ${route.destination} departures in the ${route.windowLabel} are on a Starlink-equipped aircraft.`;
+    return `None of the ${route.totalDepartures} scheduled ${pair} departures in the ${route.windowLabel} are on a Starlink-equipped aircraft.`;
   }
   if (route.equippedDepartures === route.totalDepartures) {
-    return `All ${route.totalDepartures} scheduled ${route.origin} → ${route.destination} departures in the ${route.windowLabel} are on Starlink-equipped aircraft.`;
+    return `All ${route.totalDepartures} scheduled ${pair} departures in the ${route.windowLabel} are on Starlink-equipped aircraft.`;
   }
-  return `${route.equippedDepartures} of ${route.totalDepartures} scheduled ${route.origin} → ${route.destination} departures in the ${route.windowLabel} are on Starlink-equipped aircraft.`;
+  return `${route.equippedDepartures} of ${route.totalDepartures} scheduled ${pair} departures in the ${route.windowLabel} are on Starlink-equipped aircraft.`;
 }
 
 function FlightNumbers({ route, airlineName }: { route: RouteSummary; airlineName: string }) {

@@ -1099,7 +1099,14 @@ const mcp: Handler = async (ctx) => {
   // HEAD always takes the page branch (like every other page handler — /mcp is
   // sitemap-advertised, so link checkers must not see 405): the MCP protocol
   // has no HEAD method, and HEAD clients (curl -I) don't send Accept: text/html.
-  if (req.method === "HEAD" || (req.method === "GET" && accept.includes("text/html"))) {
+  // Page branch for HEAD and for any GET that is not an MCP-protocol request.
+  // The protocol's only GET is the SSE handshake (Accept: text/event-stream);
+  // JSON-RPC rides POST. Gating the page on Accept: text/html made every other
+  // GET — curl, sitemap validators, generic link checkers — see a 405 on a
+  // sitemap-advertised URL.
+  const mcpProtocolGet =
+    accept.includes("text/event-stream") || accept.includes("application/json");
+  if (req.method === "HEAD" || (req.method === "GET" && !mcpProtocolGet)) {
     if (!site.features.mcpPage) {
       return notFound(site);
     }
@@ -1590,7 +1597,7 @@ function subPageMeta(
   if (page === "check-flight")
     return {
       siteTitle: `Does My ${short} Flight Have Starlink? Check Any Flight — Live`,
-      siteDescription: `Does my flight have Starlink? Enter a ${short} flight number and date for a live answer — verified within ~2 days of departure, predicted from 12,000+ past flights.`,
+      siteDescription: `Does my flight have Starlink? Enter ${/^[aeiou]/i.test(short) ? "an" : "a"} ${short} flight number and date for a live answer — verified within ~2 days of departure, predicted from 12,000+ past flights.`,
       keywords: `does my flight have starlink, does my ${short.toLowerCase()} flight have starlink, check ${cfg?.iata ?? "airline"} flight starlink, ${name} wifi check`,
       ogTitle: `Does My ${short} Flight Have Starlink?`,
       ogDescription: `Check any ${short} flight by number and date — live answer for whether your aircraft has free Starlink WiFi.`,
@@ -1612,12 +1619,17 @@ function subPageMeta(
       ogDescription:
         "Find direct flights and smart connections with the highest Starlink probability.",
     };
+  // On the hub there is no carrier, and "${short} Fleet" degenerated to
+  // "Tracked Fleets Fleet"; "every ${name} aircraft" likewise read "every
+  // tracked airlines aircraft".
+  const fleetLead = cfg ? `${short} Fleet` : "Tracked Fleets";
+  const fleetOf = cfg ? `${name} aircraft` : "aircraft from every tracked airline";
   return {
-    siteTitle: `${short} Fleet Starlink Rollout — Every Tail Number, Every WiFi Provider`,
-    siteDescription: `See every ${name} aircraft at once, colored by WiFi provider. Track which aircraft types are done and how many Starlink planes are in the air right now.`,
+    siteTitle: `${fleetLead} Starlink Rollout — Every Tail Number, Every WiFi Provider`,
+    siteDescription: `See every ${fleetOf} at once, colored by WiFi provider. Track which aircraft types are done and how many Starlink planes are in the air right now.`,
     keywords: `${name} fleet starlink, wifi by aircraft, starlink rollout progress, tail number wifi`,
-    ogTitle: `${short} Fleet Starlink Rollout`,
-    ogDescription: `Every ${name} tail number, colored by WiFi provider.`,
+    ogTitle: `${fleetLead} Starlink Rollout`,
+    ogDescription: "Every tail number, colored by WiFi provider.",
   };
 }
 
@@ -1877,6 +1889,13 @@ const routePlannerPage: Handler = (ctx) => {
   if (trimmed !== "/route-planner") {
     const parsed = parseRoutePath(ctx.url.pathname);
     if (!parsed) return notFound(ctx.site);
+    // One spelling per route: lowercase and trailing-slash variants 301 to the
+    // canonical uppercase form, mirroring /check-flight. They used to 200 with
+    // a self-correcting canonical — duplicate crawl surface.
+    const canonicalPath = `/route-planner/${parsed.origin}/${parsed.destination}`;
+    if (ctx.url.pathname !== canonicalPath) {
+      return Response.redirect(`https://${ctx.site.canonicalHost}${canonicalPath}`, 301);
+    }
     const cfg = siteAirline(ctx.site);
     if (!ctx.reader.routeHasData(parsed.origin, parsed.destination)) return notFound(ctx.site);
     const route = ctx.reader.getRouteSummary(parsed.origin, parsed.destination);
