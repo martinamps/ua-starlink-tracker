@@ -757,8 +757,14 @@ export function updateDatabase(
     setMeta(db, "totalAircraftCount", totalAircraftCount, airline);
     stampLastUpdated(db, airline, "sheet-scrape");
 
-    // Raw sheet tallies (pre-dedup, pre-verification). Display/API counts come
-    // from getStarlinkPlanes()/getFleetStats() — these meta keys are diagnostic.
+    // Raw sheet tallies. These are a FALLBACK floor, not the published number:
+    // refreshFleetMeta() below overwrites every total with roster-derived
+    // counts whenever united_fleet has rows for this airline. The sheet's own
+    // row sums are wrong as a denominator — its express tabs carry SkyWest's
+    // entire operation (their Delta/American/Alaska flying included), which
+    // inflated the published UA fleet to 1,818 against a real roster of ~1,641
+    // and United's own pipeline sheet's 1,623, understating coverage by ~3.5
+    // points (and express by ~18).
     for (const [fleetType, stats] of Object.entries(fleetStats)) {
       for (const [metric, value] of Object.entries(stats)) {
         const key = `${fleetType}${metric.charAt(0).toUpperCase() + metric.slice(1)}`;
@@ -870,6 +876,14 @@ export function updateDatabase(
       "DELETE FROM starlink_planes WHERE sheet_gid = 'discovery' AND verified_wifi IS NOT NULL AND verified_wifi != 'Starlink' AND airline = ?"
     ).run(airline);
   })();
+
+  // Overwrite the raw sheet tallies with roster-derived totals. united_fleet
+  // (FR24-sourced) agrees with United's own pipeline sheet to within ~1%; the
+  // community sheet's row sums do not (see the comment on the fallback writes
+  // above). No-ops when the airline has no roster rows, so airlines without an
+  // FR24 sync keep the sheet tallies. lastUpdated is safe: stampLastUpdated is
+  // ownership-gated and UA's owner is the scrape itself.
+  refreshFleetMeta(db, airline);
   return null;
 }
 
@@ -943,6 +957,9 @@ export function refreshFleetMeta(db: Database, airline: string): void {
   setMeta(db, "expressTotal", expressTotal, airline);
   setMeta(db, "expressStarlink", expressStarlink, airline);
   setMeta(db, "expressPercentage", pct(expressStarlink, expressTotal), airline);
+  // Ownership-gated: writes lastUpdated only for airlines whose configured
+  // owner is "fleet-meta" (the default). For UA the scrape owns the stamp, so
+  // the updateDatabase call below can never steal it.
   stampLastUpdated(db, airline, "fleet-meta");
 }
 
