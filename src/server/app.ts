@@ -1473,17 +1473,28 @@ function escapeHtmlAttr(s: string): string {
   );
 }
 
+/** The reader-derived stats buildBaseTemplateVars needs; a handler that has
+ * already fetched them for its own render passes them in instead of paying the
+ * same four queries twice. */
+interface BaseStatVars {
+  fleetStats: ReturnType<ScopedReader["getFleetStats"]>;
+  totalCount: number;
+  starlinkCount: number;
+  lastUpdated: string;
+}
+
 function buildBaseTemplateVars(
   ctx: RequestContext,
   reactHtml: string,
-  canonicalPath = "/"
+  canonicalPath = "/",
+  precomputed?: BaseStatVars
 ): Record<string, string> {
   const { reader, site } = ctx;
   const brand = site.brand;
 
-  const fleetStats = reader.getFleetStats();
-  const totalCount = reader.getTotalCount();
-  const starlinkCount = reader.getStarlinkPlanes().length;
+  const fleetStats = precomputed ? precomputed.fleetStats : reader.getFleetStats();
+  const totalCount = precomputed ? precomputed.totalCount : reader.getTotalCount();
+  const starlinkCount = precomputed ? precomputed.starlinkCount : reader.getStarlinkPlanes().length;
   const percentage = totalCount > 0 ? ((starlinkCount / totalCount) * 100).toFixed(2) : "0.00";
   const isoDate = new Date().toISOString();
 
@@ -1493,7 +1504,7 @@ function buildBaseTemplateVars(
     starlinkCount: starlinkCount.toString(),
     totalCount: starlinkCount.toString(),
     totalAircraftCount: totalCount.toString(),
-    lastUpdated: reader.getLastUpdated(),
+    lastUpdated: precomputed ? precomputed.lastUpdated : reader.getLastUpdated(),
     currentDate: new Date().toLocaleDateString(),
     isoDate,
     mainlineCount: (fleetStats?.mainline.starlink || 0).toString(),
@@ -2010,12 +2021,18 @@ const homePage: Handler = async (ctx) => {
   }
 
   const isHub = tenant === "ALL";
+  // Fetched once and shared with buildBaseTemplateVars below — these four were
+  // previously queried twice per homepage render (React tree + template vars).
+  const total = reader.getTotalCount();
+  const starlink = reader.getStarlinkPlanes();
+  const lastUpdated = reader.getLastUpdated();
+  const fleetStats = reader.getFleetStats();
   const reactHtml = ReactDOMServer.renderToString(
     React.createElement(Page, {
-      total: reader.getTotalCount(),
-      starlink: reader.getStarlinkPlanes(),
-      lastUpdated: reader.getLastUpdated(),
-      fleetStats: reader.getFleetStats(),
+      total,
+      starlink,
+      lastUpdated,
+      fleetStats,
       site,
       content,
       airlineByTail: reader.getAirlineByTail(),
@@ -2031,7 +2048,12 @@ const homePage: Handler = async (ctx) => {
   );
 
   const template = await getHtmlTemplate();
-  const baseVars = buildBaseTemplateVars(ctx, reactHtml);
+  const baseVars = buildBaseTemplateVars(ctx, reactHtml, "/", {
+    fleetStats,
+    totalCount: total,
+    starlinkCount: starlink.length,
+    lastUpdated,
+  });
   return new Response(
     renderHtml(template, {
       ...baseVars,
