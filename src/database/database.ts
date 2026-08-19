@@ -620,7 +620,21 @@ function migrateMultiAirline(db: Database) {
     CREATE INDEX IF NOT EXISTS idx_uf_airline   ON united_fleet(airline, starlink_status);
     CREATE INDEX IF NOT EXISTS idx_upf_airline  ON upcoming_flights(airline, flight_number);
     CREATE INDEX IF NOT EXISTS idx_vlog_airline ON starlink_verification_log(airline, tail_number);
+    CREATE INDEX IF NOT EXISTS idx_vlog_flight  ON starlink_verification_log(flight_number, checked_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_upf_tail     ON upcoming_flights(tail_number);
   `);
+
+  // The two indexes above exist for the serving path: getFlightHistorySummary
+  // runs three flight_number-filtered queries per permalink render and had only
+  // airline-leading indexes to use — on a one-airline 76k-row log that is a
+  // full-table range scan, measured at ~150ms of the permalink's 152ms. The
+  // EQUIPPED_DEPARTURES join likewise had no tail_number index on
+  // upcoming_flights. ANALYZE is NOT optional: without sqlite_stat1 the planner
+  // keeps choosing airline= (zero selectivity here) over flight_number IN — the
+  // new indexes sit unused. Measured with production cardinality: 14.6ms → 0.01ms
+  // and 103ms → 2.6ms, but only after ANALYZE. Runs at startup; ~76k rows
+  // analyze in well under a second.
+  db.exec("ANALYZE");
 
   const renamed = db
     .query("UPDATE meta SET key = 'UA:' || key WHERE key NOT LIKE '%:%'")
@@ -1273,7 +1287,7 @@ export function archivePastDepartures(
 ): number {
   const params: (string | number)[] = [now];
   if (tailNumber) params.push(tailNumber);
-  return db
+  const changes = db
     .query(
       `INSERT INTO departure_log (tail_number, airport, departed_at, airline)
        SELECT tail_number, departure_airport, departure_time, airline
@@ -1285,6 +1299,11 @@ export function archivePastDepartures(
          )`
     )
     .run(...params).changes;
+  // 30-day trim lives here with the other departure_log writes. It used to run
+  // inside getAirportDepartures — a DELETE taking a WAL write lock on every
+  // homepage render, ~4,200 write transactions/day on the read path.
+  db.query("DELETE FROM departure_log WHERE departed_at < ?").run(now - 30 * 86400);
+  return changes;
 }
 
 export function getUpcomingFlights(
@@ -4093,12 +4112,6 @@ export function getAirportDepartures(
   airline?: AirlineFilter,
   nowSec = Math.floor(Date.now() / 1000)
 ): AirportDepartures {
-  try {
-    db.query("DELETE FROM departure_log WHERE departed_at < ?").run(nowSec - 30 * 86400);
-  } catch {
-    // readonly DB (tests/snapshots) — trim is best-effort housekeeping
-  }
-
   const q = withAirline(
     `SELECT uf.departure_airport AS airport,
             COUNT(DISTINCT uf.flight_number || ':' || uf.departure_time) AS count${EQUIPPED_DEPARTURES_SQL}`,

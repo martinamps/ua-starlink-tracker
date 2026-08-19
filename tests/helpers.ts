@@ -29,7 +29,10 @@ function loadSnapshotDdl(): string[] {
   const src = openSnapshot();
   const rows = src
     .query(
-      "SELECT sql FROM sqlite_master WHERE type='table' AND sql IS NOT NULL AND name <> 'sqlite_sequence'"
+      // NOT LIKE 'sqlite_%', not just sqlite_sequence: setupTables now runs
+      // ANALYZE, which creates sqlite_stat1 — replaying any internal table's
+      // DDL into :memory: throws "reserved for internal use".
+      "SELECT sql FROM sqlite_master WHERE type='table' AND sql IS NOT NULL AND name NOT LIKE 'sqlite_%'"
     )
     .all() as { sql: string }[];
   src.close();
