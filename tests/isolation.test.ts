@@ -128,6 +128,8 @@ const ENDPOINTS = [
   "/llms.txt",
   "/newly-equipped",
   "/feed.xml",
+  "/badge.svg",
+  "/embed",
 ];
 
 describe("UA host never leaks canaries", () => {

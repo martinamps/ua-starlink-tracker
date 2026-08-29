@@ -182,6 +182,7 @@ const ROUTES: Array<[route: string, feature: keyof SiteConfig["features"] | null
   ["/airlines", "airlinesPages"],
   ["/mcp", "mcpPage"],
   ["/newly-equipped", "newlyEquippedPage"],
+  ["/embed", "embedPage"],
 ];
 const isHtmlRoute = (route: string) => !route.startsWith("/api/") && !route.endsWith(".txt");
 

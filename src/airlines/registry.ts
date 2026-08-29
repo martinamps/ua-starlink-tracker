@@ -82,6 +82,9 @@ export interface SiteFeatures {
    * Off where DateFound history is entirely bulk-seeded (QR), where a
    * permanently-empty feed would misread as a stalled rollout. */
   newlyEquippedPage: boolean;
+  /** /embed — documents the auto-updating /badge.svg (the badge itself is
+   * always on: its live stat exists for every tenant and the hub). */
+  embedPage: boolean;
 }
 
 export interface SiteConfig {
@@ -702,6 +705,7 @@ const AIRLINE_SITE_FEATURES: SiteFeatures = {
   airlinesPages: false,
   methodologyPage: false,
   newlyEquippedPage: true,
+  embedPage: true,
 };
 
 export const SITES: Record<string, SiteConfig> = {
@@ -747,6 +751,7 @@ export const SITES: Record<string, SiteConfig> = {
       airlinesPages: true,
       methodologyPage: false,
       newlyEquippedPage: true,
+      embedPage: true,
     },
   },
   hawaiian: {

@@ -62,6 +62,7 @@ import CheckFlightPage, {
   type FlightFacts,
   type InvalidFlightQuery,
 } from "../components/check-flight-page";
+import EmbedPage from "../components/embed-page";
 import FleetPage from "../components/fleet-page";
 import McpPage from "../components/mcp-page";
 import MethodologyPage, { hasMethodology } from "../components/methodology-page";
@@ -1203,6 +1204,14 @@ const SITE_PAGES: SitePage[] = [
       `- [Newly equipped](https://${h}/newly-equipped) — aircraft as they join the Starlink fleet (Atom feed at https://${h}/feed.xml)`,
   },
   {
+    path: "/embed",
+    feature: "embedPage",
+    changefreq: "monthly",
+    priority: "0.4",
+    llmsLine: (h) =>
+      `- [Embed badge](https://${h}/embed) — auto-updating SVG badge with the live equipped count (https://${h}/badge.svg)`,
+  },
+  {
     path: "/methodology",
     feature: "methodologyPage",
     changefreq: "monthly",
@@ -1590,6 +1599,65 @@ const newlyEquippedPage: Handler = (ctx) => {
     installs,
     airlines: ctx.reader.getPerAirlineStats(),
     firstFlights: firstFlightsFor(ctx.reader, installs),
+  });
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// /badge.svg — auto-updating live-stat badge + /embed documentation page
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ~Verdana 11px average glyph width; close enough that text never clips at
+// realistic counts, and the badge stays a dependency-free string template.
+const BADGE_CHAR_W = 6.3;
+
+export function badgeSvgMarkup(label: string, value: string, accent: string): string {
+  const lw = Math.round(label.length * BADGE_CHAR_W) + 20;
+  const vw = Math.round(value.length * BADGE_CHAR_W) + 20;
+  const l = escapeXml(label);
+  const v = escapeXml(value);
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${lw + vw}" height="20" role="img" aria-label="${l}: ${v}">
+  <title>${l}: ${v}</title>
+  <rect width="${lw}" height="20" rx="3" fill="#1a2332"/>
+  <rect x="${lw}" width="${vw}" height="20" rx="3" fill="${accent}"/>
+  <rect x="${lw}" width="3" height="20" fill="${accent}"/>
+  <g fill="#ffffff" text-anchor="middle" font-family="Verdana,Geneva,DejaVu Sans,sans-serif" font-size="11">
+    <text x="${lw / 2}" y="14">${l}</text>
+    <text x="${lw + vw / 2}" y="14">${v}</text>
+  </g>
+</svg>`;
+}
+
+const badgeSvg: Handler = ({ req, site, reader, tenant }) => {
+  if (req.method !== "GET" && req.method !== "HEAD") return methodNotAllowed();
+  const cfg = tenantConfig(tenant);
+  const equipped = reader.getStarlinkPlanes().length;
+  const total = reader.getTotalCount();
+  const label = cfg ? `${cfg.shortName} Starlink` : "Airline Starlink";
+  const value = `${equipped} of ${total} aircraft`;
+  return new Response(badgeSvgMarkup(label, value, site.brand.accentColor), {
+    headers: {
+      "Content-Type": "image/svg+xml; charset=utf-8",
+      // An hour of edge/browser caching keeps embeds cheap while the count
+      // still tracks the rollout day-to-day; SWR covers cache-miss bursts.
+      "Cache-Control": "public, max-age=3600, stale-while-revalidate=86400",
+      // Open like /api/*: the badge is meant to be consumed cross-origin.
+      "Access-Control-Allow-Origin": "*",
+    },
+  });
+};
+
+const embedPage: Handler = (ctx) => {
+  if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
+  if (!ctx.site.features.embedPage) return notFound(ctx.site);
+  const cfg = tenantConfig(ctx.tenant);
+  const short = cfg?.shortName ?? "Airline";
+  const subject = cfg?.name ?? "tracked airlines";
+  return renderSubPage(ctx, EmbedPage, "/embed", {
+    siteTitle: `Add a Live ${short} Starlink Badge to Your Site — Embed`,
+    siteDescription: `Embed an auto-updating SVG badge with the live count of ${subject} aircraft that have Starlink WiFi. One image tag, no script — copy the HTML or Markdown snippet.`,
+    keywords: `${short.toLowerCase()} starlink badge, starlink rollout badge, embed starlink stats, ${short.toLowerCase()} starlink widget`,
+    ogTitle: `Live ${short} Starlink Badge`,
+    ogDescription: `Auto-updating badge with the live ${subject} Starlink aircraft count — embed it with one image tag.`,
   });
 };
 
@@ -2423,6 +2491,8 @@ export function createApp(db: Database): App {
     "/airlines": airlinesIndexPage,
     "/newly-equipped": newlyEquippedPage,
     "/feed.xml": feedXml,
+    "/badge.svg": badgeSvg,
+    "/embed": embedPage,
     "/api/data": apiData,
     "/api/fleet-summary": apiFleetSummary,
     "/api/routes": apiRoutes,

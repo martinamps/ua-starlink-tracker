@@ -9,6 +9,9 @@ import { SITES } from "../src/airlines/registry";
 import { createApp } from "../src/server/app";
 import { bodyOf, openSnapshot, req } from "./helpers";
 
+// (SITES is iterated for the badge sweep; tenant pages are covered by the
+// tenant-matrix ROUTES table.)
+
 let app: ReturnType<typeof createApp>;
 
 beforeAll(() => {
@@ -82,6 +85,55 @@ describe("feed autodiscovery link", () => {
     expect(ua.text).toContain(`https://${UA}/feed.xml`);
     const qr = await bodyOf(app, "/", QR);
     expect(qr.text).not.toContain('type="application/atom+xml"');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// /badge.svg + /embed
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("/badge.svg", () => {
+  test("every site serves a cacheable SVG with its own live stat", async () => {
+    for (const site of Object.values(SITES)) {
+      const res = await app.dispatch(req("/badge.svg", site.canonicalHost));
+      expect(res.status, site.key).toBe(200);
+      expect(res.headers.get("Content-Type")).toContain("image/svg+xml");
+      expect(res.headers.get("Cache-Control")).toContain("public");
+      expect(res.headers.get("Access-Control-Allow-Origin")).toBe("*");
+      const svg = await res.text();
+      expect(svg).toContain("<svg");
+      // "N of M aircraft" with real numbers — shape, not values.
+      expect(svg).toMatch(/\d+ of \d+ aircraft/);
+      expect(svg).toContain(site.brand.accentColor);
+    }
+  });
+
+  test("tenant badge names its airline; hub badge stays generic", async () => {
+    const ua = await bodyOf(app, "/badge.svg", UA);
+    expect(ua.text).toContain("United Starlink");
+    const hub = await bodyOf(app, "/badge.svg", HUB);
+    expect(hub.text).toContain("Airline Starlink");
+    expect(hub.text).not.toContain("United Starlink");
+  });
+
+  test("POST → 405", async () => {
+    const res = await app.dispatch(req("/badge.svg", UA, { method: "POST" }));
+    expect(res.status).toBe(405);
+  });
+});
+
+describe("/embed page", () => {
+  test("documents the badge with host-correct snippets", async () => {
+    const { status, text } = await bodyOf(app, "/embed", UA);
+    expect(status).toBe(200);
+    expect(text).toContain(`https://${UA}/badge.svg`);
+    expect(text).toContain('src="/badge.svg"'); // live preview
+  });
+
+  test("hub /embed uses the hub host in snippets", async () => {
+    const { status, text } = await bodyOf(app, "/embed", HUB);
+    expect(status).toBe(200);
+    expect(text).toContain(`https://${HUB}/badge.svg`);
   });
 });
 
