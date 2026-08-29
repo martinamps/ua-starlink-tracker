@@ -12,7 +12,14 @@ import { beforeAll, describe, expect, test } from "bun:test";
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { getContent } from "../src/airlines/content";
-import { AIRLINES, SITES, type SiteConfig, siteForAirline } from "../src/airlines/registry";
+import {
+  AIRLINES,
+  SITES,
+  type SiteConfig,
+  airlineSlug,
+  enabledAirlines,
+  siteForAirline,
+} from "../src/airlines/registry";
 import { setAssignmentFetcher } from "../src/api/flight-verdict";
 import { COUNTERS, metrics } from "../src/observability/metrics";
 import { createApp } from "../src/server/app";
@@ -170,6 +177,15 @@ describe("guardrail: no optional-tenant United/hub defaults in src/", () => {
 // SITES × routes matrix
 // ─────────────────────────────────────────────────────────────────────────────
 
+// The first canonical compare pair (alphabetical by slug) — derived from the
+// registry so the matrix row never hardcodes airline slugs.
+const comparePair = (() => {
+  const [a, b] = [...enabledAirlines()].sort((x, y) =>
+    airlineSlug(x).localeCompare(airlineSlug(y))
+  );
+  return `/compare/${airlineSlug(a)}-vs-${airlineSlug(b)}`;
+})();
+
 // feature === null → always on. HTML-ness is derived from the route shape.
 const ROUTES: Array<[route: string, feature: keyof SiteConfig["features"] | null]> = [
   ["/", null],
@@ -180,6 +196,7 @@ const ROUTES: Array<[route: string, feature: keyof SiteConfig["features"] | null
   ["/fleet", "fleetPage"],
   ["/routes", "routesPage"],
   ["/airlines", "airlinesPages"],
+  [comparePair, "comparePages"],
   ["/mcp", "mcpPage"],
 ];
 const isHtmlRoute = (route: string) => !route.startsWith("/api/") && !route.endsWith(".txt");

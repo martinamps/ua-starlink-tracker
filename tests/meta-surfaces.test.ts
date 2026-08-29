@@ -378,12 +378,27 @@ describe("host redirects", () => {
 
   test("parked domains 301 even for static asset paths (redirect beats static)", async () => {
     for (const [apex, target] of Object.entries(HOST_REDIRECTS)) {
+      // A path-bearing target absorbs every request (the parked domain IS the
+      // query); an origin-only target preserves the requested path.
+      const t = new URL(target);
+      const expected =
+        t.pathname === "/" && !t.search ? `${t.origin}/static/social-image.webp` : t.href;
       for (const host of [apex, `www.${apex}`]) {
         const res = await get("/static/social-image.webp", host);
         expect(res.status, host).toBe(301);
-        expect(res.headers.get("Location")).toBe(`${target}/static/social-image.webp`);
+        expect(res.headers.get("Location")).toBe(expected);
       }
     }
+  });
+
+  test("parked delta domain lands on the Delta explainer, which serves", async () => {
+    const res = await get("/", "deltastarlinktracker.com");
+    expect(res.status).toBe(301);
+    const location = res.headers.get("Location");
+    expect(location).toBe("https://airlinestarlinktracker.com/airlines/delta");
+    const target = new URL(location as string);
+    const page = await get(target.pathname, target.host);
+    expect(page.status).toBe(200);
   });
 
   test("static assets still serve on unknown hosts (no 421 for crawler fetches)", async () => {

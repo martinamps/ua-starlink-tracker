@@ -74,6 +74,8 @@ export interface SiteFeatures {
   chromeExtension: boolean;
   /** Hub-only /airlines comparison index + per-airline rollout pages. */
   airlinesPages: boolean;
+  /** Hub-only /compare/{a}-vs-{b} head-to-head pages for tracked airlines. */
+  comparePages: boolean;
   /** /methodology — only where a per-tail verification loop actually runs
    * (UA united.com, AS alaskaair.com). HA/QR status is type-determined, so a
    * "how we verify" page there would overstate. */
@@ -696,6 +698,7 @@ const AIRLINE_SITE_FEATURES: SiteFeatures = {
   mcpPage: false,
   chromeExtension: false,
   airlinesPages: false,
+  comparePages: false,
   methodologyPage: false,
 };
 
@@ -740,6 +743,7 @@ export const SITES: Record<string, SiteConfig> = {
       mcpPage: false,
       chromeExtension: false,
       airlinesPages: true,
+      comparePages: true,
       methodologyPage: false,
     },
   },
@@ -841,10 +845,13 @@ export function siteAirline(site: SiteConfig): AirlineConfig {
   return tenant;
 }
 
-// Hosts that resolve here but aren't tenants yet — 301 to the hub until the
-// airline has data. Promote to a tenant config and remove the entry when ready.
+// Hosts that resolve here but aren't tenants yet — 301 until the airline has
+// data. An origin-only target preserves the requested path + query; a target
+// with a path sends every request to that page (the parked domain IS the
+// query, e.g. deltastarlinktracker.com → the Delta explainer). Promote to a
+// tenant config and remove the entry when ready.
 export const HOST_REDIRECTS: Record<string, string> = {
-  "deltastarlinktracker.com": "https://airlinestarlinktracker.com",
+  "deltastarlinktracker.com": "https://airlinestarlinktracker.com/airlines/delta",
 };
 
 export function resolveSite(host: string | null): SiteConfig | null {
