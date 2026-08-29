@@ -66,9 +66,12 @@ export function buildFreshnessCoverage(
   qrEnabled = AIRLINES.QR.enabled
 ): Record<string, readonly string[]> {
   const coverage: Record<string, readonly string[]> = {
-    flight_updater: ["UA", "HA", "AS"],
+    // WN's only continuous pipeline is the flight updater over its curated
+    // equipped tails (no verifier backend) — that plus the departure archive
+    // is its freshness anchor.
+    flight_updater: ["UA", "HA", "AS", "WN"],
     verifier: ["UA", "HA", "AS"],
-    departures: ["UA", "HA", "AS"],
+    departures: ["UA", "HA", "AS", "WN"],
     fleet_progress: ["UA"],
     faa_registry: ["UA"],
     adsb_sweep: ["UA"],

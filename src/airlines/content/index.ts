@@ -6,6 +6,7 @@ import { content as ha } from "./ha";
 import { content as hub } from "./hub";
 import { content as qr } from "./qr";
 import { content as ua } from "./ua";
+import { content as wn } from "./wn";
 
 export interface ContentStats {
   starlinkCount: number;
@@ -57,6 +58,7 @@ const CONTENT: Record<KnownAirlineCode, AirlineContent> = {
   HA: ha,
   AS: as,
   QR: qr,
+  WN: wn,
 };
 
 // Widened view for runtime lookup by arbitrary code — typed possibly-undefined

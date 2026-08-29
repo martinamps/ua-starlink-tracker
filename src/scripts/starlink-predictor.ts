@@ -802,7 +802,15 @@ export function carrierPrediction(
 ): CarrierPrediction {
   const noModel: CarrierPrediction = {
     kind: "no_model",
-    reason: `No per-flight prediction model exists for ${cfg.name} — Starlink status is determined by aircraft type, not flight-number history. ${cfg.rollout.phaseNote}`,
+    // Late-assignment carriers get their own honesty: type isn't the reason
+    // there's no per-flight answer — the assignment timing is.
+    reason: cfg.lateAssignmentNote
+      ? joinSentences(
+          `No per-flight prediction model exists for ${cfg.name}`,
+          cfg.lateAssignmentNote,
+          cfg.rollout.phaseNote
+        )
+      : `No per-flight prediction model exists for ${cfg.name} — Starlink status is determined by aircraft type, not flight-number history. ${cfg.rollout.phaseNote}`,
   };
   // Defensive: a reader scoped to another airline (e.g. a hub caller that
   // skipped resolveCarrier) must never produce that airline's roster counts
@@ -854,7 +862,12 @@ export function describeCarrierPrediction(cfg: AirlineConfig, answer: CarrierPre
   const basis = pen.synthetic
     ? `${sf.label}${hint} — Starlink status is set by the operating subfleet`
     : `${pen.equipped} of ${pen.total} ${sf.label}${hint} aircraft equipped`;
-  return joinSentences(`~${pct}% Starlink probability (${basis})`, cfg.rollout.phaseNote);
+  return joinSentences(
+    `~${pct}% Starlink probability (${basis})`,
+    // Fleet-odds mode: say WHY there's no firmer answer before the rollout story.
+    cfg.lateAssignmentNote,
+    cfg.rollout.phaseNote
+  );
 }
 
 /**

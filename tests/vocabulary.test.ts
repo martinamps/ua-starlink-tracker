@@ -178,6 +178,7 @@ const TAIL_SAMPLES: Record<string, string> = {
   HA: "N390HA",
   AS: "N967AK",
   QR: "A7-ALA",
+  WN: "N8543Z",
 };
 
 describe("tail patterns", () => {

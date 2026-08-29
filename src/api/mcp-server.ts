@@ -691,8 +691,14 @@ async function toolCheckFlight(
 
     case "no_model": {
       // "no assignment data" would be a lie during an FR24 outage — the same
-      // couldn't-confirm caveat the prediction branch uses.
-      const lead = verdict.fr24Error ? FR24_OUTAGE_NOTE : "no assignment data.";
+      // couldn't-confirm caveat the prediction branch uses. Late-assignment
+      // carriers deliberately never consult assignments, so that lead would be
+      // a different lie there; the answer prose carries the why.
+      const lead = verdict.fr24Error
+        ? FR24_OUTAGE_NOTE
+        : cfg.lateAssignmentNote
+          ? "fleet odds."
+          : "no assignment data.";
       return {
         content: [
           {

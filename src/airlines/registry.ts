@@ -127,6 +127,17 @@ export interface AirlineConfig {
    * observation log. False → prediction surfaces answer from type rules and
    * subfleet penetration instead; another carrier's priors never apply. */
   flightHistoryModel: boolean;
+  /** Set when the airline settles tail assignments too late for any advance
+   * per-flight answer to be honest (Southwest: ~1 hour before departure).
+   * When present, the check-flight ladder skips schedule rows AND the FR24
+   * reverse lookup entirely — a published assignment is speculation, not a
+   * promise — and answers fleet odds instead, with this copy explaining why.
+   * Only meaningful alongside flightHistoryModel: false. */
+  lateAssignmentNote?: string;
+  /** Overrides llms.txt's shared "free for everyone" fact where that claim
+   * would be false (WN: free for Rapid Rewards members via T-Mobile, $8
+   * per device otherwise). */
+  freeWifiFact?: string;
   /** Site users should double-check answers on (flight status / WiFi pages). */
   verifySite: string;
   /** For airlines whose Starlink status is fully determined by aircraft type
@@ -444,6 +455,63 @@ const AIRLINE_DEFS = {
       analyticsDomain: "qatarstarlinktracker.com",
       pressReleaseUrl:
         "https://www.qatarairways.com/press-releases/en-WW/259315-qatar-airways-launches-world-s-first-starlink-equipped-boeing-787-and-completes-airbus-a350-starlink-rollout-connecting-over-11-millio/",
+    },
+  },
+  WN: {
+    code: "WN",
+    name: "Southwest Airlines",
+    shortName: "Southwest",
+    enabled: true,
+    // Promote to the hub once the rollout has enough tracked tails to compare
+    // honestly (same staging QR used pre-launch).
+    publicInHub: false,
+    iata: "WN",
+    icao: "SWA",
+    carrierPrefixes: ["SWA", "WN"],
+    // One all-737 fleet — no regional/mainline split to partition by.
+    subfleets: [{ key: "mainline", label: "Southwest 737 Fleet", match: () => true }],
+    classifyFleet: () => "mainline",
+    fr24Slug: "wn-swa",
+    metricTag: "southwest",
+    ...FAA_TAIL,
+    // ~800 737s; a partial FR24 scrape below this would wreck the fleet-odds
+    // denominator the whole tenant is built on.
+    minFleetSanity: 600,
+    // No first-party per-tail WiFi oracle. Equipped tails come from the
+    // curated evidence log (src/airlines/southwest-equipped.ts) until an
+    // automated discovery job exists.
+    flightHistoryModel: false,
+    verifySite: "southwest.com",
+    // Southwest is a WiFi tracker in its bones: tail assignments settle ~1h
+    // out, so every advance answer is fleet odds — the honesty IS the product.
+    lateAssignmentNote:
+      "Southwest finalizes which aircraft operates a flight only about an hour before departure, so an advance per-flight answer isn't possible — these are fleet-wide odds. The equipped-tail list shows where Starlink is already flying.",
+    freeWifiFact:
+      "Southwest is rolling out SpaceX Starlink WiFi — gate-to-gate, real-world speeds in the 100-250 Mbps range. WiFi is **free for Rapid Rewards members** (T-Mobile sponsorship since October 24, 2025, whole fleet, Starlink or not); $8 per device without a free-to-create account.",
+    rollout: {
+      status: "in_progress",
+      statusLabel: "In progress",
+      phaseNote:
+        "First Starlink aircraft entered service June 22, 2026; Southwest plans 300+ of its ~800 737s equipped by the end of 2026, pace gated by antenna deliveries. The WiFi vendor for the remaining fleet is not yet decided.",
+    },
+    brand: {
+      title: "Southwest Airlines Starlink Tracker",
+      tagline: "Tracking Southwest Airlines aircraft with Starlink WiFi",
+      siteTitle: "Southwest Starlink Tracker — Which 737s Have Starlink WiFi?",
+      description:
+        "{{starlinkCount}} of {{totalAircraftCount}} Southwest 737s have Starlink WiFi so far. Southwest finalizes aircraft close to departure, so this tracker gives honest fleet odds, every equipped tail, and where those tails are flying.",
+      ogTitle: "Southwest Airlines Starlink Tracker",
+      ogDescription:
+        "Live count of Southwest 737s with Starlink WiFi, every equipped tail number, and where they're flying — with honest fleet odds for any flight.",
+      keywords:
+        "southwest starlink tracker, southwest airlines starlink, southwest wifi, does southwest have starlink, southwest 737 starlink, southwest free wifi rapid rewards",
+      // Southwest-adjacent palette (bold blue / warm red / sunrise yellow),
+      // no trademarked assets.
+      accentColor: "#304cb2",
+      accentColorDim: "#5a71c4",
+      faviconAccent: "#f5a623", // sunrise yellow — the blues vanish on a dark tile
+      socialImagePath: "/static/social-image-wn.webp",
+      analyticsDomain: "southweststarlinktracker.com",
     },
   },
 } satisfies Record<string, AirlineConfig>;
@@ -787,6 +855,23 @@ export const SITES: Record<string, SiteConfig> = {
     // upcoming_flights joined to starlink_planes — all empty for QR (schedule
     // lives in qatar_schedule). Hide both rather than ship a permanently-empty UX.
     features: { ...AIRLINE_SITE_FEATURES, routePlannerPage: false, routesPage: false },
+  },
+  southwest: {
+    key: "southwest",
+    scope: "WN",
+    live: false,
+    hosts: ["southweststarlinktracker.com", "www.southweststarlinktracker.com"],
+    canonicalHost: "southweststarlinktracker.com",
+    brand: AIRLINES.WN.brand,
+    analytics: {
+      scriptSrc: DEFAULT_ANALYTICS_SCRIPT,
+      dataDomain: AIRLINES.WN.brand.analyticsDomain,
+      eventApiUrl: DEFAULT_ANALYTICS_EVENT_API,
+    },
+    // Methodology is on despite no automated verifier: the curated per-tail
+    // evidence log is the methodology, and the fleet-odds honesty needs a
+    // citable "how we know" page behind it (see methodology-page SOURCES.WN).
+    features: { ...AIRLINE_SITE_FEATURES, methodologyPage: true },
   },
 };
 

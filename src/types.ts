@@ -85,6 +85,8 @@ export type FleetSource =
   | "spreadsheet"
   | "ha_seed"
   | "as_seed"
+  | "wn_seed"
+  | "wn_curated"
   | "canary"
   | "flyertalk_qr"
   | "flyertalk_as";

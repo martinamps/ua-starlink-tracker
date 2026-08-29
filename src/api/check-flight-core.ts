@@ -268,6 +268,20 @@ export async function resolveFlightVerdict(
 
   if (cfg.code === "QR") return resolveQatarVerdict(reader, normalized, date, window);
 
+  // Late-assignment carriers (WN): the airline settles which aircraft flies
+  // only ~1h before departure, so a scheduled tail row or an FR24 reverse
+  // lookup is speculation, never a per-flight promise. Skip the whole tail
+  // ladder — no schedule read, no FR24 call — and answer honest fleet odds.
+  if (cfg.lateAssignmentNote) {
+    return {
+      kind: "no_model",
+      window,
+      normalized,
+      answer: carrierPrediction(cfg, reader, normalized),
+      fr24Error: false,
+    };
+  }
+
   const variants = buildAirlineFlightNumberVariants(cfg, normalized);
 
   // Query is last_updated DESC, so dedupe by departure_time keeps the

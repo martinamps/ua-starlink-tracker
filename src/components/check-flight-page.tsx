@@ -71,8 +71,13 @@ const fmtDuration = (sec: number) => {
   return `${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, "0")}m`;
 };
 
-function flightSummary(flight: FlightFacts): string {
+function flightSummary(flight: FlightFacts, lateAssignment: boolean): string {
   const { flightNumber, observedStarlink: s, observedTotal: n } = flight;
+  // Late-assignment carriers never answer from an assigned aircraft — don't
+  // promise a "live answer" the fleet-odds ladder deliberately withholds.
+  if (lateAssignment) {
+    return "The aircraft is finalized about an hour before departure, so the honest answer is fleet odds — pick a date below to see them.";
+  }
   if (n > 0 && s > 0) {
     return `${flightNumber} had Starlink on ${s} of ${n} recent departures (${Math.round((s / n) * 100)}%). Pick a date below for a live answer.`;
   }
@@ -243,9 +248,12 @@ export default function CheckFlightPage({ site, flight, invalid }: CheckFlightPa
         ? `We cross-reference ${shortName}'s own status data, public fleet data, and observed aircraft assignments.`
         : "We cross-reference public fleet data, rollout updates, and observed aircraft assignments.";
   const faqSubject = flight ? flight.flightNumber : `my ${shortName} flight`;
-  const faqAnswer = flight
-    ? `Pick your travel date in the form above. Within ~2 days of departure the answer comes from the actual aircraft assigned to ${flight.flightNumber}; further out it's a probability from this flight number's recent aircraft history.`
-    : `Enter your flight number (for example ${flightExample}) and travel date in the form above. The tool checks our database of Starlink-equipped aircraft against the scheduled aircraft for that flight.`;
+  const lateNote = cfg.lateAssignmentNote;
+  const faqAnswer = lateNote
+    ? `${lateNote} Enter your flight number and date above for the current fleet odds.`
+    : flight
+      ? `Pick your travel date in the form above. Within ~2 days of departure the answer comes from the actual aircraft assigned to ${flight.flightNumber}; further out it's a probability from this flight number's recent aircraft history.`
+      : `Enter your flight number (for example ${flightExample}) and travel date in the form above. The tool checks our database of Starlink-equipped aircraft against the scheduled aircraft for that flight.`;
   const extensionAnswer = showChromeExtension
     ? "Use this page to check by flight number, search by tail number on the main tracker, or install the free Chrome extension to see Starlink badges directly on Google Flights."
     : "Use this page to check by flight number, or search by tail number on the main tracker.";
@@ -268,8 +276,10 @@ export default function CheckFlightPage({ site, flight, invalid }: CheckFlightPa
           {invalid
             ? `Enter a ${shortName} flight number below to check for Starlink`
             : flight
-              ? flightSummary(flight)
-              : "Enter your flight number and date to see if your aircraft has free Starlink internet"}
+              ? flightSummary(flight, Boolean(lateNote))
+              : lateNote
+                ? "Enter your flight number and date for honest fleet odds — the aircraft is finalized about an hour before departure"
+                : "Enter your flight number and date to see if your aircraft has free Starlink internet"}
         </p>
       </header>
 

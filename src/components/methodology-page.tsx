@@ -70,6 +70,29 @@ const SOURCES: Record<string, DataSource[]> = {
         "Registration cross-reference so retired or re-registered airframes drop out of the counts instead of lingering as phantom installs.",
     },
   ],
+  // WN has no automated verifier: the curated evidence log is the methodology.
+  // Being explicit about that (and about the ~1h assignment window) is what
+  // lets the fleet-odds product cite itself honestly.
+  WN: [
+    {
+      name: "Curated per-tail evidence log",
+      cadence: "updated as evidence appears",
+      detail:
+        "Southwest publishes no per-aircraft WiFi roster, so every equipped tail here carries the date of its first public evidence — launch announcements, first revenue flights, credible passenger and spotter reports — and a note saying what proved it. No tail is counted without a dated record.",
+    },
+    {
+      name: "Flightradar24 fleet and schedule data",
+      cadence: "full fleet pull daily; flight schedules continuously",
+      detail:
+        "The full 737 roster gives us the honest denominator for fleet odds; live schedules show where the equipped tails have been flying. We deliberately do NOT use advance tail assignments to answer per-flight questions — Southwest finalizes the operating aircraft only about an hour before departure, so an advance assignment is speculation.",
+    },
+    {
+      name: "FAA aircraft registry",
+      cadence: "daily",
+      detail:
+        "Registration cross-reference so retired or re-registered airframes drop out of the counts instead of lingering as phantom installs.",
+    },
+  ],
 };
 
 /** True when SOURCES documents this airline — the /methodology handler 404s

@@ -26,12 +26,14 @@ UPDATE starlink_verification_log SET tail_confirmed=1 WHERE error IS NULL AND ta
 INSERT OR IGNORE INTO united_fleet (tail_number, aircraft_type, fleet, starlink_status, verified_wifi, first_seen_source, first_seen_at, last_seen_at, airline)
   VALUES ('N999HA', 'A330-200', 'mainline', 'confirmed', 'Starlink', 'canary', 1774190000, 1774190000, 'HA'),
          ('N644AS', '737-700',  'mainline', 'confirmed', 'Starlink', 'canary', 1774190000, 1774190000, 'AS'),
-         ('A7-TST', 'B777-300ER', 'mainline', 'confirmed', 'Starlink', 'canary', 1774190000, 1774190000, 'QR');
+         ('A7-TST', 'B777-300ER', 'mainline', 'confirmed', 'Starlink', 'canary', 1774190000, 1774190000, 'QR'),
+         ('N999WN', 'Boeing 737-800', 'mainline', 'confirmed', 'Starlink', 'canary', 1774190000, 1774190000, 'WN');
 
 INSERT OR IGNORE INTO starlink_planes (aircraft, wifi, sheet_gid, sheet_type, DateFound, TailNumber, OperatedBy, fleet, verified_wifi, airline)
   VALUES ('A330-200', 'Starlink', 'discovery', 'HA-mainline', '2026-01-01', 'N999HA', 'Hawaiian Airlines', 'mainline', 'Starlink', 'HA'),
          ('737-700',  'Starlink', 'discovery', 'AS-mainline', '2026-01-01', 'N644AS', 'Alaska Airlines',   'mainline', 'Starlink', 'AS'),
-         ('B777-300ER', 'Starlink', 'discovery', 'QR-mainline', '2026-01-01', 'A7-TST', 'Qatar Airways', 'mainline', 'Starlink', 'QR');
+         ('B777-300ER', 'Starlink', 'discovery', 'QR-mainline', '2026-01-01', 'A7-TST', 'Qatar Airways', 'mainline', 'Starlink', 'QR'),
+         ('Boeing 737-800', 'Starlink', 'discovery', 'WN-mainline', '2026-01-01', 'N999WN', 'Southwest Airlines', 'mainline', 'Starlink', 'WN');
 
 INSERT OR IGNORE INTO upcoming_flights (tail_number, flight_number, departure_airport, arrival_airport, departure_time, arrival_time, last_updated, airline)
   VALUES ('N999HA', 'HA9999', 'HNL', 'LAX', 1774200000, 1774220000, 1774190000, 'HA'),
@@ -102,7 +104,27 @@ INSERT OR IGNORE INTO upcoming_flights (tail_number, flight_number, departure_ai
   ('N654QX','QX2304','SEA','PDX',1774200000,1774206000,1774190000,'AS'),
   ('N292AK','AS307','SEA','LAX',1774200000,1774215000,1774190000,'AS');
 
--- HA + AS meta keys (so previews/tests render real percentages, not 0%).
+-- WN fleet sample — mirrors seed-southwest output: N8543Z is the real first
+-- curated tail (wn_curated, per-tail evidenced date), the rest of the roster
+-- is 'unknown' (wn_seed). publicInHub=false, so none of these rows may ever
+-- surface on the hub; N999WN above is the leak canary.
+INSERT OR IGNORE INTO united_fleet (tail_number, aircraft_type, fleet, operated_by, starlink_status, verified_wifi, verified_at, first_seen_source, first_seen_at, last_seen_at, airline) VALUES
+  ('N8543Z','Boeing 737-800','mainline','Southwest Airlines','confirmed','Starlink',1782086400,'wn_curated',1782086400,1782086400,'WN'),
+  ('N8641W','Boeing 737-800','mainline','Southwest Airlines','unknown',NULL,NULL,'wn_seed',1774190000,1774190000,'WN'),
+  ('N8642W','Boeing 737-800','mainline','Southwest Airlines','unknown',NULL,NULL,'wn_seed',1774190000,1774190000,'WN'),
+  ('N8643W','Boeing 737-700','mainline','Southwest Airlines','unknown',NULL,NULL,'wn_seed',1774190000,1774190000,'WN'),
+  ('N8644W','Boeing 737-700','mainline','Southwest Airlines','unknown',NULL,NULL,'wn_seed',1774190000,1774190000,'WN');
+
+INSERT OR IGNORE INTO starlink_planes (aircraft, wifi, sheet_gid, sheet_type, DateFound, TailNumber, OperatedBy, fleet, verified_wifi, airline) VALUES
+  ('Boeing 737-800','Starlink','wn_curated','wn_curated','2026-06-22','N8543Z','Southwest Airlines','mainline','Starlink','WN');
+
+-- WN upcoming flights: sitemap needs at least one WN permalink, and the
+-- routes/"where the tails fly" surfaces read these.
+INSERT OR IGNORE INTO upcoming_flights (tail_number, flight_number, departure_airport, arrival_airport, departure_time, arrival_time, last_updated, airline) VALUES
+  ('N999WN','WN9999','DAL','ABQ',1774200000,1774207200,1774190000,'WN'),
+  ('N8543Z','WN410','DAL','HOU',1774200000,1774205400,1774190000,'WN');
+
+-- HA + AS + WN meta keys (so previews/tests render real percentages, not 0%).
 INSERT OR REPLACE INTO meta (key, value) VALUES
   ('HA:totalAircraftCount', '12'),
   ('HA:mainlineStarlink', '9'),
@@ -113,7 +135,12 @@ INSERT OR REPLACE INTO meta (key, value) VALUES
   ('AS:mainlineStarlink', '3'),
   ('AS:mainlineTotal', '6'),
   ('AS:mainlinePercentage', '50.00'),
-  ('AS:lastUpdated', '2026-04-12T00:00:00.000Z');
+  ('AS:lastUpdated', '2026-04-12T00:00:00.000Z'),
+  ('WN:totalAircraftCount', '6'),
+  ('WN:mainlineStarlink', '2'),
+  ('WN:mainlineTotal', '6'),
+  ('WN:mainlinePercentage', '33.33'),
+  ('WN:lastUpdated', '2026-08-01T00:00:00.000Z');
 SQL
 
 echo "test DB ready at $DB"
