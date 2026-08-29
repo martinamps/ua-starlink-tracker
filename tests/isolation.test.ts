@@ -29,11 +29,13 @@ import {
 const UA = "unitedstarlinktracker.com";
 const HA_HOST = "hawaiianstarlinktracker.com";
 const AS_HOST = "alaskastarlinktracker.com";
+const WN_HOST = "southweststarlinktracker.com";
 const HUB = "airlinestarlinktracker.com";
 const EVIL = "evil.example.com";
-const CANARIES = ["N999HA", "HA9999", "N644AS", "AS118", "A7-TST", "QR9999"];
+const CANARIES = ["N999HA", "HA9999", "N644AS", "AS118", "A7-TST", "QR9999", "N999WN", "WN9999"];
 const REAL_HA_TAILS = ["N380HA", "N382HA", "N389HA", "N202HA", "N215HA"];
 const REAL_AS_TAILS = ["N654QX", "N658QX"];
+const REAL_WN_TAILS = ["N8543Z"];
 
 let app: ReturnType<typeof createApp>;
 let db: Database;
@@ -42,9 +44,9 @@ beforeAll(() => {
   db = openSnapshot();
   app = createApp(db);
   const c = db
-    .query("SELECT COUNT(*) as n FROM starlink_planes WHERE airline IN ('HA','QR')")
+    .query("SELECT COUNT(*) as n FROM starlink_planes WHERE airline IN ('HA','QR','WN')")
     .get() as { n: number };
-  if (c.n < 2) throw new Error("Canary rows missing — run `bun run test:setup`");
+  if (c.n < 3) throw new Error("Canary rows missing — run `bun run test:setup`");
 });
 
 const bodyOf = (path: string, host: string, init?: RequestInit) => bodyOfApp(app, path, host, init);
@@ -436,21 +438,23 @@ describe("write-path safety — UA scrape cannot wipe HA rows", () => {
 });
 
 describe("hub host shows enabled airlines only", () => {
-  test("/api/data contains enabled-airline canaries, not disabled", async () => {
+  test("/api/data contains enabled-airline canaries, not hub-hidden ones", async () => {
     const { text } = await bodyOf("/api/data", HUB);
     expect(text).toContain("N999HA");
     expect(text).toContain("N644AS");
     expect(text).not.toContain("A7-TST");
+    expect(text).not.toContain("N999WN");
   });
 
-  test("/fleet page contains enabled-airline canaries, not disabled", async () => {
+  test("/fleet page contains enabled-airline canaries, not hub-hidden ones", async () => {
     const { text } = await bodyOf("/fleet", HUB);
     expect(text).toContain("N999HA");
     expect(text).toContain("N644AS");
     expect(text).not.toContain("A7-TST");
+    expect(text).not.toContain("N999WN");
   });
 
-  test("MCP list_starlink_aircraft limit=500 — enabled-only (no QR canary)", async () => {
+  test("MCP list_starlink_aircraft limit=500 — enabled-only (no QR/WN canaries)", async () => {
     const r = await app.dispatch(
       mcpReq(HUB, "tools/call", { name: "list_starlink_aircraft", arguments: { limit: 500 } })
     );
@@ -458,6 +462,7 @@ describe("hub host shows enabled airlines only", () => {
     expect(text).toContain("N999HA");
     expect(text).toContain("N644AS");
     expect(text).not.toContain("A7-TST");
+    expect(text).not.toContain("N999WN");
   });
 
   test("homepage links go to live airline sites, hub-filtered for unlaunched", async () => {
@@ -467,6 +472,9 @@ describe("hub host shows enabled airlines only", () => {
     expect(text).not.toContain("https://hawaiianstarlinktracker.com/");
     expect(text).not.toContain("https://airlinestarlinktracker.com/?filter=AS");
     expect(text).not.toContain("https://qatarstarlinktracker.com/");
+    // publicInHub:false — WN must not surface on the hub in any form yet.
+    expect(text).not.toContain("https://southweststarlinktracker.com/");
+    expect(text).not.toContain("Southwest");
   });
 
   test("hub sitemap stays generic", async () => {
@@ -600,6 +608,68 @@ describe("AS host isolation", () => {
   test("hub /api/data includes AS tails", async () => {
     const { text } = await bodyOf("/api/data", HUB);
     for (const t of REAL_AS_TAILS) expect(text).toContain(t);
+  });
+});
+
+describe("WN host isolation", () => {
+  test("/api/data on WN host shows only WN tails", async () => {
+    const { status, text } = await bodyOf("/api/data", WN_HOST);
+    expect(status).toBe(200);
+    for (const t of REAL_WN_TAILS) expect(text).toContain(t);
+    for (const t of [...REAL_HA_TAILS, ...REAL_AS_TAILS]) expect(text).not.toContain(t);
+    const j = JSON.parse(text);
+    const planes = j.starlinkPlanes as Array<{ OperatedBy: string }>;
+    expect(planes.length).toBeGreaterThan(0);
+    for (const p of planes) expect(p.OperatedBy).not.toMatch(/United|Hawaiian|Alaska|Qatar/i);
+  });
+
+  test("every other tenant + hub has zero WN tails", async () => {
+    for (const host of [UA, HA_HOST, AS_HOST, HUB]) {
+      const { text } = await bodyOf("/api/data", host);
+      for (const t of REAL_WN_TAILS) expect(text, `${host} leaks ${t}`).not.toContain(t);
+      expect(text, `${host} leaks WN canary`).not.toContain("N999WN");
+    }
+  });
+
+  test("WN host MCP list_starlink_aircraft → WN-only, Southwest-labeled", async () => {
+    const r = await app.dispatch(
+      mcpReq(WN_HOST, "tools/call", { name: "list_starlink_aircraft", arguments: { limit: 500 } })
+    );
+    const text = await r.text();
+    expect(text).toContain("Southwest");
+    expect(text).toContain("N8543Z");
+    for (const t of [...REAL_HA_TAILS, ...REAL_AS_TAILS]) expect(text).not.toContain(t);
+  });
+
+  test("hub APIs refuse WN flights (publicInHub: false), like QR", async () => {
+    const check = await bodyOf("/api/check-flight?flight_number=WN410&date=2026-03-22", HUB);
+    expect(check.status).toBe(404);
+    expect(check.text).toContain("not tracked");
+    expect(check.text).not.toContain("Southwest");
+
+    // check-any-flight keeps its 200-with-error-body contract.
+    const any = await bodyOf("/api/check-any-flight?flight_number=WN410&date=2026-03-22", HUB);
+    expect(any.status).toBe(200);
+    expect(JSON.parse(any.text).error).toContain("not tracked");
+  });
+
+  test("WN host MCP init is Southwest-branded", async () => {
+    const r = await app.dispatch(
+      new Request("http://x/mcp", {
+        method: "POST",
+        headers: { Host: WN_HOST, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t" } },
+        }),
+      })
+    );
+    const j = await r.json();
+    expect(j.result.serverInfo.name).toBe("southwest-starlink-tracker");
+    expect(j.result.instructions).toContain("Scope: Southwest Airlines");
+    expect(j.result.instructions).not.toContain("United");
   });
 });
 

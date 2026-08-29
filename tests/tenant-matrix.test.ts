@@ -366,11 +366,17 @@ describe("hub /api/check-flight + /api/predict-flight detect the airline", () =>
     expect(predictText).not.toContain("fleet prior");
     expect(predictText).not.toContain("United");
 
-    // QR is publicInHub:false — hub MCP check_flight refuses, like hub REST.
+    // QR and WN are publicInHub:false — hub MCP check_flight refuses, like
+    // hub REST, and the tracked-carrier list must not advertise them.
     const qr = await call("check_flight", { flight_number: "QR123", date: "2026-03-22" });
     expect(qr.isError).toBe(true);
     expect(qr.content[0].text).toContain("not tracked");
     expect(qr.content[0].text).not.toContain("QR (");
+    const wn = await call("check_flight", { flight_number: "WN410", date: "2026-03-22" });
+    expect(wn.isError).toBe(true);
+    expect(wn.content[0].text).toContain("not tracked");
+    expect(wn.content[0].text).not.toContain("WN (");
+    expect(wn.content[0].text).not.toContain("Southwest");
 
     // Digits-only on the hub is undetectable — clean error listing carriers.
     const bare = await call("check_flight", { flight_number: "123", date: "2026-03-22" });
@@ -500,17 +506,19 @@ function expectNoUaLeak(text: string, label: string) {
 }
 
 describe("MCP tools are scope-correct on non-UA tenants", () => {
-  const nonUaSites = [SITES.alaska, SITES.hawaiian, SITES.qatar];
+  const nonUaSites = [SITES.alaska, SITES.hawaiian, SITES.qatar, SITES.southwest];
   // Route the tenant plausibly serves — HA's pair exercises its routeTypeRule.
   const ROUTE_FOR: Record<string, { origin: string; destination: string }> = {
     alaska: { origin: "SEA", destination: "JFK" },
     hawaiian: { origin: "HNL", destination: "LAX" },
     qatar: { origin: "DOH", destination: "LHR" },
+    southwest: { origin: "DAL", destination: "ABQ" },
   };
 
   // Exact predict branch per scope. Split-phase carriers (HA, QR) must NEVER
   // show a blended number; AS850 quotes the registry penetrationOverride, so
-  // the pinned value is registry-driven, not snapshot-data-driven.
+  // the pinned value is registry-driven, not snapshot-data-driven. WN's pin is
+  // the fleet-odds mode: seeded 2-of-6 penetration, never a model output.
   const PREDICT_PIN: Record<
     string,
     | { flight: string; branch: "split"; groups: string[] }
@@ -519,6 +527,7 @@ describe("MCP tools are scope-correct on non-UA tenants", () => {
     alaska: { flight: "850", branch: "number", probability: 1, mentions: "Hawaiian-operated" },
     hawaiian: { flight: "1", branch: "split", groups: ["A330", "717"] },
     qatar: { flight: "1", branch: "split", groups: ["777", "787"] },
+    southwest: { flight: "1", branch: "number", probability: 2 / 6, mentions: "737" },
   };
 
   test("tools/list: same tool names as UA, zero United literals", async () => {
