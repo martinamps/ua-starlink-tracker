@@ -69,6 +69,9 @@ export interface SiteFeatures {
   checkFlightPage: boolean;
   routePlannerPage: boolean;
   fleetPage: boolean;
+  /** /tail/{registration} evidence permalinks — tenant pages (the roster is
+   * per-airline), so the hub funnels tail intent to the tenant trackers. */
+  tailPages: boolean;
   routesPage: boolean;
   mcpPage: boolean;
   chromeExtension: boolean;
@@ -692,6 +695,7 @@ const AIRLINE_SITE_FEATURES: SiteFeatures = {
   checkFlightPage: true,
   routePlannerPage: true,
   fleetPage: true,
+  tailPages: true,
   routesPage: true,
   mcpPage: false,
   chromeExtension: false,
@@ -736,6 +740,7 @@ export const SITES: Record<string, SiteConfig> = {
       checkFlightPage: false,
       routePlannerPage: false,
       fleetPage: true,
+      tailPages: false,
       routesPage: false,
       mcpPage: false,
       chromeExtension: false,

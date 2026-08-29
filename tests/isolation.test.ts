@@ -111,6 +111,9 @@ describe("og:image is tenant-branded", () => {
 const ENDPOINTS = [
   "/",
   "/fleet",
+  // Bare /tail 301s to /fleet; per-tail canary isolation is pinned in
+  // tail-pages.test.ts (a foreign-airline registration 404s on this host).
+  "/tail",
   "/routes",
   "/check-flight",
   "/route-planner",

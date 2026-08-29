@@ -69,7 +69,14 @@ import Page from "../components/page";
 import RoutePage, { routeVerdict } from "../components/route-page";
 import RoutePlannerPage from "../components/route-planner-page";
 import RoutesPage from "../components/routes-page";
-import { ROUTE_AIRPORT_RE, type RouteSummary } from "../database/database";
+import TailPage, {
+  type TailPageData,
+  type TailUpcomingFlight,
+  deriveTailClaim,
+  tailClaimHeadline,
+  tailVerdict,
+} from "../components/tail-page";
+import { ROUTE_AIRPORT_RE, type RouteSummary, TAIL_URL_RE } from "../database/database";
 import {
   COUNTERS,
   DISTRIBUTIONS,
@@ -1264,6 +1271,17 @@ const sitemap: Handler = ({ reader, site, tenant, getReader }) => {
           lastmod: r.last_touched ? new Date(r.last_touched * 1000).toISOString() : undefined,
         }))
       : [];
+  // Per-tail lastmod is real evidence time (latest verification / status
+  // settle for that tail), not the roster sync's daily touch.
+  const tailEntries =
+    site.features.tailPages && tenantConfig(tenant)
+      ? reader.getSitemapTails().map((t) => ({
+          path: `/tail/${t.tail}`,
+          changefreq: "weekly",
+          priority: "0.5",
+          lastmod: t.last_touched ? new Date(t.last_touched * 1000).toISOString() : undefined,
+        }))
+      : [];
   // Each hub airline page's lastmod is that airline's own data freshness, not
   // the hub-wide max — an airline without a stamp yet omits lastmod rather
   // than borrowing another airline's. Same population as the hub homepage:
@@ -1286,6 +1304,7 @@ const sitemap: Handler = ({ reader, site, tenant, getReader }) => {
     ...airlineEntries,
     ...flightEntries,
     ...routeEntries,
+    ...tailEntries,
   ];
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
@@ -1368,6 +1387,7 @@ const llmsTxt: Handler = ({ site, tenant, reader }) => {
   const sampleFlight = features.checkFlightPage
     ? reader.getSitemapFlights()[0]?.flight_number
     : undefined;
+  const sampleTail = features.tailPages ? reader.getSitemapTails()[0]?.tail : undefined;
 
   const bestLink = sampleFlight
     ? `The most useful link to give is a per-flight page — https://${host}/check-flight/${sampleFlight} — which shows the live answer and updates as the schedule firms up.`
@@ -1409,6 +1429,9 @@ The homepage carries one dated, self-contained sentence (HTML element id \`starl
       : null,
     features.routePlannerPage
       ? `**"Best Starlink flight from SFO to Newark?"** → https://${host}/route-planner ranks direct and one-stop options by Starlink probability and expected connected hours.`
+      : null,
+    sampleTail
+      ? `**"Does aircraft ${sampleTail} have Starlink?"** → https://${host}/tail/${sampleTail} — every tracked registration has a page with its current status, verification history, and recent flying, including aircraft that do NOT have Starlink yet.`
       : null,
     `**"How is the rollout going?"** → https://${host}/ has the live count and a chart over time.${features.fleetPage ? ` https://${host}/fleet shows every aircraft and its WiFi provider.` : ""}`,
     `**"Is it actually free / how fast is it?"** → Free for everyone aboard, no account, no purchase. Real-world 100-250 Mbps, low latency, gate-to-gate.`,
@@ -1951,13 +1974,137 @@ const routePlannerPage: Handler = (ctx) => {
   return renderSubPage(ctx, RoutePlannerPage, "/route-planner", subPageMeta(ctx, "route-planner"));
 };
 
+/** Parse `/tail/{registration}`. `raw` is the segment as requested, `tail` its
+ * canonical spelling (uppercase) — a mismatch means 301, so each registration
+ * has exactly one indexable URL. Shape-invalid segments are null (404): the
+ * URL space is bounded by TAIL_URL_RE + a united_fleet row, the same test
+ * getSitemapTails advertises with. */
+export function parseTailPath(pathname: string): { raw: string; tail: string } | null {
+  const rest = pathname.slice("/tail/".length).replace(/\/+$/, "");
+  if (!rest || rest.includes("/")) return null;
+  let raw: string;
+  try {
+    raw = decodeURIComponent(rest).trim();
+  } catch {
+    return null; // malformed % escape
+  }
+  const tail = raw.toUpperCase();
+  if (!TAIL_URL_RE.test(tail)) return null;
+  return { raw, tail };
+}
+
+function tailPageMeta(ctx: RequestContext, cfg: AirlineConfig, data: TailPageData): PageMeta {
+  const { tail } = data;
+  const verdict = tailVerdict(data.claim, tail, cfg.name, data.record.aircraft_type);
+  const typeSuffix = data.record.aircraft_type ? ` ${data.record.aircraft_type}` : " Aircraft";
+  return {
+    siteTitle: `Does ${tail} Have Starlink WiFi? — ${cfg.shortName}${typeSuffix}`,
+    siteDescription: `${verdict} Verification history and recent flying for this aircraft, updated continuously.`,
+    keywords: `${tail} starlink, ${tail} wifi, does ${tail} have starlink, ${cfg.shortName.toLowerCase()} ${tail}`,
+    ogTitle: `${tail} — ${tailClaimHeadline(data.claim)}`,
+    ogDescription: verdict,
+  };
+}
+
+const tailPage: Handler = (ctx) => {
+  if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
+  if (!ctx.site.features.tailPages) {
+    return notFound(ctx.site);
+  }
+  const parsed = parseTailPath(ctx.url.pathname);
+  if (!parsed) return notFound(ctx.site);
+  const { tail } = parsed;
+  // One spelling per registration: lowercase, trailing-slash, and encoded
+  // variants 301 to the canonical uppercase form, mirroring /check-flight.
+  if (ctx.url.pathname !== `/tail/${tail}`) {
+    return Response.redirect(`https://${ctx.site.canonicalHost}/tail/${tail}`, 301);
+  }
+  // tailPages is airline-site-only; siteAirline throws (fail closed) on the hub.
+  const cfg = siteAirline(ctx.site);
+  // Existence gate (same population getSitemapTails advertises): registrations
+  // outside this airline's roster 404, so the URL space stays bounded and a
+  // tenant host never confirms another airline's tail.
+  const record = ctx.reader.getTailPageRecord(tail);
+  if (!record) return notFound(ctx.site);
+
+  const timeline = ctx.reader.getTailVerificationTimeline(tail, 30);
+  const marketing = new RegExp(`^${cfg.iata}\\d+$`);
+  const upcoming: TailUpcomingFlight[] = ctx.reader
+    .getUpcomingFlights(tail)
+    .slice(0, 6)
+    .map((f) => {
+      // Same canonicalization as getSitemapFlights, so a linked permalink is
+      // backed by the very row that produced it; operating-carrier numbers
+      // (SKW…) render unlinked rather than minting a broken internal link.
+      const fn = stripFlightNumberZeros(ensureAirlinePrefix(cfg, f.flight_number));
+      return {
+        permalink: ctx.site.features.checkFlightPage && marketing.test(fn) ? fn : null,
+        flight_number: f.flight_number,
+        departure_airport: f.departure_airport,
+        arrival_airport: f.arrival_airport,
+        departure_time: f.departure_time,
+      };
+    });
+  const faaRow = ctx.reader.getFaaRegistryByTail(tail);
+  const data: TailPageData = {
+    tail,
+    record,
+    claim: deriveTailClaim(record, timeline),
+    timeline,
+    upcoming,
+    departures: ctx.reader.getTailRecentDepartures(tail, 8),
+    faa: faaRow ? { year_mfr: faaRow.year_mfr, serial: faaRow.serial } : null,
+  };
+  return renderSubPage(ctx, TailPage, `/tail/${tail}`, tailPageMeta(ctx, cfg, data), { data });
+};
+
+// Bare /tail has no listing of its own — the fleet page is the browsable
+// parent of the tail corpus.
+const tailIndex: Handler = (ctx) => {
+  if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
+  if (!ctx.site.features.tailPages) {
+    return notFound(ctx.site);
+  }
+  return Response.redirect(`https://${ctx.site.canonicalHost}/fleet`, 301);
+};
+
+/** Tail-registry rows per /fleet page. Sized so a page stays well under 100KB
+ * of SSR while keeping the page count in single digits for current fleets. */
+export const FLEET_TAILS_PAGE_SIZE = 250;
+
 const fleetPage: Handler = (ctx) => {
   if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
   if (!ctx.site.features.fleetPage) {
     return notFound(ctx.site);
   }
   const data = ctx.reader.getFleetPageData();
-  return renderSubPage(ctx, FleetPage, "/fleet", subPageMeta(ctx, "fleet"), { data });
+  const totalPages = Math.max(1, Math.ceil(data.allTails.length / FLEET_TAILS_PAGE_SIZE));
+  // Server-side pagination of the tail registry: ?page=N beyond the data 404s
+  // (bounded URL space), ?page=1 301s to the bare canonical.
+  const rawPage = ctx.url.searchParams.get("page");
+  let page = 1;
+  if (rawPage !== null) {
+    if (!/^[1-9]\d{0,3}$/.test(rawPage)) return notFound(ctx.site);
+    page = Number(rawPage);
+    if (page === 1) return Response.redirect(`https://${ctx.site.canonicalHost}/fleet`, 301);
+    if (page > totalPages) return notFound(ctx.site);
+  }
+  const baseMeta = subPageMeta(ctx, "fleet");
+  const meta: PageMeta =
+    page === 1
+      ? baseMeta
+      : {
+          ...baseMeta,
+          siteTitle: `${baseMeta.siteTitle} — Page ${page}`,
+          // Continuation pages exist to be crawled through, not ranked: their
+          // tail links must be followed, but only /fleet itself should index.
+          robotsMeta: "noindex, follow",
+        };
+  return renderSubPage(ctx, FleetPage, page === 1 ? "/fleet" : `/fleet?page=${page}`, meta, {
+    data,
+    pagination: { page, totalPages, pageSize: FLEET_TAILS_PAGE_SIZE },
+    tailLinks: ctx.site.features.tailPages,
+  });
 };
 
 const methodologyPage: Handler = (ctx) => {
@@ -2288,6 +2435,7 @@ export function createApp(db: Database): App {
     "/check-flight": checkFlightPage,
     "/route-planner": routePlannerPage,
     "/fleet": fleetPage,
+    "/tail": tailIndex,
     "/routes": routesPage,
     "/methodology": methodologyPage,
     "/airlines": airlinesIndexPage,
@@ -2322,6 +2470,7 @@ export function createApp(db: Database): App {
   const prefixRoutes: Array<[string, Handler]> = [
     ["/check-flight/", checkFlightPage],
     ["/route-planner/", routePlannerPage],
+    ["/tail/", tailPage],
     ["/airlines/", airlineDetailPage],
     ["/static/", staticDir],
   ];
