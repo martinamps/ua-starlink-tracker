@@ -1212,11 +1212,16 @@ function buildRouteGraph(
           : {
               flight_number: uaNum,
               probability: confirmedP,
+              // A confirmed same-day assignment is direct evidence, so "high"
+              // is honest at a 90-95% swap-adjusted probability. Carry the
+              // flight's REAL historical sample count rather than a literal 1:
+              // n_observations means "how much history backs this" everywhere
+              // else, and inventing one observation published "1 obs · high",
+              // the same contradictory pair this file just fixed upstream.
+              // `method` disambiguates why confidence is high with a thin n.
               confidence: "high",
-              // Was omitted, which tsc flags: BasePrediction requires it and
-              // the field was simply missing from the wire response.
               method: "confirmed_assignment",
-              n_observations: 1,
+              n_observations: hist.n_observations,
             };
     } else {
       pred = predictFlight(reader, uaNum);
