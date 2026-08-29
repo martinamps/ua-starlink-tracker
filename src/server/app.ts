@@ -65,6 +65,7 @@ import CheckFlightPage, {
 import FleetPage from "../components/fleet-page";
 import McpPage from "../components/mcp-page";
 import MethodologyPage, { hasMethodology } from "../components/methodology-page";
+import NewlyEquippedPage from "../components/newly-equipped-page";
 import Page from "../components/page";
 import RoutePage, { routeVerdict } from "../components/route-page";
 import RoutePlannerPage from "../components/route-planner-page";
@@ -89,7 +90,7 @@ import {
   planItinerary,
   predictFlight,
 } from "../scripts/starlink-predictor";
-import type { ApiResponse, Flight } from "../types";
+import type { ApiResponse, FirstFlight, Flight } from "../types";
 import {
   API_CORS_HEADERS,
   BASE_RESPONSE_HEADERS,
@@ -1194,6 +1195,14 @@ const SITE_PAGES: SitePage[] = [
       `- [Live routes](https://${h}/routes) — departures on Starlink-equipped aircraft by route, next 48h`,
   },
   {
+    path: "/newly-equipped",
+    feature: "newlyEquippedPage",
+    changefreq: "daily",
+    priority: "0.6",
+    llmsLine: (h) =>
+      `- [Newly equipped](https://${h}/newly-equipped) — aircraft as they join the Starlink fleet (Atom feed at https://${h}/feed.xml)`,
+  },
+  {
     path: "/methodology",
     feature: "methodologyPage",
     changefreq: "monthly",
@@ -1470,6 +1479,121 @@ ${mcpSection}${chromeSection}${pages}
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Newly-equipped log: /feed.xml (Atom) + /newly-equipped
+// ─────────────────────────────────────────────────────────────────────────────
+
+function escapeXml(s: string): string {
+  return s.replace(
+    /[&<>"']/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[c] as string
+  );
+}
+
+const FEED_LIMIT = 50;
+
+// DateFound is a calendar date, not a timestamp — noon UTC keeps the entry on
+// the same calendar day in every timezone a feed reader renders it in.
+const installIso = (dateFound: string): string => `${dateFound.slice(0, 10)}T12:00:00Z`;
+
+/** Sparse first-flight lookup for a set of installs; keyed by tail. */
+function firstFlightsFor(
+  reader: ScopedReader,
+  installs: ReturnType<ScopedReader["getRecentInstalls"]>
+): Record<string, FirstFlight> {
+  return Object.fromEntries(
+    reader.getFirstFlights(installs.map((i) => i.TailNumber)).map((f) => [f.tail_number, f])
+  );
+}
+
+const feedXml: Handler = ({ req, site, reader }) => {
+  if (req.method !== "GET" && req.method !== "HEAD") return methodNotAllowed();
+  if (!site.features.newlyEquippedPage) return notFound(site);
+  const host = site.canonicalHost;
+  const installs = reader.getRecentInstalls(FEED_LIMIT);
+  const firstFlights = firstFlightsFor(reader, installs);
+  const airlineNames = new Map(publicAirlines().map((a) => [a.code, a.name]));
+
+  // Honest <updated>: newest install date, else the data's own stamp — never
+  // the request clock (same discipline as the sitemap's lastmod).
+  const rawStamp = Date.parse(reader.getLastUpdatedRaw() ?? "");
+  const updated = installs.length
+    ? installIso(installs[0].DateFound)
+    : Number.isFinite(rawStamp)
+      ? new Date(rawStamp).toISOString()
+      : "1970-01-01T00:00:00Z";
+
+  const entries = installs
+    .map((i) => {
+      const name = airlineNames.get(i.airline) ?? i.airline;
+      const url = `https://${host}/newly-equipped#${encodeURIComponent(i.TailNumber)}`;
+      const operated = i.OperatedBy ? `, operated by ${i.OperatedBy}` : "";
+      const ff = firstFlights[i.TailNumber];
+      const firstFlightLine = ff
+        ? ` First observed Starlink revenue flight: ${ff.flight_number} ${ff.origin} → ${ff.destination} on ${new Date(ff.departed_at * 1000).toISOString().slice(0, 10)}.`
+        : "";
+      return `  <entry>
+    <title>${escapeXml(`${name} ${i.TailNumber} (${i.Aircraft}) now has Starlink`)}</title>
+    <id>${escapeXml(url)}</id>
+    <link href="${escapeXml(url)}"/>
+    <updated>${installIso(i.DateFound)}</updated>
+    <summary>${escapeXml(
+      `${name} aircraft ${i.TailNumber} (${i.Aircraft}${operated}) joined the Starlink-equipped fleet on ${i.DateFound.slice(0, 10)}.${firstFlightLine}`
+    )}</summary>
+  </entry>`;
+    })
+    .join("\n");
+
+  const xml = `<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>${escapeXml(`${site.brand.title} — Newly Equipped Aircraft`)}</title>
+  <subtitle>${escapeXml("Aircraft as they join the Starlink-equipped fleet, newest first")}</subtitle>
+  <link href="https://${host}/feed.xml" rel="self"/>
+  <link href="https://${host}/newly-equipped"/>
+  <id>https://${host}/feed.xml</id>
+  <updated>${updated}</updated>
+  <author><name>${escapeXml(site.brand.title)}</name></author>
+${entries}
+</feed>`;
+  return new Response(xml, {
+    headers: {
+      "Content-Type": "application/atom+xml; charset=utf-8",
+      "Cache-Control": "public, max-age=900",
+    },
+  });
+};
+
+const newlyEquippedPage: Handler = (ctx) => {
+  if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
+  if (!ctx.site.features.newlyEquippedPage) return notFound(ctx.site);
+  const cfg = tenantConfig(ctx.tenant);
+  const short = cfg?.shortName;
+  const installs = ctx.reader.getRecentInstalls(FEED_LIMIT);
+  const meta: PageMeta = short
+    ? {
+        siteTitle: `Which ${short} Aircraft Just Got Starlink? — Newly Equipped Log`,
+        siteDescription: `Every ${cfg.name} aircraft as it joins the Starlink-equipped fleet — tail number, aircraft type, and install date, newest first, with an Atom feed for auto-updates.`,
+        keywords: `${cfg.name.toLowerCase()} new starlink aircraft, ${short.toLowerCase()} starlink installs, ${short.toLowerCase()} starlink rss feed, newly equipped starlink`,
+        ogTitle: `Newly Equipped ${short} Starlink Aircraft`,
+        ogDescription: `${cfg.name} aircraft as they join the Starlink-equipped fleet — newest first, with feed subscription.`,
+      }
+    : {
+        siteTitle: "Which Aircraft Just Got Starlink? — New Installs Across Airlines",
+        siteDescription:
+          "Every tracked aircraft as it joins a Starlink-equipped fleet, across all tracked airlines — tail number, aircraft type, and install date, with an Atom feed for auto-updates.",
+        keywords:
+          "new starlink aircraft, starlink install log, airline starlink rss feed, newly equipped starlink",
+        ogTitle: "Newly Equipped Starlink Aircraft",
+        ogDescription:
+          "Aircraft as they join Starlink-equipped fleets across tracked airlines — newest first.",
+      };
+  return renderSubPage(ctx, NewlyEquippedPage, "/newly-equipped", meta, {
+    installs,
+    airlines: ctx.reader.getPerAirlineStats(),
+    firstFlights: firstFlightsFor(ctx.reader, installs),
+  });
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // HTML page handlers
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1542,7 +1666,13 @@ function buildBaseTemplateVars(
     canonicalPath: escapeHtmlAttr(canonicalPath),
     robotsMeta: "index, follow",
     analyticsSnippet: analyticsSnippet(site),
-    headSnippet: site.headSnippet ?? "",
+    // Feed autodiscovery rides the headSnippet var so index.html stays
+    // placeholder-stable; only advertised where the feed actually serves.
+    headSnippet: `${
+      site.features.newlyEquippedPage
+        ? `<link rel="alternate" type="application/atom+xml" href="https://${site.canonicalHost}/feed.xml" title="Newly equipped Starlink aircraft" />`
+        : ""
+    }${site.headSnippet ?? ""}`,
     // Dark-launch probe is UA-only; the onboard portal URL is United's.
     passengerProbeSnippet: isPassengerVerifyAudience(ctx.onStarlinkIp, site.scope)
       ? PROBE_SNIPPET
@@ -2291,6 +2421,8 @@ export function createApp(db: Database): App {
     "/routes": routesPage,
     "/methodology": methodologyPage,
     "/airlines": airlinesIndexPage,
+    "/newly-equipped": newlyEquippedPage,
+    "/feed.xml": feedXml,
     "/api/data": apiData,
     "/api/fleet-summary": apiFleetSummary,
     "/api/routes": apiRoutes,

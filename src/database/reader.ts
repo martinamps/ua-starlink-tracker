@@ -11,6 +11,7 @@ import { AIRLINES, type AirlineCode, airlineHomeUrl, publicAirlines } from "../a
 import type {
   Aircraft,
   AirportDepartures,
+  FirstFlight,
   FleetDiscoveryStats,
   FleetPageData,
   FleetStats,
@@ -50,6 +51,7 @@ import {
   getConfirmedFleetTails,
   getConfirmedStarlinkEdges,
   getDirectRouteEdge,
+  getFirstFlights,
   getFleetDiscoveryStats,
   getFleetEntryByTail,
   getFleetPageData,
@@ -97,6 +99,8 @@ export interface ScopedReader {
   getStarlinkPlanes(): Aircraft[];
   getAirlineByTail(): Record<string, string>;
   getRecentInstalls(limit?: number, perAirlineCap?: number): RecentInstall[];
+  /** First observed post-install revenue departures for the given tails (sparse). */
+  getFirstFlights(tails: readonly string[]): FirstFlight[];
   getPerAirlineStats(): PerAirlineStat[];
   getUpcomingFlights(tailNumber?: string): Flight[];
   /** Per-airline subfleet split; null on the hub (no cross-airline aggregate exists). */
@@ -261,6 +265,7 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     getAirlineByTail: () => getAirlineByTail(db, airlines),
     getRecentInstalls: (limit, perAirlineCap) =>
       getRecentInstalls(db, airlines, limit, perAirlineCap),
+    getFirstFlights: (tails) => getFirstFlights(db, tails, airlines),
     getPerAirlineStats: () => buildPerAirlineStats(db, airlines),
     getUpcomingFlights: (t) => getUpcomingFlights(db, t, airlines),
     // FleetStats shape is subfleet-specific (express/mainline); there is no

@@ -78,6 +78,10 @@ export interface SiteFeatures {
    * (UA united.com, AS alaskaair.com). HA/QR status is type-determined, so a
    * "how we verify" page there would overstate. */
   methodologyPage: boolean;
+  /** /newly-equipped + /feed.xml (Atom) — the newly-equipped-aircraft log.
+   * Off where DateFound history is entirely bulk-seeded (QR), where a
+   * permanently-empty feed would misread as a stalled rollout. */
+  newlyEquippedPage: boolean;
 }
 
 export interface SiteConfig {
@@ -697,6 +701,7 @@ const AIRLINE_SITE_FEATURES: SiteFeatures = {
   chromeExtension: false,
   airlinesPages: false,
   methodologyPage: false,
+  newlyEquippedPage: true,
 };
 
 export const SITES: Record<string, SiteConfig> = {
@@ -741,6 +746,7 @@ export const SITES: Record<string, SiteConfig> = {
       chromeExtension: false,
       airlinesPages: true,
       methodologyPage: false,
+      newlyEquippedPage: true,
     },
   },
   hawaiian: {
@@ -786,7 +792,14 @@ export const SITES: Record<string, SiteConfig> = {
     // Route planner reads flight_routes/departure_log and the routes page reads
     // upcoming_flights joined to starlink_planes — all empty for QR (schedule
     // lives in qatar_schedule). Hide both rather than ship a permanently-empty UX.
-    features: { ...AIRLINE_SITE_FEATURES, routePlannerPage: false, routesPage: false },
+    // newly-equipped is off for the same reason: QR statuses are type-settled in
+    // bulk (DateFound null), so the install log would be permanently empty.
+    features: {
+      ...AIRLINE_SITE_FEATURES,
+      routePlannerPage: false,
+      routesPage: false,
+      newlyEquippedPage: false,
+    },
   },
 };
 

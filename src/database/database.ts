@@ -29,6 +29,7 @@ import type {
   BodyClass,
   BtsMonthAggregates,
   FaaRegistryRow,
+  FirstFlight,
   FleetAircraft,
   FleetAnchorRow,
   FleetCarrier,
@@ -285,6 +286,25 @@ export function setupTables(db: Database) {
       );
       CREATE INDEX idx_dl_departed ON departure_log(departed_at);
       CREATE INDEX idx_dl_airport ON departure_log(airport);
+    `).run();
+  }
+
+  // One row per newly equipped tail: its first observed revenue departure
+  // AFTER the install was found. Written by the first-flight watch job; read
+  // by /feed.xml and /newly-equipped. Kept forever — departure_log's 30-day
+  // trim would erase the scoop this table exists to preserve.
+  if (!tableExists(db, "first_flights")) {
+    db.query(`
+      CREATE TABLE first_flights (
+        tail_number TEXT PRIMARY KEY,
+        airline TEXT NOT NULL,
+        flight_number TEXT NOT NULL,
+        origin TEXT NOT NULL,
+        destination TEXT NOT NULL,
+        departed_at INTEGER NOT NULL,
+        recorded_at INTEGER NOT NULL
+      );
+      CREATE INDEX idx_ff_airline ON first_flights(airline, departed_at);
     `).run();
   }
 
@@ -1044,6 +1064,24 @@ export function getRecentInstalls(
   return db
     .query(`${q.sql} ORDER BY DateFound DESC LIMIT ?`)
     .all(...q.params, limit) as RecentInstall[];
+}
+
+/** First observed post-install revenue departures for a set of tails. */
+export function getFirstFlights(
+  db: Database,
+  tails: readonly string[],
+  airline: AirlineFilter
+): FirstFlight[] {
+  if (tails.length === 0) return [];
+  const placeholders = tails.map(() => "?").join(",");
+  const q = withAirline(
+    `SELECT tail_number, airline, flight_number, origin, destination, departed_at, recorded_at
+     FROM first_flights WHERE tail_number IN (${placeholders})`,
+    airline,
+    "",
+    [...tails]
+  );
+  return db.query(q.sql).all(...q.params) as FirstFlight[];
 }
 
 export interface HubAirlineStat {
