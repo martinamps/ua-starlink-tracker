@@ -249,6 +249,13 @@ export const GAUGES = {
   //   dataset (mirrors job — DD monitors group by dataset), airline
   DATA_FRESHNESS_SECONDS: "data.freshness_seconds",
 
+  // freshness_seconds divided by the per-(job, airline) deadman budget in
+  // data-freshness.ts — >1 means the pipeline is past the age where its loop
+  // must be dead. Exists because healthy cadences differ per airline (HA's
+  // verifier sawtooths to ~168h by design), so no single seconds threshold
+  // can monitor every airline. Same tags as freshness_seconds; no new values.
+  DATA_FRESHNESS_RATIO: "data.freshness_ratio",
+
   // Backtest precision of firm "yes/no Starlink" calls — tags: airline, window, call
   PRECISION_FIRM_CALL: "precision.firm_call",
   PRECISION_FIRM_CALL_N: "precision.firm_call.n",

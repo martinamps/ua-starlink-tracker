@@ -103,6 +103,36 @@ To add a new route, update the `KNOWN_ROUTES` set in `server.ts`. Keep the total
 | `starlink.planes.verified_starlink` | Verified Starlink-equipped count |
 | `starlink.planes.pending` | Planes pending verification |
 
+### Data freshness & deadman monitoring
+
+`src/scripts/data-freshness.ts` derives two gauges every 5 minutes from
+`MAX(timestamp)` in the DB itself (not a ran-at heartbeat, so a loop that is
+alive but writing nothing still ages):
+
+- **`starlink.data.freshness_seconds`** — seconds since the last write, tagged
+  `{job, dataset, airline}` (dataset mirrors job). Always emitted per airline;
+  never monitor a cross-airline rollup of this gauge — the stalest airline
+  masks the rest, and healthy cadences differ by orders of magnitude.
+- **`starlink.data.freshness_ratio`** — the same age divided by a per-(job,
+  airline) *deadman budget* (`DEADMAN_BUDGET_SEC` in data-freshness.ts).
+  `> 1` means the pipeline is past the point where its loop must be dead.
+
+The ratio exists because of cadence asymmetry: Hawaiian's verifier re-checks
+each tail on a deliberate ~168h defer, so its healthy `freshness_seconds`
+sawtooths up to ~604,800s — that sawtooth is *healthy*. A seconds threshold
+tight enough for United (writes every few minutes) pages weekly on healthy
+Hawaiian; one loose enough for Hawaiian hides a dead United verifier for a
+week. Budgets encode each pipeline's own "definitely dead" age (verifier:
+24h default, 14d for HA), so a single monitor covers everything:
+
+```
+max:starlink.data.freshness_ratio{*} by {dataset,airline} > 1
+```
+
+Creating that monitor is a Datadog-side task; the code guarantees the series
+exist (tests/jobs.test.ts pins that every freshness query has a budget and
+that every enabled airline surfaces in some freshness job).
+
 ## Tracing
 
 ### Span Names

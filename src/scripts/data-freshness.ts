@@ -79,6 +79,38 @@ export function buildFreshnessCoverage(
 
 export const FRESHNESS_COVERAGE = buildFreshnessCoverage();
 
+// Deadman budgets: the age (seconds) past which a pipeline's silence means the
+// LOOP IS DEAD, not merely between healthy writes. Deliberately generous — a
+// freshness SLO belongs to per-dataset monitors; this exists so one monitor on
+// freshness_ratio > 1 catches any dead pipeline. Per-airline overrides handle
+// legitimately different cadences: HA's verifier re-checks each tail on a
+// ~168h (7-day) defer, so its healthy freshness sawtooths to ~604800s — a
+// threshold tight enough for UA pages weekly on healthy HA, and one loose
+// enough for HA hides a dead UA verifier for a week. tests/jobs.test.ts pins
+// that every freshness query has a budget, so a new job can't ship unmonitorable.
+const DAY = 86_400;
+const DEADMAN_BUDGET_SEC: Record<string, { default: number; byAirline?: Record<string, number> }> =
+  {
+    flight_updater: { default: DAY },
+    verifier: { default: DAY, byAirline: { HA: 14 * DAY } },
+    departures: { default: 2 * DAY },
+    fleet_progress: { default: 3 * DAY },
+    faa_registry: { default: 3 * DAY },
+    adsb_sweep: { default: DAY },
+    qatar_ingester: { default: DAY },
+  };
+
+export function deadmanBudgetSec(job: string, airline: string): number | null {
+  const entry = DEADMAN_BUDGET_SEC[job];
+  if (!entry) return null;
+  return entry.byAirline?.[airline] ?? entry.default;
+}
+
+/** Test seam: asserts stay in sync with the queries without exporting the table. */
+export function deadmanJobs(): string[] {
+  return Object.keys(DEADMAN_BUDGET_SEC);
+}
+
 // Tables sampled by the row-count gauge. flight_routes/qatar_schedule have no
 // airline column — those report under airline:all.
 const ROW_COUNT_TABLES: Array<{ table: string; hasAirline: boolean }> = [
@@ -142,11 +174,15 @@ export function emitDataFreshness(db: Database, queries = FRESHNESS_QUERIES): vo
         // dataset mirrors job: DD monitors/dashboards group this gauge by
         // dataset, which read N/A while only job was emitted. job stays so
         // existing series and queries keep working.
-        metrics.gauge(GAUGES.DATA_FRESHNESS_SECONDS, ageSec, {
-          job,
-          dataset: job,
-          airline: normalizeAirlineTag(row.airline),
-        });
+        const tags = { job, dataset: job, airline: normalizeAirlineTag(row.airline) };
+        metrics.gauge(GAUGES.DATA_FRESHNESS_SECONDS, ageSec, tags);
+        // Cadence-normalized deadman: >1 means the pipeline is past its
+        // budget. Lets a single monitor cover airlines whose healthy write
+        // cadences differ by orders of magnitude (UA minutes vs HA weekly).
+        const budget = deadmanBudgetSec(job, row.airline);
+        if (budget !== null) {
+          metrics.gauge(GAUGES.DATA_FRESHNESS_RATIO, ageSec / budget, tags);
+        }
       }
     } catch (err) {
       logError(`Freshness query failed for job=${job}`, err);

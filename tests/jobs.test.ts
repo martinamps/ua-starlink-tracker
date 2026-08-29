@@ -24,6 +24,8 @@ import {
   FRESHNESS_QUERIES,
   buildFreshnessCoverage,
   buildFreshnessQueries,
+  deadmanBudgetSec,
+  deadmanJobs,
   emitDataFreshness,
 } from "../src/scripts/data-freshness";
 import { buildRoster } from "../src/scripts/fleet-sync";
@@ -752,6 +754,79 @@ describe("qatar_ingester freshness sentinel", () => {
     // quiet instead of paging forever.
     const call = qatarGauge(captureGauges(db, buildFreshnessQueries(false)));
     expect(call).toBeUndefined();
+    db.close();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// deadman ratio — one monitorable gauge across wildly different cadences
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("freshness deadman ratio", () => {
+  type GaugeCall = { name: string; value: number; tags?: Record<string, string | number> };
+
+  function captureGauges(db: ReturnType<typeof makeSyntheticDb>): GaugeCall[] {
+    const calls: GaugeCall[] = [];
+    const original = metrics.gauge;
+    metrics.gauge = (name, value, tags) => {
+      calls.push({ name, value, tags });
+    };
+    try {
+      emitDataFreshness(db);
+    } finally {
+      metrics.gauge = original;
+    }
+    return calls;
+  }
+
+  const ratioFor = (calls: GaugeCall[], job: string, airline: string) =>
+    calls.find(
+      (c) => c.name === "data.freshness_ratio" && c.tags?.job === job && c.tags?.airline === airline
+    );
+
+  test("every freshness query has a deadman budget for every covered airline", () => {
+    // qrEnabled=true is the superset of query keys; the static budget table
+    // must cover it so a new pipeline can't ship without a dead threshold.
+    for (const [job, airlines] of Object.entries(buildFreshnessCoverage(true))) {
+      for (const airline of airlines) {
+        expect(deadmanBudgetSec(job, airline)).toBeGreaterThan(0);
+      }
+    }
+    expect(deadmanJobs().sort()).toEqual(Object.keys(buildFreshnessQueries(true)).sort());
+  });
+
+  test("HA's healthy ~168h verifier sawtooth stays under 1 while the same age flags UA dead", () => {
+    const db = makeSyntheticDb();
+    const age = 700_000; // > 604800s: healthy for HA's weekly cadence, dead for UA's
+    const ts = Math.floor(Date.now() / 1000) - age;
+    db.query(
+      "INSERT INTO starlink_verification_log (tail_number, source, checked_at, has_starlink, airline) VALUES ('N1', 'alaska', ?, 1, 'HA'), ('N2', 'united', ?, 1, 'UA')"
+    ).run(ts, ts);
+
+    const calls = captureGauges(db);
+    const ha = ratioFor(calls, "verifier", "hawaiian");
+    const ua = ratioFor(calls, "verifier", "united");
+    expect(ha).toBeDefined();
+    expect(ua).toBeDefined();
+    expect(ha?.value as number).toBeLessThan(1);
+    expect(ua?.value as number).toBeGreaterThan(1);
+    db.close();
+  });
+
+  test("ratio rides the same tag set as freshness_seconds (dataset mirror included)", () => {
+    const db = makeSyntheticDb();
+    db.query(
+      "INSERT INTO starlink_verification_log (tail_number, source, checked_at, has_starlink, airline) VALUES ('N1', 'united', ?, 1, 'UA')"
+    ).run(Math.floor(Date.now() / 1000) - 60);
+    const calls = captureGauges(db);
+    const seconds = calls.find(
+      (c) =>
+        c.name === "data.freshness_seconds" &&
+        c.tags?.job === "verifier" &&
+        c.tags?.airline === "united"
+    );
+    const ratio = ratioFor(calls, "verifier", "united");
+    expect(ratio?.tags).toEqual(seconds?.tags as Record<string, string | number>);
     db.close();
   });
 });
