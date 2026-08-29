@@ -858,6 +858,25 @@ export function describeCarrierPrediction(cfg: AirlineConfig, answer: CarrierPre
 }
 
 /**
+ * Per-subfleet install rates from the full roster — the breakdown block
+ * compareRoute serves per airline and the hub /compare pages render directly.
+ * Empty when the roster holds no penetration data for the carrier.
+ */
+export function subfleetBreakdown(cfg: AirlineConfig, reader: ScopedReader): SubfleetBreakdown[] {
+  const penMap = reader.getSubfleetPenetration();
+  if (penMap.size === 0) return [];
+  return cfg.subfleets.map((sf) => {
+    const p = subfleetPenetration(penMap, sf) ?? {
+      synthetic: false as const,
+      equipped: 0,
+      total: 0,
+      pct: 0,
+    };
+    return { key: sf.key, label: sf.label, hint: sf.flightNumberHint, ...p };
+  });
+}
+
+/**
  * One airline's Starlink odds on a NONSTOP O-D pair.
  *
  * Reports the install rate across the subfleet(s) the carrier flies nonstop
@@ -896,17 +915,8 @@ export function compareRouteForAirline(
   }
 
   // ---- 2. Unbiased per-subfleet penetration from full roster ----
-  const penMap = reader.getSubfleetPenetration();
-  if (penMap.size === 0) return null;
-  const penArr: SubfleetBreakdown[] = cfg.subfleets.map((sf) => {
-    const p = subfleetPenetration(penMap, sf) ?? {
-      synthetic: false as const,
-      equipped: 0,
-      total: 0,
-      pct: 0,
-    };
-    return { key: sf.key, label: sf.label, hint: sf.flightNumberHint, ...p };
-  });
+  const penArr = subfleetBreakdown(cfg, reader);
+  if (penArr.length === 0) return null;
   const maxPct = Math.max(...penArr.map((p) => p.pct));
   const minSub = penArr.reduce((a, b) => (a.pct <= b.pct ? a : b));
 
