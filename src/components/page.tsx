@@ -1,5 +1,6 @@
 import type React from "react";
 import type { AirlineContent, ContentStats } from "../airlines/content";
+import { ensureAirlinePrefix } from "../airlines/flight-number";
 import { type SiteConfig, siteAirline } from "../airlines/registry";
 import type {
   Aircraft,
@@ -363,6 +364,34 @@ export default function Page({
   // Hub never renders the flight-search form (checkFlightPage is off), so the
   // prefix is only read on airline-scoped sites.
   const searchCarrier = site.scope !== "ALL" ? siteAirline(site).iata : "";
+  // Flight permalinks are airline-scoped: the hub has checkFlightPage off and
+  // siteAirline() throws there, so pills stay outbound on sites without one.
+  const permalinkAirline = features.checkFlightPage ? siteAirline(site) : null;
+  // Mirrors parseCheckFlightPath's gate, so every link we emit is a URL the
+  // permalink handler parses instead of 404ing or redirecting. Built once —
+  // this runs against every pill on the page.
+  const permalinkFnPattern = permalinkAirline
+    ? new RegExp(`^${permalinkAirline.iata}\\d{1,4}$`)
+    : null;
+
+  /**
+   * `/check-flight/{marketing number}` for a pill, or null when the pill can't
+   * reach a real permalink and must keep its outbound link.
+   *
+   * The pill carries the OPERATING carrier's callsign (OO4757, SKW5366) but the
+   * permalink is minted under the marketing code, so this goes through
+   * ensureAirlinePrefix — never a bare prefix strip, which turns G74561 into
+   * UA74561 instead of UA4561. Two gates keep it off dead URLs:
+   * non-numeric callsigns (SKW394Y) normalize to themselves, and a foreign
+   * carrier's number belongs to no permalink this site serves — both would land
+   * on the noindex generic page rather than a flight, so they stay outbound.
+   */
+  const flightPermalink = (tailNumber: string, flightNumber: string): string | null => {
+    if (!permalinkAirline || !permalinkFnPattern) return null;
+    if ((airlineByTail[tailNumber] || permalinkAirline.code) !== permalinkAirline.code) return null;
+    const fn = ensureAirlinePrefix(permalinkAirline, flightNumber);
+    return permalinkFnPattern.test(fn) ? `/check-flight/${fn}` : null;
+  };
   const navLinks = [
     ...(features.checkFlightPage
       ? [{ href: "/check-flight", label: "Check a Flight", badge: "" }]
@@ -440,13 +469,23 @@ export default function Page({
         visibilityClass = "hidden md:inline-flex"; // Tablet+ (md+)
       }
 
+      // Every pill that can reach a permalink links to one. Deduping to one
+      // anchor per flight number was considered and rejected: the anchor count
+      // is identical either way (this converts links, it never adds any), so
+      // the per-link equity denominator doesn't move — repeats to one URL are
+      // consolidated anyway — and it would leave the same flight number
+      // pointing at two different destinations in one row.
+      const permalink = flightPermalink(tailNumber, flight.flight_number);
+      // Hover text names the destination, so it shows the marketing number the
+      // permalink is filed under rather than the operating callsign.
+      const tooltip = permalink ? permalink.slice("/check-flight/".length) : flight.flight_number;
+
       return (
         <a
           key={idx}
-          href={`https://www.flightaware.com/live/flight/${flight.flight_number}`}
-          target="_blank"
-          rel="nofollow noopener noreferrer"
-          data-flight-tooltip={flight.flight_number}
+          href={permalink ?? `https://www.flightaware.com/live/flight/${flight.flight_number}`}
+          {...(permalink ? {} : { target: "_blank", rel: "nofollow noopener noreferrer" as const })}
+          data-flight-tooltip={tooltip}
           className={`flight-pill font-mono items-center gap-1.5 px-2 py-1 bg-surface-elevated border border-subtle rounded text-xs text-secondary hover:text-accent hover:border-accent/50 transition-all ${visibilityClass}`}
         >
           <span className="text-accent font-medium">{dep}</span>

@@ -1,0 +1,200 @@
+/**
+ * Homepage flight pills point at this site's own flight permalinks.
+ *
+ * The pills carry OPERATING-carrier callsigns (OO4757, G74561, SKW5366) while
+ * permalinks are filed under the marketing code, so the interesting cases are
+ * all normalization: the mapping must go through ensureAirlinePrefix, and every
+ * href it emits has to be a URL the permalink handler actually serves — not a
+ * 301 to a canonical spelling and not the noindex generic fallback.
+ */
+
+import { beforeAll, describe, expect, test } from "bun:test";
+import { createApp } from "../src/server/app";
+import { addFleet, addFlight, addPlane, makeSyntheticDb, req } from "./helpers";
+
+const UA_HOST = "unitedstarlinktracker.com";
+const AS_HOST = "alaskastarlinktracker.com";
+const HUB_HOST = "airlinestarlinktracker.com";
+
+const PILL_RE = /<a\b[^>]*?class="[^"]*flight-pill[^"]*"[^>]*?>/g;
+const HREF_RE = /href="([^"]*)"/;
+const TOOLTIP_RE = /data-flight-tooltip="([^"]*)"/;
+
+interface Pill {
+  tag: string;
+  href: string;
+  tooltip: string;
+}
+
+function pillsOf(html: string): Pill[] {
+  return (html.match(PILL_RE) ?? []).map((tag) => ({
+    tag,
+    href: tag.match(HREF_RE)?.[1] ?? "",
+    tooltip: tag.match(TOOLTIP_RE)?.[1] ?? "",
+  }));
+}
+
+/** Pills whose row flight number is `fn` — matched via the tooltip, which
+ * carries either the marketing number (when linked) or the raw callsign. */
+function pillFor(pills: Pill[], tooltip: string): Pill | undefined {
+  return pills.find((p) => p.tooltip === tooltip);
+}
+
+// Departures are only "upcoming" while departure_time > now, so every fixture
+// is minted relative to the run.
+const soon = (hours: number) => Math.floor(Date.now() / 1000) + hours * 3600;
+
+/**
+ * One UA tail carrying every flight-number spelling the pill mapper has to
+ * survive, plus a Hawaiian tail so the hub renders a second carrier.
+ */
+function seedDb() {
+  const db = makeSyntheticDb();
+  addPlane(db, "N100UA", "Starlink");
+  addFleet(db, "N100UA", "confirmed", { verifiedWifi: "Starlink" });
+  addFlight(db, "N100UA", "UA123", "SFO", soon(1));
+  addFlight(db, "N100UA", "OO4757", "GSP", soon(2), { arrivalAirport: "ORD" });
+  // G7 is the two-char prefix that a naive /^[A-Z]+/ strip mangles into
+  // UA74561; the correct mapping drops only the prefix.
+  addFlight(db, "N100UA", "G74561", "IAH", soon(3), { arrivalAirport: "DEN" });
+  // Non-numeric callsign suffix: normalizes to itself, so no permalink exists.
+  addFlight(db, "N100UA", "SKW394Y", "DEN", soon(4), { arrivalAirport: "ASE" });
+  // Zero-padded spelling: the permalink handler 301s UA0100 → UA100, so the
+  // link must already be canonical.
+  addFlight(db, "N100UA", "UA0100", "EWR", soon(5), { arrivalAirport: "TLV" });
+
+  addPlane(db, "N999HA", "Starlink", { airline: "HA", aircraft: "Airbus A330-243" });
+  addFleet(db, "N999HA", "confirmed", {
+    airline: "HA",
+    aircraftType: "Airbus A330-243",
+    verifiedWifi: "Starlink",
+  });
+  addFlight(db, "N999HA", "HA11", "HNL", soon(2), { arrivalAirport: "LAX", airline: "HA" });
+
+  // Horizon flies AS metal under QX — the same operating/marketing split as UA,
+  // under a different carrier, so it proves the mapping reads each site's own
+  // airline rather than a pinned UA.
+  addPlane(db, "N654QX", "Starlink", { airline: "AS", aircraft: "Embraer ERJ-175LR" });
+  addFleet(db, "N654QX", "confirmed", {
+    airline: "AS",
+    aircraftType: "Embraer ERJ-175LR",
+    verifiedWifi: "Starlink",
+  });
+  addFlight(db, "N654QX", "QX2304", "SEA", soon(2), { arrivalAirport: "PDX", airline: "AS" });
+  return db;
+}
+
+describe("homepage flight pills link to flight permalinks", () => {
+  let app: ReturnType<typeof createApp>;
+  let pills: Pill[];
+
+  beforeAll(async () => {
+    app = createApp(seedDb());
+    const res = await app.dispatch(req("/", UA_HOST));
+    expect(res.status).toBe(200);
+    pills = pillsOf(await res.text());
+    expect(pills.length).toBeGreaterThan(0);
+  });
+
+  test("every pill href is either an own-site permalink or an outbound tracker link", () => {
+    for (const p of pills) {
+      expect(p.href).toMatch(
+        /^(\/check-flight\/UA\d{1,4}|https:\/\/www\.flightaware\.com\/live\/flight\/[A-Z0-9]+)$/
+      );
+    }
+  });
+
+  test("at least one pill became an internal permalink", () => {
+    expect(pills.filter((p) => p.href.startsWith("/check-flight/")).length).toBeGreaterThan(0);
+  });
+
+  test("internal pills drop the outbound-link attributes; outbound pills keep them", () => {
+    for (const p of pills) {
+      const internal = p.href.startsWith("/check-flight/");
+      expect(p.tag.includes('target="_blank"')).toBe(!internal);
+      expect(p.tag.includes("nofollow")).toBe(!internal);
+    }
+  });
+
+  test("operating-carrier callsigns map to the marketing number", () => {
+    expect(pillFor(pills, "UA4757")?.href).toBe("/check-flight/UA4757");
+  });
+
+  test("a two-letter carrier prefix is stripped as a prefix, not as leading letters", () => {
+    // Regression guard: a /^[A-Z]+/ strip yields UA74561, which no permalink
+    // serves and which the permalink path regex rejects outright.
+    const pill = pillFor(pills, "UA4561");
+    expect(pill?.href).toBe("/check-flight/UA4561");
+    expect(pills.some((p) => p.href.includes("UA74561"))).toBe(false);
+  });
+
+  test("a marketing-coded flight number links to itself", () => {
+    expect(pillFor(pills, "UA123")?.href).toBe("/check-flight/UA123");
+  });
+
+  test("zero-padded numbers link to the canonical spelling, not a 301", () => {
+    expect(pillFor(pills, "UA100")?.href).toBe("/check-flight/UA100");
+    expect(pills.some((p) => p.href.includes("UA0100"))).toBe(false);
+  });
+
+  test("a callsign with a non-numeric suffix keeps its outbound link", () => {
+    const pill = pillFor(pills, "SKW394Y");
+    expect(pill?.href).toBe("https://www.flightaware.com/live/flight/SKW394Y");
+  });
+
+  test("every distinct permalink the homepage emits serves an indexable flight page", async () => {
+    const hrefs = [...new Set(pills.map((p) => p.href))].filter((h) =>
+      h.startsWith("/check-flight/")
+    );
+    expect(hrefs.length).toBeGreaterThan(0);
+    for (const href of hrefs) {
+      const res = await app.dispatch(req(href, UA_HOST));
+      // A 301 would mean the link used a non-canonical spelling; the generic
+      // noindex fallback would mean the flight has no data behind it.
+      expect(res.status).toBe(200);
+      const html = await res.text();
+      expect(html).not.toContain("noindex");
+      expect(html).toContain(`<link rel="canonical" href="https://${UA_HOST}${href}"`);
+      expect(html).toContain(href.slice("/check-flight/".length));
+    }
+  });
+
+  test("the hover label names the permalink target", () => {
+    for (const p of pills) {
+      if (!p.href.startsWith("/check-flight/")) continue;
+      expect(p.tooltip).toBe(p.href.slice("/check-flight/".length));
+    }
+  });
+});
+
+describe("each tenant normalizes to its own marketing code", () => {
+  test("Alaska's homepage maps QX pills to AS permalinks, and never to UA", async () => {
+    const app = createApp(seedDb());
+    const res = await app.dispatch(req("/", AS_HOST));
+    expect(res.status).toBe(200);
+    const pills = pillsOf(await res.text());
+    expect(pills.length).toBeGreaterThan(0);
+    expect(pillFor(pills, "AS2304")?.href).toBe("/check-flight/AS2304");
+    for (const p of pills) {
+      if (p.href.startsWith("/check-flight/")) expect(p.href).toStartWith("/check-flight/AS");
+    }
+  });
+});
+
+describe("sites without a flight-permalink page keep pills outbound", () => {
+  test("the hub emits no permalink hrefs", async () => {
+    const app = createApp(seedDb());
+    const res = await app.dispatch(req("/", HUB_HOST));
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    const pills = pillsOf(html);
+    expect(pills.length).toBeGreaterThan(0);
+    for (const p of pills) {
+      expect(p.href).toStartWith("https://www.flightaware.com/live/flight/");
+    }
+    // The hub 404s /check-flight entirely, so linking there would be a dead end.
+    expect(await app.dispatch(req("/check-flight/UA123", HUB_HOST)).then((r) => r.status)).toBe(
+      404
+    );
+  });
+});
