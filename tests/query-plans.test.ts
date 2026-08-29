@@ -61,13 +61,16 @@ const planOf = (db: ReturnType<typeof seeded>, sql: string, params: (string | nu
     .join(" | ");
 
 describe("hot-path query plans", () => {
-  test("both serving-path indexes exist after setupTables", () => {
+  test("the serving-path indexes exist after setupTables", () => {
     const db = makeSyntheticDb();
     const names = (
       db.query("SELECT name FROM sqlite_master WHERE type='index'").all() as { name: string }[]
     ).map((r) => r.name);
     expect(names).toContain("idx_vlog_flight");
     expect(names).toContain("idx_upf_tail");
+    // /tail/{registration} pages: timeline + per-tail lastmod + recent flying.
+    expect(names).toContain("idx_vlog_tail_time");
+    expect(names).toContain("idx_dl_tail");
     db.close();
   });
 
@@ -97,6 +100,48 @@ describe("hot-path query plans", () => {
       [1_700_000_000, 1_800_000_000, "UA"]
     );
     expect(plan).toContain("idx_upf_tail");
+    db.close();
+  });
+
+  // /tail/{registration} serving path: the timeline filters on tail_number and
+  // the sitemap computes MAX(checked_at) per tail — both must seek, not scan
+  // the one-airline log.
+  test("tail verification reads seek by tail_number", () => {
+    const db = seeded();
+    const timelinePlan = planOf(
+      db,
+      `SELECT date(checked_at, 'unixepoch') AS day, source, has_starlink, wifi_provider,
+              MAX(flight_number), COUNT(*), MAX(checked_at)
+       FROM starlink_verification_log
+       WHERE tail_number = ? AND error IS NULL AND has_starlink IS NOT NULL AND airline = ?
+       GROUP BY day, source, has_starlink, wifi_provider`,
+      ["N100AB", "UA"]
+    );
+    expect(timelinePlan).toContain("SEARCH starlink_verification_log");
+    expect(timelinePlan).toContain("tail_number=?");
+
+    const lastmodPlan = planOf(
+      db,
+      `SELECT MAX(checked_at) FROM starlink_verification_log
+       WHERE tail_number = ? AND airline = ?`,
+      ["N100AB", "UA"]
+    );
+    expect(lastmodPlan).toContain("idx_vlog_tail_time");
+    db.close();
+  });
+
+  test("recent-departures read seeks departure_log by tail", () => {
+    const db = seeded();
+    db.query(
+      "INSERT INTO departure_log (tail_number, airport, departed_at, airline) VALUES (?,?,?,?)"
+    ).run("N100AB", "ORD", 1_700_000_000, "UA");
+    const plan = planOf(
+      db,
+      `SELECT airport, departed_at FROM departure_log
+       WHERE tail_number = ? AND airline = ? ORDER BY departed_at DESC LIMIT 8`,
+      ["N100AB", "UA"]
+    );
+    expect(plan).toContain("idx_dl_tail");
     db.close();
   });
 });

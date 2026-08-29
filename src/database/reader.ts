@@ -19,6 +19,7 @@ import type {
   RecentInstall,
   RouteSchedule,
 } from "../types";
+import type { FaaRegistryRow } from "../types";
 import {
   type ConfirmedEdge,
   type DirectRouteEdge,
@@ -34,7 +35,11 @@ import {
   type RouteSummary,
   type SitemapFlight,
   type SitemapRoute,
+  type SitemapTail,
   type SubfleetPenetration,
+  type TailDeparture,
+  type TailPageRecord,
+  type TailVerificationEvent,
   type VerificationObservation,
   type VerificationSource,
   type WifiConsensus,
@@ -50,6 +55,7 @@ import {
   getConfirmedFleetTails,
   getConfirmedStarlinkEdges,
   getDirectRouteEdge,
+  getFaaRegistryByTail,
   getFleetDiscoveryStats,
   getFleetEntryByTail,
   getFleetPageData,
@@ -75,9 +81,13 @@ import {
   getServedRoutePairs,
   getSitemapFlights,
   getSitemapRoutes,
+  getSitemapTails,
   getStarlinkPlaneByTail,
   getStarlinkPlanes,
   getSubfleetPenetration,
+  getTailPageRecord,
+  getTailRecentDepartures,
+  getTailVerificationTimeline,
   getTotalCount,
   getUpcomingFlights,
   getVerificationObservations,
@@ -113,6 +123,8 @@ export interface ScopedReader {
   getSitemapFlights(): SitemapFlight[];
   /** Route permalinks worth advertising, with real per-route lastmod; empty on the hub (route pages are tenant pages). */
   getSitemapRoutes(): SitemapRoute[];
+  /** Tail permalinks (the airline's whole roster, negatives included) with real per-tail lastmod; empty on the hub (tail pages are tenant pages). */
+  getSitemapTails(): SitemapTail[];
   /** Meta keys are namespaced per-airline; null on the hub (no single namespace). */
   getMeta(key: string): string | null;
   /** Check-flight assignments without the verified_wifi filter (the core classifies tiers). */
@@ -165,6 +177,16 @@ export interface ScopedReader {
   getRouteSummary(origin: string, destination: string): RouteSummary;
   getFlightHistorySummary(variants: string[]): FlightHistorySummary;
   getFlightRoutePairs(variants: string[]): FlightRoutePair[];
+
+  // /tail/{registration} SSR: existence gate + evidence timeline + recent flying.
+  /** null is the page's existence gate — unknown registrations 404. */
+  getTailPageRecord(tail: string): TailPageRecord | null;
+  getTailVerificationTimeline(tail: string, limit?: number): TailVerificationEvent[];
+  getTailRecentDepartures(tail: string, limit?: number): TailDeparture[];
+  /** FAA registry facts for a tail this scope actually tracks; null otherwise
+   * (the registry table is airline-agnostic, so the fleet membership check is
+   * what keeps a tenant from resolving another airline's registration). */
+  getFaaRegistryByTail(tail: string): FaaRegistryRow | null;
 
   // Single-tail lookups + best-effort writes. Airline-scoped like everything
   // else: a tenant's FR24 fallback must not resolve another airline's tail.
@@ -288,6 +310,7 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
         .at(-1) ?? null,
     getSitemapFlights: () => (scope === "ALL" ? [] : getSitemapFlights(db, scope)),
     getSitemapRoutes: () => (scope === "ALL" ? [] : getSitemapRoutes(db, scope)),
+    getSitemapTails: () => (scope === "ALL" ? [] : getSitemapTails(db, scope)),
     getMeta: (key) => (scope === "ALL" ? null : getMeta(db, key, scope)),
     getFlightAssignments: (v, s, e) => getFlightAssignments(db, v, s, e, airlines),
     getFleetPageData: () => getFleetPageData(db, airlines),
@@ -319,6 +342,13 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     getRouteSummary: (o, d) => getRouteSummary(db, o, d, soleAirline()),
     getFlightHistorySummary: (v) => getFlightHistorySummary(db, v, airlines),
     getFlightRoutePairs: (v) => getFlightRoutePairs(db, v, airlines),
+
+    getTailPageRecord: (tail) => getTailPageRecord(db, tail, airlines),
+    getTailVerificationTimeline: (tail, limit) =>
+      getTailVerificationTimeline(db, tail, airlines, limit),
+    getTailRecentDepartures: (tail, limit) => getTailRecentDepartures(db, tail, airlines, limit),
+    getFaaRegistryByTail: (tail) =>
+      getTailPageRecord(db, tail, airlines) ? getFaaRegistryByTail(db, tail) : null,
 
     getStarlinkPlaneByTail: (tail) => getStarlinkPlaneByTail(db, tail, airlines),
     getFleetEntryByTail: (tail) => getFleetEntryByTail(db, tail, airlines),

@@ -622,9 +622,17 @@ function migrateMultiAirline(db: Database) {
     CREATE INDEX IF NOT EXISTS idx_vlog_airline ON starlink_verification_log(airline, tail_number);
     CREATE INDEX IF NOT EXISTS idx_vlog_flight  ON starlink_verification_log(flight_number, checked_at DESC);
     CREATE INDEX IF NOT EXISTS idx_upf_tail     ON upcoming_flights(tail_number);
+    CREATE INDEX IF NOT EXISTS idx_vlog_tail_time ON starlink_verification_log(tail_number, checked_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_dl_tail      ON departure_log(tail_number, departed_at DESC);
   `);
 
-  // The two indexes above exist for the serving path: getFlightHistorySummary
+  // idx_vlog_tail_time / idx_dl_tail serve /tail/{registration}: the timeline
+  // and sitemap-lastmod reads filter on tail_number and order/aggregate by
+  // checked_at, which idx_verification_tail_source (tail, SOURCE, time) cannot
+  // satisfy without visiting every one of the tail's rows; departure_log had no
+  // tail index at all.
+  //
+  // The flight_number/tail indexes exist for the serving path: getFlightHistorySummary
   // runs three flight_number-filtered queries per permalink render and had only
   // airline-leading indexes to use — on a one-airline 76k-row log that is a
   // full-table range scan, measured at ~150ms of the permalink's 152ms. The
@@ -2193,6 +2201,156 @@ export function getFleetEntryByTail(
   } | null;
 }
 
+// ============================================
+// /tail/{registration} page readers
+// ============================================
+
+/**
+ * Registrations eligible for a tail URL — uppercase alphanumerics with an
+ * optional single hyphen group (N47280, A7-BBB). Page gate and sitemap share
+ * this test (mirroring ROUTE_AIRPORT_RE for routes) so an advertised tail URL
+ * can never 404 on spelling alone.
+ */
+export const TAIL_URL_RE = /^[A-Z0-9]{2,10}(-[A-Z0-9]{1,8})?$/;
+
+export interface TailPageRecord {
+  tail_number: string;
+  aircraft_type: string | null;
+  fleet: string;
+  operated_by: string | null;
+  starlink_status: string;
+  verified_wifi: string | null;
+  verified_at: number | null;
+  first_seen_at: number;
+  last_seen_at: number;
+  ship_number: string | null;
+  /** starlink_planes.DateFound — when the tail first appeared in the tracked
+   * Starlink roster; null when it never has. */
+  sheet_date_found: string | null;
+}
+
+/** Everything a /tail/{registration} page needs from the fleet tables; null is
+ * the existence gate (unknown registrations 404, same population the sitemap
+ * advertises). */
+export function getTailPageRecord(
+  db: Database,
+  tail: string,
+  airline?: AirlineFilter
+): TailPageRecord | null {
+  const q = withAirline(
+    `SELECT uf.tail_number, uf.aircraft_type, uf.fleet, uf.operated_by,
+            uf.starlink_status, uf.verified_wifi, uf.verified_at,
+            uf.first_seen_at, uf.last_seen_at, uf.ship_number,
+            (SELECT MIN(sp.DateFound) FROM starlink_planes sp
+              WHERE sp.TailNumber = uf.tail_number AND sp.airline = uf.airline) AS sheet_date_found
+     FROM united_fleet uf WHERE uf.tail_number = ?`,
+    airline,
+    "uf",
+    [tail]
+  );
+  return db.query(q.sql).get(...q.params) as TailPageRecord | null;
+}
+
+export interface TailVerificationEvent {
+  /** UTC day the check(s) landed on (YYYY-MM-DD). */
+  day: string;
+  source: string;
+  has_starlink: number;
+  wifi_provider: string | null;
+  /** A flight the tail was checked against that day, when the source recorded one. */
+  flight_number: string | null;
+  /** Identical same-day checks collapsed into this row. */
+  checks: number;
+  last_checked_at: number;
+}
+
+/**
+ * Public evidence timeline for a tail: clean observations only (same
+ * CLEAN_OBSERVATION_WHERE population that trains the predictor and settles
+ * consensus — the page must cite the evidence the verdict actually rests on),
+ * collapsed per day/source/result so an hourly re-check reads as one entry.
+ */
+export function getTailVerificationTimeline(
+  db: Database,
+  tail: string,
+  airline?: AirlineFilter,
+  limit = 30
+): TailVerificationEvent[] {
+  const q = withAirline(
+    `SELECT date(checked_at, 'unixepoch') AS day, source, has_starlink, wifi_provider,
+            MAX(flight_number) AS flight_number, COUNT(*) AS checks,
+            MAX(checked_at) AS last_checked_at
+     FROM starlink_verification_log
+     WHERE tail_number = ? AND ${CLEAN_OBSERVATION_WHERE}`,
+    airline,
+    "",
+    [tail]
+  );
+  return db
+    .query(
+      `${q.sql} GROUP BY day, source, has_starlink, wifi_provider
+       ORDER BY last_checked_at DESC LIMIT ?`
+    )
+    .all(...q.params, limit) as TailVerificationEvent[];
+}
+
+export interface TailDeparture {
+  airport: string;
+  departed_at: number;
+}
+
+export function getTailRecentDepartures(
+  db: Database,
+  tail: string,
+  airline?: AirlineFilter,
+  limit = 10
+): TailDeparture[] {
+  const q = withAirline(
+    "SELECT airport, departed_at FROM departure_log WHERE tail_number = ?",
+    airline,
+    "",
+    [tail]
+  );
+  return db
+    .query(`${q.sql} ORDER BY departed_at DESC LIMIT ?`)
+    .all(...q.params, limit) as TailDeparture[];
+}
+
+export interface SitemapTail {
+  tail: string;
+  /** Latest verification/fleet-status change (unix sec); 0 when unknown — emit no <lastmod> rather than lie. */
+  last_touched: number;
+}
+
+/**
+ * Every registration with a /tail/{registration} page — the airline's whole
+ * united_fleet roster, negatives included ("does N12345 have Starlink" deserves
+ * an honest no). lastmod is real evidence time: the latest verification check
+ * or verified_at settle for that tail, never the request time. Mirrors the
+ * page's existence gate (getTailPageRecord) by construction: both read
+ * united_fleet scoped to the airline.
+ */
+export function getSitemapTails(db: Database, airline: string): SitemapTail[] {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const rows = db
+    .query(
+      `SELECT tail_number AS tail,
+              COALESCE(verified_at, 0) AS settled_at,
+              COALESCE((SELECT MAX(v.checked_at) FROM starlink_verification_log v
+                        WHERE v.tail_number = united_fleet.tail_number
+                          AND v.airline = united_fleet.airline), 0) AS checked_at
+       FROM united_fleet WHERE airline = ? ORDER BY tail_number`
+    )
+    .all(airline) as Array<{ tail: string; settled_at: number; checked_at: number }>;
+  return rows
+    .filter((r) => TAIL_URL_RE.test(r.tail))
+    .map((r) => {
+      // Future timestamps are corrupt rows — treat as unknown, keep the page.
+      const sane = [r.settled_at, r.checked_at].filter((t) => t > 0 && t <= nowSec);
+      return { tail: r.tail, last_touched: sane.length > 0 ? Math.max(...sane) : 0 };
+    });
+}
+
 export function getStarlinkTailsByCheckAge(db: Database): string[] {
   return (
     db
@@ -3738,7 +3896,10 @@ export function bodyClassOf(family: string): BodyClass {
   return "narrowbody"; // safer default for unknowns than inflating regional
 }
 
-const fleetPageCache = new Map<string, { data: FleetPageData; at: number }>();
+// Keyed per Database instance: a process-wide map keyed only by airline served
+// one connection's cached fleet to every other connection (visible as
+// cross-fixture bleed in tests; prod runs a single db so behavior is unchanged).
+const fleetPageCache = new WeakMap<Database, Map<string, { data: FleetPageData; at: number }>>();
 const FLEET_PAGE_TTL_MS = 60_000;
 
 /**
@@ -3749,13 +3910,18 @@ const FLEET_PAGE_TTL_MS = 60_000;
  */
 export function getFleetPageData(db: Database, airline?: AirlineFilter): FleetPageData {
   const now = Date.now();
+  let perDb = fleetPageCache.get(db);
+  if (!perDb) {
+    perDb = new Map();
+    fleetPageCache.set(db, perDb);
+  }
   const key = filterKey(airline);
-  const cached = fleetPageCache.get(key);
+  const cached = perDb.get(key);
   if (cached && now - cached.at < FLEET_PAGE_TTL_MS) {
     return cached.data;
   }
   const data = computeFleetPageData(db, airline);
-  fleetPageCache.set(key, { data, at: now });
+  perDb.set(key, { data, at: now });
   return data;
 }
 
