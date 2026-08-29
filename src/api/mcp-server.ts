@@ -32,6 +32,7 @@ import {
   type AirlineConfig,
   type AnalyticsConfig,
   enabledAirlines,
+  siteForAirline,
 } from "../airlines/registry";
 import type { FlightAssignmentRow } from "../database/database";
 import { type Scope, type ScopedReader, aggregatePenetration } from "../database/reader";
@@ -49,14 +50,17 @@ import {
 } from "../scripts/starlink-predictor";
 import { debug, info } from "../utils/logger";
 import {
+  type EvidenceClass,
   FR24_OUTAGE_NOTE,
   type FlightVerdict,
   SWAP_DEGRADED_NOTE,
   carrierReader,
+  dataFreshness,
   decideCarrier,
   flightDateWindow,
   negativeWifi,
   resolveFlightVerdict,
+  verdictEvidence,
   verdictTelemetry,
 } from "./check-flight-core";
 import type { FallbackSegment } from "./flight-verdict";
@@ -138,9 +142,45 @@ interface JsonRpcError {
 
 type JsonRpcResponse = JsonRpcSuccess | JsonRpcError;
 
-// MCP tool result content block
+// MCP tool result content block. structuredContent (2025-06-18) is additive:
+// the prose text blocks stay the primary answer, structure rides alongside.
 type TextContent = { type: "text"; text: string };
-type ToolResult = { content: TextContent[]; isError?: boolean };
+type ToolResult = {
+  content: TextContent[];
+  structuredContent?: Record<string, unknown>;
+  isError?: boolean;
+};
+
+// ============================================================================
+// Structured provenance (machine-readable, additive alongside the prose)
+// ============================================================================
+
+interface Provenance extends Record<string, unknown> {
+  source: string;
+  evidence: EvidenceClass;
+  data_updated_at: string | null;
+  retrieved_at: string;
+}
+
+function prov(reader: ScopedReader, source: string, evidence: EvidenceClass): Provenance {
+  return { source, evidence, ...dataFreshness(reader) };
+}
+
+/**
+ * Per-tail evidence permalink (/tail/{registration}) on the airline's own
+ * tracker host. Null when no airline attribution exists (hub-scope aircraft
+ * rows) — never a guessed host.
+ */
+function tailEvidenceUrl(code: AirlineCode | null, registration: string): string | null {
+  if (!code) return null;
+  const host = siteForAirline(code)?.canonicalHost;
+  return host ? `https://${host}/tail/${encodeURIComponent(registration)}` : null;
+}
+
+/** Tail reference for structuredContent: registration + evidence permalink. */
+function tailRef(code: AirlineCode | null, registration: string): Record<string, unknown> {
+  return { registration, evidence_url: tailEvidenceUrl(code, registration) };
+}
 
 // ============================================================================
 // Tool definitions (JSON Schema 2020-12)
@@ -189,6 +229,207 @@ function exampleFlightNumber(scope: Scope): string {
   return `${scope}${scope === "UA" ? "544" : "1"}`;
 }
 
+// Output schemas describe structuredContent (additive alongside the prose
+// text blocks). Deliberately permissive — only always-present fields are
+// required, so future additive fields never break client-side validation.
+// Scope-neutral prose only: these serve every /mcp host.
+const PROVENANCE_SCHEMA = {
+  type: "object",
+  description: "Machine-readable provenance for this answer.",
+  properties: {
+    source: {
+      type: "string",
+      description:
+        "Pipeline that produced the answer, e.g. verified_assignment, fleet_assignment, verified_negative, fr24_tail_lookup, flight_history_model, fleet_prior, type_rules, schedule_equipment, fleet_data, confirmed_assignments, route_comparison.",
+    },
+    evidence: {
+      type: "string",
+      enum: ["observed", "fleet_data", "type_derived", "predicted", "none"],
+      description:
+        "Evidence class: observed = per-tail verification against the airline's own systems; fleet_data = tracked in fleet data but unverified; type_derived = determined by aircraft type; predicted = statistical estimate; none = no data.",
+    },
+    data_updated_at: {
+      type: ["string", "null"],
+      description: "ISO 8601 stamp of the underlying data's last update; null when unstamped.",
+    },
+    retrieved_at: { type: "string", description: "ISO 8601 stamp when this answer was generated." },
+  },
+  required: ["source", "evidence", "retrieved_at"],
+} as const;
+
+const TAIL_SCHEMA = {
+  type: "object",
+  properties: {
+    registration: { type: "string", description: "Aircraft registration (tail number)." },
+    evidence_url: {
+      type: ["string", "null"],
+      description:
+        "Per-tail evidence page (/tail/{registration}) with the verification history; null when no per-airline host is known.",
+    },
+  },
+  required: ["registration"],
+} as const;
+
+const STRUCTURED_FLIGHT_SCHEMA = {
+  type: "object",
+  properties: {
+    flight_number: { type: "string" },
+    origin: { type: "string" },
+    destination: { type: "string" },
+    departure_time: { type: "string", description: "ISO 8601 UTC departure time." },
+    aircraft_type: { type: ["string", "null"] },
+    wifi: { type: ["string", "null"], description: "WiFi system on the assigned aircraft." },
+    tail: TAIL_SCHEMA,
+  },
+} as const;
+
+const LEG_PREDICTION_SCHEMA = {
+  type: "object",
+  properties: {
+    flight_number: { type: "string" },
+    route: { type: "string" },
+    probability: { type: "number" },
+    confidence: { type: "string", enum: ["high", "medium", "low"] },
+    n_observations: { type: "number" },
+  },
+} as const;
+
+function buildOutputSchemas(): Record<string, Record<string, unknown>> {
+  return {
+    check_flight: {
+      type: "object",
+      properties: {
+        flight_number: { type: "string" },
+        date: { type: "string" },
+        verdict: {
+          type: "string",
+          enum: ["yes", "no", "unknown"],
+          description: "yes/no = firm answer from the assigned aircraft; unknown = no assignment.",
+        },
+        confidence: {
+          type: "string",
+          description:
+            "Claim strength: verified, likely, high/medium/low (prediction), type, rolling, mixed, none.",
+        },
+        probability: { type: "number", description: "Present on prediction answers only." },
+        n_observations: { type: "number" },
+        flights: { type: "array", items: STRUCTURED_FLIGHT_SCHEMA },
+        provenance: PROVENANCE_SCHEMA,
+      },
+      required: ["flight_number", "date", "verdict", "confidence", "provenance"],
+    },
+    get_fleet_stats: {
+      type: "object",
+      properties: {
+        airline: { type: ["string", "null"], description: "IATA code; null on the hub scope." },
+        starlink_count: { type: "number" },
+        total_count: { type: "number" },
+        percentage: { type: "number" },
+        subfleets: {
+          type: "object",
+          description: "express/mainline split with per-subfleet installed/total/percentage.",
+        },
+        families: { type: "array", description: "Per-aircraft-family installed/total breakdown." },
+        airlines: { type: "array", description: "Hub scope only: per-airline counts." },
+        provenance: PROVENANCE_SCHEMA,
+      },
+      required: ["starlink_count", "total_count", "provenance"],
+    },
+    list_starlink_aircraft: {
+      type: "object",
+      properties: {
+        total: { type: "number" },
+        shown: { type: "number" },
+        aircraft: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              registration: { type: "string" },
+              evidence_url: { type: ["string", "null"] },
+              aircraft_type: { type: ["string", "null"] },
+              operator: { type: "string" },
+              fleet: { type: "string" },
+              first_seen: { type: ["string", "null"] },
+            },
+            required: ["registration"],
+          },
+        },
+        provenance: PROVENANCE_SCHEMA,
+      },
+      required: ["total", "shown", "aircraft", "provenance"],
+    },
+    predict_flight_starlink: {
+      type: "object",
+      properties: {
+        flight_number: { type: "string" },
+        probability: { type: "number" },
+        confidence: { type: "string" },
+        method: { type: "string" },
+        n_observations: { type: "number" },
+        provenance: PROVENANCE_SCHEMA,
+      },
+      required: ["flight_number", "confidence", "provenance"],
+    },
+    plan_starlink_itinerary: {
+      type: "object",
+      properties: {
+        origin: { type: "string" },
+        destination: { type: "string" },
+        itineraries: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              via: { type: "array", items: { type: "string" } },
+              coverage: { type: "string", enum: ["full", "partial"] },
+              joint_probability: { type: "number" },
+              coverage_ratio: { type: ["number", "null"] },
+              expected_starlink_hours: { type: ["number", "null"] },
+              total_flight_hours: { type: ["number", "null"] },
+              legs: { type: "array", items: LEG_PREDICTION_SCHEMA },
+            },
+          },
+        },
+        airlines: { type: "array", description: "Hub scope only: per-airline route odds." },
+        probability: { type: "number", description: "Carriers without a flight-history model." },
+        provenance: PROVENANCE_SCHEMA,
+      },
+      required: ["origin", "destination", "provenance"],
+    },
+    predict_route_starlink: {
+      type: "object",
+      properties: {
+        origin: { type: ["string", "null"] },
+        destination: { type: ["string", "null"] },
+        flights: { type: "array", items: LEG_PREDICTION_SCHEMA },
+        airlines: { type: "array", description: "Hub scope only: per-airline route odds." },
+        probability: { type: "number", description: "Carriers without a flight-history model." },
+        provenance: PROVENANCE_SCHEMA,
+      },
+      required: ["provenance"],
+    },
+    search_starlink_flights: {
+      type: "object",
+      properties: {
+        origin: { type: ["string", "null"] },
+        destination: { type: ["string", "null"] },
+        total: { type: "number" },
+        shown: { type: "number" },
+        data_horizon: {
+          type: "string",
+          description: "Last date with confirmed assignments — absence beyond it is not a no.",
+        },
+        flights: { type: "array", items: STRUCTURED_FLIGHT_SCHEMA },
+        provenance: PROVENANCE_SCHEMA,
+      },
+      required: ["total", "shown", "flights", "provenance"],
+    },
+  };
+}
+
+const OUTPUT_SCHEMAS = buildOutputSchemas();
+
 function buildTools(scope: Scope) {
   const carrier = scopeLabel(scope);
   const example = exampleFlightNumber(scope);
@@ -199,7 +440,7 @@ function buildTools(scope: Scope) {
       ? " Also accepts operating-carrier codes like SKW5212, OO4680, UAL544."
       : "";
 
-  return [
+  const tools = [
     {
       name: "check_flight",
       description: `Use when the user asks "does my flight have Starlink/WiFi?" with a specific ${carrier} flight number and date. Returns FIRM YES if assigned to a verified-Starlink plane, FIRM NO if assigned to a verified non-Starlink plane, or a probability estimate if no assignment exists yet (assignments publish ~2 days out). For dates further out, call predict_flight_starlink directly — check_flight just falls through to the same estimate with extra latency.`,
@@ -400,6 +641,9 @@ function buildTools(scope: Scope) {
       },
     },
   ];
+  // structuredContent schemas are scope-neutral — appended uniformly so a tool
+  // can't ship structure the schema doesn't declare.
+  return tools.map((t) => ({ ...t, outputSchema: OUTPUT_SCHEMAS[t.name] }));
 }
 
 const TOOL_NAMES = buildTools("UA").map((t) => t.name);
@@ -578,12 +822,49 @@ async function toolCheckFlight(
   recordMcpFlightLookup(reader.scope, t.outcome, t.confidence);
 
   if (verdict.kind === "qatar" || verdict.kind === "qatar_no_data") {
-    return renderQatarCheckFlight(verdict, date);
+    return renderQatarCheckFlight(verdict, date, reader);
   }
 
   const { mid, start: startOfDay, end: endOfDay } = verdict.window;
   const now = Math.floor(Date.now() / 1000);
   const normalized = verdict.normalized;
+  const evidence = verdictEvidence(verdict);
+
+  // Structured mirror of the prose answer: same verdict, same rows, plus
+  // per-tail evidence permalinks.
+  const structuredCheck = (
+    verdictWord: "yes" | "no" | "unknown",
+    confidence: string,
+    source: string,
+    extra: Record<string, unknown> = {}
+  ): Record<string, unknown> => ({
+    flight_number: normalized,
+    date,
+    verdict: verdictWord,
+    confidence,
+    ...extra,
+    provenance: prov(reader, source, evidence),
+  });
+
+  const structuredAssignment = (f: FlightAssignmentRow): Record<string, unknown> => ({
+    flight_number: normalizeAirlineFlightNumber(cfg, f.flight_number),
+    origin: f.departure_airport,
+    destination: f.arrival_airport,
+    departure_time: new Date(f.departure_time * 1000).toISOString(),
+    aircraft_type: f.aircraft_type || null,
+    wifi: f.verified_wifi ?? null,
+    tail: tailRef(cfg.code, f.tail_number),
+  });
+
+  const structuredSegment = (s: FallbackSegment): Record<string, unknown> => ({
+    flight_number: normalized,
+    origin: s.origin,
+    destination: s.destination,
+    departure_time: new Date(s.departure_time * 1000).toISOString(),
+    aircraft_type: s.aircraft_model,
+    wifi: s.verified_wifi ?? null,
+    tail: tailRef(cfg.code, s.tail_number),
+  });
 
   const renderAssignment = (f: FlightAssignmentRow): string => {
     const dep = new Date(f.departure_time * 1000).toISOString();
@@ -618,6 +899,9 @@ async function toolCheckFlight(
               text: `✈️ Yes! Flight ${normalized} on ${date} is scheduled on a verified Starlink aircraft:\n\n${verdict.verified.map(renderAssignment).join("\n")}\n\nStarlink WiFi is free on all equipped ${cfg.shortName} flights.`,
             },
           ],
+          structuredContent: structuredCheck("yes", "verified", "verified_assignment", {
+            flights: verdict.verified.map(structuredAssignment),
+          }),
         };
       }
       return {
@@ -627,6 +911,9 @@ async function toolCheckFlight(
             text: `Likely yes — ${normalized} on ${date} is assigned to a tail tracked as Starlink in the fleet spreadsheet (not yet verified against ${cfg.verifySite}):\n\n${verdict.unverified.map(renderAssignment).join("\n")}\n\nSpreadsheet data is usually accurate but unverified. Check ${cfg.verifySite} or the flight status 24h out to confirm.`,
           },
         ],
+        structuredContent: structuredCheck("yes", "likely", "fleet_assignment", {
+          flights: verdict.unverified.map(structuredAssignment),
+        }),
       };
     }
 
@@ -651,6 +938,12 @@ async function toolCheckFlight(
             ),
           },
         ],
+        structuredContent: structuredCheck("no", "verified", "verified_negative", {
+          flights: verdict.flights.map((row) => ({
+            ...structuredAssignment(row),
+            wifi: negativeWifi(row),
+          })),
+        }),
       };
     }
 
@@ -665,6 +958,12 @@ async function toolCheckFlight(
             text: `✈️ Yes! Flight ${normalized} on ${date} is assigned to a Starlink aircraft (via live tail lookup):\n\n${verdict.starlink.map(renderSeg).join("\n")}\n\nStarlink WiFi is free on all equipped ${cfg.shortName} flights.`,
           },
         ],
+        structuredContent: structuredCheck(
+          "yes",
+          verdict.starlink.every((s) => s.confidence === "verified") ? "verified" : "likely",
+          "fr24_tail_lookup",
+          { flights: verdict.starlink.map(structuredSegment) }
+        ),
       };
     }
 
@@ -686,6 +985,9 @@ async function toolCheckFlight(
             ),
           },
         ],
+        structuredContent: structuredCheck("no", "verified", "fr24_tail_lookup", {
+          flights: no.map(structuredSegment),
+        }),
       };
     }
 
@@ -700,6 +1002,12 @@ async function toolCheckFlight(
             text: `${normalized} on ${date}: ${lead} ${describeCarrierPrediction(cfg, verdict.answer)}`,
           },
         ],
+        structuredContent: structuredCheck(
+          "unknown",
+          "type",
+          "type_rules",
+          verdict.answer.kind === "penetration" ? { probability: verdict.answer.pen.pct } : {}
+        ),
       };
     }
 
@@ -736,6 +1044,12 @@ async function toolCheckFlight(
 
       return {
         content: [{ type: "text", text: `${probLine}${altBlock}` }],
+        structuredContent: structuredCheck(
+          "unknown",
+          pred.confidence,
+          pred.method.startsWith("fleet_prior") ? "fleet_prior" : "flight_history_model",
+          { probability: pred.probability, n_observations: pred.n_observations }
+        ),
       };
     }
 
@@ -748,7 +1062,8 @@ async function toolCheckFlight(
 
 function renderQatarCheckFlight(
   verdict: Extract<FlightVerdict, { kind: "qatar" } | { kind: "qatar_no_data" }>,
-  date: string
+  date: string,
+  reader: ScopedReader
 ): ToolResult {
   if (verdict.kind === "qatar_no_data") {
     return {
@@ -758,6 +1073,13 @@ function renderQatarCheckFlight(
           text: `${verdict.normalized} on ${date}: no schedule data. Coverage is limited to high-traffic Qatar Airways routes for the next ~48h; check back closer to departure.`,
         },
       ],
+      structuredContent: {
+        flight_number: verdict.normalized,
+        date,
+        verdict: "unknown",
+        confidence: "none",
+        provenance: prov(reader, "schedule_equipment", "none"),
+      },
     };
   }
 
@@ -773,6 +1095,22 @@ function renderQatarCheckFlight(
         : `Maybe — ${verdict.normalized} on ${date}.`;
   return {
     content: [{ type: "text", text: `${headline} ${verdict.reason}\n\n${lines.join("\n")}` }],
+    structuredContent: {
+      flight_number: verdict.normalized,
+      date,
+      verdict:
+        verdict.hasStarlink === true ? "yes" : verdict.hasStarlink === false ? "no" : "unknown",
+      confidence: verdict.confidence,
+      flights: verdict.rows.map((r) => ({
+        flight_number: r.flight_number,
+        origin: r.departure_airport ?? null,
+        destination: r.arrival_airport ?? null,
+        departure_time: r.departure_time ? new Date(r.departure_time * 1000).toISOString() : null,
+        aircraft_type: qatarEquipmentName(r.equipment_code),
+        wifi: r.wifi_verdict,
+      })),
+      provenance: prov(reader, "schedule_equipment", "type_derived"),
+    },
   };
 }
 
@@ -1035,7 +1373,15 @@ function formatCarrierPrediction(
           describeCarrierPrediction(cfg, answer),
           "Use check_flight with a date to see the scheduled aircraft"
         );
-  return { content: [{ type: "text", text }] };
+  return {
+    content: [{ type: "text", text }],
+    structuredContent: {
+      flight_number: normalized,
+      confidence: "type",
+      ...(answer.kind === "penetration" ? { probability: answer.pen.pct } : {}),
+      provenance: prov(reader, "type_rules", "type_derived"),
+    },
+  };
 }
 
 /** Format carrierRouteAnswer for MCP — model-less carriers' route answer. */
@@ -1060,6 +1406,11 @@ function formatCarrierRoute(
           ),
         },
       ],
+      structuredContent: {
+        origin,
+        destination,
+        provenance: prov(reader, "type_rules", "none"),
+      },
     };
   }
 
@@ -1075,7 +1426,20 @@ function formatCarrierRoute(
   } else {
     text = `**${route} (${cfg.name})**: ${joinSentences(`~${pct(r.probability)} Starlink — ${r.reason}`, footer)}`;
   }
-  return { content: [{ type: "text", text }] };
+  return {
+    content: [{ type: "text", text }],
+    structuredContent: {
+      origin,
+      destination,
+      probability: r.probability,
+      ...(r.lo != null && r.hi != null ? { probability_lo: r.lo, probability_hi: r.hi } : {}),
+      provenance: prov(
+        reader,
+        r.kind === "type_rule" ? "type_rules" : "subfleet_penetration",
+        "type_derived"
+      ),
+    },
+  };
 }
 
 /**
@@ -1106,6 +1470,15 @@ function formatHubRouteComparison(
     results.length > 0 ? "predicted" : "no_data",
     results.length > 0 ? "low" : "none"
   );
+  const hubReader = getReader("ALL");
+  const structuredAirlines = results.map((r) => ({
+    airline: r.airline,
+    name: r.name,
+    kind: r.kind,
+    ...(r.kind === "no_data" ? {} : { probability: r.probability }),
+    ...(r.lo != null && r.hi != null ? { probability_lo: r.lo, probability_hi: r.hi } : {}),
+    reason: r.reason,
+  }));
   if (results.length === 0) {
     return {
       content: [
@@ -1114,6 +1487,12 @@ function formatHubRouteComparison(
           text: `No route data for ${origin}→${destination} on any tracked airline yet. For a specific flight, use check_flight with the flight number and date.`,
         },
       ],
+      structuredContent: {
+        origin,
+        destination,
+        airlines: [],
+        provenance: prov(hubReader, "route_comparison", "none"),
+      },
     };
   }
   const pct = (p: number) => `${(p * 100).toFixed(0)}%`;
@@ -1130,6 +1509,14 @@ function formatHubRouteComparison(
         text: `**${origin}→${destination} — Starlink odds by airline (nonstop)**\n\n${lines.join("\n")}\n\nFor itinerary planning or flight-level detail, use an airline-specific scope (e.g. \`?scope=UA\`) or check_flight with a flight number and date.`,
       },
     ],
+    structuredContent: {
+      origin,
+      destination,
+      airlines: structuredAirlines,
+      // Per-airline rows carry their own kind (observed vs type rule); the
+      // comparison as a whole is a route-odds estimate, not a per-flight verdict.
+      provenance: prov(hubReader, "route_comparison", "predicted"),
+    },
   };
 }
 
@@ -1199,7 +1586,21 @@ async function toolPredictFlightStarlink(
     altBlock = `\n\n${buildAlternativesBlock(cfg, reader, routes, dateUnix)}`;
   }
 
-  return { content: [{ type: "text", text: `${probLine}${altBlock}` }] };
+  return {
+    content: [{ type: "text", text: `${probLine}${altBlock}` }],
+    structuredContent: {
+      flight_number: forPredict,
+      probability: pred.probability,
+      confidence: pred.confidence,
+      method: pred.method,
+      n_observations: pred.n_observations,
+      provenance: prov(
+        reader,
+        pred.method.startsWith("fleet_prior") ? "fleet_prior" : "flight_history_model",
+        "predicted"
+      ),
+    },
+  };
 }
 
 function toolPlanStarlinkItinerary(
@@ -1289,6 +1690,12 @@ function toolPlanStarlinkItinerary(
           text: `No Starlink routings found from ${orig} to ${dest} within ${maxStops} stops.\n\nNo path through the Starlink route graph connects these airports. This may be a mainline-only route, where fleet-wide coverage is much lower than on express.\n\n**Fallbacks**: (1) \`search_starlink_flights\` with just \`destination="${dest}"\` or \`origin="${orig}"\` — confirmed near-term assignments may exist even when historical probability is low; (2) if the user has a specific flight, \`predict_flight_starlink\` for a per-flight estimate; (3) otherwise advise booking the nonstop — no Starlink routing meaningfully improves odds on mainline-only routes.`,
         },
       ],
+      structuredContent: {
+        origin: orig,
+        destination: dest,
+        itineraries: [],
+        provenance: prov(reader, "flight_history_model", "none"),
+      },
     };
   }
 
@@ -1375,7 +1782,31 @@ ${sections.join("\n\n---\n\n")}${timingNote}
 
 **Ranking**: by coverage ratio (expected Starlink hours / total hours) — a 92% direct and a 92% multi-stop score the same. "~1.8h Starlink / ~7h flying (26%)" = 26% of flight time expected on Starlink. Compare the ratio, not raw hours.`;
 
-  return { content: [{ type: "text", text }] };
+  return {
+    content: [{ type: "text", text }],
+    structuredContent: {
+      origin: origin.toUpperCase(),
+      destination: destination.toUpperCase(),
+      itineraries: itineraries.map((it) => ({
+        via: it.via,
+        coverage: it.coverage,
+        joint_probability: it.joint_probability,
+        coverage_ratio: it.coverage_ratio,
+        expected_starlink_hours: it.expected_starlink_hours,
+        total_flight_hours: it.total_flight_hours,
+        legs: it.legs.map((l) => ({
+          flight_number: l.flight_number,
+          route: l.route,
+          probability: l.probability,
+          confidence: l.confidence,
+          n_observations: l.n_observations,
+          confirmed: l.confirmed === true,
+          duration_hours: l.duration_hours,
+        })),
+      })),
+      provenance: prov(reader, "flight_history_model", "predicted"),
+    },
+  };
 }
 
 function toolPredictRouteStarlink(
@@ -1419,6 +1850,12 @@ function toolPredictRouteStarlink(
   }
 
   const result = predictRoute(reader, origin || null, destination || null);
+  const emptyStructured = {
+    origin: result.origin,
+    destination: result.destination,
+    flights: [],
+    provenance: prov(reader, "flight_history_model", "none"),
+  };
 
   if (result.flights.length === 0) {
     recordMcpFlightLookup(reader.scope, "no_data", "none");
@@ -1436,6 +1873,7 @@ function toolPredictRouteStarlink(
             text: `No DIRECT Starlink flight on ${origin.toUpperCase()}→${destination.toUpperCase()} — this tool only finds single-route flights. Connection-based alternatives below:\n\n${alt}`,
           },
         ],
+        structuredContent: emptyStructured,
       };
     }
     return {
@@ -1445,6 +1883,7 @@ function toolPredictRouteStarlink(
           text: `${result.coverage_note}\n\nIf you have a specific flight number, try predict_flight_starlink for a fleet-prior estimate.`,
         },
       ],
+      structuredContent: emptyStructured,
     };
   }
 
@@ -1480,7 +1919,21 @@ ${result.coverage_note}
 
 Probability and confidence are independent: 92% with 4 obs (medium) is a *less certain* estimate than 79% with 10 obs (high), but still indicates higher Starlink likelihood.`;
 
-  return { content: [{ type: "text", text }] };
+  return {
+    content: [{ type: "text", text }],
+    structuredContent: {
+      origin: result.origin,
+      destination: result.destination,
+      flights: shown.map((f) => ({
+        flight_number: f.flight_number,
+        route: f.route,
+        probability: f.probability,
+        confidence: f.confidence,
+        n_observations: f.n_observations,
+      })),
+      provenance: prov(reader, "flight_history_model", "predicted"),
+    },
+  };
 }
 
 // A scope can be registered (VALID_SCOPES) before its airline config exists —
@@ -1513,7 +1966,23 @@ function toolGetFleetStats(reader: ScopedReader): ToolResult {
 **All tracked airlines**: ${agg.starlink} of ${agg.total} aircraft (${pct(agg.starlink, agg.total)}%) have Starlink WiFi
 
 ${lines.join("\n")}`;
-    return { content: [{ type: "text", text }] };
+    return {
+      content: [{ type: "text", text }],
+      structuredContent: {
+        airline: null,
+        starlink_count: agg.starlink,
+        total_count: agg.total,
+        percentage: agg.total > 0 ? (agg.starlink / agg.total) * 100 : 0,
+        airlines: per.map((a) => ({
+          airline: a.code,
+          name: a.name,
+          starlink_count: a.starlink,
+          total_count: a.total,
+          percentage: a.total > 0 ? (a.starlink / a.total) * 100 : 0,
+        })),
+        provenance: prov(reader, "fleet_data", "fleet_data"),
+      },
+    };
   }
 
   // Single-airline scope: branding and rollout prose come from the registry
@@ -1530,10 +1999,10 @@ ${lines.join("\n")}`;
       ? `**Mainline Fleet**: ${fleetStats.mainline.starlink} of ${fleetStats.mainline.total} aircraft (${fleetStats.mainline.percentage.toFixed(1)}%)`
       : null,
   ].filter((l) => l !== null);
-  const familyLines = reader
-    .getFleetPageData()
-    .families.filter((f) => f.family !== "unknown")
-    .map((f) => `- ${f.family}: ${f.starlink} of ${f.total} (${pct(f.starlink, f.total)}%)`);
+  const families = reader.getFleetPageData().families.filter((f) => f.family !== "unknown");
+  const familyLines = families.map(
+    (f) => `- ${f.family}: ${f.starlink} of ${f.total} (${pct(f.starlink, f.total)}%)`
+  );
   const text = [
     `${cfg.name} Starlink Installation Progress (as of ${lastUpdated}):`,
     `**Combined Fleet**: ${starlinkPlanes.length} of ${totalCount} aircraft (${pct(starlinkPlanes.length, totalCount)}%) have Starlink WiFi`,
@@ -1545,7 +2014,26 @@ ${lines.join("\n")}`;
     .filter(Boolean)
     .join("\n\n");
 
-  return { content: [{ type: "text", text }] };
+  return {
+    content: [{ type: "text", text }],
+    structuredContent: {
+      airline: cfg.iata,
+      starlink_count: starlinkPlanes.length,
+      total_count: totalCount,
+      percentage: totalCount > 0 ? (starlinkPlanes.length / totalCount) * 100 : 0,
+      subfleets: {
+        express: fleetStats.express,
+        mainline: fleetStats.mainline,
+      },
+      families: families.map((f) => ({
+        family: f.family,
+        starlink_count: f.starlink,
+        total_count: f.total,
+      })),
+      rollout: { status: cfg.rollout.status, label: cfg.rollout.statusLabel },
+      provenance: prov(reader, "fleet_data", "fleet_data"),
+    },
+  };
 }
 
 /**
@@ -1591,6 +2079,8 @@ function toolListStarlinkAircraft(
     ? `${total} Starlink-equipped aircraft in the ${carrier} ${fleet} fleet`
     : `${total} Starlink-equipped aircraft (${carrier})`;
 
+  // Hub rows carry no airline attribution — evidence URLs are single-scope only.
+  const scopeCode = reader.scope === "ALL" ? null : (reader.scope as AirlineCode);
   return {
     content: [
       {
@@ -1598,6 +2088,19 @@ function toolListStarlinkAircraft(
         text: `${header} (showing ${shown.length}):\n\n${lines.join("\n")}`,
       },
     ],
+    structuredContent: {
+      total,
+      shown: shown.length,
+      ...(fleet ? { fleet_filter: fleet } : {}),
+      aircraft: shown.map((p) => ({
+        ...tailRef(scopeCode, p.TailNumber),
+        aircraft_type: p.Aircraft || null,
+        operator: p.OperatedBy,
+        fleet: p.fleet,
+        first_seen: p.DateFound,
+      })),
+      provenance: prov(reader, "fleet_data", "fleet_data"),
+    },
   };
 }
 
@@ -1651,6 +2154,15 @@ function toolSearchStarlinkFlights(
           text: `No confirmed Starlink flights found for ${routeDesc} in the next ~2 days.\n\nNote: this tool only sees confirmed assignments through ~${dataHorizon}. If you need dates beyond that, use predict_route_starlink or plan_starlink_itinerary for probability-based planning instead — absence from this tool does NOT mean no Starlink.`,
         },
       ],
+      structuredContent: {
+        origin: origin ?? null,
+        destination: destination ?? null,
+        total: 0,
+        shown: 0,
+        data_horizon: dataHorizon,
+        flights: [],
+        provenance: prov(reader, "confirmed_assignments", "none"),
+      },
     };
   }
 
@@ -1659,8 +2171,9 @@ function toolSearchStarlinkFlights(
   // scopeCfg is null on the hub by design, not a config error.
   const pinnedCfg = scopeCfg(reader.scope);
   if (reader.scope !== "ALL" && !pinnedCfg) return scopeConfigError(reader.scope);
+  const rowCfgFor = (f: (typeof shown)[number]) => pinnedCfg ?? AIRLINES[f.airline] ?? null;
   const lines = shown.map((f) => {
-    const rowCfg = pinnedCfg ?? AIRLINES[f.airline] ?? null;
+    const rowCfg = rowCfgFor(f);
     const fn = rowCfg ? normalizeAirlineFlightNumber(rowCfg, f.flight_number) : f.flight_number;
     const dep = new Date(f.departure_time * 1000).toISOString().slice(0, 16).replace("T", " ");
     return `${fn} ${f.departure_airport}→${f.arrival_airport} dep ${dep}Z (tail ${f.tail_number})`;
@@ -1674,6 +2187,28 @@ function toolSearchStarlinkFlights(
         text: `Found ${total} confirmed Starlink flight(s) for ${routeDesc} (showing ${shown.length}):\n\n${lines.join("\n")}\n\nSchedule data extends through ~${dataHorizon}. For dates beyond that, use predict_route_starlink or plan_starlink_itinerary.`,
       },
     ],
+    structuredContent: {
+      origin: origin ?? null,
+      destination: destination ?? null,
+      total,
+      shown: shown.length,
+      data_horizon: dataHorizon,
+      flights: shown.map((f) => {
+        const rowCfg = rowCfgFor(f);
+        return {
+          flight_number: rowCfg
+            ? normalizeAirlineFlightNumber(rowCfg, f.flight_number)
+            : f.flight_number,
+          origin: f.departure_airport,
+          destination: f.arrival_airport,
+          departure_time: new Date(f.departure_time * 1000).toISOString(),
+          tail: tailRef(rowCfg?.code ?? null, f.tail_number),
+        };
+      }),
+      // The tails are in the equipped set (verified + tracked mix) — fleet_data
+      // is the honest floor for the Starlink claim; the schedule row is firm.
+      provenance: prov(reader, "confirmed_assignments", "fleet_data"),
+    },
   };
 }
 

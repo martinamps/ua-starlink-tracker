@@ -27,6 +27,100 @@
               "date": "2026-05-15"
             }
           ]
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "flight_number": {
+              "type": "string"
+            },
+            "date": {
+              "type": "string"
+            },
+            "verdict": {
+              "type": "string",
+              "enum": ["yes", "no", "unknown"],
+              "description": "yes/no = firm answer from the assigned aircraft; unknown = no assignment."
+            },
+            "confidence": {
+              "type": "string",
+              "description": "Claim strength: verified, likely, high/medium/low (prediction), type, rolling, mixed, none."
+            },
+            "probability": {
+              "type": "number",
+              "description": "Present on prediction answers only."
+            },
+            "n_observations": {
+              "type": "number"
+            },
+            "flights": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "flight_number": {
+                    "type": "string"
+                  },
+                  "origin": {
+                    "type": "string"
+                  },
+                  "destination": {
+                    "type": "string"
+                  },
+                  "departure_time": {
+                    "type": "string",
+                    "description": "ISO 8601 UTC departure time."
+                  },
+                  "aircraft_type": {
+                    "type": ["string", "null"]
+                  },
+                  "wifi": {
+                    "type": ["string", "null"],
+                    "description": "WiFi system on the assigned aircraft."
+                  },
+                  "tail": {
+                    "type": "object",
+                    "properties": {
+                      "registration": {
+                        "type": "string",
+                        "description": "Aircraft registration (tail number)."
+                      },
+                      "evidence_url": {
+                        "type": ["string", "null"],
+                        "description": "Per-tail evidence page (/tail/{registration}) with the verification history; null when no per-airline host is known."
+                      }
+                    },
+                    "required": ["registration"]
+                  }
+                }
+              }
+            },
+            "provenance": {
+              "type": "object",
+              "description": "Machine-readable provenance for this answer.",
+              "properties": {
+                "source": {
+                  "type": "string",
+                  "description": "Pipeline that produced the answer, e.g. verified_assignment, fleet_assignment, verified_negative, fr24_tail_lookup, flight_history_model, fleet_prior, type_rules, schedule_equipment, fleet_data, confirmed_assignments, route_comparison."
+                },
+                "evidence": {
+                  "type": "string",
+                  "enum": ["observed", "fleet_data", "type_derived", "predicted", "none"],
+                  "description": "Evidence class: observed = per-tail verification against the airline's own systems; fleet_data = tracked in fleet data but unverified; type_derived = determined by aircraft type; predicted = statistical estimate; none = no data."
+                },
+                "data_updated_at": {
+                  "type": ["string", "null"],
+                  "description": "ISO 8601 stamp of the underlying data's last update; null when unstamped."
+                },
+                "retrieved_at": {
+                  "type": "string",
+                  "description": "ISO 8601 stamp when this answer was generated."
+                }
+              },
+              "required": ["source", "evidence", "retrieved_at"]
+            }
+          },
+          "required": ["flight_number", "date", "verdict", "confidence", "provenance"]
         }
       },
       {
@@ -36,6 +130,61 @@
           "type": "object",
           "properties": {},
           "examples": [{}]
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "airline": {
+              "type": ["string", "null"],
+              "description": "IATA code; null on the hub scope."
+            },
+            "starlink_count": {
+              "type": "number"
+            },
+            "total_count": {
+              "type": "number"
+            },
+            "percentage": {
+              "type": "number"
+            },
+            "subfleets": {
+              "type": "object",
+              "description": "express/mainline split with per-subfleet installed/total/percentage."
+            },
+            "families": {
+              "type": "array",
+              "description": "Per-aircraft-family installed/total breakdown."
+            },
+            "airlines": {
+              "type": "array",
+              "description": "Hub scope only: per-airline counts."
+            },
+            "provenance": {
+              "type": "object",
+              "description": "Machine-readable provenance for this answer.",
+              "properties": {
+                "source": {
+                  "type": "string",
+                  "description": "Pipeline that produced the answer, e.g. verified_assignment, fleet_assignment, verified_negative, fr24_tail_lookup, flight_history_model, fleet_prior, type_rules, schedule_equipment, fleet_data, confirmed_assignments, route_comparison."
+                },
+                "evidence": {
+                  "type": "string",
+                  "enum": ["observed", "fleet_data", "type_derived", "predicted", "none"],
+                  "description": "Evidence class: observed = per-tail verification against the airline's own systems; fleet_data = tracked in fleet data but unverified; type_derived = determined by aircraft type; predicted = statistical estimate; none = no data."
+                },
+                "data_updated_at": {
+                  "type": ["string", "null"],
+                  "description": "ISO 8601 stamp of the underlying data's last update; null when unstamped."
+                },
+                "retrieved_at": {
+                  "type": "string",
+                  "description": "ISO 8601 stamp when this answer was generated."
+                }
+              },
+              "required": ["source", "evidence", "retrieved_at"]
+            }
+          },
+          "required": ["starlink_count", "total_count", "provenance"]
         }
       },
       {
@@ -65,6 +214,69 @@
             },
             {}
           ]
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "total": {
+              "type": "number"
+            },
+            "shown": {
+              "type": "number"
+            },
+            "aircraft": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "registration": {
+                    "type": "string"
+                  },
+                  "evidence_url": {
+                    "type": ["string", "null"]
+                  },
+                  "aircraft_type": {
+                    "type": ["string", "null"]
+                  },
+                  "operator": {
+                    "type": "string"
+                  },
+                  "fleet": {
+                    "type": "string"
+                  },
+                  "first_seen": {
+                    "type": ["string", "null"]
+                  }
+                },
+                "required": ["registration"]
+              }
+            },
+            "provenance": {
+              "type": "object",
+              "description": "Machine-readable provenance for this answer.",
+              "properties": {
+                "source": {
+                  "type": "string",
+                  "description": "Pipeline that produced the answer, e.g. verified_assignment, fleet_assignment, verified_negative, fr24_tail_lookup, flight_history_model, fleet_prior, type_rules, schedule_equipment, fleet_data, confirmed_assignments, route_comparison."
+                },
+                "evidence": {
+                  "type": "string",
+                  "enum": ["observed", "fleet_data", "type_derived", "predicted", "none"],
+                  "description": "Evidence class: observed = per-tail verification against the airline's own systems; fleet_data = tracked in fleet data but unverified; type_derived = determined by aircraft type; predicted = statistical estimate; none = no data."
+                },
+                "data_updated_at": {
+                  "type": ["string", "null"],
+                  "description": "ISO 8601 stamp of the underlying data's last update; null when unstamped."
+                },
+                "retrieved_at": {
+                  "type": "string",
+                  "description": "ISO 8601 stamp when this answer was generated."
+                }
+              },
+              "required": ["source", "evidence", "retrieved_at"]
+            }
+          },
+          "required": ["total", "shown", "aircraft", "provenance"]
         }
       },
       {
@@ -94,6 +306,51 @@
               "flight_number": "UA544"
             }
           ]
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "flight_number": {
+              "type": "string"
+            },
+            "probability": {
+              "type": "number"
+            },
+            "confidence": {
+              "type": "string"
+            },
+            "method": {
+              "type": "string"
+            },
+            "n_observations": {
+              "type": "number"
+            },
+            "provenance": {
+              "type": "object",
+              "description": "Machine-readable provenance for this answer.",
+              "properties": {
+                "source": {
+                  "type": "string",
+                  "description": "Pipeline that produced the answer, e.g. verified_assignment, fleet_assignment, verified_negative, fr24_tail_lookup, flight_history_model, fleet_prior, type_rules, schedule_equipment, fleet_data, confirmed_assignments, route_comparison."
+                },
+                "evidence": {
+                  "type": "string",
+                  "enum": ["observed", "fleet_data", "type_derived", "predicted", "none"],
+                  "description": "Evidence class: observed = per-tail verification against the airline's own systems; fleet_data = tracked in fleet data but unverified; type_derived = determined by aircraft type; predicted = statistical estimate; none = no data."
+                },
+                "data_updated_at": {
+                  "type": ["string", "null"],
+                  "description": "ISO 8601 stamp of the underlying data's last update; null when unstamped."
+                },
+                "retrieved_at": {
+                  "type": "string",
+                  "description": "ISO 8601 stamp when this answer was generated."
+                }
+              },
+              "required": ["source", "evidence", "retrieved_at"]
+            }
+          },
+          "required": ["flight_number", "confidence", "provenance"]
         }
       },
       {
@@ -145,6 +402,104 @@
               "max_stops": 1
             }
           ]
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "origin": {
+              "type": "string"
+            },
+            "destination": {
+              "type": "string"
+            },
+            "itineraries": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "via": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "coverage": {
+                    "type": "string",
+                    "enum": ["full", "partial"]
+                  },
+                  "joint_probability": {
+                    "type": "number"
+                  },
+                  "coverage_ratio": {
+                    "type": ["number", "null"]
+                  },
+                  "expected_starlink_hours": {
+                    "type": ["number", "null"]
+                  },
+                  "total_flight_hours": {
+                    "type": ["number", "null"]
+                  },
+                  "legs": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "flight_number": {
+                          "type": "string"
+                        },
+                        "route": {
+                          "type": "string"
+                        },
+                        "probability": {
+                          "type": "number"
+                        },
+                        "confidence": {
+                          "type": "string",
+                          "enum": ["high", "medium", "low"]
+                        },
+                        "n_observations": {
+                          "type": "number"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "airlines": {
+              "type": "array",
+              "description": "Hub scope only: per-airline route odds."
+            },
+            "probability": {
+              "type": "number",
+              "description": "Carriers without a flight-history model."
+            },
+            "provenance": {
+              "type": "object",
+              "description": "Machine-readable provenance for this answer.",
+              "properties": {
+                "source": {
+                  "type": "string",
+                  "description": "Pipeline that produced the answer, e.g. verified_assignment, fleet_assignment, verified_negative, fr24_tail_lookup, flight_history_model, fleet_prior, type_rules, schedule_equipment, fleet_data, confirmed_assignments, route_comparison."
+                },
+                "evidence": {
+                  "type": "string",
+                  "enum": ["observed", "fleet_data", "type_derived", "predicted", "none"],
+                  "description": "Evidence class: observed = per-tail verification against the airline's own systems; fleet_data = tracked in fleet data but unverified; type_derived = determined by aircraft type; predicted = statistical estimate; none = no data."
+                },
+                "data_updated_at": {
+                  "type": ["string", "null"],
+                  "description": "ISO 8601 stamp of the underlying data's last update; null when unstamped."
+                },
+                "retrieved_at": {
+                  "type": "string",
+                  "description": "ISO 8601 stamp when this answer was generated."
+                }
+              },
+              "required": ["source", "evidence", "retrieved_at"]
+            }
+          },
+          "required": ["origin", "destination", "provenance"]
         }
       },
       {
@@ -180,6 +535,74 @@
               "origin": "ORD"
             }
           ]
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "origin": {
+              "type": ["string", "null"]
+            },
+            "destination": {
+              "type": ["string", "null"]
+            },
+            "flights": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "flight_number": {
+                    "type": "string"
+                  },
+                  "route": {
+                    "type": "string"
+                  },
+                  "probability": {
+                    "type": "number"
+                  },
+                  "confidence": {
+                    "type": "string",
+                    "enum": ["high", "medium", "low"]
+                  },
+                  "n_observations": {
+                    "type": "number"
+                  }
+                }
+              }
+            },
+            "airlines": {
+              "type": "array",
+              "description": "Hub scope only: per-airline route odds."
+            },
+            "probability": {
+              "type": "number",
+              "description": "Carriers without a flight-history model."
+            },
+            "provenance": {
+              "type": "object",
+              "description": "Machine-readable provenance for this answer.",
+              "properties": {
+                "source": {
+                  "type": "string",
+                  "description": "Pipeline that produced the answer, e.g. verified_assignment, fleet_assignment, verified_negative, fr24_tail_lookup, flight_history_model, fleet_prior, type_rules, schedule_equipment, fleet_data, confirmed_assignments, route_comparison."
+                },
+                "evidence": {
+                  "type": "string",
+                  "enum": ["observed", "fleet_data", "type_derived", "predicted", "none"],
+                  "description": "Evidence class: observed = per-tail verification against the airline's own systems; fleet_data = tracked in fleet data but unverified; type_derived = determined by aircraft type; predicted = statistical estimate; none = no data."
+                },
+                "data_updated_at": {
+                  "type": ["string", "null"],
+                  "description": "ISO 8601 stamp of the underlying data's last update; null when unstamped."
+                },
+                "retrieved_at": {
+                  "type": "string",
+                  "description": "ISO 8601 stamp when this answer was generated."
+                }
+              },
+              "required": ["source", "evidence", "retrieved_at"]
+            }
+          },
+          "required": ["provenance"]
         }
       },
       {
@@ -215,6 +638,94 @@
               "destination": "EWR"
             }
           ]
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "origin": {
+              "type": ["string", "null"]
+            },
+            "destination": {
+              "type": ["string", "null"]
+            },
+            "total": {
+              "type": "number"
+            },
+            "shown": {
+              "type": "number"
+            },
+            "data_horizon": {
+              "type": "string",
+              "description": "Last date with confirmed assignments — absence beyond it is not a no."
+            },
+            "flights": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "flight_number": {
+                    "type": "string"
+                  },
+                  "origin": {
+                    "type": "string"
+                  },
+                  "destination": {
+                    "type": "string"
+                  },
+                  "departure_time": {
+                    "type": "string",
+                    "description": "ISO 8601 UTC departure time."
+                  },
+                  "aircraft_type": {
+                    "type": ["string", "null"]
+                  },
+                  "wifi": {
+                    "type": ["string", "null"],
+                    "description": "WiFi system on the assigned aircraft."
+                  },
+                  "tail": {
+                    "type": "object",
+                    "properties": {
+                      "registration": {
+                        "type": "string",
+                        "description": "Aircraft registration (tail number)."
+                      },
+                      "evidence_url": {
+                        "type": ["string", "null"],
+                        "description": "Per-tail evidence page (/tail/{registration}) with the verification history; null when no per-airline host is known."
+                      }
+                    },
+                    "required": ["registration"]
+                  }
+                }
+              }
+            },
+            "provenance": {
+              "type": "object",
+              "description": "Machine-readable provenance for this answer.",
+              "properties": {
+                "source": {
+                  "type": "string",
+                  "description": "Pipeline that produced the answer, e.g. verified_assignment, fleet_assignment, verified_negative, fr24_tail_lookup, flight_history_model, fleet_prior, type_rules, schedule_equipment, fleet_data, confirmed_assignments, route_comparison."
+                },
+                "evidence": {
+                  "type": "string",
+                  "enum": ["observed", "fleet_data", "type_derived", "predicted", "none"],
+                  "description": "Evidence class: observed = per-tail verification against the airline's own systems; fleet_data = tracked in fleet data but unverified; type_derived = determined by aircraft type; predicted = statistical estimate; none = no data."
+                },
+                "data_updated_at": {
+                  "type": ["string", "null"],
+                  "description": "ISO 8601 stamp of the underlying data's last update; null when unstamped."
+                },
+                "retrieved_at": {
+                  "type": "string",
+                  "description": "ISO 8601 stamp when this answer was generated."
+                }
+              },
+              "required": ["source", "evidence", "retrieved_at"]
+            }
+          },
+          "required": ["total", "shown", "flights", "provenance"]
         }
       }
     ]

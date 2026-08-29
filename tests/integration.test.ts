@@ -89,11 +89,13 @@ describe("/api/check-flight contract", () => {
     ["far-future date", new Date(Date.now() + 60 * 86400 * 1000).toISOString().slice(0, 10)],
   ])("miss (%s): exact key set, prediction rides along", async (_label, date) => {
     const body = await checkFlight("UA1234", date);
-    // Chrome extension contract core + the additive prediction block — an
-    // unexpected new key here is a wire change, fail loudly.
+    // Chrome extension contract core + the additive prediction/provenance
+    // blocks — an unexpected new key here is a wire change, fail loudly.
     expect(Object.keys(body).sort()).toEqual([
       "confidence",
+      "evidence",
       "flights",
+      "freshness",
       "hasStarlink",
       "message",
       "prediction",
@@ -111,6 +113,13 @@ describe("/api/check-flight contract", () => {
     expect(["high", "medium", "low"]).toContain(body.prediction.confidence);
     expect(typeof body.prediction.n_observations).toBe("number");
     expect(typeof body.message).toBe("string");
+    // Additive provenance block: claim-ladder class + honest freshness stamps.
+    expect(body.evidence).toBe("predicted");
+    expect(typeof body.freshness.retrieved_at).toBe("string");
+    expect(Number.isNaN(Date.parse(body.freshness.retrieved_at))).toBe(false);
+    if (body.freshness.data_updated_at !== null) {
+      expect(Number.isNaN(Date.parse(body.freshness.data_updated_at))).toBe(false);
+    }
   });
 
   test("hit: returns { hasStarlink: true, flights: [...] } with full field shape", async () => {
@@ -144,6 +153,9 @@ describe("/api/check-flight contract", () => {
     expect(body.hasStarlink).toBe(true);
     expect(Array.isArray(body.flights)).toBe(true);
     expect(body.flights.length).toBeGreaterThan(0);
+    // Additive provenance: a firm yes is observed or fleet-data backed.
+    expect(["observed", "fleet_data"]).toContain(body.evidence);
+    expect(typeof body.freshness.retrieved_at).toBe("string");
 
     const f = body.flights[0];
     // These fields are the Chrome extension contract — do not break

@@ -39,16 +39,19 @@ import {
   siteForAirline,
 } from "../airlines/registry";
 import {
+  type DataFreshness,
   FR24_OUTAGE_NOTE,
   type FlightVerdict,
   SWAP_DEGRADED_NOTE,
   carrierReader,
+  dataFreshness,
   decideCarrier,
   isPlausibleFlightNumber,
   negativeWifi,
   resolveFlightVerdict,
   scheduledFlights,
   verdictConfidence,
+  verdictEvidence,
   verdictTelemetry,
 } from "../api/check-flight-core";
 import { handleMcpRequest } from "../api/mcp-server";
@@ -485,7 +488,8 @@ function recordPrediction(
  * so its boolean contract isn't affected.
  */
 function qatarCheckFlightResponse(
-  verdict: Extract<FlightVerdict, { kind: "qatar" } | { kind: "qatar_no_data" }>
+  verdict: Extract<FlightVerdict, { kind: "qatar" } | { kind: "qatar_no_data" }>,
+  freshness: DataFreshness
 ): Response {
   const cfg = AIRLINES.QR;
 
@@ -495,6 +499,8 @@ function qatarCheckFlightResponse(
         hasStarlink: null,
         airline: cfg.name,
         confidence: "no_data",
+        evidence: verdictEvidence(verdict),
+        freshness,
         reason:
           "No schedule data for this Qatar flight. Coverage is limited to high-traffic routes for the next ~48h; check back closer to departure.",
         flights: [],
@@ -508,6 +514,8 @@ function qatarCheckFlightResponse(
       hasStarlink: verdict.hasStarlink,
       airline: cfg.name,
       confidence: verdict.confidence,
+      evidence: verdictEvidence(verdict),
+      freshness,
       reason: verdict.reason,
       flights: verdict.rows.map((r) => ({
         flight_number: r.flight_number,
@@ -629,8 +637,14 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant }) 
   const t = verdictTelemetry(verdict);
   recordFlightLookup("api_check", t.outcome, t.confidence, cfg.code, verdict.window.daysOut);
 
+  // Additive keys only — the { hasStarlink, flights } core is the frozen
+  // Chrome-extension contract. evidence is the claim-ladder class, freshness
+  // the data's own stamp (never request time for data_updated_at).
+  const freshness = dataFreshness(carrier.reader);
+  const provenance = { evidence: verdictEvidence(verdict), freshness };
+
   if (verdict.kind === "qatar" || verdict.kind === "qatar_no_data") {
-    return qatarCheckFlightResponse(verdict);
+    return qatarCheckFlightResponse(verdict, freshness);
   }
 
   switch (verdict.kind) {
@@ -640,6 +654,7 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant }) 
           hasStarlink: true,
           ...hubAirline,
           confidence: verdictConfidence(verdict),
+          ...provenance,
           flights: scheduledFlights(verdict).map((flight) =>
             checkFlightWireFlight({
               tail_number: flight.tail_number,
@@ -665,6 +680,7 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant }) 
           hasStarlink: false,
           ...hubAirline,
           confidence: "verified",
+          ...provenance,
           message: `${verdict.normalized} is assigned to tail ${f.tail_number}, verified as ${negativeWifi(f)} WiFi — not Starlink.${verdict.fr24Error ? ` ${SWAP_DEGRADED_NOTE}` : ""}`,
           flights: [],
         }),
@@ -677,6 +693,7 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant }) 
           hasStarlink: true,
           ...hubAirline,
           confidence: verdictConfidence(verdict),
+          ...provenance,
           method: "fr24_tail_lookup",
           flights: verdict.starlink.map((s) =>
             checkFlightWireFlight({
@@ -701,6 +718,7 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant }) 
         JSON.stringify({
           hasStarlink: false,
           ...hubAirline,
+          ...provenance,
           method: "fr24_tail_lookup",
           flights: [],
           fallback: { segments: verdict.segments },
@@ -719,6 +737,7 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant }) 
           hasStarlink: null,
           ...hubAirline,
           confidence: "type",
+          ...provenance,
           ...(verdict.answer.kind === "penetration"
             ? { prediction: { probability: verdict.answer.pen.pct } }
             : {}),
@@ -749,6 +768,7 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant }) 
           hasStarlink: null,
           ...hubAirline,
           confidence: "predicted",
+          ...provenance,
           prediction: {
             probability: pred.probability,
             confidence: pred.confidence,
@@ -958,6 +978,8 @@ const apiPredictFlight: Handler = ({ req, url, reader, getReader, tenant }) => {
         flight_number: normalized,
         ...(answer.kind === "penetration" ? { probability: answer.pen.pct } : {}),
         confidence: "type",
+        evidence: "type_derived",
+        freshness: dataFreshness(carrier.reader),
         message: describeCarrierPrediction(cfg, answer),
       }),
       { headers: SECURITY_HEADERS.api }
@@ -978,6 +1000,8 @@ const apiPredictFlight: Handler = ({ req, url, reader, getReader, tenant }) => {
       confidence: pred.confidence,
       method: pred.method,
       n_observations: pred.n_observations,
+      evidence: "predicted",
+      freshness: dataFreshness(carrier.reader),
     }),
     { headers: SECURITY_HEADERS.api }
   );

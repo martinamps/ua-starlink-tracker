@@ -206,6 +206,51 @@ export interface VerdictTelemetry {
   confidence: "high" | "medium" | "low" | "none";
 }
 
+/**
+ * Claim-ladder evidence class, additive on REST responses and carried in MCP
+ * structuredContent: observed (dated per-tail verification) > fleet_data
+ * (tracked in fleet data, unverified) > type_derived (aircraft-type rule) >
+ * predicted (statistical estimate) > none (honest abstention).
+ */
+export type EvidenceClass = "observed" | "fleet_data" | "type_derived" | "predicted" | "none";
+
+/** One verdict→evidence mapping shared by REST and MCP so the surfaces can't drift. */
+export function verdictEvidence(
+  verdict: Exclude<FlightVerdict, { kind: "invalid_date" } | { kind: "invalid_flight_number" }>
+): EvidenceClass {
+  switch (verdict.kind) {
+    case "scheduled":
+      return verdict.verified.length > 0 ? "observed" : "fleet_data";
+    case "scheduled_no":
+    case "fr24_no":
+      return "observed";
+    case "fr24":
+      return verdict.starlink.every((s) => s.confidence === "verified") ? "observed" : "fleet_data";
+    case "no_model":
+    case "qatar":
+      return "type_derived";
+    case "prediction":
+      return "predicted";
+    case "qatar_no_data":
+      return "none";
+  }
+}
+
+export interface DataFreshness {
+  /** Underlying data's own last-update stamp — null when never stamped, never request time. */
+  data_updated_at: string | null;
+  retrieved_at: string;
+}
+
+/** Freshness pair for API/MCP responses; honest null when the scope has no stamp. */
+export function dataFreshness(reader: ScopedReader): DataFreshness {
+  const t = Date.parse(reader.getLastUpdatedRaw() ?? "");
+  return {
+    data_updated_at: Number.isFinite(t) ? new Date(t).toISOString() : null,
+    retrieved_at: new Date().toISOString(),
+  };
+}
+
 /** One outcome/confidence mapping for FLIGHT_LOOKUP_RESULT so REST and MCP tags can't drift. */
 export function verdictTelemetry(
   verdict: Exclude<FlightVerdict, { kind: "invalid_date" } | { kind: "invalid_flight_number" }>
