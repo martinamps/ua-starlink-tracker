@@ -1,326 +1,344 @@
-const DEBUG = false;
-const log = (...args) => DEBUG && console.log("[Starlink Tracker]", ...args);
+/**
+ * Google Flights content script. Finds flight cards, resolves each tracked
+ * flight to a claim-ladder answer via the background worker, and renders a
+ * compact badge for verified / installed / high-probability-predicted flights.
+ *
+ * Resilience posture: Google's class names are obfuscated and churn, so
+ * discovery leans on the semantic Travel Impact Model data attribute first
+ * and treats every class-name selector as an optional fast path. Any failure
+ * — markup drift, API outage, extension reload — degrades to "no badge",
+ * never to a wrong badge or an error surfaced to the page.
+ */
 
-const flightCache = new Map();
-const CACHE_DURATION = 30 * 60 * 1000;
+(() => {
+  const lib = typeof globalThis !== "undefined" ? globalThis.StarlinkTrackerLib : null;
+  if (!lib || typeof chrome === "undefined" || !chrome.runtime) return;
 
-let processedElements = new WeakSet();
+  const DEBUG = false;
+  const log = (...args) => DEBUG && console.log("[Starlink Tracker]", ...args);
 
-function extractFlightDate() {
-  const urlElements = document.querySelectorAll("[data-travelimpactmodelwebsiteurl]");
-  for (const element of urlElements) {
-    const url = element.getAttribute("data-travelimpactmodelwebsiteurl");
-    if (url) {
-      const dateMatch = url.match(/(\d{8})$/);
-      if (dateMatch) {
-        const dateStr = dateMatch[1];
-        const formatted = `${dateStr.substring(0, 4)}-${dateStr.substring(4, 6)}-${dateStr.substring(6, 8)}`;
-        return formatted;
+  // Google Flights result-card class — an optional fast path, not a
+  // requirement: the TIM attribute anchor below survives class renames.
+  const LEGACY_CARD_SELECTOR = ".pIav2d";
+  const TIM_ATTR = "data-travelimpactmodelwebsiteurl";
+  const CARD_HINT_SELECTOR = `${LEGACY_CARD_SELECTOR},[${TIM_ATTR}]`;
+
+  // Caps a runaway pass (selector drift matching everything) before it can
+  // hammer the API; unbadged cards are retried by later passes.
+  const MAX_NEW_LOOKUPS_PER_PASS = 40;
+  const MAX_SEGMENTS_PER_CARD = 4;
+  const MAX_ATTR_SCAN_ELEMENTS = 400;
+
+  const claimCache = new Map();
+  const pendingLookups = new Map();
+  let processedElements = new WeakSet();
+  let isProcessing = false;
+
+  // ── claim lookup ───────────────────────────────────────────────────────────
+
+  function cachedClaim(key) {
+    const entry = claimCache.get(key);
+    if (entry && entry.expires > Date.now()) return entry.claim;
+    if (entry) claimCache.delete(key);
+    return null;
+  }
+
+  function getClaim(flightNumber, date) {
+    const key = `${flightNumber}-${date}`;
+    const cached = cachedClaim(key);
+    if (cached) return Promise.resolve(cached);
+    const pending = pendingLookups.get(key);
+    if (pending) return pending;
+
+    const lookup = (async () => {
+      let outcome;
+      try {
+        const response = await chrome.runtime.sendMessage({
+          action: "checkFlight",
+          flightNumber,
+          date,
+        });
+        outcome = lib.claimFromResponse(response);
+      } catch (err) {
+        // Worker restart or invalidated context — honest unknown, retry soon.
+        log("lookup failed", flightNumber, err);
+        outcome = { claim: lib.unknownClaim(), retryable: true };
+      } finally {
+        pendingLookups.delete(key);
       }
-    }
+      claimCache.set(key, {
+        claim: outcome.claim,
+        expires: Date.now() + (outcome.retryable ? lib.CACHE_TTL.error : lib.CACHE_TTL.resolved),
+      });
+      return outcome.claim;
+    })();
+    pendingLookups.set(key, lookup);
+    return lookup;
   }
 
-  const hash = window.location.hash;
-  const dateMatch = hash.match(/;d:(\d{4}-\d{2}-\d{2})/);
-  if (dateMatch) {
-    return dateMatch[1];
-  }
+  // ── page/card parsing ──────────────────────────────────────────────────────
 
-  return new Date().toISOString().split("T")[0];
-}
-
-async function checkFlightForStarlink(flightNumber, date) {
-  const cacheKey = `${flightNumber}-${date}`;
-  const cached = flightCache.get(cacheKey);
-  if (cached && Date.now() - cached.timestamp < CACHE_DURATION) {
-    return cached;
-  }
-
-  try {
-    const response = await chrome.runtime.sendMessage({
-      action: "checkFlight",
-      flightNumber,
-      date,
-    });
-
-    if (!response.success) {
-      return { hasStarlink: false };
-    }
-
-    const hasStarlink = response.data.hasStarlink || false;
-    const confidence = response.data.confidence || (hasStarlink ? "verified" : undefined);
-    const prediction = response.data.prediction;
-
-    const result = { hasStarlink, confidence, prediction, timestamp: Date.now() };
-    flightCache.set(cacheKey, result);
-    return result;
-  } catch (error) {
-    log("Error checking flight:", flightNumber, error);
-    return { hasStarlink: false };
-  }
-}
-
-// Aircraft assignments only exist ~2 days before departure. Above this
-// historical rate we show a "likely" badge instead of nothing.
-const PREDICTION_BADGE_THRESHOLD = 0.8;
-
-// Mobile has no tooltips, so the predicted badge carries the percentage in its
-// text — "Starlink ~85%" — instead of the firm-assignment "(likely)" wording.
-function badgeLabel(confidence, prediction) {
-  if (confidence === "predicted") return `Starlink ~${Math.round(prediction.probability * 100)}%`;
-  return confidence === "likely" ? "Starlink (likely)" : "Starlink";
-}
-
-function badgeTitle(confidence, prediction) {
-  if (confidence === "predicted")
-    return `~${Math.round(prediction.probability * 100)}% of recent departures of this flight used a Starlink-equipped aircraft. United assigns the actual aircraft ~2 days before departure.`;
-  if (confidence === "likely")
-    return "Tracked as Starlink-equipped; not yet verified against united.com";
-  return "Verified Starlink WiFi";
-}
-
-function createStarlinkBadge(confidence, prediction) {
-  const likely = confidence === "likely" || confidence === "predicted";
-  const badge = document.createElement("span");
-  badge.className = `starlink-wifi-badge${likely ? " starlink-wifi-badge--likely" : ""}`;
-  badge.title = badgeTitle(confidence, prediction);
-  badge.style.cssText = `
-    margin-left: 12px;
-    display: inline-flex;
-    align-items: center;
-    font-size: 13px;
-    color: ${likely ? "#5f6368" : "#1967d2"};
-    background: ${likely ? "#f1f3f4" : "#e8f0fe"};
-    padding: 2px 10px;
-    border-radius: 12px;
-    font-weight: 500;
-  `;
-  const icon = likely
-    ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="vertical-align: -2px; margin-right: 4px;"><path d="M11 17h2v2h-2zm0-10h2v8h-2zM12 2a10 10 0 100 20 10 10 0 000-20zm0 18a8 8 0 110-16 8 8 0 010 16z"/></svg>'
-    : '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="vertical-align: -2px; margin-right: 4px;"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>';
-  badge.innerHTML = `${icon}${badgeLabel(confidence, prediction)}`;
-  return badge;
-}
-
-function addStarlinkBadge(card, confidence, prediction) {
-  if (card.querySelector(".starlink-wifi-badge")) return;
-
-  const badge = createStarlinkBadge(confidence, prediction);
-  const likely = confidence === "likely" || confidence === "predicted";
-  const isDesktop = window.innerWidth >= 1024;
-
-  if (isDesktop) {
-    const timeContainer = card.querySelector(".zxVSec.YMlIz.tPgKwe.ogfYpf");
-    if (timeContainer) {
-      const timeSpan = timeContainer.querySelector("span.mv1WYe");
-      if (timeSpan) {
-        timeSpan.parentNode.insertBefore(badge, timeSpan.nextSibling);
-        return;
+  function extractPageDate() {
+    try {
+      for (const el of document.querySelectorAll(`[${TIM_ATTR}]`)) {
+        const segments = lib.parseTimSegments(el.getAttribute(TIM_ATTR) || "");
+        if (segments.length) return segments[0].date;
       }
+      const hashMatch = window.location.hash.match(/;d:(\d{4}-\d{2}-\d{2})/);
+      if (hashMatch) return hashMatch[1];
+    } catch {
+      // fall through to today
     }
+    return lib.localTodayIso();
   }
 
-  const liElement = card.closest("li");
-  if (liElement) {
-    liElement.style.position = "relative";
-    badge.style.cssText = `
-      position: absolute;
-      top: -3px;
-      left: -6px;
-      display: inline-flex;
-      align-items: center;
-      font-size: 9px;
-      color: ${likely ? "#5f6368" : "#1967d2"};
-      background: ${likely ? "rgba(241, 243, 244, 0.9)" : "rgba(232, 240, 254, 0.85)"};
-      padding: 1px 5px;
-      border-radius: 8px;
-      font-weight: 500;
-      white-space: nowrap;
-      z-index: 10;
-      box-shadow: 0 1px 2px rgba(0,0,0,0.08);
-    `;
-    badge.textContent = badgeLabel(confidence, prediction);
-    liElement.insertBefore(badge, liElement.firstChild);
+  /** A stable per-result element: the enclosing <li> when there is one. */
+  function canonicalCard(el) {
+    return el.closest("li") || el;
   }
-}
 
-function extractFlightNumber(card) {
-  if (processedElements.has(card)) return null;
-  const cardText = card.innerText || "";
-  const ariaLabel = card.querySelector("[aria-label]")?.getAttribute("aria-label") || "";
+  function findFlightCards() {
+    const cards = new Set();
+    for (const el of document.querySelectorAll(CARD_HINT_SELECTOR)) {
+      cards.add(canonicalCard(el));
+    }
+    return cards;
+  }
 
-  if (!cardText.includes("United") && !ariaLabel.includes("United")) return null;
-
-  let flightNumber = null;
-
-  const allElements = card.querySelectorAll("*");
-  for (const element of allElements) {
-    for (const attr of element.attributes) {
-      if (attr.value.includes("UA-") || attr.value.includes("/UA/")) {
-        let match = attr.value.match(/\bUA-(\d{3,4})-\d{8}\b/i);
-        if (!match) match = attr.value.match(/\bUA-(\d{3,4})\b/i);
-        if (!match) match = attr.value.match(/\/UA\/(\d{3,4})\//i);
-
-        if (match) {
-          flightNumber = `UA${match[1]}`;
-          break;
+  /**
+   * Flight segments for one card as [{flightNumber, date|null}], most-reliable
+   * source first. A card WITH itinerary data but no tracked segment returns []
+   * without consulting the heuristics — the itinerary already settled "not a
+   * tracked airline", and a text match on top of that would be a false positive.
+   */
+  function extractSegments(card) {
+    const timEls = [];
+    if (card.hasAttribute?.(TIM_ATTR)) timEls.push(card);
+    timEls.push(...card.querySelectorAll(`[${TIM_ATTR}]`));
+    if (timEls.length > 0) {
+      const segments = [];
+      for (const el of timEls) {
+        for (const seg of lib.parseTimSegments(el.getAttribute(TIM_ATTR) || "")) {
+          if (!lib.detectCarrier(seg.flightNumber)) continue;
+          if (segments.some((s) => s.flightNumber === seg.flightNumber && s.date === seg.date)) {
+            continue;
+          }
+          segments.push({ flightNumber: seg.flightNumber, date: seg.date });
         }
       }
+      return segments.slice(0, MAX_SEGMENTS_PER_CARD);
     }
-    if (flightNumber) break;
-  }
 
-  if (!flightNumber) {
-    const uaMatch = cardText.match(/\bUA\s*(\d{1,4})\b/);
-    if (uaMatch) {
-      flightNumber = `UA${uaMatch[1]}`;
-    }
-  }
-
-  return flightNumber;
-}
-
-async function processFlights() {
-  if (isProcessing) {
-    log("Already processing, skipping...");
-    return;
-  }
-
-  isProcessing = true;
-
-  try {
-    const date = extractFlightDate();
-
-    const flightCards = document.querySelectorAll(".pIav2d");
-    log(`Found ${flightCards.length} flight cards`);
-
-    let processedCount = 0;
-    let starlinkCount = 0;
-
-    for (const card of flightCards) {
-      if (processedElements.has(card)) continue;
-
-      const flightNumber = extractFlightNumber(card);
-      if (!flightNumber) continue;
-
-      log(`Found flight number: ${flightNumber}`);
-      processedElements.add(card);
-      processedCount++;
-
-      const { hasStarlink, confidence, prediction } = await checkFlightForStarlink(
-        flightNumber,
-        date
-      );
-      if (hasStarlink) {
-        starlinkCount++;
-        addStarlinkBadge(card, confidence);
-        if (!DEBUG) console.log(`✈️ ${flightNumber} has Starlink WiFi (${confidence})`);
-      } else if (
-        prediction &&
-        prediction.probability >= PREDICTION_BADGE_THRESHOLD &&
-        prediction.confidence !== "low"
-      ) {
-        starlinkCount++;
-        addStarlinkBadge(card, "predicted", prediction);
-        if (!DEBUG)
-          console.log(
-            `✈️ ${flightNumber} likely Starlink (${Math.round(prediction.probability * 100)}%, ${prediction.n_observations} obs)`
-          );
+    const elements = card.querySelectorAll("*");
+    const scanLimit = Math.min(elements.length, MAX_ATTR_SCAN_ELEMENTS);
+    for (let i = 0; i < scanLimit; i++) {
+      for (const attr of elements[i].attributes) {
+        const flightNumber = lib.parseAttrFlightNumber(attr.value);
+        if (flightNumber) return [{ flightNumber, date: null }];
       }
     }
 
-    if (processedCount > 0 && !DEBUG) {
-      console.log(
-        `[Starlink Tracker] Processed ${processedCount} UA flights, ${starlinkCount} have Starlink`
-      );
-    }
-  } finally {
-    isProcessing = false;
-  }
-}
-
-function debounce(func, wait) {
-  let timeout;
-  return function executedFunction(...args) {
-    const later = () => {
-      clearTimeout(timeout);
-      func(...args);
-    };
-    clearTimeout(timeout);
-    timeout = setTimeout(later, wait);
-  };
-}
-
-function reprocessAllFlights() {
-  for (const badge of document.querySelectorAll(".starlink-wifi-badge")) {
-    badge.remove();
+    const text = `${card.innerText || ""} ${
+      card.querySelector("[aria-label]")?.getAttribute("aria-label") || ""
+    }`;
+    return lib
+      .extractFlightNumbersFromText(text)
+      .slice(0, MAX_SEGMENTS_PER_CARD)
+      .map((flightNumber) => ({ flightNumber, date: null }));
   }
 
-  processedElements = new WeakSet();
+  // ── badge rendering ────────────────────────────────────────────────────────
 
-  processFlights();
-}
+  function buildBadge(claim) {
+    const colors = lib.badgeColors(claim);
+    const badge = document.createElement("span");
+    badge.className = lib.badgeClass(claim);
+    badge.title = lib.badgeTitle(claim);
+    badge.textContent = lib.badgeLabel(claim);
+    badge.style.cssText = [
+      "margin-left: 12px",
+      "display: inline-flex",
+      "align-items: center",
+      "font-size: 13px",
+      `color: ${colors.fg}`,
+      `background: ${colors.bg}`,
+      "padding: 2px 10px",
+      "border-radius: 12px",
+      "font-weight: 500",
+    ].join("; ");
+    return badge;
+  }
 
-let isProcessing = false;
+  // v1's exact insertion point, kept as a fast path while the classes exist.
+  function insertInline(card, badge) {
+    const timeContainer = card.querySelector(".zxVSec.YMlIz.tPgKwe.ogfYpf");
+    const timeSpan = timeContainer?.querySelector("span.mv1WYe");
+    if (!timeSpan || !timeSpan.parentNode) return false;
+    timeSpan.parentNode.insertBefore(badge, timeSpan.nextSibling);
+    return true;
+  }
 
-function initialize() {
-  setTimeout(processFlights, 1000);
-  const debouncedProcess = debounce(() => {
-    if (!isProcessing) {
-      processFlights();
+  // Layout-independent fallback: pin to the result row's corner. Needs no
+  // knowledge of the card's internals, so it survives markup drift.
+  function insertCorner(card, badge, claim) {
+    const row = card.closest("li") || card;
+    const colors = lib.badgeColors(claim);
+    row.style.position = "relative";
+    badge.style.cssText = [
+      "position: absolute",
+      "top: -3px",
+      "left: -6px",
+      "display: inline-flex",
+      "align-items: center",
+      "font-size: 9px",
+      `color: ${colors.fg}`,
+      `background: ${colors.bg}`,
+      "padding: 1px 5px",
+      "border-radius: 8px",
+      "font-weight: 500",
+      "white-space: nowrap",
+      "z-index: 10",
+      "box-shadow: 0 1px 2px rgba(0,0,0,0.08)",
+    ].join("; ");
+    row.insertBefore(badge, row.firstChild);
+  }
+
+  function addBadge(card, claim) {
+    try {
+      if (card.querySelector(".starlink-wifi-badge")) return;
+      const badge = buildBadge(claim);
+      const wantInline = window.innerWidth >= 1024;
+      if (wantInline && insertInline(card, badge)) return;
+      insertCorner(card, badge, claim);
+    } catch (err) {
+      log("badge insert failed", err);
     }
-  }, 2000);
+  }
 
-  const observer = new MutationObserver((mutations) => {
+  // ── main pass ──────────────────────────────────────────────────────────────
+
+  async function processCard(card, pageDate, budget) {
+    const segments = extractSegments(card);
+    if (segments.length === 0) {
+      // Nothing tracked here (authoritative or not) — settled for this card.
+      processedElements.add(card);
+      return false;
+    }
+
+    // Respect the per-pass network budget BEFORE marking processed, so
+    // skipped cards get picked up by a later pass.
+    for (const seg of segments) {
+      const key = `${seg.flightNumber}-${seg.date || pageDate}`;
+      if (!cachedClaim(key) && !pendingLookups.has(key)) {
+        if (budget.remaining <= 0) return false;
+        budget.remaining--;
+      }
+    }
+    processedElements.add(card);
+
+    const claims = await Promise.all(
+      segments.map((seg) => getClaim(seg.flightNumber, seg.date || pageDate))
+    );
+    const combined = lib.combineClaims(claims);
+    if (lib.shouldBadge(combined)) {
+      addBadge(card, combined);
+      log("badged", segments.map((s) => s.flightNumber).join("+"), combined.status);
+    }
+    return true;
+  }
+
+  async function processFlights() {
     if (isProcessing) return;
-    const hasNewFlights = mutations.some((mutation) => {
-      return Array.from(mutation.addedNodes).some((node) => {
-        return (
-          node.nodeType === 1 &&
-          (node.classList?.contains("pIav2d") || node.querySelector?.(".pIav2d"))
+    isProcessing = true;
+    try {
+      const pageDate = extractPageDate();
+      const budget = { remaining: MAX_NEW_LOOKUPS_PER_PASS };
+      const cards = findFlightCards();
+      log(`pass: ${cards.size} cards`);
+      for (const card of cards) {
+        if (processedElements.has(card)) continue;
+        try {
+          await processCard(card, pageDate, budget);
+        } catch (err) {
+          // One broken card must not stop the pass or reach the page.
+          log("card failed", err);
+        }
+      }
+    } catch (err) {
+      log("pass failed", err);
+    } finally {
+      isProcessing = false;
+    }
+  }
+
+  // ── lifecycle ──────────────────────────────────────────────────────────────
+
+  function debounce(fn, wait) {
+    let timeout;
+    return (...args) => {
+      clearTimeout(timeout);
+      timeout = setTimeout(() => fn(...args), wait);
+    };
+  }
+
+  function reprocessAllFlights() {
+    try {
+      for (const badge of document.querySelectorAll(".starlink-wifi-badge")) {
+        badge.remove();
+      }
+    } catch {
+      // removal is cosmetic; keep going
+    }
+    processedElements = new WeakSet();
+    processFlights();
+  }
+
+  function initialize() {
+    setTimeout(processFlights, 1000);
+    const debouncedProcess = debounce(processFlights, 2000);
+
+    const looksLikeFlightNode = (node) =>
+      node.nodeType === 1 &&
+      (node.matches?.(CARD_HINT_SELECTOR) || node.querySelector?.(CARD_HINT_SELECTOR) != null);
+
+    const observer = new MutationObserver((mutations) => {
+      try {
+        if (isProcessing) return;
+        const hasNewFlights = mutations.some((mutation) =>
+          Array.from(mutation.addedNodes).some(looksLikeFlightNode)
         );
-      });
+        if (hasNewFlights) debouncedProcess();
+      } catch {
+        // observer callbacks must never throw into the page
+      }
     });
+    observer.observe(document.body, { childList: true, subtree: true });
 
-    if (hasNewFlights) {
-      debouncedProcess();
-    }
-  });
+    // Badge placement differs across the desktop/mobile breakpoint.
+    let lastWidth = window.innerWidth;
+    window.addEventListener(
+      "resize",
+      debounce(() => {
+        const wasDesktop = lastWidth >= 1024;
+        lastWidth = window.innerWidth;
+        if (wasDesktop !== lastWidth >= 1024) reprocessAllFlights();
+      }, 500)
+    );
 
-  observer.observe(document.body, {
-    childList: true,
-    subtree: true,
-    attributes: false,
-    characterData: false,
-  });
+    // SPA navigation never fires load events — poll the URL.
+    let lastUrl = location.href;
+    setInterval(() => {
+      if (location.href !== lastUrl) {
+        lastUrl = location.href;
+        processedElements = new WeakSet();
+        setTimeout(processFlights, 1000);
+      }
+    }, 1000);
+  }
 
-  let lastWidth = window.innerWidth;
-  const handleResize = debounce(() => {
-    const currentWidth = window.innerWidth;
-    const wasDesktop = lastWidth >= 1024;
-    const isDesktop = currentWidth >= 1024;
-
-    if (wasDesktop !== isDesktop) {
-      lastWidth = currentWidth;
-      reprocessAllFlights();
-    }
-  }, 500);
-
-  window.addEventListener("resize", handleResize);
-
-  let lastUrl = location.href;
-  setInterval(() => {
-    const url = location.href;
-    if (url !== lastUrl) {
-      lastUrl = url;
-      processedElements = new WeakSet();
-      setTimeout(processFlights, 1000);
-    }
-  }, 1000);
-}
-
-if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", initialize);
-} else {
-  initialize();
-}
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initialize);
+  } else {
+    initialize();
+  }
+})();

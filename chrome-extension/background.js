@@ -1,26 +1,45 @@
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.action === "checkFlight") {
-    const { flightNumber, date } = request;
-    const url = `https://unitedstarlinktracker.com/api/check-flight?flight_number=${flightNumber}&date=${date}`;
+/**
+ * Service worker: the only place the extension talks to the network. Routing
+ * (UA → the frozen check-flight contract, others → the hub's
+ * check-any-flight) lives in lib.js so it is unit-tested in the main repo.
+ *
+ * Both APIs serve `Access-Control-Allow-Origin: *`, so no host permission
+ * beyond the original one is required — adding one would disable the
+ * extension for existing users until they re-approve the update.
+ */
 
-    console.log("[Starlink Tracker Background] Fetching:", url);
+importScripts("lib.js");
 
-    fetch(url)
-      .then((response) => {
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
-        return response.json();
-      })
-      .then((data) => {
-        console.log("[Starlink Tracker Background] API response:", data);
-        sendResponse({ success: true, data });
-      })
-      .catch((error) => {
-        console.error("[Starlink Tracker Background] API error:", error);
-        sendResponse({ success: false, error: error.message });
-      });
+const FETCH_TIMEOUT_MS = 10_000;
 
-    return true;
+chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
+  if (!request || request.action !== "checkFlight") return undefined;
+
+  const lib = globalThis.StarlinkTrackerLib;
+  const url = lib ? lib.endpointFor(request.flightNumber, request.date) : null;
+  if (!url) {
+    sendResponse({ success: false, error: "unsupported flight number or date" });
+    return undefined;
   }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+
+  fetch(url, { signal: controller.signal })
+    .then(async (response) => {
+      const body = await response.json().catch(() => null);
+      // 400/404 bodies are settled answers ("untracked airline", bad input) —
+      // hand them to the normalizer instead of treating them as outages.
+      if (body && (response.ok || response.status === 400 || response.status === 404)) {
+        sendResponse({ success: true, data: body });
+      } else {
+        sendResponse({ success: false, status: response.status });
+      }
+    })
+    .catch((err) => {
+      sendResponse({ success: false, error: err instanceof Error ? err.message : String(err) });
+    })
+    .finally(() => clearTimeout(timer));
+
+  return true;
 });

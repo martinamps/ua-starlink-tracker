@@ -1,9 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Google Flights Starlink Indicator",
-  "version": "1.4.0",
-  "description": "Highlights flights with Starlink WiFi on Google Flights",
-  "permissions": ["storage"],
+  "version": "2.0.0",
+  "description": "Shows which United, Hawaiian, and Alaska flights have Starlink WiFi on Google Flights — verified, installed, or predicted.",
   "host_permissions": ["https://unitedstarlinktracker.com/*"],
   "background": {
     "service_worker": "background.js"
@@ -11,7 +10,7 @@
   "content_scripts": [
     {
       "matches": ["https://www.google.com/flights/*", "https://www.google.com/travel/flights/*"],
-      "js": ["content.js"],
+      "js": ["lib.js", "content.js"],
       "css": ["styles.css"],
       "run_at": "document_idle"
     }
