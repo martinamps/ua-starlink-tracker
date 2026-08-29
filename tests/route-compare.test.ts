@@ -13,6 +13,7 @@ import {
   compareRoute,
   joinSentences,
   planItinerary,
+  predictFlight,
   subfleetPenetration,
 } from "../src/scripts/starlink-predictor";
 import { createReaderFactory } from "../src/server/context";
@@ -437,6 +438,48 @@ describe("planItinerary geographic gates", () => {
     expect(vias("OGG", "SFO")).not.toContain("LAX");
     ins.run("OGG", "LAX");
     expect(vias("OGG", "SFO")).toContain("LAX");
+  });
+});
+
+// ── planItinerary confirmed edges ────────────────────────────────────────────
+// The path that exists for a flight number with NO history that is on a
+// verified Starlink tail today. Nothing else covers it, and it is the one leg
+// whose probability does not come from its own observations.
+
+describe("planItinerary confirmed edges", () => {
+  let sdb: Database;
+  let reader: ReturnType<typeof getReader>;
+  // Midday at the departure airport, so the leg lands on the queried LOCAL date.
+  const date = new Date(Date.now() + 86400_000).toISOString().slice(0, 10);
+  const departure = Math.floor(Date.parse(`${date}T20:00:00Z`) / 1000);
+  const targetDateUnix = Math.floor(Date.parse(`${date}T12:00:00Z`) / 1000);
+
+  beforeAll(() => {
+    sdb = makeSyntheticDb();
+    sdb
+      .query(
+        `INSERT INTO starlink_planes (aircraft, wifi, sheet_gid, sheet_type, DateFound, TailNumber, OperatedBy, fleet, verified_wifi, airline)
+       VALUES ('Boeing 737-900', 'Starlink', 'test', 'UA-mainline', '2026-01-01', 'N7777X', 'United Airlines', 'mainline', 'Starlink', 'UA')`
+      )
+      .run();
+    addFlight(sdb, "N7777X", "UA7777", "SFO", departure, { arrivalAirport: "EWR" });
+    reader = createReaderFactory(sdb)("UA");
+  });
+  afterAll(() => sdb.close());
+
+  test("a confirmed leg reports the flight's real history, never a fabricated count", () => {
+    const its = planItinerary(reader, "SFO", "EWR", { targetDateUnix, maxStops: 0 });
+    const leg = its[0]?.legs[0];
+    if (!leg) throw new Error("confirmed edge produced no itinerary");
+
+    expect(leg.method).toBe("confirmed_assignment");
+    expect(leg.confidence).toBe("high");
+    // UA7777 has never been verified, so its history is empty — and the leg
+    // must say so rather than inventing an observation to sit beside "high".
+    expect(leg.n_observations).toBe(predictFlight(reader, "UA7777").n_observations);
+    // Which is exactly why renderers get `confirmed`: it is the only field that
+    // explains a 90-95% call with no observations behind it.
+    expect(leg.confirmed).toBe(true);
   });
 });
 

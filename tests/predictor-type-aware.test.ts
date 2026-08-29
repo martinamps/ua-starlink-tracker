@@ -191,6 +191,26 @@ describe("type-aware predictor", () => {
     expect(staleSeventeen.confidence).not.toBe("low");
   });
 
+  test("16 and 17 draws of the same age are labeled the same", () => {
+    // The reported symptom: two legs at the same ~98% probability, one draw
+    // apart, carrying opposite labels. Neighbouring sample sizes at equal
+    // recency must not straddle a tier boundary.
+    const build = (n: number, fn: string) =>
+      buildModel(
+        [
+          obs("UA999", "N175-0", 1, 0),
+          ...Array.from({ length: n }, (_, i) => obs(fn, "N175-1", 1, 20 + i / 10)),
+        ],
+        CONFIG,
+        roster
+      ).predict(fn);
+
+    const sixteen = build(16, "UA5510");
+    const seventeen = build(17, "UA5511");
+    expect(Math.abs(sixteen.probability - seventeen.probability)).toBeLessThan(0.02);
+    expect(sixteen.confidence).toBe(seventeen.confidence);
+  });
+
   test("staleness costs at most one tier, so decay still outranks a fresh sample", () => {
     // The floor must not erase the decay signal: 16 fresh draws should still
     // outrank 17 stale ones. Same method, so the ordering is the label's job.
@@ -218,6 +238,52 @@ describe("type-aware predictor", () => {
     const single = buildModel([obs("UA5503", "N175-1", 1, 0)], CONFIG, roster).predict("UA5503");
     expect(single.n_observations).toBe(1);
     expect(single.confidence).toBe("low");
+  });
+
+  test("the floor covers small samples too, not just the 5+ band", () => {
+    // The first floor only lifted a sample one tier below its raw count, which
+    // left 2-4 draws — confidenceFor's own "medium" band — still publishing
+    // "3 historical observations (low confidence)". Every count the tiering
+    // rates above low must clear the same bar.
+    for (const n of [2, 3, 4]) {
+      const p = buildModel(
+        [
+          obs("UA999", "N175-0", 1, 0),
+          ...Array.from({ length: n }, () => obs(`UA560${n}`, "N175-1", 1, 90)),
+        ],
+        CONFIG,
+        roster
+      ).predict(`UA560${n}`);
+      expect(p.n_observations, `n=${n}`).toBe(n);
+      expect(p.confidence, `n=${n}`).not.toBe("low");
+    }
+  });
+
+  test("evidence decayed past the prior falls to low however large the raw count", () => {
+    // The floor must not make "low" unreachable forever: at a year and two
+    // years out, 17 draws are worth a fraction of one observation against the
+    // smoothing prior, so the number IS the prior and the label must say so.
+    const build = (ageDays: number, fn: string) =>
+      buildModel(
+        [
+          obs("UA999", "N175-0", 1, 0),
+          ...Array.from({ length: 17 }, () => obs(fn, "N175-1", 1, ageDays)),
+        ],
+        CONFIG,
+        roster
+      ).predict(fn);
+
+    for (const [age, fn] of [
+      [365, "UA5504"],
+      [730, "UA5505"],
+    ] as const) {
+      const dead = build(age, fn);
+      expect(dead.n_observations, `${age}d`).toBe(17);
+      expect(dead.confidence, `${age}d`).toBe("low");
+    }
+    // ...and the cliff is the decay, not the count: the same 17 draws still
+    // rate above low while the evidence is live.
+    expect(build(120, "UA5506").confidence).not.toBe("low");
   });
 
   test("no roster → the legacy subfleet-prior model, method labels intact", () => {

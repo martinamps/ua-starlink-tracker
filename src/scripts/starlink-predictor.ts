@@ -127,20 +127,42 @@ type Confidence = (typeof CONFIDENCE_TIERS)[number];
 const confidenceFor = (n: number): Confidence => (n >= 5 ? "high" : n >= 2 ? "medium" : "low");
 
 /**
- * Confidence for the decayed model, floored so it cannot contradict the
- * `n_observations` every surface prints beside it.
- *
- * The decayed weight is the Brier-tuned signal and stays primary — six draws
- * from months ago really do back the number less than six from this week. But
- * scoring the label off the decayed weight while reporting the RAW count
- * published pairs like "17 observations (low confidence)", which reads as a
- * bug and made the Chrome extension suppress a 98% call at the point of
- * booking. Staleness may cost at most one tier, so a large sample can be
- * hedged but never erased.
+ * Below this share of the smoothed posterior a flight's own history has
+ * stopped moving the number: the estimate is (s + α·prior)/(w + α), so once
+ * the decayed weight `w` is worth under 5% of that denominator what ships is
+ * the family prior wearing a flight number. Expressed against α rather than
+ * hardcoded so it tracks a priorStrength re-sweep.
  */
-function decayedConfidence(decayedWeight: number, rawCount: number): Confidence {
+const DEAD_EVIDENCE_SHARE = 0.05;
+const deadEvidenceWeight = (priorStrength: number) =>
+  (priorStrength * DEAD_EVIDENCE_SHARE) / (1 - DEAD_EVIDENCE_SHARE);
+
+/**
+ * Confidence for the decayed model. Two rules, in order:
+ *
+ * 1. Dead evidence is dead. Once decay has eaten the sample past
+ *    `deadEvidenceWeight`, the probability IS the prior, so "low" is honest no
+ *    matter how many raw draws produced it — this is the model's only way to
+ *    say "too old to lean on", and the /check-flight copy names the staleness
+ *    rather than printing a bare count beside it.
+ * 2. Otherwise the label may hedge for staleness but never contradict the
+ *    `n_observations` printed next to it. Scoring purely off the decayed
+ *    weight published pairs like "17 observations (low confidence)", which
+ *    reads as a bug and made the Chrome extension suppress a 98% call at the
+ *    point of booking; anything confidenceFor() itself rates above "low"
+ *    therefore floors at "medium". Staleness costs a tier, not the sample.
+ *
+ * The decayed weight stays the leading signal between those bounds — six draws
+ * from months ago really do back the number less than six from this week.
+ */
+function decayedConfidence(
+  decayedWeight: number,
+  rawCount: number,
+  priorStrength: number
+): Confidence {
+  if (decayedWeight < deadEvidenceWeight(priorStrength)) return "low";
   const decayed = CONFIDENCE_TIERS.indexOf(confidenceFor(decayedWeight));
-  const floor = Math.max(0, CONFIDENCE_TIERS.indexOf(confidenceFor(rawCount)) - 1);
+  const floor = confidenceFor(rawCount) === "low" ? 0 : 1;
   return CONFIDENCE_TIERS[Math.max(decayed, floor)];
 }
 
@@ -234,8 +256,9 @@ function buildTypeAwarePredict(
 
   // Everything is determined at build time, so predict is a lookup.
   // Confidence leads on the DECAYED evidence weight — six draws from months ago
-  // back the number far less than six from this week — floored against the raw
-  // count so the label can never contradict the n reported next to it.
+  // back the number far less than six from this week — bounded at both ends by
+  // decayedConfidence so the label never contradicts the n reported next to it
+  // and never vouches for evidence the decay has already written off.
   const predictions = new Map<string, Prediction>();
   for (const [flightNumber, f] of flights) {
     let prior = coldPrior(flightNumber, config);
@@ -252,7 +275,7 @@ function buildTypeAwarePredict(
     predictions.set(flightNumber, {
       flight_number: flightNumber,
       probability: smoothedRate(f.s, f.n, prior, config.priorStrength),
-      confidence: decayedConfidence(f.n, f.raw),
+      confidence: decayedConfidence(f.n, f.raw, config.priorStrength),
       method: "flight_history_smoothed",
       n_observations: f.raw,
     });
@@ -1213,12 +1236,14 @@ function buildRouteGraph(
               flight_number: uaNum,
               probability: confirmedP,
               // A confirmed same-day assignment is direct evidence, so "high"
-              // is honest at a 90-95% swap-adjusted probability. Carry the
-              // flight's REAL historical sample count rather than a literal 1:
-              // n_observations means "how much history backs this" everywhere
-              // else, and inventing one observation published "1 obs · high",
-              // the same contradictory pair this file just fixed upstream.
-              // `method` disambiguates why confidence is high with a thin n.
+              // is honest at a 90-95% swap-adjusted probability. n_observations
+              // stays the flight's REAL history rather than a fabricated 1 —
+              // it means "how much history backs this" everywhere else, and
+              // this path exists precisely for flights that have none (UA1358
+              // in the header: no history, but on a Starlink tail tomorrow), so
+              // it is frequently 0. Renderers must therefore branch on
+              // `confirmed`/`method` and say WHY the number is high instead of
+              // printing the count — see route-planner-page and mcp-server.
               confidence: "high",
               method: "confirmed_assignment",
               n_observations: hist.n_observations,

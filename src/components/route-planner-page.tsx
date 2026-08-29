@@ -289,10 +289,17 @@ export default function RoutePlannerPage({ site }: RoutePlannerPageProps) {
                 '</div>';
             }
             var conf = leg.confidence === 'high' ? '' : ' · ' + leg.confidence;
+            // A confirmed leg is priced off today's tail assignment, not off
+            // history, and that history is usually empty — printing its count
+            // renders "0 obs" beside a 95% bar. Name the evidence instead, the
+            // way the MCP renderer does.
+            var basis = leg.confirmed
+              ? 'confirmed assignment'
+              : leg.n_observations + ' obs' + conf;
             return '<div class="flex items-center justify-between py-2 border-l-2 pl-3 ml-1" style="border-color:' + color + '">' +
               '<div class="text-sm font-mono">' +
               '<div class="text-secondary">' + leg.flight_number + ' <span class="text-muted">' + parts[0] + ' → ' + parts[1] + '</span></div>' +
-              '<div class="text-xs text-muted opacity-70">' + leg.n_observations + ' obs' + conf + '</div>' +
+              '<div class="text-xs text-muted opacity-70">' + basis + '</div>' +
               '</div>' +
               '<div class="flex items-center gap-2">' +
               probBars(leg.probability, color) +

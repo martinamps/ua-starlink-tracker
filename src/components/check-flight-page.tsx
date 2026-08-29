@@ -672,9 +672,17 @@ export default function CheckFlightPage({ site, flight, invalid }: CheckFlightPa
                       var barColor = isLikely ? 'bg-green-500' : isPossible ? 'bg-yellow-500' : 'bg-surface-elevated';
                       var borderColor = isLikely ? 'border-green-700/50 bg-green-900/20' : isPossible ? 'border-yellow-700/50 bg-yellow-900/20' : 'border-subtle bg-surface-elevated';
                       var iconColor = isLikely ? 'text-green-400' : isPossible ? 'text-yellow-400' : 'text-muted';
-                      var detail = pred.n_observations > 0
-                        ? 'Based on <span class="text-secondary">' + pred.n_observations + '</span> historical observation' + (pred.n_observations === 1 ? '' : 's') + ' of aircraft on this flight number (' + pred.confidence + ' confidence).'
-                        : 'No historical data for this flight number — this is the fleet install rate (treat as upper bound).';
+                      // "low" beside a real sample only happens when the model
+                      // has decayed that sample past the point of mattering, so
+                      // say that rather than printing a count the label appears
+                      // to contradict.
+                      var stale = pred.confidence === 'low' && pred.n_observations >= 2;
+                      var counted = '<span class="text-secondary">' + pred.n_observations + '</span> historical observation' + (pred.n_observations === 1 ? '' : 's') + ' of aircraft on this flight number';
+                      var detail = pred.n_observations === 0
+                        ? 'No historical data for this flight number — this is the fleet install rate (treat as upper bound).'
+                        : stale
+                        ? 'The ' + counted + ' are all old enough that the model leans on the fleet install rate instead (low confidence).'
+                        : 'Based on ' + counted + ' (' + pred.confidence + ' confidence).';
                       resultDiv.innerHTML = '<div class="rounded p-4 border ' + borderColor + '">' +
                         '<div class="flex items-center gap-2 mb-3">' +
                         '<span class="text-lg ' + iconColor + '">~</span>' +
