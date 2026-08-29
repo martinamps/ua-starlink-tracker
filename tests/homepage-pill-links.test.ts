@@ -16,22 +16,35 @@ const UA_HOST = "unitedstarlinktracker.com";
 const AS_HOST = "alaskastarlinktracker.com";
 const HUB_HOST = "airlinestarlinktracker.com";
 
-const PILL_RE = /<a\b[^>]*?class="[^"]*flight-pill[^"]*"[^>]*?>/g;
+const PILL_RE = /<a\b[^>]*?class="[^"]*flight-pill[^"]*"[^>]*?>([\s\S]*?)<\/a>/g;
 const HREF_RE = /href="([^"]*)"/;
 const TOOLTIP_RE = /data-flight-tooltip="([^"]*)"/;
+const ARIA_RE = /aria-label="([^"]*)"/;
 
 interface Pill {
   tag: string;
   href: string;
   tooltip: string;
+  ariaLabel: string;
+  /** Words a sighted user actually reads on the pill, arrows dropped. */
+  visibleWords: string[];
 }
 
 function pillsOf(html: string): Pill[] {
-  return (html.match(PILL_RE) ?? []).map((tag) => ({
-    tag,
-    href: tag.match(HREF_RE)?.[1] ?? "",
-    tooltip: tag.match(TOOLTIP_RE)?.[1] ?? "",
-  }));
+  return [...html.matchAll(PILL_RE)].map((m) => {
+    const tag = m[0].slice(0, m[0].indexOf(">") + 1);
+    return {
+      tag,
+      href: tag.match(HREF_RE)?.[1] ?? "",
+      tooltip: tag.match(TOOLTIP_RE)?.[1] ?? "",
+      ariaLabel: tag.match(ARIA_RE)?.[1] ?? "",
+      visibleWords: m[1]
+        .replace(/<[^>]*>/g, " ")
+        .replace(/&rarr;|→|&#x2192;/g, " ")
+        .split(/\s+/)
+        .filter(Boolean),
+    };
+  });
 }
 
 /** Pills whose row flight number is `fn` — matched via the tooltip, which
@@ -163,6 +176,27 @@ describe("homepage flight pills link to flight permalinks", () => {
     for (const p of pills) {
       if (!p.href.startsWith("/check-flight/")) continue;
       expect(p.tooltip).toBe(p.href.slice("/check-flight/".length));
+    }
+  });
+
+  test("the link's accessible name carries the flight number, not just a route", () => {
+    // The pill's visible text is an airport pair and a clock time; the flight
+    // number is the target page's whole subject, so it has to reach a screen
+    // reader and a crawler reading link text — the hover tooltip is a data
+    // attribute and does neither.
+    for (const p of pills) {
+      expect(p.ariaLabel).toContain(p.tooltip);
+      expect(p.ariaLabel).not.toBe("");
+    }
+    expect(pillFor(pills, "UA4561")?.ariaLabel).toContain("UA4561");
+  });
+
+  test("the accessible name restates every visible word (WCAG 2.5.3)", () => {
+    // aria-label replaces the visible text for AT and speech input, so dropping
+    // a word a sighted user can see would break "click GSP to ORD".
+    for (const p of pills) {
+      expect(p.visibleWords.length).toBeGreaterThan(0);
+      for (const word of p.visibleWords) expect(p.ariaLabel).toContain(word);
     }
   });
 });

@@ -479,6 +479,13 @@ export default function Page({
       // Hover text names the destination, so it shows the marketing number the
       // permalink is filed under rather than the operating callsign.
       const tooltip = permalink ? permalink.slice("/check-flight/".length) : flight.flight_number;
+      const when = formatCompactTime(flight.departure_time);
+      // The pill's visible text is an airport pair and a clock time — the flight
+      // number lives only in a hover tooltip, which is a data attribute gated on
+      // (hover: hover). So the link's own subject was reaching neither a screen
+      // reader nor a crawler reading link text. The label restates the visible
+      // text so speech-input targeting still works (WCAG 2.5.3).
+      const label = `Flight ${tooltip}, ${dep} to ${arr}, departs ${when}`;
 
       return (
         <a
@@ -486,12 +493,13 @@ export default function Page({
           href={permalink ?? `https://www.flightaware.com/live/flight/${flight.flight_number}`}
           {...(permalink ? {} : { target: "_blank", rel: "nofollow noopener noreferrer" as const })}
           data-flight-tooltip={tooltip}
+          aria-label={label}
           className={`flight-pill font-mono items-center gap-1.5 px-2 py-1 bg-surface-elevated border border-subtle rounded text-xs text-secondary hover:text-accent hover:border-accent/50 transition-all ${visibilityClass}`}
         >
           <span className="text-accent font-medium">{dep}</span>
           <span className="text-muted">→</span>
           <span className="text-accent font-medium">{arr}</span>
-          <span className="text-muted text-[10px]">{formatCompactTime(flight.departure_time)}</span>
+          <span className="text-muted text-[10px]">{when}</span>
         </a>
       );
     };
