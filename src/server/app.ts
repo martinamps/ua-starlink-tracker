@@ -63,12 +63,15 @@ import CheckFlightPage, {
   type InvalidFlightQuery,
 } from "../components/check-flight-page";
 import FleetPage from "../components/fleet-page";
+import HowToCheckPage from "../components/how-to-check-page";
+import IsStarlinkFreePage, { hasFreeAnswer } from "../components/is-starlink-free-page";
 import McpPage from "../components/mcp-page";
 import MethodologyPage, { hasMethodology } from "../components/methodology-page";
 import Page from "../components/page";
 import RoutePage, { routeVerdict } from "../components/route-page";
 import RoutePlannerPage from "../components/route-planner-page";
 import RoutesPage from "../components/routes-page";
+import TimelinePage, { getTimeline, hasTimeline } from "../components/timeline-page";
 import { ROUTE_AIRPORT_RE, type RouteSummary } from "../database/database";
 import {
   COUNTERS,
@@ -128,6 +131,9 @@ interface PageMeta {
   pageJsonLd?: string;
   /** Override the default "index, follow" (e.g. soft-gated flight permalinks). */
   robotsMeta?: string;
+  /** og:type — "website" (tools, indexes) unless a page overrides with
+   * "article" (dated editorial content: timeline, methodology, intent pages). */
+  ogType?: "website" | "article";
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1201,6 +1207,30 @@ const SITE_PAGES: SitePage[] = [
     llmsLine: (h) =>
       `- [Methodology](https://${h}/methodology) — how the data is gathered and verified, and how to cite it`,
   },
+  {
+    path: "/timeline",
+    feature: "timelinePage",
+    changefreq: "weekly",
+    priority: "0.7",
+    llmsLine: (h) =>
+      `- [Rollout timeline](https://${h}/timeline) — every dated milestone plus the airline's stated targets`,
+  },
+  {
+    path: "/how-to-check",
+    feature: "intentPages",
+    changefreq: "monthly",
+    priority: "0.6",
+    llmsLine: (h) =>
+      `- [How to check a flight](https://${h}/how-to-check) — step-by-step guide to a verified answer`,
+  },
+  {
+    path: "/is-starlink-free",
+    feature: "intentPages",
+    changefreq: "monthly",
+    priority: "0.6",
+    llmsLine: (h) =>
+      `- [Is Starlink free?](https://${h}/is-starlink-free) — pricing, sign-in fine print, and speeds`,
+  },
   { path: "/mcp", feature: "mcpPage", changefreq: "monthly", priority: "0.6" },
 ];
 
@@ -1541,6 +1571,7 @@ function buildBaseTemplateVars(
     host: site.canonicalHost,
     canonicalPath: escapeHtmlAttr(canonicalPath),
     robotsMeta: "index, follow",
+    ogType: "website",
     analyticsSnippet: analyticsSnippet(site),
     headSnippet: site.headSnippet ?? "",
     // Dark-launch probe is UA-only; the onboard portal URL is United's.
@@ -1719,6 +1750,18 @@ function buildFlightFacts(
         wifiLabel: starlink ? "Starlink" : (f.settled_wifi ?? f.verified_wifi ?? "Install pending"),
       };
     });
+  // Sibling permalinks: other marketing numbers on the primary route (routes
+  // lead with currently-scheduled legs). getRouteSummary draws on the same
+  // populations as the permalink existence gate, so every link resolves. The
+  // reader is always single-airline here — the hub 404s /check-flight/*.
+  const primary = routes[0] ?? null;
+  const siblings = primary
+    ? reader
+        .getRouteSummary(primary.departure_airport, primary.arrival_airport)
+        .flightNumbers.map((f) => f.flight_number)
+        .filter((f) => f !== flightNumber)
+        .slice(0, 8)
+    : [];
   return {
     flightNumber,
     airlineName: cfg.name,
@@ -1730,6 +1773,7 @@ function buildFlightFacts(
       : null,
     routes,
     upcoming,
+    siblings,
   };
 }
 
@@ -1859,10 +1903,17 @@ const checkFlightPage: Handler = (ctx) => {
     // noindex + canonical to /check-flight keeps it out of the index (the
     // sitemap never advertises ungated flights).
     if (!reader.flightNumberHasData(variants)) {
-      return renderSubPage(ctx, CheckFlightPage, "/check-flight", {
-        ...subPageMeta(ctx, "check-flight"),
-        robotsMeta: "noindex, follow",
-      });
+      return renderSubPage(
+        ctx,
+        CheckFlightPage,
+        "/check-flight",
+        {
+          ...subPageMeta(ctx, "check-flight"),
+          robotsMeta: "noindex, follow",
+        },
+        // noindex but follow: hand the crawler somewhere real to go.
+        { popular: reader.getPopularFlights() }
+      );
     }
     const facts = buildFlightFacts(reader, cfg, fn, variants);
     return renderSubPage(
@@ -1875,7 +1926,9 @@ const checkFlightPage: Handler = (ctx) => {
   }
   // Bare /check-flight (with or without a trailing slash) — the generic
   // indexable page.
-  return renderSubPage(ctx, CheckFlightPage, "/check-flight", subPageMeta(ctx, "check-flight"));
+  return renderSubPage(ctx, CheckFlightPage, "/check-flight", subPageMeta(ctx, "check-flight"), {
+    popular: ctx.reader.getPopularFlights(),
+  });
 };
 
 /** `/route-planner/SFO/EWR` → `{ origin, destination }`; anything else → null. */
@@ -1957,7 +2010,29 @@ const fleetPage: Handler = (ctx) => {
     return notFound(ctx.site);
   }
   const data = ctx.reader.getFleetPageData();
-  return renderSubPage(ctx, FleetPage, "/fleet", subPageMeta(ctx, "fleet"), { data });
+  const cfg = tenantConfig(ctx.tenant);
+  // ItemList over the family breakdown — the page's real structure. Counts,
+  // not URLs: families have no permalink yet.
+  const fleetJsonLd = jsonLdBlock({
+    "@context": "https://schema.org",
+    "@type": "ItemList",
+    name: cfg
+      ? `${cfg.name} fleet by aircraft family — Starlink WiFi status`
+      : "Tracked fleets by aircraft family — Starlink WiFi status",
+    numberOfItems: data.families.length,
+    itemListElement: data.families.slice(0, 25).map((f, i) => ({
+      "@type": "ListItem",
+      position: i + 1,
+      name: `${f.family} — ${f.starlink} of ${f.total} aircraft with Starlink`,
+    })),
+  });
+  return renderSubPage(
+    ctx,
+    FleetPage,
+    "/fleet",
+    { ...subPageMeta(ctx, "fleet"), pageJsonLd: fleetJsonLd },
+    { data }
+  );
 };
 
 const methodologyPage: Handler = (ctx) => {
@@ -1970,6 +2045,34 @@ const methodologyPage: Handler = (ctx) => {
   // Gate on content, not just the feature flag — a SOURCES-less airline would
   // otherwise render an empty "where the data comes from" page.
   if (!hasMethodology(cfg.code)) return notFound(ctx.site);
+  const host = ctx.site.canonicalHost;
+  // Dataset JSON-LD for Dataset Search. Citations are the SEC filings the
+  // fleet_anchors rows are pinned to — real, checkable primary sources; the
+  // block simply omits them when no anchors are seeded yet. dateModified uses
+  // the RAW stamp for the same honesty reason the sitemap does.
+  const anchors = ctx.reader.getFleetAnchors();
+  const citations = [...new Set(anchors.map((a) => a.source_url))];
+  const earliestAnchor = anchors.at(-1)?.as_of_date; // rows are ordered as_of_date DESC
+  const modifiedTs = Date.parse(ctx.reader.getLastUpdatedRaw() ?? "");
+  const datasetJsonLd = jsonLdBlock({
+    "@context": "https://schema.org",
+    "@type": "Dataset",
+    name: `${cfg.name} Starlink WiFi rollout — per-aircraft installation status`,
+    description: `Per-aircraft Starlink WiFi installation status across the ${cfg.name} fleet: equipped tail numbers, verification records, and rollout counts, cross-referenced against ${cfg.verifySite}, fleet and schedule data, and officially reported fleet figures. Updated continuously.`,
+    url: `https://${host}/methodology`,
+    creator: { "@type": "Organization", name: ctx.site.brand.title, url: `https://${host}/` },
+    isAccessibleForFree: true,
+    ...(Number.isFinite(modifiedTs) ? { dateModified: new Date(modifiedTs).toISOString() } : {}),
+    ...(earliestAnchor ? { temporalCoverage: `${earliestAnchor}/..` } : {}),
+    distribution: [
+      {
+        "@type": "DataDownload",
+        encodingFormat: "application/json",
+        contentUrl: `https://${host}/api/data`,
+      },
+    ],
+    ...(citations.length > 0 ? { citation: citations } : {}),
+  });
   return renderSubPage(
     ctx,
     MethodologyPage,
@@ -1980,6 +2083,8 @@ const methodologyPage: Handler = (ctx) => {
       keywords: `${cfg.name.toLowerCase()} starlink data, ${cfg.shortName.toLowerCase()} starlink tracker methodology, how starlink tracker works, starlink rollout data source`,
       ogTitle: `How ${ctx.site.brand.title} Verifies Starlink Data`,
       ogDescription: `The data sources, verification loops, and consensus rules behind this ${cfg.shortName} Starlink tracker's numbers.`,
+      ogType: "article",
+      pageJsonLd: datasetJsonLd,
     },
     { lastUpdated: ctx.reader.getLastUpdated() }
   );
@@ -1991,7 +2096,109 @@ const routesPage: Handler = (ctx) => {
     return notFound(ctx.site);
   }
   const schedule = ctx.reader.getRouteStarlinkSchedule();
-  return renderSubPage(ctx, RoutesPage, "/routes", subPageMeta(ctx, "routes"), { schedule });
+  // ItemList over the live-window route rows; URLs only where the route pages
+  // actually serve (routePlannerPage can lag routesPage on a new tenant).
+  const routesJsonLd = jsonLdBlock({
+    "@context": "https://schema.org",
+    "@type": "ItemList",
+    name: `Routes with scheduled Starlink departures — ${ctx.site.brand.title}`,
+    numberOfItems: schedule.rows.length,
+    itemListElement: schedule.rows.slice(0, 25).map((r, i) => ({
+      "@type": "ListItem",
+      position: i + 1,
+      name: `${r.origin} to ${r.destination} — ${r.departures} Starlink departure${r.departures === 1 ? "" : "s"}`,
+      ...(ctx.site.features.routePlannerPage
+        ? { url: `https://${ctx.site.canonicalHost}/route-planner/${r.origin}/${r.destination}` }
+        : {}),
+    })),
+  });
+  const popularFlights = ctx.site.features.checkFlightPage
+    ? ctx.reader.getPopularFlights()
+    : undefined;
+  return renderSubPage(
+    ctx,
+    RoutesPage,
+    "/routes",
+    { ...subPageMeta(ctx, "routes"), pageJsonLd: routesJsonLd },
+    { schedule, popularFlights }
+  );
+};
+
+const timelinePage: Handler = (ctx) => {
+  if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
+  if (!ctx.site.features.timelinePage) return notFound(ctx.site);
+  // timelinePage is airline-site-only; siteAirline throws (fail closed) on the hub.
+  const cfg = siteAirline(ctx.site);
+  // Gate on content, not just the flag — mirrors /methodology's hasMethodology.
+  const timeline = getTimeline(cfg.code);
+  if (!hasTimeline(cfg.code) || !timeline) return notFound(ctx.site);
+  const starlinkCount = ctx.reader.getStarlinkPlanes().length;
+  const totalCount = ctx.reader.getTotalCount();
+  const first = timeline.milestones[0];
+  return renderSubPage(
+    ctx,
+    TimelinePage,
+    "/timeline",
+    {
+      siteTitle: `${cfg.shortName} Starlink Rollout Timeline — Every Milestone, Dated`,
+      siteDescription: `The ${cfg.name} Starlink rollout, milestone by milestone: from the first flight in ${first.date.slice(0, 4)} to ${starlinkCount} equipped aircraft today, plus the airline's stated targets — each dated and sourced.`,
+      keywords: `${cfg.name.toLowerCase()} starlink rollout, ${cfg.shortName.toLowerCase()} starlink timeline, when will ${cfg.shortName.toLowerCase()} have starlink, ${cfg.shortName.toLowerCase()} starlink schedule`,
+      ogTitle: `${cfg.shortName} Starlink Rollout Timeline`,
+      ogDescription: `Every dated milestone in the ${cfg.name} Starlink rollout, plus stated targets and the live equipped-aircraft count.`,
+      ogType: "article",
+      pageJsonLd: jsonLdBlock({
+        "@context": "https://schema.org",
+        "@type": "ItemList",
+        name: `${cfg.name} Starlink rollout milestones`,
+        numberOfItems: timeline.milestones.length,
+        itemListElement: timeline.milestones.map((m, i) => ({
+          "@type": "ListItem",
+          position: i + 1,
+          name: `${m.date} — ${m.title}`,
+        })),
+      }),
+    },
+    { starlinkCount, totalCount, lastUpdated: ctx.reader.getLastUpdated() }
+  );
+};
+
+const howToCheckPage: Handler = (ctx) => {
+  if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
+  if (!ctx.site.features.intentPages) return notFound(ctx.site);
+  const cfg = siteAirline(ctx.site);
+  return renderSubPage(ctx, HowToCheckPage, "/how-to-check", {
+    siteTitle: `How to Check If Your ${cfg.shortName} Flight Has Starlink WiFi`,
+    siteDescription: `Four steps to a real answer: enter your ${cfg.shortName} flight number and date, read the verified-vs-predicted result, and re-check before departure. Plus tail-number lookup and booking-time tricks.`,
+    keywords: `how to check ${cfg.shortName.toLowerCase()} starlink, how to know if my flight has starlink, does my ${cfg.shortName.toLowerCase()} flight have starlink, check flight wifi`,
+    ogTitle: `How to Check If Your ${cfg.shortName} Flight Has Starlink`,
+    ogDescription: `Flight-number check, tail-number lookup, and booking-time tools — how to tell whether a ${cfg.name} flight has free Starlink WiFi.`,
+    ogType: "article",
+  });
+};
+
+const isStarlinkFreePage: Handler = (ctx) => {
+  if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
+  if (!ctx.site.features.intentPages) return notFound(ctx.site);
+  const cfg = siteAirline(ctx.site);
+  // Content gate like /methodology: no per-airline access story, no page.
+  if (!hasFreeAnswer(cfg.code)) return notFound(ctx.site);
+  return renderSubPage(
+    ctx,
+    IsStarlinkFreePage,
+    "/is-starlink-free",
+    {
+      siteTitle: `Is ${cfg.shortName} Starlink WiFi Free? Yes — Here's the Fine Print`,
+      siteDescription: `${cfg.name} Starlink WiFi is free — no purchase, no data caps. What you need to sign in, real-world speeds, and the one catch: only Starlink-equipped aircraft have it. Check your flight.`,
+      keywords: `is ${cfg.shortName.toLowerCase()} starlink free, is ${cfg.shortName.toLowerCase()} wifi free, ${cfg.shortName.toLowerCase()} starlink cost, free wifi ${cfg.name.toLowerCase()}`,
+      ogTitle: `Is ${cfg.shortName} Starlink WiFi Free?`,
+      ogDescription: `Yes — free on every Starlink-equipped ${cfg.name} aircraft. The fine print, the speeds, and how to check your flight.`,
+      ogType: "article",
+    },
+    {
+      starlinkCount: ctx.reader.getStarlinkPlanes().length,
+      totalCount: ctx.reader.getTotalCount(),
+    }
+  );
 };
 
 // ── Hub /airlines pages ──────────────────────────────────────────────────────
@@ -2104,6 +2311,7 @@ const homePage: Handler = async (ctx) => {
       flightsByTail,
       airportDepartures: reader.getAirportDepartures(),
       showPassengerBanner: isPassengerVerifyAudience(ctx.onStarlinkIp, site.scope),
+      popularFlights: site.features.checkFlightPage ? reader.getPopularFlights() : undefined,
     })
   );
 
@@ -2290,6 +2498,9 @@ export function createApp(db: Database): App {
     "/fleet": fleetPage,
     "/routes": routesPage,
     "/methodology": methodologyPage,
+    "/timeline": timelinePage,
+    "/how-to-check": howToCheckPage,
+    "/is-starlink-free": isStarlinkFreePage,
     "/airlines": airlinesIndexPage,
     "/api/data": apiData,
     "/api/fleet-summary": apiFleetSummary,
