@@ -130,6 +130,7 @@ const ENDPOINTS = [
   "/feed.xml",
   "/badge.svg",
   "/embed",
+  "/install-rate",
 ];
 
 describe("UA host never leaks canaries", () => {

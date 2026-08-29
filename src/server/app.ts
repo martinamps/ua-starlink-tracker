@@ -38,6 +38,7 @@ import {
   siteAirline,
   siteForAirline,
 } from "../airlines/registry";
+import { rolloutTargets } from "../airlines/targets";
 import {
   FR24_OUTAGE_NOTE,
   type FlightVerdict,
@@ -64,6 +65,7 @@ import CheckFlightPage, {
 } from "../components/check-flight-page";
 import EmbedPage from "../components/embed-page";
 import FleetPage from "../components/fleet-page";
+import InstallRatePage, { type AirlineInstallRate } from "../components/install-rate-page";
 import McpPage from "../components/mcp-page";
 import MethodologyPage, { hasMethodology } from "../components/methodology-page";
 import NewlyEquippedPage from "../components/newly-equipped-page";
@@ -98,6 +100,7 @@ import {
   CONTENT_TYPES,
   SECURITY_HEADERS,
 } from "../utils/constants";
+import { computeInstallRate } from "../utils/install-rate";
 import { error as logError } from "../utils/logger";
 import { getNotFoundHtml } from "../utils/not-found";
 import { getSpreadsheetCacheInfo, getSpreadsheetCacheTails } from "../utils/utils";
@@ -1204,6 +1207,14 @@ const SITE_PAGES: SitePage[] = [
       `- [Newly equipped](https://${h}/newly-equipped) — aircraft as they join the Starlink fleet (Atom feed at https://${h}/feed.xml)`,
   },
   {
+    path: "/install-rate",
+    feature: "installRatePage",
+    changefreq: "daily",
+    priority: "0.6",
+    llmsLine: (h) =>
+      `- [Install Rate Index](https://${h}/install-rate) — observed installs/month vs. the airline's stated targets, with sources`,
+  },
+  {
     path: "/embed",
     feature: "embedPage",
     changefreq: "monthly",
@@ -1600,6 +1611,69 @@ const newlyEquippedPage: Handler = (ctx) => {
     airlines: ctx.reader.getPerAirlineStats(),
     firstFlights: firstFlightsFor(ctx.reader, installs),
   });
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// /install-rate — installs/month vs. each airline's stated target
+// ─────────────────────────────────────────────────────────────────────────────
+
+function airlineInstallRate(
+  getReader: RequestContext["getReader"],
+  cfg: AirlineConfig,
+  nowMs: number
+): AirlineInstallRate {
+  const r = getReader(cfg.code);
+  return {
+    code: cfg.code,
+    name: cfg.name,
+    shortName: cfg.shortName,
+    accentColor: cfg.brand.accentColor,
+    statusLabel: cfg.rollout.statusLabel,
+    phaseNote: cfg.rollout.phaseNote,
+    stats: computeInstallRate({
+      monthly: r.getMonthlyInstalls(),
+      equipped: r.getStarlinkPlanes().length,
+      total: r.getTotalCount(),
+      targets: rolloutTargets(cfg.code),
+      nowMs,
+    }),
+  };
+}
+
+const installRatePage: Handler = (ctx) => {
+  if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
+  if (!ctx.site.features.installRatePage) return notFound(ctx.site);
+  const cfg = tenantConfig(ctx.tenant);
+  const now = Date.now();
+  const airlines = cfg
+    ? [airlineInstallRate(ctx.getReader, cfg, now)]
+    : publicAirlines().map((a) => airlineInstallRate(ctx.getReader, a, now));
+  // Dated with the data's own stamp (display copy — getLastUpdated's now()
+  // fallback is acceptable here, unlike sitemap lastmod).
+  const stamp = new Date(ctx.reader.getLastUpdated());
+  const asOfDate = (Number.isNaN(stamp.getTime()) ? new Date(now) : stamp).toLocaleDateString(
+    "en-US",
+    { month: "long", day: "numeric", year: "numeric" }
+  );
+  const meta: PageMeta = cfg
+    ? {
+        siteTitle: `Will ${cfg.shortName} Hit Its Starlink Target? — Install Rate Index`,
+        siteDescription: `How fast ${cfg.name} is actually installing Starlink: observed installs per month, the current pace, and a straight-line projection against the airline's stated targets — with sources.`,
+        keywords: `${cfg.name.toLowerCase()} starlink rollout pace, ${cfg.shortName.toLowerCase()} starlink target, when will ${cfg.shortName.toLowerCase()} finish starlink, starlink install rate`,
+        ogTitle: `Will ${cfg.shortName} Hit Its Starlink Target?`,
+        ogDescription: `${cfg.name}'s observed Starlink install pace vs. its stated rollout targets, updated continuously.`,
+      }
+    : {
+        siteTitle: "Starlink Install Rate Index — Which Airline Is Installing Fastest?",
+        siteDescription:
+          "Observed Starlink installs per month for every tracked airline, the current pace, and straight-line projections against each airline's stated rollout targets — with sources.",
+        keywords:
+          "starlink install rate, airline starlink rollout pace, starlink rollout targets, which airline installs starlink fastest",
+        ogTitle: "Starlink Install Rate Index",
+        ogDescription:
+          "Every tracked airline's observed Starlink install pace vs. its stated targets.",
+      };
+  return renderSubPage(ctx, InstallRatePage, "/install-rate", meta, { airlines, asOfDate });
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2493,6 +2567,7 @@ export function createApp(db: Database): App {
     "/feed.xml": feedXml,
     "/badge.svg": badgeSvg,
     "/embed": embedPage,
+    "/install-rate": installRatePage,
     "/api/data": apiData,
     "/api/fleet-summary": apiFleetSummary,
     "/api/routes": apiRoutes,

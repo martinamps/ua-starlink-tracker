@@ -85,6 +85,10 @@ export interface SiteFeatures {
   /** /embed — documents the auto-updating /badge.svg (the badge itself is
    * always on: its live stat exists for every tenant and the hub). */
   embedPage: boolean;
+  /** /install-rate — observed installs/month vs. stated targets. Off where
+   * the whole DateFound history is bulk-settled (QR): with no organic series
+   * the page could only abstain. */
+  installRatePage: boolean;
 }
 
 export interface SiteConfig {
@@ -706,6 +710,7 @@ const AIRLINE_SITE_FEATURES: SiteFeatures = {
   methodologyPage: false,
   newlyEquippedPage: true,
   embedPage: true,
+  installRatePage: true,
 };
 
 export const SITES: Record<string, SiteConfig> = {
@@ -752,6 +757,7 @@ export const SITES: Record<string, SiteConfig> = {
       methodologyPage: false,
       newlyEquippedPage: true,
       embedPage: true,
+      installRatePage: true,
     },
   },
   hawaiian: {
@@ -804,6 +810,7 @@ export const SITES: Record<string, SiteConfig> = {
       routePlannerPage: false,
       routesPage: false,
       newlyEquippedPage: false,
+      installRatePage: false,
     },
   },
 };

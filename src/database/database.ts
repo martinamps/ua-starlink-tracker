@@ -1066,6 +1066,26 @@ export function getRecentInstalls(
     .all(...q.params, limit) as RecentInstall[];
 }
 
+/** Organic installs bucketed by calendar month (bulk writers excluded via
+ * INSTALL_FILTER — a one-day seed import must never chart as an install
+ * spike). Feeds the Install Rate Index; gaps are zero-filled downstream. */
+export function getMonthlyInstalls(
+  db: Database,
+  airline: AirlineFilter
+): { month: string; installs: number }[] {
+  const q = withAirline(
+    `SELECT substr(DateFound, 1, 7) AS month, COUNT(*) AS installs
+     FROM starlink_planes
+     WHERE ${equippedFilter("starlink_planes")}
+       AND ${INSTALL_FILTER}`,
+    airline
+  );
+  return db.query(`${q.sql} GROUP BY month ORDER BY month`).all(...q.params) as {
+    month: string;
+    installs: number;
+  }[];
+}
+
 /** First observed post-install revenue departures for a set of tails. */
 export function getFirstFlights(
   db: Database,

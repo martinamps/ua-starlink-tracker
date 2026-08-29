@@ -63,6 +63,7 @@ import {
   getHubStats,
   getLastUpdated,
   getMeta,
+  getMonthlyInstalls,
   getObservedDirectFlightNumbers,
   getPendingFleetTails,
   getQatarScheduleByFlight,
@@ -101,6 +102,8 @@ export interface ScopedReader {
   getRecentInstalls(limit?: number, perAirlineCap?: number): RecentInstall[];
   /** First observed post-install revenue departures for the given tails (sparse). */
   getFirstFlights(tails: readonly string[]): FirstFlight[];
+  /** Organic installs per calendar month (bulk seeds excluded); ascending. */
+  getMonthlyInstalls(): { month: string; installs: number }[];
   getPerAirlineStats(): PerAirlineStat[];
   getUpcomingFlights(tailNumber?: string): Flight[];
   /** Per-airline subfleet split; null on the hub (no cross-airline aggregate exists). */
@@ -266,6 +269,7 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     getRecentInstalls: (limit, perAirlineCap) =>
       getRecentInstalls(db, airlines, limit, perAirlineCap),
     getFirstFlights: (tails) => getFirstFlights(db, tails, airlines),
+    getMonthlyInstalls: () => getMonthlyInstalls(db, airlines),
     getPerAirlineStats: () => buildPerAirlineStats(db, airlines),
     getUpcomingFlights: (t) => getUpcomingFlights(db, t, airlines),
     // FleetStats shape is subfleet-specific (express/mainline); there is no
