@@ -42,8 +42,54 @@ function cellTitle(t: FleetTail): string {
   return `${t.tail} · ${PROVIDER_LABEL[t.provider]}`;
 }
 
-function monumentTitle(t: FleetTail): string {
-  return `${t.type || "type unknown"} · ${PROVIDER_LABEL[t.provider]} · ${t.fleet} · verified ${timeAgo(t.verified_at)} · click for live tracking`;
+function monumentTitle(t: FleetTail, tailLinks: boolean): string {
+  return `${t.type || "type unknown"} · ${PROVIDER_LABEL[t.provider]} · ${t.fleet} · verified ${timeAgo(t.verified_at)} · ${tailLinks ? "click for status & history" : "click for live tracking"}`;
+}
+
+export interface FleetPagination {
+  page: number;
+  totalPages: number;
+  pageSize: number;
+}
+
+const registryHref = (page: number): string => (page === 1 ? "/fleet" : `/fleet?page=${page}`);
+
+function PaginationNav({ pagination }: { pagination: FleetPagination }) {
+  const { page, totalPages } = pagination;
+  if (totalPages <= 1) return null;
+  const pages = Array.from({ length: totalPages }, (_, i) => i + 1);
+  return (
+    <nav
+      aria-label="Tail registry pages"
+      className="flex flex-wrap items-center gap-2 font-mono text-[11px] mt-4"
+    >
+      {page > 1 && (
+        <a href={registryHref(page - 1)} className="text-accent hover:underline">
+          ← prev
+        </a>
+      )}
+      {pages.map((p) =>
+        p === page ? (
+          <span key={p} className="px-2 py-0.5 rounded border border-accent text-accent">
+            {p}
+          </span>
+        ) : (
+          <a
+            key={p}
+            href={registryHref(p)}
+            className="px-2 py-0.5 rounded border border-subtle text-secondary hover:border-accent hover:text-accent transition-colors"
+          >
+            {p}
+          </a>
+        )
+      )}
+      {page < totalPages && (
+        <a href={registryHref(page + 1)} className="text-accent hover:underline">
+          next →
+        </a>
+      )}
+    </nav>
+  );
 }
 
 const FAMILY_ABBR: Record<string, string> = {
@@ -131,19 +177,24 @@ function LivePulse({ pulse }: { pulse: FleetPageData["pulse"] }) {
   );
 }
 
-function TailGrid({ tails }: { tails: FleetTail[] }) {
+// Cell sizing/hover lives in the shared .tail-cell rule, not per-cell utility
+// classes — at 1.6k cells every repeated byte of markup is page weight.
+function TailGrid({ tails, tailLinks }: { tails: FleetTail[]; tailLinks: boolean }) {
   return (
     <div className="grid grid-cols-[repeat(10,8px)] gap-[2px]">
-      {tails.map((t) => (
-        // biome-ignore lint/a11y/useAnchorContent: aria-label provides the accessible name; inline text on 1.5k cells would add ~50KB
-        <a
-          key={t.tail}
-          href={`#t-${t.tail}`}
-          title={cellTitle(t)}
-          aria-label={cellTitle(t)}
-          className={`wifi-${t.provider} w-2 h-2 rounded-[1px] hover:scale-150 transition-transform`}
-        />
-      ))}
+      {tails.map((t) =>
+        tailLinks ? (
+          // biome-ignore lint/a11y/useAnchorContent: title provides the accessible name; inline text on 1.6k cells would add ~50KB
+          <a
+            key={t.tail}
+            href={`/tail/${t.tail}`}
+            title={cellTitle(t)}
+            className={`tail-cell wifi-${t.provider}`}
+          />
+        ) : (
+          <span key={t.tail} title={cellTitle(t)} className={`tail-cell wifi-${t.provider}`} />
+        )
+      )}
     </div>
   );
 }
@@ -179,7 +230,7 @@ function SpecCard({ family, spec }: { family: string; spec: AircraftSpec }) {
   );
 }
 
-function FamilyBlock({ fam }: { fam: FleetFamily }) {
+function FamilyBlock({ fam, tailLinks }: { fam: FleetFamily; tailLinks: boolean }) {
   const pct = Math.round((fam.starlink / fam.total) * 100);
   const spec = AIRCRAFT_SPECS[fam.family];
   return (
@@ -210,7 +261,7 @@ function FamilyBlock({ fam }: { fam: FleetFamily }) {
         </svg>
       </summary>
       <div className="px-2 pb-2">
-        <TailGrid tails={fam.tails} />
+        <TailGrid tails={fam.tails} tailLinks={tailLinks} />
       </div>
     </details>
   );
@@ -234,11 +285,13 @@ function HangarFloor({
   totalFleet,
   totalStarlink,
   scopeLabel,
+  tailLinks,
 }: {
   families: FleetFamily[];
   totalFleet: number;
   totalStarlink: number;
   scopeLabel: string;
+  tailLinks: boolean;
 }) {
   return (
     <section className={SECTION}>
@@ -247,13 +300,14 @@ function HangarFloor({
         <p className="text-xs text-muted mb-3">
           Every {scopeLabel} tail number is one cell. {totalStarlink} of {totalFleet} currently show
           Starlink. The color tells you which WiFi system is installed today.
+          {tailLinks && " Click any cell for that tail's status and verification history."}
         </p>
         <Legend />
       </div>
 
       <div className="fam-container gap-3">
         {families.map((fam) => (
-          <FamilyBlock key={fam.family} fam={fam} />
+          <FamilyBlock key={fam.family} fam={fam} tailLinks={tailLinks} />
         ))}
       </div>
       <script
@@ -459,7 +513,39 @@ function IronyStack({ bodyClass }: { bodyClass: FleetPageData["bodyClass"] }) {
   );
 }
 
-function TailMonument({ allTails, totalFleet }: { allTails: FleetTail[]; totalFleet: number }) {
+function RegistryEntry({ t, tailLinks }: { t: FleetTail; tailLinks: boolean }) {
+  const cls = t.provider === "starlink" ? "tail-sl" : "tail-dim";
+  // Internal /tail permalinks where they exist (the whole point of the crawl
+  // hub); sites without tail pages keep the external live-tracking links.
+  const linkProps = tailLinks
+    ? { href: `/tail/${t.tail}` }
+    : {
+        href: `https://flightaware.com/live/flight/${t.tail}`,
+        target: "_blank",
+        rel: "nofollow noreferrer noopener",
+      };
+  return (
+    <a {...linkProps} title={monumentTitle(t, tailLinks)} className={cls}>
+      <span className="tail-dot">{t.provider === "starlink" ? "◉" : " "}</span>
+      <span className="tail-num">{t.tail}</span>
+      <span className="tail-abbr">{FAMILY_ABBR[t.family] || "—"}</span>
+    </a>
+  );
+}
+
+function TailRegistry({
+  allTails,
+  totalFleet,
+  pagination,
+  tailLinks,
+}: {
+  allTails: FleetTail[];
+  totalFleet: number;
+  pagination: FleetPagination;
+  tailLinks: boolean;
+}) {
+  // Full-fleet provider counts even on later pages — the header is a fleet
+  // summary, not a page summary.
   const byProvider: Record<WifiProvider, number> = {
     starlink: 0,
     viasat: 0,
@@ -470,14 +556,21 @@ function TailMonument({ allTails, totalFleet }: { allTails: FleetTail[]; totalFl
   };
   for (const t of allTails) byProvider[t.provider]++;
 
+  const { page, totalPages, pageSize } = pagination;
+  const pageTails = allTails.slice((page - 1) * pageSize, page * pageSize);
+
   return (
     <section className={SECTION}>
       <div className="mb-4">
         <h2 className="font-display text-xl font-semibold text-primary mb-1">Tail Registry</h2>
         <p className="text-xs text-muted mb-2">
-          All {totalFleet} tails —{" "}
+          All {totalFleet} tails{totalPages > 1 ? ` (page ${page} of ${totalPages})` : ""} —{" "}
           <kbd className="px-1 bg-surface border border-subtle rounded text-[10px]">⌘F</kbd> to find
-          yours, click to track on FlightAware. Cyan = Starlink, dim = everything else.
+          yours,{" "}
+          {tailLinks
+            ? "click for that tail's Starlink status and history"
+            : "click to track on FlightAware"}
+          . Cyan = Starlink, dim = everything else.
         </p>
         <div className="flex flex-wrap gap-3 font-mono text-[10px] text-muted">
           {PROVIDER_ORDER.map((p) =>
@@ -491,22 +584,11 @@ function TailMonument({ allTails, totalFleet }: { allTails: FleetTail[]; totalFl
         </div>
       </div>
       <div className="bg-surface border border-subtle rounded-lg p-4 font-mono text-[10px] leading-[1.7] columns-[18ch] gap-x-3">
-        {allTails.map((t) => (
-          <a
-            key={t.tail}
-            id={`t-${t.tail}`}
-            href={`https://flightaware.com/live/flight/${t.tail}`}
-            target="_blank"
-            rel="nofollow noreferrer noopener"
-            title={monumentTitle(t)}
-            className={t.provider === "starlink" ? "tail-sl" : "tail-dim"}
-          >
-            <span className="tail-dot">{t.provider === "starlink" ? "◉" : "\u00A0"}</span>
-            <span className="tail-num">{t.tail}</span>
-            <span className="tail-abbr">{FAMILY_ABBR[t.family] || "—"}</span>
-          </a>
+        {pageTails.map((t) => (
+          <RegistryEntry key={t.tail} t={t} tailLinks={tailLinks} />
         ))}
       </div>
+      <PaginationNav pagination={pagination} />
     </section>
   );
 }
@@ -620,15 +702,22 @@ function OfficialAnchorsSection({ anchors }: { anchors: FleetAnchorRow[] }) {
 interface FleetPageProps {
   data: FleetPageData;
   site: SiteConfig;
+  pagination: FleetPagination;
+  /** Registry/hangar entries link to /tail/{registration} (tenant sites); false keeps external tracking links. */
+  tailLinks: boolean;
 }
 
-export default function FleetPage({ data, site }: FleetPageProps) {
+export default function FleetPage({ data, site, pagination, tailLinks }: FleetPageProps) {
   const scopeCode = site.scope !== "ALL" ? site.scope : null;
   const scopeLabel = scopeCode ? AIRLINES[scopeCode].name : "tracked";
   const headerTitle = scopeCode
     ? `${AIRLINES[scopeCode].name} Fleet · Starlink Rollout`
     : "Tracked Fleets · Starlink Rollout";
   const backLabel = site.brand.title;
+  // Continuation pages carry only the registry slice: the charts and the
+  // hangar floor already ship in full on page 1, and repeating them would put
+  // near-identical 100KB+ documents behind every ?page=N.
+  const continuation = pagination.page > 1;
   return (
     <div className="w-full mx-auto px-4 sm:px-6 md:px-8 bg-base min-h-screen flex flex-col relative">
       <div className="absolute inset-0 grid-pattern opacity-50 pointer-events-none" />
@@ -648,7 +737,8 @@ export default function FleetPage({ data, site }: FleetPageProps) {
           .tail-dim { color: var(--color-text-muted); opacity: 0.3; transition: opacity .15s; }
           .tail-sl:hover .tail-num, .tail-dim:hover .tail-num { text-decoration: underline; }
           .tail-dim:hover { opacity: 1; }
-          .tail-sl:target, .tail-dim:target { background: rgba(14, 165, 233, 0.2); opacity: 1; scroll-margin-top: 5rem; }
+          .tail-cell { width: 8px; height: 8px; border-radius: 1px; display: block; transition: transform .15s; }
+          a.tail-cell:hover { transform: scale(1.5); }
           .tail-dot { width: 0.8em; text-align: center; flex-shrink: 0; }
           .tail-num { flex: 0 0 auto; }
           .tail-abbr { opacity: 0.4; font-size: 0.75em; flex-shrink: 0; }
@@ -687,33 +777,45 @@ export default function FleetPage({ data, site }: FleetPageProps) {
       />
 
       <header className="relative py-5 sm:py-6 text-center mb-6">
-        <a href="/" className="block">
+        <a href={continuation ? "/fleet" : "/"} className="block">
           <h1 className="font-display text-3xl sm:text-4xl font-bold text-primary mb-2 tracking-tight hover:text-accent transition-colors">
             {headerTitle}
           </h1>
         </a>
         <p className="text-base text-secondary font-display">
-          {data.totalStarlink} of {data.totalFleet} aircraft equipped — and what's replacing what
+          {continuation
+            ? `Tail registry, page ${pagination.page} of ${pagination.totalPages}`
+            : `${data.totalStarlink} of ${data.totalFleet} aircraft equipped — and what's replacing what`}
         </p>
       </header>
 
-      <LivePulse pulse={data.pulse} />
-      <InstallPaceSection pace={data.installPace} />
-      <InstallPipelineSection progress={data.progress} />
-      <OfficialAnchorsSection anchors={data.anchors} />
-      <HangarFloor
-        families={data.families}
+      {!continuation && (
+        <>
+          <LivePulse pulse={data.pulse} />
+          <InstallPaceSection pace={data.installPace} />
+          <InstallPipelineSection progress={data.progress} />
+          <OfficialAnchorsSection anchors={data.anchors} />
+          <HangarFloor
+            families={data.families}
+            totalFleet={data.totalFleet}
+            totalStarlink={data.totalStarlink}
+            scopeLabel={scopeLabel}
+            tailLinks={tailLinks}
+          />
+
+          <section className={`${SECTION} grid md:grid-cols-2 gap-4`}>
+            <CarrierLeaderboard carriers={data.carriers} />
+            <IronyStack bodyClass={data.bodyClass} />
+          </section>
+        </>
+      )}
+
+      <TailRegistry
+        allTails={data.allTails}
         totalFleet={data.totalFleet}
-        totalStarlink={data.totalStarlink}
-        scopeLabel={scopeLabel}
+        pagination={pagination}
+        tailLinks={tailLinks}
       />
-
-      <section className={`${SECTION} grid md:grid-cols-2 gap-4`}>
-        <CarrierLeaderboard carriers={data.carriers} />
-        <IronyStack bodyClass={data.bodyClass} />
-      </section>
-
-      <TailMonument allTails={data.allTails} totalFleet={data.totalFleet} />
 
       <footer className="relative py-6 text-center border-t border-subtle text-muted text-sm">
         <a href="/" className="text-accent hover:underline font-display">
