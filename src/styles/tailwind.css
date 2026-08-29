@@ -1,0 +1,26 @@
+/* Tailwind source. `bun run build:css` compiles this to static/tailwind.css,
+   which the server fingerprints and serves itself.
+
+   Everything here lands in @layer utilities (and theme/base), so the unlayered
+   rules in index.html's <style> block keep winning every name they share —
+   the same precedence the browser JIT gave them, and the reason the link tag's
+   position relative to that block does not matter.
+
+   The output is a BUILD ARTIFACT, never committed. Compiling utilities ahead of
+   time flips the old CDN invariant "any class works anywhere at runtime" into
+   "the CSS must be rebuilt whenever markup changes" — so the rebuild is wired
+   into the Docker build and `bun run dev` rather than checked in. A committed
+   .css would go stale the moment a branch adding new markup merged after it,
+   and nothing in the test suite can see unstyled HTML.
+
+   No @theme block on purpose. ~15 classes in the markup name custom colors
+   (bg-accent/20, text-subtle, placeholder-muted, …) that Tailwind has never
+   known about, so they emit nothing today and must keep emitting nothing here
+   or the visuals change. Defining those tokens is a separate, deliberate
+   change — not a side effect of moving off the CDN. */
+@import "tailwindcss";
+
+/* Explicit, so the scan can never drift with the CSS file's location. Every
+   rendered class comes from a component under src/ or from the page shell. */
+@source "../../index.html";
+@source "../../src";

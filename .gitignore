@@ -15,6 +15,11 @@ plane-data.production.sqlite*
 tsconfig.tsbuildinfo
 patches/
 
+# Compiled from src/styles/tailwind.css by `bun run build:css`. Deliberately not
+# committed — a checked-in stylesheet goes stale the moment a branch adding new
+# markup merges after it, and nothing in the test suite can see unstyled HTML.
+static/tailwind.css
+
 # internal
 ops/
 CLAUDE.local.md

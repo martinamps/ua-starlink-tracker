@@ -33,6 +33,11 @@ RUN bunx playwright install chromium
 
 COPY . .
 
+# Tailwind is compiled here rather than committed: the CSS is derived from the
+# markup in this image, so a branch that adds a page can never ship without the
+# utilities it uses. server.ts refuses to boot in production if this is missing.
+RUN bun run build:css
+
 EXPOSE 3000
 
 ARG SOURCE_COMMIT=unknown

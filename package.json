@@ -1,8 +1,9 @@
 {
   "name": "ua-tracker",
   "scripts": {
-    "dev": "bun --watch server.ts",
-    "start": "bun server.ts",
+    "dev": "bun scripts/dev.ts",
+    "start": "bun run build:css && bun server.ts",
+    "build:css": "tailwindcss -i src/styles/tailwind.css -o static/tailwind.css --minify",
     "scrape": "bun run scrape.ts",
     "residential-sync": "bun run src/scripts/residential-sync.ts",
     "scrape-fr24": "PLAYWRIGHT_BROWSERS_PATH=./do_not_commit/playwright-browsers bun run src/scripts/flightradar24-scraper.ts",
@@ -21,8 +22,9 @@
     "surface-sweep": "bun run src/scripts/surface-sweep.ts",
     "seed-hawaiian": "PLAYWRIGHT_BROWSERS_PATH=./do_not_commit/playwright-browsers bun run src/scripts/seed-hawaiian.ts",
     "seed-alaska": "PLAYWRIGHT_BROWSERS_PATH=./do_not_commit/playwright-browsers bun run src/scripts/seed-alaska.ts",
-    "preview-hosts": "PLAYWRIGHT_BROWSERS_PATH=./do_not_commit/playwright-browsers bun scripts/preview-hosts.ts",
+    "preview-hosts": "bun run build:css && PLAYWRIGHT_BROWSERS_PATH=./do_not_commit/playwright-browsers bun scripts/preview-hosts.ts",
     "reset-flights": "bun run src/scripts/reset-flight-checks.ts",
+    "pretest": "bun run build:css",
     "test": "bun test tests/",
     "test:setup": "bash scripts/test-setup.sh",
     "wifi-patch": "bun run src/scripts/verified-wifi-patch.ts",
@@ -44,6 +46,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
+    "@tailwindcss/cli": "4.3.3",
     "@types/bun": "^1.2.22",
     "@types/react": "^19.1.13",
     "@types/react-dom": "^19.1.9",
