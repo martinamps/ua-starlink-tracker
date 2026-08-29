@@ -2047,48 +2047,102 @@ export interface FlightRoutePair {
   dur_sec: number | null;
   /** 1 when the leg appears in the live schedule window, 0 when it is only history. */
   scheduled: number;
+  /** Newest evidence for this leg (unix seconds); null when the row carries no timestamp. */
+  last_seen_at: number | null;
 }
 
-/** Route pairs a flight number flies, currently-scheduled legs first and
- * most-flown within that — the accumulated flight_routes cache unioned with the
- * live upcoming_flights window (which covers legs the cache hasn't recorded yet).
+/** How long a leg may go without evidence before it stops counting as one the
+ * number currently flies.
  *
- * Ordering leads with `scheduled` rather than raw frequency because
+ * Sized against how last_seen_at is actually produced, which is NOT "whenever the
+ * leg is on the schedule": cacheFlightRoute is reached only from updateFlights and
+ * the MCP FR24 lookup, and every updateFlights caller iterates a Starlink-equipped
+ * roster (flight-updater over starlink_planes, fleet-discovery's confirmed
+ * branches). A leg re-stamps only when one of the ~33% of UA tails that carry
+ * Starlink happens to be assigned to it inside the ~47h window — 17.6% on
+ * mainline, where the reassignment cases live (546/1651 fleet-wide, 202/1146
+ * mainline, measured 2026-08-29). So silence is a noisy proxy for "retired", and
+ * the window has to be wide enough that a leg still flown daily almost never
+ * falls through it: at mainline penetration a daily leg goes a full week unstamped
+ * 26% of the time (0.824^7) but a full month only 0.3% of the time (0.824^30).
+ * Hence a month, not a week. */
+const ROUTE_ACTIVE_WINDOW_SEC = 30 * 24 * 60 * 60;
+
+const MAX_ROUTE_PAIRS = 4;
+
+/** Route pairs a flight number flies, currently-flown legs first and most-flown
+ * within that — the accumulated flight_routes cache unioned with the live
+ * upcoming_flights window (which covers legs the cache hasn't recorded yet).
+ *
+ * Ordering leads with "is this leg current?" rather than raw frequency because
  * flight_routes.seen_count accumulates for the life of a flight number. When a
- * number is reassigned to a new city pair, the retired leg keeps out-counting
- * the current one indefinitely, so callers that take routes[0] as "the" route —
- * page titles, meta descriptions, Flight JSON-LD — would advertise a route the
- * flight no longer flies. */
+ * number is reassigned to a new city pair, the retired leg keeps out-counting the
+ * current one indefinitely, so callers that take routes[0] as "the" route — page
+ * titles, meta descriptions, Flight JSON-LD — would advertise a route the flight
+ * no longer flies.
+ *
+ * Currency has two tiers: a live upcoming_flights row is proof, and failing that
+ * (the window only reaches ~47h ahead, so a number with no near-term assignment
+ * has none) route-cache recency stands in. The cutoff is absolute — measured from
+ * `now`, never from the number's own freshest leg — so "current" means genuinely
+ * recent rather than merely the least stale of several dead legs. That is what
+ * keeps the tier from degenerating into recency-first: when no leg has evidence
+ * inside the window the tier is flat and frequency decides, exactly as before this
+ * ordering existed. A leg is demoted below a lighter one only on the positive
+ * evidence that a sibling was seen this month and it was not.
+ *
+ * Because seen_count only ever grows, the reverse mistake never self-corrects, so
+ * the ordering is deliberately asymmetric: it changes nothing unless the evidence
+ * separates the legs.
+ *
+ * Demotes rather than filters — a hard cutoff would leave cold-tail permalinks
+ * with no route at all for the title and JSON-LD. */
 export function getFlightRoutePairs(
   db: Database,
   variants: string[],
-  airline?: AirlineFilter
+  airline?: AirlineFilter,
+  now = Math.floor(Date.now() / 1000)
 ): FlightRoutePair[] {
   const placeholders = variants.map(() => "?").join(",");
   const upcoming = withAirline(
     `SELECT departure_airport, arrival_airport, COUNT(*) AS times,
             CAST(AVG(arrival_time - departure_time) AS INTEGER) AS dur_sec,
-            1 AS scheduled
+            1 AS scheduled, MAX(last_updated) AS last_seen_at
      FROM upcoming_flights WHERE flight_number IN (${placeholders})`,
     airline,
     "",
     [...variants]
   );
-  return db
+  const rows = db
     .query(
       `SELECT departure_airport, arrival_airport, SUM(times) AS times, MAX(dur_sec) AS dur_sec,
-              MAX(scheduled) AS scheduled
+              MAX(scheduled) AS scheduled, MAX(last_seen_at) AS last_seen_at
        FROM (
          SELECT origin AS departure_airport, destination AS arrival_airport,
-                seen_count AS times, duration_sec AS dur_sec, 0 AS scheduled
+                seen_count AS times, duration_sec AS dur_sec, 0 AS scheduled,
+                last_seen_at
          FROM flight_routes WHERE flight_number IN (${placeholders})
          UNION ALL
          ${upcoming.sql} GROUP BY departure_airport, arrival_airport
        )
        GROUP BY departure_airport, arrival_airport
-       ORDER BY scheduled DESC, times DESC LIMIT 4`
+       ORDER BY scheduled DESC, times DESC`
     )
     .all(...variants, ...upcoming.params) as FlightRoutePair[];
+
+  const cutoff = now - ROUTE_ACTIVE_WINDOW_SEC;
+  // A timestamp ahead of now is corrupt, not fresh (the test snapshot carries one
+  // dated 2036). Scoring it as evidence would pin a junk row to routes[0] forever,
+  // since no cutoff ever catches up to it — so it counts as no evidence at all.
+  const seenAt = (r: FlightRoutePair) => {
+    const t = r.last_seen_at ?? 0;
+    return t > now ? 0 : t;
+  };
+  const current = (r: FlightRoutePair) => (r.scheduled === 1 || seenAt(r) >= cutoff ? 1 : 0);
+
+  return rows
+    .sort((a, b) => b.scheduled - a.scheduled || current(b) - current(a) || b.times - a.times)
+    .slice(0, MAX_ROUTE_PAIRS);
 }
 
 export interface FlightHistorySummary {
