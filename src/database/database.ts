@@ -1845,6 +1845,82 @@ export function flightNumberHasData(
  */
 export const ROUTE_AIRPORT_RE = /^[A-Z]{3}$/;
 
+export interface PopularFlight {
+  flight_number: string;
+  /** Most-seen leg, for qualified anchor text; null when no clean IATA pair is recorded. */
+  origin: string | null;
+  destination: string | null;
+  /** Accumulated observations across all legs (flight_routes.seen_count). */
+  times: number;
+}
+
+/**
+ * Most-observed marketing flight numbers for one airline — the source for the
+ * server-rendered "popular flights" blocks that give the /check-flight/{fn}
+ * corpus crawlable inlinks. Same two populations as getSitemapFlights /
+ * flightNumberHasData (accumulated flight_routes + live upcoming_flights), so
+ * every link serves; ranked by accumulated seen_count, which keeps the anchors
+ * stable from crawl to crawl instead of churning with the 48h schedule window.
+ */
+export function getPopularFlights(db: Database, airline: AirlineCode, limit = 12): PopularFlight[] {
+  const cfg = AIRLINES[airline];
+  if (!cfg) return [];
+  const marketing = new RegExp(`^${cfg.iata}\\d+$`);
+  const cached = db
+    .query(
+      `SELECT flight_number, origin, destination, seen_count
+       FROM flight_routes WHERE flight_number GLOB ?`
+    )
+    .all(`${cfg.iata}[0-9]*`) as {
+    flight_number: string;
+    origin: string;
+    destination: string;
+    seen_count: number;
+  }[];
+  const live = db
+    .query(
+      `SELECT flight_number, departure_airport AS origin, arrival_airport AS destination,
+              COUNT(*) AS seen_count
+       FROM upcoming_flights
+       WHERE airline = ? AND flight_number IS NOT NULL
+       GROUP BY flight_number, departure_airport, arrival_airport`
+    )
+    .all(airline) as typeof cached;
+  const agg = new Map<
+    string,
+    { times: number; best: { origin: string; destination: string; times: number } | null }
+  >();
+  for (const r of [...cached, ...live]) {
+    // Zero-padded spellings collapse onto the canonical permalink, same as
+    // getSitemapFlights — the padded URL would 301.
+    const fn = stripFlightNumberZeros(ensureAirlinePrefix(cfg, r.flight_number));
+    if (!marketing.test(fn)) continue;
+    const cur = agg.get(fn) ?? { times: 0, best: null };
+    cur.times += r.seen_count;
+    const cleanPair =
+      ROUTE_AIRPORT_RE.test(r.origin) &&
+      ROUTE_AIRPORT_RE.test(r.destination) &&
+      r.origin !== r.destination;
+    if (cleanPair && (!cur.best || r.seen_count > cur.best.times)) {
+      cur.best = { origin: r.origin, destination: r.destination, times: r.seen_count };
+    }
+    agg.set(fn, cur);
+  }
+  return [...agg]
+    .map(([flight_number, v]) => ({
+      flight_number,
+      origin: v.best?.origin ?? null,
+      destination: v.best?.destination ?? null,
+      times: v.times,
+    }))
+    .sort(
+      (a, b) =>
+        b.times - a.times ||
+        a.flight_number.localeCompare(b.flight_number, undefined, { numeric: true })
+    )
+    .slice(0, limit);
+}
+
 export interface SitemapRoute {
   origin: string;
   destination: string;
