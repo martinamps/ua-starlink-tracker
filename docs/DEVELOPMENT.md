@@ -31,11 +31,25 @@ The example database is a small sampled subset (≈50 aircraft) so the app boots
 
 ### Development
 ```bash
-bun run dev              # Dev server with hot reload
+bun run dev              # Dev server with hot reload (rebuilds CSS on source change)
 bun run start            # Production server
+bun run build:css        # Compile Tailwind → static/tailwind.css
 bun run lint             # Check code with Biome
 bun run format           # Auto-format
 ```
+
+### Styling
+
+Tailwind utilities are compiled from `src/styles/tailwind.css` by `bun run build:css`
+into `static/tailwind.css` — a build artifact, gitignored, produced by the Docker
+build (and by `dev`, `start`, `pretest`, `preview-hosts`). The server fingerprints
+it and serves it from `/static/tailwind.<hash>.css`; in production it refuses to
+boot if the file is missing, since an unstyled render fails no test.
+
+The practical consequence: a class only works if Tailwind's scanner can see it in
+`index.html` or under `src/`. Classes assembled at runtime (`` `text-${color}-500` ``)
+compile to nothing. `tests/stylesheet.test.ts` fails on any rendered class the
+scanner can't find, so this is caught rather than discovered in production.
 
 ### Data & Debugging
 ```bash

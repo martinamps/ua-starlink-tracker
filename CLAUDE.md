@@ -48,3 +48,4 @@ Bun + SQLite + server-rendered React. `server.ts` serves pages/APIs and starts b
 - **Logging** — `import { info, error, debug } from "./utils/logger"` (auto-tags filename, writes console + `logs/app.log`)
 - **Metrics** — route every metric tag through the normalizers in `src/observability/metrics.ts`; always set the `airline` tag
 - **Upstream citizenship** — public endpoints serve from the DB; never proxy live scraping to callers
+- **Tailwind is compiled, not JIT** — `bun run build:css` emits gitignored `static/tailwind.css`; a class only works if the scanner finds it verbatim in `index.html` or `src/`, so never build one at runtime (`` `text-${x}-500` ``). `tests/stylesheet.test.ts` enforces it
