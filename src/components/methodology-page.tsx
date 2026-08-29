@@ -166,9 +166,11 @@ export default function MethodologyPage({ site, lastUpdated }: MethodologyPagePr
               direct verification.
             </li>
             <li>
-              <span className="text-secondary font-medium">Predicted</span> — for flights more than
-              ~2 days out no aircraft is assigned yet, so per-flight answers are probabilities built
-              from historical assignments. Predictions never feed the fleet count.
+              <span className="text-secondary font-medium">Predicted</span> —{" "}
+              {cfg.lateAssignmentNote
+                ? `${cfg.shortName} finalizes the operating aircraft only about an hour before departure, so every per-flight answer here is fleet odds — equipped tails over the whole roster, never an assignment claim.`
+                : "for flights more than ~2 days out no aircraft is assigned yet, so per-flight answers are probabilities built from historical assignments."}{" "}
+              Predictions never feed the fleet count.
             </li>
           </ul>
           <p>
@@ -180,9 +182,9 @@ export default function MethodologyPage({ site, lastUpdated }: MethodologyPagePr
 
         <Section title="How fresh is it">
           <p>
-            Verification and schedule jobs run continuously (60–90 second cycles), fleet-level syncs
-            run hourly to daily, and every page renders straight from the live database — there is
-            no publishing delay between a status change and the site.
+            {cfg.lateAssignmentNote
+              ? "Schedule jobs run continuously, fleet-level syncs run daily, the curated equipped-tail log updates as evidence appears, and every page renders straight from the live database — there is no publishing delay between a status change and the site."
+              : "Verification and schedule jobs run continuously (60–90 second cycles), fleet-level syncs run hourly to daily, and every page renders straight from the live database — there is no publishing delay between a status change and the site."}
             {dateLabel && (
               <>
                 {" "}
