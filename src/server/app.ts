@@ -319,6 +319,44 @@ for (const p of SOCIAL_IMAGE_PATHS) {
   }
 }
 
+/**
+ * Compiled Tailwind, fingerprinted and registered as a tenant-agnostic asset.
+ *
+ * The file is a build artifact (`bun run build:css`), never committed, so it is
+ * regenerated from whatever markup the image actually contains — a branch that
+ * adds a page can't be served a previous build's CSS. The content hash in the
+ * URL extends that guarantee to browser caches: markup and stylesheet are
+ * versioned together, which a fixed `/static/tailwind.css` under any real
+ * max-age could not do.
+ *
+ * Missing output is fatal in production. An unstyled render is invisible to
+ * every test and to health checks, so failing the boot (deploy rolls back,
+ * previous container keeps serving) is the only failure mode anyone notices.
+ */
+function registerStylesheet(): string {
+  const cssPath = path.join(STATIC_DIR, "tailwind.css");
+  if (!fs.existsSync(cssPath)) {
+    const msg = `Compiled stylesheet missing at ${cssPath} — run \`bun run build:css\``;
+    if (process.env.NODE_ENV === "production") throw new Error(msg);
+    logError(msg);
+    return "";
+  }
+  const css = fs.readFileSync(cssPath);
+  const href = `/static/tailwind.${Bun.hash(css).toString(36)}.css`;
+  staticResponses.set(
+    href,
+    new Response(css, {
+      headers: {
+        ...BASE_RESPONSE_HEADERS,
+        "Content-Type": "text/css; charset=utf-8",
+        "Cache-Control": "public, max-age=31536000, immutable",
+      },
+    })
+  );
+  return `<link rel="stylesheet" href="${href}">`;
+}
+const STYLESHEET_TAG = registerStylesheet();
+
 // A tenant whose OG card hasn't been generated yet (QR is excluded from
 // /api/fleet-summary, so generate-og-images never renders one) gets the
 // neutral hub card — never another airline's. Checked live, not at boot, so a
@@ -1537,6 +1575,7 @@ function buildBaseTemplateVars(
     ...brandVars,
     ...statVars,
     socialImagePath: resolveSocialImage(brand),
+    stylesheetTag: STYLESHEET_TAG,
     html: reactHtml,
     host: site.canonicalHost,
     canonicalPath: escapeHtmlAttr(canonicalPath),

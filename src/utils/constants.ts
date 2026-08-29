@@ -69,7 +69,9 @@ const probeOrigins = process.env.PASSENGER_VERIFY === "off" ? [] : PROBE_CONNECT
 const { scriptOrigins: ANALYTICS_SCRIPT_ORIGINS, connectOrigins: ANALYTICS_CONNECT_ORIGINS } =
   analyticsOrigins();
 const CONNECT_SRC = ["'self'", ...probeOrigins, ...ANALYTICS_CONNECT_ORIGINS].join(" ");
-const SCRIPT_SRC = ["'self'", "'unsafe-inline'", "https://unpkg.com", ...ANALYTICS_SCRIPT_ORIGINS]
+// No third-party script origin: Tailwind is compiled at build time and served
+// from this origin, so nothing but analytics loads code from off-site.
+const SCRIPT_SRC = ["'self'", "'unsafe-inline'", ...ANALYTICS_SCRIPT_ORIGINS]
   .filter(Boolean)
   .join(" ");
 
@@ -98,7 +100,7 @@ export const SECURITY_HEADERS = {
     ...BASE_RESPONSE_HEADERS,
     ...API_CORS_HEADERS,
     "Content-Type": "application/json",
-    "Content-Security-Policy": `default-src 'self' https://unpkg.com; connect-src ${CONNECT_SRC}; script-src ${SCRIPT_SRC}; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https://*;`,
+    "Content-Security-Policy": `default-src 'self'; connect-src ${CONNECT_SRC}; script-src ${SCRIPT_SRC}; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https://*;`,
     "Cache-Control": "no-store, max-age=0",
   },
   html: {
@@ -107,7 +109,7 @@ export const SECURITY_HEADERS = {
     // Rendered HTML varies by client IP (passenger banner/probe) — never let
     // an edge cache serve one visitor's render to another.
     "Cache-Control": "private, no-store",
-    "Content-Security-Policy": `default-src 'self' https://unpkg.com; connect-src ${CONNECT_SRC}; script-src ${SCRIPT_SRC}; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:;`,
+    "Content-Security-Policy": `default-src 'self'; connect-src ${CONNECT_SRC}; script-src ${SCRIPT_SRC}; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:;`,
   },
   notFound: {
     ...BASE_RESPONSE_HEADERS,
