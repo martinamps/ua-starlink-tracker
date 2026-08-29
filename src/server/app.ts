@@ -96,6 +96,7 @@ import {
   CONTENT_TYPES,
   SECURITY_HEADERS,
 } from "../utils/constants";
+import { schedulerStatus } from "../utils/job-runner";
 import { error as logError } from "../utils/logger";
 import { getNotFoundHtml } from "../utils/not-found";
 import { getSpreadsheetCacheInfo, getSpreadsheetCacheTails } from "../utils/utils";
@@ -1221,7 +1222,7 @@ const robotsTxt: Handler = ({ site }) => {
   // page must stay crawlable there — disallowing it while the sitemap lists it
   // earns a GSC "blocked by robots" flag. Where the feature is off, /mcp is
   // protocol-or-404 only and stays disallowed.
-  const disallows = ["/api/", "/debug/", ...(site.features.mcpPage ? [] : ["/mcp"])];
+  const disallows = ["/api/", "/debug/", "/healthz", ...(site.features.mcpPage ? [] : ["/mcp"])];
   // One `*` block covers everyone; named blocks welcoming AI crawlers
   // (GPTBot/ClaudeBot/PerplexityBot) are a deliberate option if rules diverge.
   return new Response(
@@ -2242,6 +2243,65 @@ export function createApp(db: Database): App {
   const detector = passengerVerifyEnabled ? new StarlinkIpDetector(db) : null;
   const ipHits = new Map<string, number[]>();
   let lastSweep = 0;
+  const bootedAt = Date.now();
+
+  // Ops probe, not a page: must answer on ANY Host (uptime checks hit the
+  // bare IP or localhost, which would otherwise 421), so it's served in
+  // dispatch() ahead of tenancy, rate limiting, and metrics. Deliberately
+  // absent from SITE_PAGES (never advertised in sitemap/llms.txt) and
+  // disallowed in robots.txt. 503 only on states a restart/page can fix:
+  // unreadable DB or a registered-but-silent scheduler. Table-age numbers are
+  // reported for humans/probes but don't flip status — per-pipeline staleness
+  // already pages via starlink.data.freshness_ratio.
+  function healthzResponse(method: string): Response {
+    const headers = { "Content-Type": "application/json", "Cache-Control": "no-store" };
+    if (method !== "GET" && method !== "HEAD") {
+      return new Response(JSON.stringify({ error: "method not allowed" }), {
+        status: 405,
+        headers,
+      });
+    }
+    const nowSec = Math.floor(Date.now() / 1000);
+    let dbOk = true;
+    let dbError: string | undefined;
+    // Key write paths only, epoch-second columns; null = table empty.
+    const lastWriteAgeSec: Record<string, number | null> = {};
+    for (const [table, column] of [
+      ["starlink_verification_log", "checked_at"],
+      ["upcoming_flights", "last_updated"],
+    ] as const) {
+      try {
+        const row = db.query(`SELECT MAX(${column}) AS ts FROM ${table}`).get() as {
+          ts: number | null;
+        };
+        lastWriteAgeSec[table] = row.ts == null ? null : Math.max(0, nowSec - row.ts);
+      } catch (err) {
+        dbOk = false;
+        dbError = err instanceof Error ? err.message : String(err);
+        lastWriteAgeSec[table] = null;
+      }
+    }
+    const sched = schedulerStatus();
+    const lastTickAgeSec =
+      sched.lastTickAt == null
+        ? null
+        : Math.max(0, Math.round((Date.now() - sched.lastTickAt) / 1000));
+    // jobs=0 stays healthy: DISABLE_JOBS=1 and test processes run no jobs at
+    // all — the deadman is for a scheduler that registered ticks then went
+    // silent (fastest job cadence is 22.5s; 10min of silence means wedged).
+    const schedulerStale = sched.jobs > 0 && lastTickAgeSec !== null && lastTickAgeSec > 600;
+    const ok = dbOk && !schedulerStale;
+    return new Response(
+      JSON.stringify({
+        status: ok ? "ok" : "degraded",
+        db: dbOk ? { ok: true } : { ok: false, error: dbError },
+        lastWriteAgeSec,
+        scheduler: { jobs: sched.jobs, lastTickAgeSec },
+        uptimeSec: Math.max(0, Math.round((Date.now() - bootedAt) / 1000)),
+      }),
+      { status: ok ? 200 : 503, headers }
+    );
+  }
 
   const apiPassengerProbe: Handler = async ({ req, ip, onStarlinkIp }) => {
     if (req.method !== "POST") return methodNotAllowed(true);
@@ -2347,6 +2407,10 @@ export function createApp(db: Database): App {
   async function dispatch(req: Request): Promise<Response> {
     const url = new URL(req.url);
     try {
+      // Host-agnostic ops probe — ahead even of the canonical-host 301s so a
+      // probe pointed at a parked alias still reports THIS process's health.
+      if (url.pathname === "/healthz") return finalizeResponse(healthzResponse(req.method), false);
+
       // Canonical-host 301s run before anything is served: parked domains
       // (HOST_REDIRECTS) and www aliases must redirect, never serve content.
       const redirect = hostRedirect(req, url);

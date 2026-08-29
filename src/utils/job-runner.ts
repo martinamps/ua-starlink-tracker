@@ -30,6 +30,20 @@ const REAL_CLOCK: JobClock = {
 
 const DEFAULT_STUCK_TIMEOUT_MS = 15 * 60 * 1000;
 
+// Scheduler-alive registry for /healthz. Stamped on real wall-clock time at
+// every tick entry (skips included — a tick that ran at all proves the timer
+// fired), independent of the injectable test clock: the question healthz asks
+// is "are timers firing in THIS process", not what a fake clock says.
+const jobTicks = new Map<string, number>();
+
+export function schedulerStatus(): { jobs: number; lastTickAt: number | null } {
+  let last: number | null = null;
+  for (const ts of jobTicks.values()) {
+    if (last === null || ts > last) last = ts;
+  }
+  return { jobs: jobTicks.size, lastTickAt: last };
+}
+
 export interface JobRunContext {
   /** False once the runner has abandoned this run (stuck escape). An orphan
    * settling late must not mutate state its successor reads — guard breaker
@@ -62,6 +76,7 @@ export function startJob(opts: JobOptions): JobHandle {
   let active: { id: number; startedAt: number } | null = null;
 
   const tick = async (): Promise<void> => {
+    jobTicks.set(name, Date.now());
     if (active) {
       const elapsed = clock.now() - active.startedAt;
       if (elapsed < stuckTimeoutMs) {
