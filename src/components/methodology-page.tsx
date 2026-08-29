@@ -72,6 +72,47 @@ const SOURCES: Record<string, DataSource[]> = {
   ],
 };
 
+// What the headline "n of TOTAL" denominator counts — and, where our scoping
+// differs from the airline's own announced numbers, why. Keyed like SOURCES;
+// tests pin that every SOURCES airline has an entry so the section can't
+// silently vanish for a documented airline.
+export const DENOMINATOR_SCOPE: Record<string, React.ReactNode> = {
+  UA: (
+    <>
+      <p>
+        The denominator is the roster of aircraft actually flying for United — mainline plus the
+        United Express regional jets operated for United — from the daily Flightradar24 fleet pull,
+        cross-checked against the FAA registry. It tracks United's own reported fleet to within
+        about 1%.
+      </p>
+      <p>
+        It is deliberately <em>not</em> the community spreadsheet's row count: that sheet's express
+        tabs list regional operators' entire fleets, including aircraft those operators fly for
+        other airlines, which would inflate the denominator by roughly 175 aircraft and understate
+        Starlink coverage.
+      </p>
+    </>
+  ),
+  AS: (
+    <>
+      <p>
+        The denominator covers the Alaska Airlines operation only: the mainline Boeing fleet plus
+        the regional E175s flown as Alaska by Horizon Air and SkyWest.{" "}
+        <a href="https://hawaiianstarlinktracker.com/" className="text-accent hover:underline">
+          Hawaiian Airlines is tracked separately
+        </a>{" "}
+        with its own counts.
+      </p>
+      <p>
+        Alaska's own announcements quote the combined Alaska–Hawaiian group (roughly 150 of ~400
+        aircraft as of mid-2026), which folds in Hawaiian's fully-equipped Airbus fleet — so the
+        airline's published figure reads higher than this page's Alaska-only number. Both are right;
+        they count different fleets.
+      </p>
+    </>
+  ),
+};
+
 /** True when SOURCES documents this airline — the /methodology handler 404s
  * otherwise, so a feature gate flipped on without content can't silently
  * render an empty-source page. */
@@ -154,6 +195,10 @@ export default function MethodologyPage({ site, lastUpdated }: MethodologyPagePr
             removed from the headline count even if a spreadsheet says otherwise.
           </p>
         </Section>
+
+        {DENOMINATOR_SCOPE[cfg.code] && (
+          <Section title="What the fleet total counts">{DENOMINATOR_SCOPE[cfg.code]}</Section>
+        )}
 
         <Section title="How fresh is it">
           <p>

@@ -60,6 +60,30 @@ describe("fleet denominator source of truth", () => {
     db.close();
   });
 
+  test("the roster recompute overwrites the combined* fallback keys too", () => {
+    // fetchAllSheets also returns a `combined` leg (for the scrape CLI) whose
+    // tallies land in meta via the same fallback loop. Leaving them at the
+    // sheet's inflated sums keeps a denominator in the DB that contradicts
+    // totalAircraftCount forever — every stored total must agree.
+    const db = makeSyntheticDb();
+    for (let i = 0; i < 3; i++) addFleet(db, `N90${i}EX`, "confirmed");
+    const statsWithCombined = {
+      ...inflatedSheetStats,
+      combined: { total: 1818, starlink: 526, unverified: 0, percentage: 28.9 },
+    } as FleetStats;
+
+    const refusal = updateDatabase(db, 1818, sheetRoster, statsWithCombined);
+    expect(refusal).toBeNull();
+
+    const meta = (key: string) =>
+      (db.query("SELECT value FROM meta WHERE key = ?").get(`UA:${key}`) as { value: string })
+        ?.value;
+    expect(meta("combinedTotal")).toBe(String(getTotalCount(db, "UA")));
+    expect(meta("combinedTotal")).toBe("3");
+    expect(meta("combinedStarlink")).toBe("3");
+    db.close();
+  });
+
   test("the scrape's lastUpdated stamp survives the roster recompute", () => {
     // stampLastUpdated is ownership-gated: UA's configured owner is the scrape,
     // so refreshFleetMeta's own stamp attempt must be a no-op — lastUpdated

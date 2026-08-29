@@ -951,6 +951,14 @@ export function refreshFleetMeta(db: Database, airline: string): void {
   const pct = (n: number, d: number) => (d > 0 ? ((n / d) * 100).toFixed(2) : "0.00");
 
   setMeta(db, "totalAircraftCount", total, airline);
+  // The scrape's fallback writes a combined* leg too (fetchAllSheets returns
+  // it for the scrape CLI). Nothing serves these keys, but leaving them at
+  // the sheet's inflated row sums keeps a denominator in meta that forever
+  // contradicts totalAircraftCount — overwrite them with the same roster
+  // numbers so every stored total agrees.
+  setMeta(db, "combinedTotal", total, airline);
+  setMeta(db, "combinedStarlink", mainlineStarlink + expressStarlink, airline);
+  setMeta(db, "combinedPercentage", pct(mainlineStarlink + expressStarlink, total), airline);
   setMeta(db, "mainlineTotal", mainlineTotal, airline);
   setMeta(db, "mainlineStarlink", mainlineStarlink, airline);
   setMeta(db, "mainlinePercentage", pct(mainlineStarlink, mainlineTotal), airline);

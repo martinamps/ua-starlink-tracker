@@ -81,6 +81,35 @@ describe("/methodology gating", () => {
     expect(text).toContain("starlink-stat");
   });
 
+  test("every documented airline states what its denominator counts", async () => {
+    const { DENOMINATOR_SCOPE, hasMethodology } = await import(
+      "../src/components/methodology-page"
+    );
+    for (const code of Object.keys(DENOMINATOR_SCOPE)) {
+      expect(hasMethodology(code)).toBe(true);
+    }
+    // And the other direction: a documented airline without scope copy would
+    // silently drop the section.
+    for (const code of ["UA", "AS"]) {
+      expect(DENOMINATOR_SCOPE[code]).toBeDefined();
+    }
+  });
+
+  test("united: denominator section names the roster, not the sheet's row sums", async () => {
+    const { text } = await getText("/methodology", SITES.united.canonicalHost);
+    expect(text).toContain("What the fleet total counts");
+    expect(visibleText(text)).toContain("United Express");
+  });
+
+  test("alaska: denominator section says Hawaiian is counted separately", async () => {
+    const { text } = await getText("/methodology", SITES.alaska.canonicalHost);
+    expect(text).toContain("What the fleet total counts");
+    // The airline's own ~150-of-~400 combined-group figure must be explained,
+    // not silently disagreed with.
+    expect(visibleText(text)).toContain("Hawaiian");
+    expect(text).toContain("hawaiianstarlinktracker.com");
+  });
+
   test("sitemap lists /methodology only where it serves", async () => {
     for (const site of Object.values(SITES)) {
       const { text } = await getText("/sitemap.xml", site.canonicalHost);
