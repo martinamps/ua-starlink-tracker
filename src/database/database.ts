@@ -1086,6 +1086,73 @@ export function getMonthlyInstalls(
   }[];
 }
 
+/**
+ * Detect and record each newly equipped tail's first observed revenue
+ * departure. A candidate is an organically dated install (INSTALL_FILTER —
+ * bulk seeds would fire dozens of fake scoops) whose earliest post-install
+ * departure in upcoming_flights has now actually departed.
+ *
+ * The 14-day recency gate is an honesty bound, not an optimization:
+ * upcoming_flights only looks ~2 days ahead and refreshes constantly, so for
+ * an old install the "earliest" row would be today's flight, not the true
+ * first — better to record nothing than a fabricated first flight.
+ *
+ * Returns only the rows inserted by THIS call, so the caller can notify
+ * exactly once per tail.
+ */
+export function recordFirstFlights(
+  db: Database,
+  now = Math.floor(Date.now() / 1000)
+): FirstFlight[] {
+  const enabled = enabledAirlines().map((a) => a.code);
+  const placeholders = enabled.map(() => "?").join(",");
+  const candidates = db
+    .query(
+      `SELECT sp.TailNumber AS tail_number, sp.airline,
+              uf.flight_number, uf.departure_airport AS origin,
+              uf.arrival_airport AS destination,
+              MIN(uf.departure_time) AS departed_at
+       FROM starlink_planes sp
+       JOIN upcoming_flights uf
+         ON uf.tail_number = sp.TailNumber AND uf.airline = sp.airline
+       WHERE ${equippedFilter("sp")}
+         AND ${INSTALL_FILTER}
+         AND sp.airline IN (${placeholders})
+         AND sp.DateFound >= date(?, 'unixepoch', '-14 days')
+         AND uf.flight_number IS NOT NULL
+         AND uf.departure_airport IS NOT NULL
+         AND uf.arrival_airport IS NOT NULL
+         AND uf.departure_time >= strftime('%s', sp.DateFound)
+         AND uf.departure_time <= ?
+         AND NOT EXISTS (SELECT 1 FROM first_flights ff WHERE ff.tail_number = sp.TailNumber)
+       GROUP BY sp.TailNumber`
+    )
+    .all(...enabled, now, now) as Omit<FirstFlight, "recorded_at">[];
+  if (candidates.length === 0) return [];
+
+  const insert = db.query(
+    `INSERT OR IGNORE INTO first_flights
+       (tail_number, airline, flight_number, origin, destination, departed_at, recorded_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  );
+  const recorded: FirstFlight[] = [];
+  db.transaction(() => {
+    for (const c of candidates) {
+      const res = insert.run(
+        c.tail_number,
+        c.airline,
+        c.flight_number,
+        c.origin,
+        c.destination,
+        c.departed_at,
+        now
+      );
+      if (res.changes > 0) recorded.push({ ...c, recorded_at: now });
+    }
+  })();
+  return recorded;
+}
+
 /** First observed post-install revenue departures for a set of tails. */
 export function getFirstFlights(
   db: Database,

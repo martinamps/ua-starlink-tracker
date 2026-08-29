@@ -3,7 +3,12 @@ import "./src/observability/tracer";
 import "dotenv/config";
 
 import { checkNewPlanes, startFlightUpdater } from "./src/api/flight-updater";
-import { archivePastDepartures, initializeDatabase, pruneCrashRows } from "./src/database/database";
+import {
+  archivePastDepartures,
+  initializeDatabase,
+  pruneCrashRows,
+  recordFirstFlights,
+} from "./src/database/database";
 import { startAdsbSweepJob } from "./src/scripts/adsb-sweep";
 import { startAlaskaVerifier } from "./src/scripts/alaska-verifier";
 import { startBtsSyncJob } from "./src/scripts/bts-sync";
@@ -102,6 +107,24 @@ if (JOBS_ENABLED) {
       name: "archive_departures",
       intervalMs: 5 * 60 * 1000,
       run: () => archivePastDepartures(db),
+    })
+  );
+
+  // Shares archive_departures' cadence because it races the same deadline:
+  // both read a departure that has just passed out of upcoming_flights, and
+  // updateFlights DELETEs a tail's rows wholesale when its 1–8h cache expires.
+  // Slower than that and a newly equipped tail's first flight is gone unseen.
+  track(
+    startJob({
+      name: "first_flight_watch",
+      intervalMs: 5 * 60 * 1000,
+      run: () => {
+        for (const f of recordFirstFlights(db)) {
+          info(
+            `First flight for ${f.tail_number} (${f.airline}): ${f.flight_number} ${f.origin}→${f.destination}`
+          );
+        }
+      },
     })
   );
 

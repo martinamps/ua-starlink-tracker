@@ -8,8 +8,9 @@ import { beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { SITES } from "../src/airlines/registry";
+import { getFirstFlights, recordFirstFlights } from "../src/database/database";
 import { createApp } from "../src/server/app";
-import { bodyOf, openSnapshot, req } from "./helpers";
+import { bodyOf, makeSyntheticDb, openSnapshot, req } from "./helpers";
 
 // (SITES is iterated for the badge sweep; tenant pages are covered by the
 // tenant-matrix ROUTES table.)
@@ -181,5 +182,102 @@ describe("/newly-equipped page", () => {
   test("hub renders (aggregate across airlines)", async () => {
     const { status } = await bodyOf(app, "/newly-equipped", HUB);
     expect(status).toBe(200);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// recordFirstFlights — the detection job behind the feed's "first flight" line.
+// Synthetic DB (write path): the snapshot is readonly and carries no installs
+// inside the 14-day window, so these are constructed rather than drifted-upon.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("recordFirstFlights", () => {
+  const NOW = Math.floor(Date.now() / 1000);
+  const dayOf = (epoch: number) => new Date(epoch * 1000).toISOString().slice(0, 10);
+  const midnight = (day: string) => Math.floor(new Date(`${day}T00:00:00Z`).getTime() / 1000);
+
+  function seedTail(
+    db: ReturnType<typeof makeSyntheticDb>,
+    tail: string,
+    day: string,
+    gid: string,
+    departures: [flight: string, origin: string, destination: string, at: number][]
+  ) {
+    db.query(
+      `INSERT INTO starlink_planes (aircraft, wifi, sheet_gid, sheet_type, DateFound, TailNumber, OperatedBy, fleet, verified_wifi, airline)
+       VALUES ('B737','Starlink',?,'UA-mainline',?,?,'United','mainline','Starlink','UA')`
+    ).run(gid, day, tail);
+    for (const [flight, origin, destination, at] of departures) {
+      db.query(
+        `INSERT INTO upcoming_flights (tail_number, flight_number, departure_airport, arrival_airport, departure_time, arrival_time, last_updated, airline)
+         VALUES (?,?,?,?,?,?,?, 'UA')`
+      ).run(tail, flight, origin, destination, at, at + 9000, NOW);
+    }
+  }
+
+  const recentDay = dayOf(NOW - 3 * 86400);
+  const recentInstall = midnight(recentDay);
+
+  test("records the earliest departed flight, not an arbitrary row", () => {
+    const db = makeSyntheticDb();
+    // Earliest is inserted second — a bare-column MIN that ignored rowid order
+    // would hand back UA200 and quietly fabricate the scoop.
+    seedTail(db, "N00TST", recentDay, "discovery", [
+      ["UA200", "ORD", "DEN", recentInstall + 40000],
+      ["UA100", "EWR", "SFO", recentInstall + 10000],
+      ["UA300", "IAH", "LAX", recentInstall + 90000],
+    ]);
+
+    const recorded = recordFirstFlights(db, NOW);
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0]).toMatchObject({
+      tail_number: "N00TST",
+      airline: "UA",
+      flight_number: "UA100",
+      origin: "EWR",
+      destination: "SFO",
+    });
+    expect(typeof recorded[0].departed_at).toBe("number");
+    expect(typeof recorded[0].recorded_at).toBe("number");
+    db.close();
+  });
+
+  test("returns only this call's inserts, so a tail notifies once", () => {
+    const db = makeSyntheticDb();
+    seedTail(db, "N00TST", recentDay, "discovery", [
+      ["UA100", "EWR", "SFO", recentInstall + 10000],
+    ]);
+
+    expect(recordFirstFlights(db, NOW)).toHaveLength(1);
+    expect(recordFirstFlights(db, NOW)).toHaveLength(0);
+    expect(getFirstFlights(db, ["N00TST"], "UA")).toHaveLength(1);
+    db.close();
+  });
+
+  test("reads back tenant-scoped", () => {
+    const db = makeSyntheticDb();
+    seedTail(db, "N00TST", recentDay, "discovery", [
+      ["UA100", "EWR", "SFO", recentInstall + 10000],
+    ]);
+    recordFirstFlights(db, NOW);
+
+    expect(getFirstFlights(db, ["N00TST"], "UA")).toHaveLength(1);
+    expect(getFirstFlights(db, ["N00TST"], "HA")).toHaveLength(0);
+    db.close();
+  });
+
+  test("abstains where the record would be a guess", () => {
+    const db = makeSyntheticDb();
+    // Not yet departed — nothing to report.
+    seedTail(db, "N01TST", recentDay, "discovery", [["UA900", "SFO", "JFK", NOW + 50000]]);
+    // Bulk seed import: DateFound is the import date, not an install date.
+    seedTail(db, "N02TST", recentDay, "ua_seed", [["UA901", "SFO", "JFK", recentInstall + 5000]]);
+    // Older than the 14-day window: upcoming_flights only looks ~2 days ahead,
+    // so its "earliest" row is today's flight, not the true first.
+    const oldDay = dayOf(NOW - 40 * 86400);
+    seedTail(db, "N03TST", oldDay, "discovery", [["UA902", "SFO", "JFK", midnight(oldDay) + 5000]]);
+
+    expect(recordFirstFlights(db, NOW)).toEqual([]);
+    db.close();
   });
 });
