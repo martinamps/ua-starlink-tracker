@@ -78,6 +78,16 @@ export interface SiteFeatures {
    * (UA united.com, AS alaskaair.com). HA/QR status is type-determined, so a
    * "how we verify" page there would overstate. */
   methodologyPage: boolean;
+  /** /aircraft index + per-family pages — airline sites only (specs/seat
+   * counts are carrier-specific; the hub has no single fleet story). */
+  aircraftPages: boolean;
+  /** /airports index + per-airport departure pages. Reads the same
+   * upcoming_flights/flight_routes data as route pages, so it's off wherever
+   * those tables are empty for the tenant (QR) and on the hub. */
+  airportPages: boolean;
+  /** /rankings leaderboards (100% routes, transcon, per-hub). Same data
+   * dependency as airportPages. */
+  rankingsPages: boolean;
 }
 
 export interface SiteConfig {
@@ -139,6 +149,10 @@ export interface AirlineConfig {
   ) => { probability: number; reason: string } | null;
   /** Canonical lowercase tag for Datadog `airline:` — preserves history (`united`, not `UA`). */
   metricTag: string;
+  /** The carrier's hub/base airports (IATA) — each gets a /rankings hub
+   * leaderboard where rankingsPages is on. Required so a new airline without a
+   * hub story is a compile error, not a missing page family. */
+  hubAirports: readonly string[];
   /** Anchored registration format for tails operated by this airline. Used to
    * reject sheet typos at ingest and gate cleanup scripts. Built by
    * tailPatterns() from the same body as tailScanPattern. */
@@ -216,6 +230,7 @@ const AIRLINE_DEFS = {
     },
     fr24Slug: "ua-ual",
     metricTag: "united",
+    hubAirports: ["EWR", "ORD", "DEN", "IAH", "SFO", "LAX", "IAD"],
     ...FAA_TAIL,
     minFleetSanity: 800,
     verifierBackend: "united",
@@ -262,6 +277,7 @@ const AIRLINE_DEFS = {
     subfleets: [{ key: "mainline", label: "Hawaiian Fleet", match: () => true }],
     fr24Slug: "ha-hal",
     metricTag: "hawaiian",
+    hubAirports: ["HNL"],
     ...FAA_TAIL,
     minFleetSanity: 30,
     verifierBackend: "alaska-json",
@@ -360,6 +376,7 @@ const AIRLINE_DEFS = {
     fr24Slug: "as-asa",
     regionalCarriers: [{ fr24Slug: "qx-qxe", name: "Horizon Air", subfleet: "horizon" }],
     metricTag: "alaska",
+    hubAirports: ["SEA", "PDX", "ANC", "SFO", "LAX", "SAN"],
     ...FAA_TAIL,
     minFleetSanity: 200,
     verifierBackend: "alaska-json",
@@ -408,6 +425,7 @@ const AIRLINE_DEFS = {
     classifyFleet: () => "mainline",
     fr24Slug: "qr-qtr",
     metricTag: "qatar",
+    hubAirports: ["DOH"],
     ...QATAR_TAIL,
     // 274 aircraft on FR24 (Apr 2026); minus ~37 freighters leaves ~237. Set
     // floor at 200 so a partial scrape still passes sanity but a near-empty
@@ -697,6 +715,9 @@ const AIRLINE_SITE_FEATURES: SiteFeatures = {
   chromeExtension: false,
   airlinesPages: false,
   methodologyPage: false,
+  aircraftPages: true,
+  airportPages: true,
+  rankingsPages: true,
 };
 
 export const SITES: Record<string, SiteConfig> = {
@@ -741,6 +762,9 @@ export const SITES: Record<string, SiteConfig> = {
       chromeExtension: false,
       airlinesPages: true,
       methodologyPage: false,
+      aircraftPages: false,
+      airportPages: false,
+      rankingsPages: false,
     },
   },
   hawaiian: {
@@ -785,8 +809,15 @@ export const SITES: Record<string, SiteConfig> = {
     },
     // Route planner reads flight_routes/departure_log and the routes page reads
     // upcoming_flights joined to starlink_planes — all empty for QR (schedule
-    // lives in qatar_schedule). Hide both rather than ship a permanently-empty UX.
-    features: { ...AIRLINE_SITE_FEATURES, routePlannerPage: false, routesPage: false },
+    // lives in qatar_schedule). Hide both rather than ship a permanently-empty
+    // UX; airport + rankings pages read the same empty tables, so off too.
+    features: {
+      ...AIRLINE_SITE_FEATURES,
+      routePlannerPage: false,
+      routesPage: false,
+      airportPages: false,
+      rankingsPages: false,
+    },
   },
 };
 

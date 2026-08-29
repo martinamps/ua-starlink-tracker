@@ -12,6 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import React from "react";
 import ReactDOMServer from "react-dom/server";
+import { familySlug, normalizeAircraftType } from "../airlines/aircraft-families";
 import { buildFaqJsonLd, getContent } from "../airlines/content";
 import {
   buildFlightLookupVariants,
@@ -54,10 +55,22 @@ import {
 import { handleMcpRequest } from "../api/mcp-server";
 import { qatarEquipmentName, qatarEquipmentToWifi } from "../api/qatar-status";
 import {
+  AircraftFamilyPage,
+  AircraftIndexPage,
+  familyMeta,
+  familyVerdict,
+} from "../components/aircraft-page";
+import {
   AirlineDetailPage,
   type AirlineOverview,
   AirlinesIndexPage,
 } from "../components/airlines-page";
+import {
+  type AirportIndexEntry,
+  AirportPage,
+  AirportsIndexPage,
+  airportVerdict,
+} from "../components/airport-page";
 import CheckFlightPage, {
   type FlightFacts,
   type InvalidFlightQuery,
@@ -66,6 +79,7 @@ import FleetPage from "../components/fleet-page";
 import McpPage from "../components/mcp-page";
 import MethodologyPage, { hasMethodology } from "../components/methodology-page";
 import Page from "../components/page";
+import { LeaderboardPage, RankingsIndexPage } from "../components/rankings-page";
 import RoutePage, { routeVerdict } from "../components/route-page";
 import RoutePlannerPage from "../components/route-planner-page";
 import RoutesPage from "../components/routes-page";
@@ -90,6 +104,7 @@ import {
   predictFlight,
 } from "../scripts/starlink-predictor";
 import type { ApiResponse, Flight } from "../types";
+import { AIRPORT_NAMES, type AirportInfo } from "../utils/airport-names";
 import {
   API_CORS_HEADERS,
   BASE_RESPONSE_HEADERS,
@@ -114,6 +129,7 @@ import {
   isPassengerVerifyAudience,
   passengerVerifyEnabled,
 } from "./passenger-detect";
+import { leaderboardDefs } from "./rankings";
 
 type Handler = (ctx: RequestContext) => Response | Promise<Response>;
 type RouteTable = Record<string, Handler>;
@@ -423,7 +439,7 @@ const apiFleetSummary: Handler = ({ req, getReader }) => {
   });
 };
 
-const apiRoutes: Handler = ({ req, site, reader }) => {
+const apiRoutes: Handler = ({ req, url, site, reader }) => {
   if (req.method !== "GET" && req.method !== "HEAD") return methodNotAllowed(true);
   if (!site.features.routesPage) {
     return new Response(JSON.stringify({ error: "Not found" }), {
@@ -431,7 +447,20 @@ const apiRoutes: Handler = ({ req, site, reader }) => {
       headers: SECURITY_HEADERS.api,
     });
   }
-  const schedule = reader.getRouteStarlinkSchedule();
+  // Additive pagination: no params keeps the original top-60 page (and its
+  // wire shape); limit is capped so a crawler can't turn this into a full
+  // table dump per request.
+  const intParam = (name: string): number | undefined => {
+    const raw = url.searchParams.get(name);
+    if (raw === null) return undefined;
+    const n = Number.parseInt(raw, 10);
+    return Number.isFinite(n) ? n : undefined;
+  };
+  const limitParam = intParam("limit");
+  const schedule = reader.getRouteStarlinkSchedule({
+    limit: limitParam === undefined ? undefined : Math.min(Math.max(limitParam, 1), 200),
+    offset: intParam("offset"),
+  });
   return new Response(JSON.stringify(schedule), {
     headers: { ...SECURITY_HEADERS.api, "Cache-Control": "public, max-age=300" },
   });
@@ -1201,6 +1230,30 @@ const SITE_PAGES: SitePage[] = [
     llmsLine: (h) =>
       `- [Methodology](https://${h}/methodology) — how the data is gathered and verified, and how to cite it`,
   },
+  {
+    path: "/aircraft",
+    feature: "aircraftPages",
+    changefreq: "daily",
+    priority: "0.7",
+    llmsLine: (h) =>
+      `- [Starlink by aircraft type](https://${h}/aircraft) — installs per fleet family, every tail number`,
+  },
+  {
+    path: "/airports",
+    feature: "airportPages",
+    changefreq: "daily",
+    priority: "0.6",
+    llmsLine: (h) =>
+      `- [Starlink by airport](https://${h}/airports) — live equipped-departure counts per airport`,
+  },
+  {
+    path: "/rankings",
+    feature: "rankingsPages",
+    changefreq: "hourly",
+    priority: "0.7",
+    llmsLine: (h) =>
+      `- [Route rankings](https://${h}/rankings) — 100% Starlink routes, best transcons, per-hub leaderboards`,
+  },
   { path: "/mcp", feature: "mcpPage", changefreq: "monthly", priority: "0.6" },
 ];
 
@@ -1276,6 +1329,46 @@ const sitemap: Handler = ({ reader, site, tenant, getReader }) => {
         lastmod: stampedIso(getReader(cfg.code).getLastUpdatedRaw()),
       }))
     : [];
+  // Family pages regenerate from fleet data, so the airline data stamp is
+  // their honest lastmod (same as the static pages).
+  const aircraftEntries =
+    site.features.aircraftPages && tenantConfig(tenant)
+      ? reader
+          .getFleetPageData()
+          .families.filter((f) => f.family !== "unknown")
+          .map((f) => ({
+            path: `/aircraft/${familySlug(f.family)}`,
+            changefreq: "daily",
+            priority: "0.6",
+            lastmod: lastUpdated,
+          }))
+      : [];
+  const airportEntries =
+    site.features.airportPages && tenantConfig(tenant)
+      ? namedSitemapAirports(reader).map((a) => ({
+          path: `/airport/${a.airport}`,
+          changefreq: "daily",
+          priority: "0.6",
+          lastmod: a.last_touched ? new Date(a.last_touched * 1000).toISOString() : undefined,
+        }))
+      : [];
+  // Same data test the page handler applies: an empty leaderboard 404s, so
+  // only boards with rows right now get advertised.
+  const rankingsCfg = tenantConfig(tenant);
+  const rankingsEntries =
+    site.features.rankingsPages && rankingsCfg
+      ? (() => {
+          const rows = reader.getRouteLeaderboard();
+          return leaderboardDefs(rankingsCfg)
+            .filter((d) => d.select(rows).length > 0)
+            .map((d) => ({
+              path: `/rankings/${d.slug}`,
+              changefreq: "hourly",
+              priority: "0.6",
+              lastmod: lastUpdated,
+            }));
+        })()
+      : [];
   const entries: Array<{ path: string; changefreq: string; priority: string; lastmod?: string }> = [
     ...sitePages(site).map((p) => ({
       path: p.path,
@@ -1284,6 +1377,9 @@ const sitemap: Handler = ({ reader, site, tenant, getReader }) => {
       lastmod: lastUpdated,
     })),
     ...airlineEntries,
+    ...aircraftEntries,
+    ...airportEntries,
+    ...rankingsEntries,
     ...flightEntries,
     ...routeEntries,
   ];
@@ -1994,6 +2090,239 @@ const routesPage: Handler = (ctx) => {
   return renderSubPage(ctx, RoutesPage, "/routes", subPageMeta(ctx, "routes"), { schedule });
 };
 
+// ── /aircraft — per-family rollout pages ─────────────────────────────────────
+// Bounded by the family vocabulary actually present in the tenant's fleet
+// data: the same list feeds the index, the per-family gate, and the sitemap,
+// so an advertised family page can never 404 and an unknown one always does.
+
+/** Families worth a page: real vocabulary only — "unknown" is a data gap, not
+ * an aircraft type someone searches for. */
+function pageFamilies(ctx: RequestContext) {
+  return ctx.reader.getFleetPageData().families.filter((f) => f.family !== "unknown");
+}
+
+function aircraftIndexMeta(cfg: AirlineConfig, familyCount: number): PageMeta {
+  return {
+    siteTitle: `Which ${cfg.shortName} Aircraft Have Starlink? Rollout by Type`,
+    siteDescription: `Starlink installs across every ${cfg.name} aircraft type — ${familyCount} fleet families with installed counts, percentages, and every tail number's WiFi status.`,
+    keywords: `${cfg.shortName.toLowerCase()} aircraft starlink, which ${cfg.shortName.toLowerCase()} planes have starlink, ${cfg.shortName.toLowerCase()} fleet wifi by type, starlink by aircraft type`,
+    ogTitle: `Which ${cfg.shortName} Aircraft Have Starlink?`,
+    ogDescription: `Starlink installs by aircraft type across the ${cfg.name} fleet, updated continuously.`,
+  };
+}
+
+const aircraftIndexPage: Handler = (ctx) => {
+  if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
+  if (!ctx.site.features.aircraftPages) return notFound(ctx.site);
+  // aircraftPages is airline-site-only; siteAirline throws (fail closed) on the hub.
+  const cfg = siteAirline(ctx.site);
+  const families = pageFamilies(ctx);
+  return renderSubPage(
+    ctx,
+    AircraftIndexPage,
+    "/aircraft",
+    aircraftIndexMeta(cfg, families.length),
+    {
+      families,
+    }
+  );
+};
+
+const aircraftFamilyPage: Handler = (ctx) => {
+  if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
+  if (!ctx.site.features.aircraftPages) return notFound(ctx.site);
+  const cfg = siteAirline(ctx.site);
+  let seg: string;
+  try {
+    seg = decodeURIComponent(ctx.url.pathname.slice("/aircraft/".length)).replace(/\/+$/, "");
+  } catch {
+    return notFound(ctx.site);
+  }
+  // Bare /aircraft/ has no content of its own — the index is the real page.
+  if (!seg) return Response.redirect(`https://${ctx.site.canonicalHost}/aircraft`, 301);
+  const families = pageFamilies(ctx);
+  const lower = seg.toLowerCase();
+  const fam = families.find((f) => familySlug(f.family) === lower);
+  if (!fam) return notFound(ctx.site);
+  // One indexable URL per family: case variants 301 to the lowercase slug.
+  if (seg !== lower) {
+    return Response.redirect(`https://${ctx.site.canonicalHost}/aircraft/${lower}`, 301);
+  }
+  const { display, query } = familyMeta(fam.family);
+  const verdict = familyVerdict(fam, cfg.name);
+  // Progress sheets key rows by free-text type codes; the family normalizer is
+  // the shared vocabulary, so matching through it can't drift from the page's
+  // own grouping. "Totals" rows are segment aggregates, not a type.
+  const progress = ctx.reader
+    .getFleetPageData()
+    .progress.filter(
+      (r) => r.type_code !== "Totals" && normalizeAircraftType(r.type_code) === fam.family
+    );
+  return renderSubPage(
+    ctx,
+    AircraftFamilyPage,
+    `/aircraft/${lower}`,
+    {
+      siteTitle: `Does the ${cfg.shortName} ${query} Have Starlink WiFi?`,
+      siteDescription: `${verdict} Every ${cfg.shortName} ${display} tail number and its WiFi status, updated continuously.`,
+      keywords: `${cfg.shortName.toLowerCase()} ${query.toLowerCase()} starlink, does the ${query.toLowerCase()} have starlink, ${query.toLowerCase()} wifi, ${cfg.shortName.toLowerCase()} ${query.toLowerCase()} wifi`,
+      ogTitle: `Does the ${cfg.shortName} ${query} Have Starlink?`,
+      ogDescription: verdict,
+    },
+    { family: fam, progress }
+  );
+};
+
+// ── /airports + /airport/{IATA} — per-airport departure pages ────────────────
+// Existence = the airport appears as an origin in the route data (mirrors
+// getSitemapAirports) AND has a reference name — city-titled pages only, so a
+// code the name table doesn't know 404s rather than shipping a bare-IATA page.
+
+function namedSitemapAirports(
+  reader: ScopedReader
+): Array<{ airport: string; last_touched: number; info: AirportInfo }> {
+  return reader
+    .getSitemapAirports()
+    .map((a) => ({ ...a, info: AIRPORT_NAMES[a.airport] }))
+    .filter((a): a is { airport: string; last_touched: number; info: AirportInfo } =>
+      Boolean(a.info)
+    );
+}
+
+const airportsIndexPage: Handler = (ctx) => {
+  if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
+  if (!ctx.site.features.airportPages) return notFound(ctx.site);
+  const cfg = siteAirline(ctx.site);
+  const counts = new Map(ctx.reader.getAirportDepartures().rows.map((r) => [r.airport, r.count]));
+  const airports: AirportIndexEntry[] = namedSitemapAirports(ctx.reader)
+    .map((a) => ({ iata: a.airport, info: a.info, equipped: counts.get(a.airport) ?? 0 }))
+    .sort((x, y) => y.equipped - x.equipped || x.iata.localeCompare(y.iata));
+  return renderSubPage(
+    ctx,
+    AirportsIndexPage,
+    "/airports",
+    {
+      siteTitle: `${cfg.shortName} Starlink Flights by Airport — Live Departure Counts`,
+      siteDescription: `Where ${cfg.name} Starlink departures leave from: live equipped-departure counts per airport over the next 48 hours, plus every airport in the tracked route network.`,
+      keywords: `${cfg.shortName.toLowerCase()} starlink airports, starlink flights by airport, ${cfg.shortName.toLowerCase()} starlink departures`,
+      ogTitle: `${cfg.shortName} Starlink Flights by Airport`,
+      ogDescription: `Live equipped-departure counts per airport across the ${cfg.name} network.`,
+    },
+    { airports }
+  );
+};
+
+const airportPage: Handler = (ctx) => {
+  if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
+  if (!ctx.site.features.airportPages) return notFound(ctx.site);
+  const cfg = siteAirline(ctx.site);
+  let seg: string;
+  try {
+    seg = decodeURIComponent(ctx.url.pathname.slice("/airport/".length)).replace(/\/+$/, "");
+  } catch {
+    return notFound(ctx.site);
+  }
+  // Bare /airport/ has no content of its own — the index is the real page.
+  if (!seg) return Response.redirect(`https://${ctx.site.canonicalHost}/airports`, 301);
+  const upper = seg.toUpperCase();
+  if (!ROUTE_AIRPORT_RE.test(upper)) return notFound(ctx.site);
+  // One indexable URL per airport: lowercase variants 301 to the IATA form.
+  if (seg !== upper) {
+    return Response.redirect(`https://${ctx.site.canonicalHost}/airport/${upper}`, 301);
+  }
+  const info = AIRPORT_NAMES[upper];
+  if (!info) return notFound(ctx.site);
+  if (!ctx.reader.airportHasData(upper)) return notFound(ctx.site);
+  const summary = ctx.reader.getAirportSummary(upper);
+  const verdict = airportVerdict(summary, info, cfg.name);
+  return renderSubPage(
+    ctx,
+    AirportPage,
+    `/airport/${upper}`,
+    {
+      siteTitle: `${info.city} Starlink Flights — ${cfg.shortName} From ${upper}`,
+      siteDescription: `${verdict} Routes from ${upper} and the next equipped departures, counted from live tail assignments.`,
+      keywords: `${info.city.toLowerCase()} starlink flights, ${upper.toLowerCase()} starlink, ${cfg.shortName.toLowerCase()} ${info.city.toLowerCase()} starlink, ${cfg.shortName.toLowerCase()} ${upper.toLowerCase()} wifi`,
+      ogTitle: `${info.city} Starlink Flights (${upper})`,
+      ogDescription: verdict,
+      pageJsonLd: jsonLdBlock({
+        "@context": "https://schema.org",
+        "@type": "Airport",
+        name: info.name,
+        iataCode: upper,
+        url: `https://${ctx.site.canonicalHost}/airport/${upper}`,
+      }),
+    },
+    { summary, info }
+  );
+};
+
+// ── /rankings — bounded leaderboard pages ────────────────────────────────────
+// The slug set is static per airline (leaderboardDefs); each page is further
+// gated on having rows right now, and the sitemap applies the same test.
+
+const rankingsIndexPage: Handler = (ctx) => {
+  if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
+  if (!ctx.site.features.rankingsPages) return notFound(ctx.site);
+  const cfg = siteAirline(ctx.site);
+  const rows = ctx.reader.getRouteLeaderboard();
+  const boards = leaderboardDefs(cfg)
+    .map((def) => {
+      const selected = def.select(rows);
+      return { def, count: selected.length, top: selected[0] ?? null };
+    })
+    .filter((b) => b.count > 0);
+  return renderSubPage(
+    ctx,
+    RankingsIndexPage,
+    "/rankings",
+    {
+      siteTitle: `${cfg.shortName} Starlink Route Rankings — 100% Routes & Hub Leaderboards`,
+      siteDescription: `Which ${cfg.name} routes fly all-Starlink, the best transcons for working WiFi, and per-hub leaderboards — ranked from live tail assignments over the next 48 hours.`,
+      keywords: `${cfg.shortName.toLowerCase()} starlink routes ranked, 100 percent starlink routes, best ${cfg.shortName.toLowerCase()} routes for wifi, starlink route leaderboard`,
+      ogTitle: `${cfg.shortName} Starlink Route Rankings`,
+      ogDescription: "100% Starlink routes, best transcons, and per-hub leaderboards — live.",
+    },
+    { boards }
+  );
+};
+
+const rankingsLeaderboardPage: Handler = (ctx) => {
+  if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
+  if (!ctx.site.features.rankingsPages) return notFound(ctx.site);
+  const cfg = siteAirline(ctx.site);
+  let seg: string;
+  try {
+    seg = decodeURIComponent(ctx.url.pathname.slice("/rankings/".length)).replace(/\/+$/, "");
+  } catch {
+    return notFound(ctx.site);
+  }
+  if (!seg) return Response.redirect(`https://${ctx.site.canonicalHost}/rankings`, 301);
+  const lower = seg.toLowerCase();
+  const def = leaderboardDefs(cfg).find((d) => d.slug === lower);
+  if (!def) return notFound(ctx.site);
+  if (seg !== lower) {
+    return Response.redirect(`https://${ctx.site.canonicalHost}/rankings/${lower}`, 301);
+  }
+  const rows = def.select(ctx.reader.getRouteLeaderboard());
+  // Empty leaderboards 404 (and are never advertised) rather than serving a
+  // thin page whose answer is "nothing" — the index carries the empty story.
+  if (rows.length === 0) return notFound(ctx.site);
+  return renderSubPage(
+    ctx,
+    LeaderboardPage,
+    `/rankings/${def.slug}`,
+    {
+      siteTitle: def.metaTitle,
+      siteDescription: def.metaDescription,
+      keywords: `${cfg.shortName.toLowerCase()} starlink routes, ${def.slug.replace(/-/g, " ")}, starlink route ranking`,
+      ogTitle: def.heading,
+      ogDescription: def.metaDescription,
+    },
+    { def, rows }
+  );
+};
+
 // ── Hub /airlines pages ──────────────────────────────────────────────────────
 // Registry + DB only (upstream citizenship). Each page's job is to answer the
 // comparison query and hand airline-brand intent to the dedicated tracker.
@@ -2291,6 +2620,9 @@ export function createApp(db: Database): App {
     "/routes": routesPage,
     "/methodology": methodologyPage,
     "/airlines": airlinesIndexPage,
+    "/aircraft": aircraftIndexPage,
+    "/airports": airportsIndexPage,
+    "/rankings": rankingsIndexPage,
     "/api/data": apiData,
     "/api/fleet-summary": apiFleetSummary,
     "/api/routes": apiRoutes,
@@ -2323,6 +2655,9 @@ export function createApp(db: Database): App {
     ["/check-flight/", checkFlightPage],
     ["/route-planner/", routePlannerPage],
     ["/airlines/", airlineDetailPage],
+    ["/aircraft/", aircraftFamilyPage],
+    ["/airport/", airportPage],
+    ["/rankings/", rankingsLeaderboardPage],
     ["/static/", staticDir],
   ];
 
