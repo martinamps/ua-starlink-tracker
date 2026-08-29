@@ -1928,6 +1928,155 @@ export function routeHasData(
   );
 }
 
+export interface SitemapAirport {
+  airport: string;
+  /** Newest data-touch across the airport's departing pairs; 0 = omit lastmod. */
+  last_touched: number;
+}
+
+/**
+ * Departure airports worth advertising at /airport/{IATA} — the origins of
+ * getSitemapRoutes, so the airport corpus can never claim an airport the route
+ * corpus doesn't back. Name/city gating (AIRPORT_NAMES) happens at the app
+ * layer, applied identically to the sitemap and the page.
+ */
+export function getSitemapAirports(db: Database, airline: string): SitemapAirport[] {
+  const latest = new Map<string, number>();
+  for (const r of getSitemapRoutes(db, airline)) {
+    latest.set(r.origin, Math.max(latest.get(r.origin) ?? 0, r.last_touched));
+  }
+  return [...latest]
+    .map(([airport, last_touched]) => ({ airport, last_touched }))
+    .sort((a, b) => a.airport.localeCompare(b.airport));
+}
+
+/**
+ * Single-airport form of the getSitemapAirports data test (same union and
+ * validity filters as getSitemapRoutes, restricted to one origin) — pages and
+ * sitemap must agree on which airport URLs exist.
+ */
+export function airportHasData(db: Database, iata: string, airline: string): boolean {
+  if (!ROUTE_AIRPORT_RE.test(iata)) return false;
+  const q = withAirline(
+    `SELECT 1 FROM upcoming_flights
+     WHERE departure_airport = ? AND arrival_airport GLOB '[A-Z][A-Z][A-Z]'
+       AND arrival_airport <> ?`,
+    airline,
+    "",
+    [iata, iata]
+  );
+  if (db.query(`${q.sql} LIMIT 1`).get(...q.params)) return true;
+  const cfg = AIRLINES[airline];
+  if (!cfg) return false;
+  return Boolean(
+    db
+      .query(
+        `SELECT 1 FROM flight_routes
+         WHERE origin = ? AND destination GLOB '[A-Z][A-Z][A-Z]'
+           AND destination <> ? AND flight_number GLOB ? LIMIT 1`
+      )
+      .get(iata, iata, `${cfg.iata}[0-9]*`)
+  );
+}
+
+export interface AirportDepartureRow {
+  flight_number: string;
+  destination: string;
+  departure_time: number;
+  tail_number: string;
+  aircraft_type: string | null;
+}
+
+export interface AirportSummary {
+  airport: string;
+  /** All tracked departures from the airport in the live window. */
+  totalDepartures: number;
+  /** Departures on a Starlink-equipped tail. */
+  equippedDepartures: number;
+  /** Per-destination equipped/total counts, busiest equipped first. */
+  destinations: RouteLeaderboardRow[];
+  /** Next equipped departures (marketing flight numbers only — operating
+   * numbers have no /check-flight permalink to link). */
+  upcoming: AirportDepartureRow[];
+  /** Every destination in the route corpus (getSitemapRoutes origins=iata) —
+   * durable history, so the page has real links even when the 48h window is
+   * empty; each pair is a valid /route-planner permalink by construction. */
+  allDestinations: string[];
+  windowLabel: string;
+}
+
+/** Everything an /airport/{IATA} page renders, from the DB only. */
+export function getAirportSummary(
+  db: Database,
+  iata: string,
+  airline: string,
+  nowSec = Math.floor(Date.now() / 1000)
+): AirportSummary {
+  const windowEnd = nowSec + DEPARTURE_WINDOW_HOURS * 3600;
+
+  const totalsQ = withAirline(
+    `SELECT COUNT(DISTINCT uf.flight_number || ':' || uf.departure_time) AS departures,
+            COUNT(DISTINCT CASE WHEN sp.TailNumber IS NOT NULL
+                                THEN uf.flight_number || ':' || uf.departure_time END) AS equipped
+     FROM upcoming_flights uf
+     LEFT JOIN starlink_planes sp
+       ON uf.tail_number = sp.TailNumber AND ${equippedFilter("sp")}
+     WHERE uf.departure_airport = ? AND uf.departure_time >= ? AND uf.departure_time < ?`,
+    airline,
+    "uf",
+    [iata, nowSec, windowEnd]
+  );
+  const totals = db.query(totalsQ.sql).get(...totalsQ.params) as {
+    departures: number;
+    equipped: number;
+  };
+
+  const destinations = getRouteLeaderboard(db, airline, nowSec).filter((r) => r.origin === iata);
+
+  const cfg = AIRLINES[airline];
+  const upcoming: AirportDepartureRow[] = [];
+  if (cfg) {
+    const marketing = new RegExp(`^${cfg.iata}\\d+$`);
+    const upcomingQ = withAirline(
+      `SELECT uf.flight_number, uf.arrival_airport AS destination, uf.departure_time,
+              uf.tail_number, sp.Aircraft AS aircraft_type${EQUIPPED_DEPARTURES_SQL}
+         AND uf.departure_airport = ?`,
+      airline,
+      "uf",
+      [nowSec, windowEnd, iata]
+    );
+    const upcomingRows = db
+      .query(`${upcomingQ.sql} ORDER BY uf.departure_time ASC LIMIT 60`)
+      .all(...upcomingQ.params) as AirportDepartureRow[];
+    const seen = new Set<string>();
+    for (const r of upcomingRows) {
+      const fn = stripFlightNumberZeros(ensureAirlinePrefix(cfg, r.flight_number));
+      // Operating numbers (SKW5425) have no /check-flight permalink to link.
+      if (!marketing.test(fn)) continue;
+      // Tail-swap leftovers leave multiple rows for one physical departure.
+      const key = `${fn}:${r.departure_time}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      upcoming.push({ ...r, flight_number: fn });
+      if (upcoming.length >= 10) break;
+    }
+  }
+
+  const allDestinations = getSitemapRoutes(db, airline)
+    .filter((r) => r.origin === iata)
+    .map((r) => r.destination);
+
+  return {
+    airport: iata,
+    totalDepartures: totals.departures,
+    equippedDepartures: totals.equipped,
+    destinations,
+    upcoming,
+    allDestinations,
+    windowLabel: `next ${DEPARTURE_WINDOW_HOURS} hours`,
+  };
+}
+
 export interface RouteSummary {
   origin: string;
   destination: string;
@@ -4151,12 +4300,22 @@ export function getAirportDepartures(
   return { rows, windowLabel: `next ${DEPARTURE_WINDOW_HOURS} hours` };
 }
 
+/** Row cap + paging for getRouteStarlinkSchedule. Defaults preserve the
+ * original one-page behavior (top 60, no offset). */
+export interface RouteScheduleOpts {
+  limit?: number;
+  offset?: number;
+}
+
 export function getRouteStarlinkSchedule(
   db: Database,
   airline?: AirlineFilter,
-  nowSec = Math.floor(Date.now() / 1000)
+  nowSec = Math.floor(Date.now() / 1000),
+  opts: RouteScheduleOpts = {}
 ): RouteSchedule {
   const windowEnd = nowSec + DEPARTURE_WINDOW_HOURS * 3600;
+  const limit = Math.max(1, Math.floor(opts.limit ?? 60));
+  const offset = Math.max(0, Math.floor(opts.offset ?? 0));
   // The DISTINCT pair count dedupes tail-swap leftovers (multiple rows for one
   // physical departure).
   const baseSql = EQUIPPED_DEPARTURES_SQL;
@@ -4172,21 +4331,77 @@ export function getRouteStarlinkSchedule(
   const rows = db
     .query(
       `${q.sql} GROUP BY uf.departure_airport, uf.arrival_airport
-       ORDER BY departures DESC, flight_numbers DESC, origin ASC LIMIT 60`
+       ORDER BY departures DESC, flight_numbers DESC, origin ASC LIMIT ? OFFSET ?`
     )
-    .all(...q.params) as RouteScheduleRow[];
+    .all(...q.params, limit, offset) as RouteScheduleRow[];
 
-  // Headline total uses the same predicate without the LIMIT, so the header
+  // Headline totals use the same predicate without the LIMIT, so the header
   // never disagrees with what a user could count by paging the rows.
   const totalQ = withAirline(
-    `SELECT COUNT(DISTINCT uf.flight_number || ':' || uf.departure_time) AS n${baseSql}`,
+    `SELECT COUNT(DISTINCT uf.flight_number || ':' || uf.departure_time) AS departures,
+            COUNT(DISTINCT uf.departure_airport || '-' || uf.arrival_airport) AS routes${baseSql}`,
     airline,
     "uf",
     [nowSec, windowEnd]
   );
-  const totalDepartures = (db.query(totalQ.sql).get(...totalQ.params) as { n: number }).n;
+  const totals = db.query(totalQ.sql).get(...totalQ.params) as {
+    departures: number;
+    routes: number;
+  };
 
-  return { rows, totalDepartures, windowLabel: `next ${DEPARTURE_WINDOW_HOURS} hours` };
+  return {
+    rows,
+    totalDepartures: totals.departures,
+    totalRoutes: totals.routes,
+    windowLabel: `next ${DEPARTURE_WINDOW_HOURS} hours`,
+  };
+}
+
+export interface RouteLeaderboardRow {
+  origin: string;
+  destination: string;
+  /** All tracked departures on the pair in the window, equipped or not. */
+  departures: number;
+  /** Departures on a Starlink-equipped tail. */
+  equipped: number;
+  flight_numbers: number;
+  next_departure: number;
+}
+
+/**
+ * Per-route equipped AND total departure counts over the live window — the
+ * rankings pages' base table. getRouteStarlinkSchedule counts only equipped
+ * departures; keeping the denominator here is what lets a page claim "every
+ * scheduled departure on this route is Starlink" honestly. Unpaginated: the
+ * 48h window bounds the row count, and rankings rank/filter in memory.
+ */
+export function getRouteLeaderboard(
+  db: Database,
+  airline?: AirlineFilter,
+  nowSec = Math.floor(Date.now() / 1000)
+): RouteLeaderboardRow[] {
+  const windowEnd = nowSec + DEPARTURE_WINDOW_HOURS * 3600;
+  const q = withAirline(
+    `SELECT uf.departure_airport AS origin, uf.arrival_airport AS destination,
+            COUNT(DISTINCT uf.flight_number || ':' || uf.departure_time) AS departures,
+            COUNT(DISTINCT CASE WHEN sp.TailNumber IS NOT NULL
+                                THEN uf.flight_number || ':' || uf.departure_time END) AS equipped,
+            COUNT(DISTINCT uf.flight_number) AS flight_numbers,
+            MIN(uf.departure_time) AS next_departure
+     FROM upcoming_flights uf
+     LEFT JOIN starlink_planes sp
+       ON uf.tail_number = sp.TailNumber AND ${equippedFilter("sp")}
+     WHERE uf.departure_time >= ? AND uf.departure_time < ?`,
+    airline,
+    "uf",
+    [nowSec, windowEnd]
+  );
+  return db
+    .query(
+      `${q.sql} GROUP BY uf.departure_airport, uf.arrival_airport
+       ORDER BY equipped DESC, departures DESC, origin ASC, destination ASC`
+    )
+    .all(...q.params) as RouteLeaderboardRow[];
 }
 
 function computeInstallPace(

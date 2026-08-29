@@ -295,6 +295,8 @@ export interface RouteSchedule {
   rows: RouteScheduleRow[];
   /** All departures matching the window/predicate — not capped by the row LIMIT. */
   totalDepartures: number;
+  /** All route pairs matching the window/predicate — the pagination denominator. */
+  totalRoutes: number;
   windowLabel: string;
 }
 

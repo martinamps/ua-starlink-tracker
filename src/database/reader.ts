@@ -20,6 +20,7 @@ import type {
   RouteSchedule,
 } from "../types";
 import {
+  type AirportSummary,
   type ConfirmedEdge,
   type DirectRouteEdge,
   type FleetRosterEntry,
@@ -31,7 +32,10 @@ import {
   type RouteEntryRow,
   type RouteFlightRow,
   type RouteGraphEdge,
+  type RouteLeaderboardRow,
+  type RouteScheduleOpts,
   type RouteSummary,
+  type SitemapAirport,
   type SitemapFlight,
   type SitemapRoute,
   type SubfleetPenetration,
@@ -40,12 +44,14 @@ import {
   type WifiConsensus,
   type WifiMismatch,
   airlineServesAirports,
+  airportHasData,
   bumpDiscoveryPriority,
   cacheFlightRoute,
   computeWifiConsensus,
   flightNumberHasData,
   getAirlineByTail,
   getAirportDepartures,
+  getAirportSummary,
   getCachedFlightRoutes,
   getConfirmedFleetTails,
   getConfirmedStarlinkEdges,
@@ -69,10 +75,12 @@ import {
   getRecentInstalls,
   getRouteFlights,
   getRouteGraphEdges,
+  getRouteLeaderboard,
   getRouteStarlinkSchedule,
   getRouteSummary,
   getRoutesForFlightVariants,
   getServedRoutePairs,
+  getSitemapAirports,
   getSitemapFlights,
   getSitemapRoutes,
   getStarlinkPlaneByTail,
@@ -123,7 +131,9 @@ export interface ScopedReader {
   ): FlightAssignmentRow[];
   getFleetPageData(): FleetPageData;
   getAirportDepartures(): AirportDepartures;
-  getRouteStarlinkSchedule(): RouteSchedule;
+  getRouteStarlinkSchedule(opts?: RouteScheduleOpts): RouteSchedule;
+  /** Per-route equipped/total counts for the rankings pages. */
+  getRouteLeaderboard(): RouteLeaderboardRow[];
   getFleetDiscoveryStats(): FleetDiscoveryStats;
   getConfirmedFleetTails(): ReturnType<typeof getConfirmedFleetTails>;
   getPendingFleetTails(): ReturnType<typeof getPendingFleetTails>;
@@ -163,6 +173,11 @@ export interface ScopedReader {
   /** Existence gate for /route-planner/{origin}/{destination}; mirrors getSitemapRoutes. */
   routeHasData(origin: string, destination: string): boolean;
   getRouteSummary(origin: string, destination: string): RouteSummary;
+  /** Airport permalinks worth advertising; empty on the hub (airport pages are tenant pages). */
+  getSitemapAirports(): SitemapAirport[];
+  /** Existence gate for /airport/{IATA}; mirrors getSitemapAirports. */
+  airportHasData(iata: string): boolean;
+  getAirportSummary(iata: string): AirportSummary;
   getFlightHistorySummary(variants: string[]): FlightHistorySummary;
   getFlightRoutePairs(variants: string[]): FlightRoutePair[];
 
@@ -292,7 +307,9 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     getFlightAssignments: (v, s, e) => getFlightAssignments(db, v, s, e, airlines),
     getFleetPageData: () => getFleetPageData(db, airlines),
     getAirportDepartures: () => getAirportDepartures(db, airlines),
-    getRouteStarlinkSchedule: () => getRouteStarlinkSchedule(db, airlines),
+    getRouteStarlinkSchedule: (opts) =>
+      getRouteStarlinkSchedule(db, airlines, Math.floor(Date.now() / 1000), opts),
+    getRouteLeaderboard: () => getRouteLeaderboard(db, airlines),
     getFleetDiscoveryStats: () => getFleetDiscoveryStats(db, airlines),
     getConfirmedFleetTails: () => getConfirmedFleetTails(db, airlines),
     getPendingFleetTails: () => getPendingFleetTails(db, airlines),
@@ -317,6 +334,9 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     flightNumberHasData: (v) => flightNumberHasData(db, v, airlines),
     routeHasData: (o, d) => routeHasData(db, o, d, soleAirline()),
     getRouteSummary: (o, d) => getRouteSummary(db, o, d, soleAirline()),
+    getSitemapAirports: () => (scope === "ALL" ? [] : getSitemapAirports(db, scope)),
+    airportHasData: (iata) => airportHasData(db, iata, soleAirline()),
+    getAirportSummary: (iata) => getAirportSummary(db, iata, soleAirline()),
     getFlightHistorySummary: (v) => getFlightHistorySummary(db, v, airlines),
     getFlightRoutePairs: (v) => getFlightRoutePairs(db, v, airlines),
 
