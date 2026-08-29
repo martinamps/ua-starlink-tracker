@@ -95,25 +95,76 @@ function parseCSV(csvText: string) {
   return { headers, rows };
 }
 
-/** Fetch one Google Sheets tab as CSV via the export endpoint, with the same
- * browser-imitating headers the roster scrape uses. */
-export async function fetchSheetCsv(docId: string, gid: number): Promise<string> {
-  const response = await fetch(
-    `https://docs.google.com/spreadsheets/d/${docId}/export?format=csv&gid=${gid}`,
-    {
-      redirect: "follow",
-      headers: {
-        "User-Agent": BROWSER_USER_AGENT,
-        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9",
-        "Accept-Language": "en-US,en;q=0.5",
-        "Cache-Control": "no-cache",
-      },
-    }
-  );
-  if (!response.ok) {
-    throw new Error(`HTTP error! Status: ${response.status}`);
+const SHEET_EXPORT_HEADERS = {
+  "User-Agent": BROWSER_USER_AGENT,
+  Accept: "text/html,application/xhtml+xml,application/xml;q=0.9",
+  "Accept-Language": "en-US,en;q=0.5",
+  "Cache-Control": "no-cache",
+} as const;
+
+/** A CSV-export fetch failure that knows whether retrying can ever help:
+ * 429/5xx/network are transient export-endpoint moods; any other HTTP status
+ * means the gid itself is bad (tab renamed or deleted — fix the gid list). */
+export class SheetFetchError extends Error {
+  constructor(
+    message: string,
+    readonly status: number | null,
+    readonly retryable: boolean
+  ) {
+    super(message);
+    this.name = "SheetFetchError";
   }
-  return response.text();
+}
+
+// Two short retries: the export endpoint 429s/5xxs a few tabs per month near
+// the end of the 23-tab serial burst (the tabs still exist — verified by
+// re-fetching the failed gids), and one hourly cycle aborted over a blip is
+// an hour of staleness for nothing. Permanent failures skip the waits.
+const SHEET_RETRY_DELAYS_MS = [2_000, 8_000];
+
+interface CsvFetchDeps {
+  fetchFn?: typeof fetch;
+  sleep?: (ms: number) => Promise<unknown>;
+}
+
+export async function fetchCsvWithRetry(url: string, deps: CsvFetchDeps = {}): Promise<string> {
+  const fetchFn = deps.fetchFn ?? fetch;
+  const sleep = deps.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
+  let lastError: SheetFetchError | null = null;
+  for (let attempt = 0; attempt <= SHEET_RETRY_DELAYS_MS.length; attempt++) {
+    if (attempt > 0) await sleep(SHEET_RETRY_DELAYS_MS[attempt - 1]);
+    try {
+      const response = await fetchFn(url, {
+        redirect: "follow",
+        headers: SHEET_EXPORT_HEADERS,
+      });
+      if (response.ok) return response.text();
+      const retryable = response.status === 429 || response.status >= 500;
+      lastError = new SheetFetchError(
+        retryable
+          ? `HTTP ${response.status} (transient — export rate-limit/outage)`
+          : `HTTP ${response.status} (permanent — tab likely renamed or removed; update the gid list)`,
+        response.status,
+        retryable
+      );
+    } catch (err) {
+      lastError = new SheetFetchError(
+        `network error (transient): ${err instanceof Error ? err.message : String(err)}`,
+        null,
+        true
+      );
+    }
+    if (!lastError.retryable) break;
+  }
+  throw lastError ?? new SheetFetchError("unreachable", null, false);
+}
+
+/** Fetch one Google Sheets tab as CSV via the export endpoint, with the same
+ * browser-imitating headers + retry policy the roster scrape uses. */
+export async function fetchSheetCsv(docId: string, gid: number): Promise<string> {
+  return fetchCsvWithRetry(
+    `https://docs.google.com/spreadsheets/d/${docId}/export?format=csv&gid=${gid}`
+  );
 }
 
 // Function to fetch all CSV data and filter for Starlink WiFi
@@ -127,23 +178,11 @@ export async function fetchAllSheets() {
   let expressStarlink = 0;
   let mainlineStarlink = 0;
 
-  const failedGids: string[] = [];
+  const failedSheets: string[] = [];
 
   for (const sheet of exportUrls) {
     try {
-      const response = await fetch(sheet.url, {
-        redirect: "follow",
-        headers: {
-          "User-Agent": BROWSER_USER_AGENT,
-          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9",
-          "Accept-Language": "en-US,en;q=0.5",
-          "Cache-Control": "no-cache",
-        },
-      });
-      if (!response.ok) {
-        throw new Error(`HTTP error! Status: ${response.status}`);
-      }
-      const csvText = await response.text();
+      const csvText = await fetchCsvWithRetry(sheet.url);
       const { headers, rows } = parseCSV(csvText);
 
       // Add to the appropriate fleet total
@@ -211,14 +250,18 @@ export async function fetchAllSheets() {
         starlinkAircraft.push(aircraft);
       }
     } catch (err) {
-      logError(`Failed to fetch sheet with gid=${sheet.gid}`, err);
-      failedGids.push(String(sheet.gid));
+      // fleet + gid together: gid 13 exists in BOTH spreadsheets, so a bare
+      // gid can't identify which tab failed. The SheetFetchError message
+      // already says transient-vs-permanent and what to do about each.
+      const attempts = err instanceof SheetFetchError && err.retryable ? " after retries" : "";
+      logError(`Failed to fetch ${sheet.fleet} sheet gid=${sheet.gid}${attempts}`, err);
+      failedSheets.push(`${sheet.fleet}:${sheet.gid}`);
     }
   }
 
-  if (failedGids.length > 0) {
+  if (failedSheets.length > 0) {
     throw new Error(
-      `fetchAllSheets: ${failedGids.length} sheet(s) failed (gids: ${failedGids.join(", ")}); aborting to avoid partial DELETE in updateDatabase`
+      `fetchAllSheets: ${failedSheets.length} sheet(s) failed (${failedSheets.join(", ")}); aborting to avoid partial DELETE in updateDatabase`
     );
   }
 
