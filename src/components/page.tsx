@@ -1,7 +1,7 @@
 import type React from "react";
 import type { AirlineContent, ContentStats } from "../airlines/content";
 import { ensureAirlinePrefix } from "../airlines/flight-number";
-import { type SiteConfig, siteAirline } from "../airlines/registry";
+import { AIRLINES, type SiteConfig, siteAirline } from "../airlines/registry";
 import type {
   Aircraft,
   AirportDeparture,
@@ -776,11 +776,22 @@ export default function Page({
                     return [`${dep}-${arr}`, `${arr}-${dep}`];
                   })
                   .join(" ");
-                // Index raw + marketing-airline-prefix variant for search
+                // Index the raw callsign plus the marketing number it maps to.
+                // The mapping is ensureAirlinePrefix, not a `/^[A-Z]+/` strip:
+                // a strip turns G74561 into UA74561, so a G7-coded flight was
+                // unfindable by the UA number the pill's label and href
+                // advertise — the box would have said "no match" for the very
+                // number the row was showing.
+                const rowAirline = AIRLINES[airline];
                 const flightNumbersStr = flights
-                  .map(
-                    (f) => `${f.flight_number} ${airline}${f.flight_number.replace(/^[A-Z]+/, "")}`
-                  )
+                  .flatMap((f) => {
+                    const marketing = rowAirline
+                      ? ensureAirlinePrefix(rowAirline, f.flight_number)
+                      : f.flight_number;
+                    return marketing === f.flight_number
+                      ? [f.flight_number]
+                      : [f.flight_number, marketing];
+                  })
                   .join(" ")
                   .toLowerCase();
 

@@ -47,6 +47,15 @@ function pillsOf(html: string): Pill[] {
   });
 }
 
+/** The row `<div>` carrying the client-side search index for one tail. */
+function searchIndexFor(html: string, tail: string): string {
+  const row = html.match(new RegExp(`<div\\b[^>]*data-tail="${tail.toLowerCase()}"[^>]*>`))?.[0];
+  return row?.match(/data-flights="([^"]*)"/)?.[1] ?? "";
+}
+
+/** The substring test the inline search script runs against `data-flights`. */
+const searchFinds = (index: string, term: string) => index.includes(term.toLowerCase());
+
 /** Pills whose row flight number is `fn` — matched via the tooltip, which
  * carries either the marketing number (when linked) or the raw callsign. */
 function pillFor(pills: Pill[], tooltip: string): Pill | undefined {
@@ -100,12 +109,14 @@ function seedDb() {
 describe("homepage flight pills link to flight permalinks", () => {
   let app: ReturnType<typeof createApp>;
   let pills: Pill[];
+  let html: string;
 
   beforeAll(async () => {
     app = createApp(seedDb());
     const res = await app.dispatch(req("/", UA_HOST));
     expect(res.status).toBe(200);
-    pills = pillsOf(await res.text());
+    html = await res.text();
+    pills = pillsOf(html);
     expect(pills.length).toBeGreaterThan(0);
   });
 
@@ -198,6 +209,20 @@ describe("homepage flight pills link to flight permalinks", () => {
       expect(p.visibleWords.length).toBeGreaterThan(0);
       for (const word of p.visibleWords) expect(p.ariaLabel).toContain(word);
     }
+  });
+
+  test("the row search index finds every number the pills advertise", () => {
+    const index = searchIndexFor(html, "N100UA");
+    for (const p of pills) {
+      // Regression: the index used to be built with a /^[A-Z]+/ strip, so the
+      // row advertised UA4561 while indexing UA74561 — typing the number the
+      // page had just shown matched nothing.
+      expect(searchFinds(index, p.tooltip)).toBe(true);
+    }
+    // The operating callsign stays searchable too; this adds, never replaces.
+    expect(searchFinds(index, "G74561")).toBe(true);
+    expect(searchFinds(index, "OO4757")).toBe(true);
+    expect(searchFinds(index, "UA74561")).toBe(false);
   });
 });
 
