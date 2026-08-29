@@ -678,7 +678,13 @@ export default function CheckFlightPage({ site, flight, invalid }: CheckFlightPa
                       // to contradict.
                       var stale = pred.confidence === 'low' && pred.n_observations >= 2;
                       var counted = '<span class="text-secondary">' + pred.n_observations + '</span> historical observation' + (pred.n_observations === 1 ? '' : 's') + ' of aircraft on this flight number';
-                      var detail = pred.n_observations === 0
+                      var detail = pred.method === 'type_mix_prior'
+                        // Zero observations, but not the fleet average: we know
+                        // which airframes fly this number and what share of
+                        // THOSE carry Starlink. Naming the wrong evidence is
+                        // how a never-equipped regional jet got told ~70%.
+                        ? 'No verified history for this flight number — this is the install rate across the aircraft types that fly it.'
+                        : pred.n_observations === 0
                         ? 'No historical data for this flight number — this is the fleet install rate (treat as upper bound).'
                         : stale
                         ? 'The ' + counted + ' are all old enough that the model leans on the fleet install rate instead (low confidence).'

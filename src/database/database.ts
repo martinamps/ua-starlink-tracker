@@ -1436,6 +1436,41 @@ export function getVerificationObservations(
   return db.query(q.sql).all(...q.params) as VerificationObservation[];
 }
 
+/** One check's record of WHICH AIRFRAME flew a flight number — no outcome. */
+export interface FlightTypeDraw {
+  flight_number: string;
+  tail_number: string;
+  aircraft_type: string;
+  checked_at: number;
+}
+
+/**
+ * Aircraft types seen on each flight number, over EVERY verifier row rather
+ * than the clean-observation population getVerificationObservations trains on.
+ *
+ * Whether a check parsed a wifi provider is a fact about the OUTCOME; the
+ * airframe it was flying is not. The two come apart exactly where it matters:
+ * a family with no wifi product at all parses no provider, so every check on it
+ * is dropped as unclean and its flight numbers reach the predictor with no type
+ * evidence — inheriting the fleet-wide subfleet prior (~70% for express) when
+ * their own family is at 0%. Same for aircraft the fleet roster is missing
+ * (regional-partner tails): the log still saw them fly.
+ */
+export function getFlightTypeDraws(db: Database, airline?: AirlineFilter): FlightTypeDraw[] {
+  const sources = verifierSources(airline);
+  if (sources.length === 0) return [];
+  const q = withAirline(
+    `SELECT flight_number, tail_number, aircraft_type, checked_at
+     FROM starlink_verification_log
+     WHERE flight_number IS NOT NULL AND aircraft_type IS NOT NULL AND aircraft_type <> ''
+       AND source IN (${sources.map(() => "?").join(",")})`,
+    airline,
+    "",
+    sources
+  );
+  return db.query(q.sql).all(...q.params) as FlightTypeDraw[];
+}
+
 export interface RouteFlightRow {
   flight_number: string;
   departure_airport: string;

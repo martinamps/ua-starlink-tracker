@@ -26,6 +26,7 @@ import {
   type FlightAssignmentRow,
   type FlightHistorySummary,
   type FlightRoutePair,
+  type FlightTypeDraw,
   type HubAirlineStat,
   type QatarScheduleRow,
   type RouteEntryRow,
@@ -58,6 +59,7 @@ import {
   getFlightAssignments,
   getFlightHistorySummary,
   getFlightRoutePairs,
+  getFlightTypeDraws,
   getHubStats,
   getLastUpdated,
   getMeta,
@@ -132,6 +134,8 @@ export interface ScopedReader {
 
   // Predictor / route-graph
   getVerificationObservations(): VerificationObservation[];
+  /** Flight-number → airframe draws from every verifier row (identity, not outcome). */
+  getFlightTypeDraws(): FlightTypeDraw[];
   getRouteFlights(origin: string | null, destination: string | null): RouteFlightRow[];
   getRouteGraphEdges(): RouteGraphEdge[];
   /** Every ORIG-DEST the carrier flies; null when no route census exists for the scope. */
@@ -300,6 +304,7 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     getWifiMismatches: () => getWifiMismatches(db, airlines),
 
     getVerificationObservations: () => getVerificationObservations(db, airlines),
+    getFlightTypeDraws: () => getFlightTypeDraws(db, airlines),
     getRouteFlights: (o, d) => getRouteFlights(db, o, d, airlines),
     getRouteGraphEdges: () => getRouteGraphEdges(db, airlines),
     getServedRoutePairs: () => getServedRoutePairs(db, airlines),

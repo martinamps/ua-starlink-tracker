@@ -39,6 +39,7 @@ import {
 } from "../airlines/registry";
 import type {
   FleetRosterEntry,
+  FlightTypeDraw,
   VerificationObservation as Observation,
   SubfleetPenetration,
 } from "../database/database";
@@ -63,6 +64,11 @@ const uaPrefix = (fn: string) => ensureAirlinePrefix(UA_CFG, fn);
 
 type PredictionMethod =
   | "flight_history_smoothed"
+  /** No clean outcome for this flight number, but the log knows WHICH AIRFRAMES
+   * fly it, so the answer is those families' install rate instead of the
+   * subfleet's. Additive: a new value on an existing field, and it only
+   * replaces `fleet_prior_*` on flights that used to have no evidence at all. */
+  | "type_mix_prior"
   | "fleet_prior_express"
   | "fleet_prior_mainline"
   | "fleet_prior_unknown"
@@ -77,6 +83,21 @@ interface Prediction {
   confidence: "high" | "medium" | "low";
   method: PredictionMethod;
   n_observations: number;
+}
+
+/**
+ * What a number is actually made of, for copy that has to name its evidence.
+ * `n_observations === 0` used to imply "fleet average"; it no longer does —
+ * a type-mix prediction has no outcome history and is still specific to the
+ * airframes that fly the number, and calling that the fleet rate is the same
+ * mislabel the type-mix prior exists to remove.
+ */
+export function predictionBasis(
+  pred: Pick<Prediction, "method" | "n_observations">
+): "assignment" | "history" | "aircraft_types" | "fleet_prior" {
+  if (pred.method === "confirmed_assignment") return "assignment";
+  if (pred.method === "type_mix_prior") return "aircraft_types";
+  return pred.n_observations > 0 ? "history" : "fleet_prior";
 }
 
 /**
@@ -193,7 +214,8 @@ function coldPrediction(flightNumber: string, config: ModelConfig): Prediction {
 function buildTypeAwarePredict(
   trainObs: Observation[],
   config: ModelConfig,
-  roster: FleetRosterEntry[]
+  roster: FleetRosterEntry[],
+  typeDraws: FlightTypeDraw[]
 ): ((flightNumber: string) => Prediction) | null {
   if (roster.length === 0) return null;
 
@@ -221,7 +243,25 @@ function buildTypeAwarePredict(
     });
   }
 
-  // Penetration per family, over the whole roster.
+  // Airframes the roster is missing but the log has watched fly: family from
+  // the log row, status from its own newest observation. United Express is
+  // flown by partner carriers whose tails the fleet pull doesn't return, and
+  // those partners operate most of the never-equipped regional jets — leaving
+  // them out of the census is what let their flight numbers be priced off the
+  // express average.
+  for (const d of typeDraws) {
+    if (tails.has(d.tail_number)) continue;
+    const status = tailLatest.get(d.tail_number);
+    // No clean observation of this airframe = no known status. It stays out of
+    // the census entirely rather than counting as an unequipped body.
+    if (!status) continue;
+    tails.set(d.tail_number, {
+      type: normalizeAircraftType(d.aircraft_type),
+      starlink: status.starlink,
+    });
+  }
+
+  // Penetration per family, over every airframe whose status we know.
   const typePen = new Map<string, { s: number; n: number }>();
   for (const t of tails.values()) {
     const agg = typePen.get(t.type) ?? { s: 0, n: 0 };
@@ -229,6 +269,51 @@ function buildTypeAwarePredict(
     agg.n += 1;
     typePen.set(t.type, agg);
   }
+
+  // Which families fly each flight number, over EVERY check rather than the
+  // clean ones alone. A family with no wifi product parses no provider, so its
+  // checks never become observations — and its flight numbers would otherwise
+  // arrive here with no type evidence at all.
+  const drawMix = new Map<string, Map<string, number>>();
+  for (const d of typeDraws) {
+    const type = tails.get(d.tail_number)?.type ?? normalizeAircraftType(d.aircraft_type);
+    if (type === "unknown" || type === "other") continue;
+    let m = drawMix.get(d.flight_number);
+    if (!m) {
+      m = new Map();
+      drawMix.set(d.flight_number, m);
+    }
+    m.set(type, (m.get(type) ?? 0) + 1);
+  }
+
+  /**
+   * The install rate of the families a flight actually draws — the ceiling its
+   * prediction is held to, since a flight cannot beat the fleet it is flown by.
+   * Null when the mix is empty; only then is the subfleet average still the
+   * best available prior.
+   *
+   * It caps by REPLACING the subfleet prior rather than by clamping the final
+   * number: a flight number's own history may legitimately sit far above its
+   * families' average (a 20%-penetration family still has flights that draw an
+   * equipped tail every day), and measurement confirmed a hard clamp wrecks
+   * exactly those — 737-900 flights fell from a well-calibrated ~0.9 to the
+   * family's 0.21. The evidence outranks the prior; the prior is what had no
+   * business being a fleet-wide average.
+   */
+  const mixPrior = (mix: Map<string, number>) => {
+    let n = 0;
+    let s = 0;
+    for (const [type, count] of mix) {
+      const pen = typePen.get(type);
+      // A family with no airframe of known status is ignorance, not a zero.
+      // Counting it as 0% would let an unknown type talk a flight down to
+      // "no Starlink" — the mirror of the bug this whole path exists to fix.
+      if (!pen) continue;
+      n += count;
+      s += count * (pen.s / pen.n);
+    }
+    return n > 0 ? s / n : null;
+  };
 
   // Per flight number: the family mix of its tail draws, plus the
   // recency-weighted draws whose tail carries Starlink NOW.
@@ -261,23 +346,33 @@ function buildTypeAwarePredict(
   // and never vouches for evidence the decay has already written off.
   const predictions = new Map<string, Prediction>();
   for (const [flightNumber, f] of flights) {
-    let prior = coldPrior(flightNumber, config);
-    if (f.mix.size > 0) {
-      let n = 0;
-      let s = 0;
-      for (const [type, count] of f.mix) {
-        const pen = typePen.get(type);
-        n += count;
-        s += count * (pen ? pen.s / pen.n : 0);
-      }
-      prior = s / n;
-    }
+    // Prefer the all-checks mix over the clean-observation one: same quantity,
+    // strictly more evidence about which airframes this number draws. A thin
+    // history smoothed toward the subfleet average is how flight numbers flown
+    // only by never-equipped regional jets published ~70%.
+    const prior = mixPrior(drawMix.get(flightNumber) ?? f.mix) ?? coldPrior(flightNumber, config);
     predictions.set(flightNumber, {
       flight_number: flightNumber,
       probability: smoothedRate(f.s, f.n, prior, config.priorStrength),
       confidence: decayedConfidence(f.n, f.raw, config.priorStrength),
       method: "flight_history_smoothed",
       n_observations: f.raw,
+    });
+  }
+
+  // Flight numbers with type evidence but no clean outcome yet. They used to
+  // fall through to the subfleet cold prior; their own families are a far
+  // better answer, and for the never-equipped ones the only honest one.
+  for (const [flightNumber, mix] of drawMix) {
+    if (predictions.has(flightNumber)) continue;
+    const prior = mixPrior(mix);
+    if (prior === null) continue;
+    predictions.set(flightNumber, {
+      flight_number: flightNumber,
+      probability: prior,
+      confidence: "low",
+      method: "type_mix_prior",
+      n_observations: 0,
     });
   }
 
@@ -328,10 +423,14 @@ function buildLegacyPredict(
 export function buildModel(
   trainObs: Observation[],
   config: ModelConfig = DEFAULT_CONFIG,
-  roster: FleetRosterEntry[] = []
+  roster: FleetRosterEntry[] = [],
+  /** Every check's flight→airframe record; callers holding out a window must
+   * filter these to it too, or the model reads assignments from the future. */
+  typeDraws: FlightTypeDraw[] = []
 ) {
   const predict =
-    buildTypeAwarePredict(trainObs, config, roster) ?? buildLegacyPredict(trainObs, config);
+    buildTypeAwarePredict(trainObs, config, roster, typeDraws) ??
+    buildLegacyPredict(trainObs, config);
   return { predict };
 }
 
@@ -486,7 +585,10 @@ export function backtest(
   const testObs = allObs.filter((o) => o.checked_at >= cutoff);
 
   const derivedConfig = deriveConfig(reader, trainObs, config);
-  const { predict } = buildModel(trainObs, derivedConfig, censusRoster(reader));
+  // Type draws are held out on the same cutoff: which airframe flew a number
+  // last Tuesday is knowledge from the future at the point being scored.
+  const trainDraws = reader.getFlightTypeDraws().filter((d) => d.checked_at < cutoff);
+  const { predict } = buildModel(trainObs, derivedConfig, censusRoster(reader), trainDraws);
 
   const predictions = testObs.map((obs) => ({
     pred: predict(obs.flight_number),
@@ -615,7 +717,7 @@ function censusRoster(reader: ScopedReader): FleetRosterEntry[] {
 function buildProductionModel(reader: ScopedReader): { predict: (fn: string) => Prediction } {
   const trainObs = reader.getVerificationObservations();
   const config = deriveConfig(reader, trainObs);
-  return buildModel(trainObs, config, censusRoster(reader));
+  return buildModel(trainObs, config, censusRoster(reader), reader.getFlightTypeDraws());
 }
 
 /**

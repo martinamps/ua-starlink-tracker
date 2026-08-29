@@ -88,6 +88,7 @@ import {
   joinSentences,
   planItinerary,
   predictFlight,
+  predictionBasis,
 } from "../scripts/starlink-predictor";
 import type { ApiResponse, Flight } from "../types";
 import {
@@ -465,13 +466,33 @@ function recordPrediction(
   pred: { probability: number; confidence: "high" | "medium" | "low"; method: string },
   airlineCode: string
 ): void {
-  const method = pred.method.startsWith("fleet_prior") ? "fleet_prior" : "flight_history";
+  // Three bounded values, and the split matters: a type-mix answer is neither a
+  // fleet-wide cold start nor a flight with history behind it.
+  const method = pred.method.startsWith("fleet_prior")
+    ? "fleet_prior"
+    : pred.method === "type_mix_prior"
+      ? "type_mix"
+      : "flight_history";
   metrics.distribution(DISTRIBUTIONS.PREDICTION_PROBABILITY, pred.probability, {
     confidence: pred.confidence,
     method,
     airline: normalizeAirlineTag(airlineCode),
   });
 }
+
+/** The one place API copy names a prediction's evidence, so no endpoint can
+ * call a type-mix number the fleet average again. */
+function predictionSentence(pred: { method: string; n_observations: number }, pct: number): string {
+  switch (predictionBasis(pred)) {
+    case "history":
+      return `~${pct}% of recent departures of this flight used a Starlink-equipped aircraft (${pred.n_observations} observation${pred.n_observations === 1 ? "" : "s"}).`;
+    case "aircraft_types":
+      return `No verified history for this flight number; ~${pct}% is the install rate across the aircraft types that fly it.`;
+    default:
+      return `No history for this flight number; ~${pct}% reflects the fleet-wide install rate.`;
+  }
+}
+
 /**
  * QR's data shape doesn't fit the upcoming_flights → starlink_planes JOIN that
  * other carriers use (no per-tail signal from QR's flight-status API). Serve
@@ -753,11 +774,11 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant }) 
             probability: pred.probability,
             confidence: pred.confidence,
             n_observations: pred.n_observations,
+            // Additive: 0 observations no longer means "fleet average", so a
+            // renderer needs the basis to describe the number correctly.
+            method: pred.method,
           },
-          message:
-            pred.n_observations > 0
-              ? `${assignmentNote} ~${pct}% of recent departures of this flight used a Starlink-equipped aircraft (${pred.n_observations} observation${pred.n_observations === 1 ? "" : "s"}).`
-              : `${assignmentNote} No history for this flight number; ~${pct}% reflects the fleet-wide install rate.`,
+          message: `${assignmentNote} ${predictionSentence(pred, pct)}`,
           flights: [],
         }),
         { headers: SECURITY_HEADERS.api }
@@ -878,10 +899,7 @@ const apiCheckAnyFlight: Handler = async ({ req, url, reader, getReader, tenant 
           airline: cfg.name,
           probability: pred.probability,
           confidence: pred.confidence,
-          reason:
-            pred.n_observations > 0
-              ? `No schedule data for this date; ~${Math.round(pred.probability * 100)}% based on ${pred.n_observations} historical observation${pred.n_observations === 1 ? "" : "s"}.`
-              : `No schedule data for this date; ~${Math.round(pred.probability * 100)}% based on ${cfg.name} fleet rollout rate.`,
+          reason: `No schedule data for this date; ${predictionSentence(pred, Math.round(pred.probability * 100))}`,
           flights: [],
         }),
         { headers: SECURITY_HEADERS.api }

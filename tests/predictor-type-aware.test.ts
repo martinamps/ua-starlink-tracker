@@ -5,7 +5,11 @@
  * backed suites. Asserts the causal structure, not exact probabilities.
  */
 import { describe, expect, test } from "bun:test";
-import type { FleetRosterEntry, VerificationObservation } from "../src/database/database";
+import type {
+  FleetRosterEntry,
+  FlightTypeDraw,
+  VerificationObservation,
+} from "../src/database/database";
 import { buildModel } from "../src/scripts/starlink-predictor";
 
 const CONFIG = {
@@ -26,6 +30,18 @@ const obs = (
   flight_number,
   tail_number,
   has_starlink,
+  checked_at: NOW - daysAgo * 86400,
+});
+
+const draw = (
+  flight_number: string,
+  tail_number: string,
+  aircraft_type: string,
+  daysAgo = 0
+): FlightTypeDraw => ({
+  flight_number,
+  tail_number,
+  aircraft_type,
   checked_at: NOW - daysAgo * 86400,
 });
 
@@ -57,6 +73,16 @@ function makeRoster(): FleetRosterEntry[] {
 
 describe("type-aware predictor", () => {
   const roster = makeRoster();
+  // The never-equipped end of United Express: 60 CRJ-200s, none retrofitted,
+  // alongside a fully-equipped E175 pool that lifts the express average.
+  const crjRoster: FleetRosterEntry[] = [
+    ...roster,
+    ...Array.from({ length: 60 }, (_, i) => ({
+      tail_number: `NCRJ-${i}`,
+      aircraft_type: "Bombardier CRJ-200",
+      verified_wifi: null,
+    })),
+  ];
 
   test("a flight that only ever draws an unretrofittable type predicts ~0", () => {
     // UA100 has flown ten 787s. 0/400 787s have Starlink → the answer is no,
@@ -103,6 +129,63 @@ describe("type-aware predictor", () => {
     expect(express.method).toBe("fleet_prior_express");
     expect(express.n_observations).toBe(0);
     expect(predict("UA300").method).toBe("fleet_prior_mainline");
+  });
+
+  test("a flight known only by the airframes it draws is priced off that family", () => {
+    // UA5000 has no clean observation — its checks parse no wifi provider, the
+    // way a regional jet with no wifi product at all never does. What the log
+    // DOES record is which airframe flew it. Without that the express cold
+    // prior answers for a family that will never be equipped.
+    const draws = Array.from({ length: 6 }, (_, i) => draw("UA5000", `NCRJ-${i}`, "CRJ-200", i));
+    const withTypes = buildModel([], CONFIG, crjRoster, draws).predict("UA5000");
+    const blind = buildModel([], CONFIG, crjRoster).predict("UA5000");
+
+    expect(withTypes.method).toBe("type_mix_prior");
+    expect(withTypes.n_observations).toBe(0);
+    // No outcome behind it — the number is a prior, and says so.
+    expect(withTypes.confidence).toBe("low");
+    expect(withTypes.probability).toBeLessThan(blind.probability);
+    expect(blind.method).toBe("fleet_prior_express");
+  });
+
+  test("airframes the roster misses still count toward their family's rate", () => {
+    // United Express is flown by partner carriers whose tails the fleet pull
+    // doesn't return, so ERJ-145 has no rostered airframe at all. The log has
+    // both their family and their status, which is everything a penetration
+    // figure needs — and without it the express average answers instead.
+    const offRoster = Array.from({ length: 8 }, (_, i) => `NPTNR-${i}`);
+    const history = offRoster.map((tail, i) => obs(`UA61${i}`, tail, 0, i));
+    const draws = [
+      ...offRoster.map((tail, i) => draw(`UA61${i}`, tail, "ERJ-145", i)),
+      ...offRoster.map((tail, i) => draw("UA5001", tail, "ERJ-145", i)),
+    ];
+    const p = buildModel(history, CONFIG, roster, draws).predict("UA5001");
+    expect(p.method).toBe("type_mix_prior");
+    expect(p.probability).toBeLessThan(CONFIG.expressColdPrior / 2);
+  });
+
+  test("a family with no airframe of known status leaves the prior alone", () => {
+    // An unknown type must not read as 0% installed: UA5002 draws a family the
+    // roster has never seen and no observation has ever settled, so the honest
+    // answer is still the subfleet cold start.
+    const p = buildModel([], CONFIG, roster, [draw("UA5002", "NNEW-1", "Airbus A321neo")]).predict(
+      "UA5002"
+    );
+    expect(p.method).toBe("fleet_prior_express");
+    expect(p.probability).toBe(CONFIG.expressColdPrior);
+  });
+
+  test("type evidence informs the prior; it never overrules the flight's own record", () => {
+    // A 25%-penetration family still has flight numbers that draw an equipped
+    // tail every single day. Clamping those to the family rate is the failure
+    // mode a hard cap introduced — measured, then removed.
+    const history = Array.from({ length: 12 }, (_, i) => obs("UA800", "N738-0", 1, i / 4));
+    const draws = Array.from({ length: 12 }, (_, i) =>
+      draw("UA800", "N738-0", "Boeing 737-824", i / 4)
+    );
+    const p = buildModel(history, CONFIG, roster, draws).predict("UA800");
+    expect(p.method).toBe("flight_history_smoothed");
+    expect(p.probability).toBeGreaterThan(0.7);
   });
 
   test("cosmetic type-name variants share one penetration bucket", () => {

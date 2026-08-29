@@ -46,6 +46,7 @@ import {
   planItinerary,
   predictFlight,
   predictRoute,
+  predictionBasis,
 } from "../scripts/starlink-predictor";
 import { debug, info } from "../utils/logger";
 import {
@@ -725,7 +726,14 @@ async function toolCheckFlight(
 
       // Probability context FIRST, alternatives table LAST. Recency bias: the
       // agent's final impression is "here's the table to present", not "no data".
-      const probLine = `**${normalized} on ${date}**: ~${pct}% Starlink probability ${pred.n_observations > 0 ? `(${pred.n_observations} historical obs)` : "(fleet install rate)"}. ${assignmentNote}`;
+      const basis = predictionBasis(pred);
+      const evidence =
+        basis === "history"
+          ? `(${pred.n_observations} historical obs)`
+          : basis === "aircraft_types"
+            ? "(install rate of the aircraft types that fly this number)"
+            : "(fleet install rate)";
+      const probLine = `**${normalized} on ${date}**: ~${pct}% Starlink probability ${evidence}. ${assignmentNote}`;
 
       let altBlock = "";
       if (pred.probability < 0.2 && !isPast) {
@@ -1177,17 +1185,27 @@ async function toolPredictFlightStarlink(
   recordMcpPrediction(reader.scope, pred);
   const pct = (pred.probability * 100).toFixed(0);
 
+  // Three evidence classes, three sentences. A type-mix number has no history
+  // behind it but is NOT the fleet average — it is the install rate of the
+  // airframes this number actually draws, which is the whole point of it.
+  const basis = predictionBasis(pred);
   let details: string;
-  if (pred.method !== "flight_history_smoothed") {
+  let tag: string;
+  if (basis === "aircraft_types") {
+    details = "Based on the aircraft types this flight number draws, not its own history.";
+    tag = "(aircraft-type install rate)";
+  } else if (basis === "fleet_prior") {
     const fleet = inferSubfleet(cfg, forPredict);
     const fleetLabel = fleet === "express" ? "express (regional)" : "mainline";
     details = `${fleetLabel} fleet install rate — not flight-specific.`;
+    tag = "(fleet prior)";
   } else {
     details =
       pred.n_observations >= 5 ? "Sample size is solid." : "Limited data — estimate may drift.";
+    tag = confidenceTag(pred.n_observations, pred.confidence);
   }
 
-  const probLine = `**${forPredict}**: ~${pct}% Starlink probability ${pred.method === "flight_history_smoothed" ? confidenceTag(pred.n_observations, pred.confidence) : "(fleet prior)"}. ${details}`;
+  const probLine = `**${forPredict}**: ~${pct}% Starlink probability ${tag}. ${details}`;
 
   // Alternatives LAST so it's the agent's final impression (recency bias).
   let altBlock = "";
