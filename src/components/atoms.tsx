@@ -1,5 +1,6 @@
 import React from "react";
 import { SITES, type SiteConfig, airlineHomeUrl, liveAirlineSites } from "../airlines/registry";
+import type { PopularFlight } from "../database/database";
 import type { RecentInstall } from "../types";
 import type { Aircraft, PerAirlineStat } from "../types";
 
@@ -65,6 +66,54 @@ export function PageFooter({ site }: { site: SiteConfig }) {
       </a>
       <CrossSiteLinks site={site} />
     </footer>
+  );
+}
+
+/**
+ * Server-rendered inlinks into the /check-flight/{fn} permalink corpus, shared
+ * by /, /check-flight, and /routes. The corpus is otherwise reachable only via
+ * the sitemap, which crawlers treat as discovery, not endorsement — these
+ * blocks give the most-observed flight pages real crawl depth. Anchor text
+ * carries the route so the link targets the qualified "does UA123 have
+ * starlink" intent, not the bare flight-status query.
+ */
+export function PopularFlightsLinks({
+  flights,
+  airlineName,
+}: {
+  flights: PopularFlight[];
+  airlineName: string;
+}) {
+  if (flights.length === 0) return null;
+  return (
+    <div className="bg-surface border border-subtle rounded-lg p-5" data-popular-flights>
+      <div className="text-[10px] font-mono text-muted uppercase tracking-wider mb-3">
+        Popular flights
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {flights.map((f) => (
+          <a
+            key={f.flight_number}
+            href={`/check-flight/${f.flight_number}`}
+            className="font-mono text-sm px-2.5 py-1 rounded border border-subtle bg-surface-elevated text-secondary hover:border-accent hover:text-accent transition-colors"
+          >
+            {f.flight_number}
+            {/* Arrow, not the en dash /routes uses for its own O-D labels — the
+                route-pages guard treats a dashed pair as an unlinked route label. */}
+            {f.origin && f.destination && (
+              <span className="text-muted">
+                {" "}
+                {f.origin} → {f.destination}
+              </span>
+            )}
+          </a>
+        ))}
+      </div>
+      <p className="text-[11px] text-muted mt-4 leading-snug">
+        The most-observed {airlineName} flight numbers in the tracker. Each page carries that
+        flight's Starlink record, its routes, and a live check by date.
+      </p>
+    </div>
   );
 }
 

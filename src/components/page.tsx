@@ -1,6 +1,7 @@
 import type React from "react";
 import type { AirlineContent, ContentStats } from "../airlines/content";
 import { type SiteConfig, siteAirline } from "../airlines/registry";
+import type { PopularFlight } from "../database/database";
 import type {
   Aircraft,
   AirportDeparture,
@@ -10,7 +11,7 @@ import type {
   PerAirlineStat,
   RecentInstall,
 } from "../types";
-import { CrossSiteLinks, HeaderStatStrip } from "./atoms";
+import { CrossSiteLinks, HeaderStatStrip, PopularFlightsLinks } from "./atoms";
 import { PassengerBanner } from "./passenger-banner";
 
 // Reusable FAQ accordion item — eliminates ~30 lines of boilerplate per question
@@ -69,6 +70,8 @@ interface PageProps {
   airportDepartures?: AirportDepartures;
   showPassengerBanner?: boolean;
   installs30d?: number;
+  /** Most-observed flight numbers — crawlable inlinks into the permalink corpus. */
+  popularFlights?: PopularFlight[];
 }
 
 /**
@@ -326,6 +329,7 @@ export default function Page({
   airportDepartures,
   showPassengerBanner = false,
   installs30d,
+  popularFlights = [],
 }: PageProps) {
   // Apply date overrides to the aircraft data
   const applyDateOverrides = (data: Aircraft[]): Aircraft[] => {
@@ -376,7 +380,8 @@ export default function Page({
       ? [{ href: "/fleet", label: "Fleet Rollout", badge: features.routesPage ? "" : "NEW" }]
       : []),
     ...(features.routesPage ? [{ href: "/routes", label: "Live Routes", badge: "NEW" }] : []),
-    ...(features.mcpPage ? [{ href: "/mcp", label: "Tools & MCP", badge: "NEW" }] : []),
+    ...(features.timelinePage ? [{ href: "/timeline", label: "Timeline", badge: "NEW" }] : []),
+    ...(features.mcpPage ? [{ href: "/mcp", label: "Tools & MCP", badge: "" }] : []),
   ];
   // Filter buttons act on the rendered rows, so their counts must describe the
   // capped list — full-fleet numbers live in the hero and on /fleet.
@@ -964,6 +969,16 @@ export default function Page({
         </div>
       )}
 
+      {/* Popular flights — server-rendered inlinks into the permalink corpus */}
+      {features.checkFlightPage && popularFlights.length > 0 && (
+        <div className="relative max-w-3xl mx-auto w-full mb-12">
+          <PopularFlightsLinks
+            flights={popularFlights}
+            airlineName={site.scope !== "ALL" ? siteAirline(site).name : "tracked"}
+          />
+        </div>
+      )}
+
       {/* FAQ Section */}
       <div className="relative mb-12">
         <div className="text-center mb-6">
@@ -1334,6 +1349,17 @@ export default function Page({
                 className="text-secondary hover:text-primary transition-colors"
               >
                 Methodology
+              </a>
+            </>
+          )}
+          {features.intentPages && (
+            <>
+              <span className="text-muted">·</span>
+              <a
+                href="/is-starlink-free"
+                className="text-secondary hover:text-primary transition-colors"
+              >
+                Is it free?
               </a>
             </>
           )}

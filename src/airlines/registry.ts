@@ -78,6 +78,11 @@ export interface SiteFeatures {
    * (UA united.com, AS alaskaair.com). HA/QR status is type-determined, so a
    * "how we verify" page there would overstate. */
   methodologyPage: boolean;
+  /** /timeline — dated rollout milestones. Also gated on the airline having a
+   * timeline story (timeline-page's hasTimeline), like methodology's content gate. */
+  timelinePage: boolean;
+  /** /how-to-check + /is-starlink-free intent pages. */
+  intentPages: boolean;
 }
 
 export interface SiteConfig {
@@ -697,6 +702,8 @@ const AIRLINE_SITE_FEATURES: SiteFeatures = {
   chromeExtension: false,
   airlinesPages: false,
   methodologyPage: false,
+  timelinePage: false,
+  intentPages: false,
 };
 
 export const SITES: Record<string, SiteConfig> = {
@@ -717,6 +724,8 @@ export const SITES: Record<string, SiteConfig> = {
       mcpPage: true,
       chromeExtension: true,
       methodologyPage: true,
+      timelinePage: true,
+      intentPages: true,
     },
   },
   airline: {
@@ -741,6 +750,8 @@ export const SITES: Record<string, SiteConfig> = {
       chromeExtension: false,
       airlinesPages: true,
       methodologyPage: false,
+      timelinePage: false,
+      intentPages: false,
     },
   },
   hawaiian: {

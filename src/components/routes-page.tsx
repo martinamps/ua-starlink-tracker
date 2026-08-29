@@ -1,6 +1,8 @@
 import React from "react";
 import { AIRLINES, type SiteConfig } from "../airlines/registry";
+import type { PopularFlight } from "../database/database";
 import type { RouteSchedule } from "../types";
+import { PopularFlightsLinks } from "./atoms";
 
 const EYEBROW = "text-[10px] font-mono text-muted uppercase tracking-wider mb-3";
 const PANEL = "bg-surface border border-subtle rounded-lg p-5";
@@ -70,9 +72,10 @@ function RouteRows({ schedule }: { schedule: RouteSchedule }) {
 interface RoutesPageProps {
   schedule: RouteSchedule;
   site?: SiteConfig;
+  popularFlights?: PopularFlight[];
 }
 
-export default function RoutesPage({ schedule, site }: RoutesPageProps) {
+export default function RoutesPage({ schedule, site, popularFlights = [] }: RoutesPageProps) {
   const scopeCode = site?.scope && site.scope !== "ALL" ? site.scope : null;
   const airlineName = scopeCode ? AIRLINES[scopeCode].name : "tracked airlines";
   const backLabel = site?.brand.title ?? "Starlink Tracker";
@@ -111,6 +114,12 @@ export default function RoutesPage({ schedule, site }: RoutesPageProps) {
           </p>
         </div>
       </section>
+
+      {popularFlights.length > 0 && (
+        <section className={SECTION}>
+          <PopularFlightsLinks flights={popularFlights} airlineName={airlineName} />
+        </section>
+      )}
 
       <section className={`${SECTION} text-center`}>
         <p className="text-sm text-secondary">

@@ -1,5 +1,7 @@
 import React from "react";
 import { type SiteConfig, siteAirline } from "../airlines/registry";
+import type { PopularFlight } from "../database/database";
+import { PopularFlightsLinks } from "./atoms";
 
 export interface FlightRouteFact {
   departure_airport: string;
@@ -29,6 +31,9 @@ export interface FlightFacts {
   lastStarlink: { tail: string; checked_at: number } | null;
   routes: FlightRouteFact[];
   upcoming: FlightUpcomingDeparture[];
+  /** Other marketing flight numbers on this flight's primary route — sibling
+   * permalinks, so the corpus links laterally instead of only via /routes. */
+  siblings: string[];
 }
 
 /** A permalink segment that is not a flight number this site can answer for.
@@ -44,6 +49,9 @@ interface CheckFlightPageProps {
   site: SiteConfig;
   flight?: FlightFacts;
   invalid?: InvalidFlightQuery;
+  /** Rendered on the generic (non-permalink) page only — permalinks link
+   * laterally via siblings instead. */
+  popular?: PopularFlight[];
 }
 
 const fmtDay = (sec: number) =>
@@ -118,6 +126,29 @@ function FlightFactBlocks({ flight }: { flight: FlightFacts }) {
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {flight.siblings.length > 0 && flight.routes[0] && (
+        <div className="bg-surface rounded-lg border border-subtle p-6">
+          <h2 className="font-display text-lg font-semibold text-primary mb-3">
+            Other flights on {flight.routes[0].departure_airport}–{flight.routes[0].arrival_airport}
+          </h2>
+          <div className="flex flex-wrap gap-2">
+            {flight.siblings.map((s) => (
+              <a
+                key={s}
+                href={`/check-flight/${s}`}
+                className="font-mono text-sm px-2.5 py-1 rounded border border-subtle bg-surface-elevated text-secondary hover:border-accent hover:text-accent transition-colors"
+              >
+                {s}
+              </a>
+            ))}
+          </div>
+          <p className="text-xs text-muted mt-3">
+            Same route, different schedules — each flight number has its own aircraft history and
+            Starlink record.
+          </p>
         </div>
       )}
 
@@ -228,7 +259,12 @@ function InvalidQueryNotice({
   );
 }
 
-export default function CheckFlightPage({ site, flight, invalid }: CheckFlightPageProps) {
+export default function CheckFlightPage({
+  site,
+  flight,
+  invalid,
+  popular = [],
+}: CheckFlightPageProps) {
   const cfg = siteAirline(site);
   const airlineName = flight?.airlineName ?? cfg.name;
   const homeTitle = site.brand.title;
@@ -329,11 +365,28 @@ export default function CheckFlightPage({ site, flight, invalid }: CheckFlightPa
           </form>
 
           <div id="flight-result" className="mt-4 hidden" />
+
+          {site.features.intentPages && (
+            <p className="text-xs text-muted mt-4">
+              New here?{" "}
+              <a href="/how-to-check" className="text-accent hover:underline">
+                How the check works
+              </a>{" "}
+              — and yes,{" "}
+              <a href="/is-starlink-free" className="text-accent hover:underline">
+                Starlink WiFi is free
+              </a>
+              .
+            </p>
+          )}
         </div>
       </div>
 
       <div className="relative max-w-xl mx-auto w-full mb-10 space-y-6">
         {flight && <FlightFactBlocks flight={flight} />}
+        {!flight && popular.length > 0 && (
+          <PopularFlightsLinks flights={popular} airlineName={cfg.name} />
+        )}
         {flight && site.features.fleetPage && (
           <p className="text-sm text-muted text-center">
             See where the {airlineName} rollout stands across every aircraft on the{" "}
