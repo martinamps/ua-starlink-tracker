@@ -121,7 +121,28 @@ const DEFAULT_CONFIG: ModelConfig = {
 // 5/10/20/30/40d half-lives in the rolling backtest; 30d is the Brier optimum.
 const ASSIGNMENT_HALF_LIFE_DAYS = 30;
 
-const confidenceFor = (n: number) => (n >= 5 ? "high" : n >= 2 ? "medium" : "low") as const;
+const CONFIDENCE_TIERS = ["low", "medium", "high"] as const;
+type Confidence = (typeof CONFIDENCE_TIERS)[number];
+
+const confidenceFor = (n: number): Confidence => (n >= 5 ? "high" : n >= 2 ? "medium" : "low");
+
+/**
+ * Confidence for the decayed model, floored so it cannot contradict the
+ * `n_observations` every surface prints beside it.
+ *
+ * The decayed weight is the Brier-tuned signal and stays primary — six draws
+ * from months ago really do back the number less than six from this week. But
+ * scoring the label off the decayed weight while reporting the RAW count
+ * published pairs like "17 observations (low confidence)", which reads as a
+ * bug and made the Chrome extension suppress a 98% call at the point of
+ * booking. Staleness may cost at most one tier, so a large sample can be
+ * hedged but never erased.
+ */
+function decayedConfidence(decayedWeight: number, rawCount: number): Confidence {
+  const decayed = CONFIDENCE_TIERS.indexOf(confidenceFor(decayedWeight));
+  const floor = Math.max(0, CONFIDENCE_TIERS.indexOf(confidenceFor(rawCount)) - 1);
+  return CONFIDENCE_TIERS[Math.max(decayed, floor)];
+}
 
 /** Subfleet cold-start install rate: all we know with no usable history. */
 function coldPrior(flightNumber: string, config: ModelConfig): number {
@@ -212,8 +233,9 @@ function buildTypeAwarePredict(
   }
 
   // Everything is determined at build time, so predict is a lookup.
-  // Confidence reflects the DECAYED evidence weight: six draws from months
-  // ago back the number far less than six from this week.
+  // Confidence leads on the DECAYED evidence weight — six draws from months ago
+  // back the number far less than six from this week — floored against the raw
+  // count so the label can never contradict the n reported next to it.
   const predictions = new Map<string, Prediction>();
   for (const [flightNumber, f] of flights) {
     let prior = coldPrior(flightNumber, config);
@@ -230,7 +252,7 @@ function buildTypeAwarePredict(
     predictions.set(flightNumber, {
       flight_number: flightNumber,
       probability: smoothedRate(f.s, f.n, prior, config.priorStrength),
-      confidence: confidenceFor(f.n),
+      confidence: decayedConfidence(f.n, f.raw),
       method: "flight_history_smoothed",
       n_observations: f.raw,
     });

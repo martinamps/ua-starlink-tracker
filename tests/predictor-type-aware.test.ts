@@ -174,6 +174,52 @@ describe("type-aware predictor", () => {
     expect(stale.confidence).not.toBe("high");
   });
 
+  test("a large stale sample is hedged, never labeled low next to its own n", () => {
+    // The shipped bug: confidence scored off the decayed weight while
+    // n_observations reported the raw count, so a flight could publish
+    // "17 observations (low confidence)" — which the Chrome extension read as
+    // a reason to suppress the badge at the point of booking.
+    const staleSeventeen = buildModel(
+      [
+        obs("UA999", "N175-0", 1, 0),
+        ...Array.from({ length: 17 }, () => obs("UA5501", "N175-1", 1, 120)),
+      ],
+      CONFIG,
+      roster
+    ).predict("UA5501");
+    expect(staleSeventeen.n_observations).toBe(17);
+    expect(staleSeventeen.confidence).not.toBe("low");
+  });
+
+  test("staleness costs at most one tier, so decay still outranks a fresh sample", () => {
+    // The floor must not erase the decay signal: 16 fresh draws should still
+    // outrank 17 stale ones. Same method, so the ordering is the label's job.
+    const build = (n: number, ageDays: number, fn: string) =>
+      buildModel(
+        [
+          obs("UA999", "N175-0", 1, 0),
+          ...Array.from({ length: n }, () => obs(fn, "N175-1", 1, ageDays)),
+        ],
+        CONFIG,
+        roster
+      ).predict(fn);
+
+    const stale = build(17, 120, "UA5501");
+    const fresh = build(16, 30, "UA5502");
+    const rank = { low: 0, medium: 1, high: 2 } as const;
+
+    expect(stale.method).toBe(fresh.method);
+    expect(rank[fresh.confidence]).toBeGreaterThan(rank[stale.confidence]);
+    expect(fresh.confidence).toBe("high");
+  });
+
+  test("the raw floor never invents confidence a thin sample hasn't earned", () => {
+    // One fresh observation is genuinely weak; flooring must not promote it.
+    const single = buildModel([obs("UA5503", "N175-1", 1, 0)], CONFIG, roster).predict("UA5503");
+    expect(single.n_observations).toBe(1);
+    expect(single.confidence).toBe("low");
+  });
+
   test("no roster → the legacy subfleet-prior model, method labels intact", () => {
     const legacy = buildModel([obs("UA500", "N1", 1), obs("UA500", "N1", 1)], CONFIG, []);
     const seen = legacy.predict("UA500");
