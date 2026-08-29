@@ -19,6 +19,7 @@
     "predict-backtest": "bun run src/scripts/starlink-predictor.ts --backtest",
     "precision": "bun run src/scripts/precision-backtest.ts",
     "surface-sweep": "bun run src/scripts/surface-sweep.ts",
+    "citation-check": "bun scripts/ai-citation-check.ts",
     "seed-hawaiian": "PLAYWRIGHT_BROWSERS_PATH=./do_not_commit/playwright-browsers bun run src/scripts/seed-hawaiian.ts",
     "seed-alaska": "PLAYWRIGHT_BROWSERS_PATH=./do_not_commit/playwright-browsers bun run src/scripts/seed-alaska.ts",
     "preview-hosts": "PLAYWRIGHT_BROWSERS_PATH=./do_not_commit/playwright-browsers bun scripts/preview-hosts.ts",
