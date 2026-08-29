@@ -32,9 +32,9 @@ Bun + SQLite + server-rendered React. `server.ts` serves pages/APIs and starts b
 
 **Tables:** `starlink_planes`, `united_fleet`, `upcoming_flights`, `starlink_verification_log`, `departure_log`, `flight_routes`, `meta`
 
-**Routes:** `/`, `/fleet`, `/check-flight`, `/route-planner`, `/mcp` · `/api/data`, `/api/check-flight`, `/api/predict-flight`, `/api/plan-route`, `/api/mismatches`, `/api/fleet-discovery`
+**Routes:** `/`, `/fleet`, `/check-flight`, `/route-planner`, `/api` (docs), `/mcp` · `/api/data`, `/api/check-flight`, `/api/predict-flight`, `/api/plan-route`, `/api/mismatches`, `/api/fleet-discovery`
 
-**MCP:** stateless Streamable HTTP at `/mcp` exposing 7 tools (`check_flight`, `predict_flight_starlink`, `plan_starlink_itinerary`, `predict_route_starlink`, `search_starlink_flights`, `get_fleet_stats`, `list_starlink_aircraft`). See `src/api/mcp-server.ts`.
+**MCP:** stateless Streamable HTTP at `/mcp` exposing 7 tools (`check_flight`, `predict_flight_starlink`, `plan_starlink_itinerary`, `predict_route_starlink`, `search_starlink_flights`, `get_fleet_stats`, `list_starlink_aircraft`), each with `structuredContent` + `outputSchema` (provenance, freshness, per-tail evidence URLs) alongside the prose. See `src/api/mcp-server.ts`.
 
 ## Public contracts — do not break
 
