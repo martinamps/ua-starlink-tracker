@@ -168,6 +168,13 @@ describe("WN check-flight answers fleet odds, never assignments", () => {
     expect(d.message).toContain("737");
   });
 
+  test("/api/plan-route answers fleet odds with the late-assignment caveat", async () => {
+    const d = await jsonOf(app, "/api/plan-route?origin=DAL&destination=HOU", WN_HOST);
+    expect(d.itineraries).toEqual([]);
+    expect(d.message).toMatch(/\d+ of \d+ equipped/);
+    expect(d.message).toContain("hour before departure");
+  });
+
   test("foreign-prefix numbers are refused on the WN host (404, no cross-brand copy)", async () => {
     for (const fn of ["UA1", "AS118", "HA9999", "QR9999"]) {
       const { status, text } = await bodyOf(
