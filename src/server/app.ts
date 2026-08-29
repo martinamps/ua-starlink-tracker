@@ -1566,7 +1566,7 @@ async function renderSubPage<P extends { site: SiteConfig }>(
   canonicalPath: string,
   meta: PageMeta,
   props?: Omit<P, "site">,
-  status = 200
+  opts: { status?: number; edgeCacheable?: boolean } = {}
 ): Promise<Response> {
   const reactHtml = ReactDOMServer.renderToString(
     React.createElement(component, { site: ctx.site, ...(props ?? {}) } as unknown as P)
@@ -1575,6 +1575,11 @@ async function renderSubPage<P extends { site: SiteConfig }>(
     ...buildBaseTemplateVars(ctx, reactHtml, canonicalPath),
     ...meta,
   };
+  // The ONE thing that makes a rendered page vary by visitor is the passenger
+  // probe (client IP). Dropping it is therefore the precondition for letting a
+  // shared cache hold the response — tying the two together here means no
+  // caller can cache a per-visitor body by passing the wrong flag.
+  if (opts.edgeCacheable) htmlVariables.passengerProbeSnippet = "";
   // Rebuild AFTER the meta merge: the WebPage JSON-LD must claim the page's
   // own title/description, not the homepage copy baked into the base vars.
   htmlVariables.webPageJsonLd = sitePageJsonLd(ctx.site, {
@@ -1586,10 +1591,15 @@ async function renderSubPage<P extends { site: SiteConfig }>(
 
   const template = await getHtmlTemplate();
   return new Response(renderHtml(template, htmlVariables), {
-    status,
+    status: opts.status ?? 200,
     // Keep the HTML CSP even on 404s: this page runs the inline lookup script,
-    // which SECURITY_HEADERS.notFound would block.
-    headers: SECURITY_HEADERS.html,
+    // which SECURITY_HEADERS.notFound would block. Only the caching rule
+    // changes — an edge-cacheable render takes the same shared-cache TTL as
+    // the plain 404 it replaces, so retiring a large URL space doesn't send
+    // every repeat crawl back to origin for a full SSR.
+    headers: opts.edgeCacheable
+      ? { ...SECURITY_HEADERS.html, "Cache-Control": SECURITY_HEADERS.notFound["Cache-Control"] }
+      : SECURITY_HEADERS.html,
   });
 }
 
@@ -1805,6 +1815,25 @@ function flightPageMeta(
   };
 }
 
+/** Meta for the "that isn't a flight number" 404. Deliberately NOT
+ * subPageMeta's copy: reusing the hub page's title stamped the site's primary
+ * conversion title, verbatim, onto an unbounded set of URLs whose H1 says the
+ * opposite. Title tracks the H1 instead, and the page self-canonicalizes so
+ * its noindex lands on the URL it is actually about. */
+function invalidFlightMeta(ctx: RequestContext, reason: InvalidFlightQuery["reason"]): PageMeta {
+  const short = tenantConfig(ctx.tenant)?.shortName;
+  const carrier = short ? `${short} ` : "";
+  const lead = reason === "other-carrier" ? `Not a ${carrier}Flight Number` : "Not a Flight Number";
+  return {
+    siteTitle: `${lead} — Check a ${carrier}Flight for Starlink`,
+    siteDescription: `That isn't a ${carrier}flight number. Enter a flight number and date to check whether your aircraft has free Starlink WiFi.`,
+    keywords: `check ${carrier.toLowerCase()}flight starlink, does my flight have starlink`,
+    ogTitle: lead,
+    ogDescription: `Enter a ${carrier}flight number and date to check for Starlink WiFi.`,
+    robotsMeta: "noindex, nofollow",
+  };
+}
+
 const checkFlightPage: Handler = (ctx) => {
   if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
   if (!ctx.site.features.checkFlightPage) {
@@ -1817,15 +1846,18 @@ const checkFlightPage: Handler = (ctx) => {
   // A segment that isn't a flight number (an airport code, a city, a typo —
   // the homepage form navigates here with whatever was typed) still 404s, but
   // renders the real page with a notice and the working lookup form instead of
-  // the bare not-found document.
+  // the bare not-found document. Self-canonical: a noindex response that
+  // canonicalizes to /check-flight aims the noindex at the conversion page.
+  // Edge-cacheable for the same reason the plain 404 is — this replaces it
+  // over a URL space crawlers generate without limit.
   const invalidPage = (invalid: InvalidFlightQuery) =>
     renderSubPage(
       ctx,
       CheckFlightPage,
-      "/check-flight",
-      { ...subPageMeta(ctx, "check-flight"), robotsMeta: "noindex, nofollow" },
+      ctx.url.pathname,
+      invalidFlightMeta(ctx, invalid.reason),
       { invalid },
-      404
+      { status: 404, edgeCacheable: true }
     );
   if (parsed.kind === "invalid") {
     const query = echoQuery(parsed.raw);

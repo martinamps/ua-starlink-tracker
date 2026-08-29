@@ -258,7 +258,9 @@ export default function CheckFlightPage({ site, flight, invalid }: CheckFlightPa
         <a href="/" className="block">
           <h1 className="font-display text-3xl sm:text-4xl font-bold text-primary mb-2 tracking-tight hover:text-accent transition-colors">
             {invalid
-              ? "That Doesn't Look Like a Flight Number"
+              ? invalid.reason === "other-carrier"
+                ? `Not a ${shortName} Flight Number`
+                : "That Doesn't Look Like a Flight Number"
               : flight
                 ? `Does ${flight.flightNumber} Have Starlink WiFi?`
                 : `Check If Your ${airlineName} Flight Has Starlink WiFi`}
@@ -517,34 +519,39 @@ export default function CheckFlightPage({ site, flight, invalid }: CheckFlightPa
         }}
       />
 
-      <script
-        type="application/ld+json"
-        // biome-ignore lint/security/noDangerouslySetInnerHtml: JSON-LD from server data; flight number is regex-validated
-        dangerouslySetInnerHTML={{
-          __html: JSON.stringify({
-            "@context": "https://schema.org",
-            "@type": "FAQPage",
-            mainEntity: [
-              {
-                "@type": "Question",
-                name: `How do I check if ${faqSubject} has Starlink?`,
-                acceptedAnswer: {
-                  "@type": "Answer",
-                  text: faqAnswer,
+      {/* No FAQ markup on the invalid-query 404: rich-result structured data on
+          a noindex response is a contradictory signal, and this one would
+          repeat identically across every URL a crawler can invent. */}
+      {!invalid && (
+        <script
+          type="application/ld+json"
+          // biome-ignore lint/security/noDangerouslySetInnerHtml: JSON-LD from server data; flight number is regex-validated
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify({
+              "@context": "https://schema.org",
+              "@type": "FAQPage",
+              mainEntity: [
+                {
+                  "@type": "Question",
+                  name: `How do I check if ${faqSubject} has Starlink?`,
+                  acceptedAnswer: {
+                    "@type": "Answer",
+                    text: faqAnswer,
+                  },
                 },
-              },
-              {
-                "@type": "Question",
-                name: `How do I know if my ${shortName} flight has Starlink WiFi?`,
-                acceptedAnswer: {
-                  "@type": "Answer",
-                  text: extensionAnswer,
+                {
+                  "@type": "Question",
+                  name: `How do I know if my ${shortName} flight has Starlink WiFi?`,
+                  acceptedAnswer: {
+                    "@type": "Answer",
+                    text: extensionAnswer,
+                  },
                 },
-              },
-            ],
-          }),
-        }}
-      />
+              ],
+            }),
+          }}
+        />
+      )}
 
       <script
         // biome-ignore lint/security/noDangerouslySetInnerHtml: static inline script, no user input
