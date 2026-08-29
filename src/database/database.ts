@@ -3738,7 +3738,10 @@ export function bodyClassOf(family: string): BodyClass {
   return "narrowbody"; // safer default for unknowns than inflating regional
 }
 
-const fleetPageCache = new Map<string, { data: FleetPageData; at: number }>();
+// Keyed by connection first: the server has exactly one, but tests (and any
+// future second handle) must never read another database's fleet through a
+// cache keyed only by the airline filter.
+const fleetPageCache = new WeakMap<Database, Map<string, { data: FleetPageData; at: number }>>();
 const FLEET_PAGE_TTL_MS = 60_000;
 
 /**
@@ -3750,12 +3753,17 @@ const FLEET_PAGE_TTL_MS = 60_000;
 export function getFleetPageData(db: Database, airline?: AirlineFilter): FleetPageData {
   const now = Date.now();
   const key = filterKey(airline);
-  const cached = fleetPageCache.get(key);
+  let perDb = fleetPageCache.get(db);
+  if (!perDb) {
+    perDb = new Map();
+    fleetPageCache.set(db, perDb);
+  }
+  const cached = perDb.get(key);
   if (cached && now - cached.at < FLEET_PAGE_TTL_MS) {
     return cached.data;
   }
   const data = computeFleetPageData(db, airline);
-  fleetPageCache.set(key, { data, at: now });
+  perDb.set(key, { data, at: now });
   return data;
 }
 
