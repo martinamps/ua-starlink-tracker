@@ -71,6 +71,10 @@ export interface SiteFeatures {
   fleetPage: boolean;
   routesPage: boolean;
   mcpPage: boolean;
+  /** /api — human-readable docs for the public JSON endpoints. Airline sites
+   * only: the hub's API surface (check-any-flight, compare-route) diverges and
+   * documenting it would advertise per-airline endpoints that 404 there. */
+  apiDocsPage: boolean;
   chromeExtension: boolean;
   /** Hub-only /airlines comparison index + per-airline rollout pages. */
   airlinesPages: boolean;
@@ -694,6 +698,7 @@ const AIRLINE_SITE_FEATURES: SiteFeatures = {
   fleetPage: true,
   routesPage: true,
   mcpPage: false,
+  apiDocsPage: true,
   chromeExtension: false,
   airlinesPages: false,
   methodologyPage: false,
@@ -738,6 +743,7 @@ export const SITES: Record<string, SiteConfig> = {
       fleetPage: true,
       routesPage: false,
       mcpPage: false,
+      apiDocsPage: false,
       chromeExtension: false,
       airlinesPages: true,
       methodologyPage: false,

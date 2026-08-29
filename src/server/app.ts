@@ -61,6 +61,7 @@ import {
   type AirlineOverview,
   AirlinesIndexPage,
 } from "../components/airlines-page";
+import ApiDocsPage from "../components/api-docs-page";
 import CheckFlightPage, {
   type FlightFacts,
   type InvalidFlightQuery,
@@ -1120,6 +1121,23 @@ const apiFleetDiscovery: Handler = ({ req, reader }) => {
   return new Response(JSON.stringify(response, null, 2), { headers: SECURITY_HEADERS.api });
 };
 
+// Human-readable docs for the public JSON endpoints. Lives at /api (no
+// trailing slash), which robots.txt's "Disallow: /api/" deliberately does not
+// cover — the docs page is crawlable, the endpoints stay out of the index.
+const apiDocsPage: Handler = (ctx) => {
+  if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
+  if (!ctx.site.features.apiDocsPage) return notFound(ctx.site);
+  // Airline-site-only feature; siteAirline throws (fail closed) on the hub.
+  const cfg = siteAirline(ctx.site);
+  return renderSubPage(ctx, ApiDocsPage, "/api", {
+    siteTitle: `${cfg.shortName} Starlink API — Free JSON Flight WiFi Data`,
+    siteDescription: `Free JSON API for ${cfg.name} Starlink WiFi status: check any flight by number and date, get probability predictions, and pull the full equipped-aircraft list. No auth, CORS enabled.`,
+    keywords: `${cfg.shortName.toLowerCase()} starlink api, flight wifi api, does my flight have starlink api, ${cfg.iata} starlink json, starlink tracker api`,
+    ogTitle: `${cfg.shortName} Starlink API`,
+    ogDescription: `Check ${cfg.shortName} flights for Starlink WiFi over a free JSON API — live data, no auth, CORS enabled.`,
+  });
+};
+
 const mcp: Handler = async (ctx) => {
   const { req, getReader, site, tenant } = ctx;
   const accept = req.headers.get("accept") || "";
@@ -1224,6 +1242,14 @@ const SITE_PAGES: SitePage[] = [
     priority: "0.5",
     llmsLine: (h) =>
       `- [Methodology](https://${h}/methodology) — how the data is gathered and verified, and how to cite it`,
+  },
+  {
+    path: "/api",
+    feature: "apiDocsPage",
+    changefreq: "monthly",
+    priority: "0.5",
+    llmsLine: (h) =>
+      `- [API documentation](https://${h}/api) — free JSON endpoints for flight Starlink status (no auth, CORS)`,
   },
   { path: "/mcp", feature: "mcpPage", changefreq: "monthly", priority: "0.6" },
 ];
@@ -2315,6 +2341,7 @@ export function createApp(db: Database): App {
     "/routes": routesPage,
     "/methodology": methodologyPage,
     "/airlines": airlinesIndexPage,
+    "/api": apiDocsPage,
     "/api/data": apiData,
     "/api/fleet-summary": apiFleetSummary,
     "/api/routes": apiRoutes,
