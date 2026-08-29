@@ -9,6 +9,7 @@ import type {
   WifiProvider,
 } from "../types";
 import { AIRCRAFT_SPECS, type AircraftSpec } from "../utils/aircraft-specs";
+import { ShareCardLink } from "./atoms";
 
 const PROVIDER_LABEL: Record<WifiProvider, string> = {
   starlink: "Starlink",
@@ -620,9 +621,11 @@ function OfficialAnchorsSection({ anchors }: { anchors: FleetAnchorRow[] }) {
 interface FleetPageProps {
   data: FleetPageData;
   site: SiteConfig;
+  /** Pre-rendered share card path; null until the nightly batch produced one. */
+  shareCard?: string | null;
 }
 
-export default function FleetPage({ data, site }: FleetPageProps) {
+export default function FleetPage({ data, site, shareCard }: FleetPageProps) {
   const scopeCode = site.scope !== "ALL" ? site.scope : null;
   const scopeLabel = scopeCode ? AIRLINES[scopeCode].name : "tracked";
   const headerTitle = scopeCode
@@ -714,6 +717,8 @@ export default function FleetPage({ data, site }: FleetPageProps) {
       </section>
 
       <TailMonument allTails={data.allTails} totalFleet={data.totalFleet} />
+
+      <ShareCardLink path={shareCard} />
 
       <footer className="relative py-6 text-center border-t border-subtle text-muted text-sm">
         <a href="/" className="text-accent hover:underline font-display">

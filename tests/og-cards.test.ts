@@ -10,9 +10,11 @@ import {
   type ApiData,
   type Summary,
   buildCardSpecs,
+  buildShareCardSpecs,
   rolloutSeries,
 } from "../scripts/generate-og-images";
 import { AIRLINES, SITES } from "../src/airlines/registry";
+import { shareCardFile } from "../src/utils/share-cards";
 
 const NOW = Date.parse("2026-06-04T00:00:00Z");
 
@@ -115,6 +117,39 @@ describe("buildCardSpecs", () => {
     const [ua] = await buildCardSpecs(summary, noData, NOW);
     expect(ua.params.get("series")).toBe("");
     expect(ua.params.get("count")).toBe("50");
+  });
+});
+
+describe("buildShareCardSpecs", () => {
+  test("one PNG per renderable tenant plus the hub card, no shared files", () => {
+    const summary: Summary = {
+      airlines: [airlineRow("UA", 50, 14), airlineRow("HA", 0, 0), airlineRow("ZZ", 5)],
+    };
+    const specs = buildShareCardSpecs(summary);
+    // Zero-installed (HA) and unregistered (ZZ) tenants get no card; hub last.
+    expect(specs.map((s) => s.file)).toEqual([shareCardFile("UA"), shareCardFile("ALL")]);
+    expect(new Set(specs.map((s) => s.file)).size).toBe(specs.length);
+    for (const s of specs) expect(s.file).toEndWith(".png");
+  });
+
+  test("tenant card carries its own host, count, and denominator", () => {
+    const [ua] = buildShareCardSpecs({ airlines: [airlineRow("UA", 50)] });
+    expect(ua.params.get("layout")).toBe("count");
+    expect(ua.params.get("domain")).toBe("unitedstarlinktracker.com");
+    expect(ua.params.get("count")).toBe("50");
+    expect(ua.params.get("sub")).toContain("OF 100 AIRCRAFT");
+  });
+
+  test("share files never collide with the og social images", () => {
+    const ogFiles = new Set(
+      [SITES.airline.brand, ...Object.values(AIRLINES).map((a) => a.brand)].map((b) =>
+        b.socialImagePath.split("/").pop()
+      )
+    );
+    const specs = buildShareCardSpecs({
+      airlines: Object.keys(AIRLINES).map((code) => airlineRow(code, 5)),
+    });
+    for (const s of specs) expect(ogFiles.has(s.file)).toBe(false);
   });
 });
 

@@ -5,6 +5,8 @@
  */
 
 import { beforeAll, describe, expect, test } from "bun:test";
+import { existsSync, unlinkSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { SITES } from "../src/airlines/registry";
 import { createApp } from "../src/server/app";
 import { bodyOf, openSnapshot, req } from "./helpers";
@@ -134,6 +136,37 @@ describe("/embed page", () => {
     const { status, text } = await bodyOf(app, "/embed", HUB);
     expect(status).toBe(200);
     expect(text).toContain(`https://${HUB}/badge.svg`);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Share-card download link (pre-rendered by the nightly og batch)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("share-card link", () => {
+  const uaCard = join(import.meta.dir, "..", "static", "share-card-ua.png");
+
+  test("absent until the batch has rendered the card", async () => {
+    if (existsSync(uaCard)) return; // a locally generated card makes this moot
+    const { text } = await bodyOf(app, "/", UA);
+    expect(text).not.toContain("share-card-ua.png");
+  });
+
+  test("offered once the card exists, tenant-scoped path", async () => {
+    const had = existsSync(uaCard);
+    if (!had) writeFileSync(uaCard, "png");
+    try {
+      for (const path of ["/", "/fleet"]) {
+        const { text } = await bodyOf(app, path, UA);
+        expect(text, `${path} misses share link`).toContain("/static/share-card-ua.png");
+        expect(text).toContain("download");
+      }
+      // The hub never offers a tenant's card (its own would be share-card-hub).
+      const hub = await bodyOf(app, "/", HUB);
+      expect(hub.text).not.toContain("share-card-ua.png");
+    } finally {
+      if (!had) unlinkSync(uaCard);
+    }
   });
 });
 

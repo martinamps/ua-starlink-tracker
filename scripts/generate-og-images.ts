@@ -10,6 +10,7 @@ import path from "node:path";
 import { type Page, chromium } from "playwright";
 import { AIRLINES, SITES, siteForAirline } from "../src/airlines/registry";
 import { isBulkGid } from "../src/database/database";
+import { shareCardFile } from "../src/utils/share-cards";
 
 const OG_HTML = path.resolve(import.meta.dir, "../static/og.html");
 const OUT_DIR = path.resolve(import.meta.dir, "../static");
@@ -69,6 +70,13 @@ export function rolloutSeries(planes: ApiData["starlinkPlanes"], nowMs = Date.no
     series.push(cursor);
   }
   return series;
+}
+
+// Share cards ship as PNG (pastes cleanly everywhere users share them); the
+// deviceScaleFactor-2 screenshot doubles as retina-friendly output.
+async function renderPng(page: Page, params: URLSearchParams, out: string) {
+  await page.goto(`file://${OG_HTML}?${params}`, { waitUntil: "networkidle", timeout: 15000 });
+  await Bun.write(out, await page.screenshot({ type: "png" }));
 }
 
 async function renderWebp(page: Page, params: URLSearchParams, out: string) {
@@ -165,6 +173,57 @@ export async function buildCardSpecs(
   return specs;
 }
 
+/**
+ * Downloadable share-stat cards, one per renderable tenant plus the hub grid.
+ * Same skip rules as the og cards (zero-installed and unregistered airlines
+ * never get a card) but a separate spec list: og cards are the social-preview
+ * contract, share cards are the user-facing download, and the two may diverge
+ * in copy without touching each other.
+ */
+export function buildShareCardSpecs(summary: Summary): CardSpec[] {
+  const specs: CardSpec[] = [];
+
+  for (const a of summary.airlines) {
+    if (a.installed === 0) continue;
+    const cfg = AIRLINES[a.code];
+    const host = siteForAirline(a.code)?.canonicalHost;
+    if (!cfg || !host) continue; // buildCardSpecs already warned for these
+    specs.push({
+      file: shareCardFile(a.code),
+      params: new URLSearchParams({
+        layout: "count",
+        label: `${cfg.name.toUpperCase()} STARLINK TRACKER`,
+        domain: host,
+        accent: cfg.brand.accentColor.replace("#", ""),
+        count: String(a.installed),
+        // The share card carries the denominator — the whole quotable stat.
+        sub: `OF ${a.total} AIRCRAFT HAVE STARLINK`,
+      }),
+      desc: `share ${a.code} ${a.installed}/${a.total}`,
+    });
+  }
+
+  const cards = summary.airlines.map((a) => ({
+    name: a.name.replace(/ Airlines?$/, "").toUpperCase(),
+    pct: Math.round(a.percentage),
+    accent: AIRLINES[a.code]?.brand.accentColor.replace("#", "") ?? "0ea5e9",
+  }));
+  specs.push({
+    file: shareCardFile("ALL"),
+    params: new URLSearchParams({
+      layout: "grid",
+      label: "AIRLINE STARLINK TRACKER",
+      domain: HUB_HOST,
+      accent: SITES.airline.brand.accentColor.replace("#", ""),
+      cards: JSON.stringify(cards),
+      caption: "PER-AIRCRAFT STARLINK WIFI STATUS",
+    }),
+    desc: `share hub ${cards.map((c) => `${c.name}=${c.pct}%`).join(" ")}`,
+  });
+
+  return specs;
+}
+
 async function main() {
   const summary = await getJson<Summary>(`https://${HUB_HOST}/api/fleet-summary`);
   if (!summary) {
@@ -175,12 +234,15 @@ async function main() {
   const specs = await buildCardSpecs(summary, (_code, host) =>
     getJson<ApiData>(`https://${host}/api/data`)
   );
+  specs.push(...buildShareCardSpecs(summary));
 
   const browser = await chromium.launch({ headless: true, args: ["--no-sandbox"] });
   const page = await browser.newPage({ viewport: { width: W, height: H }, deviceScaleFactor: 2 });
   const generated: string[] = [];
   for (const spec of specs) {
-    await renderWebp(page, spec.params, path.join(OUT_DIR, spec.file));
+    const out = path.join(OUT_DIR, spec.file);
+    if (spec.file.endsWith(".png")) await renderPng(page, spec.params, out);
+    else await renderWebp(page, spec.params, out);
     generated.push(`${spec.file}  ${spec.desc}`);
   }
 

@@ -103,6 +103,7 @@ import {
 import { computeInstallRate } from "../utils/install-rate";
 import { error as logError } from "../utils/logger";
 import { getNotFoundHtml } from "../utils/not-found";
+import { shareCardFile, shareCardPath } from "../utils/share-cards";
 import { getSpreadsheetCacheInfo, getSpreadsheetCacheTails } from "../utils/utils";
 import {
   type Database,
@@ -331,6 +332,14 @@ for (const p of SOCIAL_IMAGE_PATHS) {
 function resolveSocialImage(brand: PageBrand): string {
   const p = brand.socialImagePath;
   return fs.existsSync(path.join(STATIC_DIR, path.basename(p))) ? p : HUB_BRAND.socialImagePath;
+}
+
+// Share-card download offered only once the nightly batch has rendered this
+// scope's card. Null, never a fallback: unlike og images (where a neutral hub
+// preview beats a broken one) a *download button* handing out another scope's
+// card would be a tenancy leak in the user's camera roll.
+function resolveShareCard(scope: SiteConfig["scope"]): string | null {
+  return fs.existsSync(path.join(STATIC_DIR, shareCardFile(scope))) ? shareCardPath(scope) : null;
 }
 
 // Per-tenant favicons. Standard discovery paths (/favicon.ico,
@@ -2229,7 +2238,10 @@ const fleetPage: Handler = (ctx) => {
     return notFound(ctx.site);
   }
   const data = ctx.reader.getFleetPageData();
-  return renderSubPage(ctx, FleetPage, "/fleet", subPageMeta(ctx, "fleet"), { data });
+  return renderSubPage(ctx, FleetPage, "/fleet", subPageMeta(ctx, "fleet"), {
+    data,
+    shareCard: resolveShareCard(ctx.site.scope),
+  });
 };
 
 const methodologyPage: Handler = (ctx) => {
@@ -2376,6 +2388,7 @@ const homePage: Handler = async (ctx) => {
       flightsByTail,
       airportDepartures: reader.getAirportDepartures(),
       showPassengerBanner: isPassengerVerifyAudience(ctx.onStarlinkIp, site.scope),
+      shareCard: resolveShareCard(site.scope),
     })
   );
 
