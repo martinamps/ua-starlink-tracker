@@ -19,20 +19,31 @@ See `package.json` for the full script list (verification, discovery, sync, back
 
 ## Architecture
 
-Bun + SQLite + server-rendered React. `server.ts` serves pages/APIs and starts background jobs:
+Bun + SQLite + server-rendered React, multi-tenant by Host header (UA/HA/AS sites + the hub; see `src/airlines/registry.ts`). `server.ts` serves pages/APIs and starts background jobs:
 
 | Job | Interval | Purpose |
 |---|---|---|
-| Spreadsheet scrape + consensus reconcile | 1 hr | Sync sheet → fleet, settle wifi status |
+| `sheet_scrape` | 1 hr | UA community sheet → fleet, consensus + type reconcile, precision gauges |
 | Flight updater | 22.5 s | Keep `upcoming_flights` fresh (1–8 hr smart cache) |
-| Starlink verifier | 60 s | Verify tails against United.com |
-| Fleet discovery | 90 s | Find newly-equipped tails |
-| Fleet sync | 24 hr | Full FR24 fleet pull |
+| Starlink verifier | 60 s | Verify UA tails against united.com |
+| Fleet discovery | 90 s | Find newly-equipped UA tails |
+| Alaska verifier | 90 s | AS/HA tail/type checks via alaskaair.com (round-robin) |
+| Qatar schedule ingester | 1 hr | QR per-flight equipment → `qatar_schedule` |
+| Fleet sync | 24 hr | Full FR24 fleet pull, all enabled airlines |
+| Freshness emitter | 5 min | `data.freshness_seconds`/`_ratio` gauges from DB write timestamps |
+| `archive_departures` | 5 min | Departed flights → `departure_log` |
 | Ship-number sync | 24 hr | United ship→tail mapping sheet |
+| Fleet progress | 24 hr | UA install-pipeline counts from the fleet-site workbooks |
+| FAA registry | 24 hr | Registration existence/dereg hygiene + Mode-S hex |
+| SEC anchors | 24 hr | UAL/SkyWest/Republic filings watcher (official count anchors) |
+| ADS-B sweep | 5 min | Shadow-compare live callsigns vs FR24 assignments (metrics-only) |
+| BTS sync | 24 hr | Monthly BTS shadow ingest when a new month posts |
+| Geofeed | 24 hr | Starlink RFC 8805 geofeed (passenger-verify probe; env-gated) |
+| `prune_crash_rows` | 24 hr | Drop subprocess-crash log noise |
 
-**Tables:** `starlink_planes`, `united_fleet`, `upcoming_flights`, `starlink_verification_log`, `departure_log`, `flight_routes`, `meta`
+**Core tables:** `starlink_planes`, `united_fleet`, `upcoming_flights`, `starlink_verification_log`, `departure_log`, `flight_routes`, `meta` — plus per-job side tables (`qatar_schedule`, `faa_registry`, `fleet_progress`, `adsb_*`, `bts_*`, `sec_filings_seen`, `starlink_prefixes`)
 
-**Routes:** `/`, `/fleet`, `/check-flight`, `/route-planner`, `/mcp` · `/api/data`, `/api/check-flight`, `/api/predict-flight`, `/api/plan-route`, `/api/mismatches`, `/api/fleet-discovery`
+**Routes** (feature-gated per site via `SITE_PAGES`/`SiteFeatures`): pages `/`, `/fleet`, `/routes`, `/airlines[/{slug}]`, `/check-flight[/{fn}]`, `/route-planner[/{o}/{d}]`, `/methodology`, `/mcp` · APIs `/api/data`, `/api/fleet-summary`, `/api/routes`, `/api/check-flight`, `/api/check-any-flight`, `/api/compare-route`, `/api/predict-flight`, `/api/plan-route`, `/api/mismatches`, `/api/fleet-discovery`, `/api/passenger-probe` · ops/SEO `/healthz`, `/robots.txt`, `/sitemap.xml`, `/llms.txt`
 
 **MCP:** stateless Streamable HTTP at `/mcp` exposing 7 tools (`check_flight`, `predict_flight_starlink`, `plan_starlink_itinerary`, `predict_route_starlink`, `search_starlink_flights`, `get_fleet_stats`, `list_starlink_aircraft`). See `src/api/mcp-server.ts`.
 
