@@ -22,6 +22,7 @@ import { makeAlaskaTick } from "../src/scripts/alaska-verifier";
 import {
   FRESHNESS_COVERAGE,
   FRESHNESS_QUERIES,
+  WORST_HEALTHY_GAP_SEC,
   buildFreshnessCoverage,
   buildFreshnessQueries,
   deadmanBudgetSec,
@@ -795,20 +796,56 @@ describe("freshness deadman ratio", () => {
     expect(deadmanJobs().sort()).toEqual(Object.keys(buildFreshnessQueries(true)).sort());
   });
 
-  test("HA's healthy ~168h verifier sawtooth stays under 1 while the same age flags UA dead", () => {
+  test("every budget clears that pipeline's worst measured healthy write gap", () => {
+    // The property that makes the gauge monitorable: ratio > 1 must mean dead,
+    // not "this airline is between healthy passes". Budgets under a measured
+    // gap page on a healthy pipeline — how AS shipped on the 24h default while
+    // its real worst gap was 3.8 d.
+    for (const [job, airlines] of Object.entries(buildFreshnessCoverage(true))) {
+      for (const airline of airlines) {
+        const worst = WORST_HEALTHY_GAP_SEC[job]?.[airline];
+        if (worst === undefined) continue;
+        const budget = deadmanBudgetSec(job, airline) as number;
+        expect(budget).toBeGreaterThan(worst);
+      }
+    }
+  });
+
+  test("airlines sharing a verifier backend share a verifier budget", () => {
+    // AS and HA ride one alaska-json round-robin with one ~7-day defer, so a
+    // budget keyed per airline code silently under-budgets whichever one the
+    // override forgot.
+    const byBackend = new Map<string, Set<number>>();
+    for (const airline of buildFreshnessCoverage(true).verifier) {
+      const backend = AIRLINES[airline]?.verifierBackend;
+      if (!backend) continue;
+      const budget = deadmanBudgetSec("verifier", airline) as number;
+      const seen = byBackend.get(backend) ?? new Set<number>();
+      seen.add(budget);
+      byBackend.set(backend, seen);
+    }
+    expect(byBackend.get("alaska-json")).toBeDefined();
+    for (const [, budgets] of byBackend) expect(budgets.size).toBe(1);
+  });
+
+  test("an alaska-json airline's worst healthy gap stays under 1 while it flags UA dead", () => {
     const db = makeSyntheticDb();
-    const age = 700_000; // > 604800s: healthy for HA's weekly cadence, dead for UA's
+    // The measured AS worst case — the age that used to read > 1 on a healthy
+    // pipeline. UA's verifier has never been quiet this long.
+    const age = WORST_HEALTHY_GAP_SEC.verifier.AS;
     const ts = Math.floor(Date.now() / 1000) - age;
     db.query(
-      "INSERT INTO starlink_verification_log (tail_number, source, checked_at, has_starlink, airline) VALUES ('N1', 'alaska', ?, 1, 'HA'), ('N2', 'united', ?, 1, 'UA')"
-    ).run(ts, ts);
+      "INSERT INTO starlink_verification_log (tail_number, source, checked_at, has_starlink, airline) VALUES ('N1', 'alaska', ?, 1, 'AS'), ('N2', 'alaska', ?, 1, 'HA'), ('N3', 'united', ?, 1, 'UA')"
+    ).run(ts, ts, ts);
 
     const calls = captureGauges(db);
-    const ha = ratioFor(calls, "verifier", "hawaiian");
+    for (const tag of ["alaska", "hawaiian"]) {
+      const ratio = ratioFor(calls, "verifier", tag);
+      expect(ratio).toBeDefined();
+      expect(ratio?.value as number).toBeLessThan(1);
+    }
     const ua = ratioFor(calls, "verifier", "united");
-    expect(ha).toBeDefined();
     expect(ua).toBeDefined();
-    expect(ha?.value as number).toBeLessThan(1);
     expect(ua?.value as number).toBeGreaterThan(1);
     db.close();
   });

@@ -79,31 +79,67 @@ export function buildFreshnessCoverage(
 
 export const FRESHNESS_COVERAGE = buildFreshnessCoverage();
 
+const DAY = 86_400;
+
+// Worst healthy write gap actually observed per (job, airline), measured over
+// the 90 days of production data ending 2026-08-29. These are the numbers the
+// budgets below must clear; WORST_HEALTHY_GAP_SEC is exported so
+// tests/jobs.test.ts can assert budget > gap instead of checking the table
+// against itself. Re-measure with:
+//   LAG(ts) OVER (PARTITION BY airline ORDER BY ts) on each anchor column.
+// Note what the anchor measures: MAX(ts) over ALL of an airline's rows, i.e.
+// the fleet-wide newest write — NOT any single tail's re-check interval. A
+// per-tail defer only shows up here when it is long enough that the whole
+// roster goes quiet between passes, which is exactly what the alaska-json
+// verifier's small queues do.
+export const WORST_HEALTHY_GAP_SEC: Record<string, Record<string, number>> = {
+  // alaska-json round-robin: AS 328,533s (3.8 d), HA 535,605s (6.2 d) — small
+  // rosters plus the ~7-day inconclusive defer leave the whole airline quiet
+  // for days. UA's united.com verifier: 4,140s (69 min).
+  verifier: { UA: 4_140, AS: 328_533, HA: 535_605 },
+  // departure_log archives on a 5-min sweep; gaps are just quiet flight banks.
+  departures: { UA: 10_920, HA: 13_500, AS: 31_320, QR: 7_800 },
+};
+
 // Deadman budgets: the age (seconds) past which a pipeline's silence means the
 // LOOP IS DEAD, not merely between healthy writes. Deliberately generous — a
 // freshness SLO belongs to per-dataset monitors; this exists so one monitor on
-// freshness_ratio > 1 catches any dead pipeline. Per-airline overrides handle
-// legitimately different cadences: HA's verifier re-checks each tail on a
-// ~168h (7-day) defer, so its healthy freshness sawtooths to ~604800s — a
-// threshold tight enough for UA pages weekly on healthy HA, and one loose
-// enough for HA hides a dead UA verifier for a week. tests/jobs.test.ts pins
-// that every freshness query has a budget, so a new job can't ship unmonitorable.
-const DAY = 86_400;
-const DEADMAN_BUDGET_SEC: Record<string, { default: number; byAirline?: Record<string, number> }> =
-  {
-    flight_updater: { default: DAY },
-    verifier: { default: DAY, byAirline: { HA: 14 * DAY } },
-    departures: { default: 2 * DAY },
-    fleet_progress: { default: 3 * DAY },
-    faa_registry: { default: 3 * DAY },
-    adsb_sweep: { default: DAY },
-    qatar_ingester: { default: DAY },
-  };
+// freshness_ratio > 1 catches any dead pipeline. The verifier budget is keyed
+// off the registry's verifierBackend, not off airline codes: every airline on
+// the alaska-json backend shares one round-robin and one ~7-day inconclusive
+// defer (src/scripts/alaska-verifier.ts), so they must share a budget. Keying
+// it per-airline is how AS previously ended up on the 24h default and read
+// > 1 for ~38% of a healthy 90 days. tests/jobs.test.ts pins both that every
+// query has a budget and that each budget clears WORST_HEALTHY_GAP_SEC.
+const VERIFIER_BUDGET_BY_BACKEND: Record<string, number> = {
+  united: DAY,
+  // 14 d ≈ 2.3x the worst measured alaska-json gap (HA, 6.2 d).
+  "alaska-json": 14 * DAY,
+  "qatar-fltstatus": DAY,
+};
+
+function verifierBudgetSec(airline: string): number {
+  const backend = AIRLINES[airline]?.verifierBackend;
+  return (backend && VERIFIER_BUDGET_BY_BACKEND[backend]) ?? DAY;
+}
+
+const DEADMAN_BUDGET_SEC: Record<
+  string,
+  { default: number; byAirline?: (airline: string) => number }
+> = {
+  flight_updater: { default: DAY },
+  verifier: { default: DAY, byAirline: verifierBudgetSec },
+  departures: { default: 2 * DAY },
+  fleet_progress: { default: 3 * DAY },
+  faa_registry: { default: 3 * DAY },
+  adsb_sweep: { default: DAY },
+  qatar_ingester: { default: DAY },
+};
 
 export function deadmanBudgetSec(job: string, airline: string): number | null {
   const entry = DEADMAN_BUDGET_SEC[job];
   if (!entry) return null;
-  return entry.byAirline?.[airline] ?? entry.default;
+  return entry.byAirline?.(airline) ?? entry.default;
 }
 
 /** Test seam: asserts stay in sync with the queries without exporting the table. */
@@ -178,7 +214,8 @@ export function emitDataFreshness(db: Database, queries = FRESHNESS_QUERIES): vo
         metrics.gauge(GAUGES.DATA_FRESHNESS_SECONDS, ageSec, tags);
         // Cadence-normalized deadman: >1 means the pipeline is past its
         // budget. Lets a single monitor cover airlines whose healthy write
-        // cadences differ by orders of magnitude (UA minutes vs HA weekly).
+        // cadences differ by two orders of magnitude (UA's verifier writes
+        // every ~69 min at worst; the alaska-json airlines go quiet for days).
         const budget = deadmanBudgetSec(job, row.airline);
         if (budget !== null) {
           metrics.gauge(GAUGES.DATA_FRESHNESS_RATIO, ageSec / budget, tags);

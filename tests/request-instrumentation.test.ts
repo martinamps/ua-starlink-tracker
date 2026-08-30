@@ -13,6 +13,7 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
+import { join } from "node:path";
 import { classifyUserAgent, metrics } from "../src/observability/metrics";
 import { createApp } from "../src/server/app";
 import { openSnapshot, req } from "./helpers";
@@ -90,6 +91,36 @@ describe("classifyUserAgent", () => {
       "x".repeat(500),
     ]) {
       expect(allowed.has(classifyUserAgent(ua)), ua).toBe(true);
+    }
+  });
+
+  test("the metrics.ts cardinality budget lists every bucket the classifier emits", async () => {
+    // The budget header is the stated billing control, so it has to be true:
+    // it claimed 5 client classes while the named-crawler split shipped 12,
+    // understating the http.request series count by ~2.4x.
+    const src = await Bun.file(
+      join(import.meta.dir, "..", "src", "observability", "metrics.ts")
+    ).text();
+    const lines = src.split(" */")[0].split("\n");
+    const start = lines.findIndex((l) => l.startsWith(" *   client_class:"));
+    expect(start).toBeGreaterThan(-1);
+    const end = lines.findIndex((l, i) => i > start && /^ \* {3}\w+:/.test(l));
+    const documented = lines.slice(start, end === -1 ? undefined : end).join("\n");
+    for (const bucket of [
+      "extension",
+      "claude",
+      "googleother",
+      "googlebot",
+      "bingbot",
+      "gptbot",
+      "perplexity",
+      "seo-crawler",
+      "social",
+      "bot",
+      "browser",
+      "unknown",
+    ]) {
+      expect(documented, bucket).toContain(bucket);
     }
   });
 });

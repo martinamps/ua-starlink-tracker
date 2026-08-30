@@ -117,21 +117,33 @@ alive but writing nothing still ages):
   airline) *deadman budget* (`DEADMAN_BUDGET_SEC` in data-freshness.ts).
   `> 1` means the pipeline is past the point where its loop must be dead.
 
-The ratio exists because of cadence asymmetry: Hawaiian's verifier re-checks
-each tail on a deliberate ~168h defer, so its healthy `freshness_seconds`
-sawtooths up to ~604,800s — that sawtooth is *healthy*. A seconds threshold
-tight enough for United (writes every few minutes) pages weekly on healthy
-Hawaiian; one loose enough for Hawaiian hides a dead United verifier for a
-week. Budgets encode each pipeline's own "definitely dead" age (verifier:
-24h default, 14d for HA), so a single monitor covers everything:
+Each anchor is `MAX(ts)` over **all** of an airline's rows — the fleet-wide
+newest write, not any one tail's re-check interval — so the gauge only ages
+when the whole airline goes quiet.
+
+The ratio exists because of cadence asymmetry between airlines. Measured over
+the 90 days ending 2026-08-29, the worst *healthy* verifier gap was 4,140s
+(69 min) for United, but 328,533s (3.8 d) for Alaska and 535,605s (6.2 d) for
+Hawaiian: both ride the same `alaska-json` round-robin, whose small rosters and
+~7-day inconclusive defer leave the airline silent for days at a time. A
+seconds threshold tight enough for United pages continuously on a healthy
+Alaska (its age exceeded 24h ~38% of that window); one loose enough for Alaska
+hides a dead United verifier for a week. Budgets encode each pipeline's own
+"definitely dead" age — the verifier's is keyed off the registry's
+`verifierBackend` (`united` 24h, `alaska-json` 14d), never off airline codes,
+so a new airline joining a backend inherits the right budget — and a single
+monitor then covers everything:
 
 ```
 max:starlink.data.freshness_ratio{*} by {dataset,airline} > 1
 ```
 
 Creating that monitor is a Datadog-side task; the code guarantees the series
-exist (tests/jobs.test.ts pins that every freshness query has a budget and
-that every enabled airline surfaces in some freshness job).
+exist and stay monitorable — tests/jobs.test.ts pins that every freshness query
+has a budget, that every enabled airline surfaces in some freshness job, and
+that each budget clears the worst healthy write gap recorded in
+`WORST_HEALTHY_GAP_SEC` (so re-measuring production is the only way to move a
+budget under an airline's real cadence).
 
 ## Tracing
 

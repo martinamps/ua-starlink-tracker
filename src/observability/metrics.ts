@@ -6,7 +6,12 @@
  *
  * Naming Convention: starlink.{category}.{action}
  *
- * Tag cardinality budget (keep each tag ≤ ~20 values):
+ * Tag cardinality budget. Every line is a billing control, not documentation:
+ * Datadog bills unique series (metric name × tag-value combination), so a tag
+ * that quietly grows multiplies every metric carrying it. Keep each tag at or
+ * under ~25 values, and update the line in the same commit that adds a bucket —
+ * tests/request-instrumentation.test.ts pins client_class against the real
+ * classifier so at least that one can't drift again.
  *   airline:         united | hawaiian | alaska | qatar | all | unmapped | unknown  (~7)
  *                    `all` = hub-scope emits (db.table_rows, mcp.tool_call)
  *   tenant:          UA | HA | AS | QR | ALL  (~5) — used on http.* only; the
@@ -27,8 +32,13 @@
  *                    rate_limited emits (fr24 only)                  (~10)
  *   result:          success | error | aircraft_mismatch | tail_unknown  (4)
  *                    on flight.lookup_result it mirrors `outcome` (+5)
- *   dataset:         mirrors `job` on data.freshness_seconds             (~7)
- *   client_class:    bot | claude | extension | browser | unknown    (5)
+ *   dataset:         mirrors `job` on data.freshness_seconds and
+ *                    data.freshness_ratio                                (~7)
+ *   client_class:    extension | claude | googleother | googlebot | bingbot |
+ *                    gptbot | perplexity | seo-crawler | social | bot |
+ *                    browser | unknown                                (12)
+ *                    = the NAMED_CRAWLERS split + extension/bot/browser/unknown;
+ *                    the largest multiplier on http.request.
  *   confidence:      high | medium | low | none                      (4)
  *   outcome:         verified_yes | verified_no | predicted | no_data | error  (5)
  *   tool:            7 MCP tool names (TOOL_NAMES) | unknown         (~8)
@@ -251,9 +261,11 @@ export const GAUGES = {
 
   // freshness_seconds divided by the per-(job, airline) deadman budget in
   // data-freshness.ts — >1 means the pipeline is past the age where its loop
-  // must be dead. Exists because healthy cadences differ per airline (HA's
-  // verifier sawtooths to ~168h by design), so no single seconds threshold
-  // can monitor every airline. Same tags as freshness_seconds; no new values.
+  // must be dead. Exists because healthy cadences differ per airline: the
+  // alaska-json verifier's worst healthy write gap is days (measured in
+  // WORST_HEALTHY_GAP_SEC) where UA's is ~69 min, so no single seconds
+  // threshold can monitor every airline. Same tags as freshness_seconds; no
+  // new values.
   DATA_FRESHNESS_RATIO: "data.freshness_ratio",
 
   // Backtest precision of firm "yes/no Starlink" calls — tags: airline, window, call
