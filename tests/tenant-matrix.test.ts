@@ -187,6 +187,13 @@ const ROUTES: Array<[route: string, feature: keyof SiteConfig["features"] | null
 ];
 const isHtmlRoute = (route: string) => !route.startsWith("/api/") && !route.endsWith(".txt");
 
+// Bounded URL families: on top of the feature flag these only exist where the
+// tenant actually has the data behind them, so a fixed 200 would pin the test
+// to whatever the snapshot happens to contain. The invariant that matters —
+// and the one the conventions demand — is that a page serves exactly when the
+// sitemap advertises it, in both directions.
+const DATA_GATED = new Set(["/newly-equipped", "/install-rate"]);
+
 // Editorially deliberate cross-airline mentions (2024 AS/HA merger FAQ copy).
 // Covers the airline's name AND canonical host. Anything else is a leak.
 const ALLOWED_CROSS_MENTIONS: Record<string, string[]> = {
@@ -236,12 +243,18 @@ function assertOwnBranding(site: SiteConfig, route: string, body: string) {
 for (const site of Object.values(SITES)) {
   describe(`tenant matrix: ${site.key} (${site.canonicalHost})`, () => {
     for (const [route, feature] of ROUTES) {
-      const enabled = feature === null || site.features[feature];
-      const label = feature ? ` (${feature} ${enabled ? "on" : "off"})` : "";
-      test(`GET ${route} → ${enabled ? 200 : 404}${label}`, async () => {
+      const flagged = feature === null || site.features[feature];
+      const label = feature ? ` (${feature} ${flagged ? "on" : "off"})` : "";
+      const suffix = flagged && DATA_GATED.has(route) ? " iff sitemapped" : "";
+      test(`GET ${route} → ${flagged ? 200 : 404}${label}${suffix}`, async () => {
+        let expected = flagged;
+        if (flagged && DATA_GATED.has(route)) {
+          const sm = await (await get(site, "/sitemap.xml")).text();
+          expected = sm.includes(`https://${site.canonicalHost}${route}<`);
+        }
         const res = await get(site, route, "text/html");
-        expect(res.status).toBe(enabled ? 200 : 404);
-        if (!enabled) return;
+        expect(res.status).toBe(expected ? 200 : 404);
+        if (!expected) return;
         const body = await res.text();
         if (isHtmlRoute(route)) assertOwnBranding(site, route, body);
         // Canary sweep: airline-scoped sites must never carry another

@@ -1,5 +1,5 @@
 import { AIRLINES, type SiteConfig } from "../airlines/registry";
-import { PageFooter } from "./atoms";
+import { PageFooter, type PageLink } from "./atoms";
 
 const EYEBROW = "text-[10px] font-mono text-muted uppercase tracking-wider mb-3";
 const PANEL = "bg-surface border border-subtle rounded-lg p-5 mb-4";
@@ -7,6 +7,14 @@ const SECTION = "relative w-full max-w-2xl mx-auto mb-8";
 
 interface EmbedPageProps {
   site: SiteConfig;
+  /** Does this tenant actually appear in /api/fleet-summary? The endpoint
+   * serves publicAirlines() only, so on a non-hub tenant (QR) the documented
+   * link would hand a visitor three other carriers and none of theirs. */
+  inFleetSummary: boolean;
+  /** Is /feed.xml live here? It rides both the feature flag and the
+   * install-log data gate, so the flag alone would link a 404. */
+  feedAvailable: boolean;
+  pageLinks?: PageLink[];
 }
 
 function Snippet({ label, code }: { label: string; code: string }) {
@@ -20,7 +28,12 @@ function Snippet({ label, code }: { label: string; code: string }) {
   );
 }
 
-export default function EmbedPage({ site }: EmbedPageProps) {
+export default function EmbedPage({
+  site,
+  inFleetSummary,
+  feedAvailable,
+  pageLinks,
+}: EmbedPageProps) {
   const host = site.canonicalHost;
   const scopeCode = site.scope !== "ALL" ? site.scope : null;
   const subject = scopeCode ? AIRLINES[scopeCode].name : "tracked airlines";
@@ -72,29 +85,35 @@ export default function EmbedPage({ site }: EmbedPageProps) {
           </p>
         </div>
 
-        <div className={PANEL}>
-          <div className={EYEBROW}>Want the numbers instead?</div>
-          <p className="text-sm text-muted leading-relaxed">
-            The same live data is available as JSON at{" "}
-            <a href="/api/fleet-summary" className="text-accent hover:underline font-mono text-xs">
-              /api/fleet-summary
-            </a>{" "}
-            (CORS enabled, no auth) if you'd rather render your own widget
-            {site.features.newlyEquippedPage ? (
-              <>
-                , and the{" "}
+        {(inFleetSummary || feedAvailable) && (
+          <div className={PANEL}>
+            <div className={EYEBROW}>Want the numbers instead?</div>
+            {inFleetSummary && (
+              <p className="text-sm text-muted leading-relaxed">
+                The same live data is available as JSON at{" "}
+                <a
+                  href="/api/fleet-summary"
+                  className="text-accent hover:underline font-mono text-xs"
+                >
+                  /api/fleet-summary
+                </a>{" "}
+                (CORS enabled, no auth) if you'd rather render your own widget.
+              </p>
+            )}
+            {feedAvailable && (
+              <p className="text-sm text-muted leading-relaxed mt-2">
+                The{" "}
                 <a href="/feed.xml" className="text-accent hover:underline">
                   Atom feed
                 </a>{" "}
-                announces each newly equipped aircraft
-              </>
-            ) : null}
-            .
-          </p>
-        </div>
+                announces each newly equipped aircraft as it lands.
+              </p>
+            )}
+          </div>
+        )}
       </section>
 
-      <PageFooter site={site} />
+      <PageFooter site={site} pageLinks={pageLinks} />
     </div>
   );
 }

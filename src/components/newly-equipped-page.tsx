@@ -1,7 +1,7 @@
 import React from "react";
 import { AIRLINES, type SiteConfig } from "../airlines/registry";
 import type { FirstFlight, PerAirlineStat, RecentInstall } from "../types";
-import { PageFooter } from "./atoms";
+import { PageFooter, type PageLink } from "./atoms";
 
 const EYEBROW = "text-[10px] font-mono text-muted uppercase tracking-wider mb-3";
 const PANEL = "bg-surface border border-subtle rounded-lg p-5";
@@ -13,6 +13,7 @@ interface NewlyEquippedPageProps {
   airlines: PerAirlineStat[];
   /** Observed first revenue departure per tail; sparse — most tails have none yet. */
   firstFlights: Record<string, FirstFlight>;
+  pageLinks?: PageLink[];
 }
 
 function installDate(d: string): string {
@@ -66,6 +67,7 @@ export default function NewlyEquippedPage({
   installs,
   airlines,
   firstFlights,
+  pageLinks,
 }: NewlyEquippedPageProps) {
   const scopeCode = site.scope !== "ALL" ? site.scope : null;
   const airlineName = scopeCode ? AIRLINES[scopeCode].name : "tracked airlines";
@@ -145,7 +147,7 @@ export default function NewlyEquippedPage({
         </div>
       </section>
 
-      <PageFooter site={site} />
+      <PageFooter site={site} pageLinks={pageLinks} />
     </div>
   );
 }

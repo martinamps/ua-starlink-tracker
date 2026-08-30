@@ -13,7 +13,7 @@ import {
   airlineSlug,
 } from "../airlines/registry";
 import type { PerAirlineStat } from "../types";
-import { PageFooter, STATUS_TONE } from "./atoms";
+import { PageFooter, type PageLink, STATUS_TONE } from "./atoms";
 
 const PANEL = "bg-surface border border-subtle rounded-lg p-5";
 const SECTION = "relative w-full max-w-3xl mx-auto mb-8";
@@ -77,11 +77,13 @@ function PageShell({
   heading,
   sub,
   children,
+  pageLinks,
 }: {
   site: SiteConfig;
   heading: string;
   sub: string;
   children: React.ReactNode;
+  pageLinks?: PageLink[];
 }) {
   return (
     <div className="w-full mx-auto px-4 sm:px-6 md:px-8 bg-base min-h-screen flex flex-col relative">
@@ -103,7 +105,7 @@ function PageShell({
           ← Back to {site.brand.title}
         </a>
       </div>
-      <PageFooter site={site} />
+      <PageFooter site={site} pageLinks={pageLinks} />
     </div>
   );
 }
@@ -111,13 +113,16 @@ function PageShell({
 export function AirlinesIndexPage({
   site,
   airlines,
+  pageLinks,
 }: {
   site: SiteConfig;
   airlines: AirlineOverview[];
+  pageLinks?: PageLink[];
 }) {
   return (
     <PageShell
       site={site}
+      pageLinks={pageLinks}
       heading="Which Airlines Have Starlink WiFi?"
       sub="Every airline with a Starlink rollout we track — fleet counts, percent equipped, and where each install program stands."
     >
@@ -173,15 +178,18 @@ export function AirlinesIndexPage({
 export function AirlineDetailPage({
   site,
   overview,
+  pageLinks,
 }: {
   site: SiteConfig;
   overview: AirlineOverview;
+  pageLinks?: PageLink[];
 }) {
   const { cfg, stat } = overview;
   const { fleet, pct } = fleetShare(stat);
   return (
     <PageShell
       site={site}
+      pageLinks={pageLinks}
       heading={`${cfg.name} Starlink WiFi`}
       sub={`${cfg.rollout.statusLabel} — ${cfg.rollout.phaseNote}`}
     >

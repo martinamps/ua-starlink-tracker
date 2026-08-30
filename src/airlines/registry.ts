@@ -164,6 +164,15 @@ export interface AirlineConfig {
     status: RolloutStatus;
     statusLabel: string;
     phaseNote: string;
+    /** Is the tracked roster the rollout's own denominator?
+     *
+     * False when the roster counts aircraft the programme deliberately excludes
+     * (HA's 717s, QR's narrowbodies and freighters). On-site that nuance is
+     * carried by the status chip and phaseNote next to the number — but
+     * /badge.svg travels alone into third-party READMEs with no such context,
+     * so a bare "42 of 61" there would read as a 69%-done rollout the site
+     * itself calls Complete. Required, so a new airline has to decide. */
+    rosterIsProgramScope: boolean;
   };
   brand: PageBrand;
 }
@@ -240,6 +249,7 @@ const AIRLINE_DEFS = {
       statusLabel: "In progress",
       phaseNote:
         "Started with regional jets in early 2025; rolling out across United Express and mainline.",
+      rosterIsProgramScope: true,
     },
     brand: {
       title: "United Airlines Starlink Tracker",
@@ -285,6 +295,9 @@ const AIRLINE_DEFS = {
       status: "complete",
       statusLabel: "Complete",
       phaseNote: "Every A330 and A321neo has Starlink. The 717 interisland jets won't get it.",
+      // The 717s are counted but never eligible, so 42/61 understates a
+      // finished rollout.
+      rosterIsProgramScope: false,
     },
     routeTypeRule: (o, d) => {
       // Hawaiian's network is hub-and-spoke from Hawai'i — every route touches
@@ -382,6 +395,9 @@ const AIRLINE_DEFS = {
       status: "phase_done",
       statusLabel: "Regional fleet done",
       phaseNote: "All 90 regional E175s have Starlink. Mainline 737s and 787s start later in 2026.",
+      // Mainline is in the programme too, just not started — the whole roster
+      // is the denominator.
+      rosterIsProgramScope: true,
     },
     brand: {
       title: "Alaska Airlines Starlink Tracker",
@@ -436,6 +452,9 @@ const AIRLINE_DEFS = {
       statusLabel: "Widebodies done",
       phaseNote:
         "Every Boeing 777 and Airbus A350 has Starlink (rollout completed December 2025); the 787 fleet is mid-installation. Narrowbodies and freighters are not in the program.",
+      // Roster counts ~277 including narrowbodies and freighters the programme
+      // excludes; the in-scope widebody fleet is roughly half that.
+      rosterIsProgramScope: false,
     },
     brand: {
       title: "Qatar Airways Starlink Tracker",

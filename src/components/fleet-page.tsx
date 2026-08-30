@@ -9,7 +9,7 @@ import type {
   WifiProvider,
 } from "../types";
 import { AIRCRAFT_SPECS, type AircraftSpec } from "../utils/aircraft-specs";
-import { ShareCardLink } from "./atoms";
+import { type PageLink, PageNavLinks, ShareCardLink } from "./atoms";
 
 const PROVIDER_LABEL: Record<WifiProvider, string> = {
   starlink: "Starlink",
@@ -623,9 +623,10 @@ interface FleetPageProps {
   site: SiteConfig;
   /** Pre-rendered share card path; null until the nightly batch produced one. */
   shareCard?: string | null;
+  pageLinks?: PageLink[];
 }
 
-export default function FleetPage({ data, site, shareCard }: FleetPageProps) {
+export default function FleetPage({ data, site, shareCard, pageLinks }: FleetPageProps) {
   const scopeCode = site.scope !== "ALL" ? site.scope : null;
   const scopeLabel = scopeCode ? AIRLINES[scopeCode].name : "tracked";
   const headerTitle = scopeCode
@@ -724,6 +725,7 @@ export default function FleetPage({ data, site, shareCard }: FleetPageProps) {
         <a href="/" className="text-accent hover:underline font-display">
           ← Back to {backLabel}
         </a>
+        <PageNavLinks links={pageLinks} />
       </footer>
     </div>
   );

@@ -73,10 +73,39 @@ export function ShareCardLink({ path }: { path?: string | null }) {
   );
 }
 
+export interface PageLink {
+  href: string;
+  label: string;
+}
+
+/**
+ * Internal nav for the secondary URL families (/newly-equipped, /install-rate,
+ * /embed). They are sitemapped and indexable, so without an inbound href from
+ * a real page they are orphans — no PageRank path in and no way for a human to
+ * find them. The server builds this list from the same sitePages() filter the
+ * sitemap uses (feature flag AND data gate), so a link here can never point at
+ * a 404, and the current page is dropped so nothing self-links.
+ */
+export function PageNavLinks({ links }: { links?: PageLink[] }) {
+  if (!links?.length) return null;
+  return (
+    <div className="mt-3 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-xs">
+      {links.map((l, i) => (
+        <React.Fragment key={l.href}>
+          {i > 0 && <span className="text-subtle">·</span>}
+          <a href={l.href} className="text-secondary hover:text-primary transition-colors">
+            {l.label}
+          </a>
+        </React.Fragment>
+      ))}
+    </div>
+  );
+}
+
 /** Shared footer for secondary pages (methodology, hub /airlines). The
  * homepage footer in page.tsx stays inline — it carries extra links (GitHub,
  * methodology) and is the reference markup. */
-export function PageFooter({ site }: { site: SiteConfig }) {
+export function PageFooter({ site, pageLinks }: { site: SiteConfig; pageLinks?: PageLink[] }) {
   return (
     <footer className="relative py-6 text-center border-t border-subtle text-muted text-sm">
       <a
@@ -98,6 +127,7 @@ export function PageFooter({ site }: { site: SiteConfig }) {
         </svg>
         by @martinamps
       </a>
+      <PageNavLinks links={pageLinks} />
       <CrossSiteLinks site={site} />
     </footer>
   );

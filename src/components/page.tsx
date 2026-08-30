@@ -10,7 +10,13 @@ import type {
   PerAirlineStat,
   RecentInstall,
 } from "../types";
-import { CrossSiteLinks, HeaderStatStrip, ShareCardLink } from "./atoms";
+import {
+  CrossSiteLinks,
+  HeaderStatStrip,
+  type PageLink,
+  PageNavLinks,
+  ShareCardLink,
+} from "./atoms";
 import { PassengerBanner } from "./passenger-banner";
 
 // Reusable FAQ accordion item — eliminates ~30 lines of boilerplate per question
@@ -71,6 +77,7 @@ interface PageProps {
   installs30d?: number;
   /** Pre-rendered share card path; null until the nightly batch produced one. */
   shareCard?: string | null;
+  pageLinks?: PageLink[];
 }
 
 /**
@@ -329,6 +336,7 @@ export default function Page({
   showPassengerBanner = false,
   installs30d,
   shareCard,
+  pageLinks,
 }: PageProps) {
   // Apply date overrides to the aircraft data
   const applyDateOverrides = (data: Aircraft[]): Aircraft[] => {
@@ -1343,6 +1351,7 @@ export default function Page({
             </>
           )}
         </div>
+        <PageNavLinks links={pageLinks} />
         <CrossSiteLinks site={site} />
       </footer>
     </div>

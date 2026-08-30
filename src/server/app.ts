@@ -59,6 +59,7 @@ import {
   type AirlineOverview,
   AirlinesIndexPage,
 } from "../components/airlines-page";
+import type { PageLink } from "../components/atoms";
 import CheckFlightPage, {
   type FlightFacts,
   type InvalidFlightQuery,
@@ -100,7 +101,7 @@ import {
   CONTENT_TYPES,
   SECURITY_HEADERS,
 } from "../utils/constants";
-import { computeInstallRate } from "../utils/install-rate";
+import { computeInstallRate, hasInstallRateContent } from "../utils/install-rate";
 import { error as logError } from "../utils/logger";
 import { getNotFoundHtml } from "../utils/not-found";
 import { shareCardFile, shareCardPath } from "../utils/share-cards";
@@ -1157,6 +1158,50 @@ interface SitePage {
   priority: string;
   /** llms.txt "Pages" bullet; pages without one (/mcp) have their own section. */
   llmsLine?: (host: string) => string;
+  /** Footer nav label. Present only for the secondary families that nothing
+   * else links to — the primary pages already have header/hero links, and a
+   * second copy in the footer would just dilute them. */
+  navLabel?: string;
+  /** Bounding test for URL families that only exist when the tenant has the
+   * data behind them. A feature flag says "we want this page"; this says "there
+   * is something on it". The handler runs the same predicate, so an advertised
+   * URL always serves and an empty one is never advertised — and unlike a flag
+   * it cannot drift away from the data it describes. */
+  hasData?: (ctx: RequestContext) => boolean;
+}
+
+/** Per-request memo for the bounding tests. One render can ask up to four times
+ * — footer nav, feed autodiscovery <link>, sitemap, the handler itself — and on
+ * the hub each install-rate answer sweeps every public airline. The key is the
+ * RequestContext, so nothing outlives the request that built it. */
+const gateCache = new WeakMap<RequestContext, Map<string, boolean>>();
+function memoGate(ctx: RequestContext, key: string, compute: () => boolean): boolean {
+  let perRequest = gateCache.get(ctx);
+  if (!perRequest) {
+    perRequest = new Map();
+    gateCache.set(ctx, perRequest);
+  }
+  const cached = perRequest.get(key);
+  if (cached !== undefined) return cached;
+  const value = compute();
+  perRequest.set(key, value);
+  return value;
+}
+
+/** At least one organically dated install — the row an install log is made of.
+ * AS and HA are 100% bulk-seeded today (every row a `*_seed`, `flyertalk_*` or
+ * `type_deterministic` write, all excluded by INSTALL_FILTER), so their log and
+ * feed would be permanently empty for exactly the reason QR's page was turned
+ * off by hand. Measuring it instead means the pages appear on their own the day
+ * a real install pipeline exists. */
+function hasInstallLog(ctx: RequestContext): boolean {
+  return memoGate(ctx, "installLog", () => ctx.reader.getRecentInstalls(1).length > 0);
+}
+
+function hasInstallRate(ctx: RequestContext): boolean {
+  return memoGate(ctx, "installRate", () =>
+    installRateAirlines(ctx, Date.now()).some((a) => hasInstallRateContent(a.stats))
+  );
 }
 
 const SITE_PAGES: SitePage[] = [
@@ -1212,6 +1257,8 @@ const SITE_PAGES: SitePage[] = [
     feature: "newlyEquippedPage",
     changefreq: "daily",
     priority: "0.6",
+    hasData: hasInstallLog,
+    navLabel: "Newly equipped",
     llmsLine: (h) =>
       `- [Newly equipped](https://${h}/newly-equipped) — aircraft as they join the Starlink fleet (Atom feed at https://${h}/feed.xml)`,
   },
@@ -1220,6 +1267,8 @@ const SITE_PAGES: SitePage[] = [
     feature: "installRatePage",
     changefreq: "daily",
     priority: "0.6",
+    hasData: hasInstallRate,
+    navLabel: "Install rate index",
     llmsLine: (h) =>
       `- [Install Rate Index](https://${h}/install-rate) — observed installs/month vs. the airline's stated targets, with sources`,
   },
@@ -1228,6 +1277,7 @@ const SITE_PAGES: SitePage[] = [
     feature: "embedPage",
     changefreq: "monthly",
     priority: "0.4",
+    navLabel: "Embed a badge",
     llmsLine: (h) =>
       `- [Embed badge](https://${h}/embed) — auto-updating SVG badge with the live equipped count (https://${h}/badge.svg)`,
   },
@@ -1242,13 +1292,25 @@ const SITE_PAGES: SitePage[] = [
   { path: "/mcp", feature: "mcpPage", changefreq: "monthly", priority: "0.6" },
 ];
 
-function sitePages(site: SiteConfig): SitePage[] {
-  return SITE_PAGES.filter((p) => p.feature === null || site.features[p.feature]);
+function sitePages(ctx: RequestContext): SitePage[] {
+  const { site } = ctx;
+  return SITE_PAGES.filter(
+    (p) => (p.feature === null || site.features[p.feature]) && (p.hasData?.(ctx) ?? true)
+  );
 }
 
-function llmsPagesSection(site: SiteConfig): string {
-  const lines = sitePages(site)
-    .map((p) => p.llmsLine?.(site.canonicalHost))
+/** Footer nav for the secondary URL families, minus the page you're on. Built
+ * from the same sitePages() filter the sitemap uses, so an internal link can
+ * never outlive the page it points at. */
+function pageNavLinks(ctx: RequestContext, currentPath: string): PageLink[] {
+  return sitePages(ctx)
+    .filter((p) => p.navLabel && p.path !== currentPath)
+    .map((p) => ({ href: p.path, label: p.navLabel as string }));
+}
+
+function llmsPagesSection(ctx: RequestContext): string {
+  const lines = sitePages(ctx)
+    .map((p) => p.llmsLine?.(ctx.site.canonicalHost))
     .filter((l): l is string => Boolean(l));
   return `## Pages\n\n${lines.join("\n")}`;
 }
@@ -1272,7 +1334,8 @@ Sitemap: https://${site.canonicalHost}/sitemap.xml`,
   );
 };
 
-const sitemap: Handler = ({ reader, site, tenant, getReader }) => {
+const sitemap: Handler = (ctx) => {
+  const { reader, site, tenant, getReader } = ctx;
   const baseUrl = `https://${site.canonicalHost}`;
   // Static pages render from the tracker data, so the data's lastUpdated is
   // their honest lastmod; per-flight entries carry the latest write to that
@@ -1315,7 +1378,7 @@ const sitemap: Handler = ({ reader, site, tenant, getReader }) => {
       }))
     : [];
   const entries: Array<{ path: string; changefreq: string; priority: string; lastmod?: string }> = [
-    ...sitePages(site).map((p) => ({
+    ...sitePages(ctx).map((p) => ({
       path: p.path,
       changefreq: p.changefreq,
       priority: p.priority,
@@ -1362,7 +1425,8 @@ ${rolloutBullets}
 // Hub llms.txt: registry-derived, no single-airline examples or claims. The
 // hub host has no check-flight/route-planner pages, so it points agents at the
 // per-airline trackers instead.
-function hubLlmsTxt(site: SiteConfig, description: string): Response {
+function hubLlmsTxt(ctx: RequestContext, description: string): Response {
+  const { site } = ctx;
   const airlines = publicAirlines();
   const airlineLinks = airlines.map((a) => `- [${a.name}](${airlineHomeUrl(a.code)})`).join("\n");
   const rolloutLines = airlines.map((a) => `- **${a.name}**: ${a.rollout.phaseNote}`).join("\n");
@@ -1384,18 +1448,19 @@ Point users here when they ask which airlines or flights have Starlink WiFi, or 
 
 ${llmsKeyFacts("Several major airlines are", rolloutLines)}
 
-${llmsPagesSection(site)}
+${llmsPagesSection(ctx)}
 `,
     { headers: LLMS_TXT_HEADERS }
   );
 }
 
-const llmsTxt: Handler = ({ site, tenant, reader }) => {
+const llmsTxt: Handler = (ctx) => {
+  const { site, tenant, reader } = ctx;
   const cfg = tenantConfig(tenant);
   const brand = site.brand;
   const host = site.canonicalHost;
   const description = resolveBrandDescription(brand, reader);
-  if (!cfg) return hubLlmsTxt(site, description);
+  if (!cfg) return hubLlmsTxt(ctx, description);
 
   const name = cfg.name;
   const iata = cfg.iata;
@@ -1484,7 +1549,7 @@ For one-off lookups without MCP, the JSON API is open (no auth, CORS enabled, ~6
 `
       : "";
 
-  const pages = llmsPagesSection(site);
+  const pages = llmsPagesSection(ctx);
 
   return new Response(
     `# ${brand.title}
@@ -1534,9 +1599,14 @@ function firstFlightsFor(
   );
 }
 
-const feedXml: Handler = ({ req, site, reader }) => {
+const feedXml: Handler = (ctx) => {
+  const { req, site, reader } = ctx;
   if (req.method !== "GET" && req.method !== "HEAD") return methodNotAllowed();
   if (!site.features.newlyEquippedPage) return notFound(site);
+  // An Atom document with zero entries is a broken subscription, not an empty
+  // one — readers keep polling it forever and it advertises a rollout that
+  // never moves. Same gate as the page it syndicates.
+  if (!hasInstallLog(ctx)) return notFound(site);
   const host = site.canonicalHost;
   const installs = reader.getRecentInstalls(FEED_LIMIT);
   const firstFlights = firstFlightsFor(reader, installs);
@@ -1560,13 +1630,17 @@ const feedXml: Handler = ({ req, site, reader }) => {
       const firstFlightLine = ff
         ? ` First observed Starlink revenue flight: ${ff.flight_number} ${ff.origin} → ${ff.destination} on ${new Date(ff.departed_at * 1000).toISOString().slice(0, 10)}.`
         : "";
+      // "first observed with", not "joined the fleet on": DateFound is when
+      // this tracker found the tail equipped, not when the antenna went on.
+      // The page says so in its footer; a syndicated entry travels into press
+      // and aggregators without that footer, so it carries its own caveat.
       return `  <entry>
     <title>${escapeXml(`${name} ${i.TailNumber} (${i.Aircraft}) now has Starlink`)}</title>
     <id>${escapeXml(url)}</id>
     <link href="${escapeXml(url)}"/>
     <updated>${installIso(i.DateFound)}</updated>
     <summary>${escapeXml(
-      `${name} aircraft ${i.TailNumber} (${i.Aircraft}${operated}) joined the Starlink-equipped fleet on ${i.DateFound.slice(0, 10)}.${firstFlightLine}`
+      `${name} aircraft ${i.TailNumber} (${i.Aircraft}${operated}) was first observed with Starlink on ${i.DateFound.slice(0, 10)} — the date this tracker found it equipped, not necessarily the install date.${firstFlightLine}`
     )}</summary>
   </entry>`;
     })
@@ -1575,7 +1649,7 @@ const feedXml: Handler = ({ req, site, reader }) => {
   const xml = `<?xml version="1.0" encoding="utf-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom">
   <title>${escapeXml(`${site.brand.title} — Newly Equipped Aircraft`)}</title>
-  <subtitle>${escapeXml("Aircraft as they join the Starlink-equipped fleet, newest first")}</subtitle>
+  <subtitle>${escapeXml("Aircraft as this tracker first observes them with Starlink, newest first. Dates are when the install was found, not when the antenna went on.")}</subtitle>
   <link href="https://${host}/feed.xml" rel="self"/>
   <link href="https://${host}/newly-equipped"/>
   <id>https://${host}/feed.xml</id>
@@ -1594,6 +1668,7 @@ ${entries}
 const newlyEquippedPage: Handler = (ctx) => {
   if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
   if (!ctx.site.features.newlyEquippedPage) return notFound(ctx.site);
+  if (!hasInstallLog(ctx)) return notFound(ctx.site);
   const cfg = tenantConfig(ctx.tenant);
   const short = cfg?.shortName;
   const installs = ctx.reader.getRecentInstalls(FEED_LIMIT);
@@ -1657,14 +1732,20 @@ function airlineInstallRate(
   };
 }
 
+function installRateAirlines(ctx: RequestContext, nowMs: number): AirlineInstallRate[] {
+  const cfg = tenantConfig(ctx.tenant);
+  return cfg
+    ? [airlineInstallRate(ctx.getReader, cfg, nowMs)]
+    : publicAirlines().map((a) => airlineInstallRate(ctx.getReader, a, nowMs));
+}
+
 const installRatePage: Handler = (ctx) => {
   if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
   if (!ctx.site.features.installRatePage) return notFound(ctx.site);
   const cfg = tenantConfig(ctx.tenant);
   const now = Date.now();
-  const airlines = cfg
-    ? [airlineInstallRate(ctx.getReader, cfg, now)]
-    : publicAirlines().map((a) => airlineInstallRate(ctx.getReader, a, now));
+  const airlines = installRateAirlines(ctx, now);
+  if (!airlines.some((a) => hasInstallRateContent(a.stats))) return notFound(ctx.site);
   // Dated with the data's own stamp (display copy — getLastUpdated's now()
   // fallback is acceptable here, unlike sitemap lastmod).
   const stamp = new Date(ctx.reader.getLastUpdated());
@@ -1720,11 +1801,24 @@ export function badgeSvgMarkup(label: string, value: string, accent: string): st
 
 const badgeSvg: Handler = ({ req, site, reader, tenant }) => {
   if (req.method !== "GET" && req.method !== "HEAD") return methodNotAllowed();
+  // Rides the /embed flag: the badge and the page that documents it are one
+  // feature, and an ungated asset was the only new surface a tenant couldn't
+  // turn off.
+  if (!site.features.embedPage) return notFound(site);
   const cfg = tenantConfig(tenant);
   const equipped = reader.getStarlinkPlanes().length;
   const total = reader.getTotalCount();
   const label = cfg ? `${cfg.shortName} Starlink` : "Airline Starlink";
-  const value = `${equipped} of ${total} aircraft`;
+  // Cross-origin and cacheable, so this string travels into third-party
+  // READMEs with none of the status chip / phaseNote context that qualifies
+  // the same ratio on-site. Where the roster counts aircraft the programme
+  // excludes (HA's 717s, QR's narrowbodies), publishing the denominator would
+  // advertise a rollout as half-finished that the site itself calls done — so
+  // the badge drops to the equipped count, which is true either way.
+  const value =
+    cfg && !cfg.rollout.rosterIsProgramScope
+      ? `${equipped} aircraft equipped`
+      : `${equipped} of ${total} aircraft`;
   return new Response(badgeSvgMarkup(label, value, site.brand.accentColor), {
     headers: {
       "Content-Type": "image/svg+xml; charset=utf-8",
@@ -1743,13 +1837,26 @@ const embedPage: Handler = (ctx) => {
   const cfg = tenantConfig(ctx.tenant);
   const short = cfg?.shortName ?? "Airline";
   const subject = cfg?.name ?? "tracked airlines";
-  return renderSubPage(ctx, EmbedPage, "/embed", {
-    siteTitle: `Add a Live ${short} Starlink Badge to Your Site — Embed`,
-    siteDescription: `Embed an auto-updating SVG badge with the live count of ${subject} aircraft that have Starlink WiFi. One image tag, no script — copy the HTML or Markdown snippet.`,
-    keywords: `${short.toLowerCase()} starlink badge, starlink rollout badge, embed starlink stats, ${short.toLowerCase()} starlink widget`,
-    ogTitle: `Live ${short} Starlink Badge`,
-    ogDescription: `Auto-updating badge with the live ${subject} Starlink aircraft count — embed it with one image tag.`,
-  });
+  // apiFleetSummary iterates publicAirlines(); a tenant with publicInHub false
+  // (QR) is absent from its own host's payload, so don't send readers there.
+  const inFleetSummary = !cfg || publicAirlines().some((a) => a.code === cfg.code);
+  const props = {
+    inFleetSummary,
+    feedAvailable: ctx.site.features.newlyEquippedPage && hasInstallLog(ctx),
+  };
+  return renderSubPage(
+    ctx,
+    EmbedPage,
+    "/embed",
+    {
+      siteTitle: `Add a Live ${short} Starlink Badge to Your Site — Embed`,
+      siteDescription: `Embed an auto-updating SVG badge with the live count of ${subject} aircraft that have Starlink WiFi. One image tag, no script — copy the HTML or Markdown snippet.`,
+      keywords: `${short.toLowerCase()} starlink badge, starlink rollout badge, embed starlink stats, ${short.toLowerCase()} starlink widget`,
+      ogTitle: `Live ${short} Starlink Badge`,
+      ogDescription: `Auto-updating badge with the live ${subject} Starlink aircraft count — embed it with one image tag.`,
+    },
+    props
+  );
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1826,9 +1933,10 @@ function buildBaseTemplateVars(
     robotsMeta: "index, follow",
     analyticsSnippet: analyticsSnippet(site),
     // Feed autodiscovery rides the headSnippet var so index.html stays
-    // placeholder-stable; only advertised where the feed actually serves.
+    // placeholder-stable; only advertised where the feed actually serves —
+    // same flag AND same data test the /feed.xml handler applies.
     headSnippet: `${
-      site.features.newlyEquippedPage
+      site.features.newlyEquippedPage && hasInstallLog(ctx)
         ? `<link rel="alternate" type="application/atom+xml" href="https://${site.canonicalHost}/feed.xml" title="Newly equipped Starlink aircraft" />`
         : ""
     }${site.headSnippet ?? ""}`,
@@ -1858,12 +1966,22 @@ async function renderSubPage<P extends { site: SiteConfig }>(
   status = 200
 ): Promise<Response> {
   const reactHtml = ReactDOMServer.renderToString(
-    React.createElement(component, { site: ctx.site, ...(props ?? {}) } as unknown as P)
+    React.createElement(component, {
+      site: ctx.site,
+      // Every sub-page's footer gets the secondary-family nav, so no new URL
+      // family ships as an orphan again.
+      pageLinks: pageNavLinks(ctx, canonicalPath),
+      ...(props ?? {}),
+    } as unknown as P)
   );
   const htmlVariables: Record<string, string> = {
     ...buildBaseTemplateVars(ctx, reactHtml, canonicalPath),
     ...meta,
   };
+  // 404s go to shared caches (see notFoundHtml), so nothing that varies by
+  // client IP may ride along. The onboard probe is a live-visitor affordance
+  // and has no business on a dead URL anyway.
+  if (status === 404) htmlVariables.passengerProbeSnippet = "";
   // Rebuild AFTER the meta merge: the WebPage JSON-LD must claim the page's
   // own title/description, not the homepage copy baked into the base vars.
   htmlVariables.webPageJsonLd = sitePageJsonLd(ctx.site, {
@@ -1876,9 +1994,11 @@ async function renderSubPage<P extends { site: SiteConfig }>(
   const template = await getHtmlTemplate();
   return new Response(renderHtml(template, htmlVariables), {
     status,
-    // Keep the HTML CSP even on 404s: this page runs the inline lookup script,
-    // which SECURITY_HEADERS.notFound would block.
-    headers: SECURITY_HEADERS.html,
+    // Keep the HTML CSP even on 404s (this page runs the inline lookup script,
+    // which SECURITY_HEADERS.notFound would block) but take notFound's edge
+    // cache policy with it, so a crawler sweeping the unbounded
+    // /check-flight/* space doesn't re-render React at origin every hit.
+    headers: status === 404 ? SECURITY_HEADERS.notFoundHtml : SECURITY_HEADERS.html,
   });
 }
 
@@ -2397,6 +2517,7 @@ const homePage: Handler = async (ctx) => {
       airportDepartures: reader.getAirportDepartures(),
       showPassengerBanner: isPassengerVerifyAudience(ctx.onStarlinkIp, site.scope),
       shareCard: resolveShareCard(site.scope),
+      pageLinks: pageNavLinks(ctx, "/"),
     })
   );
 

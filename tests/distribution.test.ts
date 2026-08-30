@@ -7,7 +7,7 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { SITES } from "../src/airlines/registry";
+import { AIRLINES, SITES, type SiteConfig } from "../src/airlines/registry";
 import { getFirstFlights, recordFirstFlights } from "../src/database/database";
 import { createApp } from "../src/server/app";
 import { bodyOf, makeSyntheticDb, openSnapshot, req } from "./helpers";
@@ -24,6 +24,9 @@ beforeAll(() => {
 const UA = SITES.united.canonicalHost;
 const HUB = SITES.airline.canonicalHost;
 const QR = SITES.qatar.canonicalHost;
+
+/** The airline a site is bound to; null on the hub (which has no single one). */
+const airlineOf = (site: SiteConfig) => (site.scope === "ALL" ? null : AIRLINES[site.scope]);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // /feed.xml — newly-equipped Atom feed
@@ -75,6 +78,18 @@ describe("newly-equipped Atom feed", () => {
     expect(res.status).toBe(404);
   });
 
+  test("entries date the find, not the install", async () => {
+    // DateFound is when this tracker saw the tail. The page carries that caveat
+    // in its footer; a syndicated entry reaches press without the footer, so
+    // the wording has to travel with it.
+    const { text } = await bodyOf(app, "/feed.xml", UA);
+    expect(text).toContain("was first observed with Starlink on");
+    expect(text).toContain("not necessarily the install date");
+    expect(text).not.toContain("joined the Starlink-equipped fleet on");
+    // …and the feed-level description says the same thing.
+    expect(text).toMatch(/<subtitle>[^<]*not when the antenna went on/);
+  });
+
   test("POST is not a feed method", async () => {
     const res = await app.dispatch(req("/feed.xml", UA, { method: "POST" }));
     expect(res.status).toBe(405);
@@ -96,18 +111,45 @@ describe("feed autodiscovery link", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("/badge.svg", () => {
-  test("every site serves a cacheable SVG with its own live stat", async () => {
+  test("every site with the feature on serves a cacheable SVG with its own live stat", async () => {
     for (const site of Object.values(SITES)) {
       const res = await app.dispatch(req("/badge.svg", site.canonicalHost));
+      if (!site.features.embedPage) {
+        // The badge rides the /embed flag — it was the one new surface a
+        // tenant had no way to turn off.
+        expect(res.status, site.key).toBe(404);
+        continue;
+      }
       expect(res.status, site.key).toBe(200);
       expect(res.headers.get("Content-Type")).toContain("image/svg+xml");
       expect(res.headers.get("Cache-Control")).toContain("public");
       expect(res.headers.get("Access-Control-Allow-Origin")).toBe("*");
       const svg = await res.text();
       expect(svg).toContain("<svg");
-      // "N of M aircraft" with real numbers — shape, not values.
-      expect(svg).toMatch(/\d+ of \d+ aircraft/);
       expect(svg).toContain(site.brand.accentColor);
+      // Shape, not values: a denominator only where the tracked roster IS the
+      // programme's own scope.
+      const cfg = airlineOf(site);
+      if (!cfg || cfg.rollout.rosterIsProgramScope) {
+        expect(svg, site.key).toMatch(/\d+ of \d+ aircraft/);
+      } else {
+        expect(svg, site.key).toMatch(/\d+ aircraft equipped/);
+      }
+    }
+  });
+
+  test("a roster wider than the programme never publishes a ratio", async () => {
+    // HA's 61 tails include 717s that will never be equipped and QR's 277
+    // include narrowbodies and freighters the programme excludes — so "42 of
+    // 61" would advertise a finished rollout as two-thirds done, cross-origin,
+    // with none of the status chip context that qualifies it on-site.
+    const outOfScope = Object.values(SITES).filter(
+      (s) => s.features.embedPage && airlineOf(s)?.rollout.rosterIsProgramScope === false
+    );
+    expect(outOfScope.length, "no out-of-scope tenant to cover").toBeGreaterThan(0);
+    for (const site of outOfScope) {
+      const { text } = await bodyOf(app, "/badge.svg", site.canonicalHost);
+      expect(text, site.key).not.toMatch(/\d+ of \d+/);
     }
   });
 
@@ -137,6 +179,21 @@ describe("/embed page", () => {
     const { status, text } = await bodyOf(app, "/embed", HUB);
     expect(status).toBe(200);
     expect(text).toContain(`https://${HUB}/badge.svg`);
+  });
+
+  test("only points at /api/fleet-summary where the tenant is in it", async () => {
+    // The endpoint serves publicAirlines(); QR is publicInHub false, so a
+    // Qatar visitor following that link would get three other carriers and
+    // none of the airline they came for.
+    const payload = await bodyOf(app, "/api/fleet-summary", HUB);
+    const codes: string[] = JSON.parse(payload.text).airlines.map((a: { code: string }) => a.code);
+    for (const site of Object.values(SITES)) {
+      if (!site.features.embedPage) continue;
+      const cfg = airlineOf(site);
+      const { text } = await bodyOf(app, "/embed", site.canonicalHost);
+      const present = !cfg || codes.includes(cfg.code);
+      expect(text.includes("/api/fleet-summary"), `${site.key} fleet-summary link`).toBe(present);
+    }
   });
 });
 
@@ -182,6 +239,104 @@ describe("/newly-equipped page", () => {
   test("hub renders (aggregate across airlines)", async () => {
     const { status } = await bodyOf(app, "/newly-equipped", HUB);
     expect(status).toBe(200);
+  });
+});
+
+describe("secondary pages are reachable, not just sitemapped", () => {
+  // Shipped as orphans: sitemapped and indexable with zero inbound href from
+  // any component, so no PageRank path in and no way for a visitor to find
+  // them. The footer nav is built from the same sitePages() filter, so a link
+  // can never outlive the page it points at.
+  const SECONDARY = ["/newly-equipped", "/install-rate", "/embed"];
+
+  test("every advertised secondary page is linked from the pages a visitor lands on", async () => {
+    const sitemap = await bodyOf(app, "/sitemap.xml", UA);
+    const advertised = SECONDARY.filter((p) => sitemap.text.includes(`https://${UA}${p}<`));
+    expect(advertised.length, "no secondary page advertised to cover").toBeGreaterThan(0);
+    for (const entry of ["/", "/fleet"]) {
+      const { text } = await bodyOf(app, entry, UA);
+      for (const p of advertised) {
+        expect(text, `${entry} has no link to ${p}`).toContain(`href="${p}"`);
+      }
+    }
+  });
+
+  test("a secondary page cross-links its siblings but never itself", async () => {
+    for (const page of SECONDARY) {
+      const { status, text } = await bodyOf(app, page, UA);
+      expect(status, page).toBe(200);
+      for (const other of SECONDARY.filter((p) => p !== page)) {
+        expect(text, `${page} misses sibling ${other}`).toContain(`href="${other}"`);
+      }
+      // Self-links in a nav are noise; the header already links home.
+      expect(text.split(`href="${page}"`).length - 1, `${page} self-links`).toBe(0);
+    }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Bounded URL families: a tenant with no organic install history publishes
+// neither the log, the feed, nor the index — and never advertises them.
+//
+// Synthetic DB rather than the snapshot: on production every AS row is a
+// `*_seed` / `flyertalk_*` / `type_deterministic` write and every HA row is
+// `ha_seed`, so INSTALL_FILTER leaves them nothing — but the snapshot happens
+// to carry a `discovery` canary row for each, so only a constructed roster
+// reproduces the shape deterministically.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("empty-install tenants publish nothing", () => {
+  const AS = SITES.alaska.canonicalHost;
+  let bulkApp: ReturnType<typeof createApp>;
+
+  beforeAll(() => {
+    const db = makeSyntheticDb();
+    // Bulk-only roster: the writers INSTALL_FILTER excludes by name.
+    for (const [tail, gid] of [
+      ["N100AS", "as_seed"],
+      ["N101AS", "flyertalk_as"],
+      ["N102AS", "type_deterministic"],
+    ] as const) {
+      db.query(
+        `INSERT INTO starlink_planes (aircraft, wifi, sheet_gid, sheet_type, DateFound, TailNumber, OperatedBy, fleet, verified_wifi, airline)
+         VALUES ('Embraer ERJ-175LR','Starlink',?,'AS-horizon','2026-04-21',?,'Horizon Air','horizon','Starlink','AS')`
+      ).run(gid, tail);
+    }
+    bulkApp = createApp(db);
+  });
+
+  test("the log and its feed 404 instead of serving an empty page", async () => {
+    for (const path of ["/newly-equipped", "/feed.xml", "/install-rate"]) {
+      const res = await bulkApp.dispatch(req(path, AS));
+      expect(res.status, `${path} served with no data behind it`).toBe(404);
+    }
+  });
+
+  test("nothing advertises a URL that 404s", async () => {
+    const sitemap = await bodyOf(bulkApp, "/sitemap.xml", AS);
+    const llms = await bodyOf(bulkApp, "/llms.txt", AS);
+    for (const path of ["/newly-equipped", "/install-rate"]) {
+      expect(sitemap.text, `sitemap advertises ${path}`).not.toContain(`${AS}${path}<`);
+      expect(llms.text, `llms.txt advertises ${path}`).not.toContain(`${AS}${path})`);
+    }
+    // …and the autodiscovery <link> goes with them, so no reader subscribes to
+    // a feed that isn't there.
+    const home = await bodyOf(bulkApp, "/", AS);
+    expect(home.text).not.toContain('type="application/atom+xml"');
+  });
+
+  test("the same tenant with one organic install turns them back on", async () => {
+    const db = makeSyntheticDb();
+    db.query(
+      `INSERT INTO starlink_planes (aircraft, wifi, sheet_gid, sheet_type, DateFound, TailNumber, OperatedBy, fleet, verified_wifi, airline)
+       VALUES ('Embraer ERJ-175LR','Starlink','discovery','AS-horizon','2026-04-21','N103AS','Horizon Air','horizon','Starlink','AS')`
+    ).run();
+    const live = createApp(db);
+    expect((await live.dispatch(req("/newly-equipped", AS))).status).toBe(200);
+    expect((await live.dispatch(req("/feed.xml", AS))).status).toBe(200);
+    const sitemap = await bodyOf(live, "/sitemap.xml", AS);
+    expect(sitemap.text).toContain(`${AS}/newly-equipped<`);
+    db.close();
   });
 });
 
