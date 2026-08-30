@@ -233,6 +233,19 @@ function assertOwnBranding(site: SiteConfig, route: string, body: string) {
   expect(body, `${site.key} ${route}: JSON-LD url`).toContain(`"url":"https://${host}/"`);
 }
 
+describe("scheduleCoverage matches the ingest that fills upcoming_flights", () => {
+  test("only the alaska-json tenants claim whole-fleet coverage", () => {
+    // The flight updater walks starlink_planes per tail; getNextFleetTailNeedingFlights
+    // is the ONLY path that pulls unequipped tails, and it is restricted to
+    // verifierBackend === "alaska-json". A tenant claiming whole-fleet coverage
+    // without that path would hand every ratio surface a fake denominator.
+    for (const cfg of Object.values(AIRLINES)) {
+      const expected = cfg.verifierBackend === "alaska-json" ? "whole-fleet" : "starlink-roster";
+      expect(cfg.scheduleCoverage, cfg.code).toBe(expected);
+    }
+  });
+});
+
 for (const site of Object.values(SITES)) {
   describe(`tenant matrix: ${site.key} (${site.canonicalHost})`, () => {
     for (const [route, feature] of ROUTES) {

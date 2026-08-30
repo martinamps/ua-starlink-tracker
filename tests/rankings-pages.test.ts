@@ -15,11 +15,16 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { AIRLINES, SITES } from "../src/airlines/registry";
 import type { RouteLeaderboardRow } from "../src/database/database";
 import { createApp } from "../src/server/app";
-import { leaderboardDefs } from "../src/server/rankings";
+import { PAGE_SIZE, leaderboardDefs, leaderboardSlice } from "../src/server/rankings";
 import { addFlight, addPlane, makeSyntheticDb, openSnapshot, req } from "./helpers";
 
 const UA = SITES.united.canonicalHost;
 const HUB = SITES.airline.canonicalHost;
+
+/** Distinct well-formed IATA codes — the boards drop anything else, so a
+ * fixture built from `A00`-style codes would silently select nothing. */
+const iataAt = (i: number) =>
+  `Q${String.fromCharCode(65 + Math.floor(i / 26))}${String.fromCharCode(65 + (i % 26))}`;
 
 const row = (
   origin: string,
@@ -35,6 +40,11 @@ const row = (
   next_departure: 1_800_000_000,
 });
 
+/** The Starlink-roster tenants have no departure denominator, so any board
+ * whose claim is a ratio must not exist for them at all. */
+const wholeFleet = Object.values(AIRLINES).filter((a) => a.scheduleCoverage === "whole-fleet");
+const rosterOnly = Object.values(AIRLINES).filter((a) => a.scheduleCoverage !== "whole-fleet");
+
 describe("leaderboardDefs", () => {
   const defs = leaderboardDefs(AIRLINES.UA);
 
@@ -42,8 +52,9 @@ describe("leaderboardDefs", () => {
     const slugs = defs.map((d) => d.slug);
     expect(new Set(slugs).size).toBe(slugs.length);
     for (const s of slugs) expect(s).toMatch(/^[a-z0-9-]+$/);
-    // One board per hub, plus the two network-wide boards.
-    expect(defs.length).toBe(AIRLINES.UA.hubAirports.length + 2);
+    // One board per hub, plus the transcon board; UA is roster-scoped, so the
+    // ratio board isn't among them.
+    expect(defs.length).toBe(AIRLINES.UA.hubAirports.length + 1);
   });
 
   test("every board carries the copy the page and its meta need", () => {
@@ -54,8 +65,33 @@ describe("leaderboardDefs", () => {
     }
   });
 
+  test("the 100% board exists only where a departure denominator does", () => {
+    // upcoming_flights is written per-tail off the Starlink roster; without a
+    // whole-fleet pull, "every departure is equipped" is true by construction.
+    expect(rosterOnly.length).toBeGreaterThan(0);
+    for (const cfg of rosterOnly) {
+      const slugs = leaderboardDefs(cfg).map((d) => d.slug);
+      expect(slugs, cfg.code).not.toContain("100-percent-starlink-routes");
+    }
+    expect(wholeFleet.length).toBeGreaterThan(0);
+    for (const cfg of wholeFleet) {
+      const slugs = leaderboardDefs(cfg).map((d) => d.slug);
+      expect(slugs, cfg.code).toContain("100-percent-starlink-routes");
+    }
+  });
+
+  test("no board publishes an equipped share without a real denominator", () => {
+    for (const cfg of Object.values(AIRLINES)) {
+      for (const d of leaderboardDefs(cfg)) {
+        expect(d.showShare, `${cfg.code}/${d.slug}`).toBe(cfg.scheduleCoverage === "whole-fleet");
+      }
+    }
+  });
+
   test("the 100% board claims only what the counts support", () => {
-    const select = defs.find((d) => d.slug === "100-percent-starlink-routes")?.select;
+    const select = leaderboardDefs(wholeFleet[0]).find(
+      (d) => d.slug === "100-percent-starlink-routes"
+    )?.select;
     if (!select) throw new Error("100% board missing");
     const picked = select([
       row("EWR", "SFO", 4, 4), // qualifies
@@ -92,18 +128,44 @@ describe("leaderboardDefs", () => {
     expect(picked).toEqual(["EWR-SFO", "EWR-BOS"]);
   });
 
-  test("every board is row-capped and reports a sane share", () => {
-    const many = Array.from({ length: 300 }, (_, i) =>
-      row("EWR", `A${String(i).padStart(2, "0")}`.slice(0, 3), 4, 4)
-    );
-    for (const d of defs) {
-      const picked = d.select(many);
-      expect(picked.length, d.slug).toBeLessThanOrEqual(100);
-      for (const r of picked) {
-        expect(r.pct).toBeGreaterThanOrEqual(0);
-        expect(r.pct).toBeLessThanOrEqual(100);
-      }
+  test("select() returns the whole qualifying set — the count must be honest", () => {
+    // A capped select() would publish "100 routes" for a 300-route board with
+    // no way to reach the rest; paging is the page's job, not the board's.
+    const many = Array.from({ length: 300 }, (_, i) => row("EWR", iataAt(i), 4, 4));
+    const hub = defs.find((d) => d.slug === "hub-ewr");
+    if (!hub) throw new Error("hub-EWR board missing");
+    const picked = hub.select(many);
+    expect(picked.length).toBe(many.length);
+    expect(picked.length).toBeGreaterThan(PAGE_SIZE);
+    for (const r of picked) {
+      expect(r.pct).toBeGreaterThanOrEqual(0);
+      expect(r.pct).toBeLessThanOrEqual(100);
     }
+  });
+
+  test("leaderboardSlice pages without dropping or repeating a row", () => {
+    const all = Array.from({ length: 250 }, (_, i) => ({
+      ...row("EWR", iataAt(i), 4, 4),
+      pct: 100,
+    }));
+    const seen: string[] = [];
+    for (let p = 1; p <= 3; p++) {
+      const slice = leaderboardSlice(all, p);
+      if (!slice) throw new Error(`page ${p} missing`);
+      // The headline count is the true total on every page, never the slice.
+      expect(slice.total).toBe(250);
+      expect(slice.pageCount).toBe(3);
+      expect(slice.firstRank).toBe((p - 1) * PAGE_SIZE + 1);
+      seen.push(...slice.rows.map((r) => r.destination));
+    }
+    expect(seen.length).toBe(250);
+    expect(new Set(seen).size).toBe(250);
+    // Past the end is out of the bounded URL space, not an empty page.
+    expect(leaderboardSlice(all, 4)).toBeNull();
+    expect(leaderboardSlice(all, 0)).toBeNull();
+    // A board that fits on one page still has a page 1.
+    expect(leaderboardSlice(all.slice(0, 3), 1)?.pageCount).toBe(1);
+    expect(leaderboardSlice([], 1)?.rows).toEqual([]);
   });
 });
 
@@ -179,21 +241,40 @@ describe("/rankings against a live schedule window", () => {
   const get = (path: string) => app.dispatch(req(path, UA, { headers: { Accept: "text/html" } }));
 
   test("boards with rows resolve; boards without still 404", async () => {
-    expect((await get("/rankings/100-percent-starlink-routes")).status).toBe(200);
     expect((await get("/rankings/hub-ewr")).status).toBe(200);
     expect((await get("/rankings/best-transcon-starlink-routes")).status).toBe(200);
+    // UA is roster-scoped: the ratio board isn't in its URL space at all.
+    expect((await get("/rankings/100-percent-starlink-routes")).status).toBe(404);
     // No departures from these hubs in the fixture.
     expect((await get("/rankings/hub-iad")).status).toBe(404);
     expect((await get("/rankings/hub-den")).status).toBe(404);
   });
 
   test("a board only lists routes its own claim covers", async () => {
-    const body = await (await get("/rankings/100-percent-starlink-routes")).text();
+    const body = await (await get("/rankings/best-transcon-starlink-routes")).text();
     const pairs = [...body.matchAll(/href="\/route-planner\/([A-Z]{3})\/([A-Z]{3})"/g)].map(
       (m) => `${m[1]}-${m[2]}`
     );
-    // EWR-ORD is half-equipped and MCO-MIA has none: neither is 100%.
+    // EWR-ORD and MCO-MIA aren't coast pairs; LAX-JFK and EWR-SFO are.
     expect(pairs.sort()).toEqual(["EWR-SFO", "LAX-JFK"]);
+  });
+
+  test("a roster-scoped tenant publishes counts, never an equipped share", async () => {
+    const body = await (await get("/rankings/hub-ewr")).text();
+    // The column header IS the claim: "3 of 4 equipped" is the one the roster
+    // denominator can't support, so neither it nor its header may appear.
+    expect(body).toContain("Starlink departures");
+    expect(body).not.toContain("Starlink / departures");
+    expect(body).toContain("not a share of every");
+  });
+
+  test("?page past the end 404s; a one-page board takes no pager", async () => {
+    expect((await get("/rankings/hub-ewr?page=2")).status).toBe(404);
+    // Junk is page 1, not a 404 — a mangled param must not mint a dead URL.
+    expect((await get("/rankings/hub-ewr?page=abc")).status).toBe(200);
+    expect((await get("/rankings/hub-ewr?page=0")).status).toBe(200);
+    const body = await (await get("/rankings/hub-ewr")).text();
+    expect(body).not.toContain("Next 100");
   });
 
   test("case variants 301 to the canonical slug", async () => {
@@ -218,6 +299,54 @@ describe("/rankings against a live schedule window", () => {
     for (const slug of unadvertised) {
       expect((await get(`/rankings/${slug}`)).status, slug).toBe(404);
     }
+  });
+});
+
+describe("/rankings pagination on a board bigger than one page", () => {
+  let app: ReturnType<typeof createApp>;
+  let db: Database;
+  const ROUTES = PAGE_SIZE + 30;
+
+  beforeAll(() => {
+    db = makeSyntheticDb();
+    const soon = Math.floor(Date.now() / 1000) + 3600;
+    addPlane(db, "N1EQ", "Starlink");
+    // One equipped EWR departure per destination — 130 qualifying hub routes.
+    for (let i = 0; i < ROUTES; i++) {
+      addFlight(db, "N1EQ", `UA93${String(i).padStart(2, "0")}`, "EWR", soon + i * 60, {
+        arrivalAirport: iataAt(i),
+      });
+    }
+    app = createApp(db);
+  });
+  afterAll(() => db.close());
+
+  const get = (path: string) => app.dispatch(req(path, UA, { headers: { Accept: "text/html" } }));
+
+  test("page 1 reports the TRUE total, not the page size", async () => {
+    const body = await (await get("/rankings/hub-ewr")).text();
+    expect(body).toContain(`${ROUTES} routes`);
+    const listed = [...body.matchAll(/href="\/route-planner\/EWR\/([A-Z]{3})"/g)].length;
+    expect(listed).toBe(PAGE_SIZE);
+    expect(body).toContain('href="/rankings/hub-ewr?page=2"');
+  });
+
+  test("page 2 carries the remainder, continues the ranks, and is noindex", async () => {
+    const res = await get("/rankings/hub-ewr?page=2");
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    const listed = [...body.matchAll(/href="\/route-planner\/EWR\/([A-Z]{3})"/g)].length;
+    expect(listed).toBe(ROUTES - PAGE_SIZE);
+    // Continuations exist so a reader can reach rows 101+, not as search hits.
+    expect(body).toContain("noindex");
+    expect(body).toContain(`<link rel="canonical" href="https://${UA}/rankings/hub-ewr?page=2"`);
+    expect(body).toContain('href="/rankings/hub-ewr"');
+  });
+
+  test("only page 1 is advertised in the sitemap", async () => {
+    const body = await (await app.dispatch(req("/sitemap.xml", UA))).text();
+    expect(body).toContain("/rankings/hub-ewr</loc>");
+    expect(body).not.toContain("page=");
   });
 });
 

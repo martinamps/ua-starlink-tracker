@@ -44,11 +44,41 @@ function timeAgo(sec: number | null): string {
 
 /**
  * Registrations link to /tail/{registration}, which ships on the sibling
- * roadmap/tail-pages branch — the links resolve once both land. Emitting them
- * now keeps the family pages as the crawl path into the per-tail corpus
- * instead of needing a second pass over every page to add them.
+ * roadmap/tail-pages branch. This is the site's highest-fan-out crawl path
+ * (one link per tail, 100+ on a mainline family), so the links stay off behind
+ * `tailPages` until that route exists — otherwise merging this branch alone
+ * would point a page-full of links at 404s.
  */
-function TailTable({ tails }: { tails: FleetTail[] }) {
+function TailCell({ tail, tailPages }: { tail: FleetTail; tailPages: boolean }) {
+  const equipped = tail.provider === "starlink";
+  const title = `${tail.tail} · ${PROVIDER_LABEL[tail.provider]} · verified ${timeAgo(tail.verified_at)}`;
+  const cls = `flex items-baseline gap-2 py-0.5 rounded ${equipped ? "text-accent" : "text-muted"}`;
+  const body = (
+    <>
+      <span className="w-2 text-center">{equipped ? "◉" : "·"}</span>
+      <span className={equipped ? "" : "text-secondary"}>{tail.tail}</span>
+      <span className="text-[10px] text-muted truncate">{PROVIDER_LABEL[tail.provider]}</span>
+    </>
+  );
+  if (!tailPages) {
+    return (
+      <span title={title} className={cls}>
+        {body}
+      </span>
+    );
+  }
+  return (
+    <a
+      href={`/tail/${tail.tail}`}
+      title={title}
+      className={`${cls} hover:bg-surface-elevated transition-colors`}
+    >
+      {body}
+    </a>
+  );
+}
+
+function TailTable({ tails, tailPages }: { tails: FleetTail[]; tailPages: boolean }) {
   // Starlink tails first (the reason the reader is here), then the pipeline.
   const order: WifiProvider[] = ["starlink", "viasat", "panasonic", "thales", "none", "unknown"];
   const sorted = [...tails].sort(
@@ -57,34 +87,46 @@ function TailTable({ tails }: { tails: FleetTail[] }) {
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1 font-mono text-xs">
       {sorted.map((t) => (
-        <a
-          key={t.tail}
-          href={`/tail/${t.tail}`}
-          title={`${t.tail} · ${PROVIDER_LABEL[t.provider]} · verified ${timeAgo(t.verified_at)}`}
-          className={`flex items-baseline gap-2 py-0.5 rounded hover:bg-surface-elevated transition-colors ${
-            t.provider === "starlink" ? "text-accent" : "text-muted"
-          }`}
-        >
-          <span className="w-2 text-center">{t.provider === "starlink" ? "◉" : "·"}</span>
-          <span className={t.provider === "starlink" ? "" : "text-secondary"}>{t.tail}</span>
-          <span className="text-[10px] text-muted truncate">{PROVIDER_LABEL[t.provider]}</span>
-        </a>
+        <TailCell key={t.tail} tail={t} tailPages={tailPages} />
       ))}
     </div>
   );
+}
+
+/** Fleet counts carry the data's own stamp, not the request time — the page
+ * publishes bare current-state numbers ("Installed 141/141") that are
+ * worthless to quote undated. */
+function asOfDate(lastUpdated: string): string | null {
+  const stamped = new Date(lastUpdated);
+  if (Number.isNaN(stamped.getTime())) return null;
+  return stamped.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
 }
 
 interface AircraftFamilyPageProps {
   family: FleetFamily;
   /** Install-pipeline rows matched to this family (empty when the sheet has none). */
   progress: FleetProgressRow[];
+  /** The fleet data's lastUpdated stamp. */
+  lastUpdated: string;
   site: SiteConfig;
 }
 
-export function AircraftFamilyPage({ family, progress, site }: AircraftFamilyPageProps) {
+export function AircraftFamilyPage({
+  family,
+  progress,
+  lastUpdated,
+  site,
+}: AircraftFamilyPageProps) {
   const cfg = siteAirline(site);
   const { display, query } = familyMeta(family.family);
   const spec = AIRCRAFT_SPECS[family.family];
+  // Seats and some fun facts are one carrier's, not the type's; on another
+  // tenant's branded page they'd read as that carrier's own numbers.
+  const showSeats = Boolean(spec && spec.seats_airline === cfg.code);
+  const showFunFact = Boolean(
+    spec && (!spec.fun_fact_airline || spec.fun_fact_airline === cfg.code)
+  );
+  const asOf = asOfDate(lastUpdated);
   const pct = family.total > 0 ? Math.round((family.starlink / family.total) * 100) : 0;
   const inMod = progress.reduce((s, r) => s + (r.in_mod ?? 0), 0);
   const verifying = progress.reduce((s, r) => s + (r.verification_needed ?? 0), 0);
@@ -104,7 +146,9 @@ export function AircraftFamilyPage({ family, progress, site }: AircraftFamilyPag
 
       <section className={SECTION}>
         <div className={PANEL}>
-          <div className={EYEBROW}>{display} · Starlink rollout status</div>
+          <div
+            className={EYEBROW}
+          >{`${display} · Starlink rollout status${asOf ? ` · as of ${asOf}` : ""}`}</div>
           <dl className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             <div>
               <dt className="text-[10px] font-mono text-muted uppercase tracking-wider">
@@ -142,9 +186,7 @@ export function AircraftFamilyPage({ family, progress, site }: AircraftFamilyPag
             <div className="h-full bg-[var(--color-accent)]" style={{ width: `${pct}%` }} />
           </div>
           <p className="text-[11px] text-muted mt-4 leading-snug">
-            Counts reflect current fleet data — per-tail verification where available, community
-            fleet sheets otherwise. Mod-line numbers come from the community progress sheets and
-            show aircraft being retrofitted before they appear as installed.
+            {`Counts reflect fleet data${asOf ? ` as of ${asOf}` : ""} — per-tail verification where available, community fleet sheets otherwise. Mod-line numbers come from the community progress sheets and show aircraft being retrofitted before they appear as installed.`}
           </p>
         </div>
       </section>
@@ -154,10 +196,14 @@ export function AircraftFamilyPage({ family, progress, site }: AircraftFamilyPag
           <div className={PANEL}>
             <div className={EYEBROW}>{display} at a glance</div>
             <dl className="grid grid-cols-2 sm:grid-cols-4 gap-4 font-mono text-sm text-secondary">
-              <div>
-                <dt className="text-[10px] text-muted uppercase tracking-wider">Seats</dt>
-                <dd>{spec.seats}</dd>
-              </div>
+              {showSeats && (
+                <div>
+                  <dt className="text-[10px] text-muted uppercase tracking-wider">
+                    Seats · {cfg.shortName}
+                  </dt>
+                  <dd>{spec.seats}</dd>
+                </div>
+              )}
               <div>
                 <dt className="text-[10px] text-muted uppercase tracking-wider">Range</dt>
                 <dd>{spec.range_mi.toLocaleString()} mi</dd>
@@ -171,9 +217,11 @@ export function AircraftFamilyPage({ family, progress, site }: AircraftFamilyPag
                 <dd>{spec.first_flight}</dd>
               </div>
             </dl>
-            <p className="text-[11px] text-accent/80 mt-4 leading-snug border-t border-subtle pt-3">
-              {spec.fun_fact}
-            </p>
+            {showFunFact && (
+              <p className="text-[11px] text-accent/80 mt-4 leading-snug border-t border-subtle pt-3">
+                {spec.fun_fact}
+              </p>
+            )}
           </div>
         </section>
       )}
@@ -183,10 +231,11 @@ export function AircraftFamilyPage({ family, progress, site }: AircraftFamilyPag
           <div className={EYEBROW}>
             Every {cfg.shortName} {query} tail number
           </div>
-          <TailTable tails={family.tails} />
+          <TailTable tails={family.tails} tailPages={site.features.tailPages} />
           <p className="text-[11px] text-muted mt-4 leading-snug">
-            ◉ marks tails showing Starlink in current fleet data. Follow a registration for that
-            aircraft's page. Flying soon? A tail's status can change the week of your flight —{" "}
+            {`◉ marks tails showing Starlink in fleet data${asOf ? ` as of ${asOf}` : ""}.${
+              site.features.tailPages ? " Follow a registration for that aircraft's page." : ""
+            } Flying soon? A tail's status can change the week of your flight — `}
             <a href="/check-flight" className="text-accent hover:underline">
               check your flight number
             </a>{" "}
@@ -219,11 +268,13 @@ export function AircraftFamilyPage({ family, progress, site }: AircraftFamilyPag
 
 interface AircraftIndexPageProps {
   families: FleetFamily[];
+  lastUpdated: string;
   site: SiteConfig;
 }
 
-export function AircraftIndexPage({ families, site }: AircraftIndexPageProps) {
+export function AircraftIndexPage({ families, lastUpdated, site }: AircraftIndexPageProps) {
   const cfg = siteAirline(site);
+  const asOf = asOfDate(lastUpdated);
   return (
     <div className="w-full mx-auto px-4 sm:px-6 md:px-8 bg-base min-h-screen flex flex-col relative">
       <div className="absolute inset-0 grid-pattern opacity-50 pointer-events-none" />
@@ -239,7 +290,9 @@ export function AircraftIndexPage({ families, site }: AircraftIndexPageProps) {
 
       <section className={SECTION}>
         <div className={PANEL}>
-          <div className={EYEBROW}>By aircraft type · installed / fleet</div>
+          <div
+            className={EYEBROW}
+          >{`By aircraft type · installed / fleet${asOf ? ` · as of ${asOf}` : ""}`}</div>
           <div className="space-y-3">
             {families.length === 0 && (
               <p className="text-sm text-muted">No fleet data loaded yet — check back shortly.</p>
@@ -267,8 +320,7 @@ export function AircraftIndexPage({ families, site }: AircraftIndexPageProps) {
             })}
           </div>
           <p className="text-[11px] text-muted mt-4 leading-snug">
-            Per current fleet data. Each type links to its rollout page with every tail number and
-            its WiFi status.
+            {`Per fleet data${asOf ? ` as of ${asOf}` : ""}. Each type links to its rollout page with every tail number and its WiFi status.`}
           </p>
         </div>
       </section>

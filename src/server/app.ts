@@ -83,7 +83,12 @@ import { LeaderboardPage, RankingsIndexPage } from "../components/rankings-page"
 import RoutePage, { routeVerdict } from "../components/route-page";
 import RoutePlannerPage from "../components/route-planner-page";
 import RoutesPage from "../components/routes-page";
-import { ROUTE_AIRPORT_RE, type RouteSummary } from "../database/database";
+import {
+  ROUTE_AIRPORT_RE,
+  type RouteSummary,
+  type SitemapRoute,
+  sitemapAirportsFrom,
+} from "../database/database";
 import {
   COUNTERS,
   DISTRIBUTIONS,
@@ -129,7 +134,7 @@ import {
   isPassengerVerifyAudience,
   passengerVerifyEnabled,
 } from "./passenger-detect";
-import { leaderboardDefs } from "./rankings";
+import { type LeaderboardDef, leaderboardDefs, leaderboardSlice } from "./rankings";
 
 type Handler = (ctx: RequestContext) => Response | Promise<Response>;
 type RouteTable = Record<string, Handler>;
@@ -1251,8 +1256,10 @@ const SITE_PAGES: SitePage[] = [
     feature: "rankingsPages",
     changefreq: "hourly",
     priority: "0.7",
+    // No "100% Starlink routes" here: that board only exists on tenants whose
+    // schedule data covers the unequipped fleet, and llms.txt is one string.
     llmsLine: (h) =>
-      `- [Route rankings](https://${h}/rankings) — 100% Starlink routes, best transcons, per-hub leaderboards`,
+      `- [Route rankings](https://${h}/rankings) — routes ranked by Starlink-equipped departures, best transcons, per-hub leaderboards`,
   },
   { path: "/mcp", feature: "mcpPage", changefreq: "monthly", priority: "0.6" },
 ];
@@ -1308,9 +1315,16 @@ const sitemap: Handler = ({ reader, site, tenant, getReader }) => {
           lastmod: f.last_touched ? new Date(f.last_touched * 1000).toISOString() : undefined,
         }))
       : [];
+  // The route corpus is two full GROUP BYs; the route entries and the airport
+  // entries below are both folds of it, so it is read at most once per render.
+  let routeCorpus: SitemapRoute[] | null = null;
+  const sitemapRoutes = (): SitemapRoute[] => {
+    routeCorpus ??= reader.getSitemapRoutes();
+    return routeCorpus;
+  };
   const routeEntries =
     site.features.routePlannerPage && tenantConfig(tenant)
-      ? reader.getSitemapRoutes().map((r) => ({
+      ? sitemapRoutes().map((r) => ({
           path: `/route-planner/${r.origin}/${r.destination}`,
           changefreq: "weekly",
           priority: "0.6",
@@ -1345,7 +1359,7 @@ const sitemap: Handler = ({ reader, site, tenant, getReader }) => {
       : [];
   const airportEntries =
     site.features.airportPages && tenantConfig(tenant)
-      ? namedSitemapAirports(reader).map((a) => ({
+      ? namedSitemapAirports(sitemapRoutes()).map((a) => ({
           path: `/airport/${a.airport}`,
           changefreq: "daily",
           priority: "0.6",
@@ -2122,9 +2136,7 @@ const aircraftIndexPage: Handler = (ctx) => {
     AircraftIndexPage,
     "/aircraft",
     aircraftIndexMeta(cfg, families.length),
-    {
-      families,
-    }
+    { families, lastUpdated: ctx.reader.getLastUpdated() }
   );
 };
 
@@ -2169,7 +2181,7 @@ const aircraftFamilyPage: Handler = (ctx) => {
       ogTitle: `Does the ${cfg.shortName} ${query} Have Starlink?`,
       ogDescription: verdict,
     },
-    { family: fam, progress }
+    { family: fam, progress, lastUpdated: ctx.reader.getLastUpdated() }
   );
 };
 
@@ -2178,15 +2190,22 @@ const aircraftFamilyPage: Handler = (ctx) => {
 // getSitemapAirports) AND has a reference name — city-titled pages only, so a
 // code the name table doesn't know 404s rather than shipping a bare-IATA page.
 
+/** Takes the route corpus rather than the reader so the sitemap can fold one
+ * getSitemapRoutes pass into both its airport and its route entries. */
 function namedSitemapAirports(
-  reader: ScopedReader
+  routes: SitemapRoute[]
 ): Array<{ airport: string; last_touched: number; info: AirportInfo }> {
-  return reader
-    .getSitemapAirports()
+  return sitemapAirportsFrom(routes)
     .map((a) => ({ ...a, info: AIRPORT_NAMES[a.airport] }))
     .filter((a): a is { airport: string; last_touched: number; info: AirportInfo } =>
       Boolean(a.info)
     );
+}
+
+/** UTC HH:MM the live-window data was read at — the same currency stamp
+ * /routes carries, so a reader (or an LLM) can date what it quotes. */
+function windowAsOf(): string {
+  return new Date().toISOString().slice(11, 16);
 }
 
 const airportsIndexPage: Handler = (ctx) => {
@@ -2194,7 +2213,7 @@ const airportsIndexPage: Handler = (ctx) => {
   if (!ctx.site.features.airportPages) return notFound(ctx.site);
   const cfg = siteAirline(ctx.site);
   const counts = new Map(ctx.reader.getAirportDepartures().rows.map((r) => [r.airport, r.count]));
-  const airports: AirportIndexEntry[] = namedSitemapAirports(ctx.reader)
+  const airports: AirportIndexEntry[] = namedSitemapAirports(ctx.reader.getSitemapRoutes())
     .map((a) => ({ iata: a.airport, info: a.info, equipped: counts.get(a.airport) ?? 0 }))
     .sort((x, y) => y.equipped - x.equipped || x.iata.localeCompare(y.iata));
   return renderSubPage(
@@ -2208,7 +2227,7 @@ const airportsIndexPage: Handler = (ctx) => {
       ogTitle: `${cfg.shortName} Starlink Flights by Airport`,
       ogDescription: `Live equipped-departure counts per airport across the ${cfg.name} network.`,
     },
-    { airports }
+    { airports, asOf: windowAsOf() }
   );
 };
 
@@ -2235,6 +2254,15 @@ const airportPage: Handler = (ctx) => {
   if (!ctx.reader.airportHasData(upper)) return notFound(ctx.site);
   const summary = ctx.reader.getAirportSummary(upper);
   const verdict = airportVerdict(summary, info, cfg.name);
+  // rankingsLeaderboardPage 404s an empty board, so the hub cross-link needs
+  // the board's OWN predicate, not "this airport is a hub" — the board also
+  // drops self-pairs and non-IATA destinations.
+  const hubBoard = ctx.site.features.rankingsPages
+    ? leaderboardDefs(cfg).find((d) => d.slug === `hub-${upper.toLowerCase()}`)
+    : undefined;
+  const hubBoardHasRows = hubBoard
+    ? hubBoard.select(ctx.reader.getRouteLeaderboard()).length > 0
+    : false;
   return renderSubPage(
     ctx,
     AirportPage,
@@ -2253,7 +2281,7 @@ const airportPage: Handler = (ctx) => {
         url: `https://${ctx.site.canonicalHost}/airport/${upper}`,
       }),
     },
-    { summary, info }
+    { summary, info, hubBoardHasRows, asOf: windowAsOf() }
   );
 };
 
@@ -2268,24 +2296,42 @@ const rankingsIndexPage: Handler = (ctx) => {
   const rows = ctx.reader.getRouteLeaderboard();
   const boards = leaderboardDefs(cfg)
     .map((def) => {
+      // Uncapped: the card's count is the board's true size, not its first page.
       const selected = def.select(rows);
       return { def, count: selected.length, top: selected[0] ?? null };
     })
     .filter((b) => b.count > 0);
+  // The all-Starlink board only exists where a departure denominator does, so
+  // the index copy can't promise it site-wide.
+  const hasShareBoard = boards.some((b) => b.def.showShare);
+  const lede = hasShareBoard
+    ? `Which ${cfg.name} routes fly all-Starlink, the best transcons for working WiFi, and per-hub leaderboards`
+    : `${cfg.name} routes ranked by Starlink-equipped departures: the best transcons for working WiFi, plus per-hub leaderboards`;
   return renderSubPage(
     ctx,
     RankingsIndexPage,
     "/rankings",
     {
-      siteTitle: `${cfg.shortName} Starlink Route Rankings — 100% Routes & Hub Leaderboards`,
-      siteDescription: `Which ${cfg.name} routes fly all-Starlink, the best transcons for working WiFi, and per-hub leaderboards — ranked from live tail assignments over the next 48 hours.`,
-      keywords: `${cfg.shortName.toLowerCase()} starlink routes ranked, 100 percent starlink routes, best ${cfg.shortName.toLowerCase()} routes for wifi, starlink route leaderboard`,
+      siteTitle: hasShareBoard
+        ? `${cfg.shortName} Starlink Route Rankings — 100% Routes & Hub Leaderboards`
+        : `${cfg.shortName} Starlink Route Rankings — Transcons & Hub Leaderboards`,
+      siteDescription: `${lede} — ranked from live tail assignments over the next 48 hours.`,
+      keywords: `${cfg.shortName.toLowerCase()} starlink routes ranked, best ${cfg.shortName.toLowerCase()} routes for wifi, starlink route leaderboard`,
       ogTitle: `${cfg.shortName} Starlink Route Rankings`,
-      ogDescription: "100% Starlink routes, best transcons, and per-hub leaderboards — live.",
+      ogDescription: `${lede} — live.`,
     },
-    { boards }
+    { boards, asOf: windowAsOf() }
   );
 };
+
+/** ?page=N for a leaderboard. Anything that isn't a positive integer is page 1
+ * rather than an error — a crawler mangling the param must not mint a 404. */
+function leaderboardPageParam(url: URL): number {
+  const raw = url.searchParams.get("page");
+  if (!raw) return 1;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 1 ? n : 1;
+}
 
 const rankingsLeaderboardPage: Handler = (ctx) => {
   if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
@@ -2304,22 +2350,30 @@ const rankingsLeaderboardPage: Handler = (ctx) => {
   if (seg !== lower) {
     return Response.redirect(`https://${ctx.site.canonicalHost}/rankings/${lower}`, 301);
   }
-  const rows = def.select(ctx.reader.getRouteLeaderboard());
+  const all = def.select(ctx.reader.getRouteLeaderboard());
   // Empty leaderboards 404 (and are never advertised) rather than serving a
   // thin page whose answer is "nothing" — the index carries the empty story.
-  if (rows.length === 0) return notFound(ctx.site);
+  if (all.length === 0) return notFound(ctx.site);
+  const page = leaderboardPageParam(ctx.url);
+  const slice = leaderboardSlice(all, page);
+  // Past the last page is out of the bounded URL space, same as an unknown slug.
+  if (!slice) return notFound(ctx.site);
+  const pageSuffix = page > 1 ? ` — Page ${page}` : "";
   return renderSubPage(
     ctx,
     LeaderboardPage,
-    `/rankings/${def.slug}`,
+    page > 1 ? `/rankings/${def.slug}?page=${page}` : `/rankings/${def.slug}`,
     {
-      siteTitle: def.metaTitle,
+      siteTitle: `${def.metaTitle}${pageSuffix}`,
       siteDescription: def.metaDescription,
       keywords: `${cfg.shortName.toLowerCase()} starlink routes, ${def.slug.replace(/-/g, " ")}, starlink route ranking`,
-      ogTitle: def.heading,
+      ogTitle: `${def.heading}${pageSuffix}`,
       ogDescription: def.metaDescription,
+      // Only page 1 is advertised and worth indexing; the continuations exist
+      // so a reader can reach rows 101+, not as their own search results.
+      ...(page > 1 ? { robotsMeta: "noindex, follow" } : {}),
     },
-    { def, rows }
+    { def, slice, asOf: windowAsOf() }
   );
 };
 

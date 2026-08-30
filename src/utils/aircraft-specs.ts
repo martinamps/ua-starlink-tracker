@@ -1,12 +1,21 @@
 /**
  * Static aircraft specs keyed by normalized family name
  * (see normalizeAircraftType in airlines/aircraft-families.ts).
- * Seat counts reflect the operating carrier's configuration (United for the
- * shared families, Hawaiian for A330/B717, Qatar for A380).
+ *
+ * Seat counts and some fun facts are the OPERATING CARRIER'S, not the type's:
+ * United for the shared families, Hawaiian for A330/B717, Qatar for A380. Each
+ * carrier-specific field therefore carries the airline code it was measured
+ * on, so a carrier-branded page can suppress the ones that belong to someone
+ * else rather than publishing United's 737-900 count on Alaska's site. Range,
+ * cruise, first flight, wingspan and length are airframe facts and need no
+ * attribution.
  */
 
 export interface AircraftSpec {
   seats: number | string;
+  /** Airline code whose cabin configuration `seats` reflects. Omitted where
+   * there is nothing to attribute (freighters, types with no seat count). */
+  seats_airline?: string;
   wingspan_ft: number | string;
   length_ft: number | string;
   range_mi: number;
@@ -14,12 +23,16 @@ export interface AircraftSpec {
   first_flight: number;
   engines: string;
   fun_fact: string;
+  /** Airline code when the fun fact is written in that carrier's voice
+   * ("United yanked 20 seats out..."). Omitted for type-wide facts. */
+  fun_fact_airline?: string;
 }
 
 export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
   // Boeing narrowbody
   "B737-700": {
     seats: 126,
+    seats_airline: "UA",
     wingspan_ft: 117.4,
     length_ft: 110.3,
     range_mi: 3440,
@@ -31,6 +44,7 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
   },
   "B737-800": {
     seats: 166,
+    seats_airline: "UA",
     wingspan_ft: 117.4,
     length_ft: 129.5,
     range_mi: 3380,
@@ -41,6 +55,7 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
   },
   "B737-900": {
     seats: "167–179",
+    seats_airline: "UA",
     wingspan_ft: 117.4,
     length_ft: 138.2,
     range_mi: 3235,
@@ -51,6 +66,7 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
   },
   "B737-MAX8": {
     seats: 166,
+    seats_airline: "UA",
     wingspan_ft: 117.8,
     length_ft: 129.7,
     range_mi: 4085,
@@ -62,6 +78,7 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
   },
   "B737-MAX9": {
     seats: 179,
+    seats_airline: "UA",
     wingspan_ft: 117.8,
     length_ft: 138.3,
     range_mi: 4085,
@@ -72,6 +89,7 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
   },
   "B737-MAX10": {
     seats: 191,
+    seats_airline: "UA",
     wingspan_ft: 117.8,
     length_ft: 143.7,
     range_mi: 3800,
@@ -82,6 +100,7 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
   },
   B757: {
     seats: "169–234",
+    seats_airline: "UA",
     wingspan_ft: 124.8,
     length_ft: "155.3–178.6",
     range_mi: 4490,
@@ -93,6 +112,7 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
   },
   B717: {
     seats: 128,
+    seats_airline: "HA",
     wingspan_ft: 93.3,
     length_ft: 124.0,
     range_mi: 2060,
@@ -105,6 +125,7 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
   // Boeing widebody
   B747: {
     seats: "364–467",
+    seats_airline: "UA",
     wingspan_ft: 224.4,
     length_ft: 250.2,
     range_mi: 8920,
@@ -127,6 +148,7 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
   },
   B767: {
     seats: "167–240",
+    seats_airline: "UA",
     wingspan_ft: "156.1–170.3",
     length_ft: "180.3–201.3",
     range_mi: 6880,
@@ -138,6 +160,7 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
   },
   B777: {
     seats: "276–350",
+    seats_airline: "UA",
     wingspan_ft: "199.9–212.6",
     length_ft: "209.1–242.3",
     range_mi: 8480,
@@ -160,6 +183,7 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
   },
   B787: {
     seats: "243–318",
+    seats_airline: "UA",
     wingspan_ft: 197.3,
     length_ft: "186.1–224.0",
     range_mi: 8705,
@@ -172,6 +196,7 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
   // Airbus
   A319: {
     seats: 126,
+    seats_airline: "UA",
     wingspan_ft: 111.9,
     length_ft: 111.0,
     range_mi: 4300,
@@ -179,9 +204,11 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
     first_flight: 1995,
     engines: "2× IAE V2524-A5",
     fun_fact: "The smallest plane United flies that can still cross the Atlantic nonstop.",
+    fun_fact_airline: "UA",
   },
   A320: {
     seats: 150,
+    seats_airline: "UA",
     wingspan_ft: 111.9,
     length_ft: 123.3,
     range_mi: 3800,
@@ -193,6 +220,7 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
   },
   A321: {
     seats: 200,
+    seats_airline: "UA",
     wingspan_ft: 117.4,
     length_ft: 146.0,
     range_mi: 4600,
@@ -200,9 +228,11 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
     first_flight: 2016,
     engines: "2× PW1133G-JM",
     fun_fact: "First plane where United let you pair your AirPods to the seatback screen.",
+    fun_fact_airline: "UA",
   },
   A330: {
     seats: 278,
+    seats_airline: "HA",
     wingspan_ft: 197.8,
     length_ft: 193.0,
     range_mi: 8390,
@@ -222,9 +252,11 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
     engines: "2× RR Trent XWB-84",
     fun_fact:
       "Over half the plane is carbon fiber — the wings bend upward 13 feet in flight. United has none yet.",
+    fun_fact_airline: "UA",
   },
   A380: {
     seats: 517,
+    seats_airline: "QR",
     wingspan_ft: 261.6,
     length_ft: 238.5,
     range_mi: 9200,
@@ -237,6 +269,7 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
   // Regional jets
   E175: {
     seats: 76,
+    seats_airline: "UA",
     wingspan_ft: 93.9,
     length_ft: 103.9,
     range_mi: 2530,
@@ -248,6 +281,7 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
   },
   "ERJ-145": {
     seats: 50,
+    seats_airline: "UA",
     wingspan_ft: 65.8,
     length_ft: 98.0,
     range_mi: 1780,
@@ -258,6 +292,7 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
   },
   "CRJ-200": {
     seats: 50,
+    seats_airline: "UA",
     wingspan_ft: 69.6,
     length_ft: 87.8,
     range_mi: 1955,
@@ -269,6 +304,7 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
   },
   "CRJ-550": {
     seats: 50,
+    seats_airline: "UA",
     wingspan_ft: 76.3,
     length_ft: 106.1,
     range_mi: 1960,
@@ -277,9 +313,11 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
     engines: "2× GE CF34-8C5",
     fun_fact:
       "United yanked 20 seats out of a 70-seater so they could add first class and a snack bar.",
+    fun_fact_airline: "UA",
   },
   "CRJ-700": {
     seats: 70,
+    seats_airline: "UA",
     wingspan_ft: 76.3,
     length_ft: 106.1,
     range_mi: 1840,

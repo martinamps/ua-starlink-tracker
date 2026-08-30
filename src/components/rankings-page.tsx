@@ -1,6 +1,6 @@
 import React from "react";
 import { type SiteConfig, siteAirline } from "../airlines/registry";
-import type { LeaderboardDef, LeaderboardRow } from "../server/rankings";
+import type { LeaderboardDef, LeaderboardPageSlice, LeaderboardRow } from "../server/rankings";
 
 const EYEBROW = "text-[10px] font-mono text-muted uppercase tracking-wider mb-3";
 const PANEL = "bg-surface border border-subtle rounded-lg p-5";
@@ -14,13 +14,23 @@ function relativeTime(epochSec: number): string {
   return `in ${hrs}h`;
 }
 
-function LeaderboardRows({ rows }: { rows: LeaderboardRow[] }) {
+function LeaderboardRows({
+  rows,
+  firstRank,
+  showShare,
+}: {
+  rows: LeaderboardRow[];
+  firstRank: number;
+  showShare: boolean;
+}) {
   return (
     <div className="space-y-2">
       <div className="grid grid-cols-[auto_1fr_auto_auto] gap-x-4 font-mono text-[10px] text-muted uppercase tracking-wider pb-1 border-b border-subtle">
         <span>#</span>
         <span>Route</span>
-        <span className="text-right">Starlink / departures</span>
+        <span className="text-right">
+          {showShare ? "Starlink / departures" : "Starlink departures"}
+        </span>
         <span className="text-right">Next</span>
       </div>
       {rows.map((r, i) => (
@@ -28,7 +38,7 @@ function LeaderboardRows({ rows }: { rows: LeaderboardRow[] }) {
           key={`${r.origin}-${r.destination}`}
           className="grid grid-cols-[auto_1fr_auto_auto] gap-x-4 items-center text-sm"
         >
-          <span className="font-mono text-xs text-muted w-5 tabular-nums">{i + 1}</span>
+          <span className="font-mono text-xs text-muted w-5 tabular-nums">{firstRank + i}</span>
           <a
             href={`/route-planner/${r.origin}/${r.destination}`}
             className="font-display font-semibold text-secondary tabular-nums hover:text-accent transition-colors"
@@ -37,10 +47,14 @@ function LeaderboardRows({ rows }: { rows: LeaderboardRow[] }) {
           </a>
           <span className="font-mono text-right tabular-nums">
             <span className="text-accent">{r.equipped}</span>
-            <span className="text-muted"> / {r.departures}</span>
-            <span className={`text-xs ml-2 ${r.pct === 100 ? "text-accent" : "text-muted"}`}>
-              {r.pct}%
-            </span>
+            {showShare && (
+              <>
+                <span className="text-muted"> / {r.departures}</span>
+                <span className={`text-xs ml-2 ${r.pct === 100 ? "text-accent" : "text-muted"}`}>
+                  {r.pct}%
+                </span>
+              </>
+            )}
           </span>
           <span className="font-mono text-muted text-right text-xs">
             {relativeTime(r.next_departure)}
@@ -51,13 +65,48 @@ function LeaderboardRows({ rows }: { rows: LeaderboardRow[] }) {
   );
 }
 
+/** Prev/next only — a numbered pager over 100-row pages would be its own
+ * thin-link farm, and the sitemap advertises page 1 alone. */
+function Pager({ slug, page, pageCount }: { slug: string; page: number; pageCount: number }) {
+  if (pageCount <= 1) return null;
+  const href = (p: number) => (p === 1 ? `/rankings/${slug}` : `/rankings/${slug}?page=${p}`);
+  return (
+    <nav className="flex items-center justify-between mt-4 pt-3 border-t border-subtle text-sm">
+      {page > 1 ? (
+        <a href={href(page - 1)} className="text-accent hover:underline font-mono text-xs">
+          ← Previous 100
+        </a>
+      ) : (
+        <span />
+      )}
+      <span className="font-mono text-[10px] text-muted uppercase tracking-wider">
+        Page {page} of {pageCount}
+      </span>
+      {page < pageCount ? (
+        <a href={href(page + 1)} className="text-accent hover:underline font-mono text-xs">
+          Next 100 →
+        </a>
+      ) : (
+        <span />
+      )}
+    </nav>
+  );
+}
+
 interface LeaderboardPageProps {
   def: LeaderboardDef;
-  rows: LeaderboardRow[];
+  slice: LeaderboardPageSlice;
+  /** Data-freshness stamp for the live window (UTC HH:MM), same as /routes. */
+  asOf: string;
   site: SiteConfig;
 }
 
-export function LeaderboardPage({ def, rows, site }: LeaderboardPageProps) {
+export function LeaderboardPage({ def, slice, asOf, site }: LeaderboardPageProps) {
+  const { rows, total, page, pageCount, firstRank } = slice;
+  const shown =
+    pageCount > 1
+      ? `${total} route${total === 1 ? "" : "s"} · showing ${firstRank}–${firstRank + rows.length - 1}`
+      : `${total} route${total === 1 ? "" : "s"}`;
   return (
     <div className="w-full mx-auto px-4 sm:px-6 md:px-8 bg-base min-h-screen flex flex-col relative">
       <div className="absolute inset-0 grid-pattern opacity-50 pointer-events-none" />
@@ -71,10 +120,11 @@ export function LeaderboardPage({ def, rows, site }: LeaderboardPageProps) {
 
       <section className={SECTION}>
         <div className={PANEL}>
-          <div className={EYEBROW}>
-            {rows.length} route{rows.length === 1 ? "" : "s"} · ranked from live tail assignments
-          </div>
-          <LeaderboardRows rows={rows} />
+          <div
+            className={EYEBROW}
+          >{`${shown} · ranked from live tail assignments · as of ${asOf} UTC`}</div>
+          <LeaderboardRows rows={rows} firstRank={firstRank} showShare={def.showShare} />
+          <Pager slug={def.slug} page={page} pageCount={pageCount} />
           <p className="text-[11px] text-muted mt-4 leading-snug">{def.note}</p>
         </div>
       </section>
@@ -102,6 +152,7 @@ export function LeaderboardPage({ def, rows, site }: LeaderboardPageProps) {
 
 export interface RankingsIndexEntry {
   def: LeaderboardDef;
+  /** Every qualifying route on the board, not the first page's worth. */
   count: number;
   /** Top route preview, when the board has one. */
   top: LeaderboardRow | null;
@@ -109,11 +160,13 @@ export interface RankingsIndexEntry {
 
 interface RankingsIndexPageProps {
   boards: RankingsIndexEntry[];
+  asOf: string;
   site: SiteConfig;
 }
 
-export function RankingsIndexPage({ boards, site }: RankingsIndexPageProps) {
+export function RankingsIndexPage({ boards, asOf, site }: RankingsIndexPageProps) {
   const cfg = siteAirline(site);
+  const hasShareBoard = boards.some((b) => b.def.showShare);
   return (
     <div className="w-full mx-auto px-4 sm:px-6 md:px-8 bg-base min-h-screen flex flex-col relative">
       <div className="absolute inset-0 grid-pattern opacity-50 pointer-events-none" />
@@ -123,8 +176,9 @@ export function RankingsIndexPage({ boards, site }: RankingsIndexPageProps) {
           {cfg.shortName} Starlink Route Rankings
         </h1>
         <p className="text-base text-secondary font-display">
-          100% Starlink routes, the best transcons, and per-hub leaderboards — from live tail
-          assignments
+          {hasShareBoard
+            ? "100% Starlink routes, the best transcons, and per-hub leaderboards — from live tail assignments"
+            : "The best transcons and per-hub leaderboards — from live tail assignments"}
         </p>
       </header>
 
@@ -159,13 +213,19 @@ export function RankingsIndexPage({ boards, site }: RankingsIndexPageProps) {
                     <span className="text-accent">
                       {top.origin}–{top.destination}
                     </span>{" "}
-                    — {top.equipped} of {top.departures} departures equipped
+                    —{" "}
+                    {def.showShare
+                      ? `${top.equipped} of ${top.departures} departures equipped`
+                      : `${top.equipped} equipped departure${top.equipped === 1 ? "" : "s"}`}
                   </p>
                 )}
               </a>
             ))}
           </div>
         )}
+        <p className="text-[11px] text-muted mt-4 leading-snug text-center">
+          {`Ranked over the next 48 hours · as of ${asOf} UTC`}
+        </p>
       </section>
 
       <section className={`${SECTION} text-center`}>

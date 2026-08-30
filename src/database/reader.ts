@@ -35,7 +35,6 @@ import {
   type RouteLeaderboardRow,
   type RouteScheduleOpts,
   type RouteSummary,
-  type SitemapAirport,
   type SitemapFlight,
   type SitemapRoute,
   type SubfleetPenetration,
@@ -80,7 +79,6 @@ import {
   getRouteSummary,
   getRoutesForFlightVariants,
   getServedRoutePairs,
-  getSitemapAirports,
   getSitemapFlights,
   getSitemapRoutes,
   getStarlinkPlaneByTail,
@@ -173,9 +171,9 @@ export interface ScopedReader {
   /** Existence gate for /route-planner/{origin}/{destination}; mirrors getSitemapRoutes. */
   routeHasData(origin: string, destination: string): boolean;
   getRouteSummary(origin: string, destination: string): RouteSummary;
-  /** Airport permalinks worth advertising; empty on the hub (airport pages are tenant pages). */
-  getSitemapAirports(): SitemapAirport[];
-  /** Existence gate for /airport/{IATA}; mirrors getSitemapAirports. */
+  /** Existence gate for /airport/{IATA}; mirrors sitemapAirportsFrom(getSitemapRoutes()),
+   * which is how the sitemap and the /airports index derive the airport corpus
+   * — one route-corpus read, folded, rather than a second whole-corpus pass. */
   airportHasData(iata: string): boolean;
   getAirportSummary(iata: string): AirportSummary;
   getFlightHistorySummary(variants: string[]): FlightHistorySummary;
@@ -334,7 +332,6 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     flightNumberHasData: (v) => flightNumberHasData(db, v, airlines),
     routeHasData: (o, d) => routeHasData(db, o, d, soleAirline()),
     getRouteSummary: (o, d) => getRouteSummary(db, o, d, soleAirline()),
-    getSitemapAirports: () => (scope === "ALL" ? [] : getSitemapAirports(db, scope)),
     airportHasData: (iata) => airportHasData(db, iata, soleAirline()),
     getAirportSummary: (iata) => getAirportSummary(db, iata, soleAirline()),
     getFlightHistorySummary: (v) => getFlightHistorySummary(db, v, airlines),

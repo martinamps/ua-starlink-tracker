@@ -15,8 +15,22 @@ function relativeTime(epochSec: number): string {
   return `in ${hrs}h`;
 }
 
-/** The one-line answer an airport page exists to give. */
+/**
+ * The one-line answer an airport page exists to give.
+ *
+ * On a starlink-roster tenant the schedule table only holds departures flown
+ * by roster aircraft, so totalDepartures is NOT a denominator and the verdict
+ * publishes a count instead of a ratio. See ScheduleCoverage.
+ */
 export function airportVerdict(s: AirportSummary, info: AirportInfo, airlineName: string): string {
+  if (s.coverage !== "whole-fleet") {
+    if (s.equippedDepartures === 0) {
+      return `No ${airlineName} departures from ${info.name} are scheduled on a Starlink-equipped aircraft in the ${s.windowLabel} yet. Aircraft assignments publish about two days out.`;
+    }
+    return s.equippedDepartures === 1
+      ? `One ${airlineName} departure from ${info.name} in the ${s.windowLabel} is scheduled on a Starlink-equipped aircraft.`
+      : `${s.equippedDepartures} ${airlineName} departures from ${info.name} in the ${s.windowLabel} are scheduled on Starlink-equipped aircraft.`;
+  }
   if (s.totalDepartures === 0) {
     return `No ${airlineName} departures from ${info.name} are in the schedule window right now. Aircraft assignments publish about two days out.`;
   }
@@ -31,9 +45,23 @@ export function airportVerdict(s: AirportSummary, info: AirportInfo, airlineName
   return `${s.equippedDepartures} of ${s.totalDepartures} tracked ${airlineName} departures from ${info.name} in the ${s.windowLabel} are on Starlink-equipped aircraft.`;
 }
 
+/**
+ * What the equipped/total gap actually means — never "assignments haven't
+ * published yet", which is the opposite of the truth: upcoming_flights.tail_number
+ * is always populated, and a departure is missing because its tail isn't in the
+ * table, not because it has no assignment.
+ */
+function provenanceNote(s: AirportSummary, airlineName: string): string {
+  if (s.coverage !== "whole-fleet") {
+    return `Counted from live tail assignments over the ${s.windowLabel}. ${airlineName} schedule data here covers the Starlink-equipped fleet, so this is a count of equipped departures — not a share of every ${airlineName} departure from ${s.airport}.`;
+  }
+  return `Counted from live tail assignments over the ${s.windowLabel}. The total covers every departure whose assigned tail the tracker holds; unequipped tails are refreshed on a slower cadence, so it can trail the published schedule.`;
+}
+
 const IATA_RE = /^[A-Z]{3}$/;
 
 function DestinationRows({ summary }: { summary: AirportSummary }) {
+  const showShare = summary.coverage === "whole-fleet";
   const rows = summary.destinations.filter(
     (r) => IATA_RE.test(r.destination) && r.destination !== summary.airport
   );
@@ -49,7 +77,9 @@ function DestinationRows({ summary }: { summary: AirportSummary }) {
     <div className="space-y-2">
       <div className="grid grid-cols-[1fr_auto_auto] gap-x-4 font-mono text-[10px] text-muted uppercase tracking-wider pb-1 border-b border-subtle">
         <span>Route</span>
-        <span className="text-right">Starlink / departures</span>
+        <span className="text-right">
+          {showShare ? "Starlink / departures" : "Starlink departures"}
+        </span>
         <span className="text-right">Next</span>
       </div>
       {rows.map((r) => (
@@ -65,7 +95,7 @@ function DestinationRows({ summary }: { summary: AirportSummary }) {
           </a>
           <span className="font-mono text-right tabular-nums">
             <span className={r.equipped > 0 ? "text-accent" : "text-muted"}>{r.equipped}</span>
-            <span className="text-muted"> / {r.departures}</span>
+            {showShare && <span className="text-muted"> / {r.departures}</span>}
           </span>
           <span className="font-mono text-muted text-right text-xs">
             {relativeTime(r.next_departure)}
@@ -77,8 +107,15 @@ function DestinationRows({ summary }: { summary: AirportSummary }) {
 }
 
 /** Tail links point at /tail/{registration} from the sibling roadmap/tail-pages
- * branch; they resolve once both land. */
-function UpcomingDepartures({ summary }: { summary: AirportSummary }) {
+ * branch. `tailPages` stays off until that route exists, so this page never
+ * ships a link per departure into a 404. */
+function UpcomingDepartures({
+  summary,
+  tailPages,
+}: {
+  summary: AirportSummary;
+  tailPages: boolean;
+}) {
   if (summary.upcoming.length === 0) {
     return (
       <p className="text-sm text-muted">
@@ -86,6 +123,7 @@ function UpcomingDepartures({ summary }: { summary: AirportSummary }) {
       </p>
     );
   }
+  const tailClass = "font-mono text-xs text-muted text-right hidden sm:block";
   return (
     <div className="space-y-2">
       <div className="grid grid-cols-[auto_1fr_auto_auto] gap-x-4 font-mono text-[10px] text-muted uppercase tracking-wider pb-1 border-b border-subtle">
@@ -106,13 +144,19 @@ function UpcomingDepartures({ summary }: { summary: AirportSummary }) {
             {f.flight_number}
           </a>
           <span className="font-mono text-secondary">{f.destination}</span>
-          <a
-            href={`/tail/${f.tail_number}`}
-            title={f.aircraft_type ?? undefined}
-            className="font-mono text-xs text-muted text-right hover:text-accent transition-colors hidden sm:block"
-          >
-            {f.tail_number}
-          </a>
+          {tailPages ? (
+            <a
+              href={`/tail/${f.tail_number}`}
+              title={f.aircraft_type ?? undefined}
+              className={`${tailClass} hover:text-accent transition-colors`}
+            >
+              {f.tail_number}
+            </a>
+          ) : (
+            <span title={f.aircraft_type ?? undefined} className={tailClass}>
+              {f.tail_number}
+            </span>
+          )}
           <span className="font-mono text-muted text-right text-xs">
             {relativeTime(f.departure_time)}
           </span>
@@ -125,12 +169,18 @@ function UpcomingDepartures({ summary }: { summary: AirportSummary }) {
 interface AirportPageProps {
   summary: AirportSummary;
   info: AirportInfo;
+  /** The hub leaderboard for this airport has rows right now. The handler 404s
+   * an empty board, so the link only exists when the board does. */
+  hubBoardHasRows: boolean;
+  /** Data-freshness stamp for the live window (UTC HH:MM), same as /routes. */
+  asOf: string;
   site: SiteConfig;
 }
 
-export function AirportPage({ summary, info, site }: AirportPageProps) {
+export function AirportPage({ summary, info, hubBoardHasRows, asOf, site }: AirportPageProps) {
   const cfg = siteAirline(site);
   const isHub = cfg.hubAirports.includes(summary.airport);
+  const showShare = summary.coverage === "whole-fleet";
 
   return (
     <div className="w-full mx-auto px-4 sm:px-6 md:px-8 bg-base min-h-screen flex flex-col relative">
@@ -147,9 +197,9 @@ export function AirportPage({ summary, info, site }: AirportPageProps) {
 
       <section className={SECTION}>
         <div className={PANEL}>
-          <div className={EYEBROW}>
-            {info.name} · {summary.windowLabel}
-          </div>
+          <div
+            className={EYEBROW}
+          >{`${info.name} · ${summary.windowLabel} · as of ${asOf} UTC`}</div>
           <dl className="grid grid-cols-2 sm:grid-cols-3 gap-4">
             <div>
               <dt className="text-[10px] font-mono text-muted uppercase tracking-wider">
@@ -157,7 +207,11 @@ export function AirportPage({ summary, info, site }: AirportPageProps) {
               </dt>
               <dd className="font-display text-2xl font-bold text-primary tabular-nums">
                 {summary.equippedDepartures}
-                <span className="text-muted text-base font-normal">/{summary.totalDepartures}</span>
+                {showShare && (
+                  <span className="text-muted text-base font-normal">
+                    /{summary.totalDepartures}
+                  </span>
+                )}
               </dd>
             </div>
             <div>
@@ -176,8 +230,7 @@ export function AirportPage({ summary, info, site }: AirportPageProps) {
             </div>
           </dl>
           <p className="text-[11px] text-muted mt-4 leading-snug">
-            Counted from live tail assignments over the {summary.windowLabel}. Departures without a
-            published assignment yet aren't counted — assignments publish about two days out.
+            {provenanceNote(summary, cfg.name)}
           </p>
         </div>
       </section>
@@ -194,7 +247,7 @@ export function AirportPage({ summary, info, site }: AirportPageProps) {
       <section className={SECTION}>
         <div className={PANEL}>
           <div className={EYEBROW}>Next Starlink departures from {summary.airport}</div>
-          <UpcomingDepartures summary={summary} />
+          <UpcomingDepartures summary={summary} tailPages={site.features.tailPages} />
         </div>
       </section>
 
@@ -225,7 +278,7 @@ export function AirportPage({ summary, info, site }: AirportPageProps) {
 
       <section className={`${SECTION} text-center`}>
         <p className="text-sm text-secondary">
-          {isHub && site.features.rankingsPages && (
+          {isHub && site.features.rankingsPages && hubBoardHasRows && (
             <>
               <a
                 href={`/rankings/hub-${summary.airport.toLowerCase()}`}
@@ -264,10 +317,11 @@ export interface AirportIndexEntry {
 
 interface AirportsIndexPageProps {
   airports: AirportIndexEntry[];
+  asOf: string;
   site: SiteConfig;
 }
 
-export function AirportsIndexPage({ airports, site }: AirportsIndexPageProps) {
+export function AirportsIndexPage({ airports, asOf, site }: AirportsIndexPageProps) {
   const cfg = siteAirline(site);
   const active = airports.filter((a) => a.equipped > 0);
   const rest = airports.filter((a) => a.equipped === 0);
@@ -287,7 +341,7 @@ export function AirportsIndexPage({ airports, site }: AirportsIndexPageProps) {
       {active.length > 0 && (
         <section className={SECTION}>
           <div className={PANEL}>
-            <div className={EYEBROW}>Starlink departures scheduled now</div>
+            <div className={EYEBROW}>{`Starlink departures scheduled now · as of ${asOf} UTC`}</div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-1">
               {active.map((a) => (
                 <a

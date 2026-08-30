@@ -88,6 +88,11 @@ export interface SiteFeatures {
   /** /rankings leaderboards (100% routes, transcon, per-hub). Same data
    * dependency as airportPages. */
   rankingsPages: boolean;
+  /** /tail/{registration} pages ship on the sibling roadmap/tail-pages branch.
+   * Off here so the aircraft/airport families can merge alone without turning
+   * their highest-fan-out crawl path (one link per tail) into dead links;
+   * that branch flips this on in the same commit that adds the route. */
+  tailPages: boolean;
 }
 
 export interface SiteConfig {
@@ -103,6 +108,18 @@ export interface SiteConfig {
 }
 
 export type LastUpdatedOwner = "fleet-meta" | "sheet-scrape" | "schedule-ingester";
+
+/**
+ * How much of the airline's flying `upcoming_flights` actually holds.
+ *
+ * The flight updater walks the starlink_planes roster tail by tail; only
+ * alaska-json tenants additionally pull unequipped tails out of united_fleet
+ * (getNextFleetTailNeedingFlights). So on a "starlink-roster" tenant every row
+ * in upcoming_flights is BY CONSTRUCTION a Starlink-equipped departure, and a
+ * COUNT(*) over it is not a denominator — it is the roster's own schedule.
+ * Nothing may publish an equipped *share* for such a tenant.
+ */
+export type ScheduleCoverage = "whole-fleet" | "starlink-roster";
 
 export interface AirlineConfig {
   code: AirlineCode;
@@ -128,6 +145,11 @@ export interface AirlineConfig {
   minFleetSanity: number;
   /** Per-flight wifi verification source; null = none (type-map only). */
   verifierBackend?: "united" | "alaska-json" | "qatar-fltstatus" | null;
+  /** Whether upcoming_flights covers this airline's whole fleet or only its
+   * Starlink roster. Required so a new airline can't silently inherit a
+   * denominator its ingest never collected. Must agree with verifierBackend —
+   * tests/tenancy pins the pair. */
+  scheduleCoverage: ScheduleCoverage;
   /** Sole writer of this airline's `lastUpdated` meta. Every writer stamps
    * via stampLastUpdated, which no-ops unless the caller IS the owner — so a
    * daily fleet sync can't mask a dead primary pipeline. Default "fleet-meta"
@@ -234,6 +256,8 @@ const AIRLINE_DEFS = {
     ...FAA_TAIL,
     minFleetSanity: 800,
     verifierBackend: "united",
+    // The updater only walks the Starlink roster for UA — no whole-fleet pull.
+    scheduleCoverage: "starlink-roster",
     // UA meta (totals + lastUpdated) comes from the community sheet, not FR24.
     lastUpdatedOwner: "sheet-scrape",
     flightHistoryModel: true,
@@ -281,6 +305,8 @@ const AIRLINE_DEFS = {
     ...FAA_TAIL,
     minFleetSanity: 30,
     verifierBackend: "alaska-json",
+    // getNextFleetTailNeedingFlights pulls unequipped united_fleet tails too.
+    scheduleCoverage: "whole-fleet",
     flightHistoryModel: false,
     verifySite: "hawaiianairlines.com",
     typeDeterministicWifi: hawaiianTypeToWifi,
@@ -380,6 +406,8 @@ const AIRLINE_DEFS = {
     ...FAA_TAIL,
     minFleetSanity: 200,
     verifierBackend: "alaska-json",
+    // getNextFleetTailNeedingFlights pulls unequipped united_fleet tails too.
+    scheduleCoverage: "whole-fleet",
     flightHistoryModel: false,
     verifySite: "alaskaair.com",
     typeDeterministicWifi: alaskaTypeToWifi,
@@ -432,6 +460,8 @@ const AIRLINE_DEFS = {
     // one doesn't blow away the roster.
     minFleetSanity: 200,
     verifierBackend: "qatar-fltstatus",
+    // QR schedule lives in qatar_schedule; upcoming_flights is roster-only.
+    scheduleCoverage: "starlink-roster",
     // QR freshness = "the schedule cache is current", not "the roster row
     // count changed" — the hourly ingester owns the stamp (gated on outcome).
     lastUpdatedOwner: "schedule-ingester",
@@ -718,6 +748,7 @@ const AIRLINE_SITE_FEATURES: SiteFeatures = {
   aircraftPages: true,
   airportPages: true,
   rankingsPages: true,
+  tailPages: false,
 };
 
 export const SITES: Record<string, SiteConfig> = {
@@ -765,6 +796,7 @@ export const SITES: Record<string, SiteConfig> = {
       aircraftPages: false,
       airportPages: false,
       rankingsPages: false,
+      tailPages: false,
     },
   },
   hawaiian: {

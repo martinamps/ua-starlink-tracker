@@ -5,6 +5,7 @@ import {
   type AirlineCode,
   type LastUpdatedOwner,
   OBSERVED_WIFI_SOURCES,
+  type ScheduleCoverage,
   VERIFICATION_SOURCES,
   enabledAirlines,
   lastUpdatedOwner,
@@ -622,6 +623,7 @@ function migrateMultiAirline(db: Database) {
     CREATE INDEX IF NOT EXISTS idx_vlog_airline ON starlink_verification_log(airline, tail_number);
     CREATE INDEX IF NOT EXISTS idx_vlog_flight  ON starlink_verification_log(flight_number, checked_at DESC);
     CREATE INDEX IF NOT EXISTS idx_upf_tail     ON upcoming_flights(tail_number);
+    CREATE INDEX IF NOT EXISTS idx_upf_dep       ON upcoming_flights(departure_airport, departure_time);
   `);
 
   // The two indexes above exist for the serving path: getFlightHistorySummary
@@ -629,7 +631,9 @@ function migrateMultiAirline(db: Database) {
   // airline-leading indexes to use — on a one-airline 76k-row log that is a
   // full-table range scan, measured at ~150ms of the permalink's 152ms. The
   // EQUIPPED_DEPARTURES join likewise had no tail_number index on
-  // upcoming_flights. ANALYZE is NOT optional: without sqlite_stat1 the planner
+  // upcoming_flights. idx_upf_dep serves the origin-scoped airport reads, which
+  // otherwise scan the whole live window once per /airport/{IATA} render.
+  // ANALYZE is NOT optional: without sqlite_stat1 the planner
   // keeps choosing airline= (zero selectivity here) over flight_number IN — the
   // new indexes sit unused. Measured with production cardinality: 14.6ms → 0.01ms
   // and 103ms → 2.6ms, but only after ANALYZE. Runs at startup; ~76k rows
@@ -1860,40 +1864,55 @@ export interface SitemapRoute {
  * URLs every couple of days. flight_routes is airline-agnostic (the PK carries
  * the IATA prefix), so scoping is a GLOB on flight_number — same trick
  * getSitemapFlights uses.
+ *
+ * `origin` scopes both aggregates in SQL for the single-airport callers.
  */
-export function getSitemapRoutes(db: Database, airline: string): SitemapRoute[] {
+export function getSitemapRoutes(db: Database, airline: string, origin?: string): SitemapRoute[] {
   const cfg = AIRLINES[airline];
   if (!cfg) return [];
   const nowSec = Math.floor(Date.now() / 1000);
   const latest = new Map<string, number>();
-  const touch = (origin: string, destination: string, t: number | null) => {
-    if (!ROUTE_AIRPORT_RE.test(origin) || !ROUTE_AIRPORT_RE.test(destination)) return;
-    if (origin === destination) return;
+  const touch = (o: string, destination: string, t: number | null) => {
+    if (!ROUTE_AIRPORT_RE.test(o) || !ROUTE_AIRPORT_RE.test(destination)) return;
+    if (o === destination) return;
     // Future timestamps are corrupt rows — treat as unknown, keep the route.
     const sane = t && t <= nowSec ? t : 0;
-    const key = `${origin}-${destination}`;
+    const key = `${o}-${destination}`;
     latest.set(key, Math.max(latest.get(key) ?? 0, sane));
   };
+  // A single-origin caller (the /airport pages) must not aggregate the whole
+  // network and throw it away: an airport-family crawl would re-run both
+  // GROUP BYs over the full route corpus once per URL.
   const cached = db
     .query(
       `SELECT origin, destination, MAX(last_seen_at) AS t FROM flight_routes
-       WHERE flight_number GLOB ? GROUP BY origin, destination`
+       WHERE flight_number GLOB ?${origin ? " AND origin = ?" : ""}
+       GROUP BY origin, destination`
     )
-    .all(`${cfg.iata}[0-9]*`) as { origin: string; destination: string; t: number | null }[];
+    .all(...[`${cfg.iata}[0-9]*`, ...(origin ? [origin] : [])]) as {
+    origin: string;
+    destination: string;
+    t: number | null;
+  }[];
   const upcoming = db
     .query(
       `SELECT departure_airport AS origin, arrival_airport AS destination,
               MAX(last_updated) AS t
        FROM upcoming_flights
        WHERE airline = ? AND departure_airport IS NOT NULL AND arrival_airport IS NOT NULL
+         ${origin ? "AND departure_airport = ?" : ""}
        GROUP BY departure_airport, arrival_airport`
     )
-    .all(airline) as { origin: string; destination: string; t: number | null }[];
+    .all(...[airline, ...(origin ? [origin] : [])]) as {
+    origin: string;
+    destination: string;
+    t: number | null;
+  }[];
   for (const r of [...cached, ...upcoming]) touch(r.origin, r.destination, r.t);
   return [...latest]
     .map(([key, last_touched]) => {
-      const [origin, destination] = key.split("-");
-      return { origin, destination, last_touched };
+      const [o, destination] = key.split("-");
+      return { origin: o, destination, last_touched };
     })
     .sort((a, b) => a.origin.localeCompare(b.origin) || a.destination.localeCompare(b.destination));
 }
@@ -1941,8 +1960,14 @@ export interface SitemapAirport {
  * layer, applied identically to the sitemap and the page.
  */
 export function getSitemapAirports(db: Database, airline: string): SitemapAirport[] {
+  return sitemapAirportsFrom(getSitemapRoutes(db, airline));
+}
+
+/** Pure origin-fold of getSitemapRoutes, so a caller that already holds the
+ * route corpus (the sitemap handler) doesn't re-run both GROUP BYs to get it. */
+export function sitemapAirportsFrom(routes: SitemapRoute[]): SitemapAirport[] {
   const latest = new Map<string, number>();
-  for (const r of getSitemapRoutes(db, airline)) {
+  for (const r of routes) {
     latest.set(r.origin, Math.max(latest.get(r.origin) ?? 0, r.last_touched));
   }
   return [...latest]
@@ -1989,8 +2014,12 @@ export interface AirportDepartureRow {
 
 export interface AirportSummary {
   airport: string;
-  /** All tracked departures from the airport in the live window. */
+  /** Departures from the airport in the live window that upcoming_flights
+   * holds. Only a real denominator when `coverage` is "whole-fleet" — on a
+   * starlink-roster tenant it approaches equippedDepartures by construction. */
   totalDepartures: number;
+  /** Whether totalDepartures may be published as a denominator. */
+  coverage: ScheduleCoverage;
   /** Departures on a Starlink-equipped tail. */
   equippedDepartures: number;
   /** Per-destination equipped/total counts, busiest equipped first. */
@@ -2031,7 +2060,7 @@ export function getAirportSummary(
     equipped: number;
   };
 
-  const destinations = getRouteLeaderboard(db, airline, nowSec).filter((r) => r.origin === iata);
+  const destinations = getRouteLeaderboard(db, airline, nowSec, iata);
 
   const cfg = AIRLINES[airline];
   const upcoming: AirportDepartureRow[] = [];
@@ -2062,13 +2091,12 @@ export function getAirportSummary(
     }
   }
 
-  const allDestinations = getSitemapRoutes(db, airline)
-    .filter((r) => r.origin === iata)
-    .map((r) => r.destination);
+  const allDestinations = getSitemapRoutes(db, airline, iata).map((r) => r.destination);
 
   return {
     airport: iata,
     totalDepartures: totals.departures,
+    coverage: cfg?.scheduleCoverage ?? "starlink-roster",
     equippedDepartures: totals.equipped,
     destinations,
     upcoming,
@@ -4369,16 +4397,19 @@ export interface RouteLeaderboardRow {
 }
 
 /**
- * Per-route equipped AND total departure counts over the live window — the
+ * Per-route equipped AND `departures` counts over the live window — the
  * rankings pages' base table. getRouteStarlinkSchedule counts only equipped
- * departures; keeping the denominator here is what lets a page claim "every
- * scheduled departure on this route is Starlink" honestly. Unpaginated: the
- * 48h window bounds the row count, and rankings rank/filter in memory.
+ * departures; the second count here is what lets a whole-fleet tenant rank by
+ * equipped SHARE. On a starlink-roster tenant `departures` is not a
+ * denominator (see ScheduleCoverage) and no caller may publish it as one.
+ * Unpaginated: the 48h window bounds the row count, and rankings rank/filter
+ * in memory. `origin` scopes the aggregate in SQL for single-airport callers.
  */
 export function getRouteLeaderboard(
   db: Database,
   airline?: AirlineFilter,
-  nowSec = Math.floor(Date.now() / 1000)
+  nowSec = Math.floor(Date.now() / 1000),
+  origin?: string
 ): RouteLeaderboardRow[] {
   const windowEnd = nowSec + DEPARTURE_WINDOW_HOURS * 3600;
   const q = withAirline(
@@ -4391,10 +4422,11 @@ export function getRouteLeaderboard(
      FROM upcoming_flights uf
      LEFT JOIN starlink_planes sp
        ON uf.tail_number = sp.TailNumber AND ${equippedFilter("sp")}
-     WHERE uf.departure_time >= ? AND uf.departure_time < ?`,
+     WHERE uf.departure_time >= ? AND uf.departure_time < ?
+       ${origin ? "AND uf.departure_airport = ?" : ""}`,
     airline,
     "uf",
-    [nowSec, windowEnd]
+    [nowSec, windowEnd, ...(origin ? [origin] : [])]
   );
   return db
     .query(

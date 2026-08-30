@@ -9,7 +9,7 @@
  */
 
 import { beforeAll, describe, expect, test } from "bun:test";
-import { SITES } from "../src/airlines/registry";
+import { AIRLINES, SITES } from "../src/airlines/registry";
 import { getSitemapAirports } from "../src/database/database";
 import { createApp } from "../src/server/app";
 import { AIRPORT_NAMES } from "../src/utils/airport-names";
@@ -98,6 +98,26 @@ describe("/airport/{IATA}", () => {
     }
   });
 
+  test("a roster-scoped tenant never publishes an equipped share", async () => {
+    // upcoming_flights is written per-tail off the Starlink roster, so a
+    // COUNT over it is not United's schedule and "37 of 37" would be a
+    // fabricated denominator. UA must publish a count and say what it counts.
+    expect(AIRLINES.UA.scheduleCoverage).toBe("starlink-roster");
+    const { airport } = namedAirports()[0];
+    const body = await (await get(`/airport/${airport}`)).text();
+    expect(body).toContain("not a share of every");
+    expect(body).not.toContain("Starlink / departures");
+    // The old note blamed the gap on unpublished assignments, which is the
+    // opposite of the truth — upcoming_flights.tail_number is always set.
+    expect(body).not.toContain("Departures without a published assignment");
+  });
+
+  test("the page dates the live window it renders", async () => {
+    const { airport } = namedAirports()[0];
+    const body = await (await get(`/airport/${airport}`)).text();
+    expect(body).toMatch(/as of \d{2}:\d{2} UTC/);
+  });
+
   test("lastmod is honest — no future stamps from corrupt rows", async () => {
     const nowMs = Date.now();
     for (const a of namedAirports()) {
@@ -165,9 +185,46 @@ describe("live departures", () => {
       );
       expect(res.status, fn).toBe(200);
     }
-    // Per-tail pages ship on the sibling roadmap/tail-pages branch; these links
-    // resolve once both land. Pinned so the crawl path isn't silently dropped.
-    expect(body).toContain('href="/tail/N3TEST"');
+    // Per-tail pages ship on the sibling roadmap/tail-pages branch, so the
+    // registration is rendered but NOT linked — this branch must be safe to
+    // merge alone. The tail still appears; only the dead href is withheld.
+    expect(SITES.united.features.tailPages).toBe(false);
+    expect(body).toContain("N3TEST");
+    expect(body).not.toContain('href="/tail/');
+    synthetic.close();
+  });
+});
+
+describe("cross-links", () => {
+  test("every internal link a hub airport page emits resolves", async () => {
+    // The hub leaderboard cross-link is the one that used to be gated on
+    // "this is a hub" rather than on the board having rows, so it could point
+    // at a page the rankings handler 404s.
+    const synthetic = makeSyntheticDb();
+    const soon = Math.floor(Date.now() / 1000) + 3600;
+    addPlane(synthetic, "N4TEST", "Starlink");
+    // DEN gets departures but none on an equipped tail: hub page, empty board.
+    addFlight(synthetic, "N9NONE", "UA9401", "DEN", soon, { arrivalAirport: "EWR" });
+    addFlight(synthetic, "N9NONE", "UA9402", "DEN", soon + 600, { arrivalAirport: "SFO" });
+    // EWR gets an equipped one, so its board does have rows.
+    addFlight(synthetic, "N4TEST", "UA9403", "EWR", soon, { arrivalAirport: "SFO" });
+    const scoped = createApp(synthetic);
+    const fetchPage = (p: string) =>
+      scoped.dispatch(req(p, UA, { headers: { Accept: "text/html" } }));
+
+    for (const iata of ["DEN", "EWR"]) {
+      const res = await fetchPage(`/airport/${iata}`);
+      expect(res.status, iata).toBe(200);
+      const body = await res.text();
+      const links = [...body.matchAll(/href="(\/rankings\/[a-z0-9-]+)"/g)].map((m) => m[1]);
+      for (const href of links) {
+        expect((await fetchPage(href)).status, `${iata} → ${href}`).toBe(200);
+      }
+    }
+    // And the gate is real: DEN's board is empty, so DEN's page omits the link.
+    expect(await (await fetchPage("/airport/DEN")).text()).not.toContain("/rankings/hub-den");
+    expect((await fetchPage("/rankings/hub-den")).status).toBe(404);
+    expect(await (await fetchPage("/airport/EWR")).text()).toContain("/rankings/hub-ewr");
     synthetic.close();
   });
 });

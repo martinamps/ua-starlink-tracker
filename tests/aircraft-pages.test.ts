@@ -6,14 +6,19 @@
  * does.
  */
 import { beforeAll, describe, expect, test } from "bun:test";
+import React from "react";
+import ReactDOMServer from "react-dom/server";
 import {
   FAMILY_DISPLAY,
   familySlug,
   normalizeAircraftType,
 } from "../src/airlines/aircraft-families";
-import { SITES } from "../src/airlines/registry";
+import { AIRLINES, SITES } from "../src/airlines/registry";
+import { AircraftFamilyPage } from "../src/components/aircraft-page";
 import { getFleetPageData } from "../src/database/database";
 import { createApp } from "../src/server/app";
+import type { FleetFamily } from "../src/types";
+import { AIRCRAFT_SPECS } from "../src/utils/aircraft-specs";
 import { openSnapshot, req } from "./helpers";
 
 let app: ReturnType<typeof createApp>;
@@ -90,17 +95,102 @@ describe("/aircraft", () => {
     expect(linked).toEqual(expected);
   });
 
-  test("a data-backed family renders its own page with tail links", async () => {
+  test("a data-backed family renders its own page, listing every tail", async () => {
     const fam = uaFamilies()[0];
     const slug = familySlug(fam.family);
     const res = await get(`/aircraft/${slug}`);
     expect(res.status).toBe(200);
     const body = await res.text();
     expect(body).toContain(`<link rel="canonical" href="https://${UA}/aircraft/${slug}"`);
-    // Family pages are the crawl path into the per-tail corpus (parallel
-    // branch): every tail in the family gets a /tail/{registration} link.
-    const tailLinks = [...body.matchAll(/href="\/tail\/([A-Z0-9-]+)"/g)].map((m) => m[1]);
-    expect(tailLinks.length).toBe(fam.tails.length);
+    for (const t of fam.tails) expect(body, t.tail).toContain(t.tail);
+  });
+
+  test("tail registrations aren't linked until /tail/ exists", async () => {
+    // This is the site's highest-fan-out crawl path (one link per tail); the
+    // route ships on roadmap/tail-pages, so the flag keeps this branch safe to
+    // merge alone rather than pointing a page-full of links at 404s.
+    expect(SITES.united.features.tailPages).toBe(false);
+    const slug = familySlug(uaFamilies()[0].family);
+    const body = await (await get(`/aircraft/${slug}`)).text();
+    expect(body).not.toContain('href="/tail/');
+  });
+
+  test("every carrier-specific spec figure names the carrier it belongs to", () => {
+    // The panel is rendered on a carrier-branded page, so an unattributed
+    // number reads as that carrier's own. Anything with a real seat count must
+    // say whose cabin it is; only "—" rows (freighters) may go unattributed.
+    for (const [family, spec] of Object.entries(AIRCRAFT_SPECS)) {
+      if (String(spec.seats) !== "—") expect(spec.seats_airline, family).toBeTruthy();
+      if (spec.seats_airline) expect(AIRLINES[spec.seats_airline], family).toBeDefined();
+      if (spec.fun_fact_airline) expect(AIRLINES[spec.fun_fact_airline], family).toBeDefined();
+    }
+  });
+
+  test("a family page suppresses another carrier's seat count and voice", () => {
+    // Rendered directly for two tenants: the snapshot need not carry an Alaska
+    // 737-900 for the rule to be the thing under test.
+    const family = "B737-900";
+    const spec = AIRCRAFT_SPECS[family];
+    expect(spec.seats_airline).toBe("UA");
+    const fam: FleetFamily = {
+      family,
+      body: "narrowbody",
+      total: 2,
+      starlink: 1,
+      tails: [
+        {
+          tail: "N1TEST",
+          type: "Boeing 737-900",
+          family,
+          provider: "starlink",
+          fleet: "mainline",
+          verified_at: null,
+        },
+        {
+          tail: "N2TEST",
+          type: "Boeing 737-900",
+          family,
+          provider: "viasat",
+          fleet: "mainline",
+          verified_at: null,
+        },
+      ],
+    };
+    const render = (site: (typeof SITES)[string]) =>
+      ReactDOMServer.renderToString(
+        React.createElement(AircraftFamilyPage, {
+          family: fam,
+          progress: [],
+          lastUpdated: "2026-08-01T00:00:00.000Z",
+          site,
+        })
+      );
+    const onOwner = render(SITES.united);
+    const onOther = render(SITES.alaska);
+    expect(onOwner).toContain(String(spec.seats));
+    expect(onOther).not.toContain(String(spec.seats));
+    // Airframe facts are the type's, not a carrier's — they stay on both.
+    expect(onOwner).toContain(String(spec.cruise_mph));
+    expect(onOther).toContain(String(spec.cruise_mph));
+  });
+
+  test("fleet counts carry the data's own date, not the request time", () => {
+    const fam: FleetFamily = {
+      family: "E175",
+      body: "regional",
+      total: 1,
+      starlink: 1,
+      tails: [],
+    };
+    const html = ReactDOMServer.renderToString(
+      React.createElement(AircraftFamilyPage, {
+        family: fam,
+        progress: [],
+        lastUpdated: "2026-08-01T00:00:00.000Z",
+        site: SITES.united,
+      })
+    );
+    expect(html).toContain("as of August 1, 2026");
   });
 
   test("unknown families and junk 404 — bounded URL space", async () => {
