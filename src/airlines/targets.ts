@@ -15,12 +15,18 @@ export interface RolloutTargetDef {
   label: string;
   /** Deadline the statement names (YYYY-MM-DD, end of the stated period). */
   deadline: string;
-  /** Absolute aircraft count, when the statement gives one. */
+  /** Absolute aircraft count, when the statement gives one. Only ever the
+   * airline's own figure — never arithmetic of ours. */
   count?: number;
   /** Target as a share of the fleet this tracker counts (0–1), when the
    * statement is relative ("half the fleet", "all aircraft"). Resolved
-   * against the live tracked total at render time. */
+   * against the live tracked total at render time. The resulting count is
+   * OURS, not the airline's, and the page must label it as such. */
   fractionOfTracked?: number;
+  /** Airline codes the fraction spans, when the statement covers more than the
+   * tenant reading it — Alaska's "combined Alaska/Hawaiian fleet" is half of
+   * AS+HA, and an AS-scoped reader alone would silently publish half of AS. */
+  fractionSpans?: readonly KnownAirlineCode[];
   source: { title: string; url: string };
 }
 
@@ -64,6 +70,11 @@ const ROLLOUT_TARGETS: Record<KnownAirlineCode, RolloutTargetDef[]> = {
       label: "About half the combined Alaska/Hawaiian fleet",
       deadline: "2026-12-31",
       fractionOfTracked: 0.5,
+      // Alaska stated the share, not a count, and stated it over the merged
+      // Alaska + Hawaiian fleet — so the denominator has to span both tenants.
+      // Resolving 0.5 against the AS reader alone published "175 aircraft"
+      // under Alaska's byline, a number Alaska never said.
+      fractionSpans: ["AS", "HA"],
       source: AS_SOURCE,
     },
     {

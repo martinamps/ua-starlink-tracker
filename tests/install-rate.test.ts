@@ -5,12 +5,14 @@
  */
 
 import { beforeAll, describe, expect, test } from "bun:test";
-import { SITES } from "../src/airlines/registry";
+import { AIRLINES, SITES } from "../src/airlines/registry";
 import { rolloutTargets } from "../src/airlines/targets";
 import { createApp } from "../src/server/app";
 import {
+  type DailyInstalls,
   type MonthlyInstalls,
   computeInstallRate,
+  excludeMassWriteDays,
   zeroFillMonths,
 } from "../src/utils/install-rate";
 import { bodyOf, openSnapshot } from "./helpers";
@@ -19,6 +21,23 @@ const NOW = Date.parse("2026-06-15T00:00:00Z");
 
 const months = (...pairs: Array<[string, number]>): MonthlyInstalls[] =>
   pairs.map(([month, installs]) => ({ month, installs }));
+
+/** Spread a month's installs over distinct days, a handful each. The mass-write
+ * guard exists to catch one-date dumps, so pace fixtures have to look like a
+ * rollout rather than an import. */
+function daysIn(month: string, installs: number, perDay = 4): DailyInstalls[] {
+  const out: DailyInstalls[] = [];
+  let left = installs;
+  for (let day = 1; left > 0 && day <= 28; day++) {
+    const n = Math.min(perDay, left);
+    out.push({ day: `${month}-${String(day).padStart(2, "0")}`, installs: n });
+    left -= n;
+  }
+  return out;
+}
+
+const daily = (...pairs: Array<[string, number]>): DailyInstalls[] =>
+  pairs.flatMap(([month, installs]) => daysIn(month, installs));
 
 const TARGET = {
   label: "1,000 aircraft",
@@ -49,7 +68,7 @@ describe("zeroFillMonths", () => {
 describe("computeInstallRate", () => {
   test("pace averages the last three complete months, current month excluded", () => {
     const stats = computeInstallRate({
-      monthly: months(["2026-03", 30], ["2026-04", 24], ["2026-05", 30], ["2026-06", 99]),
+      daily: daily(["2026-03", 30], ["2026-04", 24], ["2026-05", 30], ["2026-06", 99]),
       equipped: 500,
       total: 1400,
       targets: [TARGET],
@@ -60,7 +79,7 @@ describe("computeInstallRate", () => {
 
   test("on-track projection lands before the deadline", () => {
     const stats = computeInstallRate({
-      monthly: months(["2026-03", 100], ["2026-04", 100], ["2026-05", 100]),
+      daily: daily(["2026-03", 100], ["2026-04", 100], ["2026-05", 100]),
       equipped: 800,
       total: 1400,
       targets: [TARGET],
@@ -73,7 +92,7 @@ describe("computeInstallRate", () => {
 
   test("behind verdict when the straight line overshoots the deadline", () => {
     const stats = computeInstallRate({
-      monthly: months(["2026-03", 10], ["2026-04", 10], ["2026-05", 10]),
+      daily: daily(["2026-03", 10], ["2026-04", 10], ["2026-05", 10]),
       equipped: 500,
       total: 1400,
       targets: [TARGET],
@@ -84,7 +103,7 @@ describe("computeInstallRate", () => {
 
   test("reached targets never project", () => {
     const stats = computeInstallRate({
-      monthly: months(["2026-04", 5], ["2026-05", 5]),
+      daily: daily(["2026-04", 5], ["2026-05", 5]),
       equipped: 1000,
       total: 1400,
       targets: [TARGET],
@@ -96,9 +115,9 @@ describe("computeInstallRate", () => {
 
   test("abstains with under two complete months of history", () => {
     // One complete month (May, with June current) is an anecdote, not a rate.
-    for (const thin of [months(["2026-05", 40]), months(["2026-06", 40])]) {
+    for (const thin of [daily(["2026-05", 40]), daily(["2026-06", 40])]) {
       const stats = computeInstallRate({
-        monthly: thin,
+        daily: thin,
         equipped: 500,
         total: 1400,
         targets: [TARGET],
@@ -111,13 +130,7 @@ describe("computeInstallRate", () => {
 
   test("abstains at a near-zero pace instead of projecting decades out", () => {
     const stats = computeInstallRate({
-      monthly: months(
-        ["2026-01", 1],
-        ["2026-02", 0],
-        ["2026-03", 0],
-        ["2026-04", 0],
-        ["2026-05", 0]
-      ),
+      daily: daily(["2026-01", 1], ["2026-02", 0], ["2026-03", 0], ["2026-04", 0], ["2026-05", 0]),
       equipped: 500,
       total: 1400,
       targets: [TARGET],
@@ -129,7 +142,7 @@ describe("computeInstallRate", () => {
 
   test("fractional targets resolve against the tracked total", () => {
     const stats = computeInstallRate({
-      monthly: months(["2026-03", 50], ["2026-04", 50], ["2026-05", 50]),
+      daily: daily(["2026-03", 50], ["2026-04", 50], ["2026-05", 50]),
       equipped: 300,
       total: 700,
       targets: [
@@ -144,6 +157,105 @@ describe("computeInstallRate", () => {
     });
     expect(stats.projections[0].targetCount).toBe(350);
     expect(stats.projections[0].verdict).toBe("on_track");
+  });
+
+  test("a fraction target spanning tenants resolves against the summed roster", () => {
+    // The AS shape: Alaska stated a share of the merged Alaska+Hawaiian fleet,
+    // so the denominator is both readers' totals, not the serving tenant's.
+    const stats = computeInstallRate({
+      daily: daily(["2026-03", 20], ["2026-04", 20], ["2026-05", 20]),
+      equipped: 100,
+      total: 350,
+      targets: [
+        {
+          label: "half the combined fleet",
+          deadline: "2026-12-31",
+          fractionOfTracked: 0.5,
+          fractionSpans: ["AS", "HA"],
+          source: TARGET.source,
+        },
+      ],
+      fractionBase: (t) => (t.fractionSpans ? 411 : 350),
+      nowMs: NOW,
+    });
+    const [p] = stats.projections;
+    expect(p.targetCount).toBe(206); // ceil(0.5 * 411), not 175
+    expect(p.derivedFrom).toBe(411);
+  });
+
+  test("a derived count is flagged; a stated count is not", () => {
+    const stats = computeInstallRate({
+      daily: daily(["2026-03", 20], ["2026-04", 20], ["2026-05", 20]),
+      equipped: 100,
+      total: 700,
+      targets: [
+        TARGET,
+        { ...TARGET, count: undefined, fractionOfTracked: 1, label: "entire fleet" },
+      ],
+      nowMs: NOW,
+    });
+    const [stated, derived] = stats.projections;
+    // A count the airline published may be attributed to it; one we computed
+    // off our own roster may not.
+    expect(stated.derived).toBe(false);
+    expect(stated.derivedFrom).toBeNull();
+    expect(derived.derived).toBe(true);
+    expect(derived.derivedFrom).toBe(700);
+  });
+});
+
+describe("excludeMassWriteDays", () => {
+  test("a one-date import is dropped while the busiest real day survives", () => {
+    // The live UA shape: ~200 days of 1-3, a handful up to 16, and a single
+    // sheet-tab import of 121 on 2025-12-03 that INSTALL_FILTER cannot see
+    // (numeric gid '13' looks nothing like a seed).
+    const series: DailyInstalls[] = [];
+    for (let i = 1; i <= 20; i++)
+      series.push({ day: `2025-11-${String(i).padStart(2, "0")}`, installs: (i % 3) + 1 });
+    series.push({ day: "2025-12-02", installs: 16 });
+    series.push({ day: "2025-12-03", installs: 121 });
+
+    const { kept, excluded } = excludeMassWriteDays(series);
+    expect(excluded.map((d) => d.day)).toEqual(["2025-12-03"]);
+    expect(kept.some((d) => d.day === "2025-12-02" && d.installs === 16)).toBe(true);
+    expect(kept.length).toBe(series.length - 1);
+  });
+
+  test("a tenant whose only history is one bulk write keeps nothing", () => {
+    // AS/HA today: were their seed gids ever to stop self-labelling, a single
+    // 90-tail date must not become the whole install rate. The day under test
+    // is excluded from its own threshold, so it cannot vouch for itself.
+    const { kept, excluded } = excludeMassWriteDays([{ day: "2026-04-21", installs: 90 }]);
+    expect(kept).toEqual([]);
+    expect(excluded).toHaveLength(1);
+  });
+
+  test("a sustained high rate is a rollout, not an import", () => {
+    // Threshold scales with the busy end of normal, so an airline genuinely
+    // installing 30 a day never trips the guard.
+    const series = Array.from({ length: 12 }, (_, i) => ({
+      day: `2026-05-${String(i + 1).padStart(2, "0")}`,
+      installs: 30,
+    }));
+    expect(excludeMassWriteDays(series).excluded).toEqual([]);
+  });
+
+  test("an import never inflates the pace or the chart", () => {
+    const organic = daily(["2026-03", 12], ["2026-04", 12], ["2026-05", 12]);
+    const withImport = [...organic, { day: "2026-04-20", installs: 118 }];
+    const opts = { equipped: 100, total: 1400, targets: [TARGET], nowMs: NOW };
+    const clean = computeInstallRate({ ...opts, daily: organic });
+    const dirty = computeInstallRate({ ...opts, daily: withImport });
+
+    expect(dirty.paceMonthly).toBe(clean.paceMonthly);
+    expect(dirty.months).toEqual(clean.months);
+    // …and the page is told, so the footnote's promise is checkable.
+    expect(dirty.excludedDays).toEqual([{ day: "2026-04-20", installs: 118 }]);
+    expect(clean.excludedDays).toEqual([]);
+  });
+
+  test("empty in, empty out", () => {
+    expect(excludeMassWriteDays([])).toEqual({ kept: [], excluded: [] });
   });
 });
 
@@ -160,6 +272,18 @@ describe("rolloutTargets config", () => {
 
   test("unknown airlines fail closed", () => {
     expect(() => rolloutTargets("WN")).toThrow();
+  });
+
+  test("every fractionSpans code is a registered airline", () => {
+    // A typo here would silently drop a carrier from the denominator and
+    // publish a smaller target under the airline's own byline.
+    for (const code of Object.keys(AIRLINES)) {
+      for (const t of rolloutTargets(code)) {
+        for (const span of t.fractionSpans ?? []) {
+          expect(AIRLINES[span], `${code} target spans unknown airline ${span}`).toBeDefined();
+        }
+      }
+    }
   });
 });
 
@@ -187,5 +311,13 @@ describe("/install-rate page", () => {
     for (const code of ["ua", "ha", "as"]) {
       expect(text).toContain(`id="install-rate-stat-${code}"`);
     }
+  });
+
+  test("a count we derived is labelled as ours, not the airline's", async () => {
+    // UA's "Entire fleet" target has no stated count — it resolves off our own
+    // roster, so the page must not present the number as United's figure.
+    expect(rolloutTargets("UA").some((t) => t.count === undefined)).toBe(true);
+    const { text } = await bodyOf(app, "/install-rate", SITES.united.canonicalHost);
+    expect(text).toContain("Count derived here, not stated by the airline");
   });
 });

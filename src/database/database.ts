@@ -1085,22 +1085,28 @@ export function getRecentInstalls(
     .all(...q.params, limit) as RecentInstall[];
 }
 
-/** Organic installs bucketed by calendar month (bulk writers excluded via
- * INSTALL_FILTER — a one-day seed import must never chart as an install
- * spike). Feeds the Install Rate Index; gaps are zero-filled downstream. */
-export function getMonthlyInstalls(
+/**
+ * Organic installs bucketed by calendar DAY (bulk writers excluded via
+ * INSTALL_FILTER). Day, not month, because INSTALL_FILTER only knows the bulk
+ * writers that label themselves: a mass import landing on a numeric Google
+ * Sheets tab id (UA sheet_gid '13' stamped 121 tails on 2025-12-03) passes the
+ * predicate and would chart as a real install spike. Only a per-day series can
+ * see that shape, so the Install Rate Index detects it downstream
+ * (excludeMassWriteDays) before it rolls up to months.
+ */
+export function getDailyInstalls(
   db: Database,
   airline: AirlineFilter
-): { month: string; installs: number }[] {
+): { day: string; installs: number }[] {
   const q = withAirline(
-    `SELECT substr(DateFound, 1, 7) AS month, COUNT(*) AS installs
+    `SELECT substr(DateFound, 1, 10) AS day, COUNT(*) AS installs
      FROM starlink_planes
      WHERE ${equippedFilter("starlink_planes")}
        AND ${INSTALL_FILTER}`,
     airline
   );
-  return db.query(`${q.sql} GROUP BY month ORDER BY month`).all(...q.params) as {
-    month: string;
+  return db.query(`${q.sql} GROUP BY day ORDER BY day`).all(...q.params) as {
+    day: string;
     installs: number;
   }[];
 }

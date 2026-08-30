@@ -1640,10 +1640,18 @@ function airlineInstallRate(
     statusLabel: cfg.rollout.statusLabel,
     phaseNote: cfg.rollout.phaseNote,
     stats: computeInstallRate({
-      monthly: r.getMonthlyInstalls(),
+      daily: r.getDailyInstalls(),
       equipped: r.getStarlinkPlanes().length,
       total: r.getTotalCount(),
       targets: rolloutTargets(cfg.code),
+      // A target stated over more than one carrier's fleet ("half the combined
+      // Alaska/Hawaiian fleet") resolves against those tenants' summed rosters.
+      // Reading it off the serving tenant alone halved the denominator and
+      // published a count the airline never gave.
+      fractionBase: (t) =>
+        t.fractionSpans
+          ? t.fractionSpans.reduce((sum, code) => sum + getReader(code).getTotalCount(), 0)
+          : r.getTotalCount(),
       nowMs,
     }),
   };

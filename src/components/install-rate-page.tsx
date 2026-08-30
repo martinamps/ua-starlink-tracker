@@ -1,6 +1,6 @@
 import type { SiteConfig } from "../airlines/registry";
 import type { InstallRateStats, TargetProjection, TargetVerdict } from "../utils/install-rate";
-import { PageFooter } from "./atoms";
+import { PageFooter, type PageLink } from "./atoms";
 
 const EYEBROW = "text-[10px] font-mono text-muted uppercase tracking-wider mb-3";
 const PANEL = "bg-surface border border-subtle rounded-lg p-5";
@@ -21,6 +21,7 @@ interface InstallRatePageProps {
   airlines: AirlineInstallRate[];
   /** The data's own freshness date — the quotable sentence is dated with this. */
   asOfDate: string;
+  pageLinks?: PageLink[];
 }
 
 const VERDICT_TONE: Record<TargetVerdict, { label: string; color: string; bg: string }> = {
@@ -82,7 +83,7 @@ function TargetRow({ p }: { p: TargetProjection }) {
         </span>
       </div>
       <div className="font-mono text-[11px] text-muted mt-1 leading-relaxed">
-        {p.targetCount.toLocaleString()} aircraft by {p.target.deadline}
+        By {p.target.deadline} · {p.targetCount.toLocaleString()} aircraft
         {p.verdict === "reached" ? " — already there." : ` · ${p.remaining.toLocaleString()} to go`}
         {p.projectedMonth && p.verdict !== "reached" && (
           <> · straight-line arrival {monthLabel(p.projectedMonth)}</>
@@ -91,8 +92,20 @@ function TargetRow({ p }: { p: TargetProjection }) {
           !p.projectedMonth &&
           " · at the current pace this doesn't land within a projectable horizon"}
       </div>
+      {/* The count under a fraction target is OUR arithmetic over OUR roster.
+          Saying so keeps the sourced quote (the label) separable from the
+          number, which the airline never published. */}
+      {p.derived && p.derivedFrom !== null && (
+        <div className="font-mono text-[10px] text-muted mt-1 leading-relaxed">
+          Count derived here, not stated by the airline:{" "}
+          {p.target.fractionOfTracked === 1
+            ? `the ${p.derivedFrom.toLocaleString()} aircraft this tracker counts`
+            : `${Math.round((p.target.fractionOfTracked ?? 1) * 100)}% of the ${p.derivedFrom.toLocaleString()} aircraft this tracker counts`}
+          .
+        </div>
+      )}
       <div className="font-mono text-[10px] text-muted mt-1">
-        Source:{" "}
+        {p.derived ? "Target stated in" : "Source"}:{" "}
         <a
           href={p.target.source.url}
           target="_blank"
@@ -143,6 +156,14 @@ function AirlineSection({ a, asOfDate }: { a: AirlineInstallRate; asOfDate: stri
         <div className="mb-4">
           <div className={EYEBROW}>Installs per month (dated finds only)</div>
           <MonthChart stats={stats} accent={a.accentColor} />
+          {stats.excludedDays.length > 0 && (
+            <p className="text-[10px] text-muted mt-1.5 leading-snug">
+              {stats.excludedDays.length === 1 ? "One day" : `${stats.excludedDays.length} days`}{" "}
+              excluded as a bulk import (
+              {stats.excludedDays.map((d) => `${d.day}: ${d.installs}`).join(", ")}) — too many
+              aircraft on one date to be installs, so they'd read as a spike the fleet never had.
+            </p>
+          )}
         </div>
       ) : (
         <p className="text-[11px] text-muted mb-4 leading-snug">
@@ -162,7 +183,12 @@ function AirlineSection({ a, asOfDate }: { a: AirlineInstallRate; asOfDate: stri
   );
 }
 
-export default function InstallRatePage({ site, airlines, asOfDate }: InstallRatePageProps) {
+export default function InstallRatePage({
+  site,
+  airlines,
+  asOfDate,
+  pageLinks,
+}: InstallRatePageProps) {
   const single = airlines.length === 1 ? airlines[0] : null;
   return (
     <div className="w-full mx-auto px-4 sm:px-6 md:px-8 bg-base min-h-screen flex flex-col relative">
@@ -189,10 +215,14 @@ export default function InstallRatePage({ site, airlines, asOfDate }: InstallRat
 
       <section className={SECTION}>
         <p className="text-[11px] text-muted leading-snug text-center">
-          Pace counts only dated, organically observed installs — bulk imports and seed data are
-          excluded, so a data backfill never reads as an install spike. Projections are
-          straight-line extrapolations of the trailing three complete months; below ~0.5
-          installs/month we say "too early to call" instead of projecting.
+          Pace counts only dated, organically observed installs. Seed batches and type-rule
+          backfills are excluded by source, and any single date carrying far more aircraft than the
+          fleet installs in a day is dropped as an import and named above — so a data backfill
+          doesn't read as an install spike. Projections are straight-line extrapolations of the
+          trailing three complete months; below ~0.5 installs/month we say "too early to call"
+          instead of projecting. Counts shown for "share of the fleet" targets are computed from
+          this tracker's roster and labelled as such — only figures an airline actually published
+          are attributed to it.
           {site.features.methodologyPage && (
             <>
               {" "}
@@ -204,7 +234,7 @@ export default function InstallRatePage({ site, airlines, asOfDate }: InstallRat
         </p>
       </section>
 
-      <PageFooter site={site} />
+      <PageFooter site={site} pageLinks={pageLinks} />
     </div>
   );
 }
