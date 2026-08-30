@@ -74,7 +74,13 @@ interface RoutesPageProps {
 
 export default function RoutesPage({ schedule, site }: RoutesPageProps) {
   const scopeCode = site?.scope && site.scope !== "ALL" ? site.scope : null;
-  const airlineName = scopeCode ? AIRLINES[scopeCode].name : "tracked airlines";
+  const cfg = scopeCode ? AIRLINES[scopeCode] : null;
+  const airlineName = cfg?.name ?? "tracked airlines";
+  // "assignments publish about two days before departure" is United's story.
+  // A late-assignment carrier's registry clause replaces it. (WN ships
+  // routesPage:false, but the site flag and the airline flag are independent.)
+  const assignmentTiming =
+    cfg?.lateAssignmentShort ?? "assignments publish about two days before departure";
   const backLabel = site?.brand.title ?? "Starlink Tracker";
   const totalDepartures = schedule.totalDepartures;
   const asOf = new Date().toISOString().slice(11, 16);
@@ -105,9 +111,8 @@ export default function RoutesPage({ schedule, site }: RoutesPageProps) {
           <p className="text-[11px] text-muted mt-4 leading-snug">
             Counted from live tail assignments: every departure in the {schedule.windowLabel} whose
             assigned aircraft is Starlink-equipped, showing the top {schedule.rows.length} routes.
-            Routes not listed may still have Starlink — assignments publish about two days before
-            departure. This is a count of Starlink service, not a share of all departures on the
-            route.
+            Routes not listed may still have Starlink — {assignmentTiming}. This is a count of
+            Starlink service, not a share of all departures on the route.
           </p>
         </div>
       </section>

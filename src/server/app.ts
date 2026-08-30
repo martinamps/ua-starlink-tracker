@@ -1955,7 +1955,7 @@ export function parseRoutePath(pathname: string): { origin: string; destination:
 
 function routePageMeta(ctx: RequestContext, cfg: AirlineConfig, route: RouteSummary): PageMeta {
   const pair = `${route.origin} to ${route.destination}`;
-  const verdict = routeVerdict(route, cfg.name);
+  const verdict = routeVerdict(route, cfg.name, cfg);
   const numbers = route.flightNumbers.slice(0, 6).map((f) => f.flight_number);
   return {
     siteTitle: `${pair} Starlink WiFi — ${cfg.shortName} Flights`,

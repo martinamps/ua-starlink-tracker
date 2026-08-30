@@ -1,5 +1,5 @@
 import React from "react";
-import { type SiteConfig, siteAirline } from "../airlines/registry";
+import { type AirlineConfig, type SiteConfig, siteAirline } from "../airlines/registry";
 import type { RouteSummary } from "../database/database";
 
 const EYEBROW = "text-[10px] font-mono text-muted uppercase tracking-wider mb-3";
@@ -14,9 +14,21 @@ export function formatDuration(sec: number | null): string | null {
   return m === 0 ? `${h}h` : `${h}h ${m}m`;
 }
 
+/** When the operating aircraft actually becomes knowable. United-shaped by
+ * default; a late-assignment carrier's registry clause replaces it, because
+ * "assignments publish about two days out" is precisely false there. */
+function assignmentTiming(cfg: Pick<AirlineConfig, "lateAssignmentShort"> | null): string {
+  return cfg?.lateAssignmentShort ?? "aircraft assignments publish about two days out";
+}
+
 /** The one-line answer the page exists to give. */
-export function routeVerdict(route: RouteSummary, airlineName: string): string {
+export function routeVerdict(
+  route: RouteSummary,
+  airlineName: string,
+  cfg: Pick<AirlineConfig, "lateAssignmentShort"> | null = null
+): string {
   const pair = `${route.origin} → ${route.destination}`;
+  const timing = assignmentTiming(cfg);
   if (route.totalDepartures === 0) {
     // Lead with what we durably know. The schedule window is only 48h, so a
     // route with real history spends most of its life "empty" — opening on the
@@ -28,9 +40,9 @@ export function routeVerdict(route: RouteSummary, airlineName: string): string {
         .slice(0, 3)
         .map((f) => f.flight_number)
         .join(", ");
-      return `${airlineName} flies ${pair} — ${fns.length} flight number${fns.length === 1 ? "" : "s"} on record (${sample}). No departures are in the next-48h assignment window yet; aircraft assignments publish about two days out.`;
+      return `${airlineName} flies ${pair} — ${fns.length} flight number${fns.length === 1 ? "" : "s"} on record (${sample}). No departures are in the next-48h schedule window yet; ${timing}.`;
     }
-    return `No ${airlineName} departures are in the schedule window for ${pair} right now. Aircraft assignments publish about two days out.`;
+    return `No ${airlineName} departures are in the schedule window for ${pair} right now — ${timing}.`;
   }
   // "All 1 scheduled departures" shipped on ~10% of route pages.
   if (route.totalDepartures === 1) {
@@ -100,7 +112,7 @@ export default function RoutePage({ route, site }: RoutePageProps) {
           {route.origin} to {route.destination} Starlink WiFi
         </h1>
         <p className="text-base text-secondary font-display max-w-2xl mx-auto">
-          {routeVerdict(route, airlineName)}
+          {routeVerdict(route, airlineName, cfg)}
         </p>
       </header>
 
@@ -143,9 +155,18 @@ export default function RoutePage({ route, site }: RoutePageProps) {
             </div>
           </dl>
           <p className="text-[11px] text-muted mt-4 leading-snug">
-            Counted from live tail assignments over the {route.windowLabel}. A route with no
-            equipped departures today can still get one — assignments publish about two days before
-            departure.
+            {cfg.lateAssignmentShort ? (
+              <>
+                Counted from the aircraft currently scheduled over the {route.windowLabel}, but{" "}
+                {cfg.lateAssignmentShort} — read this as where equipped tails have been flying, not
+                as a per-departure promise.
+              </>
+            ) : (
+              <>
+                Counted from live tail assignments over the {route.windowLabel}. A route with no
+                equipped departures today can still get one — {assignmentTiming(cfg)}.
+              </>
+            )}
           </p>
         </div>
       </section>
