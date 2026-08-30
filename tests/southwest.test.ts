@@ -144,6 +144,36 @@ describe("WN check-flight answers fleet odds, never assignments", () => {
     }
   });
 
+  test("the permalink renders no forward-looking per-departure verdict either", async () => {
+    // Same setup as above — an equipped tail scheduled inside the 48h window —
+    // which on every other tenant renders "Upcoming WN410 departures · N8543Z
+    // · ✓ Starlink". Publishing that above the fold while the API on the same
+    // host refuses a per-flight answer is the contradiction under test.
+    const db = makeSyntheticDb();
+    addPlane(db, "N8543Z", "Starlink", { airline: "WN", aircraft: "Boeing 737-800" });
+    addFleet(db, "N8543Z", "confirmed", {
+      airline: "WN",
+      aircraftType: "Boeing 737-800",
+      verifiedWifi: "Starlink",
+    });
+    addFlight(db, "N8543Z", "WN410", "DAL", Math.floor(Date.now() / 1000) + 3 * 3600, {
+      arrivalAirport: "HOU",
+      airline: "WN",
+    });
+    const sapp = createApp(db);
+    try {
+      const { status, text } = await bodyOf(sapp, "/check-flight/WN410", WN_HOST);
+      expect(status).toBe(200);
+      // React SSR splits adjacent text expressions with comments.
+      const body = text.replace(/<!--.*?-->/g, "");
+      expect(body).not.toContain("Upcoming WN410 departures");
+      expect(body).not.toContain("✓ Starlink");
+      expect(body).toContain("fleet odds");
+    } finally {
+      db.close();
+    }
+  });
+
   test("snapshot WN410: honest fleet-odds shape with the seeded penetration", async () => {
     const d = await jsonOf(app, "/api/check-flight?flight_number=WN410&date=2026-03-22", WN_HOST);
     expect(d.hasStarlink).toBeNull();
@@ -217,6 +247,25 @@ describe("WN pages carry the fleet-odds story", () => {
     expect(perma.text).toContain("fleet odds");
   });
 
+  test("indexable meta never promises an assignment window WN doesn't have", async () => {
+    // These are the SERP snippets; the sitemap advertises every one of them.
+    const description = (html: string) =>
+      html.match(/<meta name="description" content="([^"]*)"/)?.[1] ?? "";
+    const sitemap = await bodyOf(app, "/sitemap.xml", WN_HOST);
+    const paths = [...sitemap.text.matchAll(/<loc>https:\/\/[^/]+([^<]*)<\/loc>/g)].map(
+      (m) => m[1] || "/"
+    );
+    expect(paths.length).toBeGreaterThan(3);
+    for (const path of paths) {
+      const { status, text } = await bodyOf(app, path, WN_HOST);
+      expect(status, `${path} is advertised in the sitemap`).toBe(200);
+      const d = description(text);
+      expect(d, `${path} meta`).not.toMatch(/assignments publish|two days/i);
+      expect(d, `${path} meta`).not.toContain("firm answer");
+      expect(d, `${path} meta`).not.toContain("direct verification");
+    }
+  });
+
   test("fleet page renders the WN roster with per-tail provider coloring", async () => {
     const { status, text } = await bodyOf(app, "/fleet", WN_HOST);
     expect(status).toBe(200);
@@ -239,5 +288,15 @@ describe("WN pages carry the fleet-odds story", () => {
     expect(text).toContain("starlink-stat");
     expect(text).toContain("/methodology");
     expect(text).not.toContain("United");
+  });
+
+  test("llms.txt never contradicts itself about advance per-flight answers", async () => {
+    const { text } = await bodyOf(app, "/llms.txt", WN_HOST);
+    expect(text).toContain("No advance answer is honest");
+    // The self-contradiction that shipped: a "live answer" per-flight link two
+    // paragraphs above the refusal.
+    expect(text).not.toContain("shows the live answer");
+    expect(text).not.toMatch(/live Starlink status/);
+    expect(text).not.toMatch(/check-flight\/WN\d/);
   });
 });

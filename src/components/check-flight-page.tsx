@@ -87,10 +87,19 @@ function flightSummary(flight: FlightFacts, lateAssignment: boolean): string {
   return `Pick a date below for a live answer based on the aircraft assigned to ${flightNumber}.`;
 }
 
-function FlightFactBlocks({ flight }: { flight: FlightFacts }) {
+function FlightFactBlocks({
+  flight,
+  lateAssignment,
+}: { flight: FlightFacts; lateAssignment: boolean }) {
   const fn = flight.flightNumber;
   const hasHistory =
     flight.observedTotal > 0 || flight.aircraftTypes.length > 0 || flight.lastStarlink !== null;
+  // The upcoming block is a forward-looking per-departure verdict built from
+  // advance tail assignments — exactly what a late-assignment tenant's
+  // methodology page calls speculation, and a per-flight "yes" on a page whose
+  // own subtitle says the honest answer is fleet odds. The routes block below
+  // (observed history) is what stays.
+  const upcoming = lateAssignment ? [] : flight.upcoming;
   return (
     <>
       {flight.routes.length > 0 && (
@@ -160,13 +169,13 @@ function FlightFactBlocks({ flight }: { flight: FlightFacts }) {
         </div>
       )}
 
-      {flight.upcoming.length > 0 && (
+      {upcoming.length > 0 && (
         <div className="bg-surface rounded-lg border border-subtle p-6">
           <h2 className="font-display text-lg font-semibold text-primary mb-3">
             Upcoming {fn} departures
           </h2>
           <div className="space-y-2">
-            {flight.upcoming.map((u) => (
+            {upcoming.map((u) => (
               <div
                 key={`${u.tail_number}-${u.departure_time}`}
                 className="flex items-center justify-between gap-3 text-sm font-mono"
@@ -343,7 +352,7 @@ export default function CheckFlightPage({ site, flight, invalid }: CheckFlightPa
       </div>
 
       <div className="relative max-w-xl mx-auto w-full mb-10 space-y-6">
-        {flight && <FlightFactBlocks flight={flight} />}
+        {flight && <FlightFactBlocks flight={flight} lateAssignment={Boolean(lateNote)} />}
         {flight && site.features.fleetPage && (
           <p className="text-sm text-muted text-center">
             See where the {airlineName} rollout stands across every aircraft on the{" "}
