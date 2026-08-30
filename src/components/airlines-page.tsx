@@ -19,8 +19,9 @@ import {
   type AirlineFactsEntry,
   type RolloutFact,
   type RolloutFactsStatus,
+  factStamp,
+  factsStamp,
   formatFactDate,
-  latestFactDate,
 } from "../airlines/rollout-facts";
 import type { PerAirlineStat } from "../types";
 import { PageFooter, STATUS_TONE } from "./atoms";
@@ -87,11 +88,12 @@ function FactsStatusPill({ entry }: { entry: AirlineFactsEntry }) {
 
 /** One dated, sourced claim — the "as of" stamp is the product. */
 function FactRow({ fact }: { fact: RolloutFact }) {
+  const stamp = factStamp(fact);
   return (
     <li className="py-3 border-b border-subtle last:border-0">
       <p className="text-sm text-secondary leading-relaxed mb-1">{fact.fact}</p>
       <div className="font-mono text-[11px] text-muted">
-        as of <span className="text-primary">{formatFactDate(fact.asOf)}</span>
+        {stamp.label} <span className="text-primary">{formatFactDate(stamp.date)}</span>
         {" · "}
         <a
           href={fact.source.url}
@@ -107,6 +109,7 @@ function FactRow({ fact }: { fact: RolloutFact }) {
 }
 
 export function FactsList({ entry }: { entry: AirlineFactsEntry }) {
+  const stamp = factsStamp(entry);
   return (
     <div className={PANEL}>
       <div className="flex items-center justify-between gap-2 mb-1">
@@ -114,7 +117,7 @@ export function FactsList({ entry }: { entry: AirlineFactsEntry }) {
           {entry.name} — the record, with receipts
         </span>
         <span className="font-mono text-[10px] text-muted">
-          updated {formatFactDate(latestFactDate(entry))}
+          {stamp.label} {formatFactDate(stamp.date)}
         </span>
       </div>
       <ul className="list-none p-0 m-0">
@@ -208,6 +211,7 @@ const ROSTER_SECTIONS: Array<{ status: RolloutFactsStatus; heading: string; note
 ];
 
 function RosterRow({ entry }: { entry: AirlineFactsEntry }) {
+  const stamp = factsStamp(entry);
   return (
     <div className={PANEL}>
       <div className="flex items-center justify-between gap-2 mb-2">
@@ -228,7 +232,7 @@ function RosterRow({ entry }: { entry: AirlineFactsEntry }) {
           {entry.shortName} details, with sources →
         </a>
         <span className="font-mono text-[10px] text-muted">
-          as of {formatFactDate(latestFactDate(entry))}
+          {stamp.label} {formatFactDate(stamp.date)}
         </span>
       </div>
     </div>
@@ -448,7 +452,13 @@ export function factsHeadline(entry: AirlineFactsEntry): string {
     case "trial":
       return `Does ${entry.shortName} Have Starlink? Trial Aircraft Only`;
     case "not_starlink":
-      return `Does ${entry.shortName} Have Starlink? No`;
+      // A bare "No" is a verified claim. We can only verify it where the
+      // airline announced something else; where we have simply found no
+      // announcement, the headline says exactly that — and matches the body,
+      // which tells the reader to treat the negative as unconfirmed.
+      return entry.negative === "unannounced"
+        ? `Does ${entry.shortName} Have Starlink? No Deal Announced`
+        : `Does ${entry.shortName} Have Starlink? No`;
   }
 }
 

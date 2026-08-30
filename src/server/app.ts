@@ -46,6 +46,7 @@ import {
   factsAliasTarget,
   factsBySlug,
   factsForCode,
+  factsStamp,
   formatFactDate,
   latestFactDate,
 } from "../airlines/rollout-facts";
@@ -1377,10 +1378,10 @@ function hubLlmsTxt(site: SiteConfig, description: string): Response {
   // The wider roster: dated, sourced one-liners for every airline with a
   // Starlink program — and the explicit negatives, so agents stop guessing.
   const rosterLines = contentOnlyFacts()
-    .map(
-      (e) =>
-        `- **${e.name}** — ${e.statusLabel} (as of ${formatFactDate(latestFactDate(e))}): ${e.summary} Details: https://${host}/airlines/${e.slug}`
-    )
+    .map((e) => {
+      const stamp = factsStamp(e);
+      return `- **${e.name}** — ${e.statusLabel} (${stamp.label} ${formatFactDate(stamp.date)}): ${e.summary} Details: https://${host}/airlines/${e.slug}`;
+    })
     .join("\n");
 
   const compareLines = comparePairs()
@@ -2144,9 +2145,10 @@ function compareLinks(site: SiteConfig): TrackedLink[] {
 
 function factsPageMeta(entry: AirlineFactsEntry): PageMeta {
   const short = entry.shortName.toLowerCase();
+  const stamp = factsStamp(entry);
   return {
     siteTitle: factsHeadline(entry),
-    siteDescription: `${entry.summary} Every claim dated and sourced — updated ${formatFactDate(latestFactDate(entry))}.`,
+    siteDescription: `${entry.summary} Every claim dated and sourced — ${stamp.label} ${formatFactDate(stamp.date)}.`,
     keywords: `${entry.name.toLowerCase()} starlink, does ${short} have starlink, ${short} starlink wifi, ${short} wifi`,
     ogTitle: factsHeadline(entry),
     ogDescription: entry.summary,

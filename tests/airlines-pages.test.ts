@@ -16,10 +16,12 @@ import {
 import {
   AIRLINE_FACTS,
   contentOnlyFacts,
+  factStamp,
   factsBySlug,
   factsForCode,
   formatFactDate,
 } from "../src/airlines/rollout-facts";
+import { factsHeadline } from "../src/components/airlines-page";
 import { createApp } from "../src/server/app";
 import { openSnapshot, req } from "./helpers";
 
@@ -32,6 +34,11 @@ beforeAll(() => {
 const hub = SITES.airline;
 const get = (path: string, host: string) =>
   app.dispatch(req(path, host, { headers: { Accept: "text/html" } }));
+
+// Brand names carry ampersands ("British Airways, Iberia ... & LEVEL"); React
+// escapes them on the way out, so assert against the escaped form rather than
+// forbidding the character in content.
+const html = (s: string) => s.replace(/&/g, "&amp;");
 
 // The tracked roster on /airlines: public airlines plus enabled-but-hidden
 // ones that carry a facts entry (QR today). Mirrors app.ts hubTrackedAirlines.
@@ -54,7 +61,7 @@ describe("hub /airlines index", () => {
       );
     }
     for (const entry of contentOnlyFacts()) {
-      expect(body, `index missing ${entry.name}`).toContain(entry.name);
+      expect(body, `index missing ${entry.name}`).toContain(html(entry.name));
       expect(body, `index missing link to ${entry.slug}`).toContain(`/airlines/${entry.slug}`);
     }
     for (const cfg of invisibleAirlines()) {
@@ -66,7 +73,7 @@ describe("hub /airlines index", () => {
     const body = await (await get("/airlines", hub.canonicalHost)).text();
     expect(body).toContain("Not Starlink");
     for (const entry of contentOnlyFacts().filter((e) => e.status === "not_starlink")) {
-      expect(body, `negatives section missing ${entry.name}`).toContain(entry.name);
+      expect(body, `negatives section missing ${entry.name}`).toContain(html(entry.name));
     }
   });
 
@@ -99,7 +106,8 @@ describe("hub /airlines/{slug} detail pages (tracked airlines)", () => {
       if (!entry) continue;
       const body = await (await get(`/airlines/${airlineSlug(cfg)}`, hub.canonicalHost)).text();
       for (const fact of entry.facts) {
-        expect(body, `${cfg.code} missing as-of ${fact.asOf}`).toContain(formatFactDate(fact.asOf));
+        const { date } = factStamp(fact);
+        expect(body, `${cfg.code} missing stamp ${date}`).toContain(formatFactDate(date));
         expect(body, `${cfg.code} missing source ${fact.source.url}`).toContain(fact.source.url);
       }
     }
@@ -132,22 +140,43 @@ describe("hub /airlines/{slug} facts pages (content-level roster)", () => {
       const res = await get(`/airlines/${entry.slug}`, hub.canonicalHost);
       expect(res.status, entry.slug).toBe(200);
       const body = await res.text();
-      expect(body, entry.slug).toContain(entry.name);
-      expect(body, entry.slug).toContain("as of");
+      expect(body, entry.slug).toContain(html(entry.name));
       for (const fact of entry.facts) {
-        expect(body, `${entry.slug} missing as-of ${fact.asOf}`).toContain(
-          formatFactDate(fact.asOf)
-        );
+        const { label, date } = factStamp(fact);
+        // Dated claims read "as of"; claims resting on an undated evergreen
+        // source read "checked" — the reader must be able to tell them apart.
+        expect(body, `${entry.slug} missing "${label}" stamp`).toContain(label);
+        expect(body, `${entry.slug} missing stamp ${date}`).toContain(formatFactDate(date));
         expect(body, `${entry.slug} missing source ${fact.source.url}`).toContain(fact.source.url);
       }
     }
   });
 
-  test("negative pages answer the question with a 'No' headline and the alternative", async () => {
+  test("negative pages answer the question without overstating the negative", async () => {
     for (const entry of contentOnlyFacts().filter((e) => e.status === "not_starlink")) {
       const body = await (await get(`/airlines/${entry.slug}`, hub.canonicalHost)).text();
-      expect(body, entry.slug).toContain("Have Starlink? No");
+      // Question form always — but only an airline that announced an
+      // alternative gets the flat "No". Where we have merely found no
+      // announcement, the headline says so, because a page whose own body
+      // reads "treat this as unconfirmed" must not headline a verified No.
+      expect(body, entry.slug).toContain("Have Starlink?");
+      expect(body, entry.slug).toContain(html(factsHeadline(entry)));
+      if (entry.negative === "unannounced") {
+        expect(factsHeadline(entry), entry.slug).toContain("No Deal Announced");
+      } else {
+        expect(factsHeadline(entry), entry.slug).toContain("Have Starlink? No");
+      }
       expect(body, `${entry.slug} missing insteadOf`).toContain(entry.insteadOf as string);
+    }
+  });
+
+  // The honest statusLabel ("First aircraft flying") must survive onto the page
+  // next to the headline: a one-aircraft rollout and a finished one both derive
+  // "Yes" from `status` alone, and only the label separates them.
+  test("every facts page shows its status label beside the headline", async () => {
+    for (const entry of contentOnlyFacts()) {
+      const body = await (await get(`/airlines/${entry.slug}`, hub.canonicalHost)).text();
+      expect(body, `${entry.slug} missing statusLabel`).toContain(entry.statusLabel);
     }
   });
 

@@ -6,6 +6,16 @@
  * pages render visible "as of" stamps. A claim without a date and source URL
  * does not belong in this file.
  *
+ * The rule that keeps this honest: a fact may say only what the page at
+ * `source.url` actually says. Citing a plausible article that happens not to
+ * mention the sub-fleet, the count, or the negative you are publishing is the
+ * failure mode this whole file exists to prevent — check the source, not your
+ * memory of it. `summary` and `insteadOf` are held to the same standard: they
+ * are the highest-traffic strings here (page sub-heading, meta and og
+ * descriptions, /airlines index row, llms.txt roster line), so they may not
+ * outrun the facts array, and a test pins that every number in them is one the
+ * facts actually carry.
+ *
  * Deliberately NOT AirlineConfig entries: these airlines have no tenant, no
  * reader scope, no jobs. Promoting one to tail-level tracking means adding it
  * to AIRLINE_DEFS and setting `trackedCode` here so the hub page picks up
@@ -26,14 +36,31 @@ export type RolloutFactsStatus =
   /** No Starlink program; the page says what the airline runs instead. */
   | "not_starlink";
 
-export interface RolloutFact {
-  /** The claim, written to stand alone. */
+interface RolloutFactBase {
+  /** The claim, written to stand alone. Say only what the cited page says:
+   * a source that never mentions a sub-fleet cannot support a claim about it. */
   fact: string;
+  source: { label: string; url: string };
+}
+
+/** A claim the source itself dates. Only these move the page's lastmod. */
+interface DatedFact extends RolloutFactBase {
   /** Date the claim was true per the source — YYYY-MM-DD, or YYYY-MM when the
    * source supports only month precision. Never the page-render date. */
   asOf: string;
-  source: { label: string; url: string };
+  accessed?: never;
 }
+
+/** A claim from an evergreen source that carries no date of its own (an
+ * airline's own product page). Kept out of lastmod on purpose: re-reading a
+ * page that never changed is not a content update, and stamping it as one is
+ * exactly the dishonest-freshness signal this file exists to avoid. */
+interface CheckedFact extends RolloutFactBase {
+  accessed: string;
+  asOf?: never;
+}
+
+export type RolloutFact = DatedFact | CheckedFact;
 
 export interface AirlineFactsEntry {
   /** Canonical /airlines/{slug}. For tracked airlines this MUST equal
@@ -54,6 +81,11 @@ export interface AirlineFactsEntry {
    * ("Does Delta Have Starlink?"). Derived from status when absent. */
   headline?: string;
   facts: RolloutFact[];
+  /** not_starlink only. `chose` = the airline picked a different system, which
+   * its own announcement confirms. `unannounced` = we have found no Starlink
+   * announcement — an absence of evidence, not a verified negative. The two
+   * get different headlines so silence is never published as a confirmed No. */
+  negative?: "chose" | "unannounced";
   /** not_starlink only: what the airline chose or runs instead. */
   insteadOf?: string;
   /** Alternate slugs that 301 to the canonical one (constituent brands of a
@@ -105,10 +137,10 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     status: "installing",
     statusLabel: "Installing",
     summary:
-      "About 150 aircraft across Alaska, Hawaiian, and Horizon — every regional E175 plus the first ~50 mainline 737s — with roughly half the combined fleet targeted by the end of 2026.",
+      "Roughly 150 aircraft equipped across Alaska, Hawaiian, and Horizon — every regional aircraft plus about 50 mainline jets — with the announced E175, 737, and 787 program targeted to finish in early 2027. Free for Atmos Rewards members via T-Mobile.",
     facts: [
       {
-        fact: "Alaska Air Group reported about 150 Starlink-equipped aircraft across Alaska, Hawaiian, and Horizon: all 91 regional E175s plus roughly 50 mainline aircraft, with about half the combined fleet targeted by the end of 2026 and the rest by 2027.",
+        fact: "Starlink is available on approximately 150 aircraft across Alaska, Hawaiian, and Horizon: all of Alaska's regional aircraft are now equipped, along with about 50 mainline jets. Alaska expects its entire widebody fleet equipped by the fall.",
         asOf: "2026-06-25",
         source: {
           label: "AirlineGeeks",
@@ -123,6 +155,14 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
           url: "https://airlinegeeks.com/2026/06/25/alaska-hawaiian-expand-starlink-wifi-to-around-150-aircraft/",
         },
       },
+      {
+        fact: "Alaska's announced Starlink scope is its Boeing 787s, Boeing 737s, and Embraer E175s. Installs started with the E175s in December 2025, reached the 737s in early 2026 and the 787s later in 2026, with completion targeted for early 2027.",
+        asOf: "2025-12-15",
+        source: {
+          label: "One Mile at a Time",
+          url: "https://onemileatatime.com/news/alaska-airlines-free-starlink-wi-fi/",
+        },
+      },
     ],
   },
   {
@@ -134,7 +174,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     status: "complete",
     statusLabel: "Airbus fleet done",
     summary:
-      "Every A330 and A321neo has had free Starlink since September 2024 — the first large U.S. carrier with a completed install program. 787-9s follow in fall 2026; the 717 interisland jets are excluded.",
+      "Every A330 and A321neo has had free Starlink since September 2024 — the first large U.S. carrier with a completed install program. The 787-9s are next in line; Hawaiian does not plan to offer connectivity on its 717 interisland jets.",
     facts: [
       {
         fact: "Hawaiian completed free, gate-to-gate Starlink across its entire Airbus fleet (A330s and A321neos) — the first major U.S. carrier to finish an announced Starlink program.",
@@ -145,7 +185,15 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         },
       },
       {
-        fact: "Hawaiian's 787-9 widebodies are slated to get Starlink by fall 2026; the Boeing 717 interisland fleet is not in the program and has no Wi-Fi.",
+        fact: "With the A321neos and A330-200s done, the Boeing 787-9 fleet is next in line for installation. Hawaiian's only other type is the Boeing 717, and the airline does not plan to offer connectivity on those aircraft — they fly short interisland routes.",
+        asOf: "2025-08-20",
+        source: {
+          label: "One Mile at a Time",
+          url: "https://onemileatatime.com/news/hawaiian-airlines-free-starlink-wi-fi/",
+        },
+      },
+      {
+        fact: "Alaska Air Group expects its entire widebody fleet to be equipped with Starlink by the fall.",
         asOf: "2026-06-25",
         source: {
           label: "AirlineGeeks",
@@ -220,6 +268,9 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     iata: "LH",
     status: "installing",
     statusLabel: "First aircraft flying",
+    // One aircraft out of ~850 is a Yes only in the narrowest sense; the
+    // derived "Yes — Rollout Under Way" would imply a fleet you can plan around.
+    headline: "Does Lufthansa Have Starlink? Just Started — One Aircraft Flying",
     summary:
       "First Starlink flight on August 19, 2026 (A320neo D-AINM, Frankfurt–Rome); rolling out to some 850 aircraft group-wide by 2029.",
     facts: [
@@ -243,11 +294,15 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
   },
   {
     slug: "iag",
-    name: "IAG (British Airways, Iberia, Aer Lingus, Vueling, LEVEL)",
-    shortName: "IAG",
+    // Brand-led naming: the searchable query is "does British Airways have
+    // Starlink", and the constituent brands 301 here — a page titled for the
+    // holding company answers a question nobody types.
+    name: "British Airways, Iberia, Aer Lingus, Vueling & LEVEL (IAG)",
+    shortName: "British Airways",
     iata: "BA",
     status: "installing",
     statusLabel: "Installing",
+    headline: "Does British Airways Have Starlink? Yes — IAG's Rollout Is Under Way",
     summary:
       "500+ aircraft committed across British Airways, Iberia, Aer Lingus, Vueling, and LEVEL (announced November 2025); the first British Airways 787-8 has been flying with Starlink since March 2026.",
     aliases: ["british-airways", "iberia", "aer-lingus", "vueling", "level"],
@@ -418,7 +473,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     status: "installing",
     statusLabel: "Installing",
     summary:
-      "First European airline to fly Starlink (February 2025), installing across its A220-300 fleet — free with no login on equipped aircraft. airBaltic itself publishes no completed-fleet count; treat third-party 100% claims as unverified.",
+      "First European airline to fly Starlink (February 2025), installing across its A220-300 fleet — free with no login on equipped aircraft. airBaltic itself publishes no completed-fleet count; treat third-party completed-fleet claims as unverified.",
     facts: [
       {
         fact: "airBaltic became the first European airline to launch Starlink, with its first equipped A220-300 flying in February 2025 and installation continuing across the fleet.",
@@ -430,7 +485,9 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
       },
       {
         fact: "airBaltic advertises free Starlink internet from boarding through the flight, but publishes no count of how much of the A220 fleet is finished — third-party claims of a completed fleet are not confirmed by the airline.",
-        asOf: "2026-08-29",
+        // airBaltic's product page carries no date of its own; this is when we
+        // last read it, and it deliberately does not move the page's lastmod.
+        accessed: "2026-08-29",
         source: {
           label: "airBaltic — internet on board",
           url: "https://www.airbaltic.com/en/extra-services/fast-and-free-internet-on-board",
@@ -445,6 +502,9 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     iata: "WN",
     status: "installing",
     statusLabel: "First aircraft flying",
+    // One aircraft out of ~800: an unqualified "Yes" would be the wrong answer
+    // for all but a rounding error of Southwest passengers.
+    headline: "Does Southwest Have Starlink? Barely — One Aircraft So Far",
     summary:
       "One confirmed Starlink aircraft (N8543Z, first flight June 22, 2026) with 300+ committed by the end of 2026, gated on antenna deliveries. Free for Rapid Rewards members via T-Mobile; a full-fleet Starlink commitment has NOT been made.",
     facts: [
@@ -462,26 +522,6 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         source: {
           label: "Simple Flying",
           url: "https://simpleflying.com/southwest-first-starlink-wifi-flight-300-jets-2026/",
-        },
-      },
-    ],
-  },
-  {
-    slug: "flydubai",
-    name: "flydubai",
-    shortName: "flydubai",
-    iata: "FZ",
-    status: "installing",
-    statusLabel: "Rolling out in 2026",
-    summary:
-      "Signed with SpaceX at the Dubai Airshow (November 18, 2025) to put Starlink on 100 Boeing 737s during 2026.",
-    facts: [
-      {
-        fact: "flydubai announced Starlink as its inflight connectivity partner on November 18, 2025, with installation across 100 Boeing 737s to be rolled out during 2026.",
-        asOf: "2025-11-18",
-        source: {
-          label: "flydubai newsroom",
-          url: "https://news.flydubai.com/flydubai-announces-starlink-as-its-inflight-connectivity-partner",
         },
       },
     ],
@@ -539,6 +579,30 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
 
   // ── Announced, not flying yet ──────────────────────────────────────────────
   {
+    slug: "flydubai",
+    name: "flydubai",
+    shortName: "flydubai",
+    iata: "FZ",
+    // Committed, nothing flying: the announcement promises installs "in 2026"
+    // and flydubai has published no equipped aircraft, so this is `announced`
+    // by the definition above — `installing` would answer the page's own
+    // question ("does flydubai have Starlink?") with a Yes no source supports.
+    status: "announced",
+    statusLabel: "Rolling out in 2026",
+    summary:
+      "Signed with SpaceX at the Dubai Airshow (November 18, 2025) to put Starlink on 100 Boeing 737s during 2026.",
+    facts: [
+      {
+        fact: "flydubai announced Starlink as its inflight connectivity partner on November 18, 2025, with installation across 100 Boeing 737s to be rolled out during 2026.",
+        asOf: "2025-11-18",
+        source: {
+          label: "flydubai newsroom",
+          url: "https://news.flydubai.com/flydubai-announces-starlink-as-its-inflight-connectivity-partner",
+        },
+      },
+    ],
+  },
+  {
     slug: "american",
     name: "American Airlines",
     shortName: "American",
@@ -547,7 +611,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     statusLabel: "Installs begin Q1 2027",
     headline: "Does American Have Starlink? Not Yet — Airbus Installs Begin in 2027",
     summary:
-      "500+ Airbus narrowbodies only, announced May 26, 2026, with installs from Q1 2027 — zero flying today. 737s stay on Viasat and widebodies on Panasonic; AAdvantage members already get free Wi-Fi on the Viasat/Intelsat fleet via AT&T.",
+      "500+ Airbus narrowbodies only, announced May 26, 2026, with installs from Q1 2027 — zero flying today. No other American aircraft is in the Starlink program as announced; AAdvantage members already get free Wi-Fi on the ~90% of the fleet running Viasat or Intelsat, sponsored by AT&T.",
     facts: [
       {
         fact: "American announced Starlink for more than 500 Airbus narrowbodies (including future A321XLR and A321neo deliveries) with installations beginning in the first quarter of 2027. No American aircraft flies with Starlink today.",
@@ -558,7 +622,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         },
       },
       {
-        fact: "The announced scope is the A320 family only — A319s, A320s, A321s, A321neos, and A321XLRs — with no official plans to extend Starlink to any other American aircraft. The Boeing 737s fly Viasat today and the widebodies Panasonic; neither is part of the Starlink program as announced.",
+        fact: "The announced scope is the A320 family only — A319s, A320s, A321s, A321neos, and A321XLRs — with no official plans to extend Starlink to any other American aircraft. American runs Viasat on most of its narrowbodies today and Panasonic on most of its widebodies; neither is part of the Starlink program as announced.",
         asOf: "2026-05-26",
         source: {
           label: "One Mile at a Time",
@@ -605,11 +669,14 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
   },
   {
     slug: "cebu-pacific-indigo",
-    name: "Cebu Pacific + Indigo Partners",
-    shortName: "Cebu Pacific + Indigo",
+    // Same brand-led rule as IAG: Frontier and Wizz Air carry the search
+    // volume that the group name absorbs but can never rank for.
+    name: "Frontier, Wizz Air, Volaris, JetSMART & Cebu Pacific (Indigo Partners)",
+    shortName: "Frontier + Cebu Pacific",
     iata: "5J",
     status: "announced",
     statusLabel: "From 2027",
+    headline: "Do Frontier, Wizz Air & Cebu Pacific Have Starlink? Not Yet — Committed",
     summary:
       "Frontier, Wizz Air, Volaris, JetSMART, and Cebu Pacific — the Indigo Partners portfolio — expect Starlink on more than 1,000 aircraft, with Frontier's first equipped aircraft due in early 2027.",
     aliases: ["cebu-pacific", "frontier", "wizz-air", "volaris", "jetsmart"],
@@ -682,6 +749,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     shortName: "Delta",
     iata: "DL",
     status: "not_starlink",
+    negative: "chose",
     statusLabel: "Chose Amazon Leo",
     headline: "Does Delta Have Starlink? No — Here's What They Chose Instead",
     insteadOf:
@@ -721,6 +789,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     shortName: "LATAM",
     iata: "LA",
     status: "not_starlink",
+    negative: "chose",
     statusLabel: "Chose SES multi-orbit",
     insteadOf: "SES multi-orbit (GEO + Eutelsat OneWeb LEO) on 60+ new Airbus and Embraer aircraft",
     summary:
@@ -742,6 +811,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     shortName: "ANA",
     iata: "NH",
     status: "not_starlink",
+    negative: "chose",
     statusLabel: "Chose Viasat Amara",
     insteadOf: "Viasat Amara on 767s and 37 on-order widebodies; free international Wi-Fi",
     summary:
@@ -763,6 +833,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     shortName: "Etihad",
     iata: "EY",
     status: "not_starlink",
+    negative: "chose",
     statusLabel: "Chose Viasat Amara",
     insteadOf: "Viasat Amara across the majority of the fleet",
     summary:
@@ -784,6 +855,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     shortName: "Turkish",
     iata: "TK",
     status: "not_starlink",
+    negative: "unannounced",
     statusLabel: "No Starlink commitment",
     insteadOf:
       "Anuvu Dedicated Space upgrades across 100+ narrowbodies; no Starlink deal announced",
@@ -799,8 +871,8 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         },
       },
       {
-        fact: "Turkish Airlines has announced no Starlink agreement. Its published Wi-Fi guidance still describes a non-Starlink satellite service (a 2024 Turksat/TCI Aircraft Interiors memorandum) and names Starlink only as one provider the airline could have chosen. Treat any 'Turkish has Starlink' claim as unconfirmed until the airline says so.",
-        asOf: "2026-08-29",
+        fact: "Turkish Airlines has announced no Starlink agreement. Its published Wi-Fi guidance describes Turksat-based satellite service whose coverage is not global, and names Starlink only as one provider Turkish could have chosen to fill the gaps. Treat any 'Turkish has Starlink' claim as unconfirmed until the airline says so.",
+        asOf: "2026-04-29",
         source: {
           label: "AwardWallet — Turkish Airlines Wi-Fi guide",
           url: "https://awardwallet.com/airlines/turkish-airlines-wifi/",
@@ -814,17 +886,19 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     shortName: "Philippine Airlines",
     iata: "PR",
     status: "not_starlink",
+    negative: "unannounced",
     statusLabel: "No Starlink program",
-    insteadOf: "Inmarsat/GX-based satellite Wi-Fi with capped free data allowances",
+    insteadOf: "Paid, data-capped satellite Wi-Fi (myPAL Wi-Fi); no Starlink agreement announced",
     summary:
-      "No Starlink program. Philippine Airlines' inflight Wi-Fi rides Inmarsat satellite service, with small complimentary data allowances by cabin and paid top-ups (myPAL Wi-Fi).",
+      "No Starlink program announced. Philippine Airlines' myPAL Wi-Fi is a paid, data-capped satellite service — a complimentary chat plan for everyone, a 100 MB voucher in business class, and browsing plans sold onboard.",
     facts: [
       {
-        fact: "Philippine Airlines' inflight internet is delivered over Inmarsat satellite connectivity (not Starlink), with complimentary access capped by a small per-cabin data allowance and paid plans beyond it.",
-        asOf: "2026-08-29",
+        fact: "Philippine Airlines' inflight Wi-Fi is data-capped rather than time-capped: a free chat plan is included with every ticket, business class gets a complimentary 100 MB voucher, and Unlimited, Standard, Light, and Chat plans are sold onboard. Starlink is not offered, and Philippine Airlines has announced no Starlink agreement.",
+        // Provider guide with no publication date of its own — see CheckedFact.
+        accessed: "2026-08-29",
         source: {
-          label: "Executive Traveller",
-          url: "https://www.executivetraveller.com/philippine-airlines-inflight-internet-service",
+          label: "Inflight Wi-Fi — Philippine Airlines",
+          url: "https://inflightwifi.one/philippine-airlines-wifi/",
         },
       },
     ],
@@ -856,15 +930,47 @@ export function contentOnlyFacts(): AirlineFactsEntry[] {
   return AIRLINE_FACTS.filter((e) => !e.trackedCode);
 }
 
-/** Newest asOf across an entry's facts — the honest lastmod for its page
- * (the date its content last actually changed, never the request clock). */
+/** Newest asOf across an entry's facts — the honest lastmod for its page (the
+ * date its content last actually changed, never the request clock). Empty when
+ * every fact rests on an undated source: `accessed` dates are deliberately
+ * excluded, so re-reading an evergreen page can never fake a content update. */
 export function latestFactDate(entry: AirlineFactsEntry): string {
+  return newest(entry.facts.map((f) => f.asOf));
+}
+
+function newest(dates: Array<string | undefined>): string {
   return (
-    entry.facts
-      .map((f) => f.asOf)
+    dates
+      .filter((d): d is string => Boolean(d))
       .sort()
       .at(-1) ?? ""
   );
+}
+
+/** How one fact is stamped: a dated claim reads "as of", a claim resting on an
+ * undated evergreen source reads "checked" — the reader can tell them apart. */
+export function factStamp(fact: RolloutFact):
+  | { label: "as of"; date: string }
+  | {
+      label: "checked";
+      date: string;
+    } {
+  return fact.asOf
+    ? { label: "as of", date: fact.asOf }
+    : { label: "checked", date: fact.accessed as string };
+}
+
+/** The page's visible freshness stamp. "updated" only when a dated claim backs
+ * it — an entry built entirely on undated sources says "checked" instead and
+ * contributes no sitemap lastmod at all. */
+export function factsStamp(entry: AirlineFactsEntry): {
+  label: "updated" | "checked";
+  date: string;
+} {
+  const dated = latestFactDate(entry);
+  return dated
+    ? { label: "updated", date: dated }
+    : { label: "checked", date: newest(entry.facts.map((f) => f.accessed)) };
 }
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];

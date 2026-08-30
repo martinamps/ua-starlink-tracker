@@ -11,8 +11,10 @@ import { AIRLINES, airlineSlug } from "../src/airlines/registry";
 import {
   AIRLINE_FACTS,
   contentOnlyFacts,
+  factStamp,
   factsAliasTarget,
   factsBySlug,
+  factsStamp,
   formatFactDate,
   latestFactDate,
 } from "../src/airlines/rollout-facts";
@@ -45,16 +47,65 @@ describe("rollout-facts structure", () => {
     for (const entry of AIRLINE_FACTS) {
       expect(entry.facts.length, `${entry.slug} has no facts`).toBeGreaterThan(0);
       for (const fact of entry.facts) {
-        expect(AS_OF_RE.test(fact.asOf), `${entry.slug}: bad asOf ${fact.asOf}`).toBe(true);
-        const t = Date.parse(fact.asOf);
-        expect(Number.isFinite(t), `${entry.slug}: unparseable asOf ${fact.asOf}`).toBe(true);
-        expect(t, `${entry.slug}: future-dated fact ${fact.asOf}`).toBeLessThanOrEqual(Date.now());
+        const { date } = factStamp(fact);
+        expect(AS_OF_RE.test(date), `${entry.slug}: bad date ${date}`).toBe(true);
+        const t = Date.parse(date);
+        expect(Number.isFinite(t), `${entry.slug}: unparseable date ${date}`).toBe(true);
+        expect(t, `${entry.slug}: future-dated fact ${date}`).toBeLessThanOrEqual(Date.now());
         expect(fact.source.url, `${entry.slug}: non-https source`).toStartWith("https://");
         expect(fact.source.label.length, `${entry.slug}: empty source label`).toBeGreaterThan(0);
         expect(fact.fact.trim().length, `${entry.slug}: empty fact`).toBeGreaterThan(0);
       }
-      // The page's lastmod derives from this — it must always exist and parse.
-      expect(Number.isFinite(Date.parse(latestFactDate(entry)))).toBe(true);
+      // The visible stamp always resolves, even for entries built entirely on
+      // undated sources (those say "checked" and contribute no lastmod).
+      expect(Number.isFinite(Date.parse(factsStamp(entry).date)), entry.slug).toBe(true);
+    }
+  });
+
+  // The lastmod bug this guards: dating a claim to the day you authored the
+  // page makes every page advertise today's freshness for months-old sources,
+  // then freezes that lie in place. An undated source gets `accessed` instead,
+  // which is rendered as "checked" and never reaches <lastmod>.
+  test("no asOf is the build date — asOf is the claim's date, not the access date", () => {
+    const today = new Date().toISOString().slice(0, 10);
+    for (const entry of AIRLINE_FACTS) {
+      for (const fact of entry.facts) {
+        expect(fact.asOf, `${entry.slug}: asOf is today's date — use accessed`).not.toBe(today);
+      }
+    }
+  });
+
+  test("accessed-only entries contribute no lastmod and say 'checked'", () => {
+    for (const entry of AIRLINE_FACTS) {
+      const stamp = factsStamp(entry);
+      if (entry.facts.every((f) => !f.asOf)) {
+        expect(latestFactDate(entry), `${entry.slug} must not mint a lastmod`).toBe("");
+        expect(stamp.label, entry.slug).toBe("checked");
+      } else {
+        expect(stamp.label, entry.slug).toBe("updated");
+        expect(stamp.date, entry.slug).toBe(latestFactDate(entry));
+      }
+    }
+  });
+
+  // summary and insteadOf are the widest-read strings in this file (sub-heading,
+  // meta + og description, /airlines row, llms.txt roster line) but render no
+  // source link of their own. So every number they publish must be one the
+  // dated, sourced facts already carry — the page banner promises exactly that.
+  test("every number in summary/insteadOf is backed by the entry's facts", () => {
+    const runs = (s: string) => (s.match(/\d{2,}/g) ?? []).map((m) => m);
+    for (const entry of AIRLINE_FACTS) {
+      const backing = [
+        ...entry.facts.map((f) => f.fact),
+        // A summary may state the date its claims are as of.
+        ...entry.facts.map((f) => factStamp(f).date),
+        ...entry.facts.map((f) => formatFactDate(factStamp(f).date)),
+      ].join(" ");
+      for (const claim of [entry.summary, entry.insteadOf ?? ""]) {
+        for (const n of runs(claim)) {
+          expect(backing.includes(n), `${entry.slug}: "${n}" in summary is in no fact`).toBe(true);
+        }
+      }
     }
   });
 
@@ -73,6 +124,21 @@ describe("rollout-facts structure", () => {
   test("negative entries always say what the airline runs instead", () => {
     for (const entry of AIRLINE_FACTS.filter((e) => e.status === "not_starlink")) {
       expect(entry.insteadOf, `${entry.slug} missing insteadOf`).toBeTruthy();
+    }
+  });
+
+  // "They chose Amazon Leo" is verifiable; "we found no announcement" is not.
+  // Forcing the distinction at the data level is what stops factsHeadline from
+  // publishing an unverified negative as a verified one.
+  test("every negative entry declares whether it chose an alternative or is unannounced", () => {
+    for (const entry of AIRLINE_FACTS) {
+      if (entry.status === "not_starlink") {
+        expect(["chose", "unannounced"], `${entry.slug}: missing negative kind`).toContain(
+          entry.negative
+        );
+      } else {
+        expect(entry.negative, `${entry.slug}: negative kind on a positive entry`).toBeUndefined();
+      }
     }
   });
 
