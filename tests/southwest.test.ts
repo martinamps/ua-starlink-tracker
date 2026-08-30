@@ -90,6 +90,16 @@ describe("southwest-equipped curated log", () => {
     expect(fleet[0].airline).toBe("WN");
     expect(fleet[0].fleet).toBe("mainline");
 
+    // verified_at is the record's evidenced date too, not the run date: the
+    // fleet page renders "<n>d ago" off it, and stamping the run date made a
+    // months-old news report read as checked today.
+    const stamped = db
+      .query("SELECT verified_at FROM united_fleet WHERE tail_number = ?")
+      .get(first.tail) as { verified_at: number };
+    expect(stamped.verified_at).toBe(
+      Math.floor(Date.parse(`${first.equippedOn}T00:00:00Z`) / 1000)
+    );
+
     // DateFound is the record's evidenced date, never the run date — the
     // install-pace surfaces depend on that.
     const planes = db
@@ -278,6 +288,29 @@ describe("WN pages carry the fleet-odds story", () => {
     expect(status).toBe(200);
     expect(text).toContain("Curated per-tail evidence log");
     expect(text).toContain("hour before departure");
+  });
+
+  test("methodology page claims only the machinery WN actually runs", async () => {
+    const { text } = await bodyOf(app, "/methodology", WN_HOST);
+    // United's ladder and its consensus pass describe a verifier WN has none of.
+    expect(text).not.toContain("on the airline's own systems");
+    expect(text).not.toContain("queued for direct verification");
+    expect(text).not.toContain("hourly consensus pass");
+    // ...and the evidence log the page cites as its basis is actually rendered,
+    // with a link a reader can follow.
+    for (const r of SOUTHWEST_EQUIPPED_TAILS) {
+      expect(text).toContain(r.tail);
+      expect(text).toContain(r.equippedOn);
+      if (r.evidenceUrl) expect(text).toContain(r.evidenceUrl);
+    }
+  });
+
+  test("homepage stat attribution names the evidence WN has, not verification", async () => {
+    const { text } = await bodyOf(app, "/", WN_HOST);
+    const stat = text.slice(text.indexOf('id="starlink-stat"'));
+    const sentence = stat.slice(0, stat.indexOf("</p>")).replace(/<!--.*?-->/g, "");
+    expect(sentence).not.toContain("verification data");
+    expect(sentence).toContain("evidence log");
   });
 
   test("llms.txt tells agents the honest pricing and assignment facts", async () => {

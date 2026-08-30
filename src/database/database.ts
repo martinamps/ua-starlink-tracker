@@ -3208,9 +3208,15 @@ export function upsertFleetAircraft(
     starlinkStatus: StarlinkStatus;
     verifiedWifi: string | null;
     evidence: "observed" | "type_rule";
+    /** When the observation actually happened, epoch seconds. Defaults to now.
+     * A curated log whose records carry their own evidenced date must pass it:
+     * stamping the run date makes every tail read "verified today" on the
+     * fleet page, which is the same freshness fabrication DateFound avoids. */
+    observedAt?: number;
   }
 ): void {
   const now = Math.floor(Date.now() / 1000);
+  const observedAt = seedVerdict?.observedAt ?? now;
   // Empty/placeholder type strings must not clobber a real value via COALESCE.
   const type = aircraftType?.trim();
   const safeType = type && !/^unknown$/i.test(type) ? type : null;
@@ -3250,7 +3256,7 @@ export function upsertFleetAircraft(
       `).run(
         seedVerdict.starlinkStatus,
         observed ? seedVerdict.verifiedWifi : null,
-        observed && seedVerdict.verifiedWifi ? now : null,
+        observed && seedVerdict.verifiedWifi ? observedAt : null,
         observed ? now + 365 * 24 * 3600 : 0,
         tailNumber
       );
@@ -3276,7 +3282,7 @@ export function upsertFleetAircraft(
       operatedBy,
       status,
       observed ? (seedVerdict?.verifiedWifi ?? null) : null,
-      observed && seedVerdict?.verifiedWifi ? now : null,
+      observed && seedVerdict?.verifiedWifi ? observedAt : null,
       observed ? now + 365 * 24 * 3600 : 0,
       priority,
       airline

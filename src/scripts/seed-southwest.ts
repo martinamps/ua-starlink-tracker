@@ -91,6 +91,10 @@ export function applySouthwestEquipped(
         starlinkStatus: "confirmed",
         verifiedWifi: r.provider,
         evidence: "observed",
+        // Same rule as DateFound below: the record's own evidenced date, never
+        // the run date, or the fleet page reads "verified today" for a tail
+        // whose evidence is months old.
+        observedAt: Math.floor(Date.parse(`${r.equippedOn}T00:00:00Z`) / 1000),
       });
       addDiscoveredStarlinkPlane(db, r.tail, r.aircraftType, r.provider, null, "mainline", {
         sheetGid: "wn_curated",

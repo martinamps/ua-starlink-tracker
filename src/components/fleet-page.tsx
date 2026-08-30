@@ -42,8 +42,11 @@ function cellTitle(t: FleetTail): string {
   return `${t.tail} · ${PROVIDER_LABEL[t.provider]}`;
 }
 
-function monumentTitle(t: FleetTail): string {
-  return `${t.type || "type unknown"} · ${PROVIDER_LABEL[t.provider]} · ${t.fleet} · verified ${timeAgo(t.verified_at)} · click for live tracking`;
+// evidenceLabel, not a hardcoded "verified": a tenant with no verifier backend
+// dates its tails from a curated public record, and calling that "verified"
+// claims an observation on the airline's own systems that never happened.
+function monumentTitle(t: FleetTail, evidenceLabel: string): string {
+  return `${t.type || "type unknown"} · ${PROVIDER_LABEL[t.provider]} · ${t.fleet} · ${evidenceLabel} ${timeAgo(t.verified_at)} · click for live tracking`;
 }
 
 const FAMILY_ABBR: Record<string, string> = {
@@ -459,7 +462,11 @@ function IronyStack({ bodyClass }: { bodyClass: FleetPageData["bodyClass"] }) {
   );
 }
 
-function TailMonument({ allTails, totalFleet }: { allTails: FleetTail[]; totalFleet: number }) {
+function TailMonument({
+  allTails,
+  totalFleet,
+  evidenceLabel,
+}: { allTails: FleetTail[]; totalFleet: number; evidenceLabel: string }) {
   const byProvider: Record<WifiProvider, number> = {
     starlink: 0,
     viasat: 0,
@@ -498,7 +505,7 @@ function TailMonument({ allTails, totalFleet }: { allTails: FleetTail[]; totalFl
             href={`https://flightaware.com/live/flight/${t.tail}`}
             target="_blank"
             rel="nofollow noreferrer noopener"
-            title={monumentTitle(t)}
+            title={monumentTitle(t, evidenceLabel)}
             className={t.provider === "starlink" ? "tail-sl" : "tail-dim"}
           >
             <span className="tail-dot">{t.provider === "starlink" ? "◉" : "\u00A0"}</span>
@@ -713,7 +720,11 @@ export default function FleetPage({ data, site }: FleetPageProps) {
         <IronyStack bodyClass={data.bodyClass} />
       </section>
 
-      <TailMonument allTails={data.allTails} totalFleet={data.totalFleet} />
+      <TailMonument
+        allTails={data.allTails}
+        totalFleet={data.totalFleet}
+        evidenceLabel={scopeCode && !AIRLINES[scopeCode].verifierBackend ? "evidenced" : "verified"}
+      />
 
       <footer className="relative py-6 text-center border-t border-subtle text-muted text-sm">
         <a href="/" className="text-accent hover:underline font-display">

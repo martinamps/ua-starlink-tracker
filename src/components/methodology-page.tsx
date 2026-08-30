@@ -1,5 +1,9 @@
 import type React from "react";
 import { type SiteConfig, siteAirline } from "../airlines/registry";
+import {
+  SOUTHWEST_EQUIPPED_TAILS,
+  type SouthwestEquippedTail,
+} from "../airlines/southwest-equipped";
 import { PageFooter } from "./atoms";
 
 interface MethodologyPageProps {
@@ -102,9 +106,54 @@ export function hasMethodology(code: string): boolean {
   return code in SOURCES;
 }
 
+// The page promises that every counted tail carries "a note saying what proved
+// it". That log was invisible: `evidence`/`evidenceUrl` were read by the seed
+// script and the tests and rendered nowhere, so the basis the whole tenant
+// cites was unverifiable to a reader. Render it here, where the claim is made.
+const EVIDENCE_LOG: Record<string, readonly SouthwestEquippedTail[]> = {
+  WN: SOUTHWEST_EQUIPPED_TAILS,
+};
+
+function EvidenceLog({ records }: { records: readonly SouthwestEquippedTail[] }) {
+  return (
+    <ul className="space-y-3">
+      {records.map((r) => (
+        <li key={r.tail} className="pl-4 border-l-2 border-subtle">
+          <span className="text-secondary font-mono">{r.tail}</span>{" "}
+          <span className="font-mono text-xs text-muted">{r.aircraftType}</span>{" "}
+          <span className="font-mono text-xs text-accent">
+            {r.provider} · evidenced {r.equippedOn}
+          </span>
+          <div className="mt-1">
+            {r.evidence}
+            {r.evidenceUrl && (
+              <>
+                {" "}
+                <a
+                  href={r.evidenceUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-accent hover:underline"
+                >
+                  Source
+                </a>
+              </>
+            )}
+          </div>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export default function MethodologyPage({ site, lastUpdated }: MethodologyPageProps) {
   const cfg = siteAirline(site);
   const sources = SOURCES[cfg.code] ?? [];
+  // No verifier backend means no first-party oracle and no verification queue,
+  // so United's three-tier ladder (verified / reported / predicted) and its
+  // hourly consensus pass describe machinery this tenant does not run.
+  const verified = Boolean(cfg.verifierBackend);
+  const evidenceLog = EVIDENCE_LOG[cfg.code] ?? [];
   const stampedDate = new Date(lastUpdated);
   const dateLabel = Number.isNaN(stampedDate.getTime())
     ? null
@@ -124,7 +173,9 @@ export default function MethodologyPage({ site, lastUpdated }: MethodologyPagePr
       <header className="relative py-5 sm:py-6 text-center mb-3">
         <a href="/" className="block">
           <h1 className="font-display text-3xl sm:text-4xl font-bold text-primary mb-2 tracking-tight hover:text-accent transition-colors">
-            How We Verify {cfg.shortName} Starlink Data
+            {verified
+              ? `How We Verify ${cfg.shortName} Starlink Data`
+              : `Where Our ${cfg.shortName} Starlink Data Comes From`}
           </h1>
         </a>
         <p className="text-base text-secondary font-display max-w-xl mx-auto">
@@ -152,19 +203,38 @@ export default function MethodologyPage({ site, lastUpdated }: MethodologyPagePr
 
         <Section title='How "has Starlink" is decided'>
           <p>
-            Each aircraft carries one of three levels of certainty, and the site treats them
-            differently:
+            {verified
+              ? "Each aircraft carries one of three levels of certainty, and the site treats them differently:"
+              : `${cfg.shortName} publishes no per-aircraft WiFi roster and we run no verifier against its systems, so there is no "reported, pending verification" middle tier here — a tail either has a dated public record or it doesn't:`}
           </p>
           <ul className="list-disc pl-5 space-y-2">
-            <li>
-              <span className="text-secondary font-medium">Verified</span> — we observed the status
-              on the airline's own systems for a flight that aircraft operated.
-            </li>
-            <li>
-              <span className="text-secondary font-medium">Reported</span> — a community source
-              claims the install; the tail counts toward the headline number but stays queued for
-              direct verification.
-            </li>
+            {verified ? (
+              <>
+                <li>
+                  <span className="text-secondary font-medium">Verified</span> — we observed the
+                  status on the airline's own systems for a flight that aircraft operated.
+                </li>
+                <li>
+                  <span className="text-secondary font-medium">Reported</span> — a community source
+                  claims the install; the tail counts toward the headline number but stays queued
+                  for direct verification.
+                </li>
+              </>
+            ) : (
+              <>
+                <li>
+                  <span className="text-secondary font-medium">Evidenced</span> — a dated public
+                  record ties Starlink to that exact tail. It counts toward the headline number, and
+                  the log below names the record and links it.
+                </li>
+                <li>
+                  <span className="text-secondary font-medium">Unknown</span> — no dated record for
+                  that tail yet. It stays in the denominator and out of the equipped count. An
+                  aircraft can be equipped and sit here until evidence surfaces, so the headline
+                  number is a floor, not a census.
+                </li>
+              </>
+            )}
             <li>
               <span className="text-secondary font-medium">Predicted</span> —{" "}
               {cfg.lateAssignmentNote
@@ -174,11 +244,22 @@ export default function MethodologyPage({ site, lastUpdated }: MethodologyPagePr
             </li>
           </ul>
           <p>
-            An hourly consensus pass reconciles the sources. Direct observation outranks community
-            claims: a tail we verify as running a non-Starlink WiFi system is settled negative and
-            removed from the headline count even if a spreadsheet says otherwise.
+            {verified
+              ? "An hourly consensus pass reconciles the sources. Direct observation outranks community claims: a tail we verify as running a non-Starlink WiFi system is settled negative and removed from the headline count even if a spreadsheet says otherwise."
+              : "There is no automated reconciliation to run: with no first-party roster to check against and no verifier loop, a tail's status changes only when a dated record is added to — or corrected in — the log below."}
           </p>
         </Section>
+
+        {evidenceLog.length > 0 && (
+          <Section title="The evidence log">
+            <p>
+              Every tail counted as equipped, with the date of its earliest public evidence and the
+              record that proved it. Install dates come from these records, never from the day we
+              happened to add them.
+            </p>
+            <EvidenceLog records={evidenceLog} />
+          </Section>
+        )}
 
         <Section title="How fresh is it">
           <p>
@@ -198,16 +279,18 @@ export default function MethodologyPage({ site, lastUpdated }: MethodologyPagePr
         <Section title="What this site does not know">
           <ul className="list-disc pl-5 space-y-2">
             <li>
-              Aircraft assignments can change up to departure — a swap can put you on a different
-              tail than the one we verified.
+              {cfg.lateAssignmentNote
+                ? `${cfg.shortName} finalizes the operating aircraft only about an hour before departure, so nothing here names the tail you will actually fly on.`
+                : "Aircraft assignments can change up to departure — a swap can put you on a different tail than the one we verified."}
             </li>
             <li>
               We track aircraft, not seats: no guarantees about connectivity quality or outages on a
               given flight.
             </li>
             <li>
-              Install dates record when we first found a tail equipped, which can lag the physical
-              installation by days.
+              {verified
+                ? "Install dates record when we first found a tail equipped, which can lag the physical installation by days."
+                : "Install dates are the date of the earliest public evidence, which can lag the physical installation by weeks — and a tail with no public evidence yet reads here as unequipped."}
             </li>
           </ul>
         </Section>

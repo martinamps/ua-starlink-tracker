@@ -96,19 +96,25 @@ function StatSentence({
     year: "numeric",
   });
   const pct = Math.round(Number.parseFloat(stats.percentage));
+  // llms.txt tells agents to quote this sentence verbatim, so the attribution
+  // clause has to name the evidence this tenant actually has. It used to key
+  // off the methodologyPage flag, which turned "tracking data" into "live
+  // verification data" for a carrier with no verifier pipeline at all.
+  const sourceLabel = cfg.verifierBackend
+    ? "live verification data"
+    : "curated per-tail evidence log";
   return (
     <p id="starlink-stat" className="text-sm text-secondary leading-relaxed mb-3">
       As of {date}, {stats.starlinkCount.toLocaleString("en-US")} of{" "}
       {stats.totalCount.toLocaleString("en-US")} {cfg.name} aircraft ({pct}%) have Starlink WiFi
       installed
-      {installs30d ? <>, including {installs30d} in the last 30 days</> : null}, per this site's
-      live{" "}
+      {installs30d ? <>, including {installs30d} in the last 30 days</> : null}, per this site's{" "}
       {site.features.methodologyPage ? (
         <a href="/methodology" className="text-accent hover:underline">
-          verification data
+          {sourceLabel}
         </a>
       ) : (
-        "tracking data"
+        sourceLabel
       )}
       .
     </p>
