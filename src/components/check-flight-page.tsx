@@ -6,6 +6,8 @@ export interface FlightRouteFact {
   arrival_airport: string;
   times: number;
   dur_sec: number | null;
+  /** Newest evidence for this leg (unix seconds); null when the row carries none. */
+  last_seen_at: number | null;
 }
 
 export interface FlightUpcomingDeparture {
@@ -72,6 +74,15 @@ function flightSummary(flight: FlightFacts): string {
   return `Pick a date below for a live answer based on the aircraft assigned to ${flightNumber}.`;
 }
 
+/** The list is ordered by how recently each leg was seen, so the date is the
+ * evidence behind the order — and the honest hedge on the heading's present
+ * tense, since a leg's silence is what makes it a route the number *flew*.
+ * A future timestamp is a corrupt row, not a date to show. */
+function lastSeenLabel(sec: number | null): string | null {
+  if (!sec || sec * 1000 > Date.now()) return null;
+  return `last seen ${fmtDay(sec)}`;
+}
+
 function FlightFactBlocks({ flight }: { flight: FlightFacts }) {
   const fn = flight.flightNumber;
   const hasHistory =
@@ -84,29 +95,33 @@ function FlightFactBlocks({ flight }: { flight: FlightFacts }) {
             Routes {fn} flies
           </h2>
           <div className="space-y-2">
-            {flight.routes.map((r) => (
-              <div
-                key={`${r.departure_airport}-${r.arrival_airport}`}
-                className="flex items-center justify-between gap-3 text-sm font-mono"
-              >
-                <span className="text-secondary">
-                  {r.departure_airport} → {r.arrival_airport}
-                  {r.dur_sec ? (
-                    <span className="text-muted"> · {fmtDuration(r.dur_sec)}</span>
-                  ) : null}
-                  <span className="text-muted">
-                    {" "}
-                    · seen {r.times} time{r.times === 1 ? "" : "s"}
-                  </span>
-                </span>
-                <a
-                  href={`/route-planner/${r.departure_airport}/${r.arrival_airport}`}
-                  className="text-accent hover:underline text-xs whitespace-nowrap"
+            {flight.routes.map((r) => {
+              const lastSeen = lastSeenLabel(r.last_seen_at);
+              return (
+                <div
+                  key={`${r.departure_airport}-${r.arrival_airport}`}
+                  className="flex items-center justify-between gap-3 text-sm font-mono"
                 >
-                  Plan this route →
-                </a>
-              </div>
-            ))}
+                  <span className="text-secondary">
+                    {r.departure_airport} → {r.arrival_airport}
+                    {r.dur_sec ? (
+                      <span className="text-muted"> · {fmtDuration(r.dur_sec)}</span>
+                    ) : null}
+                    <span className="text-muted">
+                      {" "}
+                      · seen {r.times} time{r.times === 1 ? "" : "s"}
+                    </span>
+                    {lastSeen ? <span className="text-muted"> · {lastSeen}</span> : null}
+                  </span>
+                  <a
+                    href={`/route-planner/${r.departure_airport}/${r.arrival_airport}`}
+                    className="text-accent hover:underline text-xs whitespace-nowrap"
+                  >
+                    Plan this route →
+                  </a>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}

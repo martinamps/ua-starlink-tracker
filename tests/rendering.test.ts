@@ -176,3 +176,57 @@ describe("flight permalink gate + normalization", () => {
     );
   });
 });
+
+/**
+ * "Routes {fn} flies" is present tense over a list ordered by how recently each
+ * leg was seen, and the top row is what the title, meta description and Flight
+ * JSON-LD advertise. A row without its date asserts a currency the ordering
+ * itself does not claim, so the date is what makes the heading honest.
+ */
+describe("flight permalink route rows carry their evidence date", () => {
+  const HOST = "unitedstarlinktracker.com";
+  let app: ReturnType<typeof createApp>;
+  let reader: ReturnType<ReturnType<typeof createReaderFactory>>;
+
+  beforeAll(() => {
+    const db = openSnapshot();
+    app = createApp(db);
+    reader = createReaderFactory(db)("UA");
+  });
+
+  // React SSR splits interpolated text with <!-- --> markers.
+  const plain = (html: string) => html.replaceAll("<!-- -->", "");
+
+  test("a leg with a real timestamp renders its last-seen date", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const fn = reader
+      .getSitemapFlights()
+      .map((f) => f.flight_number)
+      .find((n) => {
+        const top = reader.getFlightRoutePairs([n])[0];
+        return top !== undefined && top.last_seen_at !== null && top.last_seen_at <= now;
+      });
+    expect(fn).toMatch(/^UA\d{1,4}$/);
+
+    const html = plain(await (await app.dispatch(req(`/check-flight/${fn}`, HOST))).text());
+    const seen = html.match(/· seen \d+ times?/g) ?? [];
+    expect(seen.length).toBeGreaterThan(0);
+    // One date per row, not one for the block.
+    expect((html.match(/· last seen \w{3} \d{1,2}, \d{4}/g) ?? []).length).toBe(seen.length);
+  });
+
+  test("no route row ever renders a date in the future", async () => {
+    // A last_seen_at ahead of now is a corrupt row (the snapshot carries one
+    // dated 2036); showing it would date a leg to a flight that hasn't happened.
+    for (const { flight_number } of reader.getSitemapFlights().slice(0, 12)) {
+      const html = plain(
+        await (await app.dispatch(req(`/check-flight/${flight_number}`, HOST))).text()
+      );
+      for (const m of html.matchAll(/· last seen (\w{3} \d{1,2}, \d{4})/g)) {
+        expect(Date.parse(`${m[1]} UTC`), `${flight_number}: ${m[1]}`).toBeLessThanOrEqual(
+          Date.now()
+        );
+      }
+    }
+  });
+});
