@@ -159,6 +159,15 @@ export default function McpPage({ site }: McpPageProps) {
         </details>
       </div>
 
+      {site.features.apiDocsPage ? (
+        <div className="relative max-w-2xl mx-auto w-full mb-8 text-sm text-muted text-center">
+          Not using an assistant? The same data is a plain JSON API —{" "}
+          <a href="/api" className="text-accent hover:underline">
+            endpoint documentation →
+          </a>
+        </div>
+      ) : null}
+
       <div className="relative text-center mb-6">
         <a href="/" className="text-sm text-accent hover:underline font-display">
           ← Back to {homeTitle}

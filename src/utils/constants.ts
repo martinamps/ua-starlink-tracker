@@ -125,6 +125,18 @@ export const SECURITY_HEADERS = {
   },
 };
 
+// A full page render served as 404 (an unparseable /check-flight/ segment,
+// which still gets the working lookup form). It needs the html CSP for the
+// inline lookup script, but the html variant's `private, no-store` exists only
+// because a 200 render can carry per-visitor content — renderSubPage strips
+// that on the 404 path, so the body is brand-static and belongs at the edge
+// like any other 404. Without this an unbounded, crawler-walked URL space
+// re-rendered at origin on every repeat hit.
+export const HTML_NOT_FOUND_HEADERS: Record<string, string> = {
+  ...SECURITY_HEADERS.html,
+  "Cache-Control": SECURITY_HEADERS.notFound["Cache-Control"],
+};
+
 // File content types
 export const CONTENT_TYPES: Record<string, string> = {
   png: "image/png",

@@ -377,6 +377,7 @@ export default function Page({
       : []),
     ...(features.routesPage ? [{ href: "/routes", label: "Live Routes", badge: "NEW" }] : []),
     ...(features.mcpPage ? [{ href: "/mcp", label: "Tools & MCP", badge: "NEW" }] : []),
+    ...(features.apiDocsPage ? [{ href: "/api", label: "API", badge: "" }] : []),
   ];
   // Filter buttons act on the rendered rows, so their counts must describe the
   // capped list — full-fleet numbers live in the hero and on /fleet.

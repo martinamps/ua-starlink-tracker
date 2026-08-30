@@ -61,7 +61,7 @@ import {
   type AirlineOverview,
   AirlinesIndexPage,
 } from "../components/airlines-page";
-import ApiDocsPage from "../components/api-docs-page";
+import ApiDocsPage, { type ApiDocsData } from "../components/api-docs-page";
 import CheckFlightPage, {
   type FlightFacts,
   type InvalidFlightQuery,
@@ -98,6 +98,7 @@ import {
   API_CORS_HEADERS,
   BASE_RESPONSE_HEADERS,
   CONTENT_TYPES,
+  HTML_NOT_FOUND_HEADERS,
   SECURITY_HEADERS,
 } from "../utils/constants";
 import { error as logError } from "../utils/logger";
@@ -1129,14 +1130,75 @@ const apiDocsPage: Handler = (ctx) => {
   if (!ctx.site.features.apiDocsPage) return notFound(ctx.site);
   // Airline-site-only feature; siteAirline throws (fail closed) on the hub.
   const cfg = siteAirline(ctx.site);
-  return renderSubPage(ctx, ApiDocsPage, "/api", {
+  return renderSubPage(ctx, ApiDocsPage, "/api", apiDocsMeta(cfg), {
+    data: apiDocsData(ctx.reader, cfg),
+  });
+};
+
+/**
+ * Documented example payloads, drawn from this tenant's own rows. Every
+ * airline site serves this page, so a hardcoded United tail/subfleet would be
+ * a wrong answer on three of four hosts — and a hand-written /api/data example
+ * silently drifts from the endpoint (and from golden.test's
+ * express.starlink + mainline.starlink === starlinkPlanes.length invariant).
+ */
+function apiDocsData(reader: ScopedReader, cfg: AirlineConfig): ApiDocsData {
+  const planes = reader.getStarlinkPlanes();
+  const plane = planes[0];
+  const tail = plane
+    ? {
+        registration: plane.TailNumber,
+        aircraftType: plane.Aircraft || null,
+        operatedBy: plane.OperatedBy,
+        fleet: plane.fleet,
+      }
+    : null;
+
+  // Prefer a leg actually scheduled on that tail — then the whole check-flight
+  // example is one real assignment. `upcoming_flights` only holds the forward
+  // window, so outside it fall back to a flight number the sitemap already
+  // vouches for (same existence gate the permalinks use) and its known route.
+  let flight: ApiDocsData["flight"] = null;
+  const scheduled = plane ? reader.getUpcomingFlights(plane.TailNumber)[0] : undefined;
+  if (scheduled) {
+    flight = {
+      number: normalizeAirlineFlightNumber(cfg, scheduled.flight_number),
+      rawNumber: scheduled.flight_number,
+      origin: scheduled.departure_airport,
+      destination: scheduled.arrival_airport,
+    };
+  } else {
+    const fn = reader.getSitemapFlights()[0]?.flight_number;
+    const pair = fn ? reader.getFlightRoutePairs(buildFlightLookupVariants(cfg, fn))[0] : undefined;
+    if (fn) {
+      flight = {
+        number: fn,
+        rawNumber: fn,
+        origin: pair?.departure_airport ?? null,
+        destination: pair?.arrival_airport ?? null,
+      };
+    }
+  }
+
+  return {
+    tail,
+    flight,
+    starlinkCount: planes.length,
+    totalCount: reader.getTotalCount(),
+    fleetStats: reader.getFleetStats(),
+    lastUpdated: reader.getLastUpdatedRaw() ?? reader.getLastUpdated(),
+  };
+}
+
+function apiDocsMeta(cfg: AirlineConfig): PageMeta {
+  return {
     siteTitle: `${cfg.shortName} Starlink API — Free JSON Flight WiFi Data`,
     siteDescription: `Free JSON API for ${cfg.name} Starlink WiFi status: check any flight by number and date, get probability predictions, and pull the full equipped-aircraft list. No auth, CORS enabled.`,
     keywords: `${cfg.shortName.toLowerCase()} starlink api, flight wifi api, does my flight have starlink api, ${cfg.iata} starlink json, starlink tracker api`,
     ogTitle: `${cfg.shortName} Starlink API`,
     ogDescription: `Check ${cfg.shortName} flights for Starlink WiFi over a free JSON API — live data, no auth, CORS enabled.`,
-  });
-};
+  };
+}
 
 const mcp: Handler = async (ctx) => {
   const { req, getReader, site, tenant } = ctx;
@@ -1523,6 +1585,14 @@ ${mcpSection}${chromeSection}${pages}
 // HTML page handlers
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** og:url + rel=canonical as one unit, so a page that must not point anywhere
+ * (the /check-flight/ invalid-segment 404) can emit neither rather than
+ * advertising a different, indexable URL from a 404 body. */
+function canonicalTags(host: string, canonicalPath: string): string {
+  const url = `https://${host}${escapeHtmlAttr(canonicalPath)}`;
+  return `<meta property="og:url" content="${url}" />\n    <link rel="canonical" href="${url}" />`;
+}
+
 // canonicalPath lands in href/content attributes; today every caller passes a
 // literal or a regex-validated flight number, but escape at the boundary so a
 // future caller passing raw URL input can't break out of the attribute.
@@ -1590,6 +1660,7 @@ function buildBaseTemplateVars(
     html: reactHtml,
     host: site.canonicalHost,
     canonicalPath: escapeHtmlAttr(canonicalPath),
+    canonicalTags: canonicalTags(site.canonicalHost, canonicalPath),
     robotsMeta: "index, follow",
     analyticsSnippet: analyticsSnippet(site),
     headSnippet: site.headSnippet ?? "",
@@ -1621,25 +1692,40 @@ async function renderSubPage<P extends { site: SiteConfig }>(
   const reactHtml = ReactDOMServer.renderToString(
     React.createElement(component, { site: ctx.site, ...(props ?? {}) } as unknown as P)
   );
+  const notFoundRender = status === 404;
   const htmlVariables: Record<string, string> = {
     ...buildBaseTemplateVars(ctx, reactHtml, canonicalPath),
     ...meta,
   };
   // Rebuild AFTER the meta merge: the WebPage JSON-LD must claim the page's
   // own title/description, not the homepage copy baked into the base vars.
-  htmlVariables.webPageJsonLd = sitePageJsonLd(ctx.site, {
-    path: canonicalPath,
-    name: htmlVariables.siteTitle,
-    description: htmlVariables.siteDescription,
-    isoDate: htmlVariables.isoDate,
-  });
+  htmlVariables.webPageJsonLd = notFoundRender
+    ? ""
+    : sitePageJsonLd(ctx.site, {
+        path: canonicalPath,
+        name: htmlVariables.siteTitle,
+        description: htmlVariables.siteDescription,
+        isoDate: htmlVariables.isoDate,
+      });
+  if (notFoundRender) {
+    // A 404 must not advertise a different, indexable URL: canonical + og:url
+    // pointing at the generic page, plus WebPage data describing it, are
+    // conflicting signals that can carry this response's noindex across to the
+    // canonical target. noindex on the 404 itself is the whole job.
+    htmlVariables.canonicalTags = "";
+    // Also the reason the render can be edge-cached below: the probe snippet is
+    // the only per-visitor content in the document.
+    htmlVariables.passengerProbeSnippet = "";
+  }
 
   const template = await getHtmlTemplate();
   return new Response(renderHtml(template, htmlVariables), {
     status,
-    // Keep the HTML CSP even on 404s: this page runs the inline lookup script,
-    // which SECURITY_HEADERS.notFound would block.
-    headers: SECURITY_HEADERS.html,
+    // Keep the HTML CSP even on 404s (this page runs the inline lookup script,
+    // which SECURITY_HEADERS.notFound would block) but take notFound's
+    // edge-cacheable Cache-Control — /check-flight/* is an unbounded URL space
+    // crawlers re-walk, and `private, no-store` re-rendered every repeat hit.
+    headers: notFoundRender ? HTML_NOT_FOUND_HEADERS : SECURITY_HEADERS.html,
   });
 }
 
@@ -1868,15 +1954,30 @@ const checkFlightPage: Handler = (ctx) => {
   // the homepage form navigates here with whatever was typed) still 404s, but
   // renders the real page with a notice and the working lookup form instead of
   // the bare not-found document.
-  const invalidPage = (invalid: InvalidFlightQuery) =>
-    renderSubPage(
+  // Its own title/description, matching the H1: the generic page's title
+  // ("Does My United Flight Have Starlink? Check Any Flight") promises content
+  // a 404 does not deliver. renderSubPage drops the canonical and the WebPage
+  // JSON-LD on the 404 path, so nothing here points at another URL.
+  const invalidPage = (invalid: InvalidFlightQuery) => {
+    const short = siteAirline(ctx.site).shortName;
+    const title = "That Doesn't Look Like a Flight Number";
+    const description = `Enter a ${short} flight number (like ${siteAirline(ctx.site).iata}123) and a date to check that flight for Starlink WiFi.`;
+    return renderSubPage(
       ctx,
       CheckFlightPage,
       "/check-flight",
-      { ...subPageMeta(ctx, "check-flight"), robotsMeta: "noindex, nofollow" },
+      {
+        siteTitle: title,
+        siteDescription: description,
+        keywords: "",
+        ogTitle: title,
+        ogDescription: description,
+        robotsMeta: "noindex, nofollow",
+      },
       { invalid },
       404
     );
+  };
   if (parsed.kind === "invalid") {
     const query = echoQuery(parsed.raw);
     return invalidPage({

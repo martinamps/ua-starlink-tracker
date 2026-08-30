@@ -206,6 +206,16 @@ export default function MethodologyPage({ site, lastUpdated }: MethodologyPagePr
               tracker's source code
             </a>{" "}
             is public.
+            {site.features.apiDocsPage ? (
+              <>
+                {" "}
+                To pull the same numbers programmatically, see the{" "}
+                <a href="/api" className="text-accent hover:underline">
+                  JSON API documentation
+                </a>
+                .
+              </>
+            ) : null}
           </p>
         </Section>
       </div>

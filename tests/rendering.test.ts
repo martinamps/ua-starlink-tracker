@@ -186,6 +186,41 @@ describe("flight permalink gate + normalization", () => {
     expect(html).not.toContain("American");
   });
 
+  // /check-flight/* is an unbounded URL space crawlers re-walk. The full render
+  // must still be absorbed by shared caches like any other 404 — `no-store`
+  // here sends every repeat hit back to origin.
+  test("invalid-segment 404 is edge-cacheable, not private/no-store", async () => {
+    for (const seg of ["banana", "PHX", "AA123"]) {
+      const res = await app.dispatch(req(`/check-flight/${seg}`, HOST));
+      const cc = res.headers.get("cache-control") ?? "";
+      expect(cc, seg).toContain("s-maxage");
+      expect(cc, seg).not.toContain("no-store");
+      // The page runs the inline lookup script, so it keeps the HTML CSP.
+      expect(res.headers.get("content-security-policy"), seg).toContain("script-src");
+    }
+  });
+
+  // A 404 that canonicalises to a live 200 page (and ships WebPage data
+  // describing it) sends conflicting signals about that other URL.
+  test("invalid-segment 404 advertises no canonical, og:url, or WebPage JSON-LD", async () => {
+    const res = await app.dispatch(req("/check-flight/banana", HOST));
+    const html = await res.text();
+    expect(html).not.toContain('rel="canonical"');
+    expect(html).not.toContain('property="og:url"');
+    expect(html).not.toContain('"@type":"WebPage"');
+    // ...and its title matches what the page actually says, not the generic
+    // page's promise of a working lookup.
+    expect(html).toContain("<title>That Doesn't Look Like a Flight Number</title>");
+  });
+
+  test("a real page still carries its own canonical and WebPage JSON-LD", async () => {
+    const res = await app.dispatch(req("/check-flight", HOST));
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain(`rel="canonical" href="https://${HOST}/check-flight"`);
+    expect(html).toContain('"@type":"WebPage"');
+  });
+
   test("zero-padded spelling → 301 to the canonical flight URL", async () => {
     const digits = ghostFlight.slice(2);
     const res = await app.dispatch(req(`/check-flight/UA0${digits.slice(0, 3)}`, HOST));
