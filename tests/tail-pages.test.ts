@@ -13,10 +13,12 @@
 
 import type { Database } from "bun:sqlite";
 import { beforeAll, describe, expect, test } from "bun:test";
-import { SITES, siteForAirline } from "../src/airlines/registry";
+import { buildFlightLookupVariants, stripFlightNumberZeros } from "../src/airlines/flight-number";
+import { AIRLINES, SITES, siteForAirline } from "../src/airlines/registry";
 import { deriveTailClaim, tailClaimHeadline, tailVerdict } from "../src/components/tail-page";
 import {
   TAIL_URL_RE,
+  flightNumberHasData,
   getSitemapTails,
   getTailPageRecord,
   getTailVerificationTimeline,
@@ -199,17 +201,41 @@ describe("/tail/{registration}", () => {
     expect(res.status).toBe(405);
   });
 
+  // The linked corpus is thousands of distinct flight numbers and grows with
+  // the data, so one GET per link outruns the page-class rate limiter and the
+  // test starts failing on volume rather than on a broken link. What actually
+  // decides whether a permalink resolves is checked in-process on every link —
+  // canonical marketing spelling (anything else 301s) and the handler's own
+  // existence gate (no rows behind it degrades to the generic noindex page) —
+  // and HTTP is dispatched only for a fixed, data-independent sample.
   test("every /check-flight link on tail pages resolves (marketing numbers only)", async () => {
     const seen = new Set<string>();
     for (const t of getSitemapTails(db, "UA")) {
       const body = await (await get(`/tail/${t.tail}`)).text();
       for (const m of body.matchAll(/href="\/check-flight\/([^"]+)"/g)) seen.add(m[1]);
     }
-    for (const fn of seen) {
+    const linked = [...seen].sort();
+    expect(linked.length).toBeGreaterThan(0);
+
+    for (const fn of linked) {
       expect(fn, "non-marketing flight number linked").toMatch(/^UA\d+$/);
+      expect(stripFlightNumberZeros(fn), `non-canonical spelling linked: ${fn}`).toBe(fn);
+      expect(
+        flightNumberHasData(db, buildFlightLookupVariants(AIRLINES.UA, fn), "UA"),
+        `/check-flight/${fn} has no data behind it`
+      ).toBe(true);
+    }
+
+    // Fixed stride plus both ends: deterministic, no randomness, and bounded
+    // at ~HTTP_PROBES requests however large the corpus gets.
+    const HTTP_PROBES = 24;
+    const stride = Math.ceil(linked.length / HTTP_PROBES);
+    const probes = new Set<string>([linked[0], linked[linked.length - 1]]);
+    for (let i = 0; i < linked.length; i += stride) probes.add(linked[i]);
+    for (const fn of probes) {
       expect((await get(`/check-flight/${fn}`)).status, `/check-flight/${fn}`).toBe(200);
     }
-  });
+  }, 60_000);
 });
 
 describe("sitemap agrees with the pages", () => {
