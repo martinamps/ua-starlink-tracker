@@ -31,19 +31,9 @@ export interface FlightFacts {
   upcoming: FlightUpcomingDeparture[];
 }
 
-/** A permalink segment that is not a flight number this site can answer for.
- * `query` is the offending segment (null when it could not be decoded), never
- * trusted — React escapes it at render. */
-export interface InvalidFlightQuery {
-  query: string | null;
-  reason: "not-a-flight-number" | "other-carrier";
-  airportHint: boolean;
-}
-
 interface CheckFlightPageProps {
   site: SiteConfig;
   flight?: FlightFacts;
-  invalid?: InvalidFlightQuery;
 }
 
 const fmtDay = (sec: number) =>
@@ -192,43 +182,7 @@ function FlightFactBlocks({ flight }: { flight: FlightFacts }) {
   );
 }
 
-function InvalidQueryNotice({
-  invalid,
-  example,
-  shortName,
-  showRoutePlanner,
-}: {
-  invalid: InvalidFlightQuery;
-  example: string;
-  shortName: string;
-  showRoutePlanner: boolean;
-}) {
-  const quoted = invalid.query ? `“${invalid.query}”` : "That";
-  return (
-    <div className="bg-surface-elevated border border-subtle rounded p-4 mb-4">
-      <p className="text-sm text-secondary">
-        {invalid.reason === "other-carrier"
-          ? `${quoted} isn't a ${shortName} flight number — this tracker only covers ${shortName} flights.`
-          : `${quoted} isn't a flight number.`}
-      </p>
-      <p className="text-sm text-muted mt-1">
-        Flight numbers look like <span className="font-mono text-secondary">{example}</span> — a
-        two-letter airline code followed by 1–4 digits. Try again below.
-      </p>
-      {invalid.airportHint && showRoutePlanner && (
-        <p className="text-sm text-muted mt-2">
-          Looking for an airport or a route instead? Try the{" "}
-          <a href="/route-planner" className="text-accent hover:underline">
-            route planner
-          </a>
-          .
-        </p>
-      )}
-    </div>
-  );
-}
-
-export default function CheckFlightPage({ site, flight, invalid }: CheckFlightPageProps) {
+export default function CheckFlightPage({ site, flight }: CheckFlightPageProps) {
   const cfg = siteAirline(site);
   const airlineName = flight?.airlineName ?? cfg.name;
   const homeTitle = site.brand.title;
@@ -257,19 +211,15 @@ export default function CheckFlightPage({ site, flight, invalid }: CheckFlightPa
       <header className="relative py-5 sm:py-6 text-center mb-6">
         <a href="/" className="block">
           <h1 className="font-display text-3xl sm:text-4xl font-bold text-primary mb-2 tracking-tight hover:text-accent transition-colors">
-            {invalid
-              ? "That Doesn't Look Like a Flight Number"
-              : flight
-                ? `Does ${flight.flightNumber} Have Starlink WiFi?`
-                : `Check If Your ${airlineName} Flight Has Starlink WiFi`}
+            {flight
+              ? `Does ${flight.flightNumber} Have Starlink WiFi?`
+              : `Check If Your ${airlineName} Flight Has Starlink WiFi`}
           </h1>
         </a>
         <p className="text-base text-secondary font-display">
-          {invalid
-            ? `Enter a ${shortName} flight number below to check for Starlink`
-            : flight
-              ? flightSummary(flight)
-              : "Enter your flight number and date to see if your aircraft has free Starlink internet"}
+          {flight
+            ? flightSummary(flight)
+            : "Enter your flight number and date to see if your aircraft has free Starlink internet"}
         </p>
       </header>
 
@@ -278,14 +228,6 @@ export default function CheckFlightPage({ site, flight, invalid }: CheckFlightPa
           <h2 className="font-display text-lg font-semibold text-primary mb-4">
             Check by flight number
           </h2>
-          {invalid && (
-            <InvalidQueryNotice
-              invalid={invalid}
-              example={flightExample}
-              shortName={shortName}
-              showRoutePlanner={site.features.routePlannerPage}
-            />
-          )}
           <form id="check-flight-form" className="space-y-4">
             <div className="flex flex-col sm:flex-row gap-3">
               <div className="flex-1">
