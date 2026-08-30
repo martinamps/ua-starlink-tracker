@@ -187,6 +187,23 @@ export default function MethodologyPage({ site, lastUpdated }: MethodologyPagePr
           </ul>
         </Section>
 
+        {/* The Dataset JSON-LD on this page declares /api/data as its
+            distribution; Google requires the markup to describe content that is
+            actually on the page, so the download has to be visible here too. */}
+        <Section title="Get the data">
+          <p>
+            The full current dataset is one open JSON endpoint — no key, no registration:{" "}
+            <a href="/api/data" className="text-accent hover:underline font-mono text-xs">
+              /api/data
+            </a>
+            . It returns every {cfg.shortName} tail we hold with its verified WiFi provider, the
+            fleet totals behind the headline percentage, the last-updated stamp, and the upcoming
+            departures mapped to each tail. It is regenerated from the same live database this page
+            describes, so a response is a point-in-time snapshot — read{" "}
+            <code className="font-mono text-xs">lastUpdated</code> alongside the counts.
+          </p>
+        </Section>
+
         <Section title="Citing this data">
           <p>
             The canonical, quotable form of our headline stat is the dated sentence on the{" "}

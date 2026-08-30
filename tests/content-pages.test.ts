@@ -164,6 +164,23 @@ describe("structured data blocks", () => {
     expect(text).toContain('"@type":"DataDownload"');
   });
 
+  test("the declared distribution is crawlable and visible on the page", async () => {
+    // Dataset Search drops (and flags) a distribution robots.txt blocks, and
+    // requires the markup to describe content that is actually on the page.
+    const robots = await getText("/robots.txt", UA);
+    expect(robots.text).toContain("Allow: /api/data");
+    expect(robots.text).toContain("Disallow: /api/");
+    const { text } = await getText("/methodology", UA);
+    expect(text).toContain('href="/api/data"');
+    // Hosts without /methodology declare no dataset, so they carve out nothing.
+    for (const site of Object.values(SITES)) {
+      const r = await getText("/robots.txt", site.canonicalHost);
+      expect(r.text.includes("Allow: /api/data"), `${site.key} robots`).toBe(
+        site.features.methodologyPage
+      );
+    }
+  });
+
   test("Dataset cites SEC filing source_urls once anchors are seeded", async () => {
     const sdb = makeSyntheticDb();
     seedFleetAnchors(sdb, [

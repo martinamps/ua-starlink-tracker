@@ -1252,11 +1252,17 @@ const robotsTxt: Handler = ({ site }) => {
   // earns a GSC "blocked by robots" flag. Where the feature is off, /mcp is
   // protocol-or-404 only and stays disallowed.
   const disallows = ["/api/", "/debug/", ...(site.features.mcpPage ? [] : ["/mcp"])];
+  // /api/data is the crawlable dataset distribution the Dataset JSON-LD on
+  // /methodology declares (and /methodology's "Get the data" section links).
+  // Google Dataset Search drops — and flags — a distribution robots blocks, so
+  // this one path is carved out of the /api/ Disallow. Longest-match wins, so
+  // the carve-out holds regardless of directive order.
+  const allows = ["/", ...(site.features.methodologyPage ? ["/api/data"] : [])];
   // One `*` block covers everyone; named blocks welcoming AI crawlers
   // (GPTBot/ClaudeBot/PerplexityBot) are a deliberate option if rules diverge.
   return new Response(
     `User-agent: *
-Allow: /
+${allows.map((a) => `Allow: ${a}`).join("\n")}
 ${disallows.map((d) => `Disallow: ${d}`).join("\n")}
 
 Sitemap: https://${site.canonicalHost}/sitemap.xml`,
