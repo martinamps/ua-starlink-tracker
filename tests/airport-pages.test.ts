@@ -126,6 +126,38 @@ describe("/airport/{IATA}", () => {
   });
 });
 
+describe("whole-fleet coverage", () => {
+  test("a tenant whose ingest pulls unequipped tails keeps its ratio", async () => {
+    // The other half of the coverage fork: AS/HA get a whole-fleet pull
+    // (getNextFleetTailNeedingFlights), so equipped/total IS a real share
+    // there and the page must still publish it.
+    expect(AIRLINES.HA.scheduleCoverage).toBe("whole-fleet");
+    const synthetic = makeSyntheticDb();
+    const soon = Math.floor(Date.now() / 1000) + 3600;
+    addPlane(synthetic, "N1HA", "Starlink", { airline: "HA" });
+    addFlight(synthetic, "N1HA", "HA9101", "HNL", soon, {
+      arrivalAirport: "LAX",
+      airline: "HA",
+    });
+    // An unequipped tail: the row the roster-scoped tenants can never have.
+    addFlight(synthetic, "N9NONE", "HA9102", "HNL", soon + 600, {
+      arrivalAirport: "SFO",
+      airline: "HA",
+    });
+    const scoped = createApp(synthetic);
+    const body = await (
+      await scoped.dispatch(
+        req("/airport/HNL", SITES.hawaiian.canonicalHost, { headers: { Accept: "text/html" } })
+      )
+    ).text();
+    expect(body).toContain("Starlink / departures");
+    // ...and the roster-restriction disclaimer belongs only to the tenants it
+    // is true of, so it must NOT appear here.
+    expect(body).not.toContain("not a share of every");
+    synthetic.close();
+  });
+});
+
 describe("/airports index", () => {
   test("links exactly the airports that have their own page", async () => {
     const res = await get("/airports");
