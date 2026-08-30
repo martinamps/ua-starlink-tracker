@@ -10,6 +10,7 @@
 
 import { beforeAll, describe, expect, test } from "bun:test";
 import { SITES } from "../src/airlines/registry";
+import { freeAccessAnswer } from "../src/components/is-starlink-free-page";
 import { getTimeline, hasTimeline } from "../src/components/timeline-page";
 import {
   cacheFlightRoute,
@@ -79,6 +80,25 @@ describe("/timeline", () => {
     expect(text).toContain('"@type":"ItemList"');
   });
 
+  test("every milestone and target carries a linkable primary source", () => {
+    const t = getTimeline("UA");
+    for (const entry of [...(t?.milestones ?? []), ...(t?.targets ?? [])]) {
+      expect(entry.source.length, entry.source).toBeGreaterThan(0);
+      // A bare publisher name is not a citation a reader can check.
+      expect(entry.sourceUrl, entry.source).toMatch(/^https:\/\//);
+    }
+  });
+
+  test("sources render as real outbound links", async () => {
+    const { text } = await getText("/timeline", UA);
+    for (const m of getTimeline("UA")?.milestones ?? []) {
+      expect(text, m.title).toContain(`href="${m.sourceUrl}"`);
+    }
+    for (const t of getTimeline("UA")?.targets ?? []) {
+      expect(text, t.when).toContain(`href="${t.sourceUrl}"`);
+    }
+  });
+
   test("sitemap + llms.txt advertise /timeline only where it serves", async () => {
     for (const site of Object.values(SITES)) {
       const { text } = await getText("/sitemap.xml", site.canonicalHost);
@@ -104,14 +124,30 @@ describe("intent pages", () => {
     expect(text).toContain('href="/is-starlink-free"');
   });
 
-  test("united /is-starlink-free: direct answer, live count, FAQ JSON-LD", async () => {
+  test("united /is-starlink-free: direct answer and live count", async () => {
     const { status, text } = await getText("/is-starlink-free", UA);
     expect(status).toBe(200);
     expect(text).toContain("MileagePlus");
-    expect(text).toContain('"@type":"FAQPage"');
     expect(text).toContain('href="/check-flight"');
     const count = getReader("UA").getStarlinkPlanes().length;
     expect(text).toContain(`${count.toLocaleString("en-US")} of `);
+  });
+
+  test("/is-starlink-free emits no FAQPage — the homepage owns that question", async () => {
+    // The block's questions had no visible Q&A (Google requires markup to match
+    // rendered content) and its lead question duplicated the homepage FAQ's
+    // verbatim with a different answer — two entities for one question.
+    const { text } = await getText("/is-starlink-free", UA);
+    expect(text).not.toContain('"@type":"FAQPage"');
+    expect((await getText("/", UA)).text).toContain('"@type":"FAQPage"');
+  });
+
+  test("llms.txt quotes the page's own access answer, not different fine print", async () => {
+    const { text } = await getText("/llms.txt", UA);
+    const answer = freeAccessAnswer("UA");
+    expect(answer).not.toBeNull();
+    expect(text).toContain(answer as string);
+    expect(text).toContain("/is-starlink-free");
   });
 
   test("intent pages 404 where the feature is off", async () => {

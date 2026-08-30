@@ -181,14 +181,14 @@ export const content: AirlineContent = {
             <p>
               Not yet — {percentage}% of the fleet is equipped today. United Express regional jets
               (E175, CRJ-550) are at {(fleetStats?.express.percentage || 0).toFixed(2)}%; mainline
-              narrowbodies and widebodies are following. The{" "}
+              narrowbodies and widebodies are being equipped now. The{" "}
               <a href="/fleet" className="text-accent hover:underline">
                 fleet page
               </a>{" "}
               lists every verified tail.
             </p>
           ),
-          ld: "Not yet — {{percentage}}% of the fleet is equipped today. United Express regional jets (E175, CRJ-550) are at {{expressPercentage}}%; mainline narrowbodies and widebodies are following. The fleet page lists every verified tail.",
+          ld: "Not yet — {{percentage}}% of the fleet is equipped today. United Express regional jets (E175, CRJ-550) are at {{expressPercentage}}%; mainline narrowbodies and widebodies are being equipped now. The fleet page lists every verified tail.",
         },
         {
           q: "How fast is United's Starlink rollout?",
@@ -226,30 +226,40 @@ export const content: AirlineContent = {
           q: "When will all United flights have Starlink?",
           a: ({ totalCount, percentage }) => (
             <p>
-              United hasn't published a completion date. Currently {percentage}% of the {totalCount}
-              -plane fleet is equipped — regional jets and narrow-body aircraft are being equipped
-              first, with widebodies to follow. The count on this page updates as new tails are
-              verified.
+              United's stated target is the whole fleet by the end of 2027 — every United and United
+              Express aircraft. It reported more than 450 equipped with its Q2 2026 results and
+              expects close to 1,000 by the end of 2026, with every widebody done by summer 2027.
+              Today {percentage}% of the {totalCount}-plane fleet is equipped. The{" "}
+              <a href="/timeline" className="text-accent hover:underline">
+                rollout timeline
+              </a>{" "}
+              has each milestone and target with its source, and the count on this page updates as
+              new tails are verified.
             </p>
           ),
-          ld: "United hasn't published a completion date. Currently {{percentage}}% of the {{totalAircraftCount}}-plane fleet is equipped — regional jets and narrow-body aircraft are being equipped first, with widebodies to follow. The count on this page updates as new tails are verified.",
+          ld: "United's stated target is the whole fleet by the end of 2027 — every United and United Express aircraft. It reported more than 450 equipped with its Q2 2026 results and expects close to 1,000 by the end of 2026, with every widebody done by summer 2027. Today {{percentage}}% of the {{totalAircraftCount}}-plane fleet is equipped. The rollout timeline page has each milestone and target with its source, and the count on this page updates as new tails are verified.",
         },
         {
           q: "Does United have Starlink on international flights?",
-          a: () => (
+          a: ({ percentage }) => (
             <p>
-              Not on widebody international routes yet. Starlink works over oceans and at the poles
-              — unlike older Ku/Ka-band systems with coverage gaps — so it's a matter of when, but
-              787, 777, and 767 installs haven't started. Today's equipped aircraft are E175 and
-              CRJ-550 regional jets on near-international routes to Canada, Mexico, and the
-              Caribbean. Check the{" "}
+              Yes, on a growing share of them — widebody installs are under way. The first was UA14,
+              Newark to London on a Boeing 777-200, on June 22, 2026; United expects nearly 60
+              widebodies equipped during 2026 and the entire widebody fleet by summer 2027. Starlink
+              works over oceans and at the poles, unlike the older Ku/Ka-band systems it replaces,
+              so long-haul is where it changes the most. Coverage is still partial at {percentage}%
+              of the fleet, so check the{" "}
               <a href="/fleet" className="text-accent hover:underline">
                 fleet page
               </a>{" "}
-              for current coverage.
+              for current widebody status, or{" "}
+              <a href="/check-flight" className="text-accent hover:underline">
+                check your flight
+              </a>{" "}
+              by number and date.
             </p>
           ),
-          ld: "Not on widebody international routes yet. Starlink works over oceans and at the poles — unlike older Ku/Ka-band systems with coverage gaps — so it's a matter of when, but 787, 777, and 767 installs haven't started. Today's equipped aircraft are E175 and CRJ-550 regional jets on near-international routes to Canada, Mexico, and the Caribbean. Check the fleet page for current coverage.",
+          ld: "Yes, on a growing share of them — widebody installs are under way. The first was UA14, Newark to London on a Boeing 777-200, on June 22, 2026; United expects nearly 60 widebodies equipped during 2026 and the entire widebody fleet by summer 2027. Starlink works over oceans and at the poles, unlike the older Ku/Ka-band systems it replaces, so long-haul is where it changes the most. Coverage is still partial at {{percentage}}% of the fleet, so check the fleet page for current widebody status, or check your flight by number and date.",
         },
       ],
     },

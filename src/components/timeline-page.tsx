@@ -2,22 +2,29 @@ import React from "react";
 import { type SiteConfig, siteAirline } from "../airlines/registry";
 import { PageFooter } from "./atoms";
 
+/** Attribution every timeline entry must carry. A milestone page exists to be
+ * checkable, so the source is required and has to be a real document a reader
+ * can open — an entry that can't be given one doesn't belong on the page. */
+interface Citation {
+  /** Publisher + date, shown as the label. */
+  source: string;
+  /** Primary source. Airline newsroom / earnings release, never a summary. */
+  sourceUrl: string;
+}
+
 /** One dated rollout milestone. Adding a future milestone = one entry here. */
-export interface TimelineMilestone {
+export interface TimelineMilestone extends Citation {
   /** ISO date (YYYY-MM-DD) the milestone happened. */
   date: string;
   title: string;
   detail: string;
-  /** Where the fact comes from — named plainly, no fabricated links. */
-  source?: string;
 }
 
 /** A stated goal, kept apart from milestones so the page never presents an
  * airline's plan as an accomplished fact. */
-export interface TimelineTarget {
+export interface TimelineTarget extends Citation {
   when: string;
   what: string;
-  source: string;
 }
 
 interface AirlineTimeline {
@@ -29,67 +36,103 @@ interface AirlineTimeline {
 // route can gate on content (hasTimeline) and a feature flag flipped on
 // without a story can't render an empty page. Milestones stay chronological;
 // append new entries as they happen.
+// United's own newsroom and earnings releases. Reused across entries so a
+// correction lands in one place, and so nothing on the page cites a summary of
+// a primary source when the primary source is linkable.
+const UA_SOURCES = {
+  faaCertE175: {
+    source: "United newsroom, March 31, 2025",
+    sourceUrl:
+      "https://united.mediaroom.com/2025-03-31-United-Receives-FAA-Certification-on-Starlink-Aircraft-and-Schedules-First-Commercial-Flight-for-May-2025",
+  },
+  faaCert737: {
+    source: "United newsroom, September 26, 2025",
+    sourceUrl:
+      "https://united.mediaroom.com/2025-09-26-United-Receives-FAA-Certification-for-First-Starlink-Equipped-Mainline-Aircraft",
+  },
+  firstMainlineFlight: {
+    source: "United newsroom, October 2025",
+    sourceUrl:
+      "https://www.prnewswire.com/news-releases/united-schedules-first-starlink-equipped-mainline-flight-for-take-off-302582565.html",
+  },
+  regionalComplete: {
+    source: "United newsroom, February 2, 2026",
+    sourceUrl:
+      "https://united.mediaroom.com/2026-02-02-United-Spotlights-Starlink-Wi-Fi-in-New-Big-Game-Ad-as-Airline-Completes-Installation-on-300-Regional-Aircraft",
+  },
+  firstWidebodyFlight: {
+    source: "United newsroom, June 22, 2026",
+    sourceUrl:
+      "https://www.prnewswire.com/news-releases/united-accelerates-starlink-wi-fi-rollout-with-first-widebody-transatlantic-flight-302806746.html",
+  },
+  q2y2026: {
+    source: "UAL Q2 2026 results, July 15, 2026",
+    sourceUrl:
+      "https://united.mediaroom.com/2026-07-15-United-Posts-Q2-Results-Above-Wall-Street-Expectations-and-Raises-Full-Year-2026-Adjusted-EPS-Guidance1-Despite-a-Nearly-6-Billion-Increase-In-Anticipated-Fuel-Costs",
+  },
+} as const;
+
 const TIMELINES: Record<string, AirlineTimeline> = {
   UA: {
     milestones: [
       {
         date: "2025-05-15",
-        title: "First commercial Starlink flight",
+        title: "First customer flight — United Express E175",
         detail:
-          "An Embraer E175 operated the first United revenue flight with Starlink WiFi live, opening the United Express regional rollout.",
-        source: "United announcement",
+          "United's first revenue flight with Starlink live flew on a United Express Embraer 175, opening the regional rollout. The FAA had certified the type that March, with roughly 40 regional installs a month planned from there.",
+        ...UA_SOURCES.faaCertE175,
       },
       {
         date: "2025-09-26",
-        title: "First mainline STC — Boeing 737-800",
+        title: "First mainline certification — Boeing 737-800",
         detail:
-          "The FAA granted the first supplemental type certificate covering Starlink on a United mainline type, clearing the 737-800 for installations.",
-        source: "United / FAA certification news",
+          "The FAA approved the Starlink supplemental type certificate covering United's Boeing 737-800, the first mainline type cleared for installation.",
+        ...UA_SOURCES.faaCert737,
       },
       {
         date: "2025-10-15",
         title: "First mainline passenger flight — UA2940",
         detail:
           "UA2940 from Newark to Houston flew as the first mainline passenger flight with Starlink, on a Boeing 737-800.",
-        source: "United announcement",
+        ...UA_SOURCES.firstMainlineFlight,
       },
       {
         date: "2026-02-02",
         title: "Regional fleet complete — 300+ aircraft",
         detail:
-          "United finished the two-cabin regional fleet, putting Starlink on more than 300 United Express aircraft in under a year.",
-        source: "United announcement",
+          "United finished the two-cabin regional fleet, putting Starlink on more than 300 United Express aircraft in under a year, and turned to the mainline narrowbodies.",
+        ...UA_SOURCES.regionalComplete,
       },
       {
         date: "2026-06-22",
         title: "First widebody passenger flight — UA14",
         detail:
-          "UA14 from Newark to London Heathrow carried the first widebody passengers with Starlink, on 777-200 N37018.",
-        source: "United announcement",
+          "UA14 from Newark to London carried the first widebody passengers with Starlink, on a Boeing 777-200 — the first of nearly 60 widebodies United expected to equip during 2026.",
+        ...UA_SOURCES.firstWidebodyFlight,
       },
       {
         date: "2026-07-15",
         title: "450 aircraft equipped — official",
         detail:
-          "United reported more than 450 Starlink-equipped aircraft alongside its Q2 2026 results, with mainline installs running at several airframes a day.",
-        source: "UAL Q2 2026 earnings",
+          "United reported more than 450 Starlink-equipped aircraft alongside its Q2 2026 results, and said it remained on track for close to 1,000 by year end.",
+        ...UA_SOURCES.q2y2026,
       },
     ],
     targets: [
       {
         when: "End of 2026",
-        what: "Close to 1,000 aircraft equipped.",
-        source: "United guidance, 2026",
+        what: "Close to 1,000 aircraft equipped, including nearly 60 widebodies.",
+        ...UA_SOURCES.q2y2026,
       },
       {
         when: "Summer 2027",
         what: "Every widebody equipped.",
-        source: "United guidance, 2026",
+        ...UA_SOURCES.firstWidebodyFlight,
       },
       {
         when: "End of 2027",
         what: "The full fleet — every United and United Express aircraft.",
-        source: "United guidance, 2026",
+        ...UA_SOURCES.q2y2026,
       },
     ],
   },
@@ -111,6 +154,22 @@ const fmtDate = (iso: string) =>
     day: "numeric",
     year: "numeric",
   });
+
+/** Attribution line. The link is the point — a bare publisher name is not a
+ * citation a reader can check. */
+const SourceLink = ({ label, cite }: { label: string; cite: Citation }) => (
+  <div className="font-mono text-[10px] text-muted uppercase tracking-wider mt-1">
+    {label}{" "}
+    <a
+      href={cite.sourceUrl}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-muted hover:text-accent underline decoration-dotted underline-offset-2"
+    >
+      {cite.source}
+    </a>
+  </div>
+);
 
 interface TimelinePageProps {
   site: SiteConfig;
@@ -161,11 +220,7 @@ export default function TimelinePage({
                   {m.title}
                 </div>
                 <p className="text-sm text-muted leading-relaxed mt-1">{m.detail}</p>
-                {m.source && (
-                  <div className="font-mono text-[10px] text-muted uppercase tracking-wider mt-1">
-                    Source: {m.source}
-                  </div>
-                )}
+                <SourceLink label="Source" cite={m} />
               </li>
             ))}
           </ol>
@@ -184,9 +239,7 @@ export default function TimelinePage({
               <li key={t.when} className="pl-4 border-l-2 border-subtle">
                 <span className="font-mono text-xs text-accent">{t.when}</span>
                 <div className="text-sm text-secondary mt-0.5">{t.what}</div>
-                <div className="font-mono text-[10px] text-muted uppercase tracking-wider mt-1">
-                  Stated target · {t.source}
-                </div>
+                <SourceLink label="Stated target ·" cite={t} />
               </li>
             ))}
           </ul>

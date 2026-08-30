@@ -25,6 +25,12 @@ export function hasFreeAnswer(code: string): boolean {
   return code in ACCESS;
 }
 
+/** The same sentence llms.txt hands agents, so the human-facing page and the
+ * agent-facing contract can't disagree on the sign-in fine print. */
+export function freeAccessAnswer(code: string): string | null {
+  return ACCESS[code]?.answer ?? null;
+}
+
 interface IsStarlinkFreePageProps {
   site: SiteConfig;
   starlinkCount: number;
@@ -40,21 +46,11 @@ export default function IsStarlinkFreePage({
   const copy = ACCESS[cfg.code];
   const short = cfg.shortName;
 
-  const faq = [
-    {
-      q: `Is ${short} Starlink WiFi free?`,
-      a: copy.answer,
-    },
-    {
-      q: "How fast is it?",
-      a: "Real-world speeds run in the 100-250 Mbps range with low latency — enough for streaming, video calls, gaming, and VPNs, on every device you bring.",
-    },
-    {
-      q: `Does every ${short} flight have it?`,
-      a: `Not yet — ${starlinkCount} of ${totalCount} ${cfg.name} aircraft have Starlink today, and whether your flight has it depends on the aircraft assigned, not the route. Aircraft without Starlink still carry the older WiFi systems, which are typically paid.`,
-    },
-  ];
-
+  // No FAQPage JSON-LD here on purpose. Its questions had no visible Q&A on the
+  // page (Google requires markup to match rendered content), and its lead
+  // question duplicated the homepage FAQ's verbatim — two competing FAQPage
+  // entities for one question. The page's own answer copy is the answer; the
+  // WebPage JSON-LD renderSubPage emits already describes it.
   return (
     <div className="w-full mx-auto px-4 sm:px-6 md:px-8 bg-base min-h-screen flex flex-col relative">
       <div className="absolute inset-0 grid-pattern opacity-50 pointer-events-none" />
@@ -104,7 +100,18 @@ export default function IsStarlinkFreePage({
               {starlinkCount.toLocaleString("en-US")} of {totalCount.toLocaleString("en-US")}
             </span>{" "}
             {cfg.name} aircraft today, with more added weekly. Aircraft still awaiting installation
-            carry the older Viasat, Panasonic, or Thales systems, which are slower and usually paid.
+            mostly carry an older system — Viasat, Panasonic or Thales — which is slower and usually
+            paid, and some carry no WiFi at all.
+            {site.features.fleetPage && (
+              <>
+                {" "}
+                The{" "}
+                <a href="/fleet" className="text-accent hover:underline">
+                  fleet page
+                </a>{" "}
+                shows which is which, tail by tail.
+              </>
+            )}{" "}
             Whether <em>your</em> flight has Starlink depends on the aircraft assigned, so{" "}
             <a href="/check-flight" className="text-accent hover:underline">
               check your flight number and date
@@ -139,22 +146,6 @@ export default function IsStarlinkFreePage({
       </div>
 
       <PageFooter site={site} />
-
-      <script
-        type="application/ld+json"
-        // biome-ignore lint/security/noDangerouslySetInnerHtml: JSON-LD built from static per-airline copy + live counts
-        dangerouslySetInnerHTML={{
-          __html: JSON.stringify({
-            "@context": "https://schema.org",
-            "@type": "FAQPage",
-            mainEntity: faq.map((f) => ({
-              "@type": "Question",
-              name: f.q,
-              acceptedAnswer: { "@type": "Answer", text: f.a },
-            })),
-          }).replace(/</g, "\\u003c"),
-        }}
-      />
     </div>
   );
 }

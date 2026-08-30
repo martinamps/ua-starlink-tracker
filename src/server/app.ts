@@ -64,7 +64,10 @@ import CheckFlightPage, {
 } from "../components/check-flight-page";
 import FleetPage from "../components/fleet-page";
 import HowToCheckPage from "../components/how-to-check-page";
-import IsStarlinkFreePage, { hasFreeAnswer } from "../components/is-starlink-free-page";
+import IsStarlinkFreePage, {
+  freeAccessAnswer,
+  hasFreeAnswer,
+} from "../components/is-starlink-free-page";
 import McpPage from "../components/mcp-page";
 import MethodologyPage, { hasMethodology } from "../components/methodology-page";
 import Page from "../components/page";
@@ -1447,7 +1450,11 @@ The homepage carries one dated, self-contained sentence (HTML element id \`starl
       ? `**"Best Starlink flight from SFO to Newark?"** → https://${host}/route-planner ranks direct and one-stop options by Starlink probability and expected connected hours.`
       : null,
     `**"How is the rollout going?"** → https://${host}/ has the live count and a chart over time.${features.fleetPage ? ` https://${host}/fleet shows every aircraft and its WiFi provider.` : ""}`,
-    `**"Is it actually free / how fast is it?"** → Free for everyone aboard, no account, no purchase. Real-world 100-250 Mbps, low latency, gate-to-gate.`,
+    // The access sentence comes from the same per-airline copy /is-starlink-free
+    // renders, so agents and readers can't be told different fine print (this
+    // line used to say "no account" while the page said "sign in with your
+    // MileagePlus number"). Airlines without an entry keep the generic line.
+    `**"Is it actually free / how fast is it?"** → ${freeAccessAnswer(cfg.code) ?? "Free for everyone aboard, no account, no purchase."} Real-world 100-250 Mbps, low latency, gate-to-gate.${features.intentPages ? ` Full answer: https://${host}/is-starlink-free` : ""}`,
   ].filter((e): e is string => Boolean(e));
 
   const howToAnswer = `## How to answer common questions
