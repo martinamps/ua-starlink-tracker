@@ -9,11 +9,10 @@
 
 import type React from "react";
 import { type AirlineConfig, type SiteConfig, airlineSlug } from "../airlines/registry";
-import type { WifiPhase } from "../airlines/registry";
 import type { AirlineFactsEntry } from "../airlines/rollout-facts";
 import type { SubfleetBreakdown } from "../scripts/starlink-predictor";
 import type { PerAirlineStat } from "../types";
-import { FactsList } from "./airlines-page";
+import { FactsList, PhaseTable, type TypePhase } from "./airlines-page";
 import { PageFooter, STATUS_TONE } from "./atoms";
 
 const PANEL = "bg-surface border border-subtle rounded-lg p-5";
@@ -29,23 +28,11 @@ export interface CompareSide {
   /** Type→phase table for type-determined programs (HA/QR); null otherwise.
    * Rendered instead of a single blended number — a flight's answer depends
    * on which family flies it. */
-  phases: Array<{ family: string; phase: WifiPhase }> | null;
+  phases: TypePhase[] | null;
   facts: AirlineFactsEntry | null;
   /** Flight-level lookup on the airline's own surface, when one exists. */
   checkFlightUrl: string | null;
 }
-
-const PHASE_LABEL: Record<WifiPhase, { text: string; tone: "yes" | "mid" | "no" }> = {
-  confirmed: { text: "Starlink — whole type", tone: "yes" },
-  rolling: { text: "Mid-installation", tone: "mid" },
-  negative: { text: "No Starlink planned", tone: "no" },
-};
-
-const TONE_CLASS = {
-  yes: "text-green-400",
-  mid: "text-amber-400",
-  no: "text-muted",
-} as const;
 
 function pctOf(stat: PerAirlineStat): { fleet: number; pct: number } {
   // Full-fleet denominator — the same number each airline's own tracker
@@ -58,6 +45,13 @@ function SidePanel({ side }: { side: CompareSide }) {
   const { cfg, stat } = side;
   const { fleet, pct } = pctOf(stat);
   const tone = STATUS_TONE[cfg.rollout.status];
+  // A type-determined program has no honest single number: the denominator
+  // includes families excluded from the program by design (QR's A380s and
+  // A330s, HA's 717s), so "46% of fleet" understates the answer for a 777
+  // passenger and overstates it for an A380 one. Those programs show the
+  // per-family table INSTEAD — the blended figure is exactly the average the
+  // predict path refuses to publish.
+  const showBlended = fleet > 0 && !side.phases;
   return (
     <div className={`${PANEL} flex flex-col`}>
       <div className="flex items-center justify-between gap-2 mb-3">
@@ -75,7 +69,7 @@ function SidePanel({ side }: { side: CompareSide }) {
         </span>
       </div>
 
-      {fleet > 0 ? (
+      {showBlended && (
         <>
           <div className="font-mono text-3xl font-semibold text-primary leading-none mb-1">
             {stat.starlink}
@@ -100,33 +94,18 @@ function SidePanel({ side }: { side: CompareSide }) {
             </div>
           )}
         </>
-      ) : (
+      )}
+      {fleet === 0 && (
         <p className="text-sm text-muted mb-3">
           No per-aircraft counts yet — coverage begins as {cfg.shortName} installation data lands.
         </p>
       )}
 
+      {side.phases ? <PhaseTable phases={side.phases} /> : null}
+
       <p className="text-sm text-muted leading-relaxed mb-4">{cfg.rollout.phaseNote}</p>
 
-      {side.phases ? (
-        <div className="mb-4">
-          <div className="text-[10px] font-mono text-muted uppercase tracking-wider mb-1">
-            By aircraft type
-          </div>
-          {side.phases.map(({ family, phase }) => {
-            const p = PHASE_LABEL[phase];
-            return (
-              <div
-                key={family}
-                className="flex items-center justify-between py-1.5 border-b border-subtle last:border-0"
-              >
-                <span className="font-mono text-xs text-primary">{family}</span>
-                <span className={`font-mono text-[11px] ${TONE_CLASS[p.tone]}`}>{p.text}</span>
-              </div>
-            );
-          })}
-        </div>
-      ) : side.breakdown.length > 0 ? (
+      {side.phases ? null : side.breakdown.length > 0 ? (
         <div className="mb-4">
           <div className="text-[10px] font-mono text-muted uppercase tracking-wider mb-1">
             By fleet group
@@ -204,10 +183,12 @@ export default function ComparePage({
           <SidePanel side={right} />
         </div>
         <p className="text-[11px] text-muted leading-relaxed mt-3 max-w-3xl">
-          Percentages are shares of each airline's full tracked fleet — the same denominators their
-          dedicated trackers publish — so neither side is flattered. Whether a specific flight has
-          Starlink depends on the aircraft assigned, not the airline average: check the flight
-          number for a real answer.
+          Where a percentage is shown it is a share of that airline's full tracked fleet — the same
+          denominator its dedicated tracker publishes — so neither side is flattered. Airlines whose
+          program is decided by aircraft type get the per-type table instead of a percentage,
+          because their full-fleet denominator includes types the program deliberately excludes.
+          Either way, whether a specific flight has Starlink depends on the aircraft assigned, not
+          the airline average: check the flight number for a real answer.
         </p>
       </section>
 

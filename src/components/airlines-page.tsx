@@ -12,6 +12,7 @@ import type React from "react";
 import {
   type AirlineConfig,
   type SiteConfig,
+  type WifiPhase,
   airlineHomeUrl,
   airlineSlug,
 } from "../airlines/registry";
@@ -51,6 +52,56 @@ export interface AirlineOverview {
 export interface TrackedLink {
   name: string;
   href: string;
+}
+
+/** One row of a type-determined program's answer: the whole family is in, out,
+ * or mid-install. */
+export interface TypePhase {
+  family: string;
+  phase: WifiPhase;
+}
+
+const PHASE_LABEL: Record<WifiPhase, { text: string; tone: "yes" | "mid" | "no" }> = {
+  confirmed: { text: "Starlink — whole type", tone: "yes" },
+  rolling: { text: "Mid-installation", tone: "mid" },
+  negative: { text: "No Starlink planned", tone: "no" },
+};
+
+const TONE_CLASS = {
+  yes: "text-green-400",
+  mid: "text-amber-400",
+  no: "text-muted",
+} as const;
+
+/** The answer for an airline whose Starlink status is decided by aircraft
+ * type. It REPLACES the blended fleet percentage rather than sitting under it:
+ * the full-fleet denominator counts families the program excludes by design
+ * (QR's A380s and A330s, HA's 717s), so a single percentage is wrong in both
+ * directions at once — the same average the predict path refuses to publish. */
+export function PhaseTable({ phases }: { phases: TypePhase[] }) {
+  return (
+    <div className="mb-4">
+      <div className="text-[10px] font-mono text-muted uppercase tracking-wider mb-1">
+        By aircraft type
+      </div>
+      {phases.map(({ family, phase }) => {
+        const p = PHASE_LABEL[phase];
+        return (
+          <div
+            key={family}
+            className="flex items-center justify-between py-1.5 border-b border-subtle last:border-0"
+          >
+            <span className="font-mono text-xs text-primary">{family}</span>
+            <span className={`font-mono text-[11px] ${TONE_CLASS[p.tone]}`}>{p.text}</span>
+          </div>
+        );
+      })}
+      <p className="text-[11px] text-muted leading-relaxed mt-2">
+        This program is decided by aircraft type, so there is no single fleet percentage worth
+        quoting — which aircraft flies your route is the answer.
+      </p>
+    </div>
+  );
 }
 
 function fleetShare(stat: PerAirlineStat): { fleet: number; pct: number } {
@@ -359,14 +410,19 @@ export function AirlineDetailPage({
   site,
   overview,
   facts,
+  phases,
 }: {
   site: SiteConfig;
   overview: AirlineOverview;
   /** Dated, sourced milestones for this airline (rollout-facts entry). */
   facts?: AirlineFactsEntry | null;
+  /** Type→phase table for type-determined programs; null otherwise. Present →
+   * this page publishes it INSTEAD of a blended fleet percentage. */
+  phases?: TypePhase[] | null;
 }) {
   const { cfg, stat } = overview;
   const { fleet, pct } = fleetShare(stat);
+  const showBlended = fleet > 0 && !phases;
   return (
     <PageShell
       site={site}
@@ -381,7 +437,7 @@ export function AirlineDetailPage({
             </span>
             <StatusPill cfg={cfg} />
           </div>
-          {fleet > 0 ? (
+          {showBlended && (
             <div className="font-mono text-2xl font-semibold text-primary mb-1">
               {stat.starlink}
               <span className="text-base text-muted font-normal">
@@ -389,13 +445,15 @@ export function AirlineDetailPage({
                 / {fleet} aircraft · {pct}%
               </span>
             </div>
-          ) : (
+          )}
+          {fleet === 0 && (
             <p className="text-sm text-muted">
               No per-aircraft data yet — this page updates as {cfg.shortName} installation data
               lands.
             </p>
           )}
-          {(stat.installs30d ?? 0) > 0 && (
+          {phases && <PhaseTable phases={phases} />}
+          {showBlended && (stat.installs30d ?? 0) > 0 && (
             <div className="font-mono text-xs text-secondary mb-1">
               +{stat.installs30d} aircraft equipped in the last 30 days
             </div>

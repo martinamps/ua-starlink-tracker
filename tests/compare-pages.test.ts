@@ -5,7 +5,7 @@
  */
 
 import { beforeAll, describe, expect, test } from "bun:test";
-import { SITES, airlineSlug, enabledAirlines } from "../src/airlines/registry";
+import { SITES, airlineSlug, enabledAirlines, wifiPhaseFamilies } from "../src/airlines/registry";
 import { createApp } from "../src/server/app";
 import { openSnapshot, req } from "./helpers";
 
@@ -42,6 +42,46 @@ describe("hub /compare/{a}-vs-{b}", () => {
       // Both sides link down to their rollout detail pages.
       expect(body, path).toContain(`/airlines/${airlineSlug(a)}`);
       expect(body, path).toContain(`/airlines/${airlineSlug(b)}`);
+    }
+  });
+
+  // A type-determined program's full-fleet denominator counts families the
+  // program excludes by design, so a blended "x% of fleet" is wrong for every
+  // passenger on it. Those airlines publish the per-type table INSTEAD — on
+  // the compare panel and on their own /airlines page.
+  test("type-determined programs publish a per-type table, never a blended percentage", async () => {
+    const isTyped = (cfg: { code: string }) => Boolean(wifiPhaseFamilies(cfg.code));
+    const typed = enabledAirlines().filter(isTyped);
+    expect(typed.length, "no type-determined airline to exercise").toBeGreaterThan(0);
+
+    // "% of fleet" appears only in the blended stat block, once per side that
+    // prints one. A typed side must never contribute one, so the count can
+    // never exceed the number of untyped sides on the page.
+    const blendedCount = (body: string) => body.split("% of fleet").length - 1;
+
+    for (const cfg of typed) {
+      const families = Object.keys(wifiPhaseFamilies(cfg.code) as Record<string, unknown>).filter(
+        (f) => !f.endsWith("F")
+      );
+      const surfaces: Array<{ path: string; sides: Array<{ code: string }> }> = [
+        { path: `/airlines/${airlineSlug(cfg)}`, sides: [cfg] },
+        ...pairs()
+          .filter(([a, b]) => a === cfg || b === cfg)
+          .map(([a, b]) => ({
+            path: `/compare/${airlineSlug(a)}-vs-${airlineSlug(b)}`,
+            sides: [a, b],
+          })),
+      ];
+      for (const { path, sides } of surfaces) {
+        const body = await (await get(path, hub.canonicalHost)).text();
+        expect(body, `${path} missing per-type table`).toContain("By aircraft type");
+        for (const family of families) {
+          expect(body, `${path} missing family ${family}`).toContain(family);
+        }
+        expect(blendedCount(body), `${path} blends a type-determined fleet`).toBeLessThanOrEqual(
+          sides.filter((s) => !isTyped(s)).length
+        );
+      }
     }
   });
 

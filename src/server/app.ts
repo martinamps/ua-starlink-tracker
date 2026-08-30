@@ -22,6 +22,7 @@ import {
 } from "../airlines/flight-number";
 import {
   AIRLINES,
+  type AirlineCode,
   type AirlineConfig,
   HOST_REDIRECTS,
   HUB_BRAND,
@@ -71,6 +72,7 @@ import {
   type AirlineOverview,
   AirlinesIndexPage,
   type TrackedLink,
+  type TypePhase,
   factsHeadline,
 } from "../components/airlines-page";
 import CheckFlightPage, {
@@ -2192,7 +2194,7 @@ const airlineDetailPage: Handler = (ctx) => {
         ogTitle: `${cfg.name} Starlink WiFi — Rollout Status`,
         ogDescription: cfg.rollout.phaseNote,
       },
-      { overview, facts: factsForCode(cfg.code) }
+      { overview, facts: factsForCode(cfg.code), phases: passengerPhases(cfg.code) }
     );
   }
 
@@ -2227,23 +2229,31 @@ function comparePairs(): Array<[AirlineConfig, AirlineConfig]> {
   return out;
 }
 
+/** Passenger-facing per-type answer for a type-determined program; null for
+ * airlines whose status is per-tail. Freighter families are dropped — nobody
+ * is choosing a seat on one. */
+function passengerPhases(code: AirlineCode): TypePhase[] | null {
+  const table = wifiPhaseFamilies(code);
+  return table
+    ? Object.entries(table)
+        .filter(([family]) => !family.endsWith("F"))
+        .map(([family, phase]) => ({ family, phase }))
+    : null;
+}
+
 function buildCompareSide(ctx: RequestContext, cfg: AirlineConfig): CompareSide {
   const reader = ctx.getReader(cfg.code);
   const liveSite = siteForAirline(cfg.code, true);
-  const phaseTable = wifiPhaseFamilies(cfg.code);
+  const phases = passengerPhases(cfg.code);
   return {
     cfg,
     stat: reader.getPerAirlineStats()[0],
     trackerHost: liveSite?.canonicalHost ?? null,
-    // Type-determined programs render the phase table; a single subfleet
-    // number there would be the blended answer the predict path refuses.
-    // Freighter families stay off this passenger-facing surface.
-    breakdown: phaseTable ? [] : subfleetBreakdown(cfg, reader),
-    phases: phaseTable
-      ? Object.entries(phaseTable)
-          .filter(([family]) => !family.endsWith("F"))
-          .map(([family, phase]) => ({ family, phase }))
-      : null,
+    // Type-determined programs render the phase table INSTEAD of any blended
+    // number — see PhaseTable for why the fleet percentage is unpublishable
+    // for them. The panel drops the headline stat when phases are present.
+    breakdown: phases ? [] : subfleetBreakdown(cfg, reader),
+    phases,
     facts: factsForCode(cfg.code),
     checkFlightUrl: liveSite?.features.checkFlightPage
       ? `https://${liveSite.canonicalHost}/check-flight`
