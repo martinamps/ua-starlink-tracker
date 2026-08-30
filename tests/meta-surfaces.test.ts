@@ -8,14 +8,30 @@
  */
 
 import { beforeAll, describe, expect, test } from "bun:test";
-import { HOST_REDIRECTS, SITES, type SiteConfig, resolveSite } from "../src/airlines/registry";
+import {
+  CANONICAL_FLIGHT_PERMALINK,
+  buildFlightLookupVariants,
+} from "../src/airlines/flight-number";
+import {
+  AIRLINES,
+  HOST_REDIRECTS,
+  SITES,
+  type SiteConfig,
+  resolveSite,
+} from "../src/airlines/registry";
+import { type Scope, type ScopedReader, createReaderFactory } from "../src/database/reader";
 import { API_RATE_LIMIT, createApp } from "../src/server/app";
 import { mcpReq, openSnapshot, req } from "./helpers";
 
 let app: ReturnType<typeof createApp>;
+// Same snapshot the app serves from, so the pure-DB tier and the dispatched
+// tier can never disagree about what data exists.
+let readers: (scope: Scope) => ScopedReader;
 
 beforeAll(() => {
-  app = createApp(openSnapshot());
+  const db = openSnapshot();
+  app = createApp(db);
+  readers = createReaderFactory(db);
 });
 
 // Sweeps fetch every advertised URL — with flight permalinks enumerated in
@@ -60,19 +76,106 @@ async function statusOf(urls: Array<{ href: string; path: string; host: string }
   return Promise.all(urls.map(async (u) => ({ ...u, status: (await get(u.path, u.host)).status })));
 }
 
+// ── bounded sweeps ─────────────────────────────────────────────────────────
+// The sitemaps are parameterized: united alone advertises 6,696 URLs, and each
+// one is a full SSR render (~4ms), so dispatching every one costs ~25s per
+// method per site and blows any sane test budget. The corpus is also data
+// shaped, so it only grows. Split the invariant instead of sampling it away:
+//
+//   tier (a) EXHAUSTIVE, pure-DB — every advertised URL has the canonical
+//            shape its router accepts and passes that route's existence gate.
+//            This is the tier that catches a sitemap advertising a 404
+//            (it is what /check-flight/UA63986 tripped), and it is O(ms).
+//   tier (b) DISPATCHED — every static URL plus a deterministic stride sample
+//            of the parameterized ones, actually fetched. This is what pins
+//            the per-method behaviours a DB check cannot see (the /mcp HEAD
+//            405 regression, header/redirect wrappers, render crashes).
+//
+// The stride is index-based, never random, so a failure names a URL that the
+// next run will fetch again.
+
+/** Cap on dispatched parameterized URLs per site per method. */
+const SWEEP_SAMPLE = 60;
+/** Both sweeps render SSR pages; the default 5s is not a meaningful budget. */
+const SWEEP_TIMEOUT_MS = 60_000;
+
+const isParameterized = (p: string) =>
+  /^\/check-flight\/.+/.test(p) || /^\/route-planner\/.+\/.+/.test(p);
+
+/**
+ * Static URLs in full, plus every Nth parameterized URL — first and last
+ * always included so the ends of the corpus stay covered.
+ */
+function sweepSample(paths: string[]): string[] {
+  const statics = paths.filter((p) => !isParameterized(p));
+  const params = paths.filter(isParameterized);
+  if (params.length <= SWEEP_SAMPLE) return [...statics, ...params];
+  const stride = Math.ceil(params.length / SWEEP_SAMPLE);
+  const picked = params.filter((_, i) => i % stride === 0);
+  const last = params[params.length - 1];
+  if (!picked.includes(last)) picked.push(last);
+  return [...statics, ...picked];
+}
+
 for (const site of Object.values(SITES)) {
   describe(`meta surfaces: ${site.key} (${site.canonicalHost})`, () => {
-    test("every sitemap URL serves < 400", async () => {
+    // Tier (a): exhaustive, pure-DB. Every advertised parameterized URL must
+    // have the shape its router accepts AND have data behind it, which is
+    // exactly the pair of conditions that decide 200 vs 404 for these routes.
+    test("every sitemap URL has a shape and a row the router will answer", async () => {
       const paths = await sitemapPaths(site);
-      const results = await statusOf(
-        paths.map((path) => ({ href: path, path, host: site.canonicalHost }))
-      );
-      for (const r of results) {
-        expect(r.status, `${site.key} sitemap advertises ${r.href} → ${r.status}`).toBeLessThan(
-          400
-        );
+      const reader = site.scope === "ALL" ? null : readers(site.scope);
+      const cfg = site.scope === "ALL" ? null : AIRLINES[site.scope];
+      let checked = 0;
+      for (const path of paths) {
+        const flight = path.match(/^\/check-flight\/(.+)$/);
+        if (flight) {
+          expect(
+            reader && cfg,
+            `${site.key} advertises ${path} without a permalink scope`
+          ).toBeTruthy();
+          expect(flight[1], `${site.key} sitemap advertises ${path}`).toMatch(
+            CANONICAL_FLIGHT_PERMALINK
+          );
+          expect(
+            reader!.flightNumberHasData(buildFlightLookupVariants(cfg!, flight[1])),
+            `${site.key} sitemap advertises ${path} with no data behind it`
+          ).toBe(true);
+          checked++;
+          continue;
+        }
+        const route = path.match(/^\/route-planner\/([^/]+)\/([^/]+)$/);
+        if (route) {
+          expect(route[1], `${site.key} sitemap advertises ${path}`).toMatch(/^[A-Z0-9]{3,4}$/);
+          expect(route[2], `${site.key} sitemap advertises ${path}`).toMatch(/^[A-Z0-9]{3,4}$/);
+          expect(
+            reader!.routeHasData(route[1], route[2]),
+            `${site.key} sitemap advertises ${path} with no data behind it`
+          ).toBe(true);
+          checked++;
+        }
       }
+      // Guards the guard: if the enumerator ever stops emitting parameterized
+      // URLs this test must not keep passing on an empty loop.
+      if (site.features.checkFlightPage) expect(checked).toBeGreaterThan(0);
     });
+
+    // Tier (b): actually dispatched — statics in full, parameterized sampled.
+    test(
+      "every static sitemap URL and a sample of the rest serves < 400",
+      async () => {
+        const paths = sweepSample(await sitemapPaths(site));
+        const results = await statusOf(
+          paths.map((path) => ({ href: path, path, host: site.canonicalHost }))
+        );
+        for (const r of results) {
+          expect(r.status, `${site.key} sitemap advertises ${r.href} → ${r.status}`).toBeLessThan(
+            400
+          );
+        }
+      },
+      SWEEP_TIMEOUT_MS
+    );
 
     test("no sitemap URL is robots-disallowed", async () => {
       const disallows = await robotsDisallows(site);
@@ -86,20 +189,24 @@ for (const site of Object.values(SITES)) {
       }
     });
 
-    test("every sitemap URL answers HEAD < 400 (crawlers pre-fetch with HEAD)", async () => {
-      // /mcp regression: the page branch only matched GET+Accept:text/html, so
-      // HEAD fell through to the MCP protocol handler's 405 on a
-      // sitemap-advertised URL.
-      for (const path of await sitemapPaths(site)) {
-        const res = await app.dispatch(
-          req(path, site.canonicalHost, {
-            method: "HEAD",
-            headers: { "x-forwarded-for": "127.0.0.1" },
-          })
-        );
-        expect(res.status, `${site.key} HEAD ${path} → ${res.status}`).toBeLessThan(400);
-      }
-    });
+    test(
+      "every static sitemap URL and a sample of the rest answers HEAD < 400 (crawlers pre-fetch with HEAD)",
+      async () => {
+        // /mcp regression: the page branch only matched GET+Accept:text/html, so
+        // HEAD fell through to the MCP protocol handler's 405 on a
+        // sitemap-advertised URL. /mcp is a static URL, so it is always swept.
+        for (const path of sweepSample(await sitemapPaths(site))) {
+          const res = await app.dispatch(
+            req(path, site.canonicalHost, {
+              method: "HEAD",
+              headers: { "x-forwarded-for": "127.0.0.1" },
+            })
+          );
+          expect(res.status, `${site.key} HEAD ${path} → ${res.status}`).toBeLessThan(400);
+        }
+      },
+      SWEEP_TIMEOUT_MS
+    );
 
     test("every llms.txt URL on a tracked host serves < 400", async () => {
       const res = await get("/llms.txt", site.canonicalHost);

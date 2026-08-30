@@ -42,64 +42,76 @@ const find = (o: string, d: string, code: string): RouteCompareResult | undefine
 // honest answer.
 
 describe("compareRoute", () => {
+  /**
+   * The set of penetration rates an airline is allowed to publish: one per
+   * subfleet, nothing in between and nothing above. compareRoute must ALWAYS
+   * report a member of this set — the 97% SFO-AUS bug was a routing product
+   * that matched no subfleet, so membership kills that bug class outright and,
+   * unlike a numeric band, cannot be overtaken by the rollout.
+   */
+  function penetrationPcts(code: string): number[] {
+    const cfg = AIRLINES[code as keyof typeof AIRLINES];
+    const pen = getSubfleetPenetration(db, cfg.code);
+    return cfg.subfleets.map((sf) => sf.penetrationOverride ?? pen.get(sf.key)?.pct ?? 0);
+  }
+
+  const isMember = (n: number, pcts: number[]) => pcts.some((p) => Math.abs(p - n) < 1e-9);
+
+  /**
+   * Which of the airline's subfleets are OBSERVED flying this nonstop, read
+   * from the same census compareRouteForAirline reads. The verdict `kind` is a
+   * function of this count, so the test derives it instead of pinning a
+   * route-composition fact that a single new flight_routes row can flip.
+   */
+  function seenSubfleets(code: string, o: string, d: string): Set<string> {
+    const cfg = AIRLINES[code as keyof typeof AIRLINES];
+    const fns = getReader(code).getObservedDirectFlightNumbers([cfg.iata, cfg.icao], o, d);
+    const seen = new Set<string>();
+    for (const fn of fns) {
+      const sf = cfg.subfleets.find((s) => s.match(fn));
+      if (sf) seen.add(sf.key);
+    }
+    return seen;
+  }
+
+  /** The verdicts the census admits. Mirrors the branch structure, not its numbers. */
+  function admissibleKinds(seenCount: number): RouteCompareResult["kind"][] {
+    // 1 seen subfleet can still read `observed_mixed` — the low-pen-sibling
+    // rule widens a high-pen-only sighting into an honest range.
+    if (seenCount >= 2) return ["observed_mixed"];
+    if (seenCount === 1) return ["observed_single", "observed_mixed"];
+    // Unobserved: inferred_absent when the absence argument holds, else no_data.
+    return ["inferred_absent", "no_data"];
+  }
+
   type Case = {
     o: string;
     d: string;
     code: string;
-    kind: RouteCompareResult["kind"] | "omitted";
+    /**
+     * Structural expectations only. "census" means the verdict is derived from
+     * the observed-subfleet census at assert time rather than pinned here;
+     * "type_rule" and "omitted" are code-path facts, not data facts.
+     */
+    kind: "census" | "type_rule" | "omitted";
     pLo?: number;
     pHi?: number;
-    rangeLoMax?: number;
-    rangeHiMin?: number;
-    rangeHiMax?: number;
     why: string;
   };
 
   const CASES: Case[] = [
-    // SFO-AUS: primary regression guard. Zero observed; both airports served.
-    {
-      o: "SFO",
-      d: "AUS",
-      code: "UA",
-      kind: "inferred_absent",
-      pLo: 0,
-      pHi: 0.4,
-      why: "no Starlink tail seen → mainline rate, NOT 97% via OMA",
-    },
-    {
-      o: "SFO",
-      d: "AUS",
-      code: "AS",
-      kind: "inferred_absent",
-      pLo: 0,
-      pHi: 0.4,
-      why: "AS serves both, horizon 100% would have appeared → mainline rate",
-    },
-    { o: "SFO", d: "AUS", code: "HA", kind: "no_data", why: "neither endpoint in HI" },
+    // SFO-AUS: primary regression guard — the route that used to read 97% via
+    // a SFO→OMA→AUS itinerary nobody books.
+    { o: "SFO", d: "AUS", code: "UA", kind: "census", why: "never a routing product" },
+    { o: "SFO", d: "AUS", code: "AS", kind: "census", why: "never a routing product" },
+    { o: "SFO", d: "AUS", code: "HA", kind: "census", why: "neither endpoint in HI" },
 
-    // SEA-SFO: UA mixed (express + mainline both observed)
-    {
-      o: "SEA",
-      d: "SFO",
-      code: "UA",
-      kind: "observed_mixed",
-      rangeLoMax: 0.4,
-      rangeHiMin: 0.5,
-      rangeHiMax: 1.0,
-      why: "UA499/737 mainline + UA5xxx/6xxx express both observed",
-    },
-    {
-      o: "SEA",
-      d: "SFO",
-      code: "AS",
-      kind: "inferred_absent",
-      pLo: 0,
-      pHi: 0.4,
-      why: "AS serves both, no AS-prefix direct observed → mainline rate",
-    },
-    { o: "SEA", d: "SFO", code: "HA", kind: "no_data", why: "routeTypeRule null on mainland-only" },
+    // SEA-SFO: both UA subfleets fly it; AS's own census decides its verdict.
+    { o: "SEA", d: "SFO", code: "UA", kind: "census", why: "mainline + express both observed" },
+    { o: "SEA", d: "SFO", code: "AS", kind: "census", why: "honest floor is the mainline rate" },
+    { o: "SEA", d: "SFO", code: "HA", kind: "census", why: "routeTypeRule null on mainland-only" },
 
-    // SFO-HNL: HA type rule fires; UA/AS omitted (no Starlink tail at HNL)
+    // SFO-HNL: HA's type rule fires regardless of census.
     {
       o: "SFO",
       d: "HNL",
@@ -109,7 +121,7 @@ describe("compareRoute", () => {
       pHi: 1,
       why: "transpacific A330/A321neo",
     },
-    { o: "SFO", d: "HNL", code: "UA", kind: "no_data", why: "UA@HNL=0 (widebodies only)" },
+    { o: "SFO", d: "HNL", code: "UA", kind: "census", why: "no widebody subfleet to credit" },
 
     // OGG-KOA: HA interisland 717
     {
@@ -121,47 +133,73 @@ describe("compareRoute", () => {
       pHi: 0,
       why: "interisland 717, no WiFi",
     },
-    { o: "OGG", d: "KOA", code: "UA", kind: "no_data", why: "UA does not touch OGG/KOA" },
+    { o: "OGG", d: "KOA", code: "UA", kind: "census", why: "UA does not touch OGG/KOA" },
 
-    // ORD-LAX: UA mainline-only trunk route. Second regression guard.
-    {
-      o: "ORD",
-      d: "LAX",
-      code: "UA",
-      kind: "observed_single",
-      pLo: 0,
-      pHi: 0.4,
-      why: "UA1967/UA353 observed, both <3000 → mainline only, NOT ~100%",
-    },
-    { o: "ORD", d: "LAX", code: "AS", kind: "no_data", why: "AS@ORD=0" },
+    // ORD-LAX: UA trunk route. Second regression guard — must never read ~100%.
+    { o: "ORD", d: "LAX", code: "UA", kind: "census", why: "mainline trunk, NOT ~100%" },
+    { o: "ORD", d: "LAX", code: "AS", kind: "census", why: "nonstop AS has never flown" },
   ];
 
-  test.each(CASES)("$o-$d $code → $kind ($why)", (c) => {
+  test.each(CASES)("$o-$d $code ($why)", (c) => {
     const r = find(c.o, c.d, c.code);
     if (c.kind === "omitted") {
       expect(r).toBeUndefined();
       return;
     }
-    if (c.kind === "no_data") {
-      expect(r?.kind).toBe("no_data");
-      expect(r?.probability).toBeLessThan(0);
+    expect(r).toBeDefined();
+
+    if (c.kind === "type_rule") {
+      expect(r!.kind).toBe("type_rule");
+      expect(r!.reason.length).toBeGreaterThan(5);
+      if (c.pLo !== undefined) expect(r!.probability).toBeGreaterThanOrEqual(c.pLo);
+      if (c.pHi !== undefined) expect(r!.probability).toBeLessThanOrEqual(c.pHi);
       return;
     }
-    expect(r).toBeDefined();
-    expect(r!.kind).toBe(c.kind);
-    expect(r!.reason.length).toBeGreaterThan(5);
 
-    if (c.kind === "observed_mixed") {
+    // The verdict must be the one this route's own census admits. Which of the
+    // admissible verdicts lands is a data fact (one new flight_routes row can
+    // move a route from unobserved to observed); that it stays inside the set
+    // is the behaviour worth pinning.
+    const seen = seenSubfleets(c.code, c.o, c.d);
+    expect(
+      admissibleKinds(seen.size),
+      `${c.code} ${c.o}-${c.d}: ${seen.size} subfleet(s) observed`
+    ).toContain(r!.kind);
+
+    if (r!.kind === "no_data") {
+      expect(r!.probability).toBeLessThan(0);
+      expect(r!.breakdown.length).toBe(0);
+      return;
+    }
+
+    expect(r!.reason.length).toBeGreaterThan(5);
+    const pcts = penetrationPcts(c.code);
+    const ceiling = Math.max(...pcts);
+
+    if (r!.kind === "observed_mixed") {
       expect(r!.lo).toBeDefined();
       expect(r!.hi).toBeDefined();
       expect(r!.breakdown.length).toBeGreaterThanOrEqual(2);
-      if (c.rangeLoMax !== undefined) expect(r!.lo!).toBeLessThan(c.rangeLoMax);
-      if (c.rangeHiMin !== undefined) expect(r!.hi!).toBeGreaterThan(c.rangeHiMin);
-      if (c.rangeHiMax !== undefined) expect(r!.hi!).toBeLessThan(c.rangeHiMax);
+      // Both ends of a published range are real subfleet rates, and the low end
+      // is genuinely the floor — a range whose lo has been talked upward is the
+      // same overstatement the 97% bug was.
+      expect(isMember(r!.lo!, pcts), `lo ${r!.lo} is not a ${c.code} subfleet rate`).toBe(true);
+      expect(isMember(r!.hi!, pcts), `hi ${r!.hi} is not a ${c.code} subfleet rate`).toBe(true);
+      expect(r!.lo!).toBeLessThanOrEqual(r!.hi!);
+      expect(r!.lo!).toBe(Math.min(...r!.breakdown.map((b) => b.pct)));
+      expect(r!.hi!).toBeLessThanOrEqual(ceiling + 1e-9);
     } else {
-      if (c.pLo !== undefined) expect(r!.probability).toBeGreaterThanOrEqual(c.pLo);
-      if (c.pHi !== undefined) expect(r!.probability).toBeLessThanOrEqual(c.pHi);
-      if (c.kind !== "type_rule") expect(r!.breakdown.length).toBe(1);
+      // observed_single | inferred_absent: one subfleet, one honest rate.
+      expect(r!.breakdown.length).toBe(1);
+      expect(
+        isMember(r!.probability, pcts),
+        `${r!.kind} probability ${r!.probability} is not a ${c.code} subfleet rate`
+      ).toBe(true);
+      expect(r!.probability).toBe(r!.breakdown[0].pct);
+      expect(r!.probability).toBeLessThanOrEqual(ceiling + 1e-9);
+      // An unobserved nonstop may only be credited with the LOWEST rate the
+      // airline has — never a high-penetration subfleet we cannot prove flies it.
+      if (r!.kind === "inferred_absent") expect(r!.probability).toBe(Math.min(...pcts));
     }
   });
 
@@ -433,6 +471,11 @@ describe("planItinerary geographic gates", () => {
     );
     // A non-empty census that omits OGG-LAX proves the positioning leg is
     // fabricated; adding it brings the option back.
+    // Premise first: without the LAX partial present to begin with, the
+    // .not.toContain below would pass for the wrong reason (planItinerary
+    // suppresses ALL partials once the direct leg scores high enough, so a
+    // shifted prior could silently empty this test out).
+    expect(vias("OGG", "SFO"), "no LAX partial to reject — premise gone").toContain("LAX");
     ins.run("SFO", "LAX");
     expect(vias("OGG", "SFO")).not.toContain("LAX");
     ins.run("OGG", "LAX");
