@@ -175,10 +175,25 @@ describe("type-aware predictor", () => {
     expect(p.probability).toBe(CONFIG.expressColdPrior);
   });
 
+  test("an off-roster airframe with no clean observation neither counts nor blocks", () => {
+    // The conjunction 462d886 named as its root cause: a tail missing from the
+    // fleet roster AND never seen in a clean observation. Production has no
+    // airframe in that state today — every off-roster tail in the draw log
+    // carries one, and never-equipped jets report wifi_provider 'None', which
+    // is a clean negative — but the model must handle it in the safe direction:
+    // the unknown body is not counted as unequipped, and it does not stop the
+    // family's KNOWN bodies from pricing the flight either.
+    const p = buildModel([], CONFIG, crjRoster, [draw("UA5530", "NGHOST-1", "CRJ-200")]).predict(
+      "UA5530"
+    );
+    expect(p.method).toBe("type_mix_prior");
+    expect(p.probability).toBeLessThan(CONFIG.expressColdPrior / 4);
+  });
+
   test("type evidence informs the prior; it never overrules the flight's own record", () => {
     // A 25%-penetration family still has flight numbers that draw an equipped
-    // tail every single day. Clamping those to the family rate is the failure
-    // mode a hard cap introduced — measured, then removed.
+    // tail every single day. Clamping those at the family rate costs Brier
+    // 0.1630 -> 0.1727 on the production snapshot — see mixPrior's note.
     const history = Array.from({ length: 12 }, (_, i) => obs("UA800", "N738-0", 1, i / 4));
     const draws = Array.from({ length: 12 }, (_, i) =>
       draw("UA800", "N738-0", "Boeing 737-824", i / 4)

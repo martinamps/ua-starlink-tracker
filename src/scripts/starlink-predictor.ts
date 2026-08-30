@@ -326,10 +326,13 @@ function buildTypeAwarePredict(
    *
    * It caps by REPLACING the subfleet prior rather than by clamping the final
    * number: a flight number's own history may legitimately sit far above its
-   * families' average (a 20%-penetration family still has flights that draw an
-   * equipped tail every day), and clamping the result wrecks exactly those.
-   * The evidence outranks the prior; the prior is what had no business being a
-   * fleet-wide average.
+   * families' average, because a partly-retrofitted family still has flights
+   * that draw an equipped tail every day. Clamping the result at the family
+   * rate was measured on the production snapshot (90-day holdout, n=26,839):
+   * Brier 0.1630 -> 0.1727, and over the 3,038 observations it actually moved
+   * it pulled the prediction from 0.320 down to 0.190 against an outcome rate
+   * of 0.551. The evidence outranks the prior; the prior is what had no
+   * business being a fleet-wide average.
    *
    * Each family rate is shrunk toward the census-wide rate by the same α the
    * flight-level model uses, because a family census is itself a sample: the
