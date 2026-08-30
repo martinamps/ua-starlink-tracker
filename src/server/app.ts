@@ -2279,27 +2279,30 @@ export function createApp(db: Database): App {
   let lastSweep = 0;
   const bootedAt = Date.now();
 
-  // Ops probe, not a page: must answer on ANY Host (uptime checks hit the
-  // bare IP or localhost, which would otherwise 421), so it's served in
-  // dispatch() ahead of tenancy, rate limiting, and metrics. Deliberately
-  // absent from SITE_PAGES (never advertised in sitemap/llms.txt) and
-  // disallowed in robots.txt. 503 only on states a restart/page can fix:
-  // unreadable DB or a registered-but-silent scheduler. Table-age numbers are
-  // reported for humans/probes but don't flip status — per-pipeline staleness
-  // already pages via starlink.data.freshness_ratio.
-  function healthzResponse(method: string): Response {
-    const headers = { "Content-Type": "application/json", "Cache-Control": "no-store" };
-    if (method !== "GET" && method !== "HEAD") {
-      return new Response(JSON.stringify({ error: "method not allowed" }), {
-        status: 405,
-        headers,
-      });
-    }
-    const nowSec = Math.floor(Date.now() / 1000);
-    let dbOk = true;
-    let dbError: string | undefined;
-    // Key write paths only, epoch-second columns; null = table empty.
-    const lastWriteAgeSec: Record<string, number | null> = {};
+  // /healthz reads two MAX() timestamps; it is unauthenticated and served ahead
+  // of the rate limiter, so the aggregate read is cached rather than run per
+  // request — a probe must not be a load amplifier, and these ages are advisory
+  // (30s of staleness on a pipeline whose deadman budget is 24h changes no
+  // decision). Reachability is NOT cached: healthzDbPing runs every request so
+  // a DB that just became unreadable degrades immediately rather than 30s late.
+  const HEALTHZ_DB_CACHE_MS = 30_000;
+  let healthzDbCache: {
+    at: number;
+    ok: boolean;
+    error?: string;
+    ages: Record<string, number | null>;
+  } | null = null;
+
+  function healthzDbSample(nowMs: number) {
+    if (healthzDbCache && nowMs - healthzDbCache.at < HEALTHZ_DB_CACHE_MS) return healthzDbCache;
+    const nowSec = Math.floor(nowMs / 1000);
+    let ok = true;
+    let error: string | undefined;
+    // Key write paths only, epoch-second columns; null = table empty. Both
+    // MAXes seek a single-column index (idx_vlog_checked / idx_upf_updated) —
+    // see setupTables; without them a global MAX on a composite index's
+    // trailing column scans the whole log.
+    const ages: Record<string, number | null> = {};
     for (const [table, column] of [
       ["starlink_verification_log", "checked_at"],
       ["upcoming_flights", "last_updated"],
@@ -2308,30 +2311,66 @@ export function createApp(db: Database): App {
         const row = db.query(`SELECT MAX(${column}) AS ts FROM ${table}`).get() as {
           ts: number | null;
         };
-        lastWriteAgeSec[table] = row.ts == null ? null : Math.max(0, nowSec - row.ts);
+        ages[table] = row.ts == null ? null : Math.max(0, nowSec - row.ts);
       } catch (err) {
-        dbOk = false;
-        dbError = err instanceof Error ? err.message : String(err);
-        lastWriteAgeSec[table] = null;
+        ok = false;
+        error = err instanceof Error ? err.message : String(err);
+        ages[table] = null;
       }
     }
-    const sched = schedulerStatus();
+    healthzDbCache = { at: nowMs, ok, error, ages };
+    return healthzDbCache;
+  }
+
+  /** O(1) reachability check, deliberately outside the cache: a handle that has
+   * gone away (file unlinked, disk gone, connection closed) must show up on the
+   * very next probe, not when the age cache next expires. */
+  function healthzDbPing(): { ok: boolean; error?: string } {
+    try {
+      db.query("SELECT 1").get();
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  // Ops probe, not a page: must answer on ANY Host (uptime checks hit the
+  // bare IP or localhost, which would otherwise 421), so it's served in
+  // dispatch() ahead of tenancy, rate limiting, and metrics. Deliberately
+  // absent from SITE_PAGES (never advertised in sitemap/llms.txt) and
+  // disallowed in robots.txt. 503 only on states a restart/page can fix:
+  // an unreadable DB, or a job that has registered with the scheduler and is
+  // past its own cadence's deadman (job-runner's stalenessBudgetMs). Table-age
+  // numbers are reported for humans/probes but don't flip status — per-pipeline
+  // staleness already pages via starlink.data.freshness_ratio.
+  function healthzResponse(method: string): Response {
+    const headers = { "Content-Type": "application/json", "Cache-Control": "no-store" };
+    if (method !== "GET" && method !== "HEAD") {
+      return new Response(JSON.stringify({ error: "method not allowed" }), {
+        status: 405,
+        headers,
+      });
+    }
+    const nowMs = Date.now();
+    const ping = healthzDbPing();
+    const sample = healthzDbSample(nowMs);
+    const dbOk = ping.ok && sample.ok;
+    const dbError = ping.error ?? sample.error;
+    const sched = schedulerStatus(nowMs);
     const lastTickAgeSec =
-      sched.lastTickAt == null
-        ? null
-        : Math.max(0, Math.round((Date.now() - sched.lastTickAt) / 1000));
-    // jobs=0 stays healthy: DISABLE_JOBS=1 and test processes run no jobs at
-    // all — the deadman is for a scheduler that registered ticks then went
-    // silent (fastest job cadence is 22.5s; 10min of silence means wedged).
-    const schedulerStale = sched.jobs > 0 && lastTickAgeSec !== null && lastTickAgeSec > 600;
-    const ok = dbOk && !schedulerStale;
+      sched.lastTickAt == null ? null : Math.max(0, Math.round((nowMs - sched.lastTickAt) / 1000));
+    // jobs=0 stays healthy: DISABLE_JOBS=1 and test processes register none.
+    // With jobs registered, staleness is per job against that job's own
+    // interval — a global newest-tick would let the 22.5s flight updater mask
+    // every wedged or dead sibling.
+    const ok = dbOk && sched.staleJobs.length === 0;
     return new Response(
       JSON.stringify({
         status: ok ? "ok" : "degraded",
         db: dbOk ? { ok: true } : { ok: false, error: dbError },
-        lastWriteAgeSec,
-        scheduler: { jobs: sched.jobs, lastTickAgeSec },
-        uptimeSec: Math.max(0, Math.round((Date.now() - bootedAt) / 1000)),
+        lastWriteAgeSec: sample.ages,
+        scheduler: { jobs: sched.jobs, lastTickAgeSec, staleJobs: sched.staleJobs },
+        uptimeSec: Math.max(0, Math.round((nowMs - bootedAt) / 1000)),
       }),
       { status: ok ? 200 : 503, headers }
     );

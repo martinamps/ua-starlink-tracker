@@ -622,7 +622,17 @@ function migrateMultiAirline(db: Database) {
     CREATE INDEX IF NOT EXISTS idx_vlog_airline ON starlink_verification_log(airline, tail_number);
     CREATE INDEX IF NOT EXISTS idx_vlog_flight  ON starlink_verification_log(flight_number, checked_at DESC);
     CREATE INDEX IF NOT EXISTS idx_upf_tail     ON upcoming_flights(tail_number);
+    CREATE INDEX IF NOT EXISTS idx_vlog_checked  ON starlink_verification_log(checked_at);
+    CREATE INDEX IF NOT EXISTS idx_upf_updated   ON upcoming_flights(last_updated);
   `);
+
+  // The two single-column timestamp indexes serve /healthz's global
+  // MAX(checked_at) / MAX(last_updated). A MAX on the TRAILING column of a
+  // composite index can't seek — idx_vlog_flight made it a full covering-index
+  // scan of the verification log, and upcoming_flights had no candidate at all.
+  // Measured at production size (83k log rows): 2ms → under the 1ms timer floor.
+  // /healthz is unauthenticated and served ahead of the rate limiter, so its
+  // cost must not grow with the log.
 
   // The two indexes above exist for the serving path: getFlightHistorySummary
   // runs three flight_number-filtered queries per permalink render and had only

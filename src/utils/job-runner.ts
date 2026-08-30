@@ -30,18 +30,60 @@ const REAL_CLOCK: JobClock = {
 
 const DEFAULT_STUCK_TIMEOUT_MS = 15 * 60 * 1000;
 
-// Scheduler-alive registry for /healthz. Stamped on real wall-clock time at
-// every tick entry (skips included — a tick that ran at all proves the timer
-// fired), independent of the injectable test clock: the question healthz asks
-// is "are timers firing in THIS process", not what a fake clock says.
-const jobTicks = new Map<string, number>();
+// Per-job liveness registry for /healthz. Every stamp is real wall-clock,
+// independent of the injectable test clock: healthz asks "are THIS process's
+// timers firing", not what a fake clock says.
+//
+// Registration happens in startJob, not at first tick. Counting only ticked
+// jobs made "JOBS_ENABLED but the timers never fired" report jobs:0 — the
+// same shape as DISABLE_JOBS=1, so the exact wedge the probe exists for read
+// as healthy forever.
+interface JobLiveness {
+  intervalMs: number;
+  stuckTimeoutMs: number;
+  registeredAt: number;
+  /** Last tick that got past the stuck-skip and actually started a run. A
+   * tick that only bounced off a wedged predecessor proves the timer fired,
+   * not that the job is alive, so it deliberately doesn't stamp. */
+  lastRunStartedAt: number | null;
+  /** Last run that settled, success or failure. A run hung forever never
+   * stamps this — the one wedge a tick-entry heartbeat cannot see, because
+   * the stuck escape keeps starting fresh runs on schedule. */
+  lastRunEndedAt: number | null;
+}
 
-export function schedulerStatus(): { jobs: number; lastTickAt: number | null } {
+const jobLiveness = new Map<string, JobLiveness>();
+
+/** Silence past this and the job is wedged or its timer is gone, not merely
+ * between runs. Floored at 10 min so the 22.5s flight updater can't page on a
+ * single delayed tick, and held above the runner's own stuck timeout so an
+ * abandoned-then-restarted run is not mistaken for a dead one. */
+function stalenessBudgetMs(j: JobLiveness): number {
+  return Math.max(10 * 60_000, 2 * j.intervalMs, 2 * j.stuckTimeoutMs);
+}
+
+export interface SchedulerStatus {
+  /** Registered jobs, ticked or not. 0 means none were started (DISABLE_JOBS=1, tests). */
+  jobs: number;
+  /** Newest run-start across all jobs — a coarse "something is firing" signal. */
+  lastTickAt: number | null;
+  /** Jobs whose own cadence says they should have completed a run by now. */
+  staleJobs: string[];
+}
+
+export function schedulerStatus(now = Date.now()): SchedulerStatus {
   let last: number | null = null;
-  for (const ts of jobTicks.values()) {
-    if (last === null || ts > last) last = ts;
+  const staleJobs: string[] = [];
+  for (const [name, j] of jobLiveness) {
+    if (j.lastRunStartedAt !== null && (last === null || j.lastRunStartedAt > last)) {
+      last = j.lastRunStartedAt;
+    }
+    // Never-run jobs are measured from registration, so a scheduler whose
+    // timers never fire goes stale on its own budget instead of hiding
+    // behind a sibling job's heartbeat.
+    if (now - (j.lastRunEndedAt ?? j.registeredAt) > stalenessBudgetMs(j)) staleJobs.push(name);
   }
-  return { jobs: jobTicks.size, lastTickAt: last };
+  return { jobs: jobLiveness.size, lastTickAt: last, staleJobs };
 }
 
 export interface JobRunContext {
@@ -75,8 +117,16 @@ export function startJob(opts: JobOptions): JobHandle {
   let runSeq = 0;
   let active: { id: number; startedAt: number } | null = null;
 
+  const liveness: JobLiveness = {
+    intervalMs,
+    stuckTimeoutMs,
+    registeredAt: Date.now(),
+    lastRunStartedAt: null,
+    lastRunEndedAt: null,
+  };
+  jobLiveness.set(name, liveness);
+
   const tick = async (): Promise<void> => {
-    jobTicks.set(name, Date.now());
     if (active) {
       const elapsed = clock.now() - active.startedAt;
       if (elapsed < stuckTimeoutMs) {
@@ -89,11 +139,15 @@ export function startJob(opts: JobOptions): JobHandle {
     }
     const id = ++runSeq;
     active = { id, startedAt: clock.now() };
+    liveness.lastRunStartedAt = Date.now();
     try {
       await run({ isCurrent: () => active?.id === id });
     } catch (err) {
       error(`[job:${name}] run failed`, err);
     } finally {
+      // Settled at all — a throwing job is alive; failure paging is the
+      // job's own metrics' business, not the scheduler deadman's.
+      liveness.lastRunEndedAt = Date.now();
       if (active?.id === id) active = null;
     }
   };
@@ -110,6 +164,9 @@ export function startJob(opts: JobOptions): JobHandle {
     stop: () => {
       clock.clearInterval(interval);
       if (initial !== null) clock.clearTimeout(initial);
+      // Deliberately stopped is not unhealthy — leaving it registered would
+      // age a shut-down job into a permanent /healthz degrade.
+      if (jobLiveness.get(name) === liveness) jobLiveness.delete(name);
     },
   };
 }
