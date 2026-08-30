@@ -34,7 +34,9 @@ Bun + SQLite + server-rendered React. `server.ts` serves pages/APIs and starts b
 
 **Routes:** `/`, `/fleet`, `/check-flight`, `/route-planner`, `/api` (docs), `/mcp` · `/api/data`, `/api/check-flight`, `/api/predict-flight`, `/api/plan-route`, `/api/mismatches`, `/api/fleet-discovery`
 
-**MCP:** stateless Streamable HTTP at `/mcp` exposing 7 tools (`check_flight`, `predict_flight_starlink`, `plan_starlink_itinerary`, `predict_route_starlink`, `search_starlink_flights`, `get_fleet_stats`, `list_starlink_aircraft`), each with `structuredContent` + `outputSchema` (provenance, freshness, per-tail evidence URLs) alongside the prose. See `src/api/mcp-server.ts`.
+**MCP:** stateless Streamable HTTP at `/mcp` exposing 7 tools (`check_flight`, `predict_flight_starlink`, `plan_starlink_itinerary`, `predict_route_starlink`, `search_starlink_flights`, `get_fleet_stats`, `list_starlink_aircraft`), each with `structuredContent` + `outputSchema` (provenance, freshness, per-tail links into `/fleet`) alongside the prose. See `src/api/mcp-server.ts`.
+
+- **Never emit a URL that doesn't resolve.** Structured output is read by assistants that cite it verbatim, so `evidence_url` and friends must point at a route that exists on a *live* host today (`siteForAirline(code, true)`) — `tests/mcp-structured.test.ts` dispatches every one it emits.
 
 ## Public contracts — do not break
 
@@ -47,4 +49,4 @@ Bun + SQLite + server-rendered React. `server.ts` serves pages/APIs and starts b
 - **Tests assert shapes, not values** — integration tests run against a real data snapshot and must survive data drift
 - **Logging** — `import { info, error, debug } from "./utils/logger"` (auto-tags filename, writes console + `logs/app.log`)
 - **Metrics** — route every metric tag through the normalizers in `src/observability/metrics.ts`; always set the `airline` tag
-- **Upstream citizenship** — public endpoints serve from the DB; never proxy live scraping to callers
+- **Upstream citizenship** — public endpoints serve from the DB; never proxy live scraping to callers. The one standing exception is `/api/check-flight`, which awaits a *cached* FR24 tail lookup inside the ~2-day assignment window (`method: "fr24_tail_lookup"`); the rate limit is what protects that upstream, so don't publish "never live scraping" as an absolute

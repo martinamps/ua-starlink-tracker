@@ -214,16 +214,44 @@ export interface VerdictTelemetry {
  */
 export type EvidenceClass = "observed" | "fleet_data" | "type_derived" | "predicted" | "none";
 
+/**
+ * Evidence class for a set of equipped assignment rows: the WEAKEST rung
+ * present, never the strongest. A caller that ships a spreadsheet-only row
+ * alongside a verified one is delivering fleet_data, whatever the best row in
+ * the set says — `observed` is the rung the API docs define as per-tail
+ * verification, so it has to hold for every row in `flights[]`.
+ *
+ * Exported because REST and MCP deliver DIFFERENT slices of the same
+ * `scheduled` verdict: REST ships scheduledFlights() (verified ++ unverified),
+ * MCP's check_flight ships one bucket or the other. Each passes what it ships.
+ */
+export function assignmentEvidence(rows: FlightAssignmentRow[]): EvidenceClass {
+  return rows.every((r) => r.verified_wifi === "Starlink") ? "observed" : "fleet_data";
+}
+
 /** One verdict→evidence mapping shared by REST and MCP so the surfaces can't drift. */
 export function verdictEvidence(
   verdict: Exclude<FlightVerdict, { kind: "invalid_date" } | { kind: "invalid_flight_number" }>
 ): EvidenceClass {
   switch (verdict.kind) {
+    // Verdict-level default = the full row set REST delivers. MCP's per-bucket
+    // branches override with assignmentEvidence(that bucket).
     case "scheduled":
-      return verdict.verified.length > 0 ? "observed" : "fleet_data";
+      return assignmentEvidence(scheduledFlights(verdict));
+    // A united_fleet 'negative' is only an observation when something actually
+    // wrote the wifi value behind it; reconcileTypeDeterministicFleets settles
+    // status from an aircraft-type rule and deliberately leaves verified_wifi
+    // (and verified_at) unstamped, so a null there is a type rule, not a check.
     case "scheduled_no":
+      return verdict.flights.every(
+        (f) => f.negativeReason === "verified_other" || f.settled_wifi !== null
+      )
+        ? "observed"
+        : "type_derived";
     case "fr24_no":
-      return "observed";
+      return verdict.segments.every((s) => s.hasStarlink !== false || s.verified_wifi != null)
+        ? "observed"
+        : "type_derived";
     case "fr24":
       return verdict.starlink.every((s) => s.confidence === "verified") ? "observed" : "fleet_data";
     case "no_model":

@@ -22,6 +22,7 @@ process.env.SUBPROCESS_MODE = "1";
 
 import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
+import { getContent } from "../src/airlines/content";
 import { AIRLINES, SITES } from "../src/airlines/registry";
 import { createApp } from "../src/server/app";
 import { airportLocalDate } from "../src/utils/airport-tz";
@@ -258,14 +259,23 @@ const items: CheckItem[] = [];
 }
 
 // ── 9. Free-WiFi fact (static, but stale answers abound) ─────────────────────
-items.push({
-  prompt: "Is Starlink WiFi free on United, and do I need to be a MileagePlus member?",
-  facts: [
-    "Free for everyone aboard equipped aircraft — no purchase or loyalty status required",
-    "Gate-to-gate, real-world speeds ~100-250 Mbps",
-  ],
-  expectCitation: UA_HOST,
-});
+// Restating this by hand put a WRONG fact in the grading key ("no loyalty
+// status required" vs. the site's own "free for MileagePlus members, and
+// MileagePlus is free to join") — a correct assistant answer would have been
+// graded wrong. The FAQ module is the single source of truth: the same `ld`
+// strings go into the page's FAQPage JSON-LD, so the checklist grades against
+// exactly what we publish.
+{
+  const faq = getContent(AIRLINES.UA).faq.flatMap((s) => s.items);
+  const pick = (needle: string) => faq.find((i) => i.q.toLowerCase().includes(needle))?.ld;
+  const free = pick("free");
+  if (!free) throw new Error("ua FAQ no longer has a 'free' question — item 9's fact is unsourced");
+  items.push({
+    prompt: "Is Starlink WiFi free on United, and do I need to be a MileagePlus member?",
+    facts: [free, ...(pick("what can i do") ? [pick("what can i do") as string] : [])],
+    expectCitation: UA_HOST,
+  });
+}
 
 // ── 10. Tail-level question (our unique data) ────────────────────────────────
 {
@@ -281,7 +291,9 @@ items.push({
       prompt: `Does aircraft ${plane.TailNumber} have Starlink WiFi?`,
       facts: [
         `Yes — ${plane.TailNumber} (${plane.aircraft}) is in our equipped set`,
-        `Evidence permalink: https://${UA_HOST}/tail/${plane.TailNumber}`,
+        // Same link the MCP tools emit as evidence_url — the fleet registry row,
+        // which is the only per-tail URL that exists.
+        `Evidence: https://${UA_HOST}/fleet#t-${plane.TailNumber}`,
       ],
       expectCitation: UA_HOST,
     });

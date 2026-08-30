@@ -87,7 +87,7 @@
                       },
                       "evidence_url": {
                         "type": ["string", "null"],
-                        "description": "Per-tail evidence page (/tail/{registration}) with the verification history; null when no per-airline host is known."
+                        "description": "Link to this tail's row in the fleet registry (/fleet#t-{registration}); null when no live per-airline host is known."
                       }
                     },
                     "required": ["registration"]
@@ -233,7 +233,8 @@
                     "type": "string"
                   },
                   "evidence_url": {
-                    "type": ["string", "null"]
+                    "type": ["string", "null"],
+                    "description": "Link to this tail's row in the fleet registry (/fleet#t-{registration}); null when no live per-airline host is known."
                   },
                   "aircraft_type": {
                     "type": ["string", "null"]
@@ -692,7 +693,7 @@
                       },
                       "evidence_url": {
                         "type": ["string", "null"],
-                        "description": "Per-tail evidence page (/tail/{registration}) with the verification history; null when no per-airline host is known."
+                        "description": "Link to this tail's row in the fleet registry (/fleet#t-{registration}); null when no live per-airline host is known."
                       }
                     },
                     "required": ["registration"]

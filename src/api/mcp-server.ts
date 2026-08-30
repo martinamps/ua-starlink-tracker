@@ -54,6 +54,7 @@ import {
   FR24_OUTAGE_NOTE,
   type FlightVerdict,
   SWAP_DEGRADED_NOTE,
+  assignmentEvidence,
   carrierReader,
   dataFreshness,
   decideCarrier,
@@ -167,14 +168,17 @@ function prov(reader: ScopedReader, source: string, evidence: EvidenceClass): Pr
 }
 
 /**
- * Per-tail evidence permalink (/tail/{registration}) on the airline's own
- * tracker host. Null when no airline attribution exists (hub-scope aircraft
- * rows) — never a guessed host.
+ * Per-tail evidence link on the airline's own tracker host. MCP clients are
+ * assistants that surface and cite these, so it must resolve today: the fleet
+ * page's tail registry anchors every tail as `#t-{registration}`, which is the
+ * only per-tail URL that exists. Null when there is no airline attribution
+ * (hub-scope aircraft rows) or no LIVE site for the airline — a link to a host
+ * that isn't serving yet is the same dead citation as an unbuilt route.
  */
 function tailEvidenceUrl(code: AirlineCode | null, registration: string): string | null {
   if (!code) return null;
-  const host = siteForAirline(code)?.canonicalHost;
-  return host ? `https://${host}/tail/${encodeURIComponent(registration)}` : null;
+  const host = siteForAirline(code, true)?.canonicalHost;
+  return host ? `https://${host}/fleet#t-${encodeURIComponent(registration)}` : null;
 }
 
 /** Tail reference for structuredContent: registration + evidence permalink. */
@@ -264,7 +268,7 @@ const TAIL_SCHEMA = {
     evidence_url: {
       type: ["string", "null"],
       description:
-        "Per-tail evidence page (/tail/{registration}) with the verification history; null when no per-airline host is known.",
+        "Link to this tail's row in the fleet registry (/fleet#t-{registration}); null when no live per-airline host is known.",
     },
   },
   required: ["registration"],
@@ -346,7 +350,7 @@ function buildOutputSchemas(): Record<string, Record<string, unknown>> {
             type: "object",
             properties: {
               registration: { type: "string" },
-              evidence_url: { type: ["string", "null"] },
+              evidence_url: TAIL_SCHEMA.properties.evidence_url,
               aircraft_type: { type: ["string", "null"] },
               operator: { type: "string" },
               fleet: { type: "string" },
@@ -832,18 +836,22 @@ async function toolCheckFlight(
 
   // Structured mirror of the prose answer: same verdict, same rows, plus
   // per-tail evidence permalinks.
+  // `evidenceClass` defaults to the verdict-level class (the full row set), but
+  // check_flight's scheduled branches ship ONE bucket — verified or unverified,
+  // never both — so they pass the class of what they actually deliver.
   const structuredCheck = (
     verdictWord: "yes" | "no" | "unknown",
     confidence: string,
     source: string,
-    extra: Record<string, unknown> = {}
+    extra: Record<string, unknown> = {},
+    evidenceClass: EvidenceClass = evidence
   ): Record<string, unknown> => ({
     flight_number: normalized,
     date,
     verdict: verdictWord,
     confidence,
     ...extra,
-    provenance: prov(reader, source, evidence),
+    provenance: prov(reader, source, evidenceClass),
   });
 
   const structuredAssignment = (f: FlightAssignmentRow): Record<string, unknown> => ({
@@ -899,9 +907,13 @@ async function toolCheckFlight(
               text: `✈️ Yes! Flight ${normalized} on ${date} is scheduled on a verified Starlink aircraft:\n\n${verdict.verified.map(renderAssignment).join("\n")}\n\nStarlink WiFi is free on all equipped ${cfg.shortName} flights.`,
             },
           ],
-          structuredContent: structuredCheck("yes", "verified", "verified_assignment", {
-            flights: verdict.verified.map(structuredAssignment),
-          }),
+          structuredContent: structuredCheck(
+            "yes",
+            "verified",
+            "verified_assignment",
+            { flights: verdict.verified.map(structuredAssignment) },
+            assignmentEvidence(verdict.verified)
+          ),
         };
       }
       return {
@@ -911,9 +923,13 @@ async function toolCheckFlight(
             text: `Likely yes — ${normalized} on ${date} is assigned to a tail tracked as Starlink in the fleet spreadsheet (not yet verified against ${cfg.verifySite}):\n\n${verdict.unverified.map(renderAssignment).join("\n")}\n\nSpreadsheet data is usually accurate but unverified. Check ${cfg.verifySite} or the flight status 24h out to confirm.`,
           },
         ],
-        structuredContent: structuredCheck("yes", "likely", "fleet_assignment", {
-          flights: verdict.unverified.map(structuredAssignment),
-        }),
+        structuredContent: structuredCheck(
+          "yes",
+          "likely",
+          "fleet_assignment",
+          { flights: verdict.unverified.map(structuredAssignment) },
+          assignmentEvidence(verdict.unverified)
+        ),
       };
     }
 

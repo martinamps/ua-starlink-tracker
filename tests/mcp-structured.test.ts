@@ -1,7 +1,7 @@
 /**
  * MCP structuredContent + outputSchema shape tests. Structured output is
  * additive alongside the prose text blocks: provenance (source + evidence
- * class), freshness stamps, and per-tail evidence URLs (/tail/{registration}).
+ * class), freshness stamps, and per-tail evidence URLs (/fleet#t-{registration}).
  * Shape-not-values — must survive snapshot drift.
  */
 
@@ -118,8 +118,52 @@ describe("check_flight structuredContent", () => {
     expect(flights.length).toBe(1);
     const tail = flights[0].tail as Record<string, unknown>;
     expect(tail.registration).toBe("N1001");
-    expect(tail.evidence_url).toBe("https://unitedstarlinktracker.com/tail/N1001");
+    expect(tail.evidence_url).toBe("https://unitedstarlinktracker.com/fleet#t-N1001");
     sdb.close();
+  });
+
+  // The ladder describes what a surface actually delivers, and the two surfaces
+  // deliver different slices of the same verdict: MCP ships the verified bucket
+  // alone (so it keeps "observed"), while REST ships verified ++ unverified — so
+  // one spreadsheet-only row there drops the answer to fleet_data. Shipping
+  // "observed" alongside a "likely" confidence was the ladder violation.
+  describe("mixed assignment: evidence follows the rows each surface ships", () => {
+    const mixed = () => {
+      const sdb = makeSyntheticDb();
+      addPlane(sdb, "N1002", "Starlink");
+      addPlane(sdb, "N1003", null); // tracked as equipped, never verified
+      addFlight(sdb, "N1002", "UA112", "SFO", utc("2027-06-10T05:35:00Z"));
+      addFlight(sdb, "N1003", "UA112", "SFO", utc("2027-06-10T02:00:00Z"));
+      return sdb;
+    };
+
+    test("MCP ships the verified bucket alone → observed", async () => {
+      const sdb = mixed();
+      const j = await postMcp(createApp(sdb), UA, "tools/call", {
+        name: "check_flight",
+        arguments: { flight_number: "UA112", date: "2027-06-09" },
+      });
+      const sc = j.result.structuredContent as Record<string, unknown>;
+      expect(sc.confidence).toBe("verified");
+      expect((sc.flights as unknown[]).length).toBe(1);
+      expect(expectProvenance(sc).evidence).toBe("observed");
+      sdb.close();
+    });
+
+    test("REST ships both buckets → likely + fleet_data, never likely + observed", async () => {
+      const sdb = mixed();
+      const res = await createApp(sdb).dispatch(
+        new Request("https://x/api/check-flight?flight_number=UA112&date=2027-06-09", {
+          headers: { Host: UA },
+        })
+      );
+      const body = (await res.json()) as Record<string, unknown>;
+      expect(body.hasStarlink).toBe(true);
+      expect((body.flights as unknown[]).length).toBe(2);
+      expect(body.confidence).toBe("likely");
+      expect(body.evidence).toBe("fleet_data");
+      sdb.close();
+    });
   });
 
   test("qatar branch: type_derived evidence, tri-state verdict word", async () => {
@@ -185,7 +229,7 @@ describe("fleet + aircraft structuredContent", () => {
     for (const a of aircraft) {
       expect(typeof a.registration).toBe("string");
       expect(a.evidence_url).toMatch(
-        new RegExp(`^https://unitedstarlinktracker\\.com/tail/${a.registration}$`)
+        new RegExp(`^https://unitedstarlinktracker\\.com/fleet#t-${a.registration}$`)
       );
     }
   });
@@ -197,6 +241,25 @@ describe("fleet + aircraft structuredContent", () => {
     for (const a of sc.aircraft as Array<Record<string, unknown>>) {
       // Hub aircraft rows have no airline attribution — null beats a wrong host.
       expect(a.evidence_url).toBeNull();
+    }
+  });
+
+  // MCP clients are assistants that surface and cite evidence_url verbatim, so
+  // the link has to resolve — a schema description promising a page that 404s
+  // is worse than no link. Dispatching what the tool actually returned is the
+  // only assertion that catches an unbuilt route.
+  test("every emitted evidence_url resolves on this host, anchor and all", async () => {
+    const r = await callTool(UA, "list_starlink_aircraft", { limit: 3 });
+    const aircraft = (r.structuredContent as Record<string, unknown>).aircraft as Array<
+      Record<string, unknown>
+    >;
+    expect(aircraft.length).toBeGreaterThan(0);
+    for (const a of aircraft) {
+      const url = new URL(a.evidence_url as string);
+      expect(url.host).toBe(UA);
+      const res = await app.dispatch(new Request(url.href, { headers: { Host: UA } }));
+      expect(res.status).toBe(200);
+      expect(await res.text()).toContain(`id="${url.hash.slice(1)}"`);
     }
   });
 });
