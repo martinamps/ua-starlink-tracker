@@ -1591,13 +1591,19 @@ function buildBaseTemplateVars(
   };
 }
 
+interface RenderSubPageOptions {
+  /** Serve this render as a 404 that shared caches may keep — see
+   * SECURITY_HEADERS.htmlNotFound. Only for bodies with no per-visitor content. */
+  edgeCacheable404?: boolean;
+}
+
 async function renderSubPage<P extends { site: SiteConfig }>(
   ctx: RequestContext,
   component: React.ComponentType<P>,
   canonicalPath: string,
   meta: PageMeta,
   props?: Omit<P, "site">,
-  status = 200
+  opts: RenderSubPageOptions = {}
 ): Promise<Response> {
   const reactHtml = ReactDOMServer.renderToString(
     React.createElement(component, { site: ctx.site, ...(props ?? {}) } as unknown as P)
@@ -1606,6 +1612,9 @@ async function renderSubPage<P extends { site: SiteConfig }>(
     ...buildBaseTemplateVars(ctx, reactHtml, canonicalPath),
     ...meta,
   };
+  // The shared-cache 404 variant must be byte-identical for every visitor, and
+  // the probe snippet is the one thing in a sub-page render that isn't.
+  if (opts.edgeCacheable404) htmlVariables.passengerProbeSnippet = "";
   // Rebuild AFTER the meta merge: the WebPage JSON-LD must claim the page's
   // own title/description, not the homepage copy baked into the base vars.
   htmlVariables.webPageJsonLd = sitePageJsonLd(ctx.site, {
@@ -1617,10 +1626,12 @@ async function renderSubPage<P extends { site: SiteConfig }>(
 
   const template = await getHtmlTemplate();
   return new Response(renderHtml(template, htmlVariables), {
-    status,
-    // Keep the HTML CSP even on 404s: this page runs the inline lookup script,
-    // which SECURITY_HEADERS.notFound would block.
-    headers: SECURITY_HEADERS.html,
+    status: opts.edgeCacheable404 ? 404 : 200,
+    // Keep the page CSP even on 404s: this page runs the inline lookup script,
+    // which SECURITY_HEADERS.notFound would block. htmlNotFound is that CSP
+    // plus the shared-cache policy, so a crawler re-walking a dead URL space is
+    // absorbed at the edge instead of re-rendering ~28KB at origin every time.
+    headers: opts.edgeCacheable404 ? SECURITY_HEADERS.htmlNotFound : SECURITY_HEADERS.html,
   });
 }
 
@@ -1751,13 +1762,13 @@ function buildFlightFacts(
       };
     });
   // Sibling permalinks: other marketing numbers on the primary route (routes
-  // lead with currently-scheduled legs). getRouteSummary draws on the same
-  // populations as the permalink existence gate, so every link resolves. The
-  // reader is always single-airline here — the hub 404s /check-flight/*.
+  // lead with currently-scheduled legs). Draws on the same populations as the
+  // permalink existence gate, so every link resolves. The reader is always
+  // single-airline here — the hub 404s /check-flight/*.
   const primary = routes[0] ?? null;
   const siblings = primary
     ? reader
-        .getRouteSummary(primary.departure_airport, primary.arrival_airport)
+        .getRouteFlightNumbers(primary.departure_airport, primary.arrival_airport)
         .flightNumbers.map((f) => f.flight_number)
         .filter((f) => f !== flightNumber)
         .slice(0, 8)
@@ -1869,7 +1880,7 @@ const checkFlightPage: Handler = (ctx) => {
       "/check-flight",
       { ...subPageMeta(ctx, "check-flight"), robotsMeta: "noindex, nofollow" },
       { invalid },
-      404
+      { edgeCacheable404: true }
     );
   if (parsed.kind === "invalid") {
     const query = echoQuery(parsed.raw);

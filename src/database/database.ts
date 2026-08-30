@@ -3,6 +3,7 @@ import { ensureAirlinePrefix, stripFlightNumberZeros } from "../airlines/flight-
 import {
   AIRLINES,
   type AirlineCode,
+  type AirlineConfig,
   type LastUpdatedOwner,
   OBSERVED_WIFI_SOURCES,
   VERIFICATION_SOURCES,
@@ -1854,6 +1855,19 @@ export interface PopularFlight {
   times: number;
 }
 
+// Per-database so a synthetic test DB can never serve its ranking to the
+// snapshot (or to prod). The block is a ranking over every recorded route for
+// the airline plus a GROUP BY of the live window — cheap once, but it renders
+// on /, /check-flight, /routes and every ungated permalink, none of which are
+// edge-cacheable (SECURITY_HEADERS.html is `private, no-store`), so without
+// this every one of those requests paid the whole aggregation. The ranking
+// moves on the order of days; minutes of staleness are invisible.
+const popularFlightsCache = new WeakMap<
+  Database,
+  Map<string, { data: PopularFlight[]; at: number }>
+>();
+const POPULAR_FLIGHTS_TTL_MS = 10 * 60_000;
+
 /**
  * Most-observed marketing flight numbers for one airline — the source for the
  * server-rendered "popular flights" blocks that give the /check-flight/{fn}
@@ -1861,10 +1875,26 @@ export interface PopularFlight {
  * flightNumberHasData (accumulated flight_routes + live upcoming_flights), so
  * every link serves; ranked by accumulated seen_count, which keeps the anchors
  * stable from crawl to crawl instead of churning with the 48h schedule window.
+ * Memoized per (database, airline, limit) — see popularFlightsCache.
  */
 export function getPopularFlights(db: Database, airline: AirlineCode, limit = 12): PopularFlight[] {
   const cfg = AIRLINES[airline];
   if (!cfg) return [];
+  let perDb = popularFlightsCache.get(db);
+  if (!perDb) {
+    perDb = new Map();
+    popularFlightsCache.set(db, perDb);
+  }
+  const key = `${airline}:${limit}`;
+  const now = Date.now();
+  const hit = perDb.get(key);
+  if (hit && now - hit.at < POPULAR_FLIGHTS_TTL_MS) return hit.data;
+  const data = computePopularFlights(db, cfg, limit);
+  perDb.set(key, { data, at: now });
+  return data;
+}
+
+function computePopularFlights(db: Database, cfg: AirlineConfig, limit: number): PopularFlight[] {
   const marketing = new RegExp(`^${cfg.iata}\\d+$`);
   const cached = db
     .query(
@@ -1885,7 +1915,7 @@ export function getPopularFlights(db: Database, airline: AirlineCode, limit = 12
        WHERE airline = ? AND flight_number IS NOT NULL
        GROUP BY flight_number, departure_airport, arrival_airport`
     )
-    .all(airline) as typeof cached;
+    .all(cfg.code) as typeof cached;
   const agg = new Map<
     string,
     { times: number; best: { origin: string; destination: string; times: number } | null }
@@ -2018,14 +2048,21 @@ export interface RouteSummary {
   windowLabel: string;
 }
 
-/** Everything a /route-planner/{origin}/{destination} page renders. */
-export function getRouteSummary(
+/** The flight-number half of a route summary. Split out because the flight
+ * permalinks' sibling links need only this: the two windowed COUNT(DISTINCT …)
+ * departure joins getRouteSummary also runs were computed and thrown away on
+ * every render of the largest crawled URL family. */
+export interface RouteFlightNumbers {
+  flightNumbers: RouteSummary["flightNumbers"];
+  durationSec: number | null;
+}
+
+export function getRouteFlightNumbers(
   db: Database,
   origin: string,
   destination: string,
-  airline: string,
-  nowSec = Math.floor(Date.now() / 1000)
-): RouteSummary {
+  airline: string
+): RouteFlightNumbers {
   const cfg = AIRLINES[airline];
   const cached = cfg
     ? (db
@@ -2082,6 +2119,19 @@ export function getRouteSummary(
     .filter((d): d is number => typeof d === "number" && d > 0)
     .sort((a, b) => a - b);
   const durationSec = durations.length ? durations[Math.floor(durations.length / 2)] : null;
+
+  return { flightNumbers, durationSec };
+}
+
+/** Everything a /route-planner/{origin}/{destination} page renders. */
+export function getRouteSummary(
+  db: Database,
+  origin: string,
+  destination: string,
+  airline: string,
+  nowSec = Math.floor(Date.now() / 1000)
+): RouteSummary {
+  const { flightNumbers, durationSec } = getRouteFlightNumbers(db, origin, destination, airline);
 
   const windowEnd = nowSec + DEPARTURE_WINDOW_HOURS * 3600;
   const equippedQ = withAirline(

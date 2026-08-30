@@ -11,7 +11,13 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { SITES } from "../src/airlines/registry";
 import { getTimeline, hasTimeline } from "../src/components/timeline-page";
-import { cacheFlightRoute, getPopularFlights, seedFleetAnchors } from "../src/database/database";
+import {
+  cacheFlightRoute,
+  getPopularFlights,
+  getRouteFlightNumbers,
+  getRouteSummary,
+  seedFleetAnchors,
+} from "../src/database/database";
 import { createReaderFactory } from "../src/database/reader";
 import { createApp } from "../src/server/app";
 import { makeSyntheticDb, openSnapshot, req } from "./helpers";
@@ -252,7 +258,46 @@ describe("popular flights (permalink un-orphaning)", () => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+describe("the rendered 404 for a non-flight segment", () => {
+  test("stays shared-cacheable so a crawler sweep is absorbed at the edge", async () => {
+    const res = await app.dispatch(req("/check-flight/notaflight", UA));
+    expect(res.status).toBe(404);
+    const cache = res.headers.get("Cache-Control") ?? "";
+    expect(cache).toContain("public");
+    expect(cache).toContain("s-maxage=");
+    expect(cache).not.toContain("no-store");
+  });
+
+  test("carries no per-visitor content, so caching it is safe", async () => {
+    // The passenger probe is the one part of a sub-page render that varies by
+    // client IP; the shared-cache variant must never carry it, or one visitor's
+    // render gets served to another.
+    const { text } = await getText("/check-flight/notaflight", UA);
+    expect(text).not.toContain("onboard.united.com");
+  });
+
+  test("still renders the working lookup form, not the bare 404 body", async () => {
+    const { status, text } = await getText("/check-flight/notaflight", UA);
+    expect(status).toBe(404);
+    expect(text).toContain('id="check-flight-form"');
+    expect(text).toContain("noindex");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 describe("sibling links between same-route flight numbers", () => {
+  test("the narrow reader agrees with getRouteSummary on the same pair", () => {
+    const sdb = makeSyntheticDb();
+    cacheFlightRoute(sdb, "UA111", "SFO", "EWR", 3600);
+    cacheFlightRoute(sdb, "UA222", "SFO", "EWR", 5400);
+    const narrow = getRouteFlightNumbers(sdb, "SFO", "EWR", "UA");
+    const full = getRouteSummary(sdb, "SFO", "EWR", "UA");
+    expect(narrow.flightNumbers).toEqual(full.flightNumbers);
+    expect(narrow.durationSec).toEqual(full.durationSec);
+    sdb.close();
+  });
+
   test("a permalink links laterally to other numbers on its route", async () => {
     const sdb = makeSyntheticDb();
     cacheFlightRoute(sdb, "UA111", "SFO", "EWR", 3600);

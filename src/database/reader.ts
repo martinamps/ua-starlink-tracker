@@ -30,6 +30,7 @@ import {
   type PopularFlight,
   type QatarScheduleRow,
   type RouteEntryRow,
+  type RouteFlightNumbers,
   type RouteFlightRow,
   type RouteGraphEdge,
   type RouteSummary,
@@ -70,6 +71,7 @@ import {
   getQatarScheduleByRoute,
   getQatarScheduleStats,
   getRecentInstalls,
+  getRouteFlightNumbers,
   getRouteFlights,
   getRouteGraphEdges,
   getRouteStarlinkSchedule,
@@ -170,6 +172,9 @@ export interface ScopedReader {
   /** Existence gate for /route-planner/{origin}/{destination}; mirrors getSitemapRoutes. */
   routeHasData(origin: string, destination: string): boolean;
   getRouteSummary(origin: string, destination: string): RouteSummary;
+  /** Marketing numbers on a pair without getRouteSummary's windowed departure
+   * counts — what the flight permalinks' sibling links actually need. */
+  getRouteFlightNumbers(origin: string, destination: string): RouteFlightNumbers;
   getFlightHistorySummary(variants: string[]): FlightHistorySummary;
   getFlightRoutePairs(variants: string[]): FlightRoutePair[];
 
@@ -326,6 +331,7 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     flightNumberHasData: (v) => flightNumberHasData(db, v, airlines),
     routeHasData: (o, d) => routeHasData(db, o, d, soleAirline()),
     getRouteSummary: (o, d) => getRouteSummary(db, o, d, soleAirline()),
+    getRouteFlightNumbers: (o, d) => getRouteFlightNumbers(db, o, d, soleAirline()),
     getFlightHistorySummary: (v) => getFlightHistorySummary(db, v, airlines),
     getFlightRoutePairs: (v) => getFlightRoutePairs(db, v, airlines),
 

@@ -93,6 +93,15 @@ export const API_CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Headers": "Content-Type",
 };
 
+// The page CSP. Shared by every variant that serves a rendered React page so a
+// 200 and a 404 rendering the same component can't drift into different rules.
+const PAGE_CSP = `default-src 'self' https://unpkg.com; connect-src ${CONNECT_SRC}; script-src ${SCRIPT_SRC}; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:;`;
+
+// Shared-cache 404 policy. s-maxage only: shared caches absorb repeat crawler
+// hits on a dead URL space, browsers keep revalidating so a path that starts
+// existing isn't stuck 404ing for a user.
+const NOT_FOUND_CACHE_CONTROL = "public, s-maxage=3600, max-age=0, must-revalidate";
+
 export const SECURITY_HEADERS = {
   api: {
     ...BASE_RESPONSE_HEADERS,
@@ -107,7 +116,21 @@ export const SECURITY_HEADERS = {
     // Rendered HTML varies by client IP (passenger banner/probe) — never let
     // an edge cache serve one visitor's render to another.
     "Cache-Control": "private, no-store",
-    "Content-Security-Policy": `default-src 'self' https://unpkg.com; connect-src ${CONNECT_SRC}; script-src ${SCRIPT_SRC}; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:;`,
+    "Content-Security-Policy": PAGE_CSP,
+  },
+  // A full React page served as a 404 — the /check-flight "that isn't a flight
+  // number" body, which keeps the working lookup form and so needs the page CSP
+  // for its inline script. Same shared-cache deal as notFound and for the same
+  // reason: /check-flight/{anything} is an unbounded garbage URL space, and at
+  // ~28KB a re-render per repeat crawler hit is 24x the bare 404 body. Callers
+  // MUST render it visitor-invariantly — renderSubPage drops the passenger
+  // probe snippet for this variant, which is the only per-IP part of a sub-page
+  // render; anything new that varies by visitor must not use it.
+  htmlNotFound: {
+    ...BASE_RESPONSE_HEADERS,
+    "Content-Type": "text/html",
+    "Cache-Control": NOT_FOUND_CACHE_CONTROL,
+    "Content-Security-Policy": PAGE_CSP,
   },
   notFound: {
     ...BASE_RESPONSE_HEADERS,
@@ -116,9 +139,8 @@ export const SECURITY_HEADERS = {
     // variant it is safe at the edge. Retiring a large URL space (the
     // pre-route-page /route-planner/* duplicates) sends crawlers back over
     // thousands of dead URLs; without this every repeat 404 re-rendered at
-    // origin. s-maxage only: shared caches absorb it, browsers keep revalidating
-    // so a path that starts existing isn't stuck 404ing for a user.
-    "Cache-Control": "public, s-maxage=3600, max-age=0, must-revalidate",
+    // origin.
+    "Cache-Control": NOT_FOUND_CACHE_CONTROL,
     "Content-Security-Policy":
       "default-src 'self'; style-src 'unsafe-inline' https://fonts.googleapis.com; " +
       "font-src 'self' https://fonts.gstatic.com; img-src 'self' data:;",
