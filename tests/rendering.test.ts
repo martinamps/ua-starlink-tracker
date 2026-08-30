@@ -184,6 +184,43 @@ describe("flight permalink gate + normalization", () => {
     const html = await res.text();
     expect(html).toContain("AA123");
     expect(html).not.toContain("American");
+    // AA123 IS a flight number — the headline must not say otherwise, and the
+    // document title must describe the page actually rendered.
+    expect(html).not.toContain("Doesn&#x27;t Look Like a Flight Number");
+    expect(html.match(/<title>([^<]+)<\/title>/)?.[1]).toContain("We Only Track United Flights");
+  });
+
+  // noindex + a canonical pointing at a different, indexable URL is a
+  // conflicting signal; a 404 must not assert a WebPage node either.
+  test("invalid segments self-canonicalize and assert no WebPage", async () => {
+    for (const seg of ["PHX", "AA123"]) {
+      const res = await app.dispatch(req(`/check-flight/${seg}`, HOST));
+      const html = await res.text();
+      expect(html.match(/<meta name="robots" content="([^"]+)"/)?.[1], seg).toContain("noindex");
+      expect(html.match(/<link rel="canonical" href="([^"]+)"/)?.[1], seg).toBe(
+        `https://${HOST}/check-flight/${seg}`
+      );
+      expect(html, seg).not.toContain('"@type":"WebPage"');
+      expect(html, seg).not.toContain('"@type":"SoftwareApplication"');
+    }
+  });
+
+  // The notice is a full SSR of the check-flight page on a crawlable space, so
+  // it must be edge-cacheable (the static 404 it replaced was) and bounded to
+  // segments that plausibly came from the lookup form.
+  test("the notice page is edge-cacheable; junk segments keep the static 404", async () => {
+    const notice = await app.dispatch(req("/check-flight/PHX", HOST));
+    const cache = notice.headers.get("Cache-Control") ?? "";
+    expect(cache).toContain("s-maxage=");
+    expect(cache).not.toContain("no-store");
+
+    for (const seg of ["wp-includes%2Fwlwmanifest.xml", "a".repeat(60), "%E2%80%8B%E2%80%8B"]) {
+      const res = await app.dispatch(req(`/check-flight/${seg}`, HOST));
+      expect(res.status, seg).toBe(404);
+      const html = await res.text();
+      expect(html, seg).not.toContain('id="check-flight-form"');
+      expect(res.headers.get("Cache-Control"), seg).toContain("s-maxage=");
+    }
   });
 
   test("zero-padded spelling → 301 to the canonical flight URL", async () => {

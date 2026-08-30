@@ -192,6 +192,18 @@ function FlightFactBlocks({ flight }: { flight: FlightFacts }) {
   );
 }
 
+/**
+ * H1 for an invalid permalink. Exported so the handler builds the document
+ * title from the same words the page renders: "That Doesn't Look Like a Flight
+ * Number" over `/check-flight/AA123` contradicted the body copy inches below
+ * it, which correctly calls AA123 a flight number for an airline we don't track.
+ */
+export function invalidHeadline(invalid: InvalidFlightQuery, shortName: string): string {
+  return invalid.reason === "other-carrier"
+    ? `We Only Track ${shortName} Flights`
+    : "That Doesn't Look Like a Flight Number";
+}
+
 function InvalidQueryNotice({
   invalid,
   example,
@@ -258,7 +270,7 @@ export default function CheckFlightPage({ site, flight, invalid }: CheckFlightPa
         <a href="/" className="block">
           <h1 className="font-display text-3xl sm:text-4xl font-bold text-primary mb-2 tracking-tight hover:text-accent transition-colors">
             {invalid
-              ? "That Doesn't Look Like a Flight Number"
+              ? invalidHeadline(invalid, shortName)
               : flight
                 ? `Does ${flight.flightNumber} Have Starlink WiFi?`
                 : `Check If Your ${airlineName} Flight Has Starlink WiFi`}

@@ -61,6 +61,7 @@ import {
 import CheckFlightPage, {
   type FlightFacts,
   type InvalidFlightQuery,
+  invalidHeadline,
 } from "../components/check-flight-page";
 import FleetPage from "../components/fleet-page";
 import McpPage from "../components/mcp-page";
@@ -861,6 +862,13 @@ const apiCheckAnyFlight: Handler = async ({ req, url, reader, getReader, tenant 
           hasStarlink: null,
           airline: cfg.name,
           confidence: "type",
+          // Additive `probability`, mirroring /api/check-flight's no_model: a
+          // subfleet-penetration answer IS a number, and withholding it left
+          // every type-determined carrier unanswerable to clients that consume
+          // probabilities (AS800-899 is a 100%-equipped subfleet reported as
+          // "no answer"). Absent for type_split answers, where any single
+          // number would blend "always yes" types with "never" ones.
+          ...(verdict.answer.kind === "penetration" ? { probability: verdict.answer.pen.pct } : {}),
           reason: describeCarrierPrediction(cfg, verdict.answer),
           flights: [],
         }),
@@ -1560,13 +1568,25 @@ function buildBaseTemplateVars(
   };
 }
 
+interface SubPageRender {
+  status?: number;
+  /** Let shared caches keep the render. Legal only for a body with no
+   * per-visitor content, so it also drops the passenger probe snippet — the one
+   * base variable that varies by client IP, and the whole reason
+   * SECURITY_HEADERS.html is `private, no-store`. */
+  edgeCacheable?: boolean;
+  /** Drop the WebPage + SoftwareApplication nodes. A 404 must not assert that a
+   * WebPage with this title exists — least of all at a different URL. */
+  omitPageStructuredData?: boolean;
+}
+
 async function renderSubPage<P extends { site: SiteConfig }>(
   ctx: RequestContext,
   component: React.ComponentType<P>,
   canonicalPath: string,
   meta: PageMeta,
   props?: Omit<P, "site">,
-  status = 200
+  render: SubPageRender = {}
 ): Promise<Response> {
   const reactHtml = ReactDOMServer.renderToString(
     React.createElement(component, { site: ctx.site, ...(props ?? {}) } as unknown as P)
@@ -1575,21 +1595,30 @@ async function renderSubPage<P extends { site: SiteConfig }>(
     ...buildBaseTemplateVars(ctx, reactHtml, canonicalPath),
     ...meta,
   };
-  // Rebuild AFTER the meta merge: the WebPage JSON-LD must claim the page's
-  // own title/description, not the homepage copy baked into the base vars.
-  htmlVariables.webPageJsonLd = sitePageJsonLd(ctx.site, {
-    path: canonicalPath,
-    name: htmlVariables.siteTitle,
-    description: htmlVariables.siteDescription,
-    isoDate: htmlVariables.isoDate,
-  });
+  if (render.omitPageStructuredData) {
+    htmlVariables.webPageJsonLd = "";
+    htmlVariables.chromeExtensionJsonLd = "";
+  } else {
+    // Rebuild AFTER the meta merge: the WebPage JSON-LD must claim the page's
+    // own title/description, not the homepage copy baked into the base vars.
+    htmlVariables.webPageJsonLd = sitePageJsonLd(ctx.site, {
+      path: canonicalPath,
+      name: htmlVariables.siteTitle,
+      description: htmlVariables.siteDescription,
+      isoDate: htmlVariables.isoDate,
+    });
+  }
+  if (render.edgeCacheable) htmlVariables.passengerProbeSnippet = "";
 
   const template = await getHtmlTemplate();
   return new Response(renderHtml(template, htmlVariables), {
-    status,
+    status: render.status ?? 200,
     // Keep the HTML CSP even on 404s: this page runs the inline lookup script,
-    // which SECURITY_HEADERS.notFound would block.
-    headers: SECURITY_HEADERS.html,
+    // which SECURITY_HEADERS.notFound would block. Borrow only that variant's
+    // Cache-Control, so the two policies can't drift apart.
+    headers: render.edgeCacheable
+      ? { ...SECURITY_HEADERS.html, "Cache-Control": SECURITY_HEADERS.notFound["Cache-Control"] }
+      : SECURITY_HEADERS.html,
   });
 }
 
@@ -1682,6 +1711,11 @@ function parseCheckFlightPath(pathname: string): CheckFlightPath {
  * this only keeps a pasted essay from wrecking the layout. */
 const echoQuery = (raw: string | null): string | null =>
   raw ? (raw.length > 24 ? `${raw.slice(0, 24)}…` : raw) : null;
+
+/** What a mistyped flight lookup looks like: a short alphanumeric word or two
+ * ("PHX", "phoenix arizona", "UA123X"). Bounds the URL space that earns the
+ * SSR'd notice page instead of the static 404. */
+const LOOKUP_TYPO_RE = /^[A-Za-z0-9][A-Za-z0-9 .-]{0,23}$/;
 
 const AIRPORT_CODE_RE = /^[A-Z0-9]{3,4}$/;
 
@@ -1818,16 +1852,34 @@ const checkFlightPage: Handler = (ctx) => {
   // the homepage form navigates here with whatever was typed) still 404s, but
   // renders the real page with a notice and the working lookup form instead of
   // the bare not-found document.
-  const invalidPage = (invalid: InvalidFlightQuery) =>
-    renderSubPage(
+  const invalidPage = (invalid: InvalidFlightQuery) => {
+    const headline = invalidHeadline(invalid, siteAirline(ctx.site).shortName);
+    return renderSubPage(
       ctx,
       CheckFlightPage,
-      "/check-flight",
-      { ...subPageMeta(ctx, "check-flight"), robotsMeta: "noindex, nofollow" },
+      // Self-canonical. noindex plus a canonical pointing at /check-flight
+      // is the conflicting-signal pattern Google warns about, aimed from an
+      // unbounded space at a primary landing page.
+      ctx.url.pathname,
+      {
+        ...subPageMeta(ctx, "check-flight"),
+        // Head and body describe the same page: the generic check-flight meta
+        // advertises a live lookup answer this render doesn't have. The echoed
+        // query stays out of the title — it is untrusted, and the template
+        // substitutes meta unescaped.
+        siteTitle: `${headline} — ${ctx.site.brand.title}`,
+        ogTitle: headline,
+        robotsMeta: "noindex, nofollow",
+      },
       { invalid },
-      404
+      { status: 404, edgeCacheable: true, omitPageStructuredData: true }
     );
+  };
   if (parsed.kind === "invalid") {
+    // The notice costs a full SSR of the check-flight page, so it is bounded to
+    // segments that plausibly came from the lookup form. Scanner probes, encoded
+    // junk and pasted paragraphs get the brand-static 404 they always did.
+    if (parsed.raw === null || !LOOKUP_TYPO_RE.test(parsed.raw)) return notFound(ctx.site);
     const query = echoQuery(parsed.raw);
     return invalidPage({
       query,
