@@ -426,19 +426,27 @@ export default function Page({
     return code;
   };
 
-  // Compact flight time with day (e.g., "MON 2:30p")
+  // Compact flight time with day, stated in UTC (e.g., "MON 14:30 UTC").
+  //
+  // departure_time is a UTC epoch, so formatting it without an explicit
+  // timeZone renders it in whatever zone the SERVER happens to run in — a clock
+  // that belongs to neither the traveller nor the airport, and that disagreed
+  // with /check-flight/{fn}, which states the same departure as UTC. The pill
+  // links there and its aria-label speaks this string as a departure claim, so
+  // the zone has to be pinned and named. The 24-hour spelling is the permalink
+  // page's, so the two pages read as one clock rather than two.
   const formatCompactTime = (timestamp: number) => {
     const date = new Date(timestamp * 1000);
-    const day = date.toLocaleDateString("en-US", { weekday: "short" }).toUpperCase();
-    const time = date
-      .toLocaleTimeString("en-US", {
-        hour: "numeric",
-        minute: "2-digit",
-        hour12: true,
-      })
-      .replace(" AM", "a")
-      .replace(" PM", "p");
-    return `${day} ${time}`;
+    const day = date
+      .toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" })
+      .toUpperCase();
+    const time = date.toLocaleTimeString("en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+      timeZone: "UTC",
+    });
+    return `${day} ${time} UTC`;
   };
 
   // Compact inline flight pills for new table design (responsive + expandable)
