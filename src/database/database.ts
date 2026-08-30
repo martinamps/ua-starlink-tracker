@@ -277,7 +277,10 @@ export function setupTables(db: Database) {
   // passed before the per-tail DELETE. Enables trailing-window queries
   // that upcoming_flights (forward-only ~47h cache) can't answer.
   if (!tableExists(db, "departure_log")) {
-    db.query(`
+    // exec, not query().run(): bun:sqlite's query() prepares only the FIRST
+    // statement, so a multi-statement DDL string silently drops every index
+    // after the CREATE TABLE. Every block below follows the same rule.
+    db.exec(`
       CREATE TABLE departure_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         tail_number TEXT NOT NULL,
@@ -286,7 +289,7 @@ export function setupTables(db: Database) {
       );
       CREATE INDEX idx_dl_departed ON departure_log(departed_at);
       CREATE INDEX idx_dl_airport ON departure_log(airport);
-    `).run();
+    `);
   }
 
   // One row per newly equipped tail: its first observed revenue departure
@@ -294,7 +297,7 @@ export function setupTables(db: Database) {
   // by /feed.xml and /newly-equipped. Kept forever — departure_log's 30-day
   // trim would erase the scoop this table exists to preserve.
   if (!tableExists(db, "first_flights")) {
-    db.query(`
+    db.exec(`
       CREATE TABLE first_flights (
         tail_number TEXT PRIMARY KEY,
         airline TEXT NOT NULL,
@@ -305,7 +308,7 @@ export function setupTables(db: Database) {
         recorded_at INTEGER NOT NULL
       );
       CREATE INDEX idx_ff_airline ON first_flights(airline, departed_at);
-    `).run();
+    `);
   }
 
   // Persistent FR24 route lookup cache. Append-only: builds route knowledge over
@@ -313,7 +316,7 @@ export function setupTables(db: Database) {
   // Also backfills mainline route data that upcoming_flights can't provide
   // (we only track Starlink planes).
   if (!tableExists(db, "flight_routes")) {
-    db.query(`
+    db.exec(`
       CREATE TABLE flight_routes (
         flight_number TEXT NOT NULL,
         origin TEXT NOT NULL,
@@ -326,7 +329,7 @@ export function setupTables(db: Database) {
       );
       CREATE INDEX idx_fr_flight ON flight_routes(flight_number);
       CREATE INDEX idx_fr_route ON flight_routes(origin, destination);
-    `).run();
+    `);
   }
 
   // Qatar's flight-status API exposes per-flight equipment but no tail, so the
@@ -335,7 +338,7 @@ export function setupTables(db: Database) {
   // API serves from the DB (per CLAUDE.md "upstream citizenship") instead of
   // proxying live calls.
   if (!tableExists(db, "qatar_schedule")) {
-    db.query(`
+    db.exec(`
       CREATE TABLE qatar_schedule (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         flight_number TEXT NOT NULL,
@@ -353,7 +356,7 @@ export function setupTables(db: Database) {
       CREATE INDEX idx_qs_dep_time ON qatar_schedule(departure_time);
       CREATE INDEX idx_qs_route ON qatar_schedule(departure_airport, arrival_airport, departure_time);
       CREATE INDEX idx_qs_flight ON qatar_schedule(flight_number, scheduled_date);
-    `).run();
+    `);
   }
 
   // Per-type Starlink install pipeline from the United Fleet Site progress
@@ -642,6 +645,22 @@ function migrateMultiAirline(db: Database) {
     CREATE INDEX IF NOT EXISTS idx_vlog_airline ON starlink_verification_log(airline, tail_number);
     CREATE INDEX IF NOT EXISTS idx_vlog_flight  ON starlink_verification_log(flight_number, checked_at DESC);
     CREATE INDEX IF NOT EXISTS idx_upf_tail     ON upcoming_flights(tail_number);
+  `);
+
+  // Backfill for databases created before the query()-drops-statement-2 bug was
+  // fixed above: their tables already exist, so the CREATE TABLE blocks never
+  // re-run and the indexes would stay missing forever. Verified absent in
+  // production (idx_dl_departed, idx_dl_airport, idx_fr_flight, idx_fr_route,
+  // idx_qs_*) while sibling indexes written as their own statement are present.
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_dl_departed ON departure_log(departed_at);
+    CREATE INDEX IF NOT EXISTS idx_dl_airport  ON departure_log(airport);
+    CREATE INDEX IF NOT EXISTS idx_ff_airline  ON first_flights(airline, departed_at);
+    CREATE INDEX IF NOT EXISTS idx_fr_flight   ON flight_routes(flight_number);
+    CREATE INDEX IF NOT EXISTS idx_fr_route    ON flight_routes(origin, destination);
+    CREATE INDEX IF NOT EXISTS idx_qs_dep_time ON qatar_schedule(departure_time);
+    CREATE INDEX IF NOT EXISTS idx_qs_route    ON qatar_schedule(departure_airport, arrival_airport, departure_time);
+    CREATE INDEX IF NOT EXISTS idx_qs_flight   ON qatar_schedule(flight_number, scheduled_date);
   `);
 
   // The two indexes above exist for the serving path: getFlightHistorySummary
