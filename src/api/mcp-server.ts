@@ -35,7 +35,13 @@ import {
 } from "../airlines/registry";
 import type { FlightAssignmentRow } from "../database/database";
 import { type Scope, type ScopedReader, aggregatePenetration } from "../database/reader";
-import { COUNTERS, DISTRIBUTIONS, metrics, normalizeAirlineTag } from "../observability";
+import {
+  COUNTERS,
+  DISTRIBUTIONS,
+  metrics,
+  normalizeAirlineTag,
+  normalizePredictionMethod,
+} from "../observability";
 import {
   carrierPrediction,
   carrierPredictionTelemetry,
@@ -520,10 +526,9 @@ function recordMcpPrediction(
   scope: Scope,
   pred: { probability: number; confidence: "high" | "medium" | "low"; method: string }
 ): void {
-  const method = pred.method.startsWith("fleet_prior") ? "fleet_prior" : "flight_history";
   metrics.distribution(DISTRIBUTIONS.PREDICTION_PROBABILITY, pred.probability, {
     confidence: pred.confidence,
-    method,
+    method: normalizePredictionMethod(pred.method),
     airline: mcpAirlineTag(scope),
   });
 }
@@ -726,14 +731,7 @@ async function toolCheckFlight(
 
       // Probability context FIRST, alternatives table LAST. Recency bias: the
       // agent's final impression is "here's the table to present", not "no data".
-      const basis = predictionBasis(pred);
-      const evidence =
-        basis === "history"
-          ? `(${pred.n_observations} historical obs)`
-          : basis === "aircraft_types"
-            ? "(install rate of the aircraft types that fly this number)"
-            : "(fleet install rate)";
-      const probLine = `**${normalized} on ${date}**: ~${pct}% Starlink probability ${evidence}. ${assignmentNote}`;
+      const probLine = `**${normalized} on ${date}**: ~${pct}% Starlink probability ${evidenceTag(pred)}. ${assignmentNote}`;
 
       let altBlock = "";
       if (pred.probability < 0.2 && !isPast) {
@@ -785,12 +783,34 @@ function renderQatarCheckFlight(
 }
 
 /**
- * Format confidence as a parenthetical qualifier — keeps it visually subordinate
- * to the probability number so they don't get mentally merged.
+ * Name a prediction's evidence as a parenthetical qualifier — kept visually
+ * subordinate to the probability so the two don't get mentally merged.
  * e.g. "92% (4 obs · medium confidence)" not "92% Likely — 4 obs, medium"
+ *
+ * Every MCP renderer goes through here, because a bare count lies in both
+ * directions: "0 obs" on a type-mix answer reads as the fleet average — the
+ * mislabel the type-mix prior exists to remove — and "17 obs · low confidence"
+ * reads as a bug. That pair only occurs when decay has retired the sample, so
+ * the copy says that instead of printing the count beside the word that seems
+ * to contradict it.
  */
-function confidenceTag(nObs: number, confidence: string): string {
-  return `(${nObs} obs · ${confidence} confidence)`;
+export function evidenceTag(pred: {
+  method: string;
+  n_observations: number;
+  confidence: string;
+}): string {
+  switch (predictionBasis(pred)) {
+    case "assignment":
+      return "(confirmed near-term assignment)";
+    case "aircraft_types":
+      return "(no flight history · install rate of the aircraft types that fly it)";
+    case "fleet_prior":
+      return "(no flight history · fleet install rate)";
+    default:
+      return pred.confidence === "low" && pred.n_observations >= 2
+        ? `(${pred.n_observations} obs, all too old to lean on)`
+        : `(${pred.n_observations} obs · ${pred.confidence} confidence)`;
+  }
 }
 
 // Single shared FR24 client for route lookups. Module-level state is fine for
@@ -1190,22 +1210,23 @@ async function toolPredictFlightStarlink(
   // airframes this number actually draws, which is the whole point of it.
   const basis = predictionBasis(pred);
   let details: string;
-  let tag: string;
   if (basis === "aircraft_types") {
     details = "Based on the aircraft types this flight number draws, not its own history.";
-    tag = "(aircraft-type install rate)";
   } else if (basis === "fleet_prior") {
     const fleet = inferSubfleet(cfg, forPredict);
     const fleetLabel = fleet === "express" ? "express (regional)" : "mainline";
     details = `${fleetLabel} fleet install rate — not flight-specific.`;
-    tag = "(fleet prior)";
+  } else if (pred.confidence === "low" && pred.n_observations >= 2) {
+    // Decay has retired the sample, so the number is the prior wearing a
+    // flight number. "Sample size is solid" beside "low confidence" is the
+    // self-contradiction this branch exists to stop publishing.
+    details = "Its observations are all old enough that the model leans on the fleet rate instead.";
   } else {
     details =
       pred.n_observations >= 5 ? "Sample size is solid." : "Limited data — estimate may drift.";
-    tag = confidenceTag(pred.n_observations, pred.confidence);
   }
 
-  const probLine = `**${forPredict}**: ~${pct}% Starlink probability ${tag}. ${details}`;
+  const probLine = `**${forPredict}**: ~${pct}% Starlink probability ${evidenceTag(pred)}. ${details}`;
 
   // Alternatives LAST so it's the agent's final impression (recency bias).
   let altBlock = "";
@@ -1326,9 +1347,7 @@ function toolPlanStarlinkItinerary(
     const pct = (leg.probability * 100).toFixed(0);
     const fleetTag = inferSubfleet(cfg, leg.flight_number) === "mainline" ? " [Mainline]" : "";
     const dur = leg.duration_hours !== null ? ` ~${fmtHours(leg.duration_hours)}` : "";
-    const tag = leg.confirmed
-      ? "(confirmed near-term assignment)"
-      : confidenceTag(leg.n_observations, leg.confidence);
+    const tag = leg.confirmed ? "(confirmed near-term assignment)" : evidenceTag(leg);
     return `${leg.flight_number}${fleetTag} (${leg.route}${dur}) — ${pct}% ${tag}`;
   };
 
@@ -1475,11 +1494,9 @@ function toolPredictRouteStarlink(
     const pct = (f.probability * 100).toFixed(0);
     const fleet = inferSubfleet(cfg, f.flight_number);
     const fleetTag = fleet === "mainline" ? "[Mainline]" : "          "; // align columns
-    // Distinguish "observed and confirmed 0%" from "unobserved (fleet prior)"
-    const obsNote =
-      f.n_observations === 0
-        ? "(unobserved — fleet prior)"
-        : confidenceTag(f.n_observations, f.confidence);
+    // Distinguish "observed and confirmed 0%" from the two kinds of unobserved
+    // — the fleet average, and this number's own aircraft types.
+    const obsNote = evidenceTag(f);
     return `  ${f.flight_number.padEnd(8)} ${fleetTag} (${f.route})  ${pct.padStart(3)}%  ${obsNote}`;
   });
 

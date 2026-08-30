@@ -155,6 +155,23 @@ export function normalizeAirlineTag(code: string | null | undefined): string {
   return AIRLINES[code.toUpperCase()]?.metricTag ?? "unmapped";
 }
 
+/**
+ * Evidence class behind a prediction, as a bounded `method` tag. Three values,
+ * because a type-mix answer is neither a flight with outcome history nor a
+ * fleet-wide cold start and splitting PREDICTION_PROBABILITY by evidence is the
+ * only way to see the difference. Lives here, not beside the predictor, so the
+ * REST handler and the MCP tools cannot drift into tagging the same prediction
+ * two different ways — which is exactly what happened when each had its own
+ * inline ternary.
+ */
+export function normalizePredictionMethod(raw: string | null | undefined): string {
+  if (!raw) return "unknown";
+  if (raw.startsWith("fleet_prior")) return "fleet_prior";
+  if (raw === "type_mix_prior") return "type_mix";
+  if (raw === "confirmed_assignment") return "assignment";
+  return "flight_history";
+}
+
 /** Bounded-cardinality bucket for how many calendar days ahead a flight lookup's date is. */
 export function bucketDaysOut(days: number): string {
   if (!Number.isFinite(days)) return "unknown";

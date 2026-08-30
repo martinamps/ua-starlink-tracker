@@ -77,6 +77,7 @@ import {
   classifyUserAgent,
   metrics,
   normalizeAirlineTag,
+  normalizePredictionMethod,
   withSpan,
 } from "../observability";
 import {
@@ -466,26 +467,29 @@ function recordPrediction(
   pred: { probability: number; confidence: "high" | "medium" | "low"; method: string },
   airlineCode: string
 ): void {
-  // Three bounded values, and the split matters: a type-mix answer is neither a
-  // fleet-wide cold start nor a flight with history behind it.
-  const method = pred.method.startsWith("fleet_prior")
-    ? "fleet_prior"
-    : pred.method === "type_mix_prior"
-      ? "type_mix"
-      : "flight_history";
   metrics.distribution(DISTRIBUTIONS.PREDICTION_PROBABILITY, pred.probability, {
     confidence: pred.confidence,
-    method,
+    method: normalizePredictionMethod(pred.method),
     airline: normalizeAirlineTag(airlineCode),
   });
 }
 
 /** The one place API copy names a prediction's evidence, so no endpoint can
- * call a type-mix number the fleet average again. */
-function predictionSentence(pred: { method: string; n_observations: number }, pct: number): string {
+ * call a type-mix number the fleet average again — or restate a sample the
+ * model has already decayed away as a frequency it is still reporting. */
+export function predictionSentence(
+  pred: { method: string; n_observations: number; confidence: string },
+  pct: number
+): string {
   switch (predictionBasis(pred)) {
     case "history":
-      return `~${pct}% of recent departures of this flight used a Starlink-equipped aircraft (${pred.n_observations} observation${pred.n_observations === 1 ? "" : "s"}).`;
+      // "low" beside two or more observations is the model's way of saying the
+      // decay has retired them; at that point the number IS the prior, so
+      // quoting it as a departure frequency would be a claim about data the
+      // model is no longer leaning on.
+      return pred.confidence === "low" && pred.n_observations >= 2
+        ? `The ${pred.n_observations} historical observations of this flight are old enough that ~${pct}% now reflects the fleet install rate rather than this flight's own record.`
+        : `~${pct}% of recent departures of this flight used a Starlink-equipped aircraft (${pred.n_observations} observation${pred.n_observations === 1 ? "" : "s"}).`;
     case "aircraft_types":
       return `No verified history for this flight number; ~${pct}% is the install rate across the aircraft types that fly it.`;
     default:
