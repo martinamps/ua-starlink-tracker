@@ -5,7 +5,7 @@
  */
 
 import { beforeAll, describe, expect, test } from "bun:test";
-import { SITES } from "../src/airlines/registry";
+import { AIRLINES, SITES } from "../src/airlines/registry";
 import { createReaderFactory } from "../src/database/reader";
 import { createApp } from "../src/server/app";
 import { openSnapshot, req } from "./helpers";
@@ -104,10 +104,22 @@ describe("/methodology gating", () => {
   test("alaska: denominator section says Hawaiian is counted separately", async () => {
     const { text } = await getText("/methodology", SITES.alaska.canonicalHost);
     expect(text).toContain("What the fleet total counts");
-    // The airline's own ~150-of-~400 combined-group figure must be explained,
-    // not silently disagreed with.
+    // The scoping difference against Alaska's own combined-group figure must be
+    // explained, not silently disagreed with.
     expect(visibleText(text)).toContain("Hawaiian");
     expect(text).toContain("hawaiianstarlinktracker.com");
+  });
+
+  test("alaska: any group-wide claim is attributed, never quoted as our own", async () => {
+    const { text } = await getText("/methodology", SITES.alaska.canonicalHost);
+    const scope = visibleText(text).split("What the fleet total counts")[1] ?? "";
+    // The section may describe the group's larger scope, but the number itself
+    // lives at the airline's newsroom — this page publishes no fleet statistic
+    // it can't derive from its own counts (claim ladder).
+    expect(scope).toContain(AIRLINES.AS.brand.pressReleaseUrl);
+    expect(scope.slice(0, scope.indexOf("</section>"))).not.toMatch(
+      /\b\d{2,4}\s*(of|\/)\s*~?\s*\d{2,4}\b/
+    );
   });
 
   test("sitemap lists /methodology only where it serves", async () => {

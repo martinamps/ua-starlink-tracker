@@ -17,7 +17,7 @@ Never quote this file as actuals.
 | Flight/fleet data (FR24, unofficial endpoints) | $0 cash | High — no API key, no contract |
 | Verification scraping (united.com, alaskaair.com, QR, Google Sheets) | $0 cash | High |
 | VPS (single OVH box: app container + Datadog agent) | ~$10–40 | Low — plan *unknown, check the bill* |
-| Datadog (APM + custom metrics, site us5) | $0–low hundreds | Low — plan and billable series count *unknown, check usage page* |
+| Datadog (APM + custom metrics) | $0–low hundreds | Low — plan, site, and billable series count *unknown, check usage page* |
 | Plausible analytics (5 site domains) | ~$9–19 | Low — tier *unknown* |
 | Domains (6: 5 sites + 1 parked redirect) | ~$6 (≈$70/yr) | Medium |
 | GitHub Actions (CI + nightly OG images) | $0 | High — public repo |
@@ -55,7 +55,9 @@ What replaced the dollar cost:
 - **Qatar** flight-status API (hourly).
 - **Google Sheets CSV export** for the UA community sheet + ship numbers +
   fleet-progress workbooks (hourly/daily; retried with backoff since Wave 0 —
-  transient 429/5xx on ~3% of hourly cycles).
+  the export endpoint returns transient 429/5xx near the end of the 23-tab
+  serial burst. Rate *unknown*: nothing counts sheet-fetch failures, so add a
+  counter before quoting one).
 - **FlyerTalk** QR/AS scrapes run from a residential IP via
   `residential-sync` (the OVH IP gets 403) — someone's home machine, $0.
 
@@ -77,7 +79,10 @@ prices; up to ~$40 for comfortable headroom).
 
 ## 4. Datadog — the growing line item
 
-Site `us5`, service `ua-starlink-tracker`. Three billable surfaces:
+Service `ua-starlink-tracker`. The Datadog site is *unknown from this repo* —
+`DD_SITE` appears in neither the code nor `.env.example`, so it lives in the
+deploy environment; read it off the agent config before reasoning about
+regional pricing. Three billable surfaces:
 
 1. **APM** (dd-trace, opt-in via `DD_TRACE_ENABLED`) — per-host APM pricing,
    one host. *Unknown plan.*
@@ -86,9 +91,10 @@ Site `us5`, service `ua-starlink-tracker`. Three billable surfaces:
 3. **Log management** — only if `logs/app.log` is shipped by the agent;
    *unknown whether enabled*.
 
-Code-side inventory (`src/observability/metrics.ts`): ~18 counters, ~15
-gauges, 4 distributions, all under a documented per-tag cardinality budget
-(each tag ≤ ~20 values). The big multipliers are `http.request`
+Code-side inventory (`src/observability/metrics.ts`, counted from the
+`COUNTERS`/`GAUGES`/`DISTRIBUTIONS` blocks): 16 counters, 15 gauges, 4
+distributions, all under a documented per-tag cardinality budget (each tag
+≤ ~25 values). The big multipliers are `http.request`
 (method × ≤25 routes × status × 5 tenants × 12 client classes — bounded in
 code but easily the largest family), `flight.lookup_result` (outcome ×
 confidence × days_out × airline), and `vendor.request`. Recent deliberate
@@ -100,7 +106,10 @@ growth: the `client_class` named-crawler split, the `days_out` bucket, the
 Rules that keep this bounded — treat them as billing controls, not style:
 
 - every tag goes through a normalizer; free-text never becomes a tag value;
-- unmatched routes collapse to `/*`; unknown enums bucket to
+- unmatched routes collapse to the literal tag value `unmatched` — never `/*`:
+  Datadog strips `*` from tag values, so `/*` arrived as `/` and merged every
+  unmatched-path request into the homepage series (see `metricRoute` in
+  `src/server/app.ts`, which records the measurement). Unknown enums bucket to
   `other`/`unknown`;
 - new tags need a budget line in the metrics.ts header comment.
 

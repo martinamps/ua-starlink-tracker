@@ -1,6 +1,10 @@
 import type React from "react";
-import { type SiteConfig, siteAirline } from "../airlines/registry";
+import { AIRLINES, type SiteConfig, siteAirline } from "../airlines/registry";
 import { PageFooter } from "./atoms";
+
+// The registry owns every outbound airline link, so a moved release URL is
+// fixed in one place instead of drifting between the brand block and prose.
+const ALASKA_NEWSROOM_URL = AIRLINES.AS.brand.pressReleaseUrl;
 
 interface MethodologyPageProps {
   site: SiteConfig;
@@ -103,11 +107,20 @@ export const DENOMINATOR_SCOPE: Record<string, React.ReactNode> = {
         </a>{" "}
         with its own counts.
       </p>
+      {/* No group-wide count is quoted here on purpose: this site does not
+          publish an airline statistic it cannot derive from its own data, and
+          the combined figure moves with every Alaska announcement. The scoping
+          difference is the durable fact; the newsroom link carries the number
+          and its date. */}
       <p>
-        Alaska's own announcements quote the combined Alaska–Hawaiian group (roughly 150 of ~400
-        aircraft as of mid-2026), which folds in Hawaiian's fully-equipped Airbus fleet — so the
-        airline's published figure reads higher than this page's Alaska-only number. Both are right;
-        they count different fleets.
+        Alaska's own announcements count the combined Alaska–Hawaiian group, which folds in
+        Hawaiian's fully-equipped Airbus fleet, so the airline's published figure covers more
+        aircraft than this page's Alaska-only number. Both are right; they count different fleets.
+        For the group-wide figure and the date it was published, see{" "}
+        <a href={ALASKA_NEWSROOM_URL} className="text-accent hover:underline">
+          Alaska's newsroom
+        </a>
+        .
       </p>
     </>
   ),
