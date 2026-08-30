@@ -330,16 +330,38 @@ for (const p of SOCIAL_IMAGE_PATHS) {
  * every test and to health checks, so failing the boot (deploy rolls back,
  * previous container keeps serving) is the only failure mode anyone notices.
  */
-function registerStylesheet(): string {
-  const cssPath = path.join(STATIC_DIR, "tailwind.css");
-  if (!fs.existsSync(cssPath)) {
-    const msg = `Compiled stylesheet missing at ${cssPath} — run \`bun run build:css\``;
-    if (process.env.NODE_ENV === "production") throw new Error(msg);
-    logError(msg);
+const STYLESHEET_PATH = path.join(STATIC_DIR, "tailwind.css");
+
+/** mtime+size of the compiled file, "" when it isn't there. */
+function stylesheetStamp(): string {
+  try {
+    const s = fs.statSync(STYLESHEET_PATH);
+    return `${s.mtimeMs}:${s.size}`;
+  } catch {
     return "";
   }
-  const css = fs.readFileSync(cssPath);
+}
+
+let stylesheetHref = "";
+let stylesheetTag = "";
+let registeredStamp = "";
+
+function registerStylesheet(): void {
+  const stamp = stylesheetStamp();
+  registeredStamp = stamp;
+  if (!stamp) {
+    const msg = `Compiled stylesheet missing at ${STYLESHEET_PATH} — run \`bun run build:css\``;
+    if (process.env.NODE_ENV === "production") throw new Error(msg);
+    logError(msg);
+    stylesheetHref = "";
+    stylesheetTag = "";
+    return;
+  }
+  const css = fs.readFileSync(STYLESHEET_PATH);
   const href = `/static/tailwind.${Bun.hash(css).toString(36)}.css`;
+  // Drop the superseded URL so a stale fingerprint 404s instead of serving the
+  // build the markup no longer matches — the same contract as a fresh deploy.
+  if (stylesheetHref && stylesheetHref !== href) staticResponses.delete(stylesheetHref);
   staticResponses.set(
     href,
     new Response(css, {
@@ -350,9 +372,26 @@ function registerStylesheet(): string {
       },
     })
   );
-  return `<link rel="stylesheet" href="${href}">`;
+  stylesheetHref = href;
+  stylesheetTag = `<link rel="stylesheet" href="${href}">`;
 }
-const STYLESHEET_TAG = registerStylesheet();
+registerStylesheet();
+
+/**
+ * Production registers once at boot — the artifact cannot change under a
+ * running container, and re-statting per request would buy nothing.
+ *
+ * Dev must re-read. `bun run dev` recompiles the CSS out-of-band while this
+ * process is already running (`bun --watch` restarts on the source edit; the
+ * compile finishes after), so a boot-time capture would serve the pre-edit
+ * build until the *next* save — a newly typed utility appearing one save late
+ * is exactly the hazard compiling ahead of time introduced.
+ */
+function currentStylesheetTag(): string {
+  if (process.env.NODE_ENV === "production") return stylesheetTag;
+  if (stylesheetStamp() !== registeredStamp) registerStylesheet();
+  return stylesheetTag;
+}
 
 // A tenant whose OG card hasn't been generated yet (QR is excluded from
 // /api/fleet-summary, so generate-og-images never renders one) gets the
@@ -1572,7 +1611,7 @@ function buildBaseTemplateVars(
     ...brandVars,
     ...statVars,
     socialImagePath: resolveSocialImage(brand),
-    stylesheetTag: STYLESHEET_TAG,
+    stylesheetTag: currentStylesheetTag(),
     html: reactHtml,
     host: site.canonicalHost,
     canonicalPath: escapeHtmlAttr(canonicalPath),

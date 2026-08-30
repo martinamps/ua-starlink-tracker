@@ -5,8 +5,15 @@
  * Utilities are compiled ahead of time now (see src/styles/tailwind.css), so a
  * class typed into a component is invisible until the CSS is rebuilt. That is
  * the one ergonomic cost of dropping the browser JIT, and this script pays it:
- * every change under src/ or to index.html triggers a rebuild before the
- * reloaded server serves the new markup.
+ * every change under src/ or to index.html schedules a rebuild.
+ *
+ * The rebuild is NOT sequenced ahead of the server reload and can't be — the
+ * server is a separate `bun --watch` child with its own watcher, and it
+ * restarts on the same fs event this script debounces. The server absorbs the
+ * race instead: outside production it re-reads the compiled file whenever its
+ * mtime changes (currentStylesheetTag in src/server/app.ts), so a compile
+ * landing after the restart is picked up on the next request rather than the
+ * next save. Editing index.html, which restarts nothing, works the same way.
  *
  * The rebuild is a one-shot CLI run rather than `tailwindcss --watch` on
  * purpose — watch mode needs @parcel/watcher's build-from-source postinstall,
