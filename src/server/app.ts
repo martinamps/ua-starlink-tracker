@@ -18,6 +18,7 @@ import {
   detectAirline,
   ensureAirlinePrefix,
   normalizeAirlineFlightNumber,
+  prefixBelongsTo,
   stripFlightNumberZeros,
 } from "../airlines/flight-number";
 import {
@@ -1643,14 +1644,29 @@ function subPageMeta(
   };
 }
 
-/** Resolve the carrier config a check-flight permalink belongs to. Tenant hosts
- * are pinned; the hub host detects the carrier from the flight-number prefix.
- * Deliberately looser than decideCarrier (check-flight-core): this only picks
- * page meta — operating-prefix permalinks still render the generic page. */
-function resolveFlightCfg(ctx: RequestContext, flightNumber: string): AirlineConfig | null {
+/** Resolve the carrier a check-flight permalink belongs to, and whether the
+ * segment used that carrier's marketing code or one of its operating-carrier
+ * prefixes (OO/YX/QX/SKW…). The distinction is load-bearing: the DB stores
+ * operating-carrier spellings (buildAirlineFlightNumberVariants exists because
+ * OO5212 rows are real), so treating those as "some other airline" turns a
+ * flight we hold data for into a confident denial. Tenant hosts are pinned to
+ * their own carrier; the hub detects it from the prefix. */
+function resolveFlightCfg(
+  ctx: RequestContext,
+  flightNumber: string
+): { cfg: AirlineConfig; marketing: boolean } | null {
+  // startsWith alone reads UAL544 as UA's marketing spelling; only IATA
+  // followed by digits is the canonical one.
+  const isMarketing = (cfg: AirlineConfig) =>
+    flightNumber.startsWith(cfg.iata) && /^\d+$/.test(flightNumber.slice(cfg.iata.length));
   const tenantCfg = tenantConfig(ctx.tenant);
-  if (tenantCfg) return flightNumber.startsWith(tenantCfg.iata) ? tenantCfg : null;
-  return detectAirline(flightNumber);
+  if (tenantCfg) {
+    if (isMarketing(tenantCfg)) return { cfg: tenantCfg, marketing: true };
+    return prefixBelongsTo(tenantCfg, flightNumber) ? { cfg: tenantCfg, marketing: false } : null;
+  }
+  const detected = detectAirline(flightNumber);
+  if (!detected) return null;
+  return { cfg: detected, marketing: isMarketing(detected) };
 }
 
 type CheckFlightPath =
@@ -1674,7 +1690,11 @@ function parseCheckFlightPath(pathname: string): CheckFlightPath {
     return { kind: "invalid", raw: null }; // malformed % escape
   }
   const fn = stripFlightNumberZeros(raw.toUpperCase());
-  if (!/^[A-Z]{2}\d{1,4}$/.test(fn)) return { kind: "invalid", raw };
+  // 2–3 letters: three-letter ICAO/operating spellings (SKW5212, ASH4, QXE2402)
+  // are real DB rows, so they must reach the carrier resolver and 301 to their
+  // marketing spelling. Rejecting them here told the user "isn't a flight
+  // number" about a flight this tracker has data for.
+  if (!/^[A-Z]{2,3}\d{1,4}$/.test(fn)) return { kind: "invalid", raw };
   const date = second && /^\d{4}-\d{2}-\d{2}$/.test(second) ? second : null;
   return { kind: "flight", raw, fn, date };
 }
@@ -1845,11 +1865,25 @@ const checkFlightPage: Handler = (ctx) => {
         301
       );
     }
-    const cfg = resolveFlightCfg(ctx, fn);
-    // Shape-valid but carrying another carrier's prefix on this host. The
-    // notice never names that carrier — a tenant host must not confirm what
-    // else exists (same rule the /api foreign-prefix gate follows).
-    if (!cfg) return invalidPage({ query: fn, reason: "other-carrier", airportHint: false });
+    const match = resolveFlightCfg(ctx, fn);
+    // Shape-valid but carrying a prefix no carrier on this host flies. Only
+    // here is the "not a ${carrier} flight number" notice true. The notice
+    // never names the other carrier — a tenant host must not confirm what else
+    // exists (same rule the /api foreign-prefix gate follows).
+    if (!match) return invalidPage({ query: fn, reason: "other-carrier", airportHint: false });
+    const { cfg } = match;
+    if (!match.marketing) {
+      // Operating-carrier spelling (OO5212, YX3600, SKW5212, QX2402) — a real
+      // row in this carrier's data, not another airline. 301 to the marketing
+      // spelling so one flight keeps one indexable URL, instead of denying it.
+      const marketingFn = normalizeAirlineFlightNumber(cfg, fn);
+      if (marketingFn !== fn) {
+        return Response.redirect(
+          `https://${ctx.site.canonicalHost}/check-flight/${marketingFn}${date ? `/${date}` : ""}`,
+          301
+        );
+      }
+    }
     const reader = ctx.tenant === "ALL" ? ctx.getReader(cfg.code) : ctx.reader;
     const variants = buildFlightLookupVariants(cfg, fn);
     // Existence gate (same data test as the sitemap): no rows behind the

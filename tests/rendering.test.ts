@@ -178,6 +178,28 @@ describe("flight permalink gate + normalization", () => {
     expect(html).not.toContain('href="/route-planner"');
   });
 
+  // The DB stores operating-carrier spellings (OO5212, SKW5212, YX3600), so a
+  // "not a United flight number" denial on those is a false claim about a
+  // flight this tracker holds rows for. They must normalize, never deny.
+  test("operating-carrier prefixes 301 to the marketing spelling, never deny", async () => {
+    for (const [seg, expected] of [
+      ["OO5212", "UA5212"],
+      ["YX3600", "UA3600"],
+      ["SKW5212", "UA5212"],
+      ["UAL544", "UA544"],
+    ] as const) {
+      const res = await app.dispatch(req(`/check-flight/${seg}`, HOST));
+      expect(res.status, seg).toBe(301);
+      expect(res.headers.get("Location"), seg).toBe(`https://${HOST}/check-flight/${expected}`);
+    }
+  });
+
+  test("operating-prefix redirect preserves the date segment", async () => {
+    const res = await app.dispatch(req("/check-flight/OO5212/2027-06-01", HOST));
+    expect(res.status).toBe(301);
+    expect(res.headers.get("Location")).toBe(`https://${HOST}/check-flight/UA5212/2027-06-01`);
+  });
+
   test("other-carrier segment → 404 page that never names the other carrier", async () => {
     const res = await app.dispatch(req("/check-flight/AA123", HOST));
     expect(res.status).toBe(404);
