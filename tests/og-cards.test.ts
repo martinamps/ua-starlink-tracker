@@ -6,6 +6,8 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   type ApiData,
   type Summary,
@@ -150,6 +152,57 @@ describe("buildShareCardSpecs", () => {
       airlines: Object.keys(AIRLINES).map((code) => airlineRow(code, 5)),
     });
     for (const s of specs) expect(ogFiles.has(s.file)).toBe(false);
+  });
+});
+
+describe("nightly workflow delivers every generated card", () => {
+  // The commit step's globs ARE the delivery path: the server reads STATIC_DIR
+  // from the image's own tree (Dockerfile COPY . ., generate-og never runs at
+  // build or boot), so a file the workflow doesn't stage does not exist in
+  // production. That is exactly how the share cards shipped dead —
+  // resolveShareCard() returning null forever because the step gated on and
+  // added only `static/social-image*.webp`.
+  const workflow = readFileSync(
+    join(import.meta.dir, "..", ".github", "workflows", "og-images.yml"),
+    "utf8"
+  );
+
+  /** The quoted pathspecs from the step's `GLOBS=( … )` line. */
+  function stagedGlobs(): string[] {
+    const line = workflow.match(/GLOBS=\(([^)]*)\)/);
+    expect(line, "og-images.yml no longer declares a GLOBS=( … ) list").not.toBeNull();
+    return [...(line as RegExpMatchArray)[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
+  }
+
+  const matches = (glob: string, file: string) => {
+    const rx = new RegExp(`^${glob.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^/]*")}$`);
+    return rx.test(`static/${file}`);
+  };
+
+  test("every spec filename is covered by a staged glob", async () => {
+    const globs = stagedGlobs();
+    expect(globs.length).toBeGreaterThan(0);
+    const summary: Summary = {
+      airlines: Object.keys(AIRLINES).map((code) => airlineRow(code, 5)),
+    };
+    const files = [
+      ...(await buildCardSpecs(summary, noData, NOW)).map((s) => s.file),
+      ...buildShareCardSpecs(summary).map((s) => s.file),
+    ];
+    expect(files.length).toBeGreaterThan(0);
+    for (const f of files) {
+      expect(
+        globs.some((g) => matches(g, f)),
+        `${f} is generated but never committed`
+      ).toBe(true);
+    }
+  });
+
+  test("the change gate sees untracked files, not just tracked diffs", () => {
+    // git diff is blind to a brand-new artifact, so gating on it would report
+    // "no changes" on the very run that first produced the share cards.
+    expect(workflow).toContain("git status --porcelain");
+    expect(workflow).not.toMatch(/git diff --quiet/);
   });
 });
 

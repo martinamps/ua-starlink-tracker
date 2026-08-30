@@ -72,8 +72,12 @@ export function rolloutSeries(planes: ApiData["starlinkPlanes"], nowMs = Date.no
   return series;
 }
 
-// Share cards ship as PNG (pastes cleanly everywhere users share them); the
-// deviceScaleFactor-2 screenshot doubles as retina-friendly output.
+// Share cards ship as PNG (pastes cleanly everywhere users share them), and
+// unlike the webp og cards they are committed to git every night — so they
+// render at 1x, not the og cards' deviceScaleFactor 2. Measured on the UA card:
+// 112KB at 2x vs 39KB at 1x. At ~5 cards a night that is the difference between
+// ~200MB and ~70MB of git objects a year, for output already at 1200x630, the
+// size social platforms want.
 async function renderPng(page: Page, params: URLSearchParams, out: string) {
   await page.goto(`file://${OG_HTML}?${params}`, { waitUntil: "networkidle", timeout: 15000 });
   await Bun.write(out, await page.screenshot({ type: "png" }));
@@ -237,12 +241,14 @@ async function main() {
   specs.push(...buildShareCardSpecs(summary));
 
   const browser = await chromium.launch({ headless: true, args: ["--no-sandbox"] });
-  const page = await browser.newPage({ viewport: { width: W, height: H }, deviceScaleFactor: 2 });
+  const viewport = { width: W, height: H };
+  const ogPage = await browser.newPage({ viewport, deviceScaleFactor: 2 });
+  const sharePage = await browser.newPage({ viewport, deviceScaleFactor: 1 });
   const generated: string[] = [];
   for (const spec of specs) {
     const out = path.join(OUT_DIR, spec.file);
-    if (spec.file.endsWith(".png")) await renderPng(page, spec.params, out);
-    else await renderWebp(page, spec.params, out);
+    if (spec.file.endsWith(".png")) await renderPng(sharePage, spec.params, out);
+    else await renderWebp(ogPage, spec.params, out);
     generated.push(`${spec.file}  ${spec.desc}`);
   }
 
