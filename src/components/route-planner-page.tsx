@@ -10,6 +10,10 @@ export default function RoutePlannerPage({ site }: RoutePlannerPageProps) {
   const airlineName = cfg.name;
   const shortName = cfg.shortName;
   const homeTitle = site.brand.title;
+  // A late-assignment carrier has no flight-number history to rank on, and
+  // "check back 1-2 days out" is advice that can never pay off there — the
+  // planner answers fleet odds, so it has to say so on the page too.
+  const lateNote = cfg.lateAssignmentNote;
 
   return (
     <div className="w-full mx-auto px-4 sm:px-6 md:px-8 bg-base min-h-screen flex flex-col relative">
@@ -193,24 +197,46 @@ export default function RoutePlannerPage({ site }: RoutePlannerPageProps) {
         <div className="bg-surface rounded-lg border border-subtle p-6">
           <h2 className="font-display text-lg font-semibold text-primary mb-3">How this works</h2>
           <div className="space-y-3 text-sm text-muted leading-relaxed">
-            <p>
-              We track historical aircraft assignments for {shortName} flights. When a flight number
-              consistently gets Starlink-equipped planes, we can predict with better confidence that
-              it will keep happening.
-            </p>
-            <p>
-              The planner looks for the best balance between travel time and Starlink coverage. A
-              connection can sometimes beat the direct flight if the nonstop is usually assigned to
-              a non-Starlink aircraft.
-            </p>
-            <p className="text-xs">
-              <span className="text-yellow-400">⚠</span> Probabilities are estimates based on
-              historical patterns. Aircraft assignments can change — use{" "}
-              <a href="/check-flight" className="text-accent hover:underline">
-                Check Flight
-              </a>{" "}
-              1-2 days before departure for a firmer answer.
-            </p>
+            {lateNote ? (
+              <>
+                <p>{lateNote}</p>
+                <p>
+                  So a routing here is scored on how much of the {shortName} subfleet flying it is
+                  already equipped, not on the aircraft you will actually board. Two itineraries
+                  between the same cities carry the same odds until the tail is set on the day.
+                </p>
+                <p className="text-xs">
+                  <span className="text-yellow-400">⚠</span> Fleet-wide odds, not a per-flight
+                  prediction — {cfg.lateAssignmentShort}. For the same odds alongside every
+                  Starlink-equipped tail, see{" "}
+                  <a href="/check-flight" className="text-accent hover:underline">
+                    Check Flight
+                  </a>
+                  .
+                </p>
+              </>
+            ) : (
+              <>
+                <p>
+                  We track historical aircraft assignments for {shortName} flights. When a flight
+                  number consistently gets Starlink-equipped planes, we can predict with better
+                  confidence that it will keep happening.
+                </p>
+                <p>
+                  The planner looks for the best balance between travel time and Starlink coverage.
+                  A connection can sometimes beat the direct flight if the nonstop is usually
+                  assigned to a non-Starlink aircraft.
+                </p>
+                <p className="text-xs">
+                  <span className="text-yellow-400">⚠</span> Probabilities are estimates based on
+                  historical patterns. Aircraft assignments can change — use{" "}
+                  <a href="/check-flight" className="text-accent hover:underline">
+                    Check Flight
+                  </a>{" "}
+                  1-2 days before departure for a firmer answer.
+                </p>
+              </>
+            )}
           </div>
         </div>
       </div>

@@ -302,6 +302,17 @@ describe("WN pages carry the fleet-odds story", () => {
     }
   });
 
+  test("route planner ranks on fleet odds, never on flight-number history", async () => {
+    const { status, text } = await bodyOf(app, "/route-planner", WN_HOST);
+    expect(status).toBe(200);
+    expect(text).toContain("hour before departure");
+    expect(text).toContain("fleet-wide odds");
+    // United's copy: WN has no flight-number history to rank on, and there is
+    // no day on which checking again buys a firmer answer.
+    expect(text).not.toContain("We track historical aircraft assignments");
+    expect(text).not.toContain("1-2 days before departure");
+  });
+
   test("fleet page renders the WN roster with per-tail provider coloring", async () => {
     const { status, text } = await bodyOf(app, "/fleet", WN_HOST);
     expect(status).toBe(200);

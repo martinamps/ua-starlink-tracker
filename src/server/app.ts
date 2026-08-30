@@ -1673,11 +1673,16 @@ function subPageMeta(
   if (page === "route-planner")
     return {
       siteTitle: `${short} Starlink Route Planner — Find Flights With Starlink WiFi`,
-      siteDescription: `See which ${name} routes and flights have Starlink WiFi. Compare direct flights and one-stop connections between any two cities, ranked by Starlink probability, and book the routing with coverage the whole way.`,
+      // "book the routing with coverage the whole way" is a per-departure
+      // promise a late-assignment carrier's own planner refuses to make.
+      siteDescription: cfg?.lateAssignmentNote
+        ? `See which ${name} routes are most likely to fly Starlink WiFi. ${cfg.lateAssignmentShort}, so a route here gets honest fleet-wide odds rather than a per-flight prediction.`
+        : `See which ${name} routes and flights have Starlink WiFi. Compare direct flights and one-stop connections between any two cities, ranked by Starlink probability, and book the routing with coverage the whole way.`,
       keywords: `${name} starlink route planner, which ${cfg?.iata ?? "airline"} flights have starlink, ${name} starlink routes, best route for starlink, plan starlink trip`,
       ogTitle: `${short} Starlink Route Planner`,
-      ogDescription:
-        "Find direct flights and smart connections with the highest Starlink probability.",
+      ogDescription: cfg?.lateAssignmentNote
+        ? `Fleet-wide Starlink odds for any ${short} route — the aircraft is finalized about an hour before departure.`
+        : "Find direct flights and smart connections with the highest Starlink probability.",
     };
   // On the hub there is no carrier, and "${short} Fleet" degenerated to
   // "Tracked Fleets Fleet"; "every ${name} aircraft" likewise read "every
