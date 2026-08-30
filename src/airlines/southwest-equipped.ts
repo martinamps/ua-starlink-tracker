@@ -12,10 +12,12 @@
  * so type can never decide status.
  *
  * Provider-aware by design: Southwest has committed Starlink for 300+ of its
- * ~800 737s but is evaluating other vendors (including Amazon's Leo) for the
- * rest, so a record names its provider instead of assuming Starlink. The
- * tenant is a Southwest WiFi tracker in its bones; Starlink is the first
- * provider, not an assumption.
+ * ~800 737s and has named no provider for the rest, so a record states its
+ * provider instead of assuming Starlink. The tenant is a Southwest WiFi
+ * tracker in its bones; Starlink is the first provider, not an assumption.
+ * (No second vendor is named here on purpose — the LEO-aviation deals in the
+ * news belong to other carriers, and attributing one to Southwest would be
+ * exactly the fabrication this log exists to prevent.)
  *
  * Contract for a future automated-discovery job (and for hand edits):
  *  - `tail` must match AIRLINES.WN.tailPattern (FAA N-number) and appear at
@@ -46,6 +48,8 @@ export interface SouthwestEquippedTail {
   equippedOn: string;
   /** What proved it — precise enough for a reader to re-verify. */
   evidence: string;
+  /** Where a reader can check it. Rendered next to the note on /methodology,
+   * so the log is citable rather than a claim about a claim. */
   evidenceUrl?: string;
 }
 
@@ -56,7 +60,9 @@ export const SOUTHWEST_EQUIPPED_TAILS: readonly SouthwestEquippedTail[] = [
     provider: "Starlink",
     equippedOn: "2026-06-22",
     evidence:
-      "First Starlink revenue flight (Dallas Love Field to Albuquerque, June 22, 2026), per Southwest's launch announcement and same-day passenger reports.",
+      "Southwest's launch-day newsroom release: first Starlink revenue flight, Dallas Love Field to Albuquerque, June 22, 2026.",
+    evidenceUrl:
+      "https://www.swamedia.com/news-and-stories/news-release/heart-meets-high-speed-wifi-southwest-airlines-first-starlink-aircraft-takes-fli-MCH6NK6V4NLBFQTGKAE4SVWJRDXQ",
   },
 ];
 

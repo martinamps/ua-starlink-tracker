@@ -134,6 +134,13 @@ export interface AirlineConfig {
    * promise — and answers fleet odds instead, with this copy explaining why.
    * Only meaningful alongside flightHistoryModel: false. */
   lateAssignmentNote?: string;
+  /** Mid-sentence clause form of lateAssignmentNote, for the surfaces that
+   * cannot carry the full paragraph — meta descriptions, page captions,
+   * sitemap/llms.txt bullets. Those all shipped United's "assignments publish
+   * about two days out" story, which is exactly false for a late-assignment
+   * carrier. Set together with lateAssignmentNote; neither means anything
+   * without the other. */
+  lateAssignmentShort?: string;
   /** Overrides llms.txt's shared "free for everyone" fact where that claim
    * would be false (WN: free for Rapid Rewards members via T-Mobile, $8
    * per device otherwise). */
@@ -486,13 +493,23 @@ const AIRLINE_DEFS = {
     // out, so every advance answer is fleet odds — the honesty IS the product.
     lateAssignmentNote:
       "Southwest finalizes which aircraft operates a flight only about an hour before departure, so an advance per-flight answer isn't possible — these are fleet-wide odds. The equipped-tail list shows where Starlink is already flying.",
+    lateAssignmentShort:
+      "Southwest finalizes the operating aircraft about an hour before departure",
+    // No speed number: the 100-250 Mbps range was carried over from United's
+    // copy and no Southwest source states it. The two pricing facts are
+    // sourced (see brand.pressReleaseUrl and the T-Mobile release).
     freeWifiFact:
-      "Southwest is rolling out SpaceX Starlink WiFi — gate-to-gate, real-world speeds in the 100-250 Mbps range. WiFi is **free for Rapid Rewards members** (T-Mobile sponsorship since October 24, 2025, whole fleet, Starlink or not); $8 per device without a free-to-create account.",
+      "Southwest is rolling out SpaceX Starlink WiFi, usable gate to gate. WiFi is **free for Rapid Rewards members** (T-Mobile sponsorship since October 24, 2025, whole fleet, Starlink or not); $8 per device without a free-to-create account.",
     rollout: {
       status: "in_progress",
       statusLabel: "In progress",
+      // Every clause here traces to a Southwest release: the 300+/end-2026
+      // target and the "upgrade all its aircraft" intent to the Feb 11 2026
+      // announcement, the June 22 2026 entry into service to the launch-day
+      // release. Southwest has NOT named a provider beyond that first 300+ —
+      // don't fill the gap with a vendor it never mentioned.
       phaseNote:
-        "First Starlink aircraft entered service June 22, 2026; Southwest plans 300+ of its ~800 737s equipped by the end of 2026, pace gated by antenna deliveries. The WiFi vendor for the remaining fleet is not yet decided.",
+        "First Starlink aircraft entered service June 22, 2026; Southwest plans 300+ of its ~800 737s equipped by the end of 2026 and says it intends to upgrade its whole fleet to low-Earth-orbit satellite WiFi. No provider has been announced for the aircraft beyond that first 300+.",
     },
     brand: {
       title: "Southwest Airlines Starlink Tracker",
@@ -512,6 +529,8 @@ const AIRLINE_DEFS = {
       faviconAccent: "#f5a623", // sunrise yellow — the blues vanish on a dark tile
       socialImagePath: "/static/social-image-wn.webp",
       analyticsDomain: "southweststarlinktracker.com",
+      pressReleaseUrl:
+        "https://investors.southwest.com/news-events/press-releases/detail/1917/southwest-airlines-brings-starlink-ultra-fast-wifi-onboard",
     },
   },
 } satisfies Record<string, AirlineConfig>;
@@ -871,7 +890,13 @@ export const SITES: Record<string, SiteConfig> = {
     // Methodology is on despite no automated verifier: the curated per-tail
     // evidence log is the methodology, and the fleet-odds honesty needs a
     // citable "how we know" page behind it (see methodology-page SOURCES.WN).
-    features: { ...AIRLINE_SITE_FEATURES, methodologyPage: true },
+    //
+    // /routes is off (QR precedent: hide a page rather than ship a
+    // permanently-degenerate UX). It is an entire indexable page counted from
+    // advance tail assignments — the one input this tenant's methodology page
+    // says it deliberately does not use — and with a handful of equipped tails
+    // it would be thin on top of that.
+    features: { ...AIRLINE_SITE_FEATURES, methodologyPage: true, routesPage: false },
   },
 };
 

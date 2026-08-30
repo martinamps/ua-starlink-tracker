@@ -3,8 +3,10 @@ import { StatRing } from "../../components/atoms";
 import type { AirlineContent, HeroProps } from "./index";
 
 // Rollout counter: live count against the two honest denominators (the 300+
-// end-of-2026 commitment and the ~800-strong 737 fleet), plus the vendor-split
-// caveat that makes this a WiFi tracker rather than a Starlink assumption.
+// end-of-2026 commitment and the ~800-strong 737 fleet), plus the "no provider
+// announced beyond that" caveat that makes this a WiFi tracker rather than a
+// Starlink assumption. Every number here traces to a Southwest release; the
+// third panel names no vendor because Southwest has named none.
 const WNHero = ({ stats }: HeroProps) => {
   const { starlinkCount, totalCount, percentage } = stats;
   return (
@@ -23,17 +25,19 @@ const WNHero = ({ stats }: HeroProps) => {
           of ~{totalCount > 700 ? totalCount.toLocaleString("en-US") : "800"} 737s
         </div>
         <div className="font-mono text-[10px] text-muted mt-3">
-          first install Jun 22, 2026 · pace gated by antenna deliveries
+          announced Feb 11, 2026 · first install Jun 22, 2026
         </div>
       </div>
       <div className="bg-surface px-4 py-6 flex flex-col items-center justify-center text-center">
         <div className="text-[10px] font-mono text-muted uppercase tracking-wider">
           Rest of Fleet
         </div>
-        <div className="font-display text-2xl text-primary mt-2">Vendor TBD</div>
-        <div className="font-mono text-xs text-secondary mt-1">~500 aircraft undecided</div>
+        <div className="font-display text-2xl text-primary mt-2">Not announced</div>
+        <div className="font-mono text-xs text-secondary mt-1">
+          ~500 aircraft, no provider named
+        </div>
         <div className="font-mono text-[10px] text-muted mt-3">
-          tracked per tail, whichever provider wins
+          tracked per tail, whichever provider ships
         </div>
       </div>
     </div>
@@ -82,20 +86,28 @@ export const content: AirlineContent = {
               Starlink so far — the rollout began with <strong>N8543Z</strong>, a 737-800 whose
               first Starlink revenue flight was Dallas Love Field to Albuquerque on{" "}
               <strong>June 22, 2026</strong>. Southwest has committed to{" "}
-              <strong>300+ aircraft by the end of 2026</strong>, with the pace set by Starlink
-              antenna deliveries. The list above shows every equipped tail and its upcoming flights.
+              <strong>300+ aircraft by the end of 2026</strong>. The list above shows every equipped
+              tail and its upcoming flights.
             </p>
           ),
-          ld: "The rollout began June 22, 2026 with N8543Z, a 737-800 (first revenue flight Dallas Love Field to Albuquerque). Southwest has committed to 300+ of its ~800 737s by the end of 2026, pace gated by antenna deliveries.",
+          ld: "The rollout began June 22, 2026 with N8543Z, a 737-800 (first revenue flight Dallas Love Field to Albuquerque). Southwest has committed to 300+ of its ~800 737s by the end of 2026.",
         },
         {
           q: "Is Southwest's WiFi free?",
           a: () => (
             <p>
-              Free for <strong>Rapid Rewards members</strong> — since October 24, 2025, T-Mobile has
-              sponsored free WiFi for members on Southwest's whole fleet, Starlink-equipped or not.
-              Without a (free-to-create) Rapid Rewards account, WiFi is $8 per device. The
-              difference on a Starlink aircraft is speed and reliability, not price.
+              Free for <strong>Rapid Rewards members</strong> —{" "}
+              <a
+                href="https://investors.southwest.com/news-events/press-releases/detail/1892/free-wifi-in-the-sky-southwest-airlines-partners-with-t-mobile-to-offer-free-inflight-wifi-for-all-rapid-rewards-members"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-accent hover:underline"
+              >
+                since October 24, 2025
+              </a>
+              , T-Mobile has sponsored free WiFi for members on Southwest's whole fleet,
+              Starlink-equipped or not. Without a (free-to-create) Rapid Rewards account, WiFi is $8
+              per device. The difference on a Starlink aircraft is speed and reliability, not price.
             </p>
           ),
           ld: "Free for Rapid Rewards members via a T-Mobile sponsorship since October 24, 2025, on the whole fleet; $8 per device otherwise. Starlink changes the speed, not the pricing.",
@@ -117,13 +129,14 @@ export const content: AirlineContent = {
           q: "Will the whole Southwest fleet get Starlink?",
           a: () => (
             <p>
-              Not committed. Starlink is confirmed for 300+ aircraft; for the remaining ~500 737s
-              Southwest is still evaluating vendors, including Amazon's Leo satellite service. This
-              site tracks the WiFi provider per tail, so whichever vendor equips the rest of the
-              fleet, the map stays honest.
+              Southwest says it intends to upgrade its whole fleet to low-Earth-orbit satellite
+              WiFi, but the only announced Starlink commitment covers 300+ aircraft by the end of
+              2026. It has not named a provider for the remaining ~500 737s. This site tracks the
+              WiFi provider per tail, so whichever vendor equips the rest of the fleet, the map
+              stays honest.
             </p>
           ),
-          ld: "Not committed. Starlink covers 300+ aircraft; Southwest is evaluating other vendors (including Amazon's Leo) for the remaining ~500 737s. This tracker records the WiFi provider per tail.",
+          ld: "Southwest says it intends to upgrade its whole fleet to low-Earth-orbit satellite WiFi, but the announced Starlink commitment covers 300+ aircraft by the end of 2026 and no provider has been named for the remaining ~500 737s. This tracker records the WiFi provider per tail.",
         },
       ],
     },
