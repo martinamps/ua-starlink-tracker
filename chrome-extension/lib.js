@@ -85,18 +85,82 @@ const StarlinkTrackerLib = (() => {
     return segments;
   }
 
-  // Attribute forms observed in Google Flights markup: "UA-123-20250101",
-  // "UA-123", "/UA/123/". Generalized from the v1 UA-only patterns.
-  const ATTR_PATTERNS = [
-    new RegExp(`\\b(${CARRIER_ALT})-(\\d{1,4})-\\d{8}\\b`),
-    new RegExp(`\\b(${CARRIER_ALT})-(\\d{1,4})\\b`),
-    new RegExp(`/(${CARRIER_ALT})/(\\d{1,4})/`),
-  ];
+  /**
+   * Tracked segments across every Travel Impact Model URL on one card.
+   *
+   * `parsed` says whether ANY itinerary segment decoded, foreign carriers
+   * included. That is the difference between the two empty results: an
+   * itinerary that decoded and named no tracked carrier is an authoritative
+   * "not ours" (heuristics would only add false positives), while nothing
+   * decoding at all means the hook itself drifted and the heuristics are the
+   * only thing left.
+   */
+  function timCardSegments(urls) {
+    const segments = [];
+    let parsed = false;
+    for (const url of Array.isArray(urls) ? urls : []) {
+      for (const seg of parseTimSegments(url)) {
+        parsed = true;
+        if (!detectCarrier(seg.flightNumber)) continue;
+        if (segments.some((s) => s.flightNumber === seg.flightNumber && s.date === seg.date)) {
+          continue;
+        }
+        segments.push({ flightNumber: seg.flightNumber, date: seg.date });
+      }
+    }
+    return { parsed, segments };
+  }
 
-  /** First tracked-carrier flight number in an attribute value, or null. */
-  function parseAttrFlightNumber(value) {
+  /**
+   * Tracked carriers whose airline name appears in a card's text. This is the
+   * evidence gate both heuristic extractors run behind: "AS" and "HA" are
+   * ordinary English tokens, and Google's obfuscated attribute soup is full of
+   * two-letter fragments, so a code match only counts when the airline is
+   * actually named on the card.
+   */
+  function carriersNamedIn(text) {
+    if (typeof text !== "string" || text.length === 0) return [];
+    return CARRIER_CODES.filter((code) => text.includes(TRACKED_CARRIERS[code].marker));
+  }
+
+  // Attribute forms observed in Google Flights markup: "UA-123-20250101",
+  // "UA-123", "/UA/123/". Generalized from the v1 UA-only patterns; compiled
+  // per code set (three of them at most) rather than per attribute value.
+  const attrPatternCache = new Map();
+
+  function attrPatterns(codes) {
+    const key = codes.join("|");
+    let patterns = attrPatternCache.get(key);
+    if (!patterns) {
+      patterns = [
+        new RegExp(`\\b(${key})-(\\d{1,4})-\\d{8}\\b`),
+        new RegExp(`\\b(${key})-(\\d{1,4})\\b`),
+        new RegExp(`/(${key})/(\\d{1,4})/`),
+      ];
+      attrPatternCache.set(key, patterns);
+    }
+    return patterns;
+  }
+
+  /**
+   * First flight number for one of `allowedCodes` in an attribute value, or
+   * null. `allowedCodes` is required and fails closed: an ungated scan over
+   * every attribute of a card matches things like "…;AS-12;…" in Google's
+   * internal payloads and would badge a foreign carrier's card with a real
+   * lookup for an unrelated flight.
+   */
+  function parseAttrFlightNumber(value, allowedCodes) {
     if (typeof value !== "string" || value.length > 4096) return null;
-    for (const re of ATTR_PATTERNS) {
+    if (!Array.isArray(allowedCodes)) return null;
+    const codes = allowedCodes.filter((code) => CARRIER_CODES.includes(code));
+    if (codes.length === 0) return null;
+    // Substring prefilter before the regex loop: this runs over every attribute
+    // of every element in a card, and the patterns can only match around
+    // "XX-" or "/XX/".
+    if (!codes.some((code) => value.includes(`${code}-`) || value.includes(`/${code}/`))) {
+      return null;
+    }
+    for (const re of attrPatterns(codes)) {
       const m = value.match(re);
       if (m) return `${m[1]}${m[2]}`;
     }
@@ -105,14 +169,11 @@ const StarlinkTrackerLib = (() => {
 
   /**
    * Last-resort extraction from visible card text. Case-sensitive and gated on
-   * the airline name appearing in the card — "AS" and "HA" are common English
-   * words/abbreviations, so a bare code match is not evidence by itself.
+   * the airline name appearing in the card (see carriersNamedIn).
    */
   function extractFlightNumbersFromText(text) {
-    if (typeof text !== "string" || text.length === 0) return [];
     const found = [];
-    for (const code of CARRIER_CODES) {
-      if (!text.includes(TRACKED_CARRIERS[code].marker)) continue;
+    for (const code of carriersNamedIn(text)) {
       const re = new RegExp(`\\b${code}\\s?(\\d{1,4})\\b`, "g");
       for (const m of text.matchAll(re)) {
         const fn = `${code}${m[1]}`;
@@ -144,6 +205,11 @@ const StarlinkTrackerLib = (() => {
    * `confidence`) — plus anything unexpected, which lands on `unknown`.
    * `hasStarlink: false` is a verified negative on both surfaces; null/absent
    * means "no assignment yet", never no.
+   *
+   * A probability with a non-prediction grade (`confidence: "type"` — the
+   * registry-derived subfleet answer for carriers with no flight-history
+   * model) stays on the predicted rung with a null grade: the number is real,
+   * but it is not a history grade and must not be dressed up as one.
    */
   function normalizeClaim(payload) {
     const claim = unknownClaim();
@@ -201,10 +267,20 @@ const StarlinkTrackerLib = (() => {
     unknown: 0,
   });
 
+  const GRADE_RANK = Object.freeze({ high: 0, medium: 1, low: 2 });
+
   /**
    * Combine per-segment claims for a multi-leg itinerary: the weakest rung
    * wins, so a card is never badged "Starlink" when only one leg has it. For
-   * predicted legs the lowest probability and weakest grade carry through.
+   * predicted legs the lowest probability and weakest grade carry through —
+   * tracked separately, because the least-likely leg is not necessarily the
+   * least-trusted one. Inheriting the min-probability leg's grade let a
+   * high-probability/low-confidence leg (which shouldBadge suppresses on its
+   * own) ride a sibling leg's "high" into a badge.
+   *
+   * An ungraded prediction (fleet/subfleet penetration, which carries a
+   * probability but no history grade) leaves the grade alone: it is not
+   * evidence of weakness, and it must not manufacture a grade either.
    */
   function combineClaims(claims) {
     if (!Array.isArray(claims) || claims.length === 0) return unknownClaim();
@@ -214,11 +290,18 @@ const StarlinkTrackerLib = (() => {
     }
     if (weakest.status !== "predicted") return { ...weakest };
     let combined = weakest;
+    let grade = null;
+    let gradeRank = -1;
     for (const claim of claims) {
       if (claim.status !== "predicted") continue;
       if (claim.probability < combined.probability) combined = claim;
+      const rank = GRADE_RANK[claim.predictionConfidence];
+      if (rank !== undefined && rank > gradeRank) {
+        gradeRank = rank;
+        grade = claim.predictionConfidence;
+      }
     }
-    return { ...combined };
+    return { ...combined, predictionConfidence: grade };
   }
 
   // Aircraft assignments only exist ~2 days out; above this historical rate a
@@ -308,6 +391,8 @@ const StarlinkTrackerLib = (() => {
     isValidDate,
     endpointFor,
     parseTimSegments,
+    timCardSegments,
+    carriersNamedIn,
     parseAttrFlightNumber,
     extractFlightNumbersFromText,
     unknownClaim,

@@ -36,16 +36,19 @@
 
   // ── claim lookup ───────────────────────────────────────────────────────────
 
-  function cachedClaim(key) {
+  /** Cached {claim, retryable} for a key, or null when absent/expired. */
+  function cachedOutcome(key) {
     const entry = claimCache.get(key);
-    if (entry && entry.expires > Date.now()) return entry.claim;
+    if (entry && entry.expires > Date.now()) return entry;
     if (entry) claimCache.delete(key);
     return null;
   }
 
+  /** Resolves to {claim, retryable} — callers need the retryable flag to know
+   * whether a card is settled or just waiting out a transient failure. */
   function getClaim(flightNumber, date) {
     const key = `${flightNumber}-${date}`;
-    const cached = cachedClaim(key);
+    const cached = cachedOutcome(key);
     if (cached) return Promise.resolve(cached);
     const pending = pendingLookups.get(key);
     if (pending) return pending;
@@ -68,9 +71,10 @@
       }
       claimCache.set(key, {
         claim: outcome.claim,
+        retryable: outcome.retryable,
         expires: Date.now() + (outcome.retryable ? lib.CACHE_TTL.error : lib.CACHE_TTL.resolved),
       });
-      return outcome.claim;
+      return outcome;
     })();
     pendingLookups.set(key, lookup);
     return lookup;
@@ -105,46 +109,62 @@
     return cards;
   }
 
-  /**
-   * Flight segments for one card as [{flightNumber, date|null}], most-reliable
-   * source first. A card WITH itinerary data but no tracked segment returns []
-   * without consulting the heuristics — the itinerary already settled "not a
-   * tracked airline", and a text match on top of that would be a false positive.
-   */
-  function extractSegments(card) {
-    const timEls = [];
-    if (card.hasAttribute?.(TIM_ATTR)) timEls.push(card);
-    timEls.push(...card.querySelectorAll(`[${TIM_ATTR}]`));
-    if (timEls.length > 0) {
-      const segments = [];
-      for (const el of timEls) {
-        for (const seg of lib.parseTimSegments(el.getAttribute(TIM_ATTR) || "")) {
-          if (!lib.detectCarrier(seg.flightNumber)) continue;
-          if (segments.some((s) => s.flightNumber === seg.flightNumber && s.date === seg.date)) {
-            continue;
-          }
-          segments.push({ flightNumber: seg.flightNumber, date: seg.date });
-        }
-      }
-      return segments.slice(0, MAX_SEGMENTS_PER_CARD);
+  /** Every Travel Impact Model URL carried by a card, itself included. */
+  function timUrls(card) {
+    const urls = card.hasAttribute?.(TIM_ATTR) ? [card.getAttribute(TIM_ATTR) || ""] : [];
+    for (const el of card.querySelectorAll(`[${TIM_ATTR}]`)) {
+      urls.push(el.getAttribute(TIM_ATTR) || "");
     }
+    return urls;
+  }
 
+  function cardText(card) {
+    return `${card.innerText || ""} ${
+      card.querySelector("[aria-label]")?.getAttribute("aria-label") || ""
+    }`;
+  }
+
+  function attrFlightNumber(card, codes) {
     const elements = card.querySelectorAll("*");
     const scanLimit = Math.min(elements.length, MAX_ATTR_SCAN_ELEMENTS);
     for (let i = 0; i < scanLimit; i++) {
       for (const attr of elements[i].attributes) {
-        const flightNumber = lib.parseAttrFlightNumber(attr.value);
-        if (flightNumber) return [{ flightNumber, date: null }];
+        const flightNumber = lib.parseAttrFlightNumber(attr.value, codes);
+        if (flightNumber) return flightNumber;
       }
     }
+    return null;
+  }
 
-    const text = `${card.innerText || ""} ${
-      card.querySelector("[aria-label]")?.getAttribute("aria-label") || ""
-    }`;
+  /**
+   * Flight segments for one card as [{flightNumber, date|null}], most-reliable
+   * source first.
+   *
+   * A card whose itinerary data DECODED but named no tracked carrier returns []
+   * without consulting the heuristics — the itinerary already settled "not a
+   * tracked airline", and a text match on top of that would be a false positive.
+   * When nothing decodes (the attribute is absent, or Google changed the
+   * itinerary encoding) the heuristics still run: gating them on the attribute's
+   * mere presence made an encoding change silently badge nothing, which is the
+   * drift this extractor exists to survive.
+   */
+  function extractSegments(card) {
+    const tim = lib.timCardSegments(timUrls(card));
+    if (tim.parsed) return tim.segments.slice(0, MAX_SEGMENTS_PER_CARD);
+
+    // Both heuristics run behind the airline-name gate: only carriers actually
+    // named on the card may be matched out of its text or attribute soup.
+    const text = cardText(card);
+    const codes = lib.carriersNamedIn(text);
+    if (codes.length === 0) return [];
+
+    const flightNumber = attrFlightNumber(card, codes);
+    if (flightNumber) return [{ flightNumber, date: null }];
+
     return lib
       .extractFlightNumbersFromText(text)
       .slice(0, MAX_SEGMENTS_PER_CARD)
-      .map((flightNumber) => ({ flightNumber, date: null }));
+      .map((fn) => ({ flightNumber: fn, date: null }));
   }
 
   // ── badge rendering ────────────────────────────────────────────────────────
@@ -217,39 +237,71 @@
 
   // ── main pass ──────────────────────────────────────────────────────────────
 
+  /** True when the card needs no further passes. */
   async function processCard(card, pageDate, budget) {
     const segments = extractSegments(card);
     if (segments.length === 0) {
       // Nothing tracked here (authoritative or not) — settled for this card.
       processedElements.add(card);
-      return false;
+      return true;
     }
 
     // Respect the per-pass network budget BEFORE marking processed, so
     // skipped cards get picked up by a later pass.
     for (const seg of segments) {
       const key = `${seg.flightNumber}-${seg.date || pageDate}`;
-      if (!cachedClaim(key) && !pendingLookups.has(key)) {
+      if (!cachedOutcome(key) && !pendingLookups.has(key)) {
         if (budget.remaining <= 0) return false;
         budget.remaining--;
       }
     }
-    processedElements.add(card);
 
-    const claims = await Promise.all(
+    const outcomes = await Promise.all(
       segments.map((seg) => getClaim(seg.flightNumber, seg.date || pageDate))
     );
-    const combined = lib.combineClaims(claims);
+    // Only a settled answer retires the card. Marking it processed on a
+    // transient failure would strand it unbadged for the rest of the session:
+    // nothing else clears processedElements short of an SPA navigation.
+    const settled = outcomes.every((outcome) => !outcome.retryable);
+    if (settled) processedElements.add(card);
+
+    const combined = lib.combineClaims(outcomes.map((outcome) => outcome.claim));
     if (lib.shouldBadge(combined)) {
       addBadge(card, combined);
       log("badged", segments.map((s) => s.flightNumber).join("+"), combined.status);
     }
-    return true;
+    return settled;
+  }
+
+  // A pass that ends with unsettled cards schedules its own retry: when the
+  // user is just sitting on a result list nothing else wakes the extension, so
+  // the short error TTL alone would never be spent. Bounded so a hard outage
+  // costs a handful of passes, not an endless poll.
+  const MAX_RETRY_PASSES = 3;
+  const RETRY_DELAY_MS = lib.CACHE_TTL.error + 5000;
+  let retryPasses = 0;
+  let retryTimer = null;
+
+  function scheduleRetryPass() {
+    if (retryTimer !== null || retryPasses >= MAX_RETRY_PASSES) return;
+    retryPasses++;
+    // Wait past the error TTL so the retry is a fresh lookup, not a cache replay.
+    retryTimer = setTimeout(() => {
+      retryTimer = null;
+      processFlights();
+    }, RETRY_DELAY_MS);
+  }
+
+  function cancelRetryPass() {
+    if (retryTimer !== null) clearTimeout(retryTimer);
+    retryTimer = null;
+    retryPasses = 0;
   }
 
   async function processFlights() {
     if (isProcessing) return;
     isProcessing = true;
+    let unsettled = false;
     try {
       const pageDate = extractPageDate();
       const budget = { remaining: MAX_NEW_LOOKUPS_PER_PASS };
@@ -258,7 +310,7 @@
       for (const card of cards) {
         if (processedElements.has(card)) continue;
         try {
-          await processCard(card, pageDate, budget);
+          if (!(await processCard(card, pageDate, budget))) unsettled = true;
         } catch (err) {
           // One broken card must not stop the pass or reach the page.
           log("card failed", err);
@@ -269,6 +321,8 @@
     } finally {
       isProcessing = false;
     }
+    if (unsettled) scheduleRetryPass();
+    else cancelRetryPass();
   }
 
   // ── lifecycle ──────────────────────────────────────────────────────────────
@@ -290,6 +344,7 @@
       // removal is cosmetic; keep going
     }
     processedElements = new WeakSet();
+    cancelRetryPass();
     processFlights();
   }
 
@@ -331,6 +386,8 @@
       if (location.href !== lastUrl) {
         lastUrl = location.href;
         processedElements = new WeakSet();
+        // A new search gets a fresh retry budget.
+        cancelRetryPass();
         setTimeout(processFlights, 1000);
       }
     }, 1000);

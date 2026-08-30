@@ -100,14 +100,70 @@ describe("Travel Impact Model URL parsing", () => {
   });
 });
 
+describe("per-card itinerary aggregation", () => {
+  const tim = (itinerary: string) => `https://travelimpactmodel.org/lookup/flight?${itinerary}`;
+
+  test("decoded segments are authoritative, tracked or not", () => {
+    const ours = extLib.timCardSegments([tim("itinerary=SFO,EWR,UA,123,20260601")]);
+    expect(ours.parsed).toBe(true);
+    expect(ours.segments).toEqual([{ flightNumber: "UA123", date: "2026-06-01" }]);
+
+    // Decoded and foreign: parsed stays true so the caller skips the
+    // heuristics rather than text-matching a competitor's card.
+    const theirs = extLib.timCardSegments([tim("itinerary=JFK,LAX,B6,623,20260601")]);
+    expect(theirs.parsed).toBe(true);
+    expect(theirs.segments).toEqual([]);
+  });
+
+  test("an itinerary encoding that no longer decodes falls back, it does not settle", () => {
+    // The attribute is present and the flight IS United; only the separator
+    // changed. Reporting parsed:false is what keeps the heuristics available.
+    const drifted = extLib.timCardSegments([tim("itinerary=SFO.EWR.UA.123.20260601")]);
+    expect(drifted.parsed).toBe(false);
+    expect(drifted.segments).toEqual([]);
+    expect(extLib.timCardSegments([]).parsed).toBe(false);
+    expect(extLib.timCardSegments(null).parsed).toBe(false);
+  });
+
+  test("legs repeated across elements are deduped", () => {
+    const url = tim("itinerary=SFO,DEN,UA,500,20260601,DEN,EWR,UA,1500,20260601");
+    const both = extLib.timCardSegments([url, url]);
+    expect(both.segments.map((s: { flightNumber: string }) => s.flightNumber)).toEqual([
+      "UA500",
+      "UA1500",
+    ]);
+  });
+});
+
 describe("attribute and text extraction fallbacks", () => {
+  const ALL = ["UA", "HA", "AS"];
+
   test("attribute forms: XX-NNNN-YYYYMMDD, XX-NNNN, /XX/NNNN/", () => {
-    expect(extLib.parseAttrFlightNumber("foo UA-1234-20260601 bar")).toBe("UA1234");
-    expect(extLib.parseAttrFlightNumber("HA-50")).toBe("HA50");
-    expect(extLib.parseAttrFlightNumber("/booking/AS/118/details")).toBe("AS118");
-    expect(extLib.parseAttrFlightNumber("DL-1234-20260601")).toBeNull();
-    expect(extLib.parseAttrFlightNumber("")).toBeNull();
-    expect(extLib.parseAttrFlightNumber(null)).toBeNull();
+    expect(extLib.parseAttrFlightNumber("foo UA-1234-20260601 bar", ALL)).toBe("UA1234");
+    expect(extLib.parseAttrFlightNumber("HA-50", ALL)).toBe("HA50");
+    expect(extLib.parseAttrFlightNumber("/booking/AS/118/details", ALL)).toBe("AS118");
+    expect(extLib.parseAttrFlightNumber("DL-1234-20260601", ALL)).toBeNull();
+    expect(extLib.parseAttrFlightNumber("", ALL)).toBeNull();
+    expect(extLib.parseAttrFlightNumber(null, ALL)).toBeNull();
+  });
+
+  test("attribute extraction is gated on the carriers named in the card", () => {
+    // Google's obfuscated attribute soup is full of two-letter fragments. Only
+    // an airline the card actually names may be matched out of it.
+    expect(extLib.parseAttrFlightNumber("data-jsdata=deferred;AS-12;x", ["UA"])).toBeNull();
+    expect(extLib.parseAttrFlightNumber("/gws/HA/9/img", ["UA"])).toBeNull();
+    expect(extLib.parseAttrFlightNumber("data-jsdata=deferred;AS-12;x", ["AS"])).toBe("AS12");
+    // Fails closed: no gate supplied, no match, ever.
+    expect(extLib.parseAttrFlightNumber("foo UA-1234-20260601 bar")).toBeNull();
+    expect(extLib.parseAttrFlightNumber("foo UA-1234-20260601 bar", [])).toBeNull();
+    expect(extLib.parseAttrFlightNumber("foo UA-1234-20260601 bar", ["DL"])).toBeNull();
+  });
+
+  test("carriersNamedIn is the shared airline-name gate", () => {
+    expect(extLib.carriersNamedIn("United · UA 1234 · 5h 30m")).toEqual(["UA"]);
+    expect(extLib.carriersNamedIn("Alaska/Hawaiian codeshare")).toEqual(["HA", "AS"]);
+    expect(extLib.carriersNamedIn("Delta · DL 456")).toEqual([]);
+    expect(extLib.carriersNamedIn(null)).toEqual([]);
   });
 
   test("text extraction requires the airline-name marker", () => {
@@ -249,6 +305,32 @@ describe("badging policy", () => {
     expect(extLib.combineClaims([]).status).toBe("unknown");
   });
 
+  test("multi-leg combine: probability and confidence grade are both worst-case", () => {
+    // The least-likely leg is not necessarily the least-trusted one. Inheriting
+    // the min-probability leg's grade laundered a low-confidence leg — which
+    // shouldBadge suppresses on its own — into a badge via its sibling.
+    const mixed = extLib.combineClaims([predicted(0.95, "low"), predicted(0.88, "high")]);
+    expect(mixed.probability).toBe(0.88);
+    expect(mixed.predictionConfidence).toBe("low");
+    expect(extLib.shouldBadge(mixed)).toBe(false);
+    expect(extLib.shouldBadge(predicted(0.95, "low"))).toBe(false);
+
+    expect(extLib.combineClaims([predicted(0.9, "high"), predicted(0.95, "medium")])).toMatchObject(
+      {
+        probability: 0.9,
+        predictionConfidence: "medium",
+      }
+    );
+    // An ungraded prediction (registry/subfleet answer) neither weakens a
+    // graded sibling nor invents a grade of its own.
+    expect(
+      extLib.combineClaims([predicted(0.99, null), predicted(0.9, "high")]).predictionConfidence
+    ).toBe("high");
+    expect(
+      extLib.combineClaims([predicted(0.99, null), predicted(0.9, null)]).predictionConfidence
+    ).toBeNull();
+  });
+
   test("badge copy states the rung, never a bare boolean", () => {
     expect(extLib.badgeLabel({ ...extLib.unknownClaim(), status: "verified" })).toBe("Starlink");
     expect(extLib.badgeLabel({ ...extLib.unknownClaim(), status: "installed" })).toBe(
@@ -318,6 +400,31 @@ describe("extension normalizer against live handler responses", () => {
       expect(extLib.shouldBadge(claim)).toBe(true);
     }
   );
+
+  // Carriers with no flight-history model answer from the registry instead. A
+  // single-subfleet answer carries a probability the ladder can read; a
+  // per-type split carries none, and must stay off the badge rather than blend
+  // "always yes" types with "never" ones.
+  test("hub registry answers: a probability badges, its absence abstains", async () => {
+    for (const fn of ["AS850", "AS2402", "HA50"]) {
+      const body = await jsonOf(
+        app,
+        `/api/check-any-flight?flight_number=${fn}&date=2024-06-01`,
+        HUB_HOST
+      );
+      const claim = extLib.normalizeClaim(body);
+      if (body.probability === undefined) {
+        expect(claim.status, fn).toBe("unknown");
+        expect(extLib.shouldBadge(claim), fn).toBe(false);
+        continue;
+      }
+      expect(claim.status, fn).toBe("predicted");
+      expect(claim.probability, fn).toBeGreaterThanOrEqual(0);
+      expect(claim.probability, fn).toBeLessThanOrEqual(1);
+      // "type" is not a history grade and must never be dressed up as one.
+      expect(claim.predictionConfidence, fn).toBeNull();
+    }
+  });
 
   test("hub check-any-flight: untracked carrier settles as unknown (no badge)", async () => {
     for (const fn of ["DL123", "QR9999"]) {
