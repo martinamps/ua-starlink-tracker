@@ -10,13 +10,13 @@
  *
  * The live upcoming_flights window only reaches ~47h ahead, so most permalinks
  * have no scheduled leg at all and fall through to the route cache. These cover
- * that fallback too. Its contract is asymmetric on purpose: frequency still
- * decides unless a leg has been silent past the whole window while a sibling was
- * seen inside it, because last_seen_at only stamps when a Starlink-equipped tail
- * lands on the leg and is therefore a noisy signal for "retired". So the negative
- * cases below — legs that are merely somewhat stale, legs that are all stale,
- * corrupt future timestamps — matter as much as the reassignment case: each is a
- * way the ordering could invent a wrong title for a permalink main gets right.
+ * that fallback too, where silence only *discounts* frequency: last_seen_at
+ * stamps just when a Starlink-equipped tail happens to draw the leg, so silence
+ * is noisy evidence and a leg has to out-earn the discount to take routes[0].
+ * The negative cases below — a lone sighting against hundreds, a heavy leg one
+ * second past the grace period, legs that are all ancient, corrupt future
+ * timestamps — matter as much as the reassignment case: each is a way the
+ * ordering could invent a wrong title for a permalink main gets right.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -126,17 +126,21 @@ function seedCachedRoute(
   );
 }
 
-describe("getFlightRoutePairs recency fallback", () => {
-  // Production shape behind the stale-title report: no near-term assignment, so
-  // every leg is history-only and the scheduled tier can't break the tie.
+describe("getFlightRoutePairs staleness discount", () => {
+  // The shape behind the stale-title report: no near-term assignment, so every
+  // leg is history-only and the scheduled tier can't break the tie. Counts and
+  // airports here are illustrative, not transcribed from any live row.
   const now = utc("2026-08-29T12:00:00Z");
 
-  test("a leg silent past the whole window loses to the leg still being seen", () => {
+  test("a long-retired leg loses routes[0] to the leg that replaced it", () => {
     const db = makeSyntheticDb();
-    seedCachedRoute(db, "UA1340", "IAH", "EWR", 165, now - 60 * DAY);
-    seedCachedRoute(db, "UA1340", "SFO", "BWI", 51, now - 90 * DAY);
-    seedCachedRoute(db, "UA1340", "EWR", "SFO", 8, now - 1800);
-    const rows = getFlightRoutePairs(db, ["UA1340"], "UA", now);
+    // A reassigned number: the old pair stopped being flown eight months ago but
+    // keeps its lifetime count forever, while the pair that replaced it has been
+    // accumulating since. Silence that long discounts the old leg to its floor,
+    // an eighth, which the replacement's 40 observations clear.
+    seedCachedRoute(db, "UA800", "IAH", "EWR", 240, now - 240 * DAY);
+    seedCachedRoute(db, "UA800", "EWR", "SFO", 40, now - 3 * DAY);
+    const rows = getFlightRoutePairs(db, ["UA800"], "UA", now);
 
     expect(rows[0].departure_airport).toBe("EWR");
     expect(rows[0].arrival_airport).toBe("SFO");
@@ -144,8 +148,7 @@ describe("getFlightRoutePairs recency fallback", () => {
     expect(rows[0].times).toBeLessThan(rows[1].times);
     // Demoted, never dropped: the page still lists the number's route history,
     // and a cold-tail permalink always has a route to put in its title.
-    expect(rows.length).toBe(3);
-    expect(rows.map((r) => r.arrival_airport)).toEqual(["SFO", "EWR", "BWI"]);
+    expect(rows.map((r) => r.arrival_airport)).toEqual(["SFO", "EWR"]);
     db.close();
   });
 
@@ -165,8 +168,8 @@ describe("getFlightRoutePairs recency fallback", () => {
     const db = makeSyntheticDb();
     // A gap of days proves nothing: last_seen_at stamps only when a Starlink tail
     // draws this leg, which at mainline penetration skips a daily route for a week
-    // about a quarter of the time. Both legs stay in the same tier, so the 300
-    // observations decide — a diversion must not become the page title.
+    // about a quarter of the time. Inside the grace period nothing is discounted,
+    // so the 300 observations decide — a diversion must not become the page title.
     seedCachedRoute(db, "UA89", "ORD", "LHR", 300, now - 10 * DAY);
     seedCachedRoute(db, "UA89", "ORD", "SNN", 1, now - 3600);
     const rows = getFlightRoutePairs(db, ["UA89"], "UA", now);
@@ -175,16 +178,60 @@ describe("getFlightRoutePairs recency fallback", () => {
     db.close();
   });
 
-  test("when no leg is current the tier is flat and frequency alone decides", () => {
+  test("crossing the grace period doesn't flip the title on the clock alone", () => {
+    // The failure a hard cutoff has: one second of elapsed time swapping a page's
+    // title, meta description and JSON-LD, then swapping back on the next stamp.
+    // The discount starts at zero, so the two sides of the boundary must agree.
+    const across = [now - 30 * DAY + 1, now - 30 * DAY - 1].map((lastSeen) => {
+      const db = makeSyntheticDb();
+      seedCachedRoute(db, "UA91", "ATL", "EWR", 82, lastSeen);
+      seedCachedRoute(db, "UA91", "ORD", "DCA", 3, now - 2 * DAY);
+      const rows = getFlightRoutePairs(db, ["UA91"], "UA", now);
+      db.close();
+      return rows.map((r) => `${r.departure_airport}-${r.arrival_airport}`);
+    });
+
+    expect(across[0]).toEqual(["ATL-EWR", "ORD-DCA"]);
+    expect(across[1]).toEqual(across[0]);
+  });
+
+  test("a lone sighting never unseats a leg with orders more evidence", () => {
     const db = makeSyntheticDb();
-    // Anchoring to the number's own freshest leg instead of to `now` would make
-    // one of these "current" by construction and crown the freshest; a cold
-    // permalink has no evidence to separate its legs, so it must not pretend to.
+    // The commonest production shape: a heavy leg silent for months against a
+    // single stray observation inside the grace period. The discount bottoms out
+    // at an eighth, so 116 observations survive as 14.5 and the stray stays put —
+    // one sighting is not evidence that the other 116 stopped happening.
+    seedCachedRoute(db, "UA92", "LAX", "SLC", 116, now - 100 * DAY);
+    seedCachedRoute(db, "UA92", "DTW", "DEN", 1, now - 20 * DAY);
+    const rows = getFlightRoutePairs(db, ["UA92"], "UA", now);
+
+    expect(rows.map((r) => r.arrival_airport)).toEqual(["SLC", "DEN"]);
+    db.close();
+  });
+
+  test("an ancient heavy leg still outranks a lighter, less ancient one", () => {
+    const db = makeSyntheticDb();
+    // Staleness must never decide on its own. Measured from the number's own
+    // freshest leg instead of from `now`, the SNN row would be "current" by
+    // construction and would take the title on one observation.
     seedCachedRoute(db, "UA90", "ORD", "LHR", 300, now - 200 * DAY);
     seedCachedRoute(db, "UA90", "ORD", "SNN", 1, now - 40 * DAY);
     const rows = getFlightRoutePairs(db, ["UA90"], "UA", now);
 
     expect(rows.map((r) => r.arrival_airport)).toEqual(["LHR", "SNN"]);
+    db.close();
+  });
+
+  test("a leg whose origin equals its destination never reaches the caller", () => {
+    const db = makeSyntheticDb();
+    // Returns and diversions come back logged as A->A. Left in, such a row can
+    // title a permalink "(MIA -> MIA)", emit JSON-LD with identical departure and
+    // arrival airports, and link to /route-planner/MIA/MIA, which 404s by design.
+    seedCachedRoute(db, "UA93", "MIA", "MIA", 1, now - 15 * DAY);
+    seedCachedRoute(db, "UA93", "FAB", "ORD", 12, now - 37 * DAY);
+    const rows = getFlightRoutePairs(db, ["UA93"], "UA", now);
+
+    expect(rows.map((r) => r.departure_airport)).toEqual(["FAB"]);
     db.close();
   });
 

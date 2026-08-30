@@ -1677,11 +1677,17 @@ function buildFlightFacts(
 ): FlightFacts {
   const history = reader.getFlightHistorySummary(variants);
   // Airport codes feed markup and JSON-LD; only use rows that look like real
-  // IATA/ICAO codes.
+  // IATA/ICAO codes. Each row also renders a /route-planner/{from}/{to} link,
+  // which parseRoutePath rejects when the two match, so a same-airport row would
+  // put a guaranteed 404 in the page — getFlightRoutePairs drops those, and this
+  // keeps the invariant local to the code that builds the link.
   const routes = reader
     .getFlightRoutePairs(variants)
     .filter(
-      (r) => AIRPORT_CODE_RE.test(r.departure_airport) && AIRPORT_CODE_RE.test(r.arrival_airport)
+      (r) =>
+        AIRPORT_CODE_RE.test(r.departure_airport) &&
+        AIRPORT_CODE_RE.test(r.arrival_airport) &&
+        r.departure_airport !== r.arrival_airport
     );
   const now = Math.floor(Date.now() / 1000);
   const upcoming = reader
