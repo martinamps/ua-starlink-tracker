@@ -1856,6 +1856,22 @@ function invalidFlightMeta(ctx: RequestContext, reason: InvalidFlightQuery["reas
   };
 }
 
+/** Meta for a well-formed flight number we hold no rows for. Same rule as
+ * invalidFlightMeta, and a far larger URL space than it: every UA number a
+ * crawler can enumerate lands here, so canonicalizing them onto /check-flight
+ * pointed thousands of noindex responses at the conversion page. Self-canonical
+ * instead, with a title that names the flight rather than reusing the hub's. */
+function unknownFlightMeta(flightNumber: string, cfg: AirlineConfig): PageMeta {
+  return {
+    siteTitle: `${flightNumber} — No Starlink Data Yet`,
+    siteDescription: `We have no schedule data for ${cfg.name} ${flightNumber} yet. Enter the flight number and date below to check for free Starlink WiFi.`,
+    keywords: `${flightNumber} starlink, does ${flightNumber} have wifi`,
+    ogTitle: `${flightNumber} — No Starlink Data Yet`,
+    ogDescription: `Check ${cfg.name} ${flightNumber} for Starlink WiFi.`,
+    robotsMeta: "noindex, follow",
+  };
+}
+
 const checkFlightPage: Handler = (ctx) => {
   if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
   if (!ctx.site.features.checkFlightPage) {
@@ -1910,13 +1926,11 @@ const checkFlightPage: Handler = (ctx) => {
     // FR24 fallback can still answer a real flight outside our schedule
     // window, and the homepage form + permalink replaceState both mint these
     // URLs — so serve the interactive generic page instead of dead-ending.
-    // noindex + canonical to /check-flight keeps it out of the index (the
-    // sitemap never advertises ungated flights).
+    // noindex keeps it out of the index (the sitemap never advertises ungated
+    // flights), and the canonical stays on this URL so the noindex lands here
+    // rather than on /check-flight.
     if (!reader.flightNumberHasData(variants)) {
-      return renderSubPage(ctx, CheckFlightPage, "/check-flight", {
-        ...subPageMeta(ctx, "check-flight"),
-        robotsMeta: "noindex, follow",
-      });
+      return renderSubPage(ctx, CheckFlightPage, ctx.url.pathname, unknownFlightMeta(fn, cfg));
     }
     const facts = buildFlightFacts(reader, cfg, fn, variants);
     return renderSubPage(

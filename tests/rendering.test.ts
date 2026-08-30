@@ -137,14 +137,18 @@ describe("flight permalink gate + normalization", () => {
     ghostFlight = `UA${n}`;
   });
 
-  test("valid-format flight with no data → 200 soft page, noindex, canonical to /check-flight", async () => {
+  test("valid-format flight with no data → 200 soft page, noindex, self-canonical", async () => {
     const res = await app.dispatch(req(`/check-flight/${ghostFlight}`, HOST));
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html.match(/<meta name="robots" content="([^"]+)"/)?.[1]).toContain("noindex");
+    // Self-canonical, never /check-flight: pointing a noindex response at the
+    // conversion page aims the noindex at the page that has to rank.
     expect(html.match(/<link rel="canonical" href="([^"]+)"/)?.[1]).toBe(
-      `https://${HOST}/check-flight`
+      `https://${HOST}/check-flight/${ghostFlight}`
     );
+    // ...and it stops borrowing the hub's title while it is at it.
+    expect(html.match(/<title>([^<]+)<\/title>/)?.[1]).toContain(ghostFlight);
     // The interactive lookup form still serves — the URL is not a dead end.
     expect(html).toContain('id="check-flight-form"');
   });
