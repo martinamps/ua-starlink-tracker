@@ -211,10 +211,10 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     status: "installing",
     statusLabel: "Widebodies nearly done",
     summary:
-      "150 Starlink widebodies as of August 2026 — every 777 and A350, the whole 787-8 sub-fleet, and the world's first 787-9 — with the 787 program finishing by the end of 2026. A380s and A330s are excluded.",
+      "150 Starlink widebodies as of August 2026 — every 777 and A350, the whole 787-8 sub-fleet, and the world's first 787-9 — with the 787 program finishing by the end of 2026. The A330s and A380s are not in the announced program and Qatar has not said whether they ever will be.",
     facts: [
       {
-        fact: "Qatar Airways reached 150 Starlink-equipped widebodies, including the world's first Starlink-equipped Boeing 787-9 and the completed 787-8 sub-fleet, and remains on track to finish the 787 rollout by the end of 2026. The 777 and A350 fleets were finished earlier; A380s and A330s are not in the announced program.",
+        fact: "Qatar Airways reached 150 Starlink-equipped widebodies, including the world's first Starlink-equipped Boeing 787-9 and the completed 787-8 sub-fleet, and remains on track to finish the 787 rollout by the end of 2026. The 777 programme was completed in nine months and the A350 programme in eight.",
         asOf: "2026-08-21",
         source: {
           label: "Qatar Airways press release",
@@ -222,11 +222,11 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         },
       },
       {
-        fact: "Full-flight free access now requires a free Privilege Club login; non-members get 45 minutes of complimentary Starlink Wi-Fi.",
-        asOf: "2026-08-21",
+        fact: "Starlink is deployed across the Boeing 777, Airbus A350, and Boeing 787-8 fleets. Qatar Airways has not confirmed whether its remaining widebodies — the Airbus A330s and A380s — will receive it. Complimentary Wi-Fi runs the whole journey via Privilege Club authentication or enrolment, though gate-to-gate access can be unavailable at some airports for local regulatory reasons.",
+        asOf: "2026-08-27",
         source: {
-          label: "Qatar Airways press release",
-          url: "https://www.qatarairways.com/press-releases/en-WW/269475-qatar-airways-150-starlink-equipped-widebody-aircraft-now-include-world-s-first-starlink-equipped-boeing-787-9/",
+          label: "Travel Tomorrow",
+          url: "https://traveltomorrow.com/qatar-airways-reaches-150-starlink-equipped-planes-with-worlds-first-boeing-787-9/",
         },
       },
     ],

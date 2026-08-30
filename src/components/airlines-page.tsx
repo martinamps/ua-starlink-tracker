@@ -64,7 +64,11 @@ export interface TypePhase {
 const PHASE_LABEL: Record<WifiPhase, { text: string; tone: "yes" | "mid" | "no" }> = {
   confirmed: { text: "Starlink — whole type", tone: "yes" },
   rolling: { text: "Mid-installation", tone: "mid" },
-  negative: { text: "No Starlink planned", tone: "no" },
+  // "No Starlink planned" claims the airline ruled the type out. For some of
+  // these it did (HA's 717s); for others it has simply never said (QR's A380s
+  // and A330s — the registry's own note is "no installation plan announced").
+  // One phase covers both, so the label says only what both support.
+  negative: { text: "Not in the current programme", tone: "no" },
 };
 
 const TONE_CLASS = {
