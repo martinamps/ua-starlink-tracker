@@ -123,6 +123,29 @@ export function stripFlightNumberZeros(flightNumber: string): string {
 }
 
 /**
+ * The one spelling a /check-flight permalink may take: two-letter marketing
+ * IATA plus 1-4 digits, zero-padding already stripped. Every producer of a
+ * permalink (sitemap, route pages) and the router that resolves one must agree
+ * on this shape — when they drifted, the sitemap advertised /check-flight/UA63986
+ * (5 digits, minted by an FR24 cache write) and the router 404'd it.
+ */
+export const CANONICAL_FLIGHT_PERMALINK = /^[A-Z]{2}\d{1,4}$/;
+
+/**
+ * What may be persisted into the flight_routes cache. Looser than the permalink
+ * shape because the cache legitimately holds operating-carrier numbers (SKW4726
+ * for a United Express leg) that have no permalink of their own, but still
+ * bounded to 4 digits — the cache is written from caller-supplied lookup input,
+ * and the sitemap enumerates it.
+ */
+export const CACHEABLE_FLIGHT_NUMBER = /^[A-Z]{2,3}\d{1,4}$/;
+
+/** Marketing-number matcher for one airline, bounded to the permalink shape. */
+export function canonicalPermalinkFor(cfg: AirlineConfig): RegExp {
+  return new RegExp(`^${cfg.iata}\\d{1,4}$`);
+}
+
+/**
  * Carrier-prefix variants plus zero-padded spellings for DB lookup. Schedule
  * feeds store some carriers' numbers zero-padded (HA11 arrives as HA0011) at
  * inconsistent widths, so every width from the natural spelling up to 5 digits

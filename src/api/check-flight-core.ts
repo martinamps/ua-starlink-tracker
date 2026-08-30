@@ -11,6 +11,7 @@
  */
 
 import {
+  CANONICAL_FLIGHT_PERMALINK,
   buildAirlineFlightNumberVariants,
   detectMarketingCarrier,
   ensureAirlinePrefix,
@@ -109,8 +110,9 @@ export function decideCarrier(
  * and /api/predict-flight so the two cannot drift.
  */
 export function isPlausibleFlightNumber(cfg: AirlineConfig, normalized: string): boolean {
-  const m = normalized.match(/^([A-Z]+)(\d{1,4})$/);
-  return m !== null && m[1] === cfg.iata;
+  // Same shape the permalink router and the sitemap enumerator accept, so the
+  // three surfaces cannot drift into advertising a URL no page can answer.
+  return CANONICAL_FLIGHT_PERMALINK.test(normalized) && normalized.startsWith(cfg.iata);
 }
 
 /** The reader a resolved decision answers from: the pinned scope's own, or a
