@@ -24,3 +24,11 @@
    rendered class comes from a component under src/ or from the page shell. */
 @source "../../index.html";
 @source "../../src";
+
+/* These add to Tailwind's automatic project scan rather than replacing it, so
+   tests/ is swept too — and a class-shaped string in a test file lands in the
+   shipped stylesheet. Measured: adding a `w-1/2` example to a comment in
+   tests/stylesheet.test.ts grew the artifact by 44 B of rules no page uses.
+   Excluding tests keeps the output a function of what actually renders, which
+   is what makes the build reproducible across machines. */
+@source not "../../tests";
