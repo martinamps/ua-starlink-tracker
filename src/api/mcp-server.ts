@@ -42,6 +42,7 @@ import {
   carrierRouteAnswer,
   compareRoute,
   describeCarrierPrediction,
+  describeRouteOdds,
   joinSentences,
   planItinerary,
   predictFlight,
@@ -1079,7 +1080,7 @@ function formatCarrierRoute(
       .join("\n");
     text = `**${route} (${cfg.name})**: ${pct(r.lo)}–${pct(r.hi)} Starlink — ${r.reason.toLowerCase()}:\n${breakdown}\n${footer}`;
   } else {
-    text = `**${route} (${cfg.name})**: ${joinSentences(`~${pct(r.probability)} Starlink — ${r.reason}`, footer)}`;
+    text = `**${route} (${cfg.name})**: ${joinSentences(describeRouteOdds(r.probability, r.reason), footer)}`;
   }
   return { content: [{ type: "text", text }] };
 }

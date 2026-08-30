@@ -85,6 +85,7 @@ import {
   carrierRouteAnswer,
   compareRoute,
   describeCarrierPrediction,
+  describeRouteOdds,
   joinSentences,
   planItinerary,
   predictFlight,
@@ -1015,10 +1016,7 @@ const apiPlanRoute: Handler = ({ req, url, reader, tenant }) => {
     // Late-assignment carriers: route odds are fleet odds too — say why no
     // per-departure promise follows (joinSentences drops it elsewhere).
     const message = r
-      ? joinSentences(
-          `~${Math.round(r.probability * 100)}% Starlink — ${r.reason}`,
-          cfg.lateAssignmentNote
-        )
+      ? joinSentences(describeRouteOdds(r.probability, r.reason), cfg.lateAssignmentNote)
       : joinSentences(
           `Route predictions for ${cfg.name} are determined by aircraft type`,
           cfg.rollout.phaseNote

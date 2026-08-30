@@ -517,17 +517,23 @@ describe("MCP tools are scope-correct on non-UA tenants", () => {
 
   // Exact predict branch per scope. Split-phase carriers (HA, QR) must NEVER
   // show a blended number; AS850 quotes the registry penetrationOverride, so
-  // the pinned value is registry-driven, not snapshot-data-driven. WN's pin is
-  // the fleet-odds mode: seeded 2-of-6 penetration, never a model output.
+  // the pinned value is registry-driven, not snapshot-data-driven.
+  //
+  // WN gets the "odds" branch, NOT a pinned number: its probability is the
+  // live roster's penetration, so an exact value would be a snapshot-data pin
+  // that dies the first time the real ~800-tail roster lands (the values-not-
+  // shapes failure the convention exists to prevent). Assert the fleet-odds
+  // shape instead.
   const PREDICT_PIN: Record<
     string,
     | { flight: string; branch: "split"; groups: string[] }
     | { flight: string; branch: "number"; probability: number; mentions: string }
+    | { flight: string; branch: "odds"; mentions: string }
   > = {
     alaska: { flight: "850", branch: "number", probability: 1, mentions: "Hawaiian-operated" },
     hawaiian: { flight: "1", branch: "split", groups: ["A330", "717"] },
     qatar: { flight: "1", branch: "split", groups: ["777", "787"] },
-    southwest: { flight: "1", branch: "number", probability: 2 / 6, mentions: "737" },
+    southwest: { flight: "1", branch: "odds", mentions: "737" },
   };
 
   test("tools/list: same tool names as UA, zero United literals", async () => {
@@ -610,6 +616,17 @@ describe("MCP tools are scope-correct on non-UA tenants", () => {
             expect(d.message, `${site.key} REST names ${g}`).toContain(g);
             expect(t, `${site.key} MCP names ${g}`).toContain(g);
           }
+        } else if (pin.branch === "odds") {
+          expect(typeof d.probability, `${site.key}: fleet odds carry a number`).toBe("number");
+          expect(d.probability).toBeGreaterThan(0);
+          expect(d.probability).toBeLessThan(1);
+          expect(d.confidence).toBe("type");
+          // The quotable clause: a real fraction, and the subfleet named.
+          expect(d.message, `${site.key} REST fleet-odds clause`).toMatch(
+            /\d+ of \d+ .* aircraft equipped/
+          );
+          expect(d.message, `${site.key} REST names ${pin.mentions}`).toContain(pin.mentions);
+          expect(t, `${site.key}: MCP text drifted from REST message`).toContain(d.message);
         } else {
           expect(d.probability).toBe(pin.probability);
           expect(d.message).toContain(pin.mentions);

@@ -198,6 +198,32 @@ describe("WN check-flight answers fleet odds, never assignments", () => {
     expect(d.message).not.toContain("United");
   });
 
+  test("at real-launch penetration the odds never round down to a '~0%' verdict", async () => {
+    // 1 equipped of ~800 is the shape the real roster lands in the moment the
+    // FR24 seed runs. A rounded percentage reads as a verdict on the user's
+    // flight instead of the rollout's current edge — the same hazard the
+    // per-flight meta copy already guards.
+    const db = makeSyntheticDb();
+    addPlane(db, "N8543Z", "Starlink", { airline: "WN", aircraft: "Boeing 737-800" });
+    const ins = db.query(
+      `INSERT INTO united_fleet (tail_number, aircraft_type, fleet, first_seen_source, first_seen_at, last_seen_at, starlink_status, verified_wifi, verified_at, airline)
+       VALUES (?, 'Boeing 737-800', 'mainline', 'test', 1, 1, ?, ?, 1, 'WN')`
+    );
+    ins.run("N8543Z", "confirmed", "Starlink");
+    for (let i = 0; i < 799; i++) ins.run(`N8${String(i).padStart(3, "0")}W`, "unknown", null);
+    const sapp = createApp(db);
+    try {
+      const d = await jsonOf(sapp, "/api/predict-flight?flight_number=410", WN_HOST);
+      expect(d.probability).toBeGreaterThan(0);
+      expect(d.probability).toBeLessThan(0.01);
+      expect(d.message).not.toContain("~0%");
+      // The raw fraction leads instead, so the number a reader quotes is real.
+      expect(d.message).toMatch(/1 of 800 .* aircraft equipped/);
+    } finally {
+      db.close();
+    }
+  });
+
   test("/api/predict-flight mirrors the registry answer (no model fingerprints)", async () => {
     const d = await jsonOf(app, "/api/predict-flight?flight_number=410", WN_HOST);
     expect(d.flight_number).toBe("WN410");

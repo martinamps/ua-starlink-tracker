@@ -857,17 +857,40 @@ export function describeCarrierPrediction(cfg: AirlineConfig, answer: CarrierPre
     );
   }
   const { sf, pen } = answer;
-  const pct = (pen.pct * 100).toFixed(0);
   const hint = sf.flightNumberHint ? ` (${sf.flightNumberHint})` : "";
   const basis = pen.synthetic
     ? `${sf.label}${hint} — Starlink status is set by the operating subfleet`
     : `${pen.equipped} of ${pen.total} ${sf.label}${hint} aircraft equipped`;
   return joinSentences(
-    `~${pct}% Starlink probability (${basis})`,
+    fleetOddsLead(pen, basis),
     // Fleet-odds mode: say WHY there's no firmer answer before the rollout story.
     cfg.lateAssignmentNote,
     cfg.rollout.phaseNote
   );
+}
+
+/** Opening clause for a penetration answer.
+ *
+ * Below ~1% the rounded percentage renders as "~0% Starlink probability",
+ * which a reader takes as a verdict on their flight rather than as the
+ * rollout's current edge — the same hazard flightMetaAnswer already guards in
+ * meta copy. Early in a rollout (Southwest: 1 equipped of ~800) that is the
+ * normal case for the tenant whose entire product is honest fleet odds, so
+ * lead with the raw fraction there and keep the percentage out of it. */
+function fleetOddsLead(pen: { pct: number; equipped: number; total: number }, basis: string) {
+  const pct = pen.pct * 100;
+  if (pct >= 1) return `~${pct.toFixed(0)}% Starlink probability (${basis})`;
+  return pen.equipped === 0
+    ? `No aircraft in this fleet group are equipped yet — ${basis}`
+    : `Starlink is still rare on this fleet — ${basis} so far, well under 1%`;
+}
+
+/** The same guard for a route answer, whose prose is assembled by the caller
+ * from probability + reason rather than from a penetration record. */
+export function describeRouteOdds(probability: number, reason: string): string {
+  const pct = probability * 100;
+  if (pct > 0 && pct < 1) return `Starlink is still rare on this fleet — ${reason}, well under 1%`;
+  return `~${Math.round(pct)}% Starlink — ${reason}`;
 }
 
 /**
