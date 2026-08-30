@@ -473,6 +473,43 @@ describe("/fleet as crawl hub", () => {
     expect(body).not.toContain('href="/tail/');
   });
 
+  // Without tail pages the hangar floor is still navigation: each cell jumps to
+  // that tail's registry row (carrying ?page= when pagination moved it there),
+  // and the row still carries the id + :target highlight to land on.
+  test("hub hangar cells jump into the registry instead of going inert", async () => {
+    const body = await (await get("/fleet", SITES.airline.canonicalHost)).text();
+    const jumps = [...body.matchAll(/href="(\/fleet(?:\?page=\d+)?)#t-([A-Z0-9-]+)"/g)];
+    expect(jumps.length).toBeGreaterThan(0);
+    expect(body).toContain(".tail-sl:target");
+    for (const [, target, tail] of jumps.slice(0, 15)) {
+      // The row lives on the page the cell points at, with the matching id.
+      const page = await (await get(target, SITES.airline.canonicalHost)).text();
+      expect(page, `${tail} missing from ${target}`).toContain(`id="t-${tail}"`);
+      expect(page, `${tail} not findable by ⌘F on ${target}`).toContain(`>${tail}</span>`);
+    }
+  });
+
+  // ⌘F only ever finds what is on the page, so the copy must describe the
+  // slice, not the fleet.
+  test("the registry's find-your-tail promise is scoped to the rendered slice", async () => {
+    const sdb = makeSyntheticDb();
+    for (let i = 0; i <= FLEET_TAILS_PAGE_SIZE; i++) {
+      addFleet(sdb, `N${String(i).padStart(3, "0")}UA`, "negative", { verifiedWifi: "Viasat" });
+    }
+    const sapp = createApp(sdb);
+    const page1 = await (
+      await sapp.dispatch(req("/fleet", UA, { headers: { Accept: "text/html" } }))
+    ).text();
+    const total = FLEET_TAILS_PAGE_SIZE + 1;
+    expect(page1).not.toContain(`All ${total} tails`);
+    expect(page1).toContain(`Tails 1–${FLEET_TAILS_PAGE_SIZE} of ${total}`);
+    // The overflow tail is genuinely absent from page 1's text, as the copy says.
+    const overflow = `N${String(FLEET_TAILS_PAGE_SIZE).padStart(3, "0")}UA`;
+    expect(page1).not.toContain(`>${overflow}</span>`);
+    expect(page1).toContain('href="/fleet?page=2"');
+    sdb.close();
+  });
+
   test("?page beyond the data 404s, ?page=1 canonicalizes, garbage 404s", async () => {
     expect((await get("/fleet?page=9999")).status).toBe(404);
     expect((await get("/fleet?page=abc")).status).toBe(404);

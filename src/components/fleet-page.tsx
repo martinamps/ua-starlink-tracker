@@ -179,22 +179,18 @@ function LivePulse({ pulse }: { pulse: FleetPageData["pulse"] }) {
 
 // Cell sizing/hover lives in the shared .tail-cell rule, not per-cell utility
 // classes — at 1.6k cells every repeated byte of markup is page weight.
-function TailGrid({ tails, tailLinks }: { tails: FleetTail[]; tailLinks: boolean }) {
+function TailGrid({ tails, cellHref }: { tails: FleetTail[]; cellHref: (t: FleetTail) => string }) {
   return (
     <div className="grid grid-cols-[repeat(10,8px)] gap-[2px]">
-      {tails.map((t) =>
-        tailLinks ? (
-          // biome-ignore lint/a11y/useAnchorContent: title provides the accessible name; inline text on 1.6k cells would add ~50KB
-          <a
-            key={t.tail}
-            href={`/tail/${t.tail}`}
-            title={cellTitle(t)}
-            className={`tail-cell wifi-${t.provider}`}
-          />
-        ) : (
-          <span key={t.tail} title={cellTitle(t)} className={`tail-cell wifi-${t.provider}`} />
-        )
-      )}
+      {tails.map((t) => (
+        // biome-ignore lint/a11y/useAnchorContent: title provides the accessible name; inline text on 1.6k cells would add ~50KB
+        <a
+          key={t.tail}
+          href={cellHref(t)}
+          title={cellTitle(t)}
+          className={`tail-cell wifi-${t.provider}`}
+        />
+      ))}
     </div>
   );
 }
@@ -230,7 +226,13 @@ function SpecCard({ family, spec }: { family: string; spec: AircraftSpec }) {
   );
 }
 
-function FamilyBlock({ fam, tailLinks }: { fam: FleetFamily; tailLinks: boolean }) {
+function FamilyBlock({
+  fam,
+  cellHref,
+}: {
+  fam: FleetFamily;
+  cellHref: (t: FleetTail) => string;
+}) {
   const pct = Math.round((fam.starlink / fam.total) * 100);
   const spec = AIRCRAFT_SPECS[fam.family];
   return (
@@ -261,7 +263,7 @@ function FamilyBlock({ fam, tailLinks }: { fam: FleetFamily; tailLinks: boolean 
         </svg>
       </summary>
       <div className="px-2 pb-2">
-        <TailGrid tails={fam.tails} tailLinks={tailLinks} />
+        <TailGrid tails={fam.tails} cellHref={cellHref} />
       </div>
     </details>
   );
@@ -286,12 +288,14 @@ function HangarFloor({
   totalStarlink,
   scopeLabel,
   tailLinks,
+  cellHref,
 }: {
   families: FleetFamily[];
   totalFleet: number;
   totalStarlink: number;
   scopeLabel: string;
   tailLinks: boolean;
+  cellHref: (t: FleetTail) => string;
 }) {
   return (
     <section className={SECTION}>
@@ -300,14 +304,16 @@ function HangarFloor({
         <p className="text-xs text-muted mb-3">
           Every {scopeLabel} tail number is one cell. {totalStarlink} of {totalFleet} currently show
           Starlink. The color tells you which WiFi system is installed today.
-          {tailLinks && " Click any cell for that tail's status and verification history."}
+          {tailLinks
+            ? " Click any cell for that tail's status and verification history."
+            : " Click any cell to jump to that tail in the registry below."}
         </p>
         <Legend />
       </div>
 
       <div className="fam-container gap-3">
         {families.map((fam) => (
-          <FamilyBlock key={fam.family} fam={fam} tailLinks={tailLinks} />
+          <FamilyBlock key={fam.family} fam={fam} cellHref={cellHref} />
         ))}
       </div>
       <script
@@ -525,7 +531,15 @@ function RegistryEntry({ t, tailLinks }: { t: FleetTail; tailLinks: boolean }) {
         rel: "nofollow noreferrer noopener",
       };
   return (
-    <a {...linkProps} title={monumentTitle(t, tailLinks)} className={cls}>
+    <a
+      {...linkProps}
+      // The hangar floor's jump target. Only minted where the cells actually
+      // jump here — with tail pages the cells link straight to /tail/, and
+      // 1.6k unused ids are pure page weight.
+      {...(tailLinks ? {} : { id: `t-${t.tail}` })}
+      title={monumentTitle(t, tailLinks)}
+      className={cls}
+    >
       <span className="tail-dot">{t.provider === "starlink" ? "◉" : " "}</span>
       <span className="tail-num">{t.tail}</span>
       <span className="tail-abbr">{FAMILY_ABBR[t.family] || "—"}</span>
@@ -558,19 +572,30 @@ function TailRegistry({
 
   const { page, totalPages, pageSize } = pagination;
   const pageTails = allTails.slice((page - 1) * pageSize, page * pageSize);
+  const firstIndex = (page - 1) * pageSize + 1;
+  const lastIndex = firstIndex + pageTails.length - 1;
 
   return (
     <section className={SECTION}>
       <div className="mb-4">
         <h2 className="font-display text-xl font-semibold text-primary mb-1">Tail Registry</h2>
+        {/* Only pageTails are on the page, so the ⌘F promise is scoped to them
+            — the old "All N tails, ⌘F to find yours" became false the moment
+            the registry paginated. */}
         <p className="text-xs text-muted mb-2">
-          All {totalFleet} tails{totalPages > 1 ? ` (page ${page} of ${totalPages})` : ""} —{" "}
-          <kbd className="px-1 bg-surface border border-subtle rounded text-[10px]">⌘F</kbd> to find
-          yours,{" "}
+          {totalPages > 1
+            ? `Tails ${firstIndex}–${lastIndex} of ${totalFleet} (page ${page} of ${totalPages}) — `
+            : `All ${totalFleet} tails — `}
+          <kbd className="px-1 bg-surface border border-subtle rounded text-[10px]">⌘F</kbd>{" "}
+          {totalPages > 1 ? "finds any tail on this page" : "to find yours"},{" "}
           {tailLinks
             ? "click for that tail's Starlink status and history"
             : "click to track on FlightAware"}
-          . Cyan = Starlink, dim = everything else.
+          .
+          {totalPages > 1
+            ? ` The other ${totalFleet - pageTails.length} are on the pages below.`
+            : ""}{" "}
+          Cyan = Starlink, dim = everything else.
         </p>
         <div className="flex flex-wrap gap-3 font-mono text-[10px] text-muted">
           {PROVIDER_ORDER.map((p) =>
@@ -718,6 +743,14 @@ export default function FleetPage({ data, site, pagination, tailLinks }: FleetPa
   // hangar floor already ship in full on page 1, and repeating them would put
   // near-identical 100KB+ documents behind every ?page=N.
   const continuation = pagination.page > 1;
+  // Where a hangar-floor cell goes. With tail pages, its own permalink;
+  // without them, the registry row for that tail — which pagination may have
+  // pushed onto another page, so the jump link has to carry ?page= too.
+  const registryPageOf = new Map(
+    data.allTails.map((t, i) => [t.tail, Math.floor(i / pagination.pageSize) + 1])
+  );
+  const cellHref = (t: FleetTail): string =>
+    tailLinks ? `/tail/${t.tail}` : `${registryHref(registryPageOf.get(t.tail) ?? 1)}#t-${t.tail}`;
   return (
     <div className="w-full mx-auto px-4 sm:px-6 md:px-8 bg-base min-h-screen flex flex-col relative">
       <div className="absolute inset-0 grid-pattern opacity-50 pointer-events-none" />
@@ -737,8 +770,9 @@ export default function FleetPage({ data, site, pagination, tailLinks }: FleetPa
           .tail-dim { color: var(--color-text-muted); opacity: 0.3; transition: opacity .15s; }
           .tail-sl:hover .tail-num, .tail-dim:hover .tail-num { text-decoration: underline; }
           .tail-dim:hover { opacity: 1; }
+          .tail-sl:target, .tail-dim:target { background: rgba(14, 165, 233, 0.2); opacity: 1; scroll-margin-top: 5rem; }
           .tail-cell { width: 8px; height: 8px; border-radius: 1px; display: block; transition: transform .15s; }
-          a.tail-cell:hover { transform: scale(1.5); }
+          .tail-cell:hover { transform: scale(1.5); }
           .tail-dot { width: 0.8em; text-align: center; flex-shrink: 0; }
           .tail-num { flex: 0 0 auto; }
           .tail-abbr { opacity: 0.4; font-size: 0.75em; flex-shrink: 0; }
@@ -801,6 +835,7 @@ export default function FleetPage({ data, site, pagination, tailLinks }: FleetPa
             totalStarlink={data.totalStarlink}
             scopeLabel={scopeLabel}
             tailLinks={tailLinks}
+            cellHref={cellHref}
           />
 
           <section className={`${SECTION} grid md:grid-cols-2 gap-4`}>
