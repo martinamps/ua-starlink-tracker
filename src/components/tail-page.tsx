@@ -1,5 +1,5 @@
 import React from "react";
-import { type SiteConfig, siteAirline } from "../airlines/registry";
+import { type SiteConfig, siteAirline, wifiEvidenceKind } from "../airlines/registry";
 import type { TailDeparture, TailPageRecord, TailVerificationEvent } from "../database/database";
 
 const EYEBROW = "text-[10px] font-mono text-muted uppercase tracking-wider mb-3";
@@ -22,11 +22,14 @@ const shortDate = (sec: number): string =>
     timeZone: "UTC",
   });
 
-/** Where each verification-log source actually looked. */
+/** Where each verification-log source actually looked. Type-derived backends
+ * say so in the label: alaskaair.com and qatarairways.com expose the equipment
+ * assigned to a flight, never the wifi installed on the airframe, so captioning
+ * one of their rows "via alaskaair.com" would invent provenance it never had. */
 const SOURCE_LABEL: Record<string, string> = {
   united: "united.com",
-  alaska: "alaskaair.com",
-  qatar: "qatarairways.com flight status",
+  alaska: "alaskaair.com equipment type",
+  qatar: "qatarairways.com equipment type",
   flightradar24: "Flightradar24",
   spreadsheet: "community fleet sheet",
 };
@@ -36,27 +39,48 @@ const sourceLabel = (source: string): string => SOURCE_LABEL[source] ?? source;
 /**
  * Claim-ladder tier for a tail: verified (observed in service, dated) >
  * installed per fleet data (labeled) > no Starlink yet > unknown (honest
- * abstention). Spreadsheet rows are fleet data, not in-service observations,
- * so they can never promote a tail to "verified".
+ * abstention). `contestedAt` rides on the weaker tiers when the newest
+ * in-service check disagrees with the settled fleet status.
  */
-export type TailClaim =
+export type TailClaim = (
   | { tier: "verified"; observedAt: number }
   | { tier: "installed"; settledAt: number | null }
   | { tier: "no_starlink"; provider: string | null; settledAt: number | null }
-  | { tier: "unknown" };
+  | { tier: "unknown" }
+) & {
+  /** Newest in-service observation contradicts the settled status (consensus
+   * needs a rolling window to flip): assert neither side until it re-settles. */
+  contestedAt?: number;
+};
 
 export function deriveTailClaim(
   record: Pick<TailPageRecord, "starlink_status" | "verified_wifi" | "verified_at">,
   timeline: TailVerificationEvent[]
 ): TailClaim {
-  if (record.starlink_status === "confirmed") {
-    const observed = timeline.find((e) => e.has_starlink === 1 && e.source !== "spreadsheet");
-    if (observed) return { tier: "verified", observedAt: observed.last_checked_at };
-    return { tier: "installed", settledAt: record.verified_at };
-  }
+  // Only an observed-wifi source can date a "verified" claim. Type-derived
+  // backends and the community sheet are fleet data — promoting one to
+  // "verified in service" is the wrong-yes bug class the registry forbids.
+  // The NEWEST such row wins, not the newest agreeable one: the timeline is
+  // printed directly under the headline, so a stale positive must never
+  // outrank the fresh negative sitting above it.
+  const newestObserved = timeline.find((e) => wifiEvidenceKind(e.source) === "observed");
   const nonStarlinkWifi =
     record.verified_wifi && record.verified_wifi !== "Starlink" ? record.verified_wifi : null;
+
+  if (record.starlink_status === "confirmed") {
+    if (newestObserved?.has_starlink === 1) {
+      return { tier: "verified", observedAt: newestObserved.last_checked_at };
+    }
+    return {
+      tier: "installed",
+      settledAt: record.verified_at,
+      ...(newestObserved ? { contestedAt: newestObserved.last_checked_at } : {}),
+    };
+  }
   if (record.starlink_status === "negative" || nonStarlinkWifi) {
+    if (newestObserved?.has_starlink === 1) {
+      return { tier: "unknown", contestedAt: newestObserved.last_checked_at };
+    }
     return { tier: "no_starlink", provider: nonStarlinkWifi, settledAt: record.verified_at };
   }
   return { tier: "unknown" };
@@ -64,6 +88,7 @@ export function deriveTailClaim(
 
 /** Short claim headline for the H1 ("N47280 — {headline}"). */
 export function tailClaimHeadline(claim: TailClaim): string {
+  if (claim.contestedAt) return "re-verifying Starlink status";
   switch (claim.tier) {
     case "verified":
       return "Starlink verified";
@@ -76,9 +101,14 @@ export function tailClaimHeadline(claim: TailClaim): string {
   }
 }
 
-const providerPhrase = (provider: string | null): string => {
-  if (!provider || provider === "None") return "no replacement WiFi has been observed on it yet";
-  return `${provider} is installed today`;
+const providerPhrase = (provider: string | null, settledAt: number | null): string => {
+  // Every other tier dates its claim; a present-tense "installed today" with
+  // no date ages silently, so say when the record settled (or say nothing).
+  const asOf = settledAt ? ` as of ${longDate(settledAt)}` : "";
+  if (!provider || provider === "None") {
+    return `no replacement WiFi has been observed on it${asOf || " yet"}`;
+  }
+  return settledAt ? `${provider} is installed${asOf}` : `${provider} is installed`;
 };
 
 /** The one-sentence answer the page exists to give — shared by the header and
@@ -93,13 +123,19 @@ export function tailVerdict(
   switch (claim.tier) {
     case "verified":
       return `${subject} has Starlink WiFi — last verified in service on ${longDate(claim.observedAt)}.`;
-    case "installed":
-      return `${subject} has Starlink WiFi installed per fleet data${
-        claim.settledAt ? ` (settled ${longDate(claim.settledAt)})` : ""
-      }, not yet re-verified in service.`;
+    case "installed": {
+      const settled = claim.settledAt ? ` (settled ${longDate(claim.settledAt)})` : "";
+      if (claim.contestedAt) {
+        return `Fleet data lists Starlink on ${subject}${settled}, but the latest in-service check on ${longDate(claim.contestedAt)} did not find it — re-verifying before we call it either way.`;
+      }
+      return `${subject} has Starlink WiFi installed per fleet data${settled}, not yet re-verified in service.`;
+    }
     case "no_starlink":
-      return `${subject} does not have Starlink yet — ${providerPhrase(claim.provider)}.`;
+      return `${subject} does not have Starlink yet — ${providerPhrase(claim.provider, claim.settledAt)}.`;
     default:
+      if (claim.contestedAt) {
+        return `The latest in-service check on ${longDate(claim.contestedAt)} found Starlink on ${subject}, but our settled fleet record still disagrees — re-verifying before we call it either way.`;
+      }
       return `The WiFi system on ${subject} hasn't been determined yet — verification checks are ongoing.`;
   }
 }
@@ -123,21 +159,31 @@ export interface TailPageData {
   faa: { year_mfr: string | null; serial: string | null } | null;
 }
 
+function claimBadgeLabel(claim: TailClaim): string {
+  if (claim.contestedAt) return `Checks disagree · re-verifying ${shortDate(claim.contestedAt)}`;
+  switch (claim.tier) {
+    case "verified":
+      return `Starlink · verified ${shortDate(claim.observedAt)}`;
+    case "installed":
+      return `Starlink · per fleet data${claim.settledAt ? ` ${shortDate(claim.settledAt)}` : ""}`;
+    case "no_starlink":
+      // Dated like every other tier — a bare "No Starlink yet" reads as a
+      // claim about right now no matter how old the settle is.
+      return `No Starlink${claim.settledAt ? ` · as of ${shortDate(claim.settledAt)}` : " yet"}`;
+    default:
+      return "Not yet determined";
+  }
+}
+
 function ClaimBadge({ claim }: { claim: TailClaim }) {
-  const tone =
-    claim.tier === "verified" || claim.tier === "installed"
+  const tone = claim.contestedAt
+    ? "text-muted border-subtle"
+    : claim.tier === "verified" || claim.tier === "installed"
       ? "text-accent border-accent/40"
       : claim.tier === "no_starlink"
         ? "text-secondary border-subtle"
         : "text-muted border-subtle";
-  const label =
-    claim.tier === "verified"
-      ? `Starlink · verified ${shortDate(claim.observedAt)}`
-      : claim.tier === "installed"
-        ? "Starlink · per fleet data"
-        : claim.tier === "no_starlink"
-          ? "No Starlink yet"
-          : "Not yet determined";
+  const label = claimBadgeLabel(claim);
   return (
     <span
       className={`inline-block font-mono text-xs px-2.5 py-1 rounded border bg-surface-elevated ${tone}`}
@@ -186,12 +232,20 @@ function AircraftFacts({ data, airlineName }: { data: TailPageData; airlineName:
 }
 
 function TimelineResult({ e }: { e: TailVerificationEvent }) {
+  // "Confirmed" is reserved for a source that actually looked at the aircraft's
+  // wifi. A type-derived row only proves which airframe flew the leg.
+  const observed = wifiEvidenceKind(e.source) === "observed";
   if (e.has_starlink === 1) {
-    return <span className="text-accent">Starlink confirmed</span>;
+    return (
+      <span className="text-accent">
+        {observed ? "Starlink confirmed" : "Starlink per fleet data"}
+      </span>
+    );
   }
   return (
     <span className="text-secondary">
-      No Starlink{e.wifi_provider && e.wifi_provider !== "None" ? ` — ${e.wifi_provider}` : ""}
+      No Starlink{observed ? "" : " per fleet data"}
+      {e.wifi_provider && e.wifi_provider !== "None" ? ` — ${e.wifi_provider}` : ""}
     </span>
   );
 }
@@ -227,9 +281,9 @@ function VerificationTimeline({ data }: { data: TailPageData }) {
             ))}
           </ol>
           <p className="text-[11px] text-muted mt-4 leading-snug">
-            Every clean check we have logged against this registration, newest first — identical
-            same-day results are collapsed into one entry. This is the evidence behind the status
-            above.
+            Every check we have logged against this registration and confirmed belongs to it, newest
+            first — identical same-day results are collapsed into one entry. This is the same
+            evidence the status above is settled from.
           </p>
         </>
       )}

@@ -2265,10 +2265,17 @@ export interface TailVerificationEvent {
 }
 
 /**
- * Public evidence timeline for a tail: clean observations only (same
- * CLEAN_OBSERVATION_WHERE population that trains the predictor and settles
- * consensus — the page must cite the evidence the verdict actually rests on),
- * collapsed per day/source/result so an hourly re-check reads as one entry.
+ * Rows a tail page may publish as evidence: the clean population consensus
+ * actually settles on. tail_confirmed = 1 matters as much as the clean filter
+ * — pre-fix legacy rows are the contaminated set computeWifiConsensus refuses
+ * to draw a verdict from, so publishing them as "the evidence behind the
+ * status above" would cite exactly what the status ignored.
+ */
+export const PUBLISHABLE_OBSERVATION_WHERE = `tail_confirmed = 1 AND ${CLEAN_OBSERVATION_WHERE}`;
+
+/**
+ * Public evidence timeline for a tail, collapsed per day/source/result so an
+ * hourly re-check reads as one entry.
  */
 export function getTailVerificationTimeline(
   db: Database,
@@ -2281,7 +2288,7 @@ export function getTailVerificationTimeline(
             MAX(flight_number) AS flight_number, COUNT(*) AS checks,
             MAX(checked_at) AS last_checked_at
      FROM starlink_verification_log
-     WHERE tail_number = ? AND ${CLEAN_OBSERVATION_WHERE}`,
+     WHERE tail_number = ? AND ${PUBLISHABLE_OBSERVATION_WHERE}`,
     airline,
     "",
     [tail]
@@ -2322,31 +2329,99 @@ export interface SitemapTail {
   last_touched: number;
 }
 
+/** Everything the indexability test needs about one registration. The page
+ * builds it from the rows it already rendered, the sitemap from SQL, so the
+ * two can only agree. */
+export interface TailEvidenceFacts {
+  starlink_status: string;
+  verified_wifi: string | null;
+  /** Has at least one PUBLISHABLE_OBSERVATION_WHERE row. */
+  has_observations: boolean;
+  has_upcoming: boolean;
+  has_departures: boolean;
+}
+
 /**
- * Every registration with a /tail/{registration} page — the airline's whole
- * united_fleet roster, negatives included ("does N12345 have Starlink" deserves
- * an honest no). lastmod is real evidence time: the latest verification check
- * or verified_at settle for that tail, never the request time. Mirrors the
- * page's existence gate (getTailPageRecord) by construction: both read
- * united_fleet scoped to the airline.
+ * Whether a registration has earned an indexable page. A roster row alone has
+ * not: a tail with no settled status, no clean check, no schedule and no
+ * departures renders aircraft type plus two empty states — the soft-404 shape.
+ * Those URLs still serve 200 (the fleet hub links every cell, and "we don't
+ * know yet" is a real answer for a visitor) but go out noindex and stay out of
+ * the sitemap. Page and sitemap share this one test.
+ */
+export function tailIsIndexable(f: TailEvidenceFacts): boolean {
+  const settledStatus =
+    f.starlink_status === "confirmed" ||
+    f.starlink_status === "negative" ||
+    // A named non-Starlink provider is a settled answer even when the status
+    // column hasn't caught up — same test deriveTailClaim uses.
+    (f.verified_wifi !== null && f.verified_wifi !== "" && f.verified_wifi !== "Starlink");
+  return settledStatus || f.has_observations || f.has_upcoming || f.has_departures;
+}
+
+/**
+ * Registrations worth advertising: the airline's roster minus the tails with
+ * nothing to say, negatives very much included ("does N12345 have Starlink"
+ * deserves an honest no). lastmod is real evidence time — the latest
+ * verification check or verified_at settle for that tail, never request time.
  */
 export function getSitemapTails(db: Database, airline: string): SitemapTail[] {
   const nowSec = Math.floor(Date.now() / 1000);
   const rows = db
     .query(
-      `SELECT tail_number AS tail,
-              COALESCE(verified_at, 0) AS settled_at,
-              COALESCE((SELECT MAX(v.checked_at) FROM starlink_verification_log v
-                        WHERE v.tail_number = united_fleet.tail_number
-                          AND v.airline = united_fleet.airline), 0) AS checked_at
+      `SELECT tail_number AS tail, starlink_status, verified_wifi,
+              COALESCE(verified_at, 0) AS settled_at
        FROM united_fleet WHERE airline = ? ORDER BY tail_number`
     )
-    .all(airline) as Array<{ tail: string; settled_at: number; checked_at: number }>;
+    .all(airline) as Array<{
+    tail: string;
+    starlink_status: string;
+    verified_wifi: string | null;
+    settled_at: number;
+  }>;
+  // Evidence arrives as whole sets, not as a correlated subquery per roster
+  // row: at fleet scale (1.6k tails over an 80k-row log) the per-row form costs
+  // ~1.6s on this serving path, the set form ~45ms.
+  const tailSet = (sql: string, ...params: (string | number)[]): Set<string> =>
+    new Set((db.query(sql).all(...params) as { tail_number: string }[]).map((r) => r.tail_number));
+  const lastChecked = new Map(
+    (
+      db
+        .query(
+          `SELECT tail_number, MAX(checked_at) AS checked_at FROM starlink_verification_log
+           WHERE airline = ? GROUP BY tail_number`
+        )
+        .all(airline) as Array<{ tail_number: string; checked_at: number }>
+    ).map((r) => [r.tail_number, r.checked_at])
+  );
+  const observed = tailSet(
+    `SELECT DISTINCT tail_number FROM starlink_verification_log
+     WHERE airline = ? AND ${PUBLISHABLE_OBSERVATION_WHERE}`,
+    airline
+  );
+  const scheduled = tailSet(
+    "SELECT DISTINCT tail_number FROM upcoming_flights WHERE airline = ? AND departure_time > ?",
+    airline,
+    nowSec
+  );
+  const departed = tailSet(
+    "SELECT DISTINCT tail_number FROM departure_log WHERE airline = ?",
+    airline
+  );
   return rows
     .filter((r) => TAIL_URL_RE.test(r.tail))
+    .filter((r) =>
+      tailIsIndexable({
+        starlink_status: r.starlink_status,
+        verified_wifi: r.verified_wifi,
+        has_observations: observed.has(r.tail),
+        has_upcoming: scheduled.has(r.tail),
+        has_departures: departed.has(r.tail),
+      })
+    )
     .map((r) => {
       // Future timestamps are corrupt rows — treat as unknown, keep the page.
-      const sane = [r.settled_at, r.checked_at].filter((t) => t > 0 && t <= nowSec);
+      const sane = [r.settled_at, lastChecked.get(r.tail) ?? 0].filter((t) => t > 0 && t <= nowSec);
       return { tail: r.tail, last_touched: sane.length > 0 ? Math.max(...sane) : 0 };
     });
 }

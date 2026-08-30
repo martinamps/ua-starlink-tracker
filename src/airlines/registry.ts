@@ -650,6 +650,26 @@ export const OBSERVED_WIFI_SOURCES: readonly VerificationSource[] = [
   ),
 ].sort();
 
+/** Sources whose wifi field is inferred from the equipment type — the check
+ * saw a fleet assignment, never the aircraft's wifi. */
+export const TYPE_DERIVED_WIFI_SOURCES: readonly VerificationSource[] = [
+  ...new Set(
+    enabledAirlines()
+      .filter((a) => a.verifierBackend && VERIFIER_EVIDENCE[a.verifierBackend] === "type_derived")
+      .map((a) => verifierSourceTag(a))
+  ),
+].sort();
+
+/** What a verification-log row's wifi field actually proves, for read surfaces
+ * that must caption their evidence honestly. Tags with no verifier backend
+ * behind them (spreadsheet, flightradar24) are "other": worth displaying,
+ * never an in-service observation. */
+export function wifiEvidenceKind(source: string): "observed" | "type_derived" | "other" {
+  if ((OBSERVED_WIFI_SOURCES as readonly string[]).includes(source)) return "observed";
+  if ((TYPE_DERIVED_WIFI_SOURCES as readonly string[]).includes(source)) return "type_derived";
+  return "other";
+}
+
 export function lastUpdatedOwner(code: string): LastUpdatedOwner {
   return AIRLINES[code]?.lastUpdatedOwner ?? "fleet-meta";
 }

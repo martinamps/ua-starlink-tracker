@@ -11,13 +11,19 @@
  * Shapes over values: tails are picked from whatever the snapshot holds.
  */
 
+import type { Database } from "bun:sqlite";
 import { beforeAll, describe, expect, test } from "bun:test";
 import { SITES, siteForAirline } from "../src/airlines/registry";
-import { deriveTailClaim } from "../src/components/tail-page";
-import { TAIL_URL_RE, getSitemapTails, getTailPageRecord } from "../src/database/database";
+import { deriveTailClaim, tailClaimHeadline, tailVerdict } from "../src/components/tail-page";
+import {
+  TAIL_URL_RE,
+  getSitemapTails,
+  getTailPageRecord,
+  getTailVerificationTimeline,
+} from "../src/database/database";
 import type { TailVerificationEvent } from "../src/database/database";
 import { FLEET_TAILS_PAGE_SIZE, createApp, parseTailPath } from "../src/server/app";
-import { addFleet, makeSyntheticDb, openSnapshot, req } from "./helpers";
+import { addFleet, addFlight, makeSyntheticDb, openSnapshot, req } from "./helpers";
 
 let app: ReturnType<typeof createApp>;
 let db: ReturnType<typeof openSnapshot>;
@@ -31,6 +37,8 @@ const UA = SITES.united.canonicalHost;
 const get = (path: string, host = UA) =>
   app.dispatch(req(path, host, { headers: { Accept: "text/html" } }));
 
+const NOINDEX = '<meta name="robots" content="noindex, follow"';
+
 /** A tail the snapshot actually backs, so the test survives data drift. */
 function someTail(airline = "UA", where = "1=1"): string {
   const row = db
@@ -38,6 +46,50 @@ function someTail(airline = "UA", where = "1=1"): string {
     .get(airline) as { tail_number: string } | null;
   if (!row) throw new Error(`snapshot has no ${airline} tail (${where}) — run bun run test:setup`);
   return row.tail_number;
+}
+
+/** A tail whose settled status the newest publishable check agrees with, for
+ * the given tier. Picking by derived tier (not by a status column) keeps these
+ * tests off whichever tails happen to be mid-disagreement in the snapshot. */
+function tailWithTier(tier: string, airline = "UA"): string {
+  const rows = db
+    .query("SELECT tail_number FROM united_fleet WHERE airline = ? ORDER BY tail_number")
+    .all(airline) as { tail_number: string }[];
+  for (const { tail_number } of rows) {
+    const record = getTailPageRecord(db, tail_number, airline);
+    if (!record) continue;
+    const claim = deriveTailClaim(record, getTailVerificationTimeline(db, tail_number, airline));
+    if (claim.tier === tier && !claim.contestedAt) return tail_number;
+  }
+  throw new Error(`snapshot has no ${airline} tail at tier ${tier} — run bun run test:setup`);
+}
+
+function addLog(
+  sdb: Database,
+  tail: string,
+  opts: {
+    source?: string;
+    hasStarlink?: number;
+    wifi?: string;
+    checkedAt: number;
+    tailConfirmed?: number | null;
+    airline?: string;
+  }
+): void {
+  const {
+    source = "united",
+    hasStarlink = 1,
+    wifi = "Starlink",
+    tailConfirmed = 1,
+    airline = "UA",
+  } = opts;
+  sdb
+    .query(
+      `INSERT INTO starlink_verification_log
+       (tail_number, source, checked_at, has_starlink, wifi_provider, error, tail_confirmed, airline)
+       VALUES (?, ?, ?, ?, ?, NULL, ?, ?)`
+    )
+    .run(tail, source, opts.checkedAt, hasStarlink, wifi, tailConfirmed, airline);
 }
 
 describe("parseTailPath", () => {
@@ -75,19 +127,32 @@ describe("/tail/{registration}", () => {
     // Claim-ladder headline, never a bare boolean.
     expect(body).toMatch(
       new RegExp(
-        `${tail} — (Starlink verified|Starlink installed|no Starlink yet|WiFi status unknown)`
+        `${tail} — (Starlink verified|Starlink installed|no Starlink yet|WiFi status unknown|re-verifying Starlink status)`
       )
     );
     expect(body).toContain("Verification history");
   });
 
-  test("a negative tail is a first-class page saying 'no Starlink yet'", async () => {
-    const tail = someTail("UA", "starlink_status = 'negative'");
+  test("a negative tail is a first-class page saying 'no Starlink yet', dated", async () => {
+    const tail = tailWithTier("no_starlink");
     const res = await get(`/tail/${tail}`);
     expect(res.status).toBe(200);
     const body = await res.text();
     expect(body).toContain(`${tail} — no Starlink yet`);
     expect(body).toContain("does not have Starlink yet");
+    // The negative tier dates its claim like every other tier — a bare
+    // present-tense "installed today" silently ages into a lie.
+    const record = getTailPageRecord(db, tail, "UA");
+    if (record?.verified_at) {
+      const settled = new Date(record.verified_at * 1000).toLocaleDateString("en-US", {
+        month: "long",
+        day: "numeric",
+        year: "numeric",
+        timeZone: "UTC",
+      });
+      expect(body).toContain(`as of ${settled}`);
+      expect(body).not.toContain("is installed today");
+    }
   });
 
   test("lowercase and trailing-slash spellings 301 to the canonical form", async () => {
@@ -239,6 +304,149 @@ describe("deriveTailClaim (claim ladder)", () => {
       []
     );
     expect(claim).toEqual({ tier: "unknown" });
+  });
+
+  // A type-derived backend (alaska-json, qatar-fltstatus) only ever sees the
+  // equipment assigned to a flight. Letting one date a "verified in service"
+  // claim invents provenance — the wrong-yes class OBSERVED_WIFI_SOURCES exists
+  // to prevent on the write path.
+  test("confirmed with only type-derived rows → installed, never verified", () => {
+    for (const source of ["alaska", "qatar"]) {
+      const claim = deriveTailClaim(
+        { starlink_status: "confirmed", verified_wifi: "Starlink", verified_at: 42 },
+        [event({ source })]
+      );
+      expect(claim, source).toEqual({ tier: "installed", settledAt: 42 });
+    }
+  });
+
+  // The timeline is printed directly under the headline, so the headline has
+  // to answer to its newest row — consensus can lag a flip by weeks.
+  test("newest observation outranks older ones, never the reverse", () => {
+    const stalePositive = event({ last_checked_at: 1_700_000_000, day: "2023-11-14" });
+    const freshNegative = event({
+      has_starlink: 0,
+      wifi_provider: "Viasat",
+      last_checked_at: 1_770_000_000,
+      day: "2026-02-02",
+    });
+    const claim = deriveTailClaim(
+      { starlink_status: "confirmed", verified_wifi: "Starlink", verified_at: 5 },
+      [freshNegative, stalePositive]
+    );
+    expect(claim).toEqual({ tier: "installed", settledAt: 5, contestedAt: 1_770_000_000 });
+  });
+
+  test("a fresh Starlink observation over a settled negative abstains, not asserts", () => {
+    const claim = deriveTailClaim(
+      { starlink_status: "negative", verified_wifi: "Viasat", verified_at: 5 },
+      [event({ last_checked_at: 1_770_000_000 })]
+    );
+    expect(claim).toEqual({ tier: "unknown", contestedAt: 1_770_000_000 });
+  });
+
+  test("a contested claim never publishes an affirmative headline", () => {
+    for (const record of [
+      { starlink_status: "confirmed", verified_wifi: "Starlink", verified_at: 5 },
+      { starlink_status: "negative", verified_wifi: "Viasat", verified_at: 5 },
+    ]) {
+      const claim = deriveTailClaim(record, [
+        event({ has_starlink: record.starlink_status === "confirmed" ? 0 : 1 }),
+      ]);
+      expect(claim.contestedAt).toBeGreaterThan(0);
+      expect(tailClaimHeadline(claim)).toBe("re-verifying Starlink status");
+      expect(tailVerdict(claim, "N1UA", "United Airlines", "B737")).toContain("re-verifying");
+    }
+  });
+});
+
+describe("evidence the page is allowed to publish", () => {
+  // computeWifiConsensus refuses to settle on tail_confirmed IS NULL rows —
+  // "legacy is the contaminated set". A page captioned "the evidence behind the
+  // status above" must not show what the status itself ignored.
+  test("the timeline drops unconfirmed legacy rows", () => {
+    const sdb = makeSyntheticDb();
+    addFleet(sdb, "N900UA", "confirmed", { verifiedWifi: "Starlink" });
+    addLog(sdb, "N900UA", { checkedAt: 1_770_000_000, tailConfirmed: null });
+    addLog(sdb, "N900UA", { checkedAt: 1_760_000_000, tailConfirmed: 1 });
+    const timeline = getTailVerificationTimeline(sdb, "N900UA", "UA");
+    expect(timeline).toHaveLength(1);
+    expect(timeline[0].last_checked_at).toBe(1_760_000_000);
+    sdb.close();
+  });
+
+  test("a legacy-only tail cannot date a 'verified in service' claim", async () => {
+    const sdb = makeSyntheticDb();
+    addFleet(sdb, "N901UA", "confirmed", { verifiedWifi: "Starlink", verifiedAt: 1_700_000_000 });
+    addLog(sdb, "N901UA", { checkedAt: 1_770_000_000, tailConfirmed: null });
+    const sapp = createApp(sdb);
+    const body = await (
+      await sapp.dispatch(req("/tail/N901UA", UA, { headers: { Accept: "text/html" } }))
+    ).text();
+    expect(body).toContain("N901UA — Starlink installed");
+    expect(body).not.toContain("last verified in service");
+    sdb.close();
+  });
+
+  test("a type-derived row is captioned as fleet data, not an in-service check", async () => {
+    const sdb = makeSyntheticDb();
+    addFleet(sdb, "N902AK", "confirmed", { airline: "AS", verifiedWifi: "Starlink" });
+    addLog(sdb, "N902AK", { source: "alaska", checkedAt: 1_770_000_000, airline: "AS" });
+    const sapp = createApp(sdb);
+    const host = siteForAirline("AS")?.canonicalHost as string;
+    const body = await (
+      await sapp.dispatch(req("/tail/N902AK", host, { headers: { Accept: "text/html" } }))
+    ).text();
+    expect(body).toContain("N902AK — Starlink installed");
+    expect(body).not.toContain("Starlink verified");
+    expect(body).not.toContain("last verified in service");
+    expect(body).toContain("Starlink per fleet data");
+    expect(body).toContain("alaskaair.com equipment type");
+    sdb.close();
+  });
+});
+
+describe("the tail URL family is bounded by evidence, not by roster membership", () => {
+  test("a roster row with nothing to say serves 200 but noindex, and is unadvertised", async () => {
+    const sdb = makeSyntheticDb();
+    addFleet(sdb, "N903UA", "unknown", { verifiedWifi: null, verifiedAt: null });
+    const sapp = createApp(sdb);
+    const res = await sapp.dispatch(req("/tail/N903UA", UA, { headers: { Accept: "text/html" } }));
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain(NOINDEX);
+    expect(body).toContain("No verification checks on record");
+    expect(getSitemapTails(sdb, "UA").map((t) => t.tail)).not.toContain("N903UA");
+    sdb.close();
+  });
+
+  test("one real fact is enough to earn the index back", async () => {
+    const sdb = makeSyntheticDb();
+    addFleet(sdb, "N904UA", "unknown", { verifiedWifi: null, verifiedAt: null });
+    addFlight(sdb, "N904UA", "UA100", "ORD", Math.floor(Date.now() / 1000) + 7200);
+    const sapp = createApp(sdb);
+    const body = await (
+      await sapp.dispatch(req("/tail/N904UA", UA, { headers: { Accept: "text/html" } }))
+    ).text();
+    expect(body).not.toContain(NOINDEX);
+    expect(getSitemapTails(sdb, "UA").map((t) => t.tail)).toContain("N904UA");
+    sdb.close();
+  });
+
+  // The sitemap and the page share one predicate; this pins that they can never
+  // drift apart on real data.
+  test("advertised ⇔ indexable, across the snapshot roster", async () => {
+    const advertised = new Set(getSitemapTails(db, "UA").map((t) => t.tail));
+    const roster = (
+      db
+        .query("SELECT tail_number FROM united_fleet WHERE airline = 'UA' ORDER BY tail_number")
+        .all() as { tail_number: string }[]
+    ).map((r) => r.tail_number);
+    expect(roster.length).toBeGreaterThan(0);
+    for (const tail of roster.slice(0, 40)) {
+      const body = await (await get(`/tail/${tail}`)).text();
+      expect(!body.includes(NOINDEX), tail).toBe(advertised.has(tail));
+    }
   });
 });
 

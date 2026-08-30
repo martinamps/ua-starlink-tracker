@@ -76,7 +76,12 @@ import TailPage, {
   tailClaimHeadline,
   tailVerdict,
 } from "../components/tail-page";
-import { ROUTE_AIRPORT_RE, type RouteSummary, TAIL_URL_RE } from "../database/database";
+import {
+  ROUTE_AIRPORT_RE,
+  type RouteSummary,
+  TAIL_URL_RE,
+  tailIsIndexable,
+} from "../database/database";
 import {
   COUNTERS,
   DISTRIBUTIONS,
@@ -1977,8 +1982,8 @@ const routePlannerPage: Handler = (ctx) => {
 /** Parse `/tail/{registration}`. `raw` is the segment as requested, `tail` its
  * canonical spelling (uppercase) — a mismatch means 301, so each registration
  * has exactly one indexable URL. Shape-invalid segments are null (404): the
- * URL space is bounded by TAIL_URL_RE + a united_fleet row, the same test
- * getSitemapTails advertises with. */
+ * URL space is bounded by TAIL_URL_RE + a united_fleet row, and the indexable
+ * subset by tailIsIndexable — the same test getSitemapTails advertises with. */
 export function parseTailPath(pathname: string): { raw: string; tail: string } | null {
   const rest = pathname.slice("/tail/".length).replace(/\/+$/, "");
   if (!rest || rest.includes("/")) return null;
@@ -2003,6 +2008,18 @@ function tailPageMeta(ctx: RequestContext, cfg: AirlineConfig, data: TailPageDat
     keywords: `${tail} starlink, ${tail} wifi, does ${tail} have starlink, ${cfg.shortName.toLowerCase()} ${tail}`,
     ogTitle: `${tail} — ${tailClaimHeadline(data.claim)}`,
     ogDescription: verdict,
+    // A roster row is not an answer. Tails with no settled status and no
+    // evidence still serve (the fleet hub links every cell) but stay out of
+    // the index, exactly as getSitemapTails keeps them out of the sitemap.
+    ...(tailIsIndexable({
+      starlink_status: data.record.starlink_status,
+      verified_wifi: data.record.verified_wifi,
+      has_observations: data.timeline.length > 0,
+      has_upcoming: data.upcoming.length > 0,
+      has_departures: data.departures.length > 0,
+    })
+      ? {}
+      : { robotsMeta: "noindex, follow" }),
   };
 }
 
@@ -2021,9 +2038,9 @@ const tailPage: Handler = (ctx) => {
   }
   // tailPages is airline-site-only; siteAirline throws (fail closed) on the hub.
   const cfg = siteAirline(ctx.site);
-  // Existence gate (same population getSitemapTails advertises): registrations
-  // outside this airline's roster 404, so the URL space stays bounded and a
-  // tenant host never confirms another airline's tail.
+  // Existence gate: registrations outside this airline's roster 404, so the URL
+  // space stays bounded and a tenant host never confirms another airline's
+  // tail. Roster membership only buys a 200 — tailPageMeta decides indexing.
   const record = ctx.reader.getTailPageRecord(tail);
   if (!record) return notFound(ctx.site);
 
