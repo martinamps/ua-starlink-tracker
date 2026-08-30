@@ -1449,12 +1449,17 @@ export interface FlightTypeDraw {
  * than the clean-observation population getVerificationObservations trains on.
  *
  * Whether a check parsed a wifi provider is a fact about the OUTCOME; the
- * airframe it was flying is not. The two come apart exactly where it matters:
- * a family with no wifi product at all parses no provider, so every check on it
- * is dropped as unclean and its flight numbers reach the predictor with no type
- * evidence — inheriting the fleet-wide subfleet prior (~70% for express) when
- * their own family is at 0%. Same for aircraft the fleet roster is missing
- * (regional-partner tails): the log still saw them fly.
+ * airframe it was flying is not. The two come apart on the flight numbers whose
+ * every check errored or reached the page without a provider string — 433 of
+ * them in the production snapshot. Those inherit the fleet-wide subfleet prior
+ * (0.79 for express, an average over a fleet split between ~100% and 0%
+ * families) when the log can say exactly which families fly them. Same for
+ * aircraft the fleet roster is missing (regional-partner tails): the log still
+ * saw them fly.
+ *
+ * A never-equipped jet does NOT hide here — United reports wifi_provider
+ * 'None' for it, which is a clean negative observation and trains the model
+ * directly. The gap this closes is per-FLIGHT-NUMBER, not per-family.
  */
 export function getFlightTypeDraws(db: Database, airline?: AirlineFilter): FlightTypeDraw[] {
   const sources = verifierSources(airline);

@@ -17,6 +17,7 @@
     "install-browser": "PLAYWRIGHT_BROWSERS_PATH=./do_not_commit/playwright-browsers bunx playwright install chromium",
     "db-status": "bun run src/scripts/db-status.ts",
     "predict-backtest": "bun run src/scripts/starlink-predictor.ts --backtest",
+    "predict-segments": "bun run src/scripts/starlink-predictor.ts --segments",
     "precision": "bun run src/scripts/precision-backtest.ts",
     "surface-sweep": "bun run src/scripts/surface-sweep.ts",
     "seed-hawaiian": "PLAYWRIGHT_BROWSERS_PATH=./do_not_commit/playwright-browsers bun run src/scripts/seed-hawaiian.ts",

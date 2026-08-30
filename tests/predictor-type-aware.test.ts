@@ -227,7 +227,9 @@ describe("type-aware predictor", () => {
     const reversed = buildModel([...history].reverse(), CONFIG, roster).predict(
       "UA200"
     ).probability;
-    expect(reversed).toBe(forward);
+    // Same answer, not the same float: the decayed weights are summed in row
+    // order, so bit-equality would be asserting IEEE addition is commutative.
+    expect(reversed).toBeCloseTo(forward, 12);
     expect(reversed).toBeGreaterThan(0.7);
   });
 
@@ -274,24 +276,31 @@ describe("type-aware predictor", () => {
     expect(staleSeventeen.confidence).not.toBe("low");
   });
 
-  test("16 and 17 draws of the same age are labeled the same", () => {
-    // The reported symptom: two legs at the same ~98% probability, one draw
-    // apart, carrying opposite labels. Neighbouring sample sizes at equal
-    // recency must not straddle a tier boundary.
-    const build = (n: number, fn: string) =>
+  test("neighbouring draw counts of the same age are never labeled differently", () => {
+    // The reported symptom: two legs at the same probability, one draw apart,
+    // carrying opposite labels. Pinning a single age proves nothing — any rule
+    // scored on count x decay straddles SOMEWHERE, so sweep the ages instead.
+    // Only confidenceFor's own count boundaries (1|2 and 4|5) may separate two
+    // counts, and this sweep stays inside one of its bands.
+    const label = (n: number, ageDays: number) =>
       buildModel(
         [
           obs("UA999", "N175-0", 1, 0),
-          ...Array.from({ length: n }, (_, i) => obs(fn, "N175-1", 1, 20 + i / 10)),
+          ...Array.from({ length: n }, () => obs("UA5510", "N175-1", 1, ageDays)),
         ],
         CONFIG,
         roster
-      ).predict(fn);
+      ).predict("UA5510").confidence;
 
-    const sixteen = build(16, "UA5510");
-    const seventeen = build(17, "UA5511");
-    expect(Math.abs(sixteen.probability - seventeen.probability)).toBeLessThan(0.02);
-    expect(sixteen.confidence).toBe(seventeen.confidence);
+    const straddles: string[] = [];
+    for (let ageDays = 1; ageDays <= 365; ageDays++) {
+      for (let n = 5; n <= 39; n++) {
+        if (label(n, ageDays) !== label(n + 1, ageDays)) {
+          straddles.push(`${n} vs ${n + 1} at ${ageDays}d`);
+        }
+      }
+    }
+    expect(straddles).toEqual([]);
   });
 
   test("staleness costs at most one tier, so decay still outranks a fresh sample", () => {
@@ -367,6 +376,50 @@ describe("type-aware predictor", () => {
     // ...and the cliff is the decay, not the count: the same 17 draws still
     // rate above low while the evidence is live.
     expect(build(120, "UA5506").confidence).not.toBe("low");
+  });
+
+  test("a type-mix answer is never stated as a certainty", () => {
+    // Zero observations behind it, so it must not outrank a verified answer:
+    // an all-equipped family can't publish 100% and a thin family can't
+    // publish 0% off a couple of airframes.
+    const allEquipped: FleetRosterEntry[] = Array.from({ length: 40 }, (_, i) => ({
+      tail_number: `NE${i}`,
+      aircraft_type: "ERJ-175",
+      verified_wifi: "Starlink",
+    }));
+    const thin: FleetRosterEntry[] = [
+      { tail_number: "NTHIN-1", aircraft_type: "Bombardier CRJ-700", verified_wifi: null },
+    ];
+    const { predict } = buildModel(
+      [],
+      CONFIG,
+      [...crjRoster, ...allEquipped, ...thin],
+      [
+        draw("UA5520", "NE0", "ERJ-175"),
+        draw("UA5521", "NTHIN-1", "CRJ-700"),
+        draw("UA5522", "NCRJ-0", "CRJ-200"),
+      ]
+    );
+
+    const sure = predict("UA5520");
+    const sparse = predict("UA5521");
+    const censused = predict("UA5522");
+    expect(sure.method).toBe("type_mix_prior");
+    expect(sure.probability).toBeLessThan(1);
+    expect(sparse.method).toBe("type_mix_prior");
+    expect(sparse.probability).toBeGreaterThan(0);
+    // A one-airframe family is barely evidence; sixty airframes at the same
+    // rate is. The thin one must stay nearer the fleet-wide rate.
+    expect(sparse.probability).toBeGreaterThan(censused.probability);
+  });
+
+  test("a large never-equipped family still prices far under the subfleet prior", () => {
+    // Smoothing must hedge the extremes without giving back the fix: 60
+    // CRJ-200s with no Starlink is real evidence, not a coin flip.
+    const draws = Array.from({ length: 6 }, (_, i) => draw("UA5000", `NCRJ-${i}`, "CRJ-200", i));
+    const p = buildModel([], CONFIG, crjRoster, draws).predict("UA5000");
+    expect(p.method).toBe("type_mix_prior");
+    expect(p.probability).toBeLessThan(CONFIG.expressColdPrior / 4);
   });
 
   test("no roster → the legacy subfleet-prior model, method labels intact", () => {

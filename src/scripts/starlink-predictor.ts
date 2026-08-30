@@ -92,9 +92,10 @@ interface Prediction {
  * airframes that fly the number, and calling that the fleet rate is the same
  * mislabel the type-mix prior exists to remove.
  */
-export function predictionBasis(
-  pred: Pick<Prediction, "method" | "n_observations">
-): "assignment" | "history" | "aircraft_types" | "fleet_prior" {
+export function predictionBasis(pred: {
+  method: string;
+  n_observations: number;
+}): "assignment" | "history" | "aircraft_types" | "fleet_prior" {
   if (pred.method === "confirmed_assignment") return "assignment";
   if (pred.method === "type_mix_prior") return "aircraft_types";
   return pred.n_observations > 0 ? "history" : "fleet_prior";
@@ -147,6 +148,10 @@ type Confidence = (typeof CONFIDENCE_TIERS)[number];
 
 const confidenceFor = (n: number): Confidence => (n >= 5 ? "high" : n >= 2 ? "medium" : "low");
 
+/** The smallest raw sample each tier admits — what the published label is
+ * promising, and the count the age rules are asked about. */
+const TIER_MIN_DRAWS: Record<Confidence, number> = { low: 1, medium: 2, high: 5 };
+
 /**
  * Below this share of the smoothed posterior a flight's own history has
  * stopped moving the number: the estimate is (s + α·prior)/(w + α), so once
@@ -158,33 +163,48 @@ const DEAD_EVIDENCE_SHARE = 0.05;
 const deadEvidenceWeight = (priorStrength: number) =>
   (priorStrength * DEAD_EVIDENCE_SHARE) / (1 - DEAD_EVIDENCE_SHARE);
 
+/** One half-life: past it each draw is worth under half a fresh one, which is
+ * the point where the label should hedge rather than vouch for the sample. */
+const STALE_DECAY = 0.5;
+
 /**
- * Confidence for the decayed model. Two rules, in order:
+ * Confidence for the decayed model, as a function of the count printed beside
+ * it and the AGE of the evidence — never of `count × age`.
  *
- * 1. Dead evidence is dead. Once decay has eaten the sample past
- *    `deadEvidenceWeight`, the probability IS the prior, so "low" is honest no
- *    matter how many raw draws produced it — this is the model's only way to
- *    say "too old to lean on", and the /check-flight copy names the staleness
- *    rather than printing a bare count beside it.
- * 2. Otherwise the label may hedge for staleness but never contradict the
- *    `n_observations` printed next to it. Scoring purely off the decayed
- *    weight published pairs like "17 observations (low confidence)", which
- *    reads as a bug and made the Chrome extension suppress a 98% call at the
- *    point of booking; anything confidenceFor() itself rates above "low"
- *    therefore floors at "medium". Staleness costs a tier, not the sample.
+ * Anything thresholded on the summed decayed weight is a threshold on n: for
+ * any cutoff there is an age where n draws sit below it and n+1 above, and
+ * both those samples publish the same probability. That is not hypothetical —
+ * measured against the production snapshot, the summed-weight rule put 16 and
+ * 17 draws of identical age on opposite sides of a tier at 180 (age, count)
+ * pairs, e.g. 51 days old: 16 draws → "medium" at p=0.699, 17 → "high" at
+ * p=0.710. So the age signal is divided by the count before it is used:
  *
- * The decayed weight stays the leading signal between those bounds — six draws
- * from months ago really do back the number less than six from this week.
+ * 1. The count sets the tier — the same tiering the label has always meant,
+ *    and the one the reader is comparing against `n_observations`.
+ * 2. Staleness costs at most one tier. A sample whose draws are each worth
+ *    under half a fresh one is hedged to "medium"; it never drops to "low"
+ *    while its evidence still moves the number, because "17 observations (low
+ *    confidence)" reads as a bug and made the Chrome extension suppress a 98%
+ *    call at the point of booking.
+ * 3. Dead evidence is dead, asked of the tier's minimum sample rather than the
+ *    exact count so neighbouring counts retire together: once even that sample
+ *    is worth under `deadEvidenceWeight`, the probability IS the prior and
+ *    "low" is the honest label however many draws produced it. The
+ *    /check-flight and MCP copy name the staleness instead of printing a bare
+ *    count beside the contradicting word.
  */
 function decayedConfidence(
   decayedWeight: number,
   rawCount: number,
   priorStrength: number
 ): Confidence {
-  if (decayedWeight < deadEvidenceWeight(priorStrength)) return "low";
-  const decayed = CONFIDENCE_TIERS.indexOf(confidenceFor(decayedWeight));
-  const floor = confidenceFor(rawCount) === "low" ? 0 : 1;
-  return CONFIDENCE_TIERS[Math.max(decayed, floor)];
+  const raw = confidenceFor(rawCount);
+  if (raw === "low") return "low";
+  // Mean decay factor across the sample: the age of the evidence with the
+  // count divided back out.
+  const freshness = decayedWeight / rawCount;
+  if (freshness * TIER_MIN_DRAWS[raw] < deadEvidenceWeight(priorStrength)) return "low";
+  return freshness < STALE_DECAY ? "medium" : raw;
 }
 
 /** Subfleet cold-start install rate: all we know with no usable history. */
@@ -245,15 +265,17 @@ function buildTypeAwarePredict(
 
   // Airframes the roster is missing but the log has watched fly: family from
   // the log row, status from its own newest observation. United Express is
-  // flown by partner carriers whose tails the fleet pull doesn't return, and
-  // those partners operate most of the never-equipped regional jets — leaving
-  // them out of the census is what let their flight numbers be priced off the
-  // express average.
+  // flown by partner carriers whose tails the fleet pull doesn't always return
+  // — 16 CRJ-200s in the current production snapshot — and without this loop
+  // their bodies are missing from their own family's penetration.
   for (const d of typeDraws) {
     if (tails.has(d.tail_number)) continue;
     const status = tailLatest.get(d.tail_number);
     // No clean observation of this airframe = no known status. It stays out of
-    // the census entirely rather than counting as an unequipped body.
+    // the census entirely rather than counting as an unequipped body: an
+    // unrecognized new type must not be able to talk a flight down to 0%.
+    // (Production has no such airframe today — every off-roster tail in the
+    // draw log has a clean observation — so this is a guard, not a filter.)
     if (!status) continue;
     tails.set(d.tail_number, {
       type: normalizeAircraftType(d.aircraft_type),
@@ -270,10 +292,20 @@ function buildTypeAwarePredict(
     typePen.set(t.type, agg);
   }
 
+  // Pooled install rate over every airframe of known status. The roster is
+  // non-empty here, so this is always a real measurement — it is the prior each
+  // family rate is shrunk toward below.
+  let censusStarlink = 0;
+  for (const t of tails.values()) censusStarlink += t.starlink;
+  const censusRate = censusStarlink / tails.size;
+
   // Which families fly each flight number, over EVERY check rather than the
-  // clean ones alone. A family with no wifi product parses no provider, so its
-  // checks never become observations — and its flight numbers would otherwise
-  // arrive here with no type evidence at all.
+  // clean ones alone. Whether a check parsed a provider is a fact about the
+  // OUTCOME; which airframe flew the number is not, and the two come apart on
+  // 433 flight numbers in the production snapshot whose every check either
+  // errored or reached the page without a provider string — those numbers
+  // reach the model with no outcome but a perfectly good record of what
+  // flies them.
   const drawMix = new Map<string, Map<string, number>>();
   for (const d of typeDraws) {
     const type = tails.get(d.tail_number)?.type ?? normalizeAircraftType(d.aircraft_type);
@@ -295,10 +327,17 @@ function buildTypeAwarePredict(
    * It caps by REPLACING the subfleet prior rather than by clamping the final
    * number: a flight number's own history may legitimately sit far above its
    * families' average (a 20%-penetration family still has flights that draw an
-   * equipped tail every day), and measurement confirmed a hard clamp wrecks
-   * exactly those — 737-900 flights fell from a well-calibrated ~0.9 to the
-   * family's 0.21. The evidence outranks the prior; the prior is what had no
-   * business being a fleet-wide average.
+   * equipped tail every day), and clamping the result wrecks exactly those.
+   * The evidence outranks the prior; the prior is what had no business being a
+   * fleet-wide average.
+   *
+   * Each family rate is shrunk toward the census-wide rate by the same α the
+   * flight-level model uses, because a family census is itself a sample: the
+   * production roster carries families of 1 and 10 airframes next to families
+   * of 257, and an unsmoothed rate hands a flight with NO outcome history a
+   * flat 0.000 or 1.000 off a handful of bodies — stated harder than the
+   * verified answers above it on the claim ladder, and one retrofit away from
+   * publishing "100% chance" with zero observations behind it.
    */
   const mixPrior = (mix: Map<string, number>) => {
     let n = 0;
@@ -310,7 +349,7 @@ function buildTypeAwarePredict(
       // "no Starlink" — the mirror of the bug this whole path exists to fix.
       if (!pen) continue;
       n += count;
-      s += count * (pen.s / pen.n);
+      s += count * smoothedRate(pen.s, pen.n, censusRate, config.priorStrength);
     }
     return n > 0 ? s / n : null;
   };
@@ -340,16 +379,14 @@ function buildTypeAwarePredict(
   }
 
   // Everything is determined at build time, so predict is a lookup.
-  // Confidence leads on the DECAYED evidence weight — six draws from months ago
-  // back the number far less than six from this week — bounded at both ends by
-  // decayedConfidence so the label never contradicts the n reported next to it
-  // and never vouches for evidence the decay has already written off.
   const predictions = new Map<string, Prediction>();
   for (const [flightNumber, f] of flights) {
     // Prefer the all-checks mix over the clean-observation one: same quantity,
     // strictly more evidence about which airframes this number draws. A thin
-    // history smoothed toward the subfleet average is how flight numbers flown
-    // only by never-equipped regional jets published ~70%.
+    // history smoothed toward the subfleet average is what priced flights flown
+    // only by never-equipped regional jets off the express fleet's bimodal
+    // average — measured at 0.67 mean over the 15 such numbers in the
+    // production snapshot, against an install rate of zero.
     const prior = mixPrior(drawMix.get(flightNumber) ?? f.mix) ?? coldPrior(flightNumber, config);
     predictions.set(flightNumber, {
       flight_number: flightNumber,
@@ -567,15 +604,15 @@ function loadFleetPriors(reader: ScopedReader): { express: number; mainline: num
 // Backtest
 // ============================================================================
 
-export function backtest(
-  dbPath: string,
-  holdoutHours = 48,
-  config: ModelConfig = DEFAULT_CONFIG
-): EvalResult {
+/**
+ * Train/test split shared by every scorer here, so a segment report and the
+ * headline Brier can never disagree about what the model was allowed to see.
+ * Anchors to MAX(checked_at) rather than wall-clock: against a frozen snapshot
+ * wall-clock shrinks or erases the holdout window.
+ */
+function splitAtHoldout(dbPath: string, holdoutHours: number, config: ModelConfig) {
   const db = new Database(dbPath, { readonly: true });
   const reader = createReaderFactory(db)("UA");
-  // Anchor to MAX(checked_at), not wall-clock — against frozen snapshots,
-  // wall-clock would shrink or erase the holdout window.
   const allObs = reader.getVerificationObservations();
   const anchor =
     allObs.reduce((m, o) => Math.max(m, o.checked_at), 0) || Math.floor(Date.now() / 1000);
@@ -583,19 +620,105 @@ export function backtest(
 
   const trainObs = allObs.filter((o) => o.checked_at < cutoff);
   const testObs = allObs.filter((o) => o.checked_at >= cutoff);
-
   const derivedConfig = deriveConfig(reader, trainObs, config);
   // Type draws are held out on the same cutoff: which airframe flew a number
   // last Tuesday is knowledge from the future at the point being scored.
   const trainDraws = reader.getFlightTypeDraws().filter((d) => d.checked_at < cutoff);
-  const { predict } = buildModel(trainObs, derivedConfig, censusRoster(reader), trainDraws);
+  const roster = censusRoster(reader);
+  db.close();
+
+  return { trainObs, testObs, trainDraws, roster, derivedConfig };
+}
+
+/** One row of the segment report: a population, its mean prediction, and what
+ * actually happened to it. */
+export interface SegmentScore {
+  segment: string;
+  n: number;
+  meanPredicted: number;
+  actualRate: number;
+  brier: number;
+}
+
+function scoreSegments(
+  scored: Array<{ segment: string; p: number; actual: number }>
+): SegmentScore[] {
+  const bySegment = new Map<string, Array<{ p: number; actual: number }>>();
+  for (const s of scored) {
+    const rows = bySegment.get(s.segment) ?? [];
+    rows.push(s);
+    bySegment.set(s.segment, rows);
+  }
+  return [...bySegment.entries()]
+    .map(([segment, rows]) => ({
+      segment,
+      n: rows.length,
+      meanPredicted: rows.reduce((a, r) => a + r.p, 0) / rows.length,
+      actualRate: rows.reduce((a, r) => a + r.actual, 0) / rows.length,
+      brier: rows.reduce((a, r) => a + (r.p - r.actual) ** 2, 0) / rows.length,
+    }))
+    .sort((a, b) => b.n - a.n);
+}
+
+/**
+ * Score the holdout split by EVIDENCE CLASS instead of in aggregate.
+ *
+ * The aggregate Brier is ~99% flights with their own history, so a change that
+ * only touches flights the model has never seen an outcome for moves it by
+ * less than the noise between two holdout windows — which is exactly the
+ * population the type-mix prior exists for. This is the harness that number
+ * has to be quoted from, and it lives in the repo so anyone can re-run it
+ * against a populated database:
+ *
+ *   bun run predict-segments --db=… --holdout=720
+ */
+export function segmentedBacktest(
+  dbPath: string,
+  holdoutHours = 720,
+  config: ModelConfig = DEFAULT_CONFIG
+): SegmentScore[] {
+  const { trainObs, testObs, trainDraws, roster, derivedConfig } = splitAtHoldout(
+    dbPath,
+    holdoutHours,
+    config
+  );
+  if (trainObs.length === 0 || testObs.length === 0) return [];
+
+  const { predict } = buildModel(trainObs, derivedConfig, roster, trainDraws);
+  const seenInTrain = new Set(trainObs.map((o) => o.flight_number));
+
+  const scored = testObs.map((obs) => {
+    const pred = predict(obs.flight_number);
+    const basis = predictionBasis(pred);
+    return {
+      segment: seenInTrain.has(obs.flight_number) ? `history (${basis})` : `cold: ${basis}`,
+      p: pred.probability,
+      actual: obs.has_starlink,
+    };
+  });
+
+  return [
+    ...scoreSegments(scored),
+    ...scoreSegments(scored.map((s) => ({ ...s, segment: "ALL" }))),
+  ];
+}
+
+export function backtest(
+  dbPath: string,
+  holdoutHours = 48,
+  config: ModelConfig = DEFAULT_CONFIG
+): EvalResult {
+  const { trainObs, testObs, trainDraws, roster, derivedConfig } = splitAtHoldout(
+    dbPath,
+    holdoutHours,
+    config
+  );
+  const { predict } = buildModel(trainObs, derivedConfig, roster, trainDraws);
 
   const predictions = testObs.map((obs) => ({
     pred: predict(obs.flight_number),
     actual: obs.has_starlink,
   }));
-
-  db.close();
 
   const result = evaluate(predictions);
 
@@ -1617,10 +1740,30 @@ if (import.meta.main) {
   const dbArg = args.find((a) => a.startsWith("--db="));
   const dbPath = dbArg ? dbArg.split("=")[1] : "./plane-data.sqlite";
 
+  const hoursArg = args.find((a) => a.startsWith("--holdout="));
+
   if (args.includes("--backtest")) {
-    const hoursArg = args.find((a) => a.startsWith("--holdout="));
-    const hours = hoursArg ? Number.parseInt(hoursArg.split("=")[1], 10) : 48;
-    backtest(dbPath, hours);
+    backtest(dbPath, hoursArg ? Number.parseInt(hoursArg.split("=")[1], 10) : 48);
+  } else if (args.includes("--segments")) {
+    // 30 days by default: the cold segment is what this report exists to show,
+    // and a 48h window barely contains one.
+    const hours = hoursArg ? Number.parseInt(hoursArg.split("=")[1], 10) : 720;
+    const rows = segmentedBacktest(dbPath, hours);
+    console.log(`\n=== Backtest by evidence class: holdout=${hours}h ===\n`);
+    if (rows.length === 0) {
+      console.error(
+        "NO DATA: the train or test split is empty — nothing was measured. " +
+          "Point --db at a populated database.\n"
+      );
+      process.exit(2);
+    }
+    console.log("  segment                          n   mean pred   actual   brier");
+    for (const r of rows) {
+      console.log(
+        `  ${r.segment.padEnd(26)} ${String(r.n).padStart(5)}      ${r.meanPredicted.toFixed(4)}   ${r.actualRate.toFixed(4)}  ${r.brier.toFixed(4)}`
+      );
+    }
+    console.log("");
   } else if (args.some((a) => a.startsWith("--predict="))) {
     const flightArg = args.find((a) => a.startsWith("--predict="))!;
     const flightNumber = flightArg.split("=")[1];
@@ -1648,6 +1791,7 @@ if (import.meta.main) {
   } else {
     console.log("Usage:");
     console.log("  --backtest [--holdout=48] [--db=path]   Evaluate model accuracy");
+    console.log("  --segments [--holdout=720] [--db=path]  Score by evidence class");
     console.log("  --cv [--db=path]                        Cross-validate across 24-168h holdouts");
     console.log("  --predict=UA4680 [--db=path]            Predict one flight");
     console.log("  --sweep [--db=path]                     Hyperparameter search (priorStrength)");
