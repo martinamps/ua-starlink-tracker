@@ -1256,17 +1256,18 @@ Sitemap: https://${site.canonicalHost}/sitemap.xml`,
   );
 };
 
+/** A content date ("2026-03-31", a lastUpdated stamp) as ISO, or undefined when
+ * there isn't one. Never falls back to the request clock: a lastmod that always
+ * equals "now" teaches crawlers to ignore the field, so an unstamped page omits
+ * it instead. Shared by <lastmod> and WebPage dateModified so the two can't
+ * disagree about the same URL. */
+function stampedIso(raw: string | null): string | undefined {
+  const t = Date.parse(raw ?? "");
+  return Number.isFinite(t) ? new Date(t).toISOString() : undefined;
+}
+
 const sitemap: Handler = ({ reader, site, tenant, getReader }) => {
   const baseUrl = `https://${site.canonicalHost}`;
-  // Static pages render from the tracker data, so the data's lastUpdated is
-  // their honest lastmod; per-flight entries carry the latest write to that
-  // flight's rows. Never the request time — a lastmod that always equals
-  // "now" teaches crawlers to ignore the field — so this reads the RAW stamp
-  // and omits the field entirely when a tenant has never been stamped.
-  const stampedIso = (raw: string | null): string | undefined => {
-    const t = Date.parse(raw ?? "");
-    return Number.isFinite(t) ? new Date(t).toISOString() : undefined;
-  };
   const lastUpdated = stampedIso(reader.getLastUpdatedRaw());
   const flightEntries =
     site.features.checkFlightPage && tenantConfig(tenant)
@@ -1664,7 +1665,14 @@ async function renderSubPage<P extends { site: SiteConfig }>(
   canonicalPath: string,
   meta: PageMeta,
   props?: Omit<P, "site">,
-  status = 200
+  status = 200,
+  /** When this page's content has its own last-changed date, pass it: it
+   * becomes the WebPage dateModified so structured data and <lastmod> tell
+   * crawlers the same story. Live pages omit it and fall back to the request
+   * clock, which is honest for them and only for them — a static facts page
+   * claiming "modified right now" on every fetch is how a site teaches
+   * crawlers to ignore the field. */
+  contentIso?: string
 ): Promise<Response> {
   const reactHtml = ReactDOMServer.renderToString(
     React.createElement(component, { site: ctx.site, ...(props ?? {}) } as unknown as P)
@@ -1679,7 +1687,7 @@ async function renderSubPage<P extends { site: SiteConfig }>(
     path: canonicalPath,
     name: htmlVariables.siteTitle,
     description: htmlVariables.siteDescription,
-    isoDate: htmlVariables.isoDate,
+    isoDate: contentIso ?? htmlVariables.isoDate,
   });
 
   const template = await getHtmlTemplate();
@@ -2151,7 +2159,11 @@ const airlinesIndexPage: Handler = (ctx) => {
       ogTitle: "Starlink WiFi by Airline — Full List & Comparison",
       ogDescription: `Every Starlink rollout compared — ${names.join(", ")} tracked live, plus dated, sourced status for every announced program and notable holdout.`,
     },
-    { airlines: overviews, roster: contentOnlyFacts(), comparisons: compareLinks(ctx) }
+    { airlines: overviews, roster: contentOnlyFacts(), comparisons: compareLinks(ctx) },
+    200,
+    // Matches this URL's own sitemap lastmod (the hub's data stamp), so the
+    // roster page doesn't claim to have changed on every crawl either.
+    stampedIso(ctx.reader.getLastUpdatedRaw())
   );
 };
 
@@ -2215,7 +2227,11 @@ const airlineDetailPage: Handler = (ctx) => {
         ogTitle: `${cfg.name} Starlink WiFi — Rollout Status`,
         ogDescription: cfg.rollout.phaseNote,
       },
-      { overview, facts: factsForCode(cfg.code), phases: passengerPhases(cfg.code) }
+      { overview, facts: factsForCode(cfg.code), phases: passengerPhases(cfg.code) },
+      200,
+      // Same stamp the sitemap gives this URL: this airline's own data
+      // freshness, not the request clock.
+      stampedIso(ctx.getReader(cfg.code).getLastUpdatedRaw())
     );
   }
 
@@ -2225,10 +2241,17 @@ const airlineDetailPage: Handler = (ctx) => {
     factsBySlug(lower) ?? contentOnlyFacts().find((e) => e.iata.toLowerCase() === lower) ?? null;
   if (!entry) return notFound(ctx.site);
   if (seg !== entry.slug) return canonical301(entry.slug);
-  return renderSubPage(ctx, AirlineFactsPage, `/airlines/${entry.slug}`, factsPageMeta(entry), {
-    entry,
-    trackedLinks: trackedFlightLinks(),
-  });
+  return renderSubPage(
+    ctx,
+    AirlineFactsPage,
+    `/airlines/${entry.slug}`,
+    factsPageMeta(entry),
+    { entry, trackedLinks: trackedFlightLinks() },
+    200,
+    // A facts page changes when its newest dated claim does — the same date
+    // the sitemap publishes. Undated-source entries contribute neither.
+    stampedIso(latestFactDate(entry))
+  );
 };
 
 // ── Hub /compare/{a}-vs-{b} pages ────────────────────────────────────────────
@@ -2337,7 +2360,15 @@ const comparePage: Handler = (ctx) => {
       ogTitle: `${vs}: Starlink WiFi Compared`,
       ogDescription: `Live install counts and rollout status for ${first.name} and ${second.name}, side by side.`,
     },
-    { left, right }
+    { left, right },
+    200,
+    // The page renders both airlines' data, so it last changed when the later
+    // of the two did — the same rule the sitemap uses for this URL.
+    [first, second]
+      .map((cfg) => stampedIso(ctx.getReader(cfg.code).getLastUpdatedRaw()))
+      .filter((s): s is string => Boolean(s))
+      .sort()
+      .at(-1)
   );
 };
 

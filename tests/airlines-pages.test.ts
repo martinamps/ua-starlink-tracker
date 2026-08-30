@@ -270,6 +270,34 @@ describe("sitemaps", () => {
     expect(Date.parse(stamps[0])).toBeLessThanOrEqual(Date.now());
   });
 
+  // One URL must not tell crawlers two different stories about when it
+  // changed. The sitemap publishes the content's own date while the WebPage
+  // JSON-LD used to publish the request clock, so every static facts page
+  // claimed "modified right now" on every fetch.
+  test("WebPage dateModified matches the URL's own sitemap lastmod", async () => {
+    const xml = await (await get("/sitemap.xml", hub.canonicalHost)).text();
+    const lastmodFor = (path: string) => {
+      const block = xml
+        .split("<url>")
+        .find((b) => b.includes(`<loc>https://${hub.canonicalHost}${path}</loc>`));
+      return block?.match(/<lastmod>([^<]+)<\/lastmod>/)?.[1];
+    };
+    const paths = [
+      ...contentOnlyFacts().map((e) => `/airlines/${e.slug}`),
+      ...trackedRoster().map((cfg) => `/airlines/${airlineSlug(cfg)}`),
+    ];
+    let checked = 0;
+    for (const path of paths) {
+      const lastmod = lastmodFor(path);
+      if (!lastmod) continue; // no dated content → the sitemap omits it too
+      const body = await (await get(path, hub.canonicalHost)).text();
+      const modified = body.match(/"dateModified":"([^"]+)"/)?.[1];
+      expect(modified, `${path} has no dateModified`).toBe(lastmod);
+      checked++;
+    }
+    expect(checked, "no page exercised the freshness invariant").toBeGreaterThan(0);
+  });
+
   test("airline-site sitemaps do not advertise /airlines", async () => {
     for (const site of Object.values(SITES).filter((s) => s.scope !== "ALL")) {
       const res = await get("/sitemap.xml", site.canonicalHost);
