@@ -66,6 +66,23 @@ describe("decideCarrier refuses foreign flight numbers on a pinned host", () => 
   });
 });
 
+/**
+ * freshness.retrieved_at is a per-call wall-clock stamp by contract ("ISO 8601
+ * stamp when this answer was generated", and a required field in the MCP
+ * provenance schema), so two sequential requests differ there for reasons that
+ * have nothing to do with flight-number spelling. Pin it as present and
+ * parseable — so a vanished or malformed stamp still fails — then compare
+ * everything else, data_updated_at included.
+ */
+const answerOf = (body: Record<string, unknown>) => {
+  const { freshness, ...rest } = body as {
+    freshness?: { retrieved_at?: string };
+  };
+  expect(typeof freshness?.retrieved_at).toBe("string");
+  expect(Number.isNaN(Date.parse(freshness?.retrieved_at ?? ""))).toBe(false);
+  return { ...rest, freshness: { ...freshness, retrieved_at: "<per-call>" } };
+};
+
 describe("zero-padding canonicalizes to one spelling", () => {
   test("ensureAirlinePrefix strips padding on prefixed and bare forms", () => {
     expect(ensureAirlinePrefix(UA, "UA0100")).toBe("UA100");
@@ -81,7 +98,7 @@ describe("zero-padding canonicalizes to one spelling", () => {
     expect(plain.status).toBe(200);
     // Same flight → same everything. Before the fix these diverged: the padded
     // form matched nothing and returned the fleet prior.
-    expect(padded.body).toEqual(plain.body);
+    expect(answerOf(padded.body)).toEqual(answerOf(plain.body));
   });
 });
 
