@@ -31,8 +31,14 @@ testing; set it back before release.
 - [ ] Search HNL → LAX within ~2 days: Hawaiian results get badges; lookups go
       to `airlinestarlinktracker.com/api/check-any-flight`
 - [ ] Search SEA → PDX within ~2 days: Alaska/Horizon E175 results get badges
-- [ ] Far-future HA/AS searches show no badge (type-level answers are honest
-      abstentions, not badges)
+- [ ] Far-future SEA → PDX (E175 regional, AS2000+): gray "Starlink ~100%"
+      badges — Alaska's subfleet answer carries a probability past the
+      assignment window
+- [ ] Far-future SEA → LAX (mainline 737, AS1-1999): no badge — the mainline
+      subfleet is mid-rollout, far below the 80% bar
+- [ ] Far-future HNL → LAX (Hawaiian): no badge at all. HA's answer is a
+      per-type split, which carries no single probability — an honest
+      abstention, not a bug (see README "Coverage windows differ by airline")
 
 ## Untracked airlines and negatives
 
@@ -63,8 +69,10 @@ testing; set it back before release.
 ## Failure honesty
 
 - [ ] Block both API hosts (DevTools → Network request blocking), reload the
-      search: no badges, no page errors; unblock, wait ~5 min or reload — badges
-      return (transient failures use the short cache)
+      search: no badges, no page errors. Unblock and leave the tab alone (no
+      reload, no scrolling): within ~5 minutes the extension re-runs its own
+      pass and the badges appear (cards left unsettled by a transient failure
+      are never retired, and the pass reschedules itself up to 3 times)
 - [ ] Kill the service worker (chrome://serviceworker-internals or wait for
       idle), then interact with the page: lookups still work (worker wakes) or
       degrade silently

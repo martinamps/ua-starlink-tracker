@@ -154,8 +154,19 @@ docker run -p 3000:3000 -v /path/to/data:/srv/ua-starlink-tracker ua-starlink-tr
 
 ## Chrome Extension Compatibility
 
-The `/api/check-flight` endpoint powers the [Chrome extension](https://chromewebstore.google.com/detail/google-flights-starlink-i/jjfljoifenkfdbldliakmmjhdkbhehoi). Maintain backwards compatibility:
+Two endpoints power the [Chrome extension](https://chromewebstore.google.com/detail/google-flights-starlink-i/jjfljoifenkfdbldliakmmjhdkbhehoi). Installed copies update on Google's schedule, not ours, so both shapes are backwards-compatible-only — add keys, never rename or drop them.
+
+`/api/check-flight` (per-airline hosts) — United lookups:
 
 - Accept `flight_number` and `date` query parameters
 - Return `hasStarlink` (boolean) and `flights` (array)
 - Include CORS headers for Google Flights domains
+
+`/api/check-any-flight` (hub host only) — Hawaiian/Alaska and any future carrier. The extension (`chrome-extension/lib.js`, `normalizeClaim`) reads exactly these top-level keys:
+
+- `hasStarlink` — `true` / `false` / `null`. `false` means a *verified* negative; `null` means "no assignment yet", never "no".
+- `confidence` — `"verified"` separates the verified rung from the installed rung on a `true`; the predictor grades `"high" | "medium" | "low"` grade a prediction; `"type"` marks a registry-derived answer.
+- `probability` — 0–1, top-level (NOT nested under `prediction` as `/api/check-flight` does). Present on the `prediction` branch and on `no_model` penetration answers; its absence is what keeps a type-split answer off the badge.
+- `airline` — display name, used in badge tooltips.
+- `error` — a body carrying `error` is a settled answer ("untracked carrier", bad input), not an outage: the extension caches it for the full TTL and shows no badge. It must stay a JSON body — a bodyless status is the one thing the worker reads as a transient failure.
+- `flights` — array; present on every branch.

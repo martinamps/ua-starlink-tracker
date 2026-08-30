@@ -39,6 +39,7 @@ Bun + SQLite + server-rendered React. `server.ts` serves pages/APIs and starts b
 ## Public contracts — do not break
 
 - **`GET /api/check-flight?flight_number=UA123&date=YYYY-MM-DD`** → `{ hasStarlink: boolean, flights: [] }` with CORS for Google Flights. The Chrome extension depends on this exact shape.
+- **`GET /api/check-any-flight?flight_number=HA50&date=YYYY-MM-DD`** (hub host) — the extension's non-UA surface since v2. It reads top-level `hasStarlink`, `confidence`, `probability`, `airline`, `error`, `flights`; `probability` is top-level here, not nested under `prediction`. Additive only — see docs/DEVELOPMENT.md § Chrome Extension Compatibility.
 - **MCP tool names and result shapes** — clients cache schemas at connect time.
 
 ## Conventions
