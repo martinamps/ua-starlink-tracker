@@ -104,8 +104,19 @@ export interface AirlineConfig {
   shortName: string;
   /** Background jobs (scrape/verify/discover/sync) skip airlines with enabled=false. resolveTenant still resolves them. */
   enabled: boolean;
-  /** Included on public hub surfaces and hub-only APIs. */
+  /** Included on the hub HOMEPAGE and hub-only APIs (/api/data, the hub's
+   * check-flight carrier detection, MCP). False keeps an airline out of every
+   * surface that promises a per-flight answer. */
   publicInHub: boolean;
+  /** Included on the hub's CONTENT surfaces — the /airlines roster, its own
+   * /airlines/{slug} page, /compare pairs, the hub sitemap and llms.txt —
+   * without joining publicInHub. This is the deliberate split for an airline
+   * we track at tail level but do not yet answer flight lookups for on the hub
+   * (QR: its data is real, its tenant site is not live). Declared here rather
+   * than implied by which helper a caller happens to use, because the two
+   * populations diverging silently is how a hidden airline leaks. An airline
+   * with publicInHub true is on the content surfaces regardless. */
+  hubContentOnly?: boolean;
   iata: string;
   icao: string;
   /** All operating-carrier prefixes (ICAO + IATA) that map to this marketing carrier. Longest-first. */
@@ -399,7 +410,12 @@ const AIRLINE_DEFS = {
     name: "Qatar Airways",
     shortName: "Qatar",
     enabled: true,
+    // Hub content yes, hub answers no: the hub owns "Qatar vs United Starlink"
+    // and publishes QR's roster page, but qatarstarlinktracker.com is not live
+    // and the hub's flight-lookup APIs do not serve QR, so QR stays off the
+    // homepage and out of /api/*. Both halves are declared, not inferred.
     publicInHub: false,
+    hubContentOnly: true,
     iata: "QR",
     icao: "QTR",
     carrierPrefixes: ["QTR", "QR"],
@@ -659,6 +675,22 @@ export function enabledAirlines(): AirlineConfig[] {
 
 export function publicAirlines(): AirlineConfig[] {
   return enabledAirlines().filter((a) => a.publicInHub);
+}
+
+/** The rule for "published on a hub content surface", as a predicate so it can
+ * be tested against flag combinations no live airline happens to have today. */
+export function isHubContent(
+  a: Pick<AirlineConfig, "enabled" | "publicInHub" | "hubContentOnly">
+): boolean {
+  return a.enabled && (a.publicInHub || Boolean(a.hubContentOnly));
+}
+
+/** The hub's CONTENT population: everything on the homepage, plus airlines
+ * flagged hubContentOnly. Every hub content surface (the /airlines roster,
+ * /compare, the sitemap, llms.txt) must derive from this one function — the
+ * bug it prevents is two surfaces disagreeing about who is published. */
+export function hubContentAirlines(): AirlineConfig[] {
+  return Object.values(AIRLINES).filter(isHubContent);
 }
 
 export function looksLikeValidTailNumber(tail: string): boolean {

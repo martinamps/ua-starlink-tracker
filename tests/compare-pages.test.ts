@@ -1,29 +1,46 @@
 /**
- * Hub /compare/{a}-vs-{b}: bounded to tracked-airline pairs in one canonical
- * slug order. Coverage derives from the registry (every enabled pair), shapes
- * only — counts come from the snapshot and must survive data drift.
+ * Hub /compare/{a}-vs-{b}: bounded to pairs where BOTH sides have real per-tail
+ * data, in one canonical slug order. Coverage derives from the registry's hub
+ * content population filtered by that same data gate, so a newly enabled
+ * airline is covered by construction — and stays 404 until it has tails.
+ * Shapes only; counts come from the snapshot and must survive data drift.
  */
 
 import { beforeAll, describe, expect, test } from "bun:test";
-import { SITES, airlineSlug, enabledAirlines, wifiPhaseFamilies } from "../src/airlines/registry";
+import {
+  type AirlineConfig,
+  SITES,
+  airlineSlug,
+  hubContentAirlines,
+  wifiPhaseFamilies,
+} from "../src/airlines/registry";
+import { createReaderFactory } from "../src/database/reader";
 import { createApp } from "../src/server/app";
-import { openSnapshot, req } from "./helpers";
+import { makeSyntheticDb, openSnapshot, req } from "./helpers";
 
 let app: ReturnType<typeof createApp>;
+let comparable: AirlineConfig[];
 
 beforeAll(() => {
-  app = createApp(openSnapshot());
+  const db = openSnapshot();
+  app = createApp(db);
+  const getReader = createReaderFactory(db);
+  // Mirrors app.ts compareAirlines: a pair page exists only where BOTH sides
+  // have real rows, so the expected URL space is read off the same data the
+  // app reads rather than off `enabled`.
+  comparable = hubContentAirlines().filter(
+    (cfg) => (getReader(cfg.code).getPerAirlineStats()[0]?.total ?? 0) > 0
+  );
 });
 
 const hub = SITES.airline;
 const get = (path: string, host: string) =>
   app.dispatch(req(path, host, { headers: { Accept: "text/html" } }));
 
-// Canonical pairs mirror app.ts comparePairs: enabled airlines, alphabetical
-// by slug — a newly enabled airline is covered by construction.
+/** Canonical pairs, alphabetical by slug — mirrors app.ts comparePairs. */
 function pairs() {
-  const list = [...enabledAirlines()].sort((a, b) => airlineSlug(a).localeCompare(airlineSlug(b)));
-  const out: Array<[(typeof list)[number], (typeof list)[number]]> = [];
+  const list = [...comparable].sort((a, b) => airlineSlug(a).localeCompare(airlineSlug(b)));
+  const out: Array<[AirlineConfig, AirlineConfig]> = [];
   for (let i = 0; i < list.length; i++) {
     for (let j = i + 1; j < list.length; j++) out.push([list[i], list[j]]);
   }
@@ -51,7 +68,7 @@ describe("hub /compare/{a}-vs-{b}", () => {
   // the compare panel and on their own /airlines page.
   test("type-determined programs publish a per-type table, never a blended percentage", async () => {
     const isTyped = (cfg: { code: string }) => Boolean(wifiPhaseFamilies(cfg.code));
-    const typed = enabledAirlines().filter(isTyped);
+    const typed = comparable.filter(isTyped);
     expect(typed.length, "no type-determined airline to exercise").toBeGreaterThan(0);
 
     // "% of fleet" appears only in the blended stat block, once per side that
@@ -108,7 +125,7 @@ describe("hub /compare/{a}-vs-{b}", () => {
   });
 
   test("unknown combos, self-pairs, and junk 404 — the space stays bounded", async () => {
-    const first = airlineSlug(enabledAirlines()[0]);
+    const first = airlineSlug(comparable[0]);
     for (const path of [
       "/compare/delta-vs-united", // facts-only airline: no per-tail data, no page
       "/compare/ryanair-vs-united",
@@ -153,6 +170,27 @@ describe("compare pages in meta surfaces", () => {
       const other = await (await get("/sitemap.xml", site.canonicalHost)).text();
       expect(other, site.key).not.toContain("/compare/");
     }
+  });
+
+  // The gate that keeps this family bounded, exercised against a database with
+  // no tails at all — the state a newly enabled airline is in on day one.
+  // Without the gate, `enabled` alone minted a page per pair (O(n²) of them),
+  // each advertised in the sitemap and llms.txt with nothing behind it.
+  test("an airline with no tail data mints no pair pages, links, or sitemap entries", async () => {
+    const empty = createApp(makeSyntheticDb());
+    const emptyGet = (path: string) =>
+      empty.dispatch(req(path, hub.canonicalHost, { headers: { Accept: "text/html" } }));
+
+    const [a, b] = pairs()[0];
+    const path = `/compare/${airlineSlug(a)}-vs-${airlineSlug(b)}`;
+    expect((await emptyGet(path)).status, `${path} served with no data behind it`).toBe(404);
+
+    const xml = await (await emptyGet("/sitemap.xml")).text();
+    expect(xml, "sitemap advertises a data-less pair").not.toContain("/compare/");
+    const txt = await (await emptyGet("/llms.txt")).text();
+    expect(txt, "llms.txt advertises a data-less pair").not.toContain("/compare/");
+    const index = await (await emptyGet("/airlines")).text();
+    expect(index, "/airlines links a data-less pair").not.toContain("/compare/");
   });
 
   test("the /airlines index links every pair — no sitemap-only orphans", async () => {

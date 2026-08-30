@@ -7,10 +7,11 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import {
   AIRLINES,
+  type AirlineConfig,
   SITES,
   airlineSlug,
-  enabledAirlines,
-  publicAirlines,
+  hubContentAirlines,
+  isHubContent,
   siteForAirline,
 } from "../src/airlines/registry";
 import {
@@ -40,13 +41,10 @@ const get = (path: string, host: string) =>
 // forbidding the character in content.
 const html = (s: string) => s.replace(/&/g, "&amp;");
 
-// The tracked roster on /airlines: public airlines plus enabled-but-hidden
-// ones that carry a facts entry (QR today). Mirrors app.ts hubTrackedAirlines.
-const trackedRoster = () => [
-  ...publicAirlines(),
-  ...enabledAirlines().filter((a) => !publicAirlines().includes(a) && factsForCode(a.code)),
-];
-// Anything enabled but neither public nor facts-covered stays invisible.
+// The tracked roster on /airlines — the registry's declared hub CONTENT
+// population (publicInHub, plus hubContentOnly airlines like QR).
+const trackedRoster = () => hubContentAirlines();
+// Anything the registry does not publish on the hub stays invisible there.
 const invisibleAirlines = () => Object.values(AIRLINES).filter((a) => !trackedRoster().includes(a));
 
 describe("hub /airlines index", () => {
@@ -67,6 +65,35 @@ describe("hub /airlines index", () => {
     for (const cfg of invisibleAirlines()) {
       expect(body, `index leaks ${cfg.name}`).not.toContain(cfg.name);
     }
+  });
+
+  // The loop above is empty whenever every registry airline is published, so
+  // it cannot be the guard on its own. This pins the rule itself against flag
+  // combinations no live airline currently has — including the one that
+  // matters: publicInHub false without hubContentOnly must stay off the hub,
+  // and `enabled: false` must never be published whatever the other flags say.
+  test("the hub-content rule keeps unpublished airlines out, whatever the flags", () => {
+    const flags = (
+      enabled: boolean,
+      publicInHub: boolean,
+      hubContentOnly?: boolean
+    ): Pick<AirlineConfig, "enabled" | "publicInHub" | "hubContentOnly"> => ({
+      enabled,
+      publicInHub,
+      hubContentOnly,
+    });
+    expect(isHubContent(flags(true, true))).toBe(true);
+    expect(isHubContent(flags(true, false, true))).toBe(true);
+    expect(isHubContent(flags(true, false)), "hidden airline leaked onto the hub").toBe(false);
+    expect(isHubContent(flags(true, false, false)), "hidden airline leaked onto the hub").toBe(
+      false
+    );
+    for (const hidden of [flags(false, true), flags(false, false, true), flags(false, false)]) {
+      expect(isHubContent(hidden), "disabled airline published").toBe(false);
+    }
+    // And the registry actually routes through that rule.
+    expect(hubContentAirlines().every(isHubContent)).toBe(true);
+    expect(Object.values(AIRLINES).filter(isHubContent)).toEqual(hubContentAirlines());
   });
 
   test("negative entries are grouped under an explicit not-Starlink section", async () => {
