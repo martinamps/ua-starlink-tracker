@@ -40,11 +40,11 @@ interface RolloutFactBase {
   /** The claim, written to stand alone. Say only what the cited page says:
    * a source that never mentions a sub-fleet cannot support a claim about it. */
   fact: string;
-  /** `mirror` is an archive copy, for sources whose host refuses every
-   * automated client (runwaygirlnetwork.com 403s browsers, Googlebot, its own
-   * RSS and REST API alike). A reader who hits that 403 still has something to
-   * check, which is the entire promise of this file — a citation nobody can
-   * open is not a receipt. Only set it to a snapshot confirmed to exist. */
+  /** `mirror` is a second, archived copy, for sources whose host turns some
+   * clients away (airline newsrooms behind Cloudflare, wire pages that 403 a
+   * bare fetch). A reader who hits that wall still has something to open,
+   * which is the entire promise of this file — a citation nobody can read is
+   * not a receipt. Only ever a snapshot confirmed to exist and return 200. */
   source: { label: string; url: string; mirror?: string };
 }
 
@@ -97,8 +97,6 @@ export interface AirlineFactsEntry {
    * group deal, common misspellings). Must not collide with any slug. */
   aliases?: string[];
 }
-
-const RGN = "Runway Girl Network";
 
 // Ordered roughly by how far along each program is; the index groups by
 // status, so order only matters within a group.
@@ -261,6 +259,8 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         source: {
           label: "Emirates media centre",
           url: "https://www.emirates.com/media-centre/gaining-speed-at-40000-feet-emirates-set-to-operate-the-worlds-largest-starlink-enabled-international-wide-body-fleet-bringing-ultra-fast-connectivity-on-232-boeing-777-and-a380-aircraft/",
+          mirror:
+            "https://web.archive.org/web/20260210102756/https://www.emirates.com/media-centre/gaining-speed-at-40000-feet-emirates-set-to-operate-the-worlds-largest-starlink-enabled-international-wide-body-fleet-bringing-ultra-fast-connectivity-on-232-boeing-777-and-a380-aircraft/",
         },
       },
       {
@@ -322,17 +322,27 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     headline:
       "Does British Airways Have Starlink? Barely — 5 Aircraft, Installs Paused Until October",
     summary:
-      "500+ aircraft committed across British Airways, Iberia, Aer Lingus, Vueling, and LEVEL (announced November 2025), but British Airways equipped just five aircraft before pausing installs in June 2026 — they are expected to resume in October 2026.",
+      "500+ aircraft committed across British Airways, Iberia, Aer Lingus, Vueling, and LEVEL (announced November 2025), and free in every cabin where it is fitted — but British Airways equipped just five aircraft before pausing installs in June 2026, and they are expected to resume in October 2026.",
     aliases: ["british-airways", "iberia", "aer-lingus", "vueling", "level"],
     facts: [
       {
-        fact: "IAG announced Starlink for more than 500 aircraft across British Airways, Aer Lingus, Iberia, Vueling, and LEVEL — covering all cabins with no paid tiers or loyalty gates.",
+        // The old wording's "no paid tiers or loyalty gates" was sourced to a
+        // Runway Girl article no client can open, and it does not survive
+        // checking: IAG's release says nothing about pricing or cabins at all.
+        // The free-in-every-cabin promise is British Airways' own, below.
+        fact: "IAG announced a partnership to implement Starlink-enabled high-speed Wi-Fi on Aer Lingus, British Airways, Iberia, LEVEL and Vueling aircraft — more than 500 across the group — with the first aircraft due to go live in early 2026.",
         asOf: "2025-11-06",
         source: {
-          label: RGN,
-          url: "https://runwaygirlnetwork.com/2025/11/iag-taps-starlink-to-power-inflight-wi-fi-for-500-plus-aircraft/",
-          mirror:
-            "https://web.archive.org/web/20260212205613/https://runwaygirlnetwork.com/2025/11/iag-taps-starlink-to-power-inflight-wi-fi-for-500-plus-aircraft/",
+          label: "IAG press release",
+          url: "https://www.iairgroup.com/press-releases/2025/iag-announces-strategic-investment-in-wifi/",
+        },
+      },
+      {
+        fact: "British Airways says Starlink is available to all customers, in every cabin, free of charge, and that its entire fleet of more than 300 aircraft will have it within two years — covering its long-haul and short-haul fleets but excluding BA Cityflyer.",
+        asOf: "2026-03-19",
+        source: {
+          label: "British Airways media centre",
+          url: "https://mediacentre.britishairways.com/news/19032026/british-airways-first-starlink-flight-takes-off-making-the-airline-the-first-in-the-uk-to-launch-the-fastest-wi-fi-in-the-sky",
         },
       },
       {
@@ -361,22 +371,26 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     status: "installing",
     statusLabel: "Majority done",
     summary:
-      "Roughly 60% of the fleet equipped as of mid-2026, with the full fleet targeted by the end of 2026. Free in every cabin with a Flying Blue login.",
+      "Nearly 60% of the fleet had Starlink installed as of June 2026, with the rollout due to complete by the end of 2026. Free in every cabin with a Flying Blue login.",
     facts: [
       {
-        fact: "About 60% of Air France's fleet carries free Starlink Wi-Fi, with the whole fleet targeted by the end of 2026.",
-        asOf: "2026-07",
+        fact: "Nearly 60% of Air France's fleet has Starlink installed, with the airline hoping to complete the rollout by the end of 2026.",
+        asOf: "2026-06-08",
         source: {
           label: "One Mile at a Time",
           url: "https://onemileatatime.com/news/air-france-free-starlink-wi-fi/",
         },
       },
       {
-        fact: "The service is free in all cabins and accessed by logging in with a (free) Flying Blue account.",
-        asOf: "2025-07",
+        // corporate.airfrance.com sits behind a Cloudflare challenge that no
+        // automated client clears (the path is right — a Wayback capture proves
+        // the page exists — it is bot-blocked, not dead). This is the same Air
+        // France release carried verbatim on a wire that is readable.
+        fact: "Air France chose Starlink for its onboard Wi-Fi, offering it completely free of charge in all travel cabins, accessible by logging into a Flying Blue account — which customers without one can create onboard in a few clicks, free.",
+        asOf: "2024-09-27",
         source: {
-          label: "Air France press release",
-          url: "https://corporate.airfrance.com/en/press-releases/complimentary-high-speed-wifi-now-available-board-air-france-flights",
+          label: "Air France press release (WebWire)",
+          url: "https://www.webwire.com/ViewPressRel.asp?aId=327474",
           mirror:
             "https://web.archive.org/web/20260703071359/https://corporate.airfrance.com/en/press-releases/complimentary-high-speed-wifi-now-available-board-air-france-flights",
         },
@@ -482,22 +496,24 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     status: "installing",
     statusLabel: "Installing",
     summary:
-      "First Starlink carrier in Latin America — first flight July 4, 2026 (737 MAX 9 HP-9901CMP) — with the all-737 fleet due complete by Q1 2027. Free only for ConnectMiles elite tiers; other passengers pay.",
+      "First Starlink carrier in Latin America — first flight July 4, 2026 (737 MAX 9 HP-9901CMP) — with the fleet due complete by Q1 2027. Free for ConnectMiles elite tiers and business class; other passengers pay.",
     facts: [
       {
-        fact: "Copa became the first airline in Latin America to fly Starlink; its first equipped aircraft, 737 MAX 9 HP-9901CMP, entered service on July 4, 2026.",
-        asOf: "2026-07-04",
+        // copaair.com returns 401 to every automated client and has no archive
+        // snapshot, so both facts are re-sourced to reachable trade press.
+        fact: "Copa's first Starlink-equipped aircraft — a Boeing 737 MAX 9, registration HP-9901CMP — made its inaugural flight on July 4, 2026, with implementation across the fleet planned for the first quarter of 2027.",
+        asOf: "2026-07-06",
         source: {
-          label: "Copa Airlines news",
-          url: "https://www.copaair.com/en-gs/news/copa-airlines-redefines-onboard-connectivity-in-latin-america-with-starlink/",
+          label: "Aviación al Día",
+          url: "https://aviacionaldia.com/en/2026/07/copa-airlines-revolutionizes-inflight-connectivity-in-latin-america-first-starlink-high-speed-internet-equipped-aircraft-takes-off.html/amp",
         },
       },
       {
-        fact: "Copa's fleet-wide rollout is expected to complete in the first quarter of 2027. Starlink is complimentary for ConnectMiles PreferMember Gold, Platinum, and Presidential members; other passengers buy access.",
-        asOf: "2026-07-06",
+        fact: "Copa became the first airline in Latin America to offer Starlink Wi-Fi, with the rollout expected to complete during the first quarter of 2027. Access is complimentary for ConnectMiles PreferMember Gold, Platinum and Presidential members, for Business Class passengers, and for customers with Starlink Residential or Starlink Roam subscriptions; all other passengers buy access through Starlink's onboard portal.",
+        asOf: "2026-07-11",
         source: {
-          label: RGN,
-          url: "https://runwaygirlnetwork.com/2026/07/copa-rolls-out-starlink-outlines-free-and-paid-tier-offers/",
+          label: "Future Travel Experience",
+          url: "https://www.futuretravelexperience.com/2026/07/copa-airlines-becomes-first-in-latin-america-to-offer-starlink-inflight-connectivity/",
         },
       },
     ],
@@ -614,24 +630,26 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     status: "complete",
     statusLabel: "Complete",
     summary:
-      "The first airline ever to fly Starlink — entire fleet equipped since May 2023, free on every flight, now including its ATR 42-600s.",
+      "The first air carrier to adopt Starlink — its entire active fleet of 40 Embraer jets equipped by May 2023, complimentary on every flight with no login.",
     facts: [
       {
-        fact: "JSX, Starlink Aviation's launch customer, fitted its entire active fleet with Starlink by May 2023 — the first airline in the world to complete a Starlink rollout — free on every flight.",
-        asOf: "2023-05-08",
+        // Was "first airline in the world to COMPLETE a Starlink rollout",
+        // sourced to a Runway Girl page no client can open. No reachable source
+        // states that; the joint JSX/SpaceX release says "first air carrier to
+        // adopt", which is what this now says.
+        fact: "JSX became the first air carrier to adopt Starlink, with the service offered to all JSX customers at no charge and with no login required.",
+        asOf: "2022-04-25",
         source: {
-          label: RGN,
-          url: "https://runwaygirlnetwork.com/2023/05/jsx-fits-entire-active-fleet-with-spacexs-starlink-inflight-connectivity/",
-          mirror:
-            "https://web.archive.org/web/20250722235035/https://runwaygirlnetwork.com/2023/05/jsx-fits-entire-active-fleet-with-spacexs-starlink-inflight-connectivity/",
+          label: "SpaceNews (JSX/SpaceX release)",
+          url: "https://spacenews.com/hop-on-jet-service-jsx-becomes-the-first-air-carrier-to-adopt-revolutionary-starlink-high-speed-internet-service/",
         },
       },
       {
-        fact: "JSX extended free Starlink Wi-Fi across its ATR 42-600 turboprop fleet, keeping every aircraft type it operates equipped.",
-        asOf: "2026-04",
+        fact: "JSX fully installed Starlink across its entire active fleet of 40 Embraer jets, with complimentary connectivity on all flights. It is Starlink's global launch customer, under an agreement to outfit up to 100 aircraft.",
+        asOf: "2023-05-08",
         source: {
-          label: "Travel Daily News",
-          url: "https://www.traveldailynews.com/aviation/jsx-introduces-starlink-wi-fi-across-atr-42-600-fleet/",
+          label: "Private Jet Card Comparisons",
+          url: "https://privatejetcardcomparisons.com/2023/05/08/by-the-seat-private-jet-jsx-completes-starlink-wifi-installation/",
         },
       },
     ],
@@ -671,16 +689,17 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     statusLabel: "Installs begin Q1 2027",
     headline: "Does American Have Starlink? Not Yet — Airbus Installs Begin in 2027",
     summary:
-      "500+ Airbus narrowbodies only, announced May 26, 2026, with installs from Q1 2027 — zero flying today. No other American aircraft is in the Starlink program as announced; AAdvantage members already get free Wi-Fi on more than 900 Viasat- or Intelsat-equipped aircraft, sponsored by AT&T.",
+      "500+ Airbus narrowbodies only, announced May 26, 2026, with installs beginning in Q1 2027. No other American aircraft is in the Starlink program as announced; AAdvantage members already get free Wi-Fi on more than 900 Viasat- or Intelsat-equipped aircraft, sponsored by AT&T.",
     facts: [
       {
-        fact: "American announced Starlink for more than 500 Airbus narrowbodies (including future A321XLR and A321neo deliveries) with installations beginning in the first quarter of 2027. No American aircraft flies with Starlink today.",
+        // Re-sourced from Runway Girl (403s every client) to American's own
+        // newsroom. The release makes no statement about what flies today, so
+        // neither does this fact — the "not yet" answer is the Q1 2027 start.
+        fact: "American announced the installation of Starlink on more than 500 narrowbody aircraft beginning in Q1 2027, updating the Wi-Fi offering on its fleet of more than 500 Airbus aircraft including new A321XLR and A321neo deliveries.",
         asOf: "2026-05-26",
         source: {
-          label: RGN,
-          url: "https://runwaygirlnetwork.com/2026/05/american-pivots-to-starlink-for-500-plus-airbus-narrowbodies/",
-          mirror:
-            "https://web.archive.org/web/20260527070905/https://runwaygirlnetwork.com/2026/05/american-pivots-to-starlink-for-500-plus-airbus-narrowbodies/",
+          label: "American Airlines newsroom",
+          url: "https://news.aa.com/news/news-details/2026/American-to-install-Starlink-the-fastest-Wi-Fi-in-the-sky-MKG-OB-05/default.aspx",
         },
       },
       {
@@ -699,6 +718,8 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         source: {
           label: "American Airlines newsroom",
           url: "https://news.aa.com/news/news-details/2026/American-Airlines-launches-FREE-high-speed-Wi-Fi-sponsored-by-ATT-available-on-more-aircraft-than-any-other-carrier-in-the-world/default.aspx",
+          mirror:
+            "https://web.archive.org/web/20260805102424/https://news.aa.com/news/news-details/2026/American-Airlines-launches-FREE-high-speed-Wi-Fi-sponsored-by-ATT-available-on-more-aircraft-than-any-other-carrier-in-the-world/default.aspx",
         },
       },
     ],
@@ -754,11 +775,13 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         },
       },
       {
-        fact: "Frontier plans to launch its first Starlink-equipped aircraft in early 2027, the first of the Indigo Partners carriers to fly it.",
+        // The "first of the Indigo carriers" framing is not what the release
+        // claims — Frontier says "first US airline", with its own qualifier.
+        fact: "Frontier plans to launch its first Starlink-equipped aircraft in early 2027 and says it will be the first US airline to offer passengers Starlink access through a new system managed directly by Starlink.",
         asOf: "2026-07-14",
         source: {
-          label: RGN,
-          url: "https://runwaygirlnetwork.com/2026/07/frontier-and-fellow-indigo-supported-airlines-tap-starlink/",
+          label: "Frontier Airlines newsroom",
+          url: "https://news.flyfrontier.com/frontier-airlines-to-offer-starlink-the-fastest-wifi-in-the-sky/",
         },
       },
     ],
@@ -768,19 +791,52 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     name: "Air Canada",
     shortName: "Air Canada",
     iata: "AC",
-    status: "announced",
-    statusLabel: "Regional Q400s only",
+    // Was `announced`, which derives "Not Yet — It's Committed" and the body
+    // line "no Air Canada aircraft flies with Starlink today". Both were false:
+    // the Jetz charter A320s were fitted in summer 2025. The old entry also
+    // read the Q400 count off the wrong programme — 25 is the seat retrofit,
+    // the Wi-Fi fit is nine aircraft — and every specific it published was
+    // sourced to a Runway Girl article no automated client can open. That
+    // citation is gone; what follows is what readable sources actually say.
+    status: "installing",
+    statusLabel: "Charter jets + some Q400s",
+    headline: "Does Air Canada Have Starlink? Only on Charter Jets and Some Regional Q400s",
     summary:
-      "Starlink only on 25 Jazz-operated Dash 8-400 turboprops (the first De Havilland type with gate-to-gate high-speed Wi-Fi), free for Aeroplan members via Bell. No mainline Starlink commitment.",
+      "Not on the mainline fleet. Air Canada's four Jetz charter A320s were fitted with Starlink in summer 2025, and nine Jazz-operated Dash 8-400s at Billy Bishop were due to start flying from October 2025 with free Wi-Fi sponsored by Bell. The widely quoted 25 is the cabin refit, not the Wi-Fi fit.",
     facts: [
       {
-        fact: "Air Canada is fitting Starlink to 25 De Havilland Dash 8-400s operated by Jazz Aviation as Air Canada Express — the first De Havilland Canada aircraft with gate-to-gate high-speed connectivity — free for Aeroplan members, sponsored by Bell. Air Canada has announced no Starlink plans for its mainline fleet.",
-        asOf: "2025-09",
+        fact: "Air Canada's Jetz fleet — four A320s configured for charter operations — had Starlink inflight internet installed over the summer of 2025, with limited commercial availability.",
+        asOf: "2025-09-11",
         source: {
-          label: RGN,
-          url: "https://runwaygirlnetwork.com/2025/09/air-canada-taps-starlink-for-some-q400s-as-part-of-broader-redesign/",
-          mirror:
-            "https://web.archive.org/web/20260113190608/https://runwaygirlnetwork.com/2025/09/air-canada-taps-starlink-for-some-q400s-as-part-of-broader-redesign/",
+          label: "PaxEx.Aero",
+          url: "https://paxex.aero/air-canada-jetz-starlink-service/",
+        },
+      },
+      {
+        // The 25 is the CABIN programme; Wi-Fi is "on select aircraft
+        // initially". Reading 25 as the Starlink count is the error the old
+        // entry made, and Air Canada's own release settles it in one sentence.
+        fact: "Air Canada announced that 25 De Havilland Dash 8-400s operated for Air Canada Express by Jazz Aviation will undergo a full cabin redesign with new seating and interiors and, on select aircraft initially flying from Billy Bishop Toronto City Airport, onboard Fast, Free Wi-Fi sponsored by Bell — an industry first for the type, beginning in October. Installation of Wi-Fi on the balance of the Dash 8-400 fleet is still being determined. Air Canada's own release does not name Starlink.",
+        asOf: "2025-09-17",
+        source: {
+          label: "Air Canada media release",
+          url: "https://www.aircanada.com/media/air-canada-elevates-the-regional-flying-experience-with-reimagined-q-400-amenities-offering-new-standards-of-comfort/",
+        },
+      },
+      {
+        fact: "De Havilland Canada announced Starlink in-flight internet on the Dash 8-400 the same day, as a factory option or a retrofit for in-service aircraft — the first De Havilland Canada aircraft in the world to deliver the service, with gate-to-gate internet access even in remote regions.",
+        asOf: "2025-09-17",
+        source: {
+          label: "De Havilland Canada",
+          url: "https://dehavilland.com/partnerships/de-havilland-canada-brings-starlink-in-flight-internet-on-dash-8-fleet/",
+        },
+      },
+      {
+        fact: "Air Canada planned to fit nine of the Dash 8-400s initially — enough to cover Billy Bishop flights to Ottawa and Montreal plus spares — with the first aircraft expected to enter passenger service in October 2025.",
+        asOf: "2025-09-17",
+        source: {
+          label: "PaxEx.Aero",
+          url: "https://paxex.aero/air-canada-q400-starlink/",
         },
       },
     ],
