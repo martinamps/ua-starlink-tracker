@@ -104,7 +104,7 @@ import {
 import { computeInstallRate, hasInstallRateContent } from "../utils/install-rate";
 import { error as logError } from "../utils/logger";
 import { getNotFoundHtml } from "../utils/not-found";
-import { shareCardFile, shareCardPath } from "../utils/share-cards";
+import { denominatorIsPublishable, shareCardFile, shareCardPath } from "../utils/share-cards";
 import { getSpreadsheetCacheInfo, getSpreadsheetCacheTails } from "../utils/utils";
 import {
   type Database,
@@ -1863,21 +1863,16 @@ export function badgeSvgMarkup(label: string, value: string, accent: string): st
 }
 
 /**
- * The badge's one line of copy. Cross-origin and cacheable, so this string
- * travels into third-party READMEs with none of the status chip / phaseNote
- * context that qualifies the same ratio on-site. It drops the denominator in
- * the two cases where publishing one would mislead:
- *
- *  - the roster counts aircraft the programme excludes (HA's 717s, QR's
- *    narrowbodies), where "42 of 61" advertises a rollout the site calls
- *    Complete as two-thirds done; and
- *  - equipped exceeds total, which is impossible — a live row count against a
- *    separately scraped meta value, mid-disagreement. The install count is
- *    still true on its own; the ratio is not.
+ * The badge's one line of copy. Cross-origin and cacheable, so it travels into
+ * third-party READMEs with none of the status chip / phaseNote context that
+ * qualifies the same ratio on-site — it publishes a denominator only where
+ * denominatorIsPublishable says every off-site surface may, which is the same
+ * rule the downloadable share card follows.
  */
 export function badgeValue(equipped: number, total: number, rosterIsProgramScope: boolean): string {
-  if (!rosterIsProgramScope || equipped > total) return `${equipped} aircraft equipped`;
-  return `${equipped} of ${total} aircraft`;
+  return denominatorIsPublishable(equipped, total, rosterIsProgramScope)
+    ? `${equipped} of ${total} aircraft`
+    : `${equipped} aircraft equipped`;
 }
 
 const badgeSvg: Handler = ({ req, site, reader, tenant }) => {
