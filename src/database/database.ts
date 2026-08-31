@@ -116,6 +116,29 @@ function addColumn(db: Database, table: string, column: string, ddl: string): vo
   db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
 }
 
+// One row per newly equipped tail: its first observed revenue departure AFTER
+// the install was found. Written by the first-flight watch job; read by
+// /feed.xml and /newly-equipped. Kept forever — departure_log's 30-day trim
+// would erase the scoop this table exists to preserve.
+//
+// The key is (tail_number, airline), not the tail alone: registrations move
+// between carriers (the AS/HA merger is actively re-registering aircraft), and
+// an airline-blind key would silently refuse the second airline's record
+// forever — the tenant-default bug class, expressed as a constraint.
+const FIRST_FLIGHTS_DDL = `
+  CREATE TABLE first_flights (
+    tail_number TEXT NOT NULL,
+    airline TEXT NOT NULL,
+    flight_number TEXT NOT NULL,
+    origin TEXT NOT NULL,
+    destination TEXT NOT NULL,
+    departed_at INTEGER NOT NULL,
+    recorded_at INTEGER NOT NULL,
+    PRIMARY KEY (tail_number, airline)
+  );
+  CREATE INDEX IF NOT EXISTS idx_ff_airline ON first_flights(airline, departed_at);
+`;
+
 export type VerificationSource = "united" | "flightradar24" | "spreadsheet" | "alaska" | "qatar";
 
 export interface VerificationLogEntry {
@@ -292,24 +315,8 @@ export function setupTables(db: Database) {
     `);
   }
 
-  // One row per newly equipped tail: its first observed revenue departure
-  // AFTER the install was found. Written by the first-flight watch job; read
-  // by /feed.xml and /newly-equipped. Kept forever — departure_log's 30-day
-  // trim would erase the scoop this table exists to preserve.
-  if (!tableExists(db, "first_flights")) {
-    db.exec(`
-      CREATE TABLE first_flights (
-        tail_number TEXT PRIMARY KEY,
-        airline TEXT NOT NULL,
-        flight_number TEXT NOT NULL,
-        origin TEXT NOT NULL,
-        destination TEXT NOT NULL,
-        departed_at INTEGER NOT NULL,
-        recorded_at INTEGER NOT NULL
-      );
-      CREATE INDEX idx_ff_airline ON first_flights(airline, departed_at);
-    `);
-  }
+  if (!tableExists(db, "first_flights")) db.exec(FIRST_FLIGHTS_DDL);
+  migrateFirstFlightsKey(db);
 
   // Persistent FR24 route lookup cache. Append-only: builds route knowledge over
   // time (which routes a flight number operates, durations) and reduces FR24 calls.
@@ -614,6 +621,38 @@ export function setupTables(db: Database) {
   }
 
   migrateMultiAirline(db);
+}
+
+/**
+ * Rebuild first_flights when it still carries the airline-blind
+ * `tail_number TEXT PRIMARY KEY`. SQLite can't ALTER a primary key, and the
+ * table is append-only and tiny, so a copy is cheaper than living with a
+ * constraint that can never record a re-registered tail's second first flight.
+ */
+function migrateFirstFlightsKey(db: Database): void {
+  const row = db
+    .query("SELECT sql FROM sqlite_master WHERE type='table' AND name='first_flights'")
+    .get() as { sql: string } | null;
+  if (!row?.sql || /PRIMARY\s+KEY\s*\(\s*tail_number\s*,\s*airline\s*\)/i.test(row.sql)) return;
+  db.transaction(() => {
+    db.exec(
+      FIRST_FLIGHTS_DDL.replace(
+        "CREATE TABLE first_flights",
+        "CREATE TABLE first_flights_new"
+      ).replace("idx_ff_airline ON first_flights", "idx_ff_airline_new ON first_flights_new")
+    );
+    db.exec(
+      `INSERT OR IGNORE INTO first_flights_new
+         (tail_number, airline, flight_number, origin, destination, departed_at, recorded_at)
+       SELECT tail_number, airline, flight_number, origin, destination, departed_at, recorded_at
+       FROM first_flights`
+    );
+    db.exec("DROP TABLE first_flights");
+    db.exec("ALTER TABLE first_flights_new RENAME TO first_flights");
+    db.exec("DROP INDEX IF EXISTS idx_ff_airline_new");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_ff_airline ON first_flights(airline, departed_at)");
+  })();
+  info("Database migration completed: first_flights keyed by (tail_number, airline)");
 }
 
 function hasColumn(db: Database, table: string, column: string): boolean {
@@ -1112,15 +1151,24 @@ export function getDailyInstalls(
 }
 
 /**
- * Detect and record each newly equipped tail's first observed revenue
+ * Detect and record each newly equipped tail's FIRST OBSERVED revenue
  * departure. A candidate is an organically dated install (INSTALL_FILTER —
  * bulk seeds would fire dozens of fake scoops) whose earliest post-install
  * departure in upcoming_flights has now actually departed.
  *
- * The 14-day recency gate is an honesty bound, not an optimization:
- * upcoming_flights only looks ~2 days ahead and refreshes constantly, so for
- * an old install the "earliest" row would be today's flight, not the true
- * first — better to record nothing than a fabricated first flight.
+ * Two independent bounds, because `upcoming_flights` cannot answer "first" on
+ * its own — it is a forward-only ~47h cache that updateFlights DELETEs per
+ * tail, so its earliest row is simply the earliest flight still cached:
+ *
+ *  1. departure_log VETO (the load-bearing one). It is the archive of every
+ *     upcoming_flights row before deletion, so a departure between DateFound
+ *     and the candidate proves the candidate is not the first. Measured on the
+ *     production snapshot before this veto existed: 14 of 14 inserted rows
+ *     were wrong, each skipping 3–41 real departures. The table is kept
+ *     forever, so a wrong claim never self-corrects — abstain instead.
+ *  2. The 14-day DateFound gate, which keeps candidates inside departure_log's
+ *     own 30-day retention. Past that the veto has nothing left to see and
+ *     could not refute a fabricated first even in principle.
  *
  * Returns only the rows inserted by THIS call, so the caller can notify
  * exactly once per tail.
@@ -1133,24 +1181,36 @@ export function recordFirstFlights(
   const placeholders = enabled.map(() => "?").join(",");
   const candidates = db
     .query(
-      `SELECT sp.TailNumber AS tail_number, sp.airline,
-              uf.flight_number, uf.departure_airport AS origin,
-              uf.arrival_airport AS destination,
-              MIN(uf.departure_time) AS departed_at
-       FROM starlink_planes sp
-       JOIN upcoming_flights uf
-         ON uf.tail_number = sp.TailNumber AND uf.airline = sp.airline
-       WHERE ${equippedFilter("sp")}
-         AND ${INSTALL_FILTER}
-         AND sp.airline IN (${placeholders})
-         AND sp.DateFound >= date(?, 'unixepoch', '-14 days')
-         AND uf.flight_number IS NOT NULL
-         AND uf.departure_airport IS NOT NULL
-         AND uf.arrival_airport IS NOT NULL
-         AND uf.departure_time >= strftime('%s', sp.DateFound)
-         AND uf.departure_time <= ?
-         AND NOT EXISTS (SELECT 1 FROM first_flights ff WHERE ff.tail_number = sp.TailNumber)
-       GROUP BY sp.TailNumber`
+      `SELECT c.tail_number, c.airline, c.flight_number, c.origin, c.destination, c.departed_at
+       FROM (
+         SELECT sp.TailNumber AS tail_number, sp.airline AS airline, sp.DateFound AS date_found,
+                uf.flight_number, uf.departure_airport AS origin,
+                uf.arrival_airport AS destination,
+                MIN(uf.departure_time) AS departed_at
+         FROM starlink_planes sp
+         JOIN upcoming_flights uf
+           ON uf.tail_number = sp.TailNumber AND uf.airline = sp.airline
+         WHERE ${equippedFilter("sp")}
+           AND ${INSTALL_FILTER}
+           AND sp.airline IN (${placeholders})
+           AND sp.DateFound >= date(?, 'unixepoch', '-14 days')
+           AND uf.flight_number IS NOT NULL
+           AND uf.departure_airport IS NOT NULL
+           AND uf.arrival_airport IS NOT NULL
+           AND uf.departure_time >= strftime('%s', sp.DateFound)
+           AND uf.departure_time <= ?
+           AND NOT EXISTS (
+             SELECT 1 FROM first_flights ff
+             WHERE ff.tail_number = sp.TailNumber AND ff.airline = sp.airline
+           )
+         GROUP BY sp.TailNumber, sp.airline
+       ) c
+       WHERE NOT EXISTS (
+         SELECT 1 FROM departure_log dl
+         WHERE dl.tail_number = c.tail_number AND dl.airline = c.airline
+           AND dl.departed_at >= strftime('%s', c.date_found)
+           AND dl.departed_at < c.departed_at
+       )`
     )
     .all(...enabled, now, now) as Omit<FirstFlight, "recorded_at">[];
   if (candidates.length === 0) return [];

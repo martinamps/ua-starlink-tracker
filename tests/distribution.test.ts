@@ -435,4 +435,124 @@ describe("recordFirstFlights", () => {
     expect(recordFirstFlights(db, NOW)).toEqual([]);
     db.close();
   });
+
+  // The bug this veto exists for: upcoming_flights is a forward-only ~47h cache
+  // that updateFlights DELETEs per tail, so its earliest surviving row is the
+  // earliest still cached — not the tail's first. Replayed against the
+  // production snapshot without the veto, 14 of 14 recorded "first flights"
+  // skipped between 3 and 41 real departures already sitting in departure_log.
+  describe("departure_log veto", () => {
+    const logDeparture = (
+      db: ReturnType<typeof makeSyntheticDb>,
+      tail: string,
+      at: number,
+      airline = "UA"
+    ) =>
+      db
+        .query(
+          "INSERT INTO departure_log (tail_number, airport, departed_at, airline) VALUES (?,?,?,?)"
+        )
+        .run(tail, "EWR", at, airline);
+
+    test("an earlier logged departure kills the candidate outright", () => {
+      const db = makeSyntheticDb();
+      seedTail(db, "N04TST", recentDay, "discovery", [
+        ["UA100", "EWR", "SFO", recentInstall + 40000],
+      ]);
+      logDeparture(db, "N04TST", recentInstall + 10000);
+
+      expect(recordFirstFlights(db, NOW)).toEqual([]);
+      db.close();
+    });
+
+    test("the candidate's own archived row is not its own veto", () => {
+      // archive_departures and first_flight_watch share a cadence, so the
+      // departure being recorded is usually already in departure_log at the
+      // same timestamp. A `<=` veto would abstain on every real first flight.
+      const db = makeSyntheticDb();
+      const departedAt = recentInstall + 10000;
+      seedTail(db, "N05TST", recentDay, "discovery", [["UA100", "EWR", "SFO", departedAt]]);
+      logDeparture(db, "N05TST", departedAt);
+
+      expect(recordFirstFlights(db, NOW)).toHaveLength(1);
+      db.close();
+    });
+
+    test("a departure logged before the install date is not evidence", () => {
+      // Pre-install flying says nothing about the Starlink era; only departures
+      // at or after DateFound can refute a post-install first.
+      const db = makeSyntheticDb();
+      seedTail(db, "N06TST", recentDay, "discovery", [
+        ["UA100", "EWR", "SFO", recentInstall + 10000],
+      ]);
+      logDeparture(db, "N06TST", recentInstall - 200000);
+
+      expect(recordFirstFlights(db, NOW)).toHaveLength(1);
+      db.close();
+    });
+
+    test("another airline's log entry never vetoes this tenant's candidate", () => {
+      const db = makeSyntheticDb();
+      seedTail(db, "N07TST", recentDay, "discovery", [
+        ["UA100", "EWR", "SFO", recentInstall + 40000],
+      ]);
+      logDeparture(db, "N07TST", recentInstall + 10000, "HA");
+
+      expect(recordFirstFlights(db, NOW)).toHaveLength(1);
+      db.close();
+    });
+
+    test("every recorded row is the earliest departure the log knows of", () => {
+      // The invariant the table has to hold forever: it is kept permanently, so
+      // a wrong claim never self-corrects.
+      const db = makeSyntheticDb();
+      seedTail(db, "N08TST", recentDay, "discovery", [
+        ["UA100", "EWR", "SFO", recentInstall + 10000],
+        ["UA200", "ORD", "DEN", recentInstall + 40000],
+      ]);
+      seedTail(db, "N09TST", recentDay, "discovery", [
+        ["UA300", "IAH", "LAX", recentInstall + 40000],
+      ]);
+      logDeparture(db, "N09TST", recentInstall + 5000);
+
+      for (const r of recordFirstFlights(db, NOW)) {
+        const earlier = db
+          .query(
+            `SELECT COUNT(*) AS n FROM departure_log
+             WHERE tail_number = ? AND airline = ?
+               AND departed_at >= ? AND departed_at < ?`
+          )
+          .get(r.tail_number, r.airline, recentInstall, r.departed_at) as { n: number };
+        expect(earlier.n, `${r.tail_number} recorded past an earlier logged departure`).toBe(0);
+      }
+      db.close();
+    });
+  });
+
+  test("a re-registered tail can hold one record per airline", () => {
+    // first_flights was keyed on tail_number alone: a registration moving
+    // between carriers (AS↔HA is doing exactly this) could never get its
+    // second record, and the airline-blind NOT EXISTS hid it as "already done".
+    const db = makeSyntheticDb();
+    seedTail(db, "N10TST", recentDay, "discovery", [
+      ["UA100", "EWR", "SFO", recentInstall + 10000],
+    ]);
+    expect(recordFirstFlights(db, NOW)).toHaveLength(1);
+
+    db.query(
+      `INSERT INTO starlink_planes (aircraft, wifi, sheet_gid, sheet_type, DateFound, TailNumber, OperatedBy, fleet, verified_wifi, airline)
+       VALUES ('A330','Starlink','discovery','HA-mainline',?,?,'Hawaiian','mainline','Starlink','HA')`
+    ).run(recentDay, "N10TST");
+    db.query(
+      `INSERT INTO upcoming_flights (tail_number, flight_number, departure_airport, arrival_airport, departure_time, arrival_time, last_updated, airline)
+       VALUES (?,?,?,?,?,?,?, 'HA')`
+    ).run("N10TST", "HA50", "HNL", "LAX", recentInstall + 20000, recentInstall + 40000, NOW);
+
+    const second = recordFirstFlights(db, NOW);
+    expect(second).toHaveLength(1);
+    expect(second[0].airline).toBe("HA");
+    expect(getFirstFlights(db, ["N10TST"], "UA")).toHaveLength(1);
+    expect(getFirstFlights(db, ["N10TST"], "HA")).toHaveLength(1);
+    db.close();
+  });
 });

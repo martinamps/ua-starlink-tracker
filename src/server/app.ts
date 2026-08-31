@@ -1584,10 +1584,32 @@ function escapeXml(s: string): string {
 }
 
 const FEED_LIMIT = 50;
+/** Rows the page renders. Deliberately larger than FEED_LIMIT: every feed entry
+ * links a `#TAIL` anchor on this page, so an entry sitting in a subscriber's
+ * reader keeps resolving for as long as its tail is still rendered. Must never
+ * drop below FEED_LIMIT or a permalink would be dead the day it was published. */
+const LOG_PAGE_LIMIT = 250;
 
 // DateFound is a calendar date, not a timestamp — noon UTC keeps the entry on
-// the same calendar day in every timezone a feed reader renders it in.
-const installIso = (dateFound: string): string => `${dateFound.slice(0, 10)}T12:00:00Z`;
+// the same calendar day in every timezone a feed reader renders it in. A row
+// whose DateFound isn't a date at all would otherwise be interpolated raw into
+// <updated>, so anything unparseable degrades to the epoch rather than breaking
+// the document for every subscriber.
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}/;
+const installIso = (dateFound: string): string =>
+  ISO_DAY.test(dateFound) ? `${dateFound.slice(0, 10)}T12:00:00Z` : "1970-01-01T00:00:00Z";
+
+/**
+ * Per-airline cap for the hub's install log, so the cross-airline surface is
+ * actually cross-airline. Undated on a tenant host (one airline, nothing to
+ * balance); on the hub, UA out-installs every other carrier by an order of
+ * magnitude and an uncapped DateFound DESC take is 50 UA rows — a hub feed
+ * that never mentions the airlines it exists to compare.
+ */
+function recentInstallCap(scope: SiteConfig["scope"], limit: number): number | undefined {
+  if (scope !== "ALL") return undefined;
+  return Math.max(1, Math.ceil(limit / Math.max(1, publicAirlines().length)));
+}
 
 /** Sparse first-flight lookup for a set of installs; keyed by tail. */
 function firstFlightsFor(
@@ -1608,7 +1630,7 @@ const feedXml: Handler = (ctx) => {
   // never moves. Same gate as the page it syndicates.
   if (!hasInstallLog(ctx)) return notFound(site);
   const host = site.canonicalHost;
-  const installs = reader.getRecentInstalls(FEED_LIMIT);
+  const installs = reader.getRecentInstalls(FEED_LIMIT, recentInstallCap(site.scope, FEED_LIMIT));
   const firstFlights = firstFlightsFor(reader, installs);
   const airlineNames = new Map(publicAirlines().map((a) => [a.code, a.name]));
 
@@ -1671,7 +1693,12 @@ const newlyEquippedPage: Handler = (ctx) => {
   if (!hasInstallLog(ctx)) return notFound(ctx.site);
   const cfg = tenantConfig(ctx.tenant);
   const short = cfg?.shortName;
-  const installs = ctx.reader.getRecentInstalls(FEED_LIMIT);
+  // Wider than the feed on purpose (see LOG_PAGE_LIMIT): syndicated entries
+  // anchor into this page, so it has to outlive the feed window.
+  const installs = ctx.reader.getRecentInstalls(
+    LOG_PAGE_LIMIT,
+    recentInstallCap(ctx.site.scope, LOG_PAGE_LIMIT)
+  );
   const meta: PageMeta = short
     ? {
         siteTitle: `Which ${short} Aircraft Just Got Starlink? — Newly Equipped Log`,
