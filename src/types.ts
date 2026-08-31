@@ -182,6 +182,8 @@ export interface FleetPageData {
   progress: FleetProgressRow[];
   /** Officially-reported fleet/Starlink figures (single-airline pages only). */
   anchors: FleetAnchorRow[];
+  /** Per-tail pipeline states (empty until the color-grid ingest has run and validated). */
+  progressTails: FleetProgressTailRow[];
 }
 
 /** One per-type row of the install pipeline (United Fleet Site progress workbooks). */
@@ -193,6 +195,22 @@ export interface FleetProgressRow {
   starlink_complete: number | null;
   in_mod: number | null;
   verification_needed: number | null;
+  sheet_updated: string | null;
+  fetched_at: number;
+}
+
+export type FleetProgressTailState = "in_mod" | "verification_needed" | "scheduled";
+
+/** One tail currently in the install pipeline, decoded from the progress
+ * workbooks' cell colors (Sheets API grid read, not the CSV export). */
+export interface FleetProgressTailRow {
+  airline: string;
+  segment: string;
+  type_code: string;
+  tail: string;
+  state: FleetProgressTailState;
+  /** Mod-line station (e.g. MLB, HKG) when the cell color maps to one. */
+  mod_location: string | null;
   sheet_updated: string | null;
   fetched_at: number;
 }

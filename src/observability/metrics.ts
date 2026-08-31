@@ -268,6 +268,11 @@ export const GAUGES = {
   // tags: segment (mainline_nb|mainline_wb|express), state (total|complete|in_mod|verification_needed), airline
   FLEET_PROGRESS_COUNT: "fleet_progress.count",
 
+  // Per-tail pipeline states decoded from the progress sheets' cell colors —
+  // only states that survived the count-validation gate.
+  // tags: segment, state (in_mod|verification_needed|scheduled), airline
+  FLEET_PROGRESS_TAILS: "fleet_progress.tails",
+
   // FAA registry sync results. tags: state (resolved|not_in_master|starlink_flagged), airline
   FAA_REGISTRY_TAILS: "faa_registry.tails",
 

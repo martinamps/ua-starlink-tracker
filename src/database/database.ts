@@ -36,6 +36,7 @@ import type {
   FleetFamily,
   FleetPageData,
   FleetProgressRow,
+  FleetProgressTailRow,
   FleetSource,
   FleetStats,
   FleetTail,
@@ -352,6 +353,25 @@ export function setupTables(db: Database) {
         sheet_updated TEXT,
         fetched_at INTEGER NOT NULL,
         UNIQUE(airline, segment, type_code)
+      );
+    `).run();
+  }
+
+  // Per-tail pipeline states decoded from the progress workbooks' cell colors
+  // (Sheets API grid read). Only count-validated states are ever written.
+  if (!tableExists(db, "fleet_progress_tails")) {
+    db.query(`
+      CREATE TABLE fleet_progress_tails (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        airline TEXT NOT NULL,
+        segment TEXT NOT NULL,
+        type_code TEXT NOT NULL,
+        tail TEXT NOT NULL,
+        state TEXT NOT NULL,
+        mod_location TEXT,
+        sheet_updated TEXT,
+        fetched_at INTEGER NOT NULL,
+        UNIQUE(airline, tail)
       );
     `).run();
   }
@@ -3795,6 +3815,54 @@ export function replaceFleetProgress(
   })();
 }
 
+/** Replace one segment's per-tail pipeline rows. Segment-scoped so a segment
+ * whose color parse failed validation keeps nothing stale from the last run
+ * while untouched segments keep serving. */
+export function replaceFleetProgressTails(
+  db: Database,
+  airline: string,
+  segment: string,
+  rows: Array<Omit<FleetProgressTailRow, "airline" | "fetched_at">>
+): void {
+  const now = Math.floor(Date.now() / 1000);
+  db.transaction(() => {
+    db.query("DELETE FROM fleet_progress_tails WHERE airline = ? AND segment = ?").run(
+      airline,
+      segment
+    );
+    for (const r of rows) {
+      db.query(`
+        INSERT OR REPLACE INTO fleet_progress_tails
+          (airline, segment, type_code, tail, state, mod_location, sheet_updated, fetched_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        airline,
+        r.segment,
+        r.type_code,
+        r.tail,
+        r.state,
+        r.mod_location,
+        r.sheet_updated,
+        now
+      );
+    }
+  })();
+}
+
+export function getFleetProgressTails(
+  db: Database,
+  airline?: AirlineFilter
+): FleetProgressTailRow[] {
+  const q = withAirline(
+    `SELECT airline, segment, type_code, tail, state, mod_location, sheet_updated, fetched_at
+     FROM fleet_progress_tails WHERE 1=1`,
+    airline
+  );
+  return db
+    .query(`${q.sql} ORDER BY segment, state, type_code, tail`)
+    .all(...q.params) as FleetProgressTailRow[];
+}
+
 export function getFleetProgress(db: Database, airline?: AirlineFilter): FleetProgressRow[] {
   const q = withAirline(
     `SELECT airline, segment, type_code, total, starlink_complete, in_mod, verification_needed,
@@ -4366,6 +4434,7 @@ function computeFleetPageData(db: Database, airline?: AirlineFilter): FleetPageD
     // one airline's pipeline as if it covered every tracked fleet.
     progress: soleAirline ? getFleetProgress(db, airline) : [],
     anchors: soleAirline ? getFleetAnchors(db, airline) : [],
+    progressTails: soleAirline ? getFleetProgressTails(db, airline) : [],
   };
 }
 

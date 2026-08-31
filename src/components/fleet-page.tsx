@@ -5,6 +5,7 @@ import type {
   FleetFamily,
   FleetPageData,
   FleetProgressRow,
+  FleetProgressTailRow,
   FleetTail,
   WifiProvider,
 } from "../types";
@@ -38,12 +39,48 @@ const EYEBROW = "text-[10px] font-mono text-muted uppercase tracking-wider mb-3"
 const PANEL = "bg-surface border border-subtle rounded-lg p-5";
 const SECTION = "relative w-full max-w-6xl mx-auto mb-10";
 
-function cellTitle(t: FleetTail): string {
-  return `${t.tail} · ${PROVIDER_LABEL[t.provider]}`;
+type PipelineMap = Map<string, FleetProgressTailRow>;
+
+const PIPELINE_LABEL: Record<FleetProgressTailRow["state"], string> = {
+  in_mod: "in mod line",
+  verification_needed: "install verifying",
+  scheduled: "queued for a future mod line",
+};
+
+function pipelineNote(p: PipelineMap, tail: string): string {
+  const row = p.get(tail);
+  if (!row) return "";
+  return ` · ${PIPELINE_LABEL[row.state]}${row.mod_location ? ` @ ${row.mod_location}` : ""}`;
 }
 
-function monumentTitle(t: FleetTail): string {
-  return `${t.type || "type unknown"} · ${PROVIDER_LABEL[t.provider]} · ${t.fleet} · verified ${timeAgo(t.verified_at)} · click for live tracking`;
+function cellTitle(t: FleetTail, pipeline: PipelineMap): string {
+  return `${t.tail} · ${PROVIDER_LABEL[t.provider]}${pipelineNote(pipeline, t.tail)}`;
+}
+
+function monumentTitle(t: FleetTail, pipeline: PipelineMap): string {
+  return `${t.type || "type unknown"} · ${PROVIDER_LABEL[t.provider]}${pipelineNote(pipeline, t.tail)} · ${t.fleet} · verified ${timeAgo(t.verified_at)} · click for live tracking`;
+}
+
+function monumentClass(t: FleetTail, pipeline: PipelineMap): string {
+  if (t.provider === "starlink") return "tail-sl";
+  return pipeline.has(t.tail) ? "tail-dim tail-pipe" : "tail-dim";
+}
+
+function monumentDotClass(t: FleetTail, pipeline: PipelineMap): string {
+  if (t.provider === "starlink") return "";
+  const state = pipeline.get(t.tail)?.state;
+  if (state === "in_mod" || state === "scheduled") return " dot-mod";
+  if (state === "verification_needed") return " dot-verif";
+  return "";
+}
+
+function monumentDot(t: FleetTail, pipeline: PipelineMap): string {
+  if (t.provider === "starlink") return "◉";
+  const state = pipeline.get(t.tail)?.state;
+  if (state === "in_mod") return "○";
+  if (state === "verification_needed") return "◎";
+  if (state === "scheduled") return "◌";
+  return " ";
 }
 
 const FAMILY_ABBR: Record<string, string> = {
@@ -131,7 +168,16 @@ function LivePulse({ pulse }: { pulse: FleetPageData["pulse"] }) {
   );
 }
 
-function TailGrid({ tails }: { tails: FleetTail[] }) {
+// The two pipeline states worth a visual on the grid — "scheduled" stays
+// title-only (a dashed 8px cell reads as rendering noise, not information).
+function pipelineCellClass(p: PipelineMap, tail: string): string {
+  const state = p.get(tail)?.state;
+  if (state === "in_mod") return " pipe-mod";
+  if (state === "verification_needed") return " pipe-verif";
+  return "";
+}
+
+function TailGrid({ tails, pipeline }: { tails: FleetTail[]; pipeline: PipelineMap }) {
   return (
     <div className="grid grid-cols-[repeat(10,8px)] gap-[2px]">
       {tails.map((t) => (
@@ -139,9 +185,9 @@ function TailGrid({ tails }: { tails: FleetTail[] }) {
         <a
           key={t.tail}
           href={`#t-${t.tail}`}
-          title={cellTitle(t)}
-          aria-label={cellTitle(t)}
-          className={`wifi-${t.provider} w-2 h-2 rounded-[1px] hover:scale-150 transition-transform`}
+          title={cellTitle(t, pipeline)}
+          aria-label={cellTitle(t, pipeline)}
+          className={`wifi-${t.provider}${pipelineCellClass(pipeline, t.tail)} w-2 h-2 rounded-[1px] hover:scale-150 transition-transform`}
         />
       ))}
     </div>
@@ -179,7 +225,7 @@ function SpecCard({ family, spec }: { family: string; spec: AircraftSpec }) {
   );
 }
 
-function FamilyBlock({ fam }: { fam: FleetFamily }) {
+function FamilyBlock({ fam, pipeline }: { fam: FleetFamily; pipeline: PipelineMap }) {
   const pct = Math.round((fam.starlink / fam.total) * 100);
   const spec = AIRCRAFT_SPECS[fam.family];
   return (
@@ -210,13 +256,16 @@ function FamilyBlock({ fam }: { fam: FleetFamily }) {
         </svg>
       </summary>
       <div className="px-2 pb-2">
-        <TailGrid tails={fam.tails} />
+        <TailGrid tails={fam.tails} pipeline={pipeline} />
       </div>
     </details>
   );
 }
 
-function Legend() {
+function Legend({ pipeline }: { pipeline: PipelineMap }) {
+  const count = (state: string) => [...pipeline.values()].filter((r) => r.state === state).length;
+  const inMod = count("in_mod");
+  const verif = count("verification_needed");
   return (
     <div className="flex flex-wrap items-center gap-3 font-mono text-[10px] text-muted">
       {PROVIDER_ORDER.map((p) => (
@@ -225,6 +274,18 @@ function Legend() {
           {PROVIDER_LABEL[p]}
         </span>
       ))}
+      {inMod > 0 && (
+        <span className="inline-flex items-center gap-1.5">
+          <span className="pipe-mod w-2.5 h-2.5 rounded-[1px]" />
+          in mod line
+        </span>
+      )}
+      {verif > 0 && (
+        <span className="inline-flex items-center gap-1.5">
+          <span className="pipe-verif w-2.5 h-2.5 rounded-[1px]" />
+          install verifying
+        </span>
+      )}
     </div>
   );
 }
@@ -234,11 +295,13 @@ function HangarFloor({
   totalFleet,
   totalStarlink,
   scopeLabel,
+  pipeline,
 }: {
   families: FleetFamily[];
   totalFleet: number;
   totalStarlink: number;
   scopeLabel: string;
+  pipeline: PipelineMap;
 }) {
   return (
     <section className={SECTION}>
@@ -248,12 +311,12 @@ function HangarFloor({
           Every {scopeLabel} tail number is one cell. {totalStarlink} of {totalFleet} currently show
           Starlink. The color tells you which WiFi system is installed today.
         </p>
-        <Legend />
+        <Legend pipeline={pipeline} />
       </div>
 
       <div className="fam-container gap-3">
         {families.map((fam) => (
-          <FamilyBlock key={fam.family} fam={fam} />
+          <FamilyBlock key={fam.family} fam={fam} pipeline={pipeline} />
         ))}
       </div>
       <script
@@ -459,7 +522,15 @@ function IronyStack({ bodyClass }: { bodyClass: FleetPageData["bodyClass"] }) {
   );
 }
 
-function TailMonument({ allTails, totalFleet }: { allTails: FleetTail[]; totalFleet: number }) {
+function TailMonument({
+  allTails,
+  totalFleet,
+  pipeline,
+}: {
+  allTails: FleetTail[];
+  totalFleet: number;
+  pipeline: PipelineMap;
+}) {
   const byProvider: Record<WifiProvider, number> = {
     starlink: 0,
     viasat: 0,
@@ -498,10 +569,12 @@ function TailMonument({ allTails, totalFleet }: { allTails: FleetTail[]; totalFl
             href={`https://flightaware.com/live/flight/${t.tail}`}
             target="_blank"
             rel="nofollow noreferrer noopener"
-            title={monumentTitle(t)}
-            className={t.provider === "starlink" ? "tail-sl" : "tail-dim"}
+            title={monumentTitle(t, pipeline)}
+            className={monumentClass(t, pipeline)}
           >
-            <span className="tail-dot">{t.provider === "starlink" ? "◉" : "\u00A0"}</span>
+            <span className={`tail-dot${monumentDotClass(t, pipeline)}`}>
+              {monumentDot(t, pipeline)}
+            </span>
             <span className="tail-num">{t.tail}</span>
             <span className="tail-abbr">{FAMILY_ABBR[t.family] || "—"}</span>
           </a>
@@ -517,15 +590,46 @@ const PROGRESS_SEGMENT_LABELS: Record<string, string> = {
   express: "Express & regional",
 };
 
+function PipelineTailChip({ row }: { row: FleetProgressTailRow }) {
+  const cls =
+    row.state === "in_mod"
+      ? "pipe-chip pipe-chip-mod"
+      : row.state === "verification_needed"
+        ? "pipe-chip pipe-chip-verif"
+        : "pipe-chip pipe-chip-sched";
+  return (
+    <a
+      href={`#t-${row.tail}`}
+      title={`${row.type_code} · ${PIPELINE_LABEL[row.state]}`}
+      className={cls}
+    >
+      {row.tail}
+      {row.mod_location && <span className="opacity-60 ml-1">{row.mod_location}</span>}
+    </a>
+  );
+}
+
 // Forward-looking install pipeline (in mod / awaiting verification) — the
 // historical counterpart is InstallPaceSection.
-function InstallPipelineSection({ progress }: { progress: FleetProgressRow[] }) {
+function InstallPipelineSection({
+  progress,
+  tails,
+}: {
+  progress: FleetProgressRow[];
+  tails: FleetProgressTailRow[];
+}) {
   const totals = progress.filter((r) => r.type_code === "Totals");
   if (totals.length === 0) return null;
   const updated = totals.find((r) => r.sheet_updated)?.sheet_updated;
   const inModTypes = progress.filter(
     (r) => r.type_code !== "Totals" && ((r.in_mod ?? 0) > 0 || (r.verification_needed ?? 0) > 0)
   );
+  const bySegment = new Map<string, FleetProgressTailRow[]>();
+  for (const t of tails) {
+    if (!bySegment.has(t.segment)) bySegment.set(t.segment, []);
+    bySegment.get(t.segment)?.push(t);
+  }
+  const scheduled = tails.filter((t) => t.state === "scheduled");
 
   return (
     <section className={SECTION}>
@@ -534,6 +638,7 @@ function InstallPipelineSection({ progress }: { progress: FleetProgressRow[] }) 
         <p className="text-xs text-muted">
           Per the community fleet-site progress sheets{updated ? ` (updated ${updated} ET)` : ""} —
           aircraft currently in a mod line show up here before they appear as equipped.
+          {tails.length > 0 && " Tail-level states are decoded from the sheets' cell colors."}
         </p>
       </div>
       <div className="grid md:grid-cols-3 gap-4">
@@ -542,6 +647,9 @@ function InstallPipelineSection({ progress }: { progress: FleetProgressRow[] }) 
             seg.total && seg.starlink_complete !== null
               ? Math.round((seg.starlink_complete / seg.total) * 100)
               : null;
+          const segTails = (bySegment.get(seg.segment) ?? []).filter(
+            (t) => t.state !== "scheduled"
+          );
           return (
             <div key={seg.segment} className={PANEL}>
               <div className={EYEBROW}>{PROGRESS_SEGMENT_LABELS[seg.segment] ?? seg.segment}</div>
@@ -557,6 +665,13 @@ function InstallPipelineSection({ progress }: { progress: FleetProgressRow[] }) 
                 <div>{seg.verification_needed ?? 0} awaiting verification</div>
                 {pct !== null && <div className="text-muted">{pct}% of segment</div>}
               </div>
+              {segTails.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mt-3">
+                  {segTails.map((t) => (
+                    <PipelineTailChip key={t.tail} row={t} />
+                  ))}
+                </div>
+              )}
             </div>
           );
         })}
@@ -570,6 +685,16 @@ function InstallPipelineSection({ progress }: { progress: FleetProgressRow[] }) 
                 {r.type_code}: {r.in_mod ?? 0} in mod
                 {(r.verification_needed ?? 0) > 0 ? `, ${r.verification_needed} verifying` : ""}
               </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {scheduled.length > 0 && (
+        <div className={`${PANEL} mt-4`}>
+          <div className={EYEBROW}>Queued for future mod lines</div>
+          <div className="flex flex-wrap gap-1.5">
+            {scheduled.map((t) => (
+              <PipelineTailChip key={t.tail} row={t} />
             ))}
           </div>
         </div>
@@ -623,6 +748,7 @@ interface FleetPageProps {
 }
 
 export default function FleetPage({ data, site }: FleetPageProps) {
+  const pipeline: PipelineMap = new Map(data.progressTails.map((r) => [r.tail, r]));
   const scopeCode = site.scope !== "ALL" ? site.scope : null;
   const scopeLabel = scopeCode ? AIRLINES[scopeCode].name : "tracked";
   const headerTitle = scopeCode
@@ -643,6 +769,22 @@ export default function FleetPage({ data, site }: FleetPageProps) {
           .wifi-thales    { background: rgba(236, 72, 153, 0.5); }
           .wifi-none      { background: transparent; box-shadow: inset 0 0 0 1px rgba(90, 106, 128, 0.5); }
           .wifi-unknown   { background: transparent; box-shadow: inset 0 0 0 1px rgba(90, 106, 128, 0.25); }
+          /* Pipeline overlays (after wifi-* so they win the cascade) */
+          .pipe-mod   { background: rgba(245, 158, 11, 0.15); box-shadow: inset 0 0 0 1.5px #f59e0b; }
+          .pipe-verif { background: rgba(14, 165, 233, 0.15); box-shadow: inset 0 0 0 1.5px var(--color-accent); }
+          .pipe-chip {
+            display: inline-flex; align-items: baseline;
+            font-family: var(--font-mono, monospace); font-size: 10px;
+            padding: 1px 6px; border-radius: 3px; text-decoration: none;
+            border: 1px solid; color: var(--color-text-secondary);
+          }
+          .pipe-chip:hover { text-decoration: underline; }
+          .pipe-chip-mod   { border-color: rgba(245, 158, 11, 0.6); background: rgba(245, 158, 11, 0.08); }
+          .pipe-chip-verif { border-color: rgba(14, 165, 233, 0.6); background: rgba(14, 165, 233, 0.08); }
+          .pipe-chip-sched { border-color: rgba(90, 106, 128, 0.5); border-style: dashed; }
+          .tail-pipe { opacity: 0.75; }
+          .dot-mod   { color: #f59e0b; }
+          .dot-verif { color: var(--color-accent); }
           .tail-sl, .tail-dim { display: flex; align-items: baseline; gap: 0.5em; text-decoration: none; }
           .tail-sl  { color: var(--color-accent); }
           .tail-dim { color: var(--color-text-muted); opacity: 0.3; transition: opacity .15s; }
@@ -699,13 +841,14 @@ export default function FleetPage({ data, site }: FleetPageProps) {
 
       <LivePulse pulse={data.pulse} />
       <InstallPaceSection pace={data.installPace} />
-      <InstallPipelineSection progress={data.progress} />
+      <InstallPipelineSection progress={data.progress} tails={data.progressTails} />
       <OfficialAnchorsSection anchors={data.anchors} />
       <HangarFloor
         families={data.families}
         totalFleet={data.totalFleet}
         totalStarlink={data.totalStarlink}
         scopeLabel={scopeLabel}
+        pipeline={pipeline}
       />
 
       <section className={`${SECTION} grid md:grid-cols-2 gap-4`}>
@@ -713,7 +856,7 @@ export default function FleetPage({ data, site }: FleetPageProps) {
         <IronyStack bodyClass={data.bodyClass} />
       </section>
 
-      <TailMonument allTails={data.allTails} totalFleet={data.totalFleet} />
+      <TailMonument allTails={data.allTails} totalFleet={data.totalFleet} pipeline={pipeline} />
 
       <footer className="relative py-6 text-center border-t border-subtle text-muted text-sm">
         <a href="/" className="text-accent hover:underline font-display">

@@ -18,7 +18,7 @@ export type ProgressSegment = "mainline_nb" | "mainline_wb" | "express";
 const MAINLINE_PROGRESS_DOC = "1QQyca_aIbxrV7uXuYfNdHuTygHwsaTFC9uf_dZbKWnI";
 const EXPRESS_PROGRESS_DOC = "1rADs3NACwfFOgqQATmj9CXWkwFH00yGUwmN1zrrT4u8";
 
-const PROGRESS_SHEETS: Array<{ segment: ProgressSegment; docId: string; gid: number }> = [
+export const PROGRESS_SHEETS: Array<{ segment: ProgressSegment; docId: string; gid: number }> = [
   { segment: "mainline_nb", docId: MAINLINE_PROGRESS_DOC, gid: 96918390 },
   { segment: "mainline_wb", docId: MAINLINE_PROGRESS_DOC, gid: 1396514988 },
   { segment: "express", docId: EXPRESS_PROGRESS_DOC, gid: 0 },
@@ -93,7 +93,7 @@ function toCount(raw: string | undefined): number | null {
 
 // Sheet column headers carry positional junk ("Tab#2 E175", "Wide E175",
 // "Bottom CRJ2") — the real type code is the last token.
-function cleanTypeCode(header: string): string {
+export function cleanTypeCode(header: string): string {
   const trimmed = header.trim();
   const last = trimmed.split(/\s+/).at(-1) ?? "";
   return last.length >= 2 ? last : trimmed;

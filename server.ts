@@ -11,6 +11,7 @@ import { startFreshnessEmitter } from "./src/scripts/data-freshness";
 import { startFaaRegistryJob } from "./src/scripts/faa-registry";
 import { startFleetDiscovery } from "./src/scripts/fleet-discovery";
 import { startFleetProgressJob } from "./src/scripts/fleet-progress";
+import { startFleetProgressTailsJob } from "./src/scripts/fleet-progress-tails";
 import { startFleetSync } from "./src/scripts/fleet-sync";
 import { startQatarScheduleIngester } from "./src/scripts/qatar-schedule-ingester";
 import { startSecAnchorsJob } from "./src/scripts/sec-anchors";
@@ -118,6 +119,10 @@ if (JOBS_ENABLED) {
 
   // Daily UA install-pipeline counts from the fleet-site progress workbooks.
   track(startFleetProgressJob(db));
+
+  // Daily per-tail pipeline states from the same workbooks' cell colors
+  // (Sheets API; no-ops without SHEETS_API_KEY).
+  track(startFleetProgressTailsJob(db));
 
   // Daily FAA registry slice: existence/dereg hygiene + Mode-S hex per tail.
   track(startFaaRegistryJob(db));
