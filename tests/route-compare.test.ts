@@ -49,10 +49,22 @@ describe("compareRoute", () => {
    * that matched no subfleet, so membership kills that bug class outright and,
    * unlike a numeric band, cannot be overtaken by the rollout.
    */
-  function penetrationPcts(code: string): number[] {
+  /**
+   * The per-subfleet rates compareRouteForAirline works from, resolved the same
+   * way it resolves them (override → census → 0) so the derivations below read
+   * the same numbers the code under test does.
+   */
+  function penetrations(code: string): { key: string; pct: number }[] {
     const cfg = AIRLINES[code as keyof typeof AIRLINES];
     const pen = getSubfleetPenetration(db, cfg.code);
-    return cfg.subfleets.map((sf) => sf.penetrationOverride ?? pen.get(sf.key)?.pct ?? 0);
+    return cfg.subfleets.map((sf) => ({
+      key: sf.key,
+      pct: subfleetPenetration(pen, sf)?.pct ?? 0,
+    }));
+  }
+
+  function penetrationPcts(code: string): number[] {
+    return penetrations(code).map((p) => p.pct);
   }
 
   const isMember = (n: number, pcts: number[]) => pcts.some((p) => Math.abs(p - n) < 1e-9);
@@ -74,14 +86,34 @@ describe("compareRoute", () => {
     return seen;
   }
 
-  /** The verdicts the census admits. Mirrors the branch structure, not its numbers. */
-  function admissibleKinds(seenCount: number): RouteCompareResult["kind"][] {
-    // 1 seen subfleet can still read `observed_mixed` — the low-pen-sibling
-    // rule widens a high-pen-only sighting into an honest range.
-    if (seenCount >= 2) return ["observed_mixed"];
-    if (seenCount === 1) return ["observed_single", "observed_mixed"];
-    // Unobserved: inferred_absent when the absence argument holds, else no_data.
-    return ["inferred_absent", "no_data"];
+  /**
+   * The ONE verdict this route's own inputs admit, re-derived from the census,
+   * the penetration map and the network-reach gate rather than asserted as a
+   * data fact. Deriving beats listing: an admissible-set assertion cannot
+   * distinguish "unobserved and honestly no_data" from "unobserved, credited
+   * with the wrong subfleet, and fell through to no_data" — which is how a
+   * predictor picking the HIGHEST-penetration subfleet instead of the lowest
+   * (the 97% overstatement this suite exists to catch) slipped past.
+   */
+  function expectedKind(code: string, o: string, d: string): RouteCompareResult["kind"] {
+    const pcts = penetrations(code);
+    const seen = seenSubfleets(code, o, d);
+    const maxPct = Math.max(...pcts.map((p) => p.pct));
+    const minSub = pcts.reduce((a, b) => (a.pct <= b.pct ? a : b));
+
+    if (seen.size >= 2) return "observed_mixed";
+    if (seen.size === 1) {
+      // A high-pen-only sighting widens into a range when a <50% sibling
+      // exists, because we cannot prove that sibling does NOT fly the route.
+      const sf = pcts.find((p) => seen.has(p.key))!;
+      const lowSibling = pcts.find((p) => p.key !== sf.key && p.pct < 0.5);
+      return sf.pct === maxPct && lowSibling ? "observed_mixed" : "observed_single";
+    }
+    // Unobserved: the absence argument only holds when the airline reaches both
+    // airports and exactly the high-pen subfleets are ruled out by absence.
+    const cfg = AIRLINES[code as keyof typeof AIRLINES];
+    const serves = getReader(code).airlineServesAirports([cfg.iata, cfg.icao], o, d);
+    return serves && maxPct >= 0.5 && minSub.pct < 0.5 ? "inferred_absent" : "no_data";
   }
 
   type Case = {
@@ -156,15 +188,13 @@ describe("compareRoute", () => {
       return;
     }
 
-    // The verdict must be the one this route's own census admits. Which of the
-    // admissible verdicts lands is a data fact (one new flight_routes row can
-    // move a route from unobserved to observed); that it stays inside the set
-    // is the behaviour worth pinning.
+    // The verdict must be the exact one this route's own inputs produce. The
+    // inputs are read at assert time, so a new flight_routes row moves the
+    // expectation with the data instead of breaking the test.
     const seen = seenSubfleets(c.code, c.o, c.d);
-    expect(
-      admissibleKinds(seen.size),
-      `${c.code} ${c.o}-${c.d}: ${seen.size} subfleet(s) observed`
-    ).toContain(r!.kind);
+    expect(r!.kind, `${c.code} ${c.o}-${c.d}: ${seen.size} subfleet(s) observed`).toBe(
+      expectedKind(c.code, c.o, c.d)
+    );
 
     if (r!.kind === "no_data") {
       expect(r!.probability).toBeLessThan(0);

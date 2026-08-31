@@ -8,10 +8,7 @@
  */
 
 import { beforeAll, describe, expect, test } from "bun:test";
-import {
-  CANONICAL_FLIGHT_PERMALINK,
-  buildFlightLookupVariants,
-} from "../src/airlines/flight-number";
+import { buildFlightLookupVariants, canonicalPermalinkFor } from "../src/airlines/flight-number";
 import {
   AIRLINES,
   HOST_REDIRECTS,
@@ -19,6 +16,7 @@ import {
   type SiteConfig,
   resolveSite,
 } from "../src/airlines/registry";
+import { ROUTE_AIRPORT_RE } from "../src/database/database";
 import { type Scope, type ScopedReader, createReaderFactory } from "../src/database/reader";
 import { API_RATE_LIMIT, createApp } from "../src/server/app";
 import { mcpReq, openSnapshot, req } from "./helpers";
@@ -126,7 +124,10 @@ for (const site of Object.values(SITES)) {
       const paths = await sitemapPaths(site);
       const reader = site.scope === "ALL" ? null : readers(site.scope);
       const cfg = site.scope === "ALL" ? null : AIRLINES[site.scope];
-      let checked = 0;
+      // Counted per family: a single total lets one enumerator go silent while
+      // the other keeps the guard-the-guard assertion green.
+      let flightsChecked = 0;
+      let routesChecked = 0;
       for (const path of paths) {
         const flight = path.match(/^\/check-flight\/(.+)$/);
         if (flight) {
@@ -134,30 +135,40 @@ for (const site of Object.values(SITES)) {
             reader && cfg,
             `${site.key} advertises ${path} without a permalink scope`
           ).toBeTruthy();
+          // Scoped, not the generic shape: a united sitemap advertising HA11
+          // is as broken as one advertising UA63986, and only the per-airline
+          // matcher the route-page builder uses catches that.
           expect(flight[1], `${site.key} sitemap advertises ${path}`).toMatch(
-            CANONICAL_FLIGHT_PERMALINK
+            canonicalPermalinkFor(cfg!)
           );
           expect(
             reader!.flightNumberHasData(buildFlightLookupVariants(cfg!, flight[1])),
             `${site.key} sitemap advertises ${path} with no data behind it`
           ).toBe(true);
-          checked++;
+          flightsChecked++;
           continue;
         }
         const route = path.match(/^\/route-planner\/([^/]+)\/([^/]+)$/);
         if (route) {
-          expect(route[1], `${site.key} sitemap advertises ${path}`).toMatch(/^[A-Z0-9]{3,4}$/);
-          expect(route[2], `${site.key} sitemap advertises ${path}`).toMatch(/^[A-Z0-9]{3,4}$/);
+          // The router's own predicate, imported rather than restated: parseRoutePath
+          // rejects 4-letter ICAO codes and self-pairs, so a hand-written
+          // /^[A-Z0-9]{3,4}$/ would wave through a KSFO/KLAX row that 404s.
+          expect(route[1], `${site.key} sitemap advertises ${path}`).toMatch(ROUTE_AIRPORT_RE);
+          expect(route[2], `${site.key} sitemap advertises ${path}`).toMatch(ROUTE_AIRPORT_RE);
+          expect(route[2], `${site.key} sitemap advertises the self-pair ${path}`).not.toBe(
+            route[1]
+          );
           expect(
             reader!.routeHasData(route[1], route[2]),
             `${site.key} sitemap advertises ${path} with no data behind it`
           ).toBe(true);
-          checked++;
+          routesChecked++;
         }
       }
-      // Guards the guard: if the enumerator ever stops emitting parameterized
-      // URLs this test must not keep passing on an empty loop.
-      if (site.features.checkFlightPage) expect(checked).toBeGreaterThan(0);
+      // Guards the guard: if either enumerator stops emitting URLs this test
+      // must not keep passing on an empty loop.
+      if (site.features.checkFlightPage) expect(flightsChecked).toBeGreaterThan(0);
+      if (site.features.routePlannerPage) expect(routesChecked).toBeGreaterThan(0);
     });
 
     // Tier (b): actually dispatched — statics in full, parameterized sampled.
@@ -244,8 +255,9 @@ describe("sitemap flight permalinks", () => {
       const flights = paths.filter((p) => p.startsWith("/check-flight/"));
       expect(flights.length).toBeGreaterThan(0);
       expect(paths.length).toBeGreaterThan(flights.length); // static pages still present
+      const permalink = canonicalPermalinkFor(AIRLINES[site.scope as keyof typeof AIRLINES]);
       for (const p of flights) {
-        expect(p).toMatch(new RegExp(`^/check-flight/${site.scope}\\d{1,4}$`));
+        expect(p.slice("/check-flight/".length), p).toMatch(permalink);
       }
     }
   );
