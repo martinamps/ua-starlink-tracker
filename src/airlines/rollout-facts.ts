@@ -559,7 +559,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     // for all but a rounding error of Southwest passengers.
     headline: "Does Southwest Have Starlink? Barely — One Aircraft So Far",
     summary:
-      "One confirmed Starlink aircraft (N8543Z, first flight June 22, 2026) and 300+ of a 800-plus fleet targeted by the end of 2026. Free for Rapid Rewards members via T-Mobile; Southwest has published no timeline for the rest of the fleet, and Viasat-equipped jets are not in the Starlink plan.",
+      "One confirmed Starlink aircraft (N8543Z, first flight June 22, 2026), with 300+ of Southwest's 800-plus aircraft targeted by the end of 2026. Free for Rapid Rewards members via T-Mobile; Southwest has published no timeline for the rest of the fleet, and Viasat-equipped jets are not in the Starlink plan.",
     facts: [
       {
         fact: "Southwest's first Starlink-equipped 737, N8543Z, carried passengers on June 22, 2026 (Dallas to Albuquerque) — the first of more than 300 aircraft Southwest aims to equip by the end of 2026. Southwest has over 800 aircraft in its fleet and says it eventually plans to bring Starlink to all of them, though no timeline has been given for the full rollout.",
