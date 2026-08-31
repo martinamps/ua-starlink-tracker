@@ -14,6 +14,7 @@ import React from "react";
 import ReactDOMServer from "react-dom/server";
 import { buildFaqJsonLd, getContent } from "../airlines/content";
 import {
+  CANONICAL_FLIGHT_PERMALINK,
   buildFlightLookupVariants,
   detectAirline,
   ensureAirlinePrefix,
@@ -369,6 +370,28 @@ function serveFavicon(tenantCode: string, urlPath: string): Response | null {
 // API handlers
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Group upcoming flights by tail, keeping only tails the equipped list still
+ * vouches for. The flight updater deliberately keeps refreshing schedules for
+ * tails settled 'negative' so a bad verdict can self-heal (see flight-updater's
+ * getAllStarlinkPlanes), so the equipped filter has to be applied here at the
+ * serialization boundary — otherwise a Viasat-confirmed tail's flights ship
+ * from a payload whose headline list correctly excludes it.
+ */
+function groupEquippedFlightsByTail(
+  starlinkPlanes: { TailNumber: string }[],
+  allFlights: Flight[]
+): Record<string, Flight[]> {
+  const equipped = new Set(starlinkPlanes.map((p) => p.TailNumber));
+  const flightsByTail: Record<string, Flight[]> = {};
+  for (const flight of allFlights) {
+    if (!equipped.has(flight.tail_number)) continue;
+    if (!flightsByTail[flight.tail_number]) flightsByTail[flight.tail_number] = [];
+    flightsByTail[flight.tail_number].push(flight);
+  }
+  return flightsByTail;
+}
+
 const apiData: Handler = ({ req, reader }) => {
   if (req.method !== "GET" && req.method !== "HEAD") return methodNotAllowed(true);
 
@@ -376,13 +399,7 @@ const apiData: Handler = ({ req, reader }) => {
   const starlinkPlanes = reader.getStarlinkPlanes();
   const lastUpdated = reader.getLastUpdated();
   const fleetStats = reader.getFleetStats();
-  const allFlights = reader.getUpcomingFlights();
-
-  const flightsByTail: Record<string, Flight[]> = {};
-  for (const flight of allFlights) {
-    if (!flightsByTail[flight.tail_number]) flightsByTail[flight.tail_number] = [];
-    flightsByTail[flight.tail_number].push(flight);
-  }
+  const flightsByTail = groupEquippedFlightsByTail(starlinkPlanes, reader.getUpcomingFlights());
 
   const response: ApiResponse = {
     totalCount,
@@ -1673,7 +1690,7 @@ function parseCheckFlightPath(pathname: string): CheckFlightPath {
     return { kind: "invalid", raw: null }; // malformed % escape
   }
   const fn = stripFlightNumberZeros(raw.toUpperCase());
-  if (!/^[A-Z]{2}\d{1,4}$/.test(fn)) return { kind: "invalid", raw };
+  if (!CANONICAL_FLIGHT_PERMALINK.test(fn)) return { kind: "invalid", raw };
   const date = second && /^\d{4}-\d{2}-\d{2}$/.test(second) ? second : null;
   return { kind: "flight", raw, fn, date };
 }
@@ -2073,13 +2090,6 @@ const homePage: Handler = async (ctx) => {
   if (req.method !== "GET" && req.method !== "HEAD") return methodNotAllowed();
   const content = getContent(tenant);
 
-  const allFlights = reader.getUpcomingFlights();
-  const flightsByTail: Record<string, Flight[]> = {};
-  for (const flight of allFlights) {
-    if (!flightsByTail[flight.tail_number]) flightsByTail[flight.tail_number] = [];
-    flightsByTail[flight.tail_number].push(flight);
-  }
-
   const isHub = tenant === "ALL";
   // Fetched once and shared with buildBaseTemplateVars below — these four were
   // previously queried twice per homepage render (React tree + template vars).
@@ -2087,6 +2097,7 @@ const homePage: Handler = async (ctx) => {
   const starlink = reader.getStarlinkPlanes();
   const lastUpdated = reader.getLastUpdated();
   const fleetStats = reader.getFleetStats();
+  const flightsByTail = groupEquippedFlightsByTail(starlink, reader.getUpcomingFlights());
   const reactHtml = ReactDOMServer.renderToString(
     React.createElement(Page, {
       total,

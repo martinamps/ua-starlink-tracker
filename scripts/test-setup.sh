@@ -102,8 +102,12 @@ INSERT OR IGNORE INTO upcoming_flights (tail_number, flight_number, departure_ai
   ('N654QX','QX2304','SEA','PDX',1774200000,1774206000,1774190000,'AS'),
   ('N292AK','AS307','SEA','LAX',1774200000,1774215000,1774190000,'AS');
 
--- HA + AS meta keys (so previews/tests render real percentages, not 0%).
-INSERT OR REPLACE INTO meta (key, value) VALUES
+-- HA + AS meta backfill (so previews/tests render real percentages, not 0%).
+-- OR IGNORE, never OR REPLACE: these numbers only make sense alongside the
+-- example fixture's handful of rows. Against a production-derived source they
+-- would replace real denominators with 6/12 while the numerator stayed in the
+-- hundreds, rendering "102 of 6 aircraft (1700%)".
+INSERT OR IGNORE INTO meta (key, value) VALUES
   ('HA:totalAircraftCount', '12'),
   ('HA:mainlineStarlink', '9'),
   ('HA:mainlineTotal', '12'),

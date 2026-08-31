@@ -554,7 +554,15 @@ function deriveConfig(
 // ============================================================================
 
 const MODEL_TTL_SEC = 3600; // 1 hour — matches scrape cadence
-const modelCache = new Map<Scope, { predict: (fn: string) => Prediction; builtAt: number }>();
+// Keyed by reader IDENTITY, not by scope: createReaderFactory hands out one
+// frozen reader per (Database, scope), so this is still one model per scope in
+// production (a single Database per process) while a reader over a different
+// Database — a test fixture, a script's own handle — can never be served a
+// model trained on someone else's rows.
+const modelCache = new WeakMap<
+  ScopedReader,
+  { predict: (fn: string) => Prediction; builtAt: number }
+>();
 
 /**
  * The type-aware model needs united_fleet to be a CENSUS, not a sample — a
@@ -575,14 +583,14 @@ function buildProductionModel(reader: ScopedReader): { predict: (fn: string) => 
 
 /**
  * Predict Starlink probability for a flight number.
- * Caches the model per reader scope for MODEL_TTL_SEC to avoid reloading 12k+ rows per call.
+ * Caches the model per reader for MODEL_TTL_SEC to avoid reloading 12k+ rows per call.
  */
 export function predictFlight(reader: ScopedReader, flightNumber: string): Prediction {
   const now = Math.floor(Date.now() / 1000);
-  let cached = modelCache.get(reader.scope);
+  let cached = modelCache.get(reader);
   if (!cached || now - cached.builtAt > MODEL_TTL_SEC) {
     cached = { ...buildProductionModel(reader), builtAt: now };
-    modelCache.set(reader.scope, cached);
+    modelCache.set(reader, cached);
   }
   return cached.predict(flightNumber);
 }

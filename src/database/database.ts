@@ -1,5 +1,10 @@
 import { Database } from "bun:sqlite";
-import { ensureAirlinePrefix, stripFlightNumberZeros } from "../airlines/flight-number";
+import {
+  CACHEABLE_FLIGHT_NUMBER,
+  canonicalPermalinkFor,
+  ensureAirlinePrefix,
+  stripFlightNumberZeros,
+} from "../airlines/flight-number";
 import {
   AIRLINES,
   type AirlineCode,
@@ -53,7 +58,7 @@ import type {
   WifiProvider,
 } from "../types";
 import { DB_PATH } from "../utils/constants";
-import { info, error as logError, warn } from "../utils/logger";
+import { debug, info, error as logError, warn } from "../utils/logger";
 
 type MetaRow = { value: string };
 
@@ -1771,6 +1776,16 @@ export function cacheFlightRoute(
   durationSec: number | null,
   now = Math.floor(Date.now() / 1000)
 ): void {
+  // flight_routes feeds the sitemap and route-page links, and this cache is
+  // written from caller-supplied lookup input (MCP/API), so an unvalidated
+  // write lets an arbitrary string mint a permalink the router will 404.
+  // Logged because nothing prunes this table: a predicate that started
+  // rejecting a legitimate callsign form would degrade one carrier's route
+  // coverage over months with no other symptom.
+  if (!CACHEABLE_FLIGHT_NUMBER.test(flightNumber)) {
+    debug(`cacheFlightRoute: rejected non-cacheable flight number "${flightNumber}"`);
+    return;
+  }
   try {
     db.query(`
       INSERT INTO flight_routes (flight_number, origin, destination, duration_sec, first_seen_at, last_seen_at, seen_count)
@@ -1823,7 +1838,7 @@ export function getSitemapFlights(db: Database, airline: AirlineCode): SitemapFl
   const cfg = AIRLINES[airline];
   if (!cfg) return [];
   const nowSec = Math.floor(Date.now() / 1000);
-  const marketing = new RegExp(`^${cfg.iata}\\d+$`);
+  const marketing = canonicalPermalinkFor(cfg);
   const latest = new Map<string, number>();
   const touch = (raw: string, t: number | null) => {
     // Zero-padded spellings collapse onto the canonical permalink (HA0011 →
@@ -2023,7 +2038,7 @@ export function getRouteSummary(
   // upcoming_flights also carries operating-carrier numbers (SKW4726 for a
   // United Express leg); those have no /check-flight permalink, so rendering
   // them would put broken internal links on every affected route page.
-  const marketing = cfg ? new RegExp(`^${cfg.iata}\\d+$`) : null;
+  const marketing = cfg ? canonicalPermalinkFor(cfg) : null;
   const merged = new Map<string, { times: number; scheduled: number }>();
   const add = (raw: string, times: number, scheduled: number) => {
     if (!cfg || !marketing) return;

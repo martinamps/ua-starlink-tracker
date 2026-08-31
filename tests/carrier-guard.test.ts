@@ -13,8 +13,13 @@
  */
 
 import { beforeAll, describe, expect, test } from "bun:test";
-import { ensureAirlinePrefix, prefixBelongsTo } from "../src/airlines/flight-number";
-import { AIRLINES } from "../src/airlines/registry";
+import {
+  CANONICAL_FLIGHT_PERMALINK,
+  canonicalPermalinkFor,
+  ensureAirlinePrefix,
+  prefixBelongsTo,
+} from "../src/airlines/flight-number";
+import { AIRLINES, enabledAirlines } from "../src/airlines/registry";
 import { decideCarrier, isPlausibleFlightNumber } from "../src/api/check-flight-core";
 import { createApp } from "../src/server/app";
 import { openSnapshot, req } from "./helpers";
@@ -121,5 +126,50 @@ describe("/api/predict-flight gating", () => {
     expect(status).toBe(200);
     expect(body).toHaveProperty("probability");
     expect(body).toHaveProperty("method");
+  });
+});
+
+/**
+ * The permalink predicate is spelled once.
+ *
+ * CANONICAL_FLIGHT_PERMALINK (what the router accepts) and canonicalPermalinkFor
+ * (what each producer advertises) must describe the same language with the
+ * carrier code substituted. They used to be independent literals that agreed
+ * only because every IATA code we happen to carry is two LETTERS — a carrier
+ * with an alphanumeric designator (B6, 9E, G7) would have made the producer
+ * accept what the router rejects, which is precisely how /check-flight/UA63986
+ * came to be advertised and 404'd.
+ */
+describe("permalink predicate agreement", () => {
+  const digits = ["1", "42", "638", "4680"];
+
+  test.each(enabledAirlines().map((cfg) => [cfg.code, cfg] as const))(
+    "%s: every permalink the producer accepts, the router accepts",
+    (_code, cfg) => {
+      const producer = canonicalPermalinkFor(cfg);
+      for (const d of digits) {
+        const fn = `${cfg.iata}${d}`;
+        expect(producer.test(fn), `${fn} rejected by its own producer`).toBe(true);
+        expect(
+          CANONICAL_FLIGHT_PERMALINK.test(fn),
+          `${cfg.code} advertises ${fn} but the router rejects it`
+        ).toBe(true);
+      }
+      // Both ends must agree on the router's 4-digit cap, not just on shape.
+      expect(producer.test(`${cfg.iata}63986`)).toBe(false);
+      expect(CANONICAL_FLIGHT_PERMALINK.test(`${cfg.iata}63986`)).toBe(false);
+    }
+  );
+
+  // Hypothetical alphanumeric designators: the generic shape must already
+  // admit them, or adding such a carrier silently reintroduces the drift.
+  test.each(["B6100", "9E42", "G74460"])("%s is a router-acceptable permalink", (fn) => {
+    expect(CANONICAL_FLIGHT_PERMALINK.test(fn)).toBe(true);
+  });
+
+  test("a bare number is not a permalink", () => {
+    for (const fn of ["12345", "1234", "UA", ""]) {
+      expect(CANONICAL_FLIGHT_PERMALINK.test(fn), fn).toBe(false);
+    }
   });
 });
