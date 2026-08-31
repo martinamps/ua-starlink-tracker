@@ -111,7 +111,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
       "450 aircraft equipped per United's Q2 2026 release; targeting close to 1,000 by the end of 2026 and the full fleet by the end of 2027.",
     facts: [
       {
-        fact: "Starlink is installed on 450 United mainline and United Express aircraft, per United's Q2 2026 results release; the airline expects nearly 1,000 by the end of 2026.",
+        fact: "Starlink is installed on 450 United mainline and United Express aircraft, per United's Q2 2026 results release; the airline expects nearly 1,000 by the end of 2026 and says it remains on track to bring Starlink to the whole fleet by the end of 2027.",
         asOf: "2026-07-15",
         source: {
           label: "United Q2 2026 results (PR Newswire)",
@@ -119,7 +119,9 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         },
       },
       {
-        fact: "United's first Starlink-equipped widebody entered transatlantic service in June 2026; the entire widebody fleet is slated for Starlink by summer 2027 and the whole fleet by the end of 2027.",
+        // The whole-fleet-by-2027 clause lives on fact 1: it is in the Q2
+        // release, not this one.
+        fact: "United's first Starlink-equipped widebody entered transatlantic service in June 2026 — the first of nearly 60 United widebody aircraft expected to have Starlink during the year — with the entire widebody fleet expected to be outfitted by the following summer.",
         asOf: "2026-06-22",
         source: {
           label: "United press release (PR Newswire)",
@@ -140,7 +142,9 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
       "Roughly 150 aircraft equipped across Alaska, Hawaiian, and Horizon — every regional aircraft plus about 50 mainline jets — with the announced E175, 737, and 787 program targeted to finish in early 2027. Free for Atmos Rewards members via T-Mobile.",
     facts: [
       {
-        fact: "Starlink is available on approximately 150 aircraft across Alaska, Hawaiian, and Horizon: all of Alaska's regional aircraft are now equipped, along with about 50 mainline jets. Alaska expects its entire widebody fleet equipped by the fall.",
+        // "All of its regional aircraft" is Alaska AIR GROUP's statement —
+        // group regional is Horizon and SkyWest, not an Alaska-mainline subset.
+        fact: "Starlink is available on approximately 150 aircraft across Alaska, Hawaiian, and Horizon: Alaska Air Group says all of its regional aircraft are now equipped, along with about 50 mainline jets. Alaska Airlines expects its entire widebody fleet equipped by the fall of 2026.",
         asOf: "2026-06-25",
         source: {
           label: "AirlineGeeks",
@@ -148,7 +152,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         },
       },
       {
-        fact: "Starlink Wi-Fi is free for Atmos Rewards (formerly Mileage Plan) members, sponsored by T-Mobile.",
+        fact: "Starlink Wi-Fi is free for Atmos Rewards members, sponsored by T-Mobile; there is no fee to join the loyalty program.",
         asOf: "2026-06-25",
         source: {
           label: "AirlineGeeks",
@@ -193,7 +197,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         },
       },
       {
-        fact: "Alaska Air Group expects its entire widebody fleet to be equipped with Starlink by the fall.",
+        fact: "Alaska Airlines expects its entire widebody fleet to be equipped with Starlink by the fall of 2026.",
         asOf: "2026-06-25",
         source: {
           label: "AirlineGeeks",
@@ -421,10 +425,10 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     status: "installing",
     statusLabel: "A350 fleet done",
     summary:
-      "All 12 A350s completed on June 2, 2026 — five months ahead of schedule. 787-9s are next in the second half of 2026, with A330neos due by the end of 2027.",
+      "All 12 A350s completed on June 2, 2026 — five months ahead of schedule. The 787 project starts in the second half of 2026 and A330neo installs commence in 2027, when Virgin plans 100% fleet connectivity.",
     facts: [
       {
-        fact: "Virgin Atlantic completed Starlink across all 12 of its A350s, five months ahead of schedule; 75% of customers on upgraded A350s now connect, versus 10% on the old system.",
+        fact: "Virgin Atlantic completed Starlink across all 12 of its A350s, five months ahead of schedule; 75% of customers now connect during an A350 flight, compared with 10% across the rest of the fleet.",
         asOf: "2026-06-02",
         source: {
           label: "Head for Points",
@@ -432,7 +436,9 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         },
       },
       {
-        fact: "Boeing 787-9 installs run through the second half of 2026 (about two-thirds done by year-end), and the A330neo fleet completes by the end of 2027 — covering the full fleet.",
+        // The source says A330neo installs COMMENCE in 2027; the old wording
+        // said they complete by then, inverting it.
+        fact: "Virgin Atlantic's Boeing 787 Starlink project is not expected to start until the second half of 2026, and A330neo installs are expected to commence at some point in 2027, after the 787 project completes. The airline says it plans to deliver 100% Starlink connectivity across its fleet in 2027.",
         asOf: "2026-06-02",
         source: {
           label: "One Mile at a Time",
@@ -510,10 +516,10 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     // for all but a rounding error of Southwest passengers.
     headline: "Does Southwest Have Starlink? Barely — One Aircraft So Far",
     summary:
-      "One confirmed Starlink aircraft (N8543Z, first flight June 22, 2026) with 300+ committed by the end of 2026, gated on antenna deliveries. Free for Rapid Rewards members via T-Mobile; a full-fleet Starlink commitment has NOT been made.",
+      "One confirmed Starlink aircraft (N8543Z, first flight June 22, 2026) and 300+ of a 800-plus fleet targeted by the end of 2026. Free for Rapid Rewards members via T-Mobile; Southwest has published no timeline for the rest of the fleet, and Viasat-equipped jets are not in the Starlink plan.",
     facts: [
       {
-        fact: "Southwest's first Starlink-equipped 737, N8543Z, carried passengers on June 22, 2026 (Dallas to Albuquerque) — the first of more than 300 aircraft Southwest aims to equip by the end of 2026.",
+        fact: "Southwest's first Starlink-equipped 737, N8543Z, carried passengers on June 22, 2026 (Dallas to Albuquerque) — the first of more than 300 aircraft Southwest aims to equip by the end of 2026. Southwest has over 800 aircraft in its fleet and says it eventually plans to bring Starlink to all of them, though no timeline has been given for the full rollout.",
         asOf: "2026-06-22",
         source: {
           label: "Upgraded Points",
@@ -521,11 +527,22 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         },
       },
       {
-        fact: "Wi-Fi is free for Rapid Rewards members under Southwest's T-Mobile partnership ($8 per device per flight otherwise). Southwest has not committed its full ~800-aircraft fleet to Starlink.",
+        fact: "Wi-Fi is free for Rapid Rewards members under Southwest's T-Mobile partnership ($8 per device per flight otherwise). Aircraft not yet retrofitted keep Southwest's older Wi-Fi providers, Viasat and Anuvu.",
         asOf: "2026-06-23",
         source: {
           label: "Simple Flying",
           url: "https://simpleflying.com/southwest-first-starlink-wifi-flight-300-jets-2026/",
+        },
+      },
+      {
+        // Why "300+" is not a step toward the whole fleet: the Viasat-equipped
+        // half of the fleet is out of scope, which is the part the roster's
+        // old unsourced "has NOT committed its full fleet" line was reaching for.
+        fact: "William Blair analysts reported that Viasat confirmed Southwest will not install Starlink on its Viasat-equipped aircraft: Starlink replaces the Anuvu system on older jets, while new 737 MAX deliveries continue to have Viasat's system line-fit.",
+        asOf: "2026-02-12",
+        source: {
+          label: "Via Satellite",
+          url: "https://www.satellitetoday.com/mobility/2026/02/12/southwest-airlines-plans-to-put-starlink-on-more-than-300-aircraft/",
         },
       },
     ],
@@ -625,7 +642,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     statusLabel: "Installs begin Q1 2027",
     headline: "Does American Have Starlink? Not Yet — Airbus Installs Begin in 2027",
     summary:
-      "500+ Airbus narrowbodies only, announced May 26, 2026, with installs from Q1 2027 — zero flying today. No other American aircraft is in the Starlink program as announced; AAdvantage members already get free Wi-Fi on the ~90% of the fleet running Viasat or Intelsat, sponsored by AT&T.",
+      "500+ Airbus narrowbodies only, announced May 26, 2026, with installs from Q1 2027 — zero flying today. No other American aircraft is in the Starlink program as announced; AAdvantage members already get free Wi-Fi on more than 900 Viasat- or Intelsat-equipped aircraft, sponsored by AT&T.",
     facts: [
       {
         fact: "American announced Starlink for more than 500 Airbus narrowbodies (including future A321XLR and A321neo deliveries) with installations beginning in the first quarter of 2027. No American aircraft flies with Starlink today.",
@@ -644,7 +661,9 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         },
       },
       {
-        fact: "Since January 6, 2026, American has offered free inflight Wi-Fi for AAdvantage members, sponsored by AT&T, on aircraft with Viasat or Intelsat connectivity — about 90% of the fleet.",
+        // The release gives no percentage — the old "~90%" was derived, not
+        // quoted. Its own figures are the count and the fleet-share wording.
+        fact: "In January 2026 American began rolling out free inflight Wi-Fi for AAdvantage members, sponsored by AT&T and powered by Viasat and Intelsat: more than 900 mainline aircraft are equipped, covering 100% of its narrowbody and dual-class regional fleets.",
         asOf: "2026-01-06",
         source: {
           label: "American Airlines newsroom",
@@ -807,14 +826,36 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     statusLabel: "Chose SES multi-orbit",
     insteadOf: "SES multi-orbit (GEO + Eutelsat OneWeb LEO) on 60+ new Airbus and Embraer aircraft",
     summary:
-      "No. LATAM expanded its SES deal — multi-orbit GEO plus Eutelsat OneWeb LEO connectivity — investing over US$25 million to equip more than 60 new Airbus and Embraer aircraft.",
+      "No Starlink deal announced. LATAM expanded its SES deal instead — multi-orbit GEO plus Eutelsat OneWeb LEO connectivity — investing over US$25 million to equip more than 60 new Airbus and Embraer aircraft.",
     facts: [
       {
-        fact: "LATAM selected SES multi-orbit connectivity (GEO satellites plus leased Eutelsat OneWeb LEO capacity) for more than 60 new A320neo, A321XLR, and E195-E2 aircraft — an investment of over US$25 million. LATAM has no Starlink program.",
+        // The SES release carries the aircraft scope and nothing else: no
+        // dollar figure, no orbit architecture, no mention of Starlink. Those
+        // three live on the facts below, each with the source that says them.
+        fact: "LATAM selected SES multi-orbit inflight connectivity: more than 60 Airbus (A320neo and A321XLR) and Embraer (E195-E2) aircraft will be equipped with SES services in the coming years.",
         asOf: "2026-07-29",
         source: {
           label: "SES press release",
           url: "https://www.ses.com/news/press-release/ses-launches-multiorbit-satellite-connectivity-on-latam-airbus-embraer-fleet",
+        },
+      },
+      {
+        fact: "The LATAM system is the Gilat Sidewinder electronically steered antenna, giving access to SES's global constellation of GEO satellites plus leased capacity on the Eutelsat OneWeb LEO constellation.",
+        asOf: "2026-07-29",
+        source: {
+          label: "PaxEx.Aero",
+          url: "https://paxex.aero/latam-inflight-internet-ses-multiorbit/",
+        },
+      },
+      {
+        // The negative is phrased as a checkable property of the cited pages —
+        // neither names Starlink — rather than a claim about the world that no
+        // source asserts. Same pattern on the other negative entries.
+        fact: "LATAM said on August 25, 2026 that it will invest more than US$25 million in the programme and offer the service free of charge to LATAM Pass members. Neither this announcement nor the SES release names Starlink.",
+        asOf: "2026-08-25",
+        source: {
+          label: "Air Data News",
+          url: "https://www.airdatanews.com/latam-invests-us-25-million-in-multi-orbit-wi-fi-for-new-aircraft/",
         },
       },
     ],
@@ -827,12 +868,16 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     status: "not_starlink",
     negative: "chose",
     statusLabel: "Chose Viasat Amara",
-    insteadOf: "Viasat Amara on 767s and 37 on-order widebodies; free international Wi-Fi",
+    insteadOf:
+      "Viasat Amara on six 767-300ERs plus 18 777-9s and 19 787-9s; free international Wi-Fi",
     summary:
-      "No. ANA picked Viasat's next-generation Amara system — starting with 767-300ERs and covering 37 on-order 787-9s and 777-9s — offering free Wi-Fi in all classes on international routes.",
+      "No Starlink deal announced. ANA picked Viasat's next-generation Amara system instead — all six 767-300ERs during FY2026, then 18 Boeing 777-9s and 19 Boeing 787-9s — offering free Wi-Fi in all classes on international routes.",
     facts: [
       {
-        fact: "ANA selected Viasat Amara (not Starlink) for six 767-300ERs and 37 on-order widebodies (19 787-9s, 18 777-9s), launching free high-speed Wi-Fi in all classes on international routes and targeting free Wi-Fi on more than 80% of its international fleet by the end of 2030.",
+        // The type breakdown is published only in the release's fleet table
+        // image, which is why the old "37 on-order widebodies" wording found no
+        // support in the page text — and why it totalled 37 rather than 43.
+        fact: "ANA selected Viasat Amara, launching free high-speed Wi-Fi in all classes on international routes. Its published fleet table covers 43 aircraft: all six B767-300ERs during FY2026, plus 18 B777-9s and 19 B787-9s from FY2026. ANA targets free Wi-Fi on more than 80% of its international fleet by the end of 2030. The release does not name Starlink.",
         asOf: "2025-08-05",
         source: {
           label: "ANA Group press release",
@@ -902,17 +947,20 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     status: "not_starlink",
     negative: "unannounced",
     statusLabel: "No Starlink program",
-    insteadOf: "Paid, data-capped satellite Wi-Fi (myPAL Wi-Fi); no Starlink agreement announced",
+    insteadOf:
+      "Paid myPAL Wi-Fi plans with free 10 MB and chat tiers; no Starlink agreement announced",
     summary:
-      "No Starlink program announced. Philippine Airlines' myPAL Wi-Fi is a paid, data-capped satellite service — a complimentary chat plan for everyone, a 100 MB voucher in business class, and browsing plans sold onboard.",
+      "No Starlink program announced. Philippine Airlines sells myPAL Wi-Fi by plan on select international flights — a free 10 MB plan for everyone, free unlimited chat for Mabuhay Miles members, a 100 MB plan in business class, and paid Unlimited, Standard, and Light plans.",
     facts: [
       {
-        fact: "Philippine Airlines' inflight Wi-Fi is data-capped rather than time-capped: a free chat plan is included with every ticket, business class gets a complimentary 100 MB voucher, and Unlimited, Standard, Light, and Chat plans are sold onboard. Starlink is not offered, and Philippine Airlines has announced no Starlink agreement.",
-        // Provider guide with no publication date of its own — see CheckedFact.
-        accessed: "2026-08-29",
+        fact: "Philippine Airlines sells myPAL Wi-Fi plans on select international flights and aircraft types: an Unlimited plan at USD 24.98, a 3-hour Standard plan at USD 15.98, and a 1-hour Light plan at USD 9.98. Three tiers are free — a 10 MB plan for all passengers, unlimited chat for Mabuhay Miles members, and a 100 MB plan for business class and Mabuhay Miles Million Milers. The page lists no Starlink service.",
+        // The airline's own product page carries no date of its own — see
+        // CheckedFact. Replaces an undated third-party aggregator whose plan
+        // list had gone stale (it still listed a paid chat plan PAL has dropped).
+        accessed: "2026-08-31",
         source: {
-          label: "Inflight Wi-Fi — Philippine Airlines",
-          url: "https://inflightwifi.one/philippine-airlines-wifi/",
+          label: "Philippine Airlines — myPAL Wi-Fi",
+          url: "https://www.philippineairlines.com/ph/en/mypal-travel-boost/mypal-wifi.html",
         },
       },
     ],
