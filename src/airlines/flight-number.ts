@@ -122,27 +122,51 @@ export function stripFlightNumberZeros(flightNumber: string): string {
   return flightNumber.replace(/^([A-Z]+)0+(?=\d)/, "$1");
 }
 
+/** The router's cap on a permalink's digits. */
+const PERMALINK_DIGITS = String.raw`\d{1,4}`;
+
 /**
- * The one spelling a /check-flight permalink may take: two-letter marketing
- * IATA plus 1-4 digits, zero-padding already stripped. Every producer of a
- * permalink (sitemap, route pages) and the router that resolves one must agree
- * on this shape — when they drifted, the sitemap advertised /check-flight/UA63986
- * (5 digits, minted by an FR24 cache write) and the router 404'd it.
+ * An IATA airline designator: two alphanumeric characters, never two digits.
+ * Deliberately wider than the [A-Z]{2} every carrier we track happens to use —
+ * B6, 9E and G7 are all real, and a generic permalink shape that rejected them
+ * while canonicalPermalinkFor accepted them is exactly the producer/router
+ * disagreement this module exists to prevent.
  */
-export const CANONICAL_FLIGHT_PERMALINK = /^[A-Z]{2}\d{1,4}$/;
+const IATA_CODE = String.raw`(?:[A-Z][A-Z0-9]|\d[A-Z])`;
+
+/**
+ * One template, so the generic shape and the per-airline matcher below are the
+ * same predicate with the carrier code substituted rather than two spellings
+ * that agree by luck.
+ */
+const permalinkPattern = (code: string) => `^${code}${PERMALINK_DIGITS}$`;
+
+/**
+ * The one spelling a /check-flight permalink may take: marketing IATA plus 1-4
+ * digits, zero-padding already stripped. Every producer of a permalink
+ * (sitemap, route pages, the IndexNow ping) and the router that resolves one
+ * must agree on this shape — when they drifted, the sitemap advertised
+ * /check-flight/UA63986 (5 digits, minted by an FR24 cache write) and the
+ * router 404'd it.
+ */
+export const CANONICAL_FLIGHT_PERMALINK = new RegExp(permalinkPattern(IATA_CODE));
 
 /**
  * What may be persisted into the flight_routes cache. Looser than the permalink
- * shape because the cache legitimately holds operating-carrier numbers (SKW4726
- * for a United Express leg) that have no permalink of their own, but still
- * bounded to 4 digits — the cache is written from caller-supplied lookup input,
- * and the sitemap enumerates it.
+ * shape because the cache legitimately holds operating-carrier callsigns that
+ * have no permalink of their own: the bare ICAO form (SKW4726 for a United
+ * Express leg) and the suffixed form schedule feeds use to disambiguate a
+ * reused number (QTR16A, SKW302M, UAL353T, ASH611A — 3.5% of production rows,
+ * and the only source for most of Qatar's route pairs). Still bounded to 4
+ * digits and one suffix letter: this cache is written from caller-supplied
+ * lookup input and the sitemap enumerates it, so the bound is what stops an
+ * arbitrary string minting a permalink.
  */
-export const CACHEABLE_FLIGHT_NUMBER = /^[A-Z]{2,3}\d{1,4}$/;
+export const CACHEABLE_FLIGHT_NUMBER = /^[A-Z]{2,3}\d{1,4}[A-Z]?$/;
 
 /** Marketing-number matcher for one airline, bounded to the permalink shape. */
 export function canonicalPermalinkFor(cfg: AirlineConfig): RegExp {
-  return new RegExp(`^${cfg.iata}\\d{1,4}$`);
+  return new RegExp(permalinkPattern(cfg.iata));
 }
 
 /**
