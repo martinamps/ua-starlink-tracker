@@ -332,9 +332,16 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         // The free-in-every-cabin promise is British Airways' own, below.
         fact: "IAG announced a partnership to implement Starlink-enabled high-speed Wi-Fi on Aer Lingus, British Airways, Iberia, LEVEL and Vueling aircraft — more than 500 across the group — with the first aircraft due to go live in early 2026.",
         asOf: "2025-11-06",
+        // IAG publishes press notices only as PDFs — iairgroup.com's
+        // /press-releases/2025/iag-announces-strategic-investment-in-wifi/ 302s
+        // to 20251106-iag-starlink-partnership-press-notice.pdf, and Wayback
+        // holds no HTML version of it. A PDF is bytes no reader-side check can
+        // search, so this cites the same-day report that quotes the release's
+        // three assertable claims: the five brands, "over 500 aircraft", and a
+        // first aircraft online in "early 2026".
         source: {
-          label: "IAG press release",
-          url: "https://www.iairgroup.com/press-releases/2025/iag-announces-strategic-investment-in-wifi/",
+          label: "Head for Points (reporting IAG's 6 November 2025 release)",
+          url: "https://www.headforpoints.com/2025/11/06/british-airways-starlink-wifi-deal/",
         },
       },
       {
@@ -562,7 +569,11 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
       "One confirmed Starlink aircraft (N8543Z, first flight June 22, 2026), with 300+ of Southwest's 800-plus aircraft targeted by the end of 2026. Free for Rapid Rewards members via T-Mobile; Southwest has published no timeline for the rest of the fleet, and Viasat-equipped jets are not in the Starlink plan.",
     facts: [
       {
-        fact: "Southwest's first Starlink-equipped 737, N8543Z, carried passengers on June 22, 2026 (Dallas to Albuquerque) — the first of more than 300 aircraft Southwest aims to equip by the end of 2026. Southwest has over 800 aircraft in its fleet and says it eventually plans to bring Starlink to all of them, though no timeline has been given for the full rollout.",
+        // The type is not in this source — Upgraded Points names the tail and
+        // never writes "737" — so it moved to the Simple Flying fact below,
+        // which does. Southwest's fleet being all-737 is true and irrelevant:
+        // a claim is sourced by the page it cites, not by common knowledge.
+        fact: "Southwest's first Starlink-equipped aircraft, N8543Z, carried passengers on June 22, 2026 (Dallas to Albuquerque) — the first of more than 300 aircraft Southwest aims to equip by the end of 2026. Southwest has over 800 aircraft in its fleet and says it eventually plans to bring Starlink to all of them, though no timeline has been given for the full rollout.",
         asOf: "2026-06-22",
         source: {
           label: "Upgraded Points",
@@ -570,7 +581,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         },
       },
       {
-        fact: "Wi-Fi is free for Rapid Rewards members under Southwest's T-Mobile partnership ($8 per device per flight otherwise). Aircraft not yet retrofitted keep Southwest's older Wi-Fi providers, Viasat and Anuvu.",
+        fact: "Southwest's first Starlink service was flown by a Boeing 737. Wi-Fi is free for Rapid Rewards members under Southwest's T-Mobile partnership ($8 per device per flight otherwise). Aircraft not yet retrofitted keep Southwest's older Wi-Fi providers, Viasat and Anuvu.",
         asOf: "2026-06-23",
         source: {
           label: "Simple Flying",
@@ -671,7 +682,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
       "Signed with SpaceX at the Dubai Airshow (November 18, 2025) to put Starlink on 100 Boeing 737s during 2026.",
     facts: [
       {
-        fact: "flydubai announced Starlink as its inflight connectivity partner on November 18, 2025, with installation across 100 Boeing 737s to be rolled out during 2026.",
+        fact: "flydubai announced Starlink as its inflight connectivity partner at the Dubai Airshow on November 18, 2025, with installation across 100 Boeing 737s to be rolled out during 2026.",
         asOf: "2025-11-18",
         source: {
           label: "flydubai newsroom",
@@ -961,15 +972,19 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     negative: "chose",
     statusLabel: "Chose Viasat Amara",
     insteadOf:
-      "Viasat Amara on six 767-300ERs plus 18 777-9s and 19 787-9s; free international Wi-Fi",
+      "Viasat Amara on its six B767-300ERs, then more new international aircraft; free Wi-Fi in all classes",
     summary:
-      "No Starlink deal announced. ANA picked Viasat's next-generation Amara system instead — all six 767-300ERs during FY2026, then 18 Boeing 777-9s and 19 Boeing 787-9s — offering free Wi-Fi in all classes on international routes.",
+      "No Starlink deal announced. ANA picked Viasat's next-generation Amara system instead — all six of its B767-300ERs by FY 2026, then additional new international aircraft — with free Wi-Fi in all classes on international routes and a target of more than 80% of the international fleet by the end of 2030.",
     facts: [
       {
-        // The type breakdown is published only in the release's fleet table
-        // image, which is why the old "37 on-order widebodies" wording found no
-        // support in the page text — and why it totalled 37 rather than 43.
-        fact: "ANA selected Viasat Amara, launching free high-speed Wi-Fi in all classes on international routes. Its published fleet table covers 43 aircraft: all six B767-300ERs during FY2026, plus 18 B777-9s and 19 B787-9s from FY2026. ANA targets free Wi-Fi on more than 80% of its international fleet by the end of 2030. The release does not name Starlink.",
+        // Second failure for this one claim, in a second form. The per-type
+        // breakdown (18 B777-9s, 19 B787-9s) exists only in the release's fleet
+        // table IMAGE — ANA's prose stops at "Aircraft scheduled to offer
+        // Viasat in-flight internet service:" — and the "43 aircraft" total was
+        // ours, summed off that image. A number read out of a picture and a
+        // number added up from one are both unsourced; this now says only what
+        // ANA's own sentences say.
+        fact: "ANA selected Viasat Amara, Viasat's next-generation in-flight connectivity solution, and is launching free, high-speed in-flight internet in all classes on international routes, starting with its B767-300ERs: three by the end of FY 2025 and all six by FY 2026, with the system also going into additional new international aircraft after FY 2026. ANA aims to offer the free service on more than 80% of its international fleet by the end of 2030. The release does not name Starlink.",
         asOf: "2025-08-05",
         source: {
           label: "ANA Group press release",
@@ -1021,7 +1036,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         // Past tense: a future-dated April 2026 target published in August 2026
         // reads as pending. The source has had no follow-up, so the fact says
         // what was said and when, not what is true now.
-        fact: "In March 2026 Turkish Airlines partnered with Anuvu on a performance upgrade of inflight connectivity across more than 100 narrowbody aircraft. Anuvu's CEO said the service had been deployed across 65 aircraft at that point, with full implementation scheduled for completion by April 2026.",
+        fact: "In March 2026 Turkish Airlines partnered with Anuvu on a performance upgrade of inflight connectivity across more than 100 narrowbody aircraft, deploying Anuvu Dedicated Space technology. Anuvu's CEO said the service had been deployed across 65 aircraft at that point, with full implementation scheduled for completion by April 2026.",
         asOf: "2026-03-30",
         source: {
           label: "Future Travel Experience",
@@ -1046,20 +1061,33 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     status: "not_starlink",
     negative: "unannounced",
     statusLabel: "No Starlink program",
-    insteadOf:
-      "Paid myPAL Wi-Fi plans with free 10 MB and chat tiers; no Starlink agreement announced",
+    insteadOf: "Viasat GX satellite Wi-Fi; no Starlink agreement announced",
     summary:
-      "No Starlink program announced. Philippine Airlines sells myPAL Wi-Fi by plan on select international flights — a free 10 MB plan for everyone, free unlimited chat for Mabuhay Miles members, a 100 MB plan in business class, and paid Unlimited, Standard, and Light plans.",
+      "No Starlink program announced. Philippine Airlines flies Viasat's GX satellite Wi-Fi — a GX customer since 2017, with its A350-1000s taking the system through the HBCplus programme.",
     facts: [
       {
-        fact: "Philippine Airlines sells myPAL Wi-Fi plans on select international flights and aircraft types: an Unlimited plan at USD 24.98, a 3-hour Standard plan at USD 15.98, and a 1-hour Light plan at USD 9.98. Three tiers are free — a 10 MB plan for all passengers, unlimited chat for Mabuhay Miles members, and a 100 MB plan for business class and Mabuhay Miles Million Milers. The page lists no Starlink service.",
-        // The airline's own product page carries no date of its own — see
-        // CheckedFact. Replaces an undated third-party aggregator whose plan
-        // list had gone stale (it still listed a paid chat plan PAL has dropped).
-        accessed: "2026-08-31",
+        // The myPAL Wi-Fi plan table (three paid tiers, two MB allowances, a
+        // Mabuhay Miles chat tier) used to live here, cited to PAL's own page.
+        // That page is an Angular shell: it returns ~10 characters of text and
+        // renders its content in the browser, so no client — and no reader
+        // without JavaScript — can check a price against it, and prices are
+        // exactly the kind of claim that goes stale silently. The tiers are
+        // dropped rather than moved to a source that merely looks readable;
+        // what stays is the question this page exists to answer, which is who
+        // supplies PAL's connectivity.
+        fact: "Philippine Airlines' inflight connectivity runs on Viasat's GX network, acquired through the Inmarsat buyout: PAL has been a GX customer since 2017 and an early adopter of line-fit installations from 2018, and Airbus confirmed that PAL's incoming A350-1000s will take GX capacity through its HBCplus programme. The announcement does not name Starlink.",
+        asOf: "2024-06-04",
         source: {
-          label: "Philippine Airlines — myPAL Wi-Fi",
-          url: "https://www.philippineairlines.com/ph/en/mypal-travel-boost/mypal-wifi.html",
+          label: "PaxEx.Aero",
+          url: "https://paxex.aero/airbus-hbcplus-backlog-philippine-airlines",
+        },
+      },
+      {
+        fact: "A July 2026 review of Philippine Airlines' A350-1000 economy cabin reported Viasat Wi-Fi installed on the type and complimentary on the flight.",
+        asOf: "2026-07-31",
+        source: {
+          label: "Simple Flying (PAL A350-1000 economy review)",
+          url: "https://simpleflying.com/flight-review-philippine-airlines-airbus-a350-1000-economy-2026",
         },
       },
     ],

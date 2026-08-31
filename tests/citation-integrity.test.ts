@@ -18,7 +18,7 @@ import {
   MAX_CONFIRMATION_AGE_DAYS,
   RETIRED_BLOCKS,
 } from "../scripts/citations/allowlist";
-import { assertableTokens, checkTokens, normalize } from "../scripts/citations/tokens";
+import { assertableTokens, checkTokens, htmlToText, normalize } from "../scripts/citations/tokens";
 import {
   AIRLINE_FACTS,
   type RolloutFact,
@@ -146,16 +146,15 @@ describe("citation dates", () => {
  * tenant-matrix.test.ts: the test fails when a new drift appears AND when a
  * pinned one is fixed without being removed from here. Fix the summary; do not
  * add to this list.
+ *
+ * Empty, and meant to stay that way. The two entries it held — flydubai's
+ * "Dubai Airshow" and Turkish's "Anuvu's Dedicated Space" — were both true and
+ * both in the cited releases ("The announcement was made at the Dubai Airshow
+ * 2025"; "deploy Anuvu Dedicated Space technology"), just missing from the
+ * facts the summaries are checked against. Fixing them meant putting the phrase
+ * in the fact that carries the source, not deleting it from the summary.
  */
-const KNOWN_SUMMARY_DRIFT: Record<string, string[]> = {
-  // "Signed with SpaceX at the Dubai Airshow" — the flydubai release is
-  // datelined Dubai, 18 November 2025 and the fact repeats that date, but no
-  // fact places the signing at the airshow.
-  flydubai: ["Dubai Airshow"],
-  // "Anuvu's Dedicated Space service" — the facts name Anuvu and the
-  // 100-narrowbody upgrade, never the product name.
-  turkish: ["Anuvu's Dedicated Space", "Dedicated Space"],
-};
+const KNOWN_SUMMARY_DRIFT: Record<string, string[]> = {};
 
 describe("summary containment", () => {
   const misses = () => {
@@ -203,6 +202,20 @@ describe("summary containment", () => {
       found,
       "A summary names something no fact carries. Fix the summary or add a dated fact — do not add to KNOWN_SUMMARY_DRIFT. If you fixed one, delete its pin."
     ).toEqual(pinned);
+  });
+});
+
+describe("token extraction", () => {
+  // A miss the extractor invents is worse than no check: it sends a reviewer to
+  // re-source a claim the page already makes. PaxEx.Aero serves
+  // "Viasat</a>&#8216;s GX satellites"; the named forms of those quotes were
+  // decoded and the numeric forms were not, so "Viasat's GX" read as absent
+  // from a page that says it.
+  test("numeric character references for curly quotes decode like their named forms", () => {
+    const text = htmlToText("<p><a>Viasat</a>&#8216;s GX satellites and &#8220;Amara&#8221;</p>");
+    expect(text).toContain("viasat gx");
+    expect(text).toContain('"amara"');
+    expect(normalize("&#8217;s")).toBe(normalize("&rsquo;s"));
   });
 });
 

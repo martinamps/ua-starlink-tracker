@@ -48,8 +48,13 @@ export interface AssertableToken {
 const ENTITIES: Array<[RegExp, string]> = [
   [/&nbsp;|&#160;/g, " "],
   [/&amp;|&#38;/g, "&"],
-  [/&quot;|&#34;|[“”]/g, '"'],
-  [/&#39;|&apos;|&rsquo;|&lsquo;|[‘’]/g, "'"],
+  [/&quot;|&#34;|&#8220;|&#8221;|[“”]/g, '"'],
+  // The numeric references belong here for the same reason &#8211; and &#8212;
+  // are on the dash row: a publisher that writes an apostrophe as &#8216; is
+  // writing an apostrophe. PaxEx.Aero serves "Viasat</a>&#8216;s GX satellites",
+  // which without this reads as a page that does not contain "Viasat's GX" —
+  // a token miss invented entirely by the extractor.
+  [/&#39;|&apos;|&rsquo;|&lsquo;|&#8216;|&#8217;|[‘’]/g, "'"],
   [/&mdash;|&ndash;|&#8211;|&#8212;|[–—]/g, "-"],
   [/&lt;/g, "<"],
   [/&gt;/g, ">"],
