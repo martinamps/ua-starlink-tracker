@@ -17,10 +17,11 @@ import {
   SITES,
   type SiteConfig,
   airlineSlug,
-  enabledAirlines,
+  hubContentAirlines,
   siteForAirline,
 } from "../src/airlines/registry";
 import { setAssignmentFetcher } from "../src/api/flight-verdict";
+import { createReaderFactory } from "../src/database/reader";
 import { COUNTERS, metrics } from "../src/observability/metrics";
 import { createApp } from "../src/server/app";
 import { jsonOf, makeSyntheticDb, openSnapshot, postMcp, req } from "./helpers";
@@ -178,11 +179,15 @@ describe("guardrail: no optional-tenant United/hub defaults in src/", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // The first canonical compare pair (alphabetical by slug) — derived from the
-// registry so the matrix row never hardcodes airline slugs.
+// SAME gate the route uses: the hub content population intersected with the
+// airlines that actually have tail rows. Deriving it from `enabled` instead
+// would 404 here the day an enabled airline with an earlier-sorting slug has
+// no tails yet, and the failure would look like a routing bug.
 const comparePair = (() => {
-  const [a, b] = [...enabledAirlines()].sort((x, y) =>
-    airlineSlug(x).localeCompare(airlineSlug(y))
-  );
+  const getReader = createReaderFactory(openSnapshot());
+  const [a, b] = hubContentAirlines()
+    .filter((cfg) => (getReader(cfg.code).getPerAirlineStats()[0]?.total ?? 0) > 0)
+    .sort((x, y) => airlineSlug(x).localeCompare(airlineSlug(y)));
   return `/compare/${airlineSlug(a)}-vs-${airlineSlug(b)}`;
 })();
 

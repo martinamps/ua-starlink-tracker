@@ -23,13 +23,17 @@ import {
   formatFactDate,
 } from "../src/airlines/rollout-facts";
 import { factsHeadline } from "../src/components/airlines-page";
-import { createApp } from "../src/server/app";
+import { createReaderFactory } from "../src/database/reader";
+import { createApp, hubUrlFamilies } from "../src/server/app";
 import { openSnapshot, req } from "./helpers";
 
 let app: ReturnType<typeof createApp>;
+let getReader: ReturnType<typeof createReaderFactory>;
 
 beforeAll(() => {
-  app = createApp(openSnapshot());
+  const db = openSnapshot();
+  app = createApp(db);
+  getReader = createReaderFactory(db);
 });
 
 const hub = SITES.airline;
@@ -287,15 +291,75 @@ describe("sitemaps", () => {
       ...trackedRoster().map((cfg) => `/airlines/${airlineSlug(cfg)}`),
     ];
     let checked = 0;
+    let unstamped = 0;
     for (const path of paths) {
       const lastmod = lastmodFor(path);
-      if (!lastmod) continue; // no dated content → the sitemap omits it too
       const body = await (await get(path, hub.canonicalHost)).text();
       const modified = body.match(/"dateModified":"([^"]+)"/)?.[1];
-      expect(modified, `${path} has no dateModified`).toBe(lastmod);
-      checked++;
+      // Absence has to survive as absence. A page whose every claim rests on an
+      // undated source omits <lastmod>; the WebPage must omit dateModified too
+      // rather than fall through to the request clock, which is how the two
+      // unstamped roster pages came to assert they changed this second.
+      expect(modified, `${path} publishes a dateModified the sitemap does not`).toBe(lastmod);
+      if (lastmod) checked++;
+      else unstamped++;
     }
     expect(checked, "no page exercised the freshness invariant").toBeGreaterThan(0);
+    expect(unstamped + checked, "roster shrank to nothing").toBe(paths.length);
+  });
+
+  // The whole point of the hub freshness model: a live page's dateModified is
+  // its DATA's stamp, the same one the sitemap gives that URL — never the
+  // clock, which would make every fetch look like a change.
+  test("SITE_PAGES publish the data stamp, not the request clock", async () => {
+    const xml = await (await get("/sitemap.xml", hub.canonicalHost)).text();
+    const block = xml
+      .split("<url>")
+      .find((b) => b.includes(`<loc>https://${hub.canonicalHost}/</loc>`));
+    const lastmod = block?.match(/<lastmod>([^<]+)<\/lastmod>/)?.[1];
+    const body = await (await get("/", hub.canonicalHost)).text();
+    const modified = body.match(/"@type":"WebPage".*?"dateModified":"([^"]+)"/)?.[1];
+    expect(modified).toBe(lastmod);
+    expect(Date.parse(modified as string)).toBeLessThan(Date.now() - 1000);
+  });
+
+  // An /airlines/{slug} that serves 200 while nothing advertises it is an
+  // orphan: indexable, unreachable, and invisible to the only lists a
+  // maintainer edits. Unpublishing an airline has to take its page with it.
+  test("no /airlines page serves outside the sitemap's population", async () => {
+    const xml = await (await get("/sitemap.xml", hub.canonicalHost)).text();
+    for (const entry of AIRLINE_FACTS) {
+      const advertised = xml.includes(
+        `<loc>https://${hub.canonicalHost}/airlines/${entry.slug}</loc>`
+      );
+      const res = await get(`/airlines/${entry.slug}`, hub.canonicalHost);
+      expect(
+        res.status === 200,
+        `${entry.slug}: served=${res.status} advertised=${advertised}`
+      ).toBe(advertised);
+      // The IATA alias must answer the same way — the two halves of the lookup
+      // diverging is exactly how the orphan survived.
+      const byIata = await get(`/airlines/${entry.iata.toLowerCase()}`, hub.canonicalHost);
+      expect([advertised ? 301 : 404], entry.iata).toContain(byIata.status);
+    }
+  });
+
+  test("hub llms.txt never advertises a URL the sitemap withholds", async () => {
+    const xml = await (await get("/sitemap.xml", hub.canonicalHost)).text();
+    const llms = await (await app.dispatch(req("/llms.txt", hub.canonicalHost))).text();
+    const linked = new Set(
+      [
+        ...llms.matchAll(
+          new RegExp(`https://${hub.canonicalHost}(/(?:airlines|compare)[a-z0-9/-]*)`, "g")
+        ),
+      ].map((m) => m[1])
+    );
+    expect(linked.size, "llms.txt links no hub pages at all").toBeGreaterThan(0);
+    for (const path of linked) {
+      expect(xml, `llms.txt links ${path}, sitemap does not`).toContain(
+        `<loc>https://${hub.canonicalHost}${path}</loc>`
+      );
+    }
   });
 
   test("airline-site sitemaps do not advertise /airlines", async () => {
@@ -304,6 +368,41 @@ describe("sitemaps", () => {
       expect(res.status, site.key).toBe(200);
       expect(await res.text(), site.key).not.toContain("/airlines");
     }
+  });
+});
+
+// Every live SITES entry is all-on (hub) or all-off (tenant), so the flag
+// combinations that broke llms.txt cannot be reached through a real host.
+// Exercise the shared gate directly instead — it is the single place both the
+// sitemap and llms.txt read their URL families from.
+describe("hub URL families are gated once, for every surface", () => {
+  const withFeatures = (over: Partial<typeof hub.features>) => ({
+    ...hub,
+    features: { ...hub.features, ...over },
+  });
+
+  test("both flags on: all three families populated", () => {
+    const f = hubUrlFamilies(hub, getReader);
+    expect(f.trackedAirlines.length).toBeGreaterThan(0);
+    expect(f.factsRoster.length).toBeGreaterThan(0);
+    expect(f.comparePairs.length).toBeGreaterThan(0);
+  });
+
+  test("airlinesPages off drops both /airlines families, comparePages off drops /compare", () => {
+    const noAirlines = hubUrlFamilies(withFeatures({ airlinesPages: false }), getReader);
+    expect(noAirlines.trackedAirlines).toEqual([]);
+    expect(noAirlines.factsRoster).toEqual([]);
+    const noCompare = hubUrlFamilies(withFeatures({ comparePages: false }), getReader);
+    expect(noCompare.comparePairs).toEqual([]);
+    const neither = hubUrlFamilies(
+      withFeatures({ airlinesPages: false, comparePages: false }),
+      getReader
+    );
+    expect([neither.trackedAirlines, neither.factsRoster, neither.comparePairs]).toEqual([
+      [],
+      [],
+      [],
+    ]);
   });
 });
 
