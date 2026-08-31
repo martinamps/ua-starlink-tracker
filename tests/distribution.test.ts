@@ -7,7 +7,7 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { AIRLINES, SITES, type SiteConfig } from "../src/airlines/registry";
+import { AIRLINES, SITES, type SiteConfig, publicAirlines } from "../src/airlines/registry";
 import { getFirstFlights, recordFirstFlights } from "../src/database/database";
 import { badgeSvgMarkup, badgeValue, createApp } from "../src/server/app";
 import { bodyOf, makeSyntheticDb, openSnapshot, req } from "./helpers";
@@ -88,6 +88,43 @@ describe("newly-equipped Atom feed", () => {
     expect(text).not.toContain("joined the Starlink-equipped fleet on");
     // …and the feed-level description says the same thing.
     expect(text).toMatch(/<subtitle>[^<]*not when the antenna went on/);
+  });
+
+  test("every entry's permalink anchor exists on the page it links to", async () => {
+    // Feed entries link `#TAIL` anchors on /newly-equipped. When the page
+    // rendered exactly the feed's own window, an entry sitting in someone's
+    // reader pointed at a row that had already scrolled off — the permalink
+    // decayed the moment a newer install landed.
+    for (const host of [UA, HUB]) {
+      const feed = await bodyOf(app, "/feed.xml", host);
+      const anchors = [...feed.text.matchAll(/\/newly-equipped#([^<"]+)/g)].map((m) =>
+        decodeURIComponent(m[1])
+      );
+      expect(anchors.length, `${host} feed has no entries`).toBeGreaterThan(0);
+      const page = await bodyOf(app, "/newly-equipped", host);
+      for (const tail of anchors) {
+        expect(page.text, `${host}: /newly-equipped has no #${tail} to land on`).toContain(
+          `id="${tail}"`
+        );
+      }
+    }
+  });
+
+  test("the hub feed is cross-airline, not one carrier's log", async () => {
+    // getRecentInstalls takes DateFound DESC; UA out-installs the others by an
+    // order of magnitude, so an uncapped take is 50 UA rows on the one surface
+    // that exists to compare carriers.
+    const { text } = await bodyOf(app, "/feed.xml", HUB);
+    const entries = text.split("<entry>").length - 1;
+    expect(entries).toBeGreaterThan(0);
+    const perAirline = new Map<string, number>();
+    for (const a of publicAirlines()) {
+      perAirline.set(a.code, text.split(`${a.name} aircraft `).length - 1);
+    }
+    // Shape, not values: no single carrier may own the whole document.
+    for (const [code, n] of perAirline) {
+      expect(n, `${code} owns the entire hub feed`).toBeLessThan(entries);
+    }
   });
 
   test("POST is not a feed method", async () => {

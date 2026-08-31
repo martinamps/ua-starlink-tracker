@@ -76,24 +76,37 @@ All metrics are prefixed with `starlink.` for easy filtering in Datadog.
 | `starlink.verification.check` | `result:success\|error` | Verification attempt |
 | `starlink.verification.mismatch` | - | Spreadsheet/United.com WiFi mismatch |
 | `starlink.vendor.request` | `vendor:flightaware\|fr24\|united`, `type:flights\|fleet\|verification`, `status:success\|rate_limited\|error` | External API call |
-| `starlink.http.request` | `method`, `route`, `status_code` | HTTP request served (known routes only) |
+| `starlink.http.request` | `method`, `route`, `status_code`, `tenant`, `client_class` | HTTP request served (`route` is the matched route-table entry, or `unmatched`) |
 
-### Route Allowlist (Important for `http.request` Metric)
+### Route Tag Cardinality (`http.request` and friends)
 
-To prevent cardinality explosion from bots and scrapers hitting random URLs, the `http.request` metric only emits for known routes. Unknown routes (404s) are traced but **not** counted in metrics.
+There is no `KNOWN_ROUTES` allowlist any more — it was replaced by
+`metricRoute()` in `src/server/app.ts`, which tags every request with the
+**route table entry that matched it**, never the raw path. Bots and scrapers
+hitting random URLs therefore cannot inflate cardinality: an unmatched path
+tags `unmatched`, and the prefix families collapse to their prefix
+(`/check-flight/UA123` → `/check-flight`, `/static/x.png` → `/static`).
 
-**Allowlisted routes (max 25):**
-- `/` - Home page
-- `/api/data` - Main data API
-- `/api/check-flight` - Flight check API
-- `/api/mismatches` - Verification mismatches API
-- `/api/fleet-discovery` - Fleet discovery stats API
-- `/sitemap.xml` - Sitemap
-- `/robots.txt` - Robots file
-- `/debug/files` - Debug endpoint
-- `/static/*` - Static assets (grouped)
+That makes the `route` tag's cardinality exactly *(route table size) + 1*, and
+the route table is the thing to watch:
 
-To add a new route, update the `KNOWN_ROUTES` set in `server.ts`. Keep the total under 25 to maintain reasonable cardinality.
+| Source | Count |
+|---|---|
+| Exact entries in `routes` | 27 |
+| Prefix families in `prefixRoutes` | 4 (3 of which reuse an exact entry's tag) |
+| `unmatched` | 1 |
+| **Distinct `route` tag values** | **29** |
+
+**Budget: keep it under 40.** The old "max 25" predates the distribution
+surfaces (`/newly-equipped`, `/feed.xml`, `/badge.svg`, `/embed`,
+`/install-rate`) and the per-airline API families, and was already exceeded by
+the routes it did not list. 40 leaves room for a new URL family without a
+re-audit while staying well inside a sane per-metric tag budget.
+
+To add a route, add it to `routes` (or `prefixRoutes`) in
+`src/server/app.ts` — the metric tag follows automatically. If a change would
+push the table past the budget, group the new URLs behind a prefix family
+rather than raising the number.
 
 ### Gauges
 

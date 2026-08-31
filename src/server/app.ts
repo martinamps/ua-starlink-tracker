@@ -1174,21 +1174,44 @@ interface SitePage {
   indexable?: boolean;
 }
 
-/** Per-request memo for the bounding tests. One render can ask up to four times
- * — footer nav, feed autodiscovery <link>, sitemap, the handler itself — and on
- * the hub each install-rate answer sweeps every public airline. The key is the
- * RequestContext, so nothing outlives the request that built it. */
-const gateCache = new WeakMap<RequestContext, Map<string, boolean>>();
+/**
+ * Bounding-gate answers, cached per (app, scope) for a short TTL.
+ *
+ * One render asks up to four times — footer nav, feed autodiscovery <link>,
+ * sitemap, the handler itself — and on the hub each install-rate answer sweeps
+ * every public airline, scanning that airline's whole install series. Measured
+ * at ~1.2ms per airline tenant and ~3ms on the hub, on EVERY HTML render
+ * including 404s (the not-found page renders the same footer): a 6,700-URL HEAD
+ * sweep went 24.9s to 32.6s, +31%.
+ *
+ * A minute of staleness is invisible here — an answer changes when a tenant
+ * gains its first organic install, which happens at most hourly and only ever
+ * flips false→true. Handlers read the same cached answer as the sitemap, so
+ * "advertised implies serves" holds within a cache generation instead of
+ * racing it.
+ *
+ * Keyed by the app's own reader factory, which createApp() mints once per
+ * database: two apps over different databases — which every write-path test
+ * builds — must never see each other's answers.
+ */
+const GATE_TTL_MS = 60_000;
+interface GateEntry {
+  value: boolean;
+  expiresAt: number;
+}
+const gateCache = new WeakMap<RequestContext["getReader"], Map<string, GateEntry>>();
 function memoGate(ctx: RequestContext, key: string, compute: () => boolean): boolean {
-  let perRequest = gateCache.get(ctx);
-  if (!perRequest) {
-    perRequest = new Map();
-    gateCache.set(ctx, perRequest);
+  let perApp = gateCache.get(ctx.getReader);
+  if (!perApp) {
+    perApp = new Map();
+    gateCache.set(ctx.getReader, perApp);
   }
-  const cached = perRequest.get(key);
-  if (cached !== undefined) return cached;
+  const scoped = `${tenantScope(ctx.tenant)}:${key}`;
+  const now = Date.now();
+  const hit = perApp.get(scoped);
+  if (hit && hit.expiresAt > now) return hit.value;
   const value = compute();
-  perRequest.set(key, value);
+  perApp.set(scoped, { value, expiresAt: now + GATE_TTL_MS });
   return value;
 }
 
@@ -1818,9 +1841,11 @@ const installRatePage: Handler = (ctx) => {
   if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
   if (!ctx.site.features.installRatePage) return notFound(ctx.site);
   const cfg = tenantConfig(ctx.tenant);
-  const now = Date.now();
-  const airlines = installRateAirlines(ctx, now);
-  if (!airlines.some((a) => hasInstallRateContent(a.stats))) return notFound(ctx.site);
+  // The same cached gate the sitemap and footer nav consult, not a second fresh
+  // computation of it — two independent answers could disagree inside one TTL
+  // and advertise a URL that 404s.
+  if (!hasInstallRate(ctx)) return notFound(ctx.site);
+  const airlines = installRateAirlines(ctx, Date.now());
   const meta: PageMeta = cfg
     ? {
         siteTitle: `Will ${cfg.shortName} Hit Its Starlink Target? — Install Rate Index`,
@@ -2902,12 +2927,15 @@ export function createApp(db: Database): App {
     // Metered surfaces: every /api/* call; /mcp protocol traffic (POST tool
     // calls drive live FR24 reverse lookups, OPTIONS preflights ride the same
     // budget — GET is the HTML setup page and stays unmetered like other
-    // pages); /check-flight/{fn} permalink SSR (runs predictions per request).
+    // pages); /check-flight/{fn} permalink SSR (runs predictions per request);
+    // and /badge.svg, which is the one surface deliberately designed to be
+    // fetched by other people's pages — CORS-open, cacheable, and embedded at
+    // whatever rate a third party's traffic dictates.
     const meterClass = url.pathname.startsWith("/api/")
       ? "api"
       : url.pathname === "/mcp" && req.method !== "GET" && req.method !== "HEAD"
         ? "mcp"
-        : url.pathname.startsWith("/check-flight/")
+        : url.pathname.startsWith("/check-flight/") || url.pathname === "/badge.svg"
           ? "page"
           : null;
     const ip = clientIp(req);
