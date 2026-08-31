@@ -775,7 +775,8 @@ function MovementsPanel({ movements }: { movements: FleetMovement[] }) {
                   {m.tail}
                 </span>
                 <span className="text-[10px] text-muted w-20 truncate hidden sm:inline flex-shrink-0">
-                  {TYPE_DISPLAY[m.type_code] ?? m.type_code}
+                  {TYPE_DISPLAY[m.type_code] ??
+                    m.type_code.replace(/^(Boeing|Airbus|Embraer)\s+/i, "")}
                 </span>
                 <span className="text-[11px] text-secondary flex-1 truncate">
                   {movementText(m)}
