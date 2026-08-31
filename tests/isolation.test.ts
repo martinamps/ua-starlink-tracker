@@ -115,6 +115,7 @@ const ENDPOINTS = [
   "/check-flight",
   "/route-planner",
   "/airlines",
+  "/compare",
   "/methodology",
   "/api/data",
   "/api/fleet-summary",

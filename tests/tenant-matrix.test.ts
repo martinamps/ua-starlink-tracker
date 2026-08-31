@@ -12,8 +12,16 @@ import { beforeAll, describe, expect, test } from "bun:test";
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { getContent } from "../src/airlines/content";
-import { AIRLINES, SITES, type SiteConfig, siteForAirline } from "../src/airlines/registry";
+import {
+  AIRLINES,
+  SITES,
+  type SiteConfig,
+  airlineSlug,
+  hubContentAirlines,
+  siteForAirline,
+} from "../src/airlines/registry";
 import { setAssignmentFetcher } from "../src/api/flight-verdict";
+import { createReaderFactory } from "../src/database/reader";
 import { COUNTERS, metrics } from "../src/observability/metrics";
 import { createApp } from "../src/server/app";
 import { jsonOf, makeSyntheticDb, openSnapshot, postMcp, req } from "./helpers";
@@ -170,6 +178,19 @@ describe("guardrail: no optional-tenant United/hub defaults in src/", () => {
 // SITES × routes matrix
 // ─────────────────────────────────────────────────────────────────────────────
 
+// The first canonical compare pair (alphabetical by slug) — derived from the
+// SAME gate the route uses: the hub content population intersected with the
+// airlines that actually have tail rows. Deriving it from `enabled` instead
+// would 404 here the day an enabled airline with an earlier-sorting slug has
+// no tails yet, and the failure would look like a routing bug.
+const comparePair = (() => {
+  const getReader = createReaderFactory(openSnapshot());
+  const [a, b] = hubContentAirlines()
+    .filter((cfg) => (getReader(cfg.code).getPerAirlineStats()[0]?.total ?? 0) > 0)
+    .sort((x, y) => airlineSlug(x).localeCompare(airlineSlug(y)));
+  return `/compare/${airlineSlug(a)}-vs-${airlineSlug(b)}`;
+})();
+
 // feature === null → always on. HTML-ness is derived from the route shape.
 const ROUTES: Array<[route: string, feature: keyof SiteConfig["features"] | null]> = [
   ["/", null],
@@ -180,6 +201,7 @@ const ROUTES: Array<[route: string, feature: keyof SiteConfig["features"] | null
   ["/fleet", "fleetPage"],
   ["/routes", "routesPage"],
   ["/airlines", "airlinesPages"],
+  [comparePair, "comparePages"],
   ["/mcp", "mcpPage"],
 ];
 const isHtmlRoute = (route: string) => !route.startsWith("/api/") && !route.endsWith(".txt");
