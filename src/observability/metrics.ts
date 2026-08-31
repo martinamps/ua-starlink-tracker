@@ -25,8 +25,15 @@
  *                    aborted | scrape_error | noop                   (~12)
  *   http_status:     upstream HTTP status code on vendor.request error/
  *                    rate_limited emits (fr24 only)                  (~10)
- *   result:          success | error | aircraft_mismatch | tail_unknown  (4)
- *                    on flight.lookup_result it mirrors `outcome` (+5)
+ *   result:          three disjoint enums share this key, so a `sum by {result}`
+ *                    across starlink.* blends unrelated things:
+ *                    verification.check       success | error | aircraft_mismatch |
+ *                                             tail_unknown | not_published        (5)
+ *                    adsb_shadow.observations match | mismatch | no_assignment |
+ *                                             no_callsign | non_revenue |
+ *                                             low_speed | airborne_total          (7)
+ *                    flight.lookup_result     mirrors `outcome`                   (+4 new)
+ *                                                                          union (16)
  *   dataset:         mirrors `job` on data.freshness_seconds             (~7)
  *   client_class:    bot | claude | extension | browser | unknown    (5)
  *   confidence:      high | medium | low | none                      (4)
@@ -208,7 +215,7 @@ export const COUNTERS = {
   FLEET_STATUS_CHANGE: "fleet.status_change",
 
   // Consensus verdict disagrees with the Google Sheet's wifi claim
-  // tags: fleet, sheet_says (starlink|not_starlink), crawler_says
+  // tags: fleet, sheet_says (starlink|not_starlink), crawler_says, airline
   // When this goes quiet for a full 30-day cycle, the crawler is at least as
   // accurate as the sheet.
   FLEET_SHEET_DISAGREEMENT: "fleet.sheet_disagreement",
