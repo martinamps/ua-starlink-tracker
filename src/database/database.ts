@@ -55,7 +55,7 @@ import type {
   WifiProvider,
 } from "../types";
 import { DB_PATH } from "../utils/constants";
-import { info, error as logError, warn } from "../utils/logger";
+import { debug, info, error as logError, warn } from "../utils/logger";
 
 type MetaRow = { value: string };
 
@@ -1739,7 +1739,13 @@ export function cacheFlightRoute(
   // flight_routes feeds the sitemap and route-page links, and this cache is
   // written from caller-supplied lookup input (MCP/API), so an unvalidated
   // write lets an arbitrary string mint a permalink the router will 404.
-  if (!CACHEABLE_FLIGHT_NUMBER.test(flightNumber)) return;
+  // Logged because nothing prunes this table: a predicate that started
+  // rejecting a legitimate callsign form would degrade one carrier's route
+  // coverage over months with no other symptom.
+  if (!CACHEABLE_FLIGHT_NUMBER.test(flightNumber)) {
+    debug(`cacheFlightRoute: rejected non-cacheable flight number "${flightNumber}"`);
+    return;
+  }
   try {
     db.query(`
       INSERT INTO flight_routes (flight_number, origin, destination, duration_sec, first_seen_at, last_seen_at, seen_count)

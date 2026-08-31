@@ -10,7 +10,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { getFlightRoutePairs } from "../src/database/database";
+import { cacheFlightRoute, getFlightRoutePairs } from "../src/database/database";
 import { makeSyntheticDb, utc } from "./helpers";
 
 function seedReassignedFlight() {
@@ -95,5 +95,55 @@ describe("getFlightRoutePairs ordering", () => {
     expect(rows[0].scheduled).toBe(1);
     expect(rows[0].times).toBe(31);
     db.close();
+  });
+});
+
+/**
+ * The cacheFlightRoute write edge.
+ *
+ * flight_routes is written from caller-supplied lookup input (MCP/API) and
+ * enumerated by the sitemap, so this guard is the only thing standing between
+ * an arbitrary caller string and an advertised permalink the router 404s. It
+ * is also the only thing that can silently DROP a real operating-carrier
+ * callsign — nothing prunes this table, so an over-tight predicate degrades a
+ * carrier's route coverage invisibly. Both directions are pinned here: the
+ * guard was previously deletable with the whole suite still green.
+ */
+describe("cacheFlightRoute write-edge validation", () => {
+  const persisted = (fn: string): boolean => {
+    const db = makeSyntheticDb();
+    cacheFlightRoute(db, fn, "SFO", "EWR", 18000, utc("2026-08-01T00:00:00Z"));
+    const row = db.query("SELECT 1 FROM flight_routes WHERE flight_number = ?").get(fn) as unknown;
+    db.close();
+    return row !== null;
+  };
+
+  // Real callsign shapes observed in production flight_routes. The suffixed
+  // ICAO form is 3.5% of rows and the sole source of most Qatar route pairs;
+  // dropping it would skew airlineServesAirports, which gates inferred_absent.
+  test.each([
+    ["UA1340", "marketing IATA"],
+    ["SKW4726", "operating-carrier ICAO"],
+    ["QTR16A", "ICAO with disambiguating suffix"],
+    ["SKW302M", "ICAO with disambiguating suffix"],
+    ["UAL353T", "ICAO with disambiguating suffix"],
+    ["ASH611A", "ICAO with disambiguating suffix"],
+    ["MX69A", "short IATA with suffix"],
+  ])("persists %s (%s)", (fn) => {
+    expect(persisted(fn)).toBe(true);
+  });
+
+  // Junk the guard exists to keep out of the sitemap. UA63986 is the row that
+  // actually leaked: five digits, real data behind it, and a hard 404.
+  test.each([
+    ["UA63986", "over the router's 4-digit permalink cap"],
+    ["A0ACFF", "ICAO hex transponder address"],
+    ["N217HA", "tail number, not a flight number"],
+    ["B1", "no flight digits"],
+    ["K4035", "single-letter prefix"],
+    ["SKWW5424", "doubled carrier prefix"],
+    ["", "empty"],
+  ])("rejects %s (%s)", (fn) => {
+    expect(persisted(fn)).toBe(false);
   });
 });
