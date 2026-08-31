@@ -34,6 +34,7 @@ import type {
   FleetCarrier,
   FleetDiscoveryStats,
   FleetFamily,
+  FleetMovement,
   FleetPageData,
   FleetProgressRow,
   FleetProgressTailRow,
@@ -43,6 +44,7 @@ import type {
   Flight,
   InstallPace,
   InstallPaceWeek,
+  PipelineEventRow,
   RecentInstall,
   RouteSchedule,
   RouteScheduleRow,
@@ -373,6 +375,24 @@ export function setupTables(db: Database) {
         fetched_at INTEGER NOT NULL,
         UNIQUE(airline, tail)
       );
+    `).run();
+  }
+
+  // Observed pipeline transitions (diffed between daily grid reads) — the
+  // spine of the movements feed.
+  if (!tableExists(db, "pipeline_events")) {
+    db.query(`
+      CREATE TABLE pipeline_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        airline TEXT NOT NULL,
+        tail TEXT NOT NULL,
+        type_code TEXT NOT NULL,
+        segment TEXT NOT NULL,
+        event TEXT NOT NULL,
+        mod_location TEXT,
+        observed_at INTEGER NOT NULL
+      );
+      CREATE INDEX idx_pipeline_events_time ON pipeline_events(airline, observed_at DESC);
     `).run();
   }
 
@@ -3863,6 +3883,90 @@ export function getFleetProgressTails(
     .all(...q.params) as FleetProgressTailRow[];
 }
 
+/** Record pipeline transitions, skipping any (tail, event) already seen in the
+ * last 14 days — a tail flapping in and out of the sheet (or a state failing
+ * the count gate for a day) must not re-announce itself. */
+export function insertPipelineEvents(
+  db: Database,
+  airline: string,
+  events: Array<Omit<PipelineEventRow, "airline" | "observed_at">>
+): number {
+  const now = Math.floor(Date.now() / 1000);
+  const cutoff = now - 14 * 86400;
+  let inserted = 0;
+  db.transaction(() => {
+    for (const e of events) {
+      const dupe = db
+        .query(
+          "SELECT 1 FROM pipeline_events WHERE airline = ? AND tail = ? AND event = ? AND observed_at > ?"
+        )
+        .get(airline, e.tail, e.event, cutoff);
+      if (dupe) continue;
+      db.query(`
+        INSERT INTO pipeline_events (airline, tail, type_code, segment, event, mod_location, observed_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(airline, e.tail, e.type_code, e.segment, e.event, e.mod_location, now);
+      inserted++;
+    }
+  })();
+  return inserted;
+}
+
+export function getPipelineEvents(
+  db: Database,
+  airline?: AirlineFilter,
+  limit = 12
+): PipelineEventRow[] {
+  const q = withAirline(
+    `SELECT airline, tail, type_code, segment, event, mod_location, observed_at
+     FROM pipeline_events WHERE 1=1`,
+    airline
+  );
+  return db
+    .query(`${q.sql} ORDER BY observed_at DESC, tail LIMIT ?`)
+    .all(...q.params, limit) as PipelineEventRow[];
+}
+
+// Movements feed: sheet-observed transitions merged with confirmed-live
+// installs (the same filtered source the homepage installs feed uses). News,
+// not archive: 14 days or 10 rows, whichever cuts first.
+const MOVEMENTS_WINDOW_DAYS = 14;
+const MOVEMENTS_MAX_ROWS = 10;
+
+export function computeFleetMovements(db: Database, airline?: AirlineFilter): FleetMovement[] {
+  const cutoffIso = new Date(Date.now() - MOVEMENTS_WINDOW_DAYS * 86400_000)
+    .toISOString()
+    .slice(0, 10);
+  const fromEvents: FleetMovement[] = getPipelineEvents(db, airline, 12).map((e) => ({
+    date: new Date(e.observed_at * 1000).toISOString().slice(0, 10),
+    tail: e.tail,
+    type_code: e.type_code,
+    kind: e.event,
+    mod_location: e.mod_location,
+  }));
+  const fromInstalls: FleetMovement[] = airline
+    ? getRecentInstalls(db, airline, 8)
+        .map((i) => ({
+          date: (i.DateFound ?? "").slice(0, 10),
+          tail: i.TailNumber,
+          type_code: i.Aircraft,
+          kind: "confirmed" as const,
+          mod_location: null,
+        }))
+        .filter((m) => m.date >= cutoffIso)
+    : [];
+  const merged = [...fromEvents, ...fromInstalls].filter((m) => m.date >= cutoffIso);
+  // A transition and a confirmed-live row landing the same day for one tail
+  // would say the same thing twice — the live row wins.
+  const confirmedSameDay = new Set(
+    merged.filter((m) => m.kind === "confirmed").map((m) => `${m.tail}|${m.date}`)
+  );
+  return merged
+    .filter((m) => m.kind === "confirmed" || !confirmedSameDay.has(`${m.tail}|${m.date}`))
+    .sort((a, b) => b.date.localeCompare(a.date) || a.tail.localeCompare(b.tail))
+    .slice(0, MOVEMENTS_MAX_ROWS);
+}
+
 export function getFleetProgress(db: Database, airline?: AirlineFilter): FleetProgressRow[] {
   const q = withAirline(
     `SELECT airline, segment, type_code, total, starlink_complete, in_mod, verification_needed,
@@ -4435,6 +4539,7 @@ function computeFleetPageData(db: Database, airline?: AirlineFilter): FleetPageD
     progress: soleAirline ? getFleetProgress(db, airline) : [],
     anchors: soleAirline ? getFleetAnchors(db, airline) : [],
     progressTails: soleAirline ? getFleetProgressTails(db, airline) : [],
+    movements: soleAirline ? computeFleetMovements(db, airline) : [],
   };
 }
 

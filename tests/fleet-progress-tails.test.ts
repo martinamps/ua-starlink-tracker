@@ -3,9 +3,16 @@
 // out of the DB, and the segment-scoped storage path.
 
 import { describe, expect, test } from "bun:test";
-import { getFleetProgressTails, replaceFleetProgressTails } from "../src/database/database";
+import {
+  computeFleetMovements,
+  getFleetProgressTails,
+  getPipelineEvents,
+  insertPipelineEvents,
+  replaceFleetProgressTails,
+} from "../src/database/database";
 import {
   type GridCell,
+  diffPipelineEvents,
   parseProgressTailGrid,
   runFleetProgressTailsSync,
 } from "../src/scripts/fleet-progress-tails";
@@ -156,6 +163,76 @@ describe("fleet_progress_tails storage", () => {
   });
 });
 
+describe("diffPipelineEvents", () => {
+  const row = (
+    tail: string,
+    state: "in_mod" | "verification_needed" | "scheduled",
+    loc: string | null = null
+  ) => ({
+    segment: "mainline_nb" as const,
+    type_code: "738",
+    tail,
+    state,
+    mod_location: loc,
+    sheet_updated: null,
+  });
+
+  test("announces entries, install completions, and queue assignments", () => {
+    const old = [row("N11111", "in_mod"), row("N22222", "in_mod"), row("N44444", "scheduled")];
+    const next = [
+      row("N11111", "in_mod", "MLB"), // unchanged state — silent
+      row("N22222", "verification_needed"), // finished install
+      row("N33333", "in_mod", "RFD"), // new arrival
+      row("N44444", "in_mod", "ILN"), // queued tail reached its line
+      row("N55555", "scheduled", "INT"), // newly queued
+    ];
+    const events = diffPipelineEvents(old, next, "mainline_nb");
+    expect(events.map((e) => `${e.tail}:${e.event}`).sort()).toEqual([
+      "N22222:to_verification",
+      "N33333:entered_mod",
+      "N44444:entered_mod",
+      "N55555:queued",
+    ]);
+    expect(events.find((e) => e.tail === "N33333")?.mod_location).toBe("RFD");
+  });
+
+  test("an empty previous snapshot emits nothing (bootstrap)", () => {
+    expect(diffPipelineEvents([], [row("N11111", "in_mod")], "mainline_nb")).toEqual([]);
+  });
+});
+
+describe("pipeline_events storage + movements feed", () => {
+  test("insert dedupes repeats within the window and the feed merges installs", () => {
+    const db = makeSyntheticDb();
+    const draft = {
+      tail: "N33333",
+      type_code: "738",
+      segment: "mainline_nb",
+      event: "entered_mod" as const,
+      mod_location: "RFD",
+    };
+    expect(insertPipelineEvents(db, "UA", [draft])).toBe(1);
+    expect(insertPipelineEvents(db, "UA", [draft])).toBe(0); // sheet flap — silent
+    expect(getPipelineEvents(db, "UA")).toHaveLength(1);
+    expect(getPipelineEvents(db, "HA")).toEqual([]);
+
+    // A fresh confirmed install joins the feed alongside the sheet event.
+    const today = new Date().toISOString().slice(0, 10);
+    db.query(`
+      INSERT INTO starlink_planes (aircraft, wifi, sheet_gid, sheet_type, DateFound, TailNumber, OperatedBy, fleet, verified_wifi, airline)
+      VALUES ('737-924ER', 'Starlink', 'discovery', 'UA-mainline', ?, 'N44501', 'United Airlines', 'mainline', 'Starlink', 'UA')
+    `).run(today);
+    const movements = computeFleetMovements(db, ["UA"]);
+    const kinds = new Map(movements.map((m) => [m.tail, m.kind]));
+    expect(kinds.get("N33333")).toBe("entered_mod");
+    expect(kinds.get("N44501")).toBe("confirmed");
+    // Newest first, and every row carries a displayable date.
+    const dates = movements.map((m) => m.date);
+    expect([...dates].sort().reverse()).toEqual(dates);
+    expect(dates.every((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))).toBe(true);
+  });
+});
+
 describe("runFleetProgressTailsSync", () => {
   test("writes validated rows from every sheet with an injected fetcher", async () => {
     const db = makeSyntheticDb();
@@ -177,6 +254,27 @@ describe("runFleetProgressTailsSync", () => {
       new Set(["mainline_nb", "mainline_wb", "express"])
     );
     expect(stored.every((r) => r.airline === "UA")).toBe(true);
+  });
+
+  test("second sync records transition events; the first (bootstrap) records none", async () => {
+    const db = makeSyntheticDb();
+    // Only the NB tab has data; a tail must not exist in two segments.
+    const oneTab = (grid: GridCell[][]) => async (_doc: string, gid: number) =>
+      gid === 96918390 ? grid : [[c("")]];
+    await runFleetProgressTailsSync(db, oneTab(MAINLINE_GRID), "test-key");
+    expect(getPipelineEvents(db, "UA")).toEqual([]);
+
+    // N37282 (unpainted) turns pink: it entered a mod line since yesterday.
+    const changed = MAINLINE_GRID.map((row) =>
+      row.map((cell) => (cell.v === "N37282" ? { ...cell, bg: PINK } : cell))
+    );
+    // Keep the summary honest: 738 column now has 2 in mod (3 total in Totals).
+    changed[4] = [c("In Mod", PINK), c("1"), c("2"), c("3"), c("42.9%")];
+    await runFleetProgressTailsSync(db, oneTab(changed), "test-key");
+    const events = getPipelineEvents(db, "UA");
+    expect(events.some((e) => e.tail === "N37282" && e.event === "entered_mod")).toBe(true);
+    // Unchanged tails re-announced nothing.
+    expect(events.every((e) => e.tail === "N37282")).toBe(true);
   });
 
   test("skips without an API key and reports error when every fetch fails", async () => {

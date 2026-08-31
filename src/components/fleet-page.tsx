@@ -3,6 +3,7 @@ import { AIRLINES, type SiteConfig } from "../airlines/registry";
 import type {
   FleetAnchorRow,
   FleetFamily,
+  FleetMovement,
   FleetPageData,
   FleetProgressRow,
   FleetProgressTailRow,
@@ -41,16 +42,63 @@ const SECTION = "relative w-full max-w-6xl mx-auto mb-10";
 
 type PipelineMap = Map<string, FleetProgressTailRow>;
 
+// Mod-line stations as the progress sheets abbreviate them. Only entries we're
+// sure of — an unlisted code renders as the bare code rather than a guess.
+const STATION_NAMES: Record<string, string> = {
+  MLB: "Melbourne, FL",
+  MIA: "Miami, FL",
+  LCQ: "Lake City, FL",
+  BFM: "Mobile, AL",
+  GSO: "Greensboro, NC",
+  RFD: "Rockford, IL",
+  MCO: "Orlando, FL",
+  IAB: "Wichita, KS",
+  PNS: "Pensacola, FL",
+  GYR: "Goodyear, AZ",
+  ROW: "Roswell, NM",
+  ILN: "Wilmington, OH",
+  INT: "Winston-Salem, NC",
+  SAL: "San Salvador, El Salvador",
+  BQN: "Aguadilla, Puerto Rico",
+  XMN: "Xiamen, China",
+  HKG: "Hong Kong",
+  GIG: "Rio de Janeiro, Brazil",
+  SFO: "San Francisco, CA",
+  LAX: "Los Angeles, CA",
+  IAH: "Houston, TX",
+  EWR: "Newark, NJ",
+  ORD: "Chicago, IL",
+  GUM: "Guam",
+  MDE: "Medellín, Colombia",
+  PEK: "Beijing, China",
+  SIN: "Singapore",
+  FTW: "Fort Worth, TX",
+  AMA: "Amarillo, TX",
+  VCV: "Victorville, CA",
+  CWF: "Lake Charles, LA",
+};
+
+// "MLB (Melbourne, FL)" — the code stays first so the vocabulary gets taught,
+// not replaced; an unknown code renders bare.
+function stationPhrase(code: string): string {
+  const name = STATION_NAMES[code];
+  return name ? `${code} (${name})` : code;
+}
+
 const PIPELINE_LABEL: Record<FleetProgressTailRow["state"], string> = {
-  in_mod: "in mod line",
-  verification_needed: "install verifying",
+  in_mod: "Starlink install underway",
+  verification_needed: "install finished — awaiting verification",
   scheduled: "queued for a future mod line",
 };
+
+function pipelinePhrase(state: FleetProgressTailRow["state"], loc: string | null): string {
+  return `${PIPELINE_LABEL[state]}${loc ? ` at ${stationPhrase(loc)}` : ""}`;
+}
 
 function pipelineNote(p: PipelineMap, tail: string): string {
   const row = p.get(tail);
   if (!row) return "";
-  return ` · ${PIPELINE_LABEL[row.state]}${row.mod_location ? ` @ ${row.mod_location}` : ""}`;
+  return ` · ${pipelinePhrase(row.state, row.mod_location)}`;
 }
 
 function cellTitle(t: FleetTail, pipeline: PipelineMap): string {
@@ -600,7 +648,7 @@ function PipelineTailChip({ row }: { row: FleetProgressTailRow }) {
   return (
     <a
       href={`#t-${row.tail}`}
-      title={`${row.type_code} · ${PIPELINE_LABEL[row.state]}`}
+      title={`${row.type_code} · ${pipelinePhrase(row.state, row.mod_location)}`}
       className={cls}
     >
       {row.tail}
@@ -609,14 +657,149 @@ function PipelineTailChip({ row }: { row: FleetProgressTailRow }) {
   );
 }
 
+// One bar per segment card: complete → verifying → in mod → queued, ordered by
+// proximity to completion so the cyan mass anchors left; the bare track is
+// "not started". Every nonzero state keeps a 3px floor — 4 verifying of 900 is
+// the point of the bar, not a rounding error.
+function PipelineBar({
+  complete,
+  verifying,
+  inMod,
+  queued,
+  total,
+}: {
+  complete: number;
+  verifying: number;
+  inMod: number;
+  queued: number;
+  total: number | null;
+}) {
+  if (!total || total <= 0) return null;
+  const segs = [
+    { n: complete, cls: "bar-complete", label: "complete" },
+    { n: verifying, cls: "bar-verif", label: "verifying" },
+    { n: inMod, cls: "bar-inmod", label: "in mod" },
+    { n: queued, cls: "bar-queued", label: "queued" },
+  ].filter((s) => s.n > 0);
+  return (
+    <div
+      className="flex gap-px h-3 rounded overflow-hidden bg-surface-elevated mt-2"
+      role="img"
+      aria-label={segs.map((s) => `${s.label}: ${s.n}`).join(", ") || "no installs yet"}
+    >
+      {segs.map((s) => (
+        <span
+          key={s.label}
+          title={`${s.label}: ${s.n}`}
+          className={s.cls}
+          style={{ width: `${(s.n / total) * 100}%`, minWidth: 3 }}
+        />
+      ))}
+    </div>
+  );
+}
+
+// The progress sheets' column shorthand, spelled out for the feed.
+const TYPE_DISPLAY: Record<string, string> = {
+  "73G": "737-700",
+  "738": "737-800",
+  "739": "737-900",
+  "38M": "737 MAX 8",
+  "39M": "737 MAX 9",
+  "319": "A319",
+  "320": "A320",
+  "321": "A321",
+  "321XLR": "A321XLR",
+  "752": "757-200",
+  "753": "757-300",
+  "763": "767-300",
+  "764": "767-400",
+  GE: "777-200",
+  PW: "777-200",
+  "77W": "777-300ER",
+  "788": "787-8",
+  "789": "787-9",
+  "78X": "787-10",
+};
+
+const MOVEMENT_GLYPH: Record<FleetMovement["kind"], { ch: string; cls: string }> = {
+  entered_mod: { ch: "○", cls: "dot-mod" },
+  to_verification: { ch: "◎", cls: "dot-verif" },
+  queued: { ch: "◌", cls: "text-muted" },
+  confirmed: { ch: "◉", cls: "text-accent" },
+};
+
+function movementText(m: FleetMovement): string {
+  switch (m.kind) {
+    case "entered_mod":
+      return m.mod_location ? `entered ${m.mod_location} mod line` : "entered a mod line";
+    case "to_verification":
+      return "install finished — verifying";
+    case "queued":
+      return m.mod_location
+        ? `queued for ${m.mod_location} mod line`
+        : "queued for future mod line";
+    case "confirmed":
+      return "now showing Starlink";
+  }
+}
+
+function movementDate(iso: string): string {
+  return new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+function MovementsPanel({ movements }: { movements: FleetMovement[] }) {
+  return (
+    <div className={`${PANEL} mt-4`}>
+      <div className={EYEBROW}>Movements</div>
+      {movements.length === 0 ? (
+        <div className="text-xs text-muted font-mono">
+          No pipeline movements in the last 14 days
+        </div>
+      ) : (
+        <div className="space-y-1 max-w-lg">
+          {movements.map((m) => {
+            const glyph = MOVEMENT_GLYPH[m.kind];
+            return (
+              <a
+                key={`${m.tail}-${m.kind}-${m.date}`}
+                href={`#t-${m.tail}`}
+                className="flex items-baseline gap-2 px-2 py-1 rounded hover:bg-surface-elevated transition-colors group font-mono"
+              >
+                <span className={`w-4 text-center flex-shrink-0 ${glyph.cls}`}>{glyph.ch}</span>
+                <span className="text-xs text-primary group-hover:text-accent transition-colors w-16 flex-shrink-0">
+                  {m.tail}
+                </span>
+                <span className="text-[10px] text-muted w-20 truncate hidden sm:inline flex-shrink-0">
+                  {TYPE_DISPLAY[m.type_code] ?? m.type_code}
+                </span>
+                <span className="text-[11px] text-secondary flex-1 truncate">
+                  {movementText(m)}
+                </span>
+                <span className="text-[10px] text-muted flex-shrink-0">{movementDate(m.date)}</span>
+              </a>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Forward-looking install pipeline (in mod / awaiting verification) — the
 // historical counterpart is InstallPaceSection.
 function InstallPipelineSection({
   progress,
   tails,
+  movements,
 }: {
   progress: FleetProgressRow[];
   tails: FleetProgressTailRow[];
+  movements: FleetMovement[];
 }) {
   const totals = progress.filter((r) => r.type_code === "Totals");
   if (totals.length === 0) return null;
@@ -630,6 +813,16 @@ function InstallPipelineSection({
     bySegment.get(t.segment)?.push(t);
   }
   const scheduled = tails.filter((t) => t.state === "scheduled");
+  // The visible station decode — mobile has no hover, so every code painted on
+  // a chip gets spelled out once, in one line, from live data only.
+  const stationEntries = [...new Set(tails.map((t) => t.mod_location).filter(Boolean))]
+    .filter((code): code is string => !!code && !!STATION_NAMES[code])
+    .sort()
+    .map((code) => `${code} ${STATION_NAMES[code]}`);
+
+  const swatch = (cls: string) => (
+    <span className={`inline-block w-2 h-2 rounded-[1px] mr-1.5 ${cls}`} />
+  );
 
   return (
     <section className={SECTION}>
@@ -650,6 +843,9 @@ function InstallPipelineSection({
           const segTails = (bySegment.get(seg.segment) ?? []).filter(
             (t) => t.state !== "scheduled"
           );
+          const segQueued = (bySegment.get(seg.segment) ?? []).filter(
+            (t) => t.state === "scheduled"
+          ).length;
           return (
             <div key={seg.segment} className={PANEL}>
               <div className={EYEBROW}>{PROGRESS_SEGMENT_LABELS[seg.segment] ?? seg.segment}</div>
@@ -660,9 +856,28 @@ function InstallPipelineSection({
                   of {seg.total ?? "?"} complete
                 </span>
               </div>
+              <PipelineBar
+                complete={seg.starlink_complete ?? 0}
+                verifying={seg.verification_needed ?? 0}
+                inMod={seg.in_mod ?? 0}
+                queued={segQueued}
+                total={seg.total}
+              />
               <div className="font-mono text-[11px] text-secondary mt-2 space-y-1">
-                <div>{seg.in_mod ?? 0} in mod line now</div>
-                <div>{seg.verification_needed ?? 0} awaiting verification</div>
+                <div>
+                  {swatch("bar-inmod")}
+                  {seg.in_mod ?? 0} in mod line now
+                </div>
+                <div>
+                  {swatch("bar-verif")}
+                  {seg.verification_needed ?? 0} awaiting verification
+                </div>
+                {segQueued > 0 && (
+                  <div>
+                    {swatch("bar-queued")}
+                    {segQueued} queued
+                  </div>
+                )}
                 {pct !== null && <div className="text-muted">{pct}% of segment</div>}
               </div>
               {segTails.length > 0 && (
@@ -676,28 +891,38 @@ function InstallPipelineSection({
           );
         })}
       </div>
-      {inModTypes.length > 0 && (
-        <div className={`${PANEL} mt-4`}>
-          <div className={EYEBROW}>Active mod lines by type</div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 font-mono text-[11px] text-secondary">
-            {inModTypes.map((r) => (
-              <div key={`${r.segment}-${r.type_code}`}>
-                {r.type_code}: {r.in_mod ?? 0} in mod
-                {(r.verification_needed ?? 0) > 0 ? `, ${r.verification_needed} verifying` : ""}
+      {(inModTypes.length > 0 || scheduled.length > 0) && (
+        <div className="grid md:grid-cols-2 gap-4 mt-4">
+          {inModTypes.length > 0 && (
+            <div className={PANEL}>
+              <div className={EYEBROW}>Active mod lines by type</div>
+              <div className="grid grid-cols-2 gap-2 font-mono text-[11px] text-secondary">
+                {inModTypes.map((r) => (
+                  <div key={`${r.segment}-${r.type_code}`}>
+                    {r.type_code}: {r.in_mod ?? 0} in mod
+                    {(r.verification_needed ?? 0) > 0 ? `, ${r.verification_needed} verifying` : ""}
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
+            </div>
+          )}
+          {scheduled.length > 0 && (
+            <div className={PANEL}>
+              <div className={EYEBROW}>Queued for future mod lines</div>
+              <div className="flex flex-wrap gap-1.5">
+                {scheduled.map((t) => (
+                  <PipelineTailChip key={t.tail} row={t} />
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
-      {scheduled.length > 0 && (
-        <div className={`${PANEL} mt-4`}>
-          <div className={EYEBROW}>Queued for future mod lines</div>
-          <div className="flex flex-wrap gap-1.5">
-            {scheduled.map((t) => (
-              <PipelineTailChip key={t.tail} row={t} />
-            ))}
-          </div>
-        </div>
+      {tails.length > 0 && <MovementsPanel movements={movements} />}
+      {stationEntries.length > 0 && (
+        <p className="font-mono text-[10px] text-muted mt-3">
+          Mod stations: {stationEntries.join(" · ")}
+        </p>
       )}
     </section>
   );
@@ -782,6 +1007,10 @@ export default function FleetPage({ data, site }: FleetPageProps) {
           .pipe-chip-mod   { border-color: rgba(245, 158, 11, 0.6); background: rgba(245, 158, 11, 0.08); }
           .pipe-chip-verif { border-color: rgba(14, 165, 233, 0.6); background: rgba(14, 165, 233, 0.08); }
           .pipe-chip-sched { border-color: rgba(90, 106, 128, 0.5); border-style: dashed; }
+          .bar-complete { background: var(--color-accent); }
+          .bar-verif    { background: rgba(14, 165, 233, 0.45); }
+          .bar-inmod    { background: rgba(245, 158, 11, 0.8); }
+          .bar-queued   { background: repeating-linear-gradient(45deg, rgba(90, 106, 128, 0.55) 0 2px, transparent 2px 4px); }
           .tail-pipe { opacity: 0.75; }
           .dot-mod   { color: #f59e0b; }
           .dot-verif { color: var(--color-accent); }
@@ -841,7 +1070,11 @@ export default function FleetPage({ data, site }: FleetPageProps) {
 
       <LivePulse pulse={data.pulse} />
       <InstallPaceSection pace={data.installPace} />
-      <InstallPipelineSection progress={data.progress} tails={data.progressTails} />
+      <InstallPipelineSection
+        progress={data.progress}
+        tails={data.progressTails}
+        movements={data.movements}
+      />
       <OfficialAnchorsSection anchors={data.anchors} />
       <HangarFloor
         families={data.families}

@@ -12,9 +12,13 @@
 
 import type { Database } from "bun:sqlite";
 import { looksLikeValidTailNumber } from "../airlines/registry";
-import { replaceFleetProgressTails } from "../database/database";
+import {
+  getFleetProgressTails,
+  insertPipelineEvents,
+  replaceFleetProgressTails,
+} from "../database/database";
 import { COUNTERS, GAUGES, metrics, normalizeAirlineTag, withSpan } from "../observability";
-import type { FleetProgressTailRow, FleetProgressTailState } from "../types";
+import type { FleetProgressTailRow, FleetProgressTailState, PipelineEventRow } from "../types";
 import { type JobHandle, startJob } from "../utils/job-runner";
 import { info, error as logError, warn } from "../utils/logger";
 import { PROGRESS_SHEETS, type ProgressSegment, cleanTypeCode } from "./fleet-progress";
@@ -234,6 +238,40 @@ export function parseProgressTailGrid(grid: GridCell[][], segment: ProgressSegme
   };
 }
 
+export type PipelineEventDraft = Omit<PipelineEventRow, "airline" | "observed_at">;
+
+/** Transitions worth announcing, from one validated parse to the next. Exits
+ * are deliberately silent: a tail leaving the sheet is ambiguous (finished?
+ * pulled from the line? editor cleanup?) — confirmed-live installs reach the
+ * feed from the roster data instead. An empty previous snapshot emits nothing
+ * (first run would misdate the whole pipeline as today's news). */
+export function diffPipelineEvents(
+  oldRows: Array<Pick<FleetProgressTailRow, "tail" | "state">>,
+  newRows: ProgressTailParsedRow[],
+  segment: ProgressSegment
+): PipelineEventDraft[] {
+  if (oldRows.length === 0) return [];
+  const prev = new Map(oldRows.map((r) => [r.tail, r.state]));
+  const events: PipelineEventDraft[] = [];
+  for (const row of newRows) {
+    const was = prev.get(row.tail);
+    const base = {
+      tail: row.tail,
+      type_code: row.type_code,
+      segment,
+      mod_location: row.mod_location,
+    };
+    if (row.state === "in_mod" && was !== "in_mod") {
+      events.push({ ...base, event: "entered_mod" });
+    } else if (row.state === "verification_needed" && was !== "verification_needed") {
+      events.push({ ...base, event: "to_verification" });
+    } else if (row.state === "scheduled" && was === undefined) {
+      events.push({ ...base, event: "queued" });
+    }
+  }
+  return events;
+}
+
 const SHEETS_API = "https://sheets.googleapis.com/v4/spreadsheets";
 
 /** Fetch one tab as a GridCell matrix via the Sheets API (public sheet + API
@@ -325,8 +363,20 @@ export async function runFleetProgressTailsSync(
             const detail = parse.unknownColors.map((u) => `${u.color}×${u.count}`).join(" ");
             warn(`fleet-progress-tails: ${sheet.segment} unrecognized cell colors: ${detail}`);
           }
+          const oldRows = getFleetProgressTails(db, "UA").filter(
+            (r) => r.segment === sheet.segment
+          );
           replaceFleetProgressTails(db, "UA", sheet.segment, parse.rows);
           written += parse.rows.length;
+
+          const emitted = insertPipelineEvents(
+            db,
+            "UA",
+            diffPipelineEvents(oldRows, parse.rows, sheet.segment)
+          );
+          if (emitted > 0) {
+            info(`fleet-progress-tails: ${sheet.segment} recorded ${emitted} pipeline events`);
+          }
 
           const byState = new Map<string, number>();
           for (const r of parse.rows) byState.set(r.state, (byState.get(r.state) ?? 0) + 1);

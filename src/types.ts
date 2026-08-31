@@ -184,6 +184,8 @@ export interface FleetPageData {
   anchors: FleetAnchorRow[];
   /** Per-tail pipeline states (empty until the color-grid ingest has run and validated). */
   progressTails: FleetProgressTailRow[];
+  /** Recent pipeline transitions + confirmed-live installs, newest first. */
+  movements: FleetMovement[];
 }
 
 /** One per-type row of the install pipeline (United Fleet Site progress workbooks). */
@@ -213,6 +215,29 @@ export interface FleetProgressTailRow {
   mod_location: string | null;
   sheet_updated: string | null;
   fetched_at: number;
+}
+
+export type PipelineEventKind = "entered_mod" | "to_verification" | "queued";
+
+/** One observed install-pipeline transition, diffed between daily grid reads. */
+export interface PipelineEventRow {
+  airline: string;
+  tail: string;
+  type_code: string;
+  segment: string;
+  event: PipelineEventKind;
+  mod_location: string | null;
+  observed_at: number;
+}
+
+/** One line of the movements feed: pipeline transitions merged with
+ * confirmed-live installs from the roster data. */
+export interface FleetMovement {
+  date: string; // YYYY-MM-DD
+  tail: string;
+  type_code: string;
+  kind: PipelineEventKind | "confirmed";
+  mod_location: string | null;
 }
 
 /** An officially-reported fleet/Starlink figure from an SEC filing. */
