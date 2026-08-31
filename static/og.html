@@ -15,6 +15,9 @@
     series         comma-separated cumulative install counts for the sparkline (count layout)
     cards          JSON array [{name,pct,accent}] (grid layout)
     caption        small caption under the cards (grid layout)
+    date           YYYY-MM-DD stamp of the data behind the card (both layouts).
+                   A shared PNG outlives its numbers by months; with no date on
+                   it a reader cannot tell a fresh card from a stale one.
 -->
 <html lang="en">
 <head>
@@ -52,6 +55,11 @@
   .domain {
     position: absolute; bottom: 52px; left: 64px;
     font-size: 19px; letter-spacing: 0.06em; color: var(--muted);
+  }
+  .stamp {
+    position: absolute; bottom: 52px; right: 140px;
+    font-size: 17px; letter-spacing: 0.14em; color: var(--muted);
+    text-transform: uppercase;
   }
   .sat {
     position: absolute; bottom: 48px; right: 56px;
@@ -95,6 +103,7 @@
   <div class="label" id="label"></div>
   <div id="content"></div>
   <div class="domain" id="domain"></div>
+  <div class="stamp" id="stamp"></div>
   <svg class="sat" viewBox="0 0 24 24" fill="none" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
     <path d="M13 7 9 3 5 7l4 4" /><path d="m17 11 4 4-4 4-4-4" /><path d="m8 12 4 4 6-6-4-4Z" />
     <path d="m16 8 3-3" /><path d="M9 21a6 6 0 0 0-6-6" /><path d="M9 17a2 2 0 0 0-2-2" />
@@ -112,6 +121,12 @@ const accent = "#" + hexOnly(q.get("accent"), "0ea5e9");
 document.documentElement.style.setProperty("--accent", accent);
 document.getElementById("label").textContent = q.get("label") || "STARLINK TRACKER";
 document.getElementById("domain").textContent = q.get("domain") || "";
+// textContent, and only for a real ISO day: an unparseable stamp renders no
+// date rather than a wrong one.
+const day = q.get("date") || "";
+document.getElementById("stamp").textContent = /^\d{4}-\d{2}-\d{2}$/.test(day)
+  ? "Data as of " + day
+  : "";
 
 const content = document.getElementById("content");
 const layout = q.get("layout") || "count";

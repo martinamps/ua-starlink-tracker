@@ -63,6 +63,17 @@ export interface RecentInstall {
   DateFound: string;
 }
 
+/** A newly equipped tail's first observed revenue departure (first_flights). */
+export interface FirstFlight {
+  tail_number: string;
+  airline: string;
+  flight_number: string;
+  origin: string;
+  destination: string;
+  departed_at: number;
+  recorded_at: number;
+}
+
 interface FleetMetrics {
   total: number;
   starlink: number;

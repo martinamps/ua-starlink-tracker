@@ -11,6 +11,7 @@ import { AIRLINES, type AirlineCode, airlineHomeUrl, publicAirlines } from "../a
 import type {
   Aircraft,
   AirportDepartures,
+  FirstFlight,
   FleetDiscoveryStats,
   FleetPageData,
   FleetStats,
@@ -43,13 +44,16 @@ import {
   bumpDiscoveryPriority,
   cacheFlightRoute,
   computeWifiConsensus,
+  countStarlinkPlanes,
   flightNumberHasData,
   getAirlineByTail,
   getAirportDepartures,
   getCachedFlightRoutes,
   getConfirmedFleetTails,
   getConfirmedStarlinkEdges,
+  getDailyInstalls,
   getDirectRouteEdge,
+  getFirstFlights,
   getFleetDiscoveryStats,
   getFleetEntryByTail,
   getFleetPageData,
@@ -95,8 +99,15 @@ export interface ScopedReader {
   /** Airline codes covered by this reader (single-element for per-airline hosts, enabled set for hub). */
   readonly airlines: readonly AirlineCode[];
   getStarlinkPlanes(): Aircraft[];
+  /** Equipped-tail count without hydrating the roster — for callers that only
+   * wanted `.length` (the install/badge gates, on every HTML render). */
+  countStarlinkPlanes(): number;
   getAirlineByTail(): Record<string, string>;
   getRecentInstalls(limit?: number, perAirlineCap?: number): RecentInstall[];
+  /** First observed post-install revenue departures for the given tails (sparse). */
+  getFirstFlights(tails: readonly string[]): FirstFlight[];
+  /** Organic installs per calendar day (labelled bulk seeds excluded); ascending. */
+  getDailyInstalls(): { day: string; installs: number }[];
   getPerAirlineStats(): PerAirlineStat[];
   getUpcomingFlights(tailNumber?: string): Flight[];
   /** Per-airline subfleet split; null on the hub (no cross-airline aggregate exists). */
@@ -258,9 +269,12 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     scope,
     airlines,
     getStarlinkPlanes: () => getStarlinkPlanes(db, airlines),
+    countStarlinkPlanes: () => countStarlinkPlanes(db, airlines),
     getAirlineByTail: () => getAirlineByTail(db, airlines),
     getRecentInstalls: (limit, perAirlineCap) =>
       getRecentInstalls(db, airlines, limit, perAirlineCap),
+    getFirstFlights: (tails) => getFirstFlights(db, tails, airlines),
+    getDailyInstalls: () => getDailyInstalls(db, airlines),
     getPerAirlineStats: () => buildPerAirlineStats(db, airlines),
     getUpcomingFlights: (t) => getUpcomingFlights(db, t, airlines),
     // FleetStats shape is subfleet-specific (express/mainline); there is no

@@ -203,8 +203,18 @@ const ROUTES: Array<[route: string, feature: keyof SiteConfig["features"] | null
   ["/airlines", "airlinesPages"],
   [comparePair, "comparePages"],
   ["/mcp", "mcpPage"],
+  ["/newly-equipped", "newlyEquippedPage"],
+  ["/embed", "embedPage"],
+  ["/install-rate", "installRatePage"],
 ];
 const isHtmlRoute = (route: string) => !route.startsWith("/api/") && !route.endsWith(".txt");
+
+// Bounded URL families: on top of the feature flag these only exist where the
+// tenant actually has the data behind them, so a fixed 200 would pin the test
+// to whatever the snapshot happens to contain. The invariant that matters —
+// and the one the conventions demand — is that a page serves exactly when the
+// sitemap advertises it, in both directions.
+const DATA_GATED = new Set(["/newly-equipped", "/install-rate"]);
 
 // Editorially deliberate cross-airline mentions (2024 AS/HA merger FAQ copy).
 // Covers the airline's name AND canonical host. Anything else is a leak.
@@ -255,12 +265,18 @@ function assertOwnBranding(site: SiteConfig, route: string, body: string) {
 for (const site of Object.values(SITES)) {
   describe(`tenant matrix: ${site.key} (${site.canonicalHost})`, () => {
     for (const [route, feature] of ROUTES) {
-      const enabled = feature === null || site.features[feature];
-      const label = feature ? ` (${feature} ${enabled ? "on" : "off"})` : "";
-      test(`GET ${route} → ${enabled ? 200 : 404}${label}`, async () => {
+      const flagged = feature === null || site.features[feature];
+      const label = feature ? ` (${feature} ${flagged ? "on" : "off"})` : "";
+      const suffix = flagged && DATA_GATED.has(route) ? " iff sitemapped" : "";
+      test(`GET ${route} → ${flagged ? 200 : 404}${label}${suffix}`, async () => {
+        let expected = flagged;
+        if (flagged && DATA_GATED.has(route)) {
+          const sm = await (await get(site, "/sitemap.xml")).text();
+          expected = sm.includes(`https://${site.canonicalHost}${route}<`);
+        }
         const res = await get(site, route, "text/html");
-        expect(res.status).toBe(enabled ? 200 : 404);
-        if (!enabled) return;
+        expect(res.status).toBe(expected ? 200 : 404);
+        if (!expected) return;
         const body = await res.text();
         if (isHtmlRoute(route)) assertOwnBranding(site, route, body);
         // Canary sweep: airline-scoped sites must never carry another
@@ -666,5 +682,53 @@ describe("MCP tools are scope-correct on non-UA tenants", () => {
     const t = j.result.content[0].text as string;
     expect(t).toContain("A330");
     expect(t).toContain("~100% Starlink");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Route-tag cardinality: the `route` metric tag is the matched route-table
+// entry, so the table IS the tag budget. docs/OBSERVABILITY.md still described
+// a KNOWN_ROUTES allowlist that no longer exists and a max of 25 the table had
+// already passed — nothing tied the doc to the code, so it drifted silently.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("route tag budget matches the code and the doc", () => {
+  const root = path.join(import.meta.dir, "..");
+  const appSrc = readFileSync(path.join(root, "src", "server", "app.ts"), "utf8");
+  const doc = readFileSync(path.join(root, "docs", "OBSERVABILITY.md"), "utf8");
+
+  /** Distinct values metricRoute() can emit: every exact route, every prefix
+   * family's tag (deduped — three reuse an exact entry's path), plus
+   * "unmatched" for everything a crawler invents. */
+  function distinctRouteTags(): Set<string> {
+    const table = appSrc.match(/const routes: RouteTable = \{([\s\S]*?)\n {2}\};/);
+    const prefixes = appSrc.match(
+      /const prefixRoutes: Array<\[string, Handler\]> = \[([\s\S]*?)\n {2}\];/
+    );
+    expect(table, "routes table no longer parses — update this test").not.toBeNull();
+    expect(prefixes, "prefixRoutes no longer parses — update this test").not.toBeNull();
+    const tags = new Set<string>(["unmatched"]);
+    for (const m of (table as RegExpMatchArray)[1].matchAll(/"([^"]+)":/g)) tags.add(m[1]);
+    for (const m of (prefixes as RegExpMatchArray)[1].matchAll(/\["([^"]+)\/",/g)) tags.add(m[1]);
+    return tags;
+  }
+
+  test("stays inside the documented budget", () => {
+    const budget = Number(doc.match(/\*\*Budget: keep it under (\d+)\.\*\*/)?.[1]);
+    expect(Number.isFinite(budget), "OBSERVABILITY.md no longer states a budget").toBe(true);
+    expect(distinctRouteTags().size).toBeLessThan(budget);
+  });
+
+  test("the doc's count is the code's count", () => {
+    const documented = Number(
+      doc.match(/\*\*Distinct `route` tag values\*\* \| \*\*(\d+)\*\*/)?.[1]
+    );
+    expect(documented, "OBSERVABILITY.md no longer states a distinct-tag count").toBeGreaterThan(0);
+    expect(documented).toBe(distinctRouteTags().size);
+  });
+
+  test("the doc no longer describes the allowlist that was deleted", () => {
+    expect(doc).not.toContain("KNOWN_ROUTES set in `server.ts`");
+    expect(appSrc).not.toContain("KNOWN_ROUTES");
   });
 });

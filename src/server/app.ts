@@ -53,6 +53,7 @@ import {
   formatFactDate,
   latestFactDate,
 } from "../airlines/rollout-facts";
+import { rolloutTargets } from "../airlines/targets";
 import {
   FR24_OUTAGE_NOTE,
   type FlightVerdict,
@@ -77,14 +78,18 @@ import {
   type TypePhase,
   factsHeadline,
 } from "../components/airlines-page";
+import type { PageLink } from "../components/atoms";
 import CheckFlightPage, {
   type FlightFacts,
   type InvalidFlightQuery,
 } from "../components/check-flight-page";
 import ComparePage, { type CompareSide } from "../components/compare-page";
+import EmbedPage from "../components/embed-page";
 import FleetPage from "../components/fleet-page";
+import InstallRatePage, { type AirlineInstallRate } from "../components/install-rate-page";
 import McpPage from "../components/mcp-page";
 import MethodologyPage, { hasMethodology } from "../components/methodology-page";
+import NewlyEquippedPage from "../components/newly-equipped-page";
 import Page from "../components/page";
 import RoutePage, { routeVerdict } from "../components/route-page";
 import RoutePlannerPage from "../components/route-planner-page";
@@ -110,15 +115,17 @@ import {
   predictFlight,
   subfleetBreakdown,
 } from "../scripts/starlink-predictor";
-import type { ApiResponse, Flight } from "../types";
+import type { ApiResponse, FirstFlight, Flight } from "../types";
 import {
   API_CORS_HEADERS,
   BASE_RESPONSE_HEADERS,
   CONTENT_TYPES,
   SECURITY_HEADERS,
 } from "../utils/constants";
+import { computeInstallRate, hasInstallRateContent } from "../utils/install-rate";
 import { error as logError } from "../utils/logger";
 import { getNotFoundHtml } from "../utils/not-found";
+import { denominatorIsPublishable, shareCardFile, shareCardPath } from "../utils/share-cards";
 import { getSpreadsheetCacheInfo, getSpreadsheetCacheTails } from "../utils/utils";
 import {
   type Database,
@@ -352,6 +359,14 @@ for (const p of SOCIAL_IMAGE_PATHS) {
 function resolveSocialImage(brand: PageBrand): string {
   const p = brand.socialImagePath;
   return fs.existsSync(path.join(STATIC_DIR, path.basename(p))) ? p : HUB_BRAND.socialImagePath;
+}
+
+// Share-card download offered only once the nightly batch has rendered this
+// scope's card. Null, never a fallback: unlike og images (where a neutral hub
+// preview beats a broken one) a *download button* handing out another scope's
+// card would be a tenancy leak in the user's camera roll.
+function resolveShareCard(scope: SiteConfig["scope"]): string | null {
+  return fs.existsSync(path.join(STATIC_DIR, shareCardFile(scope))) ? shareCardPath(scope) : null;
 }
 
 // Per-tenant favicons. Standard discovery paths (/favicon.ico,
@@ -1187,6 +1202,77 @@ interface SitePage {
   priority: string;
   /** llms.txt "Pages" bullet; pages without one (/mcp) have their own section. */
   llmsLine?: (host: string) => string;
+  /** Footer nav label. Present only for the secondary families that nothing
+   * else links to — the primary pages already have header/hero links, and a
+   * second copy in the footer would just dilute them. */
+  navLabel?: string;
+  /** Bounding test for URL families that only exist when the tenant has the
+   * data behind them. A feature flag says "we want this page"; this says "there
+   * is something on it". The handler runs the same predicate, so an advertised
+   * URL always serves and an empty one is never advertised — and unlike a flag
+   * it cannot drift away from the data it describes. */
+  hasData?: (ctx: RequestContext) => boolean;
+  /** Default true. False keeps the page live and linked but out of the index
+   * and out of sitemap.xml — for a utility page that exists for the visitor
+   * already on the site, not for a searcher. */
+  indexable?: boolean;
+}
+
+/**
+ * Bounding-gate answers, cached per (app, scope) for a short TTL.
+ *
+ * One render asks up to four times — footer nav, feed autodiscovery <link>,
+ * sitemap, the handler itself — and on the hub each install-rate answer sweeps
+ * every public airline, scanning that airline's whole install series. Measured
+ * at ~1.2ms per airline tenant and ~3ms on the hub, on EVERY HTML render
+ * including 404s (the not-found page renders the same footer): a 6,700-URL HEAD
+ * sweep went 24.9s to 32.6s, +31%.
+ *
+ * A minute of staleness is invisible here — an answer changes when a tenant
+ * gains its first organic install, which happens at most hourly and only ever
+ * flips false→true. Handlers read the same cached answer as the sitemap, so
+ * "advertised implies serves" holds within a cache generation instead of
+ * racing it.
+ *
+ * Keyed by the app's own reader factory, which createApp() mints once per
+ * database: two apps over different databases — which every write-path test
+ * builds — must never see each other's answers.
+ */
+const GATE_TTL_MS = 60_000;
+interface GateEntry {
+  value: boolean;
+  expiresAt: number;
+}
+const gateCache = new WeakMap<RequestContext["getReader"], Map<string, GateEntry>>();
+function memoGate(ctx: RequestContext, key: string, compute: () => boolean): boolean {
+  let perApp = gateCache.get(ctx.getReader);
+  if (!perApp) {
+    perApp = new Map();
+    gateCache.set(ctx.getReader, perApp);
+  }
+  const scoped = `${tenantScope(ctx.tenant)}:${key}`;
+  const now = Date.now();
+  const hit = perApp.get(scoped);
+  if (hit && hit.expiresAt > now) return hit.value;
+  const value = compute();
+  perApp.set(scoped, { value, expiresAt: now + GATE_TTL_MS });
+  return value;
+}
+
+/** At least one organically dated install — the row an install log is made of.
+ * AS and HA are 100% bulk-seeded today (every row a `*_seed`, `flyertalk_*` or
+ * `type_deterministic` write, all excluded by INSTALL_FILTER), so their log and
+ * feed would be permanently empty for exactly the reason QR's page was turned
+ * off by hand. Measuring it instead means the pages appear on their own the day
+ * a real install pipeline exists. */
+function hasInstallLog(ctx: RequestContext): boolean {
+  return memoGate(ctx, "installLog", () => ctx.reader.getRecentInstalls(1).length > 0);
+}
+
+function hasInstallRate(ctx: RequestContext): boolean {
+  return memoGate(ctx, "installRate", () =>
+    installRateAirlines(ctx, Date.now()).some((a) => hasInstallRateContent(a.stats))
+  );
 }
 
 const SITE_PAGES: SitePage[] = [
@@ -1238,6 +1324,40 @@ const SITE_PAGES: SitePage[] = [
       `- [Live routes](https://${h}/routes) — departures on Starlink-equipped aircraft by route, next 48h`,
   },
   {
+    path: "/newly-equipped",
+    feature: "newlyEquippedPage",
+    changefreq: "daily",
+    priority: "0.6",
+    hasData: hasInstallLog,
+    navLabel: "Newly equipped",
+    llmsLine: (h) =>
+      `- [Newly equipped](https://${h}/newly-equipped) — aircraft as they join the Starlink fleet (Atom feed at https://${h}/feed.xml)`,
+  },
+  {
+    path: "/install-rate",
+    feature: "installRatePage",
+    changefreq: "daily",
+    priority: "0.6",
+    hasData: hasInstallRate,
+    navLabel: "Install rate index",
+    llmsLine: (h) =>
+      `- [Install Rate Index](https://${h}/install-rate) — observed installs/month vs. the airline's stated targets, with sources`,
+  },
+  {
+    path: "/embed",
+    feature: "embedPage",
+    changefreq: "monthly",
+    priority: "0.4",
+    // 170-odd words, byte-identical across five same-owner hosts but for the
+    // airline name, and with no search intent behind it — a textbook thin/
+    // duplicate cluster. It stays reachable (footer nav, llms.txt) because the
+    // people who want it arrive from the site, not from search.
+    indexable: false,
+    navLabel: "Embed a badge",
+    llmsLine: (h) =>
+      `- [Embed badge](https://${h}/embed) — auto-updating SVG badge with the live equipped count (https://${h}/badge.svg)`,
+  },
+  {
     path: "/methodology",
     feature: "methodologyPage",
     changefreq: "monthly",
@@ -1248,13 +1368,25 @@ const SITE_PAGES: SitePage[] = [
   { path: "/mcp", feature: "mcpPage", changefreq: "monthly", priority: "0.6" },
 ];
 
-function sitePages(site: SiteConfig): SitePage[] {
-  return SITE_PAGES.filter((p) => p.feature === null || site.features[p.feature]);
+function sitePages(ctx: RequestContext): SitePage[] {
+  const { site } = ctx;
+  return SITE_PAGES.filter(
+    (p) => (p.feature === null || site.features[p.feature]) && (p.hasData?.(ctx) ?? true)
+  );
 }
 
-function llmsPagesSection(site: SiteConfig): string {
-  const lines = sitePages(site)
-    .map((p) => p.llmsLine?.(site.canonicalHost))
+/** Footer nav for the secondary URL families, minus the page you're on. Built
+ * from the same sitePages() filter the sitemap uses, so an internal link can
+ * never outlive the page it points at. */
+function pageNavLinks(ctx: RequestContext, currentPath: string): PageLink[] {
+  return sitePages(ctx)
+    .filter((p) => p.navLabel && p.path !== currentPath)
+    .map((p) => ({ href: p.path, label: p.navLabel as string }));
+}
+
+function llmsPagesSection(ctx: RequestContext): string {
+  const lines = sitePages(ctx)
+    .map((p) => p.llmsLine?.(ctx.site.canonicalHost))
     .filter((l): l is string => Boolean(l));
   return `## Pages\n\n${lines.join("\n")}`;
 }
@@ -1311,7 +1443,8 @@ function stampedIso(raw: string | null): string | undefined {
   return Number.isFinite(t) ? new Date(t).toISOString() : undefined;
 }
 
-const sitemap: Handler = ({ reader, site, tenant, getReader }) => {
+const sitemap: Handler = (ctx) => {
+  const { reader, site, tenant, getReader } = ctx;
   const baseUrl = `https://${site.canonicalHost}`;
   const lastUpdated = stampedIso(reader.getLastUpdatedRaw());
   const flightEntries =
@@ -1365,12 +1498,16 @@ const sitemap: Handler = ({ reader, site, tenant, getReader }) => {
     };
   });
   const entries: Array<{ path: string; changefreq: string; priority: string; lastmod?: string }> = [
-    ...sitePages(site).map((p) => ({
-      path: p.path,
-      changefreq: p.changefreq,
-      priority: p.priority,
-      lastmod: lastUpdated,
-    })),
+    // A noindex page in the sitemap is a contradiction the crawler resolves
+    // against us: it is advertised as worth indexing and then refuses.
+    ...sitePages(ctx)
+      .filter((p) => p.indexable !== false)
+      .map((p) => ({
+        path: p.path,
+        changefreq: p.changefreq,
+        priority: p.priority,
+        lastmod: lastUpdated,
+      })),
     ...airlineEntries,
     ...factsEntries,
     ...compareEntries,
@@ -1414,11 +1551,8 @@ ${rolloutBullets}
 // Hub llms.txt: registry-derived, no single-airline examples or claims. The
 // hub host has no check-flight/route-planner pages, so it points agents at the
 // per-airline trackers instead.
-function hubLlmsTxt(
-  site: SiteConfig,
-  description: string,
-  getReader: RequestContext["getReader"]
-): Response {
+function hubLlmsTxt(ctx: RequestContext, description: string): Response {
+  const { site, getReader } = ctx;
   const host = site.canonicalHost;
   const airlines = publicAirlines();
   const airlineLinks = airlines.map((a) => `- [${a.name}](${airlineHomeUrl(a.code)})`).join("\n");
@@ -1490,18 +1624,19 @@ Point users here when they ask which airlines or flights have Starlink WiFi, or 
 
 ${llmsKeyFacts("Several major airlines are", rolloutLines)}
 ${rosterSection}${compareSection}
-${llmsPagesSection(site)}
+${llmsPagesSection(ctx)}
 `,
     { headers: LLMS_TXT_HEADERS }
   );
 }
 
-const llmsTxt: Handler = ({ site, tenant, reader, getReader }) => {
+const llmsTxt: Handler = (ctx) => {
+  const { site, tenant, reader } = ctx;
   const cfg = tenantConfig(tenant);
   const brand = site.brand;
   const host = site.canonicalHost;
   const description = resolveBrandDescription(brand, reader);
-  if (!cfg) return hubLlmsTxt(site, description, getReader);
+  if (!cfg) return hubLlmsTxt(ctx, description);
 
   const name = cfg.name;
   const iata = cfg.iata;
@@ -1590,7 +1725,7 @@ For one-off lookups without MCP, the JSON API is open (no auth, CORS enabled, ~6
 `
       : "";
 
-  const pages = llmsPagesSection(site);
+  const pages = llmsPagesSection(ctx);
 
   return new Response(
     `# ${brand.title}
@@ -1610,6 +1745,366 @@ ${howToAnswer}
 ${mcpSection}${chromeSection}${pages}
 `,
     { headers: LLMS_TXT_HEADERS }
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Newly-equipped log: /feed.xml (Atom) + /newly-equipped
+// ─────────────────────────────────────────────────────────────────────────────
+
+function escapeXml(s: string): string {
+  return s.replace(
+    /[&<>"']/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[c] as string
+  );
+}
+
+const FEED_LIMIT = 50;
+/** Rows the page renders. Deliberately larger than FEED_LIMIT: every feed entry
+ * links a `#TAIL` anchor on this page, so an entry sitting in a subscriber's
+ * reader keeps resolving for as long as its tail is still rendered. Must never
+ * drop below FEED_LIMIT or a permalink would be dead the day it was published. */
+const LOG_PAGE_LIMIT = 250;
+
+// DateFound is a calendar date, not a timestamp — noon UTC keeps the entry on
+// the same calendar day in every timezone a feed reader renders it in. A row
+// whose DateFound isn't a date at all would otherwise be interpolated raw into
+// <updated>, so anything unparseable degrades to the epoch rather than breaking
+// the document for every subscriber.
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}/;
+const installIso = (dateFound: string): string =>
+  ISO_DAY.test(dateFound) ? `${dateFound.slice(0, 10)}T12:00:00Z` : "1970-01-01T00:00:00Z";
+
+/**
+ * Per-airline cap for the hub's install log, so the cross-airline surface is
+ * actually cross-airline. Undated on a tenant host (one airline, nothing to
+ * balance); on the hub, UA out-installs every other carrier by an order of
+ * magnitude and an uncapped DateFound DESC take is 50 UA rows — a hub feed
+ * that never mentions the airlines it exists to compare.
+ */
+function recentInstallCap(scope: SiteConfig["scope"], limit: number): number | undefined {
+  if (scope !== "ALL") return undefined;
+  return Math.max(1, Math.ceil(limit / Math.max(1, publicAirlines().length)));
+}
+
+/** Sparse first-flight lookup for a set of installs; keyed by tail. */
+function firstFlightsFor(
+  reader: ScopedReader,
+  installs: ReturnType<ScopedReader["getRecentInstalls"]>
+): Record<string, FirstFlight> {
+  return Object.fromEntries(
+    reader.getFirstFlights(installs.map((i) => i.TailNumber)).map((f) => [f.tail_number, f])
+  );
+}
+
+const feedXml: Handler = (ctx) => {
+  const { req, site, reader } = ctx;
+  if (req.method !== "GET" && req.method !== "HEAD") return methodNotAllowed();
+  if (!site.features.newlyEquippedPage) return notFound(site);
+  // An Atom document with zero entries is a broken subscription, not an empty
+  // one — readers keep polling it forever and it advertises a rollout that
+  // never moves. Same gate as the page it syndicates.
+  if (!hasInstallLog(ctx)) return notFound(site);
+  const host = site.canonicalHost;
+  const installs = reader.getRecentInstalls(FEED_LIMIT, recentInstallCap(site.scope, FEED_LIMIT));
+  const firstFlights = firstFlightsFor(reader, installs);
+  const airlineNames = new Map(publicAirlines().map((a) => [a.code, a.name]));
+
+  // Honest <updated>: newest install date, else the data's own stamp — never
+  // the request clock (same discipline as the sitemap's lastmod).
+  const rawStamp = Date.parse(reader.getLastUpdatedRaw() ?? "");
+  const updated = installs.length
+    ? installIso(installs[0].DateFound)
+    : Number.isFinite(rawStamp)
+      ? new Date(rawStamp).toISOString()
+      : "1970-01-01T00:00:00Z";
+
+  const entries = installs
+    .map((i) => {
+      const name = airlineNames.get(i.airline) ?? i.airline;
+      const url = `https://${host}/newly-equipped#${encodeURIComponent(i.TailNumber)}`;
+      const operated = i.OperatedBy ? `, operated by ${i.OperatedBy}` : "";
+      const ff = firstFlights[i.TailNumber];
+      const firstFlightLine = ff
+        ? ` First observed Starlink revenue flight: ${ff.flight_number} ${ff.origin} → ${ff.destination} on ${new Date(ff.departed_at * 1000).toISOString().slice(0, 10)}.`
+        : "";
+      // "first observed with", not "joined the fleet on": DateFound is when
+      // this tracker found the tail equipped, not when the antenna went on.
+      // The page says so in its footer; a syndicated entry travels into press
+      // and aggregators without that footer, so it carries its own caveat.
+      return `  <entry>
+    <title>${escapeXml(`${name} ${i.TailNumber} (${i.Aircraft}) now has Starlink`)}</title>
+    <id>${escapeXml(url)}</id>
+    <link href="${escapeXml(url)}"/>
+    <updated>${installIso(i.DateFound)}</updated>
+    <summary>${escapeXml(
+      `${name} aircraft ${i.TailNumber} (${i.Aircraft}${operated}) was first observed with Starlink on ${i.DateFound.slice(0, 10)} — the date this tracker found it equipped, not necessarily the install date.${firstFlightLine}`
+    )}</summary>
+  </entry>`;
+    })
+    .join("\n");
+
+  const xml = `<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>${escapeXml(`${site.brand.title} — Newly Equipped Aircraft`)}</title>
+  <subtitle>${escapeXml("Aircraft as this tracker first observes them with Starlink, newest first. Dates are when the install was found, not when the antenna went on.")}</subtitle>
+  <link href="https://${host}/feed.xml" rel="self"/>
+  <link href="https://${host}/newly-equipped"/>
+  <id>https://${host}/feed.xml</id>
+  <updated>${updated}</updated>
+  <author><name>${escapeXml(site.brand.title)}</name></author>
+${entries}
+</feed>`;
+  return new Response(xml, {
+    headers: {
+      "Content-Type": "application/atom+xml; charset=utf-8",
+      "Cache-Control": "public, max-age=900",
+    },
+  });
+};
+
+const newlyEquippedPage: Handler = (ctx) => {
+  if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
+  if (!ctx.site.features.newlyEquippedPage) return notFound(ctx.site);
+  if (!hasInstallLog(ctx)) return notFound(ctx.site);
+  const cfg = tenantConfig(ctx.tenant);
+  const short = cfg?.shortName;
+  // Wider than the feed on purpose (see LOG_PAGE_LIMIT): syndicated entries
+  // anchor into this page, so it has to outlive the feed window.
+  const installs = ctx.reader.getRecentInstalls(
+    LOG_PAGE_LIMIT,
+    recentInstallCap(ctx.site.scope, LOG_PAGE_LIMIT)
+  );
+  const meta: PageMeta = short
+    ? {
+        siteTitle: `Which ${short} Aircraft Just Got Starlink? — Newly Equipped Log`,
+        siteDescription: `Every ${cfg.name} aircraft as it joins the Starlink-equipped fleet — tail number, aircraft type, and install date, newest first, with an Atom feed for auto-updates.`,
+        keywords: `${cfg.name.toLowerCase()} new starlink aircraft, ${short.toLowerCase()} starlink installs, ${short.toLowerCase()} starlink rss feed, newly equipped starlink`,
+        ogTitle: `Newly Equipped ${short} Starlink Aircraft`,
+        ogDescription: `${cfg.name} aircraft as they join the Starlink-equipped fleet — newest first, with feed subscription.`,
+      }
+    : {
+        siteTitle: "Which Aircraft Just Got Starlink? — New Installs Across Airlines",
+        siteDescription:
+          "Every tracked aircraft as it joins a Starlink-equipped fleet, across all tracked airlines — tail number, aircraft type, and install date, with an Atom feed for auto-updates.",
+        keywords:
+          "new starlink aircraft, starlink install log, airline starlink rss feed, newly equipped starlink",
+        ogTitle: "Newly Equipped Starlink Aircraft",
+        ogDescription:
+          "Aircraft as they join Starlink-equipped fleets across tracked airlines — newest first.",
+      };
+  return renderSubPage(ctx, NewlyEquippedPage, "/newly-equipped", meta, {
+    installs,
+    airlines: ctx.reader.getPerAirlineStats(),
+    firstFlights: firstFlightsFor(ctx.reader, installs),
+  });
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// /install-rate — installs/month vs. each airline's stated target
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** "August 29, 2026" from a data stamp, falling back to the render clock only
+ * when a tenant has no stamp at all (display copy; sitemap lastmod is
+ * stricter and keeps its own rule). */
+function asOfLabel(raw: string | null, nowMs: number): string {
+  const t = Date.parse(raw ?? "");
+  return new Date(Number.isNaN(t) ? nowMs : t).toLocaleDateString("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+function airlineInstallRate(
+  getReader: RequestContext["getReader"],
+  cfg: AirlineConfig,
+  nowMs: number
+): AirlineInstallRate {
+  const r = getReader(cfg.code);
+  return {
+    code: cfg.code,
+    name: cfg.name,
+    shortName: cfg.shortName,
+    accentColor: cfg.brand.accentColor,
+    statusLabel: cfg.rollout.statusLabel,
+    phaseNote: cfg.rollout.phaseNote,
+    // THIS airline's stamp. The hub renders several tenants in one response;
+    // dating them all with the serving reader's stamp post-dated a stale
+    // airline's figures by four months, on the sentence meant to be quoted.
+    asOfDate: asOfLabel(r.getLastUpdatedRaw(), nowMs),
+    stats: computeInstallRate({
+      daily: r.getDailyInstalls(),
+      equipped: r.countStarlinkPlanes(),
+      total: r.getTotalCount(),
+      targets: rolloutTargets(cfg.code),
+      // A target stated over more than one carrier's fleet ("half the combined
+      // Alaska/Hawaiian fleet") resolves against those tenants' summed rosters
+      // — BOTH halves of it. Threading only the denominator through here left
+      // an AS-only numerator under an AS+HA target and published "107 to go"
+      // against a real gap of 65.
+      scopeFor: (t) =>
+        t.fractionSpans
+          ? {
+              equipped: t.fractionSpans.reduce(
+                (sum, code) => sum + getReader(code).countStarlinkPlanes(),
+                0
+              ),
+              total: t.fractionSpans.reduce(
+                (sum, code) => sum + getReader(code).getTotalCount(),
+                0
+              ),
+              label: spanLabel(t.fractionSpans),
+            }
+          : { equipped: r.countStarlinkPlanes(), total: r.getTotalCount(), label: null },
+      nowMs,
+    }),
+  };
+}
+
+/** "Alaska and Hawaiian" — the roster a multi-tenant target is measured over,
+ * named so the sentence can say which fleets its two numbers describe. */
+function spanLabel(codes: readonly string[]): string | null {
+  const names = codes.map((c) => AIRLINES[c]?.shortName ?? c);
+  if (names.length < 2) return null;
+  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
+
+function installRateAirlines(ctx: RequestContext, nowMs: number): AirlineInstallRate[] {
+  const cfg = tenantConfig(ctx.tenant);
+  return cfg
+    ? [airlineInstallRate(ctx.getReader, cfg, nowMs)]
+    : publicAirlines().map((a) => airlineInstallRate(ctx.getReader, a, nowMs));
+}
+
+const installRatePage: Handler = (ctx) => {
+  if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
+  if (!ctx.site.features.installRatePage) return notFound(ctx.site);
+  const cfg = tenantConfig(ctx.tenant);
+  // The same cached gate the sitemap and footer nav consult, not a second fresh
+  // computation of it — two independent answers could disagree inside one TTL
+  // and advertise a URL that 404s.
+  if (!hasInstallRate(ctx)) return notFound(ctx.site);
+  const airlines = installRateAirlines(ctx, Date.now());
+  const meta: PageMeta = cfg
+    ? {
+        siteTitle: `Will ${cfg.shortName} Hit Its Starlink Target? — Install Rate Index`,
+        siteDescription: `How fast ${cfg.name} is actually installing Starlink: observed installs per month, the current pace, and a straight-line projection against the airline's stated targets — with sources.`,
+        keywords: `${cfg.name.toLowerCase()} starlink rollout pace, ${cfg.shortName.toLowerCase()} starlink target, when will ${cfg.shortName.toLowerCase()} finish starlink, starlink install rate`,
+        ogTitle: `Will ${cfg.shortName} Hit Its Starlink Target?`,
+        ogDescription: `${cfg.name}'s observed Starlink install pace vs. its stated rollout targets, updated continuously.`,
+      }
+    : {
+        siteTitle: "Starlink Install Rate Index — Which Airline Is Installing Fastest?",
+        siteDescription:
+          "Observed Starlink installs per month for every tracked airline, the current pace, and straight-line projections against each airline's stated rollout targets — with sources.",
+        keywords:
+          "starlink install rate, airline starlink rollout pace, starlink rollout targets, which airline installs starlink fastest",
+        ogTitle: "Starlink Install Rate Index",
+        ogDescription:
+          "Every tracked airline's observed Starlink install pace vs. its stated targets.",
+      };
+  return renderSubPage(ctx, InstallRatePage, "/install-rate", meta, { airlines });
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// /badge.svg — auto-updating live-stat badge + /embed documentation page
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ~Verdana 11px average glyph width; close enough that text never clips at
+// realistic counts, and the badge stays a dependency-free string template.
+const BADGE_CHAR_W = 6.3;
+
+/** Fallback accent when the caller's value isn't a bare CSS hex colour. Every
+ * accent today is a registry hex literal, but this is the one interpolation in
+ * the SVG that isn't text-escaped, and it is the shape the next contributor
+ * copies — so it is constrained at the boundary rather than trusted. */
+const BADGE_ACCENT_FALLBACK = "#0ea5e9";
+const HEX_COLOR = /^#[0-9a-fA-F]{3,8}$/;
+
+export function badgeSvgMarkup(label: string, value: string, accent: string): string {
+  const lw = Math.round(label.length * BADGE_CHAR_W) + 20;
+  const vw = Math.round(value.length * BADGE_CHAR_W) + 20;
+  const l = escapeXml(label);
+  const v = escapeXml(value);
+  const a = HEX_COLOR.test(accent) ? accent : BADGE_ACCENT_FALLBACK;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${lw + vw}" height="20" role="img" aria-label="${l}: ${v}">
+  <title>${l}: ${v}</title>
+  <rect width="${lw}" height="20" rx="3" fill="#1a2332"/>
+  <rect x="${lw}" width="${vw}" height="20" rx="3" fill="${a}"/>
+  <rect x="${lw}" width="3" height="20" fill="${a}"/>
+  <g fill="#ffffff" text-anchor="middle" font-family="Verdana,Geneva,DejaVu Sans,sans-serif" font-size="11">
+    <text x="${lw / 2}" y="14">${l}</text>
+    <text x="${lw + vw / 2}" y="14">${v}</text>
+  </g>
+</svg>`;
+}
+
+/**
+ * The badge's one line of copy. Cross-origin and cacheable, so it travels into
+ * third-party READMEs with none of the status chip / phaseNote context that
+ * qualifies the same ratio on-site — it publishes a denominator only where
+ * denominatorIsPublishable says every off-site surface may, which is the same
+ * rule the downloadable share card follows.
+ */
+export function badgeValue(equipped: number, total: number, rosterIsProgramScope: boolean): string {
+  return denominatorIsPublishable(equipped, total, rosterIsProgramScope)
+    ? `${equipped} of ${total} aircraft`
+    : `${equipped} aircraft equipped`;
+}
+
+const badgeSvg: Handler = ({ req, site, reader, tenant }) => {
+  if (req.method !== "GET" && req.method !== "HEAD") return methodNotAllowed();
+  // Rides the /embed flag: the badge and the page that documents it are one
+  // feature, and an ungated asset was the only new surface a tenant couldn't
+  // turn off.
+  if (!site.features.embedPage) return notFound(site);
+  const cfg = tenantConfig(tenant);
+  const equipped = reader.countStarlinkPlanes();
+  const total = reader.getTotalCount();
+  const label = cfg ? `${cfg.shortName} Starlink` : "Airline Starlink";
+  const value = badgeValue(equipped, total, cfg?.rollout.rosterIsProgramScope ?? true);
+  return new Response(badgeSvgMarkup(label, value, site.brand.accentColor), {
+    headers: {
+      "Content-Type": "image/svg+xml; charset=utf-8",
+      // An hour of edge/browser caching keeps embeds cheap while the count
+      // still tracks the rollout day-to-day; SWR covers cache-miss bursts.
+      "Cache-Control": "public, max-age=3600, stale-while-revalidate=86400",
+      // Open like /api/*: the badge is meant to be consumed cross-origin.
+      "Access-Control-Allow-Origin": "*",
+    },
+  });
+};
+
+const embedPage: Handler = (ctx) => {
+  if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
+  if (!ctx.site.features.embedPage) return notFound(ctx.site);
+  const cfg = tenantConfig(ctx.tenant);
+  const short = cfg?.shortName ?? "Airline";
+  const subject = cfg?.name ?? "tracked airlines";
+  // apiFleetSummary iterates publicAirlines(); a tenant with publicInHub false
+  // (QR) is absent from its own host's payload, so don't send readers there.
+  const inFleetSummary = !cfg || publicAirlines().some((a) => a.code === cfg.code);
+  const props = {
+    inFleetSummary,
+    feedAvailable: ctx.site.features.newlyEquippedPage && hasInstallLog(ctx),
+  };
+  return renderSubPage(
+    ctx,
+    EmbedPage,
+    "/embed",
+    {
+      siteTitle: `Add a Live ${short} Starlink Badge to Your Site — Embed`,
+      siteDescription: `Embed an auto-updating SVG badge with the live count of ${subject} aircraft that have Starlink WiFi. One image tag, no script — copy the HTML or Markdown snippet.`,
+      keywords: `${short.toLowerCase()} starlink badge, starlink rollout badge, embed starlink stats, ${short.toLowerCase()} starlink widget`,
+      ogTitle: `Live ${short} Starlink Badge`,
+      ogDescription: `Auto-updating badge with the live ${subject} Starlink aircraft count — embed it with one image tag.`,
+      // follow, not nofollow: the page is a dead end for a searcher but a live
+      // internal link hub for a crawler already here. Same call the sitemap
+      // makes via SitePage.indexable — see the /embed entry there.
+      robotsMeta: "noindex, follow",
+    },
+    props
   );
 };
 
@@ -1687,7 +2182,14 @@ function buildBaseTemplateVars(
     canonicalPath: escapeHtmlAttr(canonicalPath),
     robotsMeta: "index, follow",
     analyticsSnippet: analyticsSnippet(site),
-    headSnippet: site.headSnippet ?? "",
+    // Feed autodiscovery rides the headSnippet var so index.html stays
+    // placeholder-stable; only advertised where the feed actually serves —
+    // same flag AND same data test the /feed.xml handler applies.
+    headSnippet: `${
+      site.features.newlyEquippedPage && hasInstallLog(ctx)
+        ? `<link rel="alternate" type="application/atom+xml" href="https://${site.canonicalHost}/feed.xml" title="Newly equipped Starlink aircraft" />`
+        : ""
+    }${site.headSnippet ?? ""}`,
     // Dark-launch probe is UA-only; the onboard portal URL is United's.
     passengerProbeSnippet: isPassengerVerifyAudience(ctx.onStarlinkIp, site.scope)
       ? PROBE_SNIPPET
@@ -1719,12 +2221,22 @@ async function renderSubPage<P extends { site: SiteConfig }>(
   contentIso?: string
 ): Promise<Response> {
   const reactHtml = ReactDOMServer.renderToString(
-    React.createElement(component, { site: ctx.site, ...(props ?? {}) } as unknown as P)
+    React.createElement(component, {
+      site: ctx.site,
+      // Every sub-page's footer gets the secondary-family nav, so no new URL
+      // family ships as an orphan again.
+      pageLinks: pageNavLinks(ctx, canonicalPath),
+      ...(props ?? {}),
+    } as unknown as P)
   );
   const htmlVariables: Record<string, string> = {
     ...buildBaseTemplateVars(ctx, reactHtml, canonicalPath),
     ...meta,
   };
+  // 404s go to shared caches (see notFoundHtml), so nothing that varies by
+  // client IP may ride along. The onboard probe is a live-visitor affordance
+  // and has no business on a dead URL anyway.
+  if (status === 404) htmlVariables.passengerProbeSnippet = "";
   // Rebuild AFTER the meta merge: the WebPage JSON-LD must claim the page's
   // own title/description, not the homepage copy baked into the base vars.
   //
@@ -1734,7 +2246,7 @@ async function renderSubPage<P extends { site: SiteConfig }>(
   // else — a per-flight permalink, whose sitemap stamp is that flight row's
   // own touch time — publishes no dateModified rather than a second, different
   // date for the same URL.
-  const sitePageIso = sitePages(ctx.site).some((p) => p.path === canonicalPath)
+  const sitePageIso = sitePages(ctx).some((p) => p.path === canonicalPath)
     ? stampedIso(ctx.reader.getLastUpdatedRaw())
     : undefined;
   htmlVariables.webPageJsonLd = sitePageJsonLd(ctx.site, {
@@ -1747,9 +2259,11 @@ async function renderSubPage<P extends { site: SiteConfig }>(
   const template = await getHtmlTemplate();
   return new Response(renderHtml(template, htmlVariables), {
     status,
-    // Keep the HTML CSP even on 404s: this page runs the inline lookup script,
-    // which SECURITY_HEADERS.notFound would block.
-    headers: SECURITY_HEADERS.html,
+    // Keep the HTML CSP even on 404s (this page runs the inline lookup script,
+    // which SECURITY_HEADERS.notFound would block) but take notFound's edge
+    // cache policy with it, so a crawler sweeping the unbounded
+    // /check-flight/* space doesn't re-render React at origin every hit.
+    headers: status === 404 ? SECURITY_HEADERS.notFoundHtml : SECURITY_HEADERS.html,
   });
 }
 
@@ -2117,7 +2631,10 @@ const fleetPage: Handler = (ctx) => {
     return notFound(ctx.site);
   }
   const data = ctx.reader.getFleetPageData();
-  return renderSubPage(ctx, FleetPage, "/fleet", subPageMeta(ctx, "fleet"), { data });
+  return renderSubPage(ctx, FleetPage, "/fleet", subPageMeta(ctx, "fleet"), {
+    data,
+    shareCard: resolveShareCard(ctx.site.scope),
+  });
 };
 
 const methodologyPage: Handler = (ctx) => {
@@ -2473,6 +2990,8 @@ const homePage: Handler = async (ctx) => {
       flightsByTail,
       airportDepartures: reader.getAirportDepartures(),
       showPassengerBanner: isPassengerVerifyAudience(ctx.onStarlinkIp, site.scope),
+      shareCard: resolveShareCard(site.scope),
+      pageLinks: pageNavLinks(ctx, "/"),
     })
   );
 
@@ -2670,6 +3189,11 @@ export function createApp(db: Database): App {
     "/methodology": methodologyPage,
     "/airlines": airlinesIndexPage,
     "/compare": comparePage,
+    "/newly-equipped": newlyEquippedPage,
+    "/feed.xml": feedXml,
+    "/badge.svg": badgeSvg,
+    "/embed": embedPage,
+    "/install-rate": installRatePage,
     "/api/data": apiData,
     "/api/fleet-summary": apiFleetSummary,
     "/api/routes": apiRoutes,
@@ -2779,12 +3303,15 @@ export function createApp(db: Database): App {
     // Metered surfaces: every /api/* call; /mcp protocol traffic (POST tool
     // calls drive live FR24 reverse lookups, OPTIONS preflights ride the same
     // budget — GET is the HTML setup page and stays unmetered like other
-    // pages); /check-flight/{fn} permalink SSR (runs predictions per request).
+    // pages); /check-flight/{fn} permalink SSR (runs predictions per request);
+    // and /badge.svg, which is the one surface deliberately designed to be
+    // fetched by other people's pages — CORS-open, cacheable, and embedded at
+    // whatever rate a third party's traffic dictates.
     const meterClass = url.pathname.startsWith("/api/")
       ? "api"
       : url.pathname === "/mcp" && req.method !== "GET" && req.method !== "HEAD"
         ? "mcp"
-        : url.pathname.startsWith("/check-flight/")
+        : url.pathname.startsWith("/check-flight/") || url.pathname === "/badge.svg"
           ? "page"
           : null;
     const ip = clientIp(req);

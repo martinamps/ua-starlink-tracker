@@ -415,6 +415,13 @@ describe("rate limiter covers /mcp and permalinks", () => {
       "GET /check-flight/UA1 permalink",
       () => req("/check-flight/UA1", UA, { headers: { "x-forwarded-for": "10.99.1.3" } }),
     ],
+    [
+      // The one surface designed to be fetched by other people's pages —
+      // CORS-open, cacheable, and hit at whatever rate a third party's traffic
+      // dictates. It was the only new surface with no meter at all.
+      "GET /badge.svg",
+      () => req("/badge.svg", UA, { headers: { "x-forwarded-for": "10.99.1.4" } }),
+    ],
   ];
 
   test.each(FLOODS)("%s: request past the budget from one IP → 429", async (_name, mk) => {

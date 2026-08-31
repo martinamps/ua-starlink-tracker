@@ -26,7 +26,7 @@ import {
   formatFactDate,
 } from "../airlines/rollout-facts";
 import type { PerAirlineStat } from "../types";
-import { PageFooter, STATUS_TONE } from "./atoms";
+import { PageFooter, type PageLink, STATUS_TONE } from "./atoms";
 
 const PANEL = "bg-surface border border-subtle rounded-lg p-5";
 const SECTION = "relative w-full max-w-3xl mx-auto mb-8";
@@ -241,11 +241,13 @@ function PageShell({
   heading,
   sub,
   children,
+  pageLinks,
 }: {
   site: SiteConfig;
   heading: string;
   sub: string;
   children: React.ReactNode;
+  pageLinks?: PageLink[];
 }) {
   return (
     <div className="w-full mx-auto px-4 sm:px-6 md:px-8 bg-base min-h-screen flex flex-col relative">
@@ -267,7 +269,7 @@ function PageShell({
           ← Back to {site.brand.title}
         </a>
       </div>
-      <PageFooter site={site} />
+      <PageFooter site={site} pageLinks={pageLinks} />
     </div>
   );
 }
@@ -321,6 +323,7 @@ export function AirlinesIndexPage({
   airlines,
   roster,
   comparisons,
+  pageLinks,
 }: {
   site: SiteConfig;
   airlines: AirlineOverview[];
@@ -330,10 +333,12 @@ export function AirlinesIndexPage({
   /** Head-to-head /compare pages. This index is their only HTML entry point —
    * without these links the pair pages are sitemap-only orphans. */
   comparisons: TrackedLink[];
+  pageLinks?: PageLink[];
 }) {
   return (
     <PageShell
       site={site}
+      pageLinks={pageLinks}
       heading="Which Airlines Have Starlink WiFi?"
       sub="Every Starlink rollout — and every notable airline that said no — with fleet counts where we track tail-by-tail, and dated, sourced status for the rest."
     >
@@ -442,6 +447,7 @@ export function AirlineDetailPage({
   overview,
   facts,
   phases,
+  pageLinks,
 }: {
   site: SiteConfig;
   overview: AirlineOverview;
@@ -450,6 +456,7 @@ export function AirlineDetailPage({
   /** Type→phase table for type-determined programs; null otherwise. Present →
    * this page publishes it INSTEAD of a blended fleet percentage. */
   phases?: TypePhase[] | null;
+  pageLinks?: PageLink[];
 }) {
   const { cfg, stat } = overview;
   const { fleet, pct } = fleetShare(stat);
@@ -457,6 +464,7 @@ export function AirlineDetailPage({
   return (
     <PageShell
       site={site}
+      pageLinks={pageLinks}
       heading={`${cfg.name} Starlink WiFi`}
       sub={`${cfg.rollout.statusLabel} — ${cfg.rollout.phaseNote}`}
     >
@@ -555,13 +563,15 @@ export function AirlineFactsPage({
   site,
   entry,
   trackedLinks,
+  pageLinks,
 }: {
   site: SiteConfig;
   entry: AirlineFactsEntry;
   trackedLinks: TrackedLink[];
+  pageLinks?: PageLink[];
 }) {
   return (
-    <PageShell site={site} heading={factsHeadline(entry)} sub={entry.summary}>
+    <PageShell site={site} pageLinks={pageLinks} heading={factsHeadline(entry)} sub={entry.summary}>
       {entry.status === "not_starlink" && entry.insteadOf && (
         <section className={SECTION}>
           <div className={PANEL}>

@@ -15,6 +15,8 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { makeSyntheticDb } from "./helpers";
 
 function seeded() {
@@ -129,6 +131,48 @@ describe("departure_log trim lives in the archive job, not the read path", () =>
     getAirportDepartures(db, "UA", 1_800_000_000);
     // The ancient row survives a read — the trim no longer piggybacks on it.
     expect(db.query("SELECT COUNT(*) AS n FROM departure_log").get()).toEqual({ n: 1 });
+    db.close();
+  });
+});
+
+/**
+ * Every index setupTables declares must actually exist.
+ *
+ * bun:sqlite's query() prepares only the FIRST statement of a multi-statement
+ * string, so `db.query("CREATE TABLE …; CREATE INDEX …").run()` silently
+ * created the table and dropped the index. Verified in the wild: production
+ * carries idx_fleet_discovery and idx_fleet_tail (each written as its own
+ * .run()) but not idx_dl_departed, idx_dl_airport, idx_fr_flight, idx_fr_route
+ * or idx_qs_* (all written as statement 2+ of a query() string).
+ */
+describe("setupTables DDL actually executes", () => {
+  test("no CREATE INDEX is stranded behind a CREATE TABLE", () => {
+    const src = readFileSync(join(import.meta.dir, "..", "src", "database", "database.ts"), "utf8");
+    // A query() template that declares an index is the bug shape, whatever
+    // table it belongs to — exec() runs every statement, query().run() doesn't.
+    const stranded = [...src.matchAll(/db\.query\(\s*`([^`]*)`\s*\)\s*\.run\(\)/g)].filter(
+      ([, sql]) => /create\s+index/i.test(sql.split(";").slice(1).join(";"))
+    );
+    expect(stranded.map(([, sql]) => sql.slice(0, 80))).toEqual([]);
+  });
+
+  test("a freshly migrated database has them all", () => {
+    const db = makeSyntheticDb();
+    const names = new Set(
+      (
+        db.query("SELECT name FROM sqlite_master WHERE type='index'").all() as { name: string }[]
+      ).map((r) => r.name)
+    );
+    for (const idx of [
+      "idx_ff_airline", // this branch's own table — the one that shipped dead
+      "idx_dl_departed",
+      "idx_dl_airport",
+      "idx_fr_flight",
+      "idx_fr_route",
+      "idx_qs_flight",
+    ]) {
+      expect(names.has(idx), `${idx} was declared but never created`).toBe(true);
+    }
     db.close();
   });
 });

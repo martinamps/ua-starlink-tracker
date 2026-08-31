@@ -157,6 +157,29 @@ describe("flight permalink gate + normalization", () => {
     }
   });
 
+  test("rendered 404s are edge-cacheable and carry nothing per-visitor", async () => {
+    // /check-flight/* is unbounded — any typo, airport code or stale link lands
+    // there — so a crawler sweep must be absorbed by shared caches instead of
+    // re-rendering React at origin on every hit. That means the response also
+    // has to be visitor-independent, which is why the onboard probe (the one
+    // IP-varying slot in the template) is blanked on this path.
+    for (const seg of ["PHX", "banana", "AA123"]) {
+      const res = await app.dispatch(req(`/check-flight/${seg}`, HOST));
+      const cc = res.headers.get("Cache-Control") ?? "";
+      expect(cc, seg).toContain("s-maxage");
+      expect(cc, seg).not.toContain("no-store");
+      // The inline lookup script still has to run, so the CSP stays the HTML one.
+      expect(res.headers.get("Content-Security-Policy"), seg).toContain("script-src");
+      expect(await res.text(), seg).not.toContain("passenger-probe");
+    }
+  });
+
+  test("200 renders stay private — they vary by client IP", async () => {
+    const res = await app.dispatch(req("/check-flight", HOST));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Cache-Control")).toContain("no-store");
+  });
+
   // A 404 must still be usable: the segment users actually mistype (an airport
   // code from the homepage form) explains itself and offers the lookup again.
   test("non-flight-number segment → 404 page with notice, form, and route-planner hint", async () => {

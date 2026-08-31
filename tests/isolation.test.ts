@@ -127,6 +127,11 @@ const ENDPOINTS = [
   "/robots.txt",
   "/sitemap.xml",
   "/llms.txt",
+  "/newly-equipped",
+  "/feed.xml",
+  "/badge.svg",
+  "/embed",
+  "/install-rate",
 ];
 
 describe("UA host never leaks canaries", () => {

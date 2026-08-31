@@ -13,7 +13,7 @@ import type { AirlineFactsEntry } from "../airlines/rollout-facts";
 import type { SubfleetBreakdown } from "../scripts/starlink-predictor";
 import type { PerAirlineStat } from "../types";
 import { FactsList, PhaseTable, type TypePhase } from "./airlines-page";
-import { PageFooter, STATUS_TONE } from "./atoms";
+import { PageFooter, type PageLink, STATUS_TONE } from "./atoms";
 
 const PANEL = "bg-surface border border-subtle rounded-lg p-5";
 
@@ -155,10 +155,12 @@ export default function ComparePage({
   site,
   left,
   right,
+  pageLinks,
 }: {
   site: SiteConfig;
   left: CompareSide;
   right: CompareSide;
+  pageLinks?: PageLink[];
 }) {
   const heading = `${left.cfg.shortName} vs ${right.cfg.shortName}: Starlink WiFi`;
   return (
@@ -229,7 +231,7 @@ export default function ComparePage({
       </section>
 
       <div className="mt-auto" />
-      <PageFooter site={site} />
+      <PageFooter site={site} pageLinks={pageLinks} />
     </div>
   );
 }
