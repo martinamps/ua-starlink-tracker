@@ -15,6 +15,7 @@ import {
   type WifiPhase,
   airlineHomeUrl,
   airlineSlug,
+  wifiPhaseFamilies,
 } from "../airlines/registry";
 import {
   type AirlineFactsEntry,
@@ -117,6 +118,14 @@ function fleetShare(stat: PerAirlineStat): { fleet: number; pct: number } {
   return { fleet, pct: fleet > 0 ? Math.round((stat.starlink / fleet) * 100) : 0 };
 }
 
+/** True where Starlink status is decided by aircraft type. Same predicate the
+ * detail and compare pages use to render PhaseTable INSTEAD of a percentage —
+ * the index has to honour it too, or it publishes the exact number the detail
+ * page tells the reader is not worth quoting. */
+function typeDetermined(cfg: AirlineConfig): boolean {
+  return wifiPhaseFamilies(cfg.code) !== null;
+}
+
 function StatusPill({ cfg }: { cfg: AirlineConfig }) {
   const tone = STATUS_TONE[cfg.rollout.status];
   return (
@@ -158,6 +167,19 @@ function FactRow({ fact }: { fact: RolloutFact }) {
         >
           {fact.source.label} →
         </a>
+        {fact.source.mirror && (
+          <>
+            {" · "}
+            <a
+              href={fact.source.mirror}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-secondary hover:underline"
+            >
+              archived copy
+            </a>
+          </>
+        )}
       </div>
     </li>
   );
@@ -337,8 +359,13 @@ export function AirlinesIndexPage({
                 {fleet > 0 ? (
                   <div className="font-mono text-sm text-secondary mb-2">
                     <span className="text-accent font-semibold">{stat.starlink}</span>
-                    <span className="text-muted"> of {fleet} aircraft equipped · </span>
-                    <span className="text-primary">{pct}%</span>
+                    <span className="text-muted"> of {fleet} aircraft equipped</span>
+                    {!typeDetermined(cfg) && (
+                      <>
+                        <span className="text-muted"> · </span>
+                        <span className="text-primary">{pct}%</span>
+                      </>
+                    )}
                     {(stat.installs30d ?? 0) > 0 && (
                       <span className="text-muted"> · +{stat.installs30d} in 30 days</span>
                     )}
@@ -561,10 +588,15 @@ export function AirlineFactsPage({
       {entry.status === "announced" && (
         <section className={SECTION}>
           <div className={PANEL}>
+            {/* Describes the program state the dated facts above establish. The
+                older wording asserted a fleet-wide negative ("no X aircraft
+                flies with Starlink today") that carried neither a date nor a
+                source — the one thing this file's own doctrine forbids. */}
             <p className="text-sm text-muted leading-relaxed">
-              Nothing to track tail-by-tail yet — no {entry.shortName} aircraft flies with Starlink
-              today. When installs begin, this page grows into a live tracker like the ones below:
-              per-aircraft status, install pace, and flight-level answers.
+              Nothing to track tail-by-tail yet — {entry.shortName}'s program is committed, and no
+              equipped aircraft has been announced in the sources above. When installs begin, this
+              page grows into a live tracker like the ones below: per-aircraft status, install pace,
+              and flight-level answers.
             </p>
           </div>
         </section>

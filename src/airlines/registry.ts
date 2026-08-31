@@ -313,8 +313,10 @@ const AIRLINE_DEFS = {
       faviconAccent: "#9d4edd", // Pualani purple, lifted to glow on dark
       socialImagePath: "/static/social-image-ha.webp",
       analyticsDomain: "hawaiianstarlinktracker.com",
+      // newsroom.hawaiianairlines.com fails TLS validation and 301s to a 404
+      // since the Alaska Air Group merger; this is the same release, live.
       pressReleaseUrl:
-        "https://newsroom.hawaiianairlines.com/releases/hawaiian-airlines-launches-fast-and-free-starlink-internet",
+        "https://news.alaskaair.com/releases/hawaiian-airlines-now-offering-fast-and-free-starlink-wi-fi-across-entire-airbus-fleet/",
     },
   },
   AS: {
@@ -379,11 +381,13 @@ const AIRLINE_DEFS = {
     flightHistoryModel: false,
     verifySite: "alaskaair.com",
     typeDeterministicWifi: alaskaTypeToWifi,
-    // Phase 1 (E175 regional) complete. Update status/phaseNote when 737/787 mainline starts.
+    // Phase 1 (E175 regional) complete; mainline 737/787 installs are under way
+    // — see the dated AirlineGeeks fact on /airlines/alaska for the count.
     rollout: {
       status: "phase_done",
       statusLabel: "Regional fleet done",
-      phaseNote: "All 90 regional E175s have Starlink. Mainline 737s and 787s start later in 2026.",
+      phaseNote:
+        "All 90 regional E175s have Starlink. Mainline 737 and 787 installs are under way.",
     },
     brand: {
       title: "Alaska Airlines Starlink Tracker",

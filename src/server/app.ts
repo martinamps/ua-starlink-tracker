@@ -2124,6 +2124,14 @@ function hubTrackedAirlines(): AirlineConfig[] {
   return hubContentAirlines();
 }
 
+/** "a" or "an" for an airline's short name. English picks by sound, not
+ * letter — "an Alaska flight" but "a United flight" — so the yoo- initials are
+ * excluded from the vowel rule. */
+function indefiniteArticle(shortName: string): "a" | "an" {
+  if (/^(uni|eu|use)/i.test(shortName)) return "a";
+  return /^[aeiou]/i.test(shortName) ? "an" : "a";
+}
+
 /** Flight-level links for facts pages: point brand intent at a surface that
  * can actually answer per-flight — a live tracker's check-flight page, or the
  * hub detail page when no dedicated site is live. */
@@ -2132,7 +2140,7 @@ function trackedFlightLinks(): TrackedLink[] {
     const liveSite = siteForAirline(cfg.code, true);
     return liveSite?.features.checkFlightPage
       ? {
-          name: `Check a ${cfg.shortName} flight`,
+          name: `Check ${indefiniteArticle(cfg.shortName)} ${cfg.shortName} flight`,
           href: `https://${liveSite.canonicalHost}/check-flight`,
         }
       : { name: `${cfg.shortName} rollout`, href: `/airlines/${airlineSlug(cfg)}` };

@@ -40,7 +40,12 @@ interface RolloutFactBase {
   /** The claim, written to stand alone. Say only what the cited page says:
    * a source that never mentions a sub-fleet cannot support a claim about it. */
   fact: string;
-  source: { label: string; url: string };
+  /** `mirror` is an archive copy, for sources whose host refuses every
+   * automated client (runwaygirlnetwork.com 403s browsers, Googlebot, its own
+   * RSS and REST API alike). A reader who hits that 403 still has something to
+   * check, which is the entire promise of this file — a citation nobody can
+   * open is not a receipt. Only set it to a snapshot confirmed to exist. */
+  source: { label: string; url: string; mirror?: string };
 }
 
 /** A claim the source itself dates. Only these move the page's lastmod. */
@@ -326,6 +331,8 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         source: {
           label: RGN,
           url: "https://runwaygirlnetwork.com/2025/11/iag-taps-starlink-to-power-inflight-wi-fi-for-500-plus-aircraft/",
+          mirror:
+            "https://web.archive.org/web/20260212205613/https://runwaygirlnetwork.com/2025/11/iag-taps-starlink-to-power-inflight-wi-fi-for-500-plus-aircraft/",
         },
       },
       {
@@ -370,6 +377,8 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         source: {
           label: "Air France press release",
           url: "https://corporate.airfrance.com/en/press-releases/complimentary-high-speed-wifi-now-available-board-air-france-flights",
+          mirror:
+            "https://web.archive.org/web/20260703071359/https://corporate.airfrance.com/en/press-releases/complimentary-high-speed-wifi-now-available-board-air-france-flights",
         },
       },
     ],
@@ -613,6 +622,8 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         source: {
           label: RGN,
           url: "https://runwaygirlnetwork.com/2023/05/jsx-fits-entire-active-fleet-with-spacexs-starlink-inflight-connectivity/",
+          mirror:
+            "https://web.archive.org/web/20250722235035/https://runwaygirlnetwork.com/2023/05/jsx-fits-entire-active-fleet-with-spacexs-starlink-inflight-connectivity/",
         },
       },
       {
@@ -668,6 +679,8 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         source: {
           label: RGN,
           url: "https://runwaygirlnetwork.com/2026/05/american-pivots-to-starlink-for-500-plus-airbus-narrowbodies/",
+          mirror:
+            "https://web.archive.org/web/20260527070905/https://runwaygirlnetwork.com/2026/05/american-pivots-to-starlink-for-500-plus-airbus-narrowbodies/",
         },
       },
       {
@@ -766,6 +779,8 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         source: {
           label: RGN,
           url: "https://runwaygirlnetwork.com/2025/09/air-canada-taps-starlink-for-some-q400s-as-part-of-broader-redesign/",
+          mirror:
+            "https://web.archive.org/web/20260113190608/https://runwaygirlnetwork.com/2025/09/air-canada-taps-starlink-for-some-q400s-as-part-of-broader-redesign/",
         },
       },
     ],
