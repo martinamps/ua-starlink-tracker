@@ -196,6 +196,40 @@ describe("/embed page", () => {
     expect(text).toContain('src="/badge.svg"'); // live preview
   });
 
+  test("thin utility page: noindex and out of the sitemap, but still reachable", async () => {
+    // ~170 words, byte-identical across five same-owner hosts but for the
+    // airline name, with no search intent behind it. Indexing five of those is
+    // a thin/duplicate cluster; the page still exists for the visitor already
+    // on the site, so it keeps its footer link and its llms.txt bullet.
+    for (const site of Object.values(SITES)) {
+      if (!site.features.embedPage) continue;
+      const host = site.canonicalHost;
+      const { text } = await bodyOf(app, "/embed", host);
+      expect(text.match(/<meta name="robots" content="([^"]+)"/)?.[1], host).toBe(
+        "noindex, follow"
+      );
+
+      const sitemap = await bodyOf(app, "/sitemap.xml", host);
+      expect(sitemap.text, `${host} sitemaps a noindex page`).not.toContain(
+        `https://${host}/embed<`
+      );
+
+      const llms = await bodyOf(app, "/llms.txt", host);
+      expect(llms.text, `${host} llms.txt drops /embed`).toContain(`https://${host}/embed`);
+
+      const home = await bodyOf(app, "/", host);
+      expect(home.text, `${host} home drops the /embed link`).toContain('href="/embed"');
+    }
+  });
+
+  test("does not overclaim the badge's freshness", async () => {
+    // stale-while-revalidate allows a day-old copy, so "always the current one"
+    // was a promise the cache headers contradict.
+    const { text } = await bodyOf(app, "/embed", UA);
+    expect(text).not.toContain("the number is always the current one");
+    expect(text).toContain("updated hourly");
+  });
+
   test("hub /embed uses the hub host in snippets", async () => {
     const { status, text } = await bodyOf(app, "/embed", HUB);
     expect(status).toBe(200);

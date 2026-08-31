@@ -1168,6 +1168,10 @@ interface SitePage {
    * URL always serves and an empty one is never advertised — and unlike a flag
    * it cannot drift away from the data it describes. */
   hasData?: (ctx: RequestContext) => boolean;
+  /** Default true. False keeps the page live and linked but out of the index
+   * and out of sitemap.xml — for a utility page that exists for the visitor
+   * already on the site, not for a searcher. */
+  indexable?: boolean;
 }
 
 /** Per-request memo for the bounding tests. One render can ask up to four times
@@ -1277,6 +1281,11 @@ const SITE_PAGES: SitePage[] = [
     feature: "embedPage",
     changefreq: "monthly",
     priority: "0.4",
+    // 170-odd words, byte-identical across five same-owner hosts but for the
+    // airline name, and with no search intent behind it — a textbook thin/
+    // duplicate cluster. It stays reachable (footer nav, llms.txt) because the
+    // people who want it arrive from the site, not from search.
+    indexable: false,
     navLabel: "Embed a badge",
     llmsLine: (h) =>
       `- [Embed badge](https://${h}/embed) — auto-updating SVG badge with the live equipped count (https://${h}/badge.svg)`,
@@ -1378,12 +1387,16 @@ const sitemap: Handler = (ctx) => {
       }))
     : [];
   const entries: Array<{ path: string; changefreq: string; priority: string; lastmod?: string }> = [
-    ...sitePages(ctx).map((p) => ({
-      path: p.path,
-      changefreq: p.changefreq,
-      priority: p.priority,
-      lastmod: lastUpdated,
-    })),
+    // A noindex page in the sitemap is a contradiction the crawler resolves
+    // against us: it is advertised as worth indexing and then refuses.
+    ...sitePages(ctx)
+      .filter((p) => p.indexable !== false)
+      .map((p) => ({
+        path: p.path,
+        changefreq: p.changefreq,
+        priority: p.priority,
+        lastmod: lastUpdated,
+      })),
     ...airlineEntries,
     ...flightEntries,
     ...routeEntries,
@@ -1921,6 +1934,10 @@ const embedPage: Handler = (ctx) => {
       keywords: `${short.toLowerCase()} starlink badge, starlink rollout badge, embed starlink stats, ${short.toLowerCase()} starlink widget`,
       ogTitle: `Live ${short} Starlink Badge`,
       ogDescription: `Auto-updating badge with the live ${subject} Starlink aircraft count — embed it with one image tag.`,
+      // follow, not nofollow: the page is a dead end for a searcher but a live
+      // internal link hub for a crawler already here. Same call the sitemap
+      // makes via SitePage.indexable — see the /embed entry there.
+      robotsMeta: "noindex, follow",
     },
     props
   );

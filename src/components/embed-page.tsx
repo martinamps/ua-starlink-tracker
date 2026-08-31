@@ -66,8 +66,8 @@ export default function EmbedPage({
             <img src="/badge.svg" alt={alt} height={20} />
           </p>
           <p className="text-[11px] text-muted leading-snug">
-            Served straight from this tracker's database and cached for an hour, so the number is
-            always the current one. No script, no tracking — one cacheable SVG.
+            Served straight from this tracker's database and updated hourly — caches may hold an
+            older copy for up to a day. No script, no tracking — one cacheable SVG.
           </p>
         </div>
 
