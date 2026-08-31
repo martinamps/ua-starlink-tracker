@@ -13,14 +13,15 @@ export interface AirlineInstallRate {
   accentColor: string;
   statusLabel: string;
   phaseNote: string;
+  /** THIS airline's own data-freshness date. Per airline, not per page: the
+   * hub renders several tenants at once and each carries its own stamp. */
+  asOfDate: string;
   stats: InstallRateStats;
 }
 
 interface InstallRatePageProps {
   site: SiteConfig;
   airlines: AirlineInstallRate[];
-  /** The data's own freshness date — the quotable sentence is dated with this. */
-  asOfDate: string;
   pageLinks?: PageLink[];
 }
 
@@ -84,13 +85,30 @@ function TargetRow({ p }: { p: TargetProjection }) {
       </div>
       <div className="font-mono text-[11px] text-muted mt-1 leading-relaxed">
         By {p.target.deadline} · {p.targetCount.toLocaleString()} aircraft
-        {p.verdict === "reached" ? " — already there." : ` · ${p.remaining.toLocaleString()} to go`}
-        {p.projectedMonth && p.verdict !== "reached" && (
-          <> · straight-line arrival {monthLabel(p.projectedMonth)}</>
+        {p.rosterDisagrees ? (
+          // Impossible inputs, named rather than projected from. equipped is a
+          // live row count and total a separately scraped meta value; nothing
+          // ties them to one snapshot, so mid-reconcile they can disagree.
+          <> — roster and install counts disagree; not projecting</>
+        ) : (
+          <>
+            {p.verdict === "reached"
+              ? " — already there."
+              : ` · ${p.remaining.toLocaleString()} to go`}
+            {p.projectedMonth && p.verdict !== "reached" && (
+              <> · straight-line arrival {monthLabel(p.projectedMonth)}</>
+            )}
+            {p.verdict === "behind" &&
+              !p.projectedMonth &&
+              " · at the current pace this doesn't land within a projectable horizon"}
+          </>
         )}
-        {p.verdict === "behind" &&
-          !p.projectedMonth &&
-          " · at the current pace this doesn't land within a projectable horizon"}
+      </div>
+      {/* Numerator and denominator, from one roster, named. A target stated
+          over two carriers has to show progress over those same two. */}
+      <div className="font-mono text-[10px] text-muted mt-1 leading-relaxed">
+        Progress: {p.scope.equipped.toLocaleString()} of {p.scope.total.toLocaleString()}
+        {p.scope.label ? ` across ${p.scope.label}` : ""}
       </div>
       {/* The count under a fraction target is OUR arithmetic over OUR roster.
           Saying so keeps the sourced quote (the label) separable from the
@@ -104,8 +122,11 @@ function TargetRow({ p }: { p: TargetProjection }) {
           .
         </div>
       )}
+      {/* When the airline said it, not just where. A target is only as current
+          as the statement behind it, and a reader has no other way to tell a
+          fresh commitment from a two-year-old one. */}
       <div className="font-mono text-[10px] text-muted mt-1">
-        {p.derived ? "Target stated in" : "Source"}:{" "}
+        Target stated {p.target.statedOn} in{" "}
         <a
           href={p.target.source.url}
           target="_blank"
@@ -119,9 +140,18 @@ function TargetRow({ p }: { p: TargetProjection }) {
   );
 }
 
-function AirlineSection({ a, asOfDate }: { a: AirlineInstallRate; asOfDate: string }) {
+/** "three complete months" is a claim about PACE_WINDOW, so derive it from the
+ * window the pace was actually taken over — the copy said three while the
+ * minimum is two, so a two-month tenant published a three-month average. */
+function paceWindowWords(stats: InstallRateStats): string {
+  const n = stats.paceWindowMonths;
+  const word = ["zero", "one", "two", "three", "four", "five", "six"][n] ?? String(n);
+  return n === 1 ? "complete month" : `${word} complete months`;
+}
+
+function AirlineSection({ a }: { a: AirlineInstallRate }) {
   const { stats } = a;
-  const pct = stats.total > 0 ? Math.round((stats.equipped / stats.total) * 100) : 0;
+  const pct = stats.total > 0 ? Math.min(100, Math.round((stats.equipped / stats.total) * 100)) : 0;
   const statId = `install-rate-stat-${a.code.toLowerCase()}`;
   return (
     <div className={PANEL}>
@@ -138,19 +168,31 @@ function AirlineSection({ a, asOfDate }: { a: AirlineInstallRate; asOfDate: stri
         </span>
       </div>
 
-      {/* The one sentence to quote — dated with the data's own stamp. */}
+      {/* The one sentence to quote — dated with THIS airline's own stamp, not
+          the serving reader's: on the hub, one shared date post-dated a stale
+          airline's figures by four months. */}
       <p id={statId} className="text-sm text-secondary leading-relaxed mb-4">
-        As of {asOfDate}, {stats.equipped.toLocaleString()} of {stats.total.toLocaleString()}{" "}
-        tracked {a.name} aircraft ({pct}%) have Starlink
+        As of {a.asOfDate}, {stats.equipped.toLocaleString()} of {stats.total.toLocaleString()}{" "}
+        tracked {a.name} aircraft{stats.rosterDisagrees ? "" : ` (${pct}%)`} have Starlink
         {stats.paceMonthly !== null ? (
           <>
             , with installs averaging{" "}
-            <span className="text-primary font-mono">~{stats.paceMonthly}/month</span> over the last
-            three complete months
+            <span className="text-primary font-mono">~{stats.paceMonthly}/month</span> over the last{" "}
+            {paceWindowWords(stats)}
           </>
         ) : null}
         .
       </p>
+      {stats.rosterDisagrees && (
+        // No percentage at all rather than a wrong one: the fixture served
+        // "102 of 6 tracked Alaska Airlines aircraft (1700%)" with a confident
+        // verdict beside it.
+        <p className="text-[11px] text-muted mb-4 leading-snug">
+          The install count above exceeds the tracked roster, which is impossible — the two come
+          from different sources and are mid-disagreement. No share and no projection are shown
+          until they reconcile.
+        </p>
+      )}
 
       {stats.months.length >= 2 ? (
         <div className="mb-4">
@@ -183,12 +225,7 @@ function AirlineSection({ a, asOfDate }: { a: AirlineInstallRate; asOfDate: stri
   );
 }
 
-export default function InstallRatePage({
-  site,
-  airlines,
-  asOfDate,
-  pageLinks,
-}: InstallRatePageProps) {
+export default function InstallRatePage({ site, airlines, pageLinks }: InstallRatePageProps) {
   const single = airlines.length === 1 ? airlines[0] : null;
   return (
     <div className="w-full mx-auto px-4 sm:px-6 md:px-8 bg-base min-h-screen flex flex-col relative">
@@ -209,7 +246,7 @@ export default function InstallRatePage({
 
       <section className={`${SECTION} space-y-4`}>
         {airlines.map((a) => (
-          <AirlineSection key={a.code} a={a} asOfDate={asOfDate} />
+          <AirlineSection key={a.code} a={a} />
         ))}
       </section>
 
@@ -222,7 +259,9 @@ export default function InstallRatePage({
           trailing three complete months; below ~0.5 installs/month we say "too early to call"
           instead of projecting. Counts shown for "share of the fleet" targets are computed from
           this tracker's roster and labelled as such — only figures an airline actually published
-          are attributed to it.
+          are attributed to it, with the date the airline stated it. A target stated over more than
+          one carrier's fleet is measured against those carriers' combined roster on both sides of
+          the ratio.
           {site.features.methodologyPage && (
             <>
               {" "}

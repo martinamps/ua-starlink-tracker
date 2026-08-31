@@ -1728,6 +1728,18 @@ const newlyEquippedPage: Handler = (ctx) => {
 // /install-rate — installs/month vs. each airline's stated target
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** "August 29, 2026" from a data stamp, falling back to the render clock only
+ * when a tenant has no stamp at all (display copy; sitemap lastmod is
+ * stricter and keeps its own rule). */
+function asOfLabel(raw: string | null, nowMs: number): string {
+  const t = Date.parse(raw ?? "");
+  return new Date(Number.isNaN(t) ? nowMs : t).toLocaleDateString("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
 function airlineInstallRate(
   getReader: RequestContext["getReader"],
   cfg: AirlineConfig,
@@ -1741,22 +1753,45 @@ function airlineInstallRate(
     accentColor: cfg.brand.accentColor,
     statusLabel: cfg.rollout.statusLabel,
     phaseNote: cfg.rollout.phaseNote,
+    // THIS airline's stamp. The hub renders several tenants in one response;
+    // dating them all with the serving reader's stamp post-dated a stale
+    // airline's figures by four months, on the sentence meant to be quoted.
+    asOfDate: asOfLabel(r.getLastUpdatedRaw(), nowMs),
     stats: computeInstallRate({
       daily: r.getDailyInstalls(),
-      equipped: r.getStarlinkPlanes().length,
+      equipped: r.countStarlinkPlanes(),
       total: r.getTotalCount(),
       targets: rolloutTargets(cfg.code),
       // A target stated over more than one carrier's fleet ("half the combined
-      // Alaska/Hawaiian fleet") resolves against those tenants' summed rosters.
-      // Reading it off the serving tenant alone halved the denominator and
-      // published a count the airline never gave.
-      fractionBase: (t) =>
+      // Alaska/Hawaiian fleet") resolves against those tenants' summed rosters
+      // — BOTH halves of it. Threading only the denominator through here left
+      // an AS-only numerator under an AS+HA target and published "107 to go"
+      // against a real gap of 65.
+      scopeFor: (t) =>
         t.fractionSpans
-          ? t.fractionSpans.reduce((sum, code) => sum + getReader(code).getTotalCount(), 0)
-          : r.getTotalCount(),
+          ? {
+              equipped: t.fractionSpans.reduce(
+                (sum, code) => sum + getReader(code).countStarlinkPlanes(),
+                0
+              ),
+              total: t.fractionSpans.reduce(
+                (sum, code) => sum + getReader(code).getTotalCount(),
+                0
+              ),
+              label: spanLabel(t.fractionSpans),
+            }
+          : { equipped: r.countStarlinkPlanes(), total: r.getTotalCount(), label: null },
       nowMs,
     }),
   };
+}
+
+/** "Alaska and Hawaiian" — the roster a multi-tenant target is measured over,
+ * named so the sentence can say which fleets its two numbers describe. */
+function spanLabel(codes: readonly string[]): string | null {
+  const names = codes.map((c) => AIRLINES[c]?.shortName ?? c);
+  if (names.length < 2) return null;
+  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 }
 
 function installRateAirlines(ctx: RequestContext, nowMs: number): AirlineInstallRate[] {
@@ -1773,13 +1808,6 @@ const installRatePage: Handler = (ctx) => {
   const now = Date.now();
   const airlines = installRateAirlines(ctx, now);
   if (!airlines.some((a) => hasInstallRateContent(a.stats))) return notFound(ctx.site);
-  // Dated with the data's own stamp (display copy — getLastUpdated's now()
-  // fallback is acceptable here, unlike sitemap lastmod).
-  const stamp = new Date(ctx.reader.getLastUpdated());
-  const asOfDate = (Number.isNaN(stamp.getTime()) ? new Date(now) : stamp).toLocaleDateString(
-    "en-US",
-    { month: "long", day: "numeric", year: "numeric" }
-  );
   const meta: PageMeta = cfg
     ? {
         siteTitle: `Will ${cfg.shortName} Hit Its Starlink Target? — Install Rate Index`,
@@ -1798,7 +1826,7 @@ const installRatePage: Handler = (ctx) => {
         ogDescription:
           "Every tracked airline's observed Starlink install pace vs. its stated targets.",
       };
-  return renderSubPage(ctx, InstallRatePage, "/install-rate", meta, { airlines, asOfDate });
+  return renderSubPage(ctx, InstallRatePage, "/install-rate", meta, { airlines });
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1809,21 +1837,47 @@ const installRatePage: Handler = (ctx) => {
 // realistic counts, and the badge stays a dependency-free string template.
 const BADGE_CHAR_W = 6.3;
 
+/** Fallback accent when the caller's value isn't a bare CSS hex colour. Every
+ * accent today is a registry hex literal, but this is the one interpolation in
+ * the SVG that isn't text-escaped, and it is the shape the next contributor
+ * copies — so it is constrained at the boundary rather than trusted. */
+const BADGE_ACCENT_FALLBACK = "#0ea5e9";
+const HEX_COLOR = /^#[0-9a-fA-F]{3,8}$/;
+
 export function badgeSvgMarkup(label: string, value: string, accent: string): string {
   const lw = Math.round(label.length * BADGE_CHAR_W) + 20;
   const vw = Math.round(value.length * BADGE_CHAR_W) + 20;
   const l = escapeXml(label);
   const v = escapeXml(value);
+  const a = HEX_COLOR.test(accent) ? accent : BADGE_ACCENT_FALLBACK;
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${lw + vw}" height="20" role="img" aria-label="${l}: ${v}">
   <title>${l}: ${v}</title>
   <rect width="${lw}" height="20" rx="3" fill="#1a2332"/>
-  <rect x="${lw}" width="${vw}" height="20" rx="3" fill="${accent}"/>
-  <rect x="${lw}" width="3" height="20" fill="${accent}"/>
+  <rect x="${lw}" width="${vw}" height="20" rx="3" fill="${a}"/>
+  <rect x="${lw}" width="3" height="20" fill="${a}"/>
   <g fill="#ffffff" text-anchor="middle" font-family="Verdana,Geneva,DejaVu Sans,sans-serif" font-size="11">
     <text x="${lw / 2}" y="14">${l}</text>
     <text x="${lw + vw / 2}" y="14">${v}</text>
   </g>
 </svg>`;
+}
+
+/**
+ * The badge's one line of copy. Cross-origin and cacheable, so this string
+ * travels into third-party READMEs with none of the status chip / phaseNote
+ * context that qualifies the same ratio on-site. It drops the denominator in
+ * the two cases where publishing one would mislead:
+ *
+ *  - the roster counts aircraft the programme excludes (HA's 717s, QR's
+ *    narrowbodies), where "42 of 61" advertises a rollout the site calls
+ *    Complete as two-thirds done; and
+ *  - equipped exceeds total, which is impossible — a live row count against a
+ *    separately scraped meta value, mid-disagreement. The install count is
+ *    still true on its own; the ratio is not.
+ */
+export function badgeValue(equipped: number, total: number, rosterIsProgramScope: boolean): string {
+  if (!rosterIsProgramScope || equipped > total) return `${equipped} aircraft equipped`;
+  return `${equipped} of ${total} aircraft`;
 }
 
 const badgeSvg: Handler = ({ req, site, reader, tenant }) => {
@@ -1833,19 +1887,10 @@ const badgeSvg: Handler = ({ req, site, reader, tenant }) => {
   // turn off.
   if (!site.features.embedPage) return notFound(site);
   const cfg = tenantConfig(tenant);
-  const equipped = reader.getStarlinkPlanes().length;
+  const equipped = reader.countStarlinkPlanes();
   const total = reader.getTotalCount();
   const label = cfg ? `${cfg.shortName} Starlink` : "Airline Starlink";
-  // Cross-origin and cacheable, so this string travels into third-party
-  // READMEs with none of the status chip / phaseNote context that qualifies
-  // the same ratio on-site. Where the roster counts aircraft the programme
-  // excludes (HA's 717s, QR's narrowbodies), publishing the denominator would
-  // advertise a rollout as half-finished that the site itself calls done — so
-  // the badge drops to the equipped count, which is true either way.
-  const value =
-    cfg && !cfg.rollout.rosterIsProgramScope
-      ? `${equipped} aircraft equipped`
-      : `${equipped} of ${total} aircraft`;
+  const value = badgeValue(equipped, total, cfg?.rollout.rosterIsProgramScope ?? true);
   return new Response(badgeSvgMarkup(label, value, site.brand.accentColor), {
     headers: {
       "Content-Type": "image/svg+xml; charset=utf-8",

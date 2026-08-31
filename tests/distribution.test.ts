@@ -9,7 +9,7 @@ import { existsSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { AIRLINES, SITES, type SiteConfig } from "../src/airlines/registry";
 import { getFirstFlights, recordFirstFlights } from "../src/database/database";
-import { createApp } from "../src/server/app";
+import { badgeSvgMarkup, badgeValue, createApp } from "../src/server/app";
 import { bodyOf, makeSyntheticDb, openSnapshot, req } from "./helpers";
 
 // (SITES is iterated for the badge sweep; tenant pages are covered by the
@@ -128,14 +128,35 @@ describe("/badge.svg", () => {
       expect(svg).toContain("<svg");
       expect(svg).toContain(site.brand.accentColor);
       // Shape, not values: a denominator only where the tracked roster IS the
-      // programme's own scope.
+      // programme's own scope AND the two counts are consistent.
       const cfg = airlineOf(site);
-      if (!cfg || cfg.rollout.rosterIsProgramScope) {
-        expect(svg, site.key).toMatch(/\d+ of \d+ aircraft/);
-      } else {
+      expect(svg, site.key).toMatch(/\d+ (of \d+ aircraft|aircraft equipped)/);
+      if (cfg && !cfg.rollout.rosterIsProgramScope) {
         expect(svg, site.key).toMatch(/\d+ aircraft equipped/);
       }
     }
+  });
+
+  test("the badge never publishes an impossible ratio", () => {
+    // equipped is a live row count and total a separately scraped meta value,
+    // so mid-reconcile they disagree — and this string is the one designed to
+    // be cached for a day inside somebody else's README. The AS fixture
+    // (102 installs, roster of 6) is exactly that shape.
+    expect(badgeValue(102, 6, true)).toBe("102 aircraft equipped");
+    expect(badgeValue(102, 6, true)).not.toMatch(/ of /);
+    // A consistent roster still gets its denominator.
+    expect(badgeValue(99, 350, true)).toBe("99 of 350 aircraft");
+    // …and an out-of-programme roster still drops it regardless.
+    expect(badgeValue(42, 61, false)).toBe("42 aircraft equipped");
+  });
+
+  test("a non-hex accent can never reach the SVG unescaped", () => {
+    // `accent` is the one interpolation in the badge that isn't text-escaped.
+    // Every value today is a registry hex literal; constrain it at the boundary
+    // so the shape the next contributor copies is the safe one.
+    const svg = badgeSvgMarkup("L", "V", '"/><script>alert(1)</script><rect fill="');
+    expect(svg).not.toContain("<script");
+    expect(svg).toContain('fill="#0ea5e9"');
   });
 
   test("a roster wider than the programme never publishes a ratio", async () => {

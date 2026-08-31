@@ -1307,6 +1307,20 @@ export function getHubStats(db: Database, codes: readonly string[]): HubAirlineS
   });
 }
 
+/**
+ * Equipped-tail count without hydrating the rows. Callers that only wanted
+ * `.length` were materializing the whole roster — cheap once, but the install
+ * gates run it per airline on every HTML render, and on the hub that is once
+ * per public tenant per request.
+ */
+export function countStarlinkPlanes(db: Database, airline?: AirlineFilter): number {
+  const q = withAirline(
+    `SELECT COUNT(*) AS n FROM starlink_planes sp WHERE ${equippedFilter("sp")}`,
+    airline
+  );
+  return (db.query(q.sql).get(...q.params) as { n: number }).n;
+}
+
 export function getStarlinkPlanes(db: Database, airline?: AirlineFilter): Aircraft[] {
   const q = withAirline(
     `SELECT aircraft as Aircraft,

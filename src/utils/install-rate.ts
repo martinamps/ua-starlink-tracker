@@ -22,6 +22,21 @@ export interface MonthlyInstalls {
 
 export type TargetVerdict = "reached" | "on_track" | "behind" | "no_data";
 
+/**
+ * The roster ONE target is measured against. Numerator and denominator come
+ * from here together, on purpose: Alaska's "half the combined Alaska/Hawaiian
+ * fleet" once took its denominator from AS+HA and its numerator from AS alone,
+ * and published "107 to go" against a real gap of 65 — a 65% overstatement, on
+ * the page whose only job is judging an airline against its promise.
+ */
+export interface TargetScope {
+  equipped: number;
+  total: number;
+  /** Names the roster when it is wider than the serving tenant ("Alaska and
+   * Hawaiian"); null when the target is measured against this tenant alone. */
+  label: string | null;
+}
+
 export interface TargetProjection {
   target: RolloutTargetDef;
   /** Absolute count the target resolves to. */
@@ -32,8 +47,16 @@ export interface TargetProjection {
   derived: boolean;
   /** Roster the fraction was taken of; null for a stated absolute count. */
   derivedFrom: number | null;
+  /** The roster this target's progress is measured over — both halves of it. */
+  scope: TargetScope;
   remaining: number;
   verdict: TargetVerdict;
+  /** True when the scope's install count exceeds its roster, which is
+   * impossible: `equipped` is a live row count and `total` a separately
+   * scraped meta value, tied to no common snapshot. Nothing is projected from
+   * an impossible pair — a confident "Reached" off mid-reconcile numbers is
+   * worse than saying the inputs disagree. */
+  rosterDisagrees: boolean;
   /** YYYY-MM straight-line arrival month; null when the pace can't honestly
    * be extrapolated (verdict no_data, or beyond the 4-year noise horizon). */
   projectedMonth: string | null;
@@ -42,11 +65,19 @@ export interface TargetProjection {
 export interface InstallRateStats {
   equipped: number;
   total: number;
+  /** This tenant's own equipped count exceeds its own roster — see
+   * TargetProjection.rosterDisagrees. The headline sentence must not publish a
+   * percentage (the fixture served "102 of 6 … (1700%)") when this is true. */
+  rosterDisagrees: boolean;
   /** Zero-filled from the first organic month through the current month. */
   months: MonthlyInstalls[];
   /** Average installs/month over the last complete months (up to PACE_WINDOW);
    * null when fewer than MIN_COMPLETE_MONTHS complete months exist. */
   paceMonthly: number | null;
+  /** How many complete months paceMonthly actually averaged. The page states
+   * this in prose, so it has to be measured rather than assumed to be
+   * PACE_WINDOW — a tenant at MIN_COMPLETE_MONTHS has only two. */
+  paceWindowMonths: number;
   projections: TargetProjection[];
   /** Same-day mass writes dropped before charting and pacing — surfaced so the
    * page can say it excluded them instead of silently disagreeing with itself. */
@@ -162,10 +193,11 @@ export function computeInstallRate(opts: {
   equipped: number;
   total: number;
   targets: RolloutTargetDef[];
-  /** Roster each target's fraction is taken of, keyed by target label. Falls
-   * back to `total` — a target that spans several tenants (AS+HA) resolves
-   * against their summed rosters, never one tenant's. */
-  fractionBase?: (target: RolloutTargetDef) => number;
+  /** Roster a target is measured against, BOTH halves of it. Falls back to this
+   * tenant's own (equipped, total) — a target that spans several tenants
+   * (AS+HA) resolves against their summed rosters, never one tenant's, and
+   * never against a denominator from one set and a numerator from another. */
+  scopeFor?: (target: RolloutTargetDef) => TargetScope;
   nowMs: number;
 }): InstallRateStats {
   const { equipped, total, targets, nowMs } = opts;
@@ -181,13 +213,22 @@ export function computeInstallRate(opts: {
       : null;
 
   const projections: TargetProjection[] = targets.map((target) => {
-    const base = opts.fractionBase?.(target) ?? total;
+    const scope = opts.scopeFor?.(target) ?? { equipped, total, label: null };
     const derived = target.count === undefined;
     const targetCount =
-      target.count ?? Math.ceil((target.fractionOfTracked ?? 1) * Math.max(base, 0));
-    const derivedFrom = derived ? base : null;
-    const remaining = Math.max(0, targetCount - equipped);
-    const common = { target, targetCount, derived, derivedFrom, remaining };
+      target.count ?? Math.ceil((target.fractionOfTracked ?? 1) * Math.max(scope.total, 0));
+    const derivedFrom = derived ? scope.total : null;
+    const rosterDisagrees = scope.equipped > scope.total;
+    const remaining = Math.max(0, targetCount - scope.equipped);
+    const common = { target, targetCount, derived, derivedFrom, scope, remaining, rosterDisagrees };
+    // Impossible inputs project nothing. `equipped` is a live row count and
+    // `total` a separately scraped meta value; mid-reconcile they can disagree,
+    // and a fixture roster of 6 with 102 installs rendered a confident
+    // "Reached — already there" that then travelled into third-party READMEs
+    // via /badge.svg. Say the inputs disagree instead.
+    if (rosterDisagrees) {
+      return { ...common, verdict: "no_data", projectedMonth: null };
+    }
     if (remaining === 0) {
       return { ...common, verdict: "reached", projectedMonth: null };
     }
@@ -206,7 +247,16 @@ export function computeInstallRate(opts: {
     return { ...common, verdict, projectedMonth };
   });
 
-  return { equipped, total, months, paceMonthly, projections, excludedDays: excluded };
+  return {
+    equipped,
+    total,
+    rosterDisagrees: equipped > total,
+    months,
+    paceMonthly,
+    paceWindowMonths: paceMonthly === null ? 0 : window.length,
+    projections,
+    excludedDays: excluded,
+  };
 }
 
 /**

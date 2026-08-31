@@ -44,6 +44,7 @@ import {
   bumpDiscoveryPriority,
   cacheFlightRoute,
   computeWifiConsensus,
+  countStarlinkPlanes,
   flightNumberHasData,
   getAirlineByTail,
   getAirportDepartures,
@@ -98,6 +99,9 @@ export interface ScopedReader {
   /** Airline codes covered by this reader (single-element for per-airline hosts, enabled set for hub). */
   readonly airlines: readonly AirlineCode[];
   getStarlinkPlanes(): Aircraft[];
+  /** Equipped-tail count without hydrating the roster — for callers that only
+   * wanted `.length` (the install/badge gates, on every HTML render). */
+  countStarlinkPlanes(): number;
   getAirlineByTail(): Record<string, string>;
   getRecentInstalls(limit?: number, perAirlineCap?: number): RecentInstall[];
   /** First observed post-install revenue departures for the given tails (sparse). */
@@ -265,6 +269,7 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     scope,
     airlines,
     getStarlinkPlanes: () => getStarlinkPlanes(db, airlines),
+    countStarlinkPlanes: () => countStarlinkPlanes(db, airlines),
     getAirlineByTail: () => getAirlineByTail(db, airlines),
     getRecentInstalls: (limit, perAirlineCap) =>
       getRecentInstalls(db, airlines, limit, perAirlineCap),

@@ -6,7 +6,7 @@
 
 import { beforeAll, describe, expect, test } from "bun:test";
 import { AIRLINES, SITES } from "../src/airlines/registry";
-import { rolloutTargets } from "../src/airlines/targets";
+import { airlinesWithTargetEntry, rolloutTargets } from "../src/airlines/targets";
 import { createApp } from "../src/server/app";
 import {
   type DailyInstalls,
@@ -43,6 +43,7 @@ const TARGET = {
   label: "1,000 aircraft",
   deadline: "2026-12-31",
   count: 1000,
+  statedOn: "2026-01-01",
   source: { title: "src", url: "https://example.com" },
 };
 
@@ -159,12 +160,14 @@ describe("computeInstallRate", () => {
     expect(stats.projections[0].verdict).toBe("on_track");
   });
 
-  test("a fraction target spanning tenants resolves against the summed roster", () => {
-    // The AS shape: Alaska stated a share of the merged Alaska+Hawaiian fleet,
-    // so the denominator is both readers' totals, not the serving tenant's.
+  test("a fraction target spanning tenants measures BOTH halves over the same roster", () => {
+    // The AS shape on production numbers: AS 99/350, HA 42/61. Alaska stated a
+    // share of the merged Alaska+Hawaiian fleet, so the denominator is both
+    // readers' totals — and so is the numerator. Threading only the denominator
+    // through published "206 aircraft · 107 to go" against a real gap of 65.
     const stats = computeInstallRate({
       daily: daily(["2026-03", 20], ["2026-04", 20], ["2026-05", 20]),
-      equipped: 100,
+      equipped: 99,
       total: 350,
       targets: [
         {
@@ -172,15 +175,53 @@ describe("computeInstallRate", () => {
           deadline: "2026-12-31",
           fractionOfTracked: 0.5,
           fractionSpans: ["AS", "HA"],
+          statedOn: "2026-01-01",
           source: TARGET.source,
         },
       ],
-      fractionBase: (t) => (t.fractionSpans ? 411 : 350),
+      scopeFor: (t) =>
+        t.fractionSpans
+          ? { equipped: 141, total: 411, label: "Alaska and Hawaiian" }
+          : { equipped: 99, total: 350, label: null },
       nowMs: NOW,
     });
     const [p] = stats.projections;
     expect(p.targetCount).toBe(206); // ceil(0.5 * 411), not 175
     expect(p.derivedFrom).toBe(411);
+    // The invariant: remaining is target minus the SAME roster's equipped.
+    expect(p.scope).toEqual({ equipped: 141, total: 411, label: "Alaska and Hawaiian" });
+    expect(p.remaining).toBe(65);
+    expect(p.targetCount - p.scope.equipped).toBe(p.remaining);
+  });
+
+  test("an impossible roster projects nothing instead of a confident verdict", () => {
+    // equipped is a live row count, total a separately scraped meta value;
+    // nothing ties them to one snapshot. A fixture with 102 installs against a
+    // roster of 6 rendered "Reached — already there" and 1700%.
+    const stats = computeInstallRate({
+      daily: daily(["2026-03", 20], ["2026-04", 20], ["2026-05", 20]),
+      equipped: 102,
+      total: 6,
+      targets: [{ ...TARGET, count: undefined, fractionOfTracked: 1 }],
+      nowMs: NOW,
+    });
+    expect(stats.rosterDisagrees).toBe(true);
+    const [p] = stats.projections;
+    expect(p.rosterDisagrees).toBe(true);
+    expect(p.verdict).toBe("no_data");
+    expect(p.projectedMonth).toBeNull();
+  });
+
+  test("a consistent roster is untouched by the impossible-pair guard", () => {
+    const stats = computeInstallRate({
+      daily: daily(["2026-03", 20], ["2026-04", 20], ["2026-05", 20]),
+      equipped: 6,
+      total: 6,
+      targets: [{ ...TARGET, count: undefined, fractionOfTracked: 1 }],
+      nowMs: NOW,
+    });
+    expect(stats.rosterDisagrees).toBe(false);
+    expect(stats.projections[0].verdict).toBe("reached");
   });
 
   test("a derived count is flagged; a stated count is not", () => {
@@ -270,8 +311,40 @@ describe("rolloutTargets config", () => {
     }
   });
 
-  test("unknown airlines fail closed", () => {
-    expect(() => rolloutTargets("WN")).toThrow();
+  test("every target says when the airline stated it, on or before its deadline", () => {
+    // Without a stated-on date a reader cannot tell current guidance from a
+    // two-year-old statement; the page reads every target as equally fresh.
+    for (const code of airlinesWithTargetEntry()) {
+      for (const t of rolloutTargets(code)) {
+        expect(t.statedOn, `${code}/${t.label} has no statedOn`).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+        expect(t.statedOn < t.deadline, `${code}/${t.label} stated after its own deadline`).toBe(
+          true
+        );
+      }
+    }
+  });
+
+  test("no two targets of one airline lean on the same source link", () => {
+    // Two claims behind one generic link is indistinguishable from one claim
+    // with no source: neither can be checked against the other.
+    for (const code of airlinesWithTargetEntry()) {
+      const urls = rolloutTargets(code).map((t) => t.source.url);
+      expect(new Set(urls).size, `${code} reuses a source URL across targets`).toBe(urls.length);
+    }
+  });
+
+  test("every registered airline has a decided entry", () => {
+    // The real fail-closed invariant, asserted here rather than thrown on every
+    // page render: rolloutTargets() runs from the footer nav of every tenant,
+    // so throwing there would 500 the whole site over one missing config row.
+    const decided = new Set(airlinesWithTargetEntry());
+    for (const code of Object.keys(AIRLINES)) {
+      expect(decided.has(code), `${code} has no ROLLOUT_TARGETS entry`).toBe(true);
+    }
+  });
+
+  test("an unknown airline degrades to no targets instead of throwing", () => {
+    expect(rolloutTargets("WN")).toEqual([]);
   });
 
   test("every fractionSpans code is a registered airline", () => {
