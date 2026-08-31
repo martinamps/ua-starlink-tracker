@@ -174,14 +174,14 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     status: "complete",
     statusLabel: "Airbus fleet done",
     summary:
-      "Every A330 and A321neo has had free Starlink since September 2024 — the first large U.S. carrier with a completed install program. The 787-9s are next in line; Hawaiian does not plan to offer connectivity on its 717 interisland jets.",
+      "Every A330 and A321neo has had free Starlink since September 2024 — Hawaiian was the first major U.S. carrier to debut Starlink and the first major airline to offer it at no cost. The 787-9s are next in line; Hawaiian does not plan to offer connectivity on its 717 interisland jets.",
     facts: [
       {
-        fact: "Hawaiian completed free, gate-to-gate Starlink across its entire Airbus fleet (A330s and A321neos) — the first major U.S. carrier to finish an announced Starlink program.",
-        asOf: "2024-09-06",
+        fact: "Hawaiian completed Starlink installation across its 24 A330s, having become the first major U.S. carrier to debut Starlink in February 2024 on its A321neos — and, per the same release, the first major airline to offer travelers Starlink at no cost.",
+        asOf: "2024-09-24",
         source: {
-          label: "Hawaiian Airlines newsroom",
-          url: "https://newsroom.hawaiianairlines.com/releases/hawaiian-airlines-launches-fast-and-free-starlink-internet",
+          label: "Hawaiian Airlines newsroom (Alaska Air Group)",
+          url: "https://news.alaskaair.com/releases/hawaiian-airlines-now-offering-fast-and-free-starlink-wi-fi-across-entire-airbus-fleet/",
         },
       },
       {
@@ -244,7 +244,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
       "Installing since November 2025 at roughly 14 aircraft a month; about 150 aircraft targeted by the end of 2026 and all 232 777s and A380s by mid-2027. Free in every cabin, no login.",
     facts: [
       {
-        fact: "Emirates began Starlink installs on its Boeing 777s in November 2025 and will equip its entire in-service fleet of 232 777s and A380s by mid-2027, at roughly 14 aircraft per month. Access is free in all cabins with no payment or Skywards login required.",
+        fact: "Emirates began Starlink installs on its Boeing 777s in November 2025 and will equip its entire in-service fleet of 232 777s and A380s by mid-2027, at roughly 14 aircraft per month, with installation on the A380 fleet commencing in February 2026. Access is free in all cabins with no payment or Skywards login required.",
         asOf: "2025-11",
         source: {
           label: "Emirates media centre",
@@ -252,8 +252,8 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         },
       },
       {
-        fact: "Emirates expects about 150 aircraft to carry free Starlink Wi-Fi by the end of 2026, with A380 installations under way since early 2026.",
-        asOf: "2026-04",
+        fact: "Emirates expects about 150 aircraft to carry free Starlink Wi-Fi by the end of 2026; the rollout began with the installation of Starlink on 10 Boeing 777s.",
+        asOf: "2026-01-28",
         source: {
           label: "Gulf News",
           url: "https://gulfnews.com/business/aviation/dubais-emirates-to-offer-free-starlink-wi-fi-on-150-aircraft-by-end-of-2026-1.500423320",
@@ -283,8 +283,10 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         },
       },
       {
-        fact: "The Lufthansa Group–Starlink agreement covers all fleets across the group's airlines, announced as high-speed internet on all fleets.",
-        asOf: "2025-12",
+        // The release names no individual carrier — only "all our airlines" —
+        // so this says group-wide and stops there.
+        fact: "The Lufthansa Group–Starlink agreement covers all of the group's around 850 aircraft across all its airlines, with gradual introduction beginning in the second half of 2026 and the entire fleet equipped by 2029.",
+        asOf: "2026-01-13",
         source: {
           label: "Lufthansa Group newsroom",
           url: "https://newsroom.lufthansagroup.com/en/new-lufthansa-group-collaboration-with-starlink-high-speed-internet-on-all-fleets-across-all-airlines/",
@@ -400,8 +402,10 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         },
       },
       {
-        fact: "WestJet's Boeing 787 Starlink installations are planned to complete by the end of 2026, following the 737 fleet.",
-        asOf: "2025-09-26",
+        // Announcement-day piece, never updated since; the plan it reports is
+        // the only thing it can support, so the fact is framed as one.
+        fact: "When WestJet announced the TELUS/Starlink partnership in July 2024 it said Boeing 787 installations would follow the 737 fleet and should be complete by the end of 2026.",
+        asOf: "2024-07-24",
         source: {
           label: "One Mile at a Time",
           url: "https://onemileatatime.com/news/westjet-free-starlink-wi-fi/",
@@ -536,14 +540,24 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     status: "complete",
     statusLabel: "Complete",
     summary:
-      "All eight 787-8s equipped by spring 2026 — the first fully Starlink-enabled fleet in Asia. Free for every passenger.",
+      "All eight Boeing 787s equipped — the first fully Starlink-enabled fleet in Asia. Free for every passenger, in every cabin.",
     facts: [
       {
-        fact: "ZIPAIR equipped its entire Boeing 787-8 fleet (eight aircraft) with free Starlink Wi-Fi by spring 2026, becoming the first airline in Asia with a fully Starlink-enabled fleet.",
-        asOf: "2026-05-31",
+        // The March source is a forecast ("will be completed"), so it cannot
+        // carry the completion claim — that rests on the CEO fact below.
+        fact: "ZIPAIR began Starlink installation across its Boeing 787 fleet in early February 2026, with completion planned by spring 2026 — free of charge for all passengers, and set to make ZIPAIR the first airline in Asia to operate a fully Starlink-enabled fleet.",
+        asOf: "2026-03-02",
         source: {
           label: "Future Travel Experience",
           url: "https://www.futuretravelexperience.com/2026/03/zipair-enhancing-cx-with-free-high-speed-starlink-connectivity-across-its-boeing-787-fleet/",
+        },
+      },
+      {
+        fact: "ZIPAIR CEO Yasuhiro Fukada said the airline completed Starlink installation across its entire fleet of eight Boeing 787s, giving passengers in all cabin classes free high-speed Wi-Fi.",
+        asOf: "2026-07-29",
+        source: {
+          label: "CAPA — Centre for Aviation",
+          url: "https://centreforaviation.com/news/zipair-ceo-we-completed-installation-of-starlink-inflight-connectivity-on-entire-fleet-1367868",
         },
       },
     ],
