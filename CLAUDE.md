@@ -12,6 +12,7 @@ bun run test:setup             # Snapshot DB → .test-snapshot.sqlite (run befo
 bun run test                   # Integration tests (49, against readonly snapshot)
 bun run db-status              # Database overview (--full for details)
 bun run scrape                 # Fetch fleet data from Google Sheets
+bun run verify-citations       # Fetch every rollout-facts source and check the claim's tokens are in it (network, opt-in)
 bun run lint / format          # Biome
 ```
 
@@ -48,3 +49,4 @@ Bun + SQLite + server-rendered React. `server.ts` serves pages/APIs and starts b
 - **Logging** — `import { info, error, debug } from "./utils/logger"` (auto-tags filename, writes console + `logs/app.log`)
 - **Metrics** — route every metric tag through the normalizers in `src/observability/metrics.ts`; always set the `airline` tag
 - **Upstream citizenship** — public endpoints serve from the DB; never proxy live scraping to callers
+- **Citations** — a claim in `src/airlines/rollout-facts.ts` may say only what the page at its `source.url` says. Adding or editing one means running `bun run verify-citations` (a machine must find the claim's numbers and names in the source's bytes); a source no client can read gets a `source.mirror`, and only then an entry in `scripts/citations/allowlist.ts`
