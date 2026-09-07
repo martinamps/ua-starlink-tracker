@@ -107,7 +107,7 @@ describe("canonical / og:url / WebPage JSON-LD claim the page path", () => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Flight permalinks: existence gate (no data → interactive soft page, noindex,
-// canonical to /check-flight — the client-side FR24 lookup can still answer;
+// self-canonical — the client-side FR24 lookup can still answer;
 // malformed/other-carrier segments hard-404) and URL normalization (one
 // canonical spelling per flight, everything else 301).
 // ─────────────────────────────────────────────────────────────────────────────
@@ -137,13 +137,14 @@ describe("flight permalink gate + normalization", () => {
     ghostFlight = `UA${n}`;
   });
 
-  test("valid-format flight with no data → 200 soft page, noindex, canonical to /check-flight", async () => {
+  test("valid-format flight with no data → 200 soft page, noindex, self-canonical", async () => {
     const res = await app.dispatch(req(`/check-flight/${ghostFlight}`, HOST));
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html.match(/<meta name="robots" content="([^"]+)"/)?.[1]).toContain("noindex");
+    // Self-canonical: aiming noindex at /check-flight would mark the conversion page.
     expect(html.match(/<link rel="canonical" href="([^"]+)"/)?.[1]).toBe(
-      `https://${HOST}/check-flight`
+      `https://${HOST}/check-flight/${ghostFlight}`
     );
     // The interactive lookup form still serves — the URL is not a dead end.
     expect(html).toContain('id="check-flight-form"');
