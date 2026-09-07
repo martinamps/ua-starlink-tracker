@@ -1006,6 +1006,8 @@ const apiCheckAnyFlight: Handler = async ({ req, url, reader, getReader, tenant 
           hasStarlink: null,
           airline: cfg.name,
           confidence: "type",
+          // Additive top-level `probability` for the extension claim ladder.
+          ...(verdict.answer.kind === "penetration" ? { probability: verdict.answer.pen.pct } : {}),
           reason: describeCarrierPrediction(cfg, verdict.answer),
           flights: [],
         }),
