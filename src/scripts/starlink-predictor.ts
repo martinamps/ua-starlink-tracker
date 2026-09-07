@@ -121,7 +121,53 @@ const DEFAULT_CONFIG: ModelConfig = {
 // 5/10/20/30/40d half-lives in the rolling backtest; 30d is the Brier optimum.
 const ASSIGNMENT_HALF_LIFE_DAYS = 30;
 
-const confidenceFor = (n: number) => (n >= 5 ? "high" : n >= 2 ? "medium" : "low") as const;
+type Confidence = "high" | "medium" | "low";
+
+const confidenceFor = (n: number): Confidence => (n >= 5 ? "high" : n >= 2 ? "medium" : "low");
+
+/** The smallest raw sample each tier admits — what the published label is
+ * promising, and the count the age rules are asked about. */
+const TIER_MIN_DRAWS: Record<Confidence, number> = { low: 1, medium: 2, high: 5 };
+
+/**
+ * Below this share of the smoothed posterior a flight's own history has
+ * stopped moving the number: the estimate is (s + α·prior)/(w + α), so once
+ * the decayed weight `w` is worth under 5% of that denominator what ships is
+ * the family prior wearing a flight number. Expressed against α rather than
+ * hardcoded so it tracks a priorStrength re-sweep.
+ */
+const DEAD_EVIDENCE_SHARE = 0.05;
+const deadEvidenceWeight = (priorStrength: number) =>
+  (priorStrength * DEAD_EVIDENCE_SHARE) / (1 - DEAD_EVIDENCE_SHARE);
+
+/** One half-life: past it each draw is worth under half a fresh one, which is
+ * the point where the label should hedge rather than vouch for the sample. */
+const STALE_DECAY = 0.5;
+
+/**
+ * Confidence for the decayed model, as a function of the count printed beside
+ * it and the AGE of the evidence — never of `count × age`.
+ *
+ * 1. The count sets the tier — the same tiering the label has always meant.
+ * 2. Staleness costs at most one tier. A sample whose draws are each worth
+ *    under half a fresh one is hedged to "medium"; it never drops to "low"
+ *    while its evidence still moves the number, because "17 observations (low
+ *    confidence)" reads as a bug and made the Chrome extension suppress a 98%
+ *    call at the point of booking.
+ * 3. Dead evidence is dead, asked of the tier's minimum sample rather than the
+ *    whole n, so a large stale sample that still moves the number stays medium.
+ */
+function decayedConfidence(
+  decayedWeight: number,
+  rawCount: number,
+  priorStrength: number
+): Confidence {
+  const raw = confidenceFor(rawCount);
+  if (raw === "low") return "low";
+  const freshness = decayedWeight / rawCount;
+  if (freshness * TIER_MIN_DRAWS[raw] < deadEvidenceWeight(priorStrength)) return "low";
+  return freshness < STALE_DECAY ? "medium" : raw;
+}
 
 /** Subfleet cold-start install rate: all we know with no usable history. */
 function coldPrior(flightNumber: string, config: ModelConfig): number {
@@ -230,7 +276,7 @@ function buildTypeAwarePredict(
     predictions.set(flightNumber, {
       flight_number: flightNumber,
       probability: smoothedRate(f.s, f.n, prior, config.priorStrength),
-      confidence: confidenceFor(f.n),
+      confidence: decayedConfidence(f.n, f.raw, config.priorStrength),
       method: "flight_history_smoothed",
       n_observations: f.raw,
     });
