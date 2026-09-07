@@ -1,6 +1,7 @@
 import type React from "react";
 import type { AirlineContent, ContentStats } from "../airlines/content";
-import { type SiteConfig, siteAirline } from "../airlines/registry";
+import { ensureAirlinePrefix } from "../airlines/flight-number";
+import { AIRLINES, type SiteConfig, siteAirline } from "../airlines/registry";
 import type {
   Aircraft,
   AirportDeparture,
@@ -374,6 +375,34 @@ export default function Page({
   // Hub never renders the flight-search form (checkFlightPage is off), so the
   // prefix is only read on airline-scoped sites.
   const searchCarrier = site.scope !== "ALL" ? siteAirline(site).iata : "";
+  // Flight permalinks are airline-scoped: the hub has checkFlightPage off and
+  // siteAirline() throws there, so pills stay outbound on sites without one.
+  const permalinkAirline = features.checkFlightPage ? siteAirline(site) : null;
+  // Mirrors parseCheckFlightPath's gate, so every link we emit is a URL the
+  // permalink handler parses instead of 404ing or redirecting. Built once —
+  // this runs against every pill on the page.
+  const permalinkFnPattern = permalinkAirline
+    ? new RegExp(`^${permalinkAirline.iata}\\d{1,4}$`)
+    : null;
+
+  /**
+   * `/check-flight/{marketing number}` for a pill, or null when the pill can't
+   * reach a real permalink and must keep its outbound link.
+   *
+   * The pill carries the OPERATING carrier's callsign (OO4757, SKW5366) but the
+   * permalink is minted under the marketing code, so this goes through
+   * ensureAirlinePrefix — never a bare prefix strip, which turns G74561 into
+   * UA74561 instead of UA4561. Two gates keep it off dead URLs:
+   * non-numeric callsigns (SKW394Y) normalize to themselves, and a foreign
+   * carrier's number belongs to no permalink this site serves — both would land
+   * on the noindex generic page rather than a flight, so they stay outbound.
+   */
+  const flightPermalink = (tailNumber: string, flightNumber: string): string | null => {
+    if (!permalinkAirline || !permalinkFnPattern) return null;
+    if ((airlineByTail[tailNumber] || permalinkAirline.code) !== permalinkAirline.code) return null;
+    const fn = ensureAirlinePrefix(permalinkAirline, flightNumber);
+    return permalinkFnPattern.test(fn) ? `/check-flight/${fn}` : null;
+  };
   const navLinks = [
     ...(features.checkFlightPage
       ? [{ href: "/check-flight", label: "Check a Flight", badge: "" }]
@@ -408,19 +437,27 @@ export default function Page({
     return code;
   };
 
-  // Compact flight time with day (e.g., "MON 2:30p")
+  // Compact flight time with day, stated in UTC (e.g., "MON 14:30 UTC").
+  //
+  // departure_time is a UTC epoch, so formatting it without an explicit
+  // timeZone renders it in whatever zone the SERVER happens to run in — a clock
+  // that belongs to neither the traveller nor the airport, and that disagreed
+  // with /check-flight/{fn}, which states the same departure as UTC. The pill
+  // links there and its aria-label speaks this string as a departure claim, so
+  // the zone has to be pinned and named. The 24-hour spelling is the permalink
+  // page's, so the two pages read as one clock rather than two.
   const formatCompactTime = (timestamp: number) => {
     const date = new Date(timestamp * 1000);
-    const day = date.toLocaleDateString("en-US", { weekday: "short" }).toUpperCase();
-    const time = date
-      .toLocaleTimeString("en-US", {
-        hour: "numeric",
-        minute: "2-digit",
-        hour12: true,
-      })
-      .replace(" AM", "a")
-      .replace(" PM", "p");
-    return `${day} ${time}`;
+    const day = date
+      .toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" })
+      .toUpperCase();
+    const time = date.toLocaleTimeString("en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+      timeZone: "UTC",
+    });
+    return `${day} ${time} UTC`;
   };
 
   // Compact inline flight pills for new table design (responsive + expandable)
@@ -451,19 +488,37 @@ export default function Page({
         visibilityClass = "hidden md:inline-flex"; // Tablet+ (md+)
       }
 
+      // Every pill that can reach a permalink links to one. Deduping to one
+      // anchor per flight number was considered and rejected: the anchor count
+      // is identical either way (this converts links, it never adds any), so
+      // the per-link equity denominator doesn't move — repeats to one URL are
+      // consolidated anyway — and it would leave the same flight number
+      // pointing at two different destinations in one row.
+      const permalink = flightPermalink(tailNumber, flight.flight_number);
+      // Hover text names the destination, so it shows the marketing number the
+      // permalink is filed under rather than the operating callsign.
+      const tooltip = permalink ? permalink.slice("/check-flight/".length) : flight.flight_number;
+      const when = formatCompactTime(flight.departure_time);
+      // The pill's visible text is an airport pair and a clock time — the flight
+      // number lives only in a hover tooltip, which is a data attribute gated on
+      // (hover: hover). So the link's own subject was reaching neither a screen
+      // reader nor a crawler reading link text. The label restates the visible
+      // text so speech-input targeting still works (WCAG 2.5.3).
+      const label = `Flight ${tooltip}, ${dep} to ${arr}, departs ${when}`;
+
       return (
         <a
           key={idx}
-          href={`https://www.flightaware.com/live/flight/${flight.flight_number}`}
-          target="_blank"
-          rel="nofollow noopener noreferrer"
-          data-flight-tooltip={flight.flight_number}
+          href={permalink ?? `https://www.flightaware.com/live/flight/${flight.flight_number}`}
+          {...(permalink ? {} : { target: "_blank", rel: "nofollow noopener noreferrer" as const })}
+          data-flight-tooltip={tooltip}
+          aria-label={label}
           className={`flight-pill font-mono items-center gap-1.5 px-2 py-1 bg-surface-elevated border border-subtle rounded text-xs text-secondary hover:text-accent hover:border-accent/50 transition-all ${visibilityClass}`}
         >
           <span className="text-accent font-medium">{dep}</span>
           <span className="text-muted">→</span>
           <span className="text-accent font-medium">{arr}</span>
-          <span className="text-muted text-[10px]">{formatCompactTime(flight.departure_time)}</span>
+          <span className="text-muted text-[10px]">{when}</span>
         </a>
       );
     };
@@ -740,11 +795,22 @@ export default function Page({
                     return [`${dep}-${arr}`, `${arr}-${dep}`];
                   })
                   .join(" ");
-                // Index raw + marketing-airline-prefix variant for search
+                // Index the raw callsign plus the marketing number it maps to.
+                // The mapping is ensureAirlinePrefix, not a `/^[A-Z]+/` strip:
+                // a strip turns G74561 into UA74561, so a G7-coded flight was
+                // unfindable by the UA number the pill's label and href
+                // advertise — the box would have said "no match" for the very
+                // number the row was showing.
+                const rowAirline = AIRLINES[airline];
                 const flightNumbersStr = flights
-                  .map(
-                    (f) => `${f.flight_number} ${airline}${f.flight_number.replace(/^[A-Z]+/, "")}`
-                  )
+                  .flatMap((f) => {
+                    const marketing = rowAirline
+                      ? ensureAirlinePrefix(rowAirline, f.flight_number)
+                      : f.flight_number;
+                    return marketing === f.flight_number
+                      ? [f.flight_number]
+                      : [f.flight_number, marketing];
+                  })
                   .join(" ")
                   .toLowerCase();
 
