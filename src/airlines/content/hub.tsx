@@ -218,12 +218,14 @@ export const content: AirlineContent = {
           q: "Is Starlink WiFi free on these airlines?",
           a: () => (
             <p>
-              Yes — United, Hawaiian, and Alaska all offer Starlink free to every passenger,
-              gate-to-gate, with no login wall or loyalty requirement. This is a deliberate contrast
-              with the paid legacy WiFi most carriers still use.
+              Starlink itself is not a paid add-on on these airlines, but access rules differ:{" "}
+              <strong>United</strong> requires a free MileagePlus login (join on the spot if
+              needed); <strong>Hawaiian</strong> and <strong>Alaska</strong> offer it to every
+              passenger with no loyalty signup. Speeds are gate-to-gate on equipped aircraft —
+              confirm on the airline&apos;s WiFi portal once you board.
             </p>
           ),
-          ld: "Yes. United, Hawaiian, and Alaska all offer Starlink WiFi free to every passenger, gate-to-gate.",
+          ld: "Starlink is not a paid add-on on United, Hawaiian, or Alaska, but access differs: United requires a free MileagePlus login; Hawaiian and Alaska have no loyalty signup. Confirm on the airline WiFi portal once you board.",
         },
       ],
     },
