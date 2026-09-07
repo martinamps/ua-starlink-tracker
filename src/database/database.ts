@@ -1,5 +1,10 @@
 import { Database } from "bun:sqlite";
-import { ensureAirlinePrefix, stripFlightNumberZeros } from "../airlines/flight-number";
+import {
+  CACHEABLE_FLIGHT_NUMBER,
+  canonicalPermalinkFor,
+  ensureAirlinePrefix,
+  stripFlightNumberZeros,
+} from "../airlines/flight-number";
 import {
   AIRLINES,
   type AirlineCode,
@@ -29,19 +34,23 @@ import type {
   BodyClass,
   BtsMonthAggregates,
   FaaRegistryRow,
+  FirstFlight,
   FleetAircraft,
   FleetAnchorRow,
   FleetCarrier,
   FleetDiscoveryStats,
   FleetFamily,
+  FleetMovement,
   FleetPageData,
   FleetProgressRow,
+  FleetProgressTailRow,
   FleetSource,
   FleetStats,
   FleetTail,
   Flight,
   InstallPace,
   InstallPaceWeek,
+  PipelineEventRow,
   RecentInstall,
   RouteSchedule,
   RouteScheduleRow,
@@ -50,7 +59,7 @@ import type {
   WifiProvider,
 } from "../types";
 import { DB_PATH } from "../utils/constants";
-import { info, error as logError, warn } from "../utils/logger";
+import { debug, info, error as logError, warn } from "../utils/logger";
 
 type MetaRow = { value: string };
 
@@ -114,6 +123,29 @@ function addColumn(db: Database, table: string, column: string, ddl: string): vo
   if (hasColumn(db, table, column)) return;
   db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
 }
+
+// One row per newly equipped tail: its first observed revenue departure AFTER
+// the install was found. Written by the first-flight watch job; read by
+// /feed.xml and /newly-equipped. Kept forever — departure_log's 30-day trim
+// would erase the scoop this table exists to preserve.
+//
+// The key is (tail_number, airline), not the tail alone: registrations move
+// between carriers (the AS/HA merger is actively re-registering aircraft), and
+// an airline-blind key would silently refuse the second airline's record
+// forever — the tenant-default bug class, expressed as a constraint.
+const FIRST_FLIGHTS_DDL = `
+  CREATE TABLE first_flights (
+    tail_number TEXT NOT NULL,
+    airline TEXT NOT NULL,
+    flight_number TEXT NOT NULL,
+    origin TEXT NOT NULL,
+    destination TEXT NOT NULL,
+    departed_at INTEGER NOT NULL,
+    recorded_at INTEGER NOT NULL,
+    PRIMARY KEY (tail_number, airline)
+  );
+  CREATE INDEX IF NOT EXISTS idx_ff_airline ON first_flights(airline, departed_at);
+`;
 
 export type VerificationSource = "united" | "flightradar24" | "spreadsheet" | "alaska" | "qatar";
 
@@ -276,7 +308,10 @@ export function setupTables(db: Database) {
   // passed before the per-tail DELETE. Enables trailing-window queries
   // that upcoming_flights (forward-only ~47h cache) can't answer.
   if (!tableExists(db, "departure_log")) {
-    db.query(`
+    // exec, not query().run(): bun:sqlite's query() prepares only the FIRST
+    // statement, so a multi-statement DDL string silently drops every index
+    // after the CREATE TABLE. Every block below follows the same rule.
+    db.exec(`
       CREATE TABLE departure_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         tail_number TEXT NOT NULL,
@@ -285,15 +320,18 @@ export function setupTables(db: Database) {
       );
       CREATE INDEX idx_dl_departed ON departure_log(departed_at);
       CREATE INDEX idx_dl_airport ON departure_log(airport);
-    `).run();
+    `);
   }
+
+  if (!tableExists(db, "first_flights")) db.exec(FIRST_FLIGHTS_DDL);
+  migrateFirstFlightsKey(db);
 
   // Persistent FR24 route lookup cache. Append-only: builds route knowledge over
   // time (which routes a flight number operates, durations) and reduces FR24 calls.
   // Also backfills mainline route data that upcoming_flights can't provide
   // (we only track Starlink planes).
   if (!tableExists(db, "flight_routes")) {
-    db.query(`
+    db.exec(`
       CREATE TABLE flight_routes (
         flight_number TEXT NOT NULL,
         origin TEXT NOT NULL,
@@ -306,7 +344,7 @@ export function setupTables(db: Database) {
       );
       CREATE INDEX idx_fr_flight ON flight_routes(flight_number);
       CREATE INDEX idx_fr_route ON flight_routes(origin, destination);
-    `).run();
+    `);
   }
 
   // Qatar's flight-status API exposes per-flight equipment but no tail, so the
@@ -315,7 +353,7 @@ export function setupTables(db: Database) {
   // API serves from the DB (per CLAUDE.md "upstream citizenship") instead of
   // proxying live calls.
   if (!tableExists(db, "qatar_schedule")) {
-    db.query(`
+    db.exec(`
       CREATE TABLE qatar_schedule (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         flight_number TEXT NOT NULL,
@@ -333,7 +371,7 @@ export function setupTables(db: Database) {
       CREATE INDEX idx_qs_dep_time ON qatar_schedule(departure_time);
       CREATE INDEX idx_qs_route ON qatar_schedule(departure_airport, arrival_airport, departure_time);
       CREATE INDEX idx_qs_flight ON qatar_schedule(flight_number, scheduled_date);
-    `).run();
+    `);
   }
 
   // Per-type Starlink install pipeline from the United Fleet Site progress
@@ -354,6 +392,43 @@ export function setupTables(db: Database) {
         UNIQUE(airline, segment, type_code)
       );
     `).run();
+  }
+
+  // Per-tail pipeline states decoded from the progress workbooks' cell colors
+  // (Sheets API grid read). Only count-validated states are ever written.
+  if (!tableExists(db, "fleet_progress_tails")) {
+    db.query(`
+      CREATE TABLE fleet_progress_tails (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        airline TEXT NOT NULL,
+        segment TEXT NOT NULL,
+        type_code TEXT NOT NULL,
+        tail TEXT NOT NULL,
+        state TEXT NOT NULL,
+        mod_location TEXT,
+        sheet_updated TEXT,
+        fetched_at INTEGER NOT NULL,
+        UNIQUE(airline, tail)
+      );
+    `).run();
+  }
+
+  // Observed pipeline transitions (diffed between daily grid reads) — the
+  // spine of the movements feed.
+  if (!tableExists(db, "pipeline_events")) {
+    db.exec(`
+      CREATE TABLE pipeline_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        airline TEXT NOT NULL,
+        tail TEXT NOT NULL,
+        type_code TEXT NOT NULL,
+        segment TEXT NOT NULL,
+        event TEXT NOT NULL,
+        mod_location TEXT,
+        observed_at INTEGER NOT NULL
+      );
+      CREATE INDEX idx_pipeline_events_time ON pipeline_events(airline, observed_at DESC);
+    `);
   }
 
   // Officially-reported fleet/Starlink figures from SEC filings, plus the
@@ -593,6 +668,38 @@ export function setupTables(db: Database) {
   migrateMultiAirline(db);
 }
 
+/**
+ * Rebuild first_flights when it still carries the airline-blind
+ * `tail_number TEXT PRIMARY KEY`. SQLite can't ALTER a primary key, and the
+ * table is append-only and tiny, so a copy is cheaper than living with a
+ * constraint that can never record a re-registered tail's second first flight.
+ */
+function migrateFirstFlightsKey(db: Database): void {
+  const row = db
+    .query("SELECT sql FROM sqlite_master WHERE type='table' AND name='first_flights'")
+    .get() as { sql: string } | null;
+  if (!row?.sql || /PRIMARY\s+KEY\s*\(\s*tail_number\s*,\s*airline\s*\)/i.test(row.sql)) return;
+  db.transaction(() => {
+    db.exec(
+      FIRST_FLIGHTS_DDL.replace(
+        "CREATE TABLE first_flights",
+        "CREATE TABLE first_flights_new"
+      ).replace("idx_ff_airline ON first_flights", "idx_ff_airline_new ON first_flights_new")
+    );
+    db.exec(
+      `INSERT OR IGNORE INTO first_flights_new
+         (tail_number, airline, flight_number, origin, destination, departed_at, recorded_at)
+       SELECT tail_number, airline, flight_number, origin, destination, departed_at, recorded_at
+       FROM first_flights`
+    );
+    db.exec("DROP TABLE first_flights");
+    db.exec("ALTER TABLE first_flights_new RENAME TO first_flights");
+    db.exec("DROP INDEX IF EXISTS idx_ff_airline_new");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_ff_airline ON first_flights(airline, departed_at)");
+  })();
+  info("Database migration completed: first_flights keyed by (tail_number, airline)");
+}
+
 function hasColumn(db: Database, table: string, column: string): boolean {
   return (db.query(`PRAGMA table_info(${table})`).all() as { name: string }[]).some(
     (c) => c.name === column
@@ -622,6 +729,23 @@ function migrateMultiAirline(db: Database) {
     CREATE INDEX IF NOT EXISTS idx_vlog_airline ON starlink_verification_log(airline, tail_number);
     CREATE INDEX IF NOT EXISTS idx_vlog_flight  ON starlink_verification_log(flight_number, checked_at DESC);
     CREATE INDEX IF NOT EXISTS idx_upf_tail     ON upcoming_flights(tail_number);
+  `);
+
+  // Backfill for databases created before the query()-drops-statement-2 bug was
+  // fixed above: their tables already exist, so the CREATE TABLE blocks never
+  // re-run and the indexes would stay missing forever. Verified absent in
+  // production (idx_dl_departed, idx_dl_airport, idx_fr_flight, idx_fr_route,
+  // idx_qs_*) while sibling indexes written as their own statement are present.
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_dl_departed ON departure_log(departed_at);
+    CREATE INDEX IF NOT EXISTS idx_dl_airport  ON departure_log(airport);
+    CREATE INDEX IF NOT EXISTS idx_ff_airline  ON first_flights(airline, departed_at);
+    CREATE INDEX IF NOT EXISTS idx_fr_flight   ON flight_routes(flight_number);
+    CREATE INDEX IF NOT EXISTS idx_fr_route    ON flight_routes(origin, destination);
+    CREATE INDEX IF NOT EXISTS idx_qs_dep_time ON qatar_schedule(departure_time);
+    CREATE INDEX IF NOT EXISTS idx_qs_route    ON qatar_schedule(departure_airport, arrival_airport, departure_time);
+    CREATE INDEX IF NOT EXISTS idx_qs_flight   ON qatar_schedule(flight_number, scheduled_date);
+    CREATE INDEX IF NOT EXISTS idx_pipeline_events_time ON pipeline_events(airline, observed_at DESC);
   `);
 
   // The two indexes above exist for the serving path: getFlightHistorySummary
@@ -1046,6 +1170,138 @@ export function getRecentInstalls(
     .all(...q.params, limit) as RecentInstall[];
 }
 
+/**
+ * Organic installs bucketed by calendar DAY (bulk writers excluded via
+ * INSTALL_FILTER). Day, not month, because INSTALL_FILTER only knows the bulk
+ * writers that label themselves: a mass import landing on a numeric Google
+ * Sheets tab id (UA sheet_gid '13' stamped 121 tails on 2025-12-03) passes the
+ * predicate and would chart as a real install spike. Only a per-day series can
+ * see that shape, so the Install Rate Index detects it downstream
+ * (excludeMassWriteDays) before it rolls up to months.
+ */
+export function getDailyInstalls(
+  db: Database,
+  airline: AirlineFilter
+): { day: string; installs: number }[] {
+  const q = withAirline(
+    `SELECT substr(DateFound, 1, 10) AS day, COUNT(*) AS installs
+     FROM starlink_planes
+     WHERE ${equippedFilter("starlink_planes")}
+       AND ${INSTALL_FILTER}`,
+    airline
+  );
+  return db.query(`${q.sql} GROUP BY day ORDER BY day`).all(...q.params) as {
+    day: string;
+    installs: number;
+  }[];
+}
+
+/**
+ * Detect and record each newly equipped tail's FIRST OBSERVED revenue
+ * departure. A candidate is an organically dated install (INSTALL_FILTER —
+ * bulk seeds would fire dozens of fake scoops) whose earliest post-install
+ * departure in upcoming_flights has now actually departed.
+ *
+ * Two independent bounds, because `upcoming_flights` cannot answer "first" on
+ * its own — it is a forward-only ~47h cache that updateFlights DELETEs per
+ * tail, so its earliest row is simply the earliest flight still cached:
+ *
+ *  1. departure_log VETO (the load-bearing one). It is the archive of every
+ *     upcoming_flights row before deletion, so a departure between DateFound
+ *     and the candidate proves the candidate is not the first. Measured on the
+ *     production snapshot before this veto existed: 14 of 14 inserted rows
+ *     were wrong, each skipping 3–41 real departures. The table is kept
+ *     forever, so a wrong claim never self-corrects — abstain instead.
+ *  2. The 14-day DateFound gate, which keeps candidates inside departure_log's
+ *     own 30-day retention. Past that the veto has nothing left to see and
+ *     could not refute a fabricated first even in principle.
+ *
+ * Returns only the rows inserted by THIS call, so the caller can notify
+ * exactly once per tail.
+ */
+export function recordFirstFlights(
+  db: Database,
+  now = Math.floor(Date.now() / 1000)
+): FirstFlight[] {
+  const enabled = enabledAirlines().map((a) => a.code);
+  const placeholders = enabled.map(() => "?").join(",");
+  const candidates = db
+    .query(
+      `SELECT c.tail_number, c.airline, c.flight_number, c.origin, c.destination, c.departed_at
+       FROM (
+         SELECT sp.TailNumber AS tail_number, sp.airline AS airline, sp.DateFound AS date_found,
+                uf.flight_number, uf.departure_airport AS origin,
+                uf.arrival_airport AS destination,
+                MIN(uf.departure_time) AS departed_at
+         FROM starlink_planes sp
+         JOIN upcoming_flights uf
+           ON uf.tail_number = sp.TailNumber AND uf.airline = sp.airline
+         WHERE ${equippedFilter("sp")}
+           AND ${INSTALL_FILTER}
+           AND sp.airline IN (${placeholders})
+           AND sp.DateFound >= date(?, 'unixepoch', '-14 days')
+           AND uf.flight_number IS NOT NULL
+           AND uf.departure_airport IS NOT NULL
+           AND uf.arrival_airport IS NOT NULL
+           AND uf.departure_time >= strftime('%s', sp.DateFound)
+           AND uf.departure_time <= ?
+           AND NOT EXISTS (
+             SELECT 1 FROM first_flights ff
+             WHERE ff.tail_number = sp.TailNumber AND ff.airline = sp.airline
+           )
+         GROUP BY sp.TailNumber, sp.airline
+       ) c
+       WHERE NOT EXISTS (
+         SELECT 1 FROM departure_log dl
+         WHERE dl.tail_number = c.tail_number AND dl.airline = c.airline
+           AND dl.departed_at >= strftime('%s', c.date_found)
+           AND dl.departed_at < c.departed_at
+       )`
+    )
+    .all(...enabled, now, now) as Omit<FirstFlight, "recorded_at">[];
+  if (candidates.length === 0) return [];
+
+  const insert = db.query(
+    `INSERT OR IGNORE INTO first_flights
+       (tail_number, airline, flight_number, origin, destination, departed_at, recorded_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  );
+  const recorded: FirstFlight[] = [];
+  db.transaction(() => {
+    for (const c of candidates) {
+      const res = insert.run(
+        c.tail_number,
+        c.airline,
+        c.flight_number,
+        c.origin,
+        c.destination,
+        c.departed_at,
+        now
+      );
+      if (res.changes > 0) recorded.push({ ...c, recorded_at: now });
+    }
+  })();
+  return recorded;
+}
+
+/** First observed post-install revenue departures for a set of tails. */
+export function getFirstFlights(
+  db: Database,
+  tails: readonly string[],
+  airline: AirlineFilter
+): FirstFlight[] {
+  if (tails.length === 0) return [];
+  const placeholders = tails.map(() => "?").join(",");
+  const q = withAirline(
+    `SELECT tail_number, airline, flight_number, origin, destination, departed_at, recorded_at
+     FROM first_flights WHERE tail_number IN (${placeholders})`,
+    airline,
+    "",
+    [...tails]
+  );
+  return db.query(q.sql).all(...q.params) as FirstFlight[];
+}
+
 export interface HubAirlineStat {
   code: string;
   starlink: number;
@@ -1095,6 +1351,20 @@ export function getHubStats(db: Database, codes: readonly string[]): HubAirlineS
       installs30d: v30[f.airline] ?? 0,
     };
   });
+}
+
+/**
+ * Equipped-tail count without hydrating the rows. Callers that only wanted
+ * `.length` were materializing the whole roster — cheap once, but the install
+ * gates run it per airline on every HTML render, and on the hub that is once
+ * per public tenant per request.
+ */
+export function countStarlinkPlanes(db: Database, airline?: AirlineFilter): number {
+  const q = withAirline(
+    `SELECT COUNT(*) AS n FROM starlink_planes sp WHERE ${equippedFilter("sp")}`,
+    airline
+  );
+  return (db.query(q.sql).get(...q.params) as { n: number }).n;
 }
 
 export function getStarlinkPlanes(db: Database, airline?: AirlineFilter): Aircraft[] {
@@ -1731,6 +2001,16 @@ export function cacheFlightRoute(
   durationSec: number | null,
   now = Math.floor(Date.now() / 1000)
 ): void {
+  // flight_routes feeds the sitemap and route-page links, and this cache is
+  // written from caller-supplied lookup input (MCP/API), so an unvalidated
+  // write lets an arbitrary string mint a permalink the router will 404.
+  // Logged because nothing prunes this table: a predicate that started
+  // rejecting a legitimate callsign form would degrade one carrier's route
+  // coverage over months with no other symptom.
+  if (!CACHEABLE_FLIGHT_NUMBER.test(flightNumber)) {
+    debug(`cacheFlightRoute: rejected non-cacheable flight number "${flightNumber}"`);
+    return;
+  }
   try {
     db.query(`
       INSERT INTO flight_routes (flight_number, origin, destination, duration_sec, first_seen_at, last_seen_at, seen_count)
@@ -1783,7 +2063,7 @@ export function getSitemapFlights(db: Database, airline: AirlineCode): SitemapFl
   const cfg = AIRLINES[airline];
   if (!cfg) return [];
   const nowSec = Math.floor(Date.now() / 1000);
-  const marketing = new RegExp(`^${cfg.iata}\\d+$`);
+  const marketing = canonicalPermalinkFor(cfg);
   const latest = new Map<string, number>();
   const touch = (raw: string, t: number | null) => {
     // Zero-padded spellings collapse onto the canonical permalink (HA0011 →
@@ -1983,7 +2263,7 @@ export function getRouteSummary(
   // upcoming_flights also carries operating-carrier numbers (SKW4726 for a
   // United Express leg); those have no /check-flight permalink, so rendering
   // them would put broken internal links on every affected route page.
-  const marketing = cfg ? new RegExp(`^${cfg.iata}\\d+$`) : null;
+  const marketing = cfg ? canonicalPermalinkFor(cfg) : null;
   const merged = new Map<string, { times: number; scheduled: number }>();
   const add = (raw: string, times: number, scheduled: number) => {
     if (!cfg || !marketing) return;
@@ -3795,6 +4075,138 @@ export function replaceFleetProgress(
   })();
 }
 
+/** Replace one segment's per-tail pipeline rows. Segment-scoped so a segment
+ * whose color parse failed validation keeps nothing stale from the last run
+ * while untouched segments keep serving. */
+export function replaceFleetProgressTails(
+  db: Database,
+  airline: string,
+  segment: string,
+  rows: Array<Omit<FleetProgressTailRow, "airline" | "fetched_at">>
+): void {
+  const now = Math.floor(Date.now() / 1000);
+  db.transaction(() => {
+    db.query("DELETE FROM fleet_progress_tails WHERE airline = ? AND segment = ?").run(
+      airline,
+      segment
+    );
+    for (const r of rows) {
+      db.query(`
+        INSERT OR REPLACE INTO fleet_progress_tails
+          (airline, segment, type_code, tail, state, mod_location, sheet_updated, fetched_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        airline,
+        r.segment,
+        r.type_code,
+        r.tail,
+        r.state,
+        r.mod_location,
+        r.sheet_updated,
+        now
+      );
+    }
+  })();
+}
+
+export function getFleetProgressTails(
+  db: Database,
+  airline?: AirlineFilter
+): FleetProgressTailRow[] {
+  const q = withAirline(
+    `SELECT airline, segment, type_code, tail, state, mod_location, sheet_updated, fetched_at
+     FROM fleet_progress_tails WHERE 1=1`,
+    airline
+  );
+  return db
+    .query(`${q.sql} ORDER BY segment, state, type_code, tail`)
+    .all(...q.params) as FleetProgressTailRow[];
+}
+
+/** Record pipeline transitions, skipping any (tail, event) already seen in the
+ * last 14 days — a tail flapping in and out of the sheet (or a state failing
+ * the count gate for a day) must not re-announce itself. */
+export function insertPipelineEvents(
+  db: Database,
+  airline: string,
+  events: Array<Omit<PipelineEventRow, "airline" | "observed_at">>
+): number {
+  const now = Math.floor(Date.now() / 1000);
+  const cutoff = now - 14 * 86400;
+  let inserted = 0;
+  db.transaction(() => {
+    for (const e of events) {
+      const dupe = db
+        .query(
+          "SELECT 1 FROM pipeline_events WHERE airline = ? AND tail = ? AND event = ? AND observed_at > ?"
+        )
+        .get(airline, e.tail, e.event, cutoff);
+      if (dupe) continue;
+      db.query(`
+        INSERT INTO pipeline_events (airline, tail, type_code, segment, event, mod_location, observed_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(airline, e.tail, e.type_code, e.segment, e.event, e.mod_location, now);
+      inserted++;
+    }
+  })();
+  return inserted;
+}
+
+export function getPipelineEvents(
+  db: Database,
+  airline?: AirlineFilter,
+  limit = 12
+): PipelineEventRow[] {
+  const q = withAirline(
+    `SELECT airline, tail, type_code, segment, event, mod_location, observed_at
+     FROM pipeline_events WHERE 1=1`,
+    airline
+  );
+  return db
+    .query(`${q.sql} ORDER BY observed_at DESC, tail LIMIT ?`)
+    .all(...q.params, limit) as PipelineEventRow[];
+}
+
+// Movements feed: sheet-observed transitions merged with confirmed-live
+// installs (the same filtered source the homepage installs feed uses). News,
+// not archive: 14 days or 10 rows, whichever cuts first.
+const MOVEMENTS_WINDOW_DAYS = 14;
+const MOVEMENTS_MAX_ROWS = 10;
+
+export function computeFleetMovements(db: Database, airline?: AirlineFilter): FleetMovement[] {
+  const cutoffIso = new Date(Date.now() - MOVEMENTS_WINDOW_DAYS * 86400_000)
+    .toISOString()
+    .slice(0, 10);
+  const fromEvents: FleetMovement[] = getPipelineEvents(db, airline, 12).map((e) => ({
+    date: new Date(e.observed_at * 1000).toISOString().slice(0, 10),
+    tail: e.tail,
+    type_code: e.type_code,
+    kind: e.event,
+    mod_location: e.mod_location,
+  }));
+  const fromInstalls: FleetMovement[] = airline
+    ? getRecentInstalls(db, airline, 8)
+        .map((i) => ({
+          date: (i.DateFound ?? "").slice(0, 10),
+          tail: i.TailNumber,
+          type_code: i.Aircraft,
+          kind: "confirmed" as const,
+          mod_location: null,
+        }))
+        .filter((m) => m.date >= cutoffIso)
+    : [];
+  const merged = [...fromEvents, ...fromInstalls].filter((m) => m.date >= cutoffIso);
+  // A transition and a confirmed-live row landing the same day for one tail
+  // would say the same thing twice — the live row wins.
+  const confirmedSameDay = new Set(
+    merged.filter((m) => m.kind === "confirmed").map((m) => `${m.tail}|${m.date}`)
+  );
+  return merged
+    .filter((m) => m.kind === "confirmed" || !confirmedSameDay.has(`${m.tail}|${m.date}`))
+    .sort((a, b) => b.date.localeCompare(a.date) || a.tail.localeCompare(b.tail))
+    .slice(0, MOVEMENTS_MAX_ROWS);
+}
+
 export function getFleetProgress(db: Database, airline?: AirlineFilter): FleetProgressRow[] {
   const q = withAirline(
     `SELECT airline, segment, type_code, total, starlink_complete, in_mod, verification_needed,
@@ -4366,6 +4778,8 @@ function computeFleetPageData(db: Database, airline?: AirlineFilter): FleetPageD
     // one airline's pipeline as if it covered every tracked fleet.
     progress: soleAirline ? getFleetProgress(db, airline) : [],
     anchors: soleAirline ? getFleetAnchors(db, airline) : [],
+    progressTails: soleAirline ? getFleetProgressTails(db, airline) : [],
+    movements: soleAirline ? computeFleetMovements(db, airline) : [],
   };
 }
 

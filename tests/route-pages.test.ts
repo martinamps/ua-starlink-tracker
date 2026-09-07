@@ -9,10 +9,18 @@
  */
 
 import { beforeAll, describe, expect, test } from "bun:test";
-import { SITES } from "../src/airlines/registry";
-import { getSitemapRoutes, routeHasData } from "../src/database/database";
+import {
+  CANONICAL_FLIGHT_PERMALINK,
+  buildFlightLookupVariants,
+} from "../src/airlines/flight-number";
+import { AIRLINES, SITES } from "../src/airlines/registry";
+import { getRouteSummary, getSitemapRoutes, routeHasData } from "../src/database/database";
+import { createReaderFactory } from "../src/database/reader";
 import { createApp, parseRoutePath } from "../src/server/app";
 import { openSnapshot, req } from "./helpers";
+
+/** Route pages actually rendered by the link sweep; the rest is DB-checked. */
+const ROUTE_PAGE_SAMPLE = 40;
 
 let app: ReturnType<typeof createApp>;
 let db: ReturnType<typeof openSnapshot>;
@@ -23,8 +31,13 @@ beforeAll(() => {
 });
 
 const UA = SITES.united.canonicalHost;
+// x-forwarded-for localhost: /check-flight/{fn} is a metered page surface and
+// the sweeps below exceed the per-IP page budget, so an unidentified client
+// would collect 429s instead of the statuses under test.
 const get = (path: string, host = UA) =>
-  app.dispatch(req(path, host, { headers: { Accept: "text/html" } }));
+  app.dispatch(
+    req(path, host, { headers: { Accept: "text/html", "x-forwarded-for": "127.0.0.1" } })
+  );
 
 /** A route the snapshot actually backs, so the test survives data drift. */
 function someRoute() {
@@ -98,22 +111,61 @@ describe("/route-planner/{origin}/{destination}", () => {
     throw new Error("no route in the snapshot carried a flight number");
   });
 
+  // The exhaustive half of the link check above. Rendering all 2,200 route
+  // pages is too slow to do per-run, but the flight numbers each page links to
+  // come straight out of getRouteSummary, so the same invariant can be pinned
+  // over EVERY route in the corpus purely against the DB — shape the router
+  // accepts, plus a row behind it. This is what catches a single bad link on a
+  // route the render sample happens to skip.
+  test("no route in the corpus would link a permalink the router rejects", () => {
+    const cfg = AIRLINES.UA;
+    const reader = createReaderFactory(db)("UA");
+    // flight number → the first route page that links it, for the message.
+    const linked = new Map<string, string>();
+    for (const r of getSitemapRoutes(db, "UA")) {
+      const page = `/route-planner/${r.origin}/${r.destination}`;
+      for (const f of getRouteSummary(db, r.origin, r.destination, "UA").flightNumbers) {
+        expect(f.flight_number, page).toMatch(CANONICAL_FLIGHT_PERMALINK);
+        if (!linked.has(f.flight_number)) linked.set(f.flight_number, page);
+      }
+    }
+    expect(linked.size, "no route page links any flight number").toBeGreaterThan(0);
+    for (const [fn, page] of linked) {
+      expect(
+        reader.flightNumberHasData(buildFlightLookupVariants(cfg, fn)),
+        `${page} links ${fn} with no data behind it`
+      ).toBe(true);
+    }
+  }, 60_000);
+
   test("every permalink a route page links to actually resolves", async () => {
     // upcoming_flights also carries operating-carrier numbers (SKW4726 for a
     // United Express leg) which have no /check-flight permalink. Linking one
     // would put a broken internal link on the page — the exact failure these
     // route pages exist to clean up.
+    //
+    // 2,200 route pages × ~6ms each plus ~4,500 distinct permalinks is a
+    // ~40s sweep that only grows with the corpus, so the route pages are
+    // sampled by a fixed stride (never at random: a failure must name a URL
+    // the next run visits again). The permalinks harvested from that sample
+    // are then checked exhaustively — that is the assertion with the teeth.
+    const routes = getSitemapRoutes(db, "UA");
+    const stride = Math.max(1, Math.ceil(routes.length / ROUTE_PAGE_SAMPLE));
+    const sampled = routes.filter((_, i) => i % stride === 0);
     const seen = new Set<string>();
-    for (const r of getSitemapRoutes(db, "UA")) {
+    for (const r of sampled) {
       const body = await (await get(`/route-planner/${r.origin}/${r.destination}`)).text();
       for (const m of body.matchAll(/href="\/check-flight\/([^"]+)"/g)) seen.add(m[1]);
     }
     expect(seen.size).toBeGreaterThan(0);
     for (const fn of seen) {
-      expect(fn, "non-marketing flight number linked").toMatch(/^UA\d+$/);
+      // The permalink router's own shape. `UA\d+` would accept UA63986, a
+      // 5-digit number the router 404s — the shape check has to be the one
+      // the router applies, or it cannot catch the link it was written for.
+      expect(fn, "non-marketing flight number linked").toMatch(CANONICAL_FLIGHT_PERMALINK);
       expect((await get(`/check-flight/${fn}`)).status, `/check-flight/${fn}`).toBe(200);
     }
-  });
+  }, 60_000);
 
   test("unknown, malformed, and same-airport pairs 404", async () => {
     for (const path of [
@@ -187,9 +239,13 @@ describe("/routes links into the route corpus", () => {
 
   test("no O-D pair is rendered as bare text instead of a link", async () => {
     const body = await (await get("/routes")).text();
-    const bare = [...body.matchAll(bareLabelRe)];
     const links = [...body.matchAll(linkRe)];
-    // Whatever is rendered, none of it may be unlinked.
+    // A correctly linked pair renders the SAME "ORD<!-- -->–<!-- -->DEN" text,
+    // just inside the anchor, so the label pattern has to be looked for in
+    // what is left AFTER anchors are removed or every good row reads as a
+    // violation. This is why the assertion has to strip first, not just count.
+    const outsideLinks = body.replace(/<a\b[^>]*>[\s\S]*?<\/a>/g, "");
+    const bare = [...outsideLinks.matchAll(bareLabelRe)];
     expect(bare.length, "unlinked O-D labels on /routes").toBe(0);
     if (links.length === 0) return; // empty schedule window in this snapshot
     expect(links.length).toBeGreaterThan(0);

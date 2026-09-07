@@ -311,7 +311,12 @@ describe("MCP tools", () => {
     const pctMatch = text.match(/~(\d+)% Starlink probability/);
     expect(pctMatch).not.toBeNull();
     const pct = Number(pctMatch![1]);
-    expect(pct).toBeLessThan(15);
+    // The reported number IS United's live mainline penetration by design, so
+    // pin it to the same rate the site publishes rather than to a literal a
+    // rollout can overtake — and to the fact that mainline is the LOW prior.
+    const stats = reader.getFleetStats()!;
+    expect(pct).toBe(Math.round(stats.mainline.percentage));
+    expect(pct).toBeLessThan(Math.round(stats.express.percentage));
     expect(text).toContain("mainline");
     expect(text).toContain("fleet");
   });
@@ -584,7 +589,9 @@ describe("flight-verdict shared fallback", () => {
   test("resolveTailVerdict: confirmed-starlink tail → hasStarlink=true, verified|spreadsheet", () => {
     const tail = db
       .query(
-        "SELECT tail_number FROM united_fleet WHERE starlink_status='confirmed' AND tail_number IN (SELECT TailNumber FROM starlink_planes) LIMIT 1"
+        // airline='UA' on BOTH sides: `reader` is UA-scoped, so an unscoped
+        // pick can hand it a Qatar tail and read back the correct `unknown`.
+        "SELECT tail_number FROM united_fleet WHERE airline='UA' AND starlink_status='confirmed' AND tail_number IN (SELECT TailNumber FROM starlink_planes WHERE airline='UA') LIMIT 1"
       )
       .get() as { tail_number: string } | null;
     if (!tail) return;
@@ -596,7 +603,7 @@ describe("flight-verdict shared fallback", () => {
   test("resolveTailVerdict: negative tail not in starlink_planes → hasStarlink=false, negative", () => {
     const tail = db
       .query(
-        "SELECT tail_number FROM united_fleet WHERE starlink_status='negative' AND tail_number NOT IN (SELECT TailNumber FROM starlink_planes) LIMIT 1"
+        "SELECT tail_number FROM united_fleet WHERE airline='UA' AND starlink_status='negative' AND tail_number NOT IN (SELECT TailNumber FROM starlink_planes WHERE airline='UA') LIMIT 1"
       )
       .get() as { tail_number: string } | null;
     if (!tail) return;

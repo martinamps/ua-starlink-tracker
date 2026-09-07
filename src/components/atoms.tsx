@@ -38,10 +38,74 @@ export function CrossSiteLinks({ site }: { site: SiteConfig }) {
   );
 }
 
+/**
+ * Download link for the pre-rendered share-stat card. Renders nothing until
+ * the nightly batch has produced the card (path is null when the file isn't
+ * on disk) — a dead download link is worse than no button.
+ */
+export function ShareCardLink({ path }: { path?: string | null }) {
+  if (!path) return null;
+  return (
+    <div className="relative text-center py-2">
+      <a
+        href={path}
+        download
+        className="inline-flex items-center gap-2 font-mono text-xs px-3 py-2 bg-surface border border-subtle rounded text-secondary hover:text-accent hover:border-accent transition-colors"
+      >
+        <svg
+          className="w-3.5 h-3.5"
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+          <polyline points="7 10 12 15 17 10" />
+          <line x1="12" y1="15" x2="12" y2="3" />
+        </svg>
+        Share this stat — download the card
+      </a>
+    </div>
+  );
+}
+
+export interface PageLink {
+  href: string;
+  label: string;
+}
+
+/**
+ * Internal nav for the secondary URL families (/newly-equipped, /install-rate,
+ * /embed). They are sitemapped and indexable, so without an inbound href from
+ * a real page they are orphans — no PageRank path in and no way for a human to
+ * find them. The server builds this list from the same sitePages() filter the
+ * sitemap uses (feature flag AND data gate), so a link here can never point at
+ * a 404, and the current page is dropped so nothing self-links.
+ */
+export function PageNavLinks({ links }: { links?: PageLink[] }) {
+  if (!links?.length) return null;
+  return (
+    <div className="mt-3 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-xs">
+      {links.map((l, i) => (
+        <React.Fragment key={l.href}>
+          {i > 0 && <span className="text-subtle">·</span>}
+          <a href={l.href} className="text-secondary hover:text-primary transition-colors">
+            {l.label}
+          </a>
+        </React.Fragment>
+      ))}
+    </div>
+  );
+}
+
 /** Shared footer for secondary pages (methodology, hub /airlines). The
  * homepage footer in page.tsx stays inline — it carries extra links (GitHub,
  * methodology) and is the reference markup. */
-export function PageFooter({ site }: { site: SiteConfig }) {
+export function PageFooter({ site, pageLinks }: { site: SiteConfig; pageLinks?: PageLink[] }) {
   return (
     <footer className="relative py-6 text-center border-t border-subtle text-muted text-sm">
       <a
@@ -63,6 +127,7 @@ export function PageFooter({ site }: { site: SiteConfig }) {
         </svg>
         by @martinamps
       </a>
+      <PageNavLinks links={pageLinks} />
       <CrossSiteLinks site={site} />
     </footer>
   );

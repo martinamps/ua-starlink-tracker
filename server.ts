@@ -3,7 +3,12 @@ import "./src/observability/tracer";
 import "dotenv/config";
 
 import { checkNewPlanes, startFlightUpdater } from "./src/api/flight-updater";
-import { archivePastDepartures, initializeDatabase, pruneCrashRows } from "./src/database/database";
+import {
+  archivePastDepartures,
+  initializeDatabase,
+  pruneCrashRows,
+  recordFirstFlights,
+} from "./src/database/database";
 import { startAdsbSweepJob } from "./src/scripts/adsb-sweep";
 import { startAlaskaVerifier } from "./src/scripts/alaska-verifier";
 import { startBtsSyncJob } from "./src/scripts/bts-sync";
@@ -11,6 +16,7 @@ import { startFreshnessEmitter } from "./src/scripts/data-freshness";
 import { startFaaRegistryJob } from "./src/scripts/faa-registry";
 import { startFleetDiscovery } from "./src/scripts/fleet-discovery";
 import { startFleetProgressJob } from "./src/scripts/fleet-progress";
+import { startFleetProgressTailsJob } from "./src/scripts/fleet-progress-tails";
 import { startFleetSync } from "./src/scripts/fleet-sync";
 import { startQatarScheduleIngester } from "./src/scripts/qatar-schedule-ingester";
 import { startSecAnchorsJob } from "./src/scripts/sec-anchors";
@@ -105,6 +111,24 @@ if (JOBS_ENABLED) {
     })
   );
 
+  // Shares archive_departures' cadence because it races the same deadline:
+  // both read a departure that has just passed out of upcoming_flights, and
+  // updateFlights DELETEs a tail's rows wholesale when its 1–8h cache expires.
+  // Slower than that and a newly equipped tail's first flight is gone unseen.
+  track(
+    startJob({
+      name: "first_flight_watch",
+      intervalMs: 5 * 60 * 1000,
+      run: () => {
+        for (const f of recordFirstFlights(db)) {
+          info(
+            `First flight for ${f.tail_number} (${f.airline}): ${f.flight_number} ${f.origin}→${f.destination}`
+          );
+        }
+      },
+    })
+  );
+
   // Daily UA ship→tail sheet sync. (FlyerTalk QR/AS scrapes run via
   // residential-sync from a non-OVH IP — prod gets 403.)
   track(
@@ -118,6 +142,10 @@ if (JOBS_ENABLED) {
 
   // Daily UA install-pipeline counts from the fleet-site progress workbooks.
   track(startFleetProgressJob(db));
+
+  // Daily per-tail pipeline states from the same workbooks' cell colors
+  // (Sheets API; no-ops without SHEETS_API_KEY).
+  track(startFleetProgressTailsJob(db));
 
   // Daily FAA registry slice: existence/dereg hygiene + Mode-S hex per tail.
   track(startFaaRegistryJob(db));

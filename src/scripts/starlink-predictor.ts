@@ -554,7 +554,15 @@ function deriveConfig(
 // ============================================================================
 
 const MODEL_TTL_SEC = 3600; // 1 hour — matches scrape cadence
-const modelCache = new Map<Scope, { predict: (fn: string) => Prediction; builtAt: number }>();
+// Keyed by reader IDENTITY, not by scope: createReaderFactory hands out one
+// frozen reader per (Database, scope), so this is still one model per scope in
+// production (a single Database per process) while a reader over a different
+// Database — a test fixture, a script's own handle — can never be served a
+// model trained on someone else's rows.
+const modelCache = new WeakMap<
+  ScopedReader,
+  { predict: (fn: string) => Prediction; builtAt: number }
+>();
 
 /**
  * The type-aware model needs united_fleet to be a CENSUS, not a sample — a
@@ -575,14 +583,14 @@ function buildProductionModel(reader: ScopedReader): { predict: (fn: string) => 
 
 /**
  * Predict Starlink probability for a flight number.
- * Caches the model per reader scope for MODEL_TTL_SEC to avoid reloading 12k+ rows per call.
+ * Caches the model per reader for MODEL_TTL_SEC to avoid reloading 12k+ rows per call.
  */
 export function predictFlight(reader: ScopedReader, flightNumber: string): Prediction {
   const now = Math.floor(Date.now() / 1000);
-  let cached = modelCache.get(reader.scope);
+  let cached = modelCache.get(reader);
   if (!cached || now - cached.builtAt > MODEL_TTL_SEC) {
     cached = { ...buildProductionModel(reader), builtAt: now };
-    modelCache.set(reader.scope, cached);
+    modelCache.set(reader, cached);
   }
   return cached.predict(flightNumber);
 }
@@ -858,6 +866,25 @@ export function describeCarrierPrediction(cfg: AirlineConfig, answer: CarrierPre
 }
 
 /**
+ * Per-subfleet install rates from the full roster — the breakdown block
+ * compareRoute serves per airline and the hub /compare pages render directly.
+ * Empty when the roster holds no penetration data for the carrier.
+ */
+export function subfleetBreakdown(cfg: AirlineConfig, reader: ScopedReader): SubfleetBreakdown[] {
+  const penMap = reader.getSubfleetPenetration();
+  if (penMap.size === 0) return [];
+  return cfg.subfleets.map((sf) => {
+    const p = subfleetPenetration(penMap, sf) ?? {
+      synthetic: false as const,
+      equipped: 0,
+      total: 0,
+      pct: 0,
+    };
+    return { key: sf.key, label: sf.label, hint: sf.flightNumberHint, ...p };
+  });
+}
+
+/**
  * One airline's Starlink odds on a NONSTOP O-D pair.
  *
  * Reports the install rate across the subfleet(s) the carrier flies nonstop
@@ -896,17 +923,8 @@ export function compareRouteForAirline(
   }
 
   // ---- 2. Unbiased per-subfleet penetration from full roster ----
-  const penMap = reader.getSubfleetPenetration();
-  if (penMap.size === 0) return null;
-  const penArr: SubfleetBreakdown[] = cfg.subfleets.map((sf) => {
-    const p = subfleetPenetration(penMap, sf) ?? {
-      synthetic: false as const,
-      equipped: 0,
-      total: 0,
-      pct: 0,
-    };
-    return { key: sf.key, label: sf.label, hint: sf.flightNumberHint, ...p };
-  });
+  const penArr = subfleetBreakdown(cfg, reader);
+  if (penArr.length === 0) return null;
   const maxPct = Math.max(...penArr.map((p) => p.pct));
   const minSub = penArr.reduce((a, b) => (a.pct <= b.pct ? a : b));
 

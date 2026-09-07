@@ -15,7 +15,8 @@
       "build",
       "do_not_commit",
       ".playwright-browsers",
-      "tmp"
+      "tmp",
+      ".citation-cache"
     ]
   },
   "linter": {

@@ -15,6 +15,7 @@ The example database is a small sampled subset (≈50 aircraft) so the app boots
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `AEROAPI_KEY` | No | FlightAware API key (fallback, not used by default) |
+| `SHEETS_API_KEY` | No | Google Sheets API key; unlocks the per-tail install-pipeline ingest (in-mod tails on `/fleet`) |
 | `PORT` | No | Server port (default: 3000) |
 | `NODE_ENV` | No | Set to "production" for production mode |
 

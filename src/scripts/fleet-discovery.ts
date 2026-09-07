@@ -8,7 +8,11 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { buildFlightLookupVariants, stripFlightNumberZeros } from "../airlines/flight-number";
+import {
+  CANONICAL_FLIGHT_PERMALINK,
+  buildFlightLookupVariants,
+  stripFlightNumberZeros,
+} from "../airlines/flight-number";
 import { AIRLINES } from "../airlines/registry";
 import { FlightRadar24API } from "../api/flightradar24-api";
 import {
@@ -313,14 +317,14 @@ export async function verifyPlane(
           // flight permalink when we know one — tell IndexNow so Bing-family
           // engines recrawl before the hourly sitemap cycle. The permalink is
           // pinged in its canonical (zero-stripped) spelling and only when it
-          // passes the same existence gate the page serves behind — never a
-          // URL that would answer noindex.
+          // passes BOTH gates the page serves behind — never a URL that would
+          // answer 404 or noindex. Shape is not implied by existence: the
+          // upstream pickVerifiableFlight only requires bare digits, so a
+          // 5-digit row (UA63986) has data behind it and still hard-404s.
           const permalinkFn = stripFlightNumberZeros(`UA${forVerification.flightNumber}`);
-          const permalinkServes = flightNumberHasData(
-            db,
-            buildFlightLookupVariants(AIRLINES.UA, permalinkFn),
-            "UA"
-          );
+          const permalinkServes =
+            CANONICAL_FLIGHT_PERMALINK.test(permalinkFn) &&
+            flightNumberHasData(db, buildFlightLookupVariants(AIRLINES.UA, permalinkFn), "UA");
           pingIndexNow("UA", [
             "/",
             "/fleet",

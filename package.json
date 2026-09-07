@@ -25,6 +25,7 @@
     "reset-flights": "bun run src/scripts/reset-flight-checks.ts",
     "test": "bun test tests/",
     "test:setup": "bash scripts/test-setup.sh",
+    "verify-citations": "bun run scripts/verify-citations.ts",
     "wifi-patch": "bun run src/scripts/verified-wifi-patch.ts",
     "lint": "biome check .",
     "format": "biome format --write .",

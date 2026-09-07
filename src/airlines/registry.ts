@@ -74,10 +74,23 @@ export interface SiteFeatures {
   chromeExtension: boolean;
   /** Hub-only /airlines comparison index + per-airline rollout pages. */
   airlinesPages: boolean;
+  /** Hub-only /compare/{a}-vs-{b} head-to-head pages for tracked airlines. */
+  comparePages: boolean;
   /** /methodology — only where a per-tail verification loop actually runs
    * (UA united.com, AS alaskaair.com). HA/QR status is type-determined, so a
    * "how we verify" page there would overstate. */
   methodologyPage: boolean;
+  /** /newly-equipped + /feed.xml (Atom) — the newly-equipped-aircraft log.
+   * Off where DateFound history is entirely bulk-seeded (QR), where a
+   * permanently-empty feed would misread as a stalled rollout. */
+  newlyEquippedPage: boolean;
+  /** /embed — documents the auto-updating /badge.svg (the badge itself is
+   * always on: its live stat exists for every tenant and the hub). */
+  embedPage: boolean;
+  /** /install-rate — observed installs/month vs. stated targets. Off where
+   * the whole DateFound history is bulk-settled (QR): with no organic series
+   * the page could only abstain. */
+  installRatePage: boolean;
 }
 
 export interface SiteConfig {
@@ -102,8 +115,19 @@ export interface AirlineConfig {
   shortName: string;
   /** Background jobs (scrape/verify/discover/sync) skip airlines with enabled=false. resolveTenant still resolves them. */
   enabled: boolean;
-  /** Included on public hub surfaces and hub-only APIs. */
+  /** Included on the hub HOMEPAGE and hub-only APIs (/api/data, the hub's
+   * check-flight carrier detection, MCP). False keeps an airline out of every
+   * surface that promises a per-flight answer. */
   publicInHub: boolean;
+  /** Included on the hub's CONTENT surfaces — the /airlines roster, its own
+   * /airlines/{slug} page, /compare pairs, the hub sitemap and llms.txt —
+   * without joining publicInHub. This is the deliberate split for an airline
+   * we track at tail level but do not yet answer flight lookups for on the hub
+   * (QR: its data is real, its tenant site is not live). Declared here rather
+   * than implied by which helper a caller happens to use, because the two
+   * populations diverging silently is how a hidden airline leaks. An airline
+   * with publicInHub true is on the content surfaces regardless. */
+  hubContentOnly?: boolean;
   iata: string;
   icao: string;
   /** All operating-carrier prefixes (ICAO + IATA) that map to this marketing carrier. Longest-first. */
@@ -153,6 +177,21 @@ export interface AirlineConfig {
     status: RolloutStatus;
     statusLabel: string;
     phaseNote: string;
+    /** Is the tracked roster the rollout's own denominator?
+     *
+     * False when the roster counts aircraft the programme deliberately excludes
+     * (HA's 717s, QR's narrowbodies and freighters). On-site that nuance is
+     * carried by the status chip and phaseNote next to the number — but
+     * /badge.svg travels alone into third-party READMEs with no such context,
+     * so a bare "42 of 61" there would read as a 69%-done rollout the site
+     * itself calls Complete. Required, so a new airline has to decide.
+     *
+     * Coupled to wifiPhaseFamilies(): where that returns a type→phase table,
+     * /airlines and /compare already replace the blended percentage with the
+     * table, and this flag is how /badge.svg and the share cards reach the same
+     * verdict. Set both or neither — tests/distribution.test.ts asserts they
+     * agree for every airline. */
+    rosterIsProgramScope: boolean;
   };
   brand: PageBrand;
 }
@@ -229,6 +268,7 @@ const AIRLINE_DEFS = {
       statusLabel: "In progress",
       phaseNote:
         "Started with regional jets in early 2025; rolling out across United Express and mainline.",
+      rosterIsProgramScope: true,
     },
     brand: {
       title: "United Airlines Starlink Tracker",
@@ -274,6 +314,9 @@ const AIRLINE_DEFS = {
       status: "complete",
       statusLabel: "Complete",
       phaseNote: "Every A330 and A321neo has Starlink. The 717 interisland jets won't get it.",
+      // The 717s are counted but never eligible, so 42/61 understates a
+      // finished rollout.
+      rosterIsProgramScope: false,
     },
     routeTypeRule: (o, d) => {
       // Hawaiian's network is hub-and-spoke from Hawai'i — every route touches
@@ -300,8 +343,10 @@ const AIRLINE_DEFS = {
       faviconAccent: "#9d4edd", // Pualani purple, lifted to glow on dark
       socialImagePath: "/static/social-image-ha.webp",
       analyticsDomain: "hawaiianstarlinktracker.com",
+      // newsroom.hawaiianairlines.com fails TLS validation and 301s to a 404
+      // since the Alaska Air Group merger; this is the same release, live.
       pressReleaseUrl:
-        "https://newsroom.hawaiianairlines.com/releases/hawaiian-airlines-launches-fast-and-free-starlink-internet",
+        "https://news.alaskaair.com/releases/hawaiian-airlines-now-offering-fast-and-free-starlink-wi-fi-across-entire-airbus-fleet/",
     },
   },
   AS: {
@@ -366,11 +411,15 @@ const AIRLINE_DEFS = {
     flightHistoryModel: false,
     verifySite: "alaskaair.com",
     typeDeterministicWifi: alaskaTypeToWifi,
-    // Phase 1 (E175 regional) complete. Update status/phaseNote when 737/787 mainline starts.
+    // Phase 1 (E175 regional) complete; mainline 737/787 installs are under way
+    // — see the dated AirlineGeeks fact on /airlines/alaska for the count.
     rollout: {
       status: "phase_done",
       statusLabel: "Regional fleet done",
-      phaseNote: "All 90 regional E175s have Starlink. Mainline 737s and 787s start later in 2026.",
+      phaseNote:
+        "All 90 regional E175s have Starlink. Mainline 737 and 787 installs are under way.",
+      // Mainline is in the programme too — the whole roster is the denominator.
+      rosterIsProgramScope: true,
     },
     brand: {
       title: "Alaska Airlines Starlink Tracker",
@@ -397,7 +446,12 @@ const AIRLINE_DEFS = {
     name: "Qatar Airways",
     shortName: "Qatar",
     enabled: true,
+    // Hub content yes, hub answers no: the hub owns "Qatar vs United Starlink"
+    // and publishes QR's roster page, but qatarstarlinktracker.com is not live
+    // and the hub's flight-lookup APIs do not serve QR, so QR stays off the
+    // homepage and out of /api/*. Both halves are declared, not inferred.
     publicInHub: false,
+    hubContentOnly: true,
     iata: "QR",
     icao: "QTR",
     carrierPrefixes: ["QTR", "QR"],
@@ -425,6 +479,9 @@ const AIRLINE_DEFS = {
       statusLabel: "Widebodies done",
       phaseNote:
         "Every Boeing 777 and Airbus A350 has Starlink (rollout completed December 2025); the 787 fleet is mid-installation. Narrowbodies and freighters are not in the program.",
+      // Roster counts ~277 including narrowbodies and freighters the programme
+      // excludes; the in-scope widebody fleet is roughly half that.
+      rosterIsProgramScope: false,
     },
     brand: {
       title: "Qatar Airways Starlink Tracker",
@@ -659,6 +716,22 @@ export function publicAirlines(): AirlineConfig[] {
   return enabledAirlines().filter((a) => a.publicInHub);
 }
 
+/** The rule for "published on a hub content surface", as a predicate so it can
+ * be tested against flag combinations no live airline happens to have today. */
+export function isHubContent(
+  a: Pick<AirlineConfig, "enabled" | "publicInHub" | "hubContentOnly">
+): boolean {
+  return a.enabled && (a.publicInHub || Boolean(a.hubContentOnly));
+}
+
+/** The hub's CONTENT population: everything on the homepage, plus airlines
+ * flagged hubContentOnly. Every hub content surface (the /airlines roster,
+ * /compare, the sitemap, llms.txt) must derive from this one function — the
+ * bug it prevents is two surfaces disagreeing about who is published. */
+export function hubContentAirlines(): AirlineConfig[] {
+  return Object.values(AIRLINES).filter(isHubContent);
+}
+
 export function looksLikeValidTailNumber(tail: string): boolean {
   return Object.values(AIRLINES).some((a) => a.tailPattern.test(tail));
 }
@@ -696,7 +769,11 @@ const AIRLINE_SITE_FEATURES: SiteFeatures = {
   mcpPage: false,
   chromeExtension: false,
   airlinesPages: false,
+  comparePages: false,
   methodologyPage: false,
+  newlyEquippedPage: true,
+  embedPage: true,
+  installRatePage: true,
 };
 
 export const SITES: Record<string, SiteConfig> = {
@@ -740,7 +817,11 @@ export const SITES: Record<string, SiteConfig> = {
       mcpPage: false,
       chromeExtension: false,
       airlinesPages: true,
+      comparePages: true,
       methodologyPage: false,
+      newlyEquippedPage: true,
+      embedPage: true,
+      installRatePage: true,
     },
   },
   hawaiian: {
@@ -786,7 +867,15 @@ export const SITES: Record<string, SiteConfig> = {
     // Route planner reads flight_routes/departure_log and the routes page reads
     // upcoming_flights joined to starlink_planes — all empty for QR (schedule
     // lives in qatar_schedule). Hide both rather than ship a permanently-empty UX.
-    features: { ...AIRLINE_SITE_FEATURES, routePlannerPage: false, routesPage: false },
+    // newly-equipped is off for the same reason: QR statuses are type-settled in
+    // bulk (DateFound null), so the install log would be permanently empty.
+    features: {
+      ...AIRLINE_SITE_FEATURES,
+      routePlannerPage: false,
+      routesPage: false,
+      newlyEquippedPage: false,
+      installRatePage: false,
+    },
   },
 };
 
@@ -841,10 +930,13 @@ export function siteAirline(site: SiteConfig): AirlineConfig {
   return tenant;
 }
 
-// Hosts that resolve here but aren't tenants yet — 301 to the hub until the
-// airline has data. Promote to a tenant config and remove the entry when ready.
+// Hosts that resolve here but aren't tenants yet — 301 until the airline has
+// data. An origin-only target preserves the requested path + query; a target
+// with a path sends every request to that page (the parked domain IS the
+// query, e.g. deltastarlinktracker.com → the Delta explainer). Promote to a
+// tenant config and remove the entry when ready.
 export const HOST_REDIRECTS: Record<string, string> = {
-  "deltastarlinktracker.com": "https://airlinestarlinktracker.com",
+  "deltastarlinktracker.com": "https://airlinestarlinktracker.com/airlines/delta",
 };
 
 export function resolveSite(host: string | null): SiteConfig | null {

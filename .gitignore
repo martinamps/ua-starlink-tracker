@@ -20,3 +20,4 @@ ops/
 CLAUDE.local.md
 .claude/
 tsconfig.review.tsbuildinfo
+.citation-cache/

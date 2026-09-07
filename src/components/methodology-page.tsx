@@ -1,10 +1,11 @@
 import type React from "react";
 import { type SiteConfig, siteAirline } from "../airlines/registry";
-import { PageFooter } from "./atoms";
+import { PageFooter, type PageLink } from "./atoms";
 
 interface MethodologyPageProps {
   site: SiteConfig;
   lastUpdated: string;
+  pageLinks?: PageLink[];
 }
 
 interface DataSource {
@@ -79,7 +80,7 @@ export function hasMethodology(code: string): boolean {
   return code in SOURCES;
 }
 
-export default function MethodologyPage({ site, lastUpdated }: MethodologyPageProps) {
+export default function MethodologyPage({ site, lastUpdated, pageLinks }: MethodologyPageProps) {
   const cfg = siteAirline(site);
   const sources = SOURCES[cfg.code] ?? [];
   const stampedDate = new Date(lastUpdated);
@@ -216,7 +217,7 @@ export default function MethodologyPage({ site, lastUpdated }: MethodologyPagePr
         </a>
       </div>
 
-      <PageFooter site={site} />
+      <PageFooter site={site} pageLinks={pageLinks} />
     </div>
   );
 }

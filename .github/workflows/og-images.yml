@@ -27,15 +27,25 @@ jobs:
           PLAYWRIGHT_BROWSERS_PATH: do_not_commit/playwright-browsers
       - run: bun run generate-og
       - name: Commit if changed
-        # The social-image*.webp glob is a pinned convention: every registry
-        # socialImagePath basename must match it (tests/vocabulary.test.ts).
+        # These globs ARE the delivery path. The server reads STATIC_DIR from the
+        # image's own tree (Dockerfile `COPY . .`; generate-og never runs at build
+        # or boot), so an artifact this step doesn't commit does not exist in
+        # production — that's how the share cards shipped dead, with
+        # resolveShareCard() returning null forever. Every file the generator can
+        # emit must match one of these; tests/og-cards.test.ts fails the build if
+        # a spec filename escapes them.
+        #
+        # git status, not git diff: the diff is blind to untracked files, so a
+        # brand-new artifact would report "no changes" on the very run that
+        # created it.
         run: |
-          if git diff --quiet static/social-image*.webp; then
+          GLOBS=('static/social-image*.webp' 'static/share-card-*.png')
+          if [ -z "$(git status --porcelain -- "${GLOBS[@]}")" ]; then
             echo "no changes"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add static/social-image*.webp
+          git add -- "${GLOBS[@]}"
           git commit -m "chore: refresh OG images [skip ci]"
           git push

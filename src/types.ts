@@ -63,6 +63,17 @@ export interface RecentInstall {
   DateFound: string;
 }
 
+/** A newly equipped tail's first observed revenue departure (first_flights). */
+export interface FirstFlight {
+  tail_number: string;
+  airline: string;
+  flight_number: string;
+  origin: string;
+  destination: string;
+  departed_at: number;
+  recorded_at: number;
+}
+
 interface FleetMetrics {
   total: number;
   starlink: number;
@@ -182,6 +193,10 @@ export interface FleetPageData {
   progress: FleetProgressRow[];
   /** Officially-reported fleet/Starlink figures (single-airline pages only). */
   anchors: FleetAnchorRow[];
+  /** Per-tail pipeline states (empty until the color-grid ingest has run and validated). */
+  progressTails: FleetProgressTailRow[];
+  /** Recent pipeline transitions + confirmed-live installs, newest first. */
+  movements: FleetMovement[];
 }
 
 /** One per-type row of the install pipeline (United Fleet Site progress workbooks). */
@@ -195,6 +210,45 @@ export interface FleetProgressRow {
   verification_needed: number | null;
   sheet_updated: string | null;
   fetched_at: number;
+}
+
+export type FleetProgressTailState = "in_mod" | "verification_needed" | "scheduled";
+
+/** One tail currently in the install pipeline, decoded from the progress
+ * workbooks' cell colors (Sheets API grid read, not the CSV export). */
+export interface FleetProgressTailRow {
+  airline: string;
+  segment: string;
+  type_code: string;
+  tail: string;
+  state: FleetProgressTailState;
+  /** Mod-line station (e.g. MLB, HKG) when the cell color maps to one. */
+  mod_location: string | null;
+  sheet_updated: string | null;
+  fetched_at: number;
+}
+
+export type PipelineEventKind = "entered_mod" | "to_verification" | "queued";
+
+/** One observed install-pipeline transition, diffed between daily grid reads. */
+export interface PipelineEventRow {
+  airline: string;
+  tail: string;
+  type_code: string;
+  segment: string;
+  event: PipelineEventKind;
+  mod_location: string | null;
+  observed_at: number;
+}
+
+/** One line of the movements feed: pipeline transitions merged with
+ * confirmed-live installs from the roster data. */
+export interface FleetMovement {
+  date: string; // YYYY-MM-DD
+  tail: string;
+  type_code: string;
+  kind: PipelineEventKind | "confirmed";
+  mod_location: string | null;
 }
 
 /** An officially-reported fleet/Starlink figure from an SEC filing. */
