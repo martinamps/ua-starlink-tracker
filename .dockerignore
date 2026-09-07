@@ -12,3 +12,5 @@ logs/
 docs/
 tests/
 do_not_commit/
+# Host-built CSS never enters the image; `RUN bun run build:css` produces it.
+static/tailwind.css
