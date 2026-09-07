@@ -361,7 +361,6 @@ for (const p of SOCIAL_IMAGE_PATHS) {
   }
 }
 
-
 /**
  * Compiled Tailwind, fingerprinted and registered as a tenant-agnostic asset.
  *
@@ -2614,7 +2613,6 @@ function flightPageMeta(
     pageJsonLd,
   };
 }
-
 
 /** Meta for a URL that isn't a flight number. Reuses the conversion page's
  * title/description when the segment is garbage; that would stamp thousands of
