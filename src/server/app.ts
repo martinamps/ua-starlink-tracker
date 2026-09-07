@@ -361,7 +361,6 @@ for (const p of SOCIAL_IMAGE_PATHS) {
   }
 }
 
-
 /**
  * Compiled Tailwind, fingerprinted and registered as a tenant-agnostic asset.
  *
