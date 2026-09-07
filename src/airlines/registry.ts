@@ -80,6 +80,11 @@ export interface SiteFeatures {
    * (UA united.com, AS alaskaair.com). HA/QR status is type-determined, so a
    * "how we verify" page there would overstate. */
   methodologyPage: boolean;
+  /** /timeline — dated rollout milestones. Also gated on the airline having a
+   * timeline story (timeline-page's hasTimeline), like methodology's content gate. */
+  timelinePage: boolean;
+  /** /how-to-check + /is-starlink-free intent pages. */
+  intentPages: boolean;
   /** /newly-equipped + /feed.xml (Atom) — the newly-equipped-aircraft log.
    * Off where DateFound history is entirely bulk-seeded (QR), where a
    * permanently-empty feed would misread as a stalled rollout. */
@@ -771,6 +776,8 @@ const AIRLINE_SITE_FEATURES: SiteFeatures = {
   airlinesPages: false,
   comparePages: false,
   methodologyPage: false,
+  timelinePage: false,
+  intentPages: false,
   newlyEquippedPage: true,
   embedPage: true,
   installRatePage: true,
@@ -794,6 +801,8 @@ export const SITES: Record<string, SiteConfig> = {
       mcpPage: true,
       chromeExtension: true,
       methodologyPage: true,
+      timelinePage: true,
+      intentPages: true,
     },
   },
   airline: {
@@ -819,6 +828,8 @@ export const SITES: Record<string, SiteConfig> = {
       airlinesPages: true,
       comparePages: true,
       methodologyPage: false,
+      timelinePage: false,
+      intentPages: false,
       newlyEquippedPage: true,
       embedPage: true,
       installRatePage: true,

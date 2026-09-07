@@ -8,6 +8,7 @@ import {
 import {
   AIRLINES,
   type AirlineCode,
+  type AirlineConfig,
   type LastUpdatedOwner,
   OBSERVED_WIFI_SOURCES,
   VERIFICATION_SOURCES,
@@ -2125,6 +2126,111 @@ export function flightNumberHasData(
  */
 export const ROUTE_AIRPORT_RE = /^[A-Z]{3}$/;
 
+export interface PopularFlight {
+  flight_number: string;
+  /** Most-seen leg, for qualified anchor text; null when no clean IATA pair is recorded. */
+  origin: string | null;
+  destination: string | null;
+  /** Accumulated observations across all legs (flight_routes.seen_count). */
+  times: number;
+}
+
+// Per-database so a synthetic test DB can never serve its ranking to the
+// snapshot (or to prod). The block is a ranking over every recorded route for
+// the airline plus a GROUP BY of the live window — cheap once, but it renders
+// on /, /check-flight, /routes and every ungated permalink, none of which are
+// edge-cacheable (SECURITY_HEADERS.html is `private, no-store`), so without
+// this every one of those requests paid the whole aggregation. The ranking
+// moves on the order of days; minutes of staleness are invisible.
+const popularFlightsCache = new WeakMap<
+  Database,
+  Map<string, { data: PopularFlight[]; at: number }>
+>();
+const POPULAR_FLIGHTS_TTL_MS = 10 * 60_000;
+
+/**
+ * Most-observed marketing flight numbers for one airline — the source for the
+ * server-rendered "popular flights" blocks that give the /check-flight/{fn}
+ * corpus crawlable inlinks. Same two populations as getSitemapFlights /
+ * flightNumberHasData (accumulated flight_routes + live upcoming_flights), so
+ * every link serves; ranked by accumulated seen_count, which keeps the anchors
+ * stable from crawl to crawl instead of churning with the 48h schedule window.
+ * Memoized per (database, airline, limit) — see popularFlightsCache.
+ */
+export function getPopularFlights(db: Database, airline: AirlineCode, limit = 12): PopularFlight[] {
+  const cfg = AIRLINES[airline];
+  if (!cfg) return [];
+  let perDb = popularFlightsCache.get(db);
+  if (!perDb) {
+    perDb = new Map();
+    popularFlightsCache.set(db, perDb);
+  }
+  const key = `${airline}:${limit}`;
+  const now = Date.now();
+  const hit = perDb.get(key);
+  if (hit && now - hit.at < POPULAR_FLIGHTS_TTL_MS) return hit.data;
+  const data = computePopularFlights(db, cfg, limit);
+  perDb.set(key, { data, at: now });
+  return data;
+}
+
+function computePopularFlights(db: Database, cfg: AirlineConfig, limit: number): PopularFlight[] {
+  const marketing = new RegExp(`^${cfg.iata}\\d+$`);
+  const cached = db
+    .query(
+      `SELECT flight_number, origin, destination, seen_count
+       FROM flight_routes WHERE flight_number GLOB ?`
+    )
+    .all(`${cfg.iata}[0-9]*`) as {
+    flight_number: string;
+    origin: string;
+    destination: string;
+    seen_count: number;
+  }[];
+  const live = db
+    .query(
+      `SELECT flight_number, departure_airport AS origin, arrival_airport AS destination,
+              COUNT(*) AS seen_count
+       FROM upcoming_flights
+       WHERE airline = ? AND flight_number IS NOT NULL
+       GROUP BY flight_number, departure_airport, arrival_airport`
+    )
+    .all(cfg.code) as typeof cached;
+  const agg = new Map<
+    string,
+    { times: number; best: { origin: string; destination: string; times: number } | null }
+  >();
+  for (const r of [...cached, ...live]) {
+    // Zero-padded spellings collapse onto the canonical permalink, same as
+    // getSitemapFlights — the padded URL would 301.
+    const fn = stripFlightNumberZeros(ensureAirlinePrefix(cfg, r.flight_number));
+    if (!marketing.test(fn)) continue;
+    const cur = agg.get(fn) ?? { times: 0, best: null };
+    cur.times += r.seen_count;
+    const cleanPair =
+      ROUTE_AIRPORT_RE.test(r.origin) &&
+      ROUTE_AIRPORT_RE.test(r.destination) &&
+      r.origin !== r.destination;
+    if (cleanPair && (!cur.best || r.seen_count > cur.best.times)) {
+      cur.best = { origin: r.origin, destination: r.destination, times: r.seen_count };
+    }
+    agg.set(fn, cur);
+  }
+  return [...agg]
+    .map(([flight_number, v]) => ({
+      flight_number,
+      origin: v.best?.origin ?? null,
+      destination: v.best?.destination ?? null,
+      times: v.times,
+    }))
+    .sort(
+      (a, b) =>
+        b.times - a.times ||
+        a.flight_number.localeCompare(b.flight_number, undefined, { numeric: true })
+    )
+    .slice(0, limit);
+}
+
 export interface SitemapRoute {
   origin: string;
   destination: string;
@@ -2222,14 +2328,21 @@ export interface RouteSummary {
   windowLabel: string;
 }
 
-/** Everything a /route-planner/{origin}/{destination} page renders. */
-export function getRouteSummary(
+/** The flight-number half of a route summary. Split out because the flight
+ * permalinks' sibling links need only this: the two windowed COUNT(DISTINCT …)
+ * departure joins getRouteSummary also runs were computed and thrown away on
+ * every render of the largest crawled URL family. */
+export interface RouteFlightNumbers {
+  flightNumbers: RouteSummary["flightNumbers"];
+  durationSec: number | null;
+}
+
+export function getRouteFlightNumbers(
   db: Database,
   origin: string,
   destination: string,
-  airline: string,
-  nowSec = Math.floor(Date.now() / 1000)
-): RouteSummary {
+  airline: string
+): RouteFlightNumbers {
   const cfg = AIRLINES[airline];
   const cached = cfg
     ? (db
@@ -2286,6 +2399,19 @@ export function getRouteSummary(
     .filter((d): d is number => typeof d === "number" && d > 0)
     .sort((a, b) => a - b);
   const durationSec = durations.length ? durations[Math.floor(durations.length / 2)] : null;
+
+  return { flightNumbers, durationSec };
+}
+
+/** Everything a /route-planner/{origin}/{destination} page renders. */
+export function getRouteSummary(
+  db: Database,
+  origin: string,
+  destination: string,
+  airline: string,
+  nowSec = Math.floor(Date.now() / 1000)
+): RouteSummary {
+  const { flightNumbers, durationSec } = getRouteFlightNumbers(db, origin, destination, airline);
 
   const windowEnd = nowSec + DEPARTURE_WINDOW_HOURS * 3600;
   const equippedQ = withAirline(
