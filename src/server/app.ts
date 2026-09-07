@@ -2640,7 +2640,7 @@ const checkFlightPage: Handler = (ctx) => {
       "/check-flight",
       { ...subPageMeta(ctx, "check-flight"), robotsMeta: "noindex, nofollow" },
       { invalid },
-      { edgeCacheable404: true }
+      404
     );
   if (parsed.kind === "invalid") {
     const query = echoQuery(parsed.raw);
