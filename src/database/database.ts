@@ -2453,48 +2453,131 @@ export interface FlightRoutePair {
   dur_sec: number | null;
   /** 1 when the leg appears in the live schedule window, 0 when it is only history. */
   scheduled: number;
+  /** Newest evidence for this leg (unix seconds); null when the row carries no timestamp. */
+  last_seen_at: number | null;
 }
 
-/** Route pairs a flight number flies, currently-scheduled legs first and
- * most-flown within that — the accumulated flight_routes cache unioned with the
- * live upcoming_flights window (which covers legs the cache hasn't recorded yet).
+/** Grace period: a leg silent for less than this is not discounted at all.
  *
- * Ordering leads with `scheduled` rather than raw frequency because
+ * Sized against how last_seen_at is actually produced, which is NOT "whenever the
+ * leg is on the schedule": cacheFlightRoute is reached only from updateFlights and
+ * the MCP FR24 lookup, and every updateFlights caller iterates a Starlink-equipped
+ * roster (flight-updater over starlink_planes, fleet-discovery's confirmed
+ * branches). A leg re-stamps only when one of the ~33% of UA tails that carry
+ * Starlink happens to be assigned to it inside the ~47h window (546/1651
+ * fleet-wide, 202/1146 mainline, measured 2026-08-29).
+ *
+ * That per-day stamping rate varies by subfleet — mainline is the worst case at
+ * 17.6%, express is far denser — so the grace period is sized off the worst case
+ * and is therefore conservative for everything else: at 17.6% a daily leg goes a
+ * full week unstamped 26% of the time (0.824^7) but a full month only 0.3% of the
+ * time (0.824^30). A week-long window would demote live mainline routes on
+ * ordinary sampling gaps; a month does not. */
+const ROUTE_GRACE_SEC = 30 * 24 * 60 * 60;
+
+/** Past the grace period, each of these halves a leg's evidence.
+ *
+ * Deliberately slower than the sampling model alone justifies — at 17.6% daily
+ * stamping two months of silence already runs ~1e-5 against "still flown daily"
+ * (0.824^60) — because the two error directions are not symmetric: seen_count
+ * only ever grows, so wrongly demoting a live leg corrects itself the next time a
+ * Starlink tail draws it, while wrongly promoting a dead one persists. */
+const ROUTE_STALE_HALF_LIFE_SEC = 15 * 24 * 60 * 60;
+
+/** Floor on the staleness discount: how much of a silent leg's evidence survives,
+ * however long the silence runs. Without it, staleness alone eventually decides
+ * and a lone sighting titles the page — the failure the discount exists to avoid.
+ * With it, a leg still being seen leads a silent one only on evidence of its own:
+ * it needs more than an eighth of the silent leg's observations. */
+const ROUTE_MIN_STALE_WEIGHT = 1 / 8;
+
+const MAX_ROUTE_PAIRS = 4;
+
+/** Route pairs a flight number flies, scheduled legs first and best-evidenced
+ * within that — the accumulated flight_routes cache unioned with the live
+ * upcoming_flights window (which covers legs the cache hasn't recorded yet).
+ *
+ * Evidence is frequency discounted by silence, not frequency alone, because
  * flight_routes.seen_count accumulates for the life of a flight number. When a
- * number is reassigned to a new city pair, the retired leg keeps out-counting
- * the current one indefinitely, so callers that take routes[0] as "the" route —
- * page titles, meta descriptions, Flight JSON-LD — would advertise a route the
- * flight no longer flies. */
+ * number is reassigned to a new city pair, the retired leg keeps out-counting the
+ * current one indefinitely, so callers that take routes[0] as "the" route — page
+ * titles, meta descriptions, Flight JSON-LD — would advertise a route the flight
+ * no longer flies.
+ *
+ * A live upcoming_flights row is proof of currency and wins outright. Failing
+ * that (the window only reaches ~47h ahead, so a number with no near-term
+ * assignment has none), route-cache staleness discounts frequency:
+ * score = times x weight(silence), weight decaying from 1 to
+ * ROUTE_MIN_STALE_WEIGHT. Staleness is measured from `now`, never from the
+ * number's own freshest leg — anchored to the number, some leg is always "recent"
+ * by construction and a single diversion recorded an hour ago would outrank the
+ * daily route.
+ *
+ * A discount rather than a tier because a tier is a knife edge: with a binary
+ * cutoff a page's title, meta description and JSON-LD flip the instant a leg
+ * crosses 30 days unstamped, no matter how lopsided the counts, and flip back on
+ * the next stamp. Discounting makes the promoted leg pay for the promotion in its
+ * own observations, and makes the crossing gradual instead of instantaneous:
+ * between the grace period and the floor the weight ramps down, so legs whose
+ * counts are close change places while lopsided ones never do.
+ *
+ * Demotes rather than filters — a hard cutoff would leave cold-tail permalinks
+ * with no route at all for the title and JSON-LD. */
 export function getFlightRoutePairs(
   db: Database,
   variants: string[],
-  airline?: AirlineFilter
+  airline?: AirlineFilter,
+  now = Math.floor(Date.now() / 1000)
 ): FlightRoutePair[] {
   const placeholders = variants.map(() => "?").join(",");
   const upcoming = withAirline(
     `SELECT departure_airport, arrival_airport, COUNT(*) AS times,
             CAST(AVG(arrival_time - departure_time) AS INTEGER) AS dur_sec,
-            1 AS scheduled
+            1 AS scheduled, MAX(last_updated) AS last_seen_at
      FROM upcoming_flights WHERE flight_number IN (${placeholders})`,
     airline,
     "",
     [...variants]
   );
-  return db
+  const rows = db
     .query(
       `SELECT departure_airport, arrival_airport, SUM(times) AS times, MAX(dur_sec) AS dur_sec,
-              MAX(scheduled) AS scheduled
+              MAX(scheduled) AS scheduled, MAX(last_seen_at) AS last_seen_at
        FROM (
          SELECT origin AS departure_airport, destination AS arrival_airport,
-                seen_count AS times, duration_sec AS dur_sec, 0 AS scheduled
+                seen_count AS times, duration_sec AS dur_sec, 0 AS scheduled,
+                last_seen_at
          FROM flight_routes WHERE flight_number IN (${placeholders})
          UNION ALL
          ${upcoming.sql} GROUP BY departure_airport, arrival_airport
        )
+       -- An origin that equals its destination is a source artifact (returns and
+       -- diversions come back logged as A->A), never a route. Dropping it here
+       -- keeps it out of titles and JSON-LD, and out of the /route-planner/A/A
+       -- link the permalink builds per row, which 404s by design.
+       WHERE departure_airport <> arrival_airport
        GROUP BY departure_airport, arrival_airport
-       ORDER BY scheduled DESC, times DESC LIMIT 4`
+       ORDER BY scheduled DESC, times DESC`
     )
     .all(...variants, ...upcoming.params) as FlightRoutePair[];
+
+  // A timestamp ahead of now is corrupt, not fresh (the test snapshot carries one
+  // dated 2036). Counted as evidence it would pin a junk row to routes[0] forever,
+  // since no amount of elapsed time ever catches up to it — so it counts as none.
+  const silence = (r: FlightRoutePair) => {
+    const t = r.last_seen_at ?? 0;
+    return t > now ? now : now - t;
+  };
+  const score = (r: FlightRoutePair) => {
+    if (r.scheduled === 1) return r.times;
+    const stale = Math.max(0, silence(r) - ROUTE_GRACE_SEC);
+    const weight = Math.max(2 ** (-stale / ROUTE_STALE_HALF_LIFE_SEC), ROUTE_MIN_STALE_WEIGHT);
+    return r.times * weight;
+  };
+
+  return rows
+    .sort((a, b) => b.scheduled - a.scheduled || score(b) - score(a) || b.times - a.times)
+    .slice(0, MAX_ROUTE_PAIRS);
 }
 
 export interface FlightHistorySummary {
