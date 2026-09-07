@@ -28,8 +28,10 @@ import {
   type FlightHistorySummary,
   type FlightRoutePair,
   type HubAirlineStat,
+  type PopularFlight,
   type QatarScheduleRow,
   type RouteEntryRow,
+  type RouteFlightNumbers,
   type RouteFlightRow,
   type RouteGraphEdge,
   type RouteSummary,
@@ -54,6 +56,7 @@ import {
   getDailyInstalls,
   getDirectRouteEdge,
   getFirstFlights,
+  getFleetAnchors,
   getFleetDiscoveryStats,
   getFleetEntryByTail,
   getFleetPageData,
@@ -67,10 +70,12 @@ import {
   getMeta,
   getObservedDirectFlightNumbers,
   getPendingFleetTails,
+  getPopularFlights,
   getQatarScheduleByFlight,
   getQatarScheduleByRoute,
   getQatarScheduleStats,
   getRecentInstalls,
+  getRouteFlightNumbers,
   getRouteFlights,
   getRouteGraphEdges,
   getRouteStarlinkSchedule,
@@ -122,6 +127,10 @@ export interface ScopedReader {
   getLastUpdatedRaw(): string | null;
   /** Flight permalinks worth advertising, with real per-flight lastmod; empty on the hub (permalinks are tenant pages). */
   getSitemapFlights(): SitemapFlight[];
+  /** Most-observed flight numbers for "popular flights" link blocks; empty on the hub (permalinks are tenant pages). */
+  getPopularFlights(limit?: number): PopularFlight[];
+  /** Officially-reported fleet/Starlink figures (SEC filings) for this scope. */
+  getFleetAnchors(): ReturnType<typeof getFleetAnchors>;
   /** Route permalinks worth advertising, with real per-route lastmod; empty on the hub (route pages are tenant pages). */
   getSitemapRoutes(): SitemapRoute[];
   /** Meta keys are namespaced per-airline; null on the hub (no single namespace). */
@@ -174,6 +183,9 @@ export interface ScopedReader {
   /** Existence gate for /route-planner/{origin}/{destination}; mirrors getSitemapRoutes. */
   routeHasData(origin: string, destination: string): boolean;
   getRouteSummary(origin: string, destination: string): RouteSummary;
+  /** Marketing numbers on a pair without getRouteSummary's windowed departure
+   * counts — what the flight permalinks' sibling links actually need. */
+  getRouteFlightNumbers(origin: string, destination: string): RouteFlightNumbers;
   getFlightHistorySummary(variants: string[]): FlightHistorySummary;
   getFlightRoutePairs(variants: string[]): FlightRoutePair[];
 
@@ -302,6 +314,8 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
         .at(-1) ?? null,
     getSitemapFlights: () => (scope === "ALL" ? [] : getSitemapFlights(db, scope)),
     getSitemapRoutes: () => (scope === "ALL" ? [] : getSitemapRoutes(db, scope)),
+    getPopularFlights: (limit) => (scope === "ALL" ? [] : getPopularFlights(db, scope, limit)),
+    getFleetAnchors: () => getFleetAnchors(db, airlines),
     getMeta: (key) => (scope === "ALL" ? null : getMeta(db, key, scope)),
     getFlightAssignments: (v, s, e) => getFlightAssignments(db, v, s, e, airlines),
     getFleetPageData: () => getFleetPageData(db, airlines),
@@ -331,6 +345,7 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     flightNumberHasData: (v) => flightNumberHasData(db, v, airlines),
     routeHasData: (o, d) => routeHasData(db, o, d, soleAirline()),
     getRouteSummary: (o, d) => getRouteSummary(db, o, d, soleAirline()),
+    getRouteFlightNumbers: (o, d) => getRouteFlightNumbers(db, o, d, soleAirline()),
     getFlightHistorySummary: (v) => getFlightHistorySummary(db, v, airlines),
     getFlightRoutePairs: (v) => getFlightRoutePairs(db, v, airlines),
 

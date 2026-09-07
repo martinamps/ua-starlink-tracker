@@ -111,6 +111,15 @@ export const SECURITY_HEADERS = {
     "Cache-Control": "private, no-store",
     "Content-Security-Policy": `default-src 'self'; connect-src ${CONNECT_SRC}; script-src ${SCRIPT_SRC}; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:;`,
   },
+  // Full React page served as a 404 (invalid /check-flight segment). Needs the
+  // page CSP for its inline lookup script, plus shared-cache so crawlers don't
+  // re-render at origin on every sweep.
+  notFoundHtml: {
+    ...BASE_RESPONSE_HEADERS,
+    "Content-Type": "text/html",
+    "Cache-Control": "public, s-maxage=3600, max-age=0, must-revalidate",
+    "Content-Security-Policy": `default-src 'self'; connect-src ${CONNECT_SRC}; script-src ${SCRIPT_SRC}; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:;`,
+  },
   notFound: {
     ...BASE_RESPONSE_HEADERS,
     "Content-Type": "text/html",

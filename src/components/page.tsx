@@ -2,6 +2,7 @@ import type React from "react";
 import type { AirlineContent, ContentStats } from "../airlines/content";
 import { ensureAirlinePrefix } from "../airlines/flight-number";
 import { AIRLINES, type SiteConfig, siteAirline } from "../airlines/registry";
+import type { PopularFlight } from "../database/database";
 import type {
   Aircraft,
   AirportDeparture,
@@ -16,6 +17,7 @@ import {
   HeaderStatStrip,
   type PageLink,
   PageNavLinks,
+  PopularFlightsLinks,
   ShareCardLink,
 } from "./atoms";
 import { PassengerBanner } from "./passenger-banner";
@@ -79,6 +81,8 @@ interface PageProps {
   /** Pre-rendered share card path; null until the nightly batch produced one. */
   shareCard?: string | null;
   pageLinks?: PageLink[];
+  /** Most-observed flight numbers — crawlable inlinks into the permalink corpus. */
+  popularFlights?: PopularFlight[];
 }
 
 /**
@@ -338,6 +342,7 @@ export default function Page({
   installs30d,
   shareCard,
   pageLinks,
+  popularFlights = [],
 }: PageProps) {
   // Apply date overrides to the aircraft data
   const applyDateOverrides = (data: Aircraft[]): Aircraft[] => {
@@ -416,7 +421,8 @@ export default function Page({
       ? [{ href: "/fleet", label: "Fleet Rollout", badge: features.routesPage ? "" : "NEW" }]
       : []),
     ...(features.routesPage ? [{ href: "/routes", label: "Live Routes", badge: "NEW" }] : []),
-    ...(features.mcpPage ? [{ href: "/mcp", label: "Tools & MCP", badge: "NEW" }] : []),
+    ...(features.timelinePage ? [{ href: "/timeline", label: "Timeline", badge: "NEW" }] : []),
+    ...(features.mcpPage ? [{ href: "/mcp", label: "Tools & MCP", badge: "" }] : []),
   ];
   // Filter buttons act on the rendered rows, so their counts must describe the
   // capped list — full-fleet numbers live in the hero and on /fleet.
@@ -1041,6 +1047,16 @@ export default function Page({
         </div>
       )}
 
+      {/* Popular flights — server-rendered inlinks into the permalink corpus */}
+      {features.checkFlightPage && popularFlights.length > 0 && (
+        <div className="relative max-w-3xl mx-auto w-full mb-12">
+          <PopularFlightsLinks
+            flights={popularFlights}
+            airlineName={site.scope !== "ALL" ? siteAirline(site).name : "tracked"}
+          />
+        </div>
+      )}
+
       {/* FAQ Section */}
       <div className="relative mb-12">
         <div className="text-center mb-6">
@@ -1413,6 +1429,17 @@ export default function Page({
                 className="text-secondary hover:text-primary transition-colors"
               >
                 Methodology
+              </a>
+            </>
+          )}
+          {features.intentPages && (
+            <>
+              <span className="text-muted">·</span>
+              <a
+                href="/is-starlink-free"
+                className="text-secondary hover:text-primary transition-colors"
+              >
+                Is it free?
               </a>
             </>
           )}

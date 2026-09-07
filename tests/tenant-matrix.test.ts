@@ -206,6 +206,9 @@ const ROUTES: Array<[route: string, feature: keyof SiteConfig["features"] | null
   ["/newly-equipped", "newlyEquippedPage"],
   ["/embed", "embedPage"],
   ["/install-rate", "installRatePage"],
+  ["/timeline", "timelinePage"],
+  ["/how-to-check", "intentPages"],
+  ["/is-starlink-free", "intentPages"],
 ];
 const isHtmlRoute = (route: string) => !route.startsWith("/api/") && !route.endsWith(".txt");
 
