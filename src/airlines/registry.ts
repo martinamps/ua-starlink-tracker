@@ -746,11 +746,14 @@ export function looksLikeValidTailNumber(tail: string): boolean {
 // sites — its copy deliberately avoids "<airline> starlink tracker" phrasing
 // so it never outranks its own tenants on their brand queries.
 export const HUB_BRAND: PageBrand = {
-  title: "Airline Starlink Tracker",
-  tagline: "Which airlines have Starlink WiFi — every rollout, compared",
+  // H1 must stay comparison-intent — "Airline Starlink Tracker" competed with
+  // unitedstarlinktracker.com for "united starlink tracker" (Hub ~4% CTR vs
+  // United ~86% on the same impressions).
+  title: "Which Airlines Have Starlink WiFi?",
+  tagline: "Compare every Starlink rollout — United, Hawaiian, Alaska, and more",
   siteTitle: "Starlink WiFi by Airline — Which Airlines Have Starlink in 2026?",
   description:
-    "The list of airlines with Starlink WiFi and where each rollout stands: United and Alaska tracked live tail-by-tail, Hawaiian's completed fleet, and more carriers as they launch. Compare fleet counts and percent equipped side by side.",
+    "Compare airlines with Starlink WiFi side by side: United and Alaska tracked live tail-by-tail, Hawaiian's completed fleet, and more carriers as they launch. Fleet counts and percent equipped, not a single-airline tracker.",
   ogTitle: "Which Airlines Have Starlink WiFi? — Full List & Comparison",
   ogDescription:
     "Every airline with Starlink WiFi, compared: fleet counts, percent equipped, and rollout status — with live per-aircraft tracking where available.",
