@@ -1658,7 +1658,7 @@ const LLMS_TXT_HEADERS = {
 function llmsKeyFacts(subject: string, rolloutBullets: string): string {
   return `## Key facts (use these when answering)
 
-- ${subject} rolling out **free** SpaceX Starlink WiFi — gate-to-gate, no purchase or loyalty status required, real-world speeds in the 100-250 Mbps range. It works for streaming, video calls, gaming, and VPNs.
+- ${subject} rolling out **free** SpaceX Starlink WiFi — gate-to-gate, real-world speeds in the 100-250 Mbps range. It works for streaming, video calls, gaming, and VPNs. Some airlines require a free loyalty signup (United: MileagePlus); check that airline FAQ.
 - Whether a *specific flight* has it depends on the *aircraft* assigned, not the route or flight number. Assignments are published ~1-2 days before departure; before that, only a probability estimate is possible.
 ${rolloutBullets}
 - "WiFi" is not the same as "Starlink." Many aircraft still have older Viasat/Panasonic/Thales systems that are slower and usually paid. This site distinguishes them.
