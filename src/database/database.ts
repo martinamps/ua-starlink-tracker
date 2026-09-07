@@ -2053,12 +2053,28 @@ export interface SitemapFlight {
 }
 
 /**
- * Flight numbers with real data behind /check-flight/{fn} — the live schedule
- * window (upcoming_flights) plus the accumulated route cache (flight_routes)
- * — with the latest write per flight, so sitemap <lastmod> reflects when the
- * data changed, not when the sitemap was requested. flight_routes is matched
- * by marketing IATA only: operating prefixes (OO/SKW…) fly for multiple
- * carriers and the table has no airline column to disambiguate.
+ * Minimum accumulated flight_routes.seen_count before a flight number that is
+ * NOT also in the live upcoming_flights window earns a sitemap slot. One-off
+ * API/MCP cache writes used to mint thousands of thin /check-flight/{fn} URLs
+ * (United sitemap ~4.5k check-flight locs, 29 GSC warnings). Pages still
+ * serve via flightNumberHasData; we only stop advertising the long tail.
+ */
+export const SITEMAP_FLIGHT_MIN_SEEN = 3;
+
+/**
+ * Minimum SUM(seen_count) across a directed airport pair (or presence in the
+ * live upcoming window) before /route-planner/{o}/{d} is advertised. Keeps
+ * valuable indexable routes while dropping sparse parameterized planner URLs
+ * (United ~2.2k route-planner locs at 0.27% CTR on the tool itself).
+ */
+export const SITEMAP_ROUTE_MIN_SEEN = 5;
+
+/**
+ * Flight numbers with real data behind /check-flight/{fn} worth advertising —
+ * every flight in the live schedule window, plus accumulated flight_routes
+ * rows that clear SITEMAP_FLIGHT_MIN_SEEN. flight_routes is matched by
+ * marketing IATA only: operating prefixes (OO/SKW…) fly for multiple carriers
+ * and the table has no airline column to disambiguate.
  */
 export function getSitemapFlights(db: Database, airline: AirlineCode): SitemapFlight[] {
   const cfg = AIRLINES[airline];
@@ -2081,13 +2097,22 @@ export function getSitemapFlights(db: Database, airline: AirlineCode): SitemapFl
        WHERE airline = ? AND flight_number IS NOT NULL GROUP BY flight_number`
     )
     .all(airline) as { flight_number: string; t: number | null }[];
+  for (const r of upcoming) touch(r.flight_number, r.t);
+  const inUpcoming = new Set(latest.keys());
   const cached = db
     .query(
-      `SELECT flight_number, MAX(last_seen_at) AS t FROM flight_routes
+      `SELECT flight_number, MAX(last_seen_at) AS t, SUM(seen_count) AS seen
+       FROM flight_routes
        WHERE flight_number GLOB ? GROUP BY flight_number`
     )
-    .all(`${cfg.iata}[0-9]*`) as { flight_number: string; t: number | null }[];
-  for (const r of [...upcoming, ...cached]) touch(r.flight_number, r.t);
+    .all(`${cfg.iata}[0-9]*`) as { flight_number: string; t: number | null; seen: number | null }[];
+  for (const r of cached) {
+    const fn = stripFlightNumberZeros(ensureAirlinePrefix(cfg, r.flight_number));
+    if (!marketing.test(fn)) continue;
+    if (inUpcoming.has(fn) || (r.seen ?? 0) >= SITEMAP_FLIGHT_MIN_SEEN) {
+      touch(r.flight_number, r.t);
+    }
+  }
   return [...latest]
     .map(([flight_number, last_touched]) => ({ flight_number, last_touched }))
     .sort((a, b) => a.flight_number.localeCompare(b.flight_number, undefined, { numeric: true }));
@@ -2260,12 +2285,6 @@ export function getSitemapRoutes(db: Database, airline: string): SitemapRoute[] 
     const key = `${origin}-${destination}`;
     latest.set(key, Math.max(latest.get(key) ?? 0, sane));
   };
-  const cached = db
-    .query(
-      `SELECT origin, destination, MAX(last_seen_at) AS t FROM flight_routes
-       WHERE flight_number GLOB ? GROUP BY origin, destination`
-    )
-    .all(`${cfg.iata}[0-9]*`) as { origin: string; destination: string; t: number | null }[];
   const upcoming = db
     .query(
       `SELECT departure_airport AS origin, arrival_airport AS destination,
@@ -2275,7 +2294,28 @@ export function getSitemapRoutes(db: Database, airline: string): SitemapRoute[] 
        GROUP BY departure_airport, arrival_airport`
     )
     .all(airline) as { origin: string; destination: string; t: number | null }[];
-  for (const r of [...cached, ...upcoming]) touch(r.origin, r.destination, r.t);
+  for (const r of upcoming) touch(r.origin, r.destination, r.t);
+  const inUpcoming = new Set(latest.keys());
+  const cached = db
+    .query(
+      `SELECT origin, destination, MAX(last_seen_at) AS t, SUM(seen_count) AS seen
+       FROM flight_routes
+       WHERE flight_number GLOB ? GROUP BY origin, destination`
+    )
+    .all(`${cfg.iata}[0-9]*`) as {
+    origin: string;
+    destination: string;
+    t: number | null;
+    seen: number | null;
+  }[];
+  for (const r of cached) {
+    if (!ROUTE_AIRPORT_RE.test(r.origin) || !ROUTE_AIRPORT_RE.test(r.destination)) continue;
+    if (r.origin === r.destination) continue;
+    const key = `${r.origin}-${r.destination}`;
+    if (inUpcoming.has(key) || (r.seen ?? 0) >= SITEMAP_ROUTE_MIN_SEEN) {
+      touch(r.origin, r.destination, r.t);
+    }
+  }
   return [...latest]
     .map(([key, last_touched]) => {
       const [origin, destination] = key.split("-");
