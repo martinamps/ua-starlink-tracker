@@ -24,7 +24,7 @@ import {
 } from "../src/airlines/rollout-facts";
 import { factsHeadline } from "../src/components/airlines-page";
 import { createReaderFactory } from "../src/database/reader";
-import { createApp, hubUrlFamilies } from "../src/server/app";
+import { createApp, hubAirlinePageIndexable, hubUrlFamilies } from "../src/server/app";
 import { openSnapshot, req } from "./helpers";
 
 let app: ReturnType<typeof createApp>;
@@ -246,15 +246,19 @@ describe("hub /airlines/{slug} facts pages (content-level roster)", () => {
 });
 
 describe("sitemaps", () => {
-  test("hub sitemap advertises the index, every tracked airline, and every facts page", async () => {
+  test("hub sitemap advertises the index, indexable tracked airlines, and every facts page", async () => {
     const res = await get("/sitemap.xml", hub.canonicalHost);
     expect(res.status).toBe(200);
     const xml = await res.text();
     expect(xml).toContain(`<loc>https://${hub.canonicalHost}/airlines</loc>`);
     for (const cfg of trackedRoster()) {
-      expect(xml, cfg.code).toContain(
-        `<loc>https://${hub.canonicalHost}/airlines/${airlineSlug(cfg)}</loc>`
-      );
+      const loc = `<loc>https://${hub.canonicalHost}/airlines/${airlineSlug(cfg)}</loc>`;
+      if (hubAirlinePageIndexable(cfg)) {
+        expect(xml, cfg.code).toContain(loc);
+      } else {
+        // Live brand trackers own those SERPs — hub page stays reachable but unadvertised.
+        expect(xml, cfg.code).not.toContain(loc);
+      }
     }
     for (const entry of contentOnlyFacts()) {
       expect(xml, entry.slug).toContain(
@@ -286,9 +290,13 @@ describe("sitemaps", () => {
         .find((b) => b.includes(`<loc>https://${hub.canonicalHost}${path}</loc>`));
       return block?.match(/<lastmod>([^<]+)<\/lastmod>/)?.[1];
     };
+    // Only sitemap-advertised roster URLs — noindex hub airline pages (live
+    // brand trackers) are deliberately absent from the sitemap.
     const paths = [
       ...contentOnlyFacts().map((e) => `/airlines/${e.slug}`),
-      ...trackedRoster().map((cfg) => `/airlines/${airlineSlug(cfg)}`),
+      ...trackedRoster()
+        .filter(hubAirlinePageIndexable)
+        .map((cfg) => `/airlines/${airlineSlug(cfg)}`),
     ];
     let checked = 0;
     let unstamped = 0;
@@ -324,8 +332,8 @@ describe("sitemaps", () => {
   });
 
   // An /airlines/{slug} that serves 200 while nothing advertises it is an
-  // orphan: indexable, unreachable, and invisible to the only lists a
-  // maintainer edits. Unpublishing an airline has to take its page with it.
+  // orphan — unless it is a deliberate noindex handoff to a live brand tracker
+  // (United/Alaska today). Unpublishing an airline still has to take its page.
   test("no /airlines page serves outside the sitemap's population", async () => {
     const xml = await (await get("/sitemap.xml", hub.canonicalHost)).text();
     for (const entry of AIRLINE_FACTS) {
@@ -333,6 +341,18 @@ describe("sitemaps", () => {
         `<loc>https://${hub.canonicalHost}/airlines/${entry.slug}</loc>`
       );
       const res = await get(`/airlines/${entry.slug}`, hub.canonicalHost);
+      const liveHandoff =
+        entry.trackedCode != null &&
+        !hubAirlinePageIndexable(AIRLINES[entry.trackedCode] as AirlineConfig);
+      if (liveHandoff) {
+        expect(res.status, entry.slug).toBe(200);
+        expect(advertised, `${entry.slug} should not be sitemap-advertised`).toBe(false);
+        const body = await res.text();
+        expect(body, entry.slug).toContain("noindex");
+        const byIata = await get(`/airlines/${entry.iata.toLowerCase()}`, hub.canonicalHost);
+        expect(byIata.status, entry.iata).toBe(301);
+        continue;
+      }
       expect(
         res.status === 200,
         `${entry.slug}: served=${res.status} advertised=${advertised}`

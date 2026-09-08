@@ -1526,6 +1526,18 @@ export function hubUrlFamilies(
   };
 }
 
+/**
+ * Hub /airlines/{slug} pages for carriers that already have a live dedicated
+ * tracker (unitedstarlinktracker.com, alaskastarlinktracker.com, …) duplicate
+ * brand SERPs at ~4% CTR while the brand host converts at ~86%. Those pages
+ * stay reachable for hub visitors (CTA → live tracker) but are noindex and
+ * omitted from the hub sitemap so Google consolidates on the brand host.
+ * Carriers without a live tenant (Hawaiian today) keep a normal indexable hub page.
+ */
+export function hubAirlinePageIndexable(cfg: AirlineConfig): boolean {
+  return !siteForAirline(cfg.code, true);
+}
+
 const robotsTxt: Handler = ({ site }) => {
   // /mcp is deliberately SEO'd where mcpPage is on: GET serves HTML (crawlers
   // only GET), POST is the JSON-RPC protocol and invisible to robots. So the
@@ -1587,7 +1599,7 @@ const sitemap: Handler = (ctx) => {
   // Each hub airline page's lastmod is that airline's own data freshness, not
   // the hub-wide max — an airline without a stamp yet omits lastmod rather
   // than borrowing another airline's.
-  const airlineEntries = hubUrls.trackedAirlines.map((cfg) => ({
+  const airlineEntries = hubUrls.trackedAirlines.filter(hubAirlinePageIndexable).map((cfg) => ({
     path: `/airlines/${airlineSlug(cfg)}`,
     changefreq: "daily",
     priority: "0.7",
@@ -2403,18 +2415,22 @@ function subPageMeta(
   const short = cfg?.shortName ?? "Tracked Fleets";
   if (page === "check-flight")
     return {
-      siteTitle: `Does My ${short} Flight Have Starlink? Check Any Flight — Live`,
-      siteDescription: `Does my flight have Starlink? Enter ${/^[aeiou]/i.test(short) ? "an" : "a"} ${short} flight number and date for a live answer — verified within ~2 days of departure, predicted from 12,000+ past flights.`,
-      keywords: `does my flight have starlink, does my ${short.toLowerCase()} flight have starlink, check ${cfg?.iata ?? "airline"} flight starlink, ${name} wifi check`,
-      ogTitle: `Does My ${short} Flight Have Starlink?`,
-      ogDescription: `Check any ${short} flight by number and date — live answer for whether your aircraft has free Starlink WiFi.`,
+      // Tool intent — avoid soaking "united starlink tracker" brand impressions
+      // (check-flight previously sat at ~2% CTR on that query at position ~1).
+      siteTitle: `Check a ${short} Flight for Starlink WiFi — Flight Number Lookup`,
+      siteDescription: `Enter ${/^[aeiou]/i.test(short) ? "an" : "a"} ${short} flight number and date for a live Starlink answer — verified near departure, with a probability estimate earlier from past assignments.`,
+      keywords: `check ${cfg?.iata ?? "airline"} flight starlink, does my ${short.toLowerCase()} flight have starlink, ${name} flight wifi lookup, starlink flight checker`,
+      ogTitle: `Check a ${short} Flight for Starlink`,
+      ogDescription: `Flight-number lookup for ${short} Starlink WiFi — live answer by date when assignments publish.`,
     };
   if (page === "routes")
     return {
-      siteTitle: `Where ${short} Starlink Is Flying Today — Live Routes | ${brand.title}`,
+      // Drop "| ${brand.title}" — that appended the brand-tracker name into the
+      // SERP title and pulled brand impressions onto a 0.25% CTR utility page.
+      siteTitle: `${short} Starlink Flights Today — Live Routes by Departure`,
       siteDescription: `Every ${name} departure scheduled on a Starlink-equipped aircraft over the next 48 hours, grouped by route and counted from live tail assignments.`,
-      keywords: `${name} starlink routes, which routes have starlink, ${cfg?.iata ?? "airline"} starlink flights today, starlink wifi routes`,
-      ogTitle: `Where ${short} Starlink Is Flying Today`,
+      keywords: `${name} starlink routes today, ${cfg?.iata ?? "airline"} starlink departures, live starlink routes, starlink wifi flights today`,
+      ogTitle: `${short} Starlink Flights Today`,
       ogDescription: `Live count of ${name} departures on Starlink-equipped aircraft by route, next 48 hours.`,
     };
   if (page === "route-planner")
@@ -2434,11 +2450,11 @@ function subPageMeta(
   const fleetLead = cfg ? `${short} Fleet` : "Tracked Fleets";
   const fleetOf = cfg ? `${name} aircraft` : "aircraft from every tracked airline";
   return {
-    siteTitle: `${fleetLead} Starlink Rollout — Every Tail Number, Every WiFi Provider`,
-    siteDescription: `See every ${fleetOf} at once, colored by WiFi provider. Track which aircraft types are done and how many Starlink planes are in the air right now.`,
-    keywords: `${name} fleet starlink, wifi by aircraft, starlink rollout progress, tail number wifi`,
-    ogTitle: `${fleetLead} Starlink Rollout`,
-    ogDescription: "Every tail number, colored by WiFi provider.",
+    siteTitle: `${fleetLead} WiFi Map — Starlink vs Other Providers by Tail`,
+    siteDescription: `Browse every ${fleetOf}, colored by WiFi provider. See which types still lack Starlink and how many equipped planes are flying right now.`,
+    keywords: `${name} fleet wifi map, starlink by tail number, aircraft wifi provider, ${short.toLowerCase()} starlink fleet`,
+    ogTitle: `${fleetLead} WiFi Map`,
+    ogDescription: "Every tail number, colored by WiFi provider — Starlink vs legacy systems.",
   };
 }
 
@@ -3122,21 +3138,32 @@ const airlineDetailPage: Handler = (ctx) => {
     const redirect = canonicalOrRedirect(airlineSlug(cfg));
     if (redirect) return redirect;
     const overview = airlineOverview(ctx.getReader, cfg);
+    const liveTracker = siteForAirline(cfg.code, true);
+    const indexable = hubAirlinePageIndexable(cfg);
     return renderSubPage(
       ctx,
       AirlineDetailPage,
       `/airlines/${airlineSlug(cfg)}`,
       {
-        siteTitle: `${cfg.name} Starlink WiFi — Rollout Status & Fleet Progress`,
-        siteDescription: `Where the ${cfg.name} Starlink rollout stands: ${cfg.rollout.phaseNote} Fleet counts and percent equipped, updated continuously.`,
-        keywords: `${cfg.name.toLowerCase()} starlink, does ${cfg.shortName.toLowerCase()} have starlink, ${cfg.shortName.toLowerCase()} starlink wifi, ${cfg.shortName.toLowerCase()} starlink rollout`,
-        ogTitle: `${cfg.name} Starlink WiFi — Rollout Status`,
+        // Comparison-hub framing — avoid "<airline> starlink tracker" titles that
+        // cannibalize the live brand host on brand SERPs.
+        siteTitle: indexable
+          ? `${cfg.name} Starlink WiFi — Rollout Status Compared Across Airlines`
+          : `${cfg.name} Starlink on the Hub — See the Full Tracker for Flight Checks`,
+        siteDescription: indexable
+          ? `Where the ${cfg.name} Starlink rollout stands beside other carriers: ${cfg.rollout.phaseNote} Fleet counts and percent equipped, updated continuously.`
+          : `Hub snapshot of the ${cfg.name} Starlink rollout (${cfg.rollout.phaseNote}). For flight checks and the live tracker, use ${liveTracker!.canonicalHost}.`,
+        keywords: indexable
+          ? `${cfg.name.toLowerCase()} starlink rollout, ${cfg.shortName.toLowerCase()} starlink compared, airlines with starlink wifi`
+          : `${cfg.name.toLowerCase()} starlink compared, ${cfg.shortName.toLowerCase()} starlink hub`,
+        ogTitle: `${cfg.name} Starlink — Hub Comparison Snapshot`,
         ogDescription: cfg.rollout.phaseNote,
+        ...(indexable ? {} : { robotsMeta: "noindex, follow" }),
       },
       { overview, facts: factsForCode(cfg.code), phases: passengerPhases(cfg.code) },
       200,
-      // Same stamp the sitemap gives this URL: this airline's own data
-      // freshness, not the request clock.
+      // Same stamp the sitemap gives this URL when indexable; noindex pages still
+      // use the airline's data freshness for WebPage dateModified consistency.
       stampedIso(ctx.getReader(cfg.code).getLastUpdatedRaw())
     );
   }
