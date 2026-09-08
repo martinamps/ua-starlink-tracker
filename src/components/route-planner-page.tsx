@@ -111,11 +111,11 @@ export default function RoutePlannerPage({ site }: RoutePlannerPageProps) {
       <header className="relative py-5 sm:py-6 text-center mb-6">
         <a href="/" className="block">
           <h1 className="font-display text-3xl sm:text-4xl font-bold text-primary mb-2 tracking-tight hover:text-accent transition-colors">
-            Starlink Route Planner
+            Find Starlink-Equipped Flights
           </h1>
         </a>
         <p className="text-base text-secondary font-display">
-          Find the best way to fly {airlineName} with Starlink WiFi
+          Search {airlineName} flights between any two airports — ranked by Starlink coverage
         </p>
       </header>
 

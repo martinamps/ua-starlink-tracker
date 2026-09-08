@@ -2419,12 +2419,14 @@ function subPageMeta(
     };
   if (page === "route-planner")
     return {
-      siteTitle: `${short} Starlink Route Planner — Find Flights With Starlink WiFi`,
-      siteDescription: `See which ${name} routes and flights have Starlink WiFi. Compare direct flights and one-stop connections between any two cities, ranked by Starlink probability, and book the routing with coverage the whole way.`,
-      keywords: `${name} starlink route planner, which ${cfg?.iata ?? "airline"} flights have starlink, ${name} starlink routes, best route for starlink, plan starlink trip`,
-      ogTitle: `${short} Starlink Route Planner`,
-      ogDescription:
-        "Find direct flights and smart connections with the highest Starlink probability.",
+      // Tool/snippet intent — was ranking for "united starlink tracker" at
+      // pos ~1.8 with 0.27% CTR (7 clicks / 2614 impr). Lead with the job:
+      // find Starlink-equipped flights between airports.
+      siteTitle: `Find Starlink-Equipped ${short} Flights Between Airports`,
+      siteDescription: `Pick two airports to find ${name} flights and one-stop connections on Starlink-equipped aircraft. Ranked by Starlink probability and connected hours — not a brand tracker homepage.`,
+      keywords: `starlink flights between airports, ${cfg?.iata ?? "airline"} starlink route finder, find starlink equipped flights, ${name} starlink connections`,
+      ogTitle: `Find Starlink-Equipped ${short} Flights`,
+      ogDescription: `Search ${short} flights between any two airports ranked by Starlink probability and connected hours.`,
     };
   // On the hub there is no carrier, and "${short} Fleet" degenerated to
   // "Tracked Fleets Fleet"; "every ${name} aircraft" likewise read "every
