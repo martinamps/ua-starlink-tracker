@@ -121,7 +121,7 @@ import {
   predictFlight,
   subfleetBreakdown,
 } from "../scripts/starlink-predictor";
-import type { ApiResponse, FirstFlight, Flight } from "../types";
+import type { ApiResponse, FirstFlight, FleetPageData, Flight } from "../types";
 import {
   API_CORS_HEADERS,
   BASE_RESPONSE_HEADERS,
@@ -2832,16 +2832,51 @@ const routePlannerPage: Handler = (ctx) => {
   return renderSubPage(ctx, RoutePlannerPage, "/route-planner", subPageMeta(ctx, "route-planner"));
 };
 
+// ItemList over the aircraft families the page actually groups (one block per
+// type). Tails are the fallback when that rollup is empty, so the block still
+// describes aircraft on the page rather than an empty list. Shared by every
+// tenant whose fleetPage flag serves this handler.
+function fleetItemListJsonLd(ctx: RequestContext, data: FleetPageData): string {
+  const cfg = tenantConfig(ctx.tenant);
+  const subject = cfg?.name ?? "Tracked airline";
+  const families = data.families;
+  const useFamilies = families.length > 0;
+  const itemListElement = useFamilies
+    ? families.slice(0, 25).map((f, i) => ({
+        "@type": "ListItem",
+        position: i + 1,
+        name: `${f.family} — ${f.starlink} of ${f.total} Starlink`,
+      }))
+    : data.allTails.slice(0, 25).map((t, i) => ({
+        "@type": "ListItem",
+        position: i + 1,
+        name: `${t.tail} · ${t.provider.charAt(0).toUpperCase()}${t.provider.slice(1)}`,
+      }));
+  return jsonLdBlock({
+    "@context": "https://schema.org",
+    "@type": "ItemList",
+    name: `${subject} fleet by WiFi provider`,
+    numberOfItems: useFamilies ? families.length : data.allTails.length,
+    itemListElement,
+  });
+}
+
 const fleetPage: Handler = (ctx) => {
   if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
   if (!ctx.site.features.fleetPage) {
     return notFound(ctx.site);
   }
   const data = ctx.reader.getFleetPageData();
-  return renderSubPage(ctx, FleetPage, "/fleet", subPageMeta(ctx, "fleet"), {
-    data,
-    shareCard: resolveShareCard(ctx.site.scope),
-  });
+  return renderSubPage(
+    ctx,
+    FleetPage,
+    "/fleet",
+    { ...subPageMeta(ctx, "fleet"), pageJsonLd: fleetItemListJsonLd(ctx, data) },
+    {
+      data,
+      shareCard: resolveShareCard(ctx.site.scope),
+    }
+  );
 };
 
 const methodologyPage: Handler = (ctx) => {
