@@ -104,6 +104,17 @@ describe("page copy", () => {
     ).text();
     expect(body).not.toContain('href="/route-planner"');
   });
+
+  test("hub free FAQ does not claim every airline is free with no login", async () => {
+    const body = await (
+      await app.dispatch(req("/", HUB, { headers: { Accept: "text/html" } }))
+    ).text();
+    expect(body).not.toContain("no login wall or loyalty requirement");
+    expect(body).not.toContain("free to every passenger, gate-to-gate, with no login");
+    expect(body).toContain("MileagePlus");
+    expect(body).toContain("Hawaiian");
+    expect(body).toContain("Alaska");
+  });
 });
 
 describe("/mcp content negotiation", () => {
