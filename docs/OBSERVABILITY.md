@@ -87,15 +87,15 @@ hitting random URLs therefore cannot inflate cardinality: an unmatched path
 tags `unmatched`, and the prefix families collapse to their prefix
 (`/check-flight/UA123` → `/check-flight`, `/static/x.png` → `/static`).
 
-That makes the `route` tag's cardinality exactly *(route table size) + 1*, and
+That makes the `route` tag's cardinality exactly *(exact routes) + (prefix tags not already in the table) + 1 (`unmatched`)*, and
 the route table is the thing to watch:
 
 | Source | Count |
 |---|---|
-| Exact entries in `routes` | 28 |
+| Exact entries in `routes` | 31 |
 | Prefix families in `prefixRoutes` | 5 (4 of which reuse an exact entry's tag) |
 | `unmatched` | 1 |
-| **Distinct `route` tag values** | **30** |
+| **Distinct `route` tag values** | **33** |
 
 **Budget: keep it under 40.** The old "max 25" predates the distribution
 surfaces (`/newly-equipped`, `/feed.xml`, `/badge.svg`, `/embed`,
