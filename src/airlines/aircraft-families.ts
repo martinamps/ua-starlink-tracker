@@ -4,9 +4,10 @@
  * vocabulary, consumed by metrics tags, fleet-page grouping, aircraft specs,
  * and the registry's type→wifi phase tables — one matcher, many consumers.
  *
- * Freighters are distinct families (B777F/B747F) because program status
+ * Freighters are distinct families (B777F/B747F/B737F) because program status
  * diverges from the passenger fleet (QR: every passenger 777 has Starlink,
- * the freighters never will).
+ * the freighters never will), and because they are not in any passenger
+ * denominator — see isFreighterFamily.
  *
  * Input examples (44 distinct in prod):
  *   "Boeing 737-924(ER)", "Boeing 737-924", "Boeing 737-932(ER)" → all B737-900
@@ -16,11 +17,14 @@
  * Ordered from most-specific to least-specific pattern — first match wins.
  * Leaf module: no imports, safe for both registry and observability.
  */
-const AIRCRAFT_FAMILIES: Array<[RegExp, string]> = [
+const AIRCRAFT_FAMILIES: ReadonlyArray<[RegExp, string]> = [
   // MAX variants render both ways in the wild ("737 MAX 9", "737-9 MAX").
   [/737[-\s]?(MAX[-\s]?10|10[-\s]?MAX)/i, "B737-MAX10"],
   [/737[-\s]?(MAX[-\s]?8|8[-\s]?MAX)/i, "B737-MAX8"],
   [/737[-\s]?(MAX[-\s]?9|9[-\s]?MAX)/i, "B737-MAX9"],
+  // Converted freighters ("737-804(BCF)", "737-790(BDSF)") must win over the
+  // passenger -700/-800 patterns below.
+  [/737[\w-]*\((?:BCF|BDSF|SF|PCF|F)\)/i, "B737F"],
   [/737-?7/i, "B737-700"],
   [/737-?8/i, "B737-800"],
   [/737-?9/i, "B737-900"],
@@ -44,6 +48,14 @@ const AIRCRAFT_FAMILIES: Array<[RegExp, string]> = [
   [/CRJ.?550/i, "CRJ-550"],
   [/CRJ.?7/i, "CRJ-700"],
 ];
+
+/** Every family normalizeAircraftType can return besides "other"/"unknown". */
+export const AIRCRAFT_FAMILY_KEYS: readonly string[] = [
+  ...new Set(AIRCRAFT_FAMILIES.map(([, family]) => family)),
+];
+
+/** Freighter families: kept in united_fleet, excluded from passenger counts. */
+export const isFreighterFamily = (family: string): boolean => /F$/.test(family);
 
 export function normalizeAircraftType(raw: string | null | undefined): string {
   if (!raw || /^unknown$/i.test(raw.trim())) return "unknown";
