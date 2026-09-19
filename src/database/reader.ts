@@ -74,6 +74,7 @@ import {
   getQatarScheduleByFlight,
   getQatarScheduleByRoute,
   getQatarScheduleStats,
+  getRankedStarlinkRoutePairs,
   getRecentInstalls,
   getRouteFlightNumbers,
   getRouteFlights,
@@ -144,6 +145,11 @@ export interface ScopedReader {
   getFleetPageData(): FleetPageData;
   getAirportDepartures(): AirportDepartures;
   getRouteStarlinkSchedule(): RouteSchedule;
+  /** Route pairs in getRouteStarlinkSchedule order, past `offset`. */
+  getRankedStarlinkRoutePairs(
+    offset: number,
+    limit: number
+  ): Array<{ origin: string; destination: string }>;
   getFleetDiscoveryStats(): FleetDiscoveryStats;
   getConfirmedFleetTails(): ReturnType<typeof getConfirmedFleetTails>;
   getPendingFleetTails(): ReturnType<typeof getPendingFleetTails>;
@@ -321,6 +327,8 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     getFleetPageData: () => getFleetPageData(db, airlines),
     getAirportDepartures: () => getAirportDepartures(db, airlines),
     getRouteStarlinkSchedule: () => getRouteStarlinkSchedule(db, airlines),
+    getRankedStarlinkRoutePairs: (offset, limit) =>
+      getRankedStarlinkRoutePairs(db, airlines, offset, limit),
     getFleetDiscoveryStats: () => getFleetDiscoveryStats(db, airlines),
     getConfirmedFleetTails: () => getConfirmedFleetTails(db, airlines),
     getPendingFleetTails: () => getPendingFleetTails(db, airlines),

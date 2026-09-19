@@ -1,6 +1,6 @@
 import React from "react";
 import { type SiteConfig, siteAirline } from "../airlines/registry";
-import { PageFooter } from "./atoms";
+import { PageFooter, type PageLink } from "./atoms";
 
 /** The airline-specific access story. Kept per-airline (like methodology's
  * SOURCES) because "free" has different fine print per carrier — the handler
@@ -35,12 +35,14 @@ interface IsStarlinkFreePageProps {
   site: SiteConfig;
   starlinkCount: number;
   totalCount: number;
+  pageLinks?: PageLink[];
 }
 
 export default function IsStarlinkFreePage({
   site,
   starlinkCount,
   totalCount,
+  pageLinks,
 }: IsStarlinkFreePageProps) {
   const cfg = siteAirline(site);
   const copy = ACCESS[cfg.code];
@@ -145,7 +147,7 @@ export default function IsStarlinkFreePage({
         </a>
       </div>
 
-      <PageFooter site={site} />
+      <PageFooter site={site} pageLinks={pageLinks} />
     </div>
   );
 }

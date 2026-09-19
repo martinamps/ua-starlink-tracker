@@ -1,5 +1,5 @@
 import type React from "react";
-import type { AirlineContent, ContentStats } from "../airlines/content";
+import type { AirlineContent, ContentStats, HubHomeLinks } from "../airlines/content";
 import { ensureAirlinePrefix } from "../airlines/flight-number";
 import { AIRLINES, type SiteConfig, siteAirline } from "../airlines/registry";
 import type { PopularFlight } from "../database/database";
@@ -83,6 +83,7 @@ interface PageProps {
   pageLinks?: PageLink[];
   /** Most-observed flight numbers — crawlable inlinks into the permalink corpus. */
   popularFlights?: PopularFlight[];
+  hubLinks?: HubHomeLinks;
 }
 
 /**
@@ -322,6 +323,21 @@ function AirportTreemap({ data, windowLabel }: { data: AirportDeparture[]; windo
 // notice points anyone hunting a specific tail at /fleet.
 const AIRCRAFT_LIST_CAP = 100;
 
+// Built once: toLocale*String({timeZone}) constructs a formatter per call, and
+// ~3,500 pills per homepage render made that most of the SSR time.
+const PILL_WEEKDAY_UTC = new Intl.DateTimeFormat("en-US", { weekday: "short", timeZone: "UTC" });
+const PILL_HHMM_UTC = new Intl.DateTimeFormat("en-US", {
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+  timeZone: "UTC",
+});
+
+export function formatPillTime(epochSec: number): string {
+  const d = new Date(epochSec * 1000);
+  return `${PILL_WEEKDAY_UTC.format(d).toUpperCase()} ${PILL_HHMM_UTC.format(d)} UTC`;
+}
+
 const dateOverrides: Record<string, string> = {
   N127SY: "2025-03-07", // First Starlink installation per press release
 };
@@ -343,6 +359,7 @@ export default function Page({
   shareCard,
   pageLinks,
   popularFlights = [],
+  hubLinks,
 }: PageProps) {
   // Apply date overrides to the aircraft data
   const applyDateOverrides = (data: Aircraft[]): Aircraft[] => {
@@ -452,19 +469,7 @@ export default function Page({
   // links there and its aria-label speaks this string as a departure claim, so
   // the zone has to be pinned and named. The 24-hour spelling is the permalink
   // page's, so the two pages read as one clock rather than two.
-  const formatCompactTime = (timestamp: number) => {
-    const date = new Date(timestamp * 1000);
-    const day = date
-      .toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" })
-      .toUpperCase();
-    const time = date.toLocaleTimeString("en-US", {
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-      timeZone: "UTC",
-    });
-    return `${day} ${time} UTC`;
-  };
+  const formatCompactTime = formatPillTime;
 
   // Compact inline flight pills for new table design (responsive + expandable)
   const renderFlightPills = (tailNumber: string) => {
@@ -487,7 +492,7 @@ export default function Page({
       // Determine visibility classes
       let visibilityClass = "inline-flex"; // Always visible
       if (idx >= desktopMax) {
-        visibilityClass = "flight-extra hidden"; // Hidden until expanded
+        visibilityClass = "hidden"; // Until the container is expanded
       } else if (idx >= tabletMax) {
         visibilityClass = "hidden xl:inline-flex"; // Desktop only (xl+)
       } else if (idx >= mobileMax) {
@@ -519,7 +524,7 @@ export default function Page({
           {...(permalink ? {} : { target: "_blank", rel: "nofollow noopener noreferrer" as const })}
           data-flight-tooltip={tooltip}
           aria-label={label}
-          className={`flight-pill font-mono items-center gap-1.5 px-2 py-1 bg-surface-elevated border border-subtle rounded text-xs text-secondary hover:text-accent hover:border-accent/50 transition-all ${visibilityClass}`}
+          className={`flight-pill ${visibilityClass}`}
         >
           <span className="text-accent font-medium">{dep}</span>
           <span className="text-muted">→</span>
@@ -529,43 +534,37 @@ export default function Page({
       );
     };
 
-    // Calculate remaining for each breakpoint
     const mobileRemaining = Math.max(0, flights.length - mobileMax);
     const tabletRemaining = Math.max(0, flights.length - tabletMax);
     const desktopRemaining = Math.max(0, flights.length - desktopMax);
+    // One button for every breakpoint; the count it shows and whether it shows
+    // at all follow the same md/xl cut points as the pills themselves.
+    const expandVisibility =
+      desktopRemaining > 0
+        ? "inline-flex"
+        : tabletRemaining > 0
+          ? "inline-flex xl:hidden"
+          : "inline-flex md:hidden";
 
     return (
       <div className="flex flex-wrap gap-1.5" id={containerId}>
         {flights.map((flight, idx) => renderPill(flight, idx))}
-        {/* Responsive expand buttons - show different counts based on screen size */}
         {mobileRemaining > 0 && (
           <button
             type="button"
-            className="expand-flights md:hidden inline-flex items-center px-2 py-1 border border-accent/30 hover:border-accent rounded text-xs text-accent font-mono font-medium transition-all cursor-pointer hover:bg-accent/10"
-            data-target={containerId}
-            data-count={mobileRemaining}
+            className={`expand-flights ${expandVisibility} items-center px-2 py-1 border border-accent/30 hover:border-accent rounded text-xs text-accent font-mono font-medium transition-all cursor-pointer hover:bg-accent/10`}
+            aria-expanded="false"
           >
-            +{mobileRemaining}
-          </button>
-        )}
-        {tabletRemaining > 0 && (
-          <button
-            type="button"
-            className="expand-flights hidden md:inline-flex xl:hidden items-center px-2 py-1 border border-accent/30 hover:border-accent rounded text-xs text-accent font-mono font-medium transition-all cursor-pointer hover:bg-accent/10"
-            data-target={containerId}
-            data-count={tabletRemaining}
-          >
-            +{tabletRemaining}
-          </button>
-        )}
-        {desktopRemaining > 0 && (
-          <button
-            type="button"
-            className="expand-flights hidden xl:inline-flex items-center px-2 py-1 border border-accent/30 hover:border-accent rounded text-xs text-accent font-mono font-medium transition-all cursor-pointer hover:bg-accent/10"
-            data-target={containerId}
-            data-count={desktopRemaining}
-          >
-            +{desktopRemaining}
+            <span className="pill-more">
+              <span className="md:hidden">+{mobileRemaining}</span>
+              {tabletRemaining > 0 && (
+                <span className="hidden md:inline xl:hidden">+{tabletRemaining}</span>
+              )}
+              {desktopRemaining > 0 && (
+                <span className="hidden xl:inline">+{desktopRemaining}</span>
+              )}
+            </span>
+            <span className="pill-less">−</span>
           </button>
         )}
       </div>
@@ -686,6 +685,7 @@ export default function Page({
         starlinkData={starlinkData}
         perAirlineStats={perAirlineStats}
         recentInstalls={recentInstalls}
+        hubLinks={hubLinks}
       />
 
       {/* Aircraft List with integrated search */}
@@ -833,57 +833,40 @@ export default function Page({
                     data-routes={routesStr}
                     data-flights={flightNumbersStr}
                   >
-                    {/* Desktop Layout */}
-                    <div className="hidden md:grid md:grid-cols-12 gap-4 items-center">
-                      {/* Aircraft - Tail + Fleet badge */}
-                      <div className="col-span-3 flex items-center gap-3">
-                        <div className="status-dot flex-shrink-0" />
-                        <div>
-                          <div className="font-mono text-sm font-semibold text-primary group-hover:text-accent transition-colors">
-                            {plane.TailNumber}
-                          </div>
-                          {badge && (
-                            <div className="text-[10px] font-mono text-muted uppercase">
-                              {badge}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Type */}
-                      <div className="col-span-2">
-                        <span className="font-mono text-sm text-secondary">{plane.Aircraft}</span>
-                      </div>
-
-                      {/* Operator */}
-                      <div className="col-span-3 text-sm text-muted">{plane.OperatedBy || "—"}</div>
-
-                      {/* Flights */}
-                      <div className="col-span-4">{renderFlightPills(plane.TailNumber)}</div>
-                    </div>
-
-                    {/* Mobile Layout */}
-                    <div className="md:hidden">
-                      <div className="flex items-start justify-between mb-3">
+                    <div className="md:grid md:grid-cols-12 md:gap-4 md:items-center">
+                      <div className="md:col-span-3 flex items-start md:items-center justify-between md:justify-start gap-3 mb-3 md:mb-0">
                         <div className="flex items-center gap-3">
                           <div className="status-dot flex-shrink-0" />
                           <div>
-                            <div className="font-mono text-base font-bold text-primary">
+                            <div className="font-mono text-base md:text-sm font-bold md:font-semibold text-primary group-hover:text-accent transition-colors">
                               {plane.TailNumber}
                             </div>
-                            <div className="font-mono text-xs text-secondary">{plane.Aircraft}</div>
+                            <div className="md:hidden font-mono text-xs text-secondary">
+                              {plane.Aircraft}
+                            </div>
+                            {badge && (
+                              <div className="hidden md:block text-[10px] font-mono text-muted uppercase">
+                                {badge}
+                              </div>
+                            )}
                           </div>
                         </div>
                         {badge && (
-                          <div className="text-[10px] font-mono text-accent uppercase">{badge}</div>
+                          <div className="md:hidden text-[10px] font-mono text-accent uppercase">
+                            {badge}
+                          </div>
                         )}
                       </div>
 
-                      {/* Operator */}
-                      <div className="text-xs text-muted mb-3 pl-5">{plane.OperatedBy || "—"}</div>
+                      <div className="hidden md:block md:col-span-2">
+                        <span className="font-mono text-sm text-secondary">{plane.Aircraft}</span>
+                      </div>
 
-                      {/* Flights */}
-                      <div className="pt-3 border-t border-subtle">
+                      <div className="md:col-span-3 text-xs md:text-sm text-muted mb-3 md:mb-0 pl-5 md:pl-0">
+                        {plane.OperatedBy || "—"}
+                      </div>
+
+                      <div className="md:col-span-4 pt-3 md:pt-0 border-t md:border-t-0 border-subtle">
                         {renderFlightPills(plane.TailNumber)}
                       </div>
                     </div>
@@ -1268,29 +1251,12 @@ export default function Page({
               document.addEventListener('click', function(e) {
                 var btn = e.target.closest('.expand-flights');
                 if (!btn) return;
-
-                var targetId = btn.dataset.target;
-                var container = document.getElementById(targetId);
+                var container = btn.closest('[id^="flights-"]');
                 if (!container) return;
-
-                var extras = container.querySelectorAll('.flight-extra');
-                var isExpanded = btn.textContent.includes('−');
-
-                if (isExpanded) {
-                  // Collapse
-                  extras.forEach(function(el) {
-                    el.classList.add('hidden');
-                    el.classList.remove('inline-flex');
-                  });
-                  btn.textContent = '+' + btn.dataset.count;
-                } else {
-                  // Expand
-                  extras.forEach(function(el) {
-                    el.classList.remove('hidden');
-                    el.classList.add('inline-flex');
-                  });
-                  btn.textContent = '−';
-                }
+                var expanded = container.hasAttribute('data-expanded');
+                if (expanded) container.removeAttribute('data-expanded');
+                else container.setAttribute('data-expanded', '');
+                btn.setAttribute('aria-expanded', expanded ? 'false' : 'true');
               });
 
               // Flight badge tooltips - only on devices with hover (not touch/mobile)
@@ -1378,7 +1344,7 @@ export default function Page({
       <ShareCardLink path={shareCard} />
 
       <footer className="relative py-6 text-center border-t border-subtle text-muted text-sm">
-        <div className="flex items-center justify-center gap-4">
+        <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 px-4">
           <a
             href="https://x.com/martinamps"
             target="_blank"
@@ -1402,7 +1368,9 @@ export default function Page({
             </svg>
             by @martinamps
           </a>
-          <span className="text-muted">·</span>
+          <span className="text-muted" aria-hidden="true">
+            ·
+          </span>
           <a
             href="https://github.com/martinamps/ua-starlink-tracker"
             target="_blank"
@@ -1421,20 +1389,11 @@ export default function Page({
             </svg>
             GitHub
           </a>
-          {features.methodologyPage && (
-            <>
-              <span className="text-muted">·</span>
-              <a
-                href="/methodology"
-                className="text-secondary hover:text-primary transition-colors"
-              >
-                Methodology
-              </a>
-            </>
-          )}
           {features.intentPages && (
             <>
-              <span className="text-muted">·</span>
+              <span className="text-muted" aria-hidden="true">
+                ·
+              </span>
               <a
                 href="/is-starlink-free"
                 className="text-secondary hover:text-primary transition-colors"

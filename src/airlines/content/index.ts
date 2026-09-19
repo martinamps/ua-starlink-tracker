@@ -30,11 +30,23 @@ export interface SubfleetFilter {
   label: string;
 }
 
+export interface HubHomeLink {
+  href: string;
+  label: string;
+}
+
+export interface HubHomeLinks {
+  airlines: HubHomeLink[];
+  compares: HubHomeLink[];
+}
+
 export interface HeroProps {
   stats: ContentStats;
   starlinkData: Aircraft[];
   perAirlineStats?: PerAirlineStat[];
   recentInstalls?: RecentInstall[];
+  /** Hub only: server-rendered inlinks to every sitemapped airline and compare page. */
+  hubLinks?: HubHomeLinks;
 }
 
 export interface AirlineContent {

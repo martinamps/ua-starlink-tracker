@@ -1,6 +1,6 @@
 import React from "react";
 import { type SiteConfig, siteAirline } from "../airlines/registry";
-import { PageFooter } from "./atoms";
+import { PageFooter, type PageLink } from "./atoms";
 
 /** Attribution every timeline entry must carry. A milestone page exists to be
  * checkable, so the source is required and has to be a real document a reader
@@ -176,6 +176,7 @@ interface TimelinePageProps {
   starlinkCount: number;
   totalCount: number;
   lastUpdated: string;
+  pageLinks?: PageLink[];
 }
 
 export default function TimelinePage({
@@ -183,6 +184,7 @@ export default function TimelinePage({
   starlinkCount,
   totalCount,
   lastUpdated,
+  pageLinks,
 }: TimelinePageProps) {
   const cfg = siteAirline(site);
   const timeline = TIMELINES[cfg.code];
@@ -286,7 +288,7 @@ export default function TimelinePage({
         </a>
       </div>
 
-      <PageFooter site={site} />
+      <PageFooter site={site} pageLinks={pageLinks} />
     </div>
   );
 }

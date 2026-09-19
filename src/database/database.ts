@@ -5233,3 +5233,32 @@ export function getQatarScheduleStats(db: Database): {
     lastUpdated: counts.lastUpdated ?? null,
   };
 }
+
+/**
+ * Route pairs in /routes order (most equipped departures first), starting at
+ * `offset`. /routes renders the first 60; the route-planner hub links the next
+ * page so the two surfaces spread internal links over different permalinks.
+ */
+export function getRankedStarlinkRoutePairs(
+  db: Database,
+  airline: AirlineFilter,
+  offset: number,
+  limit: number,
+  nowSec = Math.floor(Date.now() / 1000)
+): Array<{ origin: string; destination: string }> {
+  const q = withAirline(
+    `SELECT uf.departure_airport AS origin, uf.arrival_airport AS destination,
+            COUNT(DISTINCT uf.flight_number || ':' || uf.departure_time) AS departures,
+            COUNT(DISTINCT uf.flight_number) AS flight_numbers${EQUIPPED_DEPARTURES_SQL}`,
+    airline,
+    "uf",
+    [nowSec, nowSec + DEPARTURE_WINDOW_HOURS * 3600]
+  );
+  const rows = db
+    .query(
+      `${q.sql} GROUP BY uf.departure_airport, uf.arrival_airport
+       ORDER BY departures DESC, flight_numbers DESC, origin ASC LIMIT ? OFFSET ?`
+    )
+    .all(...q.params, limit, offset) as Array<{ origin: string; destination: string }>;
+  return rows.map(({ origin, destination }) => ({ origin, destination }));
+}
