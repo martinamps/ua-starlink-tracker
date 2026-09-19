@@ -18,7 +18,7 @@ import { type FlyertalkFetcher, applyFlyertalkTails, fetchFlyertalk } from "./fl
 
 const ALLOWED_HOST = "www.flyertalk.com";
 const THREAD_ID = 2201647;
-const THREAD_URL = `https://${ALLOWED_HOST}/forum/alaska-airlines-atmos-rewards/${THREAD_ID}-starlink-wi-fi-e75s-began-12-2025-737s-began-4-2026-a.html`;
+const THREAD_URL = `https://${ALLOWED_HOST}/forum/alaska-airlines-atmos-rewards/${THREAD_ID}-starlink-wi-fi-737s-began-4-2026-e75s-completed-began-12-2025-a.html`;
 
 const HEADERS = {
   "User-Agent": BROWSER_USER_AGENT,

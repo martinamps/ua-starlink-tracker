@@ -6,6 +6,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import { fetchAlaskaFlyertalkTails } from "../src/scripts/flyertalk-alaska";
 import {
   type FlyertalkFetcher,
   FlyertalkRedirectRejected,
@@ -96,6 +97,18 @@ describe("fetchFlyertalk redirects", () => {
   test("a non-2xx final response throws", async () => {
     const { fetcher } = stub({ [START]: () => new Response("no", { status: 403 }) });
     await expect(fetchFlyertalk(START, THREAD, HEADERS, fetcher)).rejects.toThrow(/HTTP 403/);
+  });
+});
+
+describe("Alaska thread URL", () => {
+  // A stale slug would spend a redirect hop (and log a rename warning) on every run.
+  test("targets the current slug directly, with no redirect hop", async () => {
+    const current = `https://www.flyertalk.com/forum/alaska-airlines-atmos-rewards/${THREAD}-starlink-wi-fi-737s-began-4-2026-e75s-completed-began-12-2025-a.html`;
+    const wikipost = `<div id="wikipost-${THREAD}">Starlink Installed N101AS Installations in Progress</div> END WIKIPOST`;
+    const { fetcher, calls } = stub({ [current]: () => page(wikipost) });
+    const tails = await fetchAlaskaFlyertalkTails(fetcher);
+    expect(calls).toEqual([current]);
+    expect(Array.isArray(tails)).toBe(true);
   });
 });
 
