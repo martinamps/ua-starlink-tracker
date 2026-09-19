@@ -1,4 +1,5 @@
 import { Database } from "bun:sqlite";
+import { isFreighterFamily } from "../airlines/aircraft-families";
 import {
   CACHEABLE_FLIGHT_NUMBER,
   canonicalPermalinkFor,
@@ -1047,16 +1048,23 @@ export function stampLastUpdated(db: Database, airline: string, writer: LastUpda
  * lastUpdated goes through stampLastUpdated as the "fleet-meta" writer.
  */
 export function refreshFleetMeta(db: Database, airline: string): void {
-  const rows = db
-    .query(`
-      SELECT fleet,
+  const rows = (
+    db
+      .query(`
+      SELECT fleet, aircraft_type,
              COUNT(*) AS total,
              SUM(CASE WHEN starlink_status = 'confirmed' THEN 1 ELSE 0 END) AS confirmed
       FROM united_fleet
       WHERE airline = ?
-      GROUP BY fleet
+      GROUP BY fleet, aircraft_type
     `)
-    .all(airline) as Array<{ fleet: string; total: number; confirmed: number }>;
+      .all(airline) as Array<{
+      fleet: string;
+      aircraft_type: string | null;
+      total: number;
+      confirmed: number;
+    }>
+  ).filter((r) => !isFreighterFamily(normalizeAircraftType(r.aircraft_type)));
 
   let mainlineTotal = 0;
   let mainlineStarlink = 0;
@@ -1313,12 +1321,18 @@ export interface HubAirlineStat {
 
 export function getHubStats(db: Database, codes: readonly string[]): HubAirlineStat[] {
   const placeholders = codes.map(() => "?").join(",");
-  const fleet = db
+  const fleetByType = db
     .query(
-      `SELECT airline, COUNT(*) total FROM united_fleet
-       WHERE airline IN (${placeholders}) GROUP BY airline`
+      `SELECT airline, aircraft_type, COUNT(*) total FROM united_fleet
+       WHERE airline IN (${placeholders}) GROUP BY airline, aircraft_type`
     )
-    .all(...codes) as { airline: string; total: number }[];
+    .all(...codes) as { airline: string; aircraft_type: string | null; total: number }[];
+  const passengerTotals = new Map<string, number>();
+  for (const r of fleetByType) {
+    if (isFreighterFamily(normalizeAircraftType(r.aircraft_type))) continue;
+    passengerTotals.set(r.airline, (passengerTotals.get(r.airline) ?? 0) + r.total);
+  }
+  const fleet = [...passengerTotals].map(([airline, total]) => ({ airline, total }));
   // Equipped count from starlink_planes — the authoritative table — not from
   // united_fleet.starlink_status, which lags during reconcile cycles. Same
   // source /api/fleet-summary uses, so the cards never contradict it.
@@ -2685,14 +2699,17 @@ export function getFlightRoutePairs(
 ): FlightRoutePair[] {
   const placeholders = variants.map(() => "?").join(",");
   const scoped = corroboratedRouteFilter(variants, airline);
+  // A row that departed over a day ago is a ghost of a tail that stopped
+  // refreshing, not a schedule — it falls back to decay scoring.
   const upcoming = withAirline(
     `SELECT departure_airport, arrival_airport, COUNT(*) AS times,
             CAST(AVG(arrival_time - departure_time) AS INTEGER) AS dur_sec,
-            1 AS scheduled, MAX(last_updated) AS last_seen_at
+            CASE WHEN MAX(departure_time) >= ? THEN 1 ELSE 0 END AS scheduled,
+            MAX(last_updated) AS last_seen_at
      FROM upcoming_flights WHERE flight_number IN (${placeholders})`,
     airline,
     "",
-    [...variants]
+    [now - 86400, ...variants]
   );
   const rows = db
     .query(
@@ -3351,6 +3368,42 @@ export interface WifiConsensus {
 }
 
 /**
+ * united.com flaps Starlink↔"Not offered" on regionals: in the Aug-29 snapshot
+ * every one of 34 runs of 3+ consecutive None after a Starlink observation
+ * went back to Starlink. So once a tail has ever been seen with Starlink on
+ * united.com, a later united "None" is not evidence — only a named competing
+ * provider (Viasat, Panasonic, Thales, Gogo) can flip it negative. Tails with
+ * no Starlink history (N786SK: 20× None) keep None as a real verdict.
+ */
+export const DISCOUNT_UNITED_NONE_AFTER_STARLINK = true;
+
+function isUnitedNoneObservation(o: {
+  has_starlink: number;
+  wifi_provider: string | null;
+  source?: string;
+}): boolean {
+  return (
+    o.source === "united" &&
+    o.has_starlink === 0 &&
+    (o.wifi_provider == null || o.wifi_provider.trim() === "" || o.wifi_provider === "None")
+  );
+}
+
+function hasPriorUnitedStarlink(db: Database, tailNumber: string, airline: AirlineFilter): boolean {
+  const q = withAirline(
+    `tail_number = ? AND tail_confirmed = 1 AND has_starlink = 1 AND source = 'united'
+     AND error IS NULL`,
+    airline,
+    "",
+    [tailNumber]
+  );
+  return (
+    db.query(`SELECT 1 FROM starlink_verification_log WHERE ${q.sql} LIMIT 1`).get(...q.params) !=
+    null
+  );
+}
+
+/**
  * Compute wifi consensus from recent CLEAN_OBSERVATION_WHERE log entries.
  * Returns verdict=null when n < minObs OR the split is in the ambiguous zone.
  */
@@ -3384,12 +3437,28 @@ export function computeWifiConsensus(
 
   // Primary: only tail_confirmed=1 (post-fix clean data)
   let obs = db
-    .query(`SELECT has_starlink, wifi_provider FROM starlink_verification_log
+    .query(`SELECT has_starlink, wifi_provider, source FROM starlink_verification_log
       WHERE ${base.sql} AND tail_confirmed = 1 ORDER BY checked_at DESC`)
     .all(...base.params) as Array<{
     has_starlink: number;
     wifi_provider: string;
+    source?: string;
   }>;
+
+  if (DISCOUNT_UNITED_NONE_AFTER_STARLINK && obs.some(isUnitedNoneObservation)) {
+    if (hasPriorUnitedStarlink(db, tailNumber, opts.airline)) {
+      const named = obs.filter((o) => !isUnitedNoneObservation(o));
+      if (named.length === 0) {
+        return {
+          verdict: null,
+          n: 0,
+          starlinkPct: 0,
+          reason: "None-only after prior Starlink (regional flap), inconclusive",
+        };
+      }
+      obs = named;
+    }
+  }
 
   // Grace fallback: if zero confirmed rows, read legacy NULL rows so display
   // counts (n, starlinkPct) aren't zero during the 30d transition. Legacy is
@@ -4376,8 +4445,8 @@ function normalizeCarrier(op: string | null): string | null {
 }
 
 export function bodyClassOf(family: string): BodyClass {
-  if (/^(B767|B777|B787|A350)/.test(family)) return "widebody";
-  if (/^(B737|B757|A319|A320|A321)/.test(family)) return "narrowbody";
+  if (/^(A330|A350|A380|B747|B767|B777|B787)/.test(family)) return "widebody";
+  if (/^(B717|B737|B757|A319|A320|A321)/.test(family)) return "narrowbody";
   if (/^(E175|ERJ|CRJ)/.test(family)) return "regional";
   return "narrowbody"; // safer default for unknowns than inflating regional
 }
@@ -5067,6 +5136,7 @@ function computeFleetPageData(db: Database, airline?: AirlineFilter): FleetPageD
 
   for (const r of rows) {
     const rawFamily = normalizeAircraftType(r.aircraft_type);
+    if (isFreighterFamily(rawFamily)) continue;
     const family = rawFamily === "other" ? "unknown" : rawFamily;
     const rawProvider = normalizeWifiProvider(r.verified_wifi);
     const provider: WifiProvider =
@@ -5347,4 +5417,34 @@ export function getQatarScheduleStats(db: Database): {
     none: counts.none ?? 0,
     lastUpdated: counts.lastUpdated ?? null,
   };
+}
+
+export const UPCOMING_PRUNE_AGE_SEC = 2 * 86400;
+
+/**
+ * Drop upcoming_flights rows that departed over two days ago. The per-tail
+ * DELETE in updateFlights only touches tails the updater still refreshes, so
+ * rows for tails that left the queue stayed forever (1,112 of 7,035 in the
+ * 2026-08-29 snapshot, some from March) and pinned permalink titles to dead
+ * routes. Archives first so departure_log keeps every departure. Returns the
+ * pruned count per airline.
+ */
+export function pruneStaleUpcomingFlights(
+  db: Database,
+  now = Math.floor(Date.now() / 1000)
+): Record<string, number> {
+  const cutoff = now - UPCOMING_PRUNE_AGE_SEC;
+  return db.transaction(() => {
+    archivePastDepartures(db, now);
+    const rows = db
+      .query(
+        `SELECT airline, COUNT(*) AS cnt FROM upcoming_flights
+         WHERE departure_time < ? GROUP BY airline`
+      )
+      .all(cutoff) as Array<{ airline: string; cnt: number }>;
+    if (rows.length > 0) {
+      db.query("DELETE FROM upcoming_flights WHERE departure_time < ?").run(cutoff);
+    }
+    return Object.fromEntries(rows.map((r) => [r.airline, r.cnt]));
+  })();
 }

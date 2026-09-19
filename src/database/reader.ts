@@ -7,7 +7,13 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { AIRLINES, type AirlineCode, airlineHomeUrl, publicAirlines } from "../airlines/registry";
+import {
+  AIRLINES,
+  type AirlineCode,
+  airlineHomeUrl,
+  publicAirlines,
+  withOperatingPartners,
+} from "../airlines/registry";
 import type {
   Aircraft,
   AirportDepartures,
@@ -136,7 +142,8 @@ export interface ScopedReader {
   getSitemapRoutes(): SitemapRoute[];
   /** Meta keys are namespaced per-airline; null on the hub (no single namespace). */
   getMeta(key: string): string | null;
-  /** Check-flight assignments without the verified_wifi filter (the core classifies tiers). */
+  /** Check-flight assignments without the verified_wifi filter (the core classifies tiers).
+   * The one read that also spans operatingPartners (AS numbers on HA metal). */
   getFlightAssignments(
     variants: string[],
     startOfDay: number,
@@ -321,7 +328,8 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     getPopularFlights: (limit) => (scope === "ALL" ? [] : getPopularFlights(db, scope, limit)),
     getFleetAnchors: () => getFleetAnchors(db, airlines),
     getMeta: (key) => (scope === "ALL" ? null : getMeta(db, key, scope)),
-    getFlightAssignments: (v, s, e) => getFlightAssignments(db, v, s, e, airlines),
+    getFlightAssignments: (v, s, e) =>
+      getFlightAssignments(db, v, s, e, withOperatingPartners(airlines)),
     getFleetPageData: () => getFleetPageData(db, airlines),
     getAirportDepartures: () => getAirportDepartures(db, airlines),
     getRouteStarlinkSchedule: () => getRouteStarlinkSchedule(db, airlines),

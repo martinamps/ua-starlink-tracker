@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { AIRLINES } from "../airlines/registry";
+import { FR24_UPCOMING_CAP } from "../api/flightradar24-api";
 import { GAUGES, metrics, normalizeAirlineTag } from "../observability/metrics";
 import { type JobHandle, startJob } from "../utils/job-runner";
 import { info, error as logError } from "../utils/logger";
@@ -174,6 +175,39 @@ export function emitDataFreshness(db: Database, queries = FRESHNESS_QUERIES): vo
     }
   }
   emitRowCounts(db);
+  emitCappedFutureShare(db);
+}
+
+/** Per airline: share of tails sitting exactly at the row cap whose first row
+ * departs over an hour after their refresh. ~46% of UA tails before the
+ * nearest-first cap fix (prod snapshot 2026-08-29); a rise means the cap is
+ * dropping near-term legs again. */
+export function cappedFutureShareByAirline(
+  db: Database,
+  cap = FR24_UPCOMING_CAP
+): Array<{ airline: string; share: number }> {
+  return db
+    .query(
+      `SELECT airline, AVG(CASE WHEN n = ? AND first_dep > refreshed + 3600 THEN 1.0 ELSE 0 END) AS share
+       FROM (
+         SELECT airline, tail_number, COUNT(*) AS n, MIN(departure_time) AS first_dep,
+                MAX(last_updated) AS refreshed
+         FROM upcoming_flights GROUP BY airline, tail_number
+       ) GROUP BY airline`
+    )
+    .all(cap) as Array<{ airline: string; share: number }>;
+}
+
+function emitCappedFutureShare(db: Database): void {
+  try {
+    for (const row of cappedFutureShareByAirline(db)) {
+      metrics.gauge(GAUGES.UPCOMING_CAPPED_FUTURE_SHARE, row.share, {
+        airline: normalizeAirlineTag(row.airline),
+      });
+    }
+  } catch (err) {
+    logError("Capped-future-share query failed", err);
+  }
 }
 
 export function startFreshnessEmitter(db: Database): JobHandle {

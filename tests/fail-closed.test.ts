@@ -71,8 +71,10 @@ describe("qatarTypeToStarlink", () => {
     ["Airbus A330-202", "negative"], // covered by the canonical family table
     ["Airbus A380-861", "negative"],
     ["Boeing 737 MAX 8", "negative"], // QR's MAX fleet is real and non-Starlink
-    ["Boeing 787-8 Dreamliner", null], // rollout in progress — per-tail, not type
-    ["Boeing 787-9", null],
+    ["Boeing 787-8 Dreamliner", "confirmed"], // sub-fleet complete Aug 2026
+    ["Boeing 787-9", null], // rollout in progress — per-tail, not type
+    ["Boeing 787", null], // no sub-variant → no phase row, never a guess
+    ["B788", null],
     ["B77W", null], // IATA-style drift must not mass-flip the fleet
     ["garbage", null],
     ["", null],
