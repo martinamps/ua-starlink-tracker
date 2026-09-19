@@ -113,6 +113,12 @@ export function reserveFr24Slot(
   return slot - nowMs;
 }
 
+// Tests share one process-wide slot clock; without this a test's timing
+// depends on how many slots earlier files happened to claim.
+export function resetFr24SlotClock(): void {
+  lastRequestTime = 0;
+}
+
 export const FR24_QUEUE_SHED_MESSAGE = "shed: queue";
 
 // FR24 lists a registration's flights newest-first. Capping that list unsorted

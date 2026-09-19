@@ -6,7 +6,7 @@
  * response shape) without touching FR24.
  */
 
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { AIRLINES } from "../src/airlines/registry";
 import { resolveFlightVerdict } from "../src/api/check-flight-core";
 import {
@@ -24,6 +24,7 @@ import {
   Fr24UnavailableError,
   MIN_REQUEST_INTERVAL,
   reserveFr24Slot,
+  resetFr24SlotClock,
 } from "../src/api/flightradar24-api";
 import type { FR24FetchResult } from "../src/api/fr24-browser-transport";
 import { createReaderFactory } from "../src/database/reader";
@@ -171,9 +172,11 @@ describe("empty-result caching", () => {
 });
 
 // The real FlightRadar24API retry/rate-limit path with a fake transport. The
-// slot clock is module-global wall time, so each test claims a slot first to
-// make the queue state known instead of assuming it.
+// slot clock is module-global wall time shared with every other test file, so
+// each test starts from an empty queue instead of whatever earlier files left.
 describe("request-path FR24 queue and retry caps", () => {
+  beforeEach(() => resetFr24SlotClock());
+
   const status429: FR24FetchResult = { status: 429, ok: false, body: "" };
   const nowSec = () => Math.floor(Date.now() / 1000);
 
@@ -243,5 +246,5 @@ describe("request-path FR24 queue and retry caps", () => {
     expect(err.message).toMatch(/429$/);
     expect(fetchedAt.length).toBe(1);
     expect(performance.now() - fetchedAt[0]).toBeLessThan(1000);
-  }, 15_000); // The uncapped wait for slots earlier tests claimed happens before the fetch.
+  });
 });
