@@ -381,6 +381,7 @@ export type AircraftVerdictKind =
   | "most"
   | "some"
   | "verifying"
+  | "installing"
   | "none"
   | "official_none"
   | "unknown";

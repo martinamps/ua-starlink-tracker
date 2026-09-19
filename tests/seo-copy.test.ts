@@ -268,6 +268,7 @@ describe("aircraft-type page titles", () => {
     "most",
     "some",
     "verifying",
+    "installing",
     "none",
     "official_none",
     "unknown",
@@ -281,12 +282,13 @@ describe("aircraft-type page titles", () => {
         for (const kind of KINDS) {
           for (const official of [
             null,
-            { count: 1173, asOf: "2026-08-28", sourceLabel: "x", url: "x" },
+            { count: 1173, all: false, asOf: "2026-08-28", sourceLabel: "x", url: "x" },
           ]) {
             const title = aircraftTypeTitle({ airline: code, total: 1175, starlink: 1173 }, def, {
               kind,
               effective: 1174,
               official,
+              rosterShort: official !== null,
             });
             expect({
               code,

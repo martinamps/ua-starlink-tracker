@@ -5612,11 +5612,12 @@ function computeAircraftTypePages(
   const listedUnverified = new Set<string>();
   for (const r of listings) {
     if (isBulkGid(r.gid)) continue;
+    // Only tails the verifier hasn't reached: a listing for a tail it found on
+    // Viasat is a conflict, and never feeds a positive word. A mass-write day
+    // still counts here; it only disqualifies the date.
+    if (providerOf.get(r.tail) === "unknown") listedUnverified.add(r.tail);
     const day = r.found ? r.found.slice(0, 10) : null;
     if (day && massDays.has(day)) continue;
-    // Only tails the verifier hasn't reached: a listing for a tail it found on
-    // Viasat is a conflict, and never feeds a positive word.
-    if (providerOf.get(r.tail) === "unknown") listedUnverified.add(r.tail);
     if (!day || !/^\d{4}-\d{2}-\d{2}$/.test(day)) continue;
     const prev = organicFirstSeen.get(r.tail);
     if (!prev || day < prev) organicFirstSeen.set(r.tail, day);

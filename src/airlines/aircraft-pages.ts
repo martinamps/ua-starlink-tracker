@@ -333,6 +333,8 @@ export function typeFactsFor(code: string, slug: string): RolloutFact[] {
 
 export interface OfficialCount {
   count: number;
+  /** The airline states `count` is the whole type, not just a count. */
+  all: boolean;
   asOf: string;
   sourceLabel: string;
   url: string;
@@ -344,6 +346,7 @@ export function officialCountFor(code: string, slug: string): OfficialCount | nu
   if (!fact?.officialCounts) return null;
   return {
     count: fact.officialCounts[slug],
+    all: fact.officialAll?.includes(slug) ?? false,
     asOf: factDate(fact),
     sourceLabel: fact.source.label,
     url: fact.source.url,
@@ -409,8 +412,8 @@ export function isoDay(sec: number): string {
 const plural = (n: number, one: string, many = `${one}s`) => (n === 1 ? one : many);
 
 const OFFICIAL_STALE_DAYS = 45;
-const PIPELINE_ACTIVE = (p: AircraftTypePipeline | null) =>
-  p ? p.starlink_complete + p.in_mod + p.verification_needed : 0;
+/** Above this unchecked share, "every one we've checked" would be a sample. */
+const ALL_CHECKED_MAX_UNCHECKED = 0.1;
 
 export interface AircraftAnswer {
   kind: AircraftVerdictKind;
@@ -422,6 +425,9 @@ export interface AircraftAnswer {
   /** The count the verdict is built on: ours, or the airline's own when higher. */
   effective: number;
   official: OfficialCount | null;
+  /** The airline's bare count reaches our roster size, so the roster is
+   * missing tails and a fleet share would be invented. */
+  rosterShort: boolean;
 }
 
 type AnswerInput = Pick<
@@ -442,6 +448,7 @@ const INDEXABLE_KINDS: ReadonlySet<AircraftVerdictKind> = new Set([
   "most",
   "some",
   "verifying",
+  "installing",
 ]);
 
 export const SHARE_KINDS: ReadonlySet<AircraftVerdictKind> = new Set([
@@ -469,16 +476,19 @@ export function answerFor(
 ): AircraftAnswer {
   const copy = tenantCopy(data.airline);
   const { total: T, starlink: s, knownOther: K, unchecked: U } = data;
-  const L = data.listedAwaitingVerification.length;
+  // A listing only awaits a check where the verifier checks every tail.
+  const L = copy.checksEveryTail ? data.listedAwaitingVerification.length : 0;
   const O = official;
+  const rosterShort = O !== null && !O.all && O.count >= T;
   const E = O ? Math.max(s, Math.min(O.count, T)) : s;
   const attributed = O !== null && O.count > s;
   const pct = sharePct(E, T);
   const short = def.short;
   const shorts = `${short}s`;
   const oDate = O ? formatFactDate(O.asOf) : "";
-  const listedTail =
-    L > 0 && copy.checksEveryTail ? ` +${L} more listed, awaiting a united.com check.` : "";
+  const listedTail = L > 0 ? ` +${L} more listed, awaiting a united.com check.` : "";
+  const uncheckedTail =
+    copy.checksEveryTail && U > 0 ? ` ${U} ${plural(U, "tail")} not checked yet.` : "";
   const staleOfficial =
     O &&
     data.dataClock &&
@@ -499,13 +509,25 @@ export function answerFor(
     indexable: INDEXABLE_KINDS.has(kind),
     effective: E,
     official: O,
+    rosterShort,
   });
+
+  if (O && rosterShort) {
+    const connected = `${O.count} ${plural(O.count, short, shorts)} connected`;
+    return build(
+      "most",
+      `${O.count} do, per ${copy.airline}.`,
+      `${copy.airline} reports ${connected} (tracker updated ${oDate}), but our roster lists only ${T}, so no fleet share is shown. We have tail-level confirmation for ${s}.`,
+      `${copy.airline} reports ${connected} (${oDate}). We have tail-level confirmation for ${s}. ${SWAP_NOTE}`
+    );
+  }
 
   const attributedShare = () =>
     `${copy.airline} reports ${O?.count} of its ${T} ${shorts} connected (${oDate}), about ${pct}. We have tail-level confirmation for ${s}. ${SWAP_NOTE}`;
 
-  if (E > 0 && E === T && (!copy.checksEveryTail || (K === 0 && U === 0))) {
-    if (O && O.count >= T && attributed) {
+  const everyTail = copy.checksEveryTail ? K === 0 && U === 0 : s === T || O?.all === true;
+  if (E > 0 && E === T && everyTail) {
+    if (O?.all && attributed) {
       const ours =
         s === T
           ? `every one of the ${T} in our roster is ${copy.evidence}`
@@ -517,10 +539,9 @@ export function answerFor(
         `Every ${copy.airline} ${short} has Starlink per ${copy.possessive} own count, so it's near-certain unless the aircraft is swapped for another type.`
       );
     }
-    const officialNote =
-      O && O.count >= T
-        ? ` ${copy.airline} reports all ${O.count} of its ${shorts} connected (tracker updated ${oDate}).`
-        : "";
+    const officialNote = O?.all
+      ? ` ${copy.airline} reports all ${O.count} of its ${shorts} connected (tracker updated ${oDate}).`
+      : "";
     return build(
       "all",
       "Yes, every one.",
@@ -529,7 +550,7 @@ export function answerFor(
     );
   }
 
-  if (copy.checksEveryTail && s > 0 && K === 0 && U > 0) {
+  if (copy.checksEveryTail && s > 0 && K === 0 && U > 0 && U <= T * ALL_CHECKED_MAX_UNCHECKED) {
     return build(
       "all_checked",
       "Every one we've checked.",
@@ -541,7 +562,7 @@ export function answerFor(
   if (E > 0) {
     const most = E / T >= 0.5;
     const kind = most ? "most" : "some";
-    const lead = most ? "Most do" : "Some do";
+    const lead = E === 1 ? "One does" : most ? "Most do" : "Some do";
     if (attributed) {
       return build(
         kind,
@@ -553,19 +574,36 @@ export function answerFor(
     return build(
       kind,
       `${lead}: ${E} of ${T} (${pct}).`,
-      `Every Starlink ${short} counted here is ${copy.evidence}.${listedTail}`,
+      `Every Starlink ${short} counted here is ${copy.evidence}.${uncheckedTail}${listedTail}`,
       `${pct} of ${copy.possessive} ${shorts} have Starlink (${E} of ${T}). ${SWAP_NOTE}`
     );
   }
 
-  const active = PIPELINE_ACTIVE(data.pipeline);
-  if (L > 0 || active > 0) {
+  // "Not verified yet" is reserved for an install the sheet calls finished or
+  // a listing awaiting its check. A tail in mod is not a maybe: every checked
+  // tail still says no, so that is "not yet", with the install as the news.
+  const p = data.pipeline;
+  const sheet = p
+    ? `the United fleet progress sheet (fetched ${formatFactDate(isoDay(p.fetched_at))})`
+    : "";
+  const inMod = p?.in_mod ?? 0;
+  const finished = p ? p.starlink_complete + p.verification_needed : 0;
+  const modTail = inMod > 0 ? ` ${inMod} more in mod.` : "";
+  if (L > 0 || finished > 0) {
     const listed = `${L} ${plural(L, "tail is", "tails are")} listed with Starlink, awaiting a united.com check.`;
     const sentence =
-      active > 0 && data.pipeline
-        ? `${active} ${plural(active, "install")} finished or under way per the United fleet progress sheet (fetched ${formatFactDate(isoDay(data.pipeline.fetched_at))}), none confirmed on united.com yet for the ${short}.${L > 0 ? ` ${listed}` : ""}`
-        : `${copy.airline} ${short}: ${listed} None is confirmed there yet.`;
+      finished > 0
+        ? `${finished} ${plural(finished, "install")} finished per ${sheet}, none confirmed on united.com yet for the ${short}.${modTail}${L > 0 ? ` ${listed}` : ""}`
+        : `${copy.airline} ${short}: ${listed} None is confirmed there yet.${modTail}`;
     return build("verifying", "Not verified yet.", sentence);
+  }
+
+  if (copy.checksEveryTail && K === 0) {
+    return build(
+      "unknown",
+      "Not checked yet.",
+      `None of ${copy.possessive} ${T} ${shorts} has been checked on united.com yet.${inMod > 0 ? ` ${inMod} ${plural(inMod, "is", "are")} in mod per ${sheet}.` : ""}`
+    );
   }
 
   if (O && O.count === 0) {
@@ -584,12 +622,20 @@ export function answerFor(
     );
   }
 
+  const checked =
+    U > 0 ? `${T - U} checked on united.com, ${U} not checked yet` : "each checked on united.com";
+  if (inMod > 0) {
+    return build(
+      "installing",
+      `Not yet: 0 of ${T}.`,
+      `None of ${copy.possessive} ${T} ${shorts} has Starlink yet (${checked}). The first ${inMod === 1 ? "install is" : `${inMod} installs are`} under way per ${sheet}.`
+    );
+  }
+
   return build(
     "none",
     `Not yet: 0 of ${T}.`,
-    U > 0
-      ? `None of ${copy.possessive} ${T} ${shorts} has Starlink yet: ${T - U} checked on united.com, ${U} not checked yet.`
-      : `None of ${copy.possessive} ${T} ${shorts} has Starlink yet, each checked on united.com.`
+    `None of ${copy.possessive} ${T} ${shorts} has Starlink yet, ${checked}.`
   );
 }
 
@@ -604,24 +650,31 @@ export const TITLE_MAX = 60;
 export function aircraftTypeTitle(
   data: Pick<AircraftTypePageData, "airline" | "total" | "starlink">,
   def: AircraftPageDef,
-  answer: Pick<AircraftAnswer, "kind" | "effective" | "official">
+  answer: Pick<AircraftAnswer, "kind" | "effective" | "official"> &
+    Partial<Pick<AircraftAnswer, "rosterShort">>
 ): string {
   const { airline, possessive } = tenantCopy(data.airline);
   const s = def.short;
   const T = data.total;
   const E = answer.effective;
-  const perAirline = answer.official !== null && answer.official.count > data.starlink;
+  const O = answer.official;
+  const perAirline = O !== null && O.count > data.starlink;
   const ladder: string[] = [];
   switch (answer.kind) {
     case "all":
-      ladder.push(`${airline} ${s} Starlink: Yes, All ${T}`);
+      // Alaska's "all 93" over our roster's 92 would read as a mismatch.
+      ladder.push(
+        `${airline} ${s} Starlink: Yes, ${!O || O.count === T ? `All ${T}` : "Every One"}`
+      );
       break;
     case "all_checked":
       ladder.push(`${airline} ${s} Starlink: Every One Checked (${data.starlink})`);
       break;
     case "most":
     case "some":
-      if (perAirline) ladder.push(`${airline} ${s} Starlink: ${E} of ${T}, per ${airline}`);
+      if (O && answer.rosterShort)
+        ladder.push(`${airline} ${s} Starlink: ${O.count} Connected, per ${airline}`);
+      else if (perAirline) ladder.push(`${airline} ${s} Starlink: ${E} of ${T}, per ${airline}`);
       // "1 of 96 Do" doesn't parse; a lone tail takes the plain count form.
       else if (E > 1) ladder.push(`Does the ${airline} ${s} Have Starlink? ${E} of ${T} Do`);
       ladder.push(`${airline} ${s} Starlink: ${E} of ${T}`);
@@ -629,6 +682,10 @@ export function aircraftTypeTitle(
     case "verifying":
       ladder.push(`Does ${possessive} ${s} Have Starlink? Not Verified Yet`);
       ladder.push(`${airline} ${s} Starlink: Not Verified Yet`);
+      break;
+    case "installing":
+      ladder.push(`${airline} ${s} Starlink: Not Yet, Retrofit Under Way`);
+      ladder.push(`${airline} ${s} Starlink: Not Yet`);
       break;
     case "official_none":
       ladder.push(`${airline} ${s} Starlink: Not Yet, per ${airline}`);
@@ -721,7 +778,7 @@ export function aircraftTypeFaq(
       q: `What WiFi do ${copy.possessive} ${data.starlink > 0 ? "other " : ""}${shorts} have?`,
       a:
         data.starlink > 0
-          ? `Of the ${data.checked} ${copy.airline} ${shorts} last checked on united.com, ${data.starlink} have Starlink; of the rest, ${parts.join(", ")}.${unchecked}`
+          ? `Of the ${data.checked} ${copy.airline} ${shorts} last checked on united.com, ${data.starlink} ${plural(data.starlink, "has", "have")} Starlink; of the rest, ${parts.join(", ")}.${unchecked}`
           : `Of the ${data.checked} ${copy.airline} ${shorts} last checked on united.com, ${parts.join(", ")}.${unchecked}`,
     });
   }
@@ -736,7 +793,11 @@ export function aircraftTypeFaq(
 
   if (SHARE_KINDS.has(answer.kind) && opts.freeAccess) {
     const terms = opts.freeAccess.replace(/^Yes\b[\s—–,.:-]*/i, "");
-    const lead = `Yes, on the ${answer.effective} equipped ${copy.airline} ${shorts}: ${terms.charAt(0).toUpperCase()}${terms.slice(1)}`;
+    const equipped =
+      answer.effective === 1
+        ? `the one equipped ${copy.airline} ${short}`
+        : `the ${answer.effective} equipped ${copy.airline} ${shorts}`;
+    const lead = `Yes, on ${equipped}: ${terms.charAt(0).toUpperCase()}${terms.slice(1)}`;
     items.push({
       q: `Is Starlink free on ${copy.possessive} ${short}?`,
       a: lead,

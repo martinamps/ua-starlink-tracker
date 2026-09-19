@@ -3141,11 +3141,14 @@ const fleetPage: Handler = (ctx) => {
     slug: d.slug,
     short: d.short,
   }));
+  // Structured data points only at pages the index may carry.
+  const indexed = new Set(indexableAircraftPages(ctx).map(({ def }) => def.slug));
+  const ldLinks = typeLinks.filter((l) => indexed.has(l.slug));
   return renderSubPage(
     ctx,
     FleetPage,
     "/fleet",
-    { ...subPageMeta(ctx, "fleet"), pageJsonLd: fleetItemListJsonLd(ctx, data, typeLinks) },
+    { ...subPageMeta(ctx, "fleet"), pageJsonLd: fleetItemListJsonLd(ctx, data, ldLinks) },
     {
       data,
       shareCard: resolveShareCard(ctx.site.scope),
@@ -3213,9 +3216,15 @@ function aircraftTypeMeta(
 ): PageMeta {
   const airline = tenantCopy(cfg.code).airline;
   const p = data.pipeline;
+  const pending = p
+    ? [
+        p.in_mod > 0 ? `${p.in_mod} more in mod` : "",
+        p.verification_needed > 0 ? `${p.verification_needed} awaiting verification` : "",
+      ].filter(Boolean)
+    : [];
   const pipelineClause =
-    p && SHARE_KINDS.has(answer.kind) && p.in_mod + p.verification_needed > 0
-      ? ` ${p.in_mod} more in mod and ${p.verification_needed} awaiting verification per the United fleet progress sheet.`
+    SHARE_KINDS.has(answer.kind) && pending.length > 0
+      ? ` ${pending.join(" and ")} per the United fleet progress sheet.`
       : "";
   const description = `${answer.headline} ${answer.sentence}${pipelineClause} Every tail, where they fly, and how to check your flight.`;
   const canonical = `https://${ctx.site.canonicalHost}/fleet/${def.slug}`;

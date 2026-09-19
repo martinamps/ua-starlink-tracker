@@ -22,6 +22,7 @@ import {
   aircraftPageForFamily,
   aircraftPagesFor,
   aircraftTypeFaq,
+  aircraftTypeTitle,
   answerFor,
   officialCountFor,
   resolveAircraftSlug,
@@ -295,8 +296,9 @@ function input(over: Partial<AircraftTypePageData> = {}): AircraftTypePageData {
   };
 }
 
-const official = (count: number, asOf = "2026-08-28"): OfficialCount => ({
+const official = (count: number, asOf = "2026-08-28", all = false): OfficialCount => ({
   count,
+  all,
   asOf,
   sourceLabel: "Alaska Airlines newsroom — Starlink tracker",
   url: "https://news.alaskaair.com/alaska-airlines-wifi-connectivity/",
@@ -323,7 +325,13 @@ describe("answerFor", () => {
     ["all_checked", UA_E175, input({ total: 10, starlink: 9, unchecked: 1, checked: 9 }), null],
     ["most", UA_E175, input({ total: 10, starlink: 6, knownOther: 4 }), null],
     ["some", UA_E175, input({ total: 10, starlink: 2, knownOther: 8 }), null],
-    ["verifying", UA_787, input({ knownOther: 10, pipeline: pipeline() }), null],
+    ["installing", UA_787, input({ knownOther: 10, pipeline: pipeline() }), null],
+    [
+      "verifying",
+      UA_787,
+      input({ knownOther: 10, pipeline: pipeline({ in_mod: 0, verification_needed: 1 }) }),
+      null,
+    ],
     [
       "verifying",
       UA_787,
@@ -340,7 +348,7 @@ describe("answerFor", () => {
     expect(a.kind).toBe(kind);
     expect(a.indexable).toBe(!["none", "official_none", "unknown"].includes(kind));
     expect(a.shareLine === null).toBe(
-      ["verifying", "none", "official_none", "unknown"].includes(kind)
+      ["verifying", "installing", "none", "official_none", "unknown"].includes(kind)
     );
     if (["verifying", "official_none", "unknown"].includes(kind)) {
       expect(a.headline).not.toMatch(/^No\b/);
@@ -414,7 +422,7 @@ describe("answerFor", () => {
     const a = answerFor(
       input({ airline: "AS", total: 92, starlink: 92, checked: 92 }),
       AS_E175,
-      official(93)
+      official(93, "2026-08-28", true)
     );
     expect(a.kind).toBe("all");
     expect(a.sentence).toContain("93");
@@ -439,6 +447,103 @@ describe("answerFor", () => {
 });
 
 // ── 6. serve and render (snapshot) ──────────────────────────────────────────
+
+describe("answerFor edge verdicts", () => {
+  const fullyChecked = input({ total: 91, checked: 91, knownOther: 91 });
+
+  test("an in-mod first install on an all-checked type states the no, not 'not verified'", () => {
+    const a = answerFor({ ...fullyChecked, pipeline: pipeline({ in_mod: 1 }) }, UA_787, null);
+    expect(a.kind).toBe("installing");
+    expect(a.indexable).toBe(true);
+    expect(a.headline).toMatch(/^Not yet/);
+    expect(a.sentence).toMatch(/under way/);
+    const title = aircraftTypeTitle(fullyChecked, UA_787, a);
+    expect(title).not.toMatch(/Verified/);
+    expect(title).toMatch(/Not Yet/);
+  });
+
+  test("a finished-but-unconfirmed install is still 'verifying'", () => {
+    for (const over of [{ starlink_complete: 1 }, { verification_needed: 1 }]) {
+      const a = answerFor(
+        { ...fullyChecked, pipeline: pipeline({ in_mod: 0, ...over }) },
+        UA_787,
+        null
+      );
+      expect(a.kind).toBe("verifying");
+    }
+  });
+
+  test("a type with no tail checked is never a 'no'", () => {
+    for (const p of [null, pipeline({ in_mod: 2 })]) {
+      const a = answerFor(
+        input({ total: 10, checked: 0, unchecked: 10, pipeline: p }),
+        UA_787,
+        null
+      );
+      expect(a.kind).toBe("unknown");
+      expect(a.indexable).toBe(false);
+      expect(`${a.headline} ${a.sentence}`).not.toMatch(/Not yet|has Starlink yet/);
+    }
+  });
+
+  test("Alaska listings never produce united.com wording", () => {
+    const a = answerFor(
+      input({ airline: "AS", checked: 0, unchecked: 10, listedAwaitingVerification: ["N1"] }),
+      AS_738,
+      official(0)
+    );
+    expect(a.kind).toBe("official_none");
+    expect(`${a.headline} ${a.sentence}`).not.toContain("united.com");
+  });
+
+  test("an official count without 'all' never becomes 'every one' on a short roster", () => {
+    const a = answerFor(
+      input({ airline: "AS", total: 12, starlink: 7, checked: 7, unchecked: 5 }),
+      AS_MAX8,
+      official(12)
+    );
+    expect(a.kind).not.toBe("all");
+    expect(a.rosterShort).toBe(true);
+    expect(`${a.headline} ${a.sentence} ${a.shareLine}`).not.toMatch(/every one|100%|of its 12/i);
+    expect(aircraftTypeTitle({ airline: "AS", total: 12, starlink: 7 }, AS_MAX8, a)).not.toMatch(
+      /All|of 12/
+    );
+    const stated = answerFor(
+      input({ airline: "AS", total: 92, starlink: 90, checked: 90, unchecked: 2 }),
+      AS_E175,
+      official(93, "2026-08-28", true)
+    );
+    expect(stated.kind).toBe("all");
+    expect(aircraftTypeTitle({ airline: "AS", total: 92, starlink: 90 }, AS_E175, stated)).toMatch(
+      /Yes, Every One$/
+    );
+  });
+
+  test("'every one we've checked' needs the checked tails to cover the type", () => {
+    const a = answerFor(input({ total: 21, starlink: 1, checked: 1, unchecked: 20 }), UA_787, null);
+    expect(a.kind).toBe("some");
+    expect(a.headline).toMatch(/^One does/);
+    expect(a.sentence).toContain("20 tails not checked yet");
+  });
+
+  test("a lone equipped tail reads in the singular", () => {
+    const data = input({
+      total: 173,
+      starlink: 1,
+      checked: 172,
+      knownOther: 171,
+      unchecked: 1,
+      providers: { starlink: 1, viasat: 171, unknown: 1 } as Record<WifiProvider, number>,
+    });
+    const a = answerFor(data, UA_787, null);
+    expect(a.headline).toBe("One does: 1 of 173 (<1%).");
+    const faq = aircraftTypeFaq(data, UA_787, [], null, { freeAccess: "Yes, free for all." });
+    const text = faq.map((f) => f.a).join(" ");
+    expect(text).toContain("the one equipped United 787:");
+    expect(text).toContain("1 has Starlink");
+    expect(text).not.toMatch(/\b1 have\b|1 equipped/);
+  });
+});
 
 describe("serve and render", () => {
   for (const [code, host] of TENANTS) {
@@ -757,6 +862,21 @@ describe("first-seen and lastmod (synthetic)", () => {
     db.close();
   });
 
+  test("a listing dated on a mass-write day still counts as awaiting verification", () => {
+    const db = makeSyntheticDb();
+    for (let i = 0; i < 100; i++) {
+      const tail = `N${300 + i}YX`;
+      addFleet(db, tail, "confirmed", { aircraftType: "ERJ-175", verifiedWifi: "Starlink" });
+      listing(db, tail, "2025-12-03", "13");
+    }
+    addFleet(db, "N499YX", "unknown", { aircraftType: "ERJ-175", verifiedWifi: null });
+    listing(db, "N499YX", "2025-12-03", "13");
+    const data = getAircraftTypePageData(db, "UA", "e175");
+    expect(data?.listedAwaitingVerification).toContain("N499YX");
+    expect(data?.firstSeen).toBeNull();
+    db.close();
+  });
+
   test("other families' pipeline events never move a family's lastmod", () => {
     const build = (events: number) => {
       const db = makeSyntheticDb();
@@ -817,11 +937,13 @@ describe("pipeline (synthetic)", () => {
     return db;
   }
 
-  test("a fresh sheet install makes a zero-Starlink type 'verifying'", () => {
+  test("a fresh in-mod install makes an all-checked zero-Starlink type 'installing'", () => {
     const db = withSheet(NOW - 86400);
     const d = getAircraftTypePageData(db, "UA", "787");
     expect(d?.pipeline?.in_mod).toBe(1);
-    expect(answerFor(d as AircraftTypePageData, UA_787, null).kind).toBe("verifying");
+    const a = answerFor(d as AircraftTypePageData, UA_787, null);
+    expect(a.kind).toBe("installing");
+    expect(a.indexable).toBe(true);
     db.close();
   });
 
@@ -829,7 +951,7 @@ describe("pipeline (synthetic)", () => {
     const db = withSheet(NOW - 15 * 86400);
     const d = getAircraftTypePageData(db, "UA", "787");
     expect(d?.pipeline).toBeNull();
-    expect(answerFor(d as AircraftTypePageData, UA_787, null).kind).not.toBe("verifying");
+    expect(answerFor(d as AircraftTypePageData, UA_787, null).kind).toBe("none");
     db.close();
   });
 

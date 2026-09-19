@@ -283,7 +283,7 @@ describe("bot-blocked host allowlist", () => {
 describe("type-page tags", () => {
   const tagged = AIRLINE_FACTS.flatMap((e) =>
     e.facts
-      .filter((f) => f.aircraftPages || f.officialCounts || f.pageText)
+      .filter((f) => f.aircraftPages || f.officialCounts || f.officialAll || f.pageText)
       .map((fact) => ({ entry: e, fact }))
   );
 
@@ -299,6 +299,11 @@ describe("type-page tags", () => {
         expect(slugs.has(s), `${entry.slug}: officialCounts.${s}`).toBe(true);
         expect(Number.isInteger(n) && n >= 0, `${entry.slug}: ${s}=${n}`).toBe(true);
         expect(fact.aircraftPages, `${entry.slug}: ${s} counted but not tagged`).toContain(s);
+      }
+      for (const s of fact.officialAll ?? []) {
+        const n = fact.officialCounts?.[s];
+        expect(n, `${entry.slug}: officialAll.${s} has no count`).toBeDefined();
+        expect(fact.fact, `${entry.slug}: officialAll.${s}`).toContain(`all ${n} `);
       }
     }
   });

@@ -54,6 +54,10 @@ interface RolloutFactBase {
    * dated figure is the best answer a type page has — 0 included, because
    * "none connected yet, per the airline" is a real answer, not missing data. */
   officialCounts?: Readonly<Record<string, number>>;
+  /** Slugs whose `officialCounts` figure `fact` states as the whole type
+   * ("all 93 Embraer 175s"). A bare count has no denominator, so without this
+   * a short roster would read the count as "every one". */
+  officialAll?: readonly string[];
   /** Verbatim excerpt of `fact` a type page renders instead of the whole
    * claim, for facts whose other clauses are about a different fleet. */
   pageText?: string;
@@ -209,6 +213,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
           "737-900": 0,
           "787": 0,
         },
+        officialAll: ["e175"],
       },
     ],
   },

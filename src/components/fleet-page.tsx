@@ -1,5 +1,5 @@
 import React from "react";
-import { TYPE_DISPLAY } from "../airlines/aircraft-pages";
+import { TYPE_DISPLAY, sharePct } from "../airlines/aircraft-pages";
 import { AIRLINES, type SiteConfig } from "../airlines/registry";
 import type {
   FleetAnchorRow,
@@ -293,7 +293,6 @@ function FamilyBlock({
   pipeline: PipelineMap;
   typeLink?: FleetTypeLink;
 }) {
-  const pct = Math.round((fam.starlink / fam.total) * 100);
   const spec = AIRCRAFT_SPECS[fam.family];
   return (
     <details
@@ -314,7 +313,9 @@ function FamilyBlock({
           </span>
           <span className="font-mono text-[10px] text-muted">
             {fam.starlink}/{fam.total}
-            {pct > 0 && <span className="text-accent ml-1.5">{pct}%</span>}
+            {fam.starlink > 0 && (
+              <span className="text-accent ml-1.5">{sharePct(fam.starlink, fam.total)}</span>
+            )}
           </span>
         </div>
         <svg

@@ -110,13 +110,15 @@ describe("permalink-only readers", () => {
 });
 
 describe("aircraft-type page links", () => {
+  // Loopback, so the page limiter never 429s a crawl of real-scale data.
+  const local = (path: string) => req(path, HOST, { headers: { "x-forwarded-for": "127.0.0.1" } });
   const LINK_RE = /href="(\/(?:fleet|route-planner|check-flight)(?:\/[^"#?]*)?)(#t-[^"]+)?"/g;
 
   test("/fleet, every type page and sampled permalinks link only to URLs that serve", async () => {
     const db = openSnapshot();
     const app = createApp(db);
     const reader = createReaderFactory(db)("UA");
-    const fleetHtml = await (await app.dispatch(req("/fleet", HOST))).text();
+    const fleetHtml = await (await app.dispatch(local("/fleet"))).text();
     const tailIds = new Set([...fleetHtml.matchAll(/id="t-([^"]+)"/g)].map((m) => m[1]));
     const typePages = [
       ...new Set([...fleetHtml.matchAll(/href="(\/fleet\/[a-z0-9-]+)"/g)].map((m) => m[1])),
@@ -135,7 +137,7 @@ describe("aircraft-type page links", () => {
     for (const page of pages) {
       // Rendered anchors only — inline scripts build hrefs from user input.
       const html = (
-        page === "/fleet" ? fleetHtml : await (await app.dispatch(req(page, HOST))).text()
+        page === "/fleet" ? fleetHtml : await (await app.dispatch(local(page))).text()
       ).replace(/<script[\s\S]*?<\/script>/g, "");
       const typeLinks = new Map<string, number>();
       for (const [, href, anchor] of html.matchAll(LINK_RE)) {
@@ -145,7 +147,7 @@ describe("aircraft-type page links", () => {
           anchors++;
           continue;
         }
-        if (!status.has(href)) status.set(href, (await app.dispatch(req(href, HOST))).status);
+        if (!status.has(href)) status.set(href, (await app.dispatch(local(href))).status);
         expect(status.get(href), `${page} → ${href}`).toBe(200);
         if (/^\/fleet\/[a-z0-9-]+$/.test(href)) typeLinks.set(href, (typeLinks.get(href) ?? 0) + 1);
       }

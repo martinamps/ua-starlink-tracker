@@ -57,10 +57,17 @@ const VERDICT_CLASS: Record<AircraftVerdictKind, string> = {
   most: "verdict verdict-most",
   some: "verdict verdict-some",
   verifying: "verdict verdict-wait",
+  installing: "verdict verdict-no",
   none: "verdict verdict-no",
   official_none: "verdict verdict-no",
   unknown: "verdict verdict-wait",
 };
+
+const TARGET_IN_HEADER: ReadonlySet<AircraftVerdictKind> = new Set([
+  "verifying",
+  "installing",
+  "none",
+]);
 
 const TAIL_CHIP_CLASS: Record<WifiProvider, string> = {
   starlink: "tchip tchip-sl",
@@ -131,7 +138,7 @@ function Header({
       >
         <StatCell label={official ? "Confirmed by us" : "With Starlink"} value={data.starlink} />
         <StatCell label={`${airline} ${def.short}s`} value={data.total} />
-        {official && official.count > data.starlink ? (
+        {official && (official.count > data.starlink || answer.rosterShort) ? (
           <StatCell label={`Per ${airline}`} value={official.count} />
         ) : (
           <StatCell label="Share" value={sharePct(answer.effective, data.total)} />
@@ -146,7 +153,7 @@ function Header({
           , updated {formatFactDate(official.asOf)}.
         </p>
       )}
-      {target && (answer.kind === "none" || answer.kind === "verifying") && target.asOf && (
+      {target?.asOf && (
         <p className="text-xs text-muted mt-3">
           {airline}'s stated target ({formatFactDate(target.asOf)}): {factText(target)}
         </p>
@@ -348,9 +355,8 @@ function RecentSection({ def, data }: { def: AircraftPageDef; data: AircraftType
         ))}
       </ul>
       <p className="text-xs text-muted mt-3">
-        The date each {def.short} first appeared with Starlink in the tracked data
-        {data.firstSeen ? `; the earliest was ${monthDay(data.firstSeen)}` : ""}. Bulk imports are
-        left out.
+        The date each {def.short} first appeared with Starlink in the tracked data, leaving out bulk
+        imports{data.firstSeen ? `; the earliest such date was ${monthDay(data.firstSeen)}` : ""}.
       </p>
     </section>
   );
@@ -565,6 +571,9 @@ export default function AircraftTypePage({
 }: AircraftTypePageProps) {
   const airline = tenantCopy(data.airline).airline;
   const target = targetFact(facts, def.slug);
+  // Above the fold only where the answer is "not yet"; it then leaves the
+  // facts list so the page states it once besides the FAQ.
+  const headerTarget = target?.asOf && TARGET_IN_HEADER.has(answer.kind) ? target : null;
   return (
     <div className="w-full mx-auto px-4 sm:px-6 md:px-8 bg-base min-h-screen flex flex-col relative">
       <div className="absolute inset-0 grid-pattern opacity-50 pointer-events-none" />
@@ -592,7 +601,7 @@ export default function AircraftTypePage({
           answer={answer}
           airline={airline}
           lastUpdated={lastUpdated}
-          target={target}
+          target={headerTarget}
         />
 
         {answer.shareLine && (
@@ -611,7 +620,7 @@ export default function AircraftTypePage({
         <RecentSection def={def} data={data} />
         <RoutesSection def={def} data={data} />
         <FlightsSection def={def} data={data} answer={answer} />
-        <FactsSection facts={facts} airline={airline} />
+        <FactsSection facts={facts.filter((f) => f !== headerTarget)} airline={airline} />
         <SpecsSection def={def} spec={spec} />
         <TailsSection def={def} data={data} airline={airline} />
         <FaqSection faq={faq} />
