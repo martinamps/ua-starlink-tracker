@@ -148,6 +148,7 @@ import {
   isPassengerVerifyAudience,
   passengerVerifyEnabled,
 } from "./passenger-detect";
+import { recordWatchCtaShown, sameDayAlternativesField, watchFeed } from "./watch";
 
 type Handler = (ctx: RequestContext) => Response | Promise<Response>;
 type RouteTable = Record<string, Handler>;
@@ -728,7 +729,7 @@ function resolveCarrier(
   return { cfg: decision.cfg, reader: carrierReader(decision, reader, getReader) };
 }
 
-const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant }) => {
+const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant, site }) => {
   if (req.method !== "GET" && req.method !== "HEAD") return methodNotAllowed(true);
 
   const flightNumber = url.searchParams.get("flight_number");
@@ -771,6 +772,7 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant }) 
 
   const t = verdictTelemetry(verdict);
   recordFlightLookup("api_check", t.outcome, t.confidence, cfg.code, verdict.window.daysOut);
+  recordWatchCtaShown(req, site, cfg);
 
   if (verdict.kind === "qatar" || verdict.kind === "qatar_no_data") {
     return qatarCheckFlightResponse(verdict);
@@ -810,6 +812,7 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant }) 
           confidence: "verified",
           message: `${verdict.normalized} is assigned to tail ${f.tail_number}, verified as ${negativeWifi(f)} WiFi — not Starlink.${verdict.fr24Error ? ` ${SWAP_DEGRADED_NOTE}` : ""}`,
           flights: [],
+          ...sameDayAlternativesField(carrier.reader, verdict, date),
         }),
         { headers: SECURITY_HEADERS.api }
       );
@@ -847,6 +850,7 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant }) 
           method: "fr24_tail_lookup",
           flights: [],
           fallback: { segments: verdict.segments },
+          ...sameDayAlternativesField(carrier.reader, verdict, date),
         }),
         { headers: SECURITY_HEADERS.api }
       );
@@ -996,6 +1000,7 @@ const apiCheckAnyFlight: Handler = async ({ req, url, reader, getReader, tenant 
           confidence: "verified",
           reason: `${f.tail_number} (${f.aircraft_type}) — verified ${negativeWifi(f)} WiFi, not Starlink.`,
           flights: [],
+          ...sameDayAlternativesField(carrier.reader, verdict, date),
         }),
         { headers: SECURITY_HEADERS.api }
       );
@@ -3612,6 +3617,7 @@ export function createApp(db: Database): App {
   }
 
   const prefixRoutes: Array<[string, Handler]> = [
+    ["/cal/", watchFeed],
     ["/check-flight/", checkFlightPage],
     ["/route-planner/", routePlannerPage],
     ["/airlines/", airlineDetailPage],
@@ -3700,7 +3706,9 @@ export function createApp(db: Database): App {
       ? "api"
       : url.pathname === "/mcp" && req.method !== "GET" && req.method !== "HEAD"
         ? "mcp"
-        : url.pathname.startsWith("/check-flight/") || url.pathname === "/badge.svg"
+        : url.pathname.startsWith("/check-flight/") ||
+            url.pathname.startsWith("/cal/") ||
+            url.pathname === "/badge.svg"
           ? "page"
           : null;
     const ip = clientIp(req);

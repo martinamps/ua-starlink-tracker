@@ -93,9 +93,9 @@ the route table is the thing to watch:
 | Source | Count |
 |---|---|
 | Exact entries in `routes` | 31 |
-| Prefix families in `prefixRoutes` | 5 (4 of which reuse an exact entry's tag) |
+| Prefix families in `prefixRoutes` | 6 (4 of which reuse an exact entry's tag) |
 | `unmatched` | 1 |
-| **Distinct `route` tag values** | **33** |
+| **Distinct `route` tag values** | **34** |
 
 **Budget: keep it under 40.** The old "max 25" predates the distribution
 surfaces (`/newly-equipped`, `/feed.xml`, `/badge.svg`, `/embed`,

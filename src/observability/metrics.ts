@@ -39,6 +39,8 @@
  *   confidence:      high | medium | low | none                      (4)
  *   outcome:         verified_yes | verified_no | predicted | no_data | error  (5)
  *   tool:            7 MCP tool names (TOOL_NAMES) | unknown         (~8)
+ *   state:           watch.feed_fetch: prediction | yes | no | swap | none  (5)
+ *   surface:         watch.cta_shown: check_flight                   (1)
  */
 
 import { AIRLINES, SUBFLEET_KEYS } from "../airlines/registry";
@@ -243,6 +245,12 @@ export const COUNTERS = {
   // Probe beacon outcome — tags: outcome (onboard_api|cors_blocked|csp_blocked|
   //   fetch_error|timeout|onboard_http_*|onboard_noflight|unknown), in_geofeed (0|1), airline
   PASSENGER_PROBE: "passenger.probe",
+
+  // Starlink Watch calendar-feed fetch (calendar apps re-poll ~hourly, so this
+  // counts polls, not subscribers) — tags: airline, state (prediction|yes|no|swap|none)
+  WATCH_FEED_FETCH: "watch.feed_fetch",
+  // Watch row rendered on a check-flight result — tags: airline, surface (check_flight)
+  WATCH_CTA_SHOWN: "watch.cta_shown",
 } as const;
 
 /**

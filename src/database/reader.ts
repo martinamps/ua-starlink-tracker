@@ -21,6 +21,13 @@ import type {
   RouteSchedule,
 } from "../types";
 import {
+  type AssignmentLogRow,
+  type SameDayAlternative,
+  type SameDayAlternativesQuery,
+  getAssignmentHistory,
+  getSameDayStarlinkAlternatives,
+} from "./assignment-log";
+import {
   type ConfirmedEdge,
   type DirectRouteEdge,
   type FleetRosterEntry,
@@ -217,6 +224,10 @@ export interface ScopedReader {
     startOfDay: number,
     endOfDay: number
   ): QatarScheduleRow[];
+  /** Every tail the updater has seen on the flight's local date (Starlink Watch). */
+  getAssignmentHistory(variants: readonly string[], depDate: string): AssignmentLogRow[];
+  getSameDayStarlinkAlternatives(q: SameDayAlternativesQuery): SameDayAlternative[];
+
   getQatarScheduleStats(): {
     total: number;
     starlink: number;
@@ -358,6 +369,9 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     getQatarScheduleByFlight: (v, s, e) => getQatarScheduleByFlight(db, v, s, e),
     getQatarScheduleByRoute: (o, d, s, e) => getQatarScheduleByRoute(db, o, d, s, e),
     getQatarScheduleStats: () => getQatarScheduleStats(db),
+
+    getAssignmentHistory: (v, d) => getAssignmentHistory(db, airlines, v, d),
+    getSameDayStarlinkAlternatives: (q) => getSameDayStarlinkAlternatives(db, airlines, q),
   };
   return Object.freeze(r);
 }

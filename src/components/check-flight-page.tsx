@@ -1,6 +1,7 @@
 import React from "react";
 import { type SiteConfig, siteAirline } from "../airlines/registry";
 import type { PopularFlight } from "../database/database";
+import { watchFeedEnabled } from "../utils/ics";
 import { PopularFlightsLinks } from "./atoms";
 
 export interface FlightRouteFact {
@@ -623,6 +624,51 @@ export default function CheckFlightPage({
           var resultDiv = document.getElementById('flight-result');
           var dateInput = document.getElementById('flight-date');
           var carrierPrefix = ${JSON.stringify(cfg.iata)};
+          var WATCH_ENABLED = ${JSON.stringify(watchFeedEnabled(site))};
+          var ROUTE_PLANNER_ENABLED = ${JSON.stringify(site.features.routePlannerPage)};
+          var WATCH_MAX_DAYS_OUT = 330;
+
+          var escHtml = function(s) { var d = document.createElement('div'); d.textContent = String(s || ''); return d.innerHTML; };
+          // verified_wifi 'None' means no WiFi installed; it is never a provider name.
+          var wifiLabel = function(v) {
+            return (!v || !String(v).trim() || /^none$/i.test(String(v).trim())) ? 'no WiFi' : escHtml(v) + ' WiFi (not Starlink)';
+          };
+          var shortTime = function(unix) {
+            return new Date(unix * 1000).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZoneName: 'short' });
+          };
+          var alternativesHtml = function(list) {
+            if (!list || !list.length) return '';
+            return '<div class="mt-3"><div class="text-xs font-mono text-muted mb-1 uppercase tracking-wider">Starlink flights on this route today</div>' +
+              '<ul class="text-sm text-muted font-mono space-y-1">' +
+              list.map(function(a) {
+                return '<li><a href="/check-flight/' + encodeURIComponent(a.flight_number) + '" class="text-accent hover:underline">' + escHtml(a.flight_number) + '</a> ' +
+                  escHtml(shortTime(a.departure_time)) + ' <span class="text-secondary">' + escHtml(a.tail_number) + (a.aircraft_type ? ' (' + escHtml(a.aircraft_type) + ')' : '') + '</span></li>';
+              }).join('') +
+              '</ul></div>';
+          };
+          var routePlannerCta = function(origin, destination) {
+            var o = String(origin || '').toUpperCase();
+            var d = String(destination || '').toUpperCase();
+            if (!ROUTE_PLANNER_ENABLED || !/^[A-Z]{3}$/.test(o) || !/^[A-Z]{3}$/.test(d)) return '';
+            return '<p class="text-sm mt-3"><a href="/route-planner/' + o + '/' + d + '" rel="nofollow" class="text-accent hover:underline">Find Starlink flights ' + o + ' → ' + d + ' →</a></p>';
+          };
+          var watchRow = function(fn, date) {
+            if (!WATCH_ENABLED) return '';
+            var daysOut = Math.round((Date.parse(date + 'T00:00:00Z') - Date.parse(new Date().toISOString().slice(0, 10) + 'T00:00:00Z')) / 86400000);
+            if (!(daysOut >= -1 && daysOut <= WATCH_MAX_DAYS_OUT)) return '';
+            var path = '/cal/' + encodeURIComponent(fn) + '/' + encodeURIComponent(date) + '.ics';
+            var webcal = 'webcal://' + window.location.host + path;
+            var google = 'https://calendar.google.com/calendar/r?cid=' + encodeURIComponent(webcal);
+            return '<div class="mt-4 pt-4 border-t border-subtle">' +
+              '<div class="flex items-center gap-2 mb-2"><span class="font-display font-semibold text-secondary">Watch this flight</span></div>' +
+              '<div class="flex flex-wrap gap-3 text-sm">' +
+              '<a href="' + webcal + '" data-watch="webcal" class="text-accent hover:underline">Apple / Outlook</a>' +
+              '<a href="' + google + '" data-watch="google" target="_blank" rel="noopener noreferrer" class="text-accent hover:underline">Google Calendar</a>' +
+              '<a href="' + path + '" data-watch="ics" download class="text-accent hover:underline">Download .ics</a>' +
+              '</div>' +
+              '<p class="text-xs text-muted mt-2">A calendar event that updates itself as the aircraft is assigned or swapped. Apple refreshes about hourly, Google every 8–24 hours.</p>' +
+              '</div>';
+          };
 
           var pathParts = window.location.pathname.split('/').filter(Boolean);
           var urlFlight = pathParts.length >= 2 ? decodeURIComponent(pathParts[1]) : null;
@@ -658,7 +704,7 @@ export default function CheckFlightPage({
               fetch('/api/check-flight?flight_number=' + encodeURIComponent(flightNumber) + '&date=' + encodeURIComponent(date))
                 .then(function(res) { return res.json(); })
                 .then(function(data) {
-                  var esc = function(s) { var d = document.createElement('div'); d.textContent = String(s || ''); return d.innerHTML; };
+                  var esc = escHtml;
                   if (data.hasStarlink) {
                     var flight = data.flights[0] || {};
                     var depTime = flight.departure_time ? new Date(flight.departure_time * 1000) : null;
@@ -687,18 +733,38 @@ export default function CheckFlightPage({
                       '<div class="pt-2"><a href="' + faUrl + '" target="_blank" rel="nofollow noopener noreferrer" class="text-accent hover:underline text-xs">View on FlightAware →</a></div>' +
                       '</div></div>';
                   } else if (data.fallback && data.fallback.segments && data.fallback.segments.length > 0) {
-                    var seg = data.fallback.segments[0];
-                    var age = seg.verified_at ? Math.floor((Date.now()/1000 - seg.verified_at) / 86400) : null;
-                    var provider = esc(seg.verified_wifi || 'non-Starlink WiFi');
-                    var tail = esc(seg.tail_number);
-                    var model = seg.aircraft_model ? ' (' + esc(seg.aircraft_model) + ')' : '';
-                    var ageStr = age !== null ? ' ' + age + ' day' + (age === 1 ? '' : 's') + ' ago' : '';
-                    var note = (age !== null && age > 7)
-                      ? 'Retrofits happen mid-cycle — if you see Starlink onboard, we have flagged this plane for re-check.'
-                      : 'Aircraft swaps can happen, but this assignment is current.';
+                    var segs = data.fallback.segments;
+                    // Only a segment the API marked hasStarlink === false earns the
+                    // firm verdict; unknown tails are not a "no".
+                    var firmNo = segs.every(function(s) { return s.hasStarlink === false; });
+                    var segHtml = segs.map(function(seg) {
+                      var age = seg.verified_at ? Math.floor((Date.now()/1000 - seg.verified_at) / 86400) : null;
+                      var ageStr = age !== null ? ' ' + age + ' day' + (age === 1 ? '' : 's') + ' ago' : '';
+                      var model = seg.aircraft_model ? ' (' + esc(seg.aircraft_model) + ')' : '';
+                      var leg = seg.origin && seg.destination ? ' <span class="text-muted">(' + esc(seg.origin) + ' → ' + esc(seg.destination) + ')</span>' : '';
+                      var status = seg.hasStarlink === false
+                        ? 'Verified <span class="text-secondary">' + wifiLabel(seg.verified_wifi) + '</span>' + ageStr + '.'
+                        : 'WiFi on this aircraft is not verified yet.';
+                      var note = (age !== null && age > 7)
+                        ? ' Retrofits happen mid-cycle — if you see Starlink onboard, we have flagged this plane for re-check.'
+                        : '';
+                      return '<div class="text-sm text-muted font-mono space-y-1">' +
+                        '<div>Aircraft: <span class="text-secondary">' + esc(seg.tail_number) + model + '</span>' + leg + '</div>' +
+                        '<p class="text-sm text-muted">' + status + note + '</p>' +
+                        '</div>';
+                    }).join('');
+                    var first = segs[0];
                     resultDiv.innerHTML = '<div class="bg-surface-elevated border border-subtle rounded p-4">' +
-                      '<div class="font-display font-semibold text-secondary mb-2">Assigned aircraft: ' + tail + model + '</div>' +
-                      '<p class="text-sm text-muted">Last verified <span class="text-secondary">' + provider + '</span>' + ageStr + '. ' + note + '</p>' +
+                      (firmNo
+                        ? '<div class="flex items-center gap-2 mb-2">' +
+                          '<span class="text-muted text-lg">&#10007;</span>' +
+                          '<span class="font-display font-semibold text-secondary">No Starlink on this flight</span>' +
+                          '</div>'
+                        : '<div class="font-display font-semibold text-secondary mb-2">Assigned aircraft</div>') +
+                      '<div class="space-y-2">' + segHtml + '</div>' +
+                      '<p class="text-sm text-muted mt-2">Aircraft swaps can happen; re-check closer to departure.</p>' +
+                      alternativesHtml(data.sameDayAlternatives) +
+                      routePlannerCta(first.origin, first.destination) +
                       '</div>';
                   } else if (data.confidence === 'verified' && data.hasStarlink === false) {
                     // scheduled_no: a firm verified-no with no fallback segments.
@@ -710,6 +776,7 @@ export default function CheckFlightPage({
                       '<span class="font-display font-semibold text-secondary">No Starlink on this flight</span>' +
                       '</div>' +
                       '<p class="text-sm text-muted">' + esc(data.message || data.reason || 'The assigned aircraft is verified as non-Starlink WiFi.') + '</p>' +
+                      alternativesHtml(data.sameDayAlternatives) +
                       '</div>';
                   } else {
                     var pred = data.prediction;
@@ -746,11 +813,19 @@ export default function CheckFlightPage({
                         '</div>';
                     }
                   }
+                  if (!data.error) resultDiv.insertAdjacentHTML('beforeend', watchRow(flightNumber, date));
                 })
                 .catch(function() {
                   resultDiv.innerHTML = '<div class="text-sm text-red-400">Error checking flight. Please try again.</div>';
                 });
             };
+
+            resultDiv.addEventListener('click', function(e) {
+              var link = e.target && e.target.closest ? e.target.closest('[data-watch]') : null;
+              if (link && window.plausible) {
+                window.plausible('Watch', { props: { client: link.getAttribute('data-watch') } });
+              }
+            });
 
             form.addEventListener('submit', function(e) {
               e.preventDefault();
