@@ -37,6 +37,7 @@ import {
 import {
   type ConfirmedEdge,
   type DirectRouteEdge,
+  type FleetGuideTail,
   type FleetRosterEntry,
   type FlightAssignmentRow,
   type FlightHistorySummary,
@@ -52,6 +53,8 @@ import {
   type SitemapFlight,
   type SitemapRoute,
   type SubfleetPenetration,
+  type TypeProgress,
+  type UnequippedAssignment,
   type VerificationObservation,
   type VerificationSource,
   type WifiConsensus,
@@ -73,6 +76,7 @@ import {
   getFleetAnchors,
   getFleetDiscoveryStats,
   getFleetEntryByTail,
+  getFleetGuideTails,
   getFleetPageData,
   getFleetRoster,
   getFleetStats,
@@ -104,6 +108,8 @@ import {
   getStarlinkPlanes,
   getSubfleetPenetration,
   getTotalCount,
+  getTypeProgress,
+  getUnequippedAssignments,
   getUpcomingFlights,
   getVerificationObservations,
   getVerificationSummary,
@@ -158,6 +164,17 @@ export interface ScopedReader {
     startOfDay: number,
     endOfDay: number
   ): FlightAssignmentRow[];
+  /** Assigned tails that are on the roster but not equipped (community-source
+   * airlines name them instead of discarding them). */
+  getUnequippedAssignments(
+    variants: readonly string[],
+    startOfDay: number,
+    endOfDay: number
+  ): UnequippedAssignment[];
+  /** Equipped/total per programme type; single-airline scope only. */
+  getTypeProgress(): TypeProgress[];
+  /** Roster plus guide-only tails with their guide marks; single-airline scope only. */
+  getFleetGuideTails(): FleetGuideTail[];
   getFleetPageData(): FleetPageData;
   getAirportDepartures(): AirportDepartures;
   getRouteStarlinkSchedule(): RouteSchedule;
@@ -351,6 +368,9 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     getMeta: (key) => (scope === "ALL" ? null : getMeta(db, key, scope)),
     getFlightAssignments: (v, s, e) =>
       getFlightAssignments(db, v, s, e, withOperatingPartners(airlines)),
+    getUnequippedAssignments: (v, s, e) => getUnequippedAssignments(db, v, s, e, airlines),
+    getTypeProgress: () => getTypeProgress(db, soleAirline()),
+    getFleetGuideTails: () => getFleetGuideTails(db, soleAirline()),
     getFleetPageData: () => getFleetPageData(db, airlines),
     getAirportDepartures: () => getAirportDepartures(db, airlines),
     getRouteStarlinkSchedule: () => getRouteStarlinkSchedule(db, airlines),

@@ -5,7 +5,7 @@
 
 import type { VerificationSource } from "../database/database";
 import type { RolloutStatus, StarlinkStatus } from "../types";
-import { normalizeAircraftType } from "./aircraft-families";
+import { isFreighterFamily, normalizeAircraftType } from "./aircraft-families";
 
 // Registration patterns are stored as unanchored bodies; the anchored
 // validation pattern and the global scan pattern (for pulling registrations
@@ -20,6 +20,7 @@ function tailPatterns(body: string): { tailPattern: RegExp; tailScanPattern: Reg
 // FAA N-numbers: N + 1-5 alphanumeric, first 1-9, no I/O in suffix.
 const FAA_TAIL = tailPatterns("N[1-9][0-9A-HJ-NP-Z]{0,4}");
 const QATAR_TAIL = tailPatterns("A7-[A-Z]{3}");
+const FRANCE_TAIL = tailPatterns("F-[GH][A-Z]{3}");
 
 export type AirlineCode = string;
 
@@ -119,7 +120,11 @@ export interface SiteConfig {
   headSnippet?: string;
 }
 
-export type LastUpdatedOwner = "fleet-meta" | "sheet-scrape" | "schedule-ingester";
+export type LastUpdatedOwner =
+  | "fleet-meta"
+  | "sheet-scrape"
+  | "schedule-ingester"
+  | "community-sync";
 
 export interface AirlineConfig {
   code: AirlineCode;
@@ -182,6 +187,27 @@ export interface AirlineConfig {
   ) => { probability: number; reason: string } | null;
   /** Canonical lowercase tag for Datadog `airline:` — preserves history (`united`, not `UA`). */
   metricTag: string;
+  /** Which FR24 field becomes upcoming_flights.flight_number. "callsign"
+   * (default) keeps operating codes like SKW4783; "marketing" takes
+   * number.default, for carriers whose callsigns are alphanumeric (AFR26CE)
+   * and so never match a marketed flight number. */
+  flightNumberSource?: "callsign" | "marketing";
+  /** Per-tail status comes from a curated community list, not an observation
+   * loop. Answers built on it say "likely", never "verified", and it never
+   * writes a negative: a tail missing from the list is unknown, not a no. */
+  communitySource?: { label: string; url: string; author?: string };
+  /** Types flying today that the programme will never equip (retiring). They
+   * leave every denominator and render as "retiring"; status is never written
+   * from this list. */
+  programExclusions?: { families: readonly string[]; note: string; source: string };
+  /** Airline-local programme types, tested against the raw type string before
+   * the shared family. For a carrier whose sub-variants have opposite status
+   * (AF 777-200ER vs 777-300ER) while the global family must stay whole for
+   * every other consumer. */
+  programTypes?: ReadonlyArray<readonly [RegExp, string, string]>;
+  /** Poll non-equipped roster tails for flights with idle updater capacity, so
+   * an assigned-but-unconfirmed tail can be named without a live lookup. */
+  fleetFallbackFlights?: boolean;
   /** Anchored registration format for tails operated by this airline. Used to
    * reject sheet typos at ingest and gate cleanup scripts. Built by
    * tailPatterns() from the same body as tailScanPattern. */
@@ -534,6 +560,75 @@ const AIRLINE_DEFS = {
         "https://www.qatarairways.com/press-releases/en-WW/259315-qatar-airways-launches-world-s-first-starlink-equipped-boeing-787-and-completes-airbus-a350-starlink-rollout-connecting-over-11-millio/",
     },
   },
+  AF: {
+    code: "AF",
+    name: "Air France",
+    shortName: "Air France",
+    enabled: true,
+    // Hub-only and not yet published: no tenant site, and the per-tail data is
+    // a community list whose curator has not yet been asked.
+    publicInHub: false,
+    iata: "AF",
+    icao: "AFR",
+    // HOP! flies AF-marketed numbers under its own callsigns, which carry no
+    // marketed number, so HOP is deliberately not a prefix here.
+    carrierPrefixes: ["AFR", "AF"],
+    subfleets: [{ key: "mainline", label: "Air France Fleet", match: () => true }],
+    classifyFleet: () => "mainline",
+    // af-afr lists the HOP E-jets too; the a5-hop page is empty.
+    fr24Slug: "af-afr",
+    metricTag: "airfrance",
+    ...FRANCE_TAIL,
+    minFleetSanity: 200,
+    verifierBackend: null,
+    lastUpdatedOwner: "community-sync",
+    flightHistoryModel: false,
+    verifySite: "airfrance.com",
+    flightNumberSource: "marketing",
+    communitySource: {
+      label: "FlyerTalk Air France fleet guide",
+      url: "https://www.flyertalk.com/forum/air-france-flying-blue/2213677-complete-guide-air-france-fleet.html",
+      author: "hellolaurent",
+    },
+    programExclusions: {
+      families: ["A318", "A319", "A330"],
+      note: "All retiring by spring 2027 at the latest",
+      source: "https://onemileatatime.com/news/air-france-free-starlink-wi-fi/",
+    },
+    programTypes: [
+      [/777-?2\d\d|777-200/i, "B777-200ER", "777-200ER"],
+      [/777-?3\d\d|777-300/i, "B777-300ER", "777-300ER"],
+      // Same B787 key as the family; AF flies only the -9, so say so.
+      [/787-?9/i, "B787", "787-9"],
+    ],
+    fleetFallbackFlights: true,
+    rollout: {
+      status: "in_progress",
+      statusLabel: "Majority done",
+      phaseNote:
+        "Installs are under way on the 777-300ER, A350, A220 and E190 fleets; the 787-9, 777-200ER, A321 and E170 have not started.",
+      // Freighters and programExclusions leave every AF denominator, so the
+      // roster that remains is the programme's own.
+      rosterIsProgramScope: true,
+    },
+    brand: {
+      title: "Air France Starlink Tracker",
+      tagline: "Tracking Air France aircraft with Starlink WiFi",
+      siteTitle: "Does Air France Have Starlink? Yes — Check by Aircraft Type & Tail",
+      description:
+        "Which Air France aircraft have free Starlink WiFi, by aircraft type and tail number, from the FlyerTalk fleet guide.",
+      ogTitle: "Air France Starlink — By Aircraft Type",
+      ogDescription:
+        "Which Air France aircraft have free Starlink WiFi, by aircraft type and tail number.",
+      keywords:
+        "air france starlink, air france wifi, air france 777 starlink, air france a350 wifi, air france a220 wifi",
+      accentColor: "#002157",
+      accentColorDim: "#2a4a80",
+      faviconAccent: "#e4002b",
+      socialImagePath: "/static/social-image-af.webp",
+      analyticsDomain: "airlinestarlinktracker.com",
+    },
+  },
 } satisfies Record<string, AirlineConfig>;
 
 /** Literal union of registered airline codes. Type per-airline maps as
@@ -760,6 +855,38 @@ export const OBSERVED_WIFI_SOURCES: readonly VerificationSource[] = [
       .map((a) => verifierSourceTag(a))
   ),
 ].sort();
+
+/** The one denominator rule: freighters and a programme's declared
+ * exclusions are in the roster but never in a "how many of how many". */
+export function isOutsideProgramme(code: AirlineCode, family: string): boolean {
+  return (
+    isFreighterFamily(family) ||
+    Boolean(AIRLINES[code]?.programExclusions?.families.includes(family))
+  );
+}
+
+/** Meta key (per airline) holding the community source's own last-edit date
+ * as full ISO. Answers cite it; freshness surfaces age it. */
+export const COMMUNITY_SOURCE_UPDATED_META = "communitySourceUpdatedAt";
+
+export interface ProgramType {
+  key: string;
+  label: string;
+}
+
+/** Programme type for a raw type string: the airline's own split first, then
+ * the shared family, labelled by its bare name ("B787" reads "787"). */
+export function programTypeOf(
+  cfg: Pick<AirlineConfig, "programTypes">,
+  aircraftType: string | null | undefined
+): ProgramType {
+  const raw = aircraftType ?? "";
+  for (const [re, key, label] of cfg.programTypes ?? []) {
+    if (re.test(raw)) return { key, label };
+  }
+  const family = normalizeAircraftType(raw);
+  return { key: family, label: family.replace(/^B(?=\d)/, "") };
+}
 
 export function lastUpdatedOwner(code: string): LastUpdatedOwner {
   return AIRLINES[code]?.lastUpdatedOwner ?? "fleet-meta";
@@ -1038,9 +1165,9 @@ export function siteForAirline(code: AirlineCode, liveOnly = false): SiteConfig 
 }
 
 /** Canonical hub airline-page slug (/airlines/{slug}) — brand short name,
- * lowercased, so URLs read as names ("united"), not codes ("ua"). */
+ * lowercased and hyphenated, so URLs read as names ("air-france"), not codes. */
 export function airlineSlug(cfg: AirlineConfig): string {
-  return cfg.shortName.toLowerCase();
+  return cfg.shortName.toLowerCase().replace(/[^a-z0-9]+/g, "-");
 }
 
 /** Live airline-scoped sites, registry order — the cross-site footer's source. */

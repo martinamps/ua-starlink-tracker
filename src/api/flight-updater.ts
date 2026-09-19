@@ -1,8 +1,11 @@
 import "dotenv/config";
+import { AIRLINES } from "../airlines/registry";
 import {
   getAllStarlinkPlanes,
+  getNextCommunityFleetTailNeedingFlights,
   getNextFleetTailNeedingFlights,
   getStarlinkTailsByCheckAge,
+  getTailAirline,
   initializeDatabase,
   needsFlightCheck,
   pruneStaleUpcomingFlights,
@@ -15,7 +18,7 @@ import { FLIGHT_DATA_SOURCE } from "../utils/constants";
 import { type JobHandle, type JobRunContext, startJob } from "../utils/job-runner";
 import { debug, error, info } from "../utils/logger";
 import { FlightAwareAPI } from "./flightaware-api";
-import { FlightRadar24API } from "./flightradar24-api";
+import { type FlightNumberSource, FlightRadar24API } from "./flightradar24-api";
 
 // Common interface for flight APIs
 type FlightUpdate = Pick<
@@ -24,7 +27,10 @@ type FlightUpdate = Pick<
 >;
 
 interface FlightAPI {
-  getUpcomingFlights(tailNumber: string): Promise<FlightUpdate[]>;
+  getUpcomingFlights(
+    tailNumber: string,
+    flightNumberSource?: FlightNumberSource
+  ): Promise<FlightUpdate[]>;
 }
 
 /**
@@ -75,7 +81,11 @@ async function updateFlightsForTailNumber(api: FlightAPI, tailNumber: string): P
         // in this span (tail_number, flights.count) and in
         // starlink.data.freshness_seconds{job:flight_updater}.
         debug(`Fetching upcoming flights for ${tailNumber}`);
-        const flights = await api.getUpcomingFlights(tailNumber);
+        const airline = getTailAirline(db, tailNumber);
+        const flights = await api.getUpcomingFlights(
+          tailNumber,
+          (airline && AIRLINES[airline]?.flightNumberSource) || "callsign"
+        );
 
         span.setTag("flights.count", flights.length);
 
@@ -371,7 +381,9 @@ export function startFlightUpdater(): JobHandle | undefined {
           // aren't in starlink_planes — pick one when the primary queue is empty.
           if (!tailToUpdate) {
             const recent = recentlyAttemptedFleetTails();
-            tailToUpdate = getNextFleetTailNeedingFlights(db, recent);
+            tailToUpdate =
+              getNextFleetTailNeedingFlights(db, recent) ??
+              getNextCommunityFleetTailNeedingFlights(db, recent);
             if (tailToUpdate) markFleetTailAttempted(tailToUpdate);
           }
 

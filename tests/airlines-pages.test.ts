@@ -48,8 +48,12 @@ const html = (s: string) => s.replace(/&/g, "&amp;");
 // The tracked roster on /airlines — the registry's declared hub CONTENT
 // population (publicInHub, plus hubContentOnly airlines like QR).
 const trackedRoster = () => hubContentAirlines();
-// Anything the registry does not publish on the hub stays invisible there.
-const invisibleAirlines = () => Object.values(AIRLINES).filter((a) => !trackedRoster().includes(a));
+// Anything the registry does not publish on the hub stays invisible there —
+// except as its own content-only facts entry (AF before it is published).
+const invisibleAirlines = () =>
+  Object.values(AIRLINES).filter(
+    (a) => !trackedRoster().includes(a) && !contentOnlyFacts().some((e) => e.iata === a.iata)
+  );
 
 describe("hub /airlines index", () => {
   test("serves on the hub and lists the tracked roster plus every facts entry", async () => {

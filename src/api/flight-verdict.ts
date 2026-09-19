@@ -87,6 +87,10 @@ export function cachedFlightAssignments(
     return Promise.reject(new Fr24UnavailableError(`shed: ${shed}`));
   }
 
+  metrics.increment(COUNTERS.FR24_LOOKUP, {
+    airline: normalizeAirlineTag(flightNumber.slice(0, 2)),
+  });
+
   if (assignmentCache.size > 500) {
     for (const [k, v] of assignmentCache) {
       if (now - v.at >= ASSIGNMENT_CACHE_TTL) assignmentCache.delete(k);

@@ -86,7 +86,7 @@ export function buildFreshnessCoverage(
   qrEnabled = AIRLINES.QR.enabled
 ): Record<string, readonly string[]> {
   const coverage: Record<string, readonly string[]> = {
-    flight_updater: ["UA", "HA", "AS"],
+    flight_updater: ["UA", "HA", "AS", "AF"],
     verifier: ["UA", "HA", "AS"],
     departures: ["UA", "HA", "AS"],
     fleet_progress: ["UA"],

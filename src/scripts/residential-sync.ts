@@ -6,7 +6,7 @@
  *   bun run residential-sync             # preflight → fetch → ship → ingest → verify
  *   bun run residential-sync --dry-run   # preflight → fetch → print payload, no write
  *   ... --ingest                         # prod-side: stdin JSON → DB (invoked over ssh)
- *   ... --preflight                      # prod-side: print {qr,as} confirmed/total state
+ *   ... --preflight                      # prod-side: print {qr,as,af} confirmed/total state
  *
  * Exit codes: 0 ok · 1 fetch failed · 2 validation refused · 3 ship/ingest failed · 4 post-verify failed
  *             5 partial: one source skipped, the other shipped
@@ -17,6 +17,13 @@ import { hostname } from "node:os";
 import { AIRLINES } from "../airlines/registry";
 import { initializeDatabase, setMeta } from "../database/database";
 import { info, error as logError, warn } from "../utils/logger";
+import {
+  type AirFranceApplyResult,
+  type ParsedGuide,
+  applyAirFranceGuide,
+  fetchAirFranceGuide,
+  guideTypeCounts,
+} from "./flyertalk-airfrance";
 import { applyAlaskaFlyertalkTails, fetchAlaskaFlyertalkTails } from "./flyertalk-alaska";
 import { FlyertalkRedirectRejected } from "./flyertalk-common";
 import { applyQatarFlyertalkTails, fetchQatarFlyertalkTails } from "./flyertalk-qatar";
@@ -28,26 +35,37 @@ const REMOTE = (flag: string) =>
 
 const QR_FLOOR = 30;
 const AS_FLOOR = 1;
+const AF_FLOOR = 100;
+/** A curated guide older than this still ships, with a warning in the report. */
+export const AF_STALE_DAYS = 45;
 const CEILING_MULT = 2;
 const FETCH_ATTEMPTS = 3;
 const PARTIAL_EXIT_CODE = 5;
 const SNAPSHOT_DIR = "/srv/ua-starlink-tracker/backup/residential-snapshots";
 
 type ProdState = { confirmed: number; total: number; tails: string[] };
-type Preflight = { qr: ProdState; as: ProdState };
+// `af` is optional: a prod image older than the AF ingester answers without it,
+// and the laptop then skips AF (partial exit) instead of shipping blind.
+type Preflight = { qr: ProdState; as: ProdState; af?: ProdState };
 type Payload = {
   v: 1;
-  sources: { flyertalk_qr?: { tails: string[] }; flyertalk_as?: { tails: string[] } };
+  sources: {
+    flyertalk_qr?: { tails: string[] };
+    flyertalk_as?: { tails: string[] };
+    flyertalk_af?: { guide: ParsedGuide };
+  };
   fetchedAt: string;
   fetchedFrom: string;
 };
 type SourceResult = {
-  source: "flyertalk_qr" | "flyertalk_as";
+  source: "flyertalk_qr" | "flyertalk_as" | "flyertalk_af";
   scraped: number;
   before: number;
   after: number;
   written: number;
   new: string[];
+  /** flyertalk_af only: the guide's skip/delist accounting. */
+  af?: Omit<AirFranceApplyResult, "written">;
 };
 type IngestResult = {
   ok: true;
@@ -60,12 +78,14 @@ function refused(msg: string): never {
   throw Object.assign(new Error(msg), { code: 2 });
 }
 
+const LAYOUT_CHANGED =
+  /wikipost block not found|section bounds not found|wikipost footer not found|guide structure changed/;
+
 // A rejected redirect or a changed page layout fails identically on every
 // attempt; retrying only delays the error by 6s.
 export function isDeterministicFetchError(e: unknown): boolean {
   if (e instanceof FlyertalkRedirectRejected) return true;
-  const msg = e instanceof Error ? e.message : String(e);
-  return /wikipost block not found|section bounds not found/.test(msg);
+  return LAYOUT_CHANGED.test(e instanceof Error ? e.message : String(e));
 }
 
 export async function withRetry<T>(
@@ -140,6 +160,28 @@ function validateTails(
     );
 }
 
+/** Refuses a guide that could not have come from a healthy parse; warns when
+ * it is merely old. Returns the warnings for the report. */
+export function validateAf(guide: ParsedGuide, prodConfirmed?: number, now = Date.now()): string[] {
+  const bad = guide.tails.map((t) => t.tail).filter((t) => !AIRLINES.AF.tailPattern.test(t));
+  if (bad.length) refused(`malformed AF tails: ${bad.slice(0, 5).join(",")}`);
+  if (guide.tails.some((t) => !["starlink", "legacy", "none"].includes(t.mark)))
+    refused("AF guide carries an unknown mark");
+  if (guide.tails.some((t) => !t.section || !t.programType))
+    refused("AF guide tail outside any section");
+  const stars = guide.tails.filter((t) => t.mark === "starlink").length;
+  if (stars < AF_FLOOR) refused(`only ${stars} AF ★ tails (< floor ${AF_FLOOR}); refusing`);
+  if (prodConfirmed && stars > prodConfirmed * CEILING_MULT)
+    refused(`${stars} AF ★ tails > ${CEILING_MULT}× prod confirmed ${prodConfirmed}`);
+  const updated = Date.parse(`${guide.updatedAt}T00:00:00Z`);
+  if (!Number.isFinite(updated)) refused(`AF guide date ${guide.updatedAt} unparseable`);
+  if (updated > now + 86400_000) refused(`AF guide dated in the future (${guide.updatedAt})`);
+  const ageDays = Math.floor((now - updated) / 86400_000);
+  return ageDays > AF_STALE_DAYS
+    ? [`AF guide last updated ${guide.updatedAt} (${ageDays} days ago)`]
+    : [];
+}
+
 const validateQr = (t: string[], c?: number) =>
   validateTails("QR", t, AIRLINES.QR.tailPattern, QR_FLOOR, c);
 const validateAs = (t: string[], c?: number) =>
@@ -170,7 +212,11 @@ function readState(
 function preflight(): void {
   const db = initializeDatabase();
   try {
-    const out: Preflight = { qr: readState(db, "QR"), as: readState(db, "AS", "mainline") };
+    const out: Preflight = {
+      qr: readState(db, "QR"),
+      as: readState(db, "AS", "mainline"),
+      af: readState(db, "AF"),
+    };
     console.log(JSON.stringify(out));
   } finally {
     db.close();
@@ -207,6 +253,33 @@ function ingestSource(
   };
 }
 
+function ingestAf(db: ReturnType<typeof initializeDatabase>, guide: ParsedGuide): SourceResult {
+  const before = readState(db, "AF");
+  for (const w of validateAf(guide, before.confirmed || undefined)) warn(w);
+  let applied: AirFranceApplyResult;
+  try {
+    applied = applyAirFranceGuide(db, guide);
+  } catch (e) {
+    refused((e as Error).message);
+  }
+  const after = readState(db, "AF");
+  if (after.confirmed < before.confirmed)
+    throw Object.assign(
+      new Error(`integrity: AF confirmed dropped ${before.confirmed}→${after.confirmed}`),
+      { code: 4 }
+    );
+  const { written, ...af } = applied;
+  return {
+    source: "flyertalk_af",
+    scraped: guide.tails.length,
+    before: before.confirmed,
+    after: after.confirmed,
+    written,
+    new: after.tails.filter((t) => !before.tails.includes(t)),
+    af,
+  };
+}
+
 async function ingest(): Promise<void> {
   const raw = await new Response(Bun.stdin.stream()).text();
   let payload: Payload;
@@ -224,7 +297,11 @@ async function ingest(): Promise<void> {
     const snapshot = `${SNAPSHOT_DIR}/${payload.fetchedAt.replace(/[:.]/g, "-")}.json`;
     writeFileSync(snapshot, JSON.stringify({ before, payload }, null, 2));
 
-    if (!payload.sources.flyertalk_qr && !payload.sources.flyertalk_as)
+    if (
+      !payload.sources.flyertalk_qr &&
+      !payload.sources.flyertalk_as &&
+      !payload.sources.flyertalk_af
+    )
       refused("payload carries no sources");
 
     const results: SourceResult[] = [];
@@ -257,6 +334,11 @@ async function ingest(): Promise<void> {
       setMeta(db, "residentialSyncAt", payload.fetchedAt, "AS");
       setMeta(db, "residentialSyncFrom", payload.fetchedFrom, "AS");
     }
+    if (payload.sources.flyertalk_af) {
+      results.push(ingestAf(db, payload.sources.flyertalk_af.guide));
+      setMeta(db, "residentialSyncAt", payload.fetchedAt, "AF");
+      setMeta(db, "residentialSyncFrom", payload.fetchedFrom, "AF");
+    }
 
     const result: IngestResult = { ok: true, results, snapshot, fetchedAt: payload.fetchedAt };
     console.log(JSON.stringify(result));
@@ -279,11 +361,12 @@ function reportNew(label: string, scraped: string[], prod: ProdState): void {
 }
 
 async function run(dryRun: boolean): Promise<void> {
-  info(`preflight: checking ${PROD_SSH} reachability + QR/AS state`);
+  info(`preflight: checking ${PROD_SSH} reachability + QR/AS/AF state`);
   const prod = await sshJson<Preflight>(REMOTE("--preflight"));
+  const af = prod.af ? `, AF ${prod.af.confirmed}/${prod.af.total}` : "";
   info(
     `preflight ok: prod has QR ${prod.qr.confirmed}/${prod.qr.total}, ` +
-      `AS mainline ${prod.as.confirmed}/${prod.as.total} confirmed`
+      `AS mainline ${prod.as.confirmed}/${prod.as.total}${af} confirmed`
   );
 
   // Each source is fetched independently so one dead oracle can't block the
@@ -325,13 +408,18 @@ async function run(dryRun: boolean): Promise<void> {
     validateAs,
     prod.as
   );
-  if (!qrTails && !asTails) throw firstFailure;
+  const afGuide = await fetchAfSource(prod.af, (e) => {
+    skipped.push("flyertalk_af");
+    firstFailure ??= e;
+  });
+  if (!qrTails && !asTails && !afGuide) throw firstFailure;
 
   const payload: Payload = {
     v: 1,
     sources: {
       ...(qrTails ? { flyertalk_qr: { tails: qrTails } } : {}),
       ...(asTails ? { flyertalk_as: { tails: asTails } } : {}),
+      ...(afGuide ? { flyertalk_af: { guide: afGuide } } : {}),
     },
     fetchedAt: new Date().toISOString(),
     fetchedFrom: hostname(),
@@ -347,9 +435,20 @@ async function run(dryRun: boolean): Promise<void> {
   info(`shipping to ${PROD_SSH}`);
   const result = await sshJson<IngestResult>(REMOTE("--ingest"), JSON.stringify(payload));
 
+  const preflightFor: Record<SourceResult["source"], ProdState | undefined> = {
+    flyertalk_qr: prod.qr,
+    flyertalk_as: prod.as,
+    flyertalk_af: prod.af,
+  };
   for (const r of result.results) {
-    const pre = r.source === "flyertalk_qr" ? prod.qr : prod.as;
-    if (r.after !== pre.confirmed + r.new.length) {
+    const pre = preflightFor[r.source];
+    if (r.af) {
+      info(
+        `flyertalk_af: absent ${r.af.absent.length}, mismatch ${r.af.mismatch.length}, ` +
+          `delisted ${r.af.delisted.length}, legendMismatch ${r.af.legendMismatch}`
+      );
+    }
+    if (pre && r.after !== pre.confirmed + r.new.length) {
       warn(
         `post-verify ${r.source}: after=${r.after} != preflight ${pre.confirmed} + new ${r.new.length} ` +
           "(another writer may have raced; not fatal)"
@@ -363,6 +462,34 @@ async function run(dryRun: boolean): Promise<void> {
     .join(", ");
   info(`done: ${summary}, snapshot ${result.snapshot}`);
   markPartial(skipped);
+}
+
+export async function fetchAfSource(
+  state: ProdState | undefined,
+  onSkip: (e: unknown) => void
+): Promise<ParsedGuide | undefined> {
+  if (!state) {
+    const e = new Error("prod preflight has no AF state (older image) — AF not shipped");
+    logError(`flyertalk_af skipped: ${e.message}`);
+    onSkip(e);
+    return undefined;
+  }
+  try {
+    const guide = await withRetry(() => fetchAirFranceGuide(), "flyertalk_af");
+    for (const w of validateAf(guide, state.confirmed || undefined)) warn(w);
+    const stars = guide.tails.filter((t) => t.mark === "starlink");
+    const localNew = stars.filter((t) => !state.tails.includes(t.tail)).length;
+    info(
+      `scraped AF guide (${guide.updatedAt}): ${stars.length} ★ of ${guide.tails.length} ` +
+        `(${localNew} not yet confirmed on prod), legendMismatch ${guide.legendMismatch}, ` +
+        `by type ${JSON.stringify(guideTypeCounts(guide))}`
+    );
+    return guide;
+  } catch (e) {
+    logError(`flyertalk_af skipped: ${(e as Error).message}`, e);
+    onSkip(e);
+    return undefined;
+  }
 }
 
 function markPartial(skipped: string[]): void {

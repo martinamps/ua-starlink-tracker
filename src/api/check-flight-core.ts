@@ -17,9 +17,16 @@ import {
   ensureAirlinePrefix,
   prefixBelongsTo,
 } from "../airlines/flight-number";
-import { type AirlineConfig, enabledAirlines, publicAirlines } from "../airlines/registry";
+import {
+  type AirlineConfig,
+  COMMUNITY_SOURCE_UPDATED_META,
+  enabledAirlines,
+  programTypeOf,
+  publicAirlines,
+} from "../airlines/registry";
 import type { FlightAssignmentRow, QatarScheduleRow } from "../database/database";
 import type { Scope, ScopedReader } from "../database/reader";
+import { COUNTERS, metrics, normalizeCarrierPrefix } from "../observability";
 import {
   type CarrierPrediction,
   carrierPrediction,
@@ -98,6 +105,19 @@ export function decideCarrier(
   const cfg = detectMarketingCarrier(flightNumber, PUBLIC_AIRLINES);
   if (!cfg) return { outcome: "not_tracked", pinnedCfg: null, tracked: PUBLIC_AIRLINES };
   return { outcome: "resolved", cfg, pinned: false };
+}
+
+/** Count a not_tracked lookup by the prefix asked for — every renderer of a
+ * not_tracked decision calls this, so REST and MCP demand land in one series. */
+export function recordUntrackedLookup(
+  flightNumber: string,
+  route: "check_flight" | "check_any_flight" | "predict_flight" | "mcp"
+): void {
+  metrics.increment(COUNTERS.FLIGHT_LOOKUP_UNTRACKED, {
+    airline: "unmapped",
+    prefix: normalizeCarrierPrefix(flightNumber),
+    route,
+  });
 }
 
 /**
@@ -256,6 +276,9 @@ export function verdictTelemetry(
 
 export interface ResolveDeps {
   now?: number;
+  /** The booking's aircraft type, for carriers whose answer is per programme
+   * type (community-source); used only when no tail is known. */
+  aircraftType?: string | null;
   /** Override the FR24 reverse lookup; pass null to disable it (hub check-any-flight). */
   lookupTail?: typeof lookupFlightTailVerdict | null;
   predict?: typeof predictFlight;
@@ -317,6 +340,15 @@ export async function resolveFlightVerdict(
     return { kind: "scheduled", window, normalized, verified, unverified };
   }
 
+  // A community-source carrier's non-equipped tail is still an answer: name
+  // it with its guide status, and skip the live lookup that would only find
+  // the same tail.
+  if (cfg.communitySource) {
+    const assigned = assignedFromDb(cfg, reader, variants, date, window);
+    if (assigned)
+      return { kind: "no_model", window, normalized, answer: assigned, fr24Error: false };
+  }
+
   // FR24 runs whenever there are no equipped rows: with firm-no rows it can
   // still discover an aircraft swap onto a Starlink tail; with no rows at all
   // it is the primary fallback.
@@ -343,6 +375,15 @@ export async function resolveFlightVerdict(
       if (starlink.length > 0) {
         return { kind: "fr24", window, normalized, starlink };
       }
+      if (cfg.communitySource && segments.length > 0) {
+        return {
+          kind: "no_model",
+          window,
+          normalized,
+          answer: assignedFromSegments(cfg, reader, segments),
+          fr24Error: false,
+        };
+      }
       // Segments whose tail we know nothing about are not a "no" — only a
       // verified non-Starlink tail is. With our own firm-no rows in hand,
       // prefer those (they carry per-row reasons); otherwise fr24_no.
@@ -363,13 +404,62 @@ export async function resolveFlightVerdict(
       kind: "no_model",
       window,
       normalized,
-      answer: carrierPrediction(cfg, reader, normalized),
+      answer: carrierPrediction(cfg, reader, normalized, { aircraftType: deps.aircraftType }),
       fr24Error,
     };
   }
 
   const predict = deps.predict ?? predictFlight;
   return { kind: "prediction", window, normalized, pred: predict(reader, normalized), fr24Error };
+}
+
+type AssignedAnswer = Extract<
+  CarrierPrediction,
+  { kind: "assigned_unconfirmed" } | { kind: "partner_operated" }
+>;
+
+function assignedFromDb(
+  cfg: AirlineConfig,
+  reader: ScopedReader,
+  variants: string[],
+  date: string,
+  window: FlightDateWindow
+): AssignedAnswer | null {
+  const row = reader
+    .getUnequippedAssignments(variants, window.queryStart, window.queryEnd)
+    .find((r) =>
+      matchesLocalDate(date, r.departure_airport, r.departure_time, window.start, window.end)
+    );
+  if (!row) return null;
+  return {
+    kind: "assigned_unconfirmed",
+    tail: row.tail_number,
+    aircraftType: row.aircraft_type,
+    programLabel: programTypeOf(cfg, row.aircraft_type).label,
+    mark: row.mark,
+    guideUpdated: reader.getMeta(COMMUNITY_SOURCE_UPDATED_META),
+  };
+}
+
+// FR24's tail, which resolveTailVerdict could not place: ours (not on the
+// Starlink list) or another airline's metal on a codeshare.
+function assignedFromSegments(
+  cfg: AirlineConfig,
+  reader: ScopedReader,
+  segments: readonly FallbackSegment[]
+): AssignedAnswer {
+  const own = segments.find((s) => cfg.tailPattern.test(s.tail_number));
+  if (!own) return { kind: "partner_operated", tail: segments[0].tail_number };
+  const guide = reader.getFleetGuideTails().find((t) => t.tail === own.tail_number);
+  const aircraftType = guide?.aircraftType ?? own.aircraft_model;
+  return {
+    kind: "assigned_unconfirmed",
+    tail: own.tail_number,
+    aircraftType,
+    programLabel: programTypeOf(cfg, aircraftType).label,
+    mark: guide?.mark ?? null,
+    guideUpdated: reader.getMeta(COMMUNITY_SOURCE_UPDATED_META),
+  };
 }
 
 function resolveQatarVerdict(

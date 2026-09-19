@@ -63,6 +63,7 @@ import {
   decideCarrier,
   flightDateWindow,
   negativeWifi,
+  recordUntrackedLookup,
   resolveFlightVerdict,
   verdictTelemetry,
   wifiLabel,
@@ -523,6 +524,7 @@ function resolveFlightToolCarrier(
   }
   const decision = decideCarrier(pinnedCfg, flightNumber);
   if (decision.outcome === "not_tracked") {
+    recordUntrackedLookup(flightNumber, "mcp");
     // Single-airline surface: name only the pinned carrier — never list
     // competitor brands on its server. The hub is multi-airline, so its
     // refusal legitimately enumerates the tracked carriers.

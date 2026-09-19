@@ -41,8 +41,9 @@ describe("buildCardSpecs", () => {
     };
     const specs = await buildCardSpecs(summary, noData, NOW);
 
+    // A site-less airline (AF, hub-only) has no card: its brand never renders.
     const expected = Object.values(AIRLINES)
-      .filter((cfg) => cfg.brand.socialImagePath)
+      .filter((cfg) => cfg.brand.socialImagePath && siteForAirline(cfg.code))
       .map((cfg) => cfg.brand.socialImagePath.split("/").pop());
     const files = specs.map((s) => s.file);
 
