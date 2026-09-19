@@ -21,8 +21,10 @@ import {
   cascadeSubfleetDiscovery,
   flightNumberHasData,
   getFleetDiscoveryStats,
+  getMeta,
   getNextPlanesToVerify,
   initializeDatabase,
+  setMeta,
   updateFleetVerificationResult,
   updateFlights,
 } from "../database/database";
@@ -358,7 +360,10 @@ export async function verifyPlane(
             const sheetSaysStarlink =
               sheetClaim.wifi === "StrLnk" || sheetClaim.wifi === "Starlink";
             const crawlerSaysStarlink = consensus.verdict === "Starlink";
-            if (sheetSaysStarlink !== crawlerSaysStarlink) {
+            if (
+              sheetSaysStarlink !== crawlerSaysStarlink &&
+              claimSheetDisagreementReport(db, plane.tail_number, consensus.verdict)
+            ) {
               metrics.increment(COUNTERS.FLEET_SHEET_DISAGREEMENT, {
                 fleet: fleetTag,
                 sheet_says: sheetSaysStarlink ? "starlink" : "not_starlink",
@@ -640,6 +645,33 @@ async function verifySpecificTail(tailNumber: string): Promise<void> {
 }
 
 // CLI usage
+const SHEET_DISAGREEMENT_REPORT_INTERVAL_S = 7 * 86400;
+
+/**
+ * A stable disagreement (N786SK: sheet StrLnk, 20× None on united.com) used
+ * to re-fire the KPI on every daily re-check and dominate it. Report a tail
+ * again only when its verdict changes or a week has passed; records the
+ * report when it returns true.
+ */
+export function claimSheetDisagreementReport(
+  db: Database,
+  tail: string,
+  verdict: string,
+  now = Math.floor(Date.now() / 1000)
+): boolean {
+  const key = `sheet_disagreement:${tail}`;
+  let last: { verdict?: string; at?: number } = {};
+  try {
+    last = JSON.parse(getMeta(db, key, "UA") ?? "{}");
+  } catch {}
+  const due =
+    last.verdict !== verdict ||
+    typeof last.at !== "number" ||
+    now - last.at >= SHEET_DISAGREEMENT_REPORT_INTERVAL_S;
+  if (due) setMeta(db, key, JSON.stringify({ verdict, at: now }), "UA");
+  return due;
+}
+
 if (import.meta.main) {
   const args = process.argv.slice(2);
   const mode = args.find((a) => a === "--discovery" || a === "--maintenance") || "--maintenance";
