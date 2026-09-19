@@ -38,6 +38,13 @@ const PAIRS: Array<[string, string]> = [
   ["SFO", "AUS"],
   ["SEA", "ORD"],
   ["SFO", "DEN"],
+  // Small-city pairs with no United nonstop: every option is a connection.
+  ["ROA", "BOI"],
+  ["IND", "CLE"],
+  ["BIL", "ROC"],
+  ["RDM", "CAE"],
+  ["MSN", "SAV"],
+  ["SAN", "PHX"],
 ];
 
 function assertPlannerInvariants(reader: Reader, o: string, d: string) {
@@ -49,10 +56,18 @@ function assertPlannerInvariants(reader: Reader, o: string, d: string) {
   expect(base.expected_starlink_hours).toBeCloseTo(base.probability * base.duration_hours, 6);
 
   const budget = itineraryHourBudget(base.duration_hours);
-  for (const it of planItinerary(reader, o, d, { maxItineraries: 12, maxStops: 2 })) {
+  const hasNonstop = base.duration_source !== "great_circle";
+  const opts = { maxItineraries: 12, maxStops: 2 };
+  const planned = planItinerary(reader, o, d, opts);
+  if (!hasNonstop) {
+    const full = (its: typeof planned) => its.some((it) => it.coverage === "full");
+    const unbudgeted = planItinerary(reader, o, d, { ...opts, enforceTimeBudget: false });
+    expect(full(planned), `${o}-${d} lost every full connection`).toBe(full(unbudgeted));
+  }
+  for (const it of planned) {
     const label = `${o}-${d} via ${it.via.join(",") || "direct"}`;
     expect(it.total_flight_hours, label).not.toBeNull();
-    if (ENFORCE_ITINERARY_TIME_BUDGET && it.via.length > 0) {
+    if (ENFORCE_ITINERARY_TIME_BUDGET && hasNonstop && it.via.length > 0) {
       expect(elapsedHours(it), label).toBeLessThanOrEqual(budget + 1e-9);
     }
     for (const hub of it.via) expect(hubAllowedForTrip(o, d, hub), label).toBe(true);
@@ -261,6 +276,90 @@ describe("synthetic SFO→EWR", () => {
       expect(tool.annotations.destructiveHint).toBe(false);
       expect(typeof tool.annotations.openWorldHint).toBe("boolean");
     }
+  });
+});
+
+// Pairs United doesn't fly nonstop, where the great-circle estimate is a
+// nonstop nobody can book: IND→CLE and ROA→BOI via ORD run well past a budget
+// built from it. ROA→BOI also carries a two-sighting flight_routes row (a
+// charter), which must not count as a nonstop. IAH→CLE is the control: a
+// regularly-flown nonstop still budgets out a DEN detour.
+describe("synthetic pairs without a United nonstop", () => {
+  const DATE = "2027-06-10";
+  const H = 3600;
+  let sdb: Database;
+  let factory: ReturnType<typeof createReaderFactory>;
+  let reader: Reader;
+  let n = 0;
+
+  const leg = (fn: string, dep: string, arr: string, depIso: string, hours: number) => {
+    const tail = `N3${String(++n).padStart(3, "0")}`;
+    addPlane(sdb, tail, "Starlink");
+    const t = utc(depIso);
+    sdb
+      .query(
+        `INSERT INTO upcoming_flights (tail_number, flight_number, departure_airport, arrival_airport, departure_time, arrival_time, last_updated, airline)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'UA')`
+      )
+      .run(tail, fn, dep, arr, t, t + Math.round(hours * H), t);
+  };
+  const history = (fn: string, o: string, d: string, hours: number, seen: number) => {
+    const t = utc(`${DATE}T00:00:00Z`);
+    sdb
+      .query(
+        `INSERT INTO flight_routes (flight_number, origin, destination, duration_sec, first_seen_at, last_seen_at, seen_count)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(fn, o, d, Math.round(hours * H), t, t, seen);
+  };
+
+  beforeAll(() => {
+    sdb = makeSyntheticDb();
+    leg("UA5601", "IND", "ORD", `${DATE}T13:00:00Z`, 1.4);
+    leg("UA5602", "ORD", "CLE", `${DATE}T16:00:00Z`, 1.5);
+    leg("UA5701", "ROA", "ORD", `${DATE}T12:00:00Z`, 2.4);
+    leg("UA5702", "ORD", "BOI", `${DATE}T16:00:00Z`, 3.8);
+    history("UA3302", "ROA", "BOI", 5, 2);
+    leg("UA5801", "IAH", "DEN", `${DATE}T12:00:00Z`, 2.5);
+    leg("UA5802", "DEN", "CLE", `${DATE}T16:00:00Z`, 3.5);
+    history("UA544", "IAH", "CLE", 3, 50);
+    factory = createReaderFactory(sdb);
+    reader = factory("UA");
+  });
+  afterAll(() => sdb.close());
+
+  const plan = (o: string, d: string) =>
+    planItinerary(reader, o, d, { maxStops: 2, targetDateUnix: utc(`${DATE}T12:00:00Z`) });
+
+  test.each([
+    ["IND", "CLE"],
+    ["ROA", "BOI"],
+  ])("%s → %s keeps its hub connection and reports no nonstop", (o, d) => {
+    expect(routeBaseline(reader, o, d)?.duration_source).toBe("great_circle");
+    const full = plan(o, d).filter((it) => it.coverage === "full");
+    expect(full.length).toBeGreaterThan(0);
+    expect(full.some((it) => it.via.length === 1)).toBe(true);
+  });
+
+  test("a regularly-flown nonstop still budgets out long detours", () => {
+    if (!ENFORCE_ITINERARY_TIME_BUDGET) return;
+    expect(routeBaseline(reader, "IAH", "CLE")?.duration_source).toBe("route_history");
+    expect(plan("IAH", "CLE").some((it) => it.via.includes("DEN"))).toBe(false);
+  });
+
+  test("plan_starlink_itinerary never tells the person to book a nonstop that doesn't exist", async () => {
+    const r = await handleMcpRequest(
+      mcpReq("unitedstarlinktracker.com", "tools/call", {
+        name: "plan_starlink_itinerary",
+        arguments: { origin: "IND", destination: "CLE", date: DATE },
+      }),
+      "UA",
+      factory
+    );
+    const text: string = (await r.json()).result.content[0].text;
+    expect(text).toContain("No United nonstop");
+    expect(text).not.toContain("Nonstop baseline");
+    expect(text).not.toContain("booking the nonstop");
   });
 });
 

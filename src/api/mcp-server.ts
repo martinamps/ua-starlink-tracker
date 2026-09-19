@@ -1411,22 +1411,28 @@ function toolPlanStarlinkItinerary(
 
   const baseline = routeBaseline(reader, origin, destination);
   const fmtBaseH = (h: number) => (h >= 1 ? `${h.toFixed(1)}h` : `${Math.round(h * 60)}m`);
-  const baselineLine = baseline
-    ? `**Nonstop baseline** (${baseline.flight_number ?? "typical nonstop"}${baseline.duration_source === "great_circle" ? ", if one operates — duration estimated from distance" : ""}): ~${(baseline.probability * 100).toFixed(0)}% Starlink · ~${fmtBaseH(baseline.expected_starlink_hours)} Starlink / ~${fmtBaseH(baseline.duration_hours)} flying`
-    : "";
+  const hasNonstop = baseline !== null && baseline.duration_source !== "great_circle";
+  const orig = origin.toUpperCase();
+  const dest = destination.toUpperCase();
+  const baselineLine = !baseline
+    ? ""
+    : hasNonstop
+      ? `**Nonstop baseline** (${baseline.flight_number ?? "typical nonstop"}): ~${(baseline.probability * 100).toFixed(0)}% Starlink · ~${fmtBaseH(baseline.expected_starlink_hours)} Starlink / ~${fmtBaseH(baseline.duration_hours)} flying`
+      : `**No United nonstop** ${orig}→${dest} has been observed regularly, so every option connects (straight-line flying time ~${fmtBaseH(baseline.duration_hours)} for reference).`;
 
   if (itineraries.length === 0) {
-    const orig = origin.toUpperCase();
-    const dest = destination.toUpperCase();
     const headline =
-      baseline && ENFORCE_ITINERARY_TIME_BUDGET
+      hasNonstop && ENFORCE_ITINERARY_TIME_BUDGET
         ? `No Starlink routing within +${fmtBaseH(itineraryHourBudget(baseline.duration_hours) - baseline.duration_hours)} of the nonstop from ${orig} to ${dest} (up to ${maxStops} stops).`
         : `No Starlink routings found from ${orig} to ${dest} within ${maxStops} stops.`;
+    const lastResort = hasNonstop
+      ? "otherwise advise booking the nonstop — no Starlink routing meaningfully improves odds on mainline-only routes"
+      : "otherwise advise the fastest United connection — there is no nonstop to fall back on";
     return {
       content: [
         {
           type: "text",
-          text: `${headline}${baselineLine ? `\n\n${baselineLine}` : ""}\n\nNo reasonable path through the Starlink route graph connects these airports. This may be a mainline-only route, where fleet-wide coverage is much lower than on express.\n\n**Fallbacks**: (1) \`search_starlink_flights\` with just \`destination="${dest}"\` or \`origin="${orig}"\` — confirmed near-term assignments may exist even when historical probability is low; (2) if the user has a specific flight, \`predict_flight_starlink\` for a per-flight estimate; (3) otherwise advise booking the nonstop — no Starlink routing meaningfully improves odds on mainline-only routes.`,
+          text: `${headline}${baselineLine ? `\n\n${baselineLine}` : ""}\n\nNo reasonable path through the Starlink route graph connects these airports. This may be a mainline-only route, where fleet-wide coverage is much lower than on express.\n\n**Fallbacks**: (1) \`search_starlink_flights\` with just \`destination="${dest}"\` or \`origin="${orig}"\` — confirmed near-term assignments may exist even when historical probability is low; (2) if the user has a specific flight, \`predict_flight_starlink\` for a per-flight estimate; (3) ${lastResort}.`,
         },
       ],
     };

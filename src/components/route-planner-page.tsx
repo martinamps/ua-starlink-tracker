@@ -376,10 +376,13 @@ export default function RoutePlannerPage({ site }: RoutePlannerPageProps) {
           // 9h two-stop at 94% reads as strictly better than a 5.7h nonstop.
           function baselineHtml(b) {
             if (!b || typeof b.duration_hours !== 'number') return '';
-            var est = b.duration_source === 'great_circle' ? ' (estimated)' : '';
+            if (b.duration_source === 'great_circle') {
+              return '<div class="text-xs text-muted mb-3 leading-relaxed">No United nonstop on this pair, so every option connects (~' +
+                fmtHours(b.duration_hours) + ' straight-line for reference).</div>';
+            }
             return '<div class="text-xs text-muted mb-3 leading-relaxed">Nonstop baseline: ~' +
               Math.round(b.probability * 100) + '% Starlink · ~' + fmtHours(b.expected_starlink_hours) +
-              ' Starlink of ~' + fmtHours(b.duration_hours) + ' flying' + est + '</div>';
+              ' Starlink of ~' + fmtHours(b.duration_hours) + ' flying</div>';
           }
 
           function renderResults(data) {
@@ -392,8 +395,10 @@ export default function RoutePlannerPage({ site }: RoutePlannerPageProps) {
                 '</div>';
               // message is server-built registry prose (no user input); set via
               // textContent anyway so this stays injection-proof.
-              resultsDiv.querySelector('p').textContent = data.message ||
-                'No connection adds meaningful Starlink time without a long detour over the nonstop.';
+              var noNonstop = data.baseline && data.baseline.duration_source === 'great_circle';
+              resultsDiv.querySelector('p').textContent = data.message || (noNonstop
+                ? 'No connection between these airports has Starlink on its legs.'
+                : 'No connection adds meaningful Starlink time without a long detour over the nonstop.');
               return;
             }
             var hasDirect = itins.some(function(i) { return i.via.length === 0; });

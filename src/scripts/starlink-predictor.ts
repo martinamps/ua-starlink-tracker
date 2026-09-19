@@ -1403,7 +1403,14 @@ export function planItinerary(
   const build = (legs: ItineraryLeg[], coverage: "full" | "partial") =>
     computeItinerary(legs.map(withDuration), coverage);
   const baseline = routeBaseline(reader, orig, dest);
-  const budgetHours = baseline ? itineraryHourBudget(baseline.duration_hours) : null;
+  const hasNonstop = baseline !== null && baseline.duration_source !== "great_circle";
+  // Without a United nonstop every option connects, so the great-circle
+  // estimate is unreachable; measure against the fastest connection instead.
+  let budgetHours: number | null = hasNonstop ? itineraryHourBudget(baseline.duration_hours) : null;
+  const budgetFromFastest = (options: Itinerary[]) => {
+    const timed = options.filter((it) => it.total_flight_hours !== null).map(elapsedHours);
+    if (timed.length > 0) budgetHours = itineraryHourBudget(Math.min(...timed));
+  };
   const withinBudget = (it: Itinerary): boolean =>
     !enforceBudget ||
     it.via.length === 0 ||
@@ -1416,6 +1423,7 @@ export function planItinerary(
   type SearchState = { airport: string; legs: ItineraryLeg[]; joint: number; flown: number | null };
   let frontier: SearchState[] = [{ airport: orig, legs: [], joint: 1, flown: 0 }];
   const seenPaths = new Set<string>();
+  const fulls: Itinerary[] = [];
 
   for (let depth = 0; depth <= maxStops; depth++) {
     const nextFrontier: SearchState[] = [];
@@ -1438,8 +1446,7 @@ export function planItinerary(
           const pathKey = newLegs.map((l) => l.route).join("|");
           if (!seenPaths.has(pathKey)) {
             seenPaths.add(pathKey);
-            const it = build(newLegs, "full");
-            if (withinBudget(it)) itineraries.push(it);
+            fulls.push(build(newLegs, "full"));
           }
         } else if (depth < maxStops) {
           nextFrontier.push({ airport: nextAirport, legs: newLegs, joint: newJoint, flown });
@@ -1449,12 +1456,14 @@ export function planItinerary(
     nextFrontier.sort((a, b) => b.joint - a.joint);
     frontier = nextFrontier.slice(0, 200);
   }
+  if (!hasNonstop) budgetFromFastest(fulls.filter((it) => it.via.length > 0));
+  itineraries.push(...fulls.filter(withinBudget));
 
   // --- Partial-coverage baselines (both directions) ---
   // Only when maxStops > 0 (respect user's "direct only" intent) and when
   // we don't already have a strong direct (≥70% joint) — extra options
   // are noise when a 92% direct exists.
-  const directIt = itineraries.find((it) => it.via.length === 0);
+  const directIt = fulls.find((it) => it.via.length === 0);
   const showPartials = maxStops > 0 && (!directIt || directIt.joint_probability < 0.7);
 
   if (showPartials) {
@@ -1476,7 +1485,7 @@ export function planItinerary(
       // emitted a MIA-MIA self-loop leg ("fly ORD->MIA, then fly MIA->MIA").
       if (!leg || leg.probability < minLegProb || hub === orig || hub === dest) continue;
       if (!hubOnPath(hub) || !isServed(orig, hub) || !hubAllowed(hub)) continue;
-      if (itineraries.some((it) => it.via.length === 1 && it.via[0] === hub)) continue;
+      if (fulls.some((it) => it.via.length === 1 && it.via[0] === hub)) continue;
       candidates.push({ starlinkLeg: leg, hub, direction: "in" });
     }
     // Direction "out": Starlink orig→hub, then (any) hub→dest
@@ -1485,7 +1494,7 @@ export function planItinerary(
       for (const [hub, leg] of outEdges.entries()) {
         if (hub === dest || leg.probability < minLegProb) continue;
         if (!hubOnPath(hub) || !isServed(hub, dest) || !hubAllowed(hub)) continue;
-        if (itineraries.some((it) => it.via.length === 1 && it.via[0] === hub)) continue;
+        if (fulls.some((it) => it.via.length === 1 && it.via[0] === hub)) continue;
         candidates.push({ starlinkLeg: leg, hub, direction: "out" });
       }
     }
@@ -1497,24 +1506,22 @@ export function planItinerary(
       return bH - aH;
     });
 
-    let partialsAdded = 0;
-    for (const c of candidates) {
-      if (partialsAdded >= partialLimit) break;
-      const legs =
+    const partials = candidates.map((c) =>
+      build(
         c.direction === "in"
           ? [makePositioningLeg(`${orig}-${c.hub}`), c.starlinkLeg]
-          : [c.starlinkLeg, makePositioningLeg(`${c.hub}-${dest}`)];
-      const it = build(legs, "partial");
-      if (!withinBudget(it)) continue;
-      itineraries.push(it);
-      partialsAdded++;
-    }
+          : [c.starlinkLeg, makePositioningLeg(`${c.hub}-${dest}`)],
+        "partial"
+      )
+    );
+    if (budgetHours === null && !hasNonstop) budgetFromFastest(partials);
+    itineraries.push(...partials.filter(withinBudget).slice(0, partialLimit));
   }
 
   // A 2-stop has to buy real Starlink time over the simpler options (the
-  // nonstop baseline included), not just a marginally better ratio.
+  // nonstop baseline included, when one operates), not just a marginally better ratio.
   const simplerBest = Math.max(
-    baseline?.expected_starlink_hours ?? 0,
+    hasNonstop ? baseline.expected_starlink_hours : 0,
     ...itineraries.filter((it) => it.via.length <= 1).map((it) => it.expected_starlink_hours ?? 0)
   );
   const worthTheStops = (it: Itinerary) =>
@@ -1577,6 +1584,12 @@ const STOP_PENALTY = 0.04;
 // ~480 mph plus taxi/climb overhead.
 const CRUISE_MPH = 480;
 const BLOCK_OVERHEAD_HOURS = 0.5;
+// flight_routes also records charters, diversions and ferry hops (UA3302
+// BGR-IND, UA3898 LGA-MCO: 2 sightings each). Scheduled nonstops pile up
+// sightings; below this a pair counts as having no nonstop, which only
+// loosens the budget instead of telling someone to book a flight that
+// doesn't exist.
+const MIN_NONSTOP_SIGHTINGS = 10;
 
 /** Max elapsed hours (flying + layovers) an itinerary may take, given the nonstop's duration. */
 export function itineraryHourBudget(baselineHours: number): number {
@@ -1590,7 +1603,7 @@ export function elapsedHours(it: Itinerary): number {
 
 /**
  * Nonstop block time between two airports: an observed direct flight, else
- * the flight_routes history for the pair, else great-circle / cruise speed.
+ * a regularly-flown flight_routes history for the pair, else great-circle / cruise speed.
  * Null only when neither the data nor the coordinate table knows the pair.
  */
 export function baselineHours(
@@ -1612,8 +1625,11 @@ function routeHours(
   if (edge && edge.dur_sec > 0) return { hours: edge.dur_sec / 3600, source: "schedule" };
   // getRouteFlightNumbers is single-airline only; the hub reader throws on it.
   if (reader.scope !== "ALL") {
-    const sec = reader.getRouteFlightNumbers(origin, destination).durationSec;
-    if (sec && sec > 0) return { hours: sec / 3600, source: "route_history" };
+    const { flightNumbers, durationSec } = reader.getRouteFlightNumbers(origin, destination);
+    const sightings = flightNumbers.reduce((n, f) => n + f.times, 0);
+    if (durationSec && durationSec > 0 && sightings >= MIN_NONSTOP_SIGHTINGS) {
+      return { hours: durationSec / 3600, source: "route_history" };
+    }
   }
   const miles = airportDistanceMiles(origin, destination);
   return miles === null
@@ -1627,7 +1643,7 @@ export interface RouteBaseline {
   flight_number: string | null;
   probability: number;
   duration_hours: number;
-  /** "great_circle" = no nonstop has been observed; the duration is a distance estimate. */
+  /** "great_circle" = United operates no nonstop on the pair; the duration is a distance estimate. */
   duration_source: DurationSource;
   expected_starlink_hours: number;
 }
