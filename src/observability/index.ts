@@ -28,5 +28,6 @@ export {
   normalizeLegMatch,
   normalizeLegReason,
   normalizeLegEffect,
+  normalizeEquipmentCodeTag,
 } from "./metrics";
 export type { Tags } from "./metrics";

@@ -533,6 +533,7 @@ export const AIRPORT_COUNTRY: Record<string, string> = {
   HEL: "FI", IST: "TR", KEF: "IS", LCA: "CY", LGW: "GB", LHR: "GB", LIS: "PT", MAD: "ES",
   MAN: "GB", MUC: "DE", MXP: "IT", NCE: "FR", OPO: "PT", OSL: "NO", SNN: "IE", TEV: "ES",
   VCE: "IT", VIE: "AT", XFW: "DE", ZRH: "CH",
+  SMA: "PT", WAW: "PL", PZU: "SD",
   ABJ: "CI", ACC: "GH", ADD: "ET", ALG: "DZ", CAI: "EG", CMN: "MA", CPT: "ZA", DAR: "TZ",
   DUR: "ZA", JNB: "ZA", LOS: "NG", MPM: "MZ", NBO: "KE", RAK: "MA", SEZ: "SC", TUN: "TN",
   AMM: "JO", AUH: "AE", BAH: "BH", BEY: "LB", BGW: "IQ", BSR: "IQ", DAM: "SY", DMM: "SA",

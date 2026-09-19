@@ -407,7 +407,7 @@ export function FlightCheckInput() {
         <input
           type="text"
           name="flight_number"
-          placeholder="UA1736, HA51, AS118…"
+          placeholder="UA1736, HA51, AS118, QR1…"
           className="flex-1 font-mono text-sm px-3 py-2 bg-surface-elevated border border-subtle rounded text-primary placeholder-muted focus:outline-none focus:border-accent"
           required
         />

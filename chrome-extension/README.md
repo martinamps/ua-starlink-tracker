@@ -1,8 +1,8 @@
 # Google Flights Starlink Indicator
 
 Chrome extension (Manifest V3) that badges Google Flights search results with
-the Starlink WiFi status of each flight — for United, Hawaiian, and Alaska
-Airlines.
+the Starlink WiFi status of each flight — for United, Hawaiian, Alaska, and
+Qatar Airways.
 
 ## Installation (development)
 
@@ -46,6 +46,14 @@ depends on the airline:
   assignment window there is no honest single number, so **Hawaiian results show
   no badge until the aircraft is assigned**. Blending the types into one
   percentage would be a guess dressed as data.
+- **Qatar** — no tail-level data, but Qatar publishes the scheduled aircraft
+  type about a week ahead (selected routes only). Inside that window a 777,
+  A350 or 787-8 shows green "Starlink (installed)" — Qatar reports those fleets
+  fully fitted — while a 787-9 (installs under way), A380, A330 or narrowbody
+  shows no badge. Further out, a gray "Starlink ~NN%" appears only when the
+  flight number flew a fitted type on nearly all (~93%+) of its recent
+  operating days; the number is a conservative lower bound, and a flight that
+  often swaps aircraft gets no badge.
 
 ## How it works
 
@@ -58,7 +66,7 @@ depends on the airline:
   decodes and names no tracked airline is trusted as-is: no heuristics run.
 - United flights are checked against `unitedstarlinktracker.com/api/check-flight`
   (the long-standing contract for this extension, and the only surface with the
-  near-departure FR24 fallback). Hawaiian and Alaska flights are checked
+  near-departure FR24 fallback). Hawaiian, Alaska and Qatar flights are checked
   against the hub, `airlinestarlinktracker.com/api/check-any-flight`, which
   resolves the marketing carrier server-side.
 - Multi-leg itineraries are badged by their weakest leg — a card is never
@@ -90,8 +98,8 @@ depends on the airline:
 
 - The extension reads flight numbers and dates from Google Flights pages you
   are already viewing. It does not read anything else on the page.
-- For each United/Hawaiian/Alaska flight it finds, it sends **only the flight
-  number, date, and each leg's departure/arrival airport codes** to
+- For each United/Hawaiian/Alaska/Qatar flight it finds, it sends **only the
+  flight number, date, and each leg's departure/arrival airport codes** to
   unitedstarlinktracker.com or airlinestarlinktracker.com to ask "does this
   leg have Starlink?", plus the extension's version number
   (`client=ext-2.1.0`) so the site can count extension lookups separately

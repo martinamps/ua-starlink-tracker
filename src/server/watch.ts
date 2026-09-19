@@ -181,6 +181,7 @@ export function watchVerdictFrom(
       };
     case "qatar":
     case "qatar_no_data":
+    case "qatar_history":
       return { verdict: { state: "none", message: null }, leg: historyLeg };
   }
 }

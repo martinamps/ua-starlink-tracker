@@ -145,6 +145,13 @@ export interface AirlineConfig {
    * populations diverging silently is how a hidden airline leaks. An airline
    * with publicInHub true is on the content surfaces regardless. */
   hubContentOnly?: boolean;
+  /** Answers per-flight on the hub's cross-carrier LOOKUP surfaces only —
+   * /api/check-any-flight and hub MCP check_flight / predict_flight_starlink —
+   * without joining publicInHub's homepage, /api/data, fleet-summary, the fleet
+   * predictor or hub REST /api/check-flight and /api/predict-flight. For a
+   * carrier whose per-flight answer is real (QR's published equipment) while
+   * its fleet surfaces are not ready to sit beside the tail-tracked airlines. */
+  hubFlightLookup?: boolean;
   iata: string;
   icao: string;
   /** All operating-carrier prefixes (ICAO + IATA) that map to this marketing carrier. Longest-first. */
@@ -480,12 +487,14 @@ const AIRLINE_DEFS = {
     name: "Qatar Airways",
     shortName: "Qatar",
     enabled: true,
-    // Hub content yes, hub answers no: the hub owns "Qatar vs United Starlink"
-    // and publishes QR's roster page, but qatarstarlinktracker.com is not live
-    // and the hub's flight-lookup APIs do not serve QR, so QR stays off the
-    // homepage and out of /api/*. Both halves are declared, not inferred.
+    // Hub content and hub flight lookup, but not hub fleet surfaces: the hub
+    // owns "Qatar vs United Starlink" and QR's roster page, and answers QR
+    // flight numbers from Qatar's published equipment — but QR has no per-tail
+    // signal, so it stays off the homepage, /api/data and the fleet predictor.
+    // All three halves are declared, not inferred.
     publicInHub: false,
     hubContentOnly: true,
+    hubFlightLookup: true,
     iata: "QR",
     icao: "QTR",
     carrierPrefixes: ["QTR", "QR"],
@@ -612,8 +621,8 @@ function qatarProgramFamily(family: string, raw = ""): string {
 
 // Every IATA equipment code QR's API returns (qoreservices keyspace), mapped
 // once to canonical family (phase-table key) + display name. Adding a QR
-// equipment code is one row here. 351/359 are both A350-900 — QR's API
-// returns either; 77F/77X/74Y/74F are Qatar Cargo freighters.
+// equipment code is one row here. 351 is the A350-1000 (QR's A350-1041s fly
+// under it), 359 the -900; 77F/77X/74Y/74F are Qatar Cargo freighters.
 const QATAR_EQUIPMENT: Record<string, { family: string; name: string }> = {
   "77W": { family: "B777", name: "Boeing 777-300ER" },
   "77L": { family: "B777", name: "Boeing 777-200LR" },
@@ -621,7 +630,7 @@ const QATAR_EQUIPMENT: Record<string, { family: string; name: string }> = {
   "77X": { family: "B777F", name: "Boeing 777 Freighter" },
   "74Y": { family: "B747F", name: "Boeing 747 Freighter" },
   "74F": { family: "B747F", name: "Boeing 747 Freighter" },
-  "351": { family: "A350", name: "Airbus A350-900" },
+  "351": { family: "A350", name: "Airbus A350-1000" },
   "359": { family: "A350", name: "Airbus A350-900" },
   "35K": { family: "A350", name: "Airbus A350-1000" },
   "788": { family: "B787-8", name: "Boeing 787-8" },
@@ -633,7 +642,8 @@ const QATAR_EQUIPMENT: Record<string, { family: string; name: string }> = {
   "321": { family: "A320", name: "Airbus A321" },
   "21N": { family: "A320", name: "Airbus A321neo" },
   "38M": { family: "B737", name: "Boeing 737 MAX 8" },
-  "73H": { family: "B737", name: "Boeing 737 MAX 8" },
+  "73H": { family: "B737", name: "Boeing 737-800" },
+  "7M8": { family: "B737", name: "Boeing 737 MAX 8" },
 };
 
 export const QATAR_EQUIPMENT_CODES: readonly string[] = Object.keys(QATAR_EQUIPMENT);
@@ -774,6 +784,12 @@ export function enabledAirlines(): AirlineConfig[] {
 
 export function publicAirlines(): AirlineConfig[] {
   return enabledAirlines().filter((a) => a.publicInHub);
+}
+
+/** Carriers the hub's cross-carrier lookup surfaces answer: every public
+ * airline plus those flagged hubFlightLookup. */
+export function hubLookupAirlines(): AirlineConfig[] {
+  return enabledAirlines().filter((a) => a.publicInHub || Boolean(a.hubFlightLookup));
 }
 
 /** The rule for "published on a hub content surface", as a predicate so it can

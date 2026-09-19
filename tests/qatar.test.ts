@@ -12,8 +12,11 @@ import { Database } from "bun:sqlite";
 import { beforeAll, describe, expect, test } from "bun:test";
 import { QATAR_EQUIPMENT_CODES, qatarEquipment, wifiPhaseFamilies } from "../src/airlines/registry";
 import {
+  type QatarClass,
   type QatarWifi,
+  fetchByRoute,
   isQatarFreighterEquipment,
+  qatarEquipmentClass,
   qatarEquipmentName,
   qatarEquipmentToWifi,
 } from "../src/api/qatar-status";
@@ -32,8 +35,8 @@ describe("qatarEquipmentToWifi", () => {
   test.each<[string, QatarWifi]>([
     ["77W", "Starlink"], // 777-300ER — rollout complete Q2 2025
     ["77L", "Starlink"], // 777-200LR
-    ["351", "Starlink"], // A350-900 (one of two codes QR returns)
-    ["359", "Starlink"], // A350-900 (alternate)
+    ["351", "Starlink"], // A350-1000 (QR's A350-1041s)
+    ["359", "Starlink"], // A350-900
     ["35K", "Starlink"], // A350-1000
     ["788", "Starlink"], // 787-8 — sub-fleet complete Aug 2026
     ["789", "Rolling"], // 787-9 — rolling
@@ -70,6 +73,65 @@ describe("qatarEquipmentToWifi", () => {
   });
 });
 
+describe("qatarEquipmentClass (read-time answer class)", () => {
+  test.each<[string | null, QatarClass]>([
+    ["77W", "yes"],
+    ["77L", "yes"],
+    ["351", "yes"],
+    ["359", "yes"],
+    ["35K", "yes"],
+    ["788", "yes"],
+    ["789", "rolling"],
+    ["388", "no"],
+    ["332", "no"],
+    ["333", "no"],
+    ["320", "no"],
+    ["321", "no"],
+    ["21N", "no"],
+    ["38M", "no"],
+    ["73H", "no"],
+    ["7M8", "no"],
+    // Unknown is never "no": a new code must not become a confident negative.
+    [null, "unknown"],
+    ["", "unknown"],
+    ["XXX", "unknown"],
+    ["779", "unknown"],
+    ["32N", "unknown"],
+  ])("%p → %s", (code, want) => {
+    expect(qatarEquipmentClass(code)).toBe(want);
+  });
+});
+
+describe("fetchByRoute normalization", () => {
+  test("exposes the operating carrier and marketed number", async () => {
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          flights: [
+            {
+              flightNumber: "001",
+              carrier: { carrier: "QR", flightNumber: "001", mktFlightNumber: "001" },
+              equipmentDetails: { equipmentCode: "77W" },
+              departureStation: { airportCode: "DOH" },
+              arrivalStation: { airportCode: "LHR" },
+              flightStatus: "SCHEDULED",
+              departureDateScheduledUTC: "Sat Sep 19 2026 06:40",
+            },
+          ],
+        })
+      )) as unknown as typeof fetch;
+    try {
+      const [f] = (await fetchByRoute("DOH", "LHR", "2026-09-19")) ?? [];
+      expect(f.carrier).toBe("QR");
+      expect(f.mktFlightNumber).toBe("001");
+      expect(f.scheduledDeparture).toBe(Date.parse("2026-09-19T06:40:00Z") / 1000);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+});
+
 describe("isQatarFreighterEquipment", () => {
   test("recognizes 777/747 freighter codes", () => {
     expect(isQatarFreighterEquipment("77F")).toBe(true);
@@ -95,8 +157,11 @@ describe("qatarEquipmentName", () => {
   test("known codes map to readable names", () => {
     expect(qatarEquipmentName("77W")).toBe("Boeing 777-300ER");
     expect(qatarEquipmentName("77L")).toBe("Boeing 777-200LR");
-    expect(qatarEquipmentName("351")).toBe("Airbus A350-900");
+    expect(qatarEquipmentName("351")).toBe("Airbus A350-1000");
+    expect(qatarEquipmentName("359")).toBe("Airbus A350-900");
     expect(qatarEquipmentName("35K")).toBe("Airbus A350-1000");
+    expect(qatarEquipmentName("73H")).toBe("Boeing 737-800");
+    expect(qatarEquipmentName("7M8")).toBe("Boeing 737 MAX 8");
     expect(qatarEquipmentName("788")).toBe("Boeing 787-8");
     expect(qatarEquipmentName("789")).toBe("Boeing 787-9");
     expect(qatarEquipmentName("388")).toBe("Airbus A380-800");

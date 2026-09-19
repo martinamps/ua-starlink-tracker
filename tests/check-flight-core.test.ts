@@ -9,6 +9,7 @@ import type { Database } from "bun:sqlite";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { AIRLINES } from "../src/airlines/registry";
 import {
+  decideCarrier,
   flightDateWindow,
   negativeWifi,
   resolveFlightVerdict,
@@ -39,6 +40,33 @@ import {
 } from "./helpers";
 
 const UA_HOST = "unitedstarlinktracker.com";
+
+describe("decideCarrier pools", () => {
+  const codes = (d: ReturnType<typeof decideCarrier>) =>
+    d.outcome === "not_tracked" ? d.tracked.map((a) => a.code) : [];
+
+  test("the public pool never answers QR; the lookup pool does", () => {
+    const pub = decideCarrier(null, "QR1");
+    expect(pub.outcome).toBe("not_tracked");
+    expect(codes(pub)).not.toContain("QR");
+    const lookup = decideCarrier(null, "QR1", { pool: "lookup" });
+    expect(lookup.outcome === "resolved" && lookup.cfg.code).toBe("QR");
+  });
+
+  test("an untracked carrier on the lookup pool lists QR among the tracked", () => {
+    const d = decideCarrier(null, "DL123", { pool: "lookup" });
+    expect(d.outcome).toBe("not_tracked");
+    expect(codes(d)).toContain("QR");
+  });
+
+  test("a pinned tenant refuses QR under either pool", () => {
+    for (const pinned of [AIRLINES.UA, AIRLINES.AS]) {
+      for (const pool of ["public", "lookup"] as const) {
+        expect(decideCarrier(pinned, "QR1", { pool }).outcome).toBe("not_tracked");
+      }
+    }
+  });
+});
 
 describe("flightDateWindow", () => {
   test("strict UTC bounds plus widened query bounds", () => {
@@ -170,7 +198,7 @@ describe("resolveFlightVerdict ladder (synthetic DB)", () => {
     expect(v.kind).toBe("qatar");
     if (v.kind === "qatar") {
       expect(v.hasStarlink).toBe(true);
-      expect(v.confidence).toBe("verified");
+      expect(v.qclass).toBe("yes");
     }
     const prev = await resolveFlightVerdict(AIRLINES.QR, qrReader, "QR701", "2027-03-05", opts);
     expect(prev.kind).toBe("qatar_no_data");

@@ -19,6 +19,7 @@
     "db-status": "bun run src/scripts/db-status.ts",
     "predict-backtest": "bun run src/scripts/starlink-predictor.ts --backtest",
     "precision": "bun run src/scripts/precision-backtest.ts",
+    "qatar-backtest": "bun run src/scripts/qatar-history-backtest.ts",
     "surface-sweep": "bun run src/scripts/surface-sweep.ts",
     "seed-hawaiian": "PLAYWRIGHT_BROWSERS_PATH=./do_not_commit/playwright-browsers bun run src/scripts/seed-hawaiian.ts",
     "seed-alaska": "PLAYWRIGHT_BROWSERS_PATH=./do_not_commit/playwright-browsers bun run src/scripts/seed-alaska.ts",
