@@ -1021,6 +1021,7 @@ const apiCheckAnyFlight: Handler = async ({ req, url, reader, getReader, tenant 
       // rather than a confident "No Starlink" (upcoming_flights only covers ~47h).
       const pred = verdict.pred;
       recordPrediction(pred, cfg.code);
+      const pct = Math.round(pred.probability * 100);
       return new Response(
         JSON.stringify({
           hasStarlink: null,
@@ -1030,8 +1031,8 @@ const apiCheckAnyFlight: Handler = async ({ req, url, reader, getReader, tenant 
           n_recent_observations: pred.n_recent_observations,
           reason:
             pred.n_observations > 0
-              ? `No schedule data for this date; ~${Math.round(pred.probability * 100)}% based on ${pred.n_observations} historical observation${pred.n_observations === 1 ? "" : "s"}.`
-              : `No schedule data for this date; ~${Math.round(pred.probability * 100)}% based on ${cfg.name} fleet rollout rate.`,
+              ? `No schedule data for this date; ~${pct}% based on ${pred.n_observations} historical observation${pred.n_observations === 1 ? "" : "s"}.`
+              : `No schedule data for this date. ${coldPredictionNote(pred, pct)}`,
           flights: [],
         }),
         { headers: SECURITY_HEADERS.api }

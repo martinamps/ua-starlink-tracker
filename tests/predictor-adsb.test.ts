@@ -21,7 +21,8 @@ import {
   planItinerary,
   predictFlight,
 } from "../src/scripts/starlink-predictor";
-import { addFlight, makeSyntheticDb } from "./helpers";
+import { createApp } from "../src/server/app";
+import { addFlight, jsonOf, makeSyntheticDb } from "./helpers";
 
 const CONFIG = {
   priorStrength: 3,
@@ -230,6 +231,21 @@ describe("cold and positioning priors", () => {
     const pred = predictFlight(reader, "UA4240");
     expect(pred.method).toBe("fleet_prior_express");
     expect(pred.probability).toBeLessThan(stats.express.starlink / stats.express.total);
+  });
+
+  // The hub resolves UA through the same census model, so its cold copy must
+  // not attribute the low express prior to a fleet rollout rate.
+  test("hub check-any-flight cold answer never cites the fleet rollout rate", async () => {
+    const body = await jsonOf(
+      createApp(db),
+      "/api/check-any-flight?flight_number=UA4240&date=2024-01-15",
+      "airlinestarlinktracker.com"
+    );
+    expect(body.hasStarlink).toBeNull();
+    expect(typeof body.probability).toBe("number");
+    expect(typeof body.reason).toBe("string");
+    expect(body.reason).not.toMatch(/rollout rate/i);
+    expect(body.reason).toContain("regional jets");
   });
 
   test("a partial itinerary's positioning leg is priced at the live mainline rate", () => {
