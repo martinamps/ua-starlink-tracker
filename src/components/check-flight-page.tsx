@@ -100,10 +100,10 @@ const fmtDuration = (sec: number) => {
 function flightSummary(flight: FlightFacts): string {
   const { flightNumber, observedStarlink: s, observedTotal: n } = flight;
   if (n > 0 && s > 0) {
-    return `${flightNumber} had Starlink on ${s} of ${n} recent departures (${Math.round((s / n) * 100)}%). Pick a date below for a live answer.`;
+    return `${flightNumber} had Starlink on ${s} of ${n} observed departures (${Math.round((s / n) * 100)}%). Pick a date below for a live answer.`;
   }
   if (n > 0) {
-    return `Not yet — recent ${flightNumber} departures were flown by aircraft still awaiting Starlink installation. Pick a date below for a live answer.`;
+    return `Not yet — observed ${flightNumber} departures were flown by aircraft still awaiting Starlink installation. Pick a date below for a live answer.`;
   }
   return `Pick a date below for a live answer based on the aircraft assigned to ${flightNumber}.`;
 }
@@ -762,7 +762,7 @@ export default function CheckFlightPage({
                       var iconColor = isLikely ? 'text-green-400' : isPossible ? 'text-yellow-400' : 'text-muted';
                       var detail = pred.n_observations > 0
                         ? 'Based on <span class="text-secondary">' + pred.n_observations + '</span> historical observation' + (pred.n_observations === 1 ? '' : 's') + ' of aircraft on this flight number (' + pred.confidence + ' confidence).'
-                        : 'No historical data for this flight number — this is the fleet install rate (treat as upper bound).';
+                        : 'No history for this flight number — this is our estimate for flights we have not yet seen on a Starlink aircraft.';
                       resultDiv.innerHTML = '<div class="rounded p-4 border ' + borderColor + '">' +
                         '<div class="flex items-center gap-2 mb-3">' +
                         '<span class="text-lg ' + iconColor + '">~</span>' +

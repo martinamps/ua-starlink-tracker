@@ -37,6 +37,7 @@ import {
   siteForAirline,
   wifiPhaseFamilies,
 } from "../airlines/registry";
+import type { AdsbFlightDraw } from "../database/adsb-flight-draws";
 import type {
   FleetRosterEntry,
   VerificationObservation as Observation,
@@ -77,6 +78,8 @@ interface Prediction {
   confidence: "high" | "medium" | "low";
   method: PredictionMethod;
   n_observations: number;
+  /** Draws no older than RECENT_OBSERVATION_DAYS — n_observations is all-time. */
+  n_recent_observations: number;
 }
 
 /**
@@ -101,10 +104,10 @@ interface ModelConfig {
   expressSmoothingPrior: number;
   mainlineSmoothingPrior: number;
 
-  // Cold-start priors: for flights WITH NO history, fall back to true fleet-stat
-  // install rate. "Not in the log after 12k checks" is itself a weak negative
-  // signal (verifier only checks Starlink-suspected tails), so these are
-  // upper bounds.
+  // Cold-start priors: for flights WITH NO history. "Not in the log after 12k
+  // checks" is itself a negative signal (verifier only checks Starlink-
+  // suspected tails): mainline uses the fleet rate as an upper bound, express
+  // a constant measured on ADS-B traffic (EXPRESS_COLD_PRIOR_FALLBACK).
   expressColdPrior: number;
   mainlineColdPrior: number;
 }
@@ -113,9 +116,18 @@ const DEFAULT_CONFIG: ModelConfig = {
   priorStrength: 3, // α=3 found optimal via Brier sweep (marginally beats α=2)
   expressSmoothingPrior: 0.768,
   mainlineSmoothingPrior: 0.004,
-  expressColdPrior: 0.39,
+  expressColdPrior: 0.15,
   mainlineColdPrior: 0.02,
 };
+
+/**
+ * Express cold start. A flight number missing from the verification log is
+ * structurally an ERJ-145/CRJ-200 flight: the verifier only logs Starlink-
+ * suspected tails, and those families are 0% Starlink. On the Aug-29 ADS-B
+ * snapshot such flights had Starlink 12.8% of the time, while any blend with
+ * the log-conditional rate served ~79%.
+ */
+const EXPRESS_COLD_PRIOR_FALLBACK = 0.15;
 
 // How fast the flight-number -> tail-draw distribution goes stale. Swept over
 // 5/10/20/30/40d half-lives in the rolling backtest; 30d is the Brier optimum.
@@ -186,17 +198,56 @@ function coldPrediction(flightNumber: string, config: ModelConfig): Prediction {
     confidence: "low",
     method: `fleet_prior_${uaSubfleet(flightNumber)}` as PredictionMethod,
     n_observations: 0,
+    n_recent_observations: 0,
   };
 }
 
 /**
+ * ADS-B tail draws in the per-flight history (PREDICTOR_ADSB_DRAWS=off opts
+ * out). The verification log only holds departures the verifier chose to
+ * check, which over-samples Starlink tails: mixed mainline flights read 50-65%
+ * when the tails they actually draw are 0-13%. The backtest behind the default
+ * is `--backtest --windows=`, scored on ADS-B departures.
+ */
+const ADSB_DRAWS_DEFAULT: "on" | "off" = "on";
+export const adsbDrawsEnabled = (): boolean =>
+  (process.env.PREDICTOR_ADSB_DRAWS ?? ADSB_DRAWS_DEFAULT) !== "off";
+
+/** A logged check this close to an ADS-B departure is the same departure. */
+const ADSB_LOG_DEDUP_SEC = 12 * 3600;
+/** With this many unbiased draws, the log's selection bias costs more than its
+ * extra sample is worth, so its draws count half. */
+const ADSB_DOMINANT_DRAWS = 5;
+const LOG_WEIGHT_UNDER_ADSB = 0.5;
+const ADSB_DRAW_WINDOW_DAYS = 90;
+export const RECENT_OBSERVATION_DAYS = 30;
+
+type FlightEvidence = {
+  mix: Map<string, number>;
+  s: number;
+  n: number;
+  raw: number;
+  adsbN: number;
+  recent: number;
+};
+
+type KeptDraw = { t: number; type: string; starlink: number };
+
+/**
  * The type-aware predictor (see the file header). Returns null when the
  * roster is empty, so the caller falls back to the legacy model.
+ *
+ * `adsbDraws` null is the log-only model. For a flight with ADS-B draws, its
+ * log draws also enter the family mix decayed, the way s/n decay: at full
+ * weight a January 737-800 draw kept setting the family prior long after the
+ * route moved to MAX metal. Only then — decaying the mix of a log-only flight
+ * measured worse (ADS-B Brier 0.1280 -> 0.1329 at T=Aug15).
  */
 function buildTypeAwarePredict(
   trainObs: Observation[],
   config: ModelConfig,
-  roster: FleetRosterEntry[]
+  roster: FleetRosterEntry[],
+  adsbDraws: readonly AdsbFlightDraw[] | null = null
 ): ((flightNumber: string) => Prediction) | null {
   if (roster.length === 0) return null;
 
@@ -233,28 +284,51 @@ function buildTypeAwarePredict(
     typePen.set(t.type, agg);
   }
 
+  // ADS-B runs ahead of the log, so a draw newer than the anchor counts as
+  // fresh — never as more than one draw.
+  const decay = (t: number) => 0.5 ** (Math.max(0, anchor - t) / 86400 / ASSIGNMENT_HALF_LIFE_DAYS);
+  const recentSince = anchor - RECENT_OBSERVATION_DAYS * 86400;
+  const adsbByFlight = keptAdsbDraws(trainObs, tails, adsbDraws ?? []);
+
+  const flights = new Map<string, FlightEvidence>();
+  const evidenceFor = (flightNumber: string): FlightEvidence => {
+    let f = flights.get(flightNumber);
+    if (!f) {
+      f = { mix: new Map(), s: 0, n: 0, raw: 0, adsbN: 0, recent: 0 };
+      flights.set(flightNumber, f);
+    }
+    return f;
+  };
+
   // Per flight number: the family mix of its tail draws, plus the
   // recency-weighted draws whose tail carries Starlink NOW.
-  const flights = new Map<
-    string,
-    { mix: Map<string, number>; s: number; n: number; raw: number }
-  >();
   for (const obs of trainObs) {
     // A tail missing from the roster still has a known current status from
     // the log — only its family is unknown, so it just doesn't feed the mix.
     const tail = tails.get(obs.tail_number);
     const starlink = tail?.starlink ?? tailLatest.get(obs.tail_number)?.starlink;
     if (starlink === undefined) continue;
-    let f = flights.get(obs.flight_number);
-    if (!f) {
-      f = { mix: new Map(), s: 0, n: 0, raw: 0 };
-      flights.set(obs.flight_number, f);
-    }
-    if (tail) f.mix.set(tail.type, (f.mix.get(tail.type) ?? 0) + 1);
-    const w = 0.5 ** ((anchor - obs.checked_at) / 86400 / ASSIGNMENT_HALF_LIFE_DAYS);
+    const f = evidenceFor(obs.flight_number);
+    const adsbCount = adsbByFlight.get(obs.flight_number)?.length ?? 0;
+    const w =
+      decay(obs.checked_at) * (adsbCount >= ADSB_DOMINANT_DRAWS ? LOG_WEIGHT_UNDER_ADSB : 1);
+    if (tail) f.mix.set(tail.type, (f.mix.get(tail.type) ?? 0) + (adsbCount > 0 ? w : 1));
     f.s += starlink * w;
     f.n += w;
     f.raw += 1;
+    if (obs.checked_at >= recentSince) f.recent += 1;
+  }
+
+  for (const [flightNumber, draws] of adsbByFlight) {
+    const f = evidenceFor(flightNumber);
+    for (const d of draws) {
+      const w = decay(d.t);
+      f.mix.set(d.type, (f.mix.get(d.type) ?? 0) + w);
+      f.s += d.starlink * w;
+      f.n += w;
+      f.adsbN += 1;
+      if (d.t >= recentSince) f.recent += 1;
+    }
   }
 
   // Everything is determined at build time, so predict is a lookup.
@@ -263,22 +337,22 @@ function buildTypeAwarePredict(
   const predictions = new Map<string, Prediction>();
   for (const [flightNumber, f] of flights) {
     let prior = coldPrior(flightNumber, config);
-    if (f.mix.size > 0) {
-      let n = 0;
-      let s = 0;
-      for (const [type, count] of f.mix) {
-        const pen = typePen.get(type);
-        n += count;
-        s += count * (pen ? pen.s / pen.n : 0);
-      }
-      prior = s / n;
+    let mixWeight = 0;
+    let mixStarlink = 0;
+    for (const [type, weight] of f.mix) {
+      const pen = typePen.get(type);
+      mixWeight += weight;
+      mixStarlink += weight * (pen ? pen.s / pen.n : 0);
     }
+    if (mixWeight > 0) prior = mixStarlink / mixWeight;
+    const draws = f.raw + f.adsbN;
     predictions.set(flightNumber, {
       flight_number: flightNumber,
       probability: smoothedRate(f.s, f.n, prior, config.priorStrength),
-      confidence: decayedConfidence(f.n, f.raw, config.priorStrength),
+      confidence: decayedConfidence(f.n, draws, config.priorStrength),
       method: "flight_history_smoothed",
-      n_observations: f.raw,
+      n_observations: draws,
+      n_recent_observations: f.recent,
     });
   }
 
@@ -286,16 +360,56 @@ function buildTypeAwarePredict(
     predictions.get(flightNumber) ?? coldPrediction(flightNumber, config);
 }
 
+/**
+ * ADS-B draws the model may count, per flight number. The roster filter is
+ * load-bearing: SkyWest, Republic and Air Wisconsin fly the same callsign
+ * numbers for Delta, American and Alaska, and only a United tail makes
+ * SKW5xxx mean UA5xxx. A draw the log already holds is dropped so one
+ * departure is never counted twice.
+ */
+function keptAdsbDraws(
+  trainObs: readonly Observation[],
+  tails: ReadonlyMap<string, { type: string; starlink: number }>,
+  adsbDraws: readonly AdsbFlightDraw[]
+): Map<string, KeptDraw[]> {
+  const kept = new Map<string, KeptDraw[]>();
+  if (adsbDraws.length === 0) return kept;
+  const logTimes = new Map<string, number[]>();
+  for (const obs of trainObs) {
+    const key = `${obs.flight_number}|${obs.tail_number}`;
+    const list = logTimes.get(key);
+    if (list) list.push(obs.checked_at);
+    else logTimes.set(key, [obs.checked_at]);
+  }
+  for (const d of adsbDraws) {
+    const tail = tails.get(d.tail_number);
+    if (!tail) continue;
+    const logged = logTimes.get(`${d.flight_number}|${d.tail_number}`);
+    const alreadyLogged = logged?.some(
+      (t) => t >= d.first_seen - ADSB_LOG_DEDUP_SEC && t <= d.last_seen + ADSB_LOG_DEDUP_SEC
+    );
+    if (alreadyLogged) continue;
+    const list = kept.get(d.flight_number);
+    const draw = { t: d.first_seen, type: tail.type, starlink: tail.starlink };
+    if (list) list.push(draw);
+    else kept.set(d.flight_number, [draw]);
+  }
+  return kept;
+}
+
 /** The pre-roster model: per-flight-number rate smoothed toward a subfleet prior. */
 function buildLegacyPredict(
   trainObs: Observation[],
   config: ModelConfig
 ): (flightNumber: string) => Prediction {
-  const flightStats = new Map<string, { nStarlink: number; n: number }>();
+  const anchor = trainObs.reduce((m, o) => Math.max(m, o.checked_at), 0);
+  const recentSince = anchor - RECENT_OBSERVATION_DAYS * 86400;
+  const flightStats = new Map<string, { nStarlink: number; n: number; recent: number }>();
   for (const obs of trainObs) {
-    const cur = flightStats.get(obs.flight_number) || { nStarlink: 0, n: 0 };
+    const cur = flightStats.get(obs.flight_number) || { nStarlink: 0, n: 0, recent: 0 };
     cur.nStarlink += obs.has_starlink;
     cur.n += 1;
+    if (obs.checked_at >= recentSince) cur.recent += 1;
     flightStats.set(obs.flight_number, cur);
   }
 
@@ -318,6 +432,7 @@ function buildLegacyPredict(
       confidence: confidenceFor(stats.n),
       method: "flight_history_smoothed",
       n_observations: stats.n,
+      n_recent_observations: stats.recent,
     };
   };
 }
@@ -329,10 +444,12 @@ function buildLegacyPredict(
 export function buildModel(
   trainObs: Observation[],
   config: ModelConfig = DEFAULT_CONFIG,
-  roster: FleetRosterEntry[] = []
+  roster: FleetRosterEntry[] = [],
+  adsbDraws: readonly AdsbFlightDraw[] | null = null
 ) {
   const predict =
-    buildTypeAwarePredict(trainObs, config, roster) ?? buildLegacyPredict(trainObs, config);
+    buildTypeAwarePredict(trainObs, config, roster, adsbDraws) ??
+    buildLegacyPredict(trainObs, config);
   return { predict };
 }
 
@@ -443,7 +560,7 @@ function evaluate(predictions: Array<{ pred: Prediction; actual: number }>): Eva
  * same number. meta.*Starlink is the raw sheet claim (includes verified
  * mismatches) and overcounts.
  */
-function loadFleetPriors(reader: ScopedReader): { express: number; mainline: number } {
+export function loadFleetPriors(reader: ScopedReader): { express: number; mainline: number } {
   const stats = reader.getFleetStats();
   // Null = hub scope: no per-airline subfleet split exists. Use the
   // cross-airline penetration rate as both priors — a real aggregate, never
@@ -486,12 +603,28 @@ export function backtest(
   const trainObs = allObs.filter((o) => o.checked_at < cutoff);
   const testObs = allObs.filter((o) => o.checked_at >= cutoff);
 
-  const derivedConfig = deriveConfig(reader, trainObs, config);
-  const { predict } = buildModel(trainObs, derivedConfig, censusRoster(reader));
+  const roster = censusRoster(reader);
+  const derivedConfig = deriveConfig(reader, trainObs, config, roster);
+  const draws = reader.getAdsbFlightDraws(cutoff - ADSB_DRAW_WINDOW_DAYS * 86400);
+  const { predict } = buildModel(
+    trainObs,
+    derivedConfig,
+    roster,
+    adsbDrawsEnabled() ? draws.filter((d) => d.first_seen < cutoff) : null
+  );
 
   const predictions = testObs.map((obs) => ({
     pred: predict(obs.flight_number),
     actual: obs.has_starlink,
+  }));
+  const adsbTest = labelAdsbDraws(
+    draws.filter((d) => d.first_seen >= cutoff),
+    allObs
+  );
+  const adsbScored = adsbTest.labeled.map(({ draw, actual }) => ({
+    pred: predict(draw.flight_number),
+    actual,
+    subfleet: uaSubfleet(draw.flight_number),
   }));
 
   db.close();
@@ -538,7 +671,239 @@ export function backtest(
     );
   }
 
+  console.log(
+    `\nADS-B test set (the log is Starlink-biased; this is what flew), ADS-B draws ${adsbDrawsEnabled() ? "on" : "off"}, ${adsbTest.dropped} unlabeled dropped:`
+  );
+  if (adsbScored.length === 0) console.log("  none — no adsb_flight_draws after the cutoff");
+  printWindowArm({
+    arm: adsbDrawsEnabled() ? "adsb_draws" : "log_only",
+    log: bySubfleet(
+      testObs.map((o, i) => ({ ...predictions[i], subfleet: uaSubfleet(o.flight_number) }))
+    ),
+    adsb: bySubfleet(adsbScored),
+    adsbCalibration: evaluate(adsbScored).calibration,
+    adsbDropped: adsbTest.dropped,
+  });
+
   return result;
+}
+
+// ============================================================================
+// ADS-B test set
+// ============================================================================
+//
+// The verification log is a biased test set: it holds the departures the
+// verifier chose to check, ~65% Starlink against ~41% in real traffic, so it
+// rewards models that over-predict and cannot see cold-prior changes at all.
+// ADS-B departures sample what actually flew.
+
+/** Labels may borrow a later check, but only a near one. */
+const ADSB_LABEL_LOOKAHEAD_SEC = 7 * 86400;
+const BADGE_THRESHOLD = 0.8;
+
+type ScoredDraw = { pred: Prediction; actual: number; subfleet: string };
+
+/**
+ * Label each draw by its tail's latest clean check at or before departure,
+ * else the earliest within ADSB_LABEL_LOOKAHEAD_SEC after, else drop it —
+ * falling back to 0 would bias the set toward negatives.
+ */
+export function labelAdsbDraws(
+  draws: readonly AdsbFlightDraw[],
+  observations: readonly Observation[]
+): { labeled: Array<{ draw: AdsbFlightDraw; actual: number }>; dropped: number } {
+  const byTail = new Map<string, Array<{ at: number; starlink: number }>>();
+  for (const o of observations) {
+    if (!o.tail_number) continue;
+    const list = byTail.get(o.tail_number) ?? [];
+    list.push({ at: o.checked_at, starlink: o.has_starlink });
+    byTail.set(o.tail_number, list);
+  }
+  for (const list of byTail.values()) list.sort((a, b) => a.at - b.at);
+
+  const labeled: Array<{ draw: AdsbFlightDraw; actual: number }> = [];
+  let dropped = 0;
+  for (const draw of draws) {
+    const checks = byTail.get(draw.tail_number);
+    if (!checks) {
+      dropped++;
+      continue;
+    }
+    let lo = 0;
+    let hi = checks.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (checks[mid].at <= draw.first_seen) lo = mid + 1;
+      else hi = mid;
+    }
+    const before = lo > 0 ? checks[lo - 1] : null;
+    const after = lo < checks.length ? checks[lo] : null;
+    const label =
+      before ?? (after && after.at - draw.first_seen <= ADSB_LABEL_LOOKAHEAD_SEC ? after : null);
+    if (!label) {
+      dropped++;
+      continue;
+    }
+    labeled.push({ draw, actual: label.starlink });
+  }
+  return { labeled, dropped };
+}
+
+function expectedCalibrationError(scored: ReadonlyArray<{ pred: Prediction; actual: number }>) {
+  const bins = Array.from({ length: 10 }, () => ({ p: 0, y: 0, n: 0 }));
+  for (const { pred, actual } of scored) {
+    const b = bins[Math.min(9, Math.floor(pred.probability * 10))];
+    b.p += pred.probability;
+    b.y += actual;
+    b.n += 1;
+  }
+  const n = scored.length;
+  return n === 0 ? 0 : bins.reduce((e, b) => e + (b.n ? Math.abs(b.p - b.y) : 0), 0) / n;
+}
+
+/** The Chrome extension's badge rule: p ≥ 0.8 and a confidence it will show. */
+function badgeStats(scored: readonly ScoredDraw[]) {
+  let badged = 0;
+  let badgedTrue = 0;
+  let positives = 0;
+  for (const { pred, actual } of scored) {
+    positives += actual;
+    if (pred.probability >= BADGE_THRESHOLD && pred.confidence !== "low") {
+      badged++;
+      badgedTrue += actual;
+    }
+  }
+  return {
+    badged,
+    precision: badged ? badgedTrue / badged : 0,
+    recall: positives ? badgedTrue / positives : 0,
+  };
+}
+
+export interface SplitMetrics {
+  n: number;
+  baseRate: number;
+  brier: number;
+  logLoss: number;
+  ece: number;
+  badgePrecision: number;
+  badgeRecall: number;
+  badged: number;
+}
+
+function splitMetrics(scored: readonly ScoredDraw[]): SplitMetrics {
+  const r = evaluate([...scored]);
+  const b = badgeStats(scored);
+  return {
+    n: r.n,
+    baseRate: r.n ? scored.reduce((s, x) => s + x.actual, 0) / r.n : 0,
+    brier: r.brierScore,
+    logLoss: r.logLoss,
+    ece: expectedCalibrationError(scored),
+    badgePrecision: b.precision,
+    badgeRecall: b.recall,
+    badged: b.badged,
+  };
+}
+
+export interface WindowArmResult {
+  arm: "log_only" | "adsb_draws";
+  log: Record<"all" | "mainline" | "express", SplitMetrics>;
+  adsb: Record<"all" | "mainline" | "express", SplitMetrics>;
+  adsbCalibration: EvalResult["calibration"];
+  adsbDropped: number;
+}
+
+const bySubfleet = (scored: readonly ScoredDraw[]) => ({
+  all: splitMetrics(scored),
+  mainline: splitMetrics(scored.filter((s) => s.subfleet === "mainline")),
+  express: splitMetrics(scored.filter((s) => s.subfleet === "express")),
+});
+
+/**
+ * Train strictly before `cutoff`, score the next `testDays` on both test
+ * sets. `configOverride` lands after deriveConfig, so a caller can replay an
+ * older prior against the same split.
+ */
+export function backtestWindow(
+  reader: ScopedReader,
+  cutoff: number,
+  testDays: number,
+  arm: WindowArmResult["arm"],
+  configOverride: Partial<ModelConfig> = {}
+): WindowArmResult {
+  const testEnd = cutoff + testDays * 86400;
+  const allObs = reader.getVerificationObservations();
+  const trainObs = allObs.filter((o) => o.checked_at < cutoff);
+  const allDraws = reader.getAdsbFlightDraws(cutoff - ADSB_DRAW_WINDOW_DAYS * 86400);
+  const trainDraws = arm === "adsb_draws" ? allDraws.filter((d) => d.first_seen < cutoff) : null;
+  const roster = censusRoster(reader);
+  const config = { ...deriveConfig(reader, trainObs, DEFAULT_CONFIG, roster), ...configOverride };
+  const { predict } = buildModel(trainObs, config, roster, trainDraws);
+
+  const logScored = allObs
+    .filter((o) => o.checked_at >= cutoff && o.checked_at < testEnd)
+    .map((o) => ({
+      pred: predict(o.flight_number),
+      actual: o.has_starlink,
+      subfleet: uaSubfleet(o.flight_number),
+    }));
+  const { labeled, dropped } = labelAdsbDraws(
+    allDraws.filter((d) => d.first_seen >= cutoff && d.first_seen < testEnd),
+    allObs
+  );
+  const adsbScored = labeled.map(({ draw, actual }) => ({
+    pred: predict(draw.flight_number),
+    actual,
+    subfleet: uaSubfleet(draw.flight_number),
+  }));
+  return {
+    arm,
+    log: bySubfleet(logScored),
+    adsb: bySubfleet(adsbScored),
+    adsbCalibration: evaluate(adsbScored).calibration,
+    adsbDropped: dropped,
+  };
+}
+
+function printWindowArm(r: WindowArmResult) {
+  const row = (set: string, split: string, m: SplitMetrics) =>
+    console.log(
+      `  ${r.arm.padEnd(10)} ${set.padEnd(4)} ${split.padEnd(8)} n=${String(m.n).padStart(6)} base=${m.baseRate.toFixed(3)} brier=${m.brier.toFixed(4)} logloss=${m.logLoss.toFixed(4)} ece=${m.ece.toFixed(4)} badge(p>=0.8,!low) n=${String(m.badged).padStart(5)} prec=${(m.badgePrecision * 100).toFixed(2)}% recall=${(m.badgeRecall * 100).toFixed(1)}%`
+    );
+  for (const split of ["all", "mainline", "express"] as const) row("adsb", split, r.adsb[split]);
+  for (const split of ["all", "mainline", "express"] as const) row("log", split, r.log[split]);
+  console.log(`  ${r.arm} ADS-B calibration (dropped unlabeled: ${r.adsbDropped}):`);
+  for (const c of r.adsbCalibration) {
+    if (c.n > 0) {
+      console.log(
+        `    ${c.bucket} n=${String(c.n).padStart(6)} pred=${c.predicted.toFixed(3)} actual=${c.actual.toFixed(3)}`
+      );
+    }
+  }
+}
+
+/** Rolling-origin backtest over explicit cutoffs, both arms side by side. */
+export function backtestWindows(
+  dbPath: string,
+  cutoffs: readonly number[],
+  testDays = 7
+): Array<{ cutoff: number; arms: WindowArmResult[] }> {
+  const db = new Database(dbPath, { readonly: true });
+  const reader = createReaderFactory(db)("UA");
+  const out: Array<{ cutoff: number; arms: WindowArmResult[] }> = [];
+  for (const cutoff of cutoffs) {
+    console.log(
+      `\n=== Window: train < ${new Date(cutoff * 1000).toISOString().slice(0, 10)}, test next ${testDays}d ===`
+    );
+    const arms = (["log_only", "adsb_draws"] as const).map((arm) =>
+      backtestWindow(reader, cutoff, testDays, arm)
+    );
+    for (const a of arms) printWindowArm(a);
+    out.push({ cutoff, arms });
+  }
+  db.close();
+  return out;
 }
 
 /**
@@ -549,7 +914,8 @@ export function backtest(
 function deriveConfig(
   reader: ScopedReader,
   trainObs: Observation[],
-  base: ModelConfig = DEFAULT_CONFIG
+  base: ModelConfig = DEFAULT_CONFIG,
+  roster: readonly FleetRosterEntry[] = []
 ): ModelConfig {
   // Derive smoothing priors from log-conditional rates. Exclude 5-digit flight
   // numbers (ferry/repositioning, ~3.5% of obs, all zero-Starlink) so they don't
@@ -586,11 +952,14 @@ function deriveConfig(
     // they had Starlink). Using fleetRate prevents "0.0005" predictions when
     // actual is "0.015". Backtested: ECE -30% with this change.
     mainlineSmoothingPrior: Math.max(logRate.mainline, fleetRate.mainline),
-    // Express cold start: blend fleet rate and log-conditional rate. A flight
-    // NEWLY entering the verification log is selection-biased — it was checked
-    // because it was on a Starlink-suspected tail. True rate for such flights
-    // is ~0.65, not the fleet-wide ~0.49. Backtested: optimal blend is ~0.5·each.
-    expressColdPrior: 0.5 * fleetRate.express + 0.5 * logRate.express,
+    // Express cold start: EXPRESS_COLD_PRIOR_FALLBACK was measured on the
+    // census (type-aware) model's cold path. Without a census — the hub, or a
+    // UA fleet table fleet-sync hasn't filled — the legacy model keeps its
+    // blend of the fleet rate and the log-conditional rate.
+    expressColdPrior:
+      roster.length > 0
+        ? EXPRESS_COLD_PRIOR_FALLBACK
+        : 0.5 * fleetRate.express + 0.5 * logRate.express,
     mainlineColdPrior: fleetRate.mainline,
   };
 }
@@ -623,8 +992,12 @@ function censusRoster(reader: ScopedReader): FleetRosterEntry[] {
 
 function buildProductionModel(reader: ScopedReader): { predict: (fn: string) => Prediction } {
   const trainObs = reader.getVerificationObservations();
-  const config = deriveConfig(reader, trainObs);
-  return buildModel(trainObs, config, censusRoster(reader));
+  const roster = censusRoster(reader);
+  const config = deriveConfig(reader, trainObs, DEFAULT_CONFIG, roster);
+  const draws = adsbDrawsEnabled()
+    ? reader.getAdsbFlightDraws(Math.floor(Date.now() / 1000) - ADSB_DRAW_WINDOW_DAYS * 86400)
+    : null;
+  return buildModel(trainObs, config, roster, draws);
 }
 
 /**
@@ -1319,20 +1692,16 @@ function computeItinerary(legs: ItineraryLeg[], coverage: "full" | "partial"): I
 }
 
 /**
- * A leg we have no Starlink data for, priced at the carrier's live mainline
- * cold prior.
- *
- * Was hardcoded to DEFAULT_CONFIG.mainlineColdPrior (0.02) — the *fallback*
- * constant, not the derived one — while the live value is ~0.157. That is 7.8x
- * low, and it propagates into joint_probability on every partial itinerary.
- * `method` was also missing, which is a real type error the compiler already
- * flags on this literal.
+ * A leg we have no Starlink data for, priced at the scope's live mainline
+ * penetration (loadFleetPriors). No default on purpose: the fallback constant
+ * (0.02) is ~10x below the live rate and silently priced every partial
+ * itinerary's positioning leg while callers passed nothing.
  */
-function makePositioningLeg(route: string, config: ModelConfig = DEFAULT_CONFIG): ItineraryLeg {
+function makePositioningLeg(route: string, probability: number): ItineraryLeg {
   return {
     flight_number: "(any)",
     route,
-    probability: config.mainlineColdPrior,
+    probability,
     confidence: "low",
     method: "fleet_prior_mainline",
     n_observations: 0,
@@ -1396,6 +1765,7 @@ export function planItinerary(
 
   const graph = buildRouteGraph(reader, minLegProb, options.targetDateUnix);
   const itineraries: Itinerary[] = [];
+  const positioningPrior = loadFleetPriors(reader).mainline;
 
   const hoursMemo = new Map<string, number | null>();
   const withDuration = (leg: ItineraryLeg): ItineraryLeg => {
@@ -1524,8 +1894,8 @@ export function planItinerary(
     const partials = candidates.map((c) =>
       build(
         c.direction === "in"
-          ? [makePositioningLeg(`${orig}-${c.hub}`), c.starlinkLeg]
-          : [c.starlinkLeg, makePositioningLeg(`${c.hub}-${dest}`)],
+          ? [makePositioningLeg(`${orig}-${c.hub}`, positioningPrior), c.starlinkLeg]
+          : [c.starlinkLeg, makePositioningLeg(`${c.hub}-${dest}`, positioningPrior)],
         "partial"
       )
     );
@@ -1719,7 +2089,19 @@ if (import.meta.main) {
   const dbArg = args.find((a) => a.startsWith("--db="));
   const dbPath = dbArg ? dbArg.split("=")[1] : "./plane-data.sqlite";
 
-  if (args.includes("--backtest")) {
+  const windowsArg = args.find((a) => a.startsWith("--windows="));
+  if (args.includes("--backtest") && windowsArg) {
+    const cutoffs = windowsArg
+      .split("=")[1]
+      .split(",")
+      .map((d) => Math.floor(Date.parse(`${d.trim()}T00:00:00Z`) / 1000));
+    if (cutoffs.some((c) => !Number.isFinite(c))) {
+      console.error("--windows takes comma-separated YYYY-MM-DD cutoffs");
+      process.exit(2);
+    }
+    const daysArg = args.find((a) => a.startsWith("--test-days="));
+    backtestWindows(dbPath, cutoffs, daysArg ? Number.parseInt(daysArg.split("=")[1], 10) : 7);
+  } else if (args.includes("--backtest")) {
     const hoursArg = args.find((a) => a.startsWith("--holdout="));
     const hours = hoursArg ? Number.parseInt(hoursArg.split("=")[1], 10) : 48;
     backtest(dbPath, hours);
@@ -1750,6 +2132,9 @@ if (import.meta.main) {
   } else {
     console.log("Usage:");
     console.log("  --backtest [--holdout=48] [--db=path]   Evaluate model accuracy");
+    console.log(
+      "  --backtest --windows=2026-08-15,2026-08-22 [--test-days=7] [--db=path]  Rolling-origin, log vs ADS-B arms"
+    );
     console.log("  --cv [--db=path]                        Cross-validate across 24-168h holdouts");
     console.log("  --predict=UA4680 [--db=path]            Predict one flight");
     console.log("  --sweep [--db=path]                     Hyperparameter search (priorStrength)");
