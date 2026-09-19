@@ -298,6 +298,11 @@ export const COUNTERS = {
   WATCH_FEED_FETCH: "watch.feed_fetch",
   // Watch row rendered on a check-flight result — tags: airline, surface (check_flight)
   WATCH_CTA_SHOWN: "watch.cta_shown",
+
+  // /fleet/{slug} aircraft-type page request — tags: airline, family (normalizeAircraftType),
+  //   outcome (ok|redirect|not_found), verdict (all|all_checked|most|some|verifying|installing|none|
+  //   official_none|unknown|n/a), indexable (true|false)
+  AIRCRAFT_PAGE_VIEW: "aircraft_page.view",
 } as const;
 
 /**

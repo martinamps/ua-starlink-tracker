@@ -93,7 +93,7 @@ the route table is the thing to watch:
 | Source | Count |
 |---|---|
 | Exact entries in `routes` | 33 |
-| Prefix families in `prefixRoutes` | 6 (4 of which reuse an exact entry's tag) |
+| Prefix families in `prefixRoutes` | 7 (5 of which reuse an exact entry's tag) |
 | `unmatched` | 1 |
 | **Distinct `route` tag values** | **36** |
 
