@@ -45,10 +45,11 @@ const AIRCRAFT_FAMILIES: ReadonlyArray<[RegExp, string]> = [
   [/A350/i, "A350"],
   [/A380/i, "A380"],
   // Distinct from the E175: Air France's E190s are mid-install while its
-  // E170s have no WiFi at all.
-  [/E-?170|ERJ.?170|EMB.?170|Embraer\s*170|^E70\b/i, "E170"],
+  // E170s have no WiFi at all. "ERJ 170-200" is the E175's type-certificate
+  // name, so a 170 followed by -200 is an E175.
+  [/(?:E-?|ERJ.?|EMB.?|Embraer\s*)170(?![-\s]?200)|^E70\b/i, "E170"],
   [/E-?190|ERJ.?190|EMB.?190|Embraer\s*190|^E90\b/i, "E190"],
-  [/E-?175|ERJ.?175|EMB.?175|Embraer\s*175|^E75[A-Z]?\b/i, "E175"],
+  [/E-?175|ERJ.?175|EMB.?175|Embraer\s*175|(?:ERJ|EMB|E)[-\s]?170[-\s]?200|^E75[A-Z]?\b/i, "E175"],
   [/ERJ.?145/i, "ERJ-145"],
   [/CRJ.?2/i, "CRJ-200"],
   [/CRJ.?550/i, "CRJ-550"],

@@ -67,12 +67,30 @@ function classifyUpdateError(err: unknown): string {
   return "unknown";
 }
 
+type TailUpdateOutcome = "updated" | "empty" | "error";
+
+/** How one poll moves the updater-wide breaker. An empty answer for a fleet
+ * fallback tail (unequipped, maybe parked or in heavy check) is not a vendor
+ * failure; counting it let five idle-tier empties stall every ★ refresh. */
+export function breakerEffect(
+  outcome: TailUpdateOutcome,
+  fallbackTier: boolean
+): "reset" | "count" | "none" {
+  if (outcome === "updated") return "reset";
+  if (outcome === "empty" && fallbackTier) return "none";
+  return "count";
+}
+
 async function updateFlightsForTailNumber(api: FlightAPI, tailNumber: string): Promise<boolean> {
+  return (await pollTailFlights(api, tailNumber)) === "updated";
+}
+
+async function pollTailFlights(api: FlightAPI, tailNumber: string): Promise<TailUpdateOutcome> {
   return withSpan(
     "flight_updater.update_tail",
     async (span) => {
       span.setTag("tail_number", tailNumber);
-      let success = false;
+      let outcome: TailUpdateOutcome = "error";
       const db = initializeDatabase();
 
       try {
@@ -94,12 +112,13 @@ async function updateFlightsForTailNumber(api: FlightAPI, tailNumber: string): P
             `No upcoming flights found for ${tailNumber}; preserving cache and engaging backoff`
           );
           updateLastFlightCheck(db, tailNumber, false);
+          outcome = "empty";
         } else {
           debug(`Found ${flights.length} upcoming flights for ${tailNumber}`);
           updateFlights(db, tailNumber, flights);
           updateLastFlightCheck(db, tailNumber, true);
           debug(`Successfully updated ${flights.length} upcoming flights for ${tailNumber}`);
-          success = true;
+          outcome = "updated";
         }
       } catch (err) {
         error(`Failed to update flights for ${tailNumber}`, err);
@@ -115,7 +134,7 @@ async function updateFlightsForTailNumber(api: FlightAPI, tailNumber: string): P
         db.close();
       }
 
-      return success;
+      return outcome;
     },
     { tail_number: tailNumber }
   );
@@ -379,11 +398,15 @@ export function startFlightUpdater(): JobHandle | undefined {
 
           // alaska-json airlines need upcoming_flights for verification but their unknowns
           // aren't in starlink_planes — pick one when the primary queue is empty.
+          let tier: "starlink" | "fleet" | "community" = "starlink";
           if (!tailToUpdate) {
             const recent = recentlyAttemptedFleetTails();
-            tailToUpdate =
-              getNextFleetTailNeedingFlights(db, recent) ??
-              getNextCommunityFleetTailNeedingFlights(db, recent);
+            tailToUpdate = getNextFleetTailNeedingFlights(db, recent);
+            tier = "fleet";
+            if (!tailToUpdate) {
+              tailToUpdate = getNextCommunityFleetTailNeedingFlights(db, recent);
+              tier = "community";
+            }
             if (tailToUpdate) markFleetTailAttempted(tailToUpdate);
           }
 
@@ -395,9 +418,9 @@ export function startFlightUpdater(): JobHandle | undefined {
           }
 
           span.setTag("tail_number", tailToUpdate);
+          span.setTag("queue.tier", tier);
 
-          // Update this plane
-          const success = await updateFlightsForTailNumber(api, tailToUpdate);
+          const outcome = await pollTailFlights(api, tailToUpdate);
 
           // Abandoned (stuck-escaped) runs settling late must not feed the
           // breaker/counters the successor reads — stacked orphans settling in
@@ -407,10 +430,13 @@ export function startFlightUpdater(): JobHandle | undefined {
             return;
           }
 
-          if (success) {
+          const effect = breakerEffect(outcome, tier !== "starlink");
+          if (effect === "reset") {
             consecutiveApiFailures = 0;
             totalUpdates++;
             span.setTag("result", "success");
+          } else if (effect === "none") {
+            span.setTag("result", "empty");
           } else {
             consecutiveApiFailures++;
             totalErrors++;

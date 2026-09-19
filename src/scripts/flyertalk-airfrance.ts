@@ -33,7 +33,8 @@ import { type FlyertalkFetcher, applyFlyertalkTails, fetchFlyertalk } from "./fl
 
 const AF = AIRLINES.AF;
 const THREAD_ID = 2213677;
-const THREAD_URL = `https://www.flyertalk.com/forum/air-france-frequence-plus/${THREAD_ID}-complete-guide-air-france-fleet.html`;
+// The canonical URL: FlyerTalk 301s the /air-france-flying-blue/ alias here.
+const THREAD_URL = AF.communitySource?.url as string;
 const GID = "flyertalk_af" as const;
 const HOP_OPERATOR = "Air France HOP";
 

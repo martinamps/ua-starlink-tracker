@@ -148,7 +148,7 @@ import { error as logError } from "../utils/logger";
 import { getNotFoundHtml } from "../utils/not-found";
 import { denominatorIsPublishable, shareCardFile, shareCardPath } from "../utils/share-cards";
 import { getSpreadsheetCacheInfo, getSpreadsheetCacheTails } from "../utils/utils";
-import { aircraftTypeParam, communityWireFields } from "./community-wire";
+import { aircraftTypeParam, communityWireFields, noModelConfidence } from "./community-wire";
 import {
   type Database,
   type RequestContext,
@@ -921,7 +921,7 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant, si
         JSON.stringify({
           hasStarlink: null,
           ...hubAirline,
-          confidence: "type",
+          confidence: noModelConfidence(verdict.answer),
           ...(verdict.answer.kind === "penetration"
             ? { prediction: { probability: verdict.answer.pen.pct } }
             : {}),
@@ -1069,7 +1069,7 @@ const apiCheckAnyFlight: Handler = async ({ req, url, reader, getReader, tenant 
         JSON.stringify({
           hasStarlink: null,
           airline: cfg.name,
-          confidence: "type",
+          confidence: noModelConfidence(verdict.answer),
           // Additive top-level `probability` for the extension claim ladder.
           ...(verdict.answer.kind === "penetration" ? { probability: verdict.answer.pen.pct } : {}),
           ...communityWireFields(verdict.answer),

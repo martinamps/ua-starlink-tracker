@@ -337,8 +337,8 @@ export const COUNTERS = {
   // prefix (normalizeCarrierPrefix), route (check_flight|check_any_flight|
   // predict_flight|mcp)
   FLIGHT_LOOKUP_UNTRACKED: "flight_lookup.untracked",
-  // A request-path live FR24 assignment lookup that claimed a token from the
-  // shared bucket — each airline's share of it. tags: airline
+  // A request-path live FR24 assignment lookup that reached FR24 (queue sheds
+  // are refunded and not counted) — each airline's share. tags: airline
   FR24_LOOKUP: "flight_verdict.fr24_lookup",
 
   // Starlink Watch calendar-feed fetch (calendar apps re-poll ~hourly, so this

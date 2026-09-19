@@ -44,6 +44,13 @@ const GUIDE_STATUS = {
   none: "no_wifi_listed",
 } as const;
 
+/** A named tail is a tail-level answer, not a per-type one. */
+export function noModelConfidence(answer: CarrierPrediction): "tail" | "type" {
+  return answer.kind === "assigned_unconfirmed" || answer.kind === "partner_operated"
+    ? "tail"
+    : "type";
+}
+
 export function communityWireFields(answer: CarrierPrediction): Record<string, unknown> {
   switch (answer.kind) {
     case "type_progress":

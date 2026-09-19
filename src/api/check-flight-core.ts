@@ -24,7 +24,11 @@ import {
   programTypeOf,
   publicAirlines,
 } from "../airlines/registry";
-import type { FlightAssignmentRow, QatarScheduleRow } from "../database/database";
+import type {
+  FlightAssignmentRow,
+  QatarScheduleRow,
+  UnequippedAssignment,
+} from "../database/database";
 import type { Scope, ScopedReader } from "../database/reader";
 import { COUNTERS, metrics, normalizeCarrierPrefix } from "../observability";
 import {
@@ -308,6 +312,20 @@ export async function resolveFlightVerdict(
   // most-recent row after an aircraft swap; then keep only rows whose
   // departure-airport local date matches the queried date.
   const seen = new Set<number>();
+  const onDate = (r: { departure_airport: string; departure_time: number }) =>
+    matchesLocalDate(date, r.departure_airport, r.departure_time, window.start, window.end);
+  const unequipped = cfg.communitySource
+    ? reader.getUnequippedAssignments(variants, window.queryStart, window.queryEnd).filter(onDate)
+    : [];
+  // Only community carriers poll non-★ tails, so only they can hold a newer
+  // non-★ row that supersedes a ★ row for the same departure (a swap).
+  const supersededAt = new Map<number, number>();
+  for (const u of unequipped) {
+    supersededAt.set(
+      u.departure_time,
+      Math.max(u.last_updated, supersededAt.get(u.departure_time) ?? 0)
+    );
+  }
   const rows = reader
     .getFlightAssignments(variants, window.queryStart, window.queryEnd)
     .filter((r) => {
@@ -315,9 +333,8 @@ export async function resolveFlightVerdict(
       seen.add(r.departure_time);
       return true;
     })
-    .filter((r) =>
-      matchesLocalDate(date, r.departure_airport, r.departure_time, window.start, window.end)
-    );
+    .filter(onDate)
+    .filter((r) => r.last_updated >= (supersededAt.get(r.departure_time) ?? 0));
 
   // settled_negative (united_fleet 'negative') outranks the spreadsheet row,
   // whatever verified_wifi says — same rule as database.ts equippedFilter.
@@ -344,7 +361,7 @@ export async function resolveFlightVerdict(
   // it with its guide status, and skip the live lookup that would only find
   // the same tail.
   if (cfg.communitySource) {
-    const assigned = assignedFromDb(cfg, reader, variants, date, window);
+    const assigned = assignedFromDb(cfg, reader, unequipped);
     if (assigned)
       return { kind: "no_model", window, normalized, answer: assigned, fr24Error: false };
   }
@@ -375,14 +392,12 @@ export async function resolveFlightVerdict(
       if (starlink.length > 0) {
         return { kind: "fr24", window, normalized, starlink };
       }
-      if (cfg.communitySource && segments.length > 0) {
-        return {
-          kind: "no_model",
-          window,
-          normalized,
-          answer: assignedFromSegments(cfg, reader, segments),
-          fr24Error: false,
-        };
+      const assigned =
+        cfg.communitySource && segments.length > 0
+          ? assignedFromSegments(cfg, reader, segments)
+          : null;
+      if (assigned) {
+        return { kind: "no_model", window, normalized, answer: assigned, fr24Error: false };
       }
       // Segments whose tail we know nothing about are not a "no" — only a
       // verified non-Starlink tail is. With our own firm-no rows in hand,
@@ -421,23 +436,19 @@ type AssignedAnswer = Extract<
 function assignedFromDb(
   cfg: AirlineConfig,
   reader: ScopedReader,
-  variants: string[],
-  date: string,
-  window: FlightDateWindow
+  unequipped: readonly UnequippedAssignment[]
 ): AssignedAnswer | null {
-  const row = reader
-    .getUnequippedAssignments(variants, window.queryStart, window.queryEnd)
-    .find((r) =>
-      matchesLocalDate(date, r.departure_airport, r.departure_time, window.start, window.end)
-    );
-  if (!row) return null;
+  // Before the first guide sync every tail would read "not yet listed".
+  const guideUpdated = reader.getMeta(COMMUNITY_SOURCE_UPDATED_META);
+  const row = unequipped[0];
+  if (!guideUpdated || !row) return null;
   return {
     kind: "assigned_unconfirmed",
     tail: row.tail_number,
     aircraftType: row.aircraft_type,
     programLabel: programTypeOf(cfg, row.aircraft_type).label,
     mark: row.mark,
-    guideUpdated: reader.getMeta(COMMUNITY_SOURCE_UPDATED_META),
+    guideUpdated,
   };
 }
 
@@ -447,9 +458,11 @@ function assignedFromSegments(
   cfg: AirlineConfig,
   reader: ScopedReader,
   segments: readonly FallbackSegment[]
-): AssignedAnswer {
+): AssignedAnswer | null {
   const own = segments.find((s) => cfg.tailPattern.test(s.tail_number));
   if (!own) return { kind: "partner_operated", tail: segments[0].tail_number };
+  const guideUpdated = reader.getMeta(COMMUNITY_SOURCE_UPDATED_META);
+  if (!guideUpdated) return null;
   const guide = reader.getFleetGuideTails().find((t) => t.tail === own.tail_number);
   const aircraftType = guide?.aircraftType ?? own.aircraft_model;
   return {
@@ -458,7 +471,7 @@ function assignedFromSegments(
     aircraftType,
     programLabel: programTypeOf(cfg, aircraftType).label,
     mark: guide?.mark ?? null,
-    guideUpdated: reader.getMeta(COMMUNITY_SOURCE_UPDATED_META),
+    guideUpdated,
   };
 }
 

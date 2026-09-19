@@ -8,8 +8,10 @@
 import type { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { AIRLINES, SITES, programTypeOf } from "../src/airlines/registry";
+import { normalizeAircraftType } from "../src/airlines/aircraft-families";
+import { AIRLINES, SITES, isOutsideProgramme, programTypeOf } from "../src/airlines/registry";
 import { resolveFlightVerdict, verdictConfidence } from "../src/api/check-flight-core";
+import { breakerEffect } from "../src/api/flight-updater";
 import { CommunityAirlinePage, TypeShareTable } from "../src/components/community-airline-page";
 import {
   getFleetDiscoveryStats,
@@ -35,7 +37,9 @@ import {
   compareRouteForAirline,
   describeCarrierPrediction,
 } from "../src/scripts/starlink-predictor";
-import { communityWireFields } from "../src/server/community-wire";
+import { communityWireFields, noModelConfidence } from "../src/server/community-wire";
+import { airportCountry, airportDistanceMiles } from "../src/utils/airport-geo";
+import { airportTimezone } from "../src/utils/airport-tz";
 import { addFleet, addFlight, makeSyntheticDb } from "./helpers";
 
 const AF = AIRLINES.AF;
@@ -427,6 +431,84 @@ describe("AF answers", () => {
     db.close();
   });
 
+  test("before the first guide sync an assigned tail is never called unlisted", async () => {
+    const db = makeSyntheticDb();
+    seedRoster(db);
+    const star = STARS.find((t) => t.header === "A350-941 (Cabin G)")?.tail as string;
+    addFlight(db, star, "AF100", "XXA", NOON, { airline: "AF" });
+    const fromDb = await verdictOn(db, "AF100");
+    const fromFr24 = await verdictOn(db, "AF400", { lookupTail: async () => [seg(star)] });
+    for (const v of [fromDb, fromFr24]) {
+      if (v.kind !== "no_model") throw new Error(v.kind);
+      expect(v.answer.kind).toBe("no_model");
+      expect("assignment" in communityWireFields(v.answer)).toBe(false);
+    }
+    db.close();
+  });
+
+  test.each([
+    ["rejected by the type gate (DB row)", "db"],
+    ["absent from the roster (FR24)", "fr24"],
+  ])("a guide-★ tail %s reads as listed, never as no WiFi", async (_label, path) => {
+    const db = appliedDb();
+    const tail = path === "db" ? MISMATCHED : GUIDE_ONLY;
+    if (path === "db") addFlight(db, tail, "AF500", "XXA", NOON, { airline: "AF" });
+    const v =
+      path === "db"
+        ? await verdictOn(db, "AF500")
+        : await verdictOn(db, "AF500", { lookupTail: async () => [seg(tail)] });
+    if (v.kind !== "no_model" || v.answer.kind !== "assigned_unconfirmed") throw new Error(v.kind);
+    expect(v.answer.mark).toBe("starlink");
+    const text = describeCarrierPrediction(AF, v.answer);
+    expect(text).toMatch(/listed with Starlink/);
+    expect(text).not.toMatch(/no WiFi|not on the Starlink list/);
+    expect(
+      (communityWireFields(v.answer).assignment as { guide_status: string }).guide_status
+    ).toBe("starlink_listed");
+    db.close();
+  });
+
+  test("a newer non-★ row for the same departure supersedes an older ★ row", async () => {
+    const star = STARS.find((t) => t.header === "A350-941 (Cabin G)")?.tail as string;
+    const other = GUIDE.tails.find((t) => t.mark === "legacy" && t.programType === "B787")
+      ?.tail as string;
+    for (const [starAge, expected] of [
+      [-600, "no_model"],
+      [600, "scheduled"],
+    ] as const) {
+      const db = appliedDb();
+      addFlight(db, star, "AF700", "XXA", NOON, { airline: "AF" });
+      addFlight(db, other, "AF700", "XXA", NOON, { airline: "AF" });
+      db.query("UPDATE upcoming_flights SET last_updated = ? WHERE tail_number = ?").run(
+        NOON + starAge,
+        star
+      );
+      const v = await verdictOn(db, "AF700");
+      expect(v.kind).toBe(expected);
+      if (v.kind === "no_model" && v.answer.kind === "assigned_unconfirmed") {
+        expect(v.answer.tail).toBe(other);
+      }
+      db.close();
+    }
+  });
+
+  test("an evening departure west of UTC matches its local date, not the UTC one", async () => {
+    const db = appliedDb();
+    const star = STARS.find((t) => t.header === "A350-941 (Cabin G)")?.tail as string;
+    const nextDay = new Date(Date.parse(`${DATE}T00:00:00Z`) + 86400_000)
+      .toISOString()
+      .slice(0, 10);
+    // 21:50 in Martinique (UTC-4) is 01:50Z the next day.
+    const dep = Math.floor(Date.parse(`${nextDay}T01:50:00Z`) / 1000);
+    addFlight(db, star, "AF607", "FDF", dep, { airline: "AF" });
+    const reader = createReaderFactory(db)("AF");
+    const onLocal = await resolveFlightVerdict(AF, reader, "AF607", DATE, { lookupTail: null });
+    const onUtc = await resolveFlightVerdict(AF, reader, "AF607", nextDay, { lookupTail: null });
+    expect(onLocal.kind).toBe("scheduled");
+    expect(onUtc.kind).not.toBe("scheduled");
+    db.close();
+  });
+
   test("unassigned: per-type progress, cited, no blended number", async () => {
     const db = appliedDb();
     const v = await verdictOn(db, "AF200");
@@ -519,6 +601,7 @@ describe("AF answers", () => {
     for (const v of answers) {
       if (v.kind !== "no_model") throw new Error(v.kind);
       const f = communityWireFields(v.answer);
+      expect(noModelConfidence(v.answer)).toBe("assignment" in f ? "tail" : "type");
       expect("probability" in f).toBe(false);
       expect("prediction" in f).toBe(false);
       if (v.answer.kind === "type_progress") expect(Array.isArray(f.by_type)).toBe(true);
@@ -568,6 +651,53 @@ describe("community fleet fallback tier", () => {
     expect(next).not.toBe("F-GUOB");
     expect(getNextCommunityFleetTailNeedingFlights(db, [next as string])).not.toBe(next);
     db.close();
+  });
+
+  test("never polls a family outside the programme", () => {
+    const db = appliedDb();
+    const seen: string[] = [];
+    for (let t = getNextCommunityFleetTailNeedingFlights(db); t; ) {
+      seen.push(t);
+      t = getNextCommunityFleetTailNeedingFlights(db, seen);
+    }
+    expect(seen.length).toBeGreaterThan(0);
+    const types = new Map(
+      (
+        db.query("SELECT tail_number, aircraft_type FROM united_fleet").all() as {
+          tail_number: string;
+          aircraft_type: string;
+        }[]
+      ).map((r) => [r.tail_number, r.aircraft_type])
+    );
+    for (const tail of seen) {
+      expect(isOutsideProgramme("AF", normalizeAircraftType(types.get(tail)))).toBe(false);
+    }
+    db.close();
+  });
+
+  test.each([
+    ["updated", false, "reset"],
+    ["updated", true, "reset"],
+    ["error", false, "count"],
+    ["error", true, "count"],
+    ["empty", false, "count"],
+    ["empty", true, "none"],
+  ] as const)("breaker: %s on fallback=%p → %s", (outcome, fallback, effect) => {
+    expect(breakerEffect(outcome, fallback)).toBe(effect);
+  });
+});
+
+// Departure airports seen in real FR24 AF/HOP schedules (Sept 2026).
+const AF_FR24_DEPARTURES =
+  `AMS ATH ATL BCN BEL BER BES BIQ BLR BOD BOM CAI CAY CDG CFR CKY DEL DLA DUB
+DUS EZE FCO FDF FRA GRU HKG HND ICN JNB LIS LJU LYS MAD MAN MIA MPL MRS NBJ NCE NKC NSI NTE ORY PEK
+PRG PTP RAK RBA RUN SSG TLS TRN VCE WAW YOW ZAG`.split(/\s+/);
+
+describe("AF network airports", () => {
+  test.each(AF_FR24_DEPARTURES)("%s has a zone, coordinates and a non-US country", (iata) => {
+    expect(airportTimezone(iata)).toBeTruthy();
+    expect(airportDistanceMiles(iata, "CDG")).not.toBeNull();
+    if (!["ATL", "MIA"].includes(iata)) expect(airportCountry(iata)).not.toBe("US");
   });
 });
 

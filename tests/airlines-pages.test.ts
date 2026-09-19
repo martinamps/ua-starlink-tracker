@@ -148,6 +148,17 @@ describe("hub /airlines/{slug} detail pages (tracked airlines)", () => {
     }
   });
 
+  // Publishing an airline whose facts entry lacks trackedCode would list its
+  // slug twice (tracked + content-only) and drop its facts from the page.
+  test("a hub-content airline's facts entry is tracked, never content-only", () => {
+    for (const cfg of trackedRoster()) {
+      const dup = contentOnlyFacts().find(
+        (e) => e.slug === airlineSlug(cfg) || e.iata === cfg.iata
+      );
+      expect(dup?.slug, `${cfg.code}: set trackedCode on its rollout-facts entry`).toBeUndefined();
+    }
+  });
+
   test("IATA and case variants 301 to the canonical slug", async () => {
     for (const cfg of trackedRoster()) {
       for (const variant of [cfg.iata.toLowerCase(), airlineSlug(cfg).toUpperCase()]) {

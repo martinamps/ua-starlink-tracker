@@ -3099,7 +3099,7 @@ export function getNextCommunityFleetTailNeedingFlights(
   const skip = new Set(exclude);
   const rows = db
     .query(`
-      SELECT uf.tail_number, uf.aircraft_type
+      SELECT uf.tail_number, uf.aircraft_type, uf.airline
       FROM united_fleet uf
       WHERE uf.airline IN (${codes.map(() => "?").join(",")})
         AND NOT EXISTS (
@@ -3113,10 +3113,12 @@ export function getNextCommunityFleetTailNeedingFlights(
       ORDER BY (SELECT MAX(f.last_updated) FROM upcoming_flights f
                 WHERE f.tail_number = uf.tail_number) ASC, uf.tail_number
     `)
-    .all(...codes, now) as { tail_number: string; aircraft_type: string | null }[];
-  const next = rows.find(
-    (r) => !skip.has(r.tail_number) && !isFreighterFamily(normalizeAircraftType(r.aircraft_type))
-  );
+    .all(...codes, now) as { tail_number: string; aircraft_type: string | null; airline: string }[];
+  const next = rows.find((r) => {
+    if (skip.has(r.tail_number)) return false;
+    const family = normalizeAircraftType(r.aircraft_type);
+    return !isFreighterFamily(family) && !isOutsideProgramme(r.airline, family);
+  });
   return next?.tail_number ?? null;
 }
 
@@ -3273,6 +3275,7 @@ export interface UnequippedAssignment {
   departure_airport: string;
   arrival_airport: string;
   departure_time: number;
+  last_updated: number;
   aircraft_type: string | null;
   mark: GuideMark | null;
   guide_updated: string | null;
@@ -3290,24 +3293,24 @@ export function getUnequippedAssignments(
 ): UnequippedAssignment[] {
   if (flightNumberVariants.length === 0) return [];
   const q = withAirline(
-    `SELECT uf.tail_number, uf.flight_number, uf.departure_airport, uf.arrival_airport,
-            uf.departure_time, f.aircraft_type, g.mark, g.guide_updated
-     FROM upcoming_flights uf
-     INNER JOIN united_fleet f ON f.tail_number = uf.tail_number
+    `SELECT u.tail_number, u.flight_number, u.departure_airport, u.arrival_airport,
+            u.departure_time, u.last_updated, f.aircraft_type, g.mark, g.guide_updated
+     FROM upcoming_flights u
+     INNER JOIN united_fleet f ON f.tail_number = u.tail_number
      LEFT JOIN fleet_guide_tails g
             ON g.airline = f.airline AND g.tail_number = f.tail_number
-     WHERE uf.flight_number IN (${flightNumberVariants.map(() => "?").join(", ")})
-       AND uf.departure_time >= ? AND uf.departure_time < ?
+     WHERE u.flight_number IN (${flightNumberVariants.map(() => "?").join(", ")})
+       AND u.departure_time >= ? AND u.departure_time < ?
        AND NOT EXISTS (
          SELECT 1 FROM starlink_planes sp
-         WHERE sp.TailNumber = uf.tail_number AND ${equippedFilter("sp")}
+         WHERE sp.TailNumber = u.tail_number AND ${equippedFilter("sp")}
        )`,
     airline,
-    "uf",
+    "u",
     [...flightNumberVariants, startOfDay, endOfDay]
   );
   return db
-    .query(`${q.sql} ORDER BY uf.last_updated DESC`)
+    .query(`${q.sql} ORDER BY u.last_updated DESC`)
     .all(...q.params) as UnequippedAssignment[];
 }
 

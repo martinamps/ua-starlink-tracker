@@ -587,7 +587,7 @@ const AIRLINE_DEFS = {
     flightNumberSource: "marketing",
     communitySource: {
       label: "FlyerTalk Air France fleet guide",
-      url: "https://www.flyertalk.com/forum/air-france-flying-blue/2213677-complete-guide-air-france-fleet.html",
+      url: "https://www.flyertalk.com/forum/air-france-frequence-plus/2213677-complete-guide-air-france-fleet.html",
       author: "hellolaurent",
     },
     programExclusions: {

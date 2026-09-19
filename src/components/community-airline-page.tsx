@@ -155,7 +155,7 @@ function TailLookup({ cfg, tails }: { cfg: AirlineConfig; tails: readonly FleetG
 
 // Same endpoint and rendering rules as the hub homepage check: a firm yes
 // only on hasStarlink true; everything else is the server's own sentence.
-const CHECK_SCRIPT = `document.addEventListener('DOMContentLoaded',function(){var f=document.getElementById('community-check');var out=document.getElementById('community-check-result');if(!f||!out)return;function esc(s){var d=document.createElement('div');d.textContent=String(s==null?'':s);return d.innerHTML;}f.addEventListener('submit',function(e){e.preventDefault();var fd=new FormData(f);var q='flight_number='+encodeURIComponent(fd.get('flight_number'))+'&date='+encodeURIComponent(fd.get('date'));var t=fd.get('aircraft_type');if(t)q+='&aircraft_type='+encodeURIComponent(t);out.classList.remove('hidden');out.textContent='Checking…';fetch('/api/check-any-flight?'+q).then(function(r){return r.json()}).then(function(d){if(d.error){out.innerHTML='<span class="text-amber-400">'+esc(d.error)+'</span>';return;}var lead=d.hasStarlink===true?'<span class="text-green-400">Starlink (likely)</span> · ':'';out.innerHTML=lead+esc(d.reason||d.message||'');}).catch(function(){out.textContent='Lookup failed.';});});});`;
+const CHECK_SCRIPT = `document.addEventListener('DOMContentLoaded',function(){var f=document.getElementById('community-check');var out=document.getElementById('community-check-result');if(!f||!out)return;var di=f.elements.namedItem('date');if(di&&!di.value)di.value=new Date().toLocaleDateString('en-CA');function esc(s){var d=document.createElement('div');d.textContent=String(s==null?'':s);return d.innerHTML;}f.addEventListener('submit',function(e){e.preventDefault();var fd=new FormData(f);var q='flight_number='+encodeURIComponent(fd.get('flight_number'))+'&date='+encodeURIComponent(fd.get('date'));var t=fd.get('aircraft_type');if(t)q+='&aircraft_type='+encodeURIComponent(t);out.classList.remove('hidden');out.textContent='Checking…';fetch('/api/check-any-flight?'+q).then(function(r){return r.json()}).then(function(d){if(d.error){out.innerHTML='<span class="text-amber-400">'+esc(d.error)+'</span>';return;}var lead=d.hasStarlink===true?'<span class="text-green-400">Starlink (likely)</span> · ':'';out.innerHTML=lead+esc(d.reason||d.message||'');}).catch(function(){out.textContent='Lookup failed.';});});});`;
 
 function FlightCheck({ cfg, types }: { cfg: AirlineConfig; types: readonly TypeProgress[] }) {
   return (
@@ -174,6 +174,7 @@ function FlightCheck({ cfg, types }: { cfg: AirlineConfig; types: readonly TypeP
         <input
           name="date"
           type="date"
+          aria-label="Departure date"
           required
           className="bg-base border border-subtle rounded px-3 py-2 text-primary font-mono text-sm focus:outline-none focus:border-accent"
         />
@@ -200,6 +201,7 @@ function FlightCheck({ cfg, types }: { cfg: AirlineConfig; types: readonly TypeP
       </form>
       <div
         id="community-check-result"
+        aria-live="polite"
         className="hidden font-mono text-xs text-secondary leading-relaxed mt-3"
       />
       <script
@@ -357,7 +359,9 @@ export function communityPageDescription(
   const going = types.filter((t) => !t.excluded && t.equipped > 0).map((t) => t.label);
   const date = guideUpdated ? ` (${formatFactDate(guideUpdated.slice(0, 10))})` : "";
   const label = cfg.communitySource?.label ?? "community fleet guide";
+  // CTA first and the type list capped: snippets truncate near 155 chars.
+  const shown = going.length > 3 ? `${going.slice(0, 3).join(", ")} and more` : going.join(", ");
   return total > 0
-    ? `At least ${equipped} of ${total} ${cfg.name} jets have Starlink per the ${label}${date}; by type: ${going.join(", ")}. Look up your aircraft type or tail number.`
+    ? `Check your ${cfg.name} flight, aircraft type or tail. At least ${equipped} of ${total} jets have Starlink per the ${label}${date}${shown ? `, incl. ${shown}` : ""}.`
     : cfg.brand.description;
 }

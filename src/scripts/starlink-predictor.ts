@@ -1412,6 +1412,9 @@ function describeAssigned(
   const g = guideRef(cfg, answer.guideUpdated);
   const guide = `the ${g.label}${g.date ? ` updated ${g.date}` : ""}`;
   if (answer.mark === null) return joinSentences(`${on}; not yet listed in ${guide}`);
+  if (answer.mark === "starlink") {
+    return joinSentences(`${on}; listed with Starlink in ${guide}, not yet confirmed here`);
+  }
   const has = answer.mark === "legacy" ? "it has legacy WiFi" : "no WiFi listed";
   return joinSentences(`${on}; not on the Starlink list in ${guide} — ${has}`);
 }
@@ -1422,9 +1425,8 @@ export function describeCarrierPrediction(cfg: AirlineConfig, answer: CarrierPre
   if (answer.kind === "type_progress") {
     const g = guideRef(cfg, answer.guideUpdated);
     return joinSentences(
-      `Starlink on ${cfg.name} depends on the aircraft type. ${typeProgressSummary(answer.types)}`,
-      `Per-aircraft status from the ${g.label}${g.date ? ` (updated ${g.date})` : ""}`,
-      `If operated by ${cfg.name}`
+      `On ${cfg.name}-operated flights, Starlink depends on the aircraft type. ${typeProgressSummary(answer.types)}`,
+      `Per-aircraft status from the ${g.label}${g.date ? ` (updated ${g.date})` : ""}`
     );
   }
   if (answer.kind === "type_rate") return describeTypeRate(cfg, answer);
