@@ -108,6 +108,33 @@ describe("request-path throttle breaker", () => {
     expect(spy.calls).toBe(2);
   });
 
+  test("a burst of in-flight throttles opens the breaker once, at the base window", async () => {
+    const rejectors: Array<() => void> = [];
+    let holding = true;
+    const spy = countingFetcher(() =>
+      holding
+        ? new Promise<never[]>((_, reject) => {
+            rejectors.push(() => reject(new Fr24UnavailableError("FR24 assignments error: 429")));
+          })
+        : throttled()
+    );
+    const inFlight = [1, 2, 3, 4].map((i) =>
+      cachedFlightAssignments(`UA${i}`, TARGET, T0).catch((e) => e)
+    );
+    holding = false;
+    for (const reject of rejectors) reject();
+    await Promise.all(inFlight);
+    expect(spy.calls).toBe(4);
+
+    await expect(
+      cachedFlightAssignments("UA5", TARGET, T0 + FR24_BREAKER_BASE_SEC - 1)
+    ).rejects.toThrow("shed");
+    await expect(
+      cachedFlightAssignments("UA6", TARGET, T0 + FR24_BREAKER_BASE_SEC)
+    ).rejects.toThrow("429");
+    expect(spy.calls).toBe(5);
+  });
+
   test("a non-throttle failure does not open the breaker", async () => {
     const spy = countingFetcher(() => Promise.reject(new Fr24UnavailableError("timeout")));
     await expect(cachedFlightAssignments("UA1", TARGET, T0)).rejects.toThrow("timeout");
@@ -194,6 +221,7 @@ describe("request-path FR24 queue and retry caps", () => {
       return status429;
     });
     reserveFr24Slot();
+    reserveFr24Slot();
     const started = performance.now();
     const err = await api
       .getFlightAssignments("UA1", nowSec(), {
@@ -209,6 +237,7 @@ describe("request-path FR24 queue and retry caps", () => {
 
   test("the default request-path fetcher is queue-capped", async () => {
     setAssignmentFetcher(null);
+    reserveFr24Slot();
     reserveFr24Slot();
     const now = nowSec();
     const started = performance.now();
@@ -233,6 +262,43 @@ describe("request-path FR24 queue and retry caps", () => {
     await cachedFlightAssignments("UA8", TARGET, T0);
     await cachedFlightAssignments("UA9", TARGET, T0);
     expect(spy.calls).toBe(3);
+  });
+
+  test("a queue shed refunds its bucket token", async () => {
+    const spy = countingFetcher(() =>
+      Promise.reject(new Fr24UnavailableError(FR24_QUEUE_SHED_MESSAGE))
+    );
+    for (let i = 0; i < FR24_REQUEST_BUCKET_PER_MIN * 2; i++) {
+      await expect(cachedFlightAssignments(`UA${200 + i}`, TARGET, T0)).rejects.toThrow(
+        FR24_QUEUE_SHED_MESSAGE
+      );
+    }
+    expect(spy.calls).toBe(FR24_REQUEST_BUCKET_PER_MIN * 2);
+  });
+
+  test("two concurrent request-path misses both reach FR24", async () => {
+    let calls = 0;
+    const api = new FlightRadar24API(async () => {
+      calls++;
+      return {
+        status: 200,
+        ok: true,
+        body: JSON.stringify({ result: { response: { data: [] } } }),
+      };
+    });
+    setAssignmentFetcher((flightNumber, targetDateUnix) =>
+      api.getFlightAssignments(flightNumber, targetDateUnix, {
+        maxRetries: 0,
+        maxWaitMs: FR24_REQUEST_MAX_QUEUE_MS,
+      })
+    );
+    const now = nowSec();
+    const results = await Promise.allSettled([
+      cachedFlightAssignments("UA1", now + 86400, now),
+      cachedFlightAssignments("UA2", now + 86400, now),
+    ]);
+    expect(results.map((r) => r.status)).toEqual(["fulfilled", "fulfilled"]);
+    expect(calls).toBe(2);
   });
 
   test("maxRetries 0 makes exactly one FR24 call on a 429 and fails without backoff", async () => {

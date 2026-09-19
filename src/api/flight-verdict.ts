@@ -16,6 +16,7 @@ import {
   FR24_QUEUE_SHED_MESSAGE,
   FlightRadar24API,
   Fr24UnavailableError,
+  MIN_REQUEST_INTERVAL,
 } from "./flightradar24-api";
 
 const fr24 = new FlightRadar24API();
@@ -26,8 +27,10 @@ type AssignmentFetcher = (flightNumber: string, targetDateUnix: number) => Promi
 // later, not after a 30s sleep the caller is stuck waiting on. Likewise no deep
 // queue: slots are 2s apart and the bucket admits a burst of 15, so uncapped the
 // last of a burst (plus any slots the background jobs hold) waits ~30s — past
-// the extension's 10s fetch timeout.
-export const FR24_REQUEST_MAX_QUEUE_MS = 1500;
+// the extension's 10s fetch timeout. One slot of wait is the floor, though:
+// below it any miss within 2s of another claim sheds, e.g. leg 2 of a connecting
+// itinerary the extension checks in parallel. 2s wait + 8s fetch fits in 10s.
+export const FR24_REQUEST_MAX_QUEUE_MS = MIN_REQUEST_INTERVAL;
 const defaultFetcher: AssignmentFetcher = (flightNumber, targetDateUnix) =>
   fr24.getFlightAssignments(flightNumber, targetDateUnix, {
     maxRetries: 0,
@@ -109,6 +112,7 @@ export function cachedFlightAssignments(
       // may find a free slot.
       if (err instanceof Error && err.message === FR24_QUEUE_SHED_MESSAGE) {
         if (assignmentCache.get(key) === entry) assignmentCache.delete(key);
+        refundFr24Token();
         countShed(flightNumber, "queue");
         return;
       }
@@ -171,6 +175,12 @@ function fr24RequestShedReason(nowSec: number): "breaker" | "bucket" | null {
   return null;
 }
 
+// A queue shed never reached FR24, so it must not drain the budget that
+// later misses need.
+function refundFr24Token(): void {
+  fr24Tokens = Math.min(FR24_REQUEST_BUCKET_PER_MIN, fr24Tokens + 1);
+}
+
 // FR24 throttles a busy session with bare 400s as well as 402/429.
 function isFr24Throttle(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);
@@ -178,6 +188,9 @@ function isFr24Throttle(err: unknown): boolean {
 }
 
 function openFr24Breaker(nowSec: number): void {
+  // Concurrent lookups already in flight when the first throttle lands are one
+  // throttle event, not N consecutive ones escalating the backoff.
+  if (nowSec < fr24ThrottledUntil) return;
   const backoff = Math.min(FR24_BREAKER_MAX_SEC, FR24_BREAKER_BASE_SEC * 2 ** fr24ThrottleStreak);
   fr24ThrottleStreak++;
   fr24ThrottledUntil = Math.max(fr24ThrottledUntil, nowSec + backoff);
