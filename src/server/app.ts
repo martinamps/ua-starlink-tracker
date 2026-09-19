@@ -105,9 +105,9 @@ import {
   COUNTERS,
   DISTRIBUTIONS,
   bucketDaysOut,
-  classifyUserAgent,
   metrics,
   normalizeAirlineTag,
+  requestClientTags,
   withSpan,
 } from "../observability";
 import {
@@ -3720,7 +3720,7 @@ export function createApp(db: Database): App {
           route: metricRoute(m),
           status_code: 429,
           tenant: tenantScope(tenant),
-          client_class: classifyUserAgent(req.headers.get("user-agent")),
+          ...requestClientTags(req, url),
         });
         return new Response(JSON.stringify({ error: "rate limit exceeded" }), {
           status: 429,
@@ -3740,7 +3740,7 @@ export function createApp(db: Database): App {
         route: metricRoute(m),
         status_code: response.status,
         tenant: tenantScope(tenant),
-        client_class: classifyUserAgent(req.headers.get("user-agent")),
+        ...requestClientTags(req, url),
       });
       return response;
     }
@@ -3749,7 +3749,7 @@ export function createApp(db: Database): App {
     if (onStarlinkIp) {
       metrics.increment(COUNTERS.PASSENGER_DETECT, {
         tenant: tenantScope(tenant),
-        client_class: classifyUserAgent(req.headers.get("user-agent")),
+        ...requestClientTags(req, url),
       });
     }
     const reader: ScopedReader = getReader(tenantScope(tenant));
@@ -3786,7 +3786,7 @@ export function createApp(db: Database): App {
           route: metricRoute(m),
           status_code: response.status,
           tenant: tenantScope(tenant),
-          client_class: classifyUserAgent(ua),
+          ...requestClientTags(req, url),
         });
         return response;
       },
