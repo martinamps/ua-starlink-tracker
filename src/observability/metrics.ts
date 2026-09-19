@@ -226,7 +226,10 @@ export const COUNTERS = {
   SCRAPER_SYNC: "scraper.sync", // tags: source, airline, status (success|partial|aborted|error|noop)
   PLANES_DISCOVERED: "planes.discovered", // tags: source, airline
 
-  // New Starlink installation detected on an aircraft
+  // Trusted positive Starlink verification. Fires on EVERY positive re-check,
+  // not only new installs (~50x the install count) — for installs use
+  // fleet.status_change{to:confirmed}. Kept as-is: a dashboard plots it
+  // against verification.check as a positive-check rate.
   // tags: fleet, aircraft_type, airline
   PLANES_STARLINK_DETECTED: "planes.starlink_detected",
 

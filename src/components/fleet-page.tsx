@@ -12,6 +12,7 @@ import type {
 } from "../types";
 import { AIRCRAFT_SPECS, type AircraftSpec } from "../utils/aircraft-specs";
 import { type PageLink, PageNavLinks, ShareCardLink } from "./atoms";
+import { type CiteStat, CiteThis } from "./cite-this";
 
 const PROVIDER_LABEL: Record<WifiProvider, string> = {
   starlink: "Starlink",
@@ -975,9 +976,10 @@ interface FleetPageProps {
   /** Pre-rendered share card path; null until the nightly batch produced one. */
   shareCard?: string | null;
   pageLinks?: PageLink[];
+  cite?: CiteStat | null;
 }
 
-export default function FleetPage({ data, site, shareCard, pageLinks }: FleetPageProps) {
+export default function FleetPage({ data, site, shareCard, pageLinks, cite }: FleetPageProps) {
   const pipeline: PipelineMap = new Map(data.progressTails.map((r) => [r.tail, r]));
   const scopeCode = site.scope !== "ALL" ? site.scope : null;
   const scopeLabel = scopeCode ? AIRLINES[scopeCode].name : "tracked";
@@ -1097,6 +1099,8 @@ export default function FleetPage({ data, site, shareCard, pageLinks }: FleetPag
       <TailMonument allTails={data.allTails} totalFleet={data.totalFleet} pipeline={pipeline} />
 
       <ShareCardLink path={shareCard} />
+
+      <CiteThis site={site} cite={cite} />
 
       <footer className="relative py-6 text-center border-t border-subtle text-muted text-sm">
         <a href="/" className="text-accent hover:underline font-display">

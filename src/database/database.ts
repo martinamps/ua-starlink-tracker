@@ -4427,11 +4427,12 @@ export function getShipToTailMap(db: Database): Map<string, string> {
   return new Map(rows.map((r) => [r.ship_number, r.tail_number]));
 }
 
-export function updateShipNumber(db: Database, tailNumber: string, shipNumber: string): void {
-  db.query("UPDATE united_fleet SET ship_number = ? WHERE tail_number = ?").run(
-    shipNumber,
-    tailNumber
-  );
+/** Rows whose ship number actually changed — 0 for an unknown tail or a
+ * re-sync of the same value, so callers can tell "fetched" from "changed". */
+export function updateShipNumber(db: Database, tailNumber: string, shipNumber: string): number {
+  return db
+    .query("UPDATE united_fleet SET ship_number = ? WHERE tail_number = ? AND ship_number IS NOT ?")
+    .run(shipNumber, tailNumber, shipNumber).changes;
 }
 
 // ============ /fleet page aggregation ============
