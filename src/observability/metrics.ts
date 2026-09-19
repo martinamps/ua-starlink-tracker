@@ -36,7 +36,12 @@
  *                    flight.lookup_result     mirrors `outcome`                   (+4 new)
  *                                                                          union (16)
  *   dataset:         mirrors `job` on data.freshness_seconds             (~7)
- *   client_class:    bot | claude | extension | browser | unknown    (5)
+ *   client_class:    classifyRequest: extension | other-extension, else
+ *                    classifyUserAgent: claude | googleother | googlebot |
+ *                    bingbot | gptbot | perplexity | seo-crawler | social |
+ *                    extension | bot | browser | unknown             (13)
+ *   ext_version:     1.x | 2.0 | 2.x | other | none — only when
+ *                    client_class:extension                          (5)
  *   confidence:      high | medium | low | none                      (4)
  *   outcome:         verified_yes | verified_no | predicted | no_data | error  (5)
  *   tool:            7 MCP tool names (TOOL_NAMES) | unknown         (~8)
@@ -151,6 +156,42 @@ export function classifyUserAgent(ua: string | null | undefined): string {
   if (BOT_UA.test(ua)) return "bot";
   if (/Mozilla|AppleWebKit|Gecko|Chrome|Safari|Firefox/i.test(ua)) return "browser";
   return "unknown";
+}
+
+// The extension's service worker fetches with the stock Chrome UA, so the UA
+// regex above never fires for it: v2.0.1+ says so with `client=ext-<version>`,
+// and any extension fetch may carry its Origin. Only our own store ID counts
+// as "extension" — a copycat reusing the API is a different audience.
+const OWN_EXTENSION_ORIGIN = "chrome-extension://jjfljoifenkfdbldliakmmjhdkbhehoi";
+const EXT_CLIENT_RE = /^ext-(\d{1,2})\.(\d{1,3})\.(\d{1,3})$/;
+const FOREIGN_EXTENSION_ORIGIN_RE = /^(chrome|moz|safari-web)-extension:\/\//;
+
+export function classifyRequest(req: Request, url: URL): string {
+  if (EXT_CLIENT_RE.test(url.searchParams.get("client") ?? "")) return "extension";
+  const origin = req.headers.get("origin");
+  if (origin === OWN_EXTENSION_ORIGIN) return "extension";
+  if (origin && FOREIGN_EXTENSION_ORIGIN_RE.test(origin)) return "other-extension";
+  return classifyUserAgent(req.headers.get("user-agent"));
+}
+
+/** `none` is an extension request with no client param: every build before 2.0.1. */
+export function normalizeExtVersion(client: string | null | undefined): string {
+  if (!client) return "none";
+  const m = client.match(EXT_CLIENT_RE);
+  if (!m) return "other";
+  if (m[1] === "1") return "1.x";
+  if (m[1] === "2") return m[2] === "0" ? "2.0" : "2.x";
+  return "other";
+}
+
+/** `client_class`, plus `ext_version` on extension traffic only. */
+export function requestClientTags(req: Request, url: URL): Tags {
+  const clientClass = classifyRequest(req, url);
+  if (clientClass !== "extension") return { client_class: clientClass };
+  return {
+    client_class: clientClass,
+    ext_version: normalizeExtVersion(url.searchParams.get("client")),
+  };
 }
 
 /**

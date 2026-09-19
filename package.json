@@ -33,7 +33,9 @@
     "lint:fix": "biome check --write .",
     "prepare": "husky",
     "generate-og": "bun scripts/generate-og-images.ts",
-    "build-favicons": "bun scripts/build-favicons.ts"
+    "build-favicons": "bun scripts/build-favicons.ts",
+    "ext:package": "bun scripts/package-extension.ts",
+    "ext:store-version": "bun scripts/check-cws-version.ts"
   },
   "dependencies": {
     "dd-trace": "^5.32.0",

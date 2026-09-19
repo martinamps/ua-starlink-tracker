@@ -41,12 +41,19 @@ const StarlinkTrackerLib = (() => {
    * Everything else goes to the hub's /api/check-any-flight, the designated
    * cross-carrier surface (resolves the marketing carrier server-side and
    * reports untracked carriers as a 200 error body).
+   *
+   * `version` rides along as `client=ext-<version>`: a service-worker fetch
+   * carries the stock Chrome user agent, so without it the server cannot tell
+   * extension traffic from a person on the website.
    */
-  function endpointFor(flightNumber, date) {
+  function endpointFor(flightNumber, date, version) {
     const carrier = detectCarrier(flightNumber);
     if (!carrier || !isValidDate(date)) return null;
     const fn = flightNumber.toUpperCase();
-    const query = `flight_number=${encodeURIComponent(fn)}&date=${encodeURIComponent(date)}`;
+    let query = `flight_number=${encodeURIComponent(fn)}&date=${encodeURIComponent(date)}`;
+    if (typeof version === "string" && version.length > 0) {
+      query += `&client=ext-${encodeURIComponent(version)}`;
+    }
     return carrier === "UA"
       ? `${API_BASES.united}/api/check-flight?${query}`
       : `${API_BASES.hub}/api/check-any-flight?${query}`;
@@ -94,21 +101,30 @@ const StarlinkTrackerLib = (() => {
    * "not ours" (heuristics would only add false positives), while nothing
    * decoding at all means the hook itself drifted and the heuristics are the
    * only thing left.
+   *
+   * `untrackedLegs` counts the distinct decoded legs on carriers we cannot
+   * answer for. The weakest-leg rule only holds when every leg is judged, so a
+   * card with any untracked leg must not be badged: dropping an AA leg from
+   * AS+AS+AA would otherwise badge the whole trip "Starlink".
    */
   function timCardSegments(urls) {
     const segments = [];
+    const untracked = new Set();
     let parsed = false;
     for (const url of Array.isArray(urls) ? urls : []) {
       for (const seg of parseTimSegments(url)) {
         parsed = true;
-        if (!detectCarrier(seg.flightNumber)) continue;
+        if (!detectCarrier(seg.flightNumber)) {
+          untracked.add(`${seg.flightNumber}-${seg.date}`);
+          continue;
+        }
         if (segments.some((s) => s.flightNumber === seg.flightNumber && s.date === seg.date)) {
           continue;
         }
         segments.push({ flightNumber: seg.flightNumber, date: seg.date });
       }
     }
-    return { parsed, segments };
+    return { parsed, segments, untrackedLegs: untracked.size };
   }
 
   /**
@@ -382,6 +398,139 @@ const StarlinkTrackerLib = (() => {
     return `${y}-${m}-${d}`;
   }
 
+  // ── lookup and pass scheduling ─────────────────────────────────────────────
+
+  function claimKey(flightNumber, date) {
+    return `${flightNumber}-${date}`;
+  }
+
+  /**
+   * Per-tab claim cache with in-flight dedupe. `send` is chrome.runtime
+   * .sendMessage in the content script; it is injected so the dedupe that
+   * keeps a pooled pass from double-fetching one flight is testable.
+   *
+   * The pending entry is registered before `send` runs: a send that throws
+   * synchronously (invalidated extension context) used to settle and clear
+   * its entry before the entry was set, leaving a resolved promise in the map
+   * that shadowed every later retry.
+   */
+  function createClaimLookup(send, now = () => Date.now()) {
+    const cache = new Map();
+    const pending = new Map();
+
+    function cached(key) {
+      const entry = cache.get(key);
+      if (entry && entry.expires > now()) return entry;
+      if (entry) cache.delete(key);
+      return null;
+    }
+
+    function isKnown(key) {
+      return cached(key) !== null || pending.has(key);
+    }
+
+    function get(flightNumber, date) {
+      const key = claimKey(flightNumber, date);
+      const hit = cached(key);
+      if (hit) return Promise.resolve(hit);
+      const inflight = pending.get(key);
+      if (inflight) return inflight;
+
+      const lookup = Promise.resolve()
+        .then(() => send({ action: "checkFlight", flightNumber, date }))
+        .then(claimFromResponse, () => ({ claim: unknownClaim(), retryable: true }))
+        .then((outcome) => {
+          pending.delete(key);
+          cache.set(key, {
+            claim: outcome.claim,
+            retryable: outcome.retryable,
+            expires: now() + (outcome.retryable ? CACHE_TTL.error : CACHE_TTL.resolved),
+          });
+          return outcome;
+        });
+      pending.set(key, lookup);
+      return lookup;
+    }
+
+    return { get, isKnown };
+  }
+
+  /**
+   * Runs `worker` over `items` with at most `limit` in flight, starting them
+   * strictly in order. Each start runs synchronously up to its first await, so
+   * a worker that claims budget or registers a pending lookup before awaiting
+   * is seen by the next worker exactly as in a serial loop.
+   */
+  async function runPool(items, limit, worker) {
+    const queue = Array.from(items);
+    let next = 0;
+    const lane = async () => {
+      while (next < queue.length) {
+        const item = queue[next++];
+        try {
+          await worker(item);
+        } catch {
+          // one item must not stall its lane
+        }
+      }
+    };
+    const lanes = [];
+    for (let i = 0; i < Math.min(Math.max(1, limit), queue.length); i++) lanes.push(lane());
+    await Promise.all(lanes);
+  }
+
+  const MAX_RERUNS = 5;
+  const RERUN_DELAY_MS = 250;
+
+  /**
+   * Serializes passes without dropping triggers. A trigger that lands while a
+   * pass runs (Google appending "more flights" mid-pass) queues one rerun
+   * instead of being discarded. Reruns are capped per burst; the cap resets
+   * when a pass reports `{ newCards: 0 }` or on resetReruns() (navigation).
+   */
+  function createPassRunner(
+    runPass,
+    { maxReruns = MAX_RERUNS, delayMs = RERUN_DELAY_MS, schedule = setTimeout } = {}
+  ) {
+    let running = false;
+    let rerunRequested = false;
+    let rerunCount = 0;
+
+    async function trigger() {
+      if (running) {
+        rerunRequested = true;
+        return;
+      }
+      running = true;
+      let result;
+      try {
+        result = await runPass();
+      } catch {
+        // a failed pass must not wedge the runner
+      } finally {
+        running = false;
+      }
+      if (result && result.newCards === 0) rerunCount = 0;
+      if (rerunRequested && rerunCount++ < maxReruns) {
+        rerunRequested = false;
+        schedule(trigger, delayMs);
+      } else {
+        rerunRequested = false;
+      }
+    }
+
+    return {
+      trigger,
+      isRunning: () => running,
+      requestRerun: () => {
+        rerunRequested = true;
+      },
+      resetReruns: () => {
+        rerunCount = 0;
+      },
+    };
+  }
+
   return {
     API_BASES,
     TRACKED_CARRIERS,
@@ -405,6 +554,10 @@ const StarlinkTrackerLib = (() => {
     badgeClass,
     badgeColors,
     localTodayIso,
+    claimKey,
+    createClaimLookup,
+    runPool,
+    createPassRunner,
   };
 })();
 

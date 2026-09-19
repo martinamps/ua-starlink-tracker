@@ -10,7 +10,7 @@ testing; set it back before release.
 
 ## Setup sanity
 
-- [ ] `chrome://extensions` shows version 2.0.0, no errors on the card
+- [ ] `chrome://extensions` shows version 2.0.1, no errors on the card
 - [ ] Service worker "Inspect views" console shows no errors on load
 - [ ] Permissions listed: only unitedstarlinktracker.com — no storage, no new hosts
 
@@ -24,7 +24,8 @@ testing; set it back before release.
 - [ ] Hover each badge tier — tooltip explains verified / installed / predicted
       wording and (for predictions) observation count
 - [ ] DevTools Network tab (service worker): UA lookups go to
-      `unitedstarlinktracker.com/api/check-flight`
+      `unitedstarlinktracker.com/api/check-flight` and carry
+      `&client=ext-2.0.1` after `flight_number` and `date`
 
 ## Hawaiian / Alaska (hub endpoint)
 
@@ -36,7 +37,12 @@ testing; set it back before release.
       assignment window
 - [ ] Far-future SEA → LAX (mainline 737, AS1-1999): no badge — the mainline
       subfleet is mid-rollout, far below the 80% bar
-- [ ] Far-future HNL → LAX (Hawaiian): no badge at all. HA's answer is a
+- [ ] Far-future HNL → LAX: Hawaiian metal now sells mostly as AS800-999
+      (AS-marketed on HA A330/A321neo). Those results get a gray
+      "Starlink ~100%" badge from the `hawaiian_metal` subfleet. Until the
+      registry range is widened past AS899, AS900-999 shows no badge
+- [ ] Far-future HNL → OGG (interisland, AS1000-1299 on the 717): no badge
+- [ ] Far-future HA-marketed flights (HA1-HA999): no badge. HA's answer is a
       per-type split, which carries no single probability — an honest
       abstention, not a bug (see README "Coverage windows differ by airline")
 
@@ -51,6 +57,9 @@ testing; set it back before release.
 - [ ] A connecting itinerary where only one leg is Starlink shows no
       "Starlink" badge (weakest-leg rule) — or, if both legs qualify, one badge
       per card, never two
+- [ ] A mixed-carrier itinerary (e.g. SFO → MSN on Alaska + American, or UA +
+      Lufthansa) shows no badge, and makes no lookup for it in the Network tab:
+      the untracked leg cannot be vouched for
 
 ## Layout and drift resilience
 
@@ -61,7 +70,13 @@ testing; set it back before release.
       re-renders badges without duplicates
 - [ ] Change dates via the date picker (SPA navigation, URL change): old badges
       cleared, new results processed
-- [ ] Scroll to load more results: newly appended cards get processed
+- [ ] Click the date arrows (< >) next to the departure date several times
+      quickly: after the list settles, every badge matches the date on screen
+      (hover a badge; check the Network request's `date`), and no card keeps a
+      badge from the previous date
+- [ ] Scroll to load more results, and expand "Other departing flights" /
+      "View more flights" while the first pass is still running: the late
+      cards get badged without a reload
 - [ ] Page console (not the worker's) shows **zero** errors or warnings from
       the extension during all of the above — including with DevTools "Pause on
       exceptions" off/on
@@ -83,3 +98,12 @@ testing; set it back before release.
       date, not the outbound date (per-leg dates come from the Travel Impact
       Model attribute — verify a request in the Network tab carries the return
       date)
+
+## Release
+
+- [ ] `bun run ext:package` → `dist/ext-<version>.zip` lists only manifest,
+      background/content/lib JS, styles.css and icons (no `.md`)
+- [ ] Run this checklist against the unpacked build of the same commit
+- [ ] Owner uploads the zip to the Chrome Web Store and Edge Add-ons dashboards
+- [ ] After review: `bun run ext:store-version` reports the new version, and
+      the "Published CWS version" line in docs/DEVELOPMENT.md is updated
