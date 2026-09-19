@@ -10,6 +10,8 @@
 import type { TypeProgress } from "../database/database";
 import type { CarrierPrediction } from "../scripts/starlink-predictor";
 
+export { noModelConfidence } from "../scripts/starlink-predictor";
+
 /** Bounded free text: a booking's type string ("Boeing 777-300ER"). Anything
  * else is ignored rather than rejected, so a bad value can't break a lookup. */
 const AIRCRAFT_TYPE_PARAM = /^[A-Za-z0-9 ()-]{1,40}$/;
@@ -44,13 +46,6 @@ const GUIDE_STATUS = {
   none: "no_wifi_listed",
 } as const;
 
-/** A named tail is a tail-level answer, not a per-type one. */
-export function noModelConfidence(answer: CarrierPrediction): "tail" | "type" {
-  return answer.kind === "assigned_unconfirmed" || answer.kind === "partner_operated"
-    ? "tail"
-    : "type";
-}
-
 export function communityWireFields(answer: CarrierPrediction): Record<string, unknown> {
   switch (answer.kind) {
     case "type_progress":
@@ -63,6 +58,7 @@ export function communityWireFields(answer: CarrierPrediction): Record<string, u
           equipped: answer.type.equipped,
           total: answer.type.total,
           share: answer.share,
+          ...(answer.ambiguous ? { ambiguous: true } : { status: typeStatus(answer.type) }),
         },
         by_type: byType(answer.types),
       };

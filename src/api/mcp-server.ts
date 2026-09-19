@@ -48,6 +48,7 @@ import {
   describeCarrierPrediction,
   itineraryHourBudget,
   joinSentences,
+  noModelConfidence,
   planItinerary,
   predictFlight,
   predictRoute,
@@ -636,7 +637,17 @@ async function toolCheckFlight(
 
   const t = verdictTelemetry(verdict);
   recordMcpFlightLookup(reader.scope, t.outcome, t.confidence);
+  return renderCheckFlightVerdict(cfg, reader, verdict, date);
+}
 
+/** check_flight text for a resolved verdict — exported so AF answers can be
+ * rendered before AF is public on the hub. */
+export async function renderCheckFlightVerdict(
+  cfg: AirlineConfig,
+  reader: ScopedReader,
+  verdict: Exclude<FlightVerdict, { kind: "invalid_date" } | { kind: "invalid_flight_number" }>,
+  date: string
+): Promise<ToolResult> {
   if (verdict.kind === "qatar" || verdict.kind === "qatar_no_data") {
     return renderQatarCheckFlight(verdict, date);
   }
@@ -680,11 +691,21 @@ async function toolCheckFlight(
           ],
         };
       }
+      const unverifiedAgainst = `not yet verified against ${cfg.verifySite}`;
+      const source = cfg.communitySource
+        ? {
+            where: `listed with Starlink in the ${cfg.communitySource.label} (community data, ${unverifiedAgainst})`,
+            caveat: "Community data can lag an install or a swap.",
+          }
+        : {
+            where: `tracked as Starlink in the fleet spreadsheet (${unverifiedAgainst})`,
+            caveat: "Spreadsheet data is usually accurate but unverified.",
+          };
       return {
         content: [
           {
             type: "text",
-            text: `Likely yes — ${normalized} on ${date} is assigned to a tail tracked as Starlink in the fleet spreadsheet (not yet verified against ${cfg.verifySite}):\n\n${verdict.unverified.map(renderAssignment).join("\n")}\n\nSpreadsheet data is usually accurate but unverified. Check ${cfg.verifySite} or the flight status 24h out to confirm.`,
+            text: `Likely yes — ${normalized} on ${date} is assigned to a tail ${source.where}:\n\n${verdict.unverified.map(renderAssignment).join("\n")}\n\n${source.caveat} Check ${cfg.verifySite} or the flight status 24h out to confirm.`,
           },
         ],
       };
@@ -759,13 +780,18 @@ async function toolCheckFlight(
 
     case "no_model": {
       // "no assignment data" would be a lie during an FR24 outage — the same
-      // couldn't-confirm caveat the prediction branch uses.
-      const lead = verdict.fr24Error ? FR24_OUTAGE_NOTE : "no assignment data.";
+      // couldn't-confirm caveat the prediction branch uses — and for a
+      // community carrier's named tail, which is itself the assignment.
+      const lead = verdict.fr24Error
+        ? `${FR24_OUTAGE_NOTE} `
+        : noModelConfidence(verdict.answer) === "tail"
+          ? ""
+          : "no assignment data. ";
       return {
         content: [
           {
             type: "text",
-            text: `${normalized} on ${date}: ${lead} ${describeCarrierPrediction(cfg, verdict.answer)}`,
+            text: `${normalized} on ${date}: ${lead}${describeCarrierPrediction(cfg, verdict.answer)}`,
           },
         ],
       };
@@ -1706,13 +1732,15 @@ function toolGetFleetStats(reader: ScopedReader): ToolResult {
   if (!fleetStats) {
     const per = reader.getPerAirlineStats();
     const agg = aggregatePenetration(per);
+    // A community guide lags installs, so its count is a floor.
+    const floor = (a: { code: string }) => Boolean(AIRLINES[a.code]?.communitySource);
     const lines = per.map(
       (a) =>
-        `**${a.name}**: ${a.starlink} of ${a.total} aircraft (${pct(a.starlink, a.total)}%)${a.phaseNote ? ` — ${a.phaseNote}` : ""}`
+        `**${a.name}**: ${floor(a) ? "at least " : ""}${a.starlink} of ${a.total} aircraft (${pct(a.starlink, a.total)}%)${a.phaseNote ? ` — ${a.phaseNote}` : ""}`
     );
     const text = `Starlink Installation Progress (as of ${lastUpdated}):
 
-**All tracked airlines**: ${agg.starlink} of ${agg.total} aircraft (${pct(agg.starlink, agg.total)}%) have Starlink WiFi
+**All tracked airlines**: ${per.some(floor) ? "at least " : ""}${agg.starlink} of ${agg.total} aircraft (${pct(agg.starlink, agg.total)}%) have Starlink WiFi
 
 ${lines.join("\n")}`;
     return { content: [{ type: "text", text }] };

@@ -49,7 +49,10 @@ const AIRCRAFT_FAMILIES: ReadonlyArray<[RegExp, string]> = [
   // name, so a 170 followed by -200 is an E175.
   [/(?:E-?|ERJ.?|EMB.?|Embraer\s*)170(?![-\s]?200)|^E70\b/i, "E170"],
   [/E-?190|ERJ.?190|EMB.?190|Embraer\s*190|^E90\b/i, "E190"],
-  [/E-?175|ERJ.?175|EMB.?175|Embraer\s*175|(?:ERJ|EMB|E)[-\s]?170[-\s]?200|^E75[A-Z]?\b/i, "E175"],
+  [
+    /E-?175|ERJ.?175|EMB.?175|Embraer\s*175|(?:ERJ|EMB|E|Embraer\s*)[-\s]?170[-\s]?200|^E75[A-Z]?\b/i,
+    "E175",
+  ],
   [/ERJ.?145/i, "ERJ-145"],
   [/CRJ.?2/i, "CRJ-200"],
   [/CRJ.?550/i, "CRJ-550"],

@@ -1233,6 +1233,17 @@ export function typeShare(t: Pick<TypeProgress, "equipped" | "total" | "excluded
   return t.excluded || t.total === 0 ? 0 : t.equipped / t.total;
 }
 
+/** "Boeing 787-10" on a codeshare reaches AF's B787 key through the family
+ * fallback, but AF flies only the 787-9, so that row says nothing about it. */
+function namesUnflownVariant(cfg: AirlineConfig, aircraftType: string, key: string): boolean {
+  const pinned = (cfg.programTypes ?? []).filter(([, k]) => k === key);
+  return (
+    pinned.length > 0 &&
+    !pinned.some(([re]) => re.test(aircraftType)) &&
+    /\d{3}-\d/.test(aircraftType)
+  );
+}
+
 function communityPrediction(
   cfg: AirlineConfig,
   reader: ScopedReader,
@@ -1245,6 +1256,8 @@ function communityPrediction(
   if (types.length === 0) return noModel;
   if (aircraftType) {
     const { key } = programTypeOf(cfg, aircraftType);
+    if (namesUnflownVariant(cfg, aircraftType, key))
+      return { kind: "type_progress", types, guideUpdated };
     const row = types.find((t) => t.key === key && t.total > 0);
     if (row) return { kind: "type_rate", type: row, share: typeShare(row), types, guideUpdated };
     const split = types.filter(
@@ -1324,6 +1337,13 @@ export function carrierPrediction(
   return noModel;
 }
 
+/** A named tail is a tail-level answer, not a per-type one. */
+export function noModelConfidence(answer: CarrierPrediction): "tail" | "type" {
+  return answer.kind === "assigned_unconfirmed" || answer.kind === "partner_operated"
+    ? "tail"
+    : "type";
+}
+
 /** One outcome/confidence mapping for registry-driven carrier answers — REST,
  * MCP, and verdictTelemetry all tag through here. */
 export function carrierPredictionTelemetry(answer: CarrierPrediction | RouteCompareResult | null): {
@@ -1393,7 +1413,7 @@ function describeTypeRate(
     );
   }
   if (t.equipped === 0) {
-    return joinSentences(`None of ${cfg.name}'s ${t.total} ${name} has Starlink yet ${cite}`);
+    return joinSentences(`No ${cfg.name} ${t.label} is listed with Starlink yet ${cite}`);
   }
   if (t.equipped === t.total) {
     return joinSentences(`All ${t.total} ${cfg.name} ${name} have Starlink ${cite}`);

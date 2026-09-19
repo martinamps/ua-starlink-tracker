@@ -12,6 +12,7 @@ import { normalizeAircraftType } from "../src/airlines/aircraft-families";
 import { AIRLINES, SITES, isOutsideProgramme, programTypeOf } from "../src/airlines/registry";
 import { resolveFlightVerdict, verdictConfidence } from "../src/api/check-flight-core";
 import { breakerEffect } from "../src/api/flight-updater";
+import { renderCheckFlightVerdict } from "../src/api/mcp-server";
 import { CommunityAirlinePage, TypeShareTable } from "../src/components/community-airline-page";
 import {
   getFleetDiscoveryStats,
@@ -485,8 +486,9 @@ describe("AF answers", () => {
       );
       const v = await verdictOn(db, "AF700");
       expect(v.kind).toBe(expected);
-      if (v.kind === "no_model" && v.answer.kind === "assigned_unconfirmed") {
-        expect(v.answer.tail).toBe(other);
+      if (v.kind === "no_model") {
+        expect(v.answer.kind).toBe("assigned_unconfirmed");
+        if (v.answer.kind === "assigned_unconfirmed") expect(v.answer.tail).toBe(other);
       }
       db.close();
     }
@@ -526,6 +528,8 @@ describe("AF answers", () => {
     ["Boeing 777", null, true],
     ["Airbus A330-203", "A330", false],
     ["Concorde", undefined, false],
+    // A codeshare on a variant AF doesn't fly says nothing about AF's 787-9s.
+    ["Boeing 787-10", undefined, false],
   ] as const)("aircraft_type %s", async (type, key, ambiguous) => {
     const db = appliedDb();
     const v = await verdictOn(db, "AF200", { lookupTail: null, aircraftType: type });
@@ -595,6 +599,7 @@ describe("AF answers", () => {
     const answers = [
       await verdictOn(db, "AF200"),
       await verdictOn(db, "AF200", { lookupTail: null, aircraftType: "Boeing 777-300ER" }),
+      await verdictOn(db, "AF200", { lookupTail: null, aircraftType: "Boeing 777" }),
       await verdictOn(db, "AF300"),
       await verdictOn(db, "AF400", { lookupTail: async () => [seg("PH-BHA")] }),
     ];
@@ -606,14 +611,67 @@ describe("AF answers", () => {
       expect("prediction" in f).toBe(false);
       if (v.answer.kind === "type_progress") expect(Array.isArray(f.by_type)).toBe(true);
       if (v.answer.kind === "type_rate") {
-        const share = (f.type_rate as { share: unknown }).share;
-        expect(share === null || typeof share === "number").toBe(true);
+        const rate = f.type_rate as { share: unknown; status?: unknown; ambiguous?: unknown };
+        expect(rate.share === null || typeof rate.share === "number").toBe(true);
+        expect(rate.ambiguous === true || typeof rate.status === "string").toBe(true);
       }
       if (v.answer.kind === "assigned_unconfirmed" || v.answer.kind === "partner_operated") {
         expect(typeof (f.assignment as { tail_number: unknown }).tail_number).toBe("string");
       }
     }
     db.close();
+  });
+
+  describe("MCP check_flight text", () => {
+    const mcpText = async (
+      db: Database,
+      fn: string,
+      deps: Parameters<typeof resolveFlightVerdict>[4] = { lookupTail: null }
+    ) => {
+      const reader = createReaderFactory(db)("AF");
+      const v = await resolveFlightVerdict(AF, reader, fn, DATE, deps);
+      if (v.kind === "invalid_date" || v.kind === "invalid_flight_number") throw new Error(v.kind);
+      const r = await renderCheckFlightVerdict(AF, reader, v, DATE);
+      return { kind: v.kind, text: r.content[0].text };
+    };
+
+    test.each([
+      ["an assigned AF tail", "db"],
+      ["a partner-operated codeshare", "partner"],
+    ])("%s is an assignment, never 'no assignment data'", async (_label, path) => {
+      const db = appliedDb();
+      const legacy = GUIDE.tails.find((t) => t.mark === "legacy" && t.programType === "B787")
+        ?.tail as string;
+      if (path === "db") addFlight(db, legacy, "AF300", "XXA", NOON, { airline: "AF" });
+      const { kind, text } =
+        path === "db"
+          ? await mcpText(db, "AF300")
+          : await mcpText(db, "AF400", { lookupTail: async () => [seg("PH-BHA")] });
+      expect(kind).toBe("no_model");
+      expect(text).not.toContain("no assignment data");
+      expect(text).toContain(path === "db" ? legacy : "PH-BHA");
+      db.close();
+    });
+
+    test("an unassigned flight still says there is no assignment", async () => {
+      const db = appliedDb();
+      const { kind, text } = await mcpText(db, "AF200");
+      expect(kind).toBe("no_model");
+      expect(text).toContain("no assignment data");
+      db.close();
+    });
+
+    test("a starred tail names the community guide, not a spreadsheet", async () => {
+      const db = appliedDb();
+      const star = STARS.find((t) => t.header === "A350-941 (Cabin G)")?.tail as string;
+      addFlight(db, star, "AF100", "XXA", NOON, { airline: "AF" });
+      const { kind, text } = await mcpText(db, "AF100");
+      expect(kind).toBe("scheduled");
+      expect(text).toContain(AF.communitySource?.label as string);
+      expect(text).toMatch(/community data/);
+      expect(text).not.toMatch(/spreadsheet/i);
+      db.close();
+    });
   });
 
   test("routes never infer absence or blend", () => {
@@ -693,12 +751,19 @@ const AF_FR24_DEPARTURES =
 DUS EZE FCO FDF FRA GRU HKG HND ICN JNB LIS LJU LYS MAD MAN MIA MPL MRS NBJ NCE NKC NSI NTE ORY PEK
 PRG PTP RAK RBA RUN SSG TLS TRN VCE WAW YOW ZAG`.split(/\s+/);
 
+// Seasonal and thin AF/HOP routes FR24 hadn't scheduled yet in September.
+const AF_SEASONAL =
+  "ABV BRI BSL CAG CMF CTA DBV FAO HER IBZ JMK JTR MLH OLB PMO POP RAI SID SPU ZNZ".split(" ");
+
 describe("AF network airports", () => {
-  test.each(AF_FR24_DEPARTURES)("%s has a zone, coordinates and a non-US country", (iata) => {
-    expect(airportTimezone(iata)).toBeTruthy();
-    expect(airportDistanceMiles(iata, "CDG")).not.toBeNull();
-    if (!["ATL", "MIA"].includes(iata)) expect(airportCountry(iata)).not.toBe("US");
-  });
+  test.each([...AF_FR24_DEPARTURES, ...AF_SEASONAL])(
+    "%s has a zone, coordinates and a non-US country",
+    (iata) => {
+      expect(airportTimezone(iata)).toBeTruthy();
+      expect(airportDistanceMiles(iata, "CDG")).not.toBeNull();
+      if (!["ATL", "MIA"].includes(iata)) expect(airportCountry(iata)).not.toBe("US");
+    }
+  );
 });
 
 // ── page ────────────────────────────────────────────────────────────────────

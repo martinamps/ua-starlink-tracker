@@ -356,12 +356,10 @@ export function communityPageDescription(
   guideUpdated: string | null
 ): string {
   const { equipped, total } = programmeTotals(types);
-  const going = types.filter((t) => !t.excluded && t.equipped > 0).map((t) => t.label);
   const date = guideUpdated ? ` (${formatFactDate(guideUpdated.slice(0, 10))})` : "";
   const label = cfg.communitySource?.label ?? "community fleet guide";
-  // CTA first and the type list capped: snippets truncate near 155 chars.
-  const shown = going.length > 3 ? `${going.slice(0, 3).join(", ")} and more` : going.join(", ");
+  // No type list: with real counts it always ran past the meta clamp.
   return total > 0
-    ? `Check your ${cfg.name} flight, aircraft type or tail. At least ${equipped} of ${total} jets have Starlink per the ${label}${date}${shown ? `, incl. ${shown}` : ""}.`
+    ? `At least ${equipped} of ${total} ${cfg.name} jets have Starlink per the ${label}${date}. Check your flight, aircraft type or tail.`
     : cfg.brand.description;
 }

@@ -83,6 +83,7 @@ describe("aircraft family normalizer", () => {
     ["E75L", "E175"],
     ["ERJ-170-200", "E175"],
     ["EMB 170-200LR", "E175"],
+    ["Embraer 170-200", "E175"],
     ["ERJ 170-100", "E170"],
     // The global family stays whole; airline-local programme types split it.
     ["Boeing 777-328(ER)", "B777"],
