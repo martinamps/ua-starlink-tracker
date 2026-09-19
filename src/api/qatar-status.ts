@@ -14,8 +14,9 @@
  * Qatar's portal never renders that. So this is a per-flight equipment oracle,
  * not a per-tail wifi source like the United verifier.
  *
- * For Qatar that's enough: B777 + A350 are 100% Starlink (rollout complete
- * Q2/Dec 2025), B787 is rolling, A380/A330/narrowbody have no plan. The
+ * For Qatar that's enough: B777 + A350 + 787-8 are 100% Starlink (complete
+ * Q2 2025 / Dec 2025 / Aug 2026), 787-9 is rolling, A380/A330/narrowbody have
+ * no plan. The
  * equipment code per scheduled flight + date is the verdict.
  *
  * No auth, no captcha observed (10 rapid requests all returned 200), 500-1500ms

@@ -490,3 +490,53 @@ const DETOUR_SLACK_MI = 250;
 export function detourBoundMiles(directMiles: number): number {
   return Math.max(directMiles * DETOUR_FACTOR, directMiles + DETOUR_SLACK_MI);
 }
+
+// ISO country for every non-US code in AIRPORT_COORDS; a mapped code with no
+// entry is US (territories included). Explicit rather than inferred from a
+// "Y" prefix, which would misfile YKM (Yakima, WA).
+// biome-ignore format: grouped by region keeps the table diffable
+export const AIRPORT_COUNTRY: Record<string, string> = {
+  YEG: "CA", YHZ: "CA", YLW: "CA", YOW: "CA", YQB: "CA", YQG: "CA", YUL: "CA", YVR: "CA",
+  YWG: "CA", YYC: "CA", YYJ: "CA", YYZ: "CA",
+  ACA: "MX", AGU: "MX", BJX: "MX", CUN: "MX", CZM: "MX", GDL: "MX", LAP: "MX", LTO: "MX",
+  MEX: "MX", MID: "MX", MLM: "MX", MTY: "MX", MZT: "MX", OAX: "MX", PVR: "MX", PXM: "MX",
+  QRO: "MX", SJD: "MX", SLP: "MX", TAM: "MX", TPQ: "MX", TQO: "MX", VER: "MX", ZIH: "MX",
+  ZLO: "MX",
+  AUA: "AW", BGI: "BB", BON: "BQ", BZE: "BZ", CUR: "CW", GCM: "KY", GUA: "GT", KIN: "JM",
+  LIR: "CR", MBJ: "JM", MGA: "NI", NAS: "BS", PLS: "TC", PTY: "PA", PUJ: "DO", RTB: "HN",
+  SAL: "SV", SAP: "HN", SDQ: "DO", SJO: "CR", STI: "DO", SXM: "SX", UVF: "LC",
+  BOG: "CO", EZE: "AR", GIG: "BR", GRU: "BR", LIM: "PE", SCL: "CL",
+  AGP: "ES", AMS: "NL", ARN: "SE", ATH: "GR", BCN: "ES", BER: "DE", BHX: "GB", BRU: "BE",
+  BUD: "HU", CDG: "FR", CPH: "DK", DUB: "IE", EDI: "GB", FCO: "IT", FRA: "DE", GVA: "CH",
+  HEL: "FI", IST: "TR", KEF: "IS", LCA: "CY", LGW: "GB", LHR: "GB", LIS: "PT", MAD: "ES",
+  MAN: "GB", MUC: "DE", MXP: "IT", NCE: "FR", OPO: "PT", OSL: "NO", SNN: "IE", TEV: "ES",
+  VCE: "IT", VIE: "AT", XFW: "DE", ZRH: "CH",
+  ABJ: "CI", ACC: "GH", ADD: "ET", ALG: "DZ", CAI: "EG", CMN: "MA", CPT: "ZA", DAR: "TZ",
+  DUR: "ZA", JNB: "ZA", LOS: "NG", MPM: "MZ", NBO: "KE", RAK: "MA", SEZ: "SC", TUN: "TN",
+  AMM: "JO", AUH: "AE", BAH: "BH", BEY: "LB", BGW: "IQ", BSR: "IQ", DAM: "SY", DMM: "SA",
+  DOH: "QA", DXB: "AE", JED: "SA", KWI: "KW", MCT: "OM", MED: "SA", RUH: "SA", TLV: "IL",
+  AMD: "IN", BLR: "IN", BOM: "IN", CCU: "IN", COK: "IN", DEL: "IN", HYD: "IN", MAA: "IN",
+  CMB: "LK", DAC: "BD", ISB: "PK", KHI: "PK", KTM: "NP", LHE: "PK", MLE: "MV",
+  BKK: "TH", CAN: "CN", CGK: "ID", CKG: "CN", CRK: "PH", DPS: "ID", HAN: "VN", HGH: "CN",
+  HKG: "HK", HKT: "TH", HND: "JP", ICN: "KR", KIX: "JP", KUL: "MY", MNL: "PH", NRT: "JP",
+  PEK: "CN", PKX: "CN", PVG: "CN", SGN: "VN", SIN: "SG", TPE: "TW",
+  ADL: "AU", AKL: "NZ", BNE: "AU", MEL: "AU", PER: "AU", PPT: "PF", RAR: "CK", SYD: "AU",
+  KSA: "FM", PNI: "FM", TKK: "FM", YAP: "FM", KWA: "MH", MAJ: "MH", ROR: "PW",
+};
+
+/** ISO country code: "US" for a mapped airport with no entry, null when the code is unknown. */
+export function airportCountry(code: string): string | null {
+  return AIRPORT_COUNTRY[code] ?? (AIRPORT_COORDS[code] ? "US" : null);
+}
+
+/**
+ * May `hub` connect a US-domestic trip? Routing SFO→EWR via Halifax means a
+ * passport, customs, and a fare nobody books. Only US↔US trips are gated: a
+ * YVR→YYZ trip on United legitimately connects through a US hub. Unknown hub
+ * codes pass (fail open, like the detour gate).
+ */
+export function hubAllowedForTrip(origin: string, destination: string, hub: string): boolean {
+  if (airportCountry(origin) !== "US" || airportCountry(destination) !== "US") return true;
+  const h = airportCountry(hub);
+  return h === null || h === "US";
+}

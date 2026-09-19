@@ -651,7 +651,8 @@ describe("cachedFlightAssignments negative cache", () => {
       );
     });
     try {
-      const t0 = utc("2030-01-01T00:00:00Z");
+      // Inside ASSIGNMENT_EMPTY_CACHE_MIN_LEAD, where empties are re-polled.
+      const t0 = utc("2030-01-01T08:00:00Z");
       const target = utc("2030-01-01T12:00:00Z");
 
       // Empty result: deleted from cache so the next call re-polls.
