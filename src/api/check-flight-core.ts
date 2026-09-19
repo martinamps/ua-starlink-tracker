@@ -1075,7 +1075,11 @@ export function legLabel(leg: LegResolution): string {
   );
 }
 
-const requestedLabel = (leg: LegResolution) => pairLabel(leg.origin, leg.destination);
+// "SFO → DEN leg", or "leg from SFO" when only the origin was sent.
+const requestedLeg = (leg: LegResolution) =>
+  leg.destination
+    ? `${pairLabel(leg.origin, leg.destination)} leg`
+    : `leg from ${leg.origin ?? "?"}`;
 
 /**
  * The answer is about a different leg than the one requested: an "origin"
@@ -1115,10 +1119,10 @@ export function legNote(verdict: AnsweredVerdict & { leg?: LegResolution }): str
     return `Couldn't scope to one leg (${UNSCOPED_WORDS[l.reason ?? "invalid_airport"]}); this answer covers every leg of ${verdict.normalized}.`;
   }
   if ((verdict.kind === "prediction" || verdict.kind === "no_model") && l.otherLegs.length > 0) {
-    return `Your ${requestedLabel(l)} leg isn't in our assignment data yet; this estimate is for flight ${verdict.normalized} overall.`;
+    return `Your ${requestedLeg(l)} isn't in our assignment data yet; this estimate is for flight ${verdict.normalized} overall.`;
   }
   if (answersOtherLeg(l)) {
-    return `We hold no ${requestedLabel(l)} leg for ${verdict.normalized}; this answer is for its ${legLabel(l)} leg only.`;
+    return `We hold no ${requestedLeg(l)} for ${verdict.normalized}; this answer is for its ${legLabel(l)} leg only.`;
   }
   return "";
 }
