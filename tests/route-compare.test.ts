@@ -445,7 +445,10 @@ describe("planItinerary", () => {
 describe("planItinerary geographic gates", () => {
   let sdb: Database;
   let reader: ReturnType<typeof getReader>;
-  const NO_PROB = { maxItineraries: 10, minLegProbability: 0 } as const;
+  // Every synthetic leg lasts 3h (addFlight), so a 3h OGG→SFO "direct" would
+  // put the on-the-way LAX partial over the time budget; these tests isolate
+  // the geographic and census gates.
+  const NO_PROB = { maxItineraries: 10, minLegProbability: 0, enforceTimeBudget: false } as const;
   const vias = (o: string, d: string) =>
     planItinerary(reader, o, d, NO_PROB).map((it) => it.via.join(","));
 

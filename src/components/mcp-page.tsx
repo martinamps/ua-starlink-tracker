@@ -10,6 +10,9 @@ export default function McpPage({ site }: McpPageProps) {
   const homeTitle = site.brand.title;
   const mcpUrl = `https://${site.canonicalHost}/mcp`;
   const claudeConnectorsUrl = "https://claude.ai/settings/connectors?modal=add-custom-connector";
+  const claudeCodeCommand = `claude mcp add --transport http starlink ${mcpUrl}`;
+  const cursorInstallUrl = `cursor://anysphere.cursor-deeplink/mcp/install?name=starlink&config=${encodeURIComponent(btoa(JSON.stringify({ url: mcpUrl })))}`;
+  const vscodeInstallUrl = `vscode:mcp/install?${encodeURIComponent(JSON.stringify({ name: "starlink", type: "http", url: mcpUrl }))}`;
   return (
     <div className="w-full mx-auto px-4 sm:px-6 md:px-8 bg-base min-h-screen flex flex-col relative">
       <div className="absolute inset-0 grid-pattern opacity-50 pointer-events-none" />
@@ -155,6 +158,28 @@ export default function McpPage({ site }: McpPageProps) {
                 MCP spec →
               </a>
             </p>
+            <div className="pt-2 border-t border-subtle space-y-2">
+              <p>
+                <strong className="text-secondary">Claude Code:</strong>
+              </p>
+              <code className="block font-mono text-xs text-accent break-all select-all bg-base rounded px-3 py-2 border border-subtle">
+                {claudeCodeCommand}
+              </code>
+              <p className="flex items-center gap-2 pt-1">
+                <a
+                  href={cursorInstallUrl}
+                  className="px-3 py-1.5 bg-accent/20 border border-accent text-accent font-display rounded hover:bg-accent/30 transition-colors whitespace-nowrap"
+                >
+                  Add to Cursor
+                </a>
+                <a
+                  href={vscodeInstallUrl}
+                  className="px-3 py-1.5 bg-accent/20 border border-accent text-accent font-display rounded hover:bg-accent/30 transition-colors whitespace-nowrap"
+                >
+                  Add to VS Code
+                </a>
+              </p>
+            </div>
           </div>
         </details>
       </div>

@@ -48,7 +48,7 @@ import {
   aggregatePenetration,
   createReaderFactory,
 } from "../database/reader";
-import { airportDistanceMiles, detourBoundMiles } from "../utils/airport-geo";
+import { airportDistanceMiles, detourBoundMiles, hubAllowedForTrip } from "../utils/airport-geo";
 import { flightDateWindow, matchesLocalDate } from "../utils/airport-tz";
 
 // The prediction model is trained exclusively on United verification
@@ -1162,6 +1162,8 @@ export type ItineraryLeg = BasePrediction & {
   // True if this leg comes from a confirmed near-term Starlink assignment in
   // upcoming_flights (not historical prediction). Render differently.
   confirmed?: boolean;
+  // duration_hours was backfilled by routeHours() rather than observed on this flight.
+  duration_estimated?: boolean;
 };
 
 export interface Itinerary {
@@ -1357,12 +1359,15 @@ export function planItinerary(
     minLegProbability?: number;
     maxStops?: number;
     targetDateUnix?: number;
+    /** Time budget + 2-stop gain rule; defaults to ENFORCE_ITINERARY_TIME_BUDGET. */
+    enforceTimeBudget?: boolean;
   } = {}
 ): Itinerary[] {
   const orig = origin.toUpperCase().trim();
   const dest = destination.toUpperCase().trim();
   if (orig === dest) return [];
 
+  const enforceBudget = options.enforceTimeBudget ?? ENFORCE_ITINERARY_TIME_BUDGET;
   const maxItineraries = options.maxItineraries ?? 10;
   const minLegProb = options.minLegProbability ?? MIN_LEG_PROBABILITY;
   const maxStops = Math.min(options.maxStops ?? 2, 3);
@@ -1386,6 +1391,27 @@ export function planItinerary(
   const graph = buildRouteGraph(reader, minLegProb, options.targetDateUnix);
   const itineraries: Itinerary[] = [];
 
+  const hoursMemo = new Map<string, number | null>();
+  const withDuration = (leg: ItineraryLeg): ItineraryLeg => {
+    if (leg.duration_hours !== null) return leg;
+    const [a, b] = leg.route.split("-");
+    const key = `${a}-${b}`;
+    if (!hoursMemo.has(key)) hoursMemo.set(key, baselineHours(reader, a, b));
+    const h = hoursMemo.get(key) ?? null;
+    return h === null ? leg : { ...leg, duration_hours: h, duration_estimated: true };
+  };
+  const build = (legs: ItineraryLeg[], coverage: "full" | "partial") =>
+    computeItinerary(legs.map(withDuration), coverage);
+  const baseline = routeBaseline(reader, orig, dest);
+  const budgetHours = baseline ? itineraryHourBudget(baseline.duration_hours) : null;
+  const withinBudget = (it: Itinerary): boolean =>
+    !enforceBudget ||
+    it.via.length === 0 ||
+    budgetHours === null ||
+    it.total_flight_hours === null ||
+    elapsedHours(it) <= budgetHours;
+  const hubAllowed = (hub: string) => hubAllowedForTrip(orig, dest, hub);
+
   // --- BFS up to maxStops+1 legs ---
   type SearchState = { airport: string; legs: ItineraryLeg[]; joint: number; flown: number | null };
   let frontier: SearchState[] = [{ airport: orig, legs: [], joint: 1, flown: 0 }];
@@ -1400,6 +1426,7 @@ export function planItinerary(
       for (const [nextAirport, leg] of edges.entries()) {
         if (nextAirport === orig) continue;
         if (state.legs.some((l) => l.route.split("-")[1] === nextAirport)) continue;
+        if (nextAirport !== dest && !hubAllowed(nextAirport)) continue;
 
         const flown = pathMiles(state.flown, state.airport, nextAirport);
         if (exceedsBound(flown, nextAirport)) continue;
@@ -1411,7 +1438,8 @@ export function planItinerary(
           const pathKey = newLegs.map((l) => l.route).join("|");
           if (!seenPaths.has(pathKey)) {
             seenPaths.add(pathKey);
-            itineraries.push(computeItinerary(newLegs, "full"));
+            const it = build(newLegs, "full");
+            if (withinBudget(it)) itineraries.push(it);
           }
         } else if (depth < maxStops) {
           nextFrontier.push({ airport: nextAirport, legs: newLegs, joint: newJoint, flown });
@@ -1447,7 +1475,7 @@ export function planItinerary(
       // hub === dest as well as hub === orig: without the former the planner
       // emitted a MIA-MIA self-loop leg ("fly ORD->MIA, then fly MIA->MIA").
       if (!leg || leg.probability < minLegProb || hub === orig || hub === dest) continue;
-      if (!hubOnPath(hub) || !isServed(orig, hub)) continue;
+      if (!hubOnPath(hub) || !isServed(orig, hub) || !hubAllowed(hub)) continue;
       if (itineraries.some((it) => it.via.length === 1 && it.via[0] === hub)) continue;
       candidates.push({ starlinkLeg: leg, hub, direction: "in" });
     }
@@ -1456,7 +1484,7 @@ export function planItinerary(
     if (outEdges) {
       for (const [hub, leg] of outEdges.entries()) {
         if (hub === dest || leg.probability < minLegProb) continue;
-        if (!hubOnPath(hub) || !isServed(hub, dest)) continue;
+        if (!hubOnPath(hub) || !isServed(hub, dest) || !hubAllowed(hub)) continue;
         if (itineraries.some((it) => it.via.length === 1 && it.via[0] === hub)) continue;
         candidates.push({ starlinkLeg: leg, hub, direction: "out" });
       }
@@ -1469,26 +1497,43 @@ export function planItinerary(
       return bH - aH;
     });
 
-    for (const c of candidates.slice(0, partialLimit)) {
+    let partialsAdded = 0;
+    for (const c of candidates) {
+      if (partialsAdded >= partialLimit) break;
       const legs =
         c.direction === "in"
           ? [makePositioningLeg(`${orig}-${c.hub}`), c.starlinkLeg]
           : [c.starlinkLeg, makePositioningLeg(`${c.hub}-${dest}`)];
-      itineraries.push(computeItinerary(legs, "partial"));
+      const it = build(legs, "partial");
+      if (!withinBudget(it)) continue;
+      itineraries.push(it);
+      partialsAdded++;
     }
   }
 
+  // A 2-stop has to buy real Starlink time over the simpler options (the
+  // nonstop baseline included), not just a marginally better ratio.
+  const simplerBest = Math.max(
+    baseline?.expected_starlink_hours ?? 0,
+    ...itineraries.filter((it) => it.via.length <= 1).map((it) => it.expected_starlink_hours ?? 0)
+  );
+  const worthTheStops = (it: Itinerary) =>
+    it.via.length < 2 ||
+    (it.expected_starlink_hours ?? 0) >= simplerBest + MULTI_STOP_MIN_GAIN_HOURS;
+  const kept = enforceBudget ? itineraries.filter(worthTheStops) : itineraries;
+
   // --- Ranking ---
-  // Primary: COVERAGE RATIO (eSL / totalH). This treats a 1h 92% direct and a
-  // 10h 90% multi-stop as roughly equal quality — the user's EXPERIENCE is the
-  // same. Raw eSL would rank the 10h option absurdly higher.
-  // Secondary: fewer legs (users prefer simpler routings).
-  // Tertiary: more expected Starlink hours (breaks ties for similar ratios).
-  itineraries.sort((a, b) => {
+  // Primary: COVERAGE RATIO (eSL / totalH) minus a per-stop penalty. The ratio
+  // treats a 1h 92% direct and a 10h 90% multi-stop as equal quality; the
+  // penalty keeps a 96% 2-stop from outranking a 94% 1-stop that is hours shorter.
+  // Tiebreaks: fewer legs, then more expected Starlink hours.
+  const score = (it: Itinerary) =>
+    it.coverage_ratio === null ? null : it.coverage_ratio - STOP_PENALTY * it.via.length;
+  kept.sort((a, b) => {
     if (a.coverage !== b.coverage) return a.coverage === "full" ? -1 : 1;
 
-    const aR = a.coverage_ratio;
-    const bR = b.coverage_ratio;
+    const aR = score(a);
+    const bR = score(b);
     if (aR !== null && bR !== null) {
       if (Math.abs(bR - aR) > 0.02) return bR - aR;
     } else if (aR !== null) return -1;
@@ -1503,8 +1548,8 @@ export function planItinerary(
 
   // Guarantee: direct flight (if in graph) is always in results, regardless of
   // ratio rank. It's what users expect as the "baseline" option.
-  const fullSorted = itineraries.filter((it) => it.coverage === "full");
-  const partialSorted = itineraries.filter((it) => it.coverage === "partial");
+  const fullSorted = kept.filter((it) => it.coverage === "full");
+  const partialSorted = kept.filter((it) => it.coverage === "partial");
   const direct = fullSorted.find((it) => it.via.length === 0);
   const nonDirect = fullSorted.filter((it) => it.via.length > 0);
 
@@ -1513,6 +1558,111 @@ export function planItinerary(
     : nonDirect.slice(0, maxItineraries);
 
   return [...fullKept, ...partialSorted.slice(0, 3)];
+}
+
+/**
+ * Time budget for connections relative to the nonstop. Ratio-only ranking
+ * recommended SFO→EWR as 9–10h 2-stops (via Halifax, Nantucket) against a
+ * 5.7h nonstop, and IAH→CLE at 2x the trip time. Flip to false to restore
+ * pure coverage-ratio ranking with no time/stop gates.
+ */
+export const ENFORCE_ITINERARY_TIME_BUDGET = true;
+const BUDGET_FACTOR = 1.5;
+const BUDGET_SLACK_HOURS = 2.5;
+// Minimum connection time per stop; total_flight_hours is airborne time only.
+const LAYOVER_HOURS = 1.0;
+const MULTI_STOP_MIN_GAIN_HOURS = 1.0;
+const STOP_PENALTY = 0.04;
+// Block-time estimate when no flight has been observed on a pair: cruise at
+// ~480 mph plus taxi/climb overhead.
+const CRUISE_MPH = 480;
+const BLOCK_OVERHEAD_HOURS = 0.5;
+
+/** Max elapsed hours (flying + layovers) an itinerary may take, given the nonstop's duration. */
+export function itineraryHourBudget(baselineHours: number): number {
+  return Math.max(BUDGET_FACTOR * baselineHours, baselineHours + BUDGET_SLACK_HOURS);
+}
+
+/** Flying time plus a minimum connection per stop. */
+export function elapsedHours(it: Itinerary): number {
+  return (it.total_flight_hours ?? 0) + LAYOVER_HOURS * it.via.length;
+}
+
+/**
+ * Nonstop block time between two airports: an observed direct flight, else
+ * the flight_routes history for the pair, else great-circle / cruise speed.
+ * Null only when neither the data nor the coordinate table knows the pair.
+ */
+export function baselineHours(
+  reader: ScopedReader,
+  origin: string,
+  destination: string
+): number | null {
+  return routeHours(reader, origin, destination)?.hours ?? null;
+}
+
+type DurationSource = "schedule" | "route_history" | "great_circle";
+
+function routeHours(
+  reader: ScopedReader,
+  origin: string,
+  destination: string
+): { hours: number; source: DurationSource } | null {
+  const edge = reader.getDirectRouteEdge(origin, destination);
+  if (edge && edge.dur_sec > 0) return { hours: edge.dur_sec / 3600, source: "schedule" };
+  // getRouteFlightNumbers is single-airline only; the hub reader throws on it.
+  if (reader.scope !== "ALL") {
+    const sec = reader.getRouteFlightNumbers(origin, destination).durationSec;
+    if (sec && sec > 0) return { hours: sec / 3600, source: "route_history" };
+  }
+  const miles = airportDistanceMiles(origin, destination);
+  return miles === null
+    ? null
+    : { hours: miles / CRUISE_MPH + BLOCK_OVERHEAD_HOURS, source: "great_circle" };
+}
+
+export interface RouteBaseline {
+  route: string;
+  /** Observed nonstop flight number, when one exists in the schedule snapshot. */
+  flight_number: string | null;
+  probability: number;
+  duration_hours: number;
+  /** "great_circle" = no nonstop has been observed; the duration is a distance estimate. */
+  duration_source: DurationSource;
+  expected_starlink_hours: number;
+}
+
+/** The nonstop a connection has to beat. Null when the pair has no known duration. */
+export function routeBaseline(
+  reader: ScopedReader,
+  origin: string,
+  destination: string
+): RouteBaseline | null {
+  const o = origin.toUpperCase().trim();
+  const d = destination.toUpperCase().trim();
+  const duration = routeHours(reader, o, d);
+  if (duration === null) return null;
+  const edge = reader.getDirectRouteEdge(o, d);
+  const flightNumber = edge ? uaPrefix(edge.flight_number) : null;
+  const probability = flightNumber
+    ? predictFlight(reader, flightNumber).probability
+    : mainlineFleetRate(reader);
+  return {
+    route: `${o}-${d}`,
+    flight_number: flightNumber,
+    probability,
+    duration_hours: duration.hours,
+    duration_source: duration.source,
+    expected_starlink_hours: probability * duration.hours,
+  };
+}
+
+// Unobserved nonstops are almost always mainline; the live mainline install
+// rate, not the 0.02 fallback constant (7.8x low against ~0.157).
+function mainlineFleetRate(reader: ScopedReader): number {
+  const stats = reader.getFleetStats();
+  if (!stats || stats.mainline.total <= 0) return DEFAULT_CONFIG.mainlineColdPrior;
+  return stats.mainline.starlink / stats.mainline.total;
 }
 
 export type { Prediction };

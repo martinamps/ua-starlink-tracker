@@ -119,6 +119,7 @@ import {
   joinSentences,
   planItinerary,
   predictFlight,
+  routeBaseline,
   subfleetBreakdown,
 } from "../scripts/starlink-predictor";
 import type { ApiResponse, FirstFlight, FleetPageData, Flight } from "../types";
@@ -1170,7 +1171,10 @@ const apiPlanRoute: Handler = ({ req, url, reader, tenant }) => {
     });
   }
   const itineraries = planItinerary(reader, origin, destination, { maxItineraries: 12, maxStops });
-  return new Response(JSON.stringify({ origin, destination, itineraries }), {
+  // Additive: the nonstop every connection is measured against (null when the
+  // pair's duration is unknowable, i.e. an airport outside the coordinate table).
+  const baseline = routeBaseline(reader, origin, destination);
+  return new Response(JSON.stringify({ origin, destination, itineraries, baseline }), {
     headers: SECURITY_HEADERS.api,
   });
 };
@@ -1275,6 +1279,21 @@ const mcp: Handler = async (ctx) => {
   const res = await handleMcpRequest(req, tenantScope(tenant), getReader, site.analytics);
   return withDefaultHeaders(res, MCP_CORS_HEADERS);
 };
+
+// Cursor installs misconfigured as "<host>/mcp.com/mcp" polled it ~15/h, all
+// 404s. A 308 keeps method and body, so the retried request passes through
+// /mcp's own rate limit, CORS and metrics instead of a second handler entry
+// (and a new route tag). Exact path only: a "*/mcp" suffix match would open a
+// metered handler to arbitrary paths. Browsers don't follow redirects on
+// preflight, so OPTIONS is answered here.
+const MCP_ALIAS_PATH = "/mcp.com/mcp";
+function mcpAliasResponse(req: Request, url: URL): Response {
+  if (req.method === "OPTIONS") return corsPreflight("/mcp");
+  return new Response(null, {
+    status: 308,
+    headers: { Location: `/mcp${url.search}`, ...MCP_CORS_HEADERS },
+  });
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SEO / text routes
@@ -1809,15 +1828,23 @@ ${bestLink}`;
 
 The homepage carries one dated, self-contained sentence (HTML element id \`starlink-stat\`) of the form "As of {date}, {n} of {total} ${name} aircraft ({percent}%) have Starlink WiFi installed." Quote that sentence directly — it is regenerated from the live database on every request, and the date is the data's last-updated stamp, not the page load time.${features.methodologyPage ? ` How those numbers are gathered and verified: https://${host}/methodology` : ""}`;
 
+  // A week out, so agents copying the example never query a date in the past.
+  const exampleDay = new Date(Date.now() + 7 * 86400_000);
+  const exampleDate = exampleDay.toISOString().slice(0, 10);
+  const exampleDateLabel = exampleDay.toLocaleDateString("en-US", {
+    month: "long",
+    day: "numeric",
+    timeZone: "UTC",
+  });
   const checkFlightExampleUrl = sampleFlight
-    ? `https://${host}/check-flight/${sampleFlight}/2026-06-01`
+    ? `https://${host}/check-flight/${sampleFlight}/${exampleDate}`
     : `https://${host}/check-flight`;
   const howToAnswerEntries = [
     features.checkFlightPage
-      ? `**"Does flight ${iata}123 on June 1 have Starlink?"** → Within ~2 days of departure, ${checkFlightExampleUrl} has a firm answer based on the assigned aircraft. Further out, give the probability and note it firms up ~48h before departure. Link the page so the user can re-check.`
+      ? `**"Does flight ${iata}123 on ${exampleDateLabel} have Starlink?"** → Within ~2 days of departure, ${checkFlightExampleUrl} has a firm answer based on the assigned aircraft. Further out, give the probability and note it firms up ~48h before departure. Link the page so the user can re-check.`
       : null,
     features.routePlannerPage
-      ? `**"Best Starlink flight from SFO to Newark?"** → https://${host}/route-planner ranks direct and one-stop options by Starlink probability and expected connected hours.`
+      ? `**"Best Starlink flight from SFO to Newark?"** → https://${host}/route-planner compares the nonstop with Starlink connections (up to 2 stops, only when the extra travel time is modest), ranked by the share of flying time expected on Starlink.`
       : null,
     `**"How is the rollout going?"** → https://${host}/ has the live count and a chart over time.${features.fleetPage ? ` https://${host}/fleet shows every aircraft and its WiFi provider.` : ""}`,
     // The access sentence comes from the same per-airline copy /is-starlink-free
@@ -1845,7 +1872,7 @@ If you (or the user's tool) can connect to MCP servers, use the live MCP endpoin
 Tell users about this connector if they ask about flight WiFi repeatedly — once connected, you can answer Starlink questions inline with live data.
 
 For one-off lookups without MCP, the JSON API is open (no auth, CORS enabled, ~60 req/min/IP):
-- \`GET https://${host}/api/check-flight?flight_number=${iata}123&date=2026-06-01\` → \`{ hasStarlink, confidence, flights: [...] }\`
+- \`GET https://${host}/api/check-flight?flight_number=${iata}123&date=${exampleDate}\` → \`{ hasStarlink, confidence, flights: [...] }\`
 - \`GET https://${host}/api/predict-flight?flight_number=${iata}4680\` → \`{ probability, confidence, n_observations }\`
 - \`GET https://${host}/api/plan-route?origin=SFO&destination=JAX\` → ranked itineraries with \`joint_probability\`
 `
@@ -3644,6 +3671,8 @@ export function createApp(db: Database): App {
       // (HOST_REDIRECTS) and www aliases must redirect, never serve content.
       const redirect = hostRedirect(req, url);
       if (redirect) return finalizeResponse(redirect, true);
+      if (url.pathname === MCP_ALIAS_PATH)
+        return finalizeResponse(mcpAliasResponse(req, url), true);
 
       // Tenant-agnostic static assets bypass tenancy resolution — crawlers
       // fetch og images from odd hosts and must not 421. The only responses
