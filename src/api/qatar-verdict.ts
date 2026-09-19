@@ -392,6 +392,15 @@ function liveLegs(
   return out;
 }
 
+export function qatarLiveLegs(
+  reader: ScopedReader,
+  normalized: string,
+  date: string,
+  window: FlightDateWindow
+): QatarLeg[] {
+  return liveLegs(reader, qatarFlightVariants(normalized), date, window);
+}
+
 /** "its 777 fleet", "its 777 and A350 fleets" — the families of fitted rows. */
 function fleetPhrase(rows: readonly QatarLeg[]): string {
   const fleets = [
@@ -499,7 +508,9 @@ export function resolveQatarVerdict(
   normalized: string,
   date: string,
   window: FlightDateWindow,
-  nowSec: number
+  nowSec: number,
+  /** The live legs to answer from; a leg-scoped caller passes its selection. */
+  liveRows?: QatarLeg[]
 ): QatarVerdict {
   const variants = qatarFlightVariants(normalized);
   const daysOut = qatarDaysOut(date, nowSec);
@@ -518,7 +529,7 @@ export function resolveQatarVerdict(
       today
     );
 
-  const rows = liveLegs(reader, variants, date, window);
+  const rows = liveRows ?? liveLegs(reader, variants, date, window);
   if (rows.length > 0) {
     const answer = scheduleAnswer(rows, normalized, date, window);
     // Two or more days out, a fitted type on a number that often flies other

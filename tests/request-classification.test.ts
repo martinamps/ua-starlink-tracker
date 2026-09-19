@@ -78,7 +78,9 @@ describe("normalizeExtVersion", () => {
     expect(normalizeExtVersion(null)).toBe("none");
     expect(normalizeExtVersion("ext-1.2.0")).toBe("1.x");
     expect(normalizeExtVersion("ext-2.0.1")).toBe("2.0");
-    expect(normalizeExtVersion("ext-2.1.0")).toBe("2.x");
+    // 2.1 (first leg-scoped build) gets its own bucket; later 2.x share one.
+    expect(normalizeExtVersion("ext-2.1.0")).toBe("2.1");
+    expect(normalizeExtVersion("ext-2.3.0")).toBe("2.x");
     expect(normalizeExtVersion("ext-3.0.0")).toBe("other");
     expect(normalizeExtVersion("<script>")).toBe("other");
   });

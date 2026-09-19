@@ -16,6 +16,7 @@ import {
 } from "../airlines/registry";
 import type {
   Aircraft,
+  AircraftTypePageData,
   AirportDepartures,
   FirstFlight,
   FleetDiscoveryStats,
@@ -63,6 +64,7 @@ import {
   computeWifiConsensus,
   countStarlinkPlanes,
   flightNumberHasData,
+  getAircraftTypePageData,
   getAirlineByTail,
   getAirportDepartures,
   getCachedFlightRoutes,
@@ -262,6 +264,9 @@ export interface ScopedReader {
     lastUpdated: number | null;
   };
 
+  /** /fleet/{slug} page data; null on the hub and for types without a page. */
+  getAircraftTypePage(slug: string): AircraftTypePageData | null;
+
   // QR equipment history + fetch coverage; airline-agnostic like qatar_schedule.
   getQatarEquipmentHistory(
     variants: readonly string[],
@@ -427,6 +432,9 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
 
     getAssignmentHistory: (v, d) => getAssignmentHistory(db, airlines, v, d),
     getSameDayStarlinkAlternatives: (q) => getSameDayStarlinkAlternatives(db, airlines, q),
+
+    getAircraftTypePage: (slug) =>
+      scope === "ALL" ? null : getAircraftTypePageData(db, scope, slug),
   };
   return Object.freeze(r);
 }

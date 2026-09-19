@@ -248,6 +248,17 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
     fun_fact:
       "Sized to the exact 76-seat limit that pilot unions negotiated — any bigger and it's illegal to fly.",
   },
+  E170: {
+    seats: 70,
+    wingspan_ft: 85.3,
+    length_ft: 98.1,
+    range_mi: 2470,
+    cruise_mph: 515,
+    first_flight: 2002,
+    engines: "2× GE CF34-8E",
+    fun_fact:
+      "The first E-Jet to fly. The E175 that dominates United Express is the same airplane stretched by about six feet.",
+  },
   "ERJ-145": {
     seats: 50,
     wingspan_ft: 65.8,

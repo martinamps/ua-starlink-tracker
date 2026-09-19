@@ -99,10 +99,11 @@ depends on the airline:
 - The extension reads flight numbers and dates from Google Flights pages you
   are already viewing. It does not read anything else on the page.
 - For each United/Hawaiian/Alaska/Qatar flight it finds, it sends **only the
-  flight number and date** to unitedstarlinktracker.com or
-  airlinestarlinktracker.com to ask "does this flight have Starlink?", plus
-  the extension's version number (`client=ext-2.1.0`) so the site can count
-  extension lookups separately from website visits.
+  flight number, date, and each leg's departure/arrival airport codes** to
+  unitedstarlinktracker.com or airlinestarlinktracker.com to ask "does this
+  leg have Starlink?", plus the extension's version number
+  (`client=ext-2.1.0`) so the site can count extension lookups separately
+  from website visits.
   No account data, no page contents, no URLs, no identifiers ride along.
 - It does not collect, store, or transmit any personal information.
 - It does not track your browsing history; it only runs on Google Flights.

@@ -12,6 +12,7 @@
  * Input examples (44 distinct in prod):
  *   "Boeing 737-924(ER)", "Boeing 737-924", "Boeing 737-932(ER)" → all B737-900
  *   "ERJ-175", "E175SC", "Embraer E-175", "Embraer E175LR", "E75L" → all E175
+ *   "Embraer E170SE", "Embraer E-170"                            → E170
  *   "Mitsubishi CRJ-701ER", "CRJ-700"                            → all CRJ-700
  *
  * Ordered from most-specific to least-specific pattern — first match wins.
@@ -22,6 +23,9 @@ const AIRCRAFT_FAMILIES: ReadonlyArray<[RegExp, string]> = [
   [/737[-\s]?(MAX[-\s]?10|10[-\s]?MAX)/i, "B737-MAX10"],
   [/737[-\s]?(MAX[-\s]?8|8[-\s]?MAX)/i, "B737-MAX8"],
   [/737[-\s]?(MAX[-\s]?9|9[-\s]?MAX)/i, "B737-MAX9"],
+  // alaskaair.com's equipment codes ("737-M8E", "737-M9E").
+  [/737-?M8/i, "B737-MAX8"],
+  [/737-?M9/i, "B737-MAX9"],
   // Converted freighters ("737-804(BCF)", "737-790(BDSF)") must win over the
   // passenger -700/-800 patterns below.
   [/737[\w-]*\((?:BCF|BDSF|SF|PCF|F)\)/i, "B737F"],
@@ -38,11 +42,15 @@ const AIRCRAFT_FAMILIES: ReadonlyArray<[RegExp, string]> = [
   [/787|^B78[89]\b/i, "B787"],
   [/A319/i, "A319"],
   [/A320/i, "A320"],
+  [/Airbus\s+320\b/i, "A320"],
   [/A321|^(A21N|32Q)\b/i, "A321"],
   [/A330|^A33[23]\b/i, "A330"],
   [/A350/i, "A350"],
   [/A380/i, "A380"],
-  [/E-?17[05]|ERJ.?17[05]|EMB.?17[05]|^E75[A-Z]?\b/i, "E175"],
+  // Its own family: folded into E175, the unequipped E170s read as E175s
+  // still waiting for Starlink and dragged the type's penetration down.
+  [/E-?170|ERJ.?170|EMB.?170|^E70\b/i, "E170"],
+  [/E-?175|ERJ.?175|EMB.?175|^E75[A-Z]?\b/i, "E175"],
   [/ERJ.?145/i, "ERJ-145"],
   [/CRJ.?2/i, "CRJ-200"],
   [/CRJ.?550/i, "CRJ-550"],
