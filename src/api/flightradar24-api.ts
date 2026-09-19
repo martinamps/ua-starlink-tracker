@@ -97,21 +97,30 @@ interface FR24Response {
 // Four instances exist (server, mcp-server, flight-updater, scripts) — per-instance
 // state meant 4x the intended request rate.
 let lastRequestTime = 0;
-const MIN_REQUEST_INTERVAL = 2000; // 2s between requests to avoid 402 rate limits
+export const MIN_REQUEST_INTERVAL = 2000; // 2s between requests to avoid 402 rate limits
+
+// The slot is claimed synchronously: reading lastRequestTime, sleeping, then
+// stamping it let concurrent callers read the same stamp and fire together
+// (2,184 FR24 calls/hr against a nominal 1,800 on 2026-09-03).
+export function reserveFr24Slot(nowMs = Date.now()): number {
+  const slot = Math.max(nowMs, lastRequestTime + MIN_REQUEST_INTERVAL);
+  lastRequestTime = slot;
+  return slot - nowMs;
+}
+
+// FR24 lists a registration's flights newest-first. Capping that list unsorted
+// kept a busy regional tail's furthest-future legs and dropped the leg in the
+// air plus the next several hours (310 of 561 UA tails sat at the old cap of 10,
+// 256 of them with their first row over an hour after the refresh; prod
+// snapshot 2026-08-29).
+export const FR24_UPCOMING_CAP = 16;
 
 export class FlightRadar24API {
   private baseUrl = "https://api.flightradar24.com/common/v1";
 
   private async waitForRateLimit() {
-    const now = Date.now();
-    const timeSinceLastRequest = now - lastRequestTime;
-
-    if (timeSinceLastRequest < MIN_REQUEST_INTERVAL) {
-      const waitTime = MIN_REQUEST_INTERVAL - timeSinceLastRequest;
-      await new Promise((resolve) => setTimeout(resolve, waitTime));
-    }
-
-    lastRequestTime = Date.now();
+    const waitMs = reserveFr24Slot();
+    if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
   }
 
   private async retryWithBackoff<T>(
@@ -166,7 +175,7 @@ export class FlightRadar24API {
     return this.retryWithBackoff(async () => {
       // FR24 API expects registration without the leading 'N' for some queries,
       // but works fine with the full registration
-      const url = `${this.baseUrl}/flight/list.json?query=${tailNumber}&fetchBy=reg&page=1&limit=20`;
+      const url = `${this.baseUrl}/flight/list.json?query=${tailNumber}&fetchBy=reg&page=1&limit=25`;
 
       const response = await fr24Fetch(url, 30000);
 
@@ -201,44 +210,7 @@ export class FlightRadar24API {
         return [];
       }
 
-      const now = Math.floor(Date.now() / 1000);
-
-      return flights
-        .filter((flight) => {
-          const departureTime =
-            flight.time.scheduled.departure || flight.time.estimated.departure || 0;
-          // Keep flights that haven't landed yet — including ones currently
-          // airborne. Filtering on departure alone evicts in-progress flights
-          // when updateFlights() does its DELETE+INSERT, which starves the
-          // /fleet live-airborne pulse. Use the LATEST known arrival
-          // (scheduled||estimated short-circuits on a past scheduled time
-          // for delayed flights).
-          const arrivalTime = Math.max(
-            flight.time.scheduled.arrival ?? 0,
-            flight.time.estimated.arrival ?? 0
-          );
-          return arrivalTime > now || departureTime > now;
-        })
-        .map((flight) => {
-          // Use callsign (operating code like SKW4783) for FlightAware links, fallback to default
-          const flightNumber =
-            flight.identification.callsign ||
-            flight.identification.number.alternative ||
-            flight.identification.number.default ||
-            "";
-
-          return {
-            flight_number: flightNumber,
-            departure_airport:
-              flight.airport.origin?.code.iata || flight.airport.origin?.code.icao || "",
-            arrival_airport:
-              flight.airport.destination?.code.iata || flight.airport.destination?.code.icao || "",
-            departure_time: flight.time.scheduled.departure || flight.time.estimated.departure || 0,
-            arrival_time: flight.time.scheduled.arrival || flight.time.estimated.arrival || 0,
-          };
-        })
-        .filter((f) => f.departure_airport && f.arrival_airport) // Filter out incomplete flights
-        .slice(0, 10); // Limit to 10 upcoming flights per aircraft
+      return parseUpcomingFlights(flights, Math.floor(Date.now() / 1000));
     });
   }
 
@@ -336,7 +308,8 @@ export class FlightRadar24API {
    */
   async getFlightAssignments(
     flightNumber: string,
-    targetDateUnix: number
+    targetDateUnix: number,
+    opts: { maxRetries?: number } = {}
   ): Promise<
     Array<{
       origin: string;
@@ -395,14 +368,54 @@ export class FlightRadar24API {
 
           return out.sort((a, b) => a.departure_time - b.departure_time);
         },
-        // Awaited inline by /api/check-flight: one (throttle-spaced) retry keeps
-        // the worst case bounded; cross-request spacing comes from the 60s
-        // failure cache in flight-verdict.
-        1,
+        // The request path passes 0: a throttle retry sleeps 30s inline, which
+        // is what stretched one /api/check-flight span to 34.5s on 2026-09-06.
+        opts.maxRetries ?? 1,
         "assignments"
       );
     } catch (err) {
       throw new Fr24UnavailableError(err instanceof Error ? err.message : String(err));
     }
   }
+}
+
+export type FR24ListFlight = Pick<FR24Flight, "identification" | "airport" | "time">;
+
+/** Not-yet-landed legs (airborne ones included), nearest departure first, capped. */
+export function parseUpcomingFlights(
+  flights: FR24ListFlight[],
+  nowSec: number,
+  cap = FR24_UPCOMING_CAP
+): FlightUpdate[] {
+  return flights
+    .filter((flight) => {
+      const departureTime = flight.time.scheduled.departure || flight.time.estimated.departure || 0;
+      // Keep flights that haven't landed yet — including ones currently
+      // airborne. Filtering on departure alone evicts in-progress flights
+      // when updateFlights() does its DELETE+INSERT, which starves the
+      // /fleet live-airborne pulse. Use the LATEST known arrival
+      // (scheduled||estimated short-circuits on a past scheduled time
+      // for delayed flights).
+      const arrivalTime = Math.max(
+        flight.time.scheduled.arrival ?? 0,
+        flight.time.estimated.arrival ?? 0
+      );
+      return arrivalTime > nowSec || departureTime > nowSec;
+    })
+    .map((flight) => ({
+      // Callsign (operating code like SKW4783) for FlightAware links.
+      flight_number:
+        flight.identification.callsign ||
+        flight.identification.number.alternative ||
+        flight.identification.number.default ||
+        "",
+      departure_airport: flight.airport.origin?.code.iata || flight.airport.origin?.code.icao || "",
+      arrival_airport:
+        flight.airport.destination?.code.iata || flight.airport.destination?.code.icao || "",
+      departure_time: flight.time.scheduled.departure || flight.time.estimated.departure || 0,
+      arrival_time: flight.time.scheduled.arrival || flight.time.estimated.arrival || 0,
+    }))
+    .filter((f) => f.departure_airport && f.arrival_airport)
+    .sort((a, b) => a.departure_time - b.departure_time)
+    .slice(0, cap);
 }

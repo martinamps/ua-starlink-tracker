@@ -9,16 +9,19 @@
 
 import { OBSERVED_WIFI_SOURCES } from "../airlines/registry";
 import type { ScopedReader } from "../database/reader";
+import { COUNTERS, metrics, normalizeAirlineTag } from "../observability";
 import { matchesLocalDate } from "../utils/airport-tz";
 import { warn } from "../utils/logger";
-import { FlightRadar24API } from "./flightradar24-api";
+import { FlightRadar24API, Fr24UnavailableError } from "./flightradar24-api";
 
 const fr24 = new FlightRadar24API();
 type Assignment = Awaited<ReturnType<FlightRadar24API["getFlightAssignments"]>>;
 type AssignmentFetcher = (flightNumber: string, targetDateUnix: number) => Promise<Assignment>;
 
+// Request path: no inline retry. A throttled FR24 answers again minutes later,
+// not after a 30s sleep the caller is stuck waiting on.
 const defaultFetcher: AssignmentFetcher = (flightNumber, targetDateUnix) =>
-  fr24.getFlightAssignments(flightNumber, targetDateUnix);
+  fr24.getFlightAssignments(flightNumber, targetDateUnix, { maxRetries: 0 });
 let fetchAssignments: AssignmentFetcher = defaultFetcher;
 
 // Test seam as a setter (not an injected param) because the cache is already
@@ -27,16 +30,29 @@ let fetchAssignments: AssignmentFetcher = defaultFetcher;
 export function setAssignmentFetcher(fetcher: AssignmentFetcher | null): void {
   fetchAssignments = fetcher ?? defaultFetcher;
   assignmentCache.clear();
+  resetFr24RequestGuards();
 }
 
-const assignmentCache = new Map<
-  string,
-  { promise: Promise<Assignment>; at: number; failedAt?: number }
->();
+interface AssignmentCacheEntry {
+  promise: Promise<Assignment>;
+  at: number;
+  failedAt?: number;
+  empty?: boolean;
+}
+const assignmentCache = new Map<string, AssignmentCacheEntry>();
 const ASSIGNMENT_CACHE_TTL = 3600;
 // During an outage, replay the rejection briefly instead of re-running the
 // full retry ladder on every request.
 export const ASSIGNMENT_FAILURE_TTL = 60;
+// FR24 publishes a tail close to departure, so an empty answer for a flight
+// hours away is re-polled; far out, a repeat asker gets the cached empty.
+export const ASSIGNMENT_EMPTY_TTL = 600;
+export const ASSIGNMENT_EMPTY_CACHE_MIN_LEAD = 6 * 3600;
+
+function entryTtl(entry: AssignmentCacheEntry): number {
+  if (entry.failedAt !== undefined) return ASSIGNMENT_FAILURE_TTL;
+  return entry.empty ? ASSIGNMENT_EMPTY_TTL : ASSIGNMENT_CACHE_TTL;
+}
 
 export function cachedFlightAssignments(
   flightNumber: string,
@@ -47,9 +63,20 @@ export function cachedFlightAssignments(
   const now = nowSec;
   const cached = assignmentCache.get(key);
   if (cached) {
-    const failed = cached.failedAt !== undefined;
-    const age = now - (failed ? (cached.failedAt as number) : cached.at);
-    if (age < (failed ? ASSIGNMENT_FAILURE_TTL : ASSIGNMENT_CACHE_TTL)) return cached.promise;
+    const age = now - (cached.failedAt ?? cached.at);
+    if (age < entryTtl(cached)) return cached.promise;
+  }
+
+  const shed = fr24RequestShedReason(now);
+  if (shed) {
+    metrics.increment(COUNTERS.VENDOR_REQUEST, {
+      vendor: "fr24",
+      type: "assignments",
+      status: "shed",
+      reason: shed,
+      airline: normalizeAirlineTag(flightNumber.slice(0, 2)),
+    });
+    return Promise.reject(new Fr24UnavailableError(`shed: ${shed}`));
   }
 
   if (assignmentCache.size > 500) {
@@ -59,24 +86,24 @@ export function cachedFlightAssignments(
   }
 
   const promise = fetchAssignments(flightNumber, targetDateUnix);
-  const entry: { promise: Promise<Assignment>; at: number; failedAt?: number } = {
-    promise,
-    at: now,
-  };
+  const entry: AssignmentCacheEntry = { promise, at: now };
   assignmentCache.set(key, entry);
-  // Empties don't stay cached — unpublished assignments appear close to
-  // departure, so re-polling is intentional. Rejections become a short-TTL
-  // failure marker stamped from the injected clock, so the stamp and the TTL
-  // compare share one timebase; this rejection handler also keeps the stored
-  // promise from ever surfacing as an unhandled rejection.
+  // Rejections become a short-TTL failure marker stamped from the injected
+  // clock, so the stamp and the TTL compare share one timebase; this rejection
+  // handler also keeps the stored promise from ever surfacing as an unhandled
+  // rejection.
   promise.then(
     (result) => {
-      if (result.length === 0) assignmentCache.delete(key);
+      fr24ThrottleStreak = 0;
+      if (result.length > 0) return;
+      if (targetDateUnix - now > ASSIGNMENT_EMPTY_CACHE_MIN_LEAD) entry.empty = true;
+      else if (assignmentCache.get(key) === entry) assignmentCache.delete(key);
     },
     (err) => {
       if (assignmentCache.get(key) === entry) {
         entry.failedAt = now;
       }
+      if (isFr24Throttle(err)) openFr24Breaker(now);
       // Logged here — where the failure is PRODUCED — not in the consumer.
       // A rejection is cached for ASSIGNMENT_FAILURE_TTL and replayed to every
       // request in that window, and concurrent requests all await this same
@@ -87,6 +114,52 @@ export function cachedFlightAssignments(
     }
   );
   return promise;
+}
+
+// Request-path FR24 guards, separate from the background updater's own
+// breaker. Scripted enumeration (173 sequential flight numbers in 30 min on
+// 2026-09-06) got FR24 throttling the shared session and stalled the updater;
+// a shed request degrades to the prediction path exactly like an FR24 outage.
+export const FR24_REQUEST_BUCKET_PER_MIN = 15;
+export const FR24_BREAKER_BASE_SEC = 5 * 60;
+export const FR24_BREAKER_MAX_SEC = 30 * 60;
+
+let fr24Tokens = FR24_REQUEST_BUCKET_PER_MIN;
+let fr24TokensAt = 0;
+let fr24ThrottledUntil = 0;
+let fr24ThrottleStreak = 0;
+
+function resetFr24RequestGuards(): void {
+  fr24Tokens = FR24_REQUEST_BUCKET_PER_MIN;
+  fr24TokensAt = 0;
+  fr24ThrottledUntil = 0;
+  fr24ThrottleStreak = 0;
+}
+
+function fr24RequestShedReason(nowSec: number): "breaker" | "bucket" | null {
+  if (nowSec < fr24ThrottledUntil) return "breaker";
+  const elapsed = Math.max(0, nowSec - fr24TokensAt);
+  fr24Tokens = Math.min(
+    FR24_REQUEST_BUCKET_PER_MIN,
+    fr24Tokens + (elapsed * FR24_REQUEST_BUCKET_PER_MIN) / 60
+  );
+  fr24TokensAt = nowSec;
+  if (fr24Tokens < 1) return "bucket";
+  fr24Tokens -= 1;
+  return null;
+}
+
+// FR24 throttles a busy session with bare 400s as well as 402/429.
+function isFr24Throttle(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /(?:^|\D)(400|402|429)$/.test(message);
+}
+
+function openFr24Breaker(nowSec: number): void {
+  const backoff = Math.min(FR24_BREAKER_MAX_SEC, FR24_BREAKER_BASE_SEC * 2 ** fr24ThrottleStreak);
+  fr24ThrottleStreak++;
+  fr24ThrottledUntil = Math.max(fr24ThrottledUntil, nowSec + backoff);
+  warn(`FR24 throttled the request path; shedding live lookups for ${backoff / 60} min`);
 }
 
 export type SegmentConfidence = "verified" | "spreadsheet" | "disputed" | "negative" | "unknown";
