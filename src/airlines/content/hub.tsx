@@ -6,9 +6,50 @@ import {
   RouteComparePanel,
 } from "../../components/atoms";
 import { publicAirlines } from "../registry";
-import type { AirlineContent, HeroProps } from "./index";
+import type { AirlineContent, HeroProps, HubHomeLinks } from "./index";
 
-const HubHero = ({ stats, perAirlineStats = [], recentInstalls = [] }: HeroProps) => {
+const CHIP =
+  "font-mono text-xs px-2.5 py-1 rounded border border-subtle bg-surface-elevated text-secondary hover:border-accent hover:text-accent transition-colors";
+
+/** Crawlable inlinks to the hub's own URL families: most of its sitemap URLs
+ * were discovered but never crawled while the homepage linked only /airlines. */
+function HubLinkGrid({ links }: { links?: HubHomeLinks }) {
+  if (!links || (links.airlines.length === 0 && links.compares.length === 0)) return null;
+  return (
+    <nav className="bg-surface border border-subtle rounded-lg p-4" aria-label="Airlines">
+      {links.airlines.length > 0 && (
+        <>
+          <h2 className="text-[10px] font-mono text-muted uppercase tracking-wider mb-3">
+            Airlines with Starlink
+          </h2>
+          <div className="flex flex-wrap gap-2">
+            {links.airlines.map((l) => (
+              <a key={l.href} href={l.href} className={CHIP}>
+                {l.label}
+              </a>
+            ))}
+          </div>
+        </>
+      )}
+      {links.compares.length > 0 && (
+        <>
+          <h2 className="text-[10px] font-mono text-muted uppercase tracking-wider mt-4 mb-3">
+            Compare
+          </h2>
+          <div className="flex flex-wrap gap-2">
+            {links.compares.map((l) => (
+              <a key={l.href} href={l.href} className={CHIP}>
+                {l.label}
+              </a>
+            ))}
+          </div>
+        </>
+      )}
+    </nav>
+  );
+}
+
+const HubHero = ({ stats, perAirlineStats = [], recentInstalls = [], hubLinks }: HeroProps) => {
   const { starlinkCount, totalCount } = stats;
   return (
     <div className="relative mb-6 space-y-4">
@@ -30,6 +71,7 @@ const HubHero = ({ stats, perAirlineStats = [], recentInstalls = [] }: HeroProps
       <RouteComparePanel />
       <FlightCheckInput />
       <RecentInstallsFeed items={recentInstalls} airlines={perAirlineStats} />
+      <HubLinkGrid links={hubLinks} />
 
       {/* Client-side wiring for flight-check + route-compare forms + preset chips */}
       <script

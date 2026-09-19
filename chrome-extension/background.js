@@ -11,12 +11,16 @@
 importScripts("lib.js");
 
 const FETCH_TIMEOUT_MS = 10_000;
+const EXTENSION_VERSION =
+  typeof chrome !== "undefined" && chrome.runtime?.getManifest
+    ? chrome.runtime.getManifest().version
+    : undefined;
 
 chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
   if (!request || request.action !== "checkFlight") return undefined;
 
   const lib = globalThis.StarlinkTrackerLib;
-  const url = lib ? lib.endpointFor(request.flightNumber, request.date) : null;
+  const url = lib ? lib.endpointFor(request.flightNumber, request.date, EXTENSION_VERSION) : null;
   if (!url) {
     sendResponse({ success: false, error: "unsupported flight number or date" });
     return undefined;

@@ -1,15 +1,22 @@
 /**
  * ADS-B shadow sweep: every few minutes, ask the community ADS-B aggregators
  * which Starlink-equipped tails are airborne and what callsign they're flying,
- * then compare against the FR24-derived upcoming_flights assignments. Shadow
- * only — nothing here feeds the serving path; the point is delta metrics in
- * Datadog (and rows in adsb_observations) so we can audit agreement before
- * ever leaning on this source.
+ * then compare against the FR24-derived upcoming_flights assignments. The
+ * comparison is shadow only — delta metrics in Datadog and rows in
+ * adsb_observations. The one thing that does reach serving is the
+ * adsb_flight_draws rollup: callsign-derived flight-to-tail departures the
+ * predictor counts as unbiased tail draws (PREDICTOR_ADSB_DRAWS).
  */
 
 import type { Database } from "bun:sqlite";
 import { looksLikeValidTailNumber } from "../airlines/registry";
-import { getFleetTailsWithStatus, recordAdsbSweep } from "../database/database";
+import {
+  type AdsbFlightSighting,
+  countAdsbFlightDraws,
+  pruneAdsbFlightDraws,
+  upsertAdsbFlightDraws,
+} from "../database/adsb-flight-draws";
+import { getFleetTailsWithStatus, getMeta, recordAdsbSweep, setMeta } from "../database/database";
 import {
   COUNTERS,
   DISTRIBUTIONS,
@@ -200,13 +207,14 @@ export type ShadowResult =
 
 // ≥8000 idents are ferry/maintenance/repo across UA + Express operators.
 const NON_REVENUE_MIN_NUM = 8000;
+// FMS may still show the previous leg's ident through taxi/climb-out.
+const MIN_IDENT_GROUND_SPEED_KT = 120;
 
 export function classifyObservation(
   aircraft: AdsbAircraft,
   assignedFlights: string[]
 ): { result: ShadowResult; assignedFlight: string | null } {
-  // FMS may still show the previous leg's ident through taxi/climb-out.
-  if (aircraft.gs != null && aircraft.gs < 120) {
+  if (aircraft.gs != null && aircraft.gs < MIN_IDENT_GROUND_SPEED_KT) {
     return { result: "low_speed", assignedFlight: null };
   }
   const derived = deriveCallsignFlight(aircraft.callsign ?? null);
@@ -369,6 +377,7 @@ export async function runAdsbSweepShadow(
           },
           observations
         );
+        recordFlightDraws(db, observations, now);
 
         for (const [result, value] of Object.entries(counts)) {
           metrics.gauge(GAUGES.ADSB_SHADOW_OBSERVATIONS, value, { result, airline: airlineTag });
@@ -377,6 +386,7 @@ export async function runAdsbSweepShadow(
           result: "airborne_total",
           airline: airlineTag,
         });
+        emitShadowKpis(db, observations, airlineTag);
 
         span.setTag("observed", aircraft.length);
         span.setTag("airborne", airborne);
@@ -399,6 +409,57 @@ export async function runAdsbSweepShadow(
   );
 }
 
+export interface ShadowKpis {
+  accuracy: number | null;
+  blindShare: number | null;
+}
+
+/** accuracy over answered legs; blind share over tails the updater tracks,
+ * since a tail with no upcoming_flights rows at all can never match. */
+export function computeShadowKpis(
+  observations: ReadonlyArray<Pick<AdsbObservationRecord, "tail_number" | "shadow_result">>,
+  trackedTails: ReadonlySet<string>
+): ShadowKpis {
+  let match = 0;
+  let mismatch = 0;
+  let trackedJudged = 0;
+  let trackedBlind = 0;
+  for (const o of observations) {
+    const r = o.shadow_result;
+    if (r !== "match" && r !== "mismatch" && r !== "no_assignment") continue;
+    if (r === "match") match++;
+    if (r === "mismatch") mismatch++;
+    if (!trackedTails.has(o.tail_number)) continue;
+    trackedJudged++;
+    if (r === "no_assignment") trackedBlind++;
+  }
+  return {
+    accuracy: match + mismatch > 0 ? match / (match + mismatch) : null,
+    blindShare: trackedJudged > 0 ? trackedBlind / trackedJudged : null,
+  };
+}
+
+function emitShadowKpis(
+  db: Database,
+  observations: ReadonlyArray<Pick<AdsbObservationRecord, "tail_number" | "shadow_result">>,
+  airlineTag: string
+): void {
+  const tracked = new Set(
+    (
+      db.query("SELECT DISTINCT tail_number FROM upcoming_flights WHERE airline = 'UA'").all() as {
+        tail_number: string;
+      }[]
+    ).map((r) => r.tail_number)
+  );
+  const { accuracy, blindShare } = computeShadowKpis(observations, tracked);
+  if (accuracy !== null) {
+    metrics.gauge(GAUGES.ADSB_SHADOW_ACCURACY, accuracy, { airline: airlineTag });
+  }
+  if (blindShare !== null) {
+    metrics.gauge(GAUGES.ADSB_SHADOW_BLIND_SHARE, blindShare, { airline: airlineTag });
+  }
+}
+
 // Pause for 30 minutes after three consecutive failures so a provider outage
 // doesn't get hammered every 5 minutes.
 const ADSB_OUTAGE_FAILURES = 3;
@@ -418,6 +479,7 @@ export function startAdsbSweepJob(db: Database): JobHandle {
     // observed p95, so it only trips on a genuine hang.
     stuckTimeoutMs: 8 * 60 * 1000,
     run: async () => {
+      await backfillAdsbFlightDraws(db);
       if (breaker.shouldSkip()) return;
       const result = await runAdsbSweepShadow(db);
       if (breaker.record(result.outcome === "error" ? "failure" : "success")) {
@@ -425,4 +487,123 @@ export function startAdsbSweepJob(db: Database): JobHandle {
       }
     },
   });
+}
+
+// UCA's callsign number matched the marketing number on only 22% of logged
+// departures (every other operator 49-69%), so its idents are not a flight
+// number we can attribute a draw to.
+const DRAW_EXCLUDED_PREFIXES = new Set(["UCA"]);
+
+type SightingSource = Pick<
+  AdsbObservationRecord,
+  "observed_at" | "tail_number" | "callsign" | "airborne" | "ground_speed"
+>;
+
+/** The marketing flight a sighting is evidence for, or null when the callsign
+ * cannot name one. Same speed and non-revenue rules as classifyObservation. */
+export function flightSightingFromObservation(o: SightingSource): AdsbFlightSighting | null {
+  if (!o.airborne) return null;
+  if (o.ground_speed != null && o.ground_speed < MIN_IDENT_GROUND_SPEED_KT) return null;
+  const derived = deriveCallsignFlight(o.callsign);
+  if (!derived || DRAW_EXCLUDED_PREFIXES.has(derived.prefix)) return null;
+  if (derived.num <= 0 || derived.num >= NON_REVENUE_MIN_NUM) return null;
+  return {
+    flight_number: `UA${derived.num}`,
+    tail_number: o.tail_number,
+    observed_at: o.observed_at,
+  };
+}
+
+function toSightings(rows: readonly SightingSource[]): AdsbFlightSighting[] {
+  const out: AdsbFlightSighting[] = [];
+  for (const r of rows) {
+    const s = flightSightingFromObservation(r);
+    if (s) out.push(s);
+  }
+  return out;
+}
+
+/** Best-effort: the rollup is predictor input, never a reason to lose a sweep. */
+function recordFlightDraws(db: Database, observations: readonly SightingSource[], now: number) {
+  try {
+    upsertAdsbFlightDraws(db, toSightings(observations));
+    pruneAdsbFlightDraws(db, now);
+  } catch (err) {
+    logError("adsb-sweep: flight-draw rollup failed", err);
+  }
+}
+
+const BACKFILL_META_KEY = "adsbFlightDrawsBackfill";
+const BACKFILL_CHUNK_ROWS = 50_000;
+/** Per job tick. Each chunk is synchronous SQLite, so the budget plus a yield
+ * between chunks keeps the backfill from holding the event loop for longer
+ * than one chunk at a time. */
+const BACKFILL_BUDGET_MS = 3_000;
+
+type BackfillState = { cursor: number; highWater: number } | "done";
+
+function readBackfillState(db: Database): BackfillState | null {
+  const raw = getMeta(db, BACKFILL_META_KEY);
+  if (!raw) return null;
+  if (raw === "done") return "done";
+  try {
+    const parsed = JSON.parse(raw) as { cursor: number; highWater: number };
+    return Number.isFinite(parsed.cursor) && Number.isFinite(parsed.highWater) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * One-time rollup of the adsb_observations history that predates the live
+ * upsert. Starts only while the rollup is empty, stops at the id high-water
+ * mark captured at start (later rows arrive through the live sweep), and
+ * resumes across ticks and restarts from a cursor in meta. Runs from the
+ * sweep job, never from a request.
+ */
+export async function backfillAdsbFlightDraws(
+  db: Database,
+  opts: { budgetMs?: number; chunkRows?: number } = {}
+): Promise<"done" | "partial" | "skipped"> {
+  const budgetMs = opts.budgetMs ?? BACKFILL_BUDGET_MS;
+  const chunkRows = opts.chunkRows ?? BACKFILL_CHUNK_ROWS;
+  try {
+    let state = readBackfillState(db);
+    if (state === "done") return "skipped";
+    if (state === null) {
+      if (countAdsbFlightDraws(db) > 0) {
+        setMeta(db, BACKFILL_META_KEY, "done");
+        return "skipped";
+      }
+      const hw = db.query("SELECT MAX(id) AS id FROM adsb_observations").get() as {
+        id: number | null;
+      };
+      state = { cursor: 0, highWater: hw.id ?? 0 };
+      info(`adsb-draws backfill: starting over observations up to id ${state.highWater}`);
+    }
+    const started = Date.now();
+    const chunk = db.query(
+      `SELECT id, observed_at, tail_number, callsign, airborne, ground_speed
+       FROM adsb_observations WHERE id > ? AND id <= ? AND airborne = 1
+       ORDER BY id LIMIT ?`
+    );
+    while (Date.now() - started < budgetMs) {
+      const rows = chunk.all(state.cursor, state.highWater, chunkRows) as Array<
+        SightingSource & { id: number }
+      >;
+      if (rows.length === 0) {
+        setMeta(db, BACKFILL_META_KEY, "done");
+        info("adsb-draws backfill: complete");
+        return "done";
+      }
+      upsertAdsbFlightDraws(db, toSightings(rows));
+      state = { cursor: rows[rows.length - 1].id, highWater: state.highWater };
+      setMeta(db, BACKFILL_META_KEY, JSON.stringify(state));
+      await sleep(0);
+    }
+    return "partial";
+  } catch (err) {
+    logError("adsb-draws backfill failed", err);
+    return "partial";
+  }
 }

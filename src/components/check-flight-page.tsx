@@ -1,8 +1,11 @@
 import React from "react";
+import { aircraftFamilyPatterns } from "../airlines/aircraft-families";
 import { type SiteConfig, siteAirline } from "../airlines/registry";
 import type { PopularFlight } from "../database/database";
+import { SEATBACK_LIVE_TV_COPY, SEATBACK_LIVE_TV_LIKELY_FAMILIES } from "../utils/aircraft-specs";
+import { article } from "../utils/grammar";
 import { watchFeedEnabled } from "../utils/ics";
-import { PopularFlightsLinks } from "./atoms";
+import { type PageLink, PageNavLinks, PopularFlightsLinks } from "./atoms";
 
 export interface FlightRouteFact {
   departure_airport: string;
@@ -11,6 +14,8 @@ export interface FlightRouteFact {
   dur_sec: number | null;
   /** Newest evidence for this leg (unix seconds); null when the row carries none. */
   last_seen_at: number | null;
+  /** Whether /route-planner/{dep}/{arr} serves; false renders the pair unlinked. */
+  linkable: boolean;
 }
 
 export interface FlightUpcomingDeparture {
@@ -37,6 +42,9 @@ export interface FlightFacts {
   /** Other marketing flight numbers on this flight's primary route — sibling
    * permalinks, so the corpus links laterally instead of only via /routes. */
   siblings: string[];
+  /** Newest sighting (unix sec) when the flight has gone quiet long enough to
+   * say so on the page; null otherwise. */
+  notObservedSince?: number | null;
 }
 
 /** A permalink segment that is not a flight number this site can answer for.
@@ -55,25 +63,35 @@ interface CheckFlightPageProps {
   /** Rendered on the generic (non-permalink) page only — permalinks link
    * laterally via siblings instead. */
   popular?: PopularFlight[];
+  pageLinks?: PageLink[];
 }
 
-const fmtDay = (sec: number) =>
-  new Date(sec * 1000).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    timeZone: "UTC",
-  });
+// Module-level formatters: constructing a locale formatter per call
+// (toLocale*String with options) dominated SSR time on list-heavy pages.
+const DAY_UTC = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+  timeZone: "UTC",
+});
+const MONTH_DAY_UTC = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  day: "numeric",
+  timeZone: "UTC",
+});
+const HHMM_UTC = new Intl.DateTimeFormat("en-US", {
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+  timeZone: "UTC",
+});
 
-const fmtDeparture = (sec: number) =>
-  `${new Date(sec * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })} · ${new Date(
-    sec * 1000
-  ).toLocaleTimeString("en-US", {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-    timeZone: "UTC",
-  })} UTC`;
+const fmtDay = (sec: number) => DAY_UTC.format(new Date(sec * 1000));
+
+const fmtDeparture = (sec: number) => {
+  const d = new Date(sec * 1000);
+  return `${MONTH_DAY_UTC.format(d)} · ${HHMM_UTC.format(d)} UTC`;
+};
 
 // Round total minutes BEFORE splitting into h/m — rounding the remainder
 // alone renders 2h59m30s as "2h 60m".
@@ -85,10 +103,10 @@ const fmtDuration = (sec: number) => {
 function flightSummary(flight: FlightFacts): string {
   const { flightNumber, observedStarlink: s, observedTotal: n } = flight;
   if (n > 0 && s > 0) {
-    return `${flightNumber} had Starlink on ${s} of ${n} recent departures (${Math.round((s / n) * 100)}%). Pick a date below for a live answer.`;
+    return `${flightNumber} had Starlink on ${s} of ${n} observed departures (${Math.round((s / n) * 100)}%). Pick a date below for a live answer.`;
   }
   if (n > 0) {
-    return `Not yet — recent ${flightNumber} departures were flown by aircraft still awaiting Starlink installation. Pick a date below for a live answer.`;
+    return `Not yet — observed ${flightNumber} departures were flown by aircraft still awaiting Starlink installation. Pick a date below for a live answer.`;
   }
   return `Pick a date below for a live answer based on the aircraft assigned to ${flightNumber}.`;
 }
@@ -113,6 +131,11 @@ function FlightFactBlocks({ flight }: { flight: FlightFacts }) {
           <h2 className="font-display text-lg font-semibold text-primary mb-3">
             Routes {fn} flies
           </h2>
+          {flight.notObservedSince ? (
+            <p className="text-sm text-muted mb-3">
+              Not observed since {fmtDay(flight.notObservedSince)}; may be seasonal or discontinued.
+            </p>
+          ) : null}
           <div className="space-y-2">
             {flight.routes.map((r) => {
               const lastSeen = lastSeenLabel(r.last_seen_at);
@@ -132,12 +155,14 @@ function FlightFactBlocks({ flight }: { flight: FlightFacts }) {
                     </span>
                     {lastSeen ? <span className="text-muted"> · {lastSeen}</span> : null}
                   </span>
-                  <a
-                    href={`/route-planner/${r.departure_airport}/${r.arrival_airport}`}
-                    className="text-accent hover:underline text-xs whitespace-nowrap"
-                  >
-                    Plan this route →
-                  </a>
+                  {r.linkable ? (
+                    <a
+                      href={`/route-planner/${r.departure_airport}/${r.arrival_airport}`}
+                      className="text-accent hover:underline text-xs whitespace-nowrap"
+                    >
+                      Plan this route →
+                    </a>
+                  ) : null}
                 </div>
               );
             })}
@@ -255,7 +280,7 @@ function InvalidQueryNotice({
     <div className="bg-surface-elevated border border-subtle rounded p-4 mb-4">
       <p className="text-sm text-secondary">
         {invalid.reason === "other-carrier"
-          ? `${quoted} isn't a ${shortName} flight number — this tracker only covers ${shortName} flights.`
+          ? `${quoted} isn't ${article(shortName)} ${shortName} flight number — this tracker only covers ${shortName} flights.`
           : `${quoted} isn't a flight number.`}
       </p>
       <p className="text-sm text-muted mt-1">
@@ -280,6 +305,7 @@ export default function CheckFlightPage({
   flight,
   invalid,
   popular = [],
+  pageLinks,
 }: CheckFlightPageProps) {
   const cfg = siteAirline(site);
   const airlineName = flight?.airlineName ?? cfg.name;
@@ -288,6 +314,13 @@ export default function CheckFlightPage({
   const flightExample = flight?.flightNumber ?? `${cfg.iata}123`;
   const shortName = cfg.shortName;
   const showChromeExtension = site.features.chromeExtension;
+  const liveTvRules = site.features.liveTvPage
+    ? {
+        patterns: aircraftFamilyPatterns(),
+        likely: SEATBACK_LIVE_TV_LIKELY_FAMILIES,
+        copy: SEATBACK_LIVE_TV_COPY,
+      }
+    : null;
   const accuracyCopy =
     cfg.verifierBackend === "united"
       ? "We verify Starlink status against united.com and cross-reference with flight schedules from aviation data providers."
@@ -318,7 +351,7 @@ export default function CheckFlightPage({
         </a>
         <p className="text-base text-secondary font-display">
           {invalid
-            ? `Enter a ${shortName} flight number below to check for Starlink`
+            ? `Enter ${article(shortName)} ${shortName} flight number below to check for Starlink`
             : flight
               ? flightSummary(flight)
               : "Enter your flight number and date to see if your aircraft has free Starlink internet"}
@@ -549,6 +582,7 @@ export default function CheckFlightPage({
           </svg>
           by @martinamps
         </a>
+        <PageNavLinks links={pageLinks} />
       </footer>
 
       <script
@@ -624,6 +658,21 @@ export default function CheckFlightPage({
           var resultDiv = document.getElementById('flight-result');
           var dateInput = document.getElementById('flight-date');
           var carrierPrefix = ${JSON.stringify(cfg.iata)};
+          var liveTv = ${JSON.stringify(liveTvRules).replace(/</g, "\\u003c")};
+          // Mirrors seatbackLiveTv() in aircraft-specs.ts, fed the server's own
+          // family patterns so the two classifiers cannot drift apart.
+          var liveTvLine = function(flight, esc) {
+            if (!liveTv) return '';
+            var tier = 'no';
+            if (flight.fleet_type === 'mainline') {
+              var family = 'other';
+              for (var i = 0; i < liveTv.patterns.length; i++) {
+                if (new RegExp(liveTv.patterns[i][0], liveTv.patterns[i][1]).test(flight.aircraft_type || '')) { family = liveTv.patterns[i][2]; break; }
+              }
+              tier = liveTv.likely.indexOf(family) >= 0 ? 'likely' : 'possible';
+            }
+            return '<div class="pt-2">' + esc(liveTv.copy[tier]) + ' <a href="/live-tv" class="text-accent hover:underline">Which planes have live TV →</a></div>';
+          };
           var WATCH_ENABLED = ${JSON.stringify(watchFeedEnabled(site))};
           var ROUTE_PLANNER_ENABLED = ${JSON.stringify(site.features.routePlannerPage)};
           var WATCH_MAX_DAYS_OUT = 330;
@@ -690,7 +739,9 @@ export default function CheckFlightPage({
 
               if (!flightNumber || !date) return;
 
-              flightNumber = flightNumber.toUpperCase();
+              // Same separators canonicalFlightInput strips ("UA 544", "ua-544")
+              // so the permalink is the canonical spelling too.
+              flightNumber = flightNumber.toUpperCase().replace(/[\\s\\-.]/g, '');
               if (/^\\d+$/.test(flightNumber)) {
                 flightNumber = carrierPrefix + flightNumber;
               }
@@ -730,6 +781,7 @@ export default function CheckFlightPage({
                       '<div>Departs: <span class="text-secondary">' + dateStr + ' at ' + timeStr + '</span></div>' +
                       '<div>Aircraft: <span class="text-secondary">' + (flight.tail_number || '') + aircraftInfo + '</span></div>' +
                       (flight.operated_by ? '<div>Operated by: <span class="text-secondary">' + flight.operated_by + '</span></div>' : '') +
+                      liveTvLine(flight, esc) +
                       '<div class="pt-2"><a href="' + faUrl + '" target="_blank" rel="nofollow noopener noreferrer" class="text-accent hover:underline text-xs">View on FlightAware →</a></div>' +
                       '</div></div>';
                   } else if (data.fallback && data.fallback.segments && data.fallback.segments.length > 0) {
@@ -802,7 +854,7 @@ export default function CheckFlightPage({
                       var iconColor = isLikely ? 'text-green-400' : isPossible ? 'text-yellow-400' : 'text-muted';
                       var detail = pred.n_observations > 0
                         ? 'Based on <span class="text-secondary">' + pred.n_observations + '</span> historical observation' + (pred.n_observations === 1 ? '' : 's') + ' of aircraft on this flight number (' + pred.confidence + ' confidence).'
-                        : 'No historical data for this flight number — this is the fleet install rate (treat as upper bound).';
+                        : 'No history for this flight number — this is our estimate for flights we have not yet seen on a Starlink aircraft.';
                       resultDiv.innerHTML = '<div class="rounded p-4 border ' + borderColor + '">' +
                         '<div class="flex items-center gap-2 mb-3">' +
                         '<span class="text-lg ' + iconColor + '">~</span>' +

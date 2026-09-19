@@ -170,7 +170,7 @@ export function watchDescription(input: WatchIcsInput): string[] {
         verdict.probability === null
           ? "No aircraft assigned yet."
           : verdict.observations > 0
-            ? `No aircraft assigned yet. ~${Math.round(verdict.probability * 100)}% of ${verdict.observations} recent departures of this flight used a Starlink aircraft.`
+            ? `No aircraft assigned yet. ~${Math.round(verdict.probability * 100)}% of ${verdict.observations} observed departures of this flight used a Starlink aircraft.`
             : `No aircraft assigned yet. ~${Math.round(verdict.probability * 100)}% is the fleet-wide Starlink install rate.`
       );
       break;

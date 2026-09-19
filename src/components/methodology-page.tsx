@@ -88,8 +88,12 @@ export default function MethodologyPage({ site, lastUpdated, pageLinks }: Method
     ? null
     : stampedDate.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
 
-  const Section = ({ title, children }: { title: string; children: React.ReactNode }) => (
-    <section className="bg-surface rounded-lg border border-subtle p-5 sm:p-6 mb-4">
+  const Section = ({
+    title,
+    id,
+    children,
+  }: { title: string; id?: string; children: React.ReactNode }) => (
+    <section id={id} className="bg-surface rounded-lg border border-subtle p-5 sm:p-6 mb-4">
       <h2 className="font-display text-lg font-semibold text-primary mb-3">{title}</h2>
       <div className="text-sm text-muted leading-relaxed space-y-3">{children}</div>
     </section>
@@ -201,11 +205,19 @@ export default function MethodologyPage({ site, lastUpdated, pageLinks }: Method
             fleet totals behind the headline percentage, the last-updated stamp, and the upcoming
             departures mapped to each tail. It is regenerated from the same live database this page
             describes, so a response is a point-in-time snapshot — read{" "}
-            <code className="font-mono text-xs">lastUpdated</code> alongside the counts.
+            <code className="font-mono text-xs">lastUpdated</code> alongside the counts. The
+            equipped tails alone, with the date each was found, are also a spreadsheet-ready CSV:{" "}
+            <a
+              href="/data/starlink-tails.csv"
+              className="text-accent hover:underline font-mono text-xs"
+            >
+              /data/starlink-tails.csv
+            </a>
+            .
           </p>
         </Section>
 
-        <Section title="Citing this data">
+        <Section title="Citing this data" id="cite">
           <p>
             The canonical, quotable form of our headline stat is the dated sentence on the{" "}
             <a href="/" className="text-accent hover:underline">

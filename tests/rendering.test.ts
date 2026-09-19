@@ -190,7 +190,7 @@ describe("flight permalink gate + normalization", () => {
     expect(html).toContain("isn&#x27;t a flight number");
     expect(html).toContain("PHX");
     expect(html).toContain('id="check-flight-form"');
-    expect(html).toContain('href="/route-planner"');
+    expect(html).toContain("Looking for an airport or a route instead?");
     expect(html).not.toContain("The page you&#x27;re looking for doesn&#x27;t exist");
   });
 
@@ -199,7 +199,8 @@ describe("flight permalink gate + normalization", () => {
     expect(res.status).toBe(404);
     const html = await res.text();
     expect(html).toContain("isn&#x27;t a flight number");
-    expect(html).not.toContain('href="/route-planner"');
+    // The footer nav links the planner on every page; the hint is the notice copy.
+    expect(html).not.toContain("Looking for an airport or a route instead?");
   });
 
   test("other-carrier segment → 404 page that never names the other carrier", async () => {

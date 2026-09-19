@@ -7,7 +7,13 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { AIRLINES, type AirlineCode, airlineHomeUrl, publicAirlines } from "../airlines/registry";
+import {
+  AIRLINES,
+  type AirlineCode,
+  airlineHomeUrl,
+  publicAirlines,
+  withOperatingPartners,
+} from "../airlines/registry";
 import type {
   Aircraft,
   AirportDepartures,
@@ -20,6 +26,7 @@ import type {
   RecentInstall,
   RouteSchedule,
 } from "../types";
+import { type AdsbFlightDraw, getAdsbFlightDraws } from "./adsb-flight-draws";
 import {
   type AssignmentLogRow,
   type SameDayAlternative,
@@ -75,12 +82,14 @@ import {
   getHubStats,
   getLastUpdated,
   getMeta,
+  getObservationAnchor,
   getObservedDirectFlightNumbers,
   getPendingFleetTails,
   getPopularFlights,
   getQatarScheduleByFlight,
   getQatarScheduleByRoute,
   getQatarScheduleStats,
+  getRankedStarlinkRoutePairs,
   getRecentInstalls,
   getRouteFlightNumbers,
   getRouteFlights,
@@ -142,7 +151,8 @@ export interface ScopedReader {
   getSitemapRoutes(): SitemapRoute[];
   /** Meta keys are namespaced per-airline; null on the hub (no single namespace). */
   getMeta(key: string): string | null;
-  /** Check-flight assignments without the verified_wifi filter (the core classifies tiers). */
+  /** Check-flight assignments without the verified_wifi filter (the core classifies tiers).
+   * The one read that also spans operatingPartners (AS numbers on HA metal). */
   getFlightAssignments(
     variants: string[],
     startOfDay: number,
@@ -151,6 +161,11 @@ export interface ScopedReader {
   getFleetPageData(): FleetPageData;
   getAirportDepartures(): AirportDepartures;
   getRouteStarlinkSchedule(): RouteSchedule;
+  /** Route pairs in getRouteStarlinkSchedule order, past `offset`. */
+  getRankedStarlinkRoutePairs(
+    offset: number,
+    limit: number
+  ): Array<{ origin: string; destination: string }>;
   getFleetDiscoveryStats(): FleetDiscoveryStats;
   getConfirmedFleetTails(): ReturnType<typeof getConfirmedFleetTails>;
   getPendingFleetTails(): ReturnType<typeof getPendingFleetTails>;
@@ -159,6 +174,9 @@ export interface ScopedReader {
 
   // Predictor / route-graph
   getVerificationObservations(): VerificationObservation[];
+  /** ADS-B departures since `sinceTs`. UA only: the callsign-to-marketing-number
+   * mapping and the fleet sweep behind it exist for no other scope. */
+  getAdsbFlightDraws(sinceTs: number): AdsbFlightDraw[];
   getRouteFlights(origin: string | null, destination: string | null): RouteFlightRow[];
   getRouteGraphEdges(): RouteGraphEdge[];
   /** Every ORIG-DEST the carrier flies; null when no route census exists for the scope. */
@@ -195,6 +213,9 @@ export interface ScopedReader {
   getRouteFlightNumbers(origin: string, destination: string): RouteFlightNumbers;
   getFlightHistorySummary(variants: string[]): FlightHistorySummary;
   getFlightRoutePairs(variants: string[]): FlightRoutePair[];
+  /** Newest observation for the airline (unix sec), the reference point for
+   * staleness copy; 0 on the hub or with no data. */
+  getObservationAnchor(): number;
 
   // Single-tail lookups + best-effort writes. Airline-scoped like everything
   // else: a tenant's FR24 fallback must not resolve another airline's tail.
@@ -328,10 +349,13 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     getPopularFlights: (limit) => (scope === "ALL" ? [] : getPopularFlights(db, scope, limit)),
     getFleetAnchors: () => getFleetAnchors(db, airlines),
     getMeta: (key) => (scope === "ALL" ? null : getMeta(db, key, scope)),
-    getFlightAssignments: (v, s, e) => getFlightAssignments(db, v, s, e, airlines),
+    getFlightAssignments: (v, s, e) =>
+      getFlightAssignments(db, v, s, e, withOperatingPartners(airlines)),
     getFleetPageData: () => getFleetPageData(db, airlines),
     getAirportDepartures: () => getAirportDepartures(db, airlines),
     getRouteStarlinkSchedule: () => getRouteStarlinkSchedule(db, airlines),
+    getRankedStarlinkRoutePairs: (offset, limit) =>
+      getRankedStarlinkRoutePairs(db, airlines, offset, limit),
     getFleetDiscoveryStats: () => getFleetDiscoveryStats(db, airlines),
     getConfirmedFleetTails: () => getConfirmedFleetTails(db, airlines),
     getPendingFleetTails: () => getPendingFleetTails(db, airlines),
@@ -339,6 +363,7 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     getWifiMismatches: () => getWifiMismatches(db, airlines),
 
     getVerificationObservations: () => getVerificationObservations(db, airlines),
+    getAdsbFlightDraws: (since) => (scope === "UA" ? getAdsbFlightDraws(db, since) : []),
     getRouteFlights: (o, d) => getRouteFlights(db, o, d, airlines),
     getRouteGraphEdges: () => getRouteGraphEdges(db, airlines),
     getServedRoutePairs: () => getServedRoutePairs(db, airlines),
@@ -359,6 +384,7 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     getRouteFlightNumbers: (o, d) => getRouteFlightNumbers(db, o, d, soleAirline()),
     getFlightHistorySummary: (v) => getFlightHistorySummary(db, v, airlines),
     getFlightRoutePairs: (v) => getFlightRoutePairs(db, v, airlines),
+    getObservationAnchor: () => (scope === "ALL" ? 0 : getObservationAnchor(db, scope)),
 
     getStarlinkPlaneByTail: (tail) => getStarlinkPlaneByTail(db, tail, airlines),
     getFleetEntryByTail: (tail) => getFleetEntryByTail(db, tail, airlines),

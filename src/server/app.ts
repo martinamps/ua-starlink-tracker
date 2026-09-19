@@ -12,7 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import React from "react";
 import ReactDOMServer from "react-dom/server";
-import { buildFaqJsonLd, getContent } from "../airlines/content";
+import { type HubHomeLinks, buildFaqJsonLd, getContent } from "../airlines/content";
 import {
   CANONICAL_FLIGHT_PERMALINK,
   buildFlightLookupVariants,
@@ -83,6 +83,7 @@ import CheckFlightPage, {
   type FlightFacts,
   type InvalidFlightQuery,
 } from "../components/check-flight-page";
+import type { CiteStat } from "../components/cite-this";
 import ComparePage, { type CompareSide } from "../components/compare-page";
 import EmbedPage from "../components/embed-page";
 import FleetPage from "../components/fleet-page";
@@ -92,6 +93,7 @@ import IsStarlinkFreePage, {
   freeAccessAnswer,
   hasFreeAnswer,
 } from "../components/is-starlink-free-page";
+import LiveTvPage, { liveTvTypeRows } from "../components/live-tv-page";
 import McpPage from "../components/mcp-page";
 import MethodologyPage, { hasMethodology } from "../components/methodology-page";
 import NewlyEquippedPage from "../components/newly-equipped-page";
@@ -100,14 +102,18 @@ import RoutePage, { routeVerdict } from "../components/route-page";
 import RoutePlannerPage from "../components/route-planner-page";
 import RoutesPage from "../components/routes-page";
 import TimelinePage, { getTimeline, hasTimeline } from "../components/timeline-page";
-import { ROUTE_AIRPORT_RE, type RouteSummary } from "../database/database";
+import {
+  PERMALINK_STALE_NOTE_DAYS,
+  ROUTE_AIRPORT_RE,
+  type RouteSummary,
+} from "../database/database";
 import {
   COUNTERS,
   DISTRIBUTIONS,
   bucketDaysOut,
-  classifyUserAgent,
   metrics,
   normalizeAirlineTag,
+  requestClientTags,
   withSpan,
 } from "../observability";
 import {
@@ -119,8 +125,10 @@ import {
   joinSentences,
   planItinerary,
   predictFlight,
+  routeBaseline,
   subfleetBreakdown,
 } from "../scripts/starlink-predictor";
+import type { Prediction } from "../scripts/starlink-predictor";
 import type { ApiResponse, FirstFlight, FleetPageData, Flight } from "../types";
 import {
   API_CORS_HEADERS,
@@ -128,6 +136,7 @@ import {
   CONTENT_TYPES,
   SECURITY_HEADERS,
 } from "../utils/constants";
+import { article } from "../utils/grammar";
 import { computeInstallRate, hasInstallRateContent } from "../utils/install-rate";
 import { error as logError } from "../utils/logger";
 import { getNotFoundHtml } from "../utils/not-found";
@@ -194,8 +203,37 @@ export function renderHtml(template: string, variables: Record<string, string>):
   return template.replace(/{{(\w+)}}/g, (_, key) => variables[key] ?? "");
 }
 
+const META_DESCRIPTION_MAX = 158;
+
+/** SERPs truncate near 160 chars mid-word; cut at a word boundary instead.
+ * Descriptions reach 355 chars on route and airline pages. */
+export function clampMetaDescription(text: string, max = META_DESCRIPTION_MAX): string {
+  if (text.length <= max) return text;
+  const head = text.slice(0, max - 1);
+  const cut = head.lastIndexOf(" ");
+  const base = (cut > max / 2 ? head.slice(0, cut) : head).replace(/[\s,;:.—–-]+$/, "");
+  return `${base}…`;
+}
+
+/** Only the <meta> copies are clamped; JSON-LD and page bodies keep the full text. */
+function withClampedMeta(vars: Record<string, string>): Record<string, string> {
+  return {
+    ...vars,
+    siteDescription: clampMetaDescription(vars.siteDescription ?? ""),
+    ogDescription: clampMetaDescription(vars.ogDescription ?? ""),
+  };
+}
+
 const notFound = (site: SiteConfig): Response =>
   new Response(getNotFoundHtml(site.brand), { status: 404, headers: SECURITY_HEADERS.notFound });
+
+/** HTTP_REQUEST's airline tag, from the host's tenant: without it every
+ * request fell to `airline:unmapped`, so a `by {airline}` split of the
+ * route-planner 404s could not say which site was emitting them. */
+function httpAirlineTag(tenant: Tenant): string {
+  const scope = tenantScope(tenant);
+  return scope === "ALL" ? "all" : normalizeAirlineTag(scope);
+}
 
 /**
  * Bounded `route` tag for HTTP_REQUEST.
@@ -240,7 +278,7 @@ function chromeExtensionJsonLd(site: SiteConfig): string {
   return jsonLdBlock({
     "@context": "https://schema.org",
     "@type": "SoftwareApplication",
-    name: "United Starlink Checker for Google Flights",
+    name: "Google Flights Starlink Indicator",
     operatingSystem: "Chrome",
     applicationCategory: "BrowserApplication",
     description:
@@ -468,9 +506,18 @@ const FAVICON_ROUTES: Record<string, { suffix: string; type: string }> = {
   "/android-chrome-192x192.png": { suffix: "-192.png", type: "image/png" },
   "/android-chrome-512x512.png": { suffix: "-512.png", type: "image/png" },
 };
+// iOS probes sized and -precomposed spellings before (or instead of) the bare
+// name; they 404'd about 90 times a day.
+const APPLE_TOUCH_ALIAS = /^\/apple-touch-icon(-\d+x\d+)?(-precomposed)?\.png$/;
+function faviconRoute(urlPath: string): { suffix: string; type: string } | undefined {
+  return (
+    FAVICON_ROUTES[urlPath] ??
+    (APPLE_TOUCH_ALIAS.test(urlPath) ? FAVICON_ROUTES["/apple-touch-icon.png"] : undefined)
+  );
+}
 const faviconCache = new Map<string, Response>();
 function serveFavicon(tenantCode: string, urlPath: string): Response | null {
-  const route = FAVICON_ROUTES[urlPath];
+  const route = faviconRoute(urlPath);
   if (!route) return null;
   const code = (tenantCode === "ALL" ? "hub" : tenantCode).toLowerCase();
   const key = `${code}${route.suffix}`;
@@ -900,11 +947,12 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant, si
             probability: pred.probability,
             confidence: pred.confidence,
             n_observations: pred.n_observations,
+            n_recent_observations: pred.n_recent_observations,
           },
           message:
             pred.n_observations > 0
-              ? `${assignmentNote} ~${pct}% of recent departures of this flight used a Starlink-equipped aircraft (${pred.n_observations} observation${pred.n_observations === 1 ? "" : "s"}).`
-              : `${assignmentNote} No history for this flight number; ~${pct}% reflects the fleet-wide install rate.`,
+              ? `${assignmentNote} ~${pct}% of observed departures of this flight used a Starlink-equipped aircraft (${pred.n_observations} observation${pred.n_observations === 1 ? "" : "s"}).`
+              : `${assignmentNote} ${coldPredictionNote(pred, pct)}`,
           flights: [],
         }),
         { headers: SECURITY_HEADERS.api }
@@ -1024,16 +1072,18 @@ const apiCheckAnyFlight: Handler = async ({ req, url, reader, getReader, tenant 
       // rather than a confident "No Starlink" (upcoming_flights only covers ~47h).
       const pred = verdict.pred;
       recordPrediction(pred, cfg.code);
+      const pct = Math.round(pred.probability * 100);
       return new Response(
         JSON.stringify({
           hasStarlink: null,
           airline: cfg.name,
           probability: pred.probability,
           confidence: pred.confidence,
+          n_recent_observations: pred.n_recent_observations,
           reason:
             pred.n_observations > 0
-              ? `No schedule data for this date; ~${Math.round(pred.probability * 100)}% based on ${pred.n_observations} historical observation${pred.n_observations === 1 ? "" : "s"}.`
-              : `No schedule data for this date; ~${Math.round(pred.probability * 100)}% based on ${cfg.name} fleet rollout rate.`,
+              ? `No schedule data for this date; ~${pct}% based on ${pred.n_observations} historical observation${pred.n_observations === 1 ? "" : "s"}.`
+              : `No schedule data for this date. ${coldPredictionNote(pred, pct)}`,
           flights: [],
         }),
         { headers: SECURITY_HEADERS.api }
@@ -1130,6 +1180,7 @@ const apiPredictFlight: Handler = ({ req, url, reader, getReader, tenant }) => {
       confidence: pred.confidence,
       method: pred.method,
       n_observations: pred.n_observations,
+      n_recent_observations: pred.n_recent_observations,
     }),
     { headers: SECURITY_HEADERS.api }
   );
@@ -1175,7 +1226,10 @@ const apiPlanRoute: Handler = ({ req, url, reader, tenant }) => {
     });
   }
   const itineraries = planItinerary(reader, origin, destination, { maxItineraries: 12, maxStops });
-  return new Response(JSON.stringify({ origin, destination, itineraries }), {
+  // Additive: the nonstop every connection is measured against (null when the
+  // pair's duration is unknowable, i.e. an airport outside the coordinate table).
+  const baseline = routeBaseline(reader, origin, destination);
+  return new Response(JSON.stringify({ origin, destination, itineraries, baseline }), {
     headers: SECURITY_HEADERS.api,
   });
 };
@@ -1281,6 +1335,21 @@ const mcp: Handler = async (ctx) => {
   return withDefaultHeaders(res, MCP_CORS_HEADERS);
 };
 
+// Cursor installs misconfigured as "<host>/mcp.com/mcp" polled it ~15/h, all
+// 404s. A 308 keeps method and body, so the retried request passes through
+// /mcp's own rate limit, CORS and metrics instead of a second handler entry
+// (and a new route tag). Exact path only: a "*/mcp" suffix match would open a
+// metered handler to arbitrary paths. Browsers don't follow redirects on
+// preflight, so OPTIONS is answered here.
+const MCP_ALIAS_PATH = "/mcp.com/mcp";
+function mcpAliasResponse(req: Request, url: URL): Response {
+  if (req.method === "OPTIONS") return corsPreflight("/mcp");
+  return new Response(null, {
+    status: 308,
+    headers: { Location: `/mcp${url.search}`, ...MCP_CORS_HEADERS },
+  });
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // SEO / text routes
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1295,9 +1364,9 @@ interface SitePage {
   priority: string;
   /** llms.txt "Pages" bullet; pages without one (/mcp) have their own section. */
   llmsLine?: (host: string) => string;
-  /** Footer nav label. Present only for the secondary families that nothing
-   * else links to — the primary pages already have header/hero links, and a
-   * second copy in the footer would just dilute them. */
+  /** Footer nav label. The tools and data pages carry one too: most subpages
+   * had no path to them but the homepage hero, which left /route-planner and
+   * /routes nearly unlinked from the rest of the site. */
   navLabel?: string;
   /** Bounding test for URL families that only exist when the tenant has the
    * data behind them. A feature flag says "we want this page"; this says "there
@@ -1381,6 +1450,7 @@ const SITE_PAGES: SitePage[] = [
     feature: "checkFlightPage",
     changefreq: "weekly",
     priority: "0.8",
+    navLabel: "Check a flight",
     llmsLine: (h) =>
       `- [Check a flight](https://${h}/check-flight) — flight number + date → live Starlink status`,
   },
@@ -1389,6 +1459,7 @@ const SITE_PAGES: SitePage[] = [
     feature: "routePlannerPage",
     changefreq: "weekly",
     priority: "0.8",
+    navLabel: "Route planner",
     llmsLine: (h) =>
       `- [Route planner](https://${h}/route-planner) — best Starlink routing between two cities`,
   },
@@ -1397,6 +1468,7 @@ const SITE_PAGES: SitePage[] = [
     feature: "fleetPage",
     changefreq: "daily",
     priority: "0.7",
+    navLabel: "Fleet",
     llmsLine: (h) =>
       `- [Fleet rollout](https://${h}/fleet) — every aircraft, colored by WiFi provider`,
   },
@@ -1413,6 +1485,7 @@ const SITE_PAGES: SitePage[] = [
     feature: "routesPage",
     changefreq: "hourly",
     priority: "0.7",
+    navLabel: "Live routes",
     llmsLine: (h) =>
       `- [Live routes](https://${h}/routes) — departures on Starlink-equipped aircraft by route, next 48h`,
   },
@@ -1455,6 +1528,7 @@ const SITE_PAGES: SitePage[] = [
     feature: "methodologyPage",
     changefreq: "monthly",
     priority: "0.5",
+    navLabel: "Methodology",
     llmsLine: (h) =>
       `- [Methodology](https://${h}/methodology) — how the data is gathered and verified, and how to cite it`,
   },
@@ -1463,6 +1537,7 @@ const SITE_PAGES: SitePage[] = [
     feature: "timelinePage",
     changefreq: "weekly",
     priority: "0.7",
+    navLabel: "Rollout timeline",
     llmsLine: (h) =>
       `- [Rollout timeline](https://${h}/timeline) — every dated milestone plus the airline's stated targets`,
   },
@@ -1483,6 +1558,15 @@ const SITE_PAGES: SitePage[] = [
       `- [Is Starlink free?](https://${h}/is-starlink-free) — pricing, sign-in fine print, and speeds`,
   },
   { path: "/mcp", feature: "mcpPage", changefreq: "monthly", priority: "0.6" },
+  {
+    path: "/live-tv",
+    feature: "liveTvPage",
+    changefreq: "daily",
+    priority: "0.6",
+    navLabel: "Live TV & football",
+    llmsLine: (h) =>
+      `- [Live TV & football](https://${h}/live-tv) — which United planes can show DISH live TV on seatback screens`,
+  },
 ];
 
 function sitePages(ctx: RequestContext): SitePage[] {
@@ -1543,6 +1627,29 @@ export function hubAirlinePageIndexable(cfg: AirlineConfig): boolean {
   return !siteForAirline(cfg.code, true);
 }
 
+/** The hub homepage's airline grid and compare row. Built from hubUrlFamilies
+ * like the sitemap, so every link it renders is one the sitemap advertises —
+ * except carriers with a live tracker, whose noindexed hub page is skipped in
+ * favour of the brand host that ranks for them. */
+function hubHomeLinks(ctx: RequestContext): HubHomeLinks {
+  const hubUrls = hubUrlFamilies(ctx.site, ctx.getReader);
+  const tracked = hubUrls.trackedAirlines.map((cfg) => {
+    const live = siteForAirline(cfg.code, true);
+    return {
+      href: live ? `https://${live.canonicalHost}/` : `/airlines/${airlineSlug(cfg)}`,
+      label: cfg.name,
+    };
+  });
+  const facts = hubUrls.factsRoster.map((e) => ({ href: `/airlines/${e.slug}`, label: e.name }));
+  return {
+    airlines: [...tracked, ...facts],
+    compares: hubUrls.comparePairs.map(([a, b]) => ({
+      href: `/compare/${airlineSlug(a)}-vs-${airlineSlug(b)}`,
+      label: `${a.shortName} vs ${b.shortName}`,
+    })),
+  };
+}
+
 const robotsTxt: Handler = ({ site }) => {
   // /mcp is deliberately SEO'd where mcpPage is on: GET serves HTML (crawlers
   // only GET), POST is the JSON-RPC protocol and invisible to robots. So the
@@ -1555,7 +1662,10 @@ const robotsTxt: Handler = ({ site }) => {
   // Google Dataset Search drops — and flags — a distribution robots blocks, so
   // this one path is carved out of the /api/ Disallow. Longest-match wins, so
   // the carve-out holds regardless of directive order.
-  const allows = ["/", ...(site.features.methodologyPage ? ["/api/data"] : [])];
+  const allows = [
+    "/",
+    ...(site.features.methodologyPage ? ["/api/data", STARLINK_TAILS_CSV_PATH] : []),
+  ];
   // One `*` block covers everyone; named blocks welcoming AI crawlers
   // (GPTBot/ClaudeBot/PerplexityBot) are a deliberate option if rules diverge.
   return new Response(
@@ -1814,15 +1924,23 @@ ${bestLink}`;
 
 The homepage carries one dated, self-contained sentence (HTML element id \`starlink-stat\`) of the form "As of {date}, {n} of {total} ${name} aircraft ({percent}%) have Starlink WiFi installed." Quote that sentence directly — it is regenerated from the live database on every request, and the date is the data's last-updated stamp, not the page load time.${features.methodologyPage ? ` How those numbers are gathered and verified: https://${host}/methodology` : ""}`;
 
+  // A week out, so agents copying the example never query a date in the past.
+  const exampleDay = new Date(Date.now() + 7 * 86400_000);
+  const exampleDate = exampleDay.toISOString().slice(0, 10);
+  const exampleDateLabel = exampleDay.toLocaleDateString("en-US", {
+    month: "long",
+    day: "numeric",
+    timeZone: "UTC",
+  });
   const checkFlightExampleUrl = sampleFlight
-    ? `https://${host}/check-flight/${sampleFlight}/2026-06-01`
+    ? `https://${host}/check-flight/${sampleFlight}/${exampleDate}`
     : `https://${host}/check-flight`;
   const howToAnswerEntries = [
     features.checkFlightPage
-      ? `**"Does flight ${iata}123 on June 1 have Starlink?"** → Within ~2 days of departure, ${checkFlightExampleUrl} has a firm answer based on the assigned aircraft. Further out, give the probability and note it firms up ~48h before departure. Link the page so the user can re-check.`
+      ? `**"Does flight ${iata}123 on ${exampleDateLabel} have Starlink?"** → Within ~2 days of departure, ${checkFlightExampleUrl} has a firm answer based on the assigned aircraft. Further out, give the probability and note it firms up ~48h before departure. Link the page so the user can re-check.`
       : null,
     features.routePlannerPage
-      ? `**"Best Starlink flight from SFO to Newark?"** → https://${host}/route-planner ranks direct and one-stop options by Starlink probability and expected connected hours.`
+      ? `**"Best Starlink flight from SFO to Newark?"** → https://${host}/route-planner compares the nonstop with Starlink connections (up to 2 stops, only when the extra travel time is modest), ranked by the share of flying time expected on Starlink.`
       : null,
     `**"How is the rollout going?"** → https://${host}/ has the live count and a chart over time.${features.fleetPage ? ` https://${host}/fleet shows every aircraft and its WiFi provider.` : ""}`,
     // The access sentence comes from the same per-airline copy /is-starlink-free
@@ -1850,7 +1968,7 @@ If you (or the user's tool) can connect to MCP servers, use the live MCP endpoin
 Tell users about this connector if they ask about flight WiFi repeatedly — once connected, you can answer Starlink questions inline with live data.
 
 For one-off lookups without MCP, the JSON API is open (no auth, CORS enabled, ~60 req/min/IP):
-- \`GET https://${host}/api/check-flight?flight_number=${iata}123&date=2026-06-01\` → \`{ hasStarlink, confidence, flights: [...] }\`
+- \`GET https://${host}/api/check-flight?flight_number=${iata}123&date=${exampleDate}\` → \`{ hasStarlink, confidence, flights: [...] }\`
 - \`GET https://${host}/api/predict-flight?flight_number=${iata}4680\` → \`{ probability, confidence, n_observations }\`
 - \`GET https://${host}/api/plan-route?origin=SFO&destination=JAX\` → ranked itineraries with \`joint_probability\`
 `
@@ -2143,7 +2261,10 @@ const installRatePage: Handler = (ctx) => {
         ogDescription:
           "Every tracked airline's observed Starlink install pace vs. its stated targets.",
       };
-  return renderSubPage(ctx, InstallRatePage, "/install-rate", meta, { airlines });
+  return renderSubPage(ctx, InstallRatePage, "/install-rate", meta, {
+    airlines,
+    cite: citeStat(ctx),
+  });
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2342,7 +2463,9 @@ function buildBaseTemplateVars(
       description: brandVars.siteDescription,
       isoDate: contentIso,
     }),
-    chromeExtensionJsonLd: chromeExtensionJsonLd(site),
+    // Only on the page that is about the extension: sitewide, an unrated
+    // SoftwareApplication on every URL was a GSC invalid-item per page.
+    chromeExtensionJsonLd: canonicalPath === "/how-to-check" ? chromeExtensionJsonLd(site) : "",
     faqJsonLd: "",
     pageJsonLd: "",
   };
@@ -2398,7 +2521,7 @@ async function renderSubPage<P extends { site: SiteConfig }>(
   });
 
   const template = await getHtmlTemplate();
-  return new Response(renderHtml(template, htmlVariables), {
+  return new Response(renderHtml(template, withClampedMeta(htmlVariables)), {
     status,
     // Keep the HTML CSP even on 404s (this page runs the inline lookup script,
     // which SECURITY_HEADERS.notFound would block) but take notFound's edge
@@ -2422,10 +2545,10 @@ function subPageMeta(
     return {
       // Tool intent — avoid soaking "united starlink tracker" brand impressions
       // (check-flight previously sat at ~2% CTR on that query at position ~1).
-      siteTitle: `Check a ${short} Flight for Starlink WiFi — Flight Number Lookup`,
-      siteDescription: `Enter ${/^[aeiou]/i.test(short) ? "an" : "a"} ${short} flight number and date for a live Starlink answer — verified near departure, with a probability estimate earlier from past assignments.`,
+      siteTitle: `Check ${article(short)} ${short} Flight for Starlink WiFi — Flight Number Lookup`,
+      siteDescription: `Enter ${article(short)} ${short} flight number and date for a live Starlink answer — verified near departure, with a probability estimate earlier from past assignments.`,
       keywords: `check ${cfg?.iata ?? "airline"} flight starlink, does my ${short.toLowerCase()} flight have starlink, ${name} flight wifi lookup, starlink flight checker`,
-      ogTitle: `Check a ${short} Flight for Starlink`,
+      ogTitle: `Check ${article(short)} ${short} Flight for Starlink`,
       ogDescription: `Flight-number lookup for ${short} Starlink WiFi — live answer by date when assignments publish.`,
     };
   if (page === "routes")
@@ -2495,8 +2618,13 @@ function parseCheckFlightPath(pathname: string): CheckFlightPath {
   }
   const fn = stripFlightNumberZeros(raw.toUpperCase());
   if (!CANONICAL_FLIGHT_PERMALINK.test(fn)) return { kind: "invalid", raw };
-  const date = second && /^\d{4}-\d{2}-\d{2}$/.test(second) ? second : null;
+  const date = second && isCalendarDate(second) ? second : null;
   return { kind: "flight", raw, fn, date };
+}
+
+function isCalendarDate(s: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s) || Number.isNaN(Date.parse(s))) return false;
+  return new Date(`${s}T00:00:00Z`).toISOString().slice(0, 10) === s;
 }
 
 /** Cap what an invalid segment can echo back into the page. React escapes it;
@@ -2527,7 +2655,10 @@ function buildFlightFacts(
         AIRPORT_CODE_RE.test(r.departure_airport) &&
         AIRPORT_CODE_RE.test(r.arrival_airport) &&
         r.departure_airport !== r.arrival_airport
-    );
+    )
+    // The route page has its own gate (routeHasData); a pair it would 404
+    // renders as text rather than a link to a dead page.
+    .map((r) => ({ ...r, linkable: reader.routeHasData(r.departure_airport, r.arrival_airport) }));
   const now = Math.floor(Date.now() / 1000);
   const upcoming = reader
     .getFlightAssignments(variants, now, now + 48 * 3600)
@@ -2570,7 +2701,38 @@ function buildFlightFacts(
     routes,
     upcoming,
     siblings,
+    notObservedSince: notObservedSince(reader, routes, upcoming.length > 0, now),
   };
+}
+
+/** Newest leg sighting when the whole flight has been silent past
+ * PERMALINK_STALE_NOTE_DAYS, measured against the airline's newest data rather
+ * than the wall clock; null while anything is scheduled or recent. */
+function notObservedSince(
+  reader: ScopedReader,
+  routes: { scheduled: number; last_seen_at: number | null }[],
+  hasUpcoming: boolean,
+  now: number
+): number | null {
+  if (hasUpcoming || routes.length === 0 || routes.some((r) => r.scheduled === 1)) return null;
+  const newest = Math.max(
+    ...routes.map((r) => (r.last_seen_at && r.last_seen_at <= now ? r.last_seen_at : 0))
+  );
+  if (newest <= 0) return null;
+  const anchor = reader.getObservationAnchor();
+  return anchor - newest > PERMALINK_STALE_NOTE_DAYS * 86400 ? newest : null;
+}
+
+/** Never "fleet-wide install rate": the express cold prior is deliberately far
+ * below express penetration, because a flight number with no history is
+ * structurally a flight on unequipped regional jets. */
+function coldPredictionNote(pred: Prediction, pct: number): string {
+  const base = `No history for this flight number; ~${pct}% is our estimate for flights we haven't yet seen on a Starlink aircraft`;
+  if (pred.method === "fleet_prior_express") return `${base} — most are older regional jets.`;
+  if (pred.method === "fleet_prior_mainline") {
+    return `${base}, from the mainline fleet's current Starlink share.`;
+  }
+  return `${base}.`;
 }
 
 /** One-sentence answer for meta copy. Never "0% of the time" — a zero reads
@@ -2582,10 +2744,10 @@ function flightMetaAnswer(
   facts: FlightFacts
 ): string {
   if (facts.observedStarlink > 0) {
-    return ` Starlink on ${facts.observedStarlink} of ${facts.observedTotal} recent departures.`;
+    return ` Starlink on ${facts.observedStarlink} of ${facts.observedTotal} observed departures.`;
   }
   if (facts.observedTotal > 0) {
-    return " Recent departures used aircraft still awaiting installation.";
+    return " Observed departures used aircraft still awaiting installation.";
   }
   try {
     if (cfg.flightHistoryModel) {
@@ -2652,13 +2814,15 @@ function flightPageMeta(
 function invalidFlightMeta(ctx: RequestContext, reason: InvalidFlightQuery["reason"]): PageMeta {
   const short = tenantConfig(ctx.tenant)?.shortName;
   const carrier = short ? `${short} ` : "";
-  const lead = reason === "other-carrier" ? `Not a ${carrier}Flight Number` : "Not a Flight Number";
+  const a = article(carrier || "flight");
+  const lead =
+    reason === "other-carrier" ? `Not ${a} ${carrier}Flight Number` : "Not a Flight Number";
   return {
-    siteTitle: `${lead} — Check a ${carrier}Flight for Starlink`,
-    siteDescription: `That isn't a ${carrier}flight number. Enter a flight number and date to check whether your aircraft has free Starlink WiFi.`,
+    siteTitle: `${lead} — Check ${a} ${carrier}Flight for Starlink`,
+    siteDescription: `That isn't ${a} ${carrier}flight number. Enter a flight number and date to check whether your aircraft has free Starlink WiFi.`,
     keywords: `check ${carrier.toLowerCase()}flight starlink, does my flight have starlink`,
     ogTitle: lead,
-    ogDescription: `Enter a ${carrier}flight number and date to check for Starlink WiFi.`,
+    ogDescription: `Enter ${a} ${carrier}flight number and date to check for Starlink WiFi.`,
     robotsMeta: "noindex, nofollow",
   };
 }
@@ -2715,11 +2879,14 @@ const checkFlightPage: Handler = (ctx) => {
     });
   }
   if (parsed.kind === "flight") {
-    const { raw, fn, date } = parsed;
-    if (raw !== fn) {
-      // Non-canonical spellings (ua123, UA0123) 301 home, date preserved.
+    const { fn, date } = parsed;
+    // One URL per flight (and per dated view): lowercase, zero-padded, trailing
+    // slash and junk-suffix spellings all 301 here, so the permalink space stays
+    // bounded instead of 200ing on /UA1126/anything.
+    const canonicalPath = `/check-flight/${fn}${date ? `/${date}` : ""}`;
+    if (ctx.url.pathname !== canonicalPath) {
       return Response.redirect(
-        `https://${ctx.site.canonicalHost}/check-flight/${fn}${date ? `/${date}` : ""}`,
+        `https://${ctx.site.canonicalHost}${canonicalPath}${ctx.url.search}`,
         301
       );
     }
@@ -2757,8 +2924,12 @@ const checkFlightPage: Handler = (ctx) => {
       { flight: facts }
     );
   }
-  // Bare /check-flight (with or without a trailing slash) — the generic
-  // indexable page.
+  if (ctx.url.pathname !== "/check-flight") {
+    return Response.redirect(
+      `https://${ctx.site.canonicalHost}/check-flight${ctx.url.search}`,
+      301
+    );
+  }
   return renderSubPage(ctx, CheckFlightPage, "/check-flight", subPageMeta(ctx, "check-flight"), {
     popular: ctx.reader.getPopularFlights(),
   });
@@ -2803,6 +2974,57 @@ function routePageMeta(ctx: RequestContext, cfg: AirlineConfig, route: RouteSumm
   };
 }
 
+const ROUTES_PAGE_ROWS = 60;
+const PLANNER_POPULAR_ROUTES = 60;
+// getSitemapRoutes scans flight_routes (~20ms on prod data); the link block
+// only needs to track the schedule, so it is rebuilt at most every 10 minutes.
+const PLANNER_ROUTES_TTL_MS = 10 * 60_000;
+type RoutePair = { origin: string; destination: string };
+const plannerRoutesCache = new WeakMap<
+  RequestContext["getReader"],
+  Map<string, { value: RoutePair[]; expiresAt: number }>
+>();
+
+/** Route permalinks for the bare planner: /routes' next page of rankings, so
+ * the two hubs link different pairs, topped up from the sitemap's most recently
+ * seen routes when the live window is thin. Only sitemap-eligible pairs, so
+ * every link serves 200. */
+function plannerPopularRoutes(ctx: RequestContext): RoutePair[] {
+  let perApp = plannerRoutesCache.get(ctx.getReader);
+  if (!perApp) {
+    perApp = new Map();
+    plannerRoutesCache.set(ctx.getReader, perApp);
+  }
+  const scope = tenantScope(ctx.tenant);
+  const now = Date.now();
+  const hit = perApp.get(scope);
+  if (hit && hit.expiresAt > now) return hit.value;
+
+  const sitemapRoutes = ctx.reader.getSitemapRoutes();
+  const eligible = new Set(sitemapRoutes.map((r) => `${r.origin}-${r.destination}`));
+  const ranked = ctx.reader.getRankedStarlinkRoutePairs(
+    0,
+    ROUTES_PAGE_ROWS + PLANNER_POPULAR_ROUTES
+  );
+  const onRoutesPage = new Set(
+    ctx.site.features.routesPage
+      ? ranked.slice(0, ROUTES_PAGE_ROWS).map((r) => `${r.origin}-${r.destination}`)
+      : []
+  );
+  const picked = new Map<string, RoutePair>();
+  const take = (r: RoutePair) => {
+    const key = `${r.origin}-${r.destination}`;
+    if (picked.size >= PLANNER_POPULAR_ROUTES || !eligible.has(key) || onRoutesPage.has(key))
+      return;
+    picked.set(key, { origin: r.origin, destination: r.destination });
+  };
+  for (const r of ranked.slice(ROUTES_PAGE_ROWS)) take(r);
+  for (const r of [...sitemapRoutes].sort((x, y) => y.last_touched - x.last_touched)) take(r);
+  const value = [...picked.values()];
+  perApp.set(scope, { value, expiresAt: now + PLANNER_ROUTES_TTL_MS });
+  return value;
+}
+
 const routePlannerPage: Handler = (ctx) => {
   if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
   if (!ctx.site.features.routePlannerPage) {
@@ -2826,15 +3048,24 @@ const routePlannerPage: Handler = (ctx) => {
     const cfg = siteAirline(ctx.site);
     if (!ctx.reader.routeHasData(parsed.origin, parsed.destination)) return notFound(ctx.site);
     const route = ctx.reader.getRouteSummary(parsed.origin, parsed.destination);
+    const reverseLinkable = ctx.reader.routeHasData(parsed.destination, parsed.origin);
     return renderSubPage(
       ctx,
       RoutePage,
       `/route-planner/${parsed.origin}/${parsed.destination}`,
       routePageMeta(ctx, cfg, route),
-      { route }
+      { route, reverseLinkable }
     );
   }
-  return renderSubPage(ctx, RoutePlannerPage, "/route-planner", subPageMeta(ctx, "route-planner"));
+  if (ctx.url.pathname !== "/route-planner") {
+    return Response.redirect(
+      `https://${ctx.site.canonicalHost}/route-planner${ctx.url.search}`,
+      301
+    );
+  }
+  return renderSubPage(ctx, RoutePlannerPage, "/route-planner", subPageMeta(ctx, "route-planner"), {
+    popularRoutes: plannerPopularRoutes(ctx),
+  });
 };
 
 // ItemList over the aircraft families the page actually groups (one block per
@@ -2880,6 +3111,7 @@ const fleetPage: Handler = (ctx) => {
     {
       data,
       shareCard: resolveShareCard(ctx.site.scope),
+      cite: citeStat(ctx),
     }
   );
 };
@@ -2918,6 +3150,11 @@ const methodologyPage: Handler = (ctx) => {
         "@type": "DataDownload",
         encodingFormat: "application/json",
         contentUrl: `https://${host}/api/data`,
+      },
+      {
+        "@type": "DataDownload",
+        encodingFormat: "text/csv",
+        contentUrl: `https://${host}${STARLINK_TAILS_CSV_PATH}`,
       },
     ],
     ...(citations.length > 0 ? { citation: citations } : {}),
@@ -3020,7 +3257,7 @@ const howToCheckPage: Handler = (ctx) => {
     siteDescription: `Four steps to a real answer: enter your ${cfg.shortName} flight number and date, read the verified-vs-predicted result, and re-check before departure. Plus tail-number lookup and booking-time tricks.`,
     keywords: `how to check ${cfg.shortName.toLowerCase()} starlink, how to know if my flight has starlink, does my ${cfg.shortName.toLowerCase()} flight have starlink, check flight wifi`,
     ogTitle: `How to Check If Your ${cfg.shortName} Flight Has Starlink`,
-    ogDescription: `Flight-number check, tail-number lookup, and booking-time tools — how to tell whether a ${cfg.name} flight has free Starlink WiFi.`,
+    ogDescription: `Flight-number check, tail-number lookup, and booking-time tools — how to tell whether ${article(cfg.name)} ${cfg.name} flight has free Starlink WiFi.`,
     ogType: "article",
   });
 };
@@ -3046,6 +3283,71 @@ const isStarlinkFreePage: Handler = (ctx) => {
     {
       starlinkCount: ctx.reader.getStarlinkPlanes().length,
       totalCount: ctx.reader.getTotalCount(),
+    }
+  );
+};
+
+/** The second distribution the /methodology Dataset declares. Outside /api/
+ * so the robots Disallow never shadows it. */
+export const STARLINK_TAILS_CSV_PATH = "/data/starlink-tails.csv";
+
+const CSV_COLUMNS = ["TailNumber", "Aircraft", "fleet", "OperatedBy", "DateFound"] as const;
+
+function csvField(value: string | null): string {
+  const v = value ?? "";
+  return /[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+}
+
+/** Equipped tails as CSV, straight from the DB (never a live scrape). Same
+ * gate as the Dataset that advertises it: airline sites with /methodology. */
+const starlinkTailsCsv: Handler = (ctx) => {
+  if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
+  if (ctx.tenant === "ALL" || !ctx.site.features.methodologyPage) return notFound(ctx.site);
+  const rows = ctx.reader
+    .getStarlinkPlanes()
+    .map((p) => CSV_COLUMNS.map((c) => csvField(p[c])).join(","));
+  return new Response(`${[CSV_COLUMNS.join(","), ...rows].join("\r\n")}\r\n`, {
+    headers: {
+      "Content-Type": "text/csv; charset=utf-8",
+      "Cache-Control": "public, max-age=3600",
+    },
+  });
+};
+
+/** The homepage headline's numbers, for the "Cite this" line; null on the hub. */
+function citeStat(ctx: RequestContext): CiteStat | null {
+  if (ctx.tenant === "ALL") return null;
+  return {
+    starlink: ctx.reader.countStarlinkPlanes(),
+    total: ctx.reader.getTotalCount(),
+    // Raw, never the now() fallback: an unstamped fleet cites no date at all.
+    lastUpdated: ctx.reader.getLastUpdatedRaw() ?? undefined,
+  };
+}
+
+const liveTvPage: Handler = (ctx) => {
+  if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
+  if (!ctx.site.features.liveTvPage) return notFound(ctx.site);
+  const mainline = ctx.reader.getFleetStats()?.mainline;
+  return renderSubPage(
+    ctx,
+    LiveTvPage,
+    "/live-tv",
+    {
+      siteTitle: "Live TV & Football on United Flights: Which Planes Have It",
+      siteDescription:
+        "United's DISH live TV and football need a Starlink mainline jet with a seatback screen. See which aircraft types likely have it and check your flight.",
+      keywords:
+        "united live tv, united live football, united dish live tv, united nfl inflight, united seatback live tv, united starlink tv",
+      ogTitle: "Live TV & Football on United Flights",
+      ogDescription:
+        "Which United planes can show DISH live TV and football on the seatback — and why United Express can't.",
+      ogType: "article",
+    },
+    {
+      mainlineStarlink: mainline?.starlink ?? 0,
+      mainlineTotal: mainline?.total ?? 0,
+      byType: liveTvTypeRows(ctx.reader.getStarlinkPlanes()),
     }
   );
 };
@@ -3383,6 +3685,7 @@ const homePage: Handler = async (ctx) => {
       shareCard: resolveShareCard(site.scope),
       pageLinks: pageNavLinks(ctx, "/"),
       popularFlights: site.features.checkFlightPage ? reader.getPopularFlights() : undefined,
+      hubLinks: isHub ? hubHomeLinks(ctx) : undefined,
     })
   );
 
@@ -3394,10 +3697,13 @@ const homePage: Handler = async (ctx) => {
     lastUpdated,
   });
   return new Response(
-    renderHtml(template, {
-      ...baseVars,
-      faqJsonLd: renderHtml(buildFaqJsonLd(content, baseVars.currentDate), baseVars),
-    }),
+    renderHtml(
+      template,
+      withClampedMeta({
+        ...baseVars,
+        faqJsonLd: renderHtml(buildFaqJsonLd(content, baseVars.currentDate), baseVars),
+      })
+    ),
     { headers: SECURITY_HEADERS.html }
   );
 };
@@ -3581,6 +3887,8 @@ export function createApp(db: Database): App {
     "/timeline": timelinePage,
     "/how-to-check": howToCheckPage,
     "/is-starlink-free": isStarlinkFreePage,
+    "/live-tv": liveTvPage,
+    "/data/starlink-tails.csv": starlinkTailsCsv,
     "/airlines": airlinesIndexPage,
     "/compare": comparePage,
     "/newly-equipped": newlyEquippedPage,
@@ -3650,6 +3958,8 @@ export function createApp(db: Database): App {
       // (HOST_REDIRECTS) and www aliases must redirect, never serve content.
       const redirect = hostRedirect(req, url);
       if (redirect) return finalizeResponse(redirect, true);
+      if (url.pathname === MCP_ALIAS_PATH)
+        return finalizeResponse(mcpAliasResponse(req, url), true);
 
       // Tenant-agnostic static assets bypass tenancy resolution — crawlers
       // fetch og images from odd hosts and must not 421. The only responses
@@ -3678,7 +3988,7 @@ export function createApp(db: Database): App {
 
     // Favicons and the manifest serve pre-421: browsers fetch them from any
     // alias host and unknown hosts get neutral hub assets, never a 421.
-    if (FAVICON_ROUTES[url.pathname]) {
+    if (faviconRoute(url.pathname)) {
       const fav = serveFavicon(site?.scope ?? "ALL", url.pathname);
       if (fav) return fav;
     }
@@ -3722,13 +4032,15 @@ export function createApp(db: Database): App {
         metrics.increment(COUNTERS.HTTP_RATE_LIMITED, {
           route: metricRoute(m),
           tenant: tenantScope(tenant),
+          airline: httpAirlineTag(tenant),
         });
         metrics.increment(COUNTERS.HTTP_REQUEST, {
           method: req.method,
           route: metricRoute(m),
           status_code: 429,
           tenant: tenantScope(tenant),
-          client_class: classifyUserAgent(req.headers.get("user-agent")),
+          airline: httpAirlineTag(tenant),
+          ...requestClientTags(req, url),
         });
         return new Response(JSON.stringify({ error: "rate limit exceeded" }), {
           status: 429,
@@ -3748,7 +4060,8 @@ export function createApp(db: Database): App {
         route: metricRoute(m),
         status_code: response.status,
         tenant: tenantScope(tenant),
-        client_class: classifyUserAgent(req.headers.get("user-agent")),
+        airline: httpAirlineTag(tenant),
+        ...requestClientTags(req, url),
       });
       return response;
     }
@@ -3757,7 +4070,7 @@ export function createApp(db: Database): App {
     if (onStarlinkIp) {
       metrics.increment(COUNTERS.PASSENGER_DETECT, {
         tenant: tenantScope(tenant),
-        client_class: classifyUserAgent(req.headers.get("user-agent")),
+        ...requestClientTags(req, url),
       });
     }
     const reader: ScopedReader = getReader(tenantScope(tenant));
@@ -3782,21 +4095,34 @@ export function createApp(db: Database): App {
         // strings can hold caller-supplied values and this tag is high-volume.
         span.setTag("http.url", url.pathname);
 
-        const response = m ? await m.handler(ctx) : notFound(site);
-
-        span.setTag("http.status_code", response.status);
-        // Emitted for unmatched paths too. Gating this on `m` hid every 404 on a
-        // path that matched no route — measured at ~82% of all 404s, i.e. a 5.4x
-        // undercount — from every metric-backed dashboard and monitor. `route`
-        // stays a bounded allowlist: unmatched collapses to "/*".
-        metrics.increment(COUNTERS.HTTP_REQUEST, {
-          method: req.method,
-          route: metricRoute(m),
-          status_code: response.status,
-          tenant: tenantScope(tenant),
-          client_class: classifyUserAgent(ua),
-        });
-        return response;
+        // A throw leaves as dispatch()'s finalized 500, so that is the status
+        // counted. Counting only after a successful await made every handler
+        // crash invisible to the status_code:5* monitor on this metric.
+        let status = 500;
+        try {
+          const response = m ? await m.handler(ctx) : notFound(site);
+          status = response.status;
+          span.setTag("http.status_code", status);
+          return response;
+        } catch (err) {
+          // withSpan tags the error itself; rethrow so dispatch() still builds
+          // the CORS-carrying 500 body.
+          span.setTag("http.status_code", 500);
+          throw err;
+        } finally {
+          // Emitted for unmatched paths too. Gating this on `m` hid every 404 on
+          // a path that matched no route — measured at ~82% of all 404s, i.e. a
+          // 5.4x undercount — from every metric-backed dashboard and monitor.
+          // `route` stays a bounded allowlist: unmatched collapses to "/*".
+          metrics.increment(COUNTERS.HTTP_REQUEST, {
+            method: req.method,
+            route: metricRoute(m),
+            status_code: status,
+            tenant: tenantScope(tenant),
+            airline: httpAirlineTag(tenant),
+            ...requestClientTags(req, url),
+          });
+        }
       },
       { "span.type": "web" }
     );

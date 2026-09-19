@@ -1,6 +1,6 @@
 import React from "react";
 import { type SiteConfig, siteAirline } from "../airlines/registry";
-import { PageFooter } from "./atoms";
+import { PageFooter, type PageLink } from "./atoms";
 
 /** The airline-specific access story. Kept per-airline (like methodology's
  * SOURCES) because "free" has different fine print per carrier — the handler
@@ -35,12 +35,14 @@ interface IsStarlinkFreePageProps {
   site: SiteConfig;
   starlinkCount: number;
   totalCount: number;
+  pageLinks?: PageLink[];
 }
 
 export default function IsStarlinkFreePage({
   site,
   starlinkCount,
   totalCount,
+  pageLinks,
 }: IsStarlinkFreePageProps) {
   const cfg = siteAirline(site);
   const copy = ACCESS[cfg.code];
@@ -127,6 +129,15 @@ export default function IsStarlinkFreePage({
               .
             </p>
           )}
+          {site.features.liveTvPage && (
+            <p className="text-sm text-muted leading-relaxed mt-3">
+              After live TV or football on the seatback screen? That needs more than Starlink —{" "}
+              <a href="/live-tv" className="text-accent hover:underline">
+                see which planes have it
+              </a>
+              .
+            </p>
+          )}
         </section>
 
         <div className="text-center mb-2">
@@ -145,7 +156,7 @@ export default function IsStarlinkFreePage({
         </a>
       </div>
 
-      <PageFooter site={site} />
+      <PageFooter site={site} pageLinks={pageLinks} />
     </div>
   );
 }

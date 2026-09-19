@@ -135,6 +135,8 @@ const ENDPOINTS = [
   "/badge.svg",
   "/embed",
   "/install-rate",
+  "/live-tv",
+  "/data/starlink-tails.csv",
 ];
 
 describe("UA host never leaks canaries", () => {

@@ -18,6 +18,8 @@ import {
   formatFactDate,
   latestFactDate,
 } from "../src/airlines/rollout-facts";
+import { createApp } from "../src/server/app";
+import { openSnapshot, req } from "./helpers";
 
 const SLUG_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 // YYYY-MM-DD, or YYYY-MM when the source only supports month precision.
@@ -140,6 +142,19 @@ describe("rollout-facts structure", () => {
         expect(entry.negative, `${entry.slug}: negative kind on a positive entry`).toBeUndefined();
       }
     }
+  });
+
+  // Both used to alias to the BA page, whose "installs paused" answer is wrong
+  // for two airlines that are flying Starlink.
+  test("IAG sister airlines own their pages instead of 301ing to British Airways", async () => {
+    const app = createApp(openSnapshot());
+    for (const slug of ["aer-lingus", "iberia"]) {
+      expect(factsAliasTarget(slug), slug).toBeNull();
+      expect(factsBySlug(slug), slug).not.toBeNull();
+      const res = await app.dispatch(req(`/airlines/${slug}`, "airlinestarlinktracker.com"));
+      expect(res.status, slug).toBe(200);
+    }
+    expect(factsAliasTarget("asiana")).toBe("korean-air");
   });
 
   test("formatFactDate keeps the source's precision", () => {

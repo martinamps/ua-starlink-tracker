@@ -1,6 +1,7 @@
 import type { SiteConfig } from "../airlines/registry";
 import type { InstallRateStats, TargetProjection, TargetVerdict } from "../utils/install-rate";
 import { PageFooter, type PageLink } from "./atoms";
+import { type CiteStat, CiteThis } from "./cite-this";
 
 const EYEBROW = "text-[10px] font-mono text-muted uppercase tracking-wider mb-3";
 const PANEL = "bg-surface border border-subtle rounded-lg p-5";
@@ -23,6 +24,7 @@ interface InstallRatePageProps {
   site: SiteConfig;
   airlines: AirlineInstallRate[];
   pageLinks?: PageLink[];
+  cite?: CiteStat | null;
 }
 
 const VERDICT_TONE: Record<TargetVerdict, { label: string; color: string; bg: string }> = {
@@ -225,7 +227,7 @@ function AirlineSection({ a }: { a: AirlineInstallRate }) {
   );
 }
 
-export default function InstallRatePage({ site, airlines, pageLinks }: InstallRatePageProps) {
+export default function InstallRatePage({ site, airlines, pageLinks, cite }: InstallRatePageProps) {
   const single = airlines.length === 1 ? airlines[0] : null;
   return (
     <div className="w-full mx-auto px-4 sm:px-6 md:px-8 bg-base min-h-screen flex flex-col relative">
@@ -272,6 +274,8 @@ export default function InstallRatePage({ site, airlines, pageLinks }: InstallRa
           )}
         </p>
       </section>
+
+      <CiteThis site={site} cite={cite} />
 
       <PageFooter site={site} pageLinks={pageLinks} />
     </div>

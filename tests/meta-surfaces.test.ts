@@ -18,6 +18,7 @@ import {
 } from "../src/airlines/registry";
 import { ROUTE_AIRPORT_RE } from "../src/database/database";
 import { type Scope, type ScopedReader, createReaderFactory } from "../src/database/reader";
+import { COUNTERS, metrics } from "../src/observability/metrics";
 import { API_RATE_LIMIT, createApp } from "../src/server/app";
 import { mcpReq, openSnapshot, req } from "./helpers";
 
@@ -453,6 +454,39 @@ describe("dispatch wraps handler throws", () => {
       throw new Error("deliberate rethrow");
     };
     const res = await isolated.dispatch(req("/api/data", "unitedstarlinktracker.com"));
+    expect(res.status).toBe(500);
+    expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBe("*");
+    expect(await res.json()).toEqual({ error: "internal" });
+  });
+
+  // The contract monitor alerts on http.request{status_code:5*}; a crash that
+  // skips the count is a crash the monitor cannot see.
+  test("throwing /api/check-flight → exactly one http.request with status_code 500", async () => {
+    const isolated = createApp(openSnapshot());
+    isolated.routes["/api/check-flight"] = () => {
+      throw new Error("deliberate rethrow");
+    };
+    const calls: Array<Record<string, unknown>> = [];
+    const original = metrics.increment;
+    metrics.increment = (name, tags) => {
+      if (name === COUNTERS.HTTP_REQUEST) calls.push({ ...(tags ?? {}) });
+    };
+    let res: Response;
+    try {
+      res = await isolated.dispatch(
+        req("/api/check-flight?flight_number=UA123&date=2026-09-20", "unitedstarlinktracker.com", {
+          headers: { "x-forwarded-for": "127.0.0.1" },
+        })
+      );
+    } finally {
+      metrics.increment = original;
+    }
+    expect(calls).toHaveLength(1);
+    expect(calls[0].status_code).toBe(500);
+    expect(calls[0].route).toBe("/api/check-flight");
+    expect(typeof calls[0].tenant).toBe("string");
+    expect(typeof calls[0].client_class).toBe("string");
     expect(res.status).toBe(500);
     expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
     expect(res.headers.get("Access-Control-Allow-Origin")).toBe("*");

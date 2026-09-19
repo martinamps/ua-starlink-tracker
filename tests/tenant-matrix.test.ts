@@ -209,6 +209,7 @@ const ROUTES: Array<[route: string, feature: keyof SiteConfig["features"] | null
   ["/timeline", "timelinePage"],
   ["/how-to-check", "intentPages"],
   ["/is-starlink-free", "intentPages"],
+  ["/live-tv", "liveTvPage"],
 ];
 const isHtmlRoute = (route: string) => !route.startsWith("/api/") && !route.endsWith(".txt");
 
@@ -618,7 +619,7 @@ describe("MCP tools are scope-correct on non-UA tenants", () => {
         expectNoUaLeak(t, `${site.key} predict_flight`);
         // UA-model fingerprints must not appear on other scopes.
         expect(t).not.toContain("fleet prior");
-        expect(t).not.toContain("obs ·");
+        expect(t).not.toContain("observed departures ·");
       });
 
       test("REST /api/predict-flight agrees with MCP predict (same registry answer)", async () => {
