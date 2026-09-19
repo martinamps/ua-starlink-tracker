@@ -18,6 +18,14 @@
               "type": "string",
               "description": "Flight date in YYYY-MM-DD format, matched to the departure airport's local calendar date (UTC fallback for unmapped airports).",
               "examples": ["2026-05-15"]
+            },
+            "origin": {
+              "type": "string",
+              "description": "Optional 3-letter IATA departure airport of the traveller's leg (e.g. 'DEN'); scopes the answer to that leg of a multi-leg flight number."
+            },
+            "destination": {
+              "type": "string",
+              "description": "Optional 3-letter IATA arrival airport of the traveller's leg (e.g. 'SAN'); with origin, picks one leg of a multi-leg flight number."
             }
           },
           "required": ["flight_number", "date"],
