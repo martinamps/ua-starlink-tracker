@@ -38,7 +38,13 @@ import {
 } from "../airlines/registry";
 import type { FlightAssignmentRow } from "../database/database";
 import { type Scope, type ScopedReader, aggregatePenetration } from "../database/reader";
-import { COUNTERS, DISTRIBUTIONS, metrics, normalizeAirlineTag } from "../observability";
+import {
+  COUNTERS,
+  DISTRIBUTIONS,
+  mcpClientTags,
+  metrics,
+  normalizeAirlineTag,
+} from "../observability";
 import {
   ENFORCE_ITINERARY_TIME_BUDGET,
   carrierPrediction,
@@ -59,13 +65,19 @@ import {
   FR24_OUTAGE_NOTE,
   type FlightVerdict,
   SWAP_DEGRADED_NOTE,
+  answersOtherLeg,
   carrierReader,
   decideCarrier,
   flightDateWindow,
+  legSubject,
   negativeWifi,
+  parseLegQuery,
+  recordLegScope,
   resolveFlightVerdict,
   verdictTelemetry,
   wifiLabel,
+  withLeg,
+  withLegNote,
 } from "./check-flight-core";
 import type { FallbackSegment } from "./flight-verdict";
 import { FlightRadar24API } from "./flightradar24-api";
@@ -233,6 +245,16 @@ function buildTools(scope: Scope) {
             description:
               "Flight date in YYYY-MM-DD format, matched to the departure airport's local calendar date (UTC fallback for unmapped airports).",
             examples: ["2026-05-15"],
+          },
+          origin: {
+            type: "string",
+            description:
+              "Optional 3-letter IATA departure airport of the traveller's leg (e.g. 'DEN'); scopes the answer to that leg of a multi-leg flight number.",
+          },
+          destination: {
+            type: "string",
+            description:
+              "Optional 3-letter IATA arrival airport of the traveller's leg (e.g. 'SAN'); with origin, picks one leg of a multi-leg flight number.",
           },
         },
         required: ["flight_number", "date"],
@@ -587,7 +609,7 @@ function recordMcpPrediction(
 async function toolCheckFlight(
   hostReader: ScopedReader,
   getReader: GetReader,
-  args: { flight_number?: unknown; date?: unknown }
+  args: { flight_number?: unknown; date?: unknown; origin?: unknown; destination?: unknown }
 ): Promise<ToolResult> {
   const flightNumber =
     typeof args.flight_number === "string" ? canonicalFlightInput(args.flight_number) : "";
@@ -611,7 +633,13 @@ async function toolCheckFlight(
     reader,
     flightNumber,
     date,
-    hostReader.scope === "ALL" ? { lookupTail: null } : undefined
+    withLeg(
+      hostReader.scope === "ALL" ? { lookupTail: null } : undefined,
+      parseLegQuery(
+        typeof args.origin === "string" ? args.origin : null,
+        typeof args.destination === "string" ? args.destination : null
+      )
+    )
   );
 
   if (verdict.kind === "invalid_date") {
@@ -634,6 +662,7 @@ async function toolCheckFlight(
 
   const t = verdictTelemetry(verdict);
   recordMcpFlightLookup(reader.scope, t.outcome, t.confidence);
+  recordLegScope("mcp", verdict, cfg.code, mcpClientTags());
 
   if (verdict.kind === "qatar" || verdict.kind === "qatar_no_data") {
     return renderQatarCheckFlight(verdict, date);
@@ -673,7 +702,10 @@ async function toolCheckFlight(
           content: [
             {
               type: "text",
-              text: `✈️ Yes! Flight ${normalized} on ${date} is scheduled on a verified Starlink aircraft:\n\n${verdict.verified.map(renderAssignment).join("\n")}\n\nStarlink WiFi is free on all equipped ${cfg.shortName} flights.`,
+              text: withLegNote(
+                `✈️ Yes! Flight ${legSubject(verdict)} on ${date} is scheduled on a verified Starlink aircraft:\n\n${verdict.verified.map(renderAssignment).join("\n")}\n\nStarlink WiFi is free on all equipped ${cfg.shortName} flights.`,
+                verdict
+              ),
             },
           ],
         };
@@ -682,7 +714,10 @@ async function toolCheckFlight(
         content: [
           {
             type: "text",
-            text: `Likely yes — ${normalized} on ${date} is assigned to a tail tracked as Starlink in the fleet spreadsheet (not yet verified against ${cfg.verifySite}):\n\n${verdict.unverified.map(renderAssignment).join("\n")}\n\nSpreadsheet data is usually accurate but unverified. Check ${cfg.verifySite} or the flight status 24h out to confirm.`,
+            text: withLegNote(
+              `Likely yes — ${legSubject(verdict)} on ${date} is assigned to a tail tracked as Starlink in the fleet spreadsheet (not yet verified against ${cfg.verifySite}):\n\n${verdict.unverified.map(renderAssignment).join("\n")}\n\nSpreadsheet data is usually accurate but unverified. Check ${cfg.verifySite} or the flight status 24h out to confirm.`,
+              verdict
+            ),
           },
         ],
       };
@@ -693,20 +728,25 @@ async function toolCheckFlight(
       // already know the route from the assignment — no lookup needed.
       const f = verdict.flights[0];
       const ac = f.aircraft_type || "aircraft";
-      const altBlock = buildAlternativesBlock(
-        cfg,
-        reader,
-        [{ origin: f.departure_airport, destination: f.arrival_airport }],
-        mid,
-        { flightNumber: normalized, label: firmNoLabel([f.tail_number], [negativeWifi(f)]) }
-      );
+      const altBlock = answersOtherLeg(verdict.leg)
+        ? ""
+        : buildAlternativesBlock(
+            cfg,
+            reader,
+            [{ origin: f.departure_airport, destination: f.arrival_airport }],
+            mid,
+            { flightNumber: normalized, label: firmNoLabel([f.tail_number], [negativeWifi(f)]) }
+          );
       return {
         content: [
           {
             type: "text",
             text: withAlt(
               altBlock,
-              `❌ No Starlink: ${normalized} on ${date} is assigned to tail ${f.tail_number} (${ac}), verified as ${negativeWifi(f)} WiFi — NOT Starlink. Aircraft swaps can happen, but the assignment is currently firm.${verdict.fr24Error ? ` ${SWAP_DEGRADED_NOTE}` : ""}`
+              withLegNote(
+                `❌ No Starlink: ${legSubject(verdict)} on ${date} is assigned to tail ${f.tail_number} (${ac}), verified as ${negativeWifi(f)} WiFi — NOT Starlink. Aircraft swaps can happen, but the assignment is currently firm.${verdict.fr24Error ? ` ${SWAP_DEGRADED_NOTE}` : ""}`,
+                verdict
+              )
             ),
           },
         ],
@@ -721,7 +761,10 @@ async function toolCheckFlight(
         content: [
           {
             type: "text",
-            text: `✈️ Yes! Flight ${normalized} on ${date} is assigned to a Starlink aircraft (via live tail lookup):\n\n${verdict.starlink.map(renderSeg).join("\n")}\n\nStarlink WiFi is free on all equipped ${cfg.shortName} flights.`,
+            text: withLegNote(
+              `✈️ Yes! Flight ${legSubject(verdict)} on ${date} is assigned to a Starlink aircraft (via live tail lookup):\n\n${verdict.starlink.map(renderSeg).join("\n")}\n\nStarlink WiFi is free on all equipped ${cfg.shortName} flights.`,
+              verdict
+            ),
           },
         ],
       };
@@ -729,26 +772,31 @@ async function toolCheckFlight(
 
     case "fr24_no": {
       const no = verdict.segments.filter((s) => s.hasStarlink === false);
-      const altBlock = buildAlternativesBlock(
-        cfg,
-        reader,
-        no.map((s) => ({ origin: s.origin, destination: s.destination })),
-        mid,
-        {
-          flightNumber: normalized,
-          label: firmNoLabel(
-            no.map((s) => s.tail_number),
-            no.map((s) => wifiLabel(s.verified_wifi))
-          ),
-        }
-      );
+      const altBlock = answersOtherLeg(verdict.leg)
+        ? ""
+        : buildAlternativesBlock(
+            cfg,
+            reader,
+            no.map((s) => ({ origin: s.origin, destination: s.destination })),
+            mid,
+            {
+              flightNumber: normalized,
+              label: firmNoLabel(
+                no.map((s) => s.tail_number),
+                no.map((s) => wifiLabel(s.verified_wifi))
+              ),
+            }
+          );
       return {
         content: [
           {
             type: "text",
             text: withAlt(
               altBlock,
-              `❌ No Starlink: ${normalized} on ${date} is assigned to ${no.map((s) => `tail ${s.tail_number} (${s.aircraft_model || "aircraft"}, ${wifiLabel(s.verified_wifi)} WiFi)`).join("; ")} — NOT Starlink. Aircraft swaps can happen, but the assignment is currently firm.`
+              withLegNote(
+                `❌ No Starlink: ${legSubject(verdict)} on ${date} is assigned to ${no.map((s) => `tail ${s.tail_number} (${s.aircraft_model || "aircraft"}, ${wifiLabel(s.verified_wifi)} WiFi)`).join("; ")} — NOT Starlink. Aircraft swaps can happen, but the assignment is currently firm.`,
+                verdict
+              )
             ),
           },
         ],
@@ -763,7 +811,10 @@ async function toolCheckFlight(
         content: [
           {
             type: "text",
-            text: `${normalized} on ${date}: ${lead} ${describeCarrierPrediction(cfg, verdict.answer)}`,
+            text: withLegNote(
+              `${normalized} on ${date}: ${lead} ${describeCarrierPrediction(cfg, verdict.answer)}`,
+              verdict
+            ),
           },
         ],
       };
@@ -794,7 +845,10 @@ async function toolCheckFlight(
 
       // Probability context FIRST, alternatives table LAST. Recency bias: the
       // agent's final impression is "here's the table to present", not "no data".
-      const probLine = `**${normalized} on ${date}**: ~${pct}% Starlink probability ${pred.n_observations > 0 ? `(${pred.n_observations} historical obs)` : "(no flight history)"}. ${assignmentNote}`;
+      const probLine = withLegNote(
+        `**${normalized} on ${date}**: ~${pct}% Starlink probability ${pred.n_observations > 0 ? `(${pred.n_observations} historical obs)` : "(no flight history)"}. ${assignmentNote}`,
+        verdict
+      );
 
       let altBlock = "";
       if (pred.probability < 0.2 && !isPast) {
@@ -824,7 +878,10 @@ function renderQatarCheckFlight(
       content: [
         {
           type: "text",
-          text: `${verdict.normalized} on ${date}: no schedule data. Coverage is limited to high-traffic Qatar Airways routes for the next ~48h; check back closer to departure.`,
+          text: withLegNote(
+            `${legSubject(verdict)} on ${date}: no schedule data. Coverage is limited to high-traffic Qatar Airways routes for the next ~48h; check back closer to departure.`,
+            verdict
+          ),
         },
       ],
     };
@@ -834,14 +891,20 @@ function renderQatarCheckFlight(
     const dep = r.departure_time ? new Date(r.departure_time * 1000).toISOString() : "unknown";
     return `- ${r.flight_number} (${r.departure_airport ?? "?"}→${r.arrival_airport ?? "?"}) on ${qatarEquipmentName(r.equipment_code)}. Departs ${dep}.`;
   });
+  const subject = legSubject(verdict);
   const headline =
     verdict.hasStarlink === true
-      ? `✈️ Yes! Flight ${verdict.normalized} on ${date} is scheduled on a Starlink-equipped aircraft type.`
+      ? `✈️ Yes! Flight ${subject} on ${date} is scheduled on a Starlink-equipped aircraft type.`
       : verdict.hasStarlink === false
-        ? `❌ No Starlink: ${verdict.normalized} on ${date}.`
-        : `Maybe — ${verdict.normalized} on ${date}.`;
+        ? `❌ No Starlink: ${subject} on ${date}.`
+        : `Maybe — ${subject} on ${date}.`;
   return {
-    content: [{ type: "text", text: `${headline} ${verdict.reason}\n\n${lines.join("\n")}` }],
+    content: [
+      {
+        type: "text",
+        text: withLegNote(`${headline} ${verdict.reason}\n\n${lines.join("\n")}`, verdict),
+      },
+    ],
   };
 }
 

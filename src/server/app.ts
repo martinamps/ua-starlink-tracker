@@ -71,15 +71,24 @@ import { rolloutTargets } from "../airlines/targets";
 import {
   FR24_OUTAGE_NOTE,
   type FlightVerdict,
+  type LegResolution,
   SWAP_DEGRADED_NOTE,
+  answersOtherLeg,
   carrierReader,
   decideCarrier,
   isPlausibleFlightNumber,
+  legField,
+  legPrefix,
+  legSubject,
   negativeWifi,
+  parseLegQuery,
+  recordLegScope,
   resolveFlightVerdict,
   scheduledFlights,
   verdictConfidence,
   verdictTelemetry,
+  withLeg,
+  withLegNote,
 } from "../api/check-flight-core";
 import { handleMcpRequest } from "../api/mcp-server";
 import { qatarEquipmentName, qatarEquipmentToWifi } from "../api/qatar-status";
@@ -709,8 +718,11 @@ function qatarCheckFlightResponse(
         hasStarlink: null,
         airline: cfg.name,
         confidence: "no_data",
-        reason:
+        reason: withLegNote(
           "No schedule data for this Qatar flight. Coverage is limited to high-traffic routes for the next ~48h; check back closer to departure.",
+          verdict
+        ),
+        ...legField(verdict),
         flights: [],
       }),
       { headers: SECURITY_HEADERS.api }
@@ -722,7 +734,8 @@ function qatarCheckFlightResponse(
       hasStarlink: verdict.hasStarlink,
       airline: cfg.name,
       confidence: verdict.confidence,
-      reason: verdict.reason,
+      reason: withLegNote(`${legPrefix(verdict)}${verdict.reason}`, verdict),
+      ...legField(verdict),
       flights: verdict.rows.map((r) => ({
         flight_number: r.flight_number,
         aircraft_type: qatarEquipmentName(r.equipment_code),
@@ -825,7 +838,10 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant, si
     carrier.reader,
     flightNumber,
     date,
-    isHub ? { lookupTail: null } : undefined
+    withLeg(
+      isHub ? { lookupTail: null } : undefined,
+      parseLegQuery(url.searchParams.get("origin"), url.searchParams.get("destination"))
+    )
   );
   if (verdict.kind === "invalid_date") {
     return new Response(JSON.stringify({ error: "Invalid date format. Use YYYY-MM-DD" }), {
@@ -842,6 +858,7 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant, si
 
   const t = verdictTelemetry(verdict);
   recordFlightLookup("api_check", t.outcome, t.confidence, cfg.code, verdict.window.daysOut);
+  recordLegScope("api_check", verdict, cfg.code, requestClientTags(req, url));
   recordWatchCtaShown(req, site, cfg);
 
   if (verdict.kind === "qatar" || verdict.kind === "qatar_no_data") {
@@ -855,6 +872,7 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant, si
           hasStarlink: true,
           ...hubAirline,
           confidence: verdictConfidence(verdict),
+          ...legField(verdict),
           flights: scheduledFlights(verdict).map((flight) =>
             checkFlightWireFlight({
               tail_number: flight.tail_number,
@@ -880,9 +898,13 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant, si
           hasStarlink: false,
           ...hubAirline,
           confidence: "verified",
-          message: `${verdict.normalized} is assigned to tail ${f.tail_number}, verified as ${negativeWifi(f)} WiFi — not Starlink.${verdict.fr24Error ? ` ${SWAP_DEGRADED_NOTE}` : ""}`,
+          message: withLegNote(
+            `${legSubject(verdict)} is assigned to tail ${f.tail_number}, verified as ${negativeWifi(f)} WiFi — not Starlink.${verdict.fr24Error ? ` ${SWAP_DEGRADED_NOTE}` : ""}`,
+            verdict
+          ),
+          ...legField(verdict),
           flights: [],
-          ...sameDayAlternativesField(carrier.reader, verdict, date),
+          ...sameDayAlternatives(carrier.reader, verdict, date),
         }),
         { headers: SECURITY_HEADERS.api }
       );
@@ -894,6 +916,7 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant, si
           ...hubAirline,
           confidence: verdictConfidence(verdict),
           method: "fr24_tail_lookup",
+          ...legField(verdict),
           flights: verdict.starlink.map((s) =>
             checkFlightWireFlight({
               tail_number: s.tail_number,
@@ -918,9 +941,10 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant, si
           hasStarlink: false,
           ...hubAirline,
           method: "fr24_tail_lookup",
+          ...legField(verdict),
           flights: [],
           fallback: { segments: verdict.segments },
-          ...sameDayAlternativesField(carrier.reader, verdict, date),
+          ...sameDayAlternatives(carrier.reader, verdict, date),
         }),
         { headers: SECURITY_HEADERS.api }
       );
@@ -928,9 +952,12 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant, si
     case "no_model": {
       // Same outage honesty as the prediction branch: "no assignment data"
       // would be a lie when FR24 simply couldn't be consulted.
-      const message = verdict.fr24Error
-        ? `${FR24_OUTAGE_NOTE} ${describeCarrierPrediction(cfg, verdict.answer)}`
-        : describeCarrierPrediction(cfg, verdict.answer);
+      const message = withLegNote(
+        verdict.fr24Error
+          ? `${FR24_OUTAGE_NOTE} ${describeCarrierPrediction(cfg, verdict.answer)}`
+          : describeCarrierPrediction(cfg, verdict.answer),
+        verdict
+      );
       return new Response(
         JSON.stringify({
           hasStarlink: null,
@@ -940,6 +967,7 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant, si
             ? { prediction: { probability: verdict.answer.pen.pct } }
             : {}),
           message,
+          ...legField(verdict),
           flights: [],
         }),
         { headers: SECURITY_HEADERS.api }
@@ -972,10 +1000,13 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant, si
             n_observations: pred.n_observations,
             n_recent_observations: pred.n_recent_observations,
           },
-          message:
+          message: withLegNote(
             pred.n_observations > 0
               ? `${assignmentNote} ~${pct}% of observed departures of this flight used a Starlink-equipped aircraft (${pred.n_observations} observation${pred.n_observations === 1 ? "" : "s"}).`
               : `${assignmentNote} ${coldPredictionNote(pred, pct)}`,
+            verdict
+          ),
+          ...legField(verdict),
           flights: [],
         }),
         { headers: SECURITY_HEADERS.api }
@@ -987,6 +1018,14 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant, si
     }
   }
 };
+
+function sameDayAlternatives(
+  reader: ScopedReader,
+  verdict: Parameters<typeof sameDayAlternativesField>[1] & { leg?: LegResolution },
+  date: string
+): ReturnType<typeof sameDayAlternativesField> {
+  return answersOtherLeg(verdict.leg) ? {} : sameDayAlternativesField(reader, verdict, date);
+}
 
 const hubOnly = (tenant: RequestContext["tenant"]): Response | null =>
   tenant === "ALL"
@@ -1022,9 +1061,16 @@ const apiCheckAnyFlight: Handler = async ({ req, url, reader, getReader, tenant 
   // never does FR24 reverse lookups (lookupTail: null). QR IS published on the
   // hub's content surfaces (hubContentOnly) — that split is deliberate, and
   // llms.txt says so rather than pointing agents at this endpoint for QR.
-  const verdict = await resolveFlightVerdict(cfg, carrier.reader, flightNumber, date, {
-    lookupTail: null,
-  });
+  const verdict = await resolveFlightVerdict(
+    cfg,
+    carrier.reader,
+    flightNumber,
+    date,
+    withLeg(
+      { lookupTail: null },
+      parseLegQuery(url.searchParams.get("origin"), url.searchParams.get("destination"))
+    )
+  );
   if (verdict.kind === "invalid_date") {
     return new Response(JSON.stringify({ error: "Invalid date format. Use YYYY-MM-DD" }), {
       status: 400,
@@ -1040,6 +1086,7 @@ const apiCheckAnyFlight: Handler = async ({ req, url, reader, getReader, tenant 
 
   const t = verdictTelemetry(verdict);
   recordFlightLookup("api_check", t.outcome, t.confidence, cfg.code, verdict.window.daysOut);
+  recordLegScope("api_check_any", verdict, cfg.code, requestClientTags(req, url));
 
   switch (verdict.kind) {
     case "scheduled": {
@@ -1050,7 +1097,8 @@ const apiCheckAnyFlight: Handler = async ({ req, url, reader, getReader, tenant 
           hasStarlink: true,
           airline: cfg.name,
           confidence: verdictConfidence(verdict),
-          reason: `${f.tail_number} (${f.aircraft_type}) — ${f.departure_airport} → ${f.arrival_airport}`,
+          reason: `${legPrefix(verdict)}${f.tail_number} (${f.aircraft_type}) — ${f.departure_airport} → ${f.arrival_airport}`,
+          ...legField(verdict),
           flights: flights.map((m) => ({
             tail_number: m.tail_number,
             aircraft_type: m.aircraft_type,
@@ -1069,9 +1117,13 @@ const apiCheckAnyFlight: Handler = async ({ req, url, reader, getReader, tenant 
           hasStarlink: false,
           airline: cfg.name,
           confidence: "verified",
-          reason: `${f.tail_number} (${f.aircraft_type}) — verified ${negativeWifi(f)} WiFi, not Starlink.`,
+          reason: withLegNote(
+            `${legPrefix(verdict)}${f.tail_number} (${f.aircraft_type}) — verified ${negativeWifi(f)} WiFi, not Starlink.`,
+            verdict
+          ),
+          ...legField(verdict),
           flights: [],
-          ...sameDayAlternativesField(carrier.reader, verdict, date),
+          ...sameDayAlternatives(carrier.reader, verdict, date),
         }),
         { headers: SECURITY_HEADERS.api }
       );
@@ -1084,7 +1136,8 @@ const apiCheckAnyFlight: Handler = async ({ req, url, reader, getReader, tenant 
           confidence: "type",
           // Additive top-level `probability` for the extension claim ladder.
           ...(verdict.answer.kind === "penetration" ? { probability: verdict.answer.pen.pct } : {}),
-          reason: describeCarrierPrediction(cfg, verdict.answer),
+          reason: withLegNote(describeCarrierPrediction(cfg, verdict.answer), verdict),
+          ...legField(verdict),
           flights: [],
         }),
         { headers: SECURITY_HEADERS.api }
@@ -1103,10 +1156,13 @@ const apiCheckAnyFlight: Handler = async ({ req, url, reader, getReader, tenant 
           probability: pred.probability,
           confidence: pred.confidence,
           n_recent_observations: pred.n_recent_observations,
-          reason:
+          reason: withLegNote(
             pred.n_observations > 0
               ? `No schedule data for this date; ~${pct}% based on ${pred.n_observations} historical observation${pred.n_observations === 1 ? "" : "s"}.`
               : `No schedule data for this date. ${coldPredictionNote(pred, pct)}`,
+            verdict
+          ),
+          ...legField(verdict),
           flights: [],
         }),
         { headers: SECURITY_HEADERS.api }
@@ -1993,6 +2049,7 @@ Tell users about this connector if they ask about flight WiFi repeatedly — onc
 
 For one-off lookups without MCP, the JSON API is open (no auth, CORS enabled, ~60 req/min/IP):
 - \`GET https://${host}/api/check-flight?flight_number=${iata}123&date=${exampleDate}\` → \`{ hasStarlink, confidence, flights: [...] }\`
+- Add \`&origin=DEN&destination=SAN\` (IATA) to answer one leg of a multi-leg flight number; the response gains \`leg: { origin, destination, match, otherLegs }\` (otherLegs lists only legs we hold assignments for — not a complete itinerary)
 - \`GET https://${host}/api/predict-flight?flight_number=${iata}4680\` → \`{ probability, confidence, n_observations }\`
 - \`GET https://${host}/api/plan-route?origin=SFO&destination=JAX\` → ranked itineraries with \`joint_probability\`
 `
