@@ -94,6 +94,8 @@ const HubHero = ({ stats, perAirlineStats = [], recentInstalls = [], hubLinks }:
                   var label, cls;
                   if (d.hasStarlink === true) { label = 'Starlink'; cls = 'text-green-400'; }
                   else if (d.hasStarlink === false) { label = 'No Starlink'; cls = 'text-muted'; }
+                  else if (typeof d.probability === 'number' && d.basis && d.probability === 0) { label = 'Unlikely'; cls = 'text-muted'; }
+                  else if (typeof d.probability === 'number' && d.basis) { label = '≥' + Math.floor(d.probability * 100) + '% Starlink'; cls = 'text-accent'; }
                   else if (typeof d.probability === 'number') { label = '~' + Math.round(d.probability * 100) + '% Starlink'; cls = 'text-accent'; }
                   else { label = 'Unknown'; cls = 'text-muted'; }
                   cr.innerHTML = '<span class="' + cls + '">' + label + '</span> · ' + esc(d.airline || '') + ' · ' + esc(d.reason || d.message || '');

@@ -17,8 +17,13 @@ import {
   ensureAirlinePrefix,
   prefixBelongsTo,
 } from "../airlines/flight-number";
-import { type AirlineConfig, enabledAirlines, publicAirlines } from "../airlines/registry";
-import type { FlightAssignmentRow, QatarScheduleRow } from "../database/database";
+import {
+  type AirlineConfig,
+  enabledAirlines,
+  hubLookupAirlines,
+  publicAirlines,
+} from "../airlines/registry";
+import type { FlightAssignmentRow } from "../database/database";
 import type { Scope, ScopedReader } from "../database/reader";
 import {
   COUNTERS,
@@ -45,7 +50,12 @@ import {
 } from "../utils/airport-tz";
 import { type FallbackSegment, lookupFlightTailVerdict } from "./flight-verdict";
 import { Fr24UnavailableError } from "./flightradar24-api";
-import { qatarEquipmentName } from "./qatar-status";
+import {
+  type QatarLeg,
+  type QatarVerdict,
+  qatarLiveLegs,
+  resolveQatarVerdict,
+} from "./qatar-verdict";
 
 // flightDateWindow lives in airport-tz next to its partner matchesLocalDate;
 // re-exported here so check-flight surfaces keep one import site.
@@ -93,10 +103,18 @@ export type CarrierDecision =
 // Registry is process-static — snapshot the airline lists once.
 const ENABLED_AIRLINES: readonly AirlineConfig[] = enabledAirlines();
 const PUBLIC_AIRLINES: readonly AirlineConfig[] = publicAirlines();
+const HUB_LOOKUP_AIRLINES: readonly AirlineConfig[] = hubLookupAirlines();
 
+/**
+ * `pool` picks the unpinned (hub) population: "public" for surfaces that sit
+ * beside the fleet model (hub REST check-flight / predict-flight), "lookup"
+ * for the cross-carrier lookup surfaces that also answer hubFlightLookup
+ * airlines. A pinned scope ignores it — tenant isolation is not pool-shaped.
+ */
 export function decideCarrier(
   pinnedCfg: AirlineConfig | null,
-  flightNumber: string
+  flightNumber: string,
+  opts: { pool?: "public" | "lookup" } = {}
 ): CarrierDecision {
   if (pinnedCfg) {
     const marketing = detectMarketingCarrier(flightNumber, ENABLED_AIRLINES);
@@ -111,8 +129,9 @@ export function decideCarrier(
     }
     return { outcome: "resolved", cfg: pinnedCfg, pinned: true };
   }
-  const cfg = detectMarketingCarrier(flightNumber, PUBLIC_AIRLINES);
-  if (!cfg) return { outcome: "not_tracked", pinnedCfg: null, tracked: PUBLIC_AIRLINES };
+  const pool = opts.pool === "lookup" ? HUB_LOOKUP_AIRLINES : PUBLIC_AIRLINES;
+  const cfg = detectMarketingCarrier(flightNumber, pool);
+  if (!cfg) return { outcome: "not_tracked", pinnedCfg: null, tracked: pool };
   return { outcome: "resolved", cfg, pinned: false };
 }
 
@@ -200,16 +219,7 @@ export type AnsweredVerdict =
       pred: Prediction;
       fr24Error: boolean;
     }
-  | {
-      kind: "qatar";
-      window: FlightDateWindow;
-      normalized: string;
-      hasStarlink: boolean | null;
-      confidence: "verified" | "rolling" | "mixed";
-      reason: string;
-      rows: QatarScheduleRow[];
-    }
-  | { kind: "qatar_no_data"; window: FlightDateWindow; normalized: string };
+  | QatarVerdict;
 
 /** Equipped rows merged for display, departure_time ascending. */
 export function scheduledFlights(
@@ -232,7 +242,16 @@ export function verdictConfidence(
 }
 
 export interface VerdictTelemetry {
-  outcome: "verified_yes" | "verified_no" | "predicted" | "no_data" | "error";
+  /** type_yes/type_no: answered from a scheduled aircraft TYPE (QR), kept
+   * apart from tail-verified answers. */
+  outcome:
+    | "verified_yes"
+    | "verified_no"
+    | "type_yes"
+    | "type_no"
+    | "predicted"
+    | "no_data"
+    | "error";
   confidence: "high" | "medium" | "low" | "none";
 }
 
@@ -267,9 +286,15 @@ export function verdictTelemetry(
     case "qatar_no_data":
       return { outcome: "no_data", confidence: "none" };
     case "qatar":
-      return verdict.confidence === "verified"
-        ? { outcome: verdict.hasStarlink ? "verified_yes" : "verified_no", confidence: "high" }
-        : { outcome: "predicted", confidence: "low" };
+      if (verdict.qclass === "yes") return { outcome: "type_yes", confidence: "medium" };
+      if (verdict.qclass === "no") return { outcome: "type_no", confidence: "medium" };
+      if (verdict.qclass === "cancelled") return { outcome: "no_data", confidence: "none" };
+      return { outcome: "predicted", confidence: "low" };
+    case "qatar_history":
+      return {
+        outcome: verdict.probability === null ? "no_data" : "predicted",
+        confidence: verdict.grade,
+      };
   }
 }
 
@@ -300,7 +325,7 @@ export async function resolveFlightVerdict(
     return { kind: "invalid_flight_number", normalized };
   }
 
-  if (cfg.code === "QR") return resolveQatarVerdict(reader, normalized, date, window, deps);
+  if (cfg.code === "QR") return resolveQatarLeg(reader, normalized, date, window, now, deps);
 
   const variants = buildAirlineFlightNumberVariants(cfg, normalized);
 
@@ -561,45 +586,31 @@ function unscopedRowsOutcome(
   return "none";
 }
 
-function resolveQatarVerdict(
+/**
+ * QR answers per type, so a leg scopes the live legs the verdict is built
+ * from; history beyond the published window stays flight-number level.
+ */
+function resolveQatarLeg(
   reader: ScopedReader,
   normalized: string,
   date: string,
   window: FlightDateWindow,
-  deps: ResolveDeps = {}
+  now: number,
+  deps: ResolveDeps
 ): FlightVerdict {
-  const numeric = normalized.replace(/^[A-Z]+/, "");
-  // Match both unpadded and zero-padded forms ("QR1" and "QR001") since the
-  // ingester writes "QR1" but users may type either.
-  const padded = `QR${numeric.padStart(3, "0")}`;
-  const stripped = `QR${String(Number.parseInt(numeric, 10) || 0)}`;
-  const variants = Array.from(new Set([normalized, padded, stripped]));
-  const rows = reader
-    .getQatarScheduleByFlight(variants, window.queryStart, window.queryEnd)
-    .filter(
-      (r) =>
-        r.departure_time !== null &&
-        matchesLocalDate(
-          date,
-          r.departure_airport ?? "",
-          r.departure_time,
-          window.start,
-          window.end
-        )
-    );
-
   const leg = deps.leg;
   if (!leg) {
-    const verdict = qatarVerdictFromRows(normalized, window, rows);
+    const verdict = resolveQatarVerdict(reader, normalized, date, window, now);
     return deps.unscoped ? { ...verdict, leg: unscopedResolution(deps.unscoped) } : verdict;
   }
-  const dep = (r: QatarScheduleRow) => normalizeAirportCode(r.departure_airport);
-  const arr = (r: QatarScheduleRow) => normalizeAirportCode(r.arrival_airport);
+  const rows = qatarLiveLegs(reader, normalized, date, window);
+  const unscoped = resolveQatarVerdict(reader, normalized, date, window, now, rows);
+  const dep = (r: QatarLeg) => normalizeAirportCode(r.departure_airport);
+  const arr = (r: QatarLeg) => normalizeAirportCode(r.arrival_airport);
   const sel = selectLeg(rows, dep, arr, leg);
-  const unscoped = qatarVerdictFromRows(normalized, window, rows);
   if (sel.match === "ambiguous") return { ...unscoped, leg: unscopedResolution(ambiguousLeg(leg)) };
   return {
-    ...qatarVerdictFromRows(normalized, window, sel.items),
+    ...resolveQatarVerdict(reader, normalized, date, window, now, sel.items),
     leg: legResolution(
       leg,
       rows.length,
@@ -607,49 +618,11 @@ function resolveQatarVerdict(
       otherLegsOf(rows, sel.items, dep, arr, (r) => ({
         departure_time: r.departure_time,
         tail_number: null,
-        hasStarlink:
-          r.wifi_verdict === "Starlink" ? true : r.wifi_verdict === "None" ? false : null,
+        hasStarlink: r.klass === "yes" ? true : r.klass === "no" ? false : null,
       })),
       verdictOutcome(unscoped)
     ),
   };
-}
-
-function qatarVerdictFromRows(
-  normalized: string,
-  window: FlightDateWindow,
-  rows: QatarScheduleRow[]
-): AnsweredVerdict {
-  if (rows.length === 0) return { kind: "qatar_no_data", window, normalized };
-
-  const verdicts = rows.map((r) => r.wifi_verdict);
-  const allStarlink = verdicts.every((v) => v === "Starlink");
-  const anyRolling = verdicts.some((v) => v === "Rolling");
-  const allNone = verdicts.every((v) => v === "None");
-  const distinctEquipment = [...new Set(rows.map((r) => qatarEquipmentName(r.equipment_code)))];
-
-  let hasStarlink: boolean | null;
-  let confidence: "verified" | "rolling" | "mixed";
-  let reason: string;
-  if (allStarlink) {
-    hasStarlink = true;
-    confidence = "verified";
-    reason = `${distinctEquipment.join(", ")} — Qatar Airways completed Starlink installation on this aircraft type.`;
-  } else if (allNone) {
-    hasStarlink = false;
-    confidence = "verified";
-    reason = `${distinctEquipment.join(", ")} — not part of Qatar's Starlink rollout.`;
-  } else if (anyRolling) {
-    hasStarlink = null;
-    confidence = "rolling";
-    reason = `${distinctEquipment.join(", ")} — Qatar's 787 Starlink rollout is in progress; this aircraft may or may not be equipped yet.`;
-  } else {
-    hasStarlink = null;
-    confidence = "mixed";
-    reason = `Mixed equipment scheduled (${distinctEquipment.join(", ")}) — outcome depends on which aircraft operates.`;
-  }
-
-  return { kind: "qatar", window, normalized, hasStarlink, confidence, reason, rows };
 }
 
 // ── leg scoping ──────────────────────────────────────────────────────────────

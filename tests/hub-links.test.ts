@@ -87,3 +87,27 @@ describe("footer nav", () => {
     }
   });
 });
+
+describe("hub llms.txt and the Qatar page", () => {
+  const section = (text: string, heading: string) =>
+    text.split(`## ${heading}`)[1]?.split("\n## ")[0] ?? "";
+
+  test("Qatar is listed as flight-lookup only, not public and not content-only", async () => {
+    const { text } = await bodyOf(app, "/llms.txt", HUB);
+    const lookup = section(text, "Flight lookup only");
+    const qatarLine = lookup.split("\n").find((l) => l.includes("Qatar Airways")) ?? "";
+    expect(qatarLine).toContain("/api/check-any-flight");
+    expect(qatarLine).toContain("selected");
+    expect(section(text, "Tracked airlines")).not.toContain("Qatar");
+    expect(section(text, "Tracked here, no flight lookup yet")).not.toContain("Qatar");
+  });
+
+  test("the Qatar page matches the product (no per-airframe 787 or per-date-only claims)", async () => {
+    const { status, text } = await bodyOf(app, "/airlines/qatar", HUB);
+    expect(status).toBe(200);
+    expect(text).not.toContain("per-flight-number");
+    expect(text).not.toContain("787s are being retrofitted");
+    expect(text).not.toContain("whether that airframe has been retrofitted");
+    expect(text).toContain("787-9");
+  });
+});

@@ -47,6 +47,18 @@ testing; set it back before release.
       per-type split, which carries no single probability — an honest
       abstention, not a bug (see README "Coverage windows differ by airline")
 
+## Qatar (hub endpoint, equipment type)
+
+- [ ] DOH → LHR tomorrow: QR1/7/15 (777/A350) get green "Starlink
+      (installed)"; QR3/11 (A380) get no badge. Hover names the scheduled type
+      and the swap caveat; lookups go to `airlinestarlinktracker.com/api/check-any-flight`
+- [ ] DOH → LHR 3+ weeks out: QR1/7 get gray "Starlink ~8x-9x%" (hover cites
+      the number of operating days); QR3/11 get no badge
+- [ ] A flight scheduled on a 787-9 gets no badge (installs under way)
+- [ ] JFK → DOH → BKK on QR+QR: one badge only when both legs qualify
+- [ ] A QR + British Airways itinerary gets no badge and no lookup
+- [ ] A date more than ~7 months out gets no badge
+
 ## Untracked airlines and negatives
 
 - [ ] Delta/American/JetBlue results never get a badge and never trigger

@@ -245,6 +245,89 @@ describe("hub-only endpoints", () => {
     expect(d.error).toContain("not tracked");
   });
 
+  // QR is a lookup-only carrier: answered here, from its own equipment tables.
+  test.each(["2026-03-22", "2026-09-20", "2027-06-01"])(
+    "/api/check-any-flight: answers QR7 on the hub (%s), never verified",
+    async (date) => {
+      const { status, text } = await bodyOf(
+        `/api/check-any-flight?flight_number=QR7&date=${date}`,
+        HUB
+      );
+      expect(status).toBe(200);
+      const d = JSON.parse(text);
+      expect(d.error).toBeUndefined();
+      expect(d.airline).toBe("Qatar Airways");
+      expect([true, false, null]).toContain(d.hasStarlink);
+      expect(["type", "high", "medium", "low"]).toContain(d.confidence);
+      expect(Array.isArray(d.flights)).toBe(true);
+      if (d.basis !== undefined) expect(["schedule", "history"]).toContain(d.basis);
+      if (d.probability !== undefined) {
+        expect(d.probability).toBeGreaterThanOrEqual(0);
+        expect(d.probability).toBeLessThanOrEqual(1);
+      }
+      expect(text).not.toContain("A7-TST");
+    }
+  );
+
+  test("/api/check-any-flight: QR stays 404 off the hub", async () => {
+    for (const host of [UA, AS_HOST]) {
+      const { status } = await bodyOf(
+        "/api/check-any-flight?flight_number=QR7&date=2026-03-22",
+        host
+      );
+      expect(status, host).toBe(404);
+    }
+  });
+
+  test("/api/check-any-flight: UA/HA/AS answers keep their key sets", async () => {
+    const PINNED: Record<string, string[][]> = {
+      // Every key set these carriers' renderers can emit (one per verdict kind).
+      HA50: [
+        ["airline", "confidence", "flights", "hasStarlink", "reason"],
+        ["airline", "confidence", "flights", "hasStarlink", "probability", "reason"],
+        ["airline", "confidence", "flights", "hasStarlink", "reason", "sameDayAlternatives"],
+      ],
+      AS2100: [
+        ["airline", "confidence", "flights", "hasStarlink", "reason"],
+        ["airline", "confidence", "flights", "hasStarlink", "probability", "reason"],
+        ["airline", "confidence", "flights", "hasStarlink", "reason", "sameDayAlternatives"],
+      ],
+      UA544: [
+        ["airline", "confidence", "flights", "hasStarlink", "reason"],
+        [
+          "airline",
+          "confidence",
+          "flights",
+          "hasStarlink",
+          "n_recent_observations",
+          "probability",
+          "reason",
+        ],
+        ["airline", "confidence", "flights", "hasStarlink", "reason", "sameDayAlternatives"],
+      ],
+    };
+    for (const [fn, allowed] of Object.entries(PINNED)) {
+      const { text } = await bodyOf(
+        `/api/check-any-flight?flight_number=${fn}&date=2026-03-22`,
+        HUB
+      );
+      const keys = Object.keys(JSON.parse(text)).sort();
+      expect(
+        allowed.map((k) => k.join(",")),
+        fn
+      ).toContain(keys.join(","));
+      expect(keys, fn).not.toContain("basis");
+    }
+  });
+
+  test("QR stays off the hub's fleet surfaces", async () => {
+    for (const path of ["/api/data", "/api/fleet-summary"]) {
+      const { text } = await bodyOf(path, HUB);
+      expect(text, path).not.toContain("Qatar");
+      expect(text, path).not.toContain("A7-TST");
+    }
+  });
+
   test("/api/compare-route: 404 on UA host", async () => {
     const { status } = await bodyOf("/api/compare-route?origin=SFO&destination=HNL", UA);
     expect(status).toBe(404);

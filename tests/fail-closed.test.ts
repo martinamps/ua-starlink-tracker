@@ -21,15 +21,18 @@ import {
 import {
   SHEET_ROSTER_WHERE,
   addDiscoveredStarlinkPlane,
+  countQatarForwardSchedule,
   getHubStats,
   getMeta,
   getNextAlaskaVerifyTarget,
   getNextPlanesToVerify,
   getVerificationObservations,
   reconcileTypeDeterministicFleets,
+  recordQatarFetchCoverage,
   setMeta,
   updateDatabase,
   upsertFleetAircraft,
+  upsertQatarEquipmentHistory,
 } from "../src/database/database";
 import { createReaderFactory } from "../src/database/reader";
 import { checkOne } from "../src/scripts/alaska-verifier";
@@ -298,9 +301,11 @@ describe("ingestQatarSchedule", () => {
 
   function seedQatar(db: Database) {
     setMeta(db, "lastUpdated", OLD_STAMP, "QR");
-    // Departed >2h ago — prune bait. QR1 on DOH-LHR, QR8 on DOH-JFK.
-    addQatarRow(db, "QR1", utc("2026-01-01T08:00:00Z"), "Starlink", { flightStatus: "ARRIVED" });
-    addQatarRow(db, "QR8", utc("2026-01-01T08:00:00Z"), "Starlink", {
+    // Departed 10h ago: past the route-scoped 2h prune, inside the global 48h
+    // backstop. QR1 on DOH-LHR, QR8 on DOH-JFK.
+    const departed = Math.floor(Date.now() / 1000) - 10 * 3600;
+    addQatarRow(db, "QR1", departed, "Starlink", { flightStatus: "ARRIVED" });
+    addQatarRow(db, "QR8", departed, "Starlink", {
       arrivalAirport: "JFK",
       flightStatus: "ARRIVED",
     });
@@ -353,6 +358,246 @@ describe("ingestQatarSchedule", () => {
       .get() as { n: number };
     expect(survivor.n).toBe(1);
     db.close();
+  });
+});
+
+describe("ingestQatarSchedule: history, coverage, breaker", () => {
+  // 11:00 in Doha → DOH dates 2026-09-19 (+0), -20 (+1), -21.. (far).
+  const NOW_MS = Date.parse("2026-09-19T08:00:00Z");
+  const NOW_SEC = NOW_MS / 1000;
+  const run = (
+    db: Database,
+    fetch: typeof fetchByRoute,
+    nowMs = NOW_MS,
+    ctx?: Parameters<typeof ingestQatarSchedule>[2]
+  ) => ingestQatarSchedule(db, fetch, ctx, { now: nowMs, delayMs: 0 });
+
+  const flight = (
+    fn: string,
+    eq: string,
+    depSec: number,
+    extra: Partial<QatarFlight> = {}
+  ): QatarFlight => ({
+    flightNumber: fn,
+    carrier: "QR",
+    mktFlightNumber: fn,
+    equipmentCode: eq,
+    departureAirport: "DOH",
+    arrivalAirport: "LHR",
+    flightStatus: "SCHEDULED",
+    scheduledDeparture: depSec,
+    scheduledArrival: depSec + 7 * 3600,
+    ...extra,
+  });
+
+  /** Answers DOH-LHR from `lhr`, every other call with [] (or null). */
+  function stub(
+    lhr: (date: string) => QatarFlight[] | null,
+    other: QatarFlight[] | null = []
+  ): { fetch: typeof fetchByRoute; calls: Array<[string, string, string]> } {
+    const calls: Array<[string, string, string]> = [];
+    const fetch = (async (o: string, d: string, date: string) => {
+      calls.push([o, d, date]);
+      return o === "DOH" && d === "LHR" ? lhr(date) : other;
+    }) as unknown as typeof fetchByRoute;
+    return { fetch, calls };
+  }
+
+  const depOn = (date: string) => Date.parse(`${date}T06:40:00Z`) / 1000;
+  const count = (db: Database, table: string) =>
+    (db.query(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
+
+  test("dates per route are +0, +1 and a far offset that rotates only after a good run", async () => {
+    const db = makeSyntheticDb();
+    const first = stub(() => []);
+    const s1 = await run(db, first.fetch);
+    expect(s1.far_offset).toBe(2);
+    expect(first.calls.filter(([o, d]) => o === "DOH" && d === "JFK").map((c) => c[2])).toEqual([
+      "2026-09-19",
+      "2026-09-20",
+      "2026-09-21",
+    ]);
+    const second = stub(() => []);
+    expect((await run(db, second.fetch)).far_offset).toBe(3);
+    const failing = stub(() => null, null);
+    expect((await run(db, failing.fetch)).outcome).toBe("error");
+    const after = stub(() => []);
+    expect((await run(db, after.fetch)).far_offset).toBe(4);
+  });
+
+  test("other carriers, codeshares and freighters are skipped in both tables", async () => {
+    const db = makeSyntheticDb();
+    const dep = depOn("2026-09-20");
+    const { fetch } = stub((date) =>
+      date === "2026-09-20"
+        ? [
+            flight("001", "77W", dep),
+            flight("123", "77W", dep + 600, { carrier: "BA" }),
+            flight("5001", "77W", dep + 900, { mktFlightNumber: "0003" }),
+            flight("8001", "77F", dep + 1200),
+          ]
+        : []
+    );
+    const s = await run(db, fetch);
+    expect(s.flights_upserted).toBe(1);
+    expect(db.query("SELECT flight_number FROM qatar_schedule").all()).toEqual([
+      { flight_number: "QR1" },
+    ]);
+    const history = db
+      .query(
+        "SELECT flight_number, service_date, fetch_origin, fetch_date FROM qatar_equipment_history"
+      )
+      .all();
+    expect(history).toEqual([
+      {
+        flight_number: "QR1",
+        service_date: "2026-09-20",
+        fetch_origin: "DOH",
+        fetch_date: "2026-09-20",
+      },
+    ]);
+  });
+
+  test("a total failure writes no prune, no stamp and no cursor advance", async () => {
+    const db = makeSyntheticDb();
+    setMeta(db, "lastUpdated", "2026-01-01T00:00:00.000Z", "QR");
+    upsertQatarEquipmentHistory(
+      db,
+      {
+        flight_number: "QR1",
+        departure_airport: "DOH",
+        service_date: "2026-06-01",
+        arrival_airport: "LHR",
+        departure_time: depOn("2026-06-01"),
+        arrival_time: null,
+        equipment_code: "77W",
+        flight_status: "ARRIVED",
+        fetch_origin: "DOH",
+        fetch_destination: "LHR",
+        fetch_date: "2026-06-01",
+      },
+      NOW_SEC
+    );
+    recordQatarFetchCoverage(db, "DOH", "LHR", "2026-06-01", NOW_SEC);
+    addQatarRow(db, "QR914", NOW_SEC - 5 * 86400, "Starlink", {
+      departureAirport: "ADL",
+      arrivalAirport: "AKL",
+    });
+    const s = await run(db, stub(() => null, null).fetch);
+    expect(s.outcome).toBe("error");
+    expect(getMeta(db, "lastUpdated", "QR")).toBe("2026-01-01T00:00:00.000Z");
+    expect(getMeta(db, "qatarFarOffsetCursor", "QR")).toBeNull();
+    expect(count(db, "qatar_equipment_history")).toBe(1);
+    expect(count(db, "qatar_fetch_coverage")).toBe(1);
+    expect(count(db, "qatar_schedule")).toBe(1);
+  });
+
+  test("a partial run prunes: global 48h schedule backstop, 60d history, 10d coverage", async () => {
+    const db = makeSyntheticDb();
+    addQatarRow(db, "QR914", NOW_SEC - 5 * 86400, "Starlink", {
+      departureAirport: "ADL",
+      arrivalAirport: "AKL",
+    });
+    recordQatarFetchCoverage(db, "DOH", "LHR", "2026-09-01", NOW_SEC);
+    let n = 0;
+    const s = await run(db, (async () =>
+      n++ % 2 === 0 ? [] : null) as unknown as typeof fetchByRoute);
+    expect(s.outcome).toBe("partial");
+    expect(count(db, "qatar_schedule")).toBe(0);
+    expect(count(db, "qatar_fetch_coverage")).toBeGreaterThan(0);
+    expect(
+      db
+        .query("SELECT COUNT(*) AS n FROM qatar_fetch_coverage WHERE fetch_date = '2026-09-01'")
+        .get()
+    ).toEqual({ n: 0 });
+  });
+
+  test("breaker: a dead upstream stops at 15 calls", async () => {
+    const s = await run(makeSyntheticDb(), stub(() => null, null).fetch);
+    expect(s.routes_attempted).toBe(15);
+    expect(s.breaker_tripped).toBe(true);
+    expect(s.outcome).toBe("error");
+  });
+
+  test("breaker: a null streak after successes does not stop at 15", async () => {
+    let n = 0;
+    const s = await run(makeSyntheticDb(), (async () =>
+      n++ < 20 ? [] : null) as unknown as typeof fetchByRoute);
+    expect(s.routes_attempted).toBe(60);
+    expect(s.breaker_tripped).toBe(true);
+    expect(s.outcome).toBe("partial");
+  });
+
+  test("breaker: a >50% failure ratio stops after 60 attempts", async () => {
+    let n = 0;
+    const s = await run(makeSyntheticDb(), (async () =>
+      n++ % 5 < 3 ? null : []) as unknown as typeof fetchByRoute);
+    expect(s.breaker_tripped).toBe(true);
+    expect(s.routes_attempted).toBeGreaterThanOrEqual(60);
+    expect(s.routes_attempted).toBeLessThanOrEqual(62);
+    expect(s.outcome).toBe("partial");
+  });
+
+  test("healthy runs never trip the breaker", async () => {
+    const s = await run(makeSyntheticDb(), stub(() => []).fetch);
+    expect(s.breaker_tripped).toBe(false);
+    expect(s.routes_attempted).toBe(384);
+  });
+
+  test("an abandoned run writes no history or coverage", async () => {
+    const db = makeSyntheticDb();
+    const { fetch } = stub(() => [flight("001", "77W", depOn("2026-09-20"))]);
+    const ctx = { isCurrent: () => false } as unknown as Parameters<typeof ingestQatarSchedule>[2];
+    const s = await run(db, fetch, NOW_MS, ctx);
+    expect(s.outcome).toBe("abandoned");
+    expect(count(db, "qatar_equipment_history")).toBe(0);
+    expect(count(db, "qatar_fetch_coverage")).toBe(0);
+  });
+
+  test("a re-fetch that drops a future flight marks it stale; coverage only for successes", async () => {
+    const db = makeSyntheticDb();
+    const dep = depOn("2026-09-20");
+    const both = stub((date) =>
+      date === "2026-09-20" ? [flight("001", "77W", dep), flight("003", "388", dep + 3600)] : []
+    );
+    await run(db, both.fetch);
+    // Second run: DOH-LHR drops QR3; DOH-JFK fails; everything else is empty.
+    const onlyQR1 = (async (o: string, d: string, date: string) => {
+      if (o === "DOH" && d === "JFK") return null;
+      if (o === "DOH" && d === "LHR" && date === "2026-09-20") return [flight("001", "77W", dep)];
+      return [];
+    }) as unknown as typeof fetchByRoute;
+    const s = await run(db, onlyQR1, NOW_MS + 3600_000);
+    expect(s.history_staled).toBe(1);
+    const stale = db
+      .query("SELECT flight_number FROM qatar_equipment_history WHERE stale_at IS NOT NULL")
+      .all();
+    expect(stale).toEqual([{ flight_number: "QR3" }]);
+    const coveredNow = (o: string, d: string) =>
+      (
+        db
+          .query(
+            "SELECT COUNT(*) AS n FROM qatar_fetch_coverage WHERE origin = ? AND destination = ? AND fetched_at = ?"
+          )
+          .get(o, d, NOW_SEC + 3600) as { n: number }
+      ).n;
+    expect(coveredNow("DOH", "LHR")).toBe(3);
+    expect(coveredNow("DOH", "JFK")).toBe(0);
+  });
+
+  test("meta schedule counters equal the forward table", async () => {
+    const db = makeSyntheticDb();
+    const { fetch } = stub((date) =>
+      date === "2026-09-20"
+        ? [flight("001", "77W", depOn(date)), flight("003", "388", depOn(date) + 60)]
+        : []
+    );
+    await run(db, fetch);
+    const forward = countQatarForwardSchedule(db, NOW_SEC);
+    expect(forward.total).toBe(2);
+    expect(Number(getMeta(db, "scheduleFlights", "QR"))).toBe(forward.total);
+    expect(Number(getMeta(db, "scheduleStarlink", "QR"))).toBe(forward.Starlink);
+    expect(Number(getMeta(db, "scheduleNone", "QR"))).toBe(forward.None);
   });
 });
 

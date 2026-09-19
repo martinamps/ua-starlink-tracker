@@ -13,6 +13,7 @@ const StarlinkTrackerLib = (() => {
     UA: Object.freeze({ iata: "UA", airlineName: "United", marker: "United" }),
     HA: Object.freeze({ iata: "HA", airlineName: "Hawaiian", marker: "Hawaiian" }),
     AS: Object.freeze({ iata: "AS", airlineName: "Alaska", marker: "Alaska" }),
+    QR: Object.freeze({ iata: "QR", airlineName: "Qatar", marker: "Qatar" }),
   });
 
   const CARRIER_CODES = Object.freeze(Object.keys(TRACKED_CARRIERS));
@@ -272,6 +273,14 @@ const StarlinkTrackerLib = (() => {
     // Tooltip only: grading below never reads it.
     const echoed = scopedLegEcho(payload.leg);
     if (echoed) claim.leg = echoed;
+    // Equipment-type answers (QR) say where they came from: the published
+    // schedule or observed-type history. Only those payloads carry `basis`,
+    // so every other carrier's claim keeps its exact pre-2.1 shape.
+    if (payload.basis === "schedule" || payload.basis === "history") {
+      claim.basis = payload.basis;
+      const type = Array.isArray(payload.flights) ? payload.flights[0]?.aircraft_type : null;
+      claim.aircraftType = typeof type === "string" ? type.slice(0, 60) : null;
+    }
 
     if (payload.hasStarlink === true) {
       claim.status = payload.confidence === "verified" ? "verified" : "installed";
@@ -292,6 +301,8 @@ const StarlinkTrackerLib = (() => {
       if (PREDICTION_CONFIDENCES.includes(grade)) claim.predictionConfidence = grade;
       if (prediction && typeof prediction.n_observations === "number") {
         claim.nObservations = prediction.n_observations;
+      } else if (claim.basis && typeof payload.n_recent_observations === "number") {
+        claim.nObservations = payload.n_recent_observations;
       }
       return claim;
     }
@@ -397,7 +408,37 @@ const StarlinkTrackerLib = (() => {
     return "Starlink";
   }
 
+  // Type-based answers name the evidence: which scheduled type, or how many
+  // operating days the probability rests on. Never "verified" wording.
+  function typeBasisTitle(claim) {
+    const airline = claim.airline || "The airline";
+    if (claim.status === "installed") {
+      const type = claim.aircraftType ? ` (${claim.aircraftType})` : "";
+      return `Scheduled aircraft${type} is a type ${airline} reports fully fitted with Starlink. A last-minute swap can change this.`;
+    }
+    if (claim.status === "predicted") {
+      const days =
+        typeof claim.nObservations === "number" && claim.nObservations > 0
+          ? `${claim.nObservations} recent and scheduled operating days`
+          : "recent operating days";
+      if (claim.basis === "schedule") {
+        const type = claim.aircraftType ? ` (${claim.aircraftType})` : "";
+        return (
+          `At least ~${roundPct(claim.probability)}% — scheduled on a fitted type${type}, ` +
+          `but this flight has flown other aircraft on some of its ${days}. A swap can change this.`
+        );
+      }
+      return (
+        `At least ~${roundPct(claim.probability)}% — based on the aircraft types on ${days} ` +
+        `of this flight. ${airline} publishes the actual aircraft about a week before departure.`
+      );
+    }
+    return null;
+  }
+
   function badgeTitle(claim) {
+    const typeTitle = claim.basis ? typeBasisTitle(claim) : null;
+    if (typeTitle) return typeTitle;
     const airline = claim.airline ? ` (${claim.airline})` : "";
     if (claim.status === "predicted") {
       const obs =

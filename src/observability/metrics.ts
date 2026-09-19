@@ -43,7 +43,8 @@
  *   ext_version:     1.x | 2.0 | 2.x | other | none — only when
  *                    client_class:extension                          (5)
  *   confidence:      high | medium | low | none                      (4)
- *   outcome:         verified_yes | verified_no | predicted | no_data | error  (5)
+ *   outcome:         verified_yes | verified_no | type_yes | type_no |
+ *                    predicted | no_data | error                     (7)
  *   tool:            7 MCP tool names (TOOL_NAMES) | unknown         (~8)
  *   state:           watch.feed_fetch: prediction | yes | no | swap | none  (5)
  *   surface:         watch.cta_shown: check_flight                   (1)
@@ -243,6 +244,13 @@ export function normalizeLegEffect(raw: string | null | undefined): string {
   return raw && LEG_EFFECTS.has(raw) ? raw : "other";
 }
 
+/** IATA equipment codes are three alphanumerics; anything else is upstream
+ * junk and must not mint a tag value. */
+export function normalizeEquipmentCodeTag(code: string | null | undefined): string {
+  const c = (code ?? "").trim().toUpperCase();
+  return /^[A-Z0-9]{3}$/.test(c) ? c : "invalid";
+}
+
 /** Bounded-cardinality bucket for how many calendar days ahead a flight lookup's date is. */
 export function bucketDaysOut(days: number): string {
   if (!Number.isFinite(days)) return "unknown";
@@ -311,7 +319,7 @@ export const COUNTERS = {
   FLEET_CHECK_SKIPPED: "fleet.check_skipped",
 
   // User-facing flight lookup outcome — how often we actually answer the question.
-  // tags: endpoint (api_check|api_predict|mcp), outcome (verified_yes|verified_no|
+  // tags: endpoint (api_check|api_predict|mcp), outcome (verified_yes|verified_no|type_yes|type_no|
   //   predicted|no_data|error), result (mirrors outcome — DD monitors group by
   //   result), confidence (high|medium|low|none), airline,
   //   days_out (past|0..3|4_7|8_14|15_30|31_plus — only the /api/check-flight handler, non-QR)
@@ -347,6 +355,9 @@ export const COUNTERS = {
   //   outcome (ok|redirect|not_found), verdict (all|all_checked|most|some|verifying|installing|none|
   //   official_none|unknown|n/a), indexable (true|false)
   AIRCRAFT_PAGE_VIEW: "aircraft_page.view",
+  // A QR answer hit an equipment code missing from QATAR_EQUIPMENT (answered
+  // as unknown, never no) — tags: airline, code (3-char IATA code | invalid)
+  QATAR_UNKNOWN_EQUIPMENT: "qatar.unknown_equipment",
 } as const;
 
 /**

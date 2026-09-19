@@ -12,9 +12,12 @@
 import type { Database } from "bun:sqlite";
 import { beforeAll, describe, expect, test } from "bun:test";
 import extLib from "../chrome-extension/lib.js";
+import { dohDateISO } from "../src/api/qatar-status";
+import { addDaysISO } from "../src/api/qatar-verdict";
+import { upsertQatarEquipmentHistory, upsertQatarSchedule } from "../src/database/database";
 import { createApp } from "../src/server/app";
 import { airportLocalDate } from "../src/utils/airport-tz";
-import { jsonOf, openSnapshot } from "./helpers";
+import { jsonOf, makeSyntheticDb, openSnapshot } from "./helpers";
 
 const UA_HOST = "unitedstarlinktracker.com";
 const HUB_HOST = "airlinestarlinktracker.com";
@@ -355,6 +358,186 @@ describe("badging policy", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Qatar (v2.1): equipment-type answers from the hub
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("Qatar claims", () => {
+  const tim = (itinerary: string) => `https://travelimpactmodel.org/lookup/flight?${itinerary}`;
+
+  test("QR is detected, routed to the hub, and named-gated", () => {
+    expect(extLib.detectCarrier("qr7")).toBe("QR");
+    expect(extLib.endpointFor("QR7", "2026-06-01")).toStartWith(
+      `https://${HUB_HOST}/api/check-any-flight?`
+    );
+    expect(extLib.carriersNamedIn("Qatar Airways · QR 7")).toEqual(["QR"]);
+    expect(extLib.extractFlightNumbersFromText("Qatar Airways QR 701")).toEqual(["QR701"]);
+  });
+
+  test("QR+QR itineraries are two legs; QR+BA stays unbadged", () => {
+    const qrqr = extLib.timCardSegments([
+      tim("itinerary=JFK,DOH,QR,702,20260601,DOH,BKK,QR,830,20260602"),
+    ]);
+    expect(qrqr.segments.length).toBe(2);
+    expect(qrqr.untrackedLegs).toBe(0);
+    const qrba = extLib.timCardSegments([
+      tim("itinerary=DOH,LHR,QR,7,20260601,LHR,EDI,BA,1440,20260601"),
+    ]);
+    expect(qrba.untrackedLegs).toBe(1);
+  });
+
+  test("schedule yes → installed, titled with the scheduled type", () => {
+    const claim = extLib.normalizeClaim({
+      hasStarlink: true,
+      airline: "Qatar Airways",
+      confidence: "type",
+      basis: "schedule",
+      reason: "x",
+      flights: [{ tail_number: null, aircraft_type: "Boeing 777-300ER", starlink: "yes" }],
+    });
+    expect(claim.status).toBe("installed");
+    expect(extLib.shouldBadge(claim)).toBe(true);
+    expect(extLib.badgeTitle(claim)).toContain("Scheduled aircraft (Boeing 777-300ER)");
+    expect(extLib.badgeTitle(claim)).not.toContain("verified");
+  });
+
+  test("schedule no and type-only null never badge", () => {
+    const no = extLib.normalizeClaim({ hasStarlink: false, confidence: "type", basis: "schedule" });
+    expect(extLib.shouldBadge(no)).toBe(false);
+    const rolling = extLib.normalizeClaim({
+      hasStarlink: null,
+      confidence: "type",
+      basis: "schedule",
+    });
+    expect(rolling.status).toBe("unknown");
+    expect(extLib.shouldBadge(rolling)).toBe(false);
+  });
+
+  test("history probability → predicted; low grade or zero never badges", () => {
+    const history = (probability: number, confidence: string) =>
+      extLib.normalizeClaim({
+        hasStarlink: null,
+        airline: "Qatar Airways",
+        probability,
+        confidence,
+        basis: "history",
+        n_recent_observations: 12,
+        flights: [],
+      });
+    const good = history(0.86, "medium");
+    expect(good.status).toBe("predicted");
+    expect(extLib.shouldBadge(good)).toBe(true);
+    expect(extLib.badgeTitle(good)).toContain("12 recent and scheduled operating days");
+    expect(extLib.badgeTitle(good)).toContain("At least ~86%");
+    expect(extLib.shouldBadge(history(0.94, "low"))).toBe(false);
+    expect(extLib.shouldBadge(history(0, "high"))).toBe(false);
+  });
+
+  test("a swap-risk probability names the scheduled type, not 'publishes later'", () => {
+    const claim = extLib.normalizeClaim({
+      hasStarlink: null,
+      airline: "Qatar Airways",
+      probability: 0.84,
+      confidence: "high",
+      basis: "schedule",
+      n_recent_observations: 20,
+      flights: [{ tail_number: null, aircraft_type: "Boeing 777-300ER", starlink: "yes" }],
+    });
+    expect(claim.status).toBe("predicted");
+    const title = extLib.badgeTitle(claim);
+    expect(title).toContain("Boeing 777-300ER");
+    expect(title).not.toContain("publishes the actual aircraft");
+  });
+
+  test("an HA payload with top-level n_recent_observations keeps its pre-2.1 claim", () => {
+    const claim = extLib.normalizeClaim({
+      hasStarlink: null,
+      airline: "Hawaiian Airlines",
+      probability: 0.9,
+      confidence: "medium",
+      n_recent_observations: 7,
+      reason: "x",
+      flights: [],
+    });
+    expect(claim).toEqual({
+      status: "predicted",
+      probability: 0.9,
+      predictionConfidence: "medium",
+      nObservations: null,
+      airline: "Hawaiian Airlines",
+    });
+    expect(extLib.badgeTitle(claim)).toBe(
+      "~90% chance this flight gets a Starlink-equipped aircraft (Hawaiian Airlines). Airlines assign the actual aircraft ~2 days before departure."
+    );
+  });
+
+  describe("round trip through the hub handler", () => {
+    let app: ReturnType<typeof createApp>;
+    const nowSec = Math.floor(Date.now() / 1000);
+    const day = (offset: number) => addDaysISO(dohDateISO(nowSec), offset);
+
+    beforeAll(() => {
+      const db = makeSyntheticDb();
+      const leg = (fn: string, date: string, eq: string) => {
+        const dep = Date.parse(`${date}T06:40:00Z`) / 1000;
+        upsertQatarSchedule(db, {
+          flight_number: fn,
+          scheduled_date: date,
+          departure_airport: "DOH",
+          arrival_airport: "LHR",
+          departure_time: dep,
+          arrival_time: dep + 7 * 3600,
+          equipment_code: eq,
+          wifi_verdict: null,
+          flight_status: "SCHEDULED",
+          last_updated: nowSec,
+        });
+      };
+      leg("QR1", day(1), "77W");
+      leg("QR3", day(1), "388");
+      for (let i = -19; i <= 0; i++) {
+        const date = day(i);
+        const dep = Date.parse(`${date}T06:40:00Z`) / 1000;
+        upsertQatarEquipmentHistory(
+          db,
+          {
+            flight_number: "QR15",
+            departure_airport: "DOH",
+            service_date: date,
+            arrival_airport: "LHR",
+            departure_time: dep,
+            arrival_time: null,
+            equipment_code: "77W",
+            flight_status: "ARRIVED",
+            fetch_origin: "DOH",
+            fetch_destination: "LHR",
+            fetch_date: date,
+          },
+          nowSec
+        );
+      }
+      app = createApp(db);
+    });
+
+    const claimFor = async (fn: string, date: string) =>
+      extLib.normalizeClaim(
+        await jsonOf(app, `/api/check-any-flight?flight_number=${fn}&date=${date}`, HUB_HOST)
+      );
+
+    test("in-window 777 → installed; A380 → no_starlink", async () => {
+      expect((await claimFor("QR1", day(1))).status).toBe("installed");
+      expect((await claimFor("QR3", day(1))).status).toBe("no_starlink");
+    });
+
+    test("+20 on 20 all-777 days → predicted and badged", async () => {
+      const claim = await claimFor("QR15", day(20));
+      expect(claim.status).toBe("predicted");
+      expect(extLib.shouldBadge(claim)).toBe(true);
+      expect(claim.nObservations).toBe(20);
+    });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Cross-contract: normalizer × real API responses
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -429,7 +612,7 @@ describe("extension normalizer against live handler responses", () => {
   });
 
   test("hub check-any-flight: untracked carrier settles as unknown (no badge)", async () => {
-    for (const fn of ["DL123", "QR9999"]) {
+    for (const fn of ["DL123", "EK123"]) {
       const body = await jsonOf(
         app,
         `/api/check-any-flight?flight_number=${fn}&date=2026-06-01`,
@@ -631,6 +814,16 @@ describe("extension release guardrails", () => {
     expect(manifest.optional_permissions).toBeUndefined();
     expect(manifest.optional_host_permissions).toBeUndefined();
     expect(manifest.version).toMatch(/^\d{1,2}\.\d{1,3}\.\d{1,3}$/);
+  });
+
+  test("2.1 names Qatar within the store's description limit, same matches", () => {
+    expect(manifest.version).toBe("2.1.0");
+    expect(manifest.description.length).toBeLessThanOrEqual(132);
+    expect(manifest.description).toContain("Qatar");
+    expect(manifest.content_scripts[0].matches).toEqual([
+      "https://www.google.com/flights/*",
+      "https://www.google.com/travel/flights/*",
+    ]);
   });
 
   test("the package ships the runtime files and no docs", async () => {

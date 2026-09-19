@@ -388,6 +388,51 @@ export function setupTables(db: Database) {
     `);
   }
 
+  // qatar_schedule keeps one row per (flight, fetch date) and forgets a flight
+  // 2h after departure; answering beyond Qatar's ~6-day published window needs
+  // what each flight number actually flew, one row per leg per operating day.
+  // No wifi column: rows are classified at read time so a phase-table edit
+  // reclassifies history too.
+  if (!tableExists(db, "qatar_equipment_history")) {
+    db.exec(`
+      CREATE TABLE qatar_equipment_history (
+        flight_number TEXT NOT NULL,
+        departure_airport TEXT NOT NULL,
+        service_date TEXT NOT NULL,
+        arrival_airport TEXT,
+        departure_time INTEGER NOT NULL,
+        arrival_time INTEGER,
+        equipment_code TEXT,
+        first_equipment_code TEXT,
+        first_seen_at INTEGER NOT NULL,
+        -- departure_time - first_seen_at: the swap study buckets by lead time
+        first_seen_lead_sec INTEGER NOT NULL,
+        last_seen_at INTEGER NOT NULL,
+        flight_status TEXT,
+        -- the by-route query that last returned the row; off-pair through-legs
+        -- (ADL-AKL from DOH-AKL) can only be retired through it
+        fetch_origin TEXT NOT NULL,
+        fetch_destination TEXT NOT NULL,
+        fetch_date TEXT NOT NULL,
+        stale_at INTEGER,
+        PRIMARY KEY (flight_number, departure_airport, service_date)
+      )
+    `);
+  }
+  // Which (route, DOH date) queries have succeeded: an in-window "no rows" is
+  // only "doesn't operate that day" when the date was actually fetched.
+  if (!tableExists(db, "qatar_fetch_coverage")) {
+    db.exec(`
+      CREATE TABLE qatar_fetch_coverage (
+        origin TEXT NOT NULL,
+        destination TEXT NOT NULL,
+        fetch_date TEXT NOT NULL,
+        fetched_at INTEGER NOT NULL,
+        PRIMARY KEY (origin, destination, fetch_date)
+      )
+    `);
+  }
+
   // Per-type Starlink install pipeline from the United Fleet Site progress
   // workbooks (Complete / In Mod / Verification needed), refreshed daily.
   if (!tableExists(db, "fleet_progress")) {
@@ -762,6 +807,11 @@ function migrateMultiAirline(db: Database) {
     CREATE INDEX IF NOT EXISTS idx_qs_route    ON qatar_schedule(departure_airport, arrival_airport, departure_time);
     CREATE INDEX IF NOT EXISTS idx_qs_flight   ON qatar_schedule(flight_number, scheduled_date);
     CREATE INDEX IF NOT EXISTS idx_pipeline_events_time ON pipeline_events(airline, observed_at DESC);
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_qeh_fn_date ON qatar_equipment_history(flight_number, service_date);
+    CREATE INDEX IF NOT EXISTS idx_qeh_fn_dep  ON qatar_equipment_history(flight_number, departure_time);
+    CREATE INDEX IF NOT EXISTS idx_qeh_fetch   ON qatar_equipment_history(fetch_origin, fetch_destination, fetch_date);
   `);
 
   // The two indexes above exist for the serving path: getFlightHistorySummary
@@ -5441,6 +5491,262 @@ export function getQatarScheduleStats(db: Database): {
     none: counts.none ?? 0,
     lastUpdated: counts.lastUpdated ?? null,
   };
+}
+
+/**
+ * Backstop for rows the route-scoped prune can never match: a by-route
+ * response also carries through-legs off the queried pair (DOH-AKL returns
+ * ADL-AKL), and those survived for months.
+ */
+export function pruneQatarScheduleGlobalBefore(db: Database, beforeEpoch: number): number {
+  return db.query("DELETE FROM qatar_schedule WHERE departure_time < ?").run(beforeEpoch).changes;
+}
+
+/** Forward-schedule counts by stored verdict — the meta counters' source. */
+export function countQatarForwardSchedule(
+  db: Database,
+  afterEpoch: number
+): { total: number; Starlink: number; Rolling: number; None: number } {
+  const rows = db
+    .query(
+      "SELECT wifi_verdict AS v, COUNT(*) AS n FROM qatar_schedule WHERE departure_time > ? GROUP BY wifi_verdict"
+    )
+    .all(afterEpoch) as Array<{ v: string | null; n: number }>;
+  const out = { total: 0, Starlink: 0, Rolling: 0, None: 0 };
+  for (const r of rows) {
+    out.total += r.n;
+    if (r.v === "Starlink" || r.v === "Rolling" || r.v === "None") out[r.v] += r.n;
+  }
+  return out;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Qatar equipment history + fetch coverage (hub lookups beyond the window).
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface QatarHistoryRow {
+  flight_number: string;
+  departure_airport: string;
+  service_date: string;
+  arrival_airport: string | null;
+  departure_time: number;
+  arrival_time: number | null;
+  equipment_code: string | null;
+  first_equipment_code: string | null;
+  first_seen_at: number;
+  first_seen_lead_sec: number;
+  last_seen_at: number;
+  flight_status: string | null;
+  fetch_origin: string;
+  fetch_destination: string;
+  fetch_date: string;
+  stale_at: number | null;
+}
+
+export type QatarHistoryUpsert = Pick<
+  QatarHistoryRow,
+  | "flight_number"
+  | "departure_airport"
+  | "service_date"
+  | "arrival_airport"
+  | "departure_time"
+  | "arrival_time"
+  | "equipment_code"
+  | "flight_status"
+  | "fetch_origin"
+  | "fetch_destination"
+  | "fetch_date"
+>;
+
+// The readonly test snapshot and older prod copies predate these tables; a
+// reader must answer "nothing" rather than throw. Only presence is cached —
+// a table created later on the same handle is picked up.
+const knownTables = new WeakMap<Database, Set<string>>();
+function hasTable(db: Database, table: string): boolean {
+  let known = knownTables.get(db);
+  if (known?.has(table)) return true;
+  if (!tableExists(db, table)) return false;
+  if (!known) {
+    known = new Set();
+    knownTables.set(db, known);
+  }
+  known.add(table);
+  return true;
+}
+
+export function upsertQatarEquipmentHistory(
+  db: Database,
+  row: QatarHistoryUpsert,
+  nowSec: number
+): void {
+  db.query(
+    `INSERT INTO qatar_equipment_history
+       (flight_number, departure_airport, service_date, arrival_airport, departure_time,
+        arrival_time, equipment_code, first_equipment_code, first_seen_at, first_seen_lead_sec,
+        last_seen_at, flight_status, fetch_origin, fetch_destination, fetch_date, stale_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL)
+     ON CONFLICT(flight_number, departure_airport, service_date) DO UPDATE SET
+       arrival_airport   = excluded.arrival_airport,
+       departure_time    = excluded.departure_time,
+       arrival_time      = excluded.arrival_time,
+       equipment_code    = excluded.equipment_code,
+       flight_status     = excluded.flight_status,
+       last_seen_at      = excluded.last_seen_at,
+       fetch_origin      = excluded.fetch_origin,
+       fetch_destination = excluded.fetch_destination,
+       fetch_date        = excluded.fetch_date,
+       stale_at          = NULL`
+  ).run(
+    row.flight_number,
+    row.departure_airport,
+    row.service_date,
+    row.arrival_airport,
+    row.departure_time,
+    row.arrival_time,
+    row.equipment_code,
+    row.equipment_code,
+    nowSec,
+    row.departure_time - nowSec,
+    nowSec,
+    row.flight_status,
+    row.fetch_origin,
+    row.fetch_destination,
+    row.fetch_date
+  );
+}
+
+/**
+ * A successful re-fetch that no longer returns a row it used to is Qatar
+ * dropping that flight: mark it stale. Only future departures — Qatar may stop
+ * listing a flight once it has operated, which is not a retraction.
+ */
+export function markQatarHistoryStale(
+  db: Database,
+  origin: string,
+  destination: string,
+  fetchDate: string,
+  fetchStartSec: number,
+  nowSec: number = fetchStartSec
+): number {
+  return db
+    .query(
+      `UPDATE qatar_equipment_history SET stale_at = ?
+       WHERE fetch_origin = ? AND fetch_destination = ? AND fetch_date = ?
+         AND last_seen_at < ? AND departure_time >= ? AND stale_at IS NULL`
+    )
+    .run(nowSec, origin, destination, fetchDate, fetchStartSec, fetchStartSec).changes;
+}
+
+export function recordQatarFetchCoverage(
+  db: Database,
+  origin: string,
+  destination: string,
+  fetchDate: string,
+  nowSec: number
+): void {
+  db.query(
+    `INSERT INTO qatar_fetch_coverage (origin, destination, fetch_date, fetched_at)
+     VALUES (?,?,?,?)
+     ON CONFLICT(origin, destination, fetch_date) DO UPDATE SET fetched_at = excluded.fetched_at`
+  ).run(origin, destination, fetchDate, nowSec);
+}
+
+function variantPlaceholders(variants: readonly string[]): string {
+  return variants.map(() => "?").join(",");
+}
+
+/** Non-stale legs by service date, departure_time ascending. */
+export function getQatarEquipmentHistory(
+  db: Database,
+  variants: readonly string[],
+  sinceDate: string,
+  untilDate: string
+): QatarHistoryRow[] {
+  if (variants.length === 0 || !hasTable(db, "qatar_equipment_history")) return [];
+  return db
+    .query(
+      `SELECT * FROM qatar_equipment_history
+       WHERE flight_number IN (${variantPlaceholders(variants)})
+         AND service_date >= ? AND service_date <= ?
+         AND stale_at IS NULL
+       ORDER BY departure_time ASC`
+    )
+    .all(...variants, sinceDate, untilDate) as QatarHistoryRow[];
+}
+
+/** Legs departing in a UTC window, stale ones INCLUDED: the caller needs them
+ * to suppress the matching (unretirable) qatar_schedule row. */
+export function getQatarEquipmentHistoryByWindow(
+  db: Database,
+  variants: readonly string[],
+  startSec: number,
+  endSec: number
+): QatarHistoryRow[] {
+  if (variants.length === 0 || !hasTable(db, "qatar_equipment_history")) return [];
+  return db
+    .query(
+      `SELECT * FROM qatar_equipment_history
+       WHERE flight_number IN (${variantPlaceholders(variants)})
+         AND departure_time >= ? AND departure_time < ?
+       ORDER BY departure_time ASC`
+    )
+    .all(...variants, startSec, endSec) as QatarHistoryRow[];
+}
+
+/** The by-route queries that have returned this flight number since a date. */
+export function getQatarHistoryRoutes(
+  db: Database,
+  variants: readonly string[],
+  sinceDate: string
+): Array<{ origin: string; destination: string }> {
+  if (variants.length === 0 || !hasTable(db, "qatar_equipment_history")) return [];
+  return db
+    .query(
+      `SELECT DISTINCT fetch_origin AS origin, fetch_destination AS destination
+       FROM qatar_equipment_history
+       WHERE flight_number IN (${variantPlaceholders(variants)}) AND service_date >= ?`
+    )
+    .all(...variants, sinceDate) as Array<{ origin: string; destination: string }>;
+}
+
+/** "ORIGIN-DEST-DATE" → latest fetched_at, for the successful fetches among
+ * the given ones. */
+export function getQatarFetchCoverage(
+  db: Database,
+  pairs: ReadonlyArray<{ origin: string; destination: string }>,
+  fetchDates: readonly string[]
+): Map<string, number> {
+  const out = new Map<string, number>();
+  if (pairs.length === 0 || fetchDates.length === 0 || !hasTable(db, "qatar_fetch_coverage")) {
+    return out;
+  }
+  const rows = db
+    .query(
+      `SELECT origin, destination, fetch_date, fetched_at FROM qatar_fetch_coverage
+       WHERE fetch_date IN (${variantPlaceholders(fetchDates)})`
+    )
+    .all(...fetchDates) as Array<{
+    origin: string;
+    destination: string;
+    fetch_date: string;
+    fetched_at: number;
+  }>;
+  const wanted = new Set(pairs.map((p) => `${p.origin}-${p.destination}`));
+  for (const r of rows) {
+    if (wanted.has(`${r.origin}-${r.destination}`)) {
+      out.set(`${r.origin}-${r.destination}-${r.fetch_date}`, r.fetched_at);
+    }
+  }
+  return out;
+}
+
+export function pruneQatarEquipmentHistory(db: Database, beforeDate: string): number {
+  return db.query("DELETE FROM qatar_equipment_history WHERE service_date < ?").run(beforeDate)
+    .changes;
+}
+
+export function pruneQatarFetchCoverage(db: Database, beforeDate: string): number {
+  return db.query("DELETE FROM qatar_fetch_coverage WHERE fetch_date < ?").run(beforeDate).changes;
 }
 
 export const UPCOMING_PRUNE_AGE_SEC = 2 * 86400;
