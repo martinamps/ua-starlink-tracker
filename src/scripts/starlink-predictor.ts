@@ -2070,11 +2070,10 @@ export function routeBaseline(
 }
 
 // Unobserved nonstops are almost always mainline; the live mainline install
-// rate, not the 0.02 fallback constant (7.8x low against ~0.157).
+// rate, not the 0.02 fallback constant (7.8x low against ~0.157). The hub has
+// no subfleet split, so it gets the cross-airline aggregate from the priors.
 function mainlineFleetRate(reader: ScopedReader): number {
-  const stats = reader.getFleetStats();
-  if (!stats || stats.mainline.total <= 0) return DEFAULT_CONFIG.mainlineColdPrior;
-  return stats.mainline.starlink / stats.mainline.total;
+  return loadFleetPriors(reader).mainline;
 }
 
 export type { Prediction };
