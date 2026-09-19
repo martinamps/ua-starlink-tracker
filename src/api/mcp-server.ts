@@ -38,7 +38,13 @@ import {
 } from "../airlines/registry";
 import type { FlightAssignmentRow } from "../database/database";
 import { type Scope, type ScopedReader, aggregatePenetration } from "../database/reader";
-import { COUNTERS, DISTRIBUTIONS, metrics, normalizeAirlineTag } from "../observability";
+import {
+  COUNTERS,
+  DISTRIBUTIONS,
+  mcpClientTags,
+  metrics,
+  normalizeAirlineTag,
+} from "../observability";
 import {
   ENFORCE_ITINERARY_TIME_BUDGET,
   carrierPrediction,
@@ -59,18 +65,17 @@ import {
   FR24_OUTAGE_NOTE,
   type FlightVerdict,
   SWAP_DEGRADED_NOTE,
+  answersOtherLeg,
   carrierReader,
   decideCarrier,
   flightDateWindow,
+  legSubject,
   negativeWifi,
+  parseLegQuery,
+  recordLegScope,
   resolveFlightVerdict,
   verdictTelemetry,
   wifiLabel,
-} from "./check-flight-core";
-import {
-  legSubject,
-  parseLegQuery,
-  recordLegScope,
   withLeg,
   withLegNote,
 } from "./check-flight-core";
@@ -657,7 +662,7 @@ async function toolCheckFlight(
 
   const t = verdictTelemetry(verdict);
   recordMcpFlightLookup(reader.scope, t.outcome, t.confidence);
-  recordLegScope("mcp", verdict, cfg.code, { client_class: "mcp" });
+  recordLegScope("mcp", verdict, cfg.code, mcpClientTags());
 
   if (verdict.kind === "qatar" || verdict.kind === "qatar_no_data") {
     return renderQatarCheckFlight(verdict, date);
@@ -723,13 +728,15 @@ async function toolCheckFlight(
       // already know the route from the assignment — no lookup needed.
       const f = verdict.flights[0];
       const ac = f.aircraft_type || "aircraft";
-      const altBlock = buildAlternativesBlock(
-        cfg,
-        reader,
-        [{ origin: f.departure_airport, destination: f.arrival_airport }],
-        mid,
-        { flightNumber: normalized, label: firmNoLabel([f.tail_number], [negativeWifi(f)]) }
-      );
+      const altBlock = answersOtherLeg(verdict.leg)
+        ? ""
+        : buildAlternativesBlock(
+            cfg,
+            reader,
+            [{ origin: f.departure_airport, destination: f.arrival_airport }],
+            mid,
+            { flightNumber: normalized, label: firmNoLabel([f.tail_number], [negativeWifi(f)]) }
+          );
       return {
         content: [
           {
@@ -765,19 +772,21 @@ async function toolCheckFlight(
 
     case "fr24_no": {
       const no = verdict.segments.filter((s) => s.hasStarlink === false);
-      const altBlock = buildAlternativesBlock(
-        cfg,
-        reader,
-        no.map((s) => ({ origin: s.origin, destination: s.destination })),
-        mid,
-        {
-          flightNumber: normalized,
-          label: firmNoLabel(
-            no.map((s) => s.tail_number),
-            no.map((s) => wifiLabel(s.verified_wifi))
-          ),
-        }
-      );
+      const altBlock = answersOtherLeg(verdict.leg)
+        ? ""
+        : buildAlternativesBlock(
+            cfg,
+            reader,
+            no.map((s) => ({ origin: s.origin, destination: s.destination })),
+            mid,
+            {
+              flightNumber: normalized,
+              label: firmNoLabel(
+                no.map((s) => s.tail_number),
+                no.map((s) => wifiLabel(s.verified_wifi))
+              ),
+            }
+          );
       return {
         content: [
           {

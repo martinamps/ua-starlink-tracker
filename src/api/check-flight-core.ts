@@ -36,6 +36,7 @@ import {
   carrierPredictionTelemetry,
   predictFlight,
 } from "../scripts/starlink-predictor";
+import { AIRPORT_COORDS } from "../utils/airport-geo";
 import {
   AIRPORT_TZ,
   type FlightDateWindow,
@@ -334,9 +335,10 @@ export async function resolveFlightVerdict(
   }
 
   // A leg that matches more than one (origin, destination) pair would mix
-  // legs under a scoped label; the honest answer is the unscoped one.
-  const sel = selectLeg(rows, rowDeparture, rowArrival, leg);
-  if (sel.match === "ambiguous") {
+  // legs under a scoped label; the honest answer is the unscoped one. One
+  // FR24 fetch serves both the scoped attempt and that fallback.
+  const shared: ResolveDeps = { ...deps, lookupTail: onceLookup(deps.lookupTail) };
+  const unscopedAnswer = async (): Promise<FlightVerdict> => {
     const { verdict } = await verdictFromRows(
       cfg,
       reader,
@@ -344,24 +346,27 @@ export async function resolveFlightVerdict(
       date,
       window,
       rows,
-      deps,
+      shared,
       now
     );
     return { ...verdict, leg: unscopedResolution(ambiguousLeg(leg)) };
-  }
-  const { verdict, segments } = await verdictFromRows(
+  };
+  const sel = selectLeg(rows, rowDeparture, rowArrival, leg);
+  if (sel.match === "ambiguous") return unscopedAnswer();
+  const scoped = await verdictFromRows(
     cfg,
     reader,
     normalized,
     date,
     window,
     sel.items,
-    deps,
+    shared,
     now,
     leg
   );
+  if (scoped.segmentMatch === "ambiguous") return unscopedAnswer();
   return {
-    ...verdict,
+    ...scoped.verdict,
     leg: legResolution(
       leg,
       rows.length,
@@ -371,8 +376,19 @@ export async function resolveFlightVerdict(
         tail_number: r.tail_number,
         hasStarlink: rowOutcome(r) === "yes",
       })),
-      unscopedRowsOutcome(rows, segments)
+      unscopedRowsOutcome(rows, scoped.segments),
+      scoped.answeredSegment
     ),
+  };
+}
+
+function onceLookup(lookupTail: ResolveDeps["lookupTail"]): ResolveDeps["lookupTail"] {
+  if (lookupTail === null) return null;
+  const lookup = lookupTail ?? lookupFlightTailVerdict;
+  let pending: ReturnType<typeof lookupFlightTailVerdict> | undefined;
+  return (...args) => {
+    pending ??= lookup(...args);
+    return pending;
   };
 }
 
@@ -395,6 +411,14 @@ function rowOutcome(r: FlightAssignmentRow): "yes" | "no" {
 const rowDeparture = (r: FlightAssignmentRow) => normalizeAirportCode(r.departure_airport);
 const rowArrival = (r: FlightAssignmentRow) => normalizeAirportCode(r.arrival_airport);
 
+interface RowsAnswer {
+  verdict: AnsweredVerdict;
+  segments: FallbackSegment[] | null;
+  /** How FR24 segments scoped to the leg; "ambiguous" means `verdict` must not be served. */
+  segmentMatch?: LegSelection<FallbackSegment>["match"];
+  answeredSegment?: FallbackSegment;
+}
+
 async function verdictFromRows(
   cfg: AirlineConfig,
   reader: ScopedReader,
@@ -405,7 +429,7 @@ async function verdictFromRows(
   deps: ResolveDeps,
   now: number,
   leg?: LegQuery
-): Promise<{ verdict: AnsweredVerdict; segments: FallbackSegment[] | null }> {
+): Promise<RowsAnswer> {
   const verified: FlightAssignmentRow[] = [];
   const unverified: FlightAssignmentRow[] = [];
   const nonStarlink: ScheduledNoRow[] = [];
@@ -432,6 +456,7 @@ async function verdictFromRows(
   // it is the primary fallback.
   let fr24Error = false;
   let raw: FallbackSegment[] | null = null;
+  let scopedTo: Pick<RowsAnswer, "segmentMatch" | "answeredSegment"> = {};
   if (deps.lookupTail !== null) {
     const lookup = deps.lookupTail ?? lookupFlightTailVerdict;
     try {
@@ -449,18 +474,29 @@ async function verdictFromRows(
       fr24Error = true;
     }
     // The FR24 cache holds every leg of the number; scope after the fetch so
-    // all legs share one call. An ambiguous leg keeps every segment.
-    const segments = raw !== null && leg ? scopeSegments(raw, leg) : raw;
+    // all legs share one call. An ambiguous selection is the caller's to
+    // answer unscoped, never a mix of legs under this leg's label.
+    const segSel = raw !== null && leg ? scopeSegments(raw, leg) : null;
+    if (segSel) scopedTo = { segmentMatch: segSel.match, answeredSegment: segSel.items[0] };
+    const segments = segSel && segSel.match !== "ambiguous" ? segSel.items : raw;
     if (segments !== null) {
       const starlink = segments.filter((s) => s.hasStarlink);
       if (starlink.length > 0) {
-        return { verdict: { kind: "fr24", window, normalized, starlink }, segments: raw };
+        return {
+          verdict: { kind: "fr24", window, normalized, starlink },
+          segments: raw,
+          ...scopedTo,
+        };
       }
       // Segments whose tail we know nothing about are not a "no" — only a
       // verified non-Starlink tail is. With our own firm-no rows in hand,
       // prefer those (they carry per-row reasons); otherwise fr24_no.
       if (nonStarlink.length === 0 && segments.some((s) => s.hasStarlink === false)) {
-        return { verdict: { kind: "fr24_no", window, normalized, segments }, segments: raw };
+        return {
+          verdict: { kind: "fr24_no", window, normalized, segments },
+          segments: raw,
+          ...scopedTo,
+        };
       }
     }
   }
@@ -469,6 +505,7 @@ async function verdictFromRows(
     return {
       verdict: { kind: "scheduled_no", window, normalized, flights: nonStarlink, fr24Error },
       segments: raw,
+      ...scopedTo,
     };
   }
 
@@ -484,6 +521,7 @@ async function verdictFromRows(
         fr24Error,
       },
       segments: raw,
+      ...scopedTo,
     };
   }
 
@@ -497,17 +535,17 @@ async function verdictFromRows(
       fr24Error,
     },
     segments: raw,
+    ...scopedTo,
   };
 }
 
-function scopeSegments(segments: FallbackSegment[], leg: LegQuery): FallbackSegment[] {
-  const sel = selectLeg(
+function scopeSegments(segments: FallbackSegment[], leg: LegQuery): LegSelection<FallbackSegment> {
+  return selectLeg(
     segments,
     (s) => normalizeAirportCode(s.origin),
     (s) => normalizeAirportCode(s.destination),
     leg
   );
-  return sel.match === "ambiguous" ? segments : sel.items;
 }
 
 /** What the unscoped engine would have answered from the same rows and FR24 fetch. */
@@ -558,13 +596,8 @@ function resolveQatarVerdict(
   const dep = (r: QatarScheduleRow) => normalizeAirportCode(r.departure_airport);
   const arr = (r: QatarScheduleRow) => normalizeAirportCode(r.arrival_airport);
   const sel = selectLeg(rows, dep, arr, leg);
-  if (sel.match === "ambiguous") {
-    return {
-      ...qatarVerdictFromRows(normalized, window, rows),
-      leg: unscopedResolution(ambiguousLeg(leg)),
-    };
-  }
   const unscoped = qatarVerdictFromRows(normalized, window, rows);
+  if (sel.match === "ambiguous") return { ...unscoped, leg: unscopedResolution(ambiguousLeg(leg)) };
   return {
     ...qatarVerdictFromRows(normalized, window, sel.items),
     leg: legResolution(
@@ -711,9 +744,11 @@ export function parseLegQuery(origin: string | null, destination: string | null)
   }
   if (no && no === nd) return { leg: undefined, unscoped: { reason: "same_airport", ...echoed } };
   // Origin drives the local-date window; without its zone a scoped answer
-  // could be the previous evening's tail labelled as exact.
+  // could be the previous evening's tail labelled as exact. A code we know
+  // nothing about at all is unrecognized rather than zone-less.
   if (no && !AIRPORT_TZ[no]) {
-    return { leg: undefined, unscoped: { reason: "no_timezone", ...echoed } };
+    const reason = AIRPORT_COORDS[no] ? "no_timezone" : "invalid_airport";
+    return { leg: undefined, unscoped: { reason, ...echoed } };
   }
   return {
     leg: { ...(no ? { origin: no } : {}), ...(nd ? { destination: nd } : {}) },
@@ -734,6 +769,11 @@ export function withLeg<T extends ResolveDeps | undefined>(
   return base;
 }
 
+export interface LegSelection<T> {
+  items: T[];
+  match: "exact" | "origin" | "ambiguous" | null;
+}
+
 /**
  * The items belonging to one leg. Getters return normalizeAirportCode output;
  * an item with no departure never matches a requested origin.
@@ -742,7 +782,10 @@ export function withLeg<T extends ResolveDeps | undefined>(
  *    (dep, arr) pair is "exact".
  *  - origin + destination with no arrival match falls back to the origin's
  *    leg ("origin"): a diversion, a stale arrival code, or a whole-journey
- *    request like SFO→SAN on a SFO→DEN→SAN number.
+ *    request whose later hops we hold nothing for.
+ *  - a whole-journey request like SFO→SAN on SFO→DEN→SAN, where another
+ *    item does arrive at the destination, spans legs that can fly different
+ *    tails: "ambiguous", never the first hop answered as the whole trip.
  *  - anything spanning several pairs is "ambiguous" and selects nothing,
  *    so legs are never mixed under one label.
  */
@@ -751,7 +794,7 @@ export function selectLeg<T>(
   dep: (t: T) => string | null,
   arr: (t: T) => string | null,
   leg: LegQuery
-): { items: T[]; match: "exact" | "origin" | "ambiguous" | null } {
+): LegSelection<T> {
   const pairCount = (xs: T[]) => new Set(xs.map((t) => `${dep(t)}>${arr(t)}`)).size;
   const byOrigin = leg.origin ? items.filter((t) => dep(t) === leg.origin) : [...items];
   const byBoth = leg.destination ? byOrigin.filter((t) => arr(t) === leg.destination) : byOrigin;
@@ -761,7 +804,8 @@ export function selectLeg<T>(
       : { items: byBoth, match: "exact" };
   }
   if (leg.origin && leg.destination && byOrigin.length > 0) {
-    return pairCount(byOrigin) > 1
+    const continues = items.some((t) => arr(t) === leg.destination);
+    return continues || pairCount(byOrigin) > 1
       ? { items: [], match: "ambiguous" }
       : { items: byOrigin, match: "origin" };
   }
@@ -799,21 +843,26 @@ function otherLegsOf<T>(
   const answered = new Set(selected.map(key));
   const seen = new Set<string>();
   const legs: OtherLeg[] = [];
-  for (const t of all) {
+  // Sorted before the dedupe so a pair with several rows shows its earliest.
+  const byDeparture = all
+    .map((t) => ({ t, d: detail(t) }))
+    .sort((a, b) => (a.d.departure_time ?? 0) - (b.d.departure_time ?? 0));
+  for (const { t, d } of byDeparture) {
     const origin = dep(t);
     if (!origin || answered.has(key(t)) || seen.has(key(t))) continue;
     seen.add(key(t));
-    legs.push({ origin, destination: arr(t), ...detail(t) });
+    legs.push({ origin, destination: arr(t), ...d });
   }
-  return legs.sort((a, b) => (a.departure_time ?? 0) - (b.departure_time ?? 0));
+  return legs;
 }
 
 function legResolution<T>(
   leg: LegQuery,
   rowCount: number,
-  sel: { items: T[]; match: "exact" | "origin" | "ambiguous" | null },
+  sel: LegSelection<T>,
   otherLegs: OtherLeg[],
-  unscopedOutcome: LegOutcome
+  unscopedOutcome: LegOutcome,
+  answeredSegment?: FallbackSegment
 ): LegResolution {
   const match: LegMatch =
     sel.match === "exact" || sel.match === "origin"
@@ -834,7 +883,12 @@ function legResolution<T>(
           origin: normalizeAirportCode(first.departure_airport),
           destination: normalizeAirportCode(first.arrival_airport),
         }
-      : null,
+      : answeredSegment
+        ? {
+            origin: normalizeAirportCode(answeredSegment.origin),
+            destination: normalizeAirportCode(answeredSegment.destination),
+          }
+        : null,
     unscopedOutcome,
   };
 }
@@ -924,14 +978,30 @@ const UNSCOPED_WORDS: Record<UnscopedReason, string> = {
   ambiguous_leg: "that matches more than one leg",
 };
 
-/** "SFO → DEN" for the leg an answer is about. */
+const pairLabel = (origin: string | null | undefined, destination: string | null | undefined) =>
+  destination ? `${origin ?? "?"} → ${destination}` : `from ${origin ?? "?"}`;
+
+/** "SFO → DEN" for the leg the answer is actually about, which may not be the one asked for. */
 export function legLabel(leg: LegResolution): string {
-  const origin = leg.origin ?? leg.answered?.origin ?? "?";
-  const destination = leg.destination ?? leg.answered?.destination;
-  return destination ? `${origin} → ${destination}` : `from ${origin}`;
+  return pairLabel(
+    leg.answered?.origin ?? leg.origin,
+    leg.answered?.destination ?? leg.destination
+  );
+}
+
+const requestedLabel = (leg: LegResolution) => pairLabel(leg.origin, leg.destination);
+
+/**
+ * The answer is about a different leg than the one requested: an "origin"
+ * fallback from our rows or from FR24. Its copy names the answered leg, and
+ * it offers no same-day alternatives, which would be for that hop alone.
+ */
+export function answersOtherLeg(leg: LegResolution | undefined): boolean {
+  return !!leg?.answered && !!leg.destination && leg.answered.destination !== leg.destination;
 }
 
 function isScopedMatch(leg: LegResolution | undefined): leg is LegResolution {
+  if (leg?.match === "no_data") return leg.answered !== null;
   return leg?.match === "exact" || leg?.match === "origin" || leg?.match === "unmatched";
 }
 
@@ -959,7 +1029,10 @@ export function legNote(verdict: AnsweredVerdict & { leg?: LegResolution }): str
     return `Couldn't scope to one leg (${UNSCOPED_WORDS[l.reason ?? "invalid_airport"]}); this answer covers every leg of ${verdict.normalized}.`;
   }
   if ((verdict.kind === "prediction" || verdict.kind === "no_model") && l.otherLegs.length > 0) {
-    return `Your ${legLabel(l)} leg isn't in our assignment data yet; this estimate is for flight ${verdict.normalized} overall.`;
+    return `Your ${requestedLabel(l)} leg isn't in our assignment data yet; this estimate is for flight ${verdict.normalized} overall.`;
+  }
+  if (answersOtherLeg(l)) {
+    return `We hold no ${requestedLabel(l)} leg for ${verdict.normalized}; this answer is for its ${legLabel(l)} leg only.`;
   }
   return "";
 }

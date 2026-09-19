@@ -57,23 +57,22 @@ import { rolloutTargets } from "../airlines/targets";
 import {
   FR24_OUTAGE_NOTE,
   type FlightVerdict,
+  type LegResolution,
   SWAP_DEGRADED_NOTE,
+  answersOtherLeg,
   carrierReader,
   decideCarrier,
   isPlausibleFlightNumber,
+  legField,
+  legPrefix,
+  legSubject,
   negativeWifi,
+  parseLegQuery,
+  recordLegScope,
   resolveFlightVerdict,
   scheduledFlights,
   verdictConfidence,
   verdictTelemetry,
-} from "../api/check-flight-core";
-import {
-  type LegResolution,
-  legField,
-  legPrefix,
-  legSubject,
-  parseLegQuery,
-  recordLegScope,
   withLeg,
   withLegNote,
 } from "../api/check-flight-core";
@@ -997,14 +996,12 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant, si
   }
 };
 
-// A whole-journey or diverted request answered from its first hop must not be
-// offered same-day alternatives for that hop alone.
 function sameDayAlternatives(
   reader: ScopedReader,
   verdict: Parameters<typeof sameDayAlternativesField>[1] & { leg?: LegResolution },
   date: string
 ): ReturnType<typeof sameDayAlternativesField> {
-  return verdict.leg?.match === "origin" ? {} : sameDayAlternativesField(reader, verdict, date);
+  return answersOtherLeg(verdict.leg) ? {} : sameDayAlternativesField(reader, verdict, date);
 }
 
 const hubOnly = (tenant: RequestContext["tenant"]): Response | null =>

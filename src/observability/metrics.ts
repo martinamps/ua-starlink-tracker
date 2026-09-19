@@ -39,7 +39,7 @@
  *   client_class:    classifyRequest: extension | other-extension, else
  *                    classifyUserAgent: claude | googleother | googlebot |
  *                    bingbot | gptbot | perplexity | seo-crawler | social |
- *                    extension | bot | browser | unknown             (13)
+ *                    extension | bot | browser | unknown; mcp for /mcp  (14)
  *   ext_version:     1.x | 2.0 | 2.x | other | none — only when
  *                    client_class:extension                          (5)
  *   confidence:      high | medium | low | none                      (4)
@@ -196,6 +196,11 @@ export function requestClientTags(req: Request, url: URL): Tags {
     client_class: clientClass,
     ext_version: normalizeExtVersion(url.searchParams.get("client")),
   };
+}
+
+/** `client_class` for /mcp tool calls, which carry no request of their own to classify. */
+export function mcpClientTags(): Tags {
+  return { client_class: "mcp" };
 }
 
 /**

@@ -13,8 +13,11 @@ import {
   type FlightVerdict,
   type LegQuery,
   type ResolveDeps,
+  answersOtherLeg,
   legField,
+  legNote,
   legScopeTelemetry,
+  legSubject,
   normalizeAirportCode,
   parseLegQuery,
   resolveFlightVerdict,
@@ -23,6 +26,8 @@ import {
 } from "../src/api/check-flight-core";
 import type { FallbackSegment, lookupFlightTailVerdict } from "../src/api/flight-verdict";
 import { createReaderFactory } from "../src/database/reader";
+import { AIRPORT_COORDS } from "../src/utils/airport-geo";
+import { AIRPORT_TZ } from "../src/utils/airport-tz";
 import {
   addFleet,
   addFlight,
@@ -57,6 +62,14 @@ const seg = (
 });
 const lookupReturning = (segments: FallbackSegment[] | null) =>
   (async () => segments) as unknown as typeof lookupFlightTailVerdict;
+function countingLookup(segments: FallbackSegment[]) {
+  const counter = { calls: 0 };
+  const lookup = (async () => {
+    counter.calls++;
+    return segments;
+  }) as unknown as typeof lookupFlightTailVerdict;
+  return { counter, lookup };
+}
 
 describe("leg-scoped verdicts (synthetic DB)", () => {
   let db: Database;
@@ -82,6 +95,14 @@ describe("leg-scoped verdicts (synthetic DB)", () => {
     addFlight(db, "N2001", "UA540", "SFO", utc("2027-06-09T15:00:00Z"), { arrivalAirport: "DEN" });
     negativeTail(db, "N2002");
     addFlight(db, "N2002", "UA540", "DEN", utc("2027-06-10T01:05:00Z"), { arrivalAirport: "SAN" });
+
+    // UA9002: DEN→SAN twice on the day, the later row on a Viasat tail.
+    addPlane(db, "N3201", "Starlink");
+    addFlight(db, "N3201", "UA9002", "SFO", utc("2027-06-09T14:00:00Z"), { arrivalAirport: "DEN" });
+    addPlane(db, "N3202", "Starlink");
+    addFlight(db, "N3202", "UA9002", "DEN", utc("2027-06-09T18:00:00Z"), { arrivalAirport: "SAN" });
+    negativeTail(db, "N3203");
+    addFlight(db, "N3203", "UA9002", "DEN", utc("2027-06-09T22:00:00Z"), { arrivalAirport: "SAN" });
 
     for (const [tail, from, to, at] of [
       ["N3101", "SFO", "LAX", "2027-06-09T14:00:00Z"],
@@ -164,6 +185,36 @@ describe("leg-scoped verdicts (synthetic DB)", () => {
     expect(legOf(stale)?.match).toBe("origin");
   });
 
+  test("an origin fallback names the leg it answered, not the one asked for", async () => {
+    const v = await ua("UA1217", { origin: "DEN", destination: "XYZ" });
+    if (v.kind !== "scheduled_no") throw new Error(v.kind);
+    expect(legSubject(v)).toBe("UA1217 DEN → DRO");
+    expect(answersOtherLeg(v.leg)).toBe(true);
+    expect(legNote(v)).toContain("DEN → XYZ");
+    const exact = await ua("UA1217", { origin: "DEN", destination: "DRO" });
+    if (exact.kind !== "scheduled_no") throw new Error(exact.kind);
+    expect(answersOtherLeg(exact.leg)).toBe(false);
+    expect(legNote(exact)).toBe("");
+  });
+
+  // UA540 is SFO→DEN on Starlink then DEN→SAN on Viasat; UA9002's DEN→SAN
+  // leg is Starlink too. Asking for the whole journey must not answer the
+  // first hop alone under the journey's label, in either direction.
+  test("a whole-journey request across a connection answers unscoped", async () => {
+    for (const fn of ["UA540", "UA1217"]) {
+      const journey =
+        fn === "UA540"
+          ? { origin: "SFO", destination: "SAN" }
+          : { origin: "ORD", destination: "DRO" };
+      const base = await ua(fn);
+      const v = await ua(fn, journey);
+      const { leg, ...rest } = v as FlightVerdict & { leg?: ReturnType<typeof legOf> };
+      expect(rest).toEqual(base);
+      expect(leg?.match).toBe("unscoped");
+      expect(leg?.reason).toBe("ambiguous_leg");
+    }
+  });
+
   test("a leg with no row falls to the prediction, not the sibling's yes", async () => {
     const v = await ua("UA2769", { origin: "DSM", destination: "ORD" });
     expect(v.kind).toBe("prediction");
@@ -213,6 +264,58 @@ describe("leg-scoped verdicts (synthetic DB)", () => {
     expect((await ua("UA540", undefined, deps)).kind).toBe("scheduled");
     const v = await ua("UA540", { origin: "DEN" }, deps);
     expect(v.kind).toBe("scheduled_no");
+  });
+
+  test("FR24 across a connection answers unscoped, from one fetch", async () => {
+    const { counter, lookup } = countingLookup([seg("SFO", "DEN", false), seg("DEN", "SAN", true)]);
+    const v = await ua(
+      "UA7777",
+      { origin: "SFO", destination: "SAN" },
+      { predict: stubPredict(0), lookupTail: lookup }
+    );
+    expect(v.kind).toBe("fr24");
+    expect(legOf(v)?.match).toBe("unscoped");
+    expect(legOf(v)?.reason).toBe("ambiguous_leg");
+    expect(counter.calls).toBe(1);
+  });
+
+  test("ambiguous FR24 segments never answer under a scoped label", async () => {
+    const v = await ua(
+      "UA7777",
+      { destination: "DEN" },
+      {
+        predict: stubPredict(0),
+        lookupTail: lookupReturning([seg("SFO", "DEN", true), seg("ORD", "DEN", false)]),
+      }
+    );
+    expect(legOf(v)?.match).toBe("unscoped");
+    expect(legOf(v)?.reason).toBe("ambiguous_leg");
+    expect(legSubject(v as { normalized: string })).toBe("UA7777");
+  });
+
+  test("an FR24 origin fallback is labelled with the segment it answered", async () => {
+    const v = await ua(
+      "UA7777",
+      { origin: "SFO", destination: "SAN" },
+      { predict: stubPredict(0), lookupTail: lookupReturning([seg("SFO", "DEN", true)]) }
+    );
+    if (v.kind !== "fr24") throw new Error(v.kind);
+    expect(v.leg?.match).toBe("no_data");
+    expect(legSubject(v)).toBe("UA7777 SFO → DEN");
+    expect(answersOtherLeg(v.leg)).toBe(true);
+  });
+
+  test("otherLegs shows a repeated pair's earliest departure", async () => {
+    const v = await ua("UA9002", { origin: "SFO" });
+    expect(legOf(v)?.otherLegs).toEqual([
+      {
+        origin: "DEN",
+        destination: "SAN",
+        departure_time: utc("2027-06-09T18:00:00Z"),
+        tail_number: "N3202",
+        hasStarlink: true,
+      },
+    ]);
   });
 
   test("a number we hold no rows for reports no_data", async () => {
@@ -322,9 +425,11 @@ describe("parseLegQuery / normalizeAirportCode", () => {
     expect(parseLegQuery("SFO", "D3N").unscoped?.reason).toBe("invalid_airport");
   });
 
-  test("same airport and unmapped origin are their own reasons", () => {
+  test("same airport, unknown and zone-less origins are their own reasons", () => {
     expect(parseLegQuery("SFO", "sfo").unscoped?.reason).toBe("same_airport");
-    expect(parseLegQuery("QQQ", "SFO").unscoped?.reason).toBe("no_timezone");
+    expect(parseLegQuery("QQQ", "SFO").unscoped?.reason).toBe("invalid_airport");
+    const zoneless = Object.keys(AIRPORT_COORDS).find((code) => !AIRPORT_TZ[code]);
+    if (zoneless) expect(parseLegQuery(zoneless, "SFO").unscoped?.reason).toBe("no_timezone");
     // Only the origin drives the local-date window.
     expect(parseLegQuery("SFO", "QQQ").leg).toEqual({ origin: "SFO", destination: "QQQ" });
   });
@@ -361,11 +466,15 @@ describe("selectLeg", () => {
     expect(pick({ destination: "SAN" })).toEqual({ items: [items[1]], match: "exact" });
   });
 
-  test("origin fallback when the destination doesn't match", () => {
-    expect(pick({ origin: "SFO", destination: "SAN" })).toEqual({
+  test("origin fallback when nothing arrives at the destination", () => {
+    expect(pick({ origin: "SFO", destination: "LAX" })).toEqual({
       items: [items[0]],
       match: "origin",
     });
+  });
+
+  test("a destination another item arrives at is a connection, not a fallback", () => {
+    expect(pick({ origin: "SFO", destination: "SAN" })).toEqual({ items: [], match: "ambiguous" });
   });
 
   test("a null departure never matches a requested origin", () => {

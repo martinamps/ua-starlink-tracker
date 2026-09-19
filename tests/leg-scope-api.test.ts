@@ -143,14 +143,26 @@ describe("scoped answers", () => {
     expect(body.flights[0].departure_airport).toBe("SFO");
   });
 
-  test("a whole-journey request answers the first hop without its alternatives", async () => {
-    const exact = await jsonOf(app, check(UA, "UA2222", "&origin=SFO&destination=DEN"), UA);
+  test("a whole-journey request across a connection answers unscoped, both ways", async () => {
+    for (const fn of ["UA540", "UA2222"]) {
+      const unscoped = await jsonOf(app, check(UA, fn), UA);
+      const journey = await jsonOf(app, check(UA, fn, "&origin=SFO&destination=SAN"), UA);
+      expect(journey.hasStarlink, fn).toBe(unscoped.hasStarlink);
+      expect(journey.leg.match, fn).toBe("unscoped");
+      expect(journey.leg.reason, fn).toBe("ambiguous_leg");
+    }
+  });
+
+  test("an origin fallback names the hop it answered, without its alternatives", async () => {
+    const exact = await jsonOf(app, check(UA, "UA2333", "&origin=ORD&destination=DEN"), UA);
     expect(exact.hasStarlink).toBe(false);
     expect(Array.isArray(exact.sameDayAlternatives)).toBe(true);
-    const journey = await jsonOf(app, check(UA, "UA2222", "&origin=SFO&destination=SAN"), UA);
-    expect(journey.hasStarlink).toBe(false);
-    expect(journey.leg.match).toBe("origin");
-    expect("sameDayAlternatives" in journey).toBe(false);
+    const diverted = await jsonOf(app, check(UA, "UA2333", "&origin=ORD&destination=LAX"), UA);
+    expect(diverted.hasStarlink).toBe(false);
+    expect(diverted.leg.match).toBe("origin");
+    expect(diverted.message).toContain("UA2333 ORD → DEN is assigned");
+    expect(diverted.message).toContain("ORD → LAX");
+    expect("sameDayAlternatives" in diverted).toBe(false);
   });
 
   test("hub check-any-flight keeps airline and gains leg", async () => {
@@ -253,6 +265,28 @@ describe("MCP check_flight", () => {
     expect(den).toMatch(/No Starlink/);
   });
 
+  test("a whole journey is never the first hop's firm answer", async () => {
+    const text = await call({
+      flight_number: "UA540",
+      date: D,
+      origin: "SFO",
+      destination: "SAN",
+    });
+    expect(text).not.toMatch(/No Starlink/);
+    expect(text).not.toContain("UA540 SFO → SAN");
+  });
+
+  test("an origin fallback names its hop and offers no alternatives for it", async () => {
+    const text = await call({
+      flight_number: "UA2333",
+      date: D,
+      origin: "ORD",
+      destination: "LAX",
+    });
+    expect(text).toContain("UA2333 ORD → DEN");
+    expect(text.trimEnd()).toEndWith("leg only.");
+  });
+
   test("without a leg the text is unchanged vs empty strings", async () => {
     const plain = await call({ flight_number: "UA540", date: D });
     const empty = await call({ flight_number: "UA540", date: D, origin: "", destination: "" });
@@ -270,7 +304,7 @@ describe("snapshot shapes", () => {
                 group_concat(DISTINCT uf.departure_airport) AS origins
            FROM upcoming_flights uf
            JOIN starlink_planes sp ON sp.TailNumber = uf.tail_number
-          WHERE uf.airline = 'UA'
+          WHERE uf.airline = 'UA' AND uf.flight_number LIKE 'UA%'
           GROUP BY 1, 2
          HAVING COUNT(DISTINCT uf.departure_airport) >= 2
           LIMIT 20`

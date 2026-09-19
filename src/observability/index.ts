@@ -23,6 +23,7 @@ export {
   classifyRequest,
   normalizeExtVersion,
   requestClientTags,
+  mcpClientTags,
   bucketDaysOut,
   normalizeLegMatch,
   normalizeLegReason,
