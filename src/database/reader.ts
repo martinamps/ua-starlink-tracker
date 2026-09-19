@@ -43,6 +43,7 @@ import {
   type FlightRoutePair,
   type HubAirlineStat,
   type PopularFlight,
+  type QatarHistoryRow,
   type QatarScheduleRow,
   type RouteEntryRow,
   type RouteFlightNumbers,
@@ -86,6 +87,10 @@ import {
   getObservedDirectFlightNumbers,
   getPendingFleetTails,
   getPopularFlights,
+  getQatarEquipmentHistory,
+  getQatarEquipmentHistoryByWindow,
+  getQatarFetchCoverage,
+  getQatarHistoryRoutes,
   getQatarScheduleByFlight,
   getQatarScheduleByRoute,
   getQatarScheduleStats,
@@ -256,6 +261,26 @@ export interface ScopedReader {
     none: number;
     lastUpdated: number | null;
   };
+
+  // QR equipment history + fetch coverage; airline-agnostic like qatar_schedule.
+  getQatarEquipmentHistory(
+    variants: readonly string[],
+    sinceDate: string,
+    untilDate: string
+  ): QatarHistoryRow[];
+  getQatarEquipmentHistoryByWindow(
+    variants: readonly string[],
+    startSec: number,
+    endSec: number
+  ): QatarHistoryRow[];
+  getQatarHistoryRoutes(
+    variants: readonly string[],
+    sinceDate: string
+  ): Array<{ origin: string; destination: string }>;
+  getQatarFetchCoverage(
+    pairs: ReadonlyArray<{ origin: string; destination: string }>,
+    fetchDates: readonly string[]
+  ): Set<string>;
 }
 
 const publicCodes = (): readonly AirlineCode[] => publicAirlines().map((a) => a.code);
@@ -395,6 +420,10 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     getQatarScheduleByFlight: (v, s, e) => getQatarScheduleByFlight(db, v, s, e),
     getQatarScheduleByRoute: (o, d, s, e) => getQatarScheduleByRoute(db, o, d, s, e),
     getQatarScheduleStats: () => getQatarScheduleStats(db),
+    getQatarEquipmentHistory: (v, s, u) => getQatarEquipmentHistory(db, v, s, u),
+    getQatarEquipmentHistoryByWindow: (v, s, e) => getQatarEquipmentHistoryByWindow(db, v, s, e),
+    getQatarHistoryRoutes: (v, s) => getQatarHistoryRoutes(db, v, s),
+    getQatarFetchCoverage: (p, d) => getQatarFetchCoverage(db, p, d),
 
     getAssignmentHistory: (v, d) => getAssignmentHistory(db, airlines, v, d),
     getSameDayStarlinkAlternatives: (q) => getSameDayStarlinkAlternatives(db, airlines, q),

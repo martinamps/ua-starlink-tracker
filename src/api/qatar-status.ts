@@ -25,6 +25,7 @@
 
 import { qatarEquipment, qatarStarlinkPhase } from "../airlines/registry";
 import { COUNTERS, DISTRIBUTIONS, metrics, normalizeAirlineTag } from "../observability";
+import { localDateISO } from "../utils/airport-tz";
 import { BROWSER_USER_AGENT } from "../utils/constants";
 import { error as logError, warn } from "../utils/logger";
 
@@ -32,6 +33,10 @@ const API_URL = "https://qoreservices.qatarairways.com/fltstatus-services/flight
 
 export interface QatarFlight {
   flightNumber: string;
+  /** Operating carrier and its marketed number; a by-route result can carry
+   * another airline's leg or a codeshare, which must not feed QR answers. */
+  carrier?: string | null;
+  mktFlightNumber?: string | null;
   /** IATA equipment code, e.g. "77W", "351", "789" */
   equipmentCode: string | null;
   departureAirport: string | null;
@@ -44,7 +49,7 @@ export interface QatarFlight {
 }
 
 interface RawFlight {
-  carrier?: { carrier?: string; flightNumber?: string };
+  carrier?: { carrier?: string; flightNumber?: string; mktFlightNumber?: string };
   equipmentDetails?: { equipmentCode?: string };
   departureStation?: { airportCode?: string };
   arrivalStation?: { airportCode?: string };
@@ -70,6 +75,8 @@ function parseUtc(s: string | undefined): number | null {
 function normalize(raw: RawFlight): QatarFlight {
   return {
     flightNumber: String(raw.flightNumber ?? raw.carrier?.flightNumber ?? ""),
+    carrier: raw.carrier?.carrier ?? null,
+    mktFlightNumber: raw.carrier?.mktFlightNumber ?? null,
     equipmentCode: raw.equipmentDetails?.equipmentCode ?? null,
     departureAirport: raw.departureStation?.airportCode ?? null,
     arrivalAirport: raw.arrivalStation?.airportCode ?? null,
@@ -223,13 +230,51 @@ export type QatarWifi = "Starlink" | "Rolling" | "None";
  *
  * "Rolling" callers should render as "may have Starlink" rather than a
  * yes/no — the answer flips per-tail and we have no per-tail signal yet.
- * Unknown codes return None so they sort with non-equipped aircraft.
+ * Unknown codes return None so they sort with non-equipped aircraft — which is
+ * why this feeds only the stored qatar_schedule.wifi_verdict column and must
+ * never drive an answer: an unrecognised code is not a no. Answers classify
+ * with qatarEquipmentClass at read time.
  */
 export function qatarEquipmentToWifi(equipmentCode: string | null | undefined): QatarWifi {
   const phase = qatarStarlinkPhase(qatarEquipment(equipmentCode)?.family ?? null);
   if (phase === "confirmed") return "Starlink";
   if (phase === "rolling") return "Rolling";
   return "None";
+}
+
+export type QatarClass = "yes" | "rolling" | "no" | "unknown";
+
+/**
+ * Read-time answer class for an equipment code. Unlike qatarEquipmentToWifi,
+ * an unmapped or missing code is "unknown", never "no", so a new Qatar code
+ * can't silently become a confident negative. A phase-table edit reclassifies
+ * every stored row on the next read.
+ */
+export function qatarEquipmentClass(equipmentCode: string | null | undefined): QatarClass {
+  const phase = qatarStarlinkPhase(qatarEquipment(equipmentCode)?.family ?? null);
+  if (phase === "confirmed") return "yes";
+  if (phase === "rolling") return "rolling";
+  if (phase === "negative") return "no";
+  return "unknown";
+}
+
+/** Qatar publishes equipment about this many DOH-local days ahead. */
+export const QATAR_PUBLISHED_DAYS_FORWARD = 6;
+
+/** YYYY-MM-DD in DOH local time (UTC+3, no DST). */
+export function dohDateISO(epochSec: number): string {
+  return localDateISO(epochSec, "Asia/Qatar");
+}
+
+/**
+ * Days from DOH-local today to the queried date. Qatar's schedule window is
+ * keyed on DOH operating days, so a UTC or traveller-local "today" would put
+ * the window edge up to a day off for late-evening lookups.
+ */
+export function qatarDaysOut(dateISO: string, nowSec: number): number {
+  const q = Date.parse(`${dateISO}T00:00:00Z`);
+  const today = Date.parse(`${dohDateISO(nowSec)}T00:00:00Z`);
+  return Math.round((q - today) / 86_400_000);
 }
 
 /**

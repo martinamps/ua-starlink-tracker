@@ -34,6 +34,7 @@ import {
   type AnalyticsConfig,
   SITES,
   enabledAirlines,
+  hubLookupAirlines,
   siteForAirline,
 } from "../airlines/registry";
 import type { FlightAssignmentRow } from "../database/database";
@@ -57,7 +58,6 @@ import { AIRPORT_COORDS } from "../utils/airport-geo";
 import { debug, info } from "../utils/logger";
 import {
   FR24_OUTAGE_NOTE,
-  type FlightVerdict,
   SWAP_DEGRADED_NOTE,
   carrierReader,
   decideCarrier,
@@ -69,7 +69,14 @@ import {
 } from "./check-flight-core";
 import type { FallbackSegment } from "./flight-verdict";
 import { FlightRadar24API } from "./flightradar24-api";
-import { qatarEquipmentName } from "./qatar-status";
+import { QATAR_PUBLISHED_DAYS_FORWARD, dohDateISO, qatarEquipmentName } from "./qatar-status";
+import {
+  type QatarLeg,
+  type QatarVerdict,
+  addDaysISO,
+  qatarHistoryReason,
+  qatarNoDataReason,
+} from "./qatar-verdict";
 
 // Protocol versions we support (newest first)
 const SUPPORTED_PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26"];
@@ -514,14 +521,15 @@ type GetReader = (scope: Scope) => ScopedReader;
 function resolveFlightToolCarrier(
   reader: ScopedReader,
   getReader: GetReader,
-  flightNumber: string
+  flightNumber: string,
+  pool: "public" | "lookup" = "public"
 ): { cfg: AirlineConfig; reader: ScopedReader } | ToolResult {
   let pinnedCfg: AirlineConfig | null = null;
   if (reader.scope !== "ALL") {
     pinnedCfg = scopeCfg(reader.scope);
     if (!pinnedCfg) return scopeConfigError(reader.scope);
   }
-  const decision = decideCarrier(pinnedCfg, flightNumber);
+  const decision = decideCarrier(pinnedCfg, flightNumber, { pool });
   if (decision.outcome === "not_tracked") {
     // Single-airline surface: name only the pinned carrier — never list
     // competitor brands on its server. The hub is multi-airline, so its
@@ -600,7 +608,9 @@ async function toolCheckFlight(
     };
   }
 
-  const carrier = resolveFlightToolCarrier(hostReader, getReader, flightNumber);
+  // "lookup": the hub's MCP flight tools answer hubFlightLookup carriers
+  // (QR), matching /api/check-any-flight.
+  const carrier = resolveFlightToolCarrier(hostReader, getReader, flightNumber, "lookup");
   if ("content" in carrier) return carrier;
   const { cfg, reader } = carrier;
   // The hub never does FR24 reverse lookups — same gate as hub REST
@@ -635,7 +645,11 @@ async function toolCheckFlight(
   const t = verdictTelemetry(verdict);
   recordMcpFlightLookup(reader.scope, t.outcome, t.confidence);
 
-  if (verdict.kind === "qatar" || verdict.kind === "qatar_no_data") {
+  if (
+    verdict.kind === "qatar" ||
+    verdict.kind === "qatar_no_data" ||
+    verdict.kind === "qatar_history"
+  ) {
     return renderQatarCheckFlight(verdict, date);
   }
 
@@ -815,34 +829,46 @@ async function toolCheckFlight(
   }
 }
 
-function renderQatarCheckFlight(
-  verdict: Extract<FlightVerdict, { kind: "qatar" } | { kind: "qatar_no_data" }>,
-  date: string
-): ToolResult {
+// Hub-scope only: QR answers from equipment, not tails, so the ≤2-day rule
+// above doesn't apply to it.
+const HUB_LOOKUP_INSTRUCTION = hubLookupAirlines().some((a) => a.code === "QR")
+  ? "• Qatar Airways (QR…): use check_flight at any date — it answers from the published aircraft type (~6 days) or observed-type history beyond.\n"
+  : "";
+
+function renderQatarCheckFlight(verdict: QatarVerdict, date: string): ToolResult {
+  const text = (t: string): ToolResult => ({ content: [{ type: "text", text: t }] });
+  const legLine = (r: QatarLeg) =>
+    `- ${r.flight_number} (${r.departure_airport ?? "?"}→${r.arrival_airport ?? "?"}) on ${qatarEquipmentName(r.equipment_code)}. Departs ${new Date(r.departure_time * 1000).toISOString()}.`;
+
   if (verdict.kind === "qatar_no_data") {
-    return {
-      content: [
-        {
-          type: "text",
-          text: `${verdict.normalized} on ${date}: no schedule data. Coverage is limited to high-traffic Qatar Airways routes for the next ~48h; check back closer to departure.`,
-        },
-      ],
-    };
+    return text(
+      `${verdict.normalized} on ${date}: ${qatarNoDataReason(verdict)} Qatar publishes the aircraft about a week out on selected routes.`
+    );
   }
 
-  const lines = verdict.rows.map((r) => {
-    const dep = r.departure_time ? new Date(r.departure_time * 1000).toISOString() : "unknown";
-    return `- ${r.flight_number} (${r.departure_airport ?? "?"}→${r.arrival_airport ?? "?"}) on ${qatarEquipmentName(r.equipment_code)}. Departs ${dep}.`;
-  });
+  if (verdict.kind === "qatar_history") {
+    const reason = qatarHistoryReason(verdict);
+    if (verdict.probability === null) return text(`${verdict.normalized} on ${date}: ${reason}`);
+    const pct = Math.floor(verdict.probability * 100);
+    const basis = `${verdict.grade} confidence, ${verdict.nDays} recent and scheduled operating days`;
+    const head =
+      verdict.yesDays === 0
+        ? `**${verdict.normalized} on ${date}**: unlikely — none of its last ${verdict.nDays} operating days were on a Starlink-fitted type.`
+        : `**${verdict.normalized} on ${date}**: ${verdict.probability >= 0.8 ? "likely" : "uncertain"} — at least ${pct}% Starlink (${basis}).`;
+    const sched = verdict.scheduledRow ? `\n\n${legLine(verdict.scheduledRow)}` : "";
+    return text(`${head} ${reason}${sched}`);
+  }
+
+  const lines = verdict.rows.map(legLine);
   const headline =
     verdict.hasStarlink === true
-      ? `✈️ Yes! Flight ${verdict.normalized} on ${date} is scheduled on a Starlink-equipped aircraft type.`
+      ? `✈️ Yes, by scheduled aircraft type — ${verdict.normalized} on ${date}.`
       : verdict.hasStarlink === false
         ? `❌ No Starlink: ${verdict.normalized} on ${date}.`
-        : `Maybe — ${verdict.normalized} on ${date}.`;
-  return {
-    content: [{ type: "text", text: `${headline} ${verdict.reason}\n\n${lines.join("\n")}` }],
-  };
+        : verdict.qclass === "cancelled"
+          ? `${verdict.normalized} on ${date}: cancelled.`
+          : `Maybe — ${verdict.normalized} on ${date}.`;
+  return text(`${headline} ${verdict.reason}${lines.length ? `\n\n${lines.join("\n")}` : ""}`);
 }
 
 /**
@@ -1274,9 +1300,20 @@ async function toolPredictFlightStarlink(
     };
   }
 
-  const carrier = resolveFlightToolCarrier(hostReader, getReader, input);
+  const carrier = resolveFlightToolCarrier(hostReader, getReader, input, "lookup");
   if ("content" in carrier) return carrier;
   const { cfg, reader } = carrier;
+  // On the hub, QR's answer is date-shaped (published type in the window,
+  // observed-type history beyond), so predict routes through the same verdict
+  // as check_flight. Without a date, a date just past the window asks for the
+  // flight's general history. The QR tenant keeps its registry answer, which
+  // its REST /api/predict-flight mirrors.
+  if (hostReader.scope === "ALL" && cfg.hubFlightLookup) {
+    const given = typeof args.date === "string" ? args.date.trim() : "";
+    const nowSec = Math.floor(Date.now() / 1000);
+    const date = given || addDaysISO(dohDateISO(nowSec), QATAR_PUBLISHED_DAYS_FORWARD + 1);
+    return toolCheckFlight(hostReader, getReader, { flight_number: input, date });
+  }
   const forPredict = ensureAirlinePrefix(cfg, input);
   // Same 1-4 digit bound the check-flight core enforces — prevents agents
   // driving FR24 route lookups with junk numbers.
@@ -1942,7 +1979,7 @@ ${fleetParagraph}People who install this connector care about Starlink hours, bu
 Tool selection:
 • Routing/tradeoff → plan_starlink_itinerary (multi-stop, coverage ratio)
 • Specific flight number → check_flight (≤2 days out) or predict_flight_starlink (further out, pass date)
-• Route without flight number → predict_route_starlink
+${scope === "ALL" ? HUB_LOOKUP_INSTRUCTION : ""}• Route without flight number → predict_route_starlink
 • search_starlink_flights = next ~2 days confirmed only
 
 ⚠️ Low/no Starlink flight: check_flight and predict_flight_starlink EMBED a markdown table of alternatives (route looked up + planItinerary run for you). RENDER THE TABLE — don't summarize it into prose, don't ask which segment (both are shown), don't re-call predict_route_starlink (only finds directs, misses the connections in the table), don't add "download offline" / "use legacy WiFi" / "mobile hotspot" tips (non-responsive — they asked for better FLIGHTS).

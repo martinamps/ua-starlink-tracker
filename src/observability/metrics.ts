@@ -206,6 +206,13 @@ export function normalizeAirlineTag(code: string | null | undefined): string {
   return AIRLINES[code.toUpperCase()]?.metricTag ?? "unmapped";
 }
 
+/** IATA equipment codes are three alphanumerics; anything else is upstream
+ * junk and must not mint a tag value. */
+export function normalizeEquipmentCodeTag(code: string | null | undefined): string {
+  const c = (code ?? "").trim().toUpperCase();
+  return /^[A-Z0-9]{3}$/.test(c) ? c : "invalid";
+}
+
 /** Bounded-cardinality bucket for how many calendar days ahead a flight lookup's date is. */
 export function bucketDaysOut(days: number): string {
   if (!Number.isFinite(days)) return "unknown";
@@ -298,6 +305,10 @@ export const COUNTERS = {
   WATCH_FEED_FETCH: "watch.feed_fetch",
   // Watch row rendered on a check-flight result — tags: airline, surface (check_flight)
   WATCH_CTA_SHOWN: "watch.cta_shown",
+
+  // A QR answer hit an equipment code missing from QATAR_EQUIPMENT (answered
+  // as unknown, never no) — tags: airline, code (3-char IATA code | invalid)
+  QATAR_UNKNOWN_EQUIPMENT: "qatar.unknown_equipment",
 } as const;
 
 /**

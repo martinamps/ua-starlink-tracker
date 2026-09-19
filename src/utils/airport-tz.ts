@@ -285,6 +285,9 @@ export const AIRPORT_TZ: Record<string, string> = {
   VCE: "Europe/Rome",
   VIE: "Europe/Vienna",
   ZRH: "Europe/Zurich",
+  BUD: "Europe/Budapest",
+  SMA: "Atlantic/Azores",
+  WAW: "Europe/Warsaw",
   // Middle East / Africa (Qatar network)
   DOH: "Asia/Qatar",
   TLV: "Asia/Jerusalem",
@@ -308,6 +311,7 @@ export const AIRPORT_TZ: Record<string, string> = {
   LOS: "Africa/Lagos",
   NBO: "Africa/Nairobi",
   TUN: "Africa/Tunis",
+  PZU: "Africa/Khartoum",
   // South / Southeast / East Asia (Qatar network)
   AMD: "Asia/Kolkata",
   BLR: "Asia/Kolkata",
@@ -336,6 +340,7 @@ export const AIRPORT_TZ: Record<string, string> = {
   CAN: "Asia/Shanghai",
   PEK: "Asia/Shanghai",
   PVG: "Asia/Shanghai",
+  PKX: "Asia/Shanghai",
   HND: "Asia/Tokyo",
   KIX: "Asia/Tokyo",
   NRT: "Asia/Tokyo",
@@ -442,4 +447,39 @@ export function matchesLocalDate(
     debug(`no timezone mapping for airport ${iata} — using strict UTC day window`);
   }
   return departureTimeSec >= fallbackStart && departureTimeSec < fallbackEnd;
+}
+
+function lastSundayISO(year: number, monthIndex: number): string {
+  const last = new Date(Date.UTC(year, monthIndex + 1, 0));
+  last.setUTCDate(last.getUTCDate() - last.getUTCDay());
+  return last.toISOString().slice(0, 10);
+}
+
+/**
+ * IATA schedule season for a calendar date: "S26" from the last Sunday of
+ * March 2026, "W26" from the last Sunday of October 2026 until the next S.
+ * Airlines re-plan equipment per season, so equipment history only transfers
+ * within one. Null for a malformed date.
+ */
+export function iataSeasonKey(dateISO: string): string | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateISO) || Number.isNaN(Date.parse(dateISO))) return null;
+  const year = Number(dateISO.slice(0, 4));
+  const yy = (y: number) => String(y % 100).padStart(2, "0");
+  if (dateISO < lastSundayISO(year, 2)) return `W${yy(year - 1)}`;
+  if (dateISO < lastSundayISO(year, 9)) return `S${yy(year)}`;
+  return `W${yy(year)}`;
+}
+
+/** First day of a season key ("W26" → "2026-10-25"), or null. */
+export function iataSeasonStart(key: string): string | null {
+  const m = key.match(/^([SW])(\d{2})$/);
+  if (!m) return null;
+  return lastSundayISO(2000 + Number(m[2]), m[1] === "S" ? 2 : 9);
+}
+
+/** Ordinal of a season key, so seasons can be subtracted (S26 → W26 is 1). */
+export function iataSeasonIndex(key: string): number {
+  const m = key.match(/^([SW])(\d{2})$/);
+  if (!m) return Number.NaN;
+  return (2000 + Number(m[2])) * 2 + (m[1] === "W" ? 1 : 0);
 }

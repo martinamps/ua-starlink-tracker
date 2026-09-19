@@ -24,5 +24,6 @@ export {
   normalizeExtVersion,
   requestClientTags,
   bucketDaysOut,
+  normalizeEquipmentCodeTag,
 } from "./metrics";
 export type { Tags } from "./metrics";
