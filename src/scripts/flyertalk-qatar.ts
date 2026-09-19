@@ -18,10 +18,11 @@ import { AIRLINES, qatarTypeToStarlink } from "../airlines/registry";
 import { initializeDatabase } from "../database/database";
 import { BROWSER_USER_AGENT } from "../utils/constants";
 import { info, error as logError } from "../utils/logger";
-import { applyFlyertalkTails } from "./flyertalk-common";
+import { type FlyertalkFetcher, applyFlyertalkTails, fetchFlyertalk } from "./flyertalk-common";
 
 const ALLOWED_HOST = "www.flyertalk.com";
-const THREAD_URL = `https://${ALLOWED_HOST}/forum/qatar-airways-privilege-club/2162391-qr-starlink-now-live.html`;
+const THREAD_ID = 2162391;
+const THREAD_URL = `https://${ALLOWED_HOST}/forum/qatar-airways-privilege-club/${THREAD_ID}-qr-starlink-now-live.html`;
 const NEXT_RE = /rel="next"\s+href="([^"]+)"/i;
 const MAX_PAGES = 60;
 
@@ -42,18 +43,15 @@ const HEADERS = {
   "Accept-Language": "en-US,en;q=0.5",
 };
 
-export async function fetchQatarFlyertalkTails(): Promise<string[]> {
+export async function fetchQatarFlyertalkTails(fetcher?: FlyertalkFetcher): Promise<string[]> {
   const seen = new Set<string>();
   let url: string | null = THREAD_URL;
   let pages = 0;
 
   while (url && pages < MAX_PAGES) {
-    const res = await fetch(url, { headers: HEADERS, redirect: "error" });
-    if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
-    // FlyerTalk serves windows-1252; treat as bytes and only keep ASCII matches.
-    const html = new TextDecoder("latin1").decode(new Uint8Array(await res.arrayBuffer()));
+    const { html, finalUrl } = await fetchFlyertalk(url, THREAD_ID, HEADERS, fetcher);
     for (const m of html.matchAll(AIRLINES.QR.tailScanPattern)) seen.add(m[0]);
-    url = nextPageUrl(html, url);
+    url = nextPageUrl(html, finalUrl);
     pages++;
   }
 

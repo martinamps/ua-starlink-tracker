@@ -1,6 +1,7 @@
 import React from "react";
 import { type SiteConfig, siteAirline } from "../airlines/registry";
 import type { RouteSummary } from "../database/database";
+import { type PageLink, PageNavLinks } from "./atoms";
 
 const EYEBROW = "text-[10px] font-mono text-muted uppercase tracking-wider mb-3";
 const PANEL = "bg-surface border border-subtle rounded-lg p-5";
@@ -14,37 +15,29 @@ export function formatDuration(sec: number | null): string | null {
   return m === 0 ? `${h}h` : `${h}h ${m}m`;
 }
 
-/** The one-line answer the page exists to give. */
+/**
+ * The one-line answer the page exists to give. upcoming_flights only holds
+ * departures on tracked Starlink tails, so there is no honest denominator:
+ * "All N scheduled" or "k of N" would claim coverage of flights we never see.
+ */
 export function routeVerdict(route: RouteSummary, airlineName: string): string {
   const pair = `${route.origin} → ${route.destination}`;
-  if (route.totalDepartures === 0) {
-    // Lead with what we durably know. The schedule window is only 48h, so a
-    // route with real history spends most of its life "empty" — opening on the
-    // negative made ~43% of the corpus read as a no-data page (and gave every
-    // one of them a near-identical meta description).
-    const fns = route.flightNumbers;
-    if (fns.length > 0) {
-      const sample = fns
-        .slice(0, 3)
-        .map((f) => f.flight_number)
-        .join(", ");
-      return `${airlineName} flies ${pair} — ${fns.length} flight number${fns.length === 1 ? "" : "s"} on record (${sample}). No departures are in the next-48h assignment window yet; aircraft assignments publish about two days out.`;
-    }
-    return `No ${airlineName} departures are in the schedule window for ${pair} right now. Aircraft assignments publish about two days out.`;
+  const k = route.equippedDepartures;
+  if (k > 0) {
+    return `${k} Starlink-equipped ${airlineName} departure${k === 1 ? "" : "s"} on ${pair} in the ${route.windowLabel}. We track Starlink-equipped tails, so other departures may not be listed — check your flight number.`;
   }
-  // "All 1 scheduled departures" shipped on ~10% of route pages.
-  if (route.totalDepartures === 1) {
-    return route.equippedDepartures === 1
-      ? `The only scheduled ${pair} departure in the ${route.windowLabel} is on a Starlink-equipped aircraft.`
-      : `The only scheduled ${pair} departure in the ${route.windowLabel} is not on a Starlink-equipped aircraft.`;
+  // Lead with what we durably know. The schedule window is only 48h, so a
+  // route with real history spends most of its life "empty" — opening on the
+  // negative made ~43% of the corpus read as a no-data page.
+  const fns = route.flightNumbers;
+  if (fns.length > 0) {
+    const sample = fns
+      .slice(0, 3)
+      .map((f) => f.flight_number)
+      .join(", ");
+    return `${airlineName} flies ${pair} — ${fns.length} flight number${fns.length === 1 ? "" : "s"} on record (${sample}). No Starlink-equipped departures are in the next-48h assignment window yet; aircraft assignments publish about two days out.`;
   }
-  if (route.equippedDepartures === 0) {
-    return `None of the ${route.totalDepartures} scheduled ${pair} departures in the ${route.windowLabel} are on a Starlink-equipped aircraft.`;
-  }
-  if (route.equippedDepartures === route.totalDepartures) {
-    return `All ${route.totalDepartures} scheduled ${pair} departures in the ${route.windowLabel} are on Starlink-equipped aircraft.`;
-  }
-  return `${route.equippedDepartures} of ${route.totalDepartures} scheduled ${pair} departures in the ${route.windowLabel} are on Starlink-equipped aircraft.`;
+  return `No Starlink-equipped ${airlineName} departures are in the schedule window for ${pair} right now. Aircraft assignments publish about two days out.`;
 }
 
 function FlightNumbers({ route, airlineName }: { route: RouteSummary; airlineName: string }) {
@@ -82,9 +75,18 @@ function FlightNumbers({ route, airlineName }: { route: RouteSummary; airlineNam
 interface RoutePageProps {
   route: RouteSummary;
   site: SiteConfig;
+  /** The server's routeHasData answer for destination→origin; the reverse-leg
+   * link renders only when that page serves. */
+  reverseLinkable?: boolean;
+  pageLinks?: PageLink[];
 }
 
-export default function RoutePage({ route, site }: RoutePageProps) {
+export default function RoutePage({
+  route,
+  site,
+  reverseLinkable = false,
+  pageLinks,
+}: RoutePageProps) {
   const cfg = siteAirline(site);
   const airlineName = cfg.name;
   const backLabel = site.brand.title;
@@ -114,7 +116,6 @@ export default function RoutePage({ route, site }: RoutePageProps) {
               </dt>
               <dd className="font-display text-2xl font-bold text-primary tabular-nums">
                 {route.equippedDepartures}
-                <span className="text-muted text-base font-normal">/{route.totalDepartures}</span>
               </dd>
             </div>
             <div>
@@ -160,26 +161,36 @@ export default function RoutePage({ route, site }: RoutePageProps) {
       </section>
 
       <section className={`${SECTION} text-center`}>
-        <p className="text-sm text-secondary">
-          Want the reverse leg?{" "}
-          <a
-            href={`/route-planner/${route.destination}/${route.origin}`}
-            className="text-accent hover:underline"
-          >
-            {route.destination} to {route.origin}
-          </a>
-          , or{" "}
-          <a href="/route-planner" className="text-accent hover:underline">
-            compare a full itinerary
-          </a>
-          .
-        </p>
+        {reverseLinkable ? (
+          <p className="text-sm text-secondary">
+            Want the reverse leg?{" "}
+            <a
+              href={`/route-planner/${route.destination}/${route.origin}`}
+              className="text-accent hover:underline"
+            >
+              {route.destination} to {route.origin}
+            </a>
+            , or{" "}
+            <a href="/route-planner" className="text-accent hover:underline">
+              compare a full itinerary
+            </a>
+            .
+          </p>
+        ) : (
+          <p className="text-sm text-secondary">
+            <a href="/route-planner" className="text-accent hover:underline">
+              Compare a full itinerary
+            </a>{" "}
+            across connections.
+          </p>
+        )}
       </section>
 
       <footer className="relative py-6 text-center border-t border-subtle text-muted text-sm mt-auto">
         <a href="/" className="text-accent hover:underline font-display">
           ← Back to {backLabel}
         </a>
+        <PageNavLinks links={pageLinks} />
       </footer>
     </div>
   );
