@@ -184,6 +184,8 @@ describe("scoped answers", () => {
     expect(body.hasStarlink).toBe(null);
     expect(body.leg.match).toBe("unmatched");
     expect(body.message).toContain("this estimate is for flight UA540 overall");
+    const originOnly = await jsonOf(app, check(UA, "UA540", "&origin=LAX"), UA);
+    expect(originOnly.message).toContain("Your leg from LAX isn't");
   });
 
   test("HEAD with a leg is 200", async () => {
