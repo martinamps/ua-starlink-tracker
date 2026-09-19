@@ -1,7 +1,7 @@
 import { existsSync, writeFileSync } from "node:fs";
 import { looksLikeValidTailNumber } from "../airlines/registry";
 import { BROWSER_USER_AGENT } from "./constants";
-import { error as logError } from "./logger";
+import { error as logError, warn } from "./logger";
 
 /**
  * CSV Fetch & Parse Logic
@@ -116,9 +116,37 @@ export async function fetchSheetCsv(docId: string, gid: number): Promise<string>
   return response.text();
 }
 
+const SHEET_STARLINK_ALIASES = new Set(["strlnk", "starlink", "stalink", "starlnk", "strlink"]);
+
+/**
+ * Canonical Starlink spelling for a sheet WiFi cell, or null when the cell
+ * isn't Starlink. Hand-typed cells drift ('Stalink' on N14228), and the value
+ * is stored raw — downstream `wifi IN ('StrLnk','Starlink')` checks only work
+ * if typos are rewritten to a canonical form, not merely accepted. The exact
+ * canonical spellings pass through untouched; aliases take the sheet's own.
+ */
+export function normalizeSheetWifi(
+  raw: string | null | undefined,
+  fleet: string
+): "StrLnk" | "Starlink" | null {
+  const v = (raw ?? "").replace(/[\s\u00a0]+/g, "");
+  if (v === "StrLnk" || v === "Starlink") return v;
+  if (!SHEET_STARLINK_ALIASES.has(v.toLowerCase())) return null;
+  return fleet === "express" ? "StrLnk" : "Starlink";
+}
+
+/** An unrecognised cell that is probably a new misspelling worth a look. */
+export function looksLikeStarlinkTypo(raw: string | null | undefined): boolean {
+  const v = (raw ?? "").replace(/[\s\u00a0]+/g, "").toLowerCase();
+  return (
+    v.length >= 4 && normalizeSheetWifi(v, "mainline") === null && /^st.*l.*k|lnk$|link$/.test(v)
+  );
+}
+
 // Function to fetch all CSV data and filter for Starlink WiFi
 export async function fetchAllSheets() {
   const exportUrls = createCsvExportUrls();
+  const warnedWifi = new Set<string>();
   const starlinkAircraft: Record<string, string>[] = [];
 
   // Separate counts for express and mainline fleets
@@ -161,8 +189,16 @@ export async function fetchAllSheets() {
 
       // Filter for Starlink WiFi (both "StrLnk" for express and "Starlink" for mainline)
       const filtered = rows.filter((row) => {
-        const wifi = row.WiFi?.trim();
-        return wifi === "StrLnk" || wifi === "Starlink";
+        const wifi = normalizeSheetWifi(row.WiFi, sheet.fleet);
+        if (wifi) {
+          row.WiFi = wifi;
+          return true;
+        }
+        if (looksLikeStarlinkTypo(row.WiFi) && !warnedWifi.has(row.WiFi)) {
+          warnedWifi.add(row.WiFi);
+          warn(`Unrecognised sheet WiFi value ${JSON.stringify(row.WiFi)} (gid ${sheet.gid})`);
+        }
+        return false;
       });
 
       // Count Starlink aircraft by fleet type

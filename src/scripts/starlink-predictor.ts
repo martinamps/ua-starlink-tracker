@@ -789,7 +789,7 @@ export function joinSentences(...parts: Array<string | null | undefined | false>
 /**
  * Penetration with a sentinel-free shape: synthetic (penetrationOverride)
  * rows have no roster denominator — the tails fly on another carrier's metal
- * (e.g. AS800-899 on Hawaiian A330/A321neo), so equipped/total don't exist
+ * (e.g. AS800-999 on Hawaiian A330/A321neo), so equipped/total don't exist
  * and the type forbids printing them.
  */
 export type ResolvedPenetration =
@@ -906,7 +906,7 @@ export function describeCarrierPrediction(cfg: AirlineConfig, answer: CarrierPre
   const pct = (pen.pct * 100).toFixed(0);
   const hint = sf.flightNumberHint ? ` (${sf.flightNumberHint})` : "";
   const basis = pen.synthetic
-    ? `${sf.label}${hint} — Starlink status is set by the operating subfleet`
+    ? `${sf.label}${hint} — ${sf.overrideReason ?? "Starlink status is set by the operating subfleet"}`
     : `${pen.equipped} of ${pen.total} ${sf.label}${hint} aircraft equipped`;
   return joinSentences(`~${pct}% Starlink probability (${basis})`, cfg.rollout.phaseNote);
 }
@@ -972,7 +972,13 @@ export function compareRouteForAirline(
   const penArr = subfleetBreakdown(cfg, reader);
   if (penArr.length === 0) return null;
   const maxPct = Math.max(...penArr.map((p) => p.pct));
-  const minSub = penArr.reduce((a, b) => (a.pct <= b.pct ? a : b));
+  const defOf = (key: string) => cfg.subfleets.find((s) => s.key === key);
+  // A route-scoped subfleet (HA 717 interisland) is only credited where it is
+  // observed — never as the "lowest sibling" of an unrelated route.
+  const inferable = penArr.filter((p) => !defOf(p.key)?.routeScoped);
+  const minSub = (inferable.length > 0 ? inferable : penArr).reduce((a, b) =>
+    a.pct <= b.pct ? a : b
+  );
 
   // ---- 3. Which subfleet(s) fly this nonstop? ----
   const fns = reader.getObservedDirectFlightNumbers(prefixes, o, d);
@@ -989,7 +995,7 @@ export function compareRouteForAirline(
     // low-pen one doesn't (it's invisible to us). When the seen subfleet is
     // the high one and a low-pen (<50%) sibling exists, show the honest
     // range — otherwise SEA-ANC reads "AS 100%" when it's mostly 737s at 0%.
-    const lowSibling = penArr.find((p) => p.key !== sf.key && p.pct < 0.5);
+    const lowSibling = inferable.find((p) => p.key !== sf.key && p.pct < 0.5);
     if (sf.pct === maxPct && lowSibling) {
       const bd = [sf, lowSibling].sort((a, b) => b.pct - a.pct);
       result = {
@@ -1008,7 +1014,7 @@ export function compareRouteForAirline(
         probability: sf.pct,
         breakdown: [sf],
         reason: sf.synthetic
-          ? `${shortLabel(sf.label)} on this route — Starlink-equipped fleet`
+          ? `${shortLabel(sf.label)} on this route — ${defOf(sf.key)?.overrideReason ?? "Starlink-equipped fleet"}`
           : `${shortLabel(sf.label)} on this route — ${fmt(sf.equipped)} of ${fmt(sf.total)} equipped`,
       };
     }

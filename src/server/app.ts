@@ -100,7 +100,11 @@ import RoutePage, { routeVerdict } from "../components/route-page";
 import RoutePlannerPage from "../components/route-planner-page";
 import RoutesPage from "../components/routes-page";
 import TimelinePage, { getTimeline, hasTimeline } from "../components/timeline-page";
-import { ROUTE_AIRPORT_RE, type RouteSummary } from "../database/database";
+import {
+  PERMALINK_STALE_NOTE_DAYS,
+  ROUTE_AIRPORT_RE,
+  type RouteSummary,
+} from "../database/database";
 import {
   COUNTERS,
   DISTRIBUTIONS,
@@ -217,6 +221,14 @@ function withClampedMeta(vars: Record<string, string>): Record<string, string> {
 
 const notFound = (site: SiteConfig): Response =>
   new Response(getNotFoundHtml(site.brand), { status: 404, headers: SECURITY_HEADERS.notFound });
+
+/** HTTP_REQUEST's airline tag, from the host's tenant: without it every
+ * request fell to `airline:unmapped`, so a `by {airline}` split of the
+ * route-planner 404s could not say which site was emitting them. */
+function httpAirlineTag(tenant: Tenant): string {
+  const scope = tenantScope(tenant);
+  return scope === "ALL" ? "all" : normalizeAirlineTag(scope);
+}
 
 /**
  * Bounded `route` tag for HTTP_REQUEST.
@@ -2589,7 +2601,10 @@ function buildFlightFacts(
         AIRPORT_CODE_RE.test(r.departure_airport) &&
         AIRPORT_CODE_RE.test(r.arrival_airport) &&
         r.departure_airport !== r.arrival_airport
-    );
+    )
+    // The route page has its own gate (routeHasData); a pair it would 404
+    // renders as text rather than a link to a dead page.
+    .map((r) => ({ ...r, linkable: reader.routeHasData(r.departure_airport, r.arrival_airport) }));
   const now = Math.floor(Date.now() / 1000);
   const upcoming = reader
     .getFlightAssignments(variants, now, now + 48 * 3600)
@@ -2632,7 +2647,26 @@ function buildFlightFacts(
     routes,
     upcoming,
     siblings,
+    notObservedSince: notObservedSince(reader, routes, upcoming.length > 0, now),
   };
+}
+
+/** Newest leg sighting when the whole flight has been silent past
+ * PERMALINK_STALE_NOTE_DAYS, measured against the airline's newest data rather
+ * than the wall clock; null while anything is scheduled or recent. */
+function notObservedSince(
+  reader: ScopedReader,
+  routes: { scheduled: number; last_seen_at: number | null }[],
+  hasUpcoming: boolean,
+  now: number
+): number | null {
+  if (hasUpcoming || routes.length === 0 || routes.some((r) => r.scheduled === 1)) return null;
+  const newest = Math.max(
+    ...routes.map((r) => (r.last_seen_at && r.last_seen_at <= now ? r.last_seen_at : 0))
+  );
+  if (newest <= 0) return null;
+  const anchor = reader.getObservationAnchor();
+  return anchor - newest > PERMALINK_STALE_NOTE_DAYS * 86400 ? newest : null;
 }
 
 /** One-sentence answer for meta copy. Never "0% of the time" — a zero reads
@@ -2948,12 +2982,13 @@ const routePlannerPage: Handler = (ctx) => {
     const cfg = siteAirline(ctx.site);
     if (!ctx.reader.routeHasData(parsed.origin, parsed.destination)) return notFound(ctx.site);
     const route = ctx.reader.getRouteSummary(parsed.origin, parsed.destination);
+    const reverseLinkable = ctx.reader.routeHasData(parsed.destination, parsed.origin);
     return renderSubPage(
       ctx,
       RoutePage,
       `/route-planner/${parsed.origin}/${parsed.destination}`,
       routePageMeta(ctx, cfg, route),
-      { route }
+      { route, reverseLinkable }
     );
   }
   if (ctx.url.pathname !== "/route-planner") {
@@ -3853,12 +3888,14 @@ export function createApp(db: Database): App {
         metrics.increment(COUNTERS.HTTP_RATE_LIMITED, {
           route: metricRoute(m),
           tenant: tenantScope(tenant),
+          airline: httpAirlineTag(tenant),
         });
         metrics.increment(COUNTERS.HTTP_REQUEST, {
           method: req.method,
           route: metricRoute(m),
           status_code: 429,
           tenant: tenantScope(tenant),
+          airline: httpAirlineTag(tenant),
           client_class: classifyUserAgent(req.headers.get("user-agent")),
         });
         return new Response(JSON.stringify({ error: "rate limit exceeded" }), {
@@ -3879,6 +3916,7 @@ export function createApp(db: Database): App {
         route: metricRoute(m),
         status_code: response.status,
         tenant: tenantScope(tenant),
+        airline: httpAirlineTag(tenant),
         client_class: classifyUserAgent(req.headers.get("user-agent")),
       });
       return response;
@@ -3925,6 +3963,7 @@ export function createApp(db: Database): App {
           route: metricRoute(m),
           status_code: response.status,
           tenant: tenantScope(tenant),
+          airline: httpAirlineTag(tenant),
           client_class: classifyUserAgent(ua),
         });
         return response;

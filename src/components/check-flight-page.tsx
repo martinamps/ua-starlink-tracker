@@ -11,6 +11,8 @@ export interface FlightRouteFact {
   dur_sec: number | null;
   /** Newest evidence for this leg (unix seconds); null when the row carries none. */
   last_seen_at: number | null;
+  /** Whether /route-planner/{dep}/{arr} serves; false renders the pair unlinked. */
+  linkable: boolean;
 }
 
 export interface FlightUpcomingDeparture {
@@ -37,6 +39,9 @@ export interface FlightFacts {
   /** Other marketing flight numbers on this flight's primary route — sibling
    * permalinks, so the corpus links laterally instead of only via /routes. */
   siblings: string[];
+  /** Newest sighting (unix sec) when the flight has gone quiet long enough to
+   * say so on the page; null otherwise. */
+  notObservedSince?: number | null;
 }
 
 /** A permalink segment that is not a flight number this site can answer for.
@@ -123,6 +128,11 @@ function FlightFactBlocks({ flight }: { flight: FlightFacts }) {
           <h2 className="font-display text-lg font-semibold text-primary mb-3">
             Routes {fn} flies
           </h2>
+          {flight.notObservedSince ? (
+            <p className="text-sm text-muted mb-3">
+              Not observed since {fmtDay(flight.notObservedSince)}; may be seasonal or discontinued.
+            </p>
+          ) : null}
           <div className="space-y-2">
             {flight.routes.map((r) => {
               const lastSeen = lastSeenLabel(r.last_seen_at);
@@ -142,12 +152,14 @@ function FlightFactBlocks({ flight }: { flight: FlightFacts }) {
                     </span>
                     {lastSeen ? <span className="text-muted"> · {lastSeen}</span> : null}
                   </span>
-                  <a
-                    href={`/route-planner/${r.departure_airport}/${r.arrival_airport}`}
-                    className="text-accent hover:underline text-xs whitespace-nowrap"
-                  >
-                    Plan this route →
-                  </a>
+                  {r.linkable ? (
+                    <a
+                      href={`/route-planner/${r.departure_airport}/${r.arrival_airport}`}
+                      className="text-accent hover:underline text-xs whitespace-nowrap"
+                    >
+                      Plan this route →
+                    </a>
+                  ) : null}
                 </div>
               );
             })}

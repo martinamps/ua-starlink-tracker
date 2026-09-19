@@ -75,10 +75,18 @@ function FlightNumbers({ route, airlineName }: { route: RouteSummary; airlineNam
 interface RoutePageProps {
   route: RouteSummary;
   site: SiteConfig;
+  /** The server's routeHasData answer for destination→origin; the reverse-leg
+   * link renders only when that page serves. */
+  reverseLinkable?: boolean;
   pageLinks?: PageLink[];
 }
 
-export default function RoutePage({ route, site, pageLinks }: RoutePageProps) {
+export default function RoutePage({
+  route,
+  site,
+  reverseLinkable = false,
+  pageLinks,
+}: RoutePageProps) {
   const cfg = siteAirline(site);
   const airlineName = cfg.name;
   const backLabel = site.brand.title;
@@ -153,20 +161,29 @@ export default function RoutePage({ route, site, pageLinks }: RoutePageProps) {
       </section>
 
       <section className={`${SECTION} text-center`}>
-        <p className="text-sm text-secondary">
-          Want the reverse leg?{" "}
-          <a
-            href={`/route-planner/${route.destination}/${route.origin}`}
-            className="text-accent hover:underline"
-          >
-            {route.destination} to {route.origin}
-          </a>
-          , or{" "}
-          <a href="/route-planner" className="text-accent hover:underline">
-            compare a full itinerary
-          </a>
-          .
-        </p>
+        {reverseLinkable ? (
+          <p className="text-sm text-secondary">
+            Want the reverse leg?{" "}
+            <a
+              href={`/route-planner/${route.destination}/${route.origin}`}
+              className="text-accent hover:underline"
+            >
+              {route.destination} to {route.origin}
+            </a>
+            , or{" "}
+            <a href="/route-planner" className="text-accent hover:underline">
+              compare a full itinerary
+            </a>
+            .
+          </p>
+        ) : (
+          <p className="text-sm text-secondary">
+            <a href="/route-planner" className="text-accent hover:underline">
+              Compare a full itinerary
+            </a>{" "}
+            across connections.
+          </p>
+        )}
       </section>
 
       <footer className="relative py-6 text-center border-t border-subtle text-muted text-sm mt-auto">
