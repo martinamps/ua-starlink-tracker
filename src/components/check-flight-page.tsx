@@ -644,9 +644,7 @@ export default function CheckFlightPage({
 
               if (!flightNumber || !date) return;
 
-              // Same separators canonicalFlightInput strips ("UA 544", "ua-544")
-              // so the permalink is the canonical spelling too.
-              flightNumber = flightNumber.toUpperCase().replace(/[\\s\\-.]/g, '');
+              flightNumber = flightNumber.toUpperCase();
               if (/^\\d+$/.test(flightNumber)) {
                 flightNumber = carrierPrefix + flightNumber;
               }

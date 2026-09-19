@@ -22,8 +22,7 @@
  *   kind:            missing_from_fleet | inactive_in_fleet                 (2)
  *   status:          success | error | rate_limited | timeout | killed |
  *                    exit_error | parse_error | spawn_error | partial |
- *                    aborted | scrape_error | noop | shed            (~13)
- *   reason:          breaker | bucket | queue — fr24 assignments status:shed only (3)
+ *                    aborted | scrape_error | noop                   (~12)
  *   http_status:     upstream HTTP status code on vendor.request error/
  *                    rate_limited emits (fr24 only)                  (~10)
  *   result:          three disjoint enums share this key, so a `sum by {result}`
@@ -198,8 +197,6 @@ export const COUNTERS = {
   // tags: vendor (fr24|flightaware|united|qatar|alaska|adsb|indexnow), type, status
   // united status values: success | timeout | killed | exit_error | parse_error | spawn_error
   // fr24/flightaware/adsb/indexnow status values: success | error | rate_limited
-  // fr24 assignments adds status:shed (request-path guard refused), tagged
-  //   reason (breaker|bucket|queue) and airline
   // qatar status values: success | error | partial
   VENDOR_REQUEST: "vendor.request",
 
@@ -296,17 +293,6 @@ export const GAUGES = {
 
   // Starlink RFC 8805 geofeed prefix count — tags: airline:all
   GEOFEED_PREFIXES: "geofeed.prefixes",
-
-  // ADS-B shadow KPIs per sweep. accuracy = match/(match+mismatch); blind_share
-  // = no_assignment share of airborne tails that have any upcoming_flights row
-  // (untracked non-Starlink tails can never match, so they'd swamp it). tags: airline
-  ADSB_SHADOW_ACCURACY: "adsb_shadow.accuracy",
-  ADSB_SHADOW_BLIND_SHARE: "adsb_shadow.blind_share",
-
-  // Share of tails at the upcoming_flights row cap whose first row is more than
-  // an hour after their refresh — the signature of a cap keeping the furthest
-  // flights instead of the nearest. tags: airline
-  UPCOMING_CAPPED_FUTURE_SHARE: "upcoming.capped_future_share",
 } as const;
 
 /**
@@ -328,7 +314,4 @@ export const DISTRIBUTIONS = {
   // Distribution of probabilities served to users — surfaces cold-start floods.
   // tags: confidence (high|medium|low), method (flight_history|fleet_prior), airline
   PREDICTION_PROBABILITY: "prediction.probability",
-
-  // Past-dated upcoming_flights rows pruned per sweep (graph as sum) — tags: airline
-  UPCOMING_PRUNED: "upcoming.pruned",
 } as const;

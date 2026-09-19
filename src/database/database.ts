@@ -2570,17 +2570,14 @@ export function getFlightRoutePairs(
   now = Math.floor(Date.now() / 1000)
 ): FlightRoutePair[] {
   const placeholders = variants.map(() => "?").join(",");
-  // A row that departed over a day ago is a ghost of a tail that stopped
-  // refreshing, not a schedule — it falls back to decay scoring.
   const upcoming = withAirline(
     `SELECT departure_airport, arrival_airport, COUNT(*) AS times,
             CAST(AVG(arrival_time - departure_time) AS INTEGER) AS dur_sec,
-            CASE WHEN MAX(departure_time) >= ? THEN 1 ELSE 0 END AS scheduled,
-            MAX(last_updated) AS last_seen_at
+            1 AS scheduled, MAX(last_updated) AS last_seen_at
      FROM upcoming_flights WHERE flight_number IN (${placeholders})`,
     airline,
     "",
-    [now - 86400, ...variants]
+    [...variants]
   );
   const rows = db
     .query(
@@ -5235,34 +5232,4 @@ export function getQatarScheduleStats(db: Database): {
     none: counts.none ?? 0,
     lastUpdated: counts.lastUpdated ?? null,
   };
-}
-
-export const UPCOMING_PRUNE_AGE_SEC = 2 * 86400;
-
-/**
- * Drop upcoming_flights rows that departed over two days ago. The per-tail
- * DELETE in updateFlights only touches tails the updater still refreshes, so
- * rows for tails that left the queue stayed forever (1,112 of 7,035 in the
- * 2026-08-29 snapshot, some from March) and pinned permalink titles to dead
- * routes. Archives first so departure_log keeps every departure. Returns the
- * pruned count per airline.
- */
-export function pruneStaleUpcomingFlights(
-  db: Database,
-  now = Math.floor(Date.now() / 1000)
-): Record<string, number> {
-  const cutoff = now - UPCOMING_PRUNE_AGE_SEC;
-  return db.transaction(() => {
-    archivePastDepartures(db, now);
-    const rows = db
-      .query(
-        `SELECT airline, COUNT(*) AS cnt FROM upcoming_flights
-         WHERE departure_time < ? GROUP BY airline`
-      )
-      .all(cutoff) as Array<{ airline: string; cnt: number }>;
-    if (rows.length > 0) {
-      db.query("DELETE FROM upcoming_flights WHERE departure_time < ?").run(cutoff);
-    }
-    return Object.fromEntries(rows.map((r) => [r.airline, r.cnt]));
-  })();
 }

@@ -5,24 +5,12 @@
 
 import { type AirlineConfig, enabledAirlines } from "./registry";
 
-/**
- * How people actually type flight numbers: "UA 544", "ua-544", "UA.544".
- * Stripping separators before any prefix logic keeps every surface agreeing;
- * digits stay digits, so "UA 544 2026" still fails the 1-4 digit bound.
- */
-export function canonicalFlightInput(s: string): string {
-  return s
-    .trim()
-    .toUpperCase()
-    .replace(/[\s\-.]/g, "");
-}
-
 function detectByPrefixes(
   flightNumber: string,
   airlines: readonly AirlineConfig[],
   prefixesOf: (cfg: AirlineConfig) => string[]
 ): AirlineConfig | null {
-  const fn = canonicalFlightInput(flightNumber);
+  const fn = flightNumber.trim().toUpperCase();
   let best: { cfg: AirlineConfig; len: number } | null = null;
   for (const cfg of airlines) {
     for (const prefix of prefixesOf(cfg)) {
@@ -76,7 +64,7 @@ function iataExact(cfg: AirlineConfig): RegExp {
  * they carry no carrier claim, so the pinned carrier owns them.
  */
 export function prefixBelongsTo(cfg: AirlineConfig, flightNumber: string): boolean {
-  const fn = canonicalFlightInput(flightNumber);
+  const fn = flightNumber.trim().toUpperCase();
   const m = fn.match(/^([A-Z]+)\d+$/);
   if (!m) return true;
   const prefix = m[1];
@@ -103,7 +91,7 @@ export function normalizeAirlineFlightNumber(cfg: AirlineConfig, flightNumber: s
  * normalizeAirlineFlightNumber + bare-digit handling.
  */
 export function ensureAirlinePrefix(cfg: AirlineConfig, flightNumber: string): string {
-  const normalized = normalizeAirlineFlightNumber(cfg, canonicalFlightInput(flightNumber));
+  const normalized = normalizeAirlineFlightNumber(cfg, flightNumber.trim().toUpperCase());
   // Zero-padding is stripped here, not just at the permalink layer: boarding
   // passes and GDS itineraries print UA0100, the verification log stores UA100
   // (the DB writer strips too), so a padded query silently missed every row and

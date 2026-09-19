@@ -27,14 +27,6 @@
               "date": "2026-05-15"
             }
           ]
-        },
-        "title": "Check flight for Starlink",
-        "annotations": {
-          "title": "Check flight for Starlink",
-          "readOnlyHint": true,
-          "destructiveHint": false,
-          "idempotentHint": true,
-          "openWorldHint": true
         }
       },
       {
@@ -44,14 +36,6 @@
           "type": "object",
           "properties": {},
           "examples": [{}]
-        },
-        "title": "Starlink fleet rollout stats",
-        "annotations": {
-          "title": "Starlink fleet rollout stats",
-          "readOnlyHint": true,
-          "destructiveHint": false,
-          "idempotentHint": true,
-          "openWorldHint": false
         }
       },
       {
@@ -81,14 +65,6 @@
             },
             {}
           ]
-        },
-        "title": "List Starlink aircraft",
-        "annotations": {
-          "title": "List Starlink aircraft",
-          "readOnlyHint": true,
-          "destructiveHint": false,
-          "idempotentHint": true,
-          "openWorldHint": false
         }
       },
       {
@@ -118,14 +94,6 @@
               "flight_number": "UA544"
             }
           ]
-        },
-        "title": "Predict flight Starlink odds",
-        "annotations": {
-          "title": "Predict flight Starlink odds",
-          "readOnlyHint": true,
-          "destructiveHint": false,
-          "idempotentHint": true,
-          "openWorldHint": true
         }
       },
       {
@@ -177,14 +145,6 @@
               "max_stops": 1
             }
           ]
-        },
-        "title": "Plan a Starlink itinerary",
-        "annotations": {
-          "title": "Plan a Starlink itinerary",
-          "readOnlyHint": true,
-          "destructiveHint": false,
-          "idempotentHint": true,
-          "openWorldHint": false
         }
       },
       {
@@ -220,14 +180,6 @@
               "origin": "ORD"
             }
           ]
-        },
-        "title": "Starlink odds by route",
-        "annotations": {
-          "title": "Starlink odds by route",
-          "readOnlyHint": true,
-          "destructiveHint": false,
-          "idempotentHint": true,
-          "openWorldHint": false
         }
       },
       {
@@ -263,14 +215,6 @@
               "destination": "EWR"
             }
           ]
-        },
-        "title": "Search confirmed Starlink flights",
-        "annotations": {
-          "title": "Search confirmed Starlink flights",
-          "readOnlyHint": true,
-          "destructiveHint": false,
-          "idempotentHint": true,
-          "openWorldHint": false
         }
       }
     ]

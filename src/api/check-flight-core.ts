@@ -132,18 +132,9 @@ export type ScheduledNoRow = FlightAssignmentRow & { negativeReason: NegativeRea
 
 /** Display name for the WiFi a firm-no row actually carries. */
 export function negativeWifi(row: ScheduledNoRow): string {
-  return wifiLabel(row.negativeReason === "settled" ? row.settled_wifi : row.verified_wifi);
-}
-
-/**
- * Provider word for "{x} WiFi" prose. The fleet stores verified_wifi 'None'
- * for no-WiFi tails, which rendered as "None WiFi". A missing value means we
- * know it isn't Starlink but not what it is, so it stays "non-Starlink".
- */
-export function wifiLabel(provider: string | null | undefined): string {
-  const w = (provider ?? "").trim();
-  if (!w) return "non-Starlink";
-  return /^none$/i.test(w) ? "no" : w;
+  return row.negativeReason === "settled"
+    ? (row.settled_wifi ?? "non-Starlink")
+    : (row.verified_wifi ?? "non-Starlink");
 }
 
 export type FlightVerdict =

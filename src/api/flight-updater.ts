@@ -5,11 +5,10 @@ import {
   getStarlinkTailsByCheckAge,
   initializeDatabase,
   needsFlightCheck,
-  pruneStaleUpcomingFlights,
   updateFlights,
   updateLastFlightCheck,
 } from "../database/database";
-import { DISTRIBUTIONS, metrics, normalizeAirlineTag, withSpan } from "../observability";
+import { withSpan } from "../observability";
 import type { Aircraft, Flight } from "../types";
 import { FLIGHT_DATA_SOURCE } from "../utils/constants";
 import { type JobHandle, type JobRunContext, startJob } from "../utils/job-runner";
@@ -327,16 +326,10 @@ export function startFlightUpdater(): JobHandle | undefined {
   }
 
   let lastHeartbeat = Date.now();
-  let lastPruneAt = 0;
   let totalUpdates = 0;
   let totalErrors = 0;
 
   const runSingleUpdate = async (ctx: JobRunContext) => {
-    if (Date.now() - lastPruneAt >= PRUNE_INTERVAL_MS) {
-      lastPruneAt = Date.now();
-      runStaleUpcomingPrune();
-    }
-
     // Check circuit breaker
     if (circuitBreakerOpenedAt) {
       const timeSinceOpened = Date.now() - circuitBreakerOpenedAt;
@@ -440,31 +433,6 @@ export function startFlightUpdater(): JobHandle | undefined {
 
   info(`Flight updater started (trickle mode, every ${INTERVAL_MS / 1000}s)`);
   return handle;
-}
-
-// DB-only, so it runs even while the FR24 breaker is open, and never feeds it.
-const PRUNE_INTERVAL_MS = 10 * 60 * 1000;
-
-export function runStaleUpcomingPrune(now = Math.floor(Date.now() / 1000)): number {
-  let db: ReturnType<typeof initializeDatabase> | null = null;
-  try {
-    db = initializeDatabase();
-    const pruned = pruneStaleUpcomingFlights(db, now);
-    let total = 0;
-    for (const [airline, count] of Object.entries(pruned)) {
-      total += count;
-      metrics.distribution(DISTRIBUTIONS.UPCOMING_PRUNED, count, {
-        airline: normalizeAirlineTag(airline),
-      });
-    }
-    if (total > 0) info(`Pruned ${total} stale upcoming_flights rows`, pruned);
-    return total;
-  } catch (err) {
-    error("Stale upcoming_flights prune failed", err);
-    return 0;
-  } finally {
-    db?.close();
-  }
 }
 
 // Export individual functions for manual use
