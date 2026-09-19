@@ -8,8 +8,11 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { AIRLINES } from "../src/airlines/registry";
+import { resolveFlightVerdict, scheduledFlights } from "../src/api/check-flight-core";
+import { createReaderFactory } from "../src/database/reader";
 import { AIRPORT_TZ, flightDateWindow, matchesLocalDate } from "../src/utils/airport-tz";
-import { openSnapshot, utc } from "./helpers";
+import { addFlight, addPlane, makeSyntheticDb, openSnapshot, stubPredict, utc } from "./helpers";
 
 const MAX_UNMAPPED_SHARE = 0.005;
 
@@ -99,5 +102,24 @@ describe("AIRPORT_TZ integrity", () => {
     expect(matchesLocalDate(d, "BLI", evening, wd.start, wd.end)).toBe(true);
     expect(matchesLocalDate(next, "BLI", evening, wn.start, wn.end)).toBe(false);
     expect(matchesLocalDate(next, "BLI", morning, wn.start, wn.end)).toBe(true);
+  });
+
+  test("a scoped BLI lookup never returns the previous evening's tail", async () => {
+    const db = makeSyntheticDb();
+    addPlane(db, "N4001", "Starlink");
+    addFlight(db, "N4001", "UA4001", "BLI", utc("2027-06-10T02:19:00Z"), { arrivalAirport: "SEA" });
+    addPlane(db, "N4002", "Starlink");
+    addFlight(db, "N4002", "UA4001", "BLI", utc("2027-06-10T15:00:00Z"), { arrivalAirport: "SEA" });
+    const reader = createReaderFactory(db)("UA");
+    const v = await resolveFlightVerdict(AIRLINES.UA, reader, "UA4001", "2027-06-10", {
+      lookupTail: null,
+      predict: stubPredict(0),
+      leg: { origin: "BLI" },
+    });
+    expect(v.kind).toBe("scheduled");
+    if (v.kind === "scheduled") {
+      expect(scheduledFlights(v).map((r) => r.tail_number)).toEqual(["N4002"]);
+      expect(v.leg?.match).toBe("exact");
+    }
   });
 });

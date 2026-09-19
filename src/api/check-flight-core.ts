@@ -21,12 +21,27 @@ import { type AirlineConfig, enabledAirlines, publicAirlines } from "../airlines
 import type { FlightAssignmentRow, QatarScheduleRow } from "../database/database";
 import type { Scope, ScopedReader } from "../database/reader";
 import {
+  COUNTERS,
+  type Tags,
+  bucketDaysOut,
+  metrics,
+  normalizeAirlineTag,
+  normalizeLegEffect,
+  normalizeLegMatch,
+  normalizeLegReason,
+} from "../observability";
+import {
   type CarrierPrediction,
   carrierPrediction,
   carrierPredictionTelemetry,
   predictFlight,
 } from "../scripts/starlink-predictor";
-import { type FlightDateWindow, flightDateWindow, matchesLocalDate } from "../utils/airport-tz";
+import {
+  AIRPORT_TZ,
+  type FlightDateWindow,
+  flightDateWindow,
+  matchesLocalDate,
+} from "../utils/airport-tz";
 import { type FallbackSegment, lookupFlightTailVerdict } from "./flight-verdict";
 import { Fr24UnavailableError } from "./flightradar24-api";
 import { qatarEquipmentName } from "./qatar-status";
@@ -149,6 +164,9 @@ export function wifiLabel(provider: string | null | undefined): string {
 export type FlightVerdict =
   | { kind: "invalid_date" }
   | { kind: "invalid_flight_number"; normalized: string }
+  | (AnsweredVerdict & { leg?: LegResolution });
+
+export type AnsweredVerdict =
   | {
       kind: "scheduled";
       window: FlightDateWindow;
@@ -259,6 +277,10 @@ export interface ResolveDeps {
   /** Override the FR24 reverse lookup; pass null to disable it (hub check-any-flight). */
   lookupTail?: typeof lookupFlightTailVerdict | null;
   predict?: typeof predictFlight;
+  /** The traveller's own leg. Absent = every leg of the number (the unscoped answer). */
+  leg?: LegQuery;
+  /** A leg was asked for but can't be used: answer unscoped and say why. */
+  unscoped?: UnscopedLeg;
 }
 
 export async function resolveFlightVerdict(
@@ -277,7 +299,7 @@ export async function resolveFlightVerdict(
     return { kind: "invalid_flight_number", normalized };
   }
 
-  if (cfg.code === "QR") return resolveQatarVerdict(reader, normalized, date, window);
+  if (cfg.code === "QR") return resolveQatarVerdict(reader, normalized, date, window, deps);
 
   const variants = buildAirlineFlightNumberVariants(cfg, normalized);
 
@@ -296,17 +318,102 @@ export async function resolveFlightVerdict(
       matchesLocalDate(date, r.departure_airport, r.departure_time, window.start, window.end)
     );
 
-  // settled_negative (united_fleet 'negative') outranks the spreadsheet row,
-  // whatever verified_wifi says — same rule as database.ts equippedFilter.
+  const leg = deps.leg;
+  if (!leg) {
+    const { verdict } = await verdictFromRows(
+      cfg,
+      reader,
+      normalized,
+      date,
+      window,
+      rows,
+      deps,
+      now
+    );
+    return deps.unscoped ? { ...verdict, leg: unscopedResolution(deps.unscoped) } : verdict;
+  }
+
+  // A leg that matches more than one (origin, destination) pair would mix
+  // legs under a scoped label; the honest answer is the unscoped one.
+  const sel = selectLeg(rows, rowDeparture, rowArrival, leg);
+  if (sel.match === "ambiguous") {
+    const { verdict } = await verdictFromRows(
+      cfg,
+      reader,
+      normalized,
+      date,
+      window,
+      rows,
+      deps,
+      now
+    );
+    return { ...verdict, leg: unscopedResolution(ambiguousLeg(leg)) };
+  }
+  const { verdict, segments } = await verdictFromRows(
+    cfg,
+    reader,
+    normalized,
+    date,
+    window,
+    sel.items,
+    deps,
+    now,
+    leg
+  );
+  return {
+    ...verdict,
+    leg: legResolution(
+      leg,
+      rows.length,
+      sel,
+      otherLegsOf(rows, sel.items, rowDeparture, rowArrival, (r) => ({
+        departure_time: r.departure_time,
+        tail_number: r.tail_number,
+        hasStarlink: rowOutcome(r) === "yes",
+      })),
+      unscopedRowsOutcome(rows, segments)
+    ),
+  };
+}
+
+type RowClass = "settled" | "verified_other" | "verified" | "unverified";
+
+// settled_negative (united_fleet 'negative') outranks the spreadsheet row,
+// whatever verified_wifi says — same rule as database.ts equippedFilter.
+function classifyRow(r: FlightAssignmentRow): RowClass {
+  if (r.settled_negative) return "settled";
+  if (r.verified_wifi !== null && r.verified_wifi !== "Starlink") return "verified_other";
+  if (r.verified_wifi === "Starlink") return "verified";
+  return "unverified";
+}
+
+function rowOutcome(r: FlightAssignmentRow): "yes" | "no" {
+  const c = classifyRow(r);
+  return c === "verified" || c === "unverified" ? "yes" : "no";
+}
+
+const rowDeparture = (r: FlightAssignmentRow) => normalizeAirportCode(r.departure_airport);
+const rowArrival = (r: FlightAssignmentRow) => normalizeAirportCode(r.arrival_airport);
+
+async function verdictFromRows(
+  cfg: AirlineConfig,
+  reader: ScopedReader,
+  normalized: string,
+  date: string,
+  window: FlightDateWindow,
+  rows: FlightAssignmentRow[],
+  deps: ResolveDeps,
+  now: number,
+  leg?: LegQuery
+): Promise<{ verdict: AnsweredVerdict; segments: FallbackSegment[] | null }> {
   const verified: FlightAssignmentRow[] = [];
   const unverified: FlightAssignmentRow[] = [];
   const nonStarlink: ScheduledNoRow[] = [];
   for (const r of rows) {
-    if (r.settled_negative) {
-      nonStarlink.push({ ...r, negativeReason: "settled" });
-    } else if (r.verified_wifi !== null && r.verified_wifi !== "Starlink") {
-      nonStarlink.push({ ...r, negativeReason: "verified_other" });
-    } else if (r.verified_wifi === "Starlink") {
+    const c = classifyRow(r);
+    if (c === "settled" || c === "verified_other") {
+      nonStarlink.push({ ...r, negativeReason: c });
+    } else if (c === "verified") {
       verified.push(r);
     } else {
       unverified.push(r);
@@ -314,18 +421,21 @@ export async function resolveFlightVerdict(
   }
 
   if (verified.length > 0 || unverified.length > 0) {
-    return { kind: "scheduled", window, normalized, verified, unverified };
+    return {
+      verdict: { kind: "scheduled", window, normalized, verified, unverified },
+      segments: null,
+    };
   }
 
   // FR24 runs whenever there are no equipped rows: with firm-no rows it can
   // still discover an aircraft swap onto a Starlink tail; with no rows at all
   // it is the primary fallback.
   let fr24Error = false;
+  let raw: FallbackSegment[] | null = null;
   if (deps.lookupTail !== null) {
     const lookup = deps.lookupTail ?? lookupFlightTailVerdict;
-    let segments: FallbackSegment[] | null = null;
     try {
-      segments = await lookup(reader, normalized, date, window.start, window.end, now);
+      raw = await lookup(reader, normalized, date, window.start, window.end, now);
     } catch (err) {
       // FR24 outage ≠ "no assignment published" — never a confident no.
       // Anything else (e.g. a DB error) must not masquerade as an outage.
@@ -338,45 +448,87 @@ export async function resolveFlightVerdict(
       // via fr24Error -> FR24_OUTAGE_NOTE.
       fr24Error = true;
     }
+    // The FR24 cache holds every leg of the number; scope after the fetch so
+    // all legs share one call. An ambiguous leg keeps every segment.
+    const segments = raw !== null && leg ? scopeSegments(raw, leg) : raw;
     if (segments !== null) {
       const starlink = segments.filter((s) => s.hasStarlink);
       if (starlink.length > 0) {
-        return { kind: "fr24", window, normalized, starlink };
+        return { verdict: { kind: "fr24", window, normalized, starlink }, segments: raw };
       }
       // Segments whose tail we know nothing about are not a "no" — only a
       // verified non-Starlink tail is. With our own firm-no rows in hand,
       // prefer those (they carry per-row reasons); otherwise fr24_no.
       if (nonStarlink.length === 0 && segments.some((s) => s.hasStarlink === false)) {
-        return { kind: "fr24_no", window, normalized, segments };
+        return { verdict: { kind: "fr24_no", window, normalized, segments }, segments: raw };
       }
     }
   }
 
   if (nonStarlink.length > 0) {
-    return { kind: "scheduled_no", window, normalized, flights: nonStarlink, fr24Error };
+    return {
+      verdict: { kind: "scheduled_no", window, normalized, flights: nonStarlink, fr24Error },
+      segments: raw,
+    };
   }
 
   // Carriers without a flight-history model get the registry-driven answer
   // (type rules / subfleet penetration) — never another carrier's priors.
   if (!cfg.flightHistoryModel) {
     return {
-      kind: "no_model",
-      window,
-      normalized,
-      answer: carrierPrediction(cfg, reader, normalized),
-      fr24Error,
+      verdict: {
+        kind: "no_model",
+        window,
+        normalized,
+        answer: carrierPrediction(cfg, reader, normalized),
+        fr24Error,
+      },
+      segments: raw,
     };
   }
 
   const predict = deps.predict ?? predictFlight;
-  return { kind: "prediction", window, normalized, pred: predict(reader, normalized), fr24Error };
+  return {
+    verdict: {
+      kind: "prediction",
+      window,
+      normalized,
+      pred: predict(reader, normalized),
+      fr24Error,
+    },
+    segments: raw,
+  };
+}
+
+function scopeSegments(segments: FallbackSegment[], leg: LegQuery): FallbackSegment[] {
+  const sel = selectLeg(
+    segments,
+    (s) => normalizeAirportCode(s.origin),
+    (s) => normalizeAirportCode(s.destination),
+    leg
+  );
+  return sel.match === "ambiguous" ? segments : sel.items;
+}
+
+/** What the unscoped engine would have answered from the same rows and FR24 fetch. */
+function unscopedRowsOutcome(
+  rows: FlightAssignmentRow[],
+  segments: FallbackSegment[] | null
+): LegOutcome {
+  const outcomes = rows.map(rowOutcome);
+  if (outcomes.includes("yes")) return "yes";
+  if (segments?.some((s) => s.hasStarlink)) return "yes";
+  if (outcomes.length > 0) return "no";
+  if (segments?.some((s) => s.hasStarlink === false)) return "no";
+  return "none";
 }
 
 function resolveQatarVerdict(
   reader: ScopedReader,
   normalized: string,
   date: string,
-  window: FlightDateWindow
+  window: FlightDateWindow,
+  deps: ResolveDeps = {}
 ): FlightVerdict {
   const numeric = normalized.replace(/^[A-Z]+/, "");
   // Match both unpadded and zero-padded forms ("QR1" and "QR001") since the
@@ -398,6 +550,43 @@ function resolveQatarVerdict(
         )
     );
 
+  const leg = deps.leg;
+  if (!leg) {
+    const verdict = qatarVerdictFromRows(normalized, window, rows);
+    return deps.unscoped ? { ...verdict, leg: unscopedResolution(deps.unscoped) } : verdict;
+  }
+  const dep = (r: QatarScheduleRow) => normalizeAirportCode(r.departure_airport);
+  const arr = (r: QatarScheduleRow) => normalizeAirportCode(r.arrival_airport);
+  const sel = selectLeg(rows, dep, arr, leg);
+  if (sel.match === "ambiguous") {
+    return {
+      ...qatarVerdictFromRows(normalized, window, rows),
+      leg: unscopedResolution(ambiguousLeg(leg)),
+    };
+  }
+  const unscoped = qatarVerdictFromRows(normalized, window, rows);
+  return {
+    ...qatarVerdictFromRows(normalized, window, sel.items),
+    leg: legResolution(
+      leg,
+      rows.length,
+      sel,
+      otherLegsOf(rows, sel.items, dep, arr, (r) => ({
+        departure_time: r.departure_time,
+        tail_number: null,
+        hasStarlink:
+          r.wifi_verdict === "Starlink" ? true : r.wifi_verdict === "None" ? false : null,
+      })),
+      verdictOutcome(unscoped)
+    ),
+  };
+}
+
+function qatarVerdictFromRows(
+  normalized: string,
+  window: FlightDateWindow,
+  rows: QatarScheduleRow[]
+): AnsweredVerdict {
   if (rows.length === 0) return { kind: "qatar_no_data", window, normalized };
 
   const verdicts = rows.map((r) => r.wifi_verdict);
@@ -428,4 +617,358 @@ function resolveQatarVerdict(
   }
 
   return { kind: "qatar", window, normalized, hasStarlink, confidence, reason, rows };
+}
+
+// ── leg scoping ──────────────────────────────────────────────────────────────
+//
+// Google Flights (and any client that knows the itinerary) can name the
+// traveller's own leg of a multi-leg flight number. Without it, a sibling
+// leg's Starlink tail answered "yes" for a leg flown by a different aircraft.
+// Everything here is inert when no leg is passed: the no-param answer is the
+// same bytes as before leg scoping existed.
+
+export interface LegQuery {
+  origin?: string;
+  destination?: string;
+}
+
+export type UnscopedReason = "invalid_airport" | "same_airport" | "no_timezone" | "ambiguous_leg";
+
+export interface UnscopedLeg {
+  reason: UnscopedReason;
+  origin: string | null;
+  destination: string | null;
+}
+
+export type LegParse =
+  | { leg: LegQuery; unscoped?: undefined }
+  | { leg: undefined; unscoped?: UnscopedLeg };
+
+export type LegMatch = "exact" | "origin" | "unmatched" | "no_data" | "unscoped";
+export type LegOutcome = "yes" | "no" | "none";
+
+export interface OtherLeg {
+  origin: string;
+  destination: string | null;
+  departure_time: number | null;
+  tail_number: string | null;
+  hasStarlink: boolean | null;
+}
+
+export interface LegResolution {
+  origin: string | null;
+  destination: string | null;
+  /** From our own rows only — FR24 never changes it, so every host agrees. */
+  match: LegMatch;
+  reason?: UnscopedReason;
+  /**
+   * Other legs of this number we hold assignments for. Best-effort: only
+   * tracked tails have rows, so this is never a complete itinerary.
+   */
+  otherLegs: OtherLeg[];
+  /** The (origin, destination) the answer is about; internal, not serialized. */
+  answered: { origin: string | null; destination: string | null } | null;
+  /** What the unscoped engine would have said — telemetry only, never serialized. */
+  unscopedOutcome: LegOutcome;
+}
+
+/**
+ * Canonical IATA for a leg endpoint, or null. 4-letter K/P codes are the
+ * US/Alaska/Hawaii/Pacific ICAO forms (KSFO, PANC, PHNL, PGUM) and are only
+ * mapped when the result is an airport we know, so an arbitrary 4-letter
+ * string can't become a real code. Request params, our rows and FR24
+ * segments all pass through this, so both sides compare identically.
+ */
+export function normalizeAirportCode(raw: string | null | undefined): string | null {
+  if (typeof raw !== "string") return null;
+  const code = raw.trim().toUpperCase();
+  if (/^[A-Z]{3}$/.test(code)) return code;
+  if (/^[KP][A-Z]{3}$/.test(code) && AIRPORT_TZ[code.slice(1)]) return code.slice(1);
+  return null;
+}
+
+// Reflected back in `leg`; bounded so a caller can't echo arbitrary text.
+const echo = (raw: string): string => raw.toUpperCase().slice(0, 4);
+
+/**
+ * Lenient by design: bad input never errors. It answers unscoped and says why,
+ * because the extension caches a 400 as a settled answer for its full TTL, and
+ * a caller that sent stray params before this existed got an answer then.
+ */
+export function parseLegQuery(origin: string | null, destination: string | null): LegParse {
+  const o = origin?.trim() ?? "";
+  const d = destination?.trim() ?? "";
+  if (!o && !d) return { leg: undefined };
+
+  const no = o ? normalizeAirportCode(o) : null;
+  const nd = d ? normalizeAirportCode(d) : null;
+  const echoed = {
+    origin: o ? (no ?? echo(o)) : null,
+    destination: d ? (nd ?? echo(d)) : null,
+  };
+  if ((o && !no) || (d && !nd)) {
+    return { leg: undefined, unscoped: { reason: "invalid_airport", ...echoed } };
+  }
+  if (no && no === nd) return { leg: undefined, unscoped: { reason: "same_airport", ...echoed } };
+  // Origin drives the local-date window; without its zone a scoped answer
+  // could be the previous evening's tail labelled as exact.
+  if (no && !AIRPORT_TZ[no]) {
+    return { leg: undefined, unscoped: { reason: "no_timezone", ...echoed } };
+  }
+  return {
+    leg: { ...(no ? { origin: no } : {}), ...(nd ? { destination: nd } : {}) },
+  };
+}
+
+/**
+ * A surface's deps plus the parsed leg. With no leg asked for it returns
+ * `base` itself — the very object (or undefined) passed before leg scoping —
+ * so the no-param answer cannot drift.
+ */
+export function withLeg<T extends ResolveDeps | undefined>(
+  base: T,
+  parsed: LegParse
+): T | ResolveDeps {
+  if (parsed.leg) return { ...base, leg: parsed.leg };
+  if (parsed.unscoped) return { ...base, unscoped: parsed.unscoped };
+  return base;
+}
+
+/**
+ * The items belonging to one leg. Getters return normalizeAirportCode output;
+ * an item with no departure never matches a requested origin.
+ *
+ *  - origin then destination narrow the set; a non-empty result spanning one
+ *    (dep, arr) pair is "exact".
+ *  - origin + destination with no arrival match falls back to the origin's
+ *    leg ("origin"): a diversion, a stale arrival code, or a whole-journey
+ *    request like SFO→SAN on a SFO→DEN→SAN number.
+ *  - anything spanning several pairs is "ambiguous" and selects nothing,
+ *    so legs are never mixed under one label.
+ */
+export function selectLeg<T>(
+  items: readonly T[],
+  dep: (t: T) => string | null,
+  arr: (t: T) => string | null,
+  leg: LegQuery
+): { items: T[]; match: "exact" | "origin" | "ambiguous" | null } {
+  const pairCount = (xs: T[]) => new Set(xs.map((t) => `${dep(t)}>${arr(t)}`)).size;
+  const byOrigin = leg.origin ? items.filter((t) => dep(t) === leg.origin) : [...items];
+  const byBoth = leg.destination ? byOrigin.filter((t) => arr(t) === leg.destination) : byOrigin;
+  if (byBoth.length > 0) {
+    return pairCount(byBoth) > 1
+      ? { items: [], match: "ambiguous" }
+      : { items: byBoth, match: "exact" };
+  }
+  if (leg.origin && leg.destination && byOrigin.length > 0) {
+    return pairCount(byOrigin) > 1
+      ? { items: [], match: "ambiguous" }
+      : { items: byOrigin, match: "origin" };
+  }
+  return { items: [], match: null };
+}
+
+function ambiguousLeg(leg: LegQuery): UnscopedLeg {
+  return {
+    reason: "ambiguous_leg",
+    origin: leg.origin ?? null,
+    destination: leg.destination ?? null,
+  };
+}
+
+function unscopedResolution(u: UnscopedLeg): LegResolution {
+  return {
+    origin: u.origin,
+    destination: u.destination,
+    match: "unscoped",
+    reason: u.reason,
+    otherLegs: [],
+    answered: null,
+    unscopedOutcome: "none",
+  };
+}
+
+function otherLegsOf<T>(
+  all: readonly T[],
+  selected: readonly T[],
+  dep: (t: T) => string | null,
+  arr: (t: T) => string | null,
+  detail: (t: T) => Omit<OtherLeg, "origin" | "destination">
+): OtherLeg[] {
+  const key = (t: T) => `${dep(t)}>${arr(t)}`;
+  const answered = new Set(selected.map(key));
+  const seen = new Set<string>();
+  const legs: OtherLeg[] = [];
+  for (const t of all) {
+    const origin = dep(t);
+    if (!origin || answered.has(key(t)) || seen.has(key(t))) continue;
+    seen.add(key(t));
+    legs.push({ origin, destination: arr(t), ...detail(t) });
+  }
+  return legs.sort((a, b) => (a.departure_time ?? 0) - (b.departure_time ?? 0));
+}
+
+function legResolution<T>(
+  leg: LegQuery,
+  rowCount: number,
+  sel: { items: T[]; match: "exact" | "origin" | "ambiguous" | null },
+  otherLegs: OtherLeg[],
+  unscopedOutcome: LegOutcome
+): LegResolution {
+  const match: LegMatch =
+    sel.match === "exact" || sel.match === "origin"
+      ? sel.match
+      : rowCount > 0
+        ? "unmatched"
+        : "no_data";
+  const first = sel.items[0] as
+    | { departure_airport?: string | null; arrival_airport?: string | null }
+    | undefined;
+  return {
+    origin: leg.origin ?? null,
+    destination: leg.destination ?? null,
+    match,
+    otherLegs,
+    answered: first
+      ? {
+          origin: normalizeAirportCode(first.departure_airport),
+          destination: normalizeAirportCode(first.arrival_airport),
+        }
+      : null,
+    unscopedOutcome,
+  };
+}
+
+/** yes/no/none for the answer actually served — the `to` side of the leg-scope effect. */
+export function verdictOutcome(verdict: AnsweredVerdict): LegOutcome {
+  switch (verdict.kind) {
+    case "scheduled":
+    case "fr24":
+      return "yes";
+    case "scheduled_no":
+    case "fr24_no":
+      return "no";
+    case "qatar":
+      return verdict.hasStarlink === true ? "yes" : verdict.hasStarlink === false ? "no" : "none";
+    default:
+      return "none";
+  }
+}
+
+/** Raw FLIGHT_LEG_SCOPE tag values (normalized by the metrics allowlists). */
+export function legScopeTelemetry(verdict: AnsweredVerdict & { leg: LegResolution }): {
+  match: LegMatch;
+  reason: string;
+  effect: string;
+} {
+  const from = verdict.leg.match === "unscoped" ? "none" : verdict.leg.unscopedOutcome;
+  const to = verdict.leg.match === "unscoped" ? "none" : verdictOutcome(verdict);
+  return {
+    match: verdict.leg.match,
+    reason: verdict.leg.reason ?? "none",
+    effect: from === to ? "same" : `${from}_to_${to}`,
+  };
+}
+
+/**
+ * FLIGHT_LEG_SCOPE for REST and MCP alike. days_out is the tag that matters:
+ * firm corrections only exist where assignment data does (~0-3 days out), so
+ * the 4+ day population reads as `same` by design.
+ */
+export function recordLegScope(
+  endpoint: "api_check" | "api_check_any" | "mcp",
+  verdict: AnsweredVerdict & { leg?: LegResolution },
+  airlineCode: string,
+  clientTags: Tags
+): void {
+  if (!verdict.leg) return;
+  const t = legScopeTelemetry({ ...verdict, leg: verdict.leg });
+  metrics.increment(COUNTERS.FLIGHT_LEG_SCOPE, {
+    endpoint,
+    airline: normalizeAirlineTag(airlineCode),
+    match: normalizeLegMatch(t.match),
+    reason: normalizeLegReason(t.reason),
+    effect: normalizeLegEffect(t.effect),
+    days_out: bucketDaysOut(verdict.window.daysOut),
+    ...clientTags,
+  });
+}
+
+/** The additive `leg` wire field; `{}` when no leg was asked for. */
+export function legField(verdict: { leg?: LegResolution }): {
+  leg?: {
+    origin: string | null;
+    destination: string | null;
+    match: LegMatch;
+    reason?: UnscopedReason;
+    otherLegs: OtherLeg[];
+  };
+} {
+  const l = verdict.leg;
+  if (!l) return {};
+  return {
+    leg: {
+      origin: l.origin,
+      destination: l.destination,
+      match: l.match,
+      ...(l.reason ? { reason: l.reason } : {}),
+      otherLegs: l.otherLegs,
+    },
+  };
+}
+
+const UNSCOPED_WORDS: Record<UnscopedReason, string> = {
+  invalid_airport: "unrecognized airport code",
+  same_airport: "origin and destination are the same",
+  no_timezone: "no timezone on file for that airport",
+  ambiguous_leg: "that matches more than one leg",
+};
+
+/** "SFO → DEN" for the leg an answer is about. */
+export function legLabel(leg: LegResolution): string {
+  const origin = leg.origin ?? leg.answered?.origin ?? "?";
+  const destination = leg.destination ?? leg.answered?.destination;
+  return destination ? `${origin} → ${destination}` : `from ${origin}`;
+}
+
+function isScopedMatch(leg: LegResolution | undefined): leg is LegResolution {
+  return leg?.match === "exact" || leg?.match === "origin" || leg?.match === "unmatched";
+}
+
+/** "UA540 SFO → DEN" when the answer is about one leg, else just the number. */
+export function legSubject(verdict: { normalized: string; leg?: LegResolution }): string {
+  return isScopedMatch(verdict.leg)
+    ? `${verdict.normalized} ${legLabel(verdict.leg)}`
+    : verdict.normalized;
+}
+
+/** "UA540 SFO → DEN: " prefix for firm-yes copy; "" when unscoped. */
+export function legPrefix(verdict: { normalized: string; leg?: LegResolution }): string {
+  return isScopedMatch(verdict.leg) ? `${legSubject(verdict)}: ` : "";
+}
+
+/**
+ * The one sentence a leg adds to an answer's copy, or "". A prediction stays
+ * at flight-number level, so a leg we hold no row for says so rather than
+ * implying the estimate is about that leg.
+ */
+export function legNote(verdict: AnsweredVerdict & { leg?: LegResolution }): string {
+  const l = verdict.leg;
+  if (!l) return "";
+  if (l.match === "unscoped") {
+    return `Couldn't scope to one leg (${UNSCOPED_WORDS[l.reason ?? "invalid_airport"]}); this answer covers every leg of ${verdict.normalized}.`;
+  }
+  if ((verdict.kind === "prediction" || verdict.kind === "no_model") && l.otherLegs.length > 0) {
+    return `Your ${legLabel(l)} leg isn't in our assignment data yet; this estimate is for flight ${verdict.normalized} overall.`;
+  }
+  return "";
+}
+
+/** `base` plus the leg sentence, if any — byte-identical to `base` without a leg. */
+export function withLegNote(
+  base: string,
+  verdict: AnsweredVerdict & { leg?: LegResolution }
+): string {
+  const note = legNote(verdict);
+  return note ? `${base} ${note}` : base;
 }
