@@ -61,6 +61,7 @@ import type {
 } from "../types";
 import { DB_PATH } from "../utils/constants";
 import { debug, info, error as logError, warn } from "../utils/logger";
+import { ensureAdsbFlightDrawsTable } from "./adsb-flight-draws";
 
 type MetaRow = { value: string };
 
@@ -558,6 +559,7 @@ export function setupTables(db: Database) {
   }
   addColumn(db, "adsb_sweeps", "non_revenue", "INTEGER NOT NULL DEFAULT 0");
   addColumn(db, "adsb_sweeps", "low_speed", "INTEGER NOT NULL DEFAULT 0");
+  ensureAdsbFlightDrawsTable(db);
 
   // Starlink RFC 8805 geofeed prefixes — backs isStarlinkIp().
   if (!tableExists(db, "starlink_prefixes")) {

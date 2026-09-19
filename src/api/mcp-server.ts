@@ -43,6 +43,7 @@ import {
   compareRoute,
   describeCarrierPrediction,
   joinSentences,
+  loadFleetPriors,
   planItinerary,
   predictFlight,
   predictRoute,
@@ -725,7 +726,7 @@ async function toolCheckFlight(
 
       // Probability context FIRST, alternatives table LAST. Recency bias: the
       // agent's final impression is "here's the table to present", not "no data".
-      const probLine = `**${normalized} on ${date}**: ~${pct}% Starlink probability ${pred.n_observations > 0 ? `(${pred.n_observations} historical obs)` : "(fleet install rate)"}. ${assignmentNote}`;
+      const probLine = `**${normalized} on ${date}**: ~${pct}% Starlink probability ${pred.n_observations > 0 ? `(${pred.n_observations} historical obs)` : "(no flight history)"}. ${assignmentNote}`;
 
       let altBlock = "";
       if (pred.probability < 0.2 && !isPast) {
@@ -779,10 +780,10 @@ function renderQatarCheckFlight(
 /**
  * Format confidence as a parenthetical qualifier — keeps it visually subordinate
  * to the probability number so they don't get mentally merged.
- * e.g. "92% (4 obs · medium confidence)" not "92% Likely — 4 obs, medium"
+ * e.g. "92% (4 observed departures · medium confidence)" not "92% Likely — 4 obs, medium"
  */
 function confidenceTag(nObs: number, confidence: string): string {
-  return `(${nObs} obs · ${confidence} confidence)`;
+  return `(${nObs} observed departure${nObs === 1 ? "" : "s"} · ${confidence} confidence)`;
 }
 
 // Single shared FR24 client for route lookups. Module-level state is fine for
@@ -1181,7 +1182,7 @@ async function toolPredictFlightStarlink(
   if (pred.method !== "flight_history_smoothed") {
     const fleet = inferSubfleet(cfg, forPredict);
     const fleetLabel = fleet === "express" ? "express (regional)" : "mainline";
-    details = `${fleetLabel} fleet install rate — not flight-specific.`;
+    details = `No history for this flight number; our ${fleetLabel} estimate for flights not yet seen on a Starlink aircraft — not flight-specific.`;
   } else {
     details =
       pred.n_observations >= 5 ? "Sample size is solid." : "Limited data — estimate may drift.";
@@ -1554,13 +1555,11 @@ ${lines.join("\n")}`;
  * Replaces a hardcoded 0.02 that dated from an earlier phase of the rollout;
  * mainline is now ~15.6% and climbing ~4.5pp/month, so the frozen number
  * understated the nonstop by an order of magnitude on the exact row an LLM is
- * instructed to render verbatim. Falls back to the model default only when the
- * scope has no fleet stats (hub).
+ * instructed to render verbatim. Delegates to the predictor's fleet priors so
+ * the hub gets the cross-airline aggregate rather than a frozen fallback.
  */
 function mainlineBaseline(reader: ScopedReader): number {
-  const stats = reader.getFleetStats();
-  if (!stats || stats.mainline.total <= 0) return 0.02;
-  return stats.mainline.starlink / stats.mainline.total;
+  return loadFleetPriors(reader).mainline;
 }
 
 function toolListStarlinkAircraft(
