@@ -86,7 +86,9 @@ describe("parseUpcomingFlights", () => {
 describe("reserveFr24Slot", () => {
   test("concurrent callers are spaced by at least MIN_REQUEST_INTERVAL", () => {
     const t = Date.now();
-    const slots = [reserveFr24Slot(t), reserveFr24Slot(t), reserveFr24Slot(t)].map((w) => t + w);
+    const slots = [reserveFr24Slot(t), reserveFr24Slot(t), reserveFr24Slot(t)].map(
+      (w) => t + (w as number)
+    );
     for (let i = 1; i < slots.length; i++) {
       expect(slots[i] - slots[i - 1]).toBeGreaterThanOrEqual(MIN_REQUEST_INTERVAL);
     }
@@ -94,7 +96,7 @@ describe("reserveFr24Slot", () => {
 
   test("a caller after the interval waits nothing", () => {
     const t = Date.now();
-    const slot = t + reserveFr24Slot(t);
+    const slot = t + (reserveFr24Slot(t) as number);
     expect(reserveFr24Slot(slot + MIN_REQUEST_INTERVAL + 1)).toBe(0);
   });
 });

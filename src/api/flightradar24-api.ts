@@ -101,12 +101,19 @@ export const MIN_REQUEST_INTERVAL = 2000; // 2s between requests to avoid 402 ra
 
 // The slot is claimed synchronously: reading lastRequestTime, sleeping, then
 // stamping it let concurrent callers read the same stamp and fire together
-// (2,184 FR24 calls/hr against a nominal 1,800 on 2026-09-03).
-export function reserveFr24Slot(nowMs = Date.now()): number {
+// (2,184 FR24 calls/hr against a nominal 1,800 on 2026-09-03). Returns null,
+// claiming nothing, when the slot is further out than the caller can wait.
+export function reserveFr24Slot(
+  nowMs = Date.now(),
+  maxWaitMs = Number.POSITIVE_INFINITY
+): number | null {
   const slot = Math.max(nowMs, lastRequestTime + MIN_REQUEST_INTERVAL);
+  if (slot - nowMs > maxWaitMs) return null;
   lastRequestTime = slot;
   return slot - nowMs;
 }
+
+export const FR24_QUEUE_SHED_MESSAGE = "shed: queue";
 
 // FR24 lists a registration's flights newest-first. Capping that list unsorted
 // kept a busy regional tail's furthest-future legs and dropped the leg in the
@@ -115,24 +122,33 @@ export function reserveFr24Slot(nowMs = Date.now()): number {
 // snapshot 2026-08-29).
 export const FR24_UPCOMING_CAP = 16;
 
+type Fr24Fetch = typeof fr24Fetch;
+
 export class FlightRadar24API {
   private baseUrl = "https://api.flightradar24.com/common/v1";
 
-  private async waitForRateLimit() {
-    const waitMs = reserveFr24Slot();
+  constructor(private fetchFr24: Fr24Fetch = fr24Fetch) {}
+
+  // Uncapped, the Nth concurrent caller sleeps ~2s×(N-1) behind every slot
+  // already claimed in this process — past the extension's 10s fetch timeout.
+  private async waitForRateLimit(maxWaitMs?: number) {
+    const waitMs = reserveFr24Slot(Date.now(), maxWaitMs);
+    if (waitMs === null) throw new Fr24UnavailableError(FR24_QUEUE_SHED_MESSAGE);
     if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
   }
 
   private async retryWithBackoff<T>(
     operation: () => Promise<T>,
     maxRetries = 3,
-    requestType = "flights"
+    requestType = "flights",
+    maxWaitMs?: number
   ): Promise<T> {
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
-        await this.waitForRateLimit();
+        await this.waitForRateLimit(maxWaitMs);
         return await operation();
       } catch (error: any) {
+        if (error instanceof Fr24UnavailableError) throw error;
         const errorMessage = error?.message || String(error);
         // FR24 throttles a busy session with bare 400s (not 429): every retry
         // inside the same window fails, the same query succeeds minutes later.
@@ -177,7 +193,7 @@ export class FlightRadar24API {
       // but works fine with the full registration
       const url = `${this.baseUrl}/flight/list.json?query=${tailNumber}&fetchBy=reg&page=1&limit=25`;
 
-      const response = await fr24Fetch(url, 30000);
+      const response = await this.fetchFr24(url, 30000);
 
       if (!response.ok) {
         if (response.status === 404) {
@@ -229,9 +245,9 @@ export class FlightRadar24API {
 
     await this.waitForRateLimit();
 
-    let response: Awaited<ReturnType<typeof fr24Fetch>>;
+    let response: Awaited<ReturnType<Fr24Fetch>>;
     try {
-      response = await fr24Fetch(url, 8000);
+      response = await this.fetchFr24(url, 8000);
     } catch {
       metrics.increment(COUNTERS.VENDOR_REQUEST, {
         vendor: "fr24",
@@ -309,7 +325,7 @@ export class FlightRadar24API {
   async getFlightAssignments(
     flightNumber: string,
     targetDateUnix: number,
-    opts: { maxRetries?: number } = {}
+    opts: { maxRetries?: number; maxWaitMs?: number } = {}
   ): Promise<
     Array<{
       origin: string;
@@ -325,7 +341,7 @@ export class FlightRadar24API {
     try {
       return await this.retryWithBackoff(
         async () => {
-          const response = await fr24Fetch(url, 8000);
+          const response = await this.fetchFr24(url, 8000);
 
           if (!response.ok) {
             metrics.increment(COUNTERS.VENDOR_REQUEST, {
@@ -371,9 +387,11 @@ export class FlightRadar24API {
         // The request path passes 0: a throttle retry sleeps 30s inline, which
         // is what stretched one /api/check-flight span to 34.5s on 2026-09-06.
         opts.maxRetries ?? 1,
-        "assignments"
+        "assignments",
+        opts.maxWaitMs
       );
     } catch (err) {
+      if (err instanceof Fr24UnavailableError) throw err;
       throw new Fr24UnavailableError(err instanceof Error ? err.message : String(err));
     }
   }

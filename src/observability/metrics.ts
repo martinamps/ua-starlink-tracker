@@ -23,7 +23,7 @@
  *   status:          success | error | rate_limited | timeout | killed |
  *                    exit_error | parse_error | spawn_error | partial |
  *                    aborted | scrape_error | noop | shed            (~13)
- *   reason:          breaker | bucket — fr24 assignments status:shed only (2)
+ *   reason:          breaker | bucket | queue — fr24 assignments status:shed only (3)
  *   http_status:     upstream HTTP status code on vendor.request error/
  *                    rate_limited emits (fr24 only)                  (~10)
  *   result:          three disjoint enums share this key, so a `sum by {result}`
@@ -199,7 +199,7 @@ export const COUNTERS = {
   // united status values: success | timeout | killed | exit_error | parse_error | spawn_error
   // fr24/flightaware/adsb/indexnow status values: success | error | rate_limited
   // fr24 assignments adds status:shed (request-path guard refused), tagged
-  //   reason (breaker|bucket) and airline
+  //   reason (breaker|bucket|queue) and airline
   // qatar status values: success | error | partial
   VENDOR_REQUEST: "vendor.request",
 

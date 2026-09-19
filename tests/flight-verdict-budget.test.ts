@@ -14,10 +14,18 @@ import {
   ASSIGNMENT_EMPTY_TTL,
   FR24_BREAKER_BASE_SEC,
   FR24_REQUEST_BUCKET_PER_MIN,
+  FR24_REQUEST_MAX_QUEUE_MS,
   cachedFlightAssignments,
   setAssignmentFetcher,
 } from "../src/api/flight-verdict";
-import { Fr24UnavailableError } from "../src/api/flightradar24-api";
+import {
+  FR24_QUEUE_SHED_MESSAGE,
+  FlightRadar24API,
+  Fr24UnavailableError,
+  MIN_REQUEST_INTERVAL,
+  reserveFr24Slot,
+} from "../src/api/flightradar24-api";
+import type { FR24FetchResult } from "../src/api/fr24-browser-transport";
 import { createReaderFactory } from "../src/database/reader";
 import { createApp } from "../src/server/app";
 import { makeSyntheticDb, stubPredict, utc } from "./helpers";
@@ -160,4 +168,80 @@ describe("empty-result caching", () => {
     await cachedFlightAssignments("UA11", TARGET, T0 + 1);
     expect(spy.calls).toBe(4);
   });
+});
+
+// The real FlightRadar24API retry/rate-limit path with a fake transport. The
+// slot clock is module-global wall time, so each test claims a slot first to
+// make the queue state known instead of assuming it.
+describe("request-path FR24 queue and retry caps", () => {
+  const status429: FR24FetchResult = { status: 429, ok: false, body: "" };
+  const nowSec = () => Math.floor(Date.now() / 1000);
+
+  test("reserveFr24Slot past maxWaitMs claims nothing", () => {
+    const t = Date.now();
+    const first = reserveFr24Slot(t) as number;
+    expect(reserveFr24Slot(t, 0)).toBeNull();
+    expect(reserveFr24Slot(t)).toBe(first + MIN_REQUEST_INTERVAL);
+  });
+
+  test("a caller behind a full queue sheds at once without calling FR24", async () => {
+    let calls = 0;
+    const api = new FlightRadar24API(async () => {
+      calls++;
+      return status429;
+    });
+    reserveFr24Slot();
+    const started = performance.now();
+    const err = await api
+      .getFlightAssignments("UA1", nowSec(), {
+        maxRetries: 0,
+        maxWaitMs: FR24_REQUEST_MAX_QUEUE_MS,
+      })
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(Fr24UnavailableError);
+    expect(err.message).toBe(FR24_QUEUE_SHED_MESSAGE);
+    expect(calls).toBe(0);
+    expect(performance.now() - started).toBeLessThan(200);
+  });
+
+  test("the default request-path fetcher is queue-capped", async () => {
+    setAssignmentFetcher(null);
+    reserveFr24Slot();
+    const now = nowSec();
+    const started = performance.now();
+    await expect(cachedFlightAssignments("UA7", now + 3600, now)).rejects.toThrow(
+      FR24_QUEUE_SHED_MESSAGE
+    );
+    expect(performance.now() - started).toBeLessThan(200);
+  });
+
+  test("a queue shed is not cached as an outage and does not open the breaker", async () => {
+    let first = true;
+    const spy = countingFetcher(async () => {
+      if (first) {
+        first = false;
+        throw new Fr24UnavailableError(FR24_QUEUE_SHED_MESSAGE);
+      }
+      return [];
+    });
+    await expect(cachedFlightAssignments("UA8", TARGET, T0)).rejects.toThrow(
+      FR24_QUEUE_SHED_MESSAGE
+    );
+    await cachedFlightAssignments("UA8", TARGET, T0);
+    await cachedFlightAssignments("UA9", TARGET, T0);
+    expect(spy.calls).toBe(3);
+  });
+
+  test("maxRetries 0 makes exactly one FR24 call on a 429 and fails without backoff", async () => {
+    const fetchedAt: number[] = [];
+    const api = new FlightRadar24API(async () => {
+      fetchedAt.push(performance.now());
+      return status429;
+    });
+    const err = await api.getFlightAssignments("UA1", nowSec(), { maxRetries: 0 }).catch((e) => e);
+    expect(err).toBeInstanceOf(Fr24UnavailableError);
+    expect(err.message).toMatch(/429$/);
+    expect(fetchedAt.length).toBe(1);
+    expect(performance.now() - fetchedAt[0]).toBeLessThan(1000);
+  }, 15_000); // The uncapped wait for slots earlier tests claimed happens before the fetch.
 });

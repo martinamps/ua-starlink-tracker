@@ -12,16 +12,27 @@ import type { ScopedReader } from "../database/reader";
 import { COUNTERS, metrics, normalizeAirlineTag } from "../observability";
 import { matchesLocalDate } from "../utils/airport-tz";
 import { warn } from "../utils/logger";
-import { FlightRadar24API, Fr24UnavailableError } from "./flightradar24-api";
+import {
+  FR24_QUEUE_SHED_MESSAGE,
+  FlightRadar24API,
+  Fr24UnavailableError,
+} from "./flightradar24-api";
 
 const fr24 = new FlightRadar24API();
 type Assignment = Awaited<ReturnType<FlightRadar24API["getFlightAssignments"]>>;
 type AssignmentFetcher = (flightNumber: string, targetDateUnix: number) => Promise<Assignment>;
 
-// Request path: no inline retry. A throttled FR24 answers again minutes later,
-// not after a 30s sleep the caller is stuck waiting on.
+// Request path: no inline retry, since a throttled FR24 answers again minutes
+// later, not after a 30s sleep the caller is stuck waiting on. Likewise no deep
+// queue: slots are 2s apart and the bucket admits a burst of 15, so uncapped the
+// last of a burst (plus any slots the background jobs hold) waits ~30s — past
+// the extension's 10s fetch timeout.
+export const FR24_REQUEST_MAX_QUEUE_MS = 1500;
 const defaultFetcher: AssignmentFetcher = (flightNumber, targetDateUnix) =>
-  fr24.getFlightAssignments(flightNumber, targetDateUnix, { maxRetries: 0 });
+  fr24.getFlightAssignments(flightNumber, targetDateUnix, {
+    maxRetries: 0,
+    maxWaitMs: FR24_REQUEST_MAX_QUEUE_MS,
+  });
 let fetchAssignments: AssignmentFetcher = defaultFetcher;
 
 // Test seam as a setter (not an injected param) because the cache is already
@@ -69,13 +80,7 @@ export function cachedFlightAssignments(
 
   const shed = fr24RequestShedReason(now);
   if (shed) {
-    metrics.increment(COUNTERS.VENDOR_REQUEST, {
-      vendor: "fr24",
-      type: "assignments",
-      status: "shed",
-      reason: shed,
-      airline: normalizeAirlineTag(flightNumber.slice(0, 2)),
-    });
+    countShed(flightNumber, shed);
     return Promise.reject(new Fr24UnavailableError(`shed: ${shed}`));
   }
 
@@ -100,6 +105,13 @@ export function cachedFlightAssignments(
       else if (assignmentCache.get(key) === entry) assignmentCache.delete(key);
     },
     (err) => {
+      // FR24 was never called, so there is no outage to replay: the next ask
+      // may find a free slot.
+      if (err instanceof Error && err.message === FR24_QUEUE_SHED_MESSAGE) {
+        if (assignmentCache.get(key) === entry) assignmentCache.delete(key);
+        countShed(flightNumber, "queue");
+        return;
+      }
       if (assignmentCache.get(key) === entry) {
         entry.failedAt = now;
       }
@@ -128,6 +140,16 @@ let fr24Tokens = FR24_REQUEST_BUCKET_PER_MIN;
 let fr24TokensAt = 0;
 let fr24ThrottledUntil = 0;
 let fr24ThrottleStreak = 0;
+
+function countShed(flightNumber: string, reason: "breaker" | "bucket" | "queue"): void {
+  metrics.increment(COUNTERS.VENDOR_REQUEST, {
+    vendor: "fr24",
+    type: "assignments",
+    status: "shed",
+    reason,
+    airline: normalizeAirlineTag(flightNumber.slice(0, 2)),
+  });
+}
 
 function resetFr24RequestGuards(): void {
   fr24Tokens = FR24_REQUEST_BUCKET_PER_MIN;
