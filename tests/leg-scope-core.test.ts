@@ -122,6 +122,7 @@ describe("leg-scoped verdicts (synthetic DB)", () => {
     addQatarRow(db, "QR702", utc("2027-03-06T14:00:00Z"), "None", {
       departureAirport: "CPH",
       arrivalAirport: "DOH",
+      equipmentCode: "388",
     });
     addQatarRow(db, "QR702", utc("2027-03-07T01:00:00Z"), "Starlink", {
       departureAirport: "JFK",
