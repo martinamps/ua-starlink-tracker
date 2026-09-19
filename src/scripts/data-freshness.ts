@@ -54,7 +54,26 @@ export function buildFreshnessQueries(qrEnabled = AIRLINES.QR.enabled): Record<s
     SELECT 'QR' AS airline, MAX(last_updated) AS ts
     FROM qatar_schedule`;
   }
+  queries.residential_sync = residentialSyncQuery(qrEnabled);
   return queries;
+}
+
+// FlyerTalk is fetched from a laptop (FlyerTalk 403s the prod ASN), so nothing
+// on prod notices when it stops: the AS oracle was dead May→Sept behind a warn.
+// The airline list is fixed rather than read from meta so a missing or
+// unparseable stamp emits as maximally stale instead of going mute.
+function residentialSyncQuery(qrEnabled: boolean): string {
+  const airlines = residentialSyncAirlines(qrEnabled)
+    .map((a) => `SELECT '${a}' AS airline`)
+    .join(" UNION ALL ");
+  return `
+    SELECT a.airline, CAST(strftime('%s', m.value) AS INTEGER) AS ts
+    FROM (${airlines}) a
+    LEFT JOIN meta m ON m.key = a.airline || ':residentialSyncAt'`;
+}
+
+function residentialSyncAirlines(qrEnabled: boolean): string[] {
+  return qrEnabled ? ["AS", "QR"] : ["AS"];
 }
 
 export const FRESHNESS_QUERIES = buildFreshnessQueries();
@@ -75,6 +94,7 @@ export function buildFreshnessCoverage(
     adsb_sweep: ["UA"],
   };
   if (qrEnabled) coverage.qatar_ingester = ["QR"];
+  coverage.residential_sync = residentialSyncAirlines(qrEnabled);
   return coverage;
 }
 
@@ -136,7 +156,8 @@ export function emitDataFreshness(db: Database, queries = FRESHNESS_QUERIES): vo
           // return a null MAX on an empty table — the maximally stale state must
           // still emit so the monitor can fire (epoch 0 / meta-stamp fallback).
           if (job === "qatar_ingester") ts = metaLastUpdatedEpoch(db, row.airline) ?? 0;
-          else if (job === "faa_registry" || job === "adsb_sweep") ts = 0;
+          else if (job === "faa_registry" || job === "adsb_sweep" || job === "residential_sync")
+            ts = 0;
           else continue;
         }
         const ageSec = Math.max(0, now - ts);

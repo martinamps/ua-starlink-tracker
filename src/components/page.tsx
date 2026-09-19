@@ -409,20 +409,12 @@ export default function Page({
     return permalinkFnPattern.test(fn) ? `/check-flight/${fn}` : null;
   };
   const navLinks = [
-    ...(features.checkFlightPage
-      ? [{ href: "/check-flight", label: "Check a Flight", badge: "" }]
-      : []),
-    ...(features.routePlannerPage
-      ? [{ href: "/route-planner", label: "Route Planner", badge: "" }]
-      : []),
-    // The NEW badge hands off from Fleet Rollout to Live Routes — but only on
-    // sites that have the routes page; elsewhere Fleet Rollout keeps it.
-    ...(features.fleetPage
-      ? [{ href: "/fleet", label: "Fleet Rollout", badge: features.routesPage ? "" : "NEW" }]
-      : []),
-    ...(features.routesPage ? [{ href: "/routes", label: "Live Routes", badge: "NEW" }] : []),
-    ...(features.timelinePage ? [{ href: "/timeline", label: "Timeline", badge: "NEW" }] : []),
-    ...(features.mcpPage ? [{ href: "/mcp", label: "Tools & MCP", badge: "" }] : []),
+    ...(features.checkFlightPage ? [{ href: "/check-flight", label: "Check a Flight" }] : []),
+    ...(features.routePlannerPage ? [{ href: "/route-planner", label: "Route Planner" }] : []),
+    ...(features.fleetPage ? [{ href: "/fleet", label: "Fleet Rollout" }] : []),
+    ...(features.routesPage ? [{ href: "/routes", label: "Live Routes" }] : []),
+    ...(features.timelinePage ? [{ href: "/timeline", label: "Timeline" }] : []),
+    ...(features.mcpPage ? [{ href: "/mcp", label: "Tools & MCP" }] : []),
   ];
   // Filter buttons act on the rendered rows, so their counts must describe the
   // capped list — full-fleet numbers live in the hero and on /fleet.
@@ -666,14 +658,9 @@ export default function Page({
               <a
                 key={link.href}
                 href={link.href === "/mcp" ? "#integrations" : link.href}
-                className="px-3 py-1.5 bg-surface border border-subtle rounded text-secondary hover:text-accent hover:border-accent transition-colors inline-flex items-center gap-1.5"
+                className="px-3 py-1.5 bg-surface border border-subtle rounded text-secondary hover:text-accent hover:border-accent transition-colors"
               >
                 {link.label}
-                {link.badge && (
-                  <span className="text-[10px] font-mono px-1.5 py-0.5 bg-accent/20 text-accent rounded">
-                    {link.badge}
-                  </span>
-                )}
               </a>
             ))}
           </div>
@@ -1025,11 +1012,8 @@ export default function Page({
                     </svg>
                   </div>
                   <div>
-                    <div className="font-display font-semibold text-primary text-sm inline-flex items-center gap-1.5">
+                    <div className="font-display font-semibold text-primary text-sm">
                       MCP Server
-                      <span className="text-[10px] font-mono px-1.5 py-0.5 bg-accent/20 text-accent rounded">
-                        NEW
-                      </span>
                     </div>
                     <div className="text-xs text-muted">For Claude, Cursor & AI assistants</div>
                   </div>
