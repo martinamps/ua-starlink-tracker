@@ -26,6 +26,7 @@ import type {
   RecentInstall,
   RouteSchedule,
 } from "../types";
+import { type AdsbFlightDraw, getAdsbFlightDraws } from "./adsb-flight-draws";
 import {
   type ConfirmedEdge,
   type DirectRouteEdge,
@@ -166,6 +167,9 @@ export interface ScopedReader {
 
   // Predictor / route-graph
   getVerificationObservations(): VerificationObservation[];
+  /** ADS-B departures since `sinceTs`. UA only: the callsign-to-marketing-number
+   * mapping and the fleet sweep behind it exist for no other scope. */
+  getAdsbFlightDraws(sinceTs: number): AdsbFlightDraw[];
   getRouteFlights(origin: string | null, destination: string | null): RouteFlightRow[];
   getRouteGraphEdges(): RouteGraphEdge[];
   /** Every ORIG-DEST the carrier flies; null when no route census exists for the scope. */
@@ -348,6 +352,7 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     getWifiMismatches: () => getWifiMismatches(db, airlines),
 
     getVerificationObservations: () => getVerificationObservations(db, airlines),
+    getAdsbFlightDraws: (since) => (scope === "UA" ? getAdsbFlightDraws(db, since) : []),
     getRouteFlights: (o, d) => getRouteFlights(db, o, d, airlines),
     getRouteGraphEdges: () => getRouteGraphEdges(db, airlines),
     getServedRoutePairs: () => getServedRoutePairs(db, airlines),

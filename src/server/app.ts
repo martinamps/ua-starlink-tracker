@@ -126,6 +126,7 @@ import {
   routeBaseline,
   subfleetBreakdown,
 } from "../scripts/starlink-predictor";
+import type { Prediction } from "../scripts/starlink-predictor";
 import type { ApiResponse, FirstFlight, FleetPageData, Flight } from "../types";
 import {
   API_CORS_HEADERS,
@@ -940,11 +941,12 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant }) 
             probability: pred.probability,
             confidence: pred.confidence,
             n_observations: pred.n_observations,
+            n_recent_observations: pred.n_recent_observations,
           },
           message:
             pred.n_observations > 0
-              ? `${assignmentNote} ~${pct}% of recent departures of this flight used a Starlink-equipped aircraft (${pred.n_observations} observation${pred.n_observations === 1 ? "" : "s"}).`
-              : `${assignmentNote} No history for this flight number; ~${pct}% reflects the fleet-wide install rate.`,
+              ? `${assignmentNote} ~${pct}% of observed departures of this flight used a Starlink-equipped aircraft (${pred.n_observations} observation${pred.n_observations === 1 ? "" : "s"}).`
+              : `${assignmentNote} ${coldPredictionNote(pred, pct)}`,
           flights: [],
         }),
         { headers: SECURITY_HEADERS.api }
@@ -1063,16 +1065,18 @@ const apiCheckAnyFlight: Handler = async ({ req, url, reader, getReader, tenant 
       // rather than a confident "No Starlink" (upcoming_flights only covers ~47h).
       const pred = verdict.pred;
       recordPrediction(pred, cfg.code);
+      const pct = Math.round(pred.probability * 100);
       return new Response(
         JSON.stringify({
           hasStarlink: null,
           airline: cfg.name,
           probability: pred.probability,
           confidence: pred.confidence,
+          n_recent_observations: pred.n_recent_observations,
           reason:
             pred.n_observations > 0
-              ? `No schedule data for this date; ~${Math.round(pred.probability * 100)}% based on ${pred.n_observations} historical observation${pred.n_observations === 1 ? "" : "s"}.`
-              : `No schedule data for this date; ~${Math.round(pred.probability * 100)}% based on ${cfg.name} fleet rollout rate.`,
+              ? `No schedule data for this date; ~${pct}% based on ${pred.n_observations} historical observation${pred.n_observations === 1 ? "" : "s"}.`
+              : `No schedule data for this date. ${coldPredictionNote(pred, pct)}`,
           flights: [],
         }),
         { headers: SECURITY_HEADERS.api }
@@ -1169,6 +1173,7 @@ const apiPredictFlight: Handler = ({ req, url, reader, getReader, tenant }) => {
       confidence: pred.confidence,
       method: pred.method,
       n_observations: pred.n_observations,
+      n_recent_observations: pred.n_recent_observations,
     }),
     { headers: SECURITY_HEADERS.api }
   );
@@ -2696,6 +2701,18 @@ function notObservedSince(
   return anchor - newest > PERMALINK_STALE_NOTE_DAYS * 86400 ? newest : null;
 }
 
+/** Never "fleet-wide install rate": the express cold prior is deliberately far
+ * below express penetration, because a flight number with no history is
+ * structurally a flight on unequipped regional jets. */
+function coldPredictionNote(pred: Prediction, pct: number): string {
+  const base = `No history for this flight number; ~${pct}% is our estimate for flights we haven't yet seen on a Starlink aircraft`;
+  if (pred.method === "fleet_prior_express") return `${base} — most are older regional jets.`;
+  if (pred.method === "fleet_prior_mainline") {
+    return `${base}, from the mainline fleet's current Starlink share.`;
+  }
+  return `${base}.`;
+}
+
 /** One-sentence answer for meta copy. Never "0% of the time" — a zero reads
  * as a verdict on the flight when it's really the rollout's current edge. */
 function flightMetaAnswer(
@@ -2705,10 +2722,10 @@ function flightMetaAnswer(
   facts: FlightFacts
 ): string {
   if (facts.observedStarlink > 0) {
-    return ` Starlink on ${facts.observedStarlink} of ${facts.observedTotal} recent departures.`;
+    return ` Starlink on ${facts.observedStarlink} of ${facts.observedTotal} observed departures.`;
   }
   if (facts.observedTotal > 0) {
-    return " Recent departures used aircraft still awaiting installation.";
+    return " Observed departures used aircraft still awaiting installation.";
   }
   try {
     if (cfg.flightHistoryModel) {

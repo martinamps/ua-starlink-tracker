@@ -352,7 +352,7 @@ const StarlinkTrackerLib = (() => {
     if (claim.status === "predicted") {
       const obs =
         typeof claim.nObservations === "number" && claim.nObservations > 0
-          ? ` (${claim.nObservations} recent departure${claim.nObservations === 1 ? "" : "s"} observed)`
+          ? ` (${claim.nObservations} observed departure${claim.nObservations === 1 ? "" : "s"})`
           : "";
       return (
         `~${roundPct(claim.probability)}% chance this flight gets a Starlink-equipped ` +

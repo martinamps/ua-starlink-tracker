@@ -342,7 +342,7 @@ describe("badging policy", () => {
     );
     const title = extLib.badgeTitle({ ...predicted(0.876), nObservations: 3 });
     expect(title).toContain("~88%");
-    expect(title).toContain("3 recent departures");
+    expect(title).toContain("3 observed departures");
     expect(extLib.badgeClass(predicted(0.9))).toContain("starlink-wifi-badge--predicted");
   });
 
