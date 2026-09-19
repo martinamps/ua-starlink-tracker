@@ -39,7 +39,12 @@
     <!-- Google Fonts: Rajdhani (display) + JetBrains Mono (data) -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Rajdhani:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- display=optional: a late swap reflowed the hero (desktop CLS 0.14). The
+         preload is the latin Rajdhani 600 face the headings use, so it usually
+         lands inside the optional block period; re-copy the URL if Google bumps
+         the font version (v17). -->
+    <link rel="preload" as="font" type="font/woff2" crossorigin href="https://fonts.gstatic.com/s/rajdhani/v17/LDI2apCSOBg7S-QT7pbYF_OreefkkbIx.woff2">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Rajdhani:wght@400;500;600;700&display=optional" rel="stylesheet">
 
     <!-- Compiled Tailwind (src/styles/tailwind.css) -->
     {{stylesheetTag}}

@@ -1,9 +1,11 @@
 import type React from "react";
 import { type SiteConfig, siteAirline } from "../airlines/registry";
-import { PageFooter } from "./atoms";
+import { article } from "../utils/grammar";
+import { PageFooter, type PageLink } from "./atoms";
 
 interface HowToCheckPageProps {
   site: SiteConfig;
+  pageLinks?: PageLink[];
 }
 
 interface Step {
@@ -13,7 +15,7 @@ interface Step {
   text: string;
 }
 
-export default function HowToCheckPage({ site }: HowToCheckPageProps) {
+export default function HowToCheckPage({ site, pageLinks }: HowToCheckPageProps) {
   const cfg = siteAirline(site);
   const short = cfg.shortName;
   const example = `${cfg.iata}123`;
@@ -207,7 +209,7 @@ export default function HowToCheckPage({ site }: HowToCheckPageProps) {
         </a>
       </div>
 
-      <PageFooter site={site} />
+      <PageFooter site={site} pageLinks={pageLinks} />
 
       <script
         type="application/ld+json"
@@ -216,7 +218,7 @@ export default function HowToCheckPage({ site }: HowToCheckPageProps) {
           __html: JSON.stringify({
             "@context": "https://schema.org",
             "@type": "HowTo",
-            name: `How to check if a ${cfg.name} flight has Starlink WiFi`,
+            name: `How to check if ${article(cfg.name)} ${cfg.name} flight has Starlink WiFi`,
             description: `Check any ${cfg.name} flight for free Starlink WiFi by flight number and date, with verified answers near departure and labeled probabilities further out.`,
             totalTime: "PT1M",
             step: steps.map((s, i) => ({

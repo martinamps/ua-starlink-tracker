@@ -1,11 +1,18 @@
 import React from "react";
 import { type SiteConfig, siteAirline } from "../airlines/registry";
+import { type PageLink, PageNavLinks } from "./atoms";
 
 interface RoutePlannerPageProps {
   site: SiteConfig;
+  pageLinks?: PageLink[];
+  popularRoutes?: Array<{ origin: string; destination: string }>;
 }
 
-export default function RoutePlannerPage({ site }: RoutePlannerPageProps) {
+export default function RoutePlannerPage({
+  site,
+  pageLinks,
+  popularRoutes = [],
+}: RoutePlannerPageProps) {
   const cfg = siteAirline(site);
   const airlineName = cfg.name;
   const shortName = cfg.shortName;
@@ -215,6 +222,27 @@ export default function RoutePlannerPage({ site }: RoutePlannerPageProps) {
         </div>
       </div>
 
+      {popularRoutes.length > 0 && (
+        <section className="relative w-full max-w-4xl mx-auto mb-8">
+          <div className="bg-surface border border-subtle rounded-lg p-5">
+            <h2 className="text-[10px] font-mono text-muted uppercase tracking-wider mb-3">
+              Popular Starlink routes
+            </h2>
+            <div className="flex flex-wrap gap-2">
+              {popularRoutes.map((r) => (
+                <a
+                  key={`${r.origin}-${r.destination}`}
+                  href={`/route-planner/${r.origin}/${r.destination}`}
+                  className="font-mono text-sm px-2.5 py-1 rounded border border-subtle bg-surface-elevated text-secondary hover:border-accent hover:text-accent transition-colors"
+                >
+                  {r.origin} → {r.destination}
+                </a>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
+
       <div className="relative text-center mb-6">
         <a href="/" className="text-sm text-accent hover:underline font-display">
           ← Back to {homeTitle}
@@ -241,6 +269,7 @@ export default function RoutePlannerPage({ site }: RoutePlannerPageProps) {
           </svg>
           by @martinamps
         </a>
+        <PageNavLinks links={pageLinks} />
       </footer>
 
       <script
