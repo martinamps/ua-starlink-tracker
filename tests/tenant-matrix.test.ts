@@ -210,6 +210,7 @@ const ROUTES: Array<[route: string, feature: keyof SiteConfig["features"] | null
   ["/how-to-check", "intentPages"],
   ["/is-starlink-free", "intentPages"],
   ["/live-tv", "liveTvPage"],
+  ["/fleet/e175", "aircraftPages"],
 ];
 const isHtmlRoute = (route: string) => !route.startsWith("/api/") && !route.endsWith(".txt");
 
@@ -218,7 +219,7 @@ const isHtmlRoute = (route: string) => !route.startsWith("/api/") && !route.ends
 // to whatever the snapshot happens to contain. The invariant that matters —
 // and the one the conventions demand — is that a page serves exactly when the
 // sitemap advertises it, in both directions.
-const DATA_GATED = new Set(["/newly-equipped", "/install-rate"]);
+const DATA_GATED = new Set(["/newly-equipped", "/install-rate", "/fleet/e175"]);
 
 // Editorially deliberate cross-airline mentions (2024 AS/HA merger FAQ copy).
 // Covers the airline's name AND canonical host. Anything else is a leak.

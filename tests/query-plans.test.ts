@@ -17,6 +17,11 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import {
+  TYPE_PAGE_EVENTS_SQL,
+  TYPE_PAGE_FLIGHTS_SQL,
+  TYPE_PAGE_ROUTES_SQL,
+} from "../src/database/database";
 import { makeSyntheticDb } from "./helpers";
 
 function seeded() {
@@ -99,6 +104,59 @@ describe("hot-path query plans", () => {
       [1_700_000_000, 1_800_000_000, "UA"]
     );
     expect(plan).toContain("idx_upf_tail");
+    db.close();
+  });
+});
+
+describe("aircraft-type page passes", () => {
+  // Production shape: several airlines share the tables, so a plan that walks
+  // idx_upf_tail reads every airline's schedule to serve one.
+  function multiAirline() {
+    const db = seeded();
+    const upf = db.query(
+      `INSERT INTO upcoming_flights
+         (tail_number, flight_number, departure_airport, arrival_airport,
+          departure_time, arrival_time, last_updated, airline)
+       VALUES (?,?,?,?,?,?,?,?)`
+    );
+    for (let i = 0; i < 1500; i++) {
+      const airline = i % 3 === 0 ? "AS" : "HA";
+      upf.run(
+        `N${i % 90}XY`,
+        `${airline}${i % 300}`,
+        "SEA",
+        "LAX",
+        1_700_000_000 + i,
+        0,
+        0,
+        airline
+      );
+    }
+    db.exec("ANALYZE");
+    return db;
+  }
+
+  test("routes seek upcoming_flights by airline, never a full scan", () => {
+    const db = multiAirline();
+    const plan = planOf(db, TYPE_PAGE_ROUTES_SQL, ["UA", 1_700_000_000, 1_700_172_800]);
+    expect(plan).toContain("idx_upf_airline");
+    expect(plan).not.toMatch(/SCAN upcoming_flights/);
+    db.close();
+  });
+
+  test("flight numbers seek the verification log by airline", () => {
+    const db = seeded();
+    const plan = planOf(db, TYPE_PAGE_FLIGHTS_SQL, ["UA", 1_700_000_000]);
+    expect(plan).toContain("idx_vlog_airline");
+    expect(plan).not.toMatch(/SCAN starlink_verification_log/);
+    db.close();
+  });
+
+  test("pipeline-event lastmod seeks by airline", () => {
+    const db = seeded();
+    const plan = planOf(db, TYPE_PAGE_EVENTS_SQL, ["UA"]);
+    expect(plan).toContain("idx_pipeline_events_time");
+    expect(plan).not.toMatch(/SCAN pipeline_events/);
     db.close();
   });
 });

@@ -151,6 +151,7 @@ describe("bodyClassOf", () => {
     A330: "widebody",
     A350: "widebody",
     A380: "widebody",
+    E170: "regional",
     E175: "regional",
     "ERJ-145": "regional",
     "CRJ-200": "regional",

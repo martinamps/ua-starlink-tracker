@@ -46,6 +46,21 @@ interface RolloutFactBase {
    * which is the entire promise of this file — a citation nobody can read is
    * not a receipt. Only ever a snapshot confirmed to exist and return 200. */
   source: { label: string; url: string; mirror?: string };
+  /** Type-page slugs (/fleet/{slug}) this fact is shown on; "*" = every type
+   * page of the airline. Absent = the fact stays on the airline pages only. */
+  aircraftPages?: readonly string[];
+  /** Per-type connected counts exactly as `fact` states them, keyed by type
+   * slug. Where the airline publishes no per-tail status (Alaska), its own
+   * dated figure is the best answer a type page has — 0 included, because
+   * "none connected yet, per the airline" is a real answer, not missing data. */
+  officialCounts?: Readonly<Record<string, number>>;
+  /** Slugs whose `officialCounts` figure `fact` states as the whole type
+   * ("all 93 Embraer 175s"). A bare count has no denominator, so without this
+   * a short roster would read the count as "every one". */
+  officialAll?: readonly string[];
+  /** Verbatim excerpt of `fact` a type page renders instead of the whole
+   * claim, for facts whose other clauses are about a different fleet. */
+  pageText?: string;
 }
 
 /** A claim the source itself dates. Only these move the page's lastmod. */
@@ -120,6 +135,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
           label: "United Q2 2026 results (PR Newswire)",
           url: "https://www.prnewswire.com/news-releases/united-posts-q2-results-above-wall-street-expectations-and-raises-full-year-2026-adjusted-eps-guidance-despite-a-nearly-6-billion-increase-in-anticipated-fuel-costs-302826793.html",
         },
+        aircraftPages: ["*"],
       },
       {
         // The whole-fleet-by-2027 clause lives on fact 1: it is in the Q2
@@ -130,6 +146,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
           label: "United press release (PR Newswire)",
           url: "https://www.prnewswire.com/news-releases/united-accelerates-starlink-wi-fi-rollout-with-first-widebody-transatlantic-flight-302806746.html",
         },
+        aircraftPages: ["777", "787", "767"],
       },
     ],
   },
@@ -153,6 +170,10 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
           label: "AirlineGeeks",
           url: "https://airlinegeeks.com/2026/06/25/alaska-hawaiian-expand-starlink-wifi-to-around-150-aircraft/",
         },
+        // The ~150 and ~50-mainline figures span Alaska, Hawaiian and Horizon,
+        // so an Alaska type page quotes only the widebody sentence.
+        aircraftPages: ["787"],
+        pageText: "Alaska Airlines expects its entire widebody fleet equipped by the fall of 2026.",
       },
       {
         fact: "Starlink Wi-Fi is free for Atmos Rewards members, sponsored by T-Mobile; there is no fee to join the loyalty program.",
@@ -172,6 +193,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
           label: "One Mile at a Time",
           url: "https://onemileatatime.com/news/alaska-airlines-free-starlink-wi-fi/",
         },
+        aircraftPages: ["787"],
       },
       {
         // Alaska's own tracker, refreshed monthly — the dateline is the chart's
@@ -182,6 +204,16 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
           label: "Alaska Airlines newsroom — Starlink tracker",
           url: "https://news.alaskaair.com/alaska-airlines-wifi-connectivity/",
         },
+        aircraftPages: ["e175", "737-max-8", "737-max-9", "737-800", "737-900", "787"],
+        officialCounts: {
+          e175: 93,
+          "737-max-8": 12,
+          "737-max-9": 0,
+          "737-800": 0,
+          "737-900": 0,
+          "787": 0,
+        },
+        officialAll: ["e175"],
       },
     ],
   },
