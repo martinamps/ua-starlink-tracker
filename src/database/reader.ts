@@ -68,6 +68,7 @@ import {
   getHubStats,
   getLastUpdated,
   getMeta,
+  getObservationAnchor,
   getObservedDirectFlightNumbers,
   getPendingFleetTails,
   getPopularFlights,
@@ -188,6 +189,9 @@ export interface ScopedReader {
   getRouteFlightNumbers(origin: string, destination: string): RouteFlightNumbers;
   getFlightHistorySummary(variants: string[]): FlightHistorySummary;
   getFlightRoutePairs(variants: string[]): FlightRoutePair[];
+  /** Newest observation for the airline (unix sec), the reference point for
+   * staleness copy; 0 on the hub or with no data. */
+  getObservationAnchor(): number;
 
   // Single-tail lookups + best-effort writes. Airline-scoped like everything
   // else: a tenant's FR24 fallback must not resolve another airline's tail.
@@ -348,6 +352,7 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     getRouteFlightNumbers: (o, d) => getRouteFlightNumbers(db, o, d, soleAirline()),
     getFlightHistorySummary: (v) => getFlightHistorySummary(db, v, airlines),
     getFlightRoutePairs: (v) => getFlightRoutePairs(db, v, airlines),
+    getObservationAnchor: () => (scope === "ALL" ? 0 : getObservationAnchor(db, scope)),
 
     getStarlinkPlaneByTail: (tail) => getStarlinkPlaneByTail(db, tail, airlines),
     getFleetEntryByTail: (tail) => getFleetEntryByTail(db, tail, airlines),
