@@ -14,7 +14,7 @@
  *                    an airline, so http metrics carry tenant in addition to the
  *                    per-call default `airline:unmapped` injected by withDefaultAirline.
  *   fleet:           registry subfleet keys (SUBFLEET_KEYS) | unknown  (~5)
- *   aircraft_type:   normalized families (B737-800, E175, etc)      (~25)
+ *   aircraft_type:   normalized families (B737-800, E175, etc)      (~30)
  *   wifi_provider:   starlink | viasat | panasonic | thales | none | other | unknown  (7)
  *   starlink_status: confirmed | negative | unknown                  (3)
  *   vendor:          fr24 | flightaware | united | qatar | alaska | adsb | indexnow (7)

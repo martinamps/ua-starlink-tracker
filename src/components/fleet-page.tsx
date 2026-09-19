@@ -134,7 +134,9 @@ function monumentDot(t: FleetTail, pipeline: PipelineMap): string {
 }
 
 const FAMILY_ABBR: Record<string, string> = {
+  E170: "E170",
   E175: "E175",
+  E190: "E190",
   "ERJ-145": "ERJ145",
   "CRJ-200": "CRJ200",
   "CRJ-550": "CRJ550",
@@ -149,6 +151,8 @@ const FAMILY_ABBR: Record<string, string> = {
   B767: "767",
   B777: "777",
   B787: "787",
+  A220: "A220",
+  A318: "A318",
   A319: "A319",
   A320: "A320",
   A321: "A321",

@@ -4453,8 +4453,8 @@ function normalizeCarrier(op: string | null): string | null {
 
 export function bodyClassOf(family: string): BodyClass {
   if (/^(A330|A350|A380|B747|B767|B777|B787)/.test(family)) return "widebody";
-  if (/^(B717|B737|B757|A319|A320|A321)/.test(family)) return "narrowbody";
-  if (/^(E175|ERJ|CRJ)/.test(family)) return "regional";
+  if (/^(B717|B737|B757|A220|A318|A319|A320|A321)/.test(family)) return "narrowbody";
+  if (/^(E170|E175|E190|ERJ|CRJ)/.test(family)) return "regional";
   return "narrowbody"; // safer default for unknowns than inflating regional
 }
 
