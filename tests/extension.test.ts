@@ -430,6 +430,22 @@ describe("Qatar claims", () => {
     expect(extLib.shouldBadge(history(0, "high"))).toBe(false);
   });
 
+  test("a swap-risk probability names the scheduled type, not 'publishes later'", () => {
+    const claim = extLib.normalizeClaim({
+      hasStarlink: null,
+      airline: "Qatar Airways",
+      probability: 0.84,
+      confidence: "high",
+      basis: "schedule",
+      n_recent_observations: 20,
+      flights: [{ tail_number: null, aircraft_type: "Boeing 777-300ER", starlink: "yes" }],
+    });
+    expect(claim.status).toBe("predicted");
+    const title = extLib.badgeTitle(claim);
+    expect(title).toContain("Boeing 777-300ER");
+    expect(title).not.toContain("publishes the actual aircraft");
+  });
+
   test("an HA payload with top-level n_recent_observations keeps its pre-2.1 claim", () => {
     const claim = extLib.normalizeClaim({
       hasStarlink: null,

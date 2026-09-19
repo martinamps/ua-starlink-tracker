@@ -58,6 +58,7 @@ import {
   FR24_OUTAGE_NOTE,
   type FlightVerdict,
   SWAP_DEGRADED_NOTE,
+  type VerdictTelemetry,
   carrierReader,
   decideCarrier,
   isPlausibleFlightNumber,
@@ -637,8 +638,8 @@ const apiRoutes: Handler = ({ req, site, reader }) => {
 };
 
 // Single product-truth metric: how often a user actually got an answer.
-type LookupOutcome = "verified_yes" | "verified_no" | "predicted" | "no_data" | "error";
-type LookupConfidence = "high" | "medium" | "low" | "none";
+type LookupOutcome = VerdictTelemetry["outcome"];
+type LookupConfidence = VerdictTelemetry["confidence"];
 function recordFlightLookup(
   endpoint: "api_check" | "api_predict" | "mcp",
   outcome: LookupOutcome,
@@ -708,7 +709,7 @@ function qatarCheckFlightResponse(verdict: QatarVerdict): Response {
       airline: cfg.name,
       confidence:
         verdict.qclass === "yes" || verdict.qclass === "no"
-          ? "verified"
+          ? "type"
           : verdict.qclass === "rolling"
             ? "rolling"
             : "mixed",

@@ -59,6 +59,7 @@ import { debug, info } from "../utils/logger";
 import {
   FR24_OUTAGE_NOTE,
   SWAP_DEGRADED_NOTE,
+  type VerdictTelemetry,
   carrierReader,
   decideCarrier,
   flightDateWindow,
@@ -558,8 +559,8 @@ function firmNoLabel(tails: string[], wifiWords: string[]): string {
   return `assigned ${uniq(tails)}, ${uniq(wifiWords.map((w) => (w === "no" ? "no WiFi" : w)))}`;
 }
 
-type LookupOutcome = "verified_yes" | "verified_no" | "predicted" | "no_data" | "error";
-type LookupConfidence = "high" | "medium" | "low" | "none";
+type LookupOutcome = VerdictTelemetry["outcome"];
+type LookupConfidence = VerdictTelemetry["confidence"];
 
 // MCP-side mirror of app.ts recordFlightLookup — same metric, endpoint=mcp,
 // so the cross-channel "did we answer the user's question" view includes /mcp.
@@ -595,7 +596,8 @@ function recordMcpPrediction(
 async function toolCheckFlight(
   hostReader: ScopedReader,
   getReader: GetReader,
-  args: { flight_number?: unknown; date?: unknown }
+  args: { flight_number?: unknown; date?: unknown },
+  opts: { undated?: boolean } = {}
 ): Promise<ToolResult> {
   const flightNumber =
     typeof args.flight_number === "string" ? canonicalFlightInput(args.flight_number) : "";
@@ -650,7 +652,7 @@ async function toolCheckFlight(
     verdict.kind === "qatar_no_data" ||
     verdict.kind === "qatar_history"
   ) {
-    return renderQatarCheckFlight(verdict, date);
+    return renderQatarCheckFlight(verdict, date, opts.undated === true);
   }
 
   const { mid, start: startOfDay, end: endOfDay } = verdict.window;
@@ -835,26 +837,30 @@ const HUB_LOOKUP_INSTRUCTION = hubLookupAirlines().some((a) => a.code === "QR")
   ? "• Qatar Airways (QR…): use check_flight at any date — it answers from the published aircraft type (~6 days) or observed-type history beyond.\n"
   : "";
 
-function renderQatarCheckFlight(verdict: QatarVerdict, date: string): ToolResult {
+function renderQatarCheckFlight(verdict: QatarVerdict, date: string, undated = false): ToolResult {
   const text = (t: string): ToolResult => ({ content: [{ type: "text", text: t }] });
   const legLine = (r: QatarLeg) =>
     `- ${r.flight_number} (${r.departure_airport ?? "?"}→${r.arrival_airport ?? "?"}) on ${qatarEquipmentName(r.equipment_code)}. Departs ${new Date(r.departure_time * 1000).toISOString()}.`;
 
   if (verdict.kind === "qatar_no_data") {
-    return text(
-      `${verdict.normalized} on ${date}: ${qatarNoDataReason(verdict)} Qatar publishes the aircraft about a week out on selected routes.`
-    );
+    return text(`${verdict.normalized} on ${date}: ${qatarNoDataReason(verdict)}`);
   }
 
   if (verdict.kind === "qatar_history") {
+    const subject = undated
+      ? `${verdict.normalized} (recent pattern; no date given)`
+      : `${verdict.normalized} on ${date}`;
     const reason = qatarHistoryReason(verdict);
-    if (verdict.probability === null) return text(`${verdict.normalized} on ${date}: ${reason}`);
+    if (verdict.mostlyRolling) return text(`**${subject}**: maybe — ${reason}`);
+    if (verdict.probability === null) return text(`${subject}: ${reason}`);
     const pct = Math.floor(verdict.probability * 100);
     const basis = `${verdict.grade} confidence, ${verdict.nDays} recent and scheduled operating days`;
+    // Same bar as the extension badge: a low grade is never "likely".
+    const likely = verdict.probability >= 0.8 && verdict.grade !== "low";
     const head =
       verdict.yesDays === 0
-        ? `**${verdict.normalized} on ${date}**: unlikely — none of its last ${verdict.nDays} operating days were on a Starlink-fitted type.`
-        : `**${verdict.normalized} on ${date}**: ${verdict.probability >= 0.8 ? "likely" : "uncertain"} — at least ${pct}% Starlink (${basis}).`;
+        ? `**${subject}**: unlikely (${basis}).`
+        : `**${subject}**: ${likely ? "likely" : "uncertain"} — at least ${pct}% Starlink (${basis}).`;
     const sched = verdict.scheduledRow ? `\n\n${legLine(verdict.scheduledRow)}` : "";
     return text(`${head} ${reason}${sched}`);
   }
@@ -1312,7 +1318,12 @@ async function toolPredictFlightStarlink(
     const given = typeof args.date === "string" ? args.date.trim() : "";
     const nowSec = Math.floor(Date.now() / 1000);
     const date = given || addDaysISO(dohDateISO(nowSec), QATAR_PUBLISHED_DAYS_FORWARD + 1);
-    return toolCheckFlight(hostReader, getReader, { flight_number: input, date });
+    return toolCheckFlight(
+      hostReader,
+      getReader,
+      { flight_number: input, date },
+      { undated: !given }
+    );
   }
   const forPredict = ensureAirlinePrefix(cfg, input);
   // Same 1-4 digit bound the check-flight core enforces — prevents agents

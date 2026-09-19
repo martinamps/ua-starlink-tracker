@@ -371,6 +371,13 @@ const StarlinkTrackerLib = (() => {
         typeof claim.nObservations === "number" && claim.nObservations > 0
           ? `${claim.nObservations} recent and scheduled operating days`
           : "recent operating days";
+      if (claim.basis === "schedule") {
+        const type = claim.aircraftType ? ` (${claim.aircraftType})` : "";
+        return (
+          `At least ~${roundPct(claim.probability)}% — scheduled on a fitted type${type}, ` +
+          `but this flight has flown other aircraft on some of its ${days}. A swap can change this.`
+        );
+      }
       return (
         `At least ~${roundPct(claim.probability)}% — based on the aircraft types on ${days} ` +
         `of this flight. ${airline} publishes the actual aircraft about a week before departure.`

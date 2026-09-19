@@ -280,7 +280,7 @@ export interface ScopedReader {
   getQatarFetchCoverage(
     pairs: ReadonlyArray<{ origin: string; destination: string }>,
     fetchDates: readonly string[]
-  ): Set<string>;
+  ): Map<string, number>;
 }
 
 const publicCodes = (): readonly AirlineCode[] => publicAirlines().map((a) => a.code);

@@ -297,6 +297,35 @@ describe("QR verdict: published schedule window", () => {
     expect(v.kind).toBe("qatar");
     if (v.kind === "qatar") expect(v.reason).toContain("DOH→ADL");
   });
+
+  test("a through-flight's later leg belongs to the day its rotation left Doha", async () => {
+    const db = makeSyntheticDb();
+    historyLeg(db, "QR914", at(1), "77W", { arr: "ADL", hourZ: "20:00", fetch: ["DOH", "AKL"] });
+    historyLeg(db, "QR914", at(2), "77W", {
+      dep: "ADL",
+      arr: "AKL",
+      hourZ: "12:00",
+      fetch: ["DOH", "AKL"],
+    });
+    const departing = await verdict(db, "QR914", at(1));
+    expect(departing.kind).toBe("qatar");
+    if (departing.kind === "qatar") {
+      expect(departing.rows.length).toBe(2);
+      expect(departing.rows[0].departure_airport).toBe("DOH");
+    }
+    expect((await verdict(db, "QR914", at(2))).kind).not.toBe("qatar");
+  });
+
+  test("REST/MCP telemetry keeps type answers apart from verified ones", async () => {
+    const db = makeSyntheticDb();
+    scheduleRow(db, "QR1", at(1), "77W");
+    scheduleRow(db, "QR3", at(1), "388");
+    const yes = verdictTelemetry(await verdict(db, "QR1", at(1)));
+    const no = verdictTelemetry(await verdict(db, "QR3", at(1)));
+    expect(yes.outcome).toBe("type_yes");
+    expect(no.outcome).toBe("type_no");
+    expect(yes.confidence).not.toBe("high");
+  });
 });
 
 describe("QR verdict: no rows inside the window", () => {
@@ -325,11 +354,45 @@ describe("QR verdict: no rows inside the window", () => {
     }
   });
 
-  test("+6 is still inside the trusted band", async () => {
+  test("+6 is only partly published → history, never not_scheduled", async () => {
     const db = seededQR1();
     recordQatarFetchCoverage(db, "DOH", "LHR", at(6), NOW);
     recordQatarFetchCoverage(db, "DOH", "LHR", at(5), NOW);
-    expect((await verdict(db, "QR1", at(6))).kind).toBe("qatar_no_data");
+    const v = await verdict(db, "QR1", at(6));
+    expect(v.kind).toBe("qatar_history");
+    if (v.kind === "qatar_history") {
+      expect(v.notFetched).toBe(true);
+      expect(v.partlyPublished).toBe(true);
+      expect(qatarHistoryReason(v)).toContain("full schedule");
+    }
+  });
+
+  function seededQR702() {
+    const db = makeSyntheticDb();
+    for (let i = 1; i <= 10; i++) {
+      historyLeg(db, "QR702", at(-i), "77W", { dep: "JFK", arr: "DOH", hourZ: "02:00" });
+    }
+    return db;
+  }
+
+  test("a +5 date last fetched while it was +6 isn't proof of absence", async () => {
+    const db = seededQR702();
+    recordQatarFetchCoverage(db, "JFK", "DOH", at(5), NOW - 86400);
+    recordQatarFetchCoverage(db, "JFK", "DOH", at(4), NOW);
+    expect((await verdict(db, "QR702", at(5))).kind).toBe("qatar_history");
+    recordQatarFetchCoverage(db, "JFK", "DOH", at(5), NOW);
+    expect((await verdict(db, "QR702", at(5))).kind).toBe("qatar_no_data");
+  });
+
+  test("a fetch just after DOH midnight doesn't cover a west-origin +5 evening", async () => {
+    const db = seededQR702();
+    // 01:00 in Doha, still the previous UTC day.
+    const now = utc("2026-09-18T22:00:00Z");
+    recordQatarFetchCoverage(db, "JFK", "DOH", at(5), now);
+    recordQatarFetchCoverage(db, "JFK", "DOH", at(4), now);
+    const v = await verdict(db, "QR702", at(5), now);
+    expect(v.kind).toBe("qatar_history");
+    if (v.kind === "qatar_history") expect(v.partlyPublished).toBe(true);
   });
 
   test("never seen on a tracked route → no data", async () => {
@@ -386,14 +449,26 @@ describe("QR verdict: observed-type history beyond the window", () => {
     }
   });
 
-  test("all 787-9 → below the badge bar", async () => {
+  test("all 787-9 → a maybe with no probability, never a confident 0%", async () => {
     const db = makeSyntheticDb();
     daily(db, "QR41", at(-19), 20, () => "789");
     const v = await verdict(db, "QR41", at(20));
     if (v.kind !== "qatar_history") throw new Error(v.kind);
-    expect(v.probability).toBeLessThan(0.8);
+    expect(v.probability).toBeNull();
+    expect(v.mostlyRolling).toBe(true);
     expect(v.rollingDays).toBe(20);
     expect(qatarHistoryReason(v)).toContain("787-9");
+    expect(qatarHistoryReason(v)).not.toContain("0 on types");
+  });
+
+  test("all A380 → probability 0 with a plain 'none fitted' reason", async () => {
+    const db = makeSyntheticDb();
+    daily(db, "QR43", at(-19), 20, () => "388");
+    const v = await verdict(db, "QR43", at(20));
+    if (v.kind !== "qatar_history") throw new Error(v.kind);
+    expect(v.probability).toBe(0);
+    expect(v.mostlyRolling).toBe(false);
+    expect(qatarHistoryReason(v)).toContain("none on a Starlink-fitted type");
   });
 
   test("30 yes + 5 787-9 of 35 days is not badgeable", async () => {
@@ -420,7 +495,7 @@ describe("QR verdict: observed-type history beyond the window", () => {
     const v = await verdict(db, "QR914", at(20));
     if (v.kind !== "qatar_history") throw new Error(v.kind);
     expect(v.nDays).toBe(14);
-    expect(v.mix.reduce((n, m) => n + m.count, 0)).toBe(28);
+    expect(v.mix.reduce((n, m) => n + m.count, 0)).toBe(v.nDays);
   });
 
   test("next season with few in-season days borrows all history, one grade down", async () => {
@@ -433,6 +508,17 @@ describe("QR verdict: observed-type history beyond the window", () => {
     expect(v.season.shifted).toBe(true);
     expect(v.grade).toBe("medium");
     expect(qatarHistoryReason(v)).toContain("2026-10-25");
+  });
+
+  test("just after a season change, borrowing the last season costs a grade", async () => {
+    const now = utc("2026-10-27T08:00:00Z");
+    const db = makeSyntheticDb();
+    for (let i = -28; i <= 2; i++) historyLeg(db, "QR54", addDaysISO("2026-10-27", i), "77W");
+    const v = await verdict(db, "QR54", "2026-11-10", now);
+    if (v.kind !== "qatar_history") throw new Error(v.kind);
+    expect(v.season.shifted).toBe(false);
+    expect(v.nDays).toBeGreaterThanOrEqual(14);
+    expect(v.grade).toBe("medium");
   });
 
   test("once the query's season has 7+ days, only that season counts", async () => {

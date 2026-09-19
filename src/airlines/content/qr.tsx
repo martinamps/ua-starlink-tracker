@@ -18,7 +18,7 @@ const QRHero = ({ stats, starlinkData }: HeroProps) => {
         <div className="text-[10px] font-mono text-muted uppercase tracking-wider">Status</div>
         <div className="font-display text-2xl text-primary mt-2">777 + A350 done</div>
         <div className="font-mono text-xs text-secondary mt-1">completed Dec 2025</div>
-        <div className="font-mono text-[10px] text-muted mt-3">787 in progress</div>
+        <div className="font-mono text-[10px] text-muted mt-3">787-8 done · 787-9 in progress</div>
       </div>
       <ModelPie data={modelData} total={starlinkCount} />
     </div>
@@ -34,15 +34,16 @@ export const content: AirlineContent = {
       <span className="text-accent font-semibold">777 + A350</span> complete
     </span>,
     <span key="787">
-      <span className="text-accent">787</span> rolling out
+      <span className="text-accent">787-9</span> rolling out
     </span>,
   ],
 
   intro: () => (
     <p className="text-sm text-secondary leading-relaxed mb-3">
       Qatar Airways has finished installing free Starlink WiFi on its entire Boeing 777 and Airbus
-      A350 passenger fleets — the rollout for both was completed in December 2025 — and is now
-      equipping the Boeing 787s. Narrowbody Airbus jets and freighters are not part of the program.
+      A350 passenger fleets — the rollout for both was completed in December 2025 — and on its
+      787-8s, and is now equipping the 787-9s. The A380, A330, narrowbody Airbus jets and freighters
+      are not part of the program.
     </p>
   ),
 

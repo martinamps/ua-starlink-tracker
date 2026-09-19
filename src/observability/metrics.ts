@@ -43,7 +43,8 @@
  *   ext_version:     1.x | 2.0 | 2.x | other | none — only when
  *                    client_class:extension                          (5)
  *   confidence:      high | medium | low | none                      (4)
- *   outcome:         verified_yes | verified_no | predicted | no_data | error  (5)
+ *   outcome:         verified_yes | verified_no | type_yes | type_no |
+ *                    predicted | no_data | error                     (7)
  *   tool:            7 MCP tool names (TOOL_NAMES) | unknown         (~8)
  *   state:           watch.feed_fetch: prediction | yes | no | swap | none  (5)
  *   surface:         watch.cta_shown: check_flight                   (1)
@@ -281,7 +282,7 @@ export const COUNTERS = {
   FLEET_CHECK_SKIPPED: "fleet.check_skipped",
 
   // User-facing flight lookup outcome — how often we actually answer the question.
-  // tags: endpoint (api_check|api_predict|mcp), outcome (verified_yes|verified_no|
+  // tags: endpoint (api_check|api_predict|mcp), outcome (verified_yes|verified_no|type_yes|type_no|
   //   predicted|no_data|error), result (mirrors outcome — DD monitors group by
   //   result), confidence (high|medium|low|none), airline,
   //   days_out (past|0..3|4_7|8_14|15_30|31_plus — only the /api/check-flight handler, non-QR)

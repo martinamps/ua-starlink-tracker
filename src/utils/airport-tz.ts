@@ -449,6 +449,20 @@ export function matchesLocalDate(
   return departureTimeSec >= fallbackStart && departureTimeSec < fallbackEnd;
 }
 
+/** First UTC instant after `date` ends locally at the airport; unmapped
+ * airports get the latest end any zone can have (UTC-12). */
+export function localDayEndSec(iata: string, date: string): number {
+  const dayStart = Date.parse(`${date}T00:00:00Z`) / 1000;
+  const latest = dayStart + 86400 + 12 * 3600;
+  if (!airportTimezone(iata)) return latest;
+  // Every zone offset is a multiple of 15 minutes.
+  for (let t = dayStart - 14 * 3600; t < latest; t += 900) {
+    const local = airportLocalDate(iata, t);
+    if (local !== null && local > date) return t;
+  }
+  return latest;
+}
+
 function lastSundayISO(year: number, monthIndex: number): string {
   const last = new Date(Date.UTC(year, monthIndex + 1, 0));
   last.setUTCDate(last.getUTCDate() - last.getUTCDay());

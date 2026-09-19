@@ -28,6 +28,7 @@ import {
   iataSeasonIndex,
   iataSeasonKey,
   iataSeasonStart,
+  localDayEndSec,
   matchesLocalDate,
 } from "../utils/airport-tz";
 import { warn } from "../utils/logger";
@@ -46,6 +47,12 @@ const MIN_SUBSET_DAYS = 7;
 const MIN_PROBABILITY_DAYS = 4;
 const SWAP_RISK_NON_YES_SHARE = 0.1;
 const WILSON_Z_90 = 1.645;
+// Qatar publishes through about the end of UTC day (fetch day + 6), so the
+// +6 DOH date is only partly out: evening departures to Doha are missing.
+// An empty fetch proves absence only up to +5, and only for a local day that
+// ends inside the horizon of the fetch that recorded it.
+const TRUSTED_ABSENCE_DAYS = QATAR_PUBLISHED_DAYS_FORWARD - 1;
+const PUBLISH_HORIZON_DAYS = 6;
 
 export interface QatarLeg {
   flight_number: string;
@@ -106,8 +113,11 @@ export type QatarVerdict =
       grade: QatarGrade;
       mix: QatarMixEntry[];
       season: { query: string | null; used: string; shifted: boolean; tooFar: boolean };
+      mostlyRolling: boolean;
       swapRisk?: boolean;
       notFetched?: boolean;
+      /** Fetched, but Qatar hadn't published the whole date yet. */
+      partlyPublished?: boolean;
       scheduledRow?: QatarLeg;
     };
 
@@ -182,16 +192,13 @@ export function qatarOperatingDays(rows: readonly HistoryInput[]): Chain[] {
       }
     }
     const klass = qatarEquipmentClass(leg.equipment_code);
+    const flown = FLOWN_STATUSES.has((leg.flight_status ?? "").toUpperCase());
     if (joined) {
       joined.legs.push(leg);
       if (CLASS_RANK[klass] > CLASS_RANK[joined.klass]) joined.klass = klass;
+      joined.flown ||= flown;
     } else {
-      chains.push({
-        legs: [leg],
-        klass,
-        serviceDate: leg.service_date,
-        flown: FLOWN_STATUSES.has((leg.flight_status ?? "").toUpperCase()),
-      });
+      chains.push({ legs: [leg], klass, serviceDate: leg.service_date, flown });
     }
   }
   return chains;
@@ -209,6 +216,9 @@ export interface QatarHistoryStats {
   grade: QatarGrade;
   mix: QatarMixEntry[];
   season: { query: string | null; used: string; shifted: boolean; tooFar: boolean };
+  /** 787-9 (installs under way) is the most common type: a maybe, so no
+   * yes-share floor is reported. */
+  mostlyRolling: boolean;
 }
 
 const GRADE_DOWN: Record<QatarGrade, QatarGrade> = { high: "medium", medium: "low", low: "low" };
@@ -216,8 +226,8 @@ const GRADE_DOWN: Record<QatarGrade, QatarGrade> = { high: "medium", medium: "lo
 /**
  * Probability that `queryDate` flies a fully fitted type, from observed
  * operating days. Airlines re-plan equipment per IATA season, so the query's
- * own season is used alone once it has enough days; the next season borrows
- * everything at one grade lower; two or more seasons out is not observable.
+ * own season is used alone once it has enough days; otherwise borrowing
+ * other seasons' days costs a grade; two or more seasons out is not observable.
  */
 export function qatarHistoryStats(
   rows: readonly HistoryInput[],
@@ -244,41 +254,53 @@ export function qatarHistoryStats(
   const count = (k: QatarClass) => used.filter((c) => c.klass === k).length;
   const nDays = used.length;
   const yesDays = count("yes");
+  const rollingDays = count("rolling");
+  const noDays = count("no");
+  const unknownDays = count("unknown");
   const nFlown = used.filter((c) => c.flown).length;
 
+  // One entry per operating day, named by the leg that set the day's class,
+  // so the counts add up to nDays.
   const mixMap = new Map<string, QatarMixEntry>();
   for (const c of used) {
-    for (const leg of c.legs) {
-      const key = leg.equipment_code ?? "";
-      const e = mixMap.get(key);
-      if (e) e.count++;
-      else {
-        mixMap.set(key, {
-          equipment_code: leg.equipment_code,
-          aircraft_type: qatarEquipmentName(leg.equipment_code),
-          class: qatarEquipmentClass(leg.equipment_code),
-          count: 1,
-        });
-      }
+    const leg = c.legs.find((l) => qatarEquipmentClass(l.equipment_code) === c.klass) ?? c.legs[0];
+    const code = leg.equipment_code;
+    const e = mixMap.get(code ?? "");
+    if (e) e.count++;
+    else {
+      mixMap.set(code ?? "", {
+        equipment_code: code,
+        aircraft_type: qatarEquipmentName(code),
+        class: qatarEquipmentClass(code),
+        count: 1,
+      });
     }
   }
 
   let grade: QatarGrade = nDays >= 14 ? "high" : nDays >= MIN_SUBSET_DAYS ? "medium" : "low";
-  if (season.shifted) grade = GRADE_DOWN[grade];
+  const borrowsOtherSeasons =
+    used === all && qs !== null && all.some((c) => iataSeasonKey(c.serviceDate) !== qs);
+  if (season.shifted || borrowsOtherSeasons) grade = GRADE_DOWN[grade];
+
+  const mostlyRolling =
+    rollingDays > 0 && rollingDays >= yesDays && rollingDays >= noDays + unknownDays;
 
   return {
     nDays,
     nFlown,
     nScheduled: nDays - nFlown,
     yesDays,
-    rollingDays: count("rolling"),
-    noDays: count("no"),
-    unknownDays: count("unknown"),
+    rollingDays,
+    noDays,
+    unknownDays,
     probability:
-      !season.tooFar && nDays >= MIN_PROBABILITY_DAYS ? wilsonLowerBound(yesDays, nDays) : null,
+      !season.tooFar && !mostlyRolling && nDays >= MIN_PROBABILITY_DAYS
+        ? wilsonLowerBound(yesDays, nDays)
+        : null,
     grade,
     mix: [...mixMap.values()].sort((a, b) => b.count - a.count),
     season,
+    mostlyRolling,
   };
 }
 
@@ -318,42 +340,56 @@ function toLeg(r: QatarHistoryRow | QatarScheduleRow): QatarLeg | null {
 const legKey = (r: { departure_airport: string | null; departure_time: number | null }) =>
   `${r.departure_airport ?? ""}|${r.departure_time}`;
 
-/** Live rows for the queried local date: history ∪ schedule, history
- * preferred (it knows staleness; schedule's UNIQUE(fn, date) keeps one leg of
- * a through-flight), and a schedule row whose history twin went stale is a
- * phantom too. */
+/** Live legs of the operating day(s) that START on the queried local date:
+ * history ∪ schedule, history preferred (it knows staleness; schedule's
+ * UNIQUE(fn, date) keeps one leg of a through-flight), and a schedule row
+ * whose history twin went stale is a phantom too. A through-flight's later
+ * leg that departs on the date but belongs to the previous day's rotation is
+ * dropped: it answers a different departure. */
 function liveLegs(
   reader: ScopedReader,
   variants: string[],
   date: string,
   window: FlightDateWindow
 ): QatarLeg[] {
-  const onDate = (r: { departure_airport: string | null; departure_time: number | null }) =>
-    r.departure_time !== null &&
+  const onDate = (r: { departure_airport: string | null; departure_time: number }) =>
     matchesLocalDate(date, r.departure_airport ?? "", r.departure_time, window.start, window.end);
+  const from = window.queryStart - 86400;
+  const to = window.queryEnd + 86400;
 
   const byKey = new Map<string, QatarLeg>();
   const stale = new Set<string>();
-  for (const h of reader.getQatarEquipmentHistoryByWindow(
-    variants,
-    window.queryStart,
-    window.queryEnd
-  )) {
-    if (!onDate(h)) continue;
+  for (const h of reader.getQatarEquipmentHistoryByWindow(variants, from, to)) {
     if (h.stale_at !== null) stale.add(legKey(h));
     else {
       const leg = toLeg(h);
       if (leg) byKey.set(legKey(h), leg);
     }
   }
-  for (const s of reader.getQatarScheduleByFlight(variants, window.queryStart, window.queryEnd)) {
-    if (!onDate(s)) continue;
+  for (const s of reader.getQatarScheduleByFlight(variants, from, to)) {
     const k = legKey(s);
     if (stale.has(k) || byKey.has(k)) continue;
     const leg = toLeg(s);
     if (leg) byKey.set(k, leg);
   }
-  return [...byKey.values()].sort((a, b) => a.departure_time - b.departure_time);
+
+  const legs = [...byKey.values()].sort((a, b) => a.departure_time - b.departure_time);
+  const out: QatarLeg[] = [];
+  let chain: QatarLeg[] = [];
+  const flush = () => {
+    if (chain.length > 0 && onDate(chain[0])) out.push(...chain);
+    chain = [];
+  };
+  for (const leg of legs) {
+    const last = chain[chain.length - 1];
+    const gap = last ? leg.departure_time - last.departure_time : 0;
+    if (!last || last.arrival_airport !== leg.departure_airport || gap <= 0 || gap >= 86400) {
+      flush();
+    }
+    chain.push(leg);
+  }
+  flush();
+  return out;
 }
 
 /** "its 777 fleet", "its 777 and A350 fleets" — the families of fitted rows. */
@@ -511,20 +547,30 @@ export function resolveQatarVerdict(
   if (daysOut < -1) return noData("past");
 
   let notFetched = false;
+  let partlyPublished = false;
   if (daysOut <= QATAR_PUBLISHED_DAYS_FORWARD) {
     const routes = reader.getQatarHistoryRoutes(
       variants,
       addDaysISO(today, -QATAR_HISTORY_WINDOW_DAYS)
     );
     if (routes.length === 0) return noData("not_tracked");
-    // Overnight departures can sit under the previous DOH fetch date.
-    const dates = [date, addDaysISO(date, -1)];
-    const covered = reader.getQatarFetchCoverage(routes, dates);
-    const allCovered = routes.every((r) =>
-      dates.every((d) => covered.has(`${r.origin}-${r.destination}-${d}`))
-    );
-    if (allCovered) return noData("not_scheduled");
+    // Qatar files a by-route date on the origin's local day; the previous
+    // date is required too as a margin, not because legs are known to move.
+    const prev = addDaysISO(date, -1);
+    const covered = reader.getQatarFetchCoverage(routes, [date, prev]);
+    const key = (r: { origin: string; destination: string }, d: string) =>
+      `${r.origin}-${r.destination}-${d}`;
+    const allFetched = routes.every((r) => covered.has(key(r, date)) && covered.has(key(r, prev)));
+    const fullyPublished = (r: { origin: string; destination: string }) => {
+      const fetchedAt = covered.get(key(r, date)) ?? 0;
+      const horizon = (Math.floor(fetchedAt / 86400) + PUBLISH_HORIZON_DAYS + 1) * 86400;
+      return horizon >= localDayEndSec(r.origin, date);
+    };
+    if (allFetched && daysOut <= TRUSTED_ABSENCE_DAYS && routes.every(fullyPublished)) {
+      return noData("not_scheduled");
+    }
     notFetched = true;
+    partlyPublished = allFetched;
   }
 
   const stats = history();
@@ -537,6 +583,7 @@ export function resolveQatarVerdict(
     basis: "history",
     ...stats,
     ...(notFetched ? { notFetched: true } : {}),
+    ...(partlyPublished ? { partlyPublished: true } : {}),
   };
 }
 
@@ -545,11 +592,11 @@ export function resolveQatarVerdict(
 export function qatarNoDataReason(v: Extract<QatarVerdict, { kind: "qatar_no_data" }>): string {
   switch (v.reason) {
     case "not_scheduled":
-      return `Not in Qatar's published schedule for this date on the routes we track (selected Qatar routes only). ${QATAR_FAMILY_SENTENCE}`;
+      return `Not in Qatar's published schedule for this date on the routes we track (selected Qatar routes only; Qatar publishes the aircraft about a week out). ${QATAR_FAMILY_SENTENCE}`;
     case "past":
       return `No Qatar schedule on record for ${v.normalized} on this date. ${QATAR_FAMILY_SENTENCE}`;
     default:
-      return `We haven't observed ${v.normalized} on the Qatar routes we track yet (selected routes only). ${QATAR_FAMILY_SENTENCE}`;
+      return `We haven't observed ${v.normalized} on the Qatar routes we track yet (selected Qatar routes only; Qatar publishes the aircraft about a week out). ${QATAR_FAMILY_SENTENCE}`;
   }
 }
 
@@ -557,24 +604,35 @@ const pctFloor = (p: number) => Math.floor(p * 100);
 
 export function qatarHistoryReason(v: Extract<QatarVerdict, { kind: "qatar_history" }>): string {
   const notes: string[] = [];
-  if (v.rollingDays > 0) notes.push("787-9 installs are mid-rollout.");
+  if (v.rollingDays > 0 && !v.mostlyRolling) notes.push("787-9 installs are mid-rollout.");
   const seasonStart = v.season.query ? iataSeasonStart(v.season.query) : null;
   if (v.season.shifted && seasonStart) {
     notes.push(`Schedule season changes ${seasonStart}; equipment may shift.`);
   }
-  if (v.notFetched) notes.push("Qatar hasn't been checked for this date yet.");
+  if (v.partlyPublished) notes.push("Qatar hasn't published its full schedule for this date yet.");
+  else if (v.notFetched) notes.push("Qatar hasn't been checked for this date yet.");
   const tail = notes.length ? ` ${notes.join(" ")}` : "";
 
   if (v.season.tooFar) {
     return `More than a schedule season ahead; Qatar's equipment plans aren't observable yet. ${QATAR_FAMILY_SENTENCE}`;
   }
+  const mix = qatarMixSentence(v.mix);
+  const lastDays = `${v.normalized} over its last ${v.nDays} operating day${v.nDays === 1 ? "" : "s"} (flown and scheduled): ${mix}`;
+  if (v.mostlyRolling) {
+    const lead = v.scheduledRow
+      ? `Scheduled ${qatarEquipmentName(v.scheduledRow.equipment_code)} (Starlink-fitted type), but`
+      : "Qatar publishes the aircraft about a week ahead.";
+    return `${lead} ${lastDays} — mostly 787-9. ${QATAR_ROLLING_NOTE}${tail}`;
+  }
   if (v.swapRisk && v.scheduledRow && v.probability !== null) {
     return `Scheduled ${qatarEquipmentName(v.scheduledRow.equipment_code)} (Starlink-fitted type), but ${v.normalized} has flown other aircraft on ${v.nDays - v.yesDays} of its last ${v.nDays} operating days; at least ${pctFloor(v.probability)}% chance it stays on a fitted type.${tail}`;
   }
-  const mix = qatarMixSentence(v.mix);
   if (v.probability === null) {
-    return `Qatar publishes the aircraft about a week ahead. ${v.normalized} over its last ${v.nDays} operating day${v.nDays === 1 ? "" : "s"} (flown and scheduled): ${mix} — too few to estimate yet.${tail}`;
+    return `Qatar publishes the aircraft about a week ahead. ${lastDays} — too few to estimate yet.${tail}`;
+  }
+  if (v.yesDays === 0) {
+    return `Qatar publishes the aircraft about a week ahead. ${lastDays} — none on a Starlink-fitted type.${tail}`;
   }
   const pct = pctFloor(v.probability);
-  return `Qatar publishes the aircraft about a week ahead. ${v.normalized} over its last ${v.nDays} operating days (flown and scheduled): ${mix} — ${v.yesDays} on types Qatar reports fully fitted with Starlink${pct > 0 ? ` (at least ${pct}%)` : ""}.${tail}`;
+  return `Qatar publishes the aircraft about a week ahead. ${lastDays} — ${v.yesDays} on types Qatar reports fully fitted with Starlink${pct > 0 ? ` (at least ${pct}%)` : ""}.${tail}`;
 }

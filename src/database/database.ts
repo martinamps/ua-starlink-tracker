@@ -5692,26 +5692,32 @@ export function getQatarHistoryRoutes(
     .all(...variants, sinceDate) as Array<{ origin: string; destination: string }>;
 }
 
-/** "ORIGIN-DEST-DATE" keys of the successful fetches among the given ones. */
+/** "ORIGIN-DEST-DATE" → latest fetched_at, for the successful fetches among
+ * the given ones. */
 export function getQatarFetchCoverage(
   db: Database,
   pairs: ReadonlyArray<{ origin: string; destination: string }>,
   fetchDates: readonly string[]
-): Set<string> {
-  const out = new Set<string>();
+): Map<string, number> {
+  const out = new Map<string, number>();
   if (pairs.length === 0 || fetchDates.length === 0 || !hasTable(db, "qatar_fetch_coverage")) {
     return out;
   }
   const rows = db
     .query(
-      `SELECT origin, destination, fetch_date FROM qatar_fetch_coverage
+      `SELECT origin, destination, fetch_date, fetched_at FROM qatar_fetch_coverage
        WHERE fetch_date IN (${variantPlaceholders(fetchDates)})`
     )
-    .all(...fetchDates) as Array<{ origin: string; destination: string; fetch_date: string }>;
+    .all(...fetchDates) as Array<{
+    origin: string;
+    destination: string;
+    fetch_date: string;
+    fetched_at: number;
+  }>;
   const wanted = new Set(pairs.map((p) => `${p.origin}-${p.destination}`));
   for (const r of rows) {
     if (wanted.has(`${r.origin}-${r.destination}`)) {
-      out.add(`${r.origin}-${r.destination}-${r.fetch_date}`);
+      out.set(`${r.origin}-${r.destination}-${r.fetch_date}`, r.fetched_at);
     }
   }
   return out;

@@ -218,7 +218,16 @@ export function verdictConfidence(
 }
 
 export interface VerdictTelemetry {
-  outcome: "verified_yes" | "verified_no" | "predicted" | "no_data" | "error";
+  /** type_yes/type_no: answered from a scheduled aircraft TYPE (QR), kept
+   * apart from tail-verified answers. */
+  outcome:
+    | "verified_yes"
+    | "verified_no"
+    | "type_yes"
+    | "type_no"
+    | "predicted"
+    | "no_data"
+    | "error";
   confidence: "high" | "medium" | "low" | "none";
 }
 
@@ -253,8 +262,8 @@ export function verdictTelemetry(
     case "qatar_no_data":
       return { outcome: "no_data", confidence: "none" };
     case "qatar":
-      if (verdict.qclass === "yes") return { outcome: "verified_yes", confidence: "high" };
-      if (verdict.qclass === "no") return { outcome: "verified_no", confidence: "high" };
+      if (verdict.qclass === "yes") return { outcome: "type_yes", confidence: "medium" };
+      if (verdict.qclass === "no") return { outcome: "type_no", confidence: "medium" };
       if (verdict.qclass === "cancelled") return { outcome: "no_data", confidence: "none" };
       return { outcome: "predicted", confidence: "low" };
     case "qatar_history":
