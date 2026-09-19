@@ -93,11 +93,17 @@ describe("http.request airline tag", () => {
 });
 
 describe("permalink-only readers", () => {
-  test("no MCP tool reads getFlightRoutePairs or flightNumberHasData", () => {
+  // One sanctioned reader: lookupFlightRoutes' L4 stale fallback, which wants
+  // the tenant-scoped pairs (never Alaska's OO rows on a UA answer) and marks
+  // the result stale. Any other API/MCP use needs a deliberate exemption here.
+  const ROUTE_PAIR_READERS: Record<string, number> = { "mcp-server.ts": 1 };
+
+  test("only sanctioned API readers use getFlightRoutePairs; none use flightNumberHasData", () => {
     const apiDir = join(import.meta.dir, "..", "src", "api");
     for (const f of readdirSync(apiDir).filter((n) => /\.tsx?$/.test(n))) {
       const src = readFileSync(join(apiDir, f), "utf8");
-      expect(src.includes("getFlightRoutePairs"), f).toBe(false);
+      const pairReads = src.split("getFlightRoutePairs").length - 1;
+      expect(pairReads, f).toBe(ROUTE_PAIR_READERS[f] ?? 0);
       expect(src.includes("flightNumberHasData"), f).toBe(false);
     }
   });
