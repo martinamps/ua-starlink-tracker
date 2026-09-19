@@ -5,6 +5,8 @@
  * shared families, Hawaiian for A330/B717, Qatar for A380).
  */
 
+import { normalizeAircraftType } from "../airlines/aircraft-families";
+
 export interface AircraftSpec {
   seats: number | string;
   wingspan_ft: number | string;
@@ -288,4 +290,40 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
     engines: "2× GE CF34-8C",
     fun_fact: "The first small jet where your carry-on might actually fit in the overhead bin.",
   },
+};
+
+/**
+ * Live TV on the seatback (United + DISH, Sept 2026) needs a Starlink jet AND
+ * a seatback screen, and we hold no per-tail screen data. So this is a
+ * type-level hedge, never a promise: the newer mainline types are built around
+ * seatback screens, some older 737-800/-900 cabins lack them, and United
+ * Express regional jets have none. Unlisted mainline types stay "possible"
+ * rather than "no" — absence of data is not a verified negative.
+ */
+export type SeatbackLiveTv = "likely" | "possible" | "no";
+
+export const SEATBACK_LIVE_TV_LIKELY_FAMILIES: readonly string[] = [
+  "A321",
+  "B737-MAX8",
+  "B737-MAX9",
+  "B737-MAX10",
+  "B777",
+  "B787",
+];
+
+export function seatbackLiveTv(
+  fleet: string | null | undefined,
+  aircraftType: string | null | undefined
+): SeatbackLiveTv {
+  if (fleet !== "mainline") return "no";
+  return SEATBACK_LIVE_TV_LIKELY_FAMILIES.includes(normalizeAircraftType(aircraftType))
+    ? "likely"
+    : "possible";
+}
+
+export const SEATBACK_LIVE_TV_COPY: Record<SeatbackLiveTv, string> = {
+  likely: "Live TV on the seatback screen: likely — this aircraft type has seatback screens.",
+  possible:
+    "Live TV on the seatback screen: possible — some older cabins of this type have no seatback screen.",
+  no: "Live TV on the seatback screen: no — United Express jets have no seatback screens, so stream on your own device.",
 };

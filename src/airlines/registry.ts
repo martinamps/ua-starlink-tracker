@@ -96,6 +96,9 @@ export interface SiteFeatures {
    * the whole DateFound history is bulk-settled (QR): with no organic series
    * the page could only abstain. */
   installRatePage: boolean;
+  /** /live-tv — which planes carry the United/DISH live TV on seatback
+   * screens. A UA-only product tie-in, so it is off everywhere else. */
+  liveTvPage: boolean;
 }
 
 export interface SiteConfig {
@@ -784,6 +787,7 @@ const AIRLINE_SITE_FEATURES: SiteFeatures = {
   newlyEquippedPage: true,
   embedPage: true,
   installRatePage: true,
+  liveTvPage: false,
 };
 
 export const SITES: Record<string, SiteConfig> = {
@@ -806,6 +810,7 @@ export const SITES: Record<string, SiteConfig> = {
       methodologyPage: true,
       timelinePage: true,
       intentPages: true,
+      liveTvPage: true,
     },
   },
   airline: {
@@ -836,6 +841,7 @@ export const SITES: Record<string, SiteConfig> = {
       newlyEquippedPage: true,
       embedPage: true,
       installRatePage: true,
+      liveTvPage: false,
     },
   },
   hawaiian: {

@@ -127,6 +127,15 @@ export default function IsStarlinkFreePage({
               .
             </p>
           )}
+          {site.features.liveTvPage && (
+            <p className="text-sm text-muted leading-relaxed mt-3">
+              After live TV or football on the seatback screen? That needs more than Starlink —{" "}
+              <a href="/live-tv" className="text-accent hover:underline">
+                see which planes have it
+              </a>
+              .
+            </p>
+          )}
         </section>
 
         <div className="text-center mb-2">

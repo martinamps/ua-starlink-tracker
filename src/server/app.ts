@@ -83,6 +83,7 @@ import CheckFlightPage, {
   type FlightFacts,
   type InvalidFlightQuery,
 } from "../components/check-flight-page";
+import type { CiteStat } from "../components/cite-this";
 import ComparePage, { type CompareSide } from "../components/compare-page";
 import EmbedPage from "../components/embed-page";
 import FleetPage from "../components/fleet-page";
@@ -92,6 +93,7 @@ import IsStarlinkFreePage, {
   freeAccessAnswer,
   hasFreeAnswer,
 } from "../components/is-starlink-free-page";
+import LiveTvPage, { liveTvTypeRows } from "../components/live-tv-page";
 import McpPage from "../components/mcp-page";
 import MethodologyPage, { hasMethodology } from "../components/methodology-page";
 import NewlyEquippedPage from "../components/newly-equipped-page";
@@ -1478,6 +1480,15 @@ const SITE_PAGES: SitePage[] = [
       `- [Is Starlink free?](https://${h}/is-starlink-free) — pricing, sign-in fine print, and speeds`,
   },
   { path: "/mcp", feature: "mcpPage", changefreq: "monthly", priority: "0.6" },
+  {
+    path: "/live-tv",
+    feature: "liveTvPage",
+    changefreq: "daily",
+    priority: "0.6",
+    navLabel: "Live TV & football",
+    llmsLine: (h) =>
+      `- [Live TV & football](https://${h}/live-tv) — which United planes can show DISH live TV on seatback screens`,
+  },
 ];
 
 function sitePages(ctx: RequestContext): SitePage[] {
@@ -1550,7 +1561,10 @@ const robotsTxt: Handler = ({ site }) => {
   // Google Dataset Search drops — and flags — a distribution robots blocks, so
   // this one path is carved out of the /api/ Disallow. Longest-match wins, so
   // the carve-out holds regardless of directive order.
-  const allows = ["/", ...(site.features.methodologyPage ? ["/api/data"] : [])];
+  const allows = [
+    "/",
+    ...(site.features.methodologyPage ? ["/api/data", STARLINK_TAILS_CSV_PATH] : []),
+  ];
   // One `*` block covers everyone; named blocks welcoming AI crawlers
   // (GPTBot/ClaudeBot/PerplexityBot) are a deliberate option if rules diverge.
   return new Response(
@@ -2138,7 +2152,10 @@ const installRatePage: Handler = (ctx) => {
         ogDescription:
           "Every tracked airline's observed Starlink install pace vs. its stated targets.",
       };
-  return renderSubPage(ctx, InstallRatePage, "/install-rate", meta, { airlines });
+  return renderSubPage(ctx, InstallRatePage, "/install-rate", meta, {
+    airlines,
+    cite: citeStat(ctx),
+  });
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2875,6 +2892,7 @@ const fleetPage: Handler = (ctx) => {
     {
       data,
       shareCard: resolveShareCard(ctx.site.scope),
+      cite: citeStat(ctx),
     }
   );
 };
@@ -2913,6 +2931,11 @@ const methodologyPage: Handler = (ctx) => {
         "@type": "DataDownload",
         encodingFormat: "application/json",
         contentUrl: `https://${host}/api/data`,
+      },
+      {
+        "@type": "DataDownload",
+        encodingFormat: "text/csv",
+        contentUrl: `https://${host}${STARLINK_TAILS_CSV_PATH}`,
       },
     ],
     ...(citations.length > 0 ? { citation: citations } : {}),
@@ -3041,6 +3064,71 @@ const isStarlinkFreePage: Handler = (ctx) => {
     {
       starlinkCount: ctx.reader.getStarlinkPlanes().length,
       totalCount: ctx.reader.getTotalCount(),
+    }
+  );
+};
+
+/** The second distribution the /methodology Dataset declares. Outside /api/
+ * so the robots Disallow never shadows it. */
+export const STARLINK_TAILS_CSV_PATH = "/data/starlink-tails.csv";
+
+const CSV_COLUMNS = ["TailNumber", "Aircraft", "fleet", "OperatedBy", "DateFound"] as const;
+
+function csvField(value: string | null): string {
+  const v = value ?? "";
+  return /[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+}
+
+/** Equipped tails as CSV, straight from the DB (never a live scrape). Same
+ * gate as the Dataset that advertises it: airline sites with /methodology. */
+const starlinkTailsCsv: Handler = (ctx) => {
+  if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
+  if (ctx.tenant === "ALL" || !ctx.site.features.methodologyPage) return notFound(ctx.site);
+  const rows = ctx.reader
+    .getStarlinkPlanes()
+    .map((p) => CSV_COLUMNS.map((c) => csvField(p[c])).join(","));
+  return new Response(`${[CSV_COLUMNS.join(","), ...rows].join("\r\n")}\r\n`, {
+    headers: {
+      "Content-Type": "text/csv; charset=utf-8",
+      "Cache-Control": "public, max-age=3600",
+    },
+  });
+};
+
+/** The homepage headline's numbers, for the "Cite this" line; null on the hub. */
+function citeStat(ctx: RequestContext): CiteStat | null {
+  if (ctx.tenant === "ALL") return null;
+  return {
+    starlink: ctx.reader.countStarlinkPlanes(),
+    total: ctx.reader.getTotalCount(),
+    // Raw, never the now() fallback: an unstamped fleet cites no date at all.
+    lastUpdated: ctx.reader.getLastUpdatedRaw() ?? undefined,
+  };
+}
+
+const liveTvPage: Handler = (ctx) => {
+  if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
+  if (!ctx.site.features.liveTvPage) return notFound(ctx.site);
+  const mainline = ctx.reader.getFleetStats()?.mainline;
+  return renderSubPage(
+    ctx,
+    LiveTvPage,
+    "/live-tv",
+    {
+      siteTitle: "Live TV & Football on United Flights: Which Planes Have It",
+      siteDescription:
+        "United's DISH live TV and football need a Starlink mainline jet with a seatback screen. See which aircraft types likely have it and check your flight.",
+      keywords:
+        "united live tv, united live football, united dish live tv, united nfl inflight, united seatback live tv, united starlink tv",
+      ogTitle: "Live TV & Football on United Flights",
+      ogDescription:
+        "Which United planes can show DISH live TV and football on the seatback — and why United Express can't.",
+      ogType: "article",
+    },
+    {
+      mainlineStarlink: mainline?.starlink ?? 0,
+      mainlineTotal: mainline?.total ?? 0,
+      byType: liveTvTypeRows(ctx.reader.getStarlinkPlanes()),
     }
   );
 };
@@ -3576,6 +3664,8 @@ export function createApp(db: Database): App {
     "/timeline": timelinePage,
     "/how-to-check": howToCheckPage,
     "/is-starlink-free": isStarlinkFreePage,
+    "/live-tv": liveTvPage,
+    "/data/starlink-tails.csv": starlinkTailsCsv,
     "/airlines": airlinesIndexPage,
     "/compare": comparePage,
     "/newly-equipped": newlyEquippedPage,
@@ -3774,21 +3864,33 @@ export function createApp(db: Database): App {
         // strings can hold caller-supplied values and this tag is high-volume.
         span.setTag("http.url", url.pathname);
 
-        const response = m ? await m.handler(ctx) : notFound(site);
-
-        span.setTag("http.status_code", response.status);
-        // Emitted for unmatched paths too. Gating this on `m` hid every 404 on a
-        // path that matched no route — measured at ~82% of all 404s, i.e. a 5.4x
-        // undercount — from every metric-backed dashboard and monitor. `route`
-        // stays a bounded allowlist: unmatched collapses to "/*".
-        metrics.increment(COUNTERS.HTTP_REQUEST, {
-          method: req.method,
-          route: metricRoute(m),
-          status_code: response.status,
-          tenant: tenantScope(tenant),
-          client_class: classifyUserAgent(ua),
-        });
-        return response;
+        // A throw leaves as dispatch()'s finalized 500, so that is the status
+        // counted. Counting only after a successful await made every handler
+        // crash invisible to the status_code:5* monitor on this metric.
+        let status = 500;
+        try {
+          const response = m ? await m.handler(ctx) : notFound(site);
+          status = response.status;
+          span.setTag("http.status_code", status);
+          return response;
+        } catch (err) {
+          // withSpan tags the error itself; rethrow so dispatch() still builds
+          // the CORS-carrying 500 body.
+          span.setTag("http.status_code", 500);
+          throw err;
+        } finally {
+          // Emitted for unmatched paths too. Gating this on `m` hid every 404 on
+          // a path that matched no route — measured at ~82% of all 404s, i.e. a
+          // 5.4x undercount — from every metric-backed dashboard and monitor.
+          // `route` stays a bounded allowlist: unmatched collapses to "/*".
+          metrics.increment(COUNTERS.HTTP_REQUEST, {
+            method: req.method,
+            route: metricRoute(m),
+            status_code: status,
+            tenant: tenantScope(tenant),
+            client_class: classifyUserAgent(ua),
+          });
+        }
       },
       { "span.type": "web" }
     );

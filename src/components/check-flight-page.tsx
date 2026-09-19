@@ -1,6 +1,8 @@
 import React from "react";
+import { aircraftFamilyPatterns } from "../airlines/aircraft-families";
 import { type SiteConfig, siteAirline } from "../airlines/registry";
 import type { PopularFlight } from "../database/database";
+import { SEATBACK_LIVE_TV_COPY, SEATBACK_LIVE_TV_LIKELY_FAMILIES } from "../utils/aircraft-specs";
 import { PopularFlightsLinks } from "./atoms";
 
 export interface FlightRouteFact {
@@ -287,6 +289,13 @@ export default function CheckFlightPage({
   const flightExample = flight?.flightNumber ?? `${cfg.iata}123`;
   const shortName = cfg.shortName;
   const showChromeExtension = site.features.chromeExtension;
+  const liveTvRules = site.features.liveTvPage
+    ? {
+        patterns: aircraftFamilyPatterns(),
+        likely: SEATBACK_LIVE_TV_LIKELY_FAMILIES,
+        copy: SEATBACK_LIVE_TV_COPY,
+      }
+    : null;
   const accuracyCopy =
     cfg.verifierBackend === "united"
       ? "We verify Starlink status against united.com and cross-reference with flight schedules from aviation data providers."
@@ -623,6 +632,21 @@ export default function CheckFlightPage({
           var resultDiv = document.getElementById('flight-result');
           var dateInput = document.getElementById('flight-date');
           var carrierPrefix = ${JSON.stringify(cfg.iata)};
+          var liveTv = ${JSON.stringify(liveTvRules).replace(/</g, "\\u003c")};
+          // Mirrors seatbackLiveTv() in aircraft-specs.ts, fed the server's own
+          // family patterns so the two classifiers cannot drift apart.
+          var liveTvLine = function(flight, esc) {
+            if (!liveTv) return '';
+            var tier = 'no';
+            if (flight.fleet_type === 'mainline') {
+              var family = 'other';
+              for (var i = 0; i < liveTv.patterns.length; i++) {
+                if (new RegExp(liveTv.patterns[i][0], liveTv.patterns[i][1]).test(flight.aircraft_type || '')) { family = liveTv.patterns[i][2]; break; }
+              }
+              tier = liveTv.likely.indexOf(family) >= 0 ? 'likely' : 'possible';
+            }
+            return '<div class="pt-2">' + esc(liveTv.copy[tier]) + ' <a href="/live-tv" class="text-accent hover:underline">Which planes have live TV →</a></div>';
+          };
 
           var pathParts = window.location.pathname.split('/').filter(Boolean);
           var urlFlight = pathParts.length >= 2 ? decodeURIComponent(pathParts[1]) : null;
@@ -684,6 +708,7 @@ export default function CheckFlightPage({
                       '<div>Departs: <span class="text-secondary">' + dateStr + ' at ' + timeStr + '</span></div>' +
                       '<div>Aircraft: <span class="text-secondary">' + (flight.tail_number || '') + aircraftInfo + '</span></div>' +
                       (flight.operated_by ? '<div>Operated by: <span class="text-secondary">' + flight.operated_by + '</span></div>' : '') +
+                      liveTvLine(flight, esc) +
                       '<div class="pt-2"><a href="' + faUrl + '" target="_blank" rel="nofollow noopener noreferrer" class="text-accent hover:underline text-xs">View on FlightAware →</a></div>' +
                       '</div></div>';
                   } else if (data.fallback && data.fallback.segments && data.fallback.segments.length > 0) {
