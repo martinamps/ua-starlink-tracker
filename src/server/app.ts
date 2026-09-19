@@ -12,7 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import React from "react";
 import ReactDOMServer from "react-dom/server";
-import { buildFaqJsonLd, getContent } from "../airlines/content";
+import { type HubHomeLinks, buildFaqJsonLd, getContent } from "../airlines/content";
 import {
   CANONICAL_FLIGHT_PERMALINK,
   buildFlightLookupVariants,
@@ -132,6 +132,7 @@ import {
   CONTENT_TYPES,
   SECURITY_HEADERS,
 } from "../utils/constants";
+import { article } from "../utils/grammar";
 import { computeInstallRate, hasInstallRateContent } from "../utils/install-rate";
 import { error as logError } from "../utils/logger";
 import { getNotFoundHtml } from "../utils/not-found";
@@ -197,6 +198,27 @@ export function renderHtml(template: string, variables: Record<string, string>):
   return template.replace(/{{(\w+)}}/g, (_, key) => variables[key] ?? "");
 }
 
+const META_DESCRIPTION_MAX = 158;
+
+/** SERPs truncate near 160 chars mid-word; cut at a word boundary instead.
+ * Descriptions reach 355 chars on route and airline pages. */
+export function clampMetaDescription(text: string, max = META_DESCRIPTION_MAX): string {
+  if (text.length <= max) return text;
+  const head = text.slice(0, max - 1);
+  const cut = head.lastIndexOf(" ");
+  const base = (cut > max / 2 ? head.slice(0, cut) : head).replace(/[\s,;:.—–-]+$/, "");
+  return `${base}…`;
+}
+
+/** Only the <meta> copies are clamped; JSON-LD and page bodies keep the full text. */
+function withClampedMeta(vars: Record<string, string>): Record<string, string> {
+  return {
+    ...vars,
+    siteDescription: clampMetaDescription(vars.siteDescription ?? ""),
+    ogDescription: clampMetaDescription(vars.ogDescription ?? ""),
+  };
+}
+
 const notFound = (site: SiteConfig): Response =>
   new Response(getNotFoundHtml(site.brand), { status: 404, headers: SECURITY_HEADERS.notFound });
 
@@ -251,7 +273,7 @@ function chromeExtensionJsonLd(site: SiteConfig): string {
   return jsonLdBlock({
     "@context": "https://schema.org",
     "@type": "SoftwareApplication",
-    name: "United Starlink Checker for Google Flights",
+    name: "Google Flights Starlink Indicator",
     operatingSystem: "Chrome",
     applicationCategory: "BrowserApplication",
     description:
@@ -479,9 +501,18 @@ const FAVICON_ROUTES: Record<string, { suffix: string; type: string }> = {
   "/android-chrome-192x192.png": { suffix: "-192.png", type: "image/png" },
   "/android-chrome-512x512.png": { suffix: "-512.png", type: "image/png" },
 };
+// iOS probes sized and -precomposed spellings before (or instead of) the bare
+// name; they 404'd about 90 times a day.
+const APPLE_TOUCH_ALIAS = /^\/apple-touch-icon(-\d+x\d+)?(-precomposed)?\.png$/;
+function faviconRoute(urlPath: string): { suffix: string; type: string } | undefined {
+  return (
+    FAVICON_ROUTES[urlPath] ??
+    (APPLE_TOUCH_ALIAS.test(urlPath) ? FAVICON_ROUTES["/apple-touch-icon.png"] : undefined)
+  );
+}
 const faviconCache = new Map<string, Response>();
 function serveFavicon(tenantCode: string, urlPath: string): Response | null {
-  const route = FAVICON_ROUTES[urlPath];
+  const route = faviconRoute(urlPath);
   if (!route) return null;
   const code = (tenantCode === "ALL" ? "hub" : tenantCode).toLowerCase();
   const key = `${code}${route.suffix}`;
@@ -1302,9 +1333,9 @@ interface SitePage {
   priority: string;
   /** llms.txt "Pages" bullet; pages without one (/mcp) have their own section. */
   llmsLine?: (host: string) => string;
-  /** Footer nav label. Present only for the secondary families that nothing
-   * else links to — the primary pages already have header/hero links, and a
-   * second copy in the footer would just dilute them. */
+  /** Footer nav label. The tools and data pages carry one too: most subpages
+   * had no path to them but the homepage hero, which left /route-planner and
+   * /routes nearly unlinked from the rest of the site. */
   navLabel?: string;
   /** Bounding test for URL families that only exist when the tenant has the
    * data behind them. A feature flag says "we want this page"; this says "there
@@ -1388,6 +1419,7 @@ const SITE_PAGES: SitePage[] = [
     feature: "checkFlightPage",
     changefreq: "weekly",
     priority: "0.8",
+    navLabel: "Check a flight",
     llmsLine: (h) =>
       `- [Check a flight](https://${h}/check-flight) — flight number + date → live Starlink status`,
   },
@@ -1396,6 +1428,7 @@ const SITE_PAGES: SitePage[] = [
     feature: "routePlannerPage",
     changefreq: "weekly",
     priority: "0.8",
+    navLabel: "Route planner",
     llmsLine: (h) =>
       `- [Route planner](https://${h}/route-planner) — best Starlink routing between two cities`,
   },
@@ -1404,6 +1437,7 @@ const SITE_PAGES: SitePage[] = [
     feature: "fleetPage",
     changefreq: "daily",
     priority: "0.7",
+    navLabel: "Fleet",
     llmsLine: (h) =>
       `- [Fleet rollout](https://${h}/fleet) — every aircraft, colored by WiFi provider`,
   },
@@ -1420,6 +1454,7 @@ const SITE_PAGES: SitePage[] = [
     feature: "routesPage",
     changefreq: "hourly",
     priority: "0.7",
+    navLabel: "Live routes",
     llmsLine: (h) =>
       `- [Live routes](https://${h}/routes) — departures on Starlink-equipped aircraft by route, next 48h`,
   },
@@ -1462,6 +1497,7 @@ const SITE_PAGES: SitePage[] = [
     feature: "methodologyPage",
     changefreq: "monthly",
     priority: "0.5",
+    navLabel: "Methodology",
     llmsLine: (h) =>
       `- [Methodology](https://${h}/methodology) — how the data is gathered and verified, and how to cite it`,
   },
@@ -1470,6 +1506,7 @@ const SITE_PAGES: SitePage[] = [
     feature: "timelinePage",
     changefreq: "weekly",
     priority: "0.7",
+    navLabel: "Rollout timeline",
     llmsLine: (h) =>
       `- [Rollout timeline](https://${h}/timeline) — every dated milestone plus the airline's stated targets`,
   },
@@ -1548,6 +1585,29 @@ export function hubUrlFamilies(
  */
 export function hubAirlinePageIndexable(cfg: AirlineConfig): boolean {
   return !siteForAirline(cfg.code, true);
+}
+
+/** The hub homepage's airline grid and compare row. Built from hubUrlFamilies
+ * like the sitemap, so every link it renders is one the sitemap advertises —
+ * except carriers with a live tracker, whose noindexed hub page is skipped in
+ * favour of the brand host that ranks for them. */
+function hubHomeLinks(ctx: RequestContext): HubHomeLinks {
+  const hubUrls = hubUrlFamilies(ctx.site, ctx.getReader);
+  const tracked = hubUrls.trackedAirlines.map((cfg) => {
+    const live = siteForAirline(cfg.code, true);
+    return {
+      href: live ? `https://${live.canonicalHost}/` : `/airlines/${airlineSlug(cfg)}`,
+      label: cfg.name,
+    };
+  });
+  const facts = hubUrls.factsRoster.map((e) => ({ href: `/airlines/${e.slug}`, label: e.name }));
+  return {
+    airlines: [...tracked, ...facts],
+    compares: hubUrls.comparePairs.map(([a, b]) => ({
+      href: `/compare/${airlineSlug(a)}-vs-${airlineSlug(b)}`,
+      label: `${a.shortName} vs ${b.shortName}`,
+    })),
+  };
 }
 
 const robotsTxt: Handler = ({ site }) => {
@@ -2349,7 +2409,9 @@ function buildBaseTemplateVars(
       description: brandVars.siteDescription,
       isoDate: contentIso,
     }),
-    chromeExtensionJsonLd: chromeExtensionJsonLd(site),
+    // Only on the page that is about the extension: sitewide, an unrated
+    // SoftwareApplication on every URL was a GSC invalid-item per page.
+    chromeExtensionJsonLd: canonicalPath === "/how-to-check" ? chromeExtensionJsonLd(site) : "",
     faqJsonLd: "",
     pageJsonLd: "",
   };
@@ -2405,7 +2467,7 @@ async function renderSubPage<P extends { site: SiteConfig }>(
   });
 
   const template = await getHtmlTemplate();
-  return new Response(renderHtml(template, htmlVariables), {
+  return new Response(renderHtml(template, withClampedMeta(htmlVariables)), {
     status,
     // Keep the HTML CSP even on 404s (this page runs the inline lookup script,
     // which SECURITY_HEADERS.notFound would block) but take notFound's edge
@@ -2429,10 +2491,10 @@ function subPageMeta(
     return {
       // Tool intent — avoid soaking "united starlink tracker" brand impressions
       // (check-flight previously sat at ~2% CTR on that query at position ~1).
-      siteTitle: `Check a ${short} Flight for Starlink WiFi — Flight Number Lookup`,
-      siteDescription: `Enter ${/^[aeiou]/i.test(short) ? "an" : "a"} ${short} flight number and date for a live Starlink answer — verified near departure, with a probability estimate earlier from past assignments.`,
+      siteTitle: `Check ${article(short)} ${short} Flight for Starlink WiFi — Flight Number Lookup`,
+      siteDescription: `Enter ${article(short)} ${short} flight number and date for a live Starlink answer — verified near departure, with a probability estimate earlier from past assignments.`,
       keywords: `check ${cfg?.iata ?? "airline"} flight starlink, does my ${short.toLowerCase()} flight have starlink, ${name} flight wifi lookup, starlink flight checker`,
-      ogTitle: `Check a ${short} Flight for Starlink`,
+      ogTitle: `Check ${article(short)} ${short} Flight for Starlink`,
       ogDescription: `Flight-number lookup for ${short} Starlink WiFi — live answer by date when assignments publish.`,
     };
   if (page === "routes")
@@ -2502,8 +2564,13 @@ function parseCheckFlightPath(pathname: string): CheckFlightPath {
   }
   const fn = stripFlightNumberZeros(raw.toUpperCase());
   if (!CANONICAL_FLIGHT_PERMALINK.test(fn)) return { kind: "invalid", raw };
-  const date = second && /^\d{4}-\d{2}-\d{2}$/.test(second) ? second : null;
+  const date = second && isCalendarDate(second) ? second : null;
   return { kind: "flight", raw, fn, date };
+}
+
+function isCalendarDate(s: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s) || Number.isNaN(Date.parse(s))) return false;
+  return new Date(`${s}T00:00:00Z`).toISOString().slice(0, 10) === s;
 }
 
 /** Cap what an invalid segment can echo back into the page. React escapes it;
@@ -2681,13 +2748,15 @@ function flightPageMeta(
 function invalidFlightMeta(ctx: RequestContext, reason: InvalidFlightQuery["reason"]): PageMeta {
   const short = tenantConfig(ctx.tenant)?.shortName;
   const carrier = short ? `${short} ` : "";
-  const lead = reason === "other-carrier" ? `Not a ${carrier}Flight Number` : "Not a Flight Number";
+  const a = article(carrier || "flight");
+  const lead =
+    reason === "other-carrier" ? `Not ${a} ${carrier}Flight Number` : "Not a Flight Number";
   return {
-    siteTitle: `${lead} — Check a ${carrier}Flight for Starlink`,
-    siteDescription: `That isn't a ${carrier}flight number. Enter a flight number and date to check whether your aircraft has free Starlink WiFi.`,
+    siteTitle: `${lead} — Check ${a} ${carrier}Flight for Starlink`,
+    siteDescription: `That isn't ${a} ${carrier}flight number. Enter a flight number and date to check whether your aircraft has free Starlink WiFi.`,
     keywords: `check ${carrier.toLowerCase()}flight starlink, does my flight have starlink`,
     ogTitle: lead,
-    ogDescription: `Enter a ${carrier}flight number and date to check for Starlink WiFi.`,
+    ogDescription: `Enter ${a} ${carrier}flight number and date to check for Starlink WiFi.`,
     robotsMeta: "noindex, nofollow",
   };
 }
@@ -2744,11 +2813,14 @@ const checkFlightPage: Handler = (ctx) => {
     });
   }
   if (parsed.kind === "flight") {
-    const { raw, fn, date } = parsed;
-    if (raw !== fn) {
-      // Non-canonical spellings (ua123, UA0123) 301 home, date preserved.
+    const { fn, date } = parsed;
+    // One URL per flight (and per dated view): lowercase, zero-padded, trailing
+    // slash and junk-suffix spellings all 301 here, so the permalink space stays
+    // bounded instead of 200ing on /UA1126/anything.
+    const canonicalPath = `/check-flight/${fn}${date ? `/${date}` : ""}`;
+    if (ctx.url.pathname !== canonicalPath) {
       return Response.redirect(
-        `https://${ctx.site.canonicalHost}/check-flight/${fn}${date ? `/${date}` : ""}`,
+        `https://${ctx.site.canonicalHost}${canonicalPath}${ctx.url.search}`,
         301
       );
     }
@@ -2786,8 +2858,12 @@ const checkFlightPage: Handler = (ctx) => {
       { flight: facts }
     );
   }
-  // Bare /check-flight (with or without a trailing slash) — the generic
-  // indexable page.
+  if (ctx.url.pathname !== "/check-flight") {
+    return Response.redirect(
+      `https://${ctx.site.canonicalHost}/check-flight${ctx.url.search}`,
+      301
+    );
+  }
   return renderSubPage(ctx, CheckFlightPage, "/check-flight", subPageMeta(ctx, "check-flight"), {
     popular: ctx.reader.getPopularFlights(),
   });
@@ -2832,6 +2908,57 @@ function routePageMeta(ctx: RequestContext, cfg: AirlineConfig, route: RouteSumm
   };
 }
 
+const ROUTES_PAGE_ROWS = 60;
+const PLANNER_POPULAR_ROUTES = 60;
+// getSitemapRoutes scans flight_routes (~20ms on prod data); the link block
+// only needs to track the schedule, so it is rebuilt at most every 10 minutes.
+const PLANNER_ROUTES_TTL_MS = 10 * 60_000;
+type RoutePair = { origin: string; destination: string };
+const plannerRoutesCache = new WeakMap<
+  RequestContext["getReader"],
+  Map<string, { value: RoutePair[]; expiresAt: number }>
+>();
+
+/** Route permalinks for the bare planner: /routes' next page of rankings, so
+ * the two hubs link different pairs, topped up from the sitemap's most recently
+ * seen routes when the live window is thin. Only sitemap-eligible pairs, so
+ * every link serves 200. */
+function plannerPopularRoutes(ctx: RequestContext): RoutePair[] {
+  let perApp = plannerRoutesCache.get(ctx.getReader);
+  if (!perApp) {
+    perApp = new Map();
+    plannerRoutesCache.set(ctx.getReader, perApp);
+  }
+  const scope = tenantScope(ctx.tenant);
+  const now = Date.now();
+  const hit = perApp.get(scope);
+  if (hit && hit.expiresAt > now) return hit.value;
+
+  const sitemapRoutes = ctx.reader.getSitemapRoutes();
+  const eligible = new Set(sitemapRoutes.map((r) => `${r.origin}-${r.destination}`));
+  const ranked = ctx.reader.getRankedStarlinkRoutePairs(
+    0,
+    ROUTES_PAGE_ROWS + PLANNER_POPULAR_ROUTES
+  );
+  const onRoutesPage = new Set(
+    ctx.site.features.routesPage
+      ? ranked.slice(0, ROUTES_PAGE_ROWS).map((r) => `${r.origin}-${r.destination}`)
+      : []
+  );
+  const picked = new Map<string, RoutePair>();
+  const take = (r: RoutePair) => {
+    const key = `${r.origin}-${r.destination}`;
+    if (picked.size >= PLANNER_POPULAR_ROUTES || !eligible.has(key) || onRoutesPage.has(key))
+      return;
+    picked.set(key, { origin: r.origin, destination: r.destination });
+  };
+  for (const r of ranked.slice(ROUTES_PAGE_ROWS)) take(r);
+  for (const r of [...sitemapRoutes].sort((x, y) => y.last_touched - x.last_touched)) take(r);
+  const value = [...picked.values()];
+  perApp.set(scope, { value, expiresAt: now + PLANNER_ROUTES_TTL_MS });
+  return value;
+}
+
 const routePlannerPage: Handler = (ctx) => {
   if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
   if (!ctx.site.features.routePlannerPage) {
@@ -2864,7 +2991,15 @@ const routePlannerPage: Handler = (ctx) => {
       { route, reverseLinkable }
     );
   }
-  return renderSubPage(ctx, RoutePlannerPage, "/route-planner", subPageMeta(ctx, "route-planner"));
+  if (ctx.url.pathname !== "/route-planner") {
+    return Response.redirect(
+      `https://${ctx.site.canonicalHost}/route-planner${ctx.url.search}`,
+      301
+    );
+  }
+  return renderSubPage(ctx, RoutePlannerPage, "/route-planner", subPageMeta(ctx, "route-planner"), {
+    popularRoutes: plannerPopularRoutes(ctx),
+  });
 };
 
 // ItemList over the aircraft families the page actually groups (one block per
@@ -3050,7 +3185,7 @@ const howToCheckPage: Handler = (ctx) => {
     siteDescription: `Four steps to a real answer: enter your ${cfg.shortName} flight number and date, read the verified-vs-predicted result, and re-check before departure. Plus tail-number lookup and booking-time tricks.`,
     keywords: `how to check ${cfg.shortName.toLowerCase()} starlink, how to know if my flight has starlink, does my ${cfg.shortName.toLowerCase()} flight have starlink, check flight wifi`,
     ogTitle: `How to Check If Your ${cfg.shortName} Flight Has Starlink`,
-    ogDescription: `Flight-number check, tail-number lookup, and booking-time tools — how to tell whether a ${cfg.name} flight has free Starlink WiFi.`,
+    ogDescription: `Flight-number check, tail-number lookup, and booking-time tools — how to tell whether ${article(cfg.name)} ${cfg.name} flight has free Starlink WiFi.`,
     ogType: "article",
   });
 };
@@ -3413,6 +3548,7 @@ const homePage: Handler = async (ctx) => {
       shareCard: resolveShareCard(site.scope),
       pageLinks: pageNavLinks(ctx, "/"),
       popularFlights: site.features.checkFlightPage ? reader.getPopularFlights() : undefined,
+      hubLinks: isHub ? hubHomeLinks(ctx) : undefined,
     })
   );
 
@@ -3424,10 +3560,13 @@ const homePage: Handler = async (ctx) => {
     lastUpdated,
   });
   return new Response(
-    renderHtml(template, {
-      ...baseVars,
-      faqJsonLd: renderHtml(buildFaqJsonLd(content, baseVars.currentDate), baseVars),
-    }),
+    renderHtml(
+      template,
+      withClampedMeta({
+        ...baseVars,
+        faqJsonLd: renderHtml(buildFaqJsonLd(content, baseVars.currentDate), baseVars),
+      })
+    ),
     { headers: SECURITY_HEADERS.html }
   );
 };
@@ -3707,7 +3846,7 @@ export function createApp(db: Database): App {
 
     // Favicons and the manifest serve pre-421: browsers fetch them from any
     // alias host and unknown hosts get neutral hub assets, never a 421.
-    if (FAVICON_ROUTES[url.pathname]) {
+    if (faviconRoute(url.pathname)) {
       const fav = serveFavicon(site?.scope ?? "ALL", url.pathname);
       if (fav) return fav;
     }

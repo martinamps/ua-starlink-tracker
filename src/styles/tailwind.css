@@ -32,3 +32,30 @@
    Excluding tests keeps the output a function of what actually renders, which
    is what makes the build reproducible across machines. */
 @source not "../../tests";
+
+/* Homepage flight pills: thousands per render, so one short class instead of a
+   dozen repeated utilities. The custom colors are spelled as their variables
+   because they are index.html rules, not Tailwind utilities @apply can reach,
+   and font-family likewise matches index.html's .font-mono. */
+@layer components {
+  .flight-pill {
+    @apply items-center gap-1.5 px-2 py-1 border rounded text-xs transition-all;
+    font-family: var(--font-mono);
+    background-color: var(--color-surface-elevated);
+    border-color: var(--color-border);
+    color: var(--color-text-secondary);
+  }
+}
+
+/* Unlayered on purpose: an expanded row must beat the layered `hidden` /
+   `md:inline-flex` utilities that cap pills per breakpoint. */
+[data-expanded] > .flight-pill {
+  display: inline-flex;
+}
+.expand-flights .pill-less,
+[data-expanded] .expand-flights .pill-more {
+  display: none;
+}
+[data-expanded] .expand-flights .pill-less {
+  display: inline;
+}

@@ -1,7 +1,8 @@
 import React from "react";
 import { type SiteConfig, siteAirline } from "../airlines/registry";
 import type { PopularFlight } from "../database/database";
-import { PopularFlightsLinks } from "./atoms";
+import { article } from "../utils/grammar";
+import { type PageLink, PageNavLinks, PopularFlightsLinks } from "./atoms";
 
 export interface FlightRouteFact {
   departure_airport: string;
@@ -59,25 +60,35 @@ interface CheckFlightPageProps {
   /** Rendered on the generic (non-permalink) page only — permalinks link
    * laterally via siblings instead. */
   popular?: PopularFlight[];
+  pageLinks?: PageLink[];
 }
 
-const fmtDay = (sec: number) =>
-  new Date(sec * 1000).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    timeZone: "UTC",
-  });
+// Module-level formatters: constructing a locale formatter per call
+// (toLocale*String with options) dominated SSR time on list-heavy pages.
+const DAY_UTC = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+  timeZone: "UTC",
+});
+const MONTH_DAY_UTC = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  day: "numeric",
+  timeZone: "UTC",
+});
+const HHMM_UTC = new Intl.DateTimeFormat("en-US", {
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+  timeZone: "UTC",
+});
 
-const fmtDeparture = (sec: number) =>
-  `${new Date(sec * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })} · ${new Date(
-    sec * 1000
-  ).toLocaleTimeString("en-US", {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-    timeZone: "UTC",
-  })} UTC`;
+const fmtDay = (sec: number) => DAY_UTC.format(new Date(sec * 1000));
+
+const fmtDeparture = (sec: number) => {
+  const d = new Date(sec * 1000);
+  return `${MONTH_DAY_UTC.format(d)} · ${HHMM_UTC.format(d)} UTC`;
+};
 
 // Round total minutes BEFORE splitting into h/m — rounding the remainder
 // alone renders 2h59m30s as "2h 60m".
@@ -266,7 +277,7 @@ function InvalidQueryNotice({
     <div className="bg-surface-elevated border border-subtle rounded p-4 mb-4">
       <p className="text-sm text-secondary">
         {invalid.reason === "other-carrier"
-          ? `${quoted} isn't a ${shortName} flight number — this tracker only covers ${shortName} flights.`
+          ? `${quoted} isn't ${article(shortName)} ${shortName} flight number — this tracker only covers ${shortName} flights.`
           : `${quoted} isn't a flight number.`}
       </p>
       <p className="text-sm text-muted mt-1">
@@ -291,6 +302,7 @@ export default function CheckFlightPage({
   flight,
   invalid,
   popular = [],
+  pageLinks,
 }: CheckFlightPageProps) {
   const cfg = siteAirline(site);
   const airlineName = flight?.airlineName ?? cfg.name;
@@ -329,7 +341,7 @@ export default function CheckFlightPage({
         </a>
         <p className="text-base text-secondary font-display">
           {invalid
-            ? `Enter a ${shortName} flight number below to check for Starlink`
+            ? `Enter ${article(shortName)} ${shortName} flight number below to check for Starlink`
             : flight
               ? flightSummary(flight)
               : "Enter your flight number and date to see if your aircraft has free Starlink internet"}
@@ -560,6 +572,7 @@ export default function CheckFlightPage({
           </svg>
           by @martinamps
         </a>
+        <PageNavLinks links={pageLinks} />
       </footer>
 
       <script
