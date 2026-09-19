@@ -342,7 +342,7 @@ describe("badging policy", () => {
     );
     const title = extLib.badgeTitle({ ...predicted(0.876), nObservations: 3 });
     expect(title).toContain("~88%");
-    expect(title).toContain("3 recent departures");
+    expect(title).toContain("3 observed departures");
     expect(extLib.badgeClass(predicted(0.9))).toContain("starlink-wifi-badge--predicted");
   });
 
@@ -448,5 +448,201 @@ describe("extension normalizer against live handler responses", () => {
     for (const body of bodies) {
       expect(CLAIM_STATUSES).toContain(extLib.normalizeClaim(body).status);
     }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// v2.0.1: mixed carriers, pass scheduling, client tag, release guardrails
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("mixed-carrier itineraries fail closed", () => {
+  const tim = (itinerary: string) => `https://travelimpactmodel.org/lookup/flight?${itinerary}`;
+
+  test("an untracked leg is counted, so the card can refuse to badge", () => {
+    const card = extLib.timCardSegments([
+      tim("itinerary=SFO-SEA-AS-3490-20260920,SEA-ORD-AS-1478-20260920,ORD-MSN-AA-4217-20260920"),
+    ]);
+    expect(card.parsed).toBe(true);
+    expect(card.segments).toHaveLength(2);
+    expect(card.untrackedLegs).toBe(1);
+  });
+
+  test("an all-tracked itinerary reports zero untracked legs", () => {
+    const card = extLib.timCardSegments([
+      tim("itinerary=SFO,DEN,UA,500,20260601,DEN,EWR,UA,1500,20260601"),
+    ]);
+    expect(card.untrackedLegs).toBe(0);
+    expect(card.segments).toHaveLength(2);
+  });
+
+  test("a foreign leg repeated across TIM URLs is counted once", () => {
+    const url = tim("itinerary=SFO,ORD,UA,1,20260601,ORD,FRA,LH,431,20260601");
+    const card = extLib.timCardSegments([url, url, tim("itinerary=ORD,FRA,LH,431,20260601")]);
+    expect(card.untrackedLegs).toBe(1);
+  });
+
+  test("the claim a dropped leg stands in for never badges", () => {
+    const verified = { ...extLib.unknownClaim(), status: "verified" };
+    expect(
+      extLib.shouldBadge(extLib.combineClaims([verified, verified, extLib.unknownClaim()]))
+    ).toBe(false);
+  });
+});
+
+describe("claim lookup and pass scheduling", () => {
+  const tick = () => new Promise((r) => setTimeout(r, 0));
+  type Runner = {
+    trigger: () => Promise<void>;
+    isRunning: () => boolean;
+    requestRerun: () => void;
+  };
+
+  function manualRunner(pass: () => Promise<unknown>) {
+    const queued: Array<() => Promise<void>> = [];
+    const runner: Runner = extLib.createPassRunner(pass, {
+      schedule: (fn: () => Promise<void>) => queued.push(fn),
+    });
+    const drain = async () => {
+      while (queued.length) await (queued.shift() as () => Promise<void>)();
+    };
+    return { runner, drain };
+  }
+
+  test("two cards with the same flight in one pooled pass send one message", async () => {
+    const sent: unknown[] = [];
+    const lookup = extLib.createClaimLookup(async (message: unknown) => {
+      sent.push(message);
+      await tick();
+      return { success: true, data: { hasStarlink: true, confidence: "verified", flights: [] } };
+    });
+    const results: string[] = [];
+    await extLib.runPool(["card-a", "card-b"], 3, async () => {
+      const outcome = await lookup.get("UA123", "2026-06-01");
+      results.push(outcome.claim.status);
+    });
+    expect(sent).toHaveLength(1);
+    expect(results).toHaveLength(2);
+    expect(new Set(results).size).toBe(1);
+    expect(lookup.isKnown(extLib.claimKey("UA123", "2026-06-01"))).toBe(true);
+  });
+
+  test("a send that throws synchronously is retryable and does not wedge the key", async () => {
+    let calls = 0;
+    let now = 0;
+    const lookup = extLib.createClaimLookup(
+      () => {
+        calls++;
+        throw new Error("Extension context invalidated");
+      },
+      () => now
+    );
+    const first = await lookup.get("UA1", "2026-06-01");
+    expect(first.retryable).toBe(true);
+    now += extLib.CACHE_TTL.error + 1;
+    expect(lookup.isKnown(extLib.claimKey("UA1", "2026-06-01"))).toBe(false);
+    await lookup.get("UA1", "2026-06-01");
+    expect(calls).toBe(2);
+  });
+
+  test("the pool starts items in order and caps concurrency", async () => {
+    const started: number[] = [];
+    let inFlight = 0;
+    let peak = 0;
+    await extLib.runPool([0, 1, 2, 3, 4, 5, 6], 3, async (i: number) => {
+      started.push(i);
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      await tick();
+      inFlight--;
+    });
+    expect(started).toEqual([0, 1, 2, 3, 4, 5, 6]);
+    expect(peak).toBeLessThanOrEqual(3);
+  });
+
+  test("a trigger that lands mid-pass runs a second pass instead of being dropped", async () => {
+    let passes = 0;
+    let release: () => void = () => {};
+    const { runner, drain } = manualRunner(async () => {
+      passes++;
+      if (passes === 1) {
+        await new Promise<void>((r) => {
+          release = r;
+        });
+      }
+      return { newCards: 1 };
+    });
+    const first = runner.trigger();
+    expect(runner.isRunning()).toBe(true);
+    await runner.trigger();
+    release();
+    await first;
+    await drain();
+    expect(passes).toBe(2);
+  });
+
+  test("a trigger with no overlap runs exactly once", async () => {
+    let passes = 0;
+    const { runner, drain } = manualRunner(async () => {
+      passes++;
+      return { newCards: 1 };
+    });
+    await runner.trigger();
+    await drain();
+    expect(passes).toBe(1);
+  });
+
+  test("reruns are capped while every pass keeps finding cards", async () => {
+    let passes = 0;
+    let runner: Runner | null = null;
+    const made = manualRunner(async () => {
+      passes++;
+      runner?.requestRerun();
+      return { newCards: 1 };
+    });
+    runner = made.runner;
+    await runner.trigger();
+    await made.drain();
+    expect(passes).toBe(6);
+  });
+});
+
+describe("extension client tag", () => {
+  test("endpointFor appends client=ext-<version> without disturbing the lookup params", () => {
+    for (const fn of ["UA123", "HA50", "AS2402"]) {
+      const url = new URL(extLib.endpointFor(fn, "2026-06-01", "2.0.1"));
+      expect(url.searchParams.get("client")).toBe("ext-2.0.1");
+      expect(url.searchParams.get("flight_number")).toBe(fn);
+      expect(url.searchParams.get("date")).toBe("2026-06-01");
+    }
+    expect(extLib.endpointFor("UA123", "2026-06-01")).not.toContain("client=");
+  });
+});
+
+describe("extension release guardrails", () => {
+  const manifest = require("../chrome-extension/manifest.json");
+
+  // Any new permission disables the extension for every installed user until
+  // they re-approve it.
+  test("the manifest asks for no permission beyond the v1 host", () => {
+    expect(manifest.host_permissions).toEqual(["https://unitedstarlinktracker.com/*"]);
+    expect(manifest.permissions).toBeUndefined();
+    expect(manifest.optional_permissions).toBeUndefined();
+    expect(manifest.optional_host_permissions).toBeUndefined();
+    expect(manifest.version).toMatch(/^\d{1,2}\.\d{1,3}\.\d{1,3}$/);
+  });
+
+  test("the package ships the runtime files and no docs", async () => {
+    const { runtimeFiles } = await import("../scripts/package-extension");
+    const files = runtimeFiles(manifest);
+    for (const f of ["manifest.json", "background.js", "content.js", "lib.js", "styles.css"]) {
+      expect(files).toContain(f);
+    }
+    expect(files.some((f: string) => f.endsWith(".md"))).toBe(false);
+  });
+
+  test("the store-version check reads the listing's version cell", async () => {
+    const { parseListingVersion } = await import("../scripts/check-cws-version");
+    expect(parseListingVersion('<div>Version</div><div class="nBZElf">1.2.0</div>')).toBe("1.2.0");
+    expect(parseListingVersion("<html>no version here</html>")).toBeNull();
   });
 });

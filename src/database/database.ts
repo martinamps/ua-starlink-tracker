@@ -1,4 +1,5 @@
 import { Database } from "bun:sqlite";
+import { isFreighterFamily } from "../airlines/aircraft-families";
 import {
   CACHEABLE_FLIGHT_NUMBER,
   canonicalPermalinkFor,
@@ -61,6 +62,7 @@ import type {
 } from "../types";
 import { DB_PATH } from "../utils/constants";
 import { debug, info, error as logError, warn } from "../utils/logger";
+import { ensureAdsbFlightDrawsTable } from "./adsb-flight-draws";
 
 type MetaRow = { value: string };
 
@@ -558,6 +560,7 @@ export function setupTables(db: Database) {
   }
   addColumn(db, "adsb_sweeps", "non_revenue", "INTEGER NOT NULL DEFAULT 0");
   addColumn(db, "adsb_sweeps", "low_speed", "INTEGER NOT NULL DEFAULT 0");
+  ensureAdsbFlightDrawsTable(db);
 
   // Starlink RFC 8805 geofeed prefixes — backs isStarlinkIp().
   if (!tableExists(db, "starlink_prefixes")) {
@@ -1047,16 +1050,23 @@ export function stampLastUpdated(db: Database, airline: string, writer: LastUpda
  * lastUpdated goes through stampLastUpdated as the "fleet-meta" writer.
  */
 export function refreshFleetMeta(db: Database, airline: string): void {
-  const rows = db
-    .query(`
-      SELECT fleet,
+  const rows = (
+    db
+      .query(`
+      SELECT fleet, aircraft_type,
              COUNT(*) AS total,
              SUM(CASE WHEN starlink_status = 'confirmed' THEN 1 ELSE 0 END) AS confirmed
       FROM united_fleet
       WHERE airline = ?
-      GROUP BY fleet
+      GROUP BY fleet, aircraft_type
     `)
-    .all(airline) as Array<{ fleet: string; total: number; confirmed: number }>;
+      .all(airline) as Array<{
+      fleet: string;
+      aircraft_type: string | null;
+      total: number;
+      confirmed: number;
+    }>
+  ).filter((r) => !isFreighterFamily(normalizeAircraftType(r.aircraft_type)));
 
   let mainlineTotal = 0;
   let mainlineStarlink = 0;
@@ -1313,12 +1323,18 @@ export interface HubAirlineStat {
 
 export function getHubStats(db: Database, codes: readonly string[]): HubAirlineStat[] {
   const placeholders = codes.map(() => "?").join(",");
-  const fleet = db
+  const fleetByType = db
     .query(
-      `SELECT airline, COUNT(*) total FROM united_fleet
-       WHERE airline IN (${placeholders}) GROUP BY airline`
+      `SELECT airline, aircraft_type, COUNT(*) total FROM united_fleet
+       WHERE airline IN (${placeholders}) GROUP BY airline, aircraft_type`
     )
-    .all(...codes) as { airline: string; total: number }[];
+    .all(...codes) as { airline: string; aircraft_type: string | null; total: number }[];
+  const passengerTotals = new Map<string, number>();
+  for (const r of fleetByType) {
+    if (isFreighterFamily(normalizeAircraftType(r.aircraft_type))) continue;
+    passengerTotals.set(r.airline, (passengerTotals.get(r.airline) ?? 0) + r.total);
+  }
+  const fleet = [...passengerTotals].map(([airline, total]) => ({ airline, total }));
   // Equipped count from starlink_planes — the authoritative table — not from
   // united_fleet.starlink_status, which lags during reconcile cycles. Same
   // source /api/fleet-summary uses, so the cards never contradict it.
@@ -2113,7 +2129,9 @@ export function getSitemapFlights(db: Database, airline: AirlineCode): SitemapFl
       touch(r.flight_number, r.t);
     }
   }
+  const cutoff = sitemapStaleCutoff(db, airline);
   return [...latest]
+    .filter(([fn, t]) => inUpcoming.has(fn) || !isSitemapStale(t, cutoff))
     .map(([flight_number, last_touched]) => ({ flight_number, last_touched }))
     .sort((a, b) => a.flight_number.localeCompare(b.flight_number, undefined, { numeric: true }));
 }
@@ -2137,11 +2155,75 @@ export function flightNumberHasData(
     [...variants]
   );
   if (db.query(`${q.sql} LIMIT 1`).get(...q.params)) return true;
+  const scoped = corroboratedRouteFilter(variants, airline);
   return Boolean(
     db
-      .query(`SELECT 1 FROM flight_routes WHERE flight_number IN (${placeholders}) LIMIT 1`)
-      .get(...variants)
+      .query(
+        `SELECT 1 FROM flight_routes fr
+         WHERE fr.flight_number IN (${placeholders}) AND ${scoped.clause} LIMIT 1`
+      )
+      .get(...variants, ...scoped.params)
   );
+}
+
+/**
+ * flight_routes has no airline column, and operating prefixes are shared:
+ * SkyWest flies OO3371 for Alaska and OO5371 for United under one callsign
+ * space, so UA3371's variant list (UA/OO/SKW…) matched Alaska's STS-PDX and
+ * titled the United permalink with it. A tenant-prefixed row always counts;
+ * an operating-prefix row counts only when no other airline's schedule claims
+ * that number and this airline's own data corroborates it — the number is on
+ * the tenant's schedule, or the same number flies the same pair under the
+ * tenant prefix or schedule. Corroboration is per number, not per pair: "UA
+ * flies SFO-SNA on some number" would still admit Alaska's OO3492 SFO-SNA.
+ * Applied in SQL so dropped rows never reach SUM(seen_count).
+ */
+export function corroboratedRouteFilter(
+  variants: string[],
+  airline: AirlineFilter,
+  alias = "fr"
+): { clause: string; params: string[] } {
+  const cfgs = airlineCodes(airline)
+    .map((c) => AIRLINES[c])
+    .filter((c): c is AirlineConfig => Boolean(c));
+  if (cfgs.length === 0) return { clause: "1=0", params: [] };
+  const tenants = cfgs.map((c) => c.code);
+  const inTenants = tenants.map(() => "?").join(",");
+  const marketingRe = new RegExp(`^(${cfgs.map((c) => c.iata).join("|")})\\d+$`);
+  const marketingVariants = variants.filter((v) => marketingRe.test(v));
+  const inVariants = variants.map(() => "?").join(",");
+  const fn = `${alias}.flight_number`;
+  const sameNumberMarketing = marketingVariants.length
+    ? `OR EXISTS (SELECT 1 FROM flight_routes m
+         WHERE m.flight_number IN (${marketingVariants.map(() => "?").join(",")})
+           AND m.origin = ${alias}.origin AND m.destination = ${alias}.destination)`
+    : "";
+  const clause = `(
+    ${cfgs.map(() => `${fn} GLOB ?`).join(" OR ")}
+    OR (
+      NOT EXISTS (SELECT 1 FROM upcoming_flights x
+        WHERE x.flight_number = ${fn} AND x.airline NOT IN (${inTenants}))
+      AND (
+        EXISTS (SELECT 1 FROM upcoming_flights y
+          WHERE y.flight_number = ${fn} AND y.airline IN (${inTenants}))
+        OR EXISTS (SELECT 1 FROM upcoming_flights y
+          WHERE y.flight_number IN (${inVariants}) AND y.airline IN (${inTenants})
+            AND y.departure_airport = ${alias}.origin AND y.arrival_airport = ${alias}.destination)
+        ${sameNumberMarketing}
+      )
+    )
+  )`;
+  return {
+    clause,
+    params: [
+      ...cfgs.map((c) => `${c.iata}[0-9]*`),
+      ...tenants,
+      ...tenants,
+      ...variants,
+      ...tenants,
+      ...marketingVariants,
+    ],
+  };
 }
 
 /**
@@ -2316,13 +2398,61 @@ export function getSitemapRoutes(db: Database, airline: string): SitemapRoute[] 
       touch(r.origin, r.destination, r.t);
     }
   }
+  const cutoff = sitemapStaleCutoff(db, airline);
   return [...latest]
+    .filter(([key, t]) => inUpcoming.has(key) || !isSitemapStale(t, cutoff))
     .map(([key, last_touched]) => {
       const [origin, destination] = key.split("-");
       return { origin, destination, last_touched };
     })
     .sort((a, b) => a.origin.localeCompare(b.origin) || a.destination.localeCompare(b.destination));
 }
+
+/**
+ * Sitemap entries outside the live window drop out once this many days older
+ * than the airline's newest observation. The page keeps serving 200 and
+ * indexable — seasonal flights come back — the sitemap just stops asking
+ * crawlers to spend budget on a flight nobody has seen since spring.
+ */
+export const SITEMAP_STALE_DAYS = 60;
+
+/** Past this much silence (same anchor) a permalink says so on the page. */
+export const PERMALINK_STALE_NOTE_DAYS = 30;
+
+/**
+ * Newest observation for the airline across the route cache and the schedule
+ * window. Staleness is measured against this rather than the wall clock, so a
+ * stalled ingest (or an old snapshot) ages nothing out; future timestamps are
+ * corrupt rows and never set the anchor. 0 when the airline has no data.
+ */
+export function getObservationAnchor(
+  db: Database,
+  airline: string,
+  now = Math.floor(Date.now() / 1000)
+): number {
+  const cfg = AIRLINES[airline];
+  if (!cfg) return 0;
+  const row = db
+    .query(
+      `SELECT MAX(
+         COALESCE((SELECT MAX(last_seen_at) FROM flight_routes
+                   WHERE flight_number GLOB ? AND last_seen_at <= ?), 0),
+         COALESCE((SELECT MAX(last_updated) FROM upcoming_flights
+                   WHERE airline = ? AND last_updated <= ?), 0)
+       ) AS anchor`
+    )
+    .get(`${cfg.iata}[0-9]*`, now, airline, now) as { anchor: number | null } | null;
+  return row?.anchor ?? 0;
+}
+
+function sitemapStaleCutoff(db: Database, airline: string): number {
+  const anchor = getObservationAnchor(db, airline);
+  return anchor > 0 ? anchor - SITEMAP_STALE_DAYS * 86400 : 0;
+}
+
+// last_touched 0 means unknown (see SitemapFlight), which is not evidence of staleness.
+const isSitemapStale = (lastTouched: number, cutoff: number) =>
+  cutoff > 0 && lastTouched > 0 && lastTouched < cutoff;
 
 /**
  * Single-route form of the getSitemapRoutes data test. Pages and sitemap must
@@ -2570,14 +2700,18 @@ export function getFlightRoutePairs(
   now = Math.floor(Date.now() / 1000)
 ): FlightRoutePair[] {
   const placeholders = variants.map(() => "?").join(",");
+  const scoped = corroboratedRouteFilter(variants, airline);
+  // A row that departed over a day ago is a ghost of a tail that stopped
+  // refreshing, not a schedule — it falls back to decay scoring.
   const upcoming = withAirline(
     `SELECT departure_airport, arrival_airport, COUNT(*) AS times,
             CAST(AVG(arrival_time - departure_time) AS INTEGER) AS dur_sec,
-            1 AS scheduled, MAX(last_updated) AS last_seen_at
+            CASE WHEN MAX(departure_time) >= ? THEN 1 ELSE 0 END AS scheduled,
+            MAX(last_updated) AS last_seen_at
      FROM upcoming_flights WHERE flight_number IN (${placeholders})`,
     airline,
     "",
-    [...variants]
+    [now - 86400, ...variants]
   );
   const rows = db
     .query(
@@ -2587,7 +2721,7 @@ export function getFlightRoutePairs(
          SELECT origin AS departure_airport, destination AS arrival_airport,
                 seen_count AS times, duration_sec AS dur_sec, 0 AS scheduled,
                 last_seen_at
-         FROM flight_routes WHERE flight_number IN (${placeholders})
+         FROM flight_routes fr WHERE fr.flight_number IN (${placeholders}) AND ${scoped.clause}
          UNION ALL
          ${upcoming.sql} GROUP BY departure_airport, arrival_airport
        )
@@ -2599,7 +2733,7 @@ export function getFlightRoutePairs(
        GROUP BY departure_airport, arrival_airport
        ORDER BY scheduled DESC, times DESC`
     )
-    .all(...variants, ...upcoming.params) as FlightRoutePair[];
+    .all(...variants, ...scoped.params, ...upcoming.params) as FlightRoutePair[];
 
   // A timestamp ahead of now is corrupt, not fresh (the test snapshot carries one
   // dated 2036). Counted as evidence it would pin a junk row to routes[0] forever,
@@ -3236,6 +3370,42 @@ export interface WifiConsensus {
 }
 
 /**
+ * united.com flaps Starlink↔"Not offered" on regionals: in the Aug-29 snapshot
+ * every one of 34 runs of 3+ consecutive None after a Starlink observation
+ * went back to Starlink. So once a tail has ever been seen with Starlink on
+ * united.com, a later united "None" is not evidence — only a named competing
+ * provider (Viasat, Panasonic, Thales, Gogo) can flip it negative. Tails with
+ * no Starlink history (N786SK: 20× None) keep None as a real verdict.
+ */
+export const DISCOUNT_UNITED_NONE_AFTER_STARLINK = true;
+
+function isUnitedNoneObservation(o: {
+  has_starlink: number;
+  wifi_provider: string | null;
+  source?: string;
+}): boolean {
+  return (
+    o.source === "united" &&
+    o.has_starlink === 0 &&
+    (o.wifi_provider == null || o.wifi_provider.trim() === "" || o.wifi_provider === "None")
+  );
+}
+
+function hasPriorUnitedStarlink(db: Database, tailNumber: string, airline: AirlineFilter): boolean {
+  const q = withAirline(
+    `tail_number = ? AND tail_confirmed = 1 AND has_starlink = 1 AND source = 'united'
+     AND error IS NULL`,
+    airline,
+    "",
+    [tailNumber]
+  );
+  return (
+    db.query(`SELECT 1 FROM starlink_verification_log WHERE ${q.sql} LIMIT 1`).get(...q.params) !=
+    null
+  );
+}
+
+/**
  * Compute wifi consensus from recent CLEAN_OBSERVATION_WHERE log entries.
  * Returns verdict=null when n < minObs OR the split is in the ambiguous zone.
  */
@@ -3269,12 +3439,28 @@ export function computeWifiConsensus(
 
   // Primary: only tail_confirmed=1 (post-fix clean data)
   let obs = db
-    .query(`SELECT has_starlink, wifi_provider FROM starlink_verification_log
+    .query(`SELECT has_starlink, wifi_provider, source FROM starlink_verification_log
       WHERE ${base.sql} AND tail_confirmed = 1 ORDER BY checked_at DESC`)
     .all(...base.params) as Array<{
     has_starlink: number;
     wifi_provider: string;
+    source?: string;
   }>;
+
+  if (DISCOUNT_UNITED_NONE_AFTER_STARLINK && obs.some(isUnitedNoneObservation)) {
+    if (hasPriorUnitedStarlink(db, tailNumber, opts.airline)) {
+      const named = obs.filter((o) => !isUnitedNoneObservation(o));
+      if (named.length === 0) {
+        return {
+          verdict: null,
+          n: 0,
+          starlinkPct: 0,
+          reason: "None-only after prior Starlink (regional flap), inconclusive",
+        };
+      }
+      obs = named;
+    }
+  }
 
   // Grace fallback: if zero confirmed rows, read legacy NULL rows so display
   // counts (n, starlinkPct) aren't zero during the 30d transition. Legacy is
@@ -4262,8 +4448,8 @@ function normalizeCarrier(op: string | null): string | null {
 }
 
 export function bodyClassOf(family: string): BodyClass {
-  if (/^(B767|B777|B787|A350)/.test(family)) return "widebody";
-  if (/^(B737|B757|A319|A320|A321)/.test(family)) return "narrowbody";
+  if (/^(A330|A350|A380|B747|B767|B777|B787)/.test(family)) return "widebody";
+  if (/^(B717|B737|B757|A319|A320|A321)/.test(family)) return "narrowbody";
   if (/^(E175|ERJ|CRJ)/.test(family)) return "regional";
   return "narrowbody"; // safer default for unknowns than inflating regional
 }
@@ -4953,6 +5139,7 @@ function computeFleetPageData(db: Database, airline?: AirlineFilter): FleetPageD
 
   for (const r of rows) {
     const rawFamily = normalizeAircraftType(r.aircraft_type);
+    if (isFreighterFamily(rawFamily)) continue;
     const family = rawFamily === "other" ? "unknown" : rawFamily;
     const rawProvider = normalizeWifiProvider(r.verified_wifi);
     const provider: WifiProvider =
@@ -5233,4 +5420,63 @@ export function getQatarScheduleStats(db: Database): {
     none: counts.none ?? 0,
     lastUpdated: counts.lastUpdated ?? null,
   };
+}
+
+export const UPCOMING_PRUNE_AGE_SEC = 2 * 86400;
+
+/**
+ * Drop upcoming_flights rows that departed over two days ago. The per-tail
+ * DELETE in updateFlights only touches tails the updater still refreshes, so
+ * rows for tails that left the queue stayed forever (1,112 of 7,035 in the
+ * 2026-08-29 snapshot, some from March) and pinned permalink titles to dead
+ * routes. Archives first so departure_log keeps every departure. Returns the
+ * pruned count per airline.
+ */
+export function pruneStaleUpcomingFlights(
+  db: Database,
+  now = Math.floor(Date.now() / 1000)
+): Record<string, number> {
+  const cutoff = now - UPCOMING_PRUNE_AGE_SEC;
+  return db.transaction(() => {
+    archivePastDepartures(db, now);
+    const rows = db
+      .query(
+        `SELECT airline, COUNT(*) AS cnt FROM upcoming_flights
+         WHERE departure_time < ? GROUP BY airline`
+      )
+      .all(cutoff) as Array<{ airline: string; cnt: number }>;
+    if (rows.length > 0) {
+      db.query("DELETE FROM upcoming_flights WHERE departure_time < ?").run(cutoff);
+    }
+    return Object.fromEntries(rows.map((r) => [r.airline, r.cnt]));
+  })();
+}
+
+/**
+ * Route pairs in /routes order (most equipped departures first), starting at
+ * `offset`. /routes renders the first 60; the route-planner hub links the next
+ * page so the two surfaces spread internal links over different permalinks.
+ */
+export function getRankedStarlinkRoutePairs(
+  db: Database,
+  airline: AirlineFilter,
+  offset: number,
+  limit: number,
+  nowSec = Math.floor(Date.now() / 1000)
+): Array<{ origin: string; destination: string }> {
+  const q = withAirline(
+    `SELECT uf.departure_airport AS origin, uf.arrival_airport AS destination,
+            COUNT(DISTINCT uf.flight_number || ':' || uf.departure_time) AS departures,
+            COUNT(DISTINCT uf.flight_number) AS flight_numbers${EQUIPPED_DEPARTURES_SQL}`,
+    airline,
+    "uf",
+    [nowSec, nowSec + DEPARTURE_WINDOW_HOURS * 3600]
+  );
+  const rows = db
+    .query(
+      `${q.sql} GROUP BY uf.departure_airport, uf.arrival_airport
+       ORDER BY departures DESC, flight_numbers DESC, origin ASC LIMIT ? OFFSET ?`
+    )
+    .all(...q.params, limit, offset) as Array<{ origin: string; destination: string }>;
+  return rows.map(({ origin, destination }) => ({ origin, destination }));
 }

@@ -10,6 +10,7 @@
 
 import { Database } from "bun:sqlite";
 import { beforeAll, describe, expect, test } from "bun:test";
+import { QATAR_EQUIPMENT_CODES, qatarEquipment, wifiPhaseFamilies } from "../src/airlines/registry";
 import {
   type QatarWifi,
   isQatarFreighterEquipment,
@@ -34,7 +35,7 @@ describe("qatarEquipmentToWifi", () => {
     ["351", "Starlink"], // A350-900 (one of two codes QR returns)
     ["359", "Starlink"], // A350-900 (alternate)
     ["35K", "Starlink"], // A350-1000
-    ["788", "Rolling"], // 787-8 — rolling
+    ["788", "Starlink"], // 787-8 — sub-fleet complete Aug 2026
     ["789", "Rolling"], // 787-9 — rolling
     ["388", "None"], // A380 — not in plan
     ["332", "None"], // A330-200
@@ -46,6 +47,15 @@ describe("qatarEquipmentToWifi", () => {
     ["77w", "Starlink"], // case-insensitive
   ])("%s → %s", (code, want) => {
     expect(qatarEquipmentToWifi(code)).toBe(want);
+  });
+
+  test("every equipment code's family has a phase row (no silent None)", () => {
+    const table = wifiPhaseFamilies("QR");
+    if (!table) throw new Error("QR phase table missing");
+    for (const code of QATAR_EQUIPMENT_CODES) {
+      const family = qatarEquipment(code)?.family;
+      expect(family && family in table ? family : `${code}: ${family}`).toBe(family);
+    }
   });
 
   test("null/undefined → None", () => {

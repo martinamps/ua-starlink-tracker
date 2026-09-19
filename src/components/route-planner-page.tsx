@@ -1,11 +1,18 @@
 import React from "react";
 import { type SiteConfig, siteAirline } from "../airlines/registry";
+import { type PageLink, PageNavLinks } from "./atoms";
 
 interface RoutePlannerPageProps {
   site: SiteConfig;
+  pageLinks?: PageLink[];
+  popularRoutes?: Array<{ origin: string; destination: string }>;
 }
 
-export default function RoutePlannerPage({ site }: RoutePlannerPageProps) {
+export default function RoutePlannerPage({
+  site,
+  pageLinks,
+  popularRoutes = [],
+}: RoutePlannerPageProps) {
   const cfg = siteAirline(site);
   const airlineName = cfg.name;
   const shortName = cfg.shortName;
@@ -215,6 +222,27 @@ export default function RoutePlannerPage({ site }: RoutePlannerPageProps) {
         </div>
       </div>
 
+      {popularRoutes.length > 0 && (
+        <section className="relative w-full max-w-4xl mx-auto mb-8">
+          <div className="bg-surface border border-subtle rounded-lg p-5">
+            <h2 className="text-[10px] font-mono text-muted uppercase tracking-wider mb-3">
+              Popular Starlink routes
+            </h2>
+            <div className="flex flex-wrap gap-2">
+              {popularRoutes.map((r) => (
+                <a
+                  key={`${r.origin}-${r.destination}`}
+                  href={`/route-planner/${r.origin}/${r.destination}`}
+                  className="font-mono text-sm px-2.5 py-1 rounded border border-subtle bg-surface-elevated text-secondary hover:border-accent hover:text-accent transition-colors"
+                >
+                  {r.origin} → {r.destination}
+                </a>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
+
       <div className="relative text-center mb-6">
         <a href="/" className="text-sm text-accent hover:underline font-display">
           ← Back to {homeTitle}
@@ -241,6 +269,7 @@ export default function RoutePlannerPage({ site }: RoutePlannerPageProps) {
           </svg>
           by @martinamps
         </a>
+        <PageNavLinks links={pageLinks} />
       </footer>
 
       <script
@@ -336,9 +365,10 @@ export default function RoutePlannerPage({ site }: RoutePlannerPageProps) {
               return renderLeg(l, l.flight_number === '(any)');
             }).join('');
 
+            var flyingStr = typeof it.total_flight_hours === 'number' ? ' · ' + fmtHours(it.total_flight_hours) + ' flying' : '';
             var badge = isDirect
               ? '<span class="text-xs font-mono text-accent">DIRECT</span>'
-              : '<span class="text-xs font-mono text-muted">via ' + via.join('→') + ' · ' + nStops + ' stop' + (nStops>1?'s':'') + '</span>';
+              : '<span class="text-xs font-mono text-muted">via ' + via.join('→') + ' · ' + nStops + ' stop' + (nStops>1?'s':'') + flyingStr + '</span>';
 
             var airportLabels = '<span>' + origCode + '</span>';
             for (var vi = 0; vi < via.length; vi++) {
@@ -367,24 +397,51 @@ export default function RoutePlannerPage({ site }: RoutePlannerPageProps) {
               '</div>';
           }
 
+          function fmtHours(h) {
+            return h >= 1 ? h.toFixed(1) + 'h' : Math.round(h * 60) + 'm';
+          }
+
+          // The nonstop every connection is traded against — without it a
+          // 9h two-stop at 94% reads as strictly better than a 5.7h nonstop.
+          function baselineHtml(b) {
+            if (!b || typeof b.duration_hours !== 'number') return '';
+            if (b.duration_source === 'great_circle') {
+              return '<div class="text-xs text-muted mb-3 leading-relaxed">No United nonstop on this pair, so every option connects (~' +
+                fmtHours(b.duration_hours) + ' straight-line for reference).</div>';
+            }
+            var label = b.duration_source === 'sparse_history'
+              ? 'Nonstop seen only occasionally (may not run on your date): ~'
+              : 'Nonstop baseline: ~';
+            return '<div class="text-xs text-muted mb-3 leading-relaxed">' + label +
+              Math.round(b.probability * 100) + '% Starlink · ~' + fmtHours(b.expected_starlink_hours) +
+              ' Starlink of ~' + fmtHours(b.duration_hours) + ' flying</div>';
+          }
+
           function renderResults(data) {
             var itins = data.itineraries;
             if (!itins || itins.length === 0) {
               resultsDiv.innerHTML = '<div class="bg-surface border border-subtle rounded-lg p-6 text-center">' +
                 '<div class="text-secondary font-display font-medium mb-2">No Starlink routings found</div>' +
                 '<p class="text-sm text-muted"></p>' +
+                baselineHtml(data.baseline) +
                 '</div>';
               // message is server-built registry prose (no user input); set via
               // textContent anyway so this stays injection-proof.
-              resultsDiv.querySelector('p').textContent = data.message ||
-                'Neither the direct route nor available connections have shown a strong Starlink pattern on this routing yet.';
+              // A sparse nonstop's budget yields to the fastest connection, so an
+              // empty result there also means no connection has Starlink legs.
+              var softBudget = data.baseline && (data.baseline.duration_source === 'great_circle' ||
+                data.baseline.duration_source === 'sparse_history');
+              resultsDiv.querySelector('p').textContent = data.message || (softBudget
+                ? 'No connection between these airports has Starlink on its legs.'
+                : 'No connection adds meaningful Starlink time without a long detour over the nonstop.');
               return;
             }
+            var hasDirect = itins.some(function(i) { return i.via.length === 0; });
 
             var fullItins = itins.filter(function(i) { return i.coverage === 'full'; });
             var partialItins = itins.filter(function(i) { return i.coverage === 'partial'; });
 
-            var html = '';
+            var html = hasDirect ? '' : baselineHtml(data.baseline);
             if (fullItins.length > 0) {
               html += '<div class="mb-6">' +
                 '<h3 class="font-display text-sm font-semibold text-primary mb-3 uppercase tracking-wider">Full Starlink Coverage</h3>' +

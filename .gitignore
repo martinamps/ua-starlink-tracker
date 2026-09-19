@@ -25,3 +25,6 @@ ops/
 CLAUDE.local.md
 .claude/
 tsconfig.review.tsbuildinfo
+
+# Extension store uploads built by `bun run ext:package`
+dist/

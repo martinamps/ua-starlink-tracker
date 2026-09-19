@@ -29,56 +29,11 @@
   const MAX_SEGMENTS_PER_CARD = 4;
   const MAX_ATTR_SCAN_ELEMENTS = 400;
 
-  const claimCache = new Map();
-  const pendingLookups = new Map();
+  const lookup = lib.createClaimLookup((message) => chrome.runtime.sendMessage(message));
   let processedElements = new WeakSet();
-  let isProcessing = false;
-
-  // ── claim lookup ───────────────────────────────────────────────────────────
-
-  /** Cached {claim, retryable} for a key, or null when absent/expired. */
-  function cachedOutcome(key) {
-    const entry = claimCache.get(key);
-    if (entry && entry.expires > Date.now()) return entry;
-    if (entry) claimCache.delete(key);
-    return null;
-  }
-
-  /** Resolves to {claim, retryable} — callers need the retryable flag to know
-   * whether a card is settled or just waiting out a transient failure. */
-  function getClaim(flightNumber, date) {
-    const key = `${flightNumber}-${date}`;
-    const cached = cachedOutcome(key);
-    if (cached) return Promise.resolve(cached);
-    const pending = pendingLookups.get(key);
-    if (pending) return pending;
-
-    const lookup = (async () => {
-      let outcome;
-      try {
-        const response = await chrome.runtime.sendMessage({
-          action: "checkFlight",
-          flightNumber,
-          date,
-        });
-        outcome = lib.claimFromResponse(response);
-      } catch (err) {
-        // Worker restart or invalidated context — honest unknown, retry soon.
-        log("lookup failed", flightNumber, err);
-        outcome = { claim: lib.unknownClaim(), retryable: true };
-      } finally {
-        pendingLookups.delete(key);
-      }
-      claimCache.set(key, {
-        claim: outcome.claim,
-        retryable: outcome.retryable,
-        expires: Date.now() + (outcome.retryable ? lib.CACHE_TTL.error : lib.CACHE_TTL.resolved),
-      });
-      return outcome;
-    })();
-    pendingLookups.set(key, lookup);
-    return lookup;
-  }
+  // Bumped on every navigation; a pass that started under an older generation
+  // must not badge (or retire) cards that now show a different search.
+  let generation = 0;
 
   // ── page/card parsing ──────────────────────────────────────────────────────
 
@@ -137,12 +92,17 @@
   }
 
   /**
-   * Flight segments for one card as [{flightNumber, date|null}], most-reliable
-   * source first.
+   * Flight segments for one card as {segments: [{flightNumber, date|null}],
+   * complete}, most-reliable source first. `complete` is false when the
+   * itinerary has a leg we cannot judge (untracked carrier, or more legs than
+   * we look up): the weakest-leg rule cannot vouch for such a card, so it gets
+   * no badge. The heuristic paths only ever see our own carriers and are
+   * treated as complete.
    *
-   * A card whose itinerary data DECODED but named no tracked carrier returns []
-   * without consulting the heuristics — the itinerary already settled "not a
-   * tracked airline", and a text match on top of that would be a false positive.
+   * A card whose itinerary data DECODED but named no tracked carrier returns no
+   * segments without consulting the heuristics — the itinerary already settled
+   * "not a tracked airline", and a text match on top of that would be a false
+   * positive.
    * When nothing decodes (the attribute is absent, or Google changed the
    * itinerary encoding) the heuristics still run: gating them on the attribute's
    * mere presence made an encoding change silently badge nothing, which is the
@@ -150,21 +110,29 @@
    */
   function extractSegments(card) {
     const tim = lib.timCardSegments(timUrls(card));
-    if (tim.parsed) return tim.segments.slice(0, MAX_SEGMENTS_PER_CARD);
+    if (tim.parsed) {
+      return {
+        segments: tim.segments.slice(0, MAX_SEGMENTS_PER_CARD),
+        complete: tim.untrackedLegs === 0 && tim.segments.length <= MAX_SEGMENTS_PER_CARD,
+      };
+    }
 
     // Both heuristics run behind the airline-name gate: only carriers actually
     // named on the card may be matched out of its text or attribute soup.
     const text = cardText(card);
     const codes = lib.carriersNamedIn(text);
-    if (codes.length === 0) return [];
+    if (codes.length === 0) return { segments: [], complete: true };
 
     const flightNumber = attrFlightNumber(card, codes);
-    if (flightNumber) return [{ flightNumber, date: null }];
+    if (flightNumber) return { segments: [{ flightNumber, date: null }], complete: true };
 
-    return lib
-      .extractFlightNumbersFromText(text)
-      .slice(0, MAX_SEGMENTS_PER_CARD)
-      .map((fn) => ({ flightNumber: fn, date: null }));
+    return {
+      segments: lib
+        .extractFlightNumbersFromText(text)
+        .slice(0, MAX_SEGMENTS_PER_CARD)
+        .map((fn) => ({ flightNumber: fn, date: null })),
+      complete: true,
+    };
   }
 
   // ── badge rendering ────────────────────────────────────────────────────────
@@ -223,10 +191,31 @@
     row.insertBefore(badge, row.firstChild);
   }
 
-  function addBadge(card, claim) {
+  function removeBadge(card) {
     try {
-      if (card.querySelector(".starlink-wifi-badge")) return;
+      card.querySelector(".starlink-wifi-badge")?.remove();
+    } catch {
+      // removal is cosmetic
+    }
+  }
+
+  /** `key` names the itinerary the badge answers for, so a card Google
+   * patches in place with a different flight never keeps the old answer. */
+  function addBadge(card, claim, key) {
+    try {
+      const existing = card.querySelector(".starlink-wifi-badge");
+      if (existing) {
+        if (
+          existing.dataset.starlinkKey === key &&
+          existing.dataset.starlinkStatus === claim.status
+        ) {
+          return;
+        }
+        existing.remove();
+      }
       const badge = buildBadge(claim);
+      badge.dataset.starlinkKey = key;
+      badge.dataset.starlinkStatus = claim.status;
       const wantInline = window.innerWidth >= 1024;
       if (wantInline && insertInline(card, badge)) return;
       insertCorner(card, badge, claim);
@@ -237,28 +226,39 @@
 
   // ── main pass ──────────────────────────────────────────────────────────────
 
+  // Lookups per pass run this many cards at a time: a pass used to cost the
+  // sum of every lookup's latency, and one FR24-fallback flight (~2 s) held up
+  // every card behind it.
+  const CARD_CONCURRENCY = 3;
+
   /** True when the card needs no further passes. */
-  async function processCard(card, pageDate, budget) {
-    const segments = extractSegments(card);
-    if (segments.length === 0) {
-      // Nothing tracked here (authoritative or not) — settled for this card.
+  async function processCard(card, pageDate, budget, gen) {
+    const { segments, complete } = extractSegments(card);
+    if (segments.length === 0 || !complete) {
+      // Nothing tracked here, or a leg we cannot judge — settled for this card.
+      removeBadge(card);
       processedElements.add(card);
       return true;
     }
 
+    const keys = segments.map((seg) => lib.claimKey(seg.flightNumber, seg.date || pageDate));
+
     // Respect the per-pass network budget BEFORE marking processed, so
     // skipped cards get picked up by a later pass.
-    for (const seg of segments) {
-      const key = `${seg.flightNumber}-${seg.date || pageDate}`;
-      if (!cachedOutcome(key) && !pendingLookups.has(key)) {
+    for (const key of keys) {
+      if (!lookup.isKnown(key)) {
         if (budget.remaining <= 0) return false;
         budget.remaining--;
       }
     }
 
     const outcomes = await Promise.all(
-      segments.map((seg) => getClaim(seg.flightNumber, seg.date || pageDate))
+      segments.map((seg) => lookup.get(seg.flightNumber, seg.date || pageDate))
     );
+    // The page moved on while this card waited; its answer belongs to a search
+    // that is no longer on screen, and processedElements is a new set.
+    if (gen !== generation) return true;
+
     // Only a settled answer retires the card. Marking it processed on a
     // transient failure would strand it unbadged for the rest of the session:
     // nothing else clears processedElements short of an SPA navigation.
@@ -267,8 +267,10 @@
 
     const combined = lib.combineClaims(outcomes.map((outcome) => outcome.claim));
     if (lib.shouldBadge(combined)) {
-      addBadge(card, combined);
-      log("badged", segments.map((s) => s.flightNumber).join("+"), combined.status);
+      addBadge(card, combined, keys.join("+"));
+      log("badged", keys.join("+"), combined.status);
+    } else {
+      removeBadge(card);
     }
     return settled;
   }
@@ -298,32 +300,37 @@
     retryPasses = 0;
   }
 
-  async function processFlights() {
-    if (isProcessing) return;
-    isProcessing = true;
+  async function runPass() {
+    const gen = generation;
     let unsettled = false;
+    let newCards = 0;
     try {
       const pageDate = extractPageDate();
       const budget = { remaining: MAX_NEW_LOOKUPS_PER_PASS };
-      const cards = findFlightCards();
-      log(`pass: ${cards.size} cards`);
-      for (const card of cards) {
-        if (processedElements.has(card)) continue;
+      const pending = [...findFlightCards()].filter((card) => !processedElements.has(card));
+      newCards = pending.length;
+      log(`pass: ${newCards} new cards`);
+      await lib.runPool(pending, CARD_CONCURRENCY, async (card) => {
+        if (gen !== generation) return;
         try {
-          if (!(await processCard(card, pageDate, budget))) unsettled = true;
+          if (!(await processCard(card, pageDate, budget, gen))) unsettled = true;
         } catch (err) {
           // One broken card must not stop the pass or reach the page.
           log("card failed", err);
         }
-      }
+      });
     } catch (err) {
       log("pass failed", err);
-    } finally {
-      isProcessing = false;
     }
-    if (unsettled) scheduleRetryPass();
-    else cancelRetryPass();
+    if (gen === generation) {
+      if (unsettled) scheduleRetryPass();
+      else cancelRetryPass();
+    }
+    return { newCards };
   }
+
+  const passRunner = lib.createPassRunner(runPass);
+  const processFlights = passRunner.trigger;
 
   // ── lifecycle ──────────────────────────────────────────────────────────────
 
@@ -335,7 +342,9 @@
     };
   }
 
-  function reprocessAllFlights() {
+  /** Shared by SPA navigation and breakpoint changes: old badges go, every
+   * card is fresh, and any pass still in flight stops badging. */
+  function resetForNavigation() {
     try {
       for (const badge of document.querySelectorAll(".starlink-wifi-badge")) {
         badge.remove();
@@ -344,7 +353,13 @@
       // removal is cosmetic; keep going
     }
     processedElements = new WeakSet();
+    generation++;
     cancelRetryPass();
+    passRunner.resetReruns();
+  }
+
+  function reprocessAllFlights() {
+    resetForNavigation();
     processFlights();
   }
 
@@ -358,11 +373,12 @@
 
     const observer = new MutationObserver((mutations) => {
       try {
-        if (isProcessing) return;
         const hasNewFlights = mutations.some((mutation) =>
           Array.from(mutation.addedNodes).some(looksLikeFlightNode)
         );
-        if (hasNewFlights) debouncedProcess();
+        if (!hasNewFlights) return;
+        if (passRunner.isRunning()) passRunner.requestRerun();
+        else debouncedProcess();
       } catch {
         // observer callbacks must never throw into the page
       }
@@ -385,9 +401,7 @@
     setInterval(() => {
       if (location.href !== lastUrl) {
         lastUrl = location.href;
-        processedElements = new WeakSet();
-        // A new search gets a fresh retry budget.
-        cancelRetryPass();
+        resetForNavigation();
         setTimeout(processFlights, 1000);
       }
     }, 1000);

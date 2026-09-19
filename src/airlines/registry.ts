@@ -30,8 +30,14 @@ export interface SubfleetDef {
   /** Display-only flight-number-range hint for the route-compare "mixed equipment" row. */
   flightNumberHint?: string;
   /** Fixed Starlink rate when this subfleet flies on another carrier's metal
-   * (e.g. AS800-899 on Hawaiian A330/A321neo). */
+   * (e.g. AS800-999 on Hawaiian A330/A321neo). */
   penetrationOverride?: number;
+  /** Reason copy for a penetrationOverride subfleet, replacing the generic
+   * "Starlink-equipped fleet" wording (which is false for a 0% override). */
+  overrideReason?: string;
+  /** Flies only a fixed network (e.g. intra-Hawaii), so absence-based route
+   * inference must never credit it to an unobserved route elsewhere. */
+  routeScoped?: boolean;
 }
 
 export interface PageBrand {
@@ -141,6 +147,11 @@ export interface AirlineConfig {
   /** All operating-carrier prefixes (ICAO + IATA) that map to this marketing carrier. Longest-first. */
   carrierPrefixes: string[];
   subfleets: SubfleetDef[];
+  /** Carriers whose metal flies this airline's marketed flight numbers and
+   * whose upcoming_flights rows are stored under their own code (AS-numbered
+   * flights on HA aircraft). Read ONLY by per-flight assignment lookups —
+   * counts, stats, sitemaps and fleet reads stay single-airline. */
+  operatingPartners?: readonly AirlineCode[];
   /** Map FR24/ICAO aircraft-type strings to a subfleet key for fleet-sync. Defaults to 'mainline'. */
   classifyFleet?: (aircraftType: string) => string;
   fr24Slug?: string;
@@ -208,6 +219,12 @@ function flightNum(fn: string): number {
   const m = fn.match(/(\d+)$/);
   return m ? Number.parseInt(m[1], 10) : Number.NaN;
 }
+
+// Hawaiian's post-merger AS blocks: 8XX international, 8XX-9XX mainland,
+// 1000-1299 interisland (HA code retired 2026-04-22).
+const isHaMetal = (n: number) => n >= 800 && n <= 999;
+const isHaInterisland = (n: number) => n >= 1000 && n <= 1299;
+const HA_INTERISLAND_REASON = "Interisland — Boeing 717, no WiFi";
 
 const AIRLINE_DEFS = {
   UA: {
@@ -332,7 +349,7 @@ const AIRLINE_DEFS = {
       const HI = new Set(["HNL", "OGG", "KOA", "LIH", "ITO", "MKK", "LNY"]);
       if (!HI.has(o) && !HI.has(d)) return null;
       return HI.has(o) && HI.has(d)
-        ? { probability: 0, reason: "Interisland — Boeing 717, no WiFi" }
+        ? { probability: 0, reason: HA_INTERISLAND_REASON }
         : { probability: 1, reason: "All Hawaiian A330/A321neo have Starlink" };
     },
     brand: {
@@ -369,42 +386,49 @@ const AIRLINE_DEFS = {
     // but SKW/OO stay out of carrierPrefixes — we don't resolve SkyWest-operated
     // AS flight numbers to tails yet.
     carrierPrefixes: ["ASA", "QXE", "AS", "QX"],
+    operatingPartners: ["HA"],
     subfleets: [
-      // AS800-899 are AS-marketed flights on Hawaiian A330/A321neo metal
-      // post-merger — every one of those aircraft has Starlink. Listed first
-      // so it wins the find() over mainline.
+      // AS800-999 are AS-marketed flights on Hawaiian A330/A321neo metal
+      // post-merger — every one of those aircraft has Starlink.
       {
         key: "hawaiian_metal",
         label: "Hawaiian-operated (A330/A321neo)",
-        flightNumberHint: "AS800-899",
+        flightNumberHint: "AS800-999",
         penetrationOverride: 1,
-        match: (fn) => {
-          const n = flightNum(fn);
-          return Number.isFinite(n) && n >= 800 && n <= 899;
-        },
+        match: (fn) => isHaMetal(flightNum(fn)),
       },
       {
         key: "mainline",
         label: "Mainline (737/787)",
-        flightNumberHint: "AS1-1999",
+        flightNumberHint: "AS1-799, AS1300-1999",
         match: (fn) => {
           const n = flightNum(fn);
-          return Number.isFinite(n) && n < 2000 && !(n >= 800 && n <= 899);
+          return Number.isFinite(n) && n < 2000 && !isHaMetal(n) && !isHaInterisland(n);
         },
       },
       {
+        key: "hawaiian_interisland",
+        label: "Hawaiian interisland (Boeing 717)",
+        flightNumberHint: "AS1000-1299",
+        penetrationOverride: 0,
+        overrideReason: HA_INTERISLAND_REASON,
+        routeScoped: true,
+        match: (fn) => isHaInterisland(flightNum(fn)),
+      },
+      {
         key: "horizon",
-        // Horizon- and SkyWest-operated E175s both fly AS2000+ — don't credit
+        // Horizon- and SkyWest-operated E175s both fly AS2000-8999 — don't credit
         // one operator in user-facing copy.
         label: "Regional E175",
-        flightNumberHint: "AS2000+",
+        flightNumberHint: "AS2000-8999",
         // Phase complete (rollout.phaseNote): every E175 has Starlink. The
         // override keeps predictions right even before the type reconcile
         // settles a fresh roster's statuses.
         penetrationOverride: 1,
+        // AS9xxx are charters/positioning on mixed 737/HA metal, not E175s.
         match: (fn) => {
           const n = flightNum(fn);
-          return Number.isFinite(n) && n >= 2000;
+          return n >= 2000 && n <= 8999;
         },
       },
     ],
@@ -424,8 +448,7 @@ const AIRLINE_DEFS = {
     rollout: {
       status: "phase_done",
       statusLabel: "Regional fleet done",
-      phaseNote:
-        "All 90 regional E175s have Starlink. Mainline 737 and 787 installs are under way.",
+      phaseNote: "Every regional E175 has Starlink. Mainline 737 and 787 installs are under way.",
       // Mainline is in the programme too — the whole roster is the denominator.
       rosterIsProgramScope: true,
     },
@@ -486,7 +509,7 @@ const AIRLINE_DEFS = {
       status: "phase_done",
       statusLabel: "Widebodies done",
       phaseNote:
-        "Every Boeing 777 and Airbus A350 has Starlink (rollout completed December 2025); the 787 fleet is mid-installation. Narrowbodies and freighters are not in the program.",
+        "777, A350 and 787-8 fleets complete (787-8 Aug 2026); 787-9 installs under way, due end-2026. Narrowbodies and freighters are not in the program.",
       // Roster counts ~277 including narrowbodies and freighters the programme
       // excludes; the in-scope widebody fleet is roughly half that.
       rosterIsProgramScope: false,
@@ -496,10 +519,10 @@ const AIRLINE_DEFS = {
       tagline: "Tracking Qatar Airways aircraft with Starlink WiFi",
       siteTitle: "Qatar Starlink Tracker — Which Flights Have Free Starlink WiFi?",
       description:
-        "Track which Qatar Airways flights have free Starlink WiFi. Every Boeing 777 and Airbus A350 has Starlink (rollout complete December 2025); the Boeing 787 fleet is mid-installation. Check your flight by number and date.",
+        "Track which Qatar Airways flights have free Starlink WiFi. 777, A350 and 787-8 fleets complete (787-8 Aug 2026); 787-9 installs under way, due end-2026. Check your flight by number and date.",
       ogTitle: "Qatar Airways Starlink Tracker",
       ogDescription:
-        "Boeing 777 + A350 fleets are 100% Starlink-equipped; B787 rollout in progress. Check your QR flight to see which aircraft is scheduled.",
+        "777, A350 and 787-8 fleets complete (787-8 Aug 2026); 787-9 installs under way, due end-2026. Check your QR flight to see which aircraft is scheduled.",
       keywords:
         "qatar airways starlink, qatar starlink tracker, qatar wifi, B777 starlink, A350 starlink, B787 starlink, check qatar flight starlink, qr wifi",
       accentColor: "#5c0632",
@@ -528,7 +551,19 @@ export const SUBFLEET_KEYS: ReadonlySet<string> = new Set(
 
 /** Literal list backing the SubfleetKey type (src/types.ts derives from it).
  * tests/vocabulary.test.ts pins it equal to the runtime-derived SUBFLEET_KEYS. */
-export const SUBFLEET_KEY_LIST = ["mainline", "express", "horizon", "hawaiian_metal"] as const;
+export const SUBFLEET_KEY_LIST = [
+  "mainline",
+  "express",
+  "horizon",
+  "hawaiian_metal",
+  "hawaiian_interisland",
+] as const;
+
+/** The scope's codes plus each one's operatingPartners, deduped — the airline
+ * filter for per-flight assignment lookups only. */
+export function withOperatingPartners(codes: readonly AirlineCode[]): readonly AirlineCode[] {
+  return [...new Set(codes.flatMap((c) => [c, ...(AIRLINES[c]?.operatingPartners ?? [])]))];
+}
 
 // ── Canonical type→Starlink program state ────────────────────────────────────
 // One phase table per type-deterministic airline, keyed by the families that
@@ -539,13 +574,16 @@ export const SUBFLEET_KEY_LIST = ["mainline", "express", "horizon", "hawaiian_me
 
 export type WifiPhase = "confirmed" | "rolling" | "negative";
 
-// QR program truth. 787 completion (target end-2026): flip B787 to
+// QR program truth. 787-9 completion (target end-2026): flip B787-9 to
 // "confirmed" — both the FR24-name path (typeDeterministicWifi) and the
-// IATA-code path (qatarEquipmentToWifi) read this table.
+// IATA-code path (qatarEquipment) read this table. There is deliberately no
+// bare B787 row: a type string without the sub-variant resolves to no phase
+// (fails closed) rather than guessing between a complete and a rolling fleet.
 const QATAR_PHASE_BY_FAMILY: Record<string, WifiPhase> = {
   B777: "confirmed", // rollout complete Q2 2025
   A350: "confirmed", // rollout complete Dec 2025
-  B787: "rolling", // mid-install — per-flight equipment alone can't decide
+  "B787-8": "confirmed", // sub-fleet complete Aug 2026 (QR release 269475)
+  "B787-9": "rolling", // mid-install — per-flight equipment alone can't decide
   B777F: "negative", // Qatar Cargo — no passenger service
   B747F: "negative",
   A380: "negative", // no installation plan announced
@@ -555,10 +593,17 @@ const QATAR_PHASE_BY_FAMILY: Record<string, WifiPhase> = {
 };
 
 // Collapse normalizeAircraftType's granular families to QR program families:
-// the program treats the whole 737/A320 lineups uniformly.
-function qatarProgramFamily(family: string): string {
+// the program treats the whole 737/A320 lineups uniformly. The 787 is the
+// opposite — QR's program splits it by sub-variant, which the shared family
+// vocabulary (one B787 for UA/AS consumers) doesn't carry, so read it off the
+// raw type string.
+function qatarProgramFamily(family: string, raw = ""): string {
   if (family.startsWith("B737")) return "B737";
   if (family === "A319" || family === "A321") return "A320";
+  if (family === "B787") {
+    if (/787-8/i.test(raw)) return "B787-8";
+    if (/787-9/i.test(raw)) return "B787-9";
+  }
   return family;
 }
 
@@ -576,8 +621,8 @@ const QATAR_EQUIPMENT: Record<string, { family: string; name: string }> = {
   "351": { family: "A350", name: "Airbus A350-900" },
   "359": { family: "A350", name: "Airbus A350-900" },
   "35K": { family: "A350", name: "Airbus A350-1000" },
-  "788": { family: "B787", name: "Boeing 787-8" },
-  "789": { family: "B787", name: "Boeing 787-9" },
+  "788": { family: "B787-8", name: "Boeing 787-8" },
+  "789": { family: "B787-9", name: "Boeing 787-9" },
   "388": { family: "A380", name: "Airbus A380-800" },
   "332": { family: "A330", name: "Airbus A330-200" },
   "333": { family: "A330", name: "Airbus A330-300" },
@@ -587,6 +632,8 @@ const QATAR_EQUIPMENT: Record<string, { family: string; name: string }> = {
   "38M": { family: "B737", name: "Boeing 737 MAX 8" },
   "73H": { family: "B737", name: "Boeing 737 MAX 8" },
 };
+
+export const QATAR_EQUIPMENT_CODES: readonly string[] = Object.keys(QATAR_EQUIPMENT);
 
 export function qatarEquipment(
   code: string | null | undefined
@@ -627,7 +674,9 @@ export function providerLabel(status: StarlinkStatus | null): "Starlink" | "None
 // observation instead of mass-flipping confirmed tails on reconcile
 // (unrecognized strings normalize to "other"/"unknown" — no phase).
 export function qatarTypeToStarlink(aircraftType: string): StarlinkStatus | null {
-  return phaseToStatus(qatarStarlinkPhase(qatarProgramFamily(normalizeAircraftType(aircraftType))));
+  return phaseToStatus(
+    qatarStarlinkPhase(qatarProgramFamily(normalizeAircraftType(aircraftType), aircraftType))
+  );
 }
 
 // HA program truth: Airbus fleet complete (Sep 2024), 787s pending install,
@@ -756,7 +805,7 @@ export const HUB_BRAND: PageBrand = {
   tagline: "Compare every Starlink rollout — United, Hawaiian, Alaska, and more",
   siteTitle: "Starlink WiFi by Airline — Which Airlines Have Starlink in 2026?",
   description:
-    "Compare airlines with Starlink WiFi side by side: United and Alaska tracked live tail-by-tail, Hawaiian's completed fleet, and more carriers as they launch. Fleet counts and percent equipped, not a single-airline tracker.",
+    "Compare airlines with Starlink WiFi side by side: United and Alaska tracked live tail-by-tail, Hawaiian's and Qatar's widebody fleets, and more carriers as they launch. Fleet counts and percent equipped, not a single-airline tracker.",
   ogTitle: "Which Airlines Have Starlink WiFi? — Full List & Comparison",
   ogDescription:
     "Every airline with Starlink WiFi, compared: fleet counts, percent equipped, and rollout status — with live per-aircraft tracking where available.",
