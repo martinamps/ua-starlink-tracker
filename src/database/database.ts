@@ -2127,7 +2127,9 @@ export function getSitemapFlights(db: Database, airline: AirlineCode): SitemapFl
       touch(r.flight_number, r.t);
     }
   }
+  const cutoff = sitemapStaleCutoff(db, airline);
   return [...latest]
+    .filter(([fn, t]) => inUpcoming.has(fn) || !isSitemapStale(t, cutoff))
     .map(([flight_number, last_touched]) => ({ flight_number, last_touched }))
     .sort((a, b) => a.flight_number.localeCompare(b.flight_number, undefined, { numeric: true }));
 }
@@ -2151,11 +2153,75 @@ export function flightNumberHasData(
     [...variants]
   );
   if (db.query(`${q.sql} LIMIT 1`).get(...q.params)) return true;
+  const scoped = corroboratedRouteFilter(variants, airline);
   return Boolean(
     db
-      .query(`SELECT 1 FROM flight_routes WHERE flight_number IN (${placeholders}) LIMIT 1`)
-      .get(...variants)
+      .query(
+        `SELECT 1 FROM flight_routes fr
+         WHERE fr.flight_number IN (${placeholders}) AND ${scoped.clause} LIMIT 1`
+      )
+      .get(...variants, ...scoped.params)
   );
+}
+
+/**
+ * flight_routes has no airline column, and operating prefixes are shared:
+ * SkyWest flies OO3371 for Alaska and OO5371 for United under one callsign
+ * space, so UA3371's variant list (UA/OO/SKW…) matched Alaska's STS-PDX and
+ * titled the United permalink with it. A tenant-prefixed row always counts;
+ * an operating-prefix row counts only when no other airline's schedule claims
+ * that number and this airline's own data corroborates it — the number is on
+ * the tenant's schedule, or the same number flies the same pair under the
+ * tenant prefix or schedule. Corroboration is per number, not per pair: "UA
+ * flies SFO-SNA on some number" would still admit Alaska's OO3492 SFO-SNA.
+ * Applied in SQL so dropped rows never reach SUM(seen_count).
+ */
+export function corroboratedRouteFilter(
+  variants: string[],
+  airline: AirlineFilter,
+  alias = "fr"
+): { clause: string; params: string[] } {
+  const cfgs = airlineCodes(airline)
+    .map((c) => AIRLINES[c])
+    .filter((c): c is AirlineConfig => Boolean(c));
+  if (cfgs.length === 0) return { clause: "1=0", params: [] };
+  const tenants = cfgs.map((c) => c.code);
+  const inTenants = tenants.map(() => "?").join(",");
+  const marketingRe = new RegExp(`^(${cfgs.map((c) => c.iata).join("|")})\\d+$`);
+  const marketingVariants = variants.filter((v) => marketingRe.test(v));
+  const inVariants = variants.map(() => "?").join(",");
+  const fn = `${alias}.flight_number`;
+  const sameNumberMarketing = marketingVariants.length
+    ? `OR EXISTS (SELECT 1 FROM flight_routes m
+         WHERE m.flight_number IN (${marketingVariants.map(() => "?").join(",")})
+           AND m.origin = ${alias}.origin AND m.destination = ${alias}.destination)`
+    : "";
+  const clause = `(
+    ${cfgs.map(() => `${fn} GLOB ?`).join(" OR ")}
+    OR (
+      NOT EXISTS (SELECT 1 FROM upcoming_flights x
+        WHERE x.flight_number = ${fn} AND x.airline NOT IN (${inTenants}))
+      AND (
+        EXISTS (SELECT 1 FROM upcoming_flights y
+          WHERE y.flight_number = ${fn} AND y.airline IN (${inTenants}))
+        OR EXISTS (SELECT 1 FROM upcoming_flights y
+          WHERE y.flight_number IN (${inVariants}) AND y.airline IN (${inTenants})
+            AND y.departure_airport = ${alias}.origin AND y.arrival_airport = ${alias}.destination)
+        ${sameNumberMarketing}
+      )
+    )
+  )`;
+  return {
+    clause,
+    params: [
+      ...cfgs.map((c) => `${c.iata}[0-9]*`),
+      ...tenants,
+      ...tenants,
+      ...variants,
+      ...tenants,
+      ...marketingVariants,
+    ],
+  };
 }
 
 /**
@@ -2330,13 +2396,61 @@ export function getSitemapRoutes(db: Database, airline: string): SitemapRoute[] 
       touch(r.origin, r.destination, r.t);
     }
   }
+  const cutoff = sitemapStaleCutoff(db, airline);
   return [...latest]
+    .filter(([key, t]) => inUpcoming.has(key) || !isSitemapStale(t, cutoff))
     .map(([key, last_touched]) => {
       const [origin, destination] = key.split("-");
       return { origin, destination, last_touched };
     })
     .sort((a, b) => a.origin.localeCompare(b.origin) || a.destination.localeCompare(b.destination));
 }
+
+/**
+ * Sitemap entries outside the live window drop out once this many days older
+ * than the airline's newest observation. The page keeps serving 200 and
+ * indexable — seasonal flights come back — the sitemap just stops asking
+ * crawlers to spend budget on a flight nobody has seen since spring.
+ */
+export const SITEMAP_STALE_DAYS = 60;
+
+/** Past this much silence (same anchor) a permalink says so on the page. */
+export const PERMALINK_STALE_NOTE_DAYS = 30;
+
+/**
+ * Newest observation for the airline across the route cache and the schedule
+ * window. Staleness is measured against this rather than the wall clock, so a
+ * stalled ingest (or an old snapshot) ages nothing out; future timestamps are
+ * corrupt rows and never set the anchor. 0 when the airline has no data.
+ */
+export function getObservationAnchor(
+  db: Database,
+  airline: string,
+  now = Math.floor(Date.now() / 1000)
+): number {
+  const cfg = AIRLINES[airline];
+  if (!cfg) return 0;
+  const row = db
+    .query(
+      `SELECT MAX(
+         COALESCE((SELECT MAX(last_seen_at) FROM flight_routes
+                   WHERE flight_number GLOB ? AND last_seen_at <= ?), 0),
+         COALESCE((SELECT MAX(last_updated) FROM upcoming_flights
+                   WHERE airline = ? AND last_updated <= ?), 0)
+       ) AS anchor`
+    )
+    .get(`${cfg.iata}[0-9]*`, now, airline, now) as { anchor: number | null } | null;
+  return row?.anchor ?? 0;
+}
+
+function sitemapStaleCutoff(db: Database, airline: string): number {
+  const anchor = getObservationAnchor(db, airline);
+  return anchor > 0 ? anchor - SITEMAP_STALE_DAYS * 86400 : 0;
+}
+
+// last_touched 0 means unknown (see SitemapFlight), which is not evidence of staleness.
+const isSitemapStale = (lastTouched: number, cutoff: number) =>
+  cutoff > 0 && lastTouched > 0 && lastTouched < cutoff;
 
 /**
  * Single-route form of the getSitemapRoutes data test. Pages and sitemap must
@@ -2584,14 +2698,18 @@ export function getFlightRoutePairs(
   now = Math.floor(Date.now() / 1000)
 ): FlightRoutePair[] {
   const placeholders = variants.map(() => "?").join(",");
+  const scoped = corroboratedRouteFilter(variants, airline);
+  // A row that departed over a day ago is a ghost of a tail that stopped
+  // refreshing, not a schedule — it falls back to decay scoring.
   const upcoming = withAirline(
     `SELECT departure_airport, arrival_airport, COUNT(*) AS times,
             CAST(AVG(arrival_time - departure_time) AS INTEGER) AS dur_sec,
-            1 AS scheduled, MAX(last_updated) AS last_seen_at
+            CASE WHEN MAX(departure_time) >= ? THEN 1 ELSE 0 END AS scheduled,
+            MAX(last_updated) AS last_seen_at
      FROM upcoming_flights WHERE flight_number IN (${placeholders})`,
     airline,
     "",
-    [...variants]
+    [now - 86400, ...variants]
   );
   const rows = db
     .query(
@@ -2601,7 +2719,7 @@ export function getFlightRoutePairs(
          SELECT origin AS departure_airport, destination AS arrival_airport,
                 seen_count AS times, duration_sec AS dur_sec, 0 AS scheduled,
                 last_seen_at
-         FROM flight_routes WHERE flight_number IN (${placeholders})
+         FROM flight_routes fr WHERE fr.flight_number IN (${placeholders}) AND ${scoped.clause}
          UNION ALL
          ${upcoming.sql} GROUP BY departure_airport, arrival_airport
        )
@@ -2613,7 +2731,7 @@ export function getFlightRoutePairs(
        GROUP BY departure_airport, arrival_airport
        ORDER BY scheduled DESC, times DESC`
     )
-    .all(...variants, ...upcoming.params) as FlightRoutePair[];
+    .all(...variants, ...scoped.params, ...upcoming.params) as FlightRoutePair[];
 
   // A timestamp ahead of now is corrupt, not fresh (the test snapshot carries one
   // dated 2036). Counted as evidence it would pin a junk row to routes[0] forever,
@@ -5299,4 +5417,34 @@ export function getQatarScheduleStats(db: Database): {
     none: counts.none ?? 0,
     lastUpdated: counts.lastUpdated ?? null,
   };
+}
+
+export const UPCOMING_PRUNE_AGE_SEC = 2 * 86400;
+
+/**
+ * Drop upcoming_flights rows that departed over two days ago. The per-tail
+ * DELETE in updateFlights only touches tails the updater still refreshes, so
+ * rows for tails that left the queue stayed forever (1,112 of 7,035 in the
+ * 2026-08-29 snapshot, some from March) and pinned permalink titles to dead
+ * routes. Archives first so departure_log keeps every departure. Returns the
+ * pruned count per airline.
+ */
+export function pruneStaleUpcomingFlights(
+  db: Database,
+  now = Math.floor(Date.now() / 1000)
+): Record<string, number> {
+  const cutoff = now - UPCOMING_PRUNE_AGE_SEC;
+  return db.transaction(() => {
+    archivePastDepartures(db, now);
+    const rows = db
+      .query(
+        `SELECT airline, COUNT(*) AS cnt FROM upcoming_flights
+         WHERE departure_time < ? GROUP BY airline`
+      )
+      .all(cutoff) as Array<{ airline: string; cnt: number }>;
+    if (rows.length > 0) {
+      db.query("DELETE FROM upcoming_flights WHERE departure_time < ?").run(cutoff);
+    }
+    return Object.fromEntries(rows.map((r) => [r.airline, r.cnt]));
+  })();
 }

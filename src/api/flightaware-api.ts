@@ -1,6 +1,7 @@
 import { COUNTERS, metrics } from "../observability";
 import type { Flight } from "../types";
 import { info, warn } from "../utils/logger";
+import { FR24_UPCOMING_CAP } from "./flightradar24-api";
 
 interface FlightAwareConfig {
   apiKey: string;
@@ -116,12 +117,10 @@ export class FlightAwareAPI {
       });
       const data: FlightAwareResponse = await response.json();
 
-      const now = new Date();
+      const now = Math.floor(Date.now() / 1000);
+      // Same rule as FR24: an airborne leg stays until it lands, and the cap
+      // keeps the nearest departures.
       return data.flights
-        .filter((flight) => {
-          const departureTime = new Date(flight.scheduled_out);
-          return departureTime > now;
-        })
         .map((flight) => ({
           flight_number: flight.ident,
           departure_airport: flight.origin.code,
@@ -129,7 +128,9 @@ export class FlightAwareAPI {
           departure_time: Math.floor(new Date(flight.scheduled_out).getTime() / 1000),
           arrival_time: Math.floor(new Date(flight.scheduled_in).getTime() / 1000),
         }))
-        .slice(0, 50);
+        .filter((f) => (f.arrival_time || f.departure_time) > now)
+        .sort((a, b) => a.departure_time - b.departure_time)
+        .slice(0, FR24_UPCOMING_CAP);
     });
   }
 
