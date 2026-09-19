@@ -13,7 +13,7 @@ import {
   upsertFleetAircraft,
 } from "../database/database";
 import type { FleetSource } from "../types";
-import { info } from "../utils/logger";
+import { info, warn } from "../utils/logger";
 
 export function applyFlyertalkTails(
   db: Database,
@@ -70,4 +70,60 @@ export function applyFlyertalkTails(
     `FlyerTalk ${opts.airline} sync: ${written}/${tails.length} tails written (${opts.gateLabel})`
   );
   return written;
+}
+
+export class FlyertalkRedirectRejected extends Error {
+  override name = "FlyertalkRedirectRejected";
+}
+
+export type FlyertalkFetcher = (url: string, init: RequestInit) => Promise<Response>;
+
+const FLYERTALK_HOST = "www.flyertalk.com";
+const MAX_REDIRECT_HOPS = 2;
+
+// FlyerTalk renames thread slugs when an editor retitles the thread (AS 2201647
+// did in May and the oracle died silently on redirect:"error"). Follow only a
+// rename of the same thread on the same host; anything else could point the
+// tail regex at an attacker-controlled or unrelated page.
+function acceptRedirect(next: URL, threadId: number): boolean {
+  return (
+    next.protocol === "https:" &&
+    next.hostname === FLYERTALK_HOST &&
+    new RegExp(`^/forum/[^/]+/${threadId}-[^/]*\\.html$`).test(next.pathname)
+  );
+}
+
+export async function fetchFlyertalk(
+  url: string,
+  threadId: number,
+  headers: Record<string, string>,
+  fetcher: FlyertalkFetcher = fetch
+): Promise<{ html: string; finalUrl: string }> {
+  let cur = url;
+  for (let hop = 0; ; hop++) {
+    const res = await fetcher(cur, { headers, redirect: "manual" });
+    if (res.status >= 300 && res.status < 400) {
+      const loc = res.headers.get("location");
+      if (!loc) throw new Error(`HTTP ${res.status} without Location for ${cur}`);
+      if (hop >= MAX_REDIRECT_HOPS)
+        throw new FlyertalkRedirectRejected(
+          `too many redirects (> ${MAX_REDIRECT_HOPS}) from ${url}`
+        );
+      let next: URL;
+      try {
+        next = new URL(loc, cur);
+      } catch {
+        throw new FlyertalkRedirectRejected(`unparseable Location ${loc} from ${cur}`);
+      }
+      if (!acceptRedirect(next, threadId))
+        throw new FlyertalkRedirectRejected(`refusing redirect ${cur} → ${next.href}`);
+      warn(`FlyerTalk ${threadId} moved: ${next.href} — refresh THREAD_URL`);
+      cur = next.href;
+      continue;
+    }
+    if (!res.ok) throw new Error(`HTTP ${res.status} for ${cur}`);
+    // FlyerTalk serves windows-1252; treat as bytes and only keep ASCII matches.
+    const html = new TextDecoder("latin1").decode(new Uint8Array(await res.arrayBuffer()));
+    return { html, finalUrl: cur };
+  }
 }

@@ -17,7 +17,7 @@ import {
   needsFlightCheck,
   setMeta,
 } from "../src/database/database";
-import { metrics } from "../src/observability/metrics";
+import { metrics, normalizeAirlineTag } from "../src/observability/metrics";
 import { makeAlaskaTick } from "../src/scripts/alaska-verifier";
 import {
   FRESHNESS_COVERAGE,
@@ -619,6 +619,9 @@ describe("data-freshness coverage", () => {
           "INSERT INTO adsb_sweeps (swept_at, provider, requests, latency_ms, tails_queried, observed, airborne, matched, mismatched, no_assignment, no_callsign) VALUES (?, 'airplanes.live', 1, 250, 425, 40, 36, 11, 0, 25, 0)"
         ).run(ts);
         break;
+      case "residential_sync":
+        setMeta(db, "residentialSyncAt", new Date(ts * 1000).toISOString(), airline);
+        break;
       default:
         throw new Error(`no seeder for freshness job ${job} — add one with the query`);
     }
@@ -752,6 +755,55 @@ describe("qatar_ingester freshness sentinel", () => {
     // quiet instead of paging forever.
     const call = qatarGauge(captureGauges(db, buildFreshnessQueries(false)));
     expect(call).toBeUndefined();
+    db.close();
+  });
+});
+
+describe("residential_sync freshness gauge", () => {
+  type GaugeCall = { name: string; value: number; tags?: Record<string, string | number> };
+
+  function residentialGauges(
+    db: ReturnType<typeof makeSyntheticDb>,
+    queries?: Record<string, string>
+  ): GaugeCall[] {
+    const calls: GaugeCall[] = [];
+    const original = metrics.gauge;
+    metrics.gauge = (name, value, tags) => {
+      calls.push({ name, value, tags });
+    };
+    try {
+      emitDataFreshness(db, queries);
+    } finally {
+      metrics.gauge = original;
+    }
+    return calls.filter(
+      (c) => c.name === "data.freshness_seconds" && c.tags?.job === "residential_sync"
+    );
+  }
+
+  test("a stamped airline reports age since its residentialSyncAt", () => {
+    const db = makeSyntheticDb();
+    setMeta(db, "residentialSyncAt", new Date(Date.now() - 3_600_000).toISOString(), "AS");
+    const as = residentialGauges(db).find((c) => c.tags?.airline === normalizeAirlineTag("AS"));
+    expect(as?.tags?.dataset).toBe("residential_sync");
+    expect(as?.value as number).toBeGreaterThanOrEqual(3590);
+    expect(as?.value as number).toBeLessThan(4000);
+    db.close();
+  });
+
+  test("a missing stamp emits maximally stale instead of going mute", () => {
+    const db = makeSyntheticDb();
+    const calls = residentialGauges(db);
+    expect(calls.length).toBe(FRESHNESS_COVERAGE.residential_sync.length);
+    for (const c of calls) expect(c.value).toBeGreaterThan(50 * 365 * 24 * 3600);
+    db.close();
+  });
+
+  test("QR disabled → only AS is tracked", () => {
+    expect(buildFreshnessCoverage(false).residential_sync).toEqual(["AS"]);
+    const db = makeSyntheticDb();
+    const calls = residentialGauges(db, buildFreshnessQueries(false));
+    expect(calls.map((c) => c.tags?.airline)).toEqual([normalizeAirlineTag("AS")]);
     db.close();
   });
 });

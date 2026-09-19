@@ -14,7 +14,7 @@ import { AIRLINES } from "../airlines/registry";
 import { initializeDatabase } from "../database/database";
 import { BROWSER_USER_AGENT } from "../utils/constants";
 import { info, error as logError } from "../utils/logger";
-import { applyFlyertalkTails } from "./flyertalk-common";
+import { type FlyertalkFetcher, applyFlyertalkTails, fetchFlyertalk } from "./flyertalk-common";
 
 const ALLOWED_HOST = "www.flyertalk.com";
 const THREAD_ID = 2201647;
@@ -42,10 +42,8 @@ function extractInstalled(html: string): string[] {
   return [...new Set(installed.match(AIRLINES.AS.tailScanPattern) ?? [])].sort();
 }
 
-export async function fetchAlaskaFlyertalkTails(): Promise<string[]> {
-  const res = await fetch(THREAD_URL, { headers: HEADERS, redirect: "error" });
-  if (!res.ok) throw new Error(`HTTP ${res.status} for ${THREAD_URL}`);
-  const html = new TextDecoder("latin1").decode(new Uint8Array(await res.arrayBuffer()));
+export async function fetchAlaskaFlyertalkTails(fetcher?: FlyertalkFetcher): Promise<string[]> {
+  const { html } = await fetchFlyertalk(THREAD_URL, THREAD_ID, HEADERS, fetcher);
   return extractInstalled(html);
 }
 

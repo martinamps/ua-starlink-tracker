@@ -9,6 +9,7 @@
  *   ... --preflight                      # prod-side: print {qr,as} confirmed/total state
  *
  * Exit codes: 0 ok · 1 fetch failed · 2 validation refused · 3 ship/ingest failed · 4 post-verify failed
+ *             5 partial: one source skipped, the other shipped
  */
 
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -17,6 +18,7 @@ import { AIRLINES } from "../airlines/registry";
 import { initializeDatabase, setMeta } from "../database/database";
 import { info, error as logError, warn } from "../utils/logger";
 import { applyAlaskaFlyertalkTails, fetchAlaskaFlyertalkTails } from "./flyertalk-alaska";
+import { FlyertalkRedirectRejected } from "./flyertalk-common";
 import { applyQatarFlyertalkTails, fetchQatarFlyertalkTails } from "./flyertalk-qatar";
 
 const PROD_SSH = process.env.RESIDENTIAL_SYNC_HOST ?? "llc";
@@ -28,13 +30,14 @@ const QR_FLOOR = 30;
 const AS_FLOOR = 1;
 const CEILING_MULT = 2;
 const FETCH_ATTEMPTS = 3;
+const PARTIAL_EXIT_CODE = 5;
 const SNAPSHOT_DIR = "/srv/ua-starlink-tracker/backup/residential-snapshots";
 
 type ProdState = { confirmed: number; total: number; tails: string[] };
 type Preflight = { qr: ProdState; as: ProdState };
 type Payload = {
   v: 1;
-  sources: { flyertalk_qr: { tails: string[] }; flyertalk_as?: { tails: string[] } };
+  sources: { flyertalk_qr?: { tails: string[] }; flyertalk_as?: { tails: string[] } };
   fetchedAt: string;
   fetchedFrom: string;
 };
@@ -57,15 +60,28 @@ function refused(msg: string): never {
   throw Object.assign(new Error(msg), { code: 2 });
 }
 
-async function withRetry<T>(fn: () => Promise<T>, label: string): Promise<T> {
+// A rejected redirect or a changed page layout fails identically on every
+// attempt; retrying only delays the error by 6s.
+export function isDeterministicFetchError(e: unknown): boolean {
+  if (e instanceof FlyertalkRedirectRejected) return true;
+  const msg = e instanceof Error ? e.message : String(e);
+  return /wikipost block not found|section bounds not found/.test(msg);
+}
+
+export async function withRetry<T>(
+  fn: () => Promise<T>,
+  label: string,
+  baseDelayMs = 2000
+): Promise<T> {
   let last: unknown;
   for (let i = 1; i <= FETCH_ATTEMPTS; i++) {
     try {
       return await fn();
     } catch (e) {
       last = e;
+      if (isDeterministicFetchError(e)) throw e;
       if (i < FETCH_ATTEMPTS) {
-        const wait = 2000 * 2 ** (i - 1);
+        const wait = baseDelayMs * 2 ** (i - 1);
         info(`${label}: attempt ${i}/${FETCH_ATTEMPTS} failed (${e}), retrying in ${wait}ms`);
         await new Promise((r) => setTimeout(r, wait));
       }
@@ -208,16 +224,24 @@ async function ingest(): Promise<void> {
     const snapshot = `${SNAPSHOT_DIR}/${payload.fetchedAt.replace(/[:.]/g, "-")}.json`;
     writeFileSync(snapshot, JSON.stringify({ before, payload }, null, 2));
 
-    const results: SourceResult[] = [
-      ingestSource(
-        db,
-        "flyertalk_qr",
-        "QR",
-        payload.sources.flyertalk_qr.tails,
-        validateQr,
-        applyQatarFlyertalkTails
-      ),
-    ];
+    if (!payload.sources.flyertalk_qr && !payload.sources.flyertalk_as)
+      refused("payload carries no sources");
+
+    const results: SourceResult[] = [];
+    if (payload.sources.flyertalk_qr) {
+      results.push(
+        ingestSource(
+          db,
+          "flyertalk_qr",
+          "QR",
+          payload.sources.flyertalk_qr.tails,
+          validateQr,
+          applyQatarFlyertalkTails
+        )
+      );
+      setMeta(db, "residentialSyncAt", payload.fetchedAt, "QR");
+      setMeta(db, "residentialSyncFrom", payload.fetchedFrom, "QR");
+    }
     if (payload.sources.flyertalk_as) {
       results.push(
         ingestSource(
@@ -233,9 +257,6 @@ async function ingest(): Promise<void> {
       setMeta(db, "residentialSyncAt", payload.fetchedAt, "AS");
       setMeta(db, "residentialSyncFrom", payload.fetchedFrom, "AS");
     }
-
-    setMeta(db, "residentialSyncAt", payload.fetchedAt, "QR");
-    setMeta(db, "residentialSyncFrom", payload.fetchedFrom, "QR");
 
     const result: IngestResult = { ok: true, results, snapshot, fetchedAt: payload.fetchedAt };
     console.log(JSON.stringify(result));
@@ -265,24 +286,51 @@ async function run(dryRun: boolean): Promise<void> {
       `AS mainline ${prod.as.confirmed}/${prod.as.total} confirmed`
   );
 
-  const qrTails = await withRetry(fetchQatarFlyertalkTails, "flyertalk_qr");
-  validateQr(qrTails, prod.qr.confirmed || undefined);
-  reportNew("QR", qrTails, prod.qr);
+  // Each source is fetched independently so one dead oracle can't block the
+  // other; a skip logs an error and exits PARTIAL_EXIT_CODE so the run reads
+  // as unhealthy instead of silently shipping half (AS was dead May→Sept).
+  const skipped: string[] = [];
+  let firstFailure: unknown;
+  const fetchSource = async (
+    source: SourceResult["source"],
+    label: string,
+    fetchTails: () => Promise<string[]>,
+    validate: (t: string[], c?: number) => void,
+    state: ProdState
+  ): Promise<string[] | undefined> => {
+    try {
+      const tails = await withRetry(fetchTails, source);
+      validate(tails, state.confirmed || undefined);
+      reportNew(label, tails, state);
+      return tails;
+    } catch (e) {
+      logError(`${source} skipped: ${(e as Error).message}`, e);
+      skipped.push(source);
+      firstFailure ??= e;
+      return undefined;
+    }
+  };
 
-  let asTails: string[] | undefined;
-  try {
-    asTails = await withRetry(fetchAlaskaFlyertalkTails, "flyertalk_as");
-    validateAs(asTails, prod.as.confirmed || undefined);
-    reportNew("AS", asTails, prod.as);
-  } catch (e) {
-    warn(`flyertalk_as skipped: ${(e as Error).message} — shipping QR only`);
-    asTails = undefined;
-  }
+  const qrTails = await fetchSource(
+    "flyertalk_qr",
+    "QR",
+    () => fetchQatarFlyertalkTails(),
+    validateQr,
+    prod.qr
+  );
+  const asTails = await fetchSource(
+    "flyertalk_as",
+    "AS",
+    () => fetchAlaskaFlyertalkTails(),
+    validateAs,
+    prod.as
+  );
+  if (!qrTails && !asTails) throw firstFailure;
 
   const payload: Payload = {
     v: 1,
     sources: {
-      flyertalk_qr: { tails: qrTails },
+      ...(qrTails ? { flyertalk_qr: { tails: qrTails } } : {}),
       ...(asTails ? { flyertalk_as: { tails: asTails } } : {}),
     },
     fetchedAt: new Date().toISOString(),
@@ -292,6 +340,7 @@ async function run(dryRun: boolean): Promise<void> {
   if (dryRun) {
     console.log(JSON.stringify(payload, null, 2));
     info("dry-run: not shipped");
+    markPartial(skipped);
     return;
   }
 
@@ -313,6 +362,13 @@ async function run(dryRun: boolean): Promise<void> {
     .map((r) => `${r.source} ${r.before}→${r.after} (+${r.new.length})`)
     .join(", ");
   info(`done: ${summary}, snapshot ${result.snapshot}`);
+  markPartial(skipped);
+}
+
+function markPartial(skipped: string[]): void {
+  if (!skipped.length) return;
+  logError(`partial sync: skipped ${skipped.join(", ")} — exit ${PARTIAL_EXIT_CODE}`);
+  process.exitCode = PARTIAL_EXIT_CODE;
 }
 
 function fail(e: unknown): never {
