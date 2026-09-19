@@ -105,6 +105,9 @@ export interface SiteFeatures {
   /** /live-tv — which planes carry the United/DISH live TV on seatback
    * screens. A UA-only product tie-in, so it is off everywhere else. */
   liveTvPage: boolean;
+  /** /fleet/{slug} aircraft-type pages. Single-airline tenants only: the hub
+   * would need a page per airline per type, and those hosts already rank. */
+  aircraftPages: boolean;
 }
 
 export interface SiteConfig {
@@ -837,6 +840,7 @@ const AIRLINE_SITE_FEATURES: SiteFeatures = {
   embedPage: true,
   installRatePage: true,
   liveTvPage: false,
+  aircraftPages: false,
 };
 
 export const SITES: Record<string, SiteConfig> = {
@@ -860,6 +864,7 @@ export const SITES: Record<string, SiteConfig> = {
       timelinePage: true,
       intentPages: true,
       liveTvPage: true,
+      aircraftPages: true,
     },
   },
   airline: {
@@ -891,6 +896,7 @@ export const SITES: Record<string, SiteConfig> = {
       embedPage: true,
       installRatePage: true,
       liveTvPage: false,
+      aircraftPages: false,
     },
   },
   hawaiian: {
@@ -919,7 +925,7 @@ export const SITES: Record<string, SiteConfig> = {
       dataDomain: AIRLINES.AS.brand.analyticsDomain,
       eventApiUrl: DEFAULT_ANALYTICS_EVENT_API,
     },
-    features: { ...AIRLINE_SITE_FEATURES, methodologyPage: true },
+    features: { ...AIRLINE_SITE_FEATURES, methodologyPage: true, aircraftPages: true },
   },
   qatar: {
     key: "qatar",

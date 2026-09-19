@@ -45,6 +45,8 @@ export interface FlightFacts {
   /** Newest sighting (unix sec) when the flight has gone quiet long enough to
    * say so on the page; null otherwise. */
   notObservedSince?: number | null;
+  /** aircraftTypes with their /fleet/{slug} page, each page linked once. */
+  aircraftTypeLinks?: Array<{ label: string; href: string | null }>;
 }
 
 /** A permalink segment that is not a flight number this site can answer for.
@@ -220,7 +222,24 @@ function FlightFactBlocks({ flight }: { flight: FlightFacts }) {
             {flight.aircraftTypes.length > 0 && (
               <p>
                 Aircraft recently seen on {fn}:{" "}
-                <span className="text-secondary">{flight.aircraftTypes.join(", ")}</span>.
+                <span className="text-secondary">
+                  {(
+                    flight.aircraftTypeLinks ??
+                    flight.aircraftTypes.map((label) => ({ label, href: null }))
+                  ).map((t, i) => (
+                    <React.Fragment key={t.label}>
+                      {i > 0 && ", "}
+                      {t.href ? (
+                        <a href={t.href} className="text-accent hover:underline">
+                          {t.label}
+                        </a>
+                      ) : (
+                        t.label
+                      )}
+                    </React.Fragment>
+                  ))}
+                </span>
+                .
               </p>
             )}
           </div>
