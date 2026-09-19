@@ -125,7 +125,8 @@ export function buildAirlineFlightNumberVariants(
 ): string[] {
   if (!iataExact(cfg).test(flightNumber)) return [flightNumber];
   const num = flightNumber.slice(cfg.iata.length);
-  return [flightNumber, ...cfg.carrierPrefixes.map((p) => `${p}${num}`)];
+  // carrierPrefixes carries the IATA code too, which would repeat flightNumber.
+  return [...new Set([flightNumber, ...cfg.carrierPrefixes.map((p) => `${p}${num}`)])];
 }
 
 /** Strip zero-padding so each flight has exactly one spelling (HA0011 → HA11).

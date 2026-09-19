@@ -98,6 +98,28 @@ bun run sync-fleet spreadsheet    # Only sync from spreadsheet
 bun run scrape-fr24               # Scrape FR24 fleet to JSON file
 ```
 
+### Air France (FlyerTalk fleet guide)
+Air France is hub-only (no tenant site). Per-tail status comes from the curated
+FlyerTalk "Complete Guide to the Air France Fleet" wikipost, stored as
+`starlink_planes.sheet_gid = 'flyertalk_af'` at the **community** evidence tier:
+`verified_wifi` stays NULL, answers say "likely", never "verified", and nothing is
+ever written negative. FlyerTalk blocks the prod ASN, so it ships through
+residential-sync like AS/QR; `AF:lastUpdated` is owned by `community-sync` and
+carries the curator's own date.
+
+```bash
+bun run flyertalk-airfrance --dry-run           # fetch + parse, print per-type counts
+bun run flyertalk-airfrance                     # apply to DB_PATH (needs the FR24 roster)
+bun run flyertalk-airfrance --demote-delisted   # also move un-starred tails back to unknown
+bun run residential-sync --dry-run              # AF rides along as flyertalk_af
+```
+
+The apply refuses when the AF roster is below `minFleetSanity` or more than 10
+ingested tails lost their star. Per-type counts (`fleet_guide_tails` +
+`getTypeProgress`) key on the registry's `programTypes`, so the 777-200ER and
+777-300ER are separate rows; A318/A319/A330 (`programExclusions`) and freighters
+are outside every denominator.
+
 ## Architecture
 
 ### Background Jobs
@@ -121,6 +143,7 @@ The server starts several background processes:
 | `starlink_verification_log` | Audit trail of all verification attempts |
 | `united_fleet` | Full fleet for discovery tracking |
 | `meta` | Key-value store for stats |
+| `fleet_guide_tails` | Per-tail marks from a community fleet guide (AF) |
 
 ### Key Files
 

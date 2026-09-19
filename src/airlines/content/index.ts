@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import type { Aircraft, FleetStats, PerAirlineStat, RecentInstall } from "../../types";
 import type { AirlineCode, KnownAirlineCode, Tenant } from "../registry";
+import { content as af } from "./af";
 import { content as as } from "./as";
 import { content as ha } from "./ha";
 import { content as hub } from "./hub";
@@ -69,6 +70,7 @@ const CONTENT: Record<KnownAirlineCode, AirlineContent> = {
   HA: ha,
   AS: as,
   QR: qr,
+  AF: af,
 };
 
 // Widened view for runtime lookup by arbitrary code — typed possibly-undefined

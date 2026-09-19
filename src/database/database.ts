@@ -22,8 +22,10 @@ import {
   OBSERVED_WIFI_SOURCES,
   VERIFICATION_SOURCES,
   enabledAirlines,
+  isOutsideProgramme,
   lastUpdatedOwner,
   looksLikeValidTailNumber,
+  programTypeOf,
   verifierSourceTag,
 } from "../airlines/registry";
 import { instrumentDatabase } from "../observability/db-timing";
@@ -727,6 +729,22 @@ export function setupTables(db: Database) {
 
   migrateMultiAirline(db);
   db.exec(ASSIGNMENT_LOG_DDL);
+
+  // Per-tail marks from a curated community fleet guide (AF: FlyerTalk). The
+  // section only gates the type and names the operator; the guide's seat and
+  // cabin detail is never stored beyond it, and never republished.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS fleet_guide_tails (
+      airline TEXT NOT NULL,
+      tail_number TEXT NOT NULL,
+      section TEXT NOT NULL,
+      program_type TEXT NOT NULL,
+      mark TEXT NOT NULL CHECK (mark IN ('starlink', 'legacy', 'none')),
+      guide_updated TEXT NOT NULL,
+      fetched_at INTEGER NOT NULL,
+      PRIMARY KEY (airline, tail_number)
+    )
+  `);
 }
 
 /**
@@ -1100,8 +1118,19 @@ export function setMeta(db: Database, key: string, value: string | number, airli
  * dead primary pipeline's staleness.
  */
 export function stampLastUpdated(db: Database, airline: string, writer: LastUpdatedOwner): void {
+  stampLastUpdatedAt(db, airline, writer, new Date().toISOString());
+}
+
+/** stampLastUpdated with the source's own date: a community list is as fresh
+ * as its curator's last edit, not as the day we happened to fetch it. */
+export function stampLastUpdatedAt(
+  db: Database,
+  airline: string,
+  writer: LastUpdatedOwner,
+  iso: string
+): void {
   if (lastUpdatedOwner(airline) === writer) {
-    setMeta(db, "lastUpdated", new Date().toISOString(), airline);
+    setMeta(db, "lastUpdated", new Date(iso).toISOString(), airline);
   }
 }
 
@@ -1128,7 +1157,7 @@ export function refreshFleetMeta(db: Database, airline: string): void {
       total: number;
       confirmed: number;
     }>
-  ).filter((r) => !isFreighterFamily(normalizeAircraftType(r.aircraft_type)));
+  ).filter((r) => !isOutsideProgramme(airline, normalizeAircraftType(r.aircraft_type)));
 
   let mainlineTotal = 0;
   let mainlineStarlink = 0;
@@ -1393,7 +1422,7 @@ export function getHubStats(db: Database, codes: readonly string[]): HubAirlineS
     .all(...codes) as { airline: string; aircraft_type: string | null; total: number }[];
   const passengerTotals = new Map<string, number>();
   for (const r of fleetByType) {
-    if (isFreighterFamily(normalizeAircraftType(r.aircraft_type))) continue;
+    if (isOutsideProgramme(r.airline, normalizeAircraftType(r.aircraft_type))) continue;
     passengerTotals.set(r.airline, (passengerTotals.get(r.airline) ?? 0) + r.total);
   }
   const fleet = [...passengerTotals].map(([airline, total]) => ({ airline, total }));
@@ -1931,7 +1960,7 @@ export function getSubfleetPenetration(
 ): Map<string, SubfleetPenetration> {
   const rows = db
     .query(
-      `SELECT uf.fleet, COUNT(*) AS total,
+      `SELECT uf.fleet, uf.aircraft_type, COUNT(*) AS total,
               SUM(CASE WHEN sp.TailNumber IS NOT NULL THEN 1 ELSE 0 END) AS equipped
        FROM united_fleet uf
        LEFT JOIN starlink_planes sp
@@ -1939,12 +1968,25 @@ export function getSubfleetPenetration(
              AND sp.airline = uf.airline
              AND ${equippedFilter("sp")}
        WHERE uf.airline = ?
-       GROUP BY uf.fleet`
+       GROUP BY uf.fleet, uf.aircraft_type`
     )
-    .all(airline) as { fleet: string; total: number; equipped: number }[];
-  const out = new Map<string, SubfleetPenetration>();
+    .all(airline) as {
+    fleet: string;
+    aircraft_type: string | null;
+    total: number;
+    equipped: number;
+  }[];
+  const sums = new Map<string, { equipped: number; total: number }>();
   for (const r of rows) {
-    out.set(r.fleet, {
+    if (isOutsideProgramme(airline, normalizeAircraftType(r.aircraft_type))) continue;
+    const acc = sums.get(r.fleet) ?? { equipped: 0, total: 0 };
+    acc.equipped += r.equipped;
+    acc.total += r.total;
+    sums.set(r.fleet, acc);
+  }
+  const out = new Map<string, SubfleetPenetration>();
+  for (const [fleet, r] of sums) {
+    out.set(fleet, {
       equipped: r.equipped,
       total: r.total,
       pct: r.total > 0 ? r.equipped / r.total : 0,
@@ -3097,6 +3139,241 @@ export function getNextFleetTailNeedingFlights(
   return row?.tail_number ?? null;
 }
 
+/**
+ * Lowest tier of the flight updater: a non-equipped roster tail of a
+ * fleetFallbackFlights airline with no future upcoming row, stalest poll
+ * first. Callers consult it only after both the equipped queue and the
+ * alaska-json fallback come back empty: those tails have verified_at NULL and
+ * "F-…" sorts before "N…", so merging it into that query would starve AS's
+ * unknown-tail verification.
+ */
+export function getNextCommunityFleetTailNeedingFlights(
+  db: Database,
+  exclude: readonly string[] = []
+): string | null {
+  const codes = enabledAirlines()
+    .filter((a) => a.fleetFallbackFlights)
+    .map((a) => a.code);
+  if (codes.length === 0) return null;
+  const now = Math.floor(Date.now() / 1000);
+  const skip = new Set(exclude);
+  const rows = db
+    .query(`
+      SELECT uf.tail_number, uf.aircraft_type, uf.airline
+      FROM united_fleet uf
+      WHERE uf.airline IN (${codes.map(() => "?").join(",")})
+        AND NOT EXISTS (
+          SELECT 1 FROM starlink_planes sp
+          WHERE sp.TailNumber = uf.tail_number AND ${equippedFilter("sp")}
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM upcoming_flights f
+          WHERE f.tail_number = uf.tail_number AND f.departure_time > ?
+        )
+      ORDER BY (SELECT MAX(f.last_updated) FROM upcoming_flights f
+                WHERE f.tail_number = uf.tail_number) ASC, uf.tail_number
+    `)
+    .all(...codes, now) as { tail_number: string; aircraft_type: string | null; airline: string }[];
+  const next = rows.find((r) => {
+    if (skip.has(r.tail_number)) return false;
+    const family = normalizeAircraftType(r.aircraft_type);
+    return !isFreighterFamily(family) && !isOutsideProgramme(r.airline, family);
+  });
+  return next?.tail_number ?? null;
+}
+
+export function getTailAirline(db: Database, tail: string): string | null {
+  const row = db.query("SELECT airline FROM united_fleet WHERE tail_number = ?").get(tail) as {
+    airline: string;
+  } | null;
+  return row?.airline ?? null;
+}
+
+// ── Community fleet guide (fleet_guide_tails) ─────────────────────────────────
+
+export type GuideMark = "starlink" | "legacy" | "none";
+
+export interface FleetGuideRow {
+  tail: string;
+  section: string;
+  programType: string;
+  mark: GuideMark;
+}
+
+/** Replace an airline's guide rows in one transaction: a reader never sees a
+ * half-written guide. */
+export function replaceFleetGuide(
+  db: Database,
+  airline: string,
+  rows: readonly FleetGuideRow[],
+  guideUpdated: string
+): void {
+  const now = Math.floor(Date.now() / 1000);
+  db.transaction(() => {
+    db.query("DELETE FROM fleet_guide_tails WHERE airline = ?").run(airline);
+    const ins = db.prepare(
+      `INSERT INTO fleet_guide_tails
+         (airline, tail_number, section, program_type, mark, guide_updated, fetched_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    );
+    for (const r of rows) {
+      ins.run(airline, r.tail, r.section, r.programType, r.mark, guideUpdated, now);
+    }
+  })();
+}
+
+export interface TypeProgress {
+  key: string;
+  label: string;
+  equipped: number;
+  total: number;
+  /** Roster tails of this type the guide doesn't list yet (new deliveries). */
+  notInGuide: number;
+  /** A programExclusions family: shown, never summed into a denominator. */
+  excluded: boolean;
+}
+
+/** Equipped/total per programme type from the full roster. Freighters are
+ * dropped; excluded families come back flagged, never summed. Ordered by
+ * share, then fleet size, excluded rows last. */
+export function getTypeProgress(db: Database, airline: string): TypeProgress[] {
+  const cfg = AIRLINES[airline];
+  if (!cfg) return [];
+  const rows = db
+    .query(
+      `SELECT uf.aircraft_type,
+              CASE WHEN sp.TailNumber IS NOT NULL THEN 1 ELSE 0 END AS equipped,
+              CASE WHEN g.tail_number IS NULL THEN 1 ELSE 0 END AS not_in_guide
+       FROM united_fleet uf
+       LEFT JOIN starlink_planes sp
+              ON sp.TailNumber = uf.tail_number
+             AND sp.airline = uf.airline
+             AND ${equippedFilter("sp")}
+       LEFT JOIN fleet_guide_tails g
+              ON g.airline = uf.airline AND g.tail_number = uf.tail_number
+       WHERE uf.airline = ?`
+    )
+    .all(airline) as { aircraft_type: string | null; equipped: number; not_in_guide: number }[];
+  const hasGuide = Boolean(
+    db.query("SELECT 1 FROM fleet_guide_tails WHERE airline = ? LIMIT 1").get(airline)
+  );
+  const byKey = new Map<string, TypeProgress>();
+  for (const r of rows) {
+    const family = normalizeAircraftType(r.aircraft_type);
+    if (isFreighterFamily(family)) continue;
+    const { key, label } = programTypeOf(cfg, r.aircraft_type);
+    const acc = byKey.get(key) ?? {
+      key,
+      label,
+      equipped: 0,
+      total: 0,
+      notInGuide: 0,
+      excluded: isOutsideProgramme(airline, family),
+    };
+    acc.total++;
+    acc.equipped += r.equipped;
+    if (hasGuide) acc.notInGuide += r.not_in_guide;
+    byKey.set(key, acc);
+  }
+  const share = (t: TypeProgress) => (t.total > 0 ? t.equipped / t.total : 0);
+  return [...byKey.values()].sort(
+    (a, b) => Number(a.excluded) - Number(b.excluded) || share(b) - share(a) || b.total - a.total
+  );
+}
+
+export interface FleetGuideTail {
+  tail: string;
+  /** Roster type string; null for a guide-only tail. */
+  aircraftType: string | null;
+  mark: GuideMark | null;
+  inRoster: boolean;
+  /** Was listed ★ and ingested, but the guide no longer marks it. */
+  delisted: boolean;
+}
+
+/** Every roster tail plus guide-only tails (retired or re-registered since),
+ * so a lookup for either still gets an answer. Freighters are dropped. */
+export function getFleetGuideTails(db: Database, airline: string): FleetGuideTail[] {
+  const rows = db
+    .query(
+      `SELECT uf.tail_number AS tail, uf.aircraft_type, g.mark, 1 AS in_roster,
+              CASE WHEN substr(sp.sheet_gid, 1, 10) = 'flyertalk_' THEN 1 ELSE 0 END AS listed
+       FROM united_fleet uf
+       LEFT JOIN fleet_guide_tails g
+              ON g.airline = uf.airline AND g.tail_number = uf.tail_number
+       LEFT JOIN starlink_planes sp
+              ON sp.TailNumber = uf.tail_number AND sp.airline = uf.airline
+       WHERE uf.airline = ?
+       UNION ALL
+       SELECT g.tail_number, NULL, g.mark, 0, 0
+       FROM fleet_guide_tails g
+       WHERE g.airline = ?
+         AND NOT EXISTS (SELECT 1 FROM united_fleet uf WHERE uf.tail_number = g.tail_number)
+       ORDER BY tail`
+    )
+    .all(airline, airline) as {
+    tail: string;
+    aircraft_type: string | null;
+    mark: GuideMark | null;
+    in_roster: number;
+    listed: number;
+  }[];
+  return rows
+    .filter((r) => !isFreighterFamily(normalizeAircraftType(r.aircraft_type)))
+    .map((r) => ({
+      tail: r.tail,
+      aircraftType: r.aircraft_type,
+      mark: r.mark,
+      inRoster: r.in_roster === 1,
+      delisted: r.listed === 1 && r.mark !== "starlink",
+    }));
+}
+
+export interface UnequippedAssignment {
+  tail_number: string;
+  flight_number: string;
+  departure_airport: string;
+  arrival_airport: string;
+  departure_time: number;
+  last_updated: number;
+  aircraft_type: string | null;
+  mark: GuideMark | null;
+  guide_updated: string | null;
+}
+
+/** The complement of getFlightAssignments: flights whose assigned tail is on
+ * the roster but not equipped. Lets a community-source airline name the
+ * assigned tail and its guide status without a live lookup. */
+export function getUnequippedAssignments(
+  db: Database,
+  flightNumberVariants: readonly string[],
+  startOfDay: number,
+  endOfDay: number,
+  airline?: AirlineFilter
+): UnequippedAssignment[] {
+  if (flightNumberVariants.length === 0) return [];
+  const q = withAirline(
+    `SELECT u.tail_number, u.flight_number, u.departure_airport, u.arrival_airport,
+            u.departure_time, u.last_updated, f.aircraft_type, g.mark, g.guide_updated
+     FROM upcoming_flights u
+     INNER JOIN united_fleet f ON f.tail_number = u.tail_number
+     LEFT JOIN fleet_guide_tails g
+            ON g.airline = f.airline AND g.tail_number = f.tail_number
+     WHERE u.flight_number IN (${flightNumberVariants.map(() => "?").join(", ")})
+       AND u.departure_time >= ? AND u.departure_time < ?
+       AND NOT EXISTS (
+         SELECT 1 FROM starlink_planes sp
+         WHERE sp.TailNumber = u.tail_number AND ${equippedFilter("sp")}
+       )`,
+    airline,
+    "u",
+    [...flightNumberVariants, startOfDay, endOfDay]
+  );
+  return db
+    .query(`${q.sql} ORDER BY u.last_updated DESC`)
+    .all(...q.params) as UnequippedAssignment[];
+}
+
 export function getNextAlaskaVerifyTarget(
   db: Database,
   airline: "AS" | "HA"
@@ -3983,10 +4260,13 @@ export function upsertFleetAircraft(
   //    observation. Mirrors reconcileTypeDeterministicFleets: verified stamps
   //    stay NULL and the tail stays verifier-eligible (no parking), so the
   //    per-tail verifier confirms it organically.
+  //  - "community": a curated list (AF's FlyerTalk guide) says so, but nobody
+  //    here observed it. Same NULL stamps as type_rule, so no surface that
+  //    reads verified_wifi can call it "verified".
   seedVerdict?: {
     starlinkStatus: StarlinkStatus;
     verifiedWifi: string | null;
-    evidence: "observed" | "type_rule";
+    evidence: "observed" | "type_rule" | "community";
   }
 ): void {
   const now = Math.floor(Date.now() / 1000);
@@ -4325,15 +4605,18 @@ export function addDiscoveredStarlinkPlane(
      * no DateFound (a deploy-day batch would fabricate a rollout cliff in
      * rolloutSeries/installs30d) and no verified_* stamp (per-tail
      * verification hasn't happened; the verifier queue serves NULL
-     * verified_at first, so these get real checks promptly). */
-    evidence: "observed" | "type_rule";
+     * verified_at first, so these get real checks promptly).
+     * 'community' = a curated list names the tail: DateFound is stamped (its
+     * flyertalk_ gid keeps it off install surfaces) but verified_* stays NULL,
+     * so the answer tier is "likely", never "verified". */
+    evidence: "observed" | "type_rule" | "community";
   }
 ): void {
   // Runtime guard too: ad-hoc callers (bun -e, untyped scripts) bypass tsc,
   // and a silently-defaulted 'observed' is the fabrication path.
-  if (opts.evidence !== "observed" && opts.evidence !== "type_rule") {
+  if (!["observed", "type_rule", "community"].includes(opts.evidence)) {
     throw new Error(
-      `addDiscoveredStarlinkPlane(${tailNumber}): opts.evidence must be "observed" or "type_rule"`
+      `addDiscoveredStarlinkPlane(${tailNumber}): opts.evidence must be "observed", "type_rule" or "community"`
     );
   }
 
@@ -4342,6 +4625,7 @@ export function addDiscoveredStarlinkPlane(
   if (existing) return;
 
   const typeRule = opts.evidence === "type_rule";
+  const unverified = opts.evidence !== "observed";
   const gid = opts.sheetGid ?? (typeRule ? "type_deterministic" : "discovery");
   const today = new Date().toISOString().split("T")[0];
 
@@ -4358,8 +4642,8 @@ export function addDiscoveredStarlinkPlane(
     tailNumber,
     operatedBy || (AIRLINES[opts.airline]?.name ?? opts.airline),
     fleet,
-    typeRule ? null : wifiProvider,
-    typeRule ? null : Math.floor(Date.now() / 1000),
+    unverified ? null : wifiProvider,
+    unverified ? null : Math.floor(Date.now() / 1000),
     opts.airline
   );
 }
@@ -4367,11 +4651,21 @@ export function addDiscoveredStarlinkPlane(
 /**
  * Get fleet discovery statistics
  */
+// Community-list confirmations carry no verified stamp; "verified_starlink"
+// must not count them.
+const COMMUNITY_UNVERIFIED = (() => {
+  const codes = Object.values(AIRLINES)
+    .filter((a) => a.communitySource)
+    .map((a) => `'${a.code}'`);
+  return codes.length ? `(airline IN (${codes.join(",")}) AND verified_wifi IS NULL)` : "0";
+})();
+
 export function getFleetDiscoveryStats(db: Database, airline?: AirlineFilter): FleetDiscoveryStats {
   const q1 = withAirline(
     `SELECT
        COUNT(*) as total_fleet,
-       SUM(CASE WHEN starlink_status = 'confirmed' THEN 1 ELSE 0 END) as verified_starlink,
+       SUM(CASE WHEN starlink_status = 'confirmed' AND NOT ${COMMUNITY_UNVERIFIED}
+           THEN 1 ELSE 0 END) as verified_starlink,
        SUM(CASE WHEN starlink_status = 'negative' THEN 1 ELSE 0 END) as verified_non_starlink,
        SUM(CASE WHEN starlink_status = 'unknown' THEN 1 ELSE 0 END) as pending_verification
      FROM united_fleet WHERE 1=1`,
@@ -4513,8 +4807,8 @@ function normalizeCarrier(op: string | null): string | null {
 
 export function bodyClassOf(family: string): BodyClass {
   if (/^(A330|A350|A380|B747|B767|B777|B787)/.test(family)) return "widebody";
-  if (/^(B717|B737|B757|A319|A320|A321)/.test(family)) return "narrowbody";
-  if (/^(E17|ERJ|CRJ)/.test(family)) return "regional";
+  if (/^(B717|B737|B757|A220|A318|A319|A320|A321)/.test(family)) return "narrowbody";
+  if (/^(E170|E175|E190|ERJ|CRJ)/.test(family)) return "regional";
   return "narrowbody"; // safer default for unknowns than inflating regional
 }
 
@@ -5183,11 +5477,12 @@ function computeInstallPace(
 function computeFleetPageData(db: Database, airline?: AirlineFilter): FleetPageData {
   const q = withAirline(
     `SELECT tail_number, aircraft_type, fleet, operated_by,
-            starlink_status, verified_wifi, verified_at
+            starlink_status, verified_wifi, verified_at, airline
      FROM united_fleet WHERE 1=1`,
     airline
   );
   const rows = db.query(`${q.sql} ORDER BY tail_number`).all(...q.params) as Array<{
+    airline: string;
     tail_number: string;
     aircraft_type: string | null;
     fleet: string;
@@ -5210,7 +5505,7 @@ function computeFleetPageData(db: Database, airline?: AirlineFilter): FleetPageD
 
   for (const r of rows) {
     const rawFamily = normalizeAircraftType(r.aircraft_type);
-    if (isFreighterFamily(rawFamily)) continue;
+    if (isOutsideProgramme(r.airline, rawFamily)) continue;
     const family = rawFamily === "other" ? "unknown" : rawFamily;
     const rawProvider = normalizeWifiProvider(r.verified_wifi);
     const provider: WifiProvider =

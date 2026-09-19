@@ -30,18 +30,23 @@ import { ensureAirlinePrefix, inferSubfleet } from "../airlines/flight-number";
 import {
   AIRLINES,
   type AirlineConfig,
+  COMMUNITY_SOURCE_UPDATED_META,
   type SubfleetDef,
   type WifiPhase,
   airlineHomeUrl,
+  programTypeOf,
   publicAirlines,
   siteForAirline,
   wifiPhaseFamilies,
 } from "../airlines/registry";
+import { formatFactDate } from "../airlines/rollout-facts";
 import type { AdsbFlightDraw } from "../database/adsb-flight-draws";
 import type {
   FleetRosterEntry,
+  GuideMark,
   VerificationObservation as Observation,
   SubfleetPenetration,
+  TypeProgress,
 } from "../database/database";
 import {
   type Scope,
@@ -1195,7 +1200,89 @@ const MIN_PENETRATION_TOTAL = 5;
 export type CarrierPrediction =
   | { kind: "penetration"; sf: SubfleetDef; pen: ResolvedPenetration }
   | { kind: "type_split"; groups: { phase: WifiPhase; families: string[] }[] }
-  | { kind: "no_model"; reason: string };
+  | { kind: "no_model"; reason: string }
+  // Community-source carriers (AF). Per programme type, never one blended
+  // number: a flight number doesn't pin the type, and the types run from
+  // "not started" to nearly done.
+  | { kind: "type_progress"; types: TypeProgress[]; guideUpdated: string | null }
+  | {
+      kind: "type_rate";
+      type: TypeProgress;
+      /** equipped/total; 0 for a retiring type; null when `ambiguous`. */
+      share: number | null;
+      /** A bare family the carrier splits (a plain "Boeing 777"): one row
+       * per programme type, and no share. */
+      ambiguous?: TypeProgress[];
+      types: TypeProgress[];
+      guideUpdated: string | null;
+    }
+  // The two below come only from check-flight-core, which knows the
+  // assigned tail; carrierPrediction never returns them.
+  | {
+      kind: "assigned_unconfirmed";
+      tail: string;
+      aircraftType: string | null;
+      programLabel: string;
+      /** null = the guide doesn't list this tail yet. */
+      mark: GuideMark | null;
+      guideUpdated: string | null;
+    }
+  | { kind: "partner_operated"; tail: string };
+
+export function typeShare(t: Pick<TypeProgress, "equipped" | "total" | "excluded">): number {
+  return t.excluded || t.total === 0 ? 0 : t.equipped / t.total;
+}
+
+/** "Boeing 787-10" on a codeshare reaches AF's B787 key through the family
+ * fallback, but AF flies only the 787-9, so that row says nothing about it. */
+function namesUnflownVariant(cfg: AirlineConfig, aircraftType: string, key: string): boolean {
+  const pinned = (cfg.programTypes ?? []).filter(([, k]) => k === key);
+  return (
+    pinned.length > 0 &&
+    !pinned.some(([re]) => re.test(aircraftType)) &&
+    /\d{3}-\d/.test(aircraftType)
+  );
+}
+
+function communityPrediction(
+  cfg: AirlineConfig,
+  reader: ScopedReader,
+  aircraftType: string | null | undefined,
+  noModel: CarrierPrediction
+): CarrierPrediction {
+  // Before the first guide sync every type would read "not started".
+  const guideUpdated = reader.getMeta(COMMUNITY_SOURCE_UPDATED_META);
+  const types = guideUpdated ? reader.getTypeProgress() : [];
+  if (types.length === 0) return noModel;
+  if (aircraftType) {
+    const { key } = programTypeOf(cfg, aircraftType);
+    if (namesUnflownVariant(cfg, aircraftType, key))
+      return { kind: "type_progress", types, guideUpdated };
+    const row = types.find((t) => t.key === key && t.total > 0);
+    if (row) return { kind: "type_rate", type: row, share: typeShare(row), types, guideUpdated };
+    const split = types.filter(
+      (t) => !t.excluded && t.key !== key && normalizeAircraftType(t.label) === key
+    );
+    if (split.length > 1) {
+      return {
+        kind: "type_rate",
+        type: {
+          key,
+          label: key.replace(/^B(?=\d)/, ""),
+          equipped: 0,
+          total: 0,
+          notInGuide: 0,
+          excluded: false,
+        },
+        share: null,
+        ambiguous: split,
+        types,
+        guideUpdated,
+      };
+    }
+  }
+  return { kind: "type_progress", types, guideUpdated };
+}
 
 const PHASE_ORDER: readonly WifiPhase[] = ["confirmed", "rolling", "negative"];
 
@@ -1225,7 +1312,8 @@ function phaseSplit(cfg: AirlineConfig): { phase: WifiPhase; families: string[] 
 export function carrierPrediction(
   cfg: AirlineConfig,
   reader: ScopedReader,
-  flightNumber: string
+  flightNumber: string,
+  ctx: { aircraftType?: string | null } = {}
 ): CarrierPrediction {
   const noModel: CarrierPrediction = {
     kind: "no_model",
@@ -1236,6 +1324,8 @@ export function carrierPrediction(
   // as this carrier's answer.
   if (reader.scope !== cfg.code) return noModel;
 
+  if (cfg.communitySource) return communityPrediction(cfg, reader, ctx.aircraftType, noModel);
+
   const groups = phaseSplit(cfg);
   if (groups) return { kind: "type_split", groups };
 
@@ -1245,6 +1335,13 @@ export function carrierPrediction(
     return { kind: "penetration", sf, pen };
   }
   return noModel;
+}
+
+/** A named tail is a tail-level answer, not a per-type one. */
+export function noModelConfidence(answer: CarrierPrediction): "tail" | "type" {
+  return answer.kind === "assigned_unconfirmed" || answer.kind === "partner_operated"
+    ? "tail"
+    : "type";
 }
 
 /** One outcome/confidence mapping for registry-driven carrier answers — REST,
@@ -1265,9 +1362,100 @@ const PHASE_LABEL: Record<WifiPhase, string> = {
   negative: "no Starlink",
 };
 
+function guideRef(cfg: AirlineConfig, guideUpdated: string | null) {
+  return {
+    label: cfg.communitySource?.label ?? "community fleet guide",
+    date: guideUpdated ? formatFactDate(guideUpdated.slice(0, 10)) : null,
+  };
+}
+
+const plural = (label: string) => (/\d$|[A-Z]$/.test(label) ? `${label}s` : label);
+
+/** "At least: 777-300ER 34 of 43, …; not started on 787-9, …; A318/A330 retiring". */
+function typeProgressSummary(types: readonly TypeProgress[]): string {
+  const live = types.filter((t) => !t.excluded && t.total > 0);
+  const done = live.filter((t) => t.equipped === t.total).map((t) => `${t.label} all ${t.total}`);
+  const going = live
+    .filter((t) => t.equipped > 0 && t.equipped < t.total)
+    .map((t) => `${t.label} ${t.equipped} of ${t.total}`);
+  const idle = live.filter((t) => t.equipped === 0).map((t) => t.label);
+  const retiring = types.filter((t) => t.excluded).map((t) => t.label);
+  return [
+    done.length + going.length > 0 ? `At least: ${[...done, ...going].join(", ")}` : null,
+    idle.length > 0 ? `not started on ${idle.join(", ")}` : null,
+    retiring.length > 0 ? `${retiring.join("/")} retiring` : null,
+  ]
+    .filter(Boolean)
+    .join("; ");
+}
+
+function describeTypeRate(
+  cfg: AirlineConfig,
+  answer: Extract<CarrierPrediction, { kind: "type_rate" }>
+): string {
+  const g = guideRef(cfg, answer.guideUpdated);
+  const cite = `(${g.label}${g.date ? `, updated ${g.date}` : ""})`;
+  if (answer.ambiguous) {
+    const rows = answer.ambiguous.map(
+      (t) => `the ${t.label} (${t.equipped > 0 ? `${t.equipped} of ${t.total}` : "none yet"})`
+    );
+    return joinSentences(
+      `${cfg.name} flies ${answer.ambiguous.length === 2 ? "two" : answer.ambiguous.length} ${answer.type.label} types: ${rows.join(" and ")}`,
+      "Check the exact variant on your booking"
+    );
+  }
+  const t = answer.type;
+  const name = plural(t.label);
+  if (t.excluded) {
+    const note = cfg.programExclusions?.note;
+    return joinSentences(
+      `${cfg.name}'s ${name} are not in the Starlink programme${note ? ` — ${note.toLowerCase()}` : ""}`
+    );
+  }
+  if (t.equipped === 0) {
+    return joinSentences(`No ${cfg.name} ${t.label} is listed with Starlink yet ${cite}`);
+  }
+  if (t.equipped === t.total) {
+    return joinSentences(`All ${t.total} ${cfg.name} ${name} have Starlink ${cite}`);
+  }
+  return joinSentences(
+    `At least ${t.equipped} of ${t.total} ${cfg.name} ${name} have Starlink ${cite}`,
+    "The aircraft is assigned about two days before departure"
+  );
+}
+
+function describeAssigned(
+  cfg: AirlineConfig,
+  answer: Extract<CarrierPrediction, { kind: "assigned_unconfirmed" }>
+): string {
+  const on = `Scheduled on ${answer.tail}${answer.programLabel ? ` (${answer.programLabel})` : ""}`;
+  const g = guideRef(cfg, answer.guideUpdated);
+  const guide = `the ${g.label}${g.date ? ` updated ${g.date}` : ""}`;
+  if (answer.mark === null) return joinSentences(`${on}; not yet listed in ${guide}`);
+  if (answer.mark === "starlink") {
+    return joinSentences(`${on}; listed with Starlink in ${guide}, not yet confirmed here`);
+  }
+  const has = answer.mark === "legacy" ? "it has legacy WiFi" : "no WiFi listed";
+  return joinSentences(`${on}; not on the Starlink list in ${guide} — ${has}`);
+}
+
 /** One-sentence prose for a CarrierPrediction — keeps REST and MCP wording identical. */
 export function describeCarrierPrediction(cfg: AirlineConfig, answer: CarrierPrediction): string {
   if (answer.kind === "no_model") return answer.reason;
+  if (answer.kind === "type_progress") {
+    const g = guideRef(cfg, answer.guideUpdated);
+    return joinSentences(
+      `On ${cfg.name}-operated flights, Starlink depends on the aircraft type. ${typeProgressSummary(answer.types)}`,
+      `Per-aircraft status from the ${g.label}${g.date ? ` (updated ${g.date})` : ""}`
+    );
+  }
+  if (answer.kind === "type_rate") return describeTypeRate(cfg, answer);
+  if (answer.kind === "assigned_unconfirmed") return describeAssigned(cfg, answer);
+  if (answer.kind === "partner_operated") {
+    return joinSentences(
+      `Operated by another airline (${answer.tail}) — ${cfg.name} fleet data doesn't apply to this flight`
+    );
+  }
   if (answer.kind === "type_split") {
     const parts = answer.groups.map((g) => `${g.families.join("/")}: ${PHASE_LABEL[g.phase]}`);
     return joinSentences(
@@ -1320,6 +1508,17 @@ export function compareRouteForAirline(
 ): RouteCompareResult | null {
   const o = origin.toUpperCase().trim();
   const d = destination.toUpperCase().trim();
+  // A community-source carrier's route doesn't pin the aircraft type any more
+  // than its flight number does; any route number would be a blend.
+  if (cfg.communitySource) {
+    return {
+      ...brand(cfg),
+      kind: "no_data",
+      probability: -1,
+      breakdown: [],
+      reason: "Depends on aircraft type",
+    };
+  }
   // flight_routes has no airline column, so the prefix glob would attribute
   // shared-regional rows (OO/SKW for SkyWest, ENY/PDT etc.) to UA. flight_routes
   // is written via ensureAirlinePrefix → marketing IATA, so iata+icao is enough.
@@ -1506,7 +1705,7 @@ export function carrierRouteAnswer(
   // A split-phase carrier without a route rule (QR): the route doesn't pin
   // the family either, so a roster-penetration number would be the same
   // dishonest blend the predict path refuses — say no-model instead.
-  if (phaseSplit(cfg)) return null;
+  if (phaseSplit(cfg) || cfg.communitySource) return null;
   const r = compareRouteForAirline(cfg, reader, o, d);
   return r && r.kind !== "no_data" ? r : null;
 }

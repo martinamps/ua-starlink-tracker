@@ -10,10 +10,12 @@
 import type React from "react";
 import { type AirlineConfig, type SiteConfig, airlineSlug } from "../airlines/registry";
 import type { AirlineFactsEntry } from "../airlines/rollout-facts";
+import type { TypeProgress } from "../database/database";
 import type { SubfleetBreakdown } from "../scripts/starlink-predictor";
 import type { PerAirlineStat } from "../types";
 import { FactsList, PhaseTable, type TypePhase } from "./airlines-page";
 import { PageFooter, type PageLink, STATUS_TONE } from "./atoms";
+import { TypeShareTable } from "./community-airline-page";
 
 const PANEL = "bg-surface border border-subtle rounded-lg p-5";
 
@@ -29,6 +31,9 @@ export interface CompareSide {
    * Rendered instead of a single blended number — a flight's answer depends
    * on which family flies it. */
   phases: TypePhase[] | null;
+  /** Per-programme-type counts for a community-source airline (AF) — also
+   * rendered instead of a blended number. */
+  typeProgress?: TypeProgress[] | null;
   facts: AirlineFactsEntry | null;
   /** Flight-level lookup on the airline's own surface, when one exists. */
   checkFlightUrl: string | null;
@@ -51,7 +56,7 @@ function SidePanel({ side }: { side: CompareSide }) {
   // passenger and overstates it for an A380 one. Those programs show the
   // per-family table INSTEAD — the blended figure is exactly the average the
   // predict path refuses to publish.
-  const showBlended = fleet > 0 && !side.phases;
+  const showBlended = fleet > 0 && !side.phases && !side.typeProgress;
   return (
     <div className={`${PANEL} flex flex-col`}>
       <div className="flex items-center justify-between gap-2 mb-3">
@@ -102,10 +107,11 @@ function SidePanel({ side }: { side: CompareSide }) {
       )}
 
       {side.phases ? <PhaseTable phases={side.phases} /> : null}
+      {side.typeProgress ? <TypeShareTable types={side.typeProgress} compact /> : null}
 
       <p className="text-sm text-muted leading-relaxed mb-4">{cfg.rollout.phaseNote}</p>
 
-      {side.phases ? null : side.breakdown.length > 0 ? (
+      {side.phases || side.typeProgress ? null : side.breakdown.length > 0 ? (
         <div className="mb-4">
           <div className="text-[10px] font-mono text-muted uppercase tracking-wider mb-1">
             By fleet group

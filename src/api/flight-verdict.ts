@@ -100,8 +100,14 @@ export function cachedFlightAssignments(
   // clock, so the stamp and the TTL compare share one timebase; this rejection
   // handler also keeps the stored promise from ever surfacing as an unhandled
   // rejection.
+  // Counted once FR24 was actually asked: a queue shed refunds its token.
+  const countLookup = () =>
+    metrics.increment(COUNTERS.FR24_LOOKUP, {
+      airline: normalizeAirlineTag(flightNumber.slice(0, 2)),
+    });
   promise.then(
     (result) => {
+      countLookup();
       fr24ThrottleStreak = 0;
       if (result.length > 0) return;
       if (targetDateUnix - now > ASSIGNMENT_EMPTY_CACHE_MIN_LEAD) entry.empty = true;
@@ -116,6 +122,7 @@ export function cachedFlightAssignments(
         countShed(flightNumber, "queue");
         return;
       }
+      countLookup();
       if (assignmentCache.get(key) === entry) {
         entry.failedAt = now;
       }

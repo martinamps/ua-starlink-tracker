@@ -172,6 +172,27 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
       "Higher cabin humidity and pressure than other jets — passengers actually feel less wrecked.",
   },
   // Airbus
+  A220: {
+    seats: "120–160",
+    wingspan_ft: 115.1,
+    length_ft: 127.0,
+    range_mi: 3900,
+    cruise_mph: 515,
+    first_flight: 2015,
+    engines: "2× PW1500G",
+    fun_fact:
+      "Designed by Bombardier as the CSeries — Airbus took the programme over in 2018 and renamed it.",
+  },
+  A318: {
+    seats: "107–132",
+    wingspan_ft: 111.9,
+    length_ft: 103.2,
+    range_mi: 3570,
+    cruise_mph: 515,
+    first_flight: 2002,
+    engines: "2× CFM56-5B or PW6000",
+    fun_fact: "The smallest member of the A320 family — fewer than 100 were ever built.",
+  },
   A319: {
     seats: 126,
     wingspan_ft: 111.9,
@@ -249,15 +270,24 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
       "Sized to the exact 76-seat limit that pilot unions negotiated — any bigger and it's illegal to fly.",
   },
   E170: {
-    seats: 70,
+    seats: "70–78",
     wingspan_ft: 85.3,
     length_ft: 98.1,
-    range_mi: 2470,
-    cruise_mph: 515,
+    range_mi: 2450,
+    cruise_mph: 500,
     first_flight: 2002,
     engines: "2× GE CF34-8E",
-    fun_fact:
-      "The first E-Jet to fly. The E175 that dominates United Express is the same airplane stretched by about six feet.",
+    fun_fact: "The original E-Jet — the E175 and E190 are stretches of the same design.",
+  },
+  E190: {
+    seats: "96–114",
+    wingspan_ft: 94.3,
+    length_ft: 118.9,
+    range_mi: 2800,
+    cruise_mph: 515,
+    first_flight: 2004,
+    engines: "2× GE CF34-10E",
+    fun_fact: "Seated 2-2 throughout, so there is no middle seat anywhere on board.",
   },
   "ERJ-145": {
     seats: 50,

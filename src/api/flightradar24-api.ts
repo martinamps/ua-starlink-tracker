@@ -193,7 +193,10 @@ export class FlightRadar24API {
   /**
    * Get upcoming flights for a specific aircraft by registration/tail number
    */
-  async getUpcomingFlights(tailNumber: string): Promise<FlightUpdate[]> {
+  async getUpcomingFlights(
+    tailNumber: string,
+    flightNumberSource: FlightNumberSource = "callsign"
+  ): Promise<FlightUpdate[]> {
     return this.retryWithBackoff(async () => {
       // FR24 API expects registration without the leading 'N' for some queries,
       // but works fine with the full registration
@@ -232,7 +235,9 @@ export class FlightRadar24API {
         return [];
       }
 
-      return parseUpcomingFlights(flights, Math.floor(Date.now() / 1000));
+      return parseUpcomingFlights(flights, Math.floor(Date.now() / 1000), undefined, {
+        flightNumberSource,
+      });
     });
   }
 
@@ -405,12 +410,31 @@ export class FlightRadar24API {
 
 export type FR24ListFlight = Pick<FR24Flight, "identification" | "airport" | "time">;
 
+export type FlightNumberSource = "callsign" | "marketing";
+
+/**
+ * upcoming_flights.flight_number for one FR24 leg. "callsign" keeps the
+ * operating code (SKW4783) for FlightAware links. "marketing" is for carriers
+ * whose callsigns are alphanumeric (AFR26CE) and match no marketed number:
+ * number.default, or null to drop a leg that carries none.
+ */
+export function pickFlightNumber(
+  flight: Pick<FR24Flight, "identification">,
+  source: FlightNumberSource
+): string | null {
+  const id = flight.identification;
+  if (source === "marketing") return id.number.default || null;
+  return id.callsign || id.number.alternative || id.number.default || "";
+}
+
 /** Not-yet-landed legs (airborne ones included), nearest departure first, capped. */
 export function parseUpcomingFlights(
   flights: FR24ListFlight[],
   nowSec: number,
-  cap = FR24_UPCOMING_CAP
+  cap = FR24_UPCOMING_CAP,
+  opts: { flightNumberSource?: FlightNumberSource } = {}
 ): FlightUpdate[] {
+  const source = opts.flightNumberSource ?? "callsign";
   return flights
     .filter((flight) => {
       const departureTime = flight.time.scheduled.departure || flight.time.estimated.departure || 0;
@@ -427,19 +451,17 @@ export function parseUpcomingFlights(
       return arrivalTime > nowSec || departureTime > nowSec;
     })
     .map((flight) => ({
-      // Callsign (operating code like SKW4783) for FlightAware links.
-      flight_number:
-        flight.identification.callsign ||
-        flight.identification.number.alternative ||
-        flight.identification.number.default ||
-        "",
+      flight_number: pickFlightNumber(flight, source),
       departure_airport: flight.airport.origin?.code.iata || flight.airport.origin?.code.icao || "",
       arrival_airport:
         flight.airport.destination?.code.iata || flight.airport.destination?.code.icao || "",
       departure_time: flight.time.scheduled.departure || flight.time.estimated.departure || 0,
       arrival_time: flight.time.scheduled.arrival || flight.time.estimated.arrival || 0,
     }))
-    .filter((f) => f.departure_airport && f.arrival_airport)
+    .filter(
+      (f): f is FlightUpdate =>
+        f.flight_number !== null && Boolean(f.departure_airport && f.arrival_airport)
+    )
     .sort((a, b) => a.departure_time - b.departure_time)
     .slice(0, cap);
 }

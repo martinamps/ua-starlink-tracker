@@ -126,7 +126,7 @@ function typeDetermined(cfg: AirlineConfig): boolean {
   return wifiPhaseFamilies(cfg.code) !== null;
 }
 
-function StatusPill({ cfg }: { cfg: AirlineConfig }) {
+export function StatusPill({ cfg }: { cfg: AirlineConfig }) {
   const tone = STATUS_TONE[cfg.rollout.status];
   return (
     <span
@@ -236,7 +236,7 @@ function TrackerCta({
   );
 }
 
-function PageShell({
+export function PageShell({
   site,
   heading,
   sub,
