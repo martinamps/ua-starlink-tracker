@@ -19,6 +19,7 @@ import {
   RETIRED_BLOCKS,
 } from "../scripts/citations/allowlist";
 import { assertableTokens, checkTokens, htmlToText, normalize } from "../scripts/citations/tokens";
+import { aircraftPagesFor } from "../src/airlines/aircraft-pages";
 import {
   AIRLINE_FACTS,
   type RolloutFact,
@@ -275,6 +276,37 @@ describe("bot-blocked host allowlist", () => {
   test("a host is allowlisted once, and not also retired", () => {
     for (const host of Object.keys(BLOCKED_HOSTS)) {
       expect(RETIRED_BLOCKS[host], `${host} is both blocked and retired`).toBeUndefined();
+    }
+  });
+});
+
+describe("type-page tags", () => {
+  const tagged = AIRLINE_FACTS.flatMap((e) =>
+    e.facts
+      .filter((f) => f.aircraftPages || f.officialCounts || f.pageText)
+      .map((fact) => ({ entry: e, fact }))
+  );
+
+  test("tags only name type pages the airline actually has", () => {
+    expect(tagged.length).toBeGreaterThan(0);
+    for (const { entry, fact } of tagged) {
+      const slugs = new Set(aircraftPagesFor(entry.trackedCode ?? "").map((d) => d.slug));
+      expect(slugs.size, `${entry.slug} tags type pages but has none`).toBeGreaterThan(0);
+      for (const s of fact.aircraftPages ?? []) {
+        expect(s === "*" || slugs.has(s), `${entry.slug}: ${s}`).toBe(true);
+      }
+      for (const [s, n] of Object.entries(fact.officialCounts ?? {})) {
+        expect(slugs.has(s), `${entry.slug}: officialCounts.${s}`).toBe(true);
+        expect(Number.isInteger(n) && n >= 0, `${entry.slug}: ${s}=${n}`).toBe(true);
+        expect(fact.aircraftPages, `${entry.slug}: ${s} counted but not tagged`).toContain(s);
+      }
+    }
+  });
+
+  test("an official count is a dated claim, and pageText quotes the fact verbatim", () => {
+    for (const { entry, fact } of tagged) {
+      if (fact.officialCounts) expect(fact.asOf, entry.slug).toBeDefined();
+      if (fact.pageText) expect(fact.fact, entry.slug).toContain(fact.pageText);
     }
   });
 });

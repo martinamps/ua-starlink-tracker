@@ -48,7 +48,8 @@ async function sitemapPageShapes(): Promise<string[]> {
   expect(paths.length).toBeGreaterThan(0);
   const byShape = new Map<string, string>();
   for (const p of paths) {
-    const shape = p.split("/").slice(0, 2).join("/") || "/";
+    // /fleet/{slug} is its own template, not a /fleet variant.
+    const shape = p.startsWith("/fleet/") ? "/fleet/*" : p.split("/").slice(0, 2).join("/") || "/";
     if (!byShape.has(shape)) byShape.set(shape, p);
   }
   return [...byShape.values()];
