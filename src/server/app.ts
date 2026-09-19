@@ -39,6 +39,7 @@ import {
   AIRLINES,
   type AirlineCode,
   type AirlineConfig,
+  COMMUNITY_SOURCE_UPDATED_META,
   HOST_REDIRECTS,
   HUB_BRAND,
   type PageBrand,
@@ -84,6 +85,7 @@ import {
   negativeWifi,
   parseLegQuery,
   recordLegScope,
+  recordUntrackedLookup,
   resolveFlightVerdict,
   scheduledFlights,
   verdictConfidence,
@@ -117,6 +119,10 @@ import CheckFlightPage, {
   type InvalidFlightQuery,
 } from "../components/check-flight-page";
 import type { CiteStat } from "../components/cite-this";
+import {
+  CommunityAirlinePage,
+  communityPageDescription,
+} from "../components/community-airline-page";
 import ComparePage, { type CompareSide } from "../components/compare-page";
 import EmbedPage from "../components/embed-page";
 import FleetPage, { type FleetTypeLink } from "../components/fleet-page";
@@ -183,6 +189,7 @@ import { error as logError } from "../utils/logger";
 import { getNotFoundHtml } from "../utils/not-found";
 import { denominatorIsPublishable, shareCardFile, shareCardPath } from "../utils/share-cards";
 import { getSpreadsheetCacheInfo, getSpreadsheetCacheTails } from "../utils/utils";
+import { aircraftTypeParam, communityWireFields, noModelConfidence } from "./community-wire";
 import {
   type Database,
   type RequestContext,
@@ -884,11 +891,13 @@ function resolveCarrier(
   flightNumber: string,
   reader: ScopedReader,
   getReader: RequestContext["getReader"],
+  route: "check_flight" | "check_any_flight" | "predict_flight",
   notTrackedStatus: 200 | 404 = 404,
   pool: "public" | "lookup" = "public"
 ): { cfg: AirlineConfig; reader: ScopedReader } | Response {
   const decision = decideCarrier(tenantConfig(tenant), flightNumber, { pool });
   if (decision.outcome === "not_tracked") {
+    recordUntrackedLookup(flightNumber, route);
     return notTrackedResponse(notTrackedStatus, decision.tracked);
   }
   return { cfg: decision.cfg, reader: carrierReader(decision, reader, getReader) };
@@ -906,7 +915,7 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant, si
     );
   }
 
-  const carrier = resolveCarrier(tenant, flightNumber, reader, getReader);
+  const carrier = resolveCarrier(tenant, flightNumber, reader, getReader, "check_flight");
   if (carrier instanceof Response) return carrier;
   const { cfg } = carrier;
   const isHub = tenant === "ALL";
@@ -921,7 +930,7 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant, si
     flightNumber,
     date,
     withLeg(
-      isHub ? { lookupTail: null } : undefined,
+      isHub ? { lookupTail: null, aircraftType: aircraftTypeParam(url) } : undefined,
       parseLegQuery(url.searchParams.get("origin"), url.searchParams.get("destination"))
     )
   );
@@ -1048,10 +1057,11 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant, si
         JSON.stringify({
           hasStarlink: null,
           ...hubAirline,
-          confidence: "type",
+          confidence: noModelConfidence(verdict.answer),
           ...(verdict.answer.kind === "penetration"
             ? { prediction: { probability: verdict.answer.pen.pct } }
             : {}),
+          ...communityWireFields(verdict.answer),
           message,
           ...legField(verdict),
           flights: [],
@@ -1139,9 +1149,16 @@ const apiCheckAnyFlight: Handler = async ({ req, url, reader, getReader, tenant 
   // hub.tsx's inline check JS parses this shape — pre-existing contract.
   // The "lookup" pool adds hubFlightLookup carriers (QR) — this endpoint and
   // hub MCP flight tools answer them; hub /api/check-flight and
-  // /api/predict-flight stay on the public pool. The hub never does FR24
-  // reverse lookups (lookupTail: null).
-  const carrier = resolveCarrier(tenant, flightNumber, reader, getReader, 200, "lookup");
+  // /api/predict-flight stay on the public pool.
+  const carrier = resolveCarrier(
+    tenant,
+    flightNumber,
+    reader,
+    getReader,
+    "check_any_flight",
+    200,
+    "lookup"
+  );
   if (carrier instanceof Response) return carrier;
   const { cfg } = carrier;
 
@@ -1152,7 +1169,7 @@ const apiCheckAnyFlight: Handler = async ({ req, url, reader, getReader, tenant 
     flightNumber,
     date,
     withLeg(
-      { lookupTail: null },
+      { lookupTail: null, aircraftType: aircraftTypeParam(url) },
       parseLegQuery(url.searchParams.get("origin"), url.searchParams.get("destination"))
     )
   );
@@ -1218,9 +1235,10 @@ const apiCheckAnyFlight: Handler = async ({ req, url, reader, getReader, tenant 
         JSON.stringify({
           hasStarlink: null,
           airline: cfg.name,
-          confidence: "type",
+          confidence: noModelConfidence(verdict.answer),
           // Additive top-level `probability` for the extension claim ladder.
           ...(verdict.answer.kind === "penetration" ? { probability: verdict.answer.pen.pct } : {}),
+          ...communityWireFields(verdict.answer),
           reason: withLegNote(describeCarrierPrediction(cfg, verdict.answer), verdict),
           ...legField(verdict),
           flights: [],
@@ -1304,7 +1322,7 @@ const apiPredictFlight: Handler = ({ req, url, reader, getReader, tenant }) => {
       headers: SECURITY_HEADERS.api,
     });
   }
-  const carrier = resolveCarrier(tenant, flightNumber, reader, getReader);
+  const carrier = resolveCarrier(tenant, flightNumber, reader, getReader, "predict_flight");
   if (carrier instanceof Response) return carrier;
   const { cfg } = carrier;
   // Same shape gate resolveFlightVerdict applies — /api/predict-flight had none,
@@ -3931,6 +3949,7 @@ const airlineDetailPage: Handler = (ctx) => {
     // One indexable URL per airline: IATA, case and trailing-slash variants 301.
     const redirect = canonicalOrRedirect(airlineSlug(cfg));
     if (redirect) return redirect;
+    if (cfg.communitySource) return communityAirlinePage(ctx, cfg);
     const overview = airlineOverview(ctx.getReader, cfg);
     const liveTracker = siteForAirline(cfg.code, true);
     const indexable = hubAirlinePageIndexable(cfg);
@@ -3986,6 +4005,42 @@ const airlineDetailPage: Handler = (ctx) => {
   );
 };
 
+/** A community-source airline's hub page: per programme type and per tail.
+ * Its title carries no ratio — the guide lags installs, and a lagging ratio in
+ * a SERP snippet reads as a regression. */
+function communityAirlinePage(
+  ctx: RequestContext,
+  cfg: AirlineConfig
+): Response | Promise<Response> {
+  const reader = ctx.getReader(cfg.code);
+  const types = reader.getTypeProgress();
+  const guideUpdated = reader.getMeta(COMMUNITY_SOURCE_UPDATED_META);
+  const slug = airlineSlug(cfg);
+  return renderSubPage(
+    ctx,
+    CommunityAirlinePage,
+    `/airlines/${slug}`,
+    {
+      siteTitle: cfg.brand.siteTitle,
+      siteDescription: communityPageDescription(cfg, types, guideUpdated),
+      keywords: cfg.brand.keywords,
+      ogTitle: cfg.brand.ogTitle,
+      ogDescription: cfg.brand.ogDescription,
+    },
+    {
+      cfg,
+      types,
+      tails: reader.getFleetGuideTails(),
+      guideUpdated,
+      lastSynced: reader.getMeta("residentialSyncAt"),
+      facts: factsForCode(cfg.code),
+      nowMs: Date.now(),
+    },
+    200,
+    stampedIso(reader.getLastUpdatedRaw())
+  );
+}
+
 // ── Hub /compare/{a}-vs-{b} pages ────────────────────────────────────────────
 // Head-to-head pages ONLY for tracked airlines (real per-tail data); the URL
 // space is bounded to their pairs in one canonical slug order — the reverse
@@ -4032,6 +4087,7 @@ function buildCompareSide(ctx: RequestContext, cfg: AirlineConfig): CompareSide 
   const reader = ctx.getReader(cfg.code);
   const liveSite = siteForAirline(cfg.code, true);
   const phases = passengerPhases(cfg.code);
+  const typeProgress = cfg.communitySource ? reader.getTypeProgress() : null;
   return {
     cfg,
     stat: reader.getPerAirlineStats()[0],
@@ -4039,8 +4095,9 @@ function buildCompareSide(ctx: RequestContext, cfg: AirlineConfig): CompareSide 
     // Type-determined programs render the phase table INSTEAD of any blended
     // number — see PhaseTable for why the fleet percentage is unpublishable
     // for them. The panel drops the headline stat when phases are present.
-    breakdown: phases ? [] : subfleetBreakdown(cfg, reader),
+    breakdown: phases || typeProgress ? [] : subfleetBreakdown(cfg, reader),
     phases,
+    typeProgress,
     facts: factsForCode(cfg.code),
     checkFlightUrl: liveSite?.features.checkFlightPage
       ? `https://${liveSite.canonicalHost}/check-flight`

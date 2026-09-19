@@ -19,11 +19,13 @@ import {
 } from "../airlines/flight-number";
 import {
   type AirlineConfig,
+  COMMUNITY_SOURCE_UPDATED_META,
   enabledAirlines,
   hubLookupAirlines,
+  programTypeOf,
   publicAirlines,
 } from "../airlines/registry";
-import type { FlightAssignmentRow } from "../database/database";
+import type { FlightAssignmentRow, UnequippedAssignment } from "../database/database";
 import type { Scope, ScopedReader } from "../database/reader";
 import {
   COUNTERS,
@@ -31,6 +33,7 @@ import {
   bucketDaysOut,
   metrics,
   normalizeAirlineTag,
+  normalizeCarrierPrefix,
   normalizeLegEffect,
   normalizeLegMatch,
   normalizeLegReason,
@@ -133,6 +136,19 @@ export function decideCarrier(
   const cfg = detectMarketingCarrier(flightNumber, pool);
   if (!cfg) return { outcome: "not_tracked", pinnedCfg: null, tracked: pool };
   return { outcome: "resolved", cfg, pinned: false };
+}
+
+/** Count a not_tracked lookup by the prefix asked for — every renderer of a
+ * not_tracked decision calls this, so REST and MCP demand land in one series. */
+export function recordUntrackedLookup(
+  flightNumber: string,
+  route: "check_flight" | "check_any_flight" | "predict_flight" | "mcp"
+): void {
+  metrics.increment(COUNTERS.FLIGHT_LOOKUP_UNTRACKED, {
+    airline: "unmapped",
+    prefix: normalizeCarrierPrefix(flightNumber),
+    route,
+  });
 }
 
 /**
@@ -300,6 +316,9 @@ export function verdictTelemetry(
 
 export interface ResolveDeps {
   now?: number;
+  /** The booking's aircraft type, for carriers whose answer is per programme
+   * type (community-source); used only when no tail is known. */
+  aircraftType?: string | null;
   /** Override the FR24 reverse lookup; pass null to disable it (hub check-any-flight). */
   lookupTail?: typeof lookupFlightTailVerdict | null;
   predict?: typeof predictFlight;
@@ -333,6 +352,20 @@ export async function resolveFlightVerdict(
   // most-recent row after an aircraft swap; then keep only rows whose
   // departure-airport local date matches the queried date.
   const seen = new Set<number>();
+  const onDate = (r: { departure_airport: string; departure_time: number }) =>
+    matchesLocalDate(date, r.departure_airport, r.departure_time, window.start, window.end);
+  const unequipped = cfg.communitySource
+    ? reader.getUnequippedAssignments(variants, window.queryStart, window.queryEnd).filter(onDate)
+    : [];
+  // Only community carriers poll non-★ tails, so only they can hold a newer
+  // non-★ row that supersedes a ★ row for the same departure (a swap).
+  const supersededAt = new Map<number, number>();
+  for (const u of unequipped) {
+    supersededAt.set(
+      u.departure_time,
+      Math.max(u.last_updated, supersededAt.get(u.departure_time) ?? 0)
+    );
+  }
   const rows = reader
     .getFlightAssignments(variants, window.queryStart, window.queryEnd)
     .filter((r) => {
@@ -340,9 +373,8 @@ export async function resolveFlightVerdict(
       seen.add(r.departure_time);
       return true;
     })
-    .filter((r) =>
-      matchesLocalDate(date, r.departure_airport, r.departure_time, window.start, window.end)
-    );
+    .filter(onDate)
+    .filter((r) => r.last_updated >= (supersededAt.get(r.departure_time) ?? 0));
 
   const leg = deps.leg;
   if (!leg) {
@@ -353,6 +385,7 @@ export async function resolveFlightVerdict(
       date,
       window,
       rows,
+      unequipped,
       deps,
       now
     );
@@ -371,13 +404,16 @@ export async function resolveFlightVerdict(
       date,
       window,
       rows,
+      unequipped,
       shared,
       now
     );
     return { ...verdict, leg: unscopedResolution(ambiguousLeg(leg)) };
   };
   const sel = selectLeg(rows, rowDeparture, rowArrival, leg);
-  if (sel.match === "ambiguous") return unscopedAnswer();
+  // Community carriers also hold rows for unequipped tails; they scope the same way.
+  const unequippedSel = selectLeg(unequipped, rowDeparture, rowArrival, leg);
+  if (sel.match === "ambiguous" || unequippedSel.match === "ambiguous") return unscopedAnswer();
   const scoped = await verdictFromRows(
     cfg,
     reader,
@@ -385,17 +421,20 @@ export async function resolveFlightVerdict(
     date,
     window,
     sel.items,
+    unequippedSel.items,
     shared,
     now,
     leg
   );
   if (scoped.segmentMatch === "ambiguous") return unscopedAnswer();
+  const answeredSel: LegSelection<{ departure_airport: string; arrival_airport: string }> =
+    sel.items.length > 0 ? sel : unequippedSel;
   return {
     ...scoped.verdict,
     leg: legResolution(
       leg,
-      rows.length,
-      sel,
+      rows.length + unequipped.length,
+      answeredSel,
       otherLegsOf(rows, sel.items, rowDeparture, rowArrival, (r) => ({
         departure_time: r.departure_time,
         tail_number: r.tail_number,
@@ -433,8 +472,10 @@ function rowOutcome(r: FlightAssignmentRow): "yes" | "no" {
   return c === "verified" || c === "unverified" ? "yes" : "no";
 }
 
-const rowDeparture = (r: FlightAssignmentRow) => normalizeAirportCode(r.departure_airport);
-const rowArrival = (r: FlightAssignmentRow) => normalizeAirportCode(r.arrival_airport);
+const rowDeparture = (r: { departure_airport: string | null }) =>
+  normalizeAirportCode(r.departure_airport);
+const rowArrival = (r: { arrival_airport: string | null }) =>
+  normalizeAirportCode(r.arrival_airport);
 
 interface RowsAnswer {
   verdict: AnsweredVerdict;
@@ -451,6 +492,7 @@ async function verdictFromRows(
   date: string,
   window: FlightDateWindow,
   rows: FlightAssignmentRow[],
+  unequipped: readonly UnequippedAssignment[],
   deps: ResolveDeps,
   now: number,
   leg?: LegQuery
@@ -474,6 +516,19 @@ async function verdictFromRows(
       verdict: { kind: "scheduled", window, normalized, verified, unverified },
       segments: null,
     };
+  }
+
+  // A community-source carrier's non-equipped tail is still an answer: name
+  // it with its guide status, and skip the live lookup that would only find
+  // the same tail.
+  if (cfg.communitySource) {
+    const assigned = assignedFromDb(cfg, reader, unequipped);
+    if (assigned) {
+      return {
+        verdict: { kind: "no_model", window, normalized, answer: assigned, fr24Error: false },
+        segments: null,
+      };
+    }
   }
 
   // FR24 runs whenever there are no equipped rows: with firm-no rows it can
@@ -513,6 +568,17 @@ async function verdictFromRows(
           ...scopedTo,
         };
       }
+      const assigned =
+        cfg.communitySource && segments.length > 0
+          ? assignedFromSegments(cfg, reader, segments)
+          : null;
+      if (assigned) {
+        return {
+          verdict: { kind: "no_model", window, normalized, answer: assigned, fr24Error: false },
+          segments: raw,
+          ...scopedTo,
+        };
+      }
       // Segments whose tail we know nothing about are not a "no" — only a
       // verified non-Starlink tail is. With our own firm-no rows in hand,
       // prefer those (they carry per-row reasons); otherwise fr24_no.
@@ -542,7 +608,7 @@ async function verdictFromRows(
         kind: "no_model",
         window,
         normalized,
-        answer: carrierPrediction(cfg, reader, normalized),
+        answer: carrierPrediction(cfg, reader, normalized, { aircraftType: deps.aircraftType }),
         fr24Error,
       },
       segments: raw,
@@ -584,6 +650,53 @@ function unscopedRowsOutcome(
   if (outcomes.length > 0) return "no";
   if (segments?.some((s) => s.hasStarlink === false)) return "no";
   return "none";
+}
+
+type AssignedAnswer = Extract<
+  CarrierPrediction,
+  { kind: "assigned_unconfirmed" } | { kind: "partner_operated" }
+>;
+
+function assignedFromDb(
+  cfg: AirlineConfig,
+  reader: ScopedReader,
+  unequipped: readonly UnequippedAssignment[]
+): AssignedAnswer | null {
+  // Before the first guide sync every tail would read "not yet listed".
+  const guideUpdated = reader.getMeta(COMMUNITY_SOURCE_UPDATED_META);
+  const row = unequipped[0];
+  if (!guideUpdated || !row) return null;
+  return {
+    kind: "assigned_unconfirmed",
+    tail: row.tail_number,
+    aircraftType: row.aircraft_type,
+    programLabel: programTypeOf(cfg, row.aircraft_type).label,
+    mark: row.mark,
+    guideUpdated,
+  };
+}
+
+// FR24's tail, which resolveTailVerdict could not place: ours (not on the
+// Starlink list) or another airline's metal on a codeshare.
+function assignedFromSegments(
+  cfg: AirlineConfig,
+  reader: ScopedReader,
+  segments: readonly FallbackSegment[]
+): AssignedAnswer | null {
+  const own = segments.find((s) => cfg.tailPattern.test(s.tail_number));
+  if (!own) return { kind: "partner_operated", tail: segments[0].tail_number };
+  const guideUpdated = reader.getMeta(COMMUNITY_SOURCE_UPDATED_META);
+  if (!guideUpdated) return null;
+  const guide = reader.getFleetGuideTails().find((t) => t.tail === own.tail_number);
+  const aircraftType = guide?.aircraftType ?? own.aircraft_model;
+  return {
+    kind: "assigned_unconfirmed",
+    tail: own.tail_number,
+    aircraftType,
+    programLabel: programTypeOf(cfg, aircraftType).label,
+    mark: guide?.mark ?? null,
+    guideUpdated,
+  };
 }
 
 /**

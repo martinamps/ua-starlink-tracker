@@ -249,9 +249,10 @@ function assertNoForeignTenant(site: SiteConfig, route: string, rawBody: string)
   const body = stripCrossSiteLinks(rawBody);
   for (const other of foreignAirlines(site)) {
     expect(body, `${site.key} ${route} leaks "${other.name}"`).not.toContain(other.name);
+    // A hub-only airline has no host of its own to leak; its name still can't.
     const otherHost = siteForAirline(other.code)?.canonicalHost;
-    expect(otherHost, `no site registered for airline ${other.code}`).toBeDefined();
-    expect(body, `${site.key} ${route} links ${otherHost}`).not.toContain(otherHost as string);
+    if (!otherHost) continue;
+    expect(body, `${site.key} ${route} links ${otherHost}`).not.toContain(otherHost);
   }
 }
 

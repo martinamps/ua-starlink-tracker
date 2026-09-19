@@ -14,7 +14,7 @@
  *                    an airline, so http metrics carry tenant in addition to the
  *                    per-call default `airline:unmapped` injected by withDefaultAirline.
  *   fleet:           registry subfleet keys (SUBFLEET_KEYS) | unknown  (~5)
- *   aircraft_type:   normalized families (B737-800, E175, etc)      (~25)
+ *   aircraft_type:   normalized families (B737-800, E175, etc)      (~30)
  *   wifi_provider:   starlink | viasat | panasonic | thales | none | other | unknown  (7)
  *   starlink_status: confirmed | negative | unknown                  (3)
  *   vendor:          fr24 | flightaware | united | qatar | alaska | adsb | indexnow (7)
@@ -36,6 +36,8 @@
  *                    flight.lookup_result     mirrors `outcome`                   (+4 new)
  *                                                                          union (16)
  *   dataset:         mirrors `job` on data.freshness_seconds             (~7)
+ *   prefix:          flight_lookup.untracked: registry IATA codes + 20 named
+ *                    carriers | other (~26)
  *   client_class:    classifyRequest: extension | other-extension, else
  *                    classifyUserAgent: claude | googleother | googlebot |
  *                    bingbot | gptbot | perplexity | seo-crawler | social |
@@ -251,6 +253,43 @@ export function normalizeEquipmentCodeTag(code: string | null | undefined): stri
   return /^[A-Z0-9]{3}$/.test(c) ? c : "invalid";
 }
 
+// Carriers people ask about most, beyond the registry's own codes. Anything
+// else is "other": the prefix is caller-supplied text.
+const UNTRACKED_PREFIXES = new Set([
+  "DL",
+  "AA",
+  "WN",
+  "B6",
+  "AC",
+  "WS",
+  "BA",
+  "LH",
+  "KL",
+  "EK",
+  "EY",
+  "TK",
+  "SQ",
+  "CX",
+  "QF",
+  "NH",
+  "JL",
+  "VS",
+  "SK",
+  "LX",
+]);
+
+/** IATA designator of a caller-typed flight number, bounded to the registry
+ * codes plus UNTRACKED_PREFIXES; "other" otherwise. */
+export function normalizeCarrierPrefix(flightNumber: string | null | undefined): string {
+  const m = (flightNumber ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/[\s\-.]/g, "")
+    .match(/^([A-Z][A-Z0-9]|\d[A-Z])\d/);
+  if (!m) return "other";
+  return UNTRACKED_PREFIXES.has(m[1]) || AIRLINES[m[1]] ? m[1] : "other";
+}
+
 /** Bounded-cardinality bucket for how many calendar days ahead a flight lookup's date is. */
 export function bucketDaysOut(days: number): string {
   if (!Number.isFinite(days)) return "unknown";
@@ -344,6 +383,15 @@ export const COUNTERS = {
   // Probe beacon outcome — tags: outcome (onboard_api|cors_blocked|csp_blocked|
   //   fetch_error|timeout|onboard_http_*|onboard_noflight|unknown), in_geofeed (0|1), airline
   PASSENGER_PROBE: "passenger.probe",
+
+  // A flight-number lookup for a carrier we don't answer (web, REST, MCP) —
+  // demand for the next airline. tags: airline (always unmapped),
+  // prefix (normalizeCarrierPrefix), route (check_flight|check_any_flight|
+  // predict_flight|mcp)
+  FLIGHT_LOOKUP_UNTRACKED: "flight_lookup.untracked",
+  // A request-path live FR24 assignment lookup that reached FR24 (queue sheds
+  // are refunded and not counted) — each airline's share. tags: airline
+  FR24_LOOKUP: "flight_verdict.fr24_lookup",
 
   // Starlink Watch calendar-feed fetch (calendar apps re-poll ~hourly, so this
   // counts polls, not subscribers) — tags: airline, state (prediction|yes|no|swap|none)

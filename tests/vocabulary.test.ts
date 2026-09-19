@@ -8,6 +8,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import { AIRCRAFT_FAMILY_KEYS } from "../src/airlines/aircraft-families";
 import { getContent } from "../src/airlines/content";
 import { content as hubContent } from "../src/airlines/content/hub";
 import { detectAirline } from "../src/airlines/flight-number";
@@ -65,6 +66,47 @@ describe("snapshot aircraft_type vocabulary", () => {
       expect(normalizeFleet(fleet)).toBe(fleet);
     }
   );
+});
+
+describe("aircraft family normalizer", () => {
+  test.each([
+    ["Airbus A220-300", "A220"],
+    ["BCS3", "A220"],
+    ["Airbus A318-111", "A318"],
+    ["Embraer E170STD", "E170"],
+    ["Embraer E170SE", "E170"],
+    ["Embraer E190LR", "E190"],
+    ["E190STD", "E190"],
+    ["Embraer 190", "E190"],
+    ["E175LR", "E175"],
+    ["ERJ-175", "E175"],
+    ["E75L", "E175"],
+    ["ERJ-170-200", "E175"],
+    ["EMB 170-200LR", "E175"],
+    ["Embraer 170-200", "E175"],
+    ["ERJ 170-100", "E170"],
+    // The global family stays whole; airline-local programme types split it.
+    ["Boeing 777-328(ER)", "B777"],
+    ["777-228(ER)", "B777"],
+  ])("%s → %s", (raw, family) => {
+    expect(normalizeAircraftType(raw)).toBe(family);
+  });
+
+  test.each(["A220", "A318", "E170", "E190"])(
+    "%s is a family with specs whose fun fact names no registered airline",
+    (family) => {
+      expect(AIRCRAFT_FAMILY_KEYS).toContain(family);
+      const spec = AIRCRAFT_SPECS[family];
+      expect(spec).toBeDefined();
+      for (const a of Object.values(AIRLINES)) {
+        expect(spec.fun_fact).not.toContain(a.shortName);
+      }
+    }
+  );
+
+  test("United's E170s stay United Express after the re-bucket", () => {
+    expect(AIRLINES.UA.classifyFleet?.("Embraer E170SE")).toBe("express");
+  });
 });
 
 // ── subfleet keys ────────────────────────────────────────────────────────────
@@ -178,6 +220,7 @@ const TAIL_SAMPLES: Record<string, string> = {
   HA: "N390HA",
   AS: "N967AK",
   QR: "A7-ALA",
+  AF: "F-HTYA",
 };
 
 describe("tail patterns", () => {

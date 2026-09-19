@@ -48,8 +48,12 @@ const html = (s: string) => s.replace(/&/g, "&amp;");
 // The tracked roster on /airlines — the registry's declared hub CONTENT
 // population (publicInHub, plus hubContentOnly airlines like QR).
 const trackedRoster = () => hubContentAirlines();
-// Anything the registry does not publish on the hub stays invisible there.
-const invisibleAirlines = () => Object.values(AIRLINES).filter((a) => !trackedRoster().includes(a));
+// Anything the registry does not publish on the hub stays invisible there —
+// except as its own content-only facts entry (AF before it is published).
+const invisibleAirlines = () =>
+  Object.values(AIRLINES).filter(
+    (a) => !trackedRoster().includes(a) && !contentOnlyFacts().some((e) => e.iata === a.iata)
+  );
 
 describe("hub /airlines index", () => {
   test("serves on the hub and lists the tracked roster plus every facts entry", async () => {
@@ -141,6 +145,17 @@ describe("hub /airlines/{slug} detail pages (tracked airlines)", () => {
         expect(body, `${cfg.code} missing stamp ${date}`).toContain(formatFactDate(date));
         expect(body, `${cfg.code} missing source ${fact.source.url}`).toContain(fact.source.url);
       }
+    }
+  });
+
+  // Publishing an airline whose facts entry lacks trackedCode would list its
+  // slug twice (tracked + content-only) and drop its facts from the page.
+  test("a hub-content airline's facts entry is tracked, never content-only", () => {
+    for (const cfg of trackedRoster()) {
+      const dup = contentOnlyFacts().find(
+        (e) => e.slug === airlineSlug(cfg) || e.iata === cfg.iata
+      );
+      expect(dup?.slug, `${cfg.code}: set trackedCode on its rollout-facts entry`).toBeUndefined();
     }
   });
 

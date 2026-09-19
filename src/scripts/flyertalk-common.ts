@@ -19,44 +19,56 @@ export function applyFlyertalkTails(
   db: Database,
   tails: string[],
   opts: {
-    airline: "AS" | "QR";
-    gid: Extract<FleetSource, "flyertalk_as" | "flyertalk_qr">;
+    airline: "AS" | "QR" | "AF";
+    gid: Extract<FleetSource, "flyertalk_as" | "flyertalk_qr" | "flyertalk_af">;
     operator: string;
-    /** Aircraft type to write when the tail qualifies; null skips the tail. */
-    gate: (tail: string) => { aircraftType: string | null } | null;
+    /** united_fleet.operated_by to assert; defaults to `operator`. null leaves
+     * the roster's own value alone (AF: the guide knows HOP, FR24 doesn't). */
+    fleetOperator?: string | null;
+    /** Aircraft type to write when the tail qualifies (plus an operator that
+     * overrides `operator` on the starlink_planes row); null skips the tail. */
+    gate: (tail: string) => { aircraftType: string | null; operator?: string } | null;
     gateLabel: string;
+    /** "observed" (default): posters spotted or flew the tail — verified
+     * stamps + parking. "community": a curated list says so — no verified
+     * stamps, so every answer built on it says "likely". */
+    evidence?: "observed" | "community";
   }
 ): number {
   if (tails.length === 0) return 0;
 
+  const evidence = opts.evidence ?? "observed";
+  const fleetOperator = opts.fleetOperator === undefined ? opts.operator : opts.fleetOperator;
   let written = 0;
   const tx = db.transaction((rows: string[]) => {
     for (const tail of rows) {
       const hit = opts.gate(tail);
       if (!hit) continue;
-      // FlyerTalk tails are individually spotted/flown (community observation,
-      // not a type rule) — observation semantics: verified stamps + parking.
       upsertFleetAircraft(
         db,
         tail,
         hit.aircraftType,
         opts.gid,
         "mainline",
-        opts.operator,
+        fleetOperator,
         opts.airline,
-        { starlinkStatus: "confirmed", verifiedWifi: "Starlink", evidence: "observed" }
+        {
+          starlinkStatus: "confirmed",
+          verifiedWifi: evidence === "observed" ? "Starlink" : null,
+          evidence,
+        }
       );
       addDiscoveredStarlinkPlane(
         db,
         tail,
         hit.aircraftType,
         "Starlink",
-        opts.operator,
+        hit.operator ?? opts.operator,
         "mainline",
         {
           sheetGid: opts.gid,
           airline: opts.airline,
-          evidence: "observed",
+          evidence,
         }
       );
       written++;

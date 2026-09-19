@@ -98,7 +98,8 @@ export type FleetSource =
   | "as_seed"
   | "canary"
   | "flyertalk_qr"
-  | "flyertalk_as";
+  | "flyertalk_as"
+  | "flyertalk_af";
 export type StarlinkStatus = "confirmed" | "negative" | "unknown";
 
 export interface FleetAircraft {
