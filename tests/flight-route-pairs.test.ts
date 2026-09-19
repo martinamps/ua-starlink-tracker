@@ -49,7 +49,7 @@ function seedReassignedFlight() {
 describe("getFlightRoutePairs ordering", () => {
   test("a scheduled leg outranks a heavier historical leg", () => {
     const db = seedReassignedFlight();
-    const rows = getFlightRoutePairs(db, ["UA1340"], "UA");
+    const rows = getFlightRoutePairs(db, ["UA1340"], "UA", utc("2026-08-15T12:00:00Z"));
 
     expect(rows.length).toBe(2);
     // routes[0] is what the title/meta/JSON-LD advertise.
@@ -99,7 +99,7 @@ describe("getFlightRoutePairs ordering", () => {
        VALUES ('N54321', 'UA7', 'SFO', 'SIN', ?, ?, ?, 'UA')`,
       [dep, dep + 61200, dep]
     );
-    const rows = getFlightRoutePairs(db, ["UA7"], "UA");
+    const rows = getFlightRoutePairs(db, ["UA7"], "UA", dep - 3600);
 
     expect(rows.length).toBe(1);
     expect(rows[0].scheduled).toBe(1);

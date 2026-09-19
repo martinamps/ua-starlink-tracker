@@ -22,7 +22,8 @@
  *   kind:            missing_from_fleet | inactive_in_fleet                 (2)
  *   status:          success | error | rate_limited | timeout | killed |
  *                    exit_error | parse_error | spawn_error | partial |
- *                    aborted | scrape_error | noop                   (~12)
+ *                    aborted | scrape_error | noop | shed            (~13)
+ *   reason:          breaker | bucket | queue — fr24 assignments status:shed only (3)
  *   http_status:     upstream HTTP status code on vendor.request error/
  *                    rate_limited emits (fr24 only)                  (~10)
  *   result:          three disjoint enums share this key, so a `sum by {result}`
@@ -35,7 +36,12 @@
  *                    flight.lookup_result     mirrors `outcome`                   (+4 new)
  *                                                                          union (16)
  *   dataset:         mirrors `job` on data.freshness_seconds             (~7)
- *   client_class:    bot | claude | extension | browser | unknown    (5)
+ *   client_class:    classifyRequest: extension | other-extension, else
+ *                    classifyUserAgent: claude | googleother | googlebot |
+ *                    bingbot | gptbot | perplexity | seo-crawler | social |
+ *                    extension | bot | browser | unknown             (13)
+ *   ext_version:     1.x | 2.0 | 2.x | other | none — only when
+ *                    client_class:extension                          (5)
  *   confidence:      high | medium | low | none                      (4)
  *   outcome:         verified_yes | verified_no | predicted | no_data | error  (5)
  *   tool:            7 MCP tool names (TOOL_NAMES) | unknown         (~8)
@@ -152,6 +158,42 @@ export function classifyUserAgent(ua: string | null | undefined): string {
   return "unknown";
 }
 
+// The extension's service worker fetches with the stock Chrome UA, so the UA
+// regex above never fires for it: v2.0.1+ says so with `client=ext-<version>`,
+// and any extension fetch may carry its Origin. Only our own store ID counts
+// as "extension" — a copycat reusing the API is a different audience.
+const OWN_EXTENSION_ORIGIN = "chrome-extension://jjfljoifenkfdbldliakmmjhdkbhehoi";
+const EXT_CLIENT_RE = /^ext-(\d{1,2})\.(\d{1,3})\.(\d{1,3})$/;
+const FOREIGN_EXTENSION_ORIGIN_RE = /^(chrome|moz|safari-web)-extension:\/\//;
+
+export function classifyRequest(req: Request, url: URL): string {
+  if (EXT_CLIENT_RE.test(url.searchParams.get("client") ?? "")) return "extension";
+  const origin = req.headers.get("origin");
+  if (origin === OWN_EXTENSION_ORIGIN) return "extension";
+  if (origin && FOREIGN_EXTENSION_ORIGIN_RE.test(origin)) return "other-extension";
+  return classifyUserAgent(req.headers.get("user-agent"));
+}
+
+/** `none` is an extension request with no client param: every build before 2.0.1. */
+export function normalizeExtVersion(client: string | null | undefined): string {
+  if (!client) return "none";
+  const m = client.match(EXT_CLIENT_RE);
+  if (!m) return "other";
+  if (m[1] === "1") return "1.x";
+  if (m[1] === "2") return m[2] === "0" ? "2.0" : "2.x";
+  return "other";
+}
+
+/** `client_class`, plus `ext_version` on extension traffic only. */
+export function requestClientTags(req: Request, url: URL): Tags {
+  const clientClass = classifyRequest(req, url);
+  if (clientClass !== "extension") return { client_class: clientClass };
+  return {
+    client_class: clientClass,
+    ext_version: normalizeExtVersion(url.searchParams.get("client")),
+  };
+}
+
 /**
  * Canonical lowercase-name airline tag for metrics. Preserves Datadog history
  * (the global default has always been `airline:united`, not `airline:UA`).
@@ -197,6 +239,8 @@ export const COUNTERS = {
   // tags: vendor (fr24|flightaware|united|qatar|alaska|adsb|indexnow), type, status
   // united status values: success | timeout | killed | exit_error | parse_error | spawn_error
   // fr24/flightaware/adsb/indexnow status values: success | error | rate_limited
+  // fr24 assignments adds status:shed (request-path guard refused), tagged
+  //   reason (breaker|bucket|queue) and airline
   // qatar status values: success | error | partial
   VENDOR_REQUEST: "vendor.request",
 
@@ -293,6 +337,17 @@ export const GAUGES = {
 
   // Starlink RFC 8805 geofeed prefix count — tags: airline:all
   GEOFEED_PREFIXES: "geofeed.prefixes",
+
+  // ADS-B shadow KPIs per sweep. accuracy = match/(match+mismatch); blind_share
+  // = no_assignment share of airborne tails that have any upcoming_flights row
+  // (untracked non-Starlink tails can never match, so they'd swamp it). tags: airline
+  ADSB_SHADOW_ACCURACY: "adsb_shadow.accuracy",
+  ADSB_SHADOW_BLIND_SHARE: "adsb_shadow.blind_share",
+
+  // Share of tails at the upcoming_flights row cap whose first row is more than
+  // an hour after their refresh — the signature of a cap keeping the furthest
+  // flights instead of the nearest. tags: airline
+  UPCOMING_CAPPED_FUTURE_SHARE: "upcoming.capped_future_share",
 } as const;
 
 /**
@@ -314,4 +369,7 @@ export const DISTRIBUTIONS = {
   // Distribution of probabilities served to users — surfaces cold-start floods.
   // tags: confidence (high|medium|low), method (flight_history|fleet_prior), airline
   PREDICTION_PROBABILITY: "prediction.probability",
+
+  // Past-dated upcoming_flights rows pruned per sweep (graph as sum) — tags: airline
+  UPCOMING_PRUNED: "upcoming.pruned",
 } as const;

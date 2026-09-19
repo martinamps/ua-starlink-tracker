@@ -57,9 +57,9 @@ export const content: AirlineContent = {
   rowBadge: (p) =>
     p.fleet === "horizon" ? p.OperatedBy?.replace(/ Air(lines)?$/, "") || "Regional" : null,
 
-  // hawaiian_metal tails live in HA's roster, so its chip would always be empty.
+  // Hawaiian-operated tails live in HA's roster, so their chips would always be empty.
   subfleetFilters: AIRLINES.AS.subfleets
-    .filter((sf) => sf.key !== "hawaiian_metal")
+    .filter((sf) => sf.key !== "hawaiian_metal" && sf.key !== "hawaiian_interisland")
     .map((sf) => ({ key: sf.key, label: sf.label })),
 
   faq: [

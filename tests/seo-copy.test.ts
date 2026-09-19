@@ -17,7 +17,8 @@ import { SITES } from "../src/airlines/registry";
 import { routeVerdict } from "../src/components/route-page";
 import { getSitemapRoutes } from "../src/database/database";
 import type { RouteSummary } from "../src/database/database";
-import { createApp } from "../src/server/app";
+import { clampMetaDescription, createApp } from "../src/server/app";
+import { article } from "../src/utils/grammar";
 import { openSnapshot, req } from "./helpers";
 
 let app: ReturnType<typeof createApp>;
@@ -44,12 +45,12 @@ const summary = (over: Partial<RouteSummary>): RouteSummary => ({
 
 describe("routeVerdict", () => {
   test("a single departure is never pluralized", () => {
-    const one = summary({ totalDepartures: 1, equippedDepartures: 1 });
-    expect(routeVerdict(one, "United Airlines")).toContain("The only scheduled");
-    expect(routeVerdict(one, "United Airlines")).not.toContain("All 1");
-    const none = summary({ totalDepartures: 1, equippedDepartures: 0 });
-    expect(routeVerdict(none, "United Airlines")).toContain("is not on a Starlink-equipped");
-    expect(routeVerdict(none, "United Airlines")).not.toContain("None of the 1");
+    const one = routeVerdict(
+      summary({ totalDepartures: 1, equippedDepartures: 1 }),
+      "United Airlines"
+    );
+    expect(one).toMatch(/^1 Starlink-equipped United Airlines departure on /);
+    expect(one).not.toContain("departures on");
   });
 
   test("an empty window with history leads with the history, not the negative", () => {
@@ -68,16 +69,42 @@ describe("routeVerdict", () => {
   });
 
   test("an empty window with no history keeps the honest no-data copy", () => {
-    expect(routeVerdict(summary({}), "United Airlines")).toMatch(/^No United Airlines departures/);
+    expect(routeVerdict(summary({}), "United Airlines")).toMatch(
+      /^No Starlink-equipped United Airlines departures/
+    );
   });
 
-  test("plural branches unchanged", () => {
-    expect(
-      routeVerdict(summary({ totalDepartures: 4, equippedDepartures: 4 }), "United Airlines")
-    ).toContain("All 4 scheduled");
-    expect(
-      routeVerdict(summary({ totalDepartures: 4, equippedDepartures: 2 }), "United Airlines")
-    ).toContain("2 of 4 scheduled");
+  test("equipped departures never claim a denominator we do not observe", () => {
+    const v = routeVerdict(
+      summary({ totalDepartures: 4, equippedDepartures: 4 }),
+      "United Airlines"
+    );
+    expect(v).toMatch(/^4 Starlink-equipped United Airlines departures on ABQ → PDX/);
+    expect(v).toContain("check your flight number");
+  });
+
+  test("no combination of counts produces coverage claims", () => {
+    const claim = /\b(All|None of the) \d+ scheduled|\d+ of \d+ scheduled|only scheduled/;
+    const history = [
+      [],
+      [{ flight_number: "UA123", times: 9, scheduled: 1 }],
+      [
+        { flight_number: "UA123", times: 9, scheduled: 0 },
+        { flight_number: "UA456", times: 3, scheduled: 1 },
+      ],
+    ];
+    for (let total = 0; total <= 6; total++) {
+      for (let equipped = 0; equipped <= total; equipped++) {
+        for (const flightNumbers of history) {
+          const v = routeVerdict(
+            summary({ totalDepartures: total, equippedDepartures: equipped, flightNumbers }),
+            "United Airlines"
+          );
+          expect(v).not.toMatch(claim);
+          expect(v.length).toBeGreaterThan(0);
+        }
+      }
+    }
   });
 });
 
@@ -148,5 +175,86 @@ describe("/route-planner canonical spelling", () => {
     const r = getSitemapRoutes(db, "UA")[0];
     const res = await app.dispatch(req(`/route-planner/${r.origin}/${r.destination}`, UA));
     expect(res.status).toBe(200);
+  });
+});
+
+async function samplePages(host: string): Promise<string[]> {
+  const xml = await (await app.dispatch(req("/sitemap.xml", host))).text();
+  const paths = [...xml.matchAll(/<loc>https?:\/\/[^/]+([^<]*)<\/loc>/g)].map((m) => m[1] || "/");
+  const byShape = new Map<string, string>();
+  for (const p of paths) {
+    const shape = p.split("/").slice(0, 3).join("/");
+    if (!byShape.has(shape)) byShape.set(shape, p);
+  }
+  return [...byShape.values(), "/check-flight/NOTAFLIGHT", "/check-flight/XX123"];
+}
+
+const HOSTS = [UA, AS, SITES.hawaiian.canonicalHost, HUB];
+const html = async (path: string, host: string) =>
+  (await app.dispatch(req(path, host, { headers: { Accept: "text/html" } }))).text();
+const metaContent = (doc: string, attr: string) =>
+  doc.match(new RegExp(`<meta ${attr} content="([^"]*)"`))?.[1] ?? null;
+
+describe("article()", () => {
+  test("follows the spoken sound, not just the letter", () => {
+    expect(article("Alaska")).toBe("an");
+    expect(article("Hawaiian")).toBe("a");
+    expect(article("United")).toBe("a");
+    expect(article("Emirates")).toBe("an");
+    expect(article("flight")).toBe("a");
+  });
+
+  test("no rendered title reads 'a' before a vowel sound", async () => {
+    const bad = / a (?:[AEIO]|U(?!ni|se|su))/;
+    for (const host of HOSTS) {
+      for (const path of await samplePages(host)) {
+        const doc = await html(path, host);
+        const title = doc.match(/<title>([^<]*)<\/title>/)?.[1] ?? "";
+        expect({ host, path, title, bad: bad.test(title) }).toEqual({
+          host,
+          path,
+          title,
+          bad: false,
+        });
+      }
+    }
+  });
+});
+
+describe("meta description clamp", () => {
+  test("short copy is untouched and long copy ends on a word with an ellipsis", () => {
+    expect(clampMetaDescription("Short and sweet.")).toBe("Short and sweet.");
+    const long = "word ".repeat(80).trim();
+    const out = clampMetaDescription(long);
+    expect(out.length).toBeLessThanOrEqual(158);
+    expect(out.endsWith("word…")).toBe(true);
+  });
+
+  test("every sampled page keeps description and og:description within 160 chars", async () => {
+    for (const host of HOSTS) {
+      for (const path of await samplePages(host)) {
+        const doc = await html(path, host);
+        for (const attr of ['name="description"', 'property="og:description"']) {
+          const v = metaContent(doc, attr);
+          if (v === null) continue;
+          expect({ host, path, attr, ok: v.length <= 160 }).toEqual({ host, path, attr, ok: true });
+        }
+      }
+    }
+  });
+});
+
+describe("SoftwareApplication JSON-LD", () => {
+  test("ships only on /how-to-check", async () => {
+    const flight = (await samplePages(UA)).find((p) => /^\/check-flight\/./.test(p));
+    for (const path of ["/", "/route-planner", "/check-flight", flight ?? "/check-flight/UA1"]) {
+      expect({ path, has: (await html(path, UA)).includes('"SoftwareApplication"') }).toEqual({
+        path,
+        has: false,
+      });
+    }
+    const guide = await html("/how-to-check", UA);
+    expect(guide).toContain('"SoftwareApplication"');
+    expect(guide).toContain("Google Flights Starlink Indicator");
   });
 });

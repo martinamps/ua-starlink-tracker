@@ -62,9 +62,15 @@ depends on the airline:
   against the hub, `airlinestarlinktracker.com/api/check-any-flight`, which
   resolves the marketing carrier server-side.
 - Multi-leg itineraries are badged by their weakest leg — a card is never
-  marked "Starlink" when only one leg has it.
+  marked "Starlink" when only one leg has it. An itinerary with any leg on an
+  airline the tracker doesn't cover (UA + Lufthansa, Alaska + American) gets
+  no badge and no lookup: that leg can't be vouched for.
 - Answers are cached in-memory for 30 minutes (5 minutes for transient
-  failures). At most 40 uncached lookups run per page pass.
+  failures). At most 40 uncached lookups run per page pass, three cards at a
+  time. Cards Google adds while a pass is running queue a follow-up pass.
+- Changing the search (dates, route) clears every badge before the new
+  results are processed; a pass still running for the old search stops
+  badging.
 - A card is only retired once its answer is settled. A pass that ends with any
   card still unsettled — an API blip, an exhausted per-pass budget — schedules
   itself again after the short cache expires, up to three times, so a blip
@@ -86,7 +92,9 @@ depends on the airline:
   are already viewing. It does not read anything else on the page.
 - For each United/Hawaiian/Alaska flight it finds, it sends **only the flight
   number and date** to unitedstarlinktracker.com or
-  airlinestarlinktracker.com to ask "does this flight have Starlink?".
+  airlinestarlinktracker.com to ask "does this flight have Starlink?", plus
+  the extension's version number (`client=ext-2.0.1`) so the site can count
+  extension lookups separately from website visits.
   No account data, no page contents, no URLs, no identifiers ride along.
 - It does not collect, store, or transmit any personal information.
 - It does not track your browsing history; it only runs on Google Flights.

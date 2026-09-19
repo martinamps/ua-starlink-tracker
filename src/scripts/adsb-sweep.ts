@@ -386,6 +386,7 @@ export async function runAdsbSweepShadow(
           result: "airborne_total",
           airline: airlineTag,
         });
+        emitShadowKpis(db, observations, airlineTag);
 
         span.setTag("observed", aircraft.length);
         span.setTag("airborne", airborne);
@@ -406,6 +407,57 @@ export async function runAdsbSweepShadow(
     },
     { "job.type": "background" }
   );
+}
+
+export interface ShadowKpis {
+  accuracy: number | null;
+  blindShare: number | null;
+}
+
+/** accuracy over answered legs; blind share over tails the updater tracks,
+ * since a tail with no upcoming_flights rows at all can never match. */
+export function computeShadowKpis(
+  observations: ReadonlyArray<Pick<AdsbObservationRecord, "tail_number" | "shadow_result">>,
+  trackedTails: ReadonlySet<string>
+): ShadowKpis {
+  let match = 0;
+  let mismatch = 0;
+  let trackedJudged = 0;
+  let trackedBlind = 0;
+  for (const o of observations) {
+    const r = o.shadow_result;
+    if (r !== "match" && r !== "mismatch" && r !== "no_assignment") continue;
+    if (r === "match") match++;
+    if (r === "mismatch") mismatch++;
+    if (!trackedTails.has(o.tail_number)) continue;
+    trackedJudged++;
+    if (r === "no_assignment") trackedBlind++;
+  }
+  return {
+    accuracy: match + mismatch > 0 ? match / (match + mismatch) : null,
+    blindShare: trackedJudged > 0 ? trackedBlind / trackedJudged : null,
+  };
+}
+
+function emitShadowKpis(
+  db: Database,
+  observations: ReadonlyArray<Pick<AdsbObservationRecord, "tail_number" | "shadow_result">>,
+  airlineTag: string
+): void {
+  const tracked = new Set(
+    (
+      db.query("SELECT DISTINCT tail_number FROM upcoming_flights WHERE airline = 'UA'").all() as {
+        tail_number: string;
+      }[]
+    ).map((r) => r.tail_number)
+  );
+  const { accuracy, blindShare } = computeShadowKpis(observations, tracked);
+  if (accuracy !== null) {
+    metrics.gauge(GAUGES.ADSB_SHADOW_ACCURACY, accuracy, { airline: airlineTag });
+  }
+  if (blindShare !== null) {
+    metrics.gauge(GAUGES.ADSB_SHADOW_BLIND_SHARE, blindShare, { airline: airlineTag });
+  }
 }
 
 // Pause for 30 minutes after three consecutive failures so a provider outage

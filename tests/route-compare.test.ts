@@ -67,6 +67,15 @@ describe("compareRoute", () => {
     return penetrations(code).map((p) => p.pct);
   }
 
+  /** Rates absence-based inference may credit: route-scoped subfleets (HA 717
+   * interisland) only answer routes they are observed on. */
+  function inferablePcts(code: string): number[] {
+    const cfg = AIRLINES[code as keyof typeof AIRLINES];
+    return penetrations(code)
+      .filter((p) => !cfg.subfleets.find((sf) => sf.key === p.key)?.routeScoped)
+      .map((p) => p.pct);
+  }
+
   const isMember = (n: number, pcts: number[]) => pcts.some((p) => Math.abs(p - n) < 1e-9);
 
   /**
@@ -229,7 +238,8 @@ describe("compareRoute", () => {
       expect(r!.probability).toBeLessThanOrEqual(ceiling + 1e-9);
       // An unobserved nonstop may only be credited with the LOWEST rate the
       // airline has — never a high-penetration subfleet we cannot prove flies it.
-      if (r!.kind === "inferred_absent") expect(r!.probability).toBe(Math.min(...pcts));
+      if (r!.kind === "inferred_absent")
+        expect(r!.probability).toBe(Math.min(...inferablePcts(c.code)));
     }
   });
 
@@ -237,14 +247,14 @@ describe("compareRoute", () => {
     expect(find("SFO", "HNL", "HA")?.reason).toMatch(/A330|A321/i);
   });
 
-  // AS on SFO-HNL: AS800-899 are AS-marketed flights on Hawaiian A330/A321neo
+  // AS on SFO-HNL: AS800-999 are AS-marketed flights on Hawaiian A330/A321neo
   // metal post-merger (verified: tails N209HA, N213HA in upcoming_flights for
   // AS8xx). When the fixture has those routes cached, AS should map to the
   // hawaiian_metal subfleet at ~100%, NOT mainline 0%.
   test("AS SFO-HNL: maps to hawaiian_metal subfleet, not mainline", () => {
     const r = find("SFO", "HNL", "AS");
     if (r && r.kind !== "no_data" && r.kind !== "inferred_absent") {
-      // hawaiian_metal observed: AS800-899 should resolve to ≥90%
+      // hawaiian_metal observed: AS800-999 should resolve to ≥90%
       const ha = r.breakdown.find((b) => b.key === "hawaiian_metal");
       expect(ha).toBeDefined();
       expect(ha!.pct).toBeGreaterThanOrEqual(0.9);
@@ -295,7 +305,7 @@ describe("compareRoute", () => {
       if (cfg.routeTypeRule) continue;
       const pen = getSubfleetPenetration(db, cfg.code);
       // Same ceiling the model uses: max over per-subfleet penetration,
-      // including any penetrationOverride (e.g. AS800-899 on HA metal).
+      // including any penetrationOverride (e.g. AS800-999 on HA metal).
       const pcts = cfg.subfleets.map((sf) => sf.penetrationOverride ?? pen.get(sf.key)?.pct ?? 0);
       ceiling.set(cfg.code, Math.max(0, ...pcts));
     }
@@ -445,7 +455,10 @@ describe("planItinerary", () => {
 describe("planItinerary geographic gates", () => {
   let sdb: Database;
   let reader: ReturnType<typeof getReader>;
-  const NO_PROB = { maxItineraries: 10, minLegProbability: 0 } as const;
+  // Every synthetic leg lasts 3h (addFlight), so a 3h OGG→SFO "direct" would
+  // put the on-the-way LAX partial over the time budget; these tests isolate
+  // the geographic and census gates.
+  const NO_PROB = { maxItineraries: 10, minLegProbability: 0, enforceTimeBudget: false } as const;
   const vias = (o: string, d: string) =>
     planItinerary(reader, o, d, NO_PROB).map((it) => it.via.join(","));
 
@@ -550,7 +563,7 @@ describe("carrierPrediction", () => {
   test("split-phase carriers return type_split, never a blended number", () => {
     for (const [cfg, confirmedFamily, otherFamily] of [
       [AIRLINES.HA, "A330", "B717"],
-      [AIRLINES.QR, "B777", "B787"],
+      [AIRLINES.QR, "B777", "B787-9"],
     ] as const) {
       const answer = carrierPrediction(cfg, getReader(cfg.code), `${cfg.iata}50`);
       if (answer.kind !== "type_split") throw new Error(`${cfg.code}: expected type_split`);

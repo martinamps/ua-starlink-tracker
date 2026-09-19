@@ -1,7 +1,8 @@
 import React from "react";
 import { type SiteConfig, siteAirline } from "../airlines/registry";
 import type { PopularFlight } from "../database/database";
-import { PopularFlightsLinks } from "./atoms";
+import { article } from "../utils/grammar";
+import { type PageLink, PageNavLinks, PopularFlightsLinks } from "./atoms";
 
 export interface FlightRouteFact {
   departure_airport: string;
@@ -10,6 +11,8 @@ export interface FlightRouteFact {
   dur_sec: number | null;
   /** Newest evidence for this leg (unix seconds); null when the row carries none. */
   last_seen_at: number | null;
+  /** Whether /route-planner/{dep}/{arr} serves; false renders the pair unlinked. */
+  linkable: boolean;
 }
 
 export interface FlightUpcomingDeparture {
@@ -36,6 +39,9 @@ export interface FlightFacts {
   /** Other marketing flight numbers on this flight's primary route — sibling
    * permalinks, so the corpus links laterally instead of only via /routes. */
   siblings: string[];
+  /** Newest sighting (unix sec) when the flight has gone quiet long enough to
+   * say so on the page; null otherwise. */
+  notObservedSince?: number | null;
 }
 
 /** A permalink segment that is not a flight number this site can answer for.
@@ -54,25 +60,35 @@ interface CheckFlightPageProps {
   /** Rendered on the generic (non-permalink) page only — permalinks link
    * laterally via siblings instead. */
   popular?: PopularFlight[];
+  pageLinks?: PageLink[];
 }
 
-const fmtDay = (sec: number) =>
-  new Date(sec * 1000).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    timeZone: "UTC",
-  });
+// Module-level formatters: constructing a locale formatter per call
+// (toLocale*String with options) dominated SSR time on list-heavy pages.
+const DAY_UTC = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+  timeZone: "UTC",
+});
+const MONTH_DAY_UTC = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  day: "numeric",
+  timeZone: "UTC",
+});
+const HHMM_UTC = new Intl.DateTimeFormat("en-US", {
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+  timeZone: "UTC",
+});
 
-const fmtDeparture = (sec: number) =>
-  `${new Date(sec * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })} · ${new Date(
-    sec * 1000
-  ).toLocaleTimeString("en-US", {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-    timeZone: "UTC",
-  })} UTC`;
+const fmtDay = (sec: number) => DAY_UTC.format(new Date(sec * 1000));
+
+const fmtDeparture = (sec: number) => {
+  const d = new Date(sec * 1000);
+  return `${MONTH_DAY_UTC.format(d)} · ${HHMM_UTC.format(d)} UTC`;
+};
 
 // Round total minutes BEFORE splitting into h/m — rounding the remainder
 // alone renders 2h59m30s as "2h 60m".
@@ -112,6 +128,11 @@ function FlightFactBlocks({ flight }: { flight: FlightFacts }) {
           <h2 className="font-display text-lg font-semibold text-primary mb-3">
             Routes {fn} flies
           </h2>
+          {flight.notObservedSince ? (
+            <p className="text-sm text-muted mb-3">
+              Not observed since {fmtDay(flight.notObservedSince)}; may be seasonal or discontinued.
+            </p>
+          ) : null}
           <div className="space-y-2">
             {flight.routes.map((r) => {
               const lastSeen = lastSeenLabel(r.last_seen_at);
@@ -131,12 +152,14 @@ function FlightFactBlocks({ flight }: { flight: FlightFacts }) {
                     </span>
                     {lastSeen ? <span className="text-muted"> · {lastSeen}</span> : null}
                   </span>
-                  <a
-                    href={`/route-planner/${r.departure_airport}/${r.arrival_airport}`}
-                    className="text-accent hover:underline text-xs whitespace-nowrap"
-                  >
-                    Plan this route →
-                  </a>
+                  {r.linkable ? (
+                    <a
+                      href={`/route-planner/${r.departure_airport}/${r.arrival_airport}`}
+                      className="text-accent hover:underline text-xs whitespace-nowrap"
+                    >
+                      Plan this route →
+                    </a>
+                  ) : null}
                 </div>
               );
             })}
@@ -254,7 +277,7 @@ function InvalidQueryNotice({
     <div className="bg-surface-elevated border border-subtle rounded p-4 mb-4">
       <p className="text-sm text-secondary">
         {invalid.reason === "other-carrier"
-          ? `${quoted} isn't a ${shortName} flight number — this tracker only covers ${shortName} flights.`
+          ? `${quoted} isn't ${article(shortName)} ${shortName} flight number — this tracker only covers ${shortName} flights.`
           : `${quoted} isn't a flight number.`}
       </p>
       <p className="text-sm text-muted mt-1">
@@ -279,6 +302,7 @@ export default function CheckFlightPage({
   flight,
   invalid,
   popular = [],
+  pageLinks,
 }: CheckFlightPageProps) {
   const cfg = siteAirline(site);
   const airlineName = flight?.airlineName ?? cfg.name;
@@ -317,7 +341,7 @@ export default function CheckFlightPage({
         </a>
         <p className="text-base text-secondary font-display">
           {invalid
-            ? `Enter a ${shortName} flight number below to check for Starlink`
+            ? `Enter ${article(shortName)} ${shortName} flight number below to check for Starlink`
             : flight
               ? flightSummary(flight)
               : "Enter your flight number and date to see if your aircraft has free Starlink internet"}
@@ -548,6 +572,7 @@ export default function CheckFlightPage({
           </svg>
           by @martinamps
         </a>
+        <PageNavLinks links={pageLinks} />
       </footer>
 
       <script
@@ -644,7 +669,9 @@ export default function CheckFlightPage({
 
               if (!flightNumber || !date) return;
 
-              flightNumber = flightNumber.toUpperCase();
+              // Same separators canonicalFlightInput strips ("UA 544", "ua-544")
+              // so the permalink is the canonical spelling too.
+              flightNumber = flightNumber.toUpperCase().replace(/[\\s\\-.]/g, '');
               if (/^\\d+$/.test(flightNumber)) {
                 flightNumber = carrierPrefix + flightNumber;
               }

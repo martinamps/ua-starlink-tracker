@@ -20,6 +20,9 @@ export {
   normalizeProbeOutcome,
   normalizeStarlinkStatus,
   classifyUserAgent,
+  classifyRequest,
+  normalizeExtVersion,
+  requestClientTags,
   bucketDaysOut,
 } from "./metrics";
 export type { Tags } from "./metrics";
