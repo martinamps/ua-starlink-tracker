@@ -129,6 +129,9 @@ describe("buildWatchIcs", () => {
     expect(prop(none, "SUMMARY")).toBe("UA123 · No Starlink (N979SW\\, no WiFi)");
     expect(none).not.toMatch(/None WiFi/);
     expect(icsLines(none).join("")).toContain("UA2806");
+    // Alternatives are served up to a day out, so the feed must not claim "today".
+    expect(icsLines(none).join("")).toContain("on this route that day");
+    expect(icsLines(none).join("")).not.toContain("on this route today");
   });
 
   test("swap: 'Swapped:' prefix and SEQUENCE bumps with each new tail", () => {
@@ -226,6 +229,14 @@ describe("/cal/{fn}/{date}.ics", () => {
     expect(text).toContain("webcal://");
     expect(text).toContain("var WATCH_ENABLED = true");
     expect(text).not.toContain("Last verified");
+  });
+
+  test("check-flight page dates alternative links and never labels them 'today'", async () => {
+    const { text } = await bodyOf(app, "/check-flight", UA_HOST);
+    // A dateless permalink pre-fills the viewer's today, answering a different departure.
+    expect(text).toContain("encodeURIComponent(a.flight_number) + '/' + encodeURIComponent(date)");
+    expect(text).toContain("alternativesHtml(data.sameDayAlternatives, date)");
+    expect(text).not.toMatch(/on this route today/);
   });
 });
 

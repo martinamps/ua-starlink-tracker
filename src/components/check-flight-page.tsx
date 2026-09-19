@@ -636,12 +636,12 @@ export default function CheckFlightPage({
           var shortTime = function(unix) {
             return new Date(unix * 1000).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZoneName: 'short' });
           };
-          var alternativesHtml = function(list) {
+          var alternativesHtml = function(list, date) {
             if (!list || !list.length) return '';
-            return '<div class="mt-3"><div class="text-xs font-mono text-muted mb-1 uppercase tracking-wider">Starlink flights on this route today</div>' +
+            return '<div class="mt-3"><div class="text-xs font-mono text-muted mb-1 uppercase tracking-wider">Starlink flights on this route that day</div>' +
               '<ul class="text-sm text-muted font-mono space-y-1">' +
               list.map(function(a) {
-                return '<li><a href="/check-flight/' + encodeURIComponent(a.flight_number) + '" class="text-accent hover:underline">' + escHtml(a.flight_number) + '</a> ' +
+                return '<li><a href="/check-flight/' + encodeURIComponent(a.flight_number) + '/' + encodeURIComponent(date) + '" class="text-accent hover:underline">' + escHtml(a.flight_number) + '</a> ' +
                   escHtml(shortTime(a.departure_time)) + ' <span class="text-secondary">' + escHtml(a.tail_number) + (a.aircraft_type ? ' (' + escHtml(a.aircraft_type) + ')' : '') + '</span></li>';
               }).join('') +
               '</ul></div>';
@@ -763,7 +763,7 @@ export default function CheckFlightPage({
                         : '<div class="font-display font-semibold text-secondary mb-2">Assigned aircraft</div>') +
                       '<div class="space-y-2">' + segHtml + '</div>' +
                       '<p class="text-sm text-muted mt-2">Aircraft swaps can happen; re-check closer to departure.</p>' +
-                      alternativesHtml(data.sameDayAlternatives) +
+                      alternativesHtml(data.sameDayAlternatives, date) +
                       routePlannerCta(first.origin, first.destination) +
                       '</div>';
                   } else if (data.confidence === 'verified' && data.hasStarlink === false) {
@@ -776,7 +776,7 @@ export default function CheckFlightPage({
                       '<span class="font-display font-semibold text-secondary">No Starlink on this flight</span>' +
                       '</div>' +
                       '<p class="text-sm text-muted">' + esc(data.message || data.reason || 'The assigned aircraft is verified as non-Starlink WiFi.') + '</p>' +
-                      alternativesHtml(data.sameDayAlternatives) +
+                      alternativesHtml(data.sameDayAlternatives, date) +
                       '</div>';
                   } else {
                     var pred = data.prediction;

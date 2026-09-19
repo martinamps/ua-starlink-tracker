@@ -198,7 +198,7 @@ export function watchDescription(input: WatchIcsInput): string[] {
   }
 
   if (verdict.state === "no" && alternatives.length > 0) {
-    lines.push("", "Starlink flights on this route today:");
+    lines.push("", "Starlink flights on this route that day:");
     for (const a of alternatives) {
       lines.push(
         `${a.flight_number} ${formatLocalTime(a.departure_time, dep)} (${a.tail_number}${a.aircraft_type ? `, ${a.aircraft_type}` : ""})`
