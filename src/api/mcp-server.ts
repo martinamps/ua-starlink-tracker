@@ -1414,20 +1414,33 @@ function toolPlanStarlinkItinerary(
   const hasNonstop = baseline !== null && baseline.duration_source !== "great_circle";
   const orig = origin.toUpperCase();
   const dest = destination.toUpperCase();
+  const sparseNonstop = baseline?.duration_source === "sparse_history";
+  const sparseFlight = sparseNonstop
+    ? (baseline.flight_number ??
+      reader.getRouteFlightNumbers(orig, dest).flightNumbers[0]?.flight_number ??
+      null)
+    : null;
+  const nonstopStats = baseline
+    ? `~${(baseline.probability * 100).toFixed(0)}% Starlink · ~${fmtBaseH(baseline.expected_starlink_hours)} Starlink / ~${fmtBaseH(baseline.duration_hours)} flying`
+    : "";
   const baselineLine = !baseline
     ? ""
-    : hasNonstop
-      ? `**Nonstop baseline** (${baseline.flight_number ?? "typical nonstop"}): ~${(baseline.probability * 100).toFixed(0)}% Starlink · ~${fmtBaseH(baseline.expected_starlink_hours)} Starlink / ~${fmtBaseH(baseline.duration_hours)} flying`
-      : `**No United nonstop** ${orig}→${dest} has been observed regularly, so every option connects (straight-line flying time ~${fmtBaseH(baseline.duration_hours)} for reference).`;
+    : sparseNonstop
+      ? `**Occasional nonstop** (${sparseFlight ?? "United nonstop"}, seen only occasionally — it may not operate on the requested date): ${nonstopStats}`
+      : hasNonstop
+        ? `**Nonstop baseline** (${baseline.flight_number ?? "typical nonstop"}): ${nonstopStats}`
+        : `**No United nonstop** ${orig}→${dest} has been observed, so every option connects (straight-line flying time ~${fmtBaseH(baseline.duration_hours)} for reference).`;
 
   if (itineraries.length === 0) {
     const headline =
-      hasNonstop && ENFORCE_ITINERARY_TIME_BUDGET
+      hasNonstop && !sparseNonstop && ENFORCE_ITINERARY_TIME_BUDGET
         ? `No Starlink routing within +${fmtBaseH(itineraryHourBudget(baseline.duration_hours) - baseline.duration_hours)} of the nonstop from ${orig} to ${dest} (up to ${maxStops} stops).`
         : `No Starlink routings found from ${orig} to ${dest} within ${maxStops} stops.`;
-    const lastResort = hasNonstop
-      ? "otherwise advise booking the nonstop — no Starlink routing meaningfully improves odds on mainline-only routes"
-      : "otherwise advise the fastest United connection — there is no nonstop to fall back on";
+    const lastResort = sparseNonstop
+      ? `otherwise advise checking whether the occasional nonstop${sparseFlight ? ` (${sparseFlight})` : ""} operates on the date, else the fastest United connection`
+      : hasNonstop
+        ? "otherwise advise booking the nonstop — no Starlink routing meaningfully improves odds on mainline-only routes"
+        : "otherwise advise the fastest United connection — there is no nonstop to fall back on";
     return {
       content: [
         {

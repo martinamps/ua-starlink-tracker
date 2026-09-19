@@ -1404,6 +1404,12 @@ export function planItinerary(
     computeItinerary(legs.map(withDuration), coverage);
   const baseline = routeBaseline(reader, orig, dest);
   const hasNonstop = baseline !== null && baseline.duration_source !== "great_circle";
+  // A sparse history (charter, diversion, seasonal or new route) is a nonstop
+  // that may not run: its budget holds while some connection fits it, and
+  // yields to the fastest connection instead of emptying the result.
+  const firmNonstop =
+    baseline !== null &&
+    (baseline.duration_source === "schedule" || baseline.duration_source === "route_history");
   // Without a United nonstop every option connects, so the great-circle
   // estimate is unreachable; measure against the fastest connection instead.
   let budgetHours: number | null = hasNonstop ? itineraryHourBudget(baseline.duration_hours) : null;
@@ -1456,7 +1462,10 @@ export function planItinerary(
     nextFrontier.sort((a, b) => b.joint - a.joint);
     frontier = nextFrontier.slice(0, 200);
   }
-  if (!hasNonstop) budgetFromFastest(fulls.filter((it) => it.via.length > 0));
+  const connections = fulls.filter((it) => it.via.length > 0);
+  if (!hasNonstop || (!firmNonstop && !connections.some(withinBudget))) {
+    budgetFromFastest(connections);
+  }
   itineraries.push(...fulls.filter(withinBudget));
 
   // --- Partial-coverage baselines (both directions) ---
@@ -1514,12 +1523,13 @@ export function planItinerary(
         "partial"
       )
     );
-    if (budgetHours === null && !hasNonstop) budgetFromFastest(partials);
+    const partialsEmptied = itineraries.length === 0 && !partials.some(withinBudget);
+    if (!firmNonstop && (budgetHours === null || partialsEmptied)) budgetFromFastest(partials);
     itineraries.push(...partials.filter(withinBudget).slice(0, partialLimit));
   }
 
   // A 2-stop has to buy real Starlink time over the simpler options (the
-  // nonstop baseline included, when one operates), not just a marginally better ratio.
+  // nonstop baseline included, when one has been seen), not just a marginally better ratio.
   const simplerBest = Math.max(
     hasNonstop ? baseline.expected_starlink_hours : 0,
     ...itineraries.filter((it) => it.via.length <= 1).map((it) => it.expected_starlink_hours ?? 0)
@@ -1585,10 +1595,10 @@ const STOP_PENALTY = 0.04;
 const CRUISE_MPH = 480;
 const BLOCK_OVERHEAD_HOURS = 0.5;
 // flight_routes also records charters, diversions and ferry hops (UA3302
-// BGR-IND, UA3898 LGA-MCO: 2 sightings each). Scheduled nonstops pile up
-// sightings; below this a pair counts as having no nonstop, which only
-// loosens the budget instead of telling someone to book a flight that
-// doesn't exist.
+// BGR-IND, UA3898 LGA-MCO: 2 sightings each), but real seasonal, long-haul
+// and new nonstops look just as thin (UA2624 EWR-SMF: 7 over 15 days, UA506
+// FCO-SFO: 8). Below this a pair is "sparse_history": still a nonstop, but
+// one whose budget may yield to the fastest connection.
 const MIN_NONSTOP_SIGHTINGS = 10;
 
 /** Max elapsed hours (flying + layovers) an itinerary may take, given the nonstop's duration. */
@@ -1603,7 +1613,7 @@ export function elapsedHours(it: Itinerary): number {
 
 /**
  * Nonstop block time between two airports: an observed direct flight, else
- * a regularly-flown flight_routes history for the pair, else great-circle / cruise speed.
+ * the flight_routes history for the pair, else great-circle / cruise speed.
  * Null only when neither the data nor the coordinate table knows the pair.
  */
 export function baselineHours(
@@ -1614,7 +1624,7 @@ export function baselineHours(
   return routeHours(reader, origin, destination)?.hours ?? null;
 }
 
-type DurationSource = "schedule" | "route_history" | "great_circle";
+type DurationSource = "schedule" | "route_history" | "sparse_history" | "great_circle";
 
 function routeHours(
   reader: ScopedReader,
@@ -1627,14 +1637,20 @@ function routeHours(
   if (reader.scope !== "ALL") {
     const { flightNumbers, durationSec } = reader.getRouteFlightNumbers(origin, destination);
     const sightings = flightNumbers.reduce((n, f) => n + f.times, 0);
-    if (durationSec && durationSec > 0 && sightings >= MIN_NONSTOP_SIGHTINGS) {
-      return { hours: durationSec / 3600, source: "route_history" };
+    const source = sightings >= MIN_NONSTOP_SIGHTINGS ? "route_history" : "sparse_history";
+    if (durationSec && durationSec > 0) return { hours: durationSec / 3600, source };
+    const estimate = greatCircleHours(origin, destination);
+    if (flightNumbers.length > 0 && estimate !== null) {
+      return { hours: estimate, source: "sparse_history" };
     }
   }
+  const estimate = greatCircleHours(origin, destination);
+  return estimate === null ? null : { hours: estimate, source: "great_circle" };
+}
+
+function greatCircleHours(origin: string, destination: string): number | null {
   const miles = airportDistanceMiles(origin, destination);
-  return miles === null
-    ? null
-    : { hours: miles / CRUISE_MPH + BLOCK_OVERHEAD_HOURS, source: "great_circle" };
+  return miles === null ? null : miles / CRUISE_MPH + BLOCK_OVERHEAD_HOURS;
 }
 
 export interface RouteBaseline {
@@ -1643,7 +1659,11 @@ export interface RouteBaseline {
   flight_number: string | null;
   probability: number;
   duration_hours: number;
-  /** "great_circle" = United operates no nonstop on the pair; the duration is a distance estimate. */
+  /**
+   * "great_circle" = no United nonstop has ever been observed on the pair; the
+   * duration is a distance estimate. "sparse_history" = a nonstop has been
+   * seen only occasionally and may not operate on a given date.
+   */
   duration_source: DurationSource;
   expected_starlink_hours: number;
 }

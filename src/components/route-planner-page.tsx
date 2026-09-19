@@ -380,7 +380,10 @@ export default function RoutePlannerPage({ site }: RoutePlannerPageProps) {
               return '<div class="text-xs text-muted mb-3 leading-relaxed">No United nonstop on this pair, so every option connects (~' +
                 fmtHours(b.duration_hours) + ' straight-line for reference).</div>';
             }
-            return '<div class="text-xs text-muted mb-3 leading-relaxed">Nonstop baseline: ~' +
+            var label = b.duration_source === 'sparse_history'
+              ? 'Nonstop seen only occasionally (may not run on your date): ~'
+              : 'Nonstop baseline: ~';
+            return '<div class="text-xs text-muted mb-3 leading-relaxed">' + label +
               Math.round(b.probability * 100) + '% Starlink · ~' + fmtHours(b.expected_starlink_hours) +
               ' Starlink of ~' + fmtHours(b.duration_hours) + ' flying</div>';
           }
@@ -395,8 +398,11 @@ export default function RoutePlannerPage({ site }: RoutePlannerPageProps) {
                 '</div>';
               // message is server-built registry prose (no user input); set via
               // textContent anyway so this stays injection-proof.
-              var noNonstop = data.baseline && data.baseline.duration_source === 'great_circle';
-              resultsDiv.querySelector('p').textContent = data.message || (noNonstop
+              // A sparse nonstop's budget yields to the fastest connection, so an
+              // empty result there also means no connection has Starlink legs.
+              var softBudget = data.baseline && (data.baseline.duration_source === 'great_circle' ||
+                data.baseline.duration_source === 'sparse_history');
+              resultsDiv.querySelector('p').textContent = data.message || (softBudget
                 ? 'No connection between these airports has Starlink on its legs.'
                 : 'No connection adds meaningful Starlink time without a long detour over the nonstop.');
               return;
