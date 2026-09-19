@@ -24,6 +24,11 @@ export {
   classifyRequest,
   normalizeExtVersion,
   requestClientTags,
+  mcpClientTags,
   bucketDaysOut,
+  normalizeLegMatch,
+  normalizeLegReason,
+  normalizeLegEffect,
+  normalizeEquipmentCodeTag,
 } from "./metrics";
 export type { Tags } from "./metrics";

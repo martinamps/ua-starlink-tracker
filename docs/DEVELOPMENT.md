@@ -205,6 +205,7 @@ Two endpoints power the [Chrome extension](https://chromewebstore.google.com/det
 `/api/check-flight` (per-airline hosts) — United lookups:
 
 - Accept `flight_number` and `date` query parameters
+- Optionally accept `origin` / `destination` (IATA; K/P ICAO accepted) to scope the answer to one leg — also on `/api/check-any-flight` and MCP `check_flight`. The response then gains `leg: { origin, destination, match, reason?, otherLegs }`; bad input answers unscoped with `match: "unscoped"`, never an error
 - Return `hasStarlink` (boolean) and `flights` (array)
 - Include CORS headers for Google Flights domains
 
@@ -217,7 +218,7 @@ Two endpoints power the [Chrome extension](https://chromewebstore.google.com/det
 - `error` — settled answer body (untracked carrier / bad input), not an outage.
 - `flights` — array; present on every branch.
 
-Both endpoints ignore unknown query parameters. v2.0.1+ appends `client=ext-<version>` so request metrics can separate extension traffic (`client_class:extension`, `ext_version:1.x|2.0|2.x|other|none`) from website visitors; the service worker's fetch otherwise carries a stock Chrome user agent. Requests whose `Origin` is the extension's own `chrome-extension://jjfljoifenkfdbldliakmmjhdkbhehoi` also count as `extension` (with `ext_version:none` when no param is sent); other extension origins land in `other-extension`.
+Both endpoints ignore unknown query parameters. v2.0.1+ appends `client=ext-<version>` so request metrics can separate extension traffic (`client_class:extension`, `ext_version:1.x|2.0|2.1|2.x|other|none`) from website visitors; the service worker's fetch otherwise carries a stock Chrome user agent. Requests whose `Origin` is the extension's own `chrome-extension://jjfljoifenkfdbldliakmmjhdkbhehoi` also count as `extension` (with `ext_version:none` when no param is sent); other extension origins land in `other-extension`. v2.1.0+ also sends `origin`/`destination` for each itinerary-decoded leg, so a through flight gets one lookup per leg.
 
 ### Releasing the extension
 

@@ -39,6 +39,17 @@ describe("MCP protocol contract", () => {
     const live = await postMcp(app, UA, "tools/list", {});
     expect(live).toEqual(load("mcp-tools-list.json"));
   });
+
+  test("check_flight's leg inputs are optional additions to the original schema", () => {
+    const tool = load("mcp-tools-list.json").result.tools.find(
+      (t: { name: string }) => t.name === "check_flight"
+    );
+    const props = tool.inputSchema.properties;
+    for (const original of ["flight_number", "date"]) expect(props[original]).toBeDefined();
+    expect(tool.inputSchema.required).toEqual(["flight_number", "date"]);
+    expect(props.origin.type).toBe("string");
+    expect(props.destination.type).toBe("string");
+  });
 });
 
 describe("/api/data structural contract", () => {

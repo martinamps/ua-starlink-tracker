@@ -373,3 +373,95 @@ export interface FleetDiscoveryStats {
     first_seen_source: FleetSource;
   }>;
 }
+
+// ============ /fleet/{slug} aircraft-type pages ============
+
+export type AircraftVerdictKind =
+  | "all"
+  | "all_checked"
+  | "most"
+  | "some"
+  | "verifying"
+  | "installing"
+  | "none"
+  | "official_none"
+  | "unknown";
+
+export interface AircraftTypeVariant {
+  label: string;
+  total: number;
+  starlink: number;
+}
+
+export interface AircraftTypeInstall {
+  tail: string;
+  /** YYYY-MM-DD — first organic sighting with Starlink. */
+  date: string;
+}
+
+export interface AircraftTypePipelineRow {
+  type_code: string;
+  label: string;
+  total: number;
+  starlink_complete: number;
+  in_mod: number;
+  verification_needed: number;
+}
+
+/** The type's slice of the United fleet progress sheet, summed over its codes. */
+export interface AircraftTypePipeline {
+  total: number;
+  starlink_complete: number;
+  in_mod: number;
+  verification_needed: number;
+  sheet_updated: string | null;
+  fetched_at: number;
+  rows: AircraftTypePipelineRow[];
+  tails: FleetProgressTailRow[];
+  movements: FleetMovement[];
+}
+
+export interface AircraftTypeRoute {
+  origin: string;
+  destination: string;
+  departures: number;
+  /** /route-planner permalink, only when that URL serves. */
+  href: string | null;
+}
+
+export interface AircraftTypeFlightNumber {
+  flightNumber: string;
+  /** Tail-days this flight number was observed on the type (30-day window). */
+  observations: number;
+  /** Share of the flight number's observed tail-days that were on this type. */
+  share: number;
+  href: string;
+}
+
+export interface AircraftTypePageData {
+  airline: string;
+  family: string;
+  /** Same counting path as the /fleet family row and /api/fleet-summary. */
+  total: number;
+  starlink: number;
+  providers: Record<WifiProvider, number>;
+  checked: number;
+  knownOther: number;
+  unchecked: number;
+  tails: FleetTail[];
+  starlinkTails: FleetTail[];
+  variants: AircraftTypeVariant[] | null;
+  /** Listed with Starlink by a non-bulk source, not yet checked by the verifier. */
+  listedAwaitingVerification: string[];
+  firstSeen: string | null;
+  recentInstalls: AircraftTypeInstall[];
+  pipeline: AircraftTypePipeline | null;
+  routes: AircraftTypeRoute[];
+  routeTotals: { departures: number; pairs: number };
+  flightNumbers: AircraftTypeFlightNumber[];
+  /** "starlink_only" where the verifier logs Starlink tails only (Alaska). */
+  flightNumbersScope: "all" | "starlink_only";
+  lastmodIso?: string;
+  /** Newest verifier check for the airline (unix sec) — the page's own clock. */
+  dataClock: number | null;
+}

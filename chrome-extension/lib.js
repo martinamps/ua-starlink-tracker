@@ -13,6 +13,7 @@ const StarlinkTrackerLib = (() => {
     UA: Object.freeze({ iata: "UA", airlineName: "United", marker: "United" }),
     HA: Object.freeze({ iata: "HA", airlineName: "Hawaiian", marker: "Hawaiian" }),
     AS: Object.freeze({ iata: "AS", airlineName: "Alaska", marker: "Alaska" }),
+    QR: Object.freeze({ iata: "QR", airlineName: "Qatar", marker: "Qatar" }),
   });
 
   const CARRIER_CODES = Object.freeze(Object.keys(TRACKED_CARRIERS));
@@ -45,12 +46,21 @@ const StarlinkTrackerLib = (() => {
    * `version` rides along as `client=ext-<version>`: a service-worker fetch
    * carries the stock Chrome user agent, so without it the server cannot tell
    * extension traffic from a person on the website.
+   *
+   * `leg` ({origin, destination}) scopes the answer to the traveller's own leg
+   * of a multi-leg flight number; it is re-validated here because it arrives
+   * over extension messaging. Without one the URL is exactly the pre-2.1 URL.
    */
-  function endpointFor(flightNumber, date, version) {
+  function endpointFor(flightNumber, date, version, leg) {
     const carrier = detectCarrier(flightNumber);
     if (!carrier || !isValidDate(date)) return null;
     const fn = flightNumber.toUpperCase();
     let query = `flight_number=${encodeURIComponent(fn)}&date=${encodeURIComponent(date)}`;
+    const scoped = legOf(leg);
+    if (scoped) {
+      query += `&origin=${scoped.origin}`;
+      if (scoped.destination) query += `&destination=${scoped.destination}`;
+    }
     if (typeof version === "string" && version.length > 0) {
       query += `&client=ext-${encodeURIComponent(version)}`;
     }
@@ -71,14 +81,18 @@ const StarlinkTrackerLib = (() => {
     return `${yyyymmdd.slice(0, 4)}-${yyyymmdd.slice(4, 6)}-${yyyymmdd.slice(6, 8)}`;
   }
 
-  /** All itinerary segments in a Travel Impact Model URL — any carrier. */
+  /**
+   * All itinerary segments in a Travel Impact Model URL — any carrier. A
+   * through flight keeps one segment per leg even when both legs share a
+   * number: each leg can fly a different aircraft.
+   */
   function parseTimSegments(url) {
     if (typeof url !== "string") return [];
     const segments = [];
     const seen = new Set();
     for (const m of url.matchAll(TIM_SEGMENT_RE)) {
       const flightNumber = `${m[3]}${m[4]}`;
-      const key = `${flightNumber}-${m[5]}`;
+      const key = `${flightNumber}-${m[5]}-${m[1]}-${m[2]}`;
       if (seen.has(key)) continue;
       seen.add(key);
       segments.push({
@@ -115,16 +129,40 @@ const StarlinkTrackerLib = (() => {
       for (const seg of parseTimSegments(url)) {
         parsed = true;
         if (!detectCarrier(seg.flightNumber)) {
-          untracked.add(`${seg.flightNumber}-${seg.date}`);
+          untracked.add(`${seg.flightNumber}-${seg.date}-${seg.origin}-${seg.destination}`);
           continue;
         }
-        if (segments.some((s) => s.flightNumber === seg.flightNumber && s.date === seg.date)) {
-          continue;
-        }
-        segments.push({ flightNumber: seg.flightNumber, date: seg.date });
+        const sameLeg = (s) =>
+          s.flightNumber === seg.flightNumber &&
+          s.date === seg.date &&
+          s.origin === seg.origin &&
+          s.destination === seg.destination;
+        if (segments.some(sameLeg)) continue;
+        segments.push({
+          flightNumber: seg.flightNumber,
+          date: seg.date,
+          origin: seg.origin,
+          destination: seg.destination,
+        });
       }
     }
     return { parsed, segments, untrackedLegs: untracked.size };
+  }
+
+  const AIRPORT_RE = /^[A-Z]{3}$/;
+
+  /**
+   * The leg a lookup may send: both airports when both are IATA-shaped and
+   * differ, the origin alone when only it is, otherwise nothing. A leg that
+   * lands where it departed is not a leg we can scope, and heuristic segments
+   * carry no airports; both keep the unscoped lookup.
+   */
+  function legOf(seg) {
+    if (!seg || typeof seg !== "object") return undefined;
+    const origin = AIRPORT_RE.test(seg.origin ?? "") ? seg.origin : null;
+    if (!origin) return undefined;
+    if (!AIRPORT_RE.test(seg.destination ?? "")) return { origin };
+    return seg.destination === origin ? undefined : { origin, destination: seg.destination };
   }
 
   /**
@@ -232,6 +270,17 @@ const StarlinkTrackerLib = (() => {
     if (!payload || typeof payload !== "object" || Array.isArray(payload)) return claim;
     if (typeof payload.airline === "string") claim.airline = payload.airline;
     if (payload.error !== undefined) return claim;
+    // Tooltip only: grading below never reads it.
+    const echoed = scopedLegEcho(payload.leg);
+    if (echoed) claim.leg = echoed;
+    // Equipment-type answers (QR) say where they came from: the published
+    // schedule or observed-type history. Only those payloads carry `basis`,
+    // so every other carrier's claim keeps its exact pre-2.1 shape.
+    if (payload.basis === "schedule" || payload.basis === "history") {
+      claim.basis = payload.basis;
+      const type = Array.isArray(payload.flights) ? payload.flights[0]?.aircraft_type : null;
+      claim.aircraftType = typeof type === "string" ? type.slice(0, 60) : null;
+    }
 
     if (payload.hasStarlink === true) {
       claim.status = payload.confidence === "verified" ? "verified" : "installed";
@@ -252,10 +301,22 @@ const StarlinkTrackerLib = (() => {
       if (PREDICTION_CONFIDENCES.includes(grade)) claim.predictionConfidence = grade;
       if (prediction && typeof prediction.n_observations === "number") {
         claim.nObservations = prediction.n_observations;
+      } else if (claim.basis && typeof payload.n_recent_observations === "number") {
+        claim.nObservations = payload.n_recent_observations;
       }
       return claim;
     }
     return claim;
+  }
+
+  /** The server's leg echo when the answer really is about that leg. */
+  function scopedLegEcho(leg) {
+    if (!leg || typeof leg !== "object") return null;
+    if (leg.match === "unscoped" || !AIRPORT_RE.test(leg.origin ?? "")) return null;
+    return {
+      origin: leg.origin,
+      destination: AIRPORT_RE.test(leg.destination ?? "") ? leg.destination : null,
+    };
   }
 
   /**
@@ -347,7 +408,37 @@ const StarlinkTrackerLib = (() => {
     return "Starlink";
   }
 
+  // Type-based answers name the evidence: which scheduled type, or how many
+  // operating days the probability rests on. Never "verified" wording.
+  function typeBasisTitle(claim) {
+    const airline = claim.airline || "The airline";
+    if (claim.status === "installed") {
+      const type = claim.aircraftType ? ` (${claim.aircraftType})` : "";
+      return `Scheduled aircraft${type} is a type ${airline} reports fully fitted with Starlink. A last-minute swap can change this.`;
+    }
+    if (claim.status === "predicted") {
+      const days =
+        typeof claim.nObservations === "number" && claim.nObservations > 0
+          ? `${claim.nObservations} recent and scheduled operating days`
+          : "recent operating days";
+      if (claim.basis === "schedule") {
+        const type = claim.aircraftType ? ` (${claim.aircraftType})` : "";
+        return (
+          `At least ~${roundPct(claim.probability)}% — scheduled on a fitted type${type}, ` +
+          `but this flight has flown other aircraft on some of its ${days}. A swap can change this.`
+        );
+      }
+      return (
+        `At least ~${roundPct(claim.probability)}% — based on the aircraft types on ${days} ` +
+        `of this flight. ${airline} publishes the actual aircraft about a week before departure.`
+      );
+    }
+    return null;
+  }
+
   function badgeTitle(claim) {
+    const typeTitle = claim.basis ? typeBasisTitle(claim) : null;
+    if (typeTitle) return typeTitle;
     const airline = claim.airline ? ` (${claim.airline})` : "";
     if (claim.status === "predicted") {
       const obs =
@@ -363,6 +454,24 @@ const StarlinkTrackerLib = (() => {
       return `Aircraft is Starlink-equipped per fleet data${airline} — not yet verified against the airline's site.`;
     }
     return `Verified Starlink WiFi${airline}`;
+  }
+
+  /**
+   * Tooltip for a card's combined claim (from combineClaims over `claims`).
+   * When the legs disagree it names the leg that set the badge, the weakest
+   * one, so a traveller can see which leg the answer hinges on; legs that all
+   * say the same thing name none. `flightNumber` is stamped on by the caller.
+   */
+  function cardBadgeTitle(combined, claims) {
+    const title = badgeTitle(combined);
+    const legs = Array.isArray(claims) ? claims : [];
+    const disagree = legs.some(
+      (c) => c.status !== combined.status || c.probability !== combined.probability
+    );
+    const { leg, flightNumber } = combined;
+    if (!disagree || !leg || typeof flightNumber !== "string") return title;
+    const route = leg.destination ? `${leg.origin}→${leg.destination}` : `from ${leg.origin}`;
+    return `${flightNumber} ${route}: ${title}`;
   }
 
   function badgeClass(claim) {
@@ -400,8 +509,10 @@ const StarlinkTrackerLib = (() => {
 
   // ── lookup and pass scheduling ─────────────────────────────────────────────
 
-  function claimKey(flightNumber, date) {
-    return `${flightNumber}-${date}`;
+  /** One cache entry per leg; an unscoped lookup keeps the pre-2.1 key. */
+  function claimKey(flightNumber, date, leg) {
+    if (!leg) return `${flightNumber}-${date}`;
+    return `${flightNumber}-${date}-${leg.origin}-${leg.destination || ""}`;
   }
 
   /**
@@ -429,15 +540,24 @@ const StarlinkTrackerLib = (() => {
       return cached(key) !== null || pending.has(key);
     }
 
-    function get(flightNumber, date) {
-      const key = claimKey(flightNumber, date);
+    function get(flightNumber, date, leg) {
+      const key = claimKey(flightNumber, date, leg);
       const hit = cached(key);
       if (hit) return Promise.resolve(hit);
       const inflight = pending.get(key);
       if (inflight) return inflight;
 
+      const message = leg
+        ? {
+            action: "checkFlight",
+            flightNumber,
+            date,
+            origin: leg.origin,
+            destination: leg.destination,
+          }
+        : { action: "checkFlight", flightNumber, date };
       const lookup = Promise.resolve()
-        .then(() => send({ action: "checkFlight", flightNumber, date }))
+        .then(() => send(message))
         .then(claimFromResponse, () => ({ claim: unknownClaim(), retryable: true }))
         .then((outcome) => {
           pending.delete(key);
@@ -541,6 +661,7 @@ const StarlinkTrackerLib = (() => {
     endpointFor,
     parseTimSegments,
     timCardSegments,
+    legOf,
     carriersNamedIn,
     parseAttrFlightNumber,
     extractFlightNumbersFromText,
@@ -551,6 +672,7 @@ const StarlinkTrackerLib = (() => {
     shouldBadge,
     badgeLabel,
     badgeTitle,
+    cardBadgeTitle,
     badgeClass,
     badgeColors,
     localTodayIso,

@@ -494,6 +494,27 @@ describe("AF answers", () => {
     }
   });
 
+  test("a leg names the unequipped tail flying that leg, not the first hop's", async () => {
+    const [first, second] = GUIDE.tails.filter((t) => t.mark === "legacy").map((t) => t.tail);
+    const db = appliedDb();
+    addFlight(db, first, "AF710", "CDG", NOON, { airline: "AF", arrivalAirport: "NCE" });
+    addFlight(db, second, "AF710", "NCE", NOON + 3 * 3600, {
+      airline: "AF",
+      arrivalAirport: "CDG",
+    });
+    for (const [origin, tail] of [
+      ["CDG", first],
+      ["NCE", second],
+    ]) {
+      const v = await verdictOn(db, "AF710", { lookupTail: null, leg: { origin } });
+      if (v.kind !== "no_model" || v.answer.kind !== "assigned_unconfirmed")
+        throw new Error(v.kind);
+      expect(v.answer.tail).toBe(tail);
+      expect("leg" in v && v.leg?.match).toBe("exact");
+    }
+    db.close();
+  });
+
   test("an evening departure west of UTC matches its local date, not the UTC one", async () => {
     const db = appliedDb();
     const star = STARS.find((t) => t.header === "A350-941 (Cabin G)")?.tail as string;

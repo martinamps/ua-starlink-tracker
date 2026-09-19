@@ -41,11 +41,12 @@
  *   client_class:    classifyRequest: extension | other-extension, else
  *                    classifyUserAgent: claude | googleother | googlebot |
  *                    bingbot | gptbot | perplexity | seo-crawler | social |
- *                    extension | bot | browser | unknown             (13)
+ *                    extension | bot | browser | unknown; mcp for /mcp  (14)
  *   ext_version:     1.x | 2.0 | 2.x | other | none — only when
  *                    client_class:extension                          (5)
  *   confidence:      high | medium | low | none                      (4)
- *   outcome:         verified_yes | verified_no | predicted | no_data | error  (5)
+ *   outcome:         verified_yes | verified_no | type_yes | type_no |
+ *                    predicted | no_data | error                     (7)
  *   tool:            7 MCP tool names (TOOL_NAMES) | unknown         (~8)
  *   state:           watch.feed_fetch: prediction | yes | no | swap | none  (5)
  *   surface:         watch.cta_shown: check_flight                   (1)
@@ -184,7 +185,9 @@ export function normalizeExtVersion(client: string | null | undefined): string {
   const m = client.match(EXT_CLIENT_RE);
   if (!m) return "other";
   if (m[1] === "1") return "1.x";
-  if (m[1] === "2") return m[2] === "0" ? "2.0" : "2.x";
+  // 2.1 is the first leg-scoped build; its own bucket keeps the leg-scope
+  // rollout readable against 2.0 without re-bucketing any shipped series.
+  if (m[1] === "2") return m[2] === "0" ? "2.0" : m[2] === "1" ? "2.1" : "2.x";
   return "other";
 }
 
@@ -198,6 +201,11 @@ export function requestClientTags(req: Request, url: URL): Tags {
   };
 }
 
+/** `client_class` for /mcp tool calls, which carry no request of their own to classify. */
+export function mcpClientTags(): Tags {
+  return { client_class: "mcp" };
+}
+
 /**
  * Canonical lowercase-name airline tag for metrics. Preserves Datadog history
  * (the global default has always been `airline:united`, not `airline:UA`).
@@ -206,6 +214,43 @@ export function requestClientTags(req: Request, url: URL): Tags {
 export function normalizeAirlineTag(code: string | null | undefined): string {
   if (!code) return "unknown";
   return AIRLINES[code.toUpperCase()]?.metricTag ?? "unmapped";
+}
+
+const LEG_MATCHES = new Set(["exact", "origin", "unmatched", "no_data", "unscoped"]);
+const LEG_REASONS = new Set([
+  "none",
+  "invalid_airport",
+  "same_airport",
+  "no_timezone",
+  "ambiguous_leg",
+]);
+const LEG_OUTCOMES = ["yes", "no", "none"] as const;
+const LEG_EFFECTS = new Set([
+  "same",
+  ...LEG_OUTCOMES.flatMap((from) =>
+    LEG_OUTCOMES.filter((to) => to !== from).map((to) => `${from}_to_${to}`)
+  ),
+]);
+
+export function normalizeLegMatch(raw: string | null | undefined): string {
+  return raw && LEG_MATCHES.has(raw) ? raw : "other";
+}
+
+export function normalizeLegReason(raw: string | null | undefined): string {
+  if (!raw) return "none";
+  return LEG_REASONS.has(raw) ? raw : "other";
+}
+
+/** `same`, or `<unscoped>_to_<scoped>` over yes/no/none. */
+export function normalizeLegEffect(raw: string | null | undefined): string {
+  return raw && LEG_EFFECTS.has(raw) ? raw : "other";
+}
+
+/** IATA equipment codes are three alphanumerics; anything else is upstream
+ * junk and must not mint a tag value. */
+export function normalizeEquipmentCodeTag(code: string | null | undefined): string {
+  const c = (code ?? "").trim().toUpperCase();
+  return /^[A-Z0-9]{3}$/.test(c) ? c : "invalid";
 }
 
 // Carriers people ask about most, beyond the registry's own codes. Anything
@@ -313,11 +358,18 @@ export const COUNTERS = {
   FLEET_CHECK_SKIPPED: "fleet.check_skipped",
 
   // User-facing flight lookup outcome — how often we actually answer the question.
-  // tags: endpoint (api_check|api_predict|mcp), outcome (verified_yes|verified_no|
+  // tags: endpoint (api_check|api_predict|mcp), outcome (verified_yes|verified_no|type_yes|type_no|
   //   predicted|no_data|error), result (mirrors outcome — DD monitors group by
   //   result), confidence (high|medium|low|none), airline,
   //   days_out (past|0..3|4_7|8_14|15_30|31_plus — only the /api/check-flight handler, non-QR)
   FLIGHT_LOOKUP_RESULT: "flight.lookup_result",
+
+  // A flight lookup that named its leg (origin/destination). Fires only then.
+  // tags: endpoint (api_check|api_check_any|mcp), airline, match (exact|origin|
+  //   unmatched|no_data|unscoped), reason (none|invalid_airport|same_airport|
+  //   no_timezone|ambiguous_leg), effect (same|<unscoped>_to_<scoped> over
+  //   yes/no/none), days_out, client_class, ext_version (extension traffic)
+  FLIGHT_LEG_SCOPE: "flight.leg_scope",
 
   // MCP tool dispatch — tags: tool, airline, outcome (success|error|unknown_tool)
   MCP_TOOL_CALL: "mcp.tool_call",
@@ -346,6 +398,14 @@ export const COUNTERS = {
   WATCH_FEED_FETCH: "watch.feed_fetch",
   // Watch row rendered on a check-flight result — tags: airline, surface (check_flight)
   WATCH_CTA_SHOWN: "watch.cta_shown",
+
+  // /fleet/{slug} aircraft-type page request — tags: airline, family (normalizeAircraftType),
+  //   outcome (ok|redirect|not_found), verdict (all|all_checked|most|some|verifying|installing|none|
+  //   official_none|unknown|n/a), indexable (true|false)
+  AIRCRAFT_PAGE_VIEW: "aircraft_page.view",
+  // A QR answer hit an equipment code missing from QATAR_EQUIPMENT (answered
+  // as unknown, never no) — tags: airline, code (3-char IATA code | invalid)
+  QATAR_UNKNOWN_EQUIPMENT: "qatar.unknown_equipment",
 } as const;
 
 /**

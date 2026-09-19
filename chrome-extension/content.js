@@ -137,11 +137,11 @@
 
   // ── badge rendering ────────────────────────────────────────────────────────
 
-  function buildBadge(claim) {
+  function buildBadge(claim, title) {
     const colors = lib.badgeColors(claim);
     const badge = document.createElement("span");
     badge.className = lib.badgeClass(claim);
-    badge.title = lib.badgeTitle(claim);
+    badge.title = title;
     badge.textContent = lib.badgeLabel(claim);
     badge.style.cssText = [
       "margin-left: 12px",
@@ -201,7 +201,7 @@
 
   /** `key` names the itinerary the badge answers for, so a card Google
    * patches in place with a different flight never keeps the old answer. */
-  function addBadge(card, claim, key) {
+  function addBadge(card, claim, key, title) {
     try {
       const existing = card.querySelector(".starlink-wifi-badge");
       if (existing) {
@@ -213,7 +213,7 @@
         }
         existing.remove();
       }
-      const badge = buildBadge(claim);
+      const badge = buildBadge(claim, title);
       badge.dataset.starlinkKey = key;
       badge.dataset.starlinkStatus = claim.status;
       const wantInline = window.innerWidth >= 1024;
@@ -241,7 +241,12 @@
       return true;
     }
 
-    const keys = segments.map((seg) => lib.claimKey(seg.flightNumber, seg.date || pageDate));
+    // Each TIM leg is its own lookup, two legs sharing a number included:
+    // they can fly different aircraft.
+    const legs = segments.map((seg) => lib.legOf(seg));
+    const keys = segments.map((seg, i) =>
+      lib.claimKey(seg.flightNumber, seg.date || pageDate, legs[i])
+    );
 
     // Respect the per-pass network budget BEFORE marking processed, so
     // skipped cards get picked up by a later pass.
@@ -253,7 +258,7 @@
     }
 
     const outcomes = await Promise.all(
-      segments.map((seg) => lookup.get(seg.flightNumber, seg.date || pageDate))
+      segments.map((seg, i) => lookup.get(seg.flightNumber, seg.date || pageDate, legs[i]))
     );
     // The page moved on while this card waited; its answer belongs to a search
     // that is no longer on screen, and processedElements is a new set.
@@ -265,9 +270,13 @@
     const settled = outcomes.every((outcome) => !outcome.retryable);
     if (settled) processedElements.add(card);
 
-    const combined = lib.combineClaims(outcomes.map((outcome) => outcome.claim));
+    const claims = outcomes.map((outcome, i) => ({
+      ...outcome.claim,
+      flightNumber: segments[i].flightNumber,
+    }));
+    const combined = lib.combineClaims(claims);
     if (lib.shouldBadge(combined)) {
-      addBadge(card, combined, keys.join("+"));
+      addBadge(card, combined, keys.join("+"), lib.cardBadgeTitle(combined, claims));
       log("badged", keys.join("+"), combined.status);
     } else {
       removeBadge(card);

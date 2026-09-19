@@ -100,14 +100,16 @@ export function buildFreshnessCoverage(
 
 export const FRESHNESS_COVERAGE = buildFreshnessCoverage();
 
-// Tables sampled by the row-count gauge. flight_routes/qatar_schedule have no
-// airline column — those report under airline:all.
+// Tables sampled by the row-count gauge. flight_routes and the qatar_* tables
+// have no airline column — those report under airline:all.
 const ROW_COUNT_TABLES: Array<{ table: string; hasAirline: boolean }> = [
   { table: "upcoming_flights", hasAirline: true },
   { table: "starlink_verification_log", hasAirline: true },
   { table: "departure_log", hasAirline: true },
   { table: "flight_routes", hasAirline: false },
   { table: "qatar_schedule", hasAirline: false },
+  { table: "qatar_equipment_history", hasAirline: false },
+  { table: "qatar_fetch_coverage", hasAirline: false },
 ];
 
 function emitRowCounts(db: Database): void {

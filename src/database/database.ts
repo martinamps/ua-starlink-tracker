@@ -1,7 +1,15 @@
 import { Database } from "bun:sqlite";
 import { isFreighterFamily } from "../airlines/aircraft-families";
 import {
+  SHEET_CODE_TO_FAMILY,
+  TYPE_DISPLAY,
+  aircraftPagesFor,
+  minTypeTails,
+  tenantCopy,
+} from "../airlines/aircraft-pages";
+import {
   CACHEABLE_FLIGHT_NUMBER,
+  CANONICAL_FLIGHT_PERMALINK,
   canonicalPermalinkFor,
   ensureAirlinePrefix,
   stripFlightNumberZeros,
@@ -62,7 +70,9 @@ import type {
   StarlinkStatus,
   WifiProvider,
 } from "../types";
+import type { AircraftTypePageData } from "../types";
 import { DB_PATH } from "../utils/constants";
+import { excludeMassWriteDays } from "../utils/install-rate";
 import { debug, info, error as logError, warn } from "../utils/logger";
 import { ensureAdsbFlightDrawsTable } from "./adsb-flight-draws";
 import { ASSIGNMENT_LOG_DDL, logFlightAssignments, pruneAssignmentLog } from "./assignment-log";
@@ -377,6 +387,51 @@ export function setupTables(db: Database) {
       CREATE INDEX idx_qs_dep_time ON qatar_schedule(departure_time);
       CREATE INDEX idx_qs_route ON qatar_schedule(departure_airport, arrival_airport, departure_time);
       CREATE INDEX idx_qs_flight ON qatar_schedule(flight_number, scheduled_date);
+    `);
+  }
+
+  // qatar_schedule keeps one row per (flight, fetch date) and forgets a flight
+  // 2h after departure; answering beyond Qatar's ~6-day published window needs
+  // what each flight number actually flew, one row per leg per operating day.
+  // No wifi column: rows are classified at read time so a phase-table edit
+  // reclassifies history too.
+  if (!tableExists(db, "qatar_equipment_history")) {
+    db.exec(`
+      CREATE TABLE qatar_equipment_history (
+        flight_number TEXT NOT NULL,
+        departure_airport TEXT NOT NULL,
+        service_date TEXT NOT NULL,
+        arrival_airport TEXT,
+        departure_time INTEGER NOT NULL,
+        arrival_time INTEGER,
+        equipment_code TEXT,
+        first_equipment_code TEXT,
+        first_seen_at INTEGER NOT NULL,
+        -- departure_time - first_seen_at: the swap study buckets by lead time
+        first_seen_lead_sec INTEGER NOT NULL,
+        last_seen_at INTEGER NOT NULL,
+        flight_status TEXT,
+        -- the by-route query that last returned the row; off-pair through-legs
+        -- (ADL-AKL from DOH-AKL) can only be retired through it
+        fetch_origin TEXT NOT NULL,
+        fetch_destination TEXT NOT NULL,
+        fetch_date TEXT NOT NULL,
+        stale_at INTEGER,
+        PRIMARY KEY (flight_number, departure_airport, service_date)
+      )
+    `);
+  }
+  // Which (route, DOH date) queries have succeeded: an in-window "no rows" is
+  // only "doesn't operate that day" when the date was actually fetched.
+  if (!tableExists(db, "qatar_fetch_coverage")) {
+    db.exec(`
+      CREATE TABLE qatar_fetch_coverage (
+        origin TEXT NOT NULL,
+        destination TEXT NOT NULL,
+        fetch_date TEXT NOT NULL,
+        fetched_at INTEGER NOT NULL,
+        PRIMARY KEY (origin, destination, fetch_date)
+      )
     `);
   }
 
@@ -770,6 +825,11 @@ function migrateMultiAirline(db: Database) {
     CREATE INDEX IF NOT EXISTS idx_qs_route    ON qatar_schedule(departure_airport, arrival_airport, departure_time);
     CREATE INDEX IF NOT EXISTS idx_qs_flight   ON qatar_schedule(flight_number, scheduled_date);
     CREATE INDEX IF NOT EXISTS idx_pipeline_events_time ON pipeline_events(airline, observed_at DESC);
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_qeh_fn_date ON qatar_equipment_history(flight_number, service_date);
+    CREATE INDEX IF NOT EXISTS idx_qeh_fn_dep  ON qatar_equipment_history(flight_number, departure_time);
+    CREATE INDEX IF NOT EXISTS idx_qeh_fetch   ON qatar_equipment_history(fetch_origin, fetch_destination, fetch_date);
   `);
 
   // The two indexes above exist for the serving path: getFlightHistorySummary
@@ -4752,7 +4812,9 @@ export function bodyClassOf(family: string): BodyClass {
   return "narrowbody"; // safer default for unknowns than inflating regional
 }
 
-const fleetPageCache = new Map<string, { data: FleetPageData; at: number }>();
+// Per database: an app over a second database (every write-path test builds
+// one) must never be served the first one's families.
+const fleetPageCache = new WeakMap<Database, Map<string, { data: FleetPageData; at: number }>>();
 const FLEET_PAGE_TTL_MS = 60_000;
 
 /**
@@ -4764,12 +4826,17 @@ const FLEET_PAGE_TTL_MS = 60_000;
 export function getFleetPageData(db: Database, airline?: AirlineFilter): FleetPageData {
   const now = Date.now();
   const key = filterKey(airline);
-  const cached = fleetPageCache.get(key);
+  let perDb = fleetPageCache.get(db);
+  if (!perDb) {
+    perDb = new Map();
+    fleetPageCache.set(db, perDb);
+  }
+  const cached = perDb.get(key);
   if (cached && now - cached.at < FLEET_PAGE_TTL_MS) {
     return cached.data;
   }
   const data = computeFleetPageData(db, airline);
-  fleetPageCache.set(key, { data, at: now });
+  perDb.set(key, { data, at: now });
   return data;
 }
 
@@ -5721,6 +5788,262 @@ export function getQatarScheduleStats(db: Database): {
   };
 }
 
+/**
+ * Backstop for rows the route-scoped prune can never match: a by-route
+ * response also carries through-legs off the queried pair (DOH-AKL returns
+ * ADL-AKL), and those survived for months.
+ */
+export function pruneQatarScheduleGlobalBefore(db: Database, beforeEpoch: number): number {
+  return db.query("DELETE FROM qatar_schedule WHERE departure_time < ?").run(beforeEpoch).changes;
+}
+
+/** Forward-schedule counts by stored verdict — the meta counters' source. */
+export function countQatarForwardSchedule(
+  db: Database,
+  afterEpoch: number
+): { total: number; Starlink: number; Rolling: number; None: number } {
+  const rows = db
+    .query(
+      "SELECT wifi_verdict AS v, COUNT(*) AS n FROM qatar_schedule WHERE departure_time > ? GROUP BY wifi_verdict"
+    )
+    .all(afterEpoch) as Array<{ v: string | null; n: number }>;
+  const out = { total: 0, Starlink: 0, Rolling: 0, None: 0 };
+  for (const r of rows) {
+    out.total += r.n;
+    if (r.v === "Starlink" || r.v === "Rolling" || r.v === "None") out[r.v] += r.n;
+  }
+  return out;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Qatar equipment history + fetch coverage (hub lookups beyond the window).
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface QatarHistoryRow {
+  flight_number: string;
+  departure_airport: string;
+  service_date: string;
+  arrival_airport: string | null;
+  departure_time: number;
+  arrival_time: number | null;
+  equipment_code: string | null;
+  first_equipment_code: string | null;
+  first_seen_at: number;
+  first_seen_lead_sec: number;
+  last_seen_at: number;
+  flight_status: string | null;
+  fetch_origin: string;
+  fetch_destination: string;
+  fetch_date: string;
+  stale_at: number | null;
+}
+
+export type QatarHistoryUpsert = Pick<
+  QatarHistoryRow,
+  | "flight_number"
+  | "departure_airport"
+  | "service_date"
+  | "arrival_airport"
+  | "departure_time"
+  | "arrival_time"
+  | "equipment_code"
+  | "flight_status"
+  | "fetch_origin"
+  | "fetch_destination"
+  | "fetch_date"
+>;
+
+// The readonly test snapshot and older prod copies predate these tables; a
+// reader must answer "nothing" rather than throw. Only presence is cached —
+// a table created later on the same handle is picked up.
+const knownTables = new WeakMap<Database, Set<string>>();
+function hasTable(db: Database, table: string): boolean {
+  let known = knownTables.get(db);
+  if (known?.has(table)) return true;
+  if (!tableExists(db, table)) return false;
+  if (!known) {
+    known = new Set();
+    knownTables.set(db, known);
+  }
+  known.add(table);
+  return true;
+}
+
+export function upsertQatarEquipmentHistory(
+  db: Database,
+  row: QatarHistoryUpsert,
+  nowSec: number
+): void {
+  db.query(
+    `INSERT INTO qatar_equipment_history
+       (flight_number, departure_airport, service_date, arrival_airport, departure_time,
+        arrival_time, equipment_code, first_equipment_code, first_seen_at, first_seen_lead_sec,
+        last_seen_at, flight_status, fetch_origin, fetch_destination, fetch_date, stale_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL)
+     ON CONFLICT(flight_number, departure_airport, service_date) DO UPDATE SET
+       arrival_airport   = excluded.arrival_airport,
+       departure_time    = excluded.departure_time,
+       arrival_time      = excluded.arrival_time,
+       equipment_code    = excluded.equipment_code,
+       flight_status     = excluded.flight_status,
+       last_seen_at      = excluded.last_seen_at,
+       fetch_origin      = excluded.fetch_origin,
+       fetch_destination = excluded.fetch_destination,
+       fetch_date        = excluded.fetch_date,
+       stale_at          = NULL`
+  ).run(
+    row.flight_number,
+    row.departure_airport,
+    row.service_date,
+    row.arrival_airport,
+    row.departure_time,
+    row.arrival_time,
+    row.equipment_code,
+    row.equipment_code,
+    nowSec,
+    row.departure_time - nowSec,
+    nowSec,
+    row.flight_status,
+    row.fetch_origin,
+    row.fetch_destination,
+    row.fetch_date
+  );
+}
+
+/**
+ * A successful re-fetch that no longer returns a row it used to is Qatar
+ * dropping that flight: mark it stale. Only future departures — Qatar may stop
+ * listing a flight once it has operated, which is not a retraction.
+ */
+export function markQatarHistoryStale(
+  db: Database,
+  origin: string,
+  destination: string,
+  fetchDate: string,
+  fetchStartSec: number,
+  nowSec: number = fetchStartSec
+): number {
+  return db
+    .query(
+      `UPDATE qatar_equipment_history SET stale_at = ?
+       WHERE fetch_origin = ? AND fetch_destination = ? AND fetch_date = ?
+         AND last_seen_at < ? AND departure_time >= ? AND stale_at IS NULL`
+    )
+    .run(nowSec, origin, destination, fetchDate, fetchStartSec, fetchStartSec).changes;
+}
+
+export function recordQatarFetchCoverage(
+  db: Database,
+  origin: string,
+  destination: string,
+  fetchDate: string,
+  nowSec: number
+): void {
+  db.query(
+    `INSERT INTO qatar_fetch_coverage (origin, destination, fetch_date, fetched_at)
+     VALUES (?,?,?,?)
+     ON CONFLICT(origin, destination, fetch_date) DO UPDATE SET fetched_at = excluded.fetched_at`
+  ).run(origin, destination, fetchDate, nowSec);
+}
+
+function variantPlaceholders(variants: readonly string[]): string {
+  return variants.map(() => "?").join(",");
+}
+
+/** Non-stale legs by service date, departure_time ascending. */
+export function getQatarEquipmentHistory(
+  db: Database,
+  variants: readonly string[],
+  sinceDate: string,
+  untilDate: string
+): QatarHistoryRow[] {
+  if (variants.length === 0 || !hasTable(db, "qatar_equipment_history")) return [];
+  return db
+    .query(
+      `SELECT * FROM qatar_equipment_history
+       WHERE flight_number IN (${variantPlaceholders(variants)})
+         AND service_date >= ? AND service_date <= ?
+         AND stale_at IS NULL
+       ORDER BY departure_time ASC`
+    )
+    .all(...variants, sinceDate, untilDate) as QatarHistoryRow[];
+}
+
+/** Legs departing in a UTC window, stale ones INCLUDED: the caller needs them
+ * to suppress the matching (unretirable) qatar_schedule row. */
+export function getQatarEquipmentHistoryByWindow(
+  db: Database,
+  variants: readonly string[],
+  startSec: number,
+  endSec: number
+): QatarHistoryRow[] {
+  if (variants.length === 0 || !hasTable(db, "qatar_equipment_history")) return [];
+  return db
+    .query(
+      `SELECT * FROM qatar_equipment_history
+       WHERE flight_number IN (${variantPlaceholders(variants)})
+         AND departure_time >= ? AND departure_time < ?
+       ORDER BY departure_time ASC`
+    )
+    .all(...variants, startSec, endSec) as QatarHistoryRow[];
+}
+
+/** The by-route queries that have returned this flight number since a date. */
+export function getQatarHistoryRoutes(
+  db: Database,
+  variants: readonly string[],
+  sinceDate: string
+): Array<{ origin: string; destination: string }> {
+  if (variants.length === 0 || !hasTable(db, "qatar_equipment_history")) return [];
+  return db
+    .query(
+      `SELECT DISTINCT fetch_origin AS origin, fetch_destination AS destination
+       FROM qatar_equipment_history
+       WHERE flight_number IN (${variantPlaceholders(variants)}) AND service_date >= ?`
+    )
+    .all(...variants, sinceDate) as Array<{ origin: string; destination: string }>;
+}
+
+/** "ORIGIN-DEST-DATE" → latest fetched_at, for the successful fetches among
+ * the given ones. */
+export function getQatarFetchCoverage(
+  db: Database,
+  pairs: ReadonlyArray<{ origin: string; destination: string }>,
+  fetchDates: readonly string[]
+): Map<string, number> {
+  const out = new Map<string, number>();
+  if (pairs.length === 0 || fetchDates.length === 0 || !hasTable(db, "qatar_fetch_coverage")) {
+    return out;
+  }
+  const rows = db
+    .query(
+      `SELECT origin, destination, fetch_date, fetched_at FROM qatar_fetch_coverage
+       WHERE fetch_date IN (${variantPlaceholders(fetchDates)})`
+    )
+    .all(...fetchDates) as Array<{
+    origin: string;
+    destination: string;
+    fetch_date: string;
+    fetched_at: number;
+  }>;
+  const wanted = new Set(pairs.map((p) => `${p.origin}-${p.destination}`));
+  for (const r of rows) {
+    if (wanted.has(`${r.origin}-${r.destination}`)) {
+      out.set(`${r.origin}-${r.destination}-${r.fetch_date}`, r.fetched_at);
+    }
+  }
+  return out;
+}
+
+export function pruneQatarEquipmentHistory(db: Database, beforeDate: string): number {
+  return db.query("DELETE FROM qatar_equipment_history WHERE service_date < ?").run(beforeDate)
+    .changes;
+}
+
+export function pruneQatarFetchCoverage(db: Database, beforeDate: string): number {
+  return db.query("DELETE FROM qatar_fetch_coverage WHERE fetch_date < ?").run(beforeDate).changes;
+}
+
 export const UPCOMING_PRUNE_AGE_SEC = 2 * 86400;
 
 /**
@@ -5778,4 +6101,329 @@ export function getRankedStarlinkRoutePairs(
     )
     .all(...q.params, limit, offset) as Array<{ origin: string; destination: string }>;
   return rows.map(({ origin, destination }) => ({ origin, destination }));
+}
+
+// ============ /fleet/{slug} aircraft-type pages ============
+
+const TYPE_ROUTE_LIMIT = 12;
+const TYPE_FLIGHT_LIMIT = 10;
+const TYPE_RECENT_INSTALLS = 12;
+const TYPE_OBSERVATION_WINDOW_SEC = 30 * 86400;
+const TYPE_UPCOMING_WINDOW_SEC = 48 * 3600;
+// A sheet the hourly scrape hasn't refreshed in two weeks is no longer a
+// pipeline, just an old number. Measured against the verifier's own clock, so
+// a broken scrape drops the section while snapshot reads stay deterministic.
+const SHEET_STALE_SEC = 14 * 86400;
+// "Flights that usually get a {type}": the type must carry most of the flight
+// number's observed tail-days, or the list names flights that mostly don't.
+const TYPE_FLIGHT_MIN_SHARE = 0.5;
+const TYPE_FLIGHT_MIN_OBSERVATIONS = 2;
+
+// One airline-scoped pass each, folded per family in JS: sixteen type pages
+// cost two queries, not thirty-two. Exported for the query-plan pins.
+export const TYPE_PAGE_ROUTES_SQL = `SELECT tail_number AS tail, departure_airport AS o,
+       arrival_airport AS d, COUNT(DISTINCT flight_number || ':' || departure_time) AS n
+  FROM upcoming_flights
+  WHERE airline = ? AND departure_time BETWEEN ? AND ?
+    AND departure_airport GLOB '[A-Z][A-Z][A-Z]' AND arrival_airport GLOB '[A-Z][A-Z][A-Z]'
+    AND departure_airport <> arrival_airport
+  GROUP BY 1, 2, 3`;
+export const TYPE_PAGE_FLIGHTS_SQL = `SELECT tail_number AS tail, flight_number AS fn,
+       COUNT(DISTINCT date(checked_at, 'unixepoch')) AS days
+  FROM starlink_verification_log
+  WHERE airline = ? AND checked_at > ? AND flight_number IS NOT NULL
+    AND ${CLEAN_OBSERVATION_WHERE}
+  GROUP BY 1, 2`;
+export const TYPE_PAGE_EVENTS_SQL =
+  "SELECT tail, MAX(observed_at) AS t FROM pipeline_events WHERE airline = ? GROUP BY tail";
+
+const aircraftPageCache = new WeakMap<
+  Database,
+  Map<string, { at: number; pages: Map<string, AircraftTypePageData> }>
+>();
+
+/** One type page's data, from a per-airline pass cached as long as /fleet's. */
+export function getAircraftTypePageData(
+  db: Database,
+  airline: string,
+  slug: string
+): AircraftTypePageData | null {
+  return aircraftTypePages(db, airline).get(slug) ?? null;
+}
+
+function aircraftTypePages(db: Database, airline: string): Map<string, AircraftTypePageData> {
+  const now = Date.now();
+  let perDb = aircraftPageCache.get(db);
+  if (!perDb) {
+    perDb = new Map();
+    aircraftPageCache.set(db, perDb);
+  }
+  const hit = perDb.get(airline);
+  if (hit && now - hit.at < FLEET_PAGE_TTL_MS) return hit.pages;
+  const pages = computeAircraftTypePages(db, airline);
+  perDb.set(airline, { at: now, pages });
+  return pages;
+}
+
+function emptyProviders(): Record<WifiProvider, number> {
+  return { starlink: 0, viasat: 0, panasonic: 0, thales: 0, none: 0, unknown: 0 };
+}
+
+function maxOf(db: Database, sql: string, airline: string): number | null {
+  return (db.query(sql).get(airline) as { t: number | null } | null)?.t ?? null;
+}
+
+function computeAircraftTypePages(
+  db: Database,
+  airline: string
+): Map<string, AircraftTypePageData> {
+  const out = new Map<string, AircraftTypePageData>();
+  const defs = aircraftPagesFor(airline);
+  const cfg = AIRLINES[airline];
+  if (defs.length === 0 || !cfg) return out;
+
+  const fleet = getFleetPageData(db, [airline]);
+  const families = new Map(fleet.families.map((f) => [f.family, f]));
+  const tailFamily = new Map(fleet.allTails.map((t) => [t.tail, t.family]));
+  const starlinkFamily = new Map(
+    fleet.allTails.filter((t) => t.provider === "starlink").map((t) => [t.tail, t.family])
+  );
+  const providerOf = new Map(fleet.allTails.map((t) => [t.tail, t.provider]));
+
+  const dataClock = maxOf(
+    db,
+    "SELECT MAX(checked_at) AS t FROM starlink_verification_log WHERE airline = ?",
+    airline
+  );
+  const nowSec = Math.floor(Date.now() / 1000);
+  const clock = dataClock ?? nowSec;
+
+  // A sheet-tab import stamps one DateFound on a hundred tails under an
+  // ordinary gid, so "first seen" and lastmod must skip that day by shape.
+  const massDays = new Set(
+    excludeMassWriteDays(getDailyInstalls(db, airline)).excluded.map((d) => d.day)
+  );
+  const listings = db
+    .query(
+      `SELECT sp.TailNumber AS tail, sp.DateFound AS found, sp.sheet_gid AS gid
+       FROM starlink_planes sp WHERE sp.airline = ? AND ${equippedFilter("sp")}`
+    )
+    .all(airline) as Array<{ tail: string; found: string | null; gid: string | null }>;
+  const organicFirstSeen = new Map<string, string>();
+  const listedUnverified = new Set<string>();
+  for (const r of listings) {
+    if (isBulkGid(r.gid)) continue;
+    // Only tails the verifier hasn't reached: a listing for a tail it found on
+    // Viasat is a conflict, and never feeds a positive word. A mass-write day
+    // still counts here; it only disqualifies the date.
+    if (providerOf.get(r.tail) === "unknown") listedUnverified.add(r.tail);
+    const day = r.found ? r.found.slice(0, 10) : null;
+    if (day && massDays.has(day)) continue;
+    if (!day || !/^\d{4}-\d{2}-\d{2}$/.test(day)) continue;
+    const prev = organicFirstSeen.get(r.tail);
+    if (!prev || day < prev) organicFirstSeen.set(r.tail, day);
+  }
+
+  const eventMax = new Map<string, number>();
+  if (tableExists(db, "pipeline_events")) {
+    const rows = db.query(TYPE_PAGE_EVENTS_SQL).all(airline) as Array<{ tail: string; t: number }>;
+    for (const r of rows) eventMax.set(r.tail, r.t);
+  }
+
+  // The schedule's own clock, not the verifier's: the two jobs run on
+  // different cadences, and "next 48 hours" must not include flights gone.
+  const upClock = Math.min(
+    nowSec,
+    maxOf(db, "SELECT MAX(last_updated) AS t FROM upcoming_flights WHERE airline = ?", airline) ??
+      nowSec
+  );
+  const legs = db
+    .query(TYPE_PAGE_ROUTES_SQL)
+    .all(airline, upClock, upClock + TYPE_UPCOMING_WINDOW_SEC) as Array<{
+    tail: string;
+    o: string;
+    d: string;
+    n: number;
+  }>;
+  const pairsByFamily = new Map<string, Map<string, number>>();
+  for (const l of legs) {
+    const family = starlinkFamily.get(l.tail);
+    if (!family) continue;
+    let pairs = pairsByFamily.get(family);
+    if (!pairs) {
+      pairs = new Map();
+      pairsByFamily.set(family, pairs);
+    }
+    const key = `${l.o}-${l.d}`;
+    pairs.set(key, (pairs.get(key) ?? 0) + l.n);
+  }
+
+  const observations = db
+    .query(TYPE_PAGE_FLIGHTS_SQL)
+    .all(airline, clock - TYPE_OBSERVATION_WINDOW_SEC) as Array<{
+    tail: string;
+    fn: string;
+    days: number;
+  }>;
+  const fnTotal = new Map<string, number>();
+  const fnByFamily = new Map<string, Map<string, number>>();
+  for (const o of observations) {
+    const fn = stripFlightNumberZeros(ensureAirlinePrefix(cfg, o.fn));
+    fnTotal.set(fn, (fnTotal.get(fn) ?? 0) + o.days);
+    const family = tailFamily.get(o.tail);
+    if (!family) continue;
+    let byFn = fnByFamily.get(family);
+    if (!byFn) {
+      byFn = new Map();
+      fnByFamily.set(family, byFn);
+    }
+    byFn.set(fn, (byFn.get(fn) ?? 0) + o.days);
+  }
+
+  const servedRoutes = new Set(
+    getSitemapRoutes(db, airline).map((r) => `${r.origin}-${r.destination}`)
+  );
+  const servedFlights = new Set(
+    getSitemapFlights(db, airline as AirlineCode).map((f) => f.flight_number)
+  );
+  // Alaska's verifier logs Starlink tails only, so its flight list can say
+  // "had a Starlink {type}" but never "usually gets a {type}".
+  const flightNumbersScope = tenantCopy(airline).checksEveryTail ? "all" : "starlink_only";
+
+  const progress = fleet.progress.filter((r) => r.type_code !== "Totals");
+  const unmapped = progress
+    .filter((r) => !SHEET_CODE_TO_FAMILY[r.type_code])
+    .map((r) => r.type_code);
+  if (unmapped.length > 0) {
+    debug(`${airline}: unmapped fleet-progress type codes: ${unmapped.join(", ")}`);
+  }
+
+  for (const def of defs) {
+    const fam = families.get(def.family);
+    if (!fam || fam.total < minTypeTails(airline, def)) continue;
+    const memberTails = new Set(fam.tails.map((t) => t.tail));
+    const providers = emptyProviders();
+    for (const t of fam.tails) providers[t.provider]++;
+    const starlinkTails = fam.tails.filter((t) => t.provider === "starlink");
+
+    let variants: AircraftTypePageData["variants"] = null;
+    if (def.variants) {
+      const counts = def.variants.map((v) => ({ label: v.label, total: 0, starlink: 0 }));
+      let matched = 0;
+      for (const t of fam.tails) {
+        const i = def.variants.findIndex((v) => v.match.test(t.type));
+        if (i < 0) continue;
+        matched++;
+        counts[i].total++;
+        if (t.provider === "starlink") counts[i].starlink++;
+      }
+      if (matched === fam.total) variants = counts.filter((c) => c.total > 0);
+    }
+
+    const firstSeenRows = starlinkTails
+      .map((t) => ({ tail: t.tail, date: organicFirstSeen.get(t.tail) }))
+      .filter((r): r is { tail: string; date: string } => Boolean(r.date))
+      .sort((a, b) => b.date.localeCompare(a.date) || a.tail.localeCompare(b.tail));
+
+    const sheetRows = progress.filter((r) => SHEET_CODE_TO_FAMILY[r.type_code] === def.family);
+    let pipeline: AircraftTypePageData["pipeline"] = null;
+    if (sheetRows.length > 0) {
+      const fetchedAt = Math.max(...sheetRows.map((r) => r.fetched_at));
+      if (dataClock !== null && dataClock - fetchedAt > SHEET_STALE_SEC) {
+        debug(`${airline} ${def.slug}: fleet-progress sheet stale, pipeline dropped`);
+      } else {
+        const sum = (k: "total" | "starlink_complete" | "in_mod" | "verification_needed") =>
+          sheetRows.reduce((s, r) => s + (r[k] ?? 0), 0);
+        pipeline = {
+          total: sum("total"),
+          starlink_complete: sum("starlink_complete"),
+          in_mod: sum("in_mod"),
+          verification_needed: sum("verification_needed"),
+          sheet_updated: sheetRows.find((r) => r.sheet_updated)?.sheet_updated ?? null,
+          fetched_at: fetchedAt,
+          rows: sheetRows.map((r) => ({
+            type_code: r.type_code,
+            label: TYPE_DISPLAY[r.type_code] ?? r.type_code,
+            total: r.total ?? 0,
+            starlink_complete: r.starlink_complete ?? 0,
+            in_mod: r.in_mod ?? 0,
+            verification_needed: r.verification_needed ?? 0,
+          })),
+          tails: fleet.progressTails.filter((t) => memberTails.has(t.tail)),
+          movements: fleet.movements.filter((m) => memberTails.has(m.tail)),
+        };
+      }
+    }
+
+    const pairs = [...(pairsByFamily.get(def.family) ?? new Map<string, number>())];
+    const routes = [...pairs]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .slice(0, TYPE_ROUTE_LIMIT)
+      .map(([key, departures]) => {
+        const [origin, destination] = key.split("-");
+        return {
+          origin,
+          destination,
+          departures,
+          href: servedRoutes.has(key) ? `/route-planner/${origin}/${destination}` : null,
+        };
+      });
+
+    const flightNumbers = [...(fnByFamily.get(def.family) ?? new Map<string, number>())]
+      .map(([fn, obs]) => ({ fn, obs, share: obs / (fnTotal.get(fn) ?? obs) }))
+      .filter(
+        (f) =>
+          CANONICAL_FLIGHT_PERMALINK.test(f.fn) &&
+          servedFlights.has(f.fn) &&
+          (flightNumbersScope === "starlink_only" ||
+            (f.obs >= TYPE_FLIGHT_MIN_OBSERVATIONS && f.share >= TYPE_FLIGHT_MIN_SHARE))
+      )
+      .sort((a, b) => b.obs - a.obs || a.fn.localeCompare(b.fn, undefined, { numeric: true }))
+      .slice(0, TYPE_FLIGHT_LIMIT)
+      .map((f) => ({
+        flightNumber: f.fn,
+        observations: f.obs,
+        share: Math.round(f.share * 100) / 100,
+        href: `/check-flight/${f.fn}`,
+      }));
+
+    // Content dates only: never verified_at (a re-check is not a change),
+    // never the fleet-wide movements feed (its row caps make a type's newest
+    // entry appear and vanish), never the request clock.
+    const stamps = [
+      firstSeenRows[0] ? Date.parse(`${firstSeenRows[0].date}T00:00:00Z`) : 0,
+      ...fam.tails.map((t) => (eventMax.get(t.tail) ?? 0) * 1000),
+    ].filter((t) => Number.isFinite(t) && t > 0);
+    const lastmod = stamps.length > 0 ? Math.max(...stamps) : 0;
+
+    out.set(def.slug, {
+      airline,
+      family: def.family,
+      total: fam.total,
+      starlink: fam.starlink,
+      providers,
+      checked: fam.total - providers.unknown,
+      knownOther: providers.viasat + providers.panasonic + providers.thales + providers.none,
+      unchecked: providers.unknown,
+      tails: fam.tails,
+      starlinkTails,
+      variants,
+      listedAwaitingVerification: fam.tails
+        .filter((t) => listedUnverified.has(t.tail))
+        .map((t) => t.tail),
+      firstSeen: firstSeenRows.at(-1)?.date ?? null,
+      recentInstalls: firstSeenRows.slice(0, TYPE_RECENT_INSTALLS),
+      pipeline,
+      routes,
+      routeTotals: {
+        departures: pairs.reduce((s, [, n]) => s + n, 0),
+        pairs: pairs.length,
+      },
+      flightNumbers,
+      flightNumbersScope,
+      lastmodIso: lastmod > 0 ? new Date(lastmod).toISOString() : undefined,
+      dataClock,
+    });
+  }
+  return out;
 }

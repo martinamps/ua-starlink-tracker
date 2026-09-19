@@ -57,6 +57,16 @@ describe("AS typeDeterministicWifi", () => {
   test("empty string → null (no oracle for mainline)", () => {
     expect(AIRLINES.AS.typeDeterministicWifi?.("") ?? null).toBeNull();
   });
+
+  // The E170 split must not pull a single E175 string out of the rule.
+  test("E175 strings stay Horizon + confirmed; E170 gets neither", () => {
+    for (const t of ["Embraer E175LR", "ERJ-175LR", "E75L"]) {
+      expect(AIRLINES.AS.classifyFleet?.(t)).toBe("horizon");
+      expect(AIRLINES.AS.typeDeterministicWifi?.(t) ?? null).toBe("confirmed");
+    }
+    expect(AIRLINES.AS.classifyFleet?.("Embraer E170SE")).toBe("mainline");
+    expect(AIRLINES.AS.typeDeterministicWifi?.("Embraer E170SE") ?? null).toBeNull();
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

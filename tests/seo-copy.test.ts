@@ -13,11 +13,13 @@
  */
 
 import { beforeAll, describe, expect, test } from "bun:test";
+import { TITLE_MAX, aircraftPagesFor, aircraftTypeTitle } from "../src/airlines/aircraft-pages";
 import { SITES } from "../src/airlines/registry";
 import { routeVerdict } from "../src/components/route-page";
 import { getSitemapRoutes } from "../src/database/database";
 import type { RouteSummary } from "../src/database/database";
 import { clampMetaDescription, createApp } from "../src/server/app";
+import type { AircraftVerdictKind } from "../src/types";
 import { article } from "../src/utils/grammar";
 import { openSnapshot, req } from "./helpers";
 
@@ -256,5 +258,67 @@ describe("SoftwareApplication JSON-LD", () => {
     const guide = await html("/how-to-check", UA);
     expect(guide).toContain('"SoftwareApplication"');
     expect(guide).toContain("Google Flights Starlink Indicator");
+  });
+});
+
+describe("aircraft-type page titles", () => {
+  const KINDS: AircraftVerdictKind[] = [
+    "all",
+    "all_checked",
+    "most",
+    "some",
+    "verifying",
+    "installing",
+    "none",
+    "official_none",
+    "unknown",
+  ];
+
+  // withClampedMeta clamps descriptions only, so the ladder alone keeps titles
+  // in budget — including at the longest counts and the attributed Alaska form.
+  test("every def and verdict fits 60 chars at worst-case counts", () => {
+    for (const code of ["UA", "AS"]) {
+      for (const def of aircraftPagesFor(code)) {
+        for (const kind of KINDS) {
+          for (const official of [
+            null,
+            { count: 1173, all: false, asOf: "2026-08-28", sourceLabel: "x", url: "x" },
+          ]) {
+            const title = aircraftTypeTitle({ airline: code, total: 1175, starlink: 1173 }, def, {
+              kind,
+              effective: 1174,
+              official,
+              rosterShort: official !== null,
+            });
+            expect({
+              code,
+              slug: def.slug,
+              kind,
+              title,
+              ok: title.length <= TITLE_MAX,
+            }).toMatchObject({
+              ok: true,
+            });
+            expect(title).toContain(def.short);
+            if (kind === "verifying") expect(title).not.toMatch(/Not Yet/);
+          }
+        }
+      }
+    }
+  });
+
+  test("every served type page's <title> is within budget", async () => {
+    for (const [code, host] of [
+      ["UA", UA],
+      ["AS", AS],
+    ] as const) {
+      for (const def of aircraftPagesFor(code)) {
+        const res = await app.dispatch(req(`/fleet/${def.slug}`, host));
+        if (res.status !== 200) continue;
+        const title = (await res.text()).match(/<title>([^<]*)<\/title>/)?.[1] ?? "";
+        expect(title.length, title).toBeLessThanOrEqual(TITLE_MAX);
+        expect(title.length).toBeGreaterThan(0);
+      }
+    }
   });
 });

@@ -41,6 +41,7 @@ Bun + SQLite + server-rendered React. `server.ts` serves pages/APIs and starts b
 - **`GET /api/check-flight?flight_number=UA123&date=YYYY-MM-DD`** → `{ hasStarlink: boolean, flights: [] }` with CORS for Google Flights. The Chrome extension depends on this exact shape.
 - **`GET /api/check-any-flight?flight_number=HA50&date=YYYY-MM-DD`** (hub host) — extension non-UA surface since v2; top-level `hasStarlink`, `confidence`, `probability`, `airline`, `error`, `flights`. Additive only.
 - **MCP tool names and result shapes** — clients cache schemas at connect time.
+- **Leg scoping** — both endpoints and MCP `check_flight` accept optional `origin`/`destination` (IATA; K/P ICAO accepted). Absent → the response is byte-identical to the unscoped one; `leg` appears only when a param is sent. Invalid input never errors: it answers unscoped with `leg.match: "unscoped"` and a `reason` (invalid_airport, same_airport, no_timezone, ambiguous_leg).
 
 ## Conventions
 

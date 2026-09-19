@@ -170,12 +170,22 @@ export function addQatarRow(
   flightNumber: string,
   departureTimeSec: number,
   wifiVerdict: string,
-  opts: { departureAirport?: string; arrivalAirport?: string; flightStatus?: string } = {}
+  opts: {
+    departureAirport?: string;
+    arrivalAirport?: string;
+    flightStatus?: string;
+    equipmentCode?: string;
+  } = {}
 ): void {
-  const { departureAirport = "DOH", arrivalAirport = "LHR", flightStatus = "Scheduled" } = opts;
+  const {
+    departureAirport = "DOH",
+    arrivalAirport = "LHR",
+    flightStatus = "Scheduled",
+    equipmentCode = "77W",
+  } = opts;
   db.query(
     `INSERT INTO qatar_schedule (flight_number, scheduled_date, departure_airport, arrival_airport, departure_time, arrival_time, equipment_code, wifi_verdict, flight_status, last_updated)
-     VALUES (?, ?, ?, ?, ?, ?, '77W', ?, ?, ?)`
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     flightNumber,
     new Date(departureTimeSec * 1000).toISOString().slice(0, 10),
@@ -183,6 +193,7 @@ export function addQatarRow(
     arrivalAirport,
     departureTimeSec,
     departureTimeSec + 7 * 3600,
+    equipmentCode,
     wifiVerdict,
     flightStatus,
     departureTimeSec

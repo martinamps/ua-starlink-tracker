@@ -210,6 +210,7 @@ const ROUTES: Array<[route: string, feature: keyof SiteConfig["features"] | null
   ["/how-to-check", "intentPages"],
   ["/is-starlink-free", "intentPages"],
   ["/live-tv", "liveTvPage"],
+  ["/fleet/e175", "aircraftPages"],
 ];
 const isHtmlRoute = (route: string) => !route.startsWith("/api/") && !route.endsWith(".txt");
 
@@ -218,7 +219,7 @@ const isHtmlRoute = (route: string) => !route.startsWith("/api/") && !route.ends
 // to whatever the snapshot happens to contain. The invariant that matters —
 // and the one the conventions demand — is that a page serves exactly when the
 // sitemap advertises it, in both directions.
-const DATA_GATED = new Set(["/newly-equipped", "/install-rate"]);
+const DATA_GATED = new Set(["/newly-equipped", "/install-rate", "/fleet/e175"]);
 
 // Editorially deliberate cross-airline mentions (2024 AS/HA merger FAQ copy).
 // Covers the airline's name AND canonical host. Anything else is a leak.
@@ -409,11 +410,23 @@ describe("hub /api/check-flight + /api/predict-flight detect the airline", () =>
     expect(predictText).not.toContain("fleet prior");
     expect(predictText).not.toContain("United");
 
-    // QR is publicInHub:false — hub MCP check_flight refuses, like hub REST.
+    // QR is hubFlightLookup: hub MCP flight tools answer it (like hub
+    // /api/check-any-flight) from its own tables — never another carrier's.
     const qr = await call("check_flight", { flight_number: "QR123", date: "2026-03-22" });
-    expect(qr.isError).toBe(true);
-    expect(qr.content[0].text).toContain("not tracked");
-    expect(qr.content[0].text).not.toContain("QR (");
+    expect(qr.isError).not.toBe(true);
+    expect(qr.content[0].text).toContain("QR123");
+    expect(qr.content[0].text).not.toContain("A7-");
+    expect(qr.content[0].text).not.toContain("Hawaiian");
+    const qrPredict = await call("predict_flight_starlink", { flight_number: "QR123" });
+    expect(qrPredict.isError).not.toBe(true);
+    expect(qrPredict.content[0].text).toContain("QR123");
+    // ...but hub REST check-flight / predict-flight stay on the public pool.
+    for (const path of [
+      "/api/check-flight?flight_number=QR123&date=2026-03-22",
+      "/api/predict-flight?flight_number=QR123",
+    ]) {
+      expect((await get(hub, path)).status, path).toBe(404);
+    }
 
     // Digits-only on the hub is undetectable — clean error listing carriers.
     const bare = await call("check_flight", { flight_number: "123", date: "2026-03-22" });
@@ -424,6 +437,33 @@ describe("hub /api/check-flight + /api/predict-flight detect the airline", () =>
     const ua = await call("check_flight", { flight_number: "UA4421", date: "2026-03-22" });
     expect(ua.isError).not.toBe(true);
     expect(ua.content[0].text).toContain("UA4421");
+  });
+
+  test("hub MCP names Qatar in its instructions; the UA host does not", async () => {
+    const instructions = async (host: string) =>
+      ((await postMcp(app, host, "initialize", {})).result as { instructions: string })
+        .instructions;
+    expect(await instructions(hub.canonicalHost)).toContain("Qatar");
+    expect(await instructions(SITES.united.canonicalHost)).not.toContain("Qatar");
+  });
+
+  test("hub MCP QR lookups tag airline:qatar", async () => {
+    const calls: Array<{ name: string; tags?: Record<string, string | number> }> = [];
+    const original = metrics.increment;
+    metrics.increment = (name, tags) => {
+      calls.push({ name, tags });
+    };
+    try {
+      await postMcp(app, hub.canonicalHost, "tools/call", {
+        name: "check_flight",
+        arguments: { flight_number: "QR7", date: "2026-03-22" },
+      });
+    } finally {
+      metrics.increment = original;
+    }
+    const lookup = calls.find((c) => c.name === COUNTERS.FLIGHT_LOOKUP_RESULT);
+    expect(lookup?.tags?.airline).toBe("qatar");
+    expect(lookup?.tags?.endpoint).toBe("mcp");
   });
 
   test("hub /api/check-any-flight tags days_out like /api/check-flight", async () => {

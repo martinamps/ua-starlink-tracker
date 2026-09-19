@@ -1,4 +1,5 @@
 import React from "react";
+import { TYPE_DISPLAY, sharePct } from "../airlines/aircraft-pages";
 import { AIRLINES, type SiteConfig } from "../airlines/registry";
 import type {
   FleetAnchorRow,
@@ -23,7 +24,7 @@ const PROVIDER_LABEL: Record<WifiProvider, string> = {
   unknown: "?",
 };
 
-const PROVIDER_ORDER: WifiProvider[] = [
+export const PROVIDER_ORDER: WifiProvider[] = [
   "starlink",
   "viasat",
   "panasonic",
@@ -38,15 +39,15 @@ function timeAgo(sec: number | null): string {
   return d === 0 ? "today" : d === 1 ? "1d ago" : `${d}d ago`;
 }
 
-const EYEBROW = "text-[10px] font-mono text-muted uppercase tracking-wider mb-3";
-const PANEL = "bg-surface border border-subtle rounded-lg p-5";
+export const EYEBROW = "text-[10px] font-mono text-muted uppercase tracking-wider mb-3";
+export const PANEL = "bg-surface border border-subtle rounded-lg p-5";
 const SECTION = "relative w-full max-w-6xl mx-auto mb-10";
 
 type PipelineMap = Map<string, FleetProgressTailRow>;
 
 // Mod-line stations as the progress sheets abbreviate them. Only entries we're
 // sure of — an unlisted code renders as the bare code rather than a guess.
-const STATION_NAMES: Record<string, string> = {
+export const STATION_NAMES: Record<string, string> = {
   MLB: "Melbourne, FL",
   MIA: "Miami, FL",
   LCQ: "Lake City, FL",
@@ -279,11 +280,29 @@ function SpecCard({ family, spec }: { family: string; spec: AircraftSpec }) {
   );
 }
 
-function FamilyBlock({ fam, pipeline }: { fam: FleetFamily; pipeline: PipelineMap }) {
-  const pct = Math.round((fam.starlink / fam.total) * 100);
+/** A family with its own /fleet/{slug} page. */
+export interface FleetTypeLink {
+  family: string;
+  slug: string;
+  short: string;
+}
+
+function FamilyBlock({
+  fam,
+  pipeline,
+  typeLink,
+}: {
+  fam: FleetFamily;
+  pipeline: PipelineMap;
+  typeLink?: FleetTypeLink;
+}) {
   const spec = AIRCRAFT_SPECS[fam.family];
   return (
-    <details className="fam-block bg-surface border border-subtle rounded" open>
+    <details
+      className="fam-block bg-surface border border-subtle rounded"
+      id={typeLink ? `fam-${typeLink.slug}` : undefined}
+      open
+    >
       <summary className="fam-summary list-none flex items-start justify-between gap-2 p-2">
         <div className="min-w-0">
           <span
@@ -297,7 +316,9 @@ function FamilyBlock({ fam, pipeline }: { fam: FleetFamily; pipeline: PipelineMa
           </span>
           <span className="font-mono text-[10px] text-muted">
             {fam.starlink}/{fam.total}
-            {pct > 0 && <span className="text-accent ml-1.5">{pct}%</span>}
+            {fam.starlink > 0 && (
+              <span className="text-accent ml-1.5">{sharePct(fam.starlink, fam.total)}</span>
+            )}
           </span>
         </div>
         <svg
@@ -311,6 +332,14 @@ function FamilyBlock({ fam, pipeline }: { fam: FleetFamily; pipeline: PipelineMa
       </summary>
       <div className="px-2 pb-2">
         <TailGrid tails={fam.tails} pipeline={pipeline} />
+        {typeLink && (
+          <a
+            href={`/fleet/${typeLink.slug}`}
+            className="block mt-2 font-mono text-[10px] text-accent hover:underline"
+          >
+            {typeLink.short} Starlink status →
+          </a>
+        )}
       </div>
     </details>
   );
@@ -350,12 +379,14 @@ function HangarFloor({
   totalStarlink,
   scopeLabel,
   pipeline,
+  typeLinks,
 }: {
   families: FleetFamily[];
   totalFleet: number;
   totalStarlink: number;
   scopeLabel: string;
   pipeline: PipelineMap;
+  typeLinks: Map<string, FleetTypeLink>;
 }) {
   return (
     <section className={SECTION}>
@@ -370,7 +401,12 @@ function HangarFloor({
 
       <div className="fam-container gap-3">
         {families.map((fam) => (
-          <FamilyBlock key={fam.family} fam={fam} pipeline={pipeline} />
+          <FamilyBlock
+            key={fam.family}
+            fam={fam}
+            pipeline={pipeline}
+            typeLink={typeLinks.get(fam.family)}
+          />
         ))}
       </div>
       <script
@@ -644,7 +680,12 @@ const PROGRESS_SEGMENT_LABELS: Record<string, string> = {
   express: "Express & regional",
 };
 
-function PipelineTailChip({ row }: { row: FleetProgressTailRow }) {
+// anchorBase lets a type page point chips at the /fleet registry rows, the
+// only page that carries the t-{tail} ids.
+export function PipelineTailChip({
+  row,
+  anchorBase = "",
+}: { row: FleetProgressTailRow; anchorBase?: string }) {
   const cls =
     row.state === "in_mod"
       ? "pipe-chip pipe-chip-mod"
@@ -653,7 +694,7 @@ function PipelineTailChip({ row }: { row: FleetProgressTailRow }) {
         : "pipe-chip pipe-chip-sched";
   return (
     <a
-      href={`#t-${row.tail}`}
+      href={`${anchorBase}#t-${row.tail}`}
       title={`${row.type_code} · ${pipelinePhrase(row.state, row.mod_location)}`}
       className={cls}
     >
@@ -667,7 +708,7 @@ function PipelineTailChip({ row }: { row: FleetProgressTailRow }) {
 // proximity to completion so the cyan mass anchors left; the bare track is
 // "not started". Every nonzero state keeps a 3px floor — 4 verifying of 900 is
 // the point of the bar, not a rounding error.
-function PipelineBar({
+export function PipelineBar({
   complete,
   verifying,
   inMod,
@@ -705,29 +746,6 @@ function PipelineBar({
   );
 }
 
-// The progress sheets' column shorthand, spelled out for the feed.
-const TYPE_DISPLAY: Record<string, string> = {
-  "73G": "737-700",
-  "738": "737-800",
-  "739": "737-900",
-  "38M": "737 MAX 8",
-  "39M": "737 MAX 9",
-  "319": "A319",
-  "320": "A320",
-  "321": "A321",
-  "321XLR": "A321XLR",
-  "752": "757-200",
-  "753": "757-300",
-  "763": "767-300",
-  "764": "767-400",
-  GE: "777-200",
-  PW: "777-200",
-  "77W": "777-300ER",
-  "788": "787-8",
-  "789": "787-9",
-  "78X": "787-10",
-};
-
 const MOVEMENT_GLYPH: Record<FleetMovement["kind"], { ch: string; cls: string }> = {
   entered_mod: { ch: "○", cls: "dot-mod" },
   to_verification: { ch: "◎", cls: "dot-verif" },
@@ -758,7 +776,10 @@ function movementDate(iso: string): string {
   });
 }
 
-function MovementsPanel({ movements }: { movements: FleetMovement[] }) {
+export function MovementsPanel({
+  movements,
+  anchorBase = "",
+}: { movements: FleetMovement[]; anchorBase?: string }) {
   return (
     <div className={`${PANEL} mt-4`}>
       <div className={EYEBROW}>Movements</div>
@@ -773,7 +794,7 @@ function MovementsPanel({ movements }: { movements: FleetMovement[] }) {
             return (
               <a
                 key={`${m.tail}-${m.kind}-${m.date}`}
-                href={`#t-${m.tail}`}
+                href={`${anchorBase}#t-${m.tail}`}
                 className="flex items-baseline gap-2 px-2 py-1 rounded hover:bg-surface-elevated transition-colors group font-mono"
               >
                 <span className={`w-4 text-center flex-shrink-0 ${glyph.cls}`}>{glyph.ch}</span>
@@ -974,31 +995,10 @@ function OfficialAnchorsSection({ anchors }: { anchors: FleetAnchorRow[] }) {
   );
 }
 
-interface FleetPageProps {
-  data: FleetPageData;
-  site: SiteConfig;
-  /** Pre-rendered share card path; null until the nightly batch produced one. */
-  shareCard?: string | null;
-  pageLinks?: PageLink[];
-  cite?: CiteStat | null;
-}
-
-export default function FleetPage({ data, site, shareCard, pageLinks, cite }: FleetPageProps) {
-  const pipeline: PipelineMap = new Map(data.progressTails.map((r) => [r.tail, r]));
-  const scopeCode = site.scope !== "ALL" ? site.scope : null;
-  const scopeLabel = scopeCode ? AIRLINES[scopeCode].name : "tracked";
-  const headerTitle = scopeCode
-    ? `${AIRLINES[scopeCode].name} Fleet · Starlink Rollout`
-    : "Tracked Fleets · Starlink Rollout";
-  const backLabel = site.brand.title;
-  return (
-    <div className="w-full mx-auto px-4 sm:px-6 md:px-8 bg-base min-h-screen flex flex-col relative">
-      <div className="absolute inset-0 grid-pattern opacity-50 pointer-events-none" />
-
-      <style
-        // biome-ignore lint/security/noDangerouslySetInnerHtml: static CSS, no user input
-        dangerouslySetInnerHTML={{
-          __html: `
+// The provider/pipeline swatch classes, shared with the type pages. Kept as
+// plain CSS: the class names are data-driven (wifi-${provider}), which the
+// compiled Tailwind scanner cannot see.
+export const FLEET_GRID_CSS = `
           .wifi-starlink  { background: var(--color-accent); }
           .wifi-viasat    { background: rgba(245, 158, 11, 0.5); }
           .wifi-panasonic { background: rgba(168, 85, 247, 0.5); }
@@ -1064,7 +1064,72 @@ export default function FleetPage({ data, site, shareCard, pageLinks, cite }: Fl
           @media (max-width: 767px) {
             .spec-card { left: 0; right: 0; width: auto; position: fixed; top: auto; bottom: 1rem; margin: 0 1rem; }
           }
-          `,
+          `;
+
+interface FleetPageProps {
+  data: FleetPageData;
+  site: SiteConfig;
+  /** Pre-rendered share card path; null until the nightly batch produced one. */
+  shareCard?: string | null;
+  pageLinks?: PageLink[];
+  cite?: CiteStat | null;
+  /** Served /fleet/{slug} pages, in the order the chip row shows them. */
+  typeLinks?: FleetTypeLink[];
+}
+
+// One line of text links, not a panel: it sits above the fold, so it must
+// not push the live pulse down (CLS) or compete with the header for LCP.
+function TypeChipRow({ links, families }: { links: FleetTypeLink[]; families: FleetFamily[] }) {
+  if (links.length === 0) return null;
+  const byFamily = new Map(families.map((f) => [f.family, f]));
+  return (
+    <nav
+      aria-label="Starlink by aircraft type"
+      className="font-mono text-[11px] text-muted mt-3 flex flex-wrap justify-center gap-x-3 gap-y-1"
+    >
+      <span>Starlink by aircraft type:</span>
+      {links.map((l) => {
+        const f = byFamily.get(l.family);
+        return (
+          <a key={l.slug} href={`/fleet/${l.slug}`} className="text-secondary hover:text-accent">
+            {l.short}
+            {f && (
+              <span className="text-muted">
+                {" "}
+                {f.starlink}/{f.total}
+              </span>
+            )}
+          </a>
+        );
+      })}
+    </nav>
+  );
+}
+
+export default function FleetPage({
+  data,
+  site,
+  shareCard,
+  pageLinks,
+  cite,
+  typeLinks = [],
+}: FleetPageProps) {
+  const pipeline: PipelineMap = new Map(data.progressTails.map((r) => [r.tail, r]));
+  const typeLinkByFamily = new Map(typeLinks.map((l) => [l.family, l]));
+  const scopeCode = site.scope !== "ALL" ? site.scope : null;
+  const scopeLabel = scopeCode ? AIRLINES[scopeCode].name : "tracked";
+  const headerTitle = scopeCode
+    ? `${AIRLINES[scopeCode].name} Fleet · Starlink Rollout`
+    : "Tracked Fleets · Starlink Rollout";
+  const backLabel = site.brand.title;
+  return (
+    <div className="w-full mx-auto px-4 sm:px-6 md:px-8 bg-base min-h-screen flex flex-col relative">
+      <div className="absolute inset-0 grid-pattern opacity-50 pointer-events-none" />
+
+      <style
+        // biome-ignore lint/security/noDangerouslySetInnerHtml: static CSS, no user input
+        dangerouslySetInnerHTML={{
+          __html: FLEET_GRID_CSS,
         }}
       />
 
@@ -1077,6 +1142,7 @@ export default function FleetPage({ data, site, shareCard, pageLinks, cite }: Fl
         <p className="text-base text-secondary font-display">
           {data.totalStarlink} of {data.totalFleet} aircraft equipped — and what's replacing what
         </p>
+        <TypeChipRow links={typeLinks} families={data.families} />
       </header>
 
       <LivePulse pulse={data.pulse} />
@@ -1093,6 +1159,7 @@ export default function FleetPage({ data, site, shareCard, pageLinks, cite }: Fl
         totalStarlink={data.totalStarlink}
         scopeLabel={scopeLabel}
         pipeline={pipeline}
+        typeLinks={typeLinkByFamily}
       />
 
       <section className={`${SECTION} grid md:grid-cols-2 gap-4`}>

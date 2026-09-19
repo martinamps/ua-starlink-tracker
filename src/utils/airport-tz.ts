@@ -2,6 +2,9 @@
  * IATA → IANA timezone lookup for departure-date math. Flight dates on
  * boarding passes are LOCAL dates; departure_time columns are UTC epochs, so
  * date matching must convert through the departure airport's zone. Coverage:
+ * every airport observed in the snapshot data plus Qatar-network majors
+ * (tests/airport-tz-coverage.test.ts holds the line). Unknown airports return
+ * undefined/null — callers fall back to a UTC window, never a guessed zone.
  * every airport observed in the snapshot data plus Qatar- and Air France-network
  * majors.
  * Unknown airports return undefined/null — callers fall back to a UTC window,
@@ -34,6 +37,17 @@ export const AIRPORT_TZ: Record<string, string> = {
   JNU: "America/Anchorage",
   KTN: "America/Anchorage",
   SIT: "America/Anchorage",
+  ADK: "America/Adak",
+  ADQ: "America/Anchorage",
+  AKN: "America/Anchorage",
+  BET: "America/Anchorage",
+  BRW: "America/Anchorage",
+  DLG: "America/Anchorage",
+  OME: "America/Nome",
+  OTZ: "America/Nome",
+  PSG: "America/Sitka",
+  SCC: "America/Anchorage",
+  WRG: "America/Sitka",
   // US Pacific
   ACV: "America/Los_Angeles",
   BFL: "America/Los_Angeles",
@@ -63,6 +77,18 @@ export const AIRPORT_TZ: Record<string, string> = {
   SJC: "America/Los_Angeles",
   SMF: "America/Los_Angeles",
   SNA: "America/Los_Angeles",
+  ALW: "America/Los_Angeles",
+  BFI: "America/Los_Angeles",
+  BIH: "America/Los_Angeles",
+  BLI: "America/Los_Angeles",
+  EAT: "America/Los_Angeles",
+  LGB: "America/Los_Angeles",
+  NZY: "America/Los_Angeles",
+  PAE: "America/Los_Angeles",
+  PUW: "America/Los_Angeles",
+  STS: "America/Los_Angeles",
+  VCV: "America/Los_Angeles",
+  YKM: "America/Los_Angeles",
   // US Mountain
   ABQ: "America/Denver",
   BIL: "America/Denver",
@@ -86,9 +112,25 @@ export const AIRPORT_TZ: Record<string, string> = {
   BOI: "America/Boise",
   IDA: "America/Boise",
   SUN: "America/Boise",
+  ASE: "America/Denver",
+  BFF: "America/Denver",
+  BTM: "America/Denver",
+  COD: "America/Denver",
+  CYS: "America/Denver",
+  GCC: "America/Denver",
+  GTF: "America/Denver",
+  HDN: "America/Denver",
+  HOB: "America/Denver",
+  LAR: "America/Denver",
+  RIW: "America/Denver",
+  ROW: "America/Denver",
+  SGU: "America/Denver",
+  SHR: "America/Denver",
+  WYS: "America/Denver",
   // Arizona (no DST)
   PHX: "America/Phoenix",
   TUS: "America/Phoenix",
+  PRC: "America/Phoenix",
   // US Central
   AMA: "America/Chicago",
   ATW: "America/Chicago",
@@ -138,6 +180,25 @@ export const AIRPORT_TZ: Record<string, string> = {
   VCT: "America/Chicago",
   XNA: "America/Chicago",
   XWA: "America/Chicago",
+  AEX: "America/Chicago",
+  BFM: "America/Chicago",
+  BRO: "America/Chicago",
+  DAL: "America/Chicago",
+  EAR: "America/Chicago",
+  FTW: "America/Chicago",
+  HRL: "America/Chicago",
+  IAB: "America/Chicago",
+  JLN: "America/Chicago",
+  LBF: "America/Chicago",
+  LCH: "America/Chicago",
+  MDW: "America/Chicago",
+  MEI: "America/Chicago",
+  MGM: "America/Chicago",
+  MKC: "America/Chicago",
+  PIB: "America/Chicago",
+  RFD: "America/Chicago",
+  SLN: "America/Chicago",
+  SUX: "America/Chicago",
   // US Eastern
   ABE: "America/New_York",
   ALB: "America/New_York",
@@ -202,6 +263,21 @@ export const AIRPORT_TZ: Record<string, string> = {
   IND: "America/Indiana/Indianapolis",
   SBN: "America/Indiana/Indianapolis",
   SDF: "America/Kentucky/Louisville",
+  ACK: "America/New_York",
+  DJT: "America/New_York",
+  GGE: "America/New_York",
+  GNV: "America/New_York",
+  INT: "America/New_York",
+  IPT: "America/New_York",
+  ITH: "America/New_York",
+  JST: "America/New_York",
+  LCQ: "America/New_York",
+  MCN: "America/New_York",
+  MHT: "America/New_York",
+  MLB: "America/New_York",
+  PBI: "America/New_York",
+  CMX: "America/Detroit",
+  MBS: "America/Detroit",
   // Canada
   YEG: "America/Edmonton",
   YYC: "America/Edmonton",
@@ -212,6 +288,9 @@ export const AIRPORT_TZ: Record<string, string> = {
   YYZ: "America/Toronto",
   YVR: "America/Vancouver",
   YWG: "America/Winnipeg",
+  YLW: "America/Vancouver",
+  YYJ: "America/Vancouver",
+  YQG: "America/Toronto",
   // Mexico / Caribbean / Central America
   AGU: "America/Mexico_City",
   BJX: "America/Mexico_City",
@@ -250,6 +329,24 @@ export const AIRPORT_TZ: Record<string, string> = {
   MBJ: "America/Jamaica",
   KIN: "America/Jamaica",
   NAS: "America/Nassau",
+  ACA: "America/Mexico_City",
+  QRO: "America/Mexico_City",
+  VER: "America/Mexico_City",
+  ZLO: "America/Mexico_City",
+  MID: "America/Merida",
+  LAP: "America/Mazatlan",
+  LTO: "America/Mazatlan",
+  MZT: "America/Mazatlan",
+  TPQ: "America/Mazatlan",
+  BQN: "America/Puerto_Rico",
+  BDA: "Atlantic/Bermuda",
+  BGI: "America/Barbados",
+  BON: "America/Kralendijk",
+  PLS: "America/Grand_Turk",
+  POS: "America/Port_of_Spain",
+  UVF: "America/St_Lucia",
+  MGA: "America/Managua",
+  XPL: "America/Tegucigalpa",
   // South America
   BOG: "America/Bogota",
   EZE: "America/Argentina/Buenos_Aires",
@@ -286,6 +383,21 @@ export const AIRPORT_TZ: Record<string, string> = {
   VCE: "Europe/Rome",
   VIE: "Europe/Vienna",
   ZRH: "Europe/Zurich",
+  AGP: "Europe/Madrid",
+  TEV: "Europe/Madrid",
+  BHX: "Europe/London",
+  FAB: "Europe/London",
+  STN: "Europe/London",
+  BUD: "Europe/Budapest",
+  OPO: "Europe/Lisbon",
+  SMA: "Atlantic/Azores",
+  SNN: "Europe/Dublin",
+  SVO: "Europe/Moscow",
+  TLS: "Europe/Paris",
+  WAW: "Europe/Warsaw",
+  XFW: "Europe/Berlin",
+  ESB: "Europe/Istanbul",
+  LCA: "Asia/Nicosia",
   // Middle East / Africa (Qatar network)
   DOH: "Asia/Qatar",
   TLV: "Asia/Jerusalem",
@@ -309,6 +421,18 @@ export const AIRPORT_TZ: Record<string, string> = {
   LOS: "Africa/Lagos",
   NBO: "Africa/Nairobi",
   TUN: "Africa/Tunis",
+  BGW: "Asia/Baghdad",
+  BSR: "Asia/Baghdad",
+  DAM: "Asia/Damascus",
+  ABJ: "Africa/Abidjan",
+  ACC: "Africa/Accra",
+  ALG: "Africa/Algiers",
+  DAR: "Africa/Dar_es_Salaam",
+  MPM: "Africa/Maputo",
+  PZU: "Africa/Khartoum",
+  RAK: "Africa/Casablanca",
+  SEZ: "Indian/Mahe",
+  MLE: "Indian/Maldives",
   // South / Southeast / East Asia (Qatar network)
   AMD: "Asia/Kolkata",
   BLR: "Asia/Kolkata",
@@ -337,17 +461,19 @@ export const AIRPORT_TZ: Record<string, string> = {
   CAN: "Asia/Shanghai",
   PEK: "Asia/Shanghai",
   PVG: "Asia/Shanghai",
+  PKX: "Asia/Shanghai",
   HND: "Asia/Tokyo",
   KIX: "Asia/Tokyo",
   NRT: "Asia/Tokyo",
   TPE: "Asia/Taipei",
+  CRK: "Asia/Manila",
+  HKT: "Asia/Bangkok",
+  KTI: "Asia/Phnom_Penh",
+  CKG: "Asia/Shanghai",
+  HGH: "Asia/Shanghai",
   // Air France / HOP network (France, overseas departments, Africa, Europe)
-  ABJ: "Africa/Abidjan",
   ABV: "Africa/Lagos",
-  ACC: "Africa/Accra",
-  AGP: "Europe/Madrid",
   AJA: "Europe/Paris",
-  ALG: "Africa/Algiers",
   BEG: "Europe/Belgrade",
   BEL: "America/Belem",
   BES: "Europe/Paris",
@@ -361,7 +487,6 @@ export const AIRPORT_TZ: Record<string, string> = {
   BOD: "Europe/Paris",
   BRI: "Europe/Rome",
   BSL: "Europe/Paris",
-  BUD: "Europe/Budapest",
   BZV: "Africa/Brazzaville",
   CAG: "Europe/Rome",
   CAY: "America/Cayenne",
@@ -396,7 +521,6 @@ export const AIRPORT_TZ: Record<string, string> = {
   KIV: "Europe/Chisinau",
   KRK: "Europe/Warsaw",
   LBV: "Africa/Libreville",
-  LCA: "Asia/Nicosia",
   LDE: "Europe/Paris",
   LFW: "Africa/Lome",
   LIL: "Europe/Paris",
@@ -406,10 +530,8 @@ export const AIRPORT_TZ: Record<string, string> = {
   LUX: "Europe/Luxembourg",
   LYS: "Europe/Paris",
   MLA: "Europe/Malta",
-  MLE: "Indian/Maldives",
   MLH: "Europe/Paris",
   MPL: "Europe/Paris",
-  MPM: "Africa/Maputo",
   MRS: "Europe/Paris",
   MRU: "Indian/Mauritius",
   MVD: "America/Montevideo",
@@ -422,30 +544,25 @@ export const AIRPORT_TZ: Record<string, string> = {
   NTE: "Europe/Paris",
   NUE: "Europe/Berlin",
   OLB: "Europe/Rome",
-  OPO: "Europe/Lisbon",
   ORN: "Africa/Algiers",
   ORY: "Europe/Paris",
   OTP: "Europe/Bucharest",
   OUA: "Africa/Ouagadougou",
   PAP: "America/Port-au-Prince",
   PGF: "Europe/Paris",
-  PKX: "Asia/Shanghai",
   PMI: "Europe/Madrid",
   PMO: "Europe/Rome",
   PNR: "Africa/Brazzaville",
   POP: "America/Santo_Domingo",
-  POS: "America/Port_of_Spain",
   PRG: "Europe/Prague",
   PTP: "America/Guadeloupe",
   PUF: "Europe/Paris",
   RAI: "Atlantic/Cape_Verde",
-  RAK: "Africa/Casablanca",
   RBA: "Africa/Casablanca",
   REC: "America/Recife",
   RIX: "Europe/Riga",
   RNS: "Europe/Paris",
   RUN: "Indian/Reunion",
-  SEZ: "Indian/Mahe",
   SID: "Atlantic/Cape_Verde",
   SKG: "Europe/Athens",
   SOF: "Europe/Sofia",
@@ -459,13 +576,11 @@ export const AIRPORT_TZ: Record<string, string> = {
   TIA: "Europe/Tirane",
   TLL: "Europe/Tallinn",
   TLN: "Europe/Paris",
-  TLS: "Europe/Paris",
   TNR: "Indian/Antananarivo",
   TRN: "Europe/Rome",
   UIO: "America/Guayaquil",
   VLC: "Europe/Madrid",
   VNO: "Europe/Vilnius",
-  WAW: "Europe/Warsaw",
   ZAG: "Europe/Zagreb",
   ZNZ: "Africa/Dar_es_Salaam",
   // Oceania
@@ -476,6 +591,7 @@ export const AIRPORT_TZ: Record<string, string> = {
   MEL: "Australia/Melbourne",
   PER: "Australia/Perth",
   SYD: "Australia/Sydney",
+  RAR: "Pacific/Rarotonga",
 };
 
 const fmtCache = new Map<string, Intl.DateTimeFormat>();
@@ -570,4 +686,53 @@ export function matchesLocalDate(
     debug(`no timezone mapping for airport ${iata} — using strict UTC day window`);
   }
   return departureTimeSec >= fallbackStart && departureTimeSec < fallbackEnd;
+}
+
+/** First UTC instant after `date` ends locally at the airport; unmapped
+ * airports get the latest end any zone can have (UTC-12). */
+export function localDayEndSec(iata: string, date: string): number {
+  const dayStart = Date.parse(`${date}T00:00:00Z`) / 1000;
+  const latest = dayStart + 86400 + 12 * 3600;
+  if (!airportTimezone(iata)) return latest;
+  // Every zone offset is a multiple of 15 minutes.
+  for (let t = dayStart - 14 * 3600; t < latest; t += 900) {
+    const local = airportLocalDate(iata, t);
+    if (local !== null && local > date) return t;
+  }
+  return latest;
+}
+
+function lastSundayISO(year: number, monthIndex: number): string {
+  const last = new Date(Date.UTC(year, monthIndex + 1, 0));
+  last.setUTCDate(last.getUTCDate() - last.getUTCDay());
+  return last.toISOString().slice(0, 10);
+}
+
+/**
+ * IATA schedule season for a calendar date: "S26" from the last Sunday of
+ * March 2026, "W26" from the last Sunday of October 2026 until the next S.
+ * Airlines re-plan equipment per season, so equipment history only transfers
+ * within one. Null for a malformed date.
+ */
+export function iataSeasonKey(dateISO: string): string | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateISO) || Number.isNaN(Date.parse(dateISO))) return null;
+  const year = Number(dateISO.slice(0, 4));
+  const yy = (y: number) => String(y % 100).padStart(2, "0");
+  if (dateISO < lastSundayISO(year, 2)) return `W${yy(year - 1)}`;
+  if (dateISO < lastSundayISO(year, 9)) return `S${yy(year)}`;
+  return `W${yy(year)}`;
+}
+
+/** First day of a season key ("W26" → "2026-10-25"), or null. */
+export function iataSeasonStart(key: string): string | null {
+  const m = key.match(/^([SW])(\d{2})$/);
+  if (!m) return null;
+  return lastSundayISO(2000 + Number(m[2]), m[1] === "S" ? 2 : 9);
+}
+
+/** Ordinal of a season key, so seasons can be subtracted (S26 → W26 is 1). */
+export function iataSeasonIndex(key: string): number {
+  const m = key.match(/^([SW])(\d{2})$/);
+  if (!m) return Number.NaN;
+  return (2000 + Number(m[2])) * 2 + (m[1] === "W" ? 1 : 0);
 }
