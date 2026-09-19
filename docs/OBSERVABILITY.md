@@ -70,9 +70,9 @@ All metrics are prefixed with `starlink.` for easy filtering in Datadog.
 
 | Metric | Tags | Description |
 |--------|------|-------------|
-| `starlink.scraper.sync` | `source:spreadsheet\|fr24` | Sync operation completed |
+| `starlink.scraper.sync` | `source:spreadsheet\|fr24\|ship_numbers\|…`, `airline`, `status:success\|partial\|noop\|error` | Sync operation completed |
 | `starlink.planes.discovered` | `source:spreadsheet\|fr24` | New plane discovered |
-| `starlink.planes.starlink_detected` | - | Starlink WiFi detected on a plane |
+| `starlink.planes.starlink_detected` | `fleet`, `aircraft_type`, `airline` | Trusted positive Starlink verification — fires on every positive re-check, not just new installs. For installs use `starlink.fleet.status_change{to:confirmed}` |
 | `starlink.verification.check` | `result:success\|error` | Verification attempt |
 | `starlink.verification.mismatch` | - | Spreadsheet/United.com WiFi mismatch |
 | `starlink.vendor.request` | `vendor:flightaware\|fr24\|united`, `type:flights\|fleet\|verification`, `status:success\|rate_limited\|error` | External API call |
@@ -92,10 +92,10 @@ the route table is the thing to watch:
 
 | Source | Count |
 |---|---|
-| Exact entries in `routes` | 31 |
+| Exact entries in `routes` | 33 |
 | Prefix families in `prefixRoutes` | 5 (4 of which reuse an exact entry's tag) |
 | `unmatched` | 1 |
-| **Distinct `route` tag values** | **33** |
+| **Distinct `route` tag values** | **35** |
 
 **Budget: keep it under 40.** The old "max 25" predates the distribution
 surfaces (`/newly-equipped`, `/feed.xml`, `/badge.svg`, `/embed`,

@@ -9,8 +9,10 @@
  *   col[1] = tail number, col[2] = ship number
  */
 
+import type { Database } from "bun:sqlite";
 import { AIRLINES } from "../airlines/registry";
-import { initializeDatabase, updateShipNumber } from "../database/database";
+import { initializeDatabase, setMeta, updateShipNumber } from "../database/database";
+import { COUNTERS, metrics, normalizeAirlineTag } from "../observability/metrics";
 import { BROWSER_USER_AGENT } from "../utils/constants";
 import { info, error as logError } from "../utils/logger";
 
@@ -52,16 +54,42 @@ function parseCsvLine(line: string): string[] {
   return fields;
 }
 
-export async function syncShipNumbers(): Promise<number> {
-  const db = initializeDatabase();
-  let updated = 0;
+export type ShipSyncStatus = "error" | "partial" | "noop" | "success";
+
+export interface ShipSyncResult {
+  status: ShipSyncStatus;
+  fetchedGids: number;
+  failedGids: number;
+  rowsSeen: number;
+  changed: number;
+}
+
+export const SHIP_NUMBERS_SYNCED_AT = "ship_numbers_synced_at";
+
+/** Per-gid fetch failures are absorbed so one bad tab never costs the rest,
+ * which is exactly why the outcome has to be counted: without it a run where
+ * every tab 403s looked identical to a clean one. */
+export function shipSyncStatus(r: Omit<ShipSyncResult, "status">): ShipSyncStatus {
+  if (r.fetchedGids === 0) return "error";
+  if (r.failedGids > 0) return "partial";
+  return r.changed === 0 ? "noop" : "success";
+}
+
+export async function syncShipNumbers(
+  deps: { db?: Database; fetchSheet?: (gid: number) => Promise<string> } = {}
+): Promise<ShipSyncResult> {
+  const db = deps.db ?? initializeDatabase();
+  const fetchGid = deps.fetchSheet ?? fetchSheet;
+  const counts = { fetchedGids: 0, failedGids: 0, rowsSeen: 0, changed: 0 };
 
   try {
     for (const gid of SHIP_SHEET_GIDS) {
       let csv: string;
       try {
-        csv = await fetchSheet(gid);
+        csv = await fetchGid(gid);
+        counts.fetchedGids++;
       } catch (err) {
+        counts.failedGids++;
         logError(`Failed to fetch ship sheet gid=${gid}`, err);
         continue;
       }
@@ -73,22 +101,33 @@ export async function syncShipNumbers(): Promise<number> {
         const tail = cols[1]?.replace(/"/g, "").trim();
         const ship = cols[2]?.replace(/"/g, "").trim();
         if (!tail || !ship || !AIRLINES.UA.tailPattern.test(tail)) continue;
-        updateShipNumber(db, tail, ship);
-        updated++;
+        counts.rowsSeen++;
+        counts.changed += updateShipNumber(db, tail, ship);
       }
     }
-  } finally {
-    db.close();
-  }
 
-  return updated;
+    const status = shipSyncStatus(counts);
+    metrics.increment(COUNTERS.SCRAPER_SYNC, {
+      source: "ship_numbers",
+      airline: normalizeAirlineTag("UA"),
+      status,
+    });
+    const summary = `${counts.fetchedGids}/${SHIP_SHEET_GIDS.length} sheets, ${counts.rowsSeen} rows, ${counts.changed} changed`;
+    if (status === "error") {
+      throw new Error(`Ship number sync failed: ${summary}`);
+    }
+    setMeta(db, SHIP_NUMBERS_SYNCED_AT, new Date().toISOString());
+    info(`Ship number sync ${status}: ${summary}`);
+    return { status, ...counts };
+  } finally {
+    if (!deps.db) db.close();
+  }
 }
 
 if (import.meta.main) {
   syncShipNumbers()
-    .then((count) => {
-      info(`Ship number sync complete: ${count} rows updated`);
-      console.log(`Updated ${count} ship numbers`);
+    .then((r) => {
+      console.log(`Ship numbers ${r.status}: ${r.changed} changed of ${r.rowsSeen} rows`);
     })
     .catch((err) => {
       logError("Ship number sync failed", err);

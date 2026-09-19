@@ -64,3 +64,9 @@ export function normalizeAircraftType(raw: string | null | undefined): string {
   }
   return "other";
 }
+
+/** The matcher as data, for inline page scripts that must classify a type
+ * string exactly as the server does (a hand-written second copy drifts). */
+export function aircraftFamilyPatterns(): Array<[source: string, flags: string, family: string]> {
+  return AIRCRAFT_FAMILIES.map(([re, family]) => [re.source, re.flags, family]);
+}
