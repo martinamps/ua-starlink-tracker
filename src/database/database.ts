@@ -63,6 +63,7 @@ import type {
 import { DB_PATH } from "../utils/constants";
 import { debug, info, error as logError, warn } from "../utils/logger";
 import { ensureAdsbFlightDrawsTable } from "./adsb-flight-draws";
+import { ASSIGNMENT_LOG_DDL, logFlightAssignments, pruneAssignmentLog } from "./assignment-log";
 
 type MetaRow = { value: string };
 
@@ -670,6 +671,7 @@ export function setupTables(db: Database) {
   }
 
   migrateMultiAirline(db);
+  db.exec(ASSIGNMENT_LOG_DDL);
 }
 
 /**
@@ -1555,6 +1557,7 @@ export function updateFlights(
           airline
         );
       }
+      logFlightAssignments(db, airline, tailNumber, valid, now);
     }
   });
 
@@ -1607,6 +1610,7 @@ export function archivePastDepartures(
   // inside getAirportDepartures — a DELETE taking a WAL write lock on every
   // homepage render, ~4,200 write transactions/day on the read path.
   db.query("DELETE FROM departure_log WHERE departed_at < ?").run(now - 30 * 86400);
+  pruneAssignmentLog(db, now);
   return changes;
 }
 
