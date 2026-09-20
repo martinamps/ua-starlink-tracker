@@ -258,7 +258,7 @@ describe("hub-only endpoints", () => {
       expect(d.error).toBeUndefined();
       expect(d.airline).toBe("Qatar Airways");
       expect([true, false, null]).toContain(d.hasStarlink);
-      expect(["type", "high", "medium", "low"]).toContain(d.confidence);
+      expect(["type", "high", "medium", "low", "none", "no_data"]).toContain(d.confidence);
       expect(Array.isArray(d.flights)).toBe(true);
       if (d.basis !== undefined) expect(["schedule", "history"]).toContain(d.basis);
       if (d.probability !== undefined) {

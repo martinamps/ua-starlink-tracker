@@ -948,7 +948,9 @@ function renderQatarCheckFlight(
       return text(withLegNote(`**${subject}**: maybe — ${reason}`, verdict));
     if (verdict.probability === null) return text(withLegNote(`${subject}: ${reason}`, verdict));
     const pct = Math.floor(verdict.probability * 100);
-    const basis = `${verdict.grade} confidence, ${verdict.nDays} recent and scheduled operating days`;
+    const basis = verdict.swapRisk
+      ? `${verdict.grade} confidence, ${verdict.swapObserved} flown days first published on a fitted type`
+      : `${verdict.grade} confidence, ${verdict.nDays} recent and scheduled operating days`;
     // Same bar as the extension badge: a low grade is never "likely".
     const likely = verdict.probability >= 0.8 && verdict.grade !== "low";
     const head =
