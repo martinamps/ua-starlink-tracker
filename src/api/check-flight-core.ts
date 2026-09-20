@@ -13,6 +13,7 @@
 import {
   CANONICAL_FLIGHT_PERMALINK,
   buildAirlineFlightNumberVariants,
+  canonicalFlightInput,
   detectMarketingCarrier,
   ensureAirlinePrefix,
   prefixBelongsTo,
@@ -56,7 +57,10 @@ import { Fr24UnavailableError } from "./flightradar24-api";
 import {
   type QatarLeg,
   type QatarVerdict,
+  addDaysISO,
+  qatarLegsDepartingOn,
   qatarLiveLegs,
+  qatarNotOnLeg,
   resolveQatarVerdict,
 } from "./qatar-verdict";
 
@@ -140,9 +144,30 @@ export function decideCarrier(
     return { outcome: "resolved", cfg: pinnedCfg, pinned: true };
   }
   const pool = opts.pool === "lookup" ? HUB_LOOKUP_AIRLINES : PUBLIC_AIRLINES;
-  const cfg = detectMarketingCarrier(flightNumber, pool);
+  const cfg =
+    detectMarketingCarrier(flightNumber, pool) ?? malformedNumberCarrier(flightNumber, pool);
   if (!cfg) return { outcome: "not_tracked", pinnedCfg: null, tracked: pool };
   return { outcome: "resolved", cfg, pinned: false };
+}
+
+/**
+ * "QR" or "QR1A" names a tracked carrier with a malformed number: resolve it so
+ * the shape gate answers "invalid flight number" instead of "airline not
+ * tracked". Only a bare prefix or one followed by a digit counts, so QRA1 or
+ * UAE123 (Emirates) stay untracked.
+ */
+function malformedNumberCarrier(
+  flightNumber: string,
+  pool: readonly AirlineConfig[]
+): AirlineConfig | null {
+  const fn = canonicalFlightInput(flightNumber);
+  return (
+    pool.find((cfg) =>
+      [cfg.iata, cfg.icao].some(
+        (p) => !!p && fn.startsWith(p) && (fn.length === p.length || /\d/.test(fn[p.length]))
+      )
+    ) ?? null
+  );
 }
 
 /** Count a not_tracked lookup by the prefix asked for — every renderer of a
@@ -815,6 +840,13 @@ function assignedFromSegments(
   };
 }
 
+const askedLeg = (leg: LegQuery) =>
+  leg.origin && leg.destination
+    ? `${leg.origin}→${leg.destination}`
+    : leg.origin
+      ? `from ${leg.origin}`
+      : `to ${leg.destination}`;
+
 /**
  * QR answers per type, so a leg scopes the live legs the verdict is built
  * from; history beyond the published window stays flight-number level.
@@ -832,14 +864,22 @@ function resolveQatarLeg(
     const verdict = resolveQatarVerdict(reader, normalized, date, window, now);
     return deps.unscoped ? { ...verdict, leg: unscopedResolution(deps.unscoped) } : verdict;
   }
-  const rows = qatarLiveLegs(reader, normalized, date, window);
-  const unscoped = resolveQatarVerdict(reader, normalized, date, window, now, rows);
+  const dateRows = qatarLiveLegs(reader, normalized, date, window);
+  const unscoped = resolveQatarVerdict(reader, normalized, date, window, now, dateRows);
+  const prevWindow = leg.origin ? flightDateWindow(addDaysISO(date, -1), now) : null;
+  const rows = prevWindow
+    ? qatarLegsDepartingOn(reader, normalized, date, window, prevWindow)
+    : dateRows;
   const dep = (r: QatarLeg) => normalizeAirportCode(r.departure_airport);
   const arr = (r: QatarLeg) => normalizeAirportCode(r.arrival_airport);
   const sel = selectLeg(rows, dep, arr, leg);
   if (sel.match === "ambiguous") return { ...unscoped, leg: unscopedResolution(ambiguousLeg(leg)) };
+  const answer =
+    sel.match === null && rows.length > 0
+      ? qatarNotOnLeg(normalized, date, window, now, askedLeg(leg), rows)
+      : resolveQatarVerdict(reader, normalized, date, window, now, sel.items);
   return {
-    ...resolveQatarVerdict(reader, normalized, date, window, now, sel.items),
+    ...answer,
     leg: legResolution(
       leg,
       rows.length,

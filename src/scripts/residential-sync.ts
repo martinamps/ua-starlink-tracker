@@ -26,7 +26,13 @@ import {
 } from "./flyertalk-airfrance";
 import { applyAlaskaFlyertalkTails, fetchAlaskaFlyertalkTails } from "./flyertalk-alaska";
 import { FlyertalkRedirectRejected } from "./flyertalk-common";
-import { applyQatarFlyertalkTails, fetchQatarFlyertalkTails } from "./flyertalk-qatar";
+import {
+  type GatedTail,
+  applyQatarFlyertalkTails,
+  fetchQatarFlyertalkTails,
+  qatarFlyertalkTypePasses,
+  typeGatedSummary,
+} from "./flyertalk-qatar";
 
 const PROD_SSH = process.env.RESIDENTIAL_SYNC_HOST ?? "llc";
 const CONTAINER = "$(sudo docker ps -q --filter name=c4wg48 | head -1)";
@@ -43,7 +49,14 @@ const FETCH_ATTEMPTS = 3;
 const PARTIAL_EXIT_CODE = 5;
 const SNAPSHOT_DIR = "/srv/ua-starlink-tracker/backup/residential-snapshots";
 
-type ProdState = { confirmed: number; total: number; tails: string[] };
+type ProdState = {
+  confirmed: number;
+  total: number;
+  tails: string[];
+  /** QR only: fleet tails whose type the ingest gate refuses, with the type.
+   * Absent from an older prod image. */
+  gated?: Record<string, string | null>;
+};
 // `af` is optional: a prod image older than the AF ingester answers without it,
 // and the laptop then skips AF (partial exit) instead of shipping blind.
 type Preflight = { qr: ProdState; as: ProdState; af?: ProdState };
@@ -209,11 +222,22 @@ function readState(
   };
 }
 
+function qatarGatedFleet(db: ReturnType<typeof initializeDatabase>): Record<string, string | null> {
+  const rows = db
+    .query("SELECT tail_number, aircraft_type FROM united_fleet WHERE airline='QR'")
+    .all() as { tail_number: string; aircraft_type: string | null }[];
+  const out: Record<string, string | null> = {};
+  for (const r of rows) {
+    if (!qatarFlyertalkTypePasses(r.aircraft_type)) out[r.tail_number] = r.aircraft_type;
+  }
+  return out;
+}
+
 function preflight(): void {
   const db = initializeDatabase();
   try {
     const out: Preflight = {
-      qr: readState(db, "QR"),
+      qr: { ...readState(db, "QR"), gated: qatarGatedFleet(db) },
       as: readState(db, "AS", "mainline"),
       af: readState(db, "AF"),
     };
@@ -349,15 +373,25 @@ async function ingest(): Promise<void> {
 
 // ---- laptop-side driver ----
 
-function reportNew(label: string, scraped: string[], prod: ProdState): void {
-  const localNew = scraped.filter((t) => !prod.tails.includes(t));
-  info(
+// Type-gated tails (787-9s, A380s) are posted every run and never ingested;
+// listing them as "not yet confirmed" buried the genuinely new ones.
+export function reportNew(label: string, scraped: string[], prod: ProdState): string {
+  const gated: GatedTail[] = [];
+  const localNew: string[] = [];
+  for (const t of scraped) {
+    if (prod.tails.includes(t)) continue;
+    if (prod.gated && t in prod.gated) gated.push({ tail: t, aircraftType: prod.gated[t] });
+    else localNew.push(t);
+  }
+  const line =
     `scraped ${scraped.length} ${label} tails (${localNew.length} not yet confirmed on prod` +
-      (localNew.length
-        ? `: ${localNew.slice(0, 8).join(" ")}${localNew.length > 8 ? " …" : ""}`
-        : "") +
-      ")"
-  );
+    (localNew.length
+      ? `: ${localNew.slice(0, 8).join(" ")}${localNew.length > 8 ? " …" : ""}`
+      : "") +
+    (gated.length ? `; ${typeGatedSummary(gated)}` : "") +
+    ")";
+  info(line);
+  return line;
 }
 
 async function run(dryRun: boolean): Promise<void> {

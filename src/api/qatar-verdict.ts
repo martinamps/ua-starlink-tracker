@@ -45,7 +45,7 @@ export const QATAR_HISTORY_WINDOW_DAYS = 28;
 // Swap-risk and season subsets need this many operating days to mean anything.
 const MIN_SUBSET_DAYS = 7;
 const MIN_PROBABILITY_DAYS = 4;
-const SWAP_RISK_NON_YES_SHARE = 0.1;
+const SWAP_RISK_SHARE = 0.1;
 const WILSON_Z_90 = 1.645;
 // Qatar publishes through about the end of UTC day (fetch day + 6), so the
 // +6 DOH date is only partly out: evening departures to Doha are missing.
@@ -93,8 +93,19 @@ export type QatarVerdict =
       daysOut: number;
       /** past: nothing on record; not_tracked: never seen on a curated route;
        * not_scheduled: its routes were fetched for the date and it isn't there;
-       * not_observed: no usable history beyond the window. */
-      reason: "past" | "not_tracked" | "not_scheduled" | "not_observed";
+       * not_observed: no usable history beyond the window; all_cancelled: every
+       * recent operating day was cancelled; not_on_leg: it flies that date,
+       * just not the requested leg. */
+      reason:
+        | "past"
+        | "not_tracked"
+        | "not_scheduled"
+        | "not_observed"
+        | "all_cancelled"
+        | "not_on_leg";
+      /** not_on_leg: the leg asked for ("LHR→DOH", "from LHR") and what it flies. */
+      asked?: string;
+      flies?: string;
     }
   | {
       kind: "qatar_history";
@@ -115,6 +126,10 @@ export type QatarVerdict =
       season: { query: string | null; used: string; shifted: boolean; tooFar: boolean };
       mostlyRolling: boolean;
       swapRisk?: boolean;
+      /** swapRisk: flown days first published on a fitted type, and how many
+       * of those Qatar moved off one before departure. */
+      swapObserved?: number;
+      swapDays?: number;
       notFetched?: boolean;
       /** Fetched, but Qatar hadn't published the whole date yet. */
       partlyPublished?: boolean;
@@ -163,8 +178,8 @@ type HistoryInput = Pick<
   | "flight_status"
 >;
 
-interface Chain {
-  legs: HistoryInput[];
+interface Chain<T extends HistoryInput = HistoryInput> {
+  legs: T[];
   klass: QatarClass;
   serviceDate: string;
   flown: boolean;
@@ -176,11 +191,11 @@ interface Chain {
  * one day, not two). The chain takes its worst leg's class — the legs share an
  * airframe, so they normally agree, and a disagreement must not count as yes.
  */
-export function qatarOperatingDays(rows: readonly HistoryInput[]): Chain[] {
+export function qatarOperatingDays<T extends HistoryInput>(rows: readonly T[]): Chain<T>[] {
   const sorted = [...rows].sort((a, b) => a.departure_time - b.departure_time);
-  const chains: Chain[] = [];
+  const chains: Chain<T>[] = [];
   for (const leg of sorted) {
-    let joined: Chain | null = null;
+    let joined: Chain<T> | null = null;
     for (let i = chains.length - 1; i >= 0; i--) {
       const c = chains[i];
       if (leg.departure_time - c.legs[0].departure_time > 3 * 86400) break;
@@ -304,6 +319,38 @@ export function qatarHistoryStats(
   };
 }
 
+type SwapInput = HistoryInput &
+  Pick<QatarHistoryRow, "first_equipment_code" | "first_seen_lead_sec">;
+
+/**
+ * Real swaps, not rotation: of the flown operating days Qatar first published
+ * on a fitted type at least `minLeadDays` out, how many flew something else.
+ * A number that alternates types by weekday is planned, and each date's own
+ * published type already says which one it gets.
+ */
+export function qatarSwapStats(
+  rows: readonly SwapInput[],
+  nowSec: number,
+  minLeadDays = 2
+): { observed: number; swapped: number } {
+  let observed = 0;
+  let swapped = 0;
+  const flown = qatarOperatingDays(rows.filter((r) => !isCancelled(r.flight_status))).filter(
+    (c) => c.legs[0].departure_time < nowSec
+  );
+  for (const c of flown) {
+    const publishedFitted = c.legs.every(
+      (l) =>
+        l.first_seen_lead_sec >= minLeadDays * 86400 &&
+        qatarEquipmentClass(l.first_equipment_code ?? l.equipment_code) === "yes"
+    );
+    if (!publishedFitted) continue;
+    observed++;
+    if (c.klass !== "yes") swapped++;
+  }
+  return { observed, swapped };
+}
+
 /** "777-300ER ×6, A350-1000 ×4, 787-9 ×2" */
 export function qatarMixSentence(mix: readonly QatarMixEntry[]): string {
   const short = (name: string) => name.replace(/^(Boeing|Airbus) /, "");
@@ -401,6 +448,51 @@ export function qatarLiveLegs(
   return liveLegs(reader, qatarFlightVariants(normalized), date, window);
 }
 
+/**
+ * Live legs that leave their own airport on the queried local date, whichever
+ * rotation they belong to: QR914's ADL→AKL on the 23rd is the 22nd's Doha
+ * departure, so an origin-scoped ask must look one rotation back.
+ */
+export function qatarLegsDepartingOn(
+  reader: ScopedReader,
+  normalized: string,
+  date: string,
+  window: FlightDateWindow,
+  prevWindow: FlightDateWindow
+): QatarLeg[] {
+  const variants = qatarFlightVariants(normalized);
+  const byKey = new Map<string, QatarLeg>();
+  for (const l of liveLegs(reader, variants, addDaysISO(date, -1), prevWindow)) {
+    byKey.set(legKey(l), l);
+  }
+  for (const l of liveLegs(reader, variants, date, window)) byKey.set(legKey(l), l);
+  return [...byKey.values()]
+    .filter((l) =>
+      matchesLocalDate(date, l.departure_airport ?? "", l.departure_time, window.start, window.end)
+    )
+    .sort((a, b) => a.departure_time - b.departure_time);
+}
+
+/** A leg the flight number doesn't fly on a date it does operate. */
+export function qatarNotOnLeg(
+  normalized: string,
+  date: string,
+  window: FlightDateWindow,
+  nowSec: number,
+  asked: string,
+  rows: readonly QatarLeg[]
+): Extract<QatarVerdict, { kind: "qatar_no_data" }> {
+  return {
+    kind: "qatar_no_data",
+    window,
+    normalized,
+    daysOut: qatarDaysOut(date, nowSec),
+    reason: "not_on_leg",
+    asked,
+    flies: routeText(rows),
+  };
+}
+
 /** "its 777 fleet", "its 777 and A350 fleets" — the families of fitted rows. */
 function fleetPhrase(rows: readonly QatarLeg[]): string {
   const fleets = [
@@ -492,7 +584,7 @@ function scheduleAnswer(
       ...base,
       hasStarlink: null,
       qclass: "rolling",
-      reason: `${types} — ${QATAR_ROLLING_NOTE}`,
+      reason: `Scheduled ${types} ${routeText(active)}. ${QATAR_ROLLING_NOTE}`,
     };
   }
   return {
@@ -518,36 +610,37 @@ export function resolveQatarVerdict(
   const noData = (reason: Extract<QatarVerdict, { kind: "qatar_no_data" }>["reason"]) =>
     ({ kind: "qatar_no_data", window, normalized, daysOut, reason }) as const;
 
-  const history = () =>
-    qatarHistoryStats(
-      reader.getQatarEquipmentHistory(
-        variants,
-        addDaysISO(today, -QATAR_HISTORY_WINDOW_DAYS),
-        addDaysISO(today, QATAR_PUBLISHED_DAYS_FORWARD)
-      ),
-      date,
-      today
+  let recentRows: QatarHistoryRow[] | null = null;
+  const recent = () => {
+    recentRows ??= reader.getQatarEquipmentHistory(
+      variants,
+      addDaysISO(today, -QATAR_HISTORY_WINDOW_DAYS),
+      addDaysISO(today, QATAR_PUBLISHED_DAYS_FORWARD)
     );
+    return recentRows;
+  };
+  const history = () => qatarHistoryStats(recent(), date, today);
 
   const rows = liveRows ?? liveLegs(reader, variants, date, window);
   if (rows.length > 0) {
     const answer = scheduleAnswer(rows, normalized, date, window);
-    // Two or more days out, a fitted type on a number that often flies other
-    // aircraft is a probability, not a yes: 77W→388 and 788→789 swaps happen.
+    // Two or more days out, a fitted type on a number Qatar often swaps after
+    // publishing is a probability, not a yes: 77W→388 and 788→789 swaps happen.
     if (answer.qclass === "yes" && daysOut >= 2) {
-      const stats = history();
-      if (
-        stats.nDays >= MIN_SUBSET_DAYS &&
-        (stats.nDays - stats.yesDays) / stats.nDays > SWAP_RISK_NON_YES_SHARE
-      ) {
+      const swaps = qatarSwapStats(recent(), nowSec);
+      if (swaps.observed >= MIN_SUBSET_DAYS && swaps.swapped / swaps.observed > SWAP_RISK_SHARE) {
         return {
           kind: "qatar_history",
           window,
           normalized,
           daysOut,
           basis: "schedule",
-          ...stats,
+          ...history(),
+          probability: wilsonLowerBound(swaps.observed - swaps.swapped, swaps.observed),
+          grade: swaps.observed >= 14 ? "high" : "medium",
           swapRisk: true,
+          swapObserved: swaps.observed,
+          swapDays: swaps.swapped,
           scheduledRow: answer.rows.find((r) => !isCancelled(r.flight_status)),
         };
       }
@@ -585,7 +678,14 @@ export function resolveQatarVerdict(
   }
 
   const stats = history();
-  if (stats.nDays === 0) return noData("not_observed");
+  if (stats.nDays === 0) {
+    const seen = recent();
+    return noData(
+      seen.length > 0 && seen.every((r) => isCancelled(r.flight_status))
+        ? "all_cancelled"
+        : "not_observed"
+    );
+  }
   return {
     kind: "qatar_history",
     window,
@@ -606,6 +706,10 @@ export function qatarNoDataReason(v: Extract<QatarVerdict, { kind: "qatar_no_dat
       return `Not in Qatar's published schedule for this date on the routes we track (selected Qatar routes only; Qatar publishes the aircraft about a week out). ${QATAR_FAMILY_SENTENCE}`;
     case "past":
       return `No Qatar schedule on record for ${v.normalized} on this date. ${QATAR_FAMILY_SENTENCE}`;
+    case "all_cancelled":
+      return `Qatar cancelled ${v.normalized} on every recent operating day we track (last ${QATAR_HISTORY_WINDOW_DAYS} days), so there's no aircraft pattern to estimate from. ${QATAR_FAMILY_SENTENCE}`;
+    case "not_on_leg":
+      return `${v.normalized} doesn't operate ${v.asked ?? "that leg"} on this date${v.flies ? `; it flies ${v.flies}` : ""}.`;
     default:
       return `We haven't observed ${v.normalized} on the Qatar routes we track yet (selected Qatar routes only; Qatar publishes the aircraft about a week out). ${QATAR_FAMILY_SENTENCE}`;
   }
@@ -636,7 +740,8 @@ export function qatarHistoryReason(v: Extract<QatarVerdict, { kind: "qatar_histo
     return `${lead} ${lastDays} — mostly 787-9. ${QATAR_ROLLING_NOTE}${tail}`;
   }
   if (v.swapRisk && v.scheduledRow && v.probability !== null) {
-    return `Scheduled ${qatarEquipmentName(v.scheduledRow.equipment_code)} (Starlink-fitted type), but ${v.normalized} has flown other aircraft on ${v.nDays - v.yesDays} of its last ${v.nDays} operating days; at least ${pctFloor(v.probability)}% chance it stays on a fitted type.${tail}`;
+    const n = v.swapObserved ?? 0;
+    return `Scheduled ${qatarEquipmentName(v.scheduledRow.equipment_code)} (Starlink-fitted type), but Qatar moved ${v.normalized} off a fitted type after publishing it on ${v.swapDays ?? 0} of its last ${n} flown day${n === 1 ? "" : "s"}; at least ${pctFloor(v.probability)}% chance it stays on a fitted type.${tail}`;
   }
   if (v.probability === null) {
     return `Qatar publishes the aircraft about a week ahead. ${lastDays} — too few to estimate yet.${tail}`;

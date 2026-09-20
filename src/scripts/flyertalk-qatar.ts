@@ -58,23 +58,54 @@ export async function fetchQatarFlyertalkTails(fetcher?: FlyertalkFetcher): Prom
   return [...seen].sort();
 }
 
-export function applyQatarFlyertalkTails(db: Database, tails: string[]): number {
+// Forum posts are uncurated; only confirm tails the type rule already says
+// should be Starlink. 787-9s/freighters/A380s/unknown types are skipped.
+export function qatarFlyertalkTypePasses(aircraftType: string | null): boolean {
+  return qatarTypeToStarlink(aircraftType ?? "") === "confirmed";
+}
+
+export interface GatedTail {
+  tail: string;
+  aircraftType: string | null;
+}
+
+/** "7 type-gated (787-9 ×6, A380-800 ×1)" */
+export function typeGatedSummary(gated: readonly GatedTail[]): string {
+  const counts = new Map<string, number>();
+  for (const g of gated) {
+    const type = g.aircraftType?.replace(/^(Boeing|Airbus)\s+/, "") || "unknown type";
+    counts.set(type, (counts.get(type) ?? 0) + 1);
+  }
+  const parts = [...counts]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([type, n]) => `${type} ×${n}`);
+  return `${gated.length} type-gated${parts.length ? ` (${parts.join(", ")})` : ""}`;
+}
+
+/** Writes the tails that pass the type gate; the rest land in `gated`. */
+export function applyQatarFlyertalkTails(
+  db: Database,
+  tails: string[],
+  gated: GatedTail[] = []
+): number {
   const typeOf = db.query<{ aircraft_type: string | null }, [string]>(
     "SELECT aircraft_type FROM united_fleet WHERE tail_number = ?"
   );
 
-  return applyFlyertalkTails(db, tails, {
+  const written = applyFlyertalkTails(db, tails, {
     airline: "QR",
     gid: "flyertalk_qr",
     operator: "Qatar Airways",
     gateLabel: "type-gated",
     gate: (tail) => {
       const type = typeOf.get(tail)?.aircraft_type ?? null;
-      // Forum posts are uncurated; only confirm tails the type rule already
-      // says should be Starlink. 787s/freighters/A380s/unknown types skipped.
-      return qatarTypeToStarlink(type ?? "") === "confirmed" ? { aircraftType: type } : null;
+      if (qatarFlyertalkTypePasses(type)) return { aircraftType: type };
+      gated.push({ tail, aircraftType: type });
+      return null;
     },
   });
+  if (gated.length > 0) info(`FlyerTalk QR: ${typeGatedSummary(gated)}`);
+  return written;
 }
 
 async function syncQatarFlyertalk(): Promise<number> {
