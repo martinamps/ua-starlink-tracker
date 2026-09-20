@@ -32,6 +32,7 @@ import {
   buildFlightLookupVariants,
   canonicalFlightInput,
   detectAirline,
+  detectMarketingCarrier,
   ensureAirlinePrefix,
   normalizeAirlineFlightNumber,
   stripFlightNumberZeros,
@@ -878,13 +879,23 @@ function checkFlightWireFlight(f: {
   };
 }
 
-function notTrackedResponse(status: 200 | 404, tracked: readonly AirlineConfig[]): Response {
-  return new Response(
-    JSON.stringify({
-      error: `Airline not tracked. Tracked: ${tracked.map((a) => a.iata).join(", ")}`,
-    }),
-    { status, headers: SECURITY_HEADERS.api }
-  );
+/** A single-airline host names only its own carrier and, for another tracked
+ * airline's number, the site that answers it: "Tracked: UA, HA, AS" on the
+ * United host read as though AS100 should have worked there. */
+export function notTrackedMessage(
+  pinnedCfg: AirlineConfig | null,
+  tracked: readonly AirlineConfig[],
+  flightNumber: string
+): string {
+  if (!pinnedCfg) return `Airline not tracked. Tracked: ${tracked.map((a) => a.iata).join(", ")}`;
+  const own = `Airline not tracked. This site covers ${pinnedCfg.name} (${pinnedCfg.iata}) flights.`;
+  const other = detectMarketingCarrier(flightNumber, tracked);
+  if (!other || other.code === pinnedCfg.code) return own;
+  return `${own} ${other.iata} flights: use ${new URL(airlineHomeUrl(other.code)).host}.`;
+}
+
+function notTrackedResponse(status: 200 | 404, error: string): Response {
+  return new Response(JSON.stringify({ error }), { status, headers: SECURITY_HEADERS.api });
 }
 
 /** REST renderer over decideCarrier (check-flight-core owns the policy). */
@@ -900,7 +911,10 @@ function resolveCarrier(
   const decision = decideCarrier(tenantConfig(tenant), flightNumber, { pool });
   if (decision.outcome === "not_tracked") {
     recordUntrackedLookup(flightNumber, route);
-    return notTrackedResponse(notTrackedStatus, decision.tracked);
+    return notTrackedResponse(
+      notTrackedStatus,
+      notTrackedMessage(decision.pinnedCfg, decision.tracked, flightNumber)
+    );
   }
   return { cfg: decision.cfg, reader: carrierReader(decision, reader, getReader) };
 }
@@ -1051,8 +1065,8 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant, si
       // would be a lie when FR24 simply couldn't be consulted.
       const message = withLegNote(
         verdict.fr24Error
-          ? `${FR24_OUTAGE_NOTE} ${describeCarrierPrediction(cfg, verdict.answer)}`
-          : describeCarrierPrediction(cfg, verdict.answer),
+          ? `${FR24_OUTAGE_NOTE} ${describeCarrierPrediction(cfg, verdict.answer, { date })}`
+          : describeCarrierPrediction(cfg, verdict.answer, { date }),
         verdict
       );
       return new Response(
@@ -1244,7 +1258,7 @@ const apiCheckAnyFlight: Handler = async ({ req, url, reader, getReader, tenant 
           // Additive top-level `probability` for the extension claim ladder.
           ...(verdict.answer.kind === "penetration" ? { probability: verdict.answer.pen.pct } : {}),
           ...communityWireFields(verdict.answer),
-          reason: withLegNote(describeCarrierPrediction(cfg, verdict.answer), verdict),
+          reason: withLegNote(describeCarrierPrediction(cfg, verdict.answer, { date }), verdict),
           ...legField(verdict),
           flights: [],
         }),
@@ -4197,6 +4211,16 @@ const homePage: Handler = async (ctx) => {
   const lastUpdated = reader.getLastUpdated();
   const fleetStats = reader.getFleetStats();
   const flightsByTail = groupEquippedFlightsByTail(starlink, reader.getUpcomingFlights());
+  // The same measured pace /install-rate publishes, so the two never disagree.
+  const installsPerMonth = isHub
+    ? null
+    : computeInstallRate({
+        daily: reader.getDailyInstalls(),
+        equipped: starlink.length,
+        total,
+        targets: [],
+        nowMs: Date.now(),
+      }).paceMonthly;
   const reactHtml = ReactDOMServer.renderToString(
     React.createElement(Page, {
       total,
@@ -4211,6 +4235,7 @@ const homePage: Handler = async (ctx) => {
       // Momentum clause for the citable stat sentence — same source as the
       // hub cards' "+N in the last 30 days".
       installs30d: isHub ? undefined : reader.getPerAirlineStats()[0]?.installs30d,
+      installsPerMonth,
       flightsByTail,
       airportDepartures: reader.getAirportDepartures(),
       showPassengerBanner: isPassengerVerifyAudience(ctx.onStarlinkIp, site.scope),
@@ -4233,7 +4258,12 @@ const homePage: Handler = async (ctx) => {
       template,
       withClampedMeta({
         ...baseVars,
-        faqJsonLd: renderHtml(buildFaqJsonLd(content, baseVars.currentDate), baseVars),
+        faqJsonLd: renderHtml(buildFaqJsonLd(content, baseVars.currentDate), {
+          ...baseVars,
+          installPaceSentence: installsPerMonth
+            ? `About ${Math.round(installsPerMonth)} installs a month. `
+            : "",
+        }),
       })
     ),
     { headers: SECURITY_HEADERS.html }

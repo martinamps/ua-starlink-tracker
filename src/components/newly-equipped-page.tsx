@@ -73,7 +73,9 @@ export default function NewlyEquippedPage({
   pageLinks,
 }: NewlyEquippedPageProps) {
   const scopeCode = site.scope !== "ALL" ? site.scope : null;
-  const airlineName = scopeCode ? AIRLINES[scopeCode].name : "tracked airlines";
+  const everyAircraft = scopeCode
+    ? `Every ${AIRLINES[scopeCode].name} aircraft`
+    : "Every aircraft from a tracked airline";
   const grouped = airlines
     .map((a) => ({ cfg: a, rows: installs.filter((i) => i.airline === a.code) }))
     .filter((g) => g.rows.length > 0);
@@ -89,8 +91,8 @@ export default function NewlyEquippedPage({
           </h1>
         </a>
         <p className="text-base text-secondary font-display max-w-xl mx-auto">
-          Every {airlineName} aircraft as it joins the Starlink-equipped fleet — newest first, with
-          its first observed Starlink revenue flight once it departs.
+          {everyAircraft} as it joins the Starlink-equipped fleet — newest first, with its first
+          observed Starlink revenue flight once it departs.
         </p>
       </header>
 

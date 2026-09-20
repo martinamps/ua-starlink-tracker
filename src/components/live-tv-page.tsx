@@ -1,6 +1,7 @@
 import React from "react";
 import { normalizeAircraftType } from "../airlines/aircraft-families";
 import { type SiteConfig, siteAirline } from "../airlines/registry";
+import { factsBySlug } from "../airlines/rollout-facts";
 import type { Aircraft } from "../types";
 import { type SeatbackLiveTv, seatbackLiveTv } from "../utils/aircraft-specs";
 import { PageFooter, type PageLink } from "./atoms";
@@ -23,6 +24,11 @@ const DISH_RELEASE =
   "https://www.globenewswire.com/news-release/2026/09/17/3364268/0/en/dish-teams-up-with-united-airlines-to-provide-live-football-at-35-000-feet.html";
 const UNITED_RELEASE =
   "https://www.prnewswire.com/news-releases/united-teams-up-with-dish-to-broadcast-professional-and-college-football-games-live-on-starlink-enabled-seatback-screens-302882330.html";
+
+/** The live-TV fleet target, as cited on /airlines/united — never a figure
+ * typed into this page, which drifted from the rollout facts once already. */
+export const LIVE_TV_TARGET_FACT =
+  factsBySlug("united")?.facts.find((f) => f.source.url === UNITED_RELEASE) ?? null;
 
 const TIER_LABEL: Record<LiveTvTypeRow["tier"], string> = {
   likely: "Likely",
@@ -186,7 +192,20 @@ export default function LiveTvPage({
             </table>
           )}
           <p className="text-xs text-muted leading-relaxed mt-4">
-            United expects Starlink on nearly 700 aircraft by February 2027.
+            {LIVE_TV_TARGET_FACT && (
+              <>
+                {LIVE_TV_TARGET_FACT.fact}{" "}
+                <a
+                  href={LIVE_TV_TARGET_FACT.source.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-accent hover:underline"
+                >
+                  Source
+                </a>
+                .
+              </>
+            )}
             {site.features.fleetPage && (
               <>
                 {" "}
