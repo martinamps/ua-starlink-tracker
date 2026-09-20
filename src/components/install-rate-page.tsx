@@ -34,11 +34,11 @@ const VERDICT_TONE: Record<TargetVerdict, { label: string; color: string; bg: st
   no_data: { label: "Too early to call", color: "#d4a72c", bg: "rgba(212,167,44,.12)" },
 };
 
-function monthLabel(month: string): string {
+export function monthLabel(month: string): string {
   const [y, m] = month.split("-").map(Number);
   return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString("en-US", {
     month: "short",
-    year: "2-digit",
+    year: "numeric",
     timeZone: "UTC",
   });
 }

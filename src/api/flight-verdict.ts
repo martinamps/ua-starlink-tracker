@@ -357,5 +357,6 @@ export async function lookupFlightTailVerdict(
     });
   }
 
+  if (segments.length > 0) reader.logResolvedAssignments(normalizedFlightNumber, segments, nowSec);
   return segments;
 }

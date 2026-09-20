@@ -148,6 +148,14 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         },
         aircraftPages: ["777", "787", "767"],
       },
+      {
+        fact: "United says live TV streaming on seatback screens is on more than 220 Starlink-equipped mainline aircraft, with plans to reach 700 mainline planes early next year.",
+        asOf: "2026-09-17",
+        source: {
+          label: "United press release (PR Newswire)",
+          url: "https://www.prnewswire.com/news-releases/united-teams-up-with-dish-to-broadcast-professional-and-college-football-games-live-on-starlink-enabled-seatback-screens-302882330.html",
+        },
+      },
     ],
   },
   {

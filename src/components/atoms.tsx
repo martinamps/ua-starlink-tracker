@@ -577,7 +577,9 @@ export function computeModelBreakdown(starlinkData: Aircraft[]): ModelDatum[] {
 export function ModelPie({ data, total }: { data: ModelDatum[]; total: number }) {
   return (
     <div className="bg-surface p-4 flex flex-col justify-center text-center">
-      <div className="text-[10px] font-mono text-muted uppercase tracking-wider mb-2">By Type</div>
+      <div className="text-[10px] font-mono text-muted uppercase tracking-wider mb-2">
+        Starlink jets by type
+      </div>
       <div className="relative w-20 h-20 mx-auto mb-2" id="pie-chart-container">
         <svg
           className="w-20 h-20"
