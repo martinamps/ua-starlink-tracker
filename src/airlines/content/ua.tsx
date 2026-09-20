@@ -1,10 +1,10 @@
 import React from "react";
 import { ModelPie, StatRing, computeModelBreakdown } from "../../components/atoms";
-import type { AirlineContent, HeroProps } from "./index";
+import type { AirlineContent, ContentStats, HeroProps } from "./index";
 
-// Rough observed install cadence — shown in the stat strip and the rollout FAQ,
-// so both go stale together when the rate changes.
-const INSTALLS_PER_MONTH = "40+";
+/** Rounded pace for copy; null means say nothing rather than a stale guess. */
+const installsPerMonth = (s: ContentStats): number | null =>
+  s.installsPerMonth ? Math.round(s.installsPerMonth) : null;
 
 const UAHero = ({ stats, starlinkData }: HeroProps) => {
   const { fleetStats, starlinkCount: x, totalCount: y, percentage } = stats;
@@ -37,7 +37,7 @@ const UAHero = ({ stats, starlinkData }: HeroProps) => {
 };
 
 export const content: AirlineContent = {
-  headerStats: [
+  headerStats: (s) => [
     <span key="mbps">
       <span className="text-accent font-semibold">250</span> Mbps
     </span>,
@@ -47,9 +47,13 @@ export const content: AirlineContent = {
     <span key="free" className="text-green-400 font-semibold">
       FREE
     </span>,
-    <span key="installs" className="hidden sm:inline">
-      <span className="text-accent font-semibold">{INSTALLS_PER_MONTH}</span> installs/mo
-    </span>,
+    ...(installsPerMonth(s)
+      ? [
+          <span key="installs" className="hidden sm:inline">
+            <span className="text-accent font-semibold">~{installsPerMonth(s)}</span> installs/mo
+          </span>,
+        ]
+      : []),
   ],
 
   intro: () => (
@@ -192,11 +196,12 @@ export const content: AirlineContent = {
         },
         {
           q: "How fast is United's Starlink rollout?",
-          a: ({ starlinkCount }) => (
+          a: (s) => (
             <p>
-              About {INSTALLS_PER_MONTH} installs a month. United's first Starlink install was March
-              2025; <span className="text-accent">{starlinkCount}</span> aircraft are equipped
-              today. The{" "}
+              {installsPerMonth(s) && <>About {installsPerMonth(s)} installs a month. </>}
+              United's first Starlink install was March 2025;{" "}
+              <span className="text-accent">{s.starlinkCount}</span> aircraft are equipped today.
+              The{" "}
               <a href="/fleet" className="text-accent hover:underline">
                 fleet page
               </a>{" "}
@@ -204,7 +209,7 @@ export const content: AirlineContent = {
               verified.
             </p>
           ),
-          ld: `About ${INSTALLS_PER_MONTH} installs a month. United's first Starlink install was March 2025; {{starlinkCount}} aircraft are equipped today. The fleet page charts the rollout tail by tail, and this page's counters update as new installs are verified.`,
+          ld: `{{installPaceSentence}}United's first Starlink install was March 2025; {{starlinkCount}} aircraft are equipped today. The fleet page charts the rollout tail by tail, and this page's counters update as new installs are verified.`,
         },
         {
           q: "When will my route get Starlink?",

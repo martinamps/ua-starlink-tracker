@@ -1232,17 +1232,41 @@ function equippedFilter(sp: string): string {
 // "recent installs" surface must exclude them or a one-day import reads as an
 // install spike. (Set E made type_rule writes DateFound NULL; the predicate
 // still excludes legacy 'type_deterministic' rows with a stamped date.)
+// A FlyerTalk gid is a backfill only on its FIRST sync day; later runs add
+// tails a few at a time as the thread reports them, which is organic discovery.
+const FLYERTALK_FIRST_SYNC = `SELECT sheet_gid, MIN(substr(DateFound, 1, 10)) FROM starlink_planes
+          WHERE sheet_gid LIKE 'flyertalk\\_%' ESCAPE '\\' AND DateFound IS NOT NULL
+          GROUP BY sheet_gid`;
 const INSTALL_FILTER = `DateFound IS NOT NULL
     AND (sheet_gid IS NULL OR (
       sheet_gid NOT LIKE '%\\_seed' ESCAPE '\\'
       AND sheet_gid <> 'type_deterministic'
-      AND sheet_gid NOT LIKE 'flyertalk\\_%' ESCAPE '\\'
+      AND (sheet_gid NOT LIKE 'flyertalk\\_%' ESCAPE '\\'
+        OR (sheet_gid, substr(DateFound, 1, 10)) NOT IN (${FLYERTALK_FIRST_SYNC}))
     ))`;
 
-/** JS mirror of INSTALL_FILTER's sheet_gid exclusions for non-SQL surfaces
- * (OG sparkline). Agreement with the SQL is pinned in tests/vocabulary.test.ts. */
+/** Gids that name a bulk writer. FlyerTalk rows are bulk only on the gid's
+ * first sync day — isBulkRow is the per-row answer. */
 export function isBulkGid(gid: string | null | undefined): boolean {
   return !!gid && /_seed$|^type_deterministic$|^flyertalk_/.test(gid);
+}
+
+/** First sync day (YYYY-MM-DD) per FlyerTalk gid: its backfill day. */
+export function flyertalkFirstSyncDays(db: Database): Map<string, string> {
+  const rows = db.query(FLYERTALK_FIRST_SYNC).values() as Array<[string, string]>;
+  return new Map(rows);
+}
+
+/** JS mirror of INSTALL_FILTER's sheet_gid exclusions for non-SQL surfaces.
+ * Agreement with the SQL is pinned in tests/vocabulary.test.ts. */
+export function isBulkRow(
+  gid: string | null | undefined,
+  found: string | null | undefined,
+  firstSyncDays: ReadonlyMap<string, string>
+): boolean {
+  if (!gid || !isBulkGid(gid)) return false;
+  if (!gid.startsWith("flyertalk_")) return true;
+  return !found || found.slice(0, 10) === firstSyncDays.get(gid);
 }
 
 export function getRecentInstalls(
@@ -5613,7 +5637,7 @@ function computeFleetPageData(db: Database, airline?: AirlineFilter): FleetPageD
     carriers,
     bodyClass,
     allTails,
-    totalFleet: rows.length,
+    totalFleet: allTails.length,
     totalStarlink,
     installPace,
     // Single-airline narrative like installPace — the hub page must not show
@@ -6297,10 +6321,11 @@ function computeAircraftTypePages(
        FROM starlink_planes sp WHERE sp.airline = ? AND ${equippedFilter("sp")}`
     )
     .all(airline) as Array<{ tail: string; found: string | null; gid: string | null }>;
+  const firstSyncDays = flyertalkFirstSyncDays(db);
   const organicFirstSeen = new Map<string, string>();
   const listedUnverified = new Set<string>();
   for (const r of listings) {
-    if (isBulkGid(r.gid)) continue;
+    if (isBulkRow(r.gid, r.found, firstSyncDays)) continue;
     // Only tails the verifier hasn't reached: a listing for a tail it found on
     // Viasat is a conflict, and never feeds a positive word. A mass-write day
     // still counts here; it only disqualifies the date.

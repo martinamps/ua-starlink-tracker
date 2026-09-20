@@ -78,6 +78,7 @@ interface PageProps {
   airportDepartures?: AirportDepartures;
   showPassengerBanner?: boolean;
   installs30d?: number;
+  installsPerMonth?: number | null;
   /** Pre-rendered share card path; null until the nightly batch produced one. */
   shareCard?: string | null;
   pageLinks?: PageLink[];
@@ -356,6 +357,7 @@ export default function Page({
   airportDepartures,
   showPassengerBanner = false,
   installs30d,
+  installsPerMonth,
   shareCard,
   pageLinks,
   popularFlights = [],
@@ -390,7 +392,13 @@ export default function Page({
   const x = starlinkData.length;
   const y = total;
   const percentage = y > 0 ? ((x / y) * 100).toFixed(2) : "0.00";
-  const stats: ContentStats = { starlinkCount: x, totalCount: y, percentage, fleetStats };
+  const stats: ContentStats = {
+    starlinkCount: x,
+    totalCount: y,
+    percentage,
+    fleetStats,
+    installsPerMonth,
+  };
   const airlineOf = (p: Aircraft) => airlineByTail[p.TailNumber] || "UA";
   const brand = site.brand;
   const features = site.features;
@@ -575,7 +583,13 @@ export default function Page({
           {brand.title}
         </h1>
         <p className="text-base sm:text-lg text-secondary font-display mb-2">{brand.tagline}</p>
-        <HeaderStatStrip items={content.headerStats} />
+        <HeaderStatStrip
+          items={
+            typeof content.headerStats === "function"
+              ? content.headerStats(stats)
+              : content.headerStats
+          }
+        />
       </header>
 
       {features.checkFlightPage && (

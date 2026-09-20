@@ -3,6 +3,7 @@ import { aircraftFamilyPatterns } from "../airlines/aircraft-families";
 import { type SiteConfig, siteAirline } from "../airlines/registry";
 import type { PopularFlight } from "../database/database";
 import { SEATBACK_LIVE_TV_COPY, SEATBACK_LIVE_TV_LIKELY_FAMILIES } from "../utils/aircraft-specs";
+import { AIRPORT_TZ } from "../utils/airport-tz";
 import { article } from "../utils/grammar";
 import { watchFeedEnabled } from "../utils/ics";
 import { type PageLink, PageNavLinks, PopularFlightsLinks } from "./atoms";
@@ -90,6 +91,14 @@ const HHMM_UTC = new Intl.DateTimeFormat("en-US", {
   timeZone: "UTC",
 });
 
+/** Zone → concatenated IATA codes; a third the bytes of the flat map, and
+ * the client needs every airport because the form checks any flight. */
+const AIRPORT_ZONES_INLINE: string = (() => {
+  const byZone: Record<string, string> = {};
+  for (const [iata, zone] of Object.entries(AIRPORT_TZ)) byZone[zone] = (byZone[zone] ?? "") + iata;
+  return JSON.stringify(byZone);
+})();
+
 const fmtDay = (sec: number) => DAY_UTC.format(new Date(sec * 1000));
 
 const fmtDeparture = (sec: number) => {
@@ -107,10 +116,10 @@ const fmtDuration = (sec: number) => {
 function flightSummary(flight: FlightFacts): string {
   const { flightNumber, observedStarlink: s, observedTotal: n } = flight;
   if (n > 0 && s > 0) {
-    return `${flightNumber} had Starlink on ${s} of ${n} observed departures (${Math.round((s / n) * 100)}%). Pick a date below for a live answer.`;
+    return `${flightNumber} had Starlink on ${s} of ${n} recently verified departures (${Math.round((s / n) * 100)}%). Pick a date below for a live answer.`;
   }
   if (n > 0) {
-    return `Not yet — observed ${flightNumber} departures were flown by aircraft still awaiting Starlink installation. Pick a date below for a live answer.`;
+    return `Not yet — recently verified ${flightNumber} departures were flown by aircraft still awaiting Starlink installation. Pick a date below for a live answer.`;
   }
   return `Pick a date below for a live answer based on the aircraft assigned to ${flightNumber}.`;
 }
@@ -706,16 +715,38 @@ export default function CheckFlightPage({
           var wifiLabel = function(v) {
             return (!v || !String(v).trim() || /^none$/i.test(String(v).trim())) ? 'no WiFi' : escHtml(v) + ' WiFi (not Starlink)';
           };
-          var shortTime = function(unix) {
-            return new Date(unix * 1000).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZoneName: 'short' });
+          // Departure times read in the departure airport's zone, like a
+          // boarding pass; the viewer's zone only when the airport is unmapped.
+          var airportZones = ${AIRPORT_ZONES_INLINE};
+          var airportTz = {};
+          Object.keys(airportZones).forEach(function(zone) {
+            var codes = airportZones[zone];
+            for (var i = 0; i < codes.length; i += 3) airportTz[codes.slice(i, i + 3)] = zone;
+          });
+          var zoneFor = function(airport) {
+            var code = String(airport || '').toUpperCase();
+            if (code.length === 4 && (code[0] === 'K' || code[0] === 'C')) code = code.slice(1);
+            return airportTz[code];
           };
-          var alternativesHtml = function(list, date) {
+          var localTime = function(unix, airport) {
+            var opts = { hour: 'numeric', minute: '2-digit', hour12: true, timeZoneName: 'short' };
+            var zone = zoneFor(airport);
+            if (zone) opts.timeZone = zone;
+            return new Date(unix * 1000).toLocaleTimeString('en-US', opts);
+          };
+          var localDay = function(unix, airport) {
+            var opts = { month: 'short', day: 'numeric' };
+            var zone = zoneFor(airport);
+            if (zone) opts.timeZone = zone;
+            return new Date(unix * 1000).toLocaleDateString('en-US', opts);
+          };
+          var alternativesHtml = function(list, date, origin) {
             if (!list || !list.length) return '';
             return '<div class="mt-3"><div class="text-xs font-mono text-muted mb-1 uppercase tracking-wider">Starlink flights on this route that day</div>' +
               '<ul class="text-sm text-muted font-mono space-y-1">' +
               list.map(function(a) {
                 return '<li><a href="/check-flight/' + encodeURIComponent(a.flight_number) + '/' + encodeURIComponent(date) + '" class="text-accent hover:underline">' + escHtml(a.flight_number) + '</a> ' +
-                  escHtml(shortTime(a.departure_time)) + ' <span class="text-secondary">' + escHtml(a.tail_number) + (a.aircraft_type ? ' (' + escHtml(a.aircraft_type) + ')' : '') + '</span></li>';
+                  escHtml(localTime(a.departure_time, origin)) + ' <span class="text-secondary">' + escHtml(a.tail_number) + (a.aircraft_type ? ' (' + escHtml(a.aircraft_type) + ')' : '') + '</span></li>';
               }).join('') +
               '</ul></div>';
           };
@@ -783,8 +814,8 @@ export default function CheckFlightPage({
                   if (data.hasStarlink) {
                     var flight = data.flights[0] || {};
                     var depTime = flight.departure_time ? new Date(flight.departure_time * 1000) : null;
-                    var timeStr = depTime ? depTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }) : 'TBD';
-                    var dateStr = depTime ? depTime.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : date;
+                    var timeStr = depTime ? localTime(flight.departure_time, flight.departure_airport) : 'TBD';
+                    var dateStr = depTime ? localDay(flight.departure_time, flight.departure_airport) : date;
                     var displayFlight = flight.ua_flight_number || flight.flight_number || flightNumber;
                     var aircraftInfo = flight.aircraft_type ? ' (' + flight.aircraft_type + ')' : '';
                     var dep = (flight.departure_airport || '').replace(/^K/, '');
@@ -839,7 +870,7 @@ export default function CheckFlightPage({
                         : '<div class="font-display font-semibold text-secondary mb-2">Assigned aircraft</div>') +
                       '<div class="space-y-2">' + segHtml + '</div>' +
                       '<p class="text-sm text-muted mt-2">Aircraft swaps can happen; re-check closer to departure.</p>' +
-                      alternativesHtml(data.sameDayAlternatives, date) +
+                      alternativesHtml(data.sameDayAlternatives, date, first.origin) +
                       routePlannerCta(first.origin, first.destination) +
                       '</div>';
                   } else if (data.confidence === 'verified' && data.hasStarlink === false) {
@@ -852,7 +883,7 @@ export default function CheckFlightPage({
                       '<span class="font-display font-semibold text-secondary">No Starlink on this flight</span>' +
                       '</div>' +
                       '<p class="text-sm text-muted">' + esc(data.message || data.reason || 'The assigned aircraft is verified as non-Starlink WiFi.') + '</p>' +
-                      alternativesHtml(data.sameDayAlternatives, date) +
+                      alternativesHtml(data.sameDayAlternatives, date, ((data.flights || [])[0] || {}).departure_airport) +
                       '</div>';
                   } else {
                     var pred = data.prediction;
