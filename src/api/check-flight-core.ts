@@ -458,13 +458,13 @@ export async function resolveFlightVerdict(
   const liveLegs = scoped.segments ? fr24OtherLegs(scoped.segments, resolution) : [];
   if (liveLegs.length > 0) resolution.liveLegs = liveLegs;
 
-  // The history model is per flight number, so on a number that flies several
-  // routes it says nothing firm about a leg we couldn't find.
+  // The history model is per flight number, so on a through flight (legs on
+  // different tails) it says nothing firm about one leg we couldn't find.
   let verdict = scoped.verdict;
   if (
     verdict.kind === "prediction" &&
     (resolution.match === "no_data" || resolution.match === "unmatched") &&
-    fliesSeveralRoutes(reader, normalized, now)
+    isThroughFlightLeg(reader, normalized, leg, now)
   ) {
     resolution.multiRoute = true;
     verdict = { ...verdict, pred: { ...verdict.pred, confidence: "low" } };
@@ -474,9 +474,36 @@ export async function resolveFlightVerdict(
 
 const RECENT_ROUTES_SEC = 30 * 86400;
 
-function fliesSeveralRoutes(reader: ScopedReader, normalized: string, now: number): boolean {
-  const routes = reader.getCachedFlightRoutes(normalized, now - RECENT_ROUTES_SEC);
-  return new Set(routes.map((r) => `${r.origin}>${r.destination}`)).size > 1;
+/**
+ * Recent routes that chain (SFO→DEN + DEN→SAN) mark a through flight; routes
+ * that don't (SFO→EWR some days, SFO→IAD others) are alternative routings,
+ * where the whole-flight history is still about the traveller's aircraft. The
+ * leg counts when it is a chained route or one we have never seen.
+ */
+function isThroughFlightLeg(
+  reader: ScopedReader,
+  normalized: string,
+  leg: LegQuery,
+  now: number
+): boolean {
+  const routes = reader.getCachedFlightRoutes(normalized, now - RECENT_ROUTES_SEC).map((r) => ({
+    origin: normalizeAirportCode(r.origin),
+    destination: normalizeAirportCode(r.destination),
+  }));
+  const chained = routes.filter((r) =>
+    routes.some(
+      (s) =>
+        s !== r &&
+        ((r.destination !== null && r.destination === s.origin) ||
+          (s.destination !== null && s.destination === r.origin))
+    )
+  );
+  if (chained.length === 0) return false;
+  const isLeg = (r: (typeof routes)[number]) =>
+    (!leg.origin || r.origin === leg.origin) &&
+    (!leg.destination || r.destination === leg.destination);
+  const matched = routes.filter(isLeg);
+  return matched.length === 0 || matched.some((r) => chained.includes(r));
 }
 
 const segDeparture = (s: FallbackSegment) => normalizeAirportCode(s.origin);
@@ -844,7 +871,7 @@ export interface LegResolution {
   liveLegs?: OtherLeg[];
   /** An FR24 segment answered the leg: the telemetry `match` (the wire's stays rows-only). */
   segmentMatch?: "exact" | "origin";
-  /** A leg we couldn't find on a number flying several recent routes: confidence is low. */
+  /** A leg we couldn't find on a through flight (chained recent routes): confidence is low. */
   multiRoute?: boolean;
   /** The (origin, destination) the answer is about. */
   answered: { origin: string | null; destination: string | null } | null;
@@ -1213,7 +1240,7 @@ export function legNote(verdict: AnsweredVerdict & { leg?: LegResolution }): str
   if (verdict.kind === "prediction" || verdict.kind === "no_model") {
     const fn = verdict.normalized;
     const overall = l.multiRoute
-      ? `this estimate is for flight ${fn} overall, which flies several routes, so it's low confidence for any one leg.`
+      ? `this estimate is for flight ${fn} overall, a through flight whose legs can fly different aircraft, so it's low confidence for any one leg.`
       : `this estimate is for flight ${fn} overall.`;
     if (legOffRoute(verdict)) {
       return `We have no ${requestedLeg(l)} for ${fn} on this date; we see it flying ${routeChain(flownLegs(l))}. ${capitalized(overall)}`;

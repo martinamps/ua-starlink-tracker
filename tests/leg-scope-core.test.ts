@@ -438,17 +438,20 @@ describe("leg-scoped verdicts (synthetic DB)", () => {
     expect(legScopeTelemetry({ ...v, leg: v.leg }).match).toBe("exact");
   });
 
-  test("a leg-less estimate on a multi-route number drops to low confidence", async () => {
+  test("an unfound leg of a through flight drops to low; alternative routings keep their grade", async () => {
     const now = Math.floor(Date.now() / 1000);
-    for (const [o, d] of [
-      ["SFO", "DEN"],
-      ["DEN", "SAN"],
+    for (const [fn, o, d] of [
+      ["UA7788", "SFO", "DEN"],
+      ["UA7788", "DEN", "SAN"],
+      ["UA7788", "LAX", "ORD"],
+      ["UA7789", "SFO", "EWR"],
+      ["UA7789", "SFO", "IAD"],
     ]) {
       db.run(
         `INSERT INTO flight_routes
            (flight_number, origin, destination, duration_sec, first_seen_at, last_seen_at, seen_count)
-         VALUES ('UA7788', ?, ?, 7200, ?, ?, 50)`,
-        [o, d, now - 90 * 86400, now - 86400]
+         VALUES (?, ?, ?, 7200, ?, ?, 50)`,
+        [fn, o, d, now - 90 * 86400, now - 86400]
       );
     }
     const high = ((_r: unknown, fn: string) => ({
@@ -464,10 +467,17 @@ describe("leg-scoped verdicts (synthetic DB)", () => {
     if (unscoped.kind !== "prediction" || scoped.kind !== "prediction") throw new Error();
     expect(unscoped.pred.confidence).toBe("high");
     expect(scoped.pred.confidence).toBe("low");
-    expect(legNote(scoped)).toContain("flies several routes, so it's low confidence");
-    // One route: the whole-flight estimate is the leg's.
-    const single = await ua("UA7799", { origin: "DEN", destination: "SAN" }, deps);
-    expect(single.kind === "prediction" && single.pred.confidence).toBe("high");
+    expect(legNote(scoped)).toContain("a through flight whose legs can fly different aircraft");
+    const grade = async (fn: string, leg: LegQuery) => {
+      const v = await ua(fn, leg, deps);
+      return v.kind === "prediction" ? v.pred.confidence : v.kind;
+    };
+    expect(await grade("UA7788", { origin: "PHX", destination: "SEA" })).toBe("low");
+    // A route that chains with nothing, on a through-flight number, keeps its grade.
+    expect(await grade("UA7788", { origin: "LAX", destination: "ORD" })).toBe("high");
+    expect(await grade("UA7789", { origin: "SFO", destination: "IAD" })).toBe("high");
+    expect(await grade("UA7789", { origin: "PHX", destination: "SEA" })).toBe("high");
+    expect(await grade("UA7799", { origin: "DEN", destination: "SAN" })).toBe("high");
   });
 
   test("a queue shed is a softer, non-error estimate; an outage stays an error", async () => {
