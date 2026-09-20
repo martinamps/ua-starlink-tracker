@@ -645,12 +645,19 @@ export interface FlightDateWindow {
   daysOut: number;
 }
 
+/** Strict YYYY-MM-DD that names a real calendar day — Date.parse rolls 2026-02-30 over to March 2. */
+export function isRealIsoDate(date: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return false;
+  const t = Date.parse(`${date}T00:00:00Z`);
+  return !Number.isNaN(t) && new Date(t).toISOString().slice(0, 10) === date;
+}
+
 export function flightDateWindow(
   date: string,
   nowSec = Math.floor(Date.now() / 1000)
 ): FlightDateWindow | null {
+  if (!isRealIsoDate(date)) return null;
   const t = Date.parse(`${date}T00:00:00Z`);
-  if (Number.isNaN(t)) return null;
   const start = Math.floor(t / 1000);
   const end = start + 86400;
   return {

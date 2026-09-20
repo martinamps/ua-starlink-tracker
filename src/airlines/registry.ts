@@ -373,8 +373,11 @@ const AIRLINE_DEFS = {
     // see HA's own press release. Denominator is the Airbus fleet only.
     rollout: {
       status: "complete",
-      statusLabel: "Complete",
-      phaseNote: "Every A330 and A321neo has Starlink. The 717 interisland jets won't get it.",
+      // Matches rollout-facts: the Airbus fleet is done, the 787-9s are still to
+      // come (HAWAIIAN_PHASE_BY_FAMILY), so "Complete" overstated it.
+      statusLabel: "Airbus fleet done",
+      phaseNote:
+        "Every A330 and A321neo has Starlink; the 787-9s are next. The 717 interisland jets won't get it.",
       // The 717s are counted but never eligible, so 42/61 understates a
       // finished rollout.
       rosterIsProgramScope: false,
@@ -470,8 +473,9 @@ const AIRLINE_DEFS = {
     ],
     // Same matcher as alaskaTypeToWifi so verdict and subfleet can't disagree.
     classifyFleet: (t) => (normalizeAircraftType(t) === "E175" ? "horizon" : "mainline"),
+    // No regionalCarriers: FR24's qx-qxe page lists 0 aircraft; as-asa carries
+    // every E175 (92 E75L, 2026-09-20).
     fr24Slug: "as-asa",
-    regionalCarriers: [{ fr24Slug: "qx-qxe", name: "Horizon Air", subfleet: "horizon" }],
     metricTag: "alaska",
     ...FAA_TAIL,
     minFleetSanity: 200,

@@ -76,8 +76,15 @@ type Prediction = ReturnType<typeof predictFlight>;
 // re-check couldn't run.
 export const FR24_OUTAGE_NOTE =
   "We couldn't confirm the aircraft assignment right now — try again shortly.";
+// A request-path shed never reached FR24: nothing is down, we just didn't ask.
+export const FR24_SHED_NOTE = "Live assignment lookup is busy; showing our estimate.";
 export const SWAP_DEGRADED_NOTE =
   "Note: aircraft-swap detection is degraded right now — the live assignment check couldn't run.";
+
+/** The caveat for an estimate served because FR24 wasn't consulted. */
+export function fr24DegradedNote(verdict: { fr24Shed?: boolean }): string {
+  return verdict.fr24Shed ? FR24_SHED_NOTE : FR24_OUTAGE_NOTE;
+}
 
 /**
  * One carrier-resolution decision shared by the flight-number-taking API
@@ -252,6 +259,8 @@ export type AnsweredVerdict =
       /** Registry-driven answer for carriers without a flight-history model. */
       answer: CarrierPrediction;
       fr24Error: boolean;
+      /** fr24Error came from our own request-path shed, not from FR24. */
+      fr24Shed?: boolean;
     }
   | {
       kind: "prediction";
@@ -259,6 +268,7 @@ export type AnsweredVerdict =
       normalized: string;
       pred: Prediction;
       fr24Error: boolean;
+      fr24Shed?: boolean;
     }
   | QatarVerdict;
 
@@ -317,12 +327,13 @@ export function verdictTelemetry(
     case "prediction": {
       const informative = verdict.pred.n_observations > 0;
       return {
-        outcome: verdict.fr24Error ? "error" : informative ? "predicted" : "no_data",
+        outcome:
+          verdict.fr24Error && !verdict.fr24Shed ? "error" : informative ? "predicted" : "no_data",
         confidence: informative ? verdict.pred.confidence : "none",
       };
     }
     case "no_model":
-      if (verdict.fr24Error) return { outcome: "error", confidence: "none" };
+      if (verdict.fr24Error && !verdict.fr24Shed) return { outcome: "error", confidence: "none" };
       return carrierPredictionTelemetry(verdict.answer);
     case "qatar_no_data":
       return { outcome: "no_data", confidence: "none" };
@@ -454,21 +465,127 @@ export async function resolveFlightVerdict(
   if (scoped.segmentMatch === "ambiguous") return unscopedAnswer();
   const answeredSel: LegSelection<{ departure_airport: string; arrival_airport: string }> =
     sel.items.length > 0 ? sel : unequippedSel;
-  return {
-    ...scoped.verdict,
-    leg: legResolution(
-      leg,
-      rows.length + unequipped.length,
-      answeredSel,
-      otherLegsOf(rows, sel.items, rowDeparture, rowArrival, (r) => ({
-        departure_time: r.departure_time,
-        tail_number: r.tail_number,
-        hasStarlink: rowOutcome(r) === "yes",
-      })),
-      unscopedRowsOutcome(rows, scoped.segments),
-      scoped.answeredSegment
-    ),
-  };
+  const resolution = legResolution(
+    leg,
+    rows.length + unequipped.length,
+    answeredSel,
+    otherLegsOf(rows, sel.items, rowDeparture, rowArrival, (r) => ({
+      departure_time: r.departure_time,
+      tail_number: r.tail_number,
+      hasStarlink: rowOutcome(r) === "yes",
+    })),
+    unscopedRowsOutcome(rows, scoped.segments),
+    scoped.answeredSegment
+  );
+  if (scoped.segmentMatch === "exact" || scoped.segmentMatch === "origin") {
+    resolution.segmentMatch = scoped.segmentMatch;
+  }
+  const liveLegs = scoped.segments ? fr24OtherLegs(scoped.segments, resolution) : [];
+  if (liveLegs.length > 0) resolution.liveLegs = liveLegs;
+
+  // The history model is per flight number, so on a through flight whose legs
+  // change aircraft it says nothing firm about one leg we couldn't find.
+  let verdict = scoped.verdict;
+  if (
+    verdict.kind === "prediction" &&
+    (resolution.match === "no_data" || resolution.match === "unmatched") &&
+    isThroughFlightLeg(reader, normalized, leg, now) &&
+    changesAircraftEnRoute(reader, normalized, now)
+  ) {
+    resolution.multiRoute = true;
+    verdict = { ...verdict, pred: { ...verdict.pred, confidence: "low" } };
+  }
+  return { ...verdict, leg: resolution };
+}
+
+const RECENT_ROUTES_SEC = 30 * 86400;
+
+/**
+ * Recent routes that chain (SFO→DEN + DEN→SAN) mark a through flight; routes
+ * that don't (SFO→EWR some days, SFO→IAD others) are alternative routings,
+ * where the whole-flight history is still about the traveller's aircraft. The
+ * leg counts when it is a chained route or one we have never seen.
+ */
+function isThroughFlightLeg(
+  reader: ScopedReader,
+  normalized: string,
+  leg: LegQuery,
+  now: number
+): boolean {
+  const routes = reader.getCachedFlightRoutes(normalized, now - RECENT_ROUTES_SEC).map((r) => ({
+    origin: normalizeAirportCode(r.origin),
+    destination: normalizeAirportCode(r.destination),
+  }));
+  const chained = routes.filter((r) =>
+    routes.some(
+      (s) =>
+        s !== r &&
+        ((r.destination !== null && r.destination === s.origin) ||
+          (s.destination !== null && s.destination === r.origin))
+    )
+  );
+  if (chained.length === 0) return false;
+  const isLeg = (r: (typeof routes)[number]) =>
+    (!leg.origin || r.origin === leg.origin) &&
+    (!leg.destination || r.destination === leg.destination);
+  const matched = routes.filter(isLeg);
+  return matched.length === 0 || matched.some((r) => chained.includes(r));
+}
+
+const TAIL_CHANGE_WINDOW_SEC = 60 * 86400;
+// Legs of one trip turn within hours; the next day's first leg is overnight.
+export const TRIP_GAP_SEC = 6 * 3600;
+export const TAIL_CHANGE_MIN_TRIPS = 5;
+export const TAIL_CHANGE_RATE_MIN = 0.2;
+
+/**
+ * Share of a number's trips (ADS-B departures chained by short turns) flown
+ * on more than one tail, or null with too few trips to say. A same-aircraft
+ * through flight often rolls up into one draw, and counts as a kept tail.
+ */
+export function tailChangeRate(
+  draws: readonly { tail_number: string; first_seen: number; last_seen: number }[]
+): number | null {
+  const trips: Set<string>[] = [];
+  let lastSeen = Number.NEGATIVE_INFINITY;
+  for (const d of [...draws].sort((a, b) => a.first_seen - b.first_seen)) {
+    if (d.first_seen - lastSeen > TRIP_GAP_SEC) trips.push(new Set());
+    trips[trips.length - 1].add(d.tail_number);
+    lastSeen = Math.max(lastSeen, d.last_seen);
+  }
+  if (trips.length < TAIL_CHANGE_MIN_TRIPS) return null;
+  return trips.filter((t) => t.size > 1).length / trips.length;
+}
+
+/** No ADS-B evidence either way keeps the cautious answer. */
+function changesAircraftEnRoute(reader: ScopedReader, normalized: string, now: number): boolean {
+  const rate = tailChangeRate(
+    reader.getAdsbFlightDrawsFor(normalized, now - TAIL_CHANGE_WINDOW_SEC)
+  );
+  return rate === null || rate >= TAIL_CHANGE_RATE_MIN;
+}
+
+const segDeparture = (s: FallbackSegment) => normalizeAirportCode(s.origin);
+const segArrival = (s: FallbackSegment) => normalizeAirportCode(s.destination);
+
+/** FR24 legs neither answered nor already listed from our rows. */
+function fr24OtherLegs(segments: FallbackSegment[], resolution: LegResolution): OtherLeg[] {
+  const key = (o: string | null, d: string | null) => `${o}>${d}`;
+  const listed = new Set(resolution.otherLegs.map((l) => key(l.origin, l.destination)));
+  const answered = resolution.answered
+    ? key(resolution.answered.origin, resolution.answered.destination)
+    : null;
+  return otherLegsOf(
+    segments,
+    segments.filter((s) => key(segDeparture(s), segArrival(s)) === answered),
+    segDeparture,
+    segArrival,
+    (s) => ({
+      departure_time: s.departure_time,
+      tail_number: s.tail_number,
+      hasStarlink: s.hasStarlink,
+    })
+  ).filter((l) => !listed.has(key(l.origin, l.destination)));
 }
 
 function onceLookup(lookupTail: ResolveDeps["lookupTail"]): ResolveDeps["lookupTail"] {
@@ -560,6 +677,7 @@ async function verdictFromRows(
   // still discover an aircraft swap onto a Starlink tail; with no rows at all
   // it is the primary fallback.
   let fr24Error = false;
+  let fr24Shed = false;
   let raw: FallbackSegment[] | null = null;
   let scopedTo: Pick<RowsAnswer, "segmentMatch" | "answeredSegment"> = {};
   if (deps.lookupTail !== null) {
@@ -577,6 +695,7 @@ async function verdictFromRows(
       // in flight-verdict.ts. The degradation is still visible to the caller
       // via fr24Error -> FR24_OUTAGE_NOTE.
       fr24Error = true;
+      fr24Shed = err.message.startsWith("shed:");
     }
     // The FR24 cache holds every leg of the number; scope after the fetch so
     // all legs share one call. An ambiguous selection is the caller's to
@@ -635,6 +754,7 @@ async function verdictFromRows(
         normalized,
         answer: carrierPrediction(cfg, reader, normalized, { aircraftType: deps.aircraftType }),
         fr24Error,
+        ...(fr24Shed ? { fr24Shed } : {}),
       },
       segments: raw,
       ...scopedTo,
@@ -649,6 +769,7 @@ async function verdictFromRows(
       normalized,
       pred: predict(reader, normalized),
       fr24Error,
+      ...(fr24Shed ? { fr24Shed } : {}),
     },
     segments: raw,
     ...scopedTo,
@@ -656,12 +777,7 @@ async function verdictFromRows(
 }
 
 function scopeSegments(segments: FallbackSegment[], leg: LegQuery): LegSelection<FallbackSegment> {
-  return selectLeg(
-    segments,
-    (s) => normalizeAirportCode(s.origin),
-    (s) => normalizeAirportCode(s.destination),
-    leg
-  );
+  return selectLeg(segments, segDeparture, segArrival, leg);
 }
 
 /** What the unscoped engine would have answered from the same rows and FR24 fetch. */
@@ -825,7 +941,13 @@ export interface LegResolution {
    * tracked tails have rows, so this is never a complete itinerary.
    */
   otherLegs: OtherLeg[];
-  /** The (origin, destination) the answer is about; internal, not serialized. */
+  /** Internal from here down, never serialized. FR24 legs not in otherLegs, for copy only. */
+  liveLegs?: OtherLeg[];
+  /** An FR24 segment answered the leg: the telemetry `match` (the wire's stays rows-only). */
+  segmentMatch?: "exact" | "origin";
+  /** A leg we couldn't find on a through flight (chained recent routes): confidence is low. */
+  multiRoute?: boolean;
+  /** The (origin, destination) the answer is about. */
   answered: { origin: string | null; destination: string | null } | null;
   /** What the unscoped engine would have said — telemetry only, never serialized. */
   unscopedOutcome: LegOutcome;
@@ -1043,8 +1165,9 @@ export function legScopeTelemetry(verdict: AnsweredVerdict & { leg: LegResolutio
 } {
   const from = verdict.leg.match === "unscoped" ? "none" : verdict.leg.unscopedOutcome;
   const to = verdict.leg.match === "unscoped" ? "none" : verdictOutcome(verdict);
+  const rowsMissed = verdict.leg.match === "unmatched" || verdict.leg.match === "no_data";
   return {
-    match: verdict.leg.match,
+    match: rowsMissed ? (verdict.leg.segmentMatch ?? verdict.leg.match) : verdict.leg.match,
     reason: verdict.leg.reason ?? "none",
     effect: from === to ? "same" : `${from}_to_${to}`,
   };
@@ -1147,6 +1270,36 @@ export function legPrefix(verdict: { normalized: string; leg?: LegResolution }):
   return isScopedMatch(verdict.leg) ? `${legSubject(verdict)}: ` : "";
 }
 
+// Every leg we see the number flying, by departure.
+const flownLegs = (l: LegResolution): OtherLeg[] =>
+  [...l.otherLegs, ...(l.liveLegs ?? [])].sort(
+    (a, b) => (a.departure_time ?? 0) - (b.departure_time ?? 0)
+  );
+
+// "RDU → ORD → IAH" when the legs connect, else "SFO → DEN, LAX → ORD".
+function routeChain(legs: OtherLeg[]): string {
+  const connected = legs.every((l, i) => i === 0 || legs[i - 1].destination === l.origin);
+  if (connected) return [legs[0].origin, ...legs.map((l) => l.destination ?? "?")].join(" → ");
+  return legs.map((l) => pairLabel(l.origin, l.destination)).join(", ");
+}
+
+/**
+ * An estimate for a leg we can't find on a number we do see flying other legs
+ * that day. Its note names those legs, so renderers drop "assignment not yet
+ * published", which those very legs contradict.
+ */
+export function legOffRoute(verdict: AnsweredVerdict & { leg?: LegResolution }): boolean {
+  const l = verdict.leg;
+  return (
+    (verdict.kind === "prediction" || verdict.kind === "no_model") &&
+    (l?.match === "unmatched" || l?.match === "no_data") &&
+    l.answered === null &&
+    flownLegs(l).length > 0
+  );
+}
+
+const capitalized = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
 /**
  * The one sentence a leg adds to an answer's copy, or "". A prediction stays
  * at flight-number level, so a leg we hold no row for says so rather than
@@ -1158,8 +1311,18 @@ export function legNote(verdict: AnsweredVerdict & { leg?: LegResolution }): str
   if (l.match === "unscoped") {
     return `Couldn't scope to one leg (${UNSCOPED_WORDS[l.reason ?? "invalid_airport"]}); this answer covers every leg of ${verdict.normalized}.`;
   }
-  if ((verdict.kind === "prediction" || verdict.kind === "no_model") && l.otherLegs.length > 0) {
-    return `Your ${requestedLeg(l)} isn't in our assignment data yet; this estimate is for flight ${verdict.normalized} overall.`;
+  if (verdict.kind === "prediction" || verdict.kind === "no_model") {
+    const fn = verdict.normalized;
+    const overall = l.multiRoute
+      ? `this estimate is for flight ${fn} overall, a through flight whose legs can fly different aircraft, so it's low confidence for any one leg.`
+      : `this estimate is for flight ${fn} overall.`;
+    if (legOffRoute(verdict)) {
+      return `We have no ${requestedLeg(l)} for ${fn} on this date; we see it flying ${routeChain(flownLegs(l))}. ${capitalized(overall)}`;
+    }
+    if (l.otherLegs.length > 0) {
+      return `Your ${requestedLeg(l)} isn't in our assignment data yet; ${overall}`;
+    }
+    if (l.multiRoute) return capitalized(overall);
   }
   if (answersOtherLeg(l)) {
     return `We hold no ${requestedLeg(l)} for ${verdict.normalized}; this answer is for its ${legLabel(l)} leg only.`;

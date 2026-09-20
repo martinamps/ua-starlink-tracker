@@ -30,7 +30,9 @@ import { type HubHomeLinks, buildFaqJsonLd, getContent } from "../airlines/conte
 import {
   CANONICAL_FLIGHT_PERMALINK,
   buildFlightLookupVariants,
+  canonicalFlightInput,
   detectAirline,
+  detectMarketingCarrier,
   ensureAirlinePrefix,
   normalizeAirlineFlightNumber,
   stripFlightNumberZeros,
@@ -70,7 +72,6 @@ import {
 } from "../airlines/rollout-facts";
 import { rolloutTargets } from "../airlines/targets";
 import {
-  FR24_OUTAGE_NOTE,
   type FlightVerdict,
   type LegResolution,
   SWAP_DEGRADED_NOTE,
@@ -78,8 +79,11 @@ import {
   answersOtherLeg,
   carrierReader,
   decideCarrier,
+  fr24DegradedNote,
   isPlausibleFlightNumber,
   legField,
+  legNote,
+  legOffRoute,
   legPrefix,
   legSubject,
   negativeWifi,
@@ -177,6 +181,7 @@ import type {
   Flight,
 } from "../types";
 import { AIRCRAFT_SPECS } from "../utils/aircraft-specs";
+import { isRealIsoDate } from "../utils/airport-tz";
 import {
   API_CORS_HEADERS,
   BASE_RESPONSE_HEADERS,
@@ -877,13 +882,23 @@ function checkFlightWireFlight(f: {
   };
 }
 
-function notTrackedResponse(status: 200 | 404, tracked: readonly AirlineConfig[]): Response {
-  return new Response(
-    JSON.stringify({
-      error: `Airline not tracked. Tracked: ${tracked.map((a) => a.iata).join(", ")}`,
-    }),
-    { status, headers: SECURITY_HEADERS.api }
-  );
+/** A single-airline host names only its own carrier and, for another tracked
+ * airline's number, the site that answers it: "Tracked: UA, HA, AS" on the
+ * United host read as though AS100 should have worked there. */
+export function notTrackedMessage(
+  pinnedCfg: AirlineConfig | null,
+  tracked: readonly AirlineConfig[],
+  flightNumber: string
+): string {
+  if (!pinnedCfg) return `Airline not tracked. Tracked: ${tracked.map((a) => a.iata).join(", ")}`;
+  const own = `Airline not tracked. This site covers ${pinnedCfg.name} (${pinnedCfg.iata}) flights.`;
+  const other = detectMarketingCarrier(flightNumber, tracked);
+  if (!other || other.code === pinnedCfg.code) return own;
+  return `${own} ${other.iata} flights: use ${new URL(airlineHomeUrl(other.code)).host}.`;
+}
+
+function notTrackedResponse(status: 200 | 404, error: string): Response {
+  return new Response(JSON.stringify({ error }), { status, headers: SECURITY_HEADERS.api });
 }
 
 /** REST renderer over decideCarrier (check-flight-core owns the policy). */
@@ -899,7 +914,10 @@ function resolveCarrier(
   const decision = decideCarrier(tenantConfig(tenant), flightNumber, { pool });
   if (decision.outcome === "not_tracked") {
     recordUntrackedLookup(flightNumber, route);
-    return notTrackedResponse(notTrackedStatus, decision.tracked);
+    return notTrackedResponse(
+      notTrackedStatus,
+      notTrackedMessage(decision.pinnedCfg, decision.tracked, flightNumber)
+    );
   }
   return { cfg: decision.cfg, reader: carrierReader(decision, reader, getReader) };
 }
@@ -963,11 +981,14 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant, si
 
   switch (verdict.kind) {
     case "scheduled": {
+      // Only a leg adds a message here, so the unscoped body keeps its bytes.
+      const note = legNote(verdict);
       return new Response(
         JSON.stringify({
           hasStarlink: true,
           ...hubAirline,
           confidence: verdictConfidence(verdict),
+          ...(note ? { message: `${legPrefix(verdict)}Starlink-equipped. ${note}` } : {}),
           ...legField(verdict),
           flights: scheduledFlights(verdict).map((flight) =>
             checkFlightWireFlight({
@@ -1006,12 +1027,14 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant, si
       );
     }
     case "fr24": {
+      const note = legNote(verdict);
       return new Response(
         JSON.stringify({
           hasStarlink: true,
           ...hubAirline,
           confidence: verdictConfidence(verdict),
           method: "fr24_tail_lookup",
+          ...(note ? { message: `${legPrefix(verdict)}Starlink-equipped. ${note}` } : {}),
           ...legField(verdict),
           flights: verdict.starlink.map((s) =>
             checkFlightWireFlight({
@@ -1050,8 +1073,8 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant, si
       // would be a lie when FR24 simply couldn't be consulted.
       const message = withLegNote(
         verdict.fr24Error
-          ? `${FR24_OUTAGE_NOTE} ${describeCarrierPrediction(cfg, verdict.answer)}`
-          : describeCarrierPrediction(cfg, verdict.answer),
+          ? `${fr24DegradedNote(verdict)} ${describeCarrierPrediction(cfg, verdict.answer, { date })}`
+          : describeCarrierPrediction(cfg, verdict.answer, { date }),
         verdict
       );
       return new Response(
@@ -1082,10 +1105,16 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant, si
       recordPrediction(pred, cfg.code);
       const pct = Math.round(pred.probability * 100);
       // During an FR24 outage we genuinely don't know whether an assignment
-      // exists — don't claim it isn't published yet.
+      // exists — don't claim it isn't published yet. Nor when other legs of
+      // the number are assigned: the leg note names them instead.
+      // daysOut is UTC-day math, so -1 can still be "today" west of UTC.
       const assignmentNote = verdict.fr24Error
-        ? FR24_OUTAGE_NOTE
-        : `Aircraft assignment not yet published — ${cfg.name} assigns aircraft ~2 days before departure.`;
+        ? `${fr24DegradedNote(verdict)} `
+        : legOffRoute(verdict)
+          ? ""
+          : verdict.window.daysOut < -1
+            ? `No aircraft assignment on record — ${date} has already passed. `
+            : `Aircraft assignment not yet published — ${cfg.name} assigns aircraft ~2 days before departure. `;
       return new Response(
         JSON.stringify({
           hasStarlink: null,
@@ -1099,8 +1128,8 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant, si
           },
           message: withLegNote(
             pred.n_observations > 0
-              ? `${assignmentNote} ~${pct}% of observed departures of this flight used a Starlink-equipped aircraft (${pred.n_observations} observation${pred.n_observations === 1 ? "" : "s"}).`
-              : `${assignmentNote} ${coldPredictionNote(pred, pct)}`,
+              ? `${assignmentNote}~${pct}% of observed departures of this flight used a Starlink-equipped aircraft (${pred.n_observations} observation${pred.n_observations === 1 ? "" : "s"}).`
+              : `${assignmentNote}${coldPredictionNote(pred, pct)}`,
             verdict
           ),
           ...legField(verdict),
@@ -1200,7 +1229,10 @@ const apiCheckAnyFlight: Handler = async ({ req, url, reader, getReader, tenant 
           hasStarlink: true,
           airline: cfg.name,
           confidence: verdictConfidence(verdict),
-          reason: `${legPrefix(verdict)}${f.tail_number} (${f.aircraft_type}) — ${f.departure_airport} → ${f.arrival_airport}`,
+          reason: withLegNote(
+            `${legPrefix(verdict)}${f.tail_number} (${f.aircraft_type}) — ${f.departure_airport} → ${f.arrival_airport}`,
+            verdict
+          ),
           ...legField(verdict),
           flights: flights.map((m) => ({
             tail_number: m.tail_number,
@@ -1240,7 +1272,7 @@ const apiCheckAnyFlight: Handler = async ({ req, url, reader, getReader, tenant 
           // Additive top-level `probability` for the extension claim ladder.
           ...(verdict.answer.kind === "penetration" ? { probability: verdict.answer.pen.pct } : {}),
           ...communityWireFields(verdict.answer),
-          reason: withLegNote(describeCarrierPrediction(cfg, verdict.answer), verdict),
+          reason: withLegNote(describeCarrierPrediction(cfg, verdict.answer, { date }), verdict),
           ...legField(verdict),
           flights: [],
         }),
@@ -1253,6 +1285,14 @@ const apiCheckAnyFlight: Handler = async ({ req, url, reader, getReader, tenant 
       const pred = verdict.pred;
       recordPrediction(pred, cfg.code);
       const pct = Math.round(pred.probability * 100);
+      const informative = pred.n_observations > 0;
+      const history = informative
+        ? `~${pct}% based on ${pred.n_observations} historical observation${pred.n_observations === 1 ? "" : "s"}.`
+        : coldPredictionNote(pred, pct);
+      // Other legs of the number are scheduled; the leg note names them.
+      const lead = legOffRoute(verdict)
+        ? ""
+        : `No schedule data for this date${informative ? ";" : "."} `;
       return new Response(
         JSON.stringify({
           hasStarlink: null,
@@ -1260,12 +1300,7 @@ const apiCheckAnyFlight: Handler = async ({ req, url, reader, getReader, tenant 
           probability: pred.probability,
           confidence: pred.confidence,
           n_recent_observations: pred.n_recent_observations,
-          reason: withLegNote(
-            pred.n_observations > 0
-              ? `No schedule data for this date; ~${pct}% based on ${pred.n_observations} historical observation${pred.n_observations === 1 ? "" : "s"}.`
-              : `No schedule data for this date. ${coldPredictionNote(pred, pct)}`,
-            verdict
-          ),
+          reason: withLegNote(`${lead}${history}`, verdict),
           ...legField(verdict),
           flights: [],
         }),
@@ -1391,6 +1426,12 @@ const apiPlanRoute: Handler = ({ req, url, reader, tenant }) => {
   const maxStops = maxStopsParam ? Math.min(Number.parseInt(maxStopsParam, 10), 3) : 2;
   if (!origin || !destination) {
     return new Response(JSON.stringify({ error: "Missing origin or destination" }), {
+      status: 400,
+      headers: SECURITY_HEADERS.api,
+    });
+  }
+  if (origin.trim().toUpperCase() === destination.trim().toUpperCase()) {
+    return new Response(JSON.stringify({ error: "Origin and destination must differ" }), {
       status: 400,
       headers: SECURITY_HEADERS.api,
     });
@@ -2820,15 +2861,21 @@ function parseCheckFlightPath(pathname: string): CheckFlightPath {
   } catch {
     return { kind: "invalid", raw: null }; // malformed % escape
   }
-  const fn = stripFlightNumberZeros(raw.toUpperCase());
+  const fn = stripFlightNumberZeros(icaoToIata(canonicalFlightInput(raw)));
   if (!CANONICAL_FLIGHT_PERMALINK.test(fn)) return { kind: "invalid", raw };
-  const date = second && isCalendarDate(second) ? second : null;
+  const date = second && isRealIsoDate(second) ? second : null;
   return { kind: "flight", raw, fn, date };
 }
 
-function isCalendarDate(s: string): boolean {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(s) || Number.isNaN(Date.parse(s))) return false;
-  return new Date(`${s}T00:00:00Z`).toISOString().slice(0, 10) === s;
+/** UAL675 → UA675: people paste the callsign from FR24/FlightAware. Only a
+ * carrier's own ICAO code maps — operating prefixes (SKW, OO) fly for several. */
+function icaoToIata(fn: string): string {
+  for (const cfg of enabledAirlines()) {
+    if (fn.startsWith(cfg.icao) && /^\d{1,4}$/.test(fn.slice(cfg.icao.length))) {
+      return `${cfg.iata}${fn.slice(cfg.icao.length)}`;
+    }
+  }
+  return fn;
 }
 
 /** Cap what an invalid segment can echo back into the page. React escapes it;
@@ -3071,7 +3118,7 @@ const checkFlightPage: Handler = (ctx) => {
       CheckFlightPage,
       ctx.url.pathname,
       invalidFlightMeta(ctx, invalid.reason),
-      { invalid },
+      { invalid, noindex: true },
       404
     );
   if (parsed.kind === "invalid") {
@@ -3116,7 +3163,7 @@ const checkFlightPage: Handler = (ctx) => {
         ctx.url.pathname,
         unknownFlightMeta(fn, cfg),
         // noindex but follow: hand the crawler somewhere real to go.
-        { popular: reader.getPopularFlights() }
+        { popular: reader.getPopularFlights(), noindex: true }
       );
     }
     const facts = buildFlightFacts(reader, cfg, fn, variants);
@@ -3253,11 +3300,17 @@ const routePlannerPage: Handler = (ctx) => {
     if (!ctx.reader.routeHasData(parsed.origin, parsed.destination)) return notFound(ctx.site);
     const route = ctx.reader.getRouteSummary(parsed.origin, parsed.destination);
     const reverseLinkable = ctx.reader.routeHasData(parsed.destination, parsed.origin);
+    // Historical pairs stay reachable (flight permalinks link them) but no
+    // longer index; recently seen ones do, whatever the 48h window holds.
+    const indexable = !ctx.reader.routeIsHistorical(parsed.origin, parsed.destination);
     return renderSubPage(
       ctx,
       RoutePage,
       `/route-planner/${parsed.origin}/${parsed.destination}`,
-      routePageMeta(ctx, cfg, route),
+      {
+        ...routePageMeta(ctx, cfg, route),
+        ...(indexable ? {} : { robotsMeta: "noindex, follow" }),
+      },
       { route, reverseLinkable }
     );
   }
@@ -3346,15 +3399,15 @@ const fleetPage: Handler = (ctx) => {
  * The one source for which type pages exist on this host. The handler, the
  * sitemap, llms.txt, /fleet's chip row, permalink type links and sibling links
  * all read it, so no surface links a page the handler 404s. One boolean gate
- * per def because memoGate caches booleans; the data itself is the reader's
- * own 60s per-airline pass.
+ * per def because memoGate caches booleans; it reads the cheap per-family
+ * gate, never the full type-page pass, so permalinks don't pay for it.
  */
 function servedAircraftPages(ctx: RequestContext): AircraftPageDef[] {
   const cfg = tenantConfig(ctx.tenant);
   if (!ctx.site.features.aircraftPages || !cfg) return [];
   return aircraftPagesFor(cfg.code).filter((def) =>
     memoGate(ctx, `aircraftPage:${def.slug}`, () => {
-      const data = ctx.reader.getAircraftTypePage(def.slug);
+      const data = ctx.reader.getAircraftTypeGate(def.slug);
       if (!data) return false;
       return (
         !def.requiresSourcedFact || typeFactsFor(cfg.code, def.slug).length > 0 || data.starlink > 0
@@ -4175,6 +4228,16 @@ const homePage: Handler = async (ctx) => {
   const lastUpdated = reader.getLastUpdated();
   const fleetStats = reader.getFleetStats();
   const flightsByTail = groupEquippedFlightsByTail(starlink, reader.getUpcomingFlights());
+  // The same measured pace /install-rate publishes, so the two never disagree.
+  const installsPerMonth = isHub
+    ? null
+    : computeInstallRate({
+        daily: reader.getDailyInstalls(),
+        equipped: starlink.length,
+        total,
+        targets: [],
+        nowMs: Date.now(),
+      }).paceMonthly;
   const reactHtml = ReactDOMServer.renderToString(
     React.createElement(Page, {
       total,
@@ -4189,6 +4252,7 @@ const homePage: Handler = async (ctx) => {
       // Momentum clause for the citable stat sentence — same source as the
       // hub cards' "+N in the last 30 days".
       installs30d: isHub ? undefined : reader.getPerAirlineStats()[0]?.installs30d,
+      installsPerMonth,
       flightsByTail,
       airportDepartures: reader.getAirportDepartures(),
       showPassengerBanner: isPassengerVerifyAudience(ctx.onStarlinkIp, site.scope),
@@ -4211,7 +4275,12 @@ const homePage: Handler = async (ctx) => {
       template,
       withClampedMeta({
         ...baseVars,
-        faqJsonLd: renderHtml(buildFaqJsonLd(content, baseVars.currentDate), baseVars),
+        faqJsonLd: renderHtml(buildFaqJsonLd(content, baseVars.currentDate), {
+          ...baseVars,
+          installPaceSentence: installsPerMonth
+            ? `About ${Math.round(installsPerMonth)} installs a month. `
+            : "",
+        }),
       })
     ),
     { headers: SECURITY_HEADERS.html }
@@ -4305,9 +4374,32 @@ function hostRedirect(req: Request, url: URL): Response | null {
   if (req.method !== "GET" && req.method !== "HEAD") return null;
   const site = Object.values(SITES).find((s) => s.hosts.includes(host));
   if (site && host !== site.canonicalHost) {
-    return Response.redirect(`https://${site.canonicalHost}${url.pathname}${url.search}`, 301);
+    return Response.redirect(
+      `https://${site.canonicalHost}${canonicalAliasPath(url.pathname)}${url.search}`,
+      301
+    );
   }
   return null;
+}
+
+/** Fold the canonical host's own path 301s into the alias hop, so www +
+ * /check-flight/ual675/ lands in one redirect instead of three. Only spellings
+ * the page handlers would 301 anyway; anything else passes through. */
+function canonicalAliasPath(pathname: string): string {
+  if (pathname === "/" || pathname.startsWith("/api/") || pathname.startsWith("/mcp")) {
+    return pathname;
+  }
+  if (pathname.startsWith("/check-flight/")) {
+    const parsed = parseCheckFlightPath(pathname);
+    if (parsed.kind === "flight") {
+      return `/check-flight/${parsed.fn}${parsed.date ? `/${parsed.date}` : ""}`;
+    }
+  }
+  if (pathname.startsWith("/route-planner/")) {
+    const parsed = parseRoutePath(pathname);
+    if (parsed) return `/route-planner/${parsed.origin}/${parsed.destination}`;
+  }
+  return pathname.replace(/\/+$/, "") || "/";
 }
 
 // Preflight mirrors the CORS headers the real responses carry: /api/* serves

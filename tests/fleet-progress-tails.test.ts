@@ -130,6 +130,53 @@ describe("parseProgressTailGrid", () => {
     });
   });
 
+  // Live express legend (2026-09-20): In Mod and In Operation share the yellow,
+  // the summary says 0 in mod, and 17 unequipped CRJs wear it.
+  test("a legend color shared with In Operation is idle, not in mod", () => {
+    const YELLOW = "255,242,204";
+    const grid: GridCell[][] = [
+      [c("Type"), c("CRJ2"), c("Totals")],
+      [c("Total (no Exit/Fltr)"), c("3"), c("3")],
+      [c("Starlink", BLUE), c("0"), c("0")],
+      [c("In Mod", YELLOW), c("0"), c("0")],
+      [c("In Operation", YELLOW), c("3"), c("3")],
+      [c(""), c("N920EV", YELLOW)],
+      [c(""), c("N921EV", YELLOW)],
+      [c(""), c("N922EV", YELLOW)],
+    ];
+    const parse = parseProgressTailGrid(grid, "express");
+    expect(parse).toEqual({ rows: [], rejected: [], unknownColors: [] });
+  });
+
+  // Live mainline_nb (2026-09-20): the rollup's In Mod reconciles only when
+  // tails at the "Future locations??" stations count as in mod.
+  test("future-station tails become in_mod when only that matches the rollup", () => {
+    const grid: GridCell[][] = [
+      [c("Type"), c("739"), c("Totals")],
+      [c("Total"), c("6"), c("6")],
+      [c("In Mod", PINK), c("6"), c("6")],
+      [c("Mod locations"), c("N37281", MLB)],
+      [c("MLB (DG3)", MLB), c("N37282", MLB)],
+      [c("Future locations??"), c("N79279", ILN)],
+      [c("ILN (G3)", ILN), c("N79280", ILN)],
+      [c(""), c("N79281", ILN)],
+      [c(""), c("N79282", ILN)],
+    ];
+    const parse = parseProgressTailGrid(grid, "mainline_nb");
+    expect(parse.rejected).toEqual([]);
+    expect(parse.rows).toHaveLength(6);
+    expect(parse.rows.every((r) => r.state === "in_mod")).toBe(true);
+    expect(parse.rows.find((r) => r.tail === "N79279")?.mod_location).toBe("ILN");
+  });
+
+  test("the darker complete blues are complete, not unknown", () => {
+    const grid = MAINLINE_GRID.map((row) => [...row]);
+    grid[8] = [c("MLB (DG3)", MLB), c("N33262", "17,85,204"), c("N37282", "0,0,255")];
+    const parse = parseProgressTailGrid(grid, "mainline_nb");
+    expect(parse.unknownColors).toEqual([]);
+    expect(parse.rows.some((r) => r.tail === "N33262" || r.tail === "N37282")).toBe(false);
+  });
+
   test("returns nothing for a grid without a Totals header", () => {
     expect(parseProgressTailGrid([[c("nope")]], "express")).toMatchObject({ rows: [] });
   });

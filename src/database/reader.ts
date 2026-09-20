@@ -27,13 +27,19 @@ import type {
   RecentInstall,
   RouteSchedule,
 } from "../types";
-import { type AdsbFlightDraw, getAdsbFlightDraws } from "./adsb-flight-draws";
+import {
+  type AdsbFlightDraw,
+  getAdsbFlightDraws,
+  getAdsbFlightDrawsFor,
+} from "./adsb-flight-draws";
 import {
   type AssignmentLogRow,
+  type ResolvedLeg,
   type SameDayAlternative,
   type SameDayAlternativesQuery,
   getAssignmentHistory,
   getSameDayStarlinkAlternatives,
+  logResolvedAssignments,
 } from "./assignment-log";
 import {
   type ConfirmedEdge,
@@ -67,6 +73,7 @@ import {
   computeWifiConsensus,
   countStarlinkPlanes,
   flightNumberHasData,
+  getAircraftTypeGate,
   getAircraftTypePageData,
   getAirlineByTail,
   getAirportDepartures,
@@ -122,6 +129,7 @@ import {
   getVerificationSummary,
   getWifiMismatches,
   routeHasData,
+  routeIsHistorical,
 } from "./database";
 
 export type { Database };
@@ -201,6 +209,8 @@ export interface ScopedReader {
   /** ADS-B departures since `sinceTs`. UA only: the callsign-to-marketing-number
    * mapping and the fleet sweep behind it exist for no other scope. */
   getAdsbFlightDraws(sinceTs: number): AdsbFlightDraw[];
+  /** getAdsbFlightDraws for one flight number, by departure. UA only. */
+  getAdsbFlightDrawsFor(flightNumber: string, sinceTs: number): AdsbFlightDraw[];
   getRouteFlights(origin: string | null, destination: string | null): RouteFlightRow[];
   getRouteGraphEdges(): RouteGraphEdge[];
   /** Every ORIG-DEST the carrier flies; null when no route census exists for the scope. */
@@ -231,6 +241,8 @@ export interface ScopedReader {
   flightNumberHasData(variants: string[]): boolean;
   /** Existence gate for /route-planner/{origin}/{destination}; mirrors getSitemapRoutes. */
   routeHasData(origin: string, destination: string): boolean;
+  /** Unseen for ROUTE_NOINDEX_STALE_DAYS — the route page goes noindex. */
+  routeIsHistorical(origin: string, destination: string): boolean;
   getRouteSummary(origin: string, destination: string): RouteSummary;
   /** Marketing numbers on a pair without getRouteSummary's windowed departure
    * counts — what the flight permalinks' sibling links actually need. */
@@ -272,6 +284,7 @@ export interface ScopedReader {
   /** Every tail the updater has seen on the flight's local date (Starlink Watch). */
   getAssignmentHistory(variants: readonly string[], depDate: string): AssignmentLogRow[];
   getSameDayStarlinkAlternatives(q: SameDayAlternativesQuery): SameDayAlternative[];
+  logResolvedAssignments(flightNumber: string, legs: readonly ResolvedLeg[], now: number): void;
 
   getQatarScheduleStats(): {
     total: number;
@@ -283,6 +296,8 @@ export interface ScopedReader {
 
   /** /fleet/{slug} page data; null on the hub and for types without a page. */
   getAircraftTypePage(slug: string): AircraftTypePageData | null;
+  /** Existence + Starlink count for the served gate, without the full page pass. */
+  getAircraftTypeGate(slug: string): { total: number; starlink: number } | null;
 
   // QR equipment history + fetch coverage; airline-agnostic like qatar_schedule.
   getQatarEquipmentHistory(
@@ -414,6 +429,8 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
 
     getVerificationObservations: () => getVerificationObservations(db, airlines),
     getAdsbFlightDraws: (since) => (scope === "UA" ? getAdsbFlightDraws(db, since) : []),
+    getAdsbFlightDrawsFor: (fn, since) =>
+      scope === "UA" ? getAdsbFlightDrawsFor(db, fn, since) : [],
     getRouteFlights: (o, d) => getRouteFlights(db, o, d, airlines),
     getRouteGraphEdges: () => getRouteGraphEdges(db, airlines),
     getServedRoutePairs: () => getServedRoutePairs(db, airlines),
@@ -430,6 +447,7 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
 
     flightNumberHasData: (v) => flightNumberHasData(db, v, airlines),
     routeHasData: (o, d) => routeHasData(db, o, d, soleAirline()),
+    routeIsHistorical: (o, d) => routeIsHistorical(db, o, d, soleAirline()),
     getRouteSummary: (o, d) => getRouteSummary(db, o, d, soleAirline()),
     getRouteFlightNumbers: (o, d) => getRouteFlightNumbers(db, o, d, soleAirline()),
     getFlightHistorySummary: (v) => getFlightHistorySummary(db, v, airlines),
@@ -452,9 +470,11 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
 
     getAssignmentHistory: (v, d) => getAssignmentHistory(db, airlines, v, d),
     getSameDayStarlinkAlternatives: (q) => getSameDayStarlinkAlternatives(db, airlines, q),
+    logResolvedAssignments: (fn, legs, now) => logResolvedAssignments(db, airlines, fn, legs, now),
 
     getAircraftTypePage: (slug) =>
       scope === "ALL" ? null : getAircraftTypePageData(db, scope, slug),
+    getAircraftTypeGate: (slug) => (scope === "ALL" ? null : getAircraftTypeGate(db, scope, slug)),
   };
   return Object.freeze(r);
 }
