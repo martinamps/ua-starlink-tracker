@@ -30,6 +30,7 @@ import { type HubHomeLinks, buildFaqJsonLd, getContent } from "../airlines/conte
 import {
   CANONICAL_FLIGHT_PERMALINK,
   buildFlightLookupVariants,
+  canonicalFlightInput,
   detectAirline,
   ensureAirlinePrefix,
   normalizeAirlineFlightNumber,
@@ -177,6 +178,7 @@ import type {
   Flight,
 } from "../types";
 import { AIRCRAFT_SPECS } from "../utils/aircraft-specs";
+import { isRealIsoDate } from "../utils/airport-tz";
 import {
   API_CORS_HEADERS,
   BASE_RESPONSE_HEADERS,
@@ -1082,9 +1084,12 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant, si
       const pct = Math.round(pred.probability * 100);
       // During an FR24 outage we genuinely don't know whether an assignment
       // exists — don't claim it isn't published yet.
+      // daysOut is UTC-day math, so -1 can still be "today" west of UTC.
       const assignmentNote = verdict.fr24Error
         ? FR24_OUTAGE_NOTE
-        : `Aircraft assignment not yet published — ${cfg.name} assigns aircraft ~2 days before departure.`;
+        : verdict.window.daysOut < -1
+          ? `No aircraft assignment on record — ${date} has already passed.`
+          : `Aircraft assignment not yet published — ${cfg.name} assigns aircraft ~2 days before departure.`;
       return new Response(
         JSON.stringify({
           hasStarlink: null,
@@ -1390,6 +1395,12 @@ const apiPlanRoute: Handler = ({ req, url, reader, tenant }) => {
   const maxStops = maxStopsParam ? Math.min(Number.parseInt(maxStopsParam, 10), 3) : 2;
   if (!origin || !destination) {
     return new Response(JSON.stringify({ error: "Missing origin or destination" }), {
+      status: 400,
+      headers: SECURITY_HEADERS.api,
+    });
+  }
+  if (origin.trim().toUpperCase() === destination.trim().toUpperCase()) {
+    return new Response(JSON.stringify({ error: "Origin and destination must differ" }), {
       status: 400,
       headers: SECURITY_HEADERS.api,
     });
@@ -2819,15 +2830,21 @@ function parseCheckFlightPath(pathname: string): CheckFlightPath {
   } catch {
     return { kind: "invalid", raw: null }; // malformed % escape
   }
-  const fn = stripFlightNumberZeros(raw.toUpperCase());
+  const fn = stripFlightNumberZeros(icaoToIata(canonicalFlightInput(raw)));
   if (!CANONICAL_FLIGHT_PERMALINK.test(fn)) return { kind: "invalid", raw };
-  const date = second && isCalendarDate(second) ? second : null;
+  const date = second && isRealIsoDate(second) ? second : null;
   return { kind: "flight", raw, fn, date };
 }
 
-function isCalendarDate(s: string): boolean {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(s) || Number.isNaN(Date.parse(s))) return false;
-  return new Date(`${s}T00:00:00Z`).toISOString().slice(0, 10) === s;
+/** UAL675 → UA675: people paste the callsign from FR24/FlightAware. Only a
+ * carrier's own ICAO code maps — operating prefixes (SKW, OO) fly for several. */
+function icaoToIata(fn: string): string {
+  for (const cfg of enabledAirlines()) {
+    if (fn.startsWith(cfg.icao) && /^\d{1,4}$/.test(fn.slice(cfg.icao.length))) {
+      return `${cfg.iata}${fn.slice(cfg.icao.length)}`;
+    }
+  }
+  return fn;
 }
 
 /** Cap what an invalid segment can echo back into the page. React escapes it;
@@ -3070,7 +3087,7 @@ const checkFlightPage: Handler = (ctx) => {
       CheckFlightPage,
       ctx.url.pathname,
       invalidFlightMeta(ctx, invalid.reason),
-      { invalid },
+      { invalid, noindex: true },
       404
     );
   if (parsed.kind === "invalid") {
@@ -3115,7 +3132,7 @@ const checkFlightPage: Handler = (ctx) => {
         ctx.url.pathname,
         unknownFlightMeta(fn, cfg),
         // noindex but follow: hand the crawler somewhere real to go.
-        { popular: reader.getPopularFlights() }
+        { popular: reader.getPopularFlights(), noindex: true }
       );
     }
     const facts = buildFlightFacts(reader, cfg, fn, variants);
@@ -3252,11 +3269,17 @@ const routePlannerPage: Handler = (ctx) => {
     if (!ctx.reader.routeHasData(parsed.origin, parsed.destination)) return notFound(ctx.site);
     const route = ctx.reader.getRouteSummary(parsed.origin, parsed.destination);
     const reverseLinkable = ctx.reader.routeHasData(parsed.destination, parsed.origin);
+    // Historical pairs stay reachable (flight permalinks link them) but no
+    // longer index; recently seen ones do, whatever the 48h window holds.
+    const indexable = !ctx.reader.routeIsHistorical(parsed.origin, parsed.destination);
     return renderSubPage(
       ctx,
       RoutePage,
       `/route-planner/${parsed.origin}/${parsed.destination}`,
-      routePageMeta(ctx, cfg, route),
+      {
+        ...routePageMeta(ctx, cfg, route),
+        ...(indexable ? {} : { robotsMeta: "noindex, follow" }),
+      },
       { route, reverseLinkable }
     );
   }
@@ -4304,9 +4327,32 @@ function hostRedirect(req: Request, url: URL): Response | null {
   if (req.method !== "GET" && req.method !== "HEAD") return null;
   const site = Object.values(SITES).find((s) => s.hosts.includes(host));
   if (site && host !== site.canonicalHost) {
-    return Response.redirect(`https://${site.canonicalHost}${url.pathname}${url.search}`, 301);
+    return Response.redirect(
+      `https://${site.canonicalHost}${canonicalAliasPath(url.pathname)}${url.search}`,
+      301
+    );
   }
   return null;
+}
+
+/** Fold the canonical host's own path 301s into the alias hop, so www +
+ * /check-flight/ual675/ lands in one redirect instead of three. Only spellings
+ * the page handlers would 301 anyway; anything else passes through. */
+function canonicalAliasPath(pathname: string): string {
+  if (pathname === "/" || pathname.startsWith("/api/") || pathname.startsWith("/mcp")) {
+    return pathname;
+  }
+  if (pathname.startsWith("/check-flight/")) {
+    const parsed = parseCheckFlightPath(pathname);
+    if (parsed.kind === "flight") {
+      return `/check-flight/${parsed.fn}${parsed.date ? `/${parsed.date}` : ""}`;
+    }
+  }
+  if (pathname.startsWith("/route-planner/")) {
+    const parsed = parseRoutePath(pathname);
+    if (parsed) return `/route-planner/${parsed.origin}/${parsed.destination}`;
+  }
+  return pathname.replace(/\/+$/, "") || "/";
 }
 
 // Preflight mirrors the CORS headers the real responses carry: /api/* serves
