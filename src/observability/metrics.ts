@@ -374,7 +374,7 @@ export const COUNTERS = {
   // MCP tool dispatch — tags: tool, airline, outcome (success|error|unknown_tool)
   MCP_TOOL_CALL: "mcp.tool_call",
 
-  // Route lookup fallback chain hit source — tags: source (memory|sqlite|fr24|upcoming|miss), airline
+  // Route lookup fallback chain hit source — tags: source (memory|assignment|sqlite|fr24|upcoming|stale|miss), airline
   ROUTE_LOOKUP: "route.lookup",
 
   // Passenger-verify dark launch: HTML request whose cf-connecting-ip is in the
