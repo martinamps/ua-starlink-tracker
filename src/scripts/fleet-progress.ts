@@ -234,26 +234,8 @@ export async function runFleetProgressSync(
 
       replaceFleetProgress(db, "UA", allRows);
 
-      // One gauge per segment rollup so dashboards/monitors can watch the
-      // pipeline (and catch a parse regression as a sudden drop to zero).
       const totalsRows = allRows.filter((r) => r.type_code === "Totals");
-      for (const rollup of totalsRows) {
-        const states: Array<[string, number | null]> = [
-          ["total", rollup.total],
-          ["complete", rollup.starlink_complete],
-          ["in_mod", rollup.in_mod],
-          ["verification_needed", rollup.verification_needed],
-        ];
-        for (const [state, value] of states) {
-          if (value !== null) {
-            metrics.gauge(GAUGES.FLEET_PROGRESS_COUNT, value, {
-              segment: rollup.segment,
-              state,
-              airline: airlineTag,
-            });
-          }
-        }
-      }
+      emitFleetProgressCounts("UA", totalsRows);
 
       const summary = totalsRows
         .map(
@@ -265,6 +247,35 @@ export async function runFleetProgressSync(
     },
     { "job.type": "background" }
   );
+}
+
+export type ProgressRollup = Pick<
+  ProgressTypeRow,
+  "segment" | "total" | "starlink_complete" | "in_mod" | "verification_needed"
+>;
+
+/** One gauge per segment rollup so monitors can catch a parse regression as a
+ * sudden drop. Also re-emitted from the stored snapshot by the 5-min freshness
+ * sweep: a once-a-day point left pct_change(last_1d) monitors on No Data. */
+export function emitFleetProgressCounts(airline: string, rollups: ProgressRollup[]): void {
+  const airlineTag = normalizeAirlineTag(airline);
+  for (const rollup of rollups) {
+    const states: Array<[string, number | null]> = [
+      ["total", rollup.total],
+      ["complete", rollup.starlink_complete],
+      ["in_mod", rollup.in_mod],
+      ["verification_needed", rollup.verification_needed],
+    ];
+    for (const [state, value] of states) {
+      if (value !== null) {
+        metrics.gauge(GAUGES.FLEET_PROGRESS_COUNT, value, {
+          segment: rollup.segment,
+          state,
+          airline: airlineTag,
+        });
+      }
+    }
+  }
 }
 
 export function startFleetProgressJob(db: Database): JobHandle {

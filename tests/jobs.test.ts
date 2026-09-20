@@ -7,6 +7,8 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { AIRLINES, enabledAirlines } from "../src/airlines/registry";
 import { checkNewPlanes } from "../src/api/flight-updater";
 import { FlightRadar24API } from "../src/api/flightradar24-api";
@@ -26,7 +28,7 @@ import {
   buildFreshnessQueries,
   emitDataFreshness,
 } from "../src/scripts/data-freshness";
-import { buildRoster } from "../src/scripts/fleet-sync";
+import { buildRoster, fleetSyncInitialDelayMs, rosterSources } from "../src/scripts/fleet-sync";
 import { ingestQatarSchedule } from "../src/scripts/qatar-schedule-ingester";
 import { type SheetScrapeResult, runSheetScrape } from "../src/scripts/sheet-scrape";
 import type { FleetStats } from "../src/types";
@@ -799,11 +801,55 @@ describe("residential_sync freshness gauge", () => {
     db.close();
   });
 
-  test("QR disabled → only AS is tracked", () => {
-    expect(buildFreshnessCoverage(false).residential_sync).toEqual(["AS"]);
+  test("QR disabled → QR is not tracked", () => {
+    expect(buildFreshnessCoverage(false).residential_sync).not.toContain("QR");
     const db = makeSyntheticDb();
     const calls = residentialGauges(db, buildFreshnessQueries(false));
-    expect(calls.map((c) => c.tags?.airline)).toEqual([normalizeAirlineTag("AS")]);
+    expect(calls.map((c) => c.tags?.airline)).not.toContain(normalizeAirlineTag("QR"));
+    expect(calls.map((c) => c.tags?.airline)).toContain(normalizeAirlineTag("AS"));
+    db.close();
+  });
+
+  // The daily sync alone left pct_change(last_1d) monitors on No Data.
+  test("the sweep re-emits the stored fleet-progress rollups", () => {
+    const db = makeSyntheticDb();
+    db.query(
+      "INSERT INTO fleet_progress (airline, segment, type_code, total, starlink_complete, in_mod, fetched_at) VALUES ('UA', 'mainline_nb', 'Totals', 878, 239, 13, 1), ('UA', 'mainline_nb', 'A320', 90, 5, 1, 1)"
+    ).run();
+    const calls: Array<{ name: string; value: number; tags?: Record<string, string | number> }> =
+      [];
+    const original = metrics.gauge;
+    metrics.gauge = (name, value, tags) => {
+      calls.push({ name, value, tags });
+    };
+    try {
+      emitDataFreshness(db);
+    } finally {
+      metrics.gauge = original;
+    }
+    const progress = calls.filter((c) => c.name === "fleet_progress.count");
+    expect(progress.map((c) => c.tags?.state).sort()).toEqual(["complete", "in_mod", "total"]);
+    for (const c of progress) {
+      expect(c.tags?.segment).toBe("mainline_nb");
+      expect(c.tags?.airline).toBe(normalizeAirlineTag("UA"));
+    }
+    db.close();
+  });
+
+  // residential-sync stamps AF:residentialSyncAt; the gauge ignored it.
+  test("every airline residential-sync stamps is tracked", () => {
+    const src = readFileSync(join(import.meta.dir, "../src/scripts/residential-sync.ts"), "utf8");
+    const stamped = [...src.matchAll(/setMeta\(db, "residentialSyncAt", [^,]+, "([A-Z0-9]{2})"\)/g)]
+      .map((m) => m[1])
+      .filter((code) => AIRLINES[code]?.enabled);
+    expect(stamped.length).toBeGreaterThan(0);
+    for (const code of stamped) expect(FRESHNESS_COVERAGE.residential_sync).toContain(code);
+
+    const db = makeSyntheticDb();
+    setMeta(db, "residentialSyncAt", new Date(Date.now() - 3_600_000).toISOString(), "AF");
+    const af = residentialGauges(db).find((c) => c.tags?.airline === normalizeAirlineTag("AF"));
+    expect(af?.value as number).toBeGreaterThanOrEqual(3590);
+    expect(af?.value as number).toBeLessThan(4000);
     db.close();
   });
 });
@@ -813,7 +859,17 @@ describe("residential_sync freshness gauge", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("fleet-sync buildRoster", () => {
-  const AS = AIRLINES.AS;
+  // The regional-page mechanism, exercised with the shape qx-qxe used to have.
+  const AS = {
+    ...AIRLINES.AS,
+    regionalCarriers: [{ fr24Slug: "qx-qxe", name: "Horizon Air", subfleet: "horizon" }],
+  };
+
+  // FR24's Horizon page lists "Number of aircraft in fleet: 0"; as-asa carries
+  // all 92 E75L. Scraping qx-qxe returned 0 on every run.
+  test("AS scrapes only its livery page", () => {
+    expect(rosterSources(AIRLINES.AS).map((s) => s.slug)).toEqual(["as-asa"]);
+  });
   const e175 = (reg: string) => ({ registration: reg, aircraftType: "Embraer E175LR" });
   const b737 = (reg: string) => ({ registration: reg, aircraftType: "Boeing 737-890" });
 
@@ -847,5 +903,21 @@ describe("fleet-sync buildRoster", () => {
   test("configured page subfleet beats the type classifier", () => {
     const roster = buildRoster(AS, [{ subfleet: "horizon", aircraft: [b737("N999XX")] }]);
     expect(roster[0].subfleet).toBe("horizon");
+  });
+});
+
+describe("fleet-sync boot delay", () => {
+  const NOW = Date.parse("2026-09-20T16:35:55Z");
+  const HOUR = 3600_000;
+
+  test("a restart soon after a run waits out the rest of the 24h", () => {
+    const delay = fleetSyncInitialDelayMs(new Date(NOW - 3 * HOUR).toISOString(), NOW);
+    expect(delay).toBe(21 * HOUR);
+  });
+
+  test("an overdue, missing or garbled stamp runs 5 min after boot", () => {
+    for (const stamp of [new Date(NOW - 30 * HOUR).toISOString(), null, "not-a-date"]) {
+      expect(fleetSyncInitialDelayMs(stamp, NOW)).toBe(5 * 60_000);
+    }
   });
 });

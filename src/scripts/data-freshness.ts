@@ -4,6 +4,7 @@ import { FR24_UPCOMING_CAP } from "../api/flightradar24-api";
 import { GAUGES, metrics, normalizeAirlineTag } from "../observability/metrics";
 import { type JobHandle, startJob } from "../utils/job-runner";
 import { info, error as logError } from "../utils/logger";
+import { type ProgressRollup, emitFleetProgressCounts } from "./fleet-progress";
 
 const EMIT_INTERVAL_MS = 5 * 60 * 1000;
 
@@ -72,8 +73,8 @@ function residentialSyncQuery(qrEnabled: boolean): string {
     LEFT JOIN meta m ON m.key = a.airline || ':residentialSyncAt'`;
 }
 
-function residentialSyncAirlines(qrEnabled: boolean): string[] {
-  return qrEnabled ? ["AS", "QR"] : ["AS"];
+function residentialSyncAirlines(qrEnabled: boolean, afEnabled = AIRLINES.AF.enabled): string[] {
+  return ["AS", ...(qrEnabled ? ["QR"] : []), ...(afEnabled ? ["AF"] : [])];
 }
 
 export const FRESHNESS_QUERIES = buildFreshnessQueries();
@@ -178,19 +179,40 @@ export function emitDataFreshness(db: Database, queries = FRESHNESS_QUERIES): vo
   }
   emitRowCounts(db);
   emitCappedFutureShare(db);
+  emitStoredFleetProgress(db);
 }
 
+function emitStoredFleetProgress(db: Database): void {
+  try {
+    const rows = db
+      .query(
+        `SELECT airline, segment, total, starlink_complete, in_mod, verification_needed
+         FROM fleet_progress WHERE type_code = 'Totals'`
+      )
+      .all() as Array<ProgressRollup & { airline: string }>;
+    for (const row of rows) emitFleetProgressCounts(row.airline, [row]);
+  } catch (err) {
+    logError("Fleet-progress re-emit failed", err);
+  }
+}
+
+/** Past any overnight park, so a tail refreshed at the gate for its first
+ * morning departure doesn't count. A 1h threshold swung AS 0→64% every night
+ * (Datadog 2026-09-20); simulated refreshes at every ground moment in the
+ * 2026-08-29 schedules flag 4.4% of UA at 12h vs 70% at 1h. */
+export const CAPPED_FUTURE_GAP_SEC = 12 * 3600;
+
 /** Per airline: share of tails sitting exactly at the row cap whose first row
- * departs over an hour after their refresh. ~46% of UA tails before the
- * nearest-first cap fix (prod snapshot 2026-08-29); a rise means the cap is
- * dropping near-term legs again. */
+ * departs more than an overnight park after their refresh. 34% of UA tails
+ * (193/561) before the nearest-first cap fix (prod snapshot 2026-08-29); a rise
+ * means the cap is dropping near-term legs again. */
 export function cappedFutureShareByAirline(
   db: Database,
   cap = FR24_UPCOMING_CAP
 ): Array<{ airline: string; share: number }> {
   return db
     .query(
-      `SELECT airline, AVG(CASE WHEN n = ? AND first_dep > refreshed + 3600 THEN 1.0 ELSE 0 END) AS share
+      `SELECT airline, AVG(CASE WHEN n = ? AND first_dep > refreshed + ${CAPPED_FUTURE_GAP_SEC} THEN 1.0 ELSE 0 END) AS share
        FROM (
          SELECT airline, tail_number, COUNT(*) AS n, MIN(departure_time) AS first_dep,
                 MAX(last_updated) AS refreshed
