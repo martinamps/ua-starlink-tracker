@@ -2,9 +2,10 @@
  * Starlink Watch routes: GET /cal/{FN}/{YYYY-MM-DD}[.ics] and the same-day
  * alternatives attached to firm-no check-flight answers.
  *
- * Served from the DB only (lookupTail: null): a calendar app re-polls every
- * subscription on its own schedule, so an FR24 call per fetch would turn every
- * subscriber into a scraper.
+ * Served from the DB only: a calendar app re-polls every subscription on its
+ * own schedule, so an FR24 call per fetch would turn every subscriber into a
+ * scraper. The FR24 lookup is stood in for by the legs check-flight last
+ * resolved (logged to flight_assignment_log), so the feed and the page agree.
  */
 
 import {
@@ -15,11 +16,13 @@ import {
 import type { AirlineConfig, SiteConfig } from "../airlines/registry";
 import {
   type FlightVerdict,
+  type ResolveDeps,
   negativeWifi,
   resolveFlightVerdict,
   scheduledFlights,
   verdictConfidence,
 } from "../api/check-flight-core";
+import { type FallbackSegment, resolveTailVerdict } from "../api/flight-verdict";
 import type { AssignmentLogRow, SameDayAlternative } from "../database/assignment-log";
 import { COUNTERS, metrics, normalizeAirlineTag } from "../observability/metrics";
 import { flightDateWindow } from "../utils/airport-tz";
@@ -83,13 +86,17 @@ export function watchVerdictFrom(
   verdict: VerdictWithWindow,
   history: readonly AssignmentLogRow[]
 ): { verdict: WatchVerdict; leg: WatchLeg } {
-  const latest = [...history].sort((a, b) => b.last_seen - a.last_seen)[0];
-  const historyLeg: WatchLeg = latest
+  const first = [...history].sort(
+    (a, b) =>
+      (a.departure_time ?? Number.POSITIVE_INFINITY) -
+      (b.departure_time ?? Number.POSITIVE_INFINITY)
+  )[0];
+  const historyLeg: WatchLeg = first
     ? {
-        dep: latest.departure_airport,
-        arr: latest.arrival_airport,
-        depUnix: latest.departure_time,
-        arrUnix: latest.arrival_time,
+        dep: first.departure_airport,
+        arr: first.arrival_airport,
+        depUnix: first.departure_time,
+        arrUnix: first.arrival_time,
       }
     : { dep: null, arr: null, depUnix: null, arrUnix: null };
 
@@ -187,6 +194,47 @@ export function watchVerdictFrom(
 }
 
 /**
+ * DB-only stand-in for the FR24 lookup: per leg, the most recently seen tail
+ * the updater doesn't track. Tracked tails are skipped because this only runs
+ * when upcoming_flights holds no equipped row for the flight, and a tracked
+ * tail missing there has moved off it. null (no usable rows) falls through to
+ * the prediction, exactly like a date outside FR24's window.
+ */
+export function loggedTailLookup(
+  history: readonly AssignmentLogRow[]
+): NonNullable<ResolveDeps["lookupTail"]> {
+  return async (reader, _fn, _date, _start, _end, now) => {
+    const byLeg = new Map<string, AssignmentLogRow>();
+    for (const r of history) {
+      if (r.departure_time === null || r.arrival_time === null) continue;
+      if (reader.getStarlinkPlaneByTail(r.tail_number)) continue;
+      const cur = byLeg.get(r.departure_airport);
+      if (!cur || r.last_seen > cur.last_seen) byLeg.set(r.departure_airport, r);
+    }
+    if (byLeg.size === 0) return null;
+    return [...byLeg.values()]
+      .sort((a, b) => (a.departure_time ?? 0) - (b.departure_time ?? 0))
+      .map((r): FallbackSegment => {
+        const v = resolveTailVerdict(reader, r.tail_number, now);
+        return {
+          tail_number: r.tail_number,
+          aircraft_model: v.aircraft_model ?? null,
+          origin: r.departure_airport,
+          destination: r.arrival_airport ?? "",
+          departure_time: r.departure_time ?? 0,
+          arrival_time: r.arrival_time ?? 0,
+          hasStarlink: v.hasStarlink,
+          confidence: v.confidence,
+          verified_wifi: v.verified_wifi,
+          verified_at: v.verified_at,
+          operated_by: v.operated_by,
+          fleet_type: v.fleet_type,
+        };
+      });
+  };
+}
+
+/**
  * Same-day Starlink departures on the firm-no leg, or null when the verdict
  * isn't a firm no or the date is past the loaded schedule. Null means "omit
  * the field"; [] means "we looked and found none".
@@ -262,18 +310,18 @@ export async function watchFeed(ctx: RequestContext): Promise<Response> {
     return watchNotFound();
   }
 
+  const history = ctx.reader.getAssignmentHistory(
+    buildAirlineFlightNumberVariants(cfg, parsed.fn),
+    parsed.date
+  );
   const verdict = await resolveFlightVerdict(cfg, ctx.reader, parsed.fn, parsed.date, {
     now,
-    lookupTail: null,
+    lookupTail: loggedTailLookup(history),
   });
   if (verdict.kind === "invalid_date" || verdict.kind === "invalid_flight_number") {
     return watchNotFound();
   }
 
-  const history = ctx.reader.getAssignmentHistory(
-    buildAirlineFlightNumberVariants(cfg, parsed.fn),
-    parsed.date
-  );
   const { verdict: watch, leg } = watchVerdictFrom(verdict, history);
   const alternatives = sameDayAlternativesFor(ctx.reader, verdict, parsed.date) ?? [];
 
