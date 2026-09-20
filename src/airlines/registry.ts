@@ -470,8 +470,9 @@ const AIRLINE_DEFS = {
     ],
     // Same matcher as alaskaTypeToWifi so verdict and subfleet can't disagree.
     classifyFleet: (t) => (normalizeAircraftType(t) === "E175" ? "horizon" : "mainline"),
+    // No regionalCarriers: FR24's qx-qxe page lists 0 aircraft; as-asa carries
+    // every E175 (92 E75L, 2026-09-20).
     fr24Slug: "as-asa",
-    regionalCarriers: [{ fr24Slug: "qx-qxe", name: "Horizon Air", subfleet: "horizon" }],
     metricTag: "alaska",
     ...FAA_TAIL,
     minFleetSanity: 200,

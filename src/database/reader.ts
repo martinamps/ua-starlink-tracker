@@ -30,10 +30,12 @@ import type {
 import { type AdsbFlightDraw, getAdsbFlightDraws } from "./adsb-flight-draws";
 import {
   type AssignmentLogRow,
+  type ResolvedLeg,
   type SameDayAlternative,
   type SameDayAlternativesQuery,
   getAssignmentHistory,
   getSameDayStarlinkAlternatives,
+  logResolvedAssignments,
 } from "./assignment-log";
 import {
   type ConfirmedEdge,
@@ -67,6 +69,7 @@ import {
   computeWifiConsensus,
   countStarlinkPlanes,
   flightNumberHasData,
+  getAircraftTypeGate,
   getAircraftTypePageData,
   getAirlineByTail,
   getAirportDepartures,
@@ -275,6 +278,7 @@ export interface ScopedReader {
   /** Every tail the updater has seen on the flight's local date (Starlink Watch). */
   getAssignmentHistory(variants: readonly string[], depDate: string): AssignmentLogRow[];
   getSameDayStarlinkAlternatives(q: SameDayAlternativesQuery): SameDayAlternative[];
+  logResolvedAssignments(flightNumber: string, legs: readonly ResolvedLeg[], now: number): void;
 
   getQatarScheduleStats(): {
     total: number;
@@ -286,6 +290,8 @@ export interface ScopedReader {
 
   /** /fleet/{slug} page data; null on the hub and for types without a page. */
   getAircraftTypePage(slug: string): AircraftTypePageData | null;
+  /** Existence + Starlink count for the served gate, without the full page pass. */
+  getAircraftTypeGate(slug: string): { total: number; starlink: number } | null;
 
   // QR equipment history + fetch coverage; airline-agnostic like qatar_schedule.
   getQatarEquipmentHistory(
@@ -456,9 +462,11 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
 
     getAssignmentHistory: (v, d) => getAssignmentHistory(db, airlines, v, d),
     getSameDayStarlinkAlternatives: (q) => getSameDayStarlinkAlternatives(db, airlines, q),
+    logResolvedAssignments: (fn, legs, now) => logResolvedAssignments(db, airlines, fn, legs, now),
 
     getAircraftTypePage: (slug) =>
       scope === "ALL" ? null : getAircraftTypePageData(db, scope, slug),
+    getAircraftTypeGate: (slug) => (scope === "ALL" ? null : getAircraftTypeGate(db, scope, slug)),
   };
   return Object.freeze(r);
 }

@@ -3368,15 +3368,15 @@ const fleetPage: Handler = (ctx) => {
  * The one source for which type pages exist on this host. The handler, the
  * sitemap, llms.txt, /fleet's chip row, permalink type links and sibling links
  * all read it, so no surface links a page the handler 404s. One boolean gate
- * per def because memoGate caches booleans; the data itself is the reader's
- * own 60s per-airline pass.
+ * per def because memoGate caches booleans; it reads the cheap per-family
+ * gate, never the full type-page pass, so permalinks don't pay for it.
  */
 function servedAircraftPages(ctx: RequestContext): AircraftPageDef[] {
   const cfg = tenantConfig(ctx.tenant);
   if (!ctx.site.features.aircraftPages || !cfg) return [];
   return aircraftPagesFor(cfg.code).filter((def) =>
     memoGate(ctx, `aircraftPage:${def.slug}`, () => {
-      const data = ctx.reader.getAircraftTypePage(def.slug);
+      const data = ctx.reader.getAircraftTypeGate(def.slug);
       if (!data) return false;
       return (
         !def.requiresSourcedFact || typeFactsFor(cfg.code, def.slug).length > 0 || data.starlink > 0

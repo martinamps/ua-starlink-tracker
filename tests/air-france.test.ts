@@ -754,15 +754,14 @@ describe("community fleet fallback tier", () => {
     db.close();
   });
 
+  // Empty is neutral on every tier: five idle A7-BC* (14:52Z) then F-GSQ*
+  // (16:28Z) starlink-tier empties opened the breaker twice on 2026-09-20.
   test.each([
-    ["updated", false, "reset"],
-    ["updated", true, "reset"],
-    ["error", false, "count"],
-    ["error", true, "count"],
-    ["empty", false, "count"],
-    ["empty", true, "none"],
-  ] as const)("breaker: %s on fallback=%p → %s", (outcome, fallback, effect) => {
-    expect(breakerEffect(outcome, fallback)).toBe(effect);
+    ["updated", "reset"],
+    ["error", "count"],
+    ["empty", "none"],
+  ] as const)("breaker: %s → %s", (outcome, effect) => {
+    expect(breakerEffect(outcome)).toBe(effect);
   });
 });
 

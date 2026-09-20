@@ -42,8 +42,8 @@ async function scrapeRoster(): Promise<SeedRow[]> {
 
   const sources = rosterSources(cfg);
 
-  // buildRoster dedupes the as-asa/qx-qxe overlap; operator is asserted only
-  // for qx-qxe-sourced tails, so as-asa rows can't misattribute Horizon E175s
+  // buildRoster dedupes any regional-page overlap; operator is asserted only
+  // for regional-page tails, so as-asa rows can't misattribute Horizon E175s
   // to "Alaska Airlines" or inflate the counts.
   const scraped: RosterSource[] = [];
   const failures: string[] = [];
@@ -53,9 +53,7 @@ async function scrapeRoster(): Promise<SeedRow[]> {
       info(`Fetching FR24 roster for ${slug}...`);
       const scrape = await scrapeFlightRadar24Fleet(slug, browser);
       if (!scrape.success) {
-        // Non-fatal per source — qx-qxe is flaky and redundant when as-asa
-        // returns the full livery roster. The minFleetSanity check below is
-        // the real gate.
+        // Non-fatal per source. The minFleetSanity check below is the real gate.
         info(`FR24 scrape failed for ${slug} (${scrape.error}); continuing`);
         failures.push(slug);
         continue;

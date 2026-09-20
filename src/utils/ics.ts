@@ -164,14 +164,19 @@ function formatLocalTime(unixSec: number, airport: string | null): string {
 export function watchDescription(input: WatchIcsInput): string[] {
   const { verdict, history, alternatives, dep } = input;
   const lines: string[] = [];
+  const legRows = dep ? history.filter((h) => h.departure_airport === dep) : history;
+  // Rows for the date mean a tail was seen and has since moved off: the
+  // current one is unknown, not unassigned.
+  const pending =
+    legRows.length > 0 ? "Current aircraft not confirmed." : "No aircraft assigned yet.";
   switch (verdict.state) {
     case "prediction":
       lines.push(
         verdict.probability === null
-          ? "No aircraft assigned yet."
+          ? pending
           : verdict.observations > 0
-            ? `No aircraft assigned yet. ~${Math.round(verdict.probability * 100)}% of ${verdict.observations} observed departures of this flight used a Starlink aircraft.`
-            : `No aircraft assigned yet. ~${Math.round(verdict.probability * 100)}% is the fleet-wide Starlink install rate.`
+            ? `${pending} ~${Math.round(verdict.probability * 100)}% of ${verdict.observations} observed departures of this flight used a Starlink aircraft.`
+            : `${pending} ~${Math.round(verdict.probability * 100)}% is the fleet-wide Starlink install rate.`
       );
       break;
     case "yes":
@@ -185,11 +190,10 @@ export function watchDescription(input: WatchIcsInput): string[] {
       );
       break;
     case "none":
-      lines.push(verdict.message ?? "No aircraft assigned yet.");
+      lines.push(verdict.message ?? pending);
       break;
   }
 
-  const legRows = dep ? history.filter((h) => h.departure_airport === dep) : history;
   if (legRows.length > 0) {
     lines.push("", "Assignment history:");
     for (const r of legRows) {

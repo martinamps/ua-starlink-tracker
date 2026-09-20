@@ -10,8 +10,10 @@ import {
   lastUpdatedOwner,
 } from "../airlines/registry";
 import {
+  getMeta,
   initializeDatabase,
   refreshFleetMeta,
+  setMeta,
   syncSpreadsheetToFleet,
   upsertFleetAircraft,
 } from "../database/database";
@@ -280,16 +282,50 @@ export async function syncFullFleet(): Promise<{
   return { fr24, spreadsheet: spreadsheetResult };
 }
 
-/**
- * Start automatic daily fleet sync
- * Runs FR24 sync once per day to keep united_fleet populated
- */
+const FLEET_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const FLEET_SYNC_MIN_DELAY_MS = 5 * 60 * 1000;
+const FLEET_SYNC_META_KEY = "fleetSyncStartedAt";
+
+/** Delay the boot run until 24h after the last one. Every deploy (the daily OG
+ * refresh included) re-ran the full FR24 scrape 5 min after boot: 14 runs in
+ * 9.5 days, 3 on 2026-09-20. A missing or unparseable stamp runs promptly. */
+export function fleetSyncInitialDelayMs(lastStartedAt: string | null, nowMs = Date.now()): number {
+  const last = lastStartedAt ? Date.parse(lastStartedAt) : Number.NaN;
+  if (!Number.isFinite(last)) return FLEET_SYNC_MIN_DELAY_MS;
+  return Math.max(FLEET_SYNC_MIN_DELAY_MS, last + FLEET_SYNC_INTERVAL_MS - nowMs);
+}
+
+function readFleetSyncStartedAt(): string | null {
+  const db = initializeDatabase();
+  try {
+    return getMeta(db, FLEET_SYNC_META_KEY, "ALL");
+  } finally {
+    db.close();
+  }
+}
+
+function stampFleetSyncStarted(): void {
+  const db = initializeDatabase();
+  try {
+    setMeta(db, FLEET_SYNC_META_KEY, new Date().toISOString(), "ALL");
+  } finally {
+    db.close();
+  }
+}
+
+/** Daily FR24 roster sync keeping united_fleet populated. */
 export function startFleetSync(): JobHandle {
-  const SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
-  const INITIAL_DELAY_MS = 5 * 60 * 1000; // 5 minutes after startup
+  let initialDelayMs = FLEET_SYNC_MIN_DELAY_MS;
+  try {
+    initialDelayMs = fleetSyncInitialDelayMs(readFleetSyncStartedAt());
+  } catch (err) {
+    logError("Fleet sync: could not read last-run stamp; running on the boot schedule", err);
+  }
 
   const runSync = async () => {
     try {
+      // Stamped on start, not success, so a crash-looping deploy can't re-run it.
+      stampFleetSyncStarted();
       await withSpan(
         "fleet_sync.run",
         async (span) => {
@@ -324,14 +360,13 @@ export function startFleetSync(): JobHandle {
 
   const handle = startJob({
     name: "fleet_sync",
-    intervalMs: SYNC_INTERVAL_MS,
-    // Initial sync after 5 minutes (give server time to stabilize)
-    initialDelayMs: INITIAL_DELAY_MS,
+    intervalMs: FLEET_SYNC_INTERVAL_MS,
+    initialDelayMs,
     run: runSync,
   });
 
   info(
-    `Fleet sync scheduled (every ${SYNC_INTERVAL_MS / 1000 / 3600}h, first run in ${INITIAL_DELAY_MS / 1000 / 60}min)`
+    `Fleet sync scheduled (every ${FLEET_SYNC_INTERVAL_MS / 1000 / 3600}h, first run in ${Math.round(initialDelayMs / 1000 / 60)}min)`
   );
   return handle;
 }

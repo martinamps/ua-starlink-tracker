@@ -5,14 +5,19 @@
  * upcoming_flights is rewritten per tail on every refresh, so it can say which
  * tail flies a flight now but never that the tail changed. This log keeps one
  * row per (flight, local date, leg, tail) the updater has ever seen, which is
- * what a swap is: two tails for one leg. Rows only come from tails the updater
- * tracks (starlink_planes), so a swap onto an untracked tail shows up as the
- * flight vanishing, not as a row — consumers must not read absence as a swap.
+ * what a swap is: two tails for one leg. Rows come from tails the updater
+ * tracks (starlink_planes) and from the legs a check-flight FR24 lookup
+ * resolved, so a swap onto an untracked tail nobody has looked up shows up as
+ * the flight vanishing, not as a row — consumers must not read absence as a swap.
  */
 
 import type { Database } from "bun:sqlite";
-import { ensureAirlinePrefix, normalizeAirlineFlightNumber } from "../airlines/flight-number";
-import { AIRLINES } from "../airlines/registry";
+import {
+  detectAirline,
+  ensureAirlinePrefix,
+  normalizeAirlineFlightNumber,
+} from "../airlines/flight-number";
+import { AIRLINES, type AirlineConfig } from "../airlines/registry";
 import type { Flight } from "../types";
 import { airportLocalDate, icaoToIata } from "../utils/airport-tz";
 
@@ -123,6 +128,52 @@ export function logFlightAssignments(
       now
     );
   }
+}
+
+export interface ResolvedLeg {
+  tail_number: string;
+  origin: string;
+  destination: string;
+  departure_time: number;
+  arrival_time: number;
+}
+
+/**
+ * The legs a request-path FR24 lookup answered with, so DB-only readers (the
+ * Watch feed) can serve the same tail without their own FR24 call.
+ * Best-effort: readonly DBs (tests, MCP snapshot) just skip.
+ */
+export function logResolvedAssignments(
+  db: Database,
+  airlines: readonly string[],
+  flightNumber: string,
+  legs: readonly ResolvedLeg[],
+  now: number
+): void {
+  const cfg = detectAirline(
+    flightNumber,
+    airlines.map((a) => AIRLINES[a]).filter((c): c is AirlineConfig => !!c)
+  );
+  if (!cfg) return;
+  const byTail = new Map<string, ResolvedLeg[]>();
+  for (const l of legs) byTail.set(l.tail_number, [...(byTail.get(l.tail_number) ?? []), l]);
+  try {
+    for (const [tail, tailLegs] of byTail) {
+      logFlightAssignments(
+        db,
+        cfg.code,
+        tail,
+        tailLegs.map((l) => ({
+          flight_number: flightNumber,
+          departure_airport: l.origin,
+          arrival_airport: l.destination,
+          departure_time: l.departure_time,
+          arrival_time: l.arrival_time,
+        })),
+        now
+      );
+    }
+  } catch {}
 }
 
 export function pruneAssignmentLog(db: Database, now: number): void {
