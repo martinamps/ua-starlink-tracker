@@ -187,9 +187,10 @@ type ToolResult = { content: TextContent[]; isError?: boolean };
 // Tool definitions (JSON Schema 2020-12)
 // ============================================================================
 
-// Registry-derived (pinned in tests/vocabulary.test.ts): a newly enabled
-// airline is overridable via ?scope= without editing this file.
-export const VALID_SCOPES: readonly Scope[] = ["ALL", ...enabledAirlines().map((a) => a.code)];
+// Registry-derived (pinned in tests/vocabulary.test.ts). Only carriers the hub
+// already answers for: an enabled-but-unpublished airline (collecting data
+// before launch) must not be reachable through ?scope=.
+export const VALID_SCOPES: readonly Scope[] = ["ALL", ...hubLookupAirlines().map((a) => a.code)];
 
 function isValidScope(s: string): s is Scope {
   return (VALID_SCOPES as readonly string[]).includes(s);

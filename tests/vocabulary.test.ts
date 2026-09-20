@@ -19,6 +19,7 @@ import {
   SUBFLEET_KEY_LIST,
   VERIFICATION_SOURCES,
   enabledAirlines,
+  hubLookupAirlines,
   verifierSourceTag,
 } from "../src/airlines/registry";
 import { VALID_SCOPES } from "../src/api/mcp-server";
@@ -206,10 +207,15 @@ describe("bulk writer sheet_gids are excluded from install surfaces", () => {
 describe("MCP scope vocabulary", () => {
   // A hand-enumerated list compiles clean when an airline is registered but
   // silently ignores its ?scope= override (falls back to the host scope).
-  test("VALID_SCOPES = ALL + every enabled airline", () => {
+  test("VALID_SCOPES = ALL + every hub-lookup airline", () => {
     expect([...VALID_SCOPES].sort()).toEqual(
-      ["ALL", ...enabledAirlines().map((a) => a.code)].sort()
+      ["ALL", ...hubLookupAirlines().map((a) => a.code)].sort()
     );
+  });
+
+  test("an enabled but unpublished airline is not a valid scope", () => {
+    const hidden = enabledAirlines().filter((a) => !hubLookupAirlines().includes(a));
+    for (const a of hidden) expect(VALID_SCOPES).not.toContain(a.code);
   });
 });
 
