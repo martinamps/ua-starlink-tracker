@@ -27,10 +27,12 @@ import {
   resolveFlightVerdict,
   scheduledFlights,
   selectLeg,
+  tailChangeRate,
   verdictTelemetry,
 } from "../src/api/check-flight-core";
 import type { FallbackSegment, lookupFlightTailVerdict } from "../src/api/flight-verdict";
 import { Fr24UnavailableError } from "../src/api/flightradar24-api";
+import { ensureAdsbFlightDrawsTable } from "../src/database/adsb-flight-draws";
 import { createReaderFactory } from "../src/database/reader";
 import type { predictFlight } from "../src/scripts/starlink-predictor";
 import { AIRPORT_COORDS } from "../src/utils/airport-geo";
@@ -478,6 +480,51 @@ describe("leg-scoped verdicts (synthetic DB)", () => {
     expect(await grade("UA7789", { origin: "SFO", destination: "IAD" })).toBe("high");
     expect(await grade("UA7789", { origin: "PHX", destination: "SEA" })).toBe("high");
     expect(await grade("UA7799", { origin: "DEN", destination: "SAN" })).toBe("high");
+
+    // ADS-B: a through flight that keeps its aircraft keeps its grade; one that
+    // changes tails on ≥20% of trips drops. UA7788 above has no draws at all.
+    ensureAdsbFlightDrawsTable(db);
+    for (const [fn, changedTrips] of [
+      ["UA7790", 0],
+      ["UA7791", 2],
+    ] as const) {
+      for (const [o, d] of [
+        ["SFO", "DEN"],
+        ["DEN", "SAN"],
+      ]) {
+        db.run(
+          `INSERT INTO flight_routes
+             (flight_number, origin, destination, duration_sec, first_seen_at, last_seen_at, seen_count)
+           VALUES (?, ?, ?, 7200, ?, ?, 50)`,
+          [fn, o, d, now - 90 * 86400, now - 86400]
+        );
+      }
+      for (let day = 1; day <= 6; day++) {
+        const dep = now - day * 86400;
+        const second = day <= changedTrips ? "N9002" : "N9001";
+        db.run("INSERT INTO adsb_flight_draws VALUES (?, 'N9001', ?, ?)", [fn, dep, dep + 7200]);
+        db.run("INSERT INTO adsb_flight_draws VALUES (?, ?, ?, ?)", [
+          fn,
+          second,
+          dep + 3 * 3600,
+          dep + 5 * 3600,
+        ]);
+      }
+    }
+    expect(await grade("UA7790", { origin: "DEN", destination: "SAN" })).toBe("high");
+    expect(await grade("UA7791", { origin: "DEN", destination: "SAN" })).toBe("low");
+  });
+
+  test("tailChangeRate groups draws into trips by short turns", () => {
+    const d = (tail: string, h: number) => ({
+      tail_number: tail,
+      first_seen: h * 3600,
+      last_seen: h * 3600 + 7200,
+    });
+    // Two legs 3h apart are one trip; the next morning is another.
+    const days = [0, 24, 48, 72, 96].flatMap((h, i) => [d("A", h), d(i < 2 ? "B" : "A", h + 3)]);
+    expect(tailChangeRate(days)).toBe(0.4);
+    expect(tailChangeRate(days.slice(0, 4))).toBe(null);
   });
 
   test("a queue shed is a softer, non-error estimate; an outage stays an error", async () => {

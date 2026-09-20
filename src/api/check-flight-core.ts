@@ -458,13 +458,14 @@ export async function resolveFlightVerdict(
   const liveLegs = scoped.segments ? fr24OtherLegs(scoped.segments, resolution) : [];
   if (liveLegs.length > 0) resolution.liveLegs = liveLegs;
 
-  // The history model is per flight number, so on a through flight (legs on
-  // different tails) it says nothing firm about one leg we couldn't find.
+  // The history model is per flight number, so on a through flight whose legs
+  // change aircraft it says nothing firm about one leg we couldn't find.
   let verdict = scoped.verdict;
   if (
     verdict.kind === "prediction" &&
     (resolution.match === "no_data" || resolution.match === "unmatched") &&
-    isThroughFlightLeg(reader, normalized, leg, now)
+    isThroughFlightLeg(reader, normalized, leg, now) &&
+    changesAircraftEnRoute(reader, normalized, now)
   ) {
     resolution.multiRoute = true;
     verdict = { ...verdict, pred: { ...verdict.pred, confidence: "low" } };
@@ -504,6 +505,39 @@ function isThroughFlightLeg(
     (!leg.destination || r.destination === leg.destination);
   const matched = routes.filter(isLeg);
   return matched.length === 0 || matched.some((r) => chained.includes(r));
+}
+
+const TAIL_CHANGE_WINDOW_SEC = 60 * 86400;
+// Legs of one trip turn within hours; the next day's first leg is overnight.
+export const TRIP_GAP_SEC = 6 * 3600;
+export const TAIL_CHANGE_MIN_TRIPS = 5;
+export const TAIL_CHANGE_RATE_MIN = 0.2;
+
+/**
+ * Share of a number's trips (ADS-B departures chained by short turns) flown
+ * on more than one tail, or null with too few trips to say. A same-aircraft
+ * through flight often rolls up into one draw, and counts as a kept tail.
+ */
+export function tailChangeRate(
+  draws: readonly { tail_number: string; first_seen: number; last_seen: number }[]
+): number | null {
+  const trips: Set<string>[] = [];
+  let lastSeen = Number.NEGATIVE_INFINITY;
+  for (const d of [...draws].sort((a, b) => a.first_seen - b.first_seen)) {
+    if (d.first_seen - lastSeen > TRIP_GAP_SEC) trips.push(new Set());
+    trips[trips.length - 1].add(d.tail_number);
+    lastSeen = Math.max(lastSeen, d.last_seen);
+  }
+  if (trips.length < TAIL_CHANGE_MIN_TRIPS) return null;
+  return trips.filter((t) => t.size > 1).length / trips.length;
+}
+
+/** No ADS-B evidence either way keeps the cautious answer. */
+function changesAircraftEnRoute(reader: ScopedReader, normalized: string, now: number): boolean {
+  const rate = tailChangeRate(
+    reader.getAdsbFlightDrawsFor(normalized, now - TAIL_CHANGE_WINDOW_SEC)
+  );
+  return rate === null || rate >= TAIL_CHANGE_RATE_MIN;
 }
 
 const segDeparture = (s: FallbackSegment) => normalizeAirportCode(s.origin);
