@@ -552,9 +552,15 @@ describe("QR verdict: observed-type history beyond the window", () => {
 });
 
 describe("QR verdict: swap risk inside the window", () => {
+  /** Published 77W five days out every day; every 5th day flew a 388. */
   function swappy() {
     const db = makeSyntheticDb();
-    daily(db, "QR7", at(-20), 20, (i) => (i % 5 === 0 ? "388" : "77W"));
+    for (let i = 0; i < 20; i++) {
+      const d = at(-20 + i);
+      const dep = utc(`${d}T06:40:00Z`);
+      historyLeg(db, "QR7", d, "77W", { seenAt: dep - 5 * 86400 });
+      if (i % 5 === 0) historyLeg(db, "QR7", d, "388", { seenAt: dep - 86400 });
+    }
     scheduleRow(db, "QR7", at(3), "77W");
     scheduleRow(db, "QR7", at(1), "77W");
     return db;
@@ -566,10 +572,42 @@ describe("QR verdict: swap risk inside the window", () => {
     if (v.kind === "qatar_history") {
       expect(v.basis).toBe("schedule");
       expect(v.swapRisk).toBe(true);
+      expect(v.swapObserved).toBe(20);
+      expect(v.swapDays).toBe(4);
       expect(v.scheduledRow?.equipment_code).toBe("77W");
       expect(v.probability).toBeLessThan(0.8);
-      expect(qatarHistoryReason(v)).toContain("4 of its last 20");
+      const reason = qatarHistoryReason(v);
+      expect(reason).toContain("4 of its last 20 flown days");
+      expect(reason).not.toContain("operating days");
     }
+  });
+
+  test("a planned weekday rotation is not swap risk (QR500 788 some days, A330 others)", async () => {
+    const db = makeSyntheticDb();
+    for (let i = 0; i < 27; i++) {
+      const d = at(-20 + i);
+      const dep = utc(`${d}T06:40:00Z`);
+      historyLeg(db, "QR500", d, i % 7 < 3 ? "788" : "332", { seenAt: dep - 5 * 86400 });
+    }
+    scheduleRow(db, "QR500", at(3), "788");
+    const v = await verdict(db, "QR500", at(3));
+    expect(v.kind).toBe("qatar");
+    if (v.kind === "qatar") expect(v.hasStarlink).toBe(true);
+  });
+
+  test("not-yet-flown days and late first sightings don't count as swaps", async () => {
+    const db = makeSyntheticDb();
+    for (let i = 0; i < 20; i++) {
+      const d = at(-20 + i);
+      const dep = utc(`${d}T06:40:00Z`);
+      // First seen the day before departure: Qatar published it late, not a swap.
+      historyLeg(db, "QR9", d, "77W", { seenAt: dep - 86400 });
+      if (i % 3 === 0) historyLeg(db, "QR9", d, "388", { seenAt: dep - 3600 });
+    }
+    for (const i of [1, 2, 4, 5]) historyLeg(db, "QR9", at(i), i % 2 ? "388" : "77W");
+    scheduleRow(db, "QR9", at(3), "77W");
+    const v = await verdict(db, "QR9", at(3));
+    expect(v.kind).toBe("qatar");
   });
 
   test("+1 keeps the firm scheduled-type yes", async () => {

@@ -807,7 +807,8 @@ function qatarWireLeg(r: QatarLeg) {
  * the same top-level keys the extension reads (hasStarlink, confidence,
  * probability, airline, flights) with the same types, plus `basis` and the
  * history counts. `confidence` is "type" for schedule answers — the equipment
- * code names a type, not an airframe — or the history grade, never "verified".
+ * code names a type, not an airframe — the history grade, "none" for history
+ * too thin to estimate, or "no_data"; never "verified".
  */
 function hubQatarBody(verdict: QatarVerdict & { leg?: LegResolution }): Record<string, unknown> {
   const airline = AIRLINES.QR.name;
@@ -826,7 +827,7 @@ function hubQatarBody(verdict: QatarVerdict & { leg?: LegResolution }): Record<s
     return {
       hasStarlink: null,
       airline,
-      confidence: "type",
+      confidence: "no_data",
       basis: verdict.daysOut <= QATAR_PUBLISHED_DAYS_FORWARD ? "schedule" : "history",
       reason: withLegNote(qatarNoDataReason(verdict), verdict),
       ...legField(verdict),
@@ -837,7 +838,7 @@ function hubQatarBody(verdict: QatarVerdict & { leg?: LegResolution }): Record<s
     hasStarlink: null,
     airline,
     ...(verdict.probability !== null ? { probability: verdict.probability } : {}),
-    confidence: verdict.probability !== null ? verdict.grade : "type",
+    confidence: verdict.probability !== null ? verdict.grade : "none",
     basis: verdict.basis,
     n_recent_observations: verdict.nDays,
     n_flown: verdict.nFlown,
