@@ -1,17 +1,23 @@
 /**
  * Input validation and crawl hygiene: impossible dates and same-airport plans
  * are refused, pasted callsigns resolve to the permalink, alias hosts land in
- * one hop, and robots/structured data agree with the sitemap.
+ * one hop, route pages noindex only once historical, and structured data
+ * rides only on indexable pages.
  */
 
 import { beforeAll, describe, expect, test } from "bun:test";
 import { buildFlightLookupVariants } from "../src/airlines/flight-number";
 import { AIRLINES, SITES } from "../src/airlines/registry";
-import { flightNumberHasData, getSitemapRoutes, routeHasData } from "../src/database/database";
+import {
+  ROUTE_NOINDEX_STALE_DAYS,
+  flightNumberHasData,
+  getSitemapRoutes,
+  routeIsHistorical,
+} from "../src/database/database";
 import { createReaderFactory } from "../src/database/reader";
 import { createApp } from "../src/server/app";
 import { flightDateWindow, isRealIsoDate } from "../src/utils/airport-tz";
-import { bodyOf, openSnapshot, req } from "./helpers";
+import { addFlight, bodyOf, makeSyntheticDb, openSnapshot, req } from "./helpers";
 
 const UA = SITES.united.canonicalHost;
 const WWW = `www.${UA}`;
@@ -124,39 +130,58 @@ describe("alias host redirects land in one hop", () => {
   });
 });
 
-describe("robots agrees with the sitemap on route pages", () => {
+describe("route pages noindex only once historical", () => {
   const robots = (page: string) => page.match(/<meta name="robots" content="([^"]+)"/)?.[1];
+  const DAY = 86400;
 
-  test("a sitemap route is indexable", async () => {
-    const r = getSitemapRoutes(db, "UA")[0];
-    if (!r) throw new Error("snapshot has no routes — run bun run test:setup");
-    const res = await html(`/route-planner/${r.origin}/${r.destination}`);
-    expect(res.status).toBe(200);
-    expect(robots(await res.text())).toBe("index, follow");
+  function syntheticRoutes() {
+    const sdb = makeSyntheticDb();
+    const anchor = Math.floor(Date.now() / 1000) - DAY;
+    const route = (fn: string, o: string, d: string, lastSeen: number) =>
+      sdb
+        .query(
+          `INSERT INTO flight_routes (flight_number, origin, destination, first_seen_at, last_seen_at, seen_count)
+           VALUES (?, ?, ?, ?, ?, 1)`
+        )
+        .run(fn, o, d, lastSeen, lastSeen);
+    route("UA1", "SFO", "EWR", anchor);
+    route("UA2", "SFO", "SIN", anchor - (ROUTE_NOINDEX_STALE_DAYS - 5) * DAY);
+    route("UA3", "ORD", "SBA", anchor - (ROUTE_NOINDEX_STALE_DAYS + 5) * DAY);
+    route("UA4", "MEX", "IAH", anchor - (ROUTE_NOINDEX_STALE_DAYS + 5) * DAY);
+    addFlight(sdb, "N1", "UA4", "MEX", anchor - 90 * DAY, { arrivalAirport: "IAH" });
+    return sdb;
+  }
+
+  test("only a pair unseen past the window with no schedule row is historical", () => {
+    const sdb = syntheticRoutes();
+    expect(routeIsHistorical(sdb, "SFO", "EWR", "UA")).toBe(false);
+    // Outside the 48h window and under the sitemap's sighting floor, still indexable.
+    expect(routeIsHistorical(sdb, "SFO", "SIN", "UA")).toBe(false);
+    expect(routeIsHistorical(sdb, "ORD", "SBA", "UA")).toBe(true);
+    // A schedule row keeps it current, as it keeps the pair in the sitemap.
+    expect(routeIsHistorical(sdb, "MEX", "IAH", "UA")).toBe(false);
   });
 
-  test("a served pair outside the sitemap is noindex, follow", async () => {
-    const inSitemap = new Set(
-      getSitemapRoutes(db, "UA").map((r) => `${r.origin}-${r.destination}`)
-    );
-    const thin = (
-      db
-        .query(
-          "SELECT DISTINCT origin, destination FROM flight_routes WHERE flight_number GLOB ? LIMIT 5000"
-        )
-        .all(`${AIRLINES.UA.iata}[0-9]*`) as { origin: string; destination: string }[]
-    ).find(
-      (r) =>
-        /^[A-Z]{3}$/.test(r.origin) &&
-        /^[A-Z]{3}$/.test(r.destination) &&
-        r.origin !== r.destination &&
-        !inSitemap.has(`${r.origin}-${r.destination}`) &&
-        routeHasData(db, r.origin, r.destination, "UA")
-    );
-    if (!thin) return; // every served pair is in the sitemap on this snapshot
-    const res = await html(`/route-planner/${thin.origin}/${thin.destination}`);
+  test("the page's robots follows the rule", async () => {
+    const sapp = createApp(syntheticRoutes());
+    const page = async (p: string) =>
+      robots(await (await sapp.dispatch(req(p, UA, { headers: { Accept: "text/html" } }))).text());
+    expect(await page("/route-planner/SFO/SIN")).toBe("index, follow");
+    expect(await page("/route-planner/ORD/SBA")).toBe("noindex, follow");
+  });
+
+  test("no sitemap route is historical on the snapshot", async () => {
+    const routes = getSitemapRoutes(db, "UA");
+    if (routes.length === 0) throw new Error("snapshot has no routes — run bun run test:setup");
+    for (const r of routes) {
+      expect(
+        routeIsHistorical(db, r.origin, r.destination, "UA"),
+        `${r.origin}-${r.destination}`
+      ).toBe(false);
+    }
+    const res = await html(`/route-planner/${routes[0].origin}/${routes[0].destination}`);
     expect(res.status).toBe(200);
-    expect(robots(await res.text())).toBe("noindex, follow");
+    expect(robots(await res.text())).toBe("index, follow");
   });
 });
 

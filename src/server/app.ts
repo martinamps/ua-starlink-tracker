@@ -3205,28 +3205,6 @@ const plannerRoutesCache = new WeakMap<
   Map<string, { value: RoutePair[]; expiresAt: number }>
 >();
 
-const sitemapRouteKeysCache = new WeakMap<
-  RequestContext["getReader"],
-  Map<string, { value: Set<string>; expiresAt: number }>
->();
-
-/** The sitemap's route pairs as `${origin}-${destination}`, on the planner
- * links' TTL so a route page doesn't pay the flight_routes scan per render. */
-function sitemapRouteKeys(ctx: RequestContext): Set<string> {
-  let perApp = sitemapRouteKeysCache.get(ctx.getReader);
-  if (!perApp) {
-    perApp = new Map();
-    sitemapRouteKeysCache.set(ctx.getReader, perApp);
-  }
-  const scope = tenantScope(ctx.tenant);
-  const now = Date.now();
-  const hit = perApp.get(scope);
-  if (hit && hit.expiresAt > now) return hit.value;
-  const value = new Set(ctx.reader.getSitemapRoutes().map((r) => `${r.origin}-${r.destination}`));
-  perApp.set(scope, { value, expiresAt: now + PLANNER_ROUTES_TTL_MS });
-  return value;
-}
-
 /** Route permalinks for the bare planner: /routes' next page of rankings, so
  * the two hubs link different pairs, topped up from the sitemap's most recently
  * seen routes when the live window is thin. Only sitemap-eligible pairs, so
@@ -3291,9 +3269,9 @@ const routePlannerPage: Handler = (ctx) => {
     if (!ctx.reader.routeHasData(parsed.origin, parsed.destination)) return notFound(ctx.site);
     const route = ctx.reader.getRouteSummary(parsed.origin, parsed.destination);
     const reverseLinkable = ctx.reader.routeHasData(parsed.destination, parsed.origin);
-    // routeHasData keeps thin pairs reachable (flight permalinks link them);
-    // only the sitemap's pairs are worth indexing, so robots agrees with it.
-    const indexable = sitemapRouteKeys(ctx).has(`${parsed.origin}-${parsed.destination}`);
+    // Historical pairs stay reachable (flight permalinks link them) but no
+    // longer index; recently seen ones do, whatever the 48h window holds.
+    const indexable = !ctx.reader.routeIsHistorical(parsed.origin, parsed.destination);
     return renderSubPage(
       ctx,
       RoutePage,
