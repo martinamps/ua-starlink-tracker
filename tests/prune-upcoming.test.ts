@@ -76,7 +76,7 @@ describe("getFlightRoutePairs ghost demotion", () => {
 });
 
 describe("cappedFutureShareByAirline", () => {
-  test("counts only tails at the cap whose first row is over an hour past refresh", () => {
+  test("counts only tails at the cap whose first row is past an overnight park", () => {
     const db = makeSyntheticDb();
     const insert = (tail: string, firstDep: number, n: number) => {
       for (let i = 0; i < n; i++) {
@@ -89,15 +89,16 @@ describe("cappedFutureShareByAirline", () => {
         );
       }
     };
-    insert("N1", NOW + 12 * 3600, 4);
+    insert("N1", NOW + 30 * 3600, 4);
     insert("N2", NOW + 600, 4);
-    insert("N3", NOW + 12 * 3600, 3);
+    insert("N3", NOW + 30 * 3600, 3);
+    // Refreshed at the gate overnight: the 1h rule counted it every night.
+    insert("N4", NOW + 8 * 3600, 4);
 
     const rows = cappedFutureShareByAirline(db, 4);
     expect(rows.length).toBe(1);
     expect(rows[0].airline).toBe("UA");
-    expect(rows[0].share).toBeGreaterThan(0);
-    expect(rows[0].share).toBeLessThan(1);
+    expect(rows[0].share).toBe(0.25);
     db.close();
   });
 });

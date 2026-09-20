@@ -69,15 +69,14 @@ function classifyUpdateError(err: unknown): string {
 
 type TailUpdateOutcome = "updated" | "empty" | "error";
 
-/** How one poll moves the updater-wide breaker. An empty answer for a fleet
- * fallback tail (unequipped, maybe parked or in heavy check) is not a vendor
- * failure; counting it let five idle-tier empties stall every ★ refresh. */
-export function breakerEffect(
-  outcome: TailUpdateOutcome,
-  fallbackTier: boolean
-): "reset" | "count" | "none" {
+/** How one poll moves the updater-wide FR24 breaker. An empty answer is FR24
+ * responding (200/404), not failing: a parked or undelivered tail on any tier
+ * legitimately has no schedule, and five idle QR/AF tails in a row paused
+ * every airline's refresh for 30 min. Only thrown errors (HTTP errors,
+ * throttles, timeouts) are vendor failures. */
+export function breakerEffect(outcome: TailUpdateOutcome): "reset" | "count" | "none" {
   if (outcome === "updated") return "reset";
-  if (outcome === "empty" && fallbackTier) return "none";
+  if (outcome === "empty") return "none";
   return "count";
 }
 
@@ -143,14 +142,14 @@ async function pollTailFlights(api: FlightAPI, tailNumber: string): Promise<Tail
 async function updateFlightsIfNeeded(
   api: FlightAPI,
   tailNumber: string
-): Promise<{ updated: boolean; success: boolean }> {
+): Promise<{ updated: boolean; success: boolean; outcome?: TailUpdateOutcome }> {
   const db = initializeDatabase();
   const needsUpdate = needsFlightCheck(db, tailNumber);
   db.close();
 
   if (needsUpdate) {
-    const success = await updateFlightsForTailNumber(api, tailNumber);
-    return { updated: true, success };
+    const outcome = await pollTailFlights(api, tailNumber);
+    return { updated: true, success: outcome === "updated", outcome };
   }
 
   return { updated: false, success: true };
@@ -167,6 +166,18 @@ let consecutiveApiFailures = 0;
 const MAX_CONSECUTIVE_FAILURES = 5;
 const CIRCUIT_BREAKER_RESET_TIME = 30 * 60 * 1000; // 30 minutes
 let circuitBreakerOpenedAt: number | null = null;
+
+function applyBreakerEffect(outcome: TailUpdateOutcome) {
+  const effect = breakerEffect(outcome);
+  if (effect === "reset") consecutiveApiFailures = 0;
+  if (effect !== "count") return effect;
+  consecutiveApiFailures++;
+  if (consecutiveApiFailures >= MAX_CONSECUTIVE_FAILURES) {
+    circuitBreakerOpenedAt = Date.now();
+    error(`Circuit breaker opened after ${MAX_CONSECUTIVE_FAILURES} consecutive API failures`);
+  }
+  return effect;
+}
 
 // Per-tail backoff for the alaska-json fleet fallback so a stored/maintenance
 // tail with no FR24 flights doesn't pin the queue.
@@ -229,19 +240,7 @@ async function processPlanesInBatches(api: FlightAPI, planes: Aircraft[], batchS
 
         const result = await updateFlightsIfNeeded(api, plane.TailNumber);
 
-        if (result.updated) {
-          if (result.success) {
-            consecutiveApiFailures = 0;
-          } else {
-            consecutiveApiFailures++;
-            if (consecutiveApiFailures >= MAX_CONSECUTIVE_FAILURES) {
-              circuitBreakerOpenedAt = Date.now();
-              error(
-                `Circuit breaker opened after ${MAX_CONSECUTIVE_FAILURES} consecutive API failures`
-              );
-            }
-          }
-        }
+        if (result.outcome) applyBreakerEffect(result.outcome);
 
         return {
           updated: result.updated,
@@ -251,13 +250,7 @@ async function processPlanesInBatches(api: FlightAPI, planes: Aircraft[], batchS
         };
       } catch (err) {
         error(`Error processing ${plane.TailNumber}`, err);
-        consecutiveApiFailures++;
-        if (consecutiveApiFailures >= MAX_CONSECUTIVE_FAILURES) {
-          circuitBreakerOpenedAt = Date.now();
-          error(
-            `Circuit breaker opened after ${MAX_CONSECUTIVE_FAILURES} consecutive API failures`
-          );
-        }
+        applyBreakerEffect("error");
         return {
           updated: false,
           apiCall: false,
@@ -430,23 +423,15 @@ export function startFlightUpdater(): JobHandle | undefined {
             return;
           }
 
-          const effect = breakerEffect(outcome, tier !== "starlink");
+          const effect = applyBreakerEffect(outcome);
           if (effect === "reset") {
-            consecutiveApiFailures = 0;
             totalUpdates++;
             span.setTag("result", "success");
           } else if (effect === "none") {
             span.setTag("result", "empty");
           } else {
-            consecutiveApiFailures++;
             totalErrors++;
             span.setTag("result", "failure");
-            if (consecutiveApiFailures >= MAX_CONSECUTIVE_FAILURES) {
-              circuitBreakerOpenedAt = Date.now();
-              error(
-                `Circuit breaker opened after ${MAX_CONSECUTIVE_FAILURES} consecutive API failures`
-              );
-            }
           }
 
           // Heartbeat logging
