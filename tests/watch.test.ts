@@ -235,7 +235,7 @@ describe("/cal/{fn}/{date}.ics", () => {
     const { text } = await bodyOf(app, "/check-flight", UA_HOST);
     // A dateless permalink pre-fills the viewer's today, answering a different departure.
     expect(text).toContain("encodeURIComponent(a.flight_number) + '/' + encodeURIComponent(date)");
-    expect(text).toContain("alternativesHtml(data.sameDayAlternatives, date)");
+    expect(text).toContain("alternativesHtml(data.sameDayAlternatives, date,");
     expect(text).not.toMatch(/on this route today/);
   });
 });

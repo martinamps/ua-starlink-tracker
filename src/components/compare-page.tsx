@@ -13,6 +13,7 @@ import type { AirlineFactsEntry } from "../airlines/rollout-facts";
 import type { TypeProgress } from "../database/database";
 import type { SubfleetBreakdown } from "../scripts/starlink-predictor";
 import type { PerAirlineStat } from "../types";
+import { article } from "../utils/grammar";
 import { FactsList, PhaseTable, type TypePhase } from "./airlines-page";
 import { PageFooter, type PageLink, STATUS_TONE } from "./atoms";
 import { TypeShareTable } from "./community-airline-page";
@@ -149,7 +150,7 @@ function SidePanel({ side }: { side: CompareSide }) {
             href={side.checkFlightUrl}
             className="font-mono text-xs px-3 py-1.5 bg-surface-elevated border border-subtle rounded text-secondary hover:text-accent hover:border-accent transition-colors"
           >
-            Check a {cfg.shortName} flight →
+            Check {article(cfg.shortName)} {cfg.shortName} flight →
           </a>
         )}
       </div>

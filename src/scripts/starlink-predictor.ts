@@ -1439,8 +1439,13 @@ function describeAssigned(
   return joinSentences(`${on}; not on the Starlink list in ${guide} — ${has}`);
 }
 
-/** One-sentence prose for a CarrierPrediction — keeps REST and MCP wording identical. */
-export function describeCarrierPrediction(cfg: AirlineConfig, answer: CarrierPrediction): string {
+/** One-sentence prose for a CarrierPrediction — keeps REST and MCP wording identical.
+ * `date` marks a dated lookup, which must not be told to pick a date. */
+export function describeCarrierPrediction(
+  cfg: AirlineConfig,
+  answer: CarrierPrediction,
+  opts: { date?: string | null } = {}
+): string {
   if (answer.kind === "no_model") return answer.reason;
   if (answer.kind === "type_progress") {
     const g = guideRef(cfg, answer.guideUpdated);
@@ -1460,12 +1465,14 @@ export function describeCarrierPrediction(cfg: AirlineConfig, answer: CarrierPre
     const parts = answer.groups.map((g) => `${g.families.join("/")}: ${PHASE_LABEL[g.phase]}`);
     return joinSentences(
       `Starlink on ${cfg.name} is determined by aircraft type — ${parts.join("; ")}`,
-      "Check a specific flight and date to see which aircraft type is scheduled"
+      opts.date
+        ? `No aircraft schedule is on file for this flight on ${opts.date} yet; aircraft are assigned about two days before departure`
+        : "Check a specific flight and date to see which aircraft type is scheduled"
     );
   }
   const { sf, pen } = answer;
   const pct = (pen.pct * 100).toFixed(0);
-  const hint = sf.flightNumberHint ? ` (${sf.flightNumberHint})` : "";
+  const hint = sf.flightNumberHint ? `, ${sf.flightNumberHint}` : "";
   const basis = pen.synthetic
     ? `${sf.label}${hint} — ${sf.overrideReason ?? "Starlink status is set by the operating subfleet"}`
     : `${pen.equipped} of ${pen.total} ${sf.label}${hint} aircraft equipped`;

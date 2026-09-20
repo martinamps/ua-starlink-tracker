@@ -28,7 +28,7 @@ function RouteRows({ schedule }: { schedule: RouteSchedule }) {
   const max = schedule.rows[0].departures;
   return (
     <div className="space-y-2">
-      <div className="grid grid-cols-[1fr_auto_auto] sm:grid-cols-[7rem_1fr_auto_auto] gap-x-4 font-mono text-[10px] text-muted uppercase tracking-wider pb-1 border-b border-subtle">
+      <div className="grid grid-cols-[1fr_9rem_5.5rem] sm:grid-cols-[7rem_1fr_9rem_5.5rem] gap-x-4 font-mono text-[10px] text-muted uppercase tracking-wider pb-1 border-b border-subtle">
         <span>Route</span>
         <span className="hidden sm:block" />
         <span className="text-right">Departures</span>
@@ -37,7 +37,7 @@ function RouteRows({ schedule }: { schedule: RouteSchedule }) {
       {schedule.rows.map((r) => (
         <div
           key={`${r.origin}-${r.destination}`}
-          className="grid grid-cols-[1fr_auto_auto] sm:grid-cols-[7rem_1fr_auto_auto] gap-x-4 items-center text-sm"
+          className="grid grid-cols-[1fr_9rem_5.5rem] sm:grid-cols-[7rem_1fr_9rem_5.5rem] gap-x-4 items-center text-sm"
         >
           <a
             href={`/route-planner/${r.origin}/${r.destination}`}
@@ -100,7 +100,7 @@ export default function RoutesPage({
         </a>
         <p className="text-base text-secondary font-display">
           {totalDepartures > 0
-            ? `${totalDepartures} departures on Starlink-equipped ${airlineName} aircraft scheduled over the ${schedule.windowLabel}`
+            ? `${totalDepartures.toLocaleString("en-US")} departures on Starlink-equipped ${airlineName} aircraft scheduled over the ${schedule.windowLabel}`
             : `Live ${airlineName} Starlink departures by route`}
         </p>
       </header>
