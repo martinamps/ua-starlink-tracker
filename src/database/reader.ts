@@ -125,6 +125,7 @@ import {
   getVerificationSummary,
   getWifiMismatches,
   routeHasData,
+  routeIsHistorical,
 } from "./database";
 
 export type { Database };
@@ -234,6 +235,8 @@ export interface ScopedReader {
   flightNumberHasData(variants: string[]): boolean;
   /** Existence gate for /route-planner/{origin}/{destination}; mirrors getSitemapRoutes. */
   routeHasData(origin: string, destination: string): boolean;
+  /** Unseen for ROUTE_NOINDEX_STALE_DAYS — the route page goes noindex. */
+  routeIsHistorical(origin: string, destination: string): boolean;
   getRouteSummary(origin: string, destination: string): RouteSummary;
   /** Marketing numbers on a pair without getRouteSummary's windowed departure
    * counts — what the flight permalinks' sibling links actually need. */
@@ -436,6 +439,7 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
 
     flightNumberHasData: (v) => flightNumberHasData(db, v, airlines),
     routeHasData: (o, d) => routeHasData(db, o, d, soleAirline()),
+    routeIsHistorical: (o, d) => routeIsHistorical(db, o, d, soleAirline()),
     getRouteSummary: (o, d) => getRouteSummary(db, o, d, soleAirline()),
     getRouteFlightNumbers: (o, d) => getRouteFlightNumbers(db, o, d, soleAirline()),
     getFlightHistorySummary: (v) => getFlightHistorySummary(db, v, airlines),

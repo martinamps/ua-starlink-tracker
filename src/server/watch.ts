@@ -25,7 +25,7 @@ import {
 import { type FallbackSegment, resolveTailVerdict } from "../api/flight-verdict";
 import type { AssignmentLogRow, SameDayAlternative } from "../database/assignment-log";
 import { COUNTERS, metrics, normalizeAirlineTag } from "../observability/metrics";
-import { flightDateWindow } from "../utils/airport-tz";
+import { flightDateWindow, isRealIsoDate } from "../utils/airport-tz";
 import { type WatchVerdict, buildWatchIcs, watchFeedEnabled, watchFeedState } from "../utils/ics";
 import { type RequestContext, type ScopedReader, tenantConfig } from "./context";
 
@@ -42,12 +42,6 @@ const WATCH_NOT_FOUND_HEADERS = {
 
 function watchNotFound(): Response {
   return new Response("Not found", { status: 404, headers: WATCH_NOT_FOUND_HEADERS });
-}
-
-function isRealIsoDate(date: string): boolean {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return false;
-  const t = Date.parse(`${date}T00:00:00Z`);
-  return !Number.isNaN(t) && new Date(t).toISOString().slice(0, 10) === date;
 }
 
 export function parseWatchPath(
