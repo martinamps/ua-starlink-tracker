@@ -8,6 +8,7 @@ import {
   initializeDatabase,
   pruneCrashRows,
   recordFirstFlights,
+  warmAircraftTypePages,
 } from "./src/database/database";
 import { startAdsbSweepJob } from "./src/scripts/adsb-sweep";
 import { startAlaskaVerifier } from "./src/scripts/alaska-verifier";
@@ -48,6 +49,15 @@ Bun.serve({
   port: PORT,
   fetch: app.dispatch,
 });
+
+// Off the listen path; after this, stale-while-revalidate keeps it warm.
+setTimeout(() => {
+  try {
+    warmAircraftTypePages(db);
+  } catch (err) {
+    logError("Aircraft type page warm-up failed", err);
+  }
+}, 0);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Background jobs (raw db; not request-scoped)

@@ -69,6 +69,7 @@ import {
   computeWifiConsensus,
   countStarlinkPlanes,
   flightNumberHasData,
+  getAircraftTypeGate,
   getAircraftTypePageData,
   getAirlineByTail,
   getAirportDepartures,
@@ -286,6 +287,8 @@ export interface ScopedReader {
 
   /** /fleet/{slug} page data; null on the hub and for types without a page. */
   getAircraftTypePage(slug: string): AircraftTypePageData | null;
+  /** Existence + Starlink count for the served gate, without the full page pass. */
+  getAircraftTypeGate(slug: string): { total: number; starlink: number } | null;
 
   // QR equipment history + fetch coverage; airline-agnostic like qatar_schedule.
   getQatarEquipmentHistory(
@@ -459,6 +462,7 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
 
     getAircraftTypePage: (slug) =>
       scope === "ALL" ? null : getAircraftTypePageData(db, scope, slug),
+    getAircraftTypeGate: (slug) => (scope === "ALL" ? null : getAircraftTypeGate(db, scope, slug)),
   };
   return Object.freeze(r);
 }
