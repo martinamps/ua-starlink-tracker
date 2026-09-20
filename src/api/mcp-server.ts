@@ -64,7 +64,6 @@ import {
 import { AIRPORT_COORDS } from "../utils/airport-geo";
 import { debug, info } from "../utils/logger";
 import {
-  FR24_OUTAGE_NOTE,
   type FlightVerdict,
   type LegResolution,
   SWAP_DEGRADED_NOTE,
@@ -73,6 +72,8 @@ import {
   carrierReader,
   decideCarrier,
   flightDateWindow,
+  fr24DegradedNote,
+  legOffRoute,
   legSubject,
   negativeWifi,
   parseLegQuery,
@@ -851,7 +852,7 @@ export async function renderCheckFlightVerdict(
       // couldn't-confirm caveat the prediction branch uses — and for a
       // community carrier's named tail, which is itself the assignment.
       const lead = verdict.fr24Error
-        ? `${FR24_OUTAGE_NOTE} `
+        ? `${fr24DegradedNote(verdict)} `
         : noModelConfidence(verdict.answer) === "tail"
           ? ""
           : "no assignment data. ";
@@ -885,16 +886,20 @@ export async function renderCheckFlightVerdict(
       // During an FR24 outage we genuinely don't know whether an assignment
       // exists — don't claim it isn't published yet.
       // A past date's assignment isn't "not yet published" — it's gone.
+      // Other legs of the number being assigned contradicts "not yet
+      // published"; the leg note names them instead.
       const assignmentNote = verdict.fr24Error
-        ? FR24_OUTAGE_NOTE
-        : isPast
-          ? timing
-          : `Aircraft assignment not yet published — that happens ~2 days out. ${timing}`;
+        ? fr24DegradedNote(verdict)
+        : legOffRoute(verdict)
+          ? ""
+          : isPast
+            ? timing
+            : `Aircraft assignment not yet published — that happens ~2 days out. ${timing}`;
 
       // Probability context FIRST, alternatives table LAST. Recency bias: the
       // agent's final impression is "here's the table to present", not "no data".
       const probLine = withLegNote(
-        `**${normalized} on ${date}**: ~${pct}% Starlink probability ${pred.n_observations > 0 ? `(${pred.n_observations} historical obs)` : "(no flight history)"}. ${assignmentNote}`,
+        `**${normalized} on ${date}**: ~${pct}% Starlink probability ${pred.n_observations > 0 ? `(${pred.n_observations} historical obs)` : "(no flight history)"}.${assignmentNote ? ` ${assignmentNote}` : ""}`,
         verdict
       );
 

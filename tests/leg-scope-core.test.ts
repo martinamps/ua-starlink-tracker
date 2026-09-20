@@ -10,12 +10,16 @@ import type { Database } from "bun:sqlite";
 import { beforeAll, describe, expect, test } from "bun:test";
 import { AIRLINES } from "../src/airlines/registry";
 import {
+  FR24_OUTAGE_NOTE,
+  FR24_SHED_NOTE,
   type FlightVerdict,
   type LegQuery,
   type ResolveDeps,
   answersOtherLeg,
+  fr24DegradedNote,
   legField,
   legNote,
+  legOffRoute,
   legScopeTelemetry,
   legSubject,
   normalizeAirportCode,
@@ -23,9 +27,12 @@ import {
   resolveFlightVerdict,
   scheduledFlights,
   selectLeg,
+  verdictTelemetry,
 } from "../src/api/check-flight-core";
 import type { FallbackSegment, lookupFlightTailVerdict } from "../src/api/flight-verdict";
+import { Fr24UnavailableError } from "../src/api/flightradar24-api";
 import { createReaderFactory } from "../src/database/reader";
+import type { predictFlight } from "../src/scripts/starlink-predictor";
 import { AIRPORT_COORDS } from "../src/utils/airport-geo";
 import { AIRPORT_TZ } from "../src/utils/airport-tz";
 import {
@@ -394,6 +401,93 @@ describe("leg-scoped verdicts (synthetic DB)", () => {
       "otherLegs",
     ]);
     expect(legField(await ua("UA1217"))).toEqual({});
+  });
+
+  test("an estimate for a leg the number doesn't fly names the legs it does", async () => {
+    const v = await ua("UA540", { origin: "LAX", destination: "JFK" });
+    if (v.kind !== "prediction") throw new Error(v.kind);
+    expect(legOffRoute(v)).toBe(true);
+    expect(legNote(v)).toBe(
+      "We have no LAX → JFK leg for UA540 on this date; we see it flying SFO → DEN → SAN. This estimate is for flight UA540 overall."
+    );
+    const scattered = await ua("UA9001", { origin: "ORD", destination: "JFK" });
+    expect(legNote(scattered as never)).toContain("flying SFO → LAX → SFO → SEA.");
+  });
+
+  test("FR24 legs feed the note but never the wire's otherLegs", async () => {
+    const deps = {
+      predict: stubPredict(0),
+      lookupTail: lookupReturning([seg("LHR", "EWR", null)]),
+    };
+    const v = await ua("UA7777", { origin: "SFO", destination: "DEN" }, deps);
+    if (v.kind !== "prediction") throw new Error(v.kind);
+    expect(v.leg?.match).toBe("no_data");
+    expect(legField(v).leg?.otherLegs).toEqual([]);
+    expect(legOffRoute(v)).toBe(true);
+    expect(legNote(v)).toContain("we see it flying LHR → EWR.");
+  });
+
+  test("an FR24-answered leg reports the segment's match in telemetry only", async () => {
+    const v = await ua(
+      "UA2769",
+      { origin: "DSM", destination: "ORD" },
+      { predict: stubPredict(0), lookupTail: lookupReturning([seg("DSM", "ORD", false)]) }
+    );
+    if (v.kind !== "fr24_no" || !v.leg) throw new Error(v.kind);
+    expect(v.leg.match).toBe("unmatched");
+    expect(legScopeTelemetry({ ...v, leg: v.leg }).match).toBe("exact");
+  });
+
+  test("a leg-less estimate on a multi-route number drops to low confidence", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    for (const [o, d] of [
+      ["SFO", "DEN"],
+      ["DEN", "SAN"],
+    ]) {
+      db.run(
+        `INSERT INTO flight_routes
+           (flight_number, origin, destination, duration_sec, first_seen_at, last_seen_at, seen_count)
+         VALUES ('UA7788', ?, ?, 7200, ?, ?, 50)`,
+        [o, d, now - 90 * 86400, now - 86400]
+      );
+    }
+    const high = ((_r: unknown, fn: string) => ({
+      flight_number: fn,
+      probability: 0.82,
+      confidence: "high" as const,
+      method: "flight_history",
+      n_observations: 100,
+    })) as unknown as typeof predictFlight;
+    const deps = { lookupTail: null, predict: high };
+    const unscoped = await ua("UA7788", undefined, deps);
+    const scoped = await ua("UA7788", { origin: "DEN", destination: "SAN" }, deps);
+    if (unscoped.kind !== "prediction" || scoped.kind !== "prediction") throw new Error();
+    expect(unscoped.pred.confidence).toBe("high");
+    expect(scoped.pred.confidence).toBe("low");
+    expect(legNote(scoped)).toContain("flies several routes, so it's low confidence");
+    // One route: the whole-flight estimate is the leg's.
+    const single = await ua("UA7799", { origin: "DEN", destination: "SAN" }, deps);
+    expect(single.kind === "prediction" && single.pred.confidence).toBe("high");
+  });
+
+  test("a queue shed is a softer, non-error estimate; an outage stays an error", async () => {
+    const failing = (message: string) =>
+      (async () => {
+        throw new Fr24UnavailableError(message);
+      }) as unknown as typeof lookupFlightTailVerdict;
+    const shed = await ua("UA7777", undefined, {
+      predict: stubPredict(3),
+      lookupTail: failing("shed: bucket"),
+    });
+    const outage = await ua("UA7777", undefined, {
+      predict: stubPredict(3),
+      lookupTail: failing("FR24 assignments error: 503"),
+    });
+    if (shed.kind !== "prediction" || outage.kind !== "prediction") throw new Error();
+    expect(fr24DegradedNote(shed)).toBe(FR24_SHED_NOTE);
+    expect(verdictTelemetry(shed).outcome).toBe("predicted");
+    expect(fr24DegradedNote(outage)).toBe(FR24_OUTAGE_NOTE);
+    expect(verdictTelemetry(outage).outcome).toBe("error");
   });
 });
 
