@@ -908,7 +908,7 @@ export async function renderCheckFlightVerdict(
           {
             type: "text",
             text: withLegNote(
-              `${normalized} on ${date}: ${lead}${describeCarrierPrediction(cfg, verdict.answer)}`,
+              `${normalized} on ${date}: ${lead}${describeCarrierPrediction(cfg, verdict.answer, { date })}`,
               verdict
             ),
           },
