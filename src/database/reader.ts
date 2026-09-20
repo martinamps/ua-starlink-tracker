@@ -30,10 +30,12 @@ import type {
 import { type AdsbFlightDraw, getAdsbFlightDraws } from "./adsb-flight-draws";
 import {
   type AssignmentLogRow,
+  type ResolvedLeg,
   type SameDayAlternative,
   type SameDayAlternativesQuery,
   getAssignmentHistory,
   getSameDayStarlinkAlternatives,
+  logResolvedAssignments,
 } from "./assignment-log";
 import {
   type ConfirmedEdge,
@@ -273,6 +275,7 @@ export interface ScopedReader {
   /** Every tail the updater has seen on the flight's local date (Starlink Watch). */
   getAssignmentHistory(variants: readonly string[], depDate: string): AssignmentLogRow[];
   getSameDayStarlinkAlternatives(q: SameDayAlternativesQuery): SameDayAlternative[];
+  logResolvedAssignments(flightNumber: string, legs: readonly ResolvedLeg[], now: number): void;
 
   getQatarScheduleStats(): {
     total: number;
@@ -455,6 +458,7 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
 
     getAssignmentHistory: (v, d) => getAssignmentHistory(db, airlines, v, d),
     getSameDayStarlinkAlternatives: (q) => getSameDayStarlinkAlternatives(db, airlines, q),
+    logResolvedAssignments: (fn, legs, now) => logResolvedAssignments(db, airlines, fn, legs, now),
 
     getAircraftTypePage: (slug) =>
       scope === "ALL" ? null : getAircraftTypePageData(db, scope, slug),
