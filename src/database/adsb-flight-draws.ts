@@ -153,3 +153,20 @@ export function getAdsbFlightDraws(db: Database, sinceTs: number): AdsbFlightDra
     )
     .all(sinceTs) as AdsbFlightDraw[];
 }
+
+/** One flight number's departures since `sinceTs`, by time; a PK-prefix
+ * search, so cheap enough for the request path. */
+export function getAdsbFlightDrawsFor(
+  db: Database,
+  flightNumber: string,
+  sinceTs: number
+): AdsbFlightDraw[] {
+  if (!hasDrawsTable(db)) return [];
+  return db
+    .query(
+      `SELECT flight_number, tail_number, first_seen, last_seen
+       FROM adsb_flight_draws WHERE flight_number = ? AND first_seen >= ?
+       ORDER BY first_seen`
+    )
+    .all(flightNumber, sinceTs) as AdsbFlightDraw[];
+}

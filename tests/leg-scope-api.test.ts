@@ -179,13 +179,41 @@ describe("scoped answers", () => {
     expect(as.leg.match).toBe("exact");
   });
 
-  test("a prediction for an unmatched leg says it covers the number overall", async () => {
+  test("a prediction for an unmatched leg names the legs flown, not 'not yet published'", async () => {
     const body = await jsonOf(app, check(UA, "UA540", "&origin=LAX&destination=SFO"), UA);
     expect(body.hasStarlink).toBe(null);
     expect(body.leg.match).toBe("unmatched");
-    expect(body.message).toContain("this estimate is for flight UA540 overall");
+    expect(body.message).not.toContain("not yet published");
+    expect(body.message).toContain(
+      "We have no LAX → SFO leg for UA540 on this date; we see it flying SFO → DEN → SAN. This estimate is for flight UA540 overall."
+    );
     const originOnly = await jsonOf(app, check(UA, "UA540", "&origin=LAX"), UA);
-    expect(originOnly.message).toContain("Your leg from LAX isn't");
+    expect(originOnly.message).toContain("We have no leg from LAX");
+    const hub = await jsonOf(
+      app,
+      check(HUB, "UA540", "&origin=LAX&destination=SFO", "/api/check-any-flight"),
+      HUB
+    );
+    expect(hub.reason).not.toContain("No schedule data");
+    expect(hub.reason).toContain("we see it flying SFO → DEN → SAN");
+  });
+
+  test("a yes answered from another leg says so; the unscoped yes gains no message", async () => {
+    const body = await jsonOf(app, check(UA, "UA540", "&origin=SFO&destination=LAX"), UA);
+    expect(body.hasStarlink).toBe(true);
+    expect(body.leg.match).toBe("origin");
+    expect(body.message).toContain("this answer is for its SFO → DEN leg only");
+    const hub = await jsonOf(
+      app,
+      check(HUB, "UA540", "&origin=SFO&destination=LAX", "/api/check-any-flight"),
+      HUB
+    );
+    expect(hub.reason).toContain("this answer is for its SFO → DEN leg only");
+    const exact = await jsonOf(app, check(UA, "UA540", "&origin=SFO&destination=DEN"), UA);
+    expect("message" in exact).toBe(false);
+    const plain = await jsonOf(app, check(UA, "UA540"), UA);
+    expect(plain.hasStarlink).toBe(true);
+    expect("message" in plain).toBe(false);
   });
 
   test("HEAD with a leg is 200", async () => {

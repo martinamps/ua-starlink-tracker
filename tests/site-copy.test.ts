@@ -27,7 +27,7 @@ import {
 import { createApp, notTrackedMessage } from "../src/server/app";
 import { createReaderFactory } from "../src/server/context";
 import { computeInstallRate } from "../src/utils/install-rate";
-import { bodyOf, makeSyntheticDb, openSnapshot } from "./helpers";
+import { bodyOf, makeSyntheticDb, openSnapshot, postMcp } from "./helpers";
 
 const db = openSnapshot();
 const app = createApp(db);
@@ -171,6 +171,17 @@ describe("grammar", () => {
     expect(describeCarrierPrediction(AIRLINES.HA, answer)).toContain(
       "Check a specific flight and date"
     );
+  });
+
+  test("MCP check_flight's dated type-split answer does not ask for a date either", async () => {
+    const answer = carrierPrediction(AIRLINES.HA, createReaderFactory(db)("HA"), "HA50");
+    if (answer.kind !== "type_split") return;
+    const res = await postMcp(app, HUB, "tools/call", {
+      name: "check_flight",
+      arguments: { flight_number: "HA50", date: "2026-09-22" },
+    });
+    const text: string = res.result?.content?.[0]?.text ?? "";
+    expect(text).not.toContain("Check a specific flight and date");
   });
 
   test("subfleet hints are not a second parenthetical", () => {

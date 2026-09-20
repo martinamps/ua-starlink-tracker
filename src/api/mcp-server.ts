@@ -67,7 +67,6 @@ import { AIRPORT_COORDS } from "../utils/airport-geo";
 import { isRealIsoDate, matchesLocalDate } from "../utils/airport-tz";
 import { debug, info } from "../utils/logger";
 import {
-  FR24_OUTAGE_NOTE,
   type FlightVerdict,
   type LegResolution,
   SWAP_DEGRADED_NOTE,
@@ -76,7 +75,9 @@ import {
   carrierReader,
   decideCarrier,
   flightDateWindow,
+  fr24DegradedNote,
   isPlausibleFlightNumber,
+  legOffRoute,
   legSubject,
   negativeWifi,
   normalizeAirportCode,
@@ -898,7 +899,7 @@ export async function renderCheckFlightVerdict(
       // couldn't-confirm caveat the prediction branch uses — and for a
       // community carrier's named tail, which is itself the assignment.
       const lead = verdict.fr24Error
-        ? `${FR24_OUTAGE_NOTE} `
+        ? `${fr24DegradedNote(verdict)} `
         : noModelConfidence(verdict.answer) === "tail"
           ? ""
           : "no assignment data. ";
@@ -907,7 +908,7 @@ export async function renderCheckFlightVerdict(
           {
             type: "text",
             text: withLegNote(
-              `${normalized} on ${date}: ${lead}${describeCarrierPrediction(cfg, verdict.answer)}`,
+              `${normalized} on ${date}: ${lead}${describeCarrierPrediction(cfg, verdict.answer, { date })}`,
               verdict
             ),
           },
@@ -929,21 +930,25 @@ export async function renderCheckFlightVerdict(
       // A past date's assignment isn't "not yet published" — it's gone.
       // Near-term, only a surface that ran the live tail lookup may call a
       // missing assignment unusual; the hub skips that lookup by design.
+      // Other legs of the number being assigned contradicts "not yet
+      // published"; the leg note names them instead.
       const liveSite = siteForAirline(cfg.code, true)?.canonicalHost;
       const assignmentNote = verdict.fr24Error
-        ? FR24_OUTAGE_NOTE
-        : isPast
-          ? "This date is in the past; we don't retain historical assignments."
-          : !isNearTerm
-            ? "Aircraft assignment not yet published — that happens ~2 days out. Check again 1-2 days before departure for a firm answer."
-            : opts.liveLookup === false
-              ? `No assignment on file — this multi-airline server only sees Starlink-tracked aircraft and doesn't run a live tail lookup.${liveSite ? ` For a live check, use ${liveSite}/mcp.` : ""}`
-              : "No assignment published — this is unusual for a near-term flight. The tail may not be in our Starlink-tracked set yet.";
+        ? fr24DegradedNote(verdict)
+        : legOffRoute(verdict)
+          ? ""
+          : isPast
+            ? "This date is in the past; we don't retain historical assignments."
+            : !isNearTerm
+              ? "Aircraft assignment not yet published — that happens ~2 days out. Check again 1-2 days before departure for a firm answer."
+              : opts.liveLookup === false
+                ? `No assignment on file — this multi-airline server only sees Starlink-tracked aircraft and doesn't run a live tail lookup.${liveSite ? ` For a live check, use ${liveSite}/mcp.` : ""}`
+                : "No assignment published — this is unusual for a near-term flight. The tail may not be in our Starlink-tracked set yet.";
 
       // Probability context FIRST, alternatives table LAST. Recency bias: the
       // agent's final impression is "here's the table to present", not "no data".
       const probLine = withLegNote(
-        `**${normalized} on ${date}**: ~${pct}% Starlink probability ${pred.n_observations > 0 ? `(${pred.n_observations} historical obs)` : "(no flight history)"}. ${assignmentNote}`,
+        `**${normalized} on ${date}**: ~${pct}% Starlink probability ${pred.n_observations > 0 ? `(${pred.n_observations} historical obs)` : "(no flight history)"}.${assignmentNote ? ` ${assignmentNote}` : ""}`,
         verdict
       );
 
