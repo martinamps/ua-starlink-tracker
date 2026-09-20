@@ -72,7 +72,6 @@ import {
 } from "../airlines/rollout-facts";
 import { rolloutTargets } from "../airlines/targets";
 import {
-  FR24_OUTAGE_NOTE,
   type FlightVerdict,
   type LegResolution,
   SWAP_DEGRADED_NOTE,
@@ -80,8 +79,11 @@ import {
   answersOtherLeg,
   carrierReader,
   decideCarrier,
+  fr24DegradedNote,
   isPlausibleFlightNumber,
   legField,
+  legNote,
+  legOffRoute,
   legPrefix,
   legSubject,
   negativeWifi,
@@ -978,11 +980,14 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant, si
 
   switch (verdict.kind) {
     case "scheduled": {
+      // Only a leg adds a message here, so the unscoped body keeps its bytes.
+      const note = legNote(verdict);
       return new Response(
         JSON.stringify({
           hasStarlink: true,
           ...hubAirline,
           confidence: verdictConfidence(verdict),
+          ...(note ? { message: `${legPrefix(verdict)}Starlink-equipped. ${note}` } : {}),
           ...legField(verdict),
           flights: scheduledFlights(verdict).map((flight) =>
             checkFlightWireFlight({
@@ -1021,12 +1026,14 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant, si
       );
     }
     case "fr24": {
+      const note = legNote(verdict);
       return new Response(
         JSON.stringify({
           hasStarlink: true,
           ...hubAirline,
           confidence: verdictConfidence(verdict),
           method: "fr24_tail_lookup",
+          ...(note ? { message: `${legPrefix(verdict)}Starlink-equipped. ${note}` } : {}),
           ...legField(verdict),
           flights: verdict.starlink.map((s) =>
             checkFlightWireFlight({
@@ -1065,7 +1072,7 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant, si
       // would be a lie when FR24 simply couldn't be consulted.
       const message = withLegNote(
         verdict.fr24Error
-          ? `${FR24_OUTAGE_NOTE} ${describeCarrierPrediction(cfg, verdict.answer, { date })}`
+          ? `${fr24DegradedNote(verdict)} ${describeCarrierPrediction(cfg, verdict.answer, { date })}`
           : describeCarrierPrediction(cfg, verdict.answer, { date }),
         verdict
       );
@@ -1097,13 +1104,16 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant, si
       recordPrediction(pred, cfg.code);
       const pct = Math.round(pred.probability * 100);
       // During an FR24 outage we genuinely don't know whether an assignment
-      // exists — don't claim it isn't published yet.
+      // exists — don't claim it isn't published yet. Nor when other legs of
+      // the number are assigned: the leg note names them instead.
       // daysOut is UTC-day math, so -1 can still be "today" west of UTC.
       const assignmentNote = verdict.fr24Error
-        ? FR24_OUTAGE_NOTE
-        : verdict.window.daysOut < -1
-          ? `No aircraft assignment on record — ${date} has already passed.`
-          : `Aircraft assignment not yet published — ${cfg.name} assigns aircraft ~2 days before departure.`;
+        ? `${fr24DegradedNote(verdict)} `
+        : legOffRoute(verdict)
+          ? ""
+          : verdict.window.daysOut < -1
+            ? `No aircraft assignment on record — ${date} has already passed. `
+            : `Aircraft assignment not yet published — ${cfg.name} assigns aircraft ~2 days before departure. `;
       return new Response(
         JSON.stringify({
           hasStarlink: null,
@@ -1117,8 +1127,8 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant, si
           },
           message: withLegNote(
             pred.n_observations > 0
-              ? `${assignmentNote} ~${pct}% of observed departures of this flight used a Starlink-equipped aircraft (${pred.n_observations} observation${pred.n_observations === 1 ? "" : "s"}).`
-              : `${assignmentNote} ${coldPredictionNote(pred, pct)}`,
+              ? `${assignmentNote}~${pct}% of observed departures of this flight used a Starlink-equipped aircraft (${pred.n_observations} observation${pred.n_observations === 1 ? "" : "s"}).`
+              : `${assignmentNote}${coldPredictionNote(pred, pct)}`,
             verdict
           ),
           ...legField(verdict),
@@ -1218,7 +1228,10 @@ const apiCheckAnyFlight: Handler = async ({ req, url, reader, getReader, tenant 
           hasStarlink: true,
           airline: cfg.name,
           confidence: verdictConfidence(verdict),
-          reason: `${legPrefix(verdict)}${f.tail_number} (${f.aircraft_type}) — ${f.departure_airport} → ${f.arrival_airport}`,
+          reason: withLegNote(
+            `${legPrefix(verdict)}${f.tail_number} (${f.aircraft_type}) — ${f.departure_airport} → ${f.arrival_airport}`,
+            verdict
+          ),
           ...legField(verdict),
           flights: flights.map((m) => ({
             tail_number: m.tail_number,
@@ -1271,6 +1284,14 @@ const apiCheckAnyFlight: Handler = async ({ req, url, reader, getReader, tenant 
       const pred = verdict.pred;
       recordPrediction(pred, cfg.code);
       const pct = Math.round(pred.probability * 100);
+      const informative = pred.n_observations > 0;
+      const history = informative
+        ? `~${pct}% based on ${pred.n_observations} historical observation${pred.n_observations === 1 ? "" : "s"}.`
+        : coldPredictionNote(pred, pct);
+      // Other legs of the number are scheduled; the leg note names them.
+      const lead = legOffRoute(verdict)
+        ? ""
+        : `No schedule data for this date${informative ? ";" : "."} `;
       return new Response(
         JSON.stringify({
           hasStarlink: null,
@@ -1278,12 +1299,7 @@ const apiCheckAnyFlight: Handler = async ({ req, url, reader, getReader, tenant 
           probability: pred.probability,
           confidence: pred.confidence,
           n_recent_observations: pred.n_recent_observations,
-          reason: withLegNote(
-            pred.n_observations > 0
-              ? `No schedule data for this date; ~${pct}% based on ${pred.n_observations} historical observation${pred.n_observations === 1 ? "" : "s"}.`
-              : `No schedule data for this date. ${coldPredictionNote(pred, pct)}`,
-            verdict
-          ),
+          reason: withLegNote(`${lead}${history}`, verdict),
           ...legField(verdict),
           flights: [],
         }),

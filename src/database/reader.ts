@@ -27,7 +27,11 @@ import type {
   RecentInstall,
   RouteSchedule,
 } from "../types";
-import { type AdsbFlightDraw, getAdsbFlightDraws } from "./adsb-flight-draws";
+import {
+  type AdsbFlightDraw,
+  getAdsbFlightDraws,
+  getAdsbFlightDrawsFor,
+} from "./adsb-flight-draws";
 import {
   type AssignmentLogRow,
   type ResolvedLeg,
@@ -205,6 +209,8 @@ export interface ScopedReader {
   /** ADS-B departures since `sinceTs`. UA only: the callsign-to-marketing-number
    * mapping and the fleet sweep behind it exist for no other scope. */
   getAdsbFlightDraws(sinceTs: number): AdsbFlightDraw[];
+  /** getAdsbFlightDraws for one flight number, by departure. UA only. */
+  getAdsbFlightDrawsFor(flightNumber: string, sinceTs: number): AdsbFlightDraw[];
   getRouteFlights(origin: string | null, destination: string | null): RouteFlightRow[];
   getRouteGraphEdges(): RouteGraphEdge[];
   /** Every ORIG-DEST the carrier flies; null when no route census exists for the scope. */
@@ -423,6 +429,8 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
 
     getVerificationObservations: () => getVerificationObservations(db, airlines),
     getAdsbFlightDraws: (since) => (scope === "UA" ? getAdsbFlightDraws(db, since) : []),
+    getAdsbFlightDrawsFor: (fn, since) =>
+      scope === "UA" ? getAdsbFlightDrawsFor(db, fn, since) : [],
     getRouteFlights: (o, d) => getRouteFlights(db, o, d, airlines),
     getRouteGraphEdges: () => getRouteGraphEdges(db, airlines),
     getServedRoutePairs: () => getServedRoutePairs(db, airlines),
