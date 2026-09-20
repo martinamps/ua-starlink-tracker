@@ -64,7 +64,7 @@ import {
   routeBaseline,
 } from "../scripts/starlink-predictor";
 import { AIRPORT_COORDS } from "../utils/airport-geo";
-import { matchesLocalDate } from "../utils/airport-tz";
+import { isRealIsoDate, matchesLocalDate } from "../utils/airport-tz";
 import { debug, info } from "../utils/logger";
 import {
   FR24_OUTAGE_NOTE,
@@ -656,14 +656,6 @@ function recordMcpPrediction(
   });
 }
 
-// Date.parse rolls 2026-02-30 over to March 2 instead of rejecting it, so a
-// round-trip is the only way to catch an impossible calendar date.
-function isCalendarDate(s: string): boolean {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
-  const t = Date.parse(`${s}T00:00:00Z`);
-  return !Number.isNaN(t) && new Date(t).toISOString().slice(0, 10) === s;
-}
-
 function invalidDateError(): ToolResult {
   return {
     content: [{ type: "text", text: "Error: invalid date format. Use YYYY-MM-DD." }],
@@ -687,7 +679,7 @@ async function toolCheckFlight(
       isError: true,
     };
   }
-  if (!isCalendarDate(date)) return invalidDateError();
+  if (!isRealIsoDate(date)) return invalidDateError();
 
   // "lookup": the hub's MCP flight tools answer hubFlightLookup carriers
   // (QR), matching /api/check-any-flight.
@@ -1562,7 +1554,7 @@ async function toolPredictFlightStarlink(
   }
 
   const givenDate = typeof args.date === "string" ? args.date.trim() : "";
-  if (givenDate && !isCalendarDate(givenDate)) return invalidDateError();
+  if (givenDate && !isRealIsoDate(givenDate)) return invalidDateError();
 
   const carrier = resolveFlightToolCarrier(hostReader, getReader, input, "lookup");
   if ("content" in carrier) return carrier;
@@ -1681,7 +1673,7 @@ function toolPlanStarlinkItinerary(
   // Optional date for confirmed-edge seeding. Without a date (or outside the
   // ~2-day snapshot window), the planner uses historical prediction only.
   const dateStr = typeof args.date === "string" ? args.date.trim() : "";
-  if (dateStr && !isCalendarDate(dateStr)) return invalidDateError();
+  if (dateStr && !isRealIsoDate(dateStr)) return invalidDateError();
   const dateWindow = dateStr ? flightDateWindow(dateStr) : null;
   const targetDateUnix = dateWindow ? dateWindow.mid : undefined;
 

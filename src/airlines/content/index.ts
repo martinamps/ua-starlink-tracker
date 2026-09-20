@@ -13,6 +13,9 @@ export interface ContentStats {
   totalCount: number;
   percentage: string;
   fleetStats?: FleetStats | null;
+  /** The /install-rate page's measured pace (installs/month); null or absent
+   * when there isn't enough organic history to state one. */
+  installsPerMonth?: number | null;
 }
 
 export interface FaqEntry {
@@ -53,7 +56,7 @@ export interface HeroProps {
 export interface AirlineContent {
   intro: (s: ContentStats) => ReactNode;
   /** Stat strip under the tagline (each entry rendered with · separators). */
-  headerStats: ReactNode[];
+  headerStats: ReactNode[] | ((s: ContentStats) => ReactNode[]);
   /** Bespoke stat panel — each airline composes its own from shared atoms. */
   Hero: (p: HeroProps) => ReactNode;
   /** Optional per-row badge under tail number (e.g. UA mainline/express). null = no badge. */

@@ -1232,17 +1232,41 @@ function equippedFilter(sp: string): string {
 // "recent installs" surface must exclude them or a one-day import reads as an
 // install spike. (Set E made type_rule writes DateFound NULL; the predicate
 // still excludes legacy 'type_deterministic' rows with a stamped date.)
+// A FlyerTalk gid is a backfill only on its FIRST sync day; later runs add
+// tails a few at a time as the thread reports them, which is organic discovery.
+const FLYERTALK_FIRST_SYNC = `SELECT sheet_gid, MIN(substr(DateFound, 1, 10)) FROM starlink_planes
+          WHERE sheet_gid LIKE 'flyertalk\\_%' ESCAPE '\\' AND DateFound IS NOT NULL
+          GROUP BY sheet_gid`;
 const INSTALL_FILTER = `DateFound IS NOT NULL
     AND (sheet_gid IS NULL OR (
       sheet_gid NOT LIKE '%\\_seed' ESCAPE '\\'
       AND sheet_gid <> 'type_deterministic'
-      AND sheet_gid NOT LIKE 'flyertalk\\_%' ESCAPE '\\'
+      AND (sheet_gid NOT LIKE 'flyertalk\\_%' ESCAPE '\\'
+        OR (sheet_gid, substr(DateFound, 1, 10)) NOT IN (${FLYERTALK_FIRST_SYNC}))
     ))`;
 
-/** JS mirror of INSTALL_FILTER's sheet_gid exclusions for non-SQL surfaces
- * (OG sparkline). Agreement with the SQL is pinned in tests/vocabulary.test.ts. */
+/** Gids that name a bulk writer. FlyerTalk rows are bulk only on the gid's
+ * first sync day — isBulkRow is the per-row answer. */
 export function isBulkGid(gid: string | null | undefined): boolean {
   return !!gid && /_seed$|^type_deterministic$|^flyertalk_/.test(gid);
+}
+
+/** First sync day (YYYY-MM-DD) per FlyerTalk gid: its backfill day. */
+export function flyertalkFirstSyncDays(db: Database): Map<string, string> {
+  const rows = db.query(FLYERTALK_FIRST_SYNC).values() as Array<[string, string]>;
+  return new Map(rows);
+}
+
+/** JS mirror of INSTALL_FILTER's sheet_gid exclusions for non-SQL surfaces.
+ * Agreement with the SQL is pinned in tests/vocabulary.test.ts. */
+export function isBulkRow(
+  gid: string | null | undefined,
+  found: string | null | undefined,
+  firstSyncDays: ReadonlyMap<string, string>
+): boolean {
+  if (!gid || !isBulkGid(gid)) return false;
+  if (!gid.startsWith("flyertalk_")) return true;
+  return !found || found.slice(0, 10) === firstSyncDays.get(gid);
 }
 
 export function getRecentInstalls(
@@ -2588,6 +2612,45 @@ export function routeHasData(
       )
       .get(origin, destination, `${cfg.iata}[0-9]*`)
   );
+}
+
+/** A route page this long past its last sighting is historical and goes
+ * noindex. Deliberately not the sitemap rule: that one tracks the 48h window
+ * and a sighting floor, so indexability would flap with the schedule. */
+export const ROUTE_NOINDEX_STALE_DAYS = 60;
+
+/**
+ * Has this pair gone unseen for ROUTE_NOINDEX_STALE_DAYS? Any schedule row
+ * counts as current, the same exemption getSitemapRoutes grants, so no
+ * sitemap URL can come back noindex. Measured against the airline's newest
+ * observation (a stalled ingest ages nothing); unknown or future timestamps
+ * are not evidence of staleness.
+ */
+export function routeIsHistorical(
+  db: Database,
+  origin: string,
+  destination: string,
+  airline: string
+): boolean {
+  const cfg = AIRLINES[airline];
+  if (!cfg) return false;
+  const q = withAirline(
+    "SELECT 1 FROM upcoming_flights WHERE departure_airport = ? AND arrival_airport = ?",
+    airline,
+    "",
+    [origin, destination]
+  );
+  if (db.query(`${q.sql} LIMIT 1`).get(...q.params)) return false;
+  const anchor = getObservationAnchor(db, airline);
+  if (anchor === 0) return false;
+  const row = db
+    .query(
+      `SELECT MAX(last_seen_at) AS t FROM flight_routes
+       WHERE origin = ? AND destination = ? AND flight_number GLOB ? AND last_seen_at <= ?`
+    )
+    .get(origin, destination, `${cfg.iata}[0-9]*`, anchor) as { t: number | null } | null;
+  const last = row?.t ?? 0;
+  return last > 0 && anchor - last > ROUTE_NOINDEX_STALE_DAYS * 86400;
 }
 
 export interface RouteSummary {
@@ -5574,7 +5637,7 @@ function computeFleetPageData(db: Database, airline?: AirlineFilter): FleetPageD
     carriers,
     bodyClass,
     allTails,
-    totalFleet: rows.length,
+    totalFleet: allTails.length,
     totalStarlink,
     installPace,
     // Single-airline narrative like installPace — the hub page must not show
@@ -6139,8 +6202,14 @@ export const TYPE_PAGE_EVENTS_SQL =
 
 const aircraftPageCache = new WeakMap<
   Database,
-  Map<string, { at: number; pages: Map<string, AircraftTypePageData> }>
+  Map<string, { at: number; pages: Map<string, AircraftTypePageData>; rebuilding?: boolean }>
 >();
+let aircraftPageBuilds = 0;
+
+/** Full type-page passes run so far; tests pin which surfaces may trigger one. */
+export function aircraftTypePageBuildCount(): number {
+  return aircraftPageBuilds;
+}
 
 /** One type page's data, from a per-airline pass cached as long as /fleet's. */
 export function getAircraftTypePageData(
@@ -6151,18 +6220,61 @@ export function getAircraftTypePageData(
   return aircraftTypePages(db, airline).get(slug) ?? null;
 }
 
+/** Whether a type page exists and its Starlink count, from /fleet's cheap
+ * per-family pass: the served gate on every permalink must never pay for the
+ * ~150ms route/flight/pipeline fold only the type page itself renders. Mirrors
+ * the skip in computeAircraftTypePages. */
+export function getAircraftTypeGate(
+  db: Database,
+  airline: string,
+  slug: string
+): { total: number; starlink: number } | null {
+  const def = aircraftPagesFor(airline).find((d) => d.slug === slug);
+  if (!def || !AIRLINES[airline]) return null;
+  const fam = getFleetPageData(db, [airline]).families.find((f) => f.family === def.family);
+  if (!fam || fam.total < minTypeTails(airline, def)) return null;
+  return { total: fam.total, starlink: fam.starlink };
+}
+
+/** Builds every airline's type pages so no request pays the first pass. */
+export function warmAircraftTypePages(db: Database): void {
+  for (const code of Object.keys(AIRLINES)) {
+    if (aircraftPagesFor(code).length > 0) aircraftTypePages(db, code);
+  }
+}
+
+function buildAircraftTypePages(db: Database, airline: string): Map<string, AircraftTypePageData> {
+  aircraftPageBuilds++;
+  return computeAircraftTypePages(db, airline);
+}
+
+// Stale-while-revalidate: an expired pass is served as-is and rebuilt after
+// the response, single-flight, so only a cold start renders synchronously.
 function aircraftTypePages(db: Database, airline: string): Map<string, AircraftTypePageData> {
-  const now = Date.now();
   let perDb = aircraftPageCache.get(db);
   if (!perDb) {
     perDb = new Map();
     aircraftPageCache.set(db, perDb);
   }
   const hit = perDb.get(airline);
-  if (hit && now - hit.at < FLEET_PAGE_TTL_MS) return hit.pages;
-  const pages = computeAircraftTypePages(db, airline);
-  perDb.set(airline, { at: now, pages });
-  return pages;
+  if (!hit) {
+    const pages = buildAircraftTypePages(db, airline);
+    perDb.set(airline, { at: Date.now(), pages });
+    return pages;
+  }
+  if (Date.now() - hit.at >= FLEET_PAGE_TTL_MS && !hit.rebuilding) {
+    hit.rebuilding = true;
+    const cache = perDb;
+    setTimeout(() => {
+      try {
+        cache.set(airline, { at: Date.now(), pages: buildAircraftTypePages(db, airline) });
+      } catch (err) {
+        hit.rebuilding = false;
+        warn(`${airline}: aircraft type page rebuild failed, serving stale`, err);
+      }
+    }, 0);
+  }
+  return hit.pages;
 }
 
 function emptyProviders(): Record<WifiProvider, number> {
@@ -6209,10 +6321,11 @@ function computeAircraftTypePages(
        FROM starlink_planes sp WHERE sp.airline = ? AND ${equippedFilter("sp")}`
     )
     .all(airline) as Array<{ tail: string; found: string | null; gid: string | null }>;
+  const firstSyncDays = flyertalkFirstSyncDays(db);
   const organicFirstSeen = new Map<string, string>();
   const listedUnverified = new Set<string>();
   for (const r of listings) {
-    if (isBulkGid(r.gid)) continue;
+    if (isBulkRow(r.gid, r.found, firstSyncDays)) continue;
     // Only tails the verifier hasn't reached: a listing for a tail it found on
     // Viasat is a conflict, and never feeds a positive word. A mass-write day
     // still counts here; it only disqualifies the date.

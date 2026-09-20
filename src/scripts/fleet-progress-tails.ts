@@ -6,8 +6,7 @@
  * background marks tails currently at that station. Colors are community-
  * maintained and drift, so every state must survive a count-validation gate
  * against the same tab's summary rollup before anything is written — a tab
- * whose colors mean something else (express reuses mainline's "W/O Starlink"
- * yellow for its In Mod label) fails the gate and contributes nothing.
+ * whose colors mean something else fails the gate and contributes nothing.
  */
 
 import type { Database } from "bun:sqlite";
@@ -33,8 +32,13 @@ const WHITE = "255,255,255";
 
 // Canonical state colors observed across the workbooks — the fallback when a
 // tab's own legend doesn't declare a state (the WB tab has no complete label).
+// The two darker blues each reconcile a mainline_nb type column's Complete
+// count on 2026-09-20 (39M: 2 canonical + 1 of 17,85,204 = 3; 38M: 1 of
+// 0,0,255 = 1); both sit past COMPLETE_DISTANCE.
 const FALLBACK_STATE_COLORS: ReadonlyMap<string, InternalState> = new Map([
   ["60,120,216", "complete"],
+  ["17,85,204", "complete"],
+  ["0,0,255", "complete"],
   ["0,255,0", "verification_needed"],
   ["244,204,204", "in_mod"],
 ]);
@@ -65,6 +69,8 @@ function colorDistance(a: string, b: number[]): number {
 interface TabLegend {
   stateColors: Map<string, InternalState>;
   locColors: Map<string, { loc: string; future: boolean }>;
+  /** Colors the legend gives to not-installed tails (W/O Starlink, In Operation). */
+  idleColors: Set<string>;
 }
 
 // The legend lives in column A: summary labels carry their state's color, and
@@ -74,6 +80,7 @@ interface TabLegend {
 function parseLegend(grid: GridCell[][]): TabLegend {
   const stateColors = new Map<string, InternalState>();
   const locColors = new Map<string, { loc: string; future: boolean }>();
+  const idleColors = new Set<string>();
   let future = false;
   for (const row of grid) {
     const cell = row[0];
@@ -81,7 +88,9 @@ function parseLegend(grid: GridCell[][]): TabLegend {
     const label = cell.v;
     const color = cell.bg;
     if (color && color !== WHITE) {
-      if (/^(starlink complete|starlink|completed)$/i.test(label)) {
+      if (/^(w\/o starlink|in operation)$/i.test(label)) {
+        idleColors.add(color);
+      } else if (/^(starlink complete|starlink|completed)$/i.test(label)) {
         if (!stateColors.has(color)) stateColors.set(color, "complete");
       } else if (/^verification needed/i.test(label)) {
         if (!stateColors.has(color)) stateColors.set(color, "verification_needed");
@@ -94,7 +103,10 @@ function parseLegend(grid: GridCell[][]): TabLegend {
     if (/future locations/i.test(label)) future = true;
     else if (/^mod locations?$/i.test(label)) future = false;
   }
-  return { stateColors, locColors };
+  // Express paints In Mod and In Operation the same yellow; a color that also
+  // means "flying without Starlink" can't prove a tail is in mod.
+  for (const color of idleColors) stateColors.delete(color);
+  return { stateColors, locColors, idleColors };
 }
 
 function toCount(raw: string | undefined): number | null {
@@ -175,7 +187,7 @@ export function parseProgressTailGrid(grid: GridCell[][], segment: ProgressSegme
       if (!cell || !looksLikeValidTailNumber(cell.v) || seen.has(cell.v)) continue;
       seen.add(cell.v);
       const color = cell.bg;
-      if (!color || color === WHITE) continue;
+      if (!color || color === WHITE || legend.idleColors.has(color)) continue;
       let state: InternalState | null = legend.stateColors.get(color) ?? null;
       let loc: string | null = null;
       if (!state) {
@@ -209,16 +221,20 @@ export function parseProgressTailGrid(grid: GridCell[][], segment: ProgressSegme
   // come from the same location-color legend.
   const rejected: TailGridParse["rejected"] = [];
   const accepted = new Set<FleetProgressTailState>();
-  const inModOk = withinTolerance(tally.get("in_mod") ?? 0, expected.get("in_mod") ?? null);
-  if (inModOk) {
+  const inModParsed = tally.get("in_mod") ?? 0;
+  const scheduledParsed = tally.get("scheduled") ?? 0;
+  const inModExpected = expected.get("in_mod") ?? null;
+  if (withinTolerance(inModParsed, inModExpected)) {
     accepted.add("in_mod");
     accepted.add("scheduled");
+  } else if (scheduledParsed > 0 && withinTolerance(inModParsed + scheduledParsed, inModExpected)) {
+    // The rollup counts tails already at a "Future locations??" station as In
+    // Mod: on 2026-09-20 the 738 and 739 columns reconcile only that way
+    // (MIA+ILN+RFD = 3, INT+INT+MLB = 3), so those stations have opened.
+    for (const c of candidates) if (c.state === "scheduled") c.state = "in_mod";
+    accepted.add("in_mod");
   } else {
-    rejected.push({
-      state: "in_mod",
-      parsed: tally.get("in_mod") ?? 0,
-      expected: expected.get("in_mod") ?? null,
-    });
+    rejected.push({ state: "in_mod", parsed: inModParsed, expected: inModExpected });
   }
   const verifParsed = tally.get("verification_needed") ?? 0;
   if (withinTolerance(verifParsed, expected.get("verification_needed") ?? null)) {
