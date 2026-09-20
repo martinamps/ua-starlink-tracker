@@ -67,6 +67,8 @@ interface CheckFlightPageProps {
    * laterally via siblings instead. */
   popular?: PopularFlight[];
   pageLinks?: PageLink[];
+  /** FAQPage rich results are ignored on noindex URLs; keep the markup off them. */
+  noindex?: boolean;
 }
 
 // Module-level formatters: constructing a locale formatter per call
@@ -334,6 +336,7 @@ export default function CheckFlightPage({
   invalid,
   popular = [],
   pageLinks,
+  noindex = false,
 }: CheckFlightPageProps) {
   const cfg = siteAirline(site);
   const airlineName = flight?.airlineName ?? cfg.name;
@@ -648,34 +651,36 @@ export default function CheckFlightPage({
         }}
       />
 
-      <script
-        type="application/ld+json"
-        // biome-ignore lint/security/noDangerouslySetInnerHtml: JSON-LD from server data; flight number is regex-validated
-        dangerouslySetInnerHTML={{
-          __html: JSON.stringify({
-            "@context": "https://schema.org",
-            "@type": "FAQPage",
-            mainEntity: [
-              {
-                "@type": "Question",
-                name: `How do I check if ${faqSubject} has Starlink?`,
-                acceptedAnswer: {
-                  "@type": "Answer",
-                  text: faqAnswer,
+      {!noindex && (
+        <script
+          type="application/ld+json"
+          // biome-ignore lint/security/noDangerouslySetInnerHtml: JSON-LD from server data; flight number is regex-validated
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify({
+              "@context": "https://schema.org",
+              "@type": "FAQPage",
+              mainEntity: [
+                {
+                  "@type": "Question",
+                  name: `How do I check if ${faqSubject} has Starlink?`,
+                  acceptedAnswer: {
+                    "@type": "Answer",
+                    text: faqAnswer,
+                  },
                 },
-              },
-              {
-                "@type": "Question",
-                name: `How do I know if my ${shortName} flight has Starlink WiFi?`,
-                acceptedAnswer: {
-                  "@type": "Answer",
-                  text: extensionAnswer,
+                {
+                  "@type": "Question",
+                  name: `How do I know if my ${shortName} flight has Starlink WiFi?`,
+                  acceptedAnswer: {
+                    "@type": "Answer",
+                    text: extensionAnswer,
+                  },
                 },
-              },
-            ],
-          }),
-        }}
-      />
+              ],
+            }),
+          }}
+        />
+      )}
 
       <script
         // biome-ignore lint/security/noDangerouslySetInnerHtml: static inline script, no user input

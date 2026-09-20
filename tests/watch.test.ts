@@ -363,3 +363,104 @@ describe("assignment log and same-day alternatives (synthetic)", () => {
     expect(icsLines(ics.text).join("")).toContain("UA5300");
   });
 });
+
+describe("feed agrees with check-flight without its own FR24 call (synthetic)", () => {
+  // UA675 on 2026-09-20: DEN→ORD then ORD→MSP, both on untracked Viasat tails
+  // that only FR24 names, after a tracked Starlink tail left the second leg.
+  const date = departureLocalDate("DEN", Math.floor(Date.now() / 1000) + 86400);
+  const at = (iso: string) => Math.floor(Date.parse(iso) / 1000);
+  const denDep = at(`${date}T20:50:00Z`);
+  const ordDep = denDep + 4 * 3600 + 24 * 60;
+  const fr24Legs = [
+    {
+      origin: "DEN",
+      destination: "ORD",
+      departure_time: denDep,
+      arrival_time: denDep + 9720,
+      tail_number: "N14502",
+      aircraft_model: "Airbus A321-271NX",
+    },
+    {
+      origin: "ORD",
+      destination: "MSP",
+      departure_time: ordDep,
+      arrival_time: ordDep + 5880,
+      tail_number: "N36476",
+      aircraft_model: "Boeing 737-924(ER)",
+    },
+  ];
+  const leg = (
+    flight_number: string,
+    departure_airport: string,
+    arrival_airport: string,
+    departure_time: number
+  ) => ({
+    flight_number,
+    departure_airport,
+    arrival_airport,
+    departure_time,
+    arrival_time: departure_time + 3 * 3600,
+  });
+  let fr24Calls = 0;
+
+  function seed() {
+    const db = makeSyntheticDb();
+    const now = Math.floor(Date.now() / 1000);
+    addPlane(db, "N64809", "Starlink");
+    addPlane(db, "N64572", "Starlink");
+    addFleet(db, "N14502", "negative", { verifiedWifi: "Viasat", verifiedAt: now });
+    addFleet(db, "N36476", "negative", { verifiedWifi: "Viasat", verifiedAt: now });
+    updateFlights(db, "N64809", [leg("UA675", "ORD", "MSP", ordDep)]);
+    updateFlights(db, "N64809", []);
+    updateFlights(db, "N64572", [leg("UA1050", "DEN", "ORD", denDep + 3 * 3600)]);
+    return db;
+  }
+
+  beforeAll(() =>
+    setAssignmentFetcher(async () => {
+      fr24Calls++;
+      return fr24Legs;
+    })
+  );
+  afterAll(() => setAssignmentFetcher(null));
+
+  test("a firm no on the page is a firm no in the feed, on the first leg, with alternatives", async () => {
+    const app = createApp(seed());
+    const api = await jsonOf(app, `/api/check-flight?flight_number=UA675&date=${date}`, UA_HOST);
+    expect(api.hasStarlink).toBe(false);
+    expect(api.sameDayAlternatives.length).toBeGreaterThan(0);
+
+    const callsBefore = fr24Calls;
+    const ics = await bodyOf(app, `/cal/UA675/${date}.ics`, UA_HOST);
+    expect(fr24Calls).toBe(callsBefore);
+    expectWellFormedIcs(ics.text);
+    const text = icsLines(ics.text).join("");
+    expect(prop(ics.text, "SUMMARY")).toBe("UA675 · No Starlink (N14502\\, Viasat)");
+    expect(prop(ics.text, "DTSTART")).toBe(
+      `${new Date(denDep * 1000).toISOString().slice(0, 19).replace(/[-:]/g, "")}Z`
+    );
+    expect(text).not.toContain("odds");
+    expect(text).not.toContain("No aircraft assigned yet");
+    expect(text).toContain("UA1050");
+  });
+
+  test("with nothing resolved yet: first leg, and a tail that moved off is not 'no aircraft assigned'", async () => {
+    setAssignmentFetcher(async () => {
+      throw new Error("the feed must not call FR24");
+    });
+    const db = seed();
+    addPlane(db, "N11111", "Starlink");
+    updateFlights(db, "N11111", [leg("UA675", "DEN", "ORD", denDep)]);
+    updateFlights(db, "N11111", []);
+    db.query(
+      "UPDATE flight_assignment_log SET last_seen = last_seen - 600 WHERE departure_airport = 'DEN'"
+    ).run();
+    const ics = await bodyOf(createApp(db), `/cal/UA675/${date}.ics`, UA_HOST);
+    expectWellFormedIcs(ics.text);
+    expect(prop(ics.text, "SUMMARY")).not.toContain("N64809");
+    expect(prop(ics.text, "DTSTART")).toBe(
+      `${new Date(denDep * 1000).toISOString().slice(0, 19).replace(/[-:]/g, "")}Z`
+    );
+    expect(icsLines(ics.text).join("")).not.toContain("No aircraft assigned yet");
+  });
+});
