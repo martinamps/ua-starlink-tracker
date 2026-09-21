@@ -148,7 +148,7 @@ export type { Database };
  * schedule refreshes every 22.5s per tail, so a minute of staleness is
  * invisible and keeps the build off the request path.
  */
-const DEPARTURE_AGGREGATE_TTL_MS = 60_000;
+const DEPARTURE_AGGREGATE_MEMO = { ttlSec: 60, maxEntries: 64 };
 
 export type Scope = AirlineCode | "ALL";
 
@@ -396,11 +396,9 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
       throw new Error(`ScopedReader method requires a single-airline scope, got ${scope}`);
     return airlines[0];
   };
-  const airportsMemo = memo<AirportDepartures>(DEPARTURE_AGGREGATE_TTL_MS);
-  const scheduleMemo = memo<RouteSchedule>(DEPARTURE_AGGREGATE_TTL_MS);
-  const rankedMemo = memo<Array<{ origin: string; destination: string }>>(
-    DEPARTURE_AGGREGATE_TTL_MS
-  );
+  const airportsMemo = memo<AirportDepartures>(DEPARTURE_AGGREGATE_MEMO);
+  const scheduleMemo = memo<RouteSchedule>(DEPARTURE_AGGREGATE_MEMO);
+  const rankedMemo = memo<Array<{ origin: string; destination: string }>>(DEPARTURE_AGGREGATE_MEMO);
   const r: ScopedReader = {
     scope,
     airlines,
