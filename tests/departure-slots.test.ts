@@ -119,11 +119,13 @@ describe("a tail swap onto a non-Starlink tail removes the departure", () => {
       /<!-- -->/g,
       ""
     );
-    const block = html.slice(html.indexOf("Upcoming UA5763 departures"));
+    const block = html.slice(html.indexOf("Next UA5763 departures"));
     expect(block).toContain("N786SK");
     expect(block).not.toContain("N716EV");
     expect(block).toContain("No Wi-Fi");
-    expect(block).toMatch(/· [A-Z][a-z]{2} \d{1,2} · \d{2}:\d{2} local/);
+    expect(block).toMatch(
+      /· [A-Z][a-z]{2}, [A-Z][a-z]{2} \d{1,2}[^<]*\d{1,2}:\d{2}\s[AP]M [A-Z]{2,5}</
+    );
   });
 });
 
@@ -221,9 +223,9 @@ describe("operating partners on route surfaces", () => {
       /<!-- -->/g,
       ""
     );
-    const block = html.slice(html.indexOf("Upcoming AS2092 departures"));
+    const block = html.slice(html.indexOf("Next AS2092 departures"));
     expect(block).toContain("N644QX");
-    expect(block).toContain("✓ Starlink");
+    expect(block).toMatch(/text-success">Starlink</);
     expect(block).not.toContain("Install pending");
     db.close();
   });
