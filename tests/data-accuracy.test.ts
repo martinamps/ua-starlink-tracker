@@ -11,7 +11,9 @@ import {
   getFirstFlights,
   getFleetPageData,
   getRouteFlightNumbers,
+  reconcileConsensus,
   recordFirstFlights,
+  syncSpreadsheetToFleet,
 } from "../src/database/database";
 import { createReaderFactory } from "../src/database/reader";
 import { createApp } from "../src/server/app";
@@ -55,6 +57,54 @@ describe("a negative settle yields to a retrofit", () => {
     expect(statusOf(db, "N37532")).toBe("unknown");
     expect(statusOf(db, "N37440")).toBe("negative");
     expect(demoteRetrofittedNegatives(db, NOW)).toBe(0);
+    db.close();
+  });
+
+  test("checks outside the trailing window or on another airline don't demote", () => {
+    const db = makeSyntheticDb();
+    addFleet(db, "N1OLD", "negative");
+    check(db, "N1OLD", NOW - 45 * 86400, "Starlink");
+    check(db, "N1OLD", NOW - 40 * 86400, "Starlink");
+    addFleet(db, "N2MIX", "negative");
+    check(db, "N2MIX", NOW - 3 * 86400, "Starlink");
+    db.query(
+      `INSERT INTO starlink_verification_log
+         (tail_number, source, checked_at, has_starlink, wifi_provider, tail_confirmed, error, airline)
+       VALUES ('N2MIX', 'united', ?, 1, 'Starlink', 1, NULL, 'AS')`
+    ).run(NOW - 86400);
+    expect(demoteRetrofittedNegatives(db, NOW)).toBe(0);
+    db.close();
+  });
+
+  test("the hourly sync → reconcile cycle reaches a fixed point", () => {
+    const db = makeSyntheticDb();
+    // The listing still says Viasat and the 30-day window leans Viasat, so
+    // consensus alone would keep re-settling it; the newest two say Starlink.
+    addPlane(db, "N37532", "Viasat", { aircraft: "Boeing 737-824" });
+    addFleet(db, "N37532", "negative", { aircraftType: "Boeing 737-824", verifiedWifi: "Viasat" });
+    for (const d of [25, 22, 18, 12, 8]) check(db, "N37532", NOW - d * 86400, "Viasat");
+    for (const d of [3, 1]) check(db, "N37532", NOW - d * 86400, "Starlink");
+
+    const state = () =>
+      db
+        .query(
+          `SELECT f.starlink_status, f.next_check_after, sp.verified_wifi FROM united_fleet f
+           JOIN starlink_planes sp ON sp.TailNumber = f.tail_number AND sp.airline = f.airline
+           WHERE f.tail_number = 'N37532'`
+        )
+        .get();
+    const cycle = (at: number) => {
+      syncSpreadsheetToFleet(db, "UA");
+      return reconcileConsensus(db, at);
+    };
+
+    expect(cycle(NOW)).toBeGreaterThan(0);
+    const settled = state();
+    expect(settled).toMatchObject({ starlink_status: "unknown", verified_wifi: null });
+    for (const hour of [1, 2, 3]) {
+      expect(cycle(NOW + hour * 3600)).toBe(0);
+      expect(state()).toEqual(settled);
+    }
     db.close();
   });
 });

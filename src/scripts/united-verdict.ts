@@ -258,7 +258,10 @@ function settleConsensus(
   opts: { tag?: string; clearOnAmbiguous?: boolean } = {}
 ): WifiConsensus {
   const { tag = "", clearOnAmbiguous = true } = opts;
-  const consensus = computeWifiConsensus(db, tail, { sources: OBSERVED_WIFI_SOURCES });
+  const consensus = computeWifiConsensus(db, tail, {
+    sources: OBSERVED_WIFI_SOURCES,
+    airline: "UA",
+  });
   const status = consensusToFleetStatus(consensus.verdict);
   if (status !== null) {
     // Change-gated: a re-confirmation of the value already on file is a debug
@@ -269,23 +272,25 @@ function settleConsensus(
     // starlink_planes.verified_wifi, and the two tables both carry the column.
     const prev =
       (
-        db.query("SELECT verified_wifi FROM starlink_planes WHERE TailNumber = ?").get(tail) as {
-          verified_wifi: string | null;
-        } | null
+        db
+          .query(
+            "SELECT verified_wifi FROM starlink_planes WHERE TailNumber = ? AND airline = 'UA'"
+          )
+          .get(tail) as { verified_wifi: string | null } | null
       )?.verified_wifi ?? null;
-    updateVerifiedWifi(db, tail, consensus.verdict);
+    updateVerifiedWifi(db, tail, "UA", consensus.verdict);
     const line = `${tail}${tag}: verified_wifi → ${consensus.verdict} (${consensus.reason})`;
     if (prev === consensus.verdict) (log.debug ?? log.info)(line);
     else log.info(line);
     // Discovery is the sole united_fleet status writer; queue a re-check when
     // its row disagrees so the verifier/swap path can't leave it stale.
     if (getFleetEntryByTail(db, tail)?.starlink_status !== status) {
-      bumpDiscoveryPriority(db, tail);
+      bumpDiscoveryPriority(db, tail, "UA");
     }
   } else if (clearOnAmbiguous) {
     // Ambiguous — clear to NULL so the check-flight filter
     // (IS NULL OR = 'Starlink') falls through to spreadsheet trust.
-    updateVerifiedWifi(db, tail, null);
+    updateVerifiedWifi(db, tail, "UA", null);
     log.info(`${tail}${tag}: consensus ambiguous, verified_wifi cleared (${consensus.reason})`);
   }
   return consensus;

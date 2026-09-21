@@ -3933,20 +3933,16 @@ export function bumpDiscoveryPriority(
   }
 }
 
-/**
- * Update the verified WiFi status for a plane
- */
+/** Registrations move between carriers, so a listing is keyed by (tail, airline). */
 export function updateVerifiedWifi(
   db: Database,
   tailNumber: string,
+  airline: string,
   verifiedWifi: string | null
 ): void {
-  const now = unixNow();
-  db.query(`
-    UPDATE starlink_planes
-    SET verified_wifi = ?, verified_at = ?
-    WHERE TailNumber = ?
-  `).run(verifiedWifi, now, tailNumber);
+  db.query(
+    "UPDATE starlink_planes SET verified_wifi = ?, verified_at = ? WHERE TailNumber = ? AND airline = ?"
+  ).run(verifiedWifi, unixNow(), tailNumber, airline);
 }
 
 export function reconcileTypeDeterministicFleets(db: Database): number {
@@ -4012,13 +4008,17 @@ export function reconcileTypeDeterministicFleets(db: Database): number {
  * before a fix deployed, or any other path that adds obs without triggering
  * consensus. Runs with the hourly sync — cheap enough to be the safety net.
  */
-export function reconcileConsensus(db: Database): number {
+export function reconcileConsensus(db: Database, now = unixNow()): number {
   const airlines = (
     db.query("SELECT DISTINCT airline FROM starlink_planes").values() as [string][]
   ).map(([a]) => a);
+  const retrofits = retrofittedNegatives(db, now);
   let healed = 0;
-  for (const airline of airlines) healed += reconcileAirlineConsensus(db, airline);
-  return healed + demoteRetrofittedNegatives(db);
+  for (const airline of airlines) {
+    const skip = new Set(retrofits.filter((r) => r.airline === airline).map((r) => r.tail_number));
+    healed += reconcileAirlineConsensus(db, airline, now, skip);
+  }
+  return healed + demoteNegatives(db, retrofits, now);
 }
 
 /**
@@ -4030,7 +4030,12 @@ export function reconcileConsensus(db: Database): number {
  * minObs already demands two confirmed rows, so only tails with window rows
  * are candidates.
  */
-function reconcileAirlineConsensus(db: Database, airline: string): number {
+function reconcileAirlineConsensus(
+  db: Database,
+  airline: string,
+  now: number,
+  skip: ReadonlySet<string>
+): number {
   const rule = DEFAULT_CONSENSUS_RULE;
   const obsByTail = new Map<string, ConsensusObservation[]>();
   const rows = db
@@ -4040,7 +4045,7 @@ function reconcileAirlineConsensus(db: Database, airline: string): number {
          AND checked_at >= ? AND ${CLEAN_OBSERVATION_WHERE}
        ORDER BY tail_number, checked_at DESC`
     )
-    .all(airline, ...OBSERVED_WIFI_SOURCES, unixNow() - rule.windowDays * DAY_SEC) as Array<
+    .all(airline, ...OBSERVED_WIFI_SOURCES, now - rule.windowDays * DAY_SEC) as Array<
     ConsensusObservation & { tail_number: string }
   >;
   for (const { tail_number, ...o } of rows) {
@@ -4060,10 +4065,12 @@ function reconcileAirlineConsensus(db: Database, airline: string): number {
     const obs = discountRegionalFlaps(window, () => hasPriorUnitedStarlink(db, tail, airline));
     if (!obs?.length) return [];
     const { verdict } = settleConsensus(obs, rule);
-    return verdict !== null && verdict !== current ? [{ tail, verdict }] : [];
+    if (verdict === null || verdict === current) return [];
+    // A retrofit being demoted this sweep must not be re-settled negative by it.
+    return verdict !== "Starlink" && skip.has(tail) ? [] : [{ tail, verdict }];
   });
   db.transaction(() => {
-    for (const h of heal) updateVerifiedWifi(db, h.tail, h.verdict);
+    for (const h of heal) updateVerifiedWifi(db, h.tail, airline, h.verdict);
   })();
   return heal.length;
 }
@@ -4073,42 +4080,68 @@ function reconcileAirlineConsensus(db: Database, airline: string): number {
  * tail retrofitted after it was settled answered a firm "not Starlink" while
  * its two newest United.com checks said Starlink: an ambiguous 30-day window
  * (2 Starlink, 2 Viasat) never re-settles, and the streak override needs 3.
- * Two newest clean checks on Starlink drop the settle to 'unknown' (the sheet
- * and the next consensus decide) and queue a prompt re-check.
+ * Both checks must fall inside the trailing window: two old Starlink rows on
+ * a tail nobody has looked at since are not news.
+ *
+ * Returned whatever the current status, because the rule has to hold after
+ * the demotion too: reconcileConsensus won't re-settle these tails to another
+ * provider until a newer check breaks the pair.
  */
-export function demoteRetrofittedNegatives(db: Database, now = unixNow()) {
+function retrofittedNegatives(db: Database, now: number): RetrofitCandidate[] {
   const sources = placeholders(OBSERVED_WIFI_SOURCES);
-  const stale = db
+  return db
     .query(
       `SELECT f.tail_number, f.starlink_status, f.fleet, f.airline FROM united_fleet f
-       WHERE f.starlink_status = 'negative'
+       WHERE f.airline IS NOT NULL
          AND (SELECT COUNT(*) FROM (
-               SELECT has_starlink FROM starlink_verification_log
-               WHERE tail_number = f.tail_number AND tail_confirmed = 1
+               SELECT has_starlink, checked_at FROM starlink_verification_log
+               WHERE tail_number = f.tail_number AND airline = f.airline AND tail_confirmed = 1
                  AND source IN (${sources}) AND ${CLEAN_OBSERVATION_WHERE}
                ORDER BY checked_at DESC LIMIT 2
-             ) WHERE has_starlink = 1) = 2`
+             ) WHERE has_starlink = 1 AND checked_at >= ?) = 2`
     )
-    .all(...OBSERVED_WIFI_SOURCES) as Array<{
-    tail_number: string;
-    starlink_status: string;
-    fleet: string | null;
-    airline: string | null;
-  }>;
+    .all(...OBSERVED_WIFI_SOURCES, now - TRAILING_WINDOW_SEC) as RetrofitCandidate[];
+}
+
+type RetrofitCandidate = {
+  tail_number: string;
+  starlink_status: string | null;
+  fleet: string | null;
+  airline: string;
+};
+
+/**
+ * Drop the settle to 'unknown' and queue a prompt re-check; the next clean
+ * check decides. The listing's non-Starlink verified_wifi is cleared with it:
+ * syncSpreadsheetToFleet re-derives the status from that column every hour,
+ * and leaving 'Viasat' there re-settled the tail 'negative' on the next scrape
+ * (reconcileConsensus skips these tails for the same reason).
+ */
+function demoteNegatives(db: Database, retrofits: RetrofitCandidate[], now: number): number {
+  const stale = retrofits.filter((r) => r.starlink_status === "negative");
   if (stale.length === 0) return 0;
   const demote = db.query(
-    `UPDATE united_fleet SET starlink_status = 'unknown', next_check_after = ?,
-            discovery_priority = MAX(discovery_priority, 0.9)
-     WHERE tail_number = ? AND starlink_status = 'negative'`
+    `UPDATE united_fleet SET starlink_status = 'unknown', verified_wifi = NULL,
+            next_check_after = ?, discovery_priority = MAX(discovery_priority, 0.9)
+     WHERE tail_number = ? AND airline = ? AND starlink_status = 'negative'`
+  );
+  const clearListing = db.query(
+    `UPDATE starlink_planes SET verified_wifi = NULL, verified_at = ?
+     WHERE TailNumber = ? AND airline = ? AND verified_wifi <> 'Starlink'`
   );
   db.transaction(() => {
     for (const r of stale) {
-      demote.run(now, r.tail_number);
+      demote.run(now, r.tail_number, r.airline);
+      clearListing.run(now, r.tail_number, r.airline);
       emitFleetStatusChange(r, "unknown");
     }
   })();
   info(`Demoted ${stale.length} negative settle(s) with two newest checks on Starlink`);
   return stale.length;
+}
+
+export function demoteRetrofittedNegatives(db: Database, now = unixNow()): number {
+  return demoteNegatives(db, retrofittedNegatives(db, now), now);
 }
 
 /**
