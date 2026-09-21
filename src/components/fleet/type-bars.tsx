@@ -179,7 +179,7 @@ export function CarrierSection({ carriers }: { carriers: FleetCarrier[] }) {
         {sorted.map((c) => (
           <ShareBarRow
             key={c.name}
-            label={c.unattributed ? "No carrier on record" : c.name}
+            label={c.unattributed ? "Unlisted carrier" : c.name}
             n={c.confirmed}
             total={c.total}
           />
