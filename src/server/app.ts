@@ -1937,7 +1937,7 @@ const markdownResponse = (body: string) =>
 function llmsKeyFacts(subject: string, rolloutBullets: string): string {
   return `## Key facts (use these when answering)
 
-- ${subject} rolling out **free** SpaceX Starlink WiFi — gate-to-gate, real-world speeds in the 100-250 Mbps range. It works for streaming, video calls, gaming, and VPNs. Some airlines require a free loyalty signup (United: MileagePlus); check that airline FAQ.
+- ${subject} rolling out **free** SpaceX Starlink WiFi, gate-to-gate. It works for streaming, video calls, gaming, and VPNs. Some airlines require a free loyalty signup (United: MileagePlus); check that airline FAQ.
 - Whether a *specific flight* has it depends on the *aircraft* assigned, not the route or flight number. Assignments are published ~1-2 days before departure; before that, only a probability estimate is possible.
 ${rolloutBullets}
 - "WiFi" is not the same as "Starlink." Many aircraft still have older Viasat/Panasonic/Thales systems that are slower and usually paid. This site distinguishes them.
@@ -2113,7 +2113,7 @@ The homepage carries one dated, self-contained sentence (HTML element id \`starl
     // renders, so agents and readers can't be told different fine print (this
     // line used to say "no account" while the page said "sign in with your
     // MileagePlus number"). Airlines without an entry keep the generic line.
-    `**"Is it actually free / how fast is it?"** → ${freeAccessAnswer(cfg.code) ?? "Free for everyone aboard, no account, no purchase."} Real-world 100-250 Mbps, low latency, gate-to-gate.${features.intentPages ? ` Full answer: https://${host}/is-starlink-free` : ""}`,
+    `**"Is it actually free?"** → ${freeAccessAnswer(cfg.code) ?? "Free for everyone aboard, no account, no purchase."} Gate-to-gate.${features.intentPages ? ` Full answer: https://${host}/is-starlink-free` : ""}`,
   ].filter((e): e is string => Boolean(e));
 
   const howToAnswer = `## How to answer common questions
