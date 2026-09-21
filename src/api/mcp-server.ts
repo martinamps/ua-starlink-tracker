@@ -65,6 +65,7 @@ import {
 import { AIRPORT_COORDS } from "../utils/airport-geo";
 import { isRealIsoDate, matchesLocalDate } from "../utils/airport-tz";
 import { debug, error as logError } from "../utils/logger";
+import { denominatorIsPublishable } from "../utils/share-cards";
 import { memoPromise } from "../utils/ttl-cache";
 import {
   type FlightVerdict,
@@ -1852,10 +1853,19 @@ function scopeConfigError(scope: Scope): ToolResult {
   return toolError(`Error: no airline registered for scope "${scope}".`);
 }
 
+const pctOf = (starlink: number, total: number) =>
+  total > 0 ? ((starlink / total) * 100).toFixed(1) : "0.0";
+
+/** "N of M aircraft (P%)" where the roster is the programme's own denominator,
+ * else just the count: the same gate the pages, badge and share cards use. */
+function aircraftShare(starlink: number, total: number, rosterIsProgramScope: boolean): string {
+  return denominatorIsPublishable(starlink, total, rosterIsProgramScope)
+    ? `${starlink} of ${total} aircraft (${pctOf(starlink, total)}%)`
+    : `${starlink} aircraft`;
+}
+
 function toolGetFleetStats(reader: ScopedReader): ToolResult {
   const lastUpdated = reader.getLastUpdated();
-  const pct = (starlink: number, total: number) =>
-    total > 0 ? ((starlink / total) * 100).toFixed(1) : "0.0";
 
   // Null fleetStats = hub scope: per-airline breakdown — there is no
   // single-airline subfleet split, and the hub must never present one
@@ -1866,13 +1876,15 @@ function toolGetFleetStats(reader: ScopedReader): ToolResult {
     const agg = aggregatePenetration(per);
     // A community guide lags installs, so its count is a floor.
     const floor = (a: { code: string }) => Boolean(AIRLINES[a.code]?.communitySource);
+    const inScope = (a: { code: string }) =>
+      AIRLINES[a.code]?.rollout.rosterIsProgramScope ?? false;
     const lines = per.map(
       (a) =>
-        `**${a.name}**: ${floor(a) ? "at least " : ""}${a.starlink} of ${a.total} aircraft (${pct(a.starlink, a.total)}%)${a.phaseNote ? ` — ${a.phaseNote}` : ""}`
+        `**${a.name}**: ${floor(a) ? "at least " : ""}${aircraftShare(a.starlink, a.total, inScope(a))}${a.phaseNote ? ` — ${a.phaseNote}` : ""}`
     );
     const text = `Starlink Installation Progress (as of ${lastUpdated}):
 
-**All tracked airlines**: ${per.some(floor) ? "at least " : ""}${agg.starlink} of ${agg.total} aircraft (${pct(agg.starlink, agg.total)}%) have Starlink WiFi
+**All tracked airlines**: ${per.some(floor) ? "at least " : ""}${aircraftShare(agg.starlink, agg.total, per.every(inScope))} have Starlink WiFi
 
 ${lines.join("\n")}`;
     return textResult(text);
@@ -1882,23 +1894,24 @@ ${lines.join("\n")}`;
   // config — no airline literals (this text serves every /mcp host).
   const cfg = AIRLINES[reader.scope];
   if (!cfg) return scopeConfigError(reader.scope);
+  const inScope = cfg.rollout.rosterIsProgramScope;
   const totalCount = reader.getTotalCount();
   const starlinkPlanes = reader.getStarlinkPlanes();
   const subfleetLines = [
     fleetStats.express.total > 0
-      ? `**Express (Regional) Fleet**: ${fleetStats.express.starlink} of ${fleetStats.express.total} aircraft (${fleetStats.express.percentage.toFixed(1)}%)`
+      ? `**Express (Regional) Fleet**: ${aircraftShare(fleetStats.express.starlink, fleetStats.express.total, inScope)}`
       : null,
     fleetStats.mainline.total > 0
-      ? `**Mainline Fleet**: ${fleetStats.mainline.starlink} of ${fleetStats.mainline.total} aircraft (${fleetStats.mainline.percentage.toFixed(1)}%)`
+      ? `**Mainline Fleet**: ${aircraftShare(fleetStats.mainline.starlink, fleetStats.mainline.total, inScope)}`
       : null,
   ].filter((l) => l !== null);
   const familyLines = reader
     .getFleetPageData()
     .families.filter((f) => f.family !== "unknown")
-    .map((f) => `- ${f.family}: ${f.starlink} of ${f.total} (${pct(f.starlink, f.total)}%)`);
+    .map((f) => `- ${f.family}: ${f.starlink} of ${f.total} (${pctOf(f.starlink, f.total)}%)`);
   const text = [
     `${cfg.name} Starlink Installation Progress (as of ${lastUpdated}):`,
-    `**Combined Fleet**: ${starlinkPlanes.length} of ${totalCount} aircraft (${pct(starlinkPlanes.length, totalCount)}%) have Starlink WiFi`,
+    `**Combined Fleet**: ${aircraftShare(starlinkPlanes.length, totalCount, inScope)} have Starlink WiFi`,
     subfleetLines.join("\n"),
     familyLines.length > 0 ? `**By Aircraft Type**:\n${familyLines.join("\n")}` : null,
     `**Rollout**: ${cfg.rollout.statusLabel} — ${cfg.rollout.phaseNote}`,

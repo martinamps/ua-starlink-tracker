@@ -348,6 +348,12 @@ describe("hub /api/check-flight + /api/predict-flight detect the airline", () =>
     for (const a of Object.values(AIRLINES).filter((x) => x.enabled && x.publicInHub)) {
       expect(text, `hub fleet stats missing ${a.name}`).toContain(a.name);
     }
+    // A roster that isn't the programme's denominator gets a count, not a share
+    // (the pages and badge refuse the same ratio).
+    for (const a of Object.values(AIRLINES).filter((x) => !x.rollout.rosterIsProgramScope)) {
+      const line = text.split("\n").find((l) => l.startsWith(`**${a.name}**:`));
+      if (line) expect(line.split(" — ")[0], a.code).not.toMatch(/\d+ of \d+ aircraft \(/);
+    }
   });
 
   test("hub detection uses marketing codes only — shared regional prefixes fail closed", async () => {
