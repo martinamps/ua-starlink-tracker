@@ -247,6 +247,12 @@ const CASES: Case[] = [
       ["QR8888", D1],
     ] as [string, string][]
   ).map(([fn, d]) => api(QR, "/api/check-flight", fn, d)),
+  // Watch feeds last: they read the assignment log the FR24 cases above wrote.
+  ...[...UA_FLIGHTS, ["UA1003", PAST] as [string, string]].map(
+    ([fn, d]): Case => ({ name: `${UA} watch ${fn} ${d}`, host: UA, path: `/cal/${fn}/${d}.ics` })
+  ),
+  { name: `${AS} watch AS100 ${D1}`, host: AS, path: `/cal/AS100/${D1}.ics` },
+  { name: `${AS} watch AS200 ${FAR}`, host: AS, path: `/cal/AS200/${FAR}.ics` },
 ];
 
 const MCP_CASES: { host: string; args: Record<string, string> }[] = [

@@ -693,6 +693,134 @@
     },
     "body": "{\"hasStarlink\":null,\"airline\":\"Qatar Airways\",\"confidence\":\"no_data\",\"reason\":\"We haven't observed QR8888 on the Qatar routes we track yet (selected Qatar routes only; Qatar publishes the aircraft about a week out). Qatar reports its 777, A350 and 787-8 fleets fitted; 787-9 installs are under way; A380, A330 and narrowbodies aren't in the program.\",\"flights\":[]}"
   },
+  "unitedstarlinktracker.com watch UA1001 2026-09-20": {
+    "status": 200,
+    "headers": {
+      "content-type": "text/calendar; charset=utf-8",
+      "cache-control": "public, max-age=900",
+      "access-control-allow-origin": "*",
+      "vary": "Host"
+    },
+    "body": "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//unitedstarlinktracker//watch//EN\r\nCALSCALE:GREGORIAN\r\nMETHOD:PUBLISH\r\nX-WR-CALNAME:Starlink Watch UA1001\r\nREFRESH-INTERVAL;VALUE=DURATION:PT1H\r\nX-PUBLISHED-TTL:PT1H\r\nBEGIN:VEVENT\r\nUID:UA1001-2026-09-20@unitedstarlinktracker.com\r\nDTSTAMP:20260919T080000Z\r\nDTSTART:20260920T150000Z\r\nDTEND:20260920T180000Z\r\nLAST-MODIFIED:20260919T080000Z\r\nSEQUENCE:0\r\nSUMMARY:UA1001 SFO→EWR · Starlink ✅ N3001 (Boeing 737-900)\r\nDESCRIPTION:Aircraft: N3001 (Boeing 737-900) — Starlink verified.\\n\\nAirc\r\n raft usually assigned ~2 days out\\; Google Calendar refreshes every 8–24\r\n h\\, Apple ~hourly.\\nhttps://unitedstarlinktracker.com/check-flight/UA1001/\r\n 2026-09-20?utm_source=cal\r\nURL:https://unitedstarlinktracker.com/check-flight/UA1001/2026-09-20?utm_so\r\n urce=cal\r\nTRANSP:TRANSPARENT\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+  },
+  "unitedstarlinktracker.com watch UA1002 2026-09-20": {
+    "status": 200,
+    "headers": {
+      "content-type": "text/calendar; charset=utf-8",
+      "cache-control": "public, max-age=900",
+      "access-control-allow-origin": "*",
+      "vary": "Host"
+    },
+    "body": "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//unitedstarlinktracker//watch//EN\r\nCALSCALE:GREGORIAN\r\nMETHOD:PUBLISH\r\nX-WR-CALNAME:Starlink Watch UA1002\r\nREFRESH-INTERVAL;VALUE=DURATION:PT1H\r\nX-PUBLISHED-TTL:PT1H\r\nBEGIN:VEVENT\r\nUID:UA1002-2026-09-20@unitedstarlinktracker.com\r\nDTSTAMP:20260919T080000Z\r\nDTSTART:20260920T160000Z\r\nDTEND:20260920T190000Z\r\nLAST-MODIFIED:20260919T080000Z\r\nSEQUENCE:0\r\nSUMMARY:UA1002 SFO→DEN · Starlink ✅ N3002 (Boeing 737-900)\r\nDESCRIPTION:Aircraft: N3002 (Boeing 737-900) — Starlink likely (listed as\r\n  installed\\, not yet verified onboard).\\n\\nAircraft usually assigned ~2 da\r\n ys out\\; Google Calendar refreshes every 8–24h\\, Apple ~hourly.\\nhttps:/\r\n /unitedstarlinktracker.com/check-flight/UA1002/2026-09-20?utm_source=cal\r\nURL:https://unitedstarlinktracker.com/check-flight/UA1002/2026-09-20?utm_so\r\n urce=cal\r\nTRANSP:TRANSPARENT\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+  },
+  "unitedstarlinktracker.com watch UA1003 2026-09-20": {
+    "status": 200,
+    "headers": {
+      "content-type": "text/calendar; charset=utf-8",
+      "cache-control": "public, max-age=900",
+      "access-control-allow-origin": "*",
+      "vary": "Host"
+    },
+    "body": "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//unitedstarlinktracker//watch//EN\r\nCALSCALE:GREGORIAN\r\nMETHOD:PUBLISH\r\nX-WR-CALNAME:Starlink Watch UA1003\r\nREFRESH-INTERVAL;VALUE=DURATION:PT1H\r\nX-PUBLISHED-TTL:PT1H\r\nBEGIN:VEVENT\r\nUID:UA1003-2026-09-20@unitedstarlinktracker.com\r\nDTSTAMP:20260919T080000Z\r\nDTSTART:20260920T180000Z\r\nDTEND:20260920T210000Z\r\nLAST-MODIFIED:20260919T080000Z\r\nSEQUENCE:0\r\nSUMMARY:UA1003 · No Starlink (N3003\\, Viasat)\r\nDESCRIPTION:Aircraft: N3003 (Boeing 737-900) — Viasat WiFi\\, not Starlink\r\n .\\n\\nStarlink flights on this route that day:\\nUA1004 3:00 PM CDT (N3004\\,\r\n  Boeing 737-900)\\n\\nAircraft usually assigned ~2 days out\\; Google Calenda\r\n r refreshes every 8–24h\\, Apple ~hourly.\\nhttps://unitedstarlinktracker.\r\n com/check-flight/UA1003/2026-09-20?utm_source=cal\r\nURL:https://unitedstarlinktracker.com/check-flight/UA1003/2026-09-20?utm_so\r\n urce=cal\r\nTRANSP:TRANSPARENT\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+  },
+  "unitedstarlinktracker.com watch UA1005 2026-09-20": {
+    "status": 200,
+    "headers": {
+      "content-type": "text/calendar; charset=utf-8",
+      "cache-control": "public, max-age=900",
+      "access-control-allow-origin": "*",
+      "vary": "Host"
+    },
+    "body": "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//unitedstarlinktracker//watch//EN\r\nCALSCALE:GREGORIAN\r\nMETHOD:PUBLISH\r\nX-WR-CALNAME:Starlink Watch UA1005\r\nREFRESH-INTERVAL;VALUE=DURATION:PT1H\r\nX-PUBLISHED-TTL:PT1H\r\nBEGIN:VEVENT\r\nUID:UA1005-2026-09-20@unitedstarlinktracker.com\r\nDTSTAMP:20260919T080000Z\r\nDTSTART:20260920T140000Z\r\nDTEND:20260920T170000Z\r\nLAST-MODIFIED:20260919T080000Z\r\nSEQUENCE:1\r\nSUMMARY:UA1005 · Starlink odds ~2%\r\nDESCRIPTION:Current aircraft not confirmed. ~2% is the fleet-wide Starlink \r\n install rate.\\n\\nAssignment history:\\nN3001 first seen assigned Sep 19 at \r\n 3:00 AM CDT\\n\\nAircraft usually assigned ~2 days out\\; Google Calendar ref\r\n reshes every 8–24h\\, Apple ~hourly.\\nhttps://unitedstarlinktracker.com/c\r\n heck-flight/UA1005/2026-09-20?utm_source=cal\r\nURL:https://unitedstarlinktracker.com/check-flight/UA1005/2026-09-20?utm_so\r\n urce=cal\r\nTRANSP:TRANSPARENT\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+  },
+  "unitedstarlinktracker.com watch UA1006 2026-09-20": {
+    "status": 200,
+    "headers": {
+      "content-type": "text/calendar; charset=utf-8",
+      "cache-control": "public, max-age=900",
+      "access-control-allow-origin": "*",
+      "vary": "Host"
+    },
+    "body": "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//unitedstarlinktracker//watch//EN\r\nCALSCALE:GREGORIAN\r\nMETHOD:PUBLISH\r\nX-WR-CALNAME:Starlink Watch UA1006\r\nREFRESH-INTERVAL;VALUE=DURATION:PT1H\r\nX-PUBLISHED-TTL:PT1H\r\nBEGIN:VEVENT\r\nUID:UA1006-2026-09-20@unitedstarlinktracker.com\r\nDTSTAMP:20260919T080000Z\r\nDTSTART:20260920T140000Z\r\nDTEND:20260920T170000Z\r\nLAST-MODIFIED:20260919T080000Z\r\nSEQUENCE:1\r\nSUMMARY:UA1006 · No Starlink (N3005\\, Thales)\r\nDESCRIPTION:Aircraft: N3005 — Thales WiFi\\, not Starlink.\\n\\nAssignment h\r\n istory:\\nN3005 first seen assigned Sep 19 at 3:00 AM CDT\\n\\nAircraft usual\r\n ly assigned ~2 days out\\; Google Calendar refreshes every 8–24h\\, Apple \r\n ~hourly.\\nhttps://unitedstarlinktracker.com/check-flight/UA1006/2026-09-20\r\n ?utm_source=cal\r\nURL:https://unitedstarlinktracker.com/check-flight/UA1006/2026-09-20?utm_so\r\n urce=cal\r\nTRANSP:TRANSPARENT\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+  },
+  "unitedstarlinktracker.com watch UA1007 2026-09-20": {
+    "status": 200,
+    "headers": {
+      "content-type": "text/calendar; charset=utf-8",
+      "cache-control": "public, max-age=900",
+      "access-control-allow-origin": "*",
+      "vary": "Host"
+    },
+    "body": "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//unitedstarlinktracker//watch//EN\r\nCALSCALE:GREGORIAN\r\nMETHOD:PUBLISH\r\nX-WR-CALNAME:Starlink Watch UA1007\r\nREFRESH-INTERVAL;VALUE=DURATION:PT1H\r\nX-PUBLISHED-TTL:PT1H\r\nBEGIN:VEVENT\r\nUID:UA1007-2026-09-20@unitedstarlinktracker.com\r\nDTSTAMP:20260919T080000Z\r\nDTSTART:20260920T140000Z\r\nDTEND:20260920T170000Z\r\nLAST-MODIFIED:20260919T080000Z\r\nSEQUENCE:1\r\nSUMMARY:UA1007 · Starlink odds ~2%\r\nDESCRIPTION:Current aircraft not confirmed. ~2% is the fleet-wide Starlink \r\n install rate.\\n\\nAssignment history:\\nN3999 first seen assigned Sep 19 at \r\n 3:00 AM CDT\\n\\nAircraft usually assigned ~2 days out\\; Google Calendar ref\r\n reshes every 8–24h\\, Apple ~hourly.\\nhttps://unitedstarlinktracker.com/c\r\n heck-flight/UA1007/2026-09-20?utm_source=cal\r\nURL:https://unitedstarlinktracker.com/check-flight/UA1007/2026-09-20?utm_so\r\n urce=cal\r\nTRANSP:TRANSPARENT\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+  },
+  "unitedstarlinktracker.com watch UA1008 2026-09-20": {
+    "status": 200,
+    "headers": {
+      "content-type": "text/calendar; charset=utf-8",
+      "cache-control": "public, max-age=900",
+      "access-control-allow-origin": "*",
+      "vary": "Host"
+    },
+    "body": "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//unitedstarlinktracker//watch//EN\r\nCALSCALE:GREGORIAN\r\nMETHOD:PUBLISH\r\nX-WR-CALNAME:Starlink Watch UA1008\r\nREFRESH-INTERVAL;VALUE=DURATION:PT1H\r\nX-PUBLISHED-TTL:PT1H\r\nBEGIN:VEVENT\r\nUID:UA1008-2026-09-20@unitedstarlinktracker.com\r\nDTSTAMP:20260919T080000Z\r\nDTSTART;VALUE=DATE:20260920\r\nDTEND;VALUE=DATE:20260921\r\nLAST-MODIFIED:20260919T080000Z\r\nSEQUENCE:0\r\nSUMMARY:UA1008 · Starlink odds ~2%\r\nDESCRIPTION:No aircraft assigned yet. ~2% is the fleet-wide Starlink instal\r\n l rate.\\n\\nAircraft usually assigned ~2 days out\\; Google Calendar refresh\r\n es every 8–24h\\, Apple ~hourly.\\nhttps://unitedstarlinktracker.com/check\r\n -flight/UA1008/2026-09-20?utm_source=cal\r\nURL:https://unitedstarlinktracker.com/check-flight/UA1008/2026-09-20?utm_so\r\n urce=cal\r\nTRANSP:TRANSPARENT\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+  },
+  "unitedstarlinktracker.com watch UA1009 2026-09-29": {
+    "status": 200,
+    "headers": {
+      "content-type": "text/calendar; charset=utf-8",
+      "cache-control": "public, max-age=900",
+      "access-control-allow-origin": "*",
+      "vary": "Host"
+    },
+    "body": "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//unitedstarlinktracker//watch//EN\r\nCALSCALE:GREGORIAN\r\nMETHOD:PUBLISH\r\nX-WR-CALNAME:Starlink Watch UA1009\r\nREFRESH-INTERVAL;VALUE=DURATION:PT1H\r\nX-PUBLISHED-TTL:PT1H\r\nBEGIN:VEVENT\r\nUID:UA1009-2026-09-29@unitedstarlinktracker.com\r\nDTSTAMP:20260919T080000Z\r\nDTSTART;VALUE=DATE:20260929\r\nDTEND;VALUE=DATE:20260930\r\nLAST-MODIFIED:20260919T080000Z\r\nSEQUENCE:0\r\nSUMMARY:UA1009 · Starlink odds ~80%\r\nDESCRIPTION:No aircraft assigned yet. ~80% of 5 observed departures of this\r\n  flight used a Starlink aircraft.\\n\\nAircraft usually assigned ~2 days out\r\n \\; Google Calendar refreshes every 8–24h\\, Apple ~hourly.\\nhttps://unite\r\n dstarlinktracker.com/check-flight/UA1009/2026-09-29?utm_source=cal\r\nURL:https://unitedstarlinktracker.com/check-flight/UA1009/2026-09-29?utm_so\r\n urce=cal\r\nTRANSP:TRANSPARENT\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+  },
+  "unitedstarlinktracker.com watch UA1010 2026-09-29": {
+    "status": 200,
+    "headers": {
+      "content-type": "text/calendar; charset=utf-8",
+      "cache-control": "public, max-age=900",
+      "access-control-allow-origin": "*",
+      "vary": "Host"
+    },
+    "body": "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//unitedstarlinktracker//watch//EN\r\nCALSCALE:GREGORIAN\r\nMETHOD:PUBLISH\r\nX-WR-CALNAME:Starlink Watch UA1010\r\nREFRESH-INTERVAL;VALUE=DURATION:PT1H\r\nX-PUBLISHED-TTL:PT1H\r\nBEGIN:VEVENT\r\nUID:UA1010-2026-09-29@unitedstarlinktracker.com\r\nDTSTAMP:20260919T080000Z\r\nDTSTART;VALUE=DATE:20260929\r\nDTEND;VALUE=DATE:20260930\r\nLAST-MODIFIED:20260919T080000Z\r\nSEQUENCE:0\r\nSUMMARY:UA1010 · Starlink odds ~2%\r\nDESCRIPTION:No aircraft assigned yet. ~2% is the fleet-wide Starlink instal\r\n l rate.\\n\\nAircraft usually assigned ~2 days out\\; Google Calendar refresh\r\n es every 8–24h\\, Apple ~hourly.\\nhttps://unitedstarlinktracker.com/check\r\n -flight/UA1010/2026-09-29?utm_source=cal\r\nURL:https://unitedstarlinktracker.com/check-flight/UA1010/2026-09-29?utm_so\r\n urce=cal\r\nTRANSP:TRANSPARENT\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+  },
+  "unitedstarlinktracker.com watch UA1010 2026-09-14": {
+    "status": 404,
+    "headers": {
+      "content-type": "text/plain; charset=utf-8",
+      "cache-control": "public, max-age=300",
+      "vary": "Host"
+    },
+    "body": "Not found"
+  },
+  "unitedstarlinktracker.com watch UA1003 2026-09-14": {
+    "status": 404,
+    "headers": {
+      "content-type": "text/plain; charset=utf-8",
+      "cache-control": "public, max-age=300",
+      "vary": "Host"
+    },
+    "body": "Not found"
+  },
+  "alaskastarlinktracker.com watch AS100 2026-09-20": {
+    "status": 200,
+    "headers": {
+      "content-type": "text/calendar; charset=utf-8",
+      "cache-control": "public, max-age=900",
+      "access-control-allow-origin": "*",
+      "vary": "Host"
+    },
+    "body": "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//unitedstarlinktracker//watch//EN\r\nCALSCALE:GREGORIAN\r\nMETHOD:PUBLISH\r\nX-WR-CALNAME:Starlink Watch AS100\r\nREFRESH-INTERVAL;VALUE=DURATION:PT1H\r\nX-PUBLISHED-TTL:PT1H\r\nBEGIN:VEVENT\r\nUID:AS100-2026-09-20@alaskastarlinktracker.com\r\nDTSTAMP:20260919T080000Z\r\nDTSTART:20260920T180000Z\r\nDTEND:20260920T210000Z\r\nLAST-MODIFIED:20260919T080000Z\r\nSEQUENCE:0\r\nSUMMARY:AS100 SEA→LAX · Starlink ✅ N601AS (Boeing 737-900)\r\nDESCRIPTION:Aircraft: N601AS (Boeing 737-900) — Starlink verified.\\n\\nAir\r\n craft usually assigned ~2 days out\\; Google Calendar refreshes every 8–2\r\n 4h\\, Apple ~hourly.\\nhttps://alaskastarlinktracker.com/check-flight/AS100/\r\n 2026-09-20?utm_source=cal\r\nURL:https://alaskastarlinktracker.com/check-flight/AS100/2026-09-20?utm_sou\r\n rce=cal\r\nTRANSP:TRANSPARENT\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+  },
+  "alaskastarlinktracker.com watch AS200 2026-09-29": {
+    "status": 200,
+    "headers": {
+      "content-type": "text/calendar; charset=utf-8",
+      "cache-control": "public, max-age=900",
+      "access-control-allow-origin": "*",
+      "vary": "Host"
+    },
+    "body": "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//unitedstarlinktracker//watch//EN\r\nCALSCALE:GREGORIAN\r\nMETHOD:PUBLISH\r\nX-WR-CALNAME:Starlink Watch AS200\r\nREFRESH-INTERVAL;VALUE=DURATION:PT1H\r\nX-PUBLISHED-TTL:PT1H\r\nBEGIN:VEVENT\r\nUID:AS200-2026-09-29@alaskastarlinktracker.com\r\nDTSTAMP:20260919T080000Z\r\nDTSTART;VALUE=DATE:20260929\r\nDTEND;VALUE=DATE:20260930\r\nLAST-MODIFIED:20260919T080000Z\r\nSEQUENCE:0\r\nSUMMARY:AS200 · Starlink status pending\r\nDESCRIPTION:No aircraft assigned yet.\\n\\nAircraft usually assigned ~2 days \r\n out\\; Google Calendar refreshes every 8–24h\\, Apple ~hourly.\\nhttps://al\r\n askastarlinktracker.com/check-flight/AS200/2026-09-29?utm_source=cal\r\nURL:https://alaskastarlinktracker.com/check-flight/AS200/2026-09-29?utm_sou\r\n rce=cal\r\nTRANSP:TRANSPARENT\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+  },
   "unitedstarlinktracker.com mcp check_flight {\"flight_number\":\"UA1001\",\"date\":\"2026-09-20\"}": {
     "status": 200,
     "headers": {
