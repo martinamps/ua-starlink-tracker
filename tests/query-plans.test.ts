@@ -105,7 +105,9 @@ describe("hot-path query plans", () => {
        WHERE flight_number IN (?,?) AND source IN (?) AND error IS NULL AND airline = ?`,
       ["UA1", "UAL1", "united", "UA"]
     );
-    expect(plan).toContain("idx_vlog_flight");
+    expect(plan).toMatch(
+      /SEARCH starlink_verification_log USING (COVERING )?INDEX idx_vlog_flight \(flight_number=\?/
+    );
     expect(plan).not.toContain("idx_vlog_airline");
     db.close();
   });
@@ -122,9 +124,9 @@ describe("hot-path query plans", () => {
          AND ${equippedSql("sp")}`,
       ["UA1", "UAL1", 1_700_000_000, 1_800_000_000]
     );
-    expect(plan).toContain("idx_sp_tail");
+    expect(plan).toMatch(/SEARCH sp USING (COVERING )?INDEX idx_sp_tail \(TailNumber=\?\)/);
     expect(plan).not.toMatch(/SCAN sp\b/);
-    expect(plan).toContain("idx_upf_flight");
+    expect(plan).toMatch(/SEARCH uf USING (COVERING )?INDEX idx_upf_flight \(flight_number=\?/);
     db.close();
   });
 });
@@ -160,7 +162,7 @@ describe("aircraft-type page passes", () => {
   test("routes seek upcoming_flights by airline, never a full scan", () => {
     const db = multiAirline();
     const plan = planOf(db, TYPE_PAGE_ROUTES_SQL, ["UA", 1_700_000_000, 1_700_172_800]);
-    expect(plan).toMatch(/idx_upf_(airline|route) \(airline=\?/);
+    expect(plan).toMatch(/SEARCH uf USING (COVERING )?INDEX idx_upf_(airline|route) \(airline=\?/);
     expect(plan).not.toMatch(/SCAN upcoming_flights/);
     db.close();
   });
@@ -168,7 +170,9 @@ describe("aircraft-type page passes", () => {
   test("flight numbers seek the verification log by airline", () => {
     const db = seeded();
     const plan = planOf(db, TYPE_PAGE_FLIGHTS_SQL, ["UA", 1_700_000_000]);
-    expect(plan).toContain("idx_vlog_airline");
+    expect(plan).toMatch(
+      /SEARCH starlink_verification_log USING (COVERING )?INDEX idx_vlog_airline\w* \(airline=\?/
+    );
     expect(plan).not.toMatch(/SCAN starlink_verification_log/);
     db.close();
   });
@@ -176,7 +180,9 @@ describe("aircraft-type page passes", () => {
   test("pipeline-event lastmod seeks by airline", () => {
     const db = seeded();
     const plan = planOf(db, TYPE_PAGE_EVENTS_SQL, ["UA"]);
-    expect(plan).toContain("idx_pipeline_events_time");
+    expect(plan).toMatch(
+      /SEARCH pipeline_events USING (COVERING )?INDEX idx_pipeline_events_time \(airline=\?/
+    );
     expect(plan).not.toMatch(/SCAN pipeline_events/);
     db.close();
   });
