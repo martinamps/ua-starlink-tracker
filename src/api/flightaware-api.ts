@@ -1,6 +1,7 @@
-import { COUNTERS, metrics } from "../observability";
+import { COUNTERS, metrics, normalizeAirlineTag } from "../observability";
 import type { Flight } from "../types";
 import { info, warn } from "../utils/logger";
+import { sleep } from "../utils/sleep";
 import { FR24_UPCOMING_CAP } from "./flightradar24-api";
 
 interface FlightAwareConfig {
@@ -45,13 +46,17 @@ export class FlightAwareAPI {
 
     if (timeSinceLastRequest < this.minRequestInterval) {
       const waitTime = this.minRequestInterval - timeSinceLastRequest;
-      await new Promise((resolve) => setTimeout(resolve, waitTime));
+      await sleep(waitTime);
     }
 
     this.lastRequestTime = Date.now();
   }
 
-  private async retryWithBackoff<T>(operation: () => Promise<T>, maxRetries = 3): Promise<T> {
+  private async retryWithBackoff<T>(
+    operation: () => Promise<T>,
+    airline: string,
+    maxRetries = 3
+  ): Promise<T> {
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
         await this.waitForRateLimit();
@@ -62,6 +67,7 @@ export class FlightAwareAPI {
             vendor: "flightaware",
             type: "flights",
             status: "rate_limited",
+            airline,
           });
 
           // Exponential backoff: 10s, 20s, 40s (max 60s) + 0-5s jitter
@@ -72,7 +78,7 @@ export class FlightAwareAPI {
           warn(
             `Rate limited (429), waiting ${Math.round(delay / 1000)}s before retry ${attempt + 1}/${maxRetries}`
           );
-          await new Promise((resolve) => setTimeout(resolve, delay));
+          await sleep(delay);
           continue;
         }
         throw error;
@@ -81,7 +87,12 @@ export class FlightAwareAPI {
     throw new Error("Max retries exceeded");
   }
 
-  async getUpcomingFlights(tailNumber: string): Promise<FlightUpdate[]> {
+  async getUpcomingFlights(
+    tailNumber: string,
+    _flightNumberSource?: unknown,
+    airlineCode?: string | null
+  ): Promise<FlightUpdate[]> {
+    const airline = airlineCode ? normalizeAirlineTag(airlineCode) : "unmapped";
     return this.retryWithBackoff(async () => {
       const url = `${this.config.baseUrl}/flights/${tailNumber}`;
 
@@ -99,6 +110,7 @@ export class FlightAwareAPI {
             vendor: "flightaware",
             type: "flights",
             status: "success",
+            airline,
           });
           return [];
         }
@@ -106,6 +118,7 @@ export class FlightAwareAPI {
           vendor: "flightaware",
           type: "flights",
           status: "error",
+          airline,
         });
         throw new Error(`FlightAware API error: ${response.status} ${response.statusText}`);
       }
@@ -114,6 +127,7 @@ export class FlightAwareAPI {
         vendor: "flightaware",
         type: "flights",
         status: "success",
+        airline,
       });
       const data: FlightAwareResponse = await response.json();
 
@@ -131,7 +145,7 @@ export class FlightAwareAPI {
         .filter((f) => (f.arrival_time || f.departure_time) > now)
         .sort((a, b) => a.departure_time - b.departure_time)
         .slice(0, FR24_UPCOMING_CAP);
-    });
+    }, airline);
   }
 
   async checkRateLimit(): Promise<{ remaining: number; resetTime: number }> {

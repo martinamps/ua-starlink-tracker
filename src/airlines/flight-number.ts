@@ -110,6 +110,44 @@ export function ensureAirlinePrefix(cfg: AirlineConfig, flightNumber: string): s
   return normalized;
 }
 
+/** UAL675 → UA675: people paste the callsign from FR24/FlightAware. Only a
+ * carrier's own ICAO code maps — operating prefixes (SKW, OO) fly for several. */
+export function icaoCallsignToIata(fn: string): string {
+  for (const cfg of enabledAirlines()) {
+    if (fn.startsWith(cfg.icao) && /^\d{1,4}$/.test(fn.slice(cfg.icao.length))) {
+      return `${cfg.iata}${fn.slice(cfg.icao.length)}`;
+    }
+  }
+  return fn;
+}
+
+/**
+ * The airline a /check-flight permalink answers for. Deliberately looser than
+ * check-flight-core's decideCarrier: a pinned host owns only its own IATA
+ * spelling, and the hub resolves by any tracked prefix.
+ */
+export function permalinkCarrier(
+  pinned: AirlineConfig | null,
+  flightNumber: string
+): AirlineConfig | null {
+  if (pinned) return flightNumber.startsWith(pinned.iata) ? pinned : null;
+  return detectAirline(flightNumber);
+}
+
+/**
+ * A stored row's number as the marketing number it's sold under: the row's own
+ * carrier when its prefix maps there, else whichever tracked marketing carrier
+ * owns the prefix, else the row carrier's IATA over the digits.
+ */
+export function marketingFlightNumber(rowCfg: AirlineConfig, raw: string): string {
+  const fn = normalizeAirlineFlightNumber(rowCfg, raw);
+  if (iataExact(rowCfg).test(fn)) return fn;
+  const marketing = detectMarketingCarrier(raw);
+  if (marketing) return normalizeAirlineFlightNumber(marketing, raw);
+  const digits = raw.match(/^[A-Z]{2,3}(\d{1,4})$/)?.[1];
+  return digits ? `${rowCfg.iata}${digits}` : raw;
+}
+
 /**
  * Build all carrier-prefix variants of a marketing-code flight number for DB
  * lookup. The DB stores operating-carrier codes (SKW5212, OO5212, …) but users
@@ -234,8 +272,13 @@ export function flightInputRules(cfg: AirlineConfig): FlightInputRules {
  * that entry or an advertised URL would 404.
  */
 export function buildFlightLookupVariants(cfg: AirlineConfig, flightNumber: string): string[] {
-  const variants = new Set(buildAirlineFlightNumberVariants(cfg, flightNumber));
-  for (const v of [...variants]) {
+  return zeroPaddedVariants(buildAirlineFlightNumberVariants(cfg, flightNumber));
+}
+
+/** Each spelling plus its zero-padded forms up to 5 digits, deduplicated. */
+export function zeroPaddedVariants(spellings: readonly string[]): string[] {
+  const variants = new Set(spellings);
+  for (const v of spellings) {
     const m = v.match(/^([A-Z]+)(\d+)$/);
     if (!m) continue;
     const digits = m[2].replace(/^0+(?=\d)/, "");

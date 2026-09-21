@@ -57,6 +57,7 @@ import { COUNTERS, metrics, normalizeAirlineTag, withSpan } from "../observabili
 import { airportLocalDate } from "../utils/airport-tz";
 import { type JobHandle, type JobRunContext, startJob } from "../utils/job-runner";
 import { info, error as logError, warn } from "../utils/logger";
+import { sleep } from "../utils/sleep";
 
 const INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 const STARTUP_DELAY_MS = 45_000; // stagger after server boot
@@ -395,7 +396,7 @@ export async function ingestQatarSchedule(
         recordQatarFetchCoverage(db, origin, destination, date, writeSec);
       });
       tx();
-      if (delayMs > 0) await new Promise((r) => setTimeout(r, delayMs));
+      if (delayMs > 0) await sleep(delayMs);
     }
   }
 

@@ -31,6 +31,7 @@ import type { Scope, ScopedReader } from "../database/reader";
 import { rowEvidence } from "../database/sql/equipped";
 import {
   COUNTERS,
+  DISTRIBUTIONS,
   type Tags,
   bucketDaysOut,
   metrics,
@@ -39,11 +40,13 @@ import {
   normalizeLegEffect,
   normalizeLegMatch,
   normalizeLegReason,
+  normalizeScopeTag,
 } from "../observability";
 import {
   type CarrierPrediction,
   carrierPrediction,
   carrierPredictionTelemetry,
+  noModelConfidence,
   predictFlight,
 } from "../scripts/starlink-predictor";
 import { AIRPORT_COORDS } from "../utils/airport-geo";
@@ -56,6 +59,7 @@ import {
 import { type FallbackSegment, lookupFlightTailVerdict } from "./flight-verdict";
 import { Fr24UnavailableError } from "./flightradar24-api";
 import {
+  type QatarGrade,
   type QatarLeg,
   type QatarVerdict,
   addDaysISO,
@@ -349,6 +353,181 @@ export function verdictTelemetry(
         confidence: verdict.grade,
       };
   }
+}
+
+/** The aircraft an answer names: the first equipped leg for a yes, the
+ * non-Starlink leg for a no. */
+export interface VerdictAssignment {
+  tail: string;
+  aircraft: string | null;
+  /** The non-Starlink WiFi a firm no names; null on a yes. */
+  wifi: string | null;
+  origin: string;
+  destination: string;
+  departure: number;
+  arrival: number;
+}
+
+/**
+ * The surface-neutral answer every renderer starts from: REST check-flight,
+ * hub check-any-flight, MCP check_flight and the Watch feed read hasStarlink,
+ * confidence, probability and the named aircraft from here rather than
+ * re-deriving them per kind. `confidence` is the REST label; a surface that
+ * publishes a different vocabulary (check-any-flight's model grade) maps it.
+ */
+export type SummaryConfidence =
+  | ReturnType<typeof verdictConfidence>
+  | ReturnType<typeof noModelConfidence>
+  | "predicted"
+  | "no_data"
+  | QatarGrade
+  | "none";
+
+export interface VerdictSummary {
+  hasStarlink: boolean | null;
+  /** null where the REST body carries no confidence (fr24_no). */
+  confidence: SummaryConfidence | null;
+  probability: number | null;
+  /** Flight-history observations behind `probability`; 0 for a type share. */
+  observations: number | null;
+  assignment: VerdictAssignment | null;
+}
+
+type AssignedVerdict = Extract<
+  AnsweredVerdict,
+  { kind: "scheduled" } | { kind: "scheduled_no" } | { kind: "fr24" } | { kind: "fr24_no" }
+>;
+
+export function verdictAssignment(verdict: AssignedVerdict): VerdictAssignment {
+  switch (verdict.kind) {
+    case "scheduled":
+      return rowAssignment(scheduledFlights(verdict)[0], null);
+    case "scheduled_no":
+      return rowAssignment(verdict.flights[0], negativeWifi(verdict.flights[0]));
+    case "fr24":
+      return segmentAssignment(verdict.starlink[0], null);
+    case "fr24_no": {
+      const s = verdict.segments.find((x) => x.hasStarlink === false) ?? verdict.segments[0];
+      return segmentAssignment(s, s.verified_wifi ?? null);
+    }
+  }
+}
+
+export function verdictSummary(verdict: AnsweredVerdict): VerdictSummary {
+  const none = { probability: null, observations: null, assignment: null };
+  switch (verdict.kind) {
+    case "scheduled":
+    case "fr24":
+      return {
+        ...none,
+        hasStarlink: true,
+        confidence: verdictConfidence(verdict),
+        assignment: verdictAssignment(verdict),
+      };
+    case "scheduled_no":
+      return {
+        ...none,
+        hasStarlink: false,
+        confidence: "verified",
+        assignment: verdictAssignment(verdict),
+      };
+    case "fr24_no":
+      return {
+        ...none,
+        hasStarlink: false,
+        confidence: null,
+        assignment: verdictAssignment(verdict),
+      };
+    case "no_model": {
+      const pen = verdict.answer.kind === "penetration" ? verdict.answer.pen.pct : null;
+      return {
+        ...none,
+        hasStarlink: null,
+        confidence: noModelConfidence(verdict.answer),
+        probability: pen,
+        observations: pen === null ? null : 0,
+      };
+    }
+    case "prediction":
+      return {
+        ...none,
+        hasStarlink: null,
+        confidence: "predicted",
+        probability: verdict.pred.probability,
+        observations: verdict.pred.n_observations,
+      };
+    case "qatar":
+      return { ...none, hasStarlink: verdict.hasStarlink, confidence: "type" };
+    case "qatar_no_data":
+      return { ...none, hasStarlink: null, confidence: "no_data" };
+    case "qatar_history":
+      return {
+        ...none,
+        hasStarlink: null,
+        confidence: verdict.probability !== null ? verdict.grade : "none",
+        probability: verdict.probability,
+      };
+  }
+}
+
+function rowAssignment(f: FlightAssignmentRow, wifi: string | null): VerdictAssignment {
+  return {
+    tail: f.tail_number,
+    aircraft: f.aircraft_type ?? null,
+    wifi,
+    origin: f.departure_airport,
+    destination: f.arrival_airport,
+    departure: f.departure_time,
+    arrival: f.arrival_time,
+  };
+}
+
+function segmentAssignment(s: FallbackSegment, wifi: string | null): VerdictAssignment {
+  return {
+    tail: s.tail_number,
+    aircraft: s.aircraft_model,
+    wifi,
+    origin: s.origin,
+    destination: s.destination,
+    departure: s.departure_time,
+    arrival: s.arrival_time,
+  };
+}
+
+/**
+ * FLIGHT_LOOKUP_RESULT, the single product-truth metric: how often a caller
+ * actually got an answer. Shared by REST and MCP so the cross-channel view
+ * can't drift. `result` mirrors `outcome` — DD monitors group by result, which
+ * read N/A while only outcome was emitted; outcome stays for existing series.
+ */
+export function recordFlightLookup(
+  endpoint: "api_check" | "api_predict" | "mcp",
+  outcome: VerdictTelemetry["outcome"],
+  confidence: VerdictTelemetry["confidence"],
+  scope: string,
+  daysOut?: number
+): void {
+  metrics.increment(COUNTERS.FLIGHT_LOOKUP_RESULT, {
+    endpoint,
+    outcome,
+    result: outcome,
+    confidence,
+    airline: normalizeScopeTag(scope),
+    ...(daysOut !== undefined && { days_out: bucketDaysOut(daysOut) }),
+  });
+}
+
+/** What prediction was actually served — a flood of 2% fleet-prior cold starts
+ * is invisible in success-rate metrics but is a real product problem. */
+export function recordPrediction(
+  pred: { probability: number; confidence: "high" | "medium" | "low"; method: string },
+  scope: string
+): void {
+  metrics.distribution(DISTRIBUTIONS.PREDICTION_PROBABILITY, pred.probability, {
+    confidence: pred.confidence,
+    method: pred.method.startsWith("fleet_prior") ? "fleet_prior" : "flight_history",
+    airline: normalizeScopeTag(scope),
+  });
 }
 
 export interface ResolveDeps {

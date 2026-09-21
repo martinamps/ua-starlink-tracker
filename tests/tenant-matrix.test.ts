@@ -748,7 +748,7 @@ describe("route tag budget matches the code and the doc", () => {
   function distinctRouteTags(): Set<string> {
     const table = appSrc.match(/const routes: RouteTable = \{([\s\S]*?)\n {2}\};/);
     const prefixes = appSrc.match(
-      /const prefixRoutes: Array<\[string, Handler\]> = \[([\s\S]*?)\n {2}\];/
+      /const prefixRoutes: Array<\[string, Route\]> = \[([\s\S]*?)\n {2}\];/
     );
     expect(table, "routes table no longer parses — update this test").not.toBeNull();
     expect(prefixes, "prefixRoutes no longer parses — update this test").not.toBeNull();

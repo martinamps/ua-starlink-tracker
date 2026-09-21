@@ -450,7 +450,7 @@ describe("rate limiter covers /mcp and permalinks", () => {
 describe("dispatch wraps handler throws", () => {
   test("throwing /api handler → 500 JSON with nosniff + ACAO", async () => {
     const isolated = createApp(openSnapshot());
-    isolated.routes["/api/data"] = () => {
+    isolated.routes["/api/data"].handler = () => {
       throw new Error("deliberate rethrow");
     };
     const res = await isolated.dispatch(req("/api/data", "unitedstarlinktracker.com"));
@@ -464,7 +464,7 @@ describe("dispatch wraps handler throws", () => {
   // skips the count is a crash the monitor cannot see.
   test("throwing /api/check-flight → exactly one http.request with status_code 500", async () => {
     const isolated = createApp(openSnapshot());
-    isolated.routes["/api/check-flight"] = () => {
+    isolated.routes["/api/check-flight"].handler = () => {
       throw new Error("deliberate rethrow");
     };
     const calls: Array<Record<string, unknown>> = [];
@@ -495,7 +495,7 @@ describe("dispatch wraps handler throws", () => {
 
   test("throwing page handler → 500 without leaking the error", async () => {
     const isolated = createApp(openSnapshot());
-    isolated.routes["/fleet"] = () => {
+    isolated.routes["/fleet"].handler = () => {
       throw new Error("secret detail");
     };
     const res = await isolated.dispatch(req("/fleet", "unitedstarlinktracker.com"));

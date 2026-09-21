@@ -3,6 +3,7 @@ import "./src/observability/tracer";
 import "dotenv/config";
 
 import { checkNewPlanes, startFlightUpdater } from "./src/api/flight-updater";
+import { closeFR24Transport } from "./src/api/fr24-browser-transport";
 import {
   archivePastDepartures,
   migrate,
@@ -31,6 +32,7 @@ import { passengerVerifyEnabled } from "./src/server/passenger-detect";
 import { pingIndexNow } from "./src/utils/indexnow";
 import { type JobHandle, type JobRunContext, startJob } from "./src/utils/job-runner";
 import { info, error as logError } from "./src/utils/logger";
+import { sleep } from "./src/utils/sleep";
 
 process.on("unhandledRejection", (reason) => {
   const err = reason instanceof Error ? reason : new Error(String(reason));
@@ -195,9 +197,12 @@ if (JOBS_ENABLED) {
 
 // Container deploys send SIGTERM: clear all job timers (in-flight runs aren't
 // awaited — they're cut with the process) and exit cleanly.
-const shutdown = (signal: string) => {
+// The FR24 browser transport is a child Chromium; close it so a deploy
+// doesn't leave it orphaned, but never let a hung close block the exit.
+const shutdown = async (signal: string) => {
   info(`${signal} received — stopping ${jobs.length} background jobs and exiting`);
   for (const job of jobs) job.stop();
+  await Promise.race([closeFR24Transport().catch(() => {}), sleep(2000)]);
   process.exit(0);
 };
 process.on("SIGTERM", () => shutdown("SIGTERM"));

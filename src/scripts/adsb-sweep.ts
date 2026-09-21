@@ -9,7 +9,7 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { looksLikeValidTailNumber } from "../airlines/registry";
+import { looksLikeValidTailNumber, operatorStoragePrefixes } from "../airlines/registry";
 import {
   type AdsbFlightSighting,
   countAdsbFlightDraws,
@@ -29,6 +29,7 @@ import type { AdsbObservationRecord } from "../types";
 import { BROWSER_USER_AGENT } from "../utils/constants";
 import { type JobHandle, createOutageBreaker, startJob } from "../utils/job-runner";
 import { debug, info, error as logError, warn } from "../utils/logger";
+import { sleep } from "../utils/sleep";
 
 interface AdsbProvider {
   name: string;
@@ -82,8 +83,6 @@ export interface AdsbSweepStats {
   requests: number;
   latencyMs: number;
 }
-
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function queryProvider(
   provider: AdsbProvider,
@@ -163,15 +162,7 @@ export async function sweepAdsbProviders(
 
 // Callsign ICAO prefix → how upcoming_flights codes that operator's rows. The
 // pairing matters: SKW#### must never match a marketing UA#### that shares the number.
-const OPERATOR_DB_PREFIXES: Record<string, string[]> = {
-  UAL: ["UAL", "UA"],
-  SKW: ["SKW", "OO"],
-  GJS: ["GJS", "G7"],
-  RPA: ["RPA", "YX"],
-  ASH: ["ASH", "YV"],
-  UCA: ["UCA", "C5"],
-  AWI: ["AWI", "ZW"],
-};
+const OPERATOR_DB_PREFIXES = operatorStoragePrefixes("UA");
 const UA_CALLSIGN_RE = new RegExp(`^(${Object.keys(OPERATOR_DB_PREFIXES).join("|")})(\\d+)$`);
 
 export function deriveCallsignFlight(

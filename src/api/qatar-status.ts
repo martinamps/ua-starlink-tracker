@@ -28,6 +28,7 @@ import { COUNTERS, DISTRIBUTIONS, metrics, normalizeAirlineTag } from "../observ
 import { localDateISO } from "../utils/airport-tz";
 import { BROWSER_USER_AGENT } from "../utils/constants";
 import { error as logError, warn } from "../utils/logger";
+import { sleep } from "../utils/sleep";
 
 const API_URL = "https://qoreservices.qatarairways.com/fltstatus-services/flight/getStatus";
 
@@ -108,7 +109,7 @@ async function postStatus(
     let lastErr: unknown;
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       if (attempt > 0) {
-        await new Promise((r) => setTimeout(r, RETRY_BACKOFF_MS));
+        await sleep(RETRY_BACKOFF_MS);
       }
       try {
         const res = await fetch(API_URL, {

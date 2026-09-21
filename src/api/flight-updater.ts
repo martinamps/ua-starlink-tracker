@@ -18,6 +18,7 @@ import type { Aircraft, Flight } from "../types";
 import { FLIGHT_DATA_SOURCE } from "../utils/constants";
 import { type JobHandle, type JobRunContext, startJob } from "../utils/job-runner";
 import { debug, error, info } from "../utils/logger";
+import { sleep } from "../utils/sleep";
 import { FlightAwareAPI } from "./flightaware-api";
 import { type FlightNumberSource, FlightRadar24API } from "./flightradar24-api";
 
@@ -33,7 +34,8 @@ type FlightUpdate = Pick<
 interface FlightAPI {
   getUpcomingFlights(
     tailNumber: string,
-    flightNumberSource?: FlightNumberSource
+    flightNumberSource?: FlightNumberSource,
+    airlineCode?: string | null
   ): Promise<FlightUpdate[]>;
 }
 
@@ -112,7 +114,8 @@ async function pollTailFlights(
         const airline = getTailAirline(db, tailNumber);
         const flights = await api.getUpcomingFlights(
           tailNumber,
-          (airline && AIRLINES[airline]?.flightNumberSource) || "callsign"
+          (airline && AIRLINES[airline]?.flightNumberSource) || "callsign",
+          airline
         );
 
         span.setTag("flights.count", flights.length);
@@ -237,7 +240,7 @@ async function processPlanesInBatches(
     const batchPromises = batch.map(async (plane, index) => {
       try {
         const staggerDelay = createJitteredDelay(2000 + index * 2000, 500);
-        await new Promise((resolve) => setTimeout(resolve, staggerDelay));
+        await sleep(staggerDelay);
 
         const result = await updateFlightsIfNeeded(db, api, plane.TailNumber);
 
@@ -272,7 +275,7 @@ async function processPlanesInBatches(
     if (i + batchSize < planesToUpdate.length) {
       const batchDelay = createJitteredDelay(5000, 3000);
       info(`Batch completed, waiting ${Math.round(batchDelay / 1000)}s before next batch...`);
-      await new Promise((resolve) => setTimeout(resolve, batchDelay));
+      await sleep(batchDelay);
     }
   }
 

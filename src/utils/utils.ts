@@ -1,4 +1,3 @@
-import { existsSync, writeFileSync } from "node:fs";
 import { looksLikeValidTailNumber } from "../airlines/registry";
 import { BROWSER_USER_AGENT } from "./constants";
 import { error as logError, warn } from "./logger";
@@ -290,13 +289,6 @@ export async function fetchAllSheets() {
       },
     },
   };
-}
-
-// Helper function to create the database file if it doesn't exist
-export function ensureDatabaseFileExists(dbPath: string) {
-  if (!existsSync(dbPath)) {
-    writeFileSync(dbPath, ""); // Create an empty file
-  }
 }
 
 // ============================================

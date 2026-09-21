@@ -31,10 +31,11 @@ import {
   CANONICAL_FLIGHT_PERMALINK,
   buildFlightLookupVariants,
   canonicalFlightInput,
-  detectAirline,
   detectMarketingCarrier,
   ensureAirlinePrefix,
+  icaoCallsignToIata,
   normalizeAirlineFlightNumber,
+  permalinkCarrier,
   stripFlightNumberZeros,
 } from "../airlines/flight-number";
 import {
@@ -52,7 +53,6 @@ import {
   airlineHomeUrl,
   airlineSlug,
   brandMetadata,
-  enabledAirlines,
   hubContentAirlines,
   publicAirlines,
   resolveSite,
@@ -74,10 +74,8 @@ import {
 } from "../airlines/rollout-facts";
 import { rolloutTargets } from "../airlines/targets";
 import {
-  type FlightVerdict,
   type LegResolution,
   SWAP_DEGRADED_NOTE,
-  type VerdictTelemetry,
   answersOtherLeg,
   carrierReader,
   decideCarrier,
@@ -88,13 +86,15 @@ import {
   legOffRoute,
   legPrefix,
   legSubject,
-  negativeWifi,
   parseLegQuery,
+  recordFlightLookup,
   recordLegScope,
+  recordPrediction,
   recordUntrackedLookup,
   resolveFlightVerdict,
   scheduledFlights,
-  verdictConfidence,
+  verdictAssignment,
+  verdictSummary,
   verdictTelemetry,
   wifiLabel,
   withLeg,
@@ -163,11 +163,10 @@ import {
 import { contradictingWifi } from "../database/sql/equipped";
 import {
   COUNTERS,
-  DISTRIBUTIONS,
-  bucketDaysOut,
   metrics,
   normalizeAircraftType,
   normalizeAirlineTag,
+  normalizeScopeTag,
   requestClientTags,
   withSpan,
 } from "../observability";
@@ -202,10 +201,21 @@ import {
 import { article } from "../utils/grammar";
 import { computeInstallRate, hasInstallRateContent } from "../utils/install-rate";
 import { error as logError } from "../utils/logger";
+import { memo, perOwner } from "../utils/ttl-cache";
+import {
+  CACHE,
+  CORS_ANY_ORIGIN,
+  json,
+  jsonError,
+  methodNotAllowed,
+  text,
+  withDefaultHeaders,
+  xml,
+} from "./respond";
 
 import { denominatorIsPublishable, shareCardFile, shareCardPath } from "../utils/share-cards";
 import { getSpreadsheetCacheInfo, getSpreadsheetCacheTails } from "../utils/utils";
-import { aircraftTypeParam, communityWireFields, noModelConfidence } from "./community-wire";
+import { aircraftTypeParam, communityWireFields } from "./community-wire";
 import {
   type Database,
   type RequestContext,
@@ -224,7 +234,32 @@ import {
 import { recordWatchCtaShown, sameDayAlternativesField, watchFeed } from "./watch";
 
 type Handler = (ctx: RequestContext) => Response | Promise<Response>;
-type RouteTable = Record<string, Handler>;
+
+/** A route table entry. Dispatch enforces `methods` and `feature` before the
+ * handler runs: 405 for a method outside the list, then the tenant's not-found
+ * for a feature it has switched off. /api/* answers both in JSON. */
+interface Route {
+  handler: Handler;
+  methods?: readonly string[];
+  feature?: keyof SiteFeatures;
+}
+type RouteTable = Record<string, Route>;
+
+const READ_METHODS = ["GET", "HEAD"] as const;
+const read = (handler: Handler, feature?: keyof SiteFeatures): Route => ({
+  handler,
+  methods: READ_METHODS,
+  ...(feature ? { feature } : {}),
+});
+
+function serve(entry: Route, ctx: RequestContext): Response | Promise<Response> {
+  const api = ctx.url.pathname.startsWith("/api/");
+  if (entry.methods && !entry.methods.includes(ctx.req.method)) return methodNotAllowed(api);
+  if (entry.feature && !ctx.site.features[entry.feature]) {
+    return api ? jsonError(404, "Not found") : notFound(ctx.site);
+  }
+  return entry.handler(ctx);
+}
 
 interface PageMeta {
   siteTitle: string;
@@ -317,8 +352,7 @@ async function notFound(site: SiteConfig): Promise<Response> {
  * request fell to `airline:unmapped`, so a `by {airline}` split of the
  * route-planner 404s could not say which site was emitting them. */
 function httpAirlineTag(tenant: Tenant): string {
-  const scope = tenantScope(tenant);
-  return scope === "ALL" ? "all" : normalizeAirlineTag(scope);
+  return normalizeScopeTag(tenantScope(tenant));
 }
 
 /**
@@ -336,16 +370,23 @@ function metricRoute(m: { route: string } | null): string {
   return m.route === "/static" ? "/static" : m.route;
 }
 
-function methodNotAllowed(json = false): Response {
-  return json
-    ? new Response(JSON.stringify({ error: "Method not allowed" }), {
-        status: 405,
-        headers: SECURITY_HEADERS.api,
-      })
-    : new Response("Method not allowed", {
-        status: 405,
-        headers: { "Content-Type": "text/plain" },
-      });
+/** The one HTTP_REQUEST emit: every response dispatchTenant produces, 429s
+ * and preflights included, is counted exactly once through here. */
+function countRequest(
+  req: Request,
+  url: URL,
+  m: { route: string } | null,
+  tenant: Tenant,
+  status: number
+): void {
+  metrics.increment(COUNTERS.HTTP_REQUEST, {
+    method: req.method,
+    route: metricRoute(m),
+    status_code: status,
+    tenant: tenantScope(tenant),
+    airline: httpAirlineTag(tenant),
+    ...requestClientTags(req, url),
+  });
 }
 
 function analyticsSnippet(site: SiteConfig): string {
@@ -448,7 +489,7 @@ function manifestResponse(site: SiteConfig | null): Response {
     {
       headers: {
         "Content-Type": "application/manifest+json",
-        "Cache-Control": "public, max-age=86400",
+        "Cache-Control": CACHE.day,
       },
     }
   );
@@ -478,7 +519,7 @@ for (const p of SOCIAL_IMAGE_PATHS) {
         headers: {
           ...BASE_RESPONSE_HEADERS,
           "Content-Type": "image/webp",
-          "Cache-Control": "public, max-age=86400",
+          "Cache-Control": CACHE.day,
         },
       })
     );
@@ -537,7 +578,7 @@ function registerStylesheet(): void {
       headers: {
         ...BASE_RESPONSE_HEADERS,
         "Content-Type": "text/css; charset=utf-8",
-        "Cache-Control": "public, max-age=31536000, immutable",
+        "Cache-Control": CACHE.year,
       },
     })
   );
@@ -616,7 +657,7 @@ function serveFavicon(tenantCode: string, urlPath: string): Response | null {
       headers: {
         ...BASE_RESPONSE_HEADERS,
         "Content-Type": route.type,
-        "Cache-Control": "public, max-age=86400",
+        "Cache-Control": CACHE.day,
         Vary: "Host",
       },
     });
@@ -651,9 +692,7 @@ function groupEquippedFlightsByTail(
   return flightsByTail;
 }
 
-const apiData: Handler = ({ req, reader }) => {
-  if (req.method !== "GET" && req.method !== "HEAD") return methodNotAllowed(true);
-
+const apiData: Handler = ({ reader }) => {
   const totalCount = reader.getTotalCount();
   const starlinkPlanes = reader.getStarlinkPlanes();
   const lastUpdated = reader.getLastUpdated();
@@ -667,13 +706,12 @@ const apiData: Handler = ({ req, reader }) => {
     fleetStats,
     flightsByTail,
   };
-  return new Response(JSON.stringify(response), { headers: SECURITY_HEADERS.api });
+  return json(response);
 };
 
 // Per-airline rollout summary — used by the OG image generator and any
 // cross-airline UI. Cheap to compute per-request.
-const apiFleetSummary: Handler = ({ req, getReader }) => {
-  if (req.method !== "GET" && req.method !== "HEAD") return methodNotAllowed(true);
+const apiFleetSummary: Handler = ({ getReader }) => {
   const airlines = publicAirlines().map((cfg) => {
     const r = getReader(cfg.code);
     const installed = r.getStarlinkPlanes().length;
@@ -694,125 +732,13 @@ const apiFleetSummary: Handler = ({ req, getReader }) => {
       families,
     };
   });
-  return new Response(JSON.stringify({ airlines, generatedAt: new Date().toISOString() }), {
-    headers: { ...SECURITY_HEADERS.api, "Cache-Control": "public, max-age=300" },
-  });
+  return json({ airlines, generatedAt: new Date().toISOString() }, { cache: CACHE.fiveMinutes });
 };
 
-const apiRoutes: Handler = ({ req, site, reader }) => {
-  if (req.method !== "GET" && req.method !== "HEAD") return methodNotAllowed(true);
-  if (!site.features.routesPage) {
-    return new Response(JSON.stringify({ error: "Not found" }), {
-      status: 404,
-      headers: SECURITY_HEADERS.api,
-    });
-  }
+const apiRoutes: Handler = ({ reader }) => {
   const schedule = reader.getRouteStarlinkSchedule();
-  return new Response(JSON.stringify(schedule), {
-    headers: { ...SECURITY_HEADERS.api, "Cache-Control": "public, max-age=300" },
-  });
+  return json(schedule, { cache: CACHE.fiveMinutes });
 };
-
-// Single product-truth metric: how often a user actually got an answer.
-type LookupOutcome = VerdictTelemetry["outcome"];
-type LookupConfidence = VerdictTelemetry["confidence"];
-function recordFlightLookup(
-  endpoint: "api_check" | "api_predict" | "mcp",
-  outcome: LookupOutcome,
-  confidence: LookupConfidence,
-  airlineCode: string,
-  daysOut?: number
-): void {
-  // result mirrors outcome: DD monitors group this counter by result, which
-  // read N/A while only outcome was emitted. outcome stays for existing series.
-  metrics.increment(COUNTERS.FLIGHT_LOOKUP_RESULT, {
-    endpoint,
-    outcome,
-    result: outcome,
-    confidence,
-    airline: normalizeAirlineTag(airlineCode),
-    ...(daysOut !== undefined && { days_out: bucketDaysOut(daysOut) }),
-  });
-}
-
-// Surfaces what's actually served — a flood of 2% fleet-prior cold-starts
-// is invisible in success-rate metrics but is a real product problem.
-function recordPrediction(
-  pred: { probability: number; confidence: "high" | "medium" | "low"; method: string },
-  airlineCode: string
-): void {
-  const method = pred.method.startsWith("fleet_prior") ? "fleet_prior" : "flight_history";
-  metrics.distribution(DISTRIBUTIONS.PREDICTION_PROBABILITY, pred.probability, {
-    confidence: pred.confidence,
-    method,
-    airline: normalizeAirlineTag(airlineCode),
-  });
-}
-/**
- * QR's data shape doesn't fit the upcoming_flights → starlink_planes JOIN that
- * other carriers use (no per-tail signal from QR's flight-status API). Serve
- * straight from qatar_schedule, which the ingester keeps fresh hourly.
- *
- * Contract divergence: the UA endpoint returns `hasStarlink: boolean`. This
- * one returns `boolean | null` — null is the right answer when QR ships a
- * "rolling" subfleet (787) where we have no per-tail signal, or when distinct
- * equipment types are scheduled on the same flight number. Callers on the QR
- * host should expect tri-state. The Chrome extension only hits the UA host,
- * so its boolean contract isn't affected.
- */
-function qatarCheckFlightResponse(verdict: QatarVerdict & { leg?: LegResolution }): Response {
-  const cfg = AIRLINES.QR;
-
-  if (verdict.kind === "qatar_no_data") {
-    return new Response(
-      JSON.stringify({
-        hasStarlink: null,
-        airline: cfg.name,
-        confidence: "no_data",
-        reason: withLegNote(qatarNoDataReason(verdict), verdict),
-        ...legField(verdict),
-        flights: [],
-      }),
-      { headers: SECURITY_HEADERS.api }
-    );
-  }
-  if (verdict.kind === "qatar_history") {
-    return new Response(JSON.stringify(hubQatarBody(verdict)), { headers: SECURITY_HEADERS.api });
-  }
-
-  return new Response(
-    JSON.stringify({
-      hasStarlink: verdict.hasStarlink,
-      airline: cfg.name,
-      confidence:
-        verdict.qclass === "yes" || verdict.qclass === "no"
-          ? "type"
-          : verdict.qclass === "rolling"
-            ? "rolling"
-            : "mixed",
-      reason: withLegNote(`${legPrefix(verdict)}${verdict.reason}`, verdict),
-      ...legField(verdict),
-      flights: verdict.rows.map((r) => ({
-        flight_number: r.flight_number,
-        aircraft_type: qatarEquipmentName(r.equipment_code),
-        equipment_code: r.equipment_code,
-        wifi_verdict: QATAR_CLASS_WIFI[r.klass],
-        departure_airport: r.departure_airport,
-        arrival_airport: r.arrival_airport,
-        departure_time: r.departure_time,
-        arrival_time: r.arrival_time,
-        departure_time_formatted: r.departure_time
-          ? new Date(r.departure_time * 1000).toISOString()
-          : null,
-        arrival_time_formatted: r.arrival_time
-          ? new Date(r.arrival_time * 1000).toISOString()
-          : null,
-        flight_status: r.flight_status,
-      })),
-    }),
-    { headers: SECURITY_HEADERS.api }
-  );
-}
 
 const QATAR_CLASS_WIFI: Record<QatarLeg["klass"], string | null> = {
   yes: "Starlink",
@@ -821,7 +747,27 @@ const QATAR_CLASS_WIFI: Record<QatarLeg["klass"], string | null> = {
   unknown: null,
 };
 
-function qatarWireLeg(r: QatarLeg) {
+/** The QR host's /api/check-flight leg: schedule times, no tail. */
+function qatarHostLeg(r: QatarLeg) {
+  return {
+    flight_number: r.flight_number,
+    aircraft_type: qatarEquipmentName(r.equipment_code),
+    equipment_code: r.equipment_code,
+    wifi_verdict: QATAR_CLASS_WIFI[r.klass],
+    departure_airport: r.departure_airport,
+    arrival_airport: r.arrival_airport,
+    departure_time: r.departure_time,
+    arrival_time: r.arrival_time,
+    departure_time_formatted: r.departure_time
+      ? new Date(r.departure_time * 1000).toISOString()
+      : null,
+    arrival_time_formatted: r.arrival_time ? new Date(r.arrival_time * 1000).toISOString() : null,
+    flight_status: r.flight_status,
+  };
+}
+
+/** The hub's check-any-flight leg: the shared flights[] keys, tail always null. */
+function qatarHubLeg(r: QatarLeg) {
   return {
     tail_number: null,
     aircraft_type: qatarEquipmentName(r.equipment_code),
@@ -835,24 +781,44 @@ function qatarWireLeg(r: QatarLeg) {
 }
 
 /**
- * The hub's /api/check-any-flight body for QR. Additive to the shared shape:
- * the same top-level keys the extension reads (hasStarlink, confidence,
- * probability, airline, flights) with the same types, plus `basis` and the
- * history counts. `confidence` is "type" for schedule answers — the equipment
- * code names a type, not an airframe — the history grade, "none" for history
- * too thin to estimate, or "no_data"; never "verified".
+ * The one QR wire body, in the two dialects it ships in.
+ *
+ * "hub" (/api/check-any-flight) is additive to the shared shape: the top-level
+ * keys the extension reads, plus `basis` and the history counts. `confidence`
+ * is "type" for schedule answers (the equipment code names a type, not an
+ * airframe), the history grade, "none" for history too thin to estimate, or
+ * "no_data"; never "verified".
+ *
+ * "host" (QR's own /api/check-flight) predates it: no `basis`, a
+ * type/rolling/mixed schedule confidence, and legs with arrival times. Its
+ * hasStarlink is tri-state — null for a rolling subfleet (787-9) or mixed
+ * equipment — unlike the UA host's boolean; the extension never calls it.
  */
-function hubQatarBody(verdict: QatarVerdict & { leg?: LegResolution }): Record<string, unknown> {
+function qatarWireBody(
+  verdict: QatarVerdict & { leg?: LegResolution },
+  dialect: "hub" | "host"
+): Record<string, unknown> {
   const airline = AIRLINES.QR.name;
+  const hub = dialect === "hub";
   if (verdict.kind === "qatar") {
+    const hostConfidence =
+      verdict.qclass === "yes" || verdict.qclass === "no"
+        ? "type"
+        : verdict.qclass === "rolling"
+          ? "rolling"
+          : "mixed";
     return {
       hasStarlink: verdict.hasStarlink,
       airline,
-      confidence: "type",
-      basis: "schedule",
+      confidence: hub ? "type" : hostConfidence,
+      ...(hub ? { basis: "schedule" } : {}),
       reason: withLegNote(`${legPrefix(verdict)}${verdict.reason}`, verdict),
       ...legField(verdict),
-      flights: verdict.qclass === "cancelled" ? [] : verdict.rows.map(qatarWireLeg),
+      flights: !hub
+        ? verdict.rows.map(qatarHostLeg)
+        : verdict.qclass === "cancelled"
+          ? []
+          : verdict.rows.map(qatarHubLeg),
     };
   }
   if (verdict.kind === "qatar_no_data") {
@@ -860,7 +826,9 @@ function hubQatarBody(verdict: QatarVerdict & { leg?: LegResolution }): Record<s
       hasStarlink: null,
       airline,
       confidence: "no_data",
-      basis: verdict.daysOut <= QATAR_PUBLISHED_DAYS_FORWARD ? "schedule" : "history",
+      ...(hub
+        ? { basis: verdict.daysOut <= QATAR_PUBLISHED_DAYS_FORWARD ? "schedule" : "history" }
+        : {}),
       reason: withLegNote(qatarNoDataReason(verdict), verdict),
       ...legField(verdict),
       flights: [],
@@ -880,7 +848,7 @@ function hubQatarBody(verdict: QatarVerdict & { leg?: LegResolution }): Record<s
     season_shift: verdict.season.shifted,
     reason: withLegNote(qatarHistoryReason(verdict), verdict),
     ...legField(verdict),
-    flights: verdict.scheduledRow ? [qatarWireLeg(verdict.scheduledRow)] : [],
+    flights: verdict.scheduledRow ? [qatarHubLeg(verdict.scheduledRow)] : [],
   };
 }
 
@@ -930,7 +898,7 @@ export function notTrackedMessage(
 }
 
 function notTrackedResponse(status: 200 | 404, error: string): Response {
-  return new Response(JSON.stringify({ error }), { status, headers: SECURITY_HEADERS.api });
+  return json({ error }, { status });
 }
 
 /** REST renderer over decideCarrier (check-flight-core owns the policy). */
@@ -955,15 +923,10 @@ function resolveCarrier(
 }
 
 const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant, site }) => {
-  if (req.method !== "GET" && req.method !== "HEAD") return methodNotAllowed(true);
-
   const flightNumber = url.searchParams.get("flight_number");
   const date = url.searchParams.get("date");
   if (!flightNumber || !date) {
-    return new Response(
-      JSON.stringify({ error: "Missing required parameters: flight_number and date" }),
-      { status: 400, headers: SECURITY_HEADERS.api }
-    );
+    return jsonError(400, "Missing required parameters: flight_number and date");
   }
 
   const carrier = resolveCarrier(tenant, flightNumber, reader, getReader, "check_flight");
@@ -986,16 +949,10 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant, si
     )
   );
   if (verdict.kind === "invalid_date") {
-    return new Response(JSON.stringify({ error: "Invalid date format. Use YYYY-MM-DD" }), {
-      status: 400,
-      headers: SECURITY_HEADERS.api,
-    });
+    return jsonError(400, "Invalid date format. Use YYYY-MM-DD");
   }
   if (verdict.kind === "invalid_flight_number") {
-    return new Response(
-      JSON.stringify({ error: `Invalid flight number ${verdict.normalized} — use 1-4 digits.` }),
-      { status: 400, headers: SECURITY_HEADERS.api }
-    );
+    return jsonError(400, `Invalid flight number ${verdict.normalized} — use 1-4 digits.`);
   }
 
   const t = verdictTelemetry(verdict);
@@ -1008,14 +965,11 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant, si
     verdict.kind === "qatar_no_data" ||
     verdict.kind === "qatar_history"
   ) {
-    return qatarCheckFlightResponse(verdict);
+    return json(qatarWireBody(verdict, "host"));
   }
   if (verdict.kind === "prediction") recordPrediction(verdict.pred, cfg.code);
 
-  return new Response(
-    JSON.stringify(checkFlightBody(cfg, carrier.reader, verdict, date, hubAirline)),
-    { headers: SECURITY_HEADERS.api }
-  );
+  return json(checkFlightBody(cfg, carrier.reader, verdict, date, hubAirline));
 };
 
 type CheckFlightVerdict = Exclude<
@@ -1039,14 +993,15 @@ function checkFlightBody(
   date: string,
   hubAirline: { airline?: string }
 ): Record<string, unknown> {
+  const summary = verdictSummary(verdict);
+  const answer = { hasStarlink: summary.hasStarlink, ...hubAirline };
   switch (verdict.kind) {
     case "scheduled": {
       // Only a leg adds a message here, so the unscoped body keeps its bytes.
       const note = legNote(verdict);
       return {
-        hasStarlink: true,
-        ...hubAirline,
-        confidence: verdictConfidence(verdict),
+        ...answer,
+        confidence: summary.confidence,
         ...(note ? { message: `${legPrefix(verdict)}Starlink-equipped. ${note}` } : {}),
         ...legField(verdict),
         flights: scheduledFlights(verdict).map((flight) =>
@@ -1066,13 +1021,12 @@ function checkFlightBody(
       };
     }
     case "scheduled_no": {
-      const f = verdict.flights[0];
+      const a = verdictAssignment(verdict);
       return {
-        hasStarlink: false,
-        ...hubAirline,
-        confidence: "verified",
+        ...answer,
+        confidence: summary.confidence,
         message: withLegNote(
-          `${legSubject(verdict)} is assigned to tail ${f.tail_number}, verified as ${negativeWifi(f)} WiFi — not Starlink.${verdict.fr24Error ? ` ${SWAP_DEGRADED_NOTE}` : ""}`,
+          `${legSubject(verdict)} is assigned to tail ${a.tail}, verified as ${a.wifi} WiFi — not Starlink.${verdict.fr24Error ? ` ${SWAP_DEGRADED_NOTE}` : ""}`,
           verdict
         ),
         ...legField(verdict),
@@ -1083,9 +1037,8 @@ function checkFlightBody(
     case "fr24": {
       const note = legNote(verdict);
       return {
-        hasStarlink: true,
-        ...hubAirline,
-        confidence: verdictConfidence(verdict),
+        ...answer,
+        confidence: summary.confidence,
         method: "fr24_tail_lookup",
         ...(note ? { message: `${legPrefix(verdict)}Starlink-equipped. ${note}` } : {}),
         ...legField(verdict),
@@ -1107,8 +1060,7 @@ function checkFlightBody(
     }
     case "fr24_no": {
       return {
-        hasStarlink: false,
-        ...hubAirline,
+        ...answer,
         method: "fr24_tail_lookup",
         ...legField(verdict),
         flights: [],
@@ -1126,11 +1078,10 @@ function checkFlightBody(
         verdict
       );
       return {
-        hasStarlink: null,
-        ...hubAirline,
-        confidence: noModelConfidence(verdict.answer),
-        ...(verdict.answer.kind === "penetration"
-          ? { prediction: { probability: verdict.answer.pen.pct } }
+        ...answer,
+        confidence: summary.confidence,
+        ...(summary.probability !== null
+          ? { prediction: { probability: summary.probability } }
           : {}),
         ...communityWireFields(verdict.answer),
         message,
@@ -1160,9 +1111,8 @@ function checkFlightBody(
             ? `No aircraft assignment on record — ${date} has already passed. `
             : `Aircraft assignment not yet published — ${cfg.name} assigns aircraft ~2 days before departure. `;
       return {
-        hasStarlink: null,
-        ...hubAirline,
-        confidence: "predicted",
+        ...answer,
+        confidence: summary.confidence,
         prediction: {
           probability: pred.probability,
           confidence: pred.confidence,
@@ -1195,25 +1145,16 @@ function sameDayAlternatives(
 }
 
 const hubOnly = (tenant: RequestContext["tenant"]): Response | null =>
-  tenant === "ALL"
-    ? null
-    : new Response(JSON.stringify({ error: "Not found" }), {
-        status: 404,
-        headers: SECURITY_HEADERS.api,
-      });
+  tenant === "ALL" ? null : jsonError(404, "Not found");
 
 const apiCheckAnyFlight: Handler = async ({ req, url, reader, getReader, tenant }) => {
-  if (req.method !== "GET" && req.method !== "HEAD") return methodNotAllowed(true);
   const guard = hubOnly(tenant);
   if (guard) return guard;
 
   const flightNumber = url.searchParams.get("flight_number");
   const date = url.searchParams.get("date");
   if (!flightNumber || !date) {
-    return new Response(
-      JSON.stringify({ error: "Missing required parameters: flight_number and date" }),
-      { status: 400, headers: SECURITY_HEADERS.api }
-    );
+    return jsonError(400, "Missing required parameters: flight_number and date");
   }
 
   // 200-with-error-body on unknown carriers (vs /api/check-flight's 404):
@@ -1245,80 +1186,63 @@ const apiCheckAnyFlight: Handler = async ({ req, url, reader, getReader, tenant 
     )
   );
   if (verdict.kind === "invalid_date") {
-    return new Response(JSON.stringify({ error: "Invalid date format. Use YYYY-MM-DD" }), {
-      status: 400,
-      headers: SECURITY_HEADERS.api,
-    });
+    return jsonError(400, "Invalid date format. Use YYYY-MM-DD");
   }
   if (verdict.kind === "invalid_flight_number") {
-    return new Response(
-      JSON.stringify({ error: `Invalid flight number ${verdict.normalized} — use 1-4 digits.` }),
-      { status: 400, headers: SECURITY_HEADERS.api }
-    );
+    return jsonError(400, `Invalid flight number ${verdict.normalized} — use 1-4 digits.`);
   }
 
   const t = verdictTelemetry(verdict);
   recordFlightLookup("api_check", t.outcome, t.confidence, cfg.code, verdict.window.daysOut);
   recordLegScope("api_check_any", verdict, cfg.code, requestClientTags(req, url));
 
+  const summary = verdictSummary(verdict);
+  const head = { hasStarlink: summary.hasStarlink, airline: cfg.name };
   switch (verdict.kind) {
     case "scheduled": {
-      const flights = scheduledFlights(verdict);
-      const f = flights[0];
-      return new Response(
-        JSON.stringify({
-          hasStarlink: true,
-          airline: cfg.name,
-          confidence: verdictConfidence(verdict),
-          reason: withLegNote(
-            `${legPrefix(verdict)}${f.tail_number} (${f.aircraft_type}) — ${f.departure_airport} → ${f.arrival_airport}`,
-            verdict
-          ),
-          ...legField(verdict),
-          flights: flights.map((m) => ({
-            tail_number: m.tail_number,
-            aircraft_type: m.aircraft_type,
-            departure_airport: m.departure_airport,
-            arrival_airport: m.arrival_airport,
-            departure_time: m.departure_time,
-          })),
-        }),
-        { headers: SECURITY_HEADERS.api }
-      );
+      const a = verdictAssignment(verdict);
+      return json({
+        ...head,
+        confidence: summary.confidence,
+        reason: withLegNote(
+          `${legPrefix(verdict)}${a.tail} (${a.aircraft}) — ${a.origin} → ${a.destination}`,
+          verdict
+        ),
+        ...legField(verdict),
+        flights: scheduledFlights(verdict).map((m) => ({
+          tail_number: m.tail_number,
+          aircraft_type: m.aircraft_type,
+          departure_airport: m.departure_airport,
+          arrival_airport: m.arrival_airport,
+          departure_time: m.departure_time,
+        })),
+      });
     }
     case "scheduled_no": {
-      const f = verdict.flights[0];
-      return new Response(
-        JSON.stringify({
-          hasStarlink: false,
-          airline: cfg.name,
-          confidence: "verified",
-          reason: withLegNote(
-            `${legPrefix(verdict)}${f.tail_number} (${f.aircraft_type}) — verified ${negativeWifi(f)} WiFi, not Starlink.`,
-            verdict
-          ),
-          ...legField(verdict),
-          flights: [],
-          ...sameDayAlternatives(carrier.reader, verdict, date),
-        }),
-        { headers: SECURITY_HEADERS.api }
-      );
+      const a = verdictAssignment(verdict);
+      return json({
+        ...head,
+        confidence: summary.confidence,
+        reason: withLegNote(
+          `${legPrefix(verdict)}${a.tail} (${a.aircraft}) — verified ${a.wifi} WiFi, not Starlink.`,
+          verdict
+        ),
+        ...legField(verdict),
+        flights: [],
+        ...sameDayAlternatives(carrier.reader, verdict, date),
+      });
     }
     case "no_model": {
-      return new Response(
-        JSON.stringify({
-          hasStarlink: null,
-          airline: cfg.name,
-          confidence: noModelConfidence(verdict.answer),
-          // Additive top-level `probability` for the extension claim ladder.
-          ...(verdict.answer.kind === "penetration" ? { probability: verdict.answer.pen.pct } : {}),
-          ...communityWireFields(verdict.answer),
-          reason: withLegNote(describeCarrierPrediction(cfg, verdict.answer, { date }), verdict),
-          ...legField(verdict),
-          flights: [],
-        }),
-        { headers: SECURITY_HEADERS.api }
-      );
+      return json({
+        ...head,
+        confidence: summary.confidence,
+        // Additive top-level `probability` for the extension claim ladder.
+        ...(summary.probability !== null ? { probability: summary.probability } : {}),
+        ...communityWireFields(verdict.answer),
+        reason: withLegNote(describeCarrierPrediction(cfg, verdict.answer, { date }), verdict),
+        ...legField(verdict),
+        flights: [],
+      });
     }
     case "prediction": {
       // No schedule row and no type rule — fall back to historical probability
@@ -1334,26 +1258,21 @@ const apiCheckAnyFlight: Handler = async ({ req, url, reader, getReader, tenant 
       const lead = legOffRoute(verdict)
         ? ""
         : `No schedule data for this date${informative ? ";" : "."} `;
-      return new Response(
-        JSON.stringify({
-          hasStarlink: null,
-          airline: cfg.name,
-          probability: pred.probability,
-          confidence: pred.confidence,
-          n_recent_observations: pred.n_recent_observations,
-          reason: withLegNote(`${lead}${history}`, verdict),
-          ...legField(verdict),
-          flights: [],
-        }),
-        { headers: SECURITY_HEADERS.api }
-      );
+      // This surface publishes the model's own grade, not the REST "predicted".
+      return json({
+        ...head,
+        probability: summary.probability,
+        confidence: pred.confidence,
+        n_recent_observations: pred.n_recent_observations,
+        reason: withLegNote(`${lead}${history}`, verdict),
+        ...legField(verdict),
+        flights: [],
+      });
     }
     case "qatar":
     case "qatar_no_data":
     case "qatar_history":
-      return new Response(JSON.stringify(hubQatarBody(verdict)), {
-        headers: SECURITY_HEADERS.api,
-      });
+      return json(qatarWireBody(verdict, "hub"));
     // Structurally unreachable on the hub: lookupTail is null (no FR24 kinds).
     case "fr24":
     case "fr24_no":
@@ -1365,39 +1284,28 @@ const apiCheckAnyFlight: Handler = async ({ req, url, reader, getReader, tenant 
   }
 };
 
-const apiCompareRoute: Handler = ({ req, url, getReader, tenant }) => {
-  if (req.method !== "GET" && req.method !== "HEAD") return methodNotAllowed(true);
+const apiCompareRoute: Handler = ({ url, getReader, tenant }) => {
   const guard = hubOnly(tenant);
   if (guard) return guard;
 
   const origin = url.searchParams.get("origin");
   const destination = url.searchParams.get("destination");
   if (!origin || !destination || origin.length !== 3 || destination.length !== 3) {
-    return new Response(
-      JSON.stringify({ error: "origin and destination must be 3-letter IATA codes" }),
-      { status: 400, headers: SECURITY_HEADERS.api }
-    );
+    return jsonError(400, "origin and destination must be 3-letter IATA codes");
   }
 
   const results = compareRoute(getReader, origin, destination);
-  return new Response(
-    JSON.stringify({
-      origin: origin.toUpperCase(),
-      destination: destination.toUpperCase(),
-      results,
-    }),
-    { headers: SECURITY_HEADERS.api }
-  );
+  return json({
+    origin: origin.toUpperCase(),
+    destination: destination.toUpperCase(),
+    results,
+  });
 };
 
-const apiPredictFlight: Handler = ({ req, url, reader, getReader, tenant }) => {
-  if (req.method !== "GET" && req.method !== "HEAD") return methodNotAllowed(true);
+const apiPredictFlight: Handler = ({ url, reader, getReader, tenant }) => {
   const flightNumber = url.searchParams.get("flight_number");
   if (!flightNumber) {
-    return new Response(JSON.stringify({ error: "Missing flight_number" }), {
-      status: 400,
-      headers: SECURITY_HEADERS.api,
-    });
+    return jsonError(400, "Missing flight_number");
   }
   const carrier = resolveCarrier(tenant, flightNumber, reader, getReader, "predict_flight");
   if (carrier instanceof Response) return carrier;
@@ -1405,10 +1313,7 @@ const apiPredictFlight: Handler = ({ req, url, reader, getReader, tenant }) => {
   // Same shape gate resolveFlightVerdict applies — /api/predict-flight had none,
   // so UA4680A and UA00004680 returned a fleet prior for a non-flight-number.
   if (!isPlausibleFlightNumber(cfg, ensureAirlinePrefix(cfg, flightNumber))) {
-    return new Response(JSON.stringify({ error: "Invalid flight number" }), {
-      status: 400,
-      headers: SECURITY_HEADERS.api,
-    });
+    return jsonError(400, "Invalid flight number");
   }
   if (!cfg.flightHistoryModel) {
     // No flight-history model for this carrier — answer from the registry
@@ -1417,15 +1322,12 @@ const apiPredictFlight: Handler = ({ req, url, reader, getReader, tenant }) => {
     const answer = carrierPrediction(cfg, carrier.reader, normalized);
     const t = carrierPredictionTelemetry(answer);
     recordFlightLookup("api_predict", t.outcome, t.confidence, cfg.code);
-    return new Response(
-      JSON.stringify({
-        flight_number: normalized,
-        ...(answer.kind === "penetration" ? { probability: answer.pen.pct } : {}),
-        confidence: "type",
-        message: describeCarrierPrediction(cfg, answer),
-      }),
-      { headers: SECURITY_HEADERS.api }
-    );
+    return json({
+      flight_number: normalized,
+      ...(answer.kind === "penetration" ? { probability: answer.pen.pct } : {}),
+      confidence: "type",
+      message: describeCarrierPrediction(cfg, answer),
+    });
   }
   const pred = predictFlight(carrier.reader, ensureAirlinePrefix(cfg, flightNumber));
   recordFlightLookup(
@@ -1435,47 +1337,34 @@ const apiPredictFlight: Handler = ({ req, url, reader, getReader, tenant }) => {
     cfg.code
   );
   recordPrediction(pred, cfg.code);
-  return new Response(
-    JSON.stringify({
-      flight_number: pred.flight_number,
-      probability: pred.probability,
-      confidence: pred.confidence,
-      method: pred.method,
-      n_observations: pred.n_observations,
-      n_recent_observations: pred.n_recent_observations,
-    }),
-    { headers: SECURITY_HEADERS.api }
-  );
+  return json({
+    flight_number: pred.flight_number,
+    probability: pred.probability,
+    confidence: pred.confidence,
+    method: pred.method,
+    n_observations: pred.n_observations,
+    n_recent_observations: pred.n_recent_observations,
+  });
 };
 
-const apiPlanRoute: Handler = ({ req, url, reader, tenant }) => {
-  if (req.method !== "GET" && req.method !== "HEAD") return methodNotAllowed(true);
+const apiPlanRoute: Handler = ({ url, reader, tenant }) => {
   const cfg = tenantConfig(tenant);
   // Hub: fail closed like the disabled route-planner page (routePlannerPage is
   // false there). planItinerary is the UA-trained model — running it over the
   // ALL-scope reader scores other airlines' edges with United's priors.
   // Per-airline route answers live at /api/compare-route.
   if (!cfg) {
-    return new Response(JSON.stringify({ error: "Not found" }), {
-      status: 404,
-      headers: SECURITY_HEADERS.api,
-    });
+    return jsonError(404, "Not found");
   }
   const origin = url.searchParams.get("origin");
   const destination = url.searchParams.get("destination");
   const maxStopsParam = url.searchParams.get("max_stops");
   const maxStops = maxStopsParam ? Math.min(Number.parseInt(maxStopsParam, 10), 3) : 2;
   if (!origin || !destination) {
-    return new Response(JSON.stringify({ error: "Missing origin or destination" }), {
-      status: 400,
-      headers: SECURITY_HEADERS.api,
-    });
+    return jsonError(400, "Missing origin or destination");
   }
   if (origin.trim().toUpperCase() === destination.trim().toUpperCase()) {
-    return new Response(JSON.stringify({ error: "Origin and destination must differ" }), {
-      status: 400,
-      headers: SECURITY_HEADERS.api,
-    });
+    return jsonError(400, "Origin and destination must differ");
   }
   // The itinerary planner runs on the flight-history model. Model-less
   // tenants get the registry route answer as prose (additive `message`
@@ -1489,21 +1378,16 @@ const apiPlanRoute: Handler = ({ req, url, reader, tenant }) => {
           `Route predictions for ${cfg.name} are determined by aircraft type`,
           cfg.rollout.phaseNote
         );
-    return new Response(JSON.stringify({ origin, destination, itineraries: [], message }), {
-      headers: SECURITY_HEADERS.api,
-    });
+    return json({ origin, destination, itineraries: [], message });
   }
   const itineraries = planItinerary(reader, origin, destination, { maxItineraries: 12, maxStops });
   // Additive: the nonstop every connection is measured against (null when the
   // pair's duration is unknowable, i.e. an airport outside the coordinate table).
   const baseline = routeBaseline(reader, origin, destination);
-  return new Response(JSON.stringify({ origin, destination, itineraries, baseline }), {
-    headers: SECURITY_HEADERS.api,
-  });
+  return json({ origin, destination, itineraries, baseline });
 };
 
-const apiMismatches: Handler = ({ req, reader }) => {
-  if (req.method !== "GET" && req.method !== "HEAD") return methodNotAllowed(true);
+const apiMismatches: Handler = ({ reader }) => {
   const summary = reader.getVerificationSummary();
   const mismatches = reader.getWifiMismatches();
   const response = {
@@ -1518,11 +1402,10 @@ const apiMismatches: Handler = ({ req, reader }) => {
       date_found: m.DateFound,
     })),
   };
-  return new Response(JSON.stringify(response, null, 2), { headers: SECURITY_HEADERS.api });
+  return json(response, { pretty: true });
 };
 
-const apiFleetDiscovery: Handler = ({ req, reader }) => {
-  if (req.method !== "GET" && req.method !== "HEAD") return methodNotAllowed(true);
+const apiFleetDiscovery: Handler = ({ reader }) => {
   const stats = reader.getFleetDiscoveryStats();
   const spreadsheetCache = getSpreadsheetCacheTails();
   const cacheInfo = getSpreadsheetCacheInfo();
@@ -1567,7 +1450,7 @@ const apiFleetDiscovery: Handler = ({ req, reader }) => {
     pending_checkable_sample: pendingCheckable.slice(0, 10).map((p) => p.tail_number),
     pending_no_flights_sample: pendingNoFlights.slice(0, 10).map((p) => p.tail_number),
   };
-  return new Response(JSON.stringify(response, null, 2), { headers: SECURITY_HEADERS.api });
+  return json(response, { pretty: true });
 };
 
 const mcp: Handler = async (ctx) => {
@@ -1669,24 +1552,11 @@ interface SitePage {
  * builds — must never see each other's answers.
  */
 const GATE_TTL_MS = 60_000;
-interface GateEntry {
-  value: boolean;
-  expiresAt: number;
-}
-const gateCache = new WeakMap<RequestContext["getReader"], Map<string, GateEntry>>();
+const gateMemo = perOwner<RequestContext["getReader"], ReturnType<typeof memo<boolean>>>(() =>
+  memo<boolean>(GATE_TTL_MS)
+);
 function memoGate(ctx: RequestContext, key: string, compute: () => boolean): boolean {
-  let perApp = gateCache.get(ctx.getReader);
-  if (!perApp) {
-    perApp = new Map();
-    gateCache.set(ctx.getReader, perApp);
-  }
-  const scoped = `${tenantScope(ctx.tenant)}:${key}`;
-  const now = Date.now();
-  const hit = perApp.get(scoped);
-  if (hit && hit.expiresAt > now) return hit.value;
-  const value = compute();
-  perApp.set(scoped, { value, expiresAt: now + GATE_TTL_MS });
-  return value;
+  return gateMemo(ctx.getReader)(`${tenantScope(ctx.tenant)}:${key}`, compute);
 }
 
 /** At least one organically dated install — the row an install log is made of.
@@ -1936,13 +1806,14 @@ const robotsTxt: Handler = ({ site }) => {
   ];
   // One `*` block covers everyone; named blocks welcoming AI crawlers
   // (GPTBot/ClaudeBot/PerplexityBot) are a deliberate option if rules diverge.
-  return new Response(
+  return text(
     `User-agent: *
 ${allows.map((a) => `Allow: ${a}`).join("\n")}
 ${disallows.map((d) => `Disallow: ${d}`).join("\n")}
 
 Sitemap: https://${site.canonicalHost}/sitemap.xml`,
-    { headers: { "Content-Type": "text/plain", "Cache-Control": "public, max-age=86400" } }
+    "text/plain",
+    { cache: CACHE.day }
   );
 };
 
@@ -2028,7 +1899,7 @@ const sitemap: Handler = (ctx) => {
     ...routeEntries,
     ...aircraftPageEntries(ctx),
   ];
-  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+  const body = `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
 ${entries
   .map(
@@ -2040,14 +1911,12 @@ ${entry.lastmod ? `    <lastmod>${entry.lastmod}</lastmod>\n` : ""}    <changefr
   )
   .join("\n")}
 </urlset>`;
-  return new Response(xml, {
-    headers: { "Content-Type": "application/xml", "Cache-Control": "public, max-age=3600" },
-  });
+  return xml(body, { cache: CACHE.hour });
 };
 
 const LLMS_TXT_HEADERS = {
   "Content-Type": "text/markdown; charset=utf-8",
-  "Cache-Control": "public, max-age=86400",
+  "Cache-Control": CACHE.day,
 };
 
 // Key-facts section shared by the hub and airline llms.txt variants — only
@@ -2341,9 +2210,7 @@ function firstFlightsFor(
 }
 
 const feedXml: Handler = (ctx) => {
-  const { req, site, reader } = ctx;
-  if (req.method !== "GET" && req.method !== "HEAD") return methodNotAllowed();
-  if (!site.features.newlyEquippedPage) return notFound(site);
+  const { site, reader } = ctx;
   // An Atom document with zero entries is a broken subscription, not an empty
   // one — readers keep polling it forever and it advertises a rollout that
   // never moves. Same gate as the page it syndicates.
@@ -2387,7 +2254,7 @@ const feedXml: Handler = (ctx) => {
     })
     .join("\n");
 
-  const xml = `<?xml version="1.0" encoding="utf-8"?>
+  const body = `<?xml version="1.0" encoding="utf-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom">
   <title>${escapeXml(`${site.brand.title} — Newly Equipped Aircraft`)}</title>
   <subtitle>${escapeXml("Aircraft as this tracker first observes them with Starlink, newest first. Dates are when the install was found, not when the antenna went on.")}</subtitle>
@@ -2398,17 +2265,10 @@ const feedXml: Handler = (ctx) => {
   <author><name>${escapeXml(site.brand.title)}</name></author>
 ${entries}
 </feed>`;
-  return new Response(xml, {
-    headers: {
-      "Content-Type": "application/atom+xml; charset=utf-8",
-      "Cache-Control": "public, max-age=900",
-    },
-  });
+  return text(body, "application/atom+xml; charset=utf-8", { cache: CACHE.fifteenMinutes });
 };
 
 const newlyEquippedPage: Handler = (ctx) => {
-  if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
-  if (!ctx.site.features.newlyEquippedPage) return notFound(ctx.site);
   if (!hasInstallLog(ctx)) return notFound(ctx.site);
   const cfg = tenantConfig(ctx.tenant);
   const short = cfg?.shortName;
@@ -2522,8 +2382,6 @@ function installRateAirlines(ctx: RequestContext, nowMs: number): AirlineInstall
 }
 
 const installRatePage: Handler = (ctx) => {
-  if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
-  if (!ctx.site.features.installRatePage) return notFound(ctx.site);
   const cfg = tenantConfig(ctx.tenant);
   // The same cached gate the sitemap and footer nav consult, not a second fresh
   // computation of it — two independent answers could disagree inside one TTL
@@ -2600,12 +2458,7 @@ export function badgeValue(equipped: number, total: number, rosterIsProgramScope
     : `${equipped} aircraft equipped`;
 }
 
-const badgeSvg: Handler = ({ req, site, reader, tenant }) => {
-  if (req.method !== "GET" && req.method !== "HEAD") return methodNotAllowed();
-  // Rides the /embed flag: the badge and the page that documents it are one
-  // feature, and an ungated asset was the only new surface a tenant couldn't
-  // turn off.
-  if (!site.features.embedPage) return notFound(site);
+const badgeSvg: Handler = ({ site, reader, tenant }) => {
   const cfg = tenantConfig(tenant);
   const equipped = reader.countStarlinkPlanes();
   const total = reader.getTotalCount();
@@ -2616,16 +2469,14 @@ const badgeSvg: Handler = ({ req, site, reader, tenant }) => {
       "Content-Type": "image/svg+xml; charset=utf-8",
       // An hour of edge/browser caching keeps embeds cheap while the count
       // still tracks the rollout day-to-day; SWR covers cache-miss bursts.
-      "Cache-Control": "public, max-age=3600, stale-while-revalidate=86400",
+      "Cache-Control": CACHE.hourStaleDay,
       // Open like /api/*: the badge is meant to be consumed cross-origin.
-      "Access-Control-Allow-Origin": "*",
+      ...CORS_ANY_ORIGIN,
     },
   });
 };
 
 const embedPage: Handler = (ctx) => {
-  if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
-  if (!ctx.site.features.embedPage) return notFound(ctx.site);
   const cfg = tenantConfig(ctx.tenant);
   const short = cfg?.shortName ?? "Airline";
   const subject = cfg?.name ?? "tracked airlines";
@@ -2877,12 +2728,6 @@ function subPageMeta(
  * are pinned; the hub host detects the carrier from the flight-number prefix.
  * Deliberately looser than decideCarrier (check-flight-core): this only picks
  * page meta — operating-prefix permalinks still render the generic page. */
-function resolveFlightCfg(ctx: RequestContext, flightNumber: string): AirlineConfig | null {
-  const tenantCfg = tenantConfig(ctx.tenant);
-  if (tenantCfg) return flightNumber.startsWith(tenantCfg.iata) ? tenantCfg : null;
-  return detectAirline(flightNumber);
-}
-
 type CheckFlightPath =
   | { kind: "bare" }
   | { kind: "flight"; raw: string; fn: string; date: string | null }
@@ -2903,21 +2748,10 @@ function parseCheckFlightPath(pathname: string): CheckFlightPath {
   } catch {
     return { kind: "invalid", raw: null }; // malformed % escape
   }
-  const fn = stripFlightNumberZeros(icaoToIata(canonicalFlightInput(raw)));
+  const fn = stripFlightNumberZeros(icaoCallsignToIata(canonicalFlightInput(raw)));
   if (!CANONICAL_FLIGHT_PERMALINK.test(fn)) return { kind: "invalid", raw };
   const date = second && isRealIsoDate(second) ? second : null;
   return { kind: "flight", raw, fn, date };
-}
-
-/** UAL675 → UA675: people paste the callsign from FR24/FlightAware. Only a
- * carrier's own ICAO code maps — operating prefixes (SKW, OO) fly for several. */
-function icaoToIata(fn: string): string {
-  for (const cfg of enabledAirlines()) {
-    if (fn.startsWith(cfg.icao) && /^\d{1,4}$/.test(fn.slice(cfg.icao.length))) {
-      return `${cfg.iata}${fn.slice(cfg.icao.length)}`;
-    }
-  }
-  return fn;
 }
 
 /** Cap what an invalid segment can echo back into the page. React escapes it;
@@ -3221,10 +3055,6 @@ async function datedAnswer(
 }
 
 const checkFlightPage: Handler = async (ctx) => {
-  if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
-  if (!ctx.site.features.checkFlightPage) {
-    return notFound(ctx.site);
-  }
   // Per-flight permalinks: /check-flight/UA881[/{date}] renders flight-specific
   // content + meta + Flight JSON-LD; the date-less URL is canonical so date
   // variants don't dilute it.
@@ -3267,7 +3097,7 @@ const checkFlightPage: Handler = async (ctx) => {
         301
       );
     }
-    const cfg = resolveFlightCfg(ctx, fn);
+    const cfg = permalinkCarrier(tenantConfig(ctx.tenant), fn);
     // Shape-valid but carrying another carrier's prefix on this host. The
     // notice never names that carrier — a tenant host must not confirm what
     // else exists (same rule the /api foreign-prefix gate follows).
@@ -3410,26 +3240,22 @@ const PLANNER_POPULAR_ROUTES = 60;
 // only needs to track the schedule, so it is rebuilt at most every 10 minutes.
 const PLANNER_ROUTES_TTL_MS = 10 * 60_000;
 type RoutePair = { origin: string; destination: string };
-const plannerRoutesCache = new WeakMap<
+const plannerRoutesMemo = perOwner<
   RequestContext["getReader"],
-  Map<string, { value: RoutePair[]; expiresAt: number }>
->();
+  ReturnType<typeof memo<RoutePair[]>>
+>(() => memo<RoutePair[]>(PLANNER_ROUTES_TTL_MS));
 
 /** Route permalinks for the bare planner: /routes' next page of rankings, so
  * the two hubs link different pairs, topped up from the sitemap's most recently
  * seen routes when the live window is thin. Only sitemap-eligible pairs, so
  * every link serves 200. */
 function plannerPopularRoutes(ctx: RequestContext): RoutePair[] {
-  let perApp = plannerRoutesCache.get(ctx.getReader);
-  if (!perApp) {
-    perApp = new Map();
-    plannerRoutesCache.set(ctx.getReader, perApp);
-  }
-  const scope = tenantScope(ctx.tenant);
-  const now = Date.now();
-  const hit = perApp.get(scope);
-  if (hit && hit.expiresAt > now) return hit.value;
+  return plannerRoutesMemo(ctx.getReader)(tenantScope(ctx.tenant), () =>
+    computePlannerPopularRoutes(ctx)
+  );
+}
 
+function computePlannerPopularRoutes(ctx: RequestContext): RoutePair[] {
   const sitemapRoutes = ctx.reader.getSitemapRoutes();
   const eligible = new Set(sitemapRoutes.map((r) => `${r.origin}-${r.destination}`));
   const ranked = ctx.reader.getRankedStarlinkRoutePairs(
@@ -3450,16 +3276,10 @@ function plannerPopularRoutes(ctx: RequestContext): RoutePair[] {
   };
   for (const r of ranked.slice(ROUTES_PAGE_ROWS)) take(r);
   for (const r of [...sitemapRoutes].sort((x, y) => y.last_touched - x.last_touched)) take(r);
-  const value = [...picked.values()];
-  perApp.set(scope, { value, expiresAt: now + PLANNER_ROUTES_TTL_MS });
-  return value;
+  return [...picked.values()];
 }
 
 const routePlannerPage: Handler = (ctx) => {
-  if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
-  if (!ctx.site.features.routePlannerPage) {
-    return notFound(ctx.site);
-  }
   // Per-route permalinks: /route-planner/{origin}/{destination}. The prefix used
   // to swallow every sub-path and render the planner, so ~10k internal links off
   // the flight permalinks all resolved to one duplicate page and Google logged
@@ -3550,10 +3370,6 @@ function fleetItemListJsonLd(
 }
 
 const fleetPage: Handler = (ctx) => {
-  if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
-  if (!ctx.site.features.fleetPage) {
-    return notFound(ctx.site);
-  }
   const data = ctx.reader.getFleetPageData();
   const typeLinks: FleetTypeLink[] = servedAircraftPages(ctx).map((d) => ({
     family: d.family,
@@ -3692,7 +3508,6 @@ function recordAircraftPageView(
 }
 
 const aircraftTypePage: Handler = (ctx) => {
-  if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
   const cfg = tenantConfig(ctx.tenant);
   if (!ctx.site.features.aircraftPages || !cfg) {
     return notFound(ctx.site);
@@ -3805,10 +3620,6 @@ function aircraftTypeLinks(
 }
 
 const methodologyPage: Handler = (ctx) => {
-  if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
-  if (!ctx.site.features.methodologyPage) {
-    return notFound(ctx.site);
-  }
   // methodologyPage is airline-site-only; siteAirline throws (fail closed) on the hub.
   const cfg = siteAirline(ctx.site);
   // Gate on content, not just the feature flag — a SOURCES-less airline would
@@ -3865,10 +3676,6 @@ const methodologyPage: Handler = (ctx) => {
 };
 
 const routesPage: Handler = (ctx) => {
-  if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
-  if (!ctx.site.features.routesPage) {
-    return notFound(ctx.site);
-  }
   const schedule = ctx.reader.getRouteStarlinkSchedule();
   // ItemList over the live-window route rows; URLs only where the route pages
   // actually serve (routePlannerPage can lag routesPage on a new tenant).
@@ -3899,8 +3706,6 @@ const routesPage: Handler = (ctx) => {
 };
 
 const timelinePage: Handler = (ctx) => {
-  if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
-  if (!ctx.site.features.timelinePage) return notFound(ctx.site);
   // timelinePage is airline-site-only; siteAirline throws (fail closed) on the hub.
   const cfg = siteAirline(ctx.site);
   // Gate on content, not just the flag — mirrors /methodology's hasMethodology.
@@ -3937,8 +3742,6 @@ const timelinePage: Handler = (ctx) => {
 };
 
 const howToCheckPage: Handler = (ctx) => {
-  if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
-  if (!ctx.site.features.intentPages) return notFound(ctx.site);
   const cfg = siteAirline(ctx.site);
   return renderSubPage(ctx, HowToCheckPage, "/how-to-check", {
     siteTitle: `How to Check If Your ${cfg.shortName} Flight Has Starlink WiFi`,
@@ -3951,8 +3754,6 @@ const howToCheckPage: Handler = (ctx) => {
 };
 
 const isStarlinkFreePage: Handler = (ctx) => {
-  if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
-  if (!ctx.site.features.intentPages) return notFound(ctx.site);
   const cfg = siteAirline(ctx.site);
   // Content gate like /methodology: no per-airline access story, no page.
   if (!hasFreeAnswer(cfg.code)) return notFound(ctx.site);
@@ -3989,16 +3790,12 @@ function csvField(value: string | null): string {
 /** Equipped tails as CSV, straight from the DB (never a live scrape). Same
  * gate as the Dataset that advertises it: airline sites with /methodology. */
 const starlinkTailsCsv: Handler = (ctx) => {
-  if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
   if (ctx.tenant === "ALL" || !ctx.site.features.methodologyPage) return notFound(ctx.site);
   const rows = ctx.reader
     .getStarlinkPlanes()
     .map((p) => CSV_COLUMNS.map((c) => csvField(p[c])).join(","));
-  return new Response(`${[CSV_COLUMNS.join(","), ...rows].join("\r\n")}\r\n`, {
-    headers: {
-      "Content-Type": "text/csv; charset=utf-8",
-      "Cache-Control": "public, max-age=3600",
-    },
+  return text(`${[CSV_COLUMNS.join(","), ...rows].join("\r\n")}\r\n`, "text/csv; charset=utf-8", {
+    cache: CACHE.hour,
   });
 };
 
@@ -4014,8 +3811,6 @@ function citeStat(ctx: RequestContext): CiteStat | null {
 }
 
 const liveTvPage: Handler = (ctx) => {
-  if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
-  if (!ctx.site.features.liveTvPage) return notFound(ctx.site);
   const mainline = ctx.reader.getFleetStats()?.mainline;
   return renderSubPage(
     ctx,
@@ -4081,8 +3876,6 @@ function trackedFlightLinks(): TrackedLink[] {
 }
 
 const airlinesIndexPage: Handler = (ctx) => {
-  if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
-  if (!ctx.site.features.airlinesPages) return notFound(ctx.site);
   const overviews = hubContentAirlines().map((cfg) => airlineOverview(ctx.getReader, cfg));
   const names = overviews.map((o) => o.cfg.name);
   const rosterCount = contentOnlyFacts().length;
@@ -4146,8 +3939,6 @@ function factsPageMeta(entry: AirlineFactsEntry): PageMeta {
 }
 
 const airlineDetailPage: Handler = (ctx) => {
-  if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
-  if (!ctx.site.features.airlinesPages) return notFound(ctx.site);
   const trimmed = ctx.url.pathname.replace(/\/+$/, "");
   // Bare /airlines/ is the index with a stray slash, not a missing airline —
   // the same 301 /compare/ gets, so the two families answer alike.
@@ -4358,8 +4149,6 @@ function buildCompareSide(ctx: RequestContext, cfg: AirlineConfig): CompareSide 
 }
 
 const comparePage: Handler = (ctx) => {
-  if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
-  if (!ctx.site.features.comparePages) return notFound(ctx.site);
   const trimmed = ctx.url.pathname.replace(/\/+$/, "");
   // Bare /compare has no index page — the comparison index is /airlines.
   if (trimmed === "/compare") {
@@ -4461,8 +4250,7 @@ function homeMeta(
 }
 
 const homePage: Handler = async (ctx) => {
-  const { req, reader, tenant, site } = ctx;
-  if (req.method !== "GET" && req.method !== "HEAD") return methodNotAllowed();
+  const { reader, tenant, site } = ctx;
   const content = getContent(tenant);
 
   const isHub = tenant === "ALL";
@@ -4569,9 +4357,7 @@ const staticDir: Handler = ({ url, site }) => {
     if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
       const ext = path.extname(filePath).toLowerCase().substring(1);
       const contentType = CONTENT_TYPES[ext] || "application/octet-stream";
-      return new Response(Bun.file(filePath), {
-        headers: { "Content-Type": contentType, "Cache-Control": "public, max-age=86400" },
-      });
+      return text(Bun.file(filePath), contentType, { cache: CACHE.day });
     }
   } catch (err) {
     logError(`Error serving static file ${filePath}`, err);
@@ -4588,41 +4374,18 @@ export interface App {
   dispatch(req: Request): Promise<Response>;
 }
 
-function withDefaultHeaders(res: Response, defaults: Record<string, string>): Response {
-  const headers = new Headers(res.headers);
-  let changed = false;
-  for (const [k, v] of Object.entries(defaults)) {
-    if (!headers.has(k)) {
-      headers.set(k, v);
-      changed = true;
-    }
-  }
-  if (!changed) return res;
-  return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
-}
-
 function finalizeResponse(res: Response, varyHost: boolean): Response {
-  const headers = new Headers(res.headers);
-  let changed = false;
-  for (const [k, v] of Object.entries(BASE_RESPONSE_HEADERS)) {
-    if (!headers.has(k)) {
-      headers.set(k, v);
-      changed = true;
-    }
-  }
-  if (varyHost) {
+  return withDefaultHeaders(res, BASE_RESPONSE_HEADERS, (headers) => {
+    if (!varyHost) return false;
     // Merge into an existing Vary (e.g. a handler's "Accept-Encoding"), don't skip.
     const vary = (headers.get("Vary") ?? "")
       .split(",")
       .map((v) => v.trim())
       .filter(Boolean);
-    if (!vary.some((v) => v.toLowerCase() === "host")) {
-      headers.set("Vary", [...vary, "Host"].join(", "));
-      changed = true;
-    }
-  }
-  if (!changed) return res;
-  return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+    if (vary.some((v) => v.toLowerCase() === "host")) return false;
+    headers.set("Vary", [...vary, "Host"].join(", "));
+    return true;
+  });
 }
 
 /** 301 for parked domains (HOST_REDIRECTS, any method) and non-canonical
@@ -4681,7 +4444,7 @@ function canonicalAliasPath(pathname: string): string {
 // API_CORS_HEADERS (spread into SECURITY_HEADERS.api), /mcp serves
 // MCP_CORS_HEADERS (browser-based MCP clients POST JSON-RPC cross-origin).
 const MCP_CORS_HEADERS: Record<string, string> = {
-  "Access-Control-Allow-Origin": "*",
+  ...CORS_ANY_ORIGIN,
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, Accept, Mcp-Session-Id, MCP-Protocol-Version",
   "Access-Control-Expose-Headers": "Mcp-Session-Id",
@@ -4715,7 +4478,6 @@ export function createApp(db: Database): App {
   let lastSweep = 0;
 
   const apiPassengerProbe: Handler = async ({ req, ip, onStarlinkIp }) => {
-    if (req.method !== "POST") return methodNotAllowed(true);
     let body: unknown;
     try {
       // sendBeacon posts text/plain; req.json() handles that.
@@ -4755,39 +4517,42 @@ export function createApp(db: Database): App {
   }
 
   const routes: RouteTable = {
-    "/": homePage,
-    "/check-flight": checkFlightPage,
-    "/route-planner": routePlannerPage,
-    "/fleet": fleetPage,
-    "/routes": routesPage,
-    "/methodology": methodologyPage,
-    "/timeline": timelinePage,
-    "/how-to-check": howToCheckPage,
-    "/is-starlink-free": isStarlinkFreePage,
-    "/live-tv": liveTvPage,
-    "/data/starlink-tails.csv": starlinkTailsCsv,
-    "/airlines": airlinesIndexPage,
-    "/compare": comparePage,
-    "/newly-equipped": newlyEquippedPage,
-    "/feed.xml": feedXml,
-    "/badge.svg": badgeSvg,
-    "/embed": embedPage,
-    "/install-rate": installRatePage,
-    "/api/data": apiData,
-    "/api/fleet-summary": apiFleetSummary,
-    "/api/routes": apiRoutes,
-    "/api/check-flight": apiCheckFlight,
-    "/api/check-any-flight": apiCheckAnyFlight,
-    "/api/compare-route": apiCompareRoute,
-    "/api/predict-flight": apiPredictFlight,
-    "/api/plan-route": apiPlanRoute,
-    "/api/mismatches": apiMismatches,
-    "/api/fleet-discovery": apiFleetDiscovery,
-    "/api/passenger-probe": apiPassengerProbe,
-    "/mcp": mcp,
-    "/robots.txt": robotsTxt,
-    "/llms.txt": llmsTxt,
-    "/sitemap.xml": sitemap,
+    "/": read(homePage),
+    "/check-flight": read(checkFlightPage, "checkFlightPage"),
+    "/route-planner": read(routePlannerPage, "routePlannerPage"),
+    "/fleet": read(fleetPage, "fleetPage"),
+    "/routes": read(routesPage, "routesPage"),
+    "/methodology": read(methodologyPage, "methodologyPage"),
+    "/timeline": read(timelinePage, "timelinePage"),
+    "/how-to-check": read(howToCheckPage, "intentPages"),
+    "/is-starlink-free": read(isStarlinkFreePage, "intentPages"),
+    "/live-tv": read(liveTvPage, "liveTvPage"),
+    "/data/starlink-tails.csv": read(starlinkTailsCsv),
+    "/airlines": read(airlinesIndexPage, "airlinesPages"),
+    "/compare": read(comparePage, "comparePages"),
+    "/newly-equipped": read(newlyEquippedPage, "newlyEquippedPage"),
+    "/feed.xml": read(feedXml, "newlyEquippedPage"),
+    // Rides the /embed flag: the badge and the page that documents it are one
+    // feature, and an ungated asset was the only new surface a tenant couldn't
+    // turn off.
+    "/badge.svg": read(badgeSvg, "embedPage"),
+    "/embed": read(embedPage, "embedPage"),
+    "/install-rate": read(installRatePage, "installRatePage"),
+    "/api/data": read(apiData),
+    "/api/fleet-summary": read(apiFleetSummary),
+    "/api/routes": read(apiRoutes, "routesPage"),
+    "/api/check-flight": read(apiCheckFlight),
+    "/api/check-any-flight": read(apiCheckAnyFlight),
+    "/api/compare-route": read(apiCompareRoute),
+    "/api/predict-flight": read(apiPredictFlight),
+    "/api/plan-route": read(apiPlanRoute),
+    "/api/mismatches": read(apiMismatches),
+    "/api/fleet-discovery": read(apiFleetDiscovery),
+    "/api/passenger-probe": { handler: apiPassengerProbe, methods: ["POST"] },
+    "/mcp": { handler: mcp },
+    "/robots.txt": { handler: robotsTxt },
+    "/llms.txt": { handler: llmsTxt },
+    "/sitemap.xml": { handler: sitemap },
   };
 
   // IndexNow key file — the spec requires GET https://<host>/{key}.txt to echo
@@ -4795,27 +4560,26 @@ export function createApp(db: Database): App {
   // static, and an unset key simply means no route (feature off).
   const indexNowKey = process.env.INDEXNOW_KEY;
   if (indexNowKey) {
-    routes[`/${indexNowKey}.txt`] = () =>
-      new Response(indexNowKey, {
-        headers: { "Content-Type": "text/plain", "Cache-Control": "public, max-age=86400" },
-      });
+    routes[`/${indexNowKey}.txt`] = {
+      handler: () => text(indexNowKey, "text/plain", { cache: CACHE.day }),
+    };
   }
 
-  const prefixRoutes: Array<[string, Handler]> = [
-    ["/cal/", watchFeed],
-    ["/check-flight/", checkFlightPage],
-    ["/route-planner/", routePlannerPage],
-    ["/airlines/", airlineDetailPage],
-    ["/compare/", comparePage],
-    ["/static/", staticDir],
-    ["/fleet/", aircraftTypePage],
+  const prefixRoutes: Array<[string, Route]> = [
+    ["/cal/", read(watchFeed)],
+    ["/check-flight/", read(checkFlightPage, "checkFlightPage")],
+    ["/route-planner/", read(routePlannerPage, "routePlannerPage")],
+    ["/airlines/", read(airlineDetailPage, "airlinesPages")],
+    ["/compare/", read(comparePage, "comparePages")],
+    ["/static/", { handler: staticDir }],
+    ["/fleet/", read(aircraftTypePage)],
   ];
 
-  function match(pathname: string): { handler: Handler; route: string } | null {
+  function match(pathname: string): { entry: Route; route: string } | null {
     const exact = routes[pathname];
-    if (exact) return { handler: exact, route: pathname };
-    for (const [prefix, h] of prefixRoutes) {
-      if (pathname.startsWith(prefix)) return { handler: h, route: prefix.slice(0, -1) };
+    if (exact) return { entry: exact, route: pathname };
+    for (const [prefix, entry] of prefixRoutes) {
+      if (pathname.startsWith(prefix)) return { entry, route: prefix.slice(0, -1) };
     }
     return null;
   }
@@ -4852,12 +4616,8 @@ export function createApp(db: Database): App {
       logError(`Unhandled error dispatching ${req.method} ${url.pathname}`, err);
       // API-shaped headers (incl. CORS) on every path: /api/* consumers need
       // ACAO to even see the failure; on pages the JSON body is still honest.
-      const headers =
-        url.pathname === "/mcp"
-          ? { ...SECURITY_HEADERS.api, ...MCP_CORS_HEADERS }
-          : SECURITY_HEADERS.api;
       return finalizeResponse(
-        new Response(JSON.stringify({ error: "internal" }), { status: 500, headers }),
+        jsonError(500, "internal", { headers: url.pathname === "/mcp" ? MCP_CORS_HEADERS : {} }),
         true
       );
     }
@@ -4875,10 +4635,7 @@ export function createApp(db: Database): App {
     if (url.pathname === "/site.webmanifest") return manifestResponse(site);
 
     if (site === null) {
-      return new Response("Misdirected Request", {
-        status: 421,
-        headers: { "Content-Type": "text/plain" },
-      });
+      return text("Misdirected Request", "text/plain", { status: 421 });
     }
     const tenant = site.scope === "ALL" ? "ALL" : AIRLINES[site.scope];
 
@@ -4914,18 +4671,8 @@ export function createApp(db: Database): App {
           tenant: tenantScope(tenant),
           airline: httpAirlineTag(tenant),
         });
-        metrics.increment(COUNTERS.HTTP_REQUEST, {
-          method: req.method,
-          route: metricRoute(m),
-          status_code: 429,
-          tenant: tenantScope(tenant),
-          airline: httpAirlineTag(tenant),
-          ...requestClientTags(req, url),
-        });
-        return new Response(JSON.stringify({ error: "rate limit exceeded" }), {
-          status: 429,
-          headers: { ...SECURITY_HEADERS.api, "Retry-After": "60" },
-        });
+        countRequest(req, url, m, tenant, 429);
+        return jsonError(429, "rate limit exceeded", { headers: { "Retry-After": "60" } });
       }
     }
 
@@ -4935,14 +4682,7 @@ export function createApp(db: Database): App {
     // visible in dashboards; just not worth a full trace span.
     if (req.method === "OPTIONS" && (url.pathname.startsWith("/api/") || url.pathname === "/mcp")) {
       const response = corsPreflight(url.pathname);
-      metrics.increment(COUNTERS.HTTP_REQUEST, {
-        method: req.method,
-        route: metricRoute(m),
-        status_code: response.status,
-        tenant: tenantScope(tenant),
-        airline: httpAirlineTag(tenant),
-        ...requestClientTags(req, url),
-      });
+      countRequest(req, url, m, tenant, response.status);
       return response;
     }
 
@@ -4950,6 +4690,7 @@ export function createApp(db: Database): App {
     if (onStarlinkIp) {
       metrics.increment(COUNTERS.PASSENGER_DETECT, {
         tenant: tenantScope(tenant),
+        airline: httpAirlineTag(tenant),
         ...requestClientTags(req, url),
       });
     }
@@ -4980,7 +4721,7 @@ export function createApp(db: Database): App {
         // crash invisible to the status_code:5* monitor on this metric.
         let status = 500;
         try {
-          const response = m ? await m.handler(ctx) : await notFound(site);
+          const response = m ? await serve(m.entry, ctx) : await notFound(site);
           status = response.status;
           span.setTag("http.status_code", status);
           return response;
@@ -4994,14 +4735,7 @@ export function createApp(db: Database): App {
           // a path that matched no route — measured at ~82% of all 404s, i.e. a
           // 5.4x undercount — from every metric-backed dashboard and monitor.
           // `route` stays a bounded allowlist: unmatched collapses to "/*".
-          metrics.increment(COUNTERS.HTTP_REQUEST, {
-            method: req.method,
-            route: metricRoute(m),
-            status_code: status,
-            tenant: tenantScope(tenant),
-            airline: httpAirlineTag(tenant),
-            ...requestClientTags(req, url),
-          });
+          countRequest(req, url, m, tenant, status);
         }
       },
       { "span.type": "web" }
