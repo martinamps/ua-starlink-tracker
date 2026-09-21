@@ -76,3 +76,212 @@
 [data-expanded] .expand-flights .pill-less {
   display: inline;
 }
+
+/* /fleet and /fleet/{slug}. Unlayered, like the inline <style> blocks they
+   replace, so a swatch beats the size/shape utilities it sits beside. The
+   wifi-* names are built from a provider key at render time, which is why they
+   are rules here rather than utilities: this file is what the scanner and the
+   class-coverage test read them from. */
+.wifi-starlink {
+  background: var(--color-accent);
+}
+.wifi-viasat {
+  background: rgba(245, 158, 11, 0.5);
+}
+.wifi-panasonic {
+  background: rgba(168, 85, 247, 0.5);
+}
+.wifi-thales {
+  background: rgba(236, 72, 153, 0.5);
+}
+.wifi-none {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px rgba(90, 106, 128, 0.5);
+}
+.wifi-unknown {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px rgba(90, 106, 128, 0.25);
+}
+/* Pipeline overlays come after wifi-* so they win the cascade. */
+.pipe-mod {
+  background: rgba(245, 158, 11, 0.15);
+  box-shadow: inset 0 0 0 1.5px #f59e0b;
+}
+.pipe-verif {
+  background: rgba(14, 165, 233, 0.15);
+  box-shadow: inset 0 0 0 1.5px var(--color-accent);
+}
+.pipe-chip {
+  display: inline-flex;
+  align-items: baseline;
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  text-decoration: none;
+  border: 1px solid;
+  color: var(--color-text-secondary);
+}
+.pipe-chip:hover {
+  text-decoration: underline;
+}
+.pipe-chip-mod {
+  border-color: rgba(245, 158, 11, 0.6);
+  background: rgba(245, 158, 11, 0.08);
+}
+.pipe-chip-verif {
+  border-color: rgba(14, 165, 233, 0.6);
+  background: rgba(14, 165, 233, 0.08);
+}
+.pipe-chip-sched {
+  border-color: rgba(90, 106, 128, 0.5);
+  border-style: dashed;
+}
+.bar-complete {
+  background: var(--color-accent);
+}
+.bar-verif {
+  background: rgba(14, 165, 233, 0.45);
+}
+.bar-inmod {
+  background: rgba(245, 158, 11, 0.8);
+}
+.bar-queued {
+  background: repeating-linear-gradient(45deg, rgba(90, 106, 128, 0.55) 0 2px, transparent 2px 4px);
+}
+.tail-pipe {
+  opacity: 0.75;
+}
+.dot-mod {
+  color: #f59e0b;
+}
+.dot-verif {
+  color: var(--color-accent);
+}
+.tail-sl,
+.tail-dim {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5em;
+  text-decoration: none;
+}
+.tail-sl {
+  color: var(--color-accent);
+}
+.tail-dim {
+  color: var(--color-text-muted);
+  opacity: 0.45;
+  transition: opacity 0.15s;
+}
+.tail-sl:hover .tail-num,
+.tail-dim:hover .tail-num {
+  text-decoration: underline;
+}
+.tail-dim:hover {
+  opacity: 1;
+}
+.tail-sl:target,
+.tail-dim:target {
+  background: rgba(14, 165, 233, 0.2);
+  opacity: 1;
+  scroll-margin-top: 5rem;
+}
+.tail-dot {
+  width: 0.8em;
+  text-align: center;
+  flex-shrink: 0;
+}
+.tail-num {
+  flex: 0 0 auto;
+}
+.tail-abbr {
+  opacity: 0.6;
+  font-size: 0.85em;
+  flex-shrink: 0;
+}
+/* Hangar floor: always-open blocks on desktop, collapsible on mobile. */
+.fam-summary::-webkit-details-marker {
+  display: none;
+}
+.fam-caret {
+  transition: transform 0.2s;
+}
+.fam-container {
+  display: grid;
+}
+@media (min-width: 768px) {
+  .fam-container {
+    grid-template-columns: repeat(auto-fill, 118px);
+    align-items: start;
+  }
+  .fam-summary {
+    pointer-events: none;
+    min-height: 34px;
+  }
+  .fam-caret {
+    display: none;
+  }
+}
+@media (max-width: 767px) {
+  .fam-container {
+    grid-template-columns: 1fr;
+  }
+  .fam-summary {
+    cursor: pointer;
+    padding: 0.75rem;
+  }
+  .fam-block[open] .fam-caret {
+    transform: rotate(180deg);
+  }
+}
+/* Aircraft spec popover: hover on desktop, focus (tap) on mobile. */
+.spec-trigger {
+  pointer-events: auto;
+  outline: none;
+}
+.spec-card {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-4px);
+  transition: opacity 0.15s, transform 0.15s;
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 400;
+}
+.spec-trigger:hover .spec-card,
+.spec-trigger:focus .spec-card,
+.spec-trigger:focus-within .spec-card {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+@media (max-width: 767px) {
+  .spec-card {
+    left: 0;
+    right: 0;
+    width: auto;
+    position: fixed;
+    top: auto;
+    bottom: 1rem;
+    margin: 0 1rem;
+  }
+}
+/* Type-page verdict card: the left rule carries the answer's tone. */
+.verdict {
+  border-left-width: 3px;
+}
+.verdict-yes {
+  border-left-color: var(--color-accent);
+}
+.verdict-most {
+  border-left-color: rgba(14, 165, 233, 0.6);
+}
+.verdict-some {
+  border-left-color: rgba(14, 165, 233, 0.35);
+}
+.verdict-wait {
+  border-left-color: #f59e0b;
+}
+.verdict-no {
+  border-left-color: rgba(90, 106, 128, 0.6);
+}

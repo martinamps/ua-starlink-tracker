@@ -294,7 +294,7 @@ export const TYPE_DISPLAY: Record<string, string> = {
   "39M": "737 MAX 9",
   "319": "A319",
   "320": "A320",
-  "321": "A321",
+  "321": "A321neo",
   "321XLR": "A321XLR",
   "752": "757-200",
   "753": "757-300",
@@ -391,7 +391,7 @@ export const PROVIDER_NAMES: Record<WifiProvider, string> = {
   viasat: "Viasat",
   panasonic: "Panasonic",
   thales: "Thales",
-  none: "no WiFi",
+  none: "no Wi-Fi",
   unknown: "not checked yet",
 };
 
@@ -459,7 +459,7 @@ export const SHARE_KINDS: ReadonlySet<AircraftVerdictKind> = new Set([
 ]);
 
 const SWAP_NOTE =
-  "Aircraft swaps happen; the real answer comes when the tail is assigned, about 1–2 days out.";
+  "The aircraft is usually assigned 1–2 days before departure. Check your flight then.";
 
 /**
  * The verdict a type page leads with. Decided on the tails actually checked:
@@ -705,13 +705,12 @@ export function aircraftTypeTitle(
  * neutral about which runs ahead (ours is above the sheet as often as below). */
 export function sheetComparison(pipeline: AircraftTypePipeline, starlink: number): string[] {
   const fetched = formatFactDate(isoDay(pipeline.fetched_at));
+  const n = (v: number) => v.toLocaleString("en-US");
   const lines = [
-    `Per the United fleet progress sheet (fetched ${fetched}): ${pipeline.starlink_complete} complete, ${pipeline.in_mod} in mod, ${pipeline.verification_needed} awaiting verification. Verified by us on united.com: ${starlink}.`,
+    `The United fleet progress sheet (fetched ${fetched}) shows ${n(pipeline.starlink_complete)} complete, ${n(pipeline.in_mod)} in mod and ${n(pipeline.verification_needed)} awaiting verification. We've verified ${n(starlink)} on united.com.`,
   ];
   if (pipeline.starlink_complete !== starlink) {
-    lines.push(
-      "The sheet and united.com update independently, so the two counts don't always match."
-    );
+    lines.push("The sheet and united.com update separately, so the counts can differ.");
   }
   return lines;
 }
@@ -771,11 +770,11 @@ export function aircraftTypeFaq(
       .filter((p) => data.providers[p] > 0)
       .map(
         (p) =>
-          `${data.providers[p]} ${data.providers[p] === 1 ? "has" : "have"} ${p === "none" ? "no WiFi" : PROVIDER_NAMES[p]}`
+          `${data.providers[p]} ${data.providers[p] === 1 ? "has" : "have"} ${PROVIDER_NAMES[p]}`
       );
     const unchecked = data.unchecked > 0 ? ` ${data.unchecked} not checked yet.` : "";
     items.push({
-      q: `What WiFi do ${copy.possessive} ${data.starlink > 0 ? "other " : ""}${shorts} have?`,
+      q: `What Wi-Fi do ${copy.possessive} ${data.starlink > 0 ? "other " : ""}${shorts} have?`,
       a:
         data.starlink > 0
           ? `Of the ${data.checked} ${copy.airline} ${shorts} last checked on united.com, ${data.starlink} ${plural(data.starlink, "has", "have")} Starlink; of the rest, ${parts.join(", ")}.${unchecked}`
@@ -787,7 +786,7 @@ export function aircraftTypeFaq(
   if (target?.asOf) {
     items.push({
       q: `When will every ${copy.airline} ${short} have Starlink?`,
-      a: `No date is published for the ${short} alone. The closest dated target (${formatFactDate(target.asOf)}, ${target.source.label}): ${factText(target)}`,
+      a: `${copy.airline} hasn't given a date for the ${short}. Its closest stated target (${target.source.label}, ${formatFactDate(target.asOf)}): ${factText(target)}`,
     });
   }
 
