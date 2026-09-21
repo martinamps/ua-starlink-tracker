@@ -34,7 +34,7 @@ import {
 import { normalizeAircraftType, normalizeFleet, normalizeOpCarrier } from "../src/observability";
 import { callsignMatchesAssignment } from "../src/scripts/adsb-sweep";
 import { AIRCRAFT_SPECS } from "../src/utils/aircraft-specs";
-import { makeSyntheticDb, openSnapshot } from "./helpers";
+import { addFleet, makeSyntheticDb, openSnapshot } from "./helpers";
 
 const airlineCodes = Object.keys(AIRLINES);
 
@@ -367,6 +367,43 @@ describe("verification sources", () => {
       .query("SELECT verified_wifi FROM starlink_planes WHERE TailNumber = 'N37502'")
       .get() as { verified_wifi: string | null };
     expect(row.verified_wifi).toBe("Starlink");
+    db.close();
+  });
+
+  test("reconcileConsensus settles each airline's listing from its own rows; the count sums both plus demotions", () => {
+    const db = makeSyntheticDb();
+    addPlaneRow(db, "N50001", "UA");
+    logRows(db, "N50001", "united", "UA", true, 2);
+    // One registration listed by two airlines, each with its own evidence.
+    addPlaneRow(db, "N50002", "UA");
+    addPlaneRow(db, "N50002", "AS");
+    logRows(db, "N50002", "united", "UA", true, 2);
+    logRows(db, "N50002", "united", "AS", false, 2);
+    // A retrofit: settled negative, two newest checks on Starlink.
+    addPlaneRow(db, "N50003", "UA");
+    db.query(
+      "UPDATE starlink_planes SET verified_wifi = 'Viasat' WHERE TailNumber = 'N50003'"
+    ).run();
+    addFleet(db, "N50003", "negative", { verifiedWifi: "Viasat" });
+    logRows(db, "N50003", "united", "UA", true, 2);
+
+    // UA heals N50001, N50002 and N50003; AS heals N50002; one demotion.
+    expect(reconcileConsensus(db)).toBe(5);
+    const listing = db
+      .query(
+        "SELECT TailNumber AS tail, airline, verified_wifi AS wifi FROM starlink_planes WHERE TailNumber LIKE 'N5000%' ORDER BY tail, airline"
+      )
+      .all();
+    expect(listing).toEqual([
+      { tail: "N50001", airline: "UA", wifi: "Starlink" },
+      { tail: "N50002", airline: "AS", wifi: "Viasat" },
+      { tail: "N50002", airline: "UA", wifi: "Starlink" },
+      { tail: "N50003", airline: "UA", wifi: "Starlink" },
+    ]);
+    expect(
+      db.query("SELECT starlink_status AS s FROM united_fleet WHERE tail_number = 'N50003'").get()
+    ).toEqual({ s: "unknown" });
+    expect(reconcileConsensus(db)).toBe(0);
     db.close();
   });
 
