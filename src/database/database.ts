@@ -294,17 +294,6 @@ export function setupTables(db: Database) {
       );
     `).run();
 
-    // Create index for efficient discovery queries
-    db.query(`
-      CREATE INDEX idx_fleet_discovery ON united_fleet(
-        starlink_status, discovery_priority DESC, next_check_after
-      );
-    `).run();
-
-    db.query(`
-      CREATE INDEX idx_fleet_tail ON united_fleet(tail_number);
-    `).run();
-
     info("Created united_fleet table for fleet-wide discovery");
   }
 
@@ -352,7 +341,6 @@ export function setupTables(db: Database) {
         departed_at INTEGER NOT NULL
       );
       CREATE INDEX idx_dl_departed ON departure_log(departed_at);
-      CREATE INDEX idx_dl_airport ON departure_log(airport);
     `);
   }
 
@@ -403,7 +391,6 @@ export function setupTables(db: Database) {
       );
       CREATE INDEX idx_qs_dep_time ON qatar_schedule(departure_time);
       CREATE INDEX idx_qs_route ON qatar_schedule(departure_airport, arrival_airport, departure_time);
-      CREATE INDEX idx_qs_flight ON qatar_schedule(flight_number, scheduled_date);
     `);
   }
 
@@ -850,23 +837,52 @@ function migrateMultiAirline(db: Database) {
   // Backfill for databases created before the query()-drops-statement-2 bug was
   // fixed above: their tables already exist, so the CREATE TABLE blocks never
   // re-run and the indexes would stay missing forever. Verified absent in
-  // production (idx_dl_departed, idx_dl_airport, idx_fr_flight, idx_fr_route,
-  // idx_qs_*) while sibling indexes written as their own statement are present.
+  // production (idx_dl_departed, idx_fr_flight, idx_fr_route, idx_qs_*) while
+  // sibling indexes written as their own statement are present.
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_dl_departed ON departure_log(departed_at);
-    CREATE INDEX IF NOT EXISTS idx_dl_airport  ON departure_log(airport);
     CREATE INDEX IF NOT EXISTS idx_ff_airline  ON first_flights(airline, departed_at);
     CREATE INDEX IF NOT EXISTS idx_fr_flight   ON flight_routes(flight_number);
     CREATE INDEX IF NOT EXISTS idx_fr_route    ON flight_routes(origin, destination);
     CREATE INDEX IF NOT EXISTS idx_qs_dep_time ON qatar_schedule(departure_time);
     CREATE INDEX IF NOT EXISTS idx_qs_route    ON qatar_schedule(departure_airport, arrival_airport, departure_time);
-    CREATE INDEX IF NOT EXISTS idx_qs_flight   ON qatar_schedule(flight_number, scheduled_date);
     CREATE INDEX IF NOT EXISTS idx_pipeline_events_time ON pipeline_events(airline, observed_at DESC);
   `);
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_qeh_fn_date ON qatar_equipment_history(flight_number, service_date);
     CREATE INDEX IF NOT EXISTS idx_qeh_fn_dep  ON qatar_equipment_history(flight_number, departure_time);
     CREATE INDEX IF NOT EXISTS idx_qeh_fetch   ON qatar_equipment_history(fetch_origin, fetch_destination, fetch_date);
+  `);
+
+  // Lookups that had no index to use:
+  //  - idx_sp_tail: every equipped test correlates starlink_planes on
+  //    TailNumber; without it each roster row scanned the table (hub card
+  //    64ms → 4ms, subfleet rates 64ms → 2ms on the 2026-09-21 snapshot).
+  //  - idx_dl_tail: archivePastDepartures' dedupe and the first-flight veto
+  //    probe departure_log by (tail, time).
+  //  - idx_upf_flight: check-flight filters upcoming_flights by flight number
+  //    and a time window; idx_upf_route: route pages by airline and pair.
+  //  - idx_vlog_airline_time: type pages and freshness read one airline's log
+  //    by checked_at.
+  //  - idx_qfc_date: the coverage lookup filters on fetch_date alone, which
+  //    the (origin, destination, fetch_date) key can't seek.
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_sp_tail  ON starlink_planes(TailNumber);
+    CREATE INDEX IF NOT EXISTS idx_dl_tail  ON departure_log(tail_number, departed_at);
+    CREATE INDEX IF NOT EXISTS idx_upf_flight ON upcoming_flights(flight_number, departure_time);
+    CREATE INDEX IF NOT EXISTS idx_upf_route  ON upcoming_flights(airline, departure_airport, arrival_airport);
+    CREATE INDEX IF NOT EXISTS idx_vlog_airline_time ON starlink_verification_log(airline, checked_at);
+    CREATE INDEX IF NOT EXISTS idx_qfc_date ON qatar_fetch_coverage(fetch_date);
+  `);
+  // Redundant, so pure write cost: idx_fleet_tail and idx_qs_flight duplicate
+  // UNIQUE constraints' own indexes; departure_log.airport is never filtered
+  // on; getNextPlanesToVerify filters airline + next_check_after, which
+  // idx_fleet_discovery (starlink_status first) can't serve.
+  db.exec(`
+    DROP INDEX IF EXISTS idx_fleet_tail;
+    DROP INDEX IF EXISTS idx_qs_flight;
+    DROP INDEX IF EXISTS idx_dl_airport;
+    DROP INDEX IF EXISTS idx_fleet_discovery;
   `);
 
   // idx_vlog_flight and idx_upf_tail exist for the serving path:

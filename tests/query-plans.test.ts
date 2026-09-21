@@ -21,8 +21,28 @@ import {
   TYPE_PAGE_EVENTS_SQL,
   TYPE_PAGE_FLIGHTS_SQL,
   TYPE_PAGE_ROUTES_SQL,
+  setupTables,
 } from "../src/database/database";
+import { equippedSql } from "../src/database/sql/equipped";
 import { makeSyntheticDb } from "./helpers";
+
+// Airport pairs vary as they do in production: a fixture where every row is
+// one pair makes the route index look like a free seek on anything.
+const AIRPORTS = [
+  "ORD",
+  "DEN",
+  "SFO",
+  "EWR",
+  "IAH",
+  "IAD",
+  "LAX",
+  "SEA",
+  "BOS",
+  "ATL",
+  "MCO",
+  "LAS",
+];
+const airport = (i: number) => AIRPORTS[i % AIRPORTS.length];
 
 function seeded() {
   const db = makeSyntheticDb();
@@ -51,8 +71,8 @@ function seeded() {
     upf.run(
       `N${100 + (i % 40)}AB`,
       `UA${1 + (i % 200)}`,
-      "ORD",
-      "DEN",
+      airport(i),
+      airport(i + 5),
       1_700_000_000 + i * 100,
       1_700_010_000 + i * 100,
       1_700_000_000
@@ -91,19 +111,21 @@ describe("hot-path query plans", () => {
     db.close();
   });
 
-  test("the equipped-departures join seeks upcoming_flights by tail", () => {
+  test("the equipped probe seeks starlink_planes by tail, never scans it", () => {
+    // Every equipped test correlates the listing on TailNumber; before
+    // idx_sp_tail the check-flight lookup scanned starlink_planes per row.
     const db = seeded();
     const plan = planOf(
       db,
-      `SELECT uf.departure_airport, COUNT(DISTINCT uf.flight_number || ':' || uf.departure_time)
-       FROM upcoming_flights uf
+      `SELECT uf.* FROM upcoming_flights uf
        INNER JOIN starlink_planes sp ON uf.tail_number = sp.TailNumber
-       WHERE (sp.verified_wifi IS NULL OR sp.verified_wifi = 'Starlink')
-         AND uf.departure_time >= ? AND uf.departure_time < ? AND uf.airline = ?
-       GROUP BY uf.departure_airport`,
-      [1_700_000_000, 1_800_000_000, "UA"]
+       WHERE uf.flight_number IN (?,?) AND uf.departure_time >= ? AND uf.departure_time < ?
+         AND ${equippedSql("sp")}`,
+      ["UA1", "UAL1", 1_700_000_000, 1_800_000_000]
     );
-    expect(plan).toContain("idx_upf_tail");
+    expect(plan).toContain("idx_sp_tail");
+    expect(plan).not.toMatch(/SCAN sp\b/);
+    expect(plan).toContain("idx_upf_flight");
     db.close();
   });
 });
@@ -124,8 +146,8 @@ describe("aircraft-type page passes", () => {
       upf.run(
         `N${i % 90}XY`,
         `${airline}${i % 300}`,
-        "SEA",
-        "LAX",
+        airport(i + 3),
+        airport(i + 7),
         1_700_000_000 + i,
         0,
         0,
@@ -139,7 +161,7 @@ describe("aircraft-type page passes", () => {
   test("routes seek upcoming_flights by airline, never a full scan", () => {
     const db = multiAirline();
     const plan = planOf(db, TYPE_PAGE_ROUTES_SQL, ["UA", 1_700_000_000, 1_700_172_800]);
-    expect(plan).toContain("idx_upf_airline");
+    expect(plan).toMatch(/idx_upf_(airline|route) \(airline=\?/);
     expect(plan).not.toMatch(/SCAN upcoming_flights/);
     db.close();
   });
@@ -224,12 +246,39 @@ describe("setupTables DDL actually executes", () => {
     for (const idx of [
       "idx_ff_airline", // this branch's own table — the one that shipped dead
       "idx_dl_departed",
-      "idx_dl_airport",
       "idx_fr_flight",
       "idx_fr_route",
-      "idx_qs_flight",
+      "idx_sp_tail",
+      "idx_dl_tail",
+      "idx_upf_flight",
+      "idx_upf_route",
+      "idx_vlog_airline_time",
+      "idx_qfc_date",
     ]) {
       expect(names.has(idx), `${idx} was declared but never created`).toBe(true);
+    }
+    db.close();
+  });
+
+  test("migration drops the redundant indexes an older database still carries", () => {
+    const db = makeSyntheticDb();
+    db.exec(`
+      CREATE INDEX idx_fleet_tail ON united_fleet(tail_number);
+      CREATE INDEX idx_qs_flight ON qatar_schedule(flight_number, scheduled_date);
+      CREATE INDEX idx_dl_airport ON departure_log(airport);
+      CREATE INDEX idx_fleet_discovery ON united_fleet(starlink_status, discovery_priority DESC, next_check_after);
+    `);
+    setupTables(db);
+    const names = (
+      db.query("SELECT name FROM sqlite_master WHERE type='index'").all() as { name: string }[]
+    ).map((r) => r.name);
+    for (const idx of [
+      "idx_fleet_tail",
+      "idx_qs_flight",
+      "idx_dl_airport",
+      "idx_fleet_discovery",
+    ]) {
+      expect(names).not.toContain(idx);
     }
     db.close();
   });
