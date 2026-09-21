@@ -17,10 +17,8 @@ import type { AirlineConfig, SiteConfig } from "../airlines/registry";
 import {
   type FlightVerdict,
   type ResolveDeps,
-  negativeWifi,
   resolveFlightVerdict,
-  scheduledFlights,
-  verdictConfidence,
+  verdictSummary,
 } from "../api/check-flight-core";
 import { type FallbackSegment, resolveTailVerdict } from "../api/flight-verdict";
 import type { AssignmentLogRow, SameDayAlternative } from "../database/assignment-log";
@@ -93,98 +91,38 @@ export function watchVerdictFrom(
       }
     : { dep: null, arr: null, depUnix: null, arrUnix: null };
 
-  switch (verdict.kind) {
-    case "scheduled": {
-      const f = scheduledFlights(verdict)[0];
-      return {
-        verdict: {
-          state: "yes",
-          tail: f.tail_number,
-          aircraft: f.aircraft_type ?? null,
-          confidence: verdictConfidence(verdict),
-        },
-        leg: {
-          dep: f.departure_airport,
-          arr: f.arrival_airport,
-          depUnix: f.departure_time,
-          arrUnix: f.arrival_time,
-        },
-      };
-    }
-    case "scheduled_no": {
-      const f = verdict.flights[0];
-      return {
-        verdict: {
-          state: "no",
-          tail: f.tail_number,
-          aircraft: f.aircraft_type ?? null,
-          wifi: negativeWifi(f),
-        },
-        leg: {
-          dep: f.departure_airport,
-          arr: f.arrival_airport,
-          depUnix: f.departure_time,
-          arrUnix: f.arrival_time,
-        },
-      };
-    }
-    case "fr24": {
-      const s = verdict.starlink[0];
-      return {
-        verdict: {
-          state: "yes",
-          tail: s.tail_number,
-          aircraft: s.aircraft_model,
-          confidence: verdictConfidence(verdict),
-        },
-        leg: {
-          dep: s.origin,
-          arr: s.destination,
-          depUnix: s.departure_time,
-          arrUnix: s.arrival_time,
-        },
-      };
-    }
-    case "fr24_no": {
-      const s = verdict.segments.find((x) => x.hasStarlink === false) ?? verdict.segments[0];
-      return {
-        verdict: {
-          state: "no",
-          tail: s.tail_number,
-          aircraft: s.aircraft_model,
-          wifi: s.verified_wifi ?? null,
-        },
-        leg: {
-          dep: s.origin,
-          arr: s.destination,
-          depUnix: s.departure_time,
-          arrUnix: s.arrival_time,
-        },
-      };
-    }
-    case "prediction":
-      return {
-        verdict: {
-          state: "prediction",
-          probability: verdict.pred.probability,
-          observations: verdict.pred.n_observations,
-        },
-        leg: historyLeg,
-      };
-    case "no_model":
-      return {
-        verdict:
-          verdict.answer.kind === "penetration"
-            ? { state: "prediction", probability: verdict.answer.pen.pct, observations: 0 }
-            : { state: "none", message: null },
-        leg: historyLeg,
-      };
-    case "qatar":
-    case "qatar_no_data":
-    case "qatar_history":
-      return { verdict: { state: "none", message: null }, leg: historyLeg };
+  // The feed is tail-level; QR answers from the scheduled type, and QR hosts
+  // serve no feed (watchFeedEnabled).
+  if (verdict.kind.startsWith("qatar")) return { verdict: NONE, leg: historyLeg };
+  const s = verdictSummary(verdict);
+  const a = s.assignment;
+  const leg = a
+    ? { dep: a.origin, arr: a.destination, depUnix: a.departure, arrUnix: a.arrival }
+    : historyLeg;
+  if (a && s.hasStarlink === true) {
+    return {
+      verdict: {
+        state: "yes",
+        tail: a.tail,
+        aircraft: a.aircraft,
+        confidence: s.confidence as "verified" | "likely",
+      },
+      leg,
+    };
   }
+  if (a && s.hasStarlink === false) {
+    return { verdict: { state: "no", tail: a.tail, aircraft: a.aircraft, wifi: a.wifi }, leg };
+  }
+  if (s.probability !== null && s.observations !== null) {
+    return {
+      verdict: { state: "prediction", probability: s.probability, observations: s.observations },
+      leg,
+    };
+  }
+  return { verdict: NONE, leg };
 }
+
+const NONE: WatchVerdict = { state: "none", message: null };
 
 /**
  * DB-only stand-in for the FR24 lookup: per leg, the most recently seen tail

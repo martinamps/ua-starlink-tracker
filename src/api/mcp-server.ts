@@ -35,7 +35,6 @@ import {
   type AirlineConfig,
   type AnalyticsConfig,
   SITES,
-  enabledAirlines,
   hubLookupAirlines,
   siteForAirline,
 } from "../airlines/registry";
@@ -78,7 +77,6 @@ import {
   isPlausibleFlightNumber,
   legOffRoute,
   legSubject,
-  negativeWifi,
   normalizeAirportCode,
   parseLegQuery,
   recordFlightLookup,
@@ -86,6 +84,7 @@ import {
   recordPrediction,
   recordUntrackedLookup,
   resolveFlightVerdict,
+  verdictAssignment,
   verdictTelemetry,
   wifiLabel,
   withLeg,
@@ -757,26 +756,22 @@ export async function renderCheckFlightVerdict(
     case "scheduled_no": {
       // Firm NO: we have an assignment but it's a non-Starlink plane. We also
       // already know the route from the assignment — no lookup needed.
-      const f = verdict.flights[0];
-      const ac = f.aircraft_type || "aircraft";
+      const a = verdictAssignment(verdict);
+      const wifi = wifiLabel(a.wifi);
       const altBlock = answersOtherLeg(verdict.leg)
         ? ""
         : buildAlternativesBlock(
             cfg,
             reader,
-            [{ origin: f.departure_airport, destination: f.arrival_airport }],
+            [{ origin: a.origin, destination: a.destination }],
             mid,
-            {
-              flightNumber: normalized,
-              probability: 0,
-              label: firmNoLabel([f.tail_number], [negativeWifi(f)]),
-            }
+            { flightNumber: normalized, probability: 0, label: firmNoLabel([a.tail], [wifi]) }
           );
       return textResult(
         withAlt(
           altBlock,
           withLegNote(
-            `❌ No Starlink: ${legSubject(verdict)} on ${date} is assigned to tail ${f.tail_number} (${ac}), verified as ${negativeWifi(f)} WiFi — NOT Starlink. Aircraft swaps can happen, but the assignment is currently firm.${verdict.fr24Error ? ` ${SWAP_DEGRADED_NOTE}` : ""}`,
+            `❌ No Starlink: ${legSubject(verdict)} on ${date} is assigned to tail ${a.tail} (${a.aircraft || "aircraft"}), verified as ${wifi} WiFi — NOT Starlink. Aircraft swaps can happen, but the assignment is currently firm.${verdict.fr24Error ? ` ${SWAP_DEGRADED_NOTE}` : ""}`,
             verdict
           )
         )

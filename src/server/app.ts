@@ -74,7 +74,6 @@ import {
 } from "../airlines/rollout-facts";
 import { rolloutTargets } from "../airlines/targets";
 import {
-  type FlightVerdict,
   type LegResolution,
   SWAP_DEGRADED_NOTE,
   answersOtherLeg,
@@ -87,7 +86,6 @@ import {
   legOffRoute,
   legPrefix,
   legSubject,
-  negativeWifi,
   parseLegQuery,
   recordFlightLookup,
   recordLegScope,
@@ -95,7 +93,8 @@ import {
   recordUntrackedLookup,
   resolveFlightVerdict,
   scheduledFlights,
-  verdictConfidence,
+  verdictAssignment,
+  verdictSummary,
   verdictTelemetry,
   wifiLabel,
   withLeg,
@@ -214,7 +213,7 @@ import {
 
 import { denominatorIsPublishable, shareCardFile, shareCardPath } from "../utils/share-cards";
 import { getSpreadsheetCacheInfo, getSpreadsheetCacheTails } from "../utils/utils";
-import { aircraftTypeParam, communityWireFields, noModelConfidence } from "./community-wire";
+import { aircraftTypeParam, communityWireFields } from "./community-wire";
 import {
   type Database,
   type RequestContext,
@@ -691,7 +690,7 @@ function groupEquippedFlightsByTail(
   return flightsByTail;
 }
 
-const apiData: Handler = ({ req, reader }) => {
+const apiData: Handler = ({ reader }) => {
   const totalCount = reader.getTotalCount();
   const starlinkPlanes = reader.getStarlinkPlanes();
   const lastUpdated = reader.getLastUpdated();
@@ -710,7 +709,7 @@ const apiData: Handler = ({ req, reader }) => {
 
 // Per-airline rollout summary — used by the OG image generator and any
 // cross-airline UI. Cheap to compute per-request.
-const apiFleetSummary: Handler = ({ req, getReader }) => {
+const apiFleetSummary: Handler = ({ getReader }) => {
   const airlines = publicAirlines().map((cfg) => {
     const r = getReader(cfg.code);
     const installed = r.getStarlinkPlanes().length;
@@ -734,68 +733,10 @@ const apiFleetSummary: Handler = ({ req, getReader }) => {
   return json({ airlines, generatedAt: new Date().toISOString() }, { cache: CACHE.fiveMinutes });
 };
 
-const apiRoutes: Handler = ({ req, site, reader }) => {
+const apiRoutes: Handler = ({ reader }) => {
   const schedule = reader.getRouteStarlinkSchedule();
   return json(schedule, { cache: CACHE.fiveMinutes });
 };
-
-/**
- * QR's data shape doesn't fit the upcoming_flights → starlink_planes JOIN that
- * other carriers use (no per-tail signal from QR's flight-status API). Serve
- * straight from qatar_schedule, which the ingester keeps fresh hourly.
- *
- * Contract divergence: the UA endpoint returns `hasStarlink: boolean`. This
- * one returns `boolean | null` — null is the right answer when QR ships a
- * "rolling" subfleet (787) where we have no per-tail signal, or when distinct
- * equipment types are scheduled on the same flight number. Callers on the QR
- * host should expect tri-state. The Chrome extension only hits the UA host,
- * so its boolean contract isn't affected.
- */
-function qatarCheckFlightResponse(verdict: QatarVerdict & { leg?: LegResolution }): Response {
-  const cfg = AIRLINES.QR;
-
-  if (verdict.kind === "qatar_no_data") {
-    return json({
-      hasStarlink: null,
-      airline: cfg.name,
-      confidence: "no_data",
-      reason: withLegNote(qatarNoDataReason(verdict), verdict),
-      ...legField(verdict),
-      flights: [],
-    });
-  }
-  if (verdict.kind === "qatar_history") {
-    return json(hubQatarBody(verdict));
-  }
-
-  return json({
-    hasStarlink: verdict.hasStarlink,
-    airline: cfg.name,
-    confidence:
-      verdict.qclass === "yes" || verdict.qclass === "no"
-        ? "type"
-        : verdict.qclass === "rolling"
-          ? "rolling"
-          : "mixed",
-    reason: withLegNote(`${legPrefix(verdict)}${verdict.reason}`, verdict),
-    ...legField(verdict),
-    flights: verdict.rows.map((r) => ({
-      flight_number: r.flight_number,
-      aircraft_type: qatarEquipmentName(r.equipment_code),
-      equipment_code: r.equipment_code,
-      wifi_verdict: QATAR_CLASS_WIFI[r.klass],
-      departure_airport: r.departure_airport,
-      arrival_airport: r.arrival_airport,
-      departure_time: r.departure_time,
-      arrival_time: r.arrival_time,
-      departure_time_formatted: r.departure_time
-        ? new Date(r.departure_time * 1000).toISOString()
-        : null,
-      arrival_time_formatted: r.arrival_time ? new Date(r.arrival_time * 1000).toISOString() : null,
-      flight_status: r.flight_status,
-    })),
-  });
-}
 
 const QATAR_CLASS_WIFI: Record<QatarLeg["klass"], string | null> = {
   yes: "Starlink",
@@ -804,7 +745,27 @@ const QATAR_CLASS_WIFI: Record<QatarLeg["klass"], string | null> = {
   unknown: null,
 };
 
-function qatarWireLeg(r: QatarLeg) {
+/** The QR host's /api/check-flight leg: schedule times, no tail. */
+function qatarHostLeg(r: QatarLeg) {
+  return {
+    flight_number: r.flight_number,
+    aircraft_type: qatarEquipmentName(r.equipment_code),
+    equipment_code: r.equipment_code,
+    wifi_verdict: QATAR_CLASS_WIFI[r.klass],
+    departure_airport: r.departure_airport,
+    arrival_airport: r.arrival_airport,
+    departure_time: r.departure_time,
+    arrival_time: r.arrival_time,
+    departure_time_formatted: r.departure_time
+      ? new Date(r.departure_time * 1000).toISOString()
+      : null,
+    arrival_time_formatted: r.arrival_time ? new Date(r.arrival_time * 1000).toISOString() : null,
+    flight_status: r.flight_status,
+  };
+}
+
+/** The hub's check-any-flight leg: the shared flights[] keys, tail always null. */
+function qatarHubLeg(r: QatarLeg) {
   return {
     tail_number: null,
     aircraft_type: qatarEquipmentName(r.equipment_code),
@@ -818,24 +779,44 @@ function qatarWireLeg(r: QatarLeg) {
 }
 
 /**
- * The hub's /api/check-any-flight body for QR. Additive to the shared shape:
- * the same top-level keys the extension reads (hasStarlink, confidence,
- * probability, airline, flights) with the same types, plus `basis` and the
- * history counts. `confidence` is "type" for schedule answers — the equipment
- * code names a type, not an airframe — the history grade, "none" for history
- * too thin to estimate, or "no_data"; never "verified".
+ * The one QR wire body, in the two dialects it ships in.
+ *
+ * "hub" (/api/check-any-flight) is additive to the shared shape: the top-level
+ * keys the extension reads, plus `basis` and the history counts. `confidence`
+ * is "type" for schedule answers (the equipment code names a type, not an
+ * airframe), the history grade, "none" for history too thin to estimate, or
+ * "no_data"; never "verified".
+ *
+ * "host" (QR's own /api/check-flight) predates it: no `basis`, a
+ * type/rolling/mixed schedule confidence, and legs with arrival times. Its
+ * hasStarlink is tri-state — null for a rolling subfleet (787-9) or mixed
+ * equipment — unlike the UA host's boolean; the extension never calls it.
  */
-function hubQatarBody(verdict: QatarVerdict & { leg?: LegResolution }): Record<string, unknown> {
+function qatarWireBody(
+  verdict: QatarVerdict & { leg?: LegResolution },
+  dialect: "hub" | "host"
+): Record<string, unknown> {
   const airline = AIRLINES.QR.name;
+  const hub = dialect === "hub";
   if (verdict.kind === "qatar") {
+    const hostConfidence =
+      verdict.qclass === "yes" || verdict.qclass === "no"
+        ? "type"
+        : verdict.qclass === "rolling"
+          ? "rolling"
+          : "mixed";
     return {
       hasStarlink: verdict.hasStarlink,
       airline,
-      confidence: "type",
-      basis: "schedule",
+      confidence: hub ? "type" : hostConfidence,
+      ...(hub ? { basis: "schedule" } : {}),
       reason: withLegNote(`${legPrefix(verdict)}${verdict.reason}`, verdict),
       ...legField(verdict),
-      flights: verdict.qclass === "cancelled" ? [] : verdict.rows.map(qatarWireLeg),
+      flights: !hub
+        ? verdict.rows.map(qatarHostLeg)
+        : verdict.qclass === "cancelled"
+          ? []
+          : verdict.rows.map(qatarHubLeg),
     };
   }
   if (verdict.kind === "qatar_no_data") {
@@ -843,7 +824,9 @@ function hubQatarBody(verdict: QatarVerdict & { leg?: LegResolution }): Record<s
       hasStarlink: null,
       airline,
       confidence: "no_data",
-      basis: verdict.daysOut <= QATAR_PUBLISHED_DAYS_FORWARD ? "schedule" : "history",
+      ...(hub
+        ? { basis: verdict.daysOut <= QATAR_PUBLISHED_DAYS_FORWARD ? "schedule" : "history" }
+        : {}),
       reason: withLegNote(qatarNoDataReason(verdict), verdict),
       ...legField(verdict),
       flights: [],
@@ -863,7 +846,7 @@ function hubQatarBody(verdict: QatarVerdict & { leg?: LegResolution }): Record<s
     season_shift: verdict.season.shifted,
     reason: withLegNote(qatarHistoryReason(verdict), verdict),
     ...legField(verdict),
-    flights: verdict.scheduledRow ? [qatarWireLeg(verdict.scheduledRow)] : [],
+    flights: verdict.scheduledRow ? [qatarHubLeg(verdict.scheduledRow)] : [],
   };
 }
 
@@ -980,7 +963,7 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant, si
     verdict.kind === "qatar_no_data" ||
     verdict.kind === "qatar_history"
   ) {
-    return qatarCheckFlightResponse(verdict);
+    return json(qatarWireBody(verdict, "host"));
   }
   if (verdict.kind === "prediction") recordPrediction(verdict.pred, cfg.code);
 
@@ -1008,14 +991,15 @@ function checkFlightBody(
   date: string,
   hubAirline: { airline?: string }
 ): Record<string, unknown> {
+  const summary = verdictSummary(verdict);
+  const answer = { hasStarlink: summary.hasStarlink, ...hubAirline };
   switch (verdict.kind) {
     case "scheduled": {
       // Only a leg adds a message here, so the unscoped body keeps its bytes.
       const note = legNote(verdict);
       return {
-        hasStarlink: true,
-        ...hubAirline,
-        confidence: verdictConfidence(verdict),
+        ...answer,
+        confidence: summary.confidence,
         ...(note ? { message: `${legPrefix(verdict)}Starlink-equipped. ${note}` } : {}),
         ...legField(verdict),
         flights: scheduledFlights(verdict).map((flight) =>
@@ -1035,13 +1019,12 @@ function checkFlightBody(
       };
     }
     case "scheduled_no": {
-      const f = verdict.flights[0];
+      const a = verdictAssignment(verdict);
       return {
-        hasStarlink: false,
-        ...hubAirline,
-        confidence: "verified",
+        ...answer,
+        confidence: summary.confidence,
         message: withLegNote(
-          `${legSubject(verdict)} is assigned to tail ${f.tail_number}, verified as ${negativeWifi(f)} WiFi — not Starlink.${verdict.fr24Error ? ` ${SWAP_DEGRADED_NOTE}` : ""}`,
+          `${legSubject(verdict)} is assigned to tail ${a.tail}, verified as ${a.wifi} WiFi — not Starlink.${verdict.fr24Error ? ` ${SWAP_DEGRADED_NOTE}` : ""}`,
           verdict
         ),
         ...legField(verdict),
@@ -1052,9 +1035,8 @@ function checkFlightBody(
     case "fr24": {
       const note = legNote(verdict);
       return {
-        hasStarlink: true,
-        ...hubAirline,
-        confidence: verdictConfidence(verdict),
+        ...answer,
+        confidence: summary.confidence,
         method: "fr24_tail_lookup",
         ...(note ? { message: `${legPrefix(verdict)}Starlink-equipped. ${note}` } : {}),
         ...legField(verdict),
@@ -1076,8 +1058,7 @@ function checkFlightBody(
     }
     case "fr24_no": {
       return {
-        hasStarlink: false,
-        ...hubAirline,
+        ...answer,
         method: "fr24_tail_lookup",
         ...legField(verdict),
         flights: [],
@@ -1095,11 +1076,10 @@ function checkFlightBody(
         verdict
       );
       return {
-        hasStarlink: null,
-        ...hubAirline,
-        confidence: noModelConfidence(verdict.answer),
-        ...(verdict.answer.kind === "penetration"
-          ? { prediction: { probability: verdict.answer.pen.pct } }
+        ...answer,
+        confidence: summary.confidence,
+        ...(summary.probability !== null
+          ? { prediction: { probability: summary.probability } }
           : {}),
         ...communityWireFields(verdict.answer),
         message,
@@ -1129,9 +1109,8 @@ function checkFlightBody(
             ? `No aircraft assignment on record — ${date} has already passed. `
             : `Aircraft assignment not yet published — ${cfg.name} assigns aircraft ~2 days before departure. `;
       return {
-        hasStarlink: null,
-        ...hubAirline,
-        confidence: "predicted",
+        ...answer,
+        confidence: summary.confidence,
         prediction: {
           probability: pred.probability,
           confidence: pred.confidence,
@@ -1215,20 +1194,20 @@ const apiCheckAnyFlight: Handler = async ({ req, url, reader, getReader, tenant 
   recordFlightLookup("api_check", t.outcome, t.confidence, cfg.code, verdict.window.daysOut);
   recordLegScope("api_check_any", verdict, cfg.code, requestClientTags(req, url));
 
+  const summary = verdictSummary(verdict);
+  const head = { hasStarlink: summary.hasStarlink, airline: cfg.name };
   switch (verdict.kind) {
     case "scheduled": {
-      const flights = scheduledFlights(verdict);
-      const f = flights[0];
+      const a = verdictAssignment(verdict);
       return json({
-        hasStarlink: true,
-        airline: cfg.name,
-        confidence: verdictConfidence(verdict),
+        ...head,
+        confidence: summary.confidence,
         reason: withLegNote(
-          `${legPrefix(verdict)}${f.tail_number} (${f.aircraft_type}) — ${f.departure_airport} → ${f.arrival_airport}`,
+          `${legPrefix(verdict)}${a.tail} (${a.aircraft}) — ${a.origin} → ${a.destination}`,
           verdict
         ),
         ...legField(verdict),
-        flights: flights.map((m) => ({
+        flights: scheduledFlights(verdict).map((m) => ({
           tail_number: m.tail_number,
           aircraft_type: m.aircraft_type,
           departure_airport: m.departure_airport,
@@ -1238,13 +1217,12 @@ const apiCheckAnyFlight: Handler = async ({ req, url, reader, getReader, tenant 
       });
     }
     case "scheduled_no": {
-      const f = verdict.flights[0];
+      const a = verdictAssignment(verdict);
       return json({
-        hasStarlink: false,
-        airline: cfg.name,
-        confidence: "verified",
+        ...head,
+        confidence: summary.confidence,
         reason: withLegNote(
-          `${legPrefix(verdict)}${f.tail_number} (${f.aircraft_type}) — verified ${negativeWifi(f)} WiFi, not Starlink.`,
+          `${legPrefix(verdict)}${a.tail} (${a.aircraft}) — verified ${a.wifi} WiFi, not Starlink.`,
           verdict
         ),
         ...legField(verdict),
@@ -1254,11 +1232,10 @@ const apiCheckAnyFlight: Handler = async ({ req, url, reader, getReader, tenant 
     }
     case "no_model": {
       return json({
-        hasStarlink: null,
-        airline: cfg.name,
-        confidence: noModelConfidence(verdict.answer),
+        ...head,
+        confidence: summary.confidence,
         // Additive top-level `probability` for the extension claim ladder.
-        ...(verdict.answer.kind === "penetration" ? { probability: verdict.answer.pen.pct } : {}),
+        ...(summary.probability !== null ? { probability: summary.probability } : {}),
         ...communityWireFields(verdict.answer),
         reason: withLegNote(describeCarrierPrediction(cfg, verdict.answer, { date }), verdict),
         ...legField(verdict),
@@ -1279,10 +1256,10 @@ const apiCheckAnyFlight: Handler = async ({ req, url, reader, getReader, tenant 
       const lead = legOffRoute(verdict)
         ? ""
         : `No schedule data for this date${informative ? ";" : "."} `;
+      // This surface publishes the model's own grade, not the REST "predicted".
       return json({
-        hasStarlink: null,
-        airline: cfg.name,
-        probability: pred.probability,
+        ...head,
+        probability: summary.probability,
         confidence: pred.confidence,
         n_recent_observations: pred.n_recent_observations,
         reason: withLegNote(`${lead}${history}`, verdict),
@@ -1293,7 +1270,7 @@ const apiCheckAnyFlight: Handler = async ({ req, url, reader, getReader, tenant 
     case "qatar":
     case "qatar_no_data":
     case "qatar_history":
-      return json(hubQatarBody(verdict));
+      return json(qatarWireBody(verdict, "hub"));
     // Structurally unreachable on the hub: lookupTail is null (no FR24 kinds).
     case "fr24":
     case "fr24_no":
@@ -1305,7 +1282,7 @@ const apiCheckAnyFlight: Handler = async ({ req, url, reader, getReader, tenant 
   }
 };
 
-const apiCompareRoute: Handler = ({ req, url, getReader, tenant }) => {
+const apiCompareRoute: Handler = ({ url, getReader, tenant }) => {
   const guard = hubOnly(tenant);
   if (guard) return guard;
 
@@ -1323,7 +1300,7 @@ const apiCompareRoute: Handler = ({ req, url, getReader, tenant }) => {
   });
 };
 
-const apiPredictFlight: Handler = ({ req, url, reader, getReader, tenant }) => {
+const apiPredictFlight: Handler = ({ url, reader, getReader, tenant }) => {
   const flightNumber = url.searchParams.get("flight_number");
   if (!flightNumber) {
     return jsonError(400, "Missing flight_number");
@@ -1368,7 +1345,7 @@ const apiPredictFlight: Handler = ({ req, url, reader, getReader, tenant }) => {
   });
 };
 
-const apiPlanRoute: Handler = ({ req, url, reader, tenant }) => {
+const apiPlanRoute: Handler = ({ url, reader, tenant }) => {
   const cfg = tenantConfig(tenant);
   // Hub: fail closed like the disabled route-planner page (routePlannerPage is
   // false there). planItinerary is the UA-trained model — running it over the
@@ -1408,7 +1385,7 @@ const apiPlanRoute: Handler = ({ req, url, reader, tenant }) => {
   return json({ origin, destination, itineraries, baseline });
 };
 
-const apiMismatches: Handler = ({ req, reader }) => {
+const apiMismatches: Handler = ({ reader }) => {
   const summary = reader.getVerificationSummary();
   const mismatches = reader.getWifiMismatches();
   const response = {
@@ -1426,7 +1403,7 @@ const apiMismatches: Handler = ({ req, reader }) => {
   return json(response, { pretty: true });
 };
 
-const apiFleetDiscovery: Handler = ({ req, reader }) => {
+const apiFleetDiscovery: Handler = ({ reader }) => {
   const stats = reader.getFleetDiscoveryStats();
   const spreadsheetCache = getSpreadsheetCacheTails();
   const cacheInfo = getSpreadsheetCacheInfo();
@@ -2244,7 +2221,7 @@ function firstFlightsFor(
 }
 
 const feedXml: Handler = (ctx) => {
-  const { req, site, reader } = ctx;
+  const { site, reader } = ctx;
   // An Atom document with zero entries is a broken subscription, not an empty
   // one — readers keep polling it forever and it advertises a rollout that
   // never moves. Same gate as the page it syndicates.
@@ -2492,7 +2469,7 @@ export function badgeValue(equipped: number, total: number, rosterIsProgramScope
     : `${equipped} aircraft equipped`;
 }
 
-const badgeSvg: Handler = ({ req, site, reader, tenant }) => {
+const badgeSvg: Handler = ({ site, reader, tenant }) => {
   const cfg = tenantConfig(tenant);
   const equipped = reader.countStarlinkPlanes();
   const total = reader.getTotalCount();
@@ -4304,7 +4281,7 @@ function homeMeta(
 }
 
 const homePage: Handler = async (ctx) => {
-  const { req, reader, tenant, site } = ctx;
+  const { reader, tenant, site } = ctx;
   const content = getContent(tenant);
 
   const isHub = tenant === "ALL";
