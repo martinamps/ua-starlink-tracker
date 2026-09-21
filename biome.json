@@ -16,7 +16,8 @@
       "do_not_commit",
       ".playwright-browsers",
       "tmp",
-      "static/tailwind.css"
+      "static/tailwind.css",
+      ".citation-cache"
     ]
   },
   "linter": {

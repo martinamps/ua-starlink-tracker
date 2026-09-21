@@ -348,7 +348,7 @@ describe("/newly-equipped page", () => {
   test("UA host renders install rows linking the feed", async () => {
     const { status, text } = await bodyOf(app, "/newly-equipped", UA);
     expect(status).toBe(200);
-    expect(text).toContain("Newly Equipped Aircraft");
+    expect(text).toContain("Newly equipped aircraft");
     expect(text).toContain('href="/feed.xml"');
   });
 

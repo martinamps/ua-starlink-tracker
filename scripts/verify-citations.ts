@@ -42,7 +42,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { AIRLINES } from "../src/airlines/registry";
-import { AIRLINE_FACTS, type RolloutFact } from "../src/airlines/rollout-facts";
+import { AIRLINE_FACTS, ROLLOUT_TIMELINES, type RolloutFact } from "../src/airlines/rollout-facts";
 import { BLOCKED_HOSTS } from "./citations/allowlist";
 import { dateSkewDays, extractPublishedDates } from "./citations/pubdate";
 import {
@@ -326,6 +326,25 @@ async function main() {
     }`;
     for (const [i, fact] of entry.facts.entries()) {
       await verifyFact(entry.slug, subject, fact, i);
+    }
+  }
+
+  // /timeline entries are dated by their source's dateline, so the same
+  // date-skew and token checks apply unchanged.
+  for (const [code, timeline] of Object.entries(ROLLOUT_TIMELINES)) {
+    const slug = `timeline-${code.toLowerCase()}`;
+    if (slugFilter && slug !== slugFilter) continue;
+    if (only) continue;
+    const cfg = AIRLINES[code];
+    const subject = `${cfg?.name ?? ""} ${cfg?.shortName ?? ""}`;
+    const entries = [...(timeline?.milestones ?? []), ...(timeline?.targets ?? [])];
+    for (const [i, e] of entries.entries()) {
+      const asFact: RolloutFact = {
+        fact: e.fact,
+        asOf: e.source.published,
+        source: { label: e.source.label, url: e.source.url },
+      };
+      await verifyFact(slug, subject, asFact, i);
     }
   }
 

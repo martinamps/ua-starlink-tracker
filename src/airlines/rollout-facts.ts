@@ -1368,3 +1368,141 @@ export function formatFactDate(asOf: string): string {
   if (!month) return asOf;
   return d ? `${month} ${Number.parseInt(d, 10)}, ${y}` : `${month} ${y}`;
 }
+
+// ── Rollout timelines (/timeline) ────────────────────────────────────────────
+// Held to the same rule as AIRLINE_FACTS, and checked by the same verifier:
+// `fact` may say only what `source.url` says. `source.published` is the
+// document's own dateline, which is not always the milestone's date — United
+// dated its first passenger flight only after the fact, in a later release.
+
+export interface TimelineSource {
+  label: string;
+  url: string;
+  /** The source document's dateline, YYYY-MM-DD. */
+  published: string;
+}
+
+export interface TimelineMilestone {
+  /** When it happened: YYYY-MM-DD, or YYYY-MM when the source gives only the month. */
+  date: string;
+  title: string;
+  fact: string;
+  source: TimelineSource;
+}
+
+/** A stated goal, kept apart from milestones so a plan never reads as done. */
+export interface TimelineTarget {
+  when: string;
+  fact: string;
+  source: TimelineSource;
+}
+
+export interface RolloutTimeline {
+  milestones: TimelineMilestone[];
+  targets: TimelineTarget[];
+}
+
+const UA_TIMELINE_SOURCES = {
+  faaCertE175: {
+    label: "United, Mar 31, 2025",
+    url: "https://united.mediaroom.com/2025-03-31-United-Receives-FAA-Certification-on-Starlink-Aircraft-and-Schedules-First-Commercial-Flight-for-May-2025",
+    published: "2025-03-31",
+  },
+  faaCert737: {
+    label: "United, Sep 26, 2025",
+    url: "https://united.mediaroom.com/2025-09-26-United-Receives-FAA-Certification-for-First-Starlink-Equipped-Mainline-Aircraft",
+    published: "2025-09-26",
+  },
+  firstMainlineFlight: {
+    label: "United, Oct 14, 2025",
+    url: "https://www.prnewswire.com/news-releases/united-schedules-first-starlink-equipped-mainline-flight-for-take-off-302582565.html",
+    published: "2025-10-14",
+  },
+  regional300: {
+    label: "United, Feb 2, 2026",
+    url: "https://united.mediaroom.com/2026-02-02-United-Spotlights-Starlink-Wi-Fi-in-New-Big-Game-Ad-as-Airline-Completes-Installation-on-300-Regional-Aircraft",
+    published: "2026-02-02",
+  },
+  firstWidebodyFlight: {
+    label: "United, Jun 22, 2026",
+    url: "https://www.prnewswire.com/news-releases/united-accelerates-starlink-wi-fi-rollout-with-first-widebody-transatlantic-flight-302806746.html",
+    published: "2026-06-22",
+  },
+  q2y2026: {
+    label: "United Q2 2026 results, Jul 15, 2026",
+    url: "https://www.prnewswire.com/news-releases/united-posts-q2-results-above-wall-street-expectations-and-raises-full-year-2026-adjusted-eps-guidance-despite-a-nearly-6-billion-increase-in-anticipated-fuel-costs-302826793.html",
+    published: "2026-07-15",
+  },
+} as const;
+
+/** Keyed by registry code; an airline without an entry has no /timeline.
+ * Milestones stay chronological. */
+export const ROLLOUT_TIMELINES: Partial<Record<KnownAirlineCode, RolloutTimeline>> = {
+  UA: {
+    milestones: [
+      {
+        date: "2025-03-31",
+        title: "FAA certifies Starlink on the E175",
+        fact: "The FAA issued a Supplemental Type Certificate for Starlink on the Embraer 175, with 40 regional jet installs planned each month.",
+        source: UA_TIMELINE_SOURCES.faaCertE175,
+      },
+      {
+        date: "2025-05",
+        title: "First passenger flight",
+        fact: "The first Starlink-equipped United customer flight flew on an Embraer 175 regional aircraft in May 2025.",
+        source: UA_TIMELINE_SOURCES.faaCert737,
+      },
+      {
+        date: "2025-09-26",
+        title: "First mainline type certified",
+        fact: "The FAA approved the Starlink Supplemental Type Certificate amendment for United's Boeing 737-800.",
+        source: UA_TIMELINE_SOURCES.faaCert737,
+      },
+      {
+        date: "2025-10-15",
+        title: "First mainline flight",
+        fact: "United flight 2940, a Boeing 737-800 from Newark/New York to Houston, was the first mainline flight with Starlink.",
+        source: UA_TIMELINE_SOURCES.firstMainlineFlight,
+      },
+      {
+        date: "2026-02-02",
+        title: "300+ regional aircraft equipped",
+        fact: "Most of the two-cabin regional fleet, more than 300 aircraft, had Starlink in less than a year.",
+        source: UA_TIMELINE_SOURCES.regional300,
+      },
+      {
+        date: "2026-06-22",
+        title: "First widebody flight",
+        fact: "United flight 14, a Boeing 777-200 from Newark/New York to London, was the first widebody customer flight with Starlink.",
+        source: UA_TIMELINE_SOURCES.firstWidebodyFlight,
+      },
+      {
+        date: "2026-07-15",
+        title: "450 aircraft equipped",
+        fact: "United reported Starlink installed on 450 mainline and United Express aircraft.",
+        source: UA_TIMELINE_SOURCES.q2y2026,
+      },
+    ],
+    targets: [
+      {
+        when: "End of 2026",
+        fact: "Nearly 1,000 aircraft, including nearly 60 widebodies.",
+        source: UA_TIMELINE_SOURCES.q2y2026,
+      },
+      {
+        when: "Summer 2027",
+        fact: "The entire widebody fleet.",
+        source: UA_TIMELINE_SOURCES.firstWidebodyFlight,
+      },
+      {
+        when: "End of 2027",
+        fact: "The whole fleet, mainline and United Express.",
+        source: UA_TIMELINE_SOURCES.q2y2026,
+      },
+    ],
+  },
+};
+
+export function rolloutTimeline(code: string): RolloutTimeline | null {
+  return (ROLLOUT_TIMELINES as Record<string, RolloutTimeline | undefined>)[code] ?? null;
+}

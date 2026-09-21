@@ -71,6 +71,12 @@ export interface InstallRateStats {
   rosterDisagrees: boolean;
   /** Zero-filled from the first organic month through the current month. */
   months: MonthlyInstalls[];
+  /** The organic daily series after mass-write days are dropped, oldest first —
+   * what a cumulative chart draws, at day resolution. */
+  days: DailyInstalls[];
+  /** The clock these stats were computed against; the current month in
+   * `months` is partial as of this instant. */
+  asOfMs: number;
   /** Average installs/month over the last complete months (up to PACE_WINDOW);
    * null when fewer than MIN_COMPLETE_MONTHS complete months exist. */
   paceMonthly: number | null;
@@ -252,6 +258,8 @@ export function computeInstallRate(opts: {
     total,
     rosterDisagrees: equipped > total,
     months,
+    days: [...kept].sort((a, b) => a.day.localeCompare(b.day)),
+    asOfMs: nowMs,
     paceMonthly,
     paceWindowMonths: paceMonthly === null ? 0 : window.length,
     projections,
