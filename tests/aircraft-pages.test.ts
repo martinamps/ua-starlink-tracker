@@ -984,11 +984,9 @@ describe("degradation and cache (snapshot)", () => {
       for (const def of await servedDefs(code, host)) {
         const d = getAircraftTypePageData(snap, code, def.slug) as AircraftTypePageData;
         const html = await (await get(`/fleet/${def.slug}`, host)).text();
-        expect(html.includes("Recently first seen with Starlink"), def.slug).toBe(
-          d.recentInstalls.length > 0
-        );
+        expect(html.includes(">Recently added</h2>"), def.slug).toBe(d.recentInstalls.length > 0);
         expect(html.includes("install pipeline"), def.slug).toBe(d.pipeline !== null);
-        expect(html.includes("fly next (48 h)"), def.slug).toBe(d.routes.length > 0);
+        expect(html.includes("fly in the next 48 hours"), def.slug).toBe(d.routes.length > 0);
       }
     }
   });
