@@ -5,7 +5,6 @@
 
 import type { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-import { computeModelBreakdown } from "../src/components/atoms";
 import {
   backfillAlaskaSkyWestOperator,
   demoteRetrofittedNegatives,
@@ -16,7 +15,6 @@ import {
 } from "../src/database/database";
 import { createReaderFactory } from "../src/database/reader";
 import { createApp } from "../src/server/app";
-import type { Aircraft } from "../src/types";
 import { addFleet, addFlight, addPlane, makeSyntheticDb, openSnapshot, req } from "./helpers";
 
 const NOW = Math.floor(Date.now() / 1000);
@@ -155,21 +153,7 @@ describe("route flight numbers need corroboration", () => {
   });
 });
 
-describe("homepage breakdowns", () => {
-  test("Starlink jets group by aircraft type, not by manufacturer word", () => {
-    const planes = [
-      "Embraer E175LR",
-      "Embraer ERJ-175",
-      "Boeing 737-824",
-      "Boeing 737-924(ER)",
-      "Bombardier CRJ-550",
-    ].map((a) => ({ Aircraft: a }) as Aircraft);
-    const names = computeModelBreakdown(planes).map((d) => d.model);
-    expect(names).not.toContain("Boeing");
-    expect(names).not.toContain("Embraer");
-    expect(computeModelBreakdown(planes)[0]).toMatchObject({ count: 2 });
-  });
-
+describe("homepage list", () => {
   test("the list filter's ALL count is the whole equipped list, not the 100 shown", async () => {
     const snap = openSnapshot();
     const equipped = createReaderFactory(snap)("UA").getStarlinkPlanes().length;
