@@ -247,6 +247,7 @@ export function AircraftList({
               id="filter-all"
               className={`${FILTER_BUTTON} ${FILTER_ACTIVE}`}
               data-filter="all"
+              data-count={shown.length}
             >
               ALL <span className="hidden sm:inline">({fmt(shown.length)})</span>
             </button>

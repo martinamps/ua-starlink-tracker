@@ -26,7 +26,15 @@ import {
 } from "../src/database/database";
 import { createReaderFactory } from "../src/database/reader";
 import { createApp } from "../src/server/app";
-import { addFleet, addFlight, addPlane, makeSyntheticDb, openSnapshot, req } from "./helpers";
+import {
+  addFleet,
+  addFlight,
+  addPlane,
+  elementAttrs,
+  makeSyntheticDb,
+  openSnapshot,
+  req,
+} from "./helpers";
 
 const NOW = Math.floor(Date.now() / 1000);
 
@@ -458,11 +466,9 @@ describe("homepage list", () => {
     const html = await (
       await createApp(snap).dispatch(req("/", "unitedstarlinktracker.com"))
     ).text();
-    const all = html
-      .replace(/<!-- -->/g, "")
-      .match(/data-filter="all"[^>]*>\s*ALL <span[^>]*>\((\d+)\)/);
-    expect(all).not.toBeNull();
-    expect(Number(all?.[1])).toBe(equipped);
+    const all = elementAttrs(html, "filter-all");
+    expect(all["data-filter"]).toBe("all");
+    expect(Number(all["data-count"])).toBe(equipped);
     snap.close();
   });
 });

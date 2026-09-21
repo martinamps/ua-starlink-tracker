@@ -68,6 +68,31 @@ export function sectionOf(html: string, heading: string): string {
   return html.slice(start, next < 0 ? undefined : next);
 }
 
+/** The attributes of the first element carrying `id`, entity-decoded. */
+export function elementAttrs(html: string, id: string): Record<string, string> {
+  const tag = html.match(new RegExp(`<[a-z][^>]*\\sid="${id}"[^>]*>`))?.[0];
+  if (!tag) throw new Error(`no element with id="${id}"`);
+  const decode = (v: string) =>
+    v
+      .replace(/&quot;/g, '"')
+      .replace(/&#x27;/g, "'")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&amp;/g, "&");
+  return Object.fromEntries(
+    [...tag.matchAll(/\s([\w-]+)="([^"]*)"/g)].map((m) => [m[1], decode(m[2])])
+  );
+}
+
+/** JSON.parse of a <script type="application/json" id="…"> island. */
+export function jsonIsland<T = Record<string, unknown>>(html: string, id: string): T {
+  const body = html.match(
+    new RegExp(`<script type="application/json" id="${id}"[^>]*>([\\s\\S]*?)</script>`)
+  )?.[1];
+  if (body === undefined) throw new Error(`no JSON island with id="${id}"`);
+  return JSON.parse(body) as T;
+}
+
 export const utc = (iso: string) => Math.floor(Date.parse(iso) / 1000);
 
 // ── dispatch helpers (shared by isolation + tenant-matrix) ──────────────────

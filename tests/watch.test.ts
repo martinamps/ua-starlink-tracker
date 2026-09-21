@@ -18,7 +18,16 @@ import {
   foldIcsLine,
   watchSummary,
 } from "../src/utils/ics";
-import { addFleet, addPlane, bodyOf, jsonOf, makeSyntheticDb, openSnapshot, req } from "./helpers";
+import {
+  addFleet,
+  addPlane,
+  bodyOf,
+  jsonIsland,
+  jsonOf,
+  makeSyntheticDb,
+  openSnapshot,
+  req,
+} from "./helpers";
 
 const UA_HOST = "unitedstarlinktracker.com";
 const HUB_HOST = "airlinestarlinktracker.com";
@@ -244,7 +253,7 @@ describe("/cal/{fn}/{date}.ics", () => {
     expect(on).toContain(`webcal://${UA_HOST}/cal/UA100/${date}.ics`);
     expect(renderFlightAnswer(body, answerCtx(date, false)).html).not.toContain("webcal://");
     const { text } = await bodyOf(app, `/check-flight/UA100/${date}`, UA_HOST);
-    expect(text).toContain('"watchEnabled":true');
+    expect(jsonIsland(text, "check-flight-config").watchEnabled).toBe(true);
   });
 
   test("alternative links carry the asked-about date and never say 'today'", () => {
