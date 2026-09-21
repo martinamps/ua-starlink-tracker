@@ -561,3 +561,19 @@ describe("host redirects", () => {
     expect(res.status).toBe(200);
   });
 });
+
+describe("plain 404", () => {
+  for (const site of Object.values(SITES)) {
+    test(`${site.key}: the site's shell, noindex, no script and nothing to canonicalize to`, async () => {
+      const res = await get("/no-such-page-anywhere", site.canonicalHost);
+      expect(res.status).toBe(404);
+      expect(res.headers.get("content-security-policy")).toContain("script-src 'none'");
+      const body = await res.text();
+      expect(body).toContain('content="noindex, nofollow"');
+      expect(body).toContain(site.brand.title);
+      expect(body).not.toContain("<script");
+      expect(body).not.toContain('rel="canonical"');
+      expect(body).not.toMatch(/{{\w+}}/);
+    });
+  }
+});

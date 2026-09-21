@@ -330,28 +330,44 @@ function withClampedMeta(vars: Record<string, string>): Record<string, string> {
   };
 }
 
+/** index.html's look without its page machinery: the theme block, fonts and
+ * stylesheet, but no scripts, analytics, JSON-LD, social tags or canonical. A
+ * dead URL has nothing to canonicalize to and nothing to measure. */
+function notFoundTemplate(template: string): string {
+  const style = template.match(/<style>[\s\S]*?<\/style>/)?.[0] ?? "";
+  const fonts = template.match(/<link href="https:\/\/fonts\.googleapis\.com[^>]*>/)?.[0] ?? "";
+  return `<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>{{siteTitle}}</title>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="theme-color" content="{{accentColor}}" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    ${fonts}
+    {{stylesheetTag}}
+    ${style}
+  </head>
+  <body>
+    <div id="root">{{html}}</div>
+  </body>
+</html>
+`;
+}
+
 /** The site's own shell around a "not found" header. Built only from the
  * tenant's static config — no reader, no client IP — because the response is
- * cached at the edge (SECURITY_HEADERS.notFoundHtml). */
+ * cached at the edge (SECURITY_HEADERS.notFound). */
 async function notFound(site: SiteConfig): Promise<Response> {
   const html = ReactDOMServer.renderToString(React.createElement(NotFoundPage, { site }));
-  const title = `Page not found | ${site.brand.title}`;
-  const body = renderHtml(await getHtmlTemplate(), {
+  const body = renderHtml(notFoundTemplate(await getHtmlTemplate()), {
     ...brandMetadata(site.brand),
-    siteTitle: title,
-    ogTitle: title,
-    siteDescription: "This page doesn't exist.",
-    ogDescription: "This page doesn't exist.",
-    keywords: "",
-    robotsMeta: "noindex, nofollow",
-    ogType: "website",
-    host: site.canonicalHost,
-    canonicalPath: "/",
-    socialImagePath: resolveSocialImage(site.brand),
+    siteTitle: `Page not found | ${site.brand.title}`,
     stylesheetTag: currentStylesheetTag(),
     html,
   });
-  return new Response(body, { status: 404, headers: SECURITY_HEADERS.notFoundHtml });
+  return new Response(body, { status: 404, headers: SECURITY_HEADERS.notFound });
 }
 
 /** HTTP_REQUEST's airline tag, from the host's tenant: without it every
