@@ -53,8 +53,9 @@ Contract goldens pin the public wire formats byte-for-byte:
 `tests/golden/api-contracts.json` (check-flight, check-any-flight, MCP
 `check_flight`, .ics feeds; hermetic synthetic DB) and
 `tests/golden/mcp-tools-list.json`. Regenerate only for an intentional contract
-change: `UPDATE_GOLDEN=1 bun test tests/api-contract-golden.test.ts` and
-`bun run capture-golden`, then review the diff.
+change: `bun run capture-golden` rewrites and formats both, then review the
+diff. JSON bodies are stored parsed and .ics bodies as lines; each must
+re-encode to the live bytes.
 
 ### Styling
 
