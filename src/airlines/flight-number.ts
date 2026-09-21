@@ -3,7 +3,7 @@
  * the AirlineConfig — adding a carrier means adding a config, not editing here.
  */
 
-import { type AirlineConfig, enabledAirlines } from "./registry";
+import { AIRLINES, type AirlineConfig, enabledAirlines } from "./registry";
 
 /**
  * How people actually type flight numbers: "UA 544", "ua-544", "UA.544".
@@ -127,6 +127,45 @@ export function buildAirlineFlightNumberVariants(
   const num = flightNumber.slice(cfg.iata.length);
   // carrierPrefixes carries the IATA code too, which would repeat flightNumber.
   return [...new Set([flightNumber, ...cfg.carrierPrefixes.map((p) => `${p}${num}`)])];
+}
+
+let slotPrefixCache: ReadonlyArray<readonly [string, string]> | null = null;
+
+/**
+ * Every code a tracked carrier's rows are stored under, longest first, paired
+ * with the IATA it collapses to. A regional operator code (SKW, OO) flies for
+ * several marketing carriers, but its own number is unique to the operator, so
+ * collapsing it under one label can never merge two different departures.
+ */
+export function slotFlightPrefixes(): ReadonlyArray<readonly [string, string]> {
+  if (slotPrefixCache) return slotPrefixCache;
+  const owner = new Map<string, string>();
+  for (const cfg of Object.values(AIRLINES)) {
+    for (const p of [cfg.iata, cfg.icao, ...cfg.carrierPrefixes]) {
+      if (!owner.has(p)) owner.set(p, cfg.iata);
+    }
+  }
+  slotPrefixCache = [...owner].sort(
+    (a, b) => b[0].length - a[0].length || a[0].localeCompare(b[0])
+  );
+  return slotPrefixCache;
+}
+
+/**
+ * The flight half of a physical departure slot. One departure is stored under
+ * several spellings (UAL1377 and UA1377, SKW3440 and OO3440, HA0011): all of
+ * them collapse to one key. A spelling no prefix explains, such as an ATC
+ * callsign (SKW302M), stays itself. Mirrored in SQL by slotFlightSql
+ * (database.ts); tests pin the two together.
+ */
+export function slotFlightKey(flightNumber: string | null): string | null {
+  if (!flightNumber) return flightNumber;
+  for (const [prefix, iata] of slotFlightPrefixes()) {
+    if (!flightNumber.startsWith(prefix)) continue;
+    const rest = flightNumber.slice(prefix.length);
+    if (/^\d+$/.test(rest)) return `${iata}${Number.parseInt(rest, 10)}`;
+  }
+  return flightNumber;
 }
 
 /** Strip zero-padding so each flight has exactly one spelling (HA0011 → HA11).

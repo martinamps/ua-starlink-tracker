@@ -412,6 +412,8 @@ export type FR24ListFlight = Pick<FR24Flight, "identification" | "airport" | "ti
 
 export type FlightNumberSource = "callsign" | "marketing";
 
+const NUMERIC_FLIGHT = /^[A-Z0-9]{2,3}\d{1,4}$/;
+
 /**
  * upcoming_flights.flight_number for one FR24 leg. "callsign" keeps the
  * operating code (SKW4783) for FlightAware links. "marketing" is for carriers
@@ -424,6 +426,14 @@ export function pickFlightNumber(
 ): string | null {
   const id = flight.identification;
   if (source === "marketing") return id.number.default || null;
+  // An ATC callsign with a letter suffix (SKW302M for UA5352) matches no
+  // marketed number, so the departure was invisible to every flight lookup.
+  if (id.callsign && !NUMERIC_FLIGHT.test(id.callsign)) {
+    const numbered = [id.number.alternative, id.number.default].find(
+      (n): n is string => !!n && NUMERIC_FLIGHT.test(n)
+    );
+    if (numbered) return numbered;
+  }
   return id.callsign || id.number.alternative || id.number.default || "";
 }
 

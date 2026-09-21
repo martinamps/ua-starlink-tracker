@@ -921,7 +921,6 @@ export async function renderCheckFlightVerdict(
       // route from FR24 (cached) so we can give the agent a concrete next step.
       const pred = verdict.pred;
       recordMcpPrediction(reader.scope, pred);
-      const pct = (pred.probability * 100).toFixed(0);
 
       const isPast = endOfDay < now - 86400;
       const isNearTerm = startOfDay < now + 3 * 86400;
@@ -948,7 +947,7 @@ export async function renderCheckFlightVerdict(
       // Probability context FIRST, alternatives table LAST. Recency bias: the
       // agent's final impression is "here's the table to present", not "no data".
       const probLine = withLegNote(
-        `**${normalized} on ${date}**: ~${pct}% Starlink probability ${pred.n_observations > 0 ? `(${pred.n_observations} historical obs)` : "(no flight history)"}.${assignmentNote ? ` ${assignmentNote}` : ""}`,
+        `**${normalized} on ${date}**: ${approxPct(pred.probability)} Starlink probability ${pred.n_observations > 0 ? `(${pred.n_observations} historical obs)` : "(no flight history)"}.${assignmentNote ? ` ${assignmentNote}` : ""}`,
         verdict
       );
 
@@ -1314,8 +1313,8 @@ function buildAlternativesBlock(
         flights: ownFlight.flightNumber,
         via: "direct — your flight",
         stops: 0,
-        starlinkPct: `~${(p * 100).toFixed(0)}%`,
-        starlinkH: hours !== null ? `~${fmtH(p * hours)}` : "?",
+        starlinkPct: approxPct(p),
+        starlinkH: hours !== null ? approxShare(p, hours, fmtH) : "?",
         totalH,
       });
     } else if (!its.some((it) => it.via.length === 0)) {
@@ -1325,8 +1324,8 @@ function buildAlternativesBlock(
         flights: base?.flight_number ? ensureAirlinePrefix(cfg, base.flight_number) : "nonstop",
         via: "direct — baseline",
         stops: 0,
-        starlinkPct: `~${(directProb * 100).toFixed(0)}%`,
-        starlinkH: hours !== null ? `~${fmtH(directProb * hours)}` : "?",
+        starlinkPct: approxPct(directProb),
+        starlinkH: hours !== null ? approxShare(directProb, hours, fmtH) : "?",
         totalH,
       });
     }
@@ -1451,11 +1450,11 @@ function formatCarrierRoute(
   let text: string;
   if (r.kind === "observed_mixed" && r.lo != null && r.hi != null) {
     const breakdown = r.breakdown
-      .map((b) => `- ${b.label}${b.hint ? ` (${b.hint})` : ""}: ~${pct(b.pct)}`)
+      .map((b) => `- ${b.label}${b.hint ? ` (${b.hint})` : ""}: ${approxPct(b.pct)}`)
       .join("\n");
     text = `**${route} (${cfg.name})**: ${pct(r.lo)}–${pct(r.hi)} Starlink — ${r.reason.toLowerCase()}:\n${breakdown}\n${footer}`;
   } else {
-    text = `**${route} (${cfg.name})**: ${joinSentences(`~${pct(r.probability)} Starlink — ${r.reason}`, footer)}`;
+    text = `**${route} (${cfg.name})**: ${joinSentences(`${approxPct(r.probability)} Starlink — ${r.reason}`, footer)}`;
   }
   return { content: [{ type: "text", text }] };
 }
@@ -1532,7 +1531,7 @@ function formatHubRouteComparison(
   const lines = results.map((r) => {
     if (r.kind === "no_data") return `- **${r.name}**: no route data yet`;
     const range =
-      r.lo != null && r.hi != null ? `${pct(r.lo)}–${pct(r.hi)}` : `~${pct(r.probability)}`;
+      r.lo != null && r.hi != null ? `${pct(r.lo)}–${pct(r.hi)}` : approxPct(r.probability);
     return `- **${r.name}**: ${range} Starlink${r.reason ? ` — ${r.reason}` : ""}`;
   });
   lines.push(...lookupLines);
@@ -1607,7 +1606,6 @@ async function toolPredictFlightStarlink(
     pred.confidence
   );
   recordMcpPrediction(reader.scope, pred);
-  const pct = (pred.probability * 100).toFixed(0);
 
   let details: string;
   if (pred.method !== "flight_history_smoothed") {
@@ -1619,7 +1617,7 @@ async function toolPredictFlightStarlink(
       pred.n_observations >= 5 ? "Sample size is solid." : "Limited data — estimate may drift.";
   }
 
-  const probLine = `**${forPredict}**: ~${pct}% Starlink probability ${pred.method === "flight_history_smoothed" ? confidenceTag(pred.n_observations, pred.confidence) : "(fleet prior)"}. ${details}`;
+  const probLine = `**${forPredict}**: ${approxPct(pred.probability)} Starlink probability ${pred.method === "flight_history_smoothed" ? confidenceTag(pred.n_observations, pred.confidence) : "(fleet prior)"}. ${details}`;
 
   // Alternatives LAST so it's the agent's final impression (recency bias).
   let altBlock = "";
@@ -1739,7 +1737,7 @@ function toolPlanStarlinkItinerary(
       null)
     : null;
   const nonstopStats = baseline
-    ? `~${(baseline.probability * 100).toFixed(0)}% Starlink · ~${fmtBaseH(baseline.expected_starlink_hours)} Starlink / ~${fmtBaseH(baseline.duration_hours)} flying`
+    ? `${approxPct(baseline.probability)} Starlink · ${approxShare(baseline.probability, baseline.duration_hours, fmtBaseH, baseline.expected_starlink_hours)} Starlink / ~${fmtBaseH(baseline.duration_hours)} flying`
     : "";
   const baselineLine = !baseline
     ? ""
@@ -2128,6 +2126,25 @@ function marketingFlightNumber(rowCfg: AirlineConfig, raw: string): string {
   return digits ? `${rowCfg.iata}${digits}` : raw;
 }
 
+// Past the ~48h schedule cache; only a bound, never a window the data fills.
+const SEARCH_HORIZON_SEC = 14 * 86400;
+
+/** "~16%", but a plain "0%": a hedge on zero reads as a maybe on a no. */
+export function approxPct(p: number): string {
+  const n = Number((p * 100).toFixed(0));
+  return n === 0 ? "0%" : `~${n}%`;
+}
+
+/** Expected Starlink time for a share of `hours`, "0" when the share rounds to 0%. */
+function approxShare(
+  p: number,
+  hours: number,
+  fmt: (h: number) => string,
+  expected = p * hours
+): string {
+  return approxPct(p) === "0%" ? "0" : `~${fmt(expected)}`;
+}
+
 function toolSearchStarlinkFlights(
   reader: ScopedReader,
   args: { origin?: unknown; destination?: unknown; limit?: unknown }
@@ -2149,10 +2166,11 @@ function toolSearchStarlinkFlights(
   }
 
   const now = Math.floor(Date.now() / 1000);
-  const starlinkTails = new Set(reader.getStarlinkPlanes().map((p) => p.TailNumber));
+  // One entry per physical departure: a tail swap leaves the old row behind,
+  // so the slot is claimed first and only then tested for Starlink.
   const allFuture = reader
-    .getUpcomingFlights()
-    .filter((f) => f.departure_time > now && starlinkTails.has(f.tail_number));
+    .getDepartureSlots({ from: now + 1, to: now + SEARCH_HORIZON_SEC, partners: true })
+    .filter((f) => f.equipped === 1);
 
   // Data horizon from the UNFILTERED set — showing now() when the filtered result
   // is empty would wrongly imply we have zero forward data

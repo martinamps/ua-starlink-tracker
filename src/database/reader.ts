@@ -44,6 +44,8 @@ import {
 } from "./assignment-log";
 import {
   type ConfirmedEdge,
+  type DepartureSlot,
+  type DepartureSlotQuery,
   type DirectRouteEdge,
   type FleetGuideTail,
   type FleetRosterEntry,
@@ -82,6 +84,7 @@ import {
   getConfirmedFleetTails,
   getConfirmedStarlinkEdges,
   getDailyInstalls,
+  getDepartureSlots,
   getDirectRouteEdge,
   getFirstFlights,
   getFleetAnchors,
@@ -192,6 +195,10 @@ export interface ScopedReader {
   /** Roster plus guide-only tails with their guide marks; single-airline scope only. */
   getFleetGuideTails(): FleetGuideTail[];
   getFleetPageData(): FleetPageData;
+  /** Physical departures in a window, newest row per slot, with the equipped
+   * test the headline counts use. `partners` adds operatingPartners' rows that
+   * carry this scope's marketed numbers. */
+  getDepartureSlots(q: DepartureSlotQuery): DepartureSlot[];
   getAirportDepartures(): AirportDepartures;
   getRouteStarlinkSchedule(): RouteSchedule;
   /** Route pairs in getRouteStarlinkSchedule order, past `offset`. */
@@ -419,6 +426,7 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     getTypeProgress: () => getTypeProgress(db, soleAirline()),
     getFleetGuideTails: () => getFleetGuideTails(db, soleAirline()),
     getFleetPageData: () => getFleetPageData(db, airlines),
+    getDepartureSlots: (q) => getDepartureSlots(db, airlines, q),
     getAirportDepartures: () => getAirportDepartures(db, airlines),
     getRouteStarlinkSchedule: () => getRouteStarlinkSchedule(db, airlines),
     getRankedStarlinkRoutePairs: (offset, limit) =>

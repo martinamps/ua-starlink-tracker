@@ -353,9 +353,11 @@ describe("sibling links between same-route flight numbers", () => {
 
   test("a permalink links laterally to other numbers on its route", async () => {
     const sdb = makeSyntheticDb();
-    cacheFlightRoute(sdb, "UA111", "SFO", "EWR", 3600);
-    cacheFlightRoute(sdb, "UA222", "SFO", "EWR", 3600);
-    cacheFlightRoute(sdb, "UA333", "SFO", "EWR", 3600);
+    // Siblings from history alone need more than one sighting.
+    for (const fn of ["UA111", "UA222", "UA333"]) {
+      cacheFlightRoute(sdb, fn, "SFO", "EWR", 3600);
+      cacheFlightRoute(sdb, fn, "SFO", "EWR", 3600);
+    }
     const sapp = createApp(sdb);
     const res = await sapp.dispatch(req("/check-flight/UA111", UA));
     const text = visible(await res.text());

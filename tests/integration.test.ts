@@ -308,7 +308,7 @@ describe("MCP tools", () => {
     });
     const text = json.result.content[0].text;
     // Format: **UAxxx**: ~N% Starlink probability (fleet prior). mainline fleet...
-    const pctMatch = text.match(/~(\d+)% Starlink probability/);
+    const pctMatch = text.match(/~?(\d+)% Starlink probability/);
     expect(pctMatch).not.toBeNull();
     const pct = Number(pctMatch![1]);
     // The reported number IS United's live mainline penetration by design, so
@@ -938,9 +938,12 @@ describe("getFleetPageData", () => {
     expect(d.allTails.length).toBe(d.totalFleet);
 
     for (const c of d.carriers) {
-      expect(["SkyWest", "Republic", "Mesa", "GoJet"]).toContain(c.name);
+      expect(["SkyWest", "Republic", "Mesa", "GoJet", "Unattributed"]).toContain(c.name);
       expect(c.confirmed).toBeLessThanOrEqual(c.total);
     }
+    // Every express tail sits in exactly one carrier row.
+    const express = d.allTails.filter((t) => t.fleet === "express").length;
+    expect(d.carriers.reduce((n, c) => n + c.total, 0)).toBe(express);
 
     for (const body of ["regional", "narrowbody", "widebody"] as const) {
       const sum = Object.values(d.bodyClass[body]).reduce((a, b) => a + b, 0);

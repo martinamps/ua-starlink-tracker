@@ -8,7 +8,7 @@ interface NewlyEquippedPageProps {
   site: SiteConfig;
   installs: RecentInstall[];
   airlines: PerAirlineStat[];
-  /** Observed first revenue departure per tail; sparse — most tails have none yet. */
+  /** Observed first scheduled departure per tail; sparse — most tails have none yet. */
   firstFlights: Record<string, FirstFlight>;
   pageLinks?: PageLink[];
   currentPath?: string;
@@ -47,7 +47,7 @@ function InstallRow({ install, first }: { install: RecentInstall; first?: FirstF
         // the tail equipped, not when the antenna went on, so the true first
         // flight is often unknowable. Same wording the syndicated feed uses.
         <div className="font-mono text-xs text-muted mt-1">
-          First observed Starlink revenue flight:{" "}
+          First observed Starlink flight:{" "}
           <span className="text-secondary">
             {first.flight_number} {first.origin} → {first.destination}
           </span>{" "}
@@ -86,7 +86,7 @@ export default function NewlyEquippedPage({
         dek={
           <>
             {everyAircraft} as it joins the Starlink-equipped fleet — newest first, with its first
-            observed Starlink revenue flight once it departs.
+            observed Starlink flight once it departs.
           </>
         }
       />
@@ -127,10 +127,9 @@ export default function NewlyEquippedPage({
           )}
           <p className="text-xs text-muted mt-4 leading-snug">
             Dates are when this tracker first observed the install, not when the antenna went on. A
-            "first observed Starlink revenue flight" is likewise the earliest departure we can
-            evidence after that find — where an earlier departure exists in our own departure log,
-            we record nothing rather than name a flight that wasn't first. Writing about the
-            rollout? The{" "}
+            "first observed Starlink flight" is likewise the earliest departure we can evidence
+            after that find — where an earlier departure exists in our own departure log, we record
+            nothing rather than name a flight that wasn't first. Writing about the rollout? The{" "}
             <a href="/feed.xml" className="text-accent hover:underline">
               Atom feed
             </a>{" "}

@@ -104,6 +104,7 @@ function StatSentence({
     month: "long",
     day: "numeric",
     year: "numeric",
+    timeZone: "UTC",
   });
   const pct = Math.round(Number.parseFloat(stats.percentage));
   return (
@@ -427,12 +428,12 @@ export default function Page({
     const fn = ensureAirlinePrefix(permalinkAirline, flightNumber);
     return permalinkFnPattern.test(fn) ? `/check-flight/${fn}` : null;
   };
-  // Filter buttons act on the rendered rows, so their counts must describe the
-  // capped list — full-fleet numbers live in the hero and on /fleet.
+  // Counts describe the whole equipped list, not the capped rows: "ALL (100)"
+  // read as the fleet's total. The list's footer says how many rows show.
   const subfleetCounts = Object.fromEntries(
     content.subfleetFilters.map((c) => [
       c.key,
-      displayedAircraft.filter((p) => p.fleet === c.key || airlineOf(p) === c.key).length,
+      starlinkData.filter((p) => p.fleet === c.key || airlineOf(p) === c.key).length,
     ])
   );
 
@@ -721,7 +722,7 @@ export default function Page({
                 className="filter-btn font-mono text-xs px-3 py-2 rounded border transition-all bg-accent/20 border-accent text-accent"
                 data-filter="all"
               >
-                ALL <span className="hidden sm:inline">({displayedAircraft.length})</span>
+                ALL <span className="hidden sm:inline">({starlinkData.length})</span>
               </button>
               {content.subfleetFilters.length > 1 &&
                 content.subfleetFilters.map((card) => (
@@ -1035,6 +1036,8 @@ export default function Page({
               year: "numeric",
               hour: "numeric",
               minute: "2-digit",
+              timeZone: "UTC",
+              timeZoneName: "short",
             })}
           </span>
         </div>

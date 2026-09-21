@@ -12,6 +12,8 @@ import {
   CANONICAL_FLIGHT_PERMALINK,
   canonicalPermalinkFor,
   ensureAirlinePrefix,
+  inferSubfleet,
+  slotFlightPrefixes,
   stripFlightNumberZeros,
 } from "../airlines/flight-number";
 import {
@@ -71,6 +73,7 @@ import type {
   WifiProvider,
 } from "../types";
 import type { AircraftTypePageData } from "../types";
+import { airportCountry } from "../utils/airport-geo";
 import { DB_PATH } from "../utils/constants";
 import { excludeMassWriteDays } from "../utils/install-rate";
 import { debug, info, error as logError, warn } from "../utils/logger";
@@ -728,6 +731,7 @@ export function setupTables(db: Database) {
   }
 
   migrateMultiAirline(db);
+  backfillAlaskaSkyWestOperator(db);
   db.exec(ASSIGNMENT_LOG_DDL);
 
   // Per-tail marks from a curated community fleet guide (AF: FlyerTalk). The
@@ -777,6 +781,25 @@ function migrateFirstFlightsKey(db: Database): void {
     db.exec("CREATE INDEX IF NOT EXISTS idx_ff_airline ON first_flights(airline, departed_at)");
   })();
   info("Database migration completed: first_flights keyed by (tail_number, airline)");
+}
+
+/**
+ * Alaska's SkyWest-operated E175s (N…SY) were seeded from the Horizon roster
+ * page and kept OperatedBy 'Horizon Air'. The SY suffix is SkyWest's
+ * registration block, so the label follows the tail. Idempotent: matches
+ * nothing once applied.
+ */
+export function backfillAlaskaSkyWestOperator(db: Database): number {
+  if (!tableExists(db, "starlink_planes")) return 0;
+  const res = db
+    .query(
+      `UPDATE starlink_planes SET OperatedBy = 'SkyWest Airlines'
+       WHERE airline = 'AS' AND TailNumber GLOB 'N*SY'
+         AND (OperatedBy IS NULL OR OperatedBy <> 'SkyWest Airlines')`
+    )
+    .run();
+  if (res.changes > 0) info(`Backfilled OperatedBy on ${res.changes} Alaska SkyWest tails`);
+  return res.changes;
 }
 
 function hasColumn(db: Database, table: string, column: string): boolean {
@@ -1351,7 +1374,7 @@ export function recordFirstFlights(
 ): FirstFlight[] {
   const enabled = enabledAirlines().map((a) => a.code);
   const placeholders = enabled.map(() => "?").join(",");
-  const candidates = db
+  const raw = db
     .query(
       `SELECT c.tail_number, c.airline, c.flight_number, c.origin, c.destination, c.departed_at
        FROM (
@@ -1364,6 +1387,7 @@ export function recordFirstFlights(
            ON uf.tail_number = sp.TailNumber AND uf.airline = sp.airline
          WHERE ${equippedFilter("sp")}
            AND ${INSTALL_FILTER}
+           AND ${NOT_FORUM_DATED}
            AND sp.airline IN (${placeholders})
            AND sp.DateFound >= date(?, 'unixepoch', '-14 days')
            AND uf.flight_number IS NOT NULL
@@ -1385,6 +1409,9 @@ export function recordFirstFlights(
        )`
     )
     .all(...enabled, now, now) as Omit<FirstFlight, "recorded_at">[];
+  // A non-scheduled earliest leg means abstain, not "try the next one": the
+  // ferry is itself a departure the departure_log veto would then have to see.
+  const candidates = raw.filter((c) => isScheduledLeg(db, c.airline, c.origin, c.destination));
   if (candidates.length === 0) return [];
 
   const insert = db.query(
@@ -1410,7 +1437,8 @@ export function recordFirstFlights(
   return recorded;
 }
 
-/** First observed post-install revenue departures for a set of tails. */
+/** First observed post-install departures for a set of tails. Rows recorded
+ * before the ferry/charter and forum-date rules are held to them on read. */
 export function getFirstFlights(
   db: Database,
   tails: readonly string[],
@@ -1419,13 +1447,41 @@ export function getFirstFlights(
   if (tails.length === 0) return [];
   const placeholders = tails.map(() => "?").join(",");
   const q = withAirline(
-    `SELECT tail_number, airline, flight_number, origin, destination, departed_at, recorded_at
-     FROM first_flights WHERE tail_number IN (${placeholders})`,
+    `SELECT ff.tail_number, ff.airline, ff.flight_number, ff.origin, ff.destination,
+            ff.departed_at, ff.recorded_at
+     FROM first_flights ff
+     WHERE ff.tail_number IN (${placeholders})
+       AND NOT EXISTS (
+         SELECT 1 FROM starlink_planes sp
+         WHERE sp.TailNumber = ff.tail_number AND NOT (${NOT_FORUM_DATED})
+       )`,
     airline,
-    "",
+    "ff",
     [...tails]
   );
-  return db.query(q.sql).all(...q.params) as FirstFlight[];
+  return (db.query(q.sql).all(...q.params) as FirstFlight[]).filter((f) =>
+    isScheduledLeg(db, f.airline, f.origin, f.destination)
+  );
+}
+
+// A FlyerTalk DateFound is the day a forum post named the tail, not an install
+// date, so "first departure after it" is just the next flight.
+const NOT_FORUM_DATED = `(sp.sheet_gid IS NULL OR sp.sheet_gid NOT LIKE 'flyertalk\\_%' ESCAPE '\\')`;
+
+/**
+ * Is this a leg the airline schedules? A tail leaving a mod station positions
+ * on a ferry number (UA38xx MLB→ORD, 19 numbers on a pair United never sells)
+ * and a regional charter (BOI→GNV) is a departure, but no passenger's first
+ * Starlink flight. The BTS T-100 census is United's only schedule census, and
+ * it covers domestic pairs only, so every other leg passes.
+ */
+function isScheduledLeg(db: Database, airline: string, origin: string, dest: string): boolean {
+  if (airline !== "UA") return true;
+  if (airportCountry(origin) !== "US" || airportCountry(dest) !== "US") return true;
+  if (!db.query("SELECT 1 FROM bts_monthly_routes LIMIT 1").get()) return true;
+  return !!db
+    .query("SELECT 1 FROM bts_monthly_routes WHERE origin = ? AND dest = ? LIMIT 1")
+    .get(origin, dest);
 }
 
 export interface HubAirlineStat {
@@ -2717,18 +2773,29 @@ export function getRouteFlightNumbers(
   // them would put broken internal links on every affected route page.
   const marketing = cfg ? canonicalPermalinkFor(cfg) : null;
   const merged = new Map<string, { times: number; scheduled: number }>();
-  const add = (raw: string, times: number, scheduled: number) => {
+  const liveNumbers = new Set(
+    cfg ? live.map((r) => stripFlightNumberZeros(ensureAirlinePrefix(cfg, r.flight_number))) : []
+  );
+  const add = (raw: string, times: number, scheduled: number, durationSec: number | null) => {
     if (!cfg || !marketing) return;
     const fn = stripFlightNumberZeros(ensureAirlinePrefix(cfg, raw));
     if (!marketing.test(fn)) return;
+    // History alone must be corroborated: one sighting is how a lookup miss
+    // or a one-off charter enters the cache (219 of 225 UA8xxx rows on file
+    // were seen once), and a regional-range number on a transatlantic block
+    // time (UA3893 EWR-CDG, 7h40m) is a mis-attributed row, not a flight.
+    if (scheduled === 0 && !liveNumbers.has(fn)) {
+      if (times < 2) return;
+      if (durationSec && durationSec > REGIONAL_MAX_BLOCK_SEC && isRegionalNumber(cfg, fn)) return;
+    }
     const prev = merged.get(fn);
     merged.set(fn, {
       times: (prev?.times ?? 0) + times,
       scheduled: Math.max(prev?.scheduled ?? 0, scheduled),
     });
   };
-  for (const r of cached) add(r.flight_number, r.times, 0);
-  for (const r of live) add(r.flight_number, r.times, 1);
+  for (const r of cached) add(r.flight_number, r.times, 0, r.duration_sec);
+  for (const r of live) add(r.flight_number, r.times, 1, r.duration_sec);
   const flightNumbers = [...merged]
     .map(([flight_number, v]) => ({ flight_number, ...v }))
     .sort((a, b) => b.scheduled - a.scheduled || b.times - a.times);
@@ -2742,6 +2809,15 @@ export function getRouteFlightNumbers(
   return { flightNumbers, durationSec };
 }
 
+// Regional jets top out near four and a half hours of block time; past this a
+// regional-range number is a mis-attributed row.
+const REGIONAL_MAX_BLOCK_SEC = 5.5 * 3600;
+const REGIONAL_SUBFLEETS = new Set(["express", "horizon"]);
+
+function isRegionalNumber(cfg: AirlineConfig, flightNumber: string): boolean {
+  return REGIONAL_SUBFLEETS.has(inferSubfleet(cfg, flightNumber));
+}
+
 /** Everything a /route-planner/{origin}/{destination} page renders. */
 export function getRouteSummary(
   db: Database,
@@ -2752,26 +2828,15 @@ export function getRouteSummary(
 ): RouteSummary {
   const { flightNumbers, durationSec } = getRouteFlightNumbers(db, origin, destination, airline);
 
-  const windowEnd = nowSec + DEPARTURE_WINDOW_HOURS * 3600;
-  const equippedQ = withAirline(
-    `SELECT COUNT(DISTINCT uf.flight_number || ':' || uf.departure_time) AS n${EQUIPPED_DEPARTURES_SQL}
-       AND uf.departure_airport = ? AND uf.arrival_airport = ?`,
-    airline,
-    "uf",
-    [nowSec, windowEnd, origin, destination]
-  );
-  const equippedDepartures = (db.query(equippedQ.sql).get(...equippedQ.params) as { n: number }).n;
-
-  const totalQ = withAirline(
-    `SELECT COUNT(DISTINCT uf.flight_number || ':' || uf.departure_time) AS n
-     FROM upcoming_flights uf
-     WHERE uf.departure_time >= ? AND uf.departure_time < ?
-       AND uf.departure_airport = ? AND uf.arrival_airport = ?`,
-    airline,
-    "uf",
-    [nowSec, windowEnd, origin, destination]
-  );
-  const totalDepartures = (db.query(totalQ.sql).get(...totalQ.params) as { n: number }).n;
+  const slots = equippedWindow(airline, nowSec);
+  const counts = db
+    .query(
+      `SELECT COALESCE(SUM(d.equipped), 0) AS equipped, COUNT(*) AS total FROM ${slots.sql} d
+       WHERE d.departure_airport = ? AND d.arrival_airport = ?`
+    )
+    .get(...slots.params, origin, destination) as { equipped: number; total: number };
+  const equippedDepartures = counts.equipped;
+  const totalDepartures = counts.total;
 
   return {
     origin,
@@ -2927,6 +2992,9 @@ export interface FlightHistorySummary {
   /** Clean verified observations of aircraft flying this number. */
   total: number;
   starlink: number;
+  /** Earliest check in `total` (unix seconds): these are verifier checks, not
+   * departures, and the window is the whole log. Null when there are none. */
+  first_checked_at: number | null;
   /** Aircraft types recently seen on the number, newest first. */
   aircraft_types: string[];
   last_starlink: { tail_number: string; checked_at: number } | null;
@@ -2942,6 +3010,7 @@ export function getFlightHistorySummary(
   const empty: FlightHistorySummary = {
     total: 0,
     starlink: 0,
+    first_checked_at: null,
     aircraft_types: [],
     last_starlink: null,
   };
@@ -2957,10 +3026,15 @@ export function getFlightHistorySummary(
   );
   const counts = db
     .query(
-      `SELECT COUNT(*) AS total, COALESCE(SUM(has_starlink), 0) AS starlink
+      `SELECT COUNT(*) AS total, COALESCE(SUM(has_starlink), 0) AS starlink,
+              MIN(checked_at) AS first_checked_at
        FROM starlink_verification_log WHERE ${where.sql}`
     )
-    .get(...where.params) as { total: number; starlink: number } | null;
+    .get(...where.params) as {
+    total: number;
+    starlink: number;
+    first_checked_at: number | null;
+  } | null;
   if (!counts || counts.total === 0) return empty;
   const types = db
     .query(
@@ -2978,6 +3052,7 @@ export function getFlightHistorySummary(
   return {
     total: counts.total,
     starlink: counts.starlink,
+    first_checked_at: counts.first_checked_at,
     aircraft_types: types.map((t) => t.aircraft_type),
     last_starlink: last,
   };
@@ -4134,7 +4209,50 @@ export function reconcileConsensus(db: Database): number {
       healed++;
     }
   }
-  return healed;
+  return healed + demoteRetrofittedNegatives(db);
+}
+
+/**
+ * A 'negative' settle outranks everything (equippedFilter, classifyRow), so a
+ * tail retrofitted after it was settled answered a firm "not Starlink" while
+ * its two newest United.com checks said Starlink: an ambiguous 30-day window
+ * (2 Starlink, 2 Viasat) never re-settles, and the streak override needs 3.
+ * Two newest clean checks on Starlink drop the settle to 'unknown' (the sheet
+ * and the next consensus decide) and queue a prompt re-check.
+ */
+export function demoteRetrofittedNegatives(db: Database, now = Math.floor(Date.now() / 1000)) {
+  const sources = OBSERVED_WIFI_SOURCES.map(() => "?").join(",");
+  const stale = db
+    .query(
+      `SELECT f.tail_number, f.starlink_status, f.fleet, f.airline FROM united_fleet f
+       WHERE f.starlink_status = 'negative'
+         AND (SELECT COUNT(*) FROM (
+               SELECT has_starlink FROM starlink_verification_log
+               WHERE tail_number = f.tail_number AND tail_confirmed = 1
+                 AND source IN (${sources}) AND ${CLEAN_OBSERVATION_WHERE}
+               ORDER BY checked_at DESC LIMIT 2
+             ) WHERE has_starlink = 1) = 2`
+    )
+    .all(...OBSERVED_WIFI_SOURCES) as Array<{
+    tail_number: string;
+    starlink_status: string;
+    fleet: string | null;
+    airline: string | null;
+  }>;
+  if (stale.length === 0) return 0;
+  const demote = db.query(
+    `UPDATE united_fleet SET starlink_status = 'unknown', next_check_after = ?,
+            discovery_priority = MAX(discovery_priority, 0.9)
+     WHERE tail_number = ? AND starlink_status = 'negative'`
+  );
+  db.transaction(() => {
+    for (const r of stale) {
+      demote.run(now, r.tail_number);
+      emitFleetStatusChange(r, "unknown");
+    }
+  })();
+  info(`Demoted ${stale.length} negative settle(s) with two newest checks on Starlink`);
+  return stale.length;
 }
 
 /**
@@ -4859,6 +4977,7 @@ export function updateShipNumber(db: Database, tailNumber: string, shipNumber: s
 // ============ /fleet page aggregation ============
 
 const CARRIER_NAMES = ["SkyWest", "Republic", "Mesa", "GoJet"] as const;
+const UNATTRIBUTED_CARRIER = "Unattributed";
 
 function normalizeCarrier(op: string | null): string | null {
   const lower = (op || "").toLowerCase();
@@ -5389,34 +5508,166 @@ export function recordAdsbSweep(
   })();
 }
 
-// One definition of "departure on a Starlink-equipped aircraft, next 48h":
-// the same equipped predicate /api/check-flight uses, with a real upper bound.
-// The homepage airports panel and /routes both render from this base, so the
-// two surfaces can never disagree under the same window label.
 const DEPARTURE_WINDOW_HOURS = 48;
-const EQUIPPED_DEPARTURES_SQL = `
-     FROM upcoming_flights uf
-     INNER JOIN starlink_planes sp ON uf.tail_number = sp.TailNumber
-     WHERE ${equippedFilter("sp")}
-       AND uf.departure_time >= ? AND uf.departure_time < ?`;
+
+/** SQL twin of slotFlightKey (flight-number.ts); the prefixes are registry
+ * literals, never caller input. */
+function slotFlightSql(col: string): string {
+  const cases = slotFlightPrefixes().map(([prefix, iata]) => {
+    const rest = `substr(${col}, ${prefix.length + 1})`;
+    return `WHEN ${col} GLOB '${prefix}[0-9]*' AND ${rest} NOT GLOB '*[^0-9]*'
+          THEN '${iata}' || CAST(${rest} AS INTEGER)`;
+  });
+  return `CASE ${cases.join("\n        ")} ELSE ${col} END`;
+}
+
+/**
+ * One row per physical departure: flight (slotFlightSql), departure airport and
+ * departure time, keeping the most recently refreshed row. A tail swap leaves
+ * the pre-swap row behind until that tail's next refresh, and one departure is
+ * stored under several spellings; counting rows counted both. The newest row
+ * is chosen BEFORE the equipped test, so a swap onto a non-Starlink tail
+ * removes the departure instead of leaving the stale Starlink row standing.
+ *
+ * `equipped` is equippedFilter, the predicate behind the headline counts and
+ * the verdict engine's classifyRow; a tail missing from starlink_planes is not
+ * equipped. Placeholders: the scope clause's, then [from, to) on departure_time.
+ */
+function departureSlotsSql(scopeClause: string): string {
+  return `SELECT s.*, sp.Aircraft AS aircraft_type, sp.verified_wifi AS verified_wifi,
+         CASE WHEN _sneg.tail_number IS NOT NULL THEN 1 ELSE 0 END AS settled_negative,
+         _sneg.verified_wifi AS settled_wifi,
+         CASE WHEN sp.TailNumber IS NOT NULL AND ${equippedFilter("sp")} THEN 1 ELSE 0 END AS equipped
+  FROM (
+    SELECT k.*, ROW_NUMBER() OVER (
+             PARTITION BY k.slot_flight, k.departure_airport, k.departure_time
+             ORDER BY k.last_updated DESC, k.id DESC) AS slot_rank
+    FROM (
+      SELECT uf.*, ${slotFlightSql("uf.flight_number")} AS slot_flight
+      FROM upcoming_flights uf
+      WHERE ${scopeClause} AND uf.departure_time >= ? AND uf.departure_time < ?
+    ) k
+  ) s
+  LEFT JOIN starlink_planes sp ON sp.TailNumber = s.tail_number
+  LEFT JOIN united_fleet _sneg
+    ON _sneg.tail_number = s.tail_number AND _sneg.starlink_status = 'negative'
+  WHERE s.slot_rank = 1`;
+}
+
+export type DepartureSlot = Flight & {
+  id: number;
+  /** The slot's flight key (UA1377 for UAL1377); a count key, not a display number. */
+  slot_flight: string | null;
+  aircraft_type: string | null;
+  verified_wifi: string | null;
+  settled_negative: number;
+  settled_wifi: string | null;
+  /** 1 when the slot's current tail passes equippedFilter. */
+  equipped: number;
+};
+
+/**
+ * The airline clause for departure slots. With `partners`, a single-airline
+ * scope also takes its operatingPartners' rows that carry its own marketed
+ * numbers (AS832 on a Hawaiian A330 is an Alaska departure).
+ */
+function slotScope(airline: AirlineFilter, partners: boolean): { sql: string; params: string[] } {
+  const codes = airline === undefined ? null : typeof airline === "string" ? [airline] : airline;
+  if (codes === null) return { sql: "1=1", params: [] };
+  if (codes.length === 0) return { sql: "1=0", params: [] };
+  const own = { sql: `uf.airline IN (${codes.map(() => "?").join(",")})`, params: [...codes] };
+  const cfg = codes.length === 1 ? AIRLINES[codes[0]] : undefined;
+  const partnerCodes = partners ? (cfg?.operatingPartners ?? []) : [];
+  if (!cfg || partnerCodes.length === 0) return own;
+  const prefixes = [...new Set([cfg.iata, cfg.icao, ...cfg.carrierPrefixes])];
+  return {
+    sql: `(${own.sql} OR (uf.airline IN (${partnerCodes.map(() => "?").join(",")})
+            AND (${prefixes.map(() => "uf.flight_number GLOB ?").join(" OR ")})))`,
+    params: [...own.params, ...partnerCodes, ...prefixes.map((p) => `${p}[0-9]*`)],
+  };
+}
+
+export interface DepartureSlotQuery {
+  from: number;
+  to: number;
+  /** Include operatingPartners' rows marketed under this airline (route surfaces). */
+  partners?: boolean;
+  /** Restrict to these stored spellings (all of one slot key, e.g. lookup variants). */
+  flightNumbers?: readonly string[];
+}
+
+/** departureSlotsSql bound to a scope, as a derived table plus its params. */
+function departureSlots(
+  airline: AirlineFilter,
+  q: DepartureSlotQuery
+): { sql: string; params: (string | number)[] } {
+  const scope = slotScope(airline, q.partners ?? false);
+  let clause = scope.sql;
+  const params: (string | number)[] = [...scope.params];
+  if (q.flightNumbers) {
+    clause = `${clause} AND uf.flight_number IN (${q.flightNumbers.map(() => "?").join(",") || "NULL"})`;
+    params.push(...q.flightNumbers);
+  }
+  return { sql: `(${departureSlotsSql(clause)})`, params: [...params, q.from, q.to] };
+}
+
+/** Physical departures in [from, to), newest row per slot, departure_time ascending. */
+export function getDepartureSlots(
+  db: Database,
+  airline: AirlineFilter,
+  q: DepartureSlotQuery
+): DepartureSlot[] {
+  const slots = departureSlots(airline, q);
+  return db
+    .query(`SELECT * FROM ${slots.sql} d ORDER BY d.departure_time ASC, d.id ASC`)
+    .all(...slots.params) as DepartureSlot[];
+}
+
+// One definition of "departure on a Starlink-equipped aircraft, next 48h".
+// The homepage airports panel, /routes and the route pages all count from
+// departureSlots, so they can never disagree under the same window label.
+function equippedWindow(airline: AirlineFilter, nowSec: number) {
+  return departureSlots(airline, {
+    from: nowSec,
+    to: nowSec + DEPARTURE_WINDOW_HOURS * 3600,
+    partners: true,
+  });
+}
 
 export function getAirportDepartures(
   db: Database,
   airline?: AirlineFilter,
   nowSec = Math.floor(Date.now() / 1000)
 ): AirportDepartures {
-  const q = withAirline(
-    `SELECT uf.departure_airport AS airport,
-            COUNT(DISTINCT uf.flight_number || ':' || uf.departure_time) AS count${EQUIPPED_DEPARTURES_SQL}`,
-    airline,
-    "uf",
-    [nowSec, nowSec + DEPARTURE_WINDOW_HOURS * 3600]
-  );
+  const slots = equippedWindow(airline, nowSec);
   const rows = db
-    .query(`${q.sql} GROUP BY uf.departure_airport ORDER BY count DESC LIMIT 30`)
-    .all(...q.params) as Array<{ airport: string; count: number }>;
+    .query(
+      `SELECT d.departure_airport AS airport, COUNT(*) AS count FROM ${slots.sql} d
+       WHERE d.equipped = 1 GROUP BY d.departure_airport ORDER BY count DESC LIMIT 30`
+    )
+    .all(...slots.params) as Array<{ airport: string; count: number }>;
 
   return { rows, windowLabel: `next ${DEPARTURE_WINDOW_HOURS} hours` };
+}
+
+function rankedEquippedRoutes(
+  db: Database,
+  airline: AirlineFilter,
+  nowSec: number,
+  limit: number,
+  offset: number
+): RouteScheduleRow[] {
+  const slots = equippedWindow(airline, nowSec);
+  return db
+    .query(
+      `SELECT d.departure_airport AS origin, d.arrival_airport AS destination,
+              COUNT(*) AS departures, COUNT(DISTINCT d.slot_flight) AS flight_numbers,
+              MIN(d.departure_time) AS next_departure
+       FROM ${slots.sql} d WHERE d.equipped = 1
+       GROUP BY d.departure_airport, d.arrival_airport
+       ORDER BY departures DESC, flight_numbers DESC, origin ASC LIMIT ? OFFSET ?`
+    )
+    .all(...slots.params, limit, offset) as RouteScheduleRow[];
 }
 
 export function getRouteStarlinkSchedule(
@@ -5424,35 +5675,15 @@ export function getRouteStarlinkSchedule(
   airline?: AirlineFilter,
   nowSec = Math.floor(Date.now() / 1000)
 ): RouteSchedule {
-  const windowEnd = nowSec + DEPARTURE_WINDOW_HOURS * 3600;
-  // The DISTINCT pair count dedupes tail-swap leftovers (multiple rows for one
-  // physical departure).
-  const baseSql = EQUIPPED_DEPARTURES_SQL;
-  const q = withAirline(
-    `SELECT uf.departure_airport AS origin, uf.arrival_airport AS destination,
-            COUNT(DISTINCT uf.flight_number || ':' || uf.departure_time) AS departures,
-            COUNT(DISTINCT uf.flight_number) AS flight_numbers,
-            MIN(uf.departure_time) AS next_departure${baseSql}`,
-    airline,
-    "uf",
-    [nowSec, windowEnd]
-  );
-  const rows = db
-    .query(
-      `${q.sql} GROUP BY uf.departure_airport, uf.arrival_airport
-       ORDER BY departures DESC, flight_numbers DESC, origin ASC LIMIT 60`
-    )
-    .all(...q.params) as RouteScheduleRow[];
-
+  const rows = rankedEquippedRoutes(db, airline, nowSec, 60, 0);
   // Headline total uses the same predicate without the LIMIT, so the header
   // never disagrees with what a user could count by paging the rows.
-  const totalQ = withAirline(
-    `SELECT COUNT(DISTINCT uf.flight_number || ':' || uf.departure_time) AS n${baseSql}`,
-    airline,
-    "uf",
-    [nowSec, windowEnd]
-  );
-  const totalDepartures = (db.query(totalQ.sql).get(...totalQ.params) as { n: number }).n;
+  const slots = equippedWindow(airline, nowSec);
+  const totalDepartures = (
+    db
+      .query(`SELECT COUNT(*) AS n FROM ${slots.sql} d WHERE d.equipped = 1`)
+      .get(...slots.params) as { n: number }
+  ).n;
 
   return { rows, totalDepartures, windowLabel: `next ${DEPARTURE_WINDOW_HOURS} hours` };
 }
@@ -5597,8 +5828,11 @@ function computeFleetPageData(db: Database, airline?: AirlineFilter): FleetPageD
     fam.tails.push(tail);
     if (provider === "starlink") fam.starlink++;
 
-    const carrier = normalizeCarrier(r.operated_by);
-    if (carrier && r.fleet === "express") {
+    // Express tails whose operator field names no regional (United's own name,
+    // or blank: 157 of 507 UA express tails) still count, under one row, so
+    // the panel's totals add up to the express fleet.
+    const carrier = normalizeCarrier(r.operated_by) ?? UNATTRIBUTED_CARRIER;
+    if (r.fleet === "express") {
       const c = carrierMap.get(carrier) || { confirmed: 0, total: 0 };
       c.total++;
       if (r.starlink_status === "confirmed") c.confirmed++;
@@ -5618,8 +5852,9 @@ function computeFleetPageData(db: Database, airline?: AirlineFilter): FleetPageD
       confirmed: c.confirmed,
       total: c.total,
       pct: c.total > 0 ? (c.confirmed / c.total) * 100 : 0,
+      ...(name === UNATTRIBUTED_CARRIER ? { unattributed: true } : {}),
     }))
-    .sort((a, b) => b.pct - a.pct);
+    .sort((a, b) => Number(!!a.unattributed) - Number(!!b.unattributed) || b.pct - a.pct);
 
   const pulse = computePulse(db, airline);
   // Install pace is a single-airline narrative (its projection extrapolates one
@@ -5654,17 +5889,14 @@ function computePulse(db: Database, airline?: AirlineFilter): FleetPageData["pul
   const winStart = nowSec - 6 * 3600;
   const winCap = nowSec + 66 * 3600;
 
-  const q = withAirline(
-    `SELECT uf.departure_time AS d, uf.arrival_time AS a
-     FROM upcoming_flights uf
-     JOIN united_fleet f ON f.tail_number = uf.tail_number
-     WHERE f.starlink_status = 'confirmed'
-       AND uf.arrival_time >= ? AND uf.departure_time <= ?`,
-    airline,
-    "uf",
-    [winStart, winCap]
-  );
-  const flights = db.query(q.sql).all(...q.params) as Array<{ d: number; a: number }>;
+  // A flight airborne at winStart departed before it; no leg is longer than a day.
+  const slots = departureSlots(airline, { from: winStart - 86400, to: winCap + 1 });
+  const flights = db
+    .query(
+      `SELECT d.departure_time AS d, d.arrival_time AS a FROM ${slots.sql} d
+       WHERE d.equipped = 1 AND d.arrival_time >= ?`
+    )
+    .all(...slots.params, winStart) as Array<{ d: number; a: number }>;
 
   if (flights.length === 0) {
     return { now: 0, sparkline: [], peak: 0, trough: 0, totalHours: 0 };
@@ -6149,21 +6381,9 @@ export function getRankedStarlinkRoutePairs(
   limit: number,
   nowSec = Math.floor(Date.now() / 1000)
 ): Array<{ origin: string; destination: string }> {
-  const q = withAirline(
-    `SELECT uf.departure_airport AS origin, uf.arrival_airport AS destination,
-            COUNT(DISTINCT uf.flight_number || ':' || uf.departure_time) AS departures,
-            COUNT(DISTINCT uf.flight_number) AS flight_numbers${EQUIPPED_DEPARTURES_SQL}`,
-    airline,
-    "uf",
-    [nowSec, nowSec + DEPARTURE_WINDOW_HOURS * 3600]
+  return rankedEquippedRoutes(db, airline, nowSec, limit, offset).map(
+    ({ origin, destination }) => ({ origin, destination })
   );
-  const rows = db
-    .query(
-      `${q.sql} GROUP BY uf.departure_airport, uf.arrival_airport
-       ORDER BY departures DESC, flight_numbers DESC, origin ASC LIMIT ? OFFSET ?`
-    )
-    .all(...q.params, limit, offset) as Array<{ origin: string; destination: string }>;
-  return rows.map(({ origin, destination }) => ({ origin, destination }));
 }
 
 // ============ /fleet/{slug} aircraft-type pages ============
@@ -6184,12 +6404,13 @@ const TYPE_FLIGHT_MIN_OBSERVATIONS = 2;
 
 // One airline-scoped pass each, folded per family in JS: sixteen type pages
 // cost two queries, not thirty-two. Exported for the query-plan pins.
-export const TYPE_PAGE_ROUTES_SQL = `SELECT tail_number AS tail, departure_airport AS o,
-       arrival_airport AS d, COUNT(DISTINCT flight_number || ':' || departure_time) AS n
-  FROM upcoming_flights
-  WHERE airline = ? AND departure_time BETWEEN ? AND ?
-    AND departure_airport GLOB '[A-Z][A-Z][A-Z]' AND arrival_airport GLOB '[A-Z][A-Z][A-Z]'
-    AND departure_airport <> arrival_airport
+// One count per physical departure, credited to the tail currently on it.
+export const TYPE_PAGE_ROUTES_SQL = `SELECT d.tail_number AS tail, d.departure_airport AS o,
+       d.arrival_airport AS d, COUNT(*) AS n
+  FROM (${departureSlotsSql("uf.airline = ?")}) d
+  WHERE d.equipped = 1
+    AND d.departure_airport GLOB '[A-Z][A-Z][A-Z]' AND d.arrival_airport GLOB '[A-Z][A-Z][A-Z]'
+    AND d.departure_airport <> d.arrival_airport
   GROUP BY 1, 2, 3`;
 export const TYPE_PAGE_FLIGHTS_SQL = `SELECT tail_number AS tail, flight_number AS fn,
        COUNT(DISTINCT date(checked_at, 'unixepoch')) AS days
@@ -6297,9 +6518,6 @@ function computeAircraftTypePages(
   const fleet = getFleetPageData(db, [airline]);
   const families = new Map(fleet.families.map((f) => [f.family, f]));
   const tailFamily = new Map(fleet.allTails.map((t) => [t.tail, t.family]));
-  const starlinkFamily = new Map(
-    fleet.allTails.filter((t) => t.provider === "starlink").map((t) => [t.tail, t.family])
-  );
   const providerOf = new Map(fleet.allTails.map((t) => [t.tail, t.provider]));
 
   const dataClock = maxOf(
@@ -6360,7 +6578,7 @@ function computeAircraftTypePages(
   }>;
   const pairsByFamily = new Map<string, Map<string, number>>();
   for (const l of legs) {
-    const family = starlinkFamily.get(l.tail);
+    const family = tailFamily.get(l.tail);
     if (!family) continue;
     let pairs = pairsByFamily.get(family);
     if (!pairs) {

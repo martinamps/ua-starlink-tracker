@@ -39,7 +39,7 @@ import {
 import { createApp } from "../src/server/app";
 import type { AircraftTypePageData, AircraftVerdictKind, WifiProvider } from "../src/types";
 import { baseNormalizeAircraftType } from "./fixtures/aircraft-families-base";
-import { addFleet, addFlight, makeSyntheticDb, openSnapshot, req } from "./helpers";
+import { addFleet, addFlight, addPlane, makeSyntheticDb, openSnapshot, req } from "./helpers";
 
 const UA = SITES.united.canonicalHost;
 const AS = SITES.alaska.canonicalHost;
@@ -767,6 +767,11 @@ describe("routes and flight numbers (synthetic)", () => {
       aircraftType: "ERJ-175",
       verifiedWifi: "Starlink",
     });
+    // Routes count equipped departures (starlink_planes + equippedFilter), the
+    // same predicate as every other departure count.
+    addPlane(db, "N101SY", "Starlink", { aircraft: "ERJ-175" });
+    addPlane(db, "N103SY", "Viasat", { aircraft: "ERJ-175" });
+    addPlane(db, "N200AS", "Starlink", { aircraft: "ERJ-175", airline: "AS" });
     addFlight(db, "N101SY", "UA5001", "DEN", NOW + 3600, { arrivalAirport: "ASE" });
     addFlight(db, "N101SY", "UA5002", "ASE", NOW + 7200, { arrivalAirport: "DEN" });
     addFlight(db, "N103SY", "UA5003", "ORD", NOW + 3600, { arrivalAirport: "MSN" });

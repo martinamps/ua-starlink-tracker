@@ -93,7 +93,12 @@ export default function MethodologyPage({
   const stampedDate = new Date(lastUpdated);
   const dateLabel = Number.isNaN(stampedDate.getTime())
     ? null
-    : stampedDate.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+    : stampedDate.toLocaleDateString("en-US", {
+        month: "long",
+        day: "numeric",
+        year: "numeric",
+        timeZone: "UTC",
+      });
 
   const Section = ({
     title,

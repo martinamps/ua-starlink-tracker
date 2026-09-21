@@ -1,5 +1,12 @@
 import React from "react";
-import { SITES, type SiteConfig, airlineHomeUrl, liveAirlineSites } from "../airlines/registry";
+import {
+  type AirlineConfig,
+  SITES,
+  type SiteConfig,
+  airlineHomeUrl,
+  liveAirlineSites,
+  programTypeOf,
+} from "../airlines/registry";
 import type { PopularFlight } from "../database/database";
 import type { RecentInstall } from "../types";
 import type { Aircraft, PerAirlineStat } from "../types";
@@ -348,6 +355,7 @@ export function RecentInstallsFeed({
                       {new Date(r.DateFound).toLocaleDateString("en-US", {
                         month: "short",
                         day: "numeric",
+                        timeZone: "UTC",
                       })}
                     </span>
                   </a>
@@ -532,11 +540,18 @@ export interface ModelDatum {
   count: number;
 }
 
-export function computeModelBreakdown(starlinkData: Aircraft[]): ModelDatum[] {
+/** Starlink tails per programme type (E175, 737-800), the grouping the type
+ * pages and /fleet use. The first word of the raw string grouped by maker:
+ * "Boeing" and "Embraer" slices mixed a dozen types under one name. */
+export function computeModelBreakdown(
+  starlinkData: Aircraft[],
+  cfg: Pick<AirlineConfig, "programTypes"> = {}
+): ModelDatum[] {
   const counts: Record<string, number> = {};
   for (const p of starlinkData) {
-    const base = (p.Aircraft || "Unknown").split(/[-\s]/)[0];
-    counts[base] = (counts[base] || 0) + 1;
+    const { key, label } = programTypeOf(cfg, p.Aircraft);
+    const name = key === "other" || key === "unknown" ? "Other" : label;
+    counts[name] = (counts[name] || 0) + 1;
   }
   return Object.entries(counts)
     .sort((a, b) => b[1] - a[1])

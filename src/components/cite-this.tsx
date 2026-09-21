@@ -22,6 +22,7 @@ export function CiteThis({ site, cite }: { site: SiteConfig; cite?: CiteStat | n
     month: "long",
     day: "numeric",
     year: "numeric",
+    timeZone: "UTC",
   });
   return (
     <p
