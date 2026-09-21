@@ -3,8 +3,11 @@
  * production row that exposed it. Shapes and invariants, not live values.
  */
 
-import type { Database } from "bun:sqlite";
+import { type Database, Database as SqliteDatabase } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
+import { copyFileSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { OBSERVED_WIFI_SOURCES } from "../src/airlines/registry";
 import { logFlightAssignments } from "../src/database/assignment-log";
 import {
@@ -517,6 +520,46 @@ describe("migrate", () => {
     migrate(db);
     expect(meta(db, "schema:analyzed_indexes")).toContain("idx_test_only");
     db.close();
+  });
+
+  test("the committed old-schema example migrates, twice, to the current index set", () => {
+    const dir = mkdtempSync(join(tmpdir(), "migrate-example-"));
+    const path = join(dir, "plane-data.sqlite");
+    copyFileSync(join(import.meta.dir, "..", "plane-data.sqlite.example"), path);
+    const db = new SqliteDatabase(path);
+    try {
+      const indexes = () =>
+        new Set(
+          (
+            db
+              .query(
+                "SELECT name FROM sqlite_master WHERE type = 'index' AND name NOT LIKE 'sqlite_%'"
+              )
+              .values() as [string][]
+          ).map(([n]) => n)
+        );
+      expect(indexes().has("idx_fleet_tail")).toBe(true);
+      expect(() => migrate(db)).not.toThrow();
+      const once = indexes();
+      expect(() => migrate(db)).not.toThrow();
+      expect(indexes()).toEqual(once);
+      for (const kept of ["idx_upf_route", "idx_vlog_flight", "idx_upf_tail"]) {
+        expect(once.has(kept), kept).toBe(true);
+      }
+      for (const dropped of [
+        "idx_fleet_tail",
+        "idx_qs_flight",
+        "idx_dl_airport",
+        "idx_fleet_discovery",
+      ]) {
+        expect(once.has(dropped), dropped).toBe(false);
+      }
+      const stats = db.query("SELECT COUNT(*) AS n FROM sqlite_stat1").get() as { n: number };
+      expect(stats.n).toBeGreaterThan(0);
+    } finally {
+      db.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test("new Alaska SkyWest listings carry the SkyWest label", () => {
