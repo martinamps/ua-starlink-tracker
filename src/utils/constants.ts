@@ -87,10 +87,13 @@ export const BASE_RESPONSE_HEADERS: Record<string, string> = {
   "Content-Security-Policy": "default-src 'none'",
 };
 
+/** The one wildcard origin every CORS-open surface grants. */
+export const CORS_ANY_ORIGIN = { "Access-Control-Allow-Origin": "*" } as const;
+
 // The /api/* CORS contract (Chrome extension + Google Flights embedding).
 // Spread into SECURITY_HEADERS.api and mirrored verbatim by OPTIONS preflight.
 export const API_CORS_HEADERS: Record<string, string> = {
-  "Access-Control-Allow-Origin": "*",
+  ...CORS_ANY_ORIGIN,
   "Access-Control-Allow-Methods": "GET, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type",
 };

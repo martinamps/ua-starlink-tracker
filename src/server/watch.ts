@@ -28,20 +28,19 @@ import { COUNTERS, metrics, normalizeAirlineTag } from "../observability/metrics
 import { flightDateWindow, isRealIsoDate } from "../utils/airport-tz";
 import { type WatchVerdict, buildWatchIcs, watchFeedEnabled, watchFeedState } from "../utils/ics";
 import { type RequestContext, type ScopedReader, tenantConfig } from "./context";
+import { CACHE, CORS_ANY_ORIGIN, text } from "./respond";
 
 /** Past this, schedules aren't loaded and the feed would only restate the prior. */
 const WATCH_MAX_DAYS_OUT = 330;
 /** Alternatives only mean something while the schedule for that day is loaded. */
 const ALTERNATIVES_MAX_DAYS_OUT = 1;
 
-const WATCH_NOT_FOUND_HEADERS = {
-  "Content-Type": "text/plain; charset=utf-8",
-  "X-Robots-Tag": "noindex",
-  "Cache-Control": "public, max-age=300",
-};
-
 function watchNotFound(): Response {
-  return new Response("Not found", { status: 404, headers: WATCH_NOT_FOUND_HEADERS });
+  return text("Not found", "text/plain; charset=utf-8", {
+    status: 404,
+    cache: CACHE.fiveMinutes,
+    headers: { "X-Robots-Tag": "noindex" },
+  });
 }
 
 export function parseWatchPath(
@@ -287,12 +286,6 @@ export function recordWatchCtaShown(req: Request, site: SiteConfig, cfg: Airline
 }
 
 export async function watchFeed(ctx: RequestContext): Promise<Response> {
-  if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") {
-    return new Response("Method not allowed", {
-      status: 405,
-      headers: { "Content-Type": "text/plain" },
-    });
-  }
   const cfg = tenantConfig(ctx.tenant);
   if (!cfg || !watchFeedEnabled(ctx.site)) return watchNotFound();
   const parsed = parseWatchPath(cfg, ctx.url.pathname);
@@ -338,9 +331,9 @@ export async function watchFeed(ctx: RequestContext): Promise<Response> {
     headers: {
       "Content-Type": "text/calendar; charset=utf-8",
       "Content-Disposition": `inline; filename="starlink-watch-${parsed.fn}-${parsed.date}.ics"`,
-      "Cache-Control": "public, max-age=900",
+      "Cache-Control": CACHE.fifteenMinutes,
       "X-Robots-Tag": "noindex",
-      "Access-Control-Allow-Origin": "*",
+      ...CORS_ANY_ORIGIN,
     },
   });
 }
