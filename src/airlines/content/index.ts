@@ -103,5 +103,5 @@ export function buildFaqJsonLd(content: AirlineContent, currentDate: string): st
     dateModified: currentDate,
     mainEntity: entities,
   });
-  return `<script type="application/ld+json">${json}</script>`;
+  return `<script type="application/ld+json">${json.replace(/</g, "\\u003c")}</script>`;
 }

@@ -10,6 +10,7 @@
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createApp } from "../src/server/app";
+import { AIRPORT_TZ } from "../src/utils/airport-tz";
 import { addFleet, addFlight, addPlane, makeSyntheticDb, req } from "./helpers";
 
 const UA_HOST = "unitedstarlinktracker.com";
@@ -294,10 +295,30 @@ describe("the pill states a departure the permalink page agrees with", () => {
       expect(stamped).not.toBeNull();
       expect(p.ariaLabel).toContain(`departs ${stamped?.[1]} ${stamped?.[2]} UTC`);
 
-      const page = await app.dispatch(req(p.href, UA_HOST)).then((r) => r.text());
-      const onPage = page.match(/[A-Z][a-z]{2} \d{1,2} · (\d{2}:\d{2}) UTC/);
+      // The permalink reads the departure airport's own clock (the date the
+      // checker answers for); it must be the same instant the pill names.
+      const epoch = Object.values(seedFlightTimes).find(
+        (t) => new Date(t * 1000).toISOString().slice(11, 16) === stamped?.[2]
+      );
+      expect(epoch).toBeDefined();
+      const page = (await app.dispatch(req(p.href, UA_HOST)).then((r) => r.text())).replace(
+        /<!-- -->/g,
+        ""
+      );
+      const onPage = page.match(/([A-Z]{3}) → [A-Z]{3}<span[^>]*> · ([^<]+)<\/span>/);
       expect(onPage).not.toBeNull();
-      expect(stamped?.[2]).toBe(onPage?.[1] as string);
+      const zone = AIRPORT_TZ[onPage?.[1] as string];
+      expect(zone).toBeDefined();
+      const local = new Intl.DateTimeFormat("en-US", {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+        timeZoneName: "short",
+        timeZone: zone,
+      }).format(new Date((epoch as number) * 1000));
+      expect(onPage?.[2]).toBe(local);
     }
   });
 

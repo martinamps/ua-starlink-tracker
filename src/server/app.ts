@@ -108,6 +108,7 @@ import {
   qatarHistoryReason,
   qatarNoDataReason,
 } from "../api/qatar-verdict";
+import { clientScriptResponse } from "../client/bundle";
 import AircraftTypePage from "../components/aircraft-type-page";
 import {
   AirlineDetailPage,
@@ -120,6 +121,7 @@ import {
 } from "../components/airlines-page";
 import type { PageLink } from "../components/atoms";
 import CheckFlightPage, {
+  type DatedAnswer,
   type FlightFacts,
   type InvalidFlightQuery,
 } from "../components/check-flight-page";
@@ -130,6 +132,7 @@ import {
 } from "../components/community-airline-page";
 import ComparePage, { type CompareSide } from "../components/compare-page";
 import EmbedPage from "../components/embed-page";
+import { breadcrumbJsonLd, faqJsonLd, jsonLdString } from "../components/faq";
 import FleetPage, { type FleetTypeLink } from "../components/fleet-page";
 import HowToCheckPage from "../components/how-to-check-page";
 import InstallRatePage, { type AirlineInstallRate } from "../components/install-rate-page";
@@ -345,8 +348,7 @@ function analyticsSnippet(site: SiteConfig): string {
 }
 
 function jsonLdBlock(payload: unknown): string {
-  // Escape `<` so a `</script>` in any string value can't terminate the block.
-  return `<script type="application/ld+json">${JSON.stringify(payload).replace(/</g, "\\u003c")}</script>`;
+  return `<script type="application/ld+json">${jsonLdString(payload)}</script>`;
 }
 
 function chromeExtensionJsonLd(site: SiteConfig): string {
@@ -1001,95 +1003,111 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant, si
   ) {
     return qatarCheckFlightResponse(verdict);
   }
+  if (verdict.kind === "prediction") recordPrediction(verdict.pred, cfg.code);
 
+  return new Response(
+    JSON.stringify(checkFlightBody(cfg, carrier.reader, verdict, date, hubAirline)),
+    { headers: SECURITY_HEADERS.api }
+  );
+};
+
+type CheckFlightVerdict = Exclude<
+  Awaited<ReturnType<typeof resolveFlightVerdict>>,
+  | { kind: "invalid_date" }
+  | { kind: "invalid_flight_number" }
+  | { kind: "qatar" }
+  | { kind: "qatar_no_data" }
+  | { kind: "qatar_history" }
+>;
+
+/**
+ * The /api/check-flight body for an answered, non-Qatar verdict. Separate
+ * from the handler so the dated permalink renders its answer card from the
+ * same object the extension and the page's live re-check receive.
+ */
+function checkFlightBody(
+  cfg: AirlineConfig,
+  reader: ScopedReader,
+  verdict: CheckFlightVerdict,
+  date: string,
+  hubAirline: { airline?: string }
+): Record<string, unknown> {
   switch (verdict.kind) {
     case "scheduled": {
       // Only a leg adds a message here, so the unscoped body keeps its bytes.
       const note = legNote(verdict);
-      return new Response(
-        JSON.stringify({
-          hasStarlink: true,
-          ...hubAirline,
-          confidence: verdictConfidence(verdict),
-          ...(note ? { message: `${legPrefix(verdict)}Starlink-equipped. ${note}` } : {}),
-          ...legField(verdict),
-          flights: scheduledFlights(verdict).map((flight) =>
-            checkFlightWireFlight({
-              tail_number: flight.tail_number,
-              aircraft_type: flight.aircraft_type,
-              flight_number: flight.flight_number,
-              ua_flight_number: normalizeAirlineFlightNumber(cfg, flight.flight_number),
-              departure_airport: flight.departure_airport,
-              arrival_airport: flight.arrival_airport,
-              departure_time: flight.departure_time,
-              arrival_time: flight.arrival_time,
-              operated_by: flight.OperatedBy,
-              fleet_type: flight.fleet,
-            })
-          ),
-        }),
-        { headers: SECURITY_HEADERS.api }
-      );
+      return {
+        hasStarlink: true,
+        ...hubAirline,
+        confidence: verdictConfidence(verdict),
+        ...(note ? { message: `${legPrefix(verdict)}Starlink-equipped. ${note}` } : {}),
+        ...legField(verdict),
+        flights: scheduledFlights(verdict).map((flight) =>
+          checkFlightWireFlight({
+            tail_number: flight.tail_number,
+            aircraft_type: flight.aircraft_type,
+            flight_number: flight.flight_number,
+            ua_flight_number: normalizeAirlineFlightNumber(cfg, flight.flight_number),
+            departure_airport: flight.departure_airport,
+            arrival_airport: flight.arrival_airport,
+            departure_time: flight.departure_time,
+            arrival_time: flight.arrival_time,
+            operated_by: flight.OperatedBy,
+            fleet_type: flight.fleet,
+          })
+        ),
+      };
     }
     case "scheduled_no": {
       const f = verdict.flights[0];
-      return new Response(
-        JSON.stringify({
-          hasStarlink: false,
-          ...hubAirline,
-          confidence: "verified",
-          message: withLegNote(
-            `${legSubject(verdict)} is assigned to tail ${f.tail_number}, verified as ${negativeWifi(f)} WiFi — not Starlink.${verdict.fr24Error ? ` ${SWAP_DEGRADED_NOTE}` : ""}`,
-            verdict
-          ),
-          ...legField(verdict),
-          flights: [],
-          ...sameDayAlternatives(carrier.reader, verdict, date),
-        }),
-        { headers: SECURITY_HEADERS.api }
-      );
+      return {
+        hasStarlink: false,
+        ...hubAirline,
+        confidence: "verified",
+        message: withLegNote(
+          `${legSubject(verdict)} is assigned to tail ${f.tail_number}, verified as ${negativeWifi(f)} WiFi — not Starlink.${verdict.fr24Error ? ` ${SWAP_DEGRADED_NOTE}` : ""}`,
+          verdict
+        ),
+        ...legField(verdict),
+        flights: [],
+        ...sameDayAlternatives(reader, verdict, date),
+      };
     }
     case "fr24": {
       const note = legNote(verdict);
-      return new Response(
-        JSON.stringify({
-          hasStarlink: true,
-          ...hubAirline,
-          confidence: verdictConfidence(verdict),
-          method: "fr24_tail_lookup",
-          ...(note ? { message: `${legPrefix(verdict)}Starlink-equipped. ${note}` } : {}),
-          ...legField(verdict),
-          flights: verdict.starlink.map((s) =>
-            checkFlightWireFlight({
-              tail_number: s.tail_number,
-              aircraft_type: s.aircraft_model,
-              flight_number: verdict.normalized,
-              ua_flight_number: verdict.normalized,
-              departure_airport: s.origin,
-              arrival_airport: s.destination,
-              departure_time: s.departure_time,
-              arrival_time: s.arrival_time,
-              operated_by: s.operated_by ?? null,
-              fleet_type: s.fleet_type ?? null,
-            })
-          ),
-        }),
-        { headers: SECURITY_HEADERS.api }
-      );
+      return {
+        hasStarlink: true,
+        ...hubAirline,
+        confidence: verdictConfidence(verdict),
+        method: "fr24_tail_lookup",
+        ...(note ? { message: `${legPrefix(verdict)}Starlink-equipped. ${note}` } : {}),
+        ...legField(verdict),
+        flights: verdict.starlink.map((s) =>
+          checkFlightWireFlight({
+            tail_number: s.tail_number,
+            aircraft_type: s.aircraft_model,
+            flight_number: verdict.normalized,
+            ua_flight_number: verdict.normalized,
+            departure_airport: s.origin,
+            arrival_airport: s.destination,
+            departure_time: s.departure_time,
+            arrival_time: s.arrival_time,
+            operated_by: s.operated_by ?? null,
+            fleet_type: s.fleet_type ?? null,
+          })
+        ),
+      };
     }
     case "fr24_no": {
-      return new Response(
-        JSON.stringify({
-          hasStarlink: false,
-          ...hubAirline,
-          method: "fr24_tail_lookup",
-          ...legField(verdict),
-          flights: [],
-          fallback: { segments: verdict.segments },
-          ...sameDayAlternatives(carrier.reader, verdict, date),
-        }),
-        { headers: SECURITY_HEADERS.api }
-      );
+      return {
+        hasStarlink: false,
+        ...hubAirline,
+        method: "fr24_tail_lookup",
+        ...legField(verdict),
+        flights: [],
+        fallback: { segments: verdict.segments },
+        ...sameDayAlternatives(reader, verdict, date),
+      };
     }
     case "no_model": {
       // Same outage honesty as the prediction branch: "no assignment data"
@@ -1100,21 +1118,18 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant, si
           : describeCarrierPrediction(cfg, verdict.answer, { date }),
         verdict
       );
-      return new Response(
-        JSON.stringify({
-          hasStarlink: null,
-          ...hubAirline,
-          confidence: noModelConfidence(verdict.answer),
-          ...(verdict.answer.kind === "penetration"
-            ? { prediction: { probability: verdict.answer.pen.pct } }
-            : {}),
-          ...communityWireFields(verdict.answer),
-          message,
-          ...legField(verdict),
-          flights: [],
-        }),
-        { headers: SECURITY_HEADERS.api }
-      );
+      return {
+        hasStarlink: null,
+        ...hubAirline,
+        confidence: noModelConfidence(verdict.answer),
+        ...(verdict.answer.kind === "penetration"
+          ? { prediction: { probability: verdict.answer.pen.pct } }
+          : {}),
+        ...communityWireFields(verdict.answer),
+        message,
+        ...legField(verdict),
+        flights: [],
+      };
     }
     case "prediction": {
       // No assignment anywhere — tails aren't published until ~2 days out, so
@@ -1125,7 +1140,6 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant, si
       // reads `hasStarlink || false` so null is behaviourally identical for it,
       // and null is already part of this contract (no_model, type branches).
       const pred = verdict.pred;
-      recordPrediction(pred, cfg.code);
       const pct = Math.round(pred.probability * 100);
       // During an FR24 outage we genuinely don't know whether an assignment
       // exists — don't claim it isn't published yet. Nor when other legs of
@@ -1138,35 +1152,32 @@ const apiCheckFlight: Handler = async ({ req, url, reader, getReader, tenant, si
           : verdict.window.daysOut < -1
             ? `No aircraft assignment on record — ${date} has already passed. `
             : `Aircraft assignment not yet published — ${cfg.name} assigns aircraft ~2 days before departure. `;
-      return new Response(
-        JSON.stringify({
-          hasStarlink: null,
-          ...hubAirline,
-          confidence: "predicted",
-          prediction: {
-            probability: pred.probability,
-            confidence: pred.confidence,
-            n_observations: pred.n_observations,
-            n_recent_observations: pred.n_recent_observations,
-          },
-          message: withLegNote(
-            pred.n_observations > 0
-              ? `${assignmentNote}~${pct}% of observed departures of this flight used a Starlink-equipped aircraft (${pred.n_observations} observation${pred.n_observations === 1 ? "" : "s"}).`
-              : `${assignmentNote}${coldPredictionNote(pred, pct)}`,
-            verdict
-          ),
-          ...legField(verdict),
-          flights: [],
-        }),
-        { headers: SECURITY_HEADERS.api }
-      );
+      return {
+        hasStarlink: null,
+        ...hubAirline,
+        confidence: "predicted",
+        prediction: {
+          probability: pred.probability,
+          confidence: pred.confidence,
+          n_observations: pred.n_observations,
+          n_recent_observations: pred.n_recent_observations,
+        },
+        message: withLegNote(
+          pred.n_observations > 0
+            ? `${assignmentNote}~${pct}% of observed departures of this flight used a Starlink-equipped aircraft (${pred.n_observations} observation${pred.n_observations === 1 ? "" : "s"}).`
+            : `${assignmentNote}${coldPredictionNote(pred, pct)}`,
+          verdict
+        ),
+        ...legField(verdict),
+        flights: [],
+      };
     }
     default: {
       const exhaustive: never = verdict;
       return exhaustive;
     }
   }
-};
+}
 
 function sameDayAlternatives(
   reader: ScopedReader,
@@ -3117,7 +3128,44 @@ function unknownFlightMeta(flightNumber: string, cfg: AirlineConfig): PageMeta {
   };
 }
 
-const checkFlightPage: Handler = (ctx) => {
+/**
+ * The answer a dated permalink renders server-side: the /api/check-flight
+ * body from the database alone (no FR24 reverse lookup in the page request).
+ * The page's script re-asks the API when this is only a prediction near
+ * departure. Null for answers the card doesn't render (Qatar, bad input).
+ */
+async function datedAnswer(
+  cfg: AirlineConfig,
+  reader: ScopedReader,
+  flightNumber: string,
+  date: string
+): Promise<DatedAnswer | undefined> {
+  try {
+    const verdict = await resolveFlightVerdict(cfg, reader, flightNumber, date, {
+      lookupTail: null,
+    });
+    if (
+      verdict.kind === "invalid_date" ||
+      verdict.kind === "invalid_flight_number" ||
+      verdict.kind === "qatar" ||
+      verdict.kind === "qatar_no_data" ||
+      verdict.kind === "qatar_history"
+    ) {
+      return undefined;
+    }
+    return {
+      flightNumber,
+      date,
+      daysOut: verdict.window.daysOut,
+      body: checkFlightBody(cfg, reader, verdict, date, {}) as DatedAnswer["body"],
+    };
+  } catch (err) {
+    logError(`Dated answer failed for ${flightNumber} ${date}`, err);
+    return undefined;
+  }
+}
+
+const checkFlightPage: Handler = async (ctx) => {
   if (ctx.req.method !== "GET" && ctx.req.method !== "HEAD") return methodNotAllowed();
   if (!ctx.site.features.checkFlightPage) {
     return notFound(ctx.site);
@@ -3179,6 +3227,7 @@ const checkFlightPage: Handler = (ctx) => {
     // noindex keeps it out of the index (the sitemap never advertises ungated
     // flights), and the canonical stays on this URL so the noindex lands here
     // rather than on the conversion page.
+    const dated = date ? await datedAnswer(cfg, reader, fn, date) : undefined;
     if (!reader.flightNumberHasData(variants)) {
       return renderSubPage(
         ctx,
@@ -3186,7 +3235,7 @@ const checkFlightPage: Handler = (ctx) => {
         ctx.url.pathname,
         unknownFlightMeta(fn, cfg),
         // noindex but follow: hand the crawler somewhere real to go.
-        { popular: reader.getPopularFlights(), noindex: true }
+        { popular: reader.getPopularFlights(), noindex: true, dated }
       );
     }
     const facts = buildFlightFacts(reader, cfg, fn, variants);
@@ -3195,8 +3244,18 @@ const checkFlightPage: Handler = (ctx) => {
       CheckFlightPage,
       `/check-flight/${fn}`,
       flightPageMeta(ctx, reader, fn, cfg, facts),
-      { flight: { ...facts, aircraftTypeLinks: aircraftTypeLinks(ctx, facts.aircraftTypes) } }
+      {
+        flight: { ...facts, aircraftTypeLinks: aircraftTypeLinks(ctx, facts.aircraftTypes) },
+        dated,
+      }
     );
+  }
+  // The search form's no-JS submit: land on the permalink it would have built.
+  const queried = ctx.url.searchParams.get("flight_number")?.trim();
+  if (ctx.url.pathname === "/check-flight" && queried) {
+    const qDate = ctx.url.searchParams.get("date") ?? "";
+    const target = `/check-flight/${encodeURIComponent(canonicalFlightInput(queried))}${isRealIsoDate(qDate) ? `/${qDate}` : ""}`;
+    return Response.redirect(`https://${ctx.site.canonicalHost}${target}`, 302);
   }
   if (ctx.url.pathname !== "/check-flight") {
     return Response.redirect(
@@ -3484,38 +3543,16 @@ function aircraftTypeMeta(
       : "";
   const description = `${answer.headline} ${answer.sentence}${pipelineClause} Every tail, where they fly, and how to check your flight.`;
   const canonical = `https://${ctx.site.canonicalHost}/fleet/${def.slug}`;
-  const breadcrumb = jsonLdBlock({
-    "@context": "https://schema.org",
-    "@type": "BreadcrumbList",
-    itemListElement: [
-      {
-        "@type": "ListItem",
-        position: 1,
-        name: "Home",
-        item: `https://${ctx.site.canonicalHost}/`,
-      },
-      {
-        "@type": "ListItem",
-        position: 2,
-        name: "Fleet",
-        item: `https://${ctx.site.canonicalHost}/fleet`,
-      },
-      { "@type": "ListItem", position: 3, name: def.name, item: canonical },
-    ],
-  });
+  const breadcrumb = jsonLdBlock(
+    breadcrumbJsonLd(ctx.site.canonicalHost, [
+      { name: "Home", path: "/" },
+      { name: "Fleet", path: "/fleet" },
+      { name: def.name, path: `/fleet/${def.slug}` },
+    ])
+  );
   // Only where the page is indexable: a noindex page gets no structured-data
   // surface, and the entities are the visible FAQ verbatim.
-  const faqLd = answer.indexable
-    ? jsonLdBlock({
-        "@context": "https://schema.org",
-        "@type": "FAQPage",
-        mainEntity: faq.map((item) => ({
-          "@type": "Question",
-          name: item.q,
-          acceptedAnswer: { "@type": "Answer", text: item.a },
-        })),
-      })
-    : "";
+  const faqLd = answer.indexable ? jsonLdBlock(faqJsonLd(faq)) : "";
   const short = def.short.toLowerCase();
   const brand = airline.toLowerCase();
   return {
@@ -4592,6 +4629,8 @@ export function createApp(db: Database): App {
       // that don't vary by Host.
       const staticRes = staticResponses.get(url.pathname);
       if (staticRes) return finalizeResponse(staticRes.clone(), false);
+      const scriptRes = clientScriptResponse(url.pathname);
+      if (scriptRes) return finalizeResponse(scriptRes, false);
 
       return finalizeResponse(await dispatchTenant(req, url), true);
     } catch (err) {

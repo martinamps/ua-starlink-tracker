@@ -9,6 +9,7 @@ import ReactDOMServer from "react-dom/server";
 import { getContent } from "../src/airlines/content";
 import { AIRLINES, SITES, publicAirlines, wifiPhaseFamilies } from "../src/airlines/registry";
 import { factsBySlug } from "../src/airlines/rollout-facts";
+import { renderFlightAnswer } from "../src/client/flight-answer";
 import CheckFlightPage, { type FlightFacts } from "../src/components/check-flight-page";
 import { monthLabel } from "../src/components/install-rate-page";
 import { LIVE_TV_TARGET_FACT } from "../src/components/live-tv-page";
@@ -42,16 +43,41 @@ describe("install-rate dates", () => {
 });
 
 describe("check-flight permalink", () => {
-  test("departure times render in the departure airport's zone", async () => {
-    const { text } = await bodyOf(app, "/check-flight/UA2638", UA);
-    expect(text).toContain('"America/Denver":"');
-    expect(text).toContain("localTime(flight.departure_time, flight.departure_airport)");
-    expect(text).not.toContain(
-      "toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })"
+  test("departure times render in the departure airport's zone", () => {
+    // 2026-01-15 15:00 UTC is 07:00 in Los Angeles, 10:00 in New York.
+    const dep = Date.UTC(2026, 0, 15, 15, 0) / 1000;
+    const answer = renderFlightAnswer(
+      {
+        hasStarlink: true,
+        confidence: "verified",
+        flights: [
+          {
+            tail_number: "N1",
+            flight_number: "UA1",
+            departure_airport: "SFO",
+            arrival_airport: "EWR",
+            departure_time: dep,
+          },
+        ],
+      },
+      {
+        flightNumber: "UA1",
+        date: "2026-01-15",
+        daysOut: 0,
+        nowSec: dep,
+        airlineName: "United Airlines",
+        zoneFor: (c) => (c === "SFO" ? "America/Los_Angeles" : undefined),
+        liveTv: null,
+        watchEnabled: false,
+        routePlannerEnabled: false,
+        host: UA,
+      }
     );
+    expect(answer.html).toMatch(/7:00\sAM PST/);
+    expect(answer.headline).toContain("UA1 on Jan 15");
   });
 
-  test("the observed tally is labelled as verified departures, not the model's history", () => {
+  test("the observed tally is labelled as Wi-Fi checks, not departures", () => {
     const flight: FlightFacts = {
       flightNumber: "UA2638",
       airlineName: "United Airlines",
@@ -65,9 +91,11 @@ describe("check-flight permalink", () => {
     };
     const html = ReactDOMServer.renderToString(
       React.createElement(CheckFlightPage, { site: SITES.united, flight })
-    ).replace(/<!-- -->/g, "");
-    expect(html).toContain("13 of 29 recently verified departures");
-    expect(html).not.toContain("observed departures (");
+    )
+      .replace(/<!-- -->/g, "")
+      .replace(/<[^>]+>/g, "");
+    expect(html).toContain("13 of 29 Wi-Fi checks");
+    expect(html).not.toMatch(/\d+ of \d+ [a-z ]*departures/);
   });
 });
 
