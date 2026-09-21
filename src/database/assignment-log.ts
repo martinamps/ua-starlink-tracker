@@ -22,6 +22,7 @@ import type { Flight } from "../types";
 import { airportLocalDate, icaoToIata } from "../utils/airport-tz";
 import { equippedSql, starlinkFlag, tailEvidence } from "./sql/equipped";
 import { airlineIn, placeholders } from "./sql/fragments";
+import { DAY_SEC } from "./sql/windows";
 
 export const ASSIGNMENT_LOG_DDL = `
   CREATE TABLE IF NOT EXISTS flight_assignment_log (
@@ -180,7 +181,7 @@ export function logResolvedAssignments(
 
 export function pruneAssignmentLog(db: Database, now: number): void {
   db.query("DELETE FROM flight_assignment_log WHERE dep_date < ?").run(
-    utcDate(now - ASSIGNMENT_LOG_RETENTION_DAYS * 86400)
+    utcDate(now - ASSIGNMENT_LOG_RETENTION_DAYS * DAY_SEC)
   );
 }
 

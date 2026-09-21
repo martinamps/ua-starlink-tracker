@@ -78,6 +78,11 @@ export function equippedSql(sp: string): string {
     )`;
 }
 
+/** SQL: equipped and observed on Starlink (evidence 3), the "verified" tier. */
+export function verifiedEquippedSql(sp: string): string {
+  return `${sp}.verified_wifi = 'Starlink' AND ${equippedSql(sp)}`;
+}
+
 /** SQL: the tail in `tailExpr` has an equipped listing (under `airlineExpr`, when given). */
 export function tailEquippedSql(tailExpr: string, airlineExpr?: string): string {
   const scope = airlineExpr ? ` AND _eq.airline = ${airlineExpr}` : "";

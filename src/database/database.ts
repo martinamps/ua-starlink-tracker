@@ -81,12 +81,19 @@ import { debug, info, error as logError, warn } from "../utils/logger";
 import { ensureAdsbFlightDrawsTable } from "./adsb-flight-draws";
 import { ASSIGNMENT_LOG_DDL, logFlightAssignments, pruneAssignmentLog } from "./assignment-log";
 import { countRoster, fleetRoster, programmeRoster } from "./roster";
-import { equippedSql, fleetStatusFromWifi, settledNegativeJoin } from "./sql/equipped";
+import {
+  equippedSql,
+  fleetStatusFromWifi,
+  rowEvidence,
+  settledNegativeJoin,
+  verifiedEquippedSql,
+} from "./sql/equipped";
 
 import {
   type AirlineFilter,
   ROUTE_AIRPORT_RE,
   airlineCodes,
+  airlineIn,
   cleanAirportPairSql,
   filterKey,
   flightNumberGlob,
@@ -115,8 +122,7 @@ type MetaRow = { value: string };
 
 /**
  * Open a connection, no schema work. A process opens one handle and shares
- * it: every open re-prepares statements, and jobs used to reopen (and
- * re-migrate) per tick — six times per 22.5s flight-updater loop.
+ * it: every open re-prepares statements.
  */
 export function openDatabase(path = DB_PATH): Database {
   const db = new Database(path);
@@ -894,11 +900,8 @@ function ensureIndexes(db: Database): void {
     CREATE INDEX IF NOT EXISTS idx_upf_tail     ON upcoming_flights(tail_number);
   `);
 
-  // Backfill for databases created before the query()-drops-statement-2 bug was
-  // fixed above: their tables already exist, so the CREATE TABLE blocks never
-  // re-run and the indexes would stay missing forever. Verified absent in
-  // production (idx_dl_departed, idx_fr_flight, idx_fr_route, idx_qs_*) while
-  // sibling indexes written as their own statement are present.
+  // Also declared beside their tables, whose CREATE blocks only run on a new
+  // database: an existing one gets them here.
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_dl_departed ON departure_log(departed_at);
     CREATE INDEX IF NOT EXISTS idx_ff_airline  ON first_flights(airline, departed_at);
@@ -1853,10 +1856,8 @@ export function archivePastDepartures(db: Database, now = unixNow(), tailNumber?
          )`
     )
     .run(...params).changes;
-  // The 30-day trim lives with the other departure_log writes. It used to run
-  // inside getAirportDepartures — a DELETE taking a WAL write lock on every
-  // homepage render, ~4,200 write transactions/day on the read path — and
-  // then on every per-tail refresh.
+  // The 30-day trim runs on the full sweep only: a DELETE takes the WAL write
+  // lock, so it stays off the read path and off every per-tail refresh.
   if (!tailNumber) {
     db.query("DELETE FROM departure_log WHERE departed_at < ?").run(now - TRAILING_WINDOW_SEC);
     pruneAssignmentLog(db, now);
@@ -2092,7 +2093,7 @@ export function getConfirmedStarlinkEdges(
     `SELECT DISTINCT uf.flight_number, uf.departure_airport, uf.arrival_airport, uf.departure_time, sp.fleet
      FROM upcoming_flights uf
      JOIN starlink_planes sp ON uf.tail_number = sp.TailNumber
-     WHERE sp.verified_wifi = 'Starlink' AND ${equippedSql("sp")}
+     WHERE ${verifiedEquippedSql("sp")}
        AND uf.departure_time >= ? AND uf.departure_time < ?`,
     airline,
     "uf",
@@ -2678,7 +2679,7 @@ export function getObservationAnchor(db: Database, airline: string, now = unixNo
 
 function sitemapStaleCutoff(db: Database, airline: string): number {
   const anchor = getObservationAnchor(db, airline);
-  return anchor > 0 ? anchor - SITEMAP_STALE_DAYS * 86400 : 0;
+  return anchor > 0 ? anchor - SITEMAP_STALE_DAYS * DAY_SEC : 0;
 }
 
 // last_touched 0 means unknown (see SitemapFlight), which is not evidence of staleness.
@@ -2753,7 +2754,7 @@ export function routeIsHistorical(
     )
     .get(origin, destination, prefixGlob(cfg.iata), anchor) as { t: number | null } | null;
   const last = row?.t ?? 0;
-  return last > 0 && anchor - last > ROUTE_NOINDEX_STALE_DAYS * 86400;
+  return last > 0 && anchor - last > ROUTE_NOINDEX_STALE_DAYS * DAY_SEC;
 }
 
 export interface RouteSummary {
@@ -3022,7 +3023,7 @@ export function getFlightRoutePairs(
      FROM upcoming_flights WHERE flight_number IN (${ph})`,
     airline,
     "",
-    [now - 86400, ...variants]
+    [now - DAY_SEC, ...variants]
   );
   const rows = db
     .query(
@@ -3307,7 +3308,7 @@ export function logVerification(
  * holds.
  */
 export function pruneCrashRows(db: Database): number {
-  const cutoff = unixNow() - 7 * 86400;
+  const cutoff = unixNow() - 7 * DAY_SEC;
   const result = db
     .query(`
       DELETE FROM starlink_verification_log
@@ -5077,7 +5078,7 @@ export function insertPipelineEvents(
   events: Array<Omit<PipelineEventRow, "airline" | "observed_at">>
 ): number {
   const now = unixNow();
-  const cutoff = now - 14 * 86400;
+  const cutoff = now - 14 * DAY_SEC;
   let inserted = 0;
   db.transaction(() => {
     for (const e of events) {
@@ -5421,8 +5422,8 @@ export function recordAdsbSweep(
   sweep: AdsbSweepRecord,
   observations: Array<Omit<AdsbObservationRecord, "id">>
 ): void {
-  const obsCutoff = sweep.swept_at - ADSB_OBSERVATION_RETENTION_DAYS * 86400;
-  const sweepCutoff = sweep.swept_at - ADSB_SWEEP_RETENTION_DAYS * 86400;
+  const obsCutoff = sweep.swept_at - ADSB_OBSERVATION_RETENTION_DAYS * DAY_SEC;
+  const sweepCutoff = sweep.swept_at - ADSB_SWEEP_RETENTION_DAYS * DAY_SEC;
   db.transaction(() => {
     db.query(`
       INSERT INTO adsb_sweeps
@@ -5568,18 +5569,20 @@ export type DepartureSlot = Flight & {
  * numbers (AS832 on a Hawaiian A330 is an Alaska departure).
  */
 function slotScope(airline: AirlineFilter, partners: boolean): { sql: string; params: string[] } {
-  const codes = airline === undefined ? null : typeof airline === "string" ? [airline] : airline;
-  if (codes === null) return { sql: "1=1", params: [] };
-  if (codes.length === 0) return { sql: "1=0", params: [] };
-  const own = { sql: `uf.airline IN (${placeholders(codes)})`, params: [...codes] };
+  if (airline === undefined) return { sql: "1=1", params: [] };
+  const codes = typeof airline === "string" ? [airline] : airline;
+  const own = airlineIn(codes, "uf.airline");
   const cfg = codes.length === 1 ? AIRLINES[codes[0]] : undefined;
   const partnerCodes = partners ? (cfg?.operatingPartners ?? []) : [];
   if (!cfg || partnerCodes.length === 0) return own;
-  const prefixes = [...new Set([cfg.iata, cfg.icao, ...cfg.carrierPrefixes])];
+  const partner = airlineIn(partnerCodes, "uf.airline");
+  const marketed = flightNumberGlob(
+    [...new Set([cfg.iata, cfg.icao, ...cfg.carrierPrefixes])],
+    "uf.flight_number"
+  );
   return {
-    sql: `(${own.sql} OR (uf.airline IN (${placeholders(partnerCodes)})
-            AND (${prefixes.map(() => "uf.flight_number GLOB ?").join(" OR ")})))`,
-    params: [...own.params, ...partnerCodes, ...prefixes.map((p) => prefixGlob(p))],
+    sql: `(${own.sql} OR (${partner.sql} AND (${marketed.clause})))`,
+    params: [...own.params, ...partner.params, ...marketed.params],
   };
 }
 
@@ -5670,7 +5673,7 @@ export function getRouteDepartures(
             departure_time: r.departure_time,
             tail_number: r.tail_number,
             aircraft_type: r.aircraft_type ?? null,
-            verified: r.verified_wifi === "Starlink",
+            verified: rowEvidence(r) === "verified",
           },
         ]
       : []
@@ -5940,7 +5943,7 @@ function computePulse(db: Database, airline?: AirlineFilter): FleetPageData["pul
   const winCap = nowSec + 66 * 3600;
 
   // A flight airborne at winStart departed before it; no leg is longer than a day.
-  const slots = departureSlots(airline, { from: winStart - 86400, to: winCap + 1 });
+  const slots = departureSlots(airline, { from: winStart - DAY_SEC, to: winCap + 1 });
   const flights = db
     .query(
       `SELECT d.departure_time AS d, d.arrival_time AS a FROM ${slots.sql} d
@@ -6389,7 +6392,7 @@ export function pruneQatarFetchCoverage(db: Database, beforeDate: string): numbe
   return db.query("DELETE FROM qatar_fetch_coverage WHERE fetch_date < ?").run(beforeDate).changes;
 }
 
-export const UPCOMING_PRUNE_AGE_SEC = 2 * 86400;
+export const UPCOMING_PRUNE_AGE_SEC = 2 * DAY_SEC;
 
 /**
  * Drop upcoming_flights rows that departed over two days ago. The per-tail
@@ -6441,7 +6444,7 @@ const TYPE_RECENT_INSTALLS = 12;
 // A sheet the hourly scrape hasn't refreshed in two weeks is no longer a
 // pipeline, just an old number. Measured against the verifier's own clock, so
 // a broken scrape drops the section while snapshot reads stay deterministic.
-const SHEET_STALE_SEC = 14 * 86400;
+const SHEET_STALE_SEC = 14 * DAY_SEC;
 // "Flights that usually get a {type}": the type must carry most of the flight
 // number's observed tail-days, or the list names flights that mostly don't.
 const TYPE_FLIGHT_MIN_SHARE = 0.5;

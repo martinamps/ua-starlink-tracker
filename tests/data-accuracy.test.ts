@@ -5,10 +5,12 @@
 
 import type { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
+import { OBSERVED_WIFI_SOURCES } from "../src/airlines/registry";
 import { logFlightAssignments } from "../src/database/assignment-log";
 import {
   addDiscoveredStarlinkPlane,
   backfillAlaskaSkyWestOperator,
+  computeWifiConsensus,
   demoteRetrofittedNegatives,
   getFirstFlights,
   getFleetPageData,
@@ -108,6 +110,87 @@ describe("a negative settle yields to a retrofit", () => {
     for (const hour of [1, 2, 3]) {
       expect(cycle(NOW + hour * 3600)).toBe(0);
       expect(state()).toEqual(settled);
+    }
+    db.close();
+  });
+});
+
+describe("the batched consensus sweep agrees with the per-tail settle", () => {
+  test("streak, flap, ambiguous, settled, legacy-only and cross-airline fixtures", () => {
+    const db = makeSyntheticDb();
+    const log = (
+      tail: string,
+      daysAgo: number,
+      provider: string,
+      opts: { confirmed?: 1 | null; airline?: string } = {}
+    ) =>
+      db
+        .query(
+          `INSERT INTO starlink_verification_log
+             (tail_number, source, checked_at, has_starlink, wifi_provider, tail_confirmed, error, airline)
+           VALUES (?, 'united', ?, ?, ?, ?, NULL, ?)`
+        )
+        .run(
+          tail,
+          NOW - daysAgo * 86400,
+          provider === "Starlink" ? 1 : 0,
+          provider,
+          opts.confirmed === undefined ? 1 : opts.confirmed,
+          opts.airline ?? "UA"
+        );
+    const fixtures: Record<string, Array<[number, string]>> = {
+      N1STRK: [
+        [20, "Viasat"],
+        [15, "Viasat"],
+        [10, "Viasat"],
+        [5, "Starlink"],
+        [3, "Starlink"],
+        [1, "Starlink"],
+      ],
+      N2FLAP: [
+        [60, "Starlink"],
+        [9, "Starlink"],
+        [6, "None"],
+        [4, "Starlink"],
+        [2, "None"],
+      ],
+      N3AMBG: [
+        [8, "Starlink"],
+        [6, "Viasat"],
+        [4, "Starlink"],
+        [2, "Viasat"],
+      ],
+      N4NEG: [
+        [9, "Viasat"],
+        [6, "Viasat"],
+        [3, "Viasat"],
+      ],
+    };
+    for (const [tail, obs] of Object.entries(fixtures)) {
+      addPlane(db, tail, "Initial");
+      for (const [d, p] of obs) log(tail, d, p);
+    }
+    addPlane(db, "N5LEGC", "Initial");
+    for (const d of [6, 4, 2]) log("N5LEGC", d, "Viasat", { confirmed: null });
+    addPlane(db, "N6XAIR", "Initial");
+    for (const d of [6, 4]) log("N6XAIR", d, "Starlink");
+    for (const d of [3, 2, 1]) log("N6XAIR", d, "Viasat", { airline: "AS" });
+
+    const tails = [...Object.keys(fixtures), "N5LEGC", "N6XAIR"];
+    const expected = new Map(
+      tails.map((t) => [
+        t,
+        computeWifiConsensus(db, t, { sources: OBSERVED_WIFI_SOURCES, airline: "UA" }).verdict,
+      ])
+    );
+    expect([...expected.values()].some((v) => v === null)).toBe(true);
+    expect([...expected.values()].some((v) => v === "Starlink")).toBe(true);
+    reconcileConsensus(db, NOW);
+    for (const t of tails) {
+      const row = db
+        .query("SELECT verified_wifi AS v FROM starlink_planes WHERE TailNumber = ?")
+        .get(t) as { v: string | null };
+      expect(row.v, t).toBe(expected.get(t) ?? "Initial");
     }
     db.close();
   });
