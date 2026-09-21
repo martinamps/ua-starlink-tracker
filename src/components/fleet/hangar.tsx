@@ -1,6 +1,7 @@
 import type { FleetFamily, FleetTail } from "../../types";
 import { AIRCRAFT_SPECS, type AircraftSpec } from "../../utils/aircraft-specs";
-import { H2, SECTION_WIDE, fmt, pct } from "../layout";
+import { H2, SECTION_WIDE } from "../layout";
+import { fmt, pct } from "../ui/format";
 import { type PipelineMap, pipelinePhrase } from "./pipeline";
 import { PROVIDER_LABEL, ProviderLegend } from "./providers";
 import { type FleetTypeLink, familyLabel, providerCounts } from "./type-bars";

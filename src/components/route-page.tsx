@@ -1,10 +1,11 @@
 import React from "react";
+import { aircraftName } from "../airlines/aircraft-families";
 import { type SiteConfig, siteAirline } from "../airlines/registry";
 import type { RouteSummary } from "../database/database";
 import { airportTimezone } from "../utils/airport-tz";
-import type { PageLink } from "./atoms";
-import { Chip, PageHeader, PageShell, Section, Td, Th, aircraftName, fmt } from "./layout";
-import { formatDuration, monthDay, zonedDeparture } from "./ui/format";
+import type { Link } from "./layout";
+import { Chip, PageHeader, PageShell, Section, Td, Th } from "./layout";
+import { fmt, formatDuration, monthDay, zonedDeparture } from "./ui/format";
 
 /** One physical Starlink departure on the pair, under its marketing number. */
 export interface RouteDeparture {
@@ -205,7 +206,7 @@ interface RoutePageProps {
   /** The server's routeHasData answer for destination→origin; the reverse-leg
    * link renders only when that page serves. */
   reverseLinkable?: boolean;
-  pageLinks?: PageLink[];
+  pageLinks?: Link[];
   currentPath?: string;
 }
 

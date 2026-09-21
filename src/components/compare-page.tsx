@@ -15,9 +15,11 @@ import type { SubfleetBreakdown } from "../scripts/starlink-predictor";
 import type { PerAirlineStat } from "../types";
 import { article } from "../utils/grammar";
 import { FactsList, PhaseTable, type TypePhase } from "./airlines-page";
-import { type PageLink, StagePill, trackedStage } from "./atoms";
+import { StagePill, trackedStage } from "./atoms";
 import { TypeShareTable } from "./community-airline-page";
-import { ButtonLink, Eyebrow, PageHeader, PageShell, Panel, StatValue, fmt, pct } from "./layout";
+import type { Link } from "./layout";
+import { ButtonLink, Eyebrow, PageHeader, PageShell, Panel, StatValue } from "./layout";
+import { fmt, pct, probLabel } from "./ui/format";
 import { Meter } from "./ui/meter";
 
 export interface CompareSide {
@@ -110,7 +112,7 @@ function SidePanel({ side }: { side: CompareSide }) {
               </span>
               <span className="font-mono text-xs text-secondary">
                 {b.synthetic
-                  ? `${Math.round(b.pct * 100)}%`
+                  ? probLabel(b.pct)
                   : `${fmt(b.equipped)} of ${fmt(b.total)} · ${pct(b.equipped, b.total)}`}
               </span>
             </div>
@@ -144,7 +146,7 @@ export default function ComparePage({
   site: SiteConfig;
   left: CompareSide;
   right: CompareSide;
-  pageLinks?: PageLink[];
+  pageLinks?: Link[];
   currentPath?: string;
 }) {
   const heading = `${left.cfg.shortName} vs ${right.cfg.shortName}: Starlink WiFi`;

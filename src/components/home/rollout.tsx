@@ -7,7 +7,8 @@
 import type React from "react";
 import type { ContentStats } from "../../airlines/content";
 import { excludeMassWriteDays } from "../../utils/install-rate";
-import { StatInline, fmt, pct } from "../layout";
+import { StatInline } from "../layout";
+import { fmt, pct } from "../ui/format";
 import { Meter } from "../ui/meter";
 
 export interface RolloutSegment {

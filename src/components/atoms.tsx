@@ -18,7 +18,6 @@ import { Meter } from "./ui/meter";
 import { Pill, type Tone } from "./ui/tone";
 
 export type { PerAirlineStat };
-export type { PageLink } from "./layout";
 
 /**
  * Download link for the pre-rendered share-stat card. Renders nothing until

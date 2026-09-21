@@ -1,15 +1,15 @@
 import type React from "react";
 import { type SiteConfig, siteAirline } from "../airlines/registry";
 import { article } from "../utils/grammar";
-import type { PageLink } from "./atoms";
 import { JsonLd } from "./faq";
 import { FlightSearchForm } from "./flight-search-form";
 import { CHROME_EXTENSION_URL } from "./home/tools";
+import type { Link } from "./layout";
 import { PageHeader, PageShell, Section } from "./layout";
 
 interface HowToCheckPageProps {
   site: SiteConfig;
-  pageLinks?: PageLink[];
+  pageLinks?: Link[];
   currentPath?: string;
 }
 

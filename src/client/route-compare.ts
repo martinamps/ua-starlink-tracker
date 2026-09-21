@@ -2,6 +2,8 @@
  * The hub's route comparer: /api/compare-route per airline, one bar each. The
  * form and its preset chips are RouteComparePanel (content/hub.tsx).
  */
+import { probLabel, probPct } from "../components/ui/format";
+import { pillStyle } from "../components/ui/tone-classes";
 import { esc } from "./esc";
 import { meterHtml } from "./meter";
 
@@ -34,7 +36,7 @@ interface CompareBody {
 
 function pill(href: string, text: string, color: string): string {
   const c = esc(color);
-  return `<a href="${esc(href)}" class="ml-2 font-mono text-[9px] px-1.5 py-0.5 rounded-full whitespace-nowrap hover:underline" style="color:${c};background:color-mix(in srgb,${c} 14%,transparent);border:1px solid color-mix(in srgb,${c} 40%,transparent)">${esc(text)} →</a>`;
+  return `<a href="${esc(href)}" class="ml-2 font-mono text-[9px] px-1.5 py-0.5 rounded-full whitespace-nowrap hover:underline" style="${pillStyle(c)};border:1px solid color-mix(in srgb,${c} 40%,transparent)">${esc(text)} →</a>`;
 }
 
 const shorten = (label?: string) =>
@@ -60,22 +62,23 @@ function renderResult(a: CompareResult, O: string, D: string): string {
     const head = `<div class="flex justify-between items-center font-mono text-xs"><span class="text-primary">${esc(a.name)}</span></div><div class="font-mono text-xs text-muted">${esc(a.reason)}</div>`;
     const rows = (a.breakdown || [])
       .map((b, i) => {
-        const pct = Math.round(b.pct * 100);
         const best =
-          i === 0 && pct >= 50
+          i === 0 && probPct(b.pct) >= 50
             ? ` ${tip("text-[8px] px-1 py-px rounded no-underline", "Pick a flight in this group for the best Starlink odds", `<span style="background:color-mix(in srgb,${esc(color)} 18%,transparent);color:${esc(color)};padding:1px 4px;border-radius:3px">best bet</span>`)}`
             : "";
         const counts = b.equipped != null ? `${esc(b.equipped)}/${esc(b.total)} aircraft · ` : "";
-        return `<div class="mt-1.5 ml-3"><div class="flex justify-between font-mono text-xs"><span>${tip("text-secondary", b.hint ? `Flight numbers ${esc(b.hint)}` : "", esc(shorten(b.label)))}${best}</span>${tip("text-accent tip-l", b.equipped != null ? fleetTip(a, b) : "", `${counts}${pct}%`)}</div>${meterHtml(pct / 100, { color })}</div>`;
+        return `<div class="mt-1.5 ml-3"><div class="flex justify-between font-mono text-xs"><span>${tip("text-secondary", b.hint ? `Flight numbers ${esc(b.hint)}` : "", esc(shorten(b.label)))}${best}</span>${tip("text-accent tip-l", b.equipped != null ? fleetTip(a, b) : "", `${counts}${probLabel(b.pct)}`)}</div>${meterHtml(b.pct, { color })}</div>`;
       })
       .join("");
     return `<div class="mb-3">${head}${rows}</div>`;
   }
-  const pct = Math.round(a.probability * 100);
   const first = (a.breakdown || [])[0];
   const pctTip = first && first.equipped != null ? fleetTip(a, first) : "";
-  const chip = pct < 50 && a.kind !== "type_rule" && rp ? pill(rp, "try a connection", color) : "";
-  return `<div class="mb-3"><div class="flex justify-between items-center font-mono text-xs"><span class="text-primary">${esc(a.name)}${chip}</span>${tip("text-accent tip-l", pctTip, `${pct}%`)}</div><div class="font-mono text-xs text-muted">${esc(a.reason)}</div>${meterHtml(pct / 100, { color, dotted: a.kind === "inferred_absent" })}</div>`;
+  const chip =
+    probPct(a.probability) < 50 && a.kind !== "type_rule" && rp
+      ? pill(rp, "try a connection", color)
+      : "";
+  return `<div class="mb-3"><div class="flex justify-between items-center font-mono text-xs"><span class="text-primary">${esc(a.name)}${chip}</span>${tip("text-accent tip-l", pctTip, probLabel(a.probability))}</div><div class="font-mono text-xs text-muted">${esc(a.reason)}</div>${meterHtml(a.probability, { color, dotted: a.kind === "inferred_absent" })}</div>`;
 }
 
 export function wireRouteCompare(): void {

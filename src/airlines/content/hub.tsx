@@ -9,8 +9,8 @@ import {
   StatInline,
   buttonClass,
   chipClass,
-  fmt,
 } from "../../components/layout";
+import { fmt } from "../../components/ui/format";
 import { SITES, airlineHomeUrl, publicAirlines } from "../registry";
 import { AIRLINE_FACTS, type AirlineFactsEntry, type RolloutFactsStatus } from "../rollout-facts";
 import type { AirlineContent, HeroProps, HubHomeLinks } from "./index";

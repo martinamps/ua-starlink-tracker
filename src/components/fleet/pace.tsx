@@ -1,6 +1,6 @@
 import type { FleetPageData } from "../../types";
-import { EYEBROW, H2, PANEL, SECTION_WIDE, StatValue, fmt } from "../layout";
-import { monthDay } from "../ui/format";
+import { EYEBROW, H2, PANEL, SECTION_WIDE, StatValue } from "../layout";
+import { fmt, monthDay } from "../ui/format";
 
 // computePulse's window: six hours back to 66 ahead.
 const PULSE_WINDOW = "from 6 hours ago to 66 hours ahead";

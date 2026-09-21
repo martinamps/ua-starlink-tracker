@@ -1,13 +1,13 @@
 import type React from "react";
 import { type SiteConfig, siteAirline } from "../airlines/registry";
-import type { PageLink } from "./atoms";
+import type { Link } from "./layout";
 import { PageHeader, PageShell, Section } from "./layout";
 import { longDate } from "./ui/format";
 
 interface MethodologyPageProps {
   site: SiteConfig;
   lastUpdated: string;
-  pageLinks?: PageLink[];
+  pageLinks?: Link[];
   currentPath?: string;
 }
 

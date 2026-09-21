@@ -7,14 +7,15 @@ import {
   rolloutTimeline,
 } from "../airlines/rollout-facts";
 import type { InstallRateStats } from "../utils/install-rate";
-import type { PageLink } from "./atoms";
 import {
   CumulativeInstallsChart,
   PaceBullets,
   nearestPaceGap,
   paceWindowText,
 } from "./charts/cumulative-installs";
-import { PageHeader, PageShell, Section, StatInline, fmt, pct } from "./layout";
+import type { Link } from "./layout";
+import { PageHeader, PageShell, Section, StatInline } from "./layout";
+import { fmt, pct } from "./ui/format";
 
 /** The /timeline handler 404s for an airline without a timeline, the same
  * content gate /methodology uses. */
@@ -47,7 +48,7 @@ interface TimelinePageProps {
   stats: InstallRateStats;
   asOfDate: string;
   accent: string;
-  pageLinks?: PageLink[];
+  pageLinks?: Link[];
   currentPath?: string;
 }
 

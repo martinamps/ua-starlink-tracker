@@ -1,7 +1,8 @@
+import { aircraftName } from "../../airlines/aircraft-families";
 import { TYPE_DISPLAY } from "../../airlines/aircraft-pages";
 import type { FleetMovement, FleetProgressRow, FleetProgressTailRow } from "../../types";
-import { EYEBROW, H2, PANEL, SECTION_WIDE, StatValue, aircraftName, fmt, pct } from "../layout";
-import { monthDay } from "../ui/format";
+import { EYEBROW, H2, PANEL, SECTION_WIDE, StatValue } from "../layout";
+import { fmt, monthDay, pct } from "../ui/format";
 import { Meter } from "../ui/meter";
 
 export type PipelineMap = Map<string, FleetProgressTailRow>;

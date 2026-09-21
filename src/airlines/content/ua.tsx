@@ -1,7 +1,8 @@
 import React from "react";
 import { RolloutPanel } from "../../components/home/rollout";
 import { CHROME_EXTENSION_URL } from "../../components/home/tools";
-import { StatInline, fmt, pct } from "../../components/layout";
+import { StatInline } from "../../components/layout";
+import { fmt, pct } from "../../components/ui/format";
 import type { AirlineContent, ContentStats, HeroProps } from "./index";
 
 /** Rounded pace for copy; null means say nothing rather than a stale guess. */

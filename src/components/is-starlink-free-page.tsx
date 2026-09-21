@@ -1,6 +1,6 @@
 import { type SiteConfig, siteAirline } from "../airlines/registry";
-import type { PageLink } from "./atoms";
 import { FlightSearchForm } from "./flight-search-form";
+import type { Link } from "./layout";
 import { PageHeader, PageShell, Section, StatInline } from "./layout";
 
 /** The airline-specific access story. Kept per-airline (like methodology's
@@ -36,7 +36,7 @@ interface IsStarlinkFreePageProps {
   site: SiteConfig;
   starlinkCount: number;
   totalCount: number;
-  pageLinks?: PageLink[];
+  pageLinks?: Link[];
   currentPath?: string;
 }
 

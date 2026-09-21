@@ -1,5 +1,6 @@
 import React from "react";
-import { Eyebrow, StatValue, fmt } from "../../components/layout";
+import { Eyebrow, StatValue } from "../../components/layout";
+import { fmt } from "../../components/ui/format";
 import type { AirlineContent, HeroProps } from "./index";
 
 // No fleet percentage: the roster includes A380s, A330s, narrowbodies and

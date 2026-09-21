@@ -3,10 +3,11 @@ import { type SiteConfig, siteAirline } from "../airlines/registry";
 import { factsBySlug } from "../airlines/rollout-facts";
 import type { Aircraft } from "../types";
 import { type SeatbackLiveTv, seatbackLiveTv } from "../utils/aircraft-specs";
-import type { PageLink } from "./atoms";
 import { Faq } from "./faq";
 import { FlightSearchForm } from "./flight-search-form";
-import { PageHeader, PageShell, Section, StatInline, Td, Th, fmt } from "./layout";
+import type { Link } from "./layout";
+import { PageHeader, PageShell, Section, StatInline, Td, Th } from "./layout";
+import { fmt, pct } from "./ui/format";
 import { TONE_TEXT, type Tone } from "./ui/tone";
 
 export interface LiveTvTypeRow {
@@ -17,7 +18,7 @@ export interface LiveTvTypeRow {
 
 interface LiveTvPageProps {
   site: SiteConfig;
-  pageLinks?: PageLink[];
+  pageLinks?: Link[];
   currentPath?: string;
   mainlineStarlink: number;
   mainlineTotal: number;
@@ -111,7 +112,7 @@ export default function LiveTvPage({
 }: LiveTvPageProps) {
   const cfg = siteAirline(site);
   const faq = liveTvFaq();
-  const pct = mainlineTotal > 0 ? Math.round((mainlineStarlink / mainlineTotal) * 100) : null;
+  const share = mainlineTotal > 0 ? pct(mainlineStarlink, mainlineTotal) : null;
   const likely = byType.filter((r) => r.tier === "likely").reduce((n, r) => n + r.starlink, 0);
   const possible = byType.filter((r) => r.tier === "possible").reduce((n, r) => n + r.starlink, 0);
 
@@ -157,10 +158,10 @@ export default function LiveTvPage({
       >
         <p className="text-sm leading-relaxed text-secondary">
           <StatInline n={mainlineStarlink} /> {cfg.shortName} mainline aircraft have Starlink
-          {pct !== null && (
+          {share !== null && (
             <>
               {" "}
-              (<StatInline>{pct}%</StatInline> of {fmt(mainlineTotal)})
+              (<StatInline>{share}</StatInline> of {fmt(mainlineTotal)})
             </>
           )}
           . <StatInline n={likely} /> are types with seatback screens, so live TV is likely.{" "}

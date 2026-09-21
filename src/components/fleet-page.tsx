@@ -1,12 +1,14 @@
 import { AIRLINES, type SiteConfig } from "../airlines/registry";
 import type { FleetAnchorRow, FleetPageData } from "../types";
-import { type PageLink, ShareCardLink } from "./atoms";
+import { ShareCardLink } from "./atoms";
 import { type CiteStat, CiteThis } from "./cite-this";
 import { HangarFloor, TailRegistry } from "./fleet/hangar";
 import { InstallPaceSection, LivePulse } from "./fleet/pace";
 import { InstallPipelineSection, type PipelineMap } from "./fleet/pipeline";
 import { CarrierSection, type FleetTypeLink, TypeBarsSection } from "./fleet/type-bars";
-import { EYEBROW, PANEL, PageHeader, PageShell, SECTION_WIDE, fmt, pct } from "./layout";
+import type { Link } from "./layout";
+import { EYEBROW, PANEL, PageHeader, PageShell, SECTION_WIDE } from "./layout";
+import { fmt, pct } from "./ui/format";
 
 export type { FleetTypeLink };
 
@@ -74,7 +76,7 @@ interface FleetPageProps {
   site: SiteConfig;
   /** Pre-rendered share card path; null until the nightly batch produced one. */
   shareCard?: string | null;
-  pageLinks?: PageLink[];
+  pageLinks?: Link[];
   currentPath?: string;
   cite?: CiteStat | null;
   /** Served /fleet/{slug} pages. */

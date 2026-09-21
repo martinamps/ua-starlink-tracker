@@ -2,10 +2,12 @@ import React from "react";
 import { AIRLINES, type SiteConfig } from "../airlines/registry";
 import type { PopularFlight } from "../database/database";
 import type { AirportDepartures, RouteSchedule, RouteScheduleRow } from "../types";
-import { type PageLink, PopularFlightsLinks } from "./atoms";
+import { PopularFlightsLinks } from "./atoms";
 import { AirportBars } from "./home/rollout";
-import { PageHeader, PageShell, Panel, Section, SectionTitle, Td, Th, fmt } from "./layout";
+import type { Link } from "./layout";
+import { PageHeader, PageShell, Panel, Section, SectionTitle, Td, Th } from "./layout";
 import { localDeparture } from "./route-page";
+import { fmt } from "./ui/format";
 import { Meter } from "./ui/meter";
 
 interface RouteLeg {
@@ -148,7 +150,7 @@ interface RoutesPageProps {
   airports?: AirportDepartures;
   site: SiteConfig;
   popularFlights?: PopularFlight[];
-  pageLinks?: PageLink[];
+  pageLinks?: Link[];
   currentPath?: string;
 }
 

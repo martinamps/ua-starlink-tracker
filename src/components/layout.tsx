@@ -5,56 +5,22 @@
  * body owns its content; it should not own its chrome.
  */
 import React from "react";
-import { normalizeAircraftType } from "../airlines/aircraft-families";
 import { AIRLINES, SITES, type SiteConfig, liveAirlineSites } from "../airlines/registry";
-import { fmt, pct } from "./ui/format";
+import { fmt } from "./ui/format";
 
-export { fmt, pct };
-
-const FAMILY_DISPLAY: Record<string, string> = {
-  "B737-MAX8": "737 MAX 8",
-  "B737-MAX9": "737 MAX 9",
-  "B737-MAX10": "737 MAX 10",
-  "B737-700": "737-700",
-  "B737-800": "737-800",
-  "B737-900": "737-900",
-  B737F: "737 Freighter",
-  B717: "717",
-  B747: "747",
-  B747F: "747 Freighter",
-  B757: "757",
-  B767: "767",
-  B777: "777",
-  B777F: "777 Freighter",
-  B787: "787",
-  "CRJ-200": "CRJ200",
-  "CRJ-550": "CRJ550",
-  "CRJ-700": "CRJ700",
-  "ERJ-145": "ERJ-145",
-};
-
-/**
- * Short display name for any aircraft-type string — FR24 names, sheet headers
- * ("B737-MAX9", "E175SC") and family keys alike — via the one normalizer, so a
- * page never shows "E175" and "ERJ-175" for the same aircraft. Display only:
- * grouping and counting still key on normalizeAircraftType.
- */
-export function aircraftName(raw: string | null | undefined): string {
-  const family = normalizeAircraftType(raw);
-  if (family === "other" || family === "unknown") return raw?.trim() || "Unknown";
-  return FAMILY_DISPLAY[family] ?? family;
-}
-
-export interface NavLink {
+export interface Link {
   href: string;
   label: string;
 }
+
+/** Inline prose link. */
+export const LINK = "text-accent hover:underline";
 
 /**
  * Primary nav, one list for the site bar and the footer so the two never
  * disagree on a label. Feature-gated exactly like the routes themselves.
  */
-export function primaryNavLinks(site: SiteConfig): NavLink[] {
+export function primaryNavLinks(site: SiteConfig): Link[] {
   const f = site.features;
   return [
     ...(f.checkFlightPage ? [{ href: "/check-flight", label: "Check a flight" }] : []),
@@ -401,11 +367,6 @@ function CrossSiteLinks({ site }: { site: SiteConfig }) {
   );
 }
 
-export interface PageLink {
-  href: string;
-  label: string;
-}
-
 /**
  * Internal nav for the secondary URL families (/newly-equipped, /install-rate,
  * /embed). They are sitemapped and indexable, so without an inbound href from
@@ -414,7 +375,7 @@ export interface PageLink {
  * sitemap uses (feature flag AND data gate), so a link here can never point at
  * a 404, and the current page is dropped so nothing self-links.
  */
-function PageNavLinks({ links }: { links?: PageLink[] }) {
+function PageNavLinks({ links }: { links?: Link[] }) {
   if (!links?.length) return null;
   return (
     <div className="mt-3 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-xs">
@@ -430,7 +391,7 @@ function PageNavLinks({ links }: { links?: PageLink[] }) {
   );
 }
 
-function SiteFooter({ site, pageLinks }: { site: SiteConfig; pageLinks?: PageLink[] }) {
+function SiteFooter({ site, pageLinks }: { site: SiteConfig; pageLinks?: Link[] }) {
   return (
     <footer className="relative mt-auto border-t border-subtle py-6 text-center text-sm text-muted">
       <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 px-4">
@@ -497,7 +458,7 @@ export function PageShell({
 }: {
   site: SiteConfig;
   currentPath?: string;
-  pageLinks?: PageLink[];
+  pageLinks?: Link[];
   /** Rendered above the site bar (the onboard passenger banner). */
   before?: React.ReactNode;
   children: React.ReactNode;

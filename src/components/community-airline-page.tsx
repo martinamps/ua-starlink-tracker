@@ -9,9 +9,10 @@ import { type AirlineFactsEntry, formatFactDate } from "../airlines/rollout-fact
 import type { FleetGuideTail, TypeProgress } from "../database/database";
 import { typeShare } from "../scripts/starlink-predictor";
 import { FactsList, StatusPill } from "./airlines-page";
-import type { PageLink } from "./atoms";
 import { ClientScriptTag, FIELD_SELECT, FlightSearchForm } from "./flight-search-form";
-import { Eyebrow, PageHeader, PageShell, Panel, SECTION, StatValue, fmt } from "./layout";
+import type { Link } from "./layout";
+import { Eyebrow, PageHeader, PageShell, Panel, SECTION, StatValue } from "./layout";
+import { fmt } from "./ui/format";
 import { Meter } from "./ui/meter";
 
 /** Past this, the guide may be missing installs and the page says so. */
@@ -200,7 +201,7 @@ export function CommunityAirlinePage({
   lastSynced: string | null;
   facts: AirlineFactsEntry | null;
   nowMs: number;
-  pageLinks?: PageLink[];
+  pageLinks?: Link[];
   currentPath?: string;
 }) {
   const source = cfg.communitySource;

@@ -1,6 +1,7 @@
 import type React from "react";
 import type { WifiProvider } from "../../types";
-import { fmt } from "../layout";
+
+import { fmt } from "../ui/format";
 
 export const PROVIDER_ORDER: WifiProvider[] = [
   "starlink",

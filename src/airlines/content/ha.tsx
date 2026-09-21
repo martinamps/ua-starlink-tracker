@@ -1,6 +1,7 @@
 import React from "react";
 import { TypeBreakdownRow } from "../../components/atoms";
-import { Eyebrow, Panel, StatInline, fmt } from "../../components/layout";
+import { Eyebrow, Panel, StatInline } from "../../components/layout";
+import { fmt } from "../../components/ui/format";
 import type { AirlineContent, HeroProps } from "./index";
 
 // Aircraft-type counts come from press-release figures (rollout is complete and

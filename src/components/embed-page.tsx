@@ -1,5 +1,5 @@
 import { AIRLINES, type SiteConfig } from "../airlines/registry";
-import type { PageLink } from "./atoms";
+import type { Link } from "./layout";
 import { EYEBROW, Eyebrow, PANEL, PageHeader, PageShell, SECTION } from "./layout";
 
 interface EmbedPageProps {
@@ -11,7 +11,7 @@ interface EmbedPageProps {
   /** Is /feed.xml live here? It rides both the feature flag and the
    * install-log data gate, so the flag alone would link a 404. */
   feedAvailable: boolean;
-  pageLinks?: PageLink[];
+  pageLinks?: Link[];
   currentPath?: string;
 }
 

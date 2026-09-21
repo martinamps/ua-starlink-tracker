@@ -1,14 +1,13 @@
 /**
  * The one FAQ renderer and the one FAQPage JSON-LD builder. The visible Q&A
  * and the structured data come from the same entries, so the markup can never
- * describe answers the page doesn't show (Google's rule, and how two copies
- * drifted before). Homepage entries are functions of the stats; homeFaqItems
- * resolves them into plain entries first.
+ * describe answers the page doesn't show (Google's rule). Homepage entries
+ * are functions of the stats; homeFaqItems resolves them into plain entries.
  */
 import type React from "react";
 import ReactDOMServer from "react-dom/server";
-import type { ContentStats, FaqSection, FaqEntry as HomeFaqEntry } from "../airlines/content";
-import { Eyebrow, PANEL, SECTION, SectionTitle } from "./layout";
+import type { ContentStats, FaqSection, HomeFaqEntry } from "../airlines/content";
+import { Eyebrow, Panel, Section, SectionTitle } from "./layout";
 
 export interface FaqEntry {
   q: string;
@@ -18,18 +17,24 @@ export interface FaqEntry {
   ld?: string;
 }
 
-/** Serialized JSON-LD, safe inside <script>: "<" is escaped so a string value
- * holding "</script>" can't end the block. */
-export function jsonLdString(payload: unknown): string {
+/** JSON safe inside any <script>: "<" is escaped so a string value holding
+ * "</script>" can't end the block. For JSON-LD and page config alike. */
+export function scriptSafeJson(payload: unknown): string {
   return JSON.stringify(payload).replace(/</g, "\\u003c");
 }
 
+/** A JSON-LD <script> as a string, for the handler-built <head>. */
+export function jsonLdBlock(payload: unknown): string {
+  return `<script type="application/ld+json">${scriptSafeJson(payload)}</script>`;
+}
+
+/** A JSON-LD <script> inside a page body. */
 export function JsonLd({ data }: { data: unknown }) {
   return (
     <script
       type="application/ld+json"
-      // biome-ignore lint/security/noDangerouslySetInnerHtml: escaped by jsonLdString
-      dangerouslySetInnerHTML={{ __html: jsonLdString(data) }}
+      // biome-ignore lint/security/noDangerouslySetInnerHtml: escaped by scriptSafeJson
+      dangerouslySetInnerHTML={{ __html: scriptSafeJson(data) }}
     />
   );
 }
@@ -92,8 +97,7 @@ export function homeFaqJsonLd(
   dateModified?: string
 ): string {
   if (entries.length === 0) return "";
-  const json = jsonLdString(faqJsonLd(homeFaqItems(entries, stats), dateModified));
-  return `<script type="application/ld+json">${json}</script>`;
+  return jsonLdBlock(faqJsonLd(homeFaqItems(entries, stats), dateModified));
 }
 
 function Accordion({ item }: { item: FaqEntry }) {
@@ -159,43 +163,44 @@ export function Faq({
   );
   if (variant === "card") {
     return (
-      <section id={id} className={`${PANEL} mb-4`}>
+      <Panel as="section" id={id} className="mb-4">
         <SectionTitle className="mb-3">{title}</SectionTitle>
         {list}
         {structuredData && <JsonLd data={faqJsonLd(all)} />}
-      </section>
+      </Panel>
     );
   }
   return (
-    <section id={id} className={`${SECTION} scroll-mt-4`}>
-      <SectionTitle>{title}</SectionTitle>
+    <Section bare id={id} className="scroll-mt-4" title={title}>
       {variant === "accordion" && sections ? (
-        sections.map((s) => (
-          <div key={s.title} className="mt-4">
-            <Eyebrow as="h3" className="mb-2">
-              {s.title}
-            </Eyebrow>
-            <div className="divide-y divide-subtle rounded-lg border border-subtle bg-surface px-5">
-              {s.items.map((item) => (
-                <Accordion key={item.q} item={item} />
-              ))}
+        <div className="space-y-4">
+          {sections.map((s) => (
+            <div key={s.title}>
+              <Eyebrow as="h3" className="mb-2">
+                {s.title}
+              </Eyebrow>
+              <Panel pad="none" className="divide-y divide-subtle px-5">
+                {s.items.map((item) => (
+                  <Accordion key={item.q} item={item} />
+                ))}
+              </Panel>
             </div>
-          </div>
-        ))
+          ))}
+        </div>
       ) : variant === "grid" ? (
-        <div className={`${PANEL} mt-4 grid gap-x-8 gap-y-5 sm:grid-cols-2`}>
+        <Panel className="grid gap-x-8 gap-y-5 sm:grid-cols-2">
           {all.map((item) => (
             <div key={item.q}>
               <h3 className="font-display text-base text-primary">{item.q}</h3>
               <div className="mt-1 text-sm leading-relaxed text-secondary">{item.a}</div>
             </div>
           ))}
-        </div>
+        </Panel>
       ) : (
-        <div className={`${PANEL} mt-4`}>{list}</div>
+        <Panel>{list}</Panel>
       )}
       {structuredData && <JsonLd data={faqJsonLd(all)} />}
-    </section>
+    </Section>
   );
 }
 

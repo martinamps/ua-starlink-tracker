@@ -8,7 +8,7 @@
  * here is unit-testable without a database.
  */
 
-import { pct } from "../components/layout";
+import { pct } from "../components/ui/format";
 import type {
   AircraftTypePageData,
   AircraftTypePipeline,

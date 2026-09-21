@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import type { Link } from "../../components/layout";
 import type { Aircraft, FleetStats, PerAirlineStat, RecentInstall } from "../../types";
 import type { AirlineCode, KnownAirlineCode, SiteConfig, Tenant } from "../registry";
 import { content as af } from "./af";
@@ -11,7 +12,6 @@ import { content as ua } from "./ua";
 export interface ContentStats {
   starlinkCount: number;
   totalCount: number;
-  percentage: string;
   fleetStats?: FleetStats | null;
   /** The /install-rate page's measured pace (installs/month); null or absent
    * when there isn't enough organic history to state one. */
@@ -30,14 +30,14 @@ export interface ContentStats {
  * One question and its answer. The FAQPage JSON-LD is rendered from `a`
  * itself (faqJsonLd), so the markup can never drift from the visible text.
  */
-export interface FaqEntry {
+export interface HomeFaqEntry {
   q: string;
   a: (s: ContentStats) => ReactNode;
 }
 
 export interface FaqSection {
   title: string;
-  items: FaqEntry[];
+  items: HomeFaqEntry[];
 }
 
 interface SubfleetFilter {
@@ -45,14 +45,9 @@ interface SubfleetFilter {
   label: string;
 }
 
-interface HubHomeLink {
-  href: string;
-  label: string;
-}
-
 export interface HubHomeLinks {
-  airlines: HubHomeLink[];
-  compares: HubHomeLink[];
+  airlines: Link[];
+  compares: Link[];
 }
 
 export interface HeroProps {
@@ -75,7 +70,7 @@ export interface AirlineContent {
   /** Bespoke stat panel — each airline composes its own from shared atoms. */
   Hero: (p: HeroProps) => ReactNode;
   /** The head questions, answered in full near the top of the homepage. */
-  answers?: FaqEntry[];
+  answers?: HomeFaqEntry[];
   /** Optional per-row badge under tail number (e.g. UA mainline/express). null = no badge. */
   rowBadge: (plane: Aircraft, airline: string) => string | null;
   /** Filter buttons next to search (UA: mainline/express). Empty = ALL only. */
@@ -107,6 +102,6 @@ export function getContent(tenant: Tenant): AirlineContent {
 }
 
 /** Every question a homepage renders, answer block first, in page order. */
-export function allFaqEntries(content: AirlineContent): FaqEntry[] {
+export function allFaqEntries(content: AirlineContent): HomeFaqEntry[] {
   return [...(content.answers ?? []), ...content.faq.flatMap((s) => s.items)];
 }
