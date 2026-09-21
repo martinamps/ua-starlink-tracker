@@ -10,6 +10,7 @@
 
 import type { SiteConfig } from "../airlines/registry";
 import type { AssignmentLogRow, SameDayAlternative } from "../database/assignment-log";
+import { toIata } from "./airport-code";
 import { airportTimezone } from "./airport-tz";
 
 /**
@@ -101,10 +102,6 @@ export function watchFeedState(
   return isSwap(history, verdict, dep) ? "swap" : verdict.state;
 }
 
-function stripIcaoK(code: string): string {
-  return code.length === 4 && code.startsWith("K") ? code.slice(1) : code;
-}
-
 function aircraftSuffix(parts: (string | null)[]): string {
   const kept = parts.filter((p): p is string => !!p);
   return kept.length > 0 ? ` (${kept.join(", ")})` : "";
@@ -121,7 +118,7 @@ export function watchSummary(input: WatchIcsInput): string {
           : `${fn} · Starlink odds ~${Math.round(verdict.probability * 100)}%`;
       break;
     case "yes": {
-      const route = dep && arr ? ` ${stripIcaoK(dep)}→${stripIcaoK(arr)}` : "";
+      const route = dep && arr ? ` ${toIata(dep)}→${toIata(arr)}` : "";
       const aircraft = verdict.aircraft ? ` (${verdict.aircraft})` : "";
       body = `${fn}${route} · Starlink ✅ ${verdict.tail}${aircraft}`;
       break;
@@ -140,7 +137,7 @@ export function watchSummary(input: WatchIcsInput): string {
 }
 
 function formatLocal(unixSec: number, airport: string | null): string {
-  const timeZone = (airport && airportTimezone(stripIcaoK(airport))) || "UTC";
+  const timeZone = (airport && airportTimezone(toIata(airport))) || "UTC";
   return new Intl.DateTimeFormat("en-US", {
     timeZone,
     month: "short",
@@ -152,7 +149,7 @@ function formatLocal(unixSec: number, airport: string | null): string {
 }
 
 function formatLocalTime(unixSec: number, airport: string | null): string {
-  const timeZone = (airport && airportTimezone(stripIcaoK(airport))) || "UTC";
+  const timeZone = (airport && airportTimezone(toIata(airport))) || "UTC";
   return new Intl.DateTimeFormat("en-US", {
     timeZone,
     hour: "numeric",
