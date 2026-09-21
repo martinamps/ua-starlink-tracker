@@ -16,9 +16,11 @@ export interface ContentStats {
   /** The /install-rate page's measured pace (installs/month); null or absent
    * when there isn't enough organic history to state one. */
   installsPerMonth?: number | null;
+  /** The full months that pace averages, "Jun–Aug 2026"; absent with no pace. */
+  installsPaceWindow?: string;
   /** Newly equipped in the last 30 days; absent on the hub. */
   installs30d?: number;
-  /** Installs per rolling 7-day window, oldest first (homepage sparkline). */
+  /** Installs per calendar week, oldest first (homepage sparkline). */
   weeklyInstalls?: number[];
   /** The data's own "as of" date, e.g. "September 20, 2026"; never the request clock. */
   asOf?: string;

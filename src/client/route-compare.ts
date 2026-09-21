@@ -2,7 +2,7 @@
  * The hub's route comparer: /api/compare-route per airline, one bar each. The
  * form and its preset chips are RouteComparePanel (content/hub.tsx).
  */
-import { probLabel, probPct } from "../components/ui/format";
+import { pct, probLabel, probPct } from "../components/ui/format";
 import { pillStyle } from "../components/ui/tone-classes";
 import { esc } from "./esc";
 import { meterHtml } from "./meter";
@@ -67,7 +67,7 @@ function renderResult(a: CompareResult, O: string, D: string): string {
             ? ` ${tip("text-[8px] px-1 py-px rounded no-underline", "Pick a flight in this group for the best Starlink odds", `<span style="background:color-mix(in srgb,${esc(color)} 18%,transparent);color:${esc(color)};padding:1px 4px;border-radius:3px">best bet</span>`)}`
             : "";
         const counts = b.equipped != null ? `${esc(b.equipped)}/${esc(b.total)} aircraft · ` : "";
-        return `<div class="mt-1.5 ml-3"><div class="flex justify-between font-mono text-xs"><span>${tip("text-secondary", b.hint ? `Flight numbers ${esc(b.hint)}` : "", esc(shorten(b.label)))}${best}</span>${tip("text-accent tip-l", b.equipped != null ? fleetTip(a, b) : "", `${counts}${probLabel(b.pct)}`)}</div>${meterHtml(b.pct, { color })}</div>`;
+        return `<div class="mt-1.5 ml-3"><div class="flex justify-between font-mono text-xs"><span>${tip("text-secondary", b.hint ? `Flight numbers ${esc(b.hint)}` : "", esc(shorten(b.label)))}${best}</span>${tip("text-accent tip-l", b.equipped != null ? fleetTip(a, b) : "", `${counts}${b.equipped != null && b.total ? pct(b.equipped, b.total) : probLabel(b.pct)}`)}</div>${meterHtml(b.pct, { color })}</div>`;
       })
       .join("");
     return `<div class="mb-3">${head}${rows}</div>`;

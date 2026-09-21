@@ -48,8 +48,8 @@ export default function EmbedPage({
         title="Embed the Live Starlink Badge"
         dek={
           <>
-            A tiny SVG badge with the live count of {subject} aircraft that have Starlink — it
-            updates itself, your page never goes stale.
+            A small SVG badge with the count of {subject} aircraft that have Starlink. It updates
+            itself hourly, so your page keeps current without edits.
           </>
         }
       />

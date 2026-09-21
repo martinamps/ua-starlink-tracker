@@ -1,11 +1,11 @@
 import React from "react";
 import { RolloutPanel } from "../../components/home/rollout";
-import { StatInline } from "../../components/layout";
+import { LINK, StatInline } from "../../components/layout";
 import { fmt, pct } from "../../components/ui/format";
 import { AIRLINES, airlineHomeUrl } from "../registry";
+import { fleetTargetSentence } from "./fleet-target";
 import type { AirlineContent, ContentStats, HeroProps } from "./index";
 
-const LINK = "text-accent hover:underline";
 const regional = (s: ContentStats) => s.fleetStats?.express ?? { starlink: 0, total: 0 };
 const mainline = (s: ContentStats) => s.fleetStats?.mainline ?? { starlink: 0, total: 0 };
 
@@ -30,9 +30,6 @@ const ASHero = ({ stats, statSentence }: HeroProps) => (
 
 export const content: AirlineContent = {
   headerStats: [
-    <span key="mbps">
-      <span className="text-accent font-semibold">250</span> Mbps
-    </span>,
     <span key="free" className="text-success font-semibold">
       Free for Atmos Rewards members
     </span>,
@@ -54,8 +51,7 @@ export const content: AirlineContent = {
         <p>
           Yes. <StatInline n={s.starlinkCount} /> of {fmt(s.totalCount)} Alaska aircraft (
           {pct(s.starlinkCount, s.totalCount)}) have free Starlink Wi-Fi
-          {s.asOf ? <> as of {s.asOf}</> : null}. Alaska expects to finish the rollout in early
-          2027.
+          {s.asOf ? <> as of {s.asOf}</> : null}. {fleetTargetSentence("AS", "Alaska")}
         </p>
       ),
     },

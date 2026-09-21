@@ -28,7 +28,7 @@ const SOURCES: Record<string, DataSource[]> = {
       name: "United.com",
       cadence: "one aircraft a minute",
       detail:
-        "We look up the Wi-Fi United lists for an upcoming flight, one aircraft per check, so each aircraft is re-checked about every three days. Only this can mark an aircraft as verified.",
+        "We check one aircraft a minute against the Wi-Fi United lists for its upcoming flight, so each aircraft is re-checked about every three days. Only this can mark an aircraft as verified.",
     },
     {
       name: "Community fleet spreadsheet",

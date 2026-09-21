@@ -17,10 +17,11 @@ import type {
 import { denominatorIsPublishable } from "../utils/share-cards";
 import { HeaderStatStrip, PopularFlightsLinks, ShareCardLink } from "./atoms";
 import { Faq, homeFaqItems, homeFaqSections } from "./faq";
-import { ClientScriptTag, FlightSearchForm } from "./flight-search-form";
+import { FlightSearchForm } from "./flight-search-form";
 import { AircraftList } from "./home/aircraft-list";
 import { AirportBars } from "./home/rollout";
 import { ToolsSection } from "./home/tools";
+import { ClientScriptTag } from "./layout";
 import type { Link } from "./layout";
 import { Eyebrow, PageHeader, PageShell, Panel, Section, StatInline } from "./layout";
 import { PassengerBanner } from "./passenger-banner";
@@ -41,7 +42,8 @@ interface PageProps {
   showPassengerBanner?: boolean;
   installs30d?: number;
   installsPerMonth?: number | null;
-  /** Installs per rolling week, oldest first (rollout sparkline). */
+  installsPaceWindow?: string;
+  /** Installs per calendar week, oldest first (rollout sparkline). */
   weeklyInstalls?: number[];
   /** Pre-rendered share card path; null until the nightly batch produced one. */
   shareCard?: string | null;
@@ -57,6 +59,7 @@ export function buildContentStats(input: {
   totalCount: number;
   fleetStats?: FleetStats | null;
   installsPerMonth?: number | null;
+  installsPaceWindow?: string;
   installs30d?: number;
   weeklyInstalls?: number[];
   lastUpdated?: string;
@@ -68,6 +71,7 @@ export function buildContentStats(input: {
     totalCount,
     fleetStats: input.fleetStats,
     installsPerMonth: input.installsPerMonth,
+    installsPaceWindow: input.installsPaceWindow,
     installs30d: input.installs30d,
     weeklyInstalls: input.weeklyInstalls,
     asOf: longDate(input.lastUpdated),
@@ -142,6 +146,7 @@ export default function Page({
   showPassengerBanner = false,
   installs30d,
   installsPerMonth,
+  installsPaceWindow,
   weeklyInstalls,
   shareCard,
   pageLinks,
@@ -154,6 +159,7 @@ export default function Page({
     totalCount: total,
     fleetStats,
     installsPerMonth,
+    installsPaceWindow,
     installs30d,
     weeklyInstalls,
     lastUpdated,
@@ -206,6 +212,7 @@ export default function Page({
           id="answers"
           title="Quick answers"
           variant="grid"
+          wide
           items={homeFaqItems(content.answers, stats)}
           structuredData={false}
         />
@@ -235,15 +242,16 @@ export default function Page({
       <ToolsSection site={site} />
 
       {airline && popularFlights.length > 0 && (
-        <div className="relative max-w-3xl mx-auto w-full mb-8">
+        <Section bare wide>
           <PopularFlightsLinks flights={popularFlights} airlineName={airline.name} />
-        </div>
+        </Section>
       )}
 
       <Faq
         id="faq"
         title="More questions"
         variant="accordion"
+        wide
         sections={homeFaqSections(content.faq, stats)}
         structuredData={false}
       />

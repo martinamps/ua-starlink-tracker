@@ -1,15 +1,14 @@
 import React from "react";
 import { RolloutPanel } from "../../components/home/rollout";
 import { CHROME_EXTENSION_URL } from "../../components/home/tools";
-import { StatInline } from "../../components/layout";
+import { LINK, StatInline } from "../../components/layout";
 import { fmt, pct } from "../../components/ui/format";
+import { fleetTargetSentence } from "./fleet-target";
 import type { AirlineContent, ContentStats, HeroProps } from "./index";
 
 /** Rounded pace for copy; null means say nothing rather than a stale guess. */
 const installsPerMonth = (s: ContentStats): number | null =>
   s.installsPerMonth ? Math.round(s.installsPerMonth) : null;
-
-const LINK = "text-accent hover:underline";
 
 const express = (s: ContentStats) => s.fleetStats?.express ?? { starlink: 0, total: 0 };
 const mainline = (s: ContentStats) => s.fleetStats?.mainline ?? { starlink: 0, total: 0 };
@@ -29,19 +28,14 @@ const UAHero = ({ stats, statSentence }: HeroProps) => (
 
 export const content: AirlineContent = {
   headerStats: (s) => [
-    <span key="mbps">
-      <span className="text-accent font-semibold">250</span> Mbps
-    </span>,
-    <span key="faster">
-      <span className="text-accent font-semibold">50×</span> faster
-    </span>,
     <span key="free" className="text-success font-semibold">
       Free
     </span>,
     ...(installsPerMonth(s)
       ? [
           <span key="installs">
-            <span className="text-accent font-semibold">~{installsPerMonth(s)}</span> installs/mo
+            <span className="text-accent font-semibold">~{fmt(installsPerMonth(s) ?? 0)}</span>{" "}
+            installs a month{s.installsPaceWindow ? ` (${s.installsPaceWindow} average)` : ""}
           </span>,
         ]
       : []),
@@ -63,8 +57,7 @@ export const content: AirlineContent = {
         <p>
           Yes. <StatInline n={s.starlinkCount} /> of {fmt(s.totalCount)} United aircraft (
           {pct(s.starlinkCount, s.totalCount)}) have free Starlink Wi-Fi
-          {s.asOf ? <> as of {s.asOf}</> : null}. United plans to equip the whole fleet by the end
-          of 2027.
+          {s.asOf ? <> as of {s.asOf}</> : null}. {fleetTargetSentence("UA", "United")}
         </p>
       ),
     },

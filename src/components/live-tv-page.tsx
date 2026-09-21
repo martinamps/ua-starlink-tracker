@@ -10,7 +10,7 @@ import { PageHeader, PageShell, Section, StatInline, Td, Th } from "./layout";
 import { fmt, pct } from "./ui/format";
 import { TONE_TEXT, type Tone } from "./ui/tone";
 
-export interface LiveTvTypeRow {
+interface LiveTvTypeRow {
   label: string;
   starlink: number;
   tier: Exclude<SeatbackLiveTv, "no">;
@@ -85,7 +85,7 @@ export function liveTvFaq(): Array<{ q: string; a: string }> {
   return [
     {
       q: "Can I watch live football on my United flight?",
-      a: "Yes, if the aircraft is a Starlink-equipped United mainline jet with a seatback screen. DISH streams nine live channels (ABC, CBS, FOX, NBC, ESPN, ESPN2, FS1, NFL Network and TNF on Prime Video) to Starlink-enabled seatback screens, starting on more than 200 mainline aircraft, on domestic flights through Super Bowl LXI in February 2027.",
+      a: "Yes, if the aircraft is a Starlink-equipped United mainline jet with a seatback screen. DISH streams nine live channels (ABC, CBS, FOX, NBC, ESPN, ESPN2, FS1, NFL Network and TNF on Prime Video) to Starlink-enabled seatback screens, starting on more than 220 mainline aircraft, on domestic flights through Super Bowl LXI in February 2027.",
     },
     {
       q: "Does United Express have live TV?",

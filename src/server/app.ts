@@ -121,6 +121,7 @@ import {
   type TypePhase,
   factsHeadline,
 } from "../components/airlines-page";
+import { paceWindowSpan } from "../components/charts/rollout-math";
 import CheckFlightPage, {
   type DatedAnswer,
   type FlightFacts,
@@ -3581,7 +3582,6 @@ const aircraftTypePage: Handler = (ctx) => {
       facts,
       faq,
       siblings,
-      iata: cfg.iata,
       lastUpdated: clockIso ? formatFactDate(clockIso.slice(0, 10)) : null,
       checkFlight: ctx.site.features.checkFlightPage,
       // Specs describe United's configurations; Alaska's cabins differ.
@@ -3715,7 +3715,12 @@ const routesPage: Handler = (ctx) => {
     RoutesPage,
     "/routes",
     { ...subPageMeta(ctx, "routes"), pageJsonLd: routesJsonLd },
-    { schedule, airports: ctx.reader.getAirportDepartures(), popularFlights }
+    {
+      schedule,
+      airports: ctx.reader.getAirportDepartures(),
+      popularFlights,
+      updatedAt: ctx.reader.getLastUpdatedRaw(),
+    }
   );
 };
 
@@ -3777,7 +3782,7 @@ const isStarlinkFreePage: Handler = (ctx) => {
     "/is-starlink-free",
     {
       siteTitle: `Is ${cfg.shortName} Starlink WiFi Free? Yes — Here's the Fine Print`,
-      siteDescription: `${cfg.name} Starlink WiFi is free — no purchase, no data caps. What you need to sign in, real-world speeds, and the one catch: only Starlink-equipped aircraft have it. Check your flight.`,
+      siteDescription: `${cfg.name} Starlink WiFi is free — no purchase, no data caps. What you need to sign in and the one catch: only Starlink-equipped aircraft have it. Check your flight.`,
       keywords: `is ${cfg.shortName.toLowerCase()} starlink free, is ${cfg.shortName.toLowerCase()} wifi free, ${cfg.shortName.toLowerCase()} starlink cost, free wifi ${cfg.name.toLowerCase()}`,
       ogTitle: `Is ${cfg.shortName} Starlink WiFi Free?`,
       ogDescription: `Yes — free on every Starlink-equipped ${cfg.name} aircraft. The fine print, the speeds, and how to check your flight.`,
@@ -4280,16 +4285,17 @@ const homePage: Handler = async (ctx) => {
   const nowMs = Date.now();
   const daily = isHub ? [] : reader.getDailyInstalls();
   // The same measured pace /install-rate publishes, so the two never disagree.
-  const installsPerMonth = isHub
+  const installRate = isHub
     ? null
-    : computeInstallRate({
-        daily,
-        equipped: starlink.length,
-        total,
-        targets: [],
-        nowMs,
-      }).paceMonthly;
-  const perAirlineStats = reader.getPerAirlineStats();
+    : computeInstallRate({ daily, equipped: starlink.length, total, targets: [], nowMs });
+  const installsPerMonth = installRate?.paceMonthly ?? null;
+  const installsPaceWindow = installRate ? paceWindowSpan(installRate) : undefined;
+  // The hub's rows are the /airlines roster, hub-content-only airlines (Qatar) included.
+  const perAirlineStats = isHub
+    ? hubContentAirlines()
+        .map((cfg) => airlineOverview(ctx.getReader, cfg).stat)
+        .filter((s) => s !== undefined)
+    : reader.getPerAirlineStats();
   // Momentum clause for the stat sentence: same source as the hub rows'
   // "+N in the last 30 days".
   const installs30d = isHub ? undefined : perAirlineStats[0]?.installs30d;
@@ -4307,6 +4313,7 @@ const homePage: Handler = async (ctx) => {
       recentInstalls: isHub ? reader.getRecentInstalls(15, 5) : undefined,
       installs30d,
       installsPerMonth,
+      installsPaceWindow,
       weeklyInstalls: weekly,
       flightsByTail,
       airportDepartures: reader.getAirportDepartures(),
@@ -4324,6 +4331,7 @@ const homePage: Handler = async (ctx) => {
     totalCount: total,
     fleetStats,
     installsPerMonth,
+    installsPaceWindow,
     installs30d,
     weeklyInstalls: weekly,
     lastUpdated,

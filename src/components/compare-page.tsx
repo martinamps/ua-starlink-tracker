@@ -42,6 +42,13 @@ export interface CompareSide {
   checkFlightUrl: string | null;
 }
 
+/** A rule-set share has no counts behind it: "every aircraft", "none", or the share. */
+function syntheticShare(p: number): string {
+  if (p >= 1) return "every aircraft · 100%";
+  if (p <= 0) return "none · 0%";
+  return probLabel(p);
+}
+
 function SidePanel({ side }: { side: CompareSide }) {
   const { cfg, stat } = side;
   // Full-fleet denominator: the same number each airline's own tracker
@@ -107,12 +114,12 @@ function SidePanel({ side }: { side: CompareSide }) {
               className="flex items-center justify-between py-1.5 border-b border-subtle last:border-0"
             >
               <span className="font-mono text-xs text-primary">
-                {b.label}
+                {b.label.replace(/\s*\((.*)\)$/, " $1")}
                 {b.hint && <span className="text-muted"> ({b.hint})</span>}
               </span>
               <span className="font-mono text-xs text-secondary">
                 {b.synthetic
-                  ? probLabel(b.pct)
+                  ? syntheticShare(b.pct)
                   : `${fmt(b.equipped)} of ${fmt(b.total)} · ${pct(b.equipped, b.total)}`}
               </span>
             </div>

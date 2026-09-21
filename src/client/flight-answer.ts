@@ -12,7 +12,7 @@ import {
   ageLabel,
   fmt,
   monthDay,
-  probPct,
+  probLabel,
   probPhrase,
   probTier,
   zonedDeparture,
@@ -243,7 +243,7 @@ function probabilityBar(p: number, answer: AnswerTone): string {
     size: "md",
     className: "mt-3",
     bg: "bg-base",
-    label: `${probPct(p)}% chance of Starlink`,
+    label: `${probLabel(p)} chance of Starlink`,
   });
 }
 
