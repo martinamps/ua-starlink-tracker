@@ -37,6 +37,7 @@ import {
   programTypeOf,
   publicAirlines,
   siteForAirline,
+  uiAccent,
   wifiPhaseFamilies,
 } from "../airlines/registry";
 import { formatFactDate } from "../airlines/rollout-facts";
@@ -1125,6 +1126,8 @@ export interface RouteCompareResult {
   name: string;
   shortName: string;
   accentColor: string;
+  /** uiAccent(brand) — for text and bars on the dark hub page. */
+  accentText: string;
   canonicalHost: string;
   routePlannerBase: string | null;
   kind: RouteCompareKind;
@@ -1146,6 +1149,7 @@ function brand(cfg: AirlineConfig) {
     name: cfg.name,
     shortName: cfg.shortName,
     accentColor: cfg.brand.accentColor,
+    accentText: uiAccent(cfg.brand),
     canonicalHost: new URL(airlineHomeUrl(cfg.code)).host,
     // Path-style URL the per-airline route planner reads; null when that
     // tenant doesn't have a planner page (the chip hides).

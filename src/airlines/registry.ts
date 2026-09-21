@@ -54,6 +54,11 @@ export interface PageBrand {
   keywords: string;
   accentColor: string;
   accentColorDim: string;
+  /** Lighter tint of the brand color for text, links, outlines and chart marks
+   * on the dark page — ≥4.5:1 on base, surface and surface-elevated. Only set
+   * where the brand color itself falls short (Alaska's #01426a is 1.5:1 on a
+   * panel); accentColor stays the brand color for theme-color, badges and OG. */
+  accentText?: string;
   /** Brand color tuned for the favicon's glowing arc on a dark tile —
    * defaults to accentColor when omitted. */
   faviconAccent?: string;
@@ -403,6 +408,7 @@ const AIRLINE_DEFS = {
       keywords:
         "hawaiian airlines starlink, hawaiian airlines wifi, does hawaiian have wifi, hawaiian a330 starlink, hawaiian a321neo wifi, hawaiian 717 wifi, hawaiian interisland wifi, free wifi hawaiian airlines",
       accentColor: "#413691",
+      accentText: "#928ac9",
       accentColorDim: "#6b5fb3",
       faviconAccent: "#9d4edd", // Pualani purple, lifted to glow on dark
       socialImagePath: "/static/social-image-ha.webp",
@@ -504,6 +510,7 @@ const AIRLINE_DEFS = {
       keywords:
         "alaska airlines starlink, alaska starlink tracker, alaska wifi, 737 MAX starlink, E175 starlink, check alaska flight starlink",
       accentColor: "#01426a",
+      accentText: "#4b99c9",
       accentColorDim: "#2b6a8f",
       faviconAccent: "#00b2e3", // Alaska secondary brand blue — primary #01426a is too dark to glow
       socialImagePath: "/static/social-image-as.webp",
@@ -568,6 +575,7 @@ const AIRLINE_DEFS = {
       keywords:
         "qatar airways starlink, qatar starlink tracker, qatar wifi, B777 starlink, A350 starlink, B787 starlink, check qatar flight starlink, qr wifi",
       accentColor: "#5c0632",
+      accentText: "#d371a3",
       accentColorDim: "#8a2851",
       faviconAccent: "#a3204e", // Qatar oryx burgundy, lifted
       socialImagePath: "/static/social-image-qr.webp",
@@ -639,6 +647,7 @@ const AIRLINE_DEFS = {
       keywords:
         "air france starlink, air france wifi, air france 777 starlink, air france a350 wifi, air france a220 wifi",
       accentColor: "#002157",
+      accentText: "#5991ed",
       accentColorDim: "#2a4a80",
       faviconAccent: "#e4002b",
       socialImagePath: "/static/social-image-af.webp",
@@ -1116,6 +1125,12 @@ export function tenantBrand(tenant: Tenant): PageBrand {
   return tenant === "ALL" ? HUB_BRAND : tenant.brand;
 }
 
+/** The accent to use for anything read against the dark page (text, links,
+ * button outlines, bars) — the brand color when it already contrasts. */
+export function uiAccent(brand: PageBrand): string {
+  return brand.accentText ?? brand.accentColor;
+}
+
 /** Produce the template-variable map that index.html `{{...}}` placeholders expect. */
 export function brandMetadata(brand: PageBrand) {
   return {
@@ -1129,6 +1144,7 @@ export function brandMetadata(brand: PageBrand) {
     siteName: brand.title,
     accentColor: brand.accentColor,
     accentColorDim: brand.accentColorDim,
+    uiAccentColor: uiAccent(brand),
     // socialImagePath is intentionally absent: resolveSocialImage (app.ts) is
     // the single resolver, with the missing-asset fallback.
   };

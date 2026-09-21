@@ -12,6 +12,7 @@ import {
   type AirlineCode,
   airlineHomeUrl,
   publicAirlines,
+  uiAccent,
   withOperatingPartners,
 } from "../airlines/registry";
 import type {
@@ -355,6 +356,7 @@ function buildPerAirlineStats(db: Database, codes: readonly AirlineCode[]): PerA
       statusLabel: cfg.rollout.statusLabel,
       phaseNote: cfg.rollout.phaseNote,
       accentColor: cfg.brand.accentColor,
+      accentText: uiAccent(cfg.brand),
       href: airlineHomeUrl(code),
     });
   }

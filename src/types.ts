@@ -52,6 +52,8 @@ export interface PerAirlineStat {
   statusLabel?: string;
   phaseNote?: string;
   accentColor?: string;
+  /** uiAccent(brand): the tint to use for text and marks on the dark page. */
+  accentText?: string;
   href?: string;
 }
 
