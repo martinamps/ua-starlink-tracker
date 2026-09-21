@@ -22,15 +22,15 @@ import {
 } from "../src/database/sql/equipped";
 import { makeSyntheticDb } from "./helpers";
 
-const LISTINGS = [undefined, null, "Starlink", "Viasat"] as const;
-const SETTLES = [undefined, "unknown", "confirmed", "negative"] as const;
+const LISTINGS = [undefined, null, "Starlink", "Viasat", "None", ""] as const;
+const SETTLES = [undefined, null, "unknown", "confirmed", "negative"] as const;
 
 function seeded() {
   const db = makeSyntheticDb();
   const cases: Array<{
     tail: string;
     listed: { verified_wifi: string | null } | null;
-    fleet: { starlink_status: string } | null;
+    fleet: { starlink_status: string | null } | null;
   }> = [];
   let i = 0;
   for (const wifi of LISTINGS) {
@@ -77,6 +77,64 @@ describe("equipped: SQL predicate and JS twin", () => {
       const probe = db.query(`SELECT ${tailEquippedSql("?")} AS e`).get(c.tail) as { e: number };
       expect(probe.e === 1, c.tail).toBe(isEquipped(tailEvidence(c)));
     }
+    db.close();
+  });
+
+  test("a listing names a provider or it doesn't: 'None' and '' are other providers", () => {
+    for (const verified_wifi of ["None", ""]) {
+      expect(tailEvidence({ listed: { verified_wifi }, fleet: null })).toBe("verified_other");
+    }
+    expect(
+      tailEvidence({ listed: { verified_wifi: null }, fleet: { starlink_status: null } })
+    ).toBe("listed");
+  });
+
+  test("tailEquippedSql with an airline reads only that airline's listing", () => {
+    const db = makeSyntheticDb();
+    const list = (airline: string, wifi: string | null) =>
+      db
+        .query(
+          `INSERT INTO starlink_planes (aircraft, wifi, sheet_gid, DateFound, TailNumber, OperatedBy, fleet, verified_wifi, airline)
+           VALUES ('ERJ-175', 'Starlink', '0', '2026-01-01', 'N200XA', 'SkyWest', 'express', ?, ?)`
+        )
+        .run(wifi, airline);
+    list("AS", "Starlink");
+    list("UA", "Viasat");
+    const probe = (airline?: string) =>
+      (
+        db
+          .query(`SELECT ${airline ? tailEquippedSql("?", "?") : tailEquippedSql("?")} AS e`)
+          .get(...(airline ? ["N200XA", airline] : ["N200XA"])) as { e: number }
+      ).e;
+    expect(probe("AS")).toBe(1);
+    expect(probe("UA")).toBe(0);
+    expect(probe("HA")).toBe(0);
+    expect(probe()).toBe(1);
+    db.close();
+  });
+
+  test("a negative settle is tail-wide: it un-equips the listing under any airline", () => {
+    const db = makeSyntheticDb();
+    db.query(
+      `INSERT INTO starlink_planes (aircraft, wifi, sheet_gid, DateFound, TailNumber, OperatedBy, fleet, verified_wifi, airline)
+       VALUES ('ERJ-175', 'Starlink', '0', '2026-01-01', 'N201XA', 'SkyWest', 'express', 'Starlink', 'AS')`
+    ).run();
+    db.query(
+      `INSERT INTO united_fleet (tail_number, aircraft_type, first_seen_source, first_seen_at, last_seen_at, fleet, starlink_status, verified_wifi, airline)
+       VALUES ('N201XA', 'ERJ-175', 'fr24', 1, 1, 'express', 'negative', 'Viasat', 'UA')`
+    ).run();
+    const e = db.query(`SELECT ${tailEquippedSql("?", "?")} AS e`).get("N201XA", "AS") as {
+      e: number;
+    };
+    expect(e.e).toBe(0);
+    expect(
+      isEquipped(
+        tailEvidence({
+          listed: { verified_wifi: "Starlink" },
+          fleet: { starlink_status: "negative" },
+        })
+      )
+    ).toBe(false);
     db.close();
   });
 
