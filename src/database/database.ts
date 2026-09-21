@@ -79,12 +79,8 @@ import { excludeMassWriteDays } from "../utils/install-rate";
 import { debug, info, error as logError, warn } from "../utils/logger";
 import { ensureAdsbFlightDrawsTable } from "./adsb-flight-draws";
 import { ASSIGNMENT_LOG_DDL, logFlightAssignments, pruneAssignmentLog } from "./assignment-log";
-import {
-  equippedSql,
-  fleetStatusFromWifi,
-  settledNegativeJoin,
-  tailEquippedSql,
-} from "./sql/equipped";
+import { countRoster, fleetRoster, programmeRoster } from "./roster";
+import { equippedSql, fleetStatusFromWifi, settledNegativeJoin } from "./sql/equipped";
 
 import {
   type AirlineFilter,
@@ -1176,48 +1172,24 @@ export function stampLastUpdatedAt(
  * lastUpdated goes through stampLastUpdated as the "fleet-meta" writer.
  */
 export function refreshFleetMeta(db: Database, airline: string): void {
-  const rows = (
-    db
-      .query(`
-      SELECT fleet, aircraft_type,
-             COUNT(*) AS total,
-             SUM(CASE WHEN starlink_status = 'confirmed' THEN 1 ELSE 0 END) AS confirmed
-      FROM united_fleet
-      WHERE airline = ?
-      GROUP BY fleet, aircraft_type
-    `)
-      .all(airline) as Array<{
-      fleet: string;
-      aircraft_type: string | null;
-      total: number;
-      confirmed: number;
-    }>
-  ).filter((r) => !isOutsideProgramme(airline, normalizeAircraftType(r.aircraft_type)));
-
-  let mainlineTotal = 0;
-  let mainlineStarlink = 0;
-  let expressTotal = 0;
-  let expressStarlink = 0;
-  for (const r of rows) {
-    if (r.fleet === "mainline") {
-      mainlineTotal += r.total;
-      mainlineStarlink += r.confirmed;
-    } else {
-      expressTotal += r.total;
-      expressStarlink += r.confirmed;
-    }
-  }
-  const total = mainlineTotal + expressTotal;
+  // Two-bucket meta shape: every non-mainline subfleet reports as express.
+  const byFleet = countRoster(programmeRoster(db, airline), (t) =>
+    t.fleet === "mainline" ? "mainline" : "express"
+  );
+  const none = { total: 0, equipped: 0 };
+  const mainline = byFleet.get("mainline") ?? none;
+  const express = byFleet.get("express") ?? none;
+  const total = mainline.total + express.total;
   if (total === 0) return;
   const pct = (n: number, d: number) => (d > 0 ? ((n / d) * 100).toFixed(2) : "0.00");
 
   setMeta(db, "totalAircraftCount", total, airline);
-  setMeta(db, "mainlineTotal", mainlineTotal, airline);
-  setMeta(db, "mainlineStarlink", mainlineStarlink, airline);
-  setMeta(db, "mainlinePercentage", pct(mainlineStarlink, mainlineTotal), airline);
-  setMeta(db, "expressTotal", expressTotal, airline);
-  setMeta(db, "expressStarlink", expressStarlink, airline);
-  setMeta(db, "expressPercentage", pct(expressStarlink, expressTotal), airline);
+  setMeta(db, "mainlineTotal", mainline.total, airline);
+  setMeta(db, "mainlineStarlink", mainline.equipped, airline);
+  setMeta(db, "mainlinePercentage", pct(mainline.equipped, mainline.total), airline);
+  setMeta(db, "expressTotal", express.total, airline);
+  setMeta(db, "expressStarlink", express.equipped, airline);
+  setMeta(db, "expressPercentage", pct(express.equipped, express.total), airline);
   // Ownership-gated: writes lastUpdated only for airlines whose configured
   // owner is "fleet-meta" (the default). For UA the scrape owns the stamp, so
   // the updateDatabase call below can never steal it.
@@ -1495,18 +1467,9 @@ export function getHubStats(
   now = unixNow()
 ): HubAirlineStat[] {
   const ph = placeholders(codes);
-  const fleetByType = db
-    .query(
-      `SELECT airline, aircraft_type, COUNT(*) total FROM united_fleet
-       WHERE airline IN (${ph}) GROUP BY airline, aircraft_type`
-    )
-    .all(...codes) as { airline: string; aircraft_type: string | null; total: number }[];
-  const passengerTotals = new Map<string, number>();
-  for (const r of fleetByType) {
-    if (isOutsideProgramme(r.airline, normalizeAircraftType(r.aircraft_type))) continue;
-    passengerTotals.set(r.airline, (passengerTotals.get(r.airline) ?? 0) + r.total);
-  }
-  const fleet = [...passengerTotals].map(([airline, total]) => ({ airline, total }));
+  const fleet = [...countRoster(programmeRoster(db, codes), (t) => t.airline)]
+    .map(([airline, c]) => ({ airline, total: c.total }))
+    .sort((a, b) => a.airline.localeCompare(b.airline));
   // Equipped count from starlink_planes — the authoritative table — not from
   // united_fleet.starlink_status, which lags during reconcile cycles. Same
   // source /api/fleet-summary uses, so the cards never contradict it.
@@ -2034,32 +1997,7 @@ export function getSubfleetPenetration(
   db: Database,
   airline: string
 ): Map<string, SubfleetPenetration> {
-  const rows = db
-    .query(
-      `SELECT uf.fleet, uf.aircraft_type, COUNT(*) AS total,
-              SUM(CASE WHEN sp.TailNumber IS NOT NULL THEN 1 ELSE 0 END) AS equipped
-       FROM united_fleet uf
-       LEFT JOIN starlink_planes sp
-              ON sp.TailNumber = uf.tail_number
-             AND sp.airline = uf.airline
-             AND ${equippedSql("sp")}
-       WHERE uf.airline = ?
-       GROUP BY uf.fleet, uf.aircraft_type`
-    )
-    .all(airline) as {
-    fleet: string;
-    aircraft_type: string | null;
-    total: number;
-    equipped: number;
-  }[];
-  const sums = new Map<string, { equipped: number; total: number }>();
-  for (const r of rows) {
-    if (isOutsideProgramme(airline, normalizeAircraftType(r.aircraft_type))) continue;
-    const acc = sums.get(r.fleet) ?? { equipped: 0, total: 0 };
-    acc.equipped += r.equipped;
-    acc.total += r.total;
-    sums.set(r.fleet, acc);
-  }
+  const sums = countRoster(programmeRoster(db, airline), (t) => t.fleet);
   const out = new Map<string, SubfleetPenetration>();
   for (const [fleet, r] of sums) {
     out.set(fleet, {
@@ -3363,45 +3301,39 @@ export interface TypeProgress {
 export function getTypeProgress(db: Database, airline: string): TypeProgress[] {
   const cfg = AIRLINES[airline];
   if (!cfg) return [];
-  const rows = db
-    .query(
-      `SELECT uf.aircraft_type,
-              CASE WHEN sp.TailNumber IS NOT NULL THEN 1 ELSE 0 END AS equipped,
-              CASE WHEN g.tail_number IS NULL THEN 1 ELSE 0 END AS not_in_guide
-       FROM united_fleet uf
-       LEFT JOIN starlink_planes sp
-              ON sp.TailNumber = uf.tail_number
-             AND sp.airline = uf.airline
-             AND ${equippedSql("sp")}
-       LEFT JOIN fleet_guide_tails g
-              ON g.airline = uf.airline AND g.tail_number = uf.tail_number
-       WHERE uf.airline = ?`
-    )
-    .all(airline) as { aircraft_type: string | null; equipped: number; not_in_guide: number }[];
-  const hasGuide = Boolean(
-    db.query("SELECT 1 FROM fleet_guide_tails WHERE airline = ? LIMIT 1").get(airline)
+  const guide = new Set(
+    (
+      db.query("SELECT tail_number FROM fleet_guide_tails WHERE airline = ?").values(airline) as [
+        string,
+      ][]
+    ).map(([t]) => t)
   );
   const byKey = new Map<string, TypeProgress>();
-  for (const r of rows) {
-    const family = normalizeAircraftType(r.aircraft_type);
-    if (isFreighterFamily(family)) continue;
-    const { key, label } = programTypeOf(cfg, r.aircraft_type);
+  // The whole roster, not programmeRoster: excluded families are shown
+  // (flagged), only freighters are dropped.
+  for (const t of fleetRoster(db, airline)) {
+    if (isFreighterFamily(t.family)) continue;
+    const { key, label } = programTypeOf(cfg, t.aircraft_type);
     const acc = byKey.get(key) ?? {
       key,
       label,
       equipped: 0,
       total: 0,
       notInGuide: 0,
-      excluded: isOutsideProgramme(airline, family),
+      excluded: isOutsideProgramme(airline, t.family),
     };
     acc.total++;
-    acc.equipped += r.equipped;
-    if (hasGuide) acc.notInGuide += r.not_in_guide;
+    if (t.equipped) acc.equipped++;
+    if (guide.size > 0 && !guide.has(t.tail_number)) acc.notInGuide++;
     byKey.set(key, acc);
   }
   const share = (t: TypeProgress) => (t.total > 0 ? t.equipped / t.total : 0);
   return [...byKey.values()].sort(
-    (a, b) => Number(a.excluded) - Number(b.excluded) || share(b) - share(a) || b.total - a.total
+    (a, b) =>
+      Number(a.excluded) - Number(b.excluded) ||
+      share(b) - share(a) ||
+      b.total - a.total ||
+      a.label.localeCompare(b.label)
   );
 }
 
@@ -5742,25 +5674,7 @@ function computeInstallPace(
 }
 
 function computeFleetPageData(db: Database, airline?: AirlineFilter): FleetPageData {
-  const q = withAirline(
-    `SELECT uf.tail_number, uf.aircraft_type, uf.fleet, uf.operated_by,
-            uf.starlink_status, uf.verified_wifi, uf.verified_at, uf.airline,
-            ${tailEquippedSql("uf.tail_number", "uf.airline")} AS equipped
-     FROM united_fleet uf WHERE 1=1`,
-    airline,
-    "uf"
-  );
-  const rows = db.query(`${q.sql} ORDER BY uf.tail_number`).all(...q.params) as Array<{
-    airline: string;
-    tail_number: string;
-    aircraft_type: string | null;
-    fleet: string;
-    operated_by: string | null;
-    starlink_status: string;
-    verified_wifi: string | null;
-    verified_at: number | null;
-    equipped: number;
-  }>;
+  const rows = programmeRoster(db, airline);
 
   const allTails: FleetTail[] = [];
   const familyMap = new Map<string, FleetFamily>();
@@ -5774,10 +5688,8 @@ function computeFleetPageData(db: Database, airline?: AirlineFilter): FleetPageD
   let totalStarlink = 0;
 
   for (const r of rows) {
-    const rawFamily = normalizeAircraftType(r.aircraft_type);
-    if (isOutsideProgramme(r.airline, rawFamily)) continue;
-    const family = rawFamily === "other" ? "unknown" : rawFamily;
-    const equipped = r.equipped === 1;
+    const family = r.family === "other" ? "unknown" : r.family;
+    const { equipped } = r;
     // The observed provider. A Starlink observation on a tail the one
     // definition doesn't count (a settle or listing says otherwise) is a
     // conflict, shown as unchecked rather than as a second Starlink count.
