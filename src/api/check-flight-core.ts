@@ -498,8 +498,8 @@ function segmentAssignment(s: FallbackSegment, wifi: string | null): VerdictAssi
 /**
  * FLIGHT_LOOKUP_RESULT, the single product-truth metric: how often a caller
  * actually got an answer. Shared by REST and MCP so the cross-channel view
- * can't drift. `result` mirrors `outcome` — DD monitors group by result, which
- * read N/A while only outcome was emitted; outcome stays for existing series.
+ * can't drift. `result` mirrors `outcome`: monitors group by result, older
+ * series by outcome.
  */
 export function recordFlightLookup(
   endpoint: "api_check" | "api_predict" | "mcp",

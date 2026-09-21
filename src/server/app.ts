@@ -372,9 +372,8 @@ async function notFound(site: SiteConfig): Promise<Response> {
   return html(body, 404, SECURITY_HEADERS.notFound);
 }
 
-/** HTTP_REQUEST's airline tag, from the host's tenant: without it every
- * request fell to `airline:unmapped`, so a `by {airline}` split of the
- * route-planner 404s could not say which site was emitting them. */
+/** HTTP_REQUEST's airline tag, from the host's tenant, so a `by {airline}`
+ * split can say which site emitted a request. */
 function httpAirlineTag(tenant: Tenant): string {
   return normalizeScopeTag(tenantScope(tenant));
 }
@@ -3089,14 +3088,11 @@ const checkFlightPage: Handler = async (ctx) => {
   // variants don't dilute it.
   const parsed = parseCheckFlightPath(ctx.url.pathname);
   // A segment that isn't a flight number (an airport code, a city, a typo —
-  // the homepage form navigates here with whatever was typed) still 404s, but
-  // renders the real page with a notice and the working lookup form instead of
-  // the bare not-found document.
-  // A segment that isn't a flight number still 404s, but renders the real page
-  // with a notice and the working lookup form. Self-canonical: a noindex response
-  // that canonicalizes to /check-flight aims the noindex at the conversion page.
-  // Pass numeric 404 (not an opts object) so renderSubPage applies notFoundHtml
-  // edge caching — restores #75 after a bad land of united-content.
+  // the form navigates here with whatever was typed) still 404s, but renders
+  // the real page with a notice and the working lookup form. Self-canonical: a
+  // noindex response that canonicalizes to /check-flight aims the noindex at
+  // the conversion page. The numeric 404 is what gives it notFoundHtml's edge
+  // caching.
   const invalidPage = (invalid: InvalidFlightQuery) =>
     renderSubPage(
       ctx,
@@ -3304,17 +3300,15 @@ function computePlannerPopularRoutes(ctx: RequestContext): RoutePair[] {
 }
 
 const routePlannerPage: Handler = (ctx) => {
-  // Per-route permalinks: /route-planner/{origin}/{destination}. The prefix used
-  // to swallow every sub-path and render the planner, so ~10k internal links off
-  // the flight permalinks all resolved to one duplicate page and Google logged
-  // them as soft 404s. Unknown pairs now 404 so the URL space stays bounded.
+  // Per-route permalinks: /route-planner/{origin}/{destination}. Unknown pairs
+  // 404 so the ~10k links off the flight permalinks can't collapse into one
+  // duplicate planner page that crawlers log as soft 404s.
   const trimmed = ctx.url.pathname.replace(/\/+$/, "");
   if (trimmed !== "/route-planner") {
     const parsed = parseRoutePath(ctx.url.pathname);
     if (!parsed) return notFound(ctx.site);
     // One spelling per route: lowercase and trailing-slash variants 301 to the
-    // canonical uppercase form, mirroring /check-flight. They used to 200 with
-    // a self-correcting canonical — duplicate crawl surface.
+    // canonical uppercase form, mirroring /check-flight, so no duplicate 200s.
     const canonicalPath = `/route-planner/${parsed.origin}/${parsed.destination}`;
     if (ctx.url.pathname !== canonicalPath) {
       return Response.redirect(`https://${ctx.site.canonicalHost}${canonicalPath}`, 301);

@@ -2010,8 +2010,8 @@ function toolSearchStarlinkFlights(
     .getDepartureSlots({ from: now + 1, to: now + SEARCH_HORIZON_SEC, partners: true })
     .filter((f) => f.equipped === 1);
 
-  // Data horizon from the UNFILTERED set — showing now() when the filtered result
-  // is empty would wrongly imply we have zero forward data
+  // Data horizon from every equipped departure, before the route filter: an
+  // empty route result stamped with now() would imply no forward data at all.
   const latestDeparture =
     allFuture.length > 0 ? allFuture[allFuture.length - 1].departure_time : now;
   const dataHorizon = new Date(latestDeparture * 1000).toISOString().slice(0, 10);
@@ -2302,7 +2302,7 @@ export async function handleMcpRequest(
     response = rpcError(msg.id ?? null, -32603, "Internal error");
   }
 
-  // Track meaningful MCP usage in Plausible (skip ping & notifications — noise)
+  // Ping and notifications are noise in Plausible.
   if (msg.method === "initialize" || msg.method === "tools/list") {
     trackMcpEvent(req, analytics, { method: msg.method });
   } else if (msg.method === "tools/call") {
@@ -2310,6 +2310,5 @@ export async function handleMcpRequest(
     trackMcpEvent(req, analytics, { method: "tools/call", tool: toolName });
   }
 
-  // A notification (no id) gets 202 Accepted with no body.
   return response === null ? jsonRpc(null, 202) : jsonRpc(response);
 }
