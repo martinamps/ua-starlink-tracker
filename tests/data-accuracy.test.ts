@@ -7,12 +7,14 @@ import type { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { logFlightAssignments } from "../src/database/assignment-log";
 import {
+  addDiscoveredStarlinkPlane,
   backfillAlaskaSkyWestOperator,
   demoteRetrofittedNegatives,
   getFirstFlights,
   getFleetPageData,
   getRouteFlightNumbers,
   isScheduledLeg,
+  migrate,
   reconcileConsensus,
   recordFirstFlights,
   syncSpreadsheetToFleet,
@@ -318,6 +320,56 @@ describe("Alaska SkyWest operator backfill", () => {
       { t: "N171SY", o: "SkyWest Airlines" },
       { t: "N650QX", o: "Horizon Air" },
     ]);
+    db.close();
+  });
+});
+
+describe("migrate", () => {
+  const meta = (db: Database, key: string) =>
+    (db.query("SELECT value FROM meta WHERE key = ?").get(key) as { value: string } | null)
+      ?.value ?? null;
+
+  test("analyzes once per index set and runs one-off backfills once", () => {
+    const db = makeSyntheticDb();
+    migrate(db);
+    const analyzed = meta(db, "schema:analyzed_indexes");
+    expect(analyzed).toContain("idx_upf_route");
+    expect(meta(db, "schema:backfill_alaska_skywest_operator")).not.toBeNull();
+    expect(meta(db, "schema:namespace_meta_keys")).not.toBeNull();
+
+    db.query(
+      `INSERT INTO starlink_planes (aircraft, wifi, DateFound, TailNumber, OperatedBy, fleet, airline)
+       VALUES ('Embraer E175LR', 'Starlink', NULL, 'N199SY', 'Horizon Air', 'horizon', 'AS')`
+    ).run();
+    db.query("INSERT INTO meta (key, value) VALUES ('lastUpdated', 'x')").run();
+    migrate(db);
+    expect(meta(db, "schema:analyzed_indexes")).toBe(analyzed);
+    expect(meta(db, "lastUpdated")).toBe("x");
+    const op = db.query("SELECT OperatedBy AS o FROM starlink_planes WHERE TailNumber = 'N199SY'");
+    expect(op.get()).toEqual({ o: "Horizon Air" });
+
+    db.exec("CREATE INDEX idx_test_only ON meta(value)");
+    migrate(db);
+    expect(meta(db, "schema:analyzed_indexes")).toContain("idx_test_only");
+    db.close();
+  });
+
+  test("new Alaska SkyWest listings carry the SkyWest label", () => {
+    const db = makeSyntheticDb();
+    addDiscoveredStarlinkPlane(
+      db,
+      "N198SY",
+      "Embraer E175LR",
+      "Starlink",
+      "Horizon Air",
+      "horizon",
+      {
+        airline: "AS",
+        evidence: "type_rule",
+      }
+    );
+    const op = db.query("SELECT OperatedBy AS o FROM starlink_planes WHERE TailNumber = 'N198SY'");
+    expect(op.get()).toEqual({ o: "SkyWest Airlines" });
     db.close();
   });
 });

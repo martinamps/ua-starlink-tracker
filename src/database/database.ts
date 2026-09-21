@@ -133,14 +133,40 @@ export function openDatabase(path = DB_PATH): Database {
  * Bring the schema up to date, then refresh planner statistics. Once per
  * process: server boot, or a script's main.
  *
- * ANALYZE is not optional: without sqlite_stat1 the planner keeps choosing
+ * Statistics are not optional: without sqlite_stat1 the planner keeps choosing
  * airline= (zero selectivity on a one-airline log) over flight_number IN, and
  * the serving-path indexes sit unused. Measured at production cardinality:
  * 14.6ms → 0.01ms and 103ms → 2.6ms, only after ANALYZE.
  */
 export function migrate(db: Database): void {
   setupTables(db);
+  refreshPlannerStats(db);
+}
+
+/**
+ * A full ANALYZE reads every index (~0.6s on production data) and ran before
+ * the server listened and on every CLI start. It is only needed when there
+ * are no statistics yet or the index set changed; otherwise PRAGMA optimize
+ * re-analyzes just the tables whose row counts drifted, with a bounded scan.
+ */
+function refreshPlannerStats(db: Database): void {
+  const indexes = (
+    db
+      .query(
+        "SELECT name FROM sqlite_master WHERE type = 'index' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+      )
+      .values() as [string][]
+  )
+    .map(([n]) => n)
+    .join(",");
+  const key = `${SCHEMA_META_PREFIX}analyzed_indexes`;
+  const analyzed = db.query("SELECT value FROM meta WHERE key = ?").get(key) as MetaRow | null;
+  if (tableExists(db, "sqlite_stat1") && analyzed?.value === indexes) {
+    db.exec("PRAGMA analysis_limit = 1000; PRAGMA optimize;");
+    return;
+  }
   db.exec("ANALYZE");
+  db.query("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)").run(key, indexes);
 }
 
 /** openDatabase + migrate, for one-shot CLI entrypoints. */
@@ -734,7 +760,9 @@ export function setupTables(db: Database) {
   }
 
   migrateMultiAirline(db);
-  backfillAlaskaSkyWestOperator(db);
+  ensureIndexes(db);
+  dropRedundantIndexes(db);
+  runOnce(db, "backfill_alaska_skywest_operator", () => backfillAlaskaSkyWestOperator(db));
   db.exec(ASSIGNMENT_LOG_DDL);
 
   // Per-tail marks from a curated community fleet guide (AF: FlyerTalk). The
@@ -789,18 +817,20 @@ function migrateFirstFlightsKey(db: Database): void {
 /**
  * Alaska's SkyWest-operated E175s (N…SY) were seeded from the Horizon roster
  * page and kept OperatedBy 'Horizon Air'. The SY suffix is SkyWest's
- * registration block, so the label follows the tail. Idempotent: matches
- * nothing once applied.
+ * registration block, so the label follows the tail. Runs once (migrate);
+ * addDiscoveredStarlinkPlane applies the same rule to new listings.
  */
+const ALASKA_SKYWEST_OPERATOR = "SkyWest Airlines";
+
 export function backfillAlaskaSkyWestOperator(db: Database): number {
   if (!tableExists(db, "starlink_planes")) return 0;
   const res = db
     .query(
-      `UPDATE starlink_planes SET OperatedBy = 'SkyWest Airlines'
+      `UPDATE starlink_planes SET OperatedBy = ?1
        WHERE airline = 'AS' AND TailNumber GLOB 'N*SY'
-         AND (OperatedBy IS NULL OR OperatedBy <> 'SkyWest Airlines')`
+         AND (OperatedBy IS NULL OR OperatedBy <> ?1)`
     )
-    .run();
+    .run(ALASKA_SKYWEST_OPERATOR);
   if (res.changes > 0) info(`Backfilled OperatedBy on ${res.changes} Alaska SkyWest tails`);
   return res.changes;
 }
@@ -826,7 +856,35 @@ function migrateMultiAirline(db: Database) {
       added.push(t);
     }
   }
+  if (added.length > 0) info(`Database migration: airline column added to [${added.join(", ")}]`);
 
+  // setMeta namespaces every key it writes, so un-namespaced keys only ever
+  // came from before multi-airline.
+  runOnce(db, "namespace_meta_keys", () => {
+    const renamed = db
+      .query("UPDATE meta SET key = 'UA:' || key WHERE key NOT LIKE '%:%'")
+      .run().changes;
+    if (renamed > 0) info(`Database migration: ${renamed} meta keys namespaced`);
+  });
+}
+
+/**
+ * Schema-work bookkeeping lives under `schema:` keys, which the per-airline
+ * `UA:` namespace can never collide with.
+ */
+const SCHEMA_META_PREFIX = "schema:";
+
+/** Run a one-off data migration once per database, recorded in meta. */
+function runOnce(db: Database, name: string, fn: () => unknown): void {
+  const key = `${SCHEMA_META_PREFIX}${name}`;
+  if (db.query("SELECT 1 FROM meta WHERE key = ?").get(key)) return;
+  db.transaction(() => {
+    fn();
+    db.query("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)").run(key, String(unixNow()));
+  })();
+}
+
+function ensureIndexes(db: Database): void {
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_sp_airline   ON starlink_planes(airline);
     CREATE INDEX IF NOT EXISTS idx_uf_airline   ON united_fleet(airline, starlink_status);
@@ -874,36 +932,31 @@ function migrateMultiAirline(db: Database) {
     CREATE INDEX IF NOT EXISTS idx_sp_tail  ON starlink_planes(TailNumber);
     CREATE INDEX IF NOT EXISTS idx_dl_tail  ON departure_log(tail_number, departed_at);
     CREATE INDEX IF NOT EXISTS idx_upf_flight ON upcoming_flights(flight_number, departure_time);
-    CREATE INDEX IF NOT EXISTS idx_upf_route  ON upcoming_flights(airline, departure_airport, arrival_airport);    CREATE INDEX IF NOT EXISTS idx_vlog_airline_time ON starlink_verification_log(airline, checked_at);
+    CREATE INDEX IF NOT EXISTS idx_upf_route  ON upcoming_flights(airline, departure_airport, arrival_airport);
+    CREATE INDEX IF NOT EXISTS idx_vlog_airline_time ON starlink_verification_log(airline, checked_at);
     CREATE INDEX IF NOT EXISTS idx_qfc_date ON qatar_fetch_coverage(fetch_date);
     CREATE INDEX IF NOT EXISTS idx_bts_routes_pair ON bts_monthly_routes(origin, dest);
   `);
-  // Redundant, so pure write cost: idx_fleet_tail and idx_qs_flight duplicate
-  // UNIQUE constraints' own indexes; departure_log.airport is never filtered
-  // on; getNextPlanesToVerify filters airline + next_check_after, which
-  // idx_fleet_discovery (starlink_status first) can't serve.
+  // idx_vlog_flight and idx_upf_tail exist for the serving path:
+  // getFlightHistorySummary runs three flight_number-filtered queries per
+  // permalink render and had only airline-leading indexes to use — on a
+  // one-airline 76k-row log that is a full-table range scan, measured at ~150ms
+  // of the permalink's 152ms. They only get used after ANALYZE (see migrate).
+}
+
+/**
+ * Redundant, so pure write cost: idx_fleet_tail and idx_qs_flight duplicate
+ * UNIQUE constraints' own indexes; departure_log.airport is never filtered
+ * on; getNextPlanesToVerify filters airline + next_check_after, which
+ * idx_fleet_discovery (starlink_status first) can't serve.
+ */
+function dropRedundantIndexes(db: Database): void {
   db.exec(`
     DROP INDEX IF EXISTS idx_fleet_tail;
     DROP INDEX IF EXISTS idx_qs_flight;
     DROP INDEX IF EXISTS idx_dl_airport;
     DROP INDEX IF EXISTS idx_fleet_discovery;
   `);
-
-  // idx_vlog_flight and idx_upf_tail exist for the serving path:
-  // getFlightHistorySummary runs three flight_number-filtered queries per
-  // permalink render and had only airline-leading indexes to use — on a
-  // one-airline 76k-row log that is a full-table range scan, measured at ~150ms
-  // of the permalink's 152ms. They only get used after ANALYZE (see migrate).
-
-  const renamed = db
-    .query("UPDATE meta SET key = 'UA:' || key WHERE key NOT LIKE '%:%'")
-    .run().changes;
-
-  if (added.length > 0 || renamed > 0) {
-    info(
-      `Database migration: airline column added to [${added.join(", ")}]; ${renamed} meta keys namespaced`
-    );
-  }
 }
 
 /**
@@ -4744,7 +4797,9 @@ export function addDiscoveredStarlinkPlane(
     gid,
     typeRule ? null : (opts.dateFound ?? today),
     tailNumber,
-    operatedBy || (AIRLINES[opts.airline]?.name ?? opts.airline),
+    opts.airline === "AS" && /^N.*SY$/.test(tailNumber)
+      ? ALASKA_SKYWEST_OPERATOR
+      : operatedBy || (AIRLINES[opts.airline]?.name ?? opts.airline),
     fleet,
     unverified ? null : wifiProvider,
     unverified ? null : unixNow(),
