@@ -1,4 +1,3 @@
-import React from "react";
 import { Eyebrow, StatValue, fmt } from "../../components/layout";
 import type { AirlineContent, HeroProps } from "./index";
 

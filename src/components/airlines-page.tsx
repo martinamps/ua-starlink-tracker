@@ -8,7 +8,6 @@
  * pages funnel to it rather than compete with it.
  */
 
-import type React from "react";
 import {
   type AirlineConfig,
   type SiteConfig,

@@ -24,7 +24,6 @@ import {
   getQatarScheduleByFlight,
   getQatarScheduleByRoute,
   getQatarScheduleStats,
-  initializeDatabase,
   upsertQatarSchedule,
 } from "../src/database/database";
 

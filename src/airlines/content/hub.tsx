@@ -1,4 +1,3 @@
-import React from "react";
 import { AirlineProgressList, RecentInstallsFeed, completeScope } from "../../components/atoms";
 import { ClientScriptTag, FlightSearchForm } from "../../components/flight-search-form";
 import {

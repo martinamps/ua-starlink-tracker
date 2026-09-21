@@ -1,4 +1,3 @@
-import React from "react";
 import { type SiteConfig, siteAirline } from "../airlines/registry";
 import type { PageLink } from "./atoms";
 import { ClientScriptTag } from "./flight-search-form";

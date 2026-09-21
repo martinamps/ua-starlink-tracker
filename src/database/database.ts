@@ -15,7 +15,6 @@ import {
   inferSubfleet,
   permalinkFlightNumber,
   slotFlightPrefixes,
-  stripFlightNumberZeros,
 } from "../airlines/flight-number";
 import {
   AIRLINES,

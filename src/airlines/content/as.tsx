@@ -1,4 +1,3 @@
-import React from "react";
 import { RolloutPanel } from "../../components/home/rollout";
 import { StatInline, fmt, pct } from "../../components/layout";
 import { AIRLINES, airlineHomeUrl } from "../registry";

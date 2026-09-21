@@ -68,7 +68,6 @@ import {
   type AirlineFactsEntry,
   contentOnlyFacts,
   factsAliasTarget,
-  factsBySlug,
   factsForCode,
   factsStamp,
   formatFactDate,
@@ -2685,7 +2684,6 @@ function subPageMeta(
 ): PageMeta {
   const tenant = ctx.tenant;
   const cfg = tenantConfig(tenant);
-  const brand = ctx.site.brand;
   const name = cfg?.name ?? "tracked airlines";
   // shortName keeps the lead under ~50 chars so the keyword survives mobile SERP truncation.
   const short = cfg?.shortName ?? "Tracked Fleets";
@@ -3483,7 +3481,6 @@ function aircraftTypeMeta(
       ? ` ${pending.join(" and ")} per the United fleet progress sheet.`
       : "";
   const description = `${answer.headline} ${answer.sentence}${pipelineClause} Every tail, where they fly, and how to check your flight.`;
-  const canonical = `https://${ctx.site.canonicalHost}/fleet/${def.slug}`;
   const breadcrumb = jsonLdBlock(
     breadcrumbJsonLd(ctx.site.canonicalHost, [
       { name: "Home", path: "/" },

@@ -1,4 +1,3 @@
-import React from "react";
 import { AIRLINES, type SiteConfig } from "../airlines/registry";
 import type { PopularFlight } from "../database/database";
 import type { AirportDepartures, RouteSchedule, RouteScheduleRow } from "../types";

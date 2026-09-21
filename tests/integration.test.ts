@@ -42,7 +42,7 @@ import { createApp } from "../src/server/app";
 import { type ScopedReader, createReaderFactory } from "../src/server/context";
 import { airportLocalDate } from "../src/utils/airport-tz";
 import { pickVerifiableFlight, unitedLookupDate } from "../src/utils/constants";
-import { TEST_DB, jsonOf, mcpDirect, mcpReq, openSnapshot } from "./helpers";
+import { TEST_DB, jsonOf, mcpDirect, openSnapshot } from "./helpers";
 
 // UA-bound conveniences — these unit tests pin United's carrier-prefix mappings.
 const UA_CFG = AIRLINES.UA;

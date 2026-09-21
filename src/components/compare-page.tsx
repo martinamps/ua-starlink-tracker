@@ -7,7 +7,6 @@
  * slug order.
  */
 
-import type React from "react";
 import { type AirlineConfig, type SiteConfig, airlineSlug } from "../airlines/registry";
 import type { AirlineFactsEntry } from "../airlines/rollout-facts";
 import type { TypeProgress } from "../database/database";

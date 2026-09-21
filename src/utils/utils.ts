@@ -171,7 +171,7 @@ export async function fetchAllSheets() {
         throw new Error(`HTTP error! Status: ${response.status}`);
       }
       const csvText = await response.text();
-      const { headers, rows } = parseCSV(csvText);
+      const { rows } = parseCSV(csvText);
 
       // Add to the appropriate fleet total
       if (sheet.fleet === "express") {

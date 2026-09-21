@@ -49,12 +49,7 @@ import type {
   SubfleetPenetration,
   TypeProgress,
 } from "../database/database";
-import {
-  type Scope,
-  type ScopedReader,
-  aggregatePenetration,
-  createReaderFactory,
-} from "../database/reader";
+import { type ScopedReader, aggregatePenetration, createReaderFactory } from "../database/reader";
 import { airportDistanceMiles, detourBoundMiles, hubAllowedForTrip } from "../utils/airport-geo";
 import { flightDateWindow, matchesLocalDate } from "../utils/airport-tz";
 import { memo, perOwner } from "../utils/ttl-cache";
