@@ -216,6 +216,11 @@ export function normalizeAirlineTag(code: string | null | undefined): string {
   return AIRLINES[code.toUpperCase()]?.metricTag ?? "unmapped";
 }
 
+/** airline tag for a reader/tenant scope: the hub scope is `all`, not an airline. */
+export function normalizeScopeTag(scope: string): string {
+  return scope === "ALL" ? "all" : normalizeAirlineTag(scope);
+}
+
 const LEG_MATCHES = new Set(["exact", "origin", "unmatched", "no_data", "unscoped"]);
 const LEG_REASONS = new Set([
   "none",

@@ -77,7 +77,6 @@ import {
   type FlightVerdict,
   type LegResolution,
   SWAP_DEGRADED_NOTE,
-  type VerdictTelemetry,
   answersOtherLeg,
   carrierReader,
   decideCarrier,
@@ -90,7 +89,9 @@ import {
   legSubject,
   negativeWifi,
   parseLegQuery,
+  recordFlightLookup,
   recordLegScope,
+  recordPrediction,
   recordUntrackedLookup,
   resolveFlightVerdict,
   scheduledFlights,
@@ -162,11 +163,10 @@ import {
 } from "../database/database";
 import {
   COUNTERS,
-  DISTRIBUTIONS,
-  bucketDaysOut,
   metrics,
   normalizeAircraftType,
   normalizeAirlineTag,
+  normalizeScopeTag,
   requestClientTags,
   withSpan,
 } from "../observability";
@@ -351,8 +351,7 @@ async function notFound(site: SiteConfig): Promise<Response> {
  * request fell to `airline:unmapped`, so a `by {airline}` split of the
  * route-planner 404s could not say which site was emitting them. */
 function httpAirlineTag(tenant: Tenant): string {
-  const scope = tenantScope(tenant);
-  return scope === "ALL" ? "all" : normalizeAirlineTag(scope);
+  return normalizeScopeTag(tenantScope(tenant));
 }
 
 /**
@@ -740,41 +739,6 @@ const apiRoutes: Handler = ({ req, site, reader }) => {
   return json(schedule, { cache: CACHE.fiveMinutes });
 };
 
-// Single product-truth metric: how often a user actually got an answer.
-type LookupOutcome = VerdictTelemetry["outcome"];
-type LookupConfidence = VerdictTelemetry["confidence"];
-function recordFlightLookup(
-  endpoint: "api_check" | "api_predict" | "mcp",
-  outcome: LookupOutcome,
-  confidence: LookupConfidence,
-  airlineCode: string,
-  daysOut?: number
-): void {
-  // result mirrors outcome: DD monitors group this counter by result, which
-  // read N/A while only outcome was emitted. outcome stays for existing series.
-  metrics.increment(COUNTERS.FLIGHT_LOOKUP_RESULT, {
-    endpoint,
-    outcome,
-    result: outcome,
-    confidence,
-    airline: normalizeAirlineTag(airlineCode),
-    ...(daysOut !== undefined && { days_out: bucketDaysOut(daysOut) }),
-  });
-}
-
-// Surfaces what's actually served — a flood of 2% fleet-prior cold-starts
-// is invisible in success-rate metrics but is a real product problem.
-function recordPrediction(
-  pred: { probability: number; confidence: "high" | "medium" | "low"; method: string },
-  airlineCode: string
-): void {
-  const method = pred.method.startsWith("fleet_prior") ? "fleet_prior" : "flight_history";
-  metrics.distribution(DISTRIBUTIONS.PREDICTION_PROBABILITY, pred.probability, {
-    confidence: pred.confidence,
-    method,
-    airline: normalizeAirlineTag(airlineCode),
-  });
-}
 /**
  * QR's data shape doesn't fit the upcoming_flights → starlink_planes JOIN that
  * other carriers use (no per-tail signal from QR's flight-status API). Serve

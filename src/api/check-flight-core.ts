@@ -30,6 +30,7 @@ import type { FlightAssignmentRow, UnequippedAssignment } from "../database/data
 import type { Scope, ScopedReader } from "../database/reader";
 import {
   COUNTERS,
+  DISTRIBUTIONS,
   type Tags,
   bucketDaysOut,
   metrics,
@@ -38,6 +39,7 @@ import {
   normalizeLegEffect,
   normalizeLegMatch,
   normalizeLegReason,
+  normalizeScopeTag,
 } from "../observability";
 import {
   type CarrierPrediction,
@@ -348,6 +350,42 @@ export function verdictTelemetry(
         confidence: verdict.grade,
       };
   }
+}
+
+/**
+ * FLIGHT_LOOKUP_RESULT, the single product-truth metric: how often a caller
+ * actually got an answer. Shared by REST and MCP so the cross-channel view
+ * can't drift. `result` mirrors `outcome` — DD monitors group by result, which
+ * read N/A while only outcome was emitted; outcome stays for existing series.
+ */
+export function recordFlightLookup(
+  endpoint: "api_check" | "api_predict" | "mcp",
+  outcome: VerdictTelemetry["outcome"],
+  confidence: VerdictTelemetry["confidence"],
+  scope: string,
+  daysOut?: number
+): void {
+  metrics.increment(COUNTERS.FLIGHT_LOOKUP_RESULT, {
+    endpoint,
+    outcome,
+    result: outcome,
+    confidence,
+    airline: normalizeScopeTag(scope),
+    ...(daysOut !== undefined && { days_out: bucketDaysOut(daysOut) }),
+  });
+}
+
+/** What prediction was actually served — a flood of 2% fleet-prior cold starts
+ * is invisible in success-rate metrics but is a real product problem. */
+export function recordPrediction(
+  pred: { probability: number; confidence: "high" | "medium" | "low"; method: string },
+  scope: string
+): void {
+  metrics.distribution(DISTRIBUTIONS.PREDICTION_PROBABILITY, pred.probability, {
+    confidence: pred.confidence,
+    method: pred.method.startsWith("fleet_prior") ? "fleet_prior" : "flight_history",
+    airline: normalizeScopeTag(scope),
+  });
 }
 
 export interface ResolveDeps {
