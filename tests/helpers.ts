@@ -147,9 +147,9 @@ export function addFlight(
   flightNumber: string,
   departureAirport: string,
   departureTimeSec: number,
-  opts: { arrivalAirport?: string; airline?: string } = {}
+  opts: { arrivalAirport?: string; airline?: string; lastUpdated?: number } = {}
 ): void {
-  const { arrivalAirport = "EWR", airline = "UA" } = opts;
+  const { arrivalAirport = "EWR", airline = "UA", lastUpdated = departureTimeSec } = opts;
   db.query(
     `INSERT INTO upcoming_flights (tail_number, flight_number, departure_airport, arrival_airport, departure_time, arrival_time, last_updated, airline)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
@@ -160,7 +160,7 @@ export function addFlight(
     arrivalAirport,
     departureTimeSec,
     departureTimeSec + 3 * 3600,
-    departureTimeSec,
+    lastUpdated,
     airline
   );
 }

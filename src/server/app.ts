@@ -94,6 +94,7 @@ import {
   scheduledFlights,
   verdictConfidence,
   verdictTelemetry,
+  wifiLabel,
   withLeg,
   withLegNote,
 } from "../api/check-flight-core";
@@ -181,7 +182,7 @@ import type {
   Flight,
 } from "../types";
 import { AIRCRAFT_SPECS } from "../utils/aircraft-specs";
-import { isRealIsoDate } from "../utils/airport-tz";
+import { airportLocalDate, airportTimezone, isRealIsoDate } from "../utils/airport-tz";
 import {
   API_CORS_HEADERS,
   BASE_RESPONSE_HEADERS,
@@ -2911,21 +2912,27 @@ function buildFlightFacts(
     // renders as text rather than a link to a dead page.
     .map((r) => ({ ...r, linkable: reader.routeHasData(r.departure_airport, r.arrival_airport) }));
   const now = Math.floor(Date.now() / 1000);
+  // One row per physical departure, newest assignment first, then the same
+  // equipped test the date lookup answers with: a swap onto a non-Starlink
+  // tail replaces the stale Starlink row instead of listing both.
   const upcoming = reader
-    .getFlightAssignments(variants, now, now + 48 * 3600)
+    .getDepartureSlots({ from: now, to: now + 48 * 3600, partners: true, flightNumbers: variants })
     .filter((f) => AIRPORT_CODE_RE.test(f.departure_airport))
-    .sort((a, b) => a.departure_time - b.departure_time)
     .slice(0, 5)
     .map((f) => {
-      const starlink = f.verified_wifi === "Starlink" && !f.settled_negative;
+      const starlink = f.equipped === 1;
       return {
         departure_airport: f.departure_airport,
         arrival_airport: f.arrival_airport,
         departure_time: f.departure_time,
+        departure_local_date: airportLocalDate(f.departure_airport, f.departure_time),
+        departure_tz: airportTimezone(f.departure_airport) ?? null,
         tail_number: f.tail_number,
         aircraft_type: f.aircraft_type ?? null,
         starlink,
-        wifiLabel: starlink ? "Starlink" : (f.settled_wifi ?? f.verified_wifi ?? "Install pending"),
+        wifiLabel: starlink
+          ? "Starlink"
+          : upcomingWifiLabel(f.settled_negative ? f.settled_wifi : f.verified_wifi),
       };
     });
   // Sibling permalinks: other marketing numbers on the primary route (routes
@@ -2945,6 +2952,8 @@ function buildFlightFacts(
     airlineName: cfg.name,
     observedTotal: history.total,
     observedStarlink: history.starlink,
+    observedSince: history.first_checked_at,
+    prediction: permalinkPrediction(reader, cfg, flightNumber),
     aircraftTypes: history.aircraft_types,
     lastStarlink: history.last_starlink
       ? { tail: history.last_starlink.tail_number, checked_at: history.last_starlink.checked_at }
@@ -2954,6 +2963,33 @@ function buildFlightFacts(
     siblings,
     notObservedSince: notObservedSince(reader, routes, upcoming.length > 0, now),
   };
+}
+
+/** The model's number for the permalink, so the page and the APIs quote one
+ * figure. Best-effort: the page renders without it. */
+function permalinkPrediction(
+  reader: ScopedReader,
+  cfg: AirlineConfig,
+  flightNumber: string
+): FlightFacts["prediction"] {
+  if (!cfg.flightHistoryModel) return null;
+  try {
+    const p = predictFlight(reader, flightNumber);
+    return {
+      probability: p.probability,
+      n_observations: p.n_observations,
+      confidence: p.confidence,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Badge for a departure that is not on Starlink, from wifiLabel's words. */
+function upcomingWifiLabel(provider: string | null): string {
+  const w = wifiLabel(provider);
+  if (w === "no") return "No Wi-Fi";
+  return w === "non-Starlink" ? "Not Starlink" : w;
 }
 
 /** Newest leg sighting when the whole flight has been silent past
@@ -2994,8 +3030,17 @@ function flightMetaAnswer(
   flightNumber: string,
   facts: FlightFacts
 ): string {
+  // The model's figure first, so meta, page and APIs quote one number; the
+  // raw check tally is checks, not departures.
+  const modelled = facts.prediction;
+  if (modelled && modelled.n_observations > 0) {
+    const pct = Math.round(modelled.probability * 100);
+    return pct > 0
+      ? ` Historically it gets a Starlink-equipped aircraft about ${pct}% of the time.`
+      : " Observed departures used aircraft without Starlink.";
+  }
   if (facts.observedStarlink > 0) {
-    return ` Starlink on ${facts.observedStarlink} of ${facts.observedTotal} observed departures.`;
+    return ` Starlink found on ${facts.observedStarlink} of ${facts.observedTotal} aircraft checks.`;
   }
   if (facts.observedTotal > 0) {
     return " Observed departures used aircraft still awaiting installation.";

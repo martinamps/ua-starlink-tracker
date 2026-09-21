@@ -308,7 +308,7 @@ describe("MCP tools", () => {
     });
     const text = json.result.content[0].text;
     // Format: **UAxxx**: ~N% Starlink probability (fleet prior). mainline fleet...
-    const pctMatch = text.match(/~(\d+)% Starlink probability/);
+    const pctMatch = text.match(/~?(\d+)% Starlink probability/);
     expect(pctMatch).not.toBeNull();
     const pct = Number(pctMatch![1]);
     // The reported number IS United's live mainline penetration by design, so

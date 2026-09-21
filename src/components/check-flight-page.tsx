@@ -23,8 +23,14 @@ export interface FlightUpcomingDeparture {
   departure_airport: string;
   arrival_airport: string;
   departure_time: number;
+  /** YYYY-MM-DD at the departure airport: the date a traveller books and the
+   * date the lookup answers for. Null when the airport's zone is unknown. */
+  departure_local_date?: string | null;
+  /** IANA zone of the departure airport, for rendering local clock time. */
+  departure_tz?: string | null;
   tail_number: string;
   aircraft_type: string | null;
+  /** The slot's current tail passes the equipped test the verdict uses. */
   starlink: boolean;
   wifiLabel: string;
 }
@@ -34,9 +40,21 @@ export interface FlightUpcomingDeparture {
 export interface FlightFacts {
   flightNumber: string;
   airlineName: string;
+  /** United.com (or the carrier's verifier) checks of aircraft on this number,
+   * whole log, not departures; see observedSince. */
   observedTotal: number;
   observedStarlink: number;
+  /** Earliest check counted in observedTotal (unix seconds). */
+  observedSince?: number | null;
+  /** The per-flight model's answer: the same number /api/predict-flight and
+   * MCP predict_flight_starlink give. Null for carriers without a model. */
+  prediction?: {
+    probability: number;
+    n_observations: number;
+    confidence: "high" | "medium" | "low";
+  } | null;
   aircraftTypes: string[];
+  /** Newest check that found Starlink on this number: a check time, not a departure. */
   lastStarlink: { tail: string; checked_at: number } | null;
   routes: FlightRouteFact[];
   upcoming: FlightUpcomingDeparture[];
@@ -101,9 +119,27 @@ const AIRPORT_ZONES_INLINE: string = (() => {
 
 const fmtDay = (sec: number) => DAY_UTC.format(new Date(sec * 1000));
 
-const fmtDeparture = (sec: number) => {
+const localFormatters = new Map<string, Intl.DateTimeFormat>();
+
+/** Local date and clock at the departure airport: the checker answers per
+ * local day, so a UTC label put late-evening departures on the next date. */
+const fmtDeparture = (sec: number, tz?: string | null) => {
   const d = new Date(sec * 1000);
-  return `${MONTH_DAY_UTC.format(d)} · ${HHMM_UTC.format(d)} UTC`;
+  if (!tz) return `${MONTH_DAY_UTC.format(d)} · ${HHMM_UTC.format(d)} UTC`;
+  let f = localFormatters.get(tz);
+  if (!f) {
+    f = new Intl.DateTimeFormat("en-US", {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+      timeZone: tz,
+    });
+    localFormatters.set(tz, f);
+  }
+  const p = Object.fromEntries(f.formatToParts(d).map((x) => [x.type, x.value]));
+  return `${p.month} ${p.day} · ${p.hour}:${p.minute} local`;
 };
 
 // Round total minutes BEFORE splitting into h/m — rounding the remainder
@@ -115,6 +151,14 @@ const fmtDuration = (sec: number) => {
 
 function flightSummary(flight: FlightFacts): string {
   const { flightNumber, observedStarlink: s, observedTotal: n } = flight;
+  const pred = flight.prediction;
+  if (pred && pred.n_observations > 0) {
+    const pct = Math.round(pred.probability * 100);
+    const obs = `${pred.n_observations.toLocaleString("en-US")} observed departures`;
+    return pct > 0
+      ? `${flightNumber} gets a Starlink-equipped aircraft about ${pct}% of the time, from ${obs}. Pick a date below for a live answer.`
+      : `${flightNumber} has been flown by aircraft without Starlink in ${obs}. Pick a date below for a live answer.`;
+  }
   if (n > 0 && s > 0) {
     return `${flightNumber} had Starlink on ${s} of ${n} recently verified departures (${Math.round((s / n) * 100)}%). Pick a date below for a live answer.`;
   }
@@ -214,16 +258,17 @@ function FlightFactBlocks({ flight }: { flight: FlightFacts }) {
           <div className="text-sm text-muted leading-relaxed space-y-2">
             {flight.observedTotal > 0 && (
               <p>
-                Starlink-equipped aircraft on{" "}
+                Starlink found on{" "}
                 <span className="text-secondary font-mono">
                   {flight.observedStarlink} of {flight.observedTotal}
                 </span>{" "}
-                recently verified {fn} departures.
+                aircraft checks on {fn}
+                {flight.observedSince ? ` since ${fmtDay(flight.observedSince)}` : ""}.
               </p>
             )}
             {flight.lastStarlink && (
               <p>
-                Most recent Starlink-equipped departure:{" "}
+                Last verified on Starlink:{" "}
                 <span className="text-secondary font-mono">
                   {fmtDay(flight.lastStarlink.checked_at)}
                 </span>{" "}
@@ -270,7 +315,10 @@ function FlightFactBlocks({ flight }: { flight: FlightFacts }) {
               >
                 <span className="text-secondary">
                   {u.departure_airport} → {u.arrival_airport}
-                  <span className="text-muted"> · {fmtDeparture(u.departure_time)}</span>
+                  <span className="text-muted">
+                    {" "}
+                    · {fmtDeparture(u.departure_time, u.departure_tz)}
+                  </span>
                   <span className="text-muted hidden sm:inline">
                     {" "}
                     · {u.tail_number}
