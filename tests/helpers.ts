@@ -173,6 +173,12 @@ export function toolText(json: {
   return { text, isError: json.result?.isError === true };
 }
 
+/** An MCP initialize handshake through the app, parsed. */
+export async function mcpInitialize(app: Dispatcher, host: string, query = "") {
+  const params = { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t" } };
+  return (await app.dispatch(mcpReq(host, "initialize", params, { query }))).json();
+}
+
 /** tools/call through the app; resolves to the tool's text and error flag. */
 export async function mcpTool(
   app: Dispatcher,
