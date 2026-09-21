@@ -116,10 +116,8 @@ export default function RoutePlannerPage({
       />
 
       <PageHeader
-        title="Find Starlink-Equipped Flights"
-        dek={
-          <>Search {airlineName} flights between any two airports — ranked by Starlink coverage</>
-        }
+        title="Find the flights most likely to have Starlink"
+        dek={<>Search {airlineName} nonstops and connections between any two airports.</>}
       />
 
       <div className="relative max-w-2xl mx-auto w-full mb-8">
@@ -181,11 +179,11 @@ export default function RoutePlannerPage({
               type="submit"
               className="w-full bg-accent/20 border border-accent text-accent font-display font-semibold py-3 px-4 rounded hover:bg-accent/30 transition-colors cursor-pointer tracking-wide"
             >
-              Find Starlink Routings
+              Find flights
             </button>
           </form>
-          <p className="text-xs text-muted mt-3 text-center font-mono">
-            Searches direct flights + connections · Ranked by Starlink probability
+          <p className="text-xs text-muted mt-3 text-center">
+            Ranked by the odds of Starlink on each leg.
           </p>
         </div>
       </div>
@@ -194,25 +192,18 @@ export default function RoutePlannerPage({
 
       <div className="relative max-w-2xl mx-auto w-full mb-10">
         <div className="bg-surface rounded-lg border border-subtle p-6">
-          <h2 className="font-display text-lg font-semibold text-primary mb-3">How this works</h2>
-          <div className="space-y-3 text-sm text-muted leading-relaxed">
+          <h2 className="font-display text-xl text-primary mb-3">How it works</h2>
+          <div className="space-y-3 text-sm text-secondary leading-relaxed">
             <p>
-              We track historical aircraft assignments for {shortName} flights. When a flight number
-              consistently gets Starlink-equipped planes, we can predict with better confidence that
-              it will keep happening.
+              Odds come from which aircraft each {shortName} flight has used recently. A connection
+              can beat the nonstop when the nonstop usually gets an aircraft without Starlink.
             </p>
             <p>
-              The planner looks for the best balance between travel time and Starlink coverage. A
-              connection can sometimes beat the direct flight if the nonstop is usually assigned to
-              a non-Starlink aircraft.
-            </p>
-            <p className="text-xs">
-              <span className="text-yellow-400">⚠</span> Probabilities are estimates based on
-              historical patterns. Aircraft assignments can change — use{" "}
+              Aircraft can change.{" "}
               <a href="/check-flight" className="text-accent hover:underline">
-                Check Flight
+                Check your flight
               </a>{" "}
-              1-2 days before departure for a firmer answer.
+              1–2 days out to confirm.
             </p>
           </div>
         </div>
@@ -221,9 +212,7 @@ export default function RoutePlannerPage({
       {popularRoutes.length > 0 && (
         <section className="relative w-full max-w-4xl mx-auto mb-8">
           <div className="bg-surface border border-subtle rounded-lg p-5">
-            <h2 className="text-xs font-mono text-muted uppercase tracking-wider mb-3">
-              Popular Starlink routes
-            </h2>
+            <h2 className="font-display text-xl text-primary mb-3">Popular Starlink routes</h2>
             <div className="flex flex-wrap gap-2">
               {popularRoutes.map((r) => (
                 <a
@@ -249,10 +238,12 @@ export default function RoutePlannerPage({
           var originInput = document.getElementById('origin');
           var destInput = document.getElementById('destination');
 
-          var pathParts = window.location.pathname.split('/').filter(Boolean);
-          if (pathParts.length >= 3) {
-            originInput.value = decodeURIComponent(pathParts[1]);
-            destInput.value = decodeURIComponent(pathParts[2]);
+          // Query params, not /route-planner/O/D: that path is the route page,
+          // and it 404s for pairs without data, so a reload lost the search.
+          var params = new URLSearchParams(window.location.search);
+          if (params.get('origin') && params.get('destination')) {
+            originInput.value = params.get('origin');
+            destInput.value = params.get('destination');
           }
 
           function probBars(prob, color) {
@@ -274,25 +265,25 @@ export default function RoutePlannerPage({
             var parts = leg.route.split('-');
             if (isPositioning) {
               return '<div class="flex items-center justify-between py-2 border-l-2 border-subtle pl-3 ml-1">' +
-                '<div class="text-sm font-mono">' +
-                '<div class="text-muted">' + parts[0] + ' → ' + parts[1] + '</div>' +
-                '<div class="text-xs text-muted opacity-70">book any flight · positioning segment</div>' +
+                '<div class="text-sm">' +
+                '<div class="font-mono text-muted">' + parts[0] + ' → ' + parts[1] + '</div>' +
+                '<div class="text-xs text-muted">Any flight works for this leg</div>' +
                 '</div>' +
                 '<div class="flex items-center gap-2">' +
                 probBars(leg.probability, color) +
-                '<span class="font-mono text-xs w-10 text-right" style="color:' + color + '">' + pct + '%</span>' +
+                '<span class="text-xs w-10 text-right tabular-nums" style="color:' + color + '">' + pct + '%</span>' +
                 '</div>' +
                 '</div>';
             }
-            var conf = leg.confidence === 'high' ? '' : ' · ' + leg.confidence;
+            var conf = leg.confidence === 'high' ? '' : ' · ' + leg.confidence + ' confidence';
             return '<div class="flex items-center justify-between py-2 border-l-2 pl-3 ml-1" style="border-color:' + color + '">' +
-              '<div class="text-sm font-mono">' +
-              '<div class="text-secondary">' + leg.flight_number + ' <span class="text-muted">' + parts[0] + ' → ' + parts[1] + '</span></div>' +
-              '<div class="text-xs text-muted opacity-70">' + leg.n_observations + ' obs' + conf + '</div>' +
+              '<div class="text-sm">' +
+              '<div class="font-mono text-secondary">' + leg.flight_number + ' <span class="text-muted">' + parts[0] + ' → ' + parts[1] + '</span></div>' +
+              '<div class="text-xs text-muted">Based on ' + leg.n_observations + ' check' + (leg.n_observations === 1 ? '' : 's') + conf + '</div>' +
               '</div>' +
               '<div class="flex items-center gap-2">' +
               probBars(leg.probability, color) +
-              '<span class="font-mono text-xs w-10 text-right" style="color:' + color + '">' + pct + '%</span>' +
+              '<span class="text-xs w-10 text-right tabular-nums" style="color:' + color + '">' + pct + '%</span>' +
               '</div>' +
               '</div>';
           }
@@ -334,8 +325,8 @@ export default function RoutePlannerPage({
 
             var flyingStr = typeof it.total_flight_hours === 'number' ? ' · ' + fmtHours(it.total_flight_hours) + ' flying' : '';
             var badge = isDirect
-              ? '<span class="text-xs font-mono text-accent">DIRECT</span>'
-              : '<span class="text-xs font-mono text-muted">via ' + via.join('→') + ' · ' + nStops + ' stop' + (nStops>1?'s':'') + flyingStr + '</span>';
+              ? '<span class="text-xs text-accent">Nonstop</span>'
+              : '<span class="text-xs text-muted">via <span class="font-mono">' + via.join('→') + '</span> · ' + nStops + ' stop' + (nStops>1?'s':'') + flyingStr + '</span>';
 
             var airportLabels = '<span>' + origCode + '</span>';
             for (var vi = 0; vi < via.length; vi++) {
@@ -347,10 +338,10 @@ export default function RoutePlannerPage({
             return '<div class="itin-card bg-surface border border-subtle rounded-lg p-4 mb-3 hover:border-accent/50 transition-colors">' +
               '<div class="flex items-center justify-between mb-3">' +
               '<div class="flex items-center gap-3">' +
-              '<span class="font-mono text-xs text-muted">#' + rank + '</span>' +
+              '<span class="text-xs text-muted tabular-nums">#' + rank + '</span>' +
               badge +
               '</div>' +
-              '<div class="font-display font-semibold text-right" style="color:' + headerColor + '">' +
+              '<div class="font-display text-right" style="color:' + headerColor + '">' +
               headerPct + '% <span class="text-xs text-muted font-normal">' + headerLabel + '</span>' +
               '</div>' +
               '</div>' +
@@ -388,7 +379,7 @@ export default function RoutePlannerPage({
             var itins = data.itineraries;
             if (!itins || itins.length === 0) {
               resultsDiv.innerHTML = '<div class="bg-surface border border-subtle rounded-lg p-6 text-center">' +
-                '<div class="text-secondary font-display font-semibold mb-2">No Starlink routings found</div>' +
+                '<div class="text-secondary font-display mb-2">No Starlink options found</div>' +
                 '<p class="text-sm text-muted"></p>' +
                 baselineHtml(data.baseline) +
                 '</div>';
@@ -411,16 +402,16 @@ export default function RoutePlannerPage({
             var html = hasDirect ? '' : baselineHtml(data.baseline);
             if (fullItins.length > 0) {
               html += '<div class="mb-6">' +
-                '<h3 class="font-display text-sm font-semibold text-primary mb-3 uppercase tracking-wider">Full Starlink Coverage</h3>' +
+                '<h3 class="font-display text-lg text-primary mb-3">Starlink on every leg</h3>' +
                 fullItins.map(function(it, i) { return renderItinerary(it, i + 1); }).join('') +
                 '</div>';
             }
             if (partialItins.length > 0) {
               var partialHeader = fullItins.length === 0
-                ? '<div class="text-xs text-muted mb-3 leading-relaxed">No all-Starlink path found yet. These options keep at least one leg on a stronger Starlink pattern.</div>'
+                ? '<div class="text-xs text-muted mb-3 leading-relaxed">No option has Starlink on every leg. These have it on at least one.</div>'
                 : '';
               html += '<div>' +
-                '<h3 class="font-display text-sm font-semibold text-yellow-400 mb-2 uppercase tracking-wider">Partial Coverage</h3>' +
+                '<h3 class="font-display text-lg text-primary mb-2">Starlink on some legs</h3>' +
                 partialHeader +
                 partialItins.map(function(it, i) { return renderItinerary(it, fullItins.length + i + 1); }).join('') +
                 '</div>';
@@ -434,15 +425,15 @@ export default function RoutePlannerPage({
             var dest = destInput.value.trim().toUpperCase();
             if (!origin || !dest) return;
 
-            history.replaceState(null, '', '/route-planner/' + encodeURIComponent(origin) + '/' + encodeURIComponent(dest));
+            history.replaceState(null, '', '/route-planner?origin=' + encodeURIComponent(origin) + '&destination=' + encodeURIComponent(dest));
 
-            resultsDiv.innerHTML = '<div class="text-center text-sm text-muted font-mono py-8">Computing routings...</div>';
+            resultsDiv.innerHTML = '<div class="text-center text-sm text-muted py-8">Finding flights…</div>';
 
             fetch('/api/plan-route?origin=' + encodeURIComponent(origin) + '&destination=' + encodeURIComponent(dest))
               .then(function(r) { return r.json(); })
               .then(renderResults)
               .catch(function() {
-                resultsDiv.innerHTML = '<div class="text-sm text-red-400 text-center">Error loading routings. Please try again.</div>';
+                resultsDiv.innerHTML = '<div class="text-sm text-red-400 text-center">Something went wrong. Please try again.</div>';
               });
           });
 

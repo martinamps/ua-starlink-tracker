@@ -147,11 +147,12 @@ import MethodologyPage, { hasMethodology } from "../components/methodology-page"
 import NewlyEquippedPage from "../components/newly-equipped-page";
 import NotFoundPage from "../components/not-found-page";
 import Page from "../components/page";
-import RoutePage, { routeVerdict } from "../components/route-page";
+import RoutePage, { type RouteDeparture, routeVerdict } from "../components/route-page";
 import RoutePlannerPage from "../components/route-planner-page";
 import RoutesPage from "../components/routes-page";
 import TimelinePage, { getTimeline, hasTimeline } from "../components/timeline-page";
 import {
+  type FlightAssignmentRow,
   PERMALINK_STALE_NOTE_DAYS,
   ROUTE_AIRPORT_RE,
   type RouteSummary,
@@ -3326,9 +3327,60 @@ export function parseRoutePath(pathname: string): { origin: string; destination:
   return { origin, destination };
 }
 
-function routePageMeta(ctx: RequestContext, cfg: AirlineConfig, route: RouteSummary): PageMeta {
+const ROUTE_DEPARTURE_WINDOW_SEC = 48 * 3600;
+
+/**
+ * Starlink departures on a pair for the route page's table and answer: one row
+ * per physical departure (marketing number, departure time), the most recently
+ * refreshed row winning before the equipped test, so a swap onto a
+ * non-Starlink tail drops the departure instead of listing the stale row.
+ * getFlightAssignments returns rows newest-first.
+ */
+function routeStarlinkDepartures(
+  reader: ScopedReader,
+  cfg: AirlineConfig,
+  route: RouteSummary,
+  nowSec: number
+): RouteDeparture[] {
+  const owner = new Map<string, string>();
+  for (const f of route.flightNumbers) {
+    if (f.scheduled !== 1) continue;
+    for (const v of buildFlightLookupVariants(cfg, f.flight_number)) owner.set(v, f.flight_number);
+  }
+  if (owner.size === 0) return [];
+  const slots = new Map<string, FlightAssignmentRow>();
+  for (const row of reader.getFlightAssignments(
+    [...owner.keys()],
+    nowSec,
+    nowSec + ROUTE_DEPARTURE_WINDOW_SEC
+  )) {
+    if (row.departure_airport !== route.origin || row.arrival_airport !== route.destination)
+      continue;
+    const key = `${owner.get(row.flight_number)}|${row.departure_time}`;
+    if (!slots.has(key)) slots.set(key, row);
+  }
+  return [...slots.values()]
+    .filter(
+      (r) => !r.settled_negative && (r.verified_wifi == null || r.verified_wifi === "Starlink")
+    )
+    .sort((a, b) => a.departure_time - b.departure_time)
+    .map((r) => ({
+      flight_number: owner.get(r.flight_number) ?? r.flight_number,
+      departure_time: r.departure_time,
+      tail_number: r.tail_number,
+      aircraft_type: r.aircraft_type ?? null,
+      verified: r.verified_wifi === "Starlink",
+    }));
+}
+
+function routePageMeta(
+  ctx: RequestContext,
+  cfg: AirlineConfig,
+  route: RouteSummary,
+  departures: RouteDeparture[]
+): PageMeta {
   const pair = `${route.origin} to ${route.destination}`;
-  const verdict = routeVerdict(route, cfg.name);
+  const verdict = routeVerdict(route, cfg.name, departures);
   const numbers = route.flightNumbers.slice(0, 6).map((f) => f.flight_number);
   return {
     siteTitle: `${pair} Starlink WiFi — ${cfg.shortName} Flights`,
@@ -3427,6 +3479,13 @@ const routePlannerPage: Handler = (ctx) => {
     const cfg = siteAirline(ctx.site);
     if (!ctx.reader.routeHasData(parsed.origin, parsed.destination)) return notFound(ctx.site);
     const route = ctx.reader.getRouteSummary(parsed.origin, parsed.destination);
+    const departures = routeStarlinkDepartures(
+      ctx.reader,
+      cfg,
+      route,
+      Math.floor(Date.now() / 1000)
+    );
+    const lastSeen = ctx.reader.getRouteFlightLastSeen(parsed.origin, parsed.destination);
     const reverseLinkable = ctx.reader.routeHasData(parsed.destination, parsed.origin);
     // Historical pairs stay reachable (flight permalinks link them) but no
     // longer index; recently seen ones do, whatever the 48h window holds.
@@ -3436,10 +3495,10 @@ const routePlannerPage: Handler = (ctx) => {
       RoutePage,
       `/route-planner/${parsed.origin}/${parsed.destination}`,
       {
-        ...routePageMeta(ctx, cfg, route),
+        ...routePageMeta(ctx, cfg, route, departures),
         ...(indexable ? {} : { robotsMeta: "noindex, follow" }),
       },
-      { route, reverseLinkable }
+      { route, departures, lastSeen, reverseLinkable }
     );
   }
   if (ctx.url.pathname !== "/route-planner") {
@@ -3836,7 +3895,7 @@ const routesPage: Handler = (ctx) => {
     RoutesPage,
     "/routes",
     { ...subPageMeta(ctx, "routes"), pageJsonLd: routesJsonLd },
-    { schedule, popularFlights }
+    { schedule, airports: ctx.reader.getAirportDepartures(), popularFlights }
   );
 };
 
