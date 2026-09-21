@@ -136,16 +136,17 @@ export function watchSummary(input: WatchIcsInput): string {
   return isSwap(history, verdict, dep) ? `Swapped: ${body}` : body;
 }
 
+// Date and time are formatted separately: ICU versions disagree on how to
+// join them ("Sep 19 at 3:00 AM" vs "Sep 19, 3:00 AM"), and feeds must not
+// change with the host's ICU.
 function formatLocal(unixSec: number, airport: string | null): string {
   const timeZone = (airport && airportTimezone(toIata(airport))) || "UTC";
-  return new Intl.DateTimeFormat("en-US", {
+  const date = new Intl.DateTimeFormat("en-US", {
     timeZone,
     month: "short",
     day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    timeZoneName: "short",
   }).format(new Date(unixSec * 1000));
+  return `${date}, ${formatLocalTime(unixSec, airport)}`;
 }
 
 function formatLocalTime(unixSec: number, airport: string | null): string {

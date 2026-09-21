@@ -9,6 +9,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { zonedDeparture } from "../src/components/ui/format";
 import { createApp } from "../src/server/app";
 import { AIRPORT_TZ } from "../src/utils/airport-tz";
 import { addFleet, addFlight, addPlane, makeSyntheticDb, req } from "./helpers";
@@ -309,15 +310,7 @@ describe("the pill states a departure the permalink page agrees with", () => {
       expect(onPage).not.toBeNull();
       const zone = AIRPORT_TZ[onPage?.[1] as string];
       expect(zone).toBeDefined();
-      const local = new Intl.DateTimeFormat("en-US", {
-        weekday: "short",
-        month: "short",
-        day: "numeric",
-        hour: "numeric",
-        minute: "2-digit",
-        timeZoneName: "short",
-        timeZone: zone,
-      }).format(new Date((epoch as number) * 1000));
+      const local = zonedDeparture(epoch as number, zone).full;
       expect(onPage?.[2]).toBe(local);
     }
   });

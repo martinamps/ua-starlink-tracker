@@ -130,18 +130,16 @@ export function zonedDeparture(
 ): { date: string; day: string; time: string; full: string } {
   const tz = zone ?? "UTC";
   const d = new Date(sec * 1000);
+  const day = formatter(tz, { weekday: "short", month: "short", day: "numeric" }).format(d);
+  const time = formatter(tz, { hour: "numeric", minute: "2-digit", timeZoneName: "short" }).format(
+    d
+  );
   return {
     date: formatter(tz, { month: "short", day: "numeric" }).format(d),
-    day: formatter(tz, { weekday: "short", month: "short", day: "numeric" }).format(d),
-    time: formatter(tz, { hour: "numeric", minute: "2-digit", timeZoneName: "short" }).format(d),
-    full: formatter(tz, {
-      weekday: "short",
-      month: "short",
-      day: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-      timeZoneName: "short",
-    }).format(d),
+    day,
+    time,
+    // Joined here, not by Intl: ICU versions differ on "at" vs ",".
+    full: `${day}, ${time}`,
   };
 }
 
