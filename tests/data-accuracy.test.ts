@@ -5,6 +5,7 @@
 
 import type { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
+import { logFlightAssignments } from "../src/database/assignment-log";
 import {
   backfillAlaskaSkyWestOperator,
   demoteRetrofittedNegatives,
@@ -239,6 +240,31 @@ describe("Alaska SkyWest operator backfill", () => {
     expect(ops).toEqual([
       { t: "N171SY", o: "SkyWest Airlines" },
       { t: "N650QX", o: "Horizon Air" },
+    ]);
+    db.close();
+  });
+});
+
+describe("assignment log on a registration listed twice", () => {
+  test("the logging airline's listing decides the flag", () => {
+    const db = makeSyntheticDb();
+    addPlane(db, "N100SY", "Viasat", { airline: "UA" });
+    addPlane(db, "N100SY", "Starlink", { airline: "AS" });
+    const leg = {
+      flight_number: "AS3015",
+      departure_airport: "ACV",
+      arrival_airport: "SEA",
+      departure_time: NOW + 3600,
+      arrival_time: NOW + 7200,
+    };
+    logFlightAssignments(db, "AS", "N100SY", [leg], NOW);
+    logFlightAssignments(db, "UA", "N100SY", [{ ...leg, flight_number: "UA5236" }], NOW);
+    const flags = db
+      .query("SELECT airline, starlink FROM flight_assignment_log ORDER BY airline")
+      .all();
+    expect(flags).toEqual([
+      { airline: "AS", starlink: 1 },
+      { airline: "UA", starlink: 0 },
     ]);
     db.close();
   });
