@@ -40,9 +40,17 @@ function scannedSources(): string {
   return parts.join("\n");
 }
 
+const TENANT_HOSTS = [HOST, "airlinestarlinktracker.com", "alaskastarlinktracker.com"];
+
+/** Pages the sitemap leaves out but visitors still land on. */
+const EXTRA_PATHS = ["/definitely-not-a-page"];
+
+/** Classes that exist only for scripts or `group`/`peer` variants to select on. */
+const JS_HOOKS = new Set(["aircraft-row", "filter-btn", "pie-slice", "hub-route-preset"]);
+
 /** One representative URL per top-level path shape the sitemap advertises. */
-async function sitemapPageShapes(): Promise<string[]> {
-  const { status, text } = await bodyOf(app, "/sitemap.xml", HOST);
+async function sitemapPageShapes(host = HOST): Promise<string[]> {
+  const { status, text } = await bodyOf(app, "/sitemap.xml", host);
   expect(status).toBe(200);
   const paths = [...text.matchAll(/<loc>https?:\/\/[^/]+([^<]*)<\/loc>/g)].map((m) => m[1] || "/");
   expect(paths.length).toBeGreaterThan(0);
@@ -108,9 +116,8 @@ const STOCK_UTILITY = [
  * of dating this file.
  *
  * Custom color and font names (text-primary, bg-accent/20, font-display) are
- * deliberately outside the set: they name tokens Tailwind has never had, they
- * compile to nothing on purpose (see src/styles/tailwind.css), and index.html
- * defines them itself.
+ * outside the set: they depend on the @theme mapping in src/styles/tailwind.css,
+ * which "every rendered class emits a rule" covers.
  */
 function isStockUtility(token: string): boolean {
   const bare = token.replace(/^(sm|md|lg|xl|2xl|hover|focus):/, "");
@@ -238,6 +245,39 @@ describe("compiler coverage", () => {
       variant: sampled.some((t) => /^(sm|md|lg|xl|2xl):/.test(t)),
       arbitrary: sampled.some((t) => t.includes("[")),
     }).toEqual({ plain: true, variant: true, arbitrary: true });
+  });
+
+  /**
+   * A class can be scanned and still style nothing: `hover:text-accent` sat in
+   * forty buttons for months emitting no rule, because the color it names was
+   * never a Tailwind token. Every rendered class must resolve to a rule in the
+   * compiled CSS, in index.html's own <style>, or in the page's inline <style>
+   * — or be one of the named behaviour hooks below that scripts select on.
+   */
+  test("every rendered class emits a rule", async () => {
+    const css = await servedCss();
+    const shell = inlineStyleClasses(readFileSync(join(ROOT, "index.html"), "utf8"));
+    const hasRule = (token: string) => {
+      const sel = escapedSelector(token);
+      for (let i = css.indexOf(sel); i >= 0; i = css.indexOf(sel, i + 1)) {
+        if (!/[\w\\-]/.test(css[i + sel.length] ?? "")) return true;
+      }
+      return false;
+    };
+    const misses = new Set<string>();
+    for (const host of TENANT_HOSTS) {
+      for (const path of [...(await sitemapPageShapes(host)), ...EXTRA_PATHS]) {
+        const { text } = await bodyOf(app, path, host);
+        const local = inlineStyleClasses(text);
+        // Markup a script builds at runtime is checked by the scanner test, not here.
+        const markup = text.replace(/<script[^>]*>[\s\S]*?<\/script>/g, "");
+        for (const token of classTokens(markup)) {
+          if (JS_HOOKS.has(token) || shell.has(token) || local.has(token)) continue;
+          if (!hasRule(token)) misses.add(`${host}${path}: ${token}`);
+        }
+      }
+    }
+    expect([...misses]).toEqual([]);
   });
 
   test("no rendered class is invisible to the source scanner", async () => {

@@ -13,12 +13,29 @@
    .css would go stale the moment a branch adding new markup merged after it,
    and nothing in the test suite can see unstyled HTML.
 
-   No @theme block on purpose. ~15 classes in the markup name custom colors
-   (bg-accent/20, text-subtle, placeholder-muted, …) that Tailwind has never
-   known about, so they emit nothing today and must keep emitting nothing here
-   or the visuals change. Defining those tokens is a separate, deliberate
-   change — not a side effect of moving off the CDN. */
+   The page palette lives in index.html's :root (per-tenant accent is a
+   template variable), so the @theme below only maps Tailwind color names onto
+   those variables. `inline` makes each utility carry `var(--color-…)` itself,
+   so hover:, focus: and /20 opacity variants resolve against the tenant's
+   accent at runtime; `reference` keeps Tailwind from emitting its own
+   `--color-surface: var(--color-surface)` copies, which would be cycles on
+   any page that didn't also load index.html's :root. */
 @import "tailwindcss";
+
+/* No --color-base: `text-base` is the font-size utility, and index.html
+   already defines .bg-base. */
+@theme inline reference {
+  --color-primary: var(--color-text-primary);
+  --color-secondary: var(--color-text-secondary);
+  --color-muted: var(--color-text-muted);
+  --color-subtle: var(--color-border);
+  --color-surface: var(--color-surface);
+  --color-surface-elevated: var(--color-surface-elevated);
+  --color-accent: var(--color-accent);
+  --color-accent-dim: var(--color-accent-dim);
+  --color-success: var(--color-success);
+  --font-display: var(--font-display);
+}
 
 /* Explicit, so the scan can never drift with the CSS file's location. Every
    rendered class comes from a component under src/ or from the page shell. */

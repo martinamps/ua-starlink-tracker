@@ -143,7 +143,7 @@ export default function RoutePlannerPage({
                   name="origin"
                   placeholder="SFO"
                   maxLength={4}
-                  className="airport-input w-full bg-base border border-subtle rounded px-3 py-3 text-primary font-mono text-lg focus:outline-none focus:border-accent focus:glow-accent-strong"
+                  className="airport-input w-full bg-base border border-subtle rounded px-3 py-3 text-primary font-mono text-lg focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/30"
                   required
                   autoComplete="off"
                 />
@@ -175,7 +175,7 @@ export default function RoutePlannerPage({
                   name="destination"
                   placeholder="JAX"
                   maxLength={4}
-                  className="airport-input w-full bg-base border border-subtle rounded px-3 py-3 text-primary font-mono text-lg focus:outline-none focus:border-accent focus:glow-accent-strong"
+                  className="airport-input w-full bg-base border border-subtle rounded px-3 py-3 text-primary font-mono text-lg focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/30"
                   required
                   autoComplete="off"
                 />
