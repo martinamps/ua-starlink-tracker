@@ -30,9 +30,11 @@ import { type HubHomeLinks, allFaqEntries, getContent } from "../airlines/conten
 import {
   CANONICAL_FLIGHT_PERMALINK,
   buildFlightLookupVariants,
+  canonicalFlightFor,
   canonicalFlightInput,
   detectMarketingCarrier,
   ensureAirlinePrefix,
+  flightInputRules,
   icaoCallsignToIata,
   normalizeAirlineFlightNumber,
   permalinkCarrier,
@@ -66,7 +68,6 @@ import {
   type AirlineFactsEntry,
   contentOnlyFacts,
   factsAliasTarget,
-  factsBySlug,
   factsForCode,
   factsStamp,
   formatFactDate,
@@ -161,6 +162,7 @@ import {
   type RouteSummary,
 } from "../database/database";
 import { contradictingWifi } from "../database/sql/equipped";
+import { unixNow } from "../database/sql/windows";
 import {
   COUNTERS,
   metrics,
@@ -196,6 +198,7 @@ import {
   API_CORS_HEADERS,
   BASE_RESPONSE_HEADERS,
   CONTENT_TYPES,
+  MCP_CORS_HEADERS,
   SECURITY_HEADERS,
 } from "../utils/constants";
 import { article } from "../utils/grammar";
@@ -205,9 +208,12 @@ import { memo, perOwner } from "../utils/ttl-cache";
 import {
   CACHE,
   CORS_ANY_ORIGIN,
+  empty,
+  html,
   json,
   jsonError,
   methodNotAllowed,
+  redirect,
   text,
   withDefaultHeaders,
   xml,
@@ -254,7 +260,9 @@ const read = (handler: Handler, feature?: keyof SiteFeatures): Route => ({
 
 function serve(entry: Route, ctx: RequestContext): Response | Promise<Response> {
   const api = ctx.url.pathname.startsWith("/api/");
-  if (entry.methods && !entry.methods.includes(ctx.req.method)) return methodNotAllowed(api);
+  if (entry.methods && !entry.methods.includes(ctx.req.method)) {
+    return methodNotAllowed(entry.methods, api);
+  }
   if (entry.feature && !ctx.site.features[entry.feature]) {
     return api ? jsonError(404, "Not found") : notFound(ctx.site);
   }
@@ -324,33 +332,48 @@ function withClampedMeta(vars: Record<string, string>): Record<string, string> {
   };
 }
 
-/** The site's own shell around a "not found" header. Built only from the
- * tenant's static config — no reader, no client IP — because the response is
- * cached at the edge (SECURITY_HEADERS.notFoundHtml). */
-async function notFound(site: SiteConfig): Promise<Response> {
-  const html = ReactDOMServer.renderToString(React.createElement(NotFoundPage, { site }));
-  const title = `Page not found | ${site.brand.title}`;
-  const body = renderHtml(await getHtmlTemplate(), {
-    ...brandMetadata(site.brand),
-    siteTitle: title,
-    ogTitle: title,
-    siteDescription: "This page doesn't exist.",
-    ogDescription: "This page doesn't exist.",
-    keywords: "",
-    robotsMeta: "noindex, nofollow",
-    ogType: "website",
-    host: site.canonicalHost,
-    canonicalPath: "/",
-    socialImagePath: resolveSocialImage(site.brand),
-    stylesheetTag: currentStylesheetTag(),
-    html,
-  });
-  return new Response(body, { status: 404, headers: SECURITY_HEADERS.notFoundHtml });
+/** index.html's look without its page machinery: the theme block, fonts and
+ * stylesheet, but no scripts, analytics, JSON-LD, social tags or canonical. A
+ * dead URL has nothing to canonicalize to and nothing to measure. */
+function notFoundTemplate(template: string): string {
+  const style = template.match(/<style>[\s\S]*?<\/style>/)?.[0] ?? "";
+  const fonts = template.match(/<link href="https:\/\/fonts\.googleapis\.com[^>]*>/)?.[0] ?? "";
+  return `<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>{{siteTitle}}</title>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="theme-color" content="{{accentColor}}" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    ${fonts}
+    {{stylesheetTag}}
+    ${style}
+  </head>
+  <body>
+    <div id="root">{{html}}</div>
+  </body>
+</html>
+`;
 }
 
-/** HTTP_REQUEST's airline tag, from the host's tenant: without it every
- * request fell to `airline:unmapped`, so a `by {airline}` split of the
- * route-planner 404s could not say which site was emitting them. */
+/** The site's own shell around a "not found" header. Built only from the
+ * tenant's static config — no reader, no client IP — because the response is
+ * cached at the edge (SECURITY_HEADERS.notFound). */
+async function notFound(site: SiteConfig): Promise<Response> {
+  const markup = ReactDOMServer.renderToString(React.createElement(NotFoundPage, { site }));
+  const body = renderHtml(notFoundTemplate(await getHtmlTemplate()), {
+    ...brandMetadata(site.brand),
+    siteTitle: `Page not found | ${site.brand.title}`,
+    stylesheetTag: currentStylesheetTag(),
+    html: markup,
+  });
+  return html(body, 404, SECURITY_HEADERS.notFound);
+}
+
+/** HTTP_REQUEST's airline tag, from the host's tenant, so a `by {airline}`
+ * split can say which site emitted a request. */
 function httpAirlineTag(tenant: Tenant): string {
   return normalizeScopeTag(tenantScope(tenant));
 }
@@ -1480,10 +1503,8 @@ const mcp: Handler = async (ctx) => {
       ogDescription: `Paste one URL into Claude Desktop. Ask Claude about ${short} Starlink flights, probabilities, and routing.`,
     });
   }
-  // Protocol responses carry CORS so browser-based MCP clients can connect;
-  // preflight is answered in dispatch (corsPreflight).
-  const res = await handleMcpRequest(req, tenantScope(tenant), getReader, site.analytics);
-  return withDefaultHeaders(res, MCP_CORS_HEADERS);
+  // Preflight is answered in dispatch (corsPreflight).
+  return handleMcpRequest(req, tenantScope(tenant), getReader, site.analytics);
 };
 
 // Cursor installs misconfigured as "<host>/mcp.com/mcp" polled it ~15/h, all
@@ -1495,10 +1516,7 @@ const mcp: Handler = async (ctx) => {
 const MCP_ALIAS_PATH = "/mcp.com/mcp";
 function mcpAliasResponse(req: Request, url: URL): Response {
   if (req.method === "OPTIONS") return corsPreflight("/mcp");
-  return new Response(null, {
-    status: 308,
-    headers: { Location: `/mcp${url.search}`, ...MCP_CORS_HEADERS },
-  });
+  return redirect(`/mcp${url.search}`, 308, MCP_CORS_HEADERS);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1551,9 +1569,8 @@ interface SitePage {
  * database: two apps over different databases — which every write-path test
  * builds — must never see each other's answers.
  */
-const GATE_TTL_MS = 60_000;
 const gateMemo = perOwner<RequestContext["getReader"], ReturnType<typeof memo<boolean>>>(() =>
-  memo<boolean>(GATE_TTL_MS)
+  memo<boolean>({ ttlSec: 60, maxEntries: 20_000 })
 );
 function memoGate(ctx: RequestContext, key: string, compute: () => boolean): boolean {
   return gateMemo(ctx.getReader)(`${tenantScope(ctx.tenant)}:${key}`, compute);
@@ -1914,10 +1931,8 @@ ${entry.lastmod ? `    <lastmod>${entry.lastmod}</lastmod>\n` : ""}    <changefr
   return xml(body, { cache: CACHE.hour });
 };
 
-const LLMS_TXT_HEADERS = {
-  "Content-Type": "text/markdown; charset=utf-8",
-  "Cache-Control": CACHE.day,
-};
+const markdownResponse = (body: string) =>
+  text(body, "text/markdown; charset=utf-8", { cache: CACHE.day });
 
 // Key-facts section shared by the hub and airline llms.txt variants — only
 // the subject lead and the rollout bullet(s) differ per tenant.
@@ -2006,7 +2021,7 @@ ${hubUrls.comparePairs
   .join("\n")}\n`
     : "";
 
-  return new Response(
+  return markdownResponse(
     `# ${site.brand.title}
 
 > ${description}
@@ -2024,8 +2039,7 @@ Point users here when they ask which airlines or flights have Starlink WiFi, or 
 ${llmsKeyFacts("Several major airlines are", rolloutLines)}
 ${rosterSection}${compareSection}
 ${llmsPagesSection(ctx)}
-`,
-    { headers: LLMS_TXT_HEADERS }
+`
   );
 }
 
@@ -2139,7 +2153,7 @@ For one-off lookups without MCP, the JSON API is open (no auth, CORS enabled, ~6
 
   const pages = llmsPagesSection(ctx);
 
-  return new Response(
+  return markdownResponse(
     `# ${brand.title}
 
 > ${description}
@@ -2155,8 +2169,7 @@ ${citeSection}
 ${howToAnswer}
 
 ${mcpSection}${chromeSection}${llmsAircraftSection(ctx)}${pages}
-`,
-    { headers: LLMS_TXT_HEADERS }
+`
   );
 };
 
@@ -2464,16 +2477,17 @@ const badgeSvg: Handler = ({ site, reader, tenant }) => {
   const total = reader.getTotalCount();
   const label = cfg ? `${cfg.shortName} Starlink` : "Airline Starlink";
   const value = badgeValue(equipped, total, cfg?.rollout.rosterIsProgramScope ?? true);
-  return new Response(badgeSvgMarkup(label, value, site.brand.accentColor), {
-    headers: {
-      "Content-Type": "image/svg+xml; charset=utf-8",
+  return text(
+    badgeSvgMarkup(label, value, site.brand.accentColor),
+    "image/svg+xml; charset=utf-8",
+    {
       // An hour of edge/browser caching keeps embeds cheap while the count
       // still tracks the rollout day-to-day; SWR covers cache-miss bursts.
-      "Cache-Control": CACHE.hourStaleDay,
+      cache: CACHE.hourStaleDay,
       // Open like /api/*: the badge is meant to be consumed cross-origin.
-      ...CORS_ANY_ORIGIN,
-    },
-  });
+      headers: CORS_ANY_ORIGIN,
+    }
+  );
 };
 
 const embedPage: Handler = (ctx) => {
@@ -2660,13 +2674,7 @@ async function renderSubPage<P extends { site: SiteConfig }>(
   });
 
   const template = await getHtmlTemplate();
-  return new Response(renderHtml(template, withClampedMeta(htmlVariables)), {
-    status,
-    // A 404 render keeps the page CSP (inline lookup script) but takes the
-    // shared-cache policy, so a crawler sweeping the unbounded /check-flight/*
-    // space doesn't re-render React at origin every hit.
-    headers: status === 404 ? SECURITY_HEADERS.notFoundHtml : SECURITY_HEADERS.html,
-  });
+  return html(renderHtml(template, withClampedMeta(htmlVariables)), status);
 }
 
 function subPageMeta(
@@ -2675,7 +2683,6 @@ function subPageMeta(
 ): PageMeta {
   const tenant = ctx.tenant;
   const cfg = tenantConfig(tenant);
-  const brand = ctx.site.brand;
   const name = cfg?.name ?? "tracked airlines";
   // shortName keeps the lead under ~50 chars so the keyword survives mobile SERP truncation.
   const short = cfg?.shortName ?? "Tracked Fleets";
@@ -2754,6 +2761,27 @@ function parseCheckFlightPath(pathname: string): CheckFlightPath {
   return { kind: "flight", raw, fn, date };
 }
 
+/**
+ * Where the search form's no-JS submit lands: the permalink its script would
+ * have built, in one hop. A pinned host completes bare digits with its own
+ * code; anything that still isn't a permalink goes to the router, which
+ * explains itself. Origin and destination ride along as query.
+ */
+export function noJsPermalink(pinned: AirlineConfig | null, params: URLSearchParams): string {
+  const raw = params.get("flight_number") ?? "";
+  const fn =
+    (pinned && canonicalFlightFor(flightInputRules(pinned), raw)) ??
+    stripFlightNumberZeros(icaoCallsignToIata(canonicalFlightInput(raw)));
+  const date = params.get("date") ?? "";
+  const leg = new URLSearchParams();
+  for (const key of ["origin", "destination"]) {
+    const v = params.get(key)?.trim();
+    if (v) leg.set(key, v);
+  }
+  const query = leg.size ? `?${leg}` : "";
+  return `/check-flight/${encodeURIComponent(fn)}${isRealIsoDate(date) ? `/${date}` : ""}${query}`;
+}
+
 /** Cap what an invalid segment can echo back into the page. React escapes it;
  * this only keeps a pasted essay from wrecking the layout. */
 const echoQuery = (raw: string | null): string | null =>
@@ -2786,7 +2814,7 @@ function buildFlightFacts(
     // The route page has its own gate (routeHasData); a pair it would 404
     // renders as text rather than a link to a dead page.
     .map((r) => ({ ...r, linkable: reader.routeHasData(r.departure_airport, r.arrival_airport) }));
-  const now = Math.floor(Date.now() / 1000);
+  const now = unixNow();
   // One row per physical departure, newest assignment first, then the same
   // equipped test the date lookup answers with: a swap onto a non-Starlink
   // tail replaces the stale Starlink row instead of listing both.
@@ -3060,14 +3088,11 @@ const checkFlightPage: Handler = async (ctx) => {
   // variants don't dilute it.
   const parsed = parseCheckFlightPath(ctx.url.pathname);
   // A segment that isn't a flight number (an airport code, a city, a typo —
-  // the homepage form navigates here with whatever was typed) still 404s, but
-  // renders the real page with a notice and the working lookup form instead of
-  // the bare not-found document.
-  // A segment that isn't a flight number still 404s, but renders the real page
-  // with a notice and the working lookup form. Self-canonical: a noindex response
-  // that canonicalizes to /check-flight aims the noindex at the conversion page.
-  // Pass numeric 404 (not an opts object) so renderSubPage applies notFoundHtml
-  // edge caching — restores #75 after a bad land of united-content.
+  // the form navigates here with whatever was typed) still 404s, but renders
+  // the real page with a notice and the working lookup form. Self-canonical: a
+  // noindex response that canonicalizes to /check-flight aims the noindex at
+  // the conversion page. The numeric 404 is what gives it notFoundHtml's edge
+  // caching.
   const invalidPage = (invalid: InvalidFlightQuery) =>
     renderSubPage(
       ctx,
@@ -3135,12 +3160,8 @@ const checkFlightPage: Handler = async (ctx) => {
       }
     );
   }
-  // The search form's no-JS submit: land on the permalink it would have built.
-  const queried = ctx.url.searchParams.get("flight_number")?.trim();
-  if (ctx.url.pathname === "/check-flight" && queried) {
-    const qDate = ctx.url.searchParams.get("date") ?? "";
-    const target = `/check-flight/${encodeURIComponent(canonicalFlightInput(queried))}${isRealIsoDate(qDate) ? `/${qDate}` : ""}`;
-    return Response.redirect(`https://${ctx.site.canonicalHost}${target}`, 302);
+  if (ctx.url.pathname === "/check-flight" && ctx.url.searchParams.get("flight_number")?.trim()) {
+    return redirect(noJsPermalink(tenantConfig(ctx.tenant), ctx.url.searchParams));
   }
   if (ctx.url.pathname !== "/check-flight") {
     return Response.redirect(
@@ -3211,12 +3232,11 @@ const ROUTES_PAGE_ROWS = 60;
 const PLANNER_POPULAR_ROUTES = 60;
 // getSitemapRoutes scans flight_routes (~20ms on prod data); the link block
 // only needs to track the schedule, so it is rebuilt at most every 10 minutes.
-const PLANNER_ROUTES_TTL_MS = 10 * 60_000;
 type RoutePair = { origin: string; destination: string };
 const plannerRoutesMemo = perOwner<
   RequestContext["getReader"],
   ReturnType<typeof memo<RoutePair[]>>
->(() => memo<RoutePair[]>(PLANNER_ROUTES_TTL_MS));
+>(() => memo<RoutePair[]>({ ttlSec: 600, maxEntries: 16 }));
 
 /** Route permalinks for the bare planner: /routes' next page of rankings, so
  * the two hubs link different pairs, topped up from the sitemap's most recently
@@ -3253,17 +3273,15 @@ function computePlannerPopularRoutes(ctx: RequestContext): RoutePair[] {
 }
 
 const routePlannerPage: Handler = (ctx) => {
-  // Per-route permalinks: /route-planner/{origin}/{destination}. The prefix used
-  // to swallow every sub-path and render the planner, so ~10k internal links off
-  // the flight permalinks all resolved to one duplicate page and Google logged
-  // them as soft 404s. Unknown pairs now 404 so the URL space stays bounded.
+  // Per-route permalinks: /route-planner/{origin}/{destination}. Unknown pairs
+  // 404 so the ~10k links off the flight permalinks can't collapse into one
+  // duplicate planner page that crawlers log as soft 404s.
   const trimmed = ctx.url.pathname.replace(/\/+$/, "");
   if (trimmed !== "/route-planner") {
     const parsed = parseRoutePath(ctx.url.pathname);
     if (!parsed) return notFound(ctx.site);
     // One spelling per route: lowercase and trailing-slash variants 301 to the
-    // canonical uppercase form, mirroring /check-flight. They used to 200 with
-    // a self-correcting canonical — duplicate crawl surface.
+    // canonical uppercase form, mirroring /check-flight, so no duplicate 200s.
     const canonicalPath = `/route-planner/${parsed.origin}/${parsed.destination}`;
     if (ctx.url.pathname !== canonicalPath) {
       return Response.redirect(`https://${ctx.site.canonicalHost}${canonicalPath}`, 301);
@@ -3430,7 +3448,6 @@ function aircraftTypeMeta(
       ? ` ${pending.join(" and ")} per the United fleet progress sheet.`
       : "";
   const description = `${answer.headline} ${answer.sentence}${pipelineClause} Every tail, where they fly, and how to check your flight.`;
-  const canonical = `https://${ctx.site.canonicalHost}/fleet/${def.slug}`;
   const breadcrumb = jsonLdBlock(
     breadcrumbJsonLd(ctx.site.canonicalHost, [
       { name: "Home", path: "/" },
@@ -3600,7 +3617,11 @@ const methodologyPage: Handler = (ctx) => {
   // the RAW stamp for the same honesty reason the sitemap does.
   const anchors = ctx.reader.getFleetAnchors();
   const citations = [...new Set(anchors.map((a) => a.source_url))];
-  const earliestAnchor = anchors.at(-1)?.as_of_date; // rows are ordered as_of_date DESC
+  // The dataset starts at the first dated install; the earliest SEC anchor
+  // (rows are as_of_date DESC) comes months later.
+  const coverageStart = [ctx.reader.getDailyInstalls()[0]?.day, anchors.at(-1)?.as_of_date]
+    .filter((d): d is string => !!d)
+    .sort()[0];
   const modifiedTs = Date.parse(ctx.reader.getLastUpdatedRaw() ?? "");
   const datasetJsonLd = jsonLdBlock({
     "@context": "https://schema.org",
@@ -3611,7 +3632,7 @@ const methodologyPage: Handler = (ctx) => {
     creator: { "@type": "Organization", name: ctx.site.brand.title, url: `https://${host}/` },
     isAccessibleForFree: true,
     ...(Number.isFinite(modifiedTs) ? { dateModified: new Date(modifiedTs).toISOString() } : {}),
-    ...(earliestAnchor ? { temporalCoverage: `${earliestAnchor}/..` } : {}),
+    ...(coverageStart ? { temporalCoverage: `${coverageStart}/..` } : {}),
     distribution: [
       {
         "@type": "DataDownload",
@@ -3880,17 +3901,15 @@ function compareLinks(ctx: RequestContext): TrackedLink[] {
   }));
 }
 
-/** A facts page's <title>: the question-form headline, with "Starlink Tracker"
- * added for airlines that actually fly Starlink when it still fits. */
+/** A facts page's <title>: the H1's own words, cut to the answer before its
+ * dash when the whole headline runs long. Never "Tracker": nothing tracks
+ * these airlines by tail or by type. */
 function factsTitle(entry: AirlineFactsEntry): string {
   const headline = factsHeadline(entry);
-  if (entry.status !== "installing" && entry.status !== "complete") return headline;
-  const answer = entry.status === "complete" ? "Rollout Complete" : "Rollout Under Way";
   return (
-    [
-      `Does ${entry.shortName} Have Starlink? Yes | ${entry.shortName} Starlink Tracker`,
-      `${entry.shortName} Starlink Tracker: Yes, ${answer}`,
-    ].find((t) => t.length <= TITLE_MAX) ?? headline
+    [entry.title, headline, headline.split(" — ")[0]].find(
+      (t): t is string => !!t && t.length <= TITLE_MAX
+    ) ?? headline
   );
 }
 
@@ -4190,7 +4209,7 @@ function homeMeta(
     ).length;
     const tracked = hubContentAirlines().map((a) => a.shortName);
     return {
-      siteTitle: `Which Airlines Have Starlink WiFi? ${flying} Airlines Compared`,
+      siteTitle: `Which Airlines Have Starlink WiFi? ${AIRLINE_FACTS.length} Airlines Compared`,
       siteDescription: `${flying} airlines fly Starlink Wi-Fi or are installing it. Compare ${tracked.slice(0, -1).join(", ")} and ${tracked.at(-1)} side by side, plus every other rollout, dated and sourced.`,
     };
   }
@@ -4301,7 +4320,7 @@ const homePage: Handler = async (ctx) => {
         }),
       }
     : {};
-  return new Response(
+  return html(
     renderHtml(
       template,
       withClampedMeta({
@@ -4313,8 +4332,7 @@ const homePage: Handler = async (ctx) => {
           stampedIso(reader.getLastUpdatedRaw())
         ),
       })
-    ),
-    { headers: SECURITY_HEADERS.html }
+    )
   );
 };
 
@@ -4411,21 +4429,11 @@ function canonicalAliasPath(pathname: string): string {
 }
 
 // Preflight mirrors the CORS headers the real responses carry: /api/* serves
-// API_CORS_HEADERS (spread into SECURITY_HEADERS.api), /mcp serves
-// MCP_CORS_HEADERS (browser-based MCP clients POST JSON-RPC cross-origin).
-const MCP_CORS_HEADERS: Record<string, string> = {
-  ...CORS_ANY_ORIGIN,
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Accept, Mcp-Session-Id, MCP-Protocol-Version",
-  "Access-Control-Expose-Headers": "Mcp-Session-Id",
-};
+// API_CORS_HEADERS (spread into SECURITY_HEADERS.api), /mcp MCP_CORS_HEADERS.
 
 function corsPreflight(pathname: string): Response {
   const cors = pathname === "/mcp" ? MCP_CORS_HEADERS : API_CORS_HEADERS;
-  return new Response(null, {
-    status: 204,
-    headers: { ...cors, "Access-Control-Max-Age": "86400" },
-  });
+  return empty(204, { ...cors, "Access-Control-Max-Age": "86400" });
 }
 
 export const API_RATE_LIMIT = 100;
@@ -4462,7 +4470,7 @@ export function createApp(db: Database): App {
       req.headers.get("user-agent"),
       (body ?? {}) as Record<string, unknown>
     );
-    return new Response(null, { status: 202, headers: SECURITY_HEADERS.api });
+    return empty(202, SECURITY_HEADERS.api);
   };
 
   function rateLimited(ip: string, bucket: string, now: number): boolean {

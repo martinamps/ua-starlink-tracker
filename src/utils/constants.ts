@@ -98,6 +98,14 @@ export const API_CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Headers": "Content-Type",
 };
 
+// The /mcp CORS contract: browser-based MCP clients POST JSON-RPC cross-origin.
+export const MCP_CORS_HEADERS: Record<string, string> = {
+  ...CORS_ANY_ORIGIN,
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Accept, Mcp-Session-Id, MCP-Protocol-Version",
+  "Access-Control-Expose-Headers": "Mcp-Session-Id",
+};
+
 export const SECURITY_HEADERS = {
   api: {
     ...BASE_RESPONSE_HEADERS,
@@ -114,16 +122,24 @@ export const SECURITY_HEADERS = {
     "Cache-Control": "private, no-store",
     "Content-Security-Policy": `default-src 'self'; connect-src ${CONNECT_SRC}; script-src ${SCRIPT_SRC}; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:;`,
   },
-  // Every 404: the tenant's shell around a not-found header, or a full React
-  // page (invalid /check-flight segment, which runs an inline lookup script).
-  // Brand-static, so shared caches may hold it: retiring a large URL space
-  // sends crawlers back over thousands of dead URLs, and s-maxage keeps each
-  // repeat off origin while browsers still revalidate.
+  // A full React page served as a 404 (invalid /check-flight segment, which
+  // runs the lookup script). Brand-static, so shared caches may hold it:
+  // retiring a large URL space sends crawlers back over thousands of dead URLs,
+  // and s-maxage keeps each repeat off origin while browsers still revalidate.
   notFoundHtml: {
     ...BASE_RESPONSE_HEADERS,
     "Content-Type": "text/html",
     "Cache-Control": "public, s-maxage=3600, max-age=0, must-revalidate",
     "Content-Security-Policy": `default-src 'self'; connect-src ${CONNECT_SRC}; script-src ${SCRIPT_SRC}; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:;`,
+  },
+  // The plain not-found shell: same caching, but it runs no script at all, so
+  // its CSP allows none and connects nowhere.
+  notFound: {
+    ...BASE_RESPONSE_HEADERS,
+    "Content-Type": "text/html",
+    "Cache-Control": "public, s-maxage=3600, max-age=0, must-revalidate",
+    "Content-Security-Policy":
+      "default-src 'self'; script-src 'none'; connect-src 'none'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:;",
   },
 };
 

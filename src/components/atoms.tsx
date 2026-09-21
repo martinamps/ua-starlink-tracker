@@ -2,10 +2,7 @@ import React from "react";
 import {
   AIRLINES,
   type AirlineConfig,
-  SITES,
-  type SiteConfig,
   airlineHomeUrl,
-  liveAirlineSites,
   wifiPhaseFamilies,
 } from "../airlines/registry";
 import type { RolloutFactsStatus } from "../airlines/rollout-facts";

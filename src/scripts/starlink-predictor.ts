@@ -49,14 +49,10 @@ import type {
   SubfleetPenetration,
   TypeProgress,
 } from "../database/database";
-import {
-  type Scope,
-  type ScopedReader,
-  aggregatePenetration,
-  createReaderFactory,
-} from "../database/reader";
+import { type ScopedReader, aggregatePenetration, createReaderFactory } from "../database/reader";
 import { airportDistanceMiles, detourBoundMiles, hubAllowedForTrip } from "../utils/airport-geo";
 import { flightDateWindow, matchesLocalDate } from "../utils/airport-tz";
+import { memo, perOwner } from "../utils/ttl-cache";
 
 // The prediction model is trained exclusively on United verification
 // observations — its fleet split and priors are UA-bound by design.
@@ -971,19 +967,17 @@ function deriveConfig(
 }
 
 // ============================================================================
-// Cached model for production use (rebuilt at most every MODEL_TTL_SEC)
+// Cached model for production use (rebuilt at most hourly)
 // ============================================================================
 
-const MODEL_TTL_SEC = 3600; // 1 hour — matches scrape cadence
 // Keyed by reader IDENTITY, not by scope: createReaderFactory hands out one
 // frozen reader per (Database, scope), so this is still one model per scope in
 // production (a single Database per process) while a reader over a different
 // Database — a test fixture, a script's own handle — can never be served a
-// model trained on someone else's rows.
-const modelCache = new WeakMap<
-  ScopedReader,
-  { predict: (fn: string) => Prediction; builtAt: number }
->();
+// model trained on someone else's rows. An hour matches the scrape cadence.
+const modelMemo = perOwner<ScopedReader, ReturnType<typeof memo<ProductionModel>>>(() =>
+  memo<ProductionModel>({ ttlSec: 3600, maxEntries: 1 })
+);
 
 /**
  * The type-aware model needs united_fleet to be a CENSUS, not a sample — a
@@ -996,7 +990,9 @@ function censusRoster(reader: ScopedReader): FleetRosterEntry[] {
   return roster.length >= AIRLINES[reader.scope].minFleetSanity ? roster : [];
 }
 
-function buildProductionModel(reader: ScopedReader): { predict: (fn: string) => Prediction } {
+type ProductionModel = { predict: (fn: string) => Prediction };
+
+function buildProductionModel(reader: ScopedReader): ProductionModel {
   const trainObs = reader.getVerificationObservations();
   const roster = censusRoster(reader);
   const config = deriveConfig(reader, trainObs, DEFAULT_CONFIG, roster);
@@ -1008,16 +1004,10 @@ function buildProductionModel(reader: ScopedReader): { predict: (fn: string) => 
 
 /**
  * Predict Starlink probability for a flight number.
- * Caches the model per reader for MODEL_TTL_SEC to avoid reloading 12k+ rows per call.
+ * Caches the model per reader for an hour to avoid reloading 12k+ rows per call.
  */
 export function predictFlight(reader: ScopedReader, flightNumber: string): Prediction {
-  const now = Math.floor(Date.now() / 1000);
-  let cached = modelCache.get(reader);
-  if (!cached || now - cached.builtAt > MODEL_TTL_SEC) {
-    cached = { ...buildProductionModel(reader), builtAt: now };
-    modelCache.set(reader, cached);
-  }
-  return cached.predict(flightNumber);
+  return modelMemo(reader)("model", () => buildProductionModel(reader)).predict(flightNumber);
 }
 
 // ============================================================================

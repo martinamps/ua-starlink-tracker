@@ -1,4 +1,3 @@
-import React from "react";
 import { AIRLINES, type SiteConfig } from "../airlines/registry";
 import type { FirstFlight, PerAirlineStat, RecentInstall } from "../types";
 import type { PageLink } from "./atoms";

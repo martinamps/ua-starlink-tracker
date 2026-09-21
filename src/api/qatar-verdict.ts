@@ -137,8 +137,8 @@ export type QatarVerdict =
       scheduledRow?: QatarLeg;
     };
 
-/** "QR1", "QR001" and pinned "1" all name the same flight. */
-/** Qatar's feeds pad numbers (QR001) at their own widths. */
+/** "QR1", "QR001" and pinned "1" all name the same flight: Qatar's feeds pad
+ * numbers at their own widths. */
 export function qatarFlightVariants(normalized: string): string[] {
   return zeroPaddedVariants([normalized]);
 }

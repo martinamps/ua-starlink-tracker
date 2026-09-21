@@ -56,6 +56,13 @@ const invisibleAirlines = () =>
   );
 
 describe("hub /airlines index", () => {
+  test("the hub homepage title counts the same airlines its roster link does", async () => {
+    const body = (await (await get("/", hub.canonicalHost)).text()).replace(/<!-- -->/g, "");
+    const titled = body.match(/<title>[^<]*?(\d+) Airlines Compared<\/title>/)?.[1];
+    expect(titled).toBeDefined();
+    expect(body).toContain(`All ${titled} airlines`);
+  });
+
   test("serves on the hub and lists the tracked roster plus every facts entry", async () => {
     const res = await get("/airlines", hub.canonicalHost);
     expect(res.status).toBe(200);
@@ -223,6 +230,21 @@ describe("hub /airlines/{slug} facts pages (content-level roster)", () => {
     for (const entry of contentOnlyFacts()) {
       const body = await (await get(`/airlines/${entry.slug}`, hub.canonicalHost)).text();
       expect(body, `${entry.slug} missing statusLabel`).toContain(entry.statusLabel);
+    }
+  });
+
+  test("every facts title fits a SERP and says what the H1 says, without claiming a tracker", async () => {
+    const decode = (s: string) =>
+      s
+        .replace(/&#x27;/g, "'")
+        .replace(/&quot;/g, '"')
+        .replace(/&amp;/g, "&");
+    for (const entry of contentOnlyFacts()) {
+      const body = await (await get(`/airlines/${entry.slug}`, hub.canonicalHost)).text();
+      const title = decode(body.match(/<title>([^<]*)<\/title>/)?.[1] ?? "");
+      expect(title.length, entry.slug).toBeLessThanOrEqual(60);
+      expect(title, entry.slug).not.toContain("Tracker");
+      if (!entry.title) expect(factsHeadline(entry).startsWith(title), entry.slug).toBe(true);
     }
   });
 

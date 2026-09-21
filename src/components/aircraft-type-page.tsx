@@ -410,7 +410,6 @@ export default function AircraftTypePage({
   facts,
   faq,
   siblings,
-  iata,
   lastUpdated,
   checkFlight,
   spec,

@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
-import { canonicalPermalinkFor } from "../airlines/flight-number";
+import { canonicalPermalinkFor, permalinkFlightNumber } from "../airlines/flight-number";
 import { AIRLINES } from "../airlines/registry";
-import { marketingFlightNumber, prefixGlob } from "./sql/fragments";
+import { prefixGlob } from "./sql/fragments";
 
 /**
  * Newest route-cache sighting (unix sec) per marketing number on a pair, keyed
@@ -28,7 +28,7 @@ export function getRouteFlightLastSeen(
     last_seen_at: number;
   }>;
   for (const r of rows) {
-    const fn = marketingFlightNumber(cfg, r.flight_number);
+    const fn = permalinkFlightNumber(cfg, r.flight_number);
     if (!marketing.test(fn)) continue;
     out.set(fn, Math.max(out.get(fn) ?? 0, r.last_seen_at));
   }

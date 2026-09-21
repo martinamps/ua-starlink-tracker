@@ -1,4 +1,3 @@
-import React from "react";
 import { TypeBreakdownRow } from "../../components/atoms";
 import { Eyebrow, Panel, StatInline, fmt } from "../../components/layout";
 import type { AirlineContent, HeroProps } from "./index";

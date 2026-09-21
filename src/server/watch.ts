@@ -22,6 +22,7 @@ import {
 } from "../api/check-flight-core";
 import { type FallbackSegment, resolveTailVerdict } from "../api/flight-verdict";
 import type { AssignmentLogRow, SameDayAlternative } from "../database/assignment-log";
+import { unixNow } from "../database/sql/windows";
 import { COUNTERS, metrics, normalizeAirlineTag } from "../observability/metrics";
 import { flightDateWindow, isRealIsoDate } from "../utils/airport-tz";
 import { type WatchVerdict, buildWatchIcs, watchFeedEnabled, watchFeedState } from "../utils/ics";
@@ -229,7 +230,7 @@ export async function watchFeed(ctx: RequestContext): Promise<Response> {
   const parsed = parseWatchPath(cfg, ctx.url.pathname);
   if (!parsed) return watchNotFound();
 
-  const now = Math.floor(Date.now() / 1000);
+  const now = unixNow();
   const window = flightDateWindow(parsed.date, now);
   if (!window || window.daysOut < -1 || window.daysOut > WATCH_MAX_DAYS_OUT) {
     return watchNotFound();
@@ -265,11 +266,10 @@ export async function watchFeed(ctx: RequestContext): Promise<Response> {
     ...leg,
     now,
   });
-  return new Response(ctx.req.method === "HEAD" ? null : body, {
+  return text(ctx.req.method === "HEAD" ? null : body, "text/calendar; charset=utf-8", {
+    cache: CACHE.fifteenMinutes,
     headers: {
-      "Content-Type": "text/calendar; charset=utf-8",
       "Content-Disposition": `inline; filename="starlink-watch-${parsed.fn}-${parsed.date}.ics"`,
-      "Cache-Control": CACHE.fifteenMinutes,
       "X-Robots-Tag": "noindex",
       ...CORS_ANY_ORIGIN,
     },

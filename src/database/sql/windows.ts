@@ -22,3 +22,23 @@ export const TRAILING_WINDOW_SEC = TRAILING_WINDOW_DAYS * DAY_SEC;
 export function isoDateDaysAgo(days: number, now = unixNow()): string {
   return new Date((now - days * DAY_SEC) * 1000).toISOString().slice(0, 10);
 }
+
+/** FR24 publishes assignments about two days out and keeps them about a day
+ * after departure; outside these bounds a tail lookup cannot answer. */
+const LOOKUP_PAST_SEC = DAY_SEC;
+const LOOKUP_AHEAD_SEC = 3 * DAY_SEC;
+
+/** Where a flight day's [start, end) window sits against the FR24 lookup span. */
+export function lookupWindowPosition(
+  start: number,
+  end: number,
+  now = unixNow()
+): "past" | "inside" | "future" {
+  if (end <= now - LOOKUP_PAST_SEC) return "past";
+  if (start >= now + LOOKUP_AHEAD_SEC) return "future";
+  return "inside";
+}
+
+export function inLookupWindow(start: number, end: number, now = unixNow()): boolean {
+  return lookupWindowPosition(start, end, now) === "inside";
+}

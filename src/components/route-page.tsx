@@ -1,4 +1,3 @@
-import React from "react";
 import { type SiteConfig, siteAirline } from "../airlines/registry";
 import type { RouteSummary } from "../database/database";
 import { airportTimezone } from "../utils/airport-tz";

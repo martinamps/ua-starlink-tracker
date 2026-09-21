@@ -13,6 +13,7 @@ import {
   updateFlights,
   updateLastFlightCheck,
 } from "../database/database";
+import { unixNow } from "../database/sql/windows";
 import { DISTRIBUTIONS, metrics, normalizeAirlineTag, withSpan } from "../observability";
 import type { Aircraft, Flight } from "../types";
 import { FLIGHT_DATA_SOURCE } from "../utils/constants";
@@ -34,8 +35,7 @@ type FlightUpdate = Pick<
 interface FlightAPI {
   getUpcomingFlights(
     tailNumber: string,
-    flightNumberSource?: FlightNumberSource,
-    airlineCode?: string | null
+    opts?: { flightNumberSource?: FlightNumberSource; airlineCode?: string | null }
   ): Promise<FlightUpdate[]>;
 }
 
@@ -104,11 +104,10 @@ async function pollTailFlights(
         // starlink.data.freshness_seconds{job:flight_updater}.
         debug(`Fetching upcoming flights for ${tailNumber}`);
         const airline = getTailAirline(db, tailNumber);
-        const flights = await api.getUpcomingFlights(
-          tailNumber,
-          (airline && AIRLINES[airline]?.flightNumberSource) || "callsign",
-          airline
-        );
+        const flights = await api.getUpcomingFlights(tailNumber, {
+          flightNumberSource: (airline && AIRLINES[airline]?.flightNumberSource) || "callsign",
+          airlineCode: airline,
+        });
 
         span.setTag("flights.count", flights.length);
 
@@ -461,7 +460,7 @@ export function startFlightUpdater(db: Database): JobHandle | undefined {
 // DB-only, so it runs even while the FR24 breaker is open, and never feeds it.
 const PRUNE_INTERVAL_MS = 10 * 60 * 1000;
 
-export function runStaleUpcomingPrune(db: Database, now = Math.floor(Date.now() / 1000)): number {
+export function runStaleUpcomingPrune(db: Database, now = unixNow()): number {
   try {
     const pruned = pruneStaleUpcomingFlights(db, now);
     let total = 0;

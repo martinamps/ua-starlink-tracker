@@ -4,8 +4,7 @@
  * params; values always travel as params, never interpolated.
  */
 
-import { ensureAirlinePrefix, stripFlightNumberZeros } from "../../airlines/flight-number";
-import { type AirlineConfig, enabledAirlines } from "../../airlines/registry";
+import { enabledAirlines } from "../../airlines/registry";
 
 /** One airline, several, or undefined for every enabled airline. */
 export type AirlineFilter = string | readonly string[] | undefined;
@@ -71,15 +70,6 @@ export function flightNumberGlob(
     clause: prefixes.map(() => `${column} GLOB ?`).join(" OR "),
     params: prefixes.map(prefixGlob),
   };
-}
-
-/**
- * The permalink spelling of a stored flight number: marketing prefix, no zero
- * padding (HA0011 → HA11, 1234 → UA1234). The padded URL 301s here, so every
- * surface that links or counts flight numbers keys on this form.
- */
-export function marketingFlightNumber(cfg: AirlineConfig, raw: string): string {
-  return stripFlightNumberZeros(ensureAirlinePrefix(cfg, raw));
 }
 
 /**

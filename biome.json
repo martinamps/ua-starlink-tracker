@@ -42,6 +42,10 @@
       "complexity": {
         "noBannedTypes": "off"
       },
+      "correctness": {
+        "noUnusedImports": "error",
+        "noUnusedVariables": "error"
+      },
       "suspicious": {
         "noExplicitAny": "off"
       },

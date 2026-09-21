@@ -246,6 +246,7 @@ describe("/badge.svg", () => {
   test("POST → 405", async () => {
     const res = await app.dispatch(req("/badge.svg", UA, { method: "POST" }));
     expect(res.status).toBe(405);
+    expect(res.headers.get("Allow")).toBe("GET, HEAD");
   });
 });
 

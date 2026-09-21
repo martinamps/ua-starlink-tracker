@@ -1,4 +1,3 @@
-import React from "react";
 import { RolloutPanel } from "../../components/home/rollout";
 import type { AirlineContent, HeroProps } from "./index";
 

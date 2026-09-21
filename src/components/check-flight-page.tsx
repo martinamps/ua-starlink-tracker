@@ -1,4 +1,3 @@
-import React from "react";
 import { type SiteConfig, siteAirline } from "../airlines/registry";
 import {
   type AnswerContext,
@@ -16,17 +15,7 @@ import { FlightFactBlocks } from "./check-flight/fact-blocks";
 import { Faq, type FaqEntry, JsonLd, breadcrumbJsonLd, jsonLdString } from "./faq";
 import { ClientScriptTag, FlightSearchForm } from "./flight-search-form";
 import { CHROME_EXTENSION_URL } from "./home/tools";
-import {
-  Chip,
-  PageHeader,
-  PageShell,
-  Panel,
-  Section,
-  SectionTitle,
-  StatInline,
-  fmt,
-} from "./layout";
-import { formatDuration, shortDate, zonedDeparture } from "./ui/format";
+import { PageHeader, PageShell, Panel, Section, SectionTitle, fmt } from "./layout";
 
 interface FlightRouteFact {
   departure_airport: string;

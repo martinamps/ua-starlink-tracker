@@ -4,7 +4,7 @@
  * can't ship a JSON body the extension can't read cross-origin.
  */
 
-import { SECURITY_HEADERS } from "../utils/constants";
+import { BASE_RESPONSE_HEADERS, MCP_CORS_HEADERS, SECURITY_HEADERS } from "../utils/constants";
 
 export { CORS_ANY_ORIGIN } from "../utils/constants";
 
@@ -57,10 +57,57 @@ export function xml(body: string, opts: ResponseOptions = {}): Response {
   return text(body, "application/xml", opts);
 }
 
-export function methodNotAllowed(asJson = false): Response {
+/** A rendered page. A 404 render keeps the page CSP but takes the shared-cache
+ * policy, so a crawler sweeping a dead URL space doesn't re-render at origin. */
+export function html(
+  body: string,
+  status = 200,
+  headers: Record<string, string> = status === 404
+    ? SECURITY_HEADERS.notFoundHtml
+    : SECURITY_HEADERS.html
+): Response {
+  return new Response(body, { status, headers });
+}
+
+/** A bodiless answer: 202 Accepted, 204 preflight. */
+export function empty(status: 202 | 204, headers: Record<string, string>): Response {
+  return new Response(null, { status, headers });
+}
+
+/** 405 with the Allow header RFC 9110 requires. */
+export function methodNotAllowed(
+  allow: readonly string[],
+  asJson = false,
+  headers: Record<string, string> = {}
+): Response {
+  const opts = { status: 405, headers: { Allow: allow.join(", "), ...headers } };
   return asJson
-    ? jsonError(405, "Method not allowed")
-    : text("Method not allowed", "text/plain", { status: 405 });
+    ? json({ error: "Method not allowed" }, opts)
+    : text("Method not allowed", "text/plain", opts);
+}
+
+const MCP_HEADERS = { ...BASE_RESPONSE_HEADERS, ...MCP_CORS_HEADERS };
+
+/** A /mcp protocol response: the MCP CORS contract rather than /api's, and no
+ * Cache-Control (the pinned MCP headers carry none). Null body for a 202. */
+export function jsonRpc(body: unknown, status = 200): Response {
+  return body === null
+    ? new Response(null, { status, headers: MCP_HEADERS })
+    : text(JSON.stringify(body), "application/json", { status, headers: MCP_HEADERS });
+}
+
+export function mcpMethodNotAllowed(): Response {
+  return methodNotAllowed(["POST"], false, MCP_HEADERS);
+}
+
+/** A same-origin redirect. The Location stays relative so local and staging
+ * hosts keep their own origin. */
+export function redirect(
+  location: string,
+  status: 301 | 302 | 308 = 302,
+  headers: Record<string, string> = {}
+): Response {
+  return new Response(null, { status, headers: { Location: location, ...headers } });
 }
 
 /** Copy `res` with `defaults` filled in wherever the handler set nothing. */

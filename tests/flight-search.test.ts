@@ -6,7 +6,7 @@
 import { describe, expect, test } from "bun:test";
 import { canonicalFlightFor } from "../src/airlines/flight-input";
 import { flightInputRules } from "../src/airlines/flight-number";
-import { AIRLINES } from "../src/airlines/registry";
+import { AIRLINES, SITES } from "../src/airlines/registry";
 import { createApp } from "../src/server/app";
 import { openSnapshot, req } from "./helpers";
 
@@ -39,17 +39,42 @@ describe("canonicalFlightFor", () => {
 });
 
 describe("no-JS form submit", () => {
-  test("GET /check-flight?flight_number=&date= redirects to the dated permalink", async () => {
-    const res = await app.dispatch(req("/check-flight?flight_number=ua%20544&date=2026-10-01", UA));
-    expect(res.status).toBe(302);
-    expect(new URL(res.headers.get("Location") ?? "").pathname).toBe(
-      "/check-flight/UA544/2026-10-01"
-    );
-  });
+  const AS = SITES.alaska.canonicalHost;
+  const location = async (path: string, host: string) => {
+    const res = await app.dispatch(req(path, host, { headers: { Accept: "text/html" } }));
+    return { status: res.status, location: res.headers.get("Location") };
+  };
+  const cases: [host: string, query: string, target: string][] = [
+    [UA, "ua%20544&date=2026-10-01", "/check-flight/UA544/2026-10-01"],
+    [UA, "UA544&date=nope", "/check-flight/UA544"],
+    [UA, "2258", "/check-flight/UA2258"],
+    [UA, "UAL2258", "/check-flight/UA2258"],
+    [UA, "ua+0544", "/check-flight/UA544"],
+    [
+      UA,
+      "UA2258&date=2027-01-01&origin=sfo&destination=EWR",
+      "/check-flight/UA2258/2027-01-01?origin=sfo&destination=EWR",
+    ],
+    [AS, "850", "/check-flight/AS850"],
+    [AS, "ASA0850&origin=SEA", "/check-flight/AS850?origin=SEA"],
+    ["localhost:3000", "2258", "/check-flight/UA2258"],
+  ];
+  for (const [host, query, target] of cases) {
+    test(`${host} ?flight_number=${query} lands on ${target} in one relative hop`, async () => {
+      expect(await location(`/check-flight?flight_number=${query}`, host)).toEqual({
+        status: 302,
+        location: target,
+      });
+      expect(await location(target, host)).toEqual({ status: 200, location: null });
+    });
+  }
 
-  test("a junk date is dropped rather than carried into the URL", async () => {
-    const res = await app.dispatch(req("/check-flight?flight_number=UA544&date=nope", UA));
-    expect(new URL(res.headers.get("Location") ?? "").pathname).toBe("/check-flight/UA544");
+  test("a query that is not a flight number goes to the router's notice", async () => {
+    expect(await location("/check-flight?flight_number=SFO", UA)).toEqual({
+      status: 302,
+      location: "/check-flight/SFO",
+    });
+    expect((await location("/check-flight/SFO", UA)).status).toBe(404);
   });
 });
 

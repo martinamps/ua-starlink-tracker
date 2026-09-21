@@ -23,19 +23,18 @@ export function stripFlightNumberZeros(flightNumber: string): string {
 
 /** One carrier's permalink rules as plain data (flightInputRules builds it). */
 export interface FlightInputRules {
-  separators: string;
   iata: string;
   icao: string;
   permalink: string;
 }
 
 /**
- * Browser twin of parseCheckFlightPath for one carrier: separators out, bare
+ * parseCheckFlightPath for one known carrier: separators out, bare
  * digits get the carrier code, its own ICAO callsign maps to IATA, padding
  * goes. Null when the result is not this carrier's permalink shape.
  */
 export function canonicalFlightFor(rules: FlightInputRules, input: string): string | null {
-  let fn = input.trim().toUpperCase().replace(new RegExp(rules.separators, "g"), "");
+  let fn = canonicalFlightInput(input);
   if (/^\d+$/.test(fn)) fn = rules.iata + fn;
   if (fn.startsWith(rules.icao) && /^\d+$/.test(fn.slice(rules.icao.length))) {
     fn = rules.iata + fn.slice(rules.icao.length);

@@ -11,6 +11,7 @@
  * never a guessed zone.
  */
 
+import { unixNow } from "../database/sql/windows";
 import { debug } from "./logger";
 
 export const AIRPORT_TZ: Record<string, string> = {
@@ -652,10 +653,7 @@ export function isRealIsoDate(date: string): boolean {
   return !Number.isNaN(t) && new Date(t).toISOString().slice(0, 10) === date;
 }
 
-export function flightDateWindow(
-  date: string,
-  nowSec = Math.floor(Date.now() / 1000)
-): FlightDateWindow | null {
+export function flightDateWindow(date: string, nowSec = unixNow()): FlightDateWindow | null {
   if (!isRealIsoDate(date)) return null;
   const t = Date.parse(`${date}T00:00:00Z`);
   const start = Math.floor(t / 1000);

@@ -40,6 +40,7 @@ import {
 } from "../airlines/registry";
 import type { FlightAssignmentRow } from "../database/database";
 import { type Scope, type ScopedReader, aggregatePenetration } from "../database/reader";
+import { inLookupWindow, lookupWindowPosition, unixNow } from "../database/sql/windows";
 import {
   COUNTERS,
   DISTRIBUTIONS,
@@ -62,9 +63,11 @@ import {
   predictRoute,
   routeBaseline,
 } from "../scripts/starlink-predictor";
+import { jsonRpc, mcpMethodNotAllowed } from "../server/respond";
 import { AIRPORT_COORDS } from "../utils/airport-geo";
 import { isRealIsoDate, matchesLocalDate } from "../utils/airport-tz";
 import { debug, error as logError } from "../utils/logger";
+import { denominatorIsPublishable } from "../utils/share-cards";
 import { memoPromise } from "../utils/ttl-cache";
 import {
   type FlightVerdict,
@@ -700,7 +703,7 @@ export async function renderCheckFlightVerdict(
   }
 
   const { mid, start: startOfDay, end: endOfDay } = verdict.window;
-  const now = Math.floor(Date.now() / 1000);
+  const now = unixNow();
   const normalized = verdict.normalized;
 
   const renderAssignment = (f: FlightAssignmentRow): string => {
@@ -843,8 +846,8 @@ export async function renderCheckFlightVerdict(
       const pred = verdict.pred;
       recordPrediction(pred, reader.scope);
 
-      const isPast = endOfDay < now - 86400;
-      const isNearTerm = startOfDay < now + 3 * 86400;
+      const position = lookupWindowPosition(startOfDay, endOfDay, now);
+      const isPast = position === "past";
       // During an FR24 outage we genuinely don't know whether an assignment
       // exists — don't claim it isn't published yet.
       // A past date's assignment isn't "not yet published" — it's gone.
@@ -859,7 +862,7 @@ export async function renderCheckFlightVerdict(
           ? ""
           : isPast
             ? "This date is in the past; we don't retain historical assignments."
-            : !isNearTerm
+            : position === "future"
               ? "Aircraft assignment not yet published — that happens ~2 days out. Check again 1-2 days before departure for a firm answer."
               : opts.liveLookup === false
                 ? `No assignment on file — this multi-airline server only sees Starlink-tracked aircraft and doesn't run a live tail lookup.${liveSite ? ` For a live check, use ${liveSite}/mcp.` : ""}`
@@ -1006,7 +1009,7 @@ async function datedAssignmentRoutes(
 ): Promise<RouteEntry[]> {
   const date = new Date(targetDateUnix * 1000).toISOString().slice(0, 10);
   const window = flightDateWindow(date);
-  if (!window || window.end <= now - 86400 || window.start >= now + 3 * 86400) return [];
+  if (!window || !inLookupWindow(window.start, window.end, now)) return [];
   let legs: Awaited<ReturnType<typeof cachedFlightAssignments>>;
   try {
     legs = await cachedFlightAssignments(flightNumber, window.mid, now);
@@ -1039,7 +1042,7 @@ async function lookupFlightRoutes(
   opts: { liveAssignments: boolean } = { liveAssignments: true }
 ): Promise<RouteEntry[]> {
   const cacheKey = `${uaFlightNumber}:${targetDateUnix ? Math.floor(targetDateUnix / 86400) : "any"}:${opts.liveAssignments ? "live" : "db"}`;
-  const now = Math.floor(Date.now() / 1000);
+  const now = unixNow();
   const cached = routeCache.get(cacheKey, now);
   if (cached) {
     recordRouteLookup(reader.scope, "memory");
@@ -1368,7 +1371,7 @@ const HUB_LOOKUP_ONLY = hubLookupAirlines().filter((a) => !a.publicInHub);
 /** QR's nonstop from its published schedule — equipment type decides Starlink. */
 function hubLookupRouteLines(getReader: GetReader, origin: string, destination: string): string[] {
   if (!HUB_LOOKUP_ONLY.some((a) => a.code === "QR")) return [];
-  const now = Math.floor(Date.now() / 1000);
+  const now = unixNow();
   const rows = getReader("QR")
     .getQatarScheduleByRoute(
       origin,
@@ -1454,7 +1457,7 @@ async function toolPredictFlightStarlink(
   // its REST /api/predict-flight mirrors.
   if (hostReader.scope === "ALL" && cfg.hubFlightLookup) {
     const given = typeof args.date === "string" ? args.date.trim() : "";
-    const nowSec = Math.floor(Date.now() / 1000);
+    const nowSec = unixNow();
     const date = given || addDaysISO(dohDateISO(nowSec), QATAR_PUBLISHED_DAYS_FORWARD + 1);
     return toolCheckFlight(
       hostReader,
@@ -1490,8 +1493,14 @@ async function toolPredictFlightStarlink(
     const fleetLabel = fleet === "express" ? "express (regional)" : "mainline";
     details = `No history for this flight number; our ${fleetLabel} estimate for flights not yet seen on a Starlink aircraft — not flight-specific.`;
   } else {
+    // The grade already folds in staleness: plenty of departures can still be
+    // medium or low when most of them are old, and the sentence must agree.
     details =
-      pred.n_observations >= 5 ? "Sample size is solid." : "Limited data — estimate may drift.";
+      pred.confidence === "high"
+        ? "Sample size is solid."
+        : pred.n_observations >= 5
+          ? "Most of its history is old, so the estimate may lag recent installs."
+          : "Limited data — estimate may drift.";
   }
 
   const probLine = `**${forPredict}**: ${approxPct(pred.probability)} Starlink probability ${pred.method === "flight_history_smoothed" ? confidenceTag(pred.n_observations, pred.confidence) : "(fleet prior)"}. ${details}`;
@@ -1852,10 +1861,19 @@ function scopeConfigError(scope: Scope): ToolResult {
   return toolError(`Error: no airline registered for scope "${scope}".`);
 }
 
+const pctOf = (starlink: number, total: number) =>
+  total > 0 ? ((starlink / total) * 100).toFixed(1) : "0.0";
+
+/** "N of M aircraft (P%)" where the roster is the programme's own denominator,
+ * else just the count: the same gate the pages, badge and share cards use. */
+function aircraftShare(starlink: number, total: number, rosterIsProgramScope: boolean): string {
+  return denominatorIsPublishable(starlink, total, rosterIsProgramScope)
+    ? `${starlink} of ${total} aircraft (${pctOf(starlink, total)}%)`
+    : `${starlink} aircraft`;
+}
+
 function toolGetFleetStats(reader: ScopedReader): ToolResult {
   const lastUpdated = reader.getLastUpdated();
-  const pct = (starlink: number, total: number) =>
-    total > 0 ? ((starlink / total) * 100).toFixed(1) : "0.0";
 
   // Null fleetStats = hub scope: per-airline breakdown — there is no
   // single-airline subfleet split, and the hub must never present one
@@ -1866,13 +1884,15 @@ function toolGetFleetStats(reader: ScopedReader): ToolResult {
     const agg = aggregatePenetration(per);
     // A community guide lags installs, so its count is a floor.
     const floor = (a: { code: string }) => Boolean(AIRLINES[a.code]?.communitySource);
+    const inScope = (a: { code: string }) =>
+      AIRLINES[a.code]?.rollout.rosterIsProgramScope ?? false;
     const lines = per.map(
       (a) =>
-        `**${a.name}**: ${floor(a) ? "at least " : ""}${a.starlink} of ${a.total} aircraft (${pct(a.starlink, a.total)}%)${a.phaseNote ? ` — ${a.phaseNote}` : ""}`
+        `**${a.name}**: ${floor(a) ? "at least " : ""}${aircraftShare(a.starlink, a.total, inScope(a))}${a.phaseNote ? ` — ${a.phaseNote}` : ""}`
     );
     const text = `Starlink Installation Progress (as of ${lastUpdated}):
 
-**All tracked airlines**: ${per.some(floor) ? "at least " : ""}${agg.starlink} of ${agg.total} aircraft (${pct(agg.starlink, agg.total)}%) have Starlink WiFi
+**All tracked airlines**: ${per.some(floor) ? "at least " : ""}${aircraftShare(agg.starlink, agg.total, per.every(inScope))} have Starlink WiFi
 
 ${lines.join("\n")}`;
     return textResult(text);
@@ -1882,23 +1902,24 @@ ${lines.join("\n")}`;
   // config — no airline literals (this text serves every /mcp host).
   const cfg = AIRLINES[reader.scope];
   if (!cfg) return scopeConfigError(reader.scope);
+  const inScope = cfg.rollout.rosterIsProgramScope;
   const totalCount = reader.getTotalCount();
   const starlinkPlanes = reader.getStarlinkPlanes();
   const subfleetLines = [
     fleetStats.express.total > 0
-      ? `**Express (Regional) Fleet**: ${fleetStats.express.starlink} of ${fleetStats.express.total} aircraft (${fleetStats.express.percentage.toFixed(1)}%)`
+      ? `**Express (Regional) Fleet**: ${aircraftShare(fleetStats.express.starlink, fleetStats.express.total, inScope)}`
       : null,
     fleetStats.mainline.total > 0
-      ? `**Mainline Fleet**: ${fleetStats.mainline.starlink} of ${fleetStats.mainline.total} aircraft (${fleetStats.mainline.percentage.toFixed(1)}%)`
+      ? `**Mainline Fleet**: ${aircraftShare(fleetStats.mainline.starlink, fleetStats.mainline.total, inScope)}`
       : null,
   ].filter((l) => l !== null);
   const familyLines = reader
     .getFleetPageData()
     .families.filter((f) => f.family !== "unknown")
-    .map((f) => `- ${f.family}: ${f.starlink} of ${f.total} (${pct(f.starlink, f.total)}%)`);
+    .map((f) => `- ${f.family}: ${f.starlink} of ${f.total} (${pctOf(f.starlink, f.total)}%)`);
   const text = [
     `${cfg.name} Starlink Installation Progress (as of ${lastUpdated}):`,
-    `**Combined Fleet**: ${starlinkPlanes.length} of ${totalCount} aircraft (${pct(starlinkPlanes.length, totalCount)}%) have Starlink WiFi`,
+    `**Combined Fleet**: ${aircraftShare(starlinkPlanes.length, totalCount, inScope)} have Starlink WiFi`,
     subfleetLines.join("\n"),
     familyLines.length > 0 ? `**By Aircraft Type**:\n${familyLines.join("\n")}` : null,
     `**Rollout**: ${cfg.rollout.statusLabel} — ${cfg.rollout.phaseNote}`,
@@ -1982,15 +2003,15 @@ function toolSearchStarlinkFlights(
     return toolError("Error: at least one of origin or destination must be provided.");
   }
 
-  const now = Math.floor(Date.now() / 1000);
+  const now = unixNow();
   // One entry per physical departure: a tail swap leaves the old row behind,
   // so the slot is claimed first and only then tested for Starlink.
   const allFuture = reader
     .getDepartureSlots({ from: now + 1, to: now + SEARCH_HORIZON_SEC, partners: true })
     .filter((f) => f.equipped === 1);
 
-  // Data horizon from the UNFILTERED set — showing now() when the filtered result
-  // is empty would wrongly imply we have zero forward data
+  // Data horizon from every equipped departure, before the route filter: an
+  // empty route result stamped with now() would imply no forward data at all.
   const latestDeparture =
     allFuture.length > 0 ? allFuture[allFuture.length - 1].departure_time : now;
   const dataHorizon = new Date(latestDeparture * 1000).toISOString().slice(0, 10);
@@ -2234,8 +2255,6 @@ async function dispatch(
 // HTTP handler
 // ============================================================================
 
-const JSON_HEADERS = { "Content-Type": "application/json" };
-
 /**
  * Handle an incoming MCP HTTP request.
  * Mount this at a single path (e.g. /mcp) in your Bun.serve router.
@@ -2253,42 +2272,27 @@ export async function handleMcpRequest(
 ): Promise<Response> {
   // Stateless and tools-only: no SSE stream to open on GET, no session to end
   // on DELETE. POST is the whole protocol.
-  if (req.method !== "POST") {
-    return new Response(null, { status: 405, headers: { Allow: "POST" } });
-  }
+  if (req.method !== "POST") return mcpMethodNotAllowed();
 
-  // Validate Content-Type
   const contentType = req.headers.get("content-type") || "";
   if (!contentType.includes("application/json")) {
-    return new Response(
-      JSON.stringify(rpcError(null, -32700, "Content-Type must be application/json")),
-      { status: 415, headers: JSON_HEADERS }
-    );
+    return jsonRpc(rpcError(null, -32700, "Content-Type must be application/json"), 415);
   }
 
-  // Parse JSON body
   let msg: JsonRpcRequest;
   try {
     msg = await req.json();
   } catch {
-    return new Response(JSON.stringify(rpcError(null, -32700, "Parse error: invalid JSON")), {
-      status: 400,
-      headers: JSON_HEADERS,
-    });
+    return jsonRpc(rpcError(null, -32700, "Parse error: invalid JSON"), 400);
   }
 
-  // Validate JSON-RPC envelope
   if (msg.jsonrpc !== "2.0" || typeof msg.method !== "string") {
-    return new Response(
-      JSON.stringify(rpcError(msg.id ?? null, -32600, "Invalid Request: not JSON-RPC 2.0")),
-      { status: 400, headers: JSON_HEADERS }
-    );
+    return jsonRpc(rpcError(msg.id ?? null, -32600, "Invalid Request: not JSON-RPC 2.0"), 400);
   }
 
   const { scope } = resolveScope(req, hostScope);
   const reader = getReader(scope);
 
-  // Dispatch
   let response: JsonRpcResponse | null;
   try {
     response = await dispatch(reader, getReader, scope, hostScope, msg);
@@ -2298,7 +2302,7 @@ export async function handleMcpRequest(
     response = rpcError(msg.id ?? null, -32603, "Internal error");
   }
 
-  // Track meaningful MCP usage in Plausible (skip ping & notifications — noise)
+  // Ping and notifications are noise in Plausible.
   if (msg.method === "initialize" || msg.method === "tools/list") {
     trackMcpEvent(req, analytics, { method: msg.method });
   } else if (msg.method === "tools/call") {
@@ -2306,11 +2310,5 @@ export async function handleMcpRequest(
     trackMcpEvent(req, analytics, { method: "tools/call", tool: toolName });
   }
 
-  // Notification (no id) → 202 Accepted, empty body
-  if (response === null) {
-    return new Response(null, { status: 202 });
-  }
-
-  // Request → 200 OK with JSON-RPC response
-  return new Response(JSON.stringify(response), { status: 200, headers: JSON_HEADERS });
+  return response === null ? jsonRpc(null, 202) : jsonRpc(response);
 }

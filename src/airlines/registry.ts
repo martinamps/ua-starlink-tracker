@@ -495,12 +495,13 @@ const AIRLINE_DEFS = {
     flightHistoryModel: false,
     verifySite: "alaskaair.com",
     typeDeterministicWifi: alaskaTypeToWifi,
-    // Phase 1 (E175 regional) complete; mainline 737/787 installs are under way
-    // — see the dated AirlineGeeks fact on /airlines/alaska for the count.
+    // Alaska's own tracker (Aug. 28, 2026 fact in rollout-facts): E175s done,
+    // mainline only on the 737-8 MAX; no other 737 or 787 connected.
     rollout: {
       status: "phase_done",
       statusLabel: "Regional fleet done",
-      phaseNote: "Every regional E175 has Starlink. Mainline 737 and 787 installs are under way.",
+      phaseNote:
+        "Every regional E175 has Starlink. Mainline has started with the 737-8 MAX; no other 737 or 787 is connected yet.",
       // Mainline is in the programme too — the whole roster is the denominator.
       rosterIsProgramScope: true,
     },
