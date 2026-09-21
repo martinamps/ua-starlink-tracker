@@ -2,12 +2,12 @@ import React from "react";
 import { AIRLINES, type SiteConfig } from "../airlines/registry";
 import type { PopularFlight } from "../database/database";
 import type { AirportDepartures, RouteSchedule, RouteScheduleRow } from "../types";
+import { airportTimezone } from "../utils/airport-tz";
 import { PopularFlightsLinks } from "./atoms";
 import { AirportBars } from "./home/rollout";
 import type { Link } from "./layout";
 import { PageHeader, PageShell, Panel, Section, SectionTitle, Td, Th } from "./layout";
-import { localDeparture } from "./route-page";
-import { fmt } from "./ui/format";
+import { fmt, utcDateTime, zonedDeparture } from "./ui/format";
 import { Meter } from "./ui/meter";
 
 interface RouteLeg {
@@ -96,7 +96,7 @@ function RoutesTable({ routes, linkable }: { routes: MergedRoute[]; linkable: bo
       </thead>
       <tbody>
         {routes.map((r) => {
-          const at = localDeparture(r.next.origin, r.next.next);
+          const at = zonedDeparture(r.next.next, airportTimezone(r.next.origin));
           return (
             <tr key={r.key}>
               <Td className="pr-3 align-top">
@@ -152,9 +152,12 @@ interface RoutesPageProps {
   popularFlights?: PopularFlight[];
   pageLinks?: Link[];
   currentPath?: string;
+  /** The data's own freshness stamp, never request time. */
+  updatedAt?: string | null;
 }
 
 export default function RoutesPage({
+  updatedAt,
   schedule,
   airports,
   site,
@@ -168,13 +171,6 @@ export default function RoutesPage({
   const total = schedule.totalDepartures;
   const routes = mergeDirections(schedule.rows);
   const linkable = site.features.routePlannerPage;
-  const updated = new Date().toLocaleString("en-US", {
-    timeZone: "UTC",
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
 
   return (
     <PageShell site={site} currentPath={currentPath} pageLinks={pageLinks}>
@@ -198,7 +194,8 @@ export default function RoutesPage({
               <RoutesTable routes={routes} linkable={linkable} />
               <p className="mt-4 text-xs text-muted text-pretty">
                 Based on aircraft assigned so far. Assignments firm up about two days out, so a
-                route missing here may still have Starlink. Updated {updated} UTC.
+                route missing here may still have Starlink.
+                {updatedAt ? ` Data updated ${utcDateTime(updatedAt)}.` : ""}
               </p>
             </Panel>
           </div>

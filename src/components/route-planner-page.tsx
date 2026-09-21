@@ -1,6 +1,6 @@
 import React from "react";
 import { type SiteConfig, siteAirline } from "../airlines/registry";
-import { ClientScriptTag } from "./flight-search-form";
+import { ClientScriptTag } from "./layout";
 import type { Link } from "./layout";
 import { Chip, Eyebrow, PageHeader, PageShell, Panel, SectionTitle, buttonClass } from "./layout";
 

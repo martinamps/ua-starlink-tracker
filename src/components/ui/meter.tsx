@@ -8,7 +8,7 @@ import {
   meterWidth,
 } from "../../client/meter";
 
-export interface MeterSegment {
+interface MeterSegment {
   key: string;
   /** 0..1 of the whole track. */
   share: number;

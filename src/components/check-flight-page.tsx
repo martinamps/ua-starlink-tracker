@@ -14,8 +14,9 @@ import { PopularFlightsLinks } from "./atoms";
 import { FlightFactBlocks } from "./check-flight/fact-blocks";
 import type { DatedAnswer, FlightFacts, InvalidFlightQuery } from "./check-flight/types";
 import { Faq, type FaqEntry, JsonLd, breadcrumbJsonLd, scriptSafeJson } from "./faq";
-import { ClientScriptTag, FlightSearchForm } from "./flight-search-form";
+import { FlightSearchForm } from "./flight-search-form";
 import { CHROME_EXTENSION_URL } from "./home/tools";
+import { ClientScriptTag } from "./layout";
 import { LINK, type Link, PageHeader, PageShell, Panel, Section, SectionTitle } from "./layout";
 import { fmt, probPhrase, probTier } from "./ui/format";
 

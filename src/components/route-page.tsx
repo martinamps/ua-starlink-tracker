@@ -17,11 +17,6 @@ export interface RouteDeparture {
   verified: boolean;
 }
 
-/** Departure clock at the origin airport; unmapped airports read UTC. */
-export function localDeparture(iata: string, sec: number): { date: string; time: string } {
-  return zonedDeparture(sec, airportTimezone(iata));
-}
-
 /** A historical number seen once is as likely a data-source artifact (a
  * diversion, a mis-keyed express number) as a flight on this route. */
 const HISTORY_MIN_SIGHTINGS = 2;
@@ -52,13 +47,14 @@ export function routeVerdict(
   if (k > 0) {
     const head = `${fmt(k)} Starlink flight${k === 1 ? "" : "s"} ${pair} in the ${route.windowLabel}`;
     if (!departures) return `${head}.`;
-    const day = (d: RouteDeparture) => localDeparture(route.origin, d.departure_time).date;
+    const day = (d: RouteDeparture) =>
+      zonedDeparture(d.departure_time, airportTimezone(route.origin)).date;
     if (k === 1) return `${head}: ${departures[0].flight_number} on ${day(departures[0])}.`;
     if (k <= 3) {
       return `${head}: ${joinList(departures.map((d) => `${d.flight_number} (${day(d)})`))}.`;
     }
     const next = departures[0];
-    const at = localDeparture(route.origin, next.departure_time);
+    const at = zonedDeparture(next.departure_time, airportTimezone(route.origin));
     return `${head}. The next is ${next.flight_number} on ${at.date} at ${at.time}.`;
   }
   // Lead with what we durably know. The schedule window is only 48h, so a
@@ -91,7 +87,7 @@ function DeparturesTable({
         </thead>
         <tbody>
           {departures.map((d) => {
-            const at = localDeparture(route.origin, d.departure_time);
+            const at = zonedDeparture(d.departure_time, airportTimezone(route.origin));
             return (
               <tr key={`${d.flight_number}-${d.departure_time}`}>
                 <Td className="pr-3 whitespace-nowrap">

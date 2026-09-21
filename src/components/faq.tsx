@@ -140,6 +140,7 @@ export function Faq({
   title = "Questions",
   variant = "open",
   id,
+  wide = false,
   structuredData = true,
 }: {
   items?: FaqEntry[];
@@ -147,6 +148,8 @@ export function Faq({
   title?: string;
   variant?: "open" | "grid" | "accordion" | "card";
   id?: string;
+  /** Data width, for pages whose sections all run wide; accordion groups sit two-up. */
+  wide?: boolean;
   structuredData?: boolean;
 }) {
   const all = sections ? sections.flatMap((s) => s.items) : items;
@@ -171,9 +174,9 @@ export function Faq({
     );
   }
   return (
-    <Section bare id={id} className="scroll-mt-4" title={title}>
+    <Section bare wide={wide} id={id} className="scroll-mt-4" title={title}>
       {variant === "accordion" && sections ? (
-        <div className="space-y-4">
+        <div className={wide ? "grid items-start gap-4 lg:grid-cols-2" : "space-y-4"}>
           {sections.map((s) => (
             <div key={s.title}>
               <Eyebrow as="h3" className="mb-2">

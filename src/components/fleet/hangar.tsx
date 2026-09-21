@@ -3,7 +3,7 @@ import { AIRCRAFT_SPECS, type AircraftSpec } from "../../utils/aircraft-specs";
 import { H2, SECTION_WIDE } from "../layout";
 import { fmt, pct } from "../ui/format";
 import { type PipelineMap, pipelinePhrase } from "./pipeline";
-import { PROVIDER_LABEL, ProviderLegend } from "./providers";
+import { PROVIDER_LABEL, ProviderLegend, WIFI_CLASS } from "./providers";
 import { type FleetTypeLink, familyLabel, providerCounts } from "./type-bars";
 
 function pipelineNote(p: PipelineMap, tail: string): string {
@@ -54,7 +54,7 @@ export function TailGrid({
           href={`${anchorBase}#t-${t.tail}`}
           title={tailTitle(t, pipeline)}
           aria-label={tailTitle(t, pipeline)}
-          className={`wifi-${t.provider}${pipelineCellClass(pipeline, t.tail)} ${cell} rounded-[1px] hover:scale-150 transition-transform`}
+          className={`${WIFI_CLASS[t.provider]}${pipelineCellClass(pipeline, t.tail)} ${cell} rounded-[1px] hover:scale-150 transition-transform`}
         />
       ))}
     </div>

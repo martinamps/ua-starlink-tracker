@@ -3,13 +3,14 @@
  * tail's upcoming flights as pills. The list is server-rendered and capped;
  * src/client/aircraft-list.ts filters the rendered rows in place.
  */
+import { aircraftName } from "../../airlines/aircraft-families";
 import type { AirlineContent } from "../../airlines/content";
 import { ensureAirlinePrefix } from "../../airlines/flight-number";
 import { AIRLINES, type AirlineConfig } from "../../airlines/registry";
 import { FILTER_ACTIVE, FILTER_BUTTON, FILTER_INACTIVE } from "../../client/aircraft-list";
 import type { Aircraft, Flight } from "../../types";
 import { toIata } from "../../utils/airport-code";
-import { SectionTitle } from "../layout";
+import { Panel, SECTION_WIDE, SectionTitle } from "../layout";
 import { fmt, formatPillTime } from "../ui/format";
 
 // SSR'ing every fleet row made the homepage a ~5 MB document with thousands of
@@ -139,9 +140,8 @@ function searchIndex(flights: Flight[], rowAirline: AirlineConfig | undefined) {
   return {
     airports: pairs.flat().join(" "),
     routes: pairs.flatMap(([d, a]) => [`${d}-${a}`, `${a}-${d}`]).join(" "),
-    // The raw callsign plus the marketing number it maps to, via
-    // ensureAirlinePrefix: a prefix strip made a G7-coded flight unfindable by
-    // the UA number its pill advertises.
+    // The raw callsign plus its marketing number (ensureAirlinePrefix), so a
+    // G7-coded flight is findable by the UA number its pill shows.
     flights: flights
       .flatMap((f) => {
         const marketing = rowAirline
@@ -182,7 +182,7 @@ export function AircraftList({
     shown.filter((p) => p.fleet === key || airlineOf(p) === key).length;
 
   return (
-    <div className="relative mx-auto mb-8 w-full max-w-6xl overflow-hidden rounded-lg border border-subtle bg-surface">
+    <Panel pad="none" className={`${SECTION_WIDE} overflow-hidden`}>
       <SectionTitle className="px-4 md:px-6 pt-4 pb-0">Aircraft with Starlink</SectionTitle>
       <div className="px-4 md:px-6 py-3 border-b border-subtle">
         <div className="flex flex-col sm:flex-row gap-3">
@@ -194,7 +194,7 @@ export function AircraftList({
               type="text"
               id="aircraft-search"
               placeholder="Tail, route (sfo-lax) or flight"
-              className="w-full font-mono text-sm px-4 py-2 pl-9 pr-8 bg-surface-elevated border border-subtle rounded text-primary placeholder-muted focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all"
+              className="w-full font-mono text-xs sm:text-sm px-4 py-2 pl-9 pr-8 bg-surface-elevated border border-subtle rounded text-primary placeholder-muted focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all"
             />
             <svg
               className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted"
@@ -288,7 +288,7 @@ export function AircraftList({
                   key={plane.TailNumber || idx}
                   className="aircraft-row group px-4 md:px-6 py-4 hover:bg-surface-elevated transition-all duration-200 cursor-default border-l-2 border-transparent hover:border-accent"
                   data-tail={plane.TailNumber.toLowerCase()}
-                  data-aircraft={plane.Aircraft.toLowerCase()}
+                  data-aircraft={`${plane.Aircraft} ${aircraftName(plane.Aircraft)}`.toLowerCase()}
                   data-operator={(plane.OperatedBy || "").toLowerCase()}
                   data-fleet={plane.fleet}
                   data-airline={airline}
@@ -305,7 +305,7 @@ export function AircraftList({
                             {plane.TailNumber}
                           </div>
                           <div className="md:hidden font-mono text-xs text-secondary">
-                            {plane.Aircraft}
+                            {aircraftName(plane.Aircraft)}
                           </div>
                           {badge && (
                             <div className="hidden md:block text-xs font-mono text-muted uppercase">
@@ -322,7 +322,9 @@ export function AircraftList({
                     </div>
 
                     <div className="hidden md:block md:col-span-2">
-                      <span className="font-mono text-sm text-secondary">{plane.Aircraft}</span>
+                      <span className="font-mono text-sm text-secondary">
+                        {aircraftName(plane.Aircraft)}
+                      </span>
                     </div>
 
                     <div className="md:col-span-3 text-xs md:text-sm text-muted mb-3 md:mb-0 pl-5 md:pl-0">
@@ -376,6 +378,6 @@ export function AircraftList({
           )}
         </div>
       )}
-    </div>
+    </Panel>
   );
 }

@@ -1,12 +1,18 @@
 /**
- * The page shell every HTML page shares: the site bar, the page header, the
- * footer, and the few typographic primitives (sections, inline stats, bar rows,
- * table cells) that pages had been hand-copying with drifting sizes. A page
- * body owns its content; it should not own its chrome.
+ * The page shell every HTML page shares (site bar, page header, footer) and
+ * the typographic primitives pages compose: sections, panels, eyebrows,
+ * inline stats, buttons, chips and table cells.
  */
 import React from "react";
 import { AIRLINES, SITES, type SiteConfig, liveAirlineSites } from "../airlines/registry";
+import { type ClientScript, clientScriptSrc } from "../client/bundle";
 import { fmt } from "./ui/format";
+
+/** A page's browser bundle, content-hashed; nothing when it isn't built. */
+export function ClientScriptTag({ name }: { name: ClientScript }) {
+  const src = clientScriptSrc(name);
+  return src ? <script src={src} defer /> : null;
+}
 
 export interface Link {
   href: string;
@@ -267,10 +273,7 @@ export function Section({
   children: React.ReactNode;
 }) {
   return (
-    <section
-      id={id}
-      className={`relative mx-auto mb-8 w-full ${wide ? "max-w-6xl" : "max-w-3xl"} ${className}`}
-    >
+    <section id={id} className={`${wide ? SECTION_WIDE : SECTION} ${className}`}>
       {title && <SectionTitle>{title}</SectionTitle>}
       {dek && <p className="mt-1 text-sm text-secondary text-pretty">{dek}</p>}
       {bare ? (
@@ -337,32 +340,35 @@ export function Td({
 /**
  * One-line cross-domain footer links, rendered on every site. Registry-derived
  * (live sites only) and plain followed links — the sister domains are the same
- * publisher, so no nofollow. The hub's /airlines link stays relative on the
- * hub itself.
+ * publisher, so no nofollow. The hub, whose site bar already carries
+ * /airlines, links only its sisters.
  */
 function CrossSiteLinks({ site }: { site: SiteConfig }) {
-  const sisters = liveAirlineSites().filter(({ site: s }) => s.key !== site.key);
-  const hubHost = SITES.airline.canonicalHost;
-  const airlinesHref = site.scope === "ALL" ? "/airlines" : `https://${hubHost}/airlines`;
+  const links: Link[] = liveAirlineSites()
+    .filter(({ site: s }) => s.key !== site.key)
+    .map(({ site: s, airline }) => ({
+      href: `https://${s.canonicalHost}/`,
+      label: `${airline.shortName} Starlink tracker`,
+    }));
+  if (site.scope !== "ALL") {
+    links.push({
+      href: `https://${SITES.airline.canonicalHost}/airlines`,
+      label: "All airlines with Starlink",
+    });
+  }
   // data-cross-site-links marks the block as a deliberate cross-tenant
   // mention — the tenant-matrix canary sweep strips it before scanning.
   return (
     <div data-cross-site-links className="mt-3 text-xs text-muted">
       Also tracking:{" "}
-      {sisters.map(({ site: s, airline }) => (
-        <React.Fragment key={s.key}>
-          <a
-            href={`https://${s.canonicalHost}/`}
-            className="text-secondary hover:text-primary transition-colors"
-          >
-            {airline.shortName} Starlink tracker
+      {links.map((l, i) => (
+        <React.Fragment key={l.href}>
+          {i > 0 && <span className="mx-1.5 text-subtle">·</span>}
+          <a href={l.href} className="text-secondary hover:text-primary transition-colors">
+            {l.label}
           </a>
-          <span className="mx-1.5 text-subtle">·</span>
         </React.Fragment>
       ))}
-      <a href={airlinesHref} className="text-secondary hover:text-primary transition-colors">
-        All airlines with Starlink
-      </a>
     </div>
   );
 }

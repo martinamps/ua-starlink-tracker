@@ -104,7 +104,6 @@
       .text-secondary { color: var(--color-text-secondary); }
       .text-muted { color: var(--color-text-muted); }
       .text-accent { color: var(--color-accent); }
-      .text-white { color: #ffffff; }
 
       /* Tooltip — CSS-only, works on hover and tap-to-focus. Trigger gets a
          dotted underline as the affordance; content comes from data-tip. */
@@ -166,9 +165,6 @@
       .glow-accent {
         box-shadow: 0 0 20px color-mix(in srgb, var(--color-accent) 15%, transparent);
       }
-      .glow-accent-strong {
-        box-shadow: 0 0 30px color-mix(in srgb, var(--color-accent) 25%, transparent);
-      }
 
       /* Grid background pattern */
       .grid-pattern {
@@ -176,22 +172,6 @@
           linear-gradient(rgba(36, 48, 68, 0.3) 1px, transparent 1px),
           linear-gradient(90deg, rgba(36, 48, 68, 0.3) 1px, transparent 1px);
         background-size: 40px 40px;
-      }
-
-      /* Scan line effect */
-      .scanlines::before {
-        content: '';
-        position: absolute;
-        inset: 0;
-        background: repeating-linear-gradient(
-          0deg,
-          transparent,
-          transparent 2px,
-          rgba(0, 0, 0, 0.1) 2px,
-          rgba(0, 0, 0, 0.1) 4px
-        );
-        pointer-events: none;
-        opacity: 0.3;
       }
 
       /* Status indicator */
@@ -220,14 +200,6 @@
       }
 
       /* Animations */
-      @keyframes spin {
-        0% { transform: rotate(0deg); }
-        100% { transform: rotate(360deg); }
-      }
-      .animate-spin {
-        animation: spin 1s linear infinite;
-      }
-
       @keyframes pulse-glow {
         0%, 100% { opacity: 1; }
         50% { opacity: 0.5; }

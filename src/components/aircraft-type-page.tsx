@@ -28,7 +28,7 @@ import { PROVIDER_LABEL, ProviderLegend } from "./fleet/providers";
 import { ShareBarRow, providerCounts } from "./fleet/type-bars";
 import { FlightSearchForm } from "./flight-search-form";
 import type { Link } from "./layout";
-import { EYEBROW, H2, PANEL, PageHeader, PageShell, StatInline } from "./layout";
+import { EYEBROW, H2, LINK, PANEL, PageHeader, PageShell, StatInline } from "./layout";
 import { fmt, shortDate } from "./ui/format";
 
 interface AircraftTypeSibling {
@@ -48,7 +48,6 @@ interface AircraftTypePageProps {
   facts: RolloutFact[];
   faq: TypeFaqItem[];
   siblings: AircraftTypeSibling[];
-  iata: string;
   lastUpdated: string | null;
   checkFlight: boolean;
   spec: AircraftSpec | null;
@@ -74,7 +73,6 @@ const TARGET_IN_HEADER: ReadonlySet<AircraftVerdictKind> = new Set([
 
 const H2_CARD = `${H2} mb-3`;
 const CARD = `${PANEL} mb-4`;
-const LINK = "text-accent hover:underline";
 
 /** Every tail of the type as one square, colored by its Wi-Fi today. */
 function TailMatrix({
@@ -410,7 +408,6 @@ export default function AircraftTypePage({
   facts,
   faq,
   siblings,
-  iata,
   lastUpdated,
   checkFlight,
   spec,
