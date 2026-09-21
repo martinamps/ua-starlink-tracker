@@ -184,7 +184,7 @@ describe("ship-number sync outcome", () => {
     const first = await syncShipNumbers({ db, fetchSheet: async () => sheet("3501") });
     expect(first.status).toBe("success");
     expect(first.changed).toBe(1);
-    expect(getMeta(db, SHIP_NUMBERS_SYNCED_AT)).not.toBeNull();
+    expect(getMeta(db, SHIP_NUMBERS_SYNCED_AT, "UA")).not.toBeNull();
     const again = await syncShipNumbers({ db, fetchSheet: async () => sheet("3501") });
     expect(again.status).toBe("noop");
     const syncs = calls.filter((c) => c.name === COUNTERS.SCRAPER_SYNC);
@@ -208,7 +208,7 @@ describe("ship-number sync outcome", () => {
       })
     ).rejects.toThrow();
     expect(calls.find((c) => c.name === COUNTERS.SCRAPER_SYNC)?.tags.status).toBe("error");
-    expect(getMeta(db, SHIP_NUMBERS_SYNCED_AT)).toBeNull();
+    expect(getMeta(db, SHIP_NUMBERS_SYNCED_AT, "UA")).toBeNull();
     db.close();
   });
 });

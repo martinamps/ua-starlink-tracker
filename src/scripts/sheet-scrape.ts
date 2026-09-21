@@ -47,7 +47,7 @@ export async function runSheetScrape(
           span.setTag("result", "abandoned");
           return { outcome: "abandoned", total: 0, starlinkCount: 0 };
         }
-        const refusal = updateDatabase(db, totalAircraftCount, starlinkAircraft, fleetStats);
+        const refusal = updateDatabase(db, totalAircraftCount, starlinkAircraft, fleetStats, "UA");
         if (refusal) {
           // Roster sanity floor tripped (e.g. 200-with-HTML parsed to ~0 rows)
           // — same observable shape as fleet-sync's aborted path.
@@ -76,7 +76,7 @@ export async function runSheetScrape(
           );
         }
 
-        const synced = syncSpreadsheetToFleet(db);
+        const synced = syncSpreadsheetToFleet(db, "UA");
         if (synced > 0) {
           info(`Synced ${synced} new planes to united_fleet`);
           span.setTag("synced_to_fleet", synced);

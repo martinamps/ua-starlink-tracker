@@ -3,6 +3,7 @@
  * Syncs United Airlines fleet from FlightRadar24 and spreadsheet to united_fleet table
  */
 
+import type { Database } from "bun:sqlite";
 import {
   AIRLINES,
   type AirlineConfig,
@@ -79,6 +80,7 @@ export function buildRoster(cfg: AirlineConfig, sources: RosterSource[]): Roster
  * Sync fleet from FlightRadar24 to united_fleet table for one airline.
  */
 export async function syncFleetFromFR24(
+  db: Database,
   cfg: AirlineConfig = AIRLINES.UA,
   sharedBrowser?: import("playwright").Browser
 ): Promise<{
@@ -153,19 +155,17 @@ export async function syncFleetFromFR24(
 
       span.setTag("aircraft.count", allAircraft.length);
 
-      const db = initializeDatabase();
+      const existingTails = new Set(
+        (
+          db.query("SELECT tail_number FROM united_fleet WHERE airline = ?").all(cfg.code) as {
+            tail_number: string;
+          }[]
+        ).map((r) => r.tail_number)
+      );
 
-      try {
-        const existingTails = new Set(
-          (
-            db.query("SELECT tail_number FROM united_fleet WHERE airline = ?").all(cfg.code) as {
-              tail_number: string;
-            }[]
-          ).map((r) => r.tail_number)
-        );
-
+      // One transaction for the ~1.6k upserts: one commit, not one per tail.
+      db.transaction(() => {
         for (const aircraft of allAircraft) {
-          const isNew = !existingTails.has(aircraft.registration);
           upsertFleetAircraft(
             db,
             aircraft.registration,
@@ -175,36 +175,36 @@ export async function syncFleetFromFR24(
             aircraft.operator,
             cfg.code
           );
-          if (isNew) {
-            result.new++;
-            metrics.increment(COUNTERS.PLANES_DISCOVERED, { source: "fr24", airline: airlineTag });
-          } else {
-            result.updated++;
-          }
         }
-
-        result.total = allAircraft.length;
-        result.success = true;
-
-        // Meta totals follow the lastUpdated owner: the sheet scrape owns
-        // UA's; for everyone else FR24 is the roster of record, so refresh
-        // meta here or it goes stale. (refreshFleetMeta itself only stamps
-        // lastUpdated for fleet-meta-owned airlines — QR's stays with the
-        // schedule ingester.)
-        if (lastUpdatedOwner(cfg.code) !== "sheet-scrape") refreshFleetMeta(db, cfg.code);
-
-        span.setTag("planes.new", result.new);
-        span.setTag("planes.updated", result.updated);
-        metrics.increment(COUNTERS.SCRAPER_SYNC, {
-          source: "fr24",
-          airline: airlineTag,
-          status: result.error ? "partial" : "success",
-        });
-
-        info(`FR24 sync complete (${cfg.code}): ${result.new} new, ${result.updated} updated`);
-      } finally {
-        db.close();
+      })();
+      for (const aircraft of allAircraft) {
+        if (existingTails.has(aircraft.registration)) {
+          result.updated++;
+        } else {
+          result.new++;
+          metrics.increment(COUNTERS.PLANES_DISCOVERED, { source: "fr24", airline: airlineTag });
+        }
       }
+
+      result.total = allAircraft.length;
+      result.success = true;
+
+      // Meta totals follow the lastUpdated owner: the sheet scrape owns
+      // UA's; for everyone else FR24 is the roster of record, so refresh
+      // meta here or it goes stale. (refreshFleetMeta itself only stamps
+      // lastUpdated for fleet-meta-owned airlines — QR's stays with the
+      // schedule ingester.)
+      if (lastUpdatedOwner(cfg.code) !== "sheet-scrape") refreshFleetMeta(db, cfg.code);
+
+      span.setTag("planes.new", result.new);
+      span.setTag("planes.updated", result.updated);
+      metrics.increment(COUNTERS.SCRAPER_SYNC, {
+        source: "fr24",
+        airline: airlineTag,
+        status: result.error ? "partial" : "success",
+      });
+
+      info(`FR24 sync complete (${cfg.code}): ${result.new} new, ${result.updated} updated`);
     } catch (err) {
       result.error = err instanceof Error ? err.message : String(err);
       logError(`FR24 sync error (${cfg.code})`, result.error);
@@ -223,7 +223,7 @@ export async function syncFleetFromFR24(
 /**
  * Sync spreadsheet planes to united_fleet table
  */
-export async function syncFromSpreadsheet(): Promise<{
+export async function syncFromSpreadsheet(db: Database): Promise<{
   success: boolean;
   synced: number;
   error?: string;
@@ -232,16 +232,9 @@ export async function syncFromSpreadsheet(): Promise<{
 
   try {
     info("Starting spreadsheet sync to united_fleet...");
-
-    const db = initializeDatabase();
-
-    try {
-      result.synced = syncSpreadsheetToFleet(db);
-      result.success = true;
-      info(`Spreadsheet sync complete: ${result.synced} new planes added to united_fleet`);
-    } finally {
-      db.close();
-    }
+    result.synced = syncSpreadsheetToFleet(db, "UA");
+    result.success = true;
+    info(`Spreadsheet sync complete: ${result.synced} new planes added to united_fleet`);
   } catch (err) {
     result.error = err instanceof Error ? err.message : String(err);
     logError("Spreadsheet sync error", result.error);
@@ -253,7 +246,7 @@ export async function syncFromSpreadsheet(): Promise<{
 /**
  * Full fleet sync: FR24 (per enabled airline) + spreadsheet (UA-only)
  */
-export async function syncFullFleet(): Promise<{
+export async function syncFullFleet(db: Database): Promise<{
   fr24: Array<{
     airline: string;
     success: boolean;
@@ -270,14 +263,14 @@ export async function syncFullFleet(): Promise<{
     for (const [i, cfg] of enabledAirlines().entries()) {
       if (!cfg.fr24Slug) continue;
       if (i > 0) await new Promise((r) => setTimeout(r, 5000));
-      fr24.push(await syncFleetFromFR24(cfg, browser));
+      fr24.push(await syncFleetFromFR24(db, cfg, browser));
     }
   } finally {
     await browser.close().catch(() => {});
   }
 
   // Spreadsheet sync remains UA-only — no other airline has a community sheet.
-  const spreadsheetResult = await syncFromSpreadsheet();
+  const spreadsheetResult = await syncFromSpreadsheet(db);
 
   return { fr24, spreadsheet: spreadsheetResult };
 }
@@ -295,29 +288,11 @@ export function fleetSyncInitialDelayMs(lastStartedAt: string | null, nowMs = Da
   return Math.max(FLEET_SYNC_MIN_DELAY_MS, last + FLEET_SYNC_INTERVAL_MS - nowMs);
 }
 
-function readFleetSyncStartedAt(): string | null {
-  const db = initializeDatabase();
-  try {
-    return getMeta(db, FLEET_SYNC_META_KEY, "ALL");
-  } finally {
-    db.close();
-  }
-}
-
-function stampFleetSyncStarted(): void {
-  const db = initializeDatabase();
-  try {
-    setMeta(db, FLEET_SYNC_META_KEY, new Date().toISOString(), "ALL");
-  } finally {
-    db.close();
-  }
-}
-
 /** Daily FR24 roster sync keeping united_fleet populated. */
-export function startFleetSync(): JobHandle {
+export function startFleetSync(db: Database): JobHandle {
   let initialDelayMs = FLEET_SYNC_MIN_DELAY_MS;
   try {
-    initialDelayMs = fleetSyncInitialDelayMs(readFleetSyncStartedAt());
+    initialDelayMs = fleetSyncInitialDelayMs(getMeta(db, FLEET_SYNC_META_KEY, "ALL"));
   } catch (err) {
     logError("Fleet sync: could not read last-run stamp; running on the boot schedule", err);
   }
@@ -325,14 +300,14 @@ export function startFleetSync(): JobHandle {
   const runSync = async () => {
     try {
       // Stamped on start, not success, so a crash-looping deploy can't re-run it.
-      stampFleetSyncStarted();
+      setMeta(db, FLEET_SYNC_META_KEY, new Date().toISOString(), "ALL");
       await withSpan(
         "fleet_sync.run",
         async (span) => {
           span.setTag("job.type", "background");
 
           info("Starting scheduled FR24 fleet sync...");
-          const result = await syncFullFleet();
+          const result = await syncFullFleet(db);
 
           for (const r of result.fr24) {
             span.setTag(`fr24.${r.airline}.success`, r.success ? 1 : 0);
@@ -377,9 +352,10 @@ if (import.meta.main) {
   const mode = args[0] || "full";
 
   console.log(`Fleet sync mode: ${mode}\n`);
+  const db = initializeDatabase();
 
   if (mode === "fr24") {
-    syncFleetFromFR24()
+    syncFleetFromFR24(db)
       .then((result) => {
         console.log("\n=== FR24 Sync Results ===");
         console.log(`Success: ${result.success}`);
@@ -393,7 +369,7 @@ if (import.meta.main) {
         process.exit(1);
       });
   } else if (mode === "spreadsheet") {
-    syncFromSpreadsheet()
+    syncFromSpreadsheet(db)
       .then((result) => {
         console.log("\n=== Spreadsheet Sync Results ===");
         console.log(`Success: ${result.success}`);
@@ -405,7 +381,7 @@ if (import.meta.main) {
         process.exit(1);
       });
   } else {
-    syncFullFleet()
+    syncFullFleet(db)
       .then((result) => {
         console.log("\n=== Full Fleet Sync Results ===");
         for (const r of result.fr24) {

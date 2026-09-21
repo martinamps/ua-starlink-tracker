@@ -543,7 +543,7 @@ const BACKFILL_BUDGET_MS = 3_000;
 type BackfillState = { cursor: number; highWater: number } | "done";
 
 function readBackfillState(db: Database): BackfillState | null {
-  const raw = getMeta(db, BACKFILL_META_KEY);
+  const raw = getMeta(db, BACKFILL_META_KEY, "UA");
   if (!raw) return null;
   if (raw === "done") return "done";
   try {
@@ -572,7 +572,7 @@ export async function backfillAdsbFlightDraws(
     if (state === "done") return "skipped";
     if (state === null) {
       if (countAdsbFlightDraws(db) > 0) {
-        setMeta(db, BACKFILL_META_KEY, "done");
+        setMeta(db, BACKFILL_META_KEY, "done", "UA");
         return "skipped";
       }
       const hw = db.query("SELECT MAX(id) AS id FROM adsb_observations").get() as {
@@ -592,13 +592,13 @@ export async function backfillAdsbFlightDraws(
         SightingSource & { id: number }
       >;
       if (rows.length === 0) {
-        setMeta(db, BACKFILL_META_KEY, "done");
+        setMeta(db, BACKFILL_META_KEY, "done", "UA");
         info("adsb-draws backfill: complete");
         return "done";
       }
       upsertAdsbFlightDraws(db, toSightings(rows));
       state = { cursor: rows[rows.length - 1].id, highWater: state.highWater };
-      setMeta(db, BACKFILL_META_KEY, JSON.stringify(state));
+      setMeta(db, BACKFILL_META_KEY, JSON.stringify(state), "UA");
       await sleep(0);
     }
     return "partial";

@@ -9,7 +9,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { setAssignmentFetcher } from "../src/api/flight-verdict";
 import { renderFlightAnswer } from "../src/client/flight-answer";
 import { departureLocalDate } from "../src/database/assignment-log";
-import { updateFlights } from "../src/database/database";
+import { archivePastDepartures, updateFlights } from "../src/database/database";
 import { createApp } from "../src/server/app";
 import {
   type WatchIcsInput,
@@ -343,7 +343,7 @@ describe("assignment log and same-day alternatives (synthetic)", () => {
     expect(db.query("SELECT starlink FROM flight_assignment_log").get()).toEqual({ starlink: 0 });
   });
 
-  test("rows older than the retention window are pruned on the next refresh", () => {
+  test("rows older than the retention window are pruned by the archive pass", () => {
     const db = makeSyntheticDb();
     addPlane(db, "N44444", "Starlink");
     db.query(
@@ -351,6 +351,9 @@ describe("assignment log and same-day alternatives (synthetic)", () => {
        VALUES ('UA', 'UA1', '2020-01-01', 'SFO', 'N44444', 1, 1)`
     ).run();
     updateFlights(db, "N44444", [leg("UA2", at("19:00"))]);
+    // A refresh only archives; the trim rides the 5-minute global pass.
+    expect(db.query("SELECT COUNT(*) AS n FROM flight_assignment_log").get()).toEqual({ n: 2 });
+    archivePastDepartures(db);
     const dates = db.query("SELECT dep_date FROM flight_assignment_log").all() as {
       dep_date: string;
     }[];

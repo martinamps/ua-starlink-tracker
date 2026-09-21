@@ -160,6 +160,7 @@ import {
   ROUTE_AIRPORT_RE,
   type RouteSummary,
 } from "../database/database";
+import { contradictingWifi } from "../database/sql/equipped";
 import {
   COUNTERS,
   DISTRIBUTIONS,
@@ -2956,7 +2957,12 @@ function buildFlightFacts(
   // equipped test the date lookup answers with: a swap onto a non-Starlink
   // tail replaces the stale Starlink row instead of listing both.
   const upcoming = reader
-    .getDepartureSlots({ from: now, to: now + 48 * 3600, partners: true, flightNumbers: variants })
+    .getDepartureSlots({
+      from: now,
+      to: now + DEPARTURE_WINDOW_HOURS * 3600,
+      partners: true,
+      flightNumbers: variants,
+    })
     .filter((f) => AIRPORT_CODE_RE.test(f.departure_airport))
     .slice(0, 5)
     .map((f) => {
@@ -2970,9 +2976,7 @@ function buildFlightFacts(
         tail_number: f.tail_number,
         aircraft_type: f.aircraft_type ?? null,
         starlink,
-        wifiLabel: starlink
-          ? "Starlink"
-          : upcomingWifiLabel(f.settled_negative ? f.settled_wifi : f.verified_wifi),
+        wifiLabel: starlink ? "Starlink" : upcomingWifiLabel(contradictingWifi(f)),
       };
     });
   // Sibling permalinks: other marketing numbers on the primary route (routes

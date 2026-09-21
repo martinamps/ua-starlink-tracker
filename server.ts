@@ -5,7 +5,8 @@ import "dotenv/config";
 import { checkNewPlanes, startFlightUpdater } from "./src/api/flight-updater";
 import {
   archivePastDepartures,
-  initializeDatabase,
+  migrate,
+  openDatabase,
   pruneCrashRows,
   recordFirstFlights,
   warmAircraftTypePages,
@@ -40,7 +41,9 @@ process.on("uncaughtException", (err) => logError("Uncaught Exception", err));
 const PORT = process.env.PORT ? Number.parseInt(process.env.PORT, 10) : 3000;
 const JOBS_ENABLED = process.env.DISABLE_JOBS !== "1";
 
-const db = initializeDatabase();
+// One handle for the server and every in-process job; migrations run once, here.
+const db = openDatabase();
+migrate(db);
 const app = createApp(db);
 
 info(`Server starting on port ${PORT}. Environment: ${process.env.NODE_ENV || "development"}`);
@@ -96,18 +99,18 @@ if (JOBS_ENABLED) {
     })
   );
 
-  track(startFlightUpdater());
+  track(startFlightUpdater(db));
   // United verifier + discovery: UA-only Playwright path.
-  track(startStarlinkVerifier());
-  track(startFleetDiscovery("maintenance"));
+  track(startStarlinkVerifier(db));
+  track(startFleetDiscovery(db, "maintenance"));
   // alaska-json verifier: serves HA (type-deterministic confirmation) and AS
   // (tail/type oracle until alaskaair.com exposes per-tail wifi).
-  track(startAlaskaVerifier());
+  track(startAlaskaVerifier(db));
   // Qatar schedule ingester: pulls per-flight equipment from QR's flight-status
   // API for top routes; populates qatar_schedule which /api/check-flight reads.
-  track(startQatarScheduleIngester());
+  track(startQatarScheduleIngester(db));
   // Fleet sync iterates enabledAirlines() internally.
-  track(startFleetSync());
+  track(startFleetSync(db));
 
   // Data-freshness gauges: derived from MAX(timestamp) in the DB, not a
   // ran-at heartbeat — catches "loop alive but writes nothing" silent failures.
@@ -146,7 +149,7 @@ if (JOBS_ENABLED) {
       name: "ship_number_sync",
       intervalMs: 24 * 3600 * 1000,
       initialDelayMs: 10 * 60 * 1000,
-      run: () => syncShipNumbers(),
+      run: () => syncShipNumbers({ db }),
     })
   );
 

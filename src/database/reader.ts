@@ -358,7 +358,7 @@ function buildPerAirlineStats(db: Database, codes: readonly AirlineCode[]): PerA
     out.push({
       code,
       name: cfg.name,
-      starlink: h?.starlink ?? getStarlinkPlanes(db, code).length,
+      starlink: h?.starlink ?? countStarlinkPlanes(db, code),
       total: h?.total ?? getTotalCount(db, code),
       fleetTotal: h?.fleetTotal,
       installs30d: h?.installs30d,
