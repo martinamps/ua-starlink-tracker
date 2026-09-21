@@ -15,7 +15,6 @@ import {
   type WifiPhase,
   airlineHomeUrl,
   airlineSlug,
-  wifiPhaseFamilies,
 } from "../airlines/registry";
 import {
   type AirlineFactsEntry,
@@ -26,8 +25,27 @@ import {
   formatFactDate,
 } from "../airlines/rollout-facts";
 import type { PerAirlineStat } from "../types";
-import { type PageLink, STATUS_TONE } from "./atoms";
-import { PANEL, PageHeader, SECTION, PageShell as Shell } from "./layout";
+import {
+  type PageLink,
+  STATUS_TONE,
+  StagePill,
+  factsStage,
+  shareIsPublishable,
+  trackedStage,
+  trackingMethod,
+} from "./atoms";
+import {
+  PANEL,
+  PageHeader,
+  SECTION,
+  Section,
+  PageShell as Shell,
+  Td,
+  Th,
+  aircraftName,
+  fmt,
+  pct,
+} from "./layout";
 
 // Same visual language as STATUS_TONE, extended for the facts statuses the
 // registry doesn't have (announced, trial, not-Starlink).
@@ -58,16 +76,19 @@ export interface TrackedLink {
 export interface TypePhase {
   family: string;
   phase: WifiPhase;
+  /** Roster counts for the family, when known. */
+  equipped?: number;
+  total?: number;
 }
 
 const PHASE_LABEL: Record<WifiPhase, { text: string; tone: "yes" | "mid" | "no" }> = {
-  confirmed: { text: "Starlink — whole type", tone: "yes" },
-  rolling: { text: "Mid-installation", tone: "mid" },
+  confirmed: { text: "Starlink on every one", tone: "yes" },
+  rolling: { text: "Installing", tone: "mid" },
   // "No Starlink planned" claims the airline ruled the type out. For some of
   // these it did (HA's 717s); for others it has simply never said (QR's A380s
   // and A330s — the registry's own note is "no installation plan announced").
   // One phase covers both, so the label says only what both support.
-  negative: { text: "Not in the current programme", tone: "no" },
+  negative: { text: "Not in the programme", tone: "no" },
 };
 
 const TONE_CLASS = {
@@ -87,21 +108,30 @@ export function PhaseTable({ phases }: { phases: TypePhase[] }) {
       <div className="text-xs font-mono text-muted uppercase tracking-wider mb-1">
         By aircraft type
       </div>
-      {phases.map(({ family, phase }) => {
+      {phases.map(({ family, phase, equipped, total }) => {
         const p = PHASE_LABEL[phase];
         return (
           <div
             key={family}
-            className="flex items-center justify-between py-1.5 border-b border-subtle last:border-0"
+            data-family={family}
+            className="flex items-center justify-between gap-3 py-1.5 border-b border-subtle last:border-0 text-sm"
           >
-            <span className="font-mono text-xs text-primary">{family}</span>
-            <span className={`font-mono text-xs ${TONE_CLASS[p.tone]}`}>{p.text}</span>
+            <span className="text-primary">
+              {aircraftName(family)}
+              {total !== undefined && (
+                <span className="text-muted tabular-nums">
+                  {" "}
+                  · {phase === "negative" ? fmt(total) : `${fmt(equipped ?? 0)} of ${fmt(total)}`}
+                </span>
+              )}
+            </span>
+            <span className={TONE_CLASS[p.tone]}>{p.text}</span>
           </div>
         );
       })}
       <p className="text-xs text-muted leading-relaxed mt-2">
-        This program is decided by aircraft type, so there is no single fleet percentage worth
-        quoting — which aircraft flies your route is the answer.
+        Starlink here is decided by aircraft type, so the aircraft on your flight is the answer
+        rather than a fleet percentage.
       </p>
     </div>
   );
@@ -114,14 +144,6 @@ function fleetShare(stat: PerAirlineStat): { fleet: number; pct: number } {
   // quote a higher percentage than the tenant site for the same airline.
   const fleet = stat.total;
   return { fleet, pct: fleet > 0 ? Math.round((stat.starlink / fleet) * 100) : 0 };
-}
-
-/** True where Starlink status is decided by aircraft type. Same predicate the
- * detail and compare pages use to render PhaseTable INSTEAD of a percentage —
- * the index has to honour it too, or it publishes the exact number the detail
- * page tells the reader is not worth quoting. */
-function typeDetermined(cfg: AirlineConfig): boolean {
-  return wifiPhaseFamilies(cfg.code) !== null;
 }
 
 export function StatusPill({ cfg }: { cfg: AirlineConfig }) {
@@ -189,7 +211,7 @@ export function FactsList({ entry }: { entry: AirlineFactsEntry }) {
     <div className={PANEL}>
       <div className="flex items-center justify-between gap-2 mb-1">
         <span className="text-xs font-mono text-muted uppercase tracking-wider">
-          {entry.name} — the record, with receipts
+          {entry.name}: dated facts
         </span>
         <span className="font-mono text-xs text-muted">
           {stamp.label} {formatFactDate(stamp.date)}
@@ -201,8 +223,7 @@ export function FactsList({ entry }: { entry: AirlineFactsEntry }) {
         ))}
       </ul>
       <p className="text-xs text-muted leading-relaxed mt-2">
-        Every claim above carries the date it was true and the source that says so. No number on
-        this page is published without both.
+        Each fact above shows the date it was true and links its source.
       </p>
     </div>
   );
@@ -257,48 +278,28 @@ export function PageShell({
   );
 }
 
-// The index groups content-level entries by where each program actually
-// stands; negatives get their own section so "does X have Starlink — no"
-// intent lands on an explicit answer, not an absence.
-const ROSTER_SECTIONS: Array<{ status: RolloutFactsStatus; heading: string; note?: string }> = [
-  { status: "installing", heading: "Installing now" },
-  { status: "complete", heading: "Rollout complete" },
-  { status: "announced", heading: "Announced — not flying yet" },
-  { status: "trial", heading: "Trials" },
-  {
-    status: "not_starlink",
-    heading: "Not Starlink — what they chose instead",
-    note: "Airlines people ask about that picked a different system (or none). The answer is no — here's what they actually run.",
-  },
-];
+// Programmes first, in how far along they are; negatives get their own table
+// so "does X have Starlink — no" lands on an explicit answer, not an absence.
+const PROGRAMME_ORDER: RolloutFactsStatus[] = ["complete", "installing", "announced", "trial"];
 
-function RosterRow({ entry }: { entry: AirlineFactsEntry }) {
-  const stamp = factsStamp(entry);
-  return (
-    <div className={PANEL}>
-      <div className="flex items-center justify-between gap-2 mb-2">
-        <a
-          href={`/airlines/${entry.slug}`}
-          className="font-display text-lg font-semibold text-primary hover:text-accent transition-colors"
-        >
-          {entry.name}
-        </a>
-        <FactsStatusPill entry={entry} />
-      </div>
-      <p className="text-sm text-muted leading-relaxed mb-2">{entry.summary}</p>
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-        <a
-          href={`/airlines/${entry.slug}`}
-          className="font-mono text-xs text-secondary hover:text-accent transition-colors"
-        >
-          {entry.shortName} details, with sources →
-        </a>
-        <span className="font-mono text-xs text-muted">
-          {stamp.label} {formatFactDate(stamp.date)}
-        </span>
-      </div>
-    </div>
-  );
+const METHOD_LABEL = {
+  tail: "Plane by plane",
+  type: "By aircraft type",
+  community: "Community fleet list",
+} as const;
+
+function EquippedCell({ o }: { o: AirlineOverview }) {
+  const { cfg, stat } = o;
+  if (stat.total === 0) return <span className="text-muted">No data yet</span>;
+  if (shareIsPublishable(cfg, stat)) {
+    return (
+      <>
+        {fmt(stat.starlink)} of {fmt(stat.total)}{" "}
+        <span className="text-muted">({pct(stat.starlink, stat.total)})</span>
+      </>
+    );
+  }
+  return <>{fmt(stat.starlink)}</>;
 }
 
 export function AirlinesIndexPage({
@@ -312,7 +313,7 @@ export function AirlinesIndexPage({
   site: SiteConfig;
   airlines: AirlineOverview[];
   /** Content-level entries WITHOUT tail-level tracking (tracked airlines
-   * render as live cards above; their facts live on their detail pages). */
+   * render in the first table; their facts live on their detail pages). */
   roster: AirlineFactsEntry[];
   /** Head-to-head /compare pages. This index is their only HTML entry point —
    * without these links the pair pages are sitemap-only orphans. */
@@ -320,111 +321,162 @@ export function AirlinesIndexPage({
   pageLinks?: PageLink[];
   currentPath?: string;
 }) {
+  const programmes = PROGRAMME_ORDER.flatMap((s) => roster.filter((e) => e.status === s));
+  const negatives = roster.filter((e) => e.status === "not_starlink");
+  const perPlane = airlines
+    .filter((o) => trackingMethod(o.cfg) === "tail")
+    .map((o) => o.cfg.shortName);
+  const byType = airlines.some((o) => trackingMethod(o.cfg) === "type");
   return (
     <PageShell
       site={site}
       pageLinks={pageLinks}
       currentPath={currentPath}
-      heading="Which Airlines Have Starlink WiFi?"
-      sub="Every Starlink rollout — and every notable airline that said no — with fleet counts where we track tail-by-tail, and dated, sourced status for the rest."
+      heading="Which airlines have Starlink Wi-Fi?"
+      sub={`${airlines.length + roster.length} airlines, from finished fleets to firm no's. We count ${perPlane.join(" and ")} plane by plane.`}
     >
-      <section className={SECTION}>
-        <div className="text-xs font-mono text-muted uppercase tracking-wider mb-2">
-          Tracked tail-by-tail
-        </div>
-        <div className="space-y-4">
-          {airlines.map((o) => {
-            const { cfg, stat } = o;
-            const { fleet, pct } = fleetShare(stat);
-            return (
-              <div key={cfg.code} className={PANEL}>
-                <div className="flex items-center justify-between gap-2 mb-2">
-                  <a
-                    href={`/airlines/${airlineSlug(cfg)}`}
-                    className="font-display text-lg font-semibold text-primary hover:text-accent transition-colors"
-                  >
-                    {cfg.name}
-                  </a>
-                  <StatusPill cfg={cfg} />
-                </div>
-                {fleet > 0 ? (
-                  <div className="font-mono text-sm text-secondary mb-2">
-                    <span className="text-accent font-semibold">{stat.starlink}</span>
-                    <span className="text-muted"> of {fleet} aircraft equipped</span>
-                    {!typeDetermined(cfg) && (
-                      <>
-                        <span className="text-muted"> · </span>
-                        <span className="text-primary">{pct}%</span>
-                      </>
+      <Section title="Tracked here" wide>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr>
+                <Th>Airline</Th>
+                <Th>Status</Th>
+                <Th optional>Counted</Th>
+                <Th numeric>With Starlink</Th>
+                <Th numeric optional>
+                  Last 30 days
+                </Th>
+              </tr>
+            </thead>
+            <tbody>
+              {airlines.map((o) => (
+                <tr key={o.cfg.code}>
+                  <Td>
+                    <a
+                      href={`/airlines/${airlineSlug(o.cfg)}`}
+                      className="text-primary hover:text-accent transition-colors"
+                    >
+                      {o.cfg.name}
+                    </a>
+                    {o.trackerHost && (
+                      <a
+                        href={`https://${o.trackerHost}/`}
+                        className="block text-xs text-accent hover:underline"
+                      >
+                        {o.cfg.shortName} Starlink Tracker →
+                      </a>
                     )}
-                    {(stat.installs30d ?? 0) > 0 && (
-                      <span className="text-muted"> · +{stat.installs30d} in 30 days</span>
-                    )}
-                  </div>
-                ) : (
-                  <div className="font-mono text-sm text-muted mb-2">
-                    Per-aircraft tracking begins as installation data lands.
-                  </div>
-                )}
-                <p className="text-sm text-muted leading-relaxed mb-3">{cfg.rollout.phaseNote}</p>
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-                  <a
-                    href={`/airlines/${airlineSlug(cfg)}`}
-                    className="font-mono text-xs text-secondary hover:text-accent transition-colors"
-                  >
-                    {cfg.shortName} rollout details →
-                  </a>
-                  <TrackerCta overview={o} />
-                </div>
-              </div>
-            );
-          })}
+                  </Td>
+                  <Td>
+                    <StagePill info={trackedStage(o.cfg, o.stat)} />
+                  </Td>
+                  <Td optional className="text-secondary">
+                    {METHOD_LABEL[trackingMethod(o.cfg)]}
+                  </Td>
+                  <Td numeric className="whitespace-nowrap text-primary">
+                    <EquippedCell o={o} />
+                  </Td>
+                  <Td numeric optional className="text-secondary">
+                    {(o.stat.installs30d ?? 0) > 0 ? `+${fmt(o.stat.installs30d ?? 0)}` : "–"}
+                  </Td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
-      </section>
+        {byType && (
+          <p className="mt-3 text-xs text-muted">
+            Where Starlink is decided by aircraft type, the count assumes every aircraft of a
+            finished type has it, so it can run ahead of the airline's own figure (Qatar reported
+            150 in August 2026). No fleet share is shown for those airlines because their rosters
+            include types that aren't in the programme.
+          </p>
+        )}
+      </Section>
 
       {comparisons.length > 0 && (
-        <section className={SECTION}>
-          <div className="text-xs font-mono text-muted uppercase tracking-wider mb-2">
-            Head to head
+        <Section
+          title="Head to head"
+          dek="Install counts and rollout status for two airlines, side by side."
+        >
+          <div className="flex flex-wrap gap-2">
+            {comparisons.map((c) => (
+              <a
+                key={c.href}
+                href={c.href}
+                className="font-mono text-xs px-3 py-1.5 bg-surface-elevated border border-subtle rounded text-secondary hover:text-accent hover:border-accent transition-colors"
+              >
+                {c.name} →
+              </a>
+            ))}
           </div>
-          <div className={PANEL}>
-            <p className="text-sm text-muted leading-relaxed mb-3">
-              Two airlines on the same route? These pages put their install counts, per-fleet-group
-              rates, and rollout timelines side by side.
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {comparisons.map((c) => (
-                <a
-                  key={c.href}
-                  href={c.href}
-                  className="font-mono text-xs px-3 py-1.5 bg-surface-elevated border border-subtle rounded text-secondary hover:text-accent hover:border-accent transition-colors"
-                >
-                  {c.name} →
-                </a>
-              ))}
-            </div>
-          </div>
-        </section>
+        </Section>
       )}
 
-      {ROSTER_SECTIONS.map(({ status, heading, note }) => {
-        const entries = roster.filter((e) => e.status === status);
-        if (entries.length === 0) return null;
-        return (
-          <section key={status} className={SECTION}>
-            <div className="text-xs font-mono text-muted uppercase tracking-wider mb-2">
-              {heading}
-            </div>
-            {note && <p className="text-xs text-muted leading-relaxed mb-3">{note}</p>}
-            <div className="space-y-4">
-              {entries.map((e) => (
-                <RosterRow key={e.slug} entry={e} />
-              ))}
-            </div>
-          </section>
-        );
-      })}
+      {programmes.length > 0 && (
+        <Section
+          title="Other Starlink airlines"
+          dek="Status from each airline's own announcements, dated and sourced on its page."
+          wide
+        >
+          <RosterTable entries={programmes} />
+        </Section>
+      )}
+
+      {negatives.length > 0 && (
+        <Section
+          title="Airlines without Starlink"
+          dek="Airlines people ask about that chose a different system, or have announced nothing."
+          wide
+        >
+          <RosterTable entries={negatives} />
+        </Section>
+      )}
     </PageShell>
+  );
+}
+
+function RosterTable({ entries }: { entries: AirlineFactsEntry[] }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr>
+            <Th>Airline</Th>
+            <Th>Status</Th>
+            <Th optional>Summary</Th>
+            <Th numeric>As of</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {entries.map((e) => {
+            const stamp = factsStamp(e);
+            return (
+              <tr key={e.slug}>
+                <Td className="align-top">
+                  <a
+                    href={`/airlines/${e.slug}`}
+                    className="text-primary hover:text-accent transition-colors"
+                  >
+                    {e.name}
+                  </a>
+                </Td>
+                <Td className="align-top">
+                  <StagePill info={factsStage(e.status)} />
+                </Td>
+                <Td optional className="align-top text-secondary">
+                  {e.summary}
+                </Td>
+                <Td numeric className="align-top whitespace-nowrap text-muted">
+                  {formatFactDate(stamp.date)}
+                </Td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -607,7 +659,7 @@ export function AirlineFactsPage({
         <section className={SECTION}>
           <div className={PANEL}>
             <div className="text-xs font-mono text-muted uppercase tracking-wider mb-2">
-              Tracked live, tail-by-tail
+              Tracked live
             </div>
             <p className="text-sm text-muted leading-relaxed mb-3">
               Flying one of these instead? We track their Starlink rollouts aircraft-by-aircraft —

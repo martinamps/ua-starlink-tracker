@@ -1,22 +1,47 @@
 import React from "react";
 import {
-  AirlineStatusCards,
+  AirlineProgressList,
   FlightCheckInput,
   RecentInstallsFeed,
   RouteComparePanel,
+  completeScope,
 } from "../../components/atoms";
-import { publicAirlines } from "../registry";
+import { H2, StatInline, fmt } from "../../components/layout";
+import { airlineHomeUrl, publicAirlines } from "../registry";
+import { AIRLINE_FACTS, type AirlineFactsEntry, type RolloutFactsStatus } from "../rollout-facts";
 import type { AirlineContent, HeroProps, HubHomeLinks } from "./index";
 
 const CHIP =
   "font-mono text-xs px-2.5 py-1 rounded border border-subtle bg-surface-elevated text-secondary hover:border-accent hover:text-accent transition-colors";
+const LINK = "text-accent hover:underline";
+
+// The hub answers cross-airline questions; United-specific intent belongs to
+// the United tracker, so every United mention here links there.
+const UNITED_URL = airlineHomeUrl("UA");
+const UNITED_HOST = new URL(UNITED_URL).host;
+
+function namesWith(status: RolloutFactsStatus): string[] {
+  return AIRLINE_FACTS.filter((e: AirlineFactsEntry) => e.status === status).map((e) => {
+    const scope = status === "complete" ? completeScope(e.trackedCode) : undefined;
+    return scope ? `${e.shortName} (${scope})` : e.shortName;
+  });
+}
+
+function list(names: string[]): string {
+  if (names.length <= 1) return names.join("");
+  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
+
+const FLYING_COUNT = AIRLINE_FACTS.filter(
+  (e) => e.status === "installing" || e.status === "complete"
+).length;
 
 /** Crawlable inlinks to the hub's own URL families: most of its sitemap URLs
  * were discovered but never crawled while the homepage linked only /airlines. */
 function HubLinkGrid({ links }: { links?: HubHomeLinks }) {
   if (!links || (links.airlines.length === 0 && links.compares.length === 0)) return null;
   return (
-    <nav className="bg-surface border border-subtle rounded-lg p-4" aria-label="Airlines">
+    <nav className="bg-surface border border-subtle rounded-lg p-5" aria-label="Airlines">
       {links.airlines.length > 0 && (
         <>
           <h2 className="text-xs font-mono text-muted uppercase tracking-wider mb-3">
@@ -49,25 +74,20 @@ function HubLinkGrid({ links }: { links?: HubHomeLinks }) {
   );
 }
 
-const HubHero = ({ stats, perAirlineStats = [], recentInstalls = [], hubLinks }: HeroProps) => {
-  const { starlinkCount, totalCount } = stats;
+const HubHero = ({ perAirlineStats = [], recentInstalls = [], hubLinks }: HeroProps) => {
   return (
-    <div className="relative mb-6 space-y-4">
-      <div className="text-center">
-        <div className="font-mono text-sm text-secondary">
-          Tracking <span className="text-accent font-semibold">{starlinkCount}</span> Starlink
-          aircraft across <span className="text-muted">{totalCount}</span> planes over{" "}
-          <span className="text-accent font-semibold">{perAirlineStats.length}</span> airline
-          {perAirlineStats.length === 1 ? "" : "s"}
+    <div className="relative mx-auto mb-8 w-full max-w-3xl space-y-6">
+      <section>
+        <h2 className={H2}>Where each tracked rollout stands</h2>
+        <div className="mt-4 rounded-lg border border-subtle bg-surface p-5">
+          <AirlineProgressList stats={perAirlineStats} />
         </div>
-      </div>
-
-      <AirlineStatusCards stats={perAirlineStats} />
-      <div className="text-center">
-        <a href="/airlines" className="font-mono text-xs text-accent hover:underline">
-          Which airlines have Starlink? Full list &amp; rollout comparison →
-        </a>
-      </div>
+        <p className="mt-2 text-sm">
+          <a href="/airlines" className={LINK}>
+            All {AIRLINE_FACTS.length} airlines, including the ones that said no →
+          </a>
+        </p>
+      </section>
       <RouteComparePanel />
       <FlightCheckInput />
       <RecentInstallsFeed items={recentInstalls} airlines={perAirlineStats} />
@@ -194,22 +214,96 @@ const HubHero = ({ stats, perAirlineStats = [], recentInstalls = [], hubLinks }:
 
 export const content: AirlineContent = {
   headerStats: [
-    <span key="free" className="text-green-400 font-semibold">
-      FREE
-    </span>,
-    <span key="mbps">
-      <span className="text-accent font-semibold">250</span> Mbps
+    <span key="flying">
+      <span className="text-accent font-semibold">{FLYING_COUNT}</span> airlines flying or
+      installing Starlink
     </span>,
   ],
 
   intro: () => (
-    <p className="text-sm text-secondary leading-relaxed mb-3">
-      Live rollout status for SpaceX Starlink in-flight WiFi across United, Hawaiian, and Alaska —
-      by fleet segment, with per-tail verification.
-    </p>
+    <>
+      {AIRLINE_FACTS.length} airlines, from finished fleets to firm no's, each with a dated source.
+      We count{" "}
+      {list(
+        publicAirlines()
+          .filter((a) => !a.communitySource && a.rollout.rosterIsProgramScope)
+          .map((a) => a.shortName)
+      )}{" "}
+      plane by plane.
+    </>
   ),
 
   Hero: HubHero,
+
+  answers: [
+    {
+      q: "Which airlines have Starlink Wi-Fi?",
+      a: () => (
+        <p>
+          {FLYING_COUNT} airlines fly Starlink or are installing it. Finished:{" "}
+          {list(namesWith("complete"))}. Installing: {list(namesWith("installing"))}. Announced but
+          not flying yet: {list(namesWith("announced"))}. The{" "}
+          <a href="/airlines" className={LINK}>
+            full list
+          </a>{" "}
+          dates and sources every status.
+        </p>
+      ),
+    },
+    {
+      q: "Which airline has the most Starlink planes?",
+      a: ({ perAirline = [] }) => {
+        const [top, ...rest] = [...perAirline].sort((a, b) => b.starlink - a.starlink);
+        if (!top) return <p>See the full list for each airline's count.</p>;
+        return (
+          <p>
+            Of the airlines tracked here, {top.name} has the most, with{" "}
+            <StatInline n={top.starlink} /> planes
+            {top.code === "UA" ? (
+              <>
+                {" "}
+                on the{" "}
+                <a href={UNITED_URL} className={LINK}>
+                  United Starlink Tracker
+                </a>
+              </>
+            ) : null}
+            .{" "}
+            {rest.length > 0 && (
+              <>Next: {list(rest.map((r) => `${r.name} (${fmt(r.starlink)})`))}.</>
+            )}
+          </p>
+        );
+      },
+    },
+    {
+      q: "Is Starlink Wi-Fi free on every airline?",
+      a: () => (
+        <p>
+          Not always, and the rules differ. United's is free for MileagePlus members, Alaska's for
+          Atmos Rewards members, and Hawaiian's and Qatar's for every passenger. Each airline's page
+          on the{" "}
+          <a href="/airlines" className={LINK}>
+            full list
+          </a>{" "}
+          gives its terms with a source.
+        </p>
+      ),
+    },
+    {
+      q: "How do I check if my flight has Starlink?",
+      a: () => (
+        <p>
+          Enter the flight number and date in the flight check above; it covers every airline we
+          track. For United flights,{" "}
+          <a href={UNITED_URL} className={LINK}>
+            {UNITED_HOST}
+          </a>{" "}
+          has the full answer, including route odds.
+        </p>
+      ),
+    },
+  ],
 
   rowBadge: (_p, airline) => airline,
 
@@ -217,59 +311,32 @@ export const content: AirlineContent = {
 
   faq: [
     {
-      title: "Which airlines have Starlink",
+      title: "Airlines",
       items: [
-        {
-          q: "Which airlines have Starlink WiFi?",
-          a: ({ starlinkCount }) => (
-            <p>
-              <strong>United Airlines</strong> is mid-rollout — most United Express regional jets
-              have it, with mainline 737s and widebodies being equipped through 2026.{" "}
-              <strong>Hawaiian Airlines</strong> finished in September 2024: every A330 and A321neo
-              has Starlink. <strong>Alaska Airlines</strong> is rolling out across its 737 fleet
-              through 2027. We currently track <span className="text-accent">{starlinkCount}</span>{" "}
-              Starlink-equipped aircraft.
-            </p>
-          ),
-          ld: "United Airlines is mid-rollout across mainline and Express fleets. Hawaiian Airlines completed its rollout in September 2024 — every A330 and A321neo has Starlink. Alaska Airlines is rolling out through 2027.",
-        },
-        {
-          q: "Hawaiian shows under 100% but says 'Complete' — why?",
-          a: () => (
-            <p>
-              Hawaiian's Starlink rollout is <strong>finished</strong>: every A330 and A321neo has
-              it, gate-to-gate, since September 2024. The Boeing 717 interisland jets were never in
-              scope — short hops, no WiFi, and the type is being retired. The card's percentage is
-              over Hawaiian's <em>whole</em> fleet so you can read it as "odds on a random Hawaiian
-              flight." The Complete badge means every plane that's ever going to get Starlink
-              already has it.
-            </p>
-          ),
-          ld: "Hawaiian's Starlink rollout is finished: every A330 and A321neo has it since September 2024. The Boeing 717 interisland fleet was never in scope and is being retired. The percentage is over the whole fleet; the Complete badge means every plane that will ever get Starlink already has it.",
-        },
         {
           q: "Does Delta have Starlink?",
           a: () => (
             <p>
-              No. Delta announced a partnership with <strong>Amazon's Project Kuiper</strong> (a
-              Starlink competitor) for in-flight WiFi starting around 2028. Delta is not currently
-              tracked here.
+              No. Delta has partnered with Amazon's Project Kuiper, a Starlink competitor, for
+              in-flight Wi-Fi from around 2028.{" "}
+              <a href="/airlines/delta" className={LINK}>
+                Delta's page
+              </a>{" "}
+              has the details.
             </p>
           ),
-          ld: "No. Delta has partnered with Amazon's Project Kuiper, not Starlink, with service expected around 2028.",
         },
         {
-          q: "Is Starlink WiFi free on these airlines?",
+          q: "Does United have Starlink?",
           a: () => (
             <p>
-              Starlink itself is not a paid add-on on these airlines, but access rules differ:{" "}
-              <strong>United</strong> requires a free MileagePlus login (join on the spot if
-              needed); <strong>Hawaiian</strong> and <strong>Alaska</strong> offer it to every
-              passenger with no loyalty signup. Speeds are gate-to-gate on equipped aircraft —
-              confirm on the airline&apos;s WiFi portal once you board.
+              Yes, and it's the biggest rollout we track. The{" "}
+              <a href={UNITED_URL} className={LINK}>
+                United Starlink Tracker
+              </a>{" "}
+              has the live count, every equipped aircraft and a flight check.
             </p>
           ),
-          ld: "Starlink is not a paid add-on on United, Hawaiian, or Alaska, but access differs: United requires a free MileagePlus login; Hawaiian and Alaska have no loyalty signup. Confirm on the airline WiFi portal once you board.",
         },
       ],
     },
@@ -281,24 +348,21 @@ export const content: AirlineContent = {
           a: () => (
             <p>
               Fleet rosters and flight schedules come from public aviation data. Starlink status is
-              verified per-tail against each airline's own flight-status systems where available
-              (United, Alaska), and against official rollout announcements where the install is
-              type-complete (Hawaiian). Data refreshes hourly.
+              confirmed per aircraft against each airline's own systems where they show it (United,
+              Alaska), and by aircraft type where the airline has finished whole types (Hawaiian,
+              Qatar). Airlines we don't track aircraft by aircraft get dated, sourced status pages.
             </p>
           ),
-          ld: "Fleet rosters and flight schedules come from public aviation data. Starlink status is verified per-tail against each airline's own systems where available, and against official announcements where the install is type-complete.",
         },
         {
           q: "How accurate is this?",
           a: () => (
             <p>
-              For United we measure precision continuously against united.com — currently above 96%
-              on firm yes/no calls. Hawaiian is type-deterministic (if it's an Airbus, it has
-              Starlink), so accuracy is effectively 100%. Aircraft swaps close to departure are the
-              main source of uncertainty on any airline.
+              For United we check answers against united.com continuously. Type-based answers
+              (Hawaiian, Qatar) are as good as the airline's own type list. Aircraft swaps close to
+              departure are the main source of error on any airline.
             </p>
           ),
-          ld: "United precision is measured continuously against united.com (currently above 96%). Hawaiian is type-deterministic, so accuracy is effectively 100%. Aircraft swaps close to departure are the main uncertainty.",
         },
       ],
     },

@@ -15,9 +15,9 @@ import type { SubfleetBreakdown } from "../scripts/starlink-predictor";
 import type { PerAirlineStat } from "../types";
 import { article } from "../utils/grammar";
 import { FactsList, PhaseTable, type TypePhase } from "./airlines-page";
-import { type PageLink, STATUS_TONE } from "./atoms";
+import { type PageLink, StagePill, trackedStage } from "./atoms";
 import { TypeShareTable } from "./community-airline-page";
-import { PANEL, PageHeader, PageShell } from "./layout";
+import { PANEL, PageHeader, PageShell, fmt } from "./layout";
 
 export interface CompareSide {
   cfg: AirlineConfig;
@@ -49,7 +49,6 @@ function pctOf(stat: PerAirlineStat): { fleet: number; pct: number } {
 function SidePanel({ side }: { side: CompareSide }) {
   const { cfg, stat } = side;
   const { fleet, pct } = pctOf(stat);
-  const tone = STATUS_TONE[cfg.rollout.status];
   // A type-determined program has no honest single number: the denominator
   // includes families excluded from the program by design (QR's A380s and
   // A330s, HA's 717s), so "46% of fleet" understates the answer for a 777
@@ -66,22 +65,17 @@ function SidePanel({ side }: { side: CompareSide }) {
         >
           {cfg.name}
         </a>
-        <span
-          className="font-mono text-xs uppercase tracking-wide px-2 py-1 rounded-full shrink-0"
-          style={{ color: tone.color, background: tone.bg }}
-        >
-          {cfg.rollout.statusLabel}
-        </span>
+        <StagePill info={trackedStage(cfg, stat)} />
       </div>
 
       {showBlended && (
         <>
-          <div className="font-mono text-3xl font-semibold text-primary leading-none mb-1">
-            {stat.starlink}
-            <span className="text-base text-muted font-normal"> / {fleet}</span>
+          <div className="font-display text-3xl text-primary leading-none mb-1 tabular-nums">
+            {fmt(stat.starlink)}
+            <span className="text-base text-muted"> of {fmt(fleet)}</span>
           </div>
-          <div className="font-mono text-xs text-muted uppercase tracking-wider mb-2">
-            aircraft equipped · {pct}% of fleet
+          <div className="text-sm text-secondary mb-2">
+            aircraft have Starlink · {pct}% of the fleet
           </div>
           <div className="h-1.5 rounded bg-surface-elevated overflow-hidden mb-3">
             <div
@@ -94,8 +88,8 @@ function SidePanel({ side }: { side: CompareSide }) {
             />
           </div>
           {(stat.installs30d ?? 0) > 0 && (
-            <div className="font-mono text-xs text-secondary mb-3">
-              +{stat.installs30d} equipped in the last 30 days
+            <div className="text-xs text-secondary mb-3">
+              +{fmt(stat.installs30d ?? 0)} in the last 30 days
             </div>
           )}
         </>
@@ -128,7 +122,7 @@ function SidePanel({ side }: { side: CompareSide }) {
               <span className="font-mono text-xs text-secondary">
                 {b.synthetic
                   ? `${Math.round(b.pct * 100)}%`
-                  : `${b.equipped} / ${b.total} · ${Math.round(b.pct * 100)}%`}
+                  : `${fmt(b.equipped)} of ${fmt(b.total)} · ${Math.round(b.pct * 100)}%`}
               </span>
             </div>
           ))}
@@ -175,7 +169,7 @@ export default function ComparePage({
     <PageShell site={site} currentPath={currentPath} pageLinks={pageLinks}>
       <PageHeader
         title={heading}
-        dek="Live install counts, per-fleet-group rates, and where each rollout stands — from the same tail-level data behind the dedicated trackers."
+        dek="Install counts, rates by fleet group and where each rollout stands, side by side."
       />
 
       <section className="relative w-full max-w-5xl mx-auto mb-6">
@@ -184,12 +178,10 @@ export default function ComparePage({
           <SidePanel side={right} />
         </div>
         <p className="text-xs text-muted leading-relaxed mt-3 max-w-3xl">
-          Where a percentage is shown it is a share of that airline's full tracked fleet — the same
-          denominator its dedicated tracker publishes — so neither side is flattered. Airlines whose
-          program is decided by aircraft type get the per-type table instead of a percentage,
-          because their full-fleet denominator includes types the program deliberately excludes.
-          Either way, whether a specific flight has Starlink depends on the aircraft assigned, not
-          the airline average: check the flight number for a real answer.
+          Percentages are shares of each airline's whole fleet, the same figure its own tracker
+          shows. Airlines that decide Starlink by aircraft type get a per-type table instead,
+          because their fleets include types that aren't in the programme. Either way, your flight's
+          answer depends on the aircraft assigned, so check the flight number.
         </p>
       </section>
 

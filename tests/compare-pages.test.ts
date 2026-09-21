@@ -20,11 +20,12 @@ import { makeSyntheticDb, openSnapshot, req } from "./helpers";
 
 let app: ReturnType<typeof createApp>;
 let comparable: AirlineConfig[];
+let getReader: ReturnType<typeof createReaderFactory>;
 
 beforeAll(() => {
   const db = openSnapshot();
   app = createApp(db);
-  const getReader = createReaderFactory(db);
+  getReader = createReaderFactory(db);
   // Mirrors app.ts compareAirlines: a pair page exists only where BOTH sides
   // have real rows, so the expected URL space is read off the same data the
   // app reads rather than off `enabled`.
@@ -74,12 +75,21 @@ describe("hub /compare/{a}-vs-{b}", () => {
     // "% of fleet" appears only in the blended stat block, once per side that
     // prints one. A typed side must never contribute one, so the count can
     // never exceed the number of untyped sides on the page.
-    const blendedCount = (body: string) => body.split("% of fleet").length - 1;
+    const blendedCount = (body: string) => body.split("% of the fleet").length - 1;
 
     for (const cfg of typed) {
-      const families = Object.keys(wifiPhaseFamilies(cfg.code) as Record<string, unknown>).filter(
-        (f) => !f.endsWith("F")
-      );
+      // Families the roster no longer holds (HA's 787s) are dropped from the
+      // table; every family the airline still flies must be listed.
+      const roster = getReader(cfg.code)
+        .getTypeProgress()
+        .filter((t) => t.total > 0);
+      const families = Object.keys(wifiPhaseFamilies(cfg.code) as Record<string, unknown>)
+        .filter((f) => !f.endsWith("F"))
+        .filter(
+          (f) =>
+            roster.length === 0 || roster.some((t) => t.key.startsWith(f) || f.startsWith(t.key))
+        )
+        .map((f) => `data-family="${f}"`);
       const surfaces: Array<{ path: string; sides: Array<{ code: string }> }> = [
         { path: `/airlines/${airlineSlug(cfg)}`, sides: [cfg] },
         ...pairs()

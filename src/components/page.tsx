@@ -5,58 +5,18 @@ import { AIRLINES, type SiteConfig, siteAirline } from "../airlines/registry";
 import type { PopularFlight } from "../database/database";
 import type {
   Aircraft,
-  AirportDeparture,
   AirportDepartures,
   FleetStats,
   Flight,
   PerAirlineStat,
   RecentInstall,
 } from "../types";
+import { denominatorIsPublishable } from "../utils/share-cards";
 import { HeaderStatStrip, type PageLink, PopularFlightsLinks, ShareCardLink } from "./atoms";
-import { PageHeader, PageShell } from "./layout";
+import { AnswerBlock, HomeFaq } from "./faq";
+import { AirportBars } from "./home/rollout";
+import { PageHeader, PageShell, Section, StatInline, fmt, pct } from "./layout";
 import { PassengerBanner } from "./passenger-banner";
-
-// Reusable FAQ accordion item — eliminates ~30 lines of boilerplate per question
-function FaqItem({ q, children }: { q: string; children: React.ReactNode }) {
-  return (
-    <details className="group py-4">
-      <summary className="cursor-pointer list-none flex items-start justify-between">
-        <h3 className="font-display text-base font-semibold text-secondary group-hover:text-accent transition-colors">
-          {q}
-        </h3>
-        <svg
-          className="w-4 h-4 text-muted group-open:rotate-45 transition-transform ml-4 flex-shrink-0"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-          role="img"
-          aria-label="Expand"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M12 6v6m0 0v6m0-6h6m-6 0H6"
-          />
-        </svg>
-      </summary>
-      <div className="mt-3 text-sm text-muted leading-relaxed">{children}</div>
-    </details>
-  );
-}
-
-function FaqGroup({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="max-w-3xl mx-auto mb-4">
-      <h3 className="font-display text-xs font-semibold text-muted uppercase tracking-wider mb-2 px-1">
-        {title}
-      </h3>
-      <div className="bg-surface rounded-lg border border-subtle p-4">
-        <div className="space-y-0 divide-y divide-subtle">{children}</div>
-      </div>
-    </div>
-  );
-}
 
 interface PageProps {
   total: number;
@@ -73,6 +33,8 @@ interface PageProps {
   showPassengerBanner?: boolean;
   installs30d?: number;
   installsPerMonth?: number | null;
+  /** Installs per rolling week, oldest first (rollout sparkline). */
+  weeklyInstalls?: number[];
   /** Pre-rendered share card path; null until the nightly batch produced one. */
   shareCard?: string | null;
   pageLinks?: PageLink[];
@@ -81,234 +43,80 @@ interface PageProps {
   hubLinks?: HubHomeLinks;
 }
 
+const AS_OF_UTC = new Intl.DateTimeFormat("en-US", {
+  month: "long",
+  day: "numeric",
+  year: "numeric",
+  timeZone: "UTC",
+});
+
+/** "September 20, 2026" from the data's lastUpdated stamp; undefined when unparseable. */
+export function asOfDate(lastUpdated?: string): string | undefined {
+  const stamped = new Date(lastUpdated ?? "");
+  return Number.isNaN(stamped.getTime()) ? undefined : AS_OF_UTC.format(stamped);
+}
+
+/** The one ContentStats the homepage body and its FAQPage JSON-LD both render from. */
+export function buildContentStats(input: {
+  starlinkCount: number;
+  totalCount: number;
+  fleetStats?: FleetStats | null;
+  installsPerMonth?: number | null;
+  installs30d?: number;
+  weeklyInstalls?: number[];
+  lastUpdated?: string;
+  perAirline?: PerAirlineStat[];
+}): ContentStats {
+  const { starlinkCount, totalCount } = input;
+  return {
+    starlinkCount,
+    totalCount,
+    percentage: totalCount > 0 ? ((starlinkCount / totalCount) * 100).toFixed(2) : "0.00",
+    fleetStats: input.fleetStats,
+    installsPerMonth: input.installsPerMonth,
+    installs30d: input.installs30d,
+    weeklyInstalls: input.weeklyInstalls,
+    asOf: asOfDate(input.lastUpdated),
+    perAirline: input.perAirline,
+  };
+}
+
 /**
  * The one sentence AI answer engines should quote: dated (from the data's
  * lastUpdated, never request time), self-contained, plain server-rendered
- * text. Airline sites only — the hub has no single-fleet number.
+ * text. Airline sites only — the hub has no single-fleet number. Where the
+ * roster counts types the programme excludes, it states the count alone.
  */
-function StatSentence({
-  site,
-  stats,
-  lastUpdated,
-  installs30d,
-}: {
-  site: SiteConfig;
-  stats: ContentStats;
-  lastUpdated?: string;
-  installs30d?: number;
-}) {
-  const stamped = new Date(lastUpdated ?? "");
-  if (Number.isNaN(stamped.getTime()) || stats.totalCount === 0) return null;
+function StatSentence({ site, stats }: { site: SiteConfig; stats: ContentStats }) {
+  if (!stats.asOf || stats.totalCount === 0) return null;
   const cfg = siteAirline(site);
-  const date = stamped.toLocaleDateString("en-US", {
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-    timeZone: "UTC",
-  });
-  const pct = Math.round(Number.parseFloat(stats.percentage));
-  return (
-    <p id="starlink-stat" className="text-sm text-secondary leading-relaxed mb-3">
-      As of {date}, {stats.starlinkCount.toLocaleString("en-US")} of{" "}
-      {stats.totalCount.toLocaleString("en-US")} {cfg.name} aircraft ({pct}%) have Starlink WiFi
-      installed
-      {installs30d ? <>, including {installs30d} in the last 30 days</> : null}, per this site's
-      live{" "}
-      {site.features.methodologyPage ? (
-        <a href="/methodology" className="text-accent hover:underline">
-          verification data
-        </a>
-      ) : (
-        "tracking data"
-      )}
-      .
-    </p>
+  const ratio = denominatorIsPublishable(
+    stats.starlinkCount,
+    stats.totalCount,
+    cfg.rollout.rosterIsProgramScope
   );
-}
-
-// Squarified treemap layout (Bruls et al.) — greedily add items to the current
-// row until the worst aspect ratio degrades, then commit along the shorter side.
-function AirportTreemap({ data, windowLabel }: { data: AirportDeparture[]; windowLabel: string }) {
-  if (data.length === 0) return null;
-
-  const W = 900;
-  const H = 300;
-  const GAP = 4;
-  const max = data[0].count;
-  const min = data[data.length - 1].count;
-  const total = data.reduce((a, d) => a + d.count, 0);
-
-  // Log-scale gradient: deep indigo → cyan. Guard against min==max.
-  const logMax = Math.log(max);
-  const logMin = Math.log(Math.max(1, min));
-  const logSpan = logMax - logMin || 1;
-  const logT = (n: number) => (Math.log(Math.max(1, n)) - logMin) / logSpan;
-  const colorFor = (n: number) => {
-    const t = logT(n);
-    const hue = 222 - t * 32;
-    const sat = 55 + t * 40;
-    const lit = 20 + t * 34;
-    return `hsl(${hue} ${sat}% ${lit}%)`;
-  };
-
-  type Item = { code: string; n: number; area: number };
-  type Cell = { code: string; n: number; x: number; y: number; w: number; h: number };
-
-  const items: Item[] = data.map((d) => ({
-    code: d.airport,
-    n: d.count,
-    area: (d.count / total) * W * H,
-  }));
-
-  const layout: Cell[] = [];
-  let x = 0;
-  let y = 0;
-  let w = W;
-  let h = H;
-  let i = 0;
-  while (i < items.length) {
-    const vertical = w < h;
-    const side = vertical ? w : h;
-    const row: Item[] = [items[i]];
-    let rowArea = items[i].area;
-    const worst = () => {
-      const rl = rowArea / side;
-      return Math.max(...row.map((it) => Math.max((rl * rl) / it.area, it.area / (rl * rl))));
-    };
-    let cur = worst();
-    while (i + row.length < items.length) {
-      const next = items[i + row.length];
-      row.push(next);
-      rowArea += next.area;
-      const nw = worst();
-      if (nw > cur) {
-        row.pop();
-        rowArea -= next.area;
-        break;
-      }
-      cur = nw;
-    }
-    const rl = rowArea / side;
-    let off = 0;
-    for (const it of row) {
-      const len = it.area / rl;
-      layout.push(
-        vertical
-          ? { code: it.code, n: it.n, x: x + off, y, w: len, h: rl }
-          : { code: it.code, n: it.n, x, y: y + off, w: rl, h: len }
-      );
-      off += len;
-    }
-    if (vertical) {
-      y += rl;
-      h -= rl;
-    } else {
-      x += rl;
-      w -= rl;
-    }
-    i += row.length;
-  }
-
-  const legendStops = Array.from({ length: 12 }, (_, k) => {
-    const n = Math.exp(logMin + (k / 11) * logSpan);
-    return `${colorFor(n)} ${((k / 11) * 100).toFixed(1)}%`;
-  }).join(",");
-
   return (
-    <div
-      id="airports"
-      className="relative bg-surface rounded-lg border border-subtle p-4 md:p-6 mb-6 scroll-mt-4 overflow-hidden"
-    >
-      <h2 className="font-display text-lg font-semibold text-primary mb-1">Starlink by Airport</h2>
-      <p className="text-xs text-muted font-mono mb-4">
-        Departures on Starlink-equipped aircraft — {windowLabel}
-      </p>
-      <svg
-        viewBox={`0 0 ${W} ${H}`}
-        className="w-full h-auto block mx-auto font-display"
-        style={{ maxWidth: W }}
-        role="img"
-        aria-label="Treemap of Starlink departures by airport"
-      >
-        {layout.map((c) => {
-          const m = Math.min(c.w, c.h);
-          const t = logT(c.n);
-          const bright = t > 0.85;
-          const cw = Math.max(0, c.w - GAP);
-          const ch = Math.max(0, c.h - GAP);
-          const cx = c.x + cw / 2;
-          const cy = c.y + ch / 2;
-          const fs = Math.max(9, Math.min(22, m * 0.22));
-          return (
-            <g key={c.code}>
-              <title>{`${c.code} — ${c.n} departures`}</title>
-              <rect
-                x={c.x}
-                y={c.y}
-                width={cw}
-                height={ch}
-                rx={Math.max(3, Math.min(10, m * 0.08))}
-                fill={colorFor(c.n)}
-                stroke="rgba(0,0,0,.25)"
-                strokeWidth="1"
-              />
-              {m > 30 ? (
-                <>
-                  <text
-                    x={cx}
-                    y={cy - fs * 0.3}
-                    textAnchor="middle"
-                    dominantBaseline="central"
-                    fontSize={fs}
-                    fontWeight="700"
-                    fill={bright ? "#05131f" : "currentColor"}
-                    style={bright ? undefined : { textShadow: "0 1px 3px rgba(0,0,0,.6)" }}
-                  >
-                    {c.code}
-                  </text>
-                  <text
-                    x={cx}
-                    y={cy + fs * 0.55}
-                    textAnchor="middle"
-                    dominantBaseline="central"
-                    fontSize={fs * 0.68}
-                    fontWeight="500"
-                    opacity="0.85"
-                    fill={bright ? "#05131f" : "currentColor"}
-                  >
-                    {c.n}
-                  </text>
-                </>
-              ) : m > 16 ? (
-                <text
-                  x={cx}
-                  y={cy}
-                  textAnchor="middle"
-                  dominantBaseline="central"
-                  fontSize={fs}
-                  fontWeight="700"
-                  fill={bright ? "#05131f" : "currentColor"}
-                  style={bright ? undefined : { textShadow: "0 1px 3px rgba(0,0,0,.6)" }}
-                >
-                  {c.code}
-                </text>
-              ) : null}
-            </g>
-          );
-        })}
-      </svg>
-      <div className="flex items-center gap-3 mt-4 text-xs text-muted font-mono">
-        <span>{min}</span>
-        <div
-          className="flex-1 h-2.5 rounded"
-          style={{
-            background: `linear-gradient(to right, ${legendStops})`,
-            boxShadow: "inset 0 0 0 1px rgba(0,0,0,.3)",
-          }}
-        />
-        <span>{max}</span>
-      </div>
-    </div>
+    <p id="starlink-stat" className="text-sm text-secondary leading-relaxed">
+      As of {stats.asOf}, <StatInline n={stats.starlinkCount} />
+      {ratio ? (
+        <>
+          {" "}
+          of {fmt(stats.totalCount)} {cfg.name} aircraft (
+          {pct(stats.starlinkCount, stats.totalCount)}) have Starlink.
+        </>
+      ) : (
+        <> {cfg.name} aircraft have Starlink.</>
+      )}
+      {stats.installs30d ? <> {fmt(stats.installs30d)} were added in the last 30 days.</> : null}
+      {site.features.methodologyPage && (
+        <>
+          {" "}
+          <a href="/methodology" className="text-accent hover:underline">
+            How we verify
+          </a>
+        </>
+      )}
+    </p>
   );
 }
 
@@ -353,6 +161,7 @@ export default function Page({
   showPassengerBanner = false,
   installs30d,
   installsPerMonth,
+  weeklyInstalls,
   shareCard,
   pageLinks,
   popularFlights = [],
@@ -384,16 +193,16 @@ export default function Page({
     return updatedB - updatedA;
   });
   const displayedAircraft = starlinkData.slice(0, AIRCRAFT_LIST_CAP);
-  const x = starlinkData.length;
-  const y = total;
-  const percentage = y > 0 ? ((x / y) * 100).toFixed(2) : "0.00";
-  const stats: ContentStats = {
-    starlinkCount: x,
-    totalCount: y,
-    percentage,
+  const stats = buildContentStats({
+    starlinkCount: starlinkData.length,
+    totalCount: total,
     fleetStats,
     installsPerMonth,
-  };
+    installs30d,
+    weeklyInstalls,
+    lastUpdated,
+    perAirline: perAirlineStats,
+  });
   const airlineOf = (p: Aircraft) => airlineByTail[p.TailNumber] || "UA";
   const brand = site.brand;
   const features = site.features;
@@ -428,8 +237,9 @@ export default function Page({
     const fn = ensureAirlinePrefix(permalinkAirline, flightNumber);
     return permalinkFnPattern.test(fn) ? `/check-flight/${fn}` : null;
   };
-  // Counts describe the whole equipped list, not the capped rows: "ALL (100)"
-  // read as the fleet's total. The list's footer says how many rows show.
+  // Button counts describe the whole equipped fleet, so "Express (348)" agrees
+  // with the rollout panel; the cap note under the list says how many rows the
+  // filter can actually show.
   const subfleetCounts = Object.fromEntries(
     content.subfleetFilters.map((c) => [
       c.key,
@@ -565,7 +375,7 @@ export default function Page({
       pageLinks={pageLinks}
       before={showPassengerBanner ? <PassengerBanner /> : null}
     >
-      <PageHeader title={brand.title} dek={brand.tagline}>
+      <PageHeader title={brand.title} dek={content.intro(stats)}>
         <HeaderStatStrip
           items={
             typeof content.headerStats === "function"
@@ -637,32 +447,22 @@ export default function Page({
         </div>
       )}
 
-      {/* Intro paragraph + nav links */}
-      <div className="relative text-center max-w-2xl mx-auto mb-6">
-        {content.intro(stats)}
-        {site.scope !== "ALL" && (
-          <StatSentence
-            site={site}
-            stats={stats}
-            lastUpdated={lastUpdated}
-            installs30d={installs30d}
-          />
-        )}
-      </div>
-
-      {/* Per-airline stat panel — bespoke composition */}
       <content.Hero
         stats={stats}
         starlinkData={starlinkData}
         perAirlineStats={perAirlineStats}
         recentInstalls={recentInstalls}
         hubLinks={hubLinks}
+        statSentence={site.scope !== "ALL" ? <StatSentence site={site} stats={stats} /> : null}
       />
 
-      {/* Aircraft List with integrated search */}
-      <div className="relative bg-surface rounded-lg border border-subtle overflow-hidden mb-6">
-        <h2 className="font-display text-lg font-semibold text-primary px-4 md:px-6 pt-4 pb-0">
-          Starlink-Equipped Aircraft
+      {content.answers && (
+        <AnswerBlock title="Quick answers" entries={content.answers} stats={stats} />
+      )}
+
+      <div className="relative mx-auto mb-8 w-full max-w-6xl overflow-hidden rounded-lg border border-subtle bg-surface">
+        <h2 className="font-display text-xl text-primary px-4 md:px-6 pt-4 pb-0">
+          Aircraft with Starlink
         </h2>
         {/* Integrated header with search and filters */}
         <div className="px-4 md:px-6 py-3 border-b border-subtle">
@@ -722,7 +522,7 @@ export default function Page({
                 className="filter-btn font-mono text-xs px-3 py-2 rounded border transition-all bg-accent/20 border-accent text-accent"
                 data-filter="all"
               >
-                ALL <span className="hidden sm:inline">({starlinkData.length})</span>
+                ALL <span className="hidden sm:inline">({fmt(starlinkData.length)})</span>
               </button>
               {content.subfleetFilters.length > 1 &&
                 content.subfleetFilters.map((card) => (
@@ -734,7 +534,7 @@ export default function Page({
                     data-filter={card.key}
                   >
                     {card.label.toUpperCase()}{" "}
-                    <span className="hidden sm:inline">({subfleetCounts[card.key] || 0})</span>
+                    <span className="hidden sm:inline">({fmt(subfleetCounts[card.key] || 0)})</span>
                   </button>
                 ))}
             </div>
@@ -848,14 +648,17 @@ export default function Page({
           )}
         </div>
         {starlinkData.length > displayedAircraft.length && (
-          <div className="px-4 md:px-6 py-3 border-t border-subtle text-center text-xs font-mono text-muted">
-            Showing the {displayedAircraft.length} most recently active of {starlinkData.length}{" "}
-            Starlink aircraft
+          <div
+            id="list-cap"
+            className="px-4 md:px-6 py-3 border-t border-subtle text-center text-sm text-muted"
+          >
+            Showing {fmt(displayedAircraft.length)} of {fmt(starlinkData.length)}, most recently
+            flown first. Search and filters cover these rows.
             {features.fleetPage && (
               <>
-                {" · "}
+                {" "}
                 <a href="/fleet" className="text-accent hover:underline">
-                  See the full fleet →
+                  See all →
                 </a>
               </>
             )}
@@ -864,16 +667,21 @@ export default function Page({
       </div>
 
       {airportDepartures && airportDepartures.rows.length > 0 && (
-        <AirportTreemap data={airportDepartures.rows} windowLabel={airportDepartures.windowLabel} />
+        <Section
+          id="airports"
+          title="Starlink departures by airport"
+          dek={`Top ${Math.min(12, airportDepartures.rows.length)} airports, ${airportDepartures.windowLabel}.`}
+          wide
+        >
+          <AirportBars rows={airportDepartures.rows} />
+        </Section>
       )}
 
       {/* Tools & Integrations — UA-specific (Chrome ext is UA-only, MCP only on UA host today) */}
       {(features.chromeExtension || features.mcpPage) && (
-        <div id="integrations" className="relative my-8 max-w-3xl mx-auto scroll-mt-4">
-          <h2 className="font-display text-lg font-semibold text-primary mb-3 text-center">
-            Tools & Integrations
-          </h2>
-          <div className="grid sm:grid-cols-2 gap-3">
+        <div id="integrations" className="relative mb-8 w-full max-w-3xl mx-auto scroll-mt-4">
+          <h2 className="font-display text-xl text-primary">Tools and integrations</h2>
+          <div className="mt-4 grid sm:grid-cols-2 gap-3">
             {features.chromeExtension && (
               <div
                 id="chrome-extension"
@@ -944,9 +752,8 @@ export default function Page({
                     <div className="text-xs text-muted">For Google Flights</div>
                   </div>
                 </div>
-                <p className="text-xs text-muted leading-relaxed mb-4 flex-1">
-                  See Starlink badges directly on Google Flights search results — no extra steps
-                  while you shop for flights.
+                <p className="text-sm text-secondary leading-relaxed mb-4 flex-1">
+                  See which flights have Starlink right in your Google Flights results.
                 </p>
                 <a
                   href="https://chromewebstore.google.com/detail/google-flights-starlink-i/jjfljoifenkfdbldliakmmjhdkbhehoi"
@@ -985,9 +792,9 @@ export default function Page({
                     <div className="text-xs text-muted">For Claude, Cursor & AI assistants</div>
                   </div>
                 </div>
-                <p className="text-xs text-muted leading-relaxed mb-4 flex-1">
-                  Ask your AI assistant to check flights, predict Starlink probability, or plan
-                  routes — live tracker data via the Model Context Protocol.
+                <p className="text-sm text-secondary leading-relaxed mb-4 flex-1">
+                  Ask your AI assistant to check a flight, estimate its Starlink odds or plan a
+                  route, using this tracker's live data.
                 </p>
                 <a href="/mcp" className="text-xs text-accent hover:underline font-mono">
                   Setup instructions →
@@ -1000,7 +807,7 @@ export default function Page({
 
       {/* Popular flights — server-rendered inlinks into the permalink corpus */}
       {features.checkFlightPage && popularFlights.length > 0 && (
-        <div className="relative max-w-3xl mx-auto w-full mb-12">
+        <div className="relative max-w-3xl mx-auto w-full mb-8">
           <PopularFlightsLinks
             flights={popularFlights}
             airlineName={site.scope !== "ALL" ? siteAirline(site).name : "tracked"}
@@ -1008,39 +815,12 @@ export default function Page({
         </div>
       )}
 
-      {/* FAQ Section */}
-      <div className="relative mb-12">
-        <div className="text-center mb-6">
-          <h2 className="font-display text-xl md:text-2xl font-semibold text-primary">FAQ</h2>
-        </div>
+      <HomeFaq sections={content.faq} stats={stats} />
 
-        {content.faq.map((section) => (
-          <FaqGroup key={section.title} title={section.title}>
-            {section.items.map((item) => (
-              <FaqItem key={item.q} q={item.q}>
-                {item.a(stats)}
-              </FaqItem>
-            ))}
-          </FaqGroup>
-        ))}
-      </div>
-
-      {/* Last updated timestamp for freshness signal */}
-      {lastUpdated && (
-        <div className="relative text-center mb-6">
-          <span className="text-xs font-mono text-muted">
-            Data last updated:{" "}
-            {new Date(lastUpdated).toLocaleDateString("en-US", {
-              month: "long",
-              day: "numeric",
-              year: "numeric",
-              hour: "numeric",
-              minute: "2-digit",
-              timeZone: "UTC",
-              timeZoneName: "short",
-            })}
-          </span>
-        </div>
+      {stats.asOf && (
+        <p className="relative mb-6 text-center text-xs text-muted">
+          Data last updated {stats.asOf}
+        </p>
       )}
 
       {/* Search, Filter, and Expand functionality */}
@@ -1272,38 +1052,6 @@ export default function Page({
                     tooltip = null;
                   }
                   currentPill = null;
-                });
-              }
-
-              // Pie chart hover
-              var pieContainer = document.getElementById('pie-chart-container');
-              var pieCenterText = document.getElementById('pie-center-text');
-              var pieStatusLabel = document.getElementById('pie-status-label');
-
-              if (pieContainer && pieCenterText && pieStatusLabel) {
-                var slices = pieContainer.querySelectorAll('.pie-slice');
-                // Default to largest slice (first one, since sorted by count desc)
-                var firstSlice = slices[0];
-                var currentCount = firstSlice ? firstSlice.dataset.count : pieCenterText.textContent;
-                var currentModel = firstSlice ? firstSlice.dataset.model : '';
-                var currentPct = firstSlice ? firstSlice.dataset.pct : '';
-
-                // Set initial state to largest slice
-                if (firstSlice) {
-                  pieCenterText.textContent = currentCount;
-                  pieStatusLabel.innerHTML = '<span style="color:var(--color-accent)">' + currentModel + '</span> <span style="color:var(--color-text-muted)">· ' + currentPct + '%</span>';
-                }
-
-                // Sticky hover - remember last hovered slice
-                slices.forEach(function(slice) {
-                  slice.addEventListener('mouseenter', function() {
-                    currentCount = this.dataset.count;
-                    currentModel = this.dataset.model;
-                    currentPct = this.dataset.pct;
-                    pieCenterText.textContent = currentCount;
-                    pieStatusLabel.innerHTML = '<span style="color:var(--color-accent)">' + currentModel + '</span> <span style="color:var(--color-text-muted)">· ' + currentPct + '%</span>';
-                  });
-                  // No mouseleave handler - keeps last hovered value
                 });
               }
             });
