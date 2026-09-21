@@ -13,6 +13,7 @@ import {
   canonicalPermalinkFor,
   ensureAirlinePrefix,
   inferSubfleet,
+  slotFlightKey,
   slotFlightPrefixes,
   stripFlightNumberZeros,
 } from "../airlines/flight-number";
@@ -871,8 +872,7 @@ function migrateMultiAirline(db: Database) {
     CREATE INDEX IF NOT EXISTS idx_sp_tail  ON starlink_planes(TailNumber);
     CREATE INDEX IF NOT EXISTS idx_dl_tail  ON departure_log(tail_number, departed_at);
     CREATE INDEX IF NOT EXISTS idx_upf_flight ON upcoming_flights(flight_number, departure_time);
-    CREATE INDEX IF NOT EXISTS idx_upf_route  ON upcoming_flights(airline, departure_airport, arrival_airport);
-    CREATE INDEX IF NOT EXISTS idx_vlog_airline_time ON starlink_verification_log(airline, checked_at);
+    CREATE INDEX IF NOT EXISTS idx_upf_route  ON upcoming_flights(airline, departure_airport, arrival_airport);    CREATE INDEX IF NOT EXISTS idx_vlog_airline_time ON starlink_verification_log(airline, checked_at);
     CREATE INDEX IF NOT EXISTS idx_qfc_date ON qatar_fetch_coverage(fetch_date);
   `);
   // Redundant, so pure write cost: idx_fleet_tail and idx_qs_flight duplicate
@@ -1663,9 +1663,9 @@ export function updateFlights(
   >[]
 ) {
   const now = unixNow();
-  const valid = flights.filter((f) => f.departure_time >= MIN_VALID_DEPARTURE_TS);
-  if (valid.length < flights.length) {
-    info(`updateFlights ${tailNumber}: dropped ${flights.length - valid.length} pre-2000 rows`);
+  const dated = flights.filter((f) => f.departure_time >= MIN_VALID_DEPARTURE_TS);
+  if (dated.length < flights.length) {
+    info(`updateFlights ${tailNumber}: dropped ${flights.length - dated.length} pre-2000 rows`);
   }
   const airline =
     (
@@ -1680,6 +1680,7 @@ export function updateFlights(
     )?.airline ??
     "UA";
 
+  const valid = collapseTailDepartures(airline, dated);
   const cfg = AIRLINES[airline];
   db.transaction(() => {
     archivePastDepartures(db, now, tailNumber);
@@ -5390,73 +5391,56 @@ function slotFlightSql(col: string, airlineCol: string): string {
  * equipped. Placeholders: the scope clause's, then [from, to) on departure_time.
  */
 function departureSlotsSql(scopeClause: string): string {
+  // departure_airport and departure_time are partition keys, so a caller's
+  // WHERE on them is pushed below the window (route pages stay sub-ms).
   return `SELECT s.*, sp.Aircraft AS aircraft_type, sp.verified_wifi AS verified_wifi,
          CASE WHEN _sneg.tail_number IS NOT NULL THEN 1 ELSE 0 END AS settled_negative,
          _sneg.verified_wifi AS settled_wifi,
          CASE WHEN sp.TailNumber IS NOT NULL AND ${equippedSql("sp")} THEN 1 ELSE 0 END AS equipped
   FROM (
-    SELECT t.* FROM (
-      SELECT k.*, ROW_NUMBER() OVER (
-               PARTITION BY k.tail_number, k.departure_airport, k.departure_time
-               ORDER BY k.regional_pick DESC, k.last_updated DESC, k.id DESC) AS tail_rank
-      FROM (
-        SELECT j.*, ROW_NUMBER() OVER (
-                 PARTITION BY j.slot_flight, j.departure_airport, j.departure_time
-                 ORDER BY j.last_updated DESC, j.id DESC) AS slot_rank
-        FROM (
-          SELECT uf.*, ${slotFlightSql("uf.flight_number", "uf.airline")} AS slot_flight,
-                 ${regionalPickSql("uf.flight_number")} AS regional_pick
-          FROM upcoming_flights uf
-          WHERE ${scopeClause} AND uf.departure_time >= ? AND uf.departure_time < ?
-        ) j
-      ) k
-      WHERE k.slot_rank = 1
-    ) t
-    WHERE t.tail_rank = 1 OR t.tail_number IS NULL
+    SELECT k.*, ROW_NUMBER() OVER (
+             PARTITION BY k.departure_time, k.departure_airport, k.slot_flight
+             ORDER BY k.last_updated DESC, k.id DESC) AS slot_rank
+    FROM (
+      SELECT uf.*, ${slotFlightSql("uf.flight_number", "uf.airline")} AS slot_flight
+      FROM upcoming_flights uf
+      WHERE ${scopeClause} AND uf.departure_time >= ? AND uf.departure_time < ?
+    ) k
   ) s
   LEFT JOIN starlink_planes sp ON sp.TailNumber = s.tail_number AND sp.airline = s.airline
-  ${settledNegativeJoin("_sneg", "s.tail_number")}`;
+  ${settledNegativeJoin("_sneg", "s.tail_number")}
+  WHERE s.slot_rank = 1`;
 }
-
-let regionalPickCache: string | null = null;
 
 /**
- * One tail leaves one airport at one time once. When it is stored under two
- * different numbers (N741YX IAD-YYZ as RPA3453 and RPA741), a regional
- * operator's code on a regional-range number is the real flight; the other is
- * a registration echo. 1 marks that preferred spelling.
+ * One tail leaves one airport at one time once. FR24 sometimes lists that
+ * departure under two numbers (N741YX IAD-YYZ as RPA3453 and RPA741, the
+ * second a registration echo); every count would then see two departures.
+ * A tail's rows are replaced as one batch, so the batch is collapsed before it
+ * is written: a regional operator's code on a regional-range number is the
+ * real flight, otherwise the first listed wins.
  */
-function regionalPickSql(col: string): string {
-  if (regionalPickCache) return regionalPickCache.replaceAll("$col", col);
-  const branches: string[] = [];
-  for (const p of slotFlightPrefixes()) {
-    if (p.marketing) continue;
-    const n = `CAST(substr($col, ${p.prefix.length + 1}) AS INTEGER)`;
-    const ranges = new Set<string>();
-    for (const cfg of Object.values(AIRLINES)) {
-      if (!cfg.carrierPrefixes.includes(p.prefix)) continue;
-      for (const [lo, hi] of regionalRanges(cfg)) ranges.add(`${n} BETWEEN ${lo} AND ${hi}`);
-    }
-    if (ranges.size === 0) continue;
-    branches.push(
-      `WHEN $col GLOB '${p.prefix}[0-9]*' AND substr($col, ${p.prefix.length + 1}) NOT GLOB '*[^0-9]*'
-         THEN (${[...ranges].join(" OR ")})`
+export function collapseTailDepartures<
+  F extends { flight_number: string; departure_airport: string; departure_time: number },
+>(airline: string, flights: readonly F[]): F[] {
+  const cfg = AIRLINES[airline];
+  const operatorCodes = slotFlightPrefixes().filter((p) => !p.marketing);
+  const regionalPick = (f: F) => {
+    const fn = f.flight_number;
+    const operatorCoded = operatorCodes.some(
+      (p) => fn.startsWith(p.prefix) && /^\d+$/.test(fn.slice(p.prefix.length))
     );
+    const key = slotFlightKey(fn, airline);
+    return cfg && operatorCoded && key && isRegionalNumber(cfg, key) ? 1 : 0;
+  };
+  const best = new Map<string, F>();
+  for (const f of flights) {
+    const k = `${f.departure_airport}|${f.departure_time}`;
+    const prev = best.get(k);
+    if (!prev || regionalPick(f) > regionalPick(prev)) best.set(k, f);
   }
-  regionalPickCache = branches.length ? `CASE ${branches.join("\n  ")} ELSE 0 END` : "0";
-  return regionalPickCache.replaceAll("$col", col);
-}
-
-/** The airline's regional-subfleet number ranges, read off its own subfleet matchers. */
-function regionalRanges(cfg: AirlineConfig): Array<[number, number]> {
-  const out: Array<[number, number]> = [];
-  for (let n = 1; n <= 9999; n++) {
-    if (!isRegionalNumber(cfg, `${cfg.iata}${n}`)) continue;
-    const last = out.at(-1);
-    if (last && last[1] === n - 1) last[1] = n;
-    else out.push([n, n]);
-  }
-  return out;
+  const keep = new Set(best.values());
+  return flights.filter((f) => keep.has(f));
 }
 
 export type DepartureSlot = Flight & {
@@ -5613,24 +5597,35 @@ export function getAirportDepartures(
   return { rows, windowLabel: `next ${DEPARTURE_WINDOW_HOURS} hours` };
 }
 
+/**
+ * Equipped route pairs in /routes order, plus the uncapped departure total
+ * from the same pass (a window over the grouped rows runs before LIMIT), so
+ * the slot table is built once and the header never disagrees with what a
+ * user could count by paging the rows.
+ */
 function rankedEquippedRoutes(
   db: Database,
   airline: AirlineFilter,
   nowSec: number,
   limit: number,
   offset: number
-): RouteScheduleRow[] {
+): { rows: RouteScheduleRow[]; total: number } {
   const slots = equippedWindow(airline, nowSec);
-  return db
+  const ranked = db
     .query(
       `SELECT d.departure_airport AS origin, d.arrival_airport AS destination,
               COUNT(*) AS departures, COUNT(DISTINCT d.slot_flight) AS flight_numbers,
-              MIN(d.departure_time) AS next_departure
+              MIN(d.departure_time) AS next_departure,
+              SUM(COUNT(*)) OVER () AS total
        FROM ${slots.sql} d WHERE d.equipped = 1
        GROUP BY d.departure_airport, d.arrival_airport
        ORDER BY departures DESC, flight_numbers DESC, origin ASC LIMIT ? OFFSET ?`
     )
-    .all(...slots.params, limit, offset) as RouteScheduleRow[];
+    .all(...slots.params, limit, offset) as Array<RouteScheduleRow & { total: number }>;
+  return {
+    rows: ranked.map(({ total: _, ...r }) => r),
+    total: ranked[0]?.total ?? 0,
+  };
 }
 
 export function getRouteStarlinkSchedule(
@@ -5638,17 +5633,8 @@ export function getRouteStarlinkSchedule(
   airline?: AirlineFilter,
   nowSec = unixNow()
 ): RouteSchedule {
-  const rows = rankedEquippedRoutes(db, airline, nowSec, 60, 0);
-  // Headline total uses the same predicate without the LIMIT, so the header
-  // never disagrees with what a user could count by paging the rows.
-  const slots = equippedWindow(airline, nowSec);
-  const totalDepartures = (
-    db
-      .query(`SELECT COUNT(*) AS n FROM ${slots.sql} d WHERE d.equipped = 1`)
-      .get(...slots.params) as { n: number }
-  ).n;
-
-  return { rows, totalDepartures, windowLabel: `next ${DEPARTURE_WINDOW_HOURS} hours` };
+  const { rows, total } = rankedEquippedRoutes(db, airline, nowSec, 60, 0);
+  return { rows, totalDepartures: total, windowLabel: `next ${DEPARTURE_WINDOW_HOURS} hours` };
 }
 
 // Ten charted weeks plus the partial current one.
@@ -6335,7 +6321,7 @@ export function getRankedStarlinkRoutePairs(
   limit: number,
   nowSec = unixNow()
 ): Array<{ origin: string; destination: string }> {
-  return rankedEquippedRoutes(db, airline, nowSec, limit, offset).map(
+  return rankedEquippedRoutes(db, airline, nowSec, limit, offset).rows.map(
     ({ origin, destination }) => ({ origin, destination })
   );
 }

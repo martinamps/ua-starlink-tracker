@@ -28,6 +28,7 @@ import type {
   RecentInstall,
   RouteSchedule,
 } from "../types";
+import { memo } from "../utils/ttl-cache";
 import {
   type AdsbFlightDraw,
   getAdsbFlightDraws,
@@ -140,6 +141,14 @@ import {
 import { getRouteFlightLastSeen } from "./route-history";
 
 export type { Database };
+
+/**
+ * The 48h departure aggregates rebuild the whole slot table (~15ms for UA on
+ * production data) and back the homepage, /routes and the planner hub. The
+ * schedule refreshes every 22.5s per tail, so a minute of staleness is
+ * invisible and keeps the build off the request path.
+ */
+const DEPARTURE_AGGREGATE_TTL_MS = 60_000;
 
 export type Scope = AirlineCode | "ALL";
 
@@ -387,6 +396,11 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
       throw new Error(`ScopedReader method requires a single-airline scope, got ${scope}`);
     return airlines[0];
   };
+  const airportsMemo = memo<AirportDepartures>(DEPARTURE_AGGREGATE_TTL_MS);
+  const scheduleMemo = memo<RouteSchedule>(DEPARTURE_AGGREGATE_TTL_MS);
+  const rankedMemo = memo<Array<{ origin: string; destination: string }>>(
+    DEPARTURE_AGGREGATE_TTL_MS
+  );
   const r: ScopedReader = {
     scope,
     airlines,
@@ -434,10 +448,12 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     getFleetGuideTails: () => getFleetGuideTails(db, soleAirline()),
     getFleetPageData: () => getFleetPageData(db, airlines),
     getDepartureSlots: (q) => getDepartureSlots(db, airlines, q),
-    getAirportDepartures: () => getAirportDepartures(db, airlines),
-    getRouteStarlinkSchedule: () => getRouteStarlinkSchedule(db, airlines),
+    getAirportDepartures: () => airportsMemo("", () => getAirportDepartures(db, airlines)),
+    getRouteStarlinkSchedule: () => scheduleMemo("", () => getRouteStarlinkSchedule(db, airlines)),
     getRankedStarlinkRoutePairs: (offset, limit) =>
-      getRankedStarlinkRoutePairs(db, airlines, offset, limit),
+      rankedMemo(`${offset}:${limit}`, () =>
+        getRankedStarlinkRoutePairs(db, airlines, offset, limit)
+      ),
     getFleetDiscoveryStats: () => getFleetDiscoveryStats(db, airlines),
     getConfirmedFleetTails: () => getConfirmedFleetTails(db, airlines),
     getPendingFleetTails: () => getPendingFleetTails(db, airlines),

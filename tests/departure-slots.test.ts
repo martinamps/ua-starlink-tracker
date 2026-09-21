@@ -16,7 +16,9 @@ import {
   getRouteDepartures,
   getRouteStarlinkSchedule,
   getRouteSummary,
+  updateFlights,
 } from "../src/database/database";
+import { createReaderFactory } from "../src/database/reader";
 import { createApp } from "../src/server/app";
 import { addFleet, addFlight, addPlane, makeSyntheticDb, postMcp, req } from "./helpers";
 
@@ -88,9 +90,18 @@ describe("one tail, one airport, one time is one departure", () => {
   test("a registration echo under a second number collapses onto the regional-range number", () => {
     const db = makeSyntheticDb();
     equippedTail(db, "N741YX");
-    addFlight(db, "N741YX", "RPA3453", "IAD", T, { arrivalAirport: "YYZ" });
-    addFlight(db, "N741YX", "RPA741", "IAD", T, { arrivalAirport: "YYZ" });
-    addFlight(db, "N741YX", "RPA3466", "YYZ", T + 7200, { arrivalAirport: "IAD" });
+    const leg = (flight_number: string, from: string, to: string, at: number) => ({
+      flight_number,
+      departure_airport: from,
+      arrival_airport: to,
+      departure_time: at,
+      arrival_time: at + 5400,
+    });
+    updateFlights(db, "N741YX", [
+      leg("RPA741", "IAD", "YYZ", T),
+      leg("RPA3453", "IAD", "YYZ", T),
+      leg("RPA3466", "YYZ", "IAD", T + 7200),
+    ]);
     const slots = getDepartureSlots(db, "UA", { from: NOW, to: T + 86400 });
     expect(slots.map((s) => s.slot_flight)).toEqual(["UA3453", "UA3466"]);
     expect(getRouteStarlinkSchedule(db, "UA", NOW).totalDepartures).toBe(2);
@@ -106,6 +117,21 @@ describe("one tail, one airport, one time is one departure", () => {
     expect(slots).toHaveLength(1);
     expect(getRouteStarlinkSchedule(db, "UA", NOW).totalDepartures).toBe(1);
     expect(getAirportDepartures(db, "UA", NOW).rows).toEqual([{ airport: "GDL", count: 1 }]);
+    db.close();
+  });
+});
+
+describe("departure aggregates on the reader", () => {
+  test("are built once per reader per minute", () => {
+    const db = makeSyntheticDb();
+    equippedTail(db, "N100SY");
+    addFlight(db, "N100SY", "SKW5236", "GDL", T, { arrivalAirport: "IAH" });
+    const reader = createReaderFactory(db)("UA");
+    const first = reader.getRouteStarlinkSchedule();
+    expect(first.totalDepartures).toBe(1);
+    expect(reader.getRouteStarlinkSchedule()).toBe(first);
+    expect(reader.getAirportDepartures()).toBe(reader.getAirportDepartures());
+    expect(reader.getRankedStarlinkRoutePairs(0, 5)).toBe(reader.getRankedStarlinkRoutePairs(0, 5));
     db.close();
   });
 });
