@@ -3,6 +3,7 @@
  * Free API for fetching flight data by aircraft registration
  */
 
+import { unixNow } from "../database/sql/windows";
 import { COUNTERS, flightAirlineTag, metrics, normalizeAirlineTag } from "../observability";
 import type { Flight } from "../types";
 import { info, warn } from "../utils/logger";
@@ -244,7 +245,7 @@ export class FlightRadar24API {
         return [];
       }
 
-      return parseUpcomingFlights(flights, Math.floor(Date.now() / 1000), undefined, {
+      return parseUpcomingFlights(flights, unixNow(), undefined, {
         flightNumberSource,
       });
     }, airline);

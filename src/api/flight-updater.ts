@@ -13,6 +13,7 @@ import {
   updateFlights,
   updateLastFlightCheck,
 } from "../database/database";
+import { unixNow } from "../database/sql/windows";
 import { DISTRIBUTIONS, metrics, normalizeAirlineTag, withSpan } from "../observability";
 import type { Aircraft, Flight } from "../types";
 import { FLIGHT_DATA_SOURCE } from "../utils/constants";
@@ -461,7 +462,7 @@ export function startFlightUpdater(db: Database): JobHandle | undefined {
 // DB-only, so it runs even while the FR24 breaker is open, and never feeds it.
 const PRUNE_INTERVAL_MS = 10 * 60 * 1000;
 
-export function runStaleUpcomingPrune(db: Database, now = Math.floor(Date.now() / 1000)): number {
+export function runStaleUpcomingPrune(db: Database, now = unixNow()): number {
   try {
     const pruned = pruneStaleUpcomingFlights(db, now);
     let total = 0;

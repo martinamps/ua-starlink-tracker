@@ -40,6 +40,7 @@ import {
 } from "../airlines/registry";
 import type { FlightAssignmentRow } from "../database/database";
 import { type Scope, type ScopedReader, aggregatePenetration } from "../database/reader";
+import { inLookupWindow, lookupWindowPosition, unixNow } from "../database/sql/windows";
 import {
   COUNTERS,
   DISTRIBUTIONS,
@@ -702,7 +703,7 @@ export async function renderCheckFlightVerdict(
   }
 
   const { mid, start: startOfDay, end: endOfDay } = verdict.window;
-  const now = Math.floor(Date.now() / 1000);
+  const now = unixNow();
   const normalized = verdict.normalized;
 
   const renderAssignment = (f: FlightAssignmentRow): string => {
@@ -845,8 +846,8 @@ export async function renderCheckFlightVerdict(
       const pred = verdict.pred;
       recordPrediction(pred, reader.scope);
 
-      const isPast = endOfDay < now - 86400;
-      const isNearTerm = startOfDay < now + 3 * 86400;
+      const position = lookupWindowPosition(startOfDay, endOfDay, now);
+      const isPast = position === "past";
       // During an FR24 outage we genuinely don't know whether an assignment
       // exists — don't claim it isn't published yet.
       // A past date's assignment isn't "not yet published" — it's gone.
@@ -861,7 +862,7 @@ export async function renderCheckFlightVerdict(
           ? ""
           : isPast
             ? "This date is in the past; we don't retain historical assignments."
-            : !isNearTerm
+            : position === "future"
               ? "Aircraft assignment not yet published — that happens ~2 days out. Check again 1-2 days before departure for a firm answer."
               : opts.liveLookup === false
                 ? `No assignment on file — this multi-airline server only sees Starlink-tracked aircraft and doesn't run a live tail lookup.${liveSite ? ` For a live check, use ${liveSite}/mcp.` : ""}`
@@ -1008,7 +1009,7 @@ async function datedAssignmentRoutes(
 ): Promise<RouteEntry[]> {
   const date = new Date(targetDateUnix * 1000).toISOString().slice(0, 10);
   const window = flightDateWindow(date);
-  if (!window || window.end <= now - 86400 || window.start >= now + 3 * 86400) return [];
+  if (!window || !inLookupWindow(window.start, window.end, now)) return [];
   let legs: Awaited<ReturnType<typeof cachedFlightAssignments>>;
   try {
     legs = await cachedFlightAssignments(flightNumber, window.mid, now);
@@ -1041,7 +1042,7 @@ async function lookupFlightRoutes(
   opts: { liveAssignments: boolean } = { liveAssignments: true }
 ): Promise<RouteEntry[]> {
   const cacheKey = `${uaFlightNumber}:${targetDateUnix ? Math.floor(targetDateUnix / 86400) : "any"}:${opts.liveAssignments ? "live" : "db"}`;
-  const now = Math.floor(Date.now() / 1000);
+  const now = unixNow();
   const cached = routeCache.get(cacheKey, now);
   if (cached) {
     recordRouteLookup(reader.scope, "memory");
@@ -1370,7 +1371,7 @@ const HUB_LOOKUP_ONLY = hubLookupAirlines().filter((a) => !a.publicInHub);
 /** QR's nonstop from its published schedule — equipment type decides Starlink. */
 function hubLookupRouteLines(getReader: GetReader, origin: string, destination: string): string[] {
   if (!HUB_LOOKUP_ONLY.some((a) => a.code === "QR")) return [];
-  const now = Math.floor(Date.now() / 1000);
+  const now = unixNow();
   const rows = getReader("QR")
     .getQatarScheduleByRoute(
       origin,
@@ -1456,7 +1457,7 @@ async function toolPredictFlightStarlink(
   // its REST /api/predict-flight mirrors.
   if (hostReader.scope === "ALL" && cfg.hubFlightLookup) {
     const given = typeof args.date === "string" ? args.date.trim() : "";
-    const nowSec = Math.floor(Date.now() / 1000);
+    const nowSec = unixNow();
     const date = given || addDaysISO(dohDateISO(nowSec), QATAR_PUBLISHED_DAYS_FORWARD + 1);
     return toolCheckFlight(
       hostReader,
@@ -2002,7 +2003,7 @@ function toolSearchStarlinkFlights(
     return toolError("Error: at least one of origin or destination must be provided.");
   }
 
-  const now = Math.floor(Date.now() / 1000);
+  const now = unixNow();
   // One entry per physical departure: a tail swap leaves the old row behind,
   // so the slot is claimed first and only then tested for Starlink.
   const allFuture = reader

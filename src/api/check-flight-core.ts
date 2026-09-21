@@ -29,6 +29,7 @@ import {
 import type { FlightAssignmentRow, UnequippedAssignment } from "../database/database";
 import type { Scope, ScopedReader } from "../database/reader";
 import { rowEvidence } from "../database/sql/equipped";
+import { TRAILING_WINDOW_SEC, unixNow } from "../database/sql/windows";
 import {
   COUNTERS,
   DISTRIBUTIONS,
@@ -551,7 +552,7 @@ export async function resolveFlightVerdict(
   date: string,
   deps: ResolveDeps = {}
 ): Promise<FlightVerdict> {
-  const now = deps.now ?? Math.floor(Date.now() / 1000);
+  const now = deps.now ?? unixNow();
   const window = flightDateWindow(date, now);
   if (!window) return { kind: "invalid_date" };
 
@@ -678,8 +679,6 @@ export async function resolveFlightVerdict(
   return { ...verdict, leg: resolution };
 }
 
-const RECENT_ROUTES_SEC = 30 * 86400;
-
 /**
  * Recent routes that chain (SFO→DEN + DEN→SAN) mark a through flight; routes
  * that don't (SFO→EWR some days, SFO→IAD others) are alternative routings,
@@ -692,7 +691,7 @@ function isThroughFlightLeg(
   leg: LegQuery,
   now: number
 ): boolean {
-  const routes = reader.getCachedFlightRoutes(normalized, now - RECENT_ROUTES_SEC).map((r) => ({
+  const routes = reader.getCachedFlightRoutes(normalized, now - TRAILING_WINDOW_SEC).map((r) => ({
     origin: normalizeAirportCode(r.origin),
     destination: normalizeAirportCode(r.destination),
   }));

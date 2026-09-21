@@ -9,6 +9,7 @@
 
 import { OBSERVED_WIFI_SOURCES } from "../airlines/registry";
 import type { ScopedReader } from "../database/reader";
+import { inLookupWindow, unixNow } from "../database/sql/windows";
 import { COUNTERS, flightAirlineTag, metrics } from "../observability";
 import { matchesLocalDate } from "../utils/airport-tz";
 import { warn } from "../utils/logger";
@@ -61,7 +62,7 @@ export const ASSIGNMENT_EMPTY_CACHE_MIN_LEAD = 6 * 3600;
 export function cachedFlightAssignments(
   flightNumber: string,
   targetDateUnix: number,
-  nowSec = Math.floor(Date.now() / 1000)
+  nowSec = unixNow()
 ): Promise<Assignment> {
   const key = `${flightNumber}:${Math.floor(targetDateUnix / 86400)}`;
   const now = nowSec;
@@ -208,7 +209,7 @@ export interface FallbackSegment {
 export function resolveTailVerdict(
   reader: ScopedReader,
   tail: string,
-  nowSec = Math.floor(Date.now() / 1000)
+  nowSec = unixNow()
 ): TailVerdict {
   const sp = reader.getStarlinkPlaneByTail(tail);
 
@@ -303,10 +304,9 @@ export async function lookupFlightTailVerdict(
   date: string,
   startOfDay: number,
   endOfDay: number,
-  nowSec = Math.floor(Date.now() / 1000)
+  nowSec = unixNow()
 ): Promise<FallbackSegment[] | null> {
-  const inLookupWindow = endOfDay > nowSec - 86400 && startOfDay < nowSec + 3 * 86400;
-  if (!inLookupWindow) return null;
+  if (!inLookupWindow(startOfDay, endOfDay, nowSec)) return null;
 
   const assignments = await cachedFlightAssignments(
     normalizedFlightNumber,

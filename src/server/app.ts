@@ -163,6 +163,7 @@ import {
   type RouteSummary,
 } from "../database/database";
 import { contradictingWifi } from "../database/sql/equipped";
+import { unixNow } from "../database/sql/windows";
 import {
   COUNTERS,
   metrics,
@@ -2816,7 +2817,7 @@ function buildFlightFacts(
     // The route page has its own gate (routeHasData); a pair it would 404
     // renders as text rather than a link to a dead page.
     .map((r) => ({ ...r, linkable: reader.routeHasData(r.departure_airport, r.arrival_airport) }));
-  const now = Math.floor(Date.now() / 1000);
+  const now = unixNow();
   // One row per physical departure, newest assignment first, then the same
   // equipped test the date lookup answers with: a swap onto a non-Starlink
   // tail replaces the stale Starlink row instead of listing both.
@@ -3323,12 +3324,7 @@ const routePlannerPage: Handler = (ctx) => {
     const cfg = siteAirline(ctx.site);
     if (!ctx.reader.routeHasData(parsed.origin, parsed.destination)) return notFound(ctx.site);
     const route = ctx.reader.getRouteSummary(parsed.origin, parsed.destination);
-    const departures = routeStarlinkDepartures(
-      ctx.reader,
-      cfg,
-      route,
-      Math.floor(Date.now() / 1000)
-    );
+    const departures = routeStarlinkDepartures(ctx.reader, cfg, route, unixNow());
     const lastSeen = ctx.reader.getRouteFlightLastSeen(parsed.origin, parsed.destination);
     const reverseLinkable = ctx.reader.routeHasData(parsed.destination, parsed.origin);
     // Historical pairs stay reachable (flight permalinks link them) but no

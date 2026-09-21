@@ -1,3 +1,4 @@
+import { unixNow } from "../database/sql/windows";
 import { COUNTERS, metrics, normalizeAirlineTag } from "../observability";
 import type { Flight } from "../types";
 import { info, warn } from "../utils/logger";
@@ -131,7 +132,7 @@ export class FlightAwareAPI {
       });
       const data: FlightAwareResponse = await response.json();
 
-      const now = Math.floor(Date.now() / 1000);
+      const now = unixNow();
       // Same rule as FR24: an airborne leg stays until it lands, and the cap
       // keeps the nearest departures.
       return data.flights
