@@ -12,6 +12,7 @@ import {
   getFirstFlights,
   getFleetPageData,
   getRouteFlightNumbers,
+  isScheduledLeg,
   reconcileConsensus,
   recordFirstFlights,
   syncSpreadsheetToFleet,
@@ -142,12 +143,28 @@ describe("first observed Starlink flight", () => {
     ).run(gid, recentDay, tail);
     addFlight(db, tail, leg[0], leg[1], installed + 10000, { arrivalAirport: leg[2] });
   }
+  const modStation = (db: Database, station: string) =>
+    db
+      .query(
+        `INSERT INTO fleet_progress_tails (airline, segment, type_code, tail, state, mod_location, fetched_at)
+         VALUES ('UA', 'mainline', '737', ?, 'in_mod', ?, 1)`
+      )
+      .run(`N${station}`, station);
+  const routeSeen = (db: Database, fn: string, o: string, d: string, spanDays: number) =>
+    db
+      .query(
+        `INSERT INTO flight_routes (flight_number, origin, destination, duration_sec, first_seen_at, last_seen_at, seen_count)
+         VALUES (?, ?, ?, 3600, ?, ?, 3)`
+      )
+      .run(fn, o, d, NOW - 40 * 86400, NOW - 40 * 86400 + spanDays * 86400);
 
   test("a ferry off the mod station and a charter are not first flights; forum dates never are", () => {
     const db = makeSyntheticDb();
     db.query(
       "INSERT INTO bts_monthly_routes (month, origin, dest, performed) VALUES ('2026-08', 'ORD', 'GRB', 90)"
     ).run();
+    modStation(db, "MLB");
+    routeSeen(db, "UA6088", "BOI", "GNV", 0.4);
     seed(db, "N64572", "948315825", ["UAL3878", "MLB", "ORD"]);
     seed(db, "N640SY", "1106195214", ["OO6088", "BOI", "GNV"]);
     seed(db, "N587GJ", "6", ["GJS4574", "ORD", "GRB"]);
@@ -165,6 +182,7 @@ describe("first observed Starlink flight", () => {
     db.query(
       "INSERT INTO bts_monthly_routes (month, origin, dest, performed) VALUES ('2026-08', 'ORD', 'GRB', 90)"
     ).run();
+    modStation(db, "MLB");
     addPlane(db, "N64572", "Starlink");
     addPlane(db, "N587GJ", "Starlink");
     const ins = db.query(
@@ -176,6 +194,27 @@ describe("first observed Starlink flight", () => {
     expect(getFirstFlights(db, ["N64572", "N587GJ"], "UA").map((f) => f.tail_number)).toEqual([
       "N587GJ",
     ]);
+    db.close();
+  });
+
+  test("a pair missing from the census is scheduled unless something says otherwise", () => {
+    const db = makeSyntheticDb();
+    db.query(
+      "INSERT INTO bts_monthly_routes (month, origin, dest, performed) VALUES ('2026-06', 'ORD', 'GRB', 90)"
+    ).run();
+    modStation(db, "MLB");
+    routeSeen(db, "UA4730", "BFL", "LAX", 40);
+    routeSeen(db, "UA3781", "LGB", "SMF", 2);
+    routeSeen(db, "UA3870", "MLB", "ORD", 1);
+    routeSeen(db, "UA3870", "IAB", "ORD", 60);
+    routeSeen(db, "UA6088", "BOI", "GNV", 0.4);
+    expect(isScheduledLeg(db, "UA", "BFL", "LAX")).toBe(true);
+    expect(isScheduledLeg(db, "UA", "LGB", "SMF")).toBe(true);
+    expect(isScheduledLeg(db, "UA", "SBP", "SFO")).toBe(true);
+    expect(isScheduledLeg(db, "UA", "MLB", "ORD")).toBe(false);
+    expect(isScheduledLeg(db, "UA", "IAB", "ORD")).toBe(false);
+    expect(isScheduledLeg(db, "UA", "BOI", "GNV")).toBe(false);
+    expect(isScheduledLeg(db, "UA", "ORD", "GRB")).toBe(true);
     db.close();
   });
 });

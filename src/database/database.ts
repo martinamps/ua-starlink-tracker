@@ -868,12 +868,15 @@ function migrateMultiAirline(db: Database) {
   //    by checked_at.
   //  - idx_qfc_date: the coverage lookup filters on fetch_date alone, which
   //    the (origin, destination, fetch_date) key can't seek.
+  //  - idx_bts_routes_pair: isScheduledLeg asks "any month on this pair?",
+  //    which UNIQUE(month, origin, dest) can only skip-scan.
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_sp_tail  ON starlink_planes(TailNumber);
     CREATE INDEX IF NOT EXISTS idx_dl_tail  ON departure_log(tail_number, departed_at);
     CREATE INDEX IF NOT EXISTS idx_upf_flight ON upcoming_flights(flight_number, departure_time);
     CREATE INDEX IF NOT EXISTS idx_upf_route  ON upcoming_flights(airline, departure_airport, arrival_airport);    CREATE INDEX IF NOT EXISTS idx_vlog_airline_time ON starlink_verification_log(airline, checked_at);
     CREATE INDEX IF NOT EXISTS idx_qfc_date ON qatar_fetch_coverage(fetch_date);
+    CREATE INDEX IF NOT EXISTS idx_bts_routes_pair ON bts_monthly_routes(origin, dest);
   `);
   // Redundant, so pure write cost: idx_fleet_tail and idx_qs_flight duplicate
   // UNIQUE constraints' own indexes; departure_log.airport is never filtered
@@ -1455,14 +1458,63 @@ const NOT_FORUM_DATED = `(sp.sheet_gid IS NULL OR sp.sheet_gid NOT LIKE 'flyerta
  * and a regional charter (BOI→GNV) is a departure, but no passenger's first
  * Starlink flight. The BTS T-100 census is United's only schedule census, and
  * it covers domestic pairs only, so every other leg passes.
+ *
+ * Absence from the census is not evidence on its own: it lags months behind
+ * (data to 2026-06 in September) and misses thin pairs, so BFL-LAX, flown
+ * daily, read as a charter. A pair outside it is unscheduled only when
+ * something says so: it leaves a mod station, it shares a ferry number with a
+ * mod-station departure (IAB-ORD on MLB-ORD's UA38xx), or every number seen on
+ * it was seen on one day only.
  */
-function isScheduledLeg(db: Database, airline: string, origin: string, dest: string): boolean {
+export function isScheduledLeg(
+  db: Database,
+  airline: string,
+  origin: string,
+  dest: string
+): boolean {
   if (airline !== "UA") return true;
   if (airportCountry(origin) !== "US" || airportCountry(dest) !== "US") return true;
-  if (!db.query("SELECT 1 FROM bts_monthly_routes LIMIT 1").get()) return true;
-  return !!db
-    .query("SELECT 1 FROM bts_monthly_routes WHERE origin = ? AND dest = ? LIMIT 1")
-    .get(origin, dest);
+  if (
+    db
+      .query("SELECT 1 FROM bts_monthly_routes WHERE origin = ? AND dest = ? LIMIT 1")
+      .get(origin, dest)
+  ) {
+    return true;
+  }
+  const stations = modStations(db, airline);
+  if (stations.includes(origin)) return false;
+  const seen = db
+    .query(
+      `SELECT fr.flight_number, fr.last_seen_at - fr.first_seen_at AS span,
+              EXISTS (
+                SELECT 1 FROM flight_routes m
+                WHERE m.flight_number = fr.flight_number
+                  AND m.origin IN (SELECT value FROM json_each(?))
+              ) AS ferry
+       FROM flight_routes fr WHERE fr.origin = ? AND fr.destination = ?`
+    )
+    .all(JSON.stringify(stations), origin, dest) as Array<{
+    flight_number: string;
+    span: number;
+    ferry: number;
+  }>;
+  if (seen.length === 0) return true;
+  if (seen.some((r) => r.ferry === 1)) return false;
+  return seen.some((r) => r.span >= DAY_SEC);
+}
+
+/** Domestic stations the install pipeline currently names as mod lines. */
+function modStations(db: Database, airline: string): string[] {
+  if (!tableExists(db, "fleet_progress_tails")) return [];
+  return (
+    db
+      .query(
+        "SELECT DISTINCT mod_location FROM fleet_progress_tails WHERE airline = ? AND mod_location IS NOT NULL"
+      )
+      .values(airline) as [string][]
+  )
+    .map(([s]) => s)
+    .filter((s) => airportCountry(s) === "US");
 }
 
 export interface HubAirlineStat {
