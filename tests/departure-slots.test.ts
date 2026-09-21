@@ -13,6 +13,7 @@ import {
   getAirportDepartures,
   getDepartureSlots,
   getFleetPageData,
+  getRouteDepartures,
   getRouteStarlinkSchedule,
   getRouteSummary,
 } from "../src/database/database";
@@ -64,9 +65,88 @@ describe("slot flight key", () => {
     spellings.forEach((fn, i) => {
       addFlight(db, "N1", fn, "DEN", T + i * 60);
     });
+    spellings.forEach((fn, i) => {
+      addFlight(db, "N2", fn, "SEA", T + i * 60, { airline: "AS" });
+    });
     const rows = getDepartureSlots(db, undefined, { from: NOW, to: T + 86400 });
-    expect(rows.length).toBe(spellings.length);
-    for (const r of rows) expect(r.slot_flight).toBe(slotFlightKey(r.flight_number));
+    expect(rows.length).toBe(spellings.length * 2);
+    for (const r of rows) expect(r.slot_flight).toBe(slotFlightKey(r.flight_number, r.airline));
+    db.close();
+  });
+
+  test("an operator code collapses to the row's airline, a carrier's own code to that carrier", () => {
+    expect(slotFlightKey("OO3448", "AS")).toBe("AS3448");
+    expect(slotFlightKey("SKW3448", "AS")).toBe("AS3448");
+    expect(slotFlightKey("OO3448", "UA")).toBe("UA3448");
+    expect(slotFlightKey("AS864", "HA")).toBe("AS864");
+    expect(slotFlightKey("ASA864", "HA")).toBe("AS864");
+    expect(slotFlightKey("HAL11", "HA")).toBe("HA11");
+  });
+});
+
+describe("one tail, one airport, one time is one departure", () => {
+  test("a registration echo under a second number collapses onto the regional-range number", () => {
+    const db = makeSyntheticDb();
+    equippedTail(db, "N741YX");
+    addFlight(db, "N741YX", "RPA3453", "IAD", T, { arrivalAirport: "YYZ" });
+    addFlight(db, "N741YX", "RPA741", "IAD", T, { arrivalAirport: "YYZ" });
+    addFlight(db, "N741YX", "RPA3466", "YYZ", T + 7200, { arrivalAirport: "IAD" });
+    const slots = getDepartureSlots(db, "UA", { from: NOW, to: T + 86400 });
+    expect(slots.map((s) => s.slot_flight)).toEqual(["UA3453", "UA3466"]);
+    expect(getRouteStarlinkSchedule(db, "UA", NOW).totalDepartures).toBe(2);
+    db.close();
+  });
+
+  test("a tail listed under two airlines joins only its own airline's listing", () => {
+    const db = makeSyntheticDb();
+    equippedTail(db, "N100SY");
+    addPlane(db, "N100SY", "Starlink", { airline: "AS", aircraft: "ERJ-175" });
+    addFlight(db, "N100SY", "SKW5236", "GDL", T, { arrivalAirport: "IAH" });
+    const slots = getDepartureSlots(db, "UA", { from: NOW, to: T + 86400 });
+    expect(slots).toHaveLength(1);
+    expect(getRouteStarlinkSchedule(db, "UA", NOW).totalDepartures).toBe(1);
+    expect(getAirportDepartures(db, "UA", NOW).rows).toEqual([{ airport: "GDL", count: 1 }]);
+    db.close();
+  });
+});
+
+describe("route page departures", () => {
+  test("list marketed numbers only: operator codes map, callsigns drop", () => {
+    const db = makeSyntheticDb();
+    equippedTail(db, "N195SY", "AS");
+    equippedTail(db, "N117SY");
+    addFlight(db, "N195SY", "SKW3015", "ACV", T, { arrivalAirport: "SEA", airline: "AS" });
+    addFlight(db, "N195SY", "OO3015", "ACV", T + 86400, { arrivalAirport: "SEA", airline: "AS" });
+    addFlight(db, "N117SY", "SKW312R", "DEN", T, { arrivalAirport: "FAR" });
+    addFlight(db, "N117SY", "OO4688", "DEN", T + 3600, { arrivalAirport: "FAR" });
+    expect(getRouteDepartures(db, "AS", "ACV", "SEA", NOW).map((d) => d.flight_number)).toEqual([
+      "AS3015",
+      "AS3015",
+    ]);
+    expect(getRouteDepartures(db, "UA", "DEN", "FAR", NOW).map((d) => d.flight_number)).toEqual([
+      "UA4688",
+    ]);
+    db.close();
+  });
+
+  test("every flight link on a SkyWest-for-Alaska route page resolves", async () => {
+    const db = makeSyntheticDb();
+    equippedTail(db, "N195SY", "AS");
+    addFlight(db, "N195SY", "SKW3015", "ACV", T, { arrivalAirport: "SEA", airline: "AS" });
+    addFlight(db, "N195SY", "OO3016", "ACV", T + 86400, { arrivalAirport: "SEA", airline: "AS" });
+    const app = createApp(db);
+    const html = await (await app.dispatch(req("/route-planner/ACV/SEA", AS_HOST))).text();
+    const links = [
+      ...new Set([...html.matchAll(/href="\/check-flight\/([^"]+)"/g)].map((m) => m[1])),
+    ];
+    expect(links.sort()).toEqual(["AS3015", "AS3016"]);
+    for (const fn of links) {
+      const res = await app.dispatch(
+        req(`/check-flight/${fn}`, AS_HOST, { headers: { "x-forwarded-for": "127.0.0.1" } })
+      );
+      expect(res.status, fn).toBe(200);
+    }
+    expect(html).not.toMatch(/(SKW|OO)30\d\d/);
     db.close();
   });
 });

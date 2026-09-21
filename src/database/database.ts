@@ -5334,11 +5334,15 @@ export function recordAdsbSweep(
 
 /** SQL twin of slotFlightKey (flight-number.ts); the prefixes are registry
  * literals, never caller input. */
-function slotFlightSql(col: string): string {
-  const cases = slotFlightPrefixes().map(([prefix, iata]) => {
+function slotFlightSql(col: string, airlineCol: string): string {
+  const rowIata = `CASE ${airlineCol} ${Object.entries(AIRLINES)
+    .map(([code, cfg]) => `WHEN '${code}' THEN '${cfg.iata}'`)
+    .join(" ")} END`;
+  const cases = slotFlightPrefixes().map(({ prefix, marketing, fallback }) => {
     const rest = `substr(${col}, ${prefix.length + 1})`;
+    const iata = marketing ? `'${marketing}'` : `COALESCE(${rowIata}, '${fallback}')`;
     return `WHEN ${col} GLOB '${prefix}[0-9]*' AND ${rest} NOT GLOB '*[^0-9]*'
-          THEN '${iata}' || CAST(${rest} AS INTEGER)`;
+          THEN ${iata} || CAST(${rest} AS INTEGER)`;
   });
   return `CASE ${cases.join("\n        ")} ELSE ${col} END`;
 }
@@ -5361,18 +5365,68 @@ function departureSlotsSql(scopeClause: string): string {
          _sneg.verified_wifi AS settled_wifi,
          CASE WHEN sp.TailNumber IS NOT NULL AND ${equippedSql("sp")} THEN 1 ELSE 0 END AS equipped
   FROM (
-    SELECT k.*, ROW_NUMBER() OVER (
-             PARTITION BY k.slot_flight, k.departure_airport, k.departure_time
-             ORDER BY k.last_updated DESC, k.id DESC) AS slot_rank
-    FROM (
-      SELECT uf.*, ${slotFlightSql("uf.flight_number")} AS slot_flight
-      FROM upcoming_flights uf
-      WHERE ${scopeClause} AND uf.departure_time >= ? AND uf.departure_time < ?
-    ) k
+    SELECT t.* FROM (
+      SELECT k.*, ROW_NUMBER() OVER (
+               PARTITION BY k.tail_number, k.departure_airport, k.departure_time
+               ORDER BY k.regional_pick DESC, k.last_updated DESC, k.id DESC) AS tail_rank
+      FROM (
+        SELECT j.*, ROW_NUMBER() OVER (
+                 PARTITION BY j.slot_flight, j.departure_airport, j.departure_time
+                 ORDER BY j.last_updated DESC, j.id DESC) AS slot_rank
+        FROM (
+          SELECT uf.*, ${slotFlightSql("uf.flight_number", "uf.airline")} AS slot_flight,
+                 ${regionalPickSql("uf.flight_number")} AS regional_pick
+          FROM upcoming_flights uf
+          WHERE ${scopeClause} AND uf.departure_time >= ? AND uf.departure_time < ?
+        ) j
+      ) k
+      WHERE k.slot_rank = 1
+    ) t
+    WHERE t.tail_rank = 1 OR t.tail_number IS NULL
   ) s
-  LEFT JOIN starlink_planes sp ON sp.TailNumber = s.tail_number
-  ${settledNegativeJoin("_sneg", "s.tail_number")}
-  WHERE s.slot_rank = 1`;
+  LEFT JOIN starlink_planes sp ON sp.TailNumber = s.tail_number AND sp.airline = s.airline
+  ${settledNegativeJoin("_sneg", "s.tail_number")}`;
+}
+
+let regionalPickCache: string | null = null;
+
+/**
+ * One tail leaves one airport at one time once. When it is stored under two
+ * different numbers (N741YX IAD-YYZ as RPA3453 and RPA741), a regional
+ * operator's code on a regional-range number is the real flight; the other is
+ * a registration echo. 1 marks that preferred spelling.
+ */
+function regionalPickSql(col: string): string {
+  if (regionalPickCache) return regionalPickCache.replaceAll("$col", col);
+  const branches: string[] = [];
+  for (const p of slotFlightPrefixes()) {
+    if (p.marketing) continue;
+    const n = `CAST(substr($col, ${p.prefix.length + 1}) AS INTEGER)`;
+    const ranges = new Set<string>();
+    for (const cfg of Object.values(AIRLINES)) {
+      if (!cfg.carrierPrefixes.includes(p.prefix)) continue;
+      for (const [lo, hi] of regionalRanges(cfg)) ranges.add(`${n} BETWEEN ${lo} AND ${hi}`);
+    }
+    if (ranges.size === 0) continue;
+    branches.push(
+      `WHEN $col GLOB '${p.prefix}[0-9]*' AND substr($col, ${p.prefix.length + 1}) NOT GLOB '*[^0-9]*'
+         THEN (${[...ranges].join(" OR ")})`
+    );
+  }
+  regionalPickCache = branches.length ? `CASE ${branches.join("\n  ")} ELSE 0 END` : "0";
+  return regionalPickCache.replaceAll("$col", col);
+}
+
+/** The airline's regional-subfleet number ranges, read off its own subfleet matchers. */
+function regionalRanges(cfg: AirlineConfig): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  for (let n = 1; n <= 9999; n++) {
+    if (!isRegionalNumber(cfg, `${cfg.iata}${n}`)) continue;
+    const last = out.at(-1);
+    if (last && last[1] === n - 1) last[1] = n;
+    else out.push([n, n]);
+  }
+  return out;
 }
 
 export type DepartureSlot = Flight & {
@@ -5453,6 +5507,53 @@ export function getDepartureSlots(
   return db
     .query(`SELECT * FROM ${slots.sql} d ORDER BY d.departure_time ASC, d.id ASC`)
     .all(...slots.params) as DepartureSlot[];
+}
+
+export interface RouteDepartureRow {
+  /** The marketed number, a valid /check-flight permalink on the tenant's site. */
+  flight_number: string;
+  departure_time: number;
+  tail_number: string;
+  aircraft_type: string | null;
+  verified: boolean;
+}
+
+/**
+ * Equipped departures on one pair in the next 48h under the numbers the
+ * airline sells them as. Slots already carry the marketed key (OO3448 on an
+ * Alaska row is AS3448); a slot whose key is no permalink of the airline (an
+ * ATC callsign such as SKW312R) is a positioning leg nobody books and would
+ * be a dead link, so it is left off.
+ */
+export function getRouteDepartures(
+  db: Database,
+  airline: string,
+  origin: string,
+  destination: string,
+  nowSec = unixNow()
+): RouteDepartureRow[] {
+  const cfg = AIRLINES[airline];
+  if (!cfg) return [];
+  const permalink = canonicalPermalinkFor(cfg);
+  return getDepartureSlots(db, airline, {
+    from: nowSec,
+    to: nowSec + DEPARTURE_WINDOW_SEC,
+    partners: true,
+    origin,
+    destination,
+  }).flatMap((r) =>
+    r.equipped === 1 && r.slot_flight && permalink.test(r.slot_flight)
+      ? [
+          {
+            flight_number: r.slot_flight,
+            departure_time: r.departure_time,
+            tail_number: r.tail_number,
+            aircraft_type: r.aircraft_type ?? null,
+            verified: r.verified_wifi === "Starlink",
+          },
+        ]
+      : []
+  );
 }
 
 // One definition of "departure on a Starlink-equipped aircraft, next 48h".

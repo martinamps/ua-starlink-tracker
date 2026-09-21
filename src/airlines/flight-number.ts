@@ -163,41 +163,62 @@ export function buildAirlineFlightNumberVariants(
   return [...new Set([flightNumber, ...cfg.carrierPrefixes.map((p) => `${p}${num}`)])];
 }
 
-let slotPrefixCache: ReadonlyArray<readonly [string, string]> | null = null;
+export interface SlotFlightPrefix {
+  prefix: string;
+  /** The marketing IATA a carrier's own code collapses to; null for an operator code. */
+  marketing: string | null;
+  /** An operator code's IATA when the row's airline is unknown: its first registry owner. */
+  fallback: string;
+}
+
+let slotPrefixCache: readonly SlotFlightPrefix[] | null = null;
 
 /**
- * Every code a tracked carrier's rows are stored under, longest first, paired
- * with the IATA it collapses to. A regional operator code (SKW, OO) flies for
- * several marketing carriers, but its own number is unique to the operator, so
- * collapsing it under one label can never merge two different departures.
+ * Every code a tracked carrier's rows are stored under, longest first. A
+ * carrier's own IATA/ICAO collapses to that carrier. A regional operator code
+ * (SKW, OO) flies for several marketing carriers, so it collapses to the
+ * row's airline: SkyWest's OO3448 on an Alaska row is sold as AS3448, the
+ * same code on a United row as UA3448. The operator's own number is unique to
+ * it, so either way two different departures never merge.
  */
-export function slotFlightPrefixes(): ReadonlyArray<readonly [string, string]> {
+export function slotFlightPrefixes(): readonly SlotFlightPrefix[] {
   if (slotPrefixCache) return slotPrefixCache;
+  const marketing = new Map<string, string>();
+  for (const cfg of Object.values(AIRLINES)) {
+    for (const p of [cfg.iata, cfg.icao]) if (!marketing.has(p)) marketing.set(p, cfg.iata);
+  }
   const owner = new Map<string, string>();
   for (const cfg of Object.values(AIRLINES)) {
     for (const p of [cfg.iata, cfg.icao, ...cfg.carrierPrefixes]) {
       if (!owner.has(p)) owner.set(p, cfg.iata);
     }
   }
-  slotPrefixCache = [...owner].sort(
-    (a, b) => b[0].length - a[0].length || a[0].localeCompare(b[0])
-  );
+  slotPrefixCache = [...owner]
+    .map(([prefix, first]) => ({
+      prefix,
+      marketing: marketing.get(prefix) ?? null,
+      fallback: first,
+    }))
+    .sort((a, b) => b.prefix.length - a.prefix.length || a.prefix.localeCompare(b.prefix));
   return slotPrefixCache;
 }
 
 /**
- * The flight half of a physical departure slot. One departure is stored under
- * several spellings (UAL1377 and UA1377, SKW3440 and OO3440, HA0011): all of
- * them collapse to one key. A spelling no prefix explains, such as an ATC
- * callsign (SKW302M), stays itself. Mirrored in SQL by slotFlightSql
+ * The flight half of a physical departure slot, and the number it is sold
+ * under. One departure is stored under several spellings (UAL1377 and UA1377,
+ * SKW3440 and OO3440, HA0011): all of them collapse to one key. A spelling no
+ * prefix explains, such as an ATC callsign (SKW302M), stays itself. `airline`
+ * is the stored row's airline. Mirrored in SQL by slotFlightSql
  * (database.ts); tests pin the two together.
  */
-export function slotFlightKey(flightNumber: string | null): string | null {
+export function slotFlightKey(flightNumber: string | null, airline?: string): string | null {
   if (!flightNumber) return flightNumber;
-  for (const [prefix, iata] of slotFlightPrefixes()) {
-    if (!flightNumber.startsWith(prefix)) continue;
-    const rest = flightNumber.slice(prefix.length);
-    if (/^\d+$/.test(rest)) return `${iata}${Number.parseInt(rest, 10)}`;
+  for (const p of slotFlightPrefixes()) {
+    if (!flightNumber.startsWith(p.prefix)) continue;
+    const rest = flightNumber.slice(p.prefix.length);
+    if (!/^\d+$/.test(rest)) continue;
+    const iata = p.marketing ?? (airline ? AIRLINES[airline]?.iata : undefined) ?? p.fallback;
+    return `${iata}${Number.parseInt(rest, 10)}`;
   }
   return flightNumber;
 }

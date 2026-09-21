@@ -3171,35 +3171,8 @@ export function parseRoutePath(pathname: string): { origin: string; destination:
  * (partners included, so an Alaska number on Hawaiian metal lists), filtered
  * to the pair and to slots whose current tail is equipped.
  */
-function routeStarlinkDepartures(
-  reader: ScopedReader,
-  cfg: AirlineConfig,
-  route: RouteSummary,
-  nowSec: number
-): RouteDeparture[] {
-  const display = new Map<string, string>();
-  for (const f of route.flightNumbers) {
-    for (const v of buildFlightLookupVariants(cfg, f.flight_number))
-      display.set(v, f.flight_number);
-  }
-  return reader
-    .getDepartureSlots({
-      from: nowSec,
-      to: nowSec + DEPARTURE_WINDOW_HOURS * 3600,
-      partners: true,
-      origin: route.origin,
-      destination: route.destination,
-    })
-    .filter((r) => r.equipped === 1)
-    .map((r) => ({
-      flight_number:
-        display.get(r.flight_number) ??
-        (r.slot_flight?.startsWith(cfg.iata) ? r.slot_flight : r.flight_number),
-      departure_time: r.departure_time,
-      tail_number: r.tail_number,
-      aircraft_type: r.aircraft_type ?? null,
-      verified: r.verified_wifi === "Starlink",
-    }));
+function routeStarlinkDepartures(reader: ScopedReader, route: RouteSummary): RouteDeparture[] {
+  return reader.getRouteDepartures(route.origin, route.destination);
 }
 
 function routePageMeta(
@@ -3298,12 +3271,7 @@ const routePlannerPage: Handler = (ctx) => {
     const cfg = siteAirline(ctx.site);
     if (!ctx.reader.routeHasData(parsed.origin, parsed.destination)) return notFound(ctx.site);
     const route = ctx.reader.getRouteSummary(parsed.origin, parsed.destination);
-    const departures = routeStarlinkDepartures(
-      ctx.reader,
-      cfg,
-      route,
-      Math.floor(Date.now() / 1000)
-    );
+    const departures = routeStarlinkDepartures(ctx.reader, route);
     const lastSeen = ctx.reader.getRouteFlightLastSeen(parsed.origin, parsed.destination);
     const reverseLinkable = ctx.reader.routeHasData(parsed.destination, parsed.origin);
     // Historical pairs stay reachable (flight permalinks link them) but no

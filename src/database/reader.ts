@@ -56,6 +56,7 @@ import {
   type PopularFlight,
   type QatarHistoryRow,
   type QatarScheduleRow,
+  type RouteDepartureRow,
   type RouteEntryRow,
   type RouteFlightNumbers,
   type RouteFlightRow,
@@ -113,6 +114,7 @@ import {
   getQatarScheduleStats,
   getRankedStarlinkRoutePairs,
   getRecentInstalls,
+  getRouteDepartures,
   getRouteFlightNumbers,
   getRouteFlights,
   getRouteGraphEdges,
@@ -253,6 +255,8 @@ export interface ScopedReader {
   /** Unseen for ROUTE_NOINDEX_STALE_DAYS — the route page goes noindex. */
   routeIsHistorical(origin: string, destination: string): boolean;
   getRouteSummary(origin: string, destination: string): RouteSummary;
+  /** Equipped departures on the pair in the next 48h, under their marketed numbers. */
+  getRouteDepartures(origin: string, destination: string): RouteDepartureRow[];
   /** Marketing numbers on a pair without getRouteSummary's windowed departure
    * counts — what the flight permalinks' sibling links actually need. */
   getRouteFlightNumbers(origin: string, destination: string): RouteFlightNumbers;
@@ -462,6 +466,7 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     routeHasData: (o, d) => routeHasData(db, o, d, soleAirline()),
     routeIsHistorical: (o, d) => routeIsHistorical(db, o, d, soleAirline()),
     getRouteSummary: (o, d) => getRouteSummary(db, o, d, soleAirline()),
+    getRouteDepartures: (o, d) => getRouteDepartures(db, soleAirline(), o, d),
     getRouteFlightNumbers: (o, d) => getRouteFlightNumbers(db, o, d, soleAirline()),
     getRouteFlightLastSeen: (o, d) => getRouteFlightLastSeen(db, o, d, soleAirline()),
     getFlightHistorySummary: (v) => getFlightHistorySummary(db, v, airlines),
