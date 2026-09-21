@@ -1570,9 +1570,8 @@ interface SitePage {
  * database: two apps over different databases — which every write-path test
  * builds — must never see each other's answers.
  */
-const GATE_TTL_MS = 60_000;
 const gateMemo = perOwner<RequestContext["getReader"], ReturnType<typeof memo<boolean>>>(() =>
-  memo<boolean>(GATE_TTL_MS)
+  memo<boolean>({ ttlSec: 60, maxEntries: 20_000 })
 );
 function memoGate(ctx: RequestContext, key: string, compute: () => boolean): boolean {
   return gateMemo(ctx.getReader)(`${tenantScope(ctx.tenant)}:${key}`, compute);
@@ -3265,12 +3264,11 @@ const ROUTES_PAGE_ROWS = 60;
 const PLANNER_POPULAR_ROUTES = 60;
 // getSitemapRoutes scans flight_routes (~20ms on prod data); the link block
 // only needs to track the schedule, so it is rebuilt at most every 10 minutes.
-const PLANNER_ROUTES_TTL_MS = 10 * 60_000;
 type RoutePair = { origin: string; destination: string };
 const plannerRoutesMemo = perOwner<
   RequestContext["getReader"],
   ReturnType<typeof memo<RoutePair[]>>
->(() => memo<RoutePair[]>(PLANNER_ROUTES_TTL_MS));
+>(() => memo<RoutePair[]>({ ttlSec: 600, maxEntries: 16 }));
 
 /** Route permalinks for the bare planner: /routes' next page of rankings, so
  * the two hubs link different pairs, topped up from the sitemap's most recently
