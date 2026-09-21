@@ -1,40 +1,31 @@
 import React from "react";
-import { ModelPie, StatRing, computeModelBreakdown } from "../../components/atoms";
+import { RolloutPanel } from "../../components/home/rollout";
+import { StatInline, fmt, pct } from "../../components/layout";
 import type { AirlineContent, ContentStats, HeroProps } from "./index";
 
 /** Rounded pace for copy; null means say nothing rather than a stale guess. */
 const installsPerMonth = (s: ContentStats): number | null =>
   s.installsPerMonth ? Math.round(s.installsPerMonth) : null;
 
-const UAHero = ({ stats, starlinkData }: HeroProps) => {
-  const { fleetStats, starlinkCount: x, totalCount: y, percentage } = stats;
-  const modelData = computeModelBreakdown(starlinkData);
-  return (
-    <div className="relative grid grid-cols-2 lg:grid-cols-4 gap-px bg-subtle rounded-lg overflow-hidden mb-6 border border-subtle">
-      <StatRing
-        label="Mainline"
-        pct={fleetStats?.mainline.percentage || 0}
-        starlink={fleetStats?.mainline.starlink || 0}
-        total={fleetStats?.mainline.total || 0}
-      />
-      <StatRing
-        label="Express"
-        pct={fleetStats?.express.percentage || 0}
-        starlink={fleetStats?.express.starlink || 0}
-        total={fleetStats?.express.total || 0}
-      />
-      <StatRing
-        label="Total Fleet"
-        pct={Number.parseFloat(percentage)}
-        starlink={x}
-        total={y}
-        color="#22c55e"
-        variant="total"
-      />
-      <ModelPie data={modelData} total={x} />
-    </div>
-  );
-};
+const EXTENSION_URL =
+  "https://chromewebstore.google.com/detail/google-flights-starlink-i/jjfljoifenkfdbldliakmmjhdkbhehoi";
+const LINK = "text-accent hover:underline";
+
+const express = (s: ContentStats) => s.fleetStats?.express ?? { starlink: 0, total: 0 };
+const mainline = (s: ContentStats) => s.fleetStats?.mainline ?? { starlink: 0, total: 0 };
+
+const UAHero = ({ stats, statSentence }: HeroProps) => (
+  <RolloutPanel
+    stats={stats}
+    noun="United aircraft"
+    segments={[
+      { label: "United Express", n: express(stats).starlink, total: express(stats).total },
+      { label: "Mainline", n: mainline(stats).starlink, total: mainline(stats).total },
+    ]}
+  >
+    {statSentence}
+  </RolloutPanel>
+);
 
 export const content: AirlineContent = {
   headerStats: (s) => [
@@ -45,7 +36,7 @@ export const content: AirlineContent = {
       <span className="text-accent font-semibold">50×</span> faster
     </span>,
     <span key="free" className="text-green-400 font-semibold">
-      FREE
+      Free
     </span>,
     ...(installsPerMonth(s)
       ? [
@@ -57,14 +48,69 @@ export const content: AirlineContent = {
   ],
 
   intro: () => (
-    <p className="text-sm text-secondary leading-relaxed mb-3">
-      United Airlines is rolling out free Starlink WiFi across its fleet — the fastest internet ever
-      available on a commercial airline. Use this tracker to browse all equipped aircraft, check
-      your flight, or plan a Starlink-maximizing itinerary.
-    </p>
+    <>
+      United is adding free Starlink Wi-Fi to every plane. Check your flight, see which aircraft
+      have it, or find a route that does.
+    </>
   ),
 
   Hero: UAHero,
+
+  answers: [
+    {
+      q: "Does United have Starlink?",
+      a: (s) => (
+        <p>
+          Yes. <StatInline n={s.starlinkCount} /> of {fmt(s.totalCount)} United aircraft (
+          {pct(s.starlinkCount, s.totalCount)}) have free Starlink Wi-Fi
+          {s.asOf ? <> as of {s.asOf}</> : null}. United plans to equip the whole fleet by the end
+          of 2027.
+        </p>
+      ),
+    },
+    {
+      q: "Which United planes have Starlink?",
+      a: (s) => (
+        <p>
+          Mostly United Express regional jets: <StatInline n={express(s).starlink} /> of{" "}
+          {fmt(express(s).total)} ({pct(express(s).starlink, express(s).total)}) have it, against{" "}
+          <StatInline n={mainline(s).starlink} /> of {fmt(mainline(s).total)} mainline aircraft (
+          {pct(mainline(s).starlink, mainline(s).total)}). The{" "}
+          <a href="/fleet" className={LINK}>
+            fleet page
+          </a>{" "}
+          lists every one.
+        </p>
+      ),
+    },
+    {
+      q: "Do all United flights have Starlink?",
+      a: (s) => (
+        <p>
+          No, not yet. {pct(s.starlinkCount, s.totalCount)} of the fleet has it, so it depends on
+          the plane assigned to your flight. United Express flights (UA3000 to UA6999) are the
+          likeliest to have it.
+        </p>
+      ),
+    },
+    {
+      q: "How do I know if my United flight has Starlink?",
+      a: () => (
+        <p>
+          Enter your flight number and date in the{" "}
+          <a href="/check-flight" className={LINK}>
+            flight check
+          </a>
+          . About two days before departure United assigns the aircraft and you get a firm yes or
+          no. Further out you get the odds, based on the planes that flight has used recently. The{" "}
+          <a href={EXTENSION_URL} target="_blank" rel="noopener noreferrer" className={LINK}>
+            Chrome extension
+          </a>{" "}
+          shows the same answer on Google Flights.
+        </p>
+      ),
+    },
+  ],
 
   rowBadge: (p) => (p.fleet === "mainline" ? "Mainline" : "Express"),
 
@@ -73,82 +119,40 @@ export const content: AirlineContent = {
     { key: "express", label: "Express" },
   ],
 
-  // ld strings are the FAQPage JSON-LD copy; keep them in sync with the visible a()
-  // body — Google requires markup to match rendered content. {{...}} placeholders in
-  // ld resolve against buildBaseTemplateVars() in renderHtml().
   faq: [
     {
-      title: "Checking your flight",
+      title: "Planning a trip",
       items: [
         {
-          q: "Which United flights have Starlink?",
-          a: ({ fleetStats }) => (
+          q: "How do I maximize my chances of getting Starlink?",
+          a: (s) => (
             <p>
-              Mostly United Express flights (UA3000–6999) so far —{" "}
-              {(fleetStats?.express.percentage || 0).toFixed(0)}% of the Express regional fleet
-              (E175, CRJ-550) is equipped, versus{" "}
-              {(fleetStats?.mainline.percentage || 0).toFixed(0)}% of mainline. To find out about a
-              specific flight,{" "}
-              <a href="/check-flight" className="text-accent hover:underline">
-                check it by number and date
+              Use the{" "}
+              <a href="/route-planner" className={LINK}>
+                route planner
               </a>
-              , or browse the{" "}
-              <a href="/fleet" className="text-accent hover:underline">
-                fleet page
-              </a>{" "}
-              for every equipped tail number.
+              . It ranks nonstop flights and one-stop connections by their odds of Starlink. United
+              Express is at {pct(express(s).starlink, express(s).total)} and mainline at{" "}
+              {pct(mainline(s).starlink, mainline(s).total)}, so a connection on two Express jets
+              can beat a nonstop on mainline. Denver to Chicago nonstop is mainline, for example,
+              while Denver to Aspen to Chicago is Express on both legs.
             </p>
           ),
-          ld: "Mostly United Express flights (UA3000-6999) so far — {{expressPercentageRounded}}% of the Express regional fleet (E175, CRJ-550) is equipped, versus {{mainlinePercentageRounded}}% of mainline. Check a specific flight by number and date at /check-flight, or browse the fleet page for every equipped tail number.",
         },
         {
-          q: "Does my United flight have Starlink?",
+          q: "Does United have Starlink on international flights?",
           a: () => (
             <p>
-              Search your flight number and date above for a live answer. Within roughly two days of
-              departure the exact aircraft is usually assigned, so you get a firm yes or no; further
-              out you get a probability estimate built from 12,000+ historical aircraft assignments
-              on that route. You can also{" "}
-              <a href="/check-flight" className="text-accent hover:underline">
-                check a flight by number and date
+              On some. Widebody installs began with UA14, Newark to London on a Boeing 777-200, on
+              June 22, 2026. United expects nearly 60 widebodies to have Starlink during 2026 and
+              the whole widebody fleet by summer 2027. Starlink works over oceans and near the
+              poles, so long-haul flights gain the most.{" "}
+              <a href="/check-flight" className={LINK}>
+                Check your flight
               </a>{" "}
-              or install our{" "}
-              <a
-                href="https://chromewebstore.google.com/detail/google-flights-starlink-i/jjfljoifenkfdbldliakmmjhdkbhehoi"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-accent hover:underline"
-              >
-                Chrome extension
-              </a>{" "}
-              to see Starlink badges right on Google Flights.
+              for its aircraft.
             </p>
           ),
-          ld: "Search your flight number and date for a live answer. Within roughly two days of departure the exact aircraft is usually assigned, so you get a firm yes or no; further out you get a probability estimate built from 12,000+ historical aircraft assignments on that route. You can also check a flight by number and date or install our Chrome extension to see Starlink badges right on Google Flights.",
-        },
-        {
-          q: "How do I maximize my chances of getting Starlink?",
-          a: ({ fleetStats }) => (
-            <>
-              <p className="mb-2">
-                Use the{" "}
-                <a href="/route-planner" className="text-accent hover:underline">
-                  Route Planner
-                </a>{" "}
-                — it finds direct flights and 1-stop connections ranked by Starlink probability.
-                Express flights (UA3000-6999, regional jets) have ~
-                {fleetStats?.express.percentage.toFixed(0)}% Starlink coverage vs ~
-                {fleetStats?.mainline.percentage.toFixed(0)}% for mainline, so a connection through
-                a hub can beat a direct mainline flight.
-              </p>
-              <p>
-                For example: DEN→ORD direct is mainline (~
-                {fleetStats?.mainline.percentage.toFixed(0)}%), but DEN→ASE→ORD is express on both
-                legs.
-              </p>
-            </>
-          ),
-          ld: "Use the Route Planner to compare direct flights and 1-stop connections ranked by Starlink probability. Express flights (UA3000-6999, regional jets) have much higher coverage than mainline — a connection through a hub can beat a direct mainline flight. For example: DEN→ORD direct is mainline, but DEN→ASE→ORD is express on both legs.",
         },
       ],
     },
@@ -156,140 +160,56 @@ export const content: AirlineContent = {
       title: "The rollout",
       items: [
         {
-          q: "Does United have Starlink?",
-          a: ({ starlinkCount, totalCount, percentage }) => (
-            <p>
-              Yes. United started installing Starlink in March 2025 and currently has it live on{" "}
-              <span className="text-accent">{starlinkCount}</span> of {totalCount} aircraft (
-              {percentage}% of the fleet), across both mainline and United Express jets.
-            </p>
-          ),
-          ld: "Yes. United started installing Starlink in March 2025 and currently has it live on {{starlinkCount}} of {{totalAircraftCount}} aircraft ({{percentage}}% of the fleet), across both mainline and United Express jets.",
-        },
-        {
-          q: "How many United planes have Starlink?",
-          a: ({ starlinkCount, totalCount, percentage }) => (
-            <p>
-              As of {new Date().toLocaleDateString()},{" "}
-              <span className="text-accent">{starlinkCount}</span> United aircraft have Starlink —{" "}
-              {percentage}% of the {totalCount}-plane fleet, split across mainline and United
-              Express. The count updates here as new tails are verified against United's own
-              systems.
-            </p>
-          ),
-          ld: "As of {{currentDate}}, {{starlinkCount}} United aircraft have Starlink — {{percentage}}% of the {{totalAircraftCount}}-plane fleet, split across mainline and United Express. The count updates here as new tails are verified against United's own systems.",
-        },
-        {
-          q: "Do all United flights have Starlink?",
-          a: ({ percentage, fleetStats }) => (
-            <p>
-              Not yet — {percentage}% of the fleet is equipped today. United Express regional jets
-              (E175, CRJ-550) are at {(fleetStats?.express.percentage || 0).toFixed(2)}%; mainline
-              narrowbodies and widebodies are being equipped now. The{" "}
-              <a href="/fleet" className="text-accent hover:underline">
-                fleet page
-              </a>{" "}
-              lists every verified tail.
-            </p>
-          ),
-          ld: "Not yet — {{percentage}}% of the fleet is equipped today. United Express regional jets (E175, CRJ-550) are at {{expressPercentage}}%; mainline narrowbodies and widebodies are being equipped now. The fleet page lists every verified tail.",
-        },
-        {
           q: "How fast is United's Starlink rollout?",
           a: (s) => (
             <p>
-              {installsPerMonth(s) && <>About {installsPerMonth(s)} installs a month. </>}
-              United's first Starlink install was March 2025;{" "}
-              <span className="text-accent">{s.starlinkCount}</span> aircraft are equipped today.
-              The{" "}
-              <a href="/fleet" className="text-accent hover:underline">
-                fleet page
+              {installsPerMonth(s) && <>About {installsPerMonth(s)} aircraft a month. </>}
+              United's first Starlink install was in March 2025, and{" "}
+              <StatInline n={s.starlinkCount} /> aircraft have it today. The{" "}
+              <a href="/install-rate" className={LINK}>
+                install rate page
               </a>{" "}
-              charts the rollout tail by tail, and the counters above update as new installs are
-              verified.
+              tracks the pace against United's targets.
             </p>
           ),
-          ld: `{{installPaceSentence}}United's first Starlink install was March 2025; {{starlinkCount}} aircraft are equipped today. The fleet page charts the rollout tail by tail, and this page's counters update as new installs are verified.`,
-        },
-        {
-          q: "When will my route get Starlink?",
-          a: ({ fleetStats }) => (
-            <>
-              <p className="mb-2">
-                <span className="text-green-400">●</span> Regional jets:{" "}
-                {fleetStats?.express.percentage.toFixed(0)}% complete
-              </p>
-              <p>
-                <span className="text-accent">●</span> Mainline fleet:{" "}
-                {fleetStats?.mainline.percentage.toFixed(0)}% complete
-              </p>
-            </>
-          ),
-          ld: "Regional jets are {{expressPercentage}}% complete; mainline fleet is {{mainlinePercentage}}% complete.",
         },
         {
           q: "When will all United flights have Starlink?",
-          a: ({ totalCount, percentage }) => (
+          a: (s) => (
             <p>
-              United's stated target is the whole fleet by the end of 2027 — every United and United
-              Express aircraft. It reported more than 450 equipped with its Q2 2026 results and
-              expects close to 1,000 by the end of 2026, with every widebody done by summer 2027.
-              Today {percentage}% of the {totalCount}-plane fleet is equipped. The{" "}
-              <a href="/timeline" className="text-accent hover:underline">
+              United's target is every United and United Express aircraft by the end of 2027. It
+              reported more than 450 equipped with its Q2 2026 results and expects close to 1,000 by
+              the end of 2026. Today {pct(s.starlinkCount, s.totalCount)} of the {fmt(s.totalCount)}
+              -plane fleet has it. The{" "}
+              <a href="/timeline" className={LINK}>
                 rollout timeline
               </a>{" "}
-              has each milestone and target with its source, and the count on this page updates as
-              new tails are verified.
+              lists each milestone with its source.
             </p>
           ),
-          ld: "United's stated target is the whole fleet by the end of 2027 — every United and United Express aircraft. It reported more than 450 equipped with its Q2 2026 results and expects close to 1,000 by the end of 2026, with every widebody done by summer 2027. Today {{percentage}}% of the {{totalAircraftCount}}-plane fleet is equipped. The rollout timeline page has each milestone and target with its source, and the count on this page updates as new tails are verified.",
-        },
-        {
-          q: "Does United have Starlink on international flights?",
-          a: ({ percentage }) => (
-            <p>
-              Yes, on a growing share of them — widebody installs are under way. The first was UA14,
-              Newark to London on a Boeing 777-200, on June 22, 2026; United expects nearly 60
-              widebodies equipped during 2026 and the entire widebody fleet by summer 2027. Starlink
-              works over oceans and at the poles, unlike the older Ku/Ka-band systems it replaces,
-              so long-haul is where it changes the most. Coverage is still partial at {percentage}%
-              of the fleet, so check the{" "}
-              <a href="/fleet" className="text-accent hover:underline">
-                fleet page
-              </a>{" "}
-              for current widebody status, or{" "}
-              <a href="/check-flight" className="text-accent hover:underline">
-                check your flight
-              </a>{" "}
-              by number and date.
-            </p>
-          ),
-          ld: "Yes, on a growing share of them — widebody installs are under way. The first was UA14, Newark to London on a Boeing 777-200, on June 22, 2026; United expects nearly 60 widebodies equipped during 2026 and the entire widebody fleet by summer 2027. Starlink works over oceans and at the poles, unlike the older Ku/Ka-band systems it replaces, so long-haul is where it changes the most. Coverage is still partial at {{percentage}}% of the fleet, so check the fleet page for current widebody status, or check your flight by number and date.",
         },
       ],
     },
     {
-      title: "About Starlink WiFi",
+      title: "About Starlink Wi-Fi",
       items: [
         {
-          q: "Is United Starlink WiFi free?",
+          q: "Is United Starlink Wi-Fi free?",
           a: () => (
             <p>
-              Yes — free for MileagePlus members, and MileagePlus is free to join. No purchase, no
-              tiers, no data caps.
+              Yes. It's free for MileagePlus members, and MileagePlus is free to join. There are no
+              tiers or data caps.
             </p>
           ),
-          ld: "Yes — free for MileagePlus members, and MileagePlus is free to join. No purchase, no tiers, no data caps.",
         },
         {
-          q: "What can I do with Starlink WiFi?",
+          q: "What can I do with Starlink Wi-Fi?",
           a: () => (
             <p>
-              4K streaming, live sports, online gaming, large downloads — everything you can do at
-              home.
+              Stream video in 4K, watch live sports, make video calls and download large files, the
+              same as on a good home connection.
             </p>
           ),
-          ld: "United's Starlink WiFi offers speeds up to 250 Mbps, which is 50 times faster than previous systems. This enables 4K streaming, live sports, online gaming, and large downloads.",
         },
       ],
     },
@@ -301,40 +221,40 @@ export const content: AirlineContent = {
           a: () => (
             <>
               <p>
-                We aggregate data from multiple aviation data providers, cross-reference with flight
-                schedules, and verify Starlink status against United's own systems. The data updates
-                continuously throughout the day.
+                We combine fleet data from aviation data providers with flight schedules, then
+                confirm each aircraft's Wi-Fi against United's own systems. The{" "}
+                <a href="/methodology" className={LINK}>
+                  methodology page
+                </a>{" "}
+                has the details.
               </p>
-              <p className="mt-2 text-xs">
-                Hat tip to the{" "}
+              <p className="mt-2">
+                Thanks to the{" "}
                 <a
                   href="https://sites.google.com/site/unitedfleetsite/"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-accent hover:underline"
+                  className={LINK}
                 >
                   unitedfleetsite
                 </a>{" "}
-                community for the original fleet data that helped get this project started.
+                community, whose fleet data got this project started.
               </p>
             </>
           ),
-          ld: "We aggregate data from multiple aviation data providers, cross-reference with flight schedules, and verify Starlink status against United's own systems. The data updates continuously throughout the day to provide accurate, real-time tracking.",
         },
         {
           q: "Can I use this with Claude, ChatGPT, or other AI assistants?",
           a: () => (
             <p>
-              Yes — there's a free{" "}
-              <a href="/mcp" className="text-accent hover:underline">
+              Yes. The free{" "}
+              <a href="/mcp" className={LINK}>
                 MCP connector
               </a>{" "}
-              that works with Claude Desktop, Cursor, and any MCP-compatible client. Once connected,
-              you can ask your AI assistant things like "does UA4680 next week have Starlink?" or
-              "find me the best way to fly SFO to JAX with Starlink" and get live tracker data.
+              works with Claude Desktop, Cursor and any MCP client. Ask things like "does UA4680
+              next week have Starlink?" or "find me the best way to fly SFO to JAX with Starlink".
             </p>
           ),
-          ld: "Yes — there's a free MCP server at https://unitedstarlinktracker.com/mcp that works with Claude Desktop, Cursor, and any MCP-compatible client. Once connected, you can ask your AI assistant to check flights, predict Starlink probability, or plan routes using live tracker data.",
         },
       ],
     },

@@ -134,7 +134,7 @@ describe("homepage install pace", () => {
     if (pace) {
       expect(text.replace(/<!-- -->/g, "")).toContain(`~${Math.round(pace)}</span> installs/mo`);
     }
-    expect(text).toContain("Starlink jets by type");
+    expect(text).not.toContain("Starlink jets by type");
   });
 
   test("the stat strip states the pace it is given, and omits it when there is none", () => {

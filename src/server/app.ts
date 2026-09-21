@@ -26,7 +26,7 @@ import {
   tenantCopy,
   typeFactsFor,
 } from "../airlines/aircraft-pages";
-import { type HubHomeLinks, buildFaqJsonLd, getContent } from "../airlines/content";
+import { type HubHomeLinks, allFaqEntries, getContent } from "../airlines/content";
 import {
   CANONICAL_FLIGHT_PERMALINK,
   buildFlightLookupVariants,
@@ -62,6 +62,7 @@ import {
   wifiPhaseFamilies,
 } from "../airlines/registry";
 import {
+  AIRLINE_FACTS,
   type AirlineFactsEntry,
   contentOnlyFacts,
   factsAliasTarget,
@@ -130,19 +131,22 @@ import {
 } from "../components/community-airline-page";
 import ComparePage, { type CompareSide } from "../components/compare-page";
 import EmbedPage from "../components/embed-page";
+import { faqJsonLd } from "../components/faq";
 import FleetPage, { type FleetTypeLink } from "../components/fleet-page";
+import { weeklyInstalls } from "../components/home/rollout";
 import HowToCheckPage from "../components/how-to-check-page";
 import InstallRatePage, { type AirlineInstallRate } from "../components/install-rate-page";
 import IsStarlinkFreePage, {
   freeAccessAnswer,
   hasFreeAnswer,
 } from "../components/is-starlink-free-page";
+import { fmt } from "../components/layout";
 import LiveTvPage, { liveTvTypeRows } from "../components/live-tv-page";
 import McpPage from "../components/mcp-page";
 import MethodologyPage, { hasMethodology } from "../components/methodology-page";
 import NewlyEquippedPage from "../components/newly-equipped-page";
 import NotFoundPage from "../components/not-found-page";
-import Page from "../components/page";
+import Page, { buildContentStats } from "../components/page";
 import RoutePage, { routeVerdict } from "../components/route-page";
 import RoutePlannerPage from "../components/route-planner-page";
 import RoutesPage from "../components/routes-page";
@@ -259,6 +263,7 @@ export function renderHtml(template: string, variables: Record<string, string>):
 }
 
 const META_DESCRIPTION_MAX = 158;
+const TITLE_MAX = 60;
 
 /** SERPs truncate near 160 chars mid-word; cut at a word boundary instead.
  * Descriptions reach 355 chars on route and airline pages. */
@@ -2189,7 +2194,7 @@ ${bestLink}`;
   // which is server-rendered from the live DB with the data's own date stamp.
   const citeSection = `## Citing the headline number
 
-The homepage carries one dated, self-contained sentence (HTML element id \`starlink-stat\`) of the form "As of {date}, {n} of {total} ${name} aircraft ({percent}%) have Starlink WiFi installed." Quote that sentence directly — it is regenerated from the live database on every request, and the date is the data's last-updated stamp, not the page load time.${features.methodologyPage ? ` How those numbers are gathered and verified: https://${host}/methodology` : ""}`;
+The homepage carries one dated, self-contained sentence (HTML element id \`starlink-stat\`) of the form "As of {date}, {n} of {total} ${name} aircraft ({percent}%) have Starlink." Quote that sentence directly — it is regenerated from the live database on every request, and the date is the data's last-updated stamp, not the page load time.${features.methodologyPage ? ` How those numbers are gathered and verified: https://${host}/methodology` : ""}`;
 
   // A week out, so agents copying the example never query a date in the past.
   const exampleDay = new Date(Date.now() + 7 * 86400_000);
@@ -3953,7 +3958,7 @@ const airlinesIndexPage: Handler = (ctx) => {
     "/airlines",
     {
       siteTitle: "Starlink WiFi by Airline — Full List & Rollout Comparison",
-      siteDescription: `The full list of airlines with Starlink WiFi: ${names.join(", ")} tracked tail-by-tail, plus ${rosterCount} more rollouts and the airlines that chose something else — every status dated and sourced.`,
+      siteDescription: `The full list of airlines with Starlink Wi-Fi: ${names.join(", ")} tracked live, plus ${rosterCount} more rollouts and the airlines that chose something else, every status dated and sourced.`,
       keywords:
         "starlink wifi airlines list, airlines with starlink, airline starlink comparison, starlink rollout by airline, airlines without starlink",
       ogTitle: "Starlink WiFi by Airline — Full List & Comparison",
@@ -3978,11 +3983,25 @@ function compareLinks(ctx: RequestContext): TrackedLink[] {
   }));
 }
 
+/** A facts page's <title>: the question-form headline, with "Starlink Tracker"
+ * added for airlines that actually fly Starlink when it still fits. */
+function factsTitle(entry: AirlineFactsEntry): string {
+  const headline = factsHeadline(entry);
+  if (entry.status !== "installing" && entry.status !== "complete") return headline;
+  const answer = entry.status === "complete" ? "Rollout Complete" : "Rollout Under Way";
+  return (
+    [
+      `Does ${entry.shortName} Have Starlink? Yes | ${entry.shortName} Starlink Tracker`,
+      `${entry.shortName} Starlink Tracker: Yes, ${answer}`,
+    ].find((t) => t.length <= TITLE_MAX) ?? headline
+  );
+}
+
 function factsPageMeta(entry: AirlineFactsEntry): PageMeta {
   const short = entry.shortName.toLowerCase();
   const stamp = factsStamp(entry);
   return {
-    siteTitle: factsHeadline(entry),
+    siteTitle: factsTitle(entry),
     siteDescription: `${entry.summary} Every claim dated and sourced — ${stamp.label} ${formatFactDate(stamp.date)}.`,
     keywords: `${entry.name.toLowerCase()} starlink, does ${short} have starlink, ${short} starlink wifi, ${short} wifi`,
     ogTitle: factsHeadline(entry),
@@ -4038,7 +4057,7 @@ const airlineDetailPage: Handler = (ctx) => {
         // Comparison-hub framing — avoid "<airline> starlink tracker" titles that
         // cannibalize the live brand host on brand SERPs.
         siteTitle: indexable
-          ? `${cfg.name} Starlink WiFi — Rollout Status Compared Across Airlines`
+          ? `${cfg.name} Starlink Tracker: Which Planes Have WiFi`
           : `${cfg.name} Starlink on the Hub — See the Full Tracker for Flight Checks`,
         siteDescription: indexable
           ? `Where the ${cfg.name} Starlink rollout stands beside other carriers: ${cfg.rollout.phaseNote} Fleet counts and percent equipped, updated continuously.`
@@ -4050,7 +4069,11 @@ const airlineDetailPage: Handler = (ctx) => {
         ogDescription: cfg.rollout.phaseNote,
         ...(indexable ? {} : { robotsMeta: "noindex, follow" }),
       },
-      { overview, facts: factsForCode(cfg.code), phases: passengerPhases(cfg.code) },
+      {
+        overview,
+        facts: factsForCode(cfg.code),
+        phases: passengerPhases(cfg.code, ctx.getReader(cfg.code)),
+      },
       200,
       // Same stamp the sitemap gives this URL when indexable; noindex pages still
       // use the airline's data freshness for WebPage dateModified consistency.
@@ -4098,7 +4121,7 @@ function communityAirlinePage(
     CommunityAirlinePage,
     `/airlines/${slug}`,
     {
-      siteTitle: cfg.brand.siteTitle,
+      siteTitle: `${cfg.name} Starlink Tracker: Which Planes Have WiFi`,
       siteDescription: communityPageDescription(cfg, types, guideUpdated),
       keywords: cfg.brand.keywords,
       ogTitle: cfg.brand.ogTitle,
@@ -4150,20 +4173,36 @@ function comparePairs(
 
 /** Passenger-facing per-type answer for a type-determined program; null for
  * airlines whose status is per-tail. Freighter families are dropped — nobody
- * is choosing a seat on one. */
-function passengerPhases(code: AirlineCode): TypePhase[] | null {
+ * is choosing a seat on one, and so are families the roster doesn't hold
+ * (Hawaiian's 787s moved to Alaska): a row for a type the airline no longer
+ * flies read as an install under way. */
+function passengerPhases(code: AirlineCode, reader: ScopedReader): TypePhase[] | null {
   const table = wifiPhaseFamilies(code);
-  return table
-    ? Object.entries(table)
-        .filter(([family]) => !family.endsWith("F"))
-        .map(([family, phase]) => ({ family, phase }))
-    : null;
+  if (!table) return null;
+  const counts = new Map(reader.getTypeProgress().map((t) => [t.key, t]));
+  return (
+    Object.entries(table)
+      .filter(([family]) => !family.endsWith("F"))
+      // Table and roster key the same types at different grains (QR's B787-8
+      // vs the roster's B787), so a family stays when either names the other.
+      .filter(
+        ([family]) =>
+          counts.size === 0 ||
+          [...counts.values()].some(
+            (t) => t.total > 0 && (t.key.startsWith(family) || family.startsWith(t.key))
+          )
+      )
+      .map(([family, phase]) => {
+        const c = counts.get(family);
+        return c ? { family, phase, equipped: c.equipped, total: c.total } : { family, phase };
+      })
+  );
 }
 
 function buildCompareSide(ctx: RequestContext, cfg: AirlineConfig): CompareSide {
   const reader = ctx.getReader(cfg.code);
   const liveSite = siteForAirline(cfg.code, true);
-  const phases = passengerPhases(cfg.code);
+  const phases = passengerPhases(cfg.code, reader);
   const typeProgress = cfg.communitySource ? reader.getTypeProgress() : null;
   return {
     cfg,
@@ -4238,6 +4277,53 @@ const comparePage: Handler = (ctx) => {
   );
 };
 
+/**
+ * An airline homepage's <title> and description carry the live answer, the way
+ * the results that outrank us on "does united have starlink" do. The ratio is
+ * only published where the roster is the programme's own denominator; the
+ * brand's static copy stands in everywhere else.
+ */
+function homeMeta(
+  site: SiteConfig,
+  stats: {
+    starlinkCount: number;
+    totalCount: number;
+    fleetStats?: ReturnType<ScopedReader["getFleetStats"]>;
+  }
+): { siteTitle: string; siteDescription: string } | null {
+  if (site.scope === "ALL") {
+    const flying = AIRLINE_FACTS.filter(
+      (e) => e.status === "installing" || e.status === "complete"
+    ).length;
+    const tracked = hubContentAirlines().map((a) => a.shortName);
+    return {
+      siteTitle: `Which Airlines Have Starlink WiFi? ${flying} Airlines Compared`,
+      siteDescription: `${flying} airlines fly Starlink Wi-Fi or are installing it. Compare ${tracked.slice(0, -1).join(", ")} and ${tracked.at(-1)} side by side, plus every other rollout, dated and sourced.`,
+    };
+  }
+  const cfg = AIRLINES[site.scope];
+  const { starlinkCount: n, totalCount: total } = stats;
+  if (!cfg || !denominatorIsPublishable(n, total, cfg.rollout.rosterIsProgramScope)) return null;
+  const count = `${fmt(n)} of ${fmt(total)}`;
+  const share = `${Math.round((n / total) * 100)}%`;
+  const lead = `${cfg.shortName} Starlink Tracker`;
+  const siteTitle =
+    [
+      `${lead}: ${count} Planes Have Starlink (${share})`,
+      `${lead}: ${count} Planes Have Starlink`,
+      `${lead}: ${count} Planes (${share})`,
+    ].find((t) => t.length <= TITLE_MAX) ?? `${lead}: ${count}`;
+  const express = stats.fleetStats?.express;
+  const regionalClause =
+    express && express.total > 0 && express.starlink > (stats.fleetStats?.mainline.starlink ?? 0)
+      ? `, most of them ${cfg.code === "UA" ? "United Express" : "regional"} jets`
+      : "";
+  return {
+    siteTitle,
+    siteDescription: `Yes: ${count} ${cfg.shortName} planes (${share}) have free Starlink Wi-Fi${regionalClause}. Enter your flight number and date to see if yours does.`,
+  };
+}
+
 const homePage: Handler = async (ctx) => {
   const { req, reader, tenant, site } = ctx;
   if (req.method !== "GET" && req.method !== "HEAD") return methodNotAllowed();
@@ -4251,16 +4337,23 @@ const homePage: Handler = async (ctx) => {
   const lastUpdated = reader.getLastUpdated();
   const fleetStats = reader.getFleetStats();
   const flightsByTail = groupEquippedFlightsByTail(starlink, reader.getUpcomingFlights());
+  const nowMs = Date.now();
+  const daily = isHub ? [] : reader.getDailyInstalls();
   // The same measured pace /install-rate publishes, so the two never disagree.
   const installsPerMonth = isHub
     ? null
     : computeInstallRate({
-        daily: reader.getDailyInstalls(),
+        daily,
         equipped: starlink.length,
         total,
         targets: [],
-        nowMs: Date.now(),
+        nowMs,
       }).paceMonthly;
+  const perAirlineStats = reader.getPerAirlineStats();
+  // Momentum clause for the stat sentence: same source as the hub rows'
+  // "+N in the last 30 days".
+  const installs30d = isHub ? undefined : perAirlineStats[0]?.installs30d;
+  const weekly = isHub ? undefined : weeklyInstalls(daily, nowMs);
   const reactHtml = ReactDOMServer.renderToString(
     React.createElement(Page, {
       total,
@@ -4270,12 +4363,11 @@ const homePage: Handler = async (ctx) => {
       site,
       content,
       airlineByTail: reader.getAirlineByTail(),
-      perAirlineStats: isHub ? reader.getPerAirlineStats() : undefined,
+      perAirlineStats: isHub ? perAirlineStats : undefined,
       recentInstalls: isHub ? reader.getRecentInstalls(15, 5) : undefined,
-      // Momentum clause for the citable stat sentence — same source as the
-      // hub cards' "+N in the last 30 days".
-      installs30d: isHub ? undefined : reader.getPerAirlineStats()[0]?.installs30d,
+      installs30d,
       installsPerMonth,
+      weeklyInstalls: weekly,
       flightsByTail,
       airportDepartures: reader.getAirportDepartures(),
       showPassengerBanner: isPassengerVerifyAudience(ctx.onStarlinkIp, site.scope),
@@ -4285,6 +4377,18 @@ const homePage: Handler = async (ctx) => {
       hubLinks: isHub ? hubHomeLinks(ctx) : undefined,
     })
   );
+  // Page applies date overrides that never change counts, so the JSON-LD
+  // answers render from the same numbers the body shows.
+  const stats = buildContentStats({
+    starlinkCount: starlink.length,
+    totalCount: total,
+    fleetStats,
+    installsPerMonth,
+    installs30d,
+    weeklyInstalls: weekly,
+    lastUpdated,
+    perAirline: isHub ? perAirlineStats : undefined,
+  });
 
   const template = await getHtmlTemplate();
   const baseVars = buildBaseTemplateVars(ctx, reactHtml, "/", {
@@ -4293,17 +4397,25 @@ const homePage: Handler = async (ctx) => {
     starlinkCount: starlink.length,
     lastUpdated,
   });
+  const meta = homeMeta(site, stats);
+  const pageVars = meta
+    ? {
+        ...meta,
+        webPageJsonLd: sitePageJsonLd(site, {
+          path: "/",
+          name: meta.siteTitle,
+          description: meta.siteDescription,
+          isoDate: stampedIso(reader.getLastUpdatedRaw()),
+        }),
+      }
+    : {};
   return new Response(
     renderHtml(
       template,
       withClampedMeta({
         ...baseVars,
-        faqJsonLd: renderHtml(buildFaqJsonLd(content, baseVars.currentDate), {
-          ...baseVars,
-          installPaceSentence: installsPerMonth
-            ? `About ${Math.round(installsPerMonth)} installs a month. `
-            : "",
-        }),
+        ...pageVars,
+        faqJsonLd: faqJsonLd(allFaqEntries(content), stats, stampedIso(reader.getLastUpdatedRaw())),
       })
     ),
     { headers: SECURITY_HEADERS.html }

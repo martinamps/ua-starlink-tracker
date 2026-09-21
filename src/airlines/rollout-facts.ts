@@ -301,7 +301,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     status: "installing",
     statusLabel: "Installing",
     summary:
-      "53 aircraft connected as of September 2026, adding about 14 a month since installs began in November 2025, toward all 232 777s and A380s by mid-2027. Free in every cabin, no login.",
+      "53 aircraft connected as of September 2026, now installing about 14 a month, toward all 232 777s and A380s by mid-2027. Installs began in November 2025. Free in every cabin, no login.",
     facts: [
       {
         fact: "Emirates began Starlink installs on its Boeing 777s in November 2025 and will equip its entire in-service fleet of 232 777s and A380s by mid-2027, at roughly 14 aircraft per month, with installation on the A380 fleet commencing in February 2026. Access is free in all cabins with no payment or Skywards login required.",
@@ -583,7 +583,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     shortName: "WestJet",
     iata: "WS",
     status: "installing",
-    statusLabel: "737 fleet nearly done",
+    statusLabel: "Installing",
     summary:
       "The 100th equipped 737 was celebrated in October 2025 — the world's largest Starlink-equipped 737 fleet — with 787 installs due to finish by the end of 2026. Free for WestJet Rewards members via TELUS.",
     facts: [

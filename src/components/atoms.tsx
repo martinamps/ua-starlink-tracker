@@ -1,8 +1,17 @@
 import React from "react";
-import { SITES, type SiteConfig, airlineHomeUrl, liveAirlineSites } from "../airlines/registry";
+import {
+  AIRLINES,
+  type AirlineConfig,
+  SITES,
+  type SiteConfig,
+  airlineHomeUrl,
+  liveAirlineSites,
+  wifiPhaseFamilies,
+} from "../airlines/registry";
+import type { RolloutFactsStatus } from "../airlines/rollout-facts";
 import type { PopularFlight } from "../database/database";
-import type { RecentInstall } from "../types";
-import type { Aircraft, PerAirlineStat } from "../types";
+import type { PerAirlineStat, RecentInstall } from "../types";
+import { denominatorIsPublishable } from "../utils/share-cards";
 
 export type { PerAirlineStat };
 
@@ -144,159 +153,167 @@ export function PopularFlightsLinks({
         ))}
       </div>
       <p className="text-xs text-muted mt-4 leading-snug">
-        The most-observed {airlineName} flight numbers in the tracker. Each page carries that
-        flight's Starlink record, its routes, and a live check by date.
+        The {airlineName} flights we see most. Each shows its Starlink history and a check by date.
       </p>
     </div>
   );
 }
 
-/**
- * Hub status cards — one per airline, equal-height grid. % is over the FULL
- * fleet so a viewer can read it as "odds on a random flight"; the status pill
- * + prose explain the nuance (HA at 69% but Complete: 717s won't get it).
- */
 export const STATUS_TONE = {
   complete: { color: "#3fb950", bg: "rgba(63,185,80,.12)" },
   phase_done: { color: "#d4a72c", bg: "rgba(212,167,44,.12)" },
   in_progress: { color: "#58a6ff", bg: "rgba(88,166,255,.12)" },
 } as const;
 
-export function AirlineStatusCards({ stats }: { stats: PerAirlineStat[] }) {
-  const ranked = [...stats]
-    .map((a) => {
-      // `total`, not fleetTotal — see fleetShare in airlines-page: the hub must
-      // quote the same denominator the airline's own tracker publishes.
-      const fleet = a.total;
-      return { ...a, fleet, pct: fleet > 0 ? (a.starlink / fleet) * 100 : 0 };
-    })
-    .sort((a, b) => b.pct - a.pct);
+/**
+ * One status vocabulary for every airline on the hub, /airlines and /compare.
+ * The registry's free-text labels ("Regional fleet done", "Widebodies nearly
+ * done") stay on detail pages; lists and tables speak only these words.
+ */
+export type Stage =
+  | "Announced"
+  | "Trial"
+  | "Installing"
+  | "Mostly done"
+  | "Complete"
+  | "Not Starlink";
 
-  const r = 30;
-  const c = 2 * Math.PI * r;
+const STAGE_TONE: Record<Stage, { color: string; bg: string }> = {
+  Announced: STATUS_TONE.phase_done,
+  Trial: { color: "#a78bfa", bg: "rgba(167,139,250,.12)" },
+  Installing: STATUS_TONE.in_progress,
+  "Mostly done": STATUS_TONE.in_progress,
+  Complete: STATUS_TONE.complete,
+  "Not Starlink": { color: "#f47067", bg: "rgba(244,112,103,.12)" },
+};
 
+export interface StageInfo {
+  stage: Stage;
+  /** The stage, qualified where it covers only part of the fleet: "Complete (Airbus fleet)". */
+  label: string;
+}
+
+// Where a finished programme deliberately leaves types out, the stage names
+// what was finished rather than implying the whole fleet.
+const COMPLETE_SCOPE: Partial<Record<string, string>> = { HA: "Airbus fleet" };
+
+export function completeScope(code: string | undefined): string | undefined {
+  return code ? COMPLETE_SCOPE[code] : undefined;
+}
+
+/** Can this airline's equipped/total ratio be published? Same rule the share
+ * card and /badge.svg follow, so no surface quotes a share another refuses. */
+export function shareIsPublishable(cfg: AirlineConfig, stat: PerAirlineStat): boolean {
+  return denominatorIsPublishable(stat.starlink, stat.total, cfg.rollout.rosterIsProgramScope);
+}
+
+export function trackedStage(cfg: AirlineConfig, stat: PerAirlineStat): StageInfo {
+  if (shareIsPublishable(cfg, stat)) {
+    const share = stat.starlink / stat.total;
+    const stage: Stage = share >= 1 ? "Complete" : share >= 0.6 ? "Mostly done" : "Installing";
+    return { stage, label: stage };
+  }
+  const stage: Stage =
+    cfg.rollout.status === "complete"
+      ? "Complete"
+      : cfg.rollout.status === "phase_done"
+        ? "Mostly done"
+        : "Installing";
+  const scope = stage === "Complete" ? COMPLETE_SCOPE[cfg.code] : undefined;
+  return { stage, label: scope ? `${stage} (${scope})` : stage };
+}
+
+export function factsStage(status: RolloutFactsStatus): StageInfo {
+  const stage: Stage = {
+    announced: "Announced",
+    trial: "Trial",
+    installing: "Installing",
+    complete: "Complete",
+    not_starlink: "Not Starlink",
+  }[status] as Stage;
+  return { stage, label: stage };
+}
+
+export function StagePill({ info }: { info: StageInfo }) {
+  const tone = STAGE_TONE[info.stage];
   return (
-    <section>
-      <div className="text-xs font-mono text-muted uppercase tracking-wider mb-2">
-        Where each rollout stands
-      </div>
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {ranked.map((a) => {
-          const tone = STATUS_TONE[a.status ?? "in_progress"];
-          return (
-            <a
-              key={a.code}
-              href={a.href || "#"}
-              className="group relative bg-surface border border-subtle rounded-xl overflow-hidden flex flex-col hover:border-accent transition-all hover:-translate-y-0.5"
-              style={{
-                boxShadow: "inset 0 1px 0 0 rgba(255,255,255,.03)",
-              }}
-            >
-              {/* Accent top edge */}
-              <div
-                className="h-[3px] w-full"
-                style={{
-                  background: `linear-gradient(90deg, ${a.accentColor}, ${a.accentColor}40)`,
-                  boxShadow: `0 1px 8px ${a.accentColor}60`,
-                }}
-              />
-              {/* Subtle accent wash */}
-              <div
-                className="absolute inset-0 pointer-events-none opacity-[0.04]"
-                style={{
-                  background: `radial-gradient(circle at 0% 0%, ${a.accentColor}, transparent 60%)`,
-                }}
-              />
+    <span
+      className="shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium"
+      style={{ color: tone.color, background: tone.bg }}
+    >
+      {info.label}
+    </span>
+  );
+}
 
-              <div className="relative p-4 flex flex-col gap-3">
-                {/* Header: chip + name + status pill */}
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span
-                      className="font-mono text-xs px-1.5 py-0.5 rounded shrink-0"
-                      style={{
-                        color: a.accentText ?? a.accentColor,
-                        background: `color-mix(in srgb, ${a.accentColor} 18%, transparent)`,
-                      }}
-                    >
-                      {a.code}
-                    </span>
-                    <span className="font-display text-sm text-primary truncate group-hover:text-accent transition-colors">
-                      {a.name}
-                    </span>
-                  </div>
-                  <span
-                    className="font-mono text-xs uppercase tracking-wide px-2 py-1 rounded-full shrink-0"
-                    style={{ color: tone.color, background: tone.bg }}
-                  >
-                    {a.statusLabel ?? "In progress"}
-                  </span>
+/** How an airline's Starlink status is decided: per aircraft, by aircraft
+ * type, or from a community-curated list. Only "tail" earns "plane by plane". */
+export function trackingMethod(cfg: AirlineConfig): "tail" | "type" | "community" {
+  if (cfg.communitySource) return "community";
+  return wifiPhaseFamilies(cfg.code) ? "type" : "tail";
+}
+
+/**
+ * One row per tracked airline: name, standard stage, and a bar where the
+ * fleet share is publishable. Where it isn't (the roster counts types the
+ * programme excludes) the row gives the count and the airline's own note, never
+ * a ratio that would make a finished rollout look two-thirds done.
+ */
+export function AirlineProgressList({ stats }: { stats: PerAirlineStat[] }) {
+  const rows = stats
+    .map((stat) => ({ stat, cfg: AIRLINES[stat.code] }))
+    .filter((r): r is { stat: PerAirlineStat; cfg: AirlineConfig } => Boolean(r.cfg))
+    .sort((a, b) => b.stat.starlink - a.stat.starlink);
+  return (
+    <ul className="divide-y divide-subtle">
+      {rows.map(({ stat, cfg }) => {
+        const publishable = shareIsPublishable(cfg, stat);
+        const share = publishable ? Math.min(100, (stat.starlink / stat.total) * 100) : 0;
+        return (
+          <li key={cfg.code} className="py-3 first:pt-0 last:pb-0">
+            <div className="flex items-center justify-between gap-3">
+              <a
+                href={stat.href || "#"}
+                className="font-display text-base text-primary hover:text-accent transition-colors"
+              >
+                {cfg.name}
+              </a>
+              <StagePill info={trackedStage(cfg, stat)} />
+            </div>
+            {publishable ? (
+              <div className="mt-2 grid grid-cols-[1fr_auto] items-center gap-3">
+                <div
+                  className="h-2 overflow-hidden rounded-full bg-surface-elevated"
+                  role="img"
+                  aria-label={`${cfg.name}: ${stat.starlink.toLocaleString("en-US")} of ${stat.total.toLocaleString("en-US")} aircraft (${Math.round(share)}%)`}
+                >
+                  <div
+                    className="h-full rounded-full"
+                    style={{ width: `${share}%`, background: stat.accentText ?? stat.accentColor }}
+                  />
                 </div>
-
-                {/* Hero: ring + counts */}
-                <div className="flex items-center gap-4">
-                  <div className="relative w-[72px] h-[72px] shrink-0">
-                    <svg
-                      width="72"
-                      height="72"
-                      viewBox="0 0 72 72"
-                      className="-rotate-90"
-                      role="img"
-                      aria-label={`${a.name} ${Math.round(a.pct)}% Starlink`}
-                    >
-                      <circle cx="36" cy="36" r={r} stroke="#1d2536" strokeWidth="7" fill="none" />
-                      <circle
-                        cx="36"
-                        cy="36"
-                        r={r}
-                        stroke={a.accentText ?? a.accentColor}
-                        strokeWidth="7"
-                        fill="none"
-                        strokeLinecap="round"
-                        strokeDasharray={c}
-                        strokeDashoffset={c * (1 - Math.min(100, a.pct) / 100)}
-                        style={{ filter: `drop-shadow(0 0 5px ${a.accentColor}90)` }}
-                      />
-                    </svg>
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <span className="font-mono text-lg font-semibold text-primary">
-                        {Math.round(Math.min(100, a.pct))}
-                        <span className="text-xs text-muted">%</span>
-                      </span>
-                    </div>
-                  </div>
-                  <div className="flex flex-col gap-1 min-w-0">
-                    <div className="font-mono text-2xl font-semibold text-primary leading-none">
-                      {a.starlink}
-                      <span className="text-sm text-muted font-normal"> / {a.fleet}</span>
-                    </div>
-                    <div className="font-mono text-xs text-muted uppercase tracking-wider">
-                      aircraft equipped
-                    </div>
-                    {(a.installs30d ?? 0) > 0 ? (
-                      <div className="font-mono text-xs mt-1" style={{ color: tone.color }}>
-                        +{a.installs30d} in the last 30 days
-                      </div>
-                    ) : (
-                      <div className="font-mono text-xs text-muted mt-1">
-                        {a.status === "complete" ? "rollout finished" : "—"}
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Prose */}
-                {a.phaseNote && (
-                  <p className="text-xs text-secondary leading-snug border-t border-subtle pt-2.5 mt-auto">
-                    {a.phaseNote}
-                  </p>
-                )}
+                <span className="text-sm text-secondary tabular-nums whitespace-nowrap">
+                  {stat.starlink.toLocaleString("en-US")} of {stat.total.toLocaleString("en-US")} ·{" "}
+                  {Math.round(share)}%
+                </span>
               </div>
-            </a>
-          );
-        })}
-      </div>
-    </section>
+            ) : (
+              <p className="mt-1 text-sm text-secondary">
+                <strong className="font-semibold text-primary tabular-nums">
+                  {stat.starlink.toLocaleString("en-US")}
+                </strong>{" "}
+                aircraft with Starlink. {stat.phaseNote}
+              </p>
+            )}
+            {(stat.installs30d ?? 0) > 0 && (
+              <p className="mt-1 text-xs text-muted">
+                +{(stat.installs30d ?? 0).toLocaleString("en-US")} in the last 30 days
+              </p>
+            )}
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 
@@ -348,6 +365,7 @@ export function RecentInstallsFeed({
                       {new Date(r.DateFound).toLocaleDateString("en-US", {
                         month: "short",
                         day: "numeric",
+                        timeZone: "UTC",
                       })}
                     </span>
                   </a>
@@ -473,149 +491,6 @@ export function RouteComparePanel() {
   );
 }
 
-export const PIE_COLORS = ["#0ea5e9", "#22c55e", "#f59e0b", "#8b5cf6", "#ec4899", "#06b6d4"];
-
-export function StatRing({
-  label,
-  pct,
-  starlink,
-  total,
-  color = "#0ea5e9",
-  variant = "default",
-}: {
-  label: string;
-  pct: number;
-  starlink: number;
-  total: number;
-  color?: string;
-  variant?: "default" | "total";
-}) {
-  const isTotal = variant === "total";
-  return (
-    <div className="bg-surface p-4 flex flex-col justify-center text-center">
-      <div className="text-xs font-mono text-muted uppercase tracking-wider mb-2">{label}</div>
-      <div className="relative w-20 h-20 mx-auto mb-2">
-        <svg className="w-20 h-20 transform -rotate-90" role="img" aria-label={`${label} progress`}>
-          <circle cx="40" cy="40" r="34" stroke="#243044" strokeWidth="6" fill="none" />
-          <circle
-            cx="40"
-            cy="40"
-            r="34"
-            stroke={color}
-            strokeWidth="6"
-            fill="none"
-            strokeDasharray={`${2 * Math.PI * 34}`}
-            strokeDashoffset={`${2 * Math.PI * 34 * (1 - pct / 100)}`}
-            className="transition-all duration-1000 ease-out"
-            strokeLinecap={isTotal ? "round" : "inherit"}
-            style={{ filter: `drop-shadow(0 0 6px ${color}80)` }}
-          />
-        </svg>
-        <div className="absolute inset-0 flex items-center justify-center">
-          <span
-            className={`font-mono text-xl font-semibold ${isTotal ? "text-green-400" : "text-primary"}`}
-          >
-            {isTotal ? Math.round(pct) : pct.toFixed(0)}%
-          </span>
-        </div>
-      </div>
-      <div className="font-mono text-xs text-secondary">
-        <span className={isTotal ? "text-green-400" : "text-accent"}>{starlink}</span>
-        <span className="text-muted"> / {total}</span>
-      </div>
-    </div>
-  );
-}
-
-export interface ModelDatum {
-  model: string;
-  count: number;
-}
-
-export function computeModelBreakdown(starlinkData: Aircraft[]): ModelDatum[] {
-  const counts: Record<string, number> = {};
-  for (const p of starlinkData) {
-    const base = (p.Aircraft || "Unknown").split(/[-\s]/)[0];
-    counts[base] = (counts[base] || 0) + 1;
-  }
-  return Object.entries(counts)
-    .sort((a, b) => b[1] - a[1])
-    .map(([model, count]) => ({ model, count }));
-}
-
-export function ModelPie({ data, total }: { data: ModelDatum[]; total: number }) {
-  return (
-    <div className="bg-surface p-4 flex flex-col justify-center text-center">
-      <div className="text-xs font-mono text-muted uppercase tracking-wider mb-2">
-        Starlink jets by type
-      </div>
-      <div className="relative w-20 h-20 mx-auto mb-2" id="pie-chart-container">
-        <svg
-          className="w-20 h-20"
-          viewBox="0 0 80 80"
-          role="img"
-          aria-label="Aircraft types pie chart"
-        >
-          <circle cx="40" cy="40" r="34" stroke="#243044" strokeWidth="6" fill="none" />
-          {(() => {
-            const sum = data.reduce((s, d) => s + d.count, 0);
-            const oR = 37;
-            const iR = 31;
-            let angle = -90;
-            return data.map((item, idx) => {
-              const slice = (item.count / sum) * 360;
-              const sA = angle;
-              const eA = angle + slice;
-              angle = eA;
-              const sR = (sA * Math.PI) / 180;
-              const eR = (eA * Math.PI) / 180;
-              const ox1 = 40 + oR * Math.cos(sR);
-              const oy1 = 40 + oR * Math.sin(sR);
-              const ox2 = 40 + oR * Math.cos(eR);
-              const oy2 = 40 + oR * Math.sin(eR);
-              const ix1 = 40 + iR * Math.cos(sR);
-              const iy1 = 40 + iR * Math.sin(sR);
-              const ix2 = 40 + iR * Math.cos(eR);
-              const iy2 = 40 + iR * Math.sin(eR);
-              const large = slice > 180 ? 1 : 0;
-              const pct = ((item.count / sum) * 100).toFixed(0);
-              const d = `M ${ox1} ${oy1} A ${oR} ${oR} 0 ${large} 1 ${ox2} ${oy2} L ${ix2} ${iy2} A ${iR} ${iR} 0 ${large} 0 ${ix1} ${iy1} Z`;
-              return (
-                <path
-                  key={item.model}
-                  d={d}
-                  fill={PIE_COLORS[idx % PIE_COLORS.length]}
-                  className="pie-slice transition-opacity duration-200 hover:opacity-70 cursor-pointer"
-                  style={{
-                    filter: `drop-shadow(0 0 3px ${PIE_COLORS[idx % PIE_COLORS.length]}40)`,
-                  }}
-                  data-model={item.model}
-                  data-count={item.count}
-                  data-pct={pct}
-                />
-              );
-            });
-          })()}
-        </svg>
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-          <span id="pie-center-text" className="font-mono text-xl font-semibold text-primary">
-            {data[0]?.count || total}
-          </span>
-        </div>
-      </div>
-      <div id="pie-status" className="h-4 flex items-center justify-center text-xs font-mono">
-        <span id="pie-status-label">
-          <span className="text-accent">{data[0]?.model || "—"}</span>
-          <span className="text-muted">
-            {" "}
-            · {data[0] ? Math.round((data[0].count / total) * 100) : 0}%
-          </span>
-        </span>
-      </div>
-    </div>
-  );
-}
-
 export function TypeBreakdownRow({
   type,
   count,
@@ -640,7 +515,7 @@ export function TypeBreakdownRow({
       ? "Starlink"
       : status === "pending"
         ? note || "Planned"
-        : note || "No WiFi";
+        : note || "No Wi-Fi";
   return (
     <div className="flex items-center justify-between py-3 px-4 border-b border-subtle last:border-0">
       <div className="flex items-center gap-3">

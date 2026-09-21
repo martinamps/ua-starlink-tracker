@@ -1179,7 +1179,9 @@ describe("SEO meta", () => {
   test("homepage <title> embeds the live count and has no unresolved {{vars}}", async () => {
     const html = await getHtml("/");
     const title = html.match(/<title>([^<]+)<\/title>/)?.[1] ?? "";
-    expect(title).toMatch(/\d+ Aircraft/);
+    // The live answer, e.g. "United Starlink Tracker: 584 of 1,659 Planes Have Starlink".
+    expect(title).toMatch(/^United Starlink Tracker: [\d,]+ of [\d,]+ Planes/);
+    expect(title.length).toBeLessThanOrEqual(60);
     expect(title).not.toContain("{{");
     expect(html).not.toContain("{{starlinkCount}}");
     expect(html).not.toContain("{{totalAircraftCount}}");

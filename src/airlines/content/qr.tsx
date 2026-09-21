@@ -1,50 +1,52 @@
 import React from "react";
-import { ModelPie, StatRing, computeModelBreakdown } from "../../components/atoms";
+import { fmt } from "../../components/layout";
 import type { AirlineContent, HeroProps } from "./index";
 
-const QRHero = ({ stats, starlinkData }: HeroProps) => {
-  const { starlinkCount, totalCount, percentage } = stats;
-  const modelData = computeModelBreakdown(starlinkData);
-  return (
-    <div className="relative grid grid-cols-1 sm:grid-cols-3 gap-px bg-subtle rounded-lg overflow-hidden mb-6 border border-subtle">
-      <StatRing
-        label="Fleet Progress"
-        pct={Number.parseFloat(percentage)}
-        starlink={starlinkCount}
-        total={totalCount}
-        color="#5c0632"
-      />
-      <div className="bg-surface px-4 py-6 flex flex-col items-center justify-center text-center">
-        <div className="text-xs font-mono text-muted uppercase tracking-wider">Status</div>
-        <div className="font-display text-2xl text-primary mt-2">777 + A350 done</div>
-        <div className="font-mono text-xs text-secondary mt-1">completed Dec 2025</div>
-        <div className="font-mono text-xs text-muted mt-3">787-8 done · 787-9 in progress</div>
+// No fleet percentage: the roster includes A380s, A330s, narrowbodies and
+// freighters the programme excludes (rosterIsProgramScope false), so a blended
+// share would understate a 777 passenger's odds and overstate an A380's.
+const QRHero = ({ stats, statSentence }: HeroProps) => (
+  <div className="relative mx-auto mb-8 w-full max-w-3xl">
+    {statSentence && <div className="mb-3">{statSentence}</div>}
+    <div className="grid grid-cols-1 gap-px overflow-hidden rounded-lg border border-subtle bg-subtle sm:grid-cols-2">
+      <div className="bg-surface p-5 text-center">
+        <div className="text-xs font-mono text-muted uppercase tracking-wider">
+          Aircraft with Starlink
+        </div>
+        <div className="font-display text-4xl text-primary mt-2 tabular-nums">
+          {fmt(stats.starlinkCount)}
+        </div>
+        <div className="text-xs text-secondary mt-1">
+          Counted by aircraft type. Qatar's own figure was 150 in August 2026.
+        </div>
       </div>
-      <ModelPie data={modelData} total={starlinkCount} />
+      <div className="bg-surface p-5 text-center">
+        <div className="text-xs font-mono text-muted uppercase tracking-wider">Status</div>
+        <div className="font-display text-2xl text-primary mt-2">777 and A350 done</div>
+        <div className="text-xs text-secondary mt-1">787-8 done · 787-9 installing</div>
+      </div>
     </div>
-  );
-};
+  </div>
+);
 
 export const content: AirlineContent = {
   headerStats: [
     <span key="free" className="text-green-400 font-semibold">
-      FREE
+      Free
     </span>,
     <span key="widebodies">
-      <span className="text-accent font-semibold">777 + A350</span> complete
+      <span className="text-accent font-semibold">777 and A350</span> complete
     </span>,
     <span key="787">
-      <span className="text-accent">787-9</span> rolling out
+      <span className="text-accent">787-9</span> installing
     </span>,
   ],
 
   intro: () => (
-    <p className="text-sm text-secondary leading-relaxed mb-3">
-      Qatar Airways has finished installing free Starlink WiFi on its entire Boeing 777 and Airbus
-      A350 passenger fleets — the rollout for both was completed in December 2025 — and on its
-      787-8s, and is now equipping the 787-9s. The A380, A330, narrowbody Airbus jets and freighters
-      are not part of the program.
-    </p>
+    <>
+      Qatar Airways has free Starlink Wi-Fi on every Boeing 777, Airbus A350 and 787-8, and is
+      fitting its 787-9s now. The A380, A330 and narrowbodies are not in the programme.
+    </>
   ),
 
   Hero: QRHero,
@@ -61,37 +63,26 @@ export const content: AirlineContent = {
           q: "Which Qatar Airways aircraft have Starlink?",
           a: () => (
             <p>
-              Qatar Airways reports its passenger <strong>Boeing 777</strong> and{" "}
-              <strong>Airbus A350</strong> fleets fully fitted with Starlink (both completed by
-              December 2025), and its <strong>Boeing 787-8</strong> fleet since August 2026. The{" "}
-              <strong>787-9</strong> fleet is being equipped now. The A380, A330, narrowbody
-              A320-family aircraft and freighters are not in the program.
+              Qatar Airways reports its passenger Boeing 777 and Airbus A350 fleets fully fitted
+              (both finished by December 2025) and its Boeing 787-8 fleet since August 2026. The
+              787-9 fleet is being fitted now. The A380, A330, A320-family narrowbodies and
+              freighters are not in the programme.
             </p>
           ),
-          ld: "Qatar Airways reports its passenger Boeing 777 and Airbus A350 fleets fully fitted with Starlink (both completed by December 2025) and its 787-8 fleet since August 2026. The 787-9 fleet is mid-installation. The A380, A330, A320-family narrowbodies and freighters are not in the program.",
         },
         {
-          q: "Is Qatar Airways' Starlink WiFi free?",
-          a: () => (
-            <p>
-              Yes — free for every passenger, gate-to-gate, with no purchase or loyalty status
-              required.
-            </p>
-          ),
-          ld: "Yes. Qatar Airways' Starlink WiFi is free for every passenger, gate-to-gate, with no purchase required.",
+          q: "Is Qatar Airways' Starlink Wi-Fi free?",
+          a: () => <p>Yes, free for every passenger, gate to gate, with no purchase required.</p>,
         },
         {
           q: "Does my Qatar Airways flight have Starlink?",
           a: () => (
             <p>
-              It depends on the aircraft type scheduled for your flight. Qatar reports its 777, A350
-              and 787-8 fleets fully fitted, so those are a yes. 787-9 installs are under way (due
-              end-2026), so a 787-9 may or may not have it yet. The A380, A330 and narrowbodies are
-              not in the program. Check your flight number and date to see the scheduled aircraft
-              type.
+              It depends on the aircraft type. A 777, A350 or 787-8 has it. A 787-9 may or may not
+              yet; Qatar expects to finish them by the end of 2026. The A380, A330 and narrowbodies
+              don't. Check your flight number and date to see the scheduled type.
             </p>
           ),
-          ld: "Qatar reports its 777, A350 and 787-8 fleets fully fitted with Starlink. 787-9 installs are under way, due end-2026. The A380, A330 and narrowbodies are not in the program. Check your flight number and date for the scheduled aircraft type.",
         },
       ],
     },
@@ -102,14 +93,13 @@ export const content: AirlineContent = {
           q: "How is this data collected?",
           a: () => (
             <p>
-              Fleet roster from public aviation data; per-flight equipment from Qatar Airways'
-              flight-status systems on selected routes. Qatar publishes the aircraft type about a
-              week ahead, so dates inside that window are answered from the published schedule.
-              Further out, the answer is a conservative estimate from the aircraft types that flight
-              number has flown on recent operating days.
+              The fleet roster comes from public aviation data, and per-flight aircraft types from
+              Qatar Airways' flight-status systems on selected routes. Qatar publishes the aircraft
+              type about a week ahead, so dates inside that window use the published schedule.
+              Further out, the answer is a conservative estimate from the types that flight number
+              has flown recently.
             </p>
           ),
-          ld: "Fleet roster from public aviation data; per-flight equipment from Qatar Airways' flight-status systems on selected routes. Dates about a week out are answered from the published aircraft type; further out, from the aircraft types the flight number has flown recently.",
         },
       ],
     },
