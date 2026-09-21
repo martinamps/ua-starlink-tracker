@@ -116,7 +116,7 @@ export async function syncShipNumbers(deps: {
   if (status === "error") {
     throw new Error(`Ship number sync failed: ${summary}`);
   }
-  setMeta(db, SHIP_NUMBERS_SYNCED_AT, new Date().toISOString());
+  setMeta(db, SHIP_NUMBERS_SYNCED_AT, new Date().toISOString(), "UA");
   info(`Ship number sync ${status}: ${summary}`);
   return { status, ...counts };
 }

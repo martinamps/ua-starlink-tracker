@@ -30,8 +30,8 @@ export interface AdsbFlightSighting {
 }
 
 /** Sightings of one (flight, tail) closer than this are the same departure. */
-export const ADSB_DRAW_MERGE_GAP_SEC = 4 * 3600;
-export const ADSB_FLIGHT_DRAW_RETENTION_DAYS = 90;
+const ADSB_DRAW_MERGE_GAP_SEC = 4 * 3600;
+const ADSB_FLIGHT_DRAW_RETENTION_DAYS = 90;
 
 export function ensureAdsbFlightDrawsTable(db: Database): void {
   db.exec(`

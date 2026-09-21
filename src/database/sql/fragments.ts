@@ -103,7 +103,7 @@ export function cleanAirportPairSql(origin: string, destination: string): string
 }
 
 /** The sheet's two spellings of Starlink: express tabs say StrLnk, mainline Starlink. */
-export const SHEET_STARLINK_WIFI = ["StrLnk", "Starlink"] as const;
+const SHEET_STARLINK_WIFI = ["StrLnk", "Starlink"] as const;
 
 /** `<column> IN ('StrLnk', 'Starlink')` — literals, the vocabulary is fixed. */
 export function sheetSaysStarlink(column = "wifi"): string {

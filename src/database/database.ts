@@ -931,7 +931,7 @@ export function updateDatabase(
   totalAircraftCount: number,
   starlinkAircraft: Partial<Aircraft>[],
   fleetStats: FleetStats,
-  airline = "UA"
+  airline: string
 ): string | null {
   const existingSheetRows = (
     db
@@ -1143,7 +1143,7 @@ export function updateDatabase(
   return null;
 }
 
-export function getMeta(db: Database, key: string, airline = "UA"): string | null {
+export function getMeta(db: Database, key: string, airline: string): string | null {
   const namespaced = db
     .query("SELECT value FROM meta WHERE key = ?")
     .get(`${airline}:${key}`) as MetaRow | null;
@@ -1152,7 +1152,7 @@ export function getMeta(db: Database, key: string, airline = "UA"): string | nul
   return bare?.value ?? null;
 }
 
-export function setMeta(db: Database, key: string, value: string | number, airline = "UA"): void {
+export function setMeta(db: Database, key: string, value: string | number, airline: string): void {
   db.query("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)").run(
     `${airline}:${key}`,
     String(value)
@@ -1213,22 +1213,17 @@ export function refreshFleetMeta(db: Database, airline: string): void {
   stampLastUpdated(db, airline, "fleet-meta");
 }
 
-export function getTotalCount(db: Database, airline = "UA"): number {
+export function getTotalCount(db: Database, airline: string): number {
   const v = getMeta(db, "totalAircraftCount", airline);
   return v ? Number.parseInt(v, 10) : 0;
 }
 
-export function getMetaValue(
-  db: Database,
-  key: string,
-  defaultValue: number,
-  airline?: string
-): number {
+function getMetaValue(db: Database, key: string, defaultValue: number, airline: string): number {
   const v = getMeta(db, key, airline);
   return v ? Number.parseFloat(v) : defaultValue;
 }
 
-export function getLastUpdated(db: Database, airline = "UA"): string {
+export function getLastUpdated(db: Database, airline: string): string {
   return getMeta(db, "lastUpdated", airline) ?? new Date().toISOString();
 }
 
@@ -1576,7 +1571,7 @@ export function getAllStarlinkPlanes(db: Database, airline?: AirlineFilter): Air
   return db.query(`${q.sql} ORDER BY DateFound DESC`).all(...q.params) as Aircraft[];
 }
 
-export function getFleetStats(db: Database, airline = "UA"): FleetStats {
+export function getFleetStats(db: Database, airline: string): FleetStats {
   // Get totals from spreadsheet data (accurate for fleet size)
   const expressTotal = getMetaValue(db, "expressTotal", 0, airline);
   const mainlineTotal = getMetaValue(db, "mainlineTotal", 0, airline);
@@ -2215,7 +2210,7 @@ export interface SitemapFlight {
  * (United sitemap ~4.5k check-flight locs, 29 GSC warnings). Pages still
  * serve via flightNumberHasData; we only stop advertising the long tail.
  */
-export const SITEMAP_FLIGHT_MIN_SEEN = 3;
+const SITEMAP_FLIGHT_MIN_SEEN = 3;
 
 /**
  * Minimum SUM(seen_count) across a directed airport pair (or presence in the
@@ -2223,7 +2218,7 @@ export const SITEMAP_FLIGHT_MIN_SEEN = 3;
  * valuable indexable routes while dropping sparse parameterized planner URLs
  * (United ~2.2k route-planner locs at 0.27% CTR on the tool itself).
  */
-export const SITEMAP_ROUTE_MIN_SEEN = 5;
+const SITEMAP_ROUTE_MIN_SEEN = 5;
 
 /**
  * Flight numbers with real data behind /check-flight/{fn} worth advertising —
@@ -3472,7 +3467,7 @@ export function getNextAlaskaVerifyTarget(
   } | null;
 }
 
-export const ALASKA_VERIFY_THRESHOLD_HOURS = 168;
+const ALASKA_VERIFY_THRESHOLD_HOURS = 168;
 
 export function getNextFlightForTail(
   db: Database,
@@ -3538,50 +3533,6 @@ export function touchFleetVerifiedAt(db: Database, tail: string): void {
 }
 
 /**
- * Get the last verification for a tail number from a specific source
- */
-export function getLastVerification(
-  db: Database,
-  tailNumber: string,
-  source: VerificationSource
-): VerificationLogEntry | null {
-  const row = db
-    .query(`
-    SELECT * FROM starlink_verification_log
-    WHERE tail_number = ? AND source = ?
-    ORDER BY checked_at DESC
-    LIMIT 1
-  `)
-    .get(tailNumber, source) as {
-    id: number;
-    tail_number: string;
-    source: string;
-    checked_at: number;
-    has_starlink: number | null;
-    wifi_provider: string | null;
-    aircraft_type: string | null;
-    flight_number: string | null;
-    error: string | null;
-    airline: string;
-  } | null;
-
-  if (!row) return null;
-
-  return {
-    id: row.id,
-    tail_number: row.tail_number,
-    source: row.source as VerificationSource,
-    checked_at: row.checked_at,
-    has_starlink: row.has_starlink === null ? null : row.has_starlink === 1,
-    wifi_provider: row.wifi_provider,
-    aircraft_type: row.aircraft_type,
-    flight_number: row.flight_number,
-    error: row.error,
-    airline: row.airline,
-  };
-}
-
-/**
  * Check if a plane needs verification from a specific source
  * Uses jittered thresholds to distribute checks over time:
  * - United: 48-96 hours (centered on 72)
@@ -3630,77 +3581,6 @@ export function needsVerification(
     .get(tailNumber, source, cutoff) as { checked_at: number } | null;
 
   return !lastCheck;
-}
-
-/**
- * Get verification history for a tail number
- */
-export function getVerificationHistory(
-  db: Database,
-  tailNumber: string,
-  limit = 10
-): VerificationLogEntry[] {
-  const rows = db
-    .query(`
-    SELECT * FROM starlink_verification_log
-    WHERE tail_number = ?
-    ORDER BY checked_at DESC
-    LIMIT ?
-  `)
-    .all(tailNumber, limit) as Array<{
-    id: number;
-    tail_number: string;
-    source: string;
-    checked_at: number;
-    has_starlink: number | null;
-    wifi_provider: string | null;
-    aircraft_type: string | null;
-    flight_number: string | null;
-    error: string | null;
-    airline: string;
-  }>;
-
-  return rows.map((row) => ({
-    id: row.id,
-    tail_number: row.tail_number,
-    source: row.source as VerificationSource,
-    checked_at: row.checked_at,
-    has_starlink: row.has_starlink === null ? null : row.has_starlink === 1,
-    wifi_provider: row.wifi_provider,
-    aircraft_type: row.aircraft_type,
-    flight_number: row.flight_number,
-    error: row.error,
-    airline: row.airline,
-  }));
-}
-
-/**
- * Get planes that need United verification (haven't been checked in 72 hours)
- */
-export function getPlanesNeedingUnitedVerification(db: Database, limit = 10): string[] {
-  const now = unixNow();
-  const cutoff = now - 72 * 3600; // 72 hours ago
-
-  // Get planes that either:
-  // 1. Have never been verified by United
-  // 2. Were last verified more than 72 hours ago
-  const rows = db
-    .query(`
-    SELECT sp.TailNumber
-    FROM starlink_planes sp
-    LEFT JOIN (
-      SELECT tail_number, MAX(checked_at) as last_check
-      FROM starlink_verification_log
-      WHERE source = 'united'
-      GROUP BY tail_number
-    ) vl ON sp.TailNumber = vl.tail_number
-    WHERE vl.last_check IS NULL OR vl.last_check < ?
-    ORDER BY COALESCE(vl.last_check, 0) ASC
-    LIMIT ?
-  `)
-    .all(cutoff, limit) as { TailNumber: string }[];
-
-  return rows.map((r) => r.TailNumber);
 }
 
 /**
@@ -3779,7 +3659,7 @@ export interface WifiConsensus {
  * provider (Viasat, Panasonic, Thales, Gogo) can flip it negative. Tails with
  * no Starlink history (N786SK: 20× None) keep None as a real verdict.
  */
-export const DISCOUNT_UNITED_NONE_AFTER_STARLINK = true;
+const DISCOUNT_UNITED_NONE_AFTER_STARLINK = true;
 
 function isUnitedNoneObservation(o: {
   has_starlink: number;
@@ -4294,27 +4174,6 @@ export function clearMismatchVerifications(db: Database): number {
 }
 
 /**
- * Get planes that haven't been verified yet
- */
-export function getUnverifiedPlanes(db: Database, limit = 50): Aircraft[] {
-  return db
-    .query(`
-      SELECT
-        aircraft as Aircraft,
-        wifi as WiFi,
-        TailNumber,
-        OperatedBy,
-        DateFound,
-        fleet
-      FROM starlink_planes
-      WHERE verified_wifi IS NULL
-      ORDER BY DateFound DESC
-      LIMIT ?
-    `)
-    .all(limit) as Aircraft[];
-}
-
-/**
  * Get verification summary stats
  */
 export function getVerificationSummary(
@@ -4363,7 +4222,7 @@ export function getVerificationSummary(
  * Calculate discovery priority for an aircraft
  * Higher priority = check sooner
  */
-export function calculateDiscoveryPriority(
+function calculateDiscoveryPriority(
   aircraftType: string | null,
   starlinkStatus: StarlinkStatus,
   tailNumber: string
@@ -4393,9 +4252,9 @@ export function upsertFleetAircraft(
   tailNumber: string,
   aircraftType: string | null,
   source: FleetSource,
-  fleet = "unknown",
-  operatedBy: string | null = null,
-  airline = "UA",
+  fleet: string,
+  operatedBy: string | null,
+  airline: string,
   // Seed verdicts settle starlink_status without the verifier loop. Applied on
   // insert only — re-runs do NOT clobber an existing status (avoids the
   // documented starlink_status tug-of-war between writers). Evidence tiers:
@@ -4492,7 +4351,11 @@ export function upsertFleetAircraft(
 /**
  * Get next planes to verify based on priority and scheduling
  */
-export function getNextPlanesToVerify(db: Database, limit = 10, airline = "UA"): FleetAircraft[] {
+export function getNextPlanesToVerify(
+  db: Database,
+  limit: number,
+  airline: string
+): FleetAircraft[] {
   const now = unixNow();
 
   return db
@@ -4616,7 +4479,7 @@ export function updateFleetVerificationResult(
  * Sync planes from starlink_planes table to united_fleet
  * Marks spreadsheet planes as confirmed Starlink
  */
-export function syncSpreadsheetToFleet(db: Database): number {
+export function syncSpreadsheetToFleet(db: Database, airline: string): number {
   const now = unixNow();
   let synced = 0;
 
@@ -4624,9 +4487,9 @@ export function syncSpreadsheetToFleet(db: Database): number {
     .query(`
     SELECT TailNumber, aircraft, OperatedBy, fleet, verified_wifi
     FROM starlink_planes
-    WHERE airline = 'UA'
+    WHERE airline = ?
   `)
-    .all() as Array<{
+    .all(airline) as Array<{
     TailNumber: string;
     aircraft: string;
     OperatedBy: string;
@@ -4655,8 +4518,8 @@ export function syncSpreadsheetToFleet(db: Database): number {
     INSERT INTO united_fleet (
       tail_number, aircraft_type, first_seen_source, first_seen_at, last_seen_at,
       fleet, operated_by, starlink_status, verified_wifi, discovery_priority,
-      next_check_after
-    ) VALUES (?, ?, 'spreadsheet', ?, ?, ?, ?, ?, ?, ?, ?)
+      next_check_after, airline
+    ) VALUES (?, ?, 'spreadsheet', ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const safeType = (t: string | null): string | null => {
@@ -4712,7 +4575,8 @@ export function syncSpreadsheetToFleet(db: Database): number {
           insertStatus,
           plane.verified_wifi,
           priority,
-          now + 7 * 24 * 3600
+          now + 7 * 24 * 3600,
+          airline
         );
         synced++;
       }
@@ -4897,22 +4761,6 @@ export function getPendingFleetTails(
   return db.query(`${q.sql} ORDER BY verified_at ASC NULLS FIRST`).all(...q.params) as ReturnType<
     typeof getPendingFleetTails
   >;
-}
-
-/**
- * Get a fleet aircraft by tail number
- */
-export function getFleetAircraft(db: Database, tailNumber: string): FleetAircraft | null {
-  return db
-    .query("SELECT * FROM united_fleet WHERE tail_number = ?")
-    .get(tailNumber) as FleetAircraft | null;
-}
-
-/**
- * Get all fleet aircraft
- */
-export function getAllFleetAircraft(db: Database): FleetAircraft[] {
-  return db.query("SELECT * FROM united_fleet ORDER BY tail_number").all() as FleetAircraft[];
 }
 
 /**

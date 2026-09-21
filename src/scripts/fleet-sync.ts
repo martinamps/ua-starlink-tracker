@@ -232,7 +232,7 @@ export async function syncFromSpreadsheet(db: Database): Promise<{
 
   try {
     info("Starting spreadsheet sync to united_fleet...");
-    result.synced = syncSpreadsheetToFleet(db);
+    result.synced = syncSpreadsheetToFleet(db, "UA");
     result.success = true;
     info(`Spreadsheet sync complete: ${result.synced} new planes added to united_fleet`);
   } catch (err) {
