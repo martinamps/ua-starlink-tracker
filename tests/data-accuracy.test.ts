@@ -364,6 +364,19 @@ describe("route flight numbers need corroboration", () => {
     expect(fns).toEqual([{ flight_number: "AS832", times: 1, scheduled: 1 }]);
     db.close();
   });
+
+  test("a SkyWest-for-Alaska row lists under the Alaska number it is sold as", () => {
+    const db = makeSyntheticDb();
+    addPlane(db, "N195SY", "Starlink", { airline: "AS" });
+    addFlight(db, "N195SY", "OO3015", "ACV", NOW + 3600, { arrivalAirport: "SEA", airline: "AS" });
+    addFlight(db, "N195SY", "SKW3015", "ACV", NOW + 90000, {
+      arrivalAirport: "SEA",
+      airline: "AS",
+    });
+    const fns = getRouteFlightNumbers(db, "ACV", "SEA", "AS").flightNumbers;
+    expect(fns).toEqual([{ flight_number: "AS3015", times: 2, scheduled: 1 }]);
+    db.close();
+  });
 });
 
 describe("homepage list", () => {

@@ -2805,15 +2805,16 @@ export function getRouteFlightNumbers(
   const scope = slotScope(airline, true);
   const live = db
     .query(
-      `SELECT uf.flight_number, COUNT(*) AS times,
+      `SELECT uf.flight_number, uf.airline, COUNT(*) AS times,
               CAST(AVG(uf.arrival_time - uf.departure_time) AS INTEGER) AS duration_sec
        FROM upcoming_flights uf
        WHERE ${scope.sql} AND uf.departure_airport = ? AND uf.arrival_airport = ?
          AND uf.flight_number IS NOT NULL
-       GROUP BY uf.flight_number`
+       GROUP BY uf.flight_number, uf.airline`
     )
     .all(...scope.params, origin, destination) as Array<{
     flight_number: string;
+    airline: string;
     times: number;
     duration_sec: number | null;
   }>;
@@ -2841,7 +2842,11 @@ export function getRouteFlightNumbers(
     });
   };
   for (const r of cached) add(r.flight_number, r.times, 0, r.duration_sec);
-  for (const r of live) add(r.flight_number, r.times, 1, r.duration_sec);
+  // A live row knows its airline, so an operator code takes the number the
+  // row's airline sells (OO3015 on an Alaska row is AS3015), as slots do.
+  for (const r of live) {
+    add(slotFlightKey(r.flight_number, r.airline) ?? r.flight_number, r.times, 1, r.duration_sec);
+  }
   const flightNumbers = [...merged]
     .filter(
       ([fn, v]) => v.scheduled === 1 || (cfg !== undefined && historyCorroborated(cfg, fn, v))
