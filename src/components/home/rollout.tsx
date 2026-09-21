@@ -8,6 +8,7 @@ import type React from "react";
 import type { ContentStats } from "../../airlines/content";
 import { excludeMassWriteDays } from "../../utils/install-rate";
 import { StatInline, fmt, pct } from "../layout";
+import { Meter } from "../ui/meter";
 
 export interface RolloutSegment {
   label: string;
@@ -46,19 +47,15 @@ const SEGMENT_FILL = ["bg-[var(--color-accent)]", "bg-accent/50", "bg-accent/30"
 function StackedBar({ segments, total }: { segments: RolloutSegment[]; total: number }) {
   const label = segments.map((s) => `${s.label} ${fmt(s.n)}`).join(", ");
   return (
-    <div
-      className="flex h-3 w-full overflow-hidden rounded-full bg-surface-elevated"
-      role="img"
-      aria-label={`${label}, of ${fmt(total)} aircraft`}
-    >
-      {segments.map((s, i) => (
-        <div
-          key={s.label}
-          className={`h-full ${SEGMENT_FILL[i % SEGMENT_FILL.length]} ${i > 0 ? "border-l-2 border-surface" : ""}`}
-          style={{ width: `${total > 0 ? (s.n / total) * 100 : 0}%` }}
-        />
-      ))}
-    </div>
+    <Meter
+      size="lg"
+      label={`${label}, of ${fmt(total)} aircraft`}
+      segments={segments.map((s, i) => ({
+        key: s.label,
+        share: total > 0 ? s.n / total : 0,
+        className: `${SEGMENT_FILL[i % SEGMENT_FILL.length]} ${i > 0 ? "border-l-2 border-surface" : ""}`,
+      }))}
+    />
   );
 }
 
@@ -163,35 +160,32 @@ export function RolloutPanel({
   );
 }
 
-/** Top airports by Starlink departures, as bars scaled to the busiest. */
+/** Top airports by Starlink departures, as bars scaled to the busiest. One
+ * column where the list sits in a sidebar (/routes), two on the homepage. */
 export function AirportBars({
   rows,
   limit = 12,
+  columns = 2,
 }: {
   rows: { airport: string; count: number }[];
   limit?: number;
+  columns?: 1 | 2;
 }) {
   const top = rows.slice(0, limit);
   if (top.length === 0) return null;
   const max = top[0].count;
   return (
-    <ol className="grid gap-x-8 sm:grid-cols-2">
+    <ol className={columns === 2 ? "grid gap-x-8 sm:grid-cols-2" : ""}>
       {top.map((r) => (
         <li
           key={r.airport}
           className="grid grid-cols-[3rem_1fr_3.5rem] items-center gap-3 py-1.5 text-sm"
         >
           <span className="font-mono text-primary">{r.airport}</span>
-          <div
-            className="h-2 overflow-hidden rounded-full bg-surface-elevated"
-            role="img"
-            aria-label={`${r.airport}: ${fmt(r.count)} Starlink departures`}
-          >
-            <div
-              className="h-full rounded-full bg-[var(--color-accent)]"
-              style={{ width: `${max > 0 ? (r.count / max) * 100 : 0}%` }}
-            />
-          </div>
+          <Meter
+            share={max > 0 ? r.count / max : 0}
+            label={`${r.airport}: ${fmt(r.count)} Starlink departures`}
+          />
           <span className="text-right text-secondary tabular-nums">{fmt(r.count)}</span>
         </li>
       ))}

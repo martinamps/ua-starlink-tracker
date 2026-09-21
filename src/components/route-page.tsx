@@ -3,7 +3,7 @@ import { type SiteConfig, siteAirline } from "../airlines/registry";
 import type { RouteSummary } from "../database/database";
 import { airportTimezone } from "../utils/airport-tz";
 import type { PageLink } from "./atoms";
-import { PageHeader, PageShell, Section, Td, Th, aircraftName, fmt } from "./layout";
+import { Chip, PageHeader, PageShell, Section, Td, Th, aircraftName, fmt } from "./layout";
 import { formatDuration, monthDay, zonedDeparture } from "./ui/format";
 
 /** One physical Starlink departure on the pair, under its marketing number. */
@@ -72,9 +72,6 @@ export function routeVerdict(
   }
   return `No Starlink flights ${pair} in the ${route.windowLabel}. Aircraft are assigned about two days out.`;
 }
-
-const CHIP =
-  "text-sm px-2.5 py-1 rounded border border-subtle bg-surface-elevated text-secondary hover:border-accent hover:text-accent transition-colors whitespace-nowrap";
 
 function DeparturesTable({
   route,
@@ -164,9 +161,9 @@ function FlightNumbers({
           <h3 className="mb-2 text-sm text-secondary">In the schedule now</h3>
           <div className="flex flex-wrap gap-2">
             {scheduled.map((f) => (
-              <a key={f.flight_number} href={`/check-flight/${f.flight_number}`} className={CHIP}>
-                <span className="font-mono">{f.flight_number}</span>
-              </a>
+              <Chip key={f.flight_number} href={`/check-flight/${f.flight_number}`}>
+                {f.flight_number}
+              </Chip>
             ))}
           </div>
         </div>
@@ -176,15 +173,15 @@ function FlightNumbers({
           <h3 className="mb-2 text-sm text-secondary">Seen before</h3>
           <div className="flex flex-wrap gap-2">
             {history.map((f) => (
-              <a key={f.flight_number} href={`/check-flight/${f.flight_number}`} className={CHIP}>
-                <span className="font-mono">{f.flight_number}</span>
+              <Chip key={f.flight_number} href={`/check-flight/${f.flight_number}`}>
+                {f.flight_number}
                 {f.seen && (
-                  <span className="text-xs text-muted">
+                  <span className="font-sans text-xs text-muted">
                     {" "}
                     · last seen {monthDay(f.seen, nowSec)}
                   </span>
                 )}
-              </a>
+              </Chip>
             ))}
           </div>
         </div>

@@ -1,7 +1,8 @@
 import { TYPE_DISPLAY } from "../../airlines/aircraft-pages";
 import type { FleetMovement, FleetProgressRow, FleetProgressTailRow } from "../../types";
-import { EYEBROW, H2, PANEL, SECTION_WIDE, aircraftName, fmt, pct } from "../layout";
+import { EYEBROW, H2, PANEL, SECTION_WIDE, StatValue, aircraftName, fmt, pct } from "../layout";
 import { monthDay } from "../ui/format";
+import { Meter } from "../ui/meter";
 
 export type PipelineMap = Map<string, FleetProgressTailRow>;
 
@@ -122,24 +123,23 @@ export function PipelineBar({
     { n: queued, cls: "bar-queued", label: "queued" },
   ].filter((s) => s.n > 0);
   return (
-    <div
-      className="flex gap-px h-3 rounded overflow-hidden bg-surface-elevated mt-2"
-      role="img"
-      aria-label={
+    <Meter
+      size="lg"
+      gap
+      className="mt-2"
+      label={
         segs.length > 0
           ? `${segs.map((s) => `${fmt(s.n)} ${s.label}`).join(", ")}, of ${fmt(total)}`
           : "no installs yet"
       }
-    >
-      {segs.map((s) => (
-        <span
-          key={s.label}
-          title={`${s.label}: ${fmt(s.n)}`}
-          className={s.cls}
-          style={{ width: `${(s.n / total) * 100}%`, minWidth: 3 }}
-        />
-      ))}
-    </div>
+      segments={segs.map((s) => ({
+        key: s.label,
+        share: s.n / total,
+        className: s.cls,
+        title: `${s.label}: ${fmt(s.n)}`,
+        minPx: 3,
+      }))}
+    />
   );
 }
 
@@ -257,14 +257,11 @@ export function InstallPipelineSection({
           return (
             <div key={seg.segment} className={PANEL}>
               <div className={EYEBROW}>{SEGMENT_LABELS[seg.segment] ?? seg.segment}</div>
-              <div className="font-display text-2xl text-primary tabular-nums">
+              <StatValue
+                unit={`of ${seg.total !== null ? fmt(seg.total) : "?"} complete${seg.total ? ` · ${pct(complete, seg.total)}` : ""}`}
+              >
                 {fmt(complete)}
-                <span className="text-sm font-normal text-muted">
-                  {" "}
-                  of {seg.total !== null ? fmt(seg.total) : "?"} complete
-                  {seg.total ? ` · ${pct(complete, seg.total)}` : ""}
-                </span>
-              </div>
+              </StatValue>
               <PipelineBar
                 complete={complete}
                 verifying={seg.verification_needed ?? 0}

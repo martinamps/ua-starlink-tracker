@@ -27,7 +27,7 @@ import {
 import { PROVIDER_LABEL, ProviderLegend } from "./fleet/providers";
 import { ShareBarRow, providerCounts } from "./fleet/type-bars";
 import { EYEBROW, H2, PANEL, PageHeader, PageShell, StatInline, fmt } from "./layout";
-import { longDate } from "./ui/format";
+import { shortDate } from "./ui/format";
 
 export interface AircraftTypeSibling {
   slug: string;
@@ -274,13 +274,13 @@ function RecentSection({ def, data }: { def: AircraftPageDef; data: AircraftType
             <a href={`/fleet#t-${r.tail}`} className={`${LINK} font-mono text-xs`}>
               {r.tail}
             </a>{" "}
-            <span className="text-muted">{longDate(r.date)}</span>
+            <span className="text-muted">{shortDate(r.date.slice(0, 10))}</span>
           </li>
         ))}
       </ul>
       <p className="text-xs text-muted mt-3">
         The date we first saw Starlink on each {def.short}, leaving out bulk imports
-        {data.firstSeen ? `. The first was ${longDate(data.firstSeen)}` : ""}.
+        {data.firstSeen ? `. The first was ${shortDate(data.firstSeen.slice(0, 10))}` : ""}.
       </p>
     </section>
   );

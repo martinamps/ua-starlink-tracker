@@ -8,9 +8,10 @@ import { type AirlineConfig, type SiteConfig, programTypeOf } from "../airlines/
 import { type AirlineFactsEntry, formatFactDate } from "../airlines/rollout-facts";
 import type { FleetGuideTail, TypeProgress } from "../database/database";
 import { typeShare } from "../scripts/starlink-predictor";
-import { FactsList, PageShell, StatusPill } from "./airlines-page";
+import { FactsList, StatusPill } from "./airlines-page";
 import type { PageLink } from "./atoms";
-import { PANEL, SECTION } from "./layout";
+import { Eyebrow, PANEL, PageHeader, PageShell, Panel, SECTION, StatValue, fmt } from "./layout";
+import { Meter } from "./ui/meter";
 
 /** Past this, the guide may be missing installs and the page says so. */
 export const GUIDE_STALE_DAYS = 45;
@@ -44,9 +45,7 @@ export function TypeShareTable({
 }) {
   return (
     <div className="mb-4">
-      <div className="text-xs font-mono text-muted uppercase tracking-wider mb-1">
-        By aircraft type
-      </div>
+      <Eyebrow className="mb-1">By aircraft type</Eyebrow>
       {!compact && (
         <p className="text-xs text-muted leading-relaxed mb-2">
           Your booking shows the aircraft type — the best guide until the plane is assigned about
@@ -62,12 +61,7 @@ export function TypeShareTable({
               <span className={`font-mono text-xs text-right ${tone}`}>{text}</span>
             </div>
             {!t.excluded && (
-              <div className="h-1 rounded bg-surface-elevated overflow-hidden mt-1">
-                <div
-                  className="h-full rounded bg-success"
-                  style={{ width: `${Math.round(typeShare(t) * 100)}%` }}
-                />
-              </div>
+              <Meter share={typeShare(t)} color="var(--color-success)" size="xs" className="mt-1" />
             )}
             {!compact && !t.excluded && t.notInGuide > 0 && (
               <div className="font-mono text-xs text-muted mt-1">
@@ -244,26 +238,23 @@ export function CommunityAirlinePage({
   const stale = guideUpdated !== null && daysBetween(guideUpdated, nowMs) > GUIDE_STALE_DAYS;
   const official = facts?.facts.find((f) => f.asOf);
   return (
-    <PageShell
-      site={site}
-      pageLinks={pageLinks}
-      currentPath={currentPath}
-      heading={`Does my ${cfg.name} flight have Starlink?`}
-      sub={`${cfg.rollout.statusLabel} — ${cfg.rollout.phaseNote}`}
-    >
+    <PageShell site={site} pageLinks={pageLinks} currentPath={currentPath}>
+      <PageHeader
+        title={`Does my ${cfg.name} flight have Starlink?`}
+        dek={`${cfg.rollout.statusLabel} — ${cfg.rollout.phaseNote}`}
+      />
       <section className={SECTION}>
-        <div className={PANEL}>
+        <Panel>
           <div className="flex items-center justify-between gap-2 mb-3">
-            <span className="text-xs font-mono text-muted uppercase tracking-wider">
+            <Eyebrow as="span" className="">
               Rollout status
-            </span>
+            </Eyebrow>
             <StatusPill cfg={cfg} />
           </div>
           {total > 0 ? (
-            <div className="font-mono text-2xl font-semibold text-primary mb-1">
-              At least {equipped}
-              <span className="text-base text-muted font-normal"> of {total} aircraft</span>
-            </div>
+            <StatValue className="mb-2" unit={`of ${fmt(total)} aircraft`}>
+              At least {fmt(equipped)}
+            </StatValue>
           ) : (
             <p className="text-sm text-muted">No per-aircraft data yet.</p>
           )}
@@ -283,7 +274,7 @@ export function CommunityAirlinePage({
             </p>
           )}
           {types.length > 0 && <TypeShareTable types={types} />}
-        </div>
+        </Panel>
       </section>
 
       {types.length > 0 && (
@@ -300,10 +291,8 @@ export function CommunityAirlinePage({
 
       {source && (
         <section className={SECTION}>
-          <div className={PANEL}>
-            <div className="text-xs font-mono text-muted uppercase tracking-wider mb-2">
-              Where this comes from
-            </div>
+          <Panel>
+            <Eyebrow className="mb-2">Where this comes from</Eyebrow>
             <p className="text-sm text-secondary leading-relaxed mb-2">
               Per-aircraft status is from the{" "}
               <a
@@ -330,7 +319,7 @@ export function CommunityAirlinePage({
                 be missing from these counts.
               </p>
             )}
-          </div>
+          </Panel>
         </section>
       )}
 

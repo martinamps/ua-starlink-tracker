@@ -1,5 +1,6 @@
 import type { BodyClass, FleetCarrier, FleetFamily, FleetTail } from "../../types";
 import { Section, aircraftName, fmt, pct } from "../layout";
+import { Meter } from "../ui/meter";
 import {
   PROVIDER_LABEL,
   PROVIDER_ORDER,
@@ -69,20 +70,14 @@ export function ShareBarRow({
       ) : (
         <span className="truncate text-secondary">{label}</span>
       )}
-      <div
-        className="flex h-2 overflow-hidden rounded-full bg-surface-elevated"
-        role="img"
-        aria-label={`${label}: ${fmt(n)} of ${fmt(total)} with Starlink (${pct(n, total)})${detail ? `. ${detail}` : ""}`}
-      >
-        {total > 0 &&
-          segments.map((s) => (
-            <span
-              key={s.p}
-              className={`wifi-${s.p} h-full`}
-              style={{ width: `${(s.n / total) * 100}%` }}
-            />
-          ))}
-      </div>
+      <Meter
+        label={`${label}: ${fmt(n)} of ${fmt(total)} with Starlink (${pct(n, total)})${detail ? `. ${detail}` : ""}`}
+        segments={
+          total > 0
+            ? segments.map((s) => ({ key: s.p, share: s.n / total, className: `wifi-${s.p}` }))
+            : []
+        }
+      />
       <span className="text-right font-mono text-xs text-muted tabular-nums whitespace-nowrap">
         {fmt(n)}/{fmt(total)} · <span className={n > 0 ? "text-accent" : ""}>{pct(n, total)}</span>
       </span>

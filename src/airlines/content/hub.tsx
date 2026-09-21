@@ -6,13 +6,11 @@ import {
   RouteComparePanel,
   completeScope,
 } from "../../components/atoms";
-import { H2, StatInline, fmt } from "../../components/layout";
+import { Chip, Eyebrow, Panel, SectionTitle, StatInline, fmt } from "../../components/layout";
 import { airlineHomeUrl, publicAirlines } from "../registry";
 import { AIRLINE_FACTS, type AirlineFactsEntry, type RolloutFactsStatus } from "../rollout-facts";
 import type { AirlineContent, HeroProps, HubHomeLinks } from "./index";
 
-const CHIP =
-  "font-mono text-xs px-2.5 py-1 rounded border border-subtle bg-surface-elevated text-secondary hover:border-accent hover:text-accent transition-colors";
 const LINK = "text-accent hover:underline";
 
 // The hub answers cross-airline questions; United-specific intent belongs to
@@ -41,36 +39,34 @@ const FLYING_COUNT = AIRLINE_FACTS.filter(
 function HubLinkGrid({ links }: { links?: HubHomeLinks }) {
   if (!links || (links.airlines.length === 0 && links.compares.length === 0)) return null;
   return (
-    <nav className="bg-surface border border-subtle rounded-lg p-5" aria-label="Airlines">
+    <Panel as="nav" aria-label="Airlines">
       {links.airlines.length > 0 && (
         <>
-          <h2 className="text-xs font-mono text-muted uppercase tracking-wider mb-3">
-            Airlines with Starlink
-          </h2>
+          <Eyebrow as="h2">Airlines with Starlink</Eyebrow>
           <div className="flex flex-wrap gap-2">
             {links.airlines.map((l) => (
-              <a key={l.href} href={l.href} className={CHIP}>
+              <Chip key={l.href} href={l.href} size="sm">
                 {l.label}
-              </a>
+              </Chip>
             ))}
           </div>
         </>
       )}
       {links.compares.length > 0 && (
         <>
-          <h2 className="text-xs font-mono text-muted uppercase tracking-wider mt-4 mb-3">
+          <Eyebrow as="h2" className="mt-4 mb-3">
             Compare
-          </h2>
+          </Eyebrow>
           <div className="flex flex-wrap gap-2">
             {links.compares.map((l) => (
-              <a key={l.href} href={l.href} className={CHIP}>
+              <Chip key={l.href} href={l.href} size="sm">
                 {l.label}
-              </a>
+              </Chip>
             ))}
           </div>
         </>
       )}
-    </nav>
+    </Panel>
   );
 }
 
@@ -78,10 +74,10 @@ const HubHero = ({ perAirlineStats = [], recentInstalls = [], hubLinks }: HeroPr
   return (
     <div className="relative mx-auto mb-8 w-full max-w-3xl space-y-6">
       <section>
-        <h2 className={H2}>Where each tracked rollout stands</h2>
-        <div className="mt-4 rounded-lg border border-subtle bg-surface p-5">
+        <SectionTitle>Where each tracked rollout stands</SectionTitle>
+        <Panel className="mt-4">
           <AirlineProgressList stats={perAirlineStats} />
-        </div>
+        </Panel>
         <p className="mt-2 text-sm">
           <a href="/airlines" className={LINK}>
             All {AIRLINE_FACTS.length} airlines, including the ones that said no →

@@ -1,5 +1,5 @@
 import React from "react";
-import { fmt } from "../../components/layout";
+import { Eyebrow, StatValue, fmt } from "../../components/layout";
 import type { AirlineContent, HeroProps } from "./index";
 
 // No fleet percentage: the roster includes A380s, A330s, narrowbodies and
@@ -10,18 +10,16 @@ const QRHero = ({ stats, statSentence }: HeroProps) => (
     {statSentence && <div className="mb-3">{statSentence}</div>}
     <div className="grid grid-cols-1 gap-px overflow-hidden rounded-lg border border-subtle bg-subtle sm:grid-cols-2">
       <div className="bg-surface p-5 text-center">
-        <div className="text-xs font-mono text-muted uppercase tracking-wider">
-          Aircraft with Starlink
-        </div>
-        <div className="font-display text-4xl text-primary mt-2 tabular-nums">
+        <Eyebrow className="">Aircraft with Starlink</Eyebrow>
+        <StatValue size="lg" className="mt-2">
           {fmt(stats.starlinkCount)}
-        </div>
+        </StatValue>
         <div className="text-xs text-secondary mt-1">
           Counted by aircraft type. Qatar's own figure was 150 in August 2026.
         </div>
       </div>
       <div className="bg-surface p-5 text-center">
-        <div className="text-xs font-mono text-muted uppercase tracking-wider">Status</div>
+        <Eyebrow className="">Status</Eyebrow>
         <div className="font-display text-2xl text-primary mt-2">777 and A350 done</div>
         <div className="text-xs text-secondary mt-1">787-8 done · 787-9 installing</div>
       </div>

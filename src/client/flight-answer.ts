@@ -9,6 +9,8 @@
  */
 import { ageLabel, fmt, monthDay, zonedDeparture } from "../components/ui/format";
 import { type SeatbackLiveTv, seatbackLiveTv } from "../utils/aircraft-specs";
+import { esc } from "./esc";
+import { METER_FILL, METER_HEIGHT, METER_TRACK, meterWidth } from "./meter";
 
 export interface WireFlight {
   tail_number?: string | null;
@@ -81,13 +83,6 @@ export interface FlightAnswer {
 }
 
 const WATCH_MAX_DAYS_OUT = 330;
-
-export function esc(s: unknown): string {
-  return String(s ?? "").replace(
-    /[&<>"']/g,
-    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] as string
-  );
-}
 
 const stripK = (code: string | null | undefined) => {
   const c = String(code ?? "").toUpperCase();
@@ -246,7 +241,7 @@ function card(tone: AnswerTone, headline: string, body: string): string {
 
 function probabilityBar(p: number, tone: AnswerTone): string {
   const w = Math.max(0, Math.min(100, Math.round(p * 100)));
-  return `<div class="mt-3 h-2 w-full overflow-hidden rounded-full bg-base" role="img" aria-label="${w}% chance of Starlink"><div class="h-2 rounded-full ${TONE_BAR[tone]}" style="width:${w}%"></div></div>`;
+  return `<div class="mt-3 ${METER_TRACK} bg-base ${METER_HEIGHT.md}" role="img" aria-label="${w}% chance of Starlink"><div class="${METER_FILL} ${TONE_BAR[tone]}" style="width:${meterWidth(w / 100)}"></div></div>`;
 }
 
 /** The API's degraded-FR24 sentence, when present; the rest of the message is restated here. */

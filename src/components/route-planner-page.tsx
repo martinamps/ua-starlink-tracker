@@ -1,7 +1,7 @@
 import React from "react";
 import { type SiteConfig, siteAirline } from "../airlines/registry";
 import type { PageLink } from "./atoms";
-import { PageHeader, PageShell } from "./layout";
+import { Chip, Eyebrow, PageHeader, PageShell, Panel, SectionTitle, buttonClass } from "./layout";
 
 interface RoutePlannerPageProps {
   site: SiteConfig;
@@ -121,16 +121,13 @@ export default function RoutePlannerPage({
       />
 
       <div className="relative max-w-2xl mx-auto w-full mb-8">
-        <div className="bg-surface rounded-lg border border-subtle p-6 glow-accent">
+        <Panel className="glow-accent">
           <form id="route-form" className="space-y-4">
             <div className="flex flex-col sm:flex-row gap-4 items-end">
               <div className="flex-1">
-                <label
-                  htmlFor="origin"
-                  className="block text-xs font-mono text-muted mb-2 uppercase tracking-wider"
-                >
+                <Eyebrow as="label" htmlFor="origin" className="mb-2 block">
                   From
-                </label>
+                </Eyebrow>
                 <input
                   type="text"
                   id="origin"
@@ -157,12 +154,9 @@ export default function RoutePlannerPage({
               </div>
 
               <div className="flex-1">
-                <label
-                  htmlFor="destination"
-                  className="block text-xs font-mono text-muted mb-2 uppercase tracking-wider"
-                >
+                <Eyebrow as="label" htmlFor="destination" className="mb-2 block">
                   To
-                </label>
+                </Eyebrow>
                 <input
                   type="text"
                   id="destination"
@@ -175,24 +169,21 @@ export default function RoutePlannerPage({
                 />
               </div>
             </div>
-            <button
-              type="submit"
-              className="w-full bg-accent/20 border border-accent text-accent font-display font-semibold py-3 px-4 rounded hover:bg-accent/30 transition-colors cursor-pointer tracking-wide"
-            >
+            <button type="submit" className={`${buttonClass("primary", "lg")} w-full`}>
               Find flights
             </button>
           </form>
           <p className="text-xs text-muted mt-3 text-center">
             Ranked by the odds of Starlink on each leg.
           </p>
-        </div>
+        </Panel>
       </div>
 
       <div id="route-results" className="relative max-w-3xl mx-auto w-full mb-10" />
 
       <div className="relative max-w-2xl mx-auto w-full mb-10">
-        <div className="bg-surface rounded-lg border border-subtle p-6">
-          <h2 className="font-display text-xl text-primary mb-3">How it works</h2>
+        <Panel>
+          <SectionTitle className="mb-3">How it works</SectionTitle>
           <div className="space-y-3 text-sm text-secondary leading-relaxed">
             <p>
               Odds come from which aircraft each {shortName} flight has used recently. A connection
@@ -206,25 +197,24 @@ export default function RoutePlannerPage({
               1–2 days out to confirm.
             </p>
           </div>
-        </div>
+        </Panel>
       </div>
 
       {popularRoutes.length > 0 && (
         <section className="relative w-full max-w-4xl mx-auto mb-8">
-          <div className="bg-surface border border-subtle rounded-lg p-5">
-            <h2 className="font-display text-xl text-primary mb-3">Popular Starlink routes</h2>
+          <Panel>
+            <SectionTitle className="mb-3">Popular Starlink routes</SectionTitle>
             <div className="flex flex-wrap gap-2">
               {popularRoutes.map((r) => (
-                <a
+                <Chip
                   key={`${r.origin}-${r.destination}`}
                   href={`/route-planner/${r.origin}/${r.destination}`}
-                  className="font-mono text-sm px-2.5 py-1 rounded border border-subtle bg-surface-elevated text-secondary hover:border-accent hover:text-accent transition-colors"
                 >
                   {r.origin} → {r.destination}
-                </a>
+                </Chip>
               ))}
             </div>
-          </div>
+          </Panel>
         </section>
       )}
 

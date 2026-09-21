@@ -3,8 +3,10 @@ import { AIRLINES, type SiteConfig } from "../airlines/registry";
 import type { PopularFlight } from "../database/database";
 import type { AirportDepartures, RouteSchedule, RouteScheduleRow } from "../types";
 import { type PageLink, PopularFlightsLinks } from "./atoms";
-import { PageHeader, PageShell, Section, Td, Th, fmt } from "./layout";
+import { AirportBars } from "./home/rollout";
+import { PageHeader, PageShell, Panel, Section, SectionTitle, Td, Th, fmt } from "./layout";
 import { localDeparture } from "./route-page";
+import { Meter } from "./ui/meter";
 
 interface RouteLeg {
   origin: string;
@@ -56,17 +58,6 @@ export function mergeDirections(rows: RouteScheduleRow[]): MergedRoute[] {
       };
     })
     .sort((x, y) => y.departures - x.departures || x.key.localeCompare(y.key));
-}
-
-function Bar({ n, max }: { n: number; max: number }) {
-  return (
-    <span className="block h-2 w-full min-w-8 overflow-hidden rounded-full bg-surface-elevated">
-      <span
-        className="block h-full rounded-full bg-[var(--color-accent)]"
-        style={{ width: `${max > 0 ? Math.max(3, (n / max) * 100) : 0}%` }}
-      />
-    </span>
-  );
 }
 
 function RoutesTable({ routes, linkable }: { routes: MergedRoute[]; linkable: boolean }) {
@@ -129,7 +120,10 @@ function RoutesTable({ routes, linkable }: { routes: MergedRoute[]; linkable: bo
                   <span className="w-8 shrink-0 text-right font-semibold text-primary">
                     {fmt(r.departures)}
                   </span>
-                  <Bar n={r.departures} max={max} />
+                  <Meter
+                    share={max > 0 ? Math.max(0.03, r.departures / max) : 0}
+                    className="w-full min-w-8"
+                  />
                 </div>
               </Td>
               <Td numeric className="align-top text-secondary">
@@ -146,27 +140,6 @@ function RoutesTable({ routes, linkable }: { routes: MergedRoute[]; linkable: bo
         })}
       </tbody>
     </table>
-  );
-}
-
-function AirportBars({ airports }: { airports: AirportDepartures }) {
-  const rows = airports.rows.slice(0, 12);
-  const max = rows[0]?.count ?? 0;
-  return (
-    <ul>
-      {rows.map((r) => (
-        <li
-          key={r.airport}
-          className="grid grid-cols-[2.75rem_1fr_3rem] items-center gap-3 py-1.5 text-sm"
-          role="img"
-          aria-label={`${r.airport}: ${fmt(r.count)} Starlink departures`}
-        >
-          <span className="font-mono text-secondary">{r.airport}</span>
-          <Bar n={r.count} max={max} />
-          <span className="text-right text-primary tabular-nums">{fmt(r.count)}</span>
-        </li>
-      ))}
-    </ul>
   );
 }
 
@@ -215,25 +188,25 @@ export default function RoutesPage({
       {routes.length > 0 && (
         <section className="relative mx-auto mb-8 grid w-full max-w-6xl gap-8 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
           <div className="min-w-0">
-            <h2 className="font-display text-xl text-primary">Busiest Starlink routes</h2>
+            <SectionTitle>Busiest Starlink routes</SectionTitle>
             <p className="mt-1 text-sm text-secondary text-pretty">
               Both directions combined. Times are local to the departure airport.
             </p>
-            <div className="mt-4 rounded-lg border border-subtle bg-surface p-4 sm:p-5">
+            <Panel pad="sm" className="mt-4">
               <RoutesTable routes={routes} linkable={linkable} />
               <p className="mt-4 text-xs text-muted text-pretty">
                 Based on aircraft assigned so far. Assignments firm up about two days out, so a
                 route missing here may still have Starlink. Updated {updated} UTC.
               </p>
-            </div>
+            </Panel>
           </div>
           {airports && airports.rows.length > 0 && (
             <div className="min-w-0">
-              <h2 className="font-display text-xl text-primary">Busiest airports</h2>
+              <SectionTitle>Busiest airports</SectionTitle>
               <p className="mt-1 text-sm text-secondary">Starlink departures, next 48 hours.</p>
-              <div className="mt-4 rounded-lg border border-subtle bg-surface p-4 sm:p-5">
-                <AirportBars airports={airports} />
-              </div>
+              <Panel pad="sm" className="mt-4">
+                <AirportBars rows={airports.rows} columns={1} />
+              </Panel>
             </div>
           )}
         </section>

@@ -1,7 +1,15 @@
 import React from "react";
 import { type SiteConfig, siteAirline } from "../airlines/registry";
 import type { PageLink } from "./atoms";
-import { PageHeader, PageShell } from "./layout";
+import {
+  ButtonLink,
+  Eyebrow,
+  PageHeader,
+  PageShell,
+  Panel,
+  SectionTitle,
+  buttonClass,
+} from "./layout";
 
 interface McpPageProps {
   site: SiteConfig;
@@ -41,41 +49,35 @@ export default function McpPage({ site, pageLinks, currentPath }: McpPageProps) 
 
       {/* URL + one-line setup */}
       <div className="relative max-w-2xl mx-auto w-full mb-8">
-        <div className="bg-surface rounded-lg border border-subtle p-4 sm:p-5">
-          <div className="text-xs font-mono text-muted uppercase tracking-wider mb-2">
-            Claude Desktop · Settings → Connectors → Add
-          </div>
+        <Panel pad="sm">
+          <Eyebrow className="mb-2">Claude Desktop · Settings → Connectors → Add</Eyebrow>
           <div className="flex items-center gap-2">
             <code className="flex-1 font-mono text-sm text-accent break-all select-all bg-base rounded px-3 py-2 border border-subtle">
               {mcpUrl}
             </code>
-            <button
-              type="button"
-              id="copy-url-btn"
-              className="px-3 py-2 bg-accent/20 border border-accent text-accent text-xs font-display rounded hover:bg-accent/30 transition-colors cursor-pointer whitespace-nowrap"
-            >
+            <button type="button" id="copy-url-btn" className={buttonClass("primary", "sm")}>
               Copy
             </button>
           </div>
           <div className="flex items-center gap-2 mt-3 pt-3 border-t border-subtle text-xs text-muted">
             <span className="whitespace-nowrap">Using Claude.ai or mobile?</span>
-            <a
+            <ButtonLink
               href={claudeConnectorsUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="px-3 py-1.5 bg-accent/20 border border-accent text-accent font-display rounded hover:bg-accent/30 transition-colors whitespace-nowrap"
+              size="sm"
             >
               Open Connectors →
-            </a>
+            </ButtonLink>
             <span>then paste the URL above.</span>
           </div>
-        </div>
+        </Panel>
       </div>
 
       {/* Try asking — updated with the proven demo prompts */}
       <div className="relative max-w-2xl mx-auto w-full mb-8">
-        <div className="bg-surface rounded-lg border border-subtle p-6">
-          <h2 className="font-display text-lg font-semibold text-primary mb-3">Try asking</h2>
+        <Panel>
+          <SectionTitle className="mb-3">Try asking</SectionTitle>
           <ul className="space-y-2 text-sm text-muted">
             <li className="pl-4 -indent-4">
               <span className="text-secondary">"</span>I'm on {cfg.iata}642 on 3/13 — does it have
@@ -94,7 +96,7 @@ export default function McpPage({ site, pageLinks, currentPath }: McpPageProps) 
               {cfg.shortName}'s fleet?<span className="text-secondary">"</span>
             </li>
           </ul>
-        </div>
+        </Panel>
       </div>
 
       {/* Setup details — collapsed */}
@@ -165,18 +167,12 @@ export default function McpPage({ site, pageLinks, currentPath }: McpPageProps) 
                 {claudeCodeCommand}
               </code>
               <p className="flex items-center gap-2 pt-1">
-                <a
-                  href={cursorInstallUrl}
-                  className="px-3 py-1.5 bg-accent/20 border border-accent text-accent font-display rounded hover:bg-accent/30 transition-colors whitespace-nowrap"
-                >
+                <ButtonLink href={cursorInstallUrl} size="sm">
                   Add to Cursor
-                </a>
-                <a
-                  href={vscodeInstallUrl}
-                  className="px-3 py-1.5 bg-accent/20 border border-accent text-accent font-display rounded hover:bg-accent/30 transition-colors whitespace-nowrap"
-                >
+                </ButtonLink>
+                <ButtonLink href={vscodeInstallUrl} size="sm">
                   Add to VS Code
-                </a>
+                </ButtonLink>
               </p>
             </div>
           </div>

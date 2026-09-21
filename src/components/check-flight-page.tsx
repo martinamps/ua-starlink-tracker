@@ -14,7 +14,16 @@ import { watchFeedEnabled } from "../utils/ics";
 import { type PageLink, PopularFlightsLinks } from "./atoms";
 import { Faq, type FaqEntry, JsonLd, breadcrumbJsonLd, jsonLdString } from "./faq";
 import { ClientScriptTag, FlightSearchForm } from "./flight-search-form";
-import { H2, PageHeader, PageShell, Section, StatInline, fmt } from "./layout";
+import {
+  Chip,
+  PageHeader,
+  PageShell,
+  Panel,
+  Section,
+  SectionTitle,
+  StatInline,
+  fmt,
+} from "./layout";
 import { formatDuration, shortDate, zonedDeparture } from "./ui/format";
 
 export interface FlightRouteFact {
@@ -308,13 +317,9 @@ function FlightFactBlocks({
         >
           <div className="flex flex-wrap gap-2">
             {flight.siblings.map((s) => (
-              <a
-                key={s}
-                href={`/check-flight/${s}`}
-                className="rounded border border-subtle bg-surface-elevated px-2.5 py-1 font-mono text-sm text-secondary transition-colors hover:border-accent hover:text-accent"
-              >
+              <Chip key={s} href={`/check-flight/${s}`}>
                 {s}
-              </a>
+              </Chip>
             ))}
           </div>
         </Section>
@@ -438,8 +443,8 @@ export default function CheckFlightPage({
       )}
 
       <section className="relative mx-auto mb-8 w-full max-w-3xl">
-        {answer && <h2 className={`${H2} mb-3`}>Check another date or flight</h2>}
-        <div className="rounded-lg border border-subtle bg-surface p-5">
+        {answer && <SectionTitle className="mb-3">Check another date or flight</SectionTitle>}
+        <Panel>
           {invalid && (
             <InvalidQueryNotice
               invalid={invalid}
@@ -469,7 +474,7 @@ export default function CheckFlightPage({
               .
             </p>
           )}
-        </div>
+        </Panel>
       </section>
 
       {flight && <FlightFactBlocks flight={flight} scheduledOnDate={scheduledOnDate} />}
