@@ -9,7 +9,26 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"hasStarlink\":true,\"confidence\":\"verified\",\"flights\":[{\"tail_number\":\"N3001\",\"aircraft_type\":\"Boeing 737-900\",\"flight_number\":\"UA1001\",\"ua_flight_number\":\"UA1001\",\"departure_airport\":\"SFO\",\"arrival_airport\":\"EWR\",\"departure_time\":1789916400,\"arrival_time\":1789927200,\"departure_time_formatted\":\"2026-09-20T15:00:00.000Z\",\"arrival_time_formatted\":\"2026-09-20T18:00:00.000Z\",\"operated_by\":\"United Airlines\",\"fleet_type\":\"mainline\"}]}"
+    "json": {
+      "hasStarlink": true,
+      "confidence": "verified",
+      "flights": [
+        {
+          "tail_number": "N3001",
+          "aircraft_type": "Boeing 737-900",
+          "flight_number": "UA1001",
+          "ua_flight_number": "UA1001",
+          "departure_airport": "SFO",
+          "arrival_airport": "EWR",
+          "departure_time": 1789916400,
+          "arrival_time": 1789927200,
+          "departure_time_formatted": "2026-09-20T15:00:00.000Z",
+          "arrival_time_formatted": "2026-09-20T18:00:00.000Z",
+          "operated_by": "United Airlines",
+          "fleet_type": "mainline"
+        }
+      ]
+    }
   },
   "unitedstarlinktracker.com /api/check-flight UA1002 2026-09-20": {
     "status": 200,
@@ -21,7 +40,26 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"hasStarlink\":true,\"confidence\":\"likely\",\"flights\":[{\"tail_number\":\"N3002\",\"aircraft_type\":\"Boeing 737-900\",\"flight_number\":\"UA1002\",\"ua_flight_number\":\"UA1002\",\"departure_airport\":\"SFO\",\"arrival_airport\":\"DEN\",\"departure_time\":1789920000,\"arrival_time\":1789930800,\"departure_time_formatted\":\"2026-09-20T16:00:00.000Z\",\"arrival_time_formatted\":\"2026-09-20T19:00:00.000Z\",\"operated_by\":\"United Airlines\",\"fleet_type\":\"mainline\"}]}"
+    "json": {
+      "hasStarlink": true,
+      "confidence": "likely",
+      "flights": [
+        {
+          "tail_number": "N3002",
+          "aircraft_type": "Boeing 737-900",
+          "flight_number": "UA1002",
+          "ua_flight_number": "UA1002",
+          "departure_airport": "SFO",
+          "arrival_airport": "DEN",
+          "departure_time": 1789920000,
+          "arrival_time": 1789930800,
+          "departure_time_formatted": "2026-09-20T16:00:00.000Z",
+          "arrival_time_formatted": "2026-09-20T19:00:00.000Z",
+          "operated_by": "United Airlines",
+          "fleet_type": "mainline"
+        }
+      ]
+    }
   },
   "unitedstarlinktracker.com /api/check-flight UA1003 2026-09-20": {
     "status": 200,
@@ -33,7 +71,20 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"hasStarlink\":false,\"confidence\":\"verified\",\"message\":\"UA1003 is assigned to tail N3003, verified as Viasat WiFi — not Starlink.\",\"flights\":[],\"sameDayAlternatives\":[{\"flight_number\":\"UA1004\",\"departure_time\":1789934400,\"tail_number\":\"N3004\",\"aircraft_type\":\"Boeing 737-900\"}]}"
+    "json": {
+      "hasStarlink": false,
+      "confidence": "verified",
+      "message": "UA1003 is assigned to tail N3003, verified as Viasat WiFi — not Starlink.",
+      "flights": [],
+      "sameDayAlternatives": [
+        {
+          "flight_number": "UA1004",
+          "departure_time": 1789934400,
+          "tail_number": "N3004",
+          "aircraft_type": "Boeing 737-900"
+        }
+      ]
+    }
   },
   "unitedstarlinktracker.com /api/check-flight UA1005 2026-09-20": {
     "status": 200,
@@ -45,7 +96,27 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"hasStarlink\":true,\"confidence\":\"likely\",\"method\":\"fr24_tail_lookup\",\"flights\":[{\"tail_number\":\"N3001\",\"aircraft_type\":\"Boeing 737-800\",\"flight_number\":\"UA1005\",\"ua_flight_number\":\"UA1005\",\"departure_airport\":\"IAH\",\"arrival_airport\":\"DEN\",\"departure_time\":1789912800,\"arrival_time\":1789923600,\"departure_time_formatted\":\"2026-09-20T14:00:00.000Z\",\"arrival_time_formatted\":\"2026-09-20T17:00:00.000Z\",\"operated_by\":\"United Airlines\",\"fleet_type\":\"mainline\"}]}"
+    "json": {
+      "hasStarlink": true,
+      "confidence": "likely",
+      "method": "fr24_tail_lookup",
+      "flights": [
+        {
+          "tail_number": "N3001",
+          "aircraft_type": "Boeing 737-800",
+          "flight_number": "UA1005",
+          "ua_flight_number": "UA1005",
+          "departure_airport": "IAH",
+          "arrival_airport": "DEN",
+          "departure_time": 1789912800,
+          "arrival_time": 1789923600,
+          "departure_time_formatted": "2026-09-20T14:00:00.000Z",
+          "arrival_time_formatted": "2026-09-20T17:00:00.000Z",
+          "operated_by": "United Airlines",
+          "fleet_type": "mainline"
+        }
+      ]
+    }
   },
   "unitedstarlinktracker.com /api/check-flight UA1006 2026-09-20": {
     "status": 200,
@@ -57,7 +128,28 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"hasStarlink\":false,\"method\":\"fr24_tail_lookup\",\"flights\":[],\"fallback\":{\"segments\":[{\"tail_number\":\"N3005\",\"aircraft_model\":\"Boeing 737-800\",\"origin\":\"IAH\",\"destination\":\"ORD\",\"departure_time\":1789912800,\"arrival_time\":1789923600,\"hasStarlink\":false,\"confidence\":\"negative\",\"verified_wifi\":\"Thales\",\"verified_at\":1}]},\"sameDayAlternatives\":[]}"
+    "json": {
+      "hasStarlink": false,
+      "method": "fr24_tail_lookup",
+      "flights": [],
+      "fallback": {
+        "segments": [
+          {
+            "tail_number": "N3005",
+            "aircraft_model": "Boeing 737-800",
+            "origin": "IAH",
+            "destination": "ORD",
+            "departure_time": 1789912800,
+            "arrival_time": 1789923600,
+            "hasStarlink": false,
+            "confidence": "negative",
+            "verified_wifi": "Thales",
+            "verified_at": 1
+          }
+        ]
+      },
+      "sameDayAlternatives": []
+    }
   },
   "unitedstarlinktracker.com /api/check-flight UA1007 2026-09-20": {
     "status": 200,
@@ -69,7 +161,18 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"hasStarlink\":null,\"confidence\":\"predicted\",\"prediction\":{\"probability\":0.02,\"confidence\":\"low\",\"n_observations\":0,\"n_recent_observations\":0},\"message\":\"Aircraft assignment not yet published — United Airlines assigns aircraft ~2 days before departure. No history for this flight number; ~2% is our estimate for flights we haven't yet seen on a Starlink aircraft, from the mainline fleet's current Starlink share.\",\"flights\":[]}"
+    "json": {
+      "hasStarlink": null,
+      "confidence": "predicted",
+      "prediction": {
+        "probability": 0.02,
+        "confidence": "low",
+        "n_observations": 0,
+        "n_recent_observations": 0
+      },
+      "message": "Aircraft assignment not yet published — United Airlines assigns aircraft ~2 days before departure. No history for this flight number; ~2% is our estimate for flights we haven't yet seen on a Starlink aircraft, from the mainline fleet's current Starlink share.",
+      "flights": []
+    }
   },
   "unitedstarlinktracker.com /api/check-flight UA1008 2026-09-20": {
     "status": 200,
@@ -81,7 +184,18 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"hasStarlink\":null,\"confidence\":\"predicted\",\"prediction\":{\"probability\":0.02,\"confidence\":\"low\",\"n_observations\":0,\"n_recent_observations\":0},\"message\":\"We couldn't confirm the aircraft assignment right now — try again shortly. No history for this flight number; ~2% is our estimate for flights we haven't yet seen on a Starlink aircraft, from the mainline fleet's current Starlink share.\",\"flights\":[]}"
+    "json": {
+      "hasStarlink": null,
+      "confidence": "predicted",
+      "prediction": {
+        "probability": 0.02,
+        "confidence": "low",
+        "n_observations": 0,
+        "n_recent_observations": 0
+      },
+      "message": "We couldn't confirm the aircraft assignment right now — try again shortly. No history for this flight number; ~2% is our estimate for flights we haven't yet seen on a Starlink aircraft, from the mainline fleet's current Starlink share.",
+      "flights": []
+    }
   },
   "unitedstarlinktracker.com /api/check-flight UA1009 2026-09-29": {
     "status": 200,
@@ -93,7 +207,18 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"hasStarlink\":null,\"confidence\":\"predicted\",\"prediction\":{\"probability\":0.8,\"confidence\":\"high\",\"n_observations\":5,\"n_recent_observations\":5},\"message\":\"Aircraft assignment not yet published — United Airlines assigns aircraft ~2 days before departure. ~80% of observed departures of this flight used a Starlink-equipped aircraft (5 observations).\",\"flights\":[]}"
+    "json": {
+      "hasStarlink": null,
+      "confidence": "predicted",
+      "prediction": {
+        "probability": 0.8,
+        "confidence": "high",
+        "n_observations": 5,
+        "n_recent_observations": 5
+      },
+      "message": "Aircraft assignment not yet published — United Airlines assigns aircraft ~2 days before departure. ~80% of observed departures of this flight used a Starlink-equipped aircraft (5 observations).",
+      "flights": []
+    }
   },
   "unitedstarlinktracker.com /api/check-flight UA1010 2026-09-29": {
     "status": 200,
@@ -105,7 +230,18 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"hasStarlink\":null,\"confidence\":\"predicted\",\"prediction\":{\"probability\":0.02,\"confidence\":\"low\",\"n_observations\":0,\"n_recent_observations\":0},\"message\":\"Aircraft assignment not yet published — United Airlines assigns aircraft ~2 days before departure. No history for this flight number; ~2% is our estimate for flights we haven't yet seen on a Starlink aircraft, from the mainline fleet's current Starlink share.\",\"flights\":[]}"
+    "json": {
+      "hasStarlink": null,
+      "confidence": "predicted",
+      "prediction": {
+        "probability": 0.02,
+        "confidence": "low",
+        "n_observations": 0,
+        "n_recent_observations": 0
+      },
+      "message": "Aircraft assignment not yet published — United Airlines assigns aircraft ~2 days before departure. No history for this flight number; ~2% is our estimate for flights we haven't yet seen on a Starlink aircraft, from the mainline fleet's current Starlink share.",
+      "flights": []
+    }
   },
   "unitedstarlinktracker.com /api/check-flight UA1010 2026-09-14": {
     "status": 200,
@@ -117,7 +253,18 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"hasStarlink\":null,\"confidence\":\"predicted\",\"prediction\":{\"probability\":0.02,\"confidence\":\"low\",\"n_observations\":0,\"n_recent_observations\":0},\"message\":\"No aircraft assignment on record — 2026-09-14 has already passed. No history for this flight number; ~2% is our estimate for flights we haven't yet seen on a Starlink aircraft, from the mainline fleet's current Starlink share.\",\"flights\":[]}"
+    "json": {
+      "hasStarlink": null,
+      "confidence": "predicted",
+      "prediction": {
+        "probability": 0.02,
+        "confidence": "low",
+        "n_observations": 0,
+        "n_recent_observations": 0
+      },
+      "message": "No aircraft assignment on record — 2026-09-14 has already passed. No history for this flight number; ~2% is our estimate for flights we haven't yet seen on a Starlink aircraft, from the mainline fleet's current Starlink share.",
+      "flights": []
+    }
   },
   "unitedstarlinktracker.com /api/check-flight UA1003 2026-09-20&origin=ORD": {
     "status": 200,
@@ -129,7 +276,26 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"hasStarlink\":false,\"confidence\":\"verified\",\"message\":\"UA1003 ORD → DEN is assigned to tail N3003, verified as Viasat WiFi — not Starlink.\",\"leg\":{\"origin\":\"ORD\",\"destination\":null,\"match\":\"exact\",\"otherLegs\":[]},\"flights\":[],\"sameDayAlternatives\":[{\"flight_number\":\"UA1004\",\"departure_time\":1789934400,\"tail_number\":\"N3004\",\"aircraft_type\":\"Boeing 737-900\"}]}"
+    "json": {
+      "hasStarlink": false,
+      "confidence": "verified",
+      "message": "UA1003 ORD → DEN is assigned to tail N3003, verified as Viasat WiFi — not Starlink.",
+      "leg": {
+        "origin": "ORD",
+        "destination": null,
+        "match": "exact",
+        "otherLegs": []
+      },
+      "flights": [],
+      "sameDayAlternatives": [
+        {
+          "flight_number": "UA1004",
+          "departure_time": 1789934400,
+          "tail_number": "N3004",
+          "aircraft_type": "Boeing 737-900"
+        }
+      ]
+    }
   },
   "unitedstarlinktracker.com /api/check-flight UA1001 2026-09-20&origin=XX": {
     "status": 200,
@@ -141,7 +307,34 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"hasStarlink\":true,\"confidence\":\"verified\",\"message\":\"Starlink-equipped. Couldn't scope to one leg (unrecognized airport code); this answer covers every leg of UA1001.\",\"leg\":{\"origin\":\"XX\",\"destination\":null,\"match\":\"unscoped\",\"reason\":\"invalid_airport\",\"otherLegs\":[]},\"flights\":[{\"tail_number\":\"N3001\",\"aircraft_type\":\"Boeing 737-900\",\"flight_number\":\"UA1001\",\"ua_flight_number\":\"UA1001\",\"departure_airport\":\"SFO\",\"arrival_airport\":\"EWR\",\"departure_time\":1789916400,\"arrival_time\":1789927200,\"departure_time_formatted\":\"2026-09-20T15:00:00.000Z\",\"arrival_time_formatted\":\"2026-09-20T18:00:00.000Z\",\"operated_by\":\"United Airlines\",\"fleet_type\":\"mainline\"}]}"
+    "json": {
+      "hasStarlink": true,
+      "confidence": "verified",
+      "message": "Starlink-equipped. Couldn't scope to one leg (unrecognized airport code); this answer covers every leg of UA1001.",
+      "leg": {
+        "origin": "XX",
+        "destination": null,
+        "match": "unscoped",
+        "reason": "invalid_airport",
+        "otherLegs": []
+      },
+      "flights": [
+        {
+          "tail_number": "N3001",
+          "aircraft_type": "Boeing 737-900",
+          "flight_number": "UA1001",
+          "ua_flight_number": "UA1001",
+          "departure_airport": "SFO",
+          "arrival_airport": "EWR",
+          "departure_time": 1789916400,
+          "arrival_time": 1789927200,
+          "departure_time_formatted": "2026-09-20T15:00:00.000Z",
+          "arrival_time_formatted": "2026-09-20T18:00:00.000Z",
+          "operated_by": "United Airlines",
+          "fleet_type": "mainline"
+        }
+      ]
+    }
   },
   "unitedstarlinktracker.com /api/check-flight UA1001 2026-13-40": {
     "status": 400,
@@ -153,7 +346,9 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"error\":\"Invalid date format. Use YYYY-MM-DD\"}"
+    "json": {
+      "error": "Invalid date format. Use YYYY-MM-DD"
+    }
   },
   "unitedstarlinktracker.com /api/check-flight UA12345 2026-09-20": {
     "status": 400,
@@ -165,7 +360,9 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"error\":\"Invalid flight number UA12345 — use 1-4 digits.\"}"
+    "json": {
+      "error": "Invalid flight number UA12345 — use 1-4 digits."
+    }
   },
   "unitedstarlinktracker.com /api/check-flight DL100 2026-09-20": {
     "status": 404,
@@ -177,7 +374,9 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"error\":\"Airline not tracked. This site covers United Airlines (UA) flights.\"}"
+    "json": {
+      "error": "Airline not tracked. This site covers United Airlines (UA) flights."
+    }
   },
   "unitedstarlinktracker.com /api/check-flight AS100 2026-09-20": {
     "status": 404,
@@ -189,7 +388,9 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"error\":\"Airline not tracked. This site covers United Airlines (UA) flights. AS flights: use alaskastarlinktracker.com.\"}"
+    "json": {
+      "error": "Airline not tracked. This site covers United Airlines (UA) flights. AS flights: use alaskastarlinktracker.com."
+    }
   },
   "UA missing params": {
     "status": 400,
@@ -201,7 +402,9 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"error\":\"Missing required parameters: flight_number and date\"}"
+    "json": {
+      "error": "Missing required parameters: flight_number and date"
+    }
   },
   "UA POST": {
     "status": 405,
@@ -213,7 +416,9 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"error\":\"Method not allowed\"}"
+    "json": {
+      "error": "Method not allowed"
+    }
   },
   "UA OPTIONS": {
     "status": 204,
@@ -235,7 +440,27 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"hasStarlink\":true,\"airline\":\"United Airlines\",\"confidence\":\"verified\",\"flights\":[{\"tail_number\":\"N3001\",\"aircraft_type\":\"Boeing 737-900\",\"flight_number\":\"UA1001\",\"ua_flight_number\":\"UA1001\",\"departure_airport\":\"SFO\",\"arrival_airport\":\"EWR\",\"departure_time\":1789916400,\"arrival_time\":1789927200,\"departure_time_formatted\":\"2026-09-20T15:00:00.000Z\",\"arrival_time_formatted\":\"2026-09-20T18:00:00.000Z\",\"operated_by\":\"United Airlines\",\"fleet_type\":\"mainline\"}]}"
+    "json": {
+      "hasStarlink": true,
+      "airline": "United Airlines",
+      "confidence": "verified",
+      "flights": [
+        {
+          "tail_number": "N3001",
+          "aircraft_type": "Boeing 737-900",
+          "flight_number": "UA1001",
+          "ua_flight_number": "UA1001",
+          "departure_airport": "SFO",
+          "arrival_airport": "EWR",
+          "departure_time": 1789916400,
+          "arrival_time": 1789927200,
+          "departure_time_formatted": "2026-09-20T15:00:00.000Z",
+          "arrival_time_formatted": "2026-09-20T18:00:00.000Z",
+          "operated_by": "United Airlines",
+          "fleet_type": "mainline"
+        }
+      ]
+    }
   },
   "airlinestarlinktracker.com /api/check-flight UA1003 2026-09-20": {
     "status": 200,
@@ -247,7 +472,21 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"hasStarlink\":false,\"airline\":\"United Airlines\",\"confidence\":\"verified\",\"message\":\"UA1003 is assigned to tail N3003, verified as Viasat WiFi — not Starlink.\",\"flights\":[],\"sameDayAlternatives\":[{\"flight_number\":\"UA1004\",\"departure_time\":1789934400,\"tail_number\":\"N3004\",\"aircraft_type\":\"Boeing 737-900\"}]}"
+    "json": {
+      "hasStarlink": false,
+      "airline": "United Airlines",
+      "confidence": "verified",
+      "message": "UA1003 is assigned to tail N3003, verified as Viasat WiFi — not Starlink.",
+      "flights": [],
+      "sameDayAlternatives": [
+        {
+          "flight_number": "UA1004",
+          "departure_time": 1789934400,
+          "tail_number": "N3004",
+          "aircraft_type": "Boeing 737-900"
+        }
+      ]
+    }
   },
   "airlinestarlinktracker.com /api/check-flight UA1009 2026-09-29": {
     "status": 200,
@@ -259,7 +498,19 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"hasStarlink\":null,\"airline\":\"United Airlines\",\"confidence\":\"predicted\",\"prediction\":{\"probability\":0.8,\"confidence\":\"high\",\"n_observations\":5,\"n_recent_observations\":5},\"message\":\"Aircraft assignment not yet published — United Airlines assigns aircraft ~2 days before departure. ~80% of observed departures of this flight used a Starlink-equipped aircraft (5 observations).\",\"flights\":[]}"
+    "json": {
+      "hasStarlink": null,
+      "airline": "United Airlines",
+      "confidence": "predicted",
+      "prediction": {
+        "probability": 0.8,
+        "confidence": "high",
+        "n_observations": 5,
+        "n_recent_observations": 5
+      },
+      "message": "Aircraft assignment not yet published — United Airlines assigns aircraft ~2 days before departure. ~80% of observed departures of this flight used a Starlink-equipped aircraft (5 observations).",
+      "flights": []
+    }
   },
   "airlinestarlinktracker.com /api/check-flight UA1010 2026-09-29": {
     "status": 200,
@@ -271,7 +522,19 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"hasStarlink\":null,\"airline\":\"United Airlines\",\"confidence\":\"predicted\",\"prediction\":{\"probability\":0.02,\"confidence\":\"low\",\"n_observations\":0,\"n_recent_observations\":0},\"message\":\"Aircraft assignment not yet published — United Airlines assigns aircraft ~2 days before departure. No history for this flight number; ~2% is our estimate for flights we haven't yet seen on a Starlink aircraft, from the mainline fleet's current Starlink share.\",\"flights\":[]}"
+    "json": {
+      "hasStarlink": null,
+      "airline": "United Airlines",
+      "confidence": "predicted",
+      "prediction": {
+        "probability": 0.02,
+        "confidence": "low",
+        "n_observations": 0,
+        "n_recent_observations": 0
+      },
+      "message": "Aircraft assignment not yet published — United Airlines assigns aircraft ~2 days before departure. No history for this flight number; ~2% is our estimate for flights we haven't yet seen on a Starlink aircraft, from the mainline fleet's current Starlink share.",
+      "flights": []
+    }
   },
   "airlinestarlinktracker.com /api/check-flight AS100 2026-09-20": {
     "status": 200,
@@ -283,7 +546,27 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"hasStarlink\":true,\"airline\":\"Alaska Airlines\",\"confidence\":\"verified\",\"flights\":[{\"tail_number\":\"N601AS\",\"aircraft_type\":\"Boeing 737-900\",\"flight_number\":\"AS100\",\"ua_flight_number\":\"AS100\",\"departure_airport\":\"SEA\",\"arrival_airport\":\"LAX\",\"departure_time\":1789927200,\"arrival_time\":1789938000,\"departure_time_formatted\":\"2026-09-20T18:00:00.000Z\",\"arrival_time_formatted\":\"2026-09-20T21:00:00.000Z\",\"operated_by\":\"United Airlines\",\"fleet_type\":\"mainline\"}]}"
+    "json": {
+      "hasStarlink": true,
+      "airline": "Alaska Airlines",
+      "confidence": "verified",
+      "flights": [
+        {
+          "tail_number": "N601AS",
+          "aircraft_type": "Boeing 737-900",
+          "flight_number": "AS100",
+          "ua_flight_number": "AS100",
+          "departure_airport": "SEA",
+          "arrival_airport": "LAX",
+          "departure_time": 1789927200,
+          "arrival_time": 1789938000,
+          "departure_time_formatted": "2026-09-20T18:00:00.000Z",
+          "arrival_time_formatted": "2026-09-20T21:00:00.000Z",
+          "operated_by": "United Airlines",
+          "fleet_type": "mainline"
+        }
+      ]
+    }
   },
   "airlinestarlinktracker.com /api/check-flight AS200 2026-09-29": {
     "status": 200,
@@ -295,7 +578,13 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"hasStarlink\":null,\"airline\":\"Alaska Airlines\",\"confidence\":\"type\",\"message\":\"No per-flight prediction model exists for Alaska Airlines — Starlink status is determined by aircraft type, not flight-number history. Every regional E175 has Starlink. Mainline has started with the 737-8 MAX; no other 737 or 787 is connected yet.\",\"flights\":[]}"
+    "json": {
+      "hasStarlink": null,
+      "airline": "Alaska Airlines",
+      "confidence": "type",
+      "message": "No per-flight prediction model exists for Alaska Airlines — Starlink status is determined by aircraft type, not flight-number history. Every regional E175 has Starlink. Mainline has started with the 737-8 MAX; no other 737 or 787 is connected yet.",
+      "flights": []
+    }
   },
   "airlinestarlinktracker.com /api/check-flight HA100 2026-09-29": {
     "status": 200,
@@ -307,7 +596,13 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"hasStarlink\":null,\"airline\":\"Hawaiian Airlines\",\"confidence\":\"type\",\"message\":\"Starlink on Hawaiian Airlines is determined by aircraft type — A330/A321: Starlink (rollout complete); B787: mid-installation; B717: no Starlink. No aircraft schedule is on file for this flight on 2026-09-29 yet; aircraft are assigned about two days before departure.\",\"flights\":[]}"
+    "json": {
+      "hasStarlink": null,
+      "airline": "Hawaiian Airlines",
+      "confidence": "type",
+      "message": "Starlink on Hawaiian Airlines is determined by aircraft type — A330/A321: Starlink (rollout complete); B787: mid-installation; B717: no Starlink. No aircraft schedule is on file for this flight on 2026-09-29 yet; aircraft are assigned about two days before departure.",
+      "flights": []
+    }
   },
   "airlinestarlinktracker.com /api/check-flight QR1 2026-09-20": {
     "status": 404,
@@ -319,7 +614,9 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"error\":\"Airline not tracked. Tracked: UA, HA, AS\"}"
+    "json": {
+      "error": "Airline not tracked. Tracked: UA, HA, AS"
+    }
   },
   "airlinestarlinktracker.com /api/check-any-flight UA1001 2026-09-20": {
     "status": 200,
@@ -331,7 +628,21 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"hasStarlink\":true,\"airline\":\"United Airlines\",\"confidence\":\"verified\",\"reason\":\"N3001 (Boeing 737-900) — SFO → EWR\",\"flights\":[{\"tail_number\":\"N3001\",\"aircraft_type\":\"Boeing 737-900\",\"departure_airport\":\"SFO\",\"arrival_airport\":\"EWR\",\"departure_time\":1789916400}]}"
+    "json": {
+      "hasStarlink": true,
+      "airline": "United Airlines",
+      "confidence": "verified",
+      "reason": "N3001 (Boeing 737-900) — SFO → EWR",
+      "flights": [
+        {
+          "tail_number": "N3001",
+          "aircraft_type": "Boeing 737-900",
+          "departure_airport": "SFO",
+          "arrival_airport": "EWR",
+          "departure_time": 1789916400
+        }
+      ]
+    }
   },
   "airlinestarlinktracker.com /api/check-any-flight UA1002 2026-09-20": {
     "status": 200,
@@ -343,7 +654,21 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"hasStarlink\":true,\"airline\":\"United Airlines\",\"confidence\":\"likely\",\"reason\":\"N3002 (Boeing 737-900) — SFO → DEN\",\"flights\":[{\"tail_number\":\"N3002\",\"aircraft_type\":\"Boeing 737-900\",\"departure_airport\":\"SFO\",\"arrival_airport\":\"DEN\",\"departure_time\":1789920000}]}"
+    "json": {
+      "hasStarlink": true,
+      "airline": "United Airlines",
+      "confidence": "likely",
+      "reason": "N3002 (Boeing 737-900) — SFO → DEN",
+      "flights": [
+        {
+          "tail_number": "N3002",
+          "aircraft_type": "Boeing 737-900",
+          "departure_airport": "SFO",
+          "arrival_airport": "DEN",
+          "departure_time": 1789920000
+        }
+      ]
+    }
   },
   "airlinestarlinktracker.com /api/check-any-flight UA1003 2026-09-20": {
     "status": 200,
@@ -355,7 +680,21 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"hasStarlink\":false,\"airline\":\"United Airlines\",\"confidence\":\"verified\",\"reason\":\"N3003 (Boeing 737-900) — verified Viasat WiFi, not Starlink.\",\"flights\":[],\"sameDayAlternatives\":[{\"flight_number\":\"UA1004\",\"departure_time\":1789934400,\"tail_number\":\"N3004\",\"aircraft_type\":\"Boeing 737-900\"}]}"
+    "json": {
+      "hasStarlink": false,
+      "airline": "United Airlines",
+      "confidence": "verified",
+      "reason": "N3003 (Boeing 737-900) — verified Viasat WiFi, not Starlink.",
+      "flights": [],
+      "sameDayAlternatives": [
+        {
+          "flight_number": "UA1004",
+          "departure_time": 1789934400,
+          "tail_number": "N3004",
+          "aircraft_type": "Boeing 737-900"
+        }
+      ]
+    }
   },
   "airlinestarlinktracker.com /api/check-any-flight UA1009 2026-09-29": {
     "status": 200,
@@ -367,7 +706,15 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"hasStarlink\":null,\"airline\":\"United Airlines\",\"probability\":0.8,\"confidence\":\"high\",\"n_recent_observations\":5,\"reason\":\"No schedule data for this date; ~80% based on 5 historical observations.\",\"flights\":[]}"
+    "json": {
+      "hasStarlink": null,
+      "airline": "United Airlines",
+      "probability": 0.8,
+      "confidence": "high",
+      "n_recent_observations": 5,
+      "reason": "No schedule data for this date; ~80% based on 5 historical observations.",
+      "flights": []
+    }
   },
   "airlinestarlinktracker.com /api/check-any-flight UA1010 2026-09-29": {
     "status": 200,
@@ -379,7 +726,15 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"hasStarlink\":null,\"airline\":\"United Airlines\",\"probability\":0.02,\"confidence\":\"low\",\"n_recent_observations\":0,\"reason\":\"No schedule data for this date. No history for this flight number; ~2% is our estimate for flights we haven't yet seen on a Starlink aircraft, from the mainline fleet's current Starlink share.\",\"flights\":[]}"
+    "json": {
+      "hasStarlink": null,
+      "airline": "United Airlines",
+      "probability": 0.02,
+      "confidence": "low",
+      "n_recent_observations": 0,
+      "reason": "No schedule data for this date. No history for this flight number; ~2% is our estimate for flights we haven't yet seen on a Starlink aircraft, from the mainline fleet's current Starlink share.",
+      "flights": []
+    }
   },
   "airlinestarlinktracker.com /api/check-any-flight AS100 2026-09-20": {
     "status": 200,
@@ -391,7 +746,21 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"hasStarlink\":true,\"airline\":\"Alaska Airlines\",\"confidence\":\"verified\",\"reason\":\"N601AS (Boeing 737-900) — SEA → LAX\",\"flights\":[{\"tail_number\":\"N601AS\",\"aircraft_type\":\"Boeing 737-900\",\"departure_airport\":\"SEA\",\"arrival_airport\":\"LAX\",\"departure_time\":1789927200}]}"
+    "json": {
+      "hasStarlink": true,
+      "airline": "Alaska Airlines",
+      "confidence": "verified",
+      "reason": "N601AS (Boeing 737-900) — SEA → LAX",
+      "flights": [
+        {
+          "tail_number": "N601AS",
+          "aircraft_type": "Boeing 737-900",
+          "departure_airport": "SEA",
+          "arrival_airport": "LAX",
+          "departure_time": 1789927200
+        }
+      ]
+    }
   },
   "airlinestarlinktracker.com /api/check-any-flight AS200 2026-09-29": {
     "status": 200,
@@ -403,7 +772,13 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"hasStarlink\":null,\"airline\":\"Alaska Airlines\",\"confidence\":\"type\",\"reason\":\"No per-flight prediction model exists for Alaska Airlines — Starlink status is determined by aircraft type, not flight-number history. Every regional E175 has Starlink. Mainline has started with the 737-8 MAX; no other 737 or 787 is connected yet.\",\"flights\":[]}"
+    "json": {
+      "hasStarlink": null,
+      "airline": "Alaska Airlines",
+      "confidence": "type",
+      "reason": "No per-flight prediction model exists for Alaska Airlines — Starlink status is determined by aircraft type, not flight-number history. Every regional E175 has Starlink. Mainline has started with the 737-8 MAX; no other 737 or 787 is connected yet.",
+      "flights": []
+    }
   },
   "airlinestarlinktracker.com /api/check-any-flight QR1 2026-09-20": {
     "status": 200,
@@ -415,7 +790,25 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"hasStarlink\":true,\"airline\":\"Qatar Airways\",\"confidence\":\"type\",\"basis\":\"schedule\",\"reason\":\"Scheduled Boeing 777-300ER DOH→LHR. Qatar reports its 777 fleet fully fitted with Starlink. Qatar can change the aircraft before departure.\",\"flights\":[{\"tail_number\":null,\"aircraft_type\":\"Boeing 777-300ER\",\"equipment_code\":\"77W\",\"starlink\":\"yes\",\"departure_airport\":\"DOH\",\"arrival_airport\":\"LHR\",\"departure_time\":1789886400,\"flight_status\":\"SCHEDULED\"}]}"
+    "json": {
+      "hasStarlink": true,
+      "airline": "Qatar Airways",
+      "confidence": "type",
+      "basis": "schedule",
+      "reason": "Scheduled Boeing 777-300ER DOH→LHR. Qatar reports its 777 fleet fully fitted with Starlink. Qatar can change the aircraft before departure.",
+      "flights": [
+        {
+          "tail_number": null,
+          "aircraft_type": "Boeing 777-300ER",
+          "equipment_code": "77W",
+          "starlink": "yes",
+          "departure_airport": "DOH",
+          "arrival_airport": "LHR",
+          "departure_time": 1789886400,
+          "flight_status": "SCHEDULED"
+        }
+      ]
+    }
   },
   "airlinestarlinktracker.com /api/check-any-flight QR3 2026-09-20": {
     "status": 200,
@@ -427,7 +820,25 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"hasStarlink\":false,\"airline\":\"Qatar Airways\",\"confidence\":\"type\",\"basis\":\"schedule\",\"reason\":\"Scheduled Airbus A380-800 — not part of Qatar's Starlink program.\",\"flights\":[{\"tail_number\":null,\"aircraft_type\":\"Airbus A380-800\",\"equipment_code\":\"388\",\"starlink\":\"no\",\"departure_airport\":\"DOH\",\"arrival_airport\":\"LHR\",\"departure_time\":1789886400,\"flight_status\":\"SCHEDULED\"}]}"
+    "json": {
+      "hasStarlink": false,
+      "airline": "Qatar Airways",
+      "confidence": "type",
+      "basis": "schedule",
+      "reason": "Scheduled Airbus A380-800 — not part of Qatar's Starlink program.",
+      "flights": [
+        {
+          "tail_number": null,
+          "aircraft_type": "Airbus A380-800",
+          "equipment_code": "388",
+          "starlink": "no",
+          "departure_airport": "DOH",
+          "arrival_airport": "LHR",
+          "departure_time": 1789886400,
+          "flight_status": "SCHEDULED"
+        }
+      ]
+    }
   },
   "airlinestarlinktracker.com /api/check-any-flight QR5 2026-09-20": {
     "status": 200,
@@ -439,7 +850,25 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"hasStarlink\":true,\"airline\":\"Qatar Airways\",\"confidence\":\"type\",\"basis\":\"schedule\",\"reason\":\"Scheduled Boeing 787-8 DOH→LHR. Qatar reports its 787-8 fleet fully fitted with Starlink. Qatar can change the aircraft before departure.\",\"flights\":[{\"tail_number\":null,\"aircraft_type\":\"Boeing 787-8\",\"equipment_code\":\"788\",\"starlink\":\"yes\",\"departure_airport\":\"DOH\",\"arrival_airport\":\"LHR\",\"departure_time\":1789886400,\"flight_status\":\"SCHEDULED\"}]}"
+    "json": {
+      "hasStarlink": true,
+      "airline": "Qatar Airways",
+      "confidence": "type",
+      "basis": "schedule",
+      "reason": "Scheduled Boeing 787-8 DOH→LHR. Qatar reports its 787-8 fleet fully fitted with Starlink. Qatar can change the aircraft before departure.",
+      "flights": [
+        {
+          "tail_number": null,
+          "aircraft_type": "Boeing 787-8",
+          "equipment_code": "788",
+          "starlink": "yes",
+          "departure_airport": "DOH",
+          "arrival_airport": "LHR",
+          "departure_time": 1789886400,
+          "flight_status": "SCHEDULED"
+        }
+      ]
+    }
   },
   "airlinestarlinktracker.com /api/check-any-flight QR9 2026-09-20": {
     "status": 200,
@@ -451,7 +880,25 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"hasStarlink\":null,\"airline\":\"Qatar Airways\",\"confidence\":\"type\",\"basis\":\"schedule\",\"reason\":\"Scheduled Boeing 787-9 DOH→LHR. Qatar's 787-9 Starlink installs are under way (due end-2026); this aircraft may or may not be equipped yet.\",\"flights\":[{\"tail_number\":null,\"aircraft_type\":\"Boeing 787-9\",\"equipment_code\":\"789\",\"starlink\":\"rolling\",\"departure_airport\":\"DOH\",\"arrival_airport\":\"LHR\",\"departure_time\":1789886400,\"flight_status\":\"SCHEDULED\"}]}"
+    "json": {
+      "hasStarlink": null,
+      "airline": "Qatar Airways",
+      "confidence": "type",
+      "basis": "schedule",
+      "reason": "Scheduled Boeing 787-9 DOH→LHR. Qatar's 787-9 Starlink installs are under way (due end-2026); this aircraft may or may not be equipped yet.",
+      "flights": [
+        {
+          "tail_number": null,
+          "aircraft_type": "Boeing 787-9",
+          "equipment_code": "789",
+          "starlink": "rolling",
+          "departure_airport": "DOH",
+          "arrival_airport": "LHR",
+          "departure_time": 1789886400,
+          "flight_status": "SCHEDULED"
+        }
+      ]
+    }
   },
   "airlinestarlinktracker.com /api/check-any-flight QR11 2026-09-20": {
     "status": 200,
@@ -463,7 +910,14 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"hasStarlink\":null,\"airline\":\"Qatar Airways\",\"confidence\":\"type\",\"basis\":\"schedule\",\"reason\":\"Qatar lists QR11 on 2026-09-20 as cancelled.\",\"flights\":[]}"
+    "json": {
+      "hasStarlink": null,
+      "airline": "Qatar Airways",
+      "confidence": "type",
+      "basis": "schedule",
+      "reason": "Qatar lists QR11 on 2026-09-20 as cancelled.",
+      "flights": []
+    }
   },
   "airlinestarlinktracker.com /api/check-any-flight QR7 2026-10-09": {
     "status": 200,
@@ -475,7 +929,28 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"hasStarlink\":null,\"airline\":\"Qatar Airways\",\"probability\":0.8808234818732034,\"confidence\":\"high\",\"basis\":\"history\",\"n_recent_observations\":20,\"n_flown\":20,\"n_scheduled\":0,\"window_days\":28,\"type_mix\":[{\"equipment_code\":\"77W\",\"aircraft_type\":\"Boeing 777-300ER\",\"class\":\"yes\",\"count\":20}],\"season_shift\":false,\"reason\":\"Qatar publishes the aircraft about a week ahead. QR7 over its last 20 operating days (flown and scheduled): 777-300ER ×20 — 20 on types Qatar reports fully fitted with Starlink (at least 88%).\",\"flights\":[]}"
+    "json": {
+      "hasStarlink": null,
+      "airline": "Qatar Airways",
+      "probability": 0.8808234818732034,
+      "confidence": "high",
+      "basis": "history",
+      "n_recent_observations": 20,
+      "n_flown": 20,
+      "n_scheduled": 0,
+      "window_days": 28,
+      "type_mix": [
+        {
+          "equipment_code": "77W",
+          "aircraft_type": "Boeing 777-300ER",
+          "class": "yes",
+          "count": 20
+        }
+      ],
+      "season_shift": false,
+      "reason": "Qatar publishes the aircraft about a week ahead. QR7 over its last 20 operating days (flown and scheduled): 777-300ER ×20 — 20 on types Qatar reports fully fitted with Starlink (at least 88%).",
+      "flights": []
+    }
   },
   "airlinestarlinktracker.com /api/check-any-flight QR8888 2026-09-20": {
     "status": 200,
@@ -487,7 +962,14 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"hasStarlink\":null,\"airline\":\"Qatar Airways\",\"confidence\":\"no_data\",\"basis\":\"schedule\",\"reason\":\"We haven't observed QR8888 on the Qatar routes we track yet (selected Qatar routes only; Qatar publishes the aircraft about a week out). Qatar reports its 777, A350 and 787-8 fleets fitted; 787-9 installs are under way; A380, A330 and narrowbodies aren't in the program.\",\"flights\":[]}"
+    "json": {
+      "hasStarlink": null,
+      "airline": "Qatar Airways",
+      "confidence": "no_data",
+      "basis": "schedule",
+      "reason": "We haven't observed QR8888 on the Qatar routes we track yet (selected Qatar routes only; Qatar publishes the aircraft about a week out). Qatar reports its 777, A350 and 787-8 fleets fitted; 787-9 installs are under way; A380, A330 and narrowbodies aren't in the program.",
+      "flights": []
+    }
   },
   "airlinestarlinktracker.com /api/check-any-flight QR8888 2026-10-09": {
     "status": 200,
@@ -499,7 +981,14 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"hasStarlink\":null,\"airline\":\"Qatar Airways\",\"confidence\":\"no_data\",\"basis\":\"history\",\"reason\":\"We haven't observed QR8888 on the Qatar routes we track yet (selected Qatar routes only; Qatar publishes the aircraft about a week out). Qatar reports its 777, A350 and 787-8 fleets fitted; 787-9 installs are under way; A380, A330 and narrowbodies aren't in the program.\",\"flights\":[]}"
+    "json": {
+      "hasStarlink": null,
+      "airline": "Qatar Airways",
+      "confidence": "no_data",
+      "basis": "history",
+      "reason": "We haven't observed QR8888 on the Qatar routes we track yet (selected Qatar routes only; Qatar publishes the aircraft about a week out). Qatar reports its 777, A350 and 787-8 fleets fitted; 787-9 installs are under way; A380, A330 and narrowbodies aren't in the program.",
+      "flights": []
+    }
   },
   "airlinestarlinktracker.com /api/check-any-flight HA100 2026-09-29": {
     "status": 200,
@@ -511,7 +1000,13 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"hasStarlink\":null,\"airline\":\"Hawaiian Airlines\",\"confidence\":\"type\",\"reason\":\"Starlink on Hawaiian Airlines is determined by aircraft type — A330/A321: Starlink (rollout complete); B787: mid-installation; B717: no Starlink. No aircraft schedule is on file for this flight on 2026-09-29 yet; aircraft are assigned about two days before departure.\",\"flights\":[]}"
+    "json": {
+      "hasStarlink": null,
+      "airline": "Hawaiian Airlines",
+      "confidence": "type",
+      "reason": "Starlink on Hawaiian Airlines is determined by aircraft type — A330/A321: Starlink (rollout complete); B787: mid-installation; B717: no Starlink. No aircraft schedule is on file for this flight on 2026-09-29 yet; aircraft are assigned about two days before departure.",
+      "flights": []
+    }
   },
   "airlinestarlinktracker.com /api/check-any-flight DL100 2026-09-20": {
     "status": 200,
@@ -523,7 +1018,9 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"error\":\"Airline not tracked. Tracked: UA, HA, AS, QR\"}"
+    "json": {
+      "error": "Airline not tracked. Tracked: UA, HA, AS, QR"
+    }
   },
   "airlinestarlinktracker.com /api/check-any-flight UA12345 2026-09-20": {
     "status": 400,
@@ -535,7 +1032,9 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"error\":\"Invalid flight number UA12345 — use 1-4 digits.\"}"
+    "json": {
+      "error": "Invalid flight number UA12345 — use 1-4 digits."
+    }
   },
   "airlinestarlinktracker.com /api/check-any-flight UA1001 bad": {
     "status": 400,
@@ -547,7 +1046,9 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"error\":\"Invalid date format. Use YYYY-MM-DD\"}"
+    "json": {
+      "error": "Invalid date format. Use YYYY-MM-DD"
+    }
   },
   "HUB any missing params": {
     "status": 400,
@@ -559,7 +1060,9 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"error\":\"Missing required parameters: flight_number and date\"}"
+    "json": {
+      "error": "Missing required parameters: flight_number and date"
+    }
   },
   "unitedstarlinktracker.com /api/check-any-flight UA1001 2026-09-20": {
     "status": 404,
@@ -571,7 +1074,9 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"error\":\"Not found\"}"
+    "json": {
+      "error": "Not found"
+    }
   },
   "alaskastarlinktracker.com /api/check-flight AS100 2026-09-20": {
     "status": 200,
@@ -583,7 +1088,26 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"hasStarlink\":true,\"confidence\":\"verified\",\"flights\":[{\"tail_number\":\"N601AS\",\"aircraft_type\":\"Boeing 737-900\",\"flight_number\":\"AS100\",\"ua_flight_number\":\"AS100\",\"departure_airport\":\"SEA\",\"arrival_airport\":\"LAX\",\"departure_time\":1789927200,\"arrival_time\":1789938000,\"departure_time_formatted\":\"2026-09-20T18:00:00.000Z\",\"arrival_time_formatted\":\"2026-09-20T21:00:00.000Z\",\"operated_by\":\"United Airlines\",\"fleet_type\":\"mainline\"}]}"
+    "json": {
+      "hasStarlink": true,
+      "confidence": "verified",
+      "flights": [
+        {
+          "tail_number": "N601AS",
+          "aircraft_type": "Boeing 737-900",
+          "flight_number": "AS100",
+          "ua_flight_number": "AS100",
+          "departure_airport": "SEA",
+          "arrival_airport": "LAX",
+          "departure_time": 1789927200,
+          "arrival_time": 1789938000,
+          "departure_time_formatted": "2026-09-20T18:00:00.000Z",
+          "arrival_time_formatted": "2026-09-20T21:00:00.000Z",
+          "operated_by": "United Airlines",
+          "fleet_type": "mainline"
+        }
+      ]
+    }
   },
   "alaskastarlinktracker.com /api/check-flight AS200 2026-09-20": {
     "status": 200,
@@ -595,7 +1119,12 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"hasStarlink\":null,\"confidence\":\"type\",\"message\":\"No per-flight prediction model exists for Alaska Airlines — Starlink status is determined by aircraft type, not flight-number history. Every regional E175 has Starlink. Mainline has started with the 737-8 MAX; no other 737 or 787 is connected yet.\",\"flights\":[]}"
+    "json": {
+      "hasStarlink": null,
+      "confidence": "type",
+      "message": "No per-flight prediction model exists for Alaska Airlines — Starlink status is determined by aircraft type, not flight-number history. Every regional E175 has Starlink. Mainline has started with the 737-8 MAX; no other 737 or 787 is connected yet.",
+      "flights": []
+    }
   },
   "alaskastarlinktracker.com /api/check-flight AS200 2026-09-29": {
     "status": 200,
@@ -607,7 +1136,12 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"hasStarlink\":null,\"confidence\":\"type\",\"message\":\"No per-flight prediction model exists for Alaska Airlines — Starlink status is determined by aircraft type, not flight-number history. Every regional E175 has Starlink. Mainline has started with the 737-8 MAX; no other 737 or 787 is connected yet.\",\"flights\":[]}"
+    "json": {
+      "hasStarlink": null,
+      "confidence": "type",
+      "message": "No per-flight prediction model exists for Alaska Airlines — Starlink status is determined by aircraft type, not flight-number history. Every regional E175 has Starlink. Mainline has started with the 737-8 MAX; no other 737 or 787 is connected yet.",
+      "flights": []
+    }
   },
   "qatarstarlinktracker.com /api/check-flight QR1 2026-09-20": {
     "status": 200,
@@ -619,7 +1153,27 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"hasStarlink\":true,\"airline\":\"Qatar Airways\",\"confidence\":\"type\",\"reason\":\"Scheduled Boeing 777-300ER DOH→LHR. Qatar reports its 777 fleet fully fitted with Starlink. Qatar can change the aircraft before departure.\",\"flights\":[{\"flight_number\":\"QR1\",\"aircraft_type\":\"Boeing 777-300ER\",\"equipment_code\":\"77W\",\"wifi_verdict\":\"Starlink\",\"departure_airport\":\"DOH\",\"arrival_airport\":\"LHR\",\"departure_time\":1789886400,\"arrival_time\":1789911600,\"departure_time_formatted\":\"2026-09-20T06:40:00.000Z\",\"arrival_time_formatted\":\"2026-09-20T13:40:00.000Z\",\"flight_status\":\"SCHEDULED\"}]}"
+    "json": {
+      "hasStarlink": true,
+      "airline": "Qatar Airways",
+      "confidence": "type",
+      "reason": "Scheduled Boeing 777-300ER DOH→LHR. Qatar reports its 777 fleet fully fitted with Starlink. Qatar can change the aircraft before departure.",
+      "flights": [
+        {
+          "flight_number": "QR1",
+          "aircraft_type": "Boeing 777-300ER",
+          "equipment_code": "77W",
+          "wifi_verdict": "Starlink",
+          "departure_airport": "DOH",
+          "arrival_airport": "LHR",
+          "departure_time": 1789886400,
+          "arrival_time": 1789911600,
+          "departure_time_formatted": "2026-09-20T06:40:00.000Z",
+          "arrival_time_formatted": "2026-09-20T13:40:00.000Z",
+          "flight_status": "SCHEDULED"
+        }
+      ]
+    }
   },
   "qatarstarlinktracker.com /api/check-flight QR3 2026-09-20": {
     "status": 200,
@@ -631,7 +1185,27 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"hasStarlink\":false,\"airline\":\"Qatar Airways\",\"confidence\":\"type\",\"reason\":\"Scheduled Airbus A380-800 — not part of Qatar's Starlink program.\",\"flights\":[{\"flight_number\":\"QR3\",\"aircraft_type\":\"Airbus A380-800\",\"equipment_code\":\"388\",\"wifi_verdict\":\"None\",\"departure_airport\":\"DOH\",\"arrival_airport\":\"LHR\",\"departure_time\":1789886400,\"arrival_time\":1789911600,\"departure_time_formatted\":\"2026-09-20T06:40:00.000Z\",\"arrival_time_formatted\":\"2026-09-20T13:40:00.000Z\",\"flight_status\":\"SCHEDULED\"}]}"
+    "json": {
+      "hasStarlink": false,
+      "airline": "Qatar Airways",
+      "confidence": "type",
+      "reason": "Scheduled Airbus A380-800 — not part of Qatar's Starlink program.",
+      "flights": [
+        {
+          "flight_number": "QR3",
+          "aircraft_type": "Airbus A380-800",
+          "equipment_code": "388",
+          "wifi_verdict": "None",
+          "departure_airport": "DOH",
+          "arrival_airport": "LHR",
+          "departure_time": 1789886400,
+          "arrival_time": 1789911600,
+          "departure_time_formatted": "2026-09-20T06:40:00.000Z",
+          "arrival_time_formatted": "2026-09-20T13:40:00.000Z",
+          "flight_status": "SCHEDULED"
+        }
+      ]
+    }
   },
   "qatarstarlinktracker.com /api/check-flight QR5 2026-09-20": {
     "status": 200,
@@ -643,7 +1217,27 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"hasStarlink\":true,\"airline\":\"Qatar Airways\",\"confidence\":\"type\",\"reason\":\"Scheduled Boeing 787-8 DOH→LHR. Qatar reports its 787-8 fleet fully fitted with Starlink. Qatar can change the aircraft before departure.\",\"flights\":[{\"flight_number\":\"QR5\",\"aircraft_type\":\"Boeing 787-8\",\"equipment_code\":\"788\",\"wifi_verdict\":\"Starlink\",\"departure_airport\":\"DOH\",\"arrival_airport\":\"LHR\",\"departure_time\":1789886400,\"arrival_time\":1789911600,\"departure_time_formatted\":\"2026-09-20T06:40:00.000Z\",\"arrival_time_formatted\":\"2026-09-20T13:40:00.000Z\",\"flight_status\":\"SCHEDULED\"}]}"
+    "json": {
+      "hasStarlink": true,
+      "airline": "Qatar Airways",
+      "confidence": "type",
+      "reason": "Scheduled Boeing 787-8 DOH→LHR. Qatar reports its 787-8 fleet fully fitted with Starlink. Qatar can change the aircraft before departure.",
+      "flights": [
+        {
+          "flight_number": "QR5",
+          "aircraft_type": "Boeing 787-8",
+          "equipment_code": "788",
+          "wifi_verdict": "Starlink",
+          "departure_airport": "DOH",
+          "arrival_airport": "LHR",
+          "departure_time": 1789886400,
+          "arrival_time": 1789911600,
+          "departure_time_formatted": "2026-09-20T06:40:00.000Z",
+          "arrival_time_formatted": "2026-09-20T13:40:00.000Z",
+          "flight_status": "SCHEDULED"
+        }
+      ]
+    }
   },
   "qatarstarlinktracker.com /api/check-flight QR9 2026-09-20": {
     "status": 200,
@@ -655,7 +1249,27 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"hasStarlink\":null,\"airline\":\"Qatar Airways\",\"confidence\":\"rolling\",\"reason\":\"Scheduled Boeing 787-9 DOH→LHR. Qatar's 787-9 Starlink installs are under way (due end-2026); this aircraft may or may not be equipped yet.\",\"flights\":[{\"flight_number\":\"QR9\",\"aircraft_type\":\"Boeing 787-9\",\"equipment_code\":\"789\",\"wifi_verdict\":\"Rolling\",\"departure_airport\":\"DOH\",\"arrival_airport\":\"LHR\",\"departure_time\":1789886400,\"arrival_time\":1789911600,\"departure_time_formatted\":\"2026-09-20T06:40:00.000Z\",\"arrival_time_formatted\":\"2026-09-20T13:40:00.000Z\",\"flight_status\":\"SCHEDULED\"}]}"
+    "json": {
+      "hasStarlink": null,
+      "airline": "Qatar Airways",
+      "confidence": "rolling",
+      "reason": "Scheduled Boeing 787-9 DOH→LHR. Qatar's 787-9 Starlink installs are under way (due end-2026); this aircraft may or may not be equipped yet.",
+      "flights": [
+        {
+          "flight_number": "QR9",
+          "aircraft_type": "Boeing 787-9",
+          "equipment_code": "789",
+          "wifi_verdict": "Rolling",
+          "departure_airport": "DOH",
+          "arrival_airport": "LHR",
+          "departure_time": 1789886400,
+          "arrival_time": 1789911600,
+          "departure_time_formatted": "2026-09-20T06:40:00.000Z",
+          "arrival_time_formatted": "2026-09-20T13:40:00.000Z",
+          "flight_status": "SCHEDULED"
+        }
+      ]
+    }
   },
   "qatarstarlinktracker.com /api/check-flight QR11 2026-09-20": {
     "status": 200,
@@ -667,7 +1281,27 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"hasStarlink\":null,\"airline\":\"Qatar Airways\",\"confidence\":\"mixed\",\"reason\":\"Qatar lists QR11 on 2026-09-20 as cancelled.\",\"flights\":[{\"flight_number\":\"QR11\",\"aircraft_type\":\"Boeing 777-300ER\",\"equipment_code\":\"77W\",\"wifi_verdict\":\"Starlink\",\"departure_airport\":\"DOH\",\"arrival_airport\":\"LHR\",\"departure_time\":1789886400,\"arrival_time\":1789911600,\"departure_time_formatted\":\"2026-09-20T06:40:00.000Z\",\"arrival_time_formatted\":\"2026-09-20T13:40:00.000Z\",\"flight_status\":\"CANCELLED\"}]}"
+    "json": {
+      "hasStarlink": null,
+      "airline": "Qatar Airways",
+      "confidence": "mixed",
+      "reason": "Qatar lists QR11 on 2026-09-20 as cancelled.",
+      "flights": [
+        {
+          "flight_number": "QR11",
+          "aircraft_type": "Boeing 777-300ER",
+          "equipment_code": "77W",
+          "wifi_verdict": "Starlink",
+          "departure_airport": "DOH",
+          "arrival_airport": "LHR",
+          "departure_time": 1789886400,
+          "arrival_time": 1789911600,
+          "departure_time_formatted": "2026-09-20T06:40:00.000Z",
+          "arrival_time_formatted": "2026-09-20T13:40:00.000Z",
+          "flight_status": "CANCELLED"
+        }
+      ]
+    }
   },
   "qatarstarlinktracker.com /api/check-flight QR7 2026-10-09": {
     "status": 200,
@@ -679,7 +1313,28 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"hasStarlink\":null,\"airline\":\"Qatar Airways\",\"probability\":0.8808234818732034,\"confidence\":\"high\",\"basis\":\"history\",\"n_recent_observations\":20,\"n_flown\":20,\"n_scheduled\":0,\"window_days\":28,\"type_mix\":[{\"equipment_code\":\"77W\",\"aircraft_type\":\"Boeing 777-300ER\",\"class\":\"yes\",\"count\":20}],\"season_shift\":false,\"reason\":\"Qatar publishes the aircraft about a week ahead. QR7 over its last 20 operating days (flown and scheduled): 777-300ER ×20 — 20 on types Qatar reports fully fitted with Starlink (at least 88%).\",\"flights\":[]}"
+    "json": {
+      "hasStarlink": null,
+      "airline": "Qatar Airways",
+      "probability": 0.8808234818732034,
+      "confidence": "high",
+      "basis": "history",
+      "n_recent_observations": 20,
+      "n_flown": 20,
+      "n_scheduled": 0,
+      "window_days": 28,
+      "type_mix": [
+        {
+          "equipment_code": "77W",
+          "aircraft_type": "Boeing 777-300ER",
+          "class": "yes",
+          "count": 20
+        }
+      ],
+      "season_shift": false,
+      "reason": "Qatar publishes the aircraft about a week ahead. QR7 over its last 20 operating days (flown and scheduled): 777-300ER ×20 — 20 on types Qatar reports fully fitted with Starlink (at least 88%).",
+      "flights": []
+    }
   },
   "qatarstarlinktracker.com /api/check-flight QR8888 2026-09-20": {
     "status": 200,
@@ -691,7 +1346,13 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"hasStarlink\":null,\"airline\":\"Qatar Airways\",\"confidence\":\"no_data\",\"reason\":\"We haven't observed QR8888 on the Qatar routes we track yet (selected Qatar routes only; Qatar publishes the aircraft about a week out). Qatar reports its 777, A350 and 787-8 fleets fitted; 787-9 installs are under way; A380, A330 and narrowbodies aren't in the program.\",\"flights\":[]}"
+    "json": {
+      "hasStarlink": null,
+      "airline": "Qatar Airways",
+      "confidence": "no_data",
+      "reason": "We haven't observed QR8888 on the Qatar routes we track yet (selected Qatar routes only; Qatar publishes the aircraft about a week out). Qatar reports its 777, A350 and 787-8 fleets fitted; 787-9 installs are under way; A380, A330 and narrowbodies aren't in the program.",
+      "flights": []
+    }
   },
   "unitedstarlinktracker.com watch UA1001 2026-09-20": {
     "status": 200,
@@ -701,7 +1362,34 @@
       "access-control-allow-origin": "*",
       "vary": "Host"
     },
-    "body": "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//unitedstarlinktracker//watch//EN\r\nCALSCALE:GREGORIAN\r\nMETHOD:PUBLISH\r\nX-WR-CALNAME:Starlink Watch UA1001\r\nREFRESH-INTERVAL;VALUE=DURATION:PT1H\r\nX-PUBLISHED-TTL:PT1H\r\nBEGIN:VEVENT\r\nUID:UA1001-2026-09-20@unitedstarlinktracker.com\r\nDTSTAMP:20260919T080000Z\r\nDTSTART:20260920T150000Z\r\nDTEND:20260920T180000Z\r\nLAST-MODIFIED:20260919T080000Z\r\nSEQUENCE:0\r\nSUMMARY:UA1001 SFO→EWR · Starlink ✅ N3001 (Boeing 737-900)\r\nDESCRIPTION:Aircraft: N3001 (Boeing 737-900) — Starlink verified.\\n\\nAirc\r\n raft usually assigned ~2 days out\\; Google Calendar refreshes every 8–24\r\n h\\, Apple ~hourly.\\nhttps://unitedstarlinktracker.com/check-flight/UA1001/\r\n 2026-09-20?utm_source=cal\r\nURL:https://unitedstarlinktracker.com/check-flight/UA1001/2026-09-20?utm_so\r\n urce=cal\r\nTRANSP:TRANSPARENT\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+    "lines": [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "PRODID:-//unitedstarlinktracker//watch//EN",
+      "CALSCALE:GREGORIAN",
+      "METHOD:PUBLISH",
+      "X-WR-CALNAME:Starlink Watch UA1001",
+      "REFRESH-INTERVAL;VALUE=DURATION:PT1H",
+      "X-PUBLISHED-TTL:PT1H",
+      "BEGIN:VEVENT",
+      "UID:UA1001-2026-09-20@unitedstarlinktracker.com",
+      "DTSTAMP:20260919T080000Z",
+      "DTSTART:20260920T150000Z",
+      "DTEND:20260920T180000Z",
+      "LAST-MODIFIED:20260919T080000Z",
+      "SEQUENCE:0",
+      "SUMMARY:UA1001 SFO→EWR · Starlink ✅ N3001 (Boeing 737-900)",
+      "DESCRIPTION:Aircraft: N3001 (Boeing 737-900) — Starlink verified.\\n\\nAirc",
+      " raft usually assigned ~2 days out\\; Google Calendar refreshes every 8–24",
+      " h\\, Apple ~hourly.\\nhttps://unitedstarlinktracker.com/check-flight/UA1001/",
+      " 2026-09-20?utm_source=cal",
+      "URL:https://unitedstarlinktracker.com/check-flight/UA1001/2026-09-20?utm_so",
+      " urce=cal",
+      "TRANSP:TRANSPARENT",
+      "END:VEVENT",
+      "END:VCALENDAR",
+      ""
+    ]
   },
   "unitedstarlinktracker.com watch UA1002 2026-09-20": {
     "status": 200,
@@ -711,7 +1399,34 @@
       "access-control-allow-origin": "*",
       "vary": "Host"
     },
-    "body": "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//unitedstarlinktracker//watch//EN\r\nCALSCALE:GREGORIAN\r\nMETHOD:PUBLISH\r\nX-WR-CALNAME:Starlink Watch UA1002\r\nREFRESH-INTERVAL;VALUE=DURATION:PT1H\r\nX-PUBLISHED-TTL:PT1H\r\nBEGIN:VEVENT\r\nUID:UA1002-2026-09-20@unitedstarlinktracker.com\r\nDTSTAMP:20260919T080000Z\r\nDTSTART:20260920T160000Z\r\nDTEND:20260920T190000Z\r\nLAST-MODIFIED:20260919T080000Z\r\nSEQUENCE:0\r\nSUMMARY:UA1002 SFO→DEN · Starlink ✅ N3002 (Boeing 737-900)\r\nDESCRIPTION:Aircraft: N3002 (Boeing 737-900) — Starlink likely (listed as\r\n  installed\\, not yet verified onboard).\\n\\nAircraft usually assigned ~2 da\r\n ys out\\; Google Calendar refreshes every 8–24h\\, Apple ~hourly.\\nhttps:/\r\n /unitedstarlinktracker.com/check-flight/UA1002/2026-09-20?utm_source=cal\r\nURL:https://unitedstarlinktracker.com/check-flight/UA1002/2026-09-20?utm_so\r\n urce=cal\r\nTRANSP:TRANSPARENT\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+    "lines": [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "PRODID:-//unitedstarlinktracker//watch//EN",
+      "CALSCALE:GREGORIAN",
+      "METHOD:PUBLISH",
+      "X-WR-CALNAME:Starlink Watch UA1002",
+      "REFRESH-INTERVAL;VALUE=DURATION:PT1H",
+      "X-PUBLISHED-TTL:PT1H",
+      "BEGIN:VEVENT",
+      "UID:UA1002-2026-09-20@unitedstarlinktracker.com",
+      "DTSTAMP:20260919T080000Z",
+      "DTSTART:20260920T160000Z",
+      "DTEND:20260920T190000Z",
+      "LAST-MODIFIED:20260919T080000Z",
+      "SEQUENCE:0",
+      "SUMMARY:UA1002 SFO→DEN · Starlink ✅ N3002 (Boeing 737-900)",
+      "DESCRIPTION:Aircraft: N3002 (Boeing 737-900) — Starlink likely (listed as",
+      "  installed\\, not yet verified onboard).\\n\\nAircraft usually assigned ~2 da",
+      " ys out\\; Google Calendar refreshes every 8–24h\\, Apple ~hourly.\\nhttps:/",
+      " /unitedstarlinktracker.com/check-flight/UA1002/2026-09-20?utm_source=cal",
+      "URL:https://unitedstarlinktracker.com/check-flight/UA1002/2026-09-20?utm_so",
+      " urce=cal",
+      "TRANSP:TRANSPARENT",
+      "END:VEVENT",
+      "END:VCALENDAR",
+      ""
+    ]
   },
   "unitedstarlinktracker.com watch UA1003 2026-09-20": {
     "status": 200,
@@ -721,7 +1436,35 @@
       "access-control-allow-origin": "*",
       "vary": "Host"
     },
-    "body": "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//unitedstarlinktracker//watch//EN\r\nCALSCALE:GREGORIAN\r\nMETHOD:PUBLISH\r\nX-WR-CALNAME:Starlink Watch UA1003\r\nREFRESH-INTERVAL;VALUE=DURATION:PT1H\r\nX-PUBLISHED-TTL:PT1H\r\nBEGIN:VEVENT\r\nUID:UA1003-2026-09-20@unitedstarlinktracker.com\r\nDTSTAMP:20260919T080000Z\r\nDTSTART:20260920T180000Z\r\nDTEND:20260920T210000Z\r\nLAST-MODIFIED:20260919T080000Z\r\nSEQUENCE:0\r\nSUMMARY:UA1003 · No Starlink (N3003\\, Viasat)\r\nDESCRIPTION:Aircraft: N3003 (Boeing 737-900) — Viasat WiFi\\, not Starlink\r\n .\\n\\nStarlink flights on this route that day:\\nUA1004 3:00 PM CDT (N3004\\,\r\n  Boeing 737-900)\\n\\nAircraft usually assigned ~2 days out\\; Google Calenda\r\n r refreshes every 8–24h\\, Apple ~hourly.\\nhttps://unitedstarlinktracker.\r\n com/check-flight/UA1003/2026-09-20?utm_source=cal\r\nURL:https://unitedstarlinktracker.com/check-flight/UA1003/2026-09-20?utm_so\r\n urce=cal\r\nTRANSP:TRANSPARENT\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+    "lines": [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "PRODID:-//unitedstarlinktracker//watch//EN",
+      "CALSCALE:GREGORIAN",
+      "METHOD:PUBLISH",
+      "X-WR-CALNAME:Starlink Watch UA1003",
+      "REFRESH-INTERVAL;VALUE=DURATION:PT1H",
+      "X-PUBLISHED-TTL:PT1H",
+      "BEGIN:VEVENT",
+      "UID:UA1003-2026-09-20@unitedstarlinktracker.com",
+      "DTSTAMP:20260919T080000Z",
+      "DTSTART:20260920T180000Z",
+      "DTEND:20260920T210000Z",
+      "LAST-MODIFIED:20260919T080000Z",
+      "SEQUENCE:0",
+      "SUMMARY:UA1003 · No Starlink (N3003\\, Viasat)",
+      "DESCRIPTION:Aircraft: N3003 (Boeing 737-900) — Viasat WiFi\\, not Starlink",
+      " .\\n\\nStarlink flights on this route that day:\\nUA1004 3:00 PM CDT (N3004\\,",
+      "  Boeing 737-900)\\n\\nAircraft usually assigned ~2 days out\\; Google Calenda",
+      " r refreshes every 8–24h\\, Apple ~hourly.\\nhttps://unitedstarlinktracker.",
+      " com/check-flight/UA1003/2026-09-20?utm_source=cal",
+      "URL:https://unitedstarlinktracker.com/check-flight/UA1003/2026-09-20?utm_so",
+      " urce=cal",
+      "TRANSP:TRANSPARENT",
+      "END:VEVENT",
+      "END:VCALENDAR",
+      ""
+    ]
   },
   "unitedstarlinktracker.com watch UA1005 2026-09-20": {
     "status": 200,
@@ -731,7 +1474,35 @@
       "access-control-allow-origin": "*",
       "vary": "Host"
     },
-    "body": "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//unitedstarlinktracker//watch//EN\r\nCALSCALE:GREGORIAN\r\nMETHOD:PUBLISH\r\nX-WR-CALNAME:Starlink Watch UA1005\r\nREFRESH-INTERVAL;VALUE=DURATION:PT1H\r\nX-PUBLISHED-TTL:PT1H\r\nBEGIN:VEVENT\r\nUID:UA1005-2026-09-20@unitedstarlinktracker.com\r\nDTSTAMP:20260919T080000Z\r\nDTSTART:20260920T140000Z\r\nDTEND:20260920T170000Z\r\nLAST-MODIFIED:20260919T080000Z\r\nSEQUENCE:1\r\nSUMMARY:UA1005 · Starlink odds ~2%\r\nDESCRIPTION:Current aircraft not confirmed. ~2% is the fleet-wide Starlink \r\n install rate.\\n\\nAssignment history:\\nN3001 first seen assigned Sep 19 at \r\n 3:00 AM CDT\\n\\nAircraft usually assigned ~2 days out\\; Google Calendar ref\r\n reshes every 8–24h\\, Apple ~hourly.\\nhttps://unitedstarlinktracker.com/c\r\n heck-flight/UA1005/2026-09-20?utm_source=cal\r\nURL:https://unitedstarlinktracker.com/check-flight/UA1005/2026-09-20?utm_so\r\n urce=cal\r\nTRANSP:TRANSPARENT\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+    "lines": [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "PRODID:-//unitedstarlinktracker//watch//EN",
+      "CALSCALE:GREGORIAN",
+      "METHOD:PUBLISH",
+      "X-WR-CALNAME:Starlink Watch UA1005",
+      "REFRESH-INTERVAL;VALUE=DURATION:PT1H",
+      "X-PUBLISHED-TTL:PT1H",
+      "BEGIN:VEVENT",
+      "UID:UA1005-2026-09-20@unitedstarlinktracker.com",
+      "DTSTAMP:20260919T080000Z",
+      "DTSTART:20260920T140000Z",
+      "DTEND:20260920T170000Z",
+      "LAST-MODIFIED:20260919T080000Z",
+      "SEQUENCE:1",
+      "SUMMARY:UA1005 · Starlink odds ~2%",
+      "DESCRIPTION:Current aircraft not confirmed. ~2% is the fleet-wide Starlink ",
+      " install rate.\\n\\nAssignment history:\\nN3001 first seen assigned Sep 19 at ",
+      " 3:00 AM CDT\\n\\nAircraft usually assigned ~2 days out\\; Google Calendar ref",
+      " reshes every 8–24h\\, Apple ~hourly.\\nhttps://unitedstarlinktracker.com/c",
+      " heck-flight/UA1005/2026-09-20?utm_source=cal",
+      "URL:https://unitedstarlinktracker.com/check-flight/UA1005/2026-09-20?utm_so",
+      " urce=cal",
+      "TRANSP:TRANSPARENT",
+      "END:VEVENT",
+      "END:VCALENDAR",
+      ""
+    ]
   },
   "unitedstarlinktracker.com watch UA1006 2026-09-20": {
     "status": 200,
@@ -741,7 +1512,35 @@
       "access-control-allow-origin": "*",
       "vary": "Host"
     },
-    "body": "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//unitedstarlinktracker//watch//EN\r\nCALSCALE:GREGORIAN\r\nMETHOD:PUBLISH\r\nX-WR-CALNAME:Starlink Watch UA1006\r\nREFRESH-INTERVAL;VALUE=DURATION:PT1H\r\nX-PUBLISHED-TTL:PT1H\r\nBEGIN:VEVENT\r\nUID:UA1006-2026-09-20@unitedstarlinktracker.com\r\nDTSTAMP:20260919T080000Z\r\nDTSTART:20260920T140000Z\r\nDTEND:20260920T170000Z\r\nLAST-MODIFIED:20260919T080000Z\r\nSEQUENCE:1\r\nSUMMARY:UA1006 · No Starlink (N3005\\, Thales)\r\nDESCRIPTION:Aircraft: N3005 — Thales WiFi\\, not Starlink.\\n\\nAssignment h\r\n istory:\\nN3005 first seen assigned Sep 19 at 3:00 AM CDT\\n\\nAircraft usual\r\n ly assigned ~2 days out\\; Google Calendar refreshes every 8–24h\\, Apple \r\n ~hourly.\\nhttps://unitedstarlinktracker.com/check-flight/UA1006/2026-09-20\r\n ?utm_source=cal\r\nURL:https://unitedstarlinktracker.com/check-flight/UA1006/2026-09-20?utm_so\r\n urce=cal\r\nTRANSP:TRANSPARENT\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+    "lines": [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "PRODID:-//unitedstarlinktracker//watch//EN",
+      "CALSCALE:GREGORIAN",
+      "METHOD:PUBLISH",
+      "X-WR-CALNAME:Starlink Watch UA1006",
+      "REFRESH-INTERVAL;VALUE=DURATION:PT1H",
+      "X-PUBLISHED-TTL:PT1H",
+      "BEGIN:VEVENT",
+      "UID:UA1006-2026-09-20@unitedstarlinktracker.com",
+      "DTSTAMP:20260919T080000Z",
+      "DTSTART:20260920T140000Z",
+      "DTEND:20260920T170000Z",
+      "LAST-MODIFIED:20260919T080000Z",
+      "SEQUENCE:1",
+      "SUMMARY:UA1006 · No Starlink (N3005\\, Thales)",
+      "DESCRIPTION:Aircraft: N3005 — Thales WiFi\\, not Starlink.\\n\\nAssignment h",
+      " istory:\\nN3005 first seen assigned Sep 19 at 3:00 AM CDT\\n\\nAircraft usual",
+      " ly assigned ~2 days out\\; Google Calendar refreshes every 8–24h\\, Apple ",
+      " ~hourly.\\nhttps://unitedstarlinktracker.com/check-flight/UA1006/2026-09-20",
+      " ?utm_source=cal",
+      "URL:https://unitedstarlinktracker.com/check-flight/UA1006/2026-09-20?utm_so",
+      " urce=cal",
+      "TRANSP:TRANSPARENT",
+      "END:VEVENT",
+      "END:VCALENDAR",
+      ""
+    ]
   },
   "unitedstarlinktracker.com watch UA1007 2026-09-20": {
     "status": 200,
@@ -751,7 +1550,35 @@
       "access-control-allow-origin": "*",
       "vary": "Host"
     },
-    "body": "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//unitedstarlinktracker//watch//EN\r\nCALSCALE:GREGORIAN\r\nMETHOD:PUBLISH\r\nX-WR-CALNAME:Starlink Watch UA1007\r\nREFRESH-INTERVAL;VALUE=DURATION:PT1H\r\nX-PUBLISHED-TTL:PT1H\r\nBEGIN:VEVENT\r\nUID:UA1007-2026-09-20@unitedstarlinktracker.com\r\nDTSTAMP:20260919T080000Z\r\nDTSTART:20260920T140000Z\r\nDTEND:20260920T170000Z\r\nLAST-MODIFIED:20260919T080000Z\r\nSEQUENCE:1\r\nSUMMARY:UA1007 · Starlink odds ~2%\r\nDESCRIPTION:Current aircraft not confirmed. ~2% is the fleet-wide Starlink \r\n install rate.\\n\\nAssignment history:\\nN3999 first seen assigned Sep 19 at \r\n 3:00 AM CDT\\n\\nAircraft usually assigned ~2 days out\\; Google Calendar ref\r\n reshes every 8–24h\\, Apple ~hourly.\\nhttps://unitedstarlinktracker.com/c\r\n heck-flight/UA1007/2026-09-20?utm_source=cal\r\nURL:https://unitedstarlinktracker.com/check-flight/UA1007/2026-09-20?utm_so\r\n urce=cal\r\nTRANSP:TRANSPARENT\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+    "lines": [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "PRODID:-//unitedstarlinktracker//watch//EN",
+      "CALSCALE:GREGORIAN",
+      "METHOD:PUBLISH",
+      "X-WR-CALNAME:Starlink Watch UA1007",
+      "REFRESH-INTERVAL;VALUE=DURATION:PT1H",
+      "X-PUBLISHED-TTL:PT1H",
+      "BEGIN:VEVENT",
+      "UID:UA1007-2026-09-20@unitedstarlinktracker.com",
+      "DTSTAMP:20260919T080000Z",
+      "DTSTART:20260920T140000Z",
+      "DTEND:20260920T170000Z",
+      "LAST-MODIFIED:20260919T080000Z",
+      "SEQUENCE:1",
+      "SUMMARY:UA1007 · Starlink odds ~2%",
+      "DESCRIPTION:Current aircraft not confirmed. ~2% is the fleet-wide Starlink ",
+      " install rate.\\n\\nAssignment history:\\nN3999 first seen assigned Sep 19 at ",
+      " 3:00 AM CDT\\n\\nAircraft usually assigned ~2 days out\\; Google Calendar ref",
+      " reshes every 8–24h\\, Apple ~hourly.\\nhttps://unitedstarlinktracker.com/c",
+      " heck-flight/UA1007/2026-09-20?utm_source=cal",
+      "URL:https://unitedstarlinktracker.com/check-flight/UA1007/2026-09-20?utm_so",
+      " urce=cal",
+      "TRANSP:TRANSPARENT",
+      "END:VEVENT",
+      "END:VCALENDAR",
+      ""
+    ]
   },
   "unitedstarlinktracker.com watch UA1008 2026-09-20": {
     "status": 200,
@@ -761,7 +1588,34 @@
       "access-control-allow-origin": "*",
       "vary": "Host"
     },
-    "body": "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//unitedstarlinktracker//watch//EN\r\nCALSCALE:GREGORIAN\r\nMETHOD:PUBLISH\r\nX-WR-CALNAME:Starlink Watch UA1008\r\nREFRESH-INTERVAL;VALUE=DURATION:PT1H\r\nX-PUBLISHED-TTL:PT1H\r\nBEGIN:VEVENT\r\nUID:UA1008-2026-09-20@unitedstarlinktracker.com\r\nDTSTAMP:20260919T080000Z\r\nDTSTART;VALUE=DATE:20260920\r\nDTEND;VALUE=DATE:20260921\r\nLAST-MODIFIED:20260919T080000Z\r\nSEQUENCE:0\r\nSUMMARY:UA1008 · Starlink odds ~2%\r\nDESCRIPTION:No aircraft assigned yet. ~2% is the fleet-wide Starlink instal\r\n l rate.\\n\\nAircraft usually assigned ~2 days out\\; Google Calendar refresh\r\n es every 8–24h\\, Apple ~hourly.\\nhttps://unitedstarlinktracker.com/check\r\n -flight/UA1008/2026-09-20?utm_source=cal\r\nURL:https://unitedstarlinktracker.com/check-flight/UA1008/2026-09-20?utm_so\r\n urce=cal\r\nTRANSP:TRANSPARENT\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+    "lines": [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "PRODID:-//unitedstarlinktracker//watch//EN",
+      "CALSCALE:GREGORIAN",
+      "METHOD:PUBLISH",
+      "X-WR-CALNAME:Starlink Watch UA1008",
+      "REFRESH-INTERVAL;VALUE=DURATION:PT1H",
+      "X-PUBLISHED-TTL:PT1H",
+      "BEGIN:VEVENT",
+      "UID:UA1008-2026-09-20@unitedstarlinktracker.com",
+      "DTSTAMP:20260919T080000Z",
+      "DTSTART;VALUE=DATE:20260920",
+      "DTEND;VALUE=DATE:20260921",
+      "LAST-MODIFIED:20260919T080000Z",
+      "SEQUENCE:0",
+      "SUMMARY:UA1008 · Starlink odds ~2%",
+      "DESCRIPTION:No aircraft assigned yet. ~2% is the fleet-wide Starlink instal",
+      " l rate.\\n\\nAircraft usually assigned ~2 days out\\; Google Calendar refresh",
+      " es every 8–24h\\, Apple ~hourly.\\nhttps://unitedstarlinktracker.com/check",
+      " -flight/UA1008/2026-09-20?utm_source=cal",
+      "URL:https://unitedstarlinktracker.com/check-flight/UA1008/2026-09-20?utm_so",
+      " urce=cal",
+      "TRANSP:TRANSPARENT",
+      "END:VEVENT",
+      "END:VCALENDAR",
+      ""
+    ]
   },
   "unitedstarlinktracker.com watch UA1009 2026-09-29": {
     "status": 200,
@@ -771,7 +1625,34 @@
       "access-control-allow-origin": "*",
       "vary": "Host"
     },
-    "body": "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//unitedstarlinktracker//watch//EN\r\nCALSCALE:GREGORIAN\r\nMETHOD:PUBLISH\r\nX-WR-CALNAME:Starlink Watch UA1009\r\nREFRESH-INTERVAL;VALUE=DURATION:PT1H\r\nX-PUBLISHED-TTL:PT1H\r\nBEGIN:VEVENT\r\nUID:UA1009-2026-09-29@unitedstarlinktracker.com\r\nDTSTAMP:20260919T080000Z\r\nDTSTART;VALUE=DATE:20260929\r\nDTEND;VALUE=DATE:20260930\r\nLAST-MODIFIED:20260919T080000Z\r\nSEQUENCE:0\r\nSUMMARY:UA1009 · Starlink odds ~80%\r\nDESCRIPTION:No aircraft assigned yet. ~80% of 5 observed departures of this\r\n  flight used a Starlink aircraft.\\n\\nAircraft usually assigned ~2 days out\r\n \\; Google Calendar refreshes every 8–24h\\, Apple ~hourly.\\nhttps://unite\r\n dstarlinktracker.com/check-flight/UA1009/2026-09-29?utm_source=cal\r\nURL:https://unitedstarlinktracker.com/check-flight/UA1009/2026-09-29?utm_so\r\n urce=cal\r\nTRANSP:TRANSPARENT\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+    "lines": [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "PRODID:-//unitedstarlinktracker//watch//EN",
+      "CALSCALE:GREGORIAN",
+      "METHOD:PUBLISH",
+      "X-WR-CALNAME:Starlink Watch UA1009",
+      "REFRESH-INTERVAL;VALUE=DURATION:PT1H",
+      "X-PUBLISHED-TTL:PT1H",
+      "BEGIN:VEVENT",
+      "UID:UA1009-2026-09-29@unitedstarlinktracker.com",
+      "DTSTAMP:20260919T080000Z",
+      "DTSTART;VALUE=DATE:20260929",
+      "DTEND;VALUE=DATE:20260930",
+      "LAST-MODIFIED:20260919T080000Z",
+      "SEQUENCE:0",
+      "SUMMARY:UA1009 · Starlink odds ~80%",
+      "DESCRIPTION:No aircraft assigned yet. ~80% of 5 observed departures of this",
+      "  flight used a Starlink aircraft.\\n\\nAircraft usually assigned ~2 days out",
+      " \\; Google Calendar refreshes every 8–24h\\, Apple ~hourly.\\nhttps://unite",
+      " dstarlinktracker.com/check-flight/UA1009/2026-09-29?utm_source=cal",
+      "URL:https://unitedstarlinktracker.com/check-flight/UA1009/2026-09-29?utm_so",
+      " urce=cal",
+      "TRANSP:TRANSPARENT",
+      "END:VEVENT",
+      "END:VCALENDAR",
+      ""
+    ]
   },
   "unitedstarlinktracker.com watch UA1010 2026-09-29": {
     "status": 200,
@@ -781,7 +1662,34 @@
       "access-control-allow-origin": "*",
       "vary": "Host"
     },
-    "body": "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//unitedstarlinktracker//watch//EN\r\nCALSCALE:GREGORIAN\r\nMETHOD:PUBLISH\r\nX-WR-CALNAME:Starlink Watch UA1010\r\nREFRESH-INTERVAL;VALUE=DURATION:PT1H\r\nX-PUBLISHED-TTL:PT1H\r\nBEGIN:VEVENT\r\nUID:UA1010-2026-09-29@unitedstarlinktracker.com\r\nDTSTAMP:20260919T080000Z\r\nDTSTART;VALUE=DATE:20260929\r\nDTEND;VALUE=DATE:20260930\r\nLAST-MODIFIED:20260919T080000Z\r\nSEQUENCE:0\r\nSUMMARY:UA1010 · Starlink odds ~2%\r\nDESCRIPTION:No aircraft assigned yet. ~2% is the fleet-wide Starlink instal\r\n l rate.\\n\\nAircraft usually assigned ~2 days out\\; Google Calendar refresh\r\n es every 8–24h\\, Apple ~hourly.\\nhttps://unitedstarlinktracker.com/check\r\n -flight/UA1010/2026-09-29?utm_source=cal\r\nURL:https://unitedstarlinktracker.com/check-flight/UA1010/2026-09-29?utm_so\r\n urce=cal\r\nTRANSP:TRANSPARENT\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+    "lines": [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "PRODID:-//unitedstarlinktracker//watch//EN",
+      "CALSCALE:GREGORIAN",
+      "METHOD:PUBLISH",
+      "X-WR-CALNAME:Starlink Watch UA1010",
+      "REFRESH-INTERVAL;VALUE=DURATION:PT1H",
+      "X-PUBLISHED-TTL:PT1H",
+      "BEGIN:VEVENT",
+      "UID:UA1010-2026-09-29@unitedstarlinktracker.com",
+      "DTSTAMP:20260919T080000Z",
+      "DTSTART;VALUE=DATE:20260929",
+      "DTEND;VALUE=DATE:20260930",
+      "LAST-MODIFIED:20260919T080000Z",
+      "SEQUENCE:0",
+      "SUMMARY:UA1010 · Starlink odds ~2%",
+      "DESCRIPTION:No aircraft assigned yet. ~2% is the fleet-wide Starlink instal",
+      " l rate.\\n\\nAircraft usually assigned ~2 days out\\; Google Calendar refresh",
+      " es every 8–24h\\, Apple ~hourly.\\nhttps://unitedstarlinktracker.com/check",
+      " -flight/UA1010/2026-09-29?utm_source=cal",
+      "URL:https://unitedstarlinktracker.com/check-flight/UA1010/2026-09-29?utm_so",
+      " urce=cal",
+      "TRANSP:TRANSPARENT",
+      "END:VEVENT",
+      "END:VCALENDAR",
+      ""
+    ]
   },
   "unitedstarlinktracker.com watch UA1010 2026-09-14": {
     "status": 404,
@@ -809,7 +1717,34 @@
       "access-control-allow-origin": "*",
       "vary": "Host"
     },
-    "body": "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//unitedstarlinktracker//watch//EN\r\nCALSCALE:GREGORIAN\r\nMETHOD:PUBLISH\r\nX-WR-CALNAME:Starlink Watch AS100\r\nREFRESH-INTERVAL;VALUE=DURATION:PT1H\r\nX-PUBLISHED-TTL:PT1H\r\nBEGIN:VEVENT\r\nUID:AS100-2026-09-20@alaskastarlinktracker.com\r\nDTSTAMP:20260919T080000Z\r\nDTSTART:20260920T180000Z\r\nDTEND:20260920T210000Z\r\nLAST-MODIFIED:20260919T080000Z\r\nSEQUENCE:0\r\nSUMMARY:AS100 SEA→LAX · Starlink ✅ N601AS (Boeing 737-900)\r\nDESCRIPTION:Aircraft: N601AS (Boeing 737-900) — Starlink verified.\\n\\nAir\r\n craft usually assigned ~2 days out\\; Google Calendar refreshes every 8–2\r\n 4h\\, Apple ~hourly.\\nhttps://alaskastarlinktracker.com/check-flight/AS100/\r\n 2026-09-20?utm_source=cal\r\nURL:https://alaskastarlinktracker.com/check-flight/AS100/2026-09-20?utm_sou\r\n rce=cal\r\nTRANSP:TRANSPARENT\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+    "lines": [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "PRODID:-//unitedstarlinktracker//watch//EN",
+      "CALSCALE:GREGORIAN",
+      "METHOD:PUBLISH",
+      "X-WR-CALNAME:Starlink Watch AS100",
+      "REFRESH-INTERVAL;VALUE=DURATION:PT1H",
+      "X-PUBLISHED-TTL:PT1H",
+      "BEGIN:VEVENT",
+      "UID:AS100-2026-09-20@alaskastarlinktracker.com",
+      "DTSTAMP:20260919T080000Z",
+      "DTSTART:20260920T180000Z",
+      "DTEND:20260920T210000Z",
+      "LAST-MODIFIED:20260919T080000Z",
+      "SEQUENCE:0",
+      "SUMMARY:AS100 SEA→LAX · Starlink ✅ N601AS (Boeing 737-900)",
+      "DESCRIPTION:Aircraft: N601AS (Boeing 737-900) — Starlink verified.\\n\\nAir",
+      " craft usually assigned ~2 days out\\; Google Calendar refreshes every 8–2",
+      " 4h\\, Apple ~hourly.\\nhttps://alaskastarlinktracker.com/check-flight/AS100/",
+      " 2026-09-20?utm_source=cal",
+      "URL:https://alaskastarlinktracker.com/check-flight/AS100/2026-09-20?utm_sou",
+      " rce=cal",
+      "TRANSP:TRANSPARENT",
+      "END:VEVENT",
+      "END:VCALENDAR",
+      ""
+    ]
   },
   "alaskastarlinktracker.com watch AS200 2026-09-29": {
     "status": 200,
@@ -819,7 +1754,33 @@
       "access-control-allow-origin": "*",
       "vary": "Host"
     },
-    "body": "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//unitedstarlinktracker//watch//EN\r\nCALSCALE:GREGORIAN\r\nMETHOD:PUBLISH\r\nX-WR-CALNAME:Starlink Watch AS200\r\nREFRESH-INTERVAL;VALUE=DURATION:PT1H\r\nX-PUBLISHED-TTL:PT1H\r\nBEGIN:VEVENT\r\nUID:AS200-2026-09-29@alaskastarlinktracker.com\r\nDTSTAMP:20260919T080000Z\r\nDTSTART;VALUE=DATE:20260929\r\nDTEND;VALUE=DATE:20260930\r\nLAST-MODIFIED:20260919T080000Z\r\nSEQUENCE:0\r\nSUMMARY:AS200 · Starlink status pending\r\nDESCRIPTION:No aircraft assigned yet.\\n\\nAircraft usually assigned ~2 days \r\n out\\; Google Calendar refreshes every 8–24h\\, Apple ~hourly.\\nhttps://al\r\n askastarlinktracker.com/check-flight/AS200/2026-09-29?utm_source=cal\r\nURL:https://alaskastarlinktracker.com/check-flight/AS200/2026-09-29?utm_sou\r\n rce=cal\r\nTRANSP:TRANSPARENT\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+    "lines": [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "PRODID:-//unitedstarlinktracker//watch//EN",
+      "CALSCALE:GREGORIAN",
+      "METHOD:PUBLISH",
+      "X-WR-CALNAME:Starlink Watch AS200",
+      "REFRESH-INTERVAL;VALUE=DURATION:PT1H",
+      "X-PUBLISHED-TTL:PT1H",
+      "BEGIN:VEVENT",
+      "UID:AS200-2026-09-29@alaskastarlinktracker.com",
+      "DTSTAMP:20260919T080000Z",
+      "DTSTART;VALUE=DATE:20260929",
+      "DTEND;VALUE=DATE:20260930",
+      "LAST-MODIFIED:20260919T080000Z",
+      "SEQUENCE:0",
+      "SUMMARY:AS200 · Starlink status pending",
+      "DESCRIPTION:No aircraft assigned yet.\\n\\nAircraft usually assigned ~2 days ",
+      " out\\; Google Calendar refreshes every 8–24h\\, Apple ~hourly.\\nhttps://al",
+      " askastarlinktracker.com/check-flight/AS200/2026-09-29?utm_source=cal",
+      "URL:https://alaskastarlinktracker.com/check-flight/AS200/2026-09-29?utm_sou",
+      " rce=cal",
+      "TRANSP:TRANSPARENT",
+      "END:VEVENT",
+      "END:VCALENDAR",
+      ""
+    ]
   },
   "unitedstarlinktracker.com mcp check_flight {\"flight_number\":\"UA1001\",\"date\":\"2026-09-20\"}": {
     "status": 200,
@@ -830,7 +1791,18 @@
       "access-control-allow-headers": "Content-Type, Accept, Mcp-Session-Id, MCP-Protocol-Version",
       "vary": "Host"
     },
-    "body": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"✈️ Yes! Flight UA1001 on 2026-09-20 is scheduled on a verified Starlink aircraft:\\n\\n- UA1001 (SFO→EWR) on Boeing 737-900 tail N3001, operated by United Airlines. Departs 2026-09-20T15:00:00.000Z, arrives 2026-09-20T18:00:00.000Z.\\n\\nStarlink WiFi is free on all equipped United flights.\"}]}}"
+    "json": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "✈️ Yes! Flight UA1001 on 2026-09-20 is scheduled on a verified Starlink aircraft:\n\n- UA1001 (SFO→EWR) on Boeing 737-900 tail N3001, operated by United Airlines. Departs 2026-09-20T15:00:00.000Z, arrives 2026-09-20T18:00:00.000Z.\n\nStarlink WiFi is free on all equipped United flights."
+          }
+        ]
+      }
+    }
   },
   "unitedstarlinktracker.com mcp check_flight {\"flight_number\":\"UA1002\",\"date\":\"2026-09-20\"}": {
     "status": 200,
@@ -841,7 +1813,18 @@
       "access-control-allow-headers": "Content-Type, Accept, Mcp-Session-Id, MCP-Protocol-Version",
       "vary": "Host"
     },
-    "body": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"Likely yes — UA1002 on 2026-09-20 is assigned to a tail tracked as Starlink in the fleet spreadsheet (not yet verified against united.com):\\n\\n- UA1002 (SFO→DEN) on Boeing 737-900 tail N3002, operated by United Airlines. Departs 2026-09-20T16:00:00.000Z, arrives 2026-09-20T19:00:00.000Z.\\n\\nSpreadsheet data is usually accurate but unverified. Check united.com or the flight status 24h out to confirm.\"}]}}"
+    "json": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Likely yes — UA1002 on 2026-09-20 is assigned to a tail tracked as Starlink in the fleet spreadsheet (not yet verified against united.com):\n\n- UA1002 (SFO→DEN) on Boeing 737-900 tail N3002, operated by United Airlines. Departs 2026-09-20T16:00:00.000Z, arrives 2026-09-20T19:00:00.000Z.\n\nSpreadsheet data is usually accurate but unverified. Check united.com or the flight status 24h out to confirm."
+          }
+        ]
+      }
+    }
   },
   "unitedstarlinktracker.com mcp check_flight {\"flight_number\":\"UA1003\",\"date\":\"2026-09-20\"}": {
     "status": 200,
@@ -852,7 +1835,18 @@
       "access-control-allow-headers": "Content-Type, Accept, Mcp-Session-Id, MCP-Protocol-Version",
       "vary": "Host"
     },
-    "body": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"❌ No Starlink: UA1003 on 2026-09-20 is assigned to tail N3003 (Boeing 737-900), verified as Viasat WiFi — NOT Starlink. Aircraft swaps can happen, but the assignment is currently firm.\\n\\n<present_verbatim>\\n| Segment | Flights | Via | Stops | Starlink % | Starlink hrs | Total hrs |\\n|---|---|---|---|---|---|---|\\n| ORD→DEN | UA1003 | direct — your flight | 0 | 0% (assigned N3003, Viasat) | 0 | 3.0h |\\n| ORD→DEN | UA1004 | direct | 0 | 95% | 2.8h | 3.0h |\\n</present_verbatim>\\n\\nRender the table above in your response EXACTLY — do not summarize it into prose, do not drop columns. This is the complete answer: no more tool calls, no \\\"download offline\\\" / \\\"use legacy WiFi\\\" / \\\"mobile hotspot\\\" tips (non-responsive — they asked for better FLIGHTS). Connections are built from route history, not same-day schedules — verify they connect on united.com before rebooking. Starlink % = coverage ratio (Starlink hrs / total hrs); Total hrs is flying time, excluding layovers.\"}]}}"
+    "json": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "❌ No Starlink: UA1003 on 2026-09-20 is assigned to tail N3003 (Boeing 737-900), verified as Viasat WiFi — NOT Starlink. Aircraft swaps can happen, but the assignment is currently firm.\n\n<present_verbatim>\n| Segment | Flights | Via | Stops | Starlink % | Starlink hrs | Total hrs |\n|---|---|---|---|---|---|---|\n| ORD→DEN | UA1003 | direct — your flight | 0 | 0% (assigned N3003, Viasat) | 0 | 3.0h |\n| ORD→DEN | UA1004 | direct | 0 | 95% | 2.8h | 3.0h |\n</present_verbatim>\n\nRender the table above in your response EXACTLY — do not summarize it into prose, do not drop columns. This is the complete answer: no more tool calls, no \"download offline\" / \"use legacy WiFi\" / \"mobile hotspot\" tips (non-responsive — they asked for better FLIGHTS). Connections are built from route history, not same-day schedules — verify they connect on united.com before rebooking. Starlink % = coverage ratio (Starlink hrs / total hrs); Total hrs is flying time, excluding layovers."
+          }
+        ]
+      }
+    }
   },
   "unitedstarlinktracker.com mcp check_flight {\"flight_number\":\"UA1005\",\"date\":\"2026-09-20\"}": {
     "status": 200,
@@ -863,7 +1857,18 @@
       "access-control-allow-headers": "Content-Type, Accept, Mcp-Session-Id, MCP-Protocol-Version",
       "vary": "Host"
     },
-    "body": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"✈️ Yes! Flight UA1005 on 2026-09-20 is assigned to a Starlink aircraft (via live tail lookup):\\n\\n- UA1005 (IAH→DEN) on Boeing 737-800 tail N3001 — tracked as Starlink (unverified). Departs 2026-09-20T14:00:00.000Z.\\n\\nStarlink WiFi is free on all equipped United flights.\"}]}}"
+    "json": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "✈️ Yes! Flight UA1005 on 2026-09-20 is assigned to a Starlink aircraft (via live tail lookup):\n\n- UA1005 (IAH→DEN) on Boeing 737-800 tail N3001 — tracked as Starlink (unverified). Departs 2026-09-20T14:00:00.000Z.\n\nStarlink WiFi is free on all equipped United flights."
+          }
+        ]
+      }
+    }
   },
   "unitedstarlinktracker.com mcp check_flight {\"flight_number\":\"UA1006\",\"date\":\"2026-09-20\"}": {
     "status": 200,
@@ -874,7 +1879,18 @@
       "access-control-allow-headers": "Content-Type, Accept, Mcp-Session-Id, MCP-Protocol-Version",
       "vary": "Host"
     },
-    "body": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"❌ No Starlink: UA1006 on 2026-09-20 is assigned to tail N3005 (Boeing 737-800, Thales WiFi) — NOT Starlink. Aircraft swaps can happen, but the assignment is currently firm.\\n\\n<present_verbatim>\\n| Segment | Flights | Via | Stops | Starlink % | Starlink hrs | Total hrs |\\n|---|---|---|---|---|---|---|\\n| IAH→ORD | UA1006 | direct — your flight | 0 | 0% (assigned N3005, Thales) | 0 | ~2.4h |\\n\\nIAH→ORD: no Starlink routing within +2.5h of the nonstop.\\n</present_verbatim>\\n\\nRender the table above in your response EXACTLY — do not summarize it into prose, do not drop columns. This is the complete answer: no more tool calls, no \\\"download offline\\\" / \\\"use legacy WiFi\\\" / \\\"mobile hotspot\\\" tips (non-responsive — they asked for better FLIGHTS). Connections are built from route history, not same-day schedules — verify they connect on united.com before rebooking. Starlink % = coverage ratio (Starlink hrs / total hrs); Total hrs is flying time, excluding layovers.\"}]}}"
+    "json": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "❌ No Starlink: UA1006 on 2026-09-20 is assigned to tail N3005 (Boeing 737-800, Thales WiFi) — NOT Starlink. Aircraft swaps can happen, but the assignment is currently firm.\n\n<present_verbatim>\n| Segment | Flights | Via | Stops | Starlink % | Starlink hrs | Total hrs |\n|---|---|---|---|---|---|---|\n| IAH→ORD | UA1006 | direct — your flight | 0 | 0% (assigned N3005, Thales) | 0 | ~2.4h |\n\nIAH→ORD: no Starlink routing within +2.5h of the nonstop.\n</present_verbatim>\n\nRender the table above in your response EXACTLY — do not summarize it into prose, do not drop columns. This is the complete answer: no more tool calls, no \"download offline\" / \"use legacy WiFi\" / \"mobile hotspot\" tips (non-responsive — they asked for better FLIGHTS). Connections are built from route history, not same-day schedules — verify they connect on united.com before rebooking. Starlink % = coverage ratio (Starlink hrs / total hrs); Total hrs is flying time, excluding layovers."
+          }
+        ]
+      }
+    }
   },
   "unitedstarlinktracker.com mcp check_flight {\"flight_number\":\"UA1007\",\"date\":\"2026-09-20\"}": {
     "status": 200,
@@ -885,7 +1901,18 @@
       "access-control-allow-headers": "Content-Type, Accept, Mcp-Session-Id, MCP-Protocol-Version",
       "vary": "Host"
     },
-    "body": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"**UA1007 on 2026-09-20**: ~2% Starlink probability (no flight history). No assignment published — this is unusual for a near-term flight. The tail may not be in our Starlink-tracked set yet.\\n\\n<present_verbatim>\\n| Segment | Flights | Via | Stops | Starlink % | Starlink hrs | Total hrs |\\n|---|---|---|---|---|---|---|\\n| IAH→SFO | UA1007 | direct — your flight | 0 | ~2% | ~4m | 3.0h |\\n\\nIAH→SFO: no Starlink routing within +2.5h of the nonstop.\\n</present_verbatim>\\n\\nRender the table above in your response EXACTLY — do not summarize it into prose, do not drop columns. This is the complete answer: no more tool calls, no \\\"download offline\\\" / \\\"use legacy WiFi\\\" / \\\"mobile hotspot\\\" tips (non-responsive — they asked for better FLIGHTS). Connections are built from route history, not same-day schedules — verify they connect on united.com before rebooking. Starlink % = coverage ratio (Starlink hrs / total hrs); Total hrs is flying time, excluding layovers.\"}]}}"
+    "json": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "**UA1007 on 2026-09-20**: ~2% Starlink probability (no flight history). No assignment published — this is unusual for a near-term flight. The tail may not be in our Starlink-tracked set yet.\n\n<present_verbatim>\n| Segment | Flights | Via | Stops | Starlink % | Starlink hrs | Total hrs |\n|---|---|---|---|---|---|---|\n| IAH→SFO | UA1007 | direct — your flight | 0 | ~2% | ~4m | 3.0h |\n\nIAH→SFO: no Starlink routing within +2.5h of the nonstop.\n</present_verbatim>\n\nRender the table above in your response EXACTLY — do not summarize it into prose, do not drop columns. This is the complete answer: no more tool calls, no \"download offline\" / \"use legacy WiFi\" / \"mobile hotspot\" tips (non-responsive — they asked for better FLIGHTS). Connections are built from route history, not same-day schedules — verify they connect on united.com before rebooking. Starlink % = coverage ratio (Starlink hrs / total hrs); Total hrs is flying time, excluding layovers."
+          }
+        ]
+      }
+    }
   },
   "unitedstarlinktracker.com mcp check_flight {\"flight_number\":\"UA1008\",\"date\":\"2026-09-20\"}": {
     "status": 200,
@@ -896,7 +1923,18 @@
       "access-control-allow-headers": "Content-Type, Accept, Mcp-Session-Id, MCP-Protocol-Version",
       "vary": "Host"
     },
-    "body": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"**UA1008 on 2026-09-20**: ~2% Starlink probability (no flight history). We couldn't confirm the aircraft assignment right now — try again shortly.\\n\\n<present_verbatim>\\n| Segment | Flights | Via | Stops | Starlink % | Starlink hrs | Total hrs |\\n|---|---|---|---|---|---|---|\\n| IAH→SFO | UA1008 | direct — your flight | 0 | ~2% | ~4m | 3.0h |\\n\\nIAH→SFO: no Starlink routing within +2.5h of the nonstop.\\n</present_verbatim>\\n\\nRender the table above in your response EXACTLY — do not summarize it into prose, do not drop columns. This is the complete answer: no more tool calls, no \\\"download offline\\\" / \\\"use legacy WiFi\\\" / \\\"mobile hotspot\\\" tips (non-responsive — they asked for better FLIGHTS). Connections are built from route history, not same-day schedules — verify they connect on united.com before rebooking. Starlink % = coverage ratio (Starlink hrs / total hrs); Total hrs is flying time, excluding layovers.\"}]}}"
+    "json": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "**UA1008 on 2026-09-20**: ~2% Starlink probability (no flight history). We couldn't confirm the aircraft assignment right now — try again shortly.\n\n<present_verbatim>\n| Segment | Flights | Via | Stops | Starlink % | Starlink hrs | Total hrs |\n|---|---|---|---|---|---|---|\n| IAH→SFO | UA1008 | direct — your flight | 0 | ~2% | ~4m | 3.0h |\n\nIAH→SFO: no Starlink routing within +2.5h of the nonstop.\n</present_verbatim>\n\nRender the table above in your response EXACTLY — do not summarize it into prose, do not drop columns. This is the complete answer: no more tool calls, no \"download offline\" / \"use legacy WiFi\" / \"mobile hotspot\" tips (non-responsive — they asked for better FLIGHTS). Connections are built from route history, not same-day schedules — verify they connect on united.com before rebooking. Starlink % = coverage ratio (Starlink hrs / total hrs); Total hrs is flying time, excluding layovers."
+          }
+        ]
+      }
+    }
   },
   "unitedstarlinktracker.com mcp check_flight {\"flight_number\":\"UA1009\",\"date\":\"2026-09-29\"}": {
     "status": 200,
@@ -907,7 +1945,18 @@
       "access-control-allow-headers": "Content-Type, Accept, Mcp-Session-Id, MCP-Protocol-Version",
       "vary": "Host"
     },
-    "body": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"**UA1009 on 2026-09-29**: ~80% Starlink probability (5 historical obs). Aircraft assignment not yet published — that happens ~2 days out. Check again 1-2 days before departure for a firm answer.\"}]}}"
+    "json": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "**UA1009 on 2026-09-29**: ~80% Starlink probability (5 historical obs). Aircraft assignment not yet published — that happens ~2 days out. Check again 1-2 days before departure for a firm answer."
+          }
+        ]
+      }
+    }
   },
   "unitedstarlinktracker.com mcp check_flight {\"flight_number\":\"UA1010\",\"date\":\"2026-09-29\"}": {
     "status": 200,
@@ -918,7 +1967,18 @@
       "access-control-allow-headers": "Content-Type, Accept, Mcp-Session-Id, MCP-Protocol-Version",
       "vary": "Host"
     },
-    "body": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"**UA1010 on 2026-09-29**: ~2% Starlink probability (no flight history). Aircraft assignment not yet published — that happens ~2 days out. Check again 1-2 days before departure for a firm answer.\\n\\n<present_verbatim>\\n| Segment | Flights | Via | Stops | Starlink % | Starlink hrs | Total hrs |\\n|---|---|---|---|---|---|---|\\n| IAH→SFO | UA1010 | direct — your flight | 0 | ~2% | ~4m | 3.0h |\\n\\nIAH→SFO: no Starlink routing within +2.5h of the nonstop.\\n</present_verbatim>\\n\\nRender the table above in your response EXACTLY — do not summarize it into prose, do not drop columns. This is the complete answer: no more tool calls, no \\\"download offline\\\" / \\\"use legacy WiFi\\\" / \\\"mobile hotspot\\\" tips (non-responsive — they asked for better FLIGHTS). Connections are built from route history, not same-day schedules — verify they connect on united.com before rebooking. Starlink % = coverage ratio (Starlink hrs / total hrs); Total hrs is flying time, excluding layovers.\"}]}}"
+    "json": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "**UA1010 on 2026-09-29**: ~2% Starlink probability (no flight history). Aircraft assignment not yet published — that happens ~2 days out. Check again 1-2 days before departure for a firm answer.\n\n<present_verbatim>\n| Segment | Flights | Via | Stops | Starlink % | Starlink hrs | Total hrs |\n|---|---|---|---|---|---|---|\n| IAH→SFO | UA1010 | direct — your flight | 0 | ~2% | ~4m | 3.0h |\n\nIAH→SFO: no Starlink routing within +2.5h of the nonstop.\n</present_verbatim>\n\nRender the table above in your response EXACTLY — do not summarize it into prose, do not drop columns. This is the complete answer: no more tool calls, no \"download offline\" / \"use legacy WiFi\" / \"mobile hotspot\" tips (non-responsive — they asked for better FLIGHTS). Connections are built from route history, not same-day schedules — verify they connect on united.com before rebooking. Starlink % = coverage ratio (Starlink hrs / total hrs); Total hrs is flying time, excluding layovers."
+          }
+        ]
+      }
+    }
   },
   "unitedstarlinktracker.com mcp check_flight {\"flight_number\":\"UA1010\",\"date\":\"2026-09-14\"}": {
     "status": 200,
@@ -929,7 +1989,18 @@
       "access-control-allow-headers": "Content-Type, Accept, Mcp-Session-Id, MCP-Protocol-Version",
       "vary": "Host"
     },
-    "body": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"**UA1010 on 2026-09-14**: ~2% Starlink probability (no flight history). This date is in the past; we don't retain historical assignments.\"}]}}"
+    "json": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "**UA1010 on 2026-09-14**: ~2% Starlink probability (no flight history). This date is in the past; we don't retain historical assignments."
+          }
+        ]
+      }
+    }
   },
   "unitedstarlinktracker.com mcp check_flight {\"flight_number\":\"UA1003\",\"date\":\"2026-09-20\",\"origin\":\"ORD\"}": {
     "status": 200,
@@ -940,7 +2011,18 @@
       "access-control-allow-headers": "Content-Type, Accept, Mcp-Session-Id, MCP-Protocol-Version",
       "vary": "Host"
     },
-    "body": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"❌ No Starlink: UA1003 ORD → DEN on 2026-09-20 is assigned to tail N3003 (Boeing 737-900), verified as Viasat WiFi — NOT Starlink. Aircraft swaps can happen, but the assignment is currently firm.\\n\\n<present_verbatim>\\n| Segment | Flights | Via | Stops | Starlink % | Starlink hrs | Total hrs |\\n|---|---|---|---|---|---|---|\\n| ORD→DEN | UA1003 | direct — your flight | 0 | 0% (assigned N3003, Viasat) | 0 | 3.0h |\\n| ORD→DEN | UA1004 | direct | 0 | 95% | 2.8h | 3.0h |\\n</present_verbatim>\\n\\nRender the table above in your response EXACTLY — do not summarize it into prose, do not drop columns. This is the complete answer: no more tool calls, no \\\"download offline\\\" / \\\"use legacy WiFi\\\" / \\\"mobile hotspot\\\" tips (non-responsive — they asked for better FLIGHTS). Connections are built from route history, not same-day schedules — verify they connect on united.com before rebooking. Starlink % = coverage ratio (Starlink hrs / total hrs); Total hrs is flying time, excluding layovers.\"}]}}"
+    "json": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "❌ No Starlink: UA1003 ORD → DEN on 2026-09-20 is assigned to tail N3003 (Boeing 737-900), verified as Viasat WiFi — NOT Starlink. Aircraft swaps can happen, but the assignment is currently firm.\n\n<present_verbatim>\n| Segment | Flights | Via | Stops | Starlink % | Starlink hrs | Total hrs |\n|---|---|---|---|---|---|---|\n| ORD→DEN | UA1003 | direct — your flight | 0 | 0% (assigned N3003, Viasat) | 0 | 3.0h |\n| ORD→DEN | UA1004 | direct | 0 | 95% | 2.8h | 3.0h |\n</present_verbatim>\n\nRender the table above in your response EXACTLY — do not summarize it into prose, do not drop columns. This is the complete answer: no more tool calls, no \"download offline\" / \"use legacy WiFi\" / \"mobile hotspot\" tips (non-responsive — they asked for better FLIGHTS). Connections are built from route history, not same-day schedules — verify they connect on united.com before rebooking. Starlink % = coverage ratio (Starlink hrs / total hrs); Total hrs is flying time, excluding layovers."
+          }
+        ]
+      }
+    }
   },
   "unitedstarlinktracker.com mcp check_flight {\"flight_number\":\"UA12345\",\"date\":\"2026-09-20\"}": {
     "status": 200,
@@ -951,7 +2033,19 @@
       "access-control-allow-headers": "Content-Type, Accept, Mcp-Session-Id, MCP-Protocol-Version",
       "vary": "Host"
     },
-    "body": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"UA12345 is not a valid flight number (expected UA + 1-4 digits).\"}],\"isError\":true}}"
+    "json": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "UA12345 is not a valid flight number (expected UA + 1-4 digits)."
+          }
+        ],
+        "isError": true
+      }
+    }
   },
   "unitedstarlinktracker.com mcp check_flight {\"flight_number\":\"DL100\",\"date\":\"2026-09-20\"}": {
     "status": 200,
@@ -962,7 +2056,19 @@
       "access-control-allow-headers": "Content-Type, Accept, Mcp-Session-Id, MCP-Protocol-Version",
       "vary": "Host"
     },
-    "body": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"This server covers United Airlines flights (UA + flight number, e.g. UA123). For other carriers, use that airline's tracker or airlinestarlinktracker.com.\"}],\"isError\":true}}"
+    "json": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "This server covers United Airlines flights (UA + flight number, e.g. UA123). For other carriers, use that airline's tracker or airlinestarlinktracker.com."
+          }
+        ],
+        "isError": true
+      }
+    }
   },
   "unitedstarlinktracker.com mcp check_flight {\"flight_number\":\"UA1001\",\"date\":\"nope\"}": {
     "status": 200,
@@ -973,7 +2079,19 @@
       "access-control-allow-headers": "Content-Type, Accept, Mcp-Session-Id, MCP-Protocol-Version",
       "vary": "Host"
     },
-    "body": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"Error: invalid date format. Use YYYY-MM-DD.\"}],\"isError\":true}}"
+    "json": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Error: invalid date format. Use YYYY-MM-DD."
+          }
+        ],
+        "isError": true
+      }
+    }
   },
   "unitedstarlinktracker.com mcp check_flight {\"flight_number\":\"UA1001\"}": {
     "status": 200,
@@ -984,7 +2102,19 @@
       "access-control-allow-headers": "Content-Type, Accept, Mcp-Session-Id, MCP-Protocol-Version",
       "vary": "Host"
     },
-    "body": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"Error: flight_number and date are required.\"}],\"isError\":true}}"
+    "json": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Error: flight_number and date are required."
+          }
+        ],
+        "isError": true
+      }
+    }
   },
   "airlinestarlinktracker.com mcp check_flight {\"flight_number\":\"UA1001\",\"date\":\"2026-09-20\"}": {
     "status": 200,
@@ -995,7 +2125,18 @@
       "access-control-allow-headers": "Content-Type, Accept, Mcp-Session-Id, MCP-Protocol-Version",
       "vary": "Host"
     },
-    "body": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"✈️ Yes! Flight UA1001 on 2026-09-20 is scheduled on a verified Starlink aircraft:\\n\\n- UA1001 (SFO→EWR) on Boeing 737-900 tail N3001, operated by United Airlines. Departs 2026-09-20T15:00:00.000Z, arrives 2026-09-20T18:00:00.000Z.\\n\\nStarlink WiFi is free on all equipped United flights.\"}]}}"
+    "json": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "✈️ Yes! Flight UA1001 on 2026-09-20 is scheduled on a verified Starlink aircraft:\n\n- UA1001 (SFO→EWR) on Boeing 737-900 tail N3001, operated by United Airlines. Departs 2026-09-20T15:00:00.000Z, arrives 2026-09-20T18:00:00.000Z.\n\nStarlink WiFi is free on all equipped United flights."
+          }
+        ]
+      }
+    }
   },
   "airlinestarlinktracker.com mcp check_flight {\"flight_number\":\"UA1003\",\"date\":\"2026-09-20\"}": {
     "status": 200,
@@ -1006,7 +2147,18 @@
       "access-control-allow-headers": "Content-Type, Accept, Mcp-Session-Id, MCP-Protocol-Version",
       "vary": "Host"
     },
-    "body": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"❌ No Starlink: UA1003 on 2026-09-20 is assigned to tail N3003 (Boeing 737-900), verified as Viasat WiFi — NOT Starlink. Aircraft swaps can happen, but the assignment is currently firm.\\n\\n<present_verbatim>\\n| Segment | Flights | Via | Stops | Starlink % | Starlink hrs | Total hrs |\\n|---|---|---|---|---|---|---|\\n| ORD→DEN | UA1003 | direct — your flight | 0 | 0% (assigned N3003, Viasat) | 0 | 3.0h |\\n| ORD→DEN | UA1004 | direct | 0 | 95% | 2.8h | 3.0h |\\n</present_verbatim>\\n\\nRender the table above in your response EXACTLY — do not summarize it into prose, do not drop columns. This is the complete answer: no more tool calls, no \\\"download offline\\\" / \\\"use legacy WiFi\\\" / \\\"mobile hotspot\\\" tips (non-responsive — they asked for better FLIGHTS). Connections are built from route history, not same-day schedules — verify they connect on united.com before rebooking. Starlink % = coverage ratio (Starlink hrs / total hrs); Total hrs is flying time, excluding layovers.\"}]}}"
+    "json": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "❌ No Starlink: UA1003 on 2026-09-20 is assigned to tail N3003 (Boeing 737-900), verified as Viasat WiFi — NOT Starlink. Aircraft swaps can happen, but the assignment is currently firm.\n\n<present_verbatim>\n| Segment | Flights | Via | Stops | Starlink % | Starlink hrs | Total hrs |\n|---|---|---|---|---|---|---|\n| ORD→DEN | UA1003 | direct — your flight | 0 | 0% (assigned N3003, Viasat) | 0 | 3.0h |\n| ORD→DEN | UA1004 | direct | 0 | 95% | 2.8h | 3.0h |\n</present_verbatim>\n\nRender the table above in your response EXACTLY — do not summarize it into prose, do not drop columns. This is the complete answer: no more tool calls, no \"download offline\" / \"use legacy WiFi\" / \"mobile hotspot\" tips (non-responsive — they asked for better FLIGHTS). Connections are built from route history, not same-day schedules — verify they connect on united.com before rebooking. Starlink % = coverage ratio (Starlink hrs / total hrs); Total hrs is flying time, excluding layovers."
+          }
+        ]
+      }
+    }
   },
   "airlinestarlinktracker.com mcp check_flight {\"flight_number\":\"UA1010\",\"date\":\"2026-09-20\"}": {
     "status": 200,
@@ -1017,7 +2169,18 @@
       "access-control-allow-headers": "Content-Type, Accept, Mcp-Session-Id, MCP-Protocol-Version",
       "vary": "Host"
     },
-    "body": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"**UA1010 on 2026-09-20**: ~2% Starlink probability (no flight history). No assignment on file — this multi-airline server only sees Starlink-tracked aircraft and doesn't run a live tail lookup. For a live check, use unitedstarlinktracker.com/mcp.\\n\\n<present_verbatim>\\n| Segment | Flights | Via | Stops | Starlink % | Starlink hrs | Total hrs |\\n|---|---|---|---|---|---|---|\\n| IAH→SFO | UA1010 | direct — your flight | 0 | ~2% | ~4m | 3.0h |\\n\\nIAH→SFO: no Starlink routing within +2.5h of the nonstop.\\n</present_verbatim>\\n\\nRender the table above in your response EXACTLY — do not summarize it into prose, do not drop columns. This is the complete answer: no more tool calls, no \\\"download offline\\\" / \\\"use legacy WiFi\\\" / \\\"mobile hotspot\\\" tips (non-responsive — they asked for better FLIGHTS). Connections are built from route history, not same-day schedules — verify they connect on united.com before rebooking. Starlink % = coverage ratio (Starlink hrs / total hrs); Total hrs is flying time, excluding layovers.\"}]}}"
+    "json": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "**UA1010 on 2026-09-20**: ~2% Starlink probability (no flight history). No assignment on file — this multi-airline server only sees Starlink-tracked aircraft and doesn't run a live tail lookup. For a live check, use unitedstarlinktracker.com/mcp.\n\n<present_verbatim>\n| Segment | Flights | Via | Stops | Starlink % | Starlink hrs | Total hrs |\n|---|---|---|---|---|---|---|\n| IAH→SFO | UA1010 | direct — your flight | 0 | ~2% | ~4m | 3.0h |\n\nIAH→SFO: no Starlink routing within +2.5h of the nonstop.\n</present_verbatim>\n\nRender the table above in your response EXACTLY — do not summarize it into prose, do not drop columns. This is the complete answer: no more tool calls, no \"download offline\" / \"use legacy WiFi\" / \"mobile hotspot\" tips (non-responsive — they asked for better FLIGHTS). Connections are built from route history, not same-day schedules — verify they connect on united.com before rebooking. Starlink % = coverage ratio (Starlink hrs / total hrs); Total hrs is flying time, excluding layovers."
+          }
+        ]
+      }
+    }
   },
   "airlinestarlinktracker.com mcp check_flight {\"flight_number\":\"AS100\",\"date\":\"2026-09-20\"}": {
     "status": 200,
@@ -1028,7 +2191,18 @@
       "access-control-allow-headers": "Content-Type, Accept, Mcp-Session-Id, MCP-Protocol-Version",
       "vary": "Host"
     },
-    "body": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"✈️ Yes! Flight AS100 on 2026-09-20 is scheduled on a verified Starlink aircraft:\\n\\n- AS100 (SEA→LAX) on Boeing 737-900 tail N601AS, operated by United Airlines. Departs 2026-09-20T18:00:00.000Z, arrives 2026-09-20T21:00:00.000Z.\\n\\nStarlink WiFi is free on all equipped Alaska flights.\"}]}}"
+    "json": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "✈️ Yes! Flight AS100 on 2026-09-20 is scheduled on a verified Starlink aircraft:\n\n- AS100 (SEA→LAX) on Boeing 737-900 tail N601AS, operated by United Airlines. Departs 2026-09-20T18:00:00.000Z, arrives 2026-09-20T21:00:00.000Z.\n\nStarlink WiFi is free on all equipped Alaska flights."
+          }
+        ]
+      }
+    }
   },
   "airlinestarlinktracker.com mcp check_flight {\"flight_number\":\"AS200\",\"date\":\"2026-09-29\"}": {
     "status": 200,
@@ -1039,7 +2213,18 @@
       "access-control-allow-headers": "Content-Type, Accept, Mcp-Session-Id, MCP-Protocol-Version",
       "vary": "Host"
     },
-    "body": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"AS200 on 2026-09-29: no assignment data. No per-flight prediction model exists for Alaska Airlines — Starlink status is determined by aircraft type, not flight-number history. Every regional E175 has Starlink. Mainline has started with the 737-8 MAX; no other 737 or 787 is connected yet.\"}]}}"
+    "json": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "AS200 on 2026-09-29: no assignment data. No per-flight prediction model exists for Alaska Airlines — Starlink status is determined by aircraft type, not flight-number history. Every regional E175 has Starlink. Mainline has started with the 737-8 MAX; no other 737 or 787 is connected yet."
+          }
+        ]
+      }
+    }
   },
   "airlinestarlinktracker.com mcp check_flight {\"flight_number\":\"QR1\",\"date\":\"2026-09-20\"}": {
     "status": 200,
@@ -1050,7 +2235,18 @@
       "access-control-allow-headers": "Content-Type, Accept, Mcp-Session-Id, MCP-Protocol-Version",
       "vary": "Host"
     },
-    "body": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"✈️ Yes, by scheduled aircraft type — QR1 on 2026-09-20. Scheduled Boeing 777-300ER DOH→LHR. Qatar reports its 777 fleet fully fitted with Starlink. Qatar can change the aircraft before departure.\\n\\n- QR1 (DOH→LHR) on Boeing 777-300ER. Departs 2026-09-20T06:40:00.000Z.\"}]}}"
+    "json": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "✈️ Yes, by scheduled aircraft type — QR1 on 2026-09-20. Scheduled Boeing 777-300ER DOH→LHR. Qatar reports its 777 fleet fully fitted with Starlink. Qatar can change the aircraft before departure.\n\n- QR1 (DOH→LHR) on Boeing 777-300ER. Departs 2026-09-20T06:40:00.000Z."
+          }
+        ]
+      }
+    }
   },
   "airlinestarlinktracker.com mcp check_flight {\"flight_number\":\"QR5\",\"date\":\"2026-09-20\"}": {
     "status": 200,
@@ -1061,7 +2257,18 @@
       "access-control-allow-headers": "Content-Type, Accept, Mcp-Session-Id, MCP-Protocol-Version",
       "vary": "Host"
     },
-    "body": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"✈️ Yes, by scheduled aircraft type — QR5 on 2026-09-20. Scheduled Boeing 787-8 DOH→LHR. Qatar reports its 787-8 fleet fully fitted with Starlink. Qatar can change the aircraft before departure.\\n\\n- QR5 (DOH→LHR) on Boeing 787-8. Departs 2026-09-20T06:40:00.000Z.\"}]}}"
+    "json": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "✈️ Yes, by scheduled aircraft type — QR5 on 2026-09-20. Scheduled Boeing 787-8 DOH→LHR. Qatar reports its 787-8 fleet fully fitted with Starlink. Qatar can change the aircraft before departure.\n\n- QR5 (DOH→LHR) on Boeing 787-8. Departs 2026-09-20T06:40:00.000Z."
+          }
+        ]
+      }
+    }
   },
   "airlinestarlinktracker.com mcp check_flight {\"flight_number\":\"QR9\",\"date\":\"2026-09-20\"}": {
     "status": 200,
@@ -1072,7 +2279,18 @@
       "access-control-allow-headers": "Content-Type, Accept, Mcp-Session-Id, MCP-Protocol-Version",
       "vary": "Host"
     },
-    "body": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"Maybe — QR9 on 2026-09-20. Scheduled Boeing 787-9 DOH→LHR. Qatar's 787-9 Starlink installs are under way (due end-2026); this aircraft may or may not be equipped yet.\\n\\n- QR9 (DOH→LHR) on Boeing 787-9. Departs 2026-09-20T06:40:00.000Z.\"}]}}"
+    "json": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Maybe — QR9 on 2026-09-20. Scheduled Boeing 787-9 DOH→LHR. Qatar's 787-9 Starlink installs are under way (due end-2026); this aircraft may or may not be equipped yet.\n\n- QR9 (DOH→LHR) on Boeing 787-9. Departs 2026-09-20T06:40:00.000Z."
+          }
+        ]
+      }
+    }
   },
   "airlinestarlinktracker.com mcp check_flight {\"flight_number\":\"QR11\",\"date\":\"2026-09-20\"}": {
     "status": 200,
@@ -1083,7 +2301,18 @@
       "access-control-allow-headers": "Content-Type, Accept, Mcp-Session-Id, MCP-Protocol-Version",
       "vary": "Host"
     },
-    "body": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"QR11 on 2026-09-20: cancelled. Qatar lists QR11 on 2026-09-20 as cancelled.\\n\\n- QR11 (DOH→LHR) on Boeing 777-300ER. Departs 2026-09-20T06:40:00.000Z.\"}]}}"
+    "json": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "QR11 on 2026-09-20: cancelled. Qatar lists QR11 on 2026-09-20 as cancelled.\n\n- QR11 (DOH→LHR) on Boeing 777-300ER. Departs 2026-09-20T06:40:00.000Z."
+          }
+        ]
+      }
+    }
   },
   "airlinestarlinktracker.com mcp check_flight {\"flight_number\":\"QR7\",\"date\":\"2026-10-09\"}": {
     "status": 200,
@@ -1094,7 +2323,18 @@
       "access-control-allow-headers": "Content-Type, Accept, Mcp-Session-Id, MCP-Protocol-Version",
       "vary": "Host"
     },
-    "body": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"**QR7 on 2026-10-09**: likely — at least 88% Starlink (high confidence, 20 recent and scheduled operating days). Qatar publishes the aircraft about a week ahead. QR7 over its last 20 operating days (flown and scheduled): 777-300ER ×20 — 20 on types Qatar reports fully fitted with Starlink (at least 88%).\"}]}}"
+    "json": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "**QR7 on 2026-10-09**: likely — at least 88% Starlink (high confidence, 20 recent and scheduled operating days). Qatar publishes the aircraft about a week ahead. QR7 over its last 20 operating days (flown and scheduled): 777-300ER ×20 — 20 on types Qatar reports fully fitted with Starlink (at least 88%)."
+          }
+        ]
+      }
+    }
   },
   "airlinestarlinktracker.com mcp check_flight {\"flight_number\":\"QR8888\",\"date\":\"2026-09-20\"}": {
     "status": 200,
@@ -1105,7 +2345,18 @@
       "access-control-allow-headers": "Content-Type, Accept, Mcp-Session-Id, MCP-Protocol-Version",
       "vary": "Host"
     },
-    "body": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"QR8888 on 2026-09-20: We haven't observed QR8888 on the Qatar routes we track yet (selected Qatar routes only; Qatar publishes the aircraft about a week out). Qatar reports its 777, A350 and 787-8 fleets fitted; 787-9 installs are under way; A380, A330 and narrowbodies aren't in the program.\"}]}}"
+    "json": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "QR8888 on 2026-09-20: We haven't observed QR8888 on the Qatar routes we track yet (selected Qatar routes only; Qatar publishes the aircraft about a week out). Qatar reports its 777, A350 and 787-8 fleets fitted; 787-9 installs are under way; A380, A330 and narrowbodies aren't in the program."
+          }
+        ]
+      }
+    }
   },
   "airlinestarlinktracker.com mcp check_flight {\"flight_number\":\"HA100\",\"date\":\"2026-09-29\"}": {
     "status": 200,
@@ -1116,7 +2367,18 @@
       "access-control-allow-headers": "Content-Type, Accept, Mcp-Session-Id, MCP-Protocol-Version",
       "vary": "Host"
     },
-    "body": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"HA100 on 2026-09-29: no assignment data. Starlink on Hawaiian Airlines is determined by aircraft type — A330/A321: Starlink (rollout complete); B787: mid-installation; B717: no Starlink. No aircraft schedule is on file for this flight on 2026-09-29 yet; aircraft are assigned about two days before departure.\"}]}}"
+    "json": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "HA100 on 2026-09-29: no assignment data. Starlink on Hawaiian Airlines is determined by aircraft type — A330/A321: Starlink (rollout complete); B787: mid-installation; B717: no Starlink. No aircraft schedule is on file for this flight on 2026-09-29 yet; aircraft are assigned about two days before departure."
+          }
+        ]
+      }
+    }
   },
   "airlinestarlinktracker.com mcp check_flight {\"flight_number\":\"DL100\",\"date\":\"2026-09-20\"}": {
     "status": 200,
@@ -1127,7 +2389,19 @@
       "access-control-allow-headers": "Content-Type, Accept, Mcp-Session-Id, MCP-Protocol-Version",
       "vary": "Host"
     },
-    "body": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"Airline not tracked. Tracked carriers: UA (United Airlines), HA (Hawaiian Airlines), AS (Alaska Airlines), QR (Qatar Airways). Prefix the flight number with the carrier code, e.g. UA123.\"}],\"isError\":true}}"
+    "json": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Airline not tracked. Tracked carriers: UA (United Airlines), HA (Hawaiian Airlines), AS (Alaska Airlines), QR (Qatar Airways). Prefix the flight number with the carrier code, e.g. UA123."
+          }
+        ],
+        "isError": true
+      }
+    }
   },
   "airlinestarlinktracker.com mcp check_flight {\"flight_number\":\"OO4000\",\"date\":\"2026-09-20\"}": {
     "status": 200,
@@ -1138,6 +2412,18 @@
       "access-control-allow-headers": "Content-Type, Accept, Mcp-Session-Id, MCP-Protocol-Version",
       "vary": "Host"
     },
-    "body": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"OO4000 is an operating-carrier code, not the marketing flight number this server looks up. Use the number on the ticket — e.g. UA4000 if it's sold as United Airlines.\"}],\"isError\":true}}"
+    "json": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "OO4000 is an operating-carrier code, not the marketing flight number this server looks up. Use the number on the ticket — e.g. UA4000 if it's sold as United Airlines."
+          }
+        ],
+        "isError": true
+      }
+    }
   }
 }

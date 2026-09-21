@@ -8,7 +8,7 @@ import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { handleMcpRequest } from "../src/api/mcp-server";
-import { setupTables } from "../src/database/database";
+import { migrate, setupTables } from "../src/database/database";
 import type { Scope, ScopedReader } from "../src/database/reader";
 import type { predictFlight } from "../src/scripts/starlink-predictor";
 
@@ -48,6 +48,14 @@ export function makeSyntheticDb(): Database {
   // Tables added since the snapshot was generated (setupTables is idempotent),
   // so a stale .test-snapshot.sqlite doesn't fail write-path tests.
   setupTables(db);
+  return db;
+}
+
+/** An empty database built by the real migration alone: no snapshot, no
+ * test:setup, so a test that seeds everything itself stays hermetic. */
+export function makeFreshDb(): Database {
+  const db = new Database(":memory:");
+  migrate(db);
   return db;
 }
 

@@ -3,7 +3,10 @@
  * /api/check-any-flight and MCP check_flight, one synthetic flight per verdict
  * branch. Hermetic — fixed clock, synthetic DB, FR24 stubbed, fetch refused —
  * so the bytes never drift with data. A diff here is a contract change: review
- * it, then regenerate with `UPDATE_GOLDEN=1 bun test tests/api-contract-golden.test.ts`.
+ * it, then regenerate with `bun run capture-golden`.
+ *
+ * JSON bodies are stored parsed and .ics bodies as lines so a fixture diff
+ * reads per field; each stored form must re-encode to the exact live bytes.
  */
 
 import type { Database } from "bun:sqlite";
@@ -16,7 +19,7 @@ import { addDaysISO } from "../src/api/qatar-verdict";
 import { upsertQatarEquipmentHistory, upsertQatarSchedule } from "../src/database/database";
 import { createApp } from "../src/server/app";
 import { airportLocalDate } from "../src/utils/airport-tz";
-import { addFleet, addFlight, addPlane, makeSyntheticDb, mcpReq, utc } from "./helpers";
+import { addFleet, addFlight, addPlane, makeFreshDb, mcpReq, utc } from "./helpers";
 
 const FIXTURE = "tests/golden/api-contracts.json";
 const UA = "unitedstarlinktracker.com";
@@ -116,7 +119,7 @@ function qrHistory(db: Database, fn: string, date: string, eq: string): void {
 }
 
 function seed(): Database {
-  const db = makeSyntheticDb();
+  const db = makeFreshDb();
   // Scheduled yes, verified and spreadsheet-only.
   addPlane(db, "N3001", "Starlink");
   addFlight(db, "N3001", "UA1001", "SFO", at(D1, "15:00"), { arrivalAirport: "EWR" });
@@ -291,14 +294,51 @@ const PINNED_HEADERS = [
   "vary",
 ];
 
-interface Pinned {
+interface Captured {
   status: number;
   headers: Record<string, string>;
   body: string;
 }
 
-async function capture(app: ReturnType<typeof createApp>): Promise<Record<string, Pinned>> {
-  const out: Record<string, Pinned> = {};
+/** The fixture's form of a response: `json` or `lines` when either re-encodes
+ * to the exact bytes, else the raw `body`. */
+interface Pinned {
+  status: number;
+  headers: Record<string, string>;
+  json?: unknown;
+  lines?: string[];
+  body?: string;
+}
+
+const ICS_EOL = "\r\n";
+
+function pin({ status, headers, body }: Captured): Pinned {
+  const type = headers["content-type"] ?? "";
+  if (type.startsWith("application/json")) {
+    const json = JSON.parse(body);
+    if (JSON.stringify(json) === body) return { status, headers, json };
+  }
+  if (type.startsWith("text/calendar")) {
+    const lines = body.split(ICS_EOL);
+    if (lines.join(ICS_EOL) === body) return { status, headers, lines };
+  }
+  return { status, headers, body };
+}
+
+function bytesOf(p: Pinned): string {
+  if (p.json !== undefined) return JSON.stringify(p.json);
+  if (p.lines) return p.lines.join(ICS_EOL);
+  return p.body ?? "";
+}
+
+const caseName = {
+  http: (c: Case) => c.name,
+  mcp: (c: (typeof MCP_CASES)[number]) => `${c.host} mcp check_flight ${JSON.stringify(c.args)}`,
+};
+const CASE_NAMES = [...CASES.map(caseName.http), ...MCP_CASES.map(caseName.mcp)];
+
+async function capture(app: ReturnType<typeof createApp>): Promise<Record<string, Captured>> {
+  const out: Record<string, Captured> = {};
   const send = async (name: string, req: Request) => {
     const r = await app.dispatch(req);
     const headers: Record<string, string> = {};
@@ -310,7 +350,7 @@ async function capture(app: ReturnType<typeof createApp>): Promise<Record<string
   };
   for (const c of CASES) {
     await send(
-      c.name,
+      caseName.http(c),
       new Request(`http://x${c.path}`, {
         method: c.method ?? "GET",
         headers: { Host: c.host, "cf-connecting-ip": "127.0.0.1" },
@@ -319,7 +359,7 @@ async function capture(app: ReturnType<typeof createApp>): Promise<Record<string
   }
   for (const c of MCP_CASES) {
     await send(
-      `${c.host} mcp check_flight ${JSON.stringify(c.args)}`,
+      caseName.mcp(c),
       mcpReq(
         c.host,
         "tools/call",
@@ -331,7 +371,8 @@ async function capture(app: ReturnType<typeof createApp>): Promise<Record<string
   return out;
 }
 
-let live: Record<string, Pinned>;
+let live: Record<string, Captured>;
+let pinned: Record<string, Pinned>;
 const realFetch = globalThis.fetch;
 
 beforeAll(async () => {
@@ -344,9 +385,14 @@ beforeAll(async () => {
     return (legs ?? []).map((l) => ({ ...l, flight_number: fn })) as never;
   });
   live = await capture(createApp(seed()));
-  if (process.env.UPDATE_GOLDEN || !existsSync(FIXTURE)) {
-    writeFileSync(FIXTURE, `${JSON.stringify(live, null, 2)}\n`);
+  if (process.env.UPDATE_GOLDEN === "1") {
+    const out = Object.fromEntries(Object.entries(live).map(([k, v]) => [k, pin(v)]));
+    writeFileSync(FIXTURE, `${JSON.stringify(out, null, 2)}\n`);
   }
+  if (!existsSync(FIXTURE)) {
+    throw new Error(`${FIXTURE} is missing: regenerate it with \`bun run capture-golden\``);
+  }
+  pinned = JSON.parse(readFileSync(FIXTURE, "utf8"));
 });
 
 afterAll(() => {
@@ -356,10 +402,21 @@ afterAll(() => {
 });
 
 describe("public flight-lookup contracts", () => {
-  test("every case matches the pinned status, headers and body bytes", () => {
-    const pinned = JSON.parse(readFileSync(FIXTURE, "utf8")) as Record<string, Pinned>;
-    expect(Object.keys(live).sort()).toEqual(Object.keys(pinned).sort());
-    for (const name of Object.keys(pinned)) expect(live[name], name).toEqual(pinned[name]);
+  test("the fixture pins exactly the defined cases", () => {
+    expect(new Set(CASE_NAMES).size).toBe(CASE_NAMES.length);
+    expect(Object.keys(pinned).sort()).toEqual([...CASE_NAMES].sort());
+  });
+
+  test.each(CASE_NAMES)("%s", (name) => {
+    const want = pinned[name];
+    expect(want, `no fixture entry for ${name}`).toBeDefined();
+    const got = live[name];
+    expect({ status: got.status, headers: got.headers }).toEqual({
+      status: want.status,
+      headers: want.headers,
+    });
+    expect(got.body).toBe(bytesOf(want));
+    expect(pin(got)).toEqual(want);
   });
 
   test("the fixture exercises every verdict branch", () => {
