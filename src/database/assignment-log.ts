@@ -20,6 +20,7 @@ import {
 import { AIRLINES, type AirlineConfig } from "../airlines/registry";
 import type { Flight } from "../types";
 import { airportLocalDate, icaoToIata } from "../utils/airport-tz";
+import { airlineIn, placeholders } from "./sql/fragments";
 
 export const ASSIGNMENT_LOG_DDL = `
   CREATE TABLE IF NOT EXISTS flight_assignment_log (
@@ -182,14 +183,6 @@ export function pruneAssignmentLog(db: Database, now: number): void {
   );
 }
 
-function airlineClause(
-  airlines: readonly string[],
-  column = "airline"
-): { sql: string; params: string[] } {
-  if (airlines.length === 0) return { sql: "1=0", params: [] };
-  return { sql: `${column} IN (${airlines.map(() => "?").join(",")})`, params: [...airlines] };
-}
-
 /** Every tail seen assigned to the flight on its local date, oldest first. */
 export function getAssignmentHistory(
   db: Database,
@@ -198,11 +191,11 @@ export function getAssignmentHistory(
   depDate: string
 ): AssignmentLogRow[] {
   if (variants.length === 0) return [];
-  const a = airlineClause(airlines);
+  const a = airlineIn(airlines);
   return db
     .query(
       `SELECT * FROM flight_assignment_log
-       WHERE ${a.sql} AND flight_number IN (${variants.map(() => "?").join(",")}) AND dep_date = ?
+       WHERE ${a.sql} AND flight_number IN (${placeholders(variants)}) AND dep_date = ?
        ORDER BY first_seen ASC, tail_number ASC`
     )
     .all(...a.params, ...variants, depDate) as AssignmentLogRow[];
@@ -247,7 +240,7 @@ export function getSameDayStarlinkAlternatives(
 ): SameDayAlternative[] {
   const now = q.now ?? Math.floor(Date.now() / 1000);
   const windowSec = (q.windowH ?? 10) * 3600;
-  const a = airlineClause(airlines, "uf.airline");
+  const a = airlineIn(airlines, "uf.airline");
   const rows = db
     .query(
       `SELECT uf.flight_number, uf.departure_time, uf.tail_number, uf.airline,

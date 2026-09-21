@@ -80,45 +80,34 @@ import { debug, info, error as logError, warn } from "../utils/logger";
 import { ensureAdsbFlightDrawsTable } from "./adsb-flight-draws";
 import { ASSIGNMENT_LOG_DDL, logFlightAssignments, pruneAssignmentLog } from "./assignment-log";
 
+import {
+  type AirlineFilter,
+  ROUTE_AIRPORT_RE,
+  airlineCodes,
+  cleanAirportPairSql,
+  filterKey,
+  flightNumberGlob,
+  isCleanAirportPair,
+  marketingFlightNumber,
+  placeholders,
+  prefixGlob,
+  sheetSaysStarlink,
+  tailHash,
+  withAirline,
+} from "./sql/fragments";
+import {
+  DEPARTURE_WINDOW_HOURS,
+  DEPARTURE_WINDOW_SEC,
+  TRAILING_WINDOW_DAYS,
+  TRAILING_WINDOW_SEC,
+  isoDateDaysAgo,
+  unixNow,
+} from "./sql/windows";
+
+export type { AirlineFilter };
+export { DEPARTURE_WINDOW_HOURS, ROUTE_AIRPORT_RE };
+
 type MetaRow = { value: string };
-
-/** Append `AND <alias.>airline = ?` and the param when scope is set. */
-export type AirlineFilter = string | readonly string[] | undefined;
-
-function filterKey(f: AirlineFilter): string {
-  if (f === undefined) return "ALL";
-  return Array.isArray(f) ? f.join(",") : (f as string);
-}
-
-function withAirline(
-  sql: string,
-  airline: AirlineFilter,
-  alias = "",
-  params: (string | number)[] = []
-): { sql: string; params: (string | number)[] } {
-  if (airline === undefined) return { sql, params };
-  const col = alias ? `${alias}.airline` : "airline";
-  if (typeof airline === "string") {
-    return { sql: `${sql} AND ${col} = ?`, params: [...params, airline] };
-  }
-  if (airline.length === 0) return { sql: `${sql} AND 1=0`, params };
-  const placeholders = airline.map(() => "?").join(",");
-  return { sql: `${sql} AND ${col} IN (${placeholders})`, params: [...params, ...airline] };
-}
-
-/** Resolve an AirlineFilter to concrete airline codes (undefined = all enabled). */
-function airlineCodes(airline: AirlineFilter): readonly string[] {
-  if (airline === undefined) return enabledAirlines().map((a) => a.code);
-  return typeof airline === "string" ? [airline] : airline;
-}
-
-/** `flight_number GLOB` clause matching any of the given carrier prefixes. */
-function flightNumberGlob(prefixes: readonly string[]): { clause: string; params: string[] } {
-  return {
-    clause: prefixes.map(() => "flight_number GLOB ?").join(" OR "),
-    params: prefixes.map((p) => `${p}[0-9]*`),
-  };
-}
 
 /**
  * Open a connection, no schema work. A process opens one handle and shares
@@ -695,7 +684,7 @@ export function setupTables(db: Database) {
 
       // Stagger initial check times for planes with existing flight data
       if (tableExists(db, "upcoming_flights")) {
-        const now = Math.floor(Date.now() / 1000);
+        const now = unixNow();
         const migrationQuery = `
           UPDATE starlink_planes
           SET last_flight_check = ?
@@ -1385,12 +1374,9 @@ export function getDailyInstalls(
  * Returns only the rows inserted by THIS call, so the caller can notify
  * exactly once per tail.
  */
-export function recordFirstFlights(
-  db: Database,
-  now = Math.floor(Date.now() / 1000)
-): FirstFlight[] {
+export function recordFirstFlights(db: Database, now = unixNow()): FirstFlight[] {
   const enabled = enabledAirlines().map((a) => a.code);
-  const placeholders = enabled.map(() => "?").join(",");
+  const ph = placeholders(enabled);
   const raw = db
     .query(
       `SELECT c.tail_number, c.airline, c.flight_number, c.origin, c.destination, c.departed_at
@@ -1405,7 +1391,7 @@ export function recordFirstFlights(
          WHERE ${equippedFilter("sp")}
            AND ${INSTALL_FILTER}
            AND ${NOT_FORUM_DATED}
-           AND sp.airline IN (${placeholders})
+           AND sp.airline IN (${ph})
            AND sp.DateFound >= date(?, 'unixepoch', '-14 days')
            AND uf.flight_number IS NOT NULL
            AND uf.departure_airport IS NOT NULL
@@ -1462,12 +1448,12 @@ export function getFirstFlights(
   airline: AirlineFilter
 ): FirstFlight[] {
   if (tails.length === 0) return [];
-  const placeholders = tails.map(() => "?").join(",");
+  const ph = placeholders(tails);
   const q = withAirline(
     `SELECT ff.tail_number, ff.airline, ff.flight_number, ff.origin, ff.destination,
             ff.departed_at, ff.recorded_at
      FROM first_flights ff
-     WHERE ff.tail_number IN (${placeholders})
+     WHERE ff.tail_number IN (${ph})
        AND NOT EXISTS (
          SELECT 1 FROM starlink_planes sp
          WHERE sp.TailNumber = ff.tail_number AND NOT (${NOT_FORUM_DATED})
@@ -1509,12 +1495,16 @@ export interface HubAirlineStat {
   installs30d: number;
 }
 
-export function getHubStats(db: Database, codes: readonly string[]): HubAirlineStat[] {
-  const placeholders = codes.map(() => "?").join(",");
+export function getHubStats(
+  db: Database,
+  codes: readonly string[],
+  now = unixNow()
+): HubAirlineStat[] {
+  const ph = placeholders(codes);
   const fleetByType = db
     .query(
       `SELECT airline, aircraft_type, COUNT(*) total FROM united_fleet
-       WHERE airline IN (${placeholders}) GROUP BY airline, aircraft_type`
+       WHERE airline IN (${ph}) GROUP BY airline, aircraft_type`
     )
     .all(...codes) as { airline: string; aircraft_type: string | null; total: number }[];
   const passengerTotals = new Map<string, number>();
@@ -1530,7 +1520,7 @@ export function getHubStats(db: Database, codes: readonly string[]): HubAirlineS
     .query(
       `SELECT airline, COUNT(*) n FROM starlink_planes
        WHERE ${equippedFilter("starlink_planes")}
-         AND airline IN (${placeholders})
+         AND airline IN (${ph})
        GROUP BY airline`
     )
     .all(...codes) as { airline: string; n: number }[];
@@ -1538,13 +1528,13 @@ export function getHubStats(db: Database, codes: readonly string[]): HubAirlineS
   const v = db
     .query(
       `SELECT airline, COUNT(*) n FROM starlink_planes
-       WHERE DateFound >= date('now','-30 day')
+       WHERE DateFound >= ?
          AND ${equippedFilter("starlink_planes")}
          AND ${INSTALL_FILTER}
-         AND airline IN (${placeholders})
+         AND airline IN (${ph})
        GROUP BY airline`
     )
-    .all(...codes) as { airline: string; n: number }[];
+    .all(isoDateDaysAgo(TRAILING_WINDOW_DAYS, now), ...codes) as { airline: string; n: number }[];
   const v30 = Object.fromEntries(v.map((r) => [r.airline, r.n]));
   return fleet.map((f) => {
     const starlink = equippedBy[f.airline] ?? 0;
@@ -1703,7 +1693,7 @@ export function updateFlights(
     "flight_number" | "departure_airport" | "arrival_airport" | "departure_time" | "arrival_time"
   >[]
 ) {
-  const now = Math.floor(Date.now() / 1000);
+  const now = unixNow();
   const valid = flights.filter((f) => f.departure_time >= MIN_VALID_DEPARTURE_TS);
   if (valid.length < flights.length) {
     info(`updateFlights ${tailNumber}: dropped ${flights.length - valid.length} pre-2000 rows`);
@@ -1773,11 +1763,7 @@ export function updateFlights(
 // upcoming_flights. NOT-EXISTS dedupe guards against double-logging on the
 // per-tail path; the global call (no tailNumber) lets airlines whose tails
 // rarely have near-term flights (AS regional, QR long-haul) archive promptly.
-export function archivePastDepartures(
-  db: Database,
-  now = Math.floor(Date.now() / 1000),
-  tailNumber?: string
-): number {
+export function archivePastDepartures(db: Database, now = unixNow(), tailNumber?: string): number {
   const params: (string | number)[] = [now];
   if (tailNumber) params.push(tailNumber);
   const changes = db
@@ -1795,7 +1781,7 @@ export function archivePastDepartures(
   // 30-day trim lives here with the other departure_log writes. It used to run
   // inside getAirportDepartures — a DELETE taking a WAL write lock on every
   // homepage render, ~4,200 write transactions/day on the read path.
-  db.query("DELETE FROM departure_log WHERE departed_at < ?").run(now - 30 * 86400);
+  db.query("DELETE FROM departure_log WHERE departed_at < ?").run(now - TRAILING_WINDOW_SEC);
   pruneAssignmentLog(db, now);
   return changes;
 }
@@ -1805,7 +1791,7 @@ export function getUpcomingFlights(
   tailNumber?: string,
   airline?: AirlineFilter
 ): Flight[] {
-  const now = Math.floor(Date.now() / 1000);
+  const now = unixNow();
 
   let sql = "SELECT * FROM upcoming_flights WHERE departure_time > ?";
   const params: (string | number)[] = [now];
@@ -1843,7 +1829,7 @@ export function getFlightAssignments(
   endOfDay: number,
   airline?: AirlineFilter
 ): FlightAssignmentRow[] {
-  const placeholders = flightNumberVariants.map(() => "?").join(", ");
+  const ph = placeholders(flightNumberVariants);
   const q = withAirline(
     `SELECT uf.*, sp.Aircraft as aircraft_type, sp.OperatedBy, sp.fleet, sp.verified_wifi,
        CASE WHEN _neg.tail_number IS NOT NULL THEN 1 ELSE 0 END as settled_negative,
@@ -1852,7 +1838,7 @@ export function getFlightAssignments(
      INNER JOIN starlink_planes sp ON uf.tail_number = sp.TailNumber
      LEFT JOIN united_fleet _neg
        ON _neg.tail_number = sp.TailNumber AND _neg.starlink_status = 'negative'
-     WHERE uf.flight_number IN (${placeholders})
+     WHERE uf.flight_number IN (${ph})
        AND uf.departure_time >= ? AND uf.departure_time < ?`,
     airline,
     "uf",
@@ -1904,7 +1890,7 @@ export function getVerificationObservations(
   const q = withAirline(
     `SELECT flight_number, tail_number, has_starlink, checked_at
      FROM starlink_verification_log
-     WHERE flight_number IS NOT NULL AND source IN (${sources.map(() => "?").join(",")})
+     WHERE flight_number IS NOT NULL AND source IN (${placeholders(sources)})
        AND ${CLEAN_OBSERVATION_WHERE}`,
     airline,
     "",
@@ -2219,7 +2205,7 @@ export function cacheFlightRoute(
   origin: string,
   destination: string,
   durationSec: number | null,
-  now = Math.floor(Date.now() / 1000)
+  now = unixNow()
 ): void {
   // flight_routes feeds the sitemap and route-page links, and this cache is
   // written from caller-supplied lookup input (MCP/API), so an unvalidated
@@ -2251,11 +2237,11 @@ export function getRoutesForFlightVariants(
   variants: string[],
   airline?: AirlineFilter
 ): { departure_airport: string; arrival_airport: string; dur_sec: number }[] {
-  const placeholders = variants.map(() => "?").join(",");
+  const ph = placeholders(variants);
   const q = withAirline(
     `SELECT DISTINCT departure_airport, arrival_airport,
             AVG(arrival_time - departure_time) as dur_sec
-     FROM upcoming_flights WHERE flight_number IN (${placeholders})`,
+     FROM upcoming_flights WHERE flight_number IN (${ph})`,
     airline,
     "",
     [...variants]
@@ -2298,13 +2284,13 @@ export const SITEMAP_ROUTE_MIN_SEEN = 5;
 export function getSitemapFlights(db: Database, airline: AirlineCode): SitemapFlight[] {
   const cfg = AIRLINES[airline];
   if (!cfg) return [];
-  const nowSec = Math.floor(Date.now() / 1000);
+  const nowSec = unixNow();
   const marketing = canonicalPermalinkFor(cfg);
   const latest = new Map<string, number>();
   const touch = (raw: string, t: number | null) => {
     // Zero-padded spellings collapse onto the canonical permalink (HA0011 →
     // /check-flight/HA11); the padded URL 301s there.
-    const fn = stripFlightNumberZeros(ensureAirlinePrefix(cfg, raw));
+    const fn = marketingFlightNumber(cfg, raw);
     if (!marketing.test(fn)) return;
     // Future timestamps are corrupt rows — treat as unknown, keep the page.
     const sane = t && t <= nowSec ? t : 0;
@@ -2324,9 +2310,13 @@ export function getSitemapFlights(db: Database, airline: AirlineCode): SitemapFl
        FROM flight_routes
        WHERE flight_number GLOB ? GROUP BY flight_number`
     )
-    .all(`${cfg.iata}[0-9]*`) as { flight_number: string; t: number | null; seen: number | null }[];
+    .all(prefixGlob(cfg.iata)) as {
+    flight_number: string;
+    t: number | null;
+    seen: number | null;
+  }[];
   for (const r of cached) {
-    const fn = stripFlightNumberZeros(ensureAirlinePrefix(cfg, r.flight_number));
+    const fn = marketingFlightNumber(cfg, r.flight_number);
     if (!marketing.test(fn)) continue;
     if (inUpcoming.has(fn) || (r.seen ?? 0) >= SITEMAP_FLIGHT_MIN_SEEN) {
       touch(r.flight_number, r.t);
@@ -2350,9 +2340,9 @@ export function flightNumberHasData(
   variants: string[],
   airline?: AirlineFilter
 ): boolean {
-  const placeholders = variants.map(() => "?").join(",");
+  const ph = placeholders(variants);
   const q = withAirline(
-    `SELECT 1 FROM upcoming_flights WHERE flight_number IN (${placeholders})`,
+    `SELECT 1 FROM upcoming_flights WHERE flight_number IN (${ph})`,
     airline,
     "",
     [...variants]
@@ -2363,7 +2353,7 @@ export function flightNumberHasData(
     db
       .query(
         `SELECT 1 FROM flight_routes fr
-         WHERE fr.flight_number IN (${placeholders}) AND ${scoped.clause} LIMIT 1`
+         WHERE fr.flight_number IN (${ph}) AND ${scoped.clause} LIMIT 1`
       )
       .get(...variants, ...scoped.params)
   );
@@ -2391,14 +2381,14 @@ export function corroboratedRouteFilter(
     .filter((c): c is AirlineConfig => Boolean(c));
   if (cfgs.length === 0) return { clause: "1=0", params: [] };
   const tenants = cfgs.map((c) => c.code);
-  const inTenants = tenants.map(() => "?").join(",");
+  const inTenants = placeholders(tenants);
   const marketingRe = new RegExp(`^(${cfgs.map((c) => c.iata).join("|")})\\d+$`);
   const marketingVariants = variants.filter((v) => marketingRe.test(v));
-  const inVariants = variants.map(() => "?").join(",");
+  const inVariants = placeholders(variants);
   const fn = `${alias}.flight_number`;
   const sameNumberMarketing = marketingVariants.length
     ? `OR EXISTS (SELECT 1 FROM flight_routes m
-         WHERE m.flight_number IN (${marketingVariants.map(() => "?").join(",")})
+         WHERE m.flight_number IN (${placeholders(marketingVariants)})
            AND m.origin = ${alias}.origin AND m.destination = ${alias}.destination)`
     : "";
   const clause = `(
@@ -2419,7 +2409,7 @@ export function corroboratedRouteFilter(
   return {
     clause,
     params: [
-      ...cfgs.map((c) => `${c.iata}[0-9]*`),
+      ...cfgs.map((c) => prefixGlob(c.iata)),
       ...tenants,
       ...tenants,
       ...variants,
@@ -2428,13 +2418,6 @@ export function corroboratedRouteFilter(
     ],
   };
 }
-
-/**
- * Airport codes eligible for a route URL: IATA only, so one airport is exactly
- * one URL. Rows carrying 4-letter ICAO codes are skipped by both the sitemap
- * and the page gate, which keeps the two in agreement.
- */
-export const ROUTE_AIRPORT_RE = /^[A-Z]{3}$/;
 
 export interface PopularFlight {
   flight_number: string;
@@ -2491,7 +2474,7 @@ function computePopularFlights(db: Database, cfg: AirlineConfig, limit: number):
       `SELECT flight_number, origin, destination, seen_count
        FROM flight_routes WHERE flight_number GLOB ?`
     )
-    .all(`${cfg.iata}[0-9]*`) as {
+    .all(prefixGlob(cfg.iata)) as {
     flight_number: string;
     origin: string;
     destination: string;
@@ -2513,15 +2496,14 @@ function computePopularFlights(db: Database, cfg: AirlineConfig, limit: number):
   for (const r of [...cached, ...live]) {
     // Zero-padded spellings collapse onto the canonical permalink, same as
     // getSitemapFlights — the padded URL would 301.
-    const fn = stripFlightNumberZeros(ensureAirlinePrefix(cfg, r.flight_number));
+    const fn = marketingFlightNumber(cfg, r.flight_number);
     if (!marketing.test(fn)) continue;
     const cur = agg.get(fn) ?? { times: 0, best: null };
     cur.times += r.seen_count;
-    const cleanPair =
-      ROUTE_AIRPORT_RE.test(r.origin) &&
-      ROUTE_AIRPORT_RE.test(r.destination) &&
-      r.origin !== r.destination;
-    if (cleanPair && (!cur.best || r.seen_count > cur.best.times)) {
+    if (
+      isCleanAirportPair(r.origin, r.destination) &&
+      (!cur.best || r.seen_count > cur.best.times)
+    ) {
       cur.best = { origin: r.origin, destination: r.destination, times: r.seen_count };
     }
     agg.set(fn, cur);
@@ -2560,11 +2542,10 @@ export interface SitemapRoute {
 export function getSitemapRoutes(db: Database, airline: string): SitemapRoute[] {
   const cfg = AIRLINES[airline];
   if (!cfg) return [];
-  const nowSec = Math.floor(Date.now() / 1000);
+  const nowSec = unixNow();
   const latest = new Map<string, number>();
   const touch = (origin: string, destination: string, t: number | null) => {
-    if (!ROUTE_AIRPORT_RE.test(origin) || !ROUTE_AIRPORT_RE.test(destination)) return;
-    if (origin === destination) return;
+    if (!isCleanAirportPair(origin, destination)) return;
     // Future timestamps are corrupt rows — treat as unknown, keep the route.
     const sane = t && t <= nowSec ? t : 0;
     const key = `${origin}-${destination}`;
@@ -2587,15 +2568,14 @@ export function getSitemapRoutes(db: Database, airline: string): SitemapRoute[] 
        FROM flight_routes
        WHERE flight_number GLOB ? GROUP BY origin, destination`
     )
-    .all(`${cfg.iata}[0-9]*`) as {
+    .all(prefixGlob(cfg.iata)) as {
     origin: string;
     destination: string;
     t: number | null;
     seen: number | null;
   }[];
   for (const r of cached) {
-    if (!ROUTE_AIRPORT_RE.test(r.origin) || !ROUTE_AIRPORT_RE.test(r.destination)) continue;
-    if (r.origin === r.destination) continue;
+    if (!isCleanAirportPair(r.origin, r.destination)) continue;
     const key = `${r.origin}-${r.destination}`;
     if (inUpcoming.has(key) || (r.seen ?? 0) >= SITEMAP_ROUTE_MIN_SEEN) {
       touch(r.origin, r.destination, r.t);
@@ -2628,11 +2608,7 @@ export const PERMALINK_STALE_NOTE_DAYS = 30;
  * stalled ingest (or an old snapshot) ages nothing out; future timestamps are
  * corrupt rows and never set the anchor. 0 when the airline has no data.
  */
-export function getObservationAnchor(
-  db: Database,
-  airline: string,
-  now = Math.floor(Date.now() / 1000)
-): number {
+export function getObservationAnchor(db: Database, airline: string, now = unixNow()): number {
   const cfg = AIRLINES[airline];
   if (!cfg) return 0;
   const row = db
@@ -2644,7 +2620,7 @@ export function getObservationAnchor(
                    WHERE airline = ? AND last_updated <= ?), 0)
        ) AS anchor`
     )
-    .get(`${cfg.iata}[0-9]*`, now, airline, now) as { anchor: number | null } | null;
+    .get(prefixGlob(cfg.iata), now, airline, now) as { anchor: number | null } | null;
   return row?.anchor ?? 0;
 }
 
@@ -2685,7 +2661,7 @@ export function routeHasData(
         `SELECT 1 FROM flight_routes
          WHERE origin = ? AND destination = ? AND flight_number GLOB ? LIMIT 1`
       )
-      .get(origin, destination, `${cfg.iata}[0-9]*`)
+      .get(origin, destination, prefixGlob(cfg.iata))
   );
 }
 
@@ -2723,7 +2699,7 @@ export function routeIsHistorical(
       `SELECT MAX(last_seen_at) AS t FROM flight_routes
        WHERE origin = ? AND destination = ? AND flight_number GLOB ? AND last_seen_at <= ?`
     )
-    .get(origin, destination, `${cfg.iata}[0-9]*`, anchor) as { t: number | null } | null;
+    .get(origin, destination, prefixGlob(cfg.iata), anchor) as { t: number | null } | null;
   const last = row?.t ?? 0;
   return last > 0 && anchor - last > ROUTE_NOINDEX_STALE_DAYS * 86400;
 }
@@ -2765,7 +2741,7 @@ export function getRouteFlightNumbers(
            FROM flight_routes
            WHERE origin = ? AND destination = ? AND flight_number GLOB ?`
         )
-        .all(origin, destination, `${cfg.iata}[0-9]*`) as Array<{
+        .all(origin, destination, prefixGlob(cfg.iata)) as Array<{
         flight_number: string;
         times: number;
         duration_sec: number | null;
@@ -2793,11 +2769,11 @@ export function getRouteFlightNumbers(
   const marketing = cfg ? canonicalPermalinkFor(cfg) : null;
   const merged = new Map<string, { times: number; scheduled: number }>();
   const liveNumbers = new Set(
-    cfg ? live.map((r) => stripFlightNumberZeros(ensureAirlinePrefix(cfg, r.flight_number))) : []
+    cfg ? live.map((r) => marketingFlightNumber(cfg, r.flight_number)) : []
   );
   const add = (raw: string, times: number, scheduled: number, durationSec: number | null) => {
     if (!cfg || !marketing) return;
-    const fn = stripFlightNumberZeros(ensureAirlinePrefix(cfg, raw));
+    const fn = marketingFlightNumber(cfg, raw);
     if (!marketing.test(fn)) return;
     // History alone must be corroborated: one sighting is how a lookup miss
     // or a one-off charter enters the cache (219 of 225 UA8xxx rows on file
@@ -2843,7 +2819,7 @@ export function getRouteSummary(
   origin: string,
   destination: string,
   airline: string,
-  nowSec = Math.floor(Date.now() / 1000)
+  nowSec = unixNow()
 ): RouteSummary {
   const { flightNumbers, durationSec } = getRouteFlightNumbers(db, origin, destination, airline);
 
@@ -2950,9 +2926,9 @@ export function getFlightRoutePairs(
   db: Database,
   variants: string[],
   airline?: AirlineFilter,
-  now = Math.floor(Date.now() / 1000)
+  now = unixNow()
 ): FlightRoutePair[] {
-  const placeholders = variants.map(() => "?").join(",");
+  const ph = placeholders(variants);
   const scoped = corroboratedRouteFilter(variants, airline);
   // A row that departed over a day ago is a ghost of a tail that stopped
   // refreshing, not a schedule — it falls back to decay scoring.
@@ -2961,7 +2937,7 @@ export function getFlightRoutePairs(
             CAST(AVG(arrival_time - departure_time) AS INTEGER) AS dur_sec,
             CASE WHEN MAX(departure_time) >= ? THEN 1 ELSE 0 END AS scheduled,
             MAX(last_updated) AS last_seen_at
-     FROM upcoming_flights WHERE flight_number IN (${placeholders})`,
+     FROM upcoming_flights WHERE flight_number IN (${ph})`,
     airline,
     "",
     [now - 86400, ...variants]
@@ -2974,7 +2950,7 @@ export function getFlightRoutePairs(
          SELECT origin AS departure_airport, destination AS arrival_airport,
                 seen_count AS times, duration_sec AS dur_sec, 0 AS scheduled,
                 last_seen_at
-         FROM flight_routes fr WHERE fr.flight_number IN (${placeholders}) AND ${scoped.clause}
+         FROM flight_routes fr WHERE fr.flight_number IN (${ph}) AND ${scoped.clause}
          UNION ALL
          ${upcoming.sql} GROUP BY departure_airport, arrival_airport
        )
@@ -3035,10 +3011,10 @@ export function getFlightHistorySummary(
   };
   const sources = verifierSources(airline);
   if (sources.length === 0) return empty;
-  const placeholders = variants.map(() => "?").join(",");
+  const ph = placeholders(variants);
   const where = withAirline(
-    `flight_number IN (${placeholders})
-       AND source IN (${sources.map(() => "?").join(",")}) AND ${CLEAN_OBSERVATION_WHERE}`,
+    `flight_number IN (${ph})
+       AND source IN (${placeholders(sources)}) AND ${CLEAN_OBSERVATION_WHERE}`,
     airline,
     "",
     [...variants, ...sources]
@@ -3130,7 +3106,7 @@ export function getStarlinkTailsByCheckAge(db: Database): string[] {
 }
 
 export function updateLastFlightCheck(db: Database, tailNumber: string, success = true) {
-  const now = Math.floor(Date.now() / 1000);
+  const now = unixNow();
   if (success) {
     db.query(
       "UPDATE starlink_planes SET last_flight_check = ?, last_check_successful = 1, consecutive_failures = 0 WHERE TailNumber = ?"
@@ -3143,7 +3119,7 @@ export function updateLastFlightCheck(db: Database, tailNumber: string, success 
 }
 
 export function needsFlightCheck(db: Database, tailNumber: string): boolean {
-  const now = Math.floor(Date.now() / 1000);
+  const now = unixNow();
 
   // Single optimized query combining plane data with flight info
   const data = db
@@ -3223,7 +3199,7 @@ export function logVerification(
   db: Database,
   entry: Omit<VerificationLogEntry, "id" | "checked_at">
 ): void {
-  const now = Math.floor(Date.now() / 1000);
+  const now = unixNow();
   db.query(`
     INSERT INTO starlink_verification_log
     (tail_number, source, checked_at, has_starlink, wifi_provider, aircraft_type, flight_number, error, tail_confirmed, airline)
@@ -3249,7 +3225,7 @@ export function logVerification(
  * holds.
  */
 export function pruneCrashRows(db: Database): number {
-  const cutoff = Math.floor(Date.now() / 1000) - 7 * 86400;
+  const cutoff = unixNow() - 7 * 86400;
   const result = db
     .query(`
       DELETE FROM starlink_verification_log
@@ -3274,11 +3250,9 @@ export function getNextFleetTailNeedingFlights(
     .filter((a) => a.verifierBackend === "alaska-json")
     .map((a) => a.code);
   if (codes.length === 0) return null;
-  const now = Math.floor(Date.now() / 1000);
-  const codePh = codes.map(() => "?").join(",");
-  const exPh = exclude.length
-    ? `AND uf.tail_number NOT IN (${exclude.map(() => "?").join(",")})`
-    : "";
+  const now = unixNow();
+  const codePh = placeholders(codes);
+  const exPh = exclude.length ? `AND uf.tail_number NOT IN (${placeholders(exclude)})` : "";
   const row = db
     .query(`
       SELECT uf.tail_number
@@ -3312,13 +3286,13 @@ export function getNextCommunityFleetTailNeedingFlights(
     .filter((a) => a.fleetFallbackFlights)
     .map((a) => a.code);
   if (codes.length === 0) return null;
-  const now = Math.floor(Date.now() / 1000);
+  const now = unixNow();
   const skip = new Set(exclude);
   const rows = db
     .query(`
       SELECT uf.tail_number, uf.aircraft_type, uf.airline
       FROM united_fleet uf
-      WHERE uf.airline IN (${codes.map(() => "?").join(",")})
+      WHERE uf.airline IN (${placeholders(codes)})
         AND NOT EXISTS (
           SELECT 1 FROM starlink_planes sp
           WHERE sp.TailNumber = uf.tail_number AND ${equippedFilter("sp")}
@@ -3365,7 +3339,7 @@ export function replaceFleetGuide(
   rows: readonly FleetGuideRow[],
   guideUpdated: string
 ): void {
-  const now = Math.floor(Date.now() / 1000);
+  const now = unixNow();
   db.transaction(() => {
     db.query("DELETE FROM fleet_guide_tails WHERE airline = ?").run(airline);
     const ins = db.prepare(
@@ -3516,7 +3490,7 @@ export function getUnequippedAssignments(
      INNER JOIN united_fleet f ON f.tail_number = u.tail_number
      LEFT JOIN fleet_guide_tails g
             ON g.airline = f.airline AND g.tail_number = f.tail_number
-     WHERE u.flight_number IN (${flightNumberVariants.map(() => "?").join(", ")})
+     WHERE u.flight_number IN (${placeholders(flightNumberVariants)})
        AND u.departure_time >= ? AND u.departure_time < ?
        AND NOT EXISTS (
          SELECT 1 FROM starlink_planes sp
@@ -3535,7 +3509,7 @@ export function getNextAlaskaVerifyTarget(
   db: Database,
   airline: "AS" | "HA"
 ): { tail_number: string; aircraft_type: string | null; fleet: string | null } | null {
-  const now = Math.floor(Date.now() / 1000);
+  const now = unixNow();
   return db
     .query(`
       SELECT uf.tail_number, uf.aircraft_type, uf.fleet
@@ -3565,7 +3539,7 @@ export function getNextFlightForTail(
       WHERE tail_number = ? AND departure_time > ?
       ORDER BY departure_time ASC LIMIT 1
     `)
-    .get(tail, Math.floor(Date.now() / 1000)) as {
+    .get(tail, unixNow()) as {
     flight_number: string;
     departure_time: number;
     departure_airport: string;
@@ -3606,7 +3580,7 @@ export function setFleetVerified(
   wifi: string | null,
   status: StarlinkStatus
 ): void {
-  const now = Math.floor(Date.now() / 1000);
+  const now = unixNow();
   const prev = getFleetStatusRow(db, tail);
   db.query(
     "UPDATE united_fleet SET verified_wifi = ?, verified_at = ?, starlink_status = ? WHERE tail_number = ?"
@@ -3615,10 +3589,7 @@ export function setFleetVerified(
 }
 
 export function touchFleetVerifiedAt(db: Database, tail: string): void {
-  db.query("UPDATE united_fleet SET verified_at = ? WHERE tail_number = ?").run(
-    Math.floor(Date.now() / 1000),
-    tail
-  );
+  db.query("UPDATE united_fleet SET verified_at = ? WHERE tail_number = ?").run(unixNow(), tail);
 }
 
 /**
@@ -3666,18 +3637,6 @@ export function getLastVerification(
 }
 
 /**
- * Generate a deterministic jitter based on tail number
- * Returns a value between 0 and 1 that's consistent for each tail number
- */
-function getTailNumberJitter(tailNumber: string): number {
-  let hash = 0;
-  for (let i = 0; i < tailNumber.length; i++) {
-    hash = (hash * 31 + tailNumber.charCodeAt(i)) >>> 0;
-  }
-  return (hash % 1000) / 1000;
-}
-
-/**
  * Check if a plane needs verification from a specific source
  * Uses jittered thresholds to distribute checks over time:
  * - United: 48-96 hours (centered on 72)
@@ -3703,11 +3662,11 @@ export function needsVerification(
 
   // Add deterministic jitter: ±33% based on tail number
   // This distributes checks evenly across planes
-  const jitter = getTailNumberJitter(tailNumber); // 0 to 1
+  const jitter = (tailHash(tailNumber) % 1000) / 1000;
   const jitterRange = baseThreshold * 0.33; // ±33%
   const threshold = baseThreshold - jitterRange + jitter * 2 * jitterRange;
 
-  const now = Math.floor(Date.now() / 1000);
+  const now = unixNow();
   const cutoff = now - threshold * 3600;
 
   // A tail is "recently checked" if we've logged ANY attempt for it, not
@@ -3774,7 +3733,7 @@ export function getVerificationHistory(
  * Get planes that need United verification (haven't been checked in 72 hours)
  */
 export function getPlanesNeedingUnitedVerification(db: Database, limit = 10): string[] {
-  const now = Math.floor(Date.now() / 1000);
+  const now = unixNow();
   const cutoff = now - 72 * 3600; // 72 hours ago
 
   // Get planes that either:
@@ -3830,7 +3789,7 @@ export function getVerificationStats(db: Database): {
   `)
     .get() as { starlink: number; not_starlink: number; errors: number };
 
-  const now = Math.floor(Date.now() / 1000);
+  const now = unixNow();
   const last24h = db
     .query(`
     SELECT COUNT(*) as count FROM starlink_verification_log WHERE checked_at > ?
@@ -3922,12 +3881,17 @@ export function computeWifiConsensus(
     airline?: AirlineFilter;
   } = {}
 ): WifiConsensus {
-  const { windowDays = 30, minObs = 2, threshold = 0.7, sources = VERIFICATION_SOURCES } = opts;
-  const cutoff = Math.floor(Date.now() / 1000) - windowDays * 86400;
+  const {
+    windowDays = TRAILING_WINDOW_DAYS,
+    minObs = 2,
+    threshold = 0.7,
+    sources = VERIFICATION_SOURCES,
+  } = opts;
+  const cutoff = unixNow() - windowDays * 86400;
   // Accepted sources derive from the registry (each enabled airline's
   // verifier backend), so AS/HA evidence weighs in — not just united rows.
   const base = withAirline(
-    `tail_number = ? AND source IN (${sources.map(() => "?").join(",")})
+    `tail_number = ? AND source IN (${placeholders(sources)})
     AND checked_at >= ?
     AND ${CLEAN_OBSERVATION_WHERE}`,
     opts.airline,
@@ -4094,12 +4058,12 @@ export function cascadeSubfleetDiscovery(
     .map((p) => p.tail_number);
   if (toBump.length === 0) return 0;
 
-  const now = Math.floor(Date.now() / 1000);
+  const now = unixNow();
   db.query(
     `UPDATE united_fleet
      SET next_check_after = MIN(next_check_after, ?),
          discovery_priority = MAX(discovery_priority, 0.9)
-     WHERE tail_number IN (${toBump.map(() => "?").join(",")})`
+     WHERE tail_number IN (${placeholders(toBump)})`
   ).run(now, ...toBump);
   return toBump.length;
 }
@@ -4113,7 +4077,7 @@ export function bumpDiscoveryPriority(
   tailNumber: string,
   airline?: AirlineFilter
 ): void {
-  const now = Math.floor(Date.now() / 1000);
+  const now = unixNow();
   try {
     const q = withAirline(
       `UPDATE united_fleet
@@ -4137,7 +4101,7 @@ export function updateVerifiedWifi(
   tailNumber: string,
   verifiedWifi: string | null
 ): void {
-  const now = Math.floor(Date.now() / 1000);
+  const now = unixNow();
   db.query(`
     UPDATE starlink_planes
     SET verified_wifi = ?, verified_at = ?
@@ -4239,8 +4203,8 @@ export function reconcileConsensus(db: Database): number {
  * Two newest clean checks on Starlink drop the settle to 'unknown' (the sheet
  * and the next consensus decide) and queue a prompt re-check.
  */
-export function demoteRetrofittedNegatives(db: Database, now = Math.floor(Date.now() / 1000)) {
-  const sources = OBSERVED_WIFI_SOURCES.map(() => "?").join(",");
+export function demoteRetrofittedNegatives(db: Database, now = unixNow()) {
+  const sources = placeholders(OBSERVED_WIFI_SOURCES);
   const stale = db
     .query(
       `SELECT f.tail_number, f.starlink_status, f.fleet, f.airline FROM united_fleet f
@@ -4293,12 +4257,13 @@ export interface WifiMismatch {
 // Excludes 'None': united.com flaps Starlink↔None on regionals, so 'None' isn't
 // an actionable sheet contradiction. Shared by getWifiMismatches +
 // getVerificationSummary so /api/mismatches list and summary.count can't drift.
+const SHEET_YES_VERIFIED_NO = `(${sheetSaysStarlink("wifi")} AND verified_wifi != 'Starlink')`;
 const WIFI_MISMATCH_PREDICATE = `verified_wifi IS NOT NULL
        AND verified_wifi != 'None'
        AND (
-         (wifi IN ('StrLnk', 'Starlink') AND verified_wifi != 'Starlink')
+         ${SHEET_YES_VERIFIED_NO}
          OR
-         (wifi NOT IN ('StrLnk', 'Starlink') AND verified_wifi = 'Starlink')
+         (NOT ${sheetSaysStarlink("wifi")} AND verified_wifi = 'Starlink')
        )`;
 
 export function getWifiMismatches(db: Database, airline?: AirlineFilter): WifiMismatch[] {
@@ -4329,8 +4294,7 @@ export function clearMismatchVerifications(db: Database): number {
     SET verified_wifi = NULL, verified_at = NULL
     WHERE verified_wifi IS NOT NULL
       AND verified_wifi != 'None'
-      AND wifi IN ('StrLnk', 'Starlink')
-      AND verified_wifi != 'Starlink'
+      AND ${SHEET_YES_VERIFIED_NO}
   `)
     .run();
   return result.changes;
@@ -4403,17 +4367,6 @@ export function getVerificationSummary(
 // ============================================
 
 /**
- * Generate a deterministic hash from tail number for jitter
- */
-function hashTailNumber(tailNumber: string): number {
-  let hash = 0;
-  for (let i = 0; i < tailNumber.length; i++) {
-    hash = (hash * 31 + tailNumber.charCodeAt(i)) >>> 0;
-  }
-  return hash;
-}
-
-/**
  * Calculate discovery priority for an aircraft
  * Higher priority = check sooner
  */
@@ -4434,7 +4387,7 @@ export function calculateDiscoveryPriority(
   }
 
   // Deterministic jitter based on tail number (0.0 to 0.1)
-  priority += (hashTailNumber(tailNumber) % 100) / 1000;
+  priority += (tailHash(tailNumber) % 100) / 1000;
 
   return Math.min(1.0, priority);
 }
@@ -4469,7 +4422,7 @@ export function upsertFleetAircraft(
     evidence: "observed" | "type_rule" | "community";
   }
 ): void {
-  const now = Math.floor(Date.now() / 1000);
+  const now = unixNow();
   // Empty/placeholder type strings must not clobber a real value via COALESCE.
   const type = aircraftType?.trim();
   const safeType = type && !/^unknown$/i.test(type) ? type : null;
@@ -4547,7 +4500,7 @@ export function upsertFleetAircraft(
  * Get next planes to verify based on priority and scheduling
  */
 export function getNextPlanesToVerify(db: Database, limit = 10, airline = "UA"): FleetAircraft[] {
-  const now = Math.floor(Date.now() / 1000);
+  const now = unixNow();
 
   return db
     .query(`
@@ -4584,7 +4537,7 @@ export function updateFleetVerificationResult(
     needsMoreObs?: boolean;
   }
 ): void {
-  const now = Math.floor(Date.now() / 1000);
+  const now = unixNow();
 
   const prev = db
     .query(
@@ -4671,7 +4624,7 @@ export function updateFleetVerificationResult(
  * Marks spreadsheet planes as confirmed Starlink
  */
 export function syncSpreadsheetToFleet(db: Database): number {
-  const now = Math.floor(Date.now() / 1000);
+  const now = unixNow();
   let synced = 0;
 
   const spreadsheetPlanes = db
@@ -4843,7 +4796,7 @@ export function addDiscoveredStarlinkPlane(
     operatedBy || (AIRLINES[opts.airline]?.name ?? opts.airline),
     fleet,
     unverified ? null : wifiProvider,
-    unverified ? null : Math.floor(Date.now() / 1000),
+    unverified ? null : unixNow(),
     opts.airline
   );
 }
@@ -4893,7 +4846,7 @@ export function getFleetDiscoveryStats(db: Database, airline?: AirlineFilter): F
      WHERE starlink_status = 'confirmed' AND verified_at > ?`,
     airline,
     "",
-    [Math.floor(Date.now() / 1000) - 7 * 24 * 3600]
+    [unixNow() - 7 * 24 * 3600]
   );
   const recentDiscoveries = db
     .query(`${q3.sql} ORDER BY verified_at DESC LIMIT 10`)
@@ -5048,7 +5001,7 @@ export function replaceFleetProgress(
   airline: string,
   rows: Array<Omit<FleetProgressRow, "airline" | "fetched_at">>
 ): void {
-  const now = Math.floor(Date.now() / 1000);
+  const now = unixNow();
   db.transaction(() => {
     for (const segment of new Set(rows.map((r) => r.segment))) {
       db.query("DELETE FROM fleet_progress WHERE airline = ? AND segment = ?").run(
@@ -5086,7 +5039,7 @@ export function replaceFleetProgressTails(
   segment: string,
   rows: Array<Omit<FleetProgressTailRow, "airline" | "fetched_at">>
 ): void {
-  const now = Math.floor(Date.now() / 1000);
+  const now = unixNow();
   db.transaction(() => {
     db.query("DELETE FROM fleet_progress_tails WHERE airline = ? AND segment = ?").run(
       airline,
@@ -5133,7 +5086,7 @@ export function insertPipelineEvents(
   airline: string,
   events: Array<Omit<PipelineEventRow, "airline" | "observed_at">>
 ): number {
-  const now = Math.floor(Date.now() / 1000);
+  const now = unixNow();
   const cutoff = now - 14 * 86400;
   let inserted = 0;
   db.transaction(() => {
@@ -5224,7 +5177,7 @@ export function replaceFaaRegistry(
   db: Database,
   rows: Array<Omit<FaaRegistryRow, "last_refreshed">>
 ): void {
-  const now = Math.floor(Date.now() / 1000);
+  const now = unixNow();
   db.transaction(() => {
     db.query("DELETE FROM faa_registry").run();
     for (const r of rows) {
@@ -5253,7 +5206,7 @@ export function replaceStarlinkPrefixes(
   db: Database,
   rows: ReadonlyArray<{ cidr: string; lo: bigint; hi: bigint; v6: boolean }>
 ): void {
-  const now = Math.floor(Date.now() / 1000);
+  const now = unixNow();
   db.transaction(() => {
     db.query("DELETE FROM starlink_prefixes").run();
     for (const r of rows) {
@@ -5297,7 +5250,7 @@ export function recordPassengerReport(db: Database, r: PassengerReportInsert): v
        claimed_flight, claimed_tail, claimed_date, router_id, ua_hash, airborne_match)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    Math.floor(Date.now() / 1000),
+    unixNow(),
     r.ip,
     r.ip_prefix,
     r.in_geofeed ? 1 : 0,
@@ -5315,15 +5268,15 @@ export function recordPassengerReport(db: Database, r: PassengerReportInsert): v
 export function isFlightAirborne(
   db: Database,
   variants: readonly string[],
-  nowSec = Math.floor(Date.now() / 1000)
+  nowSec = unixNow()
 ): boolean {
   if (variants.length === 0) return false;
-  const placeholders = variants.map(() => "?").join(",");
+  const ph = placeholders(variants);
   return (
     db
       .query(
         `SELECT 1 FROM upcoming_flights
-         WHERE flight_number IN (${placeholders}) AND departure_time <= ? AND arrival_time >= ?
+         WHERE flight_number IN (${ph}) AND departure_time <= ? AND arrival_time >= ?
          LIMIT 1`
       )
       .get(...variants, nowSec, nowSec) !== null
@@ -5340,7 +5293,7 @@ export function passengerReportSeenRecently(
   tail: string | null,
   windowSec: number
 ): boolean {
-  const since = Math.floor(Date.now() / 1000) - windowSec;
+  const since = unixNow() - windowSec;
   const row = db
     .query(
       `SELECT 1 FROM passenger_reports
@@ -5357,7 +5310,7 @@ export function seedFleetAnchors(
   db: Database,
   rows: Array<Omit<FleetAnchorRow, "added_at">>
 ): void {
-  const now = Math.floor(Date.now() / 1000);
+  const now = unixNow();
   db.transaction(() => {
     for (const r of rows) {
       db.query(`
@@ -5388,7 +5341,7 @@ export function recordSecFilings(
   db: Database,
   filings: Array<Omit<SecFilingRow, "seen_at">>
 ): Array<Omit<SecFilingRow, "seen_at">> {
-  const now = Math.floor(Date.now() / 1000);
+  const now = unixNow();
   const fresh: Array<Omit<SecFilingRow, "seen_at">> = [];
   db.transaction(() => {
     for (const f of filings) {
@@ -5415,7 +5368,7 @@ export function getFaaRegistryByTail(db: Database, tail: string): FaaRegistryRow
 
 /** Replace one month's BTS aggregates in a single transaction. */
 export function replaceBtsMonth(db: Database, month: string, agg: BtsMonthAggregates): void {
-  const now = Math.floor(Date.now() / 1000);
+  const now = unixNow();
   db.transaction(() => {
     db.query("DELETE FROM bts_monthly_operators WHERE month = ?").run(month);
     db.query("DELETE FROM bts_monthly_tails WHERE month = ?").run(month);
@@ -5527,8 +5480,6 @@ export function recordAdsbSweep(
   })();
 }
 
-export const DEPARTURE_WINDOW_HOURS = 48;
-
 /** SQL twin of slotFlightKey (flight-number.ts); the prefixes are registry
  * literals, never caller input. */
 function slotFlightSql(col: string): string {
@@ -5594,15 +5545,15 @@ function slotScope(airline: AirlineFilter, partners: boolean): { sql: string; pa
   const codes = airline === undefined ? null : typeof airline === "string" ? [airline] : airline;
   if (codes === null) return { sql: "1=1", params: [] };
   if (codes.length === 0) return { sql: "1=0", params: [] };
-  const own = { sql: `uf.airline IN (${codes.map(() => "?").join(",")})`, params: [...codes] };
+  const own = { sql: `uf.airline IN (${placeholders(codes)})`, params: [...codes] };
   const cfg = codes.length === 1 ? AIRLINES[codes[0]] : undefined;
   const partnerCodes = partners ? (cfg?.operatingPartners ?? []) : [];
   if (!cfg || partnerCodes.length === 0) return own;
   const prefixes = [...new Set([cfg.iata, cfg.icao, ...cfg.carrierPrefixes])];
   return {
-    sql: `(${own.sql} OR (uf.airline IN (${partnerCodes.map(() => "?").join(",")})
+    sql: `(${own.sql} OR (uf.airline IN (${placeholders(partnerCodes)})
             AND (${prefixes.map(() => "uf.flight_number GLOB ?").join(" OR ")})))`,
-    params: [...own.params, ...partnerCodes, ...prefixes.map((p) => `${p}[0-9]*`)],
+    params: [...own.params, ...partnerCodes, ...prefixes.map((p) => prefixGlob(p))],
   };
 }
 
@@ -5627,7 +5578,7 @@ function departureSlots(
   let clause = scope.sql;
   const params: (string | number)[] = [...scope.params];
   if (q.flightNumbers) {
-    clause = `${clause} AND uf.flight_number IN (${q.flightNumbers.map(() => "?").join(",") || "NULL"})`;
+    clause = `${clause} AND uf.flight_number IN (${placeholders(q.flightNumbers) || "NULL"})`;
     params.push(...q.flightNumbers);
   }
   if (q.origin) {
@@ -5659,7 +5610,7 @@ export function getDepartureSlots(
 function equippedWindow(airline: AirlineFilter, nowSec: number) {
   return departureSlots(airline, {
     from: nowSec,
-    to: nowSec + DEPARTURE_WINDOW_HOURS * 3600,
+    to: nowSec + DEPARTURE_WINDOW_SEC,
     partners: true,
   });
 }
@@ -5667,7 +5618,7 @@ function equippedWindow(airline: AirlineFilter, nowSec: number) {
 export function getAirportDepartures(
   db: Database,
   airline?: AirlineFilter,
-  nowSec = Math.floor(Date.now() / 1000)
+  nowSec = unixNow()
 ): AirportDepartures {
   const slots = equippedWindow(airline, nowSec);
   const rows = db
@@ -5703,7 +5654,7 @@ function rankedEquippedRoutes(
 export function getRouteStarlinkSchedule(
   db: Database,
   airline?: AirlineFilter,
-  nowSec = Math.floor(Date.now() / 1000)
+  nowSec = unixNow()
 ): RouteSchedule {
   const rows = rankedEquippedRoutes(db, airline, nowSec, 60, 0);
   // Headline total uses the same predicate without the LIMIT, so the header
@@ -5718,6 +5669,9 @@ export function getRouteStarlinkSchedule(
   return { rows, totalDepartures, windowLabel: `next ${DEPARTURE_WINDOW_HOURS} hours` };
 }
 
+// Ten charted weeks plus the partial current one.
+const INSTALL_PACE_LOOKBACK_DAYS = 77;
+
 function computeInstallPace(
   db: Database,
   airline: AirlineFilter | undefined,
@@ -5728,10 +5682,12 @@ function computeInstallPace(
   // render as a one-week "install spike".
   const q = withAirline(
     `SELECT DateFound AS d, fleet FROM starlink_planes
-     WHERE DateFound >= date('now', '-77 days')
+     WHERE DateFound >= ?
        AND ${equippedFilter("starlink_planes")}
        AND ${INSTALL_FILTER}`,
-    airline
+    airline,
+    "",
+    [isoDateDaysAgo(INSTALL_PACE_LOOKBACK_DAYS)]
   );
   const found = db.query(q.sql).all(...q.params) as Array<{ d: string; fleet: string | null }>;
 
@@ -5915,7 +5871,7 @@ function computeFleetPageData(db: Database, airline?: AirlineFilter): FleetPageD
 }
 
 function computePulse(db: Database, airline?: AirlineFilter): FleetPageData["pulse"] {
-  const nowSec = Math.floor(Date.now() / 1000);
+  const nowSec = unixNow();
   const winStart = nowSec - 6 * 3600;
   const winCap = nowSec + 66 * 3600;
 
@@ -6024,11 +5980,11 @@ export function getQatarScheduleByFlight(
   endOfDay: number
 ): QatarScheduleRow[] {
   if (flightNumberVariants.length === 0) return [];
-  const placeholders = flightNumberVariants.map(() => "?").join(",");
+  const ph = placeholders(flightNumberVariants);
   return db
     .query(
       `SELECT * FROM qatar_schedule
-       WHERE flight_number IN (${placeholders})
+       WHERE flight_number IN (${ph})
          AND departure_time >= ?
          AND departure_time < ?
        ORDER BY departure_time ASC`
@@ -6272,7 +6228,7 @@ export function recordQatarFetchCoverage(
 }
 
 function variantPlaceholders(variants: readonly string[]): string {
-  return variants.map(() => "?").join(",");
+  return placeholders(variants);
 }
 
 /** Non-stale legs by service date, departure_time ascending. */
@@ -6379,10 +6335,7 @@ export const UPCOMING_PRUNE_AGE_SEC = 2 * 86400;
  * routes. Archives first so departure_log keeps every departure. Returns the
  * pruned count per airline.
  */
-export function pruneStaleUpcomingFlights(
-  db: Database,
-  now = Math.floor(Date.now() / 1000)
-): Record<string, number> {
+export function pruneStaleUpcomingFlights(db: Database, now = unixNow()): Record<string, number> {
   const cutoff = now - UPCOMING_PRUNE_AGE_SEC;
   return db.transaction(() => {
     archivePastDepartures(db, now);
@@ -6409,7 +6362,7 @@ export function getRankedStarlinkRoutePairs(
   airline: AirlineFilter,
   offset: number,
   limit: number,
-  nowSec = Math.floor(Date.now() / 1000)
+  nowSec = unixNow()
 ): Array<{ origin: string; destination: string }> {
   return rankedEquippedRoutes(db, airline, nowSec, limit, offset).map(
     ({ origin, destination }) => ({ origin, destination })
@@ -6421,8 +6374,6 @@ export function getRankedStarlinkRoutePairs(
 const TYPE_ROUTE_LIMIT = 12;
 const TYPE_FLIGHT_LIMIT = 10;
 const TYPE_RECENT_INSTALLS = 12;
-const TYPE_OBSERVATION_WINDOW_SEC = 30 * 86400;
-const TYPE_UPCOMING_WINDOW_SEC = 48 * 3600;
 // A sheet the hourly scrape hasn't refreshed in two weeks is no longer a
 // pipeline, just an old number. Measured against the verifier's own clock, so
 // a broken scrape drops the section while snapshot reads stay deterministic.
@@ -6439,8 +6390,7 @@ export const TYPE_PAGE_ROUTES_SQL = `SELECT d.tail_number AS tail, d.departure_a
        d.arrival_airport AS d, COUNT(*) AS n
   FROM (${departureSlotsSql("uf.airline = ?")}) d
   WHERE d.equipped = 1
-    AND d.departure_airport GLOB '[A-Z][A-Z][A-Z]' AND d.arrival_airport GLOB '[A-Z][A-Z][A-Z]'
-    AND d.departure_airport <> d.arrival_airport
+    AND ${cleanAirportPairSql("d.departure_airport", "d.arrival_airport")}
   GROUP BY 1, 2, 3`;
 export const TYPE_PAGE_FLIGHTS_SQL = `SELECT tail_number AS tail, flight_number AS fn,
        COUNT(DISTINCT date(checked_at, 'unixepoch')) AS days
@@ -6555,7 +6505,7 @@ function computeAircraftTypePages(
     "SELECT MAX(checked_at) AS t FROM starlink_verification_log WHERE airline = ?",
     airline
   );
-  const nowSec = Math.floor(Date.now() / 1000);
+  const nowSec = unixNow();
   const clock = dataClock ?? nowSec;
 
   // A sheet-tab import stamps one DateFound on a hundred tails under an
@@ -6600,7 +6550,7 @@ function computeAircraftTypePages(
   );
   const legs = db
     .query(TYPE_PAGE_ROUTES_SQL)
-    .all(airline, upClock, upClock + TYPE_UPCOMING_WINDOW_SEC) as Array<{
+    .all(airline, upClock, upClock + DEPARTURE_WINDOW_SEC) as Array<{
     tail: string;
     o: string;
     d: string;
@@ -6621,7 +6571,7 @@ function computeAircraftTypePages(
 
   const observations = db
     .query(TYPE_PAGE_FLIGHTS_SQL)
-    .all(airline, clock - TYPE_OBSERVATION_WINDOW_SEC) as Array<{
+    .all(airline, clock - TRAILING_WINDOW_SEC) as Array<{
     tail: string;
     fn: string;
     days: number;
@@ -6629,7 +6579,7 @@ function computeAircraftTypePages(
   const fnTotal = new Map<string, number>();
   const fnByFamily = new Map<string, Map<string, number>>();
   for (const o of observations) {
-    const fn = stripFlightNumberZeros(ensureAirlinePrefix(cfg, o.fn));
+    const fn = marketingFlightNumber(cfg, o.fn);
     fnTotal.set(fn, (fnTotal.get(fn) ?? 0) + o.days);
     const family = tailFamily.get(o.tail);
     if (!family) continue;

@@ -1,10 +1,7 @@
 import type { Database } from "bun:sqlite";
-import {
-  canonicalPermalinkFor,
-  ensureAirlinePrefix,
-  stripFlightNumberZeros,
-} from "../airlines/flight-number";
+import { canonicalPermalinkFor } from "../airlines/flight-number";
 import { AIRLINES } from "../airlines/registry";
+import { marketingFlightNumber, prefixGlob } from "./sql/fragments";
 
 /**
  * Newest route-cache sighting (unix sec) per marketing number on a pair, keyed
@@ -26,12 +23,12 @@ export function getRouteFlightLastSeen(
       `SELECT flight_number, last_seen_at FROM flight_routes
        WHERE origin = ? AND destination = ? AND flight_number GLOB ?`
     )
-    .all(origin, destination, `${cfg.iata}[0-9]*`) as Array<{
+    .all(origin, destination, prefixGlob(cfg.iata)) as Array<{
     flight_number: string;
     last_seen_at: number;
   }>;
   for (const r of rows) {
-    const fn = stripFlightNumberZeros(ensureAirlinePrefix(cfg, r.flight_number));
+    const fn = marketingFlightNumber(cfg, r.flight_number);
     if (!marketing.test(fn)) continue;
     out.set(fn, Math.max(out.get(fn) ?? 0, r.last_seen_at));
   }
