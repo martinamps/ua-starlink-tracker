@@ -12,7 +12,7 @@ import { type SeatbackLiveTv, seatbackLiveTv } from "../utils/aircraft-specs";
 import { esc } from "./esc";
 import { METER_FILL, METER_HEIGHT, METER_TRACK, meterWidth } from "./meter";
 
-export interface WireFlight {
+interface WireFlight {
   tail_number?: string | null;
   aircraft_type?: string | null;
   flight_number?: string | null;
@@ -54,7 +54,7 @@ export interface CheckFlightBody {
   sameDayAlternatives?: WireAlternative[];
 }
 
-export type AnswerTone = "yes" | "no" | "likely" | "maybe" | "unlikely" | "unknown";
+type AnswerTone = "yes" | "no" | "likely" | "maybe" | "unlikely" | "unknown";
 
 export interface AnswerContext {
   flightNumber: string;
@@ -224,7 +224,7 @@ function routePlannerCta(
   return `<p class="mt-3 text-sm"><a href="/route-planner/${o}/${d}" rel="nofollow" class="text-accent hover:underline">Find Starlink flights from ${o} to ${d}</a></p>`;
 }
 
-export function watchRow(ctx: AnswerContext): string {
+function watchRow(ctx: AnswerContext): string {
   if (!ctx.watchEnabled) return "";
   if (!(ctx.daysOut >= -1 && ctx.daysOut <= WATCH_MAX_DAYS_OUT)) return "";
   const path = `/cal/${encodeURIComponent(ctx.flightNumber)}/${encodeURIComponent(ctx.date)}.ics`;

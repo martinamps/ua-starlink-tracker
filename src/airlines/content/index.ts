@@ -40,12 +40,12 @@ export interface FaqSection {
   items: FaqEntry[];
 }
 
-export interface SubfleetFilter {
+interface SubfleetFilter {
   key: string;
   label: string;
 }
 
-export interface HubHomeLink {
+interface HubHomeLink {
   href: string;
   label: string;
 }

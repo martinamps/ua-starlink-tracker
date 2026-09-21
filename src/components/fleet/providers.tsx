@@ -26,10 +26,7 @@ export function emptyProviderCounts(): ProviderCounts {
   return { starlink: 0, viasat: 0, panasonic: 0, thales: 0, none: 0, unknown: 0 };
 }
 
-export function Swatch({
-  provider,
-  className = "",
-}: { provider: WifiProvider; className?: string }) {
+function Swatch({ provider, className = "" }: { provider: WifiProvider; className?: string }) {
   return (
     <span
       aria-hidden="true"

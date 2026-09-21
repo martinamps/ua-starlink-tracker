@@ -30,7 +30,7 @@ interface MergedRoute {
  * reverse leg outside the cap is simply absent: the row then shows the one
  * direction it has rather than inventing a zero.
  */
-export function mergeDirections(rows: RouteScheduleRow[]): MergedRoute[] {
+function mergeDirections(rows: RouteScheduleRow[]): MergedRoute[] {
   const byPair = new Map<string, RouteLeg[]>();
   for (const r of rows) {
     const [a, b] = [r.origin, r.destination].sort();

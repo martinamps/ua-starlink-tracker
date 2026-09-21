@@ -28,7 +28,7 @@ import {
 } from "./layout";
 import { formatDuration, shortDate, zonedDeparture } from "./ui/format";
 
-export interface FlightRouteFact {
+interface FlightRouteFact {
   departure_airport: string;
   arrival_airport: string;
   times: number;
@@ -39,7 +39,7 @@ export interface FlightRouteFact {
   linkable: boolean;
 }
 
-export interface FlightUpcomingDeparture {
+interface FlightUpcomingDeparture {
   departure_airport: string;
   arrival_airport: string;
   departure_time: number;

@@ -8,7 +8,7 @@ export type PipelineMap = Map<string, FleetProgressTailRow>;
 
 // Mod-line stations as the progress sheets abbreviate them. Only entries we're
 // sure of — an unlisted code renders as the bare code rather than a guess.
-export const STATION_NAMES: Record<string, string> = {
+const STATION_NAMES: Record<string, string> = {
   MLB: "Melbourne, FL",
   MIA: "Miami, FL",
   LCQ: "Lake City, FL",

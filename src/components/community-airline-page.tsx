@@ -15,7 +15,7 @@ import { Eyebrow, PageHeader, PageShell, Panel, SECTION, StatValue, fmt } from "
 import { Meter } from "./ui/meter";
 
 /** Past this, the guide may be missing installs and the page says so. */
-export const GUIDE_STALE_DAYS = 45;
+const GUIDE_STALE_DAYS = 45;
 
 function typeRowText(t: TypeProgress): { text: string; tone: string } {
   if (t.excluded)
@@ -26,7 +26,7 @@ function typeRowText(t: TypeProgress): { text: string; tone: string } {
 }
 
 /** Programme totals: excluded (retiring) types never enter a denominator. */
-export function programmeTotals(types: readonly TypeProgress[]): {
+function programmeTotals(types: readonly TypeProgress[]): {
   equipped: number;
   total: number;
 } {

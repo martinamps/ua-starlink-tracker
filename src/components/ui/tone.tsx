@@ -19,7 +19,7 @@ export const TONE_TEXT: Record<Tone, string> = {
 };
 
 /** Inline colors for a tinted pill: the tone, and the tone at 12% for its fill. */
-export function toneStyle(tone: Tone): React.CSSProperties {
+function toneStyle(tone: Tone): React.CSSProperties {
   const color = `var(--color-${tone})`;
   return { color, background: `color-mix(in srgb, ${color} 12%, transparent)` };
 }

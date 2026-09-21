@@ -10,7 +10,7 @@ function pipelineNote(p: PipelineMap, tail: string): string {
   return row ? ` · ${pipelinePhrase(row.state, row.mod_location)}` : "";
 }
 
-export function tailTitle(t: FleetTail, pipeline?: PipelineMap): string {
+function tailTitle(t: FleetTail, pipeline?: PipelineMap): string {
   return `${t.tail} · ${PROVIDER_LABEL[t.provider]}${pipeline ? pipelineNote(pipeline, t.tail) : ""}`;
 }
 

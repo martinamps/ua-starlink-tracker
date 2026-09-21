@@ -31,7 +31,7 @@ import { FlightSearchForm } from "./flight-search-form";
 import { EYEBROW, H2, PANEL, PageHeader, PageShell, StatInline, fmt } from "./layout";
 import { shortDate } from "./ui/format";
 
-export interface AircraftTypeSibling {
+interface AircraftTypeSibling {
   slug: string;
   short: string;
   starlink: number;

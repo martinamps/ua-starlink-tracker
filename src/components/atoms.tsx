@@ -103,13 +103,7 @@ export const ROLLOUT_TONE: Record<AirlineConfig["rollout"]["status"], Tone> = {
  * The registry's free-text labels ("Regional fleet done", "Widebodies nearly
  * done") stay on detail pages; lists and tables speak only these words.
  */
-export type Stage =
-  | "Announced"
-  | "Trial"
-  | "Installing"
-  | "Mostly done"
-  | "Complete"
-  | "Not Starlink";
+type Stage = "Announced" | "Trial" | "Installing" | "Mostly done" | "Complete" | "Not Starlink";
 
 const STAGE_TONE: Record<Stage, Tone> = {
   Announced: "warn",

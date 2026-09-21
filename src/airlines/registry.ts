@@ -77,7 +77,6 @@ export interface AnalyticsConfig {
 }
 
 export interface SiteFeatures {
-  homeNav: boolean;
   checkFlightPage: boolean;
   routePlannerPage: boolean;
   fleetPage: boolean;
@@ -980,7 +979,6 @@ const DEFAULT_ANALYTICS_SCRIPT = "https://analytics.martinamps.com/js/script.js"
 const DEFAULT_ANALYTICS_EVENT_API = "https://analytics.martinamps.com/api/event";
 
 const AIRLINE_SITE_FEATURES: SiteFeatures = {
-  homeNav: true,
   checkFlightPage: true,
   routePlannerPage: true,
   fleetPage: true,
@@ -1036,7 +1034,6 @@ export const SITES: Record<string, SiteConfig> = {
       eventApiUrl: DEFAULT_ANALYTICS_EVENT_API,
     },
     features: {
-      homeNav: false,
       checkFlightPage: false,
       routePlannerPage: false,
       fleetPage: true,
