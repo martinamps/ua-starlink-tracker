@@ -11,6 +11,7 @@ import {
 } from "./charts/cumulative-installs";
 import { type CiteStat, CiteThis } from "./cite-this";
 import { EYEBROW, PANEL, PageHeader, PageShell, SECTION, StatInline, fmt, pct } from "./layout";
+import { Pill, type Tone } from "./ui/tone";
 
 export interface AirlineInstallRate {
   code: string;
@@ -33,11 +34,11 @@ interface InstallRatePageProps {
   cite?: CiteStat | null;
 }
 
-const VERDICT_TONE: Record<TargetVerdict, { label: string; color: string; bg: string }> = {
-  reached: { label: "Reached", color: "#3fb950", bg: "rgba(63,185,80,.12)" },
-  on_track: { label: "On track", color: "#3fb950", bg: "rgba(63,185,80,.12)" },
-  behind: { label: "Behind pace", color: "#f85149", bg: "rgba(248,81,73,.12)" },
-  no_data: { label: "Too early to call", color: "#d4a72c", bg: "rgba(212,167,44,.12)" },
+const VERDICT_TONE: Record<TargetVerdict, { label: string; tone: Tone }> = {
+  reached: { label: "Reached", tone: "success" },
+  on_track: { label: "On track", tone: "success" },
+  behind: { label: "Behind pace", tone: "danger" },
+  no_data: { label: "Too early to call", tone: "warn" },
 };
 
 export function monthLabel(month: string): string {
@@ -62,7 +63,7 @@ function targetStatus(p: TargetProjection): string {
 }
 
 function TargetRow({ p, shortName }: { p: TargetProjection; shortName: string }) {
-  const tone = VERDICT_TONE[p.verdict];
+  const verdict = VERDICT_TONE[p.verdict];
   return (
     <li className="border-b border-subtle py-3 last:border-0">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -70,12 +71,7 @@ function TargetRow({ p, shortName }: { p: TargetProjection; shortName: string })
           {p.target.label}
           {p.derived && <span className="text-muted"> ({fmt(p.targetCount)})</span>}
         </span>
-        <span
-          className="shrink-0 rounded-full px-2 py-0.5 text-xs"
-          style={{ color: tone.color, background: tone.bg }}
-        >
-          {tone.label}
-        </span>
+        <Pill tone={verdict.tone}>{verdict.label}</Pill>
       </div>
       <p className="mt-1 text-sm text-secondary">{targetStatus(p)}</p>
       {/* A target stated over two carriers is measured over those two, both

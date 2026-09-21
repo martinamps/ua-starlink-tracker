@@ -161,7 +161,7 @@ const TONE_LABEL: Record<AnswerTone, string> = {
 const TONE_CARD: Record<AnswerTone, string> = {
   yes: "border-success/50 bg-success/10",
   likely: "border-success/40 bg-success/5",
-  maybe: "border-yellow-500/40 bg-yellow-500/5",
+  maybe: "border-warn/40 bg-warn/5",
   no: "border-subtle bg-surface-elevated",
   unlikely: "border-subtle bg-surface-elevated",
   unknown: "border-subtle bg-surface-elevated",
@@ -169,7 +169,7 @@ const TONE_CARD: Record<AnswerTone, string> = {
 const TONE_TEXT: Record<AnswerTone, string> = {
   yes: "text-success",
   likely: "text-success",
-  maybe: "text-yellow-400",
+  maybe: "text-warn",
   no: "text-primary",
   unlikely: "text-primary",
   unknown: "text-primary",
@@ -177,7 +177,7 @@ const TONE_TEXT: Record<AnswerTone, string> = {
 const TONE_BAR: Record<AnswerTone, string> = {
   yes: "bg-success",
   likely: "bg-success",
-  maybe: "bg-yellow-500",
+  maybe: "bg-warn",
   no: "bg-muted",
   unlikely: "bg-muted",
   unknown: "bg-muted",

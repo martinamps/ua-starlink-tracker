@@ -110,9 +110,9 @@ const HubHero = ({ perAirlineStats = [], recentInstalls = [], hubLinks }: HeroPr
               fetch('/api/check-any-flight?flight_number=' + encodeURIComponent(fd.get('flight_number')) + '&date=' + encodeURIComponent(fd.get('date')))
                 .then(function(r){return r.json()})
                 .then(function(d){
-                  if (d.error) { cr.innerHTML = '<span class="text-amber-400">' + esc(d.error) + '</span>'; return; }
+                  if (d.error) { cr.innerHTML = '<span class="text-warn">' + esc(d.error) + '</span>'; return; }
                   var label, cls;
-                  if (d.hasStarlink === true) { label = 'Starlink'; cls = 'text-green-400'; }
+                  if (d.hasStarlink === true) { label = 'Starlink'; cls = 'text-success'; }
                   else if (d.hasStarlink === false) { label = 'No Starlink'; cls = 'text-muted'; }
                   else if (typeof d.probability === 'number' && d.basis && d.probability === 0) { label = 'Unlikely'; cls = 'text-muted'; }
                   else if (typeof d.probability === 'number' && d.basis) { label = '≥' + Math.floor(d.probability * 100) + '% Starlink'; cls = 'text-accent'; }
@@ -178,7 +178,7 @@ const HubHero = ({ perAirlineStats = [], recentInstalls = [], hubLinks }: HeroPr
               fetch('/api/compare-route?origin=' + encodeURIComponent(origin) + '&destination=' + encodeURIComponent(dest))
                 .then(function(r){return r.json()})
                 .then(function(d){
-                  if (d.error) { rr.innerHTML = '<span class="text-amber-400 font-mono text-xs">' + esc(d.error) + '</span>'; return; }
+                  if (d.error) { rr.innerHTML = '<span class="text-warn font-mono text-xs">' + esc(d.error) + '</span>'; return; }
                   var O = esc((d.origin||'').toUpperCase()), D = esc((d.destination||'').toUpperCase());
                   var html = (d.results||[]).map(function(r){return renderResult(r,O,D)}).join('');
                   rr.innerHTML = html || '<span class="font-mono text-xs text-muted">No tracked airline shows a Starlink-equipped nonstop on '+O+' \\u21c4 '+D+' yet.</span>';

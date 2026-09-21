@@ -35,7 +35,7 @@ export const content: AirlineContent = {
     <span key="faster">
       <span className="text-accent font-semibold">50×</span> faster
     </span>,
-    <span key="free" className="text-green-400 font-semibold">
+    <span key="free" className="text-success font-semibold">
       Free
     </span>,
     ...(installsPerMonth(s)

@@ -27,7 +27,7 @@ import {
 import type { PerAirlineStat } from "../types";
 import {
   type PageLink,
-  STATUS_TONE,
+  ROLLOUT_TONE,
   StagePill,
   factsStage,
   shareIsPublishable,
@@ -46,15 +46,14 @@ import {
   fmt,
   pct,
 } from "./layout";
+import { Pill, TONE_TEXT, type Tone } from "./ui/tone";
 
-// Same visual language as STATUS_TONE, extended for the facts statuses the
-// registry doesn't have (announced, trial, not-Starlink).
-const FACTS_TONE: Record<RolloutFactsStatus, { color: string; bg: string }> = {
-  complete: STATUS_TONE.complete,
-  installing: STATUS_TONE.in_progress,
-  announced: STATUS_TONE.phase_done,
-  trial: { color: "#a78bfa", bg: "rgba(167,139,250,.12)" },
-  not_starlink: { color: "#f47067", bg: "rgba(244,112,103,.12)" },
+const FACTS_TONE: Record<RolloutFactsStatus, Tone> = {
+  complete: "success",
+  installing: "info",
+  announced: "warn",
+  trial: "trial",
+  not_starlink: "danger",
 };
 
 export interface AirlineOverview {
@@ -81,21 +80,15 @@ export interface TypePhase {
   total?: number;
 }
 
-const PHASE_LABEL: Record<WifiPhase, { text: string; tone: "yes" | "mid" | "no" }> = {
-  confirmed: { text: "Starlink on every one", tone: "yes" },
-  rolling: { text: "Installing", tone: "mid" },
+const PHASE_LABEL: Record<WifiPhase, { text: string; tone: Tone }> = {
+  confirmed: { text: "Starlink on every one", tone: "success" },
+  rolling: { text: "Installing", tone: "warn" },
   // "No Starlink planned" claims the airline ruled the type out. For some of
   // these it did (HA's 717s); for others it has simply never said (QR's A380s
   // and A330s — the registry's own note is "no installation plan announced").
   // One phase covers both, so the label says only what both support.
-  negative: { text: "Not in the programme", tone: "no" },
+  negative: { text: "Not in the programme", tone: "neutral" },
 };
-
-const TONE_CLASS = {
-  yes: "text-green-400",
-  mid: "text-amber-400",
-  no: "text-muted",
-} as const;
 
 /** The answer for an airline whose Starlink status is decided by aircraft
  * type. It REPLACES the blended fleet percentage rather than sitting under it:
@@ -125,7 +118,7 @@ export function PhaseTable({ phases }: { phases: TypePhase[] }) {
                 </span>
               )}
             </span>
-            <span className={TONE_CLASS[p.tone]}>{p.text}</span>
+            <span className={TONE_TEXT[p.tone]}>{p.text}</span>
           </div>
         );
       })}
@@ -147,27 +140,11 @@ function fleetShare(stat: PerAirlineStat): { fleet: number; pct: number } {
 }
 
 export function StatusPill({ cfg }: { cfg: AirlineConfig }) {
-  const tone = STATUS_TONE[cfg.rollout.status];
-  return (
-    <span
-      className="font-mono text-xs uppercase tracking-wide px-2 py-1 rounded-full shrink-0"
-      style={{ color: tone.color, background: tone.bg }}
-    >
-      {cfg.rollout.statusLabel}
-    </span>
-  );
+  return <Pill tone={ROLLOUT_TONE[cfg.rollout.status]}>{cfg.rollout.statusLabel}</Pill>;
 }
 
 function FactsStatusPill({ entry }: { entry: AirlineFactsEntry }) {
-  const tone = FACTS_TONE[entry.status];
-  return (
-    <span
-      className="font-mono text-xs uppercase tracking-wide px-2 py-1 rounded-full shrink-0"
-      style={{ color: tone.color, background: tone.bg }}
-    >
-      {entry.statusLabel}
-    </span>
-  );
+  return <Pill tone={FACTS_TONE[entry.status]}>{entry.statusLabel}</Pill>;
 }
 
 /** One dated, sourced claim — the "as of" stamp is the product. */

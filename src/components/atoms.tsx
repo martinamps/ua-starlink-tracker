@@ -13,6 +13,7 @@ import type { PopularFlight } from "../database/database";
 import type { PerAirlineStat, RecentInstall } from "../types";
 import { denominatorIsPublishable } from "../utils/share-cards";
 import { fmt, pct } from "./layout";
+import { Pill, type Tone } from "./ui/tone";
 
 export type { PerAirlineStat };
 
@@ -160,11 +161,11 @@ export function PopularFlightsLinks({
   );
 }
 
-export const STATUS_TONE = {
-  complete: { color: "#3fb950", bg: "rgba(63,185,80,.12)" },
-  phase_done: { color: "#d4a72c", bg: "rgba(212,167,44,.12)" },
-  in_progress: { color: "#58a6ff", bg: "rgba(88,166,255,.12)" },
-} as const;
+export const ROLLOUT_TONE: Record<AirlineConfig["rollout"]["status"], Tone> = {
+  complete: "success",
+  phase_done: "warn",
+  in_progress: "info",
+};
 
 /**
  * One status vocabulary for every airline on the hub, /airlines and /compare.
@@ -179,13 +180,13 @@ export type Stage =
   | "Complete"
   | "Not Starlink";
 
-const STAGE_TONE: Record<Stage, { color: string; bg: string }> = {
-  Announced: STATUS_TONE.phase_done,
-  Trial: { color: "#a78bfa", bg: "rgba(167,139,250,.12)" },
-  Installing: STATUS_TONE.in_progress,
-  "Mostly done": STATUS_TONE.in_progress,
-  Complete: STATUS_TONE.complete,
-  "Not Starlink": { color: "#f47067", bg: "rgba(244,112,103,.12)" },
+const STAGE_TONE: Record<Stage, Tone> = {
+  Announced: "warn",
+  Trial: "trial",
+  Installing: "info",
+  "Mostly done": "info",
+  Complete: "success",
+  "Not Starlink": "danger",
 };
 
 export interface StageInfo {
@@ -236,15 +237,7 @@ export function factsStage(status: RolloutFactsStatus): StageInfo {
 }
 
 export function StagePill({ info }: { info: StageInfo }) {
-  const tone = STAGE_TONE[info.stage];
-  return (
-    <span
-      className="shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium"
-      style={{ color: tone.color, background: tone.bg }}
-    >
-      {info.label}
-    </span>
-  );
+  return <Pill tone={STAGE_TONE[info.stage]}>{info.label}</Pill>;
 }
 
 /** How an airline's Starlink status is decided: per aircraft, by aircraft
@@ -339,7 +332,9 @@ export function RecentInstallsFeed({
               <div className="flex items-center gap-1.5 text-xs font-mono text-muted mb-1.5">
                 <span
                   className="w-1.5 h-1.5 rounded-full flex-shrink-0"
-                  style={{ background: g.cfg.accentText ?? g.cfg.accentColor ?? "#7a8ba2" }}
+                  style={{
+                    background: g.cfg.accentText ?? g.cfg.accentColor ?? "var(--color-text-muted)",
+                  }}
                 />
                 {g.cfg.name}
               </div>
@@ -504,9 +499,9 @@ export function TypeBreakdownRow({
 }) {
   const icon =
     status === "starlink" ? (
-      <span className="text-green-400 font-mono">✓</span>
+      <span className="text-success font-mono">✓</span>
     ) : status === "pending" ? (
-      <span className="text-amber-400 font-mono">…</span>
+      <span className="text-warn font-mono">…</span>
     ) : (
       <span className="text-muted font-mono">—</span>
     );
@@ -527,9 +522,7 @@ export function TypeBreakdownRow({
           )}
         </div>
       </div>
-      <div
-        className={`text-xs font-mono ${status === "starlink" ? "text-green-400" : "text-muted"}`}
-      >
+      <div className={`text-xs font-mono ${status === "starlink" ? "text-success" : "text-muted"}`}>
         {label}
       </div>
     </div>

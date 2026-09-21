@@ -34,6 +34,10 @@
   --color-accent: var(--color-accent);
   --color-accent-dim: var(--color-accent-dim);
   --color-success: var(--color-success);
+  --color-warn: var(--color-warn);
+  --color-danger: var(--color-danger);
+  --color-info: var(--color-info);
+  --color-trial: var(--color-trial);
   --font-display: var(--font-display);
 }
 
@@ -86,7 +90,7 @@
   background: var(--color-accent);
 }
 .wifi-viasat {
-  background: rgba(245, 158, 11, 0.5);
+  background: color-mix(in srgb, var(--color-warn) 50%, transparent);
 }
 .wifi-panasonic {
   background: rgba(168, 85, 247, 0.5);
@@ -96,16 +100,16 @@
 }
 .wifi-none {
   background: transparent;
-  box-shadow: inset 0 0 0 1px rgba(90, 106, 128, 0.5);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-neutral) 50%, transparent);
 }
 .wifi-unknown {
   background: transparent;
-  box-shadow: inset 0 0 0 1px rgba(90, 106, 128, 0.25);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-neutral) 25%, transparent);
 }
 /* Pipeline overlays come after wifi-* so they win the cascade. */
 .pipe-mod {
-  background: rgba(245, 158, 11, 0.15);
-  box-shadow: inset 0 0 0 1.5px #f59e0b;
+  background: color-mix(in srgb, var(--color-warn) 15%, transparent);
+  box-shadow: inset 0 0 0 1.5px var(--color-warn);
 }
 .pipe-verif {
   background: rgba(14, 165, 233, 0.15);
@@ -126,15 +130,15 @@
   text-decoration: underline;
 }
 .pipe-chip-mod {
-  border-color: rgba(245, 158, 11, 0.6);
-  background: rgba(245, 158, 11, 0.08);
+  border-color: color-mix(in srgb, var(--color-warn) 60%, transparent);
+  background: color-mix(in srgb, var(--color-warn) 8%, transparent);
 }
 .pipe-chip-verif {
   border-color: rgba(14, 165, 233, 0.6);
   background: rgba(14, 165, 233, 0.08);
 }
 .pipe-chip-sched {
-  border-color: rgba(90, 106, 128, 0.5);
+  border-color: color-mix(in srgb, var(--color-neutral) 50%, transparent);
   border-style: dashed;
 }
 .bar-complete {
@@ -144,16 +148,20 @@
   background: rgba(14, 165, 233, 0.45);
 }
 .bar-inmod {
-  background: rgba(245, 158, 11, 0.8);
+  background: color-mix(in srgb, var(--color-warn) 80%, transparent);
 }
 .bar-queued {
-  background: repeating-linear-gradient(45deg, rgba(90, 106, 128, 0.55) 0 2px, transparent 2px 4px);
+  background: repeating-linear-gradient(
+    45deg,
+    color-mix(in srgb, var(--color-neutral) 55%, transparent) 0 2px,
+    transparent 2px 4px
+  );
 }
 .tail-pipe {
   opacity: 0.75;
 }
 .dot-mod {
-  color: #f59e0b;
+  color: var(--color-warn);
 }
 .dot-verif {
   color: var(--color-accent);
@@ -280,8 +288,8 @@
   border-left-color: rgba(14, 165, 233, 0.35);
 }
 .verdict-wait {
-  border-left-color: #f59e0b;
+  border-left-color: var(--color-warn);
 }
 .verdict-no {
-  border-left-color: rgba(90, 106, 128, 0.6);
+  border-left-color: color-mix(in srgb, var(--color-neutral) 60%, transparent);
 }

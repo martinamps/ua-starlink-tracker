@@ -19,8 +19,8 @@ function typeRowText(t: TypeProgress): { text: string; tone: string } {
   if (t.excluded)
     return { text: `Retiring — not in the programme (${t.total})`, tone: "text-muted" };
   if (t.equipped === 0) return { text: `Not started — 0 of ${t.total}`, tone: "text-muted" };
-  if (t.equipped === t.total) return { text: `All ${t.total}`, tone: "text-green-400" };
-  return { text: `At least ${t.equipped} of ${t.total}`, tone: "text-amber-400" };
+  if (t.equipped === t.total) return { text: `All ${t.total}`, tone: "text-success" };
+  return { text: `At least ${t.equipped} of ${t.total}`, tone: "text-warn" };
 }
 
 /** Programme totals: excluded (retiring) types never enter a denominator. */
@@ -64,7 +64,7 @@ export function TypeShareTable({
             {!t.excluded && (
               <div className="h-1 rounded bg-surface-elevated overflow-hidden mt-1">
                 <div
-                  className="h-full rounded bg-green-400"
+                  className="h-full rounded bg-success"
                   style={{ width: `${Math.round(typeShare(t) * 100)}%` }}
                 />
               </div>
@@ -85,10 +85,10 @@ type Chip = { text: string; tone: string };
 
 function tailChip(t: FleetGuideTail): Chip {
   if (!t.inRoster) return { text: "Not in current fleet", tone: "text-muted" };
-  if (t.delisted) return { text: "Delisted — recheck", tone: "text-amber-400" };
+  if (t.delisted) return { text: "Delisted — recheck", tone: "text-warn" };
   switch (t.mark) {
     case "starlink":
-      return { text: "Starlink", tone: "text-green-400" };
+      return { text: "Starlink", tone: "text-success" };
     case "legacy":
       return { text: "Legacy WiFi", tone: "text-secondary" };
     case "none":
@@ -153,7 +153,7 @@ function TailLookup({ cfg, tails }: { cfg: AirlineConfig; tails: readonly FleetG
 
 // Same endpoint and rendering rules as the hub homepage check: a firm yes
 // only on hasStarlink true; everything else is the server's own sentence.
-const CHECK_SCRIPT = `document.addEventListener('DOMContentLoaded',function(){var f=document.getElementById('community-check');var out=document.getElementById('community-check-result');if(!f||!out)return;var di=f.elements.namedItem('date');if(di&&!di.value)di.value=new Date().toLocaleDateString('en-CA');function esc(s){var d=document.createElement('div');d.textContent=String(s==null?'':s);return d.innerHTML;}f.addEventListener('submit',function(e){e.preventDefault();var fd=new FormData(f);var q='flight_number='+encodeURIComponent(fd.get('flight_number'))+'&date='+encodeURIComponent(fd.get('date'));var t=fd.get('aircraft_type');if(t)q+='&aircraft_type='+encodeURIComponent(t);out.classList.remove('hidden');out.textContent='Checking…';fetch('/api/check-any-flight?'+q).then(function(r){return r.json()}).then(function(d){if(d.error){out.innerHTML='<span class="text-amber-400">'+esc(d.error)+'</span>';return;}var lead=d.hasStarlink===true?'<span class="text-green-400">Starlink (likely)</span> · ':'';out.innerHTML=lead+esc(d.reason||d.message||'');}).catch(function(){out.textContent='Lookup failed.';});});});`;
+const CHECK_SCRIPT = `document.addEventListener('DOMContentLoaded',function(){var f=document.getElementById('community-check');var out=document.getElementById('community-check-result');if(!f||!out)return;var di=f.elements.namedItem('date');if(di&&!di.value)di.value=new Date().toLocaleDateString('en-CA');function esc(s){var d=document.createElement('div');d.textContent=String(s==null?'':s);return d.innerHTML;}f.addEventListener('submit',function(e){e.preventDefault();var fd=new FormData(f);var q='flight_number='+encodeURIComponent(fd.get('flight_number'))+'&date='+encodeURIComponent(fd.get('date'));var t=fd.get('aircraft_type');if(t)q+='&aircraft_type='+encodeURIComponent(t);out.classList.remove('hidden');out.textContent='Checking…';fetch('/api/check-any-flight?'+q).then(function(r){return r.json()}).then(function(d){if(d.error){out.innerHTML='<span class="text-warn">'+esc(d.error)+'</span>';return;}var lead=d.hasStarlink===true?'<span class="text-success">Starlink (likely)</span> · ':'';out.innerHTML=lead+esc(d.reason||d.message||'');}).catch(function(){out.textContent='Lookup failed.';});});});`;
 
 function FlightCheck({ cfg, types }: { cfg: AirlineConfig; types: readonly TypeProgress[] }) {
   return (
@@ -325,7 +325,7 @@ export function CommunityAirlinePage({
               is unknown, not a no.
             </p>
             {stale && (
-              <p className="text-sm text-amber-400 leading-relaxed mt-2">
+              <p className="text-sm text-warn leading-relaxed mt-2">
                 The guide hasn't been updated in over {GUIDE_STALE_DAYS} days — recent installs may
                 be missing from these counts.
               </p>

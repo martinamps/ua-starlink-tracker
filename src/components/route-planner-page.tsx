@@ -256,7 +256,7 @@ export default function RoutePlannerPage({
           }
 
           function probColor(p) {
-            return p >= 0.7 ? '#22c55e' : p >= 0.4 ? '#eab308' : '#5a6a80';
+            return p >= 0.7 ? 'var(--color-success)' : p >= 0.4 ? 'var(--color-warn)' : 'var(--color-neutral)';
           }
 
           function renderLeg(leg, isPositioning) {
@@ -310,7 +310,7 @@ export default function RoutePlannerPage({
               pathParts.push('<span class="flight-path__line' + (live ? ' flight-path__line--live' : '') + '" style="color:' + color + '"></span>');
               var isLast = li === legs.length - 1;
               var nodeFilled = isLast ? ' flight-path__node--filled' : '';
-              var nodeColor = isLast ? color : (live && legs[li+1].probability >= 0.7 ? '#22c55e' : '#5a6a80');
+              var nodeColor = isLast ? color : (live && legs[li+1].probability >= 0.7 ? 'var(--color-success)' : 'var(--color-neutral)');
               pathParts.push('<span class="flight-path__node' + nodeFilled + '" style="color:' + nodeColor + '"></span>');
             }
             pathParts.push('</div>');
@@ -433,7 +433,7 @@ export default function RoutePlannerPage({
               .then(function(r) { return r.json(); })
               .then(renderResults)
               .catch(function() {
-                resultsDiv.innerHTML = '<div class="text-sm text-red-400 text-center">Something went wrong. Please try again.</div>';
+                resultsDiv.innerHTML = '<div class="text-sm text-danger text-center">Something went wrong. Please try again.</div>';
               });
           });
 

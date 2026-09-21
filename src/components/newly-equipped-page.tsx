@@ -103,7 +103,10 @@ export default function NewlyEquippedPage({
                 <div className="flex items-center gap-1.5 text-xs font-mono text-muted mb-1">
                   <span
                     className="w-1.5 h-1.5 rounded-full flex-shrink-0"
-                    style={{ background: g.cfg.accentText ?? g.cfg.accentColor ?? "#7a8ba2" }}
+                    style={{
+                      background:
+                        g.cfg.accentText ?? g.cfg.accentColor ?? "var(--color-text-muted)",
+                    }}
                   />
                   {g.cfg.name}
                 </div>

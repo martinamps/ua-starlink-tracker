@@ -18,7 +18,7 @@ const AFHero = ({ stats, statSentence }: HeroProps) => (
 
 export const content: AirlineContent = {
   headerStats: [
-    <span key="free" className="text-green-400 font-semibold">
+    <span key="free" className="text-success font-semibold">
       Free
     </span>,
     <span key="bytype">by aircraft type</span>,
