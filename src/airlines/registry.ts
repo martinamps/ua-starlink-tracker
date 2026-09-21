@@ -49,6 +49,8 @@ export interface SubfleetDef {
 export interface PageBrand {
   /** Display title (rendered in-page) */
   title: string;
+  /** Homepage H1 when it differs from the site name in `title`. */
+  heading?: string;
   tagline: string;
   /** SEO `<title>` tag */
   siteTitle: string;
@@ -1000,6 +1002,7 @@ export const HUB_BRAND: PageBrand = {
   // unitedstarlinktracker.com for "united starlink tracker" (Hub ~4% CTR vs
   // United ~86% on the same impressions).
   title: "Which Airlines Have Starlink WiFi?",
+  heading: "Which airlines have Starlink Wi-Fi?",
   tagline: "Compare every Starlink rollout — United, Hawaiian, Alaska, and more",
   siteTitle: "Starlink WiFi by Airline — Which Airlines Have Starlink in 2026?",
   description:

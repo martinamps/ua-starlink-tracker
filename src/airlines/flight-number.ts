@@ -95,6 +95,24 @@ export function normalizeAirlineFlightNumber(cfg: AirlineConfig, flightNumber: s
 }
 
 /**
+ * The marketed number for a row already known to belong to `cfg`. Unlike
+ * normalizeAirlineFlightNumber this also maps shared operators (SkyWest flies
+ * for several carriers), which is only safe once the row's airline is settled —
+ * never on user input.
+ */
+export function marketedRowFlightNumber(cfg: AirlineConfig, flightNumber: string): string {
+  const normalized = normalizeAirlineFlightNumber(cfg, flightNumber);
+  if (normalized !== flightNumber) return normalized;
+  for (const op of cfg.sharedOperators ?? []) {
+    for (const prefix of [op.icao, op.iata]) {
+      const digits = flightNumber.slice(prefix.length);
+      if (flightNumber.startsWith(prefix) && /^\d+$/.test(digits)) return `${cfg.iata}${digits}`;
+    }
+  }
+  return flightNumber;
+}
+
+/**
  * Force a flight number into exact `{IATA}####` format. Composes
  * normalizeAirlineFlightNumber + bare-digit handling.
  */

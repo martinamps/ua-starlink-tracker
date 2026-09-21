@@ -113,7 +113,7 @@ describe("equipped: SQL predicate and JS twin", () => {
     db.close();
   });
 
-  test("a negative settle is tail-wide: it un-equips the listing under any airline", () => {
+  test("a negative settle only un-equips the listing under the same airline", () => {
     const db = makeSyntheticDb();
     db.query(
       `INSERT INTO starlink_planes (aircraft, wifi, sheet_gid, DateFound, TailNumber, OperatedBy, fleet, verified_wifi, airline)
@@ -126,7 +126,7 @@ describe("equipped: SQL predicate and JS twin", () => {
     const e = db.query(`SELECT ${tailEquippedSql("?", "?")} AS e`).get("N201XA", "AS") as {
       e: number;
     };
-    expect(e.e).toBe(0);
+    expect(e.e).toBe(1);
     expect(
       isEquipped(
         tailEvidence({

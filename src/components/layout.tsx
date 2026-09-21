@@ -294,7 +294,7 @@ export function StatInline({ n, children }: { n?: number; children?: React.React
   );
 }
 
-const TH = `border-b border-subtle pb-2 text-left ${EYEBROW_TEXT}`;
+const TH = `border-b border-subtle pb-2 pr-3 last:pr-0 text-left ${EYEBROW_TEXT}`;
 const TD = "border-b border-subtle py-2 tabular-nums";
 
 export function Th({

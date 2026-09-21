@@ -125,9 +125,11 @@ type MetaRow = { value: string };
  */
 export function openDatabase(path = DB_PATH): Database {
   const db = new Database(path);
+  // busy_timeout first: switching to WAL needs a lock, and a boot that overlaps
+  // the previous process (deploys) must wait for it rather than crash.
+  db.exec("PRAGMA busy_timeout = 5000");
   // WAL so the server's readers never block on a job's write (SQLITE_BUSY).
   db.exec("PRAGMA journal_mode = WAL");
-  db.exec("PRAGMA busy_timeout = 5000");
   // Folds each query's duration into whatever span is already open, so page
   // latency can be attributed to SQL. No new spans — see db-timing.ts.
   instrumentDatabase(db);
@@ -1914,7 +1916,7 @@ export function getFlightAssignments(
        _neg.verified_wifi as settled_wifi
      FROM upcoming_flights uf
      INNER JOIN starlink_planes sp ON uf.tail_number = sp.TailNumber
-     ${settledNegativeJoin("_neg", "sp.TailNumber")}
+     ${settledNegativeJoin("_neg", "sp.TailNumber", "sp.airline")}
      WHERE uf.flight_number IN (${ph})
        AND uf.departure_time >= ? AND uf.departure_time < ?`,
     airline,
@@ -5520,7 +5522,7 @@ function departureSlotsSql(scopeClause: string): string {
     ) k
   ) s
   LEFT JOIN starlink_planes sp ON sp.TailNumber = s.tail_number AND sp.airline = s.airline
-  ${settledNegativeJoin("_sneg", "s.tail_number")}
+  ${settledNegativeJoin("_sneg", "s.tail_number", "s.airline")}
   WHERE s.slot_rank = 1`;
 }
 

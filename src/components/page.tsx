@@ -176,7 +176,7 @@ export default function Page({
       pageLinks={pageLinks}
       before={showPassengerBanner ? <PassengerBanner site={site} /> : null}
     >
-      <PageHeader title={site.brand.title} dek={content.intro(stats)}>
+      <PageHeader title={site.brand.heading ?? site.brand.title} dek={content.intro(stats)}>
         <HeaderStatStrip
           items={
             typeof content.headerStats === "function"

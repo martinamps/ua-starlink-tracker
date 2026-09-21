@@ -36,7 +36,7 @@ import {
   ensureAirlinePrefix,
   flightInputRules,
   icaoCallsignToIata,
-  normalizeAirlineFlightNumber,
+  marketedRowFlightNumber,
   permalinkCarrier,
   stripFlightNumberZeros,
 } from "../airlines/flight-number";
@@ -1030,7 +1030,7 @@ function checkFlightBody(
             tail_number: flight.tail_number,
             aircraft_type: flight.aircraft_type,
             flight_number: flight.flight_number,
-            ua_flight_number: normalizeAirlineFlightNumber(cfg, flight.flight_number),
+            ua_flight_number: marketedRowFlightNumber(cfg, flight.flight_number),
             departure_airport: flight.departure_airport,
             arrival_airport: flight.arrival_airport,
             departure_time: flight.departure_time,

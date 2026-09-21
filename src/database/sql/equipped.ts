@@ -74,7 +74,8 @@ export function equippedSql(sp: string): string {
   return `(${sp}.verified_wifi IS NULL OR ${sp}.verified_wifi = 'Starlink')
     AND NOT EXISTS (
       SELECT 1 FROM united_fleet ${NEG}
-      WHERE ${NEG}.tail_number = ${sp}.TailNumber AND ${NEG}.starlink_status = 'negative'
+      WHERE ${NEG}.tail_number = ${sp}.TailNumber AND ${NEG}.airline = ${sp}.airline
+        AND ${NEG}.starlink_status = 'negative'
     )`;
 }
 
@@ -96,9 +97,10 @@ export function tailEquippedSql(tailExpr: string, airlineExpr?: string): string 
  * LEFT JOIN of the negative settle, for readers that return evidence columns
  * (settled_negative, settled_wifi) rather than filter on them.
  */
-export function settledNegativeJoin(alias: string, tailExpr: string): string {
+export function settledNegativeJoin(alias: string, tailExpr: string, airlineExpr: string): string {
   return `LEFT JOIN united_fleet ${alias}
-    ON ${alias}.tail_number = ${tailExpr} AND ${alias}.starlink_status = 'negative'`;
+    ON ${alias}.tail_number = ${tailExpr} AND ${alias}.airline = ${airlineExpr}
+      AND ${alias}.starlink_status = 'negative'`;
 }
 
 /**
