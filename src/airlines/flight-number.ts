@@ -135,6 +135,16 @@ export function permalinkCarrier(
 }
 
 /**
+ * The permalink spelling of a stored flight number under its own carrier:
+ * marketing prefix, no zero padding (HA0011 → HA11, 1234 → UA1234). The padded
+ * URL 301s here, so every surface that links or counts flight numbers keys on
+ * this form. Unlike marketingFlightNumber it never re-homes a foreign prefix.
+ */
+export function permalinkFlightNumber(cfg: AirlineConfig, raw: string): string {
+  return stripFlightNumberZeros(ensureAirlinePrefix(cfg, raw));
+}
+
+/**
  * A stored row's number as the marketing number it's sold under: the row's own
  * carrier when its prefix maps there, else whichever tracked marketing carrier
  * owns the prefix, else the row carrier's IATA over the digits.

@@ -13,6 +13,7 @@ import {
   canonicalPermalinkFor,
   ensureAirlinePrefix,
   inferSubfleet,
+  permalinkFlightNumber,
   slotFlightPrefixes,
   stripFlightNumberZeros,
 } from "../airlines/flight-number";
@@ -90,7 +91,6 @@ import {
   filterKey,
   flightNumberGlob,
   isCleanAirportPair,
-  marketingFlightNumber,
   placeholders,
   prefixGlob,
   sheetSaysStarlink,
@@ -2236,7 +2236,7 @@ export function getSitemapFlights(db: Database, airline: AirlineCode): SitemapFl
   const touch = (raw: string, t: number | null) => {
     // Zero-padded spellings collapse onto the canonical permalink (HA0011 →
     // /check-flight/HA11); the padded URL 301s there.
-    const fn = marketingFlightNumber(cfg, raw);
+    const fn = permalinkFlightNumber(cfg, raw);
     if (!marketing.test(fn)) return;
     // Future timestamps are corrupt rows — treat as unknown, keep the page.
     const sane = t && t <= nowSec ? t : 0;
@@ -2262,7 +2262,7 @@ export function getSitemapFlights(db: Database, airline: AirlineCode): SitemapFl
     seen: number | null;
   }[];
   for (const r of cached) {
-    const fn = marketingFlightNumber(cfg, r.flight_number);
+    const fn = permalinkFlightNumber(cfg, r.flight_number);
     if (!marketing.test(fn)) continue;
     if (inUpcoming.has(fn) || (r.seen ?? 0) >= SITEMAP_FLIGHT_MIN_SEEN) {
       touch(r.flight_number, r.t);
@@ -2442,7 +2442,7 @@ function computePopularFlights(db: Database, cfg: AirlineConfig, limit: number):
   for (const r of [...cached, ...live]) {
     // Zero-padded spellings collapse onto the canonical permalink, same as
     // getSitemapFlights — the padded URL would 301.
-    const fn = marketingFlightNumber(cfg, r.flight_number);
+    const fn = permalinkFlightNumber(cfg, r.flight_number);
     if (!marketing.test(fn)) continue;
     const cur = agg.get(fn) ?? { times: 0, best: null };
     cur.times += r.seen_count;
@@ -2715,11 +2715,11 @@ export function getRouteFlightNumbers(
   const marketing = cfg ? canonicalPermalinkFor(cfg) : null;
   const merged = new Map<string, { times: number; scheduled: number }>();
   const liveNumbers = new Set(
-    cfg ? live.map((r) => marketingFlightNumber(cfg, r.flight_number)) : []
+    cfg ? live.map((r) => permalinkFlightNumber(cfg, r.flight_number)) : []
   );
   const add = (raw: string, times: number, scheduled: number, durationSec: number | null) => {
     if (!cfg || !marketing) return;
-    const fn = marketingFlightNumber(cfg, raw);
+    const fn = permalinkFlightNumber(cfg, raw);
     if (!marketing.test(fn)) return;
     // History alone must be corroborated: one sighting is how a lookup miss
     // or a one-off charter enters the cache (219 of 225 UA8xxx rows on file
@@ -6393,7 +6393,7 @@ function computeAircraftTypePages(
   const fnTotal = new Map<string, number>();
   const fnByFamily = new Map<string, Map<string, number>>();
   for (const o of observations) {
-    const fn = marketingFlightNumber(cfg, o.fn);
+    const fn = permalinkFlightNumber(cfg, o.fn);
     fnTotal.set(fn, (fnTotal.get(fn) ?? 0) + o.days);
     const family = tailFamily.get(o.tail);
     if (!family) continue;
