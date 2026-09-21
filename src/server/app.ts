@@ -121,7 +121,6 @@ import {
   type TypePhase,
   factsHeadline,
 } from "../components/airlines-page";
-import type { PageLink } from "../components/atoms";
 import CheckFlightPage, {
   type DatedAnswer,
   type FlightFacts,
@@ -134,7 +133,7 @@ import {
 } from "../components/community-airline-page";
 import ComparePage, { type CompareSide } from "../components/compare-page";
 import EmbedPage from "../components/embed-page";
-import { breadcrumbJsonLd, faqJsonLd, homeFaqJsonLd, jsonLdString } from "../components/faq";
+import { breadcrumbJsonLd, faqJsonLd, homeFaqJsonLd, jsonLdBlock } from "../components/faq";
 import FleetPage, { type FleetTypeLink } from "../components/fleet-page";
 import { weeklyInstalls } from "../components/home/rollout";
 import HowToCheckPage from "../components/how-to-check-page";
@@ -143,7 +142,8 @@ import IsStarlinkFreePage, {
   freeAccessAnswer,
   hasFreeAnswer,
 } from "../components/is-starlink-free-page";
-import { fmt } from "../components/layout";
+import type { Link as PageLink } from "../components/layout";
+
 import LiveTvPage, { liveTvTypeRows } from "../components/live-tv-page";
 import McpPage from "../components/mcp-page";
 import MethodologyPage, { hasMethodology } from "../components/methodology-page";
@@ -154,6 +154,7 @@ import RoutePage, { type RouteDeparture, routeVerdict } from "../components/rout
 import RoutePlannerPage from "../components/route-planner-page";
 import RoutesPage from "../components/routes-page";
 import TimelinePage, { getTimeline, hasTimeline } from "../components/timeline-page";
+import { fmt } from "../components/ui/format";
 import {
   DEPARTURE_WINDOW_HOURS,
   PERMALINK_STALE_NOTE_DAYS,
@@ -393,10 +394,6 @@ function analyticsSnippet(site: SiteConfig): string {
   const analytics = site.analytics;
   if (!analytics) return "";
   return `<script defer data-domain="${analytics.dataDomain}" src="${analytics.scriptSrc}"></script>`;
-}
-
-function jsonLdBlock(payload: unknown): string {
-  return `<script type="application/ld+json">${jsonLdString(payload)}</script>`;
 }
 
 function chromeExtensionJsonLd(site: SiteConfig): string {
@@ -2542,7 +2539,6 @@ function buildBaseTemplateVars(
   const fleetStats = precomputed ? precomputed.fleetStats : reader.getFleetStats();
   const totalCount = precomputed ? precomputed.totalCount : reader.getTotalCount();
   const starlinkCount = precomputed ? precomputed.starlinkCount : reader.getStarlinkPlanes().length;
-  const percentage = totalCount > 0 ? ((starlinkCount / totalCount) * 100).toFixed(2) : "0.00";
   // The data's own freshness — the same value the sitemap gives these URLs.
   // Never the request clock: that made every page claim it changed this second.
   const contentIso = stampedIso(reader.getLastUpdatedRaw());
@@ -2557,7 +2553,6 @@ function buildBaseTemplateVars(
     currentDate: new Date().toLocaleDateString(),
     mainlineCount: (fleetStats?.mainline.starlink || 0).toString(),
     expressCount: (fleetStats?.express.starlink || 0).toString(),
-    percentage,
     mainlinePercentage: (fleetStats?.mainline.percentage || 0).toFixed(2),
     expressPercentage: (fleetStats?.express.percentage || 0).toFixed(2),
     mainlinePercentageRounded: (fleetStats?.mainline.percentage || 0).toFixed(0),
@@ -2832,6 +2827,7 @@ function buildFlightFacts(
     observedStarlink: history.starlink,
     observedSince: history.first_checked_at,
     prediction: permalinkPrediction(reader, cfg, flightNumber),
+    typeRule: permalinkTypeRule(reader, cfg, flightNumber),
     aircraftTypes: history.aircraft_types,
     lastStarlink: history.last_starlink
       ? { tail: history.last_starlink.tail_number, checked_at: history.last_starlink.checked_at }
@@ -2858,6 +2854,24 @@ function permalinkPrediction(
       n_observations: p.n_observations,
       confidence: p.confidence,
     };
+  } catch {
+    return null;
+  }
+}
+
+/** A flight-number band whose aircraft type fixes the answer (AS800–999), so
+ * the undated page states the rule instead of "we haven't seen it". */
+function permalinkTypeRule(
+  reader: ScopedReader,
+  cfg: AirlineConfig,
+  flightNumber: string
+): FlightFacts["typeRule"] {
+  if (cfg.flightHistoryModel) return null;
+  try {
+    const answer = carrierPrediction(cfg, reader, flightNumber);
+    return answer.kind === "penetration" && answer.sf.penetrationOverride !== undefined
+      ? { probability: answer.pen.pct, label: answer.sf.label }
+      : null;
   } catch {
     return null;
   }
@@ -4121,7 +4135,9 @@ function passengerPhases(code: AirlineCode, reader: ScopedReader): TypePhase[] |
       )
       .map(([family, phase]) => {
         const c = counts.get(family);
-        return c ? { family, phase, equipped: c.equipped, total: c.total } : { family, phase };
+        return c
+          ? { family, label: c.label, phase, equipped: c.equipped, total: c.total }
+          : { family, phase };
       })
   );
 }

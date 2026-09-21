@@ -1,9 +1,8 @@
-import React from "react";
 import { type SiteConfig, siteAirline } from "../airlines/registry";
 import {
   type AnswerContext,
-  type CheckFlightBody,
   type FlightAnswer,
+  datePassed,
   renderFlightAnswer,
 } from "../client/flight-answer";
 import type { PopularFlight } from "../database/database";
@@ -11,100 +10,16 @@ import { SEATBACK_LIVE_TV_COPY } from "../utils/aircraft-specs";
 import { AIRPORT_TZ, airportTimezone } from "../utils/airport-tz";
 import { article } from "../utils/grammar";
 import { watchFeedEnabled } from "../utils/ics";
-import { type PageLink, PopularFlightsLinks } from "./atoms";
+import { PopularFlightsLinks } from "./atoms";
 import { FlightFactBlocks } from "./check-flight/fact-blocks";
-import { Faq, type FaqEntry, JsonLd, breadcrumbJsonLd, jsonLdString } from "./faq";
+import type { DatedAnswer, FlightFacts, InvalidFlightQuery } from "./check-flight/types";
+import { Faq, type FaqEntry, JsonLd, breadcrumbJsonLd, scriptSafeJson } from "./faq";
 import { ClientScriptTag, FlightSearchForm } from "./flight-search-form";
 import { CHROME_EXTENSION_URL } from "./home/tools";
-import {
-  Chip,
-  PageHeader,
-  PageShell,
-  Panel,
-  Section,
-  SectionTitle,
-  StatInline,
-  fmt,
-} from "./layout";
-import { formatDuration, shortDate, zonedDeparture } from "./ui/format";
+import { LINK, type Link, PageHeader, PageShell, Panel, Section, SectionTitle } from "./layout";
+import { fmt, probPhrase, probTier } from "./ui/format";
 
-interface FlightRouteFact {
-  departure_airport: string;
-  arrival_airport: string;
-  times: number;
-  dur_sec: number | null;
-  /** Newest evidence for this leg (unix seconds); null when the row carries none. */
-  last_seen_at: number | null;
-  /** Whether /route-planner/{dep}/{arr} serves; false renders the pair unlinked. */
-  linkable: boolean;
-}
-
-interface FlightUpcomingDeparture {
-  departure_airport: string;
-  arrival_airport: string;
-  departure_time: number;
-  /** YYYY-MM-DD at the departure airport: the date a traveller books and the
-   * date the lookup answers for. Null when the airport's zone is unknown. */
-  departure_local_date?: string | null;
-  /** IANA zone of the departure airport, for rendering local clock time. */
-  departure_tz?: string | null;
-  tail_number: string;
-  aircraft_type: string | null;
-  /** The slot's current tail passes the equipped test the verdict uses. */
-  starlink: boolean;
-  wifiLabel: string;
-}
-
-/** Server-assembled facts for a /check-flight/{fn} permalink — the page's
- * unique crawlable substance; the client lookup flow layers on top. */
-export interface FlightFacts {
-  flightNumber: string;
-  airlineName: string;
-  /** United.com (or the carrier's verifier) checks of aircraft on this number,
-   * whole log, not departures; see observedSince. */
-  observedTotal: number;
-  observedStarlink: number;
-  /** Earliest check counted in observedTotal (unix seconds). */
-  observedSince?: number | null;
-  /** The per-flight model's answer: the same number /api/predict-flight and
-   * MCP predict_flight_starlink give. Null for carriers without a model. */
-  prediction?: {
-    probability: number;
-    n_observations: number;
-    confidence: "high" | "medium" | "low";
-  } | null;
-  aircraftTypes: string[];
-  /** Newest check that found Starlink on this number: a check time, not a departure. */
-  lastStarlink: { tail: string; checked_at: number } | null;
-  routes: FlightRouteFact[];
-  upcoming: FlightUpcomingDeparture[];
-  /** Other marketing flight numbers on this flight's primary route — sibling
-   * permalinks, so the corpus links laterally instead of only via /routes. */
-  siblings: string[];
-  /** Newest sighting (unix sec) when the flight has gone quiet long enough to
-   * say so on the page; null otherwise. */
-  notObservedSince?: number | null;
-  /** aircraftTypes with their /fleet/{slug} page, each page linked once. */
-  aircraftTypeLinks?: Array<{ label: string; href: string | null }>;
-}
-
-/** A permalink segment that is not a flight number this site can answer for.
- * `query` is the offending segment (null when it could not be decoded), never
- * trusted — React escapes it at render. */
-export interface InvalidFlightQuery {
-  query: string | null;
-  reason: "not-a-flight-number" | "other-carrier";
-  airportHint: boolean;
-}
-
-/** The dated permalink's answer: the /api/check-flight body the server built
- * from the database, rendered by the same function the browser re-check uses. */
-export interface DatedAnswer {
-  flightNumber: string;
-  date: string;
-  daysOut: number;
-  body: CheckFlightBody;
-}
+export type { DatedAnswer, FlightFacts, InvalidFlightQuery } from "./check-flight/types";
 
 interface CheckFlightPageProps {
   site: SiteConfig;
@@ -114,7 +29,7 @@ interface CheckFlightPageProps {
   /** Rendered on the generic (non-permalink) page only — permalinks link
    * laterally via siblings instead. */
   popular?: PopularFlight[];
-  pageLinks?: PageLink[];
+  pageLinks?: Link[];
   currentPath?: string;
   /** FAQPage rich results are ignored on noindex URLs; keep the markup off them. */
   noindex?: boolean;
@@ -128,32 +43,52 @@ const AIRPORT_ZONES: Record<string, string> = (() => {
   return byZone;
 })();
 
+const USUAL_LEAD = { likely: "Usually yes", maybe: "Sometimes", unlikely: "Usually no" } as const;
+
+/** "Hawaiian-operated (A330/A321neo)" → "Hawaiian-operated A330/A321neo". */
+const bandLabel = (label: string) => label.replace(/\s*\((.*)\)$/, " $1");
+
 /** The undated answer: how often this flight gets Starlink. Prefers the
  * model's number (the one the API and MCP quote) over the raw check tally. */
 function usualSummary(flight: FlightFacts): string {
   const fn = flight.flightNumber;
   const pred = flight.prediction;
   if (pred && pred.n_observations > 0) {
-    const pct = Math.round(pred.probability * 100);
-    const share = pct < 1 ? "under 1%" : pct > 99 ? "over 99%" : `about ${pct}%`;
-    const lead = pct >= 70 ? "Usually yes" : pct >= 30 ? "Sometimes" : "Usually no";
-    return `${lead}: ${share} of recent ${fn} flights had Starlink.`;
+    const lead = USUAL_LEAD[probTier(pred.probability)];
+    return `${lead}: ${probPhrase(pred.probability)} of recent ${fn} flights had Starlink.`;
+  }
+  const rule = flight.typeRule;
+  if (rule) {
+    const band = bandLabel(rule.label);
+    if (rule.probability >= 1)
+      return `Yes: ${fn} flies ${band} aircraft, and every one has Starlink.`;
+    if (rule.probability <= 0)
+      return `No: ${fn} flies ${band} aircraft, which don't have Starlink.`;
+    return `${USUAL_LEAD[probTier(rule.probability)]}: ${probPhrase(rule.probability)} of the ${band} aircraft that fly ${fn} have Starlink.`;
   }
   const { observedStarlink: s, observedTotal: n } = flight;
   if (n > 0) {
-    const r = s / n;
-    const lead = r >= 0.7 ? "Usually yes" : r >= 0.3 ? "Sometimes" : "Usually no";
+    const lead = USUAL_LEAD[probTier(s / n)];
     return `${lead}: the aircraft had Starlink in ${fmt(s)} of ${fmt(n)} recent checks.`;
   }
   return `We haven't seen ${fn} yet.`;
 }
 
-function answerContext(site: SiteConfig, dated: DatedAnswer): AnswerContext {
+/** A type rule of all or nothing: no date can change the answer. */
+const typeSettled = (flight: FlightFacts) =>
+  !flight.prediction?.n_observations &&
+  !!flight.typeRule &&
+  (flight.typeRule.probability >= 1 || flight.typeRule.probability <= 0);
+
+function answerContext(site: SiteConfig, dated: DatedAnswer, flight?: FlightFacts): AnswerContext {
   const cfg = siteAirline(site);
+  const origin = flight?.routes[0]?.departure_airport ?? null;
   return {
     flightNumber: dated.flightNumber,
     date: dated.date,
     daysOut: dated.daysOut,
+    origin,
+    originZone: origin ? (airportTimezone(origin) ?? null) : null,
     nowSec: Math.floor(Date.now() / 1000),
     airlineName: cfg.name,
     zoneFor: (code) => airportTimezone(code),
@@ -190,7 +125,7 @@ function InvalidQueryNotice({
       {invalid.airportHint && showRoutePlanner && (
         <p className="mt-2 text-secondary">
           Looking for an airport or a route? Try the{" "}
-          <a href="/route-planner" className="text-accent hover:underline">
+          <a href="/route-planner" className={LINK}>
             route planner
           </a>
           .
@@ -217,11 +152,11 @@ export default function CheckFlightPage({
   const flightExample = fn ?? `${cfg.iata}123`;
   const shortName = cfg.shortName;
 
-  const ctx = dated ? answerContext(site, dated) : null;
+  const ctx = dated ? answerContext(site, dated, flight) : null;
   const answer: FlightAnswer | null = dated && ctx ? renderFlightAnswer(dated.body, ctx) : null;
   // A prediction near departure may firm up from the API's live schedule
   // lookup, which the server render deliberately skips.
-  const refresh = !!dated && !!answer && !answer.firm && dated.daysOut >= -1 && dated.daysOut <= 2;
+  const refresh = !!ctx && !!answer && !answer.firm && !datePassed(ctx) && ctx.daysOut <= 2;
 
   const accuracyCopy =
     cfg.verifierBackend === "united"
@@ -252,7 +187,7 @@ export default function CheckFlightPage({
     : answer
       ? undefined
       : flight
-        ? `${usualSummary(flight)} Pick a date for a firm answer.`
+        ? `${usualSummary(flight)}${typeSettled(flight) ? "" : " Pick a date for a firm answer."}`
         : "Enter your flight number and date to see whether your aircraft has Starlink.";
 
   const scheduledOnDate = answer?.firm === true;
@@ -269,16 +204,17 @@ export default function CheckFlightPage({
       <PageHeader title={title} dek={dek} />
 
       {answer && (
-        <section className="relative mx-auto mb-6 w-full max-w-3xl" aria-live="polite">
+        <Section bare>
           <div
             id="flight-answer"
+            aria-live="polite"
             // biome-ignore lint/security/noDangerouslySetInnerHtml: renderFlightAnswer escapes every value
             dangerouslySetInnerHTML={{ __html: answer.html }}
           />
-        </section>
+        </Section>
       )}
 
-      <section className="relative mx-auto mb-8 w-full max-w-3xl">
+      <Section bare>
         {answer && <SectionTitle className="mb-3">Check another date or flight</SectionTitle>}
         <Panel>
           {invalid && (
@@ -300,31 +236,31 @@ export default function CheckFlightPage({
           {site.features.intentPages && (
             <p className="mt-4 text-sm text-muted">
               New here?{" "}
-              <a href="/how-to-check" className="text-accent hover:underline">
+              <a href="/how-to-check" className={LINK}>
                 How the check works
               </a>
               .{" "}
-              <a href="/is-starlink-free" className="text-accent hover:underline">
+              <a href="/is-starlink-free" className={LINK}>
                 Starlink Wi-Fi is free
               </a>
               .
             </p>
           )}
         </Panel>
-      </section>
+      </Section>
 
       {flight && <FlightFactBlocks flight={flight} scheduledOnDate={scheduledOnDate} />}
       {!flight && popular.length > 0 && (
-        <section className="relative mx-auto mb-8 w-full max-w-3xl">
+        <Section bare>
           <PopularFlightsLinks flights={popular} airlineName={cfg.name} />
-        </section>
+        </Section>
       )}
 
       <Section title="Other ways to check">
         <ul className="space-y-2 text-sm leading-relaxed text-secondary">
           <li>
             Know your tail number? Search it on the{" "}
-            <a href="/" className="text-accent hover:underline">
+            <a href="/" className={LINK}>
               homepage
             </a>
             .
@@ -336,7 +272,7 @@ export default function CheckFlightPage({
                 href={CHROME_EXTENSION_URL}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-accent hover:underline"
+                className={LINK}
               >
                 Chrome extension
               </a>{" "}
@@ -346,7 +282,7 @@ export default function CheckFlightPage({
           {flight && site.features.fleetPage && (
             <li>
               See every {airlineName} aircraft on the{" "}
-              <a href="/fleet" className="text-accent hover:underline">
+              <a href="/fleet" className={LINK}>
                 fleet page
               </a>
               .
@@ -362,9 +298,9 @@ export default function CheckFlightPage({
         <script
           type="application/json"
           id="check-flight-config"
-          // biome-ignore lint/security/noDangerouslySetInnerHtml: escaped by jsonLdString
+          // biome-ignore lint/security/noDangerouslySetInnerHtml: escaped by scriptSafeJson
           dangerouslySetInnerHTML={{
-            __html: jsonLdString({
+            __html: scriptSafeJson({
               ...ctx,
               zoneFor: undefined,
               nowSec: undefined,

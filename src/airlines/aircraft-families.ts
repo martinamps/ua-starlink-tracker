@@ -80,6 +80,49 @@ export function normalizeAircraftType(raw: string | null | undefined): string {
   return "other";
 }
 
+const FAMILY_DISPLAY: Record<string, string> = {
+  "B737-MAX8": "737 MAX 8",
+  "B737-MAX9": "737 MAX 9",
+  "B737-MAX10": "737 MAX 10",
+  "B737-700": "737-700",
+  "B737-800": "737-800",
+  "B737-900": "737-900",
+  B737F: "737 Freighter",
+  B717: "717",
+  B747: "747",
+  B747F: "747 Freighter",
+  B757: "757",
+  B767: "767",
+  B777: "777",
+  B777F: "777 Freighter",
+  B787: "787",
+  "CRJ-200": "CRJ200",
+  "CRJ-550": "CRJ550",
+  "CRJ-700": "CRJ700",
+  "ERJ-145": "ERJ-145",
+};
+
+/** "A321-271NX", "A321-271N", "A21N", "A321neo": the re-engined A321. */
+const A321NEO = /neo|A21N|\d{3}N[XY]?\b/i;
+
+/**
+ * Short display name for any aircraft-type string — FR24 names, sheet headers
+ * ("B737-MAX9", "E175SC") and family keys alike — via the one normalizer, so a
+ * page never shows "E175" and "ERJ-175" for the same aircraft. The 787's
+ * sub-variant and the A321neo survive when the raw string names them, because
+ * programmes split on them. Display only: grouping keys on normalizeAircraftType.
+ */
+export function aircraftName(raw: string | null | undefined): string {
+  const family = normalizeAircraftType(raw);
+  if (family === "other" || family === "unknown") return raw?.trim() || "Unknown";
+  if (family === "B787") {
+    const variant = raw?.match(/787-?(8|9|10)\b/);
+    if (variant) return `787-${variant[1]}`;
+  }
+  if (family === "A321" && raw && A321NEO.test(raw)) return "A321neo";
+  return FAMILY_DISPLAY[family] ?? family;
+}
+
 /** The matcher as data, for inline page scripts that must classify a type
  * string exactly as the server does (a hand-written second copy drifts). */
 export function aircraftFamilyPatterns(): Array<[source: string, flags: string, family: string]> {

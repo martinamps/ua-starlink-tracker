@@ -9,6 +9,7 @@
  */
 
 import type React from "react";
+import { aircraftName } from "../airlines/aircraft-families";
 import {
   type AirlineConfig,
   type SiteConfig,
@@ -26,7 +27,6 @@ import {
 } from "../airlines/rollout-facts";
 import type { PerAirlineStat } from "../types";
 import {
-  type PageLink,
   ROLLOUT_TONE,
   StagePill,
   factsStage,
@@ -38,6 +38,7 @@ import {
   ButtonLink,
   Chip,
   Eyebrow,
+  type Link,
   PageHeader,
   PageShell,
   Panel,
@@ -46,10 +47,8 @@ import {
   StatValue,
   Td,
   Th,
-  aircraftName,
-  fmt,
-  pct,
 } from "./layout";
+import { fmt, pct } from "./ui/format";
 import { Pill, TONE_TEXT, type Tone } from "./ui/tone";
 
 const FACTS_TONE: Record<RolloutFactsStatus, Tone> = {
@@ -78,6 +77,8 @@ export interface TrackedLink {
  * or mid-install. */
 export interface TypePhase {
   family: string;
+  /** The roster's name for the row ("787-8", "A320 and A321neo"); aircraftName(family) otherwise. */
+  label?: string;
   phase: WifiPhase;
   /** Roster counts for the family, when known. */
   equipped?: number;
@@ -103,7 +104,7 @@ export function PhaseTable({ phases }: { phases: TypePhase[] }) {
   return (
     <div className="mb-4">
       <Eyebrow className="mb-1">By aircraft type</Eyebrow>
-      {phases.map(({ family, phase, equipped, total }) => {
+      {phases.map(({ family, label, phase, equipped, total }) => {
         const p = PHASE_LABEL[phase];
         return (
           <div
@@ -112,7 +113,7 @@ export function PhaseTable({ phases }: { phases: TypePhase[] }) {
             className="flex items-center justify-between gap-3 py-1.5 border-b border-subtle last:border-0 text-sm"
           >
             <span className="text-primary">
-              {aircraftName(family)}
+              {label ?? aircraftName(family)}
               {total !== undefined && (
                 <span className="text-muted tabular-nums">
                   {" "}
@@ -251,7 +252,7 @@ export function AirlinesIndexPage({
   /** Head-to-head /compare pages. This index is their only HTML entry point —
    * without these links the pair pages are sitemap-only orphans. */
   comparisons: TrackedLink[];
-  pageLinks?: PageLink[];
+  pageLinks?: Link[];
   currentPath?: string;
 }) {
   const programmes = PROGRAMME_ORDER.flatMap((s) => roster.filter((e) => e.status === s));
@@ -422,7 +423,7 @@ export function AirlineDetailPage({
   /** Type→phase table for type-determined programs; null otherwise. Present →
    * this page publishes it INSTEAD of a blended fleet percentage. */
   phases?: TypePhase[] | null;
-  pageLinks?: PageLink[];
+  pageLinks?: Link[];
   currentPath?: string;
 }) {
   const { cfg, stat } = overview;
@@ -530,7 +531,7 @@ export function AirlineFactsPage({
   site: SiteConfig;
   entry: AirlineFactsEntry;
   trackedLinks: TrackedLink[];
-  pageLinks?: PageLink[];
+  pageLinks?: Link[];
   currentPath?: string;
 }) {
   return (
