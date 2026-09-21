@@ -16,15 +16,6 @@ export interface RouteDeparture {
   verified: boolean;
 }
 
-/** getRouteFlightNumbers already drops the one-sighting numbers that are
- * artifacts (regional and charter ranges, implausible block times) and keeps a
- * once-a-day long-haul number the cache caught once. */
-const HISTORY_MIN_SIGHTINGS = 1;
-
-function listed(fns: RouteSummary["flightNumbers"]) {
-  return fns.filter((f) => f.scheduled === 1 || f.times >= HISTORY_MIN_SIGHTINGS);
-}
-
 function joinList(items: string[]): string {
   if (items.length <= 1) return items.join("");
   return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
@@ -60,7 +51,8 @@ export function routeVerdict(
   // Lead with what we durably know. The schedule window is only 48h, so a
   // route with real history spends most of its life "empty" — opening on the
   // negative made ~43% of the corpus read as a no-data page.
-  const fns = listed(route.flightNumbers);
+  // getRouteFlightNumbers has already dropped the one-sighting artifacts.
+  const fns = route.flightNumbers;
   if (fns.length > 0) {
     const sample = fns.slice(0, 3).map((f) => f.flight_number);
     const more = fns.length > 3 ? ` and ${fmt(fns.length - 3)} more` : "";
@@ -139,10 +131,9 @@ function FlightNumbers({
 }) {
   const scheduled = route.flightNumbers.filter((f) => f.scheduled === 1);
   const history = route.flightNumbers
-    .filter((f) => f.scheduled !== 1 && f.times >= HISTORY_MIN_SIGHTINGS)
+    .filter((f) => f.scheduled !== 1)
     .map((f) => ({ ...f, seen: lastSeen.get(f.flight_number) ?? null }))
     .sort((a, b) => (b.seen ?? 0) - (a.seen ?? 0) || b.times - a.times);
-  const seenOnce = route.flightNumbers.length - scheduled.length - history.length;
 
   if (scheduled.length === 0 && history.length === 0) {
     return (
@@ -182,11 +173,6 @@ function FlightNumbers({
             ))}
           </div>
         </div>
-      )}
-      {seenOnce > 0 && (
-        <p className="text-xs text-muted">
-          {fmt(seenOnce)} more flight number{seenOnce === 1 ? "" : "s"} seen only once, not listed.
-        </p>
       )}
     </div>
   );
