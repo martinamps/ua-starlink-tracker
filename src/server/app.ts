@@ -3932,17 +3932,15 @@ function compareLinks(ctx: RequestContext): TrackedLink[] {
   }));
 }
 
-/** A facts page's <title>: the question-form headline, with "Starlink Tracker"
- * added for airlines that actually fly Starlink when it still fits. */
+/** A facts page's <title>: the H1's own words, cut to the answer before its
+ * dash when the whole headline runs long. Never "Tracker": nothing tracks
+ * these airlines by tail or by type. */
 function factsTitle(entry: AirlineFactsEntry): string {
   const headline = factsHeadline(entry);
-  if (entry.status !== "installing" && entry.status !== "complete") return headline;
-  const answer = entry.status === "complete" ? "Rollout Complete" : "Rollout Under Way";
   return (
-    [
-      `Does ${entry.shortName} Have Starlink? Yes | ${entry.shortName} Starlink Tracker`,
-      `${entry.shortName} Starlink Tracker: Yes, ${answer}`,
-    ].find((t) => t.length <= TITLE_MAX) ?? headline
+    [entry.title, headline, headline.split(" — ")[0]].find(
+      (t): t is string => !!t && t.length <= TITLE_MAX
+    ) ?? headline
   );
 }
 
@@ -4242,7 +4240,7 @@ function homeMeta(
     ).length;
     const tracked = hubContentAirlines().map((a) => a.shortName);
     return {
-      siteTitle: `Which Airlines Have Starlink WiFi? ${flying} Airlines Compared`,
+      siteTitle: `Which Airlines Have Starlink WiFi? ${AIRLINE_FACTS.length} Airlines Compared`,
       siteDescription: `${flying} airlines fly Starlink Wi-Fi or are installing it. Compare ${tracked.slice(0, -1).join(", ")} and ${tracked.at(-1)} side by side, plus every other rollout, dated and sourced.`,
     };
   }

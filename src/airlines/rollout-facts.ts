@@ -100,6 +100,9 @@ export interface AirlineFactsEntry {
   /** Question-form H1 override for pages that own a specific SERP
    * ("Does Delta Have Starlink?"). Derived from status when absent. */
   headline?: string;
+  /** SERP title when the headline runs past 60 characters with no dash to cut
+   * at. Same claim as the headline, fewer words. */
+  title?: string;
   facts: RolloutFact[];
   /** not_starlink only. `chose` = the airline picked a different system, which
    * its own announcement confirms. `unannounced` = we have found no Starlink
@@ -1008,6 +1011,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     status: "installing",
     statusLabel: "Charter jets + some Q400s",
     headline: "Does Air Canada Have Starlink? Only on Charter Jets and Some Regional Q400s",
+    title: "Does Air Canada Have Starlink? Only Charter Jets, Some Q400s",
     summary:
       "Not on the mainline fleet. Air Canada's four Jetz charter A320s were fitted with Starlink in summer 2025, and nine Jazz-operated Dash 8-400s at Billy Bishop were due to start flying from October 2025 with free Wi-Fi sponsored by Bell. The widely quoted 25 is the cabin refit, not the Wi-Fi fit.",
     facts: [
