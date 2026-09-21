@@ -31,10 +31,11 @@ import {
   CANONICAL_FLIGHT_PERMALINK,
   buildFlightLookupVariants,
   canonicalFlightInput,
-  detectAirline,
   detectMarketingCarrier,
   ensureAirlinePrefix,
+  icaoCallsignToIata,
   normalizeAirlineFlightNumber,
+  permalinkCarrier,
   stripFlightNumberZeros,
 } from "../airlines/flight-number";
 import {
@@ -52,7 +53,6 @@ import {
   airlineHomeUrl,
   airlineSlug,
   brandMetadata,
-  enabledAirlines,
   hubContentAirlines,
   publicAirlines,
   resolveSite,
@@ -2739,12 +2739,6 @@ function subPageMeta(
  * are pinned; the hub host detects the carrier from the flight-number prefix.
  * Deliberately looser than decideCarrier (check-flight-core): this only picks
  * page meta — operating-prefix permalinks still render the generic page. */
-function resolveFlightCfg(ctx: RequestContext, flightNumber: string): AirlineConfig | null {
-  const tenantCfg = tenantConfig(ctx.tenant);
-  if (tenantCfg) return flightNumber.startsWith(tenantCfg.iata) ? tenantCfg : null;
-  return detectAirline(flightNumber);
-}
-
 type CheckFlightPath =
   | { kind: "bare" }
   | { kind: "flight"; raw: string; fn: string; date: string | null }
@@ -2765,21 +2759,10 @@ function parseCheckFlightPath(pathname: string): CheckFlightPath {
   } catch {
     return { kind: "invalid", raw: null }; // malformed % escape
   }
-  const fn = stripFlightNumberZeros(icaoToIata(canonicalFlightInput(raw)));
+  const fn = stripFlightNumberZeros(icaoCallsignToIata(canonicalFlightInput(raw)));
   if (!CANONICAL_FLIGHT_PERMALINK.test(fn)) return { kind: "invalid", raw };
   const date = second && isRealIsoDate(second) ? second : null;
   return { kind: "flight", raw, fn, date };
-}
-
-/** UAL675 → UA675: people paste the callsign from FR24/FlightAware. Only a
- * carrier's own ICAO code maps — operating prefixes (SKW, OO) fly for several. */
-function icaoToIata(fn: string): string {
-  for (const cfg of enabledAirlines()) {
-    if (fn.startsWith(cfg.icao) && /^\d{1,4}$/.test(fn.slice(cfg.icao.length))) {
-      return `${cfg.iata}${fn.slice(cfg.icao.length)}`;
-    }
-  }
-  return fn;
 }
 
 /** Cap what an invalid segment can echo back into the page. React escapes it;
@@ -3122,7 +3105,7 @@ const checkFlightPage: Handler = async (ctx) => {
         301
       );
     }
-    const cfg = resolveFlightCfg(ctx, fn);
+    const cfg = permalinkCarrier(tenantConfig(ctx.tenant), fn);
     // Shape-valid but carrying another carrier's prefix on this host. The
     // notice never names that carrier — a tenant host must not confirm what
     // else exists (same rule the /api foreign-prefix gate follows).

@@ -54,7 +54,7 @@ export function parseWatchPath(
   } catch {
     return null;
   }
-  const fn = ensureAirlinePrefix(cfg, decoded.replace(/[\s\-.]/g, ""));
+  const fn = ensureAirlinePrefix(cfg, decoded);
   const date = rawDate.replace(/\.ics$/i, "");
   if (!canonicalPermalinkFor(cfg).test(fn) || !isRealIsoDate(date)) return null;
   return { fn, date };

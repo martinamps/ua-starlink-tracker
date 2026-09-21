@@ -24,9 +24,9 @@ import {
   buildAirlineFlightNumberVariants,
   canonicalFlightInput,
   detectAirline,
-  detectMarketingCarrier,
   ensureAirlinePrefix,
   inferSubfleet,
+  marketingFlightNumber,
   normalizeAirlineFlightNumber,
 } from "../airlines/flight-number";
 import {
@@ -1961,14 +1961,6 @@ function toolListStarlinkAircraft(
  * a regional operator's code (OO/SKW) carries the row airline's marketing
  * number, the same equivalence UA's carrierPrefixes encode.
  */
-function marketingFlightNumber(rowCfg: AirlineConfig, raw: string): string {
-  const fn = normalizeAirlineFlightNumber(rowCfg, raw);
-  if (fn.startsWith(rowCfg.iata) && /^\d+$/.test(fn.slice(rowCfg.iata.length))) return fn;
-  const marketing = detectMarketingCarrier(raw);
-  if (marketing) return normalizeAirlineFlightNumber(marketing, raw);
-  const digits = raw.match(/^[A-Z]{2,3}(\d{1,4})$/)?.[1];
-  return digits ? `${rowCfg.iata}${digits}` : raw;
-}
 
 // Past the ~48h schedule cache; only a bound, never a window the data fills.
 const SEARCH_HORIZON_SEC = 14 * 86400;
