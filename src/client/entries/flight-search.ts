@@ -1,7 +1,4 @@
 import { wireFlightSearchForms } from "../flight-search";
+import { onReady } from "../ready";
 
-if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", wireFlightSearchForms);
-} else {
-  wireFlightSearchForms();
-}
+onReady(wireFlightSearchForms);

@@ -27,6 +27,7 @@ import {
 } from "./fleet/pipeline";
 import { PROVIDER_LABEL, ProviderLegend } from "./fleet/providers";
 import { ShareBarRow, providerCounts } from "./fleet/type-bars";
+import { FlightSearchForm } from "./flight-search-form";
 import { EYEBROW, H2, PANEL, PageHeader, PageShell, StatInline, fmt } from "./layout";
 import { shortDate } from "./ui/format";
 
@@ -153,50 +154,6 @@ function Header({
       )}
       <TailMatrix def={def} data={data} airline={airline} official={official} />
     </section>
-  );
-}
-
-function CheckForm({ iata }: { iata: string }) {
-  return (
-    <>
-      <form
-        id="type-flight-search"
-        method="GET"
-        action="/check-flight"
-        className="flex flex-col sm:flex-row gap-2 mt-3"
-      >
-        <input
-          type="text"
-          id="type-flight-number"
-          name="flight_number"
-          aria-label="Flight number"
-          placeholder={`${iata}123`}
-          autoComplete="off"
-          autoCapitalize="characters"
-          spellCheck={false}
-          className="flex-1 min-w-0 bg-base border border-subtle rounded px-3 py-2 text-primary font-mono text-sm focus:outline-none focus:border-accent"
-        />
-        <input
-          type="date"
-          id="type-flight-date"
-          name="date"
-          aria-label="Flight date"
-          className="bg-base border border-subtle rounded px-3 py-2 text-primary font-mono text-sm focus:outline-none focus:border-accent sm:w-40"
-        />
-        <button
-          type="submit"
-          className="px-5 py-2 border border-subtle text-accent font-display rounded cursor-pointer whitespace-nowrap hover:border-accent"
-        >
-          Check my flight
-        </button>
-      </form>
-      <script
-        // biome-ignore lint/security/noDangerouslySetInnerHtml: static inline script, no user input
-        dangerouslySetInnerHTML={{
-          __html: `document.addEventListener('DOMContentLoaded',function(){var f=document.getElementById('type-flight-search');if(!f)return;f.addEventListener('submit',function(e){e.preventDefault();var n=document.getElementById('type-flight-number').value.trim().toUpperCase().replace(/\\s+/g,'');if(!n)return;if(/^\\d+$/.test(n))n=${JSON.stringify(iata)}+n;var d=document.getElementById('type-flight-date').value;window.location.href='/check-flight/'+encodeURIComponent(n)+(d?'/'+encodeURIComponent(d):'');});});`,
-        }}
-      />
-    </>
   );
 }
 
@@ -497,7 +454,15 @@ export default function AircraftTypePage({
               Flying on {article(def.short)} {def.short}?
             </h2>
             <p className="text-sm text-secondary leading-relaxed">{answer.shareLine}</p>
-            {checkFlight && <CheckForm iata={iata} />}
+            {checkFlight && (
+              <FlightSearchForm
+                site={site}
+                id="type-flight-search"
+                submitLabel="Check my flight"
+                hideLabels
+                className="mt-3"
+              />
+            )}
           </section>
         )}
 

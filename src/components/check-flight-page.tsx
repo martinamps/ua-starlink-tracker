@@ -14,6 +14,7 @@ import { watchFeedEnabled } from "../utils/ics";
 import { type PageLink, PopularFlightsLinks } from "./atoms";
 import { Faq, type FaqEntry, JsonLd, breadcrumbJsonLd, jsonLdString } from "./faq";
 import { ClientScriptTag, FlightSearchForm } from "./flight-search-form";
+import { CHROME_EXTENSION_URL } from "./home/tools";
 import {
   Chip,
   PageHeader,
@@ -497,7 +498,7 @@ export default function CheckFlightPage({
             <li>
               Shopping on Google Flights? The free{" "}
               <a
-                href="https://chromewebstore.google.com/detail/google-flights-starlink-i/jjfljoifenkfdbldliakmmjhdkbhehoi"
+                href={CHROME_EXTENSION_URL}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-accent hover:underline"

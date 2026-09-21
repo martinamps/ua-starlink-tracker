@@ -240,6 +240,8 @@ const CHIP = {
   md: "inline-block rounded border border-subtle bg-surface-elevated px-2.5 py-1 font-mono text-sm text-secondary transition-colors hover:border-accent hover:text-accent",
 } as const;
 
+export const chipClass = (size: keyof typeof CHIP = "md") => CHIP[size];
+
 /** A small link tag: flight numbers, routes, airline pairs. */
 export function Chip({
   href,

@@ -6,6 +6,7 @@
  */
 import { type AnswerContext, type CheckFlightBody, renderFlightAnswer } from "../flight-answer";
 import { wireFlightSearchForms } from "../flight-search";
+import { onReady } from "../ready";
 
 interface CheckFlightConfig extends Omit<AnswerContext, "zoneFor" | "nowSec"> {
   refresh: boolean;
@@ -62,5 +63,4 @@ function init(): void {
   }
 }
 
-if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
-else init();
+onReady(init);

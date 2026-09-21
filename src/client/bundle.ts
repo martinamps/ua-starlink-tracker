@@ -12,7 +12,7 @@
 import path from "node:path";
 import { BASE_RESPONSE_HEADERS } from "../utils/constants";
 
-const ENTRIES = ["flight-search", "check-flight"] as const;
+const ENTRIES = ["flight-search", "check-flight", "hub", "home"] as const;
 export type ClientScript = (typeof ENTRIES)[number];
 
 const srcByName = new Map<ClientScript, string>();
