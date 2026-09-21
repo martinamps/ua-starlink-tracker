@@ -739,24 +739,8 @@ describe("MCP tools are scope-correct on non-UA tenants", () => {
 
 describe("route tag budget matches the code and the doc", () => {
   const root = path.join(import.meta.dir, "..");
-  const appSrc = readFileSync(path.join(root, "src", "server", "app.ts"), "utf8");
   const doc = readFileSync(path.join(root, "docs", "OBSERVABILITY.md"), "utf8");
-
-  /** Distinct values metricRoute() can emit: every exact route, every prefix
-   * family's tag (deduped — three reuse an exact entry's path), plus
-   * "unmatched" for everything a crawler invents. */
-  function distinctRouteTags(): Set<string> {
-    const table = appSrc.match(/const routes: RouteTable = \{([\s\S]*?)\n {2}\};/);
-    const prefixes = appSrc.match(
-      /const prefixRoutes: Array<\[string, Route\]> = \[([\s\S]*?)\n {2}\];/
-    );
-    expect(table, "routes table no longer parses — update this test").not.toBeNull();
-    expect(prefixes, "prefixRoutes no longer parses — update this test").not.toBeNull();
-    const tags = new Set<string>(["unmatched"]);
-    for (const m of (table as RegExpMatchArray)[1].matchAll(/"([^"]+)":/g)) tags.add(m[1]);
-    for (const m of (prefixes as RegExpMatchArray)[1].matchAll(/\["([^"]+)\/",/g)) tags.add(m[1]);
-    return tags;
-  }
+  const distinctRouteTags = () => new Set(app.routeTags);
 
   test("stays inside the documented budget", () => {
     const budget = Number(doc.match(/\*\*Budget: keep it under (\d+)\.\*\*/)?.[1]);
@@ -774,6 +758,5 @@ describe("route tag budget matches the code and the doc", () => {
 
   test("the doc no longer describes the allowlist that was deleted", () => {
     expect(doc).not.toContain("KNOWN_ROUTES set in `server.ts`");
-    expect(appSrc).not.toContain("KNOWN_ROUTES");
   });
 });

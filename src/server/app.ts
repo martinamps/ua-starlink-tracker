@@ -4371,6 +4371,8 @@ const staticDir: Handler = ({ url, site }) => {
 
 export interface App {
   routes: RouteTable;
+  /** Every value the `route` metric tag can take — the tag's cardinality budget. */
+  routeTags: readonly string[];
   dispatch(req: Request): Promise<Response>;
 }
 
@@ -4742,5 +4744,13 @@ export function createApp(db: Database): App {
     );
   }
 
-  return { routes, dispatch };
+  const routeTags = [
+    ...new Set([
+      "unmatched",
+      ...Object.keys(routes),
+      ...prefixRoutes.map(([prefix]) => prefix.slice(0, -1)),
+    ]),
+  ];
+
+  return { routes, routeTags, dispatch };
 }

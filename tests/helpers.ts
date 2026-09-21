@@ -7,7 +7,9 @@
 import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { handleMcpRequest } from "../src/api/mcp-server";
 import { setupTables } from "../src/database/database";
+import type { Scope, ScopedReader } from "../src/database/reader";
 import type { predictFlight } from "../src/scripts/starlink-predictor";
 
 // Snapshot lives inside the checkout (gitignored) so parallel worktrees never
@@ -76,10 +78,15 @@ export async function jsonOf(app: Dispatcher, path: string, host: string, init?:
   return JSON.parse(text);
 }
 
-export function mcpReq(host: string, method: string, params: unknown): Request {
-  return req("/mcp", host, {
+export function mcpReq(
+  host: string,
+  method: string,
+  params: unknown,
+  opts: { query?: string; headers?: Record<string, string> } = {}
+): Request {
+  return req(`/mcp${opts.query ?? ""}`, host, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...opts.headers },
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
   });
 }
@@ -89,6 +96,37 @@ export async function postMcp(app: Dispatcher, host: string, method: string, par
   const r = await app.dispatch(mcpReq(host, method, params));
   if (r.status !== 200) throw new Error(`mcp ${method} → ${r.status}`);
   return r.json();
+}
+
+/** handleMcpRequest directly (no app, no host routing) + 200 check + parsed body. */
+export async function mcpDirect(
+  scope: Scope,
+  getReader: (scope: Scope) => ScopedReader,
+  method: string,
+  params: unknown = {}
+) {
+  const r = await handleMcpRequest(
+    mcpReq("unitedstarlinktracker.com", method, params),
+    scope,
+    getReader
+  );
+  if (r.status !== 200) throw new Error(`mcp ${method} → ${r.status}`);
+  return r.json();
+}
+
+/** A tools/call body's first text block and error flag. */
+export function toolText(json: { result?: { content?: { text: string }[]; isError?: boolean } }) {
+  return { text: json.result?.content?.[0]?.text ?? "", isError: json.result?.isError === true };
+}
+
+/** tools/call through the app; resolves to the tool's text and error flag. */
+export async function mcpTool(
+  app: Dispatcher,
+  host: string,
+  name: string,
+  args: Record<string, unknown> = {}
+) {
+  return toolText(await postMcp(app, host, "tools/call", { name, arguments: args }));
 }
 
 export const stubPredict = (n = 0) =>

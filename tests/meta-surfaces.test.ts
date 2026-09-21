@@ -401,12 +401,7 @@ describe("rate limiter covers /mcp and permalinks", () => {
   const FLOODS: Array<[string, () => Request]> = [
     [
       "POST /mcp",
-      () =>
-        req("/mcp", UA, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "x-forwarded-for": "10.99.1.1" },
-          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" }),
-        }),
+      () => mcpReq(UA, "ping", undefined, { headers: { "x-forwarded-for": "10.99.1.1" } }),
     ],
     [
       "OPTIONS /mcp",

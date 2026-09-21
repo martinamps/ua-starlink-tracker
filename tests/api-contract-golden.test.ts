@@ -16,7 +16,7 @@ import { addDaysISO } from "../src/api/qatar-verdict";
 import { upsertQatarEquipmentHistory, upsertQatarSchedule } from "../src/database/database";
 import { createApp } from "../src/server/app";
 import { airportLocalDate } from "../src/utils/airport-tz";
-import { addFleet, addFlight, addPlane, makeSyntheticDb, utc } from "./helpers";
+import { addFleet, addFlight, addPlane, makeSyntheticDb, mcpReq, utc } from "./helpers";
 
 const FIXTURE = "tests/golden/api-contracts.json";
 const UA = "unitedstarlinktracker.com";
@@ -320,20 +320,12 @@ async function capture(app: ReturnType<typeof createApp>): Promise<Record<string
   for (const c of MCP_CASES) {
     await send(
       `${c.host} mcp check_flight ${JSON.stringify(c.args)}`,
-      new Request("http://x/mcp", {
-        method: "POST",
-        headers: {
-          Host: c.host,
-          "Content-Type": "application/json",
-          "cf-connecting-ip": "127.0.0.1",
-        },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          method: "tools/call",
-          params: { name: "check_flight", arguments: c.args },
-        }),
-      })
+      mcpReq(
+        c.host,
+        "tools/call",
+        { name: "check_flight", arguments: c.args },
+        { headers: { "cf-connecting-ip": "127.0.0.1" } }
+      )
     );
   }
   return out;

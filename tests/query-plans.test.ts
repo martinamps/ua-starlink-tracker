@@ -14,9 +14,8 @@
  *    Measured at production cardinality: 14.6ms → 0.01ms only after ANALYZE.
  */
 
+import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import {
   TYPE_PAGE_EVENTS_SQL,
   TYPE_PAGE_FLIGHTS_SQL,
@@ -227,13 +226,23 @@ describe("departure_log trim lives in the archive job, not the read path", () =>
  */
 describe("setupTables DDL actually executes", () => {
   test("no CREATE INDEX is stranded behind a CREATE TABLE", () => {
-    const src = readFileSync(join(import.meta.dir, "..", "src", "database", "database.ts"), "utf8");
-    // A query() template that declares an index is the bug shape, whatever
-    // table it belongs to — exec() runs every statement, query().run() doesn't.
-    const stranded = [...src.matchAll(/db\.query\(\s*`([^`]*)`\s*\)\s*\.run\(\)/g)].filter(
-      ([, sql]) => /create\s+index/i.test(sql.split(";").slice(1).join(";"))
+    // Record every string setupTables hands to query() on a fresh database —
+    // the path that runs each CREATE branch. exec() runs every statement,
+    // query().run() only the first, so a CREATE INDEX after a ";" is dead.
+    const db = new Database(":memory:");
+    const prepared: string[] = [];
+    const query = db.query.bind(db);
+    db.query = ((sql: string) => {
+      prepared.push(sql);
+      return query(sql);
+    }) as typeof db.query;
+    setupTables(db);
+    db.close();
+    expect(prepared.length).toBeGreaterThan(0);
+    const stranded = prepared.filter((sql) =>
+      /create\s+index/i.test(sql.split(";").slice(1).join(";"))
     );
-    expect(stranded.map(([, sql]) => sql.slice(0, 80))).toEqual([]);
+    expect(stranded.map((sql) => sql.slice(0, 80))).toEqual([]);
   });
 
   test("a freshly migrated database has them all", () => {

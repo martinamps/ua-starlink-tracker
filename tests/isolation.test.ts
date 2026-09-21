@@ -579,19 +579,8 @@ describe("MCP per-host branding + scope override", () => {
   const QR_HOST = "qatarstarlinktracker.com";
 
   async function mcpInit(host: string, query = "") {
-    const r = await app.dispatch(
-      new Request(`http://x/mcp${query}`, {
-        method: "POST",
-        headers: { Host: host, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          method: "initialize",
-          params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t" } },
-        }),
-      })
-    );
-    return r.json();
+    const params = { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t" } };
+    return (await app.dispatch(mcpReq(host, "initialize", params, { query }))).json();
   }
 
   test("UA host: serverInfo.name = united-starlink-tracker", async () => {

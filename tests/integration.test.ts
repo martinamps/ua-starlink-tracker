@@ -42,7 +42,7 @@ import { createApp } from "../src/server/app";
 import { type ScopedReader, createReaderFactory } from "../src/server/context";
 import { airportLocalDate } from "../src/utils/airport-tz";
 import { pickVerifiableFlight, unitedLookupDate } from "../src/utils/constants";
-import { TEST_DB, jsonOf, mcpReq, openSnapshot } from "./helpers";
+import { TEST_DB, jsonOf, mcpDirect, mcpReq, openSnapshot } from "./helpers";
 
 // UA-bound conveniences — these unit tests pin United's carrier-prefix mappings.
 const UA_CFG = AIRLINES.UA;
@@ -173,17 +173,9 @@ describe("/api/check-flight contract", () => {
 // MCP protocol — JSON-RPC 2.0 envelope + tool schemas
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function mcpCall(method: string, params?: unknown) {
-  // Direct handleMcpRequest (not app.dispatch) — these tests pin the MCP layer
-  // against a known scoped reader; the request itself is the shared builder.
-  const resp = await handleMcpRequest(
-    mcpReq("unitedstarlinktracker.com", method, params),
-    "UA",
-    () => reader
-  );
-  expect(resp.status).toBe(200);
-  return resp.json();
-}
+// Direct handleMcpRequest (not app.dispatch) — these tests pin the MCP layer
+// against a known scoped reader.
+const mcpCall = (method: string, params?: unknown) => mcpDirect("UA", () => reader, method, params);
 
 describe("MCP protocol", () => {
   test("GET with JSON accept returns 405 (Streamable HTTP)", async () => {

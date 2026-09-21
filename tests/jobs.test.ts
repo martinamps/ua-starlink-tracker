@@ -7,8 +7,6 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { AIRLINES, enabledAirlines } from "../src/airlines/registry";
 import { checkNewPlanes } from "../src/api/flight-updater";
 import { FlightRadar24API } from "../src/api/flightradar24-api";
@@ -30,6 +28,7 @@ import {
 } from "../src/scripts/data-freshness";
 import { buildRoster, fleetSyncInitialDelayMs, rosterSources } from "../src/scripts/fleet-sync";
 import { ingestQatarSchedule } from "../src/scripts/qatar-schedule-ingester";
+import { SOURCE_AIRLINE } from "../src/scripts/residential-sync";
 import { type SheetScrapeResult, runSheetScrape } from "../src/scripts/sheet-scrape";
 import type { FleetStats } from "../src/types";
 import { type JobClock, createOutageBreaker, startJob } from "../src/utils/job-runner";
@@ -836,10 +835,7 @@ describe("residential_sync freshness gauge", () => {
 
   // residential-sync stamps AF:residentialSyncAt; the gauge ignored it.
   test("every airline residential-sync stamps is tracked", () => {
-    const src = readFileSync(join(import.meta.dir, "../src/scripts/residential-sync.ts"), "utf8");
-    const stamped = [...src.matchAll(/setMeta\(db, "residentialSyncAt", [^,]+, "([A-Z0-9]{2})"\)/g)]
-      .map((m) => m[1])
-      .filter((code) => AIRLINES[code]?.enabled);
+    const stamped = Object.values(SOURCE_AIRLINE).filter((code) => AIRLINES[code]?.enabled);
     expect(stamped.length).toBeGreaterThan(0);
     for (const code of stamped) expect(FRESHNESS_COVERAGE.residential_sync).toContain(code);
 
