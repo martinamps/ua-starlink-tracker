@@ -7,12 +7,8 @@ import {
   rolloutTimeline,
 } from "../airlines/rollout-facts";
 import type { InstallRateStats } from "../utils/install-rate";
-import {
-  CumulativeInstallsChart,
-  PaceBullets,
-  nearestPaceGap,
-  paceWindowText,
-} from "./charts/cumulative-installs";
+import { CumulativeInstallsChart, PaceBullets } from "./charts/cumulative-installs";
+import { nearestPaceGap, paceWindowText } from "./charts/rollout-math";
 import type { Link } from "./layout";
 import { PageHeader, PageShell, Section, StatInline } from "./layout";
 import { fmt, pct } from "./ui/format";

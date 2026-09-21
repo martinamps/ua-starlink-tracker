@@ -1,17 +1,16 @@
 /**
  * The airline homepage's rollout panel: one headline number, one stacked bar
- * that splits it by fleet segment, and a 12-week install sparkline. It
- * replaces four donut charts, one of which grouped by manufacturer while
- * claiming to group by type.
+ * that splits it by fleet segment, and a 12-week install sparkline.
  */
 import type React from "react";
 import type { ContentStats } from "../../airlines/content";
 import { excludeMassWriteDays } from "../../utils/install-rate";
-import { StatInline } from "../layout";
+import { Sparkline } from "../charts/sparkline";
+import { Panel, SECTION_WIDE, StatInline } from "../layout";
 import { fmt, pct } from "../ui/format";
 import { Meter } from "../ui/meter";
 
-export interface RolloutSegment {
+interface RolloutSegment {
   label: string;
   n: number;
   total: number;
@@ -19,10 +18,13 @@ export interface RolloutSegment {
 
 const DAY_MS = 86_400_000;
 
+/** Whole days since the epoch of the Monday that starts `dayIndex`'s week (UTC). */
+const mondayOf = (dayIndex: number) => dayIndex - ((dayIndex + 3) % 7);
+
 /**
- * Installs per rolling 7-day window, oldest first, ending today (UTC). Rolling
- * windows rather than calendar weeks so the last point is never a partial week
- * that reads as a slowdown. Bulk-import days are dropped, as on /install-rate.
+ * Installs per calendar week (Monday start, UTC), oldest first, the last one
+ * the current partial week: the same buckets as /fleet's install-pace bars.
+ * Bulk-import days are dropped, as on /install-rate.
  */
 export function weeklyInstalls(
   daily: { day: string; installs: number }[],
@@ -30,13 +32,13 @@ export function weeklyInstalls(
   weeks = 12
 ): number[] {
   const { kept } = excludeMassWriteDays(daily);
-  const today = Math.floor(nowMs / DAY_MS);
+  const thisWeek = mondayOf(Math.floor(nowMs / DAY_MS));
   const out = new Array<number>(weeks).fill(0);
   for (const d of kept) {
-    const age = today - Math.floor(Date.parse(`${d.day}T00:00:00Z`) / DAY_MS);
-    if (age < 0 || Number.isNaN(age)) continue;
-    const bucket = weeks - 1 - Math.floor(age / 7);
-    if (bucket >= 0) out[bucket] += d.installs;
+    const day = Math.floor(Date.parse(`${d.day}T00:00:00Z`) / DAY_MS);
+    if (Number.isNaN(day)) continue;
+    const bucket = weeks - 1 - (thisWeek - mondayOf(day)) / 7;
+    if (bucket >= 0 && bucket < weeks) out[bucket] += d.installs;
   }
   return out;
 }
@@ -60,37 +62,18 @@ function StackedBar({ segments, total }: { segments: RolloutSegment[]; total: nu
   );
 }
 
-function Sparkline({ values }: { values: number[] }) {
+function WeeklySparkline({ values }: { values: number[] }) {
   if (values.length < 2 || values.every((v) => v === 0)) return null;
-  const W = 240;
-  const H = 48;
-  const max = Math.max(...values);
-  const step = W / (values.length - 1);
-  const pts = values.map((v, i) => [i * step, H - 4 - (v / max) * (H - 8)] as const);
-  const line = pts.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
   const last = values[values.length - 1];
   return (
     <figure className="w-full sm:w-72">
-      <svg
-        viewBox={`0 0 ${W} ${H}`}
-        className="block h-12 w-full"
-        preserveAspectRatio="none"
-        role="img"
-        aria-label={`Aircraft added per week, last ${values.length} weeks: ${values.join(", ")}`}
-      >
-        <polygon points={`0,${H} ${line} ${W},${H}`} fill="var(--color-accent)" opacity="0.12" />
-        <polyline
-          points={line}
-          fill="none"
-          stroke="var(--color-accent)"
-          strokeWidth="2"
-          strokeLinejoin="round"
-          vectorEffect="non-scaling-stroke"
-        />
-      </svg>
+      <Sparkline
+        values={values}
+        label={`Aircraft added per week, last ${values.length} weeks: ${values.join(", ")}`}
+      />
       <figcaption className="mt-1 text-xs text-muted">
         Added per week, last {values.length} weeks ·{" "}
-        <span className="tabular-nums">{fmt(last)}</span> in the last 7 days
+        <span className="tabular-nums">{fmt(last)}</span> this week so far
       </figcaption>
     </figure>
   );
@@ -111,10 +94,7 @@ export function RolloutPanel({
 }) {
   const { starlinkCount: n, totalCount: total, installs30d, weeklyInstalls: weekly } = stats;
   return (
-    <section
-      aria-label="Rollout progress"
-      className="relative mx-auto mb-8 w-full max-w-3xl rounded-lg border border-subtle bg-surface p-5"
-    >
+    <Panel as="section" aria-label="Rollout progress" className={SECTION_WIDE}>
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="font-display text-4xl text-primary tabular-nums">
@@ -133,7 +113,7 @@ export function RolloutPanel({
             ) : null}
           </p>
         </div>
-        {weekly && <Sparkline values={weekly} />}
+        {weekly && <WeeklySparkline values={weekly} />}
       </div>
       <div className="mt-5">
         <StackedBar segments={segments} total={total} />
@@ -149,7 +129,7 @@ export function RolloutPanel({
           ))}
           <li className="flex items-center gap-2 text-muted">
             <span
-              className="inline-block h-2.5 w-2.5 rounded-sm bg-surface-elevated"
+              className="inline-block h-2.5 w-2.5 rounded-sm border border-muted bg-surface-elevated"
               aria-hidden="true"
             />
             Not yet: {fmt(Math.max(0, total - segments.reduce((a, s) => a + s.n, 0)))}
@@ -157,7 +137,7 @@ export function RolloutPanel({
         </ul>
       </div>
       {children && <div className="mt-4 border-t border-subtle pt-4">{children}</div>}
-    </section>
+    </Panel>
   );
 }
 

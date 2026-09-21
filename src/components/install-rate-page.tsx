@@ -5,9 +5,8 @@ import {
   CumulativeInstallsChart,
   MonthlyInstallsBars,
   PaceBullets,
-  nearestPaceGap,
-  paceWindowText,
 } from "./charts/cumulative-installs";
+import { nearestPaceGap, paceWindowText } from "./charts/rollout-math";
 import { type CiteStat, CiteThis } from "./cite-this";
 import type { Link } from "./layout";
 import { EYEBROW, PANEL, PageHeader, PageShell, SECTION, StatInline } from "./layout";

@@ -11,7 +11,7 @@ import {
   cumulativeSeries,
   nearestPaceGap,
   requiredMonthlyPace,
-} from "../src/components/charts/cumulative-installs";
+} from "../src/components/charts/rollout-math";
 import { createApp } from "../src/server/app";
 import {
   type DailyInstalls,
