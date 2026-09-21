@@ -90,8 +90,7 @@ export class FlightAwareAPI {
 
   async getUpcomingFlights(
     tailNumber: string,
-    _flightNumberSource?: unknown,
-    airlineCode?: string | null
+    { airlineCode }: { airlineCode?: string | null } = {}
   ): Promise<FlightUpdate[]> {
     const airline = airlineCode ? normalizeAirlineTag(airlineCode) : "unmapped";
     return this.retryWithBackoff(async () => {

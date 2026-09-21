@@ -35,8 +35,7 @@ type FlightUpdate = Pick<
 interface FlightAPI {
   getUpcomingFlights(
     tailNumber: string,
-    flightNumberSource?: FlightNumberSource,
-    airlineCode?: string | null
+    opts?: { flightNumberSource?: FlightNumberSource; airlineCode?: string | null }
   ): Promise<FlightUpdate[]>;
 }
 
@@ -105,11 +104,10 @@ async function pollTailFlights(
         // starlink.data.freshness_seconds{job:flight_updater}.
         debug(`Fetching upcoming flights for ${tailNumber}`);
         const airline = getTailAirline(db, tailNumber);
-        const flights = await api.getUpcomingFlights(
-          tailNumber,
-          (airline && AIRLINES[airline]?.flightNumberSource) || "callsign",
-          airline
-        );
+        const flights = await api.getUpcomingFlights(tailNumber, {
+          flightNumberSource: (airline && AIRLINES[airline]?.flightNumberSource) || "callsign",
+          airlineCode: airline,
+        });
 
         span.setTag("flights.count", flights.length);
 

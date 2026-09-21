@@ -147,10 +147,12 @@ export class FlightRadar24API {
 
   private async retryWithBackoff<T>(
     operation: () => Promise<T>,
-    airline: string,
-    maxRetries = 3,
-    requestType = "flights",
-    maxWaitMs?: number
+    {
+      airline,
+      maxRetries = 3,
+      requestType = "flights",
+      maxWaitMs,
+    }: { airline: string; maxRetries?: number; requestType?: string; maxWaitMs?: number }
   ): Promise<T> {
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
@@ -199,56 +201,64 @@ export class FlightRadar24API {
    */
   async getUpcomingFlights(
     tailNumber: string,
-    flightNumberSource: FlightNumberSource = "callsign",
-    /** The tail's airline, when the caller knows it; tags the vendor metric. */
-    airlineCode?: string | null
+    {
+      flightNumberSource = "callsign",
+      airlineCode,
+    }: {
+      flightNumberSource?: FlightNumberSource;
+      /** The tail's airline, when the caller knows it; tags the vendor metric. */
+      airlineCode?: string | null;
+    } = {}
   ): Promise<FlightUpdate[]> {
     const airline = airlineCode ? normalizeAirlineTag(airlineCode) : "unmapped";
-    return this.retryWithBackoff(async () => {
-      // FR24 API expects registration without the leading 'N' for some queries,
-      // but works fine with the full registration
-      const url = `${this.baseUrl}/flight/list.json?query=${tailNumber}&fetchBy=reg&page=1&limit=25`;
+    return this.retryWithBackoff(
+      async () => {
+        // FR24 API expects registration without the leading 'N' for some queries,
+        // but works fine with the full registration
+        const url = `${this.baseUrl}/flight/list.json?query=${tailNumber}&fetchBy=reg&page=1&limit=25`;
 
-      const response = await this.fetchFr24(url, 30000);
+        const response = await this.fetchFr24(url, 30000);
 
-      if (!response.ok) {
-        if (response.status === 404) {
-          info(`No flights found for tail number: ${tailNumber}`);
+        if (!response.ok) {
+          if (response.status === 404) {
+            info(`No flights found for tail number: ${tailNumber}`);
+            metrics.increment(COUNTERS.VENDOR_REQUEST, {
+              vendor: "fr24",
+              type: "flights",
+              status: "success",
+              airline,
+            });
+            return [];
+          }
           metrics.increment(COUNTERS.VENDOR_REQUEST, {
             vendor: "fr24",
             type: "flights",
-            status: "success",
+            status: "error",
+            http_status: String(response.status),
             airline,
           });
-          return [];
+          throw new Error(`FlightRadar24 API error: ${response.status}`);
         }
+
         metrics.increment(COUNTERS.VENDOR_REQUEST, {
           vendor: "fr24",
           type: "flights",
-          status: "error",
-          http_status: String(response.status),
+          status: "success",
           airline,
         });
-        throw new Error(`FlightRadar24 API error: ${response.status}`);
-      }
+        const data: FR24Response = JSON.parse(response.body);
+        const flights = data.result?.response?.data || [];
 
-      metrics.increment(COUNTERS.VENDOR_REQUEST, {
-        vendor: "fr24",
-        type: "flights",
-        status: "success",
-        airline,
-      });
-      const data: FR24Response = JSON.parse(response.body);
-      const flights = data.result?.response?.data || [];
+        if (flights.length === 0) {
+          return [];
+        }
 
-      if (flights.length === 0) {
-        return [];
-      }
-
-      return parseUpcomingFlights(flights, unixNow(), undefined, {
-        flightNumberSource,
-      });
-    }, airline);
+        return parseUpcomingFlights(flights, unixNow(), undefined, {
+          flightNumberSource,
+        });
+      },
+      { airline }
+    );
   }
 
   /**
@@ -414,12 +424,14 @@ export class FlightRadar24API {
 
           return out.sort((a, b) => a.departure_time - b.departure_time);
         },
-        airline,
-        // The request path passes 0: a throttle retry sleeps 30s inline, which
-        // is what stretched one /api/check-flight span to 34.5s on 2026-09-06.
-        opts.maxRetries ?? 1,
-        "assignments",
-        opts.maxWaitMs
+        {
+          airline,
+          // The request path passes 0: a throttle retry sleeps 30s inline, which
+          // is what stretched one /api/check-flight span to 34.5s on 2026-09-06.
+          maxRetries: opts.maxRetries ?? 1,
+          requestType: "assignments",
+          maxWaitMs: opts.maxWaitMs,
+        }
       );
     } catch (err) {
       if (err instanceof Fr24UnavailableError) throw err;
