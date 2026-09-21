@@ -51,8 +51,8 @@ describe("routeVerdict", () => {
       summary({ totalDepartures: 1, equippedDepartures: 1 }),
       "United Airlines"
     );
-    expect(one).toMatch(/^1 Starlink-equipped United Airlines departure on /);
-    expect(one).not.toContain("departures on");
+    expect(one).toMatch(/^1 Starlink flight from ABQ to PDX /);
+    expect(one).not.toContain("flights from");
   });
 
   test("an empty window with history leads with the history, not the negative", () => {
@@ -65,14 +65,14 @@ describe("routeVerdict", () => {
       }),
       "United Airlines"
     );
-    expect(v).toMatch(/^United Airlines flies ABQ → PDX/);
+    expect(v).toMatch(/^United Airlines flies ABQ to PDX/);
     expect(v).toContain("UA123");
     expect(v).not.toMatch(/^No United Airlines departures/);
   });
 
   test("an empty window with no history keeps the honest no-data copy", () => {
     expect(routeVerdict(summary({}), "United Airlines")).toMatch(
-      /^No Starlink-equipped United Airlines departures/
+      /^No Starlink flights from ABQ to PDX/
     );
   });
 
@@ -81,8 +81,8 @@ describe("routeVerdict", () => {
       summary({ totalDepartures: 4, equippedDepartures: 4 }),
       "United Airlines"
     );
-    expect(v).toMatch(/^4 Starlink-equipped United Airlines departures on ABQ → PDX/);
-    expect(v).toContain("check your flight number");
+    expect(v).toMatch(/^4 Starlink flights from ABQ to PDX/);
+    expect(v).not.toMatch(/\bof \d+\b|\ball\b/i);
   });
 
   test("no combination of counts produces coverage claims", () => {

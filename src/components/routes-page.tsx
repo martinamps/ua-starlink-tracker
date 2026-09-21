@@ -1,73 +1,178 @@
 import React from "react";
 import { AIRLINES, type SiteConfig } from "../airlines/registry";
 import type { PopularFlight } from "../database/database";
-import type { RouteSchedule } from "../types";
+import type { AirportDepartures, RouteSchedule, RouteScheduleRow } from "../types";
 import { type PageLink, PopularFlightsLinks } from "./atoms";
-import { EYEBROW, PANEL, PageHeader, PageShell, SECTION_WIDE } from "./layout";
+import { PageHeader, PageShell, Section, Td, Th, fmt } from "./layout";
+import { localDeparture } from "./route-page";
 
-function relativeTime(epochSec: number): string {
-  const mins = Math.round((epochSec * 1000 - Date.now()) / 60000);
-  if (mins <= 0) return "boarding now";
-  if (mins < 60) return `in ${mins}m`;
-  const hrs = Math.round(mins / 60);
-  return `in ${hrs}h`;
+interface RouteLeg {
+  origin: string;
+  destination: string;
+  departures: number;
+  next: number;
 }
 
-function RouteRows({ schedule }: { schedule: RouteSchedule }) {
-  if (schedule.rows.length === 0) {
-    return (
-      <p className="text-sm text-muted">
-        No Starlink-equipped departures are in the schedule window right now. Tail assignments
-        refresh continuously — check back shortly.
-      </p>
-    );
+interface MergedRoute {
+  key: string;
+  a: string;
+  b: string;
+  /** Busier direction first. */
+  legs: RouteLeg[];
+  departures: number;
+  next: RouteLeg;
+}
+
+/**
+ * A↔B as one row. The schedule is capped at its busiest directions, so a
+ * reverse leg outside the cap is simply absent: the row then shows the one
+ * direction it has rather than inventing a zero.
+ */
+export function mergeDirections(rows: RouteScheduleRow[]): MergedRoute[] {
+  const byPair = new Map<string, RouteLeg[]>();
+  for (const r of rows) {
+    const [a, b] = [r.origin, r.destination].sort();
+    const key = `${a}-${b}`;
+    const legs = byPair.get(key) ?? [];
+    legs.push({
+      origin: r.origin,
+      destination: r.destination,
+      departures: r.departures,
+      next: r.next_departure,
+    });
+    byPair.set(key, legs);
   }
-  const max = schedule.rows[0].departures;
+  return [...byPair]
+    .map(([key, legs]) => {
+      legs.sort((x, y) => y.departures - x.departures || x.origin.localeCompare(y.origin));
+      const next = legs.reduce((m, l) => (l.next < m.next ? l : m));
+      return {
+        key,
+        a: legs[0].origin,
+        b: legs[0].destination,
+        legs,
+        departures: legs.reduce((s, l) => s + l.departures, 0),
+        next,
+      };
+    })
+    .sort((x, y) => y.departures - x.departures || x.key.localeCompare(y.key));
+}
+
+function Bar({ n, max }: { n: number; max: number }) {
   return (
-    <div className="space-y-2">
-      <div className="grid grid-cols-[1fr_9rem_5.5rem] sm:grid-cols-[7rem_1fr_9rem_5.5rem] gap-x-4 font-mono text-xs text-muted uppercase tracking-wider pb-1 border-b border-subtle">
-        <span>Route</span>
-        <span className="hidden sm:block" />
-        <span className="text-right">Departures</span>
-        <span className="text-right">Next</span>
-      </div>
-      {schedule.rows.map((r) => (
-        <div
-          key={`${r.origin}-${r.destination}`}
-          className="grid grid-cols-[1fr_9rem_5.5rem] sm:grid-cols-[7rem_1fr_9rem_5.5rem] gap-x-4 items-center text-sm"
+    <span className="block h-2 w-full min-w-8 overflow-hidden rounded-full bg-surface-elevated">
+      <span
+        className="block h-full rounded-full bg-[var(--color-accent)]"
+        style={{ width: `${max > 0 ? Math.max(3, (n / max) * 100) : 0}%` }}
+      />
+    </span>
+  );
+}
+
+function RoutesTable({ routes, linkable }: { routes: MergedRoute[]; linkable: boolean }) {
+  const max = routes[0]?.departures ?? 0;
+  const leg = (l: RouteLeg, primary: boolean) => {
+    const label = primary ? (
+      <>
+        {l.origin} → {l.destination}
+      </>
+    ) : (
+      <>
+        {l.origin}→{l.destination}
+      </>
+    );
+    return linkable ? (
+      <a
+        href={`/route-planner/${l.origin}/${l.destination}`}
+        className={`font-mono hover:text-accent transition-colors ${primary ? "text-primary" : "text-secondary"}`}
+      >
+        {label}
+      </a>
+    ) : (
+      <span className="font-mono">{label}</span>
+    );
+  };
+  return (
+    <table className="w-full text-sm">
+      <thead>
+        <tr>
+          <Th>Route</Th>
+          <Th>Starlink flights</Th>
+          <Th numeric>Next departure</Th>
+        </tr>
+      </thead>
+      <tbody>
+        {routes.map((r) => {
+          const at = localDeparture(r.next.origin, r.next.next);
+          return (
+            <tr key={r.key}>
+              <Td className="pr-3 align-top">
+                {r.legs.length === 1 ? (
+                  <div className="text-primary whitespace-nowrap">{leg(r.legs[0], true)}</div>
+                ) : (
+                  <>
+                    <div className="font-mono text-primary whitespace-nowrap">
+                      {r.a} ⇄ {r.b}
+                    </div>
+                    <div className="mt-0.5 flex flex-wrap gap-x-3 text-xs text-muted">
+                      {r.legs.map((l) => (
+                        <span key={l.origin} className="whitespace-nowrap">
+                          {leg(l, false)} <span className="tabular-nums">{fmt(l.departures)}</span>
+                        </span>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </Td>
+              <Td className="w-full pr-3 align-top">
+                <div className="flex items-center gap-2">
+                  <span className="w-8 shrink-0 text-right font-semibold text-primary">
+                    {fmt(r.departures)}
+                  </span>
+                  <Bar n={r.departures} max={max} />
+                </div>
+              </Td>
+              <Td numeric className="align-top text-secondary">
+                <div className="whitespace-nowrap">{at.date}</div>
+                <div className="whitespace-nowrap text-xs text-muted">
+                  {at.time}
+                  {r.legs.length > 1 && (
+                    <span className="hidden sm:inline"> from {r.next.origin}</span>
+                  )}
+                </div>
+              </Td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
+function AirportBars({ airports }: { airports: AirportDepartures }) {
+  const rows = airports.rows.slice(0, 12);
+  const max = rows[0]?.count ?? 0;
+  return (
+    <ul>
+      {rows.map((r) => (
+        <li
+          key={r.airport}
+          className="grid grid-cols-[2.75rem_1fr_3rem] items-center gap-3 py-1.5 text-sm"
+          role="img"
+          aria-label={`${r.airport}: ${fmt(r.count)} Starlink departures`}
         >
-          <a
-            href={`/route-planner/${r.origin}/${r.destination}`}
-            className="font-display font-semibold text-secondary tabular-nums hover:text-accent transition-colors"
-          >
-            {r.origin}–{r.destination}
-          </a>
-          <span className="hidden sm:block h-2 bg-surface-elevated rounded overflow-hidden">
-            <span
-              className="block h-full bg-[var(--color-accent)] opacity-70"
-              style={{ width: `${Math.max(4, (r.departures / max) * 100)}%` }}
-            />
-          </span>
-          <span className="font-mono text-secondary text-right tabular-nums">
-            {r.departures}
-            {r.flight_numbers !== r.departures && (
-              <span className="text-muted text-xs">
-                {" "}
-                on {r.flight_numbers} flight{r.flight_numbers === 1 ? "" : "s"}
-              </span>
-            )}
-          </span>
-          <span className="font-mono text-muted text-right text-xs">
-            {relativeTime(r.next_departure)}
-          </span>
-        </div>
+          <span className="font-mono text-secondary">{r.airport}</span>
+          <Bar n={r.count} max={max} />
+          <span className="text-right text-primary tabular-nums">{fmt(r.count)}</span>
+        </li>
       ))}
-    </div>
+    </ul>
   );
 }
 
 interface RoutesPageProps {
   schedule: RouteSchedule;
+  airports?: AirportDepartures;
   site: SiteConfig;
   popularFlights?: PopularFlight[];
   pageLinks?: PageLink[];
@@ -76,6 +181,7 @@ interface RoutesPageProps {
 
 export default function RoutesPage({
   schedule,
+  airports,
   site,
   popularFlights = [],
   pageLinks,
@@ -83,51 +189,71 @@ export default function RoutesPage({
 }: RoutesPageProps) {
   const scopeCode = site?.scope && site.scope !== "ALL" ? site.scope : null;
   const airlineName = scopeCode ? AIRLINES[scopeCode].name : "tracked airlines";
-  const totalDepartures = schedule.totalDepartures;
-  const asOf = new Date().toISOString().slice(11, 16);
+  const shortName = scopeCode ? AIRLINES[scopeCode].shortName : null;
+  const total = schedule.totalDepartures;
+  const routes = mergeDirections(schedule.rows);
+  const linkable = site.features.routePlannerPage;
+  const updated = new Date().toLocaleString("en-US", {
+    timeZone: "UTC",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
 
   return (
     <PageShell site={site} currentPath={currentPath} pageLinks={pageLinks}>
       <PageHeader
-        title="Where Starlink Is Flying"
+        title="Where Starlink is flying"
         dek={
-          totalDepartures > 0
-            ? `${totalDepartures.toLocaleString("en-US")} departures on Starlink-equipped ${airlineName} aircraft scheduled over the ${schedule.windowLabel}`
-            : `Live ${airlineName} Starlink departures by route`
+          total > 0
+            ? `${fmt(total)} ${shortName ? `${shortName} ` : ""}Starlink flights in the ${schedule.windowLabel}.`
+            : `No ${airlineName} Starlink flights are assigned in the ${schedule.windowLabel} yet.`
         }
       />
 
-      <section className={SECTION_WIDE}>
-        <div className={PANEL}>
-          <div className={EYEBROW}>
-            Routes by scheduled Starlink departures · {schedule.windowLabel} · as of {asOf} UTC
+      {routes.length > 0 && (
+        <section className="relative mx-auto mb-8 grid w-full max-w-6xl gap-8 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+          <div className="min-w-0">
+            <h2 className="font-display text-xl text-primary">Busiest Starlink routes</h2>
+            <p className="mt-1 text-sm text-secondary text-pretty">
+              Both directions combined. Times are local to the departure airport.
+            </p>
+            <div className="mt-4 rounded-lg border border-subtle bg-surface p-4 sm:p-5">
+              <RoutesTable routes={routes} linkable={linkable} />
+              <p className="mt-4 text-xs text-muted text-pretty">
+                Based on aircraft assigned so far. Assignments firm up about two days out, so a
+                route missing here may still have Starlink. Updated {updated} UTC.
+              </p>
+            </div>
           </div>
-          <RouteRows schedule={schedule} />
-          <p className="text-xs text-muted mt-4 leading-snug">
-            Counted from live tail assignments: every departure in the {schedule.windowLabel} whose
-            assigned aircraft is Starlink-equipped, showing the top {schedule.rows.length} routes.
-            Routes not listed may still have Starlink — assignments publish about two days before
-            departure. This is a count of Starlink service, not a share of all departures on the
-            route.
-          </p>
-        </div>
-      </section>
-
-      {popularFlights.length > 0 && (
-        <section className={SECTION_WIDE}>
-          <PopularFlightsLinks flights={popularFlights} airlineName={airlineName} />
+          {airports && airports.rows.length > 0 && (
+            <div className="min-w-0">
+              <h2 className="font-display text-xl text-primary">Busiest airports</h2>
+              <p className="mt-1 text-sm text-secondary">Starlink departures, next 48 hours.</p>
+              <div className="mt-4 rounded-lg border border-subtle bg-surface p-4 sm:p-5">
+                <AirportBars airports={airports} />
+              </div>
+            </div>
+          )}
         </section>
       )}
 
-      <section className={`${SECTION_WIDE} text-center`}>
+      {popularFlights.length > 0 && (
+        <Section wide bare>
+          <PopularFlightsLinks flights={popularFlights} airlineName={airlineName} />
+        </Section>
+      )}
+
+      <section className="relative mx-auto mb-8 w-full max-w-6xl text-center">
         <p className="text-sm text-secondary">
-          Planning a specific trip?{" "}
+          Planning a trip?{" "}
           <a href="/route-planner" className="text-accent hover:underline">
-            Compare routes by Starlink probability
+            Find the flights most likely to have Starlink
           </a>{" "}
           or{" "}
           <a href="/check-flight" className="text-accent hover:underline">
-            check your flight number
+            check your flight
           </a>
           .
         </p>

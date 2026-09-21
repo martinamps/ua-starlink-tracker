@@ -132,6 +132,7 @@ import {
   routeHasData,
   routeIsHistorical,
 } from "./database";
+import { getRouteFlightLastSeen } from "./route-history";
 
 export type { Database };
 
@@ -248,6 +249,8 @@ export interface ScopedReader {
   /** Marketing numbers on a pair without getRouteSummary's windowed departure
    * counts — what the flight permalinks' sibling links actually need. */
   getRouteFlightNumbers(origin: string, destination: string): RouteFlightNumbers;
+  /** Newest route-cache sighting per marketing number on a pair (unix sec). */
+  getRouteFlightLastSeen(origin: string, destination: string): Map<string, number>;
   getFlightHistorySummary(variants: string[]): FlightHistorySummary;
   getFlightRoutePairs(variants: string[]): FlightRoutePair[];
   /** Newest observation for the airline (unix sec), the reference point for
@@ -452,6 +455,7 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     routeIsHistorical: (o, d) => routeIsHistorical(db, o, d, soleAirline()),
     getRouteSummary: (o, d) => getRouteSummary(db, o, d, soleAirline()),
     getRouteFlightNumbers: (o, d) => getRouteFlightNumbers(db, o, d, soleAirline()),
+    getRouteFlightLastSeen: (o, d) => getRouteFlightLastSeen(db, o, d, soleAirline()),
     getFlightHistorySummary: (v) => getFlightHistorySummary(db, v, airlines),
     getFlightRoutePairs: (v) => getFlightRoutePairs(db, v, airlines),
     getObservationAnchor: () => (scope === "ALL" ? 0 : getObservationAnchor(db, scope)),
