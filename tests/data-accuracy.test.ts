@@ -202,6 +202,44 @@ describe("route flight numbers need corroboration", () => {
     expect(fns).not.toContain("UA3893");
     db.close();
   });
+
+  test("a mainline long-haul number seen once stands; a regional one does not", () => {
+    const db = makeSyntheticDb();
+    const route = db.query(
+      `INSERT INTO flight_routes (flight_number, origin, destination, duration_sec, first_seen_at, last_seen_at, seen_count)
+       VALUES (?, ?, ?, ?, ?, ?, 1)`
+    );
+    route.run("UA1", "SFO", "SIN", 59100, NOW - 50 * 86400, NOW - 50 * 86400);
+    route.run("UA5201", "SFO", "SIN", 59100, NOW - 50 * 86400, NOW - 50 * 86400);
+    route.run("UA2", "SFO", "SIN", 60, NOW - 50 * 86400, NOW - 50 * 86400);
+    const fns = getRouteFlightNumbers(db, "SFO", "SIN", "UA").flightNumbers;
+    expect(fns).toEqual([{ flight_number: "UA1", times: 1, scheduled: 0 }]);
+    db.close();
+  });
+
+  test("spellings merge before the sighting rule", () => {
+    const db = makeSyntheticDb();
+    const route = db.query(
+      `INSERT INTO flight_routes (flight_number, origin, destination, duration_sec, first_seen_at, last_seen_at, seen_count)
+       VALUES (?, 'HNL', 'OGG', 2400, ?, ?, 1)`
+    );
+    route.run("HA0011", NOW - 9 * 86400, NOW - 9 * 86400);
+    route.run("HA11", NOW - 2 * 86400, NOW - 2 * 86400);
+    route.run("HA9101", NOW - 2 * 86400, NOW - 2 * 86400);
+    const fns = getRouteFlightNumbers(db, "HNL", "OGG", "HA").flightNumbers;
+    expect(fns).toEqual([{ flight_number: "HA11", times: 2, scheduled: 0 }]);
+    db.close();
+  });
+
+  test("an Alaska number on Hawaiian metal is in Alaska's schedule for the pair", () => {
+    const db = makeSyntheticDb();
+    addPlane(db, "N373HA", "Starlink", { airline: "HA" });
+    addFlight(db, "N373HA", "AS832", "HND", NOW + 3600, { arrivalAirport: "HNL", airline: "HA" });
+    addFlight(db, "N373HA", "HA821", "HND", NOW + 7200, { arrivalAirport: "HNL", airline: "HA" });
+    const fns = getRouteFlightNumbers(db, "HND", "HNL", "AS").flightNumbers;
+    expect(fns).toEqual([{ flight_number: "AS832", times: 1, scheduled: 1 }]);
+    db.close();
+  });
 });
 
 describe("homepage list", () => {

@@ -2693,16 +2693,19 @@ export function getRouteFlightNumbers(
         duration_sec: number | null;
       }>)
     : [];
-  const liveQ = withAirline(
-    `SELECT flight_number, COUNT(*) AS times,
-            CAST(AVG(arrival_time - departure_time) AS INTEGER) AS duration_sec
-     FROM upcoming_flights
-     WHERE departure_airport = ? AND arrival_airport = ? AND flight_number IS NOT NULL`,
-    airline,
-    "",
-    [origin, destination]
-  );
-  const live = db.query(`${liveQ.sql} GROUP BY flight_number`).all(...liveQ.params) as Array<{
+  // Partners included: AS832 on a Hawaiian A330 is stored on an HA row and is
+  // still an Alaska departure on this pair, as departure slots count it.
+  const scope = slotScope(airline, true);
+  const live = db
+    .query(
+      `SELECT uf.flight_number, COUNT(*) AS times,
+              CAST(AVG(uf.arrival_time - uf.departure_time) AS INTEGER) AS duration_sec
+       FROM upcoming_flights uf
+       WHERE ${scope.sql} AND uf.departure_airport = ? AND uf.arrival_airport = ?
+         AND uf.flight_number IS NOT NULL
+       GROUP BY uf.flight_number`
+    )
+    .all(...scope.params, origin, destination) as Array<{
     flight_number: string;
     times: number;
     duration_sec: number | null;
@@ -2712,33 +2715,31 @@ export function getRouteFlightNumbers(
   // upcoming_flights also carries operating-carrier numbers (SKW4726 for a
   // United Express leg); those have no /check-flight permalink, so rendering
   // them would put broken internal links on every affected route page.
+  // Spellings merge before any sighting rule: HA0011 and HA11 seen once each
+  // is one number seen twice.
   const marketing = cfg ? canonicalPermalinkFor(cfg) : null;
-  const merged = new Map<string, { times: number; scheduled: number }>();
-  const liveNumbers = new Set(
-    cfg ? live.map((r) => marketingFlightNumber(cfg, r.flight_number)) : []
-  );
+  const merged = new Map<
+    string,
+    { times: number; scheduled: number; durationSec: number | null }
+  >();
   const add = (raw: string, times: number, scheduled: number, durationSec: number | null) => {
     if (!cfg || !marketing) return;
     const fn = marketingFlightNumber(cfg, raw);
     if (!marketing.test(fn)) return;
-    // History alone must be corroborated: one sighting is how a lookup miss
-    // or a one-off charter enters the cache (219 of 225 UA8xxx rows on file
-    // were seen once), and a regional-range number on a transatlantic block
-    // time (UA3893 EWR-CDG, 7h40m) is a mis-attributed row, not a flight.
-    if (scheduled === 0 && !liveNumbers.has(fn)) {
-      if (times < 2) return;
-      if (durationSec && durationSec > REGIONAL_MAX_BLOCK_SEC && isRegionalNumber(cfg, fn)) return;
-    }
     const prev = merged.get(fn);
     merged.set(fn, {
       times: (prev?.times ?? 0) + times,
       scheduled: Math.max(prev?.scheduled ?? 0, scheduled),
+      durationSec: prev?.durationSec ?? durationSec,
     });
   };
   for (const r of cached) add(r.flight_number, r.times, 0, r.duration_sec);
   for (const r of live) add(r.flight_number, r.times, 1, r.duration_sec);
   const flightNumbers = [...merged]
-    .map(([flight_number, v]) => ({ flight_number, ...v }))
+    .filter(
+      ([fn, v]) => v.scheduled === 1 || (cfg !== undefined && historyCorroborated(cfg, fn, v))
+    )
+    .map(([flight_number, { times, scheduled }]) => ({ flight_number, times, scheduled }))
     .sort((a, b) => b.scheduled - a.scheduled || b.times - a.times);
 
   const durations = [...cached, ...live]
@@ -2754,6 +2755,35 @@ export function getRouteFlightNumbers(
 // regional-range number is a mis-attributed row.
 const REGIONAL_MAX_BLOCK_SEC = 5.5 * 3600;
 const REGIONAL_SUBFLEETS = new Set(["express", "horizon"]);
+// 7000 and up is charter and positioning territory (UA8xxx, AS9xxx).
+const CHARTER_RANGE_MIN = 7000;
+// No scheduled passenger leg is shorter or longer than this.
+const MIN_PLAUSIBLE_BLOCK_SEC = 15 * 60;
+const MAX_PLAUSIBLE_BLOCK_SEC = 20 * 3600;
+
+/**
+ * Is a number seen only in route history trustworthy on this pair? One
+ * sighting is how a lookup miss or a one-off charter enters the cache (219 of
+ * 225 UA8xxx rows on file were seen once), so regional-range and charter-range
+ * numbers need two. A mainline long-haul number is seen once because it flies
+ * once a day and the cache caught it once (UA1 SFO-SIN, UA79 EWR-NRT), so one
+ * sighting stands unless its block time is implausible. A regional-range
+ * number on a transatlantic block time (UA3893 EWR-CDG, 7h40m) is a
+ * mis-attributed row, whatever its count.
+ */
+function historyCorroborated(
+  cfg: AirlineConfig,
+  flightNumber: string,
+  seen: { times: number; durationSec: number | null }
+): boolean {
+  const regional = isRegionalNumber(cfg, flightNumber);
+  const d = seen.durationSec;
+  if (regional && d && d > REGIONAL_MAX_BLOCK_SEC) return false;
+  if (seen.times >= 2) return true;
+  const n = Number.parseInt(flightNumber.slice(cfg.iata.length), 10);
+  if (regional || n >= CHARTER_RANGE_MIN) return false;
+  return !d || (d >= MIN_PLAUSIBLE_BLOCK_SEC && d <= MAX_PLAUSIBLE_BLOCK_SEC);
+}
 
 function isRegionalNumber(cfg: AirlineConfig, flightNumber: string): boolean {
   return REGIONAL_SUBFLEETS.has(inferSubfleet(cfg, flightNumber));
