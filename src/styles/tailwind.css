@@ -274,6 +274,136 @@
     margin: 0 1rem;
   }
 }
+/* /route-planner itinerary cards, drawn by src/client/route-planner.ts. */
+.flight-path {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.flight-path__node {
+  flex-shrink: 0;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  background: var(--color-base);
+  position: relative;
+  z-index: 1;
+}
+.flight-path__node--filled {
+  background: currentColor;
+}
+.flight-path__line {
+  flex: 1;
+  height: 2px;
+  background: currentColor;
+  position: relative;
+  opacity: 0.4;
+}
+.flight-path__line--live::after {
+  content: "";
+  position: absolute;
+  width: 20px;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, currentColor, transparent);
+  animation: signal-pulse 2.5s linear infinite;
+  left: -20px;
+}
+@keyframes signal-pulse {
+  0% {
+    left: -20px;
+    opacity: 0;
+  }
+  10% {
+    opacity: 1;
+  }
+  90% {
+    opacity: 1;
+  }
+  100% {
+    left: 100%;
+    opacity: 0;
+  }
+}
+.prob-bars {
+  display: inline-flex;
+  gap: 2px;
+  align-items: flex-end;
+  height: 14px;
+}
+.prob-bars__bar {
+  width: 3px;
+  background: currentColor;
+  border-radius: 1px;
+  transition: opacity 0.3s;
+}
+.prob-bars__bar:nth-child(1) {
+  height: 40%;
+}
+.prob-bars__bar:nth-child(2) {
+  height: 55%;
+}
+.prob-bars__bar:nth-child(3) {
+  height: 70%;
+}
+.prob-bars__bar:nth-child(4) {
+  height: 85%;
+}
+.prob-bars__bar:nth-child(5) {
+  height: 100%;
+}
+.prob-bars__bar--off {
+  opacity: 0.15;
+}
+@keyframes itin-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.itin-card {
+  animation: itin-enter 0.4s ease-out both;
+}
+.itin-card:nth-child(1) {
+  animation-delay: 0.05s;
+}
+.itin-card:nth-child(2) {
+  animation-delay: 0.1s;
+}
+.itin-card:nth-child(3) {
+  animation-delay: 0.15s;
+}
+.itin-card:nth-child(4) {
+  animation-delay: 0.2s;
+}
+.itin-card:nth-child(5) {
+  animation-delay: 0.25s;
+}
+.itin-card:nth-child(6) {
+  animation-delay: 0.3s;
+}
+.itin-card:nth-child(7) {
+  animation-delay: 0.35s;
+}
+.itin-card:nth-child(8) {
+  animation-delay: 0.4s;
+}
+.airport-input {
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  text-align: center;
+  font-weight: 600;
+}
+.airport-input::placeholder {
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 400;
+}
 /* Type-page verdict card: the left rule carries the answer's tone. */
 .verdict {
   border-left-width: 3px;

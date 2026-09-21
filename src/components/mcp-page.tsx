@@ -1,6 +1,7 @@
 import React from "react";
 import { type SiteConfig, siteAirline } from "../airlines/registry";
 import type { PageLink } from "./atoms";
+import { ClientScriptTag } from "./flight-search-form";
 import {
   ButtonLink,
   Eyebrow,
@@ -55,7 +56,12 @@ export default function McpPage({ site, pageLinks, currentPath }: McpPageProps) 
             <code className="flex-1 font-mono text-sm text-accent break-all select-all bg-base rounded px-3 py-2 border border-subtle">
               {mcpUrl}
             </code>
-            <button type="button" id="copy-url-btn" className={buttonClass("primary", "sm")}>
+            <button
+              type="button"
+              id="copy-url-btn"
+              data-copy={mcpUrl}
+              className={buttonClass("primary", "sm")}
+            >
               Copy
             </button>
           </div>
@@ -197,25 +203,7 @@ export default function McpPage({ site, pageLinks, currentPath }: McpPageProps) 
         </p>
       )}
 
-      {/* Copy button handler */}
-      <script
-        // biome-ignore lint/security/noDangerouslySetInnerHtml: static inline script, no user input
-        dangerouslySetInnerHTML={{
-          __html: `
-        document.addEventListener('DOMContentLoaded', function() {
-          var btn = document.getElementById('copy-url-btn');
-          if (btn) {
-            btn.addEventListener('click', function() {
-              navigator.clipboard.writeText('${mcpUrl}').then(function() {
-                btn.textContent = 'Copied!';
-                setTimeout(function() { btn.textContent = 'Copy'; }, 2000);
-              });
-            });
-          }
-        });
-      `,
-        }}
-      />
+      <ClientScriptTag name="mcp" />
     </PageShell>
   );
 }
