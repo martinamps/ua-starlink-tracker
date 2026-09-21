@@ -112,7 +112,13 @@ export function memoPromise<T>(opts: MemoOptions) {
       entries.set(key, entry);
       const settle = (s: Settled<T>) => {
         if (entries.get(key) !== entry) return;
-        entry.ttl = ttlFor(s);
+        // A throwing ttlFor would reject the handler chain unobserved; an
+        // outcome we cannot price is not replayed.
+        try {
+          entry.ttl = ttlFor(s);
+        } catch {
+          entry.ttl = 0;
+        }
         if (entry.ttl <= 0) entries.delete(key);
       };
       promise.then(

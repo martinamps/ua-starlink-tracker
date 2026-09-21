@@ -75,12 +75,48 @@ describe("memoPromise", () => {
     expect(c.get("k", 10)).toBeUndefined();
   });
 
-  test("a zero ttl evicts on settle and a rejection never goes unhandled", async () => {
+  test("a zero ttl evicts on settle", async () => {
     const c = memoPromise<number>({ ttlSec: 100, maxEntries: 10 });
     const p = Promise.reject(new Error("down"));
     c.set("k", p, 0, (s) => (s.ok ? 100 : 0));
     await p.catch(() => {});
     expect(c.get("k", 1)).toBeUndefined();
+  });
+
+  // Nothing here attaches a handler: bun's runner fails the test on any
+  // unhandled rejection, so passing is the assertion.
+  test("a cached rejection nobody awaits never surfaces as unhandled", async () => {
+    const c = memoPromise<number>({ ttlSec: 100, maxEntries: 10 });
+    c.set("k", Promise.reject(new Error("cached")), 0, () => 0);
+    c.set("t", Promise.resolve(1), 0, () => {
+      throw new Error("ttlFor");
+    });
+    await sleep(10);
+    expect(c.get("k", 1)).toBeUndefined();
+  });
+
+  test("a throwing ttlFor evicts rather than replays", async () => {
+    const c = memoPromise<number>({ ttlSec: 100, maxEntries: 10 });
+    const p = Promise.resolve(1);
+    c.set("k", p, 0, () => {
+      throw new Error("ttlFor");
+    });
+    await p;
+    await sleep(0);
+    expect(c.get("k", 1)).toBeUndefined();
+  });
+
+  test("past maxEntries a write sweeps the settled-expired entries, never the live ones", async () => {
+    const c = memoPromise<number>({ ttlSec: 10, maxEntries: 2 });
+    const live = Promise.resolve(3);
+    c.set("a", Promise.resolve(1), 0);
+    c.set("b", Promise.resolve(2), 0);
+    c.set("live", live, 15);
+    await sleep(0);
+    c.set("new", Promise.resolve(4), 20);
+    expect(c.get("a", 1)).toBeUndefined();
+    expect(c.get("b", 1)).toBeUndefined();
+    expect(c.get("live", 20)).toBe(live);
   });
 
   test("a replaced entry is not touched by the old promise settling", async () => {
