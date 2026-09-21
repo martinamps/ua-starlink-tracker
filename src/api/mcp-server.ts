@@ -65,6 +65,7 @@ import {
 import { AIRPORT_COORDS } from "../utils/airport-geo";
 import { isRealIsoDate, matchesLocalDate } from "../utils/airport-tz";
 import { debug, error as logError } from "../utils/logger";
+import { memoPromise } from "../utils/ttl-cache";
 import {
   type FlightVerdict,
   type LegResolution,
@@ -974,10 +975,11 @@ type RouteEntry = {
   stale?: boolean;
 };
 
-// Promise-based cache: concurrent requests for the same key await the in-flight
-// fetch instead of hammering FR24. Dedupes parallel calls (e.g. 15 agents at once).
-const routeCache = new Map<string, { promise: Promise<RouteEntry[]>; at: number; ttl: number }>();
+// Concurrent requests for the same key await the in-flight fetch instead of
+// hammering FR24 (e.g. 15 agents at once). Keyspace is flightNumber × day, so
+// it is swept once large.
 const ROUTE_CACHE_TTL = 3600;
+const routeCache = memoPromise<RouteEntry[]>({ ttlSec: ROUTE_CACHE_TTL, maxEntries: 500 });
 // Empty results are kept briefly: each miss re-ran a ~1.7s FR24 call, while a
 // full hour would hide a route that appears minutes later.
 const ROUTE_NEGATIVE_CACHE_TTL = 600;
@@ -1038,18 +1040,10 @@ async function lookupFlightRoutes(
 ): Promise<RouteEntry[]> {
   const cacheKey = `${uaFlightNumber}:${targetDateUnix ? Math.floor(targetDateUnix / 86400) : "any"}:${opts.liveAssignments ? "live" : "db"}`;
   const now = Math.floor(Date.now() / 1000);
-  const cached = routeCache.get(cacheKey);
-  if (cached && now - cached.at < cached.ttl) {
+  const cached = routeCache.get(cacheKey, now);
+  if (cached) {
     recordRouteLookup(reader.scope, "memory");
-    return cached.promise;
-  }
-
-  // Keyspace is flightNumber × day → unbounded over time. Sweep stale entries
-  // once the cache gets large (matches assignmentCache in flight-verdict.ts).
-  if (routeCache.size > 500) {
-    for (const [k, v] of routeCache) {
-      if (now - v.at >= v.ttl) routeCache.delete(k);
-    }
+    return cached;
   }
   const variants = buildAirlineFlightNumberVariants(cfg, uaFlightNumber);
 
@@ -1133,15 +1127,10 @@ async function lookupFlightRoutes(
       : [];
   })();
 
-  // Set immediately for in-flight dedup. An empty result stays for the short
-  // negative TTL; an error is evicted so the next request retries.
-  const entry = { promise, at: now, ttl: ROUTE_CACHE_TTL };
-  routeCache.set(cacheKey, entry);
-  promise.then(
-    (result) => {
-      if (result.length === 0) entry.ttl = ROUTE_NEGATIVE_CACHE_TTL;
-    },
-    () => routeCache.delete(cacheKey)
+  // An empty result stays for the short negative TTL; an error is evicted so
+  // the next request retries.
+  routeCache.set(cacheKey, promise, now, (s) =>
+    !s.ok ? 0 : s.value.length === 0 ? ROUTE_NEGATIVE_CACHE_TTL : ROUTE_CACHE_TTL
   );
   return promise;
 }

@@ -200,6 +200,7 @@ import {
 import { article } from "../utils/grammar";
 import { computeInstallRate, hasInstallRateContent } from "../utils/install-rate";
 import { error as logError } from "../utils/logger";
+import { memo, perOwner } from "../utils/ttl-cache";
 import {
   CACHE,
   CORS_ANY_ORIGIN,
@@ -1550,24 +1551,11 @@ interface SitePage {
  * builds — must never see each other's answers.
  */
 const GATE_TTL_MS = 60_000;
-interface GateEntry {
-  value: boolean;
-  expiresAt: number;
-}
-const gateCache = new WeakMap<RequestContext["getReader"], Map<string, GateEntry>>();
+const gateMemo = perOwner<RequestContext["getReader"], ReturnType<typeof memo<boolean>>>(() =>
+  memo<boolean>(GATE_TTL_MS)
+);
 function memoGate(ctx: RequestContext, key: string, compute: () => boolean): boolean {
-  let perApp = gateCache.get(ctx.getReader);
-  if (!perApp) {
-    perApp = new Map();
-    gateCache.set(ctx.getReader, perApp);
-  }
-  const scoped = `${tenantScope(ctx.tenant)}:${key}`;
-  const now = Date.now();
-  const hit = perApp.get(scoped);
-  if (hit && hit.expiresAt > now) return hit.value;
-  const value = compute();
-  perApp.set(scoped, { value, expiresAt: now + GATE_TTL_MS });
-  return value;
+  return gateMemo(ctx.getReader)(`${tenantScope(ctx.tenant)}:${key}`, compute);
 }
 
 /** At least one organically dated install — the row an install log is made of.
@@ -3248,26 +3236,22 @@ const PLANNER_POPULAR_ROUTES = 60;
 // only needs to track the schedule, so it is rebuilt at most every 10 minutes.
 const PLANNER_ROUTES_TTL_MS = 10 * 60_000;
 type RoutePair = { origin: string; destination: string };
-const plannerRoutesCache = new WeakMap<
+const plannerRoutesMemo = perOwner<
   RequestContext["getReader"],
-  Map<string, { value: RoutePair[]; expiresAt: number }>
->();
+  ReturnType<typeof memo<RoutePair[]>>
+>(() => memo<RoutePair[]>(PLANNER_ROUTES_TTL_MS));
 
 /** Route permalinks for the bare planner: /routes' next page of rankings, so
  * the two hubs link different pairs, topped up from the sitemap's most recently
  * seen routes when the live window is thin. Only sitemap-eligible pairs, so
  * every link serves 200. */
 function plannerPopularRoutes(ctx: RequestContext): RoutePair[] {
-  let perApp = plannerRoutesCache.get(ctx.getReader);
-  if (!perApp) {
-    perApp = new Map();
-    plannerRoutesCache.set(ctx.getReader, perApp);
-  }
-  const scope = tenantScope(ctx.tenant);
-  const now = Date.now();
-  const hit = perApp.get(scope);
-  if (hit && hit.expiresAt > now) return hit.value;
+  return plannerRoutesMemo(ctx.getReader)(tenantScope(ctx.tenant), () =>
+    computePlannerPopularRoutes(ctx)
+  );
+}
 
+function computePlannerPopularRoutes(ctx: RequestContext): RoutePair[] {
   const sitemapRoutes = ctx.reader.getSitemapRoutes();
   const eligible = new Set(sitemapRoutes.map((r) => `${r.origin}-${r.destination}`));
   const ranked = ctx.reader.getRankedStarlinkRoutePairs(
@@ -3288,9 +3272,7 @@ function plannerPopularRoutes(ctx: RequestContext): RoutePair[] {
   };
   for (const r of ranked.slice(ROUTES_PAGE_ROWS)) take(r);
   for (const r of [...sitemapRoutes].sort((x, y) => y.last_touched - x.last_touched)) take(r);
-  const value = [...picked.values()];
-  perApp.set(scope, { value, expiresAt: now + PLANNER_ROUTES_TTL_MS });
-  return value;
+  return [...picked.values()];
 }
 
 const routePlannerPage: Handler = (ctx) => {
