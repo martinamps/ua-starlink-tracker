@@ -10,7 +10,7 @@
 import type React from "react";
 import { type TimelineMilestone, formatFactDate } from "../../airlines/rollout-facts";
 import type { InstallRateStats, TargetProjection } from "../../utils/install-rate";
-import { fmt } from "../layout";
+import { fmt, monthYear } from "../ui/format";
 
 const DAY_MS = 86_400_000;
 const MONTH_MS = 30.4375 * DAY_MS;
@@ -26,14 +26,6 @@ function isoMs(iso: string): number {
 function monthStartMs(ms: number): number {
   const d = new Date(ms);
   return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1);
-}
-
-function monthYear(ms: number): string {
-  return new Date(ms).toLocaleDateString("en-US", {
-    month: "short",
-    year: "numeric",
-    timeZone: "UTC",
-  });
 }
 
 const monthKey = (ms: number) => new Date(ms).toISOString().slice(0, 7);
@@ -76,10 +68,10 @@ export function paceWindowText(stats: InstallRateStats): string {
   const last = window[window.length - 1].month;
   const span =
     first === last
-      ? monthYear(isoMs(`${last}-15`))
+      ? monthYear(last)
       : first.slice(0, 4) === last.slice(0, 4)
         ? `${short(first)}–${short(last)} ${last.slice(0, 4)}`
-        : `${monthYear(isoMs(`${first}-15`))}–${monthYear(isoMs(`${last}-15`))}`;
+        : `${monthYear(first)}–${monthYear(last)}`;
   return n === 1 ? `the last full month (${span})` : `the last ${word} full months (${span})`;
 }
 
@@ -209,7 +201,7 @@ export function CumulativeInstallsChart({
     .filter((x) => x.ms >= series.start && x.ms <= end);
 
   const description = [
-    `${airlineName} aircraft with Starlink since ${monthYear(series.start)}: ${fmt(nowValue)} as of ${monthYear(nowMs)}.`,
+    `${airlineName} aircraft with Starlink since ${monthYear(monthKey(series.start))}: ${fmt(nowValue)} as of ${monthYear(monthKey(nowMs))}.`,
     ...series.imports.map(
       (i) =>
         `${fmt(i.installs)} aircraft were added by a one-day data import on ${formatFactDate(new Date(i.ms).toISOString().slice(0, 10))}.`
@@ -221,7 +213,7 @@ export function CumulativeInstallsChart({
           p.verdict === "reached"
             ? ", reached"
             : p.projectedMonth
-              ? `, reached around ${monthYear(isoMs(`${p.projectedMonth}-15`))}`
+              ? `, reached around ${monthYear(p.projectedMonth)}`
               : ""
         }.`
     ),
@@ -348,7 +340,7 @@ export function CumulativeInstallsChart({
               <strong className="font-semibold text-primary tabular-nums">
                 {fmt(p.targetCount)}
               </strong>{" "}
-              by {monthYear(ms)}
+              by {monthYear(monthKey(ms))}
             </span>
           </div>
         ))}
@@ -473,7 +465,7 @@ export function MonthlyInstallsBars({
   if (months.length < 2) return null;
   const current = monthKey(stats.asOfMs);
   const max = Math.max(1, ...months.map((m) => m.installs));
-  const label = (m: string) => monthYear(isoMs(`${m}-15`));
+  const label = monthYear;
   const last = months[months.length - 1];
   const description = `Installs per month: ${months
     .map((m) => `${label(m.month)} ${fmt(m.installs)}${m.month === current ? " (so far)" : ""}`)

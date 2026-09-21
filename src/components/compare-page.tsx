@@ -17,7 +17,8 @@ import { article } from "../utils/grammar";
 import { FactsList, PhaseTable, type TypePhase } from "./airlines-page";
 import { type PageLink, StagePill, trackedStage } from "./atoms";
 import { TypeShareTable } from "./community-airline-page";
-import { PANEL, PageHeader, PageShell, fmt, pct } from "./layout";
+import { ButtonLink, Eyebrow, PageHeader, PageShell, Panel, StatValue, fmt, pct } from "./layout";
+import { Meter } from "./ui/meter";
 
 export interface CompareSide {
   cfg: AirlineConfig;
@@ -52,7 +53,7 @@ function SidePanel({ side }: { side: CompareSide }) {
   // predict path refuses to publish.
   const showBlended = fleet > 0 && !side.phases && !side.typeProgress;
   return (
-    <div className={`${PANEL} flex flex-col`}>
+    <Panel className="flex flex-col">
       <div className="flex items-center justify-between gap-2 mb-3">
         <a
           href={`/airlines/${airlineSlug(cfg)}`}
@@ -65,23 +66,18 @@ function SidePanel({ side }: { side: CompareSide }) {
 
       {showBlended && (
         <>
-          <div className="font-display text-3xl text-primary leading-none mb-1 tabular-nums">
+          <StatValue className="mb-1" unit={`of ${fmt(fleet)}`}>
             {fmt(stat.starlink)}
-            <span className="text-base text-muted"> of {fmt(fleet)}</span>
-          </div>
+          </StatValue>
           <div className="text-sm text-secondary mb-2">
             aircraft have Starlink · {pct(stat.starlink, fleet)} of the fleet
           </div>
-          <div className="h-1.5 rounded bg-surface-elevated overflow-hidden mb-3">
-            <div
-              className="h-full rounded"
-              style={{
-                width: `${Math.min(100, (stat.starlink / fleet) * 100)}%`,
-                background: cfg.brand.accentColor,
-                boxShadow: `0 0 6px ${cfg.brand.accentColor}90`,
-              }}
-            />
-          </div>
+          <Meter
+            share={stat.starlink / fleet}
+            color={cfg.brand.accentColor}
+            size="sm"
+            className="mb-3"
+          />
           {(stat.installs30d ?? 0) > 0 && (
             <div className="text-xs text-secondary mb-3">
               +{fmt(stat.installs30d ?? 0)} in the last 30 days
@@ -102,9 +98,7 @@ function SidePanel({ side }: { side: CompareSide }) {
 
       {side.phases || side.typeProgress ? null : side.breakdown.length > 0 ? (
         <div className="mb-4">
-          <div className="text-xs font-mono text-muted uppercase tracking-wider mb-1">
-            By fleet group
-          </div>
+          <Eyebrow className="mb-1">By fleet group</Eyebrow>
           {side.breakdown.map((b) => (
             <div
               key={b.key}
@@ -126,23 +120,17 @@ function SidePanel({ side }: { side: CompareSide }) {
 
       <div className="mt-auto flex flex-wrap gap-2">
         {side.trackerHost && (
-          <a
-            href={`https://${side.trackerHost}/`}
-            className="font-mono text-xs px-3 py-1.5 bg-accent/20 border border-accent rounded text-accent hover:bg-accent/30 transition-colors"
-          >
+          <ButtonLink href={`https://${side.trackerHost}/`} size="sm">
             Full {cfg.shortName} tracker →
-          </a>
+          </ButtonLink>
         )}
         {side.checkFlightUrl && (
-          <a
-            href={side.checkFlightUrl}
-            className="font-mono text-xs px-3 py-1.5 bg-surface-elevated border border-subtle rounded text-secondary hover:text-accent hover:border-accent transition-colors"
-          >
+          <ButtonLink href={side.checkFlightUrl} variant="secondary" size="sm">
             Check {article(cfg.shortName)} {cfg.shortName} flight →
-          </a>
+          </ButtonLink>
         )}
       </div>
-    </div>
+    </Panel>
   );
 }
 
@@ -181,10 +169,8 @@ export default function ComparePage({
       </section>
 
       <section className="relative w-full max-w-3xl mx-auto mb-8">
-        <div className={PANEL}>
-          <div className="text-xs font-mono text-muted uppercase tracking-wider mb-2">
-            Flying a specific route?
-          </div>
+        <Panel>
+          <Eyebrow className="mb-2">Flying a specific route?</Eyebrow>
           <p className="text-sm text-muted leading-relaxed">
             The{" "}
             <a href="/" className="text-accent hover:underline">
@@ -193,7 +179,7 @@ export default function ComparePage({
             scores a nonstop city pair per airline — which carrier's planes on that exact route have
             Starlink today.
           </p>
-        </div>
+        </Panel>
       </section>
 
       {(left.facts || right.facts) && (

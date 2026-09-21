@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import type { Aircraft, FleetStats, PerAirlineStat, RecentInstall } from "../../types";
-import type { AirlineCode, KnownAirlineCode, Tenant } from "../registry";
+import type { AirlineCode, KnownAirlineCode, SiteConfig, Tenant } from "../registry";
 import { content as af } from "./af";
 import { content as as } from "./as";
 import { content as ha } from "./ha";
@@ -40,12 +40,12 @@ export interface FaqSection {
   items: FaqEntry[];
 }
 
-export interface SubfleetFilter {
+interface SubfleetFilter {
   key: string;
   label: string;
 }
 
-export interface HubHomeLink {
+interface HubHomeLink {
   href: string;
   label: string;
 }
@@ -56,6 +56,7 @@ export interface HubHomeLinks {
 }
 
 export interface HeroProps {
+  site: SiteConfig;
   stats: ContentStats;
   starlinkData: Aircraft[];
   perAirlineStats?: PerAirlineStat[];

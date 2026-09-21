@@ -2,6 +2,7 @@ import type React from "react";
 import { type SiteConfig, siteAirline } from "../airlines/registry";
 import type { PageLink } from "./atoms";
 import { PageHeader, PageShell, Section } from "./layout";
+import { longDate } from "./ui/format";
 
 interface MethodologyPageProps {
   site: SiteConfig;
@@ -83,15 +84,7 @@ export default function MethodologyPage({
 }: MethodologyPageProps) {
   const cfg = siteAirline(site);
   const sources = SOURCES[cfg.code] ?? [];
-  const stampedDate = new Date(lastUpdated);
-  const dateLabel = Number.isNaN(stampedDate.getTime())
-    ? null
-    : stampedDate.toLocaleDateString("en-US", {
-        month: "long",
-        day: "numeric",
-        year: "numeric",
-        timeZone: "UTC",
-      });
+  const dateLabel = longDate(lastUpdated);
 
   return (
     <PageShell site={site} currentPath={currentPath} pageLinks={pageLinks}>

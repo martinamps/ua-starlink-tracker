@@ -34,6 +34,10 @@
   --color-accent: var(--color-accent);
   --color-accent-dim: var(--color-accent-dim);
   --color-success: var(--color-success);
+  --color-warn: var(--color-warn);
+  --color-danger: var(--color-danger);
+  --color-info: var(--color-info);
+  --color-trial: var(--color-trial);
   --font-display: var(--font-display);
 }
 
@@ -86,7 +90,7 @@
   background: var(--color-accent);
 }
 .wifi-viasat {
-  background: rgba(245, 158, 11, 0.5);
+  background: color-mix(in srgb, var(--color-warn) 50%, transparent);
 }
 .wifi-panasonic {
   background: rgba(168, 85, 247, 0.5);
@@ -96,16 +100,16 @@
 }
 .wifi-none {
   background: transparent;
-  box-shadow: inset 0 0 0 1px rgba(90, 106, 128, 0.5);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-neutral) 50%, transparent);
 }
 .wifi-unknown {
   background: transparent;
-  box-shadow: inset 0 0 0 1px rgba(90, 106, 128, 0.25);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-neutral) 25%, transparent);
 }
 /* Pipeline overlays come after wifi-* so they win the cascade. */
 .pipe-mod {
-  background: rgba(245, 158, 11, 0.15);
-  box-shadow: inset 0 0 0 1.5px #f59e0b;
+  background: color-mix(in srgb, var(--color-warn) 15%, transparent);
+  box-shadow: inset 0 0 0 1.5px var(--color-warn);
 }
 .pipe-verif {
   background: rgba(14, 165, 233, 0.15);
@@ -126,15 +130,15 @@
   text-decoration: underline;
 }
 .pipe-chip-mod {
-  border-color: rgba(245, 158, 11, 0.6);
-  background: rgba(245, 158, 11, 0.08);
+  border-color: color-mix(in srgb, var(--color-warn) 60%, transparent);
+  background: color-mix(in srgb, var(--color-warn) 8%, transparent);
 }
 .pipe-chip-verif {
   border-color: rgba(14, 165, 233, 0.6);
   background: rgba(14, 165, 233, 0.08);
 }
 .pipe-chip-sched {
-  border-color: rgba(90, 106, 128, 0.5);
+  border-color: color-mix(in srgb, var(--color-neutral) 50%, transparent);
   border-style: dashed;
 }
 .bar-complete {
@@ -144,16 +148,20 @@
   background: rgba(14, 165, 233, 0.45);
 }
 .bar-inmod {
-  background: rgba(245, 158, 11, 0.8);
+  background: color-mix(in srgb, var(--color-warn) 80%, transparent);
 }
 .bar-queued {
-  background: repeating-linear-gradient(45deg, rgba(90, 106, 128, 0.55) 0 2px, transparent 2px 4px);
+  background: repeating-linear-gradient(
+    45deg,
+    color-mix(in srgb, var(--color-neutral) 55%, transparent) 0 2px,
+    transparent 2px 4px
+  );
 }
 .tail-pipe {
   opacity: 0.75;
 }
 .dot-mod {
-  color: #f59e0b;
+  color: var(--color-warn);
 }
 .dot-verif {
   color: var(--color-accent);
@@ -266,6 +274,136 @@
     margin: 0 1rem;
   }
 }
+/* /route-planner itinerary cards, drawn by src/client/route-planner.ts. */
+.flight-path {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.flight-path__node {
+  flex-shrink: 0;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  background: var(--color-base);
+  position: relative;
+  z-index: 1;
+}
+.flight-path__node--filled {
+  background: currentColor;
+}
+.flight-path__line {
+  flex: 1;
+  height: 2px;
+  background: currentColor;
+  position: relative;
+  opacity: 0.4;
+}
+.flight-path__line--live::after {
+  content: "";
+  position: absolute;
+  width: 20px;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, currentColor, transparent);
+  animation: signal-pulse 2.5s linear infinite;
+  left: -20px;
+}
+@keyframes signal-pulse {
+  0% {
+    left: -20px;
+    opacity: 0;
+  }
+  10% {
+    opacity: 1;
+  }
+  90% {
+    opacity: 1;
+  }
+  100% {
+    left: 100%;
+    opacity: 0;
+  }
+}
+.prob-bars {
+  display: inline-flex;
+  gap: 2px;
+  align-items: flex-end;
+  height: 14px;
+}
+.prob-bars__bar {
+  width: 3px;
+  background: currentColor;
+  border-radius: 1px;
+  transition: opacity 0.3s;
+}
+.prob-bars__bar:nth-child(1) {
+  height: 40%;
+}
+.prob-bars__bar:nth-child(2) {
+  height: 55%;
+}
+.prob-bars__bar:nth-child(3) {
+  height: 70%;
+}
+.prob-bars__bar:nth-child(4) {
+  height: 85%;
+}
+.prob-bars__bar:nth-child(5) {
+  height: 100%;
+}
+.prob-bars__bar--off {
+  opacity: 0.15;
+}
+@keyframes itin-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.itin-card {
+  animation: itin-enter 0.4s ease-out both;
+}
+.itin-card:nth-child(1) {
+  animation-delay: 0.05s;
+}
+.itin-card:nth-child(2) {
+  animation-delay: 0.1s;
+}
+.itin-card:nth-child(3) {
+  animation-delay: 0.15s;
+}
+.itin-card:nth-child(4) {
+  animation-delay: 0.2s;
+}
+.itin-card:nth-child(5) {
+  animation-delay: 0.25s;
+}
+.itin-card:nth-child(6) {
+  animation-delay: 0.3s;
+}
+.itin-card:nth-child(7) {
+  animation-delay: 0.35s;
+}
+.itin-card:nth-child(8) {
+  animation-delay: 0.4s;
+}
+.airport-input {
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  text-align: center;
+  font-weight: 600;
+}
+.airport-input::placeholder {
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 400;
+}
 /* Type-page verdict card: the left rule carries the answer's tone. */
 .verdict {
   border-left-width: 3px;
@@ -280,8 +418,8 @@
   border-left-color: rgba(14, 165, 233, 0.35);
 }
 .verdict-wait {
-  border-left-color: #f59e0b;
+  border-left-color: var(--color-warn);
 }
 .verdict-no {
-  border-left-color: rgba(90, 106, 128, 0.6);
+  border-left-color: color-mix(in srgb, var(--color-neutral) 60%, transparent);
 }

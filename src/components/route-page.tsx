@@ -3,15 +3,8 @@ import { type SiteConfig, siteAirline } from "../airlines/registry";
 import type { RouteSummary } from "../database/database";
 import { airportTimezone } from "../utils/airport-tz";
 import type { PageLink } from "./atoms";
-import { PageHeader, PageShell, Section, Td, Th, aircraftName, fmt } from "./layout";
-
-export function formatDuration(sec: number | null): string | null {
-  if (!sec || sec <= 0) return null;
-  const h = Math.floor(sec / 3600);
-  const m = Math.round((sec % 3600) / 60);
-  if (h === 0) return `${m}m`;
-  return m === 0 ? `${h}h` : `${h}h ${m}m`;
-}
+import { Chip, PageHeader, PageShell, Section, Td, Th, aircraftName, fmt } from "./layout";
+import { formatDuration, monthDay, zonedDeparture } from "./ui/format";
 
 /** One physical Starlink departure on the pair, under its marketing number. */
 export interface RouteDeparture {
@@ -23,41 +16,9 @@ export interface RouteDeparture {
   verified: boolean;
 }
 
-const localFormatters = new Map<string, Intl.DateTimeFormat[]>();
-
-/**
- * Wall-clock time at the departure airport: "Sep 21" / "7:05 AM PDT". Absolute,
- * never "in 7h": pages are cached and a relative time goes stale with them.
- * Unmapped airports fall back to UTC, labelled as such.
- */
+/** Departure clock at the origin airport; unmapped airports read UTC. */
 export function localDeparture(iata: string, sec: number): { date: string; time: string } {
-  const timeZone = airportTimezone(iata) ?? "UTC";
-  let f = localFormatters.get(timeZone);
-  if (!f) {
-    f = [
-      new Intl.DateTimeFormat("en-US", { timeZone, month: "short", day: "numeric" }),
-      new Intl.DateTimeFormat("en-US", {
-        timeZone,
-        hour: "numeric",
-        minute: "2-digit",
-        timeZoneName: "short",
-      }),
-    ];
-    localFormatters.set(timeZone, f);
-  }
-  const d = new Date(sec * 1000);
-  return { date: f[0].format(d), time: f[1].format(d) };
-}
-
-function lastSeenLabel(sec: number, nowSec: number): string {
-  const d = new Date(sec * 1000);
-  const sameYear = d.getUTCFullYear() === new Date(nowSec * 1000).getUTCFullYear();
-  return d.toLocaleDateString("en-US", {
-    timeZone: "UTC",
-    month: "short",
-    day: "numeric",
-    ...(sameYear ? {} : { year: "numeric" }),
-  });
+  return zonedDeparture(sec, airportTimezone(iata));
 }
 
 /** A historical number seen once is as likely a data-source artifact (a
@@ -111,9 +72,6 @@ export function routeVerdict(
   }
   return `No Starlink flights ${pair} in the ${route.windowLabel}. Aircraft are assigned about two days out.`;
 }
-
-const CHIP =
-  "text-sm px-2.5 py-1 rounded border border-subtle bg-surface-elevated text-secondary hover:border-accent hover:text-accent transition-colors whitespace-nowrap";
 
 function DeparturesTable({
   route,
@@ -203,9 +161,9 @@ function FlightNumbers({
           <h3 className="mb-2 text-sm text-secondary">In the schedule now</h3>
           <div className="flex flex-wrap gap-2">
             {scheduled.map((f) => (
-              <a key={f.flight_number} href={`/check-flight/${f.flight_number}`} className={CHIP}>
-                <span className="font-mono">{f.flight_number}</span>
-              </a>
+              <Chip key={f.flight_number} href={`/check-flight/${f.flight_number}`}>
+                {f.flight_number}
+              </Chip>
             ))}
           </div>
         </div>
@@ -215,15 +173,15 @@ function FlightNumbers({
           <h3 className="mb-2 text-sm text-secondary">Seen before</h3>
           <div className="flex flex-wrap gap-2">
             {history.map((f) => (
-              <a key={f.flight_number} href={`/check-flight/${f.flight_number}`} className={CHIP}>
-                <span className="font-mono">{f.flight_number}</span>
+              <Chip key={f.flight_number} href={`/check-flight/${f.flight_number}`}>
+                {f.flight_number}
                 {f.seen && (
-                  <span className="text-xs text-muted">
+                  <span className="font-sans text-xs text-muted">
                     {" "}
-                    · last seen {lastSeenLabel(f.seen, nowSec)}
+                    · last seen {monthDay(f.seen, nowSec)}
                   </span>
                 )}
-              </a>
+              </Chip>
             ))}
           </div>
         </div>

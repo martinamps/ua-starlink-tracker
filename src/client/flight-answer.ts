@@ -7,9 +7,12 @@
  * React; every interpolated value goes through esc(). Keep imports
  * dependency-free: this file is bundled for the browser.
  */
+import { ageLabel, fmt, monthDay, zonedDeparture } from "../components/ui/format";
 import { type SeatbackLiveTv, seatbackLiveTv } from "../utils/aircraft-specs";
+import { esc } from "./esc";
+import { METER_FILL, METER_HEIGHT, METER_TRACK, meterWidth } from "./meter";
 
-export interface WireFlight {
+interface WireFlight {
   tail_number?: string | null;
   aircraft_type?: string | null;
   flight_number?: string | null;
@@ -51,7 +54,7 @@ export interface CheckFlightBody {
   sameDayAlternatives?: WireAlternative[];
 }
 
-export type AnswerTone = "yes" | "no" | "likely" | "maybe" | "unlikely" | "unknown";
+type AnswerTone = "yes" | "no" | "likely" | "maybe" | "unlikely" | "unknown";
 
 export interface AnswerContext {
   flightNumber: string;
@@ -81,52 +84,14 @@ export interface FlightAnswer {
 
 const WATCH_MAX_DAYS_OUT = 330;
 
-export function esc(s: unknown): string {
-  return String(s ?? "").replace(
-    /[&<>"']/g,
-    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] as string
-  );
-}
-
 const stripK = (code: string | null | undefined) => {
   const c = String(code ?? "").toUpperCase();
   return c.length === 4 && (c[0] === "K" || c[0] === "C") ? c.slice(1) : c;
 };
 
-/** "Sep 21" for the asked-about date, independent of any zone. */
-export function shortDate(date: string): string {
-  const d = new Date(`${date}T12:00:00Z`);
-  if (Number.isNaN(d.getTime())) return date;
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
-}
-
-/** "8:38 AM PDT" at the departure airport, like a boarding pass. */
-export function localTime(unix: number, airport: string | null | undefined, ctx: AnswerContext) {
-  const zone = ctx.zoneFor(stripK(airport));
-  return new Date(unix * 1000).toLocaleTimeString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-    timeZoneName: "short",
-    ...(zone ? { timeZone: zone } : { timeZone: "UTC" }),
-  });
-}
-
-function localDay(unix: number, airport: string | null | undefined, ctx: AnswerContext) {
-  const zone = ctx.zoneFor(stripK(airport));
-  return new Date(unix * 1000).toLocaleDateString("en-US", {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    timeZone: zone ?? "UTC",
-  });
-}
-
-export function ageLabel(checkedAt: number, nowSec: number): string {
-  const days = Math.floor((nowSec - checkedAt) / 86400);
-  if (days <= 0) return "today";
-  if (days === 1) return "yesterday";
-  return `${days} days ago`;
-}
+/** Departure clock at the airport, like a boarding pass: "Sun, Sep 21" / "8:38 AM PDT". */
+const departs = (unix: number, airport: string | null | undefined, ctx: AnswerContext) =>
+  zonedDeparture(unix, ctx.zoneFor(stripK(airport)));
 
 /** verified_wifi 'None' means no Wi-Fi installed; it is never a provider name. */
 function wifiPhrase(v: string | null | undefined): string {
@@ -161,7 +126,7 @@ const TONE_LABEL: Record<AnswerTone, string> = {
 const TONE_CARD: Record<AnswerTone, string> = {
   yes: "border-success/50 bg-success/10",
   likely: "border-success/40 bg-success/5",
-  maybe: "border-yellow-500/40 bg-yellow-500/5",
+  maybe: "border-warn/40 bg-warn/5",
   no: "border-subtle bg-surface-elevated",
   unlikely: "border-subtle bg-surface-elevated",
   unknown: "border-subtle bg-surface-elevated",
@@ -169,7 +134,7 @@ const TONE_CARD: Record<AnswerTone, string> = {
 const TONE_TEXT: Record<AnswerTone, string> = {
   yes: "text-success",
   likely: "text-success",
-  maybe: "text-yellow-400",
+  maybe: "text-warn",
   no: "text-primary",
   unlikely: "text-primary",
   unknown: "text-primary",
@@ -177,7 +142,7 @@ const TONE_TEXT: Record<AnswerTone, string> = {
 const TONE_BAR: Record<AnswerTone, string> = {
   yes: "bg-success",
   likely: "bg-success",
-  maybe: "bg-yellow-500",
+  maybe: "bg-warn",
   no: "bg-muted",
   unlikely: "bg-muted",
   unknown: "bg-muted",
@@ -199,7 +164,7 @@ function flightRows(f: WireFlight, ctx: AnswerContext): string {
     rows.push(
       row(
         "Departs",
-        `${esc(localDay(f.departure_time, dep, ctx))}, ${esc(localTime(f.departure_time, dep, ctx))}`
+        `${esc(departs(f.departure_time, dep, ctx).day)}, ${esc(departs(f.departure_time, dep, ctx).time)}`
       )
     );
   }
@@ -242,7 +207,7 @@ function alternativesHtml(
   const items = list
     .map(
       (a) =>
-        `<li><a href="/check-flight/${encodeURIComponent(a.flight_number)}/${encodeURIComponent(ctx.date)}" class="text-accent hover:underline">${esc(a.flight_number)}</a> at ${esc(localTime(a.departure_time, origin, ctx))} · ${tail(a.tail_number)}${a.aircraft_type ? ` · ${esc(a.aircraft_type)}` : ""}</li>`
+        `<li><a href="/check-flight/${encodeURIComponent(a.flight_number)}/${encodeURIComponent(ctx.date)}" class="text-accent hover:underline">${esc(a.flight_number)}</a> at ${esc(departs(a.departure_time, origin, ctx).time)} · ${tail(a.tail_number)}${a.aircraft_type ? ` · ${esc(a.aircraft_type)}` : ""}</li>`
     )
     .join("");
   return `<div class="mt-4"><h3 class="text-sm font-semibold text-primary">Starlink flights on this route that day</h3><ul class="mt-1 space-y-1 text-sm text-secondary">${items}</ul></div>`;
@@ -259,7 +224,7 @@ function routePlannerCta(
   return `<p class="mt-3 text-sm"><a href="/route-planner/${o}/${d}" rel="nofollow" class="text-accent hover:underline">Find Starlink flights from ${o} to ${d}</a></p>`;
 }
 
-export function watchRow(ctx: AnswerContext): string {
+function watchRow(ctx: AnswerContext): string {
   if (!ctx.watchEnabled) return "";
   if (!(ctx.daysOut >= -1 && ctx.daysOut <= WATCH_MAX_DAYS_OUT)) return "";
   const path = `/cal/${encodeURIComponent(ctx.flightNumber)}/${encodeURIComponent(ctx.date)}.ics`;
@@ -276,7 +241,7 @@ function card(tone: AnswerTone, headline: string, body: string): string {
 
 function probabilityBar(p: number, tone: AnswerTone): string {
   const w = Math.max(0, Math.min(100, Math.round(p * 100)));
-  return `<div class="mt-3 h-2 w-full overflow-hidden rounded-full bg-base" role="img" aria-label="${w}% chance of Starlink"><div class="h-2 rounded-full ${TONE_BAR[tone]}" style="width:${w}%"></div></div>`;
+  return `<div class="mt-3 ${METER_TRACK} bg-base ${METER_HEIGHT.md}" role="img" aria-label="${w}% chance of Starlink"><div class="${METER_FILL} ${TONE_BAR[tone]}" style="width:${meterWidth(w / 100)}"></div></div>`;
 }
 
 /** The API's degraded-FR24 sentence, when present; the rest of the message is restated here. */
@@ -296,7 +261,7 @@ function timingNote(ctx: AnswerContext, airlineName: string): string {
 
 export function renderFlightAnswer(body: CheckFlightBody, ctx: AnswerContext): FlightAnswer {
   const fn = ctx.flightNumber;
-  const on = `${fn} on ${shortDate(ctx.date)}`;
+  const on = `${fn} on ${monthDay(ctx.date)}`;
 
   if (body.error) {
     const headline = `We couldn't check ${fn}`;
@@ -405,7 +370,7 @@ export function renderFlightAnswer(body: CheckFlightBody, ctx: AnswerContext): F
   const basis =
     body.confidence === "predicted"
       ? n > 0
-        ? `Based on the aircraft on ${n.toLocaleString("en-US")} recent ${fn} flights.`
+        ? `Based on the aircraft on ${fmt(n)} recent ${fn} flights.`
         : `We haven't seen ${fn} yet, so this is our estimate for flights like it.`
       : (body.message ?? "");
   const note = degradedNote(body.message) ?? timingNote(ctx, ctx.airlineName);

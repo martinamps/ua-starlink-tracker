@@ -27,7 +27,7 @@ import {
 import type { PerAirlineStat } from "../types";
 import {
   type PageLink,
-  STATUS_TONE,
+  ROLLOUT_TONE,
   StagePill,
   factsStage,
   shareIsPublishable,
@@ -35,26 +35,29 @@ import {
   trackingMethod,
 } from "./atoms";
 import {
-  PANEL,
+  ButtonLink,
+  Chip,
+  Eyebrow,
   PageHeader,
+  PageShell,
+  Panel,
   SECTION,
   Section,
-  PageShell as Shell,
+  StatValue,
   Td,
   Th,
   aircraftName,
   fmt,
   pct,
 } from "./layout";
+import { Pill, TONE_TEXT, type Tone } from "./ui/tone";
 
-// Same visual language as STATUS_TONE, extended for the facts statuses the
-// registry doesn't have (announced, trial, not-Starlink).
-const FACTS_TONE: Record<RolloutFactsStatus, { color: string; bg: string }> = {
-  complete: STATUS_TONE.complete,
-  installing: STATUS_TONE.in_progress,
-  announced: STATUS_TONE.phase_done,
-  trial: { color: "#a78bfa", bg: "rgba(167,139,250,.12)" },
-  not_starlink: { color: "#f47067", bg: "rgba(244,112,103,.12)" },
+const FACTS_TONE: Record<RolloutFactsStatus, Tone> = {
+  complete: "success",
+  installing: "info",
+  announced: "warn",
+  trial: "trial",
+  not_starlink: "danger",
 };
 
 export interface AirlineOverview {
@@ -81,21 +84,15 @@ export interface TypePhase {
   total?: number;
 }
 
-const PHASE_LABEL: Record<WifiPhase, { text: string; tone: "yes" | "mid" | "no" }> = {
-  confirmed: { text: "Starlink on every one", tone: "yes" },
-  rolling: { text: "Installing", tone: "mid" },
+const PHASE_LABEL: Record<WifiPhase, { text: string; tone: Tone }> = {
+  confirmed: { text: "Starlink on every one", tone: "success" },
+  rolling: { text: "Installing", tone: "warn" },
   // "No Starlink planned" claims the airline ruled the type out. For some of
   // these it did (HA's 717s); for others it has simply never said (QR's A380s
   // and A330s — the registry's own note is "no installation plan announced").
   // One phase covers both, so the label says only what both support.
-  negative: { text: "Not in the programme", tone: "no" },
+  negative: { text: "Not in the programme", tone: "neutral" },
 };
-
-const TONE_CLASS = {
-  yes: "text-green-400",
-  mid: "text-amber-400",
-  no: "text-muted",
-} as const;
 
 /** The answer for an airline whose Starlink status is decided by aircraft
  * type. It REPLACES the blended fleet percentage rather than sitting under it:
@@ -105,9 +102,7 @@ const TONE_CLASS = {
 export function PhaseTable({ phases }: { phases: TypePhase[] }) {
   return (
     <div className="mb-4">
-      <div className="text-xs font-mono text-muted uppercase tracking-wider mb-1">
-        By aircraft type
-      </div>
+      <Eyebrow className="mb-1">By aircraft type</Eyebrow>
       {phases.map(({ family, phase, equipped, total }) => {
         const p = PHASE_LABEL[phase];
         return (
@@ -125,7 +120,7 @@ export function PhaseTable({ phases }: { phases: TypePhase[] }) {
                 </span>
               )}
             </span>
-            <span className={TONE_CLASS[p.tone]}>{p.text}</span>
+            <span className={TONE_TEXT[p.tone]}>{p.text}</span>
           </div>
         );
       })}
@@ -137,37 +132,12 @@ export function PhaseTable({ phases }: { phases: TypePhase[] }) {
   );
 }
 
-function fleetShare(stat: PerAirlineStat): { fleet: number; pct: number } {
-  // % over the FULL fleet so it reads as "odds on a random flight". `total` is
-  // the same denominator the airline's own tracker publishes; fleetTotal counts
-  // only the tails we hold rows for, which is smaller and would make the hub
-  // quote a higher percentage than the tenant site for the same airline.
-  const fleet = stat.total;
-  return { fleet, pct: fleet > 0 ? Math.round((stat.starlink / fleet) * 100) : 0 };
-}
-
 export function StatusPill({ cfg }: { cfg: AirlineConfig }) {
-  const tone = STATUS_TONE[cfg.rollout.status];
-  return (
-    <span
-      className="font-mono text-xs uppercase tracking-wide px-2 py-1 rounded-full shrink-0"
-      style={{ color: tone.color, background: tone.bg }}
-    >
-      {cfg.rollout.statusLabel}
-    </span>
-  );
+  return <Pill tone={ROLLOUT_TONE[cfg.rollout.status]}>{cfg.rollout.statusLabel}</Pill>;
 }
 
 function FactsStatusPill({ entry }: { entry: AirlineFactsEntry }) {
-  const tone = FACTS_TONE[entry.status];
-  return (
-    <span
-      className="font-mono text-xs uppercase tracking-wide px-2 py-1 rounded-full shrink-0"
-      style={{ color: tone.color, background: tone.bg }}
-    >
-      {entry.statusLabel}
-    </span>
-  );
+  return <Pill tone={FACTS_TONE[entry.status]}>{entry.statusLabel}</Pill>;
 }
 
 /** One dated, sourced claim — the "as of" stamp is the product. */
@@ -208,11 +178,11 @@ function FactRow({ fact }: { fact: RolloutFact }) {
 export function FactsList({ entry }: { entry: AirlineFactsEntry }) {
   const stamp = factsStamp(entry);
   return (
-    <div className={PANEL}>
+    <Panel>
       <div className="flex items-center justify-between gap-2 mb-1">
-        <span className="text-xs font-mono text-muted uppercase tracking-wider">
+        <Eyebrow as="span" className="">
           {entry.name}: dated facts
-        </span>
+        </Eyebrow>
         <span className="font-mono text-xs text-muted">
           {stamp.label} {formatFactDate(stamp.date)}
         </span>
@@ -225,14 +195,11 @@ export function FactsList({ entry }: { entry: AirlineFactsEntry }) {
       <p className="text-xs text-muted leading-relaxed mt-2">
         Each fact above shows the date it was true and links its source.
       </p>
-    </div>
+    </Panel>
   );
 }
 
-function TrackerCta({
-  overview,
-  prominent = false,
-}: { overview: AirlineOverview; prominent?: boolean }) {
+function TrackerCta({ overview }: { overview: AirlineOverview }) {
   const { cfg, trackerHost } = overview;
   // No live dedicated site and not on the hub homepage either (publicInHub
   // false) → nothing honest to funnel to yet.
@@ -241,41 +208,7 @@ function TrackerCta({
   const label = trackerHost
     ? `Full ${cfg.shortName} tracker → ${trackerHost}`
     : `Live ${cfg.shortName} data on the hub tracker →`;
-  return prominent ? (
-    <a
-      href={href}
-      className="inline-block font-mono text-sm px-4 py-2 bg-accent/20 border border-accent rounded text-accent hover:bg-accent/30 transition-colors"
-    >
-      {label}
-    </a>
-  ) : (
-    <a href={href} className="font-mono text-xs text-accent hover:underline whitespace-nowrap">
-      {label}
-    </a>
-  );
-}
-
-export function PageShell({
-  site,
-  heading,
-  sub,
-  children,
-  pageLinks,
-  currentPath,
-}: {
-  site: SiteConfig;
-  heading: string;
-  sub: string;
-  children: React.ReactNode;
-  pageLinks?: PageLink[];
-  currentPath?: string;
-}) {
-  return (
-    <Shell site={site} currentPath={currentPath} pageLinks={pageLinks}>
-      <PageHeader title={heading} dek={sub} />
-      {children}
-    </Shell>
-  );
+  return <ButtonLink href={href}>{label}</ButtonLink>;
 }
 
 // Programmes first, in how far along they are; negatives get their own table
@@ -328,13 +261,11 @@ export function AirlinesIndexPage({
     .map((o) => o.cfg.shortName);
   const byType = airlines.some((o) => trackingMethod(o.cfg) === "type");
   return (
-    <PageShell
-      site={site}
-      pageLinks={pageLinks}
-      currentPath={currentPath}
-      heading="Which airlines have Starlink Wi-Fi?"
-      sub={`${airlines.length + roster.length} airlines, from finished fleets to firm no's. We count ${perPlane.join(" and ")} plane by plane.`}
-    >
+    <PageShell site={site} pageLinks={pageLinks} currentPath={currentPath}>
+      <PageHeader
+        title="Which airlines have Starlink Wi-Fi?"
+        dek={`${airlines.length + roster.length} airlines, from finished fleets to firm no's. We count ${perPlane.join(" and ")} plane by plane.`}
+      />
       <Section title="Tracked here" wide>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -402,13 +333,9 @@ export function AirlinesIndexPage({
         >
           <div className="flex flex-wrap gap-2">
             {comparisons.map((c) => (
-              <a
-                key={c.href}
-                href={c.href}
-                className="font-mono text-xs px-3 py-1.5 bg-surface-elevated border border-subtle rounded text-secondary hover:text-accent hover:border-accent transition-colors"
-              >
+              <Chip key={c.href} href={c.href} size="sm">
                 {c.name} →
-              </a>
+              </Chip>
             ))}
           </div>
         </Section>
@@ -499,32 +426,31 @@ export function AirlineDetailPage({
   currentPath?: string;
 }) {
   const { cfg, stat } = overview;
-  const { fleet, pct } = fleetShare(stat);
+  // The full-fleet denominator the airline's own tracker publishes; fleetTotal
+  // counts only tails we hold rows for and would quote a higher share.
+  const fleet = stat.total;
   const showBlended = fleet > 0 && !phases;
   return (
-    <PageShell
-      site={site}
-      pageLinks={pageLinks}
-      currentPath={currentPath}
-      heading={`${cfg.name} Starlink WiFi`}
-      sub={`${cfg.rollout.statusLabel} — ${cfg.rollout.phaseNote}`}
-    >
+    <PageShell site={site} pageLinks={pageLinks} currentPath={currentPath}>
+      <PageHeader
+        title={`${cfg.name} Starlink WiFi`}
+        dek={`${cfg.rollout.statusLabel} — ${cfg.rollout.phaseNote}`}
+      />
       <section className={SECTION}>
-        <div className={PANEL}>
+        <Panel>
           <div className="flex items-center justify-between gap-2 mb-3">
-            <span className="text-xs font-mono text-muted uppercase tracking-wider">
+            <Eyebrow as="span" className="">
               Rollout status
-            </span>
+            </Eyebrow>
             <StatusPill cfg={cfg} />
           </div>
           {showBlended && (
-            <div className="font-mono text-2xl font-semibold text-primary mb-1">
-              {stat.starlink}
-              <span className="text-base text-muted font-normal">
-                {" "}
-                / {fleet} aircraft · {pct}%
-              </span>
-            </div>
+            <StatValue
+              className="mb-2"
+              unit={`of ${fmt(fleet)} aircraft · ${pct(stat.starlink, fleet)}`}
+            >
+              {fmt(stat.starlink)}
+            </StatValue>
           )}
           {fleet === 0 && (
             <p className="text-sm text-muted">
@@ -534,8 +460,8 @@ export function AirlineDetailPage({
           )}
           {phases && <PhaseTable phases={phases} />}
           {showBlended && (stat.installs30d ?? 0) > 0 && (
-            <div className="font-mono text-xs text-secondary mb-1">
-              +{stat.installs30d} aircraft equipped in the last 30 days
+            <div className="text-xs text-secondary mb-1">
+              +{fmt(stat.installs30d ?? 0)} aircraft equipped in the last 30 days
             </div>
           )}
           <p className="text-sm text-muted leading-relaxed mt-3">
@@ -555,7 +481,7 @@ export function AirlineDetailPage({
               </>
             )}
           </p>
-        </div>
+        </Panel>
       </section>
 
       {facts && (
@@ -565,7 +491,7 @@ export function AirlineDetailPage({
       )}
 
       <section className={`${SECTION} text-center`}>
-        <TrackerCta overview={overview} prominent />
+        <TrackerCta overview={overview} />
       </section>
     </PageShell>
   );
@@ -608,24 +534,19 @@ export function AirlineFactsPage({
   currentPath?: string;
 }) {
   return (
-    <PageShell
-      site={site}
-      pageLinks={pageLinks}
-      currentPath={currentPath}
-      heading={factsHeadline(entry)}
-      sub={entry.summary}
-    >
+    <PageShell site={site} pageLinks={pageLinks} currentPath={currentPath}>
+      <PageHeader title={factsHeadline(entry)} dek={entry.summary} />
       {entry.status === "not_starlink" && entry.insteadOf && (
         <section className={SECTION}>
-          <div className={PANEL}>
+          <Panel>
             <div className="flex items-center justify-between gap-2 mb-2">
-              <span className="text-xs font-mono text-muted uppercase tracking-wider">
+              <Eyebrow as="span" className="">
                 What they run instead
-              </span>
+              </Eyebrow>
               <FactsStatusPill entry={entry} />
             </div>
             <p className="text-sm text-secondary leading-relaxed">{entry.insteadOf}</p>
-          </div>
+          </Panel>
         </section>
       )}
 
@@ -640,7 +561,7 @@ export function AirlineFactsPage({
 
       {entry.status === "announced" && (
         <section className={SECTION}>
-          <div className={PANEL}>
+          <Panel>
             {/* Describes the program state the dated facts above establish. The
                 older wording asserted a fleet-wide negative ("no X aircraft
                 flies with Starlink today") that carried neither a date nor a
@@ -651,32 +572,26 @@ export function AirlineFactsPage({
               page grows into a live tracker like the ones below: per-aircraft status, install pace,
               and flight-level answers.
             </p>
-          </div>
+          </Panel>
         </section>
       )}
 
       {trackedLinks.length > 0 && (
         <section className={SECTION}>
-          <div className={PANEL}>
-            <div className="text-xs font-mono text-muted uppercase tracking-wider mb-2">
-              Tracked live
-            </div>
+          <Panel>
+            <Eyebrow className="mb-2">Tracked live</Eyebrow>
             <p className="text-sm text-muted leading-relaxed mb-3">
               Flying one of these instead? We track their Starlink rollouts aircraft-by-aircraft —
               check a specific flight number and date:
             </p>
             <div className="flex flex-wrap gap-2">
               {trackedLinks.map((l) => (
-                <a
-                  key={l.href}
-                  href={l.href}
-                  className="font-mono text-xs px-3 py-1.5 bg-surface-elevated border border-subtle rounded text-secondary hover:text-accent hover:border-accent transition-colors"
-                >
+                <Chip key={l.href} href={l.href} size="sm">
                   {l.name} →
-                </a>
+                </Chip>
               ))}
             </div>
-          </div>
+          </Panel>
         </section>
       )}
     </PageShell>

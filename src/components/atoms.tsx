@@ -12,42 +12,13 @@ import type { RolloutFactsStatus } from "../airlines/rollout-facts";
 import type { PopularFlight } from "../database/database";
 import type { PerAirlineStat, RecentInstall } from "../types";
 import { denominatorIsPublishable } from "../utils/share-cards";
-import { fmt, pct } from "./layout";
+import { ButtonLink, Chip, Eyebrow, Panel } from "./layout";
+import { fmt, monthDay, pct } from "./ui/format";
+import { Meter } from "./ui/meter";
+import { Pill, type Tone } from "./ui/tone";
 
 export type { PerAirlineStat };
-
-/**
- * One-line cross-domain footer links, rendered on every site. Registry-derived
- * (live sites only) and plain followed links — the sister domains are the same
- * publisher, so no nofollow. The hub's /airlines link stays relative on the
- * hub itself.
- */
-export function CrossSiteLinks({ site }: { site: SiteConfig }) {
-  const sisters = liveAirlineSites().filter(({ site: s }) => s.key !== site.key);
-  const hubHost = SITES.airline.canonicalHost;
-  const airlinesHref = site.scope === "ALL" ? "/airlines" : `https://${hubHost}/airlines`;
-  // data-cross-site-links marks the block as a deliberate cross-tenant
-  // mention — the tenant-matrix canary sweep strips it before scanning.
-  return (
-    <div data-cross-site-links className="mt-3 text-xs text-muted">
-      Also tracking:{" "}
-      {sisters.map(({ site: s, airline }) => (
-        <React.Fragment key={s.key}>
-          <a
-            href={`https://${s.canonicalHost}/`}
-            className="text-secondary hover:text-primary transition-colors"
-          >
-            {airline.shortName} Starlink tracker
-          </a>
-          <span className="mx-1.5 text-subtle">·</span>
-        </React.Fragment>
-      ))}
-      <a href={airlinesHref} className="text-secondary hover:text-primary transition-colors">
-        All airlines with Starlink
-      </a>
-    </div>
-  );
-}
+export type { PageLink } from "./layout";
 
 /**
  * Download link for the pre-rendered share-stat card. Renders nothing until
@@ -58,11 +29,7 @@ export function ShareCardLink({ path }: { path?: string | null }) {
   if (!path) return null;
   return (
     <div className="relative text-center py-2">
-      <a
-        href={path}
-        download
-        className="inline-flex items-center gap-2 font-mono text-xs px-3 py-2 bg-surface border border-subtle rounded text-secondary hover:text-accent hover:border-accent transition-colors"
-      >
+      <ButtonLink href={path} download variant="secondary" size="sm" className="gap-2">
         <svg
           className="w-3.5 h-3.5"
           xmlns="http://www.w3.org/2000/svg"
@@ -79,36 +46,7 @@ export function ShareCardLink({ path }: { path?: string | null }) {
           <line x1="12" y1="15" x2="12" y2="3" />
         </svg>
         Share this stat — download the card
-      </a>
-    </div>
-  );
-}
-
-export interface PageLink {
-  href: string;
-  label: string;
-}
-
-/**
- * Internal nav for the secondary URL families (/newly-equipped, /install-rate,
- * /embed). They are sitemapped and indexable, so without an inbound href from
- * a real page they are orphans — no PageRank path in and no way for a human to
- * find them. The server builds this list from the same sitePages() filter the
- * sitemap uses (feature flag AND data gate), so a link here can never point at
- * a 404, and the current page is dropped so nothing self-links.
- */
-export function PageNavLinks({ links }: { links?: PageLink[] }) {
-  if (!links?.length) return null;
-  return (
-    <div className="mt-3 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-xs">
-      {links.map((l, i) => (
-        <React.Fragment key={l.href}>
-          {i > 0 && <span className="text-subtle">·</span>}
-          <a href={l.href} className="text-secondary hover:text-primary transition-colors">
-            {l.label}
-          </a>
-        </React.Fragment>
-      ))}
+      </ButtonLink>
     </div>
   );
 }
@@ -130,17 +68,11 @@ export function PopularFlightsLinks({
 }) {
   if (flights.length === 0) return null;
   return (
-    <div className="bg-surface border border-subtle rounded-lg p-5" data-popular-flights>
-      <div className="text-xs font-mono text-muted uppercase tracking-wider mb-3">
-        Popular flights
-      </div>
+    <Panel data-popular-flights="">
+      <Eyebrow>Popular flights</Eyebrow>
       <div className="flex flex-wrap gap-2">
         {flights.map((f) => (
-          <a
-            key={f.flight_number}
-            href={`/check-flight/${f.flight_number}`}
-            className="font-mono text-sm px-2.5 py-1 rounded border border-subtle bg-surface-elevated text-secondary hover:border-accent hover:text-accent transition-colors"
-          >
+          <Chip key={f.flight_number} href={`/check-flight/${f.flight_number}`}>
             {f.flight_number}
             {/* Arrow, not the en dash /routes uses for its own O-D labels — the
                 route-pages guard treats a dashed pair as an unlinked route label. */}
@@ -150,42 +82,36 @@ export function PopularFlightsLinks({
                 {f.origin} → {f.destination}
               </span>
             )}
-          </a>
+          </Chip>
         ))}
       </div>
       <p className="text-xs text-muted mt-4 leading-snug">
         The {airlineName} flights we see most. Each shows its Starlink history and a check by date.
       </p>
-    </div>
+    </Panel>
   );
 }
 
-export const STATUS_TONE = {
-  complete: { color: "#3fb950", bg: "rgba(63,185,80,.12)" },
-  phase_done: { color: "#d4a72c", bg: "rgba(212,167,44,.12)" },
-  in_progress: { color: "#58a6ff", bg: "rgba(88,166,255,.12)" },
-} as const;
+export const ROLLOUT_TONE: Record<AirlineConfig["rollout"]["status"], Tone> = {
+  complete: "success",
+  phase_done: "warn",
+  in_progress: "info",
+};
 
 /**
  * One status vocabulary for every airline on the hub, /airlines and /compare.
  * The registry's free-text labels ("Regional fleet done", "Widebodies nearly
  * done") stay on detail pages; lists and tables speak only these words.
  */
-export type Stage =
-  | "Announced"
-  | "Trial"
-  | "Installing"
-  | "Mostly done"
-  | "Complete"
-  | "Not Starlink";
+type Stage = "Announced" | "Trial" | "Installing" | "Mostly done" | "Complete" | "Not Starlink";
 
-const STAGE_TONE: Record<Stage, { color: string; bg: string }> = {
-  Announced: STATUS_TONE.phase_done,
-  Trial: { color: "#a78bfa", bg: "rgba(167,139,250,.12)" },
-  Installing: STATUS_TONE.in_progress,
-  "Mostly done": STATUS_TONE.in_progress,
-  Complete: STATUS_TONE.complete,
-  "Not Starlink": { color: "#f47067", bg: "rgba(244,112,103,.12)" },
+const STAGE_TONE: Record<Stage, Tone> = {
+  Announced: "warn",
+  Trial: "trial",
+  Installing: "info",
+  "Mostly done": "info",
+  Complete: "success",
+  "Not Starlink": "danger",
 };
 
 export interface StageInfo {
@@ -236,15 +162,7 @@ export function factsStage(status: RolloutFactsStatus): StageInfo {
 }
 
 export function StagePill({ info }: { info: StageInfo }) {
-  const tone = STAGE_TONE[info.stage];
-  return (
-    <span
-      className="shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium"
-      style={{ color: tone.color, background: tone.bg }}
-    >
-      {info.label}
-    </span>
-  );
+  return <Pill tone={STAGE_TONE[info.stage]}>{info.label}</Pill>;
 }
 
 /** How an airline's Starlink status is decided: per aircraft, by aircraft
@@ -269,7 +187,6 @@ export function AirlineProgressList({ stats }: { stats: PerAirlineStat[] }) {
     <ul className="divide-y divide-subtle">
       {rows.map(({ stat, cfg }) => {
         const publishable = shareIsPublishable(cfg, stat);
-        const share = publishable ? Math.min(100, (stat.starlink / stat.total) * 100) : 0;
         return (
           <li key={cfg.code} className="py-3 first:pt-0 last:pb-0">
             <div className="flex items-center justify-between gap-3">
@@ -283,16 +200,11 @@ export function AirlineProgressList({ stats }: { stats: PerAirlineStat[] }) {
             </div>
             {publishable ? (
               <div className="mt-2 grid grid-cols-[1fr_auto] items-center gap-3">
-                <div
-                  className="h-2 overflow-hidden rounded-full bg-surface-elevated"
-                  role="img"
-                  aria-label={`${cfg.name}: ${fmt(stat.starlink)} of ${fmt(stat.total)} aircraft (${pct(stat.starlink, stat.total)})`}
-                >
-                  <div
-                    className="h-full rounded-full"
-                    style={{ width: `${share}%`, background: stat.accentText ?? stat.accentColor }}
-                  />
-                </div>
+                <Meter
+                  share={stat.starlink / stat.total}
+                  color={stat.accentText ?? stat.accentColor}
+                  label={`${cfg.name}: ${fmt(stat.starlink)} of ${fmt(stat.total)} aircraft (${pct(stat.starlink, stat.total)})`}
+                />
                 <span className="text-sm text-secondary tabular-nums whitespace-nowrap">
                   {fmt(stat.starlink)} of {fmt(stat.total)} · {pct(stat.starlink, stat.total)}
                 </span>
@@ -326,10 +238,8 @@ export function RecentInstallsFeed({
     .map((a) => ({ cfg: a, rows: items.filter((i) => i.airline === a.code) }))
     .filter((g) => g.rows.length > 0);
   return (
-    <div className="bg-surface border border-subtle rounded-lg p-5">
-      <div className="text-xs font-mono text-muted uppercase tracking-wider mb-3">
-        Recent installs
-      </div>
+    <Panel>
+      <Eyebrow>Recent installs</Eyebrow>
       {grouped.length === 0 ? (
         <div className="text-xs text-muted font-mono">No recent installs</div>
       ) : (
@@ -339,7 +249,9 @@ export function RecentInstallsFeed({
               <div className="flex items-center gap-1.5 text-xs font-mono text-muted mb-1.5">
                 <span
                   className="w-1.5 h-1.5 rounded-full flex-shrink-0"
-                  style={{ background: g.cfg.accentText ?? g.cfg.accentColor ?? "#7a8ba2" }}
+                  style={{
+                    background: g.cfg.accentText ?? g.cfg.accentColor ?? "var(--color-text-muted)",
+                  }}
                 />
                 {g.cfg.name}
               </div>
@@ -362,11 +274,7 @@ export function RecentInstallsFeed({
                       </span>
                     )}
                     <span className="font-mono text-xs text-muted w-12 text-right">
-                      {new Date(r.DateFound).toLocaleDateString("en-US", {
-                        month: "short",
-                        day: "numeric",
-                        timeZone: "UTC",
-                      })}
+                      {monthDay(r.DateFound)}
                     </span>
                   </a>
                 ))}
@@ -375,119 +283,7 @@ export function RecentInstallsFeed({
           ))}
         </>
       )}
-    </div>
-  );
-}
-
-/**
- * Universal flight-number check input. Renders an inert form; client-side
- * script in hub.tsx fetches /api/check-any-flight and renders the result.
- * Compact variant — secondary action below route compare.
- */
-export function FlightCheckInput() {
-  return (
-    <div className="bg-surface border border-subtle rounded-lg p-3">
-      <div className="text-xs font-mono text-muted uppercase tracking-wider mb-2">
-        Already booked? Check a flight
-      </div>
-      <form id="hub-check-flight" className="flex flex-col sm:flex-row gap-2">
-        <input
-          type="text"
-          name="flight_number"
-          placeholder="UA1736, HA51, AS118, QR1…"
-          className="flex-1 font-mono text-sm px-3 py-2 bg-surface-elevated border border-subtle rounded text-primary placeholder-muted focus:outline-none focus:border-accent"
-          required
-        />
-        <input
-          type="date"
-          name="date"
-          className="font-mono text-sm px-3 py-2 bg-surface-elevated border border-subtle rounded text-primary focus:outline-none focus:border-accent"
-          required
-        />
-        <button
-          type="submit"
-          className="font-mono text-sm px-4 py-2 bg-accent/20 border border-accent rounded text-accent hover:bg-accent/30 transition-colors"
-        >
-          Check
-        </button>
-      </form>
-      <div id="hub-check-result" className="mt-2 text-sm font-mono hidden" />
-    </div>
-  );
-}
-
-// Preset chips: pick city pairs that exercise the comparison — mainland routes
-// with UA-vs-AS overlap, plus one Hawai'i route where HA is the answer.
-const PRESET_ROUTES: { o: string; d: string }[] = [
-  { o: "SEA", d: "SFO" },
-  { o: "DEN", d: "SAN" },
-  { o: "SFO", d: "HNL" },
-];
-
-export function RouteComparePanel() {
-  return (
-    <div className="bg-surface border border-subtle rounded-lg p-5">
-      <div className="text-xs font-mono text-muted uppercase tracking-wider mb-1">
-        Starlink odds by airline
-      </div>
-      <div className="text-xs font-mono text-muted leading-relaxed mb-3">
-        Share of each carrier's planes on this nonstop route that have Starlink today.
-      </div>
-      <form id="hub-compare-route" className="flex flex-col sm:flex-row gap-2">
-        <input
-          type="text"
-          name="origin"
-          placeholder="From (SFO)"
-          maxLength={3}
-          className="flex-1 font-mono text-sm px-3 py-2 bg-surface-elevated border border-subtle rounded text-primary placeholder-muted focus:outline-none focus:border-accent uppercase"
-          required
-        />
-        <input
-          type="text"
-          name="destination"
-          placeholder="To (HNL)"
-          maxLength={3}
-          className="flex-1 font-mono text-sm px-3 py-2 bg-surface-elevated border border-subtle rounded text-primary placeholder-muted focus:outline-none focus:border-accent uppercase"
-          required
-        />
-        <button
-          type="submit"
-          className="font-mono text-sm px-4 py-2 bg-accent/20 border border-accent rounded text-accent hover:bg-accent/30 transition-colors"
-        >
-          Compare
-        </button>
-      </form>
-      <div className="flex flex-wrap items-center gap-2 mt-2">
-        {PRESET_ROUTES.map((r) => (
-          <button
-            key={`${r.o}-${r.d}`}
-            type="button"
-            data-preset-origin={r.o}
-            data-preset-dest={r.d}
-            className="hub-route-preset font-mono text-xs px-2.5 py-1.5 bg-surface-elevated border border-subtle rounded text-secondary hover:text-accent hover:border-accent transition-colors"
-          >
-            {r.o} → {r.d}
-          </button>
-        ))}
-      </div>
-      <div id="hub-compare-result" className="mt-3 hidden" />
-      <div
-        id="hub-compare-footer"
-        className="mt-3 text-xs font-mono text-muted leading-relaxed hidden"
-      >
-        Carrier missing? It only shows up once one of its Starlink planes has flown here.{" "}
-        {/* Static href must be a real page: /route-planner 404s on the hub, and
-            crawlers see this SSR value — client JS only rewrites it to the
-            per-route URL after a comparison runs. */}
-        <a
-          id="hub-compare-rp"
-          href={`https://${SITES.united.canonicalHost}/route-planner`}
-          className="text-accent hover:underline"
-        >
-          Route Planner →
-        </a>
-      </div>
-    </div>
+    </Panel>
   );
 }
 
@@ -504,9 +300,9 @@ export function TypeBreakdownRow({
 }) {
   const icon =
     status === "starlink" ? (
-      <span className="text-green-400 font-mono">✓</span>
+      <span className="text-success font-mono">✓</span>
     ) : status === "pending" ? (
-      <span className="text-amber-400 font-mono">…</span>
+      <span className="text-warn font-mono">…</span>
     ) : (
       <span className="text-muted font-mono">—</span>
     );
@@ -527,9 +323,7 @@ export function TypeBreakdownRow({
           )}
         </div>
       </div>
-      <div
-        className={`text-xs font-mono ${status === "starlink" ? "text-green-400" : "text-muted"}`}
-      >
+      <div className={`text-xs font-mono ${status === "starlink" ? "text-success" : "text-muted"}`}>
         {label}
       </div>
     </div>

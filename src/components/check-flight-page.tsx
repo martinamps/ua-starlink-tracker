@@ -12,11 +12,23 @@ import { AIRPORT_TZ, airportTimezone } from "../utils/airport-tz";
 import { article } from "../utils/grammar";
 import { watchFeedEnabled } from "../utils/ics";
 import { type PageLink, PopularFlightsLinks } from "./atoms";
+import { FlightFactBlocks } from "./check-flight/fact-blocks";
 import { Faq, type FaqEntry, JsonLd, breadcrumbJsonLd, jsonLdString } from "./faq";
 import { ClientScriptTag, FlightSearchForm } from "./flight-search-form";
-import { H2, PageHeader, PageShell, Section, StatInline, fmt } from "./layout";
+import { CHROME_EXTENSION_URL } from "./home/tools";
+import {
+  Chip,
+  PageHeader,
+  PageShell,
+  Panel,
+  Section,
+  SectionTitle,
+  StatInline,
+  fmt,
+} from "./layout";
+import { formatDuration, shortDate, zonedDeparture } from "./ui/format";
 
-export interface FlightRouteFact {
+interface FlightRouteFact {
   departure_airport: string;
   arrival_airport: string;
   times: number;
@@ -27,7 +39,7 @@ export interface FlightRouteFact {
   linkable: boolean;
 }
 
-export interface FlightUpcomingDeparture {
+interface FlightUpcomingDeparture {
   departure_airport: string;
   arrival_airport: string;
   departure_time: number;
@@ -108,14 +120,6 @@ interface CheckFlightPageProps {
   noindex?: boolean;
 }
 
-const DAY_UTC = new Intl.DateTimeFormat("en-US", {
-  month: "short",
-  day: "numeric",
-  year: "numeric",
-  timeZone: "UTC",
-});
-const fmtDay = (sec: number) => DAY_UTC.format(new Date(sec * 1000));
-
 /** Zone → concatenated IATA codes; a third the bytes of the flat map, and the
  * browser re-check needs every airport a flight might leave from. */
 const AIRPORT_ZONES: Record<string, string> = (() => {
@@ -123,36 +127,6 @@ const AIRPORT_ZONES: Record<string, string> = (() => {
   for (const [iata, zone] of Object.entries(AIRPORT_TZ)) byZone[zone] = (byZone[zone] ?? "") + iata;
   return byZone;
 })();
-
-const departureFormatters = new Map<string, Intl.DateTimeFormat>();
-
-/** "Sun, Sep 21, 8:38 AM PDT" at the departure airport; UTC only when the
- * airport's zone is unknown. The checker answers per local day, so a UTC
- * label put late-evening departures on the next date. */
-function fmtDeparture(sec: number, tz: string | null | undefined): string {
-  const zone = tz ?? "UTC";
-  let f = departureFormatters.get(zone);
-  if (!f) {
-    f = new Intl.DateTimeFormat("en-US", {
-      weekday: "short",
-      month: "short",
-      day: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-      timeZoneName: "short",
-      timeZone: zone,
-    });
-    departureFormatters.set(zone, f);
-  }
-  return f.format(new Date(sec * 1000));
-}
-
-// Round total minutes BEFORE splitting into h/m — rounding the remainder
-// alone renders 2h59m30s as "2h 60m".
-const fmtDuration = (sec: number) => {
-  const mins = Math.round(sec / 60);
-  return `${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, "0")}m`;
-};
 
 /** The undated answer: how often this flight gets Starlink. Prefers the
  * model's number (the one the API and MCP quote) over the raw check tally. */
@@ -174,11 +148,6 @@ function usualSummary(flight: FlightFacts): string {
   return `We haven't seen ${fn} yet.`;
 }
 
-function lastSeenLabel(sec: number | null): string | null {
-  if (!sec || sec * 1000 > Date.now()) return null;
-  return `last seen ${fmtDay(sec)}`;
-}
-
 function answerContext(site: SiteConfig, dated: DatedAnswer): AnswerContext {
   const cfg = siteAirline(site);
   return {
@@ -193,167 +162,6 @@ function answerContext(site: SiteConfig, dated: DatedAnswer): AnswerContext {
     routePlannerEnabled: site.features.routePlannerPage,
     host: site.canonicalHost,
   };
-}
-
-function FlightFactBlocks({
-  flight,
-  scheduledOnDate,
-}: {
-  flight: FlightFacts;
-  scheduledOnDate: boolean;
-}) {
-  const fn = flight.flightNumber;
-  const hasHistory =
-    flight.observedTotal > 0 || flight.aircraftTypes.length > 0 || flight.lastStarlink !== null;
-  const pred = flight.prediction;
-  return (
-    <>
-      {flight.upcoming.length > 0 && (
-        <Section
-          title={`Next ${fn} departures`}
-          dek="Aircraft can change up to departure. Check your date above for the current answer."
-        >
-          <ul className="divide-y divide-subtle text-sm">
-            {flight.upcoming.map((u) => (
-              <li
-                key={`${u.tail_number}-${u.departure_time}`}
-                className="flex items-start justify-between gap-3 py-2 first:pt-0 last:pb-0"
-              >
-                <div className="min-w-0">
-                  <div className="text-primary">
-                    {u.departure_airport} → {u.arrival_airport}
-                    <span className="text-secondary">
-                      {" · "}
-                      {fmtDeparture(
-                        u.departure_time,
-                        u.departure_tz ?? airportTimezone(u.departure_airport)
-                      )}
-                    </span>
-                  </div>
-                  <div className="text-muted">
-                    <span className="font-mono">{u.tail_number}</span>
-                    {u.aircraft_type ? ` · ${u.aircraft_type}` : ""}
-                  </div>
-                </div>
-                <span
-                  className={`shrink-0 whitespace-nowrap ${u.starlink ? "text-success" : "text-muted"}`}
-                >
-                  {u.starlink ? "Starlink" : u.wifiLabel}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </Section>
-      )}
-
-      {hasHistory && (
-        <Section title={`${fn} Starlink history`}>
-          <div className="space-y-2 text-sm leading-relaxed text-secondary">
-            {pred && pred.n_observations > 0 && (
-              <p>
-                <StatInline>{Math.round(pred.probability * 100)}%</StatInline> of recent {fn}{" "}
-                flights had a Starlink aircraft, from <StatInline n={pred.n_observations} /> flights
-                observed.
-              </p>
-            )}
-            {flight.observedTotal > 0 && (
-              <p>
-                Starlink found in <StatInline n={flight.observedStarlink} /> of{" "}
-                <StatInline n={flight.observedTotal} /> Wi-Fi checks of aircraft flying {fn}
-                {flight.observedSince ? ` since ${fmtDay(flight.observedSince)}` : ""}.
-              </p>
-            )}
-            {flight.lastStarlink && (
-              <p>
-                Last verified on Starlink: {fmtDay(flight.lastStarlink.checked_at)} (
-                <span className="font-mono">{flight.lastStarlink.tail}</span>).
-              </p>
-            )}
-            {flight.aircraftTypes.length > 0 && (
-              <p>
-                Aircraft seen on {fn}:{" "}
-                {(
-                  flight.aircraftTypeLinks ??
-                  flight.aircraftTypes.map((label) => ({ label, href: null }))
-                ).map((t, i) => (
-                  <React.Fragment key={t.label}>
-                    {i > 0 && ", "}
-                    {t.href ? (
-                      <a href={t.href} className="text-accent hover:underline">
-                        {t.label}
-                      </a>
-                    ) : (
-                      t.label
-                    )}
-                  </React.Fragment>
-                ))}
-                .
-              </p>
-            )}
-          </div>
-        </Section>
-      )}
-
-      {flight.routes.length > 0 && (
-        <Section title={`Routes ${fn} flies`}>
-          {flight.notObservedSince && !scheduledOnDate ? (
-            <p className="mb-3 text-sm text-muted">Last seen {fmtDay(flight.notObservedSince)}.</p>
-          ) : null}
-          <ul className="divide-y divide-subtle text-sm">
-            {flight.routes.map((r) => {
-              const lastSeen = lastSeenLabel(r.last_seen_at);
-              return (
-                <li
-                  key={`${r.departure_airport}-${r.arrival_airport}`}
-                  className="flex items-start justify-between gap-3 py-2 first:pt-0 last:pb-0"
-                >
-                  <div className="min-w-0">
-                    <div className="text-primary">
-                      {r.departure_airport} → {r.arrival_airport}
-                      {r.dur_sec ? (
-                        <span className="text-secondary"> · {fmtDuration(r.dur_sec)}</span>
-                      ) : null}
-                    </div>
-                    <div className="text-muted">
-                      Seen {fmt(r.times)} time{r.times === 1 ? "" : "s"}
-                      {lastSeen ? ` · ${lastSeen}` : ""}
-                    </div>
-                  </div>
-                  {r.linkable ? (
-                    <a
-                      href={`/route-planner/${r.departure_airport}/${r.arrival_airport}`}
-                      className="shrink-0 whitespace-nowrap text-accent hover:underline"
-                    >
-                      Plan this route
-                    </a>
-                  ) : null}
-                </li>
-              );
-            })}
-          </ul>
-        </Section>
-      )}
-
-      {flight.siblings.length > 0 && flight.routes[0] && (
-        <Section
-          title="Other flights on this route"
-          dek={`${flight.routes[0].departure_airport} to ${flight.routes[0].arrival_airport}. Each flight number has its own aircraft history.`}
-        >
-          <div className="flex flex-wrap gap-2">
-            {flight.siblings.map((s) => (
-              <a
-                key={s}
-                href={`/check-flight/${s}`}
-                className="rounded border border-subtle bg-surface-elevated px-2.5 py-1 font-mono text-sm text-secondary transition-colors hover:border-accent hover:text-accent"
-              >
-                {s}
-              </a>
-            ))}
-          </div>
-        </Section>
-      )}
-    </>
-  );
 }
 
 function InvalidQueryNotice({
@@ -471,8 +279,8 @@ export default function CheckFlightPage({
       )}
 
       <section className="relative mx-auto mb-8 w-full max-w-3xl">
-        {answer && <h2 className={`${H2} mb-3`}>Check another date or flight</h2>}
-        <div className="rounded-lg border border-subtle bg-surface p-5">
+        {answer && <SectionTitle className="mb-3">Check another date or flight</SectionTitle>}
+        <Panel>
           {invalid && (
             <InvalidQueryNotice
               invalid={invalid}
@@ -502,7 +310,7 @@ export default function CheckFlightPage({
               .
             </p>
           )}
-        </div>
+        </Panel>
       </section>
 
       {flight && <FlightFactBlocks flight={flight} scheduledOnDate={scheduledOnDate} />}
@@ -525,7 +333,7 @@ export default function CheckFlightPage({
             <li>
               Shopping on Google Flights? The free{" "}
               <a
-                href="https://chromewebstore.google.com/detail/google-flights-starlink-i/jjfljoifenkfdbldliakmmjhdkbhehoi"
+                href={CHROME_EXTENSION_URL}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-accent hover:underline"

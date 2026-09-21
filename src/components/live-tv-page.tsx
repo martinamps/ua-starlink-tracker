@@ -7,6 +7,7 @@ import type { PageLink } from "./atoms";
 import { Faq } from "./faq";
 import { FlightSearchForm } from "./flight-search-form";
 import { PageHeader, PageShell, Section, StatInline, Td, Th, fmt } from "./layout";
+import { TONE_TEXT, type Tone } from "./ui/tone";
 
 export interface LiveTvTypeRow {
   label: string;
@@ -37,9 +38,9 @@ const TIER_LABEL: Record<LiveTvTypeRow["tier"], string> = {
   likely: "Likely",
   possible: "Possible",
 };
-const TIER_CLASS: Record<LiveTvTypeRow["tier"], string> = {
-  likely: "text-success",
-  possible: "text-yellow-400",
+const TIER_TONE: Record<LiveTvTypeRow["tier"], Tone> = {
+  likely: "success",
+  possible: "warn",
 };
 
 const FAMILY_LABEL: Record<string, string> = {
@@ -181,7 +182,7 @@ export default function LiveTvPage({
                   <Td numeric className="text-secondary">
                     {fmt(row.starlink)}
                   </Td>
-                  <Td numeric className={TIER_CLASS[row.tier]}>
+                  <Td numeric className={TONE_TEXT[TIER_TONE[row.tier]]}>
                     {TIER_LABEL[row.tier]}
                   </Td>
                 </tr>

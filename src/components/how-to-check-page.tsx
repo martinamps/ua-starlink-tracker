@@ -4,6 +4,7 @@ import { article } from "../utils/grammar";
 import type { PageLink } from "./atoms";
 import { JsonLd } from "./faq";
 import { FlightSearchForm } from "./flight-search-form";
+import { CHROME_EXTENSION_URL } from "./home/tools";
 import { PageHeader, PageShell, Section } from "./layout";
 
 interface HowToCheckPageProps {
@@ -115,7 +116,7 @@ export default function HowToCheckPage({ site, pageLinks, currentPath }: HowToCh
             <li>
               <span className="font-semibold text-primary">While shopping.</span> The free{" "}
               <a
-                href="https://chromewebstore.google.com/detail/google-flights-starlink-i/jjfljoifenkfdbldliakmmjhdkbhehoi"
+                href={CHROME_EXTENSION_URL}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-accent hover:underline"

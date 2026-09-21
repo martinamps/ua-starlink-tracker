@@ -32,7 +32,7 @@ export const content: AirlineContent = {
     <span key="mbps">
       <span className="text-accent font-semibold">250</span> Mbps
     </span>,
-    <span key="free" className="text-green-400 font-semibold">
+    <span key="free" className="text-success font-semibold">
       Free for Atmos Rewards members
     </span>,
   ],

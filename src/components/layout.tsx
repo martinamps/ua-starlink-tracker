@@ -4,26 +4,12 @@
  * table cells) that pages had been hand-copying with drifting sizes. A page
  * body owns its content; it should not own its chrome.
  */
-import type React from "react";
+import React from "react";
 import { normalizeAircraftType } from "../airlines/aircraft-families";
-import { AIRLINES, type SiteConfig } from "../airlines/registry";
-import { CrossSiteLinks, type PageLink, PageNavLinks } from "./atoms";
+import { AIRLINES, SITES, type SiteConfig, liveAirlineSites } from "../airlines/registry";
+import { fmt, pct } from "./ui/format";
 
-/** Thousands-separated integer or decimal, the one number format pages use. */
-export function fmt(n: number, maximumFractionDigits = 0): string {
-  return n.toLocaleString("en-US", { maximumFractionDigits });
-}
-
-/** Share as "35%", floored so no page claims more than the data: "100%" only
- * when every aircraft has it, ">99%" and "<1%" at the edges. */
-export function pct(n: number, total: number): string {
-  if (total <= 0) return "0%";
-  if (n >= total) return "100%";
-  const p = (n / total) * 100;
-  if (p > 99) return ">99%";
-  if (p > 0 && p < 1) return "<1%";
-  return `${Math.floor(p)}%`;
-}
+export { fmt, pct };
 
 const FAMILY_DISPLAY: Record<string, string> = {
   "B737-MAX8": "737 MAX 8",
@@ -88,7 +74,7 @@ function brandName(site: SiteConfig): string {
   return `${AIRLINES[site.scope]?.shortName ?? site.brand.title} Starlink Tracker`;
 }
 
-export function SiteBar({ site, currentPath }: { site: SiteConfig; currentPath?: string }) {
+function SiteBar({ site, currentPath }: { site: SiteConfig; currentPath?: string }) {
   const links = primaryNavLinks(site);
   const isCurrent = (href: string) =>
     currentPath === href || (href !== "/" && currentPath?.startsWith(`${href}/`));
@@ -128,13 +114,150 @@ export function SiteBar({ site, currentPath }: { site: SiteConfig; currentPath?:
 }
 
 /** Small uppercase label above a panel's content. */
-export const EYEBROW = "mb-3 font-mono text-xs uppercase tracking-wider text-muted";
-export const PANEL = "rounded-lg border border-subtle bg-surface p-5";
+const EYEBROW_TEXT = "font-mono text-xs uppercase tracking-wider text-muted";
+export const EYEBROW = `mb-3 ${EYEBROW_TEXT}`;
+const SURFACE = "rounded-lg border border-subtle bg-surface";
+export const PANEL = `${SURFACE} p-5`;
 /** Section frames for bodies that don't use <Section>: reading width and data width. */
 export const SECTION = "relative mx-auto mb-8 w-full max-w-3xl";
 export const SECTION_WIDE = "relative mx-auto mb-8 w-full max-w-6xl";
-export const H1 = "font-display text-3xl sm:text-4xl tracking-tight text-primary text-balance";
+const H1 = "font-display text-3xl sm:text-4xl tracking-tight text-primary text-balance";
 export const H2 = "font-display text-xl text-primary";
+
+type Box = React.HTMLAttributes<HTMLElement> & { as?: "div" | "section" | "nav" | "aside" };
+
+const PANEL_PAD = { md: "p-5", sm: "p-4 sm:p-5", none: "" } as const;
+
+/** The surface card. Padding is a prop, not a className, so it never fights p-5. */
+export function Panel({
+  as: Tag = "div",
+  pad = "md",
+  className = "",
+  children,
+  ...rest
+}: Box & { pad?: keyof typeof PANEL_PAD }) {
+  return (
+    <Tag className={`${SURFACE} ${PANEL_PAD[pad]} ${className}`} {...rest}>
+      {children}
+    </Tag>
+  );
+}
+
+/** Pass a margin class to replace the default mb-3. */
+export function Eyebrow({
+  as: Tag = "div",
+  className = "mb-3",
+  htmlFor,
+  children,
+}: {
+  as?: "div" | "h2" | "h3" | "span" | "label";
+  className?: string;
+  htmlFor?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <Tag className={`${EYEBROW_TEXT} ${className}`} {...(htmlFor ? { htmlFor } : {})}>
+      {children}
+    </Tag>
+  );
+}
+
+export function SectionTitle({
+  className = "",
+  children,
+}: { className?: string; children: React.ReactNode }) {
+  return <h2 className={`${H2} ${className}`}>{children}</h2>;
+}
+
+const STAT_SIZE = { md: "text-3xl", lg: "text-4xl", xl: "text-5xl sm:text-6xl" } as const;
+
+/** A headline number: display face, aligned figures, an optional muted unit. */
+export function StatValue({
+  size = "md",
+  accent = false,
+  unit,
+  className = "",
+  children,
+}: {
+  size?: keyof typeof STAT_SIZE;
+  accent?: boolean;
+  unit?: React.ReactNode;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      className={`font-display ${STAT_SIZE[size]} leading-none tabular-nums ${accent ? "text-accent" : "text-primary"} ${className}`}
+    >
+      {children}
+      {unit && <span className="text-base text-muted"> {unit}</span>}
+    </div>
+  );
+}
+
+type ButtonVariant = "primary" | "secondary";
+type ButtonSize = "sm" | "md" | "lg";
+
+const BUTTON: Record<`${ButtonVariant}-${ButtonSize}`, string> = {
+  "primary-sm":
+    "inline-flex cursor-pointer items-center justify-center whitespace-nowrap rounded border border-accent bg-accent/20 px-3 py-1.5 font-display text-sm text-accent transition-colors hover:bg-accent/30",
+  "primary-md":
+    "inline-flex cursor-pointer items-center justify-center whitespace-nowrap rounded border border-accent bg-accent/20 px-5 py-2 font-display text-accent transition-colors hover:bg-accent/30",
+  "primary-lg":
+    "inline-flex cursor-pointer items-center justify-center whitespace-nowrap rounded border border-accent bg-accent/20 px-5 py-3 font-display text-accent transition-colors hover:bg-accent/30",
+  "secondary-sm":
+    "inline-flex cursor-pointer items-center justify-center whitespace-nowrap rounded border border-subtle bg-surface-elevated px-3 py-1.5 font-display text-sm text-secondary transition-colors hover:border-accent hover:text-accent",
+  "secondary-md":
+    "inline-flex cursor-pointer items-center justify-center whitespace-nowrap rounded border border-subtle bg-surface-elevated px-5 py-2 font-display text-secondary transition-colors hover:border-accent hover:text-accent",
+  "secondary-lg":
+    "inline-flex cursor-pointer items-center justify-center whitespace-nowrap rounded border border-subtle bg-surface-elevated px-5 py-3 font-display text-secondary transition-colors hover:border-accent hover:text-accent",
+};
+
+/** Classes for a <button> or a link styled as one. */
+export function buttonClass(variant: ButtonVariant = "primary", size: ButtonSize = "md"): string {
+  return BUTTON[`${variant}-${size}`];
+}
+
+export function ButtonLink({
+  variant = "primary",
+  size = "md",
+  className = "",
+  children,
+  ...rest
+}: React.AnchorHTMLAttributes<HTMLAnchorElement> & {
+  variant?: ButtonVariant;
+  size?: ButtonSize;
+}) {
+  return (
+    <a className={`${buttonClass(variant, size)} ${className}`} {...rest}>
+      {children}
+    </a>
+  );
+}
+
+const CHIP = {
+  sm: "inline-block rounded border border-subtle bg-surface-elevated px-2.5 py-1 font-mono text-xs text-secondary transition-colors hover:border-accent hover:text-accent",
+  md: "inline-block rounded border border-subtle bg-surface-elevated px-2.5 py-1 font-mono text-sm text-secondary transition-colors hover:border-accent hover:text-accent",
+} as const;
+
+export const chipClass = (size: keyof typeof CHIP = "md") => CHIP[size];
+
+/** A small link tag: flight numbers, routes, airline pairs. */
+export function Chip({
+  href,
+  size = "md",
+  children,
+}: {
+  href: string;
+  size?: keyof typeof CHIP;
+  children: React.ReactNode;
+}) {
+  return (
+    <a href={href} className={CHIP[size]}>
+      {children}
+    </a>
+  );
+}
 
 export function PageHeader({
   eyebrow,
@@ -150,9 +273,7 @@ export function PageHeader({
 }) {
   return (
     <header className="relative mx-auto w-full max-w-3xl pt-8 pb-6 text-center">
-      {eyebrow && (
-        <div className="mb-2 font-mono text-xs uppercase tracking-wider text-muted">{eyebrow}</div>
-      )}
+      {eyebrow && <Eyebrow className="mb-2">{eyebrow}</Eyebrow>}
       <h1 className={H1}>{title}</h1>
       {dek && <p className="mx-auto mt-2 max-w-2xl text-base text-secondary text-pretty">{dek}</p>}
       {children && <div className="mt-3">{children}</div>}
@@ -184,9 +305,13 @@ export function Section({
       id={id}
       className={`relative mx-auto mb-8 w-full ${wide ? "max-w-6xl" : "max-w-3xl"} ${className}`}
     >
-      {title && <h2 className={H2}>{title}</h2>}
+      {title && <SectionTitle>{title}</SectionTitle>}
       {dek && <p className="mt-1 text-sm text-secondary text-pretty">{dek}</p>}
-      <div className={`${title || dek ? "mt-4" : ""} ${bare ? "" : PANEL}`}>{children}</div>
+      {bare ? (
+        <div className={title || dek ? "mt-4" : ""}>{children}</div>
+      ) : (
+        <Panel className={title || dek ? "mt-4" : ""}>{children}</Panel>
+      )}
     </section>
   );
 }
@@ -200,48 +325,8 @@ export function StatInline({ n, children }: { n?: number; children?: React.React
   );
 }
 
-export function BarRow({
-  label,
-  href,
-  n,
-  total,
-}: {
-  label: React.ReactNode;
-  href?: string;
-  n: number;
-  total: number;
-}) {
-  const share = total > 0 ? Math.min(100, (n / total) * 100) : 0;
-  const text = typeof label === "string" ? label : "";
-  return (
-    <li className="grid grid-cols-[minmax(0,7rem)_1fr_auto] items-center gap-3 py-1.5 text-sm">
-      {href ? (
-        <a href={href} className="truncate text-secondary hover:text-accent transition-colors">
-          {label}
-        </a>
-      ) : (
-        <span className="truncate text-secondary">{label}</span>
-      )}
-      <div
-        className="h-2 overflow-hidden rounded-full bg-surface-elevated"
-        role="img"
-        aria-label={`${text}: ${fmt(n)} of ${fmt(total)} (${pct(n, total)})`}
-      >
-        <div
-          className="h-full rounded-full bg-[var(--color-accent)]"
-          style={{ width: `${share}%` }}
-        />
-      </div>
-      <span className="font-mono text-xs text-muted tabular-nums whitespace-nowrap">
-        {fmt(n)}/{fmt(total)} · {pct(n, total)}
-      </span>
-    </li>
-  );
-}
-
-export const TH =
-  "border-b border-subtle pb-2 text-left font-mono text-xs uppercase tracking-wider text-muted";
-export const TD = "border-b border-subtle py-2 tabular-nums";
+const TH = `border-b border-subtle pb-2 text-left ${EYEBROW_TEXT}`;
+const TD = "border-b border-subtle py-2 tabular-nums";
 
 export function Th({
   numeric = false,
@@ -283,7 +368,69 @@ export function Td({
   );
 }
 
-export function SiteFooter({ site, pageLinks }: { site: SiteConfig; pageLinks?: PageLink[] }) {
+/**
+ * One-line cross-domain footer links, rendered on every site. Registry-derived
+ * (live sites only) and plain followed links — the sister domains are the same
+ * publisher, so no nofollow. The hub's /airlines link stays relative on the
+ * hub itself.
+ */
+function CrossSiteLinks({ site }: { site: SiteConfig }) {
+  const sisters = liveAirlineSites().filter(({ site: s }) => s.key !== site.key);
+  const hubHost = SITES.airline.canonicalHost;
+  const airlinesHref = site.scope === "ALL" ? "/airlines" : `https://${hubHost}/airlines`;
+  // data-cross-site-links marks the block as a deliberate cross-tenant
+  // mention — the tenant-matrix canary sweep strips it before scanning.
+  return (
+    <div data-cross-site-links className="mt-3 text-xs text-muted">
+      Also tracking:{" "}
+      {sisters.map(({ site: s, airline }) => (
+        <React.Fragment key={s.key}>
+          <a
+            href={`https://${s.canonicalHost}/`}
+            className="text-secondary hover:text-primary transition-colors"
+          >
+            {airline.shortName} Starlink tracker
+          </a>
+          <span className="mx-1.5 text-subtle">·</span>
+        </React.Fragment>
+      ))}
+      <a href={airlinesHref} className="text-secondary hover:text-primary transition-colors">
+        All airlines with Starlink
+      </a>
+    </div>
+  );
+}
+
+export interface PageLink {
+  href: string;
+  label: string;
+}
+
+/**
+ * Internal nav for the secondary URL families (/newly-equipped, /install-rate,
+ * /embed). They are sitemapped and indexable, so without an inbound href from
+ * a real page they are orphans — no PageRank path in and no way for a human to
+ * find them. The server builds this list from the same sitePages() filter the
+ * sitemap uses (feature flag AND data gate), so a link here can never point at
+ * a 404, and the current page is dropped so nothing self-links.
+ */
+function PageNavLinks({ links }: { links?: PageLink[] }) {
+  if (!links?.length) return null;
+  return (
+    <div className="mt-3 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-xs">
+      {links.map((l, i) => (
+        <React.Fragment key={l.href}>
+          {i > 0 && <span className="text-subtle">·</span>}
+          <a href={l.href} className="text-secondary hover:text-primary transition-colors">
+            {l.label}
+          </a>
+        </React.Fragment>
+      ))}
+    </div>
+  );
+}
+
+function SiteFooter({ site, pageLinks }: { site: SiteConfig; pageLinks?: PageLink[] }) {
   return (
     <footer className="relative mt-auto border-t border-subtle py-6 text-center text-sm text-muted">
       <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 px-4">
@@ -295,7 +442,7 @@ export function SiteFooter({ site, pageLinks }: { site: SiteConfig; pageLinks?: 
         >
           Built with
           <svg
-            className="w-4 h-4 mx-1 text-red-400"
+            className="w-4 h-4 mx-1 text-danger"
             xmlns="http://www.w3.org/2000/svg"
             viewBox="0 0 24 24"
             fill="currentColor"

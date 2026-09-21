@@ -1,6 +1,6 @@
 import { AIRLINES, type SiteConfig } from "../airlines/registry";
 import type { PageLink } from "./atoms";
-import { EYEBROW, PANEL, PageHeader, PageShell, SECTION } from "./layout";
+import { EYEBROW, Eyebrow, PANEL, PageHeader, PageShell, SECTION } from "./layout";
 
 interface EmbedPageProps {
   site: SiteConfig;
@@ -18,7 +18,7 @@ interface EmbedPageProps {
 function Snippet({ label, code }: { label: string; code: string }) {
   return (
     <div className="mb-4 last:mb-0">
-      <div className="text-xs font-mono text-muted uppercase tracking-wider mb-1">{label}</div>
+      <Eyebrow className="mb-1">{label}</Eyebrow>
       <pre className="bg-surface-elevated border border-subtle rounded p-3 overflow-x-auto font-mono text-xs text-secondary whitespace-pre-wrap break-all">
         {code}
       </pre>

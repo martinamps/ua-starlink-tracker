@@ -1,5 +1,6 @@
 import type { FleetPageData } from "../../types";
-import { EYEBROW, H2, PANEL, SECTION_WIDE, fmt } from "../layout";
+import { EYEBROW, H2, PANEL, SECTION_WIDE, StatValue, fmt } from "../layout";
+import { monthDay } from "../ui/format";
 
 // computePulse's window: six hours back to 66 ahead.
 const PULSE_WINDOW = "from 6 hours ago to 66 hours ahead";
@@ -40,9 +41,9 @@ export function LivePulse({ pulse }: { pulse: FleetPageData["pulse"] }) {
         <div className={EYEBROW}>Live pulse</div>
         <div className="flex items-baseline justify-center gap-3 mb-1">
           {pulse.now > 0 && <span className="status-dot animate-pulse-glow" />}
-          <span className="font-display text-5xl sm:text-6xl text-accent tabular-nums">
+          <StatValue size="xl" accent>
             {haveData ? fmt(pulse.now) : "—"}
-          </span>
+          </StatValue>
         </div>
         <p className="text-sm text-secondary mb-4">
           {haveData
@@ -59,14 +60,6 @@ export function LivePulse({ pulse }: { pulse: FleetPageData["pulse"] }) {
       </div>
     </section>
   );
-}
-
-function monthDay(iso: string): string {
-  return new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    timeZone: "UTC",
-  });
 }
 
 export function InstallPaceSection({ pace }: { pace: FleetPageData["installPace"] }) {

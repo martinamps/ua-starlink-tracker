@@ -1,5 +1,6 @@
 import React from "react";
 import { RolloutPanel } from "../../components/home/rollout";
+import { CHROME_EXTENSION_URL } from "../../components/home/tools";
 import { StatInline, fmt, pct } from "../../components/layout";
 import type { AirlineContent, ContentStats, HeroProps } from "./index";
 
@@ -7,8 +8,6 @@ import type { AirlineContent, ContentStats, HeroProps } from "./index";
 const installsPerMonth = (s: ContentStats): number | null =>
   s.installsPerMonth ? Math.round(s.installsPerMonth) : null;
 
-const EXTENSION_URL =
-  "https://chromewebstore.google.com/detail/google-flights-starlink-i/jjfljoifenkfdbldliakmmjhdkbhehoi";
 const LINK = "text-accent hover:underline";
 
 const express = (s: ContentStats) => s.fleetStats?.express ?? { starlink: 0, total: 0 };
@@ -35,7 +34,7 @@ export const content: AirlineContent = {
     <span key="faster">
       <span className="text-accent font-semibold">50×</span> faster
     </span>,
-    <span key="free" className="text-green-400 font-semibold">
+    <span key="free" className="text-success font-semibold">
       Free
     </span>,
     ...(installsPerMonth(s)
@@ -103,7 +102,7 @@ export const content: AirlineContent = {
           </a>
           . About two days before departure United assigns the aircraft and you get a firm yes or
           no. Further out you get the odds, based on the planes that flight has used recently. The{" "}
-          <a href={EXTENSION_URL} target="_blank" rel="noopener noreferrer" className={LINK}>
+          <a href={CHROME_EXTENSION_URL} target="_blank" rel="noopener noreferrer" className={LINK}>
             Chrome extension
           </a>{" "}
           shows the same answer on Google Flights.
