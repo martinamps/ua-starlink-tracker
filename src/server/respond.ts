@@ -57,6 +57,23 @@ export function xml(body: string, opts: ResponseOptions = {}): Response {
   return text(body, "application/xml", opts);
 }
 
+/** A rendered page. A 404 render keeps the page CSP but takes the shared-cache
+ * policy, so a crawler sweeping a dead URL space doesn't re-render at origin. */
+export function html(
+  body: string,
+  status = 200,
+  headers: Record<string, string> = status === 404
+    ? SECURITY_HEADERS.notFoundHtml
+    : SECURITY_HEADERS.html
+): Response {
+  return new Response(body, { status, headers });
+}
+
+/** A bodiless answer: 202 Accepted, 204 preflight. */
+export function empty(status: 202 | 204, headers: Record<string, string>): Response {
+  return new Response(null, { status, headers });
+}
+
 /** 405 with the Allow header RFC 9110 requires. */
 export function methodNotAllowed(
   allow: readonly string[],
@@ -85,8 +102,12 @@ export function mcpMethodNotAllowed(): Response {
 
 /** A same-origin redirect. The Location stays relative so local and staging
  * hosts keep their own origin. */
-export function redirect(location: string, status: 301 | 302 = 302): Response {
-  return new Response(null, { status, headers: { Location: location } });
+export function redirect(
+  location: string,
+  status: 301 | 302 | 308 = 302,
+  headers: Record<string, string> = {}
+): Response {
+  return new Response(null, { status, headers: { Location: location, ...headers } });
 }
 
 /** Copy `res` with `defaults` filled in wherever the handler set nothing. */

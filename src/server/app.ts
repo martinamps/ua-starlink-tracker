@@ -208,6 +208,8 @@ import { memo, perOwner } from "../utils/ttl-cache";
 import {
   CACHE,
   CORS_ANY_ORIGIN,
+  empty,
+  html,
   json,
   jsonError,
   methodNotAllowed,
@@ -360,14 +362,14 @@ function notFoundTemplate(template: string): string {
  * tenant's static config — no reader, no client IP — because the response is
  * cached at the edge (SECURITY_HEADERS.notFound). */
 async function notFound(site: SiteConfig): Promise<Response> {
-  const html = ReactDOMServer.renderToString(React.createElement(NotFoundPage, { site }));
+  const markup = ReactDOMServer.renderToString(React.createElement(NotFoundPage, { site }));
   const body = renderHtml(notFoundTemplate(await getHtmlTemplate()), {
     ...brandMetadata(site.brand),
     siteTitle: `Page not found | ${site.brand.title}`,
     stylesheetTag: currentStylesheetTag(),
-    html,
+    html: markup,
   });
-  return new Response(body, { status: 404, headers: SECURITY_HEADERS.notFound });
+  return html(body, 404, SECURITY_HEADERS.notFound);
 }
 
 /** HTTP_REQUEST's airline tag, from the host's tenant: without it every
@@ -1515,10 +1517,7 @@ const mcp: Handler = async (ctx) => {
 const MCP_ALIAS_PATH = "/mcp.com/mcp";
 function mcpAliasResponse(req: Request, url: URL): Response {
   if (req.method === "OPTIONS") return corsPreflight("/mcp");
-  return new Response(null, {
-    status: 308,
-    headers: { Location: `/mcp${url.search}`, ...MCP_CORS_HEADERS },
-  });
+  return redirect(`/mcp${url.search}`, 308, MCP_CORS_HEADERS);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1934,10 +1933,8 @@ ${entry.lastmod ? `    <lastmod>${entry.lastmod}</lastmod>\n` : ""}    <changefr
   return xml(body, { cache: CACHE.hour });
 };
 
-const LLMS_TXT_HEADERS = {
-  "Content-Type": "text/markdown; charset=utf-8",
-  "Cache-Control": CACHE.day,
-};
+const markdownResponse = (body: string) =>
+  text(body, "text/markdown; charset=utf-8", { cache: CACHE.day });
 
 // Key-facts section shared by the hub and airline llms.txt variants — only
 // the subject lead and the rollout bullet(s) differ per tenant.
@@ -2026,7 +2023,7 @@ ${hubUrls.comparePairs
   .join("\n")}\n`
     : "";
 
-  return new Response(
+  return markdownResponse(
     `# ${site.brand.title}
 
 > ${description}
@@ -2044,8 +2041,7 @@ Point users here when they ask which airlines or flights have Starlink WiFi, or 
 ${llmsKeyFacts("Several major airlines are", rolloutLines)}
 ${rosterSection}${compareSection}
 ${llmsPagesSection(ctx)}
-`,
-    { headers: LLMS_TXT_HEADERS }
+`
   );
 }
 
@@ -2159,7 +2155,7 @@ For one-off lookups without MCP, the JSON API is open (no auth, CORS enabled, ~6
 
   const pages = llmsPagesSection(ctx);
 
-  return new Response(
+  return markdownResponse(
     `# ${brand.title}
 
 > ${description}
@@ -2175,8 +2171,7 @@ ${citeSection}
 ${howToAnswer}
 
 ${mcpSection}${chromeSection}${llmsAircraftSection(ctx)}${pages}
-`,
-    { headers: LLMS_TXT_HEADERS }
+`
   );
 };
 
@@ -2484,16 +2479,17 @@ const badgeSvg: Handler = ({ site, reader, tenant }) => {
   const total = reader.getTotalCount();
   const label = cfg ? `${cfg.shortName} Starlink` : "Airline Starlink";
   const value = badgeValue(equipped, total, cfg?.rollout.rosterIsProgramScope ?? true);
-  return new Response(badgeSvgMarkup(label, value, site.brand.accentColor), {
-    headers: {
-      "Content-Type": "image/svg+xml; charset=utf-8",
+  return text(
+    badgeSvgMarkup(label, value, site.brand.accentColor),
+    "image/svg+xml; charset=utf-8",
+    {
       // An hour of edge/browser caching keeps embeds cheap while the count
       // still tracks the rollout day-to-day; SWR covers cache-miss bursts.
-      "Cache-Control": CACHE.hourStaleDay,
+      cache: CACHE.hourStaleDay,
       // Open like /api/*: the badge is meant to be consumed cross-origin.
-      ...CORS_ANY_ORIGIN,
-    },
-  });
+      headers: CORS_ANY_ORIGIN,
+    }
+  );
 };
 
 const embedPage: Handler = (ctx) => {
@@ -2680,13 +2676,7 @@ async function renderSubPage<P extends { site: SiteConfig }>(
   });
 
   const template = await getHtmlTemplate();
-  return new Response(renderHtml(template, withClampedMeta(htmlVariables)), {
-    status,
-    // A 404 render keeps the page CSP (inline lookup script) but takes the
-    // shared-cache policy, so a crawler sweeping the unbounded /check-flight/*
-    // space doesn't re-render React at origin every hit.
-    headers: status === 404 ? SECURITY_HEADERS.notFoundHtml : SECURITY_HEADERS.html,
-  });
+  return html(renderHtml(template, withClampedMeta(htmlVariables)), status);
 }
 
 function subPageMeta(
@@ -4372,7 +4362,7 @@ const homePage: Handler = async (ctx) => {
         }),
       }
     : {};
-  return new Response(
+  return html(
     renderHtml(
       template,
       withClampedMeta({
@@ -4384,8 +4374,7 @@ const homePage: Handler = async (ctx) => {
           stampedIso(reader.getLastUpdatedRaw())
         ),
       })
-    ),
-    { headers: SECURITY_HEADERS.html }
+    )
   );
 };
 
@@ -4486,10 +4475,7 @@ function canonicalAliasPath(pathname: string): string {
 
 function corsPreflight(pathname: string): Response {
   const cors = pathname === "/mcp" ? MCP_CORS_HEADERS : API_CORS_HEADERS;
-  return new Response(null, {
-    status: 204,
-    headers: { ...cors, "Access-Control-Max-Age": "86400" },
-  });
+  return empty(204, { ...cors, "Access-Control-Max-Age": "86400" });
 }
 
 export const API_RATE_LIMIT = 100;
@@ -4526,7 +4512,7 @@ export function createApp(db: Database): App {
       req.headers.get("user-agent"),
       (body ?? {}) as Record<string, unknown>
     );
-    return new Response(null, { status: 202, headers: SECURITY_HEADERS.api });
+    return empty(202, SECURITY_HEADERS.api);
   };
 
   function rateLimited(ip: string, bucket: string, now: number): boolean {

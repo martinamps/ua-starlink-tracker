@@ -265,11 +265,10 @@ export async function watchFeed(ctx: RequestContext): Promise<Response> {
     ...leg,
     now,
   });
-  return new Response(ctx.req.method === "HEAD" ? null : body, {
+  return text(ctx.req.method === "HEAD" ? null : body, "text/calendar; charset=utf-8", {
+    cache: CACHE.fifteenMinutes,
     headers: {
-      "Content-Type": "text/calendar; charset=utf-8",
       "Content-Disposition": `inline; filename="starlink-watch-${parsed.fn}-${parsed.date}.ics"`,
-      "Cache-Control": CACHE.fifteenMinutes,
       "X-Robots-Tag": "noindex",
       ...CORS_ANY_ORIGIN,
     },
