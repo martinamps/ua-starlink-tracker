@@ -122,9 +122,21 @@ export async function mcpDirect(
   return r.json();
 }
 
-/** A tools/call body's first text block and error flag. */
-export function toolText(json: { result?: { content?: { text: string }[]; isError?: boolean } }) {
-  return { text: json.result?.content?.[0]?.text ?? "", isError: json.result?.isError === true };
+/** A tools/call body's first text block and error flag. A JSON-RPC error or
+ * a result without text throws: an empty string would let every
+ * not.toContain assertion pass vacuously. */
+export function toolText(json: {
+  error?: unknown;
+  result?: { content?: { text?: unknown }[]; isError?: boolean };
+}): { text: string; isError: boolean } {
+  if (json.error !== undefined) {
+    throw new Error(`tools/call returned a JSON-RPC error: ${JSON.stringify(json.error)}`);
+  }
+  const text = json.result?.content?.[0]?.text;
+  if (typeof text !== "string") {
+    throw new Error(`tools/call result has no text content: ${JSON.stringify(json).slice(0, 300)}`);
+  }
+  return { text, isError: json.result?.isError === true };
 }
 
 /** tools/call through the app; resolves to the tool's text and error flag. */
