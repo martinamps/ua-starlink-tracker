@@ -163,22 +163,26 @@ export async function syncFleetFromFR24(
         ).map((r) => r.tail_number)
       );
 
+      // One transaction for the ~1.6k upserts: one commit, not one per tail.
+      db.transaction(() => {
+        for (const aircraft of allAircraft) {
+          upsertFleetAircraft(
+            db,
+            aircraft.registration,
+            aircraft.aircraftType,
+            "fr24",
+            aircraft.subfleet,
+            aircraft.operator,
+            cfg.code
+          );
+        }
+      })();
       for (const aircraft of allAircraft) {
-        const isNew = !existingTails.has(aircraft.registration);
-        upsertFleetAircraft(
-          db,
-          aircraft.registration,
-          aircraft.aircraftType,
-          "fr24",
-          aircraft.subfleet,
-          aircraft.operator,
-          cfg.code
-        );
-        if (isNew) {
+        if (existingTails.has(aircraft.registration)) {
+          result.updated++;
+        } else {
           result.new++;
           metrics.increment(COUNTERS.PLANES_DISCOVERED, { source: "fr24", airline: airlineTag });
-        } else {
-          result.updated++;
         }
       }
 

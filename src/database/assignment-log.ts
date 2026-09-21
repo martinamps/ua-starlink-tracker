@@ -92,7 +92,7 @@ export function logFlightAssignments(
   if (flights.length === 0) return;
   const cfg = AIRLINES[airline];
   const starlink = tailStarlinkFlag(db, tailNumber);
-  const upsert = db.prepare(`
+  const upsert = db.query(`
     INSERT INTO flight_assignment_log
       (airline, flight_number, dep_date, departure_airport, arrival_airport, tail_number,
        starlink, departure_time, arrival_time, first_seen, last_seen)

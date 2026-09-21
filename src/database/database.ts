@@ -98,6 +98,7 @@ import {
   withAirline,
 } from "./sql/fragments";
 import {
+  DAY_SEC,
   DEPARTURE_WINDOW_HOURS,
   DEPARTURE_WINDOW_SEC,
   TRAILING_WINDOW_DAYS,
@@ -1046,14 +1047,14 @@ export function updateDatabase(
     );
 
     // Insert aircraft data
-    const insertStmt = db.prepare(`
+    const insertStmt = db.query(`
       INSERT INTO starlink_planes (aircraft, wifi, sheet_gid, sheet_type, DateFound, TailNumber, OperatedBy, fleet, last_flight_check, last_check_successful, consecutive_failures, verified_wifi, verified_at, airline)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     // Sheet now lists a plane that discovery found first: promote the row with
     // sheet metadata but keep DateFound/verified_wifi/last_flight_check intact.
-    const updateDiscoveredStmt = db.prepare(`
+    const updateDiscoveredStmt = db.query(`
       UPDATE starlink_planes
       SET aircraft = ?, OperatedBy = ?, fleet = ?, sheet_gid = ?, sheet_type = ?, wifi = ?
       WHERE TailNumber = ? AND sheet_gid = 'discovery' AND airline = ?
@@ -1684,12 +1685,13 @@ export function updateFlights(
     )?.airline ??
     "UA";
 
-  const updateFlightsTransaction = db.transaction(() => {
+  const cfg = AIRLINES[airline];
+  db.transaction(() => {
     archivePastDepartures(db, now, tailNumber);
     db.query("DELETE FROM upcoming_flights WHERE tail_number = ?").run(tailNumber);
 
     if (valid.length > 0) {
-      const insertStmt = db.prepare(`
+      const insertStmt = db.query(`
         INSERT INTO upcoming_flights (tail_number, flight_number, departure_airport, arrival_airport, departure_time, arrival_time, last_updated, airline)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `);
@@ -1708,34 +1710,33 @@ export function updateFlights(
       }
       logFlightAssignments(db, airline, tailNumber, valid, now);
     }
-  });
 
-  updateFlightsTransaction();
-
-  // Mirror routes into the long-lived flight_routes cache so it accumulates
-  // independently of the FR24 cache-miss path in mcp-server.lookupFlightRoutes.
-  // Stored under the marketing-carrier code (UA123) — that's what
-  // getCachedFlightRoutes is queried with.
-  const cfg = AIRLINES[airline];
-  // All rows with valid airports feed the route cache — a half-parsed
-  // departure_time invalidates the schedule row, not the route knowledge.
-  for (const flight of flights) {
-    if (!flight.flight_number || !flight.departure_airport || !flight.arrival_airport) continue;
-    const normalized = cfg
-      ? ensureAirlinePrefix(cfg, flight.flight_number)
-      : flight.flight_number.trim().toUpperCase();
-    const dur =
-      flight.arrival_time > flight.departure_time && flight.departure_time >= MIN_VALID_DEPARTURE_TS
-        ? flight.arrival_time - flight.departure_time
-        : null;
-    cacheFlightRoute(db, normalized, flight.departure_airport, flight.arrival_airport, dur, now);
-  }
+    // Mirror routes into the long-lived flight_routes cache so it accumulates
+    // independently of the FR24 cache-miss path in mcp-server.lookupFlightRoutes.
+    // Stored under the marketing-carrier code (UA123) — that's what
+    // getCachedFlightRoutes is queried with. All rows with valid airports feed
+    // it: a half-parsed departure_time invalidates the schedule row, not the
+    // route knowledge.
+    for (const flight of flights) {
+      if (!flight.flight_number || !flight.departure_airport || !flight.arrival_airport) continue;
+      const normalized = cfg
+        ? ensureAirlinePrefix(cfg, flight.flight_number)
+        : flight.flight_number.trim().toUpperCase();
+      const dur =
+        flight.arrival_time > flight.departure_time &&
+        flight.departure_time >= MIN_VALID_DEPARTURE_TS
+          ? flight.arrival_time - flight.departure_time
+          : null;
+      cacheFlightRoute(db, normalized, flight.departure_airport, flight.arrival_airport, dur, now);
+    }
+  })();
 }
 
 // Archive departed flights into departure_log before they're deleted from
 // upcoming_flights. NOT-EXISTS dedupe guards against double-logging on the
 // per-tail path; the global call (no tailNumber) lets airlines whose tails
-// rarely have near-term flights (AS regional, QR long-haul) archive promptly.
+// rarely have near-term flights (AS regional, QR long-haul) archive promptly,
+// and is the only one that trims: the per-tail call runs on every refresh.
 export function archivePastDepartures(db: Database, now = unixNow(), tailNumber?: string): number {
   const params: (string | number)[] = [now];
   if (tailNumber) params.push(tailNumber);
@@ -1751,11 +1752,14 @@ export function archivePastDepartures(db: Database, now = unixNow(), tailNumber?
          )`
     )
     .run(...params).changes;
-  // 30-day trim lives here with the other departure_log writes. It used to run
+  // The 30-day trim lives with the other departure_log writes. It used to run
   // inside getAirportDepartures — a DELETE taking a WAL write lock on every
-  // homepage render, ~4,200 write transactions/day on the read path.
-  db.query("DELETE FROM departure_log WHERE departed_at < ?").run(now - TRAILING_WINDOW_SEC);
-  pruneAssignmentLog(db, now);
+  // homepage render, ~4,200 write transactions/day on the read path — and
+  // then on every per-tail refresh.
+  if (!tailNumber) {
+    db.query("DELETE FROM departure_log WHERE departed_at < ?").run(now - TRAILING_WINDOW_SEC);
+    pruneAssignmentLog(db, now);
+  }
   return changes;
 }
 
@@ -3289,7 +3293,7 @@ export function replaceFleetGuide(
   const now = unixNow();
   db.transaction(() => {
     db.query("DELETE FROM fleet_guide_tails WHERE airline = ?").run(airline);
-    const ins = db.prepare(
+    const ins = db.query(
       `INSERT INTO fleet_guide_tails
          (airline, tail_number, section, program_type, mark, guide_updated, fetched_at)
        VALUES (?, ?, ?, ?, ?, ?, ?)`
@@ -3803,96 +3807,45 @@ function hasPriorUnitedStarlink(db: Database, tailNumber: string, airline: Airli
   );
 }
 
-/**
- * Compute wifi consensus from recent CLEAN_OBSERVATION_WHERE log entries.
- * Returns verdict=null when n < minObs OR the split is in the ambiguous zone.
- */
-export function computeWifiConsensus(
-  db: Database,
-  tailNumber: string,
-  opts: {
-    windowDays?: number;
-    minObs?: number;
-    threshold?: number;
-    /** Default (display surfaces): all registry verifier sources. WRITE paths
-     * must pass OBSERVED_WIFI_SOURCES so type-derived rows never gain
-     * verified_wifi write authority. */
-    sources?: readonly VerificationSource[];
-    /** Scope the evidence rows to the reading tenant's airline(s). */
-    airline?: AirlineFilter;
-  } = {}
-): WifiConsensus {
-  const {
-    windowDays = TRAILING_WINDOW_DAYS,
-    minObs = 2,
-    threshold = 0.7,
-    sources = VERIFICATION_SOURCES,
-  } = opts;
-  const cutoff = unixNow() - windowDays * 86400;
-  // Accepted sources derive from the registry (each enabled airline's
-  // verifier backend), so AS/HA evidence weighs in — not just united rows.
-  const base = withAirline(
-    `tail_number = ? AND source IN (${placeholders(sources)})
-    AND checked_at >= ?
-    AND ${CLEAN_OBSERVATION_WHERE}`,
-    opts.airline,
-    "",
-    [tailNumber, ...sources, cutoff]
-  );
+type ConsensusObservation = { has_starlink: number; wifi_provider: string; source?: string };
 
-  // Primary: only tail_confirmed=1 (post-fix clean data)
-  let obs = db
-    .query(`SELECT has_starlink, wifi_provider, source FROM starlink_verification_log
-      WHERE ${base.sql} AND tail_confirmed = 1 ORDER BY checked_at DESC`)
-    .all(...base.params) as Array<{
-    has_starlink: number;
-    wifi_provider: string;
-    source?: string;
-  }>;
+interface ConsensusRule {
+  windowDays: number;
+  minObs: number;
+  threshold: number;
+}
 
-  if (DISCOUNT_UNITED_NONE_AFTER_STARLINK && obs.some(isUnitedNoneObservation)) {
-    if (hasPriorUnitedStarlink(db, tailNumber, opts.airline)) {
-      const named = obs.filter((o) => !isUnitedNoneObservation(o));
-      if (named.length === 0) {
-        return {
-          verdict: null,
-          n: 0,
-          starlinkPct: 0,
-          reason: "None-only after prior Starlink (regional flap), inconclusive",
-        };
-      }
-      obs = named;
-    }
-  }
+const DEFAULT_CONSENSUS_RULE: ConsensusRule = {
+  windowDays: TRAILING_WINDOW_DAYS,
+  minObs: 2,
+  threshold: 0.7,
+};
 
-  // Grace fallback: if zero confirmed rows, read legacy NULL rows so display
-  // counts (n, starlinkPct) aren't zero during the 30d transition. Legacy is
-  // the contaminated set, so it MUST NOT produce a verdict — otherwise tails
-  // reset to unknown get re-dragged to negative before clean data accumulates.
-  let usedLegacyFallback = false;
-  if (obs.length === 0) {
-    obs = db
-      .query(`SELECT has_starlink, wifi_provider FROM starlink_verification_log
-        WHERE ${base.sql} AND tail_confirmed IS NULL ORDER BY checked_at DESC`)
-      .all(...base.params) as Array<{
-      has_starlink: number;
-      wifi_provider: string;
-    }>;
-    usedLegacyFallback = obs.length > 0;
-  }
+const NONE_ONLY_AFTER_STARLINK: WifiConsensus = {
+  verdict: null,
+  n: 0,
+  starlinkPct: 0,
+  reason: "None-only after prior Starlink (regional flap), inconclusive",
+};
 
+/** United "None" flaps dropped on a tail seen on Starlink before; null when
+ * nothing named survives (see DISCOUNT_UNITED_NONE_AFTER_STARLINK). */
+function discountRegionalFlaps(
+  obs: ConsensusObservation[],
+  priorUnitedStarlink: () => boolean
+): ConsensusObservation[] | null {
+  if (!DISCOUNT_UNITED_NONE_AFTER_STARLINK || !obs.some(isUnitedNoneObservation)) return obs;
+  if (!priorUnitedStarlink()) return obs;
+  const named = obs.filter((o) => !isUnitedNoneObservation(o));
+  return named.length === 0 ? null : named;
+}
+
+/** The settling rule over one tail's clean tail_confirmed observations, newest first. */
+function settleConsensus(obs: ConsensusObservation[], rule: ConsensusRule): WifiConsensus {
+  const { windowDays, minObs, threshold } = rule;
   const n = obs.length;
   const starlinkObs = obs.filter((o) => o.has_starlink === 1).length;
   const starlinkPct = n > 0 ? starlinkObs / n : 0;
-
-  if (usedLegacyFallback) {
-    return {
-      verdict: null,
-      n,
-      starlinkPct,
-      reason: `legacy obs only (${n} pre-tail_confirmed rows) — display-only, not settling`,
-    };
-  }
 
   if (n < minObs) {
     return {
@@ -3960,6 +3913,72 @@ export function computeWifiConsensus(
     n,
     starlinkPct,
     reason: `ambiguous: ${starlinkObs}/${n} Starlink recently — likely mid-retrofit or data noise`,
+  };
+}
+
+/**
+ * Compute wifi consensus from recent CLEAN_OBSERVATION_WHERE log entries.
+ * Returns verdict=null when n < minObs OR the split is in the ambiguous zone.
+ */
+export function computeWifiConsensus(
+  db: Database,
+  tailNumber: string,
+  opts: {
+    windowDays?: number;
+    minObs?: number;
+    threshold?: number;
+    /** Default (display surfaces): all registry verifier sources. WRITE paths
+     * must pass OBSERVED_WIFI_SOURCES so type-derived rows never gain
+     * verified_wifi write authority. */
+    sources?: readonly VerificationSource[];
+    /** Scope the evidence rows to the reading tenant's airline(s). */
+    airline?: AirlineFilter;
+  } = {}
+): WifiConsensus {
+  const rule: ConsensusRule = {
+    windowDays: opts.windowDays ?? DEFAULT_CONSENSUS_RULE.windowDays,
+    minObs: opts.minObs ?? DEFAULT_CONSENSUS_RULE.minObs,
+    threshold: opts.threshold ?? DEFAULT_CONSENSUS_RULE.threshold,
+  };
+  const sources = opts.sources ?? VERIFICATION_SOURCES;
+  const cutoff = unixNow() - rule.windowDays * DAY_SEC;
+  // Accepted sources derive from the registry (each enabled airline's
+  // verifier backend), so AS/HA evidence weighs in — not just united rows.
+  const base = withAirline(
+    `tail_number = ? AND source IN (${placeholders(sources)})
+    AND checked_at >= ?
+    AND ${CLEAN_OBSERVATION_WHERE}`,
+    opts.airline,
+    "",
+    [tailNumber, ...sources, cutoff]
+  );
+
+  // Primary: only tail_confirmed=1 (post-fix clean data)
+  const confirmed = discountRegionalFlaps(
+    db
+      .query(`SELECT has_starlink, wifi_provider, source FROM starlink_verification_log
+      WHERE ${base.sql} AND tail_confirmed = 1 ORDER BY checked_at DESC`)
+      .all(...base.params) as ConsensusObservation[],
+    () => hasPriorUnitedStarlink(db, tailNumber, opts.airline)
+  );
+  if (confirmed === null) return NONE_ONLY_AFTER_STARLINK;
+  if (confirmed.length > 0) return settleConsensus(confirmed, rule);
+
+  // Grace fallback: if zero confirmed rows, read legacy NULL rows so display
+  // counts (n, starlinkPct) aren't zero during the 30d transition. Legacy is
+  // the contaminated set, so it MUST NOT produce a verdict — otherwise tails
+  // reset to unknown get re-dragged to negative before clean data accumulates.
+  const legacy = db
+    .query(`SELECT has_starlink, wifi_provider FROM starlink_verification_log
+      WHERE ${base.sql} AND tail_confirmed IS NULL ORDER BY checked_at DESC`)
+    .all(...base.params) as ConsensusObservation[];
+  if (legacy.length === 0) return settleConsensus([], rule);
+  const n = legacy.length;
+  return {
+    verdict: null,
+    n,
+    starlinkPct: legacy.filter((o) => o.has_starlink === 1).length / n,
+    reason: `legacy obs only (${n} pre-tail_confirmed rows) — display-only, not settling`,
   };
 }
 
@@ -4114,26 +4133,59 @@ export function reconcileTypeDeterministicFleets(db: Database): number {
  * consensus. Runs with the hourly sync — cheap enough to be the safety net.
  */
 export function reconcileConsensus(db: Database): number {
-  const candidates = db
-    .query(`
-      SELECT sp.TailNumber as tail, sp.verified_wifi as current
-      FROM starlink_planes sp
-      WHERE (SELECT COUNT(*) FROM starlink_verification_log
-             WHERE tail_number = sp.TailNumber AND tail_confirmed = 1) >= 2
-    `)
-    .all() as Array<{ tail: string; current: string | null }>;
-
+  const airlines = (
+    db.query("SELECT DISTINCT airline FROM starlink_planes").values() as [string][]
+  ).map(([a]) => a);
   let healed = 0;
-  for (const { tail, current } of candidates) {
-    // Write authority: only observed-wifi sources. Type-derived rows (alaska
-    // wifi = type inference) must not flip verified_wifi from here.
-    const consensus = computeWifiConsensus(db, tail, { sources: OBSERVED_WIFI_SOURCES });
-    if (consensus.verdict !== null && consensus.verdict !== current) {
-      updateVerifiedWifi(db, tail, consensus.verdict);
-      healed++;
-    }
-  }
+  for (const airline of airlines) healed += reconcileAirlineConsensus(db, airline);
   return healed + demoteRetrofittedNegatives(db);
+}
+
+/**
+ * computeWifiConsensus for every listed tail of one airline from one read of
+ * its window, evidence scoped to that airline. Write authority is
+ * observed-wifi sources only: type-derived rows (alaska wifi = type
+ * inference) must not flip verified_wifi from here. A tail with no confirmed
+ * row in the window would fall back to legacy rows, which never settle, and
+ * minObs already demands two confirmed rows, so only tails with window rows
+ * are candidates.
+ */
+function reconcileAirlineConsensus(db: Database, airline: string): number {
+  const rule = DEFAULT_CONSENSUS_RULE;
+  const obsByTail = new Map<string, ConsensusObservation[]>();
+  const rows = db
+    .query(
+      `SELECT tail_number, has_starlink, wifi_provider, source FROM starlink_verification_log
+       WHERE airline = ? AND tail_confirmed = 1 AND source IN (${placeholders(OBSERVED_WIFI_SOURCES)})
+         AND checked_at >= ? AND ${CLEAN_OBSERVATION_WHERE}
+       ORDER BY tail_number, checked_at DESC`
+    )
+    .all(airline, ...OBSERVED_WIFI_SOURCES, unixNow() - rule.windowDays * DAY_SEC) as Array<
+    ConsensusObservation & { tail_number: string }
+  >;
+  for (const { tail_number, ...o } of rows) {
+    const list = obsByTail.get(tail_number);
+    if (list) list.push(o);
+    else obsByTail.set(tail_number, [o]);
+  }
+  const listed = db
+    .query(
+      "SELECT TailNumber AS tail, verified_wifi AS current FROM starlink_planes WHERE airline = ?"
+    )
+    .all(airline) as Array<{ tail: string; current: string | null }>;
+
+  const heal = listed.flatMap(({ tail, current }) => {
+    const window = obsByTail.get(tail);
+    if (!window) return [];
+    const obs = discountRegionalFlaps(window, () => hasPriorUnitedStarlink(db, tail, airline));
+    if (!obs?.length) return [];
+    const { verdict } = settleConsensus(obs, rule);
+    return verdict !== null && verdict !== current ? [{ tail, verdict }] : [];
+  });
+  db.transaction(() => {
+    for (const h of heal) updateVerifiedWifi(db, h.tail, h.verdict);
+  })();
+  return heal.length;
 }
 
 /**
@@ -4582,7 +4634,7 @@ export function syncSpreadsheetToFleet(db: Database): number {
     verified_wifi: string | null;
   }>;
 
-  const existsStmt = db.prepare(
+  const existsStmt = db.query(
     "SELECT id, starlink_status, fleet, airline FROM united_fleet WHERE tail_number = ?"
   );
   // starlink_status follows verified_wifi (the consensus-driven column) so
@@ -4590,7 +4642,7 @@ export function syncSpreadsheetToFleet(db: Database): number {
   // When verified_wifi is NULL (unverified) we leave status alone — avoids the
   // NULL→negative drag (3a41095). aircraft_type COALESCE so an empty sheet value
   // can't clobber a real FR24-sourced type.
-  const updateStmt = db.prepare(`
+  const updateStmt = db.query(`
     UPDATE united_fleet
     SET aircraft_type = COALESCE(?, aircraft_type),
         fleet = ?,
@@ -4599,7 +4651,7 @@ export function syncSpreadsheetToFleet(db: Database): number {
         starlink_status = CASE WHEN ? != 'unknown' THEN ? ELSE starlink_status END
     WHERE tail_number = ?
   `);
-  const insertStmt = db.prepare(`
+  const insertStmt = db.query(`
     INSERT INTO united_fleet (
       tail_number, aircraft_type, first_seen_source, first_seen_at, last_seen_at,
       fleet, operated_by, starlink_status, verified_wifi, discovery_priority,
