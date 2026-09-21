@@ -152,7 +152,7 @@ import RoutePlannerPage from "../components/route-planner-page";
 import RoutesPage from "../components/routes-page";
 import TimelinePage, { getTimeline, hasTimeline } from "../components/timeline-page";
 import {
-  type FlightAssignmentRow,
+  DEPARTURE_WINDOW_HOURS,
   PERMALINK_STALE_NOTE_DAYS,
   ROUTE_AIRPORT_RE,
   type RouteSummary,
@@ -3327,14 +3327,11 @@ export function parseRoutePath(pathname: string): { origin: string; destination:
   return { origin, destination };
 }
 
-const ROUTE_DEPARTURE_WINDOW_SEC = 48 * 3600;
-
 /**
- * Starlink departures on a pair for the route page's table and answer: one row
- * per physical departure (marketing number, departure time), the most recently
- * refreshed row winning before the equipped test, so a swap onto a
- * non-Starlink tail drops the departure instead of listing the stale row.
- * getFlightAssignments returns rows newest-first.
+ * Starlink departures on a pair for the route page's table and answer: the
+ * same physical-departure slots /routes and the homepage airports count
+ * (partners included, so an Alaska number on Hawaiian metal lists), filtered
+ * to the pair and to slots whose current tail is equipped.
  */
 function routeStarlinkDepartures(
   reader: ScopedReader,
@@ -3342,30 +3339,24 @@ function routeStarlinkDepartures(
   route: RouteSummary,
   nowSec: number
 ): RouteDeparture[] {
-  const owner = new Map<string, string>();
+  const display = new Map<string, string>();
   for (const f of route.flightNumbers) {
-    if (f.scheduled !== 1) continue;
-    for (const v of buildFlightLookupVariants(cfg, f.flight_number)) owner.set(v, f.flight_number);
+    for (const v of buildFlightLookupVariants(cfg, f.flight_number))
+      display.set(v, f.flight_number);
   }
-  if (owner.size === 0) return [];
-  const slots = new Map<string, FlightAssignmentRow>();
-  for (const row of reader.getFlightAssignments(
-    [...owner.keys()],
-    nowSec,
-    nowSec + ROUTE_DEPARTURE_WINDOW_SEC
-  )) {
-    if (row.departure_airport !== route.origin || row.arrival_airport !== route.destination)
-      continue;
-    const key = `${owner.get(row.flight_number)}|${row.departure_time}`;
-    if (!slots.has(key)) slots.set(key, row);
-  }
-  return [...slots.values()]
-    .filter(
-      (r) => !r.settled_negative && (r.verified_wifi == null || r.verified_wifi === "Starlink")
-    )
-    .sort((a, b) => a.departure_time - b.departure_time)
+  return reader
+    .getDepartureSlots({
+      from: nowSec,
+      to: nowSec + DEPARTURE_WINDOW_HOURS * 3600,
+      partners: true,
+      origin: route.origin,
+      destination: route.destination,
+    })
+    .filter((r) => r.equipped === 1)
     .map((r) => ({
-      flight_number: owner.get(r.flight_number) ?? r.flight_number,
+      flight_number:
+        display.get(r.flight_number) ??
+        (r.slot_flight?.startsWith(cfg.iata) ? r.slot_flight : r.flight_number),
       departure_time: r.departure_time,
       tail_number: r.tail_number,
       aircraft_type: r.aircraft_type ?? null,

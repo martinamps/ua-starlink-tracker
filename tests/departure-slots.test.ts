@@ -200,6 +200,21 @@ describe("operating partners on route surfaces", () => {
     db.close();
   });
 
+  test("the route page lists the same partner slots /routes counts", async () => {
+    const db = makeSyntheticDb();
+    equippedTail(db, "N373HA", "HA");
+    addFlight(db, "N373HA", "AS832", "HND", T, { arrivalAirport: "HNL", airline: "HA" });
+    addFlight(db, "N373HA", "ASA864", "HND", T + 3600, { arrivalAirport: "HNL", airline: "HA" });
+    const res = await createApp(db).dispatch(req("/route-planner/HND/HNL", AS_HOST));
+    expect(res.status).toBe(200);
+    const html = (await res.text()).replace(/<!-- -->/g, "");
+    const rows = html.match(/N373HA/g) ?? [];
+    expect(rows.length).toBeGreaterThanOrEqual(
+      getRouteSummary(db, "HND", "HNL", "AS", NOW).equippedDepartures
+    );
+    db.close();
+  });
+
   test("partner rows join an Alaska flight's slots; type-rule tails read as Starlink", async () => {
     const db = makeSyntheticDb();
     equippedTail(db, "N388HA", "HA");

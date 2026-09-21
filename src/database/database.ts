@@ -2651,13 +2651,15 @@ export function routeHasData(
   destination: string,
   airline: string
 ): boolean {
-  const q = withAirline(
-    "SELECT 1 FROM upcoming_flights WHERE departure_airport = ? AND arrival_airport = ?",
-    airline,
-    "",
-    [origin, destination]
-  );
-  if (db.query(`${q.sql} LIMIT 1`).get(...q.params)) return true;
+  // Partner-operated rows count: the route page lists them (AS832 on Hawaiian metal).
+  const scope = slotScope(airline, true);
+  const live = db
+    .query(
+      `SELECT 1 FROM upcoming_flights uf
+       WHERE ${scope.sql} AND uf.departure_airport = ? AND uf.arrival_airport = ? LIMIT 1`
+    )
+    .get(...scope.params, origin, destination);
+  if (live) return true;
   const cfg = AIRLINES[airline];
   if (!cfg) return false;
   return Boolean(
@@ -5508,7 +5510,7 @@ export function recordAdsbSweep(
   })();
 }
 
-const DEPARTURE_WINDOW_HOURS = 48;
+export const DEPARTURE_WINDOW_HOURS = 48;
 
 /** SQL twin of slotFlightKey (flight-number.ts); the prefixes are registry
  * literals, never caller input. */
@@ -5594,6 +5596,9 @@ export interface DepartureSlotQuery {
   partners?: boolean;
   /** Restrict to these stored spellings (all of one slot key, e.g. lookup variants). */
   flightNumbers?: readonly string[];
+  /** Restrict to one airport pair (route pages). */
+  origin?: string;
+  destination?: string;
 }
 
 /** departureSlotsSql bound to a scope, as a derived table plus its params. */
@@ -5607,6 +5612,14 @@ function departureSlots(
   if (q.flightNumbers) {
     clause = `${clause} AND uf.flight_number IN (${q.flightNumbers.map(() => "?").join(",") || "NULL"})`;
     params.push(...q.flightNumbers);
+  }
+  if (q.origin) {
+    clause = `${clause} AND uf.departure_airport = ?`;
+    params.push(q.origin);
+  }
+  if (q.destination) {
+    clause = `${clause} AND uf.arrival_airport = ?`;
+    params.push(q.destination);
   }
   return { sql: `(${departureSlotsSql(clause)})`, params: [...params, q.from, q.to] };
 }
