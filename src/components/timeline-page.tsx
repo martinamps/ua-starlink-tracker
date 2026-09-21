@@ -191,7 +191,12 @@ export default function TimelinePage({
   const stamped = new Date(lastUpdated);
   const stampLabel = Number.isNaN(stamped.getTime())
     ? "today"
-    : stamped.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+    : stamped.toLocaleDateString("en-US", {
+        month: "long",
+        day: "numeric",
+        year: "numeric",
+        timeZone: "UTC",
+      });
   const pct = totalCount > 0 ? Math.round((starlinkCount / totalCount) * 100) : 0;
 
   return (

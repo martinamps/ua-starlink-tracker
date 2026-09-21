@@ -1,0 +1,211 @@
+/**
+ * Data-layer accuracy fixes, each on a synthetic fixture shaped like the
+ * production row that exposed it. Shapes and invariants, not live values.
+ */
+
+import type { Database } from "bun:sqlite";
+import { describe, expect, test } from "bun:test";
+import { computeModelBreakdown } from "../src/components/atoms";
+import {
+  backfillAlaskaSkyWestOperator,
+  demoteRetrofittedNegatives,
+  getFirstFlights,
+  getFleetPageData,
+  getRouteFlightNumbers,
+  recordFirstFlights,
+} from "../src/database/database";
+import { createReaderFactory } from "../src/database/reader";
+import { createApp } from "../src/server/app";
+import type { Aircraft } from "../src/types";
+import { addFleet, addFlight, addPlane, makeSyntheticDb, openSnapshot, req } from "./helpers";
+
+const NOW = Math.floor(Date.now() / 1000);
+
+function check(db: Database, tail: string, at: number, provider: string) {
+  db.query(
+    `INSERT INTO starlink_verification_log
+       (tail_number, source, checked_at, has_starlink, wifi_provider, tail_confirmed, error, airline)
+     VALUES (?, 'united', ?, ?, ?, 1, NULL, 'UA')`
+  ).run(tail, at, provider === "Starlink" ? 1 : 0, provider);
+}
+
+const statusOf = (db: Database, tail: string) =>
+  (
+    db.query("SELECT starlink_status AS s FROM united_fleet WHERE tail_number = ?").get(tail) as {
+      s: string;
+    }
+  ).s;
+
+describe("a negative settle yields to a retrofit", () => {
+  test("two newest clean checks on Starlink demote negative to unknown", () => {
+    const db = makeSyntheticDb();
+    addFleet(db, "N37532", "negative", { aircraftType: "Boeing 737-824" });
+    for (const [d, p] of [
+      [40, "Viasat"],
+      [20, "Viasat"],
+      [3, "Starlink"],
+      [1, "Starlink"],
+    ] as const) {
+      check(db, "N37532", NOW - d * 86400, p);
+    }
+    // Retrofit not yet proven: newest check Starlink, the one before Viasat.
+    addFleet(db, "N37440", "negative", { aircraftType: "Boeing 737-824" });
+    check(db, "N37440", NOW - 5 * 86400, "Viasat");
+    check(db, "N37440", NOW - 86400, "Starlink");
+
+    expect(demoteRetrofittedNegatives(db, NOW)).toBe(1);
+    expect(statusOf(db, "N37532")).toBe("unknown");
+    expect(statusOf(db, "N37440")).toBe("negative");
+    expect(demoteRetrofittedNegatives(db, NOW)).toBe(0);
+    db.close();
+  });
+});
+
+describe("/fleet operating carriers", () => {
+  test("express tails naming no regional count under one row; totals add up", () => {
+    const db = makeSyntheticDb();
+    const express = (tail: string, op: string | null, status: string) => {
+      addFleet(db, tail, status, { aircraftType: "Bombardier CRJ-200" });
+      db.query(
+        "UPDATE united_fleet SET fleet = 'express', operated_by = ? WHERE tail_number = ?"
+      ).run(op, tail);
+    };
+    express("N1SK", "SkyWest dba UAX", "confirmed");
+    express("N2SK", "Skywest dba UAX", "unknown");
+    express("N3UA", "United Airlines", "unknown");
+    express("N4UA", null, "unknown");
+    const { carriers } = getFleetPageData(db, "UA");
+    expect(carriers.map((c) => c.name)).toEqual(["SkyWest", "Unattributed"]);
+    expect(carriers.at(-1)).toMatchObject({ total: 2, unattributed: true });
+    expect(carriers.reduce((s, c) => s + c.total, 0)).toBe(4);
+    db.close();
+  });
+});
+
+describe("first observed Starlink flight", () => {
+  const recentDay = new Date((NOW - 3 * 86400) * 1000).toISOString().slice(0, 10);
+  const installed = Math.floor(Date.parse(`${recentDay}T00:00:00Z`) / 1000);
+
+  function seed(db: Database, tail: string, gid: string, leg: [string, string, string]) {
+    db.query(
+      `INSERT INTO starlink_planes (aircraft, wifi, sheet_gid, sheet_type, DateFound, TailNumber, OperatedBy, fleet, verified_wifi, airline)
+       VALUES ('B737','Starlink',?,'UA-mainline',?,?,'United','mainline','Starlink','UA')`
+    ).run(gid, recentDay, tail);
+    addFlight(db, tail, leg[0], leg[1], installed + 10000, { arrivalAirport: leg[2] });
+  }
+
+  test("a ferry off the mod station and a charter are not first flights; forum dates never are", () => {
+    const db = makeSyntheticDb();
+    db.query(
+      "INSERT INTO bts_monthly_routes (month, origin, dest, performed) VALUES ('2026-08', 'ORD', 'GRB', 90)"
+    ).run();
+    seed(db, "N64572", "948315825", ["UAL3878", "MLB", "ORD"]);
+    seed(db, "N640SY", "1106195214", ["OO6088", "BOI", "GNV"]);
+    seed(db, "N587GJ", "6", ["GJS4574", "ORD", "GRB"]);
+    // International legs sit outside the domestic census and still count.
+    seed(db, "N17326", "6", ["UAL873", "GUM", "NRT"]);
+    seed(db, "N846AK", "flyertalk_as", ["UAL1703", "ORD", "GRB"]);
+
+    const recorded = recordFirstFlights(db, NOW).map((f) => f.tail_number);
+    expect(recorded.sort()).toEqual(["N17326", "N587GJ"]);
+    db.close();
+  });
+
+  test("rows recorded before the rules are held to them on read", () => {
+    const db = makeSyntheticDb();
+    db.query(
+      "INSERT INTO bts_monthly_routes (month, origin, dest, performed) VALUES ('2026-08', 'ORD', 'GRB', 90)"
+    ).run();
+    addPlane(db, "N64572", "Starlink");
+    addPlane(db, "N587GJ", "Starlink");
+    const ins = db.query(
+      `INSERT INTO first_flights (tail_number, airline, flight_number, origin, destination, departed_at, recorded_at)
+       VALUES (?, 'UA', ?, ?, ?, ?, ?)`
+    );
+    ins.run("N64572", "UAL3878", "MLB", "ORD", NOW - 86400, NOW);
+    ins.run("N587GJ", "GJS4574", "ORD", "GRB", NOW - 86400, NOW);
+    expect(getFirstFlights(db, ["N64572", "N587GJ"], "UA").map((f) => f.tail_number)).toEqual([
+      "N587GJ",
+    ]);
+    db.close();
+  });
+});
+
+describe("route flight numbers need corroboration", () => {
+  test("a once-seen or mis-attributed history row is not a flight on the route", () => {
+    const db = makeSyntheticDb();
+    const route = db.query(
+      `INSERT INTO flight_routes (flight_number, origin, destination, duration_sec, first_seen_at, last_seen_at, seen_count)
+       VALUES (?, 'EWR', 'CDG', ?, ?, ?, ?)`
+    );
+    route.run("UA57", 26400, NOW - 90 * 86400, NOW - 86400, 40);
+    route.run("UA8123", 26400, NOW - 9 * 86400, NOW - 9 * 86400, 1);
+    route.run("UA3893", 27600, NOW - 60 * 86400, NOW - 86400, 6);
+    addPlane(db, "N1", "Starlink");
+    // Scheduled right now: the live window vouches for it even though it is new.
+    addFlight(db, "N1", "UA9001", "EWR", NOW + 3600, { arrivalAirport: "CDG" });
+    const fns = getRouteFlightNumbers(db, "EWR", "CDG", "UA").flightNumbers.map(
+      (f) => f.flight_number
+    );
+    expect(fns).toContain("UA57");
+    expect(fns).toContain("UA9001");
+    expect(fns).not.toContain("UA8123");
+    expect(fns).not.toContain("UA3893");
+    db.close();
+  });
+});
+
+describe("homepage breakdowns", () => {
+  test("Starlink jets group by aircraft type, not by manufacturer word", () => {
+    const planes = [
+      "Embraer E175LR",
+      "Embraer ERJ-175",
+      "Boeing 737-824",
+      "Boeing 737-924(ER)",
+      "Bombardier CRJ-550",
+    ].map((a) => ({ Aircraft: a }) as Aircraft);
+    const names = computeModelBreakdown(planes).map((d) => d.model);
+    expect(names).not.toContain("Boeing");
+    expect(names).not.toContain("Embraer");
+    expect(computeModelBreakdown(planes)[0]).toMatchObject({ count: 2 });
+  });
+
+  test("the list filter's ALL count is the whole equipped list, not the 100 shown", async () => {
+    const snap = openSnapshot();
+    const equipped = createReaderFactory(snap)("UA").getStarlinkPlanes().length;
+    const html = await (
+      await createApp(snap).dispatch(req("/", "unitedstarlinktracker.com"))
+    ).text();
+    const all = html
+      .replace(/<!-- -->/g, "")
+      .match(/data-filter="all"[^>]*>\s*ALL <span[^>]*>\((\d+)\)/);
+    expect(all).not.toBeNull();
+    expect(Number(all?.[1])).toBe(equipped);
+    snap.close();
+  });
+});
+
+describe("Alaska SkyWest operator backfill", () => {
+  test("N…SY tails read SkyWest; other Alaska tails untouched; rerun is a no-op", () => {
+    const db = makeSyntheticDb();
+    const plane = (tail: string, op: string) =>
+      db
+        .query(
+          `INSERT INTO starlink_planes (aircraft, wifi, DateFound, TailNumber, OperatedBy, fleet, verified_wifi, airline)
+           VALUES ('Embraer E175LR', 'Starlink', NULL, ?, ?, 'horizon', NULL, 'AS')`
+        )
+        .run(tail, op);
+    plane("N171SY", "Horizon Air");
+    plane("N650QX", "Horizon Air");
+    expect(backfillAlaskaSkyWestOperator(db)).toBe(1);
+    expect(backfillAlaskaSkyWestOperator(db)).toBe(0);
+    const ops = db
+      .query("SELECT TailNumber AS t, OperatedBy AS o FROM starlink_planes ORDER BY t")
+      .all() as { t: string; o: string }[];
+    expect(ops).toEqual([
+      { t: "N171SY", o: "SkyWest Airlines" },
+      { t: "N650QX", o: "Horizon Air" },
+    ]);
+    db.close();
+  });
+});

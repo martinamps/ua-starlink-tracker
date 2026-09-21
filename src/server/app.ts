@@ -2329,7 +2329,7 @@ const feedXml: Handler = (ctx) => {
       const operated = i.OperatedBy ? `, operated by ${i.OperatedBy}` : "";
       const ff = firstFlights[i.TailNumber];
       const firstFlightLine = ff
-        ? ` First observed Starlink revenue flight: ${ff.flight_number} ${ff.origin} → ${ff.destination} on ${new Date(ff.departed_at * 1000).toISOString().slice(0, 10)}.`
+        ? ` First observed Starlink flight: ${ff.flight_number} ${ff.origin} → ${ff.destination} on ${new Date(ff.departed_at * 1000).toISOString().slice(0, 10)}.`
         : "";
       // "first observed with", not "joined the fleet on": DateFound is when
       // this tracker found the tail equipped, not when the antenna went on.
@@ -2416,6 +2416,7 @@ function asOfLabel(raw: string | null, nowMs: number): string {
     month: "long",
     day: "numeric",
     year: "numeric",
+    timeZone: "UTC",
   });
 }
 
@@ -3037,7 +3038,7 @@ function flightMetaAnswer(
     const pct = Math.round(modelled.probability * 100);
     return pct > 0
       ? ` Historically it gets a Starlink-equipped aircraft about ${pct}% of the time.`
-      : " Observed departures used aircraft without Starlink.";
+      : " It almost never gets a Starlink-equipped aircraft.";
   }
   if (facts.observedStarlink > 0) {
     return ` Starlink found on ${facts.observedStarlink} of ${facts.observedTotal} aircraft checks.`;

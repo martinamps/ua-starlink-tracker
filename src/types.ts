@@ -156,6 +156,9 @@ export interface FleetCarrier {
   confirmed: number;
   total: number;
   pct: number;
+  /** The catch-all row: express tails whose operator field names no regional
+   * carrier. Always sorted last. */
+  unattributed?: boolean;
 }
 
 export interface FleetPulse {

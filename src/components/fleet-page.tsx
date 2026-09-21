@@ -892,14 +892,19 @@ function InstallPipelineSection({
                 total={seg.total}
               />
               <div className="font-mono text-[11px] text-secondary mt-2 space-y-1">
-                <div>
-                  {swatch("bar-inmod")}
-                  {seg.in_mod ?? 0} in mod line now
-                </div>
-                <div>
-                  {swatch("bar-verif")}
-                  {seg.verification_needed ?? 0} awaiting verification
-                </div>
+                {/* A blank sheet cell is "not reported", not zero. */}
+                {seg.in_mod !== null && (
+                  <div>
+                    {swatch("bar-inmod")}
+                    {seg.in_mod} in mod line now
+                  </div>
+                )}
+                {seg.verification_needed !== null && (
+                  <div>
+                    {swatch("bar-verif")}
+                    {seg.verification_needed} awaiting verification
+                  </div>
+                )}
                 {segQueued > 0 && (
                   <div>
                     {swatch("bar-queued")}

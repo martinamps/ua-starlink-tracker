@@ -157,7 +157,7 @@ function flightSummary(flight: FlightFacts): string {
     const obs = `${pred.n_observations.toLocaleString("en-US")} observed departures`;
     return pct > 0
       ? `${flightNumber} gets a Starlink-equipped aircraft about ${pct}% of the time, from ${obs}. Pick a date below for a live answer.`
-      : `${flightNumber} has been flown by aircraft without Starlink in ${obs}. Pick a date below for a live answer.`;
+      : `${flightNumber} almost never gets a Starlink-equipped aircraft: under 1% of ${obs}. Pick a date below for a live answer.`;
   }
   if (n > 0 && s > 0) {
     return `${flightNumber} had Starlink on ${s} of ${n} recently verified departures (${Math.round((s / n) * 100)}%). Pick a date below for a live answer.`;
