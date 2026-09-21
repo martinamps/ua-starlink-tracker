@@ -295,7 +295,7 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"hasStarlink\":null,\"airline\":\"Alaska Airlines\",\"confidence\":\"type\",\"message\":\"No per-flight prediction model exists for Alaska Airlines — Starlink status is determined by aircraft type, not flight-number history. Every regional E175 has Starlink. Mainline 737 and 787 installs are under way.\",\"flights\":[]}"
+    "body": "{\"hasStarlink\":null,\"airline\":\"Alaska Airlines\",\"confidence\":\"type\",\"message\":\"No per-flight prediction model exists for Alaska Airlines — Starlink status is determined by aircraft type, not flight-number history. Every regional E175 has Starlink. Mainline has started with the 737-8 MAX; no other 737 or 787 is connected yet.\",\"flights\":[]}"
   },
   "airlinestarlinktracker.com /api/check-flight HA100 2026-09-29": {
     "status": 200,
@@ -403,7 +403,7 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"hasStarlink\":null,\"airline\":\"Alaska Airlines\",\"confidence\":\"type\",\"reason\":\"No per-flight prediction model exists for Alaska Airlines — Starlink status is determined by aircraft type, not flight-number history. Every regional E175 has Starlink. Mainline 737 and 787 installs are under way.\",\"flights\":[]}"
+    "body": "{\"hasStarlink\":null,\"airline\":\"Alaska Airlines\",\"confidence\":\"type\",\"reason\":\"No per-flight prediction model exists for Alaska Airlines — Starlink status is determined by aircraft type, not flight-number history. Every regional E175 has Starlink. Mainline has started with the 737-8 MAX; no other 737 or 787 is connected yet.\",\"flights\":[]}"
   },
   "airlinestarlinktracker.com /api/check-any-flight QR1 2026-09-20": {
     "status": 200,
@@ -595,7 +595,7 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"hasStarlink\":null,\"confidence\":\"type\",\"message\":\"No per-flight prediction model exists for Alaska Airlines — Starlink status is determined by aircraft type, not flight-number history. Every regional E175 has Starlink. Mainline 737 and 787 installs are under way.\",\"flights\":[]}"
+    "body": "{\"hasStarlink\":null,\"confidence\":\"type\",\"message\":\"No per-flight prediction model exists for Alaska Airlines — Starlink status is determined by aircraft type, not flight-number history. Every regional E175 has Starlink. Mainline has started with the 737-8 MAX; no other 737 or 787 is connected yet.\",\"flights\":[]}"
   },
   "alaskastarlinktracker.com /api/check-flight AS200 2026-09-29": {
     "status": 200,
@@ -607,7 +607,7 @@
       "access-control-allow-headers": "Content-Type",
       "vary": "Host"
     },
-    "body": "{\"hasStarlink\":null,\"confidence\":\"type\",\"message\":\"No per-flight prediction model exists for Alaska Airlines — Starlink status is determined by aircraft type, not flight-number history. Every regional E175 has Starlink. Mainline 737 and 787 installs are under way.\",\"flights\":[]}"
+    "body": "{\"hasStarlink\":null,\"confidence\":\"type\",\"message\":\"No per-flight prediction model exists for Alaska Airlines — Starlink status is determined by aircraft type, not flight-number history. Every regional E175 has Starlink. Mainline has started with the 737-8 MAX; no other 737 or 787 is connected yet.\",\"flights\":[]}"
   },
   "qatarstarlinktracker.com /api/check-flight QR1 2026-09-20": {
     "status": 200,
@@ -1039,7 +1039,7 @@
       "access-control-allow-headers": "Content-Type, Accept, Mcp-Session-Id, MCP-Protocol-Version",
       "vary": "Host"
     },
-    "body": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"AS200 on 2026-09-29: no assignment data. No per-flight prediction model exists for Alaska Airlines — Starlink status is determined by aircraft type, not flight-number history. Every regional E175 has Starlink. Mainline 737 and 787 installs are under way.\"}]}}"
+    "body": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"AS200 on 2026-09-29: no assignment data. No per-flight prediction model exists for Alaska Airlines — Starlink status is determined by aircraft type, not flight-number history. Every regional E175 has Starlink. Mainline has started with the 737-8 MAX; no other 737 or 787 is connected yet.\"}]}}"
   },
   "airlinestarlinktracker.com mcp check_flight {\"flight_number\":\"QR1\",\"date\":\"2026-09-20\"}": {
     "status": 200,
