@@ -82,6 +82,75 @@ describe("a negative settle yields to a retrofit", () => {
     db.close();
   });
 
+  test("an errored newest check is skipped; unconfirmed tails and non-observing sources never count", () => {
+    const db = makeSyntheticDb();
+    const log = (
+      tail: string,
+      at: number,
+      opts: { starlink?: boolean; error?: string; confirmed?: 0 | 1; source?: string } = {}
+    ) =>
+      db
+        .query(
+          `INSERT INTO starlink_verification_log
+             (tail_number, source, checked_at, has_starlink, wifi_provider, tail_confirmed, error, airline)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'UA')`
+        )
+        .run(
+          tail,
+          opts.source ?? "united",
+          at,
+          opts.error ? null : opts.starlink === false ? 0 : 1,
+          opts.error ? null : opts.starlink === false ? "Viasat" : "Starlink",
+          opts.confirmed ?? 1,
+          opts.error ?? null
+        );
+    addFleet(db, "N1ERR", "negative");
+    log("N1ERR", NOW - 3 * 86400);
+    log("N1ERR", NOW - 2 * 86400);
+    log("N1ERR", NOW - 86400, { error: "timeout" });
+    addFleet(db, "N2UNC", "negative");
+    log("N2UNC", NOW - 3 * 86400);
+    log("N2UNC", NOW - 86400, { confirmed: 0 });
+    addFleet(db, "N3SRC", "negative");
+    log("N3SRC", NOW - 3 * 86400);
+    log("N3SRC", NOW - 86400, { source: "spreadsheet" });
+    expect(OBSERVED_WIFI_SOURCES).not.toContain("spreadsheet");
+
+    expect(demoteRetrofittedNegatives(db, NOW)).toBe(1);
+    expect(statusOf(db, "N1ERR")).toBe("unknown");
+    expect(statusOf(db, "N2UNC")).toBe("negative");
+    expect(statusOf(db, "N3SRC")).toBe("negative");
+    db.close();
+  });
+
+  test("a demotion queues a prompt re-check and clears the contradicting listing", () => {
+    const db = makeSyntheticDb();
+    addPlane(db, "N37532", "Viasat", { aircraft: "Boeing 737-824" });
+    addFleet(db, "N37532", "negative", { aircraftType: "Boeing 737-824", verifiedWifi: "Viasat" });
+    db.query(
+      "UPDATE united_fleet SET next_check_after = ?, discovery_priority = 0.1 WHERE tail_number = 'N37532'"
+    ).run(NOW + 30 * 86400);
+    for (const d of [3, 1]) check(db, "N37532", NOW - d * 86400, "Starlink");
+    expect(demoteRetrofittedNegatives(db, NOW)).toBe(1);
+    expect(
+      db
+        .query(
+          `SELECT f.starlink_status, f.verified_wifi AS fleet_wifi, f.next_check_after,
+                  f.discovery_priority, sp.verified_wifi AS listing_wifi
+           FROM united_fleet f JOIN starlink_planes sp ON sp.TailNumber = f.tail_number
+           WHERE f.tail_number = 'N37532'`
+        )
+        .get()
+    ).toEqual({
+      starlink_status: "unknown",
+      fleet_wifi: null,
+      next_check_after: NOW,
+      discovery_priority: 0.9,
+      listing_wifi: null,
+    });
+    db.close();
+  });
+
   test("the hourly sync → reconcile cycle reaches a fixed point", () => {
     const db = makeSyntheticDb();
     // The listing still says Viasat and the 30-day window leans Viasat, so
