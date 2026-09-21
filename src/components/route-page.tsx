@@ -21,9 +21,10 @@ export function localDeparture(iata: string, sec: number): { date: string; time:
   return zonedDeparture(sec, airportTimezone(iata));
 }
 
-/** A historical number seen once is as likely a data-source artifact (a
- * diversion, a mis-keyed express number) as a flight on this route. */
-const HISTORY_MIN_SIGHTINGS = 2;
+/** getRouteFlightNumbers already drops the one-sighting numbers that are
+ * artifacts (regional and charter ranges, implausible block times) and keeps a
+ * once-a-day long-haul number the cache caught once. */
+const HISTORY_MIN_SIGHTINGS = 1;
 
 function listed(fns: RouteSummary["flightNumbers"]) {
   return fns.filter((f) => f.scheduled === 1 || f.times >= HISTORY_MIN_SIGHTINGS);

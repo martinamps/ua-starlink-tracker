@@ -135,7 +135,7 @@ async function getUpcomingFlightsForPlane(tailNumber: string): Promise<{
   allFlights: FlightInfo["raw"][];
 } | null> {
   try {
-    const flights = await fr24Api.getUpcomingFlights(tailNumber);
+    const flights = await fr24Api.getUpcomingFlights(tailNumber, "callsign", "UA");
 
     if (flights.length === 0) {
       return null;
@@ -457,8 +457,6 @@ export async function runDiscoveryBatch(
   const planes = getNextPlanesToVerify(db, limit, "UA");
 
   if (planes.length === 0) {
-    // debug, matching starlink-verifier.ts which already logs the idle
-    // tick at debug — the two paths disagreed and this one ran every 90s.
     debug("No planes need verification at this time");
     return stats;
   }

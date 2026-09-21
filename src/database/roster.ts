@@ -3,6 +3,15 @@
  * programmeRoster: the airline's united_fleet rows minus freighters and the
  * programme's declared exclusions (isOutsideProgramme). Each row carries the
  * one equipped flag (sql/equipped.ts), so numerators come from the same pass.
+ *
+ * One deliberate exception: the headline total (getTotalCount, meta
+ * totalAircraftCount) behind the homepage, badge, fleet-summary API and MCP
+ * get_fleet_stats. For AS/HA/QR/AF refreshFleetMeta writes it from this
+ * roster, so the two agree. For UA the hourly sheet scrape writes the sheet's
+ * own fleet total, the figure the community tracker publishes; it matched
+ * programmeRoster on the 2026-09-21 snapshot (1,659) but can lead it between
+ * fleet syncs. Moving the headline onto the roster is a contract change for
+ * those surfaces (tests/golden pins them), not a refactor.
  */
 
 import type { Database } from "bun:sqlite";

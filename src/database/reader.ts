@@ -28,6 +28,7 @@ import type {
   RecentInstall,
   RouteSchedule,
 } from "../types";
+import { memo } from "../utils/ttl-cache";
 import {
   type AdsbFlightDraw,
   getAdsbFlightDraws,
@@ -56,6 +57,7 @@ import {
   type PopularFlight,
   type QatarHistoryRow,
   type QatarScheduleRow,
+  type RouteDepartureRow,
   type RouteEntryRow,
   type RouteFlightNumbers,
   type RouteFlightRow,
@@ -113,6 +115,7 @@ import {
   getQatarScheduleStats,
   getRankedStarlinkRoutePairs,
   getRecentInstalls,
+  getRouteDepartures,
   getRouteFlightNumbers,
   getRouteFlights,
   getRouteGraphEdges,
@@ -138,6 +141,14 @@ import {
 import { getRouteFlightLastSeen } from "./route-history";
 
 export type { Database };
+
+/**
+ * The 48h departure aggregates rebuild the whole slot table (~15ms for UA on
+ * production data) and back the homepage, /routes and the planner hub. The
+ * schedule refreshes every 22.5s per tail, so a minute of staleness is
+ * invisible and keeps the build off the request path.
+ */
+const DEPARTURE_AGGREGATE_TTL_MS = 60_000;
 
 export type Scope = AirlineCode | "ALL";
 
@@ -253,6 +264,8 @@ export interface ScopedReader {
   /** Unseen for ROUTE_NOINDEX_STALE_DAYS — the route page goes noindex. */
   routeIsHistorical(origin: string, destination: string): boolean;
   getRouteSummary(origin: string, destination: string): RouteSummary;
+  /** Equipped departures on the pair in the next 48h, under their marketed numbers. */
+  getRouteDepartures(origin: string, destination: string): RouteDepartureRow[];
   /** Marketing numbers on a pair without getRouteSummary's windowed departure
    * counts — what the flight permalinks' sibling links actually need. */
   getRouteFlightNumbers(origin: string, destination: string): RouteFlightNumbers;
@@ -383,6 +396,11 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
       throw new Error(`ScopedReader method requires a single-airline scope, got ${scope}`);
     return airlines[0];
   };
+  const airportsMemo = memo<AirportDepartures>(DEPARTURE_AGGREGATE_TTL_MS);
+  const scheduleMemo = memo<RouteSchedule>(DEPARTURE_AGGREGATE_TTL_MS);
+  const rankedMemo = memo<Array<{ origin: string; destination: string }>>(
+    DEPARTURE_AGGREGATE_TTL_MS
+  );
   const r: ScopedReader = {
     scope,
     airlines,
@@ -430,10 +448,12 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     getFleetGuideTails: () => getFleetGuideTails(db, soleAirline()),
     getFleetPageData: () => getFleetPageData(db, airlines),
     getDepartureSlots: (q) => getDepartureSlots(db, airlines, q),
-    getAirportDepartures: () => getAirportDepartures(db, airlines),
-    getRouteStarlinkSchedule: () => getRouteStarlinkSchedule(db, airlines),
+    getAirportDepartures: () => airportsMemo("", () => getAirportDepartures(db, airlines)),
+    getRouteStarlinkSchedule: () => scheduleMemo("", () => getRouteStarlinkSchedule(db, airlines)),
     getRankedStarlinkRoutePairs: (offset, limit) =>
-      getRankedStarlinkRoutePairs(db, airlines, offset, limit),
+      rankedMemo(`${offset}:${limit}`, () =>
+        getRankedStarlinkRoutePairs(db, airlines, offset, limit)
+      ),
     getFleetDiscoveryStats: () => getFleetDiscoveryStats(db, airlines),
     getConfirmedFleetTails: () => getConfirmedFleetTails(db, airlines),
     getPendingFleetTails: () => getPendingFleetTails(db, airlines),
@@ -462,6 +482,7 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     routeHasData: (o, d) => routeHasData(db, o, d, soleAirline()),
     routeIsHistorical: (o, d) => routeIsHistorical(db, o, d, soleAirline()),
     getRouteSummary: (o, d) => getRouteSummary(db, o, d, soleAirline()),
+    getRouteDepartures: (o, d) => getRouteDepartures(db, soleAirline(), o, d),
     getRouteFlightNumbers: (o, d) => getRouteFlightNumbers(db, o, d, soleAirline()),
     getRouteFlightLastSeen: (o, d) => getRouteFlightLastSeen(db, o, d, soleAirline()),
     getFlightHistorySummary: (v) => getFlightHistorySummary(db, v, airlines),

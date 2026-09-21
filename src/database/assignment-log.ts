@@ -22,6 +22,7 @@ import type { Flight } from "../types";
 import { airportLocalDate, icaoToIata } from "../utils/airport-tz";
 import { equippedSql, starlinkFlag, tailEvidence } from "./sql/equipped";
 import { airlineIn, placeholders } from "./sql/fragments";
+import { DAY_SEC } from "./sql/windows";
 
 export const ASSIGNMENT_LOG_DDL = `
   CREATE TABLE IF NOT EXISTS flight_assignment_log (
@@ -67,11 +68,18 @@ export function departureLocalDate(departureAirport: string, departureTime: numb
   return airportLocalDate(icaoToIata(departureAirport), departureTime) ?? utcDate(departureTime);
 }
 
-/** 1/0/null from the one evidence ranking (sql/equipped.ts). */
-function tailStarlinkFlag(db: Database, tailNumber: string): number | null {
+/**
+ * 1/0/null from the one evidence ranking (sql/equipped.ts). A registration can
+ * be listed under two airlines; the logging airline's listing wins, and a
+ * partner leg (AS832 on a Hawaiian tail) falls back to the tail's own.
+ */
+function tailStarlinkFlag(db: Database, tailNumber: string, airline: string): number | null {
   const listed = db
-    .query("SELECT verified_wifi FROM starlink_planes WHERE TailNumber = ?")
-    .get(tailNumber) as { verified_wifi: string | null } | null;
+    .query(
+      `SELECT verified_wifi FROM starlink_planes WHERE TailNumber = ?
+       ORDER BY airline = ? DESC, id LIMIT 1`
+    )
+    .get(tailNumber, airline) as { verified_wifi: string | null } | null;
   const fleet = db
     .query("SELECT starlink_status FROM united_fleet WHERE tail_number = ?")
     .get(tailNumber) as { starlink_status: string | null } | null;
@@ -91,7 +99,7 @@ export function logFlightAssignments(
 ): void {
   if (flights.length === 0) return;
   const cfg = AIRLINES[airline];
-  const starlink = tailStarlinkFlag(db, tailNumber);
+  const starlink = tailStarlinkFlag(db, tailNumber, airline);
   const upsert = db.query(`
     INSERT INTO flight_assignment_log
       (airline, flight_number, dep_date, departure_airport, arrival_airport, tail_number,
@@ -173,7 +181,7 @@ export function logResolvedAssignments(
 
 export function pruneAssignmentLog(db: Database, now: number): void {
   db.query("DELETE FROM flight_assignment_log WHERE dep_date < ?").run(
-    utcDate(now - ASSIGNMENT_LOG_RETENTION_DAYS * 86400)
+    utcDate(now - ASSIGNMENT_LOG_RETENTION_DAYS * DAY_SEC)
   );
 }
 
