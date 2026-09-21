@@ -1,8 +1,16 @@
 import type { SiteConfig } from "../airlines/registry";
+import { formatFactDate, rolloutTimeline } from "../airlines/rollout-facts";
 import type { InstallRateStats, TargetProjection, TargetVerdict } from "../utils/install-rate";
 import type { PageLink } from "./atoms";
+import {
+  CumulativeInstallsChart,
+  MonthlyInstallsBars,
+  PaceBullets,
+  nearestPaceGap,
+  paceWindowText,
+} from "./charts/cumulative-installs";
 import { type CiteStat, CiteThis } from "./cite-this";
-import { EYEBROW, PANEL, PageHeader, PageShell, SECTION, StatInline } from "./layout";
+import { EYEBROW, PANEL, PageHeader, PageShell, SECTION, StatInline, fmt, pct } from "./layout";
 
 export interface AirlineInstallRate {
   code: string;
@@ -41,187 +49,166 @@ export function monthLabel(month: string): string {
   });
 }
 
-function MonthChart({ stats, accent }: { stats: InstallRateStats; accent: string }) {
-  // Last 18 months keeps the bars readable; the full series still drives pace.
-  const months = stats.months.slice(-18);
-  if (months.length < 2) return null;
-  const max = Math.max(1, ...months.map((m) => m.installs));
-  return (
-    <div>
-      <div className="flex items-end gap-[3px] h-24">
-        {months.map((m) => (
-          <div
-            key={m.month}
-            className="flex-1 rounded-t-sm"
-            title={`${monthLabel(m.month)}: ${m.installs} install${m.installs === 1 ? "" : "s"}`}
-            style={{
-              height: `${Math.max(3, (m.installs / max) * 100)}%`,
-              background: m.installs > 0 ? accent : "rgba(90,106,128,0.25)",
-              opacity: m.installs > 0 ? 0.85 : 1,
-            }}
-          />
-        ))}
-      </div>
-      <div className="flex justify-between font-mono text-xs text-muted mt-1">
-        <span>{monthLabel(months[0].month)}</span>
-        <span>{monthLabel(months[months.length - 1].month)}</span>
-      </div>
-    </div>
-  );
+function targetStatus(p: TargetProjection): string {
+  const due = `Due ${formatFactDate(p.target.deadline)}`;
+  // equipped is a live row count and total a separately scraped meta value;
+  // mid-reconcile they can disagree, and nothing is projected from that.
+  if (p.rosterDisagrees) return `${due} · counts disagree, no projection`;
+  if (p.verdict === "reached") return `${due} · reached`;
+  const parts = [due, `${fmt(p.remaining)} to go`];
+  if (p.projectedMonth) parts.push(`at current pace: ${monthLabel(p.projectedMonth)}`);
+  else if (p.verdict === "behind") parts.push("more than four years out at current pace");
+  return parts.join(" · ");
 }
 
-function TargetRow({ p }: { p: TargetProjection }) {
+function TargetRow({ p, shortName }: { p: TargetProjection; shortName: string }) {
   const tone = VERDICT_TONE[p.verdict];
   return (
-    <div className="py-3 border-b border-subtle last:border-0">
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div className="text-sm text-secondary font-medium">{p.target.label}</div>
+    <li className="border-b border-subtle py-3 last:border-0">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <span className="text-sm text-primary">
+          {p.target.label}
+          {p.derived && <span className="text-muted"> ({fmt(p.targetCount)})</span>}
+        </span>
         <span
-          className="font-mono text-xs uppercase tracking-wide px-2 py-1 rounded-full shrink-0"
+          className="shrink-0 rounded-full px-2 py-0.5 text-xs"
           style={{ color: tone.color, background: tone.bg }}
         >
           {tone.label}
         </span>
       </div>
-      <div className="font-mono text-xs text-muted mt-1 leading-relaxed">
-        By {p.target.deadline} · {p.targetCount.toLocaleString()} aircraft
-        {p.rosterDisagrees ? (
-          // Impossible inputs, named rather than projected from. equipped is a
-          // live row count and total a separately scraped meta value; nothing
-          // ties them to one snapshot, so mid-reconcile they can disagree.
-          <> — roster and install counts disagree; not projecting</>
-        ) : (
-          <>
-            {p.verdict === "reached"
-              ? " — already there."
-              : ` · ${p.remaining.toLocaleString()} to go`}
-            {p.projectedMonth && p.verdict !== "reached" && (
-              <> · straight-line arrival {monthLabel(p.projectedMonth)}</>
-            )}
-            {p.verdict === "behind" &&
-              !p.projectedMonth &&
-              " · at the current pace this doesn't land within a projectable horizon"}
-          </>
-        )}
-      </div>
-      {/* Numerator and denominator, from one roster, named. A target stated
-          over two carriers has to show progress over those same two. */}
-      <div className="font-mono text-xs text-muted mt-1 leading-relaxed">
-        Progress: {p.scope.equipped.toLocaleString()} of {p.scope.total.toLocaleString()}
-        {p.scope.label ? ` across ${p.scope.label}` : ""}
-      </div>
-      {/* The count under a fraction target is OUR arithmetic over OUR roster.
-          Saying so keeps the sourced quote (the label) separable from the
-          number, which the airline never published. */}
-      {p.derived && p.derivedFrom !== null && (
-        <div className="font-mono text-xs text-muted mt-1 leading-relaxed">
-          Count derived here, not stated by the airline:{" "}
-          {p.target.fractionOfTracked === 1
-            ? `the ${p.derivedFrom.toLocaleString()} aircraft this tracker counts`
-            : `${Math.round((p.target.fractionOfTracked ?? 1) * 100)}% of the ${p.derivedFrom.toLocaleString()} aircraft this tracker counts`}
-          .
-        </div>
+      <p className="mt-1 text-sm text-secondary">{targetStatus(p)}</p>
+      {/* A target stated over two carriers is measured over those two, both
+          halves of the ratio, so the page names the roster. */}
+      {p.scope.label && (
+        <p className="mt-1 text-sm text-secondary">
+          Measured across {p.scope.label}: {fmt(p.scope.equipped)} of {fmt(p.scope.total)}.
+        </p>
       )}
-      {/* When the airline said it, not just where. A target is only as current
-          as the statement behind it, and a reader has no other way to tell a
-          fresh commitment from a two-year-old one. */}
-      <div className="font-mono text-xs text-muted mt-1">
-        Target stated {p.target.statedOn} in{" "}
+      {/* The count under a share-of-fleet target is our arithmetic, so it must
+          never read as the airline's published figure. */}
+      {p.derived && p.derivedFrom !== null && (
+        <p className="mt-1 text-xs text-muted">
+          {p.target.fractionOfTracked === 1
+            ? `Fleet size is our count, not ${shortName}'s.`
+            : `${Math.round((p.target.fractionOfTracked ?? 1) * 100)}% of our fleet count of ${fmt(p.derivedFrom)}, not a figure ${shortName} published.`}
+        </p>
+      )}
+      <p className="mt-1 text-xs text-muted">
+        Stated {formatFactDate(p.target.statedOn)}. Source:{" "}
         <a
           href={p.target.source.url}
           target="_blank"
           rel="noopener noreferrer"
-          className="text-accent hover:underline"
+          className="underline decoration-dotted underline-offset-2 hover:text-accent"
         >
           {p.target.source.title}
         </a>
-      </div>
-    </div>
+      </p>
+    </li>
   );
-}
-
-/** "three complete months" is a claim about PACE_WINDOW, so derive it from the
- * window the pace was actually taken over — the copy said three while the
- * minimum is two, so a two-month tenant published a three-month average. */
-function paceWindowWords(stats: InstallRateStats): string {
-  const n = stats.paceWindowMonths;
-  const word = ["zero", "one", "two", "three", "four", "five", "six"][n] ?? String(n);
-  return n === 1 ? "complete month" : `${word} complete months`;
 }
 
 function AirlineSection({ a }: { a: AirlineInstallRate }) {
   const { stats } = a;
-  const pct = stats.total > 0 ? Math.min(100, Math.round((stats.equipped / stats.total) * 100)) : 0;
   const statId = `install-rate-stat-${a.code.toLowerCase()}`;
+  const hasHistory = stats.months.length >= 2;
   return (
     <div className={PANEL}>
-      <div className="flex items-center justify-between gap-2 mb-3">
-        <div className="flex items-center gap-2">
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <h2 className="flex items-center gap-2 font-display text-lg text-primary">
           <span
-            className="w-2 h-2 rounded-full flex-shrink-0"
+            className="h-2 w-2 flex-shrink-0 rounded-full"
             style={{ background: a.accentColor }}
           />
-          <span className="font-display text-lg font-semibold text-primary">{a.name}</span>
-        </div>
-        <span className="font-mono text-xs uppercase tracking-wide text-muted">
-          {a.statusLabel}
-        </span>
+          {a.name}
+        </h2>
+        <span className="text-xs text-muted">{a.statusLabel}</span>
       </div>
 
-      {/* The one sentence to quote — dated with THIS airline's own stamp, not
-          the serving reader's: on the hub, one shared date post-dated a stale
-          airline's figures by four months. */}
-      <p id={statId} className="text-sm text-secondary leading-relaxed mb-4">
+      {/* The one sentence to quote, dated with THIS airline's own stamp: on the
+          hub, one shared date once post-dated a stale airline by four months. */}
+      <p id={statId} className="mb-4 text-sm text-secondary">
         As of {a.asOfDate}, <StatInline n={stats.equipped} /> of <StatInline n={stats.total} />{" "}
-        tracked {a.name} aircraft{stats.rosterDisagrees ? "" : ` (${pct}%)`} have Starlink
-        {stats.paceMonthly !== null ? (
+        {a.name} aircraft{stats.rosterDisagrees ? "" : ` (${pct(stats.equipped, stats.total)})`}{" "}
+        have Starlink.
+        {stats.paceMonthly !== null && (
           <>
-            , with installs averaging <StatInline>~{stats.paceMonthly}/month</StatInline> over the
-            last {paceWindowWords(stats)}
+            {" "}
+            Installs have averaged about <StatInline n={Math.round(stats.paceMonthly)} /> a month
+            over {paceWindowText(stats)}.
           </>
-        ) : null}
-        .
+        )}
       </p>
       {stats.rosterDisagrees && (
-        // No percentage at all rather than a wrong one: the fixture served
-        // "102 of 6 tracked Alaska Airlines aircraft (1700%)" with a confident
-        // verdict beside it.
-        <p className="text-xs text-muted mb-4 leading-snug">
-          The install count above exceeds the tracked roster, which is impossible — the two come
-          from different sources and are mid-disagreement. No share and no projection are shown
-          until they reconcile.
+        <p className="mb-4 text-xs text-muted">
+          The install count is higher than the fleet count, so no share or projection is shown until
+          the two sources agree.
         </p>
       )}
 
-      {stats.months.length >= 2 ? (
-        <div className="mb-4">
-          <div className={EYEBROW}>Installs per month (dated finds only)</div>
-          <MonthChart stats={stats} accent={a.accentColor} />
-          {stats.excludedDays.length > 0 && (
-            <p className="text-xs text-muted mt-1.5 leading-snug">
-              {stats.excludedDays.length === 1 ? "One day" : `${stats.excludedDays.length} days`}{" "}
-              excluded as a bulk import (
-              {stats.excludedDays.map((d) => `${d.day}: ${d.installs}`).join(", ")}) — too many
-              aircraft on one date to be installs, so they'd read as a spike the fleet never had.
-            </p>
+      {hasHistory ? (
+        <>
+          <CumulativeInstallsChart
+            stats={stats}
+            accent={a.accentColor}
+            airlineName={a.name}
+            milestones={rolloutTimeline(a.code)?.milestones}
+          />
+          {stats.paceMonthly !== null && stats.projections.length > 0 && (
+            <div className="mt-6 border-t border-subtle pt-5">
+              <div className={EYEBROW}>Pace needed vs. now</div>
+              <PaceBullets stats={stats} accent={a.accentColor} />
+            </div>
           )}
-        </div>
+          <div className="mt-6 border-t border-subtle pt-5">
+            <div className={EYEBROW}>Installs per month</div>
+            <MonthlyInstallsBars stats={stats} accent={a.accentColor} />
+            {stats.excludedDays.length > 0 && (
+              <p className="mt-2 text-xs text-muted">
+                Excludes{" "}
+                {stats.excludedDays
+                  .map(
+                    (d) =>
+                      `a one-day data import (${fmt(d.installs)} aircraft, ${formatFactDate(d.day)})`
+                  )
+                  .join(" and ")}
+                .
+              </p>
+            )}
+          </div>
+        </>
       ) : (
-        <p className="text-xs text-muted mb-4 leading-snug">
-          No dated install history to chart — {a.phaseNote}
-        </p>
+        <p className="mb-4 text-sm text-muted">No dated install history to chart yet.</p>
       )}
 
       {stats.projections.length > 0 && (
-        <div>
-          <div className={EYEBROW}>Stated targets vs. observed pace</div>
-          {stats.projections.map((p) => (
-            <TargetRow key={`${p.target.label}-${p.target.deadline}`} p={p} />
-          ))}
+        <div className="mt-6 border-t border-subtle pt-5">
+          <div className={EYEBROW}>Stated targets</div>
+          <ul>
+            {stats.projections.map((p) => (
+              <TargetRow
+                key={`${p.target.label}-${p.target.deadline}`}
+                p={p}
+                shortName={a.shortName}
+              />
+            ))}
+          </ul>
         </div>
       )}
     </div>
   );
+}
+
+function singleDek(a: AirlineInstallRate): string {
+  const gap = nearestPaceGap(a.stats);
+  if (gap) {
+    return `Is ${a.shortName} on pace? About ${fmt(gap.actual)} installs a month, against the ${fmt(gap.needed)} a month needed for ${fmt(gap.target.targetCount)} by ${formatFactDate(gap.target.target.deadline)}.`;
+  }
+  if (a.stats.paceMonthly !== null) {
+    return `${a.shortName} is installing Starlink on about ${fmt(a.stats.paceMonthly)} aircraft a month.`;
+  }
+  return `How fast ${a.name} is installing Starlink, against its stated targets.`;
 }
 
 export default function InstallRatePage({
@@ -235,11 +222,11 @@ export default function InstallRatePage({
   return (
     <PageShell site={site} currentPath={currentPath} pageLinks={pageLinks}>
       <PageHeader
-        title="Starlink Install Rate Index"
+        title="Starlink install rate index"
         dek={
           single
-            ? `How fast ${single.name} is actually installing Starlink — and whether the stated targets hold at that pace.`
-            : "How fast each tracked airline is actually installing Starlink — and whether their stated targets hold at that pace."
+            ? singleDek(single)
+            : "Installs per month for each tracked airline, against the targets each has stated."
         }
       />
 
@@ -250,22 +237,14 @@ export default function InstallRatePage({
       </section>
 
       <section className={SECTION}>
-        <p className="text-xs text-muted leading-snug text-center">
-          Pace counts only dated, organically observed installs. Seed batches and type-rule
-          backfills are excluded by source, and any single date carrying far more aircraft than the
-          fleet installs in a day is dropped as an import and named above — so a data backfill
-          doesn't read as an install spike. Projections are straight-line extrapolations of the
-          trailing three complete months; below ~0.5 installs/month we say "too early to call"
-          instead of projecting. Counts shown for "share of the fleet" targets are computed from
-          this tracker's roster and labelled as such — only figures an airline actually published
-          are attributed to it, with the date the airline stated it. A target stated over more than
-          one carrier's fleet is measured against those carriers' combined roster on both sides of
-          the ratio.
+        <p className="text-center text-xs text-muted">
+          Pace averages up to the last three full months, and projections assume it holds. Seed data
+          and one-day imports are left out.
           {site.features.methodologyPage && (
             <>
               {" "}
               <a href="/methodology" className="text-accent hover:underline">
-                How the underlying data is verified →
+                Methodology →
               </a>
             </>
           )}

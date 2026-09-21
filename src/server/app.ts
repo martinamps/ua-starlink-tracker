@@ -2351,7 +2351,7 @@ const feedXml: Handler = (ctx) => {
       const operated = i.OperatedBy ? `, operated by ${i.OperatedBy}` : "";
       const ff = firstFlights[i.TailNumber];
       const firstFlightLine = ff
-        ? ` First observed Starlink revenue flight: ${ff.flight_number} ${ff.origin} → ${ff.destination} on ${new Date(ff.departed_at * 1000).toISOString().slice(0, 10)}.`
+        ? ` First observed Starlink flight: ${ff.flight_number} ${ff.origin} → ${ff.destination} on ${new Date(ff.departed_at * 1000).toISOString().slice(0, 10)}.`
         : "";
       // "first observed with", not "joined the fleet on": DateFound is when
       // this tracker found the tail equipped, not when the antenna went on.
@@ -2435,9 +2435,10 @@ const newlyEquippedPage: Handler = (ctx) => {
 function asOfLabel(raw: string | null, nowMs: number): string {
   const t = Date.parse(raw ?? "");
   return new Date(Number.isNaN(t) ? nowMs : t).toLocaleDateString("en-US", {
-    month: "long",
+    month: "short",
     day: "numeric",
     year: "numeric",
+    timeZone: "UTC",
   });
 }
 
@@ -3765,8 +3766,8 @@ const timelinePage: Handler = (ctx) => {
   // Gate on content, not just the flag — mirrors /methodology's hasMethodology.
   const timeline = getTimeline(cfg.code);
   if (!hasTimeline(cfg.code) || !timeline) return notFound(ctx.site);
-  const starlinkCount = ctx.reader.getStarlinkPlanes().length;
-  const totalCount = ctx.reader.getTotalCount();
+  const pace = airlineInstallRate(ctx.getReader, cfg, Date.now());
+  const starlinkCount = pace.stats.equipped;
   const first = timeline.milestones[0];
   return renderSubPage(
     ctx,
@@ -3774,7 +3775,7 @@ const timelinePage: Handler = (ctx) => {
     "/timeline",
     {
       siteTitle: `${cfg.shortName} Starlink Rollout Timeline — Every Milestone, Dated`,
-      siteDescription: `The ${cfg.name} Starlink rollout, milestone by milestone: from the first flight in ${first.date.slice(0, 4)} to ${starlinkCount} equipped aircraft today, plus the airline's stated targets — each dated and sourced.`,
+      siteDescription: `The ${cfg.name} Starlink rollout, milestone by milestone: from the first flight in ${first.date.slice(0, 4)} to ${starlinkCount.toLocaleString("en-US")} equipped aircraft today, plus the airline's stated targets — each dated and sourced.`,
       keywords: `${cfg.name.toLowerCase()} starlink rollout, ${cfg.shortName.toLowerCase()} starlink timeline, when will ${cfg.shortName.toLowerCase()} have starlink, ${cfg.shortName.toLowerCase()} starlink schedule`,
       ogTitle: `${cfg.shortName} Starlink Rollout Timeline`,
       ogDescription: `Every dated milestone in the ${cfg.name} Starlink rollout, plus stated targets and the live equipped-aircraft count.`,
@@ -3791,7 +3792,7 @@ const timelinePage: Handler = (ctx) => {
         })),
       }),
     },
-    { starlinkCount, totalCount, lastUpdated: ctx.reader.getLastUpdated() }
+    { stats: pace.stats, asOfDate: pace.asOfDate, accent: pace.accentColor }
   );
 };
 
