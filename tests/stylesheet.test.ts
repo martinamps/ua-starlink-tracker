@@ -14,7 +14,7 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { analyticsOrigins } from "../src/airlines/registry";
+import { SITES, analyticsOrigins } from "../src/airlines/registry";
 import { createApp } from "../src/server/app";
 import { bodyOf, openSnapshot, req } from "./helpers";
 
@@ -40,13 +40,15 @@ function scannedSources(): string {
   return parts.join("\n");
 }
 
-const TENANT_HOSTS = [HOST, "airlinestarlinktracker.com", "alaskastarlinktracker.com"];
+const TENANT_HOSTS = Object.values(SITES)
+  .filter((s) => s.live)
+  .map((s) => s.canonicalHost);
 
 /** Pages the sitemap leaves out but visitors still land on. */
 const EXTRA_PATHS = ["/definitely-not-a-page"];
 
-/** Classes that exist only for scripts or `group`/`peer` variants to select on. */
-const JS_HOOKS = new Set(["aircraft-row", "filter-btn", "pie-slice", "hub-route-preset"]);
+/** Classes that exist only for scripts to select on carry a js- prefix. */
+const isJsHook = (token: string) => token.startsWith("js-");
 
 /** One representative URL per top-level path shape the sitemap advertises. */
 async function sitemapPageShapes(host = HOST): Promise<string[]> {
@@ -272,7 +274,7 @@ describe("compiler coverage", () => {
         // Markup a script builds at runtime is checked by the scanner test, not here.
         const markup = text.replace(/<script[^>]*>[\s\S]*?<\/script>/g, "");
         for (const token of classTokens(markup)) {
-          if (JS_HOOKS.has(token) || shell.has(token) || local.has(token)) continue;
+          if (isJsHook(token) || shell.has(token) || local.has(token)) continue;
           if (!hasRule(token)) misses.add(`${host}${path}: ${token}`);
         }
       }

@@ -287,7 +287,7 @@ export function AircraftList({
               return (
                 <div
                   key={plane.TailNumber || idx}
-                  className="aircraft-row group px-4 md:px-6 py-4 hover:bg-surface-elevated transition-all duration-200 cursor-default border-l-2 border-transparent hover:border-accent"
+                  className="js-aircraft-row group px-4 md:px-6 py-4 hover:bg-surface-elevated transition-all duration-200 cursor-default border-l-2 border-transparent hover:border-accent"
                   data-tail={plane.TailNumber.toLowerCase()}
                   data-aircraft={`${plane.Aircraft} ${aircraftName(plane.Aircraft)}`.toLowerCase()}
                   data-operator={(plane.OperatedBy || "").toLowerCase()}

@@ -4,7 +4,8 @@
  * "+N" pill expansion; and flight-number tooltips on hover devices.
  */
 
-export const FILTER_BUTTON = "filter-btn font-mono text-xs px-3 py-2 rounded border transition-all";
+export const FILTER_BUTTON =
+  "js-filter-btn font-mono text-xs px-3 py-2 rounded border transition-all";
 export const FILTER_ACTIVE = "bg-accent/20 border-accent text-accent";
 export const FILTER_INACTIVE =
   "bg-transparent border-subtle text-secondary hover:border-accent/50 hover:text-accent";
@@ -30,8 +31,8 @@ function wireSearch(): void {
   const count = document.getElementById("search-count");
   const empty = document.getElementById("list-empty");
   const fleetLink = document.getElementById("list-empty-fleet") as HTMLAnchorElement | null;
-  const rows = Array.from(document.querySelectorAll<HTMLElement>(".aircraft-row"));
-  const buttons = Array.from(document.querySelectorAll<HTMLElement>(".filter-btn"));
+  const rows = Array.from(document.querySelectorAll<HTMLElement>(".js-aircraft-row"));
+  const buttons = Array.from(document.querySelectorAll<HTMLElement>(".js-filter-btn"));
   const params = new URLSearchParams(window.location.search);
   let filter = params.get("filter") || "all";
 
