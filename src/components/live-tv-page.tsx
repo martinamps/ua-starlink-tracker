@@ -113,7 +113,7 @@ export default function LiveTvPage({
       <div className="absolute inset-0 grid-pattern opacity-50 pointer-events-none" />
 
       <header className="relative py-5 sm:py-6 text-center mb-3">
-        <h1 className="font-display text-3xl sm:text-4xl font-bold text-primary mb-2 tracking-tight">
+        <h1 className="font-display text-3xl sm:text-4xl font-semibold text-primary mb-2 tracking-tight">
           Live TV &amp; football on United flights: which planes have it
         </h1>
       </header>

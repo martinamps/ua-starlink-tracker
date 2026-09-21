@@ -200,7 +200,7 @@ export default function TimelinePage({
 
       <header className="relative py-5 sm:py-6 text-center mb-3">
         <a href="/" className="block">
-          <h1 className="font-display text-3xl sm:text-4xl font-bold text-primary mb-2 tracking-tight hover:text-accent transition-colors">
+          <h1 className="font-display text-3xl sm:text-4xl font-semibold text-primary mb-2 tracking-tight hover:text-accent transition-colors">
             {cfg.shortName} Starlink Rollout Timeline
           </h1>
         </a>
@@ -218,7 +218,7 @@ export default function TimelinePage({
                 <time dateTime={m.date} className="font-mono text-xs text-accent block">
                   {fmtDate(m.date)}
                 </time>
-                <div className="text-secondary font-medium font-display text-base mt-0.5">
+                <div className="text-secondary font-semibold font-display text-base mt-0.5">
                   {m.title}
                 </div>
                 <p className="text-sm text-muted leading-relaxed mt-1">{m.detail}</p>

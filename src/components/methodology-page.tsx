@@ -105,7 +105,7 @@ export default function MethodologyPage({ site, lastUpdated, pageLinks }: Method
 
       <header className="relative py-5 sm:py-6 text-center mb-3">
         <a href="/" className="block">
-          <h1 className="font-display text-3xl sm:text-4xl font-bold text-primary mb-2 tracking-tight hover:text-accent transition-colors">
+          <h1 className="font-display text-3xl sm:text-4xl font-semibold text-primary mb-2 tracking-tight hover:text-accent transition-colors">
             How We Verify {cfg.shortName} Starlink Data
           </h1>
         </a>

@@ -27,7 +27,7 @@ function FaqItem({ q, children }: { q: string; children: React.ReactNode }) {
   return (
     <details className="group py-4">
       <summary className="cursor-pointer list-none flex items-start justify-between">
-        <h3 className="font-display text-base font-medium text-secondary group-hover:text-accent transition-colors">
+        <h3 className="font-display text-base font-semibold text-secondary group-hover:text-accent transition-colors">
           {q}
         </h3>
         <svg
@@ -579,7 +579,7 @@ export default function Page({
       {showPassengerBanner && <PassengerBanner />}
 
       <header className="relative py-5 sm:py-6 text-center mb-2">
-        <h1 className="font-display text-3xl sm:text-4xl md:text-5xl font-bold text-primary mb-1 tracking-tight">
+        <h1 className="font-display text-3xl sm:text-4xl md:text-5xl font-semibold text-primary mb-1 tracking-tight">
           {brand.title}
         </h1>
         <p className="text-base sm:text-lg text-secondary font-display mb-2">{brand.tagline}</p>

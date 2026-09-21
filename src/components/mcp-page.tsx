@@ -19,7 +19,7 @@ export default function McpPage({ site }: McpPageProps) {
 
       <header className="relative py-5 sm:py-6 text-center mb-3">
         <a href="/" className="block">
-          <h1 className="font-display text-3xl sm:text-4xl font-bold text-primary mb-2 tracking-tight hover:text-accent transition-colors">
+          <h1 className="font-display text-3xl sm:text-4xl font-semibold text-primary mb-2 tracking-tight hover:text-accent transition-colors">
             Starlink Tracker for Claude
           </h1>
         </a>
@@ -102,7 +102,7 @@ export default function McpPage({ site }: McpPageProps) {
       <div className="relative max-w-2xl mx-auto w-full mb-8">
         <details className="bg-surface rounded-lg border border-subtle p-4 group">
           <summary className="cursor-pointer list-none flex items-center justify-between">
-            <span className="font-display text-sm font-medium text-secondary group-hover:text-accent transition-colors">
+            <span className="font-display text-sm font-semibold text-secondary group-hover:text-accent transition-colors">
               Setup walkthrough & other MCP clients
             </span>
             <svg

@@ -98,7 +98,7 @@ export default function RoutePage({
       <div className="absolute inset-0 grid-pattern opacity-50 pointer-events-none" />
 
       <header className="relative py-5 sm:py-6 text-center mb-6">
-        <h1 className="font-display text-3xl sm:text-4xl font-bold text-primary mb-2 tracking-tight">
+        <h1 className="font-display text-3xl sm:text-4xl font-semibold text-primary mb-2 tracking-tight">
           {route.origin} to {route.destination} Starlink WiFi
         </h1>
         <p className="text-base text-secondary font-display max-w-2xl mx-auto">
@@ -114,7 +114,7 @@ export default function RoutePage({
               <dt className="text-[10px] font-mono text-muted uppercase tracking-wider">
                 Starlink departures
               </dt>
-              <dd className="font-display text-2xl font-bold text-primary tabular-nums">
+              <dd className="font-display text-2xl font-semibold text-primary tabular-nums">
                 {route.equippedDepartures}
               </dd>
             </div>
@@ -122,7 +122,7 @@ export default function RoutePage({
               <dt className="text-[10px] font-mono text-muted uppercase tracking-wider">
                 Flight numbers
               </dt>
-              <dd className="font-display text-2xl font-bold text-primary tabular-nums">
+              <dd className="font-display text-2xl font-semibold text-primary tabular-nums">
                 {route.flightNumbers.length}
               </dd>
             </div>
@@ -130,7 +130,7 @@ export default function RoutePage({
               <dt className="text-[10px] font-mono text-muted uppercase tracking-wider">
                 In schedule
               </dt>
-              <dd className="font-display text-2xl font-bold text-primary tabular-nums">
+              <dd className="font-display text-2xl font-semibold text-primary tabular-nums">
                 {scheduledCount}
               </dd>
             </div>
@@ -138,7 +138,7 @@ export default function RoutePage({
               <dt className="text-[10px] font-mono text-muted uppercase tracking-wider">
                 Block time
               </dt>
-              <dd className="font-display text-2xl font-bold text-primary tabular-nums">
+              <dd className="font-display text-2xl font-semibold text-primary tabular-nums">
                 {duration ?? "—"}
               </dd>
             </div>

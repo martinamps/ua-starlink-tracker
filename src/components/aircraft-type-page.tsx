@@ -102,7 +102,7 @@ function monthDay(iso: string): string {
 function StatCell({ label, value }: { label: string; value: string | number }) {
   return (
     <div className="text-center">
-      <div className="font-display text-2xl font-bold text-primary tabular-nums">{value}</div>
+      <div className="font-display text-2xl font-semibold text-primary tabular-nums">{value}</div>
       <div className="font-mono text-[10px] text-muted uppercase tracking-wider">{label}</div>
     </div>
   );
@@ -589,7 +589,7 @@ export default function AircraftTypePage({
           </a>{" "}
           › {def.name}
         </nav>
-        <h1 className="font-display text-3xl sm:text-4xl font-bold text-primary tracking-tight">
+        <h1 className="font-display text-3xl sm:text-4xl font-semibold text-primary tracking-tight">
           Does the {airline} {def.short} have Starlink?
         </h1>
       </header>

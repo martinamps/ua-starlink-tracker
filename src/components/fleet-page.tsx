@@ -194,7 +194,7 @@ function LivePulse({ pulse }: { pulse: FleetPageData["pulse"] }) {
         <div className={EYEBROW}>Live Pulse</div>
         <div className="flex items-baseline justify-center gap-3 mb-2">
           {pulse.now > 0 && <span className="status-dot animate-pulse-glow" />}
-          <span className="font-display text-5xl sm:text-6xl font-bold text-accent tabular-nums">
+          <span className="font-display text-5xl sm:text-6xl font-semibold text-accent tabular-nums">
             {haveData ? pulse.now : "—"}
           </span>
         </div>
@@ -877,7 +877,7 @@ function InstallPipelineSection({
           return (
             <div key={seg.segment} className={PANEL}>
               <div className={EYEBROW}>{PROGRESS_SEGMENT_LABELS[seg.segment] ?? seg.segment}</div>
-              <div className="font-display text-2xl font-bold text-primary">
+              <div className="font-display text-2xl font-semibold text-primary">
                 {seg.starlink_complete ?? 0}
                 <span className="text-sm font-normal text-muted">
                   {" "}
@@ -1135,7 +1135,7 @@ export default function FleetPage({
 
       <header className="relative py-5 sm:py-6 text-center mb-6">
         <a href="/" className="block">
-          <h1 className="font-display text-3xl sm:text-4xl font-bold text-primary mb-2 tracking-tight hover:text-accent transition-colors">
+          <h1 className="font-display text-3xl sm:text-4xl font-semibold text-primary mb-2 tracking-tight hover:text-accent transition-colors">
             {headerTitle}
           </h1>
         </a>

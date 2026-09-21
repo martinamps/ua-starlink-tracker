@@ -36,15 +36,17 @@
     <meta http-equiv="X-Content-Type-Options" content="nosniff">
     <meta name="referrer" content="no-referrer">
     
-    <!-- Google Fonts: Rajdhani (display) + JetBrains Mono (data) -->
+    <!-- Google Fonts: Rajdhani 600 (headings only) + JetBrains Mono (tails,
+         codes, table numerals). Body copy is the system UI stack, so prose
+         never waits on or reflows for a web font. -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <!-- display=optional: a late swap reflowed the hero (desktop CLS 0.14). The
-         preload is the latin Rajdhani 600 face the headings use, so it usually
-         lands inside the optional block period; re-copy the URL if Google bumps
-         the font version (v17). -->
+         preload is the latin Rajdhani 600 face — the only Rajdhani weight any
+         heading uses — so it usually lands inside the optional block period;
+         re-copy the URL if Google bumps the font version (v17). -->
     <link rel="preload" as="font" type="font/woff2" crossorigin href="https://fonts.gstatic.com/s/rajdhani/v17/LDI2apCSOBg7S-QT7pbYF_OreefkkbIx.woff2">
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Rajdhani:wght@400;500;600;700&display=optional" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Rajdhani:wght@600&display=optional" rel="stylesheet">
 
     <!-- Compiled Tailwind (src/styles/tailwind.css) -->
     {{stylesheetTag}}
@@ -65,8 +67,9 @@
         --color-accent: {{accentColor}};
         --color-accent-dim: {{accentColorDim}};
         --color-success: #22c55e;
-        --font-display: 'Rajdhani', sans-serif;
-        --font-mono: 'JetBrains Mono', monospace;
+        --font-display: 'Rajdhani', ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+        --font-body: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+        --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
       }
 
       body {
@@ -75,12 +78,15 @@
         background-color: var(--color-base);
         color: var(--color-text-primary);
         width: 100%;
-        font-family: 'Rajdhani', -apple-system, BlinkMacSystemFont, sans-serif;
-        font-weight: 500;
+        font-family: var(--font-body);
+        font-weight: 400;
       }
 
       /* Typography utilities */
-      .font-display { font-family: var(--font-display); }
+      /* Rajdhani ships one weight (600). Pinning it here, unlayered, means no
+         heading can ask for a face that isn't loaded and fall back to a
+         synthesized or system weight on some pages but not others. */
+      .font-display { font-family: var(--font-display); font-weight: 600; }
       .font-mono { font-family: var(--font-mono); }
 
       /* Custom color utilities */

@@ -86,7 +86,7 @@ export default function NewlyEquippedPage({
 
       <header className="relative py-5 sm:py-6 text-center mb-6">
         <a href="/" className="block">
-          <h1 className="font-display text-3xl sm:text-4xl font-bold text-primary mb-2 tracking-tight hover:text-accent transition-colors">
+          <h1 className="font-display text-3xl sm:text-4xl font-semibold text-primary mb-2 tracking-tight hover:text-accent transition-colors">
             Newly Equipped Aircraft
           </h1>
         </a>

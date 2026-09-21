@@ -117,7 +117,7 @@ export default function RoutePlannerPage({
 
       <header className="relative py-5 sm:py-6 text-center mb-6">
         <a href="/" className="block">
-          <h1 className="font-display text-3xl sm:text-4xl font-bold text-primary mb-2 tracking-tight hover:text-accent transition-colors">
+          <h1 className="font-display text-3xl sm:text-4xl font-semibold text-primary mb-2 tracking-tight hover:text-accent transition-colors">
             Find Starlink-Equipped Flights
           </h1>
         </a>
@@ -421,7 +421,7 @@ export default function RoutePlannerPage({
             var itins = data.itineraries;
             if (!itins || itins.length === 0) {
               resultsDiv.innerHTML = '<div class="bg-surface border border-subtle rounded-lg p-6 text-center">' +
-                '<div class="text-secondary font-display font-medium mb-2">No Starlink routings found</div>' +
+                '<div class="text-secondary font-display font-semibold mb-2">No Starlink routings found</div>' +
                 '<p class="text-sm text-muted"></p>' +
                 baselineHtml(data.baseline) +
                 '</div>';

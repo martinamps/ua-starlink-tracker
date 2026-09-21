@@ -83,7 +83,7 @@ export default function HowToCheckPage({ site, pageLinks }: HowToCheckPageProps)
 
       <header className="relative py-5 sm:py-6 text-center mb-3">
         <a href="/" className="block">
-          <h1 className="font-display text-3xl sm:text-4xl font-bold text-primary mb-2 tracking-tight hover:text-accent transition-colors">
+          <h1 className="font-display text-3xl sm:text-4xl font-semibold text-primary mb-2 tracking-tight hover:text-accent transition-colors">
             How to Check If Your {short} Flight Has Starlink
           </h1>
         </a>
@@ -105,7 +105,7 @@ export default function HowToCheckPage({ site, pageLinks }: HowToCheckPageProps)
                   {i + 1}.
                 </span>
                 <div>
-                  <div className="text-secondary font-medium font-display">{s.name}</div>
+                  <div className="text-secondary font-semibold font-display">{s.name}</div>
                   <p className="text-sm text-muted leading-relaxed mt-1">{s.body}</p>
                 </div>
               </li>

@@ -372,7 +372,7 @@ export default function CheckFlightPage({
 
       <header className="relative py-5 sm:py-6 text-center mb-6">
         <a href="/" className="block">
-          <h1 className="font-display text-3xl sm:text-4xl font-bold text-primary mb-2 tracking-tight hover:text-accent transition-colors">
+          <h1 className="font-display text-3xl sm:text-4xl font-semibold text-primary mb-2 tracking-tight hover:text-accent transition-colors">
             {invalid
               ? "That Doesn't Look Like a Flight Number"
               : flight
@@ -528,7 +528,7 @@ export default function CheckFlightPage({
           <div className="space-y-0 divide-y divide-subtle">
             <details className="group py-4 px-2">
               <summary className="cursor-pointer list-none flex items-start justify-between">
-                <h3 className="font-display text-base font-medium text-secondary group-hover:text-accent transition-colors">
+                <h3 className="font-display text-base font-semibold text-secondary group-hover:text-accent transition-colors">
                   How do I check if {faqSubject} has Starlink?
                 </h3>
                 <svg
@@ -553,7 +553,7 @@ export default function CheckFlightPage({
             </details>
             <details className="group py-4 px-2">
               <summary className="cursor-pointer list-none flex items-start justify-between">
-                <h3 className="font-display text-base font-medium text-secondary group-hover:text-accent transition-colors">
+                <h3 className="font-display text-base font-semibold text-secondary group-hover:text-accent transition-colors">
                   Is this information accurate?
                 </h3>
                 <svg
