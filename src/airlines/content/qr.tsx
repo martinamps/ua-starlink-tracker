@@ -1,11 +1,12 @@
-import { Eyebrow, StatValue, fmt } from "../../components/layout";
+import { Eyebrow, SECTION_WIDE, StatValue } from "../../components/layout";
+import { fmt } from "../../components/ui/format";
 import type { AirlineContent, HeroProps } from "./index";
 
 // No fleet percentage: the roster includes A380s, A330s, narrowbodies and
 // freighters the programme excludes (rosterIsProgramScope false), so a blended
 // share would understate a 777 passenger's odds and overstate an A380's.
 const QRHero = ({ stats, statSentence }: HeroProps) => (
-  <div className="relative mx-auto mb-8 w-full max-w-3xl">
+  <div className={SECTION_WIDE}>
     {statSentence && <div className="mb-3">{statSentence}</div>}
     <div className="grid grid-cols-1 gap-px overflow-hidden rounded-lg border border-subtle bg-subtle sm:grid-cols-2">
       <div className="bg-surface p-5 text-center">

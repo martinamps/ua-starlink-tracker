@@ -1,7 +1,8 @@
+import { aircraftName } from "../airlines/aircraft-families";
 import { AIRLINES, type SiteConfig } from "../airlines/registry";
 import type { FirstFlight, PerAirlineStat, RecentInstall } from "../types";
-import type { PageLink } from "./atoms";
-import { EYEBROW, PANEL, PageHeader, PageShell, SECTION, aircraftName } from "./layout";
+import type { Link } from "./layout";
+import { EYEBROW, PANEL, PageHeader, PageShell, SECTION } from "./layout";
 import { monthDay, shortDate } from "./ui/format";
 
 interface NewlyEquippedPageProps {
@@ -10,7 +11,7 @@ interface NewlyEquippedPageProps {
   airlines: PerAirlineStat[];
   /** First observed departure per tail; sparse — most tails have none yet. */
   firstFlights: Record<string, FirstFlight>;
-  pageLinks?: PageLink[];
+  pageLinks?: Link[];
   currentPath?: string;
 }
 

@@ -1,6 +1,7 @@
 import type React from "react";
 import type { WifiProvider } from "../../types";
-import { fmt } from "../layout";
+
+import { fmt } from "../ui/format";
 
 export const PROVIDER_ORDER: WifiProvider[] = [
   "starlink",
@@ -20,6 +21,16 @@ export const PROVIDER_LABEL: Record<WifiProvider, string> = {
   unknown: "Not checked yet",
 };
 
+/** Spelled out whole so the class names appear verbatim in source. */
+export const WIFI_CLASS: Record<WifiProvider, string> = {
+  starlink: "wifi-starlink",
+  viasat: "wifi-viasat",
+  panasonic: "wifi-panasonic",
+  thales: "wifi-thales",
+  none: "wifi-none",
+  unknown: "wifi-unknown",
+};
+
 export type ProviderCounts = Record<WifiProvider, number>;
 
 export function emptyProviderCounts(): ProviderCounts {
@@ -30,7 +41,7 @@ function Swatch({ provider, className = "" }: { provider: WifiProvider; classNam
   return (
     <span
       aria-hidden="true"
-      className={`wifi-${provider} inline-block w-2.5 h-2.5 rounded-[1px] shrink-0 ${className}`}
+      className={`${WIFI_CLASS[provider]} inline-block w-2.5 h-2.5 rounded-[1px] shrink-0 ${className}`}
     />
   );
 }

@@ -8,13 +8,14 @@ import {
   canonicalFlightFor,
   canonicalFlightInput,
 } from "../airlines/flight-input";
+import { probLabel } from "../components/ui/format";
 import { esc } from "./esc";
 
 /** The viewer's local calendar day; toISOString() is the UTC day, which is
  * already tomorrow for US evenings. */
-export const localToday = () => new Date().toLocaleDateString("en-CA");
+const localToday = () => new Date().toLocaleDateString("en-CA");
 
-export function permalinkFor(rules: FlightInputRules, raw: string, date: string): string {
+function permalinkFor(rules: FlightInputRules, raw: string, date: string): string {
   // An unparseable entry still goes to the router, which explains itself.
   const fn = canonicalFlightFor(rules, raw) ?? canonicalFlightInput(raw);
   return `/check-flight/${encodeURIComponent(fn)}${date ? `/${encodeURIComponent(date)}` : ""}`;
@@ -35,7 +36,7 @@ interface CheckAnyBody {
  * a basis is a floor ("≥40%"), without one an estimate ("~40%"). Community
  * answers state only a firm yes: everything else is the server's own sentence.
  */
-export function checkAnyHtml(d: CheckAnyBody, community: boolean): string {
+function checkAnyHtml(d: CheckAnyBody, community: boolean): string {
   if (d.error) return `<span class="text-warn">${esc(d.error)}</span>`;
   const sentence = esc(d.reason || d.message || "");
   if (community) {
@@ -52,7 +53,7 @@ export function checkAnyHtml(d: CheckAnyBody, community: boolean): string {
           : p !== null && d.basis
             ? [`≥${Math.floor(p * 100)}% Starlink`, "text-accent"]
             : p !== null
-              ? [`~${Math.round(p * 100)}% Starlink`, "text-accent"]
+              ? [`~${probLabel(p)} Starlink`, "text-accent"]
               : ["Unknown", "text-muted"];
   return `<span class="${cls}">${label}</span> · ${esc(d.airline || "")} · ${sentence}`;
 }

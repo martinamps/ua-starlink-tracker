@@ -1,7 +1,8 @@
+import { aircraftName } from "../../airlines/aircraft-families";
 import { TYPE_DISPLAY } from "../../airlines/aircraft-pages";
 import type { FleetMovement, FleetProgressRow, FleetProgressTailRow } from "../../types";
-import { EYEBROW, H2, PANEL, SECTION_WIDE, StatValue, aircraftName, fmt, pct } from "../layout";
-import { monthDay } from "../ui/format";
+import { EYEBROW, H2, PANEL, SECTION_WIDE, StatValue } from "../layout";
+import { fmt, monthDay, pct } from "../ui/format";
 import { Meter } from "../ui/meter";
 
 export type PipelineMap = Map<string, FleetProgressTailRow>;
@@ -193,7 +194,9 @@ export function MovementsPanel({
                   <span className="text-muted w-20 truncate hidden sm:inline shrink-0">
                     {sheetTypeName(m.type_code)}
                   </span>
-                  <span className="text-secondary flex-1 truncate">{movementText(m)}</span>
+                  <span className="text-secondary min-w-0 flex-1 sm:truncate">
+                    {movementText(m)}
+                  </span>
                   <span className="text-muted shrink-0 tabular-nums">{monthDay(m.date)}</span>
                 </a>
               </li>
@@ -246,7 +249,9 @@ export function InstallPipelineSection({
       <p className="mt-1 mb-4 text-sm text-secondary text-pretty">
         Aircraft in a mod line now, from the community progress sheet
         {updated ? ` (updated ${updated} ET)` : ""}. The sheet keeps its own fleet list, so its
-        totals run slightly different from our counts above.
+        totals run slightly different from our counts above. The in-mod and verifying counts are the
+        sheet's own totals; the tail chips are the aircraft we could read off its color coding, so
+        the two can differ by a few.
       </p>
       <div className="grid md:grid-cols-3 gap-4">
         {totals.map((seg) => {

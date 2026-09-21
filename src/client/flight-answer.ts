@@ -7,10 +7,22 @@
  * React; every interpolated value goes through esc(). Keep imports
  * dependency-free: this file is bundled for the browser.
  */
-import { ageLabel, fmt, monthDay, zonedDeparture } from "../components/ui/format";
+import { aircraftName } from "../airlines/aircraft-families";
+import {
+  ageLabel,
+  fmt,
+  monthDay,
+  probLabel,
+  probPhrase,
+  probTier,
+  zonedDeparture,
+  zonedIsoDate,
+} from "../components/ui/format";
+import { TONE_TEXT, type Tone, toneColor } from "../components/ui/tone-classes";
 import { type SeatbackLiveTv, seatbackLiveTv } from "../utils/aircraft-specs";
+import { toIata } from "../utils/airport-code";
 import { esc } from "./esc";
-import { METER_FILL, METER_HEIGHT, METER_TRACK, meterWidth } from "./meter";
+import { meterHtml } from "./meter";
 
 interface WireFlight {
   tail_number?: string | null;
@@ -60,8 +72,12 @@ export interface AnswerContext {
   flightNumber: string;
   /** YYYY-MM-DD the viewer asked about. */
   date: string;
-  /** Whole days from today to `date`; negative is past. */
+  /** Whole UTC days from today to `date`; negative is past. */
   daysOut: number;
+  /** IANA zone of the flight's usual departure airport: its clock decides
+   * whether `date` has passed and renders times when the body names no airport. */
+  origin?: string | null;
+  originZone?: string | null;
   nowSec: number;
   airlineName: string;
   /** IANA zone for an airport code, undefined when unmapped. */
@@ -84,14 +100,22 @@ export interface FlightAnswer {
 
 const WATCH_MAX_DAYS_OUT = 330;
 
-const stripK = (code: string | null | undefined) => {
-  const c = String(code ?? "").toUpperCase();
-  return c.length === 4 && (c[0] === "K" || c[0] === "C") ? c.slice(1) : c;
-};
+/** Departure clock at the airport, like a boarding pass: "Sun, Sep 21" / "8:38 AM PDT".
+ * Without an airport it falls back to the flight's usual origin, then UTC. */
+function departs(unix: number, airport: string | null | undefined, ctx: AnswerContext) {
+  const zone = airport ? ctx.zoneFor(toIata(airport)) : (ctx.originZone ?? undefined);
+  return zonedDeparture(unix, zone);
+}
 
-/** Departure clock at the airport, like a boarding pass: "Sun, Sep 21" / "8:38 AM PDT". */
-const departs = (unix: number, airport: string | null | undefined, ctx: AnswerContext) =>
-  zonedDeparture(unix, ctx.zoneFor(stripK(airport)));
+/**
+ * Has `date` ended at the departure airport? A UTC comparison calls a US
+ * evening flight "yesterday" hours before it leaves; with no known zone the
+ * last place on Earth still on `date` (UTC-12) decides.
+ */
+export function datePassed(ctx: Pick<AnswerContext, "date" | "daysOut" | "nowSec" | "originZone">) {
+  if (ctx.originZone) return ctx.date < zonedIsoDate(ctx.nowSec, ctx.originZone);
+  return ctx.daysOut < -1;
+}
 
 /** verified_wifi 'None' means no Wi-Fi installed; it is never a provider name. */
 function wifiPhrase(v: string | null | undefined): string {
@@ -99,18 +123,6 @@ function wifiPhrase(v: string | null | undefined): string {
   if (!w || /^none$/i.test(w)) return "no Wi-Fi";
   if (/^non-starlink$/i.test(w)) return "Wi-Fi that isn't Starlink";
   return `${w} Wi-Fi`;
-}
-
-function pctPhrase(p: number): string {
-  const pct = Math.round(p * 100);
-  if (pct < 1) return "under 1%";
-  if (pct > 99) return "over 99%";
-  return `about ${pct}%`;
-}
-
-function toneFor(p: number): AnswerTone {
-  const pct = Math.round(p * 100);
-  return pct >= 70 ? "likely" : pct >= 40 ? "maybe" : "unlikely";
 }
 
 const TONE_LABEL: Record<AnswerTone, string> = {
@@ -122,31 +134,24 @@ const TONE_LABEL: Record<AnswerTone, string> = {
   unknown: "Not sure yet",
 };
 
+const ANSWER_TONE: Record<AnswerTone, Tone> = {
+  yes: "success",
+  likely: "success",
+  maybe: "warn",
+  no: "neutral",
+  unlikely: "neutral",
+  unknown: "neutral",
+};
+
 // Written out whole so the Tailwind scanner finds every class verbatim.
-const TONE_CARD: Record<AnswerTone, string> = {
-  yes: "border-success/50 bg-success/10",
-  likely: "border-success/40 bg-success/5",
-  maybe: "border-warn/40 bg-warn/5",
-  no: "border-subtle bg-surface-elevated",
-  unlikely: "border-subtle bg-surface-elevated",
-  unknown: "border-subtle bg-surface-elevated",
+const TONE_CARD: Partial<Record<Tone, string>> = {
+  success: "border-success/50 bg-success/10",
+  warn: "border-warn/40 bg-warn/5",
 };
-const TONE_TEXT: Record<AnswerTone, string> = {
-  yes: "text-success",
-  likely: "text-success",
-  maybe: "text-warn",
-  no: "text-primary",
-  unlikely: "text-primary",
-  unknown: "text-primary",
-};
-const TONE_BAR: Record<AnswerTone, string> = {
-  yes: "bg-success",
-  likely: "bg-success",
-  maybe: "bg-warn",
-  no: "bg-muted",
-  unlikely: "bg-muted",
-  unknown: "bg-muted",
-};
+const NEUTRAL_CARD = "border-subtle bg-surface-elevated";
+
+/** A no reads as plainly as a yes: neutral headlines stay primary, not muted. */
+const headlineClass = (tone: Tone) => (tone === "neutral" ? "text-primary" : TONE_TEXT[tone]);
 
 function row(label: string, valueHtml: string): string {
   return `<div class="flex gap-3"><dt class="w-24 shrink-0 text-muted">${esc(label)}</dt><dd class="min-w-0 text-secondary">${valueHtml}</dd></div>`;
@@ -155,26 +160,19 @@ function row(label: string, valueHtml: string): string {
 const tail = (t: string | null | undefined) =>
   `<span class="font-mono text-primary">${esc(t)}</span>`;
 
+const typeName = (t: string | null | undefined) => (t ? ` · ${esc(aircraftName(t))}` : "");
+
 function flightRows(f: WireFlight, ctx: AnswerContext): string {
-  const dep = stripK(f.departure_airport);
-  const arr = stripK(f.arrival_airport);
+  const dep = toIata(f.departure_airport);
+  const arr = toIata(f.arrival_airport);
   const rows: string[] = [];
   if (dep && arr) rows.push(row("Route", `${esc(dep)} → ${esc(arr)}`));
   if (f.departure_time) {
-    rows.push(
-      row(
-        "Departs",
-        `${esc(departs(f.departure_time, dep, ctx).day)}, ${esc(departs(f.departure_time, dep, ctx).time)}`
-      )
-    );
+    const when = departs(f.departure_time, dep, ctx);
+    rows.push(row("Departs", `${esc(when.day)}, ${esc(when.time)}`));
   }
   if (f.tail_number) {
-    rows.push(
-      row(
-        "Aircraft",
-        `${tail(f.tail_number)}${f.aircraft_type ? ` · ${esc(f.aircraft_type)}` : ""}`
-      )
-    );
+    rows.push(row("Aircraft", `${tail(f.tail_number)}${typeName(f.aircraft_type)}`));
   }
   if (f.operated_by) rows.push(row("Operated by", esc(f.operated_by)));
   return `<dl class="mt-3 space-y-1.5 text-sm">${rows.join("")}</dl>`;
@@ -188,8 +186,8 @@ function liveTvLine(f: WireFlight, ctx: AnswerContext): string {
 
 function flightAwareLink(f: WireFlight, ctx: AnswerContext): string {
   if (!f.flight_number) return "";
-  const dep = stripK(f.departure_airport);
-  const arr = stripK(f.arrival_airport);
+  const dep = toIata(f.departure_airport);
+  const arr = toIata(f.arrival_airport);
   const utcDate = f.departure_time
     ? new Date(f.departure_time * 1000).toISOString().slice(0, 10).replace(/-/g, "")
     : ctx.date.replace(/-/g, "");
@@ -207,7 +205,7 @@ function alternativesHtml(
   const items = list
     .map(
       (a) =>
-        `<li><a href="/check-flight/${encodeURIComponent(a.flight_number)}/${encodeURIComponent(ctx.date)}" class="text-accent hover:underline">${esc(a.flight_number)}</a> at ${esc(departs(a.departure_time, origin, ctx).time)} · ${tail(a.tail_number)}${a.aircraft_type ? ` · ${esc(a.aircraft_type)}` : ""}</li>`
+        `<li><a href="/check-flight/${encodeURIComponent(a.flight_number)}/${encodeURIComponent(ctx.date)}" class="text-accent hover:underline">${esc(a.flight_number)}</a> at ${esc(departs(a.departure_time, origin, ctx).time)} · ${tail(a.tail_number)}${typeName(a.aircraft_type)}</li>`
     )
     .join("");
   return `<div class="mt-4"><h3 class="text-sm font-semibold text-primary">Starlink flights on this route that day</h3><ul class="mt-1 space-y-1 text-sm text-secondary">${items}</ul></div>`;
@@ -218,15 +216,14 @@ function routePlannerCta(
   destination: string | null | undefined,
   ctx: AnswerContext
 ) {
-  const o = stripK(origin);
-  const d = stripK(destination);
+  const o = toIata(origin);
+  const d = toIata(destination);
   if (!ctx.routePlannerEnabled || !/^[A-Z]{3}$/.test(o) || !/^[A-Z]{3}$/.test(d)) return "";
   return `<p class="mt-3 text-sm"><a href="/route-planner/${o}/${d}" rel="nofollow" class="text-accent hover:underline">Find Starlink flights from ${o} to ${d}</a></p>`;
 }
 
 function watchRow(ctx: AnswerContext): string {
-  if (!ctx.watchEnabled) return "";
-  if (!(ctx.daysOut >= -1 && ctx.daysOut <= WATCH_MAX_DAYS_OUT)) return "";
+  if (!ctx.watchEnabled || datePassed(ctx) || ctx.daysOut > WATCH_MAX_DAYS_OUT) return "";
   const path = `/cal/${encodeURIComponent(ctx.flightNumber)}/${encodeURIComponent(ctx.date)}.ics`;
   const webcal = `webcal://${ctx.host}${path}`;
   const google = `https://calendar.google.com/calendar/r?cid=${encodeURIComponent(webcal)}`;
@@ -235,13 +232,19 @@ function watchRow(ctx: AnswerContext): string {
 
 const CHANGE_NOTE = "Aircraft can change. Check again the day before.";
 
-function card(tone: AnswerTone, headline: string, body: string): string {
-  return `<div class="rounded-lg border p-5 ${TONE_CARD[tone]}" data-tone="${tone}"><h2 class="font-display text-xl ${TONE_TEXT[tone]} text-balance">${esc(headline)}</h2>${body}</div>`;
+function card(answer: AnswerTone, headline: string, body: string): string {
+  const tone = ANSWER_TONE[answer];
+  return `<div class="rounded-lg border p-5 ${TONE_CARD[tone] ?? NEUTRAL_CARD}" data-tone="${answer}"><h2 class="font-display text-xl ${headlineClass(tone)} text-balance">${esc(headline)}</h2>${body}</div>`;
 }
 
-function probabilityBar(p: number, tone: AnswerTone): string {
-  const w = Math.max(0, Math.min(100, Math.round(p * 100)));
-  return `<div class="mt-3 ${METER_TRACK} bg-base ${METER_HEIGHT.md}" role="img" aria-label="${w}% chance of Starlink"><div class="${METER_FILL} ${TONE_BAR[tone]}" style="width:${meterWidth(w / 100)}"></div></div>`;
+function probabilityBar(p: number, answer: AnswerTone): string {
+  return meterHtml(p, {
+    color: toneColor(ANSWER_TONE[answer]),
+    size: "md",
+    className: "mt-3",
+    bg: "bg-base",
+    label: `${probLabel(p)} chance of Starlink`,
+  });
 }
 
 /** The API's degraded-FR24 sentence, when present; the rest of the message is restated here. */
@@ -255,13 +258,12 @@ function timingNote(ctx: AnswerContext, airlineName: string): string {
   if (ctx.daysOut > 2) {
     return `${airlineName} assigns aircraft about 2 days before departure. Check again then for a firm answer.`;
   }
-  if (ctx.daysOut >= -1) return "No aircraft is assigned yet. Check again closer to departure.";
-  return "This date has passed, and we don't keep old assignments.";
+  return "No aircraft is assigned yet. Check again closer to departure.";
 }
 
 export function renderFlightAnswer(body: CheckFlightBody, ctx: AnswerContext): FlightAnswer {
   const fn = ctx.flightNumber;
-  const on = `${fn} on ${monthDay(ctx.date)}`;
+  const on = `${fn} on ${monthDay(ctx.date, ctx.nowSec)}`;
 
   if (body.error) {
     const headline = `We couldn't check ${fn}`;
@@ -300,12 +302,7 @@ export function renderFlightAnswer(body: CheckFlightBody, ctx: AnswerContext): F
       : `Not sure yet — ${on} is on ${first.tail_number}, which we haven't checked`;
     const segHtml = segments
       .map((s) => {
-        const rows = [
-          row(
-            "Aircraft",
-            `${tail(s.tail_number)}${s.aircraft_model ? ` · ${esc(s.aircraft_model)}` : ""}`
-          ),
-        ];
+        const rows = [row("Aircraft", `${tail(s.tail_number)}${typeName(s.aircraft_model)}`)];
         if (s.origin && s.destination)
           rows.push(row("Route", `${esc(s.origin)} → ${esc(s.destination)}`));
         rows.push(
@@ -323,7 +320,7 @@ export function renderFlightAnswer(body: CheckFlightBody, ctx: AnswerContext): F
     const html = card(
       tone,
       headline,
-      `${segHtml}<p class="mt-3 text-sm text-muted">${CHANGE_NOTE}</p>${alternativesHtml(body.sameDayAlternatives, ctx, first.origin)}${routePlannerCta(first.origin, first.destination, ctx)}${watchRow(ctx)}`
+      `${segHtml}<p class="mt-3 text-sm text-muted">${CHANGE_NOTE}</p>${alternativesHtml(body.sameDayAlternatives, ctx, first.origin ?? ctx.origin)}${routePlannerCta(first.origin, first.destination, ctx)}${watchRow(ctx)}`
     );
     return { tone, headline, html, firm: true };
   }
@@ -338,7 +335,7 @@ export function renderFlightAnswer(body: CheckFlightBody, ctx: AnswerContext): F
       body.message && /degraded/i.test(body.message)
         ? " We couldn't run the live swap check just now."
         : "";
-    const origin = body.flights?.[0]?.departure_airport;
+    const origin = body.flights?.[0]?.departure_airport ?? ctx.origin;
     const html = card(
       "no",
       headline,
@@ -348,7 +345,28 @@ export function renderFlightAnswer(body: CheckFlightBody, ctx: AnswerContext): F
   }
 
   const pred = body.prediction;
-  if (!pred || typeof pred.probability !== "number") {
+  const hasPred = !!pred && typeof pred.probability === "number";
+
+  // No assignment survives the day, so a past date gets no forecast headline.
+  if (datePassed(ctx)) {
+    const headline = `${on} has passed`;
+    const usual =
+      hasPred && pred && (pred.n_observations ?? 0) > 0
+        ? ` Recent ${fn} flights had Starlink ${probPhrase(pred.probability)} of the time.`
+        : "";
+    return {
+      tone: "unknown",
+      headline,
+      firm: false,
+      html: card(
+        "unknown",
+        headline,
+        `<p class="mt-2 text-sm text-secondary">We don't keep old aircraft assignments, so we can't say which aircraft flew it.${esc(usual)}</p>`
+      ),
+    };
+  }
+
+  if (!hasPred || !pred) {
     const headline = `Not sure yet — it depends on the aircraft ${on} gets`;
     const text =
       body.message ?? body.reason ?? "Starlink depends on the aircraft assigned to the flight.";
@@ -364,8 +382,12 @@ export function renderFlightAnswer(body: CheckFlightBody, ctx: AnswerContext): F
     };
   }
 
-  const tone = toneFor(pred.probability);
-  const headline = `${TONE_LABEL[tone]} — ${pctPhrase(pred.probability)} chance ${on} has Starlink`;
+  // A type rule is a yes for every aircraft that can fly the number, not a forecast.
+  const typeRule = body.confidence === "type" && pred.probability >= 1;
+  const tone: AnswerTone = typeRule ? "yes" : probTier(pred.probability);
+  const headline = typeRule
+    ? `Yes — every aircraft that flies ${fn} has Starlink`
+    : `${TONE_LABEL[tone]} — ${probPhrase(pred.probability)} chance ${on} has Starlink`;
   const n = pred.n_observations ?? 0;
   const basis =
     body.confidence === "predicted"
@@ -373,11 +395,11 @@ export function renderFlightAnswer(body: CheckFlightBody, ctx: AnswerContext): F
         ? `Based on the aircraft on ${fmt(n)} recent ${fn} flights.`
         : `We haven't seen ${fn} yet, so this is our estimate for flights like it.`
       : (body.message ?? "");
-  const note = degradedNote(body.message) ?? timingNote(ctx, ctx.airlineName);
+  const note = typeRule ? "" : (degradedNote(body.message) ?? timingNote(ctx, ctx.airlineName));
   const html = card(
     tone,
     headline,
-    `${probabilityBar(pred.probability, tone)}<p class="mt-3 text-sm text-secondary">${esc(basis)} ${esc(note)}</p>${watchRow(ctx)}`
+    `${typeRule ? "" : probabilityBar(pred.probability, tone)}<p class="mt-3 text-sm text-secondary">${esc(basis)} ${esc(note)}</p>${watchRow(ctx)}`
   );
   return { tone, headline, html, firm: false };
 }

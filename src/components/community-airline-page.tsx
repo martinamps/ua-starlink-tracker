@@ -9,9 +9,11 @@ import { type AirlineFactsEntry, formatFactDate } from "../airlines/rollout-fact
 import type { FleetGuideTail, TypeProgress } from "../database/database";
 import { typeShare } from "../scripts/starlink-predictor";
 import { FactsList, StatusPill } from "./airlines-page";
-import type { PageLink } from "./atoms";
-import { ClientScriptTag, FIELD_SELECT, FlightSearchForm } from "./flight-search-form";
-import { Eyebrow, PageHeader, PageShell, Panel, SECTION, StatValue, fmt } from "./layout";
+import { FIELD_CLASS, FlightSearchForm } from "./flight-search-form";
+import { ClientScriptTag } from "./layout";
+import type { Link } from "./layout";
+import { Eyebrow, PageHeader, PageShell, Panel, SECTION, StatValue } from "./layout";
+import { fmt } from "./ui/format";
 import { Meter } from "./ui/meter";
 
 /** Past this, the guide may be missing installs and the page says so. */
@@ -85,9 +87,9 @@ function tailChip(t: FleetGuideTail): Chip {
     case "starlink":
       return { text: "Starlink", tone: "text-success" };
     case "legacy":
-      return { text: "Legacy WiFi", tone: "text-secondary" };
+      return { text: "Legacy Wi-Fi", tone: "text-secondary" };
     case "none":
-      return { text: "No WiFi listed", tone: "text-muted" };
+      return { text: "No Wi-Fi listed", tone: "text-muted" };
     default:
       return { text: "Not in guide yet", tone: "text-muted" };
   }
@@ -104,7 +106,7 @@ function TailLookup({ cfg, tails }: { cfg: AirlineConfig; tails: readonly FleetG
         type="search"
         placeholder="F-HTYA"
         autoComplete="off"
-        className={`${FIELD_SELECT} mb-3 font-mono`}
+        className={`${FIELD_CLASS} mb-3 font-mono`}
       />
       <div className="max-h-96 overflow-y-auto">
         <table className="w-full text-left font-mono text-xs">
@@ -158,7 +160,7 @@ function FlightCheck({
           <select
             name="aircraft_type"
             aria-label="Aircraft type on your booking (optional)"
-            className={`${FIELD_SELECT} sm:w-auto`}
+            className={`${FIELD_CLASS} sm:w-auto`}
           >
             <option value="">Type (optional)</option>
             {types
@@ -200,7 +202,7 @@ export function CommunityAirlinePage({
   lastSynced: string | null;
   facts: AirlineFactsEntry | null;
   nowMs: number;
-  pageLinks?: PageLink[];
+  pageLinks?: Link[];
   currentPath?: string;
 }) {
   const source = cfg.communitySource;

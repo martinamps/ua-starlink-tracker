@@ -1,11 +1,11 @@
 import { type SiteConfig, siteAirline } from "../airlines/registry";
-import type { PageLink } from "./atoms";
-import { ClientScriptTag } from "./flight-search-form";
+import { ClientScriptTag } from "./layout";
+import type { Link } from "./layout";
 import { Chip, Eyebrow, PageHeader, PageShell, Panel, SectionTitle, buttonClass } from "./layout";
 
 interface RoutePlannerPageProps {
   site: SiteConfig;
-  pageLinks?: PageLink[];
+  pageLinks?: Link[];
   currentPath?: string;
   popularRoutes?: Array<{ origin: string; destination: string }>;
 }

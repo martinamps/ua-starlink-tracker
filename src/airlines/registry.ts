@@ -558,6 +558,13 @@ const AIRLINE_DEFS = {
     // QR freshness = "the schedule cache is current", not "the roster row
     // count changed" — the hourly ingester owns the stamp (gated on outcome).
     lastUpdatedOwner: "schedule-ingester",
+    // Roster counts keyed like QATAR_PHASE_BY_FAMILY, so each phase row has its own count.
+    programTypes: [
+      [/787-?8/i, "B787-8", "787-8"],
+      [/787-?9/i, "B787-9", "787-9"],
+      [/737/i, "B737", "737"],
+      [/A32[01]|A319/i, "A320", "A320 and A321neo"],
+    ],
     flightHistoryModel: false,
     verifySite: "qatarairways.com",
     typeDeterministicWifi: qatarTypeToStarlink,

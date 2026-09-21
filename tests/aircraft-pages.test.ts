@@ -29,7 +29,7 @@ import {
   typeFactsFor,
 } from "../src/airlines/aircraft-pages";
 import { AIRLINES, SITES } from "../src/airlines/registry";
-import { pct } from "../src/components/layout";
+import { pct } from "../src/components/ui/format";
 import {
   bodyClassOf,
   getAircraftTypePageData,

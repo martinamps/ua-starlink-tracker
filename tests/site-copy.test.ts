@@ -168,13 +168,13 @@ describe("homepage install pace", () => {
   test("the stat strip states the pace it is given, and omits it when there is none", () => {
     const strip = getContent(AIRLINES.UA).headerStats;
     if (typeof strip !== "function") throw new Error("UA header stats must derive from data");
-    const base = { starlinkCount: 1, totalCount: 2, percentage: "50.00" };
+    const base = { starlinkCount: 1, totalCount: 2 };
     const render = (installsPerMonth: number | null) =>
       ReactDOMServer.renderToString(
         React.createElement(React.Fragment, null, ...strip({ ...base, installsPerMonth }))
       ).replace(/<!-- -->/g, "");
-    expect(render(54.7)).toContain("~55</span> installs/mo");
-    expect(render(null)).not.toContain("installs/mo");
+    expect(render(54.7)).toContain("~55</span> installs a month");
+    expect(render(null)).not.toContain("installs a month");
   });
 });
 

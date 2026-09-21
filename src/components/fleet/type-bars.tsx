@@ -1,11 +1,14 @@
+import { aircraftName } from "../../airlines/aircraft-families";
 import type { BodyClass, FleetCarrier, FleetFamily, FleetTail } from "../../types";
-import { Section, aircraftName, fmt, pct } from "../layout";
+import { Section } from "../layout";
+import { fmt, pct } from "../ui/format";
 import { Meter } from "../ui/meter";
 import {
   PROVIDER_LABEL,
   PROVIDER_ORDER,
   type ProviderCounts,
   ProviderLegend,
+  WIFI_CLASS,
   emptyProviderCounts,
 } from "./providers";
 
@@ -74,7 +77,7 @@ export function ShareBarRow({
         label={`${label}: ${fmt(n)} of ${fmt(total)} with Starlink (${pct(n, total)})${detail ? `. ${detail}` : ""}`}
         segments={
           total > 0
-            ? segments.map((s) => ({ key: s.p, share: s.n / total, className: `wifi-${s.p}` }))
+            ? segments.map((s) => ({ key: s.p, share: s.n / total, className: WIFI_CLASS[s.p] }))
             : []
         }
       />

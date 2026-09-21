@@ -1,5 +1,6 @@
 import { TypeBreakdownRow } from "../../components/atoms";
-import { Eyebrow, Panel, StatInline, fmt } from "../../components/layout";
+import { Eyebrow, Panel, SECTION_WIDE, StatInline } from "../../components/layout";
+import { fmt } from "../../components/ui/format";
 import type { AirlineContent, HeroProps } from "./index";
 
 // Aircraft-type counts come from press-release figures (rollout is complete and
@@ -19,7 +20,7 @@ const HA_TYPES: Array<{
 const HAHero = ({ stats, statSentence }: HeroProps) => {
   const { starlinkCount } = stats;
   return (
-    <div className="relative mx-auto mb-8 grid w-full max-w-3xl grid-cols-1 gap-4 md:grid-cols-3">
+    <div className={`${SECTION_WIDE} grid grid-cols-1 gap-4 md:grid-cols-3`}>
       {statSentence && <div className="md:col-span-3">{statSentence}</div>}
       <Panel className="md:col-span-1 flex flex-col items-center justify-center text-center">
         <div className="font-display text-lg text-primary">Airbus fleet complete</div>

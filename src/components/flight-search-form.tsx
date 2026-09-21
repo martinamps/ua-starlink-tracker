@@ -14,17 +14,12 @@
 import type React from "react";
 import { flightInputRules } from "../airlines/flight-number";
 import { type SiteConfig, siteAirline } from "../airlines/registry";
-import { type ClientScript, clientScriptSrc } from "../client/bundle";
-import { buttonClass } from "./layout";
+import { ClientScriptTag, buttonClass } from "./layout";
 
-const INPUT =
+/** The form's input look, for `extra` fields (a select) that must match it. */
+export const FIELD_CLASS =
   "w-full min-w-0 rounded border border-subtle bg-base px-3 py-2 text-base text-primary placeholder-muted focus:border-accent focus:outline-none sm:text-sm";
 const LABEL = "mb-1 block text-xs text-muted";
-
-export function ClientScriptTag({ name }: { name: ClientScript }) {
-  const src = clientScriptSrc(name);
-  return src ? <script src={src} defer /> : null;
-}
 
 export function FlightSearchForm({
   site,
@@ -91,7 +86,7 @@ export function FlightSearchForm({
             autoCapitalize="characters"
             spellCheck={false}
             required
-            className={`${INPUT} font-mono`}
+            className={`${FIELD_CLASS} font-mono`}
           />
         </div>
         {mode !== "report" && (
@@ -105,7 +100,7 @@ export function FlightSearchForm({
               name="date"
               defaultValue={date}
               required={mode === "check-any"}
-              className={INPUT}
+              className={FIELD_CLASS}
             />
           </div>
         )}
@@ -125,6 +120,3 @@ export function FlightSearchForm({
     </>
   );
 }
-
-/** A select styled like the form's inputs, for `extra` fields. */
-export const FIELD_SELECT = INPUT;

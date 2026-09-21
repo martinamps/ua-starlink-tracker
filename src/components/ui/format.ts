@@ -22,6 +22,36 @@ export function pct(n: number, total: number): string {
   return `${Math.floor(p)}%`;
 }
 
+/** A 0..1 probability as a whole percent, clamped. */
+export const probPct = (p: number) => Math.round(Math.max(0, Math.min(1, p)) * 100);
+
+/** A probability as "74%", with pct()'s edges: "100%" and "0%" only when
+ * certain, ">99%" and "<1%" for everything short of that. */
+export function probLabel(p: number): string {
+  if (p >= 1) return "100%";
+  if (p <= 0) return "0%";
+  const n = p * 100;
+  if (n > 99) return ">99%";
+  if (n < 1) return "<1%";
+  return `${Math.round(n)}%`;
+}
+
+/** probLabel in words, for prose: "about 74%", "over 99%", "under 1%". */
+export function probPhrase(p: number): string {
+  const label = probLabel(p);
+  if (label.startsWith(">")) return `over ${label.slice(1)}`;
+  if (label.startsWith("<")) return `under ${label.slice(1)}`;
+  return p > 0 && p < 1 ? `about ${label}` : label;
+}
+
+export type ProbTier = "likely" | "maybe" | "unlikely";
+
+/** The one likely / maybe / unlikely cut: 70% and 40%. */
+export function probTier(p: number): ProbTier {
+  const n = probPct(p);
+  return n >= 70 ? "likely" : n >= 40 ? "maybe" : "unlikely";
+}
+
 // Built once per zone and shape: toLocale*String({timeZone}) constructs a
 // formatter per call, which dominated SSR time on pages with thousands of dates.
 const formatters = new Map<string, Intl.DateTimeFormat>();
@@ -114,6 +144,21 @@ export function zonedDeparture(
     }).format(d),
   };
 }
+
+/** YYYY-MM-DD at `zone` for an epoch: the calendar day a traveller there is on. */
+export function zonedIsoDate(sec: number, zone: string): string {
+  const parts = formatter(zone, {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date(sec * 1000));
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+  return `${get("year")}-${get("month")}-${get("day")}`;
+}
+
+/** "Sep 21, 2026, 14:05 UTC": a data timestamp, never request time. */
+export const utcDateTime = (input: DateInput) =>
+  `${utc(input, { month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false })} UTC`;
 
 /** "2h 5m", "45m", "3h"; null for a missing or non-positive duration. Minutes
  * are rounded before splitting, so 2h59m30s reads "3h", never "2h 60m". */

@@ -4,6 +4,7 @@
  * rather than /route-planner/O/D: that path is the route page, and it 404s for
  * pairs without data, so a reload would lose the search.
  */
+import { probLabel, probTier } from "../components/ui/format";
 import { esc } from "./esc";
 
 interface Leg {
@@ -36,9 +37,14 @@ interface PlanBody {
   message?: string;
 }
 
-const LIKELY = "var(--color-success)";
-const probColor = (p: number) =>
-  p >= 0.7 ? LIKELY : p >= 0.4 ? "var(--color-warn)" : "var(--color-neutral)";
+const TIER_COLOR = {
+  likely: "var(--color-success)",
+  maybe: "var(--color-warn)",
+  unlikely: "var(--color-neutral)",
+} as const;
+const LIKELY = TIER_COLOR.likely;
+const probColor = (p: number) => TIER_COLOR[probTier(p)];
+const isLikely = (p: number) => probTier(p) === "likely";
 
 const fmtHours = (h: number) => (h >= 1 ? `${h.toFixed(1)}h` : `${Math.round(h * 60)}m`);
 
@@ -52,10 +58,9 @@ function probBars(prob: number, color: string): string {
 }
 
 function renderLeg(leg: Leg): string {
-  const pct = Math.round(leg.probability * 100);
   const color = probColor(leg.probability);
   const [from, to] = leg.route.split("-").map(esc);
-  const odds = `<div class="flex items-center gap-2">${probBars(leg.probability, color)}<span class="text-xs w-10 text-right tabular-nums" style="color:${color}">${pct}%</span></div>`;
+  const odds = `<div class="flex items-center gap-2">${probBars(leg.probability, color)}<span class="text-xs w-10 text-right tabular-nums" style="color:${color}">${probLabel(leg.probability)}</span></div>`;
   if (leg.flight_number === "(any)") {
     return `<div class="flex items-center justify-between py-2 border-l-2 border-subtle pl-3 ml-1"><div class="text-sm"><div class="font-mono text-muted">${from} → ${to}</div><div class="text-xs text-muted">Any flight works for this leg</div></div>${odds}</div>`;
   }
@@ -68,7 +73,7 @@ function flightPath(legs: Leg[]): string {
   const parts = ['<div class="flight-path">'];
   legs.forEach((leg, i) => {
     const color = probColor(leg.probability);
-    const live = leg.probability >= 0.7;
+    const live = isLikely(leg.probability);
     if (i === 0) {
       parts.push(
         `<span class="flight-path__node flight-path__node--filled" style="color:${color}"></span>`
@@ -80,7 +85,7 @@ function flightPath(legs: Leg[]): string {
     const last = i === legs.length - 1;
     const nodeColor = last
       ? color
-      : live && legs[i + 1].probability >= 0.7
+      : live && isLikely(legs[i + 1].probability)
         ? LIKELY
         : "var(--color-neutral)";
     parts.push(
@@ -97,7 +102,7 @@ function renderItinerary(it: Itinerary, rank: number): string {
   const direct = via.length === 0;
   const origin = esc(legs[0].route.split("-")[0]);
   const dest = esc(legs[legs.length - 1].route.split("-")[1]);
-  const headerPct = Math.round((full ? it.joint_probability : it.at_least_one_probability) * 100);
+  const headerPct = probLabel(full ? it.joint_probability : it.at_least_one_probability);
   const headerLabel = full ? (direct ? "Starlink" : "all legs") : "final leg Starlink";
   const headerColor = probColor(full ? it.joint_probability : legs[legs.length - 1].probability);
   const flying =
@@ -106,7 +111,7 @@ function renderItinerary(it: Itinerary, rank: number): string {
     ? '<span class="text-xs text-accent">Nonstop</span>'
     : `<span class="text-xs text-muted">via <span class="font-mono">${via.map(esc).join("→")}</span> · ${via.length} stop${via.length > 1 ? "s" : ""}${flying}</span>`;
   const airports = `<span>${origin}</span>${via.map((v) => `<span class="text-center flex-1">${esc(v)}</span>`).join("")}${direct ? '<span class="flex-1"></span>' : ""}<span>${dest}</span>`;
-  return `<div class="itin-card bg-surface border border-subtle rounded-lg p-4 mb-3 hover:border-accent/50 transition-colors"><div class="flex items-center justify-between mb-3"><div class="flex items-center gap-3"><span class="text-xs text-muted tabular-nums">#${rank}</span>${badge}</div><div class="font-display text-right" style="color:${headerColor}">${headerPct}% <span class="text-xs text-muted font-normal">${headerLabel}</span></div></div><div class="mb-3"><div class="flex items-center gap-2 text-xs font-mono text-muted mb-1">${airports}</div>${flightPath(legs)}</div><div class="space-y-1">${legs.map(renderLeg).join("")}</div></div>`;
+  return `<div class="itin-card bg-surface border border-subtle rounded-lg p-4 mb-3 hover:border-accent/50 transition-colors"><div class="flex items-center justify-between mb-3"><div class="flex items-center gap-3"><span class="text-xs text-muted tabular-nums">#${rank}</span>${badge}</div><div class="font-display text-right" style="color:${headerColor}">${headerPct} <span class="text-xs text-muted font-normal">${headerLabel}</span></div></div><div class="mb-3"><div class="flex items-center gap-2 text-xs font-mono text-muted mb-1">${airports}</div>${flightPath(legs)}</div><div class="space-y-1">${legs.map(renderLeg).join("")}</div></div>`;
 }
 
 /** The nonstop every connection is traded against: without it a 9h two-stop
@@ -120,7 +125,7 @@ function baselineHtml(b: Baseline | undefined): string {
     b.duration_source === "sparse_history"
       ? "Nonstop seen only occasionally (may not run on your date): ~"
       : "Nonstop baseline: ~";
-  return `<div class="text-xs text-muted mb-3 leading-relaxed">${label}${Math.round(b.probability * 100)}% Starlink · ~${fmtHours(b.expected_starlink_hours)} Starlink of ~${fmtHours(b.duration_hours)} flying</div>`;
+  return `<div class="text-xs text-muted mb-3 leading-relaxed">${label}${probLabel(b.probability)} Starlink · ~${fmtHours(b.expected_starlink_hours)} Starlink of ~${fmtHours(b.duration_hours)} flying</div>`;
 }
 
 function renderResults(out: HTMLElement, data: PlanBody): void {

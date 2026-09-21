@@ -15,7 +15,6 @@ import { Meter } from "./ui/meter";
 import { Pill, type Tone } from "./ui/tone";
 
 export type { PerAirlineStat };
-export type { PageLink } from "./layout";
 
 /**
  * Download link for the pre-rendered share-stat card. Renders nothing until
@@ -111,7 +110,7 @@ const STAGE_TONE: Record<Stage, Tone> = {
   "Not Starlink": "danger",
 };
 
-export interface StageInfo {
+interface StageInfo {
   stage: Stage;
   /** The stage, qualified where it covers only part of the fleet: "Complete (Airbus fleet)". */
   label: string;
@@ -187,12 +186,17 @@ export function AirlineProgressList({ stats }: { stats: PerAirlineStat[] }) {
         return (
           <li key={cfg.code} className="py-3 first:pt-0 last:pb-0">
             <div className="flex items-center justify-between gap-3">
-              <a
-                href={stat.href || "#"}
-                className="font-display text-base text-primary hover:text-accent transition-colors"
-              >
-                {cfg.name}
-              </a>
+              <span className="flex flex-wrap items-baseline gap-x-2">
+                <a
+                  href={stat.href || "#"}
+                  className="font-display text-base text-primary hover:text-accent transition-colors"
+                >
+                  {cfg.name}
+                </a>
+                {trackingMethod(cfg) === "type" && (
+                  <span className="text-xs text-muted">by aircraft type</span>
+                )}
+              </span>
               <StagePill info={trackedStage(cfg, stat)} />
             </div>
             {publishable ? (
@@ -230,7 +234,6 @@ export function RecentInstallsFeed({
   items,
   airlines,
 }: { items: RecentInstall[]; airlines: PerAirlineStat[] }) {
-  // Group once per airline — the per-row airline name was 90%+ "United Airlines".
   const grouped = airlines
     .map((a) => ({ cfg: a, rows: items.filter((i) => i.airline === a.code) }))
     .filter((g) => g.rows.length > 0);

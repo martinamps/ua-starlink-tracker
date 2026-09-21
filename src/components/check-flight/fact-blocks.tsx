@@ -3,10 +3,13 @@
  * number's Starlink history, the routes it flies and its sibling numbers.
  */
 import React from "react";
+import { aircraftName } from "../../airlines/aircraft-families";
 import { airportTimezone } from "../../utils/airport-tz";
-import type { FlightFacts } from "../check-flight-page";
-import { Chip, Section, StatInline, fmt } from "../layout";
-import { formatDuration, shortDate, zonedDeparture } from "../ui/format";
+import { Chip, Section, StatInline } from "../layout";
+import { fmt, formatDuration, probPhrase, shortDate, zonedDeparture } from "../ui/format";
+import type { FlightFacts } from "./types";
+
+const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 function lastSeenLabel(sec: number | null): string | null {
   if (!sec || sec * 1000 > Date.now()) return null;
@@ -52,7 +55,7 @@ export function FlightFactBlocks({
                   </div>
                   <div className="text-muted">
                     <span className="font-mono">{u.tail_number}</span>
-                    {u.aircraft_type ? ` · ${u.aircraft_type}` : ""}
+                    {u.aircraft_type ? ` · ${aircraftName(u.aircraft_type)}` : ""}
                   </div>
                 </div>
                 <span
@@ -71,7 +74,7 @@ export function FlightFactBlocks({
           <div className="space-y-2 text-sm leading-relaxed text-secondary">
             {pred && pred.n_observations > 0 && (
               <p>
-                <StatInline>{Math.round(pred.probability * 100)}%</StatInline> of recent {fn}{" "}
+                <StatInline>{capitalize(probPhrase(pred.probability))}</StatInline> of recent {fn}{" "}
                 flights had a Starlink aircraft, from <StatInline n={pred.n_observations} /> flights
                 observed.
               </p>

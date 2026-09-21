@@ -1,17 +1,16 @@
 import type { SiteConfig } from "../airlines/registry";
 import { formatFactDate, rolloutTimeline } from "../airlines/rollout-facts";
 import type { InstallRateStats, TargetProjection, TargetVerdict } from "../utils/install-rate";
-import type { PageLink } from "./atoms";
 import {
   CumulativeInstallsChart,
   MonthlyInstallsBars,
   PaceBullets,
-  nearestPaceGap,
-  paceWindowText,
 } from "./charts/cumulative-installs";
+import { nearestPaceGap, paceWindowText } from "./charts/rollout-math";
 import { type CiteStat, CiteThis } from "./cite-this";
-import { EYEBROW, PANEL, PageHeader, PageShell, SECTION, StatInline, fmt, pct } from "./layout";
-import { monthYear } from "./ui/format";
+import type { Link } from "./layout";
+import { EYEBROW, PANEL, PageHeader, PageShell, SECTION, StatInline } from "./layout";
+import { fmt, monthYear, pct, probLabel } from "./ui/format";
 import { Pill, type Tone } from "./ui/tone";
 
 export interface AirlineInstallRate {
@@ -30,7 +29,7 @@ export interface AirlineInstallRate {
 interface InstallRatePageProps {
   site: SiteConfig;
   airlines: AirlineInstallRate[];
-  pageLinks?: PageLink[];
+  pageLinks?: Link[];
   currentPath?: string;
   cite?: CiteStat | null;
 }
@@ -79,7 +78,7 @@ function TargetRow({ p, shortName }: { p: TargetProjection; shortName: string })
         <p className="mt-1 text-xs text-muted">
           {p.target.fractionOfTracked === 1
             ? `Fleet size is our count, not ${shortName}'s.`
-            : `${Math.round((p.target.fractionOfTracked ?? 1) * 100)}% of our fleet count of ${fmt(p.derivedFrom)}, not a figure ${shortName} published.`}
+            : `${probLabel(p.target.fractionOfTracked ?? 1)} of our fleet count of ${fmt(p.derivedFrom)}, not a figure ${shortName} published.`}
         </p>
       )}
       <p className="mt-1 text-xs text-muted">

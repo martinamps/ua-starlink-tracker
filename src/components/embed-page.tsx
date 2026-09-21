@@ -1,5 +1,5 @@
 import { AIRLINES, type SiteConfig } from "../airlines/registry";
-import type { PageLink } from "./atoms";
+import type { Link } from "./layout";
 import { EYEBROW, Eyebrow, PANEL, PageHeader, PageShell, SECTION } from "./layout";
 
 interface EmbedPageProps {
@@ -11,7 +11,7 @@ interface EmbedPageProps {
   /** Is /feed.xml live here? It rides both the feature flag and the
    * install-log data gate, so the flag alone would link a 404. */
   feedAvailable: boolean;
-  pageLinks?: PageLink[];
+  pageLinks?: Link[];
   currentPath?: string;
 }
 
@@ -48,8 +48,8 @@ export default function EmbedPage({
         title="Embed the Live Starlink Badge"
         dek={
           <>
-            A tiny SVG badge with the live count of {subject} aircraft that have Starlink — it
-            updates itself, your page never goes stale.
+            A small SVG badge with the count of {subject} aircraft that have Starlink. It updates
+            itself hourly, so your page keeps current without edits.
           </>
         }
       />

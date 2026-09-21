@@ -14,9 +14,11 @@ import type { SubfleetBreakdown } from "../scripts/starlink-predictor";
 import type { PerAirlineStat } from "../types";
 import { article } from "../utils/grammar";
 import { FactsList, PhaseTable, type TypePhase } from "./airlines-page";
-import { type PageLink, StagePill, trackedStage } from "./atoms";
+import { StagePill, trackedStage } from "./atoms";
 import { TypeShareTable } from "./community-airline-page";
-import { ButtonLink, Eyebrow, PageHeader, PageShell, Panel, StatValue, fmt, pct } from "./layout";
+import type { Link } from "./layout";
+import { ButtonLink, Eyebrow, PageHeader, PageShell, Panel, StatValue } from "./layout";
+import { fmt, pct, probLabel } from "./ui/format";
 import { Meter } from "./ui/meter";
 
 export interface CompareSide {
@@ -37,6 +39,13 @@ export interface CompareSide {
   facts: AirlineFactsEntry | null;
   /** Flight-level lookup on the airline's own surface, when one exists. */
   checkFlightUrl: string | null;
+}
+
+/** A rule-set share has no counts behind it: "every aircraft", "none", or the share. */
+function syntheticShare(p: number): string {
+  if (p >= 1) return "every aircraft · 100%";
+  if (p <= 0) return "none · 0%";
+  return probLabel(p);
 }
 
 function SidePanel({ side }: { side: CompareSide }) {
@@ -104,12 +113,12 @@ function SidePanel({ side }: { side: CompareSide }) {
               className="flex items-center justify-between py-1.5 border-b border-subtle last:border-0"
             >
               <span className="font-mono text-xs text-primary">
-                {b.label}
+                {b.label.replace(/\s*\((.*)\)$/, " $1")}
                 {b.hint && <span className="text-muted"> ({b.hint})</span>}
               </span>
               <span className="font-mono text-xs text-secondary">
                 {b.synthetic
-                  ? `${Math.round(b.pct * 100)}%`
+                  ? syntheticShare(b.pct)
                   : `${fmt(b.equipped)} of ${fmt(b.total)} · ${pct(b.equipped, b.total)}`}
               </span>
             </div>
@@ -143,7 +152,7 @@ export default function ComparePage({
   site: SiteConfig;
   left: CompareSide;
   right: CompareSide;
-  pageLinks?: PageLink[];
+  pageLinks?: Link[];
   currentPath?: string;
 }) {
   const heading = `${left.cfg.shortName} vs ${right.cfg.shortName}: Starlink WiFi`;

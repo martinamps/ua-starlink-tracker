@@ -1,6 +1,6 @@
 import type React from "react";
 import type { SiteConfig } from "../../airlines/registry";
-import { Panel, SectionTitle } from "../layout";
+import { Panel, Section } from "../layout";
 
 export const CHROME_EXTENSION_URL =
   "https://chromewebstore.google.com/detail/google-flights-starlink-i/jjfljoifenkfdbldliakmmjhdkbhehoi";
@@ -126,9 +126,8 @@ export function ToolsSection({ site }: { site: SiteConfig }) {
   const f = site.features;
   if (!f.chromeExtension && !f.mcpPage) return null;
   return (
-    <div id="integrations" className="relative mb-8 w-full max-w-3xl mx-auto scroll-mt-4">
-      <SectionTitle>Tools and integrations</SectionTitle>
-      <div className="mt-4 grid sm:grid-cols-2 gap-3">
+    <Section bare wide id="integrations" className="scroll-mt-4" title="Tools and integrations">
+      <div className="grid sm:grid-cols-2 gap-3">
         {f.chromeExtension && (
           <ToolCard
             id="chrome-extension"
@@ -156,6 +155,6 @@ export function ToolsSection({ site }: { site: SiteConfig }) {
           </ToolCard>
         )}
       </div>
-    </div>
+    </Section>
   );
 }

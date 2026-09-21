@@ -1,9 +1,10 @@
+import { aircraftName } from "../airlines/aircraft-families";
 import { type SiteConfig, siteAirline } from "../airlines/registry";
 import type { RouteSummary } from "../database/database";
 import { airportTimezone } from "../utils/airport-tz";
-import type { PageLink } from "./atoms";
-import { Chip, PageHeader, PageShell, Section, Td, Th, aircraftName, fmt } from "./layout";
-import { formatDuration, monthDay, zonedDeparture } from "./ui/format";
+import type { Link } from "./layout";
+import { Chip, PageHeader, PageShell, Section, Td, Th } from "./layout";
+import { fmt, formatDuration, monthDay, zonedDeparture } from "./ui/format";
 
 /** One physical Starlink departure on the pair, under its marketing number. */
 export interface RouteDeparture {
@@ -13,11 +14,6 @@ export interface RouteDeparture {
   aircraft_type: string | null;
   /** Starlink confirmed on the tail by our checks, not just listed as equipped. */
   verified: boolean;
-}
-
-/** Departure clock at the origin airport; unmapped airports read UTC. */
-export function localDeparture(iata: string, sec: number): { date: string; time: string } {
-  return zonedDeparture(sec, airportTimezone(iata));
 }
 
 /** getRouteFlightNumbers already drops the one-sighting numbers that are
@@ -51,13 +47,14 @@ export function routeVerdict(
   if (k > 0) {
     const head = `${fmt(k)} Starlink flight${k === 1 ? "" : "s"} ${pair} in the ${route.windowLabel}`;
     if (!departures) return `${head}.`;
-    const day = (d: RouteDeparture) => localDeparture(route.origin, d.departure_time).date;
+    const day = (d: RouteDeparture) =>
+      zonedDeparture(d.departure_time, airportTimezone(route.origin)).date;
     if (k === 1) return `${head}: ${departures[0].flight_number} on ${day(departures[0])}.`;
     if (k <= 3) {
       return `${head}: ${joinList(departures.map((d) => `${d.flight_number} (${day(d)})`))}.`;
     }
     const next = departures[0];
-    const at = localDeparture(route.origin, next.departure_time);
+    const at = zonedDeparture(next.departure_time, airportTimezone(route.origin));
     return `${head}. The next is ${next.flight_number} on ${at.date} at ${at.time}.`;
   }
   // Lead with what we durably know. The schedule window is only 48h, so a
@@ -90,7 +87,7 @@ function DeparturesTable({
         </thead>
         <tbody>
           {departures.map((d) => {
-            const at = localDeparture(route.origin, d.departure_time);
+            const at = zonedDeparture(d.departure_time, airportTimezone(route.origin));
             return (
               <tr key={`${d.flight_number}-${d.departure_time}`}>
                 <Td className="pr-3 whitespace-nowrap">
@@ -205,7 +202,7 @@ interface RoutePageProps {
   /** The server's routeHasData answer for destination→origin; the reverse-leg
    * link renders only when that page serves. */
   reverseLinkable?: boolean;
-  pageLinks?: PageLink[];
+  pageLinks?: Link[];
   currentPath?: string;
 }
 

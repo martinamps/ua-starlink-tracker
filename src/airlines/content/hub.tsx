@@ -1,20 +1,27 @@
-import { AirlineProgressList, RecentInstallsFeed, completeScope } from "../../components/atoms";
-import { ClientScriptTag, FlightSearchForm } from "../../components/flight-search-form";
+import {
+  AirlineProgressList,
+  RecentInstallsFeed,
+  completeScope,
+  trackingMethod,
+} from "../../components/atoms";
+import { FlightSearchForm } from "../../components/flight-search-form";
 import {
   Chip,
+  ClientScriptTag,
   Eyebrow,
+  LINK,
   Panel,
+  SECTION_WIDE,
   SectionTitle,
   StatInline,
   buttonClass,
   chipClass,
-  fmt,
 } from "../../components/layout";
-import { SITES, airlineHomeUrl, publicAirlines } from "../registry";
+import type { Link } from "../../components/layout";
+import { fmt } from "../../components/ui/format";
+import { AIRLINES, SITES, airlineHomeUrl, publicAirlines } from "../registry";
 import { AIRLINE_FACTS, type AirlineFactsEntry, type RolloutFactsStatus } from "../rollout-facts";
 import type { AirlineContent, HeroProps, HubHomeLinks } from "./index";
-
-const LINK = "text-accent hover:underline";
 
 // The hub answers cross-airline questions; United-specific intent belongs to
 // the United tracker, so every United mention here links there.
@@ -33,26 +40,52 @@ function list(names: string[]): string {
   return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 }
 
+const byType = (code: string) => {
+  const cfg = AIRLINES[code];
+  return cfg ? trackingMethod(cfg) === "type" : false;
+};
+
 const FLYING_COUNT = AIRLINE_FACTS.filter(
   (e) => e.status === "installing" || e.status === "complete"
 ).length;
 
+const NOT_STARLINK_PATHS = new Set(
+  AIRLINE_FACTS.filter((e) => e.status === "not_starlink").map((e) => `/airlines/${e.slug}`)
+);
+
+function LinkChips({ links }: { links: Link[] }) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      {links.map((l) => (
+        <Chip key={l.href} href={l.href} size="sm">
+          {l.label}
+        </Chip>
+      ))}
+    </div>
+  );
+}
+
 /** Crawlable inlinks to the hub's own URL families: most of its sitemap URLs
- * were discovered but never crawled while the homepage linked only /airlines. */
+ * were discovered but never crawled while the homepage linked only /airlines.
+ * Airlines that chose other Wi-Fi get their own row, never "with Starlink". */
 function HubLinkGrid({ links }: { links?: HubHomeLinks }) {
   if (!links || (links.airlines.length === 0 && links.compares.length === 0)) return null;
+  const without = links.airlines.filter((l) => NOT_STARLINK_PATHS.has(l.href));
+  const withStarlink = links.airlines.filter((l) => !NOT_STARLINK_PATHS.has(l.href));
   return (
     <Panel as="nav" aria-label="Airlines">
-      {links.airlines.length > 0 && (
+      {withStarlink.length > 0 && (
         <>
           <Eyebrow as="h2">Airlines with Starlink</Eyebrow>
-          <div className="flex flex-wrap gap-2">
-            {links.airlines.map((l) => (
-              <Chip key={l.href} href={l.href} size="sm">
-                {l.label}
-              </Chip>
-            ))}
-          </div>
+          <LinkChips links={withStarlink} />
+        </>
+      )}
+      {without.length > 0 && (
+        <>
+          <Eyebrow as="h2" className="mt-4 mb-3">
+            Chose other Wi-Fi
+          </Eyebrow>
+          <LinkChips links={without} />
         </>
       )}
       {links.compares.length > 0 && (
@@ -60,13 +93,7 @@ function HubLinkGrid({ links }: { links?: HubHomeLinks }) {
           <Eyebrow as="h2" className="mt-4 mb-3">
             Compare
           </Eyebrow>
-          <div className="flex flex-wrap gap-2">
-            {links.compares.map((l) => (
-              <Chip key={l.href} href={l.href} size="sm">
-                {l.label}
-              </Chip>
-            ))}
-          </div>
+          <LinkChips links={links.compares} />
         </>
       )}
     </Panel>
@@ -92,6 +119,7 @@ function RouteComparePanel() {
         <input
           type="text"
           name="origin"
+          aria-label="From airport code"
           placeholder="From (SFO)"
           maxLength={3}
           className="flex-1 font-mono text-sm px-3 py-2 bg-surface-elevated border border-subtle rounded text-primary placeholder-muted focus:outline-none focus:border-accent uppercase"
@@ -100,6 +128,7 @@ function RouteComparePanel() {
         <input
           type="text"
           name="destination"
+          aria-label="To airport code"
           placeholder="To (HNL)"
           maxLength={3}
           className="flex-1 font-mono text-sm px-3 py-2 bg-surface-elevated border border-subtle rounded text-primary placeholder-muted focus:outline-none focus:border-accent uppercase"
@@ -134,7 +163,7 @@ function RouteComparePanel() {
         <a
           id="hub-compare-rp"
           href={`https://${SITES.united.canonicalHost}/route-planner`}
-          className="text-accent hover:underline"
+          className={LINK}
         >
           Route Planner →
         </a>
@@ -145,7 +174,7 @@ function RouteComparePanel() {
 
 const HubHero = ({ site, perAirlineStats = [], recentInstalls = [], hubLinks }: HeroProps) => {
   return (
-    <div className="relative mx-auto mb-8 w-full max-w-3xl space-y-6">
+    <div className={`${SECTION_WIDE} space-y-6`}>
       <section>
         <SectionTitle>Where each tracked rollout stands</SectionTitle>
         <Panel className="mt-4">
@@ -235,7 +264,16 @@ export const content: AirlineContent = {
             ) : null}
             .{" "}
             {rest.length > 0 && (
-              <>Next: {list(rest.map((r) => `${r.name} (${fmt(r.starlink)})`))}.</>
+              <>
+                Next:{" "}
+                {list(
+                  rest.map(
+                    (r) =>
+                      `${r.name} (${fmt(r.starlink)}${byType(r.code) ? ", counted by aircraft type" : ""})`
+                  )
+                )}
+                .
+              </>
             )}
           </p>
         );

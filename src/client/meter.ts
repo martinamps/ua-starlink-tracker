@@ -22,14 +22,33 @@ export const METER_ACCENT = "bg-[var(--color-accent)]";
 /** A share of 0..1 as a clamped CSS width. */
 export const meterWidth = (share: number) => `${Math.max(0, Math.min(100, share * 100))}%`;
 
-/** Single-fill bar. `dotted` draws an outline-only fill for an inferred value. */
+/**
+ * Single-fill bar. `dotted` draws an outline-only fill for an inferred value;
+ * `bg` swaps the track color (bg-base on an elevated card); `label` is the
+ * bar's spoken text, otherwise it is hidden from screen readers.
+ */
 export function meterHtml(
   share: number,
-  { color, size = "sm", dotted = false }: { color: string; size?: MeterSize; dotted?: boolean }
+  {
+    color,
+    size = "sm",
+    dotted = false,
+    className = "mt-1",
+    bg = METER_BG,
+    label,
+  }: {
+    color: string;
+    size?: MeterSize;
+    dotted?: boolean;
+    className?: string;
+    bg?: string;
+    label?: string;
+  }
 ): string {
   const c = esc(color);
   const fill = dotted
     ? `width:${meterWidth(share)};border-top:2px dotted ${c};background:transparent`
     : `width:${meterWidth(share)};background:${c}`;
-  return `<div class="${METER_TRACK} ${METER_BG} ${METER_HEIGHT[size]} mt-1"><div class="${METER_FILL}" style="${fill}"></div></div>`;
+  const a11y = label ? `role="img" aria-label="${esc(label)}"` : `aria-hidden="true"`;
+  return `<div class="${METER_TRACK} ${esc(bg)} ${METER_HEIGHT[size]} ${esc(className)}" ${a11y}><div class="${METER_FILL}" style="${fill}"></div></div>`;
 }

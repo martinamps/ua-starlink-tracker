@@ -15,7 +15,6 @@ import { type RolloutFact, formatFactDate } from "../airlines/rollout-facts";
 import type { AircraftTypePageData, AircraftVerdictKind, WifiProvider } from "../types";
 import type { AircraftSpec } from "../utils/aircraft-specs";
 import { article } from "../utils/grammar";
-import type { PageLink } from "./atoms";
 import { Faq } from "./faq";
 import { TailGrid } from "./fleet/hangar";
 import {
@@ -28,8 +27,9 @@ import {
 import { PROVIDER_LABEL, ProviderLegend } from "./fleet/providers";
 import { ShareBarRow, providerCounts } from "./fleet/type-bars";
 import { FlightSearchForm } from "./flight-search-form";
-import { EYEBROW, H2, PANEL, PageHeader, PageShell, StatInline, fmt } from "./layout";
-import { shortDate } from "./ui/format";
+import type { Link } from "./layout";
+import { EYEBROW, H2, LINK, PANEL, PageHeader, PageShell, StatInline } from "./layout";
+import { fmt, shortDate } from "./ui/format";
 
 interface AircraftTypeSibling {
   slug: string;
@@ -40,7 +40,7 @@ interface AircraftTypeSibling {
 
 interface AircraftTypePageProps {
   site: SiteConfig;
-  pageLinks?: PageLink[];
+  pageLinks?: Link[];
   currentPath?: string;
   def: AircraftPageDef;
   data: AircraftTypePageData;
@@ -48,7 +48,6 @@ interface AircraftTypePageProps {
   facts: RolloutFact[];
   faq: TypeFaqItem[];
   siblings: AircraftTypeSibling[];
-  iata: string;
   lastUpdated: string | null;
   checkFlight: boolean;
   spec: AircraftSpec | null;
@@ -74,7 +73,6 @@ const TARGET_IN_HEADER: ReadonlySet<AircraftVerdictKind> = new Set([
 
 const H2_CARD = `${H2} mb-3`;
 const CARD = `${PANEL} mb-4`;
-const LINK = "text-accent hover:underline";
 
 /** Every tail of the type as one square, colored by its Wi-Fi today. */
 function TailMatrix({
