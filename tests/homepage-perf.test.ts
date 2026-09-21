@@ -9,7 +9,7 @@
 
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { SITES } from "../src/airlines/registry";
-import { formatPillTime } from "../src/components/page";
+import { formatPillTime } from "../src/components/ui/format";
 import { createApp } from "../src/server/app";
 import { openSnapshot, req } from "./helpers";
 

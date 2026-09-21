@@ -1,6 +1,7 @@
 import { TYPE_DISPLAY } from "../../airlines/aircraft-pages";
 import type { FleetMovement, FleetProgressRow, FleetProgressTailRow } from "../../types";
 import { EYEBROW, H2, PANEL, SECTION_WIDE, aircraftName, fmt, pct } from "../layout";
+import { monthDay } from "../ui/format";
 
 export type PipelineMap = Map<string, FleetProgressTailRow>;
 
@@ -164,14 +165,6 @@ function movementText(m: FleetMovement): string {
   }
 }
 
-function movementDate(iso: string): string {
-  return new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    timeZone: "UTC",
-  });
-}
-
 export function MovementsPanel({
   movements,
   anchorBase = "",
@@ -201,7 +194,7 @@ export function MovementsPanel({
                     {sheetTypeName(m.type_code)}
                   </span>
                   <span className="text-secondary flex-1 truncate">{movementText(m)}</span>
-                  <span className="text-muted shrink-0 tabular-nums">{movementDate(m.date)}</span>
+                  <span className="text-muted shrink-0 tabular-nums">{monthDay(m.date)}</span>
                 </a>
               </li>
             );

@@ -7,6 +7,7 @@
  * React; every interpolated value goes through esc(). Keep imports
  * dependency-free: this file is bundled for the browser.
  */
+import { ageLabel, fmt, monthDay, zonedDeparture } from "../components/ui/format";
 import { type SeatbackLiveTv, seatbackLiveTv } from "../utils/aircraft-specs";
 
 export interface WireFlight {
@@ -93,40 +94,9 @@ const stripK = (code: string | null | undefined) => {
   return c.length === 4 && (c[0] === "K" || c[0] === "C") ? c.slice(1) : c;
 };
 
-/** "Sep 21" for the asked-about date, independent of any zone. */
-export function shortDate(date: string): string {
-  const d = new Date(`${date}T12:00:00Z`);
-  if (Number.isNaN(d.getTime())) return date;
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
-}
-
-/** "8:38 AM PDT" at the departure airport, like a boarding pass. */
-export function localTime(unix: number, airport: string | null | undefined, ctx: AnswerContext) {
-  const zone = ctx.zoneFor(stripK(airport));
-  return new Date(unix * 1000).toLocaleTimeString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-    timeZoneName: "short",
-    ...(zone ? { timeZone: zone } : { timeZone: "UTC" }),
-  });
-}
-
-function localDay(unix: number, airport: string | null | undefined, ctx: AnswerContext) {
-  const zone = ctx.zoneFor(stripK(airport));
-  return new Date(unix * 1000).toLocaleDateString("en-US", {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    timeZone: zone ?? "UTC",
-  });
-}
-
-export function ageLabel(checkedAt: number, nowSec: number): string {
-  const days = Math.floor((nowSec - checkedAt) / 86400);
-  if (days <= 0) return "today";
-  if (days === 1) return "yesterday";
-  return `${days} days ago`;
-}
+/** Departure clock at the airport, like a boarding pass: "Sun, Sep 21" / "8:38 AM PDT". */
+const departs = (unix: number, airport: string | null | undefined, ctx: AnswerContext) =>
+  zonedDeparture(unix, ctx.zoneFor(stripK(airport)));
 
 /** verified_wifi 'None' means no Wi-Fi installed; it is never a provider name. */
 function wifiPhrase(v: string | null | undefined): string {
@@ -199,7 +169,7 @@ function flightRows(f: WireFlight, ctx: AnswerContext): string {
     rows.push(
       row(
         "Departs",
-        `${esc(localDay(f.departure_time, dep, ctx))}, ${esc(localTime(f.departure_time, dep, ctx))}`
+        `${esc(departs(f.departure_time, dep, ctx).day)}, ${esc(departs(f.departure_time, dep, ctx).time)}`
       )
     );
   }
@@ -242,7 +212,7 @@ function alternativesHtml(
   const items = list
     .map(
       (a) =>
-        `<li><a href="/check-flight/${encodeURIComponent(a.flight_number)}/${encodeURIComponent(ctx.date)}" class="text-accent hover:underline">${esc(a.flight_number)}</a> at ${esc(localTime(a.departure_time, origin, ctx))} · ${tail(a.tail_number)}${a.aircraft_type ? ` · ${esc(a.aircraft_type)}` : ""}</li>`
+        `<li><a href="/check-flight/${encodeURIComponent(a.flight_number)}/${encodeURIComponent(ctx.date)}" class="text-accent hover:underline">${esc(a.flight_number)}</a> at ${esc(departs(a.departure_time, origin, ctx).time)} · ${tail(a.tail_number)}${a.aircraft_type ? ` · ${esc(a.aircraft_type)}` : ""}</li>`
     )
     .join("");
   return `<div class="mt-4"><h3 class="text-sm font-semibold text-primary">Starlink flights on this route that day</h3><ul class="mt-1 space-y-1 text-sm text-secondary">${items}</ul></div>`;
@@ -296,7 +266,7 @@ function timingNote(ctx: AnswerContext, airlineName: string): string {
 
 export function renderFlightAnswer(body: CheckFlightBody, ctx: AnswerContext): FlightAnswer {
   const fn = ctx.flightNumber;
-  const on = `${fn} on ${shortDate(ctx.date)}`;
+  const on = `${fn} on ${monthDay(ctx.date)}`;
 
   if (body.error) {
     const headline = `We couldn't check ${fn}`;
@@ -405,7 +375,7 @@ export function renderFlightAnswer(body: CheckFlightBody, ctx: AnswerContext): F
   const basis =
     body.confidence === "predicted"
       ? n > 0
-        ? `Based on the aircraft on ${n.toLocaleString("en-US")} recent ${fn} flights.`
+        ? `Based on the aircraft on ${fmt(n)} recent ${fn} flights.`
         : `We haven't seen ${fn} yet, so this is our estimate for flights like it.`
       : (body.message ?? "");
   const note = degradedNote(body.message) ?? timingNote(ctx, ctx.airlineName);

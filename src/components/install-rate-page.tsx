@@ -11,6 +11,7 @@ import {
 } from "./charts/cumulative-installs";
 import { type CiteStat, CiteThis } from "./cite-this";
 import { EYEBROW, PANEL, PageHeader, PageShell, SECTION, StatInline, fmt, pct } from "./layout";
+import { monthYear } from "./ui/format";
 import { Pill, type Tone } from "./ui/tone";
 
 export interface AirlineInstallRate {
@@ -41,15 +42,6 @@ const VERDICT_TONE: Record<TargetVerdict, { label: string; tone: Tone }> = {
   no_data: { label: "Too early to call", tone: "warn" },
 };
 
-export function monthLabel(month: string): string {
-  const [y, m] = month.split("-").map(Number);
-  return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString("en-US", {
-    month: "short",
-    year: "numeric",
-    timeZone: "UTC",
-  });
-}
-
 function targetStatus(p: TargetProjection): string {
   const due = `Due ${formatFactDate(p.target.deadline)}`;
   // equipped is a live row count and total a separately scraped meta value;
@@ -57,7 +49,7 @@ function targetStatus(p: TargetProjection): string {
   if (p.rosterDisagrees) return `${due} · counts disagree, no projection`;
   if (p.verdict === "reached") return `${due} · reached`;
   const parts = [due, `${fmt(p.remaining)} to go`];
-  if (p.projectedMonth) parts.push(`at current pace: ${monthLabel(p.projectedMonth)}`);
+  if (p.projectedMonth) parts.push(`at current pace: ${monthYear(p.projectedMonth)}`);
   else if (p.verdict === "behind") parts.push("more than four years out at current pace");
   return parts.join(" · ");
 }

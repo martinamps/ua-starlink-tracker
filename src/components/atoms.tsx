@@ -12,7 +12,7 @@ import type { RolloutFactsStatus } from "../airlines/rollout-facts";
 import type { PopularFlight } from "../database/database";
 import type { PerAirlineStat, RecentInstall } from "../types";
 import { denominatorIsPublishable } from "../utils/share-cards";
-import { fmt, pct } from "./layout";
+import { fmt, monthDay, pct } from "./ui/format";
 import { Pill, type Tone } from "./ui/tone";
 
 export type { PerAirlineStat };
@@ -357,11 +357,7 @@ export function RecentInstallsFeed({
                       </span>
                     )}
                     <span className="font-mono text-xs text-muted w-12 text-right">
-                      {new Date(r.DateFound).toLocaleDateString("en-US", {
-                        month: "short",
-                        day: "numeric",
-                        timeZone: "UTC",
-                      })}
+                      {monthDay(r.DateFound)}
                     </span>
                   </a>
                 ))}

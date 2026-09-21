@@ -1,5 +1,5 @@
 import { type SiteConfig, siteAirline } from "../airlines/registry";
-import { fmt } from "./layout";
+import { fmt, longDate } from "./ui/format";
 
 /** The homepage headline's own numbers and stamp, so a quote taken from any
  * page matches the sentence /methodology#cite calls canonical. */
@@ -16,15 +16,9 @@ export function CiteThis({ site, cite }: { site: SiteConfig; cite?: CiteStat | n
   if (!cite || site.scope === "ALL" || !site.features.methodologyPage || cite.total === 0) {
     return null;
   }
-  const stamped = new Date(cite.lastUpdated ?? "");
-  if (Number.isNaN(stamped.getTime())) return null;
+  const date = longDate(cite.lastUpdated);
+  if (!date) return null;
   const cfg = siteAirline(site);
-  const date = stamped.toLocaleDateString("en-US", {
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-    timeZone: "UTC",
-  });
   return (
     <p
       id="cite-this"

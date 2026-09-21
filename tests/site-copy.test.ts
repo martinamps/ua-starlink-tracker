@@ -11,8 +11,8 @@ import { AIRLINES, SITES, publicAirlines, wifiPhaseFamilies } from "../src/airli
 import { factsBySlug } from "../src/airlines/rollout-facts";
 import { renderFlightAnswer } from "../src/client/flight-answer";
 import CheckFlightPage, { type FlightFacts } from "../src/components/check-flight-page";
-import { monthLabel } from "../src/components/install-rate-page";
 import { LIVE_TV_TARGET_FACT } from "../src/components/live-tv-page";
+import { monthYear } from "../src/components/ui/format";
 import {
   flyertalkFirstSyncDays,
   getDailyInstalls,
@@ -38,7 +38,7 @@ afterAll(() => db.close());
 
 describe("install-rate dates", () => {
   test("month labels carry a four-digit year", () => {
-    expect(monthLabel("2027-05")).toBe("May 2027");
+    expect(monthYear("2027-05")).toBe("May 2027");
   });
 });
 

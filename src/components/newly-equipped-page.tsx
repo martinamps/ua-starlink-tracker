@@ -3,6 +3,7 @@ import { AIRLINES, type SiteConfig } from "../airlines/registry";
 import type { FirstFlight, PerAirlineStat, RecentInstall } from "../types";
 import type { PageLink } from "./atoms";
 import { EYEBROW, PANEL, PageHeader, PageShell, SECTION, aircraftName } from "./layout";
+import { monthDay, shortDate } from "./ui/format";
 
 interface NewlyEquippedPageProps {
   site: SiteConfig;
@@ -12,15 +13,6 @@ interface NewlyEquippedPageProps {
   firstFlights: Record<string, FirstFlight>;
   pageLinks?: PageLink[];
   currentPath?: string;
-}
-
-function installDate(d: string): string {
-  return new Date(`${d.slice(0, 10)}T12:00:00Z`).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    timeZone: "UTC",
-  });
 }
 
 function InstallRow({ install, first }: { install: RecentInstall; first?: FirstFlight }) {
@@ -37,7 +29,7 @@ function InstallRow({ install, first }: { install: RecentInstall; first?: FirstF
           <span className="text-xs text-muted hidden sm:inline">{install.OperatedBy}</span>
         )}
         <span className="text-xs text-muted tabular-nums ml-auto">
-          Found {installDate(install.DateFound)}
+          Found {shortDate(install.DateFound.slice(0, 10))}
         </span>
       </div>
       {first && (
@@ -49,12 +41,7 @@ function InstallRow({ install, first }: { install: RecentInstall; first?: FirstF
           <span className="font-mono text-secondary">
             {first.flight_number} {first.origin} → {first.destination}
           </span>{" "}
-          on{" "}
-          {new Date(first.departed_at * 1000).toLocaleDateString("en-US", {
-            month: "short",
-            day: "numeric",
-            timeZone: "UTC",
-          })}
+          on {monthDay(first.departed_at)}
         </div>
       )}
     </div>

@@ -15,6 +15,7 @@ import { type PageLink, PopularFlightsLinks } from "./atoms";
 import { Faq, type FaqEntry, JsonLd, breadcrumbJsonLd, jsonLdString } from "./faq";
 import { ClientScriptTag, FlightSearchForm } from "./flight-search-form";
 import { H2, PageHeader, PageShell, Section, StatInline, fmt } from "./layout";
+import { formatDuration, shortDate, zonedDeparture } from "./ui/format";
 
 export interface FlightRouteFact {
   departure_airport: string;
@@ -108,14 +109,6 @@ interface CheckFlightPageProps {
   noindex?: boolean;
 }
 
-const DAY_UTC = new Intl.DateTimeFormat("en-US", {
-  month: "short",
-  day: "numeric",
-  year: "numeric",
-  timeZone: "UTC",
-});
-const fmtDay = (sec: number) => DAY_UTC.format(new Date(sec * 1000));
-
 /** Zone → concatenated IATA codes; a third the bytes of the flat map, and the
  * browser re-check needs every airport a flight might leave from. */
 const AIRPORT_ZONES: Record<string, string> = (() => {
@@ -123,36 +116,6 @@ const AIRPORT_ZONES: Record<string, string> = (() => {
   for (const [iata, zone] of Object.entries(AIRPORT_TZ)) byZone[zone] = (byZone[zone] ?? "") + iata;
   return byZone;
 })();
-
-const departureFormatters = new Map<string, Intl.DateTimeFormat>();
-
-/** "Sun, Sep 21, 8:38 AM PDT" at the departure airport; UTC only when the
- * airport's zone is unknown. The checker answers per local day, so a UTC
- * label put late-evening departures on the next date. */
-function fmtDeparture(sec: number, tz: string | null | undefined): string {
-  const zone = tz ?? "UTC";
-  let f = departureFormatters.get(zone);
-  if (!f) {
-    f = new Intl.DateTimeFormat("en-US", {
-      weekday: "short",
-      month: "short",
-      day: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-      timeZoneName: "short",
-      timeZone: zone,
-    });
-    departureFormatters.set(zone, f);
-  }
-  return f.format(new Date(sec * 1000));
-}
-
-// Round total minutes BEFORE splitting into h/m — rounding the remainder
-// alone renders 2h59m30s as "2h 60m".
-const fmtDuration = (sec: number) => {
-  const mins = Math.round(sec / 60);
-  return `${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, "0")}m`;
-};
 
 /** The undated answer: how often this flight gets Starlink. Prefers the
  * model's number (the one the API and MCP quote) over the raw check tally. */
@@ -176,7 +139,7 @@ function usualSummary(flight: FlightFacts): string {
 
 function lastSeenLabel(sec: number | null): string | null {
   if (!sec || sec * 1000 > Date.now()) return null;
-  return `last seen ${fmtDay(sec)}`;
+  return `last seen ${shortDate(sec)}`;
 }
 
 function answerContext(site: SiteConfig, dated: DatedAnswer): AnswerContext {
@@ -224,10 +187,12 @@ function FlightFactBlocks({
                     {u.departure_airport} → {u.arrival_airport}
                     <span className="text-secondary">
                       {" · "}
-                      {fmtDeparture(
-                        u.departure_time,
-                        u.departure_tz ?? airportTimezone(u.departure_airport)
-                      )}
+                      {
+                        zonedDeparture(
+                          u.departure_time,
+                          u.departure_tz ?? airportTimezone(u.departure_airport)
+                        ).full
+                      }
                     </span>
                   </div>
                   <div className="text-muted">
@@ -260,12 +225,12 @@ function FlightFactBlocks({
               <p>
                 Starlink found in <StatInline n={flight.observedStarlink} /> of{" "}
                 <StatInline n={flight.observedTotal} /> Wi-Fi checks of aircraft flying {fn}
-                {flight.observedSince ? ` since ${fmtDay(flight.observedSince)}` : ""}.
+                {flight.observedSince ? ` since ${shortDate(flight.observedSince)}` : ""}.
               </p>
             )}
             {flight.lastStarlink && (
               <p>
-                Last verified on Starlink: {fmtDay(flight.lastStarlink.checked_at)} (
+                Last verified on Starlink: {shortDate(flight.lastStarlink.checked_at)} (
                 <span className="font-mono">{flight.lastStarlink.tail}</span>).
               </p>
             )}
@@ -297,7 +262,9 @@ function FlightFactBlocks({
       {flight.routes.length > 0 && (
         <Section title={`Routes ${fn} flies`}>
           {flight.notObservedSince && !scheduledOnDate ? (
-            <p className="mb-3 text-sm text-muted">Last seen {fmtDay(flight.notObservedSince)}.</p>
+            <p className="mb-3 text-sm text-muted">
+              Last seen {shortDate(flight.notObservedSince)}.
+            </p>
           ) : null}
           <ul className="divide-y divide-subtle text-sm">
             {flight.routes.map((r) => {
@@ -311,7 +278,7 @@ function FlightFactBlocks({
                     <div className="text-primary">
                       {r.departure_airport} → {r.arrival_airport}
                       {r.dur_sec ? (
-                        <span className="text-secondary"> · {fmtDuration(r.dur_sec)}</span>
+                        <span className="text-secondary"> · {formatDuration(r.dur_sec)}</span>
                       ) : null}
                     </div>
                     <div className="text-muted">

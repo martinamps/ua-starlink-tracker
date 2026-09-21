@@ -17,6 +17,7 @@ import { AnswerBlock, HomeFaq } from "./faq";
 import { AirportBars } from "./home/rollout";
 import { PageHeader, PageShell, Section, StatInline, fmt, pct } from "./layout";
 import { PassengerBanner } from "./passenger-banner";
+import { formatPillTime, longDate } from "./ui/format";
 
 interface PageProps {
   total: number;
@@ -43,19 +44,6 @@ interface PageProps {
   hubLinks?: HubHomeLinks;
 }
 
-const AS_OF_UTC = new Intl.DateTimeFormat("en-US", {
-  month: "long",
-  day: "numeric",
-  year: "numeric",
-  timeZone: "UTC",
-});
-
-/** "September 20, 2026" from the data's lastUpdated stamp; undefined when unparseable. */
-export function asOfDate(lastUpdated?: string): string | undefined {
-  const stamped = new Date(lastUpdated ?? "");
-  return Number.isNaN(stamped.getTime()) ? undefined : AS_OF_UTC.format(stamped);
-}
-
 /** The one ContentStats the homepage body and its FAQPage JSON-LD both render from. */
 export function buildContentStats(input: {
   starlinkCount: number;
@@ -76,7 +64,7 @@ export function buildContentStats(input: {
     installsPerMonth: input.installsPerMonth,
     installs30d: input.installs30d,
     weeklyInstalls: input.weeklyInstalls,
-    asOf: asOfDate(input.lastUpdated),
+    asOf: longDate(input.lastUpdated),
     perAirline: input.perAirline,
   };
 }
@@ -126,21 +114,6 @@ function StatSentence({ site, stats }: { site: SiteConfig; stats: ContentStats }
 // over the SSR'd DOM and therefore cover only the rendered rows — the cap
 // notice points anyone hunting a specific tail at /fleet.
 const AIRCRAFT_LIST_CAP = 100;
-
-// Built once: toLocale*String({timeZone}) constructs a formatter per call, and
-// ~3,500 pills per homepage render made that most of the SSR time.
-const PILL_WEEKDAY_UTC = new Intl.DateTimeFormat("en-US", { weekday: "short", timeZone: "UTC" });
-const PILL_HHMM_UTC = new Intl.DateTimeFormat("en-US", {
-  hour: "2-digit",
-  minute: "2-digit",
-  hour12: false,
-  timeZone: "UTC",
-});
-
-export function formatPillTime(epochSec: number): string {
-  const d = new Date(epochSec * 1000);
-  return `${PILL_WEEKDAY_UTC.format(d).toUpperCase()} ${PILL_HHMM_UTC.format(d)} UTC`;
-}
 
 const dateOverrides: Record<string, string> = {
   N127SY: "2025-03-07", // First Starlink installation per press release

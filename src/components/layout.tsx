@@ -8,22 +8,9 @@ import type React from "react";
 import { normalizeAircraftType } from "../airlines/aircraft-families";
 import { AIRLINES, type SiteConfig } from "../airlines/registry";
 import { CrossSiteLinks, type PageLink, PageNavLinks } from "./atoms";
+import { fmt, pct } from "./ui/format";
 
-/** Thousands-separated integer or decimal, the one number format pages use. */
-export function fmt(n: number, maximumFractionDigits = 0): string {
-  return n.toLocaleString("en-US", { maximumFractionDigits });
-}
-
-/** Share as "35%", floored so no page claims more than the data: "100%" only
- * when every aircraft has it, ">99%" and "<1%" at the edges. */
-export function pct(n: number, total: number): string {
-  if (total <= 0) return "0%";
-  if (n >= total) return "100%";
-  const p = (n / total) * 100;
-  if (p > 99) return ">99%";
-  if (p > 0 && p < 1) return "<1%";
-  return `${Math.floor(p)}%`;
-}
+export { fmt, pct };
 
 const FAMILY_DISPLAY: Record<string, string> = {
   "B737-MAX8": "737 MAX 8",
@@ -197,45 +184,6 @@ export function StatInline({ n, children }: { n?: number; children?: React.React
     <strong className="font-semibold text-primary tabular-nums">
       {n !== undefined ? fmt(n) : children}
     </strong>
-  );
-}
-
-export function BarRow({
-  label,
-  href,
-  n,
-  total,
-}: {
-  label: React.ReactNode;
-  href?: string;
-  n: number;
-  total: number;
-}) {
-  const share = total > 0 ? Math.min(100, (n / total) * 100) : 0;
-  const text = typeof label === "string" ? label : "";
-  return (
-    <li className="grid grid-cols-[minmax(0,7rem)_1fr_auto] items-center gap-3 py-1.5 text-sm">
-      {href ? (
-        <a href={href} className="truncate text-secondary hover:text-accent transition-colors">
-          {label}
-        </a>
-      ) : (
-        <span className="truncate text-secondary">{label}</span>
-      )}
-      <div
-        className="h-2 overflow-hidden rounded-full bg-surface-elevated"
-        role="img"
-        aria-label={`${text}: ${fmt(n)} of ${fmt(total)} (${pct(n, total)})`}
-      >
-        <div
-          className="h-full rounded-full bg-[var(--color-accent)]"
-          style={{ width: `${share}%` }}
-        />
-      </div>
-      <span className="font-mono text-xs text-muted tabular-nums whitespace-nowrap">
-        {fmt(n)}/{fmt(total)} · {pct(n, total)}
-      </span>
-    </li>
   );
 }
 

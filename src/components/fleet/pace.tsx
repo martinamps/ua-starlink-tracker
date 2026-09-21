@@ -1,5 +1,6 @@
 import type { FleetPageData } from "../../types";
 import { EYEBROW, H2, PANEL, SECTION_WIDE, fmt } from "../layout";
+import { monthDay } from "../ui/format";
 
 // computePulse's window: six hours back to 66 ahead.
 const PULSE_WINDOW = "from 6 hours ago to 66 hours ahead";
@@ -59,14 +60,6 @@ export function LivePulse({ pulse }: { pulse: FleetPageData["pulse"] }) {
       </div>
     </section>
   );
-}
-
-function monthDay(iso: string): string {
-  return new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    timeZone: "UTC",
-  });
 }
 
 export function InstallPaceSection({ pace }: { pace: FleetPageData["installPace"] }) {

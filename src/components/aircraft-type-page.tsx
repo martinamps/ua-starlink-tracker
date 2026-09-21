@@ -27,6 +27,7 @@ import {
 import { PROVIDER_LABEL, ProviderLegend } from "./fleet/providers";
 import { ShareBarRow, providerCounts } from "./fleet/type-bars";
 import { EYEBROW, H2, PANEL, PageHeader, PageShell, StatInline, fmt } from "./layout";
+import { longDate } from "./ui/format";
 
 export interface AircraftTypeSibling {
   slug: string;
@@ -72,10 +73,6 @@ const TARGET_IN_HEADER: ReadonlySet<AircraftVerdictKind> = new Set([
 const H2_CARD = `${H2} mb-3`;
 const CARD = `${PANEL} mb-4`;
 const LINK = "text-accent hover:underline";
-
-function monthDay(iso: string): string {
-  return formatFactDate(iso.slice(0, 10));
-}
 
 /** Every tail of the type as one square, colored by its Wi-Fi today. */
 function TailMatrix({
@@ -277,13 +274,13 @@ function RecentSection({ def, data }: { def: AircraftPageDef; data: AircraftType
             <a href={`/fleet#t-${r.tail}`} className={`${LINK} font-mono text-xs`}>
               {r.tail}
             </a>{" "}
-            <span className="text-muted">{monthDay(r.date)}</span>
+            <span className="text-muted">{longDate(r.date)}</span>
           </li>
         ))}
       </ul>
       <p className="text-xs text-muted mt-3">
         The date we first saw Starlink on each {def.short}, leaving out bulk imports
-        {data.firstSeen ? `. The first was ${monthDay(data.firstSeen)}` : ""}.
+        {data.firstSeen ? `. The first was ${longDate(data.firstSeen)}` : ""}.
       </p>
     </section>
   );
