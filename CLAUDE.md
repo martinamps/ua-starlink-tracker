@@ -50,6 +50,7 @@ FlyerTalk QR/AS/AF data arrives via `bun run residential-sync` from a laptop (pr
 - **`GET /api/check-any-flight?flight_number=HA50&date=YYYY-MM-DD`** (hub host) — extension non-UA surface since v2; top-level `hasStarlink`, `confidence`, `probability`, `airline`, `error`, `flights`. Additive only.
 - **MCP tool names and result shapes** — clients cache schemas at connect time.
 - **Goldens pin all three byte-for-byte:** `tests/golden/api-contracts.json` (check-flight, check-any-flight, MCP `check_flight`, .ics) and `tests/golden/mcp-tools-list.json`. A diff there is a contract change; regenerate (`UPDATE_GOLDEN=1 bun test tests/api-contract-golden.test.ts`, `bun run capture-golden`) only on purpose.
+- **`GET /api/routes`** — `rows[].flight_numbers` counts marketing flight slots (distinct `slot_flight`), so UA5212 and its operating spelling SKW5212 are one number. It once counted stored spellings, which double-counted every regional codeshare; that was a bug, and the field's name and type are unchanged.
 - **Leg scoping** — both endpoints and MCP `check_flight` accept optional `origin`/`destination` (IATA; K/P ICAO accepted). Absent → the response is byte-identical to the unscoped one; `leg` appears only when a param is sent. Invalid input never errors: it answers unscoped with `leg.match: "unscoped"` and a `reason` (invalid_airport, same_airport, no_timezone, ambiguous_leg).
 
 ## Conventions
