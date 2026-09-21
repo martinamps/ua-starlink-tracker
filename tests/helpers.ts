@@ -59,6 +59,15 @@ export function makeFreshDb(): Database {
   return db;
 }
 
+/** The HTML from `heading` up to the next <h2>. Throws when the heading is
+ * absent, so an assertion on the section can never pass on a missing one. */
+export function sectionOf(html: string, heading: string): string {
+  const start = html.indexOf(heading);
+  if (start < 0) throw new Error(`no section headed "${heading}"`);
+  const next = html.indexOf("<h2", start + heading.length);
+  return html.slice(start, next < 0 ? undefined : next);
+}
+
 export const utc = (iso: string) => Math.floor(Date.parse(iso) / 1000);
 
 // ── dispatch helpers (shared by isolation + tenant-matrix) ──────────────────

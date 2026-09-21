@@ -22,7 +22,7 @@ import {
 } from "../src/database/database";
 import { createReaderFactory } from "../src/database/reader";
 import { createApp } from "../src/server/app";
-import { addFleet, addFlight, addPlane, makeSyntheticDb, postMcp, req } from "./helpers";
+import { addFleet, addFlight, addPlane, makeSyntheticDb, mcpTool, req, sectionOf } from "./helpers";
 
 const UA_HOST = "unitedstarlinktracker.com";
 const AS_HOST = "alaskastarlinktracker.com";
@@ -119,6 +119,44 @@ describe("one tail, one airport, one time is one departure", () => {
     expect(slots).toHaveLength(1);
     expect(getRouteStarlinkSchedule(db, "UA", NOW).totalDepartures).toBe(1);
     expect(getAirportDepartures(db, "UA", NOW).rows).toEqual([{ airport: "GDL", count: 1 }]);
+    db.close();
+  });
+});
+
+describe("slot winner and window", () => {
+  test("an equal last_updated tie goes to the later write, every time", () => {
+    const db = makeSyntheticDb();
+    equippedTail(db, "N100SY");
+    equippedTail(db, "N101SY");
+    addFlight(db, "N100SY", "SKW5236", "GDL", T, { arrivalAirport: "IAH", lastUpdated: NOW });
+    addFlight(db, "N101SY", "OO5236", "GDL", T, { arrivalAirport: "IAH", lastUpdated: NOW });
+    const q = { from: NOW, to: T + 3600 };
+    const tails = () => getDepartureSlots(db, "UA", q).map((s) => s.tail_number);
+    expect(tails()).toEqual(["N101SY"]);
+    expect(tails()).toEqual(tails());
+    db.close();
+  });
+
+  test("a diversion keeps one departure: same number and time, the newer arrival wins", () => {
+    const db = makeSyntheticDb();
+    equippedTail(db, "N100SY");
+    addFlight(db, "N100SY", "SKW5236", "GDL", T, { arrivalAirport: "IAH", lastUpdated: NOW });
+    addFlight(db, "N100SY", "SKW5236", "GDL", T, { arrivalAirport: "AUS", lastUpdated: NOW + 60 });
+    const slots = getDepartureSlots(db, "UA", { from: NOW, to: T + 3600 });
+    expect(slots.map((s) => s.arrival_airport)).toEqual(["AUS"]);
+    expect(getRouteStarlinkSchedule(db, "UA", NOW).totalDepartures).toBe(1);
+    db.close();
+  });
+
+  test("the window is [from, to): a departure at `from` counts, one at `to` does not", () => {
+    const db = makeSyntheticDb();
+    equippedTail(db, "N100SY");
+    addFlight(db, "N100SY", "SKW5236", "GDL", T, { arrivalAirport: "IAH" });
+    addFlight(db, "N100SY", "SKW5237", "IAH", T + 7200, { arrivalAirport: "GDL" });
+    const fns = (from: number, to: number) =>
+      getDepartureSlots(db, "UA", { from, to }).map((s) => s.slot_flight);
+    expect(fns(T, T + 7200)).toEqual(["UA5236"]);
+    expect(fns(T + 1, T + 7201)).toEqual(["UA5237"]);
     db.close();
   });
 });
@@ -248,11 +286,10 @@ describe("a tail swap onto a non-Starlink tail removes the departure", () => {
 
   test("MCP search lists the departure once, only while its current tail is Starlink", async () => {
     const app = createApp(swapped());
-    const res = await postMcp(app, UA_HOST, "tools/call", {
-      name: "search_starlink_flights",
-      arguments: { origin: "LNK", destination: "DEN" },
+    const { text } = await mcpTool(app, UA_HOST, "search_starlink_flights", {
+      origin: "LNK",
+      destination: "DEN",
     });
-    const text: string = res.result.content[0].text;
     expect(text).toMatch(/^Found 1 confirmed Starlink flight /);
     expect(text).not.toContain("UA5763");
   });
@@ -263,7 +300,7 @@ describe("a tail swap onto a non-Starlink tail removes the departure", () => {
       /<!-- -->/g,
       ""
     );
-    const block = html.slice(html.indexOf("Next UA5763 departures"));
+    const block = sectionOf(html, "Next UA5763 departures");
     expect(block).toContain("N786SK");
     expect(block).not.toContain("N716EV");
     expect(block).toContain("No Wi-Fi");
@@ -352,10 +389,13 @@ describe("operating partners on route surfaces", () => {
     const res = await createApp(db).dispatch(req("/route-planner/HND/HNL", AS_HOST));
     expect(res.status).toBe(200);
     const html = (await res.text()).replace(/<!-- -->/g, "");
-    const rows = html.match(/N373HA/g) ?? [];
-    expect(rows.length).toBeGreaterThanOrEqual(
-      getRouteSummary(db, "HND", "HNL", "AS", NOW).equippedDepartures
-    );
+    const tbody = html.match(/<tbody>([\s\S]*?)<\/tbody>/)?.[1];
+    expect(tbody).toBeDefined();
+    const rows = (tbody ?? "").split("<tr").slice(1);
+    const listed = getRouteSummary(db, "HND", "HNL", "AS", NOW).equippedDepartures;
+    expect(listed).toBe(2);
+    expect(rows).toHaveLength(listed);
+    for (const row of rows) expect(row).toContain("N373HA");
     db.close();
   });
 
@@ -382,7 +422,7 @@ describe("operating partners on route surfaces", () => {
       /<!-- -->/g,
       ""
     );
-    const block = html.slice(html.indexOf("Next AS2092 departures"));
+    const block = sectionOf(html, "Next AS2092 departures");
     expect(block).toContain("N644QX");
     expect(block).toMatch(/text-success">Starlink</);
     expect(block).not.toContain("Install pending");
