@@ -63,6 +63,12 @@ export function methodNotAllowed(asJson = false): Response {
     : text("Method not allowed", "text/plain", { status: 405 });
 }
 
+/** A same-origin redirect. The Location stays relative so local and staging
+ * hosts keep their own origin. */
+export function redirect(location: string, status: 301 | 302 = 302): Response {
+  return new Response(null, { status, headers: { Location: location } });
+}
+
 /** Copy `res` with `defaults` filled in wherever the handler set nothing. */
 export function withDefaultHeaders(
   res: Response,

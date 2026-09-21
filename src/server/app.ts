@@ -30,9 +30,11 @@ import { type HubHomeLinks, allFaqEntries, getContent } from "../airlines/conten
 import {
   CANONICAL_FLIGHT_PERMALINK,
   buildFlightLookupVariants,
+  canonicalFlightFor,
   canonicalFlightInput,
   detectMarketingCarrier,
   ensureAirlinePrefix,
+  flightInputRules,
   icaoCallsignToIata,
   normalizeAirlineFlightNumber,
   permalinkCarrier,
@@ -208,6 +210,7 @@ import {
   json,
   jsonError,
   methodNotAllowed,
+  redirect,
   text,
   withDefaultHeaders,
   xml,
@@ -2754,6 +2757,27 @@ function parseCheckFlightPath(pathname: string): CheckFlightPath {
   return { kind: "flight", raw, fn, date };
 }
 
+/**
+ * Where the search form's no-JS submit lands: the permalink its script would
+ * have built, in one hop. A pinned host completes bare digits with its own
+ * code; anything that still isn't a permalink goes to the router, which
+ * explains itself. Origin and destination ride along as query.
+ */
+export function noJsPermalink(pinned: AirlineConfig | null, params: URLSearchParams): string {
+  const raw = params.get("flight_number") ?? "";
+  const fn =
+    (pinned && canonicalFlightFor(flightInputRules(pinned), raw)) ??
+    stripFlightNumberZeros(icaoCallsignToIata(canonicalFlightInput(raw)));
+  const date = params.get("date") ?? "";
+  const leg = new URLSearchParams();
+  for (const key of ["origin", "destination"]) {
+    const v = params.get(key)?.trim();
+    if (v) leg.set(key, v);
+  }
+  const query = leg.size ? `?${leg}` : "";
+  return `/check-flight/${encodeURIComponent(fn)}${isRealIsoDate(date) ? `/${date}` : ""}${query}`;
+}
+
 /** Cap what an invalid segment can echo back into the page. React escapes it;
  * this only keeps a pasted essay from wrecking the layout. */
 const echoQuery = (raw: string | null): string | null =>
@@ -3135,12 +3159,8 @@ const checkFlightPage: Handler = async (ctx) => {
       }
     );
   }
-  // The search form's no-JS submit: land on the permalink it would have built.
-  const queried = ctx.url.searchParams.get("flight_number")?.trim();
-  if (ctx.url.pathname === "/check-flight" && queried) {
-    const qDate = ctx.url.searchParams.get("date") ?? "";
-    const target = `/check-flight/${encodeURIComponent(canonicalFlightInput(queried))}${isRealIsoDate(qDate) ? `/${qDate}` : ""}`;
-    return Response.redirect(`https://${ctx.site.canonicalHost}${target}`, 302);
+  if (ctx.url.pathname === "/check-flight" && ctx.url.searchParams.get("flight_number")?.trim()) {
+    return redirect(noJsPermalink(tenantConfig(ctx.tenant), ctx.url.searchParams));
   }
   if (ctx.url.pathname !== "/check-flight") {
     return Response.redirect(

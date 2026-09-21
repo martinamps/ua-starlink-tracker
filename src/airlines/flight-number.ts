@@ -4,14 +4,14 @@
  */
 
 import {
-  FLIGHT_INPUT_SEPARATORS,
   type FlightInputRules,
+  canonicalFlightFor,
   canonicalFlightInput,
   stripFlightNumberZeros,
 } from "./flight-input";
 import { AIRLINES, type AirlineConfig, enabledAirlines } from "./registry";
 
-export { canonicalFlightInput, stripFlightNumberZeros };
+export { canonicalFlightFor, canonicalFlightInput, stripFlightNumberZeros };
 
 function detectByPrefixes(
   flightNumber: string,
@@ -250,13 +250,12 @@ export function canonicalPermalinkFor(cfg: AirlineConfig): RegExp {
 }
 
 /**
- * The permalink rules as plain data for the browser's flight search (see
- * canonicalFlightFor), so the form mints exactly the URL parseCheckFlightPath
- * would 301 to instead of carrying its own copy of the separators and bound.
+ * The permalink rules as plain data for canonicalFlightFor, so the browser
+ * form and the no-JS redirect mint exactly the URL parseCheckFlightPath
+ * accepts instead of carrying their own copy of the bound.
  */
 export function flightInputRules(cfg: AirlineConfig): FlightInputRules {
   return {
-    separators: FLIGHT_INPUT_SEPARATORS.source,
     iata: cfg.iata,
     icao: cfg.icao,
     permalink: canonicalPermalinkFor(cfg).source,
