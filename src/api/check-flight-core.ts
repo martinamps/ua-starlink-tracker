@@ -28,6 +28,7 @@ import {
 } from "../airlines/registry";
 import type { FlightAssignmentRow, UnequippedAssignment } from "../database/database";
 import type { Scope, ScopedReader } from "../database/reader";
+import { rowEvidence } from "../database/sql/equipped";
 import {
   COUNTERS,
   type Tags,
@@ -600,13 +601,19 @@ function onceLookup(lookupTail: ResolveDeps["lookupTail"]): ResolveDeps["lookupT
 
 type RowClass = "settled" | "verified_other" | "verified" | "unverified";
 
-// settled_negative (united_fleet 'negative') outranks the spreadsheet row,
-// whatever verified_wifi says — same rule as database.ts equippedFilter.
+// The one evidence ranking (database/sql/equipped.ts): a settled negative
+// outranks the listing, whatever verified_wifi says.
 function classifyRow(r: FlightAssignmentRow): RowClass {
-  if (r.settled_negative) return "settled";
-  if (r.verified_wifi !== null && r.verified_wifi !== "Starlink") return "verified_other";
-  if (r.verified_wifi === "Starlink") return "verified";
-  return "unverified";
+  switch (rowEvidence(r)) {
+    case "settled_negative":
+      return "settled";
+    case "verified_other":
+      return "verified_other";
+    case "verified":
+      return "verified";
+    default:
+      return "unverified";
+  }
 }
 
 function rowOutcome(r: FlightAssignmentRow): "yes" | "no" {

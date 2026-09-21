@@ -79,6 +79,12 @@ import { excludeMassWriteDays } from "../utils/install-rate";
 import { debug, info, error as logError, warn } from "../utils/logger";
 import { ensureAdsbFlightDrawsTable } from "./adsb-flight-draws";
 import { ASSIGNMENT_LOG_DDL, logFlightAssignments, pruneAssignmentLog } from "./assignment-log";
+import {
+  equippedSql,
+  fleetStatusFromWifi,
+  settledNegativeJoin,
+  tailEquippedSql,
+} from "./sql/equipped";
 
 import {
   type AirlineFilter,
@@ -1243,18 +1249,6 @@ export function getAirlineByTail(db: Database, airline?: AirlineFilter): Record<
   return Object.fromEntries(rows.map((r) => [r.TailNumber, r.airline]));
 }
 
-// Shared "this row counts as Starlink-equipped" predicate for starlink_planes
-// reads. Excludes tails united_fleet has settled as 'negative' so the headline
-// list, hero rings, hub cards, and check-flight all agree. `_neg` alias avoids
-// collisions with callers that already join united_fleet/upcoming_flights as uf.
-function equippedFilter(sp: string): string {
-  return `(${sp}.verified_wifi IS NULL OR ${sp}.verified_wifi = 'Starlink')
-    AND NOT EXISTS (
-      SELECT 1 FROM united_fleet _neg
-      WHERE _neg.tail_number = ${sp}.TailNumber AND _neg.starlink_status = 'negative'
-    )`;
-}
-
 // DateFound records when WE found the tail, not when the antenna went on.
 // Bulk writers — seed batches (sheet_gid '*_seed'), type-rule settles, and
 // FlyerTalk backfills — stamp a single run date across many tails, so any
@@ -1305,7 +1299,7 @@ export function getRecentInstalls(
   perAirlineCap?: number
 ): RecentInstall[] {
   const cols = "airline, TailNumber, aircraft as Aircraft, OperatedBy, DateFound";
-  const filter = `${equippedFilter("starlink_planes")} AND ${INSTALL_FILTER}`;
+  const filter = `${equippedSql("starlink_planes")} AND ${INSTALL_FILTER}`;
   if (perAirlineCap && perAirlineCap > 0) {
     const q = withAirline(
       `SELECT ${cols}, ROW_NUMBER() OVER (PARTITION BY airline ORDER BY DateFound DESC) AS rn
@@ -1341,7 +1335,7 @@ export function getDailyInstalls(
   const q = withAirline(
     `SELECT substr(DateFound, 1, 10) AS day, COUNT(*) AS installs
      FROM starlink_planes
-     WHERE ${equippedFilter("starlink_planes")}
+     WHERE ${equippedSql("starlink_planes")}
        AND ${INSTALL_FILTER}`,
     airline
   );
@@ -1388,7 +1382,7 @@ export function recordFirstFlights(db: Database, now = unixNow()): FirstFlight[]
          FROM starlink_planes sp
          JOIN upcoming_flights uf
            ON uf.tail_number = sp.TailNumber AND uf.airline = sp.airline
-         WHERE ${equippedFilter("sp")}
+         WHERE ${equippedSql("sp")}
            AND ${INSTALL_FILTER}
            AND ${NOT_FORUM_DATED}
            AND sp.airline IN (${ph})
@@ -1519,7 +1513,7 @@ export function getHubStats(
   const equipped = db
     .query(
       `SELECT airline, COUNT(*) n FROM starlink_planes
-       WHERE ${equippedFilter("starlink_planes")}
+       WHERE ${equippedSql("starlink_planes")}
          AND airline IN (${ph})
        GROUP BY airline`
     )
@@ -1529,7 +1523,7 @@ export function getHubStats(
     .query(
       `SELECT airline, COUNT(*) n FROM starlink_planes
        WHERE DateFound >= ?
-         AND ${equippedFilter("starlink_planes")}
+         AND ${equippedSql("starlink_planes")}
          AND ${INSTALL_FILTER}
          AND airline IN (${ph})
        GROUP BY airline`
@@ -1556,7 +1550,7 @@ export function getHubStats(
  */
 export function countStarlinkPlanes(db: Database, airline?: AirlineFilter): number {
   const q = withAirline(
-    `SELECT COUNT(*) AS n FROM starlink_planes sp WHERE ${equippedFilter("sp")}`,
+    `SELECT COUNT(*) AS n FROM starlink_planes sp WHERE ${equippedSql("sp")}`,
     airline
   );
   return (db.query(q.sql).get(...q.params) as { n: number }).n;
@@ -1573,7 +1567,7 @@ export function getStarlinkPlanes(db: Database, airline?: AirlineFilter): Aircra
             OperatedBy,
             fleet
      FROM starlink_planes sp
-     WHERE ${equippedFilter("sp")}`,
+     WHERE ${equippedSql("sp")}`,
     airline
   );
   return db.query(`${q.sql} ORDER BY DateFound DESC`).all(...q.params) as Aircraft[];
@@ -1617,7 +1611,7 @@ export function getFleetStats(db: Database, airline = "UA"): FleetStats {
        SUM(CASE WHEN uf.starlink_status IS NOT 'confirmed' THEN 1 ELSE 0 END) as unverified
      FROM starlink_planes sp
      LEFT JOIN united_fleet uf ON sp.TailNumber = uf.tail_number
-     WHERE ${equippedFilter("sp")}`,
+     WHERE ${equippedSql("sp")}`,
     airline,
     "sp"
   );
@@ -1808,7 +1802,7 @@ export type FlightAssignmentRow = Flight & {
   OperatedBy: string;
   fleet: string;
   verified_wifi: string | null;
-  /** 1 when united_fleet has settled the tail 'negative' — see equippedFilter. */
+  /** 1 when united_fleet has settled the tail 'negative' — see sql/equipped.ts. */
   settled_negative: number;
   /** united_fleet.verified_wifi for settled-negative tails (names the actual provider). */
   settled_wifi: string | null;
@@ -1818,7 +1812,7 @@ export type FlightAssignmentRow = Flight & {
  * Check-flight assignments lookup (REST + MCP via check-flight-core). No
  * verified_wifi filter — the core classifies rows into confidence tiers —
  * and ordered by last_updated DESC (for swap dedup). `settled_negative`
- * mirrors equippedFilter's NOT EXISTS clause (the canonical negative-settle
+ * mirrors equippedSql's NOT EXISTS clause (the canonical negative-settle
  * rule) so callers don't re-derive it per row; the LEFT JOIN can't fan out
  * because united_fleet.tail_number is UNIQUE.
  */
@@ -1836,8 +1830,7 @@ export function getFlightAssignments(
        _neg.verified_wifi as settled_wifi
      FROM upcoming_flights uf
      INNER JOIN starlink_planes sp ON uf.tail_number = sp.TailNumber
-     LEFT JOIN united_fleet _neg
-       ON _neg.tail_number = sp.TailNumber AND _neg.starlink_status = 'negative'
+     ${settledNegativeJoin("_neg", "sp.TailNumber")}
      WHERE uf.flight_number IN (${ph})
        AND uf.departure_time >= ? AND uf.departure_time < ?`,
     airline,
@@ -2015,7 +2008,7 @@ export function getConfirmedStarlinkEdges(
     `SELECT DISTINCT uf.flight_number, uf.departure_airport, uf.arrival_airport, uf.departure_time, sp.fleet
      FROM upcoming_flights uf
      JOIN starlink_planes sp ON uf.tail_number = sp.TailNumber
-     WHERE sp.verified_wifi = 'Starlink'
+     WHERE sp.verified_wifi = 'Starlink' AND ${equippedSql("sp")}
        AND uf.departure_time >= ? AND uf.departure_time < ?`,
     airline,
     "uf",
@@ -2049,7 +2042,7 @@ export function getSubfleetPenetration(
        LEFT JOIN starlink_planes sp
               ON sp.TailNumber = uf.tail_number
              AND sp.airline = uf.airline
-             AND ${equippedFilter("sp")}
+             AND ${equippedSql("sp")}
        WHERE uf.airline = ?
        GROUP BY uf.fleet, uf.aircraft_type`
     )
@@ -3295,7 +3288,7 @@ export function getNextCommunityFleetTailNeedingFlights(
       WHERE uf.airline IN (${placeholders(codes)})
         AND NOT EXISTS (
           SELECT 1 FROM starlink_planes sp
-          WHERE sp.TailNumber = uf.tail_number AND ${equippedFilter("sp")}
+          WHERE sp.TailNumber = uf.tail_number AND ${equippedSql("sp")}
         )
         AND NOT EXISTS (
           SELECT 1 FROM upcoming_flights f
@@ -3379,7 +3372,7 @@ export function getTypeProgress(db: Database, airline: string): TypeProgress[] {
        LEFT JOIN starlink_planes sp
               ON sp.TailNumber = uf.tail_number
              AND sp.airline = uf.airline
-             AND ${equippedFilter("sp")}
+             AND ${equippedSql("sp")}
        LEFT JOIN fleet_guide_tails g
               ON g.airline = uf.airline AND g.tail_number = uf.tail_number
        WHERE uf.airline = ?`
@@ -3494,7 +3487,7 @@ export function getUnequippedAssignments(
        AND u.departure_time >= ? AND u.departure_time < ?
        AND NOT EXISTS (
          SELECT 1 FROM starlink_planes sp
-         WHERE sp.TailNumber = u.tail_number AND ${equippedFilter("sp")}
+         WHERE sp.TailNumber = u.tail_number AND ${equippedSql("sp")}
        )`,
     airline,
     "u",
@@ -4196,7 +4189,7 @@ export function reconcileConsensus(db: Database): number {
 }
 
 /**
- * A 'negative' settle outranks everything (equippedFilter, classifyRow), so a
+ * A 'negative' settle outranks everything (equippedSql, tailEvidence), so a
  * tail retrofitted after it was settled answered a firm "not Starlink" while
  * its two newest United.com checks said Starlink: an ambiguous 30-day window
  * (2 Starlink, 2 Viasat) never re-settles, and the streak override needs 3.
@@ -4684,12 +4677,7 @@ export function syncSpreadsheetToFleet(db: Database): number {
       // 'negative'. The UPDATE CASE guard bootstraps unknown→this value, so
       // computing 'negative' here was dragging freshly-reset tails back every
       // hour before consensus could accumulate clean observations.
-      const starlinkStatus: StarlinkStatus =
-        plane.verified_wifi === "Starlink"
-          ? "confirmed"
-          : plane.verified_wifi === null
-            ? "unknown"
-            : "negative";
+      const starlinkStatus = fleetStatusFromWifi(plane.verified_wifi);
       const type = safeType(plane.aircraft);
 
       const existing = existsStmt.get(plane.TailNumber) as {
@@ -5499,7 +5487,7 @@ function slotFlightSql(col: string): string {
  * is chosen BEFORE the equipped test, so a swap onto a non-Starlink tail
  * removes the departure instead of leaving the stale Starlink row standing.
  *
- * `equipped` is equippedFilter, the predicate behind the headline counts and
+ * `equipped` is equippedSql, the predicate behind the headline counts and
  * the verdict engine's classifyRow; a tail missing from starlink_planes is not
  * equipped. Placeholders: the scope clause's, then [from, to) on departure_time.
  */
@@ -5507,7 +5495,7 @@ function departureSlotsSql(scopeClause: string): string {
   return `SELECT s.*, sp.Aircraft AS aircraft_type, sp.verified_wifi AS verified_wifi,
          CASE WHEN _sneg.tail_number IS NOT NULL THEN 1 ELSE 0 END AS settled_negative,
          _sneg.verified_wifi AS settled_wifi,
-         CASE WHEN sp.TailNumber IS NOT NULL AND ${equippedFilter("sp")} THEN 1 ELSE 0 END AS equipped
+         CASE WHEN sp.TailNumber IS NOT NULL AND ${equippedSql("sp")} THEN 1 ELSE 0 END AS equipped
   FROM (
     SELECT k.*, ROW_NUMBER() OVER (
              PARTITION BY k.slot_flight, k.departure_airport, k.departure_time
@@ -5519,8 +5507,7 @@ function departureSlotsSql(scopeClause: string): string {
     ) k
   ) s
   LEFT JOIN starlink_planes sp ON sp.TailNumber = s.tail_number
-  LEFT JOIN united_fleet _sneg
-    ON _sneg.tail_number = s.tail_number AND _sneg.starlink_status = 'negative'
+  ${settledNegativeJoin("_sneg", "s.tail_number")}
   WHERE s.slot_rank = 1`;
 }
 
@@ -5532,7 +5519,7 @@ export type DepartureSlot = Flight & {
   verified_wifi: string | null;
   settled_negative: number;
   settled_wifi: string | null;
-  /** 1 when the slot's current tail passes equippedFilter. */
+  /** 1 when the slot's current tail passes equippedSql. */
   equipped: number;
 };
 
@@ -5683,7 +5670,7 @@ function computeInstallPace(
   const q = withAirline(
     `SELECT DateFound AS d, fleet FROM starlink_planes
      WHERE DateFound >= ?
-       AND ${equippedFilter("starlink_planes")}
+       AND ${equippedSql("starlink_planes")}
        AND ${INSTALL_FILTER}`,
     airline,
     "",
@@ -5756,12 +5743,14 @@ function computeInstallPace(
 
 function computeFleetPageData(db: Database, airline?: AirlineFilter): FleetPageData {
   const q = withAirline(
-    `SELECT tail_number, aircraft_type, fleet, operated_by,
-            starlink_status, verified_wifi, verified_at, airline
-     FROM united_fleet WHERE 1=1`,
-    airline
+    `SELECT uf.tail_number, uf.aircraft_type, uf.fleet, uf.operated_by,
+            uf.starlink_status, uf.verified_wifi, uf.verified_at, uf.airline,
+            ${tailEquippedSql("uf.tail_number", "uf.airline")} AS equipped
+     FROM united_fleet uf WHERE 1=1`,
+    airline,
+    "uf"
   );
-  const rows = db.query(`${q.sql} ORDER BY tail_number`).all(...q.params) as Array<{
+  const rows = db.query(`${q.sql} ORDER BY uf.tail_number`).all(...q.params) as Array<{
     airline: string;
     tail_number: string;
     aircraft_type: string | null;
@@ -5770,6 +5759,7 @@ function computeFleetPageData(db: Database, airline?: AirlineFilter): FleetPageD
     starlink_status: string;
     verified_wifi: string | null;
     verified_at: number | null;
+    equipped: number;
   }>;
 
   const allTails: FleetTail[] = [];
@@ -5787,9 +5777,15 @@ function computeFleetPageData(db: Database, airline?: AirlineFilter): FleetPageD
     const rawFamily = normalizeAircraftType(r.aircraft_type);
     if (isOutsideProgramme(r.airline, rawFamily)) continue;
     const family = rawFamily === "other" ? "unknown" : rawFamily;
+    const equipped = r.equipped === 1;
+    // The observed provider. A Starlink observation on a tail the one
+    // definition doesn't count (a settle or listing says otherwise) is a
+    // conflict, shown as unchecked rather than as a second Starlink count.
     const rawProvider = normalizeWifiProvider(r.verified_wifi);
     const provider: WifiProvider =
-      rawProvider === "other" ? "unknown" : (rawProvider as WifiProvider);
+      rawProvider === "other" || (rawProvider === "starlink" && !equipped)
+        ? "unknown"
+        : (rawProvider as WifiProvider);
     const body = bodyClassOf(family);
 
     const tail: FleetTail = {
@@ -5802,7 +5798,7 @@ function computeFleetPageData(db: Database, airline?: AirlineFilter): FleetPageD
     };
     allTails.push(tail);
 
-    if (provider === "starlink") totalStarlink++;
+    if (equipped) totalStarlink++;
     bodyClass[body][provider]++;
 
     let fam = familyMap.get(family);
@@ -5812,7 +5808,7 @@ function computeFleetPageData(db: Database, airline?: AirlineFilter): FleetPageD
     }
     fam.total++;
     fam.tails.push(tail);
-    if (provider === "starlink") fam.starlink++;
+    if (equipped) fam.starlink++;
 
     // Express tails whose operator field names no regional (United's own name,
     // or blank: 157 of 507 UA express tails) still count, under one row, so
@@ -5821,7 +5817,7 @@ function computeFleetPageData(db: Database, airline?: AirlineFilter): FleetPageD
     if (r.fleet === "express") {
       const c = carrierMap.get(carrier) || { confirmed: 0, total: 0 };
       c.total++;
-      if (r.starlink_status === "confirmed") c.confirmed++;
+      if (equipped) c.confirmed++;
       carrierMap.set(carrier, c);
     }
   }
@@ -6434,7 +6430,7 @@ export function getAircraftTypeGate(
   if (!def || !AIRLINES[airline]) return null;
   const fam = getFleetPageData(db, [airline]).families.find((f) => f.family === def.family);
   if (!fam || fam.total < minTypeTails(airline, def)) return null;
-  return { total: fam.total, starlink: fam.starlink };
+  return { total: fam.total, starlink: verifiedStarlink(fam.tails).length };
 }
 
 /** Builds every airline's type pages so no request pays the first pass. */
@@ -6478,6 +6474,13 @@ function aircraftTypePages(db: Database, airline: string): Map<string, AircraftT
   return hit.pages;
 }
 
+/** Equipped tails observed on Starlink: a type page's lead count. Its listed,
+ * not-yet-checked tails are listedAwaitingVerification, so the two add up to
+ * the family's equipped count. */
+function verifiedStarlink(tails: readonly FleetTail[]): FleetTail[] {
+  return tails.filter((t) => t.provider === "starlink");
+}
+
 function emptyProviders(): Record<WifiProvider, number> {
   return { starlink: 0, viasat: 0, panasonic: 0, thales: 0, none: 0, unknown: 0 };
 }
@@ -6516,7 +6519,7 @@ function computeAircraftTypePages(
   const listings = db
     .query(
       `SELECT sp.TailNumber AS tail, sp.DateFound AS found, sp.sheet_gid AS gid
-       FROM starlink_planes sp WHERE sp.airline = ? AND ${equippedFilter("sp")}`
+       FROM starlink_planes sp WHERE sp.airline = ? AND ${equippedSql("sp")}`
     )
     .all(airline) as Array<{ tail: string; found: string | null; gid: string | null }>;
   const firstSyncDays = flyertalkFirstSyncDays(db);
@@ -6615,7 +6618,7 @@ function computeAircraftTypePages(
     const memberTails = new Set(fam.tails.map((t) => t.tail));
     const providers = emptyProviders();
     for (const t of fam.tails) providers[t.provider]++;
-    const starlinkTails = fam.tails.filter((t) => t.provider === "starlink");
+    const starlinkTails = verifiedStarlink(fam.tails);
 
     let variants: AircraftTypePageData["variants"] = null;
     if (def.variants) {
@@ -6711,7 +6714,7 @@ function computeAircraftTypePages(
       airline,
       family: def.family,
       total: fam.total,
-      starlink: fam.starlink,
+      starlink: starlinkTails.length,
       providers,
       checked: fam.total - providers.unknown,
       knownOther: providers.viasat + providers.panasonic + providers.thales + providers.none,
