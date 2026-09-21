@@ -1491,8 +1491,14 @@ async function toolPredictFlightStarlink(
     const fleetLabel = fleet === "express" ? "express (regional)" : "mainline";
     details = `No history for this flight number; our ${fleetLabel} estimate for flights not yet seen on a Starlink aircraft — not flight-specific.`;
   } else {
+    // The grade already folds in staleness: plenty of departures can still be
+    // medium or low when most of them are old, and the sentence must agree.
     details =
-      pred.n_observations >= 5 ? "Sample size is solid." : "Limited data — estimate may drift.";
+      pred.confidence === "high"
+        ? "Sample size is solid."
+        : pred.n_observations >= 5
+          ? "Most of its history is old, so the estimate may lag recent installs."
+          : "Limited data — estimate may drift.";
   }
 
   const probLine = `**${forPredict}**: ${approxPct(pred.probability)} Starlink probability ${pred.method === "flight_history_smoothed" ? confidenceTag(pred.n_observations, pred.confidence) : "(fleet prior)"}. ${details}`;
