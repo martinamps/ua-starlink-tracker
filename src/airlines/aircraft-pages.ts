@@ -316,10 +316,6 @@ export const TYPE_DISPLAY: Record<string, string> = {
   E145X: "ERJ-145XR",
 };
 
-export function sheetCodesFor(family: string): string[] {
-  return Object.keys(SHEET_CODE_TO_FAMILY).filter((c) => SHEET_CODE_TO_FAMILY[c] === family);
-}
-
 function factDate(f: RolloutFact): string {
   return f.asOf ?? f.accessed ?? "";
 }

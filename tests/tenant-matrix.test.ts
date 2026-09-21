@@ -67,7 +67,7 @@ const BANNED_PATTERNS: Array<{
     name: 'AIRLINES.UA / "UA"-default',
     re: UA_DEFAULT_RE,
     allowlist: new Map([
-      ["src/airlines/registry.ts", 3], // SITES.united derives from AIRLINES.UA (2) + resolveTenant doc comment (1)
+      ["src/airlines/registry.ts", 2], // SITES.united derives from AIRLINES.UA
       ["src/utils/constants.ts", 1], // extractFlightNumber builds united.com URLs — UA-bound by definition
       ["src/scripts/starlink-predictor.ts", 1], // prediction model trained on UA observations only
       ["src/scripts/fleet-sync.ts", 1], // CLI default argument for the UA sync job

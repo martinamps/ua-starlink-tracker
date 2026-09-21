@@ -144,7 +144,7 @@ export interface AirlineConfig {
   /** Brand-only short form ("United", "Alaska") for titles where the full
    * legal name pushes the keyword past mobile SERP truncation (~50–55 chars). */
   shortName: string;
-  /** Background jobs (scrape/verify/discover/sync) skip airlines with enabled=false. resolveTenant still resolves them. */
+  /** Background jobs (scrape/verify/discover/sync) skip airlines with enabled=false. resolveSite still resolves them. */
   enabled: boolean;
   /** Included on the hub HOMEPAGE and hub-only APIs (/api/data, the hub's
    * check-flight carrier detection, MCP). False keeps an airline out of every
@@ -1274,16 +1274,4 @@ export function analyticsOrigins() {
     scriptOrigins: [...scriptOrigins].sort(),
     connectOrigins: [...connectOrigins].sort(),
   };
-}
-
-/**
- * Resolve the tenant from an incoming Host header.
- * - Matches an airline's hosts → that AirlineConfig
- * - Matches the hub site's hosts → 'ALL'
- * - localhost → AIRLINES[DEV_TENANT ?? 'UA']
- * - Anything else → null (caller responds 421)
- */
-export function resolveTenant(host: string | null): Tenant | null {
-  const site = resolveSite(host);
-  return site ? siteTenant(site) : null;
 }

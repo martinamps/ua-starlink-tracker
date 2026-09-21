@@ -86,14 +86,6 @@ export function breakerEffect(outcome: TailUpdateOutcome): "reset" | "count" | "
   return "count";
 }
 
-async function updateFlightsForTailNumber(
-  db: Database,
-  api: FlightAPI,
-  tailNumber: string
-): Promise<boolean> {
-  return (await pollTailFlights(db, api, tailNumber)) === "updated";
-}
-
 async function pollTailFlights(
   db: Database,
   api: FlightAPI,
@@ -282,6 +274,7 @@ async function processPlanesInBatches(
   return { updatedCount, apiCallCount };
 }
 
+/** @public `bun run update-flights` imports this via `bun -e`. */
 export async function updateAllFlights() {
   const api = createFlightAPI();
   if (!api) {
@@ -485,6 +478,3 @@ export function runStaleUpcomingPrune(db: Database, now = Math.floor(Date.now() 
     return 0;
   }
 }
-
-// Export individual functions for manual use
-export { updateFlightsForTailNumber, updateFlightsIfNeeded };
