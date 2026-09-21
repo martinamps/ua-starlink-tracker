@@ -17,6 +17,7 @@ import type { Aircraft, Flight } from "../types";
 import { FLIGHT_DATA_SOURCE } from "../utils/constants";
 import { type JobHandle, type JobRunContext, startJob } from "../utils/job-runner";
 import { debug, error, info } from "../utils/logger";
+import { sleep } from "../utils/sleep";
 import { FlightAwareAPI } from "./flightaware-api";
 import { type FlightNumberSource, FlightRadar24API } from "./flightradar24-api";
 
@@ -238,7 +239,7 @@ async function processPlanesInBatches(api: FlightAPI, planes: Aircraft[], batchS
     const batchPromises = batch.map(async (plane, index) => {
       try {
         const staggerDelay = createJitteredDelay(2000 + index * 2000, 500);
-        await new Promise((resolve) => setTimeout(resolve, staggerDelay));
+        await sleep(staggerDelay);
 
         const result = await updateFlightsIfNeeded(api, plane.TailNumber);
 
@@ -273,7 +274,7 @@ async function processPlanesInBatches(api: FlightAPI, planes: Aircraft[], batchS
     if (i + batchSize < planesToUpdate.length) {
       const batchDelay = createJitteredDelay(5000, 3000);
       info(`Batch completed, waiting ${Math.round(batchDelay / 1000)}s before next batch...`);
-      await new Promise((resolve) => setTimeout(resolve, batchDelay));
+      await sleep(batchDelay);
     }
   }
 

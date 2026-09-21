@@ -27,6 +27,7 @@ import { icaoToIata } from "../utils/airport-tz";
 import { extractFlightNumber, pickVerifiableFlight, unitedLookupDate } from "../utils/constants";
 import { type JobHandle, startJob } from "../utils/job-runner";
 import { verifierLog } from "../utils/logger";
+import { sleep } from "../utils/sleep";
 import type { StarlinkCheckResult } from "./united-starlink-checker";
 import { checkStarlinkStatusSubprocess } from "./united-starlink-checker-subprocess";
 import {
@@ -342,7 +343,7 @@ export async function runVerificationBatch(
       // Delay between checks
       if (i < toVerify.length - 1) {
         verifierLog.debug(`Waiting ${delayMs / 1000}s before next check`);
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        await sleep(delayMs);
       }
     }
 

@@ -6,6 +6,7 @@ import StealthPlugin from "puppeteer-extra-plugin-stealth";
 import { looksLikeValidTailNumber } from "../airlines/registry";
 import { BROWSER_USER_AGENT } from "../utils/constants";
 import { LOG_DIR, info, warn } from "../utils/logger";
+import { sleep } from "../utils/sleep";
 
 // Add stealth plugin to avoid detection
 chromium.use(StealthPlugin());
@@ -371,13 +372,13 @@ export async function checkStarlinkStatus(
     try {
       if (page) {
         await page.close();
-        await new Promise((r) => setTimeout(r, 100));
+        await sleep(100);
       }
     } catch {}
     try {
       if (browser) {
         await browser.close();
-        await new Promise((r) => setTimeout(r, 100));
+        await sleep(100);
       }
     } catch {}
   }

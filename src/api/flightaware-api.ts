@@ -1,6 +1,7 @@
 import { COUNTERS, metrics, normalizeAirlineTag } from "../observability";
 import type { Flight } from "../types";
 import { info, warn } from "../utils/logger";
+import { sleep } from "../utils/sleep";
 import { FR24_UPCOMING_CAP } from "./flightradar24-api";
 
 interface FlightAwareConfig {
@@ -45,7 +46,7 @@ export class FlightAwareAPI {
 
     if (timeSinceLastRequest < this.minRequestInterval) {
       const waitTime = this.minRequestInterval - timeSinceLastRequest;
-      await new Promise((resolve) => setTimeout(resolve, waitTime));
+      await sleep(waitTime);
     }
 
     this.lastRequestTime = Date.now();
@@ -77,7 +78,7 @@ export class FlightAwareAPI {
           warn(
             `Rate limited (429), waiting ${Math.round(delay / 1000)}s before retry ${attempt + 1}/${maxRetries}`
           );
-          await new Promise((resolve) => setTimeout(resolve, delay));
+          await sleep(delay);
           continue;
         }
         throw error;

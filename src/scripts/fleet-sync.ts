@@ -20,6 +20,7 @@ import {
 import { COUNTERS, metrics, normalizeAirlineTag, withSpan } from "../observability";
 import { type JobHandle, startJob } from "../utils/job-runner";
 import { info, error as logError } from "../utils/logger";
+import { sleep } from "../utils/sleep";
 import { launchFR24Browser, scrapeFlightRadar24Fleet } from "./flightradar24-scraper";
 
 export interface RosterSource {
@@ -111,7 +112,7 @@ export async function syncFleetFromFR24(
     try {
       const scraped: RosterSource[] = [];
       for (const [i, src] of sources.entries()) {
-        if (i > 0) await new Promise((r) => setTimeout(r, 5000));
+        if (i > 0) await sleep(5000);
         info(`Starting FR24 fleet sync for ${cfg.code} (${src.slug})...`);
         const scrapeResult = await scrapeFlightRadar24Fleet(src.slug, sharedBrowser);
         if (!scrapeResult.success) {
@@ -269,7 +270,7 @@ export async function syncFullFleet(): Promise<{
   try {
     for (const [i, cfg] of enabledAirlines().entries()) {
       if (!cfg.fr24Slug) continue;
-      if (i > 0) await new Promise((r) => setTimeout(r, 5000));
+      if (i > 0) await sleep(5000);
       fr24.push(await syncFleetFromFR24(cfg, browser));
     }
   } finally {

@@ -29,6 +29,7 @@ import type { AdsbObservationRecord } from "../types";
 import { BROWSER_USER_AGENT } from "../utils/constants";
 import { type JobHandle, createOutageBreaker, startJob } from "../utils/job-runner";
 import { debug, info, error as logError, warn } from "../utils/logger";
+import { sleep } from "../utils/sleep";
 
 interface AdsbProvider {
   name: string;
@@ -82,8 +83,6 @@ export interface AdsbSweepStats {
   requests: number;
   latencyMs: number;
 }
-
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function queryProvider(
   provider: AdsbProvider,

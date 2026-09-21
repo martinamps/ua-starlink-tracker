@@ -17,6 +17,7 @@ import { hostname } from "node:os";
 import { AIRLINES } from "../airlines/registry";
 import { initializeDatabase, setMeta } from "../database/database";
 import { info, error as logError, warn } from "../utils/logger";
+import { sleep } from "../utils/sleep";
 import {
   type AirFranceApplyResult,
   type ParsedGuide,
@@ -116,7 +117,7 @@ export async function withRetry<T>(
       if (i < FETCH_ATTEMPTS) {
         const wait = baseDelayMs * 2 ** (i - 1);
         info(`${label}: attempt ${i}/${FETCH_ATTEMPTS} failed (${e}), retrying in ${wait}ms`);
-        await new Promise((r) => setTimeout(r, wait));
+        await sleep(wait);
       }
     }
   }

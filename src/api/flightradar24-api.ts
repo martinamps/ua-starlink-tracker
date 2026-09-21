@@ -6,6 +6,7 @@
 import { COUNTERS, flightAirlineTag, metrics, normalizeAirlineTag } from "../observability";
 import type { Flight } from "../types";
 import { info, warn } from "../utils/logger";
+import { sleep } from "../utils/sleep";
 import { fr24Fetch } from "./fr24-browser-transport";
 
 type FlightUpdate = Pick<
@@ -140,7 +141,7 @@ export class FlightRadar24API {
   private async waitForRateLimit(maxWaitMs?: number) {
     const waitMs = reserveFr24Slot(Date.now(), maxWaitMs);
     if (waitMs === null) throw new Fr24UnavailableError(FR24_QUEUE_SHED_MESSAGE);
-    if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
+    if (waitMs > 0) await sleep(waitMs);
   }
 
   private async retryWithBackoff<T>(
@@ -183,7 +184,7 @@ export class FlightRadar24API {
           warn(
             `FR24 API error: ${errorMessage} - waiting ${Math.round(delay / 1000)}s before retry ${attempt + 1}/${maxRetries}`
           );
-          await new Promise((resolve) => setTimeout(resolve, delay));
+          await sleep(delay);
           continue;
         }
         throw error;
