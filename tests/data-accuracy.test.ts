@@ -26,15 +26,7 @@ import {
 } from "../src/database/database";
 import { createReaderFactory } from "../src/database/reader";
 import { createApp } from "../src/server/app";
-import {
-  addFleet,
-  addFlight,
-  addPlane,
-  elementAttrs,
-  makeSyntheticDb,
-  openSnapshot,
-  req,
-} from "./helpers";
+import { addFleet, addFlight, addPlane, elementAttrs, makeSyntheticDb, req } from "./helpers";
 
 const NOW = Math.floor(Date.now() / 1000);
 
@@ -460,16 +452,21 @@ describe("route flight numbers need corroboration", () => {
 });
 
 describe("homepage list", () => {
-  test("the list filter's ALL count is the whole equipped list, not the 100 shown", async () => {
-    const snap = openSnapshot();
-    const equipped = createReaderFactory(snap)("UA").getStarlinkPlanes().length;
-    const html = await (
-      await createApp(snap).dispatch(req("/", "unitedstarlinktracker.com"))
-    ).text();
+  test("past the cap, ALL counts the rendered rows and the note names the whole list", async () => {
+    const sdb = makeSyntheticDb();
+    for (let i = 0; i < 130; i++) addPlane(sdb, `N${String(i).padStart(3, "0")}CP`, "Starlink");
+    const equipped = createReaderFactory(sdb)("UA").getStarlinkPlanes().length;
+    expect(equipped).toBe(130);
+    const html = (
+      await (await createApp(sdb).dispatch(req("/", "unitedstarlinktracker.com"))).text()
+    ).replace(/<!-- -->/g, "");
+    sdb.close();
+    const rows = (html.match(/class="js-aircraft-row /g) ?? []).length;
+    expect(rows).toBeLessThan(equipped);
     const all = elementAttrs(html, "filter-all");
     expect(all["data-filter"]).toBe("all");
-    expect(Number(all["data-count"])).toBe(equipped);
-    snap.close();
+    expect(Number(all["data-count"])).toBe(rows);
+    expect(html).toContain(`Latest ${rows} of ${equipped}`);
   });
 });
 
