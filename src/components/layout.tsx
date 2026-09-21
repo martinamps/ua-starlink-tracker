@@ -14,12 +14,15 @@ export function fmt(n: number, maximumFractionDigits = 0): string {
   return n.toLocaleString("en-US", { maximumFractionDigits });
 }
 
-/** Rounded share as "35%"; "<1%" for a non-zero share that rounds to zero. */
+/** Share as "35%", floored so no page claims more than the data: "100%" only
+ * when every aircraft has it, ">99%" and "<1%" at the edges. */
 export function pct(n: number, total: number): string {
   if (total <= 0) return "0%";
+  if (n >= total) return "100%";
   const p = (n / total) * 100;
+  if (p > 99) return ">99%";
   if (p > 0 && p < 1) return "<1%";
-  return `${Math.round(p)}%`;
+  return `${Math.floor(p)}%`;
 }
 
 const FAMILY_DISPLAY: Record<string, string> = {

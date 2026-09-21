@@ -1,4 +1,5 @@
 import { type SiteConfig, siteAirline } from "../airlines/registry";
+import { fmt } from "./layout";
 
 /** The homepage headline's own numbers and stamp, so a quote taken from any
  * page matches the sentence /methodology#cite calls canonical. */
@@ -32,8 +33,8 @@ export function CiteThis({ site, cite }: { site: SiteConfig; cite?: CiteStat | n
       <a href="/methodology#cite" className="text-accent hover:underline">
         Cite this
       </a>
-      : {cite.starlink.toLocaleString("en-US")} of {cite.total.toLocaleString("en-US")} {cfg.name}{" "}
-      aircraft (as of {date}), {site.canonicalHost}
+      : {fmt(cite.starlink)} of {fmt(cite.total)} {cfg.name} aircraft (as of {date}),{" "}
+      {site.canonicalHost}
     </p>
   );
 }

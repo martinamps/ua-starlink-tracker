@@ -1,4 +1,3 @@
-import { sharePct } from "../airlines/aircraft-pages";
 import { AIRLINES, type SiteConfig } from "../airlines/registry";
 import type { FleetAnchorRow, FleetPageData } from "../types";
 import { type PageLink, ShareCardLink } from "./atoms";
@@ -7,7 +6,7 @@ import { HangarFloor, TailRegistry } from "./fleet/hangar";
 import { InstallPaceSection, LivePulse } from "./fleet/pace";
 import { InstallPipelineSection, type PipelineMap } from "./fleet/pipeline";
 import { CarrierSection, type FleetTypeLink, TypeBarsSection } from "./fleet/type-bars";
-import { EYEBROW, PANEL, PageHeader, PageShell, SECTION_WIDE, fmt } from "./layout";
+import { EYEBROW, PANEL, PageHeader, PageShell, SECTION_WIDE, fmt, pct } from "./layout";
 
 export type { FleetTypeLink };
 
@@ -63,7 +62,7 @@ function SubfleetLine({ pace }: { pace: FleetPageData["installPace"] }) {
       {parts.map((x, i) => (
         <span key={x.label}>
           {i > 0 && " · "}
-          {x.label} {fmt(x.g.starlink)} of {fmt(x.g.total)} ({sharePct(x.g.starlink, x.g.total)})
+          {x.label} {fmt(x.g.starlink)} of {fmt(x.g.total)} ({pct(x.g.starlink, x.g.total)})
         </span>
       ))}
     </p>
@@ -106,7 +105,7 @@ export default function FleetPage({
         dek={
           <>
             {fmt(data.totalStarlink)} of {fmt(data.totalFleet)} aircraft (
-            {sharePct(data.totalStarlink, data.totalFleet)}) have Starlink.
+            {pct(data.totalStarlink, data.totalFleet)}) have Starlink.
           </>
         }
       >

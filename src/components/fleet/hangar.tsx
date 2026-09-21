@@ -1,7 +1,6 @@
-import { sharePct } from "../../airlines/aircraft-pages";
 import type { FleetFamily, FleetTail } from "../../types";
 import { AIRCRAFT_SPECS, type AircraftSpec } from "../../utils/aircraft-specs";
-import { H2, SECTION_WIDE, fmt } from "../layout";
+import { H2, SECTION_WIDE, fmt, pct } from "../layout";
 import { type PipelineMap, pipelinePhrase } from "./pipeline";
 import { PROVIDER_LABEL, ProviderLegend } from "./providers";
 import { type FleetTypeLink, familyLabel, providerCounts } from "./type-bars";
@@ -123,7 +122,7 @@ function FamilyBlock({
           <span className="text-xs text-muted tabular-nums">
             {fmt(fam.starlink)}/{fmt(fam.total)}
             {fam.starlink > 0 && (
-              <span className="text-accent ml-1.5">{sharePct(fam.starlink, fam.total)}</span>
+              <span className="text-accent ml-1.5">{pct(fam.starlink, fam.total)}</span>
             )}
           </span>
         </div>

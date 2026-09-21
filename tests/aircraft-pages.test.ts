@@ -26,10 +26,10 @@ import {
   answerFor,
   officialCountFor,
   resolveAircraftSlug,
-  sharePct,
   typeFactsFor,
 } from "../src/airlines/aircraft-pages";
 import { AIRLINES, SITES } from "../src/airlines/registry";
+import { pct } from "../src/components/layout";
 import {
   bodyClassOf,
   getAircraftTypePageData,
@@ -368,12 +368,12 @@ describe("answerFor", () => {
   });
 
   test("100% only when every tail has it; floors elsewhere", () => {
-    expect(sharePct(10, 10)).toBe("100%");
-    expect(sharePct(248, 249)).toBe(">99%");
-    expect(sharePct(1, 173)).toBe("<1%");
-    expect(sharePct(199, 200)).toBe(">99%");
-    expect(sharePct(99, 100)).toBe("99%");
-    expect(sharePct(2, 3)).toBe("66%");
+    expect(pct(10, 10)).toBe("100%");
+    expect(pct(248, 249)).toBe(">99%");
+    expect(pct(1, 173)).toBe("<1%");
+    expect(pct(199, 200)).toBe(">99%");
+    expect(pct(99, 100)).toBe("99%");
+    expect(pct(2, 3)).toBe("66%");
     for (const [s, t] of [
       [248, 249],
       [6, 10],

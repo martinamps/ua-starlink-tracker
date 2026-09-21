@@ -17,7 +17,7 @@ import { article } from "../utils/grammar";
 import { FactsList, PhaseTable, type TypePhase } from "./airlines-page";
 import { type PageLink, StagePill, trackedStage } from "./atoms";
 import { TypeShareTable } from "./community-airline-page";
-import { PANEL, PageHeader, PageShell, fmt } from "./layout";
+import { PANEL, PageHeader, PageShell, fmt, pct } from "./layout";
 
 export interface CompareSide {
   cfg: AirlineConfig;
@@ -39,16 +39,11 @@ export interface CompareSide {
   checkFlightUrl: string | null;
 }
 
-function pctOf(stat: PerAirlineStat): { fleet: number; pct: number } {
-  // Full-fleet denominator — the same number each airline's own tracker
-  // publishes, so the two sides are comparable and neither is flattered.
-  const fleet = stat.total;
-  return { fleet, pct: fleet > 0 ? Math.round((stat.starlink / fleet) * 100) : 0 };
-}
-
 function SidePanel({ side }: { side: CompareSide }) {
   const { cfg, stat } = side;
-  const { fleet, pct } = pctOf(stat);
+  // Full-fleet denominator: the same number each airline's own tracker
+  // publishes, so the two sides are comparable and neither is flattered.
+  const fleet = stat.total;
   // A type-determined program has no honest single number: the denominator
   // includes families excluded from the program by design (QR's A380s and
   // A330s, HA's 717s), so "46% of fleet" understates the answer for a 777
@@ -75,13 +70,13 @@ function SidePanel({ side }: { side: CompareSide }) {
             <span className="text-base text-muted"> of {fmt(fleet)}</span>
           </div>
           <div className="text-sm text-secondary mb-2">
-            aircraft have Starlink · {pct}% of the fleet
+            aircraft have Starlink · {pct(stat.starlink, fleet)} of the fleet
           </div>
           <div className="h-1.5 rounded bg-surface-elevated overflow-hidden mb-3">
             <div
               className="h-full rounded"
               style={{
-                width: `${Math.min(100, pct)}%`,
+                width: `${Math.min(100, (stat.starlink / fleet) * 100)}%`,
                 background: cfg.brand.accentColor,
                 boxShadow: `0 0 6px ${cfg.brand.accentColor}90`,
               }}
@@ -122,7 +117,7 @@ function SidePanel({ side }: { side: CompareSide }) {
               <span className="font-mono text-xs text-secondary">
                 {b.synthetic
                   ? `${Math.round(b.pct * 100)}%`
-                  : `${fmt(b.equipped)} of ${fmt(b.total)} · ${Math.round(b.pct * 100)}%`}
+                  : `${fmt(b.equipped)} of ${fmt(b.total)} · ${pct(b.equipped, b.total)}`}
               </span>
             </div>
           ))}

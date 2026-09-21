@@ -1,6 +1,5 @@
-import { sharePct } from "../../airlines/aircraft-pages";
 import type { BodyClass, FleetCarrier, FleetFamily, FleetTail } from "../../types";
-import { Section, aircraftName, fmt } from "../layout";
+import { Section, aircraftName, fmt, pct } from "../layout";
 import {
   PROVIDER_LABEL,
   PROVIDER_ORDER,
@@ -73,7 +72,7 @@ export function ShareBarRow({
       <div
         className="flex h-2 overflow-hidden rounded-full bg-surface-elevated"
         role="img"
-        aria-label={`${label}: ${fmt(n)} of ${fmt(total)} with Starlink (${sharePct(n, total)})${detail ? `. ${detail}` : ""}`}
+        aria-label={`${label}: ${fmt(n)} of ${fmt(total)} with Starlink (${pct(n, total)})${detail ? `. ${detail}` : ""}`}
       >
         {total > 0 &&
           segments.map((s) => (
@@ -85,8 +84,7 @@ export function ShareBarRow({
           ))}
       </div>
       <span className="text-right font-mono text-xs text-muted tabular-nums whitespace-nowrap">
-        {fmt(n)}/{fmt(total)} ·{" "}
-        <span className={n > 0 ? "text-accent" : ""}>{sharePct(n, total)}</span>
+        {fmt(n)}/{fmt(total)} · <span className={n > 0 ? "text-accent" : ""}>{pct(n, total)}</span>
       </span>
     </li>
   );
@@ -134,7 +132,7 @@ export function TypeBarsSection({
               <h3 className="flex items-baseline justify-between gap-3 border-b border-subtle pb-2 text-sm">
                 <span className="font-display text-base text-primary">{g.label}</span>
                 <span className="text-muted tabular-nums">
-                  {fmt(starlink)} of {fmt(total)} · {sharePct(starlink, total)}
+                  {fmt(starlink)} of {fmt(total)} · {pct(starlink, total)}
                 </span>
               </h3>
               <ul className="mt-1">

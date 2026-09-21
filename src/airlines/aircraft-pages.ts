@@ -8,6 +8,7 @@
  * here is unit-testable without a database.
  */
 
+import { pct } from "../components/layout";
 import type {
   AircraftTypePageData,
   AircraftTypePipeline,
@@ -395,16 +396,6 @@ export const PROVIDER_NAMES: Record<WifiProvider, string> = {
   unknown: "not checked yet",
 };
 
-/** Floor, never round up: "100%" only when every tail has it. */
-export function sharePct(n: number, total: number): string {
-  if (total <= 0) return "0%";
-  if (n >= total) return "100%";
-  const p = (n / total) * 100;
-  if (p > 99) return ">99%";
-  if (p > 0 && p < 1) return "<1%";
-  return `${Math.floor(p)}%`;
-}
-
 export function isoDay(sec: number): string {
   return new Date(sec * 1000).toISOString().slice(0, 10);
 }
@@ -482,7 +473,7 @@ export function answerFor(
   const rosterShort = O !== null && !O.all && O.count >= T;
   const E = O ? Math.max(s, Math.min(O.count, T)) : s;
   const attributed = O !== null && O.count > s;
-  const pct = sharePct(E, T);
+  const share = pct(E, T);
   const short = def.short;
   const shorts = `${short}s`;
   const oDate = O ? formatFactDate(O.asOf) : "";
@@ -523,7 +514,7 @@ export function answerFor(
   }
 
   const attributedShare = () =>
-    `${copy.airline} reports ${O?.count} of its ${T} ${shorts} connected (${oDate}), about ${pct}. We have tail-level confirmation for ${s}. ${SWAP_NOTE}`;
+    `${copy.airline} reports ${O?.count} of its ${T} ${shorts} connected (${oDate}), about ${share}. We have tail-level confirmation for ${s}. ${SWAP_NOTE}`;
 
   const everyTail = copy.checksEveryTail ? K === 0 && U === 0 : s === T || O?.all === true;
   if (E > 0 && E === T && everyTail) {
@@ -566,16 +557,16 @@ export function answerFor(
     if (attributed) {
       return build(
         kind,
-        `${lead}, per ${copy.airline}: ${E} of ${T} (${pct}).`,
+        `${lead}, per ${copy.airline}: ${E} of ${T} (${share}).`,
         `${copy.airline} reports ${O?.count} of its ${T} ${shorts} connected (tracker updated ${oDate}). We can confirm ${s} of them ourselves, from per-aircraft reports.`,
         attributedShare()
       );
     }
     return build(
       kind,
-      `${lead}: ${E} of ${T} (${pct}).`,
+      `${lead}: ${E} of ${T} (${share}).`,
       `Every Starlink ${short} counted here is ${copy.evidence}.${uncheckedTail}${listedTail}`,
-      `${pct} of ${copy.possessive} ${shorts} have Starlink (${E} of ${T}). ${SWAP_NOTE}`
+      `${share} of ${copy.possessive} ${shorts} have Starlink (${E} of ${T}). ${SWAP_NOTE}`
     );
   }
 

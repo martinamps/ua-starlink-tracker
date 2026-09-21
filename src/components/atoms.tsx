@@ -12,6 +12,7 @@ import type { RolloutFactsStatus } from "../airlines/rollout-facts";
 import type { PopularFlight } from "../database/database";
 import type { PerAirlineStat, RecentInstall } from "../types";
 import { denominatorIsPublishable } from "../utils/share-cards";
+import { fmt, pct } from "./layout";
 
 export type { PerAirlineStat };
 
@@ -285,7 +286,7 @@ export function AirlineProgressList({ stats }: { stats: PerAirlineStat[] }) {
                 <div
                   className="h-2 overflow-hidden rounded-full bg-surface-elevated"
                   role="img"
-                  aria-label={`${cfg.name}: ${stat.starlink.toLocaleString("en-US")} of ${stat.total.toLocaleString("en-US")} aircraft (${Math.round(share)}%)`}
+                  aria-label={`${cfg.name}: ${fmt(stat.starlink)} of ${fmt(stat.total)} aircraft (${pct(stat.starlink, stat.total)})`}
                 >
                   <div
                     className="h-full rounded-full"
@@ -293,21 +294,20 @@ export function AirlineProgressList({ stats }: { stats: PerAirlineStat[] }) {
                   />
                 </div>
                 <span className="text-sm text-secondary tabular-nums whitespace-nowrap">
-                  {stat.starlink.toLocaleString("en-US")} of {stat.total.toLocaleString("en-US")} ·{" "}
-                  {Math.round(share)}%
+                  {fmt(stat.starlink)} of {fmt(stat.total)} · {pct(stat.starlink, stat.total)}
                 </span>
               </div>
             ) : (
               <p className="mt-1 text-sm text-secondary">
                 <strong className="font-semibold text-primary tabular-nums">
-                  {stat.starlink.toLocaleString("en-US")}
+                  {fmt(stat.starlink)}
                 </strong>{" "}
                 aircraft with Starlink. {stat.phaseNote}
               </p>
             )}
             {(stat.installs30d ?? 0) > 0 && (
               <p className="mt-1 text-xs text-muted">
-                +{(stat.installs30d ?? 0).toLocaleString("en-US")} in the last 30 days
+                +{fmt(stat.installs30d ?? 0)} in the last 30 days
               </p>
             )}
           </li>
