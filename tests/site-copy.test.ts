@@ -149,20 +149,37 @@ describe("FlyerTalk installs after the backfill", () => {
 });
 
 describe("homepage install pace", () => {
-  test("is the /install-rate pace, not a hardcoded figure", async () => {
-    const { text } = await bodyOf(app, "/", UA);
-    expect(text).not.toContain("40+");
+  test("is the /install-rate pace, not a hardcoded figure, in the page header", async () => {
+    const sdb = makeSyntheticDb();
+    const ins = sdb.query(
+      `INSERT INTO starlink_planes (aircraft, wifi, sheet_gid, DateFound, TailNumber, OperatedBy, fleet, airline)
+       VALUES ('Boeing 737-800', 'StrLnk', '0', ?, ?, 'United Airlines', 'mainline', 'UA')`
+    );
+    const now = new Date();
+    let n = 0;
+    for (let month = 1; month <= 4; month++) {
+      for (let day = 1; day <= 20; day++) {
+        const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - month, day));
+        ins.run(d.toISOString().slice(0, 10), `N${String(n++).padStart(4, "0")}PX`);
+      }
+    }
     const pace = computeInstallRate({
-      daily: getDailyInstalls(db, ["UA"]),
+      daily: getDailyInstalls(sdb, ["UA"]),
       equipped: 0,
       total: 0,
       targets: [],
       nowMs: Date.now(),
     }).paceMonthly;
-    if (pace) {
-      expect(text.replace(/<!-- -->/g, "")).toContain(`~${Math.round(pace)}</span> installs/mo`);
-    }
-    expect(text).not.toContain("Starlink jets by type");
+    expect(pace).toBeGreaterThan(0);
+    const { status, text } = await bodyOf(createApp(sdb), "/", UA);
+    sdb.close();
+    expect(status).toBe(200);
+    const html = text.replace(/<!-- -->/g, "");
+    const headerEnd = html.indexOf("</header>");
+    expect(headerEnd).toBeGreaterThan(0);
+    const header = html.slice(html.lastIndexOf("<header", headerEnd), headerEnd);
+    expect(header).toContain(`~${Math.round(pace ?? 0)}</span> installs a month`);
+    expect(html).not.toContain("40+");
   });
 
   test("the stat strip states the pace it is given, and omits it when there is none", () => {
