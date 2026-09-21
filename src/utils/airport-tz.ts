@@ -614,13 +614,7 @@ export function airportTimezone(iata: string): string | undefined {
   return AIRPORT_TZ[iata.toUpperCase()];
 }
 
-/** ICAO → IATA for US/Canada codes (KEWR → EWR, CYVR → YVR); others pass through. */
-export function icaoToIata(icao: string): string {
-  if (icao.length === 4 && (icao.startsWith("K") || icao.startsWith("C"))) {
-    return icao.substring(1);
-  }
-  return icao;
-}
+export { toIata as icaoToIata } from "./airport-code";
 
 /** YYYY-MM-DD in the given zone (en-CA locale formats ISO-style). */
 export function localDateISO(epochSec: number, timeZone: string): string {

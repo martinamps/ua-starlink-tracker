@@ -1,6 +1,7 @@
 import React from "react";
 import { RolloutPanel } from "../../components/home/rollout";
-import { StatInline, fmt, pct } from "../../components/layout";
+import { StatInline } from "../../components/layout";
+import { fmt, pct } from "../../components/ui/format";
 import { AIRLINES, airlineHomeUrl } from "../registry";
 import type { AirlineContent, ContentStats, HeroProps } from "./index";
 
@@ -102,7 +103,8 @@ export const content: AirlineContent = {
   // Hawaiian-operated tails live in HA's roster, so their chips would always be empty.
   subfleetFilters: AIRLINES.AS.subfleets
     .filter((sf) => sf.key !== "hawaiian_metal" && sf.key !== "hawaiian_interisland")
-    .map((sf) => ({ key: sf.key, label: sf.label })),
+    // The chip appends its own "(count)", so the label drops the registry's type note.
+    .map((sf) => ({ key: sf.key, label: sf.label.replace(/\s*\(.*\)$/, "") })),
 
   faq: [
     {

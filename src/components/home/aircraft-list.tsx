@@ -6,27 +6,22 @@
 import type { AirlineContent } from "../../airlines/content";
 import { ensureAirlinePrefix } from "../../airlines/flight-number";
 import { AIRLINES, type AirlineConfig } from "../../airlines/registry";
+import { FILTER_ACTIVE, FILTER_BUTTON, FILTER_INACTIVE } from "../../client/aircraft-list";
 import type { Aircraft, Flight } from "../../types";
-import { SectionTitle, fmt } from "../layout";
-import { formatPillTime } from "../ui/format";
+import { toIata } from "../../utils/airport-code";
+import { SectionTitle } from "../layout";
+import { fmt, formatPillTime } from "../ui/format";
 
 // SSR'ing every fleet row made the homepage a ~5 MB document with thousands of
 // outbound links. The list is sorted freshest-first, so the first rows carry
-// nearly all the value; /fleet renders the complete fleet. Search/filter run
-// over the SSR'd DOM and therefore cover only the rendered rows — the cap
-// notice points anyone hunting a specific tail at /fleet.
+// nearly all the value. Search and filters run over the rendered rows only, so
+// chip counts describe those rows and a miss points at /fleet, which lists all.
 const AIRCRAFT_LIST_CAP = 100;
 
 // Pills per row before the "+N" button, by breakpoint: mobile, md, xl.
 const PILLS_SM = 2;
 const PILLS_MD = 4;
 const PILLS_XL = 6;
-
-/** "KSFO" → "SFO": the schedule feed mixes ICAO and IATA codes. */
-function cleanAirportCode(code: string): string {
-  if (code && code.length === 4 && "KCM".includes(code[0])) return code.substring(1);
-  return code;
-}
 
 /**
  * `/check-flight/{marketing number}` for a pill, or null when it can't reach a
@@ -76,8 +71,8 @@ function FlightPills({
   return (
     <div className="flex flex-wrap gap-1.5" id={`flights-${tailNumber}`}>
       {flights.map((flight, idx) => {
-        const dep = cleanAirportCode(flight.departure_airport);
-        const arr = cleanAirportCode(flight.arrival_airport);
+        const dep = toIata(flight.departure_airport);
+        const arr = toIata(flight.arrival_airport);
         const visibility =
           idx >= PILLS_XL
             ? "hidden"
@@ -138,8 +133,8 @@ function FlightPills({
 /** The data-* strings the client filter matches against, lowercased. */
 function searchIndex(flights: Flight[], rowAirline: AirlineConfig | undefined) {
   const pairs = flights.map((f) => [
-    cleanAirportCode(f.departure_airport).toLowerCase(),
-    cleanAirportCode(f.arrival_airport).toLowerCase(),
+    toIata(f.departure_airport).toLowerCase(),
+    toIata(f.arrival_airport).toLowerCase(),
   ]);
   return {
     airports: pairs.flat().join(" "),
@@ -166,6 +161,7 @@ export function AircraftList({
   flightsByTail,
   permalinkAirline,
   showFleetLink,
+  fleetTotal,
 }: {
   /** Every equipped tail, freshest flight data first. */
   aircraft: Aircraft[];
@@ -175,14 +171,15 @@ export function AircraftList({
   /** The site's airline where flight permalinks exist; null keeps pills outbound. */
   permalinkAirline: AirlineConfig | null;
   showFleetLink: boolean;
+  /** Every aircraft /fleet lists, equipped or not: where a missed search falls back to. */
+  fleetTotal: number;
 }) {
   const airlineOf = (p: Aircraft) => airlineByTail[p.TailNumber] || "UA";
   const permalink = permalinker(permalinkAirline, airlineByTail);
   const shown = aircraft.slice(0, AIRCRAFT_LIST_CAP);
-  // Button counts describe the whole equipped fleet, so "Express (348)" agrees
-  // with the rollout panel; the cap note says how many rows the filter covers.
+  const capped = aircraft.length > shown.length;
   const subfleetCount = (key: string) =>
-    aircraft.filter((p) => p.fleet === key || airlineOf(p) === key).length;
+    shown.filter((p) => p.fleet === key || airlineOf(p) === key).length;
 
   return (
     <div className="relative mx-auto mb-8 w-full max-w-6xl overflow-hidden rounded-lg border border-subtle bg-surface">
@@ -190,10 +187,13 @@ export function AircraftList({
       <div className="px-4 md:px-6 py-3 border-b border-subtle">
         <div className="flex flex-col sm:flex-row gap-3">
           <div className="relative flex-1">
+            <label htmlFor="aircraft-search" className="sr-only">
+              Search aircraft by tail, route, airport or flight number
+            </label>
             <input
               type="text"
               id="aircraft-search"
-              placeholder="Search tail, route (sfo-lax), or combine terms..."
+              placeholder="Tail, route (sfo-lax) or flight"
               className="w-full font-mono text-sm px-4 py-2 pl-9 pr-8 bg-surface-elevated border border-subtle rounded text-primary placeholder-muted focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all"
             />
             <svg
@@ -235,16 +235,20 @@ export function AircraftList({
           </div>
           <div
             id="search-count"
+            aria-live="polite"
+            data-default={capped ? `Latest ${fmt(shown.length)} of ${fmt(aircraft.length)}` : ""}
             className="hidden sm:flex items-center text-xs font-mono text-muted whitespace-nowrap"
-          />
+          >
+            {capped ? `Latest ${fmt(shown.length)} of ${fmt(aircraft.length)}` : null}
+          </div>
           <div className="flex gap-1.5 sm:gap-2">
             <button
               type="button"
               id="filter-all"
-              className="filter-btn font-mono text-xs px-3 py-2 rounded border transition-all bg-accent/20 border-accent text-accent"
+              className={`${FILTER_BUTTON} ${FILTER_ACTIVE}`}
               data-filter="all"
             >
-              ALL <span className="hidden sm:inline">({fmt(aircraft.length)})</span>
+              ALL <span className="hidden sm:inline">({fmt(shown.length)})</span>
             </button>
             {content.subfleetFilters.length > 1 &&
               content.subfleetFilters.map((card) => (
@@ -252,7 +256,7 @@ export function AircraftList({
                   key={card.key}
                   type="button"
                   id={`filter-${card.key}`}
-                  className="filter-btn font-mono text-xs px-3 py-2 rounded border transition-all bg-transparent border-subtle text-secondary hover:border-accent/50 hover:text-accent"
+                  className={`${FILTER_BUTTON} ${FILTER_INACTIVE}`}
                   data-filter={card.key}
                 >
                   {card.label.toUpperCase()}{" "}
@@ -336,10 +340,26 @@ export function AircraftList({
                 </div>
               );
             })}
+            <div id="list-empty" hidden className="px-4 md:px-6 py-10 text-center text-sm">
+              <p className="text-secondary">No aircraft match.</p>
+              {showFleetLink && (
+                <p className="mt-1 text-muted">
+                  {capped ? `This list holds the latest ${fmt(shown.length)}. ` : null}
+                  <a
+                    id="list-empty-fleet"
+                    href="/fleet"
+                    data-href="/fleet"
+                    className="text-accent hover:underline"
+                  >
+                    Search all {fmt(fleetTotal)} aircraft on the fleet page
+                  </a>
+                </p>
+              )}
+            </div>
           </div>
         )}
       </div>
-      {aircraft.length > shown.length && (
+      {capped && (
         <div
           id="list-cap"
           className="px-4 md:px-6 py-3 border-t border-subtle text-center text-sm text-muted"

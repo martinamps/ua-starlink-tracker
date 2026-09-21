@@ -4,10 +4,13 @@
  * "+N" pill expansion; and flight-number tooltips on hover devices.
  */
 
-const BUTTON = "filter-btn font-mono text-xs px-3 py-2 rounded border transition-all";
-const ACTIVE = "bg-accent/20 border-accent text-accent";
-const INACTIVE =
+export const FILTER_BUTTON = "filter-btn font-mono text-xs px-3 py-2 rounded border transition-all";
+export const FILTER_ACTIVE = "bg-accent/20 border-accent text-accent";
+export const FILTER_INACTIVE =
   "bg-transparent border-subtle text-secondary hover:border-accent/50 hover:text-accent";
+
+/** A complete US registration (n37502): a miss can jump straight to its /fleet entry. */
+const US_TAIL = /^n\d{1,5}[a-z]{0,2}$/;
 
 /** One search term against a row: a route (sfo-lax, sfo-, -lax) or a substring. */
 function matchesTerm(term: string, row: HTMLElement): boolean {
@@ -25,6 +28,8 @@ function wireSearch(): void {
   const input = document.getElementById("aircraft-search") as HTMLInputElement | null;
   const clear = document.getElementById("search-clear");
   const count = document.getElementById("search-count");
+  const empty = document.getElementById("list-empty");
+  const fleetLink = document.getElementById("list-empty-fleet") as HTMLAnchorElement | null;
   const rows = Array.from(document.querySelectorAll<HTMLElement>(".aircraft-row"));
   const buttons = Array.from(document.querySelectorAll<HTMLElement>(".filter-btn"));
   const params = new URLSearchParams(window.location.search);
@@ -32,7 +37,7 @@ function wireSearch(): void {
 
   const paintButtons = () => {
     for (const b of buttons) {
-      b.className = `${BUTTON} ${b.dataset.filter === filter ? ACTIVE : INACTIVE}`;
+      b.className = `${FILTER_BUTTON} ${b.dataset.filter === filter ? FILTER_ACTIVE : FILTER_INACTIVE}`;
     }
   };
 
@@ -49,8 +54,13 @@ function wireSearch(): void {
     }
     if (count) {
       const filtered = query || filter !== "all";
-      count.textContent = filtered ? `${visible} of ${rows.length}` : "";
-      count.style.display = filtered ? "" : "none";
+      count.textContent = filtered ? `${visible} of ${rows.length}` : count.dataset.default || "";
+      count.style.display = count.textContent ? "" : "none";
+    }
+    if (empty) empty.hidden = visible > 0 || rows.length === 0;
+    if (fleetLink) {
+      const base = fleetLink.dataset.href || "/fleet";
+      fleetLink.href = US_TAIL.test(query) ? `${base}#t-${query.toUpperCase()}` : base;
     }
     clear?.classList.toggle("hidden", !query);
     const url = new URL(window.location.href);
