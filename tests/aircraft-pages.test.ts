@@ -584,8 +584,7 @@ describe("serve and render", () => {
           | { mainEntity: Array<{ name: string; acceptedAnswer: { text: string } }> }
           | undefined;
         expect(Boolean(faqLd), def.slug).toBe(indexed);
-        const visibleQuestions =
-          html.match(/<dt class="font-display text-sm font-semibold text-secondary">/g) ?? [];
+        const visibleQuestions = html.match(/<dt class="font-semibold text-primary">/g) ?? [];
         expect(visibleQuestions.length).toBeGreaterThanOrEqual(2);
         expect(visibleQuestions.length).toBeLessThanOrEqual(5);
         if (faqLd) {

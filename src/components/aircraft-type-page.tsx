@@ -16,6 +16,7 @@ import type { AircraftTypePageData, AircraftVerdictKind, WifiProvider } from "..
 import type { AircraftSpec } from "../utils/aircraft-specs";
 import { article } from "../utils/grammar";
 import type { PageLink } from "./atoms";
+import { Faq } from "./faq";
 import { TailGrid } from "./fleet/hangar";
 import {
   MovementsPanel,
@@ -413,35 +414,6 @@ function SpecsSection({ def, spec }: { def: AircraftPageDef; spec: AircraftSpec 
   );
 }
 
-function FaqSection({ faq }: { faq: TypeFaqItem[] }) {
-  if (faq.length === 0) return null;
-  return (
-    <section className={CARD}>
-      <h2 className={H2_CARD}>Questions</h2>
-      <dl className="space-y-4">
-        {faq.map((item) => (
-          <div key={item.q}>
-            <dt className="font-display text-sm font-semibold text-secondary">{item.q}</dt>
-            <dd className="text-sm text-muted leading-relaxed mt-1">
-              {item.aHtml ? (
-                <>
-                  {item.aHtml.before}
-                  <a href={item.aHtml.href} className={LINK}>
-                    {item.aHtml.linkText}
-                  </a>
-                  {item.aHtml.after}
-                </>
-              ) : (
-                item.a
-              )}
-            </dd>
-          </div>
-        ))}
-      </dl>
-    </section>
-  );
-}
-
 function SiblingsSection({
   siblings,
   airline,
@@ -536,7 +508,25 @@ export default function AircraftTypePage({
         <FlightsSection def={def} data={data} answer={answer} />
         <FactsSection facts={facts.filter((f) => f !== headerTarget)} airline={airline} />
         <SpecsSection def={def} spec={spec} />
-        <FaqSection faq={faq} />
+        <Faq
+          variant="card"
+          structuredData={false}
+          items={faq.map((item) => ({
+            q: item.q,
+            ld: item.a,
+            a: item.aHtml ? (
+              <>
+                {item.aHtml.before}
+                <a href={item.aHtml.href} className={LINK}>
+                  {item.aHtml.linkText}
+                </a>
+                {item.aHtml.after}
+              </>
+            ) : (
+              item.a
+            ),
+          }))}
+        />
         <SiblingsSection siblings={siblings} airline={airline} />
 
         <p className="text-sm text-muted text-center">

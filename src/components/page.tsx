@@ -13,7 +13,7 @@ import type {
 } from "../types";
 import { denominatorIsPublishable } from "../utils/share-cards";
 import { HeaderStatStrip, type PageLink, PopularFlightsLinks, ShareCardLink } from "./atoms";
-import { AnswerBlock, HomeFaq } from "./faq";
+import { Faq, homeFaqItems, homeFaqSections } from "./faq";
 import { AirportBars } from "./home/rollout";
 import { PageHeader, PageShell, Section, StatInline, fmt, pct } from "./layout";
 import { PassengerBanner } from "./passenger-banner";
@@ -430,7 +430,13 @@ export default function Page({
       />
 
       {content.answers && (
-        <AnswerBlock title="Quick answers" entries={content.answers} stats={stats} />
+        <Faq
+          id="answers"
+          title="Quick answers"
+          variant="grid"
+          items={homeFaqItems(content.answers, stats)}
+          structuredData={false}
+        />
       )}
 
       <div className="relative mx-auto mb-8 w-full max-w-6xl overflow-hidden rounded-lg border border-subtle bg-surface">
@@ -788,7 +794,13 @@ export default function Page({
         </div>
       )}
 
-      <HomeFaq sections={content.faq} stats={stats} />
+      <Faq
+        id="faq"
+        title="More questions"
+        variant="accordion"
+        sections={homeFaqSections(content.faq, stats)}
+        structuredData={false}
+      />
 
       {stats.asOf && (
         <p className="relative mb-6 text-center text-xs text-muted">
