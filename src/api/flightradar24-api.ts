@@ -3,7 +3,7 @@
  * Free API for fetching flight data by aircraft registration
  */
 
-import { COUNTERS, metrics } from "../observability";
+import { COUNTERS, flightAirlineTag, metrics, normalizeAirlineTag } from "../observability";
 import type { Flight } from "../types";
 import { info, warn } from "../utils/logger";
 import { fr24Fetch } from "./fr24-browser-transport";
@@ -145,6 +145,7 @@ export class FlightRadar24API {
 
   private async retryWithBackoff<T>(
     operation: () => Promise<T>,
+    airline: string,
     maxRetries = 3,
     requestType = "flights",
     maxWaitMs?: number
@@ -168,6 +169,7 @@ export class FlightRadar24API {
             type: requestType,
             status: "rate_limited",
             http_status: throttleCode,
+            airline,
           });
         }
 
@@ -195,8 +197,11 @@ export class FlightRadar24API {
    */
   async getUpcomingFlights(
     tailNumber: string,
-    flightNumberSource: FlightNumberSource = "callsign"
+    flightNumberSource: FlightNumberSource = "callsign",
+    /** The tail's airline, when the caller knows it; tags the vendor metric. */
+    airlineCode?: string | null
   ): Promise<FlightUpdate[]> {
+    const airline = airlineCode ? normalizeAirlineTag(airlineCode) : "unmapped";
     return this.retryWithBackoff(async () => {
       // FR24 API expects registration without the leading 'N' for some queries,
       // but works fine with the full registration
@@ -211,6 +216,7 @@ export class FlightRadar24API {
             vendor: "fr24",
             type: "flights",
             status: "success",
+            airline,
           });
           return [];
         }
@@ -219,6 +225,7 @@ export class FlightRadar24API {
           type: "flights",
           status: "error",
           http_status: String(response.status),
+          airline,
         });
         throw new Error(`FlightRadar24 API error: ${response.status}`);
       }
@@ -227,6 +234,7 @@ export class FlightRadar24API {
         vendor: "fr24",
         type: "flights",
         status: "success",
+        airline,
       });
       const data: FR24Response = JSON.parse(response.body);
       const flights = data.result?.response?.data || [];
@@ -238,7 +246,7 @@ export class FlightRadar24API {
       return parseUpcomingFlights(flights, Math.floor(Date.now() / 1000), undefined, {
         flightNumberSource,
       });
-    });
+    }, airline);
   }
 
   /**
@@ -249,7 +257,10 @@ export class FlightRadar24API {
   async getFlightRoutes(
     flightNumber: string,
     targetDateUnix?: number
-  ): Promise<Array<{ origin: string; destination: string; departure_time: number }>> {
+  ): Promise<
+    Array<{ origin: string; destination: string; departure_time: number; duration_sec: number }>
+  > {
+    const airline = flightAirlineTag(flightNumber);
     // Best-effort lookup for MCP hints — a failure degrades to "ask the user".
     // No retry wrapper, but still rate-limit + instrument so we stay a good citizen.
     const url = `${this.baseUrl}/flight/list.json?query=${encodeURIComponent(flightNumber)}&fetchBy=flight&page=1&limit=20`;
@@ -264,6 +275,7 @@ export class FlightRadar24API {
         vendor: "fr24",
         type: "routes",
         status: "error",
+        airline,
       });
       return [];
     }
@@ -274,6 +286,7 @@ export class FlightRadar24API {
         type: "routes",
         status: response.status === 402 || response.status === 429 ? "rate_limited" : "error",
         http_status: String(response.status),
+        airline,
       });
       return [];
     }
@@ -285,6 +298,7 @@ export class FlightRadar24API {
       vendor: "fr24",
       type: "routes",
       status: flights.length > 0 ? "success" : "empty",
+      airline,
     });
 
     // Dedupe by (origin, destination), keep the departure closest to target date.
@@ -348,6 +362,7 @@ export class FlightRadar24API {
     }>
   > {
     const url = `${this.baseUrl}/flight/list.json?query=${encodeURIComponent(flightNumber)}&fetchBy=flight&page=1&limit=25`;
+    const airline = flightAirlineTag(flightNumber);
 
     try {
       return await this.retryWithBackoff(
@@ -360,6 +375,7 @@ export class FlightRadar24API {
               type: "assignments",
               status: response.status === 402 || response.status === 429 ? "rate_limited" : "error",
               http_status: String(response.status),
+              airline,
             });
             throw new Error(`FR24 assignments error: ${response.status}`);
           }
@@ -371,6 +387,7 @@ export class FlightRadar24API {
             vendor: "fr24",
             type: "assignments",
             status: "success",
+            airline,
           });
           const flights = data.result?.response?.data || [];
 
@@ -395,6 +412,7 @@ export class FlightRadar24API {
 
           return out.sort((a, b) => a.departure_time - b.departure_time);
         },
+        airline,
         // The request path passes 0: a throttle retry sleeps 30s inline, which
         // is what stretched one /api/check-flight span to 34.5s on 2026-09-06.
         opts.maxRetries ?? 1,

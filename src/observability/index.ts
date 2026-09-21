@@ -17,6 +17,7 @@ export {
   normalizeFleet,
   normalizeAirlineTag,
   normalizeScopeTag,
+  flightAirlineTag,
   normalizeCarrierPrefix,
   normalizeOpCarrier,
   normalizeProbeOutcome,

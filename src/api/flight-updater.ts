@@ -29,7 +29,8 @@ type FlightUpdate = Pick<
 interface FlightAPI {
   getUpcomingFlights(
     tailNumber: string,
-    flightNumberSource?: FlightNumberSource
+    flightNumberSource?: FlightNumberSource,
+    airlineCode?: string | null
   ): Promise<FlightUpdate[]>;
 }
 
@@ -101,7 +102,8 @@ async function pollTailFlights(api: FlightAPI, tailNumber: string): Promise<Tail
         const airline = getTailAirline(db, tailNumber);
         const flights = await api.getUpcomingFlights(
           tailNumber,
-          (airline && AIRLINES[airline]?.flightNumberSource) || "callsign"
+          (airline && AIRLINES[airline]?.flightNumberSource) || "callsign",
+          airline
         );
 
         span.setTag("flights.count", flights.length);

@@ -9,7 +9,7 @@
 
 import { OBSERVED_WIFI_SOURCES } from "../airlines/registry";
 import type { ScopedReader } from "../database/reader";
-import { COUNTERS, metrics, normalizeAirlineTag } from "../observability";
+import { COUNTERS, flightAirlineTag, metrics } from "../observability";
 import { matchesLocalDate } from "../utils/airport-tz";
 import { warn } from "../utils/logger";
 import { memoPromise } from "../utils/ttl-cache";
@@ -87,7 +87,7 @@ export function cachedFlightAssignments(
   // Counted once FR24 was actually asked: a queue shed refunds its token.
   const countLookup = () =>
     metrics.increment(COUNTERS.FR24_LOOKUP, {
-      airline: normalizeAirlineTag(flightNumber.slice(0, 2)),
+      airline: flightAirlineTag(flightNumber),
     });
   promise.then(
     () => {
@@ -133,7 +133,7 @@ function countShed(flightNumber: string, reason: "breaker" | "bucket" | "queue")
     type: "assignments",
     status: "shed",
     reason,
-    airline: normalizeAirlineTag(flightNumber.slice(0, 2)),
+    airline: flightAirlineTag(flightNumber),
   });
 }
 

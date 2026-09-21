@@ -52,6 +52,7 @@
  *   surface:         watch.cta_shown: check_flight                   (1)
  */
 
+import { detectAirline } from "../airlines/flight-number";
 import { AIRLINES, SUBFLEET_KEYS, operatorIatas } from "../airlines/registry";
 import { tracer } from "./tracer";
 
@@ -214,6 +215,11 @@ export function mcpClientTags(): Tags {
 export function normalizeAirlineTag(code: string | null | undefined): string {
   if (!code) return "unknown";
   return AIRLINES[code.toUpperCase()]?.metricTag ?? "unmapped";
+}
+
+/** airline tag for a flight number by its carrier prefix (SKW5212 → united). */
+export function flightAirlineTag(flightNumber: string): string {
+  return detectAirline(flightNumber)?.metricTag ?? "unmapped";
 }
 
 /** airline tag for a reader/tenant scope: the hub scope is `all`, not an airline. */

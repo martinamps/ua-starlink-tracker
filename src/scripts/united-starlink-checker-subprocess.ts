@@ -5,7 +5,7 @@
 
 import { spawn } from "node:child_process";
 import path from "node:path";
-import { COUNTERS, DISTRIBUTIONS, metrics } from "../observability";
+import { COUNTERS, DISTRIBUTIONS, metrics, normalizeAirlineTag } from "../observability";
 import { warn } from "../utils/logger";
 import type { StarlinkCheckResult } from "./united-starlink-checker";
 
@@ -29,7 +29,12 @@ type UnitedStatus =
   | "spawn_error";
 
 function emitUnitedMetrics(status: UnitedStatus, startedAt: number) {
-  const tags = { vendor: "united", type: "verification", status };
+  const tags = {
+    vendor: "united",
+    type: "verification",
+    status,
+    airline: normalizeAirlineTag("UA"),
+  };
   metrics.increment(COUNTERS.VENDOR_REQUEST, tags);
   metrics.distribution(DISTRIBUTIONS.VENDOR_DURATION_MS, Date.now() - startedAt, tags);
 }
