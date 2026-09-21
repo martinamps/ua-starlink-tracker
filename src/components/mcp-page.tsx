@@ -1,33 +1,32 @@
 import React from "react";
 import { type SiteConfig, siteAirline } from "../airlines/registry";
+import type { PageLink } from "./atoms";
+import { PageHeader, PageShell } from "./layout";
 
 interface McpPageProps {
   site: SiteConfig;
+  pageLinks?: PageLink[];
+  currentPath?: string;
 }
 
-export default function McpPage({ site }: McpPageProps) {
+export default function McpPage({ site, pageLinks, currentPath }: McpPageProps) {
   const cfg = siteAirline(site);
-  const homeTitle = site.brand.title;
   const mcpUrl = `https://${site.canonicalHost}/mcp`;
   const claudeConnectorsUrl = "https://claude.ai/settings/connectors?modal=add-custom-connector";
   const claudeCodeCommand = `claude mcp add --transport http starlink ${mcpUrl}`;
   const cursorInstallUrl = `cursor://anysphere.cursor-deeplink/mcp/install?name=starlink&config=${encodeURIComponent(btoa(JSON.stringify({ url: mcpUrl })))}`;
   const vscodeInstallUrl = `vscode:mcp/install?${encodeURIComponent(JSON.stringify({ name: "starlink", type: "http", url: mcpUrl }))}`;
   return (
-    <div className="w-full mx-auto px-4 sm:px-6 md:px-8 bg-base min-h-screen flex flex-col relative">
-      <div className="absolute inset-0 grid-pattern opacity-50 pointer-events-none" />
-
-      <header className="relative py-5 sm:py-6 text-center mb-3">
-        <a href="/" className="block">
-          <h1 className="font-display text-3xl sm:text-4xl font-semibold text-primary mb-2 tracking-tight hover:text-accent transition-colors">
-            Starlink Tracker for Claude
-          </h1>
-        </a>
-        <p className="text-base text-secondary font-display max-w-xl mx-auto">
-          Ask Claude which {cfg.shortName} flights have Starlink — and get ranked alternatives when
-          they don't.
-        </p>
-      </header>
+    <PageShell site={site} currentPath={currentPath} pageLinks={pageLinks}>
+      <PageHeader
+        title="Starlink Tracker for Claude"
+        dek={
+          <>
+            Ask Claude which {cfg.shortName} flights have Starlink — and get ranked alternatives
+            when they don't.
+          </>
+        }
+      />
 
       {/* Hero: show the result first */}
       <div className="relative max-w-3xl mx-auto w-full mb-8">
@@ -184,34 +183,6 @@ export default function McpPage({ site }: McpPageProps) {
         </details>
       </div>
 
-      <div className="relative text-center mb-6">
-        <a href="/" className="text-sm text-accent hover:underline font-display">
-          ← Back to {homeTitle}
-        </a>
-      </div>
-
-      <footer className="relative py-6 text-center border-t border-subtle text-muted text-sm">
-        <a
-          href="https://x.com/martinamps"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center text-secondary hover:text-primary transition-colors"
-        >
-          Built with
-          <svg
-            className="w-4 h-4 mx-1 text-red-400"
-            xmlns="http://www.w3.org/2000/svg"
-            viewBox="0 0 24 24"
-            fill="currentColor"
-            aria-label="Heart"
-            role="img"
-          >
-            <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z" />
-          </svg>
-          by @martinamps
-        </a>
-      </footer>
-
       {/* Copy button handler */}
       <script
         // biome-ignore lint/security/noDangerouslySetInnerHtml: static inline script, no user input
@@ -231,6 +202,6 @@ export default function McpPage({ site }: McpPageProps) {
       `,
         }}
       />
-    </div>
+    </PageShell>
   );
 }

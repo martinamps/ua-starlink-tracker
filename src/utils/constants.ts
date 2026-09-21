@@ -111,28 +111,16 @@ export const SECURITY_HEADERS = {
     "Cache-Control": "private, no-store",
     "Content-Security-Policy": `default-src 'self'; connect-src ${CONNECT_SRC}; script-src ${SCRIPT_SRC}; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:;`,
   },
-  // Full React page served as a 404 (invalid /check-flight segment). Needs the
-  // page CSP for its inline lookup script, plus shared-cache so crawlers don't
-  // re-render at origin on every sweep.
+  // Every 404: the tenant's shell around a not-found header, or a full React
+  // page (invalid /check-flight segment, which runs an inline lookup script).
+  // Brand-static, so shared caches may hold it: retiring a large URL space
+  // sends crawlers back over thousands of dead URLs, and s-maxage keeps each
+  // repeat off origin while browsers still revalidate.
   notFoundHtml: {
     ...BASE_RESPONSE_HEADERS,
     "Content-Type": "text/html",
     "Cache-Control": "public, s-maxage=3600, max-age=0, must-revalidate",
     "Content-Security-Policy": `default-src 'self'; connect-src ${CONNECT_SRC}; script-src ${SCRIPT_SRC}; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:;`,
-  },
-  notFound: {
-    ...BASE_RESPONSE_HEADERS,
-    "Content-Type": "text/html",
-    // The 404 body is brand-static — no per-visitor content, so unlike the html
-    // variant it is safe at the edge. Retiring a large URL space (the
-    // pre-route-page /route-planner/* duplicates) sends crawlers back over
-    // thousands of dead URLs; without this every repeat 404 re-rendered at
-    // origin. s-maxage only: shared caches absorb it, browsers keep revalidating
-    // so a path that starts existing isn't stuck 404ing for a user.
-    "Cache-Control": "public, s-maxage=3600, max-age=0, must-revalidate",
-    "Content-Security-Policy":
-      "default-src 'self'; style-src 'unsafe-inline' https://fonts.googleapis.com; " +
-      "font-src 'self' https://fonts.gstatic.com; img-src 'self' data:;",
   },
 };
 

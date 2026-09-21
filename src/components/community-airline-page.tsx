@@ -10,9 +10,7 @@ import type { FleetGuideTail, TypeProgress } from "../database/database";
 import { typeShare } from "../scripts/starlink-predictor";
 import { FactsList, PageShell, StatusPill } from "./airlines-page";
 import type { PageLink } from "./atoms";
-
-const PANEL = "bg-surface border border-subtle rounded-lg p-5";
-const SECTION = "relative w-full max-w-3xl mx-auto mb-8";
+import { PANEL, SECTION } from "./layout";
 
 /** Past this, the guide may be missing installs and the page says so. */
 export const GUIDE_STALE_DAYS = 45;
@@ -46,11 +44,11 @@ export function TypeShareTable({
 }) {
   return (
     <div className="mb-4">
-      <div className="text-[10px] font-mono text-muted uppercase tracking-wider mb-1">
+      <div className="text-xs font-mono text-muted uppercase tracking-wider mb-1">
         By aircraft type
       </div>
       {!compact && (
-        <p className="text-[11px] text-muted leading-relaxed mb-2">
+        <p className="text-xs text-muted leading-relaxed mb-2">
           Your booking shows the aircraft type — the best guide until the plane is assigned about
           two days out. On a 777, check whether it is the -300ER or -200ER.
         </p>
@@ -61,7 +59,7 @@ export function TypeShareTable({
           <div key={t.key} className="py-1.5 border-b border-subtle last:border-0">
             <div className="flex items-center justify-between gap-3">
               <span className="font-mono text-xs text-primary shrink-0">{t.label}</span>
-              <span className={`font-mono text-[11px] text-right ${tone}`}>{text}</span>
+              <span className={`font-mono text-xs text-right ${tone}`}>{text}</span>
             </div>
             {!t.excluded && (
               <div className="h-1 rounded bg-surface-elevated overflow-hidden mt-1">
@@ -72,7 +70,7 @@ export function TypeShareTable({
               </div>
             )}
             {!compact && !t.excluded && t.notInGuide > 0 && (
-              <div className="font-mono text-[10px] text-muted mt-1">
+              <div className="font-mono text-xs text-muted mt-1">
                 +{t.notInGuide} newer aircraft not yet in the guide
               </div>
             )}
@@ -109,7 +107,7 @@ function TailLookup({ cfg, tails }: { cfg: AirlineConfig; tails: readonly FleetG
     <div className={PANEL}>
       <label
         htmlFor="tail-filter"
-        className="block text-[10px] font-mono text-muted uppercase tracking-wider mb-2"
+        className="block text-xs font-mono text-muted uppercase tracking-wider mb-2"
       >
         Look up a tail number
       </label>
@@ -160,7 +158,7 @@ const CHECK_SCRIPT = `document.addEventListener('DOMContentLoaded',function(){va
 function FlightCheck({ cfg, types }: { cfg: AirlineConfig; types: readonly TypeProgress[] }) {
   return (
     <div className={PANEL}>
-      <div className="text-[10px] font-mono text-muted uppercase tracking-wider mb-2">
+      <div className="text-xs font-mono text-muted uppercase tracking-wider mb-2">
         Check a flight
       </div>
       <form id="community-check" className="flex flex-col sm:flex-row gap-2">
@@ -226,6 +224,7 @@ export function CommunityAirlinePage({
   facts,
   nowMs,
   pageLinks,
+  currentPath,
 }: {
   site: SiteConfig;
   cfg: AirlineConfig;
@@ -237,6 +236,7 @@ export function CommunityAirlinePage({
   facts: AirlineFactsEntry | null;
   nowMs: number;
   pageLinks?: PageLink[];
+  currentPath?: string;
 }) {
   const source = cfg.communitySource;
   const { equipped, total } = programmeTotals(types);
@@ -247,13 +247,14 @@ export function CommunityAirlinePage({
     <PageShell
       site={site}
       pageLinks={pageLinks}
+      currentPath={currentPath}
       heading={`Does my ${cfg.name} flight have Starlink?`}
       sub={`${cfg.rollout.statusLabel} — ${cfg.rollout.phaseNote}`}
     >
       <section className={SECTION}>
         <div className={PANEL}>
           <div className="flex items-center justify-between gap-2 mb-3">
-            <span className="text-[10px] font-mono text-muted uppercase tracking-wider">
+            <span className="text-xs font-mono text-muted uppercase tracking-wider">
               Rollout status
             </span>
             <StatusPill cfg={cfg} />
@@ -267,7 +268,7 @@ export function CommunityAirlinePage({
             <p className="text-sm text-muted">No per-aircraft data yet.</p>
           )}
           {official && (
-            <p className="text-[11px] text-muted leading-relaxed mb-3">
+            <p className="text-xs text-muted leading-relaxed mb-3">
               {cfg.shortName}'s own figure ({formatFactDate(official.asOf as string)}):{" "}
               {official.fact}{" "}
               <a
@@ -300,7 +301,7 @@ export function CommunityAirlinePage({
       {source && (
         <section className={SECTION}>
           <div className={PANEL}>
-            <div className="text-[10px] font-mono text-muted uppercase tracking-wider mb-2">
+            <div className="text-xs font-mono text-muted uppercase tracking-wider mb-2">
               Where this comes from
             </div>
             <p className="text-sm text-secondary leading-relaxed mb-2">
@@ -338,12 +339,6 @@ export function CommunityAirlinePage({
           <FactsList entry={facts} />
         </section>
       )}
-
-      <section className={`${SECTION} text-center`}>
-        <a href="/airlines" className="font-mono text-xs text-secondary hover:text-accent">
-          ← All airlines with Starlink
-        </a>
-      </section>
     </PageShell>
   );
 }

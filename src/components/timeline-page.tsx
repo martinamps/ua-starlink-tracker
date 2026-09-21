@@ -1,6 +1,7 @@
 import React from "react";
 import { type SiteConfig, siteAirline } from "../airlines/registry";
-import { PageFooter, type PageLink } from "./atoms";
+import type { PageLink } from "./atoms";
+import { PageHeader, PageShell, StatInline } from "./layout";
 
 /** Attribution every timeline entry must carry. A milestone page exists to be
  * checkable, so the source is required and has to be a real document a reader
@@ -158,7 +159,7 @@ const fmtDate = (iso: string) =>
 /** Attribution line. The link is the point — a bare publisher name is not a
  * citation a reader can check. */
 const SourceLink = ({ label, cite }: { label: string; cite: Citation }) => (
-  <div className="font-mono text-[10px] text-muted uppercase tracking-wider mt-1">
+  <div className="font-mono text-xs text-muted uppercase tracking-wider mt-1">
     {label}{" "}
     <a
       href={cite.sourceUrl}
@@ -177,6 +178,7 @@ interface TimelinePageProps {
   totalCount: number;
   lastUpdated: string;
   pageLinks?: PageLink[];
+  currentPath?: string;
 }
 
 export default function TimelinePage({
@@ -185,6 +187,7 @@ export default function TimelinePage({
   totalCount,
   lastUpdated,
   pageLinks,
+  currentPath,
 }: TimelinePageProps) {
   const cfg = siteAirline(site);
   const timeline = TIMELINES[cfg.code];
@@ -195,19 +198,13 @@ export default function TimelinePage({
   const pct = totalCount > 0 ? Math.round((starlinkCount / totalCount) * 100) : 0;
 
   return (
-    <div className="w-full mx-auto px-4 sm:px-6 md:px-8 bg-base min-h-screen flex flex-col relative">
-      <div className="absolute inset-0 grid-pattern opacity-50 pointer-events-none" />
-
-      <header className="relative py-5 sm:py-6 text-center mb-3">
-        <a href="/" className="block">
-          <h1 className="font-display text-3xl sm:text-4xl font-semibold text-primary mb-2 tracking-tight hover:text-accent transition-colors">
-            {cfg.shortName} Starlink Rollout Timeline
-          </h1>
-        </a>
-        <p className="text-base text-secondary font-display max-w-xl mx-auto">
-          Every dated milestone in the {cfg.name} Starlink rollout — and where it stands today.
-        </p>
-      </header>
+    <PageShell site={site} currentPath={currentPath} pageLinks={pageLinks}>
+      <PageHeader
+        title={<>{cfg.shortName} Starlink Rollout Timeline</>}
+        dek={
+          <>Every dated milestone in the {cfg.name} Starlink rollout — and where it stands today.</>
+        }
+      />
 
       <div className="relative max-w-2xl mx-auto w-full mb-8">
         <section className="bg-surface rounded-lg border border-subtle p-5 sm:p-6 mb-4">
@@ -250,10 +247,7 @@ export default function TimelinePage({
         <section className="bg-surface rounded-lg border border-subtle p-5 sm:p-6 mb-4">
           <h2 className="font-display text-lg font-semibold text-primary mb-3">Where it stands</h2>
           <p className="text-sm text-muted leading-relaxed">
-            As of {stampLabel},{" "}
-            <span className="text-secondary font-mono">
-              {starlinkCount.toLocaleString("en-US")} of {totalCount.toLocaleString("en-US")}
-            </span>{" "}
+            As of {stampLabel}, <StatInline n={starlinkCount} /> of <StatInline n={totalCount} />{" "}
             {cfg.name} aircraft ({pct}%) have Starlink installed, verified continuously against{" "}
             {cfg.verifySite}. The{" "}
             <a href="/" className="text-accent hover:underline">
@@ -281,14 +275,6 @@ export default function TimelinePage({
           </p>
         </section>
       </div>
-
-      <div className="relative text-center mb-6">
-        <a href="/" className="text-sm text-accent hover:underline font-display">
-          ← Back to {site.brand.title}
-        </a>
-      </div>
-
-      <PageFooter site={site} pageLinks={pageLinks} />
-    </div>
+    </PageShell>
   );
 }

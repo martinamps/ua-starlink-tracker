@@ -1,11 +1,8 @@
 import React from "react";
 import { type SiteConfig, siteAirline } from "../airlines/registry";
 import type { RouteSummary } from "../database/database";
-import { type PageLink, PageNavLinks } from "./atoms";
-
-const EYEBROW = "text-[10px] font-mono text-muted uppercase tracking-wider mb-3";
-const PANEL = "bg-surface border border-subtle rounded-lg p-5";
-const SECTION = "relative w-full max-w-4xl mx-auto mb-10";
+import type { PageLink } from "./atoms";
+import { EYEBROW, PANEL, PageHeader, PageShell, SECTION } from "./layout";
 
 export function formatDuration(sec: number | null): string | null {
   if (!sec || sec <= 0) return null;
@@ -63,7 +60,7 @@ function FlightNumbers({ route, airlineName }: { route: RouteSummary; airlineNam
           </a>
         ))}
       </div>
-      <p className="text-[11px] text-muted mt-4 leading-snug">
+      <p className="text-xs text-muted mt-4 leading-snug">
         Every {airlineName} flight number observed on {route.origin} → {route.destination}. A dot
         marks numbers currently in the schedule window; the rest are from the observed route
         history. Follow any number for its per-flight Starlink record.
@@ -79,6 +76,7 @@ interface RoutePageProps {
    * link renders only when that page serves. */
   reverseLinkable?: boolean;
   pageLinks?: PageLink[];
+  currentPath?: string;
 }
 
 export default function RoutePage({
@@ -86,32 +84,30 @@ export default function RoutePage({
   site,
   reverseLinkable = false,
   pageLinks,
+  currentPath,
 }: RoutePageProps) {
   const cfg = siteAirline(site);
   const airlineName = cfg.name;
-  const backLabel = site.brand.title;
   const duration = formatDuration(route.durationSec);
   const scheduledCount = route.flightNumbers.filter((f) => f.scheduled === 1).length;
 
   return (
-    <div className="w-full mx-auto px-4 sm:px-6 md:px-8 bg-base min-h-screen flex flex-col relative">
-      <div className="absolute inset-0 grid-pattern opacity-50 pointer-events-none" />
-
-      <header className="relative py-5 sm:py-6 text-center mb-6">
-        <h1 className="font-display text-3xl sm:text-4xl font-semibold text-primary mb-2 tracking-tight">
-          {route.origin} to {route.destination} Starlink WiFi
-        </h1>
-        <p className="text-base text-secondary font-display max-w-2xl mx-auto">
-          {routeVerdict(route, airlineName)}
-        </p>
-      </header>
+    <PageShell site={site} currentPath={currentPath} pageLinks={pageLinks}>
+      <PageHeader
+        title={
+          <>
+            {route.origin} to {route.destination} Starlink WiFi
+          </>
+        }
+        dek={routeVerdict(route, airlineName)}
+      />
 
       <section className={SECTION}>
         <div className={PANEL}>
           <div className={EYEBROW}>Route at a glance</div>
           <dl className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             <div>
-              <dt className="text-[10px] font-mono text-muted uppercase tracking-wider">
+              <dt className="text-xs font-mono text-muted uppercase tracking-wider">
                 Starlink departures
               </dt>
               <dd className="font-display text-2xl font-semibold text-primary tabular-nums">
@@ -119,7 +115,7 @@ export default function RoutePage({
               </dd>
             </div>
             <div>
-              <dt className="text-[10px] font-mono text-muted uppercase tracking-wider">
+              <dt className="text-xs font-mono text-muted uppercase tracking-wider">
                 Flight numbers
               </dt>
               <dd className="font-display text-2xl font-semibold text-primary tabular-nums">
@@ -127,23 +123,19 @@ export default function RoutePage({
               </dd>
             </div>
             <div>
-              <dt className="text-[10px] font-mono text-muted uppercase tracking-wider">
-                In schedule
-              </dt>
+              <dt className="text-xs font-mono text-muted uppercase tracking-wider">In schedule</dt>
               <dd className="font-display text-2xl font-semibold text-primary tabular-nums">
                 {scheduledCount}
               </dd>
             </div>
             <div>
-              <dt className="text-[10px] font-mono text-muted uppercase tracking-wider">
-                Block time
-              </dt>
+              <dt className="text-xs font-mono text-muted uppercase tracking-wider">Block time</dt>
               <dd className="font-display text-2xl font-semibold text-primary tabular-nums">
                 {duration ?? "—"}
               </dd>
             </div>
           </dl>
-          <p className="text-[11px] text-muted mt-4 leading-snug">
+          <p className="text-xs text-muted mt-4 leading-snug">
             Counted from live tail assignments over the {route.windowLabel}. A route with no
             equipped departures today can still get one — assignments publish about two days before
             departure.
@@ -185,13 +177,6 @@ export default function RoutePage({
           </p>
         )}
       </section>
-
-      <footer className="relative py-6 text-center border-t border-subtle text-muted text-sm mt-auto">
-        <a href="/" className="text-accent hover:underline font-display">
-          ← Back to {backLabel}
-        </a>
-        <PageNavLinks links={pageLinks} />
-      </footer>
-    </div>
+    </PageShell>
   );
 }

@@ -15,10 +15,9 @@ import type { SubfleetBreakdown } from "../scripts/starlink-predictor";
 import type { PerAirlineStat } from "../types";
 import { article } from "../utils/grammar";
 import { FactsList, PhaseTable, type TypePhase } from "./airlines-page";
-import { PageFooter, type PageLink, STATUS_TONE } from "./atoms";
+import { type PageLink, STATUS_TONE } from "./atoms";
 import { TypeShareTable } from "./community-airline-page";
-
-const PANEL = "bg-surface border border-subtle rounded-lg p-5";
+import { PANEL, PageHeader, PageShell } from "./layout";
 
 export interface CompareSide {
   cfg: AirlineConfig;
@@ -68,7 +67,7 @@ function SidePanel({ side }: { side: CompareSide }) {
           {cfg.name}
         </a>
         <span
-          className="font-mono text-[10px] uppercase tracking-wide px-2 py-1 rounded-full shrink-0"
+          className="font-mono text-xs uppercase tracking-wide px-2 py-1 rounded-full shrink-0"
           style={{ color: tone.color, background: tone.bg }}
         >
           {cfg.rollout.statusLabel}
@@ -81,7 +80,7 @@ function SidePanel({ side }: { side: CompareSide }) {
             {stat.starlink}
             <span className="text-base text-muted font-normal"> / {fleet}</span>
           </div>
-          <div className="font-mono text-[11px] text-muted uppercase tracking-wider mb-2">
+          <div className="font-mono text-xs text-muted uppercase tracking-wider mb-2">
             aircraft equipped · {pct}% of fleet
           </div>
           <div className="h-1.5 rounded bg-surface-elevated overflow-hidden mb-3">
@@ -95,7 +94,7 @@ function SidePanel({ side }: { side: CompareSide }) {
             />
           </div>
           {(stat.installs30d ?? 0) > 0 && (
-            <div className="font-mono text-[11px] text-secondary mb-3">
+            <div className="font-mono text-xs text-secondary mb-3">
               +{stat.installs30d} equipped in the last 30 days
             </div>
           )}
@@ -114,7 +113,7 @@ function SidePanel({ side }: { side: CompareSide }) {
 
       {side.phases || side.typeProgress ? null : side.breakdown.length > 0 ? (
         <div className="mb-4">
-          <div className="text-[10px] font-mono text-muted uppercase tracking-wider mb-1">
+          <div className="text-xs font-mono text-muted uppercase tracking-wider mb-1">
             By fleet group
           </div>
           {side.breakdown.map((b) => (
@@ -126,7 +125,7 @@ function SidePanel({ side }: { side: CompareSide }) {
                 {b.label}
                 {b.hint && <span className="text-muted"> ({b.hint})</span>}
               </span>
-              <span className="font-mono text-[11px] text-secondary">
+              <span className="font-mono text-xs text-secondary">
                 {b.synthetic
                   ? `${Math.round(b.pct * 100)}%`
                   : `${b.equipped} / ${b.total} · ${Math.round(b.pct * 100)}%`}
@@ -163,35 +162,28 @@ export default function ComparePage({
   left,
   right,
   pageLinks,
+  currentPath,
 }: {
   site: SiteConfig;
   left: CompareSide;
   right: CompareSide;
   pageLinks?: PageLink[];
+  currentPath?: string;
 }) {
   const heading = `${left.cfg.shortName} vs ${right.cfg.shortName}: Starlink WiFi`;
   return (
-    <div className="w-full mx-auto px-4 sm:px-6 md:px-8 bg-base min-h-screen flex flex-col relative">
-      <div className="absolute inset-0 grid-pattern opacity-50 pointer-events-none" />
-
-      <header className="relative py-5 sm:py-6 text-center mb-6">
-        <a href="/" className="block">
-          <h1 className="font-display text-3xl sm:text-4xl font-semibold text-primary mb-2 tracking-tight hover:text-accent transition-colors">
-            {heading}
-          </h1>
-        </a>
-        <p className="text-base text-secondary font-display max-w-2xl mx-auto">
-          Live install counts, per-fleet-group rates, and where each rollout stands — from the same
-          tail-level data behind the dedicated trackers.
-        </p>
-      </header>
+    <PageShell site={site} currentPath={currentPath} pageLinks={pageLinks}>
+      <PageHeader
+        title={heading}
+        dek="Live install counts, per-fleet-group rates, and where each rollout stands — from the same tail-level data behind the dedicated trackers."
+      />
 
       <section className="relative w-full max-w-5xl mx-auto mb-6">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <SidePanel side={left} />
           <SidePanel side={right} />
         </div>
-        <p className="text-[11px] text-muted leading-relaxed mt-3 max-w-3xl">
+        <p className="text-xs text-muted leading-relaxed mt-3 max-w-3xl">
           Where a percentage is shown it is a share of that airline's full tracked fleet — the same
           denominator its dedicated tracker publishes — so neither side is flattered. Airlines whose
           program is decided by aircraft type get the per-type table instead of a percentage,
@@ -203,7 +195,7 @@ export default function ComparePage({
 
       <section className="relative w-full max-w-3xl mx-auto mb-8">
         <div className={PANEL}>
-          <div className="text-[10px] font-mono text-muted uppercase tracking-wider mb-2">
+          <div className="text-xs font-mono text-muted uppercase tracking-wider mb-2">
             Flying a specific route?
           </div>
           <p className="text-sm text-muted leading-relaxed">
@@ -230,15 +222,6 @@ export default function ComparePage({
           </div>
         </section>
       )}
-
-      <section className="relative w-full max-w-3xl mx-auto mb-8 text-center">
-        <a href="/airlines" className="font-mono text-xs text-secondary hover:text-accent">
-          ← All airlines with Starlink
-        </a>
-      </section>
-
-      <div className="mt-auto" />
-      <PageFooter site={site} pageLinks={pageLinks} />
-    </div>
+    </PageShell>
   );
 }

@@ -1,6 +1,7 @@
 import React from "react";
 import { type SiteConfig, siteAirline } from "../airlines/registry";
-import { PageFooter, type PageLink } from "./atoms";
+import type { PageLink } from "./atoms";
+import { PageHeader, PageShell, StatInline } from "./layout";
 
 /** The airline-specific access story. Kept per-airline (like methodology's
  * SOURCES) because "free" has different fine print per carrier — the handler
@@ -36,6 +37,7 @@ interface IsStarlinkFreePageProps {
   starlinkCount: number;
   totalCount: number;
   pageLinks?: PageLink[];
+  currentPath?: string;
 }
 
 export default function IsStarlinkFreePage({
@@ -43,6 +45,7 @@ export default function IsStarlinkFreePage({
   starlinkCount,
   totalCount,
   pageLinks,
+  currentPath,
 }: IsStarlinkFreePageProps) {
   const cfg = siteAirline(site);
   const copy = ACCESS[cfg.code];
@@ -54,20 +57,11 @@ export default function IsStarlinkFreePage({
   // entities for one question. The page's own answer copy is the answer; the
   // WebPage JSON-LD renderSubPage emits already describes it.
   return (
-    <div className="w-full mx-auto px-4 sm:px-6 md:px-8 bg-base min-h-screen flex flex-col relative">
-      <div className="absolute inset-0 grid-pattern opacity-50 pointer-events-none" />
-
-      <header className="relative py-5 sm:py-6 text-center mb-3">
-        <a href="/" className="block">
-          <h1 className="font-display text-3xl sm:text-4xl font-semibold text-primary mb-2 tracking-tight hover:text-accent transition-colors">
-            Is {short} Starlink WiFi Free?
-          </h1>
-        </a>
-        <p className="text-base text-secondary font-display max-w-xl mx-auto">
-          Short answer: yes. Here's the fine print, what you actually get, and how to know whether
-          your flight has it.
-        </p>
-      </header>
+    <PageShell site={site} currentPath={currentPath} pageLinks={pageLinks}>
+      <PageHeader
+        title={<>Is {short} Starlink WiFi Free?</>}
+        dek="Short answer: yes. Here's the fine print, what you actually get, and how to know whether your flight has it."
+      />
 
       <div className="relative max-w-2xl mx-auto w-full mb-8">
         <section className="bg-surface rounded-lg border border-subtle p-5 sm:p-6 mb-4">
@@ -97,13 +91,10 @@ export default function IsStarlinkFreePage({
         <section className="bg-surface rounded-lg border border-subtle p-5 sm:p-6 mb-4">
           <h2 className="font-display text-lg font-semibold text-primary mb-3">The one catch</h2>
           <p className="text-sm text-muted leading-relaxed">
-            Free Starlink is only on Starlink-equipped aircraft —{" "}
-            <span className="text-secondary font-mono">
-              {starlinkCount.toLocaleString("en-US")} of {totalCount.toLocaleString("en-US")}
-            </span>{" "}
-            {cfg.name} aircraft today, with more added weekly. Aircraft still awaiting installation
-            mostly carry an older system — Viasat, Panasonic or Thales — which is slower and usually
-            paid, and some carry no WiFi at all.
+            Free Starlink is only on Starlink-equipped aircraft — <StatInline n={starlinkCount} />{" "}
+            of <StatInline n={totalCount} /> {cfg.name} aircraft today, with more added weekly.
+            Aircraft still awaiting installation mostly carry an older system — Viasat, Panasonic or
+            Thales — which is slower and usually paid, and some carry no WiFi at all.
             {site.features.fleetPage && (
               <>
                 {" "}
@@ -149,14 +140,6 @@ export default function IsStarlinkFreePage({
           </a>
         </div>
       </div>
-
-      <div className="relative text-center mb-6">
-        <a href="/" className="text-sm text-accent hover:underline font-display">
-          ← Back to {site.brand.title}
-        </a>
-      </div>
-
-      <PageFooter site={site} pageLinks={pageLinks} />
-    </div>
+    </PageShell>
   );
 }

@@ -19,7 +19,7 @@ function HubLinkGrid({ links }: { links?: HubHomeLinks }) {
     <nav className="bg-surface border border-subtle rounded-lg p-4" aria-label="Airlines">
       {links.airlines.length > 0 && (
         <>
-          <h2 className="text-[10px] font-mono text-muted uppercase tracking-wider mb-3">
+          <h2 className="text-xs font-mono text-muted uppercase tracking-wider mb-3">
             Airlines with Starlink
           </h2>
           <div className="flex flex-wrap gap-2">
@@ -33,7 +33,7 @@ function HubLinkGrid({ links }: { links?: HubHomeLinks }) {
       )}
       {links.compares.length > 0 && (
         <>
-          <h2 className="text-[10px] font-mono text-muted uppercase tracking-wider mt-4 mb-3">
+          <h2 className="text-xs font-mono text-muted uppercase tracking-wider mt-4 mb-3">
             Compare
           </h2>
           <div className="flex flex-wrap gap-2">
@@ -123,22 +123,22 @@ const HubHero = ({ stats, perAirlineStats = [], recentInstalls = [], hubLinks }:
               return '<span class="'+cls+' tip" tabindex="0" data-tip="'+tipText+'">'+inner+'</span>';
             }
             function renderResult(a, O, D) {
-              var color = a.accentColor || '#0ea5e9';
+              var color = a.accentText || a.accentColor || '#0ea5e9';
               var inferred = a.kind === 'inferred_absent';
               var rp = a.routePlannerBase ? a.routePlannerBase+'/'+O+'/'+D : null;
               if (a.kind === 'no_data') {
                 return '<div class="mb-3 opacity-60"><div class="flex justify-between items-center font-mono text-xs"><span class="text-muted">'+esc(a.name)+(rp?pill(rp,'check route planner',color):'')+'</span><span class="text-muted">\\u2014</span></div>'
-                     + '<div class="font-mono text-[10px] text-muted">No route data yet</div></div>';
+                     + '<div class="font-mono text-xs text-muted">No route data yet</div></div>';
               }
               if (a.kind === 'observed_mixed') {
                 var head = '<div class="flex justify-between items-center font-mono text-xs"><span class="text-primary">'+esc(a.name)+'</span></div>'
-                         + '<div class="font-mono text-[10px] text-muted">'+esc(a.reason)+'</div>';
+                         + '<div class="font-mono text-xs text-muted">'+esc(a.reason)+'</div>';
                 var rows = (a.breakdown||[]).map(function(b,i){
                   var br = Math.round(b.pct*100);
                   var lblTip = b.hint ? 'Flight numbers '+esc(b.hint) : '';
                   var best = i===0 && br>=50 ? ' '+tip('text-[8px] px-1 py-px rounded no-underline','Pick a flight in this group for the best Starlink odds','<span style="background:color-mix(in srgb,'+esc(color)+' 18%,transparent);color:'+esc(color)+';padding:1px 4px;border-radius:3px">best bet</span>') : '';
                   var counts = b.equipped!=null ? esc(b.equipped)+'/'+esc(b.total)+' aircraft \\u00b7 ' : '';
-                  return '<div class="mt-1.5 ml-3"><div class="flex justify-between font-mono text-[10px]">'
+                  return '<div class="mt-1.5 ml-3"><div class="flex justify-between font-mono text-xs">'
                        + '<span>'+tip('text-secondary',lblTip,esc(shorten(b.label)))+best+'</span>'
                        + tip('text-accent tip-l',b.equipped!=null?fleetTip(a,b):'',counts+br+'%')+'</div>'+bar(br,color,false)+'</div>';
                 }).join('');
@@ -150,7 +150,7 @@ const HubHero = ({ stats, perAirlineStats = [], recentInstalls = [], hubLinks }:
               var chipL = (pct < 50 && a.kind !== 'type_rule' && rp) ? pill(rp, 'try a connection', color) : '';
               return '<div class="mb-3"><div class="flex justify-between items-center font-mono text-xs"><span class="text-primary">'+esc(a.name)+chipL+'</span>'
                    + tip('text-accent tip-l',pctTip,pct+'%')+'</div>'
-                   + '<div class="font-mono text-[10px] text-muted">'+esc(a.reason)+'</div>'+bar(pct,color,inferred)+'</div>';
+                   + '<div class="font-mono text-xs text-muted">'+esc(a.reason)+'</div>'+bar(pct,color,inferred)+'</div>';
             }
             function doCompare(origin, dest) {
               rr.classList.remove('hidden');

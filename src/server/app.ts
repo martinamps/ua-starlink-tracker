@@ -58,6 +58,7 @@ import {
   resolveSite,
   siteAirline,
   siteForAirline,
+  uiAccent,
   wifiPhaseFamilies,
 } from "../airlines/registry";
 import {
@@ -140,6 +141,7 @@ import LiveTvPage, { liveTvTypeRows } from "../components/live-tv-page";
 import McpPage from "../components/mcp-page";
 import MethodologyPage, { hasMethodology } from "../components/methodology-page";
 import NewlyEquippedPage from "../components/newly-equipped-page";
+import NotFoundPage from "../components/not-found-page";
 import Page from "../components/page";
 import RoutePage, { routeVerdict } from "../components/route-page";
 import RoutePlannerPage from "../components/route-planner-page";
@@ -191,7 +193,7 @@ import {
 import { article } from "../utils/grammar";
 import { computeInstallRate, hasInstallRateContent } from "../utils/install-rate";
 import { error as logError } from "../utils/logger";
-import { getNotFoundHtml } from "../utils/not-found";
+
 import { denominatorIsPublishable, shareCardFile, shareCardPath } from "../utils/share-cards";
 import { getSpreadsheetCacheInfo, getSpreadsheetCacheTails } from "../utils/utils";
 import { aircraftTypeParam, communityWireFields, noModelConfidence } from "./community-wire";
@@ -277,8 +279,29 @@ function withClampedMeta(vars: Record<string, string>): Record<string, string> {
   };
 }
 
-const notFound = (site: SiteConfig): Response =>
-  new Response(getNotFoundHtml(site.brand), { status: 404, headers: SECURITY_HEADERS.notFound });
+/** The site's own shell around a "not found" header. Built only from the
+ * tenant's static config — no reader, no client IP — because the response is
+ * cached at the edge (SECURITY_HEADERS.notFoundHtml). */
+async function notFound(site: SiteConfig): Promise<Response> {
+  const html = ReactDOMServer.renderToString(React.createElement(NotFoundPage, { site }));
+  const title = `Page not found | ${site.brand.title}`;
+  const body = renderHtml(await getHtmlTemplate(), {
+    ...brandMetadata(site.brand),
+    siteTitle: title,
+    ogTitle: title,
+    siteDescription: "This page doesn't exist.",
+    ogDescription: "This page doesn't exist.",
+    keywords: "",
+    robotsMeta: "noindex, nofollow",
+    ogType: "website",
+    host: site.canonicalHost,
+    canonicalPath: "/",
+    socialImagePath: resolveSocialImage(site.brand),
+    stylesheetTag: currentStylesheetTag(),
+    html,
+  });
+  return new Response(body, { status: 404, headers: SECURITY_HEADERS.notFoundHtml });
+}
 
 /** HTTP_REQUEST's airline tag, from the host's tenant: without it every
  * request fell to `airline:unmapped`, so a `by {airline}` split of the
@@ -1764,7 +1787,7 @@ const SITE_PAGES: SitePage[] = [
     feature: "timelinePage",
     changefreq: "weekly",
     priority: "0.7",
-    navLabel: "Rollout timeline",
+    navLabel: "Timeline",
     llmsLine: (h) =>
       `- [Rollout timeline](https://${h}/timeline) — every dated milestone plus the airline's stated targets`,
   },
@@ -2428,7 +2451,7 @@ function airlineInstallRate(
     code: cfg.code,
     name: cfg.name,
     shortName: cfg.shortName,
-    accentColor: cfg.brand.accentColor,
+    accentColor: uiAccent(cfg.brand),
     statusLabel: cfg.rollout.statusLabel,
     phaseNote: cfg.rollout.phaseNote,
     // THIS airline's stamp. The hub renders several tenants in one response;
@@ -2735,6 +2758,7 @@ async function renderSubPage<P extends { site: SiteConfig }>(
       // Every sub-page's footer gets the secondary-family nav, so no new URL
       // family ships as an orphan again.
       pageLinks: pageNavLinks(ctx, canonicalPath),
+      currentPath: canonicalPath,
       ...(props ?? {}),
     } as unknown as P)
   );
@@ -2768,10 +2792,9 @@ async function renderSubPage<P extends { site: SiteConfig }>(
   const template = await getHtmlTemplate();
   return new Response(renderHtml(template, withClampedMeta(htmlVariables)), {
     status,
-    // Keep the HTML CSP even on 404s (this page runs the inline lookup script,
-    // which SECURITY_HEADERS.notFound would block) but take notFound's edge
-    // cache policy with it, so a crawler sweeping the unbounded
-    // /check-flight/* space doesn't re-render React at origin every hit.
+    // A 404 render keeps the page CSP (inline lookup script) but takes the
+    // shared-cache policy, so a crawler sweeping the unbounded /check-flight/*
+    // space doesn't re-render React at origin every hit.
     headers: status === 404 ? SECURITY_HEADERS.notFoundHtml : SECURITY_HEADERS.html,
   });
 }
@@ -4703,7 +4726,7 @@ export function createApp(db: Database): App {
         // crash invisible to the status_code:5* monitor on this metric.
         let status = 500;
         try {
-          const response = m ? await m.handler(ctx) : notFound(site);
+          const response = m ? await m.handler(ctx) : await notFound(site);
           status = response.status;
           span.setTag("http.status_code", status);
           return response;

@@ -12,14 +12,8 @@ import type {
   PerAirlineStat,
   RecentInstall,
 } from "../types";
-import {
-  CrossSiteLinks,
-  HeaderStatStrip,
-  type PageLink,
-  PageNavLinks,
-  PopularFlightsLinks,
-  ShareCardLink,
-} from "./atoms";
+import { HeaderStatStrip, type PageLink, PopularFlightsLinks, ShareCardLink } from "./atoms";
+import { PageHeader, PageShell } from "./layout";
 import { PassengerBanner } from "./passenger-banner";
 
 // Reusable FAQ accordion item — eliminates ~30 lines of boilerplate per question
@@ -433,14 +427,6 @@ export default function Page({
     const fn = ensureAirlinePrefix(permalinkAirline, flightNumber);
     return permalinkFnPattern.test(fn) ? `/check-flight/${fn}` : null;
   };
-  const navLinks = [
-    ...(features.checkFlightPage ? [{ href: "/check-flight", label: "Check a Flight" }] : []),
-    ...(features.routePlannerPage ? [{ href: "/route-planner", label: "Route Planner" }] : []),
-    ...(features.fleetPage ? [{ href: "/fleet", label: "Fleet Rollout" }] : []),
-    ...(features.routesPage ? [{ href: "/routes", label: "Live Routes" }] : []),
-    ...(features.timelinePage ? [{ href: "/timeline", label: "Timeline" }] : []),
-    ...(features.mcpPage ? [{ href: "/mcp", label: "Tools & MCP" }] : []),
-  ];
   // Filter buttons act on the rendered rows, so their counts must describe the
   // capped list — full-fleet numbers live in the hero and on /fleet.
   const subfleetCounts = Object.fromEntries(
@@ -572,17 +558,13 @@ export default function Page({
   };
 
   return (
-    <div className="w-full mx-auto px-4 sm:px-6 md:px-8 bg-base min-h-screen flex flex-col relative">
-      {/* Subtle grid background */}
-      <div className="absolute inset-0 grid-pattern opacity-50 pointer-events-none" />
-
-      {showPassengerBanner && <PassengerBanner />}
-
-      <header className="relative py-5 sm:py-6 text-center mb-2">
-        <h1 className="font-display text-3xl sm:text-4xl md:text-5xl font-semibold text-primary mb-1 tracking-tight">
-          {brand.title}
-        </h1>
-        <p className="text-base sm:text-lg text-secondary font-display mb-2">{brand.tagline}</p>
+    <PageShell
+      site={site}
+      currentPath="/"
+      pageLinks={pageLinks}
+      before={showPassengerBanner ? <PassengerBanner /> : null}
+    >
+      <PageHeader title={brand.title} dek={brand.tagline}>
         <HeaderStatStrip
           items={
             typeof content.headerStats === "function"
@@ -590,7 +572,7 @@ export default function Page({
               : content.headerStats
           }
         />
-      </header>
+      </PageHeader>
 
       {features.checkFlightPage && (
         <div className="relative max-w-xl mx-auto w-full mb-6">
@@ -665,19 +647,6 @@ export default function Page({
             installs30d={installs30d}
           />
         )}
-        {navLinks.length > 0 && features.homeNav && (
-          <div className="flex flex-wrap items-center justify-center gap-2 text-sm font-display">
-            {navLinks.map((link) => (
-              <a
-                key={link.href}
-                href={link.href === "/mcp" ? "#integrations" : link.href}
-                className="px-3 py-1.5 bg-surface border border-subtle rounded text-secondary hover:text-accent hover:border-accent transition-colors"
-              >
-                {link.label}
-              </a>
-            ))}
-          </div>
-        )}
       </div>
 
       {/* Per-airline stat panel — bespoke composition */}
@@ -749,7 +718,7 @@ export default function Page({
               <button
                 type="button"
                 id="filter-all"
-                className="filter-btn font-mono text-[11px] px-3 py-2 rounded border transition-all bg-accent/20 border-accent text-accent"
+                className="filter-btn font-mono text-xs px-3 py-2 rounded border transition-all bg-accent/20 border-accent text-accent"
                 data-filter="all"
               >
                 ALL <span className="hidden sm:inline">({displayedAircraft.length})</span>
@@ -760,7 +729,7 @@ export default function Page({
                     key={card.key}
                     type="button"
                     id={`filter-${card.key}`}
-                    className="filter-btn font-mono text-[11px] px-3 py-2 rounded border transition-all bg-transparent border-subtle text-secondary hover:border-accent/50 hover:text-accent"
+                    className="filter-btn font-mono text-xs px-3 py-2 rounded border transition-all bg-transparent border-subtle text-secondary hover:border-accent/50 hover:text-accent"
                     data-filter={card.key}
                   >
                     {card.label.toUpperCase()}{" "}
@@ -771,7 +740,7 @@ export default function Page({
           </div>
         </div>
         {/* Column headers - desktop only */}
-        <div className="hidden md:grid md:grid-cols-12 gap-4 px-6 py-2.5 border-b border-subtle bg-surface-elevated/50 text-[10px] font-mono text-muted uppercase tracking-widest">
+        <div className="hidden md:grid md:grid-cols-12 gap-4 px-6 py-2.5 border-b border-subtle bg-surface-elevated/50 text-xs font-mono text-muted uppercase tracking-widest">
           <div className="col-span-3">Aircraft</div>
           <div className="col-span-2">Type</div>
           <div className="col-span-3">Operator</div>
@@ -846,14 +815,14 @@ export default function Page({
                               {plane.Aircraft}
                             </div>
                             {badge && (
-                              <div className="hidden md:block text-[10px] font-mono text-muted uppercase">
+                              <div className="hidden md:block text-xs font-mono text-muted uppercase">
                                 {badge}
                               </div>
                             )}
                           </div>
                         </div>
                         {badge && (
-                          <div className="md:hidden text-[10px] font-mono text-accent uppercase">
+                          <div className="md:hidden text-xs font-mono text-accent uppercase">
                             {badge}
                           </div>
                         )}
@@ -1084,7 +1053,7 @@ export default function Page({
               var filterBtns = document.querySelectorAll('.filter-btn');
               var currentFilter = 'all';
               var totalCount = rows.length;
-              var baseClass = 'filter-btn font-mono text-[11px] px-3 py-2 rounded border transition-all';
+              var baseClass = 'filter-btn font-mono text-xs px-3 py-2 rounded border transition-all';
               var activeStyle = 'bg-accent/20 border-accent text-accent';
               var inactiveStyle = 'bg-transparent border-subtle text-secondary hover:border-accent/50 hover:text-accent';
 
@@ -1319,7 +1288,7 @@ export default function Page({
                 // Set initial state to largest slice
                 if (firstSlice) {
                   pieCenterText.textContent = currentCount;
-                  pieStatusLabel.innerHTML = '<span style="color:#0ea5e9">' + currentModel + '</span> <span style="color:#5a6a80">· ' + currentPct + '%</span>';
+                  pieStatusLabel.innerHTML = '<span style="color:var(--color-accent)">' + currentModel + '</span> <span style="color:var(--color-text-muted)">· ' + currentPct + '%</span>';
                 }
 
                 // Sticky hover - remember last hovered slice
@@ -1329,7 +1298,7 @@ export default function Page({
                     currentModel = this.dataset.model;
                     currentPct = this.dataset.pct;
                     pieCenterText.textContent = currentCount;
-                    pieStatusLabel.innerHTML = '<span style="color:#0ea5e9">' + currentModel + '</span> <span style="color:#5a6a80">· ' + currentPct + '%</span>';
+                    pieStatusLabel.innerHTML = '<span style="color:var(--color-accent)">' + currentModel + '</span> <span style="color:var(--color-text-muted)">· ' + currentPct + '%</span>';
                   });
                   // No mouseleave handler - keeps last hovered value
                 });
@@ -1340,70 +1309,6 @@ export default function Page({
       />
 
       <ShareCardLink path={shareCard} />
-
-      <footer className="relative py-6 text-center border-t border-subtle text-muted text-sm">
-        <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 px-4">
-          <a
-            href="https://x.com/martinamps"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center text-secondary hover:text-primary transition-colors"
-          >
-            Built with
-            <svg
-              className="w-4 h-4 mx-1 text-red-400"
-              xmlns="http://www.w3.org/2000/svg"
-              width="24"
-              height="24"
-              viewBox="0 0 24 24"
-              fill="currentColor"
-              stroke="currentColor"
-              strokeWidth="0"
-              aria-label="Heart"
-              role="img"
-            >
-              <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z" />
-            </svg>
-            by @martinamps
-          </a>
-          <span className="text-muted" aria-hidden="true">
-            ·
-          </span>
-          <a
-            href="https://github.com/martinamps/ua-starlink-tracker"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 text-secondary hover:text-primary transition-colors"
-          >
-            <svg
-              className="w-4 h-4"
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 24 24"
-              fill="currentColor"
-              aria-label="GitHub"
-              role="img"
-            >
-              <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z" />
-            </svg>
-            GitHub
-          </a>
-          {features.intentPages && (
-            <>
-              <span className="text-muted" aria-hidden="true">
-                ·
-              </span>
-              <a
-                href="/is-starlink-free"
-                className="text-secondary hover:text-primary transition-colors"
-              >
-                Is it free?
-              </a>
-            </>
-          )}
-        </div>
-        <PageNavLinks links={pageLinks} />
-        <CrossSiteLinks site={site} />
-      </footer>
-    </div>
+    </PageShell>
   );
 }

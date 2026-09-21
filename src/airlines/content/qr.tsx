@@ -15,10 +15,10 @@ const QRHero = ({ stats, starlinkData }: HeroProps) => {
         color="#5c0632"
       />
       <div className="bg-surface px-4 py-6 flex flex-col items-center justify-center text-center">
-        <div className="text-[10px] font-mono text-muted uppercase tracking-wider">Status</div>
+        <div className="text-xs font-mono text-muted uppercase tracking-wider">Status</div>
         <div className="font-display text-2xl text-primary mt-2">777 + A350 done</div>
         <div className="font-mono text-xs text-secondary mt-1">completed Dec 2025</div>
-        <div className="font-mono text-[10px] text-muted mt-3">787-8 done · 787-9 in progress</div>
+        <div className="font-mono text-xs text-muted mt-3">787-8 done · 787-9 in progress</div>
       </div>
       <ModelPie data={modelData} total={starlinkCount} />
     </div>

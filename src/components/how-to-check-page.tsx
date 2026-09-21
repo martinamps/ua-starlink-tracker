@@ -1,11 +1,13 @@
 import type React from "react";
 import { type SiteConfig, siteAirline } from "../airlines/registry";
 import { article } from "../utils/grammar";
-import { PageFooter, type PageLink } from "./atoms";
+import type { PageLink } from "./atoms";
+import { PageHeader, PageShell } from "./layout";
 
 interface HowToCheckPageProps {
   site: SiteConfig;
   pageLinks?: PageLink[];
+  currentPath?: string;
 }
 
 interface Step {
@@ -15,7 +17,7 @@ interface Step {
   text: string;
 }
 
-export default function HowToCheckPage({ site, pageLinks }: HowToCheckPageProps) {
+export default function HowToCheckPage({ site, pageLinks, currentPath }: HowToCheckPageProps) {
   const cfg = siteAirline(site);
   const short = cfg.shortName;
   const example = `${cfg.iata}123`;
@@ -78,20 +80,11 @@ export default function HowToCheckPage({ site, pageLinks }: HowToCheckPageProps)
   ];
 
   return (
-    <div className="w-full mx-auto px-4 sm:px-6 md:px-8 bg-base min-h-screen flex flex-col relative">
-      <div className="absolute inset-0 grid-pattern opacity-50 pointer-events-none" />
-
-      <header className="relative py-5 sm:py-6 text-center mb-3">
-        <a href="/" className="block">
-          <h1 className="font-display text-3xl sm:text-4xl font-semibold text-primary mb-2 tracking-tight hover:text-accent transition-colors">
-            How to Check If Your {short} Flight Has Starlink
-          </h1>
-        </a>
-        <p className="text-base text-secondary font-display max-w-xl mx-auto">
-          Whether a flight has Starlink depends on the aircraft, not the route — here's how to get a
-          real answer in under a minute.
-        </p>
-      </header>
+    <PageShell site={site} currentPath={currentPath} pageLinks={pageLinks}>
+      <PageHeader
+        title={<>How to Check If Your {short} Flight Has Starlink</>}
+        dek="Whether a flight has Starlink depends on the aircraft, not the route — here's how to get a real answer in under a minute."
+      />
 
       <div className="relative max-w-2xl mx-auto w-full mb-8">
         <section className="bg-surface rounded-lg border border-subtle p-5 sm:p-6 mb-4">
@@ -203,14 +196,6 @@ export default function HowToCheckPage({ site, pageLinks }: HowToCheckPageProps)
         </section>
       </div>
 
-      <div className="relative text-center mb-6">
-        <a href="/" className="text-sm text-accent hover:underline font-display">
-          ← Back to {site.brand.title}
-        </a>
-      </div>
-
-      <PageFooter site={site} pageLinks={pageLinks} />
-
       <script
         type="application/ld+json"
         // biome-ignore lint/security/noDangerouslySetInnerHtml: JSON-LD built from static registry-driven copy
@@ -230,6 +215,6 @@ export default function HowToCheckPage({ site, pageLinks }: HowToCheckPageProps)
           }).replace(/</g, "\\u003c"),
         }}
       />
-    </div>
+    </PageShell>
   );
 }

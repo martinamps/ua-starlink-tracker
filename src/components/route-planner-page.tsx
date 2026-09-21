@@ -1,27 +1,27 @@
 import React from "react";
 import { type SiteConfig, siteAirline } from "../airlines/registry";
-import { type PageLink, PageNavLinks } from "./atoms";
+import type { PageLink } from "./atoms";
+import { PageHeader, PageShell } from "./layout";
 
 interface RoutePlannerPageProps {
   site: SiteConfig;
   pageLinks?: PageLink[];
+  currentPath?: string;
   popularRoutes?: Array<{ origin: string; destination: string }>;
 }
 
 export default function RoutePlannerPage({
   site,
   pageLinks,
+  currentPath,
   popularRoutes = [],
 }: RoutePlannerPageProps) {
   const cfg = siteAirline(site);
   const airlineName = cfg.name;
   const shortName = cfg.shortName;
-  const homeTitle = site.brand.title;
 
   return (
-    <div className="w-full mx-auto px-4 sm:px-6 md:px-8 bg-base min-h-screen flex flex-col relative">
-      <div className="absolute inset-0 grid-pattern opacity-50 pointer-events-none" />
-
+    <PageShell site={site} currentPath={currentPath} pageLinks={pageLinks}>
       <style
         // biome-ignore lint/security/noDangerouslySetInnerHtml: static CSS, no user input
         dangerouslySetInnerHTML={{
@@ -115,16 +115,12 @@ export default function RoutePlannerPage({
         }}
       />
 
-      <header className="relative py-5 sm:py-6 text-center mb-6">
-        <a href="/" className="block">
-          <h1 className="font-display text-3xl sm:text-4xl font-semibold text-primary mb-2 tracking-tight hover:text-accent transition-colors">
-            Find Starlink-Equipped Flights
-          </h1>
-        </a>
-        <p className="text-base text-secondary font-display">
-          Search {airlineName} flights between any two airports — ranked by Starlink coverage
-        </p>
-      </header>
+      <PageHeader
+        title="Find Starlink-Equipped Flights"
+        dek={
+          <>Search {airlineName} flights between any two airports — ranked by Starlink coverage</>
+        }
+      />
 
       <div className="relative max-w-2xl mx-auto w-full mb-8">
         <div className="bg-surface rounded-lg border border-subtle p-6 glow-accent">
@@ -225,7 +221,7 @@ export default function RoutePlannerPage({
       {popularRoutes.length > 0 && (
         <section className="relative w-full max-w-4xl mx-auto mb-8">
           <div className="bg-surface border border-subtle rounded-lg p-5">
-            <h2 className="text-[10px] font-mono text-muted uppercase tracking-wider mb-3">
+            <h2 className="text-xs font-mono text-muted uppercase tracking-wider mb-3">
               Popular Starlink routes
             </h2>
             <div className="flex flex-wrap gap-2">
@@ -242,35 +238,6 @@ export default function RoutePlannerPage({
           </div>
         </section>
       )}
-
-      <div className="relative text-center mb-6">
-        <a href="/" className="text-sm text-accent hover:underline font-display">
-          ← Back to {homeTitle}
-        </a>
-      </div>
-
-      <footer className="relative py-6 text-center border-t border-subtle text-muted text-sm">
-        <a
-          href="https://x.com/martinamps"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center text-secondary hover:text-primary transition-colors"
-        >
-          Built with
-          <svg
-            className="w-4 h-4 mx-1 text-red-400"
-            xmlns="http://www.w3.org/2000/svg"
-            viewBox="0 0 24 24"
-            fill="currentColor"
-            aria-label="Heart"
-            role="img"
-          >
-            <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z" />
-          </svg>
-          by @martinamps
-        </a>
-        <PageNavLinks links={pageLinks} />
-      </footer>
 
       <script
         // biome-ignore lint/security/noDangerouslySetInnerHtml: static inline script, no user input
@@ -486,6 +453,6 @@ export default function RoutePlannerPage({
       `,
         }}
       />
-    </div>
+    </PageShell>
   );
 }

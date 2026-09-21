@@ -17,17 +17,16 @@ import { type RolloutFact, formatFactDate } from "../airlines/rollout-facts";
 import type { AircraftTypePageData, AircraftVerdictKind, WifiProvider } from "../types";
 import type { AircraftSpec } from "../utils/aircraft-specs";
 import { article } from "../utils/grammar";
-import { PageFooter, type PageLink } from "./atoms";
+import type { PageLink } from "./atoms";
 import {
-  EYEBROW,
   FLEET_GRID_CSS,
   MovementsPanel,
-  PANEL,
   PROVIDER_ORDER,
   PipelineBar,
   PipelineTailChip,
   STATION_NAMES,
 } from "./fleet-page";
+import { EYEBROW, PANEL, PageHeader, PageShell } from "./layout";
 
 export interface AircraftTypeSibling {
   slug: string;
@@ -39,6 +38,7 @@ export interface AircraftTypeSibling {
 interface AircraftTypePageProps {
   site: SiteConfig;
   pageLinks?: PageLink[];
+  currentPath?: string;
   def: AircraftPageDef;
   data: AircraftTypePageData;
   answer: AircraftAnswer;
@@ -103,7 +103,7 @@ function StatCell({ label, value }: { label: string; value: string | number }) {
   return (
     <div className="text-center">
       <div className="font-display text-2xl font-semibold text-primary tabular-nums">{value}</div>
-      <div className="font-mono text-[10px] text-muted uppercase tracking-wider">{label}</div>
+      <div className="font-mono text-xs text-muted uppercase tracking-wider">{label}</div>
     </div>
   );
 }
@@ -311,7 +311,7 @@ function PipelineSection({ def, data }: { def: AircraftPageDef; data: AircraftTy
         total={p.total}
       />
       {p.rows.length > 1 && (
-        <div className="grid grid-cols-2 gap-2 font-mono text-[11px] text-secondary mt-3">
+        <div className="grid grid-cols-2 gap-2 font-mono text-xs text-secondary mt-3">
           {p.rows.map((r) => (
             <div key={r.type_code}>
               {r.label === r.type_code ? r.label : `${r.label} (${r.type_code})`}:{" "}
@@ -331,9 +331,7 @@ function PipelineSection({ def, data }: { def: AircraftPageDef; data: AircraftTy
       )}
       {p.movements.length > 0 && <MovementsPanel movements={p.movements} anchorBase="/fleet" />}
       {stations.length > 0 && (
-        <p className="font-mono text-[10px] text-muted mt-3">
-          Mod stations: {stations.join(" · ")}
-        </p>
+        <p className="font-mono text-xs text-muted mt-3">Mod stations: {stations.join(" · ")}</p>
       )}
     </section>
   );
@@ -452,7 +450,7 @@ function FactsSection({ facts, airline }: { facts: RolloutFact[]; airline: strin
             className="text-sm text-secondary leading-relaxed"
           >
             {f.asOf && (
-              <span className="font-mono text-[11px] text-muted">{formatFactDate(f.asOf)} · </span>
+              <span className="font-mono text-xs text-muted">{formatFactDate(f.asOf)} · </span>
             )}
             {factText(f)}{" "}
             <a
@@ -558,6 +556,7 @@ function FaqSection({ faq }: { faq: TypeFaqItem[] }) {
 export default function AircraftTypePage({
   site,
   pageLinks,
+  currentPath,
   def,
   data,
   answer,
@@ -575,24 +574,27 @@ export default function AircraftTypePage({
   // facts list so the page states it once besides the FAQ.
   const headerTarget = target?.asOf && TARGET_IN_HEADER.has(answer.kind) ? target : null;
   return (
-    <div className="w-full mx-auto px-4 sm:px-6 md:px-8 bg-base min-h-screen flex flex-col relative">
-      <div className="absolute inset-0 grid-pattern opacity-50 pointer-events-none" />
+    <PageShell site={site} currentPath={currentPath} pageLinks={pageLinks}>
       <style
         // biome-ignore lint/security/noDangerouslySetInnerHtml: static CSS, no user input
         dangerouslySetInnerHTML={{ __html: FLEET_GRID_CSS + PAGE_CSS }}
       />
 
-      <header className="relative py-5 sm:py-6 text-center mb-3">
-        <nav aria-label="Breadcrumb" className="font-mono text-[11px] text-muted mb-2">
-          <a href="/fleet" className="hover:underline">
-            Fleet
-          </a>{" "}
-          › {def.name}
-        </nav>
-        <h1 className="font-display text-3xl sm:text-4xl font-semibold text-primary tracking-tight">
-          Does the {airline} {def.short} have Starlink?
-        </h1>
-      </header>
+      <PageHeader
+        eyebrow={
+          <nav aria-label="Breadcrumb">
+            <a href="/fleet" className="hover:text-accent transition-colors">
+              Fleet
+            </a>{" "}
+            › {def.name}
+          </nav>
+        }
+        title={
+          <>
+            Does the {airline} {def.short} have Starlink?
+          </>
+        }
+      />
 
       <div className="relative max-w-3xl mx-auto w-full mb-8">
         <Header
@@ -656,8 +658,6 @@ export default function AircraftTypePage({
           )}
         </p>
       </div>
-
-      <PageFooter site={site} pageLinks={pageLinks} />
-    </div>
+    </PageShell>
   );
 }

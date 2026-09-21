@@ -12,8 +12,9 @@ import type {
   WifiProvider,
 } from "../types";
 import { AIRCRAFT_SPECS, type AircraftSpec } from "../utils/aircraft-specs";
-import { type PageLink, PageNavLinks, ShareCardLink } from "./atoms";
+import { type PageLink, ShareCardLink } from "./atoms";
 import { type CiteStat, CiteThis } from "./cite-this";
+import { EYEBROW, PANEL, PageHeader, PageShell, SECTION_WIDE } from "./layout";
 
 const PROVIDER_LABEL: Record<WifiProvider, string> = {
   starlink: "Starlink",
@@ -38,10 +39,6 @@ function timeAgo(sec: number | null): string {
   const d = Math.floor((Date.now() / 1000 - sec) / 86400);
   return d === 0 ? "today" : d === 1 ? "1d ago" : `${d}d ago`;
 }
-
-export const EYEBROW = "text-[10px] font-mono text-muted uppercase tracking-wider mb-3";
-export const PANEL = "bg-surface border border-subtle rounded-lg p-5";
-const SECTION = "relative w-full max-w-6xl mx-auto mb-10";
 
 type PipelineMap = Map<string, FleetProgressTailRow>;
 
@@ -204,7 +201,7 @@ function LivePulse({ pulse }: { pulse: FleetPageData["pulse"] }) {
             : "Airborne count unavailable (data refreshing)"}
         </p>
         <Sparkline data={pulse.sparkline} peak={pulse.peak} />
-        <div className="flex items-center justify-center gap-4 text-[10px] font-mono text-muted mt-2">
+        <div className="flex items-center justify-center gap-4 text-xs font-mono text-muted mt-2">
           <span>
             peak <span className="text-accent">{pulse.peak}</span>
           </span>
@@ -260,7 +257,7 @@ function SpecCard({ family, spec }: { family: string; spec: AircraftSpec }) {
     </div>
   );
   return (
-    <div className="spec-card absolute top-full left-0 mt-1 w-64 bg-surface-elevated border border-subtle rounded-lg p-3 text-[11px] font-mono shadow-xl z-20">
+    <div className="spec-card absolute top-full left-0 mt-1 w-64 bg-surface-elevated border border-subtle rounded-lg p-3 text-xs font-mono shadow-xl z-20">
       <div className="font-display text-sm font-semibold text-primary mb-2 tracking-wide">
         {family}
       </div>
@@ -273,7 +270,7 @@ function SpecCard({ family, spec }: { family: string; spec: AircraftSpec }) {
         {row("First flight", spec.first_flight)}
         {row("Engines", spec.engines)}
       </div>
-      <p className="text-[10px] text-accent/80 leading-snug pt-2 border-t border-subtle">
+      <p className="text-xs text-accent/80 leading-snug pt-2 border-t border-subtle">
         {spec.fun_fact}
       </p>
     </div>
@@ -314,7 +311,7 @@ function FamilyBlock({
             <span className="block truncate">{fam.family}</span>
             {spec && <SpecCard family={fam.family} spec={spec} />}
           </span>
-          <span className="font-mono text-[10px] text-muted">
+          <span className="font-mono text-xs text-muted">
             {fam.starlink}/{fam.total}
             {fam.starlink > 0 && (
               <span className="text-accent ml-1.5">{sharePct(fam.starlink, fam.total)}</span>
@@ -335,7 +332,7 @@ function FamilyBlock({
         {typeLink && (
           <a
             href={`/fleet/${typeLink.slug}`}
-            className="block mt-2 font-mono text-[10px] text-accent hover:underline"
+            className="block mt-2 font-mono text-xs text-accent hover:underline"
           >
             {typeLink.short} Starlink status →
           </a>
@@ -350,7 +347,7 @@ function Legend({ pipeline }: { pipeline: PipelineMap }) {
   const inMod = count("in_mod");
   const verif = count("verification_needed");
   return (
-    <div className="flex flex-wrap items-center gap-3 font-mono text-[10px] text-muted">
+    <div className="flex flex-wrap items-center gap-3 font-mono text-xs text-muted">
       {PROVIDER_ORDER.map((p) => (
         <span key={p} className="inline-flex items-center gap-1.5">
           <span className={`wifi-${p} w-2.5 h-2.5 rounded-[1px]`} />
@@ -389,7 +386,7 @@ function HangarFloor({
   typeLinks: Map<string, FleetTypeLink>;
 }) {
   return (
-    <section className={SECTION}>
+    <section className={SECTION_WIDE}>
       <div className="mb-4">
         <h2 className="font-display text-xl font-semibold text-primary mb-1">The Hangar Floor</h2>
         <p className="text-xs text-muted mb-3">
@@ -441,7 +438,7 @@ function InstallPaceSection({ pace }: { pace: FleetPageData["installPace"] }) {
   ].filter((x) => x.g.total > 0 || x.g.starlink > 0);
 
   return (
-    <section className={SECTION}>
+    <section className={SECTION_WIDE}>
       <div className="mb-4">
         <h2 className="font-display text-xl font-semibold text-primary mb-1">Install Pace</h2>
         <p className="text-xs text-muted">
@@ -455,7 +452,7 @@ function InstallPaceSection({ pace }: { pace: FleetPageData["installPace"] }) {
           <div className="flex items-end gap-1.5 h-28">
             {pace.weeks.map((w) => (
               <div key={w.weekStart} className="flex-1 flex flex-col items-center gap-1">
-                <span className="font-mono text-[10px] text-secondary">
+                <span className="font-mono text-xs text-secondary">
                   {w.installs > 0 ? w.installs : ""}
                 </span>
                 <div
@@ -485,7 +482,7 @@ function InstallPaceSection({ pace }: { pace: FleetPageData["installPace"] }) {
                     <span className="font-display text-sm font-semibold text-secondary">
                       {label}
                     </span>
-                    <span className="font-mono text-[10px] text-muted">
+                    <span className="font-mono text-xs text-muted">
                       {pct !== null ? (
                         <>
                           {g.starlink}/{g.total} <span className="text-accent">{pct}%</span>
@@ -508,7 +505,7 @@ function InstallPaceSection({ pace }: { pace: FleetPageData["installPace"] }) {
             })}
           </div>
           {pace.projectedFinishMonth && (
-            <p className="text-[11px] text-muted mt-4 leading-snug">
+            <p className="text-xs text-muted mt-4 leading-snug">
               At the recent mainline pace of ~{pace.mainlinePaceWk}/week, the remaining{" "}
               {pace.remainingMainline} mainline aircraft would wrap up around{" "}
               <span className="text-accent">{pace.projectedFinishMonth}</span>. Straight-line
@@ -541,7 +538,7 @@ function CarrierLeaderboard({ carriers }: { carriers: FleetPageData["carriers"] 
                     <span className="ml-1.5 text-accent text-xs">◉ leading</span>
                   )}
                 </span>
-                <span className="font-mono text-[10px] text-muted">
+                <span className="font-mono text-xs text-muted">
                   {c.confirmed}/{c.total} <span className="text-accent">{c.pct.toFixed(0)}%</span>
                 </span>
               </div>
@@ -581,7 +578,7 @@ function IronyStack({ bodyClass }: { bodyClass: FleetPageData["bodyClass"] }) {
                   </span>
                   <span className="font-mono text-[9px] text-muted ml-2">{r.sub}</span>
                 </div>
-                <span className="font-mono text-[10px]">
+                <span className="font-mono text-xs">
                   <span className={data.starlink > 0 ? "text-accent" : "text-muted"}>
                     {data.starlink}
                   </span>
@@ -604,7 +601,7 @@ function IronyStack({ bodyClass }: { bodyClass: FleetPageData["bodyClass"] }) {
           );
         })}
       </div>
-      <p className="text-[11px] text-muted mt-4 italic leading-snug">
+      <p className="text-xs text-muted mt-4 italic leading-snug">
         Retrofit timing is uneven: smaller fleets often finish first, while long-haul cabins take
         longer to convert.
       </p>
@@ -632,15 +629,15 @@ function TailMonument({
   for (const t of allTails) byProvider[t.provider]++;
 
   return (
-    <section className={SECTION}>
+    <section className={SECTION_WIDE}>
       <div className="mb-4">
         <h2 className="font-display text-xl font-semibold text-primary mb-1">Tail Registry</h2>
         <p className="text-xs text-muted mb-2">
           All {totalFleet} tails —{" "}
-          <kbd className="px-1 bg-surface border border-subtle rounded text-[10px]">⌘F</kbd> to find
+          <kbd className="px-1 bg-surface border border-subtle rounded text-xs">⌘F</kbd> to find
           yours, click to track on FlightAware. Cyan = Starlink, dim = everything else.
         </p>
-        <div className="flex flex-wrap gap-3 font-mono text-[10px] text-muted">
+        <div className="flex flex-wrap gap-3 font-mono text-xs text-muted">
           {PROVIDER_ORDER.map((p) =>
             byProvider[p] > 0 ? (
               <span key={p} className="inline-flex items-center gap-1">
@@ -651,7 +648,7 @@ function TailMonument({
           )}
         </div>
       </div>
-      <div className="bg-surface border border-subtle rounded-lg p-4 font-mono text-[10px] leading-[1.7] columns-[18ch] gap-x-3">
+      <div className="bg-surface border border-subtle rounded-lg p-4 font-mono text-xs leading-[1.7] columns-[18ch] gap-x-3">
         {allTails.map((t) => (
           <a
             key={t.tail}
@@ -801,14 +798,12 @@ export function MovementsPanel({
                 <span className="text-xs text-primary group-hover:text-accent transition-colors w-16 flex-shrink-0">
                   {m.tail}
                 </span>
-                <span className="text-[10px] text-muted w-20 truncate hidden sm:inline flex-shrink-0">
+                <span className="text-xs text-muted w-20 truncate hidden sm:inline flex-shrink-0">
                   {TYPE_DISPLAY[m.type_code] ??
                     m.type_code.replace(/^(Boeing|Airbus|Embraer)\s+/i, "")}
                 </span>
-                <span className="text-[11px] text-secondary flex-1 truncate">
-                  {movementText(m)}
-                </span>
-                <span className="text-[10px] text-muted flex-shrink-0">{movementDate(m.date)}</span>
+                <span className="text-xs text-secondary flex-1 truncate">{movementText(m)}</span>
+                <span className="text-xs text-muted flex-shrink-0">{movementDate(m.date)}</span>
               </a>
             );
           })}
@@ -853,7 +848,7 @@ function InstallPipelineSection({
   );
 
   return (
-    <section className={SECTION}>
+    <section className={SECTION_WIDE}>
       <div className="mb-4">
         <h2 className="font-display text-xl font-semibold text-primary mb-1">Install Pipeline</h2>
         <p className="text-xs text-muted">
@@ -891,7 +886,7 @@ function InstallPipelineSection({
                 queued={segQueued}
                 total={seg.total}
               />
-              <div className="font-mono text-[11px] text-secondary mt-2 space-y-1">
+              <div className="font-mono text-xs text-secondary mt-2 space-y-1">
                 <div>
                   {swatch("bar-inmod")}
                   {seg.in_mod ?? 0} in mod line now
@@ -924,7 +919,7 @@ function InstallPipelineSection({
           {inModTypes.length > 0 && (
             <div className={PANEL}>
               <div className={EYEBROW}>Active mod lines by type</div>
-              <div className="grid grid-cols-2 gap-2 font-mono text-[11px] text-secondary">
+              <div className="grid grid-cols-2 gap-2 font-mono text-xs text-secondary">
                 {inModTypes.map((r) => (
                   <div key={`${r.segment}-${r.type_code}`}>
                     {r.type_code}: {r.in_mod ?? 0} in mod
@@ -948,7 +943,7 @@ function InstallPipelineSection({
       )}
       {tails.length > 0 && <MovementsPanel movements={movements} />}
       {stationEntries.length > 0 && (
-        <p className="font-mono text-[10px] text-muted mt-3">
+        <p className="font-mono text-xs text-muted mt-3">
           Mod stations: {stationEntries.join(" · ")}
         </p>
       )}
@@ -969,10 +964,10 @@ function OfficialAnchorsSection({ anchors }: { anchors: FleetAnchorRow[] }) {
   if (shown.length === 0) return null;
 
   return (
-    <section className={SECTION}>
+    <section className={SECTION_WIDE}>
       <div className={PANEL}>
         <div className={EYEBROW}>Officially reported (SEC filings)</div>
-        <div className="font-mono text-[11px] text-secondary space-y-1">
+        <div className="font-mono text-xs text-secondary space-y-1">
           {shown.map((a) => (
             <div key={a.metric}>
               {a.scope}:{" "}
@@ -1072,6 +1067,7 @@ interface FleetPageProps {
   /** Pre-rendered share card path; null until the nightly batch produced one. */
   shareCard?: string | null;
   pageLinks?: PageLink[];
+  currentPath?: string;
   cite?: CiteStat | null;
   /** Served /fleet/{slug} pages, in the order the chip row shows them. */
   typeLinks?: FleetTypeLink[];
@@ -1085,7 +1081,7 @@ function TypeChipRow({ links, families }: { links: FleetTypeLink[]; families: Fl
   return (
     <nav
       aria-label="Starlink by aircraft type"
-      className="font-mono text-[11px] text-muted mt-3 flex flex-wrap justify-center gap-x-3 gap-y-1"
+      className="font-mono text-xs text-muted mt-3 flex flex-wrap justify-center gap-x-3 gap-y-1"
     >
       <span>Starlink by aircraft type:</span>
       {links.map((l) => {
@@ -1111,6 +1107,7 @@ export default function FleetPage({
   site,
   shareCard,
   pageLinks,
+  currentPath,
   cite,
   typeLinks = [],
 }: FleetPageProps) {
@@ -1121,11 +1118,8 @@ export default function FleetPage({
   const headerTitle = scopeCode
     ? `${AIRLINES[scopeCode].name} Fleet · Starlink Rollout`
     : "Tracked Fleets · Starlink Rollout";
-  const backLabel = site.brand.title;
   return (
-    <div className="w-full mx-auto px-4 sm:px-6 md:px-8 bg-base min-h-screen flex flex-col relative">
-      <div className="absolute inset-0 grid-pattern opacity-50 pointer-events-none" />
-
+    <PageShell site={site} currentPath={currentPath} pageLinks={pageLinks}>
       <style
         // biome-ignore lint/security/noDangerouslySetInnerHtml: static CSS, no user input
         dangerouslySetInnerHTML={{
@@ -1133,17 +1127,16 @@ export default function FleetPage({
         }}
       />
 
-      <header className="relative py-5 sm:py-6 text-center mb-6">
-        <a href="/" className="block">
-          <h1 className="font-display text-3xl sm:text-4xl font-semibold text-primary mb-2 tracking-tight hover:text-accent transition-colors">
-            {headerTitle}
-          </h1>
-        </a>
-        <p className="text-base text-secondary font-display">
-          {data.totalStarlink} of {data.totalFleet} aircraft equipped — and what's replacing what
-        </p>
+      <PageHeader
+        title={headerTitle}
+        dek={
+          <>
+            {data.totalStarlink} of {data.totalFleet} aircraft equipped — and what's replacing what
+          </>
+        }
+      >
         <TypeChipRow links={typeLinks} families={data.families} />
-      </header>
+      </PageHeader>
 
       <LivePulse pulse={data.pulse} />
       <InstallPaceSection pace={data.installPace} />
@@ -1162,7 +1155,7 @@ export default function FleetPage({
         typeLinks={typeLinkByFamily}
       />
 
-      <section className={`${SECTION} grid md:grid-cols-2 gap-4`}>
+      <section className={`${SECTION_WIDE} grid md:grid-cols-2 gap-4`}>
         <CarrierLeaderboard carriers={data.carriers} />
         <IronyStack bodyClass={data.bodyClass} />
       </section>
@@ -1172,13 +1165,6 @@ export default function FleetPage({
       <ShareCardLink path={shareCard} />
 
       <CiteThis site={site} cite={cite} />
-
-      <footer className="relative py-6 text-center border-t border-subtle text-muted text-sm">
-        <a href="/" className="text-accent hover:underline font-display">
-          ← Back to {backLabel}
-        </a>
-        <PageNavLinks links={pageLinks} />
-      </footer>
-    </div>
+    </PageShell>
   );
 }

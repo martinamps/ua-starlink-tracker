@@ -4,7 +4,8 @@ import { type SiteConfig, siteAirline } from "../airlines/registry";
 import { factsBySlug } from "../airlines/rollout-facts";
 import type { Aircraft } from "../types";
 import { type SeatbackLiveTv, seatbackLiveTv } from "../utils/aircraft-specs";
-import { PageFooter, type PageLink } from "./atoms";
+import type { PageLink } from "./atoms";
+import { PageHeader, PageShell, StatInline } from "./layout";
 
 export interface LiveTvTypeRow {
   label: string;
@@ -15,6 +16,7 @@ export interface LiveTvTypeRow {
 interface LiveTvPageProps {
   site: SiteConfig;
   pageLinks?: PageLink[];
+  currentPath?: string;
   mainlineStarlink: number;
   mainlineTotal: number;
   byType: LiveTvTypeRow[];
@@ -100,6 +102,7 @@ export function liveTvFaq(): Array<{ q: string; a: string }> {
 export default function LiveTvPage({
   site,
   pageLinks,
+  currentPath,
   mainlineStarlink,
   mainlineTotal,
   byType,
@@ -109,14 +112,8 @@ export default function LiveTvPage({
   const pct = mainlineTotal > 0 ? Math.round((mainlineStarlink / mainlineTotal) * 100) : null;
 
   return (
-    <div className="w-full mx-auto px-4 sm:px-6 md:px-8 bg-base min-h-screen flex flex-col relative">
-      <div className="absolute inset-0 grid-pattern opacity-50 pointer-events-none" />
-
-      <header className="relative py-5 sm:py-6 text-center mb-3">
-        <h1 className="font-display text-3xl sm:text-4xl font-semibold text-primary mb-2 tracking-tight">
-          Live TV &amp; football on United flights: which planes have it
-        </h1>
-      </header>
+    <PageShell site={site} currentPath={currentPath} pageLinks={pageLinks}>
+      <PageHeader title="Live TV & football on United flights: which planes have it" />
 
       <div className="relative max-w-2xl mx-auto w-full mb-8">
         <section className="bg-surface rounded-lg border border-subtle p-5 sm:p-6 mb-4">
@@ -153,15 +150,11 @@ export default function LiveTvPage({
             Likely eligible aircraft today
           </h2>
           <p className="text-sm text-muted leading-relaxed mb-4">
-            <span className="text-secondary font-mono">
-              {mainlineStarlink.toLocaleString("en-US")}
-            </span>{" "}
-            {cfg.shortName} mainline aircraft have Starlink
+            <StatInline n={mainlineStarlink} /> {cfg.shortName} mainline aircraft have Starlink
             {pct !== null && (
               <>
                 {" "}
-                (<span className="font-mono">{pct}%</span> of{" "}
-                {mainlineTotal.toLocaleString("en-US")})
+                (<StatInline>{pct}%</StatInline> of {mainlineTotal.toLocaleString("en-US")})
               </>
             )}
             . That makes them likely eligible, not guaranteed: we track Starlink per tail, not
@@ -299,14 +292,6 @@ export default function LiveTvPage({
         </section>
       </div>
 
-      <div className="relative text-center mb-6">
-        <a href="/" className="text-sm text-accent hover:underline font-display">
-          ← Back to {site.brand.title}
-        </a>
-      </div>
-
-      <PageFooter site={site} pageLinks={pageLinks} />
-
       <script
         type="application/ld+json"
         // biome-ignore lint/security/noDangerouslySetInnerHtml: JSON-LD built from static copy
@@ -322,6 +307,6 @@ export default function LiveTvPage({
           }).replace(/</g, "\\u003c"),
         }}
       />
-    </div>
+    </PageShell>
   );
 }

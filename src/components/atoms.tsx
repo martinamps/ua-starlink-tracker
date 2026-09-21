@@ -103,37 +103,6 @@ export function PageNavLinks({ links }: { links?: PageLink[] }) {
   );
 }
 
-/** Shared footer for secondary pages (methodology, hub /airlines). The
- * homepage footer in page.tsx stays inline — it carries extra links (GitHub,
- * methodology) and is the reference markup. */
-export function PageFooter({ site, pageLinks }: { site: SiteConfig; pageLinks?: PageLink[] }) {
-  return (
-    <footer className="relative py-6 text-center border-t border-subtle text-muted text-sm">
-      <a
-        href="https://x.com/martinamps"
-        target="_blank"
-        rel="noopener noreferrer"
-        className="inline-flex items-center text-secondary hover:text-primary transition-colors"
-      >
-        Built with
-        <svg
-          className="w-4 h-4 mx-1 text-red-400"
-          xmlns="http://www.w3.org/2000/svg"
-          viewBox="0 0 24 24"
-          fill="currentColor"
-          aria-label="Heart"
-          role="img"
-        >
-          <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z" />
-        </svg>
-        by @martinamps
-      </a>
-      <PageNavLinks links={pageLinks} />
-      <CrossSiteLinks site={site} />
-    </footer>
-  );
-}
-
 /**
  * Server-rendered inlinks into the /check-flight/{fn} permalink corpus, shared
  * by /, /check-flight, and /routes. The corpus is otherwise reachable only via
@@ -152,7 +121,7 @@ export function PopularFlightsLinks({
   if (flights.length === 0) return null;
   return (
     <div className="bg-surface border border-subtle rounded-lg p-5" data-popular-flights>
-      <div className="text-[10px] font-mono text-muted uppercase tracking-wider mb-3">
+      <div className="text-xs font-mono text-muted uppercase tracking-wider mb-3">
         Popular flights
       </div>
       <div className="flex flex-wrap gap-2">
@@ -174,7 +143,7 @@ export function PopularFlightsLinks({
           </a>
         ))}
       </div>
-      <p className="text-[11px] text-muted mt-4 leading-snug">
+      <p className="text-xs text-muted mt-4 leading-snug">
         The most-observed {airlineName} flight numbers in the tracker. Each page carries that
         flight's Starlink record, its routes, and a live check by date.
       </p>
@@ -208,7 +177,7 @@ export function AirlineStatusCards({ stats }: { stats: PerAirlineStat[] }) {
 
   return (
     <section>
-      <div className="text-[10px] font-mono text-muted uppercase tracking-wider mb-2">
+      <div className="text-xs font-mono text-muted uppercase tracking-wider mb-2">
         Where each rollout stands
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -246,7 +215,7 @@ export function AirlineStatusCards({ stats }: { stats: PerAirlineStat[] }) {
                     <span
                       className="font-mono text-xs px-1.5 py-0.5 rounded shrink-0"
                       style={{
-                        color: a.accentColor,
+                        color: a.accentText ?? a.accentColor,
                         background: `color-mix(in srgb, ${a.accentColor} 18%, transparent)`,
                       }}
                     >
@@ -257,7 +226,7 @@ export function AirlineStatusCards({ stats }: { stats: PerAirlineStat[] }) {
                     </span>
                   </div>
                   <span
-                    className="font-mono text-[10px] uppercase tracking-wide px-2 py-1 rounded-full shrink-0"
+                    className="font-mono text-xs uppercase tracking-wide px-2 py-1 rounded-full shrink-0"
                     style={{ color: tone.color, background: tone.bg }}
                   >
                     {a.statusLabel ?? "In progress"}
@@ -280,7 +249,7 @@ export function AirlineStatusCards({ stats }: { stats: PerAirlineStat[] }) {
                         cx="36"
                         cy="36"
                         r={r}
-                        stroke={a.accentColor}
+                        stroke={a.accentText ?? a.accentColor}
                         strokeWidth="7"
                         fill="none"
                         strokeLinecap="round"
@@ -292,7 +261,7 @@ export function AirlineStatusCards({ stats }: { stats: PerAirlineStat[] }) {
                     <div className="absolute inset-0 flex items-center justify-center">
                       <span className="font-mono text-lg font-semibold text-primary">
                         {Math.round(Math.min(100, a.pct))}
-                        <span className="text-[10px] text-muted">%</span>
+                        <span className="text-xs text-muted">%</span>
                       </span>
                     </div>
                   </div>
@@ -301,15 +270,15 @@ export function AirlineStatusCards({ stats }: { stats: PerAirlineStat[] }) {
                       {a.starlink}
                       <span className="text-sm text-muted font-normal"> / {a.fleet}</span>
                     </div>
-                    <div className="font-mono text-[10px] text-muted uppercase tracking-wider">
+                    <div className="font-mono text-xs text-muted uppercase tracking-wider">
                       aircraft equipped
                     </div>
                     {(a.installs30d ?? 0) > 0 ? (
-                      <div className="font-mono text-[11px] mt-1" style={{ color: tone.color }}>
+                      <div className="font-mono text-xs mt-1" style={{ color: tone.color }}>
                         +{a.installs30d} in the last 30 days
                       </div>
                     ) : (
-                      <div className="font-mono text-[11px] text-muted mt-1">
+                      <div className="font-mono text-xs text-muted mt-1">
                         {a.status === "complete" ? "rollout finished" : "—"}
                       </div>
                     )}
@@ -318,7 +287,7 @@ export function AirlineStatusCards({ stats }: { stats: PerAirlineStat[] }) {
 
                 {/* Prose */}
                 {a.phaseNote && (
-                  <p className="text-[11.5px] text-secondary leading-snug border-t border-subtle pt-2.5 mt-auto">
+                  <p className="text-xs text-secondary leading-snug border-t border-subtle pt-2.5 mt-auto">
                     {a.phaseNote}
                   </p>
                 )}
@@ -341,7 +310,7 @@ export function RecentInstallsFeed({
     .filter((g) => g.rows.length > 0);
   return (
     <div className="bg-surface border border-subtle rounded-lg p-5">
-      <div className="text-[10px] font-mono text-muted uppercase tracking-wider mb-3">
+      <div className="text-xs font-mono text-muted uppercase tracking-wider mb-3">
         Recent installs
       </div>
       {grouped.length === 0 ? (
@@ -350,10 +319,10 @@ export function RecentInstallsFeed({
         <>
           {grouped.map((g) => (
             <div key={g.cfg.code} className="mb-3 last:mb-0">
-              <div className="flex items-center gap-1.5 text-[10px] font-mono text-muted mb-1.5">
+              <div className="flex items-center gap-1.5 text-xs font-mono text-muted mb-1.5">
                 <span
                   className="w-1.5 h-1.5 rounded-full flex-shrink-0"
-                  style={{ background: g.cfg.accentColor || "#5a6a80" }}
+                  style={{ background: g.cfg.accentText ?? g.cfg.accentColor ?? "#7a8ba2" }}
                 />
                 {g.cfg.name}
               </div>
@@ -367,15 +336,15 @@ export function RecentInstallsFeed({
                     <span className="font-mono text-xs text-primary group-hover:text-accent transition-colors w-16">
                       {r.TailNumber}
                     </span>
-                    <span className="font-mono text-[10px] text-muted flex-1 truncate">
+                    <span className="font-mono text-xs text-muted flex-1 truncate">
                       {r.Aircraft}
                     </span>
                     {r.OperatedBy && (
-                      <span className="font-mono text-[10px] text-secondary truncate hidden sm:inline">
+                      <span className="font-mono text-xs text-secondary truncate hidden sm:inline">
                         {r.OperatedBy}
                       </span>
                     )}
-                    <span className="font-mono text-[10px] text-muted w-12 text-right">
+                    <span className="font-mono text-xs text-muted w-12 text-right">
                       {new Date(r.DateFound).toLocaleDateString("en-US", {
                         month: "short",
                         day: "numeric",
@@ -400,7 +369,7 @@ export function RecentInstallsFeed({
 export function FlightCheckInput() {
   return (
     <div className="bg-surface border border-subtle rounded-lg p-3">
-      <div className="text-[10px] font-mono text-muted uppercase tracking-wider mb-2">
+      <div className="text-xs font-mono text-muted uppercase tracking-wider mb-2">
         Already booked? Check a flight
       </div>
       <form id="hub-check-flight" className="flex flex-col sm:flex-row gap-2">
@@ -440,10 +409,10 @@ const PRESET_ROUTES: { o: string; d: string }[] = [
 export function RouteComparePanel() {
   return (
     <div className="bg-surface border border-subtle rounded-lg p-5">
-      <div className="text-[10px] font-mono text-muted uppercase tracking-wider mb-1">
+      <div className="text-xs font-mono text-muted uppercase tracking-wider mb-1">
         Starlink odds by airline
       </div>
-      <div className="text-[10px] font-mono text-muted leading-relaxed mb-3">
+      <div className="text-xs font-mono text-muted leading-relaxed mb-3">
         Share of each carrier's planes on this nonstop route that have Starlink today.
       </div>
       <form id="hub-compare-route" className="flex flex-col sm:flex-row gap-2">
@@ -486,7 +455,7 @@ export function RouteComparePanel() {
       <div id="hub-compare-result" className="mt-3 hidden" />
       <div
         id="hub-compare-footer"
-        className="mt-3 text-[10px] font-mono text-muted leading-relaxed hidden"
+        className="mt-3 text-xs font-mono text-muted leading-relaxed hidden"
       >
         Carrier missing? It only shows up once one of its Starlink planes has flown here.{" "}
         {/* Static href must be a real page: /route-planner 404s on the hub, and
@@ -524,7 +493,7 @@ export function StatRing({
   const isTotal = variant === "total";
   return (
     <div className="bg-surface p-4 flex flex-col justify-center text-center">
-      <div className="text-[10px] font-mono text-muted uppercase tracking-wider mb-2">{label}</div>
+      <div className="text-xs font-mono text-muted uppercase tracking-wider mb-2">{label}</div>
       <div className="relative w-20 h-20 mx-auto mb-2">
         <svg className="w-20 h-20 transform -rotate-90" role="img" aria-label={`${label} progress`}>
           <circle cx="40" cy="40" r="34" stroke="#243044" strokeWidth="6" fill="none" />
@@ -577,7 +546,7 @@ export function computeModelBreakdown(starlinkData: Aircraft[]): ModelDatum[] {
 export function ModelPie({ data, total }: { data: ModelDatum[]; total: number }) {
   return (
     <div className="bg-surface p-4 flex flex-col justify-center text-center">
-      <div className="text-[10px] font-mono text-muted uppercase tracking-wider mb-2">
+      <div className="text-xs font-mono text-muted uppercase tracking-wider mb-2">
         Starlink jets by type
       </div>
       <div className="relative w-20 h-20 mx-auto mb-2" id="pie-chart-container">
@@ -634,10 +603,10 @@ export function ModelPie({ data, total }: { data: ModelDatum[]; total: number })
           </span>
         </div>
       </div>
-      <div id="pie-status" className="h-4 flex items-center justify-center text-[10px] font-mono">
+      <div id="pie-status" className="h-4 flex items-center justify-center text-xs font-mono">
         <span id="pie-status-label">
-          <span style={{ color: "#0ea5e9" }}>{data[0]?.model || "—"}</span>
-          <span style={{ color: "#5a6a80" }}>
+          <span className="text-accent">{data[0]?.model || "—"}</span>
+          <span className="text-muted">
             {" "}
             · {data[0] ? Math.round((data[0].count / total) * 100) : 0}%
           </span>
@@ -679,7 +648,7 @@ export function TypeBreakdownRow({
         <div>
           <div className="font-mono text-sm text-primary">{type}</div>
           {count !== undefined && (
-            <div className="text-[10px] font-mono text-muted">{count} aircraft</div>
+            <div className="text-xs font-mono text-muted">{count} aircraft</div>
           )}
         </div>
       </div>
@@ -694,11 +663,17 @@ export function TypeBreakdownRow({
 
 export function HeaderStatStrip({ items }: { items: React.ReactNode[] }) {
   return (
-    <div className="flex flex-wrap items-center justify-center gap-3 sm:gap-6 text-xs sm:text-sm font-mono text-muted">
+    <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 sm:gap-x-6 text-xs sm:text-sm font-mono text-muted">
       {items.map((it, i) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: static per-airline list, never reorders
         <React.Fragment key={i}>
-          {i > 0 && <span className="text-subtle">·</span>}
+          {/* Separators only where the strip fits one line: on a phone it wraps,
+              and a dot would start or end a line on its own. */}
+          {i > 0 && (
+            <span className="hidden sm:inline text-subtle" aria-hidden="true">
+              ·
+            </span>
+          )}
           {it}
         </React.Fragment>
       ))}

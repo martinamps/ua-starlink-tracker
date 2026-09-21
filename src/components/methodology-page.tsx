@@ -1,11 +1,13 @@
 import type React from "react";
 import { type SiteConfig, siteAirline } from "../airlines/registry";
-import { PageFooter, type PageLink } from "./atoms";
+import type { PageLink } from "./atoms";
+import { PageHeader, PageShell } from "./layout";
 
 interface MethodologyPageProps {
   site: SiteConfig;
   lastUpdated: string;
   pageLinks?: PageLink[];
+  currentPath?: string;
 }
 
 interface DataSource {
@@ -80,7 +82,12 @@ export function hasMethodology(code: string): boolean {
   return code in SOURCES;
 }
 
-export default function MethodologyPage({ site, lastUpdated, pageLinks }: MethodologyPageProps) {
+export default function MethodologyPage({
+  site,
+  lastUpdated,
+  pageLinks,
+  currentPath,
+}: MethodologyPageProps) {
   const cfg = siteAirline(site);
   const sources = SOURCES[cfg.code] ?? [];
   const stampedDate = new Date(lastUpdated);
@@ -100,20 +107,16 @@ export default function MethodologyPage({ site, lastUpdated, pageLinks }: Method
   );
 
   return (
-    <div className="w-full mx-auto px-4 sm:px-6 md:px-8 bg-base min-h-screen flex flex-col relative">
-      <div className="absolute inset-0 grid-pattern opacity-50 pointer-events-none" />
-
-      <header className="relative py-5 sm:py-6 text-center mb-3">
-        <a href="/" className="block">
-          <h1 className="font-display text-3xl sm:text-4xl font-semibold text-primary mb-2 tracking-tight hover:text-accent transition-colors">
-            How We Verify {cfg.shortName} Starlink Data
-          </h1>
-        </a>
-        <p className="text-base text-secondary font-display max-w-xl mx-auto">
-          Where this tracker's numbers come from, how a tail earns "has Starlink," and what we can't
-          know.
-        </p>
-      </header>
+    <PageShell site={site} currentPath={currentPath} pageLinks={pageLinks}>
+      <PageHeader
+        title={<>How We Verify {cfg.shortName} Starlink Data</>}
+        dek={
+          <>
+            Where this tracker's numbers come from, how a tail earns "has Starlink," and what we
+            can't know.
+          </>
+        }
+      />
 
       <div className="relative max-w-2xl mx-auto w-full mb-8">
         <Section title="Where the data comes from">
@@ -239,14 +242,6 @@ export default function MethodologyPage({ site, lastUpdated, pageLinks }: Method
           </p>
         </Section>
       </div>
-
-      <div className="relative text-center mb-6">
-        <a href="/" className="text-sm text-accent hover:underline font-display">
-          ← Back to {site.brand.title}
-        </a>
-      </div>
-
-      <PageFooter site={site} pageLinks={pageLinks} />
-    </div>
+    </PageShell>
   );
 }

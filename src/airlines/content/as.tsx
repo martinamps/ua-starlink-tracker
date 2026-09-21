@@ -16,12 +16,10 @@ const ASHero = ({ stats, starlinkData }: HeroProps) => {
         color="#01426a"
       />
       <div className="bg-surface px-4 py-6 flex flex-col items-center justify-center text-center">
-        <div className="text-[10px] font-mono text-muted uppercase tracking-wider">Target</div>
+        <div className="text-xs font-mono text-muted uppercase tracking-wider">Target</div>
         <div className="font-display text-2xl text-primary mt-2">End 2027</div>
         <div className="font-mono text-xs text-secondary mt-1">~half by end 2026</div>
-        <div className="font-mono text-[10px] text-muted mt-3">
-          E175 first · then 737 · then 787
-        </div>
+        <div className="font-mono text-xs text-muted mt-3">E175 first · then 737 · then 787</div>
       </div>
       <ModelPie data={modelData} total={starlinkCount} />
     </div>

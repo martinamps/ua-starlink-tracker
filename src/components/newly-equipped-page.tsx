@@ -1,11 +1,8 @@
 import React from "react";
 import { AIRLINES, type SiteConfig } from "../airlines/registry";
 import type { FirstFlight, PerAirlineStat, RecentInstall } from "../types";
-import { PageFooter, type PageLink } from "./atoms";
-
-const EYEBROW = "text-[10px] font-mono text-muted uppercase tracking-wider mb-3";
-const PANEL = "bg-surface border border-subtle rounded-lg p-5";
-const SECTION = "relative w-full max-w-3xl mx-auto mb-8";
+import type { PageLink } from "./atoms";
+import { EYEBROW, PANEL, PageHeader, PageShell, SECTION } from "./layout";
 
 interface NewlyEquippedPageProps {
   site: SiteConfig;
@@ -14,6 +11,7 @@ interface NewlyEquippedPageProps {
   /** Observed first revenue departure per tail; sparse — most tails have none yet. */
   firstFlights: Record<string, FirstFlight>;
   pageLinks?: PageLink[];
+  currentPath?: string;
 }
 
 function installDate(d: string): string {
@@ -36,11 +34,11 @@ function InstallRow({ install, first }: { install: RecentInstall; first?: FirstF
         <span className="font-mono text-sm text-accent">{install.TailNumber}</span>
         <span className="font-mono text-xs text-secondary">{install.Aircraft}</span>
         {install.OperatedBy && (
-          <span className="font-mono text-[10px] text-muted hidden sm:inline">
+          <span className="font-mono text-xs text-muted hidden sm:inline">
             {install.OperatedBy}
           </span>
         )}
-        <span className="font-mono text-[10px] text-muted ml-auto">
+        <span className="font-mono text-xs text-muted ml-auto">
           found {installDate(install.DateFound)}
         </span>
       </div>
@@ -48,7 +46,7 @@ function InstallRow({ install, first }: { install: RecentInstall; first?: FirstF
         // "observed", not bald "first": DateFound is when this tracker found
         // the tail equipped, not when the antenna went on, so the true first
         // flight is often unknowable. Same wording the syndicated feed uses.
-        <div className="font-mono text-[11px] text-muted mt-1">
+        <div className="font-mono text-xs text-muted mt-1">
           First observed Starlink revenue flight:{" "}
           <span className="text-secondary">
             {first.flight_number} {first.origin} → {first.destination}
@@ -71,6 +69,7 @@ export default function NewlyEquippedPage({
   airlines,
   firstFlights,
   pageLinks,
+  currentPath,
 }: NewlyEquippedPageProps) {
   const scopeCode = site.scope !== "ALL" ? site.scope : null;
   const everyAircraft = scopeCode
@@ -81,20 +80,16 @@ export default function NewlyEquippedPage({
     .filter((g) => g.rows.length > 0);
 
   return (
-    <div className="w-full mx-auto px-4 sm:px-6 md:px-8 bg-base min-h-screen flex flex-col relative">
-      <div className="absolute inset-0 grid-pattern opacity-50 pointer-events-none" />
-
-      <header className="relative py-5 sm:py-6 text-center mb-6">
-        <a href="/" className="block">
-          <h1 className="font-display text-3xl sm:text-4xl font-semibold text-primary mb-2 tracking-tight hover:text-accent transition-colors">
-            Newly Equipped Aircraft
-          </h1>
-        </a>
-        <p className="text-base text-secondary font-display max-w-xl mx-auto">
-          {everyAircraft} as it joins the Starlink-equipped fleet — newest first, with its first
-          observed Starlink revenue flight once it departs.
-        </p>
-      </header>
+    <PageShell site={site} currentPath={currentPath} pageLinks={pageLinks}>
+      <PageHeader
+        title="Newly Equipped Aircraft"
+        dek={
+          <>
+            {everyAircraft} as it joins the Starlink-equipped fleet — newest first, with its first
+            observed Starlink revenue flight once it departs.
+          </>
+        }
+      />
 
       <section className={SECTION}>
         <div className={PANEL}>
@@ -102,7 +97,7 @@ export default function NewlyEquippedPage({
             <div className={EYEBROW}>Latest installs</div>
             <a
               href="/feed.xml"
-              className="font-mono text-[11px] text-accent hover:underline"
+              className="font-mono text-xs text-accent hover:underline"
               type="application/atom+xml"
             >
               Subscribe (Atom feed) →
@@ -117,10 +112,10 @@ export default function NewlyEquippedPage({
           ) : (
             grouped.map((g) => (
               <div key={g.cfg.code} className="mb-4 last:mb-0">
-                <div className="flex items-center gap-1.5 text-[10px] font-mono text-muted mb-1">
+                <div className="flex items-center gap-1.5 text-xs font-mono text-muted mb-1">
                   <span
                     className="w-1.5 h-1.5 rounded-full flex-shrink-0"
-                    style={{ background: g.cfg.accentColor || "#5a6a80" }}
+                    style={{ background: g.cfg.accentText ?? g.cfg.accentColor ?? "#7a8ba2" }}
                   />
                   {g.cfg.name}
                 </div>
@@ -130,7 +125,7 @@ export default function NewlyEquippedPage({
               </div>
             ))
           )}
-          <p className="text-[11px] text-muted mt-4 leading-snug">
+          <p className="text-xs text-muted mt-4 leading-snug">
             Dates are when this tracker first observed the install, not when the antenna went on. A
             "first observed Starlink revenue flight" is likewise the earliest departure we can
             evidence after that find — where an earlier departure exists in our own departure log,
@@ -154,8 +149,6 @@ export default function NewlyEquippedPage({
           </p>
         </div>
       </section>
-
-      <PageFooter site={site} pageLinks={pageLinks} />
-    </div>
+    </PageShell>
   );
 }

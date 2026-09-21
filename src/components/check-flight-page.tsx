@@ -6,7 +6,8 @@ import { SEATBACK_LIVE_TV_COPY, SEATBACK_LIVE_TV_LIKELY_FAMILIES } from "../util
 import { AIRPORT_TZ } from "../utils/airport-tz";
 import { article } from "../utils/grammar";
 import { watchFeedEnabled } from "../utils/ics";
-import { type PageLink, PageNavLinks, PopularFlightsLinks } from "./atoms";
+import { type PageLink, PopularFlightsLinks } from "./atoms";
+import { PageHeader, PageShell, StatInline } from "./layout";
 
 export interface FlightRouteFact {
   departure_airport: string;
@@ -67,6 +68,7 @@ interface CheckFlightPageProps {
    * laterally via siblings instead. */
   popular?: PopularFlight[];
   pageLinks?: PageLink[];
+  currentPath?: string;
   /** FAQPage rich results are ignored on noindex URLs; keep the markup off them. */
   noindex?: boolean;
 }
@@ -214,20 +216,15 @@ function FlightFactBlocks({ flight }: { flight: FlightFacts }) {
           <div className="text-sm text-muted leading-relaxed space-y-2">
             {flight.observedTotal > 0 && (
               <p>
-                Starlink-equipped aircraft on{" "}
-                <span className="text-secondary font-mono">
-                  {flight.observedStarlink} of {flight.observedTotal}
-                </span>{" "}
-                recently verified {fn} departures.
+                Starlink-equipped aircraft on <StatInline n={flight.observedStarlink} /> of{" "}
+                <StatInline n={flight.observedTotal} /> recently verified {fn} departures.
               </p>
             )}
             {flight.lastStarlink && (
               <p>
                 Most recent Starlink-equipped departure:{" "}
-                <span className="text-secondary font-mono">
-                  {fmtDay(flight.lastStarlink.checked_at)}
-                </span>{" "}
-                on <span className="text-secondary font-mono">{flight.lastStarlink.tail}</span>.
+                <StatInline>{fmtDay(flight.lastStarlink.checked_at)}</StatInline> on{" "}
+                <span className="text-secondary font-mono">{flight.lastStarlink.tail}</span>.
               </p>
             )}
             {flight.aircraftTypes.length > 0 && (
@@ -336,6 +333,7 @@ export default function CheckFlightPage({
   invalid,
   popular = [],
   pageLinks,
+  currentPath,
   noindex = false,
 }: CheckFlightPageProps) {
   const cfg = siteAirline(site);
@@ -367,27 +365,23 @@ export default function CheckFlightPage({
     : "Use this page to check by flight number, or search by tail number on the main tracker.";
 
   return (
-    <div className="w-full mx-auto px-4 sm:px-6 md:px-8 bg-base min-h-screen flex flex-col relative">
-      <div className="absolute inset-0 grid-pattern opacity-50 pointer-events-none" />
-
-      <header className="relative py-5 sm:py-6 text-center mb-6">
-        <a href="/" className="block">
-          <h1 className="font-display text-3xl sm:text-4xl font-semibold text-primary mb-2 tracking-tight hover:text-accent transition-colors">
-            {invalid
-              ? "That Doesn't Look Like a Flight Number"
-              : flight
-                ? `Does ${flight.flightNumber} Have Starlink WiFi?`
-                : `Check If Your ${airlineName} Flight Has Starlink WiFi`}
-          </h1>
-        </a>
-        <p className="text-base text-secondary font-display">
-          {invalid
+    <PageShell site={site} currentPath={currentPath} pageLinks={pageLinks}>
+      <PageHeader
+        title={
+          invalid
+            ? "That Doesn't Look Like a Flight Number"
+            : flight
+              ? `Does ${flight.flightNumber} Have Starlink WiFi?`
+              : `Check If Your ${airlineName} Flight Has Starlink WiFi`
+        }
+        dek={
+          invalid
             ? `Enter ${article(shortName)} ${shortName} flight number below to check for Starlink`
             : flight
               ? flightSummary(flight)
-              : "Enter your flight number and date to see if your aircraft has free Starlink internet"}
-        </p>
-      </header>
+              : "Enter your flight number and date to see if your aircraft has free Starlink internet"
+        }
+      />
 
       <div className="relative max-w-xl mx-auto w-full mb-10">
         <div className="bg-surface rounded-lg border border-subtle p-6">
@@ -582,39 +576,6 @@ export default function CheckFlightPage({
           </div>
         </div>
       </div>
-
-      <div className="relative text-center mb-6">
-        <a href="/" className="text-sm text-accent hover:underline font-display">
-          ← Back to {homeTitle}
-        </a>
-      </div>
-
-      <footer className="relative py-6 text-center border-t border-subtle text-muted text-sm">
-        <a
-          href="https://x.com/martinamps"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center text-secondary hover:text-primary transition-colors"
-        >
-          Built with
-          <svg
-            className="w-4 h-4 mx-1 text-red-400"
-            xmlns="http://www.w3.org/2000/svg"
-            width="24"
-            height="24"
-            viewBox="0 0 24 24"
-            fill="currentColor"
-            stroke="currentColor"
-            strokeWidth="0"
-            aria-label="Heart"
-            role="img"
-          >
-            <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z" />
-          </svg>
-          by @martinamps
-        </a>
-        <PageNavLinks links={pageLinks} />
-      </footer>
 
       <script
         type="application/ld+json"
@@ -947,6 +908,6 @@ export default function CheckFlightPage({
       `,
         }}
       />
-    </div>
+    </PageShell>
   );
 }

@@ -14,7 +14,7 @@ export function PassengerBanner() {
           >
             ×
           </button>
-          <div className="text-[10px] font-mono text-accent uppercase tracking-wider mb-1">
+          <div className="text-xs font-mono text-accent uppercase tracking-wider mb-1">
             Detected · Starlink wifi
           </div>
           <p className="text-sm text-secondary mb-3 pr-6">
@@ -44,7 +44,7 @@ export function PassengerBanner() {
           >
             ✓ Thanks — recorded.
           </output>
-          <p className="text-[10px] text-muted mt-2">
+          <p className="text-xs text-muted mt-2">
             We only store the flight number and the fact your IP is in Starlink's published range.
           </p>
         </div>

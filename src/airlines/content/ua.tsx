@@ -49,7 +49,7 @@ export const content: AirlineContent = {
     </span>,
     ...(installsPerMonth(s)
       ? [
-          <span key="installs" className="hidden sm:inline">
+          <span key="installs">
             <span className="text-accent font-semibold">~{installsPerMonth(s)}</span> installs/mo
           </span>,
         ]

@@ -40,12 +40,12 @@ const HAHero = ({ stats }: HeroProps) => {
           <span className="text-green-400 font-semibold">{starlinkCount}</span>
           <span className="text-secondary"> Airbus aircraft equipped</span>
         </div>
-        <div className="text-[10px] font-mono text-muted mt-2 max-w-[200px]">
+        <div className="text-xs font-mono text-muted mt-2 max-w-[200px]">
           First major U.S. carrier to finish a fleet-wide Starlink install
         </div>
       </div>
       <div className="md:col-span-2 bg-surface border border-subtle rounded-lg overflow-hidden">
-        <div className="text-[10px] font-mono text-muted uppercase tracking-wider px-4 pt-4 pb-1">
+        <div className="text-xs font-mono text-muted uppercase tracking-wider px-4 pt-4 pb-1">
           Fleet by aircraft type
         </div>
         {HA_TYPES.map((t) => (
