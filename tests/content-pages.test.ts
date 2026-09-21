@@ -362,7 +362,8 @@ describe("sibling links between same-route flight numbers", () => {
     const res = await sapp.dispatch(req("/check-flight/UA111", UA));
     const text = visible(await res.text());
     expect(res.status).toBe(200);
-    expect(text).toContain("Other flights on SFO");
+    expect(text).toContain("Other flights on this route");
+    expect(text).toContain("SFO to EWR");
     expect(text).toContain('href="/check-flight/UA222"');
     expect(text).toContain('href="/check-flight/UA333"');
     // Never links itself.

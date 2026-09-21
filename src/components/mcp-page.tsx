@@ -22,8 +22,8 @@ export default function McpPage({ site, pageLinks, currentPath }: McpPageProps) 
         title="Starlink Tracker for Claude"
         dek={
           <>
-            Ask Claude which {cfg.shortName} flights have Starlink — and get ranked alternatives
-            when they don't.
+            Ask Claude whether your {cfg.shortName} flight has Starlink, and get alternatives if it
+            doesn't.
           </>
         }
       />
@@ -133,7 +133,7 @@ export default function McpPage({ site, pageLinks, currentPath }: McpPageProps) 
                 </code>{" "}
                 and name it "Starlink Tracker"
               </p>
-              <p>3. That's it — 7 tools are live in your next chat.</p>
+              <p>3. That's it. Seven tools are ready in your next chat.</p>
             </div>
             <img
               src="/static/mcp-add-dialog.webp"
@@ -146,7 +146,7 @@ export default function McpPage({ site, pageLinks, currentPath }: McpPageProps) 
             <p className="pt-2 border-t border-subtle">
               <strong className="text-secondary">ChatGPT &amp; other MCP clients:</strong> same URL,{" "}
               <code className="font-mono text-xs">http</code> transport. It's a standard JSON-RPC
-              2.0 endpoint — no auth, no SDK. In ChatGPT, enable Developer Mode in Advanced
+              2.0 endpoint with no auth and no SDK. In ChatGPT, enable Developer Mode in Advanced
               settings, then Settings → Connectors → Create.{" "}
               <a
                 href="https://modelcontextprotocol.io/specification/2025-06-18/basic/transports"
@@ -182,6 +182,24 @@ export default function McpPage({ site, pageLinks, currentPath }: McpPageProps) 
           </div>
         </details>
       </div>
+
+      {(site.features.checkFlightPage || site.features.routePlannerPage) && (
+        <p className="relative mx-auto mb-8 w-full max-w-2xl text-center text-sm text-secondary">
+          Rather use the site?{" "}
+          {site.features.checkFlightPage && (
+            <a href="/check-flight" className="text-accent hover:underline">
+              Check a flight
+            </a>
+          )}
+          {site.features.checkFlightPage && site.features.routePlannerPage && " or "}
+          {site.features.routePlannerPage && (
+            <a href="/route-planner" className="text-accent hover:underline">
+              plan a route
+            </a>
+          )}
+          .
+        </p>
+      )}
 
       {/* Copy button handler */}
       <script

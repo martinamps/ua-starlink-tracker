@@ -7,6 +7,7 @@
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { setAssignmentFetcher } from "../src/api/flight-verdict";
+import { renderFlightAnswer } from "../src/client/flight-answer";
 import { departureLocalDate } from "../src/database/assignment-log";
 import { updateFlights } from "../src/database/database";
 import { createApp } from "../src/server/app";
@@ -222,21 +223,46 @@ describe("/cal/{fn}/{date}.ics", () => {
     expect((await app.dispatch(req(`/cal/QR1/${date}.ics`, QR_HOST))).status).toBe(404);
   });
 
-  test("check-flight page ships the Watch row with compiled-class literals only", async () => {
-    const { status, text } = await bodyOf(app, "/check-flight", UA_HOST);
-    expect(status).toBe(200);
-    expect(text).toContain("Watch this flight");
-    expect(text).toContain("webcal://");
-    expect(text).toContain("var WATCH_ENABLED = true");
-    expect(text).not.toContain("Last verified");
+  const answerCtx = (date: string, watchEnabled: boolean) => ({
+    flightNumber: "UA100",
+    date,
+    daysOut: 5,
+    nowSec: Math.floor(Date.now() / 1000),
+    airlineName: "United Airlines",
+    zoneFor: () => undefined,
+    liveTv: null,
+    watchEnabled,
+    routePlannerEnabled: false,
+    host: UA_HOST,
   });
 
-  test("check-flight page dates alternative links and never labels them 'today'", async () => {
-    const { text } = await bodyOf(app, "/check-flight", UA_HOST);
-    // A dateless permalink pre-fills the viewer's today, answering a different departure.
-    expect(text).toContain("encodeURIComponent(a.flight_number) + '/' + encodeURIComponent(date)");
-    expect(text).toContain("alternativesHtml(data.sameDayAlternatives, date,");
-    expect(text).not.toMatch(/on this route today/);
+  test("the answer card carries the Watch row only where the feed serves", async () => {
+    const date = isoDaysFromNow(5);
+    const body = { hasStarlink: null, prediction: { probability: 0.5 }, flights: [] };
+    const on = renderFlightAnswer(body, answerCtx(date, true)).html;
+    expect(on).toContain("Watch this flight");
+    expect(on).toContain(`webcal://${UA_HOST}/cal/UA100/${date}.ics`);
+    expect(renderFlightAnswer(body, answerCtx(date, false)).html).not.toContain("webcal://");
+    const { text } = await bodyOf(app, `/check-flight/UA100/${date}`, UA_HOST);
+    expect(text).toContain('"watchEnabled":true');
+  });
+
+  test("alternative links carry the asked-about date and never say 'today'", () => {
+    const date = isoDaysFromNow(1);
+    const html = renderFlightAnswer(
+      {
+        hasStarlink: false,
+        confidence: "verified",
+        message: "UA100 is assigned to tail N1, verified as Viasat WiFi — not Starlink.",
+        flights: [],
+        sameDayAlternatives: [
+          { flight_number: "UA200", departure_time: Date.now() / 1000, tail_number: "N2" },
+        ],
+      },
+      answerCtx(date, false)
+    ).html;
+    expect(html).toContain(`href="/check-flight/UA200/${date}"`);
+    expect(html).not.toMatch(/on this route today/);
   });
 });
 

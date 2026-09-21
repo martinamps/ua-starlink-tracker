@@ -305,16 +305,17 @@ describe("the pill states a departure the permalink page agrees with", () => {
         /<!-- -->/g,
         ""
       );
-      const onPage = page.match(
-        /([A-Z]{3}) → [A-Z]{3}<span[^>]*> · [A-Z][a-z]{2} \d{1,2} · (\d{2}:\d{2}) local/
-      );
+      const onPage = page.match(/([A-Z]{3}) → [A-Z]{3}<span[^>]*> · ([^<]+)<\/span>/);
       expect(onPage).not.toBeNull();
       const zone = AIRPORT_TZ[onPage?.[1] as string];
       expect(zone).toBeDefined();
       const local = new Intl.DateTimeFormat("en-US", {
-        hour: "2-digit",
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
         minute: "2-digit",
-        hourCycle: "h23",
+        timeZoneName: "short",
         timeZone: zone,
       }).format(new Date((epoch as number) * 1000));
       expect(onPage?.[2]).toBe(local);

@@ -1,13 +1,20 @@
 import React from "react";
-import { aircraftFamilyPatterns } from "../airlines/aircraft-families";
 import { type SiteConfig, siteAirline } from "../airlines/registry";
+import {
+  type AnswerContext,
+  type CheckFlightBody,
+  type FlightAnswer,
+  renderFlightAnswer,
+} from "../client/flight-answer";
 import type { PopularFlight } from "../database/database";
-import { SEATBACK_LIVE_TV_COPY, SEATBACK_LIVE_TV_LIKELY_FAMILIES } from "../utils/aircraft-specs";
-import { AIRPORT_TZ } from "../utils/airport-tz";
+import { SEATBACK_LIVE_TV_COPY } from "../utils/aircraft-specs";
+import { AIRPORT_TZ, airportTimezone } from "../utils/airport-tz";
 import { article } from "../utils/grammar";
 import { watchFeedEnabled } from "../utils/ics";
 import { type PageLink, PopularFlightsLinks } from "./atoms";
-import { PageHeader, PageShell, StatInline } from "./layout";
+import { Faq, type FaqEntry, JsonLd, breadcrumbJsonLd, jsonLdString } from "./faq";
+import { ClientScriptTag, FlightSearchForm } from "./flight-search-form";
+import { H2, PageHeader, PageShell, Section, StatInline, fmt } from "./layout";
 
 export interface FlightRouteFact {
   departure_airport: string;
@@ -78,10 +85,20 @@ export interface InvalidFlightQuery {
   airportHint: boolean;
 }
 
+/** The dated permalink's answer: the /api/check-flight body the server built
+ * from the database, rendered by the same function the browser re-check uses. */
+export interface DatedAnswer {
+  flightNumber: string;
+  date: string;
+  daysOut: number;
+  body: CheckFlightBody;
+}
+
 interface CheckFlightPageProps {
   site: SiteConfig;
   flight?: FlightFacts;
   invalid?: InvalidFlightQuery;
+  dated?: DatedAnswer;
   /** Rendered on the generic (non-permalink) page only — permalinks link
    * laterally via siblings instead. */
   popular?: PopularFlight[];
@@ -91,58 +108,44 @@ interface CheckFlightPageProps {
   noindex?: boolean;
 }
 
-// Module-level formatters: constructing a locale formatter per call
-// (toLocale*String with options) dominated SSR time on list-heavy pages.
 const DAY_UTC = new Intl.DateTimeFormat("en-US", {
   month: "short",
   day: "numeric",
   year: "numeric",
   timeZone: "UTC",
 });
-const MONTH_DAY_UTC = new Intl.DateTimeFormat("en-US", {
-  month: "short",
-  day: "numeric",
-  timeZone: "UTC",
-});
-const HHMM_UTC = new Intl.DateTimeFormat("en-US", {
-  hour: "2-digit",
-  minute: "2-digit",
-  hour12: false,
-  timeZone: "UTC",
-});
-
-/** Zone → concatenated IATA codes; a third the bytes of the flat map, and
- * the client needs every airport because the form checks any flight. */
-const AIRPORT_ZONES_INLINE: string = (() => {
-  const byZone: Record<string, string> = {};
-  for (const [iata, zone] of Object.entries(AIRPORT_TZ)) byZone[zone] = (byZone[zone] ?? "") + iata;
-  return JSON.stringify(byZone);
-})();
-
 const fmtDay = (sec: number) => DAY_UTC.format(new Date(sec * 1000));
 
-const localFormatters = new Map<string, Intl.DateTimeFormat>();
+/** Zone → concatenated IATA codes; a third the bytes of the flat map, and the
+ * browser re-check needs every airport a flight might leave from. */
+const AIRPORT_ZONES: Record<string, string> = (() => {
+  const byZone: Record<string, string> = {};
+  for (const [iata, zone] of Object.entries(AIRPORT_TZ)) byZone[zone] = (byZone[zone] ?? "") + iata;
+  return byZone;
+})();
 
-/** Local date and clock at the departure airport: the checker answers per
- * local day, so a UTC label put late-evening departures on the next date. */
-const fmtDeparture = (sec: number, tz?: string | null) => {
-  const d = new Date(sec * 1000);
-  if (!tz) return `${MONTH_DAY_UTC.format(d)} · ${HHMM_UTC.format(d)} UTC`;
-  let f = localFormatters.get(tz);
+const departureFormatters = new Map<string, Intl.DateTimeFormat>();
+
+/** "Sun, Sep 21, 8:38 AM PDT" at the departure airport; UTC only when the
+ * airport's zone is unknown. The checker answers per local day, so a UTC
+ * label put late-evening departures on the next date. */
+function fmtDeparture(sec: number, tz: string | null | undefined): string {
+  const zone = tz ?? "UTC";
+  let f = departureFormatters.get(zone);
   if (!f) {
     f = new Intl.DateTimeFormat("en-US", {
+      weekday: "short",
       month: "short",
       day: "numeric",
-      hour: "2-digit",
+      hour: "numeric",
       minute: "2-digit",
-      hourCycle: "h23",
-      timeZone: tz,
+      timeZoneName: "short",
+      timeZone: zone,
     });
-    localFormatters.set(tz, f);
+    departureFormatters.set(zone, f);
   }
-  const p = Object.fromEntries(f.formatToParts(d).map((x) => [x.type, x.value]));
-  return `${p.month} ${p.day} · ${p.hour}:${p.minute} local`;
-};
+  return f.format(new Date(sec * 1000));
+}
 
 // Round total minutes BEFORE splitting into h/m — rounding the remainder
 // alone renders 2h59m30s as "2h 60m".
@@ -151,189 +154,203 @@ const fmtDuration = (sec: number) => {
   return `${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, "0")}m`;
 };
 
-function flightSummary(flight: FlightFacts): string {
-  const { flightNumber, observedStarlink: s, observedTotal: n } = flight;
+/** The undated answer: how often this flight gets Starlink. Prefers the
+ * model's number (the one the API and MCP quote) over the raw check tally. */
+function usualSummary(flight: FlightFacts): string {
+  const fn = flight.flightNumber;
   const pred = flight.prediction;
   if (pred && pred.n_observations > 0) {
     const pct = Math.round(pred.probability * 100);
-    const obs = `${pred.n_observations.toLocaleString("en-US")} observed departures`;
-    return pct > 0
-      ? `${flightNumber} gets a Starlink-equipped aircraft about ${pct}% of the time, from ${obs}. Pick a date below for a live answer.`
-      : `${flightNumber} almost never gets a Starlink-equipped aircraft: under 1% of ${obs}. Pick a date below for a live answer.`;
+    const share = pct < 1 ? "under 1%" : pct > 99 ? "over 99%" : `about ${pct}%`;
+    const lead = pct >= 70 ? "Usually yes" : pct >= 30 ? "Sometimes" : "Usually no";
+    return `${lead}: ${share} of recent ${fn} flights had Starlink.`;
   }
-  if (n > 0 && s > 0) {
-    return `${flightNumber} had Starlink on ${s} of ${n} recently verified departures (${Math.round((s / n) * 100)}%). Pick a date below for a live answer.`;
-  }
+  const { observedStarlink: s, observedTotal: n } = flight;
   if (n > 0) {
-    return `Not yet — recently verified ${flightNumber} departures were flown by aircraft still awaiting Starlink installation. Pick a date below for a live answer.`;
+    const r = s / n;
+    const lead = r >= 0.7 ? "Usually yes" : r >= 0.3 ? "Sometimes" : "Usually no";
+    return `${lead}: the aircraft had Starlink in ${fmt(s)} of ${fmt(n)} recent checks.`;
   }
-  return `Pick a date below for a live answer based on the aircraft assigned to ${flightNumber}.`;
+  return `We haven't seen ${fn} yet.`;
 }
 
-/** The list is ordered by how recently each leg was seen, so the date is the
- * evidence behind the order — and the honest hedge on the heading's present
- * tense, since a leg's silence is what makes it a route the number *flew*.
- * A future timestamp is a corrupt row, not a date to show. */
 function lastSeenLabel(sec: number | null): string | null {
   if (!sec || sec * 1000 > Date.now()) return null;
   return `last seen ${fmtDay(sec)}`;
 }
 
-function FlightFactBlocks({ flight }: { flight: FlightFacts }) {
+function answerContext(site: SiteConfig, dated: DatedAnswer): AnswerContext {
+  const cfg = siteAirline(site);
+  return {
+    flightNumber: dated.flightNumber,
+    date: dated.date,
+    daysOut: dated.daysOut,
+    nowSec: Math.floor(Date.now() / 1000),
+    airlineName: cfg.name,
+    zoneFor: (code) => airportTimezone(code),
+    liveTv: site.features.liveTvPage ? SEATBACK_LIVE_TV_COPY : null,
+    watchEnabled: watchFeedEnabled(site),
+    routePlannerEnabled: site.features.routePlannerPage,
+    host: site.canonicalHost,
+  };
+}
+
+function FlightFactBlocks({
+  flight,
+  scheduledOnDate,
+}: {
+  flight: FlightFacts;
+  scheduledOnDate: boolean;
+}) {
   const fn = flight.flightNumber;
   const hasHistory =
     flight.observedTotal > 0 || flight.aircraftTypes.length > 0 || flight.lastStarlink !== null;
+  const pred = flight.prediction;
   return (
     <>
-      {flight.routes.length > 0 && (
-        <div className="bg-surface rounded-lg border border-subtle p-6">
-          <h2 className="font-display text-lg font-semibold text-primary mb-3">
-            Routes {fn} flies
-          </h2>
-          {flight.notObservedSince ? (
-            <p className="text-sm text-muted mb-3">
-              Not observed since {fmtDay(flight.notObservedSince)}; may be seasonal or discontinued.
-            </p>
-          ) : null}
-          <div className="space-y-2">
-            {flight.routes.map((r) => {
-              const lastSeen = lastSeenLabel(r.last_seen_at);
-              return (
-                <div
-                  key={`${r.departure_airport}-${r.arrival_airport}`}
-                  className="flex items-center justify-between gap-3 text-sm font-mono"
-                >
-                  <span className="text-secondary">
-                    {r.departure_airport} → {r.arrival_airport}
-                    {r.dur_sec ? (
-                      <span className="text-muted"> · {fmtDuration(r.dur_sec)}</span>
-                    ) : null}
-                    <span className="text-muted">
-                      {" "}
-                      · seen {r.times} time{r.times === 1 ? "" : "s"}
-                    </span>
-                    {lastSeen ? <span className="text-muted"> · {lastSeen}</span> : null}
-                  </span>
-                  {r.linkable ? (
-                    <a
-                      href={`/route-planner/${r.departure_airport}/${r.arrival_airport}`}
-                      className="text-accent hover:underline text-xs whitespace-nowrap"
-                    >
-                      Plan this route →
-                    </a>
-                  ) : null}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {flight.siblings.length > 0 && flight.routes[0] && (
-        <div className="bg-surface rounded-lg border border-subtle p-6">
-          <h2 className="font-display text-lg font-semibold text-primary mb-3">
-            Other flights on {flight.routes[0].departure_airport}–{flight.routes[0].arrival_airport}
-          </h2>
-          <div className="flex flex-wrap gap-2">
-            {flight.siblings.map((s) => (
-              <a
-                key={s}
-                href={`/check-flight/${s}`}
-                className="font-mono text-sm px-2.5 py-1 rounded border border-subtle bg-surface-elevated text-secondary hover:border-accent hover:text-accent transition-colors"
+      {flight.upcoming.length > 0 && (
+        <Section
+          title={`Next ${fn} departures`}
+          dek="Aircraft can change up to departure. Check your date above for the current answer."
+        >
+          <ul className="divide-y divide-subtle text-sm">
+            {flight.upcoming.map((u) => (
+              <li
+                key={`${u.tail_number}-${u.departure_time}`}
+                className="flex items-start justify-between gap-3 py-2 first:pt-0 last:pb-0"
               >
-                {s}
-              </a>
+                <div className="min-w-0">
+                  <div className="text-primary">
+                    {u.departure_airport} → {u.arrival_airport}
+                    <span className="text-secondary">
+                      {" · "}
+                      {fmtDeparture(
+                        u.departure_time,
+                        u.departure_tz ?? airportTimezone(u.departure_airport)
+                      )}
+                    </span>
+                  </div>
+                  <div className="text-muted">
+                    <span className="font-mono">{u.tail_number}</span>
+                    {u.aircraft_type ? ` · ${u.aircraft_type}` : ""}
+                  </div>
+                </div>
+                <span
+                  className={`shrink-0 whitespace-nowrap ${u.starlink ? "text-success" : "text-muted"}`}
+                >
+                  {u.starlink ? "Starlink" : u.wifiLabel}
+                </span>
+              </li>
             ))}
-          </div>
-          <p className="text-xs text-muted mt-3">
-            Same route, different schedules — each flight number has its own aircraft history and
-            Starlink record.
-          </p>
-        </div>
+          </ul>
+        </Section>
       )}
 
       {hasHistory && (
-        <div className="bg-surface rounded-lg border border-subtle p-6">
-          <h2 className="font-display text-lg font-semibold text-primary mb-3">
-            {fn} Starlink history
-          </h2>
-          <div className="text-sm text-muted leading-relaxed space-y-2">
+        <Section title={`${fn} Starlink history`}>
+          <div className="space-y-2 text-sm leading-relaxed text-secondary">
+            {pred && pred.n_observations > 0 && (
+              <p>
+                <StatInline>{Math.round(pred.probability * 100)}%</StatInline> of recent {fn}{" "}
+                flights had a Starlink aircraft, from <StatInline n={pred.n_observations} /> flights
+                observed.
+              </p>
+            )}
             {flight.observedTotal > 0 && (
               <p>
-                Starlink found on <StatInline n={flight.observedStarlink} /> of{" "}
-                <StatInline n={flight.observedTotal} /> aircraft checks on {fn}
+                Starlink found in <StatInline n={flight.observedStarlink} /> of{" "}
+                <StatInline n={flight.observedTotal} /> Wi-Fi checks of aircraft flying {fn}
                 {flight.observedSince ? ` since ${fmtDay(flight.observedSince)}` : ""}.
               </p>
             )}
             {flight.lastStarlink && (
               <p>
-                Last verified on Starlink:{" "}
-                <StatInline>{fmtDay(flight.lastStarlink.checked_at)}</StatInline> on{" "}
-                <span className="text-secondary font-mono">{flight.lastStarlink.tail}</span>.
+                Last verified on Starlink: {fmtDay(flight.lastStarlink.checked_at)} (
+                <span className="font-mono">{flight.lastStarlink.tail}</span>).
               </p>
             )}
             {flight.aircraftTypes.length > 0 && (
               <p>
-                Aircraft recently seen on {fn}:{" "}
-                <span className="text-secondary">
-                  {(
-                    flight.aircraftTypeLinks ??
-                    flight.aircraftTypes.map((label) => ({ label, href: null }))
-                  ).map((t, i) => (
-                    <React.Fragment key={t.label}>
-                      {i > 0 && ", "}
-                      {t.href ? (
-                        <a href={t.href} className="text-accent hover:underline">
-                          {t.label}
-                        </a>
-                      ) : (
-                        t.label
-                      )}
-                    </React.Fragment>
-                  ))}
-                </span>
+                Aircraft seen on {fn}:{" "}
+                {(
+                  flight.aircraftTypeLinks ??
+                  flight.aircraftTypes.map((label) => ({ label, href: null }))
+                ).map((t, i) => (
+                  <React.Fragment key={t.label}>
+                    {i > 0 && ", "}
+                    {t.href ? (
+                      <a href={t.href} className="text-accent hover:underline">
+                        {t.label}
+                      </a>
+                    ) : (
+                      t.label
+                    )}
+                  </React.Fragment>
+                ))}
                 .
               </p>
             )}
           </div>
-        </div>
+        </Section>
       )}
 
-      {flight.upcoming.length > 0 && (
-        <div className="bg-surface rounded-lg border border-subtle p-6">
-          <h2 className="font-display text-lg font-semibold text-primary mb-3">
-            Upcoming {fn} departures
-          </h2>
-          <div className="space-y-2">
-            {flight.upcoming.map((u) => (
-              <div
-                key={`${u.tail_number}-${u.departure_time}`}
-                className="flex items-center justify-between gap-3 text-sm font-mono"
-              >
-                <span className="text-secondary">
-                  {u.departure_airport} → {u.arrival_airport}
-                  <span className="text-muted">
-                    {" "}
-                    · {fmtDeparture(u.departure_time, u.departure_tz)}
-                  </span>
-                  <span className="text-muted hidden sm:inline">
-                    {" "}
-                    · {u.tail_number}
-                    {u.aircraft_type ? ` (${u.aircraft_type})` : ""}
-                  </span>
-                </span>
-                <span
-                  className={`text-xs whitespace-nowrap ${u.starlink ? "text-green-400" : "text-muted"}`}
+      {flight.routes.length > 0 && (
+        <Section title={`Routes ${fn} flies`}>
+          {flight.notObservedSince && !scheduledOnDate ? (
+            <p className="mb-3 text-sm text-muted">Last seen {fmtDay(flight.notObservedSince)}.</p>
+          ) : null}
+          <ul className="divide-y divide-subtle text-sm">
+            {flight.routes.map((r) => {
+              const lastSeen = lastSeenLabel(r.last_seen_at);
+              return (
+                <li
+                  key={`${r.departure_airport}-${r.arrival_airport}`}
+                  className="flex items-start justify-between gap-3 py-2 first:pt-0 last:pb-0"
                 >
-                  {u.starlink ? "✓ Starlink" : u.wifiLabel}
-                </span>
-              </div>
+                  <div className="min-w-0">
+                    <div className="text-primary">
+                      {r.departure_airport} → {r.arrival_airport}
+                      {r.dur_sec ? (
+                        <span className="text-secondary"> · {fmtDuration(r.dur_sec)}</span>
+                      ) : null}
+                    </div>
+                    <div className="text-muted">
+                      Seen {fmt(r.times)} time{r.times === 1 ? "" : "s"}
+                      {lastSeen ? ` · ${lastSeen}` : ""}
+                    </div>
+                  </div>
+                  {r.linkable ? (
+                    <a
+                      href={`/route-planner/${r.departure_airport}/${r.arrival_airport}`}
+                      className="shrink-0 whitespace-nowrap text-accent hover:underline"
+                    >
+                      Plan this route
+                    </a>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+        </Section>
+      )}
+
+      {flight.siblings.length > 0 && flight.routes[0] && (
+        <Section
+          title="Other flights on this route"
+          dek={`${flight.routes[0].departure_airport} to ${flight.routes[0].arrival_airport}. Each flight number has its own aircraft history.`}
+        >
+          <div className="flex flex-wrap gap-2">
+            {flight.siblings.map((s) => (
+              <a
+                key={s}
+                href={`/check-flight/${s}`}
+                className="rounded border border-subtle bg-surface-elevated px-2.5 py-1 font-mono text-sm text-secondary transition-colors hover:border-accent hover:text-accent"
+              >
+                {s}
+              </a>
             ))}
           </div>
-          <p className="text-xs text-muted mt-3">
-            Aircraft assignments can swap up to departure — check your exact date above.
-          </p>
-        </div>
+        </Section>
       )}
     </>
   );
@@ -352,19 +369,19 @@ function InvalidQueryNotice({
 }) {
   const quoted = invalid.query ? `“${invalid.query}”` : "That";
   return (
-    <div className="bg-surface-elevated border border-subtle rounded p-4 mb-4">
-      <p className="text-sm text-secondary">
+    <div className="mb-4 rounded border border-subtle bg-surface-elevated p-4 text-sm">
+      <p className="text-primary">
         {invalid.reason === "other-carrier"
-          ? `${quoted} isn't ${article(shortName)} ${shortName} flight number — this tracker only covers ${shortName} flights.`
+          ? `${quoted} isn't ${article(shortName)} ${shortName} flight number. This site covers ${shortName} flights only.`
           : `${quoted} isn't a flight number.`}
       </p>
-      <p className="text-sm text-muted mt-1">
-        Flight numbers look like <span className="font-mono text-secondary">{example}</span> — a
-        two-letter airline code followed by 1–4 digits. Try again below.
+      <p className="mt-1 text-secondary">
+        Flight numbers look like <span className="font-mono">{example}</span>: a two-letter airline
+        code and 1–4 digits.
       </p>
       {invalid.airportHint && showRoutePlanner && (
-        <p className="text-sm text-muted mt-2">
-          Looking for an airport or a route instead? Try the{" "}
+        <p className="mt-2 text-secondary">
+          Looking for an airport or a route? Try the{" "}
           <a href="/route-planner" className="text-accent hover:underline">
             route planner
           </a>
@@ -379,6 +396,7 @@ export default function CheckFlightPage({
   site,
   flight,
   invalid,
+  dated,
   popular = [],
   pageLinks,
   currentPath,
@@ -386,56 +404,75 @@ export default function CheckFlightPage({
 }: CheckFlightPageProps) {
   const cfg = siteAirline(site);
   const airlineName = flight?.airlineName ?? cfg.name;
-  const homeTitle = site.brand.title;
   const host = site.canonicalHost;
-  const flightExample = flight?.flightNumber ?? `${cfg.iata}123`;
+  const fn = flight?.flightNumber ?? dated?.flightNumber;
+  const flightExample = fn ?? `${cfg.iata}123`;
   const shortName = cfg.shortName;
-  const showChromeExtension = site.features.chromeExtension;
-  const liveTvRules = site.features.liveTvPage
-    ? {
-        patterns: aircraftFamilyPatterns(),
-        likely: SEATBACK_LIVE_TV_LIKELY_FAMILIES,
-        copy: SEATBACK_LIVE_TV_COPY,
-      }
-    : null;
+
+  const ctx = dated ? answerContext(site, dated) : null;
+  const answer: FlightAnswer | null = dated && ctx ? renderFlightAnswer(dated.body, ctx) : null;
+  // A prediction near departure may firm up from the API's live schedule
+  // lookup, which the server render deliberately skips.
+  const refresh = !!dated && !!answer && !answer.firm && dated.daysOut >= -1 && dated.daysOut <= 2;
+
   const accuracyCopy =
     cfg.verifierBackend === "united"
-      ? "We verify Starlink status against united.com and cross-reference with flight schedules from aviation data providers."
+      ? "We check each aircraft's Wi-Fi on united.com and match aircraft to flights using flight schedule data."
       : cfg.verifierBackend === "alaska-json"
-        ? `We cross-reference ${shortName}'s own status data, public fleet data, and observed aircraft assignments.`
-        : "We cross-reference public fleet data, rollout updates, and observed aircraft assignments.";
-  const faqSubject = flight ? flight.flightNumber : `my ${shortName} flight`;
-  const faqAnswer = flight
-    ? `Pick your travel date in the form above. Within ~2 days of departure the answer comes from the actual aircraft assigned to ${flight.flightNumber}; further out it's a probability from this flight number's recent aircraft history.`
-    : `Enter your flight number (for example ${flightExample}) and travel date in the form above. The tool checks our database of Starlink-equipped aircraft against the scheduled aircraft for that flight.`;
-  const extensionAnswer = showChromeExtension
-    ? "Use this page to check by flight number, search by tail number on the main tracker, or install the free Chrome extension to see Starlink badges directly on Google Flights."
-    : "Use this page to check by flight number, or search by tail number on the main tracker.";
+        ? `We combine ${shortName}'s own status data, public fleet data and the aircraft seen on each flight.`
+        : "We combine public fleet data, rollout updates and the aircraft seen on each flight.";
+  const faq: FaqEntry[] = [
+    {
+      q: `How do I check if ${fn ?? `my ${shortName} flight`} has Starlink?`,
+      a: fn
+        ? `Pick your travel date above. About 2 days before departure, ${airlineName} assigns the aircraft, and the answer comes from that aircraft. Earlier than that, you get a probability based on the aircraft that recently flew ${fn}.`
+        : `Enter your flight number (for example ${flightExample}) and travel date above. We check the aircraft scheduled for that flight against our list of Starlink aircraft.`,
+    },
+    {
+      q: "How accurate is this?",
+      a: `${accuracyCopy} Aircraft can change up to departure, so check again the day before you fly.`,
+    },
+  ];
+
+  const title = invalid
+    ? "That isn't a flight number"
+    : fn
+      ? `Does ${fn} have Starlink Wi-Fi?`
+      : `Check your ${airlineName} flight for Starlink Wi-Fi`;
+  const dek = invalid
+    ? `Enter ${article(shortName)} ${shortName} flight number to check it.`
+    : answer
+      ? undefined
+      : flight
+        ? `${usualSummary(flight)} Pick a date for a firm answer.`
+        : "Enter your flight number and date to see whether your aircraft has Starlink.";
+
+  const scheduledOnDate = answer?.firm === true;
+  const crumbs = [
+    { name: site.brand.title, path: "/" },
+    { name: "Check a flight", path: "/check-flight" },
+    ...(flight
+      ? [{ name: flight.flightNumber, path: `/check-flight/${flight.flightNumber}` }]
+      : []),
+  ];
 
   return (
     <PageShell site={site} currentPath={currentPath} pageLinks={pageLinks}>
-      <PageHeader
-        title={
-          invalid
-            ? "That Doesn't Look Like a Flight Number"
-            : flight
-              ? `Does ${flight.flightNumber} Have Starlink WiFi?`
-              : `Check If Your ${airlineName} Flight Has Starlink WiFi`
-        }
-        dek={
-          invalid
-            ? `Enter ${article(shortName)} ${shortName} flight number below to check for Starlink`
-            : flight
-              ? flightSummary(flight)
-              : "Enter your flight number and date to see if your aircraft has free Starlink internet"
-        }
-      />
+      <PageHeader title={title} dek={dek} />
 
-      <div className="relative max-w-xl mx-auto w-full mb-10">
-        <div className="bg-surface rounded-lg border border-subtle p-6">
-          <h2 className="font-display text-lg font-semibold text-primary mb-4">
-            Check by flight number
-          </h2>
+      {answer && (
+        <section className="relative mx-auto mb-6 w-full max-w-3xl" aria-live="polite">
+          <div
+            id="flight-answer"
+            // biome-ignore lint/security/noDangerouslySetInnerHtml: renderFlightAnswer escapes every value
+            dangerouslySetInnerHTML={{ __html: answer.html }}
+          />
+        </section>
+      )}
+
+      <section className="relative mx-auto mb-8 w-full max-w-3xl">
+        {answer && <h2 className={`${H2} mb-3`}>Check another date or flight</h2>}
+        <div className="rounded-lg border border-subtle bg-surface p-5">
           {invalid && (
             <InvalidQueryNotice
               invalid={invalid}
@@ -444,518 +481,92 @@ export default function CheckFlightPage({
               showRoutePlanner={site.features.routePlannerPage}
             />
           )}
-          <form id="check-flight-form" className="space-y-4">
-            <div className="flex flex-col sm:flex-row gap-3">
-              <div className="flex-1">
-                <label
-                  htmlFor="flight-number"
-                  className="block text-xs font-mono text-muted mb-1 uppercase tracking-wider"
-                >
-                  Flight Number
-                </label>
-                <input
-                  type="text"
-                  id="flight-number"
-                  name="flight_number"
-                  placeholder={flightExample}
-                  className="w-full bg-base border border-subtle rounded px-3 py-2 text-primary font-mono text-sm focus:outline-none focus:border-accent"
-                  required
-                />
-              </div>
-              <div className="flex-1">
-                <label
-                  htmlFor="flight-date"
-                  className="block text-xs font-mono text-muted mb-1 uppercase tracking-wider"
-                >
-                  Date
-                </label>
-                <input
-                  type="date"
-                  id="flight-date"
-                  name="date"
-                  className="w-full bg-base border border-subtle rounded px-3 py-2 text-primary font-mono text-sm focus:outline-none focus:border-accent"
-                  required
-                />
-              </div>
-            </div>
-            <button
-              type="submit"
-              className="w-full bg-accent/20 border border-accent text-accent font-display font-semibold py-2 px-4 rounded hover:bg-accent/30 transition-colors cursor-pointer"
-            >
-              Check Flight
-            </button>
-          </form>
-
-          <div id="flight-result" className="mt-4 hidden" />
-
+          <FlightSearchForm
+            site={site}
+            id="check-flight-form"
+            flightNumber={fn}
+            date={dated?.date}
+            prefillDate
+            withScript={false}
+          />
           {site.features.intentPages && (
-            <p className="text-xs text-muted mt-4">
+            <p className="mt-4 text-sm text-muted">
               New here?{" "}
               <a href="/how-to-check" className="text-accent hover:underline">
                 How the check works
-              </a>{" "}
-              — and yes,{" "}
+              </a>
+              .{" "}
               <a href="/is-starlink-free" className="text-accent hover:underline">
-                Starlink WiFi is free
+                Starlink Wi-Fi is free
               </a>
               .
             </p>
           )}
         </div>
-      </div>
+      </section>
 
-      <div className="relative max-w-xl mx-auto w-full mb-10 space-y-6">
-        {flight && <FlightFactBlocks flight={flight} />}
-        {!flight && popular.length > 0 && (
+      {flight && <FlightFactBlocks flight={flight} scheduledOnDate={scheduledOnDate} />}
+      {!flight && popular.length > 0 && (
+        <section className="relative mx-auto mb-8 w-full max-w-3xl">
           <PopularFlightsLinks flights={popular} airlineName={cfg.name} />
-        )}
-        {flight && site.features.fleetPage && (
-          <p className="text-sm text-muted text-center">
-            See where the {airlineName} rollout stands across every aircraft on the{" "}
-            <a href="/fleet" className="text-accent hover:underline">
-              fleet page
+        </section>
+      )}
+
+      <Section title="Other ways to check">
+        <ul className="space-y-2 text-sm leading-relaxed text-secondary">
+          <li>
+            Know your tail number? Search it on the{" "}
+            <a href="/" className="text-accent hover:underline">
+              homepage
             </a>
             .
-          </p>
-        )}
-        <div className="bg-surface rounded-lg border border-subtle p-6">
-          <h2 className="font-display text-lg font-semibold text-primary mb-3">
-            Check by tail number
-          </h2>
-          <p className="text-sm text-muted leading-relaxed">
-            If you know your aircraft's tail number (found on your boarding pass or the aircraft
-            fuselage), search for it on the{" "}
-            <a href="/" className="text-accent hover:underline">
-              homepage tracker
-            </a>
-            . The search bar filters all Starlink-equipped aircraft instantly.
-          </p>
-        </div>
-
-        {showChromeExtension && (
-          <div className="bg-surface rounded-lg border border-subtle p-6">
-            <h2 className="font-display text-lg font-semibold text-primary mb-3">
-              Use the Chrome extension
-            </h2>
-            <p className="text-sm text-muted leading-relaxed mb-3">
-              Install the free Chrome extension to see Starlink badges directly on Google Flights
-              while you search for {shortName} flights. No extra steps needed.
-            </p>
-            <a
-              href="https://chromewebstore.google.com/detail/google-flights-starlink-i/jjfljoifenkfdbldliakmmjhdkbhehoi"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 text-sm text-accent hover:underline"
-            >
-              <svg
-                className="w-4 h-4"
-                viewBox="0 0 48 48"
-                fill="none"
-                role="img"
-                aria-label="Chrome"
+          </li>
+          {site.features.chromeExtension && (
+            <li>
+              Shopping on Google Flights? The free{" "}
+              <a
+                href="https://chromewebstore.google.com/detail/google-flights-starlink-i/jjfljoifenkfdbldliakmmjhdkbhehoi"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-accent hover:underline"
               >
-                <circle cx="24" cy="24" r="22" fill="#4285F4" />
-                <circle cx="24" cy="24" r="9" fill="white" />
-                <circle cx="24" cy="24" r="4" fill="#4285F4" />
-              </svg>
-              Add to Chrome — Free
-            </a>
-          </div>
-        )}
-      </div>
+                Chrome extension
+              </a>{" "}
+              marks {shortName} flights that have Starlink.
+            </li>
+          )}
+          {flight && site.features.fleetPage && (
+            <li>
+              See every {airlineName} aircraft on the{" "}
+              <a href="/fleet" className="text-accent hover:underline">
+                fleet page
+              </a>
+              .
+            </li>
+          )}
+        </ul>
+      </Section>
 
-      <div className="relative max-w-xl mx-auto w-full mb-12">
-        <div className="bg-surface rounded-lg border border-subtle p-4">
-          <h2 className="font-display text-lg font-semibold text-primary mb-3 px-2">FAQ</h2>
-          <div className="space-y-0 divide-y divide-subtle">
-            <details className="group py-4 px-2">
-              <summary className="cursor-pointer list-none flex items-start justify-between">
-                <h3 className="font-display text-base font-semibold text-secondary group-hover:text-accent transition-colors">
-                  How do I check if {faqSubject} has Starlink?
-                </h3>
-                <svg
-                  className="w-4 h-4 text-muted group-open:rotate-45 transition-transform ml-4 flex-shrink-0"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                  role="img"
-                  aria-label="Expand"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M12 6v6m0 0v6m0-6h6m-6 0H6"
-                  />
-                </svg>
-              </summary>
-              <div className="mt-3 text-sm text-muted leading-relaxed">
-                <p>{faqAnswer}</p>
-              </div>
-            </details>
-            <details className="group py-4 px-2">
-              <summary className="cursor-pointer list-none flex items-start justify-between">
-                <h3 className="font-display text-base font-semibold text-secondary group-hover:text-accent transition-colors">
-                  Is this information accurate?
-                </h3>
-                <svg
-                  className="w-4 h-4 text-muted group-open:rotate-45 transition-transform ml-4 flex-shrink-0"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                  role="img"
-                  aria-label="Expand"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M12 6v6m0 0v6m0-6h6m-6 0H6"
-                  />
-                </svg>
-              </summary>
-              <div className="mt-3 text-sm text-muted leading-relaxed">
-                <p>
-                  {accuracyCopy} Aircraft assignments can change, so check closer to your departure
-                  date for the most accurate results.
-                </p>
-              </div>
-            </details>
-          </div>
-        </div>
-      </div>
+      <Faq items={faq} structuredData={!noindex} />
 
-      <script
-        type="application/ld+json"
-        // biome-ignore lint/security/noDangerouslySetInnerHtml: JSON-LD from server data; flight number is regex-validated
-        dangerouslySetInnerHTML={{
-          __html: JSON.stringify({
-            "@context": "https://schema.org",
-            "@type": "BreadcrumbList",
-            itemListElement: [
-              {
-                "@type": "ListItem",
-                position: 1,
-                name: homeTitle,
-                item: `https://${host}/`,
-              },
-              {
-                "@type": "ListItem",
-                position: 2,
-                name: "Check Flight",
-                item: `https://${host}/check-flight`,
-              },
-              ...(flight
-                ? [
-                    {
-                      "@type": "ListItem",
-                      position: 3,
-                      name: flight.flightNumber,
-                      item: `https://${host}/check-flight/${flight.flightNumber}`,
-                    },
-                  ]
-                : []),
-            ],
-          }),
-        }}
-      />
-
-      {!noindex && (
+      <JsonLd data={breadcrumbJsonLd(host, crumbs)} />
+      {dated && (
         <script
-          type="application/ld+json"
-          // biome-ignore lint/security/noDangerouslySetInnerHtml: JSON-LD from server data; flight number is regex-validated
+          type="application/json"
+          id="check-flight-config"
+          // biome-ignore lint/security/noDangerouslySetInnerHtml: escaped by jsonLdString
           dangerouslySetInnerHTML={{
-            __html: JSON.stringify({
-              "@context": "https://schema.org",
-              "@type": "FAQPage",
-              mainEntity: [
-                {
-                  "@type": "Question",
-                  name: `How do I check if ${faqSubject} has Starlink?`,
-                  acceptedAnswer: {
-                    "@type": "Answer",
-                    text: faqAnswer,
-                  },
-                },
-                {
-                  "@type": "Question",
-                  name: `How do I know if my ${shortName} flight has Starlink WiFi?`,
-                  acceptedAnswer: {
-                    "@type": "Answer",
-                    text: extensionAnswer,
-                  },
-                },
-              ],
+            __html: jsonLdString({
+              ...ctx,
+              zoneFor: undefined,
+              nowSec: undefined,
+              refresh,
+              zones: refresh ? AIRPORT_ZONES : {},
             }),
           }}
         />
       )}
-
-      <script
-        // biome-ignore lint/security/noDangerouslySetInnerHtml: static inline script, no user input
-        dangerouslySetInnerHTML={{
-          __html: `
-        document.addEventListener('DOMContentLoaded', function() {
-          var form = document.getElementById('check-flight-form');
-          var resultDiv = document.getElementById('flight-result');
-          var dateInput = document.getElementById('flight-date');
-          var carrierPrefix = ${JSON.stringify(cfg.iata)};
-          var liveTv = ${JSON.stringify(liveTvRules).replace(/</g, "\\u003c")};
-          // Mirrors seatbackLiveTv() in aircraft-specs.ts, fed the server's own
-          // family patterns so the two classifiers cannot drift apart.
-          var liveTvLine = function(flight, esc) {
-            if (!liveTv) return '';
-            var tier = 'no';
-            if (flight.fleet_type === 'mainline') {
-              var family = 'other';
-              for (var i = 0; i < liveTv.patterns.length; i++) {
-                if (new RegExp(liveTv.patterns[i][0], liveTv.patterns[i][1]).test(flight.aircraft_type || '')) { family = liveTv.patterns[i][2]; break; }
-              }
-              tier = liveTv.likely.indexOf(family) >= 0 ? 'likely' : 'possible';
-            }
-            return '<div class="pt-2">' + esc(liveTv.copy[tier]) + ' <a href="/live-tv" class="text-accent hover:underline">Which planes have live TV →</a></div>';
-          };
-          var WATCH_ENABLED = ${JSON.stringify(watchFeedEnabled(site))};
-          var ROUTE_PLANNER_ENABLED = ${JSON.stringify(site.features.routePlannerPage)};
-          var WATCH_MAX_DAYS_OUT = 330;
-
-          var escHtml = function(s) { var d = document.createElement('div'); d.textContent = String(s || ''); return d.innerHTML; };
-          // verified_wifi 'None' means no WiFi installed; it is never a provider name.
-          var wifiLabel = function(v) {
-            return (!v || !String(v).trim() || /^none$/i.test(String(v).trim())) ? 'no WiFi' : escHtml(v) + ' WiFi (not Starlink)';
-          };
-          // Departure times read in the departure airport's zone, like a
-          // boarding pass; the viewer's zone only when the airport is unmapped.
-          var airportZones = ${AIRPORT_ZONES_INLINE};
-          var airportTz = {};
-          Object.keys(airportZones).forEach(function(zone) {
-            var codes = airportZones[zone];
-            for (var i = 0; i < codes.length; i += 3) airportTz[codes.slice(i, i + 3)] = zone;
-          });
-          var zoneFor = function(airport) {
-            var code = String(airport || '').toUpperCase();
-            if (code.length === 4 && (code[0] === 'K' || code[0] === 'C')) code = code.slice(1);
-            return airportTz[code];
-          };
-          var localTime = function(unix, airport) {
-            var opts = { hour: 'numeric', minute: '2-digit', hour12: true, timeZoneName: 'short' };
-            var zone = zoneFor(airport);
-            if (zone) opts.timeZone = zone;
-            return new Date(unix * 1000).toLocaleTimeString('en-US', opts);
-          };
-          var localDay = function(unix, airport) {
-            var opts = { month: 'short', day: 'numeric' };
-            var zone = zoneFor(airport);
-            if (zone) opts.timeZone = zone;
-            return new Date(unix * 1000).toLocaleDateString('en-US', opts);
-          };
-          var alternativesHtml = function(list, date, origin) {
-            if (!list || !list.length) return '';
-            return '<div class="mt-3"><div class="text-xs font-mono text-muted mb-1 uppercase tracking-wider">Starlink flights on this route that day</div>' +
-              '<ul class="text-sm text-muted font-mono space-y-1">' +
-              list.map(function(a) {
-                return '<li><a href="/check-flight/' + encodeURIComponent(a.flight_number) + '/' + encodeURIComponent(date) + '" class="text-accent hover:underline">' + escHtml(a.flight_number) + '</a> ' +
-                  escHtml(localTime(a.departure_time, origin)) + ' <span class="text-secondary">' + escHtml(a.tail_number) + (a.aircraft_type ? ' (' + escHtml(a.aircraft_type) + ')' : '') + '</span></li>';
-              }).join('') +
-              '</ul></div>';
-          };
-          var routePlannerCta = function(origin, destination) {
-            var o = String(origin || '').toUpperCase();
-            var d = String(destination || '').toUpperCase();
-            if (!ROUTE_PLANNER_ENABLED || !/^[A-Z]{3}$/.test(o) || !/^[A-Z]{3}$/.test(d)) return '';
-            return '<p class="text-sm mt-3"><a href="/route-planner/' + o + '/' + d + '" rel="nofollow" class="text-accent hover:underline">Find Starlink flights ' + o + ' → ' + d + ' →</a></p>';
-          };
-          var watchRow = function(fn, date) {
-            if (!WATCH_ENABLED) return '';
-            var daysOut = Math.round((Date.parse(date + 'T00:00:00Z') - Date.parse(new Date().toISOString().slice(0, 10) + 'T00:00:00Z')) / 86400000);
-            if (!(daysOut >= -1 && daysOut <= WATCH_MAX_DAYS_OUT)) return '';
-            var path = '/cal/' + encodeURIComponent(fn) + '/' + encodeURIComponent(date) + '.ics';
-            var webcal = 'webcal://' + window.location.host + path;
-            var google = 'https://calendar.google.com/calendar/r?cid=' + encodeURIComponent(webcal);
-            return '<div class="mt-4 pt-4 border-t border-subtle">' +
-              '<div class="flex items-center gap-2 mb-2"><span class="font-display font-semibold text-secondary">Watch this flight</span></div>' +
-              '<div class="flex flex-wrap gap-3 text-sm">' +
-              '<a href="' + webcal + '" data-watch="webcal" class="text-accent hover:underline">Apple / Outlook</a>' +
-              '<a href="' + google + '" data-watch="google" target="_blank" rel="noopener noreferrer" class="text-accent hover:underline">Google Calendar</a>' +
-              '<a href="' + path + '" data-watch="ics" download class="text-accent hover:underline">Download .ics</a>' +
-              '</div>' +
-              '<p class="text-xs text-muted mt-2">A calendar event that updates itself as the aircraft is assigned or swapped. Apple refreshes about hourly, Google every 8–24 hours.</p>' +
-              '</div>';
-          };
-
-          var pathParts = window.location.pathname.split('/').filter(Boolean);
-          var urlFlight = pathParts.length >= 2 ? decodeURIComponent(pathParts[1]) : null;
-          var urlDate = pathParts.length >= 3 ? decodeURIComponent(pathParts[2]) : null;
-
-          if (dateInput) {
-            // en-CA formats the user's LOCAL date as YYYY-MM-DD; toISOString()
-            // is the UTC day, which pre-fills tomorrow for evening US users.
-            dateInput.value = urlDate || new Date().toLocaleDateString('en-CA');
-          }
-          if (urlFlight && document.getElementById('flight-number')) {
-            document.getElementById('flight-number').value = urlFlight.toUpperCase();
-          }
-
-          if (form) {
-            var runCheck = function() {
-              var flightNumber = document.getElementById('flight-number').value.trim();
-              var date = document.getElementById('flight-date').value;
-
-              if (!flightNumber || !date) return;
-
-              // Same separators canonicalFlightInput strips ("UA 544", "ua-544")
-              // so the permalink is the canonical spelling too.
-              flightNumber = flightNumber.toUpperCase().replace(/[\\s\\-.]/g, '');
-              if (/^\\d+$/.test(flightNumber)) {
-                flightNumber = carrierPrefix + flightNumber;
-              }
-
-              var newUrl = '/check-flight/' + encodeURIComponent(flightNumber) + '/' + encodeURIComponent(date);
-              history.replaceState(null, '', newUrl);
-
-              resultDiv.className = 'mt-4';
-              resultDiv.innerHTML = '<div class="text-sm text-muted font-mono">Checking...</div>';
-
-              fetch('/api/check-flight?flight_number=' + encodeURIComponent(flightNumber) + '&date=' + encodeURIComponent(date))
-                .then(function(res) { return res.json(); })
-                .then(function(data) {
-                  var esc = escHtml;
-                  if (data.hasStarlink) {
-                    var flight = data.flights[0] || {};
-                    var depTime = flight.departure_time ? new Date(flight.departure_time * 1000) : null;
-                    var timeStr = depTime ? localTime(flight.departure_time, flight.departure_airport) : 'TBD';
-                    var dateStr = depTime ? localDay(flight.departure_time, flight.departure_airport) : date;
-                    var displayFlight = flight.ua_flight_number || flight.flight_number || flightNumber;
-                    var aircraftInfo = flight.aircraft_type ? ' (' + flight.aircraft_type + ')' : '';
-                    var dep = (flight.departure_airport || '').replace(/^K/, '');
-                    var arr = (flight.arrival_airport || '').replace(/^K/, '');
-                    var utcDate = depTime ? depTime.toISOString().slice(0, 10).replace(/-/g, '') : date.replace(/-/g, '');
-                    var depIcao = dep.length === 3 ? 'K' + dep : dep;
-                    var arrIcao = arr.length === 3 ? 'K' + arr : arr;
-                    var faUrl = flight.flight_number
-                      ? 'https://www.flightaware.com/live/flight/' + flight.flight_number + '/history/' + utcDate + '/' + depIcao + '/' + arrIcao
-                      : 'https://www.flightaware.com';
-                    resultDiv.innerHTML = '<div class="bg-green-900/30 border border-green-700/50 rounded p-4">' +
-                      '<div class="flex items-center gap-2 mb-2">' +
-                      '<span class="text-green-400 text-lg">&#10003;</span>' +
-                      '<span class="font-display font-semibold text-green-400">This flight has Starlink WiFi!</span>' +
-                      '</div>' +
-                      '<div class="text-sm text-muted font-mono space-y-1">' +
-                      '<div>Flight: <span class="text-secondary">' + displayFlight + '</span>' + (dep && arr ? ' <span class="text-muted">(' + dep + ' → ' + arr + ')</span>' : '') + '</div>' +
-                      '<div>Departs: <span class="text-secondary">' + dateStr + ' at ' + timeStr + '</span></div>' +
-                      '<div>Aircraft: <span class="text-secondary">' + (flight.tail_number || '') + aircraftInfo + '</span></div>' +
-                      (flight.operated_by ? '<div>Operated by: <span class="text-secondary">' + flight.operated_by + '</span></div>' : '') +
-                      liveTvLine(flight, esc) +
-                      '<div class="pt-2"><a href="' + faUrl + '" target="_blank" rel="nofollow noopener noreferrer" class="text-accent hover:underline text-xs">View on FlightAware →</a></div>' +
-                      '</div></div>';
-                  } else if (data.fallback && data.fallback.segments && data.fallback.segments.length > 0) {
-                    var segs = data.fallback.segments;
-                    // Only a segment the API marked hasStarlink === false earns the
-                    // firm verdict; unknown tails are not a "no".
-                    var firmNo = segs.every(function(s) { return s.hasStarlink === false; });
-                    var segHtml = segs.map(function(seg) {
-                      var age = seg.verified_at ? Math.floor((Date.now()/1000 - seg.verified_at) / 86400) : null;
-                      var ageStr = age !== null ? ' ' + age + ' day' + (age === 1 ? '' : 's') + ' ago' : '';
-                      var model = seg.aircraft_model ? ' (' + esc(seg.aircraft_model) + ')' : '';
-                      var leg = seg.origin && seg.destination ? ' <span class="text-muted">(' + esc(seg.origin) + ' → ' + esc(seg.destination) + ')</span>' : '';
-                      var status = seg.hasStarlink === false
-                        ? 'Verified <span class="text-secondary">' + wifiLabel(seg.verified_wifi) + '</span>' + ageStr + '.'
-                        : 'WiFi on this aircraft is not verified yet.';
-                      var note = (age !== null && age > 7)
-                        ? ' Retrofits happen mid-cycle — if you see Starlink onboard, we have flagged this plane for re-check.'
-                        : '';
-                      return '<div class="text-sm text-muted font-mono space-y-1">' +
-                        '<div>Aircraft: <span class="text-secondary">' + esc(seg.tail_number) + model + '</span>' + leg + '</div>' +
-                        '<p class="text-sm text-muted">' + status + note + '</p>' +
-                        '</div>';
-                    }).join('');
-                    var first = segs[0];
-                    resultDiv.innerHTML = '<div class="bg-surface-elevated border border-subtle rounded p-4">' +
-                      (firmNo
-                        ? '<div class="flex items-center gap-2 mb-2">' +
-                          '<span class="text-muted text-lg">&#10007;</span>' +
-                          '<span class="font-display font-semibold text-secondary">No Starlink on this flight</span>' +
-                          '</div>'
-                        : '<div class="font-display font-semibold text-secondary mb-2">Assigned aircraft</div>') +
-                      '<div class="space-y-2">' + segHtml + '</div>' +
-                      '<p class="text-sm text-muted mt-2">Aircraft swaps can happen; re-check closer to departure.</p>' +
-                      alternativesHtml(data.sameDayAlternatives, date, first.origin) +
-                      routePlannerCta(first.origin, first.destination) +
-                      '</div>';
-                  } else if (data.confidence === 'verified' && data.hasStarlink === false) {
-                    // scheduled_no: a firm verified-no with no fallback segments.
-                    // Estimating a probability against it would contradict the
-                    // verified answer the API just returned.
-                    resultDiv.innerHTML = '<div class="bg-surface-elevated border border-subtle rounded p-4">' +
-                      '<div class="flex items-center gap-2 mb-2">' +
-                      '<span class="text-muted text-lg">&#10007;</span>' +
-                      '<span class="font-display font-semibold text-secondary">No Starlink on this flight</span>' +
-                      '</div>' +
-                      '<p class="text-sm text-muted">' + esc(data.message || data.reason || 'The assigned aircraft is verified as non-Starlink WiFi.') + '</p>' +
-                      alternativesHtml(data.sameDayAlternatives, date, ((data.flights || [])[0] || {}).departure_airport) +
-                      '</div>';
-                  } else {
-                    var pred = data.prediction;
-                    if (!pred || typeof pred.probability !== 'number') {
-                      // Answers without a prediction carry their explanation as
-                      // message (no_model), reason (qatar) or error (400s).
-                      resultDiv.innerHTML = '<div class="bg-surface-elevated border border-subtle rounded p-4">' +
-                        '<p class="text-sm text-muted">' + esc(data.message || data.reason || data.error || 'No per-flight prediction available — Starlink status depends on the scheduled aircraft type.') + '</p>' +
-                        '</div>';
-                    } else {
-                      var daysOut = (new Date(date + 'T00:00:00Z').getTime() - Date.now()) / 86400000;
-                      var timingNote = daysOut > 2
-                        ? 'Aircraft assignments firm up ~2 days before departure — check back then for a confirmed answer.'
-                        : daysOut >= -1
-                        ? 'No live tail assignment found — the flight may have an equipment swap in progress, or this flight number may be a codeshare.'
-                        : 'This date is in the past — we do not retain historical assignments.';
-                      var pct = Math.round(pred.probability * 100);
-                      var isLikely = pct >= 70;
-                      var isPossible = pct >= 40 && pct < 70;
-                      var label = isLikely ? 'Likely' : isPossible ? 'Possible' : 'Unlikely';
-                      var barColor = isLikely ? 'bg-green-500' : isPossible ? 'bg-yellow-500' : 'bg-surface-elevated';
-                      var borderColor = isLikely ? 'border-green-700/50 bg-green-900/20' : isPossible ? 'border-yellow-700/50 bg-yellow-900/20' : 'border-subtle bg-surface-elevated';
-                      var iconColor = isLikely ? 'text-green-400' : isPossible ? 'text-yellow-400' : 'text-muted';
-                      var detail = pred.n_observations > 0
-                        ? 'Based on <span class="text-secondary">' + pred.n_observations + '</span> historical observation' + (pred.n_observations === 1 ? '' : 's') + ' of aircraft on this flight number (' + pred.confidence + ' confidence).'
-                        : 'No history for this flight number — this is our estimate for flights we have not yet seen on a Starlink aircraft.';
-                      resultDiv.innerHTML = '<div class="rounded p-4 border ' + borderColor + '">' +
-                        '<div class="flex items-center gap-2 mb-3">' +
-                        '<span class="text-lg ' + iconColor + '">~</span>' +
-                        '<span class="font-display font-semibold ' + iconColor + '">' + label + ' — estimated ' + pct + '% chance of Starlink</span>' +
-                        '</div>' +
-                        '<div class="mb-3"><div class="w-full bg-base rounded-full h-2 overflow-hidden"><div class="' + barColor + ' h-2 rounded-full" style="width: ' + pct + '%"></div></div></div>' +
-                        '<p class="text-xs text-muted leading-relaxed">' + detail + ' ' + timingNote + '</p>' +
-                        '</div>';
-                    }
-                  }
-                  if (!data.error) resultDiv.insertAdjacentHTML('beforeend', watchRow(flightNumber, date));
-                })
-                .catch(function() {
-                  resultDiv.innerHTML = '<div class="text-sm text-red-400">Error checking flight. Please try again.</div>';
-                });
-            };
-
-            resultDiv.addEventListener('click', function(e) {
-              var link = e.target && e.target.closest ? e.target.closest('[data-watch]') : null;
-              if (link && window.plausible) {
-                window.plausible('Watch', { props: { client: link.getAttribute('data-watch') } });
-              }
-            });
-
-            form.addEventListener('submit', function(e) {
-              e.preventDefault();
-              runCheck();
-            });
-
-            if (urlFlight && urlDate) {
-              runCheck();
-            }
-          }
-        });
-      `,
-        }}
-      />
+      <ClientScriptTag name="check-flight" />
     </PageShell>
   );
 }

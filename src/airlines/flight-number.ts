@@ -3,19 +3,15 @@
  * the AirlineConfig — adding a carrier means adding a config, not editing here.
  */
 
+import {
+  FLIGHT_INPUT_SEPARATORS,
+  type FlightInputRules,
+  canonicalFlightInput,
+  stripFlightNumberZeros,
+} from "./flight-input";
 import { AIRLINES, type AirlineConfig, enabledAirlines } from "./registry";
 
-/**
- * How people actually type flight numbers: "UA 544", "ua-544", "UA.544".
- * Stripping separators before any prefix logic keeps every surface agreeing;
- * digits stay digits, so "UA 544 2026" still fails the 1-4 digit bound.
- */
-export function canonicalFlightInput(s: string): string {
-  return s
-    .trim()
-    .toUpperCase()
-    .replace(/[\s\-.]/g, "");
-}
+export { canonicalFlightInput, stripFlightNumberZeros };
 
 function detectByPrefixes(
   flightNumber: string,
@@ -168,12 +164,6 @@ export function slotFlightKey(flightNumber: string | null): string | null {
   return flightNumber;
 }
 
-/** Strip zero-padding so each flight has exactly one spelling (HA0011 → HA11).
- * Permalinks 301 to this form and the sitemap advertises it. */
-export function stripFlightNumberZeros(flightNumber: string): string {
-  return flightNumber.replace(/^([A-Z]+)0+(?=\d)/, "$1");
-}
-
 /** The router's cap on a permalink's digits. */
 const PERMALINK_DIGITS = String.raw`\d{1,4}`;
 
@@ -219,6 +209,20 @@ export const CACHEABLE_FLIGHT_NUMBER = /^[A-Z]{2,3}\d{1,4}[A-Z]?$/;
 /** Marketing-number matcher for one airline, bounded to the permalink shape. */
 export function canonicalPermalinkFor(cfg: AirlineConfig): RegExp {
   return new RegExp(permalinkPattern(cfg.iata));
+}
+
+/**
+ * The permalink rules as plain data for the browser's flight search (see
+ * canonicalFlightFor), so the form mints exactly the URL parseCheckFlightPath
+ * would 301 to instead of carrying its own copy of the separators and bound.
+ */
+export function flightInputRules(cfg: AirlineConfig): FlightInputRules {
+  return {
+    separators: FLIGHT_INPUT_SEPARATORS.source,
+    iata: cfg.iata,
+    icao: cfg.icao,
+    permalink: canonicalPermalinkFor(cfg).source,
+  };
 }
 
 /**

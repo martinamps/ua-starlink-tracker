@@ -97,8 +97,8 @@ describe("/live-tv", () => {
 
   test("answer up top, hedged count, check form, and FAQ markup matching visible Q&A", async () => {
     const html = await (await get("/live-tv", UA)).text();
-    expect(html).toContain("Live TV &amp; football on United flights: which planes have it");
-    expect(html).toContain("likely eligible");
+    expect(html).toContain("Which United planes have live TV?");
+    expect(html).toContain("likely or possible, never certain");
     expect(html).toContain("globenewswire.com/news-release/2026/09/17/3364268");
     expect(html).toContain('id="live-tv-flight-search"');
     expect(html).toContain('"@type":"FAQPage"');
@@ -118,10 +118,11 @@ describe("/live-tv", () => {
   });
 
   test("check-flight ships live-TV copy for YES cards only where the page exists", async () => {
-    const ua = await (await get("/check-flight", UA)).text();
-    expect(ua).toContain("var liveTv = {");
-    const as = await (await get("/check-flight", SITES.alaska.canonicalHost)).text();
-    expect(as).toContain("var liveTv = null");
+    const date = new Date(Date.now() + 5 * 86400_000).toISOString().slice(0, 10);
+    const ua = await (await get(`/check-flight/UA100/${date}`, UA)).text();
+    expect(ua).toContain('"liveTv":{');
+    const as = await (await get(`/check-flight/AS100/${date}`, SITES.alaska.canonicalHost)).text();
+    expect(as).toContain('"liveTv":null');
   });
 });
 

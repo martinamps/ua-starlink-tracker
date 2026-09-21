@@ -1,51 +1,48 @@
 // Only ever rendered when the server already saw a Starlink-geofeed IP on the
 // UA tenant — the gate lives in passenger-detect.ts, not here.
+import { FLIGHT_INPUT_SEPARATORS } from "../airlines/flight-input";
+import { BUTTON } from "./flight-search-form";
 
 export function PassengerBanner() {
   return (
     <>
-      <div id="psgr-banner" className="relative max-w-3xl mx-auto w-full mb-4 mt-4 hidden">
-        <div className="bg-surface-elevated border border-accent/40 rounded-lg p-4 sm:p-5 shadow-lg shadow-accent/10">
+      <div id="psgr-banner" className="relative mx-auto mt-4 mb-4 hidden w-full max-w-3xl">
+        <div className="rounded-lg border border-accent/40 bg-surface-elevated p-4 shadow-lg shadow-accent/10 sm:p-5">
           <button
             id="psgr-dismiss"
             type="button"
             aria-label="Dismiss"
-            className="absolute top-2 right-3 text-muted hover:text-secondary text-lg leading-none"
+            className="absolute top-2 right-3 text-lg leading-none text-muted hover:text-secondary"
           >
             ×
           </button>
-          <div className="text-xs font-mono text-accent uppercase tracking-wider mb-1">
-            Detected · Starlink wifi
-          </div>
-          <p className="text-sm text-secondary mb-3 pr-6">
-            You look like you're connected through Starlink. If you're on a flight right now,
-            telling us the flight number helps confirm this aircraft's wifi for other travelers.
+          <h2 className="mb-1 pr-6 font-display text-lg text-primary">
+            Are you on a Starlink flight?
+          </h2>
+          <p className="mb-3 pr-6 text-sm text-secondary">
+            Your connection looks like Starlink. Tell us your flight number and we'll confirm this
+            aircraft's Wi-Fi for other travelers.
           </p>
-          <form id="psgr-form" noValidate className="flex flex-col sm:flex-row gap-2">
+          <form id="psgr-form" noValidate className="flex flex-col gap-2 sm:flex-row">
             <input
               type="text"
               name="flight_number"
               aria-label="Flight number"
-              placeholder="e.g. UA2019"
+              placeholder="UA2019"
               autoComplete="off"
+              autoCapitalize="characters"
               required
-              className="flex-1 font-mono text-sm px-3 py-2 bg-surface border border-subtle rounded text-primary placeholder-muted focus:outline-none focus:border-accent"
+              className="flex-1 rounded border border-subtle bg-surface px-3 py-2 font-mono text-base text-primary placeholder-muted focus:border-accent focus:outline-none sm:text-sm"
             />
-            <button
-              type="submit"
-              className="font-mono text-sm px-4 py-2 bg-accent/20 border border-accent rounded text-accent hover:bg-accent/30 transition-colors"
-            >
+            <button type="submit" className={BUTTON}>
               Confirm flight
             </button>
           </form>
-          <output
-            id="psgr-thanks"
-            className="hidden text-xs font-mono text-[var(--color-success)] mt-2"
-          >
-            ✓ Thanks — recorded.
+          <output id="psgr-thanks" className="mt-2 hidden text-sm text-success">
+            Thanks, recorded.
           </output>
-          <p className="text-xs text-muted mt-2">
-            We only store the flight number and the fact your IP is in Starlink's published range.
+          <p className="mt-2 text-xs text-muted">
+            We store only the flight number and that your IP is in Starlink's published range.
           </p>
         </div>
       </div>
@@ -59,15 +56,17 @@ export function PassengerBanner() {
 
 // localStorage writes are individually try-wrapped: legacy Safari private mode /
 // quota-full throws on setItem but not getItem, and that must not block the UI.
+// Separators come from the shared input rules; any carrier's number is accepted
+// because the report is about the aircraft the visitor is on, not this site.
 const PSGR_BANNER_SCRIPT = `(function(){try{
-var KEY="psgr_banner_v1",ls=function(v){try{localStorage.setItem(KEY,v)}catch(e){}};
+var KEY="psgr_banner_v1",SEP=new RegExp(${JSON.stringify(FLIGHT_INPUT_SEPARATORS.source)},"g"),ls=function(v){try{localStorage.setItem(KEY,v)}catch(e){}};
 var b=document.getElementById("psgr-banner");
 if(!b||localStorage.getItem(KEY))return;
 b.classList.remove("hidden");
 document.getElementById("psgr-dismiss").onclick=function(){b.classList.add("hidden");ls("dismissed")};
 document.getElementById("psgr-form").addEventListener("submit",function(e){
   e.preventDefault();
-  var v=(e.target.flight_number.value||"").toUpperCase().replace(/\\s+/g,"");
+  var v=(e.target.flight_number.value||"").toUpperCase().replace(SEP,"");
   if(!/^[A-Z]{2,3}\\d{1,4}$/.test(v))return;
   try{navigator.sendBeacon&&navigator.sendBeacon("/api/passenger-probe",JSON.stringify({source:"manual",outcome:"manual_report",claimed_flight:v}))}catch(x){}
   document.getElementById("psgr-thanks").classList.remove("hidden");

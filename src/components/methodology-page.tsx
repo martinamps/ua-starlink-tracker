@@ -1,7 +1,7 @@
 import type React from "react";
 import { type SiteConfig, siteAirline } from "../airlines/registry";
 import type { PageLink } from "./atoms";
-import { PageHeader, PageShell } from "./layout";
+import { PageHeader, PageShell, Section } from "./layout";
 
 interface MethodologyPageProps {
   site: SiteConfig;
@@ -19,58 +19,47 @@ interface DataSource {
 // Source lists mirror what actually runs per airline (registry verifierBackend
 // + server.ts jobs) at the level the public README already describes — what we
 // check and how often, not scraping mechanics. hasMethodology gates the route
-// on membership here, so the feature flag and content can't drift apart.
+// on membership here, so the feature flag and content can't drift apart. A
+// source the counts don't read (the FAA registry) is not listed.
 const SOURCES: Record<string, DataSource[]> = {
   UA: [
     {
-      name: "United's own systems",
-      cadence: "every 60 seconds",
+      name: "United.com",
+      cadence: "one aircraft a minute",
       detail:
-        "We check the WiFi provider United lists for upcoming flights on united.com, a few aircraft per pass, so every tracked tail is re-verified on a rolling basis. This is the only evidence that can mark a tail as verified.",
+        "We look up the Wi-Fi United lists for an upcoming flight, one aircraft per check, so each aircraft is re-checked about every three days. Only this can mark an aircraft as verified.",
     },
     {
       name: "Community fleet spreadsheet",
       cadence: "hourly",
       detail:
-        "The United fleet community maintains a per-tail equipment sheet. We sync it hourly; its Starlink claims count as reported installs until our own verification confirms or contradicts them.",
+        "United fleet enthusiasts keep a per-aircraft equipment sheet. Its Starlink entries count as reported installs until our own check confirms or contradicts them.",
     },
     {
-      name: "Flightradar24 fleet and schedule data",
-      cadence: "full fleet pull daily; flight schedules continuously",
+      name: "Flightradar24 fleet and schedules",
+      cadence: "fleet daily, schedules continuously",
       detail:
-        "Fleet rosters give us the denominator and aircraft types; live schedules tie tail numbers to upcoming flights so per-flight answers reflect the actual assigned aircraft.",
-    },
-    {
-      name: "FAA aircraft registry",
-      cadence: "daily",
-      detail:
-        "Registration cross-reference so retired or re-registered airframes drop out of the counts instead of lingering as phantom installs.",
+        "The fleet list gives us the total and each aircraft's type. Schedules tell us which aircraft flies which flight.",
     },
   ],
   AS: [
     {
-      name: "Alaska's own systems",
+      name: "Alaskaair.com",
       cadence: "every 90 seconds",
       detail:
-        "We check upcoming flights on alaskaair.com to confirm which aircraft is actually operating each flight. For Alaska this observes the equipment type, not a WiFi banner, so per-tail WiFi status is derived from the fleet program state for that type.",
+        "We look up which aircraft is flying each upcoming flight. For Alaska this shows the aircraft type, not the Wi-Fi, so an aircraft's Wi-Fi comes from where its type stands in the rollout.",
     },
     {
-      name: "Flightradar24 fleet and schedule data",
-      cadence: "full fleet pull daily; flight schedules continuously",
+      name: "Flightradar24 fleet and schedules",
+      cadence: "fleet daily, schedules continuously",
       detail:
-        "Fleet rosters for Alaska mainline and the Horizon Air regional fleet give us the denominator and aircraft types; live schedules tie tail numbers to upcoming flights.",
+        "The fleet lists for Alaska and Horizon give us the total and each aircraft's type. Schedules tell us which aircraft flies which flight.",
     },
     {
       name: "Community install reports",
       cadence: "checked continuously",
       detail:
-        "Frequent-flyer communities track which mainline 737s and 787s have been through the retrofit. We ingest those per-tail reports as claims, never as verified status.",
-    },
-    {
-      name: "FAA aircraft registry",
-      cadence: "daily",
-      detail:
-        "Registration cross-reference so retired or re-registered airframes drop out of the counts instead of lingering as phantom installs.",
+        "Frequent-flyer forums track which mainline 737s and 787s have been retrofitted. We record these as reports, never as verified.",
     },
   ],
 };
@@ -80,6 +69,10 @@ const SOURCES: Record<string, DataSource[]> = {
  * render an empty-source page. */
 export function hasMethodology(code: string): boolean {
   return code in SOURCES;
+}
+
+function Prose({ children }: { children: React.ReactNode }) {
+  return <div className="space-y-3 text-sm leading-relaxed text-secondary">{children}</div>;
 }
 
 export default function MethodologyPage({
@@ -100,153 +93,123 @@ export default function MethodologyPage({
         timeZone: "UTC",
       });
 
-  const Section = ({
-    title,
-    id,
-    children,
-  }: { title: string; id?: string; children: React.ReactNode }) => (
-    <section id={id} className="bg-surface rounded-lg border border-subtle p-5 sm:p-6 mb-4">
-      <h2 className="font-display text-lg font-semibold text-primary mb-3">{title}</h2>
-      <div className="text-sm text-muted leading-relaxed space-y-3">{children}</div>
-    </section>
-  );
-
   return (
     <PageShell site={site} currentPath={currentPath} pageLinks={pageLinks}>
       <PageHeader
-        title={<>How We Verify {cfg.shortName} Starlink Data</>}
-        dek={
-          <>
-            Where this tracker's numbers come from, how a tail earns "has Starlink," and what we
-            can't know.
-          </>
-        }
+        title={`How we verify ${cfg.shortName} Starlink data`}
+        dek="Where the data comes from and how we confirm each aircraft."
       />
 
-      <div className="relative max-w-2xl mx-auto w-full mb-8">
-        <Section title="Where the data comes from">
-          <p>
-            No single source is trusted on its own. We combine independent feeds and reconcile them
-            against each other:
-          </p>
-          <ul className="space-y-3">
-            {sources.map((s) => (
-              <li key={s.name} className="pl-4 border-l-2 border-subtle">
-                <span className="text-secondary font-medium">{s.name}</span>{" "}
-                <span className="font-mono text-xs text-accent">({s.cadence})</span>
-                <div className="mt-1">{s.detail}</div>
-              </li>
-            ))}
-          </ul>
-        </Section>
+      <Section title="Where the data comes from" dek={`We cross-check ${sources.length} sources:`}>
+        <ul className="space-y-4 text-sm leading-relaxed">
+          {sources.map((s) => (
+            <li key={s.name}>
+              <div className="text-primary">
+                <span className="font-semibold">{s.name}</span>
+                <span className="text-muted"> · {s.cadence}</span>
+              </div>
+              <p className="mt-1 text-secondary">{s.detail}</p>
+            </li>
+          ))}
+        </ul>
+      </Section>
 
-        <Section title='How "has Starlink" is decided'>
-          <p>
-            Each aircraft carries one of three levels of certainty, and the site treats them
-            differently:
-          </p>
-          <ul className="list-disc pl-5 space-y-2">
+      <Section title="How an aircraft counts as having Starlink">
+        <Prose>
+          <p>Each aircraft has one of three levels of certainty:</p>
+          <ul className="list-disc space-y-2 pl-5">
             <li>
-              <span className="text-secondary font-medium">Verified</span> — we observed the status
-              on the airline's own systems for a flight that aircraft operated.
+              <span className="font-semibold text-primary">Verified.</span> We saw Starlink listed
+              on the airline's own site for a flight that aircraft flew.
             </li>
             <li>
-              <span className="text-secondary font-medium">Reported</span> — a community source
-              claims the install; the tail counts toward the headline number but stays queued for
-              direct verification.
+              <span className="font-semibold text-primary">Reported.</span> A community source says
+              it's installed. It counts toward the total and waits for our own check.
             </li>
             <li>
-              <span className="text-secondary font-medium">Predicted</span> — for flights more than
-              ~2 days out no aircraft is assigned yet, so per-flight answers are probabilities built
-              from historical assignments. Predictions never feed the fleet count.
+              <span className="font-semibold text-primary">Predicted.</span> More than about 2 days
+              out, no aircraft is assigned yet, so a flight's answer is a probability from the
+              aircraft it has used before. Predictions never change the fleet count.
             </li>
           </ul>
           <p>
-            An hourly consensus pass reconciles the sources. Direct observation outranks community
-            claims: a tail we verify as running a non-Starlink WiFi system is settled negative and
-            removed from the headline count even if a spreadsheet says otherwise.
+            Once an hour we reconcile the sources. Our own checks win: an aircraft we find with
+            another Wi-Fi system comes out of the total, whatever the spreadsheet says.
           </p>
-        </Section>
+        </Prose>
+      </Section>
 
-        <Section title="How fresh is it">
+      <Section title="How fresh it is">
+        <Prose>
           <p>
-            Verification and schedule jobs run continuously (60–90 second cycles), fleet-level syncs
-            run hourly to daily, and every page renders straight from the live database — there is
-            no publishing delay between a status change and the site.
-            {dateLabel && (
-              <>
-                {" "}
-                This airline's data was last updated{" "}
-                <span className="text-secondary">{dateLabel}</span>.
-              </>
-            )}
+            Checks and schedule updates run all day, and every page reads the live database, so a
+            change shows up on the next page load.
+            {dateLabel && <> This airline's data was last updated {dateLabel}.</>}
           </p>
-        </Section>
+        </Prose>
+      </Section>
 
-        <Section title="What this site does not know">
-          <ul className="list-disc pl-5 space-y-2">
+      <Section title="What we can't tell you">
+        <Prose>
+          <ul className="list-disc space-y-2 pl-5">
             <li>
-              Aircraft assignments can change up to departure — a swap can put you on a different
-              tail than the one we verified.
+              The aircraft can change up to departure, so yours may not be the one we checked.
             </li>
+            <li>We track aircraft, not connection quality or outages on a given flight.</li>
             <li>
-              We track aircraft, not seats: no guarantees about connectivity quality or outages on a
-              given flight.
-            </li>
-            <li>
-              Install dates record when we first found a tail equipped, which can lag the physical
-              installation by days.
+              An install date is the day we first saw Starlink on the aircraft, which can be a few
+              days after the work was done.
             </li>
           </ul>
-        </Section>
+        </Prose>
+      </Section>
 
-        {/* The Dataset JSON-LD on this page declares /api/data as its
-            distribution; Google requires the markup to describe content that is
-            actually on the page, so the download has to be visible here too. */}
-        <Section title="Get the data">
+      {/* The Dataset JSON-LD on this page declares /api/data as its
+          distribution; Google requires the markup to describe content that is
+          actually on the page, so the download has to be visible here too. */}
+      <Section title="Get the data">
+        <Prose>
           <p>
-            The full current dataset is one open JSON endpoint — no key, no registration:{" "}
-            <a href="/api/data" className="text-accent hover:underline font-mono text-xs">
+            <a href="/api/data" className="font-mono text-accent hover:underline">
               /api/data
-            </a>
-            . It returns every {cfg.shortName} tail we hold with its verified WiFi provider, the
-            fleet totals behind the headline percentage, the last-updated stamp, and the upcoming
-            departures mapped to each tail. It is regenerated from the same live database this page
-            describes, so a response is a point-in-time snapshot — read{" "}
-            <code className="font-mono text-xs">lastUpdated</code> alongside the counts. The
-            equipped tails alone, with the date each was found, are also a spreadsheet-ready CSV:{" "}
-            <a
-              href="/data/starlink-tails.csv"
-              className="text-accent hover:underline font-mono text-xs"
-            >
+            </a>{" "}
+            is open JSON, no key needed. It lists the Starlink {cfg.shortName} aircraft we count
+            (type, operator, date found, and the Wi-Fi the community sheet lists), the fleet totals
+            behind the headline percentage, the last-updated time, and upcoming flights for each of
+            those aircraft. Read <code className="font-mono">lastUpdated</code> with the counts.
+          </p>
+          <p>
+            The same aircraft with the date each was found, as a spreadsheet:{" "}
+            <a href="/data/starlink-tails.csv" className="font-mono text-accent hover:underline">
               /data/starlink-tails.csv
             </a>
             .
           </p>
-        </Section>
+        </Prose>
+      </Section>
 
-        <Section title="Citing this data" id="cite">
+      <Section title="Citing this data" id="cite">
+        <Prose>
           <p>
-            The canonical, quotable form of our headline stat is the dated sentence on the{" "}
+            Quote the dated sentence on the{" "}
             <a href="/" className="text-accent hover:underline">
               homepage
             </a>{" "}
-            (HTML id <code className="font-mono text-xs">starlink-stat</code>): "As of {"{date}"},{" "}
-            {"{n}"} of {"{total}"} {cfg.name} aircraft ({"{percent}"}%) have Starlink WiFi
-            installed." The numbers update continuously as installs are verified, so cite the date
-            alongside the counts. Attribution to {site.canonicalHost} is appreciated; the{" "}
+            (element id <code className="font-mono">starlink-stat</code>), which gives the{" "}
+            {cfg.name} count, the fleet total and the percentage. The numbers change as installs are
+            verified, so include the date. Credit to {site.canonicalHost} is appreciated. The{" "}
             <a
               href="https://github.com/martinamps/ua-starlink-tracker"
               target="_blank"
               rel="noopener noreferrer"
               className="text-accent hover:underline"
             >
-              tracker's source code
+              source code
             </a>{" "}
             is public.
           </p>
-        </Section>
-      </div>
+        </Prose>
+      </Section>
     </PageShell>
   );
 }
