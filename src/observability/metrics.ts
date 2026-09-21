@@ -52,7 +52,7 @@
  *   surface:         watch.cta_shown: check_flight                   (1)
  */
 
-import { AIRLINES, SUBFLEET_KEYS } from "../airlines/registry";
+import { AIRLINES, SUBFLEET_KEYS, operatorIatas } from "../airlines/registry";
 import { tracer } from "./tracer";
 
 export type Tags = Record<string, string | number>;
@@ -113,7 +113,7 @@ export function normalizeStarlinkStatus(raw: string | null | undefined): string 
 }
 
 // UA mainline plus its Express operators; anything else buckets to "other".
-const UA_OPERATING_CARRIERS = new Set(["UA", "OO", "YX", "G7", "C5", "YV", "ZW"]);
+const UA_OPERATING_CARRIERS = new Set(operatorIatas("UA"));
 export function normalizeOpCarrier(raw: string | null | undefined): string {
   if (!raw || raw.trim() === "") return "unknown";
   const code = raw.trim().toUpperCase();

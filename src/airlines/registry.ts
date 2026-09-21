@@ -24,6 +24,11 @@ const FRANCE_TAIL = tailPatterns("F-[GH][A-Z]{3}");
 
 export type AirlineCode = string;
 
+export interface Operator {
+  icao: string;
+  iata: string;
+}
+
 export interface SubfleetDef {
   key: string;
   label: string;
@@ -164,7 +169,12 @@ export interface AirlineConfig {
   hubFlightLookup?: boolean;
   iata: string;
   icao: string;
-  /** All operating-carrier prefixes (ICAO + IATA) that map to this marketing carrier. Longest-first. */
+  /** The carriers whose callsigns and flight numbers this marketing carrier's
+   * flights are stored under, own mainline first: the one declaration behind
+   * carrierPrefixes, the op_carrier metric tag and the ADS-B callsign match. */
+  operators: readonly Operator[];
+  /** Derived from `operators`: every ICAO code, then every IATA code, so
+   * longest-first. */
   carrierPrefixes: string[];
   subfleets: SubfleetDef[];
   /** Carriers whose metal flies this airline's marketed flight numbers and
@@ -279,20 +289,14 @@ const AIRLINE_DEFS = {
     // ACA (Air Canada), PDT (Piedmont), and ENY (Envoy) are deliberately
     // absent — they don't operate United Express, so e.g. ACA123 must never
     // resolve to UA123.
-    carrierPrefixes: [
-      "UAL",
-      "SKW",
-      "ASH",
-      "RPA",
-      "GJS",
-      "UCA",
-      "AWI",
-      "OO",
-      "YX",
-      "YV",
-      "G7",
-      "C5",
-      "ZW",
+    operators: [
+      { icao: "UAL", iata: "UA" },
+      { icao: "SKW", iata: "OO" },
+      { icao: "ASH", iata: "YV" },
+      { icao: "RPA", iata: "YX" },
+      { icao: "GJS", iata: "G7" },
+      { icao: "UCA", iata: "C5" },
+      { icao: "AWI", iata: "ZW" },
     ],
     subfleets: [
       {
@@ -364,7 +368,7 @@ const AIRLINE_DEFS = {
     publicInHub: true,
     iata: "HA",
     icao: "HAL",
-    carrierPrefixes: ["HAL", "HA"],
+    operators: [{ icao: "HAL", iata: "HA" }],
     subfleets: [{ key: "mainline", label: "Hawaiian Fleet", match: () => true }],
     fr24Slug: "ha-hal",
     metricTag: "hawaiian",
@@ -428,9 +432,12 @@ const AIRLINE_DEFS = {
     iata: "AS",
     icao: "ASA",
     // SkyWest-for-Alaska tails are tracked (CPA-dedicated, disjoint from UA's),
-    // but SKW/OO stay out of carrierPrefixes — we don't resolve SkyWest-operated
+    // but SKW/OO stay out of operators — we don't resolve SkyWest-operated
     // AS flight numbers to tails yet.
-    carrierPrefixes: ["ASA", "QXE", "AS", "QX"],
+    operators: [
+      { icao: "ASA", iata: "AS" },
+      { icao: "QXE", iata: "QX" },
+    ],
     operatingPartners: ["HA"],
     subfleets: [
       // AS800-999 are AS-marketed flights on Hawaiian A330/A321neo metal
@@ -534,7 +541,7 @@ const AIRLINE_DEFS = {
     hubFlightLookup: true,
     iata: "QR",
     icao: "QTR",
-    carrierPrefixes: ["QTR", "QR"],
+    operators: [{ icao: "QTR", iata: "QR" }],
     // QR runs the same flight number across very different equipment day-to-day
     // (DOH-CAI may be 359 on QR1303 and 788 on QR1301 same date), so flight-
     // number partition is meaningless. One bucket; UI can break out by type.
@@ -596,7 +603,7 @@ const AIRLINE_DEFS = {
     icao: "AFR",
     // HOP! flies AF-marketed numbers under its own callsigns, which carry no
     // marketed number, so HOP is deliberately not a prefix here.
-    carrierPrefixes: ["AFR", "AF"],
+    operators: [{ icao: "AFR", iata: "AF" }],
     subfleets: [{ key: "mainline", label: "Air France Fleet", match: () => true }],
     classifyFleet: () => "mainline",
     // af-afr lists the HOP E-jets too; the a5-hop page is empty.
@@ -654,14 +661,32 @@ const AIRLINE_DEFS = {
       analyticsDomain: "airlinestarlinktracker.com",
     },
   },
-} satisfies Record<string, AirlineConfig>;
+} satisfies Record<string, Omit<AirlineConfig, "carrierPrefixes">>;
 
 /** Literal union of registered airline codes. Type per-airline maps as
  * Record<KnownAirlineCode, T> so a missing airline is a compile error, not a
  * silent fallback to another tenant's data (the og:image bug class). */
 export type KnownAirlineCode = keyof typeof AIRLINE_DEFS;
 
-export const AIRLINES: Record<AirlineCode, AirlineConfig> = AIRLINE_DEFS;
+export const AIRLINES: Record<AirlineCode, AirlineConfig> = Object.fromEntries(
+  Object.entries(AIRLINE_DEFS).map(([code, def]) => [
+    code,
+    {
+      ...def,
+      carrierPrefixes: [...def.operators.map((o) => o.icao), ...def.operators.map((o) => o.iata)],
+    },
+  ])
+);
+
+/** IATA codes of the carriers operating `code`'s flights (UA: UA, OO, YX…). */
+export function operatorIatas(code: KnownAirlineCode): string[] {
+  return AIRLINES[code].operators.map((o) => o.iata);
+}
+
+/** Callsign ICAO → the codes that operator's rows are stored under. */
+export function operatorStoragePrefixes(code: KnownAirlineCode): Record<string, string[]> {
+  return Object.fromEntries(AIRLINES[code].operators.map((o) => [o.icao, [o.icao, o.iata]]));
+}
 
 /** Every subfleet key any airline registers — the vocabulary normalizeFleet
  * and the fleet pages accept. Derived, never hand-enumerated. */

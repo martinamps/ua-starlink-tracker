@@ -20,6 +20,7 @@ import {
   VERIFICATION_SOURCES,
   enabledAirlines,
   hubLookupAirlines,
+  operatorIatas,
   verifierSourceTag,
 } from "../src/airlines/registry";
 import { VALID_SCOPES } from "../src/api/mcp-server";
@@ -30,7 +31,8 @@ import {
   logVerification,
   reconcileConsensus,
 } from "../src/database/database";
-import { normalizeAircraftType, normalizeFleet } from "../src/observability";
+import { normalizeAircraftType, normalizeFleet, normalizeOpCarrier } from "../src/observability";
+import { callsignMatchesAssignment } from "../src/scripts/adsb-sweep";
 import { AIRCRAFT_SPECS } from "../src/utils/aircraft-specs";
 import { makeSyntheticDb, openSnapshot } from "./helpers";
 
@@ -145,6 +147,20 @@ describe("carrier prefixes", () => {
         owner.set(prefix, a.code);
       }
     }
+  });
+
+  test("operators are the one source for prefixes, op_carrier and ADS-B callsigns", () => {
+    for (const a of Object.values(AIRLINES)) {
+      expect(new Set(a.carrierPrefixes)).toEqual(
+        new Set(a.operators.flatMap((o) => [o.icao, o.iata]))
+      );
+      expect(a.operators[0], a.code).toEqual({ icao: a.icao, iata: a.iata });
+    }
+    for (const o of AIRLINES.UA.operators) {
+      expect(normalizeOpCarrier(o.iata)).toBe(o.iata.toLowerCase());
+      expect(callsignMatchesAssignment(`${o.icao}123`, `${o.iata}123`), o.icao).toBe(true);
+    }
+    expect(operatorIatas("UA")).toContain("UA");
   });
 
   test("foreign-carrier prefixes resolve to no airline (ACA/PDT/ENY are not United Express)", () => {
