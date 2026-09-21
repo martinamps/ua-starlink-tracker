@@ -23,6 +23,7 @@ import { writeFileSync } from "node:fs";
 import { AIRLINES } from "../airlines/registry";
 import { FlightRadar24API } from "../api/flightradar24-api";
 import { DB_PATH, extractFlightNumber, unitedLookupDate } from "../utils/constants";
+import { sleep } from "../utils/sleep";
 import { checkStarlinkStatusSubprocess } from "./united-starlink-checker-subprocess";
 import { classifyUnitedCheck } from "./united-verdict";
 
@@ -156,7 +157,7 @@ async function verifyTail(
   // 3. Try each candidate until tail matches (express swaps ~60% of the time)
   let lastMismatch: VerifyResult | null = null;
   for (let i = 0; i < candidates.length; i++) {
-    if (i > 0) await new Promise((r) => setTimeout(r, retryDelayMs));
+    if (i > 0) await sleep(retryDelayMs);
     const flight = candidates[i];
     const uaNum = extractFlightNumber(flight.flight_number);
     const f = {
@@ -255,7 +256,7 @@ async function main() {
   const results: VerifyResult[] = [];
 
   for (let i = 0; i < tails.length; i++) {
-    if (i > 0) await new Promise((r) => setTimeout(r, delayMs));
+    if (i > 0) await sleep(delayMs);
     results.push(await verifyTail(db, tails[i].toUpperCase(), maxAttempts, delayMs));
   }
 

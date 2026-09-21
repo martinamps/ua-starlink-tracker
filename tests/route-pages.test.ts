@@ -138,34 +138,41 @@ describe("/route-planner/{origin}/{destination}", () => {
     }
   }, 60_000);
 
-  test("every permalink a route page links to actually resolves", async () => {
-    // upcoming_flights also carries operating-carrier numbers (SKW4726 for a
-    // United Express leg) which have no /check-flight permalink. Linking one
-    // would put a broken internal link on the page — the exact failure these
-    // route pages exist to clean up.
-    //
-    // 2,200 route pages × ~6ms each plus ~4,500 distinct permalinks is a
-    // ~40s sweep that only grows with the corpus, so the route pages are
-    // sampled by a fixed stride (never at random: a failure must name a URL
-    // the next run visits again). The permalinks harvested from that sample
-    // are then checked exhaustively — that is the assertion with the teeth.
-    const routes = getSitemapRoutes(db, "UA");
-    const stride = Math.max(1, Math.ceil(routes.length / ROUTE_PAGE_SAMPLE));
-    const sampled = routes.filter((_, i) => i % stride === 0);
-    const seen = new Set<string>();
-    for (const r of sampled) {
-      const body = await (await get(`/route-planner/${r.origin}/${r.destination}`)).text();
-      for (const m of body.matchAll(/href="\/check-flight\/([^"]+)"/g)) seen.add(m[1]);
-    }
-    expect(seen.size).toBeGreaterThan(0);
-    for (const fn of seen) {
-      // The permalink router's own shape. `UA\d+` would accept UA63986, a
-      // 5-digit number the router 404s — the shape check has to be the one
-      // the router applies, or it cannot catch the link it was written for.
-      expect(fn, "non-marketing flight number linked").toMatch(CANONICAL_FLIGHT_PERMALINK);
-      expect((await get(`/check-flight/${fn}`)).status, `/check-flight/${fn}`).toBe(200);
-    }
-  }, 60_000);
+  test.each([
+    ["UA", UA],
+    ["AS", SITES.alaska.canonicalHost],
+  ])(
+    "every permalink a %s route page links to actually resolves",
+    async (airline, host) => {
+      // upcoming_flights also carries operating-carrier numbers (SKW4726 for a
+      // United Express leg) which have no /check-flight permalink. Linking one
+      // would put a broken internal link on the page — the exact failure these
+      // route pages exist to clean up.
+      //
+      // 2,200 route pages × ~6ms each plus ~4,500 distinct permalinks is a
+      // ~40s sweep that only grows with the corpus, so the route pages are
+      // sampled by a fixed stride (never at random: a failure must name a URL
+      // the next run visits again). The permalinks harvested from that sample
+      // are then checked exhaustively — that is the assertion with the teeth.
+      const routes = getSitemapRoutes(db, airline);
+      const stride = Math.max(1, Math.ceil(routes.length / ROUTE_PAGE_SAMPLE));
+      const sampled = routes.filter((_, i) => i % stride === 0);
+      const seen = new Set<string>();
+      for (const r of sampled) {
+        const body = await (await get(`/route-planner/${r.origin}/${r.destination}`, host)).text();
+        for (const m of body.matchAll(/href="\/check-flight\/([^"]+)"/g)) seen.add(m[1]);
+      }
+      if (airline === "UA") expect(seen.size).toBeGreaterThan(0);
+      for (const fn of seen) {
+        // The permalink router's own shape. `UA\d+` would accept UA63986, a
+        // 5-digit number the router 404s — the shape check has to be the one
+        // the router applies, or it cannot catch the link it was written for.
+        expect(fn, "non-marketing flight number linked").toMatch(CANONICAL_FLIGHT_PERMALINK);
+        expect((await get(`/check-flight/${fn}`, host)).status, `/check-flight/${fn}`).toBe(200);
+      }
+    },
+    60_000
+  );
 
   test("unknown, malformed, and same-airport pairs 404", async () => {
     for (const path of [

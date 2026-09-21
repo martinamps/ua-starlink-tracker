@@ -64,7 +64,7 @@ beforeAll(() => {
 
 afterAll(() => setAssignmentFetcher(null));
 
-const check = (host: string, fn: string, extra = "", path = "/api/check-flight") =>
+const check = (_host: string, fn: string, extra = "", path = "/api/check-flight") =>
   `${path}?flight_number=${fn}&date=${D}${extra}`;
 
 const SURFACES: Array<{ host: string; path: string; fns: string[] }> = [

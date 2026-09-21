@@ -1,4 +1,3 @@
-import { existsSync, writeFileSync } from "node:fs";
 import { looksLikeValidTailNumber } from "../airlines/registry";
 import { BROWSER_USER_AGENT } from "./constants";
 import { error as logError, warn } from "./logger";
@@ -172,7 +171,7 @@ export async function fetchAllSheets() {
         throw new Error(`HTTP error! Status: ${response.status}`);
       }
       const csvText = await response.text();
-      const { headers, rows } = parseCSV(csvText);
+      const { rows } = parseCSV(csvText);
 
       // Add to the appropriate fleet total
       if (sheet.fleet === "express") {
@@ -290,13 +289,6 @@ export async function fetchAllSheets() {
       },
     },
   };
-}
-
-// Helper function to create the database file if it doesn't exist
-export function ensureDatabaseFileExists(dbPath: string) {
-  if (!existsSync(dbPath)) {
-    writeFileSync(dbPath, ""); // Create an empty file
-  }
 }
 
 // ============================================

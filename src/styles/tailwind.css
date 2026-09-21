@@ -6,31 +6,46 @@
    the same precedence the browser JIT gave them, and the reason the link tag's
    position relative to that block does not matter.
 
-   The output is a BUILD ARTIFACT, never committed. Compiling utilities ahead of
-   time flips the old CDN invariant "any class works anywhere at runtime" into
-   "the CSS must be rebuilt whenever markup changes" — so the rebuild is wired
-   into the Docker build and `bun run dev` rather than checked in. A committed
-   .css would go stale the moment a branch adding new markup merged after it,
-   and nothing in the test suite can see unstyled HTML.
+   The output is a build artifact, never committed: a class works only once the
+   CSS is rebuilt, so the Docker build and `bun run dev` compile it, and a
+   committed copy would go stale with the next markup change.
 
-   No @theme block on purpose. ~15 classes in the markup name custom colors
-   (bg-accent/20, text-subtle, placeholder-muted, …) that Tailwind has never
-   known about, so they emit nothing today and must keep emitting nothing here
-   or the visuals change. Defining those tokens is a separate, deliberate
-   change — not a side effect of moving off the CDN. */
+   The page palette lives in index.html's :root (per-tenant accent is a
+   template variable), so the @theme below only maps Tailwind color names onto
+   those variables. `inline` makes each utility carry `var(--color-…)` itself,
+   so hover:, focus: and /20 opacity variants resolve against the tenant's
+   accent at runtime; `reference` keeps Tailwind from emitting its own
+   `--color-surface: var(--color-surface)` copies, which would be cycles on
+   any page that didn't also load index.html's :root. */
 @import "tailwindcss";
+
+/* No --color-base: `text-base` is the font-size utility, and index.html
+   already defines .bg-base. */
+@theme inline reference {
+  --color-primary: var(--color-text-primary);
+  --color-secondary: var(--color-text-secondary);
+  --color-muted: var(--color-text-muted);
+  --color-subtle: var(--color-border);
+  --color-surface: var(--color-surface);
+  --color-surface-elevated: var(--color-surface-elevated);
+  --color-accent: var(--color-accent);
+  --color-accent-dim: var(--color-accent-dim);
+  --color-success: var(--color-success);
+  --color-warn: var(--color-warn);
+  --color-danger: var(--color-danger);
+  --color-info: var(--color-info);
+  --color-trial: var(--color-trial);
+  --font-display: var(--font-display);
+}
 
 /* Explicit, so the scan can never drift with the CSS file's location. Every
    rendered class comes from a component under src/ or from the page shell. */
 @source "../../index.html";
 @source "../../src";
 
-/* These add to Tailwind's automatic project scan rather than replacing it, so
-   tests/ is swept too — and a class-shaped string in a test file lands in the
-   shipped stylesheet. Measured: adding a `w-1/2` example to a comment in
-   tests/stylesheet.test.ts grew the artifact by 44 B of rules no page uses.
-   Excluding tests keeps the output a function of what actually renders, which
-   is what makes the build reproducible across machines. */
+/* The sources add to Tailwind's automatic scan, which would also sweep tests/
+   and ship class-shaped strings from test files. Excluding tests keeps the
+   output a function of what renders. */
 @source not "../../tests";
 
 /* Homepage flight pills: thousands per render, so one short class instead of a
@@ -58,4 +73,347 @@
 }
 [data-expanded] .expand-flights .pill-less {
   display: inline;
+}
+
+/* /fleet and /fleet/{slug}. Unlayered, like the inline <style> blocks they
+   replace, so a swatch beats the size/shape utilities it sits beside. The
+   wifi-* names are built from a provider key at render time, which is why they
+   are rules here rather than utilities: this file is what the scanner and the
+   class-coverage test read them from. */
+.wifi-starlink {
+  background: var(--color-accent);
+}
+.wifi-viasat {
+  background: color-mix(in srgb, var(--color-warn) 50%, transparent);
+}
+.wifi-panasonic {
+  background: rgba(168, 85, 247, 0.5);
+}
+.wifi-thales {
+  background: rgba(236, 72, 153, 0.5);
+}
+.wifi-none {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-neutral) 50%, transparent);
+}
+.wifi-unknown {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-neutral) 25%, transparent);
+}
+/* Pipeline overlays come after wifi-* so they win the cascade. */
+.pipe-mod {
+  background: color-mix(in srgb, var(--color-warn) 15%, transparent);
+  box-shadow: inset 0 0 0 1.5px var(--color-warn);
+}
+.pipe-verif {
+  background: color-mix(in srgb, var(--color-accent) 15%, transparent);
+  box-shadow: inset 0 0 0 1.5px var(--color-accent);
+}
+.pipe-chip {
+  display: inline-flex;
+  align-items: baseline;
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  text-decoration: none;
+  border: 1px solid;
+  color: var(--color-text-secondary);
+}
+.pipe-chip:hover {
+  text-decoration: underline;
+}
+.pipe-chip-mod {
+  border-color: color-mix(in srgb, var(--color-warn) 60%, transparent);
+  background: color-mix(in srgb, var(--color-warn) 8%, transparent);
+}
+.pipe-chip-verif {
+  border-color: color-mix(in srgb, var(--color-accent) 60%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 8%, transparent);
+}
+.pipe-chip-sched {
+  border-color: color-mix(in srgb, var(--color-neutral) 50%, transparent);
+  border-style: dashed;
+}
+.bar-complete {
+  background: var(--color-accent);
+}
+.bar-verif {
+  background: color-mix(in srgb, var(--color-accent) 45%, transparent);
+}
+.bar-inmod {
+  background: color-mix(in srgb, var(--color-warn) 80%, transparent);
+}
+.bar-queued {
+  background: repeating-linear-gradient(
+    45deg,
+    color-mix(in srgb, var(--color-neutral) 55%, transparent) 0 2px,
+    transparent 2px 4px
+  );
+}
+.tail-pipe {
+  opacity: 0.75;
+}
+.dot-mod {
+  color: var(--color-warn);
+}
+.dot-verif {
+  color: var(--color-accent);
+}
+.tail-sl,
+.tail-dim {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5em;
+  text-decoration: none;
+}
+.tail-sl {
+  color: var(--color-accent);
+}
+.tail-dim {
+  color: var(--color-text-muted);
+  opacity: 0.45;
+  transition: opacity 0.15s;
+}
+.tail-sl:hover .tail-num,
+.tail-dim:hover .tail-num {
+  text-decoration: underline;
+}
+.tail-dim:hover {
+  opacity: 1;
+}
+.tail-sl:target,
+.tail-dim:target {
+  background: color-mix(in srgb, var(--color-accent) 20%, transparent);
+  opacity: 1;
+  scroll-margin-top: 5rem;
+}
+.tail-dot {
+  width: 0.8em;
+  text-align: center;
+  flex-shrink: 0;
+}
+.tail-num {
+  flex: 0 0 auto;
+}
+.tail-abbr {
+  opacity: 0.6;
+  font-size: 0.85em;
+  flex-shrink: 0;
+}
+/* Hangar floor: always-open blocks on desktop, collapsible on mobile. */
+.fam-summary::-webkit-details-marker {
+  display: none;
+}
+.fam-caret {
+  transition: transform 0.2s;
+}
+.fam-container {
+  display: grid;
+}
+@media (min-width: 768px) {
+  .fam-container {
+    grid-template-columns: repeat(auto-fill, 118px);
+    align-items: start;
+  }
+  .fam-summary {
+    pointer-events: none;
+    min-height: 34px;
+  }
+  .fam-caret {
+    display: none;
+  }
+}
+@media (max-width: 767px) {
+  .fam-container {
+    grid-template-columns: 1fr;
+  }
+  .fam-summary {
+    cursor: pointer;
+    padding: 0.75rem;
+  }
+  .fam-block[open] .fam-caret {
+    transform: rotate(180deg);
+  }
+}
+/* Aircraft spec popover: hover on desktop, focus (tap) on mobile. */
+.spec-trigger {
+  pointer-events: auto;
+  outline: none;
+}
+.spec-card {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-4px);
+  transition: opacity 0.15s, transform 0.15s;
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 400;
+}
+.spec-trigger:hover .spec-card,
+.spec-trigger:focus .spec-card,
+.spec-trigger:focus-within .spec-card {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+@media (max-width: 767px) {
+  .spec-card {
+    left: 0;
+    right: 0;
+    width: auto;
+    position: fixed;
+    top: auto;
+    bottom: 1rem;
+    margin: 0 1rem;
+  }
+}
+/* /route-planner itinerary cards, drawn by src/client/route-planner.ts. */
+.flight-path {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.flight-path__node {
+  flex-shrink: 0;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  background: var(--color-base);
+  position: relative;
+  z-index: 1;
+}
+.flight-path__node--filled {
+  background: currentColor;
+}
+.flight-path__line {
+  flex: 1;
+  height: 2px;
+  background: currentColor;
+  position: relative;
+  opacity: 0.4;
+}
+.flight-path__line--live::after {
+  content: "";
+  position: absolute;
+  width: 20px;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, currentColor, transparent);
+  animation: signal-pulse 2.5s linear infinite;
+  left: -20px;
+}
+@keyframes signal-pulse {
+  0% {
+    left: -20px;
+    opacity: 0;
+  }
+  10% {
+    opacity: 1;
+  }
+  90% {
+    opacity: 1;
+  }
+  100% {
+    left: 100%;
+    opacity: 0;
+  }
+}
+.prob-bars {
+  display: inline-flex;
+  gap: 2px;
+  align-items: flex-end;
+  height: 14px;
+}
+.prob-bars__bar {
+  width: 3px;
+  background: currentColor;
+  border-radius: 1px;
+  transition: opacity 0.3s;
+}
+.prob-bars__bar:nth-child(1) {
+  height: 40%;
+}
+.prob-bars__bar:nth-child(2) {
+  height: 55%;
+}
+.prob-bars__bar:nth-child(3) {
+  height: 70%;
+}
+.prob-bars__bar:nth-child(4) {
+  height: 85%;
+}
+.prob-bars__bar:nth-child(5) {
+  height: 100%;
+}
+.prob-bars__bar--off {
+  opacity: 0.15;
+}
+@keyframes itin-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.itin-card {
+  animation: itin-enter 0.4s ease-out both;
+}
+.itin-card:nth-child(1) {
+  animation-delay: 0.05s;
+}
+.itin-card:nth-child(2) {
+  animation-delay: 0.1s;
+}
+.itin-card:nth-child(3) {
+  animation-delay: 0.15s;
+}
+.itin-card:nth-child(4) {
+  animation-delay: 0.2s;
+}
+.itin-card:nth-child(5) {
+  animation-delay: 0.25s;
+}
+.itin-card:nth-child(6) {
+  animation-delay: 0.3s;
+}
+.itin-card:nth-child(7) {
+  animation-delay: 0.35s;
+}
+.itin-card:nth-child(8) {
+  animation-delay: 0.4s;
+}
+.airport-input {
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  text-align: center;
+  font-weight: 600;
+}
+.airport-input::placeholder {
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 400;
+}
+/* Type-page verdict card: the left rule carries the answer's tone. */
+.verdict {
+  border-left-width: 3px;
+}
+.verdict-yes {
+  border-left-color: var(--color-accent);
+}
+.verdict-most {
+  border-left-color: color-mix(in srgb, var(--color-accent) 60%, transparent);
+}
+.verdict-some {
+  border-left-color: color-mix(in srgb, var(--color-accent) 35%, transparent);
+}
+.verdict-wait {
+  border-left-color: var(--color-warn);
+}
+.verdict-no {
+  border-left-color: color-mix(in srgb, var(--color-neutral) 60%, transparent);
 }

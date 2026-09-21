@@ -26,10 +26,10 @@ import {
   answerFor,
   officialCountFor,
   resolveAircraftSlug,
-  sharePct,
   typeFactsFor,
 } from "../src/airlines/aircraft-pages";
 import { AIRLINES, SITES } from "../src/airlines/registry";
+import { pct } from "../src/components/ui/format";
 import {
   bodyClassOf,
   getAircraftTypePageData,
@@ -39,7 +39,7 @@ import {
 import { createApp } from "../src/server/app";
 import type { AircraftTypePageData, AircraftVerdictKind, WifiProvider } from "../src/types";
 import { baseNormalizeAircraftType } from "./fixtures/aircraft-families-base";
-import { addFleet, addFlight, makeSyntheticDb, openSnapshot, req } from "./helpers";
+import { addFleet, addFlight, addPlane, makeSyntheticDb, openSnapshot, req } from "./helpers";
 
 const UA = SITES.united.canonicalHost;
 const AS = SITES.alaska.canonicalHost;
@@ -368,12 +368,12 @@ describe("answerFor", () => {
   });
 
   test("100% only when every tail has it; floors elsewhere", () => {
-    expect(sharePct(10, 10)).toBe("100%");
-    expect(sharePct(248, 249)).toBe(">99%");
-    expect(sharePct(1, 173)).toBe("<1%");
-    expect(sharePct(199, 200)).toBe(">99%");
-    expect(sharePct(99, 100)).toBe("99%");
-    expect(sharePct(2, 3)).toBe("66%");
+    expect(pct(10, 10)).toBe("100%");
+    expect(pct(248, 249)).toBe(">99%");
+    expect(pct(1, 173)).toBe("<1%");
+    expect(pct(199, 200)).toBe(">99%");
+    expect(pct(99, 100)).toBe("99%");
+    expect(pct(2, 3)).toBe("66%");
     for (const [s, t] of [
       [248, 249],
       [6, 10],
@@ -584,8 +584,7 @@ describe("serve and render", () => {
           | { mainEntity: Array<{ name: string; acceptedAnswer: { text: string } }> }
           | undefined;
         expect(Boolean(faqLd), def.slug).toBe(indexed);
-        const visibleQuestions =
-          html.match(/<dt class="font-display text-sm font-semibold text-secondary">/g) ?? [];
+        const visibleQuestions = html.match(/<dt class="font-semibold text-primary">/g) ?? [];
         expect(visibleQuestions.length).toBeGreaterThanOrEqual(2);
         expect(visibleQuestions.length).toBeLessThanOrEqual(5);
         if (faqLd) {
@@ -767,6 +766,11 @@ describe("routes and flight numbers (synthetic)", () => {
       aircraftType: "ERJ-175",
       verifiedWifi: "Starlink",
     });
+    // Routes count equipped departures (starlink_planes + equippedFilter), the
+    // same predicate as every other departure count.
+    addPlane(db, "N101SY", "Starlink", { aircraft: "ERJ-175" });
+    addPlane(db, "N103SY", "Viasat", { aircraft: "ERJ-175" });
+    addPlane(db, "N200AS", "Starlink", { aircraft: "ERJ-175", airline: "AS" });
     addFlight(db, "N101SY", "UA5001", "DEN", NOW + 3600, { arrivalAirport: "ASE" });
     addFlight(db, "N101SY", "UA5002", "ASE", NOW + 7200, { arrivalAirport: "DEN" });
     addFlight(db, "N103SY", "UA5003", "ORD", NOW + 3600, { arrivalAirport: "MSN" });
@@ -984,11 +988,9 @@ describe("degradation and cache (snapshot)", () => {
       for (const def of await servedDefs(code, host)) {
         const d = getAircraftTypePageData(snap, code, def.slug) as AircraftTypePageData;
         const html = await (await get(`/fleet/${def.slug}`, host)).text();
-        expect(html.includes("Recently first seen with Starlink"), def.slug).toBe(
-          d.recentInstalls.length > 0
-        );
+        expect(html.includes(">Recently added</h2>"), def.slug).toBe(d.recentInstalls.length > 0);
         expect(html.includes("install pipeline"), def.slug).toBe(d.pipeline !== null);
-        expect(html.includes("fly next (48 h)"), def.slug).toBe(d.routes.length > 0);
+        expect(html.includes("fly in the next 48 hours"), def.slug).toBe(d.routes.length > 0);
       }
     }
   });

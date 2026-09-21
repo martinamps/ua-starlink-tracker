@@ -8,10 +8,9 @@
 import type { Database } from "bun:sqlite";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { setAssignmentFetcher } from "../src/api/flight-verdict";
-import { handleMcpRequest } from "../src/api/mcp-server";
 import type { Scope } from "../src/database/reader";
 import { createReaderFactory } from "../src/database/reader";
-import { addQatarRow, makeSyntheticDb, mcpReq } from "./helpers";
+import { addQatarRow, makeSyntheticDb, mcpDirect, toolText } from "./helpers";
 
 const DAY = 86400;
 const now = () => Math.floor(Date.now() / 1000);
@@ -34,23 +33,11 @@ function flight(tail: string, fn: string, o: string, d: string, dep: number, air
   ).run(tail, fn, o, d, dep, dep + 2 * 3600, dep, airline);
 }
 
-async function call(scope: Scope, name: string, args: Record<string, unknown>) {
-  const r = await handleMcpRequest(
-    mcpReq("unitedstarlinktracker.com", "tools/call", { name, arguments: args }),
-    scope,
-    factory
-  );
-  const result = (await r.json()).result as {
-    content: { text: string }[];
-    isError?: boolean;
-  };
-  return { text: result.content[0].text, isError: result.isError === true };
-}
+const call = async (scope: Scope, name: string, args: Record<string, unknown>) =>
+  toolText(await mcpDirect(scope, factory, "tools/call", { name, arguments: args }));
 
-async function rpc(scope: Scope, method: string) {
-  const r = await handleMcpRequest(mcpReq("unitedstarlinktracker.com", method, {}), scope, factory);
-  return (await r.json()).result;
-}
+const rpc = async (scope: Scope, method: string) =>
+  (await mcpDirect(scope, factory, method)).result;
 
 // The flight asked about: mainline number, no history, so the fleet prior is
 // low enough (<20%) to embed the alternatives table.

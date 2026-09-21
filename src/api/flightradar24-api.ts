@@ -3,9 +3,11 @@
  * Free API for fetching flight data by aircraft registration
  */
 
-import { COUNTERS, metrics } from "../observability";
+import { unixNow } from "../database/sql/windows";
+import { COUNTERS, flightAirlineTag, metrics, normalizeAirlineTag } from "../observability";
 import type { Flight } from "../types";
 import { info, warn } from "../utils/logger";
+import { sleep } from "../utils/sleep";
 import { fr24Fetch } from "./fr24-browser-transport";
 
 type FlightUpdate = Pick<
@@ -140,14 +142,17 @@ export class FlightRadar24API {
   private async waitForRateLimit(maxWaitMs?: number) {
     const waitMs = reserveFr24Slot(Date.now(), maxWaitMs);
     if (waitMs === null) throw new Fr24UnavailableError(FR24_QUEUE_SHED_MESSAGE);
-    if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
+    if (waitMs > 0) await sleep(waitMs);
   }
 
   private async retryWithBackoff<T>(
     operation: () => Promise<T>,
-    maxRetries = 3,
-    requestType = "flights",
-    maxWaitMs?: number
+    {
+      airline,
+      maxRetries = 3,
+      requestType = "flights",
+      maxWaitMs,
+    }: { airline: string; maxRetries?: number; requestType?: string; maxWaitMs?: number }
   ): Promise<T> {
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
@@ -168,6 +173,7 @@ export class FlightRadar24API {
             type: requestType,
             status: "rate_limited",
             http_status: throttleCode,
+            airline,
           });
         }
 
@@ -181,7 +187,7 @@ export class FlightRadar24API {
           warn(
             `FR24 API error: ${errorMessage} - waiting ${Math.round(delay / 1000)}s before retry ${attempt + 1}/${maxRetries}`
           );
-          await new Promise((resolve) => setTimeout(resolve, delay));
+          await sleep(delay);
           continue;
         }
         throw error;
@@ -195,50 +201,64 @@ export class FlightRadar24API {
    */
   async getUpcomingFlights(
     tailNumber: string,
-    flightNumberSource: FlightNumberSource = "callsign"
+    {
+      flightNumberSource = "callsign",
+      airlineCode,
+    }: {
+      flightNumberSource?: FlightNumberSource;
+      /** The tail's airline, when the caller knows it; tags the vendor metric. */
+      airlineCode?: string | null;
+    } = {}
   ): Promise<FlightUpdate[]> {
-    return this.retryWithBackoff(async () => {
-      // FR24 API expects registration without the leading 'N' for some queries,
-      // but works fine with the full registration
-      const url = `${this.baseUrl}/flight/list.json?query=${tailNumber}&fetchBy=reg&page=1&limit=25`;
+    const airline = airlineCode ? normalizeAirlineTag(airlineCode) : "unmapped";
+    return this.retryWithBackoff(
+      async () => {
+        // FR24 API expects registration without the leading 'N' for some queries,
+        // but works fine with the full registration
+        const url = `${this.baseUrl}/flight/list.json?query=${tailNumber}&fetchBy=reg&page=1&limit=25`;
 
-      const response = await this.fetchFr24(url, 30000);
+        const response = await this.fetchFr24(url, 30000);
 
-      if (!response.ok) {
-        if (response.status === 404) {
-          info(`No flights found for tail number: ${tailNumber}`);
+        if (!response.ok) {
+          if (response.status === 404) {
+            info(`No flights found for tail number: ${tailNumber}`);
+            metrics.increment(COUNTERS.VENDOR_REQUEST, {
+              vendor: "fr24",
+              type: "flights",
+              status: "success",
+              airline,
+            });
+            return [];
+          }
           metrics.increment(COUNTERS.VENDOR_REQUEST, {
             vendor: "fr24",
             type: "flights",
-            status: "success",
+            status: "error",
+            http_status: String(response.status),
+            airline,
           });
-          return [];
+          throw new Error(`FlightRadar24 API error: ${response.status}`);
         }
+
         metrics.increment(COUNTERS.VENDOR_REQUEST, {
           vendor: "fr24",
           type: "flights",
-          status: "error",
-          http_status: String(response.status),
+          status: "success",
+          airline,
         });
-        throw new Error(`FlightRadar24 API error: ${response.status}`);
-      }
+        const data: FR24Response = JSON.parse(response.body);
+        const flights = data.result?.response?.data || [];
 
-      metrics.increment(COUNTERS.VENDOR_REQUEST, {
-        vendor: "fr24",
-        type: "flights",
-        status: "success",
-      });
-      const data: FR24Response = JSON.parse(response.body);
-      const flights = data.result?.response?.data || [];
+        if (flights.length === 0) {
+          return [];
+        }
 
-      if (flights.length === 0) {
-        return [];
-      }
-
-      return parseUpcomingFlights(flights, Math.floor(Date.now() / 1000), undefined, {
-        flightNumberSource,
-      });
-    });
+        return parseUpcomingFlights(flights, unixNow(), undefined, {
+          flightNumberSource,
+        });
+      },
+      { airline }
+    );
   }
 
   /**
@@ -249,7 +269,10 @@ export class FlightRadar24API {
   async getFlightRoutes(
     flightNumber: string,
     targetDateUnix?: number
-  ): Promise<Array<{ origin: string; destination: string; departure_time: number }>> {
+  ): Promise<
+    Array<{ origin: string; destination: string; departure_time: number; duration_sec: number }>
+  > {
+    const airline = flightAirlineTag(flightNumber);
     // Best-effort lookup for MCP hints — a failure degrades to "ask the user".
     // No retry wrapper, but still rate-limit + instrument so we stay a good citizen.
     const url = `${this.baseUrl}/flight/list.json?query=${encodeURIComponent(flightNumber)}&fetchBy=flight&page=1&limit=20`;
@@ -264,6 +287,7 @@ export class FlightRadar24API {
         vendor: "fr24",
         type: "routes",
         status: "error",
+        airline,
       });
       return [];
     }
@@ -274,6 +298,7 @@ export class FlightRadar24API {
         type: "routes",
         status: response.status === 402 || response.status === 429 ? "rate_limited" : "error",
         http_status: String(response.status),
+        airline,
       });
       return [];
     }
@@ -285,6 +310,7 @@ export class FlightRadar24API {
       vendor: "fr24",
       type: "routes",
       status: flights.length > 0 ? "success" : "empty",
+      airline,
     });
 
     // Dedupe by (origin, destination), keep the departure closest to target date.
@@ -348,6 +374,7 @@ export class FlightRadar24API {
     }>
   > {
     const url = `${this.baseUrl}/flight/list.json?query=${encodeURIComponent(flightNumber)}&fetchBy=flight&page=1&limit=25`;
+    const airline = flightAirlineTag(flightNumber);
 
     try {
       return await this.retryWithBackoff(
@@ -360,6 +387,7 @@ export class FlightRadar24API {
               type: "assignments",
               status: response.status === 402 || response.status === 429 ? "rate_limited" : "error",
               http_status: String(response.status),
+              airline,
             });
             throw new Error(`FR24 assignments error: ${response.status}`);
           }
@@ -371,6 +399,7 @@ export class FlightRadar24API {
             vendor: "fr24",
             type: "assignments",
             status: "success",
+            airline,
           });
           const flights = data.result?.response?.data || [];
 
@@ -395,11 +424,14 @@ export class FlightRadar24API {
 
           return out.sort((a, b) => a.departure_time - b.departure_time);
         },
-        // The request path passes 0: a throttle retry sleeps 30s inline, which
-        // is what stretched one /api/check-flight span to 34.5s on 2026-09-06.
-        opts.maxRetries ?? 1,
-        "assignments",
-        opts.maxWaitMs
+        {
+          airline,
+          // The request path passes 0: a throttle retry sleeps 30s inline, which
+          // is what stretched one /api/check-flight span to 34.5s on 2026-09-06.
+          maxRetries: opts.maxRetries ?? 1,
+          requestType: "assignments",
+          maxWaitMs: opts.maxWaitMs,
+        }
       );
     } catch (err) {
       if (err instanceof Fr24UnavailableError) throw err;
@@ -411,6 +443,8 @@ export class FlightRadar24API {
 export type FR24ListFlight = Pick<FR24Flight, "identification" | "airport" | "time">;
 
 export type FlightNumberSource = "callsign" | "marketing";
+
+const NUMERIC_FLIGHT = /^[A-Z0-9]{2,3}\d{1,4}$/;
 
 /**
  * upcoming_flights.flight_number for one FR24 leg. "callsign" keeps the
@@ -424,6 +458,14 @@ export function pickFlightNumber(
 ): string | null {
   const id = flight.identification;
   if (source === "marketing") return id.number.default || null;
+  // An ATC callsign with a letter suffix (SKW302M for UA5352) matches no
+  // marketed number, so the departure was invisible to every flight lookup.
+  if (id.callsign && !NUMERIC_FLIGHT.test(id.callsign)) {
+    const numbered = [id.number.alternative, id.number.default].find(
+      (n): n is string => !!n && NUMERIC_FLIGHT.test(n)
+    );
+    if (numbered) return numbered;
+  }
   return id.callsign || id.number.alternative || id.number.default || "";
 }
 

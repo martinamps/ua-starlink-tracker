@@ -246,6 +246,7 @@ describe("/badge.svg", () => {
   test("POST → 405", async () => {
     const res = await app.dispatch(req("/badge.svg", UA, { method: "POST" }));
     expect(res.status).toBe(405);
+    expect(res.headers.get("Allow")).toBe("GET, HEAD");
   });
 });
 
@@ -348,7 +349,7 @@ describe("/newly-equipped page", () => {
   test("UA host renders install rows linking the feed", async () => {
     const { status, text } = await bodyOf(app, "/newly-equipped", UA);
     expect(status).toBe(200);
-    expect(text).toContain("Newly Equipped Aircraft");
+    expect(text).toContain("Newly equipped aircraft");
     expect(text).toContain('href="/feed.xml"');
   });
 

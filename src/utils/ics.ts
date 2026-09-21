@@ -10,6 +10,7 @@
 
 import type { SiteConfig } from "../airlines/registry";
 import type { AssignmentLogRow, SameDayAlternative } from "../database/assignment-log";
+import { toIata } from "./airport-code";
 import { airportTimezone } from "./airport-tz";
 
 /**
@@ -101,10 +102,6 @@ export function watchFeedState(
   return isSwap(history, verdict, dep) ? "swap" : verdict.state;
 }
 
-function stripIcaoK(code: string): string {
-  return code.length === 4 && code.startsWith("K") ? code.slice(1) : code;
-}
-
 function aircraftSuffix(parts: (string | null)[]): string {
   const kept = parts.filter((p): p is string => !!p);
   return kept.length > 0 ? ` (${kept.join(", ")})` : "";
@@ -121,7 +118,7 @@ export function watchSummary(input: WatchIcsInput): string {
           : `${fn} · Starlink odds ~${Math.round(verdict.probability * 100)}%`;
       break;
     case "yes": {
-      const route = dep && arr ? ` ${stripIcaoK(dep)}→${stripIcaoK(arr)}` : "";
+      const route = dep && arr ? ` ${toIata(dep)}→${toIata(arr)}` : "";
       const aircraft = verdict.aircraft ? ` (${verdict.aircraft})` : "";
       body = `${fn}${route} · Starlink ✅ ${verdict.tail}${aircraft}`;
       break;
@@ -139,20 +136,21 @@ export function watchSummary(input: WatchIcsInput): string {
   return isSwap(history, verdict, dep) ? `Swapped: ${body}` : body;
 }
 
+// Date and time are formatted separately: ICU versions disagree on how to
+// join them ("Sep 19 at 3:00 AM" vs "Sep 19, 3:00 AM"), and feeds must not
+// change with the host's ICU.
 function formatLocal(unixSec: number, airport: string | null): string {
-  const timeZone = (airport && airportTimezone(stripIcaoK(airport))) || "UTC";
-  return new Intl.DateTimeFormat("en-US", {
+  const timeZone = (airport && airportTimezone(toIata(airport))) || "UTC";
+  const date = new Intl.DateTimeFormat("en-US", {
     timeZone,
     month: "short",
     day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    timeZoneName: "short",
   }).format(new Date(unixSec * 1000));
+  return `${date}, ${formatLocalTime(unixSec, airport)}`;
 }
 
 function formatLocalTime(unixSec: number, airport: string | null): string {
-  const timeZone = (airport && airportTimezone(stripIcaoK(airport))) || "UTC";
+  const timeZone = (airport && airportTimezone(toIata(airport))) || "UTC";
   return new Intl.DateTimeFormat("en-US", {
     timeZone,
     hour: "numeric",

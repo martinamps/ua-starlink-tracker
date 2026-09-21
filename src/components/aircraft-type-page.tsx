@@ -1,4 +1,3 @@
-import React from "react";
 import {
   type AircraftAnswer,
   type AircraftPageDef,
@@ -7,7 +6,6 @@ import {
   SHARE_KINDS,
   type TypeFaqItem,
   factText,
-  sharePct,
   sheetComparison,
   targetFact,
   tenantCopy,
@@ -17,19 +15,23 @@ import { type RolloutFact, formatFactDate } from "../airlines/rollout-facts";
 import type { AircraftTypePageData, AircraftVerdictKind, WifiProvider } from "../types";
 import type { AircraftSpec } from "../utils/aircraft-specs";
 import { article } from "../utils/grammar";
-import { PageFooter, type PageLink } from "./atoms";
+import { Faq } from "./faq";
+import { TailGrid } from "./fleet/hangar";
 import {
-  EYEBROW,
-  FLEET_GRID_CSS,
   MovementsPanel,
-  PANEL,
-  PROVIDER_ORDER,
   PipelineBar,
   PipelineTailChip,
-  STATION_NAMES,
-} from "./fleet-page";
+  sheetTypeName,
+  stationKey,
+} from "./fleet/pipeline";
+import { PROVIDER_LABEL, ProviderLegend } from "./fleet/providers";
+import { ShareBarRow, providerCounts } from "./fleet/type-bars";
+import { FlightSearchForm } from "./flight-search-form";
+import type { Link } from "./layout";
+import { EYEBROW, H2, LINK, PANEL, PageHeader, PageShell, StatInline } from "./layout";
+import { fmt, shortDate } from "./ui/format";
 
-export interface AircraftTypeSibling {
+interface AircraftTypeSibling {
   slug: string;
   short: string;
   starlink: number;
@@ -38,14 +40,14 @@ export interface AircraftTypeSibling {
 
 interface AircraftTypePageProps {
   site: SiteConfig;
-  pageLinks?: PageLink[];
+  pageLinks?: Link[];
+  currentPath?: string;
   def: AircraftPageDef;
   data: AircraftTypePageData;
   answer: AircraftAnswer;
   facts: RolloutFact[];
   faq: TypeFaqItem[];
   siblings: AircraftTypeSibling[];
-  iata: string;
   lastUpdated: string | null;
   checkFlight: boolean;
   spec: AircraftSpec | null;
@@ -69,41 +71,44 @@ const TARGET_IN_HEADER: ReadonlySet<AircraftVerdictKind> = new Set([
   "none",
 ]);
 
-const TAIL_CHIP_CLASS: Record<WifiProvider, string> = {
-  starlink: "tchip tchip-sl",
-  viasat: "tchip tchip-dim",
-  panasonic: "tchip tchip-dim",
-  thales: "tchip tchip-dim",
-  none: "tchip tchip-dim",
-  unknown: "tchip tchip-dim",
-};
-
-const PAGE_CSS = `
-  .verdict { border-left-width: 3px; }
-  .verdict-yes  { border-left-color: var(--color-accent); }
-  .verdict-most { border-left-color: rgba(14, 165, 233, 0.6); }
-  .verdict-some { border-left-color: rgba(14, 165, 233, 0.35); }
-  .verdict-wait { border-left-color: #f59e0b; }
-  .verdict-no   { border-left-color: rgba(90, 106, 128, 0.6); }
-  .tchip { font-family: var(--font-mono, monospace); font-size: 11px; text-decoration: none; padding: 1px 5px; border-radius: 3px; }
-  .tchip:hover { text-decoration: underline; }
-  .tchip-sl  { color: var(--color-accent); background: rgba(14, 165, 233, 0.08); }
-  .tchip-dim { color: var(--color-text-muted); }
-`;
-
-const H2 = "font-display text-lg font-semibold text-primary mb-2";
+const H2_CARD = `${H2} mb-3`;
 const CARD = `${PANEL} mb-4`;
-const LINK = "text-accent hover:underline";
 
-function monthDay(iso: string): string {
-  return formatFactDate(iso.slice(0, 10));
-}
-
-function StatCell({ label, value }: { label: string; value: string | number }) {
+/** Every tail of the type as one square, colored by its Wi-Fi today. */
+function TailMatrix({
+  def,
+  data,
+  airline,
+  official,
+}: {
+  def: AircraftPageDef;
+  data: AircraftTypePageData;
+  airline: string;
+  official: OfficialCount | null;
+}) {
+  const copy = tenantCopy(data.airline);
+  // Where the airline publishes nothing per tail, an unlit square is "no
+  // data", never "not checked yet": nobody is going to check it.
+  const labels: Record<WifiProvider, string> = copy.checksEveryTail
+    ? PROVIDER_LABEL
+    : { ...PROVIDER_LABEL, unknown: "No per-aircraft data" };
   return (
-    <div className="text-center">
-      <div className="font-display text-2xl font-bold text-primary tabular-nums">{value}</div>
-      <div className="font-mono text-[10px] text-muted uppercase tracking-wider">{label}</div>
+    <div
+      className="mt-5 border-t border-subtle pt-4"
+      data-equipped={data.starlink}
+      data-total={data.total}
+      data-official={official ? official.count : undefined}
+    >
+      <div className={EYEBROW}>
+        Wi-Fi on {airline} {def.short}s
+      </div>
+      <TailGrid tails={data.tails} anchorBase="/fleet" size="lg" />
+      <ProviderLegend counts={providerCounts(data.tails)} labels={labels} className="mt-3" />
+      <p className="text-xs text-muted mt-2">
+        {copy.checksEveryTail
+          ? "One square per aircraft, as last checked on united.com."
+          : `${airline} doesn't publish Wi-Fi per aircraft, so only tails we've confirmed are lit.`}
+      </p>
     </div>
   );
 }
@@ -126,27 +131,14 @@ function Header({
   const official: OfficialCount | null = answer.official;
   return (
     <section className={`${CARD} ${VERDICT_CLASS[answer.kind]}`}>
-      <p id="answer" className="text-base text-secondary leading-relaxed">
-        <strong className="font-display text-primary">{answer.headline}</strong> {answer.sentence}
-        {lastUpdated && <span className="text-muted text-xs"> As of {lastUpdated}.</span>}
+      <p id="answer" className="text-base text-secondary leading-relaxed text-pretty">
+        <strong className="font-display text-lg text-primary">{answer.headline}</strong>{" "}
+        {answer.sentence}
+        {lastUpdated && <span className="text-muted text-sm"> As of {lastUpdated}.</span>}
       </p>
-      <div
-        className="grid grid-cols-3 gap-3 mt-4"
-        data-equipped={data.starlink}
-        data-total={data.total}
-        data-official={official ? official.count : undefined}
-      >
-        <StatCell label={official ? "Confirmed by us" : "With Starlink"} value={data.starlink} />
-        <StatCell label={`${airline} ${def.short}s`} value={data.total} />
-        {official && (official.count > data.starlink || answer.rosterShort) ? (
-          <StatCell label={`Per ${airline}`} value={official.count} />
-        ) : (
-          <StatCell label="Share" value={sharePct(answer.effective, data.total)} />
-        )}
-      </div>
       {official && (
-        <p className="text-xs text-muted mt-3">
-          {airline}'s figure:{" "}
+        <p className="text-sm text-muted mt-3">
+          {airline}'s own count: <StatInline n={official.count} />, from{" "}
           <a href={official.url} className={LINK} rel="noopener noreferrer" target="_blank">
             {official.sourceLabel}
           </a>
@@ -154,114 +146,11 @@ function Header({
         </p>
       )}
       {target?.asOf && (
-        <p className="text-xs text-muted mt-3">
+        <p className="text-sm text-muted mt-3">
           {airline}'s stated target ({formatFactDate(target.asOf)}): {factText(target)}
         </p>
       )}
-    </section>
-  );
-}
-
-function CheckForm({ iata }: { iata: string }) {
-  return (
-    <>
-      <form
-        id="type-flight-search"
-        method="GET"
-        action="/check-flight"
-        className="flex flex-col sm:flex-row gap-2 mt-3"
-      >
-        <input
-          type="text"
-          id="type-flight-number"
-          name="flight_number"
-          aria-label="Flight number"
-          placeholder={`${iata}123`}
-          autoComplete="off"
-          autoCapitalize="characters"
-          spellCheck={false}
-          className="flex-1 min-w-0 bg-base border border-subtle rounded px-3 py-2 text-primary font-mono text-sm focus:outline-none"
-        />
-        <input
-          type="date"
-          id="type-flight-date"
-          name="date"
-          aria-label="Flight date"
-          className="bg-base border border-subtle rounded px-3 py-2 text-primary font-mono text-sm focus:outline-none sm:w-40"
-        />
-        <button
-          type="submit"
-          className="px-5 py-2 border border-subtle text-accent font-display font-semibold rounded cursor-pointer whitespace-nowrap"
-        >
-          Check my flight
-        </button>
-      </form>
-      <script
-        // biome-ignore lint/security/noDangerouslySetInnerHtml: static inline script, no user input
-        dangerouslySetInnerHTML={{
-          __html: `document.addEventListener('DOMContentLoaded',function(){var f=document.getElementById('type-flight-search');if(!f)return;f.addEventListener('submit',function(e){e.preventDefault();var n=document.getElementById('type-flight-number').value.trim().toUpperCase().replace(/\\s+/g,'');if(!n)return;if(/^\\d+$/.test(n))n=${JSON.stringify(iata)}+n;var d=document.getElementById('type-flight-date').value;window.location.href='/check-flight/'+encodeURIComponent(n)+(d?'/'+encodeURIComponent(d):'');});});`,
-        }}
-      />
-    </>
-  );
-}
-
-function ProvidersSection({
-  def,
-  data,
-  airline,
-}: {
-  def: AircraftPageDef;
-  data: AircraftTypePageData;
-  airline: string;
-}) {
-  const copy = tenantCopy(data.airline);
-  if (!copy.checksEveryTail) {
-    if (data.starlink >= data.total) return null;
-    return (
-      <section className={CARD}>
-        <h2 className={H2}>
-          {data.starlink > 0 ? "What the rest have today" : "What they have today"}
-        </h2>
-        <p className="text-sm text-muted">
-          No tail-level WiFi data: {airline} doesn't publish it per aircraft.
-          {data.starlink > 0 &&
-            ` The ${data.starlink} ${def.short}s we can confirm with Starlink are highlighted below.`}
-        </p>
-      </section>
-    );
-  }
-  if (data.knownOther === 0 && data.unchecked === 0) return null;
-  const shown = PROVIDER_ORDER.filter((p) => p !== "unknown" && data.providers[p] > 0);
-  return (
-    <section className={CARD}>
-      <h2 className={H2}>
-        {data.starlink > 0 ? "What the rest have today" : "What they have today"}
-      </h2>
-      {data.checked > 0 && (
-        <div className="flex h-3 rounded overflow-hidden bg-surface-elevated mb-3">
-          {shown.map((p) => (
-            <span
-              key={p}
-              className={`wifi-${p}`}
-              style={{ width: `${(data.providers[p] / data.checked) * 100}%` }}
-              title={`${PROVIDER_NAMES[p]}: ${data.providers[p]}`}
-            />
-          ))}
-        </div>
-      )}
-      <ul className="font-mono text-xs text-secondary space-y-1">
-        {shown.map((p) => (
-          <li key={p} className="flex items-center gap-2">
-            <span className={`wifi-${p} inline-block w-2.5 h-2.5 rounded-[1px]`} />
-            {data.providers[p]} {p === "none" ? "with no WiFi" : PROVIDER_NAMES[p]}
-          </li>
-        ))}
-      </ul>
-      <p className="text-xs text-muted mt-3">
-        Last checked on united.com.
-        {data.unchecked > 0 && ` ${data.unchecked} not checked yet.`}
-      </p>
+      <TailMatrix def={def} data={data} airline={airline} official={official} />
     </section>
   );
 }
@@ -270,19 +159,12 @@ function VariantsSection({ data }: { data: AircraftTypePageData }) {
   if (!data.variants || data.variants.length < 2) return null;
   return (
     <section className={CARD}>
-      <h2 className={H2}>By variant</h2>
-      <table className="w-full font-mono text-xs text-secondary">
-        <tbody>
-          {data.variants.map((v) => (
-            <tr key={v.label} className="border-t border-subtle">
-              <td className="py-1">{v.label}</td>
-              <td className="py-1 text-right">
-                {v.starlink} of {v.total} with Starlink
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <h2 className={H2_CARD}>By variant</h2>
+      <ul>
+        {data.variants.map((v) => (
+          <ShareBarRow key={v.label} label={v.label} n={v.starlink} total={v.total} />
+        ))}
+      </ul>
     </section>
   );
 }
@@ -291,13 +173,10 @@ function PipelineSection({ def, data }: { def: AircraftPageDef; data: AircraftTy
   const p = data.pipeline;
   if (!p) return null;
   const queued = p.tails.filter((t) => t.state === "scheduled").length;
-  const stations = [...new Set(p.tails.map((t) => t.mod_location).filter(Boolean))]
-    .filter((c): c is string => !!c && !!STATION_NAMES[c])
-    .sort()
-    .map((c) => `${c} ${STATION_NAMES[c]}`);
+  const stations = stationKey(p.tails.map((t) => t.mod_location));
   return (
     <section className={CARD}>
-      <h2 className={H2}>{def.short} install pipeline</h2>
+      <h2 className={H2_CARD}>{def.short} install pipeline</h2>
       {sheetComparison(p, data.starlink).map((line) => (
         <p key={line} className="text-sm text-secondary leading-relaxed">
           {line}
@@ -311,16 +190,21 @@ function PipelineSection({ def, data }: { def: AircraftPageDef; data: AircraftTy
         total={p.total}
       />
       {p.rows.length > 1 && (
-        <div className="grid grid-cols-2 gap-2 font-mono text-[11px] text-secondary mt-3">
-          {p.rows.map((r) => (
-            <div key={r.type_code}>
-              {r.label === r.type_code ? r.label : `${r.label} (${r.type_code})`}:{" "}
-              {r.starlink_complete}/{r.total} complete
-              {r.in_mod > 0 ? `, ${r.in_mod} in mod` : ""}
-              {r.verification_needed > 0 ? `, ${r.verification_needed} verifying` : ""}
-            </div>
-          ))}
-        </div>
+        <ul className="grid sm:grid-cols-2 gap-x-4 gap-y-1 text-sm text-secondary mt-3">
+          {p.rows.map((r) => {
+            const name = sheetTypeName(r.type_code);
+            // Two sheet columns can share a name (789, 789L): the code tells them apart.
+            const shared = p.rows.filter((o) => sheetTypeName(o.type_code) === name).length > 1;
+            return (
+              <li key={r.type_code}>
+                {shared ? `${name} (${r.type_code})` : name}: {fmt(r.starlink_complete)} of{" "}
+                {fmt(r.total)} complete
+                {r.in_mod > 0 ? `, ${fmt(r.in_mod)} in mod` : ""}
+                {r.verification_needed > 0 ? `, ${fmt(r.verification_needed)} verifying` : ""}
+              </li>
+            );
+          })}
+        </ul>
       )}
       {p.tails.length > 0 && (
         <div className="flex flex-wrap gap-1.5 mt-3">
@@ -330,11 +214,7 @@ function PipelineSection({ def, data }: { def: AircraftPageDef; data: AircraftTy
         </div>
       )}
       {p.movements.length > 0 && <MovementsPanel movements={p.movements} anchorBase="/fleet" />}
-      {stations.length > 0 && (
-        <p className="font-mono text-[10px] text-muted mt-3">
-          Mod stations: {stations.join(" · ")}
-        </p>
-      )}
+      {stations && <p className="text-xs text-muted mt-3">Mod stations: {stations}</p>}
     </section>
   );
 }
@@ -343,20 +223,20 @@ function RecentSection({ def, data }: { def: AircraftPageDef; data: AircraftType
   if (data.recentInstalls.length === 0) return null;
   return (
     <section className={CARD}>
-      <h2 className={H2}>Recently first seen with Starlink</h2>
-      <ul className="font-mono text-xs text-secondary grid grid-cols-2 sm:grid-cols-3 gap-1">
+      <h2 className={H2_CARD}>Recently added</h2>
+      <ul className="text-sm text-secondary grid grid-cols-2 sm:grid-cols-3 gap-1">
         {data.recentInstalls.map((r) => (
           <li key={r.tail}>
-            <a href={`/fleet#t-${r.tail}`} className="text-accent hover:underline">
+            <a href={`/fleet#t-${r.tail}`} className={`${LINK} font-mono text-xs`}>
               {r.tail}
             </a>{" "}
-            <span className="text-muted">{monthDay(r.date)}</span>
+            <span className="text-muted">{shortDate(r.date.slice(0, 10))}</span>
           </li>
         ))}
       </ul>
       <p className="text-xs text-muted mt-3">
-        The date each {def.short} first appeared with Starlink in the tracked data, leaving out bulk
-        imports{data.firstSeen ? `; the earliest such date was ${monthDay(data.firstSeen)}` : ""}.
+        The date we first saw Starlink on each {def.short}, leaving out bulk imports
+        {data.firstSeen ? `. The first was ${shortDate(data.firstSeen.slice(0, 10))}` : ""}.
       </p>
     </section>
   );
@@ -364,27 +244,28 @@ function RecentSection({ def, data }: { def: AircraftPageDef; data: AircraftType
 
 function RoutesSection({ def, data }: { def: AircraftPageDef; data: AircraftTypePageData }) {
   if (data.routes.length === 0) return null;
+  const { departures, pairs } = data.routeTotals;
   return (
     <section className={CARD}>
-      <h2 className={H2}>Where Starlink {def.short}s fly next (48 h)</h2>
-      <p className="text-xs text-muted mb-3">
-        {data.routeTotals.departures} scheduled departures on {data.routeTotals.pairs}{" "}
-        {data.routeTotals.pairs === 1 ? "route" : "routes"}; the busiest:
+      <h2 className={H2_CARD}>Where Starlink {def.short}s fly in the next 48 hours</h2>
+      <p className="text-sm text-muted mb-3">
+        {fmt(departures)} scheduled {departures === 1 ? "departure" : "departures"} on {fmt(pairs)}{" "}
+        {pairs === 1 ? "route" : "routes"}. The busiest:
       </p>
-      <ul className="font-mono text-xs text-secondary grid sm:grid-cols-2 gap-1">
+      <ul className="text-sm text-secondary grid sm:grid-cols-2 gap-x-4 gap-y-1">
         {data.routes.map((r) => (
           <li key={`${r.origin}-${r.destination}`}>
             {r.href ? (
-              <a href={r.href} className={LINK}>
+              <a href={r.href} className={`${LINK} font-mono text-xs`}>
                 {r.origin} → {r.destination}
               </a>
             ) : (
-              <span>
+              <span className="font-mono text-xs">
                 {r.origin} → {r.destination}
               </span>
             )}{" "}
-            <span className="text-muted">
-              {r.departures} {r.departures === 1 ? "departure" : "departures"}
+            <span className="text-muted tabular-nums">
+              {fmt(r.departures)} {r.departures === 1 ? "departure" : "departures"}
             </span>
           </li>
         ))}
@@ -412,22 +293,23 @@ function FlightsSection({
   const starlinkOnly = data.flightNumbersScope === "starlink_only";
   if (data.flightNumbers.length < (starlinkOnly ? 3 : 1)) return null;
   const expect = dominantOther(data);
+  const a = article(def.short);
   const caption = starlinkOnly
-    ? `Flights that recently had a Starlink ${def.short}`
+    ? `Flights that recently had a Starlink ${def.short}.`
     : SHARE_KINDS.has(answer.kind)
-      ? `Flight numbers that often get ${article(def.short)} ${def.short}, seen on this type in the last 30 days of observed assignments.`
+      ? `Flights that often got ${a} ${def.short} in the last 30 days.`
       : expect === "none"
-        ? `Flights that usually get ${article(def.short)} ${def.short}, so expect no WiFi.`
+        ? `Flights that usually get ${a} ${def.short}, so expect no Wi-Fi.`
         : expect
-          ? `Flights that usually get ${article(def.short)} ${def.short}, so expect ${PROVIDER_NAMES[expect]} WiFi rather than Starlink.`
-          : `Flights that usually get ${article(def.short)} ${def.short}.`;
+          ? `Flights that usually get ${a} ${def.short}, so expect ${PROVIDER_NAMES[expect]} Wi-Fi rather than Starlink.`
+          : `Flights that usually get ${a} ${def.short}.`;
   return (
     <section className={CARD}>
-      <h2 className={H2}>
+      <h2 className={H2_CARD}>
         {starlinkOnly ? "Recent flights" : `Flights that use the ${def.short}`}
       </h2>
-      <p className="text-xs text-muted mb-3">{caption}</p>
-      <ul className="flex flex-wrap gap-2 font-mono text-xs">
+      <p className="text-sm text-muted mb-3">{caption}</p>
+      <ul className="flex flex-wrap gap-x-3 gap-y-2 font-mono text-xs">
         {data.flightNumbers.map((f) => (
           <li key={f.flightNumber}>
             <a href={f.href} className={LINK}>
@@ -444,23 +326,16 @@ function FactsSection({ facts, airline }: { facts: RolloutFact[]; airline: strin
   if (facts.length === 0) return null;
   return (
     <section className={CARD}>
-      <h2 className={H2}>What {airline} has said</h2>
+      <h2 className={H2_CARD}>What {airline} has said</h2>
       <ul className="space-y-3">
         {facts.map((f) => (
           <li
             key={f.source.url + (f.asOf ?? "")}
             className="text-sm text-secondary leading-relaxed"
           >
-            {f.asOf && (
-              <span className="font-mono text-[11px] text-muted">{formatFactDate(f.asOf)} · </span>
-            )}
+            {f.asOf && <span className="text-muted">{formatFactDate(f.asOf)} · </span>}
             {factText(f)}{" "}
-            <a
-              href={f.source.url}
-              className={`${LINK} text-xs`}
-              rel="noopener noreferrer"
-              target="_blank"
-            >
+            <a href={f.source.url} className={LINK} rel="noopener noreferrer" target="_blank">
               {f.source.label}
             </a>
           </li>
@@ -474,19 +349,19 @@ function SpecsSection({ def, spec }: { def: AircraftPageDef; spec: AircraftSpec 
   if (!spec) return null;
   const rows: Array<[string, string]> = [
     ["Seats", String(spec.seats)],
-    ["Range", `${spec.range_mi.toLocaleString("en-US")} mi`],
-    ["Cruise", `${spec.cruise_mph} mph`],
+    ["Range", `${fmt(spec.range_mi)} mi`],
+    ["Cruise", `${fmt(spec.cruise_mph)} mph`],
     ["First flight", String(spec.first_flight)],
     ["Engines", spec.engines],
   ];
   return (
     <section className={CARD}>
-      <h2 className={H2}>The {def.name}</h2>
-      <dl className="grid grid-cols-2 sm:grid-cols-3 gap-2 font-mono text-xs">
+      <h2 className={H2_CARD}>The {def.name}</h2>
+      <dl className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
         {rows.map(([k, v]) => (
           <div key={k}>
-            <dt className="text-muted">{k}</dt>
-            <dd className="text-secondary">{v}</dd>
+            <dt className="text-xs text-muted">{k}</dt>
+            <dd className="text-secondary tabular-nums">{v}</dd>
           </div>
         ))}
       </dl>
@@ -494,63 +369,31 @@ function SpecsSection({ def, spec }: { def: AircraftPageDef; spec: AircraftSpec 
   );
 }
 
-function TailsSection({
-  def,
-  data,
+function SiblingsSection({
+  siblings,
   airline,
 }: {
-  def: AircraftPageDef;
-  data: AircraftTypePageData;
+  siblings: AircraftTypeSibling[];
   airline: string;
 }) {
-  return (
-    <section className={CARD}>
-      <h2 className={H2}>
-        Every {airline} {def.short} ({data.total})
-      </h2>
-      <p className="text-xs text-muted mb-3">
-        Highlighted tails have Starlink. Each links to its row in the{" "}
-        <a href="/fleet" className={LINK}>
-          fleet registry
-        </a>
-        .
-      </p>
-      <div className="flex flex-wrap gap-1">
-        {data.tails.map((t) => (
-          <a key={t.tail} href={`/fleet#t-${t.tail}`} className={TAIL_CHIP_CLASS[t.provider]}>
-            {t.tail}
-          </a>
-        ))}
-      </div>
-    </section>
+  if (siblings.length === 0) return null;
+  const sorted = [...siblings].sort(
+    (a, b) => b.starlink / b.total - a.starlink / a.total || b.total - a.total
   );
-}
-
-function FaqSection({ faq }: { faq: TypeFaqItem[] }) {
-  if (faq.length === 0) return null;
   return (
     <section className={CARD}>
-      <h2 className={H2}>Questions</h2>
-      <dl className="space-y-4">
-        {faq.map((item) => (
-          <div key={item.q}>
-            <dt className="font-display text-sm font-semibold text-secondary">{item.q}</dt>
-            <dd className="text-sm text-muted leading-relaxed mt-1">
-              {item.aHtml ? (
-                <>
-                  {item.aHtml.before}
-                  <a href={item.aHtml.href} className={LINK}>
-                    {item.aHtml.linkText}
-                  </a>
-                  {item.aHtml.after}
-                </>
-              ) : (
-                item.a
-              )}
-            </dd>
-          </div>
+      <h2 className={H2_CARD}>Other {airline} aircraft</h2>
+      <ul className="grid sm:grid-cols-2 gap-x-8">
+        {sorted.map((s) => (
+          <ShareBarRow
+            key={s.slug}
+            label={s.short}
+            href={`/fleet/${s.slug}`}
+            n={s.starlink}
+            total={s.total}
+          />
         ))}
-      </dl>
+      </ul>
     </section>
   );
 }
@@ -558,13 +401,13 @@ function FaqSection({ faq }: { faq: TypeFaqItem[] }) {
 export default function AircraftTypePage({
   site,
   pageLinks,
+  currentPath,
   def,
   data,
   answer,
   facts,
   faq,
   siblings,
-  iata,
   lastUpdated,
   checkFlight,
   spec,
@@ -575,24 +418,22 @@ export default function AircraftTypePage({
   // facts list so the page states it once besides the FAQ.
   const headerTarget = target?.asOf && TARGET_IN_HEADER.has(answer.kind) ? target : null;
   return (
-    <div className="w-full mx-auto px-4 sm:px-6 md:px-8 bg-base min-h-screen flex flex-col relative">
-      <div className="absolute inset-0 grid-pattern opacity-50 pointer-events-none" />
-      <style
-        // biome-ignore lint/security/noDangerouslySetInnerHtml: static CSS, no user input
-        dangerouslySetInnerHTML={{ __html: FLEET_GRID_CSS + PAGE_CSS }}
+    <PageShell site={site} currentPath={currentPath} pageLinks={pageLinks}>
+      <PageHeader
+        eyebrow={
+          <nav aria-label="Breadcrumb">
+            <a href="/fleet" className="hover:text-accent transition-colors">
+              Fleet
+            </a>{" "}
+            › {def.name}
+          </nav>
+        }
+        title={
+          <>
+            Does the {airline} {def.short} have Starlink?
+          </>
+        }
       />
-
-      <header className="relative py-5 sm:py-6 text-center mb-3">
-        <nav aria-label="Breadcrumb" className="font-mono text-[11px] text-muted mb-2">
-          <a href="/fleet" className="hover:underline">
-            Fleet
-          </a>{" "}
-          › {def.name}
-        </nav>
-        <h1 className="font-display text-3xl sm:text-4xl font-bold text-primary tracking-tight">
-          Does the {airline} {def.short} have Starlink?
-        </h1>
-      </header>
 
       <div className="relative max-w-3xl mx-auto w-full mb-8">
         <Header
@@ -606,15 +447,22 @@ export default function AircraftTypePage({
 
         {answer.shareLine && (
           <section className={CARD}>
-            <h2 className={H2}>
+            <h2 className={H2_CARD}>
               Flying on {article(def.short)} {def.short}?
             </h2>
             <p className="text-sm text-secondary leading-relaxed">{answer.shareLine}</p>
-            {checkFlight && <CheckForm iata={iata} />}
+            {checkFlight && (
+              <FlightSearchForm
+                site={site}
+                id="type-flight-search"
+                submitLabel="Check my flight"
+                hideLabels
+                className="mt-3"
+              />
+            )}
           </section>
         )}
 
-        <ProvidersSection def={def} data={data} airline={airline} />
         <VariantsSection data={data} />
         <PipelineSection def={def} data={data} />
         <RecentSection def={def} data={data} />
@@ -622,29 +470,29 @@ export default function AircraftTypePage({
         <FlightsSection def={def} data={data} answer={answer} />
         <FactsSection facts={facts.filter((f) => f !== headerTarget)} airline={airline} />
         <SpecsSection def={def} spec={spec} />
-        <TailsSection def={def} data={data} airline={airline} />
-        <FaqSection faq={faq} />
-
-        {siblings.length > 0 && (
-          <section className={CARD}>
-            <div className={EYEBROW}>Other {airline} aircraft types</div>
-            <ul className="flex flex-wrap gap-x-4 gap-y-1 font-mono text-xs">
-              {siblings.map((s) => (
-                <li key={s.slug}>
-                  <a href={`/fleet/${s.slug}`} className={LINK}>
-                    {s.short}
-                  </a>{" "}
-                  <span className="text-muted">
-                    {s.starlink}/{s.total}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </section>
-        )}
+        <Faq
+          variant="card"
+          structuredData={false}
+          items={faq.map((item) => ({
+            q: item.q,
+            ld: item.a,
+            a: item.aHtml ? (
+              <>
+                {item.aHtml.before}
+                <a href={item.aHtml.href} className={LINK}>
+                  {item.aHtml.linkText}
+                </a>
+                {item.aHtml.after}
+              </>
+            ) : (
+              item.a
+            ),
+          }))}
+        />
+        <SiblingsSection siblings={siblings} airline={airline} />
 
         <p className="text-sm text-muted text-center">
-          The type is only a starting point: the aircraft assigned to your flight decides it.{" "}
+          The aircraft on your flight is what counts.{" "}
           {checkFlight ? (
             <a href="/check-flight" className={LINK}>
               Check your flight →
@@ -656,8 +504,6 @@ export default function AircraftTypePage({
           )}
         </p>
       </div>
-
-      <PageFooter site={site} pageLinks={pageLinks} />
-    </div>
+    </PageShell>
   );
 }

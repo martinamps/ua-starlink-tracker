@@ -1,0 +1,18 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "entry": [
+    "scripts/*.ts",
+    "src/scripts/*.ts",
+    "src/client/entries/*.ts",
+    "chrome-extension/{background,content,lib}.js",
+    "tests/**/*.test.ts"
+  ],
+  "project": [
+    "*.ts",
+    "scripts/**/*.ts",
+    "src/**/*.{ts,tsx}",
+    "chrome-extension/*.js",
+    "tests/**/*.ts"
+  ],
+  "ignoreExportsUsedInFile": true
+}

@@ -56,11 +56,6 @@ export function extractPublishedDates(html: string): FoundDate[] {
   return found.filter((d) => !seen.has(d.iso) && seen.add(d.iso));
 }
 
-/** The page's single best claim about its own date, or null. */
-export function extractPublishedDate(html: string): FoundDate | null {
-  return extractPublishedDates(html)[0] ?? null;
-}
-
 function fromMeta(html: string, re: RegExp): FoundDate[] {
   const out: FoundDate[] = [];
   for (const m of html.matchAll(re)) {

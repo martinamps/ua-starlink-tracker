@@ -26,7 +26,8 @@ import {
 import { icaoToIata } from "../utils/airport-tz";
 import { extractFlightNumber, pickVerifiableFlight, unitedLookupDate } from "../utils/constants";
 import { type JobHandle, startJob } from "../utils/job-runner";
-import { verifierLog } from "../utils/logger";
+import { logger } from "../utils/logger";
+import { sleep } from "../utils/sleep";
 import type { StarlinkCheckResult } from "./united-starlink-checker";
 import { checkStarlinkStatusSubprocess } from "./united-starlink-checker-subprocess";
 import {
@@ -49,13 +50,13 @@ export interface VerifyPlaneStarlinkDeps {
 // in JSC and its stack frame (the tag source) gets elided.
 const verdictLog = {
   info: (m: string) => {
-    verifierLog.info(m);
+    logger.info(m);
   },
   warn: (m: string) => {
-    verifierLog.warn(m);
+    logger.warn(m);
   },
   debug: (m: string) => {
-    verifierLog.debug(m);
+    logger.debug(m);
   },
 };
 
@@ -188,7 +189,7 @@ export async function verifyPlaneStarlink(
       span.setTag("flight_number", `UA${flightNumber}`);
       span.setTag("route", `${origin}-${destination}`);
 
-      verifierLog.debug(
+      logger.debug(
         `Checking ${tailNumber} via UA${flightNumber} ${origin}-${destination} on ${departureDate}`
       );
 
@@ -228,22 +229,22 @@ export async function verifyPlaneStarlink(
 
         if (tailMismatch) {
           // Already logged above, just note we're not updating
-          verifierLog.debug(
+          logger.debug(
             `Flight ${flightNumber} aircraft: ${resolvedTail} (${result.wifiProvider || "unknown"})`
           );
         } else if (result.hasStarlink) {
           // debug: overwhelmingly re-confirmations. The state CHANGE line
           // (verified_wifi → X in united-verdict) stays at info.
-          verifierLog.debug(
+          logger.debug(
             `✓ ${tailNumber} confirmed Starlink (${result.wifiProvider} via ${result.providerSource})`
           );
         } else if (result.error) {
-          verifierLog.warn(
+          logger.warn(
             `✗ ${tailNumber} error: ${result.error}`,
             result.debugFile ? { debugFile: result.debugFile } : undefined
           );
         } else {
-          verifierLog.debug(
+          logger.debug(
             `✗ ${tailNumber} no Starlink (${
               result.wifiProvider
                 ? `${result.wifiProvider} via ${result.providerSource}`
@@ -256,7 +257,7 @@ export async function verifyPlaneStarlink(
         return result;
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
-        verifierLog.error(`Error verifying ${tailNumber}`, errorMessage);
+        logger.error(`Error verifying ${tailNumber}`, errorMessage);
         metrics.increment(COUNTERS.VERIFICATION_CHECK, {
           result: "error",
           fleet: fleetTag,
@@ -286,16 +287,12 @@ export async function verifyPlaneStarlink(
  * Fetches data from unitedstarlinktracker.com API
  */
 // Cheap pre-flight so the background loop can skip span creation on no-op ticks.
-export function hasVerificationWork(maxPlanes: number, forceAll = false): boolean {
-  const db = initializeDatabase();
-  try {
-    return getPlanesNeedingVerification(db, maxPlanes, forceAll).length > 0;
-  } finally {
-    db.close();
-  }
+export function hasVerificationWork(db: Database, maxPlanes: number, forceAll = false): boolean {
+  return getPlanesNeedingVerification(db, maxPlanes, forceAll).length > 0;
 }
 
 export async function runVerificationBatch(
+  db: Database,
   maxPlanes = 5,
   delayMs = VERIFICATION_DELAY_MS,
   forceAll = false
@@ -306,54 +303,49 @@ export async function runVerificationBatch(
   errors: number;
   skipped: number;
 }> {
-  const db = initializeDatabase();
   const stats = { checked: 0, starlink: 0, notStarlink: 0, errors: 0, skipped: 0 };
 
-  try {
-    // Get planes that need verification (from local DB, includes mismatches so they can self-heal)
-    const toVerify = getPlanesNeedingVerification(db, maxPlanes, forceAll);
+  // Get planes that need verification (from local DB, includes mismatches so they can self-heal)
+  const toVerify = getPlanesNeedingVerification(db, maxPlanes, forceAll);
 
-    if (toVerify.length === 0) {
-      verifierLog.debug("No planes need verification at this time");
-      return stats;
-    }
-
-    verifierLog.debug(`${toVerify.length} plane(s) need verification`);
-
-    for (let i = 0; i < toVerify.length; i++) {
-      const { plane, flight, recheckHours } = toVerify[i];
-      const result = await verifyPlaneStarlink(db, plane.TailNumber, flight, forceAll, {
-        aircraftType: plane.Aircraft,
-        fleet: plane.fleet,
-        recheckHours,
-      });
-
-      if (result === null) {
-        stats.skipped++;
-      } else if (result.error) {
-        stats.errors++;
-      } else if (result.hasStarlink) {
-        stats.starlink++;
-      } else {
-        stats.notStarlink++;
-      }
-      stats.checked++;
-
-      // Delay between checks
-      if (i < toVerify.length - 1) {
-        verifierLog.debug(`Waiting ${delayMs / 1000}s before next check`);
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
-      }
-    }
-
-    // Log verification stats
-    const dbStats = getVerificationStats(db);
-    verifierLog.debug(
-      `Stats: ${dbStats.total_checks} total checks, ${dbStats.last_24h_checks} in last 24h`
-    );
-  } finally {
-    db.close();
+  if (toVerify.length === 0) {
+    logger.debug("No planes need verification at this time");
+    return stats;
   }
+
+  logger.debug(`${toVerify.length} plane(s) need verification`);
+
+  for (let i = 0; i < toVerify.length; i++) {
+    const { plane, flight, recheckHours } = toVerify[i];
+    const result = await verifyPlaneStarlink(db, plane.TailNumber, flight, forceAll, {
+      aircraftType: plane.Aircraft,
+      fleet: plane.fleet,
+      recheckHours,
+    });
+
+    if (result === null) {
+      stats.skipped++;
+    } else if (result.error) {
+      stats.errors++;
+    } else if (result.hasStarlink) {
+      stats.starlink++;
+    } else {
+      stats.notStarlink++;
+    }
+    stats.checked++;
+
+    // Delay between checks
+    if (i < toVerify.length - 1) {
+      logger.debug(`Waiting ${delayMs / 1000}s before next check`);
+      await sleep(delayMs);
+    }
+  }
+
+  // Log verification stats
+  const dbStats = getVerificationStats(db);
+  logger.debug(
+    `Stats: ${dbStats.total_checks} total checks, ${dbStats.last_24h_checks} in last 24h`
+  );
 
   return stats;
 }
@@ -401,7 +393,7 @@ export function logSpreadsheetVerification(
  * With ~100 planes, full cycle takes ~100 minutes
  * Combined with 48-96hr jitter per plane, this spreads load nicely
  */
-export function startStarlinkVerifier(): JobHandle {
+export function startStarlinkVerifier(db: Database): JobHandle {
   const BASE_INTERVAL_MS = 60 * 1000; // 60 seconds
   const HEARTBEAT_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
   const PLANES_PER_RUN = 1;
@@ -417,17 +409,17 @@ export function startStarlinkVerifier(): JobHandle {
     if (now - lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
       // See fleet-discovery: the counter belongs in the data field so the
       // 2,950 heartbeat lines/week group as one pattern instead of 2,950.
-      verifierLog.info("Heartbeat: verifier scheduler healthy", { runs: runCount });
+      logger.info("Heartbeat: verifier scheduler healthy", { runs: runCount });
       lastHeartbeat = now;
     }
 
     // ~97% of ticks find nothing to do — skip span creation on no-op runs.
-    if (!hasVerificationWork(PLANES_PER_RUN)) return;
+    if (!hasVerificationWork(db, PLANES_PER_RUN)) return;
 
     await withSpan(
       "starlink_verifier.run",
       async (span) => {
-        const stats = await runVerificationBatch(PLANES_PER_RUN, VERIFICATION_DELAY_MS);
+        const stats = await runVerificationBatch(db, PLANES_PER_RUN, VERIFICATION_DELAY_MS);
 
         span.setTag("checked", stats.checked);
         span.setTag("starlink", stats.starlink);
@@ -435,11 +427,11 @@ export function startStarlinkVerifier(): JobHandle {
 
         // See fleet-discovery: a no-change batch is a debug-level fact.
         if (stats.starlink > 0 || stats.errors > 0) {
-          verifierLog.info(
+          logger.info(
             `Batch complete: ${stats.starlink} Starlink, ${stats.notStarlink} not, ${stats.errors} errors`
           );
         } else if (stats.checked > 0) {
-          verifierLog.debug(
+          logger.debug(
             `Batch complete: ${stats.starlink} Starlink, ${stats.notStarlink} not, ${stats.errors} errors`
           );
         }
@@ -455,7 +447,7 @@ export function startStarlinkVerifier(): JobHandle {
     run: runVerification,
   });
 
-  verifierLog.info(
+  logger.info(
     `Background verifier started (every ${BASE_INTERVAL_MS / 1000}s, ${PLANES_PER_RUN} plane/run)`
   );
   return handle;
@@ -526,7 +518,8 @@ if (import.meta.main) {
       `Running Starlink verification for up to ${maxPlanes} planes${forceAll ? " (FORCE ALL - ignoring rate limits)" : ""}...\n`
     );
 
-    runVerificationBatch(maxPlanes, VERIFICATION_DELAY_MS, forceAll)
+    const db = initializeDatabase();
+    runVerificationBatch(db, maxPlanes, VERIFICATION_DELAY_MS, forceAll)
       .then((stats) => {
         console.log("\n=== Batch Results ===");
         console.log(`Checked: ${stats.checked}`);

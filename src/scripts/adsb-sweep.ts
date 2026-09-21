@@ -9,7 +9,7 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { looksLikeValidTailNumber } from "../airlines/registry";
+import { looksLikeValidTailNumber, operatorStoragePrefixes } from "../airlines/registry";
 import {
   type AdsbFlightSighting,
   countAdsbFlightDraws,
@@ -29,6 +29,7 @@ import type { AdsbObservationRecord } from "../types";
 import { BROWSER_USER_AGENT } from "../utils/constants";
 import { type JobHandle, createOutageBreaker, startJob } from "../utils/job-runner";
 import { debug, info, error as logError, warn } from "../utils/logger";
+import { sleep } from "../utils/sleep";
 
 interface AdsbProvider {
   name: string;
@@ -82,8 +83,6 @@ export interface AdsbSweepStats {
   requests: number;
   latencyMs: number;
 }
-
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function queryProvider(
   provider: AdsbProvider,
@@ -163,15 +162,7 @@ export async function sweepAdsbProviders(
 
 // Callsign ICAO prefix → how upcoming_flights codes that operator's rows. The
 // pairing matters: SKW#### must never match a marketing UA#### that shares the number.
-const OPERATOR_DB_PREFIXES: Record<string, string[]> = {
-  UAL: ["UAL", "UA"],
-  SKW: ["SKW", "OO"],
-  GJS: ["GJS", "G7"],
-  RPA: ["RPA", "YX"],
-  ASH: ["ASH", "YV"],
-  UCA: ["UCA", "C5"],
-  AWI: ["AWI", "ZW"],
-};
+const OPERATOR_DB_PREFIXES = operatorStoragePrefixes("UA");
 const UA_CALLSIGN_RE = new RegExp(`^(${Object.keys(OPERATOR_DB_PREFIXES).join("|")})(\\d+)$`);
 
 export function deriveCallsignFlight(
@@ -543,7 +534,7 @@ const BACKFILL_BUDGET_MS = 3_000;
 type BackfillState = { cursor: number; highWater: number } | "done";
 
 function readBackfillState(db: Database): BackfillState | null {
-  const raw = getMeta(db, BACKFILL_META_KEY);
+  const raw = getMeta(db, BACKFILL_META_KEY, "UA");
   if (!raw) return null;
   if (raw === "done") return "done";
   try {
@@ -572,7 +563,7 @@ export async function backfillAdsbFlightDraws(
     if (state === "done") return "skipped";
     if (state === null) {
       if (countAdsbFlightDraws(db) > 0) {
-        setMeta(db, BACKFILL_META_KEY, "done");
+        setMeta(db, BACKFILL_META_KEY, "done", "UA");
         return "skipped";
       }
       const hw = db.query("SELECT MAX(id) AS id FROM adsb_observations").get() as {
@@ -592,13 +583,13 @@ export async function backfillAdsbFlightDraws(
         SightingSource & { id: number }
       >;
       if (rows.length === 0) {
-        setMeta(db, BACKFILL_META_KEY, "done");
+        setMeta(db, BACKFILL_META_KEY, "done", "UA");
         info("adsb-draws backfill: complete");
         return "done";
       }
       upsertAdsbFlightDraws(db, toSightings(rows));
       state = { cursor: rows[rows.length - 1].id, highWater: state.highWater };
-      setMeta(db, BACKFILL_META_KEY, JSON.stringify(state));
+      setMeta(db, BACKFILL_META_KEY, JSON.stringify(state), "UA");
       await sleep(0);
     }
     return "partial";

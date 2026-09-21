@@ -9,9 +9,10 @@ import ReactDOMServer from "react-dom/server";
 import { getContent } from "../src/airlines/content";
 import { AIRLINES, SITES, publicAirlines, wifiPhaseFamilies } from "../src/airlines/registry";
 import { factsBySlug } from "../src/airlines/rollout-facts";
+import { renderFlightAnswer } from "../src/client/flight-answer";
 import CheckFlightPage, { type FlightFacts } from "../src/components/check-flight-page";
-import { monthLabel } from "../src/components/install-rate-page";
 import { LIVE_TV_TARGET_FACT } from "../src/components/live-tv-page";
+import { monthYear } from "../src/components/ui/format";
 import {
   flyertalkFirstSyncDays,
   getDailyInstalls,
@@ -37,21 +38,46 @@ afterAll(() => db.close());
 
 describe("install-rate dates", () => {
   test("month labels carry a four-digit year", () => {
-    expect(monthLabel("2027-05")).toBe("May 2027");
+    expect(monthYear("2027-05")).toBe("May 2027");
   });
 });
 
 describe("check-flight permalink", () => {
-  test("departure times render in the departure airport's zone", async () => {
-    const { text } = await bodyOf(app, "/check-flight/UA2638", UA);
-    expect(text).toContain('"America/Denver":"');
-    expect(text).toContain("localTime(flight.departure_time, flight.departure_airport)");
-    expect(text).not.toContain(
-      "toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })"
+  test("departure times render in the departure airport's zone", () => {
+    // 2026-01-15 15:00 UTC is 07:00 in Los Angeles, 10:00 in New York.
+    const dep = Date.UTC(2026, 0, 15, 15, 0) / 1000;
+    const answer = renderFlightAnswer(
+      {
+        hasStarlink: true,
+        confidence: "verified",
+        flights: [
+          {
+            tail_number: "N1",
+            flight_number: "UA1",
+            departure_airport: "SFO",
+            arrival_airport: "EWR",
+            departure_time: dep,
+          },
+        ],
+      },
+      {
+        flightNumber: "UA1",
+        date: "2026-01-15",
+        daysOut: 0,
+        nowSec: dep,
+        airlineName: "United Airlines",
+        zoneFor: (c) => (c === "SFO" ? "America/Los_Angeles" : undefined),
+        liveTv: null,
+        watchEnabled: false,
+        routePlannerEnabled: false,
+        host: UA,
+      }
     );
+    expect(answer.html).toMatch(/7:00\sAM PST/);
+    expect(answer.headline).toContain("UA1 on Jan 15");
   });
 
-  test("the observed tally is labelled as verified departures, not the model's history", () => {
+  test("the observed tally is labelled as Wi-Fi checks, not departures", () => {
     const flight: FlightFacts = {
       flightNumber: "UA2638",
       airlineName: "United Airlines",
@@ -65,9 +91,11 @@ describe("check-flight permalink", () => {
     };
     const html = ReactDOMServer.renderToString(
       React.createElement(CheckFlightPage, { site: SITES.united, flight })
-    ).replace(/<!-- -->/g, "");
-    expect(html).toContain("13 of 29 recently verified departures");
-    expect(html).not.toContain("observed departures (");
+    )
+      .replace(/<!-- -->/g, "")
+      .replace(/<[^>]+>/g, "");
+    expect(html).toContain("13 of 29 Wi-Fi checks");
+    expect(html).not.toMatch(/\d+ of \d+ [a-z ]*departures/);
   });
 });
 
@@ -121,32 +149,49 @@ describe("FlyerTalk installs after the backfill", () => {
 });
 
 describe("homepage install pace", () => {
-  test("is the /install-rate pace, not a hardcoded figure", async () => {
-    const { text } = await bodyOf(app, "/", UA);
-    expect(text).not.toContain("40+");
+  test("is the /install-rate pace, not a hardcoded figure, in the page header", async () => {
+    const sdb = makeSyntheticDb();
+    const ins = sdb.query(
+      `INSERT INTO starlink_planes (aircraft, wifi, sheet_gid, DateFound, TailNumber, OperatedBy, fleet, airline)
+       VALUES ('Boeing 737-800', 'StrLnk', '0', ?, ?, 'United Airlines', 'mainline', 'UA')`
+    );
+    const now = new Date();
+    let n = 0;
+    for (let month = 1; month <= 4; month++) {
+      for (let day = 1; day <= 20; day++) {
+        const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - month, day));
+        ins.run(d.toISOString().slice(0, 10), `N${String(n++).padStart(4, "0")}PX`);
+      }
+    }
     const pace = computeInstallRate({
-      daily: getDailyInstalls(db, ["UA"]),
+      daily: getDailyInstalls(sdb, ["UA"]),
       equipped: 0,
       total: 0,
       targets: [],
       nowMs: Date.now(),
     }).paceMonthly;
-    if (pace) {
-      expect(text.replace(/<!-- -->/g, "")).toContain(`~${Math.round(pace)}</span> installs/mo`);
-    }
-    expect(text).toContain("Starlink jets by type");
+    expect(pace).toBeGreaterThan(0);
+    const { status, text } = await bodyOf(createApp(sdb), "/", UA);
+    sdb.close();
+    expect(status).toBe(200);
+    const html = text.replace(/<!-- -->/g, "");
+    const headerEnd = html.indexOf("</header>");
+    expect(headerEnd).toBeGreaterThan(0);
+    const header = html.slice(html.lastIndexOf("<header", headerEnd), headerEnd);
+    expect(header).toContain(`~${Math.round(pace ?? 0)}</span> installs a month`);
+    expect(html).not.toContain("40+");
   });
 
   test("the stat strip states the pace it is given, and omits it when there is none", () => {
     const strip = getContent(AIRLINES.UA).headerStats;
     if (typeof strip !== "function") throw new Error("UA header stats must derive from data");
-    const base = { starlinkCount: 1, totalCount: 2, percentage: "50.00" };
+    const base = { starlinkCount: 1, totalCount: 2 };
     const render = (installsPerMonth: number | null) =>
       ReactDOMServer.renderToString(
         React.createElement(React.Fragment, null, ...strip({ ...base, installsPerMonth }))
       ).replace(/<!-- -->/g, "");
-    expect(render(54.7)).toContain("~55</span> installs/mo");
-    expect(render(null)).not.toContain("installs/mo");
+    expect(render(54.7)).toContain("~55</span> installs a month");
+    expect(render(null)).not.toContain("installs a month");
   });
 });
 

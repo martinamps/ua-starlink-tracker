@@ -3,7 +3,10 @@
  */
 
 import type { Browser, Page } from "playwright";
-import { COUNTERS, metrics } from "../observability";
+import { COUNTERS, metrics, normalizeScopeTag } from "../observability";
+
+// The transport is shared by every airline's FR24 traffic.
+const TRANSPORT_AIRLINE = normalizeScopeTag("ALL");
 import { BROWSER_USER_AGENT } from "../utils/constants";
 import { error, info, warn } from "../utils/logger";
 
@@ -115,6 +118,7 @@ async function launch(): Promise<Page> {
       vendor: "fr24",
       type: "browser_launch",
       status: "success",
+      airline: TRANSPORT_AIRLINE,
     });
     return pg;
   } catch (err) {
@@ -122,6 +126,7 @@ async function launch(): Promise<Page> {
       vendor: "fr24",
       type: "browser_launch",
       status: "error",
+      airline: TRANSPORT_AIRLINE,
     });
     if (pendingBrowser === b) pendingBrowser = null;
     if (b) await b.close().catch(() => {});
@@ -198,6 +203,7 @@ export async function fr24Fetch(url: string, timeoutMs = 15000): Promise<FR24Fet
         vendor: "fr24",
         type: "browser_launch",
         status: "relaunch",
+        airline: TRANSPORT_AIRLINE,
       });
       await teardown();
       consecutiveFailures = 0;

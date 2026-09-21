@@ -7,8 +7,6 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { AIRLINES, enabledAirlines } from "../src/airlines/registry";
 import { checkNewPlanes } from "../src/api/flight-updater";
 import { FlightRadar24API } from "../src/api/flightradar24-api";
@@ -30,6 +28,7 @@ import {
 } from "../src/scripts/data-freshness";
 import { buildRoster, fleetSyncInitialDelayMs, rosterSources } from "../src/scripts/fleet-sync";
 import { ingestQatarSchedule } from "../src/scripts/qatar-schedule-ingester";
+import { SOURCE_AIRLINE } from "../src/scripts/residential-sync";
 import { type SheetScrapeResult, runSheetScrape } from "../src/scripts/sheet-scrape";
 import type { FleetStats } from "../src/types";
 import { type JobClock, createOutageBreaker, startJob } from "../src/utils/job-runner";
@@ -510,8 +509,7 @@ describe("alaska-verifier per-airline breaker", () => {
 
   test("AS-only outage trips only AS; HA keeps verifying and the rotation proceeds", async () => {
     const calls: string[] = [];
-    const tick = makeAlaskaTick(["AS", "HA"], {
-      openDb: () => makeSyntheticDb(),
+    const tick = makeAlaskaTick(makeSyntheticDb(), ["AS", "HA"], {
       getTarget: fakeTarget,
       check: async (_db, airline) => {
         calls.push(airline);
@@ -538,8 +536,7 @@ describe("alaska-verifier per-airline breaker", () => {
 
   test("a stale (abandoned) tick does not feed the breaker", async () => {
     let checks = 0;
-    const tick = makeAlaskaTick(["AS"], {
-      openDb: () => makeSyntheticDb(),
+    const tick = makeAlaskaTick(makeSyntheticDb(), ["AS"], {
       getTarget: fakeTarget,
       check: async () => {
         checks++;
@@ -838,10 +835,7 @@ describe("residential_sync freshness gauge", () => {
 
   // residential-sync stamps AF:residentialSyncAt; the gauge ignored it.
   test("every airline residential-sync stamps is tracked", () => {
-    const src = readFileSync(join(import.meta.dir, "../src/scripts/residential-sync.ts"), "utf8");
-    const stamped = [...src.matchAll(/setMeta\(db, "residentialSyncAt", [^,]+, "([A-Z0-9]{2})"\)/g)]
-      .map((m) => m[1])
-      .filter((code) => AIRLINES[code]?.enabled);
+    const stamped = Object.values(SOURCE_AIRLINE).filter((code) => AIRLINES[code]?.enabled);
     expect(stamped.length).toBeGreaterThan(0);
     for (const code of stamped) expect(FRESHNESS_COVERAGE.residential_sync).toContain(code);
 

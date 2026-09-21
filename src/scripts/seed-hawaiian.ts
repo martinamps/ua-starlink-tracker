@@ -10,11 +10,12 @@
  *   bun run seed-hawaiian -- --apply       # write to DB
  */
 
-import { Database } from "bun:sqlite";
+import type { Database } from "bun:sqlite";
 import { AIRLINES } from "../airlines/registry";
 import { type HawaiianWifi, hawaiianTypeToStarlink } from "../api/alaska-status";
 import {
   addDiscoveredStarlinkPlane,
+  openDatabase,
   refreshFleetMeta,
   upsertFleetAircraft,
 } from "../database/database";
@@ -128,7 +129,7 @@ if (import.meta.main) {
   printTable(rows);
 
   if (doApply) {
-    const db = new Database(dbPath);
+    const db = openDatabase(dbPath);
     apply(db, rows);
     db.close();
   } else {

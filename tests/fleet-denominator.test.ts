@@ -40,7 +40,7 @@ describe("fleet denominator source of truth", () => {
     db.query("UPDATE united_fleet SET fleet = 'express' WHERE tail_number LIKE 'N90%'").run();
     db.query("UPDATE united_fleet SET fleet = 'mainline' WHERE tail_number LIKE 'N91%'").run();
 
-    const refusal = updateDatabase(db, 1818, sheetRoster, inflatedSheetStats);
+    const refusal = updateDatabase(db, 1818, sheetRoster, inflatedSheetStats, "UA");
     expect(refusal).toBeNull();
 
     // Published totals are the roster's 8, not the sheet's 1,818.
@@ -53,7 +53,7 @@ describe("fleet denominator source of truth", () => {
 
   test("with no roster rows the sheet tallies survive as the fallback", () => {
     const db = makeSyntheticDb();
-    const refusal = updateDatabase(db, 1818, sheetRoster, inflatedSheetStats);
+    const refusal = updateDatabase(db, 1818, sheetRoster, inflatedSheetStats, "UA");
     expect(refusal).toBeNull();
     expect(getTotalCount(db, "UA")).toBe(1818);
     expect(getFleetStats(db, "UA").express.total).toBe(674);
@@ -66,7 +66,7 @@ describe("fleet denominator source of truth", () => {
     // must exist (the scrape wrote it) and stay a valid ISO timestamp.
     const db = makeSyntheticDb();
     addFleet(db, "N900EX", "confirmed");
-    updateDatabase(db, 1818, sheetRoster, inflatedSheetStats);
+    updateDatabase(db, 1818, sheetRoster, inflatedSheetStats, "UA");
     const stamped = db.query("SELECT value FROM meta WHERE key = 'UA:lastUpdated'").get() as {
       value: string;
     } | null;

@@ -34,6 +34,7 @@ import {
   addPlane,
   addQatarRow,
   makeSyntheticDb,
+  mcpTool,
   openSnapshot,
   stubPredict,
   utc,
@@ -419,23 +420,8 @@ describe("FR24 outage caveats through dispatch (synthetic DB)", () => {
     return (await res.json()) as { message?: string };
   };
 
-  const mcpCheck = async (host: string, flightNumber: string) => {
-    const res = await app.dispatch(
-      new Request("http://x/mcp", {
-        method: "POST",
-        headers: { Host: host, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          method: "tools/call",
-          params: { name: "check_flight", arguments: { flight_number: flightNumber, date: today } },
-        }),
-      })
-    );
-    expect(res.status).toBe(200);
-    const j = (await res.json()) as { result: { content: Array<{ text: string }> } };
-    return j.result.content[0].text;
-  };
+  const mcpCheck = async (host: string, flightNumber: string) =>
+    (await mcpTool(app, host, "check_flight", { flight_number: flightNumber, date: today })).text;
 
   test("REST scheduled_no + outage: firm no stands, swap-degradation caveat present", async () => {
     const d = await rest(`/api/check-flight?flight_number=UA333&date=${today}`, UA_HOST);
@@ -509,24 +495,11 @@ describe("/api/check-flight boundary + contract through dispatch (synthetic DB)"
   });
 
   test("MCP check_flight agrees with REST on the boundary date (REST==MCP)", async () => {
-    const mcp = await app.dispatch(
-      new Request("http://x/mcp", {
-        method: "POST",
-        headers: { Host: UA_HOST, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          method: "tools/call",
-          params: {
-            name: "check_flight",
-            arguments: { flight_number: "UA111", date: "2027-06-09" },
-          },
-        }),
-      })
-    );
-    expect(mcp.status).toBe(200);
-    const json = (await mcp.json()) as { result: { content: { text: string }[] } };
-    expect(json.result.content[0].text).toMatch(/Yes!/);
+    const { text } = await mcpTool(app, UA_HOST, "check_flight", {
+      flight_number: "UA111",
+      date: "2027-06-09",
+    });
+    expect(text).toMatch(/Yes!/);
   });
 });
 
@@ -568,23 +541,11 @@ describe("REST==MCP equivalence on snapshot data", () => {
     expect(restBody.hasStarlink).toBe(true);
     expect(restBody.flights.length).toBeGreaterThan(0);
 
-    const mcp = await app.dispatch(
-      new Request("http://x/mcp", {
-        method: "POST",
-        headers: { Host: UA_HOST, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          method: "tools/call",
-          params: {
-            name: "check_flight",
-            arguments: { flight_number: sample.flight_number, date },
-          },
-        }),
-      })
-    );
-    const mcpJson = (await mcp.json()) as { result: { content: { text: string }[] } };
-    expect(mcpJson.result.content[0].text).toMatch(/yes/i);
+    const { text } = await mcpTool(app, UA_HOST, "check_flight", {
+      flight_number: sample.flight_number,
+      date,
+    });
+    expect(text).toMatch(/yes/i);
   });
 
   test("HA host no-data → tri-state type verdict (deliberate wire change, pinned)", async () => {

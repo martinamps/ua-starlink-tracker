@@ -16,6 +16,8 @@ export {
   normalizeWifiProvider,
   normalizeFleet,
   normalizeAirlineTag,
+  normalizeScopeTag,
+  flightAirlineTag,
   normalizeCarrierPrefix,
   normalizeOpCarrier,
   normalizeProbeOutcome,

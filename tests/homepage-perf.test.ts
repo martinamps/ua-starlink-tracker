@@ -9,7 +9,7 @@
 
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { SITES } from "../src/airlines/registry";
-import { formatPillTime } from "../src/components/page";
+import { formatPillTime } from "../src/components/ui/format";
 import { createApp } from "../src/server/app";
 import { openSnapshot, req } from "./helpers";
 
@@ -94,7 +94,7 @@ describe("homepage DOM", () => {
       const dupes = ids.filter((id, i) => ids.indexOf(id) !== i);
       expect(dupes).toEqual([]);
 
-      const rows = (html.match(/class="aircraft-row /g) ?? []).length;
+      const rows = (html.match(/class="js-aircraft-row /g) ?? []).length;
       const containers = ids.filter((id) => id.startsWith("flights-")).length;
       expect(containers).toBeLessThanOrEqual(rows);
     });

@@ -42,7 +42,7 @@ import { createApp } from "../src/server/app";
 import { type ScopedReader, createReaderFactory } from "../src/server/context";
 import { airportLocalDate } from "../src/utils/airport-tz";
 import { pickVerifiableFlight, unitedLookupDate } from "../src/utils/constants";
-import { TEST_DB, jsonOf, mcpReq, openSnapshot } from "./helpers";
+import { TEST_DB, jsonOf, mcpDirect, openSnapshot } from "./helpers";
 
 // UA-bound conveniences — these unit tests pin United's carrier-prefix mappings.
 const UA_CFG = AIRLINES.UA;
@@ -173,17 +173,9 @@ describe("/api/check-flight contract", () => {
 // MCP protocol — JSON-RPC 2.0 envelope + tool schemas
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function mcpCall(method: string, params?: unknown) {
-  // Direct handleMcpRequest (not app.dispatch) — these tests pin the MCP layer
-  // against a known scoped reader; the request itself is the shared builder.
-  const resp = await handleMcpRequest(
-    mcpReq("unitedstarlinktracker.com", method, params),
-    "UA",
-    () => reader
-  );
-  expect(resp.status).toBe(200);
-  return resp.json();
-}
+// Direct handleMcpRequest (not app.dispatch) — these tests pin the MCP layer
+// against a known scoped reader.
+const mcpCall = (method: string, params?: unknown) => mcpDirect("UA", () => reader, method, params);
 
 describe("MCP protocol", () => {
   test("GET with JSON accept returns 405 (Streamable HTTP)", async () => {
@@ -193,6 +185,30 @@ describe("MCP protocol", () => {
     });
     const resp = await handleMcpRequest(req, "UA", () => reader);
     expect(resp.status).toBe(405);
+    expect(resp.headers.get("allow")).toBe("POST");
+    expect(resp.headers.get("access-control-allow-methods")).toContain("POST");
+  });
+
+  test("every protocol response carries nosniff and the MCP CORS contract", async () => {
+    const post = (body: string, contentType = "application/json") =>
+      handleMcpRequest(
+        new Request("http://localhost/mcp", {
+          method: "POST",
+          headers: { "Content-Type": contentType },
+          body,
+        }),
+        "UA",
+        () => reader
+      );
+    for (const resp of [
+      await post(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" })),
+      await post(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })),
+      await post("{not json"),
+      await post("{}", "text/plain"),
+    ]) {
+      expect(resp.headers.get("x-content-type-options")).toBe("nosniff");
+      expect(resp.headers.get("access-control-allow-methods")).toContain("POST");
+    }
   });
 
   test("initialize returns capabilities, serverInfo, instructions", async () => {
@@ -308,7 +324,7 @@ describe("MCP tools", () => {
     });
     const text = json.result.content[0].text;
     // Format: **UAxxx**: ~N% Starlink probability (fleet prior). mainline fleet...
-    const pctMatch = text.match(/~(\d+)% Starlink probability/);
+    const pctMatch = text.match(/~?(\d+)% Starlink probability/);
     expect(pctMatch).not.toBeNull();
     const pct = Number(pctMatch![1]);
     // The reported number IS United's live mainline penetration by design, so
@@ -938,9 +954,12 @@ describe("getFleetPageData", () => {
     expect(d.allTails.length).toBe(d.totalFleet);
 
     for (const c of d.carriers) {
-      expect(["SkyWest", "Republic", "Mesa", "GoJet"]).toContain(c.name);
+      expect(["SkyWest", "Republic", "Mesa", "GoJet", "Unattributed"]).toContain(c.name);
       expect(c.confirmed).toBeLessThanOrEqual(c.total);
     }
+    // Every express tail sits in exactly one carrier row.
+    const express = d.allTails.filter((t) => t.fleet === "express").length;
+    expect(d.carriers.reduce((n, c) => n + c.total, 0)).toBe(express);
 
     for (const body of ["regional", "narrowbody", "widebody"] as const) {
       const sum = Object.values(d.bodyClass[body]).reduce((a, b) => a + b, 0);
@@ -1179,7 +1198,9 @@ describe("SEO meta", () => {
   test("homepage <title> embeds the live count and has no unresolved {{vars}}", async () => {
     const html = await getHtml("/");
     const title = html.match(/<title>([^<]+)<\/title>/)?.[1] ?? "";
-    expect(title).toMatch(/\d+ Aircraft/);
+    // The live answer, e.g. "United Starlink Tracker: 584 of 1,659 Planes Have Starlink".
+    expect(title).toMatch(/^United Starlink Tracker: [\d,]+ of [\d,]+ Planes/);
+    expect(title.length).toBeLessThanOrEqual(60);
     expect(title).not.toContain("{{");
     expect(html).not.toContain("{{starlinkCount}}");
     expect(html).not.toContain("{{totalAircraftCount}}");

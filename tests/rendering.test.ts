@@ -66,7 +66,7 @@ describe("canonical / og:url / WebPage JSON-LD claim the page path", () => {
     const expected = `https://${HOST}${path}`;
     expect(html.match(/<link rel="canonical" href="([^"]+)"/)?.[1]).toBe(expected);
     expect(html.match(/<meta property="og:url" content="([^"]+)"/)?.[1]).toBe(expected);
-    expect(html).toContain(`Does ${realFlight} Have Starlink WiFi?`);
+    expect(html).toContain(`Does ${realFlight} have Starlink Wi-Fi?`);
     expect(html).not.toContain("0% of the time");
   });
 
@@ -77,7 +77,7 @@ describe("canonical / og:url / WebPage JSON-LD claim the page path", () => {
     expect(html.match(/<link rel="canonical" href="([^"]+)"/)?.[1]).toBe(
       `https://${HOST}/check-flight/${realFlight}`
     );
-    expect(html).toContain(`Does ${realFlight} Have Starlink WiFi?`);
+    expect(html).toContain(`Does ${realFlight} have Starlink Wi-Fi?`);
   });
 
   test("WebPage JSON-LD carries the page's own title, not homepage copy", async () => {
@@ -190,7 +190,7 @@ describe("flight permalink gate + normalization", () => {
     expect(html).toContain("isn&#x27;t a flight number");
     expect(html).toContain("PHX");
     expect(html).toContain('id="check-flight-form"');
-    expect(html).toContain("Looking for an airport or a route instead?");
+    expect(html).toContain("Looking for an airport or a route?");
     expect(html).not.toContain("The page you&#x27;re looking for doesn&#x27;t exist");
   });
 
@@ -200,7 +200,7 @@ describe("flight permalink gate + normalization", () => {
     const html = await res.text();
     expect(html).toContain("isn&#x27;t a flight number");
     // The footer nav links the planner on every page; the hint is the notice copy.
-    expect(html).not.toContain("Looking for an airport or a route instead?");
+    expect(html).not.toContain("Looking for an airport or a route?");
   });
 
   test("other-carrier segment → 404 page that never names the other carrier", async () => {
@@ -263,7 +263,7 @@ describe("flight permalink route rows carry their evidence date", () => {
     expect(fn).toMatch(/^UA\d{1,4}$/);
 
     const html = plain(await (await app.dispatch(req(`/check-flight/${fn}`, HOST))).text());
-    const seen = html.match(/· seen \d+ times?/g) ?? [];
+    const seen = html.match(/Seen [\d,]+ times?/g) ?? [];
     expect(seen.length).toBeGreaterThan(0);
     // One date per row, not one for the block.
     expect((html.match(/· last seen \w{3} \d{1,2}, \d{4}/g) ?? []).length).toBe(seen.length);

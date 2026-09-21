@@ -173,7 +173,6 @@ export async function checkOne(
 }
 
 interface AlaskaTickDeps {
-  openDb: typeof initializeDatabase;
   getTarget: typeof getNextAlaskaVerifyTarget;
   check: (db: Database, airline: "AS" | "HA") => Promise<string>;
   breakerFor: () => OutageBreaker;
@@ -186,10 +185,10 @@ interface AlaskaTickDeps {
  * selection so a skip burns only that airline's turn — the rotation proceeds.
  */
 export function makeAlaskaTick(
+  db: Database,
   targets: Array<"AS" | "HA">,
   deps: Partial<AlaskaTickDeps> = {}
 ): (ctx?: JobRunContext) => Promise<void> {
-  const openDb = deps.openDb ?? initializeDatabase;
   const getTarget = deps.getTarget ?? getNextAlaskaVerifyTarget;
   const check = deps.check ?? checkOne;
   const breakerFor =
@@ -206,12 +205,7 @@ export function makeAlaskaTick(
     // Most ticks find nothing to verify — skip span creation on no-op runs.
     let target: ReturnType<typeof getNextAlaskaVerifyTarget> = null;
     try {
-      const db = openDb();
-      try {
-        target = getTarget(db, airline);
-      } finally {
-        db.close();
-      }
+      target = getTarget(db, airline);
     } catch (e) {
       logError(`alaska-verifier ${airline} pre-check failed`, e);
       return;
@@ -223,19 +217,14 @@ export function makeAlaskaTick(
       async (span) => {
         span.setTag("airline", normalizeAirlineTag(airline));
         try {
-          const db = openDb();
-          try {
-            const result = await check(db, airline);
-            span.setTag("result", result);
-            // An abandoned run settling late must not feed the breaker its
-            // successor reads.
-            if ((ctx?.isCurrent() ?? true) && breaker.record(breakerOutcome(result))) {
-              logError(
-                `alaska-verifier ${airline}: consecutive fetch failures tripped the outage breaker — skipping its upcoming ticks`
-              );
-            }
-          } finally {
-            db.close();
+          const result = await check(db, airline);
+          span.setTag("result", result);
+          // An abandoned run settling late must not feed the breaker its
+          // successor reads.
+          if ((ctx?.isCurrent() ?? true) && breaker.record(breakerOutcome(result))) {
+            logError(
+              `alaska-verifier ${airline}: consecutive fetch failures tripped the outage breaker — skipping its upcoming ticks`
+            );
           }
         } catch (e) {
           span.setTag("error", true);
@@ -247,7 +236,7 @@ export function makeAlaskaTick(
   };
 }
 
-export function startAlaskaVerifier(): JobHandle | undefined {
+export function startAlaskaVerifier(db: Database): JobHandle | undefined {
   const targets = enabledAirlines()
     .filter((a) => a.verifierBackend === "alaska-json")
     .map((a) => a.code as "AS" | "HA");
@@ -263,7 +252,7 @@ export function startAlaskaVerifier(): JobHandle | undefined {
     name: "alaska_verifier",
     intervalMs: INTERVAL_MS,
     initialDelayMs: 30_000,
-    run: makeAlaskaTick(targets),
+    run: makeAlaskaTick(db, targets),
   });
 }
 

@@ -3,19 +3,15 @@
  * the AirlineConfig — adding a carrier means adding a config, not editing here.
  */
 
-import { type AirlineConfig, enabledAirlines } from "./registry";
+import {
+  type FlightInputRules,
+  canonicalFlightFor,
+  canonicalFlightInput,
+  stripFlightNumberZeros,
+} from "./flight-input";
+import { AIRLINES, type AirlineConfig, enabledAirlines } from "./registry";
 
-/**
- * How people actually type flight numbers: "UA 544", "ua-544", "UA.544".
- * Stripping separators before any prefix logic keeps every surface agreeing;
- * digits stay digits, so "UA 544 2026" still fails the 1-4 digit bound.
- */
-export function canonicalFlightInput(s: string): string {
-  return s
-    .trim()
-    .toUpperCase()
-    .replace(/[\s\-.]/g, "");
-}
+export { canonicalFlightFor, canonicalFlightInput, stripFlightNumberZeros };
 
 function detectByPrefixes(
   flightNumber: string,
@@ -99,6 +95,24 @@ export function normalizeAirlineFlightNumber(cfg: AirlineConfig, flightNumber: s
 }
 
 /**
+ * The marketed number for a row already known to belong to `cfg`. Unlike
+ * normalizeAirlineFlightNumber this also maps shared operators (SkyWest flies
+ * for several carriers), which is only safe once the row's airline is settled —
+ * never on user input.
+ */
+export function marketedRowFlightNumber(cfg: AirlineConfig, flightNumber: string): string {
+  const normalized = normalizeAirlineFlightNumber(cfg, flightNumber);
+  if (normalized !== flightNumber) return normalized;
+  for (const op of cfg.sharedOperators ?? []) {
+    for (const prefix of [op.icao, op.iata]) {
+      const digits = flightNumber.slice(prefix.length);
+      if (flightNumber.startsWith(prefix) && /^\d+$/.test(digits)) return `${cfg.iata}${digits}`;
+    }
+  }
+  return flightNumber;
+}
+
+/**
  * Force a flight number into exact `{IATA}####` format. Composes
  * normalizeAirlineFlightNumber + bare-digit handling.
  */
@@ -114,6 +128,54 @@ export function ensureAirlinePrefix(cfg: AirlineConfig, flightNumber: string): s
   return normalized;
 }
 
+/** UAL675 → UA675: people paste the callsign from FR24/FlightAware. Only a
+ * carrier's own ICAO code maps — operating prefixes (SKW, OO) fly for several. */
+export function icaoCallsignToIata(fn: string): string {
+  for (const cfg of enabledAirlines()) {
+    if (fn.startsWith(cfg.icao) && /^\d{1,4}$/.test(fn.slice(cfg.icao.length))) {
+      return `${cfg.iata}${fn.slice(cfg.icao.length)}`;
+    }
+  }
+  return fn;
+}
+
+/**
+ * The airline a /check-flight permalink answers for. Deliberately looser than
+ * check-flight-core's decideCarrier: a pinned host owns only its own IATA
+ * spelling, and the hub resolves by any tracked prefix.
+ */
+export function permalinkCarrier(
+  pinned: AirlineConfig | null,
+  flightNumber: string
+): AirlineConfig | null {
+  if (pinned) return flightNumber.startsWith(pinned.iata) ? pinned : null;
+  return detectAirline(flightNumber);
+}
+
+/**
+ * The permalink spelling of a stored flight number under its own carrier:
+ * marketing prefix, no zero padding (HA0011 → HA11, 1234 → UA1234). The padded
+ * URL 301s here, so every surface that links or counts flight numbers keys on
+ * this form. Unlike marketingFlightNumber it never re-homes a foreign prefix.
+ */
+export function permalinkFlightNumber(cfg: AirlineConfig, raw: string): string {
+  return stripFlightNumberZeros(ensureAirlinePrefix(cfg, raw));
+}
+
+/**
+ * A stored row's number as the marketing number it's sold under: the row's own
+ * carrier when its prefix maps there, else whichever tracked marketing carrier
+ * owns the prefix, else the row carrier's IATA over the digits.
+ */
+export function marketingFlightNumber(rowCfg: AirlineConfig, raw: string): string {
+  const fn = normalizeAirlineFlightNumber(rowCfg, raw);
+  if (iataExact(rowCfg).test(fn)) return fn;
+  const marketing = detectMarketingCarrier(raw);
+  if (marketing) return normalizeAirlineFlightNumber(marketing, raw);
+  const digits = raw.match(/^[A-Z]{2,3}(\d{1,4})$/)?.[1];
+  return digits ? `${rowCfg.iata}${digits}` : raw;
+}
+
 /**
  * Build all carrier-prefix variants of a marketing-code flight number for DB
  * lookup. The DB stores operating-carrier codes (SKW5212, OO5212, …) but users
@@ -125,14 +187,71 @@ export function buildAirlineFlightNumberVariants(
 ): string[] {
   if (!iataExact(cfg).test(flightNumber)) return [flightNumber];
   const num = flightNumber.slice(cfg.iata.length);
+  const shared = (cfg.sharedOperators ?? []).flatMap((o) => [o.icao, o.iata]);
   // carrierPrefixes carries the IATA code too, which would repeat flightNumber.
-  return [...new Set([flightNumber, ...cfg.carrierPrefixes.map((p) => `${p}${num}`)])];
+  return [
+    ...new Set([flightNumber, ...[...cfg.carrierPrefixes, ...shared].map((p) => `${p}${num}`)]),
+  ];
 }
 
-/** Strip zero-padding so each flight has exactly one spelling (HA0011 → HA11).
- * Permalinks 301 to this form and the sitemap advertises it. */
-export function stripFlightNumberZeros(flightNumber: string): string {
-  return flightNumber.replace(/^([A-Z]+)0+(?=\d)/, "$1");
+export interface SlotFlightPrefix {
+  prefix: string;
+  /** The marketing IATA a carrier's own code collapses to; null for an operator code. */
+  marketing: string | null;
+  /** An operator code's IATA when the row's airline is unknown: its first registry owner. */
+  fallback: string;
+}
+
+let slotPrefixCache: readonly SlotFlightPrefix[] | null = null;
+
+/**
+ * Every code a tracked carrier's rows are stored under, longest first. A
+ * carrier's own IATA/ICAO collapses to that carrier. A regional operator code
+ * (SKW, OO) flies for several marketing carriers, so it collapses to the
+ * row's airline: SkyWest's OO3448 on an Alaska row is sold as AS3448, the
+ * same code on a United row as UA3448. The operator's own number is unique to
+ * it, so either way two different departures never merge.
+ */
+export function slotFlightPrefixes(): readonly SlotFlightPrefix[] {
+  if (slotPrefixCache) return slotPrefixCache;
+  const marketing = new Map<string, string>();
+  for (const cfg of Object.values(AIRLINES)) {
+    for (const p of [cfg.iata, cfg.icao]) if (!marketing.has(p)) marketing.set(p, cfg.iata);
+  }
+  const owner = new Map<string, string>();
+  for (const cfg of Object.values(AIRLINES)) {
+    for (const p of [cfg.iata, cfg.icao, ...cfg.carrierPrefixes]) {
+      if (!owner.has(p)) owner.set(p, cfg.iata);
+    }
+  }
+  slotPrefixCache = [...owner]
+    .map(([prefix, first]) => ({
+      prefix,
+      marketing: marketing.get(prefix) ?? null,
+      fallback: first,
+    }))
+    .sort((a, b) => b.prefix.length - a.prefix.length || a.prefix.localeCompare(b.prefix));
+  return slotPrefixCache;
+}
+
+/**
+ * The flight half of a physical departure slot, and the number it is sold
+ * under. One departure is stored under several spellings (UAL1377 and UA1377,
+ * SKW3440 and OO3440, HA0011): all of them collapse to one key. A spelling no
+ * prefix explains, such as an ATC callsign (SKW302M), stays itself. `airline`
+ * is the stored row's airline. Mirrored in SQL by slotFlightSql
+ * (database.ts); tests pin the two together.
+ */
+export function slotFlightKey(flightNumber: string | null, airline?: string): string | null {
+  if (!flightNumber) return flightNumber;
+  for (const p of slotFlightPrefixes()) {
+    if (!flightNumber.startsWith(p.prefix)) continue;
+    const rest = flightNumber.slice(p.prefix.length);
+    if (!/^\d+$/.test(rest)) continue;
+    const iata = p.marketing ?? (airline ? AIRLINES[airline]?.iata : undefined) ?? p.fallback;
+    return `${iata}${Number.parseInt(rest, 10)}`;
+  }
+  return flightNumber;
 }
 
 /** The router's cap on a permalink's digits. */
@@ -183,6 +302,19 @@ export function canonicalPermalinkFor(cfg: AirlineConfig): RegExp {
 }
 
 /**
+ * The permalink rules as plain data for canonicalFlightFor, so the browser
+ * form and the no-JS redirect mint exactly the URL parseCheckFlightPath
+ * accepts instead of carrying their own copy of the bound.
+ */
+export function flightInputRules(cfg: AirlineConfig): FlightInputRules {
+  return {
+    iata: cfg.iata,
+    icao: cfg.icao,
+    permalink: canonicalPermalinkFor(cfg).source,
+  };
+}
+
+/**
  * Carrier-prefix variants plus zero-padded spellings for DB lookup. Schedule
  * feeds store some carriers' numbers zero-padded (HA11 arrives as HA0011) at
  * inconsistent widths, so every width from the natural spelling up to 5 digits
@@ -191,8 +323,13 @@ export function canonicalPermalinkFor(cfg: AirlineConfig): RegExp {
  * that entry or an advertised URL would 404.
  */
 export function buildFlightLookupVariants(cfg: AirlineConfig, flightNumber: string): string[] {
-  const variants = new Set(buildAirlineFlightNumberVariants(cfg, flightNumber));
-  for (const v of [...variants]) {
+  return zeroPaddedVariants(buildAirlineFlightNumberVariants(cfg, flightNumber));
+}
+
+/** Each spelling plus its zero-padded forms up to 5 digits, deduplicated. */
+export function zeroPaddedVariants(spellings: readonly string[]): string[] {
+  const variants = new Set(spellings);
+  for (const v of spellings) {
     const m = v.match(/^([A-Z]+)(\d+)$/);
     if (!m) continue;
     const digits = m[2].replace(/^0+(?=\d)/, "");

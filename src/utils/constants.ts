@@ -87,12 +87,23 @@ export const BASE_RESPONSE_HEADERS: Record<string, string> = {
   "Content-Security-Policy": "default-src 'none'",
 };
 
+/** The one wildcard origin every CORS-open surface grants. */
+export const CORS_ANY_ORIGIN = { "Access-Control-Allow-Origin": "*" } as const;
+
 // The /api/* CORS contract (Chrome extension + Google Flights embedding).
 // Spread into SECURITY_HEADERS.api and mirrored verbatim by OPTIONS preflight.
 export const API_CORS_HEADERS: Record<string, string> = {
-  "Access-Control-Allow-Origin": "*",
+  ...CORS_ANY_ORIGIN,
   "Access-Control-Allow-Methods": "GET, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type",
+};
+
+// The /mcp CORS contract: browser-based MCP clients POST JSON-RPC cross-origin.
+export const MCP_CORS_HEADERS: Record<string, string> = {
+  ...CORS_ANY_ORIGIN,
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Accept, Mcp-Session-Id, MCP-Protocol-Version",
+  "Access-Control-Expose-Headers": "Mcp-Session-Id",
 };
 
 export const SECURITY_HEADERS = {
@@ -111,28 +122,24 @@ export const SECURITY_HEADERS = {
     "Cache-Control": "private, no-store",
     "Content-Security-Policy": `default-src 'self'; connect-src ${CONNECT_SRC}; script-src ${SCRIPT_SRC}; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:;`,
   },
-  // Full React page served as a 404 (invalid /check-flight segment). Needs the
-  // page CSP for its inline lookup script, plus shared-cache so crawlers don't
-  // re-render at origin on every sweep.
+  // A full React page served as a 404 (invalid /check-flight segment, which
+  // runs the lookup script). Brand-static, so shared caches may hold it:
+  // retiring a large URL space sends crawlers back over thousands of dead URLs,
+  // and s-maxage keeps each repeat off origin while browsers still revalidate.
   notFoundHtml: {
     ...BASE_RESPONSE_HEADERS,
     "Content-Type": "text/html",
     "Cache-Control": "public, s-maxage=3600, max-age=0, must-revalidate",
     "Content-Security-Policy": `default-src 'self'; connect-src ${CONNECT_SRC}; script-src ${SCRIPT_SRC}; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:;`,
   },
+  // The plain not-found shell: same caching, but it runs no script at all, so
+  // its CSP allows none and connects nowhere.
   notFound: {
     ...BASE_RESPONSE_HEADERS,
     "Content-Type": "text/html",
-    // The 404 body is brand-static — no per-visitor content, so unlike the html
-    // variant it is safe at the edge. Retiring a large URL space (the
-    // pre-route-page /route-planner/* duplicates) sends crawlers back over
-    // thousands of dead URLs; without this every repeat 404 re-rendered at
-    // origin. s-maxage only: shared caches absorb it, browsers keep revalidating
-    // so a path that starts existing isn't stuck 404ing for a user.
     "Cache-Control": "public, s-maxage=3600, max-age=0, must-revalidate",
     "Content-Security-Policy":
-      "default-src 'self'; style-src 'unsafe-inline' https://fonts.googleapis.com; " +
-      "font-src 'self' https://fonts.gstatic.com; img-src 'self' data:;",
+      "default-src 'self'; script-src 'none'; connect-src 'none'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:;",
   },
 };
 

@@ -8,6 +8,7 @@
  * here is unit-testable without a database.
  */
 
+import { pct } from "../components/ui/format";
 import type {
   AircraftTypePageData,
   AircraftTypePipeline,
@@ -294,7 +295,7 @@ export const TYPE_DISPLAY: Record<string, string> = {
   "39M": "737 MAX 9",
   "319": "A319",
   "320": "A320",
-  "321": "A321",
+  "321": "A321neo",
   "321XLR": "A321XLR",
   "752": "757-200",
   "753": "757-300",
@@ -314,10 +315,6 @@ export const TYPE_DISPLAY: Record<string, string> = {
   CRJ2: "CRJ200",
   E145X: "ERJ-145XR",
 };
-
-export function sheetCodesFor(family: string): string[] {
-  return Object.keys(SHEET_CODE_TO_FAMILY).filter((c) => SHEET_CODE_TO_FAMILY[c] === family);
-}
 
 function factDate(f: RolloutFact): string {
   return f.asOf ?? f.accessed ?? "";
@@ -391,19 +388,9 @@ export const PROVIDER_NAMES: Record<WifiProvider, string> = {
   viasat: "Viasat",
   panasonic: "Panasonic",
   thales: "Thales",
-  none: "no WiFi",
+  none: "no Wi-Fi",
   unknown: "not checked yet",
 };
-
-/** Floor, never round up: "100%" only when every tail has it. */
-export function sharePct(n: number, total: number): string {
-  if (total <= 0) return "0%";
-  if (n >= total) return "100%";
-  const p = (n / total) * 100;
-  if (p > 99) return ">99%";
-  if (p > 0 && p < 1) return "<1%";
-  return `${Math.floor(p)}%`;
-}
 
 export function isoDay(sec: number): string {
   return new Date(sec * 1000).toISOString().slice(0, 10);
@@ -459,7 +446,7 @@ export const SHARE_KINDS: ReadonlySet<AircraftVerdictKind> = new Set([
 ]);
 
 const SWAP_NOTE =
-  "Aircraft swaps happen; the real answer comes when the tail is assigned, about 1–2 days out.";
+  "The aircraft is usually assigned 1–2 days before departure. Check your flight then.";
 
 /**
  * The verdict a type page leads with. Decided on the tails actually checked:
@@ -482,7 +469,7 @@ export function answerFor(
   const rosterShort = O !== null && !O.all && O.count >= T;
   const E = O ? Math.max(s, Math.min(O.count, T)) : s;
   const attributed = O !== null && O.count > s;
-  const pct = sharePct(E, T);
+  const share = pct(E, T);
   const short = def.short;
   const shorts = `${short}s`;
   const oDate = O ? formatFactDate(O.asOf) : "";
@@ -523,7 +510,7 @@ export function answerFor(
   }
 
   const attributedShare = () =>
-    `${copy.airline} reports ${O?.count} of its ${T} ${shorts} connected (${oDate}), about ${pct}. We have tail-level confirmation for ${s}. ${SWAP_NOTE}`;
+    `${copy.airline} reports ${O?.count} of its ${T} ${shorts} connected (${oDate}), about ${share}. We have tail-level confirmation for ${s}. ${SWAP_NOTE}`;
 
   const everyTail = copy.checksEveryTail ? K === 0 && U === 0 : s === T || O?.all === true;
   if (E > 0 && E === T && everyTail) {
@@ -566,16 +553,16 @@ export function answerFor(
     if (attributed) {
       return build(
         kind,
-        `${lead}, per ${copy.airline}: ${E} of ${T} (${pct}).`,
+        `${lead}, per ${copy.airline}: ${E} of ${T} (${share}).`,
         `${copy.airline} reports ${O?.count} of its ${T} ${shorts} connected (tracker updated ${oDate}). We can confirm ${s} of them ourselves, from per-aircraft reports.`,
         attributedShare()
       );
     }
     return build(
       kind,
-      `${lead}: ${E} of ${T} (${pct}).`,
+      `${lead}: ${E} of ${T} (${share}).`,
       `Every Starlink ${short} counted here is ${copy.evidence}.${uncheckedTail}${listedTail}`,
-      `${pct} of ${copy.possessive} ${shorts} have Starlink (${E} of ${T}). ${SWAP_NOTE}`
+      `${share} of ${copy.possessive} ${shorts} have Starlink (${E} of ${T}). ${SWAP_NOTE}`
     );
   }
 
@@ -705,13 +692,12 @@ export function aircraftTypeTitle(
  * neutral about which runs ahead (ours is above the sheet as often as below). */
 export function sheetComparison(pipeline: AircraftTypePipeline, starlink: number): string[] {
   const fetched = formatFactDate(isoDay(pipeline.fetched_at));
+  const n = (v: number) => v.toLocaleString("en-US");
   const lines = [
-    `Per the United fleet progress sheet (fetched ${fetched}): ${pipeline.starlink_complete} complete, ${pipeline.in_mod} in mod, ${pipeline.verification_needed} awaiting verification. Verified by us on united.com: ${starlink}.`,
+    `The United fleet progress sheet (fetched ${fetched}) shows ${n(pipeline.starlink_complete)} complete, ${n(pipeline.in_mod)} in mod and ${n(pipeline.verification_needed)} awaiting verification. We've verified ${n(starlink)} on united.com.`,
   ];
   if (pipeline.starlink_complete !== starlink) {
-    lines.push(
-      "The sheet and united.com update independently, so the two counts don't always match."
-    );
+    lines.push("The sheet and united.com update separately, so the counts can differ.");
   }
   return lines;
 }
@@ -771,11 +757,11 @@ export function aircraftTypeFaq(
       .filter((p) => data.providers[p] > 0)
       .map(
         (p) =>
-          `${data.providers[p]} ${data.providers[p] === 1 ? "has" : "have"} ${p === "none" ? "no WiFi" : PROVIDER_NAMES[p]}`
+          `${data.providers[p]} ${data.providers[p] === 1 ? "has" : "have"} ${PROVIDER_NAMES[p]}`
       );
     const unchecked = data.unchecked > 0 ? ` ${data.unchecked} not checked yet.` : "";
     items.push({
-      q: `What WiFi do ${copy.possessive} ${data.starlink > 0 ? "other " : ""}${shorts} have?`,
+      q: `What Wi-Fi do ${copy.possessive} ${data.starlink > 0 ? "other " : ""}${shorts} have?`,
       a:
         data.starlink > 0
           ? `Of the ${data.checked} ${copy.airline} ${shorts} last checked on united.com, ${data.starlink} ${plural(data.starlink, "has", "have")} Starlink; of the rest, ${parts.join(", ")}.${unchecked}`
@@ -787,7 +773,7 @@ export function aircraftTypeFaq(
   if (target?.asOf) {
     items.push({
       q: `When will every ${copy.airline} ${short} have Starlink?`,
-      a: `No date is published for the ${short} alone. The closest dated target (${formatFactDate(target.asOf)}, ${target.source.label}): ${factText(target)}`,
+      a: `${copy.airline} hasn't given a date for the ${short}. Its closest stated target (${target.source.label}, ${formatFactDate(target.asOf)}): ${factText(target)}`,
     });
   }
 

@@ -12,11 +12,10 @@ The example database is a small sampled subset (≈50 aircraft) so the app boots
 
 ## Environment Variables
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `AEROAPI_KEY` | No | FlightAware API key (fallback, not used by default) |
-| `PORT` | No | Server port (default: 3000) |
-| `NODE_ENV` | No | Set to "production" for production mode |
+Every variable the code reads is listed, one line each with its default, in
+[`.env.example`](../.env.example) — none is required for local dev. The ones you
+will reach for: `DB_PATH` (point at a snapshot), `DISABLE_JOBS=1` (serve only, no
+upstream scraping), `DEV_SITE` / `DEV_TENANT` (which tenant localhost serves).
 
 ## Data Sources
 
@@ -36,7 +35,27 @@ bun run start            # Production server
 bun run build:css        # Compile Tailwind → static/tailwind.css
 bun run lint             # Check code with Biome
 bun run format           # Auto-format
+bun run knip             # Unused files and exports (entries in knip.json)
 ```
+
+### Tests
+```bash
+bun run test:setup       # Snapshot plane-data.sqlite → .test-snapshot.sqlite (readonly)
+bun run test             # Everything under tests/
+```
+
+Shared fixtures live in `tests/helpers.ts`: `openSnapshot()` / `makeSyntheticDb()`,
+`req` / `jsonOf` for app dispatch, and `postMcp` / `mcpTool` / `mcpDirect` /
+`toolText` for MCP JSON-RPC. Tests read structure from runtime data
+(`createApp(db).routes`, `app.routeTags`, registry objects), not by parsing source.
+
+Contract goldens pin the public wire formats byte-for-byte:
+`tests/golden/api-contracts.json` (check-flight, check-any-flight, MCP
+`check_flight`, .ics feeds; hermetic synthetic DB) and
+`tests/golden/mcp-tools-list.json`. Regenerate only for an intentional contract
+change: `bun run capture-golden` rewrites and formats both, then review the
+diff. JSON bodies are stored parsed and .ics bodies as lines; each must
+re-encode to the live bytes.
 
 ### Styling
 
@@ -124,40 +143,61 @@ are outside every denominator.
 
 ### Background Jobs
 
-The server starts several background processes:
+`server.ts` opens one database handle (`openDatabase()`, then `migrate()` once)
+and passes it to `createApp(db)` and to every job; jobs never open or migrate
+their own. One-shot CLI scripts call `initializeDatabase()` (open + migrate).
+`DISABLE_JOBS=1` starts none of them. The full job table is in
+[CLAUDE.md](../CLAUDE.md#architecture); the core loop:
 
 | Job | Interval | Purpose |
 |-----|----------|---------|
 | Spreadsheet scrape | 1 hour | Update Starlink plane list from Google Sheets |
-| Flight updater | 30 sec | Keep flight data fresh (smart caching: 1-8hr based on proximity) |
+| Flight updater | 22.5 sec | Keep flight data fresh (smart caching: 1-8hr based on proximity) |
 | Starlink verifier | 60 sec | Verify planes against United.com (48-96hr per plane) |
 | Fleet discovery | 90 sec | Find new Starlink planes across entire fleet |
 | Fleet sync | 24 hours | Sync full fleet from FlightRadar24 |
 
 ### Database Tables
 
+27 tables, all created by `setupTables` in `src/database/database.ts` (CLAUDE.md
+lists them by area). The ones most code touches:
+
 | Table | Purpose |
 |-------|---------|
 | `starlink_planes` | Aircraft with Starlink (from spreadsheet + discovery) |
+| `united_fleet` | Full fleet per airline for discovery tracking |
 | `upcoming_flights` | Cached flight schedules |
 | `starlink_verification_log` | Audit trail of all verification attempts |
-| `united_fleet` | Full fleet for discovery tracking |
-| `meta` | Key-value store for stats |
+| `departure_log` / `flight_assignment_log` | Past departures and tail assignments |
+| `flight_routes` | Accumulated flight-number → route pairs |
+| `meta` | Key-value store for stats (keys namespaced `AIRLINE:key`) |
 | `fleet_guide_tails` | Per-tail marks from a community fleet guide (AF) |
+
+"Equipped" is defined once in `src/database/sql/equipped.ts` (the `equippedSql`
+predicate and its JS twin), and fleet denominators come from `programmeRoster()`
+in `src/database/roster.ts`. Count queries use those rather than re-deriving.
 
 ### Key Files
 
 ```
-server.ts                           # HTTP server, API routes, job orchestration
+server.ts                           # Boot: one DB handle, Bun.serve, job orchestration
+src/server/app.ts                   # createApp(db): route table, pages, APIs
+src/server/respond.ts               # json/text/xml response helpers, CACHE headers
+src/api/check-flight-core.ts        # Flight verdicts (verdictSummary) shared by REST + MCP
+src/api/mcp-server.ts               # MCP tools
 src/api/flightradar24-api.ts        # FR24 flight data (primary)
 src/api/flightaware-api.ts          # FlightAware fallback
 src/api/flight-updater.ts           # Smart flight data caching
-src/database/database.ts            # SQLite operations
+src/database/database.ts            # SQLite operations, schema (setupTables)
+src/database/sql/                   # equipped predicate, shared fragments, time windows
 src/scripts/starlink-verifier.ts    # Background verification
 src/scripts/fleet-discovery.ts      # New plane discovery
 src/scripts/united-starlink-checker.ts  # Playwright scraper
 src/utils/utils.ts                  # Google Sheets scraping
-src/components/page.tsx             # React frontend
+src/components/layout.tsx           # PageShell + UI primitives (Panel, Eyebrow, StatValue, ButtonLink…)
+src/components/ui/                  # tone palette, Meter, number/date format
+src/components/home/, page.tsx      # Homepage
+src/client/entries/                 # Browser bundles, built at boot and served content-hashed
 ```
 
 ## API

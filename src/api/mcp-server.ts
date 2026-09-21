@@ -24,9 +24,9 @@ import {
   buildAirlineFlightNumberVariants,
   canonicalFlightInput,
   detectAirline,
-  detectMarketingCarrier,
   ensureAirlinePrefix,
   inferSubfleet,
+  marketingFlightNumber,
   normalizeAirlineFlightNumber,
 } from "../airlines/flight-number";
 import {
@@ -35,18 +35,18 @@ import {
   type AirlineConfig,
   type AnalyticsConfig,
   SITES,
-  enabledAirlines,
   hubLookupAirlines,
   siteForAirline,
 } from "../airlines/registry";
 import type { FlightAssignmentRow } from "../database/database";
 import { type Scope, type ScopedReader, aggregatePenetration } from "../database/reader";
+import { inLookupWindow, lookupWindowPosition, unixNow } from "../database/sql/windows";
 import {
   COUNTERS,
   DISTRIBUTIONS,
   mcpClientTags,
   metrics,
-  normalizeAirlineTag,
+  normalizeScopeTag,
 } from "../observability";
 import {
   ENFORCE_ITINERARY_TIME_BUDGET,
@@ -63,14 +63,16 @@ import {
   predictRoute,
   routeBaseline,
 } from "../scripts/starlink-predictor";
+import { jsonRpc, mcpMethodNotAllowed } from "../server/respond";
 import { AIRPORT_COORDS } from "../utils/airport-geo";
 import { isRealIsoDate, matchesLocalDate } from "../utils/airport-tz";
-import { debug, info } from "../utils/logger";
+import { debug, error as logError } from "../utils/logger";
+import { denominatorIsPublishable } from "../utils/share-cards";
+import { memoPromise } from "../utils/ttl-cache";
 import {
   type FlightVerdict,
   type LegResolution,
   SWAP_DEGRADED_NOTE,
-  type VerdictTelemetry,
   answersOtherLeg,
   carrierReader,
   decideCarrier,
@@ -79,12 +81,14 @@ import {
   isPlausibleFlightNumber,
   legOffRoute,
   legSubject,
-  negativeWifi,
   normalizeAirportCode,
   parseLegQuery,
+  recordFlightLookup,
   recordLegScope,
+  recordPrediction,
   recordUntrackedLookup,
   resolveFlightVerdict,
+  verdictAssignment,
   verdictTelemetry,
   wifiLabel,
   withLeg,
@@ -193,6 +197,12 @@ type JsonRpcResponse = JsonRpcSuccess | JsonRpcError;
 // MCP tool result content block
 type TextContent = { type: "text"; text: string };
 type ToolResult = { content: TextContent[]; isError?: boolean };
+
+const textResult = (text: string): ToolResult => ({ content: [{ type: "text", text }] });
+const toolError = (text: string): ToolResult => ({
+  content: [{ type: "text", text }],
+  isError: true,
+});
 
 // ============================================================================
 // Tool definitions (JSON Schema 2020-12)
@@ -558,12 +568,6 @@ function suggestTool(unknown: string): string | null {
 // Tool implementations
 // ============================================================================
 
-// Shared scope→airline-tag mapping for MCP metrics. ALL is a hub scope, not an
-// airline, so it gets its own bucket instead of falling into "unmapped".
-function mcpAirlineTag(scope: Scope): string {
-  return scope === "ALL" ? "all" : normalizeAirlineTag(scope);
-}
-
 // Airline scopes use their own config — never United's config against another
 // airline's reader. The hub has NO single config: flight-taking tools resolve
 // the carrier from the flight number (resolveFlightToolCarrier), route tools
@@ -604,7 +608,7 @@ function resolveFlightToolCarrier(
         : `Airline not tracked. Tracked carriers: ${decision.tracked
             .map((a) => `${a.iata} (${a.name})`)
             .join(", ")}. Prefix the flight number with the carrier code, e.g. UA123.`;
-    return { content: [{ type: "text", text }], isError: true };
+    return toolError(text);
   }
   return { cfg: decision.cfg, reader: carrierReader(decision, reader, getReader) };
 }
@@ -623,45 +627,8 @@ function firmNoLabel(tails: string[], wifiWords: string[]): string {
   return `assigned ${uniq(tails)}, ${uniq(wifiWords.map((w) => (w === "no" ? "no WiFi" : w)))}`;
 }
 
-type LookupOutcome = VerdictTelemetry["outcome"];
-type LookupConfidence = VerdictTelemetry["confidence"];
-
-// MCP-side mirror of app.ts recordFlightLookup — same metric, endpoint=mcp,
-// so the cross-channel "did we answer the user's question" view includes /mcp.
-function recordMcpFlightLookup(
-  scope: Scope,
-  outcome: LookupOutcome,
-  confidence: LookupConfidence
-): void {
-  // result mirrors outcome — see app.ts recordFlightLookup.
-  metrics.increment(COUNTERS.FLIGHT_LOOKUP_RESULT, {
-    endpoint: "mcp",
-    outcome,
-    result: outcome,
-    confidence,
-    airline: mcpAirlineTag(scope),
-  });
-}
-
-// MCP-side mirror of app.ts recordPrediction — surfaces what's actually served
-// over /mcp (~1.4k calls/wk), not just the REST predict handlers.
-function recordMcpPrediction(
-  scope: Scope,
-  pred: { probability: number; confidence: "high" | "medium" | "low"; method: string }
-): void {
-  const method = pred.method.startsWith("fleet_prior") ? "fleet_prior" : "flight_history";
-  metrics.distribution(DISTRIBUTIONS.PREDICTION_PROBABILITY, pred.probability, {
-    confidence: pred.confidence,
-    method,
-    airline: mcpAirlineTag(scope),
-  });
-}
-
 function invalidDateError(): ToolResult {
-  return {
-    content: [{ type: "text", text: "Error: invalid date format. Use YYYY-MM-DD." }],
-    isError: true,
-  };
+  return toolError("Error: invalid date format. Use YYYY-MM-DD.");
 }
 
 async function toolCheckFlight(
@@ -675,10 +642,7 @@ async function toolCheckFlight(
   const date = typeof args.date === "string" ? args.date.trim() : "";
 
   if (!flightNumber || !date) {
-    return {
-      content: [{ type: "text", text: "Error: flight_number and date are required." }],
-      isError: true,
-    };
+    return toolError("Error: flight_number and date are required.");
   }
   if (!isRealIsoDate(date)) return invalidDateError();
 
@@ -706,19 +670,13 @@ async function toolCheckFlight(
 
   if (verdict.kind === "invalid_date") return invalidDateError();
   if (verdict.kind === "invalid_flight_number") {
-    return {
-      content: [
-        {
-          type: "text",
-          text: `${verdict.normalized} is not a valid flight number (expected ${cfg.iata} + 1-4 digits).`,
-        },
-      ],
-      isError: true,
-    };
+    return toolError(
+      `${verdict.normalized} is not a valid flight number (expected ${cfg.iata} + 1-4 digits).`
+    );
   }
 
   const t = verdictTelemetry(verdict);
-  recordMcpFlightLookup(reader.scope, t.outcome, t.confidence);
+  recordFlightLookup("mcp", t.outcome, t.confidence, reader.scope);
   recordLegScope("mcp", verdict, cfg.code, mcpClientTags());
   return renderCheckFlightVerdict(cfg, reader, verdict, date, {
     ...opts,
@@ -745,7 +703,7 @@ export async function renderCheckFlightVerdict(
   }
 
   const { mid, start: startOfDay, end: endOfDay } = verdict.window;
-  const now = Math.floor(Date.now() / 1000);
+  const now = unixNow();
   const normalized = verdict.normalized;
 
   const renderAssignment = (f: FlightAssignmentRow): string => {
@@ -774,17 +732,12 @@ export async function renderCheckFlightVerdict(
       // Firm YES: united.com-verified tail. Likely YES: spreadsheet says
       // Starlink but not yet confirmed (usually right ~80-90%, not firm).
       if (verdict.verified.length > 0) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: withLegNote(
-                `✈️ Yes! Flight ${legSubject(verdict)} on ${date} is scheduled on a verified Starlink aircraft:\n\n${verdict.verified.map(renderAssignment).join("\n")}\n\nStarlink WiFi is free on all equipped ${cfg.shortName} flights.`,
-                verdict
-              ),
-            },
-          ],
-        };
+        return textResult(
+          withLegNote(
+            `✈️ Yes! Flight ${legSubject(verdict)} on ${date} is scheduled on a verified Starlink aircraft:\n\n${verdict.verified.map(renderAssignment).join("\n")}\n\nStarlink WiFi is free on all equipped ${cfg.shortName} flights.`,
+            verdict
+          )
+        );
       }
       const unverifiedAgainst = `not yet verified against ${cfg.verifySite}`;
       const source = cfg.communitySource
@@ -796,68 +749,49 @@ export async function renderCheckFlightVerdict(
             where: `tracked as Starlink in the fleet spreadsheet (${unverifiedAgainst})`,
             caveat: "Spreadsheet data is usually accurate but unverified.",
           };
-      return {
-        content: [
-          {
-            type: "text",
-            text: withLegNote(
-              `Likely yes — ${legSubject(verdict)} on ${date} is assigned to a tail ${source.where}:\n\n${verdict.unverified.map(renderAssignment).join("\n")}\n\n${source.caveat} Check ${cfg.verifySite} or the flight status 24h out to confirm.`,
-              verdict
-            ),
-          },
-        ],
-      };
+      return textResult(
+        withLegNote(
+          `Likely yes — ${legSubject(verdict)} on ${date} is assigned to a tail ${source.where}:\n\n${verdict.unverified.map(renderAssignment).join("\n")}\n\n${source.caveat} Check ${cfg.verifySite} or the flight status 24h out to confirm.`,
+          verdict
+        )
+      );
     }
 
     case "scheduled_no": {
       // Firm NO: we have an assignment but it's a non-Starlink plane. We also
       // already know the route from the assignment — no lookup needed.
-      const f = verdict.flights[0];
-      const ac = f.aircraft_type || "aircraft";
+      const a = verdictAssignment(verdict);
+      const wifi = wifiLabel(a.wifi);
       const altBlock = answersOtherLeg(verdict.leg)
         ? ""
         : buildAlternativesBlock(
             cfg,
             reader,
-            [{ origin: f.departure_airport, destination: f.arrival_airport }],
+            [{ origin: a.origin, destination: a.destination }],
             mid,
-            {
-              flightNumber: normalized,
-              probability: 0,
-              label: firmNoLabel([f.tail_number], [negativeWifi(f)]),
-            }
+            { flightNumber: normalized, probability: 0, label: firmNoLabel([a.tail], [wifi]) }
           );
-      return {
-        content: [
-          {
-            type: "text",
-            text: withAlt(
-              altBlock,
-              withLegNote(
-                `❌ No Starlink: ${legSubject(verdict)} on ${date} is assigned to tail ${f.tail_number} (${ac}), verified as ${negativeWifi(f)} WiFi — NOT Starlink. Aircraft swaps can happen, but the assignment is currently firm.${verdict.fr24Error ? ` ${SWAP_DEGRADED_NOTE}` : ""}`,
-                verdict
-              )
-            ),
-          },
-        ],
-      };
+      return textResult(
+        withAlt(
+          altBlock,
+          withLegNote(
+            `❌ No Starlink: ${legSubject(verdict)} on ${date} is assigned to tail ${a.tail} (${a.aircraft || "aircraft"}), verified as ${wifi} WiFi — NOT Starlink. Aircraft swaps can happen, but the assignment is currently firm.${verdict.fr24Error ? ` ${SWAP_DEGRADED_NOTE}` : ""}`,
+            verdict
+          )
+        )
+      );
     }
 
     // No upcoming_flights row — the core already ran the same FR24 tail-lookup
     // fallback that /api/check-flight uses (disabled on the hub for both, see
     // toolCheckFlight), so MCP and the extension API converge per host.
     case "fr24": {
-      return {
-        content: [
-          {
-            type: "text",
-            text: withLegNote(
-              `✈️ Yes! Flight ${legSubject(verdict)} on ${date} is assigned to a Starlink aircraft (via live tail lookup):\n\n${verdict.starlink.map(renderSeg).join("\n")}\n\nStarlink WiFi is free on all equipped ${cfg.shortName} flights.`,
-              verdict
-            ),
-          },
-        ],
-      };
+      return textResult(
+        withLegNote(
+          `✈️ Yes! Flight ${legSubject(verdict)} on ${date} is assigned to a Starlink aircraft (via live tail lookup):\n\n${verdict.starlink.map(renderSeg).join("\n")}\n\nStarlink WiFi is free on all equipped ${cfg.shortName} flights.`,
+          verdict
+        )
+      );
     }
 
     case "fr24_no": {
@@ -878,20 +812,15 @@ export async function renderCheckFlightVerdict(
               ),
             }
           );
-      return {
-        content: [
-          {
-            type: "text",
-            text: withAlt(
-              altBlock,
-              withLegNote(
-                `❌ No Starlink: ${legSubject(verdict)} on ${date} is assigned to ${no.map((s) => `tail ${s.tail_number} (${s.aircraft_model || "aircraft"}, ${wifiLabel(s.verified_wifi)} WiFi)`).join("; ")} — NOT Starlink. Aircraft swaps can happen, but the assignment is currently firm.`,
-                verdict
-              )
-            ),
-          },
-        ],
-      };
+      return textResult(
+        withAlt(
+          altBlock,
+          withLegNote(
+            `❌ No Starlink: ${legSubject(verdict)} on ${date} is assigned to ${no.map((s) => `tail ${s.tail_number} (${s.aircraft_model || "aircraft"}, ${wifiLabel(s.verified_wifi)} WiFi)`).join("; ")} — NOT Starlink. Aircraft swaps can happen, but the assignment is currently firm.`,
+            verdict
+          )
+        )
+      );
     }
 
     case "no_model": {
@@ -903,28 +832,22 @@ export async function renderCheckFlightVerdict(
         : noModelConfidence(verdict.answer) === "tail"
           ? ""
           : "no assignment data. ";
-      return {
-        content: [
-          {
-            type: "text",
-            text: withLegNote(
-              `${normalized} on ${date}: ${lead}${describeCarrierPrediction(cfg, verdict.answer, { date })}`,
-              verdict
-            ),
-          },
-        ],
-      };
+      return textResult(
+        withLegNote(
+          `${normalized} on ${date}: ${lead}${describeCarrierPrediction(cfg, verdict.answer, { date })}`,
+          verdict
+        )
+      );
     }
 
     case "prediction": {
       // No assignment data at all — probability fallback. If low, look up the
       // route from FR24 (cached) so we can give the agent a concrete next step.
       const pred = verdict.pred;
-      recordMcpPrediction(reader.scope, pred);
-      const pct = (pred.probability * 100).toFixed(0);
+      recordPrediction(pred, reader.scope);
 
-      const isPast = endOfDay < now - 86400;
-      const isNearTerm = startOfDay < now + 3 * 86400;
+      const position = lookupWindowPosition(startOfDay, endOfDay, now);
+      const isPast = position === "past";
       // During an FR24 outage we genuinely don't know whether an assignment
       // exists — don't claim it isn't published yet.
       // A past date's assignment isn't "not yet published" — it's gone.
@@ -939,7 +862,7 @@ export async function renderCheckFlightVerdict(
           ? ""
           : isPast
             ? "This date is in the past; we don't retain historical assignments."
-            : !isNearTerm
+            : position === "future"
               ? "Aircraft assignment not yet published — that happens ~2 days out. Check again 1-2 days before departure for a firm answer."
               : opts.liveLookup === false
                 ? `No assignment on file — this multi-airline server only sees Starlink-tracked aircraft and doesn't run a live tail lookup.${liveSite ? ` For a live check, use ${liveSite}/mcp.` : ""}`
@@ -948,7 +871,7 @@ export async function renderCheckFlightVerdict(
       // Probability context FIRST, alternatives table LAST. Recency bias: the
       // agent's final impression is "here's the table to present", not "no data".
       const probLine = withLegNote(
-        `**${normalized} on ${date}**: ~${pct}% Starlink probability ${pred.n_observations > 0 ? `(${pred.n_observations} historical obs)` : "(no flight history)"}.${assignmentNote ? ` ${assignmentNote}` : ""}`,
+        `**${normalized} on ${date}**: ${approxPct(pred.probability)} Starlink probability ${pred.n_observations > 0 ? `(${pred.n_observations} historical obs)` : "(no flight history)"}.${assignmentNote ? ` ${assignmentNote}` : ""}`,
         verdict
       );
 
@@ -964,9 +887,7 @@ export async function renderCheckFlightVerdict(
         if (alt) altBlock = `\n\n${alt}`;
       }
 
-      return {
-        content: [{ type: "text", text: `${probLine}${altBlock}` }],
-      };
+      return textResult(`${probLine}${altBlock}`);
     }
 
     default: {
@@ -987,7 +908,7 @@ function renderQatarCheckFlight(
   date: string,
   undated = false
 ): ToolResult {
-  const text = (t: string): ToolResult => ({ content: [{ type: "text", text: t }] });
+  const text = textResult;
   const legLine = (r: QatarLeg) =>
     `- ${r.flight_number} (${r.departure_airport ?? "?"}→${r.arrival_airport ?? "?"}) on ${qatarEquipmentName(r.equipment_code)}. Departs ${new Date(r.departure_time * 1000).toISOString()}.`;
 
@@ -1057,10 +978,11 @@ type RouteEntry = {
   stale?: boolean;
 };
 
-// Promise-based cache: concurrent requests for the same key await the in-flight
-// fetch instead of hammering FR24. Dedupes parallel calls (e.g. 15 agents at once).
-const routeCache = new Map<string, { promise: Promise<RouteEntry[]>; at: number; ttl: number }>();
+// Concurrent requests for the same key await the in-flight fetch instead of
+// hammering FR24 (e.g. 15 agents at once). Keyspace is flightNumber × day, so
+// it is swept once large.
 const ROUTE_CACHE_TTL = 3600;
+const routeCache = memoPromise<RouteEntry[]>({ ttlSec: ROUTE_CACHE_TTL, maxEntries: 500 });
 // Empty results are kept briefly: each miss re-ran a ~1.7s FR24 call, while a
 // full hour would hide a route that appears minutes later.
 const ROUTE_NEGATIVE_CACHE_TTL = 600;
@@ -1073,7 +995,7 @@ function recordRouteLookup(
   scope: Scope,
   source: "memory" | "assignment" | "sqlite" | "fr24" | "upcoming" | "stale" | "miss"
 ): void {
-  metrics.increment(COUNTERS.ROUTE_LOOKUP, { source, airline: mcpAirlineTag(scope) });
+  metrics.increment(COUNTERS.ROUTE_LOOKUP, { source, airline: normalizeScopeTag(scope) });
 }
 
 /**
@@ -1087,7 +1009,7 @@ async function datedAssignmentRoutes(
 ): Promise<RouteEntry[]> {
   const date = new Date(targetDateUnix * 1000).toISOString().slice(0, 10);
   const window = flightDateWindow(date);
-  if (!window || window.end <= now - 86400 || window.start >= now + 3 * 86400) return [];
+  if (!window || !inLookupWindow(window.start, window.end, now)) return [];
   let legs: Awaited<ReturnType<typeof cachedFlightAssignments>>;
   try {
     legs = await cachedFlightAssignments(flightNumber, window.mid, now);
@@ -1120,19 +1042,11 @@ async function lookupFlightRoutes(
   opts: { liveAssignments: boolean } = { liveAssignments: true }
 ): Promise<RouteEntry[]> {
   const cacheKey = `${uaFlightNumber}:${targetDateUnix ? Math.floor(targetDateUnix / 86400) : "any"}:${opts.liveAssignments ? "live" : "db"}`;
-  const now = Math.floor(Date.now() / 1000);
-  const cached = routeCache.get(cacheKey);
-  if (cached && now - cached.at < cached.ttl) {
+  const now = unixNow();
+  const cached = routeCache.get(cacheKey, now);
+  if (cached) {
     recordRouteLookup(reader.scope, "memory");
-    return cached.promise;
-  }
-
-  // Keyspace is flightNumber × day → unbounded over time. Sweep stale entries
-  // once the cache gets large (matches assignmentCache in flight-verdict.ts).
-  if (routeCache.size > 500) {
-    for (const [k, v] of routeCache) {
-      if (now - v.at >= v.ttl) routeCache.delete(k);
-    }
+    return cached;
   }
   const variants = buildAirlineFlightNumberVariants(cfg, uaFlightNumber);
 
@@ -1216,15 +1130,10 @@ async function lookupFlightRoutes(
       : [];
   })();
 
-  // Set immediately for in-flight dedup. An empty result stays for the short
-  // negative TTL; an error is evicted so the next request retries.
-  const entry = { promise, at: now, ttl: ROUTE_CACHE_TTL };
-  routeCache.set(cacheKey, entry);
-  promise.then(
-    (result) => {
-      if (result.length === 0) entry.ttl = ROUTE_NEGATIVE_CACHE_TTL;
-    },
-    () => routeCache.delete(cacheKey)
+  // An empty result stays for the short negative TTL; an error is evicted so
+  // the next request retries.
+  routeCache.set(cacheKey, promise, now, (s) =>
+    !s.ok ? 0 : s.value.length === 0 ? ROUTE_NEGATIVE_CACHE_TTL : ROUTE_CACHE_TTL
   );
   return promise;
 }
@@ -1314,8 +1223,8 @@ function buildAlternativesBlock(
         flights: ownFlight.flightNumber,
         via: "direct — your flight",
         stops: 0,
-        starlinkPct: `~${(p * 100).toFixed(0)}%`,
-        starlinkH: hours !== null ? `~${fmtH(p * hours)}` : "?",
+        starlinkPct: approxPct(p),
+        starlinkH: hours !== null ? approxShare(p, hours, fmtH) : "?",
         totalH,
       });
     } else if (!its.some((it) => it.via.length === 0)) {
@@ -1325,8 +1234,8 @@ function buildAlternativesBlock(
         flights: base?.flight_number ? ensureAirlinePrefix(cfg, base.flight_number) : "nonstop",
         via: "direct — baseline",
         stops: 0,
-        starlinkPct: `~${(directProb * 100).toFixed(0)}%`,
-        starlinkH: hours !== null ? `~${fmtH(directProb * hours)}` : "?",
+        starlinkPct: approxPct(directProb),
+        starlinkH: hours !== null ? approxShare(directProb, hours, fmtH) : "?",
         totalH,
       });
     }
@@ -1409,7 +1318,7 @@ function formatCarrierPrediction(
 ): ToolResult {
   const answer = carrierPrediction(cfg, reader, normalized);
   const t = carrierPredictionTelemetry(answer);
-  recordMcpFlightLookup(reader.scope, t.outcome, t.confidence);
+  recordFlightLookup("mcp", t.outcome, t.confidence, reader.scope);
   const text =
     answer.kind === "penetration"
       ? `**${normalized}**: ${joinSentences(describeCarrierPrediction(cfg, answer), "For a firm answer, use check_flight with a date to see the scheduled aircraft")}`
@@ -1417,7 +1326,7 @@ function formatCarrierPrediction(
           describeCarrierPrediction(cfg, answer),
           "Use check_flight with a date to see the scheduled aircraft"
         );
-  return { content: [{ type: "text", text }] };
+  return textResult(text);
 }
 
 /** Format carrierRouteAnswer for MCP — model-less carriers' route answer. */
@@ -1429,20 +1338,15 @@ function formatCarrierRoute(
 ): ToolResult {
   const r = origin && destination ? carrierRouteAnswer(cfg, reader, origin, destination) : null;
   const t = carrierPredictionTelemetry(r);
-  recordMcpFlightLookup(reader.scope, t.outcome, t.confidence);
+  recordFlightLookup("mcp", t.outcome, t.confidence, reader.scope);
   if (!r) {
-    return {
-      content: [
-        {
-          type: "text",
-          text: joinSentences(
-            `Route-level prediction isn't available for ${cfg.name} — Starlink status is determined by aircraft type, not route history`,
-            cfg.rollout.phaseNote,
-            "Use check_flight with a flight number and date to see the scheduled aircraft"
-          ),
-        },
-      ],
-    };
+    return textResult(
+      joinSentences(
+        `Route-level prediction isn't available for ${cfg.name} — Starlink status is determined by aircraft type, not route history`,
+        cfg.rollout.phaseNote,
+        "Use check_flight with a flight number and date to see the scheduled aircraft"
+      )
+    );
   }
 
   const route = `${origin}→${destination}`;
@@ -1451,13 +1355,13 @@ function formatCarrierRoute(
   let text: string;
   if (r.kind === "observed_mixed" && r.lo != null && r.hi != null) {
     const breakdown = r.breakdown
-      .map((b) => `- ${b.label}${b.hint ? ` (${b.hint})` : ""}: ~${pct(b.pct)}`)
+      .map((b) => `- ${b.label}${b.hint ? ` (${b.hint})` : ""}: ${approxPct(b.pct)}`)
       .join("\n");
     text = `**${route} (${cfg.name})**: ${pct(r.lo)}–${pct(r.hi)} Starlink — ${r.reason.toLowerCase()}:\n${breakdown}\n${footer}`;
   } else {
-    text = `**${route} (${cfg.name})**: ${joinSentences(`~${pct(r.probability)} Starlink — ${r.reason}`, footer)}`;
+    text = `**${route} (${cfg.name})**: ${joinSentences(`${approxPct(r.probability)} Starlink — ${r.reason}`, footer)}`;
   }
-  return { content: [{ type: "text", text }] };
+  return textResult(text);
 }
 
 // Hub lookup-only carriers (QR): answered per flight, absent from compareRoute's
@@ -1467,7 +1371,7 @@ const HUB_LOOKUP_ONLY = hubLookupAirlines().filter((a) => !a.publicInHub);
 /** QR's nonstop from its published schedule — equipment type decides Starlink. */
 function hubLookupRouteLines(getReader: GetReader, origin: string, destination: string): string[] {
   if (!HUB_LOOKUP_ONLY.some((a) => a.code === "QR")) return [];
-  const now = Math.floor(Date.now() / 1000);
+  const now = unixNow();
   const rows = getReader("QR")
     .getQatarScheduleByRoute(
       origin,
@@ -1500,50 +1404,33 @@ function formatHubRouteComparison(
   destination: string | null
 ): ToolResult {
   if (!origin || !destination) {
-    return {
-      content: [
-        {
-          type: "text",
-          text: "On the multi-airline server, route predictions compare carriers on a specific O-D pair — both origin and destination are required. For one-sided searches, use an airline-specific scope (e.g. ?scope=UA on the connector URL).",
-        },
-      ],
-      isError: true,
-    };
+    return toolError(
+      "On the multi-airline server, route predictions compare carriers on a specific O-D pair — both origin and destination are required. For one-sided searches, use an airline-specific scope (e.g. ?scope=UA on the connector URL)."
+    );
   }
   const results = compareRoute(getReader, origin, destination);
   const lookupLines = hubLookupRouteLines(getReader, origin, destination);
   const answered = results.length > 0 || lookupLines.length > 0;
-  recordMcpFlightLookup("ALL", answered ? "predicted" : "no_data", answered ? "low" : "none");
+  recordFlightLookup("mcp", answered ? "predicted" : "no_data", answered ? "low" : "none", "ALL");
   if (results.length === 0) {
     const lookupNames = HUB_LOOKUP_ONLY.map((a) => `${a.name} (${a.iata}…)`).join(", ");
-    return {
-      content: [
-        {
-          type: "text",
-          text:
-            lookupLines.length > 0
-              ? `**${origin}→${destination} — Starlink odds by airline (nonstop)**\n\n${lookupLines.join("\n")}`
-              : `No route data for ${origin}→${destination} on any tracked airline yet. For a specific flight, use check_flight with the flight number and date${lookupNames ? ` — ${lookupNames} ${HUB_LOOKUP_ONLY.length === 1 ? "answers" : "answer"} per flight there` : ""}.`,
-        },
-      ],
-    };
+    return textResult(
+      lookupLines.length > 0
+        ? `**${origin}→${destination} — Starlink odds by airline (nonstop)**\n\n${lookupLines.join("\n")}`
+        : `No route data for ${origin}→${destination} on any tracked airline yet. For a specific flight, use check_flight with the flight number and date${lookupNames ? ` — ${lookupNames} ${HUB_LOOKUP_ONLY.length === 1 ? "answers" : "answer"} per flight there` : ""}.`
+    );
   }
   const pct = (p: number) => `${(p * 100).toFixed(0)}%`;
   const lines = results.map((r) => {
     if (r.kind === "no_data") return `- **${r.name}**: no route data yet`;
     const range =
-      r.lo != null && r.hi != null ? `${pct(r.lo)}–${pct(r.hi)}` : `~${pct(r.probability)}`;
+      r.lo != null && r.hi != null ? `${pct(r.lo)}–${pct(r.hi)}` : approxPct(r.probability);
     return `- **${r.name}**: ${range} Starlink${r.reason ? ` — ${r.reason}` : ""}`;
   });
   lines.push(...lookupLines);
-  return {
-    content: [
-      {
-        type: "text",
-        text: `**${origin}→${destination} — Starlink odds by airline (nonstop)**\n\n${lines.join("\n")}\n\nFor itinerary planning or flight-level detail, use an airline-specific scope (e.g. \`?scope=UA\`) or check_flight with a flight number and date.`,
-      },
-    ],
-  };
+  return textResult(
+    `**${origin}→${destination} — Starlink odds by airline (nonstop)**\n\n${lines.join("\n")}\n\nFor itinerary planning or flight-level detail, use an airline-specific scope (e.g. \`?scope=UA\`) or check_flight with a flight number and date.`
+  );
 }
 
 async function toolPredictFlightStarlink(
@@ -1554,10 +1441,7 @@ async function toolPredictFlightStarlink(
   const input =
     typeof args.flight_number === "string" ? canonicalFlightInput(args.flight_number) : "";
   if (!input) {
-    return {
-      content: [{ type: "text", text: "Error: flight_number is required." }],
-      isError: true,
-    };
+    return toolError("Error: flight_number is required.");
   }
 
   const givenDate = typeof args.date === "string" ? args.date.trim() : "";
@@ -1573,7 +1457,7 @@ async function toolPredictFlightStarlink(
   // its REST /api/predict-flight mirrors.
   if (hostReader.scope === "ALL" && cfg.hubFlightLookup) {
     const given = typeof args.date === "string" ? args.date.trim() : "";
-    const nowSec = Math.floor(Date.now() / 1000);
+    const nowSec = unixNow();
     const date = given || addDaysISO(dohDateISO(nowSec), QATAR_PUBLISHED_DAYS_FORWARD + 1);
     return toolCheckFlight(
       hostReader,
@@ -1586,28 +1470,22 @@ async function toolPredictFlightStarlink(
   // Same shape check the check-flight core and /api/predict-flight enforce —
   // prevents agents driving FR24 route lookups with junk ("XX", "UA12345").
   if (!isPlausibleFlightNumber(cfg, forPredict)) {
-    return {
-      content: [
-        {
-          type: "text",
-          text: `${forPredict} is not a valid flight number (expected ${cfg.iata} + 1-4 digits).`,
-        },
-      ],
-      isError: true,
-    };
+    return toolError(
+      `${forPredict} is not a valid flight number (expected ${cfg.iata} + 1-4 digits).`
+    );
   }
 
   // No flight-history model → registry-driven answer, same seam as the core.
   if (!cfg.flightHistoryModel) return formatCarrierPrediction(cfg, reader, forPredict);
 
   const pred = predictFlight(reader, forPredict);
-  recordMcpFlightLookup(
-    reader.scope,
+  recordFlightLookup(
+    "mcp",
     pred.n_observations > 0 ? "predicted" : "no_data",
-    pred.confidence
+    pred.confidence,
+    reader.scope
   );
-  recordMcpPrediction(reader.scope, pred);
-  const pct = (pred.probability * 100).toFixed(0);
+  recordPrediction(pred, reader.scope);
 
   let details: string;
   if (pred.method !== "flight_history_smoothed") {
@@ -1615,11 +1493,17 @@ async function toolPredictFlightStarlink(
     const fleetLabel = fleet === "express" ? "express (regional)" : "mainline";
     details = `No history for this flight number; our ${fleetLabel} estimate for flights not yet seen on a Starlink aircraft — not flight-specific.`;
   } else {
+    // The grade already folds in staleness: plenty of departures can still be
+    // medium or low when most of them are old, and the sentence must agree.
     details =
-      pred.n_observations >= 5 ? "Sample size is solid." : "Limited data — estimate may drift.";
+      pred.confidence === "high"
+        ? "Sample size is solid."
+        : pred.n_observations >= 5
+          ? "Most of its history is old, so the estimate may lag recent installs."
+          : "Limited data — estimate may drift.";
   }
 
-  const probLine = `**${forPredict}**: ~${pct}% Starlink probability ${pred.method === "flight_history_smoothed" ? confidenceTag(pred.n_observations, pred.confidence) : "(fleet prior)"}. ${details}`;
+  const probLine = `**${forPredict}**: ${approxPct(pred.probability)} Starlink probability ${pred.method === "flight_history_smoothed" ? confidenceTag(pred.n_observations, pred.confidence) : "(fleet prior)"}. ${details}`;
 
   // Alternatives LAST so it's the agent's final impression (recency bias).
   let altBlock = "";
@@ -1634,7 +1518,7 @@ async function toolPredictFlightStarlink(
     altBlock = `\n\n${buildAlternativesBlock(cfg, reader, routes, dateUnix, own)}`;
   }
 
-  return { content: [{ type: "text", text: `${probLine}${altBlock}` }] };
+  return textResult(`${probLine}${altBlock}`);
 }
 
 /** Trimmed airport arg; K/P-prefixed ICAO resolves to IATA, as check_flight's leg params do. */
@@ -1646,15 +1530,9 @@ function airportArg(raw: unknown): string | undefined {
 }
 
 function sameAirportError(code: string): ToolResult {
-  return {
-    content: [
-      {
-        type: "text",
-        text: `Origin and destination are the same (${code.toUpperCase()}). Please specify a different destination.`,
-      },
-    ],
-    isError: true,
-  };
+  return toolError(
+    `Origin and destination are the same (${code.toUpperCase()}). Please specify a different destination.`
+  );
 }
 
 function toolPlanStarlinkItinerary(
@@ -1685,10 +1563,7 @@ function toolPlanStarlinkItinerary(
   const targetDateUnix = dateWindow ? dateWindow.mid : undefined;
 
   if (!origin || !destination) {
-    return {
-      content: [{ type: "text", text: "Error: both origin and destination are required." }],
-      isError: true,
-    };
+    return toolError("Error: both origin and destination are required.");
   }
 
   if (origin.toUpperCase() === destination.toUpperCase()) return sameAirportError(origin);
@@ -1717,14 +1592,15 @@ function toolPlanStarlinkItinerary(
   // Itinerary planning is graph-search prediction; map coverage to confidence
   // so the cross-channel lookup metric still distinguishes "found a path" from
   // "no Starlink routing exists on this O-D pair".
-  recordMcpFlightLookup(
-    reader.scope,
+  recordFlightLookup(
+    "mcp",
     itineraries.length > 0 ? "predicted" : "no_data",
     itineraries.length === 0
       ? "none"
       : itineraries.some((it) => it.coverage === "full")
         ? "medium"
-        : "low"
+        : "low",
+    reader.scope
   );
 
   const baseline = routeBaseline(reader, origin, destination);
@@ -1739,7 +1615,7 @@ function toolPlanStarlinkItinerary(
       null)
     : null;
   const nonstopStats = baseline
-    ? `~${(baseline.probability * 100).toFixed(0)}% Starlink · ~${fmtBaseH(baseline.expected_starlink_hours)} Starlink / ~${fmtBaseH(baseline.duration_hours)} flying`
+    ? `${approxPct(baseline.probability)} Starlink · ${approxShare(baseline.probability, baseline.duration_hours, fmtBaseH, baseline.expected_starlink_hours)} Starlink / ~${fmtBaseH(baseline.duration_hours)} flying`
     : "";
   const baselineLine = !baseline
     ? ""
@@ -1759,14 +1635,9 @@ function toolPlanStarlinkItinerary(
       : hasNonstop
         ? "otherwise advise booking the nonstop — no Starlink routing meaningfully improves odds on mainline-only routes"
         : "otherwise advise the fastest United connection — there is no nonstop to fall back on";
-    return {
-      content: [
-        {
-          type: "text",
-          text: `${headline}${baselineLine ? `\n\n${baselineLine}` : ""}\n\nNo reasonable path through the Starlink route graph connects these airports. This may be a mainline-only route, where fleet-wide coverage is much lower than on express.\n\n**Fallbacks**: (1) \`search_starlink_flights\` with just \`destination="${dest}"\` or \`origin="${orig}"\` — confirmed near-term assignments may exist even when historical probability is low; (2) if the user has a specific flight, \`predict_flight_starlink\` for a per-flight estimate; (3) ${lastResort}.`,
-        },
-      ],
-    };
+    return textResult(
+      `${headline}${baselineLine ? `\n\n${baselineLine}` : ""}\n\nNo reasonable path through the Starlink route graph connects these airports. This may be a mainline-only route, where fleet-wide coverage is much lower than on express.\n\n**Fallbacks**: (1) \`search_starlink_flights\` with just \`destination="${dest}"\` or \`origin="${orig}"\` — confirmed near-term assignments may exist even when historical probability is low; (2) if the user has a specific flight, \`predict_flight_starlink\` for a per-flight estimate; (3) ${lastResort}.`
+    );
   }
 
   const fullItins = itineraries.filter((it) => it.coverage === "full");
@@ -1857,7 +1728,7 @@ ${baselineSection}${sections.join("\n\n---\n\n")}${timingNote}
 
 **Ranking**: by coverage ratio (expected Starlink hours / total hours), with a small penalty per stop. Connections are limited to ${ENFORCE_ITINERARY_TIME_BUDGET ? "a modest time premium over the nonstop (1h allowed per layover)" : "the geographic detour bound"}. "~1.8h Starlink / ~7h flying (26%)" = 26% of flight time expected on Starlink.`;
 
-  return { content: [{ type: "text", text }] };
+  return textResult(text);
 }
 
 function toolPredictRouteStarlink(
@@ -1870,12 +1741,7 @@ function toolPredictRouteStarlink(
   const limit = typeof args.limit === "number" && args.limit > 0 ? Math.min(args.limit, 50) : 10;
 
   if (!origin && !destination) {
-    return {
-      content: [
-        { type: "text", text: "Error: at least one of origin or destination is required." },
-      ],
-      isError: true,
-    };
+    return toolError("Error: at least one of origin or destination is required.");
   }
 
   if (origin && destination && origin.toUpperCase() === destination.toUpperCase()) {
@@ -1909,7 +1775,7 @@ function toolPredictRouteStarlink(
   const result = predictRoute(reader, origin || null, destination || null);
 
   if (result.flights.length === 0) {
-    recordMcpFlightLookup(reader.scope, "no_data", "none");
+    recordFlightLookup("mcp", "no_data", "none", reader.scope);
     // No DIRECT Starlink flights on this route. If both endpoints given,
     // inline the connection-based alternatives so the agent never sees a
     // dead-end that contradicts check_flight's embedded alternatives.
@@ -1917,30 +1783,20 @@ function toolPredictRouteStarlink(
       const alt = buildAlternativesBlock(cfg, reader, [
         { origin: origin.toUpperCase(), destination: destination.toUpperCase() },
       ]);
-      return {
-        content: [
-          {
-            type: "text",
-            text: `No DIRECT Starlink flight on ${origin.toUpperCase()}→${destination.toUpperCase()} — this tool only finds single-route flights. Connection-based alternatives below:\n\n${alt}`,
-          },
-        ],
-      };
+      return textResult(
+        `No DIRECT Starlink flight on ${origin.toUpperCase()}→${destination.toUpperCase()} — this tool only finds single-route flights. Connection-based alternatives below:\n\n${alt}`
+      );
     }
-    return {
-      content: [
-        {
-          type: "text",
-          text: `${result.coverage_note}\n\nIf you have a specific flight number, try predict_flight_starlink for a fleet-prior estimate.`,
-        },
-      ],
-    };
+    return textResult(
+      `${result.coverage_note}\n\nIf you have a specific flight number, try predict_flight_starlink for a fleet-prior estimate.`
+    );
   }
 
   const shown = result.flights.slice(0, limit);
   // Top-ranked flight is the headline answer; per-flight points feed the
   // probability distribution so MCP-served route predictions are visible.
-  recordMcpFlightLookup(reader.scope, "predicted", shown[0].confidence);
-  for (const f of shown) recordMcpPrediction(reader.scope, f);
+  recordFlightLookup("mcp", "predicted", shown[0].confidence, reader.scope);
+  for (const f of shown) recordPrediction(f, reader.scope);
   const lines = shown.map((f) => {
     const pct = (f.probability * 100).toFixed(0);
     const fleet = inferSubfleet(cfg, f.flight_number);
@@ -1968,7 +1824,7 @@ ${result.coverage_note}
 
 Probability and confidence are independent: 92% with 4 obs (medium) is a *less certain* estimate than 79% with 10 obs (high), but still indicates higher Starlink likelihood.`;
 
-  return { content: [{ type: "text", text }] };
+  return textResult(text);
 }
 
 /**
@@ -1991,15 +1847,9 @@ function unknownAirportError(
       /^[A-Z]{3}$/.test(code) &&
       (AIRPORT_COORDS[code] !== undefined || reader.airlineServesAirports(prefixes, code));
     if (!known) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Unknown airport code ${code}. Use a 3-letter IATA airport code (e.g. SFO).`,
-          },
-        ],
-        isError: true,
-      };
+      return toolError(
+        `Unknown airport code ${code}. Use a 3-letter IATA airport code (e.g. SFO).`
+      );
     }
   }
   return null;
@@ -2008,16 +1858,22 @@ function unknownAirportError(
 // A scope can be registered (VALID_SCOPES) before its airline config exists —
 // fail closed with a clean tool error, not a TypeError 500.
 function scopeConfigError(scope: Scope): ToolResult {
-  return {
-    content: [{ type: "text", text: `Error: no airline registered for scope "${scope}".` }],
-    isError: true,
-  };
+  return toolError(`Error: no airline registered for scope "${scope}".`);
+}
+
+const pctOf = (starlink: number, total: number) =>
+  total > 0 ? ((starlink / total) * 100).toFixed(1) : "0.0";
+
+/** "N of M aircraft (P%)" where the roster is the programme's own denominator,
+ * else just the count: the same gate the pages, badge and share cards use. */
+function aircraftShare(starlink: number, total: number, rosterIsProgramScope: boolean): string {
+  return denominatorIsPublishable(starlink, total, rosterIsProgramScope)
+    ? `${starlink} of ${total} aircraft (${pctOf(starlink, total)}%)`
+    : `${starlink} aircraft`;
 }
 
 function toolGetFleetStats(reader: ScopedReader): ToolResult {
   const lastUpdated = reader.getLastUpdated();
-  const pct = (starlink: number, total: number) =>
-    total > 0 ? ((starlink / total) * 100).toFixed(1) : "0.0";
 
   // Null fleetStats = hub scope: per-airline breakdown — there is no
   // single-airline subfleet split, and the hub must never present one
@@ -2028,39 +1884,42 @@ function toolGetFleetStats(reader: ScopedReader): ToolResult {
     const agg = aggregatePenetration(per);
     // A community guide lags installs, so its count is a floor.
     const floor = (a: { code: string }) => Boolean(AIRLINES[a.code]?.communitySource);
+    const inScope = (a: { code: string }) =>
+      AIRLINES[a.code]?.rollout.rosterIsProgramScope ?? false;
     const lines = per.map(
       (a) =>
-        `**${a.name}**: ${floor(a) ? "at least " : ""}${a.starlink} of ${a.total} aircraft (${pct(a.starlink, a.total)}%)${a.phaseNote ? ` — ${a.phaseNote}` : ""}`
+        `**${a.name}**: ${floor(a) ? "at least " : ""}${aircraftShare(a.starlink, a.total, inScope(a))}${a.phaseNote ? ` — ${a.phaseNote}` : ""}`
     );
     const text = `Starlink Installation Progress (as of ${lastUpdated}):
 
-**All tracked airlines**: ${per.some(floor) ? "at least " : ""}${agg.starlink} of ${agg.total} aircraft (${pct(agg.starlink, agg.total)}%) have Starlink WiFi
+**All tracked airlines**: ${per.some(floor) ? "at least " : ""}${aircraftShare(agg.starlink, agg.total, per.every(inScope))} have Starlink WiFi
 
 ${lines.join("\n")}`;
-    return { content: [{ type: "text", text }] };
+    return textResult(text);
   }
 
   // Single-airline scope: branding and rollout prose come from the registry
   // config — no airline literals (this text serves every /mcp host).
   const cfg = AIRLINES[reader.scope];
   if (!cfg) return scopeConfigError(reader.scope);
+  const inScope = cfg.rollout.rosterIsProgramScope;
   const totalCount = reader.getTotalCount();
   const starlinkPlanes = reader.getStarlinkPlanes();
   const subfleetLines = [
     fleetStats.express.total > 0
-      ? `**Express (Regional) Fleet**: ${fleetStats.express.starlink} of ${fleetStats.express.total} aircraft (${fleetStats.express.percentage.toFixed(1)}%)`
+      ? `**Express (Regional) Fleet**: ${aircraftShare(fleetStats.express.starlink, fleetStats.express.total, inScope)}`
       : null,
     fleetStats.mainline.total > 0
-      ? `**Mainline Fleet**: ${fleetStats.mainline.starlink} of ${fleetStats.mainline.total} aircraft (${fleetStats.mainline.percentage.toFixed(1)}%)`
+      ? `**Mainline Fleet**: ${aircraftShare(fleetStats.mainline.starlink, fleetStats.mainline.total, inScope)}`
       : null,
   ].filter((l) => l !== null);
   const familyLines = reader
     .getFleetPageData()
     .families.filter((f) => f.family !== "unknown")
-    .map((f) => `- ${f.family}: ${f.starlink} of ${f.total} (${pct(f.starlink, f.total)}%)`);
+    .map((f) => `- ${f.family}: ${f.starlink} of ${f.total} (${pctOf(f.starlink, f.total)}%)`);
   const text = [
     `${cfg.name} Starlink Installation Progress (as of ${lastUpdated}):`,
-    `**Combined Fleet**: ${starlinkPlanes.length} of ${totalCount} aircraft (${pct(starlinkPlanes.length, totalCount)}%) have Starlink WiFi`,
+    `**Combined Fleet**: ${aircraftShare(starlinkPlanes.length, totalCount, inScope)} have Starlink WiFi`,
     subfleetLines.join("\n"),
     familyLines.length > 0 ? `**By Aircraft Type**:\n${familyLines.join("\n")}` : null,
     `**Rollout**: ${cfg.rollout.statusLabel} — ${cfg.rollout.phaseNote}`,
@@ -2069,7 +1928,7 @@ ${lines.join("\n")}`;
     .filter(Boolean)
     .join("\n\n");
 
-  return { content: [{ type: "text", text }] };
+  return textResult(text);
 }
 
 function toolListStarlinkAircraft(
@@ -2102,14 +1961,7 @@ function toolListStarlinkAircraft(
     ? `${total} Starlink-equipped aircraft in the ${carrier} ${fleet} fleet`
     : `${total} Starlink-equipped aircraft (${carrier})`;
 
-  return {
-    content: [
-      {
-        type: "text",
-        text: `${header} (showing ${shown.length}):\n\n${lines.join("\n")}`,
-      },
-    ],
-  };
+  return textResult(`${header} (showing ${shown.length}):\n\n${lines.join("\n")}`);
 }
 
 /**
@@ -2119,13 +1971,24 @@ function toolListStarlinkAircraft(
  * a regional operator's code (OO/SKW) carries the row airline's marketing
  * number, the same equivalence UA's carrierPrefixes encode.
  */
-function marketingFlightNumber(rowCfg: AirlineConfig, raw: string): string {
-  const fn = normalizeAirlineFlightNumber(rowCfg, raw);
-  if (fn.startsWith(rowCfg.iata) && /^\d+$/.test(fn.slice(rowCfg.iata.length))) return fn;
-  const marketing = detectMarketingCarrier(raw);
-  if (marketing) return normalizeAirlineFlightNumber(marketing, raw);
-  const digits = raw.match(/^[A-Z]{2,3}(\d{1,4})$/)?.[1];
-  return digits ? `${rowCfg.iata}${digits}` : raw;
+
+// Past the ~48h schedule cache; only a bound, never a window the data fills.
+const SEARCH_HORIZON_SEC = 14 * 86400;
+
+/** "~16%", but a plain "0%": a hedge on zero reads as a maybe on a no. */
+export function approxPct(p: number): string {
+  const n = Number((p * 100).toFixed(0));
+  return n === 0 ? "0%" : `~${n}%`;
+}
+
+/** Expected Starlink time for a share of `hours`, "0" when the share rounds to 0%. */
+function approxShare(
+  p: number,
+  hours: number,
+  fmt: (h: number) => string,
+  expected = p * hours
+): string {
+  return approxPct(p) === "0%" ? "0" : `~${fmt(expected)}`;
 }
 
 function toolSearchStarlinkFlights(
@@ -2137,25 +2000,18 @@ function toolSearchStarlinkFlights(
   const limit = typeof args.limit === "number" && args.limit > 0 ? Math.min(args.limit, 100) : 20;
 
   if (!origin && !destination) {
-    return {
-      content: [
-        {
-          type: "text",
-          text: "Error: at least one of origin or destination must be provided.",
-        },
-      ],
-      isError: true,
-    };
+    return toolError("Error: at least one of origin or destination must be provided.");
   }
 
-  const now = Math.floor(Date.now() / 1000);
-  const starlinkTails = new Set(reader.getStarlinkPlanes().map((p) => p.TailNumber));
+  const now = unixNow();
+  // One entry per physical departure: a tail swap leaves the old row behind,
+  // so the slot is claimed first and only then tested for Starlink.
   const allFuture = reader
-    .getUpcomingFlights()
-    .filter((f) => f.departure_time > now && starlinkTails.has(f.tail_number));
+    .getDepartureSlots({ from: now + 1, to: now + SEARCH_HORIZON_SEC, partners: true })
+    .filter((f) => f.equipped === 1);
 
-  // Data horizon from the UNFILTERED set — showing now() when the filtered result
-  // is empty would wrongly imply we have zero forward data
+  // Data horizon from every equipped departure, before the route filter: an
+  // empty route result stamped with now() would imply no forward data at all.
   const latestDeparture =
     allFuture.length > 0 ? allFuture[allFuture.length - 1].departure_time : now;
   const dataHorizon = new Date(latestDeparture * 1000).toISOString().slice(0, 10);
@@ -2170,14 +2026,9 @@ function toolSearchStarlinkFlights(
 
   if (total === 0) {
     const routeDesc = origin && destination ? `${origin}→${destination}` : origin || destination;
-    return {
-      content: [
-        {
-          type: "text",
-          text: `No confirmed Starlink flights found for ${routeDesc} in the next ~2 days.\n\nNote: this tool only sees confirmed assignments through ~${dataHorizon}. If you need dates beyond that, use predict_route_starlink or plan_starlink_itinerary for probability-based planning instead — absence from this tool does NOT mean no Starlink.`,
-        },
-      ],
-    };
+    return textResult(
+      `No confirmed Starlink flights found for ${routeDesc} in the next ~2 days.\n\nNote: this tool only sees confirmed assignments through ~${dataHorizon}. If you need dates beyond that, use predict_route_starlink or plan_starlink_itinerary for probability-based planning instead — absence from this tool does NOT mean no Starlink.`
+    );
   }
 
   // Hub rows span airlines — normalize each flight number under its OWN
@@ -2193,14 +2044,9 @@ function toolSearchStarlinkFlights(
   });
 
   const routeDesc = origin && destination ? `${origin}→${destination}` : origin || destination;
-  return {
-    content: [
-      {
-        type: "text",
-        text: `Found ${total} confirmed Starlink flight${total === 1 ? "" : "s"} for ${routeDesc} (showing ${shown.length}):\n\n${lines.join("\n")}\n\nSchedule data extends through ~${dataHorizon}. For dates beyond that, use predict_route_starlink or plan_starlink_itinerary.`,
-      },
-    ],
-  };
+  return textResult(
+    `Found ${total} confirmed Starlink flight${total === 1 ? "" : "s"} for ${routeDesc} (showing ${shown.length}):\n\n${lines.join("\n")}\n\nSchedule data extends through ~${dataHorizon}. For dates beyond that, use predict_route_starlink or plan_starlink_itinerary.`
+  );
 }
 
 // ============================================================================
@@ -2309,7 +2155,7 @@ function recordMcpToolCall(
   // Bound the `tool` tag — /mcp is public and `params.name` is caller-controlled.
   const tags = {
     tool: TOOL_NAMES.includes(tool) ? tool : "unknown",
-    airline: mcpAirlineTag(scope),
+    airline: normalizeScopeTag(scope),
     outcome,
   };
   metrics.increment(COUNTERS.MCP_TOOL_CALL, tags);
@@ -2409,8 +2255,6 @@ async function dispatch(
 // HTTP handler
 // ============================================================================
 
-const JSON_HEADERS = { "Content-Type": "application/json" };
-
 /**
  * Handle an incoming MCP HTTP request.
  * Mount this at a single path (e.g. /mcp) in your Bun.serve router.
@@ -2426,58 +2270,39 @@ export async function handleMcpRequest(
   getReader: (scope: Scope) => ScopedReader,
   analytics: AnalyticsConfig | null = DEFAULT_ANALYTICS
 ): Promise<Response> {
-  // GET = open SSE stream for server→client push. We're stateless, no push.
-  // DELETE = terminate session. We're stateless, no sessions.
-  if (req.method === "GET" || req.method === "DELETE") {
-    return new Response(null, { status: 405, headers: { Allow: "POST" } });
-  }
+  // Stateless and tools-only: no SSE stream to open on GET, no session to end
+  // on DELETE. POST is the whole protocol.
+  if (req.method !== "POST") return mcpMethodNotAllowed();
 
-  if (req.method !== "POST") {
-    return new Response(null, { status: 405, headers: { Allow: "POST" } });
-  }
-
-  // Validate Content-Type
   const contentType = req.headers.get("content-type") || "";
   if (!contentType.includes("application/json")) {
-    return new Response(
-      JSON.stringify(rpcError(null, -32700, "Content-Type must be application/json")),
-      { status: 415, headers: JSON_HEADERS }
-    );
+    return jsonRpc(rpcError(null, -32700, "Content-Type must be application/json"), 415);
   }
 
-  // Parse JSON body
   let msg: JsonRpcRequest;
   try {
     msg = await req.json();
   } catch {
-    return new Response(JSON.stringify(rpcError(null, -32700, "Parse error: invalid JSON")), {
-      status: 400,
-      headers: JSON_HEADERS,
-    });
+    return jsonRpc(rpcError(null, -32700, "Parse error: invalid JSON"), 400);
   }
 
-  // Validate JSON-RPC envelope
   if (msg.jsonrpc !== "2.0" || typeof msg.method !== "string") {
-    return new Response(
-      JSON.stringify(rpcError(msg.id ?? null, -32600, "Invalid Request: not JSON-RPC 2.0")),
-      { status: 400, headers: JSON_HEADERS }
-    );
+    return jsonRpc(rpcError(msg.id ?? null, -32600, "Invalid Request: not JSON-RPC 2.0"), 400);
   }
 
   const { scope } = resolveScope(req, hostScope);
   const reader = getReader(scope);
 
-  // Dispatch
   let response: JsonRpcResponse | null;
   try {
     response = await dispatch(reader, getReader, scope, hostScope, msg);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    info(`MCP handler error: ${message}`);
-    response = rpcError(msg.id ?? null, -32603, `Internal error: ${message}`);
+    // The detail stays in the log: an exception message can carry SQL or paths.
+    logError(`MCP handler error in ${msg.method}`, err);
+    response = rpcError(msg.id ?? null, -32603, "Internal error");
   }
 
-  // Track meaningful MCP usage in Plausible (skip ping & notifications — noise)
+  // Ping and notifications are noise in Plausible.
   if (msg.method === "initialize" || msg.method === "tools/list") {
     trackMcpEvent(req, analytics, { method: msg.method });
   } else if (msg.method === "tools/call") {
@@ -2485,11 +2310,5 @@ export async function handleMcpRequest(
     trackMcpEvent(req, analytics, { method: "tools/call", tool: toolName });
   }
 
-  // Notification (no id) → 202 Accepted, empty body
-  if (response === null) {
-    return new Response(null, { status: 202 });
-  }
-
-  // Request → 200 OK with JSON-RPC response
-  return new Response(JSON.stringify(response), { status: 200, headers: JSON_HEADERS });
+  return response === null ? jsonRpc(null, 202) : jsonRpc(response);
 }

@@ -24,6 +24,11 @@ const FRANCE_TAIL = tailPatterns("F-[GH][A-Z]{3}");
 
 export type AirlineCode = string;
 
+export interface Operator {
+  icao: string;
+  iata: string;
+}
+
 export interface SubfleetDef {
   key: string;
   label: string;
@@ -44,6 +49,8 @@ export interface SubfleetDef {
 export interface PageBrand {
   /** Display title (rendered in-page) */
   title: string;
+  /** Homepage H1 when it differs from the site name in `title`. */
+  heading?: string;
   tagline: string;
   /** SEO `<title>` tag */
   siteTitle: string;
@@ -54,6 +61,11 @@ export interface PageBrand {
   keywords: string;
   accentColor: string;
   accentColorDim: string;
+  /** Lighter tint of the brand color for text, links, outlines and chart marks
+   * on the dark page — ≥4.5:1 on base, surface and surface-elevated. Only set
+   * where the brand color itself falls short (Alaska's #01426a is 1.5:1 on a
+   * panel); accentColor stays the brand color for theme-color, badges and OG. */
+  accentText?: string;
   /** Brand color tuned for the favicon's glowing arc on a dark tile —
    * defaults to accentColor when omitted. */
   faviconAccent?: string;
@@ -72,7 +84,6 @@ export interface AnalyticsConfig {
 }
 
 export interface SiteFeatures {
-  homeNav: boolean;
   checkFlightPage: boolean;
   routePlannerPage: boolean;
   fleetPage: boolean;
@@ -135,7 +146,7 @@ export interface AirlineConfig {
   /** Brand-only short form ("United", "Alaska") for titles where the full
    * legal name pushes the keyword past mobile SERP truncation (~50–55 chars). */
   shortName: string;
-  /** Background jobs (scrape/verify/discover/sync) skip airlines with enabled=false. resolveTenant still resolves them. */
+  /** Background jobs (scrape/verify/discover/sync) skip airlines with enabled=false. resolveSite still resolves them. */
   enabled: boolean;
   /** Included on the hub HOMEPAGE and hub-only APIs (/api/data, the hub's
    * check-flight carrier detection, MCP). False keeps an airline out of every
@@ -159,8 +170,19 @@ export interface AirlineConfig {
   hubFlightLookup?: boolean;
   iata: string;
   icao: string;
-  /** All operating-carrier prefixes (ICAO + IATA) that map to this marketing carrier. Longest-first. */
+  /** The carriers whose callsigns and flight numbers this marketing carrier's
+   * flights are stored under, own mainline first: the one declaration behind
+   * carrierPrefixes, the op_carrier metric tag and the ADS-B callsign match. */
+  operators: readonly Operator[];
+  /** Derived from `operators`: every ICAO code, then every IATA code, so
+   * longest-first. */
   carrierPrefixes: string[];
+  /** Regional operators that also fly for another tracked carrier (SkyWest
+   * for Alaska and United). Their codes reach flight-number lookup variants
+   * only, never carrier detection, metrics or callsign matching: an OO3015
+   * row belongs to this airline because its airline column says so, and the
+   * lookups that read these variants are airline-scoped. */
+  sharedOperators?: readonly Operator[];
   subfleets: SubfleetDef[];
   /** Carriers whose metal flies this airline's marketed flight numbers and
    * whose upcoming_flights rows are stored under their own code (AS-numbered
@@ -274,20 +296,14 @@ const AIRLINE_DEFS = {
     // ACA (Air Canada), PDT (Piedmont), and ENY (Envoy) are deliberately
     // absent — they don't operate United Express, so e.g. ACA123 must never
     // resolve to UA123.
-    carrierPrefixes: [
-      "UAL",
-      "SKW",
-      "ASH",
-      "RPA",
-      "GJS",
-      "UCA",
-      "AWI",
-      "OO",
-      "YX",
-      "YV",
-      "G7",
-      "C5",
-      "ZW",
+    operators: [
+      { icao: "UAL", iata: "UA" },
+      { icao: "SKW", iata: "OO" },
+      { icao: "ASH", iata: "YV" },
+      { icao: "RPA", iata: "YX" },
+      { icao: "GJS", iata: "G7" },
+      { icao: "UCA", iata: "C5" },
+      { icao: "AWI", iata: "ZW" },
     ],
     subfleets: [
       {
@@ -359,7 +375,7 @@ const AIRLINE_DEFS = {
     publicInHub: true,
     iata: "HA",
     icao: "HAL",
-    carrierPrefixes: ["HAL", "HA"],
+    operators: [{ icao: "HAL", iata: "HA" }],
     subfleets: [{ key: "mainline", label: "Hawaiian Fleet", match: () => true }],
     fr24Slug: "ha-hal",
     metricTag: "hawaiian",
@@ -403,6 +419,7 @@ const AIRLINE_DEFS = {
       keywords:
         "hawaiian airlines starlink, hawaiian airlines wifi, does hawaiian have wifi, hawaiian a330 starlink, hawaiian a321neo wifi, hawaiian 717 wifi, hawaiian interisland wifi, free wifi hawaiian airlines",
       accentColor: "#413691",
+      accentText: "#928ac9",
       accentColorDim: "#6b5fb3",
       faviconAccent: "#9d4edd", // Pualani purple, lifted to glow on dark
       socialImagePath: "/static/social-image-ha.webp",
@@ -421,10 +438,14 @@ const AIRLINE_DEFS = {
     publicInHub: true,
     iata: "AS",
     icao: "ASA",
-    // SkyWest-for-Alaska tails are tracked (CPA-dedicated, disjoint from UA's),
-    // but SKW/OO stay out of carrierPrefixes — we don't resolve SkyWest-operated
-    // AS flight numbers to tails yet.
-    carrierPrefixes: ["ASA", "QXE", "AS", "QX"],
+    // SkyWest-for-Alaska tails are tracked (CPA-dedicated, disjoint from
+    // UA's). SkyWest flies United's numbers too, so SKW/OO stay out of
+    // operators and resolve by the row's airline instead.
+    operators: [
+      { icao: "ASA", iata: "AS" },
+      { icao: "QXE", iata: "QX" },
+    ],
+    sharedOperators: [{ icao: "SKW", iata: "OO" }],
     operatingPartners: ["HA"],
     subfleets: [
       // AS800-999 are AS-marketed flights on Hawaiian A330/A321neo metal
@@ -483,12 +504,13 @@ const AIRLINE_DEFS = {
     flightHistoryModel: false,
     verifySite: "alaskaair.com",
     typeDeterministicWifi: alaskaTypeToWifi,
-    // Phase 1 (E175 regional) complete; mainline 737/787 installs are under way
-    // — see the dated AirlineGeeks fact on /airlines/alaska for the count.
+    // Alaska's own tracker (Aug. 28, 2026 fact in rollout-facts): E175s done,
+    // mainline only on the 737-8 MAX; no other 737 or 787 connected.
     rollout: {
       status: "phase_done",
       statusLabel: "Regional fleet done",
-      phaseNote: "Every regional E175 has Starlink. Mainline 737 and 787 installs are under way.",
+      phaseNote:
+        "Every regional E175 has Starlink. Mainline has started with the 737-8 MAX; no other 737 or 787 is connected yet.",
       // Mainline is in the programme too — the whole roster is the denominator.
       rosterIsProgramScope: true,
     },
@@ -504,6 +526,7 @@ const AIRLINE_DEFS = {
       keywords:
         "alaska airlines starlink, alaska starlink tracker, alaska wifi, 737 MAX starlink, E175 starlink, check alaska flight starlink",
       accentColor: "#01426a",
+      accentText: "#4b99c9",
       accentColorDim: "#2b6a8f",
       faviconAccent: "#00b2e3", // Alaska secondary brand blue — primary #01426a is too dark to glow
       socialImagePath: "/static/social-image-as.webp",
@@ -527,7 +550,7 @@ const AIRLINE_DEFS = {
     hubFlightLookup: true,
     iata: "QR",
     icao: "QTR",
-    carrierPrefixes: ["QTR", "QR"],
+    operators: [{ icao: "QTR", iata: "QR" }],
     // QR runs the same flight number across very different equipment day-to-day
     // (DOH-CAI may be 359 on QR1303 and 788 on QR1301 same date), so flight-
     // number partition is meaningless. One bucket; UI can break out by type.
@@ -544,6 +567,13 @@ const AIRLINE_DEFS = {
     // QR freshness = "the schedule cache is current", not "the roster row
     // count changed" — the hourly ingester owns the stamp (gated on outcome).
     lastUpdatedOwner: "schedule-ingester",
+    // Roster counts keyed like QATAR_PHASE_BY_FAMILY, so each phase row has its own count.
+    programTypes: [
+      [/787-?8/i, "B787-8", "787-8"],
+      [/787-?9/i, "B787-9", "787-9"],
+      [/737/i, "B737", "737"],
+      [/A32[01]|A319/i, "A320", "A320 and A321neo"],
+    ],
     flightHistoryModel: false,
     verifySite: "qatarairways.com",
     typeDeterministicWifi: qatarTypeToStarlink,
@@ -568,6 +598,7 @@ const AIRLINE_DEFS = {
       keywords:
         "qatar airways starlink, qatar starlink tracker, qatar wifi, B777 starlink, A350 starlink, B787 starlink, check qatar flight starlink, qr wifi",
       accentColor: "#5c0632",
+      accentText: "#d371a3",
       accentColorDim: "#8a2851",
       faviconAccent: "#a3204e", // Qatar oryx burgundy, lifted
       socialImagePath: "/static/social-image-qr.webp",
@@ -588,7 +619,7 @@ const AIRLINE_DEFS = {
     icao: "AFR",
     // HOP! flies AF-marketed numbers under its own callsigns, which carry no
     // marketed number, so HOP is deliberately not a prefix here.
-    carrierPrefixes: ["AFR", "AF"],
+    operators: [{ icao: "AFR", iata: "AF" }],
     subfleets: [{ key: "mainline", label: "Air France Fleet", match: () => true }],
     classifyFleet: () => "mainline",
     // af-afr lists the HOP E-jets too; the a5-hop page is empty.
@@ -639,20 +670,39 @@ const AIRLINE_DEFS = {
       keywords:
         "air france starlink, air france wifi, air france 777 starlink, air france a350 wifi, air france a220 wifi",
       accentColor: "#002157",
+      accentText: "#5991ed",
       accentColorDim: "#2a4a80",
       faviconAccent: "#e4002b",
       socialImagePath: "/static/social-image-af.webp",
       analyticsDomain: "airlinestarlinktracker.com",
     },
   },
-} satisfies Record<string, AirlineConfig>;
+} satisfies Record<string, Omit<AirlineConfig, "carrierPrefixes">>;
 
 /** Literal union of registered airline codes. Type per-airline maps as
  * Record<KnownAirlineCode, T> so a missing airline is a compile error, not a
  * silent fallback to another tenant's data (the og:image bug class). */
 export type KnownAirlineCode = keyof typeof AIRLINE_DEFS;
 
-export const AIRLINES: Record<AirlineCode, AirlineConfig> = AIRLINE_DEFS;
+export const AIRLINES: Record<AirlineCode, AirlineConfig> = Object.fromEntries(
+  Object.entries(AIRLINE_DEFS).map(([code, def]) => [
+    code,
+    {
+      ...def,
+      carrierPrefixes: [...def.operators.map((o) => o.icao), ...def.operators.map((o) => o.iata)],
+    },
+  ])
+);
+
+/** IATA codes of the carriers operating `code`'s flights (UA: UA, OO, YX…). */
+export function operatorIatas(code: KnownAirlineCode): string[] {
+  return AIRLINES[code].operators.map((o) => o.iata);
+}
+
+/** Callsign ICAO → the codes that operator's rows are stored under. */
+export function operatorStoragePrefixes(code: KnownAirlineCode): Record<string, string[]> {
+  return Object.fromEntries(AIRLINES[code].operators.map((o) => [o.icao, [o.icao, o.iata]]));
+}
 
 /** Every subfleet key any airline registers — the vocabulary normalizeFleet
  * and the fleet pages accept. Derived, never hand-enumerated. */
@@ -952,6 +1002,7 @@ export const HUB_BRAND: PageBrand = {
   // unitedstarlinktracker.com for "united starlink tracker" (Hub ~4% CTR vs
   // United ~86% on the same impressions).
   title: "Which Airlines Have Starlink WiFi?",
+  heading: "Which airlines have Starlink Wi-Fi?",
   tagline: "Compare every Starlink rollout — United, Hawaiian, Alaska, and more",
   siteTitle: "Starlink WiFi by Airline — Which Airlines Have Starlink in 2026?",
   description:
@@ -971,7 +1022,6 @@ const DEFAULT_ANALYTICS_SCRIPT = "https://analytics.martinamps.com/js/script.js"
 const DEFAULT_ANALYTICS_EVENT_API = "https://analytics.martinamps.com/api/event";
 
 const AIRLINE_SITE_FEATURES: SiteFeatures = {
-  homeNav: true,
   checkFlightPage: true,
   routePlannerPage: true,
   fleetPage: true,
@@ -1027,7 +1077,6 @@ export const SITES: Record<string, SiteConfig> = {
       eventApiUrl: DEFAULT_ANALYTICS_EVENT_API,
     },
     features: {
-      homeNav: false,
       checkFlightPage: false,
       routePlannerPage: false,
       fleetPage: true,
@@ -1112,8 +1161,10 @@ function siteForScope(scope: AirlineCode | "ALL", liveOnly = false): SiteConfig 
   return allSites().find((site) => site.scope === scope) ?? null;
 }
 
-export function tenantBrand(tenant: Tenant): PageBrand {
-  return tenant === "ALL" ? HUB_BRAND : tenant.brand;
+/** The accent to use for anything read against the dark page (text, links,
+ * button outlines, bars) — the brand color when it already contrasts. */
+export function uiAccent(brand: PageBrand): string {
+  return brand.accentText ?? brand.accentColor;
 }
 
 /** Produce the template-variable map that index.html `{{...}}` placeholders expect. */
@@ -1129,6 +1180,7 @@ export function brandMetadata(brand: PageBrand) {
     siteName: brand.title,
     accentColor: brand.accentColor,
     accentColorDim: brand.accentColorDim,
+    uiAccentColor: uiAccent(brand),
     // socialImagePath is intentionally absent: resolveSocialImage (app.ts) is
     // the single resolver, with the missing-asset fallback.
   };
@@ -1240,16 +1292,4 @@ export function analyticsOrigins() {
     scriptOrigins: [...scriptOrigins].sort(),
     connectOrigins: [...connectOrigins].sort(),
   };
-}
-
-/**
- * Resolve the tenant from an incoming Host header.
- * - Matches an airline's hosts → that AirlineConfig
- * - Matches the hub site's hosts → 'ALL'
- * - localhost → AIRLINES[DEV_TENANT ?? 'UA']
- * - Anything else → null (caller responds 421)
- */
-export function resolveTenant(host: string | null): Tenant | null {
-  const site = resolveSite(host);
-  return site ? siteTenant(site) : null;
 }

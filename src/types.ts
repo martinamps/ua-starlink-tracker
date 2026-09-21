@@ -52,6 +52,8 @@ export interface PerAirlineStat {
   statusLabel?: string;
   phaseNote?: string;
   accentColor?: string;
+  /** uiAccent(brand): the tint to use for text and marks on the dark page. */
+  accentText?: string;
   href?: string;
 }
 
@@ -156,6 +158,9 @@ export interface FleetCarrier {
   confirmed: number;
   total: number;
   pct: number;
+  /** The catch-all row: express tails whose operator field names no regional
+   * carrier. Always sorted last. */
+  unattributed?: boolean;
 }
 
 export interface FleetPulse {

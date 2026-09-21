@@ -5,7 +5,7 @@
  */
 
 import { beforeAll, describe, expect, test } from "bun:test";
-import { SITES } from "../src/airlines/registry";
+import { AIRLINES, SITES } from "../src/airlines/registry";
 import { createReaderFactory } from "../src/database/reader";
 import { createApp } from "../src/server/app";
 import { openSnapshot, req } from "./helpers";
@@ -43,11 +43,15 @@ describe("homepage stat sentence", () => {
         return;
       }
       expect(text).toContain('id="starlink-stat"');
-      const body = visibleText(text);
+      // Tags dropped too: the counts sit in <strong> for emphasis.
+      const body = visibleText(text).replace(/<[^>]+>/g, "");
       // "As of July 19, 2026, 981 of 1,516 United Airlines aircraft (36%) have
-      // Starlink WiFi installed" — numbers/date from data, never pinned.
-      const sentence =
-        /As of [A-Z][a-z]+ \d{1,2}, \d{4}, [\d,]+ of [\d,]+ [^(]+ aircraft \(\d{1,3}%\) have\s+Starlink WiFi installed/;
+      // Starlink." — numbers/date from data, never pinned. Where the roster
+      // counts types the programme excludes, the count stands alone.
+      const cfg = AIRLINES[site.scope as string];
+      const sentence = cfg.rollout.rosterIsProgramScope
+        ? /As of [A-Z][a-z]+ \d{1,2}, \d{4}, [\d,]+ of [\d,]+ [^(]+ aircraft \(\d{1,3}%\) have\s+Starlink\./
+        : /As of [A-Z][a-z]+ \d{1,2}, \d{4}, [\d,]+ [^(.]+ aircraft have Starlink\./;
       expect(body).toMatch(sentence);
     }
   );

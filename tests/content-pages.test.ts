@@ -56,7 +56,8 @@ describe("/timeline", () => {
     expect(t?.targets.length).toBeGreaterThan(0);
     const dates = (t?.milestones ?? []).map((m) => m.date);
     expect([...dates].sort()).toEqual(dates);
-    for (const d of dates) expect(d).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    // Month precision where the source gives only a month; never an invented day.
+    for (const d of dates) expect(d).toMatch(/^\d{4}-\d{2}(-\d{2})?$/);
   });
 
   test("united: renders milestones, targets, and the live count", async () => {
@@ -67,12 +68,15 @@ describe("/timeline", () => {
     for (const m of getTimeline("UA")?.milestones ?? []) {
       expect(text, m.title).toContain(`dateTime="${m.date}"`);
     }
-    // Targets stay labeled as targets, never as accomplished milestones.
-    expect(text).toContain("Stated target");
-    // Closes with the live number, not a hardcoded one.
+    // Targets stay in their own section, never among the milestones.
+    expect(text).toContain("What&#x27;s next");
+    // Leads with the live number, not a hardcoded one.
     const count = getReader("UA").getStarlinkPlanes().length;
-    expect(text).toContain(`${count.toLocaleString("en-US")} of `);
-    expect(text).toContain("have Starlink installed");
+    expect(text.replace(/<!-- -->/g, "")).toMatch(
+      new RegExp(`${count.toLocaleString("en-US")}</strong> of <strong[^>]*>[\\d,]+</strong>`)
+    );
+    expect(text).toContain("have Starlink as of");
+    expect(text).toContain('role="img"');
     // Links into the live surfaces.
     expect(text).toContain('href="/check-flight"');
     expect(text).toContain('href="/fleet"');
@@ -83,19 +87,20 @@ describe("/timeline", () => {
   test("every milestone and target carries a linkable primary source", () => {
     const t = getTimeline("UA");
     for (const entry of [...(t?.milestones ?? []), ...(t?.targets ?? [])]) {
-      expect(entry.source.length, entry.source).toBeGreaterThan(0);
+      expect(entry.source.label.length, entry.source.label).toBeGreaterThan(0);
       // A bare publisher name is not a citation a reader can check.
-      expect(entry.sourceUrl, entry.source).toMatch(/^https:\/\//);
+      expect(entry.source.url, entry.source.label).toMatch(/^https:\/\//);
+      expect(entry.source.published, entry.source.label).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     }
   });
 
   test("sources render as real outbound links", async () => {
     const { text } = await getText("/timeline", UA);
     for (const m of getTimeline("UA")?.milestones ?? []) {
-      expect(text, m.title).toContain(`href="${m.sourceUrl}"`);
+      expect(text, m.title).toContain(`href="${m.source.url}"`);
     }
     for (const t of getTimeline("UA")?.targets ?? []) {
-      expect(text, t.when).toContain(`href="${t.sourceUrl}"`);
+      expect(text, t.when).toContain(`href="${t.source.url}"`);
     }
   });
 
@@ -241,6 +246,15 @@ describe("structured data blocks", () => {
     sdb.close();
   });
 
+  test("Dataset temporalCoverage starts no later than the first dated install", async () => {
+    const text = await (await app.dispatch(req("/methodology", UA))).text();
+    const start = text.match(/"temporalCoverage":"(\d{4}-\d{2}-\d{2})\/\.\."/)?.[1];
+    const firstInstall = getReader("UA").getDailyInstalls()[0]?.day;
+    if (!firstInstall) return;
+    expect(start).toBeDefined();
+    expect((start as string) <= firstInstall).toBe(true);
+  });
+
   test("/fleet and /routes carry ItemList JSON-LD", async () => {
     for (const path of ["/fleet", "/routes"]) {
       const { text } = await getText(path, UA);
@@ -353,14 +367,17 @@ describe("sibling links between same-route flight numbers", () => {
 
   test("a permalink links laterally to other numbers on its route", async () => {
     const sdb = makeSyntheticDb();
-    cacheFlightRoute(sdb, "UA111", "SFO", "EWR", 3600);
-    cacheFlightRoute(sdb, "UA222", "SFO", "EWR", 3600);
-    cacheFlightRoute(sdb, "UA333", "SFO", "EWR", 3600);
+    // Siblings from history alone need more than one sighting.
+    for (const fn of ["UA111", "UA222", "UA333"]) {
+      cacheFlightRoute(sdb, fn, "SFO", "EWR", 3600);
+      cacheFlightRoute(sdb, fn, "SFO", "EWR", 3600);
+    }
     const sapp = createApp(sdb);
     const res = await sapp.dispatch(req("/check-flight/UA111", UA));
     const text = visible(await res.text());
     expect(res.status).toBe(200);
-    expect(text).toContain("Other flights on SFO");
+    expect(text).toContain("Other flights on this route");
+    expect(text).toContain("SFO to EWR");
     expect(text).toContain('href="/check-flight/UA222"');
     expect(text).toContain('href="/check-flight/UA333"');
     // Never links itself.

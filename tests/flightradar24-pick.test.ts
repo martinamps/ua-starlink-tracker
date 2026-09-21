@@ -23,6 +23,14 @@ describe("pickFlightNumber", () => {
     expect(pickFlightNumber(leg(null, "UA4783"), "callsign")).toBe("UA4783");
   });
 
+  test("callsign mode swaps a suffixed ATC callsign for the numbered flight", () => {
+    expect(pickFlightNumber(leg("SKW302M", "UA5352"), "callsign")).toBe("UA5352");
+    expect(pickFlightNumber(leg("SKW302M", "UA5352", "OO5352"), "callsign")).toBe("OO5352");
+    // No numbered alternative: the callsign is still better than nothing.
+    expect(pickFlightNumber(leg("SKW302M", ""), "callsign")).toBe("SKW302M");
+    expect(pickFlightNumber(leg("G74561", "UA4561"), "callsign")).toBe("G74561");
+  });
+
   test("marketing mode reads the marketed number, or drops the leg", () => {
     expect(pickFlightNumber(leg("AFR32UN", "AF1006", "A51006"), "marketing")).toBe("AF1006");
     expect(pickFlightNumber(leg("AFR32UN", ""), "marketing")).toBeNull();

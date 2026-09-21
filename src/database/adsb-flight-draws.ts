@@ -15,6 +15,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { DAY_SEC } from "./sql/windows";
 
 export interface AdsbFlightDraw {
   flight_number: string;
@@ -30,8 +31,8 @@ export interface AdsbFlightSighting {
 }
 
 /** Sightings of one (flight, tail) closer than this are the same departure. */
-export const ADSB_DRAW_MERGE_GAP_SEC = 4 * 3600;
-export const ADSB_FLIGHT_DRAW_RETENTION_DAYS = 90;
+const ADSB_DRAW_MERGE_GAP_SEC = 4 * 3600;
+const ADSB_FLIGHT_DRAW_RETENTION_DAYS = 90;
 
 export function ensureAdsbFlightDrawsTable(db: Database): void {
   db.exec(`
@@ -133,7 +134,7 @@ export function upsertAdsbFlightDraws(
 
 export function pruneAdsbFlightDraws(db: Database, now: number): void {
   db.query("DELETE FROM adsb_flight_draws WHERE last_seen < ?").run(
-    now - ADSB_FLIGHT_DRAW_RETENTION_DAYS * 86400
+    now - ADSB_FLIGHT_DRAW_RETENTION_DAYS * DAY_SEC
   );
 }
 

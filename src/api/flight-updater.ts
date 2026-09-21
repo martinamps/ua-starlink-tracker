@@ -8,17 +8,23 @@ import {
   getTailAirline,
   initializeDatabase,
   needsFlightCheck,
+  type openDatabase,
   pruneStaleUpcomingFlights,
   updateFlights,
   updateLastFlightCheck,
 } from "../database/database";
+import { unixNow } from "../database/sql/windows";
 import { DISTRIBUTIONS, metrics, normalizeAirlineTag, withSpan } from "../observability";
 import type { Aircraft, Flight } from "../types";
 import { FLIGHT_DATA_SOURCE } from "../utils/constants";
 import { type JobHandle, type JobRunContext, startJob } from "../utils/job-runner";
 import { debug, error, info } from "../utils/logger";
+import { sleep } from "../utils/sleep";
 import { FlightAwareAPI } from "./flightaware-api";
 import { type FlightNumberSource, FlightRadar24API } from "./flightradar24-api";
+
+// A job, not a route handler: it holds the process's raw handle.
+type Database = ReturnType<typeof openDatabase>;
 
 // Common interface for flight APIs
 type FlightUpdate = Pick<
@@ -29,7 +35,7 @@ type FlightUpdate = Pick<
 interface FlightAPI {
   getUpcomingFlights(
     tailNumber: string,
-    flightNumberSource?: FlightNumberSource
+    opts?: { flightNumberSource?: FlightNumberSource; airlineCode?: string | null }
   ): Promise<FlightUpdate[]>;
 }
 
@@ -80,17 +86,16 @@ export function breakerEffect(outcome: TailUpdateOutcome): "reset" | "count" | "
   return "count";
 }
 
-async function updateFlightsForTailNumber(api: FlightAPI, tailNumber: string): Promise<boolean> {
-  return (await pollTailFlights(api, tailNumber)) === "updated";
-}
-
-async function pollTailFlights(api: FlightAPI, tailNumber: string): Promise<TailUpdateOutcome> {
+async function pollTailFlights(
+  db: Database,
+  api: FlightAPI,
+  tailNumber: string
+): Promise<TailUpdateOutcome> {
   return withSpan(
     "flight_updater.update_tail",
     async (span) => {
       span.setTag("tail_number", tailNumber);
       let outcome: TailUpdateOutcome = "error";
-      const db = initializeDatabase();
 
       try {
         // debug, not info: this trio fired 3x per tail on a 22.5s loop and was
@@ -99,10 +104,10 @@ async function pollTailFlights(api: FlightAPI, tailNumber: string): Promise<Tail
         // starlink.data.freshness_seconds{job:flight_updater}.
         debug(`Fetching upcoming flights for ${tailNumber}`);
         const airline = getTailAirline(db, tailNumber);
-        const flights = await api.getUpcomingFlights(
-          tailNumber,
-          (airline && AIRLINES[airline]?.flightNumberSource) || "callsign"
-        );
+        const flights = await api.getUpcomingFlights(tailNumber, {
+          flightNumberSource: (airline && AIRLINES[airline]?.flightNumberSource) || "callsign",
+          airlineCode: airline,
+        });
 
         span.setTag("flights.count", flights.length);
 
@@ -129,8 +134,6 @@ async function pollTailFlights(api: FlightAPI, tailNumber: string): Promise<Tail
         } catch (updateError) {
           error(`Failed to update last check status for ${tailNumber}`, updateError);
         }
-      } finally {
-        db.close();
       }
 
       return outcome;
@@ -140,15 +143,12 @@ async function pollTailFlights(api: FlightAPI, tailNumber: string): Promise<Tail
 }
 
 async function updateFlightsIfNeeded(
+  db: Database,
   api: FlightAPI,
   tailNumber: string
 ): Promise<{ updated: boolean; success: boolean; outcome?: TailUpdateOutcome }> {
-  const db = initializeDatabase();
-  const needsUpdate = needsFlightCheck(db, tailNumber);
-  db.close();
-
-  if (needsUpdate) {
-    const outcome = await pollTailFlights(api, tailNumber);
+  if (needsFlightCheck(db, tailNumber)) {
+    const outcome = await pollTailFlights(db, api, tailNumber);
     return { updated: true, success: outcome === "updated", outcome };
   }
 
@@ -192,7 +192,12 @@ function markFleetTailAttempted(tail: string) {
   fleetTailAttempts.set(tail, Date.now());
 }
 
-async function processPlanesInBatches(api: FlightAPI, planes: Aircraft[], batchSize = 3) {
+async function processPlanesInBatches(
+  db: Database,
+  api: FlightAPI,
+  planes: Aircraft[],
+  batchSize = 3
+) {
   let updatedCount = 0;
   let apiCallCount = 0;
 
@@ -209,19 +214,9 @@ async function processPlanesInBatches(api: FlightAPI, planes: Aircraft[], batchS
     consecutiveApiFailures = 0;
   }
 
-  const planesToUpdate: Aircraft[] = [];
-  const db = initializeDatabase();
-
-  try {
-    for (const plane of planes) {
-      if (!plane.TailNumber) continue;
-      if (needsFlightCheck(db, plane.TailNumber)) {
-        planesToUpdate.push(plane);
-      }
-    }
-  } finally {
-    db.close();
-  }
+  const planesToUpdate = planes.filter(
+    (plane) => plane.TailNumber && needsFlightCheck(db, plane.TailNumber)
+  );
 
   info(`${planesToUpdate.length} aircraft need flight updates out of ${planes.length} total`);
 
@@ -236,9 +231,9 @@ async function processPlanesInBatches(api: FlightAPI, planes: Aircraft[], batchS
     const batchPromises = batch.map(async (plane, index) => {
       try {
         const staggerDelay = createJitteredDelay(2000 + index * 2000, 500);
-        await new Promise((resolve) => setTimeout(resolve, staggerDelay));
+        await sleep(staggerDelay);
 
-        const result = await updateFlightsIfNeeded(api, plane.TailNumber);
+        const result = await updateFlightsIfNeeded(db, api, plane.TailNumber);
 
         if (result.outcome) applyBreakerEffect(result.outcome);
 
@@ -271,13 +266,14 @@ async function processPlanesInBatches(api: FlightAPI, planes: Aircraft[], batchS
     if (i + batchSize < planesToUpdate.length) {
       const batchDelay = createJitteredDelay(5000, 3000);
       info(`Batch completed, waiting ${Math.round(batchDelay / 1000)}s before next batch...`);
-      await new Promise((resolve) => setTimeout(resolve, batchDelay));
+      await sleep(batchDelay);
     }
   }
 
   return { updatedCount, apiCallCount };
 }
 
+/** @public `bun run update-flights` imports this via `bun -e`. */
 export async function updateAllFlights() {
   const api = createFlightAPI();
   if (!api) {
@@ -288,12 +284,12 @@ export async function updateAllFlights() {
   const db = initializeDatabase();
   // Include mismatched planes so they keep getting fresh flight data for re-verification
   const planes = getAllStarlinkPlanes(db);
-  db.close();
 
   info(`Checking flight updates for ${planes.length} Starlink aircraft...`);
   info(`Data source: ${FLIGHT_DATA_SOURCE}`);
 
-  const { updatedCount, apiCallCount } = await processPlanesInBatches(api, planes, 5);
+  const { updatedCount, apiCallCount } = await processPlanesInBatches(db, api, planes, 5);
+  db.close();
 
   info(
     `Flight updates completed: ${updatedCount} aircraft updated, ${apiCallCount} API calls made`
@@ -308,7 +304,7 @@ export async function updateAllFlights() {
  * Fetching here used to race the trickle on the identical tails (duplicate
  * simultaneous FR24 calls + diluted circuit breaker).
  */
-export async function checkNewPlanes(db: ReturnType<typeof initializeDatabase>): Promise<number> {
+export async function checkNewPlanes(db: Database): Promise<number> {
   return withSpan(
     "flight_updater.check_new_planes",
     async (span) => {
@@ -338,7 +334,7 @@ export async function checkNewPlanes(db: ReturnType<typeof initializeDatabase>):
  * Instead of bulk updates every 8 hours, continuously updates 1 plane at a time
  * Much more polite to APIs and avoids rate limiting
  */
-export function startFlightUpdater(): JobHandle | undefined {
+export function startFlightUpdater(db: Database): JobHandle | undefined {
   const INTERVAL_MS = 22.5 * 1000;
   const HEARTBEAT_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
 
@@ -356,7 +352,7 @@ export function startFlightUpdater(): JobHandle | undefined {
   const runSingleUpdate = async (ctx: JobRunContext) => {
     if (Date.now() - lastPruneAt >= PRUNE_INTERVAL_MS) {
       lastPruneAt = Date.now();
-      runStaleUpcomingPrune();
+      runStaleUpcomingPrune(db);
     }
 
     // Check circuit breaker
@@ -375,8 +371,6 @@ export function startFlightUpdater(): JobHandle | undefined {
         "flight_updater.run",
         async (span) => {
           span.setTag("job.type", "background");
-
-          const db = initializeDatabase();
 
           // Stalest-first so no airline starves behind the UA/AS DateFound-ordered block.
           const tails = getStarlinkTailsByCheckAge(db);
@@ -403,8 +397,6 @@ export function startFlightUpdater(): JobHandle | undefined {
             if (tailToUpdate) markFleetTailAttempted(tailToUpdate);
           }
 
-          db.close();
-
           if (!tailToUpdate) {
             // No planes need updates right now
             return;
@@ -413,7 +405,7 @@ export function startFlightUpdater(): JobHandle | undefined {
           span.setTag("tail_number", tailToUpdate);
           span.setTag("queue.tier", tier);
 
-          const outcome = await pollTailFlights(api, tailToUpdate);
+          const outcome = await pollTailFlights(db, api, tailToUpdate);
 
           // Abandoned (stuck-escaped) runs settling late must not feed the
           // breaker/counters the successor reads — stacked orphans settling in
@@ -468,10 +460,8 @@ export function startFlightUpdater(): JobHandle | undefined {
 // DB-only, so it runs even while the FR24 breaker is open, and never feeds it.
 const PRUNE_INTERVAL_MS = 10 * 60 * 1000;
 
-export function runStaleUpcomingPrune(now = Math.floor(Date.now() / 1000)): number {
-  let db: ReturnType<typeof initializeDatabase> | null = null;
+export function runStaleUpcomingPrune(db: Database, now = unixNow()): number {
   try {
-    db = initializeDatabase();
     const pruned = pruneStaleUpcomingFlights(db, now);
     let total = 0;
     for (const [airline, count] of Object.entries(pruned)) {
@@ -485,10 +475,5 @@ export function runStaleUpcomingPrune(now = Math.floor(Date.now() / 1000)): numb
   } catch (err) {
     error("Stale upcoming_flights prune failed", err);
     return 0;
-  } finally {
-    db?.close();
   }
 }
-
-// Export individual functions for manual use
-export { updateFlightsForTailNumber, updateFlightsIfNeeded };

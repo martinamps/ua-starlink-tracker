@@ -7,6 +7,11 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { AIRLINES, SITES } from "../src/airlines/registry";
 import { airlinesWithTargetEntry, rolloutTargets } from "../src/airlines/targets";
+import {
+  cumulativeSeries,
+  nearestPaceGap,
+  requiredMonthlyPace,
+} from "../src/components/charts/rollout-math";
 import { createApp } from "../src/server/app";
 import {
   type DailyInstalls,
@@ -300,6 +305,36 @@ describe("excludeMassWriteDays", () => {
   });
 });
 
+describe("rollout chart math", () => {
+  const stats = computeInstallRate({
+    daily: [
+      ...daily(["2026-03", 30], ["2026-04", 24], ["2026-05", 30]),
+      { day: "2026-04-10", installs: 200 },
+    ],
+    equipped: 400,
+    total: 1400,
+    targets: [TARGET],
+    nowMs: NOW,
+  });
+
+  test("the cumulative line ends on the live equipped count, import drawn apart", () => {
+    const series = cumulativeSeries(stats);
+    expect(series?.now[1]).toBe(400);
+    expect(series?.imports.map((i) => i.installs)).toEqual([200]);
+    expect(series?.actual.length).toBe(2);
+  });
+
+  test("needed pace is what is left over the months left, not a constant", () => {
+    const [p] = stats.projections;
+    const needed = requiredMonthlyPace(p, NOW);
+    expect(needed).not.toBeNull();
+    expect(needed as number).toBeGreaterThan(p.remaining / 7);
+    expect(needed as number).toBeLessThan(p.remaining / 6);
+    expect(nearestPaceGap(stats)?.actual).toBe(stats.paceMonthly as number);
+    expect(requiredMonthlyPace(p, Date.parse("2027-01-15T00:00:00Z"))).toBeNull();
+  });
+});
+
 describe("rolloutTargets config", () => {
   test("every source is a real https URL and every deadline parses", () => {
     for (const code of ["UA", "HA", "AS", "QR"]) {
@@ -391,6 +426,6 @@ describe("/install-rate page", () => {
     // roster, so the page must not present the number as United's figure.
     expect(rolloutTargets("UA").some((t) => t.count === undefined)).toBe(true);
     const { text } = await bodyOf(app, "/install-rate", SITES.united.canonicalHost);
-    expect(text).toContain("Count derived here, not stated by the airline");
+    expect(text).toContain("Fleet size is our count, not United&#x27;s.");
   });
 });

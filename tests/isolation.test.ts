@@ -20,10 +20,13 @@ import {
   addPlane,
   bodyOf as bodyOfApp,
   makeSyntheticDb,
+  mcpInitialize,
   mcpReq,
+  mcpTool,
   openSnapshot,
   postMcp,
   req,
+  toolText,
 } from "./helpers";
 
 const UA = "unitedstarlinktracker.com";
@@ -151,18 +154,12 @@ describe("UA host never leaks canaries", () => {
   }
 
   test("MCP list_starlink_aircraft (limit=500)", async () => {
-    const r = await app.dispatch(
-      mcpReq(UA, "tools/call", { name: "list_starlink_aircraft", arguments: { limit: 500 } })
-    );
-    const text = await r.text();
+    const { text } = await mcpTool(app, UA, "list_starlink_aircraft", { limit: 500 });
     for (const c of CANARIES) expect(text).not.toContain(c);
   });
 
   test("MCP search_starlink_flights origin=HNL", async () => {
-    const r = await app.dispatch(
-      mcpReq(UA, "tools/call", { name: "search_starlink_flights", arguments: { origin: "HNL" } })
-    );
-    const text = await r.text();
+    const { text } = await mcpTool(app, UA, "search_starlink_flights", { origin: "HNL" });
     for (const c of CANARIES) expect(text).not.toContain(c);
   });
 
@@ -173,8 +170,8 @@ describe("UA host never leaks canaries", () => {
       name: "check_flight",
       arguments: { flight_number: "HA9999", date: "2026-03-22" },
     });
-    expect(j.result.isError).toBe(true);
-    const text = j.result.content[0].text as string;
+    const { text, isError } = toolText(j);
+    expect(isError).toBe(true);
     expect(text).toContain("This server covers United Airlines");
     // Single-airline surface: never advertise competitor brands.
     for (const brand of ["Hawaiian Airlines", "Alaska Airlines", "Qatar Airways"]) {
@@ -188,10 +185,7 @@ describe("UA host never leaks canaries", () => {
   });
 
   test("MCP get_fleet_stats", async () => {
-    const r = await app.dispatch(
-      mcpReq(UA, "tools/call", { name: "get_fleet_stats", arguments: {} })
-    );
-    const text = await r.text();
+    const { text } = await mcpTool(app, UA, "get_fleet_stats", {});
     for (const c of CANARIES) expect(text).not.toContain(c);
   });
 
@@ -365,10 +359,7 @@ describe("real HA fleet — UA host never leaks, HA host shows", () => {
   });
 
   test("MCP list_starlink_aircraft limit=500 on UA host has zero real HA tails", async () => {
-    const r = await app.dispatch(
-      mcpReq(UA, "tools/call", { name: "list_starlink_aircraft", arguments: { limit: 500 } })
-    );
-    const text = await r.text();
+    const { text } = await mcpTool(app, UA, "list_starlink_aircraft", { limit: 500 });
     for (const t of REAL_HA_TAILS) expect(text).not.toContain(t);
   });
 
@@ -545,10 +536,7 @@ describe("hub host shows enabled airlines only", () => {
   });
 
   test("MCP list_starlink_aircraft limit=500 — enabled-only (no QR canary)", async () => {
-    const r = await app.dispatch(
-      mcpReq(HUB, "tools/call", { name: "list_starlink_aircraft", arguments: { limit: 500 } })
-    );
-    const text = await r.text();
+    const { text } = await mcpTool(app, HUB, "list_starlink_aircraft", { limit: 500 });
     expect(text).toContain("N999HA");
     expect(text).toContain("N644AS");
     expect(text).not.toContain("A7-TST");
@@ -578,21 +566,7 @@ describe("hub host shows enabled airlines only", () => {
 describe("MCP per-host branding + scope override", () => {
   const QR_HOST = "qatarstarlinktracker.com";
 
-  async function mcpInit(host: string, query = "") {
-    const r = await app.dispatch(
-      new Request(`http://x/mcp${query}`, {
-        method: "POST",
-        headers: { Host: host, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          method: "initialize",
-          params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t" } },
-        }),
-      })
-    );
-    return r.json();
-  }
+  const mcpInit = (host: string, query = "") => mcpInitialize(app, host, query);
 
   test("UA host: serverInfo.name = united-starlink-tracker", async () => {
     const j = await mcpInit(UA);
@@ -675,10 +649,7 @@ describe("AS host isolation", () => {
   });
 
   test("AS host MCP list_starlink_aircraft → AS-only", async () => {
-    const r = await app.dispatch(
-      mcpReq(AS_HOST, "tools/call", { name: "list_starlink_aircraft", arguments: { limit: 500 } })
-    );
-    const text = await r.text();
+    const { text } = await mcpTool(app, AS_HOST, "list_starlink_aircraft", { limit: 500 });
     expect(text).toContain("Alaska");
     expect(text).toContain("N654QX");
     expect(text).not.toContain("N382HA");

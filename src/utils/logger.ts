@@ -93,11 +93,4 @@ export const logger = {
   debug: (message: string, data?: unknown) => log("DEBUG", message, data),
 };
 
-// Convenience exports for destructuring: import { log } from "./logger"
 export const { info, warn, error, debug } = logger;
-
-// Legacy export for backward compatibility during migration
-export const verifierLog = logger;
-export function createLogger(_prefix: string) {
-  return logger;
-}

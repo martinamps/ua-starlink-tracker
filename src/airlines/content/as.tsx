@@ -1,56 +1,94 @@
-import React from "react";
-import { ModelPie, StatRing, computeModelBreakdown } from "../../components/atoms";
+import { RolloutPanel } from "../../components/home/rollout";
+import { LINK, StatInline } from "../../components/layout";
+import { fmt, pct } from "../../components/ui/format";
 import { AIRLINES, airlineHomeUrl } from "../registry";
-import type { AirlineContent, HeroProps } from "./index";
+import { fleetTargetSentence } from "./fleet-target";
+import type { AirlineContent, ContentStats, HeroProps } from "./index";
 
-const ASHero = ({ stats, starlinkData }: HeroProps) => {
-  const { starlinkCount, totalCount, percentage } = stats;
-  const modelData = computeModelBreakdown(starlinkData);
-  return (
-    <div className="relative grid grid-cols-1 sm:grid-cols-3 gap-px bg-subtle rounded-lg overflow-hidden mb-6 border border-subtle">
-      <StatRing
-        label="Fleet Progress"
-        pct={Number.parseFloat(percentage)}
-        starlink={starlinkCount}
-        total={totalCount}
-        color="#01426a"
-      />
-      <div className="bg-surface px-4 py-6 flex flex-col items-center justify-center text-center">
-        <div className="text-[10px] font-mono text-muted uppercase tracking-wider">Target</div>
-        <div className="font-display text-2xl text-primary mt-2">End 2027</div>
-        <div className="font-mono text-xs text-secondary mt-1">~half by end 2026</div>
-        <div className="font-mono text-[10px] text-muted mt-3">
-          E175 first · then 737 · then 787
-        </div>
-      </div>
-      <ModelPie data={modelData} total={starlinkCount} />
-    </div>
-  );
-};
+const regional = (s: ContentStats) => s.fleetStats?.express ?? { starlink: 0, total: 0 };
+const mainline = (s: ContentStats) => s.fleetStats?.mainline ?? { starlink: 0, total: 0 };
+
+// Alaska's own tracker (Aug 28, 2026; rollout-facts) counts Hawaiian's Airbus
+// jets too, so its percentage runs higher than this Alaska-only roster.
+const ALASKA_OWN_FIGURE =
+  "Alaska's own tracker put the combined Alaska and Hawaiian fleet at 38% on Aug 28, 2026.";
+
+const ASHero = ({ stats, statSentence }: HeroProps) => (
+  <RolloutPanel
+    stats={stats}
+    noun="Alaska aircraft"
+    segments={[
+      { label: "Regional E175s", n: regional(stats).starlink, total: regional(stats).total },
+      { label: "Mainline", n: mainline(stats).starlink, total: mainline(stats).total },
+    ]}
+  >
+    {statSentence}
+    <p className="mt-2 text-xs text-muted">{ALASKA_OWN_FIGURE}</p>
+  </RolloutPanel>
+);
 
 export const content: AirlineContent = {
   headerStats: [
-    <span key="mbps">
-      <span className="text-accent font-semibold">250</span> Mbps
-    </span>,
-    <span key="free" className="text-green-400 font-semibold">
-      FREE
-    </span>,
-    <span key="rollout">
-      Rollout <span className="text-accent">2025–2027</span>
+    <span key="free" className="text-success font-semibold">
+      Free for Atmos Rewards members
     </span>,
   ],
 
   intro: () => (
-    <p className="text-sm text-secondary leading-relaxed mb-3">
-      Alaska Airlines is rolling out free Starlink WiFi across its entire fleet — Horizon Air
-      Embraer E175s went first in late 2025, with the 737 and 787 fleets following through 2027.
-      Alaska is replacing its legacy Intelsat system, so equipped aircraft already had paid WiFi;
-      Starlink makes it free and an order of magnitude faster.
-    </p>
+    <>
+      Alaska is replacing its paid Intelsat Wi-Fi with free Starlink. Check your flight or see which
+      aircraft have it.
+    </>
   ),
 
   Hero: ASHero,
+
+  answers: [
+    {
+      q: "Does Alaska Airlines have Starlink?",
+      a: (s) => (
+        <p>
+          Yes. <StatInline n={s.starlinkCount} /> of {fmt(s.totalCount)} Alaska aircraft (
+          {pct(s.starlinkCount, s.totalCount)}) have free Starlink Wi-Fi
+          {s.asOf ? <> as of {s.asOf}</> : null}. {fleetTargetSentence("AS", "Alaska")}
+        </p>
+      ),
+    },
+    {
+      q: "Which Alaska planes have Starlink?",
+      a: (s) => (
+        <p>
+          <StatInline n={regional(s).starlink} /> of {fmt(regional(s).total)} regional E175s and{" "}
+          <StatInline n={mainline(s).starlink} /> of {fmt(mainline(s).total)} mainline jets.
+          Mainline installs started with the 737 MAX 8; Alaska's Aug 28 tracker showed no 737-800,
+          737-900, 737 MAX 9 or 787 connected yet.
+        </p>
+      ),
+    },
+    {
+      q: "Do all Alaska flights have Starlink?",
+      a: (s) => (
+        <p>
+          No. {pct(regional(s).starlink, regional(s).total)} of regional E175s have it, but only{" "}
+          {pct(mainline(s).starlink, mainline(s).total)} of mainline aircraft, so most 737 flights
+          don't yet. Aircraft without Starlink still carry Alaska's older paid Wi-Fi.
+        </p>
+      ),
+    },
+    {
+      q: "How do I know if my Alaska flight has Starlink?",
+      a: () => (
+        <p>
+          Enter your flight number and date in the{" "}
+          <a href="/check-flight" className={LINK}>
+            flight check
+          </a>
+          . Once Alaska assigns the aircraft, usually a day or two out, you get a yes or no for that
+          plane.
+        </p>
+      ),
+    },
+  ],
 
   // Horizon and SkyWest both operate AS regional E175s — badge the row's real
   // operator, never a hardcoded one.
@@ -60,61 +98,44 @@ export const content: AirlineContent = {
   // Hawaiian-operated tails live in HA's roster, so their chips would always be empty.
   subfleetFilters: AIRLINES.AS.subfleets
     .filter((sf) => sf.key !== "hawaiian_metal" && sf.key !== "hawaiian_interisland")
-    .map((sf) => ({ key: sf.key, label: sf.label })),
+    // The chip appends its own "(count)", so the label drops the registry's type note.
+    .map((sf) => ({ key: sf.key, label: sf.label.replace(/\s*\(.*\)$/, "") })),
 
   faq: [
     {
       title: "Alaska's rollout",
       items: [
         {
-          q: "Which Alaska Airlines aircraft have Starlink?",
+          q: "Is Alaska's Starlink Wi-Fi free?",
           a: () => (
             <p>
-              Alaska started with the <strong>Horizon Air Embraer E175</strong> regional fleet in
-              December 2025, then began equipping the <strong>737</strong> mainline fleet (737-700,
-              -800, -900ER, MAX 8, MAX 9) and the <strong>787-9</strong> through 2026. Alaska
-              expects roughly half the fleet done by the end of 2026 and all aircraft equipped by
-              the end of 2027. The list above shows tails confirmed so far.
+              Yes, for Atmos Rewards members. The Wi-Fi is sponsored by T-Mobile and Atmos Rewards
+              is free to join. Aircraft not yet converted still carry the paid Intelsat system.
             </p>
           ),
-          ld: "Alaska started with Horizon Air E175s in December 2025, then the 737 family and 787-9 through 2026. Roughly half the fleet by end 2026; all aircraft by end 2027.",
         },
         {
-          q: "Is Alaska's Starlink WiFi free?",
+          q: "What about Hawaiian Airlines flights?",
           a: () => (
             <p>
-              Yes — free for every passenger, gate-to-gate, with no login or loyalty requirement.
-              Aircraft that haven't been retrofitted yet still carry Alaska's legacy Intelsat
-              system, which is paid.
-            </p>
-          ),
-          ld: "Yes. Alaska's Starlink WiFi is free for every passenger, gate-to-gate. Aircraft not yet retrofitted still carry the paid legacy Intelsat system.",
-        },
-        {
-          q: "What about Hawaiian Airlines flights operated by Alaska?",
-          a: () => (
-            <p>
-              Following the 2024 merger, Hawaiian-branded routes are flown by the Hawaiian Airbus
-              fleet (A330, A321neo) — those aircraft <strong>all have Starlink already</strong>. See{" "}
-              <a href={airlineHomeUrl("HA")} className="text-accent hover:underline">
+              Hawaiian's A330s and A321neos all have Starlink. Its Boeing 717s, which fly the short
+              interisland hops, have no Wi-Fi. See{" "}
+              <a href={airlineHomeUrl("HA")} className={LINK}>
                 the Hawaiian tracker
               </a>{" "}
-              for that fleet. Some 787-9s originally ordered by Hawaiian are transferring to
-              Alaska's fleet and will be equipped on Alaska's schedule.
+              for that fleet.
             </p>
           ),
-          ld: "Hawaiian-branded routes are flown by the Hawaiian Airbus fleet (A330, A321neo), all of which already have Starlink. Some 787-9s are transferring from Hawaiian to Alaska's fleet.",
         },
         {
           q: "Do Horizon Air and SkyWest regional flights have Starlink?",
-          a: () => (
+          a: (s) => (
             <p>
-              <strong>Horizon Air E175s</strong> were the first Alaska aircraft to get Starlink and
-              are tracked here. <strong>SkyWest-operated</strong> Alaska Express flights are not yet
-              tracked separately (SkyWest tails fly for multiple carriers).
+              Yes. Alaska's regional E175s, flown by Horizon Air and SkyWest, were the first to get
+              Starlink. {fmt(regional(s).starlink)} of the {fmt(regional(s).total)} in our roster
+              have it, and both operators' aircraft are counted.
             </p>
           ),
-          ld: "Horizon Air E175s were the first Alaska aircraft to get Starlink. SkyWest-operated Alaska Express flights are not yet tracked separately.",
         },
       ],
     },
@@ -125,13 +146,15 @@ export const content: AirlineContent = {
           q: "How is this data collected?",
           a: () => (
             <p>
-              Fleet roster from public aviation data; per-tail Starlink status from Alaska's
-              flight-status systems and public rollout announcements. Alaska's own status page does
-              not yet expose a per-aircraft WiFi-provider field, so individual tails are confirmed
-              as installations are reported.
+              The fleet roster comes from public aviation data. Starlink status per aircraft comes
+              from Alaska's flight-status systems, Alaska's own rollout tracker and community
+              reports. The{" "}
+              <a href="/methodology" className={LINK}>
+                methodology page
+              </a>{" "}
+              has the details.
             </p>
           ),
-          ld: "Fleet roster from public aviation data; per-tail Starlink status from Alaska's flight-status systems and public rollout announcements.",
         },
       ],
     },

@@ -28,8 +28,11 @@ import {
 } from "../airlines/registry";
 import type { FlightAssignmentRow, UnequippedAssignment } from "../database/database";
 import type { Scope, ScopedReader } from "../database/reader";
+import { rowEvidence } from "../database/sql/equipped";
+import { TRAILING_WINDOW_SEC, unixNow } from "../database/sql/windows";
 import {
   COUNTERS,
+  DISTRIBUTIONS,
   type Tags,
   bucketDaysOut,
   metrics,
@@ -38,11 +41,13 @@ import {
   normalizeLegEffect,
   normalizeLegMatch,
   normalizeLegReason,
+  normalizeScopeTag,
 } from "../observability";
 import {
   type CarrierPrediction,
   carrierPrediction,
   carrierPredictionTelemetry,
+  noModelConfidence,
   predictFlight,
 } from "../scripts/starlink-predictor";
 import { AIRPORT_COORDS } from "../utils/airport-geo";
@@ -55,6 +60,7 @@ import {
 import { type FallbackSegment, lookupFlightTailVerdict } from "./flight-verdict";
 import { Fr24UnavailableError } from "./flightradar24-api";
 import {
+  type QatarGrade,
   type QatarLeg,
   type QatarVerdict,
   addDaysISO,
@@ -350,6 +356,181 @@ export function verdictTelemetry(
   }
 }
 
+/** The aircraft an answer names: the first equipped leg for a yes, the
+ * non-Starlink leg for a no. */
+export interface VerdictAssignment {
+  tail: string;
+  aircraft: string | null;
+  /** The non-Starlink WiFi a firm no names; null on a yes. */
+  wifi: string | null;
+  origin: string;
+  destination: string;
+  departure: number;
+  arrival: number;
+}
+
+/**
+ * The surface-neutral answer every renderer starts from: REST check-flight,
+ * hub check-any-flight, MCP check_flight and the Watch feed read hasStarlink,
+ * confidence, probability and the named aircraft from here rather than
+ * re-deriving them per kind. `confidence` is the REST label; a surface that
+ * publishes a different vocabulary (check-any-flight's model grade) maps it.
+ */
+export type SummaryConfidence =
+  | ReturnType<typeof verdictConfidence>
+  | ReturnType<typeof noModelConfidence>
+  | "predicted"
+  | "no_data"
+  | QatarGrade
+  | "none";
+
+export interface VerdictSummary {
+  hasStarlink: boolean | null;
+  /** null where the REST body carries no confidence (fr24_no). */
+  confidence: SummaryConfidence | null;
+  probability: number | null;
+  /** Flight-history observations behind `probability`; 0 for a type share. */
+  observations: number | null;
+  assignment: VerdictAssignment | null;
+}
+
+type AssignedVerdict = Extract<
+  AnsweredVerdict,
+  { kind: "scheduled" } | { kind: "scheduled_no" } | { kind: "fr24" } | { kind: "fr24_no" }
+>;
+
+export function verdictAssignment(verdict: AssignedVerdict): VerdictAssignment {
+  switch (verdict.kind) {
+    case "scheduled":
+      return rowAssignment(scheduledFlights(verdict)[0], null);
+    case "scheduled_no":
+      return rowAssignment(verdict.flights[0], negativeWifi(verdict.flights[0]));
+    case "fr24":
+      return segmentAssignment(verdict.starlink[0], null);
+    case "fr24_no": {
+      const s = verdict.segments.find((x) => x.hasStarlink === false) ?? verdict.segments[0];
+      return segmentAssignment(s, s.verified_wifi ?? null);
+    }
+  }
+}
+
+export function verdictSummary(verdict: AnsweredVerdict): VerdictSummary {
+  const none = { probability: null, observations: null, assignment: null };
+  switch (verdict.kind) {
+    case "scheduled":
+    case "fr24":
+      return {
+        ...none,
+        hasStarlink: true,
+        confidence: verdictConfidence(verdict),
+        assignment: verdictAssignment(verdict),
+      };
+    case "scheduled_no":
+      return {
+        ...none,
+        hasStarlink: false,
+        confidence: "verified",
+        assignment: verdictAssignment(verdict),
+      };
+    case "fr24_no":
+      return {
+        ...none,
+        hasStarlink: false,
+        confidence: null,
+        assignment: verdictAssignment(verdict),
+      };
+    case "no_model": {
+      const pen = verdict.answer.kind === "penetration" ? verdict.answer.pen.pct : null;
+      return {
+        ...none,
+        hasStarlink: null,
+        confidence: noModelConfidence(verdict.answer),
+        probability: pen,
+        observations: pen === null ? null : 0,
+      };
+    }
+    case "prediction":
+      return {
+        ...none,
+        hasStarlink: null,
+        confidence: "predicted",
+        probability: verdict.pred.probability,
+        observations: verdict.pred.n_observations,
+      };
+    case "qatar":
+      return { ...none, hasStarlink: verdict.hasStarlink, confidence: "type" };
+    case "qatar_no_data":
+      return { ...none, hasStarlink: null, confidence: "no_data" };
+    case "qatar_history":
+      return {
+        ...none,
+        hasStarlink: null,
+        confidence: verdict.probability !== null ? verdict.grade : "none",
+        probability: verdict.probability,
+      };
+  }
+}
+
+function rowAssignment(f: FlightAssignmentRow, wifi: string | null): VerdictAssignment {
+  return {
+    tail: f.tail_number,
+    aircraft: f.aircraft_type ?? null,
+    wifi,
+    origin: f.departure_airport,
+    destination: f.arrival_airport,
+    departure: f.departure_time,
+    arrival: f.arrival_time,
+  };
+}
+
+function segmentAssignment(s: FallbackSegment, wifi: string | null): VerdictAssignment {
+  return {
+    tail: s.tail_number,
+    aircraft: s.aircraft_model,
+    wifi,
+    origin: s.origin,
+    destination: s.destination,
+    departure: s.departure_time,
+    arrival: s.arrival_time,
+  };
+}
+
+/**
+ * FLIGHT_LOOKUP_RESULT, the single product-truth metric: how often a caller
+ * actually got an answer. Shared by REST and MCP so the cross-channel view
+ * can't drift. `result` mirrors `outcome`: monitors group by result, older
+ * series by outcome.
+ */
+export function recordFlightLookup(
+  endpoint: "api_check" | "api_predict" | "mcp",
+  outcome: VerdictTelemetry["outcome"],
+  confidence: VerdictTelemetry["confidence"],
+  scope: string,
+  daysOut?: number
+): void {
+  metrics.increment(COUNTERS.FLIGHT_LOOKUP_RESULT, {
+    endpoint,
+    outcome,
+    result: outcome,
+    confidence,
+    airline: normalizeScopeTag(scope),
+    ...(daysOut !== undefined && { days_out: bucketDaysOut(daysOut) }),
+  });
+}
+
+/** What prediction was actually served — a flood of 2% fleet-prior cold starts
+ * is invisible in success-rate metrics but is a real product problem. */
+export function recordPrediction(
+  pred: { probability: number; confidence: "high" | "medium" | "low"; method: string },
+  scope: string
+): void {
+  metrics.distribution(DISTRIBUTIONS.PREDICTION_PROBABILITY, pred.probability, {
+    confidence: pred.confidence,
+    method: pred.method.startsWith("fleet_prior") ? "fleet_prior" : "flight_history",
+    airline: normalizeScopeTag(scope),
+  });
+}
+
 export interface ResolveDeps {
   now?: number;
   /** The booking's aircraft type, for carriers whose answer is per programme
@@ -371,7 +552,7 @@ export async function resolveFlightVerdict(
   date: string,
   deps: ResolveDeps = {}
 ): Promise<FlightVerdict> {
-  const now = deps.now ?? Math.floor(Date.now() / 1000);
+  const now = deps.now ?? unixNow();
   const window = flightDateWindow(date, now);
   if (!window) return { kind: "invalid_date" };
 
@@ -498,8 +679,6 @@ export async function resolveFlightVerdict(
   return { ...verdict, leg: resolution };
 }
 
-const RECENT_ROUTES_SEC = 30 * 86400;
-
 /**
  * Recent routes that chain (SFO→DEN + DEN→SAN) mark a through flight; routes
  * that don't (SFO→EWR some days, SFO→IAD others) are alternative routings,
@@ -512,7 +691,7 @@ function isThroughFlightLeg(
   leg: LegQuery,
   now: number
 ): boolean {
-  const routes = reader.getCachedFlightRoutes(normalized, now - RECENT_ROUTES_SEC).map((r) => ({
+  const routes = reader.getCachedFlightRoutes(normalized, now - TRAILING_WINDOW_SEC).map((r) => ({
     origin: normalizeAirportCode(r.origin),
     destination: normalizeAirportCode(r.destination),
   }));
@@ -600,13 +779,19 @@ function onceLookup(lookupTail: ResolveDeps["lookupTail"]): ResolveDeps["lookupT
 
 type RowClass = "settled" | "verified_other" | "verified" | "unverified";
 
-// settled_negative (united_fleet 'negative') outranks the spreadsheet row,
-// whatever verified_wifi says — same rule as database.ts equippedFilter.
+// The one evidence ranking (database/sql/equipped.ts): a settled negative
+// outranks the listing, whatever verified_wifi says.
 function classifyRow(r: FlightAssignmentRow): RowClass {
-  if (r.settled_negative) return "settled";
-  if (r.verified_wifi !== null && r.verified_wifi !== "Starlink") return "verified_other";
-  if (r.verified_wifi === "Starlink") return "verified";
-  return "unverified";
+  switch (rowEvidence(r)) {
+    case "settled_negative":
+      return "settled";
+    case "verified_other":
+      return "verified_other";
+    case "verified":
+      return "verified";
+    default:
+      return "unverified";
+  }
 }
 
 function rowOutcome(r: FlightAssignmentRow): "yes" | "no" {

@@ -12,6 +12,7 @@ import {
   type AirlineCode,
   airlineHomeUrl,
   publicAirlines,
+  uiAccent,
   withOperatingPartners,
 } from "../airlines/registry";
 import type {
@@ -27,6 +28,7 @@ import type {
   RecentInstall,
   RouteSchedule,
 } from "../types";
+import { memo } from "../utils/ttl-cache";
 import {
   type AdsbFlightDraw,
   getAdsbFlightDraws,
@@ -43,6 +45,8 @@ import {
 } from "./assignment-log";
 import {
   type ConfirmedEdge,
+  type DepartureSlot,
+  type DepartureSlotQuery,
   type DirectRouteEdge,
   type FleetGuideTail,
   type FleetRosterEntry,
@@ -53,6 +57,7 @@ import {
   type PopularFlight,
   type QatarHistoryRow,
   type QatarScheduleRow,
+  type RouteDepartureRow,
   type RouteEntryRow,
   type RouteFlightNumbers,
   type RouteFlightRow,
@@ -81,6 +86,7 @@ import {
   getConfirmedFleetTails,
   getConfirmedStarlinkEdges,
   getDailyInstalls,
+  getDepartureSlots,
   getDirectRouteEdge,
   getFirstFlights,
   getFleetAnchors,
@@ -109,6 +115,7 @@ import {
   getQatarScheduleStats,
   getRankedStarlinkRoutePairs,
   getRecentInstalls,
+  getRouteDepartures,
   getRouteFlightNumbers,
   getRouteFlights,
   getRouteGraphEdges,
@@ -131,8 +138,17 @@ import {
   routeHasData,
   routeIsHistorical,
 } from "./database";
+import { getRouteFlightLastSeen } from "./route-history";
 
 export type { Database };
+
+/**
+ * The 48h departure aggregates rebuild the whole slot table (~15ms for UA on
+ * production data) and back the homepage, /routes and the planner hub. The
+ * schedule refreshes every 22.5s per tail, so a minute of staleness is
+ * invisible and keeps the build off the request path.
+ */
+const DEPARTURE_AGGREGATE_MEMO = { ttlSec: 60, maxEntries: 64 };
 
 export type Scope = AirlineCode | "ALL";
 
@@ -191,6 +207,10 @@ export interface ScopedReader {
   /** Roster plus guide-only tails with their guide marks; single-airline scope only. */
   getFleetGuideTails(): FleetGuideTail[];
   getFleetPageData(): FleetPageData;
+  /** Physical departures in a window, newest row per slot, with the equipped
+   * test the headline counts use. `partners` adds operatingPartners' rows that
+   * carry this scope's marketed numbers. */
+  getDepartureSlots(q: DepartureSlotQuery): DepartureSlot[];
   getAirportDepartures(): AirportDepartures;
   getRouteStarlinkSchedule(): RouteSchedule;
   /** Route pairs in getRouteStarlinkSchedule order, past `offset`. */
@@ -244,9 +264,13 @@ export interface ScopedReader {
   /** Unseen for ROUTE_NOINDEX_STALE_DAYS — the route page goes noindex. */
   routeIsHistorical(origin: string, destination: string): boolean;
   getRouteSummary(origin: string, destination: string): RouteSummary;
+  /** Equipped departures on the pair in the next 48h, under their marketed numbers. */
+  getRouteDepartures(origin: string, destination: string): RouteDepartureRow[];
   /** Marketing numbers on a pair without getRouteSummary's windowed departure
    * counts — what the flight permalinks' sibling links actually need. */
   getRouteFlightNumbers(origin: string, destination: string): RouteFlightNumbers;
+  /** Newest route-cache sighting per marketing number on a pair (unix sec). */
+  getRouteFlightLastSeen(origin: string, destination: string): Map<string, number>;
   getFlightHistorySummary(variants: string[]): FlightHistorySummary;
   getFlightRoutePairs(variants: string[]): FlightRoutePair[];
   /** Newest observation for the airline (unix sec), the reference point for
@@ -347,7 +371,7 @@ function buildPerAirlineStats(db: Database, codes: readonly AirlineCode[]): PerA
     out.push({
       code,
       name: cfg.name,
-      starlink: h?.starlink ?? getStarlinkPlanes(db, code).length,
+      starlink: h?.starlink ?? countStarlinkPlanes(db, code),
       total: h?.total ?? getTotalCount(db, code),
       fleetTotal: h?.fleetTotal,
       installs30d: h?.installs30d,
@@ -355,6 +379,7 @@ function buildPerAirlineStats(db: Database, codes: readonly AirlineCode[]): PerA
       statusLabel: cfg.rollout.statusLabel,
       phaseNote: cfg.rollout.phaseNote,
       accentColor: cfg.brand.accentColor,
+      accentText: uiAccent(cfg.brand),
       href: airlineHomeUrl(code),
     });
   }
@@ -371,6 +396,9 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
       throw new Error(`ScopedReader method requires a single-airline scope, got ${scope}`);
     return airlines[0];
   };
+  const airportsMemo = memo<AirportDepartures>(DEPARTURE_AGGREGATE_MEMO);
+  const scheduleMemo = memo<RouteSchedule>(DEPARTURE_AGGREGATE_MEMO);
+  const rankedMemo = memo<Array<{ origin: string; destination: string }>>(DEPARTURE_AGGREGATE_MEMO);
   const r: ScopedReader = {
     scope,
     airlines,
@@ -417,10 +445,13 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     getTypeProgress: () => getTypeProgress(db, soleAirline()),
     getFleetGuideTails: () => getFleetGuideTails(db, soleAirline()),
     getFleetPageData: () => getFleetPageData(db, airlines),
-    getAirportDepartures: () => getAirportDepartures(db, airlines),
-    getRouteStarlinkSchedule: () => getRouteStarlinkSchedule(db, airlines),
+    getDepartureSlots: (q) => getDepartureSlots(db, airlines, q),
+    getAirportDepartures: () => airportsMemo("", () => getAirportDepartures(db, airlines)),
+    getRouteStarlinkSchedule: () => scheduleMemo("", () => getRouteStarlinkSchedule(db, airlines)),
     getRankedStarlinkRoutePairs: (offset, limit) =>
-      getRankedStarlinkRoutePairs(db, airlines, offset, limit),
+      rankedMemo(`${offset}:${limit}`, () =>
+        getRankedStarlinkRoutePairs(db, airlines, offset, limit)
+      ),
     getFleetDiscoveryStats: () => getFleetDiscoveryStats(db, airlines),
     getConfirmedFleetTails: () => getConfirmedFleetTails(db, airlines),
     getPendingFleetTails: () => getPendingFleetTails(db, airlines),
@@ -449,7 +480,9 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     routeHasData: (o, d) => routeHasData(db, o, d, soleAirline()),
     routeIsHistorical: (o, d) => routeIsHistorical(db, o, d, soleAirline()),
     getRouteSummary: (o, d) => getRouteSummary(db, o, d, soleAirline()),
+    getRouteDepartures: (o, d) => getRouteDepartures(db, soleAirline(), o, d),
     getRouteFlightNumbers: (o, d) => getRouteFlightNumbers(db, o, d, soleAirline()),
+    getRouteFlightLastSeen: (o, d) => getRouteFlightLastSeen(db, o, d, soleAirline()),
     getFlightHistorySummary: (v) => getFlightHistorySummary(db, v, airlines),
     getFlightRoutePairs: (v) => getFlightRoutePairs(db, v, airlines),
     getObservationAnchor: () => (scope === "ALL" ? 0 : getObservationAnchor(db, scope)),

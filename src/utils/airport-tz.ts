@@ -11,6 +11,7 @@
  * never a guessed zone.
  */
 
+import { unixNow } from "../database/sql/windows";
 import { debug } from "./logger";
 
 export const AIRPORT_TZ: Record<string, string> = {
@@ -614,13 +615,7 @@ export function airportTimezone(iata: string): string | undefined {
   return AIRPORT_TZ[iata.toUpperCase()];
 }
 
-/** ICAO → IATA for US/Canada codes (KEWR → EWR, CYVR → YVR); others pass through. */
-export function icaoToIata(icao: string): string {
-  if (icao.length === 4 && (icao.startsWith("K") || icao.startsWith("C"))) {
-    return icao.substring(1);
-  }
-  return icao;
-}
+export { toIata as icaoToIata } from "./airport-code";
 
 /** YYYY-MM-DD in the given zone (en-CA locale formats ISO-style). */
 export function localDateISO(epochSec: number, timeZone: string): string {
@@ -652,10 +647,7 @@ export function isRealIsoDate(date: string): boolean {
   return !Number.isNaN(t) && new Date(t).toISOString().slice(0, 10) === date;
 }
 
-export function flightDateWindow(
-  date: string,
-  nowSec = Math.floor(Date.now() / 1000)
-): FlightDateWindow | null {
+export function flightDateWindow(date: string, nowSec = unixNow()): FlightDateWindow | null {
   if (!isRealIsoDate(date)) return null;
   const t = Date.parse(`${date}T00:00:00Z`);
   const start = Math.floor(t / 1000);

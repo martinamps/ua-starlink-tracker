@@ -14,6 +14,7 @@
  * qatar_fetch_coverage) that the hourly ingester writes.
  */
 
+import { zeroPaddedVariants } from "../airlines/flight-number";
 import { qatarEquipment } from "../airlines/registry";
 import type { QatarHistoryRow, QatarScheduleRow } from "../database/database";
 import type { ScopedReader } from "../database/reader";
@@ -136,12 +137,10 @@ export type QatarVerdict =
       scheduledRow?: QatarLeg;
     };
 
-/** "QR1", "QR001" and pinned "1" all name the same flight. */
+/** "QR1", "QR001" and pinned "1" all name the same flight: Qatar's feeds pad
+ * numbers at their own widths. */
 export function qatarFlightVariants(normalized: string): string[] {
-  const numeric = normalized.replace(/^[A-Z]+/, "");
-  const padded = `QR${numeric.padStart(3, "0")}`;
-  const stripped = `QR${String(Number.parseInt(numeric, 10) || 0)}`;
-  return Array.from(new Set([normalized, padded, stripped]));
+  return zeroPaddedVariants([normalized]);
 }
 
 export function addDaysISO(dateISO: string, days: number): string {

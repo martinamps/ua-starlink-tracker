@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
+import type { Link } from "../../components/layout";
 import type { Aircraft, FleetStats, PerAirlineStat, RecentInstall } from "../../types";
-import type { AirlineCode, KnownAirlineCode, Tenant } from "../registry";
+import type { AirlineCode, KnownAirlineCode, SiteConfig, Tenant } from "../registry";
 import { content as af } from "./af";
 import { content as as } from "./as";
 import { content as ha } from "./ha";
@@ -11,54 +12,67 @@ import { content as ua } from "./ua";
 export interface ContentStats {
   starlinkCount: number;
   totalCount: number;
-  percentage: string;
   fleetStats?: FleetStats | null;
   /** The /install-rate page's measured pace (installs/month); null or absent
    * when there isn't enough organic history to state one. */
   installsPerMonth?: number | null;
+  /** The full months that pace averages, "Jun–Aug 2026"; absent with no pace. */
+  installsPaceWindow?: string;
+  /** Newly equipped in the last 30 days; absent on the hub. */
+  installs30d?: number;
+  /** Installs per calendar week, oldest first (homepage sparkline). */
+  weeklyInstalls?: number[];
+  /** The data's own "as of" date, e.g. "September 20, 2026"; never the request clock. */
+  asOf?: string;
+  /** Hub only: one row per tracked airline. */
+  perAirline?: PerAirlineStat[];
 }
 
-export interface FaqEntry {
+/**
+ * One question and its answer. The FAQPage JSON-LD is rendered from `a`
+ * itself (faqJsonLd), so the markup can never drift from the visible text.
+ */
+export interface HomeFaqEntry {
   q: string;
   a: (s: ContentStats) => ReactNode;
-  ld: string;
 }
 
 export interface FaqSection {
   title: string;
-  items: FaqEntry[];
+  items: HomeFaqEntry[];
 }
 
-export interface SubfleetFilter {
+interface SubfleetFilter {
   key: string;
   label: string;
 }
 
-export interface HubHomeLink {
-  href: string;
-  label: string;
-}
-
 export interface HubHomeLinks {
-  airlines: HubHomeLink[];
-  compares: HubHomeLink[];
+  airlines: Link[];
+  compares: Link[];
 }
 
 export interface HeroProps {
+  site: SiteConfig;
   stats: ContentStats;
   starlinkData: Aircraft[];
   perAirlineStats?: PerAirlineStat[];
   recentInstalls?: RecentInstall[];
   /** Hub only: server-rendered inlinks to every sitemapped airline and compare page. */
   hubLinks?: HubHomeLinks;
+  /** Airline sites: the dated, citable stat sentence, placed by the hero. */
+  statSentence?: ReactNode;
 }
 
 export interface AirlineContent {
+  /** Header dek under the H1: inline content, one or two sentences. */
   intro: (s: ContentStats) => ReactNode;
-  /** Stat strip under the tagline (each entry rendered with · separators). */
+  /** Stat strip under the dek (each entry rendered with · separators). */
   headerStats: ReactNode[] | ((s: ContentStats) => ReactNode[]);
   /** Bespoke stat panel — each airline composes its own from shared atoms. */
   Hero: (p: HeroProps) => ReactNode;
+  /** The head questions, answered in full near the top of the homepage. */
+  answers?: HomeFaqEntry[];
   /** Optional per-row badge under tail number (e.g. UA mainline/express). null = no badge. */
   rowBadge: (plane: Aircraft, airline: string) => string | null;
   /** Filter buttons next to search (UA: mainline/express). Empty = ALL only. */
@@ -89,19 +103,7 @@ export function getContent(tenant: Tenant): AirlineContent {
   return content;
 }
 
-export function buildFaqJsonLd(content: AirlineContent, currentDate: string): string {
-  const entities = content.faq.flatMap((section) =>
-    section.items.map((item) => ({
-      "@type": "Question",
-      name: item.q,
-      acceptedAnswer: { "@type": "Answer", text: item.ld },
-    }))
-  );
-  const json = JSON.stringify({
-    "@context": "https://schema.org",
-    "@type": "FAQPage",
-    dateModified: currentDate,
-    mainEntity: entities,
-  });
-  return `<script type="application/ld+json">${json}</script>`;
+/** Every question a homepage renders, answer block first, in page order. */
+export function allFaqEntries(content: AirlineContent): HomeFaqEntry[] {
+  return [...(content.answers ?? []), ...content.faq.flatMap((s) => s.items)];
 }

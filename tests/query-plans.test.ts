@@ -14,15 +14,34 @@
  *    Measured at production cardinality: 14.6ms → 0.01ms only after ANALYZE.
  */
 
+import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import {
   TYPE_PAGE_EVENTS_SQL,
   TYPE_PAGE_FLIGHTS_SQL,
   TYPE_PAGE_ROUTES_SQL,
+  setupTables,
 } from "../src/database/database";
+import { equippedSql } from "../src/database/sql/equipped";
 import { makeSyntheticDb } from "./helpers";
+
+// Airport pairs vary as they do in production: a fixture where every row is
+// one pair makes the route index look like a free seek on anything.
+const AIRPORTS = [
+  "ORD",
+  "DEN",
+  "SFO",
+  "EWR",
+  "IAH",
+  "IAD",
+  "LAX",
+  "SEA",
+  "BOS",
+  "ATL",
+  "MCO",
+  "LAS",
+];
+const airport = (i: number) => AIRPORTS[i % AIRPORTS.length];
 
 function seeded() {
   const db = makeSyntheticDb();
@@ -51,8 +70,8 @@ function seeded() {
     upf.run(
       `N${100 + (i % 40)}AB`,
       `UA${1 + (i % 200)}`,
-      "ORD",
-      "DEN",
+      airport(i),
+      airport(i + 5),
       1_700_000_000 + i * 100,
       1_700_010_000 + i * 100,
       1_700_000_000
@@ -86,24 +105,28 @@ describe("hot-path query plans", () => {
        WHERE flight_number IN (?,?) AND source IN (?) AND error IS NULL AND airline = ?`,
       ["UA1", "UAL1", "united", "UA"]
     );
-    expect(plan).toContain("idx_vlog_flight");
+    expect(plan).toMatch(
+      /SEARCH starlink_verification_log USING (COVERING )?INDEX idx_vlog_flight \(flight_number=\?/
+    );
     expect(plan).not.toContain("idx_vlog_airline");
     db.close();
   });
 
-  test("the equipped-departures join seeks upcoming_flights by tail", () => {
+  test("the equipped probe seeks starlink_planes by tail, never scans it", () => {
+    // Every equipped test correlates the listing on TailNumber; before
+    // idx_sp_tail the check-flight lookup scanned starlink_planes per row.
     const db = seeded();
     const plan = planOf(
       db,
-      `SELECT uf.departure_airport, COUNT(DISTINCT uf.flight_number || ':' || uf.departure_time)
-       FROM upcoming_flights uf
+      `SELECT uf.* FROM upcoming_flights uf
        INNER JOIN starlink_planes sp ON uf.tail_number = sp.TailNumber
-       WHERE (sp.verified_wifi IS NULL OR sp.verified_wifi = 'Starlink')
-         AND uf.departure_time >= ? AND uf.departure_time < ? AND uf.airline = ?
-       GROUP BY uf.departure_airport`,
-      [1_700_000_000, 1_800_000_000, "UA"]
+       WHERE uf.flight_number IN (?,?) AND uf.departure_time >= ? AND uf.departure_time < ?
+         AND ${equippedSql("sp")}`,
+      ["UA1", "UAL1", 1_700_000_000, 1_800_000_000]
     );
-    expect(plan).toContain("idx_upf_tail");
+    expect(plan).toMatch(/SEARCH sp USING (COVERING )?INDEX idx_sp_tail \(TailNumber=\?\)/);
+    expect(plan).not.toMatch(/SCAN sp\b/);
+    expect(plan).toMatch(/SEARCH uf USING (COVERING )?INDEX idx_upf_flight \(flight_number=\?/);
     db.close();
   });
 });
@@ -124,8 +147,8 @@ describe("aircraft-type page passes", () => {
       upf.run(
         `N${i % 90}XY`,
         `${airline}${i % 300}`,
-        "SEA",
-        "LAX",
+        airport(i + 3),
+        airport(i + 7),
         1_700_000_000 + i,
         0,
         0,
@@ -139,7 +162,7 @@ describe("aircraft-type page passes", () => {
   test("routes seek upcoming_flights by airline, never a full scan", () => {
     const db = multiAirline();
     const plan = planOf(db, TYPE_PAGE_ROUTES_SQL, ["UA", 1_700_000_000, 1_700_172_800]);
-    expect(plan).toContain("idx_upf_airline");
+    expect(plan).toMatch(/SEARCH uf USING (COVERING )?INDEX idx_upf_(airline|route) \(airline=\?/);
     expect(plan).not.toMatch(/SCAN upcoming_flights/);
     db.close();
   });
@@ -147,7 +170,9 @@ describe("aircraft-type page passes", () => {
   test("flight numbers seek the verification log by airline", () => {
     const db = seeded();
     const plan = planOf(db, TYPE_PAGE_FLIGHTS_SQL, ["UA", 1_700_000_000]);
-    expect(plan).toContain("idx_vlog_airline");
+    expect(plan).toMatch(
+      /SEARCH starlink_verification_log USING (COVERING )?INDEX idx_vlog_airline\w* \(airline=\?/
+    );
     expect(plan).not.toMatch(/SCAN starlink_verification_log/);
     db.close();
   });
@@ -155,7 +180,9 @@ describe("aircraft-type page passes", () => {
   test("pipeline-event lastmod seeks by airline", () => {
     const db = seeded();
     const plan = planOf(db, TYPE_PAGE_EVENTS_SQL, ["UA"]);
-    expect(plan).toContain("idx_pipeline_events_time");
+    expect(plan).toMatch(
+      /SEARCH pipeline_events USING (COVERING )?INDEX idx_pipeline_events_time \(airline=\?/
+    );
     expect(plan).not.toMatch(/SCAN pipeline_events/);
     db.close();
   });
@@ -205,13 +232,23 @@ describe("departure_log trim lives in the archive job, not the read path", () =>
  */
 describe("setupTables DDL actually executes", () => {
   test("no CREATE INDEX is stranded behind a CREATE TABLE", () => {
-    const src = readFileSync(join(import.meta.dir, "..", "src", "database", "database.ts"), "utf8");
-    // A query() template that declares an index is the bug shape, whatever
-    // table it belongs to — exec() runs every statement, query().run() doesn't.
-    const stranded = [...src.matchAll(/db\.query\(\s*`([^`]*)`\s*\)\s*\.run\(\)/g)].filter(
-      ([, sql]) => /create\s+index/i.test(sql.split(";").slice(1).join(";"))
+    // Record every string setupTables hands to query() on a fresh database —
+    // the path that runs each CREATE branch. exec() runs every statement,
+    // query().run() only the first, so a CREATE INDEX after a ";" is dead.
+    const db = new Database(":memory:");
+    const prepared: string[] = [];
+    const query = db.query.bind(db);
+    db.query = ((sql: string) => {
+      prepared.push(sql);
+      return query(sql);
+    }) as typeof db.query;
+    setupTables(db);
+    db.close();
+    expect(prepared.length).toBeGreaterThan(0);
+    const stranded = prepared.filter((sql) =>
+      /create\s+index/i.test(sql.split(";").slice(1).join(";"))
     );
-    expect(stranded.map(([, sql]) => sql.slice(0, 80))).toEqual([]);
+    expect(stranded.map((sql) => sql.slice(0, 80))).toEqual([]);
   });
 
   test("a freshly migrated database has them all", () => {
@@ -224,12 +261,39 @@ describe("setupTables DDL actually executes", () => {
     for (const idx of [
       "idx_ff_airline", // this branch's own table — the one that shipped dead
       "idx_dl_departed",
-      "idx_dl_airport",
       "idx_fr_flight",
       "idx_fr_route",
-      "idx_qs_flight",
+      "idx_sp_tail",
+      "idx_dl_tail",
+      "idx_upf_flight",
+      "idx_upf_route",
+      "idx_vlog_airline_time",
+      "idx_qfc_date",
     ]) {
       expect(names.has(idx), `${idx} was declared but never created`).toBe(true);
+    }
+    db.close();
+  });
+
+  test("migration drops the redundant indexes an older database still carries", () => {
+    const db = makeSyntheticDb();
+    db.exec(`
+      CREATE INDEX idx_fleet_tail ON united_fleet(tail_number);
+      CREATE INDEX idx_qs_flight ON qatar_schedule(flight_number, scheduled_date);
+      CREATE INDEX idx_dl_airport ON departure_log(airport);
+      CREATE INDEX idx_fleet_discovery ON united_fleet(starlink_status, discovery_priority DESC, next_check_after);
+    `);
+    setupTables(db);
+    const names = (
+      db.query("SELECT name FROM sqlite_master WHERE type='index'").all() as { name: string }[]
+    ).map((r) => r.name);
+    for (const idx of [
+      "idx_fleet_tail",
+      "idx_qs_flight",
+      "idx_dl_airport",
+      "idx_fleet_discovery",
+    ]) {
+      expect(names).not.toContain(idx);
     }
     db.close();
   });

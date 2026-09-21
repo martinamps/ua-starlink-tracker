@@ -7,7 +7,9 @@
 import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { setupTables } from "../src/database/database";
+import { handleMcpRequest } from "../src/api/mcp-server";
+import { migrate, setupTables } from "../src/database/database";
+import type { Scope, ScopedReader } from "../src/database/reader";
 import type { predictFlight } from "../src/scripts/starlink-predictor";
 
 // Snapshot lives inside the checkout (gitignored) so parallel worktrees never
@@ -49,6 +51,48 @@ export function makeSyntheticDb(): Database {
   return db;
 }
 
+/** An empty database built by the real migration alone: no snapshot, no
+ * test:setup, so a test that seeds everything itself stays hermetic. */
+export function makeFreshDb(): Database {
+  const db = new Database(":memory:");
+  migrate(db);
+  return db;
+}
+
+/** The HTML from `heading` up to the next <h2>. Throws when the heading is
+ * absent, so an assertion on the section can never pass on a missing one. */
+export function sectionOf(html: string, heading: string): string {
+  const start = html.indexOf(heading);
+  if (start < 0) throw new Error(`no section headed "${heading}"`);
+  const next = html.indexOf("<h2", start + heading.length);
+  return html.slice(start, next < 0 ? undefined : next);
+}
+
+/** The attributes of the first element carrying `id`, entity-decoded. */
+export function elementAttrs(html: string, id: string): Record<string, string> {
+  const tag = html.match(new RegExp(`<[a-z][^>]*\\sid="${id}"[^>]*>`))?.[0];
+  if (!tag) throw new Error(`no element with id="${id}"`);
+  const decode = (v: string) =>
+    v
+      .replace(/&quot;/g, '"')
+      .replace(/&#x27;/g, "'")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&amp;/g, "&");
+  return Object.fromEntries(
+    [...tag.matchAll(/\s([\w-]+)="([^"]*)"/g)].map((m) => [m[1], decode(m[2])])
+  );
+}
+
+/** JSON.parse of a <script type="application/json" id="…"> island. */
+export function jsonIsland<T = Record<string, unknown>>(html: string, id: string): T {
+  const body = html.match(
+    new RegExp(`<script type="application/json" id="${id}"[^>]*>([\\s\\S]*?)</script>`)
+  )?.[1];
+  if (body === undefined) throw new Error(`no JSON island with id="${id}"`);
+  return JSON.parse(body) as T;
+}
+
 export const utc = (iso: string) => Math.floor(Date.parse(iso) / 1000);
 
 // ── dispatch helpers (shared by isolation + tenant-matrix) ──────────────────
@@ -76,10 +120,15 @@ export async function jsonOf(app: Dispatcher, path: string, host: string, init?:
   return JSON.parse(text);
 }
 
-export function mcpReq(host: string, method: string, params: unknown): Request {
-  return req("/mcp", host, {
+export function mcpReq(
+  host: string,
+  method: string,
+  params: unknown,
+  opts: { query?: string; headers?: Record<string, string> } = {}
+): Request {
+  return req(`/mcp${opts.query ?? ""}`, host, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...opts.headers },
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
   });
 }
@@ -89,6 +138,55 @@ export async function postMcp(app: Dispatcher, host: string, method: string, par
   const r = await app.dispatch(mcpReq(host, method, params));
   if (r.status !== 200) throw new Error(`mcp ${method} → ${r.status}`);
   return r.json();
+}
+
+/** handleMcpRequest directly (no app, no host routing) + 200 check + parsed body. */
+export async function mcpDirect(
+  scope: Scope,
+  getReader: (scope: Scope) => ScopedReader,
+  method: string,
+  params: unknown = {}
+) {
+  const r = await handleMcpRequest(
+    mcpReq("unitedstarlinktracker.com", method, params),
+    scope,
+    getReader
+  );
+  if (r.status !== 200) throw new Error(`mcp ${method} → ${r.status}`);
+  return r.json();
+}
+
+/** A tools/call body's first text block and error flag. A JSON-RPC error or
+ * a result without text throws: an empty string would let every
+ * not.toContain assertion pass vacuously. */
+export function toolText(json: {
+  error?: unknown;
+  result?: { content?: { text?: unknown }[]; isError?: boolean };
+}): { text: string; isError: boolean } {
+  if (json.error !== undefined) {
+    throw new Error(`tools/call returned a JSON-RPC error: ${JSON.stringify(json.error)}`);
+  }
+  const text = json.result?.content?.[0]?.text;
+  if (typeof text !== "string") {
+    throw new Error(`tools/call result has no text content: ${JSON.stringify(json).slice(0, 300)}`);
+  }
+  return { text, isError: json.result?.isError === true };
+}
+
+/** An MCP initialize handshake through the app, parsed. */
+export async function mcpInitialize(app: Dispatcher, host: string, query = "") {
+  const params = { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t" } };
+  return (await app.dispatch(mcpReq(host, "initialize", params, { query }))).json();
+}
+
+/** tools/call through the app; resolves to the tool's text and error flag. */
+export async function mcpTool(
+  app: Dispatcher,
+  host: string,
+  name: string,
+  args: Record<string, unknown> = {}
+) {
+  return toolText(await postMcp(app, host, "tools/call", { name, arguments: args }));
 }
 
 export const stubPredict = (n = 0) =>
@@ -147,9 +245,9 @@ export function addFlight(
   flightNumber: string,
   departureAirport: string,
   departureTimeSec: number,
-  opts: { arrivalAirport?: string; airline?: string } = {}
+  opts: { arrivalAirport?: string; airline?: string; lastUpdated?: number } = {}
 ): void {
-  const { arrivalAirport = "EWR", airline = "UA" } = opts;
+  const { arrivalAirport = "EWR", airline = "UA", lastUpdated = departureTimeSec } = opts;
   db.query(
     `INSERT INTO upcoming_flights (tail_number, flight_number, departure_airport, arrival_airport, departure_time, arrival_time, last_updated, airline)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
@@ -160,7 +258,7 @@ export function addFlight(
     arrivalAirport,
     departureTimeSec,
     departureTimeSec + 3 * 3600,
-    departureTimeSec,
+    lastUpdated,
     airline
   );
 }

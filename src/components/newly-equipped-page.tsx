@@ -1,28 +1,18 @@
-import React from "react";
+import { aircraftName } from "../airlines/aircraft-families";
 import { AIRLINES, type SiteConfig } from "../airlines/registry";
 import type { FirstFlight, PerAirlineStat, RecentInstall } from "../types";
-import { PageFooter, type PageLink } from "./atoms";
-
-const EYEBROW = "text-[10px] font-mono text-muted uppercase tracking-wider mb-3";
-const PANEL = "bg-surface border border-subtle rounded-lg p-5";
-const SECTION = "relative w-full max-w-3xl mx-auto mb-8";
+import type { Link } from "./layout";
+import { EYEBROW, PANEL, PageHeader, PageShell, SECTION } from "./layout";
+import { monthDay, shortDate } from "./ui/format";
 
 interface NewlyEquippedPageProps {
   site: SiteConfig;
   installs: RecentInstall[];
   airlines: PerAirlineStat[];
-  /** Observed first revenue departure per tail; sparse — most tails have none yet. */
+  /** First observed departure per tail; sparse — most tails have none yet. */
   firstFlights: Record<string, FirstFlight>;
-  pageLinks?: PageLink[];
-}
-
-function installDate(d: string): string {
-  return new Date(`${d.slice(0, 10)}T12:00:00Z`).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    timeZone: "UTC",
-  });
+  pageLinks?: Link[];
+  currentPath?: string;
 }
 
 function InstallRow({ install, first }: { install: RecentInstall; first?: FirstFlight }) {
@@ -34,31 +24,24 @@ function InstallRow({ install, first }: { install: RecentInstall; first?: FirstF
     >
       <div className="flex items-baseline gap-3 flex-wrap">
         <span className="font-mono text-sm text-accent">{install.TailNumber}</span>
-        <span className="font-mono text-xs text-secondary">{install.Aircraft}</span>
+        <span className="text-xs text-secondary">{aircraftName(install.Aircraft)}</span>
         {install.OperatedBy && (
-          <span className="font-mono text-[10px] text-muted hidden sm:inline">
-            {install.OperatedBy}
-          </span>
+          <span className="text-xs text-muted hidden sm:inline">{install.OperatedBy}</span>
         )}
-        <span className="font-mono text-[10px] text-muted ml-auto">
-          found {installDate(install.DateFound)}
+        <span className="text-xs text-muted tabular-nums ml-auto">
+          Found {shortDate(install.DateFound.slice(0, 10))}
         </span>
       </div>
       {first && (
         // "observed", not bald "first": DateFound is when this tracker found
         // the tail equipped, not when the antenna went on, so the true first
         // flight is often unknowable. Same wording the syndicated feed uses.
-        <div className="font-mono text-[11px] text-muted mt-1">
-          First observed Starlink revenue flight:{" "}
-          <span className="text-secondary">
+        <div className="text-xs text-muted mt-1">
+          First observed Starlink flight:{" "}
+          <span className="font-mono text-secondary">
             {first.flight_number} {first.origin} → {first.destination}
           </span>{" "}
-          on{" "}
-          {new Date(first.departed_at * 1000).toLocaleDateString("en-US", {
-            month: "short",
-            day: "numeric",
-            timeZone: "UTC",
-          })}
+          on {monthDay(first.departed_at)}
         </div>
       )}
     </div>
@@ -71,30 +54,19 @@ export default function NewlyEquippedPage({
   airlines,
   firstFlights,
   pageLinks,
+  currentPath,
 }: NewlyEquippedPageProps) {
   const scopeCode = site.scope !== "ALL" ? site.scope : null;
-  const everyAircraft = scopeCode
-    ? `Every ${AIRLINES[scopeCode].name} aircraft`
-    : "Every aircraft from a tracked airline";
+  const dek = scopeCode
+    ? `The latest ${AIRLINES[scopeCode].shortName} aircraft to get Starlink, newest first.`
+    : "The latest aircraft to get Starlink across tracked airlines, newest first.";
   const grouped = airlines
     .map((a) => ({ cfg: a, rows: installs.filter((i) => i.airline === a.code) }))
     .filter((g) => g.rows.length > 0);
 
   return (
-    <div className="w-full mx-auto px-4 sm:px-6 md:px-8 bg-base min-h-screen flex flex-col relative">
-      <div className="absolute inset-0 grid-pattern opacity-50 pointer-events-none" />
-
-      <header className="relative py-5 sm:py-6 text-center mb-6">
-        <a href="/" className="block">
-          <h1 className="font-display text-3xl sm:text-4xl font-bold text-primary mb-2 tracking-tight hover:text-accent transition-colors">
-            Newly Equipped Aircraft
-          </h1>
-        </a>
-        <p className="text-base text-secondary font-display max-w-xl mx-auto">
-          {everyAircraft} as it joins the Starlink-equipped fleet — newest first, with its first
-          observed Starlink revenue flight once it departs.
-        </p>
-      </header>
+    <PageShell site={site} currentPath={currentPath} pageLinks={pageLinks}>
+      <PageHeader title="Newly equipped aircraft" dek={dek} />
 
       <section className={SECTION}>
         <div className={PANEL}>
@@ -102,7 +74,7 @@ export default function NewlyEquippedPage({
             <div className={EYEBROW}>Latest installs</div>
             <a
               href="/feed.xml"
-              className="font-mono text-[11px] text-accent hover:underline"
+              className="font-mono text-xs text-accent hover:underline"
               type="application/atom+xml"
             >
               Subscribe (Atom feed) →
@@ -110,17 +82,18 @@ export default function NewlyEquippedPage({
           </div>
           {grouped.length === 0 ? (
             <p className="text-sm text-muted">
-              No dated installs on record right now. Aircraft appear here the day we find them newly
-              equipped — bulk imports and seed data are excluded so this log only carries real,
-              dated finds.
+              No new installs on record right now. Aircraft appear here the day we find them.
             </p>
           ) : (
             grouped.map((g) => (
               <div key={g.cfg.code} className="mb-4 last:mb-0">
-                <div className="flex items-center gap-1.5 text-[10px] font-mono text-muted mb-1">
+                <div className="flex items-center gap-1.5 text-xs font-mono text-muted mb-1">
                   <span
                     className="w-1.5 h-1.5 rounded-full flex-shrink-0"
-                    style={{ background: g.cfg.accentColor || "#5a6a80" }}
+                    style={{
+                      background:
+                        g.cfg.accentText ?? g.cfg.accentColor ?? "var(--color-text-muted)",
+                    }}
                   />
                   {g.cfg.name}
                 </div>
@@ -130,32 +103,23 @@ export default function NewlyEquippedPage({
               </div>
             ))
           )}
-          <p className="text-[11px] text-muted mt-4 leading-snug">
-            Dates are when this tracker first observed the install, not when the antenna went on. A
-            "first observed Starlink revenue flight" is likewise the earliest departure we can
-            evidence after that find — where an earlier departure exists in our own departure log,
-            we record nothing rather than name a flight that wasn't first. Writing about the
-            rollout? The{" "}
+          <p className="text-xs text-muted mt-4">
+            Dates are when we first saw Starlink on the aircraft. Follow the{" "}
             <a href="/feed.xml" className="text-accent hover:underline">
               Atom feed
             </a>{" "}
-            carries these entries as they land
-            {site.features.methodologyPage ? (
+            for new installs.
+            {site.features.methodologyPage && (
               <>
                 {" "}
-                — see the{" "}
                 <a href="/methodology" className="text-accent hover:underline">
-                  methodology
-                </a>{" "}
-                for how installs are verified
+                  How we verify →
+                </a>
               </>
-            ) : null}
-            .
+            )}
           </p>
         </div>
       </section>
-
-      <PageFooter site={site} pageLinks={pageLinks} />
-    </div>
+    </PageShell>
   );
 }

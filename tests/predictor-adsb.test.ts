@@ -213,8 +213,8 @@ describe("cold and positioning priors", () => {
     );
     for (let i = 0; i < 7; i++) plane.run(`N${100 + i}SY`, "express");
     for (let i = 0; i < 3; i++) plane.run(`N${200 + i}UA`, "mainline");
-    setMeta(db, "expressTotal", 10);
-    setMeta(db, "mainlineTotal", 12);
+    setMeta(db, "expressTotal", 10, "UA");
+    setMeta(db, "mainlineTotal", 12, "UA");
     // A census-sized roster, so the type-aware model (and its cold path) runs.
     const fleet = db.query(
       `INSERT INTO united_fleet (tail_number, aircraft_type, first_seen_source, first_seen_at, last_seen_at, airline)

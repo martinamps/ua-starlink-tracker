@@ -135,7 +135,7 @@ async function getUpcomingFlightsForPlane(tailNumber: string): Promise<{
   allFlights: FlightInfo["raw"][];
 } | null> {
   try {
-    const flights = await fr24Api.getUpcomingFlights(tailNumber);
+    const flights = await fr24Api.getUpcomingFlights(tailNumber, "callsign", "UA");
 
     if (flights.length === 0) {
       return null;
@@ -443,7 +443,10 @@ export async function verifyPlane(
 /**
  * Run a single discovery batch
  */
-export async function runDiscoveryBatch(limit = 1): Promise<{
+export async function runDiscoveryBatch(
+  db: Database,
+  limit = 1
+): Promise<{
   checked: number;
   starlink: number;
   notStarlink: number;
@@ -451,34 +454,26 @@ export async function runDiscoveryBatch(limit = 1): Promise<{
   noFlights: number;
 }> {
   const stats = { checked: 0, starlink: 0, notStarlink: 0, errors: 0, noFlights: 0 };
-  const db = initializeDatabase();
+  const planes = getNextPlanesToVerify(db, limit, "UA");
 
-  try {
-    const planes = getNextPlanesToVerify(db, limit);
+  if (planes.length === 0) {
+    debug("No planes need verification at this time");
+    return stats;
+  }
 
-    if (planes.length === 0) {
-      // debug, matching starlink-verifier.ts which already logs the idle
-      // tick at debug — the two paths disagreed and this one ran every 90s.
-      debug("No planes need verification at this time");
-      return stats;
+  for (const plane of planes) {
+    const result = await verifyPlane(db, plane);
+
+    if (result === null) {
+      stats.noFlights++;
+    } else if (result.error) {
+      stats.errors++;
+    } else if (result.hasStarlink) {
+      stats.starlink++;
+    } else {
+      stats.notStarlink++;
     }
-
-    for (const plane of planes) {
-      const result = await verifyPlane(db, plane);
-
-      if (result === null) {
-        stats.noFlights++;
-      } else if (result.error) {
-        stats.errors++;
-      } else if (result.hasStarlink) {
-        stats.starlink++;
-      } else {
-        stats.notStarlink++;
-      }
-      stats.checked++;
-    }
-  } finally {
-    db.close();
+    stats.checked++;
   }
 
   return stats;
@@ -487,7 +482,10 @@ export async function runDiscoveryBatch(limit = 1): Promise<{
 /**
  * Start the fleet discovery background process
  */
-export function startFleetDiscovery(mode: "discovery" | "maintenance" = "maintenance"): JobHandle {
+export function startFleetDiscovery(
+  db: Database,
+  mode: "discovery" | "maintenance" = "maintenance"
+): JobHandle {
   const intervalMs = mode === "discovery" ? DISCOVERY_INTERVAL_MS : MAINTENANCE_INTERVAL_MS;
 
   let runCount = 0;
@@ -504,7 +502,7 @@ export function startFleetDiscovery(mode: "discovery" | "maintenance" = "mainten
           span.setTag("job.type", "background");
           span.setTag("mode", mode);
 
-          const stats = await runDiscoveryBatch(1);
+          const stats = await runDiscoveryBatch(db, 1);
 
           // Accumulate stats
           totalStats.checked += stats.checked;
@@ -532,26 +530,21 @@ export function startFleetDiscovery(mode: "discovery" | "maintenance" = "mainten
           // Heartbeat log
           const now = Date.now();
           if (now - lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
-            const db = initializeDatabase();
-            try {
-              const fleetStats = getFleetDiscoveryStats(db, "UA");
-              // Counters live in the data field, not the message: an
-              // incrementing runCount inside the string makes every line a
-              // distinct message and defeats Datadog pattern grouping.
-              info("Heartbeat: fleet-discovery scheduler healthy", {
-                runs: runCount,
-                fleet: fleetStats.total_fleet,
-                starlink: fleetStats.verified_starlink,
-                nonStarlink: fleetStats.verified_non_starlink,
-                pending: fleetStats.pending_verification,
-              });
+            const fleetStats = getFleetDiscoveryStats(db, "UA");
+            // Counters live in the data field, not the message: an
+            // incrementing runCount inside the string makes every line a
+            // distinct message and defeats Datadog pattern grouping.
+            info("Heartbeat: fleet-discovery scheduler healthy", {
+              runs: runCount,
+              fleet: fleetStats.total_fleet,
+              starlink: fleetStats.verified_starlink,
+              nonStarlink: fleetStats.verified_non_starlink,
+              pending: fleetStats.pending_verification,
+            });
 
-              emitFleetSnapshot(db);
+            emitFleetSnapshot(db);
 
-              lastHeartbeat = now;
-            } finally {
-              db.close();
-            }
+            lastHeartbeat = now;
           }
         },
         { "job.type": "background", mode }
@@ -588,7 +581,6 @@ async function verifySpecificTail(tailNumber: string): Promise<void> {
 
     if (!flightData) {
       console.log(`No upcoming flights found for ${tailNumber}`);
-      db.close();
       return;
     }
 
@@ -718,7 +710,7 @@ if (import.meta.main) {
     // Run a single batch
     console.log(`Running discovery batch for ${batchSize} planes...\n`);
 
-    runDiscoveryBatch(batchSize)
+    runDiscoveryBatch(initializeDatabase(), batchSize)
       .then((result) => {
         console.log("\n=== Batch Results ===");
         console.log(`Checked: ${result.checked}`);
@@ -734,6 +726,6 @@ if (import.meta.main) {
   } else {
     // Start background process
     console.log(`Starting fleet discovery in ${mode.replace("--", "")} mode...\n`);
-    startFleetDiscovery(mode === "--discovery" ? "discovery" : "maintenance");
+    startFleetDiscovery(initializeDatabase(), mode === "--discovery" ? "discovery" : "maintenance");
   }
 }

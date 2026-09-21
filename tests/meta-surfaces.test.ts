@@ -401,12 +401,7 @@ describe("rate limiter covers /mcp and permalinks", () => {
   const FLOODS: Array<[string, () => Request]> = [
     [
       "POST /mcp",
-      () =>
-        req("/mcp", UA, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "x-forwarded-for": "10.99.1.1" },
-          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" }),
-        }),
+      () => mcpReq(UA, "ping", undefined, { headers: { "x-forwarded-for": "10.99.1.1" } }),
     ],
     [
       "OPTIONS /mcp",
@@ -450,7 +445,7 @@ describe("rate limiter covers /mcp and permalinks", () => {
 describe("dispatch wraps handler throws", () => {
   test("throwing /api handler → 500 JSON with nosniff + ACAO", async () => {
     const isolated = createApp(openSnapshot());
-    isolated.routes["/api/data"] = () => {
+    isolated.routes["/api/data"].handler = () => {
       throw new Error("deliberate rethrow");
     };
     const res = await isolated.dispatch(req("/api/data", "unitedstarlinktracker.com"));
@@ -464,7 +459,7 @@ describe("dispatch wraps handler throws", () => {
   // skips the count is a crash the monitor cannot see.
   test("throwing /api/check-flight → exactly one http.request with status_code 500", async () => {
     const isolated = createApp(openSnapshot());
-    isolated.routes["/api/check-flight"] = () => {
+    isolated.routes["/api/check-flight"].handler = () => {
       throw new Error("deliberate rethrow");
     };
     const calls: Array<Record<string, unknown>> = [];
@@ -495,7 +490,7 @@ describe("dispatch wraps handler throws", () => {
 
   test("throwing page handler → 500 without leaking the error", async () => {
     const isolated = createApp(openSnapshot());
-    isolated.routes["/fleet"] = () => {
+    isolated.routes["/fleet"].handler = () => {
       throw new Error("secret detail");
     };
     const res = await isolated.dispatch(req("/fleet", "unitedstarlinktracker.com"));
@@ -565,4 +560,20 @@ describe("host redirects", () => {
     const res = await get("/static/social-image.webp", "evil.example.com");
     expect(res.status).toBe(200);
   });
+});
+
+describe("plain 404", () => {
+  for (const site of Object.values(SITES)) {
+    test(`${site.key}: the site's shell, noindex, no script and nothing to canonicalize to`, async () => {
+      const res = await get("/no-such-page-anywhere", site.canonicalHost);
+      expect(res.status).toBe(404);
+      expect(res.headers.get("content-security-policy")).toContain("script-src 'none'");
+      const body = await res.text();
+      expect(body).toContain('content="noindex, nofollow"');
+      expect(body).toContain(site.brand.title);
+      expect(body).not.toContain("<script");
+      expect(body).not.toContain('rel="canonical"');
+      expect(body).not.toMatch(/{{\w+}}/);
+    });
+  }
 });

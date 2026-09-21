@@ -8,25 +8,27 @@ import { type AirlineConfig, type SiteConfig, programTypeOf } from "../airlines/
 import { type AirlineFactsEntry, formatFactDate } from "../airlines/rollout-facts";
 import type { FleetGuideTail, TypeProgress } from "../database/database";
 import { typeShare } from "../scripts/starlink-predictor";
-import { FactsList, PageShell, StatusPill } from "./airlines-page";
-import type { PageLink } from "./atoms";
-
-const PANEL = "bg-surface border border-subtle rounded-lg p-5";
-const SECTION = "relative w-full max-w-3xl mx-auto mb-8";
+import { FactsList, StatusPill } from "./airlines-page";
+import { FIELD_CLASS, FlightSearchForm } from "./flight-search-form";
+import { ClientScriptTag } from "./layout";
+import type { Link } from "./layout";
+import { Eyebrow, PageHeader, PageShell, Panel, SECTION, StatValue } from "./layout";
+import { fmt } from "./ui/format";
+import { Meter } from "./ui/meter";
 
 /** Past this, the guide may be missing installs and the page says so. */
-export const GUIDE_STALE_DAYS = 45;
+const GUIDE_STALE_DAYS = 45;
 
 function typeRowText(t: TypeProgress): { text: string; tone: string } {
   if (t.excluded)
     return { text: `Retiring — not in the programme (${t.total})`, tone: "text-muted" };
   if (t.equipped === 0) return { text: `Not started — 0 of ${t.total}`, tone: "text-muted" };
-  if (t.equipped === t.total) return { text: `All ${t.total}`, tone: "text-green-400" };
-  return { text: `At least ${t.equipped} of ${t.total}`, tone: "text-amber-400" };
+  if (t.equipped === t.total) return { text: `All ${t.total}`, tone: "text-success" };
+  return { text: `At least ${t.equipped} of ${t.total}`, tone: "text-warn" };
 }
 
 /** Programme totals: excluded (retiring) types never enter a denominator. */
-export function programmeTotals(types: readonly TypeProgress[]): {
+function programmeTotals(types: readonly TypeProgress[]): {
   equipped: number;
   total: number;
 } {
@@ -46,11 +48,9 @@ export function TypeShareTable({
 }) {
   return (
     <div className="mb-4">
-      <div className="text-[10px] font-mono text-muted uppercase tracking-wider mb-1">
-        By aircraft type
-      </div>
+      <Eyebrow className="mb-1">By aircraft type</Eyebrow>
       {!compact && (
-        <p className="text-[11px] text-muted leading-relaxed mb-2">
+        <p className="text-xs text-muted leading-relaxed mb-2">
           Your booking shows the aircraft type — the best guide until the plane is assigned about
           two days out. On a 777, check whether it is the -300ER or -200ER.
         </p>
@@ -61,18 +61,13 @@ export function TypeShareTable({
           <div key={t.key} className="py-1.5 border-b border-subtle last:border-0">
             <div className="flex items-center justify-between gap-3">
               <span className="font-mono text-xs text-primary shrink-0">{t.label}</span>
-              <span className={`font-mono text-[11px] text-right ${tone}`}>{text}</span>
+              <span className={`font-mono text-xs text-right ${tone}`}>{text}</span>
             </div>
             {!t.excluded && (
-              <div className="h-1 rounded bg-surface-elevated overflow-hidden mt-1">
-                <div
-                  className="h-full rounded bg-green-400"
-                  style={{ width: `${Math.round(typeShare(t) * 100)}%` }}
-                />
-              </div>
+              <Meter share={typeShare(t)} color="var(--color-success)" size="xs" className="mt-1" />
             )}
             {!compact && !t.excluded && t.notInGuide > 0 && (
-              <div className="font-mono text-[10px] text-muted mt-1">
+              <div className="font-mono text-xs text-muted mt-1">
                 +{t.notInGuide} newer aircraft not yet in the guide
               </div>
             )}
@@ -87,38 +82,31 @@ type Chip = { text: string; tone: string };
 
 function tailChip(t: FleetGuideTail): Chip {
   if (!t.inRoster) return { text: "Not in current fleet", tone: "text-muted" };
-  if (t.delisted) return { text: "Delisted — recheck", tone: "text-amber-400" };
+  if (t.delisted) return { text: "Delisted — recheck", tone: "text-warn" };
   switch (t.mark) {
     case "starlink":
-      return { text: "Starlink", tone: "text-green-400" };
+      return { text: "Starlink", tone: "text-success" };
     case "legacy":
-      return { text: "Legacy WiFi", tone: "text-secondary" };
+      return { text: "Legacy Wi-Fi", tone: "text-secondary" };
     case "none":
-      return { text: "No WiFi listed", tone: "text-muted" };
+      return { text: "No Wi-Fi listed", tone: "text-muted" };
     default:
       return { text: "Not in guide yet", tone: "text-muted" };
   }
 }
 
-// Registrations are [A-Z-] only, so matching on the row id is safe; "FHRBB"
-// is accepted for "F-HRBB" because people type it without the dash.
-const TAIL_FILTER_SCRIPT = `(function(){var i=document.getElementById('tail-filter');if(!i)return;var rows=document.querySelectorAll('[data-tail-row]');i.addEventListener('input',function(){var q=i.value.toUpperCase().replace(/[^A-Z]/g,'');rows.forEach(function(r){r.hidden=q.length>0&&r.id.replace('-','').indexOf(q)<0;});});})();`;
-
 function TailLookup({ cfg, tails }: { cfg: AirlineConfig; tails: readonly FleetGuideTail[] }) {
   return (
-    <div className={PANEL}>
-      <label
-        htmlFor="tail-filter"
-        className="block text-[10px] font-mono text-muted uppercase tracking-wider mb-2"
-      >
+    <Panel>
+      <Eyebrow as="label" htmlFor="tail-filter" className="mb-2 block">
         Look up a tail number
-      </label>
+      </Eyebrow>
       <input
         id="tail-filter"
         type="search"
         placeholder="F-HTYA"
         autoComplete="off"
-        className="w-full bg-base border border-subtle rounded px-3 py-2 text-primary font-mono text-sm mb-3 focus:outline-none focus:border-accent"
+        className={`${FIELD_CLASS} mb-3 font-mono`}
       />
       <div className="max-h-96 overflow-y-auto">
         <table className="w-full text-left font-mono text-xs">
@@ -145,70 +133,47 @@ function TailLookup({ cfg, tails }: { cfg: AirlineConfig; tails: readonly FleetG
           </tbody>
         </table>
       </div>
-      <script
-        // biome-ignore lint/security/noDangerouslySetInnerHtml: static inline script, no user input
-        dangerouslySetInnerHTML={{ __html: TAIL_FILTER_SCRIPT }}
-      />
-    </div>
+    </Panel>
   );
 }
 
-// Same endpoint and rendering rules as the hub homepage check: a firm yes
-// only on hasStarlink true; everything else is the server's own sentence.
-const CHECK_SCRIPT = `document.addEventListener('DOMContentLoaded',function(){var f=document.getElementById('community-check');var out=document.getElementById('community-check-result');if(!f||!out)return;var di=f.elements.namedItem('date');if(di&&!di.value)di.value=new Date().toLocaleDateString('en-CA');function esc(s){var d=document.createElement('div');d.textContent=String(s==null?'':s);return d.innerHTML;}f.addEventListener('submit',function(e){e.preventDefault();var fd=new FormData(f);var q='flight_number='+encodeURIComponent(fd.get('flight_number'))+'&date='+encodeURIComponent(fd.get('date'));var t=fd.get('aircraft_type');if(t)q+='&aircraft_type='+encodeURIComponent(t);out.classList.remove('hidden');out.textContent='Checking…';fetch('/api/check-any-flight?'+q).then(function(r){return r.json()}).then(function(d){if(d.error){out.innerHTML='<span class="text-amber-400">'+esc(d.error)+'</span>';return;}var lead=d.hasStarlink===true?'<span class="text-green-400">Starlink (likely)</span> · ':'';out.innerHTML=lead+esc(d.reason||d.message||'');}).catch(function(){out.textContent='Lookup failed.';});});});`;
-
-function FlightCheck({ cfg, types }: { cfg: AirlineConfig; types: readonly TypeProgress[] }) {
+// A firm yes only on hasStarlink true; everything else is the server's own
+// sentence, since the guide behind the answer is community-curated.
+function FlightCheck({
+  site,
+  cfg,
+  types,
+}: { site: SiteConfig; cfg: AirlineConfig; types: readonly TypeProgress[] }) {
   return (
-    <div className={PANEL}>
-      <div className="text-[10px] font-mono text-muted uppercase tracking-wider mb-2">
-        Check a flight
-      </div>
-      <form id="community-check" className="flex flex-col sm:flex-row gap-2">
-        <input
-          name="flight_number"
-          required
-          placeholder={`${cfg.iata}1006`}
-          autoComplete="off"
-          className="bg-base border border-subtle rounded px-3 py-2 text-primary font-mono text-sm focus:outline-none focus:border-accent sm:w-32"
-        />
-        <input
-          name="date"
-          type="date"
-          aria-label="Departure date"
-          required
-          className="bg-base border border-subtle rounded px-3 py-2 text-primary font-mono text-sm focus:outline-none focus:border-accent"
-        />
-        <select
-          name="aircraft_type"
-          aria-label="Aircraft type on your booking (optional)"
-          className="bg-base border border-subtle rounded px-3 py-2 text-primary font-mono text-sm focus:outline-none focus:border-accent"
-        >
-          <option value="">Type (optional)</option>
-          {types
-            .filter((t) => t.total > 0)
-            .map((t) => (
-              <option key={t.key} value={t.label}>
-                {t.label}
-              </option>
-            ))}
-        </select>
-        <button
-          type="submit"
-          className="px-5 py-2 bg-accent/20 border border-accent text-accent font-display font-semibold rounded hover:bg-accent/30 transition-colors cursor-pointer"
-        >
-          Check
-        </button>
-      </form>
-      <div
-        id="community-check-result"
-        aria-live="polite"
-        className="hidden font-mono text-xs text-secondary leading-relaxed mt-3"
+    <Panel>
+      <Eyebrow className="mb-2">Check a flight</Eyebrow>
+      <FlightSearchForm
+        site={site}
+        id="community-check"
+        mode="check-any"
+        answer="community"
+        placeholder={`${cfg.iata}1006`}
+        prefillDate
+        hideLabels
+        withScript={false}
+        extra={
+          <select
+            name="aircraft_type"
+            aria-label="Aircraft type on your booking (optional)"
+            className={`${FIELD_CLASS} sm:w-auto`}
+          >
+            <option value="">Type (optional)</option>
+            {types
+              .filter((t) => t.total > 0)
+              .map((t) => (
+                <option key={t.key} value={t.label}>
+                  {t.label}
+                </option>
+              ))}
+          </select>
+        }
       />
-      <script
-        // biome-ignore lint/security/noDangerouslySetInnerHtml: static inline script, no user input
-        dangerouslySetInnerHTML={{ __html: CHECK_SCRIPT }}
-      />
-    </div>
+    </Panel>
   );
 }
 
@@ -226,6 +191,7 @@ export function CommunityAirlinePage({
   facts,
   nowMs,
   pageLinks,
+  currentPath,
 }: {
   site: SiteConfig;
   cfg: AirlineConfig;
@@ -236,7 +202,8 @@ export function CommunityAirlinePage({
   lastSynced: string | null;
   facts: AirlineFactsEntry | null;
   nowMs: number;
-  pageLinks?: PageLink[];
+  pageLinks?: Link[];
+  currentPath?: string;
 }) {
   const source = cfg.communitySource;
   const { equipped, total } = programmeTotals(types);
@@ -244,30 +211,28 @@ export function CommunityAirlinePage({
   const stale = guideUpdated !== null && daysBetween(guideUpdated, nowMs) > GUIDE_STALE_DAYS;
   const official = facts?.facts.find((f) => f.asOf);
   return (
-    <PageShell
-      site={site}
-      pageLinks={pageLinks}
-      heading={`Does my ${cfg.name} flight have Starlink?`}
-      sub={`${cfg.rollout.statusLabel} — ${cfg.rollout.phaseNote}`}
-    >
+    <PageShell site={site} pageLinks={pageLinks} currentPath={currentPath}>
+      <PageHeader
+        title={`Does my ${cfg.name} flight have Starlink?`}
+        dek={`${cfg.rollout.statusLabel} — ${cfg.rollout.phaseNote}`}
+      />
       <section className={SECTION}>
-        <div className={PANEL}>
+        <Panel>
           <div className="flex items-center justify-between gap-2 mb-3">
-            <span className="text-[10px] font-mono text-muted uppercase tracking-wider">
+            <Eyebrow as="span" className="">
               Rollout status
-            </span>
+            </Eyebrow>
             <StatusPill cfg={cfg} />
           </div>
           {total > 0 ? (
-            <div className="font-mono text-2xl font-semibold text-primary mb-1">
-              At least {equipped}
-              <span className="text-base text-muted font-normal"> of {total} aircraft</span>
-            </div>
+            <StatValue className="mb-2" unit={`of ${fmt(total)} aircraft`}>
+              At least {fmt(equipped)}
+            </StatValue>
           ) : (
             <p className="text-sm text-muted">No per-aircraft data yet.</p>
           )}
           {official && (
-            <p className="text-[11px] text-muted leading-relaxed mb-3">
+            <p className="text-xs text-muted leading-relaxed mb-3">
               {cfg.shortName}'s own figure ({formatFactDate(official.asOf as string)}):{" "}
               {official.fact}{" "}
               <a
@@ -282,12 +247,12 @@ export function CommunityAirlinePage({
             </p>
           )}
           {types.length > 0 && <TypeShareTable types={types} />}
-        </div>
+        </Panel>
       </section>
 
       {types.length > 0 && (
         <section className={SECTION}>
-          <FlightCheck cfg={cfg} types={types} />
+          <FlightCheck site={site} cfg={cfg} types={types} />
         </section>
       )}
 
@@ -299,10 +264,8 @@ export function CommunityAirlinePage({
 
       {source && (
         <section className={SECTION}>
-          <div className={PANEL}>
-            <div className="text-[10px] font-mono text-muted uppercase tracking-wider mb-2">
-              Where this comes from
-            </div>
+          <Panel>
+            <Eyebrow className="mb-2">Where this comes from</Eyebrow>
             <p className="text-sm text-secondary leading-relaxed mb-2">
               Per-aircraft status is from the{" "}
               <a
@@ -324,12 +287,12 @@ export function CommunityAirlinePage({
               is unknown, not a no.
             </p>
             {stale && (
-              <p className="text-sm text-amber-400 leading-relaxed mt-2">
+              <p className="text-sm text-warn leading-relaxed mt-2">
                 The guide hasn't been updated in over {GUIDE_STALE_DAYS} days — recent installs may
                 be missing from these counts.
               </p>
             )}
-          </div>
+          </Panel>
         </section>
       )}
 
@@ -338,12 +301,7 @@ export function CommunityAirlinePage({
           <FactsList entry={facts} />
         </section>
       )}
-
-      <section className={`${SECTION} text-center`}>
-        <a href="/airlines" className="font-mono text-xs text-secondary hover:text-accent">
-          ← All airlines with Starlink
-        </a>
-      </section>
+      <ClientScriptTag name="hub" />
     </PageShell>
   );
 }

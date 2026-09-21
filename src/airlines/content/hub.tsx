@@ -1,215 +1,312 @@
-import React from "react";
 import {
-  AirlineStatusCards,
-  FlightCheckInput,
+  AirlineProgressList,
   RecentInstallsFeed,
-  RouteComparePanel,
+  completeScope,
+  trackingMethod,
 } from "../../components/atoms";
-import { publicAirlines } from "../registry";
+import { FlightSearchForm } from "../../components/flight-search-form";
+import {
+  Chip,
+  ClientScriptTag,
+  Eyebrow,
+  LINK,
+  Panel,
+  SECTION_WIDE,
+  SectionTitle,
+  StatInline,
+  buttonClass,
+  chipClass,
+} from "../../components/layout";
+import type { Link } from "../../components/layout";
+import { fmt } from "../../components/ui/format";
+import { AIRLINES, SITES, airlineHomeUrl, publicAirlines } from "../registry";
+import { AIRLINE_FACTS, type AirlineFactsEntry, type RolloutFactsStatus } from "../rollout-facts";
 import type { AirlineContent, HeroProps, HubHomeLinks } from "./index";
 
-const CHIP =
-  "font-mono text-xs px-2.5 py-1 rounded border border-subtle bg-surface-elevated text-secondary hover:border-accent hover:text-accent transition-colors";
+// The hub answers cross-airline questions; United-specific intent belongs to
+// the United tracker, so every United mention here links there.
+const UNITED_URL = airlineHomeUrl("UA");
+const UNITED_HOST = new URL(UNITED_URL).host;
+
+function namesWith(status: RolloutFactsStatus): string[] {
+  return AIRLINE_FACTS.filter((e: AirlineFactsEntry) => e.status === status).map((e) => {
+    const scope = status === "complete" ? completeScope(e.trackedCode) : undefined;
+    return scope ? `${e.shortName} (${scope})` : e.shortName;
+  });
+}
+
+function list(names: string[]): string {
+  if (names.length <= 1) return names.join("");
+  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
+
+const byType = (code: string) => {
+  const cfg = AIRLINES[code];
+  return cfg ? trackingMethod(cfg) === "type" : false;
+};
+
+const FLYING_COUNT = AIRLINE_FACTS.filter(
+  (e) => e.status === "installing" || e.status === "complete"
+).length;
+
+const NOT_STARLINK_PATHS = new Set(
+  AIRLINE_FACTS.filter((e) => e.status === "not_starlink").map((e) => `/airlines/${e.slug}`)
+);
+
+function LinkChips({ links }: { links: Link[] }) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      {links.map((l) => (
+        <Chip key={l.href} href={l.href} size="sm">
+          {l.label}
+        </Chip>
+      ))}
+    </div>
+  );
+}
 
 /** Crawlable inlinks to the hub's own URL families: most of its sitemap URLs
- * were discovered but never crawled while the homepage linked only /airlines. */
+ * were discovered but never crawled while the homepage linked only /airlines.
+ * Airlines that chose other Wi-Fi get their own row, never "with Starlink". */
 function HubLinkGrid({ links }: { links?: HubHomeLinks }) {
   if (!links || (links.airlines.length === 0 && links.compares.length === 0)) return null;
+  const without = links.airlines.filter((l) => NOT_STARLINK_PATHS.has(l.href));
+  const withStarlink = links.airlines.filter((l) => !NOT_STARLINK_PATHS.has(l.href));
   return (
-    <nav className="bg-surface border border-subtle rounded-lg p-4" aria-label="Airlines">
-      {links.airlines.length > 0 && (
+    <Panel as="nav" aria-label="Airlines">
+      {withStarlink.length > 0 && (
         <>
-          <h2 className="text-[10px] font-mono text-muted uppercase tracking-wider mb-3">
-            Airlines with Starlink
-          </h2>
-          <div className="flex flex-wrap gap-2">
-            {links.airlines.map((l) => (
-              <a key={l.href} href={l.href} className={CHIP}>
-                {l.label}
-              </a>
-            ))}
-          </div>
+          <Eyebrow as="h2">Airlines with Starlink</Eyebrow>
+          <LinkChips links={withStarlink} />
+        </>
+      )}
+      {without.length > 0 && (
+        <>
+          <Eyebrow as="h2" className="mt-4 mb-3">
+            Chose other Wi-Fi
+          </Eyebrow>
+          <LinkChips links={without} />
         </>
       )}
       {links.compares.length > 0 && (
         <>
-          <h2 className="text-[10px] font-mono text-muted uppercase tracking-wider mt-4 mb-3">
+          <Eyebrow as="h2" className="mt-4 mb-3">
             Compare
-          </h2>
-          <div className="flex flex-wrap gap-2">
-            {links.compares.map((l) => (
-              <a key={l.href} href={l.href} className={CHIP}>
-                {l.label}
-              </a>
-            ))}
-          </div>
+          </Eyebrow>
+          <LinkChips links={links.compares} />
         </>
       )}
-    </nav>
+    </Panel>
   );
 }
 
-const HubHero = ({ stats, perAirlineStats = [], recentInstalls = [], hubLinks }: HeroProps) => {
-  const { starlinkCount, totalCount } = stats;
-  return (
-    <div className="relative mb-6 space-y-4">
-      <div className="text-center">
-        <div className="font-mono text-sm text-secondary">
-          Tracking <span className="text-accent font-semibold">{starlinkCount}</span> Starlink
-          aircraft across <span className="text-muted">{totalCount}</span> planes over{" "}
-          <span className="text-accent font-semibold">{perAirlineStats.length}</span> airline
-          {perAirlineStats.length === 1 ? "" : "s"}
-        </div>
-      </div>
+// Preset chips: pick city pairs that exercise the comparison — mainland routes
+// with UA-vs-AS overlap, plus one Hawai'i route where HA is the answer.
+const PRESET_ROUTES: { o: string; d: string }[] = [
+  { o: "SEA", d: "SFO" },
+  { o: "DEN", d: "SAN" },
+  { o: "SFO", d: "HNL" },
+];
 
-      <AirlineStatusCards stats={perAirlineStats} />
-      <div className="text-center">
-        <a href="/airlines" className="font-mono text-xs text-accent hover:underline">
-          Which airlines have Starlink? Full list &amp; rollout comparison →
+function RouteComparePanel() {
+  return (
+    <Panel>
+      <Eyebrow className="mb-1">Starlink odds by airline</Eyebrow>
+      <div className="text-xs font-mono text-muted leading-relaxed mb-3">
+        Share of each carrier's planes on this nonstop route that have Starlink today.
+      </div>
+      <form id="hub-compare-route" className="flex flex-col sm:flex-row gap-2">
+        <input
+          type="text"
+          name="origin"
+          aria-label="From airport code"
+          placeholder="From (SFO)"
+          maxLength={3}
+          className="flex-1 font-mono text-sm px-3 py-2 bg-surface-elevated border border-subtle rounded text-primary placeholder-muted focus:outline-none focus:border-accent uppercase"
+          required
+        />
+        <input
+          type="text"
+          name="destination"
+          aria-label="To airport code"
+          placeholder="To (HNL)"
+          maxLength={3}
+          className="flex-1 font-mono text-sm px-3 py-2 bg-surface-elevated border border-subtle rounded text-primary placeholder-muted focus:outline-none focus:border-accent uppercase"
+          required
+        />
+        <button type="submit" className={buttonClass()}>
+          Compare
+        </button>
+      </form>
+      <div className="flex flex-wrap items-center gap-2 mt-2">
+        {PRESET_ROUTES.map((r) => (
+          <button
+            key={`${r.o}-${r.d}`}
+            type="button"
+            data-preset-origin={r.o}
+            data-preset-dest={r.d}
+            className={chipClass("sm")}
+          >
+            {r.o} → {r.d}
+          </button>
+        ))}
+      </div>
+      <div id="hub-compare-result" className="mt-3 hidden" />
+      <div
+        id="hub-compare-footer"
+        className="mt-3 text-xs font-mono text-muted leading-relaxed hidden"
+      >
+        Carrier missing? It only shows up once one of its Starlink planes has flown here.{" "}
+        {/* Static href must be a real page: /route-planner 404s on the hub, and
+            crawlers see this SSR value — client JS only rewrites it to the
+            per-route URL after a comparison runs. */}
+        <a
+          id="hub-compare-rp"
+          href={`https://${SITES.united.canonicalHost}/route-planner`}
+          className={LINK}
+        >
+          Route Planner →
         </a>
       </div>
+    </Panel>
+  );
+}
+
+const HubHero = ({ site, perAirlineStats = [], recentInstalls = [], hubLinks }: HeroProps) => {
+  return (
+    <div className={`${SECTION_WIDE} space-y-6`}>
+      <section>
+        <SectionTitle>Where each tracked rollout stands</SectionTitle>
+        <Panel className="mt-4">
+          <AirlineProgressList stats={perAirlineStats} />
+        </Panel>
+        <p className="mt-2 text-sm">
+          <a href="/airlines" className={LINK}>
+            All {AIRLINE_FACTS.length} airlines, including the ones that said no →
+          </a>
+        </p>
+      </section>
       <RouteComparePanel />
-      <FlightCheckInput />
+      <Panel pad="sm">
+        <Eyebrow className="mb-2">Already booked? Check a flight</Eyebrow>
+        <FlightSearchForm
+          site={site}
+          id="hub-check-flight"
+          mode="check-any"
+          placeholder="UA1736, HA51, AS118, QR1…"
+          prefillDate
+          hideLabels
+          withScript={false}
+        />
+      </Panel>
       <RecentInstallsFeed items={recentInstalls} airlines={perAirlineStats} />
       <HubLinkGrid links={hubLinks} />
-
-      {/* Client-side wiring for flight-check + route-compare forms + preset chips */}
-      <script
-        // biome-ignore lint/security/noDangerouslySetInnerHtml: SSR client wiring, no user input
-        dangerouslySetInnerHTML={{
-          __html: `
-          document.addEventListener('DOMContentLoaded', function() {
-            function esc(s){var d=document.createElement('div');d.textContent=String(s==null?'':s);return d.innerHTML.replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
-            var cf = document.getElementById('hub-check-flight');
-            var cr = document.getElementById('hub-check-result');
-            if (cf) cf.addEventListener('submit', function(e) {
-              e.preventDefault();
-              var fd = new FormData(cf);
-              cr.classList.remove('hidden');
-              cr.textContent = 'Checking…';
-              fetch('/api/check-any-flight?flight_number=' + encodeURIComponent(fd.get('flight_number')) + '&date=' + encodeURIComponent(fd.get('date')))
-                .then(function(r){return r.json()})
-                .then(function(d){
-                  if (d.error) { cr.innerHTML = '<span class="text-amber-400">' + esc(d.error) + '</span>'; return; }
-                  var label, cls;
-                  if (d.hasStarlink === true) { label = 'Starlink'; cls = 'text-green-400'; }
-                  else if (d.hasStarlink === false) { label = 'No Starlink'; cls = 'text-muted'; }
-                  else if (typeof d.probability === 'number' && d.basis && d.probability === 0) { label = 'Unlikely'; cls = 'text-muted'; }
-                  else if (typeof d.probability === 'number' && d.basis) { label = '≥' + Math.floor(d.probability * 100) + '% Starlink'; cls = 'text-accent'; }
-                  else if (typeof d.probability === 'number') { label = '~' + Math.round(d.probability * 100) + '% Starlink'; cls = 'text-accent'; }
-                  else { label = 'Unknown'; cls = 'text-muted'; }
-                  cr.innerHTML = '<span class="' + cls + '">' + label + '</span> · ' + esc(d.airline || '') + ' · ' + esc(d.reason || d.message || '');
-                })
-                .catch(function(){ cr.textContent = 'Lookup failed.'; });
-            });
-            var rf = document.getElementById('hub-compare-route');
-            var rr = document.getElementById('hub-compare-result');
-            var rfoot = document.getElementById('hub-compare-footer');
-            var rplnk = document.getElementById('hub-compare-rp');
-            function bar(pct, color, dotted) {
-              var style = 'width:'+pct+'%;background:'+esc(color);
-              if (dotted) style = 'width:'+pct+'%;border-top:2px dotted '+esc(color)+';background:transparent';
-              return '<div class="h-1.5 bg-surface-elevated rounded overflow-hidden mt-1"><div class="h-full" style="'+style+'"></div></div>';
-            }
-            function pill(href, txt, color) {
-              return '<a href="'+esc(href)+'" class="ml-2 font-mono text-[9px] px-1.5 py-0.5 rounded-full whitespace-nowrap hover:underline" style="color:'+esc(color)+';background:color-mix(in srgb,'+esc(color)+' 14%,transparent);border:1px solid color-mix(in srgb,'+esc(color)+' 40%,transparent)">'+esc(txt)+' \\u2192</a>';
-            }
-            function shorten(label){return String(label||'').replace(/\\s*Fleet$/i,'').trim();}
-            function fleetTip(a, b){
-              return esc(b.total)+' '+esc(shorten(b.label))+' aircraft in '+esc(a.shortName||a.name)+'\\u2019s fleet \\u2014 '+esc(b.equipped)+' have Starlink';
-            }
-            function tip(cls, tipText, inner){
-              if (!tipText) return '<span class="'+cls+'">'+inner+'</span>';
-              return '<span class="'+cls+' tip" tabindex="0" data-tip="'+tipText+'">'+inner+'</span>';
-            }
-            function renderResult(a, O, D) {
-              var color = a.accentColor || '#0ea5e9';
-              var inferred = a.kind === 'inferred_absent';
-              var rp = a.routePlannerBase ? a.routePlannerBase+'/'+O+'/'+D : null;
-              if (a.kind === 'no_data') {
-                return '<div class="mb-3 opacity-60"><div class="flex justify-between items-center font-mono text-xs"><span class="text-muted">'+esc(a.name)+(rp?pill(rp,'check route planner',color):'')+'</span><span class="text-muted">\\u2014</span></div>'
-                     + '<div class="font-mono text-[10px] text-muted">No route data yet</div></div>';
-              }
-              if (a.kind === 'observed_mixed') {
-                var head = '<div class="flex justify-between items-center font-mono text-xs"><span class="text-primary">'+esc(a.name)+'</span></div>'
-                         + '<div class="font-mono text-[10px] text-muted">'+esc(a.reason)+'</div>';
-                var rows = (a.breakdown||[]).map(function(b,i){
-                  var br = Math.round(b.pct*100);
-                  var lblTip = b.hint ? 'Flight numbers '+esc(b.hint) : '';
-                  var best = i===0 && br>=50 ? ' '+tip('text-[8px] px-1 py-px rounded no-underline','Pick a flight in this group for the best Starlink odds','<span style="background:color-mix(in srgb,'+esc(color)+' 18%,transparent);color:'+esc(color)+';padding:1px 4px;border-radius:3px">best bet</span>') : '';
-                  var counts = b.equipped!=null ? esc(b.equipped)+'/'+esc(b.total)+' aircraft \\u00b7 ' : '';
-                  return '<div class="mt-1.5 ml-3"><div class="flex justify-between font-mono text-[10px]">'
-                       + '<span>'+tip('text-secondary',lblTip,esc(shorten(b.label)))+best+'</span>'
-                       + tip('text-accent tip-l',b.equipped!=null?fleetTip(a,b):'',counts+br+'%')+'</div>'+bar(br,color,false)+'</div>';
-                }).join('');
-                return '<div class="mb-3">'+head+rows+'</div>';
-              }
-              var pct = Math.round(a.probability*100);
-              var bd0 = (a.breakdown||[])[0]||{};
-              var pctTip = (bd0.equipped!=null) ? fleetTip(a,bd0) : '';
-              var chipL = (pct < 50 && a.kind !== 'type_rule' && rp) ? pill(rp, 'try a connection', color) : '';
-              return '<div class="mb-3"><div class="flex justify-between items-center font-mono text-xs"><span class="text-primary">'+esc(a.name)+chipL+'</span>'
-                   + tip('text-accent tip-l',pctTip,pct+'%')+'</div>'
-                   + '<div class="font-mono text-[10px] text-muted">'+esc(a.reason)+'</div>'+bar(pct,color,inferred)+'</div>';
-            }
-            function doCompare(origin, dest) {
-              rr.classList.remove('hidden');
-              rr.textContent = 'Comparing…';
-              fetch('/api/compare-route?origin=' + encodeURIComponent(origin) + '&destination=' + encodeURIComponent(dest))
-                .then(function(r){return r.json()})
-                .then(function(d){
-                  if (d.error) { rr.innerHTML = '<span class="text-amber-400 font-mono text-xs">' + esc(d.error) + '</span>'; return; }
-                  var O = esc((d.origin||'').toUpperCase()), D = esc((d.destination||'').toUpperCase());
-                  var html = (d.results||[]).map(function(r){return renderResult(r,O,D)}).join('');
-                  rr.innerHTML = html || '<span class="font-mono text-xs text-muted">No tracked airline shows a Starlink-equipped nonstop on '+O+' \\u21c4 '+D+' yet.</span>';
-                  if (rfoot) rfoot.classList.remove('hidden');
-                  // Hub has no route planner; the per-row chip links to whichever
-                  // airline's planner exists. Footer link goes to UA's (the only
-                  // tenant with a planner page) until the hub grows its own.
-                  if (rplnk) rplnk.href = 'https://unitedstarlinktracker.com/route-planner/'+O+'/'+D;
-                })
-                .catch(function(){ rr.textContent = 'Lookup failed.'; });
-            }
-            if (rf) rf.addEventListener('submit', function(e) {
-              e.preventDefault();
-              var fd = new FormData(rf);
-              doCompare(fd.get('origin'), fd.get('destination'));
-            });
-            if (rf) Array.prototype.forEach.call(document.querySelectorAll('.hub-route-preset'), function(btn) {
-              btn.addEventListener('click', function() {
-                var o = btn.getAttribute('data-preset-origin') || '';
-                var d = btn.getAttribute('data-preset-dest') || '';
-                rf.elements.origin.value = o;
-                rf.elements.destination.value = d;
-                doCompare(o, d);
-              });
-            });
-          });
-        `,
-        }}
-      />
+      <ClientScriptTag name="hub" />
     </div>
   );
 };
 
 export const content: AirlineContent = {
   headerStats: [
-    <span key="free" className="text-green-400 font-semibold">
-      FREE
-    </span>,
-    <span key="mbps">
-      <span className="text-accent font-semibold">250</span> Mbps
+    <span key="flying">
+      <span className="text-accent font-semibold">{FLYING_COUNT}</span> airlines flying or
+      installing Starlink
     </span>,
   ],
 
   intro: () => (
-    <p className="text-sm text-secondary leading-relaxed mb-3">
-      Live rollout status for SpaceX Starlink in-flight WiFi across United, Hawaiian, and Alaska —
-      by fleet segment, with per-tail verification.
-    </p>
+    <>
+      {AIRLINE_FACTS.length} airlines, from finished fleets to firm no's, each with a dated source.
+      We count{" "}
+      {list(
+        publicAirlines()
+          .filter((a) => !a.communitySource && a.rollout.rosterIsProgramScope)
+          .map((a) => a.shortName)
+      )}{" "}
+      plane by plane.
+    </>
   ),
 
   Hero: HubHero,
+
+  answers: [
+    {
+      q: "Which airlines have Starlink Wi-Fi?",
+      a: () => (
+        <p>
+          {FLYING_COUNT} airlines fly Starlink or are installing it. Finished:{" "}
+          {list(namesWith("complete"))}. Installing: {list(namesWith("installing"))}. Announced but
+          not flying yet: {list(namesWith("announced"))}. The{" "}
+          <a href="/airlines" className={LINK}>
+            full list
+          </a>{" "}
+          dates and sources every status.
+        </p>
+      ),
+    },
+    {
+      q: "Which airline has the most Starlink planes?",
+      a: ({ perAirline = [] }) => {
+        const [top, ...rest] = [...perAirline].sort((a, b) => b.starlink - a.starlink);
+        if (!top) return <p>See the full list for each airline's count.</p>;
+        return (
+          <p>
+            Of the airlines tracked here, {top.name} has the most, with{" "}
+            <StatInline n={top.starlink} /> planes
+            {top.code === "UA" ? (
+              <>
+                {" "}
+                on the{" "}
+                <a href={UNITED_URL} className={LINK}>
+                  United Starlink Tracker
+                </a>
+              </>
+            ) : null}
+            .{" "}
+            {rest.length > 0 && (
+              <>
+                Next:{" "}
+                {list(
+                  rest.map(
+                    (r) =>
+                      `${r.name} (${fmt(r.starlink)}${byType(r.code) ? ", counted by aircraft type" : ""})`
+                  )
+                )}
+                .
+              </>
+            )}
+          </p>
+        );
+      },
+    },
+    {
+      q: "Is Starlink Wi-Fi free on every airline?",
+      a: () => (
+        <p>
+          Not always, and the rules differ. United's is free for MileagePlus members, Alaska's for
+          Atmos Rewards members, and Hawaiian's and Qatar's for every passenger. Each airline's page
+          on the{" "}
+          <a href="/airlines" className={LINK}>
+            full list
+          </a>{" "}
+          gives its terms with a source.
+        </p>
+      ),
+    },
+    {
+      q: "How do I check if my flight has Starlink?",
+      a: () => (
+        <p>
+          Enter the flight number and date in the flight check above; it covers every airline we
+          track. For United flights,{" "}
+          <a href={UNITED_URL} className={LINK}>
+            {UNITED_HOST}
+          </a>{" "}
+          has the full answer, including route odds.
+        </p>
+      ),
+    },
+  ],
 
   rowBadge: (_p, airline) => airline,
 
@@ -217,59 +314,32 @@ export const content: AirlineContent = {
 
   faq: [
     {
-      title: "Which airlines have Starlink",
+      title: "Airlines",
       items: [
-        {
-          q: "Which airlines have Starlink WiFi?",
-          a: ({ starlinkCount }) => (
-            <p>
-              <strong>United Airlines</strong> is mid-rollout — most United Express regional jets
-              have it, with mainline 737s and widebodies being equipped through 2026.{" "}
-              <strong>Hawaiian Airlines</strong> finished in September 2024: every A330 and A321neo
-              has Starlink. <strong>Alaska Airlines</strong> is rolling out across its 737 fleet
-              through 2027. We currently track <span className="text-accent">{starlinkCount}</span>{" "}
-              Starlink-equipped aircraft.
-            </p>
-          ),
-          ld: "United Airlines is mid-rollout across mainline and Express fleets. Hawaiian Airlines completed its rollout in September 2024 — every A330 and A321neo has Starlink. Alaska Airlines is rolling out through 2027.",
-        },
-        {
-          q: "Hawaiian shows under 100% but says 'Complete' — why?",
-          a: () => (
-            <p>
-              Hawaiian's Starlink rollout is <strong>finished</strong>: every A330 and A321neo has
-              it, gate-to-gate, since September 2024. The Boeing 717 interisland jets were never in
-              scope — short hops, no WiFi, and the type is being retired. The card's percentage is
-              over Hawaiian's <em>whole</em> fleet so you can read it as "odds on a random Hawaiian
-              flight." The Complete badge means every plane that's ever going to get Starlink
-              already has it.
-            </p>
-          ),
-          ld: "Hawaiian's Starlink rollout is finished: every A330 and A321neo has it since September 2024. The Boeing 717 interisland fleet was never in scope and is being retired. The percentage is over the whole fleet; the Complete badge means every plane that will ever get Starlink already has it.",
-        },
         {
           q: "Does Delta have Starlink?",
           a: () => (
             <p>
-              No. Delta announced a partnership with <strong>Amazon's Project Kuiper</strong> (a
-              Starlink competitor) for in-flight WiFi starting around 2028. Delta is not currently
-              tracked here.
+              No. Delta has partnered with Amazon's Project Kuiper, a Starlink competitor, for
+              in-flight Wi-Fi from around 2028.{" "}
+              <a href="/airlines/delta" className={LINK}>
+                Delta's page
+              </a>{" "}
+              has the details.
             </p>
           ),
-          ld: "No. Delta has partnered with Amazon's Project Kuiper, not Starlink, with service expected around 2028.",
         },
         {
-          q: "Is Starlink WiFi free on these airlines?",
+          q: "Does United have Starlink?",
           a: () => (
             <p>
-              Starlink itself is not a paid add-on on these airlines, but access rules differ:{" "}
-              <strong>United</strong> requires a free MileagePlus login (join on the spot if
-              needed); <strong>Hawaiian</strong> and <strong>Alaska</strong> offer it to every
-              passenger with no loyalty signup. Speeds are gate-to-gate on equipped aircraft —
-              confirm on the airline&apos;s WiFi portal once you board.
+              Yes, and it's the biggest rollout we track. The{" "}
+              <a href={UNITED_URL} className={LINK}>
+                United Starlink Tracker
+              </a>{" "}
+              has the live count, every equipped aircraft and a flight check.
             </p>
           ),
-          ld: "Starlink is not a paid add-on on United, Hawaiian, or Alaska, but access differs: United requires a free MileagePlus login; Hawaiian and Alaska have no loyalty signup. Confirm on the airline WiFi portal once you board.",
         },
       ],
     },
@@ -281,24 +351,21 @@ export const content: AirlineContent = {
           a: () => (
             <p>
               Fleet rosters and flight schedules come from public aviation data. Starlink status is
-              verified per-tail against each airline's own flight-status systems where available
-              (United, Alaska), and against official rollout announcements where the install is
-              type-complete (Hawaiian). Data refreshes hourly.
+              confirmed per aircraft against each airline's own systems where they show it (United,
+              Alaska), and by aircraft type where the airline has finished whole types (Hawaiian,
+              Qatar). Airlines we don't track aircraft by aircraft get dated, sourced status pages.
             </p>
           ),
-          ld: "Fleet rosters and flight schedules come from public aviation data. Starlink status is verified per-tail against each airline's own systems where available, and against official announcements where the install is type-complete.",
         },
         {
           q: "How accurate is this?",
           a: () => (
             <p>
-              For United we measure precision continuously against united.com — currently above 96%
-              on firm yes/no calls. Hawaiian is type-deterministic (if it's an Airbus, it has
-              Starlink), so accuracy is effectively 100%. Aircraft swaps close to departure are the
-              main source of uncertainty on any airline.
+              For United we check answers against united.com continuously. Type-based answers
+              (Hawaiian, Qatar) are as good as the airline's own type list. Aircraft swaps close to
+              departure are the main source of error on any airline.
             </p>
           ),
-          ld: "United precision is measured continuously against united.com (currently above 96%). Hawaiian is type-deterministic, so accuracy is effectively 100%. Aircraft swaps close to departure are the main uncertainty.",
         },
       ],
     },

@@ -20,6 +20,9 @@ import {
 import { AIRLINES, type AirlineConfig } from "../airlines/registry";
 import type { Flight } from "../types";
 import { airportLocalDate, icaoToIata } from "../utils/airport-tz";
+import { equippedSql, starlinkFlag, tailEvidence } from "./sql/equipped";
+import { airlineIn, placeholders } from "./sql/fragments";
+import { DAY_SEC } from "./sql/windows";
 
 export const ASSIGNMENT_LOG_DDL = `
   CREATE TABLE IF NOT EXISTS flight_assignment_log (
@@ -66,21 +69,21 @@ export function departureLocalDate(departureAirport: string, departureTime: numb
 }
 
 /**
- * 1/0 from the same evidence the verdict engine ranks (a settled united_fleet
- * negative outranks the sheet; an observed non-Starlink provider is a no),
- * null when the tail is in neither table.
+ * 1/0/null from the one evidence ranking (sql/equipped.ts). A registration can
+ * be listed under two airlines; the logging airline's listing wins, and a
+ * partner leg (AS832 on a Hawaiian tail) falls back to the tail's own.
  */
-function tailStarlinkFlag(db: Database, tailNumber: string): number | null {
-  const sp = db
-    .query("SELECT verified_wifi FROM starlink_planes WHERE TailNumber = ?")
-    .get(tailNumber) as { verified_wifi: string | null } | null;
-  const uf = db
+function tailStarlinkFlag(db: Database, tailNumber: string, airline: string): number | null {
+  const listed = db
+    .query(
+      `SELECT verified_wifi FROM starlink_planes WHERE TailNumber = ?
+       ORDER BY airline = ? DESC, id LIMIT 1`
+    )
+    .get(tailNumber, airline) as { verified_wifi: string | null } | null;
+  const fleet = db
     .query("SELECT starlink_status FROM united_fleet WHERE tail_number = ?")
     .get(tailNumber) as { starlink_status: string | null } | null;
-  if (uf?.starlink_status === "negative") return 0;
-  if (sp) return sp.verified_wifi !== null && sp.verified_wifi !== "Starlink" ? 0 : 1;
-  if (uf?.starlink_status === "confirmed") return 1;
-  return null;
+  return starlinkFlag(tailEvidence({ listed, fleet }));
 }
 
 /** Upsert one row per scheduled leg; first_seen survives, last_seen moves. */
@@ -96,8 +99,8 @@ export function logFlightAssignments(
 ): void {
   if (flights.length === 0) return;
   const cfg = AIRLINES[airline];
-  const starlink = tailStarlinkFlag(db, tailNumber);
-  const upsert = db.prepare(`
+  const starlink = tailStarlinkFlag(db, tailNumber, airline);
+  const upsert = db.query(`
     INSERT INTO flight_assignment_log
       (airline, flight_number, dep_date, departure_airport, arrival_airport, tail_number,
        starlink, departure_time, arrival_time, first_seen, last_seen)
@@ -178,16 +181,8 @@ export function logResolvedAssignments(
 
 export function pruneAssignmentLog(db: Database, now: number): void {
   db.query("DELETE FROM flight_assignment_log WHERE dep_date < ?").run(
-    utcDate(now - ASSIGNMENT_LOG_RETENTION_DAYS * 86400)
+    utcDate(now - ASSIGNMENT_LOG_RETENTION_DAYS * DAY_SEC)
   );
-}
-
-function airlineClause(
-  airlines: readonly string[],
-  column = "airline"
-): { sql: string; params: string[] } {
-  if (airlines.length === 0) return { sql: "1=0", params: [] };
-  return { sql: `${column} IN (${airlines.map(() => "?").join(",")})`, params: [...airlines] };
 }
 
 /** Every tail seen assigned to the flight on its local date, oldest first. */
@@ -198,11 +193,11 @@ export function getAssignmentHistory(
   depDate: string
 ): AssignmentLogRow[] {
   if (variants.length === 0) return [];
-  const a = airlineClause(airlines);
+  const a = airlineIn(airlines);
   return db
     .query(
       `SELECT * FROM flight_assignment_log
-       WHERE ${a.sql} AND flight_number IN (${variants.map(() => "?").join(",")}) AND dep_date = ?
+       WHERE ${a.sql} AND flight_number IN (${placeholders(variants)}) AND dep_date = ?
        ORDER BY first_seen ASC, tail_number ASC`
     )
     .all(...a.params, ...variants, depDate) as AssignmentLogRow[];
@@ -247,18 +242,14 @@ export function getSameDayStarlinkAlternatives(
 ): SameDayAlternative[] {
   const now = q.now ?? Math.floor(Date.now() / 1000);
   const windowSec = (q.windowH ?? 10) * 3600;
-  const a = airlineClause(airlines, "uf.airline");
+  const a = airlineIn(airlines, "uf.airline");
   const rows = db
     .query(
       `SELECT uf.flight_number, uf.departure_time, uf.tail_number, uf.airline,
               sp.Aircraft AS aircraft_type,
-              CASE WHEN neg.tail_number IS NOT NULL
-                     OR (sp.verified_wifi IS NOT NULL AND sp.verified_wifi <> 'Starlink')
-                   THEN 1 ELSE 0 END AS non_starlink
+              CASE WHEN ${equippedSql("sp")} THEN 0 ELSE 1 END AS non_starlink
        FROM upcoming_flights uf
        INNER JOIN starlink_planes sp ON sp.TailNumber = uf.tail_number
-       LEFT JOIN united_fleet neg
-         ON neg.tail_number = uf.tail_number AND neg.starlink_status = 'negative'
        WHERE ${a.sql}
          AND uf.departure_airport = ? AND uf.arrival_airport = ?
          AND uf.departure_time > ? AND uf.departure_time BETWEEN ? AND ?

@@ -67,7 +67,7 @@ const BANNED_PATTERNS: Array<{
     name: 'AIRLINES.UA / "UA"-default',
     re: UA_DEFAULT_RE,
     allowlist: new Map([
-      ["src/airlines/registry.ts", 3], // SITES.united derives from AIRLINES.UA (2) + resolveTenant doc comment (1)
+      ["src/airlines/registry.ts", 2], // SITES.united derives from AIRLINES.UA
       ["src/utils/constants.ts", 1], // extractFlightNumber builds united.com URLs — UA-bound by definition
       ["src/scripts/starlink-predictor.ts", 1], // prediction model trained on UA observations only
       ["src/scripts/fleet-sync.ts", 1], // CLI default argument for the UA sync job
@@ -347,6 +347,12 @@ describe("hub /api/check-flight + /api/predict-flight detect the airline", () =>
     expect(text).not.toContain("United Airlines Starlink Installation Progress");
     for (const a of Object.values(AIRLINES).filter((x) => x.enabled && x.publicInHub)) {
       expect(text, `hub fleet stats missing ${a.name}`).toContain(a.name);
+    }
+    // A roster that isn't the programme's denominator gets a count, not a share
+    // (the pages and badge refuse the same ratio).
+    for (const a of Object.values(AIRLINES).filter((x) => !x.rollout.rosterIsProgramScope)) {
+      const line = text.split("\n").find((l) => l.startsWith(`**${a.name}**:`));
+      if (line) expect(line.split(" — ")[0], a.code).not.toMatch(/\d+ of \d+ aircraft \(/);
     }
   });
 
@@ -739,24 +745,8 @@ describe("MCP tools are scope-correct on non-UA tenants", () => {
 
 describe("route tag budget matches the code and the doc", () => {
   const root = path.join(import.meta.dir, "..");
-  const appSrc = readFileSync(path.join(root, "src", "server", "app.ts"), "utf8");
   const doc = readFileSync(path.join(root, "docs", "OBSERVABILITY.md"), "utf8");
-
-  /** Distinct values metricRoute() can emit: every exact route, every prefix
-   * family's tag (deduped — three reuse an exact entry's path), plus
-   * "unmatched" for everything a crawler invents. */
-  function distinctRouteTags(): Set<string> {
-    const table = appSrc.match(/const routes: RouteTable = \{([\s\S]*?)\n {2}\};/);
-    const prefixes = appSrc.match(
-      /const prefixRoutes: Array<\[string, Handler\]> = \[([\s\S]*?)\n {2}\];/
-    );
-    expect(table, "routes table no longer parses — update this test").not.toBeNull();
-    expect(prefixes, "prefixRoutes no longer parses — update this test").not.toBeNull();
-    const tags = new Set<string>(["unmatched"]);
-    for (const m of (table as RegExpMatchArray)[1].matchAll(/"([^"]+)":/g)) tags.add(m[1]);
-    for (const m of (prefixes as RegExpMatchArray)[1].matchAll(/\["([^"]+)\/",/g)) tags.add(m[1]);
-    return tags;
-  }
+  const distinctRouteTags = () => new Set(app.routeTags);
 
   test("stays inside the documented budget", () => {
     const budget = Number(doc.match(/\*\*Budget: keep it under (\d+)\.\*\*/)?.[1]);
@@ -774,6 +764,5 @@ describe("route tag budget matches the code and the doc", () => {
 
   test("the doc no longer describes the allowlist that was deleted", () => {
     expect(doc).not.toContain("KNOWN_ROUTES set in `server.ts`");
-    expect(appSrc).not.toContain("KNOWN_ROUTES");
   });
 });

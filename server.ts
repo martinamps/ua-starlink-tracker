@@ -3,9 +3,11 @@ import "./src/observability/tracer";
 import "dotenv/config";
 
 import { checkNewPlanes, startFlightUpdater } from "./src/api/flight-updater";
+import { closeFR24Transport } from "./src/api/fr24-browser-transport";
 import {
   archivePastDepartures,
-  initializeDatabase,
+  migrate,
+  openDatabase,
   pruneCrashRows,
   recordFirstFlights,
   warmAircraftTypePages,
@@ -30,6 +32,7 @@ import { passengerVerifyEnabled } from "./src/server/passenger-detect";
 import { pingIndexNow } from "./src/utils/indexnow";
 import { type JobHandle, type JobRunContext, startJob } from "./src/utils/job-runner";
 import { info, error as logError } from "./src/utils/logger";
+import { sleep } from "./src/utils/sleep";
 
 process.on("unhandledRejection", (reason) => {
   const err = reason instanceof Error ? reason : new Error(String(reason));
@@ -40,7 +43,9 @@ process.on("uncaughtException", (err) => logError("Uncaught Exception", err));
 const PORT = process.env.PORT ? Number.parseInt(process.env.PORT, 10) : 3000;
 const JOBS_ENABLED = process.env.DISABLE_JOBS !== "1";
 
-const db = initializeDatabase();
+// One handle for the server and every in-process job; migrations run once, here.
+const db = openDatabase();
+migrate(db);
 const app = createApp(db);
 
 info(`Server starting on port ${PORT}. Environment: ${process.env.NODE_ENV || "development"}`);
@@ -96,18 +101,18 @@ if (JOBS_ENABLED) {
     })
   );
 
-  track(startFlightUpdater());
+  track(startFlightUpdater(db));
   // United verifier + discovery: UA-only Playwright path.
-  track(startStarlinkVerifier());
-  track(startFleetDiscovery("maintenance"));
+  track(startStarlinkVerifier(db));
+  track(startFleetDiscovery(db, "maintenance"));
   // alaska-json verifier: serves HA (type-deterministic confirmation) and AS
   // (tail/type oracle until alaskaair.com exposes per-tail wifi).
-  track(startAlaskaVerifier());
+  track(startAlaskaVerifier(db));
   // Qatar schedule ingester: pulls per-flight equipment from QR's flight-status
   // API for top routes; populates qatar_schedule which /api/check-flight reads.
-  track(startQatarScheduleIngester());
+  track(startQatarScheduleIngester(db));
   // Fleet sync iterates enabledAirlines() internally.
-  track(startFleetSync());
+  track(startFleetSync(db));
 
   // Data-freshness gauges: derived from MAX(timestamp) in the DB, not a
   // ran-at heartbeat — catches "loop alive but writes nothing" silent failures.
@@ -146,7 +151,7 @@ if (JOBS_ENABLED) {
       name: "ship_number_sync",
       intervalMs: 24 * 3600 * 1000,
       initialDelayMs: 10 * 60 * 1000,
-      run: () => syncShipNumbers(),
+      run: () => syncShipNumbers({ db }),
     })
   );
 
@@ -192,9 +197,12 @@ if (JOBS_ENABLED) {
 
 // Container deploys send SIGTERM: clear all job timers (in-flight runs aren't
 // awaited — they're cut with the process) and exit cleanly.
-const shutdown = (signal: string) => {
+// The FR24 browser transport is a child Chromium; close it so a deploy
+// doesn't leave it orphaned, but never let a hung close block the exit.
+const shutdown = async (signal: string) => {
   info(`${signal} received — stopping ${jobs.length} background jobs and exiting`);
   for (const job of jobs) job.stop();
+  await Promise.race([closeFR24Transport().catch(() => {}), sleep(2000)]);
   process.exit(0);
 };
 process.on("SIGTERM", () => shutdown("SIGTERM"));

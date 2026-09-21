@@ -52,7 +52,8 @@
  *   surface:         watch.cta_shown: check_flight                   (1)
  */
 
-import { AIRLINES, SUBFLEET_KEYS } from "../airlines/registry";
+import { detectAirline } from "../airlines/flight-number";
+import { AIRLINES, SUBFLEET_KEYS, operatorIatas } from "../airlines/registry";
 import { tracer } from "./tracer";
 
 export type Tags = Record<string, string | number>;
@@ -113,7 +114,7 @@ export function normalizeStarlinkStatus(raw: string | null | undefined): string 
 }
 
 // UA mainline plus its Express operators; anything else buckets to "other".
-const UA_OPERATING_CARRIERS = new Set(["UA", "OO", "YX", "G7", "C5", "YV", "ZW"]);
+const UA_OPERATING_CARRIERS = new Set(operatorIatas("UA"));
 export function normalizeOpCarrier(raw: string | null | undefined): string {
   if (!raw || raw.trim() === "") return "unknown";
   const code = raw.trim().toUpperCase();
@@ -214,6 +215,16 @@ export function mcpClientTags(): Tags {
 export function normalizeAirlineTag(code: string | null | undefined): string {
   if (!code) return "unknown";
   return AIRLINES[code.toUpperCase()]?.metricTag ?? "unmapped";
+}
+
+/** airline tag for a flight number by its carrier prefix (SKW5212 → united). */
+export function flightAirlineTag(flightNumber: string): string {
+  return detectAirline(flightNumber)?.metricTag ?? "unmapped";
+}
+
+/** airline tag for a reader/tenant scope: the hub scope is `all`, not an airline. */
+export function normalizeScopeTag(scope: string): string {
+  return scope === "ALL" ? "all" : normalizeAirlineTag(scope);
 }
 
 const LEG_MATCHES = new Set(["exact", "origin", "unmatched", "no_data", "unscoped"]);

@@ -17,6 +17,7 @@ import { hostname } from "node:os";
 import { AIRLINES } from "../airlines/registry";
 import { initializeDatabase, setMeta } from "../database/database";
 import { info, error as logError, warn } from "../utils/logger";
+import { sleep } from "../utils/sleep";
 import {
   type AirFranceApplyResult,
   type ParsedGuide,
@@ -44,6 +45,12 @@ const AS_FLOOR = 1;
 const AF_FLOOR = 100;
 /** A curated guide older than this still ships, with a warning in the report. */
 export const AF_STALE_DAYS = 45;
+/** Payload source → the airline whose `residentialSyncAt` it stamps (data-freshness gauges these). */
+export const SOURCE_AIRLINE = {
+  flyertalk_qr: "QR",
+  flyertalk_as: "AS",
+  flyertalk_af: "AF",
+} as const;
 const CEILING_MULT = 2;
 const FETCH_ATTEMPTS = 3;
 const PARTIAL_EXIT_CODE = 5;
@@ -116,7 +123,7 @@ export async function withRetry<T>(
       if (i < FETCH_ATTEMPTS) {
         const wait = baseDelayMs * 2 ** (i - 1);
         info(`${label}: attempt ${i}/${FETCH_ATTEMPTS} failed (${e}), retrying in ${wait}ms`);
-        await new Promise((r) => setTimeout(r, wait));
+        await sleep(wait);
       }
     }
   }
@@ -304,6 +311,11 @@ function ingestAf(db: ReturnType<typeof initializeDatabase>, guide: ParsedGuide)
   };
 }
 
+function stampSync(db: ReturnType<typeof initializeDatabase>, airline: string, payload: Payload) {
+  setMeta(db, "residentialSyncAt", payload.fetchedAt, airline);
+  setMeta(db, "residentialSyncFrom", payload.fetchedFrom, airline);
+}
+
 async function ingest(): Promise<void> {
   const raw = await new Response(Bun.stdin.stream()).text();
   let payload: Payload;
@@ -340,8 +352,7 @@ async function ingest(): Promise<void> {
           applyQatarFlyertalkTails
         )
       );
-      setMeta(db, "residentialSyncAt", payload.fetchedAt, "QR");
-      setMeta(db, "residentialSyncFrom", payload.fetchedFrom, "QR");
+      stampSync(db, SOURCE_AIRLINE.flyertalk_qr, payload);
     }
     if (payload.sources.flyertalk_as) {
       results.push(
@@ -355,13 +366,11 @@ async function ingest(): Promise<void> {
           "mainline"
         )
       );
-      setMeta(db, "residentialSyncAt", payload.fetchedAt, "AS");
-      setMeta(db, "residentialSyncFrom", payload.fetchedFrom, "AS");
+      stampSync(db, SOURCE_AIRLINE.flyertalk_as, payload);
     }
     if (payload.sources.flyertalk_af) {
       results.push(ingestAf(db, payload.sources.flyertalk_af.guide));
-      setMeta(db, "residentialSyncAt", payload.fetchedAt, "AF");
-      setMeta(db, "residentialSyncFrom", payload.fetchedFrom, "AF");
+      stampSync(db, SOURCE_AIRLINE.flyertalk_af, payload);
     }
 
     const result: IngestResult = { ok: true, results, snapshot, fetchedAt: payload.fetchedAt };

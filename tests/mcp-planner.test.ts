@@ -7,7 +7,6 @@
 
 import type { Database } from "bun:sqlite";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { handleMcpRequest } from "../src/api/mcp-server";
 import { createReaderFactory } from "../src/database/reader";
 import {
   ENFORCE_ITINERARY_TIME_BUDGET,
@@ -22,7 +21,15 @@ import {
   airportCountry,
   hubAllowedForTrip,
 } from "../src/utils/airport-geo";
-import { addFleet, addPlane, makeSyntheticDb, mcpReq, openSnapshot, utc } from "./helpers";
+import {
+  addFleet,
+  addPlane,
+  makeSyntheticDb,
+  mcpDirect,
+  openSnapshot,
+  toolText,
+  utc,
+} from "./helpers";
 
 type Reader = ReturnType<ReturnType<typeof createReaderFactory>>;
 
@@ -224,15 +231,8 @@ describe("synthetic SFO→EWR", () => {
     assertPlannerInvariants(reader, "SFO", "EWR");
   });
 
-  async function mcp(scope: "UA" | "ALL", method: string, params: unknown) {
-    const r = await handleMcpRequest(
-      mcpReq("unitedstarlinktracker.com", method, params),
-      scope,
-      factory
-    );
-    expect(r.status).toBe(200);
-    return r.json();
-  }
+  const mcp = (scope: "UA" | "ALL", method: string, params: unknown) =>
+    mcpDirect(scope, factory, method, params);
 
   test("firm NO: verdict first, the person's flight shows 0%, no 'None WiFi'", async () => {
     // Hub scope: no FR24 reverse lookup, so the fixture is hermetic.
@@ -366,17 +366,13 @@ describe("synthetic pairs with no or a sparsely seen United nonstop", () => {
       targetDateUnix: utc(`${DATE}T12:00:00Z`),
       enforceTimeBudget,
     });
-  const planText = async (o: string, d: string): Promise<string> => {
-    const r = await handleMcpRequest(
-      mcpReq("unitedstarlinktracker.com", "tools/call", {
+  const planText = async (o: string, d: string): Promise<string> =>
+    toolText(
+      await mcpDirect("UA", factory, "tools/call", {
         name: "plan_starlink_itinerary",
         arguments: { origin: o, destination: d, date: DATE },
-      }),
-      "UA",
-      factory
-    );
-    return (await r.json()).result.content[0].text;
-  };
+      })
+    ).text;
 
   test.each([
     ["IND", "CLE", "great_circle"],
@@ -433,30 +429,24 @@ describe("MCP text edge cases (snapshot)", () => {
   afterAll(() => db.close());
 
   test("a past date is not described as 'not yet published'", async () => {
-    const r = await handleMcpRequest(
-      mcpReq("unitedstarlinktracker.com", "tools/call", {
+    const { text } = toolText(
+      await mcpDirect("UA", () => reader, "tools/call", {
         name: "check_flight",
         arguments: { flight_number: "UA5685", date: "2020-01-01" },
-      }),
-      "UA",
-      () => reader
+      })
     );
-    const text: string = (await r.json()).result.content[0].text;
     expect(text).toContain("in the past");
     expect(text).not.toContain("not yet published");
   });
 
   test("an invalid flight number names the expected shape", async () => {
-    const r = await handleMcpRequest(
-      mcpReq("unitedstarlinktracker.com", "tools/call", {
+    const { text, isError } = toolText(
+      await mcpDirect("UA", () => reader, "tools/call", {
         name: "check_flight",
         arguments: { flight_number: "UA 544 2026", date: "2099-01-01" },
-      }),
-      "UA",
-      () => reader
+      })
     );
-    const result = (await r.json()).result;
-    expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain("not a valid flight number");
+    expect(isError).toBe(true);
+    expect(text).toContain("not a valid flight number");
   });
 });
