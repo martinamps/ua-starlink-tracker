@@ -169,8 +169,11 @@ export function buildAirlineFlightNumberVariants(
 ): string[] {
   if (!iataExact(cfg).test(flightNumber)) return [flightNumber];
   const num = flightNumber.slice(cfg.iata.length);
+  const shared = (cfg.sharedOperators ?? []).flatMap((o) => [o.icao, o.iata]);
   // carrierPrefixes carries the IATA code too, which would repeat flightNumber.
-  return [...new Set([flightNumber, ...cfg.carrierPrefixes.map((p) => `${p}${num}`)])];
+  return [
+    ...new Set([flightNumber, ...[...cfg.carrierPrefixes, ...shared].map((p) => `${p}${num}`)]),
+  ];
 }
 
 export interface SlotFlightPrefix {

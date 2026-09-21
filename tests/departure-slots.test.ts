@@ -8,6 +8,8 @@
 
 import { describe, expect, test } from "bun:test";
 import { slotFlightKey } from "../src/airlines/flight-number";
+import { setAssignmentFetcher } from "../src/api/flight-verdict";
+import { Fr24UnavailableError } from "../src/api/flightradar24-api";
 import {
   getAircraftTypePageData,
   getAirportDepartures,
@@ -171,9 +173,45 @@ describe("route page departures", () => {
         req(`/check-flight/${fn}`, AS_HOST, { headers: { "x-forwarded-for": "127.0.0.1" } })
       );
       expect(res.status, fn).toBe(200);
+      const page = await res.text();
+      expect(page, fn).not.toContain('content="noindex');
+      expect(page, fn).toContain(`Does ${fn} have Starlink`);
     }
     expect(html).not.toMatch(/(SKW|OO)30\d\d/);
     db.close();
+  });
+
+  test("an Alaska lookup reads SkyWest rows by the row's airline, never United's", async () => {
+    setAssignmentFetcher(async () => {
+      throw new Fr24UnavailableError("stubbed");
+    });
+    const db = makeSyntheticDb();
+    try {
+      equippedTail(db, "N195SY", "AS");
+      equippedTail(db, "N117SY");
+      addFlight(db, "N195SY", "OO3015", "ACV", T, { arrivalAirport: "SEA", airline: "AS" });
+      addFlight(db, "N117SY", "SKW3020", "DEN", T, { arrivalAirport: "FAR" });
+      const app = createApp(db);
+      const date = new Date(T * 1000).toISOString().slice(0, 10);
+      const lookup = async (fn: string) => {
+        const res = await app.dispatch(
+          req(`/api/check-flight?flight_number=${fn}&date=${date}`, AS_HOST, {
+            headers: { "x-forwarded-for": "127.0.0.1" },
+          })
+        );
+        return (await res.json()) as {
+          hasStarlink: boolean | null;
+          flights: { tail_number: string }[];
+        };
+      };
+      const found = await lookup("AS3015");
+      expect(found.hasStarlink).toBe(true);
+      expect(found.flights.map((f) => f.tail_number)).toEqual(["N195SY"]);
+      expect((await lookup("AS3020")).flights).toEqual([]);
+    } finally {
+      setAssignmentFetcher(null);
+      db.close();
+    }
   });
 });
 

@@ -175,6 +175,12 @@ export interface AirlineConfig {
   /** Derived from `operators`: every ICAO code, then every IATA code, so
    * longest-first. */
   carrierPrefixes: string[];
+  /** Regional operators that also fly for another tracked carrier (SkyWest
+   * for Alaska and United). Their codes reach flight-number lookup variants
+   * only, never carrier detection, metrics or callsign matching: an OO3015
+   * row belongs to this airline because its airline column says so, and the
+   * lookups that read these variants are airline-scoped. */
+  sharedOperators?: readonly Operator[];
   subfleets: SubfleetDef[];
   /** Carriers whose metal flies this airline's marketed flight numbers and
    * whose upcoming_flights rows are stored under their own code (AS-numbered
@@ -430,13 +436,14 @@ const AIRLINE_DEFS = {
     publicInHub: true,
     iata: "AS",
     icao: "ASA",
-    // SkyWest-for-Alaska tails are tracked (CPA-dedicated, disjoint from UA's),
-    // but SKW/OO stay out of operators — we don't resolve SkyWest-operated
-    // AS flight numbers to tails yet.
+    // SkyWest-for-Alaska tails are tracked (CPA-dedicated, disjoint from
+    // UA's). SkyWest flies United's numbers too, so SKW/OO stay out of
+    // operators and resolve by the row's airline instead.
     operators: [
       { icao: "ASA", iata: "AS" },
       { icao: "QXE", iata: "QX" },
     ],
+    sharedOperators: [{ icao: "SKW", iata: "OO" }],
     operatingPartners: ["HA"],
     subfleets: [
       // AS800-999 are AS-marketed flights on Hawaiian A330/A321neo metal
