@@ -26,7 +26,7 @@ import {
 import { icaoToIata } from "../utils/airport-tz";
 import { extractFlightNumber, pickVerifiableFlight, unitedLookupDate } from "../utils/constants";
 import { type JobHandle, startJob } from "../utils/job-runner";
-import { verifierLog } from "../utils/logger";
+import { logger } from "../utils/logger";
 import { sleep } from "../utils/sleep";
 import type { StarlinkCheckResult } from "./united-starlink-checker";
 import { checkStarlinkStatusSubprocess } from "./united-starlink-checker-subprocess";
@@ -50,13 +50,13 @@ export interface VerifyPlaneStarlinkDeps {
 // in JSC and its stack frame (the tag source) gets elided.
 const verdictLog = {
   info: (m: string) => {
-    verifierLog.info(m);
+    logger.info(m);
   },
   warn: (m: string) => {
-    verifierLog.warn(m);
+    logger.warn(m);
   },
   debug: (m: string) => {
-    verifierLog.debug(m);
+    logger.debug(m);
   },
 };
 
@@ -189,7 +189,7 @@ export async function verifyPlaneStarlink(
       span.setTag("flight_number", `UA${flightNumber}`);
       span.setTag("route", `${origin}-${destination}`);
 
-      verifierLog.debug(
+      logger.debug(
         `Checking ${tailNumber} via UA${flightNumber} ${origin}-${destination} on ${departureDate}`
       );
 
@@ -229,22 +229,22 @@ export async function verifyPlaneStarlink(
 
         if (tailMismatch) {
           // Already logged above, just note we're not updating
-          verifierLog.debug(
+          logger.debug(
             `Flight ${flightNumber} aircraft: ${resolvedTail} (${result.wifiProvider || "unknown"})`
           );
         } else if (result.hasStarlink) {
           // debug: overwhelmingly re-confirmations. The state CHANGE line
           // (verified_wifi → X in united-verdict) stays at info.
-          verifierLog.debug(
+          logger.debug(
             `✓ ${tailNumber} confirmed Starlink (${result.wifiProvider} via ${result.providerSource})`
           );
         } else if (result.error) {
-          verifierLog.warn(
+          logger.warn(
             `✗ ${tailNumber} error: ${result.error}`,
             result.debugFile ? { debugFile: result.debugFile } : undefined
           );
         } else {
-          verifierLog.debug(
+          logger.debug(
             `✗ ${tailNumber} no Starlink (${
               result.wifiProvider
                 ? `${result.wifiProvider} via ${result.providerSource}`
@@ -257,7 +257,7 @@ export async function verifyPlaneStarlink(
         return result;
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
-        verifierLog.error(`Error verifying ${tailNumber}`, errorMessage);
+        logger.error(`Error verifying ${tailNumber}`, errorMessage);
         metrics.increment(COUNTERS.VERIFICATION_CHECK, {
           result: "error",
           fleet: fleetTag,
@@ -315,11 +315,11 @@ export async function runVerificationBatch(
     const toVerify = getPlanesNeedingVerification(db, maxPlanes, forceAll);
 
     if (toVerify.length === 0) {
-      verifierLog.debug("No planes need verification at this time");
+      logger.debug("No planes need verification at this time");
       return stats;
     }
 
-    verifierLog.debug(`${toVerify.length} plane(s) need verification`);
+    logger.debug(`${toVerify.length} plane(s) need verification`);
 
     for (let i = 0; i < toVerify.length; i++) {
       const { plane, flight, recheckHours } = toVerify[i];
@@ -342,14 +342,14 @@ export async function runVerificationBatch(
 
       // Delay between checks
       if (i < toVerify.length - 1) {
-        verifierLog.debug(`Waiting ${delayMs / 1000}s before next check`);
+        logger.debug(`Waiting ${delayMs / 1000}s before next check`);
         await sleep(delayMs);
       }
     }
 
     // Log verification stats
     const dbStats = getVerificationStats(db);
-    verifierLog.debug(
+    logger.debug(
       `Stats: ${dbStats.total_checks} total checks, ${dbStats.last_24h_checks} in last 24h`
     );
   } finally {
@@ -418,7 +418,7 @@ export function startStarlinkVerifier(): JobHandle {
     if (now - lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
       // See fleet-discovery: the counter belongs in the data field so the
       // 2,950 heartbeat lines/week group as one pattern instead of 2,950.
-      verifierLog.info("Heartbeat: verifier scheduler healthy", { runs: runCount });
+      logger.info("Heartbeat: verifier scheduler healthy", { runs: runCount });
       lastHeartbeat = now;
     }
 
@@ -436,11 +436,11 @@ export function startStarlinkVerifier(): JobHandle {
 
         // See fleet-discovery: a no-change batch is a debug-level fact.
         if (stats.starlink > 0 || stats.errors > 0) {
-          verifierLog.info(
+          logger.info(
             `Batch complete: ${stats.starlink} Starlink, ${stats.notStarlink} not, ${stats.errors} errors`
           );
         } else if (stats.checked > 0) {
-          verifierLog.debug(
+          logger.debug(
             `Batch complete: ${stats.starlink} Starlink, ${stats.notStarlink} not, ${stats.errors} errors`
           );
         }
@@ -456,7 +456,7 @@ export function startStarlinkVerifier(): JobHandle {
     run: runVerification,
   });
 
-  verifierLog.info(
+  logger.info(
     `Background verifier started (every ${BASE_INTERVAL_MS / 1000}s, ${PLANES_PER_RUN} plane/run)`
   );
   return handle;

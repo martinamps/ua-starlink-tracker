@@ -1146,10 +1146,6 @@ function siteForScope(scope: AirlineCode | "ALL", liveOnly = false): SiteConfig 
   return allSites().find((site) => site.scope === scope) ?? null;
 }
 
-export function tenantBrand(tenant: Tenant): PageBrand {
-  return tenant === "ALL" ? HUB_BRAND : tenant.brand;
-}
-
 /** The accent to use for anything read against the dark page (text, links,
  * button outlines, bars) — the brand color when it already contrasts. */
 export function uiAccent(brand: PageBrand): string {
