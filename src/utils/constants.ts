@@ -98,6 +98,14 @@ export const API_CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Headers": "Content-Type",
 };
 
+// The /mcp CORS contract: browser-based MCP clients POST JSON-RPC cross-origin.
+export const MCP_CORS_HEADERS: Record<string, string> = {
+  ...CORS_ANY_ORIGIN,
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Accept, Mcp-Session-Id, MCP-Protocol-Version",
+  "Access-Control-Expose-Headers": "Mcp-Session-Id",
+};
+
 export const SECURITY_HEADERS = {
   api: {
     ...BASE_RESPONSE_HEADERS,

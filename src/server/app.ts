@@ -198,6 +198,7 @@ import {
   API_CORS_HEADERS,
   BASE_RESPONSE_HEADERS,
   CONTENT_TYPES,
+  MCP_CORS_HEADERS,
   SECURITY_HEADERS,
 } from "../utils/constants";
 import { article } from "../utils/grammar";
@@ -257,7 +258,9 @@ const read = (handler: Handler, feature?: keyof SiteFeatures): Route => ({
 
 function serve(entry: Route, ctx: RequestContext): Response | Promise<Response> {
   const api = ctx.url.pathname.startsWith("/api/");
-  if (entry.methods && !entry.methods.includes(ctx.req.method)) return methodNotAllowed(api);
+  if (entry.methods && !entry.methods.includes(ctx.req.method)) {
+    return methodNotAllowed(entry.methods, api);
+  }
   if (entry.feature && !ctx.site.features[entry.feature]) {
     return api ? jsonError(404, "Not found") : notFound(ctx.site);
   }
@@ -1483,10 +1486,8 @@ const mcp: Handler = async (ctx) => {
       ogDescription: `Paste one URL into Claude Desktop. Ask Claude about ${short} Starlink flights, probabilities, and routing.`,
     });
   }
-  // Protocol responses carry CORS so browser-based MCP clients can connect;
-  // preflight is answered in dispatch (corsPreflight).
-  const res = await handleMcpRequest(req, tenantScope(tenant), getReader, site.analytics);
-  return withDefaultHeaders(res, MCP_CORS_HEADERS);
+  // Preflight is answered in dispatch (corsPreflight).
+  return handleMcpRequest(req, tenantScope(tenant), getReader, site.analytics);
 };
 
 // Cursor installs misconfigured as "<host>/mcp.com/mcp" polled it ~15/h, all
@@ -4465,14 +4466,7 @@ function canonicalAliasPath(pathname: string): string {
 }
 
 // Preflight mirrors the CORS headers the real responses carry: /api/* serves
-// API_CORS_HEADERS (spread into SECURITY_HEADERS.api), /mcp serves
-// MCP_CORS_HEADERS (browser-based MCP clients POST JSON-RPC cross-origin).
-const MCP_CORS_HEADERS: Record<string, string> = {
-  ...CORS_ANY_ORIGIN,
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Accept, Mcp-Session-Id, MCP-Protocol-Version",
-  "Access-Control-Expose-Headers": "Mcp-Session-Id",
-};
+// API_CORS_HEADERS (spread into SECURITY_HEADERS.api), /mcp MCP_CORS_HEADERS.
 
 function corsPreflight(pathname: string): Response {
   const cors = pathname === "/mcp" ? MCP_CORS_HEADERS : API_CORS_HEADERS;

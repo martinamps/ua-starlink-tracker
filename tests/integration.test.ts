@@ -185,6 +185,30 @@ describe("MCP protocol", () => {
     });
     const resp = await handleMcpRequest(req, "UA", () => reader);
     expect(resp.status).toBe(405);
+    expect(resp.headers.get("allow")).toBe("POST");
+    expect(resp.headers.get("access-control-allow-methods")).toContain("POST");
+  });
+
+  test("every protocol response carries nosniff and the MCP CORS contract", async () => {
+    const post = (body: string, contentType = "application/json") =>
+      handleMcpRequest(
+        new Request("http://localhost/mcp", {
+          method: "POST",
+          headers: { "Content-Type": contentType },
+          body,
+        }),
+        "UA",
+        () => reader
+      );
+    for (const resp of [
+      await post(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" })),
+      await post(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })),
+      await post("{not json"),
+      await post("{}", "text/plain"),
+    ]) {
+      expect(resp.headers.get("x-content-type-options")).toBe("nosniff");
+      expect(resp.headers.get("access-control-allow-methods")).toContain("POST");
+    }
   });
 
   test("initialize returns capabilities, serverInfo, instructions", async () => {

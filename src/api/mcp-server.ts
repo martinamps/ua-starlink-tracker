@@ -62,6 +62,7 @@ import {
   predictRoute,
   routeBaseline,
 } from "../scripts/starlink-predictor";
+import { jsonRpc, mcpMethodNotAllowed } from "../server/respond";
 import { AIRPORT_COORDS } from "../utils/airport-geo";
 import { isRealIsoDate, matchesLocalDate } from "../utils/airport-tz";
 import { debug, error as logError } from "../utils/logger";
@@ -2253,8 +2254,6 @@ async function dispatch(
 // HTTP handler
 // ============================================================================
 
-const JSON_HEADERS = { "Content-Type": "application/json" };
-
 /**
  * Handle an incoming MCP HTTP request.
  * Mount this at a single path (e.g. /mcp) in your Bun.serve router.
@@ -2272,42 +2271,27 @@ export async function handleMcpRequest(
 ): Promise<Response> {
   // Stateless and tools-only: no SSE stream to open on GET, no session to end
   // on DELETE. POST is the whole protocol.
-  if (req.method !== "POST") {
-    return new Response(null, { status: 405, headers: { Allow: "POST" } });
-  }
+  if (req.method !== "POST") return mcpMethodNotAllowed();
 
-  // Validate Content-Type
   const contentType = req.headers.get("content-type") || "";
   if (!contentType.includes("application/json")) {
-    return new Response(
-      JSON.stringify(rpcError(null, -32700, "Content-Type must be application/json")),
-      { status: 415, headers: JSON_HEADERS }
-    );
+    return jsonRpc(rpcError(null, -32700, "Content-Type must be application/json"), 415);
   }
 
-  // Parse JSON body
   let msg: JsonRpcRequest;
   try {
     msg = await req.json();
   } catch {
-    return new Response(JSON.stringify(rpcError(null, -32700, "Parse error: invalid JSON")), {
-      status: 400,
-      headers: JSON_HEADERS,
-    });
+    return jsonRpc(rpcError(null, -32700, "Parse error: invalid JSON"), 400);
   }
 
-  // Validate JSON-RPC envelope
   if (msg.jsonrpc !== "2.0" || typeof msg.method !== "string") {
-    return new Response(
-      JSON.stringify(rpcError(msg.id ?? null, -32600, "Invalid Request: not JSON-RPC 2.0")),
-      { status: 400, headers: JSON_HEADERS }
-    );
+    return jsonRpc(rpcError(msg.id ?? null, -32600, "Invalid Request: not JSON-RPC 2.0"), 400);
   }
 
   const { scope } = resolveScope(req, hostScope);
   const reader = getReader(scope);
 
-  // Dispatch
   let response: JsonRpcResponse | null;
   try {
     response = await dispatch(reader, getReader, scope, hostScope, msg);
@@ -2325,11 +2309,6 @@ export async function handleMcpRequest(
     trackMcpEvent(req, analytics, { method: "tools/call", tool: toolName });
   }
 
-  // Notification (no id) → 202 Accepted, empty body
-  if (response === null) {
-    return new Response(null, { status: 202 });
-  }
-
-  // Request → 200 OK with JSON-RPC response
-  return new Response(JSON.stringify(response), { status: 200, headers: JSON_HEADERS });
+  // A notification (no id) gets 202 Accepted with no body.
+  return response === null ? jsonRpc(null, 202) : jsonRpc(response);
 }
