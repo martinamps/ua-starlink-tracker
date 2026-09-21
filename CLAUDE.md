@@ -14,7 +14,7 @@ bun run db-status              # Database overview (--full for details)
 bun run scrape                 # Fetch fleet data from Google Sheets
 bun run lint / format          # Biome
 bun run knip                   # Dead files/exports (knip.json lists the entries)
-bun run capture-golden         # Regenerate tests/golden/mcp-tools-list.json (intentional changes only)
+bun run capture-golden         # Regenerate both contract goldens in tests/golden (intentional changes only)
 ```
 
 See `package.json` for the full script list (verification, discovery, sync, backtest helpers).
@@ -49,7 +49,7 @@ FlyerTalk QR/AS/AF data arrives via `bun run residential-sync` from a laptop (pr
 - **`GET /api/check-flight?flight_number=UA123&date=YYYY-MM-DD`** → `{ hasStarlink: boolean, flights: [] }` with CORS for Google Flights. The Chrome extension depends on this exact shape.
 - **`GET /api/check-any-flight?flight_number=HA50&date=YYYY-MM-DD`** (hub host) — extension non-UA surface since v2; top-level `hasStarlink`, `confidence`, `probability`, `airline`, `error`, `flights`. Additive only.
 - **MCP tool names and result shapes** — clients cache schemas at connect time.
-- **Goldens pin all three byte-for-byte:** `tests/golden/api-contracts.json` (check-flight, check-any-flight, MCP `check_flight`, .ics) and `tests/golden/mcp-tools-list.json`. A diff there is a contract change; regenerate (`UPDATE_GOLDEN=1 bun test tests/api-contract-golden.test.ts`, `bun run capture-golden`) only on purpose.
+- **Goldens pin all three byte-for-byte:** `tests/golden/api-contracts.json` (check-flight, check-any-flight, MCP `check_flight`, .ics) and `tests/golden/mcp-tools-list.json`. A diff there is a contract change; regenerate both with `bun run capture-golden` only on purpose. A missing fixture fails the test rather than being written.
 - **`GET /api/routes`** — `rows[].flight_numbers` counts marketing flight slots (distinct `slot_flight`), so UA5212 and its operating spelling SKW5212 are one number. It once counted stored spellings, which double-counted every regional codeshare; that was a bug, and the field's name and type are unchanged.
 - **Leg scoping** — both endpoints and MCP `check_flight` accept optional `origin`/`destination` (IATA; K/P ICAO accepted). Absent → the response is byte-identical to the unscoped one; `leg` appears only when a param is sent. Invalid input never errors: it answers unscoped with `leg.match: "unscoped"` and a `reason` (invalid_airport, same_airport, no_timezone, ambiguous_leg).
 
