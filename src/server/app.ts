@@ -3652,7 +3652,11 @@ const methodologyPage: Handler = (ctx) => {
   // the RAW stamp for the same honesty reason the sitemap does.
   const anchors = ctx.reader.getFleetAnchors();
   const citations = [...new Set(anchors.map((a) => a.source_url))];
-  const earliestAnchor = anchors.at(-1)?.as_of_date; // rows are ordered as_of_date DESC
+  // The dataset starts at the first dated install; the earliest SEC anchor
+  // (rows are as_of_date DESC) comes months later.
+  const coverageStart = [ctx.reader.getDailyInstalls()[0]?.day, anchors.at(-1)?.as_of_date]
+    .filter((d): d is string => !!d)
+    .sort()[0];
   const modifiedTs = Date.parse(ctx.reader.getLastUpdatedRaw() ?? "");
   const datasetJsonLd = jsonLdBlock({
     "@context": "https://schema.org",
@@ -3663,7 +3667,7 @@ const methodologyPage: Handler = (ctx) => {
     creator: { "@type": "Organization", name: ctx.site.brand.title, url: `https://${host}/` },
     isAccessibleForFree: true,
     ...(Number.isFinite(modifiedTs) ? { dateModified: new Date(modifiedTs).toISOString() } : {}),
-    ...(earliestAnchor ? { temporalCoverage: `${earliestAnchor}/..` } : {}),
+    ...(coverageStart ? { temporalCoverage: `${coverageStart}/..` } : {}),
     distribution: [
       {
         "@type": "DataDownload",

@@ -246,6 +246,15 @@ describe("structured data blocks", () => {
     sdb.close();
   });
 
+  test("Dataset temporalCoverage starts no later than the first dated install", async () => {
+    const text = await (await app.dispatch(req("/methodology", UA))).text();
+    const start = text.match(/"temporalCoverage":"(\d{4}-\d{2}-\d{2})\/\.\."/)?.[1];
+    const firstInstall = getReader("UA").getDailyInstalls()[0]?.day;
+    if (!firstInstall) return;
+    expect(start).toBeDefined();
+    expect((start as string) <= firstInstall).toBe(true);
+  });
+
   test("/fleet and /routes carry ItemList JSON-LD", async () => {
     for (const path of ["/fleet", "/routes"]) {
       const { text } = await getText(path, UA);
