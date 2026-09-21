@@ -286,16 +286,12 @@ export async function verifyPlaneStarlink(
  * Fetches data from unitedstarlinktracker.com API
  */
 // Cheap pre-flight so the background loop can skip span creation on no-op ticks.
-export function hasVerificationWork(maxPlanes: number, forceAll = false): boolean {
-  const db = initializeDatabase();
-  try {
-    return getPlanesNeedingVerification(db, maxPlanes, forceAll).length > 0;
-  } finally {
-    db.close();
-  }
+export function hasVerificationWork(db: Database, maxPlanes: number, forceAll = false): boolean {
+  return getPlanesNeedingVerification(db, maxPlanes, forceAll).length > 0;
 }
 
 export async function runVerificationBatch(
+  db: Database,
   maxPlanes = 5,
   delayMs = VERIFICATION_DELAY_MS,
   forceAll = false
@@ -306,54 +302,49 @@ export async function runVerificationBatch(
   errors: number;
   skipped: number;
 }> {
-  const db = initializeDatabase();
   const stats = { checked: 0, starlink: 0, notStarlink: 0, errors: 0, skipped: 0 };
 
-  try {
-    // Get planes that need verification (from local DB, includes mismatches so they can self-heal)
-    const toVerify = getPlanesNeedingVerification(db, maxPlanes, forceAll);
+  // Get planes that need verification (from local DB, includes mismatches so they can self-heal)
+  const toVerify = getPlanesNeedingVerification(db, maxPlanes, forceAll);
 
-    if (toVerify.length === 0) {
-      verifierLog.debug("No planes need verification at this time");
-      return stats;
-    }
-
-    verifierLog.debug(`${toVerify.length} plane(s) need verification`);
-
-    for (let i = 0; i < toVerify.length; i++) {
-      const { plane, flight, recheckHours } = toVerify[i];
-      const result = await verifyPlaneStarlink(db, plane.TailNumber, flight, forceAll, {
-        aircraftType: plane.Aircraft,
-        fleet: plane.fleet,
-        recheckHours,
-      });
-
-      if (result === null) {
-        stats.skipped++;
-      } else if (result.error) {
-        stats.errors++;
-      } else if (result.hasStarlink) {
-        stats.starlink++;
-      } else {
-        stats.notStarlink++;
-      }
-      stats.checked++;
-
-      // Delay between checks
-      if (i < toVerify.length - 1) {
-        verifierLog.debug(`Waiting ${delayMs / 1000}s before next check`);
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
-      }
-    }
-
-    // Log verification stats
-    const dbStats = getVerificationStats(db);
-    verifierLog.debug(
-      `Stats: ${dbStats.total_checks} total checks, ${dbStats.last_24h_checks} in last 24h`
-    );
-  } finally {
-    db.close();
+  if (toVerify.length === 0) {
+    verifierLog.debug("No planes need verification at this time");
+    return stats;
   }
+
+  verifierLog.debug(`${toVerify.length} plane(s) need verification`);
+
+  for (let i = 0; i < toVerify.length; i++) {
+    const { plane, flight, recheckHours } = toVerify[i];
+    const result = await verifyPlaneStarlink(db, plane.TailNumber, flight, forceAll, {
+      aircraftType: plane.Aircraft,
+      fleet: plane.fleet,
+      recheckHours,
+    });
+
+    if (result === null) {
+      stats.skipped++;
+    } else if (result.error) {
+      stats.errors++;
+    } else if (result.hasStarlink) {
+      stats.starlink++;
+    } else {
+      stats.notStarlink++;
+    }
+    stats.checked++;
+
+    // Delay between checks
+    if (i < toVerify.length - 1) {
+      verifierLog.debug(`Waiting ${delayMs / 1000}s before next check`);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+
+  // Log verification stats
+  const dbStats = getVerificationStats(db);
+  verifierLog.debug(
+    `Stats: ${dbStats.total_checks} total checks, ${dbStats.last_24h_checks} in last 24h`
+  );
 
   return stats;
 }
@@ -401,7 +392,7 @@ export function logSpreadsheetVerification(
  * With ~100 planes, full cycle takes ~100 minutes
  * Combined with 48-96hr jitter per plane, this spreads load nicely
  */
-export function startStarlinkVerifier(): JobHandle {
+export function startStarlinkVerifier(db: Database): JobHandle {
   const BASE_INTERVAL_MS = 60 * 1000; // 60 seconds
   const HEARTBEAT_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
   const PLANES_PER_RUN = 1;
@@ -422,12 +413,12 @@ export function startStarlinkVerifier(): JobHandle {
     }
 
     // ~97% of ticks find nothing to do — skip span creation on no-op runs.
-    if (!hasVerificationWork(PLANES_PER_RUN)) return;
+    if (!hasVerificationWork(db, PLANES_PER_RUN)) return;
 
     await withSpan(
       "starlink_verifier.run",
       async (span) => {
-        const stats = await runVerificationBatch(PLANES_PER_RUN, VERIFICATION_DELAY_MS);
+        const stats = await runVerificationBatch(db, PLANES_PER_RUN, VERIFICATION_DELAY_MS);
 
         span.setTag("checked", stats.checked);
         span.setTag("starlink", stats.starlink);
@@ -526,7 +517,8 @@ if (import.meta.main) {
       `Running Starlink verification for up to ${maxPlanes} planes${forceAll ? " (FORCE ALL - ignoring rate limits)" : ""}...\n`
     );
 
-    runVerificationBatch(maxPlanes, VERIFICATION_DELAY_MS, forceAll)
+    const db = initializeDatabase();
+    runVerificationBatch(db, maxPlanes, VERIFICATION_DELAY_MS, forceAll)
       .then((stats) => {
         console.log("\n=== Batch Results ===");
         console.log(`Checked: ${stats.checked}`);

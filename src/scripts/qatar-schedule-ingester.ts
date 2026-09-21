@@ -446,7 +446,7 @@ export async function ingestQatarSchedule(
   return stats;
 }
 
-export function startQatarScheduleIngester(): JobHandle | undefined {
+export function startQatarScheduleIngester(db: Database): JobHandle | undefined {
   if (!AIRLINES.QR.enabled) {
     info("qatar-schedule-ingester: QR disabled in registry; not starting");
     return undefined;
@@ -460,31 +460,26 @@ export function startQatarScheduleIngester(): JobHandle | undefined {
       async (span) => {
         span.setTag("airline", normalizeAirlineTag("QR"));
         try {
-          const db = initializeDatabase();
-          try {
-            const stats = await ingestQatarSchedule(db, undefined, ctx);
-            span.setTag("flights_upserted", stats.flights_upserted);
-            span.setTag("routes_failed", stats.routes_failed);
-            span.setTag("pruned", stats.pruned);
-            span.setTag("history_upserted", stats.history_upserted);
-            span.setTag("history_staled", stats.history_staled);
-            span.setTag("far_offset", stats.far_offset);
-            span.setTag("breaker_tripped", stats.breaker_tripped);
-            metrics.increment(COUNTERS.VENDOR_REQUEST, {
-              vendor: "qatar",
-              type: "ingest_run",
-              status: stats.outcome,
-              airline: normalizeAirlineTag("QR"),
-            });
-            info(
-              `qatar-schedule-ingester: upserted ${stats.flights_upserted} flights, ` +
-                `${stats.history_upserted} history legs (${stats.history_staled} staled, far +${stats.far_offset}); ` +
-                `forward schedule ${stats.by_verdict.Starlink} Starlink / ${stats.by_verdict.Rolling} Rolling / ` +
-                `${stats.by_verdict.None} None; ${stats.routes_failed}/${stats.routes_attempted} route fetches failed${stats.breaker_tripped ? " (breaker tripped)" : ""}; pruned ${stats.pruned}`
-            );
-          } finally {
-            db.close();
-          }
+          const stats = await ingestQatarSchedule(db, undefined, ctx);
+          span.setTag("flights_upserted", stats.flights_upserted);
+          span.setTag("routes_failed", stats.routes_failed);
+          span.setTag("pruned", stats.pruned);
+          span.setTag("history_upserted", stats.history_upserted);
+          span.setTag("history_staled", stats.history_staled);
+          span.setTag("far_offset", stats.far_offset);
+          span.setTag("breaker_tripped", stats.breaker_tripped);
+          metrics.increment(COUNTERS.VENDOR_REQUEST, {
+            vendor: "qatar",
+            type: "ingest_run",
+            status: stats.outcome,
+            airline: normalizeAirlineTag("QR"),
+          });
+          info(
+            `qatar-schedule-ingester: upserted ${stats.flights_upserted} flights, ` +
+              `${stats.history_upserted} history legs (${stats.history_staled} staled, far +${stats.far_offset}); ` +
+              `forward schedule ${stats.by_verdict.Starlink} Starlink / ${stats.by_verdict.Rolling} Rolling / ` +
+              `${stats.by_verdict.None} None; ${stats.routes_failed}/${stats.routes_attempted} route fetches failed${stats.breaker_tripped ? " (breaker tripped)" : ""}; pruned ${stats.pruned}`
+          );
         } catch (e) {
           span.setTag("error", true);
           logError("qatar-schedule-ingester tick failed", e);

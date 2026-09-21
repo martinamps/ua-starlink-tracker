@@ -120,17 +120,40 @@ function flightNumberGlob(prefixes: readonly string[]): { clause: string; params
   };
 }
 
-export function initializeDatabase() {
-  const db = new Database(DB_PATH);
-
-  // Enable WAL mode for better concurrent access (prevents SQLITE_BUSY errors)
+/**
+ * Open a connection, no schema work. A process opens one handle and shares
+ * it: every open re-prepares statements, and jobs used to reopen (and
+ * re-migrate) per tick — six times per 22.5s flight-updater loop.
+ */
+export function openDatabase(path = DB_PATH): Database {
+  const db = new Database(path);
+  // WAL so the server's readers never block on a job's write (SQLITE_BUSY).
   db.exec("PRAGMA journal_mode = WAL");
-  db.exec("PRAGMA busy_timeout = 5000"); // Wait up to 5s if database is locked
-
-  setupTables(db);
+  db.exec("PRAGMA busy_timeout = 5000");
   // Folds each query's duration into whatever span is already open, so page
   // latency can be attributed to SQL. No new spans — see db-timing.ts.
   instrumentDatabase(db);
+  return db;
+}
+
+/**
+ * Bring the schema up to date, then refresh planner statistics. Once per
+ * process: server boot, or a script's main.
+ *
+ * ANALYZE is not optional: without sqlite_stat1 the planner keeps choosing
+ * airline= (zero selectivity on a one-airline log) over flight_number IN, and
+ * the serving-path indexes sit unused. Measured at production cardinality:
+ * 14.6ms → 0.01ms and 103ms → 2.6ms, only after ANALYZE.
+ */
+export function migrate(db: Database): void {
+  setupTables(db);
+  db.exec("ANALYZE");
+}
+
+/** openDatabase + migrate, for one-shot CLI entrypoints. */
+export function initializeDatabase(): Database {
+  const db = openDatabase();
+  migrate(db);
   return db;
 }
 
@@ -855,17 +878,11 @@ function migrateMultiAirline(db: Database) {
     CREATE INDEX IF NOT EXISTS idx_qeh_fetch   ON qatar_equipment_history(fetch_origin, fetch_destination, fetch_date);
   `);
 
-  // The two indexes above exist for the serving path: getFlightHistorySummary
-  // runs three flight_number-filtered queries per permalink render and had only
-  // airline-leading indexes to use — on a one-airline 76k-row log that is a
-  // full-table range scan, measured at ~150ms of the permalink's 152ms. The
-  // EQUIPPED_DEPARTURES join likewise had no tail_number index on
-  // upcoming_flights. ANALYZE is NOT optional: without sqlite_stat1 the planner
-  // keeps choosing airline= (zero selectivity here) over flight_number IN — the
-  // new indexes sit unused. Measured with production cardinality: 14.6ms → 0.01ms
-  // and 103ms → 2.6ms, but only after ANALYZE. Runs at startup; ~76k rows
-  // analyze in well under a second.
-  db.exec("ANALYZE");
+  // idx_vlog_flight and idx_upf_tail exist for the serving path:
+  // getFlightHistorySummary runs three flight_number-filtered queries per
+  // permalink render and had only airline-leading indexes to use — on a
+  // one-airline 76k-row log that is a full-table range scan, measured at ~150ms
+  // of the permalink's 152ms. They only get used after ANALYZE (see migrate).
 
   const renamed = db
     .query("UPDATE meta SET key = 'UA:' || key WHERE key NOT LIKE '%:%'")

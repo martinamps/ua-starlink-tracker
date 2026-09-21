@@ -75,57 +75,54 @@ export function shipSyncStatus(r: Omit<ShipSyncResult, "status">): ShipSyncStatu
   return r.changed === 0 ? "noop" : "success";
 }
 
-export async function syncShipNumbers(
-  deps: { db?: Database; fetchSheet?: (gid: number) => Promise<string> } = {}
-): Promise<ShipSyncResult> {
-  const db = deps.db ?? initializeDatabase();
+export async function syncShipNumbers(deps: {
+  db: Database;
+  fetchSheet?: (gid: number) => Promise<string>;
+}): Promise<ShipSyncResult> {
+  const { db } = deps;
   const fetchGid = deps.fetchSheet ?? fetchSheet;
   const counts = { fetchedGids: 0, failedGids: 0, rowsSeen: 0, changed: 0 };
 
-  try {
-    for (const gid of SHIP_SHEET_GIDS) {
-      let csv: string;
-      try {
-        csv = await fetchGid(gid);
-        counts.fetchedGids++;
-      } catch (err) {
-        counts.failedGids++;
-        logError(`Failed to fetch ship sheet gid=${gid}`, err);
-        continue;
-      }
-
-      const lines = csv.split("\n");
-      for (let i = 1; i < lines.length; i++) {
-        if (!lines[i].trim()) continue;
-        const cols = parseCsvLine(lines[i]);
-        const tail = cols[1]?.replace(/"/g, "").trim();
-        const ship = cols[2]?.replace(/"/g, "").trim();
-        if (!tail || !ship || !AIRLINES.UA.tailPattern.test(tail)) continue;
-        counts.rowsSeen++;
-        counts.changed += updateShipNumber(db, tail, ship);
-      }
+  for (const gid of SHIP_SHEET_GIDS) {
+    let csv: string;
+    try {
+      csv = await fetchGid(gid);
+      counts.fetchedGids++;
+    } catch (err) {
+      counts.failedGids++;
+      logError(`Failed to fetch ship sheet gid=${gid}`, err);
+      continue;
     }
 
-    const status = shipSyncStatus(counts);
-    metrics.increment(COUNTERS.SCRAPER_SYNC, {
-      source: "ship_numbers",
-      airline: normalizeAirlineTag("UA"),
-      status,
-    });
-    const summary = `${counts.fetchedGids}/${SHIP_SHEET_GIDS.length} sheets, ${counts.rowsSeen} rows, ${counts.changed} changed`;
-    if (status === "error") {
-      throw new Error(`Ship number sync failed: ${summary}`);
+    const lines = csv.split("\n");
+    for (let i = 1; i < lines.length; i++) {
+      if (!lines[i].trim()) continue;
+      const cols = parseCsvLine(lines[i]);
+      const tail = cols[1]?.replace(/"/g, "").trim();
+      const ship = cols[2]?.replace(/"/g, "").trim();
+      if (!tail || !ship || !AIRLINES.UA.tailPattern.test(tail)) continue;
+      counts.rowsSeen++;
+      counts.changed += updateShipNumber(db, tail, ship);
     }
-    setMeta(db, SHIP_NUMBERS_SYNCED_AT, new Date().toISOString());
-    info(`Ship number sync ${status}: ${summary}`);
-    return { status, ...counts };
-  } finally {
-    if (!deps.db) db.close();
   }
+
+  const status = shipSyncStatus(counts);
+  metrics.increment(COUNTERS.SCRAPER_SYNC, {
+    source: "ship_numbers",
+    airline: normalizeAirlineTag("UA"),
+    status,
+  });
+  const summary = `${counts.fetchedGids}/${SHIP_SHEET_GIDS.length} sheets, ${counts.rowsSeen} rows, ${counts.changed} changed`;
+  if (status === "error") {
+    throw new Error(`Ship number sync failed: ${summary}`);
+  }
+  setMeta(db, SHIP_NUMBERS_SYNCED_AT, new Date().toISOString());
+  info(`Ship number sync ${status}: ${summary}`);
+  return { status, ...counts };
 }
 
 if (import.meta.main) {
-  syncShipNumbers()
+  syncShipNumbers({ db: initializeDatabase() })
     .then((r) => {
       console.log(`Ship numbers ${r.status}: ${r.changed} changed of ${r.rowsSeen} rows`);
     })

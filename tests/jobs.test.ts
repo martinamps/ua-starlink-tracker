@@ -510,8 +510,7 @@ describe("alaska-verifier per-airline breaker", () => {
 
   test("AS-only outage trips only AS; HA keeps verifying and the rotation proceeds", async () => {
     const calls: string[] = [];
-    const tick = makeAlaskaTick(["AS", "HA"], {
-      openDb: () => makeSyntheticDb(),
+    const tick = makeAlaskaTick(makeSyntheticDb(), ["AS", "HA"], {
       getTarget: fakeTarget,
       check: async (_db, airline) => {
         calls.push(airline);
@@ -538,8 +537,7 @@ describe("alaska-verifier per-airline breaker", () => {
 
   test("a stale (abandoned) tick does not feed the breaker", async () => {
     let checks = 0;
-    const tick = makeAlaskaTick(["AS"], {
-      openDb: () => makeSyntheticDb(),
+    const tick = makeAlaskaTick(makeSyntheticDb(), ["AS"], {
       getTarget: fakeTarget,
       check: async () => {
         checks++;
