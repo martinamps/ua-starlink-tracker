@@ -131,6 +131,7 @@ const ENDPOINTS = [
   "/api/mismatches",
   "/api/fleet-discovery",
   "/robots.txt",
+  "/.well-known/mcp-registry-auth",
   "/sitemap.xml",
   "/llms.txt",
   "/newly-equipped",

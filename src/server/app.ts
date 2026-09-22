@@ -1803,6 +1803,8 @@ function hubHomeLinks(ctx: RequestContext): HubHomeLinks {
   };
 }
 
+const MCP_REGISTRY_AUTH = "v=MCPv1; k=ed25519; p=IfKxQ+jBzeURR27F/J6ITBbYvdn0eJN3MmDgsUAWvJI=";
+
 const robotsTxt: Handler = ({ site }) => {
   // /mcp is deliberately SEO'd where mcpPage is on: GET serves HTML (crawlers
   // only GET), POST is the JSON-RPC protocol and invisible to robots. So the
@@ -4566,6 +4568,12 @@ export function createApp(db: Database): App {
       handler: () => text(indexNowKey, "text/plain", { cache: CACHE.day }),
     };
   }
+
+  // The official MCP registry proves domain ownership by fetching this record;
+  // only its private half (kept off the server) can sign a publish.
+  routes["/.well-known/mcp-registry-auth"] = {
+    handler: () => text(MCP_REGISTRY_AUTH, "text/plain", { cache: CACHE.day }),
+  };
 
   const prefixRoutes: Array<[string, Route]> = [
     ["/cal/", read(watchFeed)],
