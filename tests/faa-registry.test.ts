@@ -6,6 +6,7 @@ import { getFaaRegistryByTail, replaceFaaRegistry } from "../src/database/databa
 import {
   buildFaaRecords,
   collectAcftref,
+  collectAcftrefOptional,
   collectDereg,
   collectMasterRows,
   runFaaRegistrySync,
@@ -126,5 +127,20 @@ describe("faa_registry storage and sync", () => {
     replaceFaaRegistry(db, [bareRow("N2")]);
     expect(getFaaRegistryByTail(db, "N1")).toBeNull();
     expect(getFaaRegistryByTail(db, "N2")).not.toBeNull();
+  });
+});
+
+describe("collectAcftrefOptional", () => {
+  test("a missing ACFTREF member leaves models blank instead of failing the sync", async () => {
+    const missing = () => {
+      throw new Error("unzip -p /tmp/x.zip ACFTREF.txt exited with 11");
+    };
+    expect((await collectAcftrefOptional(missing, new Set(["3990070"]))).size).toBe(0);
+  });
+
+  test("it still reads models when the member is present", async () => {
+    const lines = ["CODE,MFR,MODEL", "3990070,BOEING,737-824"];
+    const models = await collectAcftrefOptional(() => lines, new Set(["3990070"]));
+    expect(models.get("3990070")).toBe("BOEING 737-824");
   });
 });
