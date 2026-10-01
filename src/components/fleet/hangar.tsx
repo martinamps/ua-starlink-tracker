@@ -1,9 +1,10 @@
+import { isStarlinkProvider } from "../../database/sql/equipped";
 import type { FleetFamily, FleetTail } from "../../types";
 import { AIRCRAFT_SPECS, type AircraftSpec } from "../../utils/aircraft-specs";
 import { H2, SECTION_WIDE } from "../layout";
 import { fmt, pct } from "../ui/format";
 import { type PipelineMap, pipelinePhrase } from "./pipeline";
-import { PROVIDER_LABEL, ProviderLegend, WIFI_CLASS } from "./providers";
+import { PROVIDER_LABEL, PROVIDER_ORDER, ProviderLegend, WIFI_CLASS } from "./providers";
 import { type FleetTypeLink, familyLabel, providerCounts } from "./type-bars";
 
 function pipelineNote(p: PipelineMap, tail: string): string {
@@ -160,6 +161,7 @@ export function HangarFloor({
   pipeline: PipelineMap;
   typeLinks: Map<string, FleetTypeLink>;
 }) {
+  const counts = providerCounts(families.flatMap((f) => f.tails));
   const count = (state: string) => [...pipeline.values()].filter((r) => r.state === state).length;
   const inMod = count("in_mod");
   const verifying = count("verification_needed");
@@ -171,6 +173,7 @@ export function HangarFloor({
       </p>
       <ProviderLegend
         className="mb-4"
+        providers={PROVIDER_ORDER.filter((p) => counts[p] > 0)}
         after={
           <>
             {inMod > 0 && (
@@ -216,12 +219,15 @@ export function HangarFloor({
 }
 
 function registryClass(t: FleetTail, pipeline: PipelineMap): string {
-  if (t.provider === "starlink") return "tail-sl";
+  if (isStarlinkProvider(t.provider)) return "tail-sl";
   return pipeline.has(t.tail) ? "tail-dim tail-pipe" : "tail-dim";
 }
 
 function registryDot(t: FleetTail, pipeline: PipelineMap): { ch: string; cls: string } {
   if (t.provider === "starlink") return { ch: "◉", cls: "" };
+  // Counted with Starlink, so it keeps the lit row, but a half-filled glyph
+  // says nobody has seen it carrying Starlink yet.
+  if (t.provider === "starlink_listed") return { ch: "◍", cls: "" };
   const state = pipeline.get(t.tail)?.state;
   if (state === "in_mod") return { ch: "○", cls: " dot-mod" };
   if (state === "verification_needed") return { ch: "◎", cls: " dot-verif" };

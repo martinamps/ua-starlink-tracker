@@ -17,7 +17,7 @@
 import type { Database } from "bun:sqlite";
 import { isOutsideProgramme } from "../airlines/registry";
 import { normalizeAircraftType } from "../observability/metrics";
-import { tailEquippedSql } from "./sql/equipped";
+import { listedVerifiedSql, tailEquippedSql } from "./sql/equipped";
 import { type AirlineFilter, withAirline } from "./sql/fragments";
 
 export interface RosterTail {
@@ -32,6 +32,9 @@ export interface RosterTail {
   verified_wifi: string | null;
   verified_at: number | null;
   equipped: boolean;
+  /** A listing names Starlink, so the tail is evidence tier "verified" rather
+   * than "listed". Equipped either way; only the display differs. */
+  listedVerified: boolean;
 }
 
 /** Every roster row in scope, in-programme or not, tail order. */
@@ -39,18 +42,23 @@ export function fleetRoster(db: Database, airline: AirlineFilter): RosterTail[] 
   const q = withAirline(
     `SELECT uf.airline, uf.tail_number, uf.aircraft_type, uf.fleet, uf.operated_by,
             uf.starlink_status, uf.verified_wifi, uf.verified_at,
-            ${tailEquippedSql("uf.tail_number", "uf.airline")} AS equipped
+            ${tailEquippedSql("uf.tail_number", "uf.airline")} AS equipped,
+            ${listedVerifiedSql("uf.tail_number", "uf.airline")} AS listed_verified
      FROM united_fleet uf WHERE 1=1`,
     airline,
     "uf"
   );
   const rows = db.query(`${q.sql} ORDER BY uf.tail_number`).all(...q.params) as Array<
-    Omit<RosterTail, "family" | "equipped"> & { equipped: number }
+    Omit<RosterTail, "family" | "equipped" | "listedVerified"> & {
+      equipped: number;
+      listed_verified: number;
+    }
   >;
   return rows.map((r) => ({
     ...r,
     family: normalizeAircraftType(r.aircraft_type),
     equipped: r.equipped === 1,
+    listedVerified: r.listed_verified === 1,
   }));
 }
 

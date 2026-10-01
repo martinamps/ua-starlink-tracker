@@ -250,8 +250,8 @@ export function InstallPipelineSection({
         Aircraft in a mod line now, from the community progress sheet
         {updated ? ` (updated ${updated} ET)` : ""}. The sheet keeps its own fleet list, so its
         totals run slightly different from our counts above. The in-mod and verifying counts are the
-        sheet's own totals; the tail chips are the aircraft we could read off its color coding, so
-        the two can differ by a few.
+        sheet's own totals; the tail chips are the aircraft we could read off its color coding, less
+        any the sheet still lists that we already count as equipped, so the two can differ by a few.
       </p>
       <div className="grid md:grid-cols-3 gap-4">
         {totals.map((seg) => {

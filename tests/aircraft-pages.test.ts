@@ -33,6 +33,7 @@ import { pct } from "../src/components/ui/format";
 import {
   bodyClassOf,
   getAircraftTypePageData,
+  getFleetPageData,
   getSitemapFlights,
   getSitemapRoutes,
 } from "../src/database/database";
@@ -243,7 +244,9 @@ describe("provider buckets (snapshot)", () => {
         expect(d.providers.starlink).toBe(d.starlink);
         const sum = Object.values(d.providers).reduce((a, b) => a + b, 0);
         expect(sum).toBe(d.total);
-        expect(d.checked).toBe(d.total - d.unchecked);
+        expect(d.checked).toBe(d.total - d.unchecked - d.providers.starlink_listed);
+        expect(d.equipped).toBe(d.starlink + d.listedAwaitingVerification.length);
+        expect(d.providers.starlink_listed).toBe(d.listedAwaitingVerification.length);
         expect(d.total).toBeGreaterThanOrEqual(1);
       }
       expect(seen).toBeGreaterThan(0);
@@ -756,6 +759,81 @@ function e175Fleet(db: Database) {
   addFleet(db, "N104SY", "unknown", { aircraftType: "E175SC", verifiedWifi: null });
   addFleet(db, "N105SY", "negative", { aircraftType: "E175SC", verifiedWifi: "None" });
 }
+
+describe("listed-but-unconfirmed tails (synthetic)", () => {
+  /** e175Fleet plus one tail the sheet lists and the verifier hasn't reached. */
+  function withListedTail(): Database {
+    const db = makeSyntheticDb();
+    e175Fleet(db);
+    listing(db, "N101SY", "2026-06-01");
+    listing(db, "N102SY", "2026-06-01");
+    addFleet(db, "N199SY", "unknown", { aircraftType: "ERJ-175", verifiedWifi: null });
+    listing(db, "N199SY", "2026-06-02");
+    return db;
+  }
+
+  test("it renders in its own Starlink bucket, inside the family's equipped count", () => {
+    const db = withListedTail();
+    const page = getFleetPageData(db, ["UA"]);
+    const listed = page.allTails.find((t) => t.tail === "N199SY");
+    expect(listed?.provider).toBe("starlink_listed");
+    for (const fam of page.families) {
+      const confirmed = fam.tails.filter((t) => t.provider === "starlink").length;
+      const reported = fam.tails.filter((t) => t.provider === "starlink_listed").length;
+      expect(confirmed + reported, fam.family).toBe(fam.starlink);
+    }
+    expect(page.families.reduce((s, f) => s + f.starlink, 0)).toBe(page.totalStarlink);
+    db.close();
+  });
+
+  test("the type page leads with the roster count and says the tail is unconfirmed", () => {
+    const db = withListedTail();
+    const page = getFleetPageData(db, ["UA"]);
+    const fam = page.families.find((f) => f.family === "E175");
+    const d = getAircraftTypePageData(db, "UA", "e175");
+    expect(d?.equipped).toBe(fam?.starlink);
+    expect(d?.starlink).toBeLessThan(fam?.starlink as number);
+    expect(d?.listedAwaitingVerification).toEqual(["N199SY"]);
+    const def = aircraftPagesFor("UA").find((x) => x.slug === "e175") as AircraftPageDef;
+    const answer = answerFor(d as AircraftTypePageData, def, null);
+    expect(answer.effective).toBe(fam?.starlink);
+    expect(answer.sentence).toContain("not yet confirmed on united.com");
+    db.close();
+  });
+});
+
+describe("pipeline rows versus the equipped flag (synthetic)", () => {
+  const pipelineRow = (db: Database, tail: string, state: string) =>
+    db
+      .query(
+        `INSERT INTO fleet_progress_tails (airline, segment, type_code, tail, state, mod_location, fetched_at)
+         VALUES ('UA', 'express', 'E7W', ?, ?, 'MLB', 1)`
+      )
+      .run(tail, state);
+
+  test("an equipped tail is never shown in a mod line; a pending one still is", () => {
+    const db = makeSyntheticDb();
+    e175Fleet(db);
+    listing(db, "N101SY", "2026-06-01");
+    pipelineRow(db, "N101SY", "in_mod");
+    pipelineRow(db, "N104SY", "in_mod");
+    const page = getFleetPageData(db, ["UA"]);
+    const shown = page.progressTails.map((r) => r.tail);
+    expect(shown).not.toContain("N101SY");
+    expect(shown).toContain("N104SY");
+    db.close();
+  });
+
+  test("every pipeline row the pages show is a tail we do not count as equipped", () => {
+    const equipped = new Set(
+      getFleetPageData(snap, ["UA"])
+        .allTails.filter((t) => t.provider === "starlink" || t.provider === "starlink_listed")
+        .map((t) => t.tail)
+    );
+    const shown = getFleetPageData(snap, ["UA"]).progressTails;
+    for (const r of shown) expect(equipped.has(r.tail), r.tail).toBe(false);
+  });
+});
 
 describe("routes and flight numbers (synthetic)", () => {
   test("only Starlink tails of the family fly the routes; hrefs all serve", () => {

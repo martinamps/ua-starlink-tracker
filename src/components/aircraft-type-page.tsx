@@ -95,7 +95,7 @@ function TailMatrix({
   return (
     <div
       className="mt-5 border-t border-subtle pt-4"
-      data-equipped={data.starlink}
+      data-equipped={data.equipped}
       data-total={data.total}
       data-official={official ? official.count : undefined}
     >
