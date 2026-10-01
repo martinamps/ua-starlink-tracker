@@ -81,6 +81,19 @@ export async function collectMasterRows(
   return out;
 }
 
+/** ACFTREF is optional: see the call site. Any read failure yields no models. */
+export async function collectAcftrefOptional(
+  open: () => AsyncIterable<string> | Iterable<string>,
+  wantedCodes: ReadonlySet<string>
+): Promise<Map<string, string>> {
+  try {
+    return await collectAcftref(open(), wantedCodes);
+  } catch (e) {
+    warn("faa-registry: ACFTREF unavailable, leaving aircraft models blank", { error: String(e) });
+    return new Map();
+  }
+}
+
 export async function collectAcftref(
   lines: AsyncIterable<string> | Iterable<string>,
   wantedCodes: ReadonlySet<string>
@@ -230,8 +243,12 @@ export async function runFaaRegistrySync(
           collectMasterRows(loadLines("MASTER.txt"), wanted),
           collectDereg(loadLines("DEREG.txt"), wanted),
         ]);
-        const acftref = await collectAcftref(
-          loadLines("ACFTREF.txt"),
+        // The FAA dropped ACFTREF.txt from the bulk zip on 2026-09-30, which
+        // failed the whole sync (unzip exits 11 on a missing member). It only
+        // supplies faa_model, a display field nothing reads, so a miss leaves
+        // the model null rather than losing the registration data we do use.
+        const acftref = await collectAcftrefOptional(
+          () => loadLines("ACFTREF.txt"),
           new Set([...master.values()].map((m) => m.mfrMdlCode))
         );
 
