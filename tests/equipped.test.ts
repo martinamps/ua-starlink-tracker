@@ -15,6 +15,7 @@ import {
 import {
   equippedSql,
   isEquipped,
+  isStarlinkProvider,
   rowEvidence,
   starlinkFlag,
   tailEquippedSql,
@@ -184,6 +185,18 @@ describe("equipped: SQL predicate and JS twin", () => {
         .get(r.tail_number) as { starlink: number | null };
       expect(logged.starlink, r.tail_number).toBe(starlinkFlag(rowEvidence(r)));
     }
+    db.close();
+  });
+
+  test("every equipped tail renders in a Starlink provider bucket", () => {
+    const { db } = seeded();
+    const page = getFleetPageData(db, ["UA"]);
+    const buckets = page.allTails.filter((t) => isStarlinkProvider(t.provider));
+    expect(buckets.length).toBe(page.totalStarlink);
+    // The seed covers every evidence combination, so both buckets are present:
+    // a square that is counted but unconfirmed must not fall back to "unknown".
+    expect(buckets.some((t) => t.provider === "starlink")).toBe(true);
+    expect(buckets.some((t) => t.provider === "starlink_listed")).toBe(true);
     db.close();
   });
 

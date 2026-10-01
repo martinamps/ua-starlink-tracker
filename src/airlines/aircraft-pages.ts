@@ -385,6 +385,7 @@ export function tenantCopy(code: string): TenantCopy {
 
 export const PROVIDER_NAMES: Record<WifiProvider, string> = {
   starlink: "Starlink",
+  starlink_listed: "Starlink, reported but unconfirmed",
   viasat: "Viasat",
   panasonic: "Panasonic",
   thales: "Thales",
@@ -422,6 +423,7 @@ type AnswerInput = Pick<
   | "airline"
   | "total"
   | "starlink"
+  | "equipped"
   | "knownOther"
   | "unchecked"
   | "listedAwaitingVerification"
@@ -467,13 +469,23 @@ export function answerFor(
   const L = copy.checksEveryTail ? data.listedAwaitingVerification.length : 0;
   const O = official;
   const rosterShort = O !== null && !O.all && O.count >= T;
-  const E = O ? Math.max(s, Math.min(O.count, T)) : s;
-  const attributed = O !== null && O.count > s;
+  // Counts quoted include the listed-but-unconfirmed tails, so a type page can
+  // never undercut the roster figure /fleet and MCP report. Which verdict we
+  // reach still turns on `s`: nothing is called confirmed on a listing alone.
+  const own = s + L;
+  const E = O ? Math.max(own, Math.min(O.count, T)) : own;
+  const attributed = O !== null && O.count > own;
   const share = pct(E, T);
   const short = def.short;
   const shorts = `${short}s`;
   const oDate = O ? formatFactDate(O.asOf) : "";
-  const listedTail = L > 0 ? ` +${L} more listed, awaiting a united.com check.` : "";
+  const listedTail =
+    L > 0
+      ? ` ${L} of ${plural(L, "them is", "them are")} listed by the fleet sheet and not yet confirmed on united.com.`
+      : "";
+  // "each verified against united.com" cannot be said of a count that carries
+  // listed tails; listedTail then does the attributing.
+  const verifiedNote = L > 0 ? "" : `, ${copy.evidence}`;
   const uncheckedTail =
     copy.checksEveryTail && U > 0 ? ` ${U} ${plural(U, "tail")} not checked yet.` : "";
   const staleOfficial =
@@ -522,7 +534,7 @@ export function answerFor(
       return build(
         "all",
         "Yes, every one.",
-        `${copy.airline} reports all ${O.count} of its ${shorts} connected (tracker updated ${oDate}), and ${ours}.`,
+        `${copy.airline} reports all ${O.count} of its ${shorts} connected (tracker updated ${oDate}), and ${ours}.${listedTail}`,
         `Every ${copy.airline} ${short} has Starlink per ${copy.possessive} own count, so it's near-certain unless the aircraft is swapped for another type.`
       );
     }
@@ -532,7 +544,7 @@ export function answerFor(
     return build(
       "all",
       "Yes, every one.",
-      `All ${T} ${copy.airline} ${shorts} have Starlink, each ${copy.evidence}.${officialNote}`,
+      `All ${T} ${copy.airline} ${shorts} have Starlink${verifiedNote}.${listedTail}${officialNote}`,
       `Every ${copy.airline} ${short} has Starlink, so it's near-certain unless the aircraft is swapped for another type.`
     );
   }
@@ -541,12 +553,12 @@ export function answerFor(
     return build(
       "all_checked",
       "Every one we've checked.",
-      `${s} of ${T} ${copy.airline} ${shorts} have Starlink, ${copy.evidence}; ${U} ${plural(U, "tail")} not checked yet.`,
+      `${E} of ${T} ${copy.airline} ${shorts} have Starlink${verifiedNote}.${listedTail} ${U} ${plural(U, "tail")} not checked yet.`,
       `Every ${short} we've checked has Starlink, so it's near-certain unless the aircraft is swapped for another type or you draw ${U === 1 ? "the one unchecked tail" : `one of the ${U} unchecked`}.`
     );
   }
 
-  if (E > 0) {
+  if (s > 0 || (O !== null && O.count > 0)) {
     const most = E / T >= 0.5;
     const kind = most ? "most" : "some";
     const lead = E === 1 ? "One does" : most ? "Most do" : "Some do";
@@ -561,7 +573,9 @@ export function answerFor(
     return build(
       kind,
       `${lead}: ${E} of ${T} (${share}).`,
-      `Every Starlink ${short} counted here is ${copy.evidence}.${uncheckedTail}${listedTail}`,
+      L > 0
+        ? `${s} of ${plural(s, "them is", "them are")} ${copy.evidence}.${listedTail}${uncheckedTail}`
+        : `Every Starlink ${short} counted here is ${copy.evidence}.${uncheckedTail}`,
       `${share} of ${copy.possessive} ${shorts} have Starlink (${E} of ${T}). ${SWAP_NOTE}`
     );
   }
@@ -635,7 +649,7 @@ export const TITLE_MAX = 60;
  * for a type that is merely unverified.
  */
 export function aircraftTypeTitle(
-  data: Pick<AircraftTypePageData, "airline" | "total" | "starlink">,
+  data: Pick<AircraftTypePageData, "airline" | "total" | "equipped">,
   def: AircraftPageDef,
   answer: Pick<AircraftAnswer, "kind" | "effective" | "official"> &
     Partial<Pick<AircraftAnswer, "rosterShort">>
@@ -645,7 +659,7 @@ export function aircraftTypeTitle(
   const T = data.total;
   const E = answer.effective;
   const O = answer.official;
-  const perAirline = O !== null && O.count > data.starlink;
+  const perAirline = O !== null && O.count > data.equipped;
   const ladder: string[] = [];
   switch (answer.kind) {
     case "all":
@@ -655,7 +669,7 @@ export function aircraftTypeTitle(
       );
       break;
     case "all_checked":
-      ladder.push(`${airline} ${s} Starlink: Every One Checked (${data.starlink})`);
+      ladder.push(`${airline} ${s} Starlink: Every One Checked (${E})`);
       break;
     case "most":
     case "some":

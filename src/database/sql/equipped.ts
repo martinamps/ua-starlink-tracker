@@ -17,7 +17,7 @@
  * Equipped = 3 or 4.
  */
 
-import type { StarlinkStatus } from "../../types";
+import type { StarlinkStatus, WifiProvider } from "../../types";
 
 export type TailEvidence =
   | "settled_negative"
@@ -45,6 +45,11 @@ export function tailEvidence({ listed, fleet }: TailEvidenceInput): TailEvidence
 
 export function isEquipped(e: TailEvidence): boolean {
   return e === "verified" || e === "listed";
+}
+
+/** The provider buckets an equipped tail renders in: "verified" and "listed". */
+export function isStarlinkProvider(p: WifiProvider): boolean {
+  return p === "starlink" || p === "starlink_listed";
 }
 
 /**
@@ -90,6 +95,20 @@ export function tailEquippedSql(tailExpr: string, airlineExpr?: string): string 
   return `EXISTS (
     SELECT 1 FROM starlink_planes _eq
     WHERE _eq.TailNumber = ${tailExpr}${scope} AND ${equippedSql("_eq")}
+  )`;
+}
+
+/**
+ * SQL: a listing for the tail names Starlink — evidence tier "verified" rather
+ * than "listed". A correlated EXISTS, not a join, because starlink_planes has
+ * no uniqueness guarantee on (TailNumber, airline) and a roster row must not
+ * be able to duplicate.
+ */
+export function listedVerifiedSql(tailExpr: string, airlineExpr: string): string {
+  return `EXISTS (
+    SELECT 1 FROM starlink_planes _lv
+    WHERE _lv.TailNumber = ${tailExpr} AND _lv.airline = ${airlineExpr}
+      AND _lv.verified_wifi = 'Starlink'
   )`;
 }
 

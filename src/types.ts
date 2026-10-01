@@ -133,7 +133,17 @@ export interface FleetAircraft {
 
 // ============ /fleet page data ============
 
-export type WifiProvider = "starlink" | "viasat" | "panasonic" | "thales" | "none" | "unknown";
+/** `starlink_listed` is equipped on the one definition (sql/equipped.ts
+ * "listed") but not yet observed carrying Starlink, so it counts inside every
+ * Starlink total while staying visibly unconfirmed. */
+export type WifiProvider =
+  | "starlink"
+  | "starlink_listed"
+  | "viasat"
+  | "panasonic"
+  | "thales"
+  | "none"
+  | "unknown";
 export type BodyClass = "regional" | "narrowbody" | "widebody";
 
 export interface FleetTail {
@@ -448,7 +458,11 @@ export interface AircraftTypePageData {
   family: string;
   /** Same counting path as the /fleet family row and /api/fleet-summary. */
   total: number;
+  /** Observed carrying Starlink. */
   starlink: number;
+  /** Equipped on the one definition: `starlink` plus the listed-but-unconfirmed
+   * tails, so it equals the /fleet family row and MCP get_fleet_stats. */
+  equipped: number;
   providers: Record<WifiProvider, number>;
   checked: number;
   knownOther: number;
@@ -456,7 +470,7 @@ export interface AircraftTypePageData {
   tails: FleetTail[];
   starlinkTails: FleetTail[];
   variants: AircraftTypeVariant[] | null;
-  /** Listed with Starlink by a non-bulk source, not yet checked by the verifier. */
+  /** Equipped, but no observation of Starlink on the tail yet. */
   listedAwaitingVerification: string[];
   firstSeen: string | null;
   recentInstalls: AircraftTypeInstall[];

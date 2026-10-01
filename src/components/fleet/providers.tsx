@@ -5,6 +5,7 @@ import { fmt } from "../ui/format";
 
 export const PROVIDER_ORDER: WifiProvider[] = [
   "starlink",
+  "starlink_listed",
   "viasat",
   "panasonic",
   "thales",
@@ -14,6 +15,7 @@ export const PROVIDER_ORDER: WifiProvider[] = [
 
 export const PROVIDER_LABEL: Record<WifiProvider, string> = {
   starlink: "Starlink",
+  starlink_listed: "Starlink, reported but not yet confirmed",
   viasat: "Viasat",
   panasonic: "Panasonic",
   thales: "Thales",
@@ -24,6 +26,7 @@ export const PROVIDER_LABEL: Record<WifiProvider, string> = {
 /** Spelled out whole so the class names appear verbatim in source. */
 export const WIFI_CLASS: Record<WifiProvider, string> = {
   starlink: "wifi-starlink",
+  starlink_listed: "wifi-starlink-listed",
   viasat: "wifi-viasat",
   panasonic: "wifi-panasonic",
   thales: "wifi-thales",
@@ -34,7 +37,15 @@ export const WIFI_CLASS: Record<WifiProvider, string> = {
 export type ProviderCounts = Record<WifiProvider, number>;
 
 export function emptyProviderCounts(): ProviderCounts {
-  return { starlink: 0, viasat: 0, panasonic: 0, thales: 0, none: 0, unknown: 0 };
+  return {
+    starlink: 0,
+    starlink_listed: 0,
+    viasat: 0,
+    panasonic: 0,
+    thales: 0,
+    none: 0,
+    unknown: 0,
+  };
 }
 
 function Swatch({ provider, className = "" }: { provider: WifiProvider; className?: string }) {

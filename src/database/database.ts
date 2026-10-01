@@ -84,6 +84,7 @@ import { countRoster, fleetRoster, programmeRoster } from "./roster";
 import {
   equippedSql,
   fleetStatusFromWifi,
+  isStarlinkProvider,
   rowEvidence,
   settledNegativeJoin,
   verifiedEquippedSql,
@@ -5838,6 +5839,18 @@ function computeInstallPace(
   };
 }
 
+function emptyProviders(): Record<WifiProvider, number> {
+  return {
+    starlink: 0,
+    starlink_listed: 0,
+    viasat: 0,
+    panasonic: 0,
+    thales: 0,
+    none: 0,
+    unknown: 0,
+  };
+}
+
 function computeFleetPageData(db: Database, airline?: AirlineFilter): FleetPageData {
   const rows = programmeRoster(db, airline);
 
@@ -5845,9 +5858,9 @@ function computeFleetPageData(db: Database, airline?: AirlineFilter): FleetPageD
   const familyMap = new Map<string, FleetFamily>();
   const carrierMap = new Map<string, { confirmed: number; total: number }>();
   const bodyClass = {
-    regional: { starlink: 0, viasat: 0, panasonic: 0, thales: 0, none: 0, unknown: 0 },
-    narrowbody: { starlink: 0, viasat: 0, panasonic: 0, thales: 0, none: 0, unknown: 0 },
-    widebody: { starlink: 0, viasat: 0, panasonic: 0, thales: 0, none: 0, unknown: 0 },
+    regional: emptyProviders(),
+    narrowbody: emptyProviders(),
+    widebody: emptyProviders(),
   } as Record<BodyClass, Record<WifiProvider, number>>;
 
   let totalStarlink = 0;
@@ -5859,8 +5872,14 @@ function computeFleetPageData(db: Database, airline?: AirlineFilter): FleetPageD
     // definition doesn't count (a settle or listing says otherwise) is a
     // conflict, shown as unchecked rather than as a second Starlink count.
     const rawProvider = normalizeWifiProvider(r.verified_wifi);
-    const provider: WifiProvider =
-      rawProvider === "other" || (rawProvider === "starlink" && !equipped)
+    const provider: WifiProvider = equipped
+      ? // Every equipped tail lands in a Starlink bucket, so the squares always
+        // add up to the count the header, the type bars and MCP report. Without
+        // an observation of its own it is "reported, not confirmed".
+        rawProvider === "starlink" || r.listedVerified
+        ? "starlink"
+        : "starlink_listed"
+      : rawProvider === "other" || rawProvider === "starlink"
         ? "unknown"
         : (rawProvider as WifiProvider);
     const body = bodyClassOf(family);
@@ -5915,6 +5934,8 @@ function computeFleetPageData(db: Database, airline?: AirlineFilter): FleetPageD
     }))
     .sort((a, b) => Number(!!a.unattributed) - Number(!!b.unattributed) || b.pct - a.pct);
 
+  const equippedTails = new Set(rows.filter((r) => r.equipped).map((r) => r.tail_number));
+
   const pulse = computePulse(db, airline);
   // Install pace is a single-airline narrative (its projection extrapolates one
   // airline's retrofit program); the hub's mixed fleet gets no pace section.
@@ -5938,7 +5959,13 @@ function computeFleetPageData(db: Database, airline?: AirlineFilter): FleetPageD
     // one airline's pipeline as if it covered every tracked fleet.
     progress: soleAirline ? getFleetProgress(db, airline) : [],
     anchors: soleAirline ? getFleetAnchors(db, airline) : [],
-    progressTails: soleAirline ? getFleetProgressTails(db, airline) : [],
+    // The community sheet lags united.com, so it still carries tails we have
+    // already settled as equipped. Showing one as "in mod" or "awaiting
+    // verification" contradicts the same page's own equipped count, so the
+    // pipeline only speaks for tails that are not equipped yet.
+    progressTails: soleAirline
+      ? getFleetProgressTails(db, airline).filter((r) => !equippedTails.has(r.tail))
+      : [],
     movements: soleAirline ? computeFleetMovements(db, airline) : [],
   };
 }
@@ -6551,15 +6578,11 @@ function aircraftTypePages(db: Database, airline: string): Map<string, AircraftT
   return hit.pages;
 }
 
-/** Equipped tails observed on Starlink: a type page's lead count. Its listed,
- * not-yet-checked tails are listedAwaitingVerification, so the two add up to
- * the family's equipped count. */
+/** Equipped tails observed on Starlink. Its listed, not-yet-confirmed tails are
+ * listedAwaitingVerification, and the two add up to `equipped` — the family's
+ * count on /fleet, /api/fleet-summary and MCP. */
 function verifiedStarlink(tails: readonly FleetTail[]): FleetTail[] {
   return tails.filter((t) => t.provider === "starlink");
-}
-
-function emptyProviders(): Record<WifiProvider, number> {
-  return { starlink: 0, viasat: 0, panasonic: 0, thales: 0, none: 0, unknown: 0 };
 }
 
 function maxOf(db: Database, sql: string, airline: string): number | null {
@@ -6578,8 +6601,6 @@ function computeAircraftTypePages(
   const fleet = getFleetPageData(db, [airline]);
   const families = new Map(fleet.families.map((f) => [f.family, f]));
   const tailFamily = new Map(fleet.allTails.map((t) => [t.tail, t.family]));
-  const providerOf = new Map(fleet.allTails.map((t) => [t.tail, t.provider]));
-
   const dataClock = maxOf(
     db,
     "SELECT MAX(checked_at) AS t FROM starlink_verification_log WHERE airline = ?",
@@ -6601,13 +6622,8 @@ function computeAircraftTypePages(
     .all(airline) as Array<{ tail: string; found: string | null; gid: string | null }>;
   const firstSyncDays = flyertalkFirstSyncDays(db);
   const organicFirstSeen = new Map<string, string>();
-  const listedUnverified = new Set<string>();
   for (const r of listings) {
     if (isBulkRow(r.gid, r.found, firstSyncDays)) continue;
-    // Only tails the verifier hasn't reached: a listing for a tail it found on
-    // Viasat is a conflict, and never feeds a positive word. A mass-write day
-    // still counts here; it only disqualifies the date.
-    if (providerOf.get(r.tail) === "unknown") listedUnverified.add(r.tail);
     const day = r.found ? r.found.slice(0, 10) : null;
     if (day && massDays.has(day)) continue;
     if (!day || !/^\d{4}-\d{2}-\d{2}$/.test(day)) continue;
@@ -6696,6 +6712,7 @@ function computeAircraftTypePages(
     const providers = emptyProviders();
     for (const t of fam.tails) providers[t.provider]++;
     const starlinkTails = verifiedStarlink(fam.tails);
+    const listedTails = fam.tails.filter((t) => t.provider === "starlink_listed");
 
     let variants: AircraftTypePageData["variants"] = null;
     if (def.variants) {
@@ -6706,7 +6723,7 @@ function computeAircraftTypePages(
         if (i < 0) continue;
         matched++;
         counts[i].total++;
-        if (t.provider === "starlink") counts[i].starlink++;
+        if (isStarlinkProvider(t.provider)) counts[i].starlink++;
       }
       if (matched === fam.total) variants = counts.filter((c) => c.total > 0);
     }
@@ -6792,16 +6809,15 @@ function computeAircraftTypePages(
       family: def.family,
       total: fam.total,
       starlink: starlinkTails.length,
+      equipped: fam.starlink,
       providers,
-      checked: fam.total - providers.unknown,
+      checked: fam.total - providers.unknown - providers.starlink_listed,
       knownOther: providers.viasat + providers.panasonic + providers.thales + providers.none,
       unchecked: providers.unknown,
       tails: fam.tails,
       starlinkTails,
       variants,
-      listedAwaitingVerification: fam.tails
-        .filter((t) => listedUnverified.has(t.tail))
-        .map((t) => t.tail),
+      listedAwaitingVerification: listedTails.map((t) => t.tail),
       firstSeen: firstSeenRows.at(-1)?.date ?? null,
       recentInstalls: firstSeenRows.slice(0, TYPE_RECENT_INSTALLS),
       pipeline,
