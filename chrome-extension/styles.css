@@ -5,7 +5,6 @@
 .starlink-wifi-badge {
   display: inline-flex !important;
   align-items: center;
-  margin-left: 8px;
   padding: 4px 10px;
   border-radius: 12px;
   font-size: 12px;

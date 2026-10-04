@@ -342,6 +342,7 @@ describe("badging policy", () => {
       "Starlink (installed)"
     );
     expect(extLib.badgeLabel(predicted(0.876))).toBe("Starlink ~88%");
+    expect(extLib.badgeLabel(predicted(0.998))).toBe("Starlink ~99%");
     expect(extLib.badgeTitle({ ...extLib.unknownClaim(), status: "installed" })).toContain(
       "not yet verified"
     );
@@ -816,14 +817,38 @@ describe("extension release guardrails", () => {
     expect(manifest.version).toMatch(/^\d{1,2}\.\d{1,3}\.\d{1,3}$/);
   });
 
-  test("2.1 names Qatar within the store's description limit, same matches", () => {
-    expect(manifest.version).toBe("2.1.0");
+  test("2.1 names Qatar within the store's description limit", () => {
     expect(manifest.description.length).toBeLessThanOrEqual(132);
     expect(manifest.description).toContain("Qatar");
-    expect(manifest.content_scripts[0].matches).toEqual([
+  });
+
+  // Google Flights is a single-page app: starting on /travel/flights (the
+  // home page, or a ?q= link from Search) and searching never loads a new
+  // document, so a match that requires "/travel/flights/" never injected the
+  // content script for that whole session. The matches stay on the one host
+  // 1.2.0 already scripted; Chrome's permission prompt is per host, not path.
+  test("content scripts match Flights' home and search URLs on the 1.2.0 host only", () => {
+    const matches: string[] = manifest.content_scripts.flatMap(
+      (cs: { matches: string[] }) => cs.matches
+    );
+    expect(matches).toEqual([
       "https://www.google.com/flights/*",
-      "https://www.google.com/travel/flights/*",
+      "https://www.google.com/travel/flights*",
     ]);
+    for (const m of matches) expect(new URL(m.replace("*", "")).host).toBe("www.google.com");
+    const glob = (pattern: string) =>
+      new RegExp(`^${pattern.replace(/[.?]/g, "\\$&").replace(/\*/g, ".*")}$`);
+    const covered = (url: string) => matches.some((m) => glob(m).test(url));
+    for (const url of [
+      "https://www.google.com/travel/flights",
+      "https://www.google.com/travel/flights?hl=en",
+      "https://www.google.com/travel/flights?q=Flights%20to%20EWR%20from%20SFO",
+      "https://www.google.com/travel/flights/search?tfs=CBwQAhoe",
+      "https://www.google.com/travel/flights/booking?tfs=CBwQAhoe",
+    ]) {
+      expect(covered(url)).toBe(true);
+    }
+    expect(covered("https://www.google.com/search?q=flights")).toBe(false);
   });
 
   test("the package ships the runtime files and no docs", async () => {
@@ -841,8 +866,8 @@ describe("extension release guardrails", () => {
     expect(parseListingVersion("<html>no version here</html>")).toBeNull();
   });
 
-  test("2.1.0 is the leg-scoped build", () => {
-    expect(manifest.version).toBe("2.1.0");
+  test("2.1.1 is the first store build of the leg-scoped series", () => {
+    expect(manifest.version).toBe("2.1.1");
   });
 });
 
@@ -950,7 +975,7 @@ describe("leg-scoped lookups", () => {
       prediction: { probability: 0.9, confidence: "high", n_observations: 40 },
       flights: [],
     };
-    const leg = { origin: "DEN", destination: "DRO", match: "unmatched", otherLegs: [] };
+    const leg = { origin: "DEN", destination: "DRO", match: "exact", otherLegs: [] };
     const plain = extLib.normalizeClaim(predicted);
     const scoped = extLib.normalizeClaim({ ...predicted, leg });
     const { leg: echoed, ...rest } = scoped;
@@ -963,6 +988,26 @@ describe("leg-scoped lookups", () => {
       leg: { ...leg, match: "unscoped", reason: "invalid_airport" },
     });
     expect("leg" in unscoped).toBe(false);
+  });
+
+  // The server answered for the flight number, not this leg: a tooltip naming
+  // the leg would assert leg-specific odds the response disclaimed.
+  test("only an exact leg match is echoed; the grade is unchanged either way", () => {
+    const predicted = {
+      hasStarlink: null,
+      confidence: "predicted",
+      prediction: { probability: 0.9, confidence: "high", n_observations: 40 },
+      flights: [],
+    };
+    const plain = extLib.normalizeClaim(predicted);
+    for (const match of ["origin", "unmatched", "no_data"]) {
+      const claim = extLib.normalizeClaim({
+        ...predicted,
+        leg: { origin: "DEN", destination: "DRO", match, otherLegs: [] },
+      });
+      expect("leg" in claim).toBe(false);
+      expect(claim).toEqual(plain);
+    }
   });
 
   test("the tooltip names the leg that set a multi-leg badge", () => {
@@ -983,6 +1028,23 @@ describe("leg-scoped lookups", () => {
     const twin = { ...strong, flightNumber: "UA1217", leg: { origin: "DEN", destination: "DRO" } };
     const agreed = extLib.combineClaims([strong, twin]);
     expect(extLib.cardBadgeTitle(agreed, [strong, twin])).toBe(extLib.badgeTitle(agreed));
+    // No exact leg echo: name the flight that set the badge, not a route.
+    const { leg: _leg, ...weakNoLeg } = weak;
+    const unlegged = extLib.combineClaims([strong, weakNoLeg]);
+    expect(extLib.cardBadgeTitle(unlegged, [strong, weakNoLeg])).toBe(
+      `UA1217: ${extLib.badgeTitle(unlegged)}`
+    );
+  });
+
+  test("settled cards: a stripped badge is restored, a reused card is redone", () => {
+    const badged = { signature: "SFO-EWR-UA-1-20261005", badged: true };
+    const bare = { signature: "SFO-EWR-UA-2-20261005", badged: false };
+    expect(extLib.settledCardAction(undefined, "x", false)).toBe("process");
+    expect(extLib.settledCardAction(badged, badged.signature, true)).toBe("skip");
+    expect(extLib.settledCardAction(badged, badged.signature, false)).toBe("restore");
+    expect(extLib.settledCardAction(bare, bare.signature, false)).toBe("skip");
+    expect(extLib.settledCardAction(badged, bare.signature, true)).toBe("process");
+    expect(extLib.settledCardAction(bare, badged.signature, false)).toBe("process");
   });
 
   test("a scoped UA response normalizes inside the ladder", async () => {

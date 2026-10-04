@@ -309,10 +309,15 @@ const StarlinkTrackerLib = (() => {
     return claim;
   }
 
-  /** The server's leg echo when the answer really is about that leg. */
+  /**
+   * The server's leg echo, only when the answer is about exactly that leg.
+   * On "origin", "unmatched" and "no_data" the server found nothing (or a
+   * different hop) for the requested leg and answered for the flight number,
+   * so a tooltip naming the leg would assert odds the server disclaimed.
+   */
   function scopedLegEcho(leg) {
     if (!leg || typeof leg !== "object") return null;
-    if (leg.match === "unscoped" || !AIRPORT_RE.test(leg.origin ?? "")) return null;
+    if (leg.match !== "exact" || !AIRPORT_RE.test(leg.origin ?? "")) return null;
     return {
       origin: leg.origin,
       destination: AIRPORT_RE.test(leg.destination ?? "") ? leg.destination : null,
@@ -398,8 +403,9 @@ const StarlinkTrackerLib = (() => {
 
   // ── badge copy ─────────────────────────────────────────────────────────────
 
+  // A prediction is never a certainty, so it never reads as 100%.
   function roundPct(probability) {
-    return Math.round(probability * 100);
+    return Math.min(99, Math.round(probability * 100));
   }
 
   function badgeLabel(claim) {
@@ -453,7 +459,7 @@ const StarlinkTrackerLib = (() => {
     if (claim.status === "installed") {
       return `Aircraft is Starlink-equipped per fleet data${airline} — not yet verified against the airline's site.`;
     }
-    return `Verified Starlink WiFi${airline}`;
+    return `Verified Starlink WiFi${airline}: the aircraft assigned to this flight was confirmed Starlink-equipped on the airline's own site. A last-minute swap can change this.`;
   }
 
   /**
@@ -469,9 +475,26 @@ const StarlinkTrackerLib = (() => {
       (c) => c.status !== combined.status || c.probability !== combined.probability
     );
     const { leg, flightNumber } = combined;
-    if (!disagree || !leg || typeof flightNumber !== "string") return title;
+    if (!disagree || typeof flightNumber !== "string") return title;
+    if (!leg) return `${flightNumber}: ${title}`;
     const route = leg.destination ? `${leg.origin}→${leg.destination}` : `from ${leg.origin}`;
     return `${flightNumber} ${route}: ${title}`;
+  }
+
+  /**
+   * What a pass owes a card it already settled. Google re-renders result
+   * cards in place (expanding one rebuilds every card's contents), which
+   * strips badges from cards a pass has retired, and it can patch a different
+   * itinerary into the same element. `entry` is what the card was settled
+   * with ({signature, badged}); `signature` is its itinerary now.
+   *   "process": never settled, or it now shows a different itinerary
+   *   "restore": same itinerary, but the page removed its badge
+   *   "skip":    nothing to do
+   */
+  function settledCardAction(entry, signature, hasBadge) {
+    if (!entry || entry.signature !== signature) return "process";
+    if (entry.badged && !hasBadge) return "restore";
+    return "skip";
   }
 
   function badgeClass(claim) {
@@ -673,6 +696,7 @@ const StarlinkTrackerLib = (() => {
     badgeLabel,
     badgeTitle,
     cardBadgeTitle,
+    settledCardAction,
     badgeClass,
     badgeColors,
     localTodayIso,
