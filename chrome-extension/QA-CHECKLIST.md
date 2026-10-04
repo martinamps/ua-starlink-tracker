@@ -10,7 +10,7 @@ testing; set it back before release.
 
 ## Setup sanity
 
-- [ ] `chrome://extensions` shows version 2.1.0, no errors on the card
+- [ ] `chrome://extensions` shows version 2.1.1, no errors on the card
 - [ ] Service worker "Inspect views" console shows no errors on load
 - [ ] Permissions listed: only unitedstarlinktracker.com — no storage, no new hosts
 
@@ -25,27 +25,30 @@ testing; set it back before release.
       wording and (for predictions) observation count
 - [ ] DevTools Network tab (service worker): UA lookups go to
       `unitedstarlinktracker.com/api/check-flight` and carry
-      `&client=ext-2.1.0` after `flight_number` and `date` (and after
+      `&client=ext-2.1.1` after `flight_number` and `date` (and after
       `origin`/`destination` on itinerary-decoded cards)
 
-## Hawaiian / Alaska (hub endpoint)
+## Alaska / Hawaiian-operated (hub endpoint)
 
-- [ ] Search HNL → LAX within ~2 days: Hawaiian results get badges; lookups go
-      to `airlinestarlinktracker.com/api/check-any-flight`
+Google Flights lists Hawaiian-operated flights only under Alaska `AS` numbers
+(no `HA` numbers appear in results), so every check here is an `AS` lookup.
+
+- [ ] Search HNL → LAX within ~2 days: the Hawaiian-operated AS8xx results get
+      badges; lookups go to `airlinestarlinktracker.com/api/check-any-flight`
+      with `flight_number=AS8…`
 - [ ] Search SEA → PDX within ~2 days: Alaska/Horizon E175 results get badges
 - [ ] Far-future SEA → PDX (E175 regional, AS2000+): gray "Starlink ~100%"
       badges — Alaska's subfleet answer carries a probability past the
       assignment window
 - [ ] Far-future SEA → LAX (mainline 737, AS1-1999): no badge — the mainline
       subfleet is mid-rollout, far below the 80% bar
-- [ ] Far-future HNL → LAX: Hawaiian metal now sells mostly as AS800-999
-      (AS-marketed on HA A330/A321neo). Those results get a gray
-      "Starlink ~100%" badge from the `hawaiian_metal` subfleet. Until the
-      registry range is widened past AS899, AS900-999 shows no badge
+- [ ] Far-future HNL → LAX: the AS800-899 results (Hawaiian A330/A321neo) get
+      a gray "Starlink ~100%" badge from the `hawaiian_metal` subfleet. Until
+      the registry range is widened past AS899, AS900-999 shows no badge
 - [ ] Far-future HNL → OGG (interisland, AS1000-1299 on the 717): no badge
-- [ ] Far-future HA-marketed flights (HA1-HA999): no badge. HA's answer is a
-      per-type split, which carries no single probability — an honest
-      abstention, not a bug (see README "Coverage windows differ by airline")
+- [ ] (Dead-safe path, only if Google shows `HA` numbers again) a far-future
+      HA-numbered flight gets no badge: HA's answer is a per-type split with no
+      single probability (see README "Coverage windows differ by airline")
 
 ## Qatar (hub endpoint, equipment type)
 
@@ -93,8 +96,15 @@ testing; set it back before release.
 - [ ] Desktop (≥1024px): badge sits inline after the flight times when Google's
       current markup allows; otherwise it appears pinned to the card corner —
       either way, never overlapping content illegibly
-- [ ] Narrow window (<1024px): corner badge form; resize across the breakpoint
-      re-renders badges without duplicates
+- [ ] Narrow window (<1024px): corner badge form, its left edge just outside
+      the card's; resize across the breakpoint re-renders badges without
+      duplicates
+- [ ] Start on the Flights home page (`google.com/travel/flights`), fill in a
+      route and date, press Search: results get badges without a reload (the
+      app never loads a new page for this)
+- [ ] Same from a Google Search "flights from X to Y" link (`/travel/flights?q=…`)
+- [ ] Expand a result ("Flight details"), then collapse it: every other card's
+      badge comes back within ~1 s, with no new API requests
 - [ ] Change dates via the date picker (SPA navigation, URL change): old badges
       cleared, new results processed
 - [ ] Click the date arrows (< >) next to the departure date several times

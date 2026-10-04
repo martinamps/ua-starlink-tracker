@@ -1,8 +1,9 @@
 # Google Flights Starlink Indicator
 
 Chrome extension (Manifest V3) that badges Google Flights search results with
-the Starlink WiFi status of each flight — for United, Hawaiian, Alaska, and
-Qatar Airways.
+the Starlink WiFi status of each flight — for United, Alaska (including
+Hawaiian Airlines-operated flights, which Google Flights lists under Alaska
+`AS` flight numbers), and Qatar Airways.
 
 ## Installation (development)
 
@@ -28,7 +29,7 @@ all** rather than a guess:
 | *no badge* | Verified non-Starlink aircraft, a prediction below the bar or of low confidence, an answer that is type-determined with no aircraft assigned yet (see below), an untracked airline, or an API that couldn't answer — silence over invention |
 
 Hover a badge for the full explanation, including observation counts for
-predictions.
+predictions; screen readers get the same text from the badge's label.
 
 ### Coverage windows differ by airline
 
@@ -41,11 +42,13 @@ depends on the airline:
   to has one equipped share, so predicted badges show at any date for the
   ~100%-equipped subfleets (AS800-899 on Hawaiian A330/A321neo metal, and the
   regional E175s) and stay off for the mid-rollout mainline.
-- **Hawaiian** — Starlink is decided by aircraft type (A330/A321neo yes, 787
-  installing, 717 no) and a flight number doesn't pin the type. Beyond the ~2-day
-  assignment window there is no honest single number, so **Hawaiian results show
-  no badge until the aircraft is assigned**. Blending the types into one
-  percentage would be a guess dressed as data.
+- **Hawaiian** — Google Flights now lists Hawaiian-operated flights only under
+  Alaska `AS` numbers, so they are answered as Alaska flights: the A330/A321neo
+  routes (AS800-899, e.g. HNL → LAX) get badges at any date, and the
+  interisland 717s (AS1000-1299) get none, because they have no Starlink.
+  `HA`-numbered lookups still work if Google ever shows them again, but an
+  `HA` number doesn't pin the aircraft type, so before the ~2-day assignment
+  window it gets no badge rather than a blended guess.
 - **Qatar** — no tail-level data, but Qatar publishes the scheduled aircraft
   type about a week ahead (selected routes only). Inside that window a 777,
   A350 or 787-8 shows green "Starlink (installed)" — Qatar reports those fleets
@@ -83,6 +86,15 @@ depends on the airline:
   card still unsettled — an API blip, an exhausted per-pass budget — schedules
   itself again after the short cache expires, up to three times, so a blip
   doesn't blank the rest of the session.
+- Google re-renders result cards in place (expanding one rebuilds the list),
+  which strips badges. A settled card's badge is restored from memory with no
+  new lookup; a card Google reuses for a different itinerary is looked up
+  afresh.
+- The content script matches `www.google.com/travel/flights*`, not just
+  `/travel/flights/*`: Flights is a single-page app, and a session that starts
+  on the home page or a `?q=` link from Search reaches results without loading
+  a new page, so the narrower pattern never ran for it (2.1.1). Same host as
+  1.2.0, so no new permission prompt.
 
 ## Permissions
 
@@ -98,11 +110,11 @@ depends on the airline:
 
 - The extension reads flight numbers and dates from Google Flights pages you
   are already viewing. It does not read anything else on the page.
-- For each United/Hawaiian/Alaska/Qatar flight it finds, it sends **only the
+- For each United/Alaska/Hawaiian/Qatar flight it finds, it sends **only the
   flight number, date, and each leg's departure/arrival airport codes** to
   unitedstarlinktracker.com or airlinestarlinktracker.com to ask "does this
   leg have Starlink?", plus the extension's version number
-  (`client=ext-2.1.0`) so the site can count extension lookups separately
+  (`client=ext-2.1.1`) so the site can count extension lookups separately
   from website visits.
   No account data, no page contents, no URLs, no identifiers ride along.
 - It does not collect, store, or transmit any personal information.

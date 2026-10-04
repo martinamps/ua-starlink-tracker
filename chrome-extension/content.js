@@ -30,7 +30,9 @@
   const MAX_ATTR_SCAN_ELEMENTS = 400;
 
   const lookup = lib.createClaimLookup((message) => chrome.runtime.sendMessage(message));
-  let processedElements = new WeakSet();
+  // Settled cards → {signature, badged, badge}. Keyed by element so Google's
+  // in-place re-renders (which strip our badges) can be repaired from memory.
+  let settledCards = new WeakMap();
   // Bumped on every navigation; a pass that started under an older generation
   // must not badge (or retire) cards that now show a different search.
   let generation = 0;
@@ -51,9 +53,14 @@
     return lib.localTodayIso();
   }
 
-  /** A stable per-result element: the enclosing <li> when there is one. */
+  /**
+   * A stable per-result element: the enclosing <li>, or the ARIA list item the
+   * booking page wraps its selected flight in. The itinerary attribute itself
+   * sits on a zero-size node inside the emissions block, so falling back to it
+   * pinned the corner badge over the CO2e figure.
+   */
   function canonicalCard(el) {
-    return el.closest("li") || el;
+    return el.closest("li") || el.closest('[role="listitem"]') || el;
   }
 
   function findFlightCards() {
@@ -71,6 +78,12 @@
       urls.push(el.getAttribute(TIM_ATTR) || "");
     }
     return urls;
+  }
+
+  /** The itinerary a card shows now, for spotting an element Google reused. */
+  function cardSignature(card) {
+    // Deduped: an expanded card repeats its own itinerary URL.
+    return [...new Set(timUrls(card))].sort().join("|");
   }
 
   function cardText(card) {
@@ -143,6 +156,9 @@
     badge.className = lib.badgeClass(claim);
     badge.title = title;
     badge.textContent = lib.badgeLabel(claim);
+    // A title tooltip never reaches keyboard, touch or screen-reader users.
+    badge.setAttribute("role", "img");
+    badge.setAttribute("aria-label", `${badge.textContent}. ${title}`);
     badge.style.cssText = [
       "margin-left: 12px",
       "display: inline-flex",
@@ -163,13 +179,20 @@
     const timeSpan = timeContainer?.querySelector("span.mv1WYe");
     if (!timeSpan || !timeSpan.parentNode) return false;
     timeSpan.parentNode.insertBefore(badge, timeSpan.nextSibling);
+    // The time row truncates with an ellipsis where it is narrow (the booking
+    // page's selected flight), which hid the badge entirely; use the corner.
+    const row = timeContainer.getBoundingClientRect();
+    if (badge.getBoundingClientRect().right > row.right + 1) {
+      badge.remove();
+      return false;
+    }
     return true;
   }
 
   // Layout-independent fallback: pin to the result row's corner. Needs no
   // knowledge of the card's internals, so it survives markup drift.
   function insertCorner(card, badge, claim) {
-    const row = card.closest("li") || card;
+    const row = canonicalCard(card);
     const colors = lib.badgeColors(claim);
     row.style.position = "relative";
     badge.style.cssText = [
@@ -193,10 +216,17 @@
 
   function removeBadge(card) {
     try {
-      card.querySelector(".starlink-wifi-badge")?.remove();
+      retire(card.querySelector(".starlink-wifi-badge"));
     } catch {
       // removal is cosmetic
     }
+  }
+
+  /** Our own removals are marked so the observer doesn't "repair" them. */
+  function retire(badge) {
+    if (!badge) return;
+    badge.dataset.starlinkRetired = "1";
+    badge.remove();
   }
 
   /** `key` names the itinerary the badge answers for, so a card Google
@@ -211,7 +241,7 @@
         ) {
           return;
         }
-        existing.remove();
+        retire(existing);
       }
       const badge = buildBadge(claim, title);
       badge.dataset.starlinkKey = key;
@@ -233,11 +263,12 @@
 
   /** True when the card needs no further passes. */
   async function processCard(card, pageDate, budget, gen) {
+    const signature = cardSignature(card);
     const { segments, complete } = extractSegments(card);
     if (segments.length === 0 || !complete) {
       // Nothing tracked here, or a leg we cannot judge — settled for this card.
       removeBadge(card);
-      processedElements.add(card);
+      settledCards.set(card, { signature, badged: false });
       return true;
     }
 
@@ -261,27 +292,57 @@
       segments.map((seg, i) => lookup.get(seg.flightNumber, seg.date || pageDate, legs[i]))
     );
     // The page moved on while this card waited; its answer belongs to a search
-    // that is no longer on screen, and processedElements is a new set.
+    // that is no longer on screen, and settledCards is a new map.
     if (gen !== generation) return true;
-
-    // Only a settled answer retires the card. Marking it processed on a
-    // transient failure would strand it unbadged for the rest of the session:
-    // nothing else clears processedElements short of an SPA navigation.
-    const settled = outcomes.every((outcome) => !outcome.retryable);
-    if (settled) processedElements.add(card);
 
     const claims = outcomes.map((outcome, i) => ({
       ...outcome.claim,
       flightNumber: segments[i].flightNumber,
     }));
     const combined = lib.combineClaims(claims);
-    if (lib.shouldBadge(combined)) {
-      addBadge(card, combined, keys.join("+"), lib.cardBadgeTitle(combined, claims));
-      log("badged", keys.join("+"), combined.status);
+    const badged = lib.shouldBadge(combined);
+    const badge = badged
+      ? { claim: combined, key: keys.join("+"), title: lib.cardBadgeTitle(combined, claims) }
+      : null;
+    if (badge) {
+      addBadge(card, badge.claim, badge.key, badge.title);
+      log("badged", badge.key, combined.status);
     } else {
       removeBadge(card);
     }
+
+    // Only a settled answer retires the card. Retiring it on a transient
+    // failure would strand it unbadged for the rest of the session: nothing
+    // else clears settledCards short of an SPA navigation.
+    const settled = outcomes.every((outcome) => !outcome.retryable);
+    if (settled) settledCards.set(card, { signature, badged, badge });
     return settled;
+  }
+
+  /**
+   * Cards this pass must look up. Settled cards cost nothing: one whose badge
+   * Google's re-render stripped gets it back from memory, and one Google
+   * reused for a different itinerary is looked up afresh.
+   */
+  function cardsNeedingWork() {
+    const pending = [];
+    for (const card of findFlightCards()) {
+      const entry = settledCards.get(card);
+      if (!entry) {
+        pending.push(card);
+        continue;
+      }
+      const hasBadge = card.querySelector(".starlink-wifi-badge") !== null;
+      const action = lib.settledCardAction(entry, cardSignature(card), hasBadge);
+      if (action === "restore") {
+        addBadge(card, entry.badge.claim, entry.badge.key, entry.badge.title);
+      } else if (action === "process") {
+        settledCards.delete(card);
+        removeBadge(card);
+        pending.push(card);
+      }
+    }
+    return pending;
   }
 
   // A pass that ends with unsettled cards schedules its own retry: when the
@@ -316,7 +377,7 @@
     try {
       const pageDate = extractPageDate();
       const budget = { remaining: MAX_NEW_LOOKUPS_PER_PASS };
-      const pending = [...findFlightCards()].filter((card) => !processedElements.has(card));
+      const pending = cardsNeedingWork();
       newCards = pending.length;
       log(`pass: ${newCards} new cards`);
       await lib.runPool(pending, CARD_CONCURRENCY, async (card) => {
@@ -356,12 +417,12 @@
   function resetForNavigation() {
     try {
       for (const badge of document.querySelectorAll(".starlink-wifi-badge")) {
-        badge.remove();
+        retire(badge);
       }
     } catch {
       // removal is cosmetic; keep going
     }
-    processedElements = new WeakSet();
+    settledCards = new WeakMap();
     generation++;
     cancelRetryPass();
     passRunner.resetReruns();
@@ -380,11 +441,37 @@
       node.nodeType === 1 &&
       (node.matches?.(CARD_HINT_SELECTOR) || node.querySelector?.(CARD_HINT_SELECTOR) != null);
 
+    // A badge leaving the page that we didn't retire was stripped by one of
+    // Google's in-place re-renders (expanding a card rebuilds every card).
+    const lostBadge = (node) =>
+      node.nodeType === 1 &&
+      (node.classList.contains("starlink-wifi-badge")
+        ? !node.dataset.starlinkRetired
+        : node.querySelector?.(".starlink-wifi-badge:not([data-starlink-retired])") != null);
+
+    // Repairs are network-free, so they run promptly rather than on the
+    // 2 s new-results debounce; anything that does need a lookup goes there.
+    const debouncedRepair = debounce(() => {
+      try {
+        if (cardsNeedingWork().length > 0) debouncedProcess();
+      } catch {
+        // repair is cosmetic
+      }
+    }, 150);
+
     const observer = new MutationObserver((mutations) => {
       try {
-        const hasNewFlights = mutations.some((mutation) =>
-          Array.from(mutation.addedNodes).some(looksLikeFlightNode)
-        );
+        let hasNewFlights = false;
+        let hasLostBadge = false;
+        for (const mutation of mutations) {
+          for (const node of mutation.addedNodes) {
+            if (!hasNewFlights && looksLikeFlightNode(node)) hasNewFlights = true;
+          }
+          for (const node of mutation.removedNodes) {
+            if (!hasLostBadge && lostBadge(node)) hasLostBadge = true;
+          }
+        }
+        if (hasLostBadge) debouncedRepair();
         if (!hasNewFlights) return;
         if (passRunner.isRunning()) passRunner.requestRerun();
         else debouncedProcess();
