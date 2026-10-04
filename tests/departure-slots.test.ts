@@ -22,6 +22,7 @@ import {
 } from "../src/database/database";
 import { createReaderFactory } from "../src/database/reader";
 import { createApp } from "../src/server/app";
+import { airportLocalDate } from "../src/utils/airport-tz";
 import { addFleet, addFlight, addPlane, makeSyntheticDb, mcpTool, req, sectionOf } from "./helpers";
 
 const UA_HOST = "unitedstarlinktracker.com";
@@ -230,7 +231,8 @@ describe("route page departures", () => {
       addFlight(db, "N195SY", "OO3015", "ACV", T, { arrivalAirport: "SEA", airline: "AS" });
       addFlight(db, "N117SY", "SKW3020", "DEN", T, { arrivalAirport: "FAR" });
       const app = createApp(db);
-      const date = new Date(T * 1000).toISOString().slice(0, 10);
+      // The departure airport's calendar date: UTC flips a day early every evening.
+      const date = airportLocalDate("ACV", T) as string;
       const lookup = async (fn: string) => {
         const res = await app.dispatch(
           req(`/api/check-flight?flight_number=${fn}&date=${date}`, AS_HOST, {
