@@ -403,8 +403,9 @@ const StarlinkTrackerLib = (() => {
 
   // ── badge copy ─────────────────────────────────────────────────────────────
 
+  // A prediction is never a certainty, so it never reads as 100%.
   function roundPct(probability) {
-    return Math.round(probability * 100);
+    return Math.min(99, Math.round(probability * 100));
   }
 
   function badgeLabel(claim) {

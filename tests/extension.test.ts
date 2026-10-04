@@ -342,6 +342,7 @@ describe("badging policy", () => {
       "Starlink (installed)"
     );
     expect(extLib.badgeLabel(predicted(0.876))).toBe("Starlink ~88%");
+    expect(extLib.badgeLabel(predicted(0.998))).toBe("Starlink ~99%");
     expect(extLib.badgeTitle({ ...extLib.unknownClaim(), status: "installed" })).toContain(
       "not yet verified"
     );

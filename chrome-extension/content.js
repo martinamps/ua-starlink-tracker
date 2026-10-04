@@ -181,8 +181,9 @@
     timeSpan.parentNode.insertBefore(badge, timeSpan.nextSibling);
     // The time row truncates with an ellipsis where it is narrow (the booking
     // page's selected flight), which hid the badge entirely; use the corner.
+    // An expanded card hides the row (zero width), which would hide it too.
     const row = timeContainer.getBoundingClientRect();
-    if (badge.getBoundingClientRect().right > row.right + 1) {
+    if (row.width === 0 || badge.getBoundingClientRect().right > row.right + 1) {
       badge.remove();
       return false;
     }
