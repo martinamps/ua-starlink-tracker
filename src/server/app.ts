@@ -21,6 +21,7 @@ import {
   aircraftTypeFaq,
   aircraftTypeTitle,
   answerFor,
+  newestOfficial,
   officialCountFor,
   resolveAircraftSlug,
   tenantCopy,
@@ -3430,7 +3431,11 @@ function aircraftAnswer(
   def: AircraftPageDef,
   data: AircraftTypePageData
 ): AircraftAnswer {
-  return answerFor(data, def, officialCountFor(code, def.slug));
+  return answerFor(
+    data,
+    def,
+    newestOfficial(officialCountFor(code, def.slug), data.officialTracker)
+  );
 }
 
 /** Served pages with a real signal — the sitemap and llms.txt list only

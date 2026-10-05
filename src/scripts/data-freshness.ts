@@ -71,7 +71,9 @@ export function buildFreshnessCoverage(
     flight_updater: ["UA", "HA", "AS", "AF"],
     verifier: ["UA", "HA", "AS"],
     departures: ["UA", "HA", "AS"],
-    fleet_progress: ["UA"],
+    // UA: the community progress sheets; AS: Alaska's newsroom tracker
+    // (alaska-tracker.ts), fetched daily so fetched_at ages only on failure.
+    fleet_progress: ["UA", "AS"],
     faa_registry: ["UA"],
     adsb_sweep: ["UA"],
   };

@@ -481,6 +481,12 @@ export const GAUGES = {
   // tags: segment, state (in_mod|verification_needed|scheduled), airline
   FLEET_PROGRESS_TAILS: "fleet_progress.tails",
 
+  // Airline-published connected count per type minus the tails of that type we
+  // list as equipped: aircraft the airline counts but we can't name yet. A
+  // persistent positive value is the manual-attribution backlog.
+  // tags: aircraft_type (family), airline
+  FLEET_PROGRESS_UNATTRIBUTED: "fleet_progress.unattributed",
+
   // FAA registry sync results. tags: state (resolved|not_in_master|starlink_flagged), airline
   FAA_REGISTRY_TAILS: "faa_registry.tails",
 

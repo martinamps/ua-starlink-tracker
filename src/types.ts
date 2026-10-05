@@ -475,6 +475,15 @@ export interface AircraftTypePageData {
   firstSeen: string | null;
   recentInstalls: AircraftTypeInstall[];
   pipeline: AircraftTypePipeline | null;
+  /** The airline's own per-type count from its install tracker (Alaska),
+   * read daily; null where the airline publishes none. */
+  officialTracker?: {
+    count: number;
+    all: boolean;
+    asOf: string;
+    sourceLabel: string;
+    url: string;
+  } | null;
   routes: AircraftTypeRoute[];
   routeTotals: { departures: number; pairs: number };
   flightNumbers: AircraftTypeFlightNumber[];

@@ -13,6 +13,7 @@ import {
   warmAircraftTypePages,
 } from "./src/database/database";
 import { startAdsbSweepJob } from "./src/scripts/adsb-sweep";
+import { startAlaskaTrackerJob } from "./src/scripts/alaska-tracker";
 import { startAlaskaVerifier } from "./src/scripts/alaska-verifier";
 import { startBtsSyncJob } from "./src/scripts/bts-sync";
 import { startFreshnessEmitter } from "./src/scripts/data-freshness";
@@ -108,6 +109,9 @@ if (JOBS_ENABLED) {
   // alaska-json verifier: serves HA (type-deterministic confirmation) and AS
   // (tail/type oracle until alaskaair.com exposes per-tail wifi).
   track(startAlaskaVerifier(db));
+  // Daily read of Alaska's own per-type install tracker (newsroom, refreshed
+  // monthly): official per-type counts, and complete types settled per tail.
+  track(startAlaskaTrackerJob(db));
   // Qatar schedule ingester: pulls per-flight equipment from QR's flight-status
   // API for top routes; populates qatar_schedule which /api/check-flight reads.
   track(startQatarScheduleIngester(db));

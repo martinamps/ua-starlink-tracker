@@ -30,6 +30,7 @@ Bun + SQLite + server-rendered React, multi-tenant by Host (`src/airlines/regist
 | Starlink verifier | 60 s | Verify UA tails against United.com |
 | Fleet discovery | 90 s | Find newly-equipped UA tails |
 | Alaska verifier | 90 s | HA/AS wifi from alaskaair.com |
+| Alaska tracker | 24 hr | AS per-type counts from Alaska's newsroom tracker → `fleet_progress`; complete types settle per tail |
 | Qatar schedule ingester | 1 hr | Per-flight QR equipment → `qatar_schedule` |
 | Archive departures / first-flight watch | 5 min | `departure_log`, `first_flights` |
 | Fleet sync | 24 hr | Full FR24 fleet pull, every enabled airline |

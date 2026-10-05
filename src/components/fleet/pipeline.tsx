@@ -1,8 +1,9 @@
 import { aircraftName } from "../../airlines/aircraft-families";
 import { TYPE_DISPLAY } from "../../airlines/aircraft-pages";
+import { AIRLINES } from "../../airlines/registry";
 import type { FleetMovement, FleetProgressRow, FleetProgressTailRow } from "../../types";
-import { EYEBROW, H2, PANEL, SECTION_WIDE, StatValue } from "../layout";
-import { fmt, monthDay, pct } from "../ui/format";
+import { EYEBROW, H2, LINK, PANEL, SECTION_WIDE, StatValue } from "../layout";
+import { fmt, longDate, monthDay, pct } from "../ui/format";
 import { Meter } from "../ui/meter";
 
 export type PipelineMap = Map<string, FleetProgressTailRow>;
@@ -218,6 +219,72 @@ function Swatch({ cls }: { cls: string }) {
   return <span aria-hidden="true" className={`inline-block w-2 h-2 rounded-[1px] mr-1.5 ${cls}`} />;
 }
 
+const OFFICIAL_SEGMENT_LABELS: Record<string, string> = {
+  ...SEGMENT_LABELS,
+  express: "Regional",
+};
+
+// An airline's own per-type tracker: connected and pending counts only — no
+// mod lines, no tail names — so it gets its own section, not the sheet's.
+function OfficialTrackerSection({
+  progress,
+  tracker,
+}: {
+  progress: FleetProgressRow[];
+  tracker: { label: string; url: string };
+}) {
+  const totals = progress.filter((r) => r.type_code === "Totals");
+  const updated = longDate(totals.find((r) => r.sheet_updated)?.sheet_updated);
+  const name = AIRLINES[totals[0].airline]?.shortName ?? totals[0].airline;
+  return (
+    <section className={SECTION_WIDE}>
+      <h2 className={H2}>Install progress, per {name}</h2>
+      <p className="mt-1 mb-4 text-sm text-secondary text-pretty">
+        Counts from{" "}
+        <a href={tracker.url} className={LINK} rel="noopener">
+          {name}'s own Starlink tracker
+        </a>
+        {updated ? ` (chart updated ${updated})` : ""}. {name} publishes how many of each type are
+        connected, not which ones, and keeps its own fleet list, so these totals can differ from our
+        counts above.
+      </p>
+      <div className="grid md:grid-cols-3 gap-4">
+        {totals.map((seg) => {
+          const complete = seg.starlink_complete ?? 0;
+          const types = progress.filter(
+            (r) => r.type_code !== "Totals" && r.segment === seg.segment
+          );
+          return (
+            <div key={seg.segment} className={PANEL}>
+              <div className={EYEBROW}>{OFFICIAL_SEGMENT_LABELS[seg.segment] ?? seg.segment}</div>
+              <StatValue
+                unit={`of ${seg.total !== null ? fmt(seg.total) : "?"} connected${seg.total ? ` · ${pct(complete, seg.total)}` : ""}`}
+              >
+                {fmt(complete)}
+              </StatValue>
+              <PipelineBar
+                complete={complete}
+                verifying={0}
+                inMod={0}
+                queued={0}
+                total={seg.total}
+              />
+              <ul className="text-sm text-secondary mt-3 space-y-1">
+                {types.map((r) => (
+                  <li key={r.type_code}>
+                    {sheetTypeName(r.type_code)}: {fmt(r.starlink_complete ?? 0)} of{" "}
+                    {fmt(r.total ?? 0)}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 // Forward-looking: aircraft in or queued for a mod line. The historical
 // counterpart is InstallPaceSection.
 export function InstallPipelineSection({
@@ -231,6 +298,8 @@ export function InstallPipelineSection({
 }) {
   const totals = progress.filter((r) => r.type_code === "Totals");
   if (totals.length === 0) return null;
+  const tracker = AIRLINES[totals[0].airline]?.officialTracker;
+  if (tracker) return <OfficialTrackerSection progress={progress} tracker={tracker} />;
   const updated = totals.find((r) => r.sheet_updated)?.sheet_updated;
   const inModTypes = progress.filter(
     (r) => r.type_code !== "Totals" && ((r.in_mod ?? 0) > 0 || (r.verification_needed ?? 0) > 0)

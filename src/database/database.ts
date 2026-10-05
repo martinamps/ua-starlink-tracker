@@ -4114,6 +4114,85 @@ export function reconcileTypeDeterministicFleets(db: Database): number {
   return total;
 }
 
+/** Equipped listings per aircraft family for one airline. */
+export function equippedCountByFamily(db: Database, airline: string): Map<string, number> {
+  const rows = db
+    .query(
+      `SELECT sp.aircraft FROM starlink_planes sp WHERE sp.airline = ? AND ${equippedSql("sp")}`
+    )
+    .all(airline) as Array<{ aircraft: string | null }>;
+  const counts = new Map<string, number>();
+  for (const r of rows) {
+    const family = normalizeAircraftType(r.aircraft);
+    counts.set(family, (counts.get(family) ?? 0) + 1);
+  }
+  return counts;
+}
+
+export interface OfficialTypeSettle {
+  roster: number;
+  settled: number;
+  /** Why nothing was written, when nothing was. */
+  skipped: "no_roster" | "roster_exceeds_official" | null;
+}
+
+/**
+ * The airline says every one of a type is connected: list each roster tail of
+ * that family as a type-rule Starlink plane. Refused when our roster holds
+ * more of the type than the airline counts — then some of ours (new
+ * deliveries, a misfiled tail) are outside its "all", and naming every one
+ * would invent equipped aircraft. A verifier 'negative' is never overridden.
+ */
+export function settleOfficiallyCompleteType(
+  db: Database,
+  airline: string,
+  family: string,
+  officialConnected: number
+): OfficialTypeSettle {
+  const rows = (
+    db
+      .query(
+        "SELECT tail_number, aircraft_type, starlink_status, fleet, airline FROM united_fleet WHERE airline = ? AND aircraft_type IS NOT NULL"
+      )
+      .all(airline) as Array<{
+      tail_number: string;
+      aircraft_type: string;
+      starlink_status: string | null;
+      fleet: string | null;
+      airline: string | null;
+    }>
+  ).filter((r) => normalizeAircraftType(r.aircraft_type) === family);
+  if (rows.length === 0) return { roster: 0, settled: 0, skipped: "no_roster" };
+  if (rows.length > officialConnected) {
+    return { roster: rows.length, settled: 0, skipped: "roster_exceeds_official" };
+  }
+  const name = AIRLINES[airline as AirlineCode]?.name ?? airline;
+  const update = db.query(
+    "UPDATE united_fleet SET starlink_status = 'confirmed' WHERE tail_number = ? AND airline = ?"
+  );
+  let settled = 0;
+  db.transaction(() => {
+    for (const r of rows) {
+      if (r.starlink_status === "negative") continue;
+      if (r.starlink_status !== "confirmed") {
+        update.run(r.tail_number, airline);
+        emitFleetStatusChange(r, "confirmed");
+        settled++;
+      }
+      addDiscoveredStarlinkPlane(
+        db,
+        r.tail_number,
+        r.aircraft_type,
+        "Starlink",
+        name,
+        r.fleet ?? "mainline",
+        { airline, evidence: "type_rule" }
+      );
+    }
+  })();
+  return { roster: rows.length, settled, skipped: null };
+}
+
 /**
  * Reconciliation sweep — recompute consensus for every sheet-listed tail with
  * ≥2 tail_confirmed obs and heal any drift between the log and verified_wifi.
@@ -4964,14 +5043,20 @@ export function getFleetPageData(db: Database, airline?: AirlineFilter): FleetPa
 }
 
 /** Replace an airline's install-pipeline rows, per segment, so types dropped
- * from the sheet don't linger as stale rows. */
+ * from the sheet don't linger as stale rows. `wholeAirline` also drops
+ * segments the new rows don't mention — for a single-page source that is
+ * always fetched whole, where a vanished segment is real, not a failed tab. */
 export function replaceFleetProgress(
   db: Database,
   airline: string,
-  rows: Array<Omit<FleetProgressRow, "airline" | "fetched_at">>
+  rows: Array<Omit<FleetProgressRow, "airline" | "fetched_at">>,
+  opts: { wholeAirline?: boolean } = {}
 ): void {
   const now = unixNow();
   db.transaction(() => {
+    if (opts.wholeAirline) {
+      db.query("DELETE FROM fleet_progress WHERE airline = ?").run(airline);
+    }
     for (const segment of new Set(rows.map((r) => r.segment))) {
       db.query("DELETE FROM fleet_progress WHERE airline = ? AND segment = ?").run(
         airline,
@@ -6568,6 +6653,7 @@ function computeAircraftTypePages(
   const defs = aircraftPagesFor(airline);
   const cfg = AIRLINES[airline];
   if (defs.length === 0 || !cfg) return out;
+  const tracker = cfg.officialTracker;
 
   const fleet = getFleetPageData(db, [airline]);
   const families = new Map(fleet.families.map((f) => [f.family, f]));
@@ -6706,10 +6792,26 @@ function computeAircraftTypePages(
 
     const sheetRows = progress.filter((r) => SHEET_CODE_TO_FAMILY[r.type_code] === def.family);
     let pipeline: AircraftTypePageData["pipeline"] = null;
+    let officialTracker: AircraftTypePageData["officialTracker"] = null;
     if (sheetRows.length > 0) {
       const fetchedAt = Math.max(...sheetRows.map((r) => r.fetched_at));
+      const asOf = sheetRows.find((r) => r.sheet_updated)?.sheet_updated ?? null;
       if (dataClock !== null && dataClock - fetchedAt > SHEET_STALE_SEC) {
         debug(`${airline} ${def.slug}: fleet-progress sheet stale, pipeline dropped`);
+      } else if (tracker) {
+        // The airline's own counts: an official figure, not a mod-line
+        // pipeline (no in-mod or verifying states to show).
+        if (asOf && /^\d{4}-\d{2}-\d{2}$/.test(asOf)) {
+          const total = sheetRows.reduce((s, r) => s + (r.total ?? 0), 0);
+          const count = sheetRows.reduce((s, r) => s + (r.starlink_complete ?? 0), 0);
+          officialTracker = {
+            count,
+            all: total > 0 && count === total,
+            asOf,
+            sourceLabel: tracker.label,
+            url: tracker.url,
+          };
+        }
       } else {
         const sum = (k: "total" | "starlink_complete" | "in_mod" | "verification_needed") =>
           sheetRows.reduce((s, r) => s + (r[k] ?? 0), 0);
@@ -6792,6 +6894,7 @@ function computeAircraftTypePages(
       firstSeen: firstSeenRows.at(-1)?.date ?? null,
       recentInstalls: firstSeenRows.slice(0, TYPE_RECENT_INSTALLS),
       pipeline,
+      officialTracker,
       routes,
       routeTotals: {
         departures: pairs.reduce((s, [, n]) => s + n, 0),
