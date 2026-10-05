@@ -11,6 +11,7 @@
 
 import { aircraftName } from "../airlines/aircraft-families";
 import type { AirlineConfig } from "../airlines/registry";
+import { recentFlights } from "../components/route-flights-copy";
 import {
   probLabel,
   zonedClock,
@@ -28,12 +29,27 @@ import {
   isoDateDaysAgo,
   unixNow,
 } from "../database/sql/windows";
-import { LEG_MIN_DRAWS, carrierPrediction, predictLeg } from "../scripts/starlink-predictor";
+import {
+  LEG_MIN_DRAWS,
+  type LegDraw,
+  type LegTrend,
+  TREND_RECENT_DAYS,
+} from "../scripts/leg-estimate";
+import {
+  carrierPrediction,
+  legAsPrediction,
+  predictLeg,
+  predictLegDraws,
+} from "../scripts/starlink-predictor";
 import { airportTimezone, flightDateWindow, isRealIsoDate } from "../utils/airport-tz";
 import { verdictSummary } from "./check-flight-core";
 
 /** Below this many draws on the leg, its odds are the share of its aircraft types. */
 export const ROUTE_BOARD_MIN_OBSERVATIONS = LEG_MIN_DRAWS;
+
+/** Weeks the odds history charts, and departures it lists. */
+const HISTORY_WEEKS = 8;
+const HISTORY_RECENT = 6;
 
 /** Logged days a departure time needs before the board calls it usual. */
 const USUAL_TIME_DAYS = 3;
@@ -57,6 +73,22 @@ export interface RouteFlightAssignment {
   label: string;
 }
 
+export interface RouteFlightTally {
+  flights: number;
+  starlink: number;
+}
+
+/** What the odds rest on: the leg's own departures, as the model saw them. */
+export interface RouteFlightHistory {
+  /** Seven-day spans ending now, oldest first, by their first origin-local day. */
+  weeks: Array<RouteFlightTally & { start: string }>;
+  /** The latest departures on the leg, newest first. Date is origin-local. */
+  recent: Array<{ date: string; tail: string; type: string | null; starlink: boolean }>;
+  /** The trend's two sides: the last two weeks, and every draw the model kept. */
+  last_14_days: RouteFlightTally;
+  window: RouteFlightTally;
+}
+
 export interface RouteFlightRow {
   flight_number: string;
   /** Local clock time at the origin, no zone name: "8:15 AM". */
@@ -72,7 +104,13 @@ export interface RouteFlightRow {
   /** With a date: seen on that weekday (true), only on others (false, listed last), unknown (null). */
   operates_on_date: boolean | null;
   probability: number | null;
+  /** Departures behind the odds, counted plainly. */
   n_observations: number | null;
+  /** The same departures as an effective count, recent ones weighing most. */
+  n_effective: number | null;
+  /** The last two weeks running 15+ points above or below the whole history. */
+  trend: LegTrend;
+  history: RouteFlightHistory | null;
   confidence: string | null;
   /** "flight_history" from this leg's own draws, "aircraft_type" from type shares. */
   basis: "flight_history" | "aircraft_type";
@@ -140,6 +178,9 @@ function assignmentOf(
 interface Odds {
   probability: number | null;
   n_observations: number | null;
+  n_effective: number | null;
+  trend: LegTrend;
+  draws: LegDraw[] | null;
   confidence: string | null;
   basis: RouteFlightRow["basis"];
   enough_history: boolean;
@@ -150,6 +191,9 @@ interface Odds {
 const NO_HISTORY: Odds = {
   probability: null,
   n_observations: 0,
+  n_effective: null,
+  trend: null,
+  draws: null,
   confidence: null,
   basis: "flight_history",
   enough_history: false,
@@ -176,7 +220,7 @@ function legOdds(
   if (cfg.flightHistoryModel) {
     const leg = predictLeg(reader, flightNumber, origin, destination, nowSec);
     if (!leg) return NO_HISTORY;
-    const { basis, aircraft, ...pred } = leg;
+    const pred = legAsPrediction(leg);
     const s = verdictSummary({
       kind: "prediction",
       window,
@@ -185,15 +229,18 @@ function legOdds(
       fr24Error: false,
     });
     const p = s.probability ?? leg.probability;
-    const history = basis === "leg_history";
+    const history = leg.basis === "leg_history";
     return {
       probability: p,
       n_observations: s.observations,
+      n_effective: history ? leg.n_effective : null,
+      trend: leg.trend,
+      draws: predictLegDraws(reader, flightNumber, origin, destination, nowSec),
       confidence: pred.confidence,
       basis: history ? "flight_history" : "aircraft_type",
       enough_history: history,
       odds_label: history ? probLabel(p) : `~${probLabel(p)}`,
-      aircraft,
+      aircraft: leg.aircraft,
     };
   }
   const s = verdictSummary({
@@ -206,11 +253,57 @@ function legOdds(
   return {
     probability: s.probability,
     n_observations: s.observations,
+    n_effective: null,
+    trend: null,
+    draws: null,
     confidence: s.confidence,
     basis: "aircraft_type",
     enough_history: s.probability !== null,
     odds_label: s.probability === null ? "Depends on aircraft" : `~${probLabel(s.probability)}`,
     aircraft: null,
+  };
+}
+
+const tally = (draws: readonly LegDraw[]): RouteFlightTally => ({
+  flights: draws.length,
+  starlink: draws.filter((d) => d.equipped).length,
+});
+
+const WEEK_SEC = 7 * DAY_SEC;
+
+/** The odds' departures in seven-day spans ending now, and the latest few. Dates are origin-local. */
+export function legHistory(
+  draws: readonly LegDraw[],
+  zone: string | undefined,
+  nowSec: number
+): RouteFlightHistory {
+  const localDate = (t: number) => (zone ? zonedIsoDate(t, zone) : isoDateDaysAgo(0, t));
+  const from = nowSec - HISTORY_WEEKS * WEEK_SEC;
+  const weeks = Array.from({ length: HISTORY_WEEKS }, (_, i) => ({
+    start: localDate(from + i * WEEK_SEC),
+    flights: 0,
+    starlink: 0,
+  }));
+  const past = draws.filter((d) => d.t <= nowSec);
+  for (const d of past) {
+    const w = weeks[HISTORY_WEEKS - 1 - Math.floor((nowSec - d.t) / WEEK_SEC)];
+    if (!w) continue;
+    w.flights++;
+    if (d.equipped) w.starlink++;
+  }
+  return {
+    weeks,
+    recent: past
+      .slice(-HISTORY_RECENT)
+      .reverse()
+      .map((d) => ({
+        date: localDate(d.t),
+        tail: d.tail,
+        type: d.type ? aircraftName(d.type) : null,
+        starlink: d.equipped,
+      })),
+    last_14_days: tally(past.filter((d) => d.t > nowSec - TREND_RECENT_DAYS * DAY_SEC)),
+    window: tally(past),
   };
 }
 
@@ -246,7 +339,7 @@ function summaryOf(r: Omit<RouteFlightRow, "summary">): string {
     r.probability === null
       ? `${r.odds_label}.`
       : r.basis === "flight_history"
-        ? `${r.odds_label} Starlink odds from ${r.n_observations} tracked flights.`
+        ? `${r.odds_label} Starlink odds from ${recentFlights(r)}.`
         : `${r.odds_label} Starlink odds by aircraft type.`;
   const a = r.assignment;
   if (!a) return odds;
@@ -325,6 +418,9 @@ export function buildRouteFlightBoard(
       operates_on_date: operates,
       probability: odds.probability,
       n_observations: odds.n_observations,
+      n_effective: odds.n_effective,
+      trend: odds.trend,
+      history: odds.draws?.length ? legHistory(odds.draws, zone, nowSec) : null,
       confidence: odds.confidence,
       basis: odds.basis,
       enough_history: odds.enough_history,

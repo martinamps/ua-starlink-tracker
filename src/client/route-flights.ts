@@ -4,17 +4,15 @@
  * from the same module, so the two surfaces phrase a row identically.
  */
 import type { RouteFlightBoard, RouteFlightRow } from "../api/route-flights";
+import { oddsCellHtml } from "../components/odds-history";
 import {
   VERIFIED_LEGEND,
   assignmentPill,
   boardDek,
   hasVerifiedRow,
-  oddsCell,
-  oddsDetail,
-  oddsTone,
   rowMarker,
 } from "../components/route-flights-copy";
-import { TONE_TEXT, pillStyle, toneColor } from "../components/ui/tone-classes";
+import { pillStyle, toneColor } from "../components/ui/tone-classes";
 import { esc } from "./esc";
 
 const TH =
@@ -36,7 +34,7 @@ function row(r: RouteFlightRow, board: RouteFlightBoard): string {
     ? `<div class="mt-1"><span class="shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium" style="${pillStyle(toneColor(tone))}">${esc(pill)}</span></div>`
     : "";
   const types = r.aircraft_types.length ? esc(r.aircraft_types.join(", ")) : "—";
-  return `<tr class="align-top"><td class="${TD} pr-3"><a href="/check-flight/${esc(r.flight_number)}" class="font-mono text-primary hover:text-accent transition-colors">${esc(r.flight_number)}</a>${time}${type}${mark}${assigned}</td><td class="${TD} hidden sm:table-cell pr-3 text-secondary">${types}</td><td class="${TD} text-right"><div class="whitespace-nowrap font-display ${TONE_TEXT[oddsTone(r)]}">${esc(oddsCell(r))}</div><div class="text-xs text-muted">${esc(oddsDetail(r))}</div></td></tr>`;
+  return `<tr class="align-top"><td class="${TD} pr-3"><a href="/check-flight/${esc(r.flight_number)}" class="font-mono text-primary hover:text-accent transition-colors">${esc(r.flight_number)}</a>${time}${type}${mark}${assigned}</td><td class="${TD} hidden sm:table-cell pr-3 text-secondary">${types}</td><td class="${TD} text-right">${oddsCellHtml(r)}</td></tr>`;
 }
 
 /**

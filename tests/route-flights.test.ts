@@ -60,6 +60,9 @@ const ROW_KEYS = [
   "operates_on_date",
   "probability",
   "n_observations",
+  "n_effective",
+  "trend",
+  "history",
   "confidence",
   "basis",
   "enough_history",
@@ -92,6 +95,22 @@ describe("GET /api/route-flights", () => {
       // The caveat lives once, in the note — never repeated per row.
       expect(f.summary).not.toMatch(/swap|guarantee/i);
       if (f.typical_departure) expect(f.typical_departure).toMatch(/^\d{1,2}:\d{2}\s[AP]M$/);
+      expect([null, "up", "down"]).toContain(f.trend);
+      if (f.enough_history && f.basis === "flight_history") {
+        expect(f.n_effective).toBeGreaterThan(0);
+        expect(f.n_effective).toBeLessThanOrEqual(f.n_observations + 1e-9);
+      }
+      if (f.history) {
+        expect(Object.keys(f.history).sort()).toEqual([
+          "last_14_days",
+          "recent",
+          "weeks",
+          "window",
+        ]);
+        expect(f.history.weeks.length).toBe(8);
+        expect(f.history.recent.length).toBeLessThanOrEqual(6);
+        for (const w of f.history.weeks) expect(w.starlink).toBeLessThanOrEqual(w.flights);
+      }
     }
   });
 
@@ -277,6 +296,20 @@ describe("board behavior (synthetic)", () => {
     // Logged on the A321neo yesterday, then gone from its refreshed schedule:
     // a swap to a plane the updater doesn't follow.
     log("UA", "UA300", "N111UA", at(1, 22), ["SFO", "ORD"], now - 7200);
+    // UA400 SFO-DEN changed metal: ADS-B saw 757s for six weeks, then
+    // A321neos for two; the log has the last few days.
+    const sighting = sdb.query(
+      "INSERT INTO adsb_flight_draws (flight_number, tail_number, first_seen, last_seen) VALUES (?, ?, ?, ?)"
+    );
+    for (let d = 1; d <= 56; d++) {
+      const t = at(-d, 15) + 600;
+      sighting.run("UA400", d <= 14 ? "N111UA" : "N222UA", t, t + 3600);
+    }
+    for (const d of [-3, -2, -1]) log("UA", "UA400", "N111UA", at(d, 15), ["SFO", "DEN"]);
+    addFlight(sdb, "N111UA", "UA400", "SFO", at(1, 15), {
+      arrivalAirport: "DEN",
+      lastUpdated: now,
+    });
     // The route page serves only pairs the route cache knows.
     sdb
       .query(
@@ -340,6 +373,38 @@ describe("board behavior (synthetic)", () => {
     expect(fromBoard).not.toBeNull();
     expect(leg?.probability).toBeCloseTo(fromBoard ?? -1, 6);
     expect(check.prediction.probability).toBeCloseTo(fromBoard ?? -1, 6);
+  });
+
+  test("a leg that changed metal reads its new mix, and every surface agrees", async () => {
+    const date = isoDateDaysAgo(-20, now);
+    const r = row(board(date, "SFO", "DEN"), "UA400");
+    expect(r.probability).toBeGreaterThan(0.7);
+    expect(r.trend).toBe("up");
+    expect(r.n_effective).toBeLessThan(r.n_observations ?? 0);
+    expect(r.summary).toMatch(/from \d+ recent flights\./);
+    const last = r.history?.weeks.at(-1);
+    expect(last?.flights).toBeGreaterThanOrEqual(6);
+    expect(last?.starlink).toBe(last?.flights ?? -1);
+    expect(r.history?.weeks[0].starlink).toBe(0);
+
+    const check = await jsonOf(
+      sapp,
+      `/api/check-flight?flight_number=UA400&date=${date}&origin=SFO&destination=DEN`,
+      UA
+    );
+    const plan = await jsonOf(sapp, `/api/plan-route?origin=SFO&destination=DEN&date=${date}`, UA);
+    const leg = plan.itineraries
+      .flatMap(
+        (it: { legs: Array<{ flight_number: string; route: string; probability: number }> }) =>
+          it.legs
+      )
+      .find(
+        (l: { flight_number: string; route: string }) =>
+          l.flight_number === "UA400" && l.route === "SFO-DEN"
+      );
+    // Seconds apart, so decay moves the fourth decimal at most.
+    expect(check.prediction.probability).toBeCloseTo(r.probability ?? -1, 4);
+    expect(leg?.probability).toBeCloseTo(r.probability ?? -1, 4);
   });
 
   test("operating spellings collapse to the marketed number", () => {

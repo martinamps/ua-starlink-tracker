@@ -48,6 +48,7 @@ import {
   type CarrierPrediction,
   carrierPrediction,
   carrierPredictionTelemetry,
+  legAsPrediction,
   noModelConfidence,
   predictFlight,
   predictLeg,
@@ -675,8 +676,7 @@ export async function resolveFlightVerdict(
       ? predictLeg(reader, normalized, leg.origin, leg.destination, now)
       : null;
   if (verdict.kind === "prediction" && legPred) {
-    const { basis: _basis, aircraft: _aircraft, ...pred } = legPred;
-    verdict = { ...verdict, pred };
+    verdict = { ...verdict, pred: legAsPrediction(legPred) };
   }
   // Otherwise the history model is per flight number, so on a through flight
   // whose legs change aircraft it says nothing firm about one leg we couldn't find.

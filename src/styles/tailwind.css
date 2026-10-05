@@ -243,6 +243,38 @@
     transform: rotate(180deg);
   }
 }
+/* Route board odds history (components/odds-history.ts): a card per row, so
+   short rules here rather than the same utilities and inline styles on every
+   bar of every row. */
+.oh-track {
+  fill: var(--color-border);
+}
+.oh-none {
+  fill: none;
+  stroke: var(--color-border);
+  stroke-dasharray: 2 2;
+}
+.oh-fill {
+  fill: var(--color-accent);
+}
+.oh-n,
+.oh-wk {
+  text-anchor: middle;
+  font-variant-numeric: tabular-nums;
+}
+.oh-n {
+  fill: var(--color-text-secondary);
+  font-size: 10px;
+}
+.oh-wk {
+  fill: var(--color-text-muted);
+  font-size: 9px;
+}
+.oh-row {
+  display: grid;
+  grid-template-columns: 3.25rem 4.5rem 1fr 0.75rem;
+  gap: 0.5rem;
+}
 /* Aircraft spec popover: hover on desktop, focus (tap) on mobile. */
 .spec-trigger {
   pointer-events: auto;
