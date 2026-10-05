@@ -15,9 +15,7 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { TITLE_MAX, aircraftPagesFor, aircraftTypeTitle } from "../src/airlines/aircraft-pages";
 import { SITES } from "../src/airlines/registry";
-import { routeVerdict } from "../src/components/route-page";
 import { getSitemapRoutes } from "../src/database/database";
-import type { RouteSummary } from "../src/database/database";
 import { clampMetaDescription, createApp } from "../src/server/app";
 import type { AircraftVerdictKind } from "../src/types";
 import { article } from "../src/utils/grammar";
@@ -33,82 +31,6 @@ beforeAll(() => {
 const UA = SITES.united.canonicalHost;
 const HUB = SITES.airline.canonicalHost;
 const AS = SITES.alaska.canonicalHost;
-
-const summary = (over: Partial<RouteSummary>): RouteSummary => ({
-  origin: "ABQ",
-  destination: "PDX",
-  flightNumbers: [],
-  durationSec: null,
-  equippedDepartures: 0,
-  totalDepartures: 0,
-  windowLabel: "next 48 hours",
-  ...over,
-});
-
-describe("routeVerdict", () => {
-  test("a single departure is never pluralized", () => {
-    const one = routeVerdict(
-      summary({ totalDepartures: 1, equippedDepartures: 1 }),
-      "United Airlines"
-    );
-    expect(one).toMatch(/^1 Starlink flight from ABQ to PDX /);
-    expect(one).not.toContain("flights from");
-  });
-
-  test("an empty window with history leads with the history, not the negative", () => {
-    const v = routeVerdict(
-      summary({
-        flightNumbers: [
-          { flight_number: "UA123", times: 9, scheduled: 0 },
-          { flight_number: "UA456", times: 3, scheduled: 0 },
-        ],
-      }),
-      "United Airlines"
-    );
-    expect(v).toMatch(/^United Airlines flies ABQ to PDX/);
-    expect(v).toContain("UA123");
-    expect(v).not.toMatch(/^No United Airlines departures/);
-  });
-
-  test("an empty window with no history keeps the honest no-data copy", () => {
-    expect(routeVerdict(summary({}), "United Airlines")).toMatch(
-      /^No Starlink flights from ABQ to PDX/
-    );
-  });
-
-  test("equipped departures never claim a denominator we do not observe", () => {
-    const v = routeVerdict(
-      summary({ totalDepartures: 4, equippedDepartures: 4 }),
-      "United Airlines"
-    );
-    expect(v).toMatch(/^4 Starlink flights from ABQ to PDX/);
-    expect(v).not.toMatch(/\bof \d+\b|\ball\b/i);
-  });
-
-  test("no combination of counts produces coverage claims", () => {
-    const claim = /\b(All|None of the) \d+ scheduled|\d+ of \d+ scheduled|only scheduled/;
-    const history = [
-      [],
-      [{ flight_number: "UA123", times: 9, scheduled: 1 }],
-      [
-        { flight_number: "UA123", times: 9, scheduled: 0 },
-        { flight_number: "UA456", times: 3, scheduled: 1 },
-      ],
-    ];
-    for (let total = 0; total <= 6; total++) {
-      for (let equipped = 0; equipped <= total; equipped++) {
-        for (const flightNumbers of history) {
-          const v = routeVerdict(
-            summary({ totalDepartures: total, equippedDepartures: equipped, flightNumbers }),
-            "United Airlines"
-          );
-          expect(v).not.toMatch(claim);
-          expect(v.length).toBeGreaterThan(0);
-        }
-      }
-    }
-  });
-});
 
 describe("page copy", () => {
   test("AS check-flight description never reads 'a Alaska'", async () => {

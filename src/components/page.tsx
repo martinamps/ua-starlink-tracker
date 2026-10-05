@@ -225,7 +225,7 @@ export default function Page({
             {features.routePlannerPage && (
               <p className="mt-2 text-center text-xs">
                 <a href="/route-planner" className={LINK} id="home-route-board-link">
-                  Or compare every flight on a route →
+                  Or see which flights on a route have Starlink →
                 </a>
               </p>
             )}

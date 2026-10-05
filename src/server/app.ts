@@ -114,7 +114,11 @@ import {
   qatarHistoryReason,
   qatarNoDataReason,
 } from "../api/qatar-verdict";
-import { type RouteFlightBoard, buildRouteFlightBoard } from "../api/route-flights";
+import {
+  type RouteFlightBoard,
+  buildRouteFlightBoard,
+  routeBoardDateOk,
+} from "../api/route-flights";
 import { clientScriptResponse } from "../client/bundle";
 import AircraftTypePage from "../components/aircraft-type-page";
 import {
@@ -166,7 +170,7 @@ import MethodologyPage, { hasMethodology } from "../components/methodology-page"
 import NewlyEquippedPage from "../components/newly-equipped-page";
 import NotFoundPage from "../components/not-found-page";
 import Page, { buildContentStats } from "../components/page";
-import RoutePage, { type RouteDeparture, routeVerdict } from "../components/route-page";
+import RoutePage from "../components/route-page";
 import RoutePlannerPage from "../components/route-planner-page";
 import RoutesPage from "../components/routes-page";
 import TimelinePage, { getTimeline, hasTimeline } from "../components/timeline-page";
@@ -174,7 +178,6 @@ import {
   DEPARTURE_WINDOW_HOURS,
   PERMALINK_STALE_NOTE_DAYS,
   ROUTE_AIRPORT_RE,
-  type RouteSummary,
 } from "../database/database";
 import { contradictingWifi } from "../database/sql/equipped";
 import { unixNow } from "../database/sql/windows";
@@ -208,7 +211,12 @@ import type {
   Flight,
 } from "../types";
 import { AIRCRAFT_SPECS } from "../utils/aircraft-specs";
-import { airportLocalDate, airportTimezone, isRealIsoDate } from "../utils/airport-tz";
+import {
+  airportLocalDate,
+  airportTimezone,
+  flightDateWindow,
+  isRealIsoDate,
+} from "../utils/airport-tz";
 import {
   API_CORS_HEADERS,
   BASE_RESPONSE_HEADERS,
@@ -1315,6 +1323,9 @@ const apiCompareRoute: Handler = ({ url, getReader, tenant }) => {
   if (!origin || !destination || origin.length !== 3 || destination.length !== 3) {
     return jsonError(400, "origin and destination must be 3-letter IATA codes");
   }
+  if (origin.toUpperCase() === destination.toUpperCase()) {
+    return jsonError(400, "Origin and destination must differ");
+  }
 
   const results = compareRoute(getReader, origin, destination);
   return json({
@@ -1402,7 +1413,15 @@ const apiPlanRoute: Handler = ({ url, reader, tenant }) => {
         );
     return json({ origin, destination, itineraries: [], message });
   }
-  const itineraries = planItinerary(reader, origin, destination, { maxItineraries: 12, maxStops });
+  // An optional travel date lets same-day confirmed assignments seed the legs.
+  const dateParam = url.searchParams.get("date");
+  const targetDateUnix =
+    dateParam && routeBoardDateOk(dateParam) ? flightDateWindow(dateParam)?.mid : undefined;
+  const itineraries = planItinerary(reader, origin, destination, {
+    maxItineraries: 12,
+    maxStops,
+    targetDateUnix,
+  });
   // Additive: the nonstop every connection is measured against (null when the
   // pair's duration is unknowable, i.e. an airport outside the coordinate table).
   const baseline = routeBaseline(reader, origin, destination);
@@ -1431,13 +1450,13 @@ const apiRouteFlights: Handler = ({ url, reader, tenant }) => {
   if (!cfg) return jsonError(404, "Not found");
   const origin = normalizeAirportCode(url.searchParams.get("origin"));
   const destination = normalizeAirportCode(url.searchParams.get("destination"));
-  if (!origin || !destination) {
-    return jsonError(400, "origin and destination must be IATA airport codes");
+  if (!origin || !destination || !airportTimezone(origin) || !airportTimezone(destination)) {
+    return jsonError(400, "origin and destination must be known IATA airport codes");
   }
   if (origin === destination) return jsonError(400, "Origin and destination must differ");
   const date = url.searchParams.get("date")?.trim() || null;
-  if (date && !isRealIsoDate(date)) {
-    return jsonError(400, "Invalid date format. Use YYYY-MM-DD");
+  if (date && !routeBoardDateOk(date)) {
+    return jsonError(400, "date must be YYYY-MM-DD, from yesterday to 330 days out");
   }
   const board = buildRouteFlightBoard(cfg, reader, origin, destination, { date });
   recordRouteFlightsView(cfg, "api", board);
@@ -2164,7 +2183,7 @@ The homepage carries one dated, self-contained sentence (HTML element id \`starl
       ? `**"Best Starlink flight from SFO to Newark?"** → https://${host}/route-planner compares the nonstop with Starlink connections (up to 2 stops, only when the extra travel time is modest), ranked by the share of flying time expected on Starlink.`
       : null,
     boardPair
-      ? `**"Which ${boardPair.origin} to ${boardPair.destination} flight should I book for Starlink?"** → https://${host}/route-planner/${boardPair.origin}/${boardPair.destination} lists every nonstop seen recently with its Starlink odds, usual departure time and aircraft, and the assigned plane once known (\`GET https://${host}/api/route-flights?origin=${boardPair.origin}&destination=${boardPair.destination}\`, optional \`&date=YYYY-MM-DD\`). They are odds, not a guarantee: the airline can swap the plane.`
+      ? `**"Which ${boardPair.origin} to ${boardPair.destination} flight should I book for Starlink?"** → https://${host}/route-planner/${boardPair.origin}/${boardPair.destination} lists every recent nonstop with its Starlink odds, departure time, aircraft and assigned plane (\`GET https://${host}/api/route-flights?origin=${boardPair.origin}&destination=${boardPair.destination}\`, optional \`&date=YYYY-MM-DD\`). Planes can be swapped before departure.`
       : null,
     `**"How is the rollout going?"** → https://${host}/ has the live count and a chart over time.${features.fleetPage ? ` https://${host}/fleet shows every aircraft and its WiFi provider.` : ""}`,
     // The access sentence comes from the same per-airline copy /is-starlink-free
@@ -3262,42 +3281,27 @@ export function parseRoutePath(pathname: string): { origin: string; destination:
   return { origin, destination };
 }
 
-/**
- * Starlink departures on a pair for the route page's table and answer: the
- * same physical-departure slots /routes and the homepage airports count
- * (partners included, so an Alaska number on Hawaiian metal lists), filtered
- * to the pair and to slots whose current tail is equipped.
- */
-function routeStarlinkDepartures(reader: ScopedReader, route: RouteSummary): RouteDeparture[] {
-  return reader.getRouteDepartures(route.origin, route.destination);
-}
-
-function routePageMeta(
-  ctx: RequestContext,
-  cfg: AirlineConfig,
-  route: RouteSummary,
-  departures: RouteDeparture[],
-  board: RouteFlightBoard
-): PageMeta {
-  const pair = `${route.origin} to ${route.destination}`;
-  const verdict = routeVerdict(route, cfg.name, departures);
+function routePageMeta(ctx: RequestContext, cfg: AirlineConfig, board: RouteFlightBoard): PageMeta {
+  const { origin, destination } = board;
+  const pair = `${origin} to ${destination}`;
   // The question the H1 asks, with the carrier, which searchers type.
   const question = `Which ${cfg.shortName} ${pair} Flights Have Starlink?`;
   const n = board.flights.length;
+  const description = n
+    ? `Starlink odds for ${n === 1 ? "the" : `all ${n}`} ${cfg.shortName} ${pair} nonstop${n === 1 ? "" : "s"} seen in the past week, with departure times, aircraft and assigned planes.`
+    : `${cfg.shortName} nonstops from ${pair} and their Starlink odds.`;
   return {
     siteTitle: question,
-    siteDescription: n
-      ? `Starlink odds for every ${cfg.shortName} nonstop from ${pair} (${n} flight${n === 1 ? "" : "s"}), with usual departure times, aircraft and any assigned plane. ${verdict}`
-      : `Does ${cfg.name} fly Starlink on ${pair}? ${verdict}`,
-    keywords: `${route.origin} ${route.destination} starlink, ${pair} wifi, ${cfg.shortName.toLowerCase()} ${route.origin} ${route.destination} starlink`,
+    siteDescription: description,
+    keywords: `${origin} ${destination} starlink, ${pair} wifi, ${cfg.shortName.toLowerCase()} ${origin} ${destination} starlink`,
     ogTitle: question,
-    ogDescription: verdict,
+    ogDescription: description,
     pageJsonLd: jsonLdBlock({
       "@context": "https://schema.org",
       "@type": "ItemList",
-      name: `${cfg.name} flights on ${route.origin} → ${route.destination}`,
-      numberOfItems: route.flightNumbers.length,
-      itemListElement: route.flightNumbers.slice(0, 25).map((f, i) => ({
+      name: `${cfg.name} flights on ${origin} → ${destination}`,
+      numberOfItems: n,
+      itemListElement: board.flights.slice(0, 25).map((f, i) => ({
         "@type": "ListItem",
         position: i + 1,
         url: `https://${ctx.site.canonicalHost}/check-flight/${f.flight_number}`,
@@ -3367,13 +3371,9 @@ const routePlannerPage: Handler = (ctx) => {
     }
     const cfg = siteAirline(ctx.site);
     if (!ctx.reader.routeHasData(parsed.origin, parsed.destination)) return notFound(ctx.site);
-    const route = ctx.reader.getRouteSummary(parsed.origin, parsed.destination);
-    const departures = routeStarlinkDepartures(ctx.reader, route);
-    const lastSeen = ctx.reader.getRouteFlightLastSeen(parsed.origin, parsed.destination);
     const reverseLinkable = ctx.reader.routeHasData(parsed.destination, parsed.origin);
-    const dateParam = ctx.url.searchParams.get("date");
     const board = buildRouteFlightBoard(cfg, ctx.reader, parsed.origin, parsed.destination, {
-      date: dateParam && isRealIsoDate(dateParam) ? dateParam : null,
+      date: ctx.url.searchParams.get("date"),
     });
     recordRouteFlightsView(cfg, "page", board);
     // Historical pairs stay reachable (flight permalinks link them) but no
@@ -3384,10 +3384,10 @@ const routePlannerPage: Handler = (ctx) => {
       RoutePage,
       `/route-planner/${parsed.origin}/${parsed.destination}`,
       {
-        ...routePageMeta(ctx, cfg, route, departures, board),
+        ...routePageMeta(ctx, cfg, board),
         ...(indexable ? {} : { robotsMeta: "noindex, follow" }),
       },
-      { route, departures, board, lastSeen, reverseLinkable }
+      { origin: parsed.origin, destination: parsed.destination, board, reverseLinkable }
     );
   }
   if (ctx.url.pathname !== "/route-planner") {

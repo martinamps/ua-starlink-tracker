@@ -139,7 +139,7 @@ import {
   routeIsHistorical,
 } from "./database";
 import { type ProgrammeHeadline, programmeHeadline } from "./roster";
-import { type RouteFlightLeg, getRouteFlightLegs } from "./route-flights";
+import { type RouteFlightLeg, getFlightNumberLegs, getRouteFlightLegs } from "./route-flights";
 import { getRouteFlightLastSeen } from "./route-history";
 
 export type { Database };
@@ -278,8 +278,11 @@ export interface ScopedReader {
   getRouteFlightNumbers(origin: string, destination: string): RouteFlightNumbers;
   /** Newest route-cache sighting per marketing number on a pair (unix sec). */
   getRouteFlightLastSeen(origin: string, destination: string): Map<string, number>;
-  /** Logged departures on a pair under their marketed numbers, with each tail's equipped status. */
-  getRouteFlightLegs(origin: string, destination: string): RouteFlightLeg[];
+  /** Logged and scheduled departures on a pair under their marketed numbers,
+   * with each tail's equipped status. */
+  getRouteFlightLegs(origin: string, destination: string, nowSec: number): RouteFlightLeg[];
+  /** Every logged leg of one flight number's stored spellings, on any pair. */
+  getFlightNumberLegs(variants: readonly string[]): RouteFlightLeg[];
   getFlightHistorySummary(variants: string[]): FlightHistorySummary;
   getFlightRoutePairs(variants: string[]): FlightRoutePair[];
   /** Newest observation for the airline (unix sec), the reference point for
@@ -497,7 +500,8 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     getRouteDepartures: (o, d) => getRouteDepartures(db, soleAirline(), o, d),
     getRouteFlightNumbers: (o, d) => getRouteFlightNumbers(db, o, d, soleAirline()),
     getRouteFlightLastSeen: (o, d) => getRouteFlightLastSeen(db, o, d, soleAirline()),
-    getRouteFlightLegs: (o, d) => getRouteFlightLegs(db, soleAirline(), o, d),
+    getRouteFlightLegs: (o, d, now) => getRouteFlightLegs(db, soleAirline(), o, d, now),
+    getFlightNumberLegs: (v) => getFlightNumberLegs(db, soleAirline(), v),
     getFlightHistorySummary: (v) => getFlightHistorySummary(db, v, airlines),
     getFlightRoutePairs: (v) => getFlightRoutePairs(db, v, airlines),
     getObservationAnchor: () => (scope === "ALL" ? 0 : getObservationAnchor(db, scope)),

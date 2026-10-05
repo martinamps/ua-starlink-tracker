@@ -383,18 +383,14 @@ describe("operating partners on route surfaces", () => {
     db.close();
   });
 
-  test("the route page lists the same partner slots /routes counts", async () => {
+  test("the route page board lists the same partner slots /routes counts", async () => {
     const db = makeSyntheticDb();
     equippedTail(db, "N373HA", "HA");
     addFlight(db, "N373HA", "AS832", "HND", T, { arrivalAirport: "HNL", airline: "HA" });
     addFlight(db, "N373HA", "ASA864", "HND", T + 3600, { arrivalAirport: "HNL", airline: "HA" });
     const res = await createApp(db).dispatch(req("/route-planner/HND/HNL", AS_HOST));
     expect(res.status).toBe(200);
-    // The nonstop board above it has its own table; read the departures one.
-    const html = sectionOf(
-      (await res.text()).replace(/<!-- -->/g, ""),
-      "Upcoming Starlink flights"
-    );
+    const html = sectionOf((await res.text()).replace(/<!-- -->/g, ""), "Nonstop flights");
     const tbody = html.match(/<tbody>([\s\S]*?)<\/tbody>/)?.[1];
     expect(tbody).toBeDefined();
     const rows = (tbody ?? "").split("<tr").slice(1);

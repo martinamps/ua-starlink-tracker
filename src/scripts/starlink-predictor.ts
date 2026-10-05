@@ -25,8 +25,12 @@
  */
 
 import { Database } from "bun:sqlite";
-import { normalizeAircraftType } from "../airlines/aircraft-families";
-import { ensureAirlinePrefix, inferSubfleet } from "../airlines/flight-number";
+import { aircraftName, normalizeAircraftType } from "../airlines/aircraft-families";
+import {
+  buildAirlineFlightNumberVariants,
+  ensureAirlinePrefix,
+  inferSubfleet,
+} from "../airlines/flight-number";
 import {
   AIRLINES,
   type AirlineConfig,
@@ -2319,6 +2323,181 @@ export function routeBaseline(
 // no subfleet split, so it gets the cross-airline aggregate from the priors.
 function mainlineFleetRate(reader: ScopedReader): number {
   return loadFleetPriors(reader).mainline;
+}
+
+// ============================================================================
+// Per-leg prediction
+// ============================================================================
+
+/** Below this many draws on a leg, its odds are the share of its aircraft types. */
+export const LEG_MIN_DRAWS = 3;
+/** An ADS-B sighting this close to a leg's scheduled departure (time of day) is that leg. */
+const ADSB_LEG_MATCH_SEC = 2 * 3600;
+const LEG_DUPLICATE_SEC = 12 * 3600;
+
+export interface LegPrediction extends Prediction {
+  /** "leg_history" when the leg's own draws carry the number, else the share of its types. */
+  basis: "leg_history" | "leg_type_share";
+  /** Aircraft it drew on this leg, most frequent first (display names). */
+  aircraft: string[];
+}
+
+interface LegFleet {
+  tails: Map<string, { family: string; type: string; equipped: boolean }>;
+  familyShare: Map<string, number>;
+}
+
+/** Roster tails with their family and equipped status (the one equipped
+ * definition), and each family's equipped share. Rebuilt at most hourly. */
+const legFleetMemo = perOwner<ScopedReader, ReturnType<typeof memo<LegFleet>>>(() =>
+  memo<LegFleet>({ ttlSec: 3600, maxEntries: 1 })
+);
+
+function legFleet(reader: ScopedReader): LegFleet {
+  return legFleetMemo(reader)("fleet", () => {
+    const equipped = new Set(reader.getStarlinkPlanes().map((p) => p.TailNumber));
+    const tails = new Map<string, { family: string; type: string; equipped: boolean }>();
+    const agg = new Map<string, { s: number; n: number }>();
+    for (const r of reader.getFleetRoster()) {
+      const family = normalizeAircraftType(r.aircraft_type);
+      const on = equipped.has(r.tail_number);
+      tails.set(r.tail_number, { family, type: r.aircraft_type, equipped: on });
+      const a = agg.get(family) ?? { s: 0, n: 0 };
+      a.s += on ? 1 : 0;
+      a.n += 1;
+      agg.set(family, a);
+    }
+    const familyShare = new Map([...agg].map(([f, a]) => [f, a.s / a.n] as const));
+    return { tails, familyShare };
+  });
+}
+
+const secOfDay = (t: number) => ((t % 86400) + 86400) % 86400;
+const clockDistance = (a: number, b: number) => {
+  const d = Math.abs(a - b);
+  return Math.min(d, 86400 - d);
+};
+
+/**
+ * Starlink odds for one leg of a flight number. The number's history mixes
+ * its legs (UA1922 flies a 757 SFO-ORD and an A321neo ORD-IAD), so this keeps
+ * only draws on the asked pair: logged departures there, plus ADS-B sightings
+ * whose time of day matches that leg's schedule and no other leg's. With
+ * enough draws the leg's own rate, smoothed toward its types' share; with
+ * fewer, the share itself. Null when the leg was never logged.
+ */
+export function predictLeg(
+  reader: ScopedReader,
+  flightNumber: string,
+  origin: string,
+  destination: string,
+  nowSec = Math.floor(Date.now() / 1000)
+): LegPrediction | null {
+  if (reader.scope === "ALL") return null;
+  const cfg = AIRLINES[reader.scope];
+  const legs = reader
+    .getFlightNumberLegs(buildAirlineFlightNumberVariants(cfg, flightNumber))
+    .filter((l) => l.flight_number === flightNumber);
+  const pairOf = (l: { departure_airport: string; arrival_airport: string }) =>
+    `${l.departure_airport}-${l.arrival_airport}`;
+  const target = `${origin}-${destination}`;
+
+  // One draw per leg and local day: the tail seen last.
+  const perDay = new Map<string, (typeof legs)[number]>();
+  for (const l of legs) {
+    const k = `${pairOf(l)}|${l.dep_date}`;
+    const prev = perDay.get(k);
+    if (!prev || l.last_seen > prev.last_seen) perDay.set(k, l);
+  }
+  // Departed legs only: a coming assignment is the answer, not history.
+  const onLeg = [...perDay.values()].filter(
+    (l) => pairOf(l) === target && l.departure_time <= nowSec
+  );
+  if (onLeg.length === 0) return null;
+
+  // Each pair's scheduled time of day: its newest logged departure.
+  const schedule = new Map<string, number>();
+  for (const l of [...perDay.values()].sort((a, b) => a.departure_time - b.departure_time)) {
+    schedule.set(pairOf(l), secOfDay(l.departure_time));
+  }
+
+  const fleet = legFleet(reader);
+  type Draw = { t: number; tail: string; equipped: boolean; family: string; type: string };
+  const draws: Draw[] = onLeg.map((l) => {
+    const known = fleet.tails.get(l.tail_number);
+    return {
+      t: l.departure_time,
+      tail: l.tail_number,
+      equipped: l.equipped,
+      family: known?.family ?? normalizeAircraftType(l.aircraft_type),
+      type: known?.type ?? l.aircraft_type ?? "",
+    };
+  });
+
+  if (adsbDrawsEnabled()) {
+    const since = nowSec - ADSB_DRAW_WINDOW_DAYS * 86400;
+    for (const d of reader.getAdsbFlightDrawsFor(flightNumber, since)) {
+      const tail = fleet.tails.get(d.tail_number);
+      if (!tail) continue;
+      let nearest: string | null = null;
+      let best = Number.POSITIVE_INFINITY;
+      for (const [pair, sod] of schedule) {
+        const dist = clockDistance(secOfDay(d.first_seen), sod);
+        if (dist < best) {
+          best = dist;
+          nearest = pair;
+        }
+      }
+      if (nearest !== target || best > ADSB_LEG_MATCH_SEC) continue;
+      if (
+        draws.some(
+          (x) => x.tail === d.tail_number && Math.abs(x.t - d.first_seen) < LEG_DUPLICATE_SEC
+        )
+      ) {
+        continue;
+      }
+      draws.push({ t: d.first_seen, tail: d.tail_number, ...tail });
+    }
+  }
+
+  let s = 0;
+  let n = 0;
+  let mixWeight = 0;
+  let mixShare = 0;
+  const byType = new Map<string, number>();
+  for (const d of draws) {
+    const w = 0.5 ** (Math.max(0, nowSec - d.t) / 86400 / ASSIGNMENT_HALF_LIFE_DAYS);
+    s += (d.equipped ? 1 : 0) * w;
+    n += w;
+    const share = fleet.familyShare.get(d.family);
+    if (share !== undefined) {
+      mixWeight += w;
+      mixShare += w * share;
+    }
+    if (d.type) {
+      const name = aircraftName(d.type);
+      byType.set(name, (byType.get(name) ?? 0) + w);
+    }
+  }
+  const prior = mixWeight > 0 ? mixShare / mixWeight : null;
+  const enough = draws.length >= LEG_MIN_DRAWS;
+  if (!enough && prior === null) return null;
+  const alpha = DEFAULT_CONFIG.priorStrength;
+  const probability = enough ? (s + alpha * (prior ?? s / n)) / (n + alpha) : (prior as number);
+  const recentSince = nowSec - RECENT_OBSERVATION_DAYS * 86400;
+  return {
+    flight_number: flightNumber,
+    probability,
+    confidence: enough ? confidenceFor(draws.length) : "low",
+    method: "flight_history_smoothed",
+    n_observations: draws.length,
+    n_recent_observations: draws.filter((d) => d.t >= recentSince).length,
+    basis: enough ? "leg_history" : "leg_type_share",
+    aircraft: [...byType]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .slice(0, 3)
+      .map(([name]) => name),
+  };
 }
 
 export type { Prediction };

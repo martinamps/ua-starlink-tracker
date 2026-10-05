@@ -50,6 +50,7 @@ import {
   carrierPredictionTelemetry,
   noModelConfidence,
   predictFlight,
+  predictLeg,
 } from "../scripts/starlink-predictor";
 import { AIRPORT_COORDS } from "../utils/airport-geo";
 import {
@@ -665,10 +666,22 @@ export async function resolveFlightVerdict(
   const liveLegs = scoped.segments ? fr24OtherLegs(scoped.segments, resolution) : [];
   if (liveLegs.length > 0) resolution.liveLegs = liveLegs;
 
-  // The history model is per flight number, so on a through flight whose legs
-  // change aircraft it says nothing firm about one leg we couldn't find.
   let verdict = scoped.verdict;
+  // A full leg answers from that leg's own draws, so a through flight's other
+  // legs can't lend it their aircraft (UA1922: 757 SFO-ORD, A321neo ORD-IAD).
+  // A stubbed predictor pins the per-number path in tests.
+  const legPred =
+    verdict.kind === "prediction" && leg.origin && leg.destination && !deps.predict
+      ? predictLeg(reader, normalized, leg.origin, leg.destination, now)
+      : null;
+  if (verdict.kind === "prediction" && legPred) {
+    const { basis: _basis, aircraft: _aircraft, ...pred } = legPred;
+    verdict = { ...verdict, pred };
+  }
+  // Otherwise the history model is per flight number, so on a through flight
+  // whose legs change aircraft it says nothing firm about one leg we couldn't find.
   if (
+    !legPred &&
     verdict.kind === "prediction" &&
     (resolution.match === "no_data" || resolution.match === "unmatched") &&
     isThroughFlightLeg(reader, normalized, leg, now) &&

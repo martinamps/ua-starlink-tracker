@@ -1,18 +1,23 @@
 import type { Database } from "bun:sqlite";
 import { canonicalPermalinkFor, slotFlightKey } from "../airlines/flight-number";
 import { AIRLINES } from "../airlines/registry";
-import { slotScope } from "./database";
+import { departureLocalDate } from "./assignment-log";
+import { getDepartureSlots, slotScope } from "./database";
 import { listedVerifiedSql, tailEquippedSql } from "./sql/equipped";
+import { placeholders, tailAircraftTypeSql } from "./sql/fragments";
+import { DEPARTURE_WINDOW_SEC } from "./sql/windows";
 
 /**
- * One observed departure of a marketed flight on a pair, from the assignment
- * log: the only table that keeps a departure time, a tail and a pair together
- * for every leg the updater or a lookup saw, past (a week) and upcoming (about
- * two days out). Operating spellings (UAL368, SKW5212) are already collapsed to
- * the marketed number, the same key /api/routes counts as slot_flight.
+ * One observed departure of a marketed flight, from the assignment log (the
+ * only table that keeps a departure time, a tail and a pair together for
+ * every leg the updater or a lookup saw: a week back, about two days ahead)
+ * and the live schedule. Operating spellings (UAL368, SKW5212) are already
+ * collapsed to the marketed number, the key /api/routes counts as slot_flight.
  */
 export interface RouteFlightLeg {
   flight_number: string;
+  departure_airport: string;
+  arrival_airport: string;
   /** Departure-airport local date the leg flies on. */
   dep_date: string;
   departure_time: number;
@@ -26,39 +31,42 @@ export interface RouteFlightLeg {
   last_seen: number;
 }
 
-export function getRouteFlightLegs(
-  db: Database,
-  airline: string,
-  origin: string,
-  destination: string
-): RouteFlightLeg[] {
+type LegFilter = { origin: string; destination: string } | { flightNumbers: readonly string[] };
+
+function loggedLegs(db: Database, airline: string, filter: LegFilter): RouteFlightLeg[] {
   const cfg = AIRLINES[airline];
   if (!cfg) return [];
   // Partners count, as departure slots count them: AS832 on a Hawaiian A330
   // is an Alaska departure on the pair.
   const scope = slotScope(airline, true);
+  const where =
+    "origin" in filter
+      ? {
+          sql: "uf.departure_airport = ? AND uf.arrival_airport = ?",
+          params: [filter.origin, filter.destination],
+        }
+      : {
+          sql: `uf.flight_number IN (${placeholders(filter.flightNumbers) || "NULL"})`,
+          params: [...filter.flightNumbers],
+        };
   const rows = db
     .query(
-      `SELECT uf.airline, uf.flight_number, uf.dep_date, uf.departure_time, uf.tail_number,
-              uf.last_seen,
-              COALESCE(
-                (SELECT f.aircraft_type FROM united_fleet f
-                 WHERE f.tail_number = uf.tail_number AND f.airline = uf.airline),
-                (SELECT sp.Aircraft FROM starlink_planes sp
-                 WHERE sp.TailNumber = uf.tail_number AND sp.airline = uf.airline
-                 ORDER BY sp.id LIMIT 1)
-              ) AS aircraft_type,
+      `SELECT uf.airline, uf.flight_number, uf.departure_airport, uf.arrival_airport, uf.dep_date,
+              uf.departure_time, uf.tail_number, uf.last_seen,
+              ${tailAircraftTypeSql("uf.tail_number", "uf.airline")} AS aircraft_type,
               CASE WHEN ${tailEquippedSql("uf.tail_number", "uf.airline")} THEN 1 ELSE 0 END
                 AS equipped,
               CASE WHEN ${listedVerifiedSql("uf.tail_number", "uf.airline")} THEN 1 ELSE 0 END
                 AS listed_verified
        FROM flight_assignment_log uf
-       WHERE uf.departure_airport = ? AND uf.arrival_airport = ?
-         AND uf.departure_time IS NOT NULL AND ${scope.sql}`
+       WHERE ${where.sql} AND uf.departure_time IS NOT NULL AND uf.arrival_airport IS NOT NULL
+         AND ${scope.sql}`
     )
-    .all(origin, destination, ...scope.params) as Array<{
+    .all(...where.params, ...scope.params) as Array<{
     airline: string;
     flight_number: string;
+    departure_airport: string;
+    arrival_airport: string;
     dep_date: string;
     departure_time: number;
     tail_number: string;
@@ -67,24 +75,77 @@ export function getRouteFlightLegs(
     equipped: number;
     listed_verified: number;
   }>;
+  return rows.map((r) => ({
+    flight_number: slotFlightKey(r.flight_number, r.airline) ?? r.flight_number,
+    departure_airport: r.departure_airport,
+    arrival_airport: r.arrival_airport,
+    dep_date: r.dep_date,
+    departure_time: r.departure_time,
+    tail_number: r.tail_number,
+    aircraft_type: r.aircraft_type,
+    equipped: r.equipped === 1,
+    verified: r.equipped === 1 && r.listed_verified === 1,
+    last_seen: r.last_seen,
+  }));
+}
 
-  // A key that is no permalink of the airline is an ATC callsign (SKW312R) or
-  // a positioning leg nobody books.
+/** The live schedule's next two days on a pair, which the log may not hold yet. */
+function scheduledLegs(
+  db: Database,
+  airline: string,
+  origin: string,
+  destination: string,
+  nowSec: number
+): RouteFlightLeg[] {
+  return getDepartureSlots(db, airline, {
+    from: nowSec,
+    to: nowSec + DEPARTURE_WINDOW_SEC,
+    partners: true,
+    origin,
+    destination,
+  }).flatMap((s) =>
+    s.slot_flight
+      ? [
+          {
+            flight_number: s.slot_flight,
+            departure_airport: s.departure_airport,
+            arrival_airport: s.arrival_airport,
+            dep_date: departureLocalDate(s.departure_airport, s.departure_time),
+            departure_time: s.departure_time,
+            tail_number: s.tail_number,
+            aircraft_type: s.aircraft_type,
+            equipped: s.equipped === 1,
+            verified: s.equipped === 1 && s.verified_wifi === "Starlink",
+            last_seen: s.last_updated,
+          },
+        ]
+      : []
+  );
+}
+
+/** Marketed departures on a pair: logged, plus the live schedule. A key that is
+ * no permalink of the airline (an ATC callsign such as SKW312R) is dropped. */
+export function getRouteFlightLegs(
+  db: Database,
+  airline: string,
+  origin: string,
+  destination: string,
+  nowSec: number
+): RouteFlightLeg[] {
+  const cfg = AIRLINES[airline];
+  if (!cfg) return [];
   const marketed = canonicalPermalinkFor(cfg);
-  const out: RouteFlightLeg[] = [];
-  for (const r of rows) {
-    const fn = slotFlightKey(r.flight_number, r.airline);
-    if (!fn || !marketed.test(fn)) continue;
-    out.push({
-      flight_number: fn,
-      dep_date: r.dep_date,
-      departure_time: r.departure_time,
-      tail_number: r.tail_number,
-      aircraft_type: r.aircraft_type,
-      equipped: r.equipped === 1,
-      verified: r.equipped === 1 && r.listed_verified === 1,
-      last_seen: r.last_seen,
-    });
-  }
-  return out;
+  return [
+    ...loggedLegs(db, airline, { origin, destination }),
+    ...scheduledLegs(db, airline, origin, destination, nowSec),
+  ].filter((l) => marketed.test(l.flight_number));
+}
+
+/** Every logged leg of one flight number (its stored spellings), on any pair. */
+export function getFlightNumberLegs(
+  db: Database,
+  airline: string,
+  variants: readonly string[]
+): RouteFlightLeg[] {
+  return variants.length ? loggedLegs(db, airline, { flightNumbers: variants }) : [];
 }

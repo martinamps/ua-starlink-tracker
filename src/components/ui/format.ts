@@ -143,6 +143,30 @@ export function zonedDeparture(
   };
 }
 
+/** "8:15 AM" at `zone`, no zone name: for lists whose header names the zone
+ * once, so a row never carries a daylight label from the wrong season. */
+export function zonedClock(sec: number, zone: string | null | undefined): string {
+  return formatter(zone ?? "UTC", { hour: "numeric", minute: "2-digit" }).format(
+    new Date(sec * 1000)
+  );
+}
+
+/** Minutes after local midnight at `zone`, for ordering by time of day. */
+export function zonedMinutes(sec: number, zone: string | null | undefined): number {
+  const parts = formatter(zone ?? "UTC", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date(sec * 1000));
+  const get = (t: string) => Number(parts.find((p) => p.type === t)?.value ?? 0);
+  return get("hour") * 60 + get("minute");
+}
+
+/** "Mon" at `zone`. */
+export function zonedWeekday(sec: number, zone: string | null | undefined): string {
+  return formatter(zone ?? "UTC", { weekday: "short" }).format(new Date(sec * 1000));
+}
+
 /** YYYY-MM-DD at `zone` for an epoch: the calendar day a traveller there is on. */
 export function zonedIsoDate(sec: number, zone: string): string {
   const parts = formatter(zone, {
