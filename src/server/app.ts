@@ -205,7 +205,8 @@ import {
 } from "../utils/constants";
 import { article } from "../utils/grammar";
 import { computeInstallRate, hasInstallRateContent } from "../utils/install-rate";
-import { error as logError } from "../utils/logger";
+import { createLogThrottle } from "../utils/log-throttle";
+import { error as logError, warn as logWarn } from "../utils/logger";
 import { memo, perOwner } from "../utils/ttl-cache";
 import {
   CACHE,
@@ -4464,6 +4465,7 @@ function corsPreflight(pathname: string): Response {
 
 export const API_RATE_LIMIT = 100;
 const API_RATE_WINDOW_MS = 60_000;
+const RATE_LIMIT_LOG_INTERVAL_MS = 60_000;
 const LOCAL_IPS = new Set(["127.0.0.1", "::1", "localhost"]);
 
 function clientIp(req: Request): string {
@@ -4480,6 +4482,7 @@ export function createApp(db: Database): App {
   const detector = passengerVerifyEnabled ? new StarlinkIpDetector(db) : null;
   const ipHits = new Map<string, number[]>();
   let lastSweep = 0;
+  const rateLimitLog = createLogThrottle(RATE_LIMIT_LOG_INTERVAL_MS);
 
   const apiPassengerProbe: Handler = async ({ req, ip, onStarlinkIp }) => {
     let body: unknown;
@@ -4676,11 +4679,18 @@ export function createApp(db: Database): App {
         // HTTP_REQUEST — this early return previously bypassed the
         // count-every-request emit, so 429s were invisible in the request
         // metric (357 fired in one incident, zero appeared).
-        metrics.increment(COUNTERS.HTTP_RATE_LIMITED, {
+        const tags = {
           route: metricRoute(m),
           tenant: tenantScope(tenant),
           airline: httpAirlineTag(tenant),
-        });
+          bucket: meterClass,
+          ...requestClientTags(req, url),
+        };
+        metrics.increment(COUNTERS.HTTP_RATE_LIMITED, tags);
+        // Bounded tags only (never the IP or raw UA), one line per tag set
+        // per interval — the burst being logged must not flood the log.
+        const suppressed = rateLimitLog(Object.values(tags).join("|"), Date.now());
+        if (suppressed !== null) logWarn("rate limited", { ...tags, suppressed });
         countRequest(req, url, m, tenant, 429);
         return jsonError(429, "rate limit exceeded", { headers: { "Retry-After": "60" } });
       }

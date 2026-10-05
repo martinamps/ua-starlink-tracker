@@ -8,12 +8,14 @@
 
 import { afterEach, describe, expect, test } from "bun:test";
 import {
+  classifyMcpClient,
   classifyRequest,
   metrics,
   normalizeExtVersion,
   requestClientTags,
 } from "../src/observability/metrics";
-import { createApp } from "../src/server/app";
+import { API_RATE_LIMIT, createApp } from "../src/server/app";
+import { createLogThrottle } from "../src/utils/log-throttle";
 import { openSnapshot, req } from "./helpers";
 
 const UA_HOST = "unitedstarlinktracker.com";
@@ -129,5 +131,76 @@ describe("/api/check-flight with the client tag", () => {
     const http = calls.filter((c) => c.name === "http.request");
     expect(http[0].tags.client_class).toBe("browser");
     expect("ext_version" in http[0].tags).toBe(false);
+  });
+});
+
+describe("classifyMcpClient", () => {
+  test("names the major MCP clients from their user agents", () => {
+    const cases: Array<[string | null, string]> = [
+      ["Claude-User", "claude"],
+      ["claude-code/2.1.278 (cli)", "claude"],
+      ["Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 Claude/2.9939.4 Chrome/152.0", "claude"],
+      ["openai-mcp/1.0.0 (Codex)", "chatgpt"],
+      ["Cursor/3.21.18 (darwin arm64)", "cursor"],
+      ["AgentIndexBot/0.1 (+https://agents.traderszone.net)", "bot"],
+      ["node", "other"],
+      [null, "unknown"],
+    ];
+    for (const [ua, bucket] of cases) expect(classifyMcpClient(ua), String(ua)).toBe(bucket);
+  });
+
+  test("tool-call metrics carry the client class", async () => {
+    const calls = captureIncrements();
+    await app.dispatch(
+      req("/mcp", UA_HOST, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "User-Agent": "Claude-User" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "get_fleet_stats", arguments: {} },
+        }),
+      })
+    );
+    const tool = calls.filter((c) => c.name === "mcp.tool_call");
+    expect(tool.length).toBe(1);
+    expect(tool[0].tags.client_class).toBe("claude");
+  });
+});
+
+describe("createLogThrottle", () => {
+  test("one line per key per interval, carrying the suppressed count", () => {
+    const allow = createLogThrottle(1000);
+    expect(allow("a", 0)).toBe(0);
+    expect(allow("a", 10)).toBeNull();
+    expect(allow("a", 20)).toBeNull();
+    expect(allow("b", 20)).toBe(0);
+    expect(allow("a", 1000)).toBe(2);
+  });
+});
+
+describe("rate-limited responses", () => {
+  test("the 429 metric carries bounded client tags, never the IP", async () => {
+    const limited = createApp(openSnapshot());
+    const calls = captureIncrements();
+    const headers = { "User-Agent": CHROME_UA, "cf-connecting-ip": "203.0.113.9" };
+    let last: Response | null = null;
+    for (let i = 0; i <= API_RATE_LIMIT; i++) {
+      last = await limited.dispatch(
+        req("/api/check-flight?client=ext-2.1.1", UA_HOST, { headers })
+      );
+    }
+    expect(last?.status).toBe(429);
+    const rl = calls.filter((c) => c.name === "http.rate_limited");
+    expect(rl.length).toBe(1);
+    expect(rl[0].tags).toMatchObject({
+      route: "/api/check-flight",
+      bucket: "api",
+      client_class: "extension",
+      ext_version: "2.1",
+      airline: "united",
+    });
+    expect(Object.values(rl[0].tags)).not.toContain("203.0.113.9");
   });
 });

@@ -24,6 +24,7 @@
  *                    exit_error | parse_error | spawn_error | partial |
  *                    aborted | scrape_error | noop | shed            (~13)
  *   reason:          breaker | bucket | queue — fr24 assignments status:shed only (3)
+ *   bucket:          api | mcp | page — http.rate_limited only (the limiter's meter) (3)
  *   http_status:     upstream HTTP status code on vendor.request error/
  *                    rate_limited emits (fr24 only)                  (~10)
  *   result:          three disjoint enums share this key, so a `sum by {result}`
@@ -42,6 +43,9 @@
  *                    classifyUserAgent: claude | googleother | googlebot |
  *                    bingbot | gptbot | perplexity | seo-crawler | social |
  *                    extension | bot | browser | unknown; mcp for /mcp  (14)
+ *                    mcp.tool_call/tool_duration_ms use classifyMcpClient:
+ *                    claude | chatgpt | cursor | vscode | bot | other |
+ *                    unknown                                         (+3 new)
  *   ext_version:     1.x | 2.0 | 2.x | other | none — only when
  *                    client_class:extension                          (5)
  *   confidence:      high | medium | low | none                      (4)
@@ -207,6 +211,27 @@ export function mcpClientTags(): Tags {
   return { client_class: "mcp" };
 }
 
+// MCP is stateless here, so a tools/call never carries the initialize
+// handshake's clientInfo — the user agent is the only per-call signal.
+// Patterns from production /mcp spans: Claude-User (claude.ai connectors),
+// claude-code/x, the Claude desktop app's "Claude/x" Electron UA,
+// openai-mcp/x (ChatGPT and Codex), Cursor/x.
+const MCP_CLIENTS: ReadonlyArray<readonly [string, RegExp]> = [
+  ["claude", /Claude-User|claude-code|\bClaude\/|anthropic/i],
+  ["chatgpt", /openai-mcp|ChatGPT/i],
+  ["cursor", /^Cursor\//i],
+  ["vscode", /vscode|Visual Studio Code|Copilot/i],
+];
+
+/** claude | chatgpt | cursor | vscode | bot | other | unknown */
+export function classifyMcpClient(ua: string | null | undefined): string {
+  if (!ua) return "unknown";
+  for (const [bucket, re] of MCP_CLIENTS) {
+    if (re.test(ua)) return bucket;
+  }
+  return BOT_UA.test(ua) ? "bot" : "other";
+}
+
 /**
  * Canonical lowercase-name airline tag for metrics. Preserves Datadog history
  * (the global default has always been `airline:united`, not `airline:UA`).
@@ -351,7 +376,8 @@ export const COUNTERS = {
   // A new SEC filing surfaced for anchor review — tags: company, form, airline
   SEC_FILING_SEEN: "sec.filing_seen",
 
-  // Per-IP rate limit triggered on /api/* — tags: route, tenant
+  // Per-IP rate limit triggered on a metered surface — tags: route, tenant,
+  //   airline, bucket (api|mcp|page), client_class, ext_version (extension traffic)
   HTTP_RATE_LIMITED: "http.rate_limited",
 
   // united_fleet.starlink_status changed (consensus verdict flipped)
@@ -382,7 +408,8 @@ export const COUNTERS = {
   //   yes/no/none), days_out, client_class, ext_version (extension traffic)
   FLIGHT_LEG_SCOPE: "flight.leg_scope",
 
-  // MCP tool dispatch — tags: tool, airline, outcome (success|error|unknown_tool)
+  // MCP tool dispatch — tags: tool, airline, outcome (success|error|unknown_tool),
+  //   client_class (classifyMcpClient)
   MCP_TOOL_CALL: "mcp.tool_call",
 
   // Route lookup fallback chain hit source — tags: source (memory|assignment|sqlite|fr24|upcoming|stale|miss), airline
@@ -493,7 +520,7 @@ export const DISTRIBUTIONS = {
   // tags: vendor, type, status
   VENDOR_DURATION_MS: "vendor.duration_ms",
 
-  // MCP tool latency in milliseconds — tags: tool, airline, outcome
+  // MCP tool latency in milliseconds — tags: tool, airline, outcome, client_class
   MCP_TOOL_DURATION_MS: "mcp.tool_duration_ms",
 
   // Distribution of probabilities served to users — surfaces cold-start floods.
