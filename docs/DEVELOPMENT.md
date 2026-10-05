@@ -129,8 +129,31 @@ answers cite it, and the hub page flags it once it is over 45 days old.
 
 QR and AS no longer take community tails either. QR is fully settled by its
 type rule plus the Qatar schedule ingester; AS mainline tails keep their stored
-confirmations, and the Alaska verifier plus the airline's own dated per-type
-figures (`rollout-facts.ts`) cover the rest.
+confirmations, and the Alaska verifier plus the airline's own per-type figures
+cover the rest.
+
+### Alaska (official per-type tracker)
+Alaska publishes no per-tail wifi: the alaskaair.com flight-status payload has
+no wifi field, and its fleet and wifi pages carry no per-aircraft data. What it
+does publish is a per-type table on its newsroom tracker
+(`news.alaskaair.com/alaska-airlines-wifi-connectivity/`, refreshed monthly,
+plain HTML, robots-allowed). `src/scripts/alaska-tracker.ts` reads it once a
+day (`bun src/scripts/alaska-tracker.ts` runs it once by hand):
+
+- Each Alaska type becomes an `AS` row in `fleet_progress` (connected =
+  `starlink_complete`, connected + pending = `total`, chart date in
+  `sheet_updated` as YYYY-MM-DD). Hawaiian's A321neo/A330 rows are skipped.
+- `/fleet` shows them as "Install progress, per Alaska"; type pages take the
+  count as the official figure (`newestOfficial`: the later of the tracker and
+  any dated fact in `rollout-facts.ts`, the tracker on a tie).
+- A type marked "Update complete" settles every roster tail of that type as a
+  type-rule listing, unless our roster holds more of it than Alaska counts.
+
+Still manual: the counts never say *which* tails are connected, so a
+partly-done type (the 737-8 MAX today) gains named tails only from stored
+confirmations. `starlink.fleet_progress.unattributed` measures that gap. A
+failed fetch or a changed table writes nothing and logs a warning; the
+`fleet_progress` freshness gauge for `AS` then ages.
 
 Per-type counts (`fleet_guide_tails` +
 `getTypeProgress`) key on the registry's `programTypes`, so the 777-200ER and

@@ -211,6 +211,10 @@ export interface AirlineConfig {
   flightHistoryModel: boolean;
   /** Site users should double-check answers on (flight status / WiFi pages). */
   verifySite: string;
+  /** The airline's own per-type install tracker, ingested into fleet_progress.
+   * Its counts are the airline's word, so they stand in as official per-type
+   * figures; UA's fleet_progress rows come from a community sheet instead. */
+  officialTracker?: { label: string; url: string };
   /** For airlines whose Starlink status is fully determined by aircraft type
    * (no per-tail observation needed). null = leave as unknown (in progress). */
   typeDeterministicWifi?: (aircraftType: string) => StarlinkStatus | null;
@@ -507,6 +511,10 @@ const AIRLINE_DEFS = {
     verifierBackend: "alaska-json",
     flightHistoryModel: false,
     verifySite: "alaskaair.com",
+    officialTracker: {
+      label: "Alaska Airlines newsroom — Starlink tracker",
+      url: "https://news.alaskaair.com/alaska-airlines-wifi-connectivity/",
+    },
     typeDeterministicWifi: alaskaTypeToWifi,
     // Alaska's own tracker (Aug. 28, 2026 fact in rollout-facts): E175s done,
     // mainline only on the 737-8 MAX; no other 737 or 787 connected.

@@ -350,6 +350,17 @@ export function officialCountFor(code: string, slug: string): OfficialCount | nu
   };
 }
 
+/** The later-dated of a hand-sourced fact and the airline's tracker as read
+ * by the daily ingest. A tie goes to the tracker: same chart, read by machine. */
+export function newestOfficial(
+  fact: OfficialCount | null,
+  tracker: OfficialCount | null | undefined
+): OfficialCount | null {
+  if (!tracker) return fact;
+  if (!fact) return tracker;
+  return tracker.asOf >= fact.asOf ? tracker : fact;
+}
+
 /** A sourced-fact def the airline itself counts only needs one roster row:
  * Alaska names its 787s, so losing a tail row must not 404 an indexed URL. */
 export function minTypeTails(code: string, def: AircraftPageDef): number {
