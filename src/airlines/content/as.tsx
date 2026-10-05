@@ -155,7 +155,7 @@ export const content: AirlineContent = {
               787s plus Hawaiian's A321neo and A330s, and the headline here counts the same fleets.
               What remains is fleet lists: Alaska's table leaves out the 737-700s, which we count as
               not yet equipped, and our roster can differ from Alaska's by an aircraft or two in a
-              type. The{" "}
+              type. We also round shares down, never up. The{" "}
               <a href="/fleet" className={LINK}>
                 fleet page
               </a>{" "}
