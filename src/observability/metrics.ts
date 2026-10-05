@@ -58,6 +58,7 @@
 
 import { detectAirline } from "../airlines/flight-number";
 import { AIRLINES, SUBFLEET_KEYS, operatorIatas } from "../airlines/registry";
+import { CHROME_EXTENSION_ID } from "../utils/chrome-extension";
 import { tracer } from "./tracer";
 
 export type Tags = Record<string, string | number>;
@@ -172,7 +173,7 @@ export function classifyUserAgent(ua: string | null | undefined): string {
 // regex above never fires for it: v2.0.1+ says so with `client=ext-<version>`,
 // and any extension fetch may carry its Origin. Only our own store ID counts
 // as "extension" — a copycat reusing the API is a different audience.
-const OWN_EXTENSION_ORIGIN = "chrome-extension://jjfljoifenkfdbldliakmmjhdkbhehoi";
+const OWN_EXTENSION_ORIGIN = `chrome-extension://${CHROME_EXTENSION_ID}`;
 const EXT_CLIENT_RE = /^ext-(\d{1,2})\.(\d{1,3})\.(\d{1,3})$/;
 const FOREIGN_EXTENSION_ORIGIN_RE = /^(chrome|moz|safari-web)-extension:\/\//;
 

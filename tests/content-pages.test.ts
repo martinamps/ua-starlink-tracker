@@ -9,9 +9,16 @@
  */
 
 import { beforeAll, describe, expect, test } from "bun:test";
-import { SITES } from "../src/airlines/registry";
-import { EXTENSION_MULTI_AIRLINE_LIVE } from "../src/components/chrome-page";
-import { CHROME_EXTENSION_URL } from "../src/components/home/tools";
+import React from "react";
+import ReactDOMServer from "react-dom/server";
+import { SITES, type SiteConfig } from "../src/airlines/registry";
+import ChromePage, {
+  CHROME_OG_IMAGE_URL,
+  CHROME_PAGE_UPDATED,
+  CHROME_PAGE_URL,
+  EXTENSION_MULTI_AIRLINE_LIVE,
+  chromeMetaDescription,
+} from "../src/components/chrome-page";
 import { freeAccessAnswer } from "../src/components/is-starlink-free-page";
 import { getTimeline, hasTimeline } from "../src/components/timeline-page";
 import {
@@ -23,6 +30,7 @@ import {
 } from "../src/database/database";
 import { createReaderFactory } from "../src/database/reader";
 import { createApp } from "../src/server/app";
+import { CHROME_EXTENSION_URL } from "../src/utils/chrome-extension";
 import { makeSyntheticDb, openSnapshot, req } from "./helpers";
 
 let app: ReturnType<typeof createApp>;
@@ -180,43 +188,136 @@ describe("intent pages", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("/chrome extension page", () => {
-  const CANONICAL = `<link rel="canonical" href="https://${UA}/chrome"`;
+  const CANONICAL = `<link rel="canonical" href="${CHROME_PAGE_URL}"`;
+  const HUB = SITES.airline.canonicalHost;
+  const decode = (html: string) =>
+    visible(html)
+      .replace(/&#x27;/g, "'")
+      .replace(/&amp;/g, "&");
+  const render = (site: SiteConfig, live: boolean) =>
+    decode(ReactDOMServer.renderToStaticMarkup(React.createElement(ChromePage, { site, live })));
+  const jsonLdTypes = (html: string) =>
+    [...html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)].map(
+      (m) => JSON.parse(m[1]) as Record<string, unknown>
+    );
 
-  test("serves on every host, canonical on United's", async () => {
+  test("serves on every host; only canonical and og:url point at United's", async () => {
     for (const site of Object.values(SITES)) {
       const { status, text } = await getText("/chrome", site.canonicalHost);
       expect(status, site.key).toBe(200);
       expect(text, site.key).toContain(CANONICAL);
+      expect(text, site.key).toContain(`property="og:url" content="${CHROME_PAGE_URL}"`);
+      expect(text, site.key).toContain(`property="og:image" content="${CHROME_OG_IMAGE_URL}"`);
+      expect(text, site.key).toContain(`name="twitter:image" content="${CHROME_OG_IMAGE_URL}"`);
       expect(text, site.key).toContain(CHROME_EXTENSION_URL);
-      expect(text, site.key).toContain("Add to Chrome — free");
-      expect(text, site.key).toContain('"FAQPage"');
-      expect(text, site.key).toMatch(/<img [^>]*width="1280"[^>]*height="800"/);
+      expect(text, site.key).toMatch(/<img [^>]*width="505"[^>]*height="598"/);
     }
   });
 
-  test("copy follows the multi-airline flag", async () => {
+  test("hub and Alaska keep their own WebSite/WebPage JSON-LD beside the app block", async () => {
+    for (const host of [HUB, AS, UA]) {
+      const { text } = await getText("/chrome", host);
+      const blocks = jsonLdTypes(text);
+      const byType = (t: string) => blocks.find((b) => b["@type"] === t);
+      expect(byType("WebSite")?.url, host).toBe(`https://${host}/`);
+      expect(byType("WebPage")?.url, host).toBe(`https://${host}/chrome`);
+      expect(byType("WebPage")?.dateModified, host).toBe(CHROME_PAGE_UPDATED);
+      const app = byType("SoftwareApplication");
+      expect(app?.applicationCategory, host).toBe("TravelApplication");
+      expect(app?.url, host).toBe(CHROME_PAGE_URL);
+      expect(app, host).not.toHaveProperty("aggregateRating");
+      expect(byType("FAQPage"), host).toBeDefined();
+    }
+  });
+
+  test("other pages keep their own host in canonical and og:image", async () => {
+    const { text } = await getText("/fleet", AS);
+    expect(text).toContain(`<link rel="canonical" href="https://${AS}/fleet"`);
+    expect(text).toContain(`property="og:image" content="https://${AS}/`);
+  });
+
+  test("1.2.0 copy (flag off) promises only what 1.2.0 does", () => {
+    const html = render(SITES.united, false);
+    expect(html).toContain(
+      "Badges appear once the airline assigns the aircraft, about 2 days before departure."
+    );
+    expect(html).toContain(
+      "The assigned aircraft has Starlink, per the airline's site or fleet data."
+    );
+    expect(html).toContain("Most often, no aircraft is assigned yet");
+    expect(html).toContain(
+      "it sends only the flight number and the date to unitedstarlinktracker.com."
+    );
+    expect(html).toContain("Next update");
+    for (const v2 of ["weakest leg", "Hover a badge", "airport codes", "A small badge on every"]) {
+      expect(html, v2).not.toContain(v2);
+    }
+  });
+
+  test("2.1.1 copy (flag on) names every airline and the 2.x behaviour", () => {
+    const html = render(SITES.united, true);
+    expect(html).toContain("A small badge on United, Alaska, Hawaiian and Qatar results");
+    expect(html).toContain("confirmed Starlink-equipped on the airline's own site");
+    expect(html).toContain("judged by its weakest leg");
+    expect(html).toContain("Hover a badge for the full explanation.");
+    expect(html).toContain("the departure and arrival airport codes and the extension's version");
+    expect(html).not.toContain("Next update");
+  });
+
+  test("hub points visitors at real checkers, split by airline", () => {
+    const html = render(SITES.airline, EXTENSION_MULTI_AIRLINE_LIVE);
+    expect(html).toContain(`href="https://${UA}/check-flight"`);
+    expect(html).toContain(`href="https://${AS}/check-flight"`);
+    expect(html).toContain(`href="https://${AS}/route-planner"`);
+    expect(html).not.toMatch(/href="\/(check-flight|route-planner)"/);
+    expect(render(SITES.united, false)).toContain('href="/check-flight"');
+  });
+
+  test("meta description leads with coverage and fits the clamp", async () => {
+    for (const live of [false, true]) {
+      const d = chromeMetaDescription(live);
+      expect(d.length, String(live)).toBeLessThanOrEqual(158);
+      expect(
+        d.startsWith(live ? "United, Alaska, Hawaiian and Qatar" : "United flights today")
+      ).toBe(true);
+      expect(d.includes("verified")).toBe(live);
+    }
     const { text } = await getText("/chrome", UA);
-    expect(text.includes("Next update")).toBe(!EXTENSION_MULTI_AIRLINE_LIVE);
+    expect(text).toContain(`name="description" content="${chromeMetaDescription()}"`);
   });
 
-  test("/extension 301s to /chrome", async () => {
+  test("/extension 301s to /chrome with the query string, outside the route table", async () => {
     for (const site of Object.values(SITES)) {
-      const res = await app.dispatch(req("/extension", site.canonicalHost));
-      expect(res.status, site.key).toBe(301);
-      expect(res.headers.get("location"), site.key).toBe(`https://${site.canonicalHost}/chrome`);
+      for (const path of ["/extension", "/extension/", "/extension?ref=x&y=1"]) {
+        const res = await app.dispatch(req(path, site.canonicalHost));
+        expect(res.status, `${site.key} ${path}`).toBe(301);
+        const search = path.includes("?") ? path.slice(path.indexOf("?")) : "";
+        expect(res.headers.get("location"), `${site.key} ${path}`).toBe(
+          `https://${site.canonicalHost}/chrome${search}`
+        );
+      }
     }
+    expect(app.routeTags).not.toContain("/extension");
   });
 
-  test("only United's sitemap and llms.txt list it; every footer links it", async () => {
+  test("sitemap lists it once on United with a fixed lastmod; llms.txt once", async () => {
     for (const site of Object.values(SITES)) {
       const host = site.canonicalHost;
       const { text: map } = await getText("/sitemap.xml", host);
       expect(map.includes(`https://${host}/chrome<`), `${site.key} sitemap`).toBe(host === UA);
-      const { text: home } = await getText("/", host);
-      expect(home, `${site.key} footer`).toContain('href="/chrome"');
     }
+    const { text: map } = await getText("/sitemap.xml", UA);
+    expect(map).toMatch(new RegExp(`/chrome</loc>\\s*<lastmod>${CHROME_PAGE_UPDATED}</lastmod>`));
     const { text: llms } = await getText("/llms.txt", UA);
-    expect(llms).toContain(`https://${UA}/chrome`);
+    expect(llms.split(CHROME_PAGE_URL).length - 1).toBe(1);
+  });
+
+  test("footers link it: relative on United, straight to United elsewhere", async () => {
+    for (const site of Object.values(SITES)) {
+      const { text: home } = await getText("/", site.canonicalHost);
+      const href = site.key === "united" ? '"/chrome"' : `"${CHROME_PAGE_URL}"`;
+      expect(home, site.key).toContain(`href=${href}`);
+    }
   });
 });
 

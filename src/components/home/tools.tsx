@@ -2,9 +2,6 @@ import type React from "react";
 import type { SiteConfig } from "../../airlines/registry";
 import { Panel, Section } from "../layout";
 
-export const CHROME_EXTENSION_URL =
-  "https://chromewebstore.google.com/detail/google-flights-starlink-i/jjfljoifenkfdbldliakmmjhdkbhehoi";
-
 function ToolCard({
   id,
   icon,
