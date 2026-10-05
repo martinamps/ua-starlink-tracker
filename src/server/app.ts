@@ -2584,8 +2584,11 @@ export function badgeValue(equipped: number, total: number, rosterIsProgramScope
 
 const badgeSvg: Handler = ({ site, reader, tenant }) => {
   const cfg = tenantConfig(tenant);
-  const equipped = reader.countStarlinkPlanes();
-  const total = reader.getTotalCount();
+  // The homepage headline's figure (Alaska's includes Hawaiian's Airbus jets):
+  // the badge links there, so it must not show a different count.
+  const programme = reader.getProgrammeHeadline();
+  const equipped = programme?.equipped ?? reader.countStarlinkPlanes();
+  const total = programme?.total ?? reader.getTotalCount();
   const label = cfg ? `${cfg.shortName} Starlink` : "Airline Starlink";
   const value = badgeValue(equipped, total, cfg?.rollout.rosterIsProgramScope ?? true);
   return text(

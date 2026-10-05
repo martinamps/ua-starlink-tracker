@@ -1924,9 +1924,16 @@ ${lines.join("\n")}`;
     .getFleetPageData()
     .families.filter((f) => f.family !== "unknown")
     .map((f) => `- ${f.family}: ${f.starlink} of ${f.total} (${pctOf(f.starlink, f.total)}%)`);
+  // A partnered programme (Alaska with Hawaiian's Airbus jets) headlines its
+  // site with the wider count; both figures appear, each named, so an agent
+  // quoting this never contradicts the site it points to.
+  const programme = reader.getProgrammeHeadline();
+  const ownLine = `${aircraftShare(starlinkPlanes.length, totalCount, inScope)} have Starlink WiFi`;
   const text = [
     `${cfg.name} Starlink Installation Progress (as of ${lastUpdated}):`,
-    `**Combined Fleet**: ${aircraftShare(starlinkPlanes.length, totalCount, inScope)} have Starlink WiFi`,
+    programme
+      ? `**${programme.noun} (the site's headline)**: ${aircraftShare(programme.equipped, programme.total, inScope)} have Starlink WiFi\n**${cfg.shortName}-operated only**: ${ownLine}`
+      : `**Combined Fleet**: ${ownLine}`,
     subfleetLines.join("\n"),
     familyLines.length > 0 ? `**By Aircraft Type**:\n${familyLines.join("\n")}` : null,
     `**Rollout**: ${cfg.rollout.statusLabel} — ${cfg.rollout.phaseNote}`,
