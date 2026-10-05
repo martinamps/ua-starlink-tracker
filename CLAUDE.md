@@ -36,7 +36,7 @@ Bun + SQLite + server-rendered React, multi-tenant by Host (`src/airlines/regist
 | Daily jobs | 24 hr | Ship numbers, fleet progress (+ tails), FAA registry, SEC anchors, BTS, geofeed, crash-row prune |
 | ADS-B sweep, data-freshness gauges | 5 min | Metrics only (FR24 stays the serving source) |
 
-FlyerTalk QR/AS/AF data arrives via `bun run residential-sync` from a laptop (prod's IP is blocked).
+Community tail lists are no longer imported: QR rides its type rule + schedule ingester, AS its verifier, and AF serves its last stored guide, dated.
 
 **Tables (27):** core `starlink_planes`, `united_fleet`, `upcoming_flights`, `starlink_verification_log`, `departure_log`, `flight_routes`, `flight_assignment_log`, `first_flights`, `meta`; pipeline `fleet_progress`, `fleet_progress_tails`, `fleet_guide_tails`, `fleet_anchors`, `pipeline_events`, `starlink_prefixes`, `faa_registry`, `sec_filings_seen`; Qatar `qatar_schedule`, `qatar_equipment_history`, `qatar_fetch_coverage`; ADS-B `adsb_sweeps`, `adsb_observations`, `adsb_flight_draws`; BTS `bts_monthly_operators`, `bts_monthly_routes`, `bts_monthly_tails`; `passenger_reports`. DDL lives in `setupTables` (`src/database/database.ts`).
 

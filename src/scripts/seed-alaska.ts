@@ -111,7 +111,7 @@ function apply(db: Database, rows: SeedRow[]) {
       // are equipped"), not a per-tail observation — evidence:'type_rule'
       // keeps verified stamps NULL and leaves the tails verifier-eligible so
       // the per-tail verifier confirms them organically. Contrast
-      // flyertalk-common, whose tails were individually spotted ('observed').
+      // fleet-discovery, whose tails were individually observed ('observed').
       upsertFleetAircraft(
         db,
         r.tail,

@@ -1,7 +1,7 @@
 /**
  * QR answer fixes: origin-scoped through-flight legs, legs the number doesn't
  * fly, all-cancelled history, 787-9 copy, hub confidence values, malformed QR
- * numbers and the FlyerTalk type-gate report. Hermetic: synthetic DBs.
+ * numbers. Hermetic: synthetic DBs.
  */
 
 import type { Database } from "bun:sqlite";
@@ -11,15 +11,9 @@ import { decideCarrier, resolveFlightVerdict } from "../src/api/check-flight-cor
 import { addDaysISO, qatarNoDataReason } from "../src/api/qatar-verdict";
 import { upsertQatarEquipmentHistory } from "../src/database/database";
 import { createReaderFactory } from "../src/database/reader";
-import {
-  type GatedTail,
-  applyQatarFlyertalkTails,
-  typeGatedSummary,
-} from "../src/scripts/flyertalk-qatar";
-import { reportNew } from "../src/scripts/residential-sync";
 import { createApp } from "../src/server/app";
 import { airportLocalDate } from "../src/utils/airport-tz";
-import { addFleet, bodyOf, makeSyntheticDb, utc } from "./helpers";
+import { bodyOf, makeSyntheticDb, utc } from "./helpers";
 
 const NOW = utc("2026-09-19T08:00:00Z");
 const TODAY = "2026-09-19";
@@ -173,33 +167,5 @@ describe("hub /api/check-any-flight QR values", () => {
     for (const fn of ["QRA1", "UAE123", "EK1A"]) {
       expect(decideCarrier(null, fn, { pool: "lookup" }).outcome, fn).toBe("not_tracked");
     }
-  });
-});
-
-describe("FlyerTalk QR type gate", () => {
-  test("rejected tails come back with their types and a summary line", () => {
-    const db = makeSyntheticDb();
-    addFleet(db, "A7-BEA", "unknown", { airline: "QR", aircraftType: "Boeing 777-300ER" });
-    for (const t of ["A7-BHA", "A7-BHB"]) {
-      addFleet(db, t, "unknown", { airline: "QR", aircraftType: "Boeing 787-9" });
-    }
-    addFleet(db, "A7-APJ", "unknown", { airline: "QR", aircraftType: "Airbus A380-800" });
-    const gated: GatedTail[] = [];
-    const written = applyQatarFlyertalkTails(db, ["A7-BEA", "A7-BHA", "A7-BHB", "A7-APJ"], gated);
-    expect(written).toBe(1);
-    expect(gated.map((g) => g.tail).sort()).toEqual(["A7-APJ", "A7-BHA", "A7-BHB"]);
-    expect(typeGatedSummary(gated)).toBe("3 type-gated (787-9 ×2, A380-800 ×1)");
-  });
-
-  test("the laptop report keeps type-gated tails out of 'not yet confirmed'", () => {
-    const line = reportNew("QR", ["A7-BEA", "A7-BHA", "A7-NEW"], {
-      confirmed: 1,
-      total: 3,
-      tails: ["A7-BEA"],
-      gated: { "A7-BHA": "Boeing 787-9" },
-    });
-    expect(line).toContain("1 not yet confirmed on prod: A7-NEW");
-    expect(line).toContain("1 type-gated (787-9 ×1)");
-    expect(line).not.toContain("A7-BHA");
   });
 });

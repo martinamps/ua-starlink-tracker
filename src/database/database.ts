@@ -1223,7 +1223,7 @@ export function setMeta(db: Database, key: string, value: string | number, airli
 /**
  * Single enforcement point for lastUpdated ownership: stamps only when the
  * calling pipeline IS the registry-declared owner for the airline, so a
- * secondary writer (daily fleet sync, residential sync) can never mask a
+ * secondary writer (e.g. the daily fleet sync) can never mask a
  * dead primary pipeline's staleness.
  */
 export function stampLastUpdated(db: Database, airline: string, writer: LastUpdatedOwner): void {
@@ -3413,35 +3413,6 @@ export function getTailAirline(db: Database, tail: string): string | null {
 // ── Community fleet guide (fleet_guide_tails) ─────────────────────────────────
 
 export type GuideMark = "starlink" | "legacy" | "none";
-
-export interface FleetGuideRow {
-  tail: string;
-  section: string;
-  programType: string;
-  mark: GuideMark;
-}
-
-/** Replace an airline's guide rows in one transaction: a reader never sees a
- * half-written guide. */
-export function replaceFleetGuide(
-  db: Database,
-  airline: string,
-  rows: readonly FleetGuideRow[],
-  guideUpdated: string
-): void {
-  const now = unixNow();
-  db.transaction(() => {
-    db.query("DELETE FROM fleet_guide_tails WHERE airline = ?").run(airline);
-    const ins = db.query(
-      `INSERT INTO fleet_guide_tails
-         (airline, tail_number, section, program_type, mark, guide_updated, fetched_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
-    );
-    for (const r of rows) {
-      ins.run(airline, r.tail, r.section, r.programType, r.mark, guideUpdated, now);
-    }
-  })();
-}
 
 export interface TypeProgress {
   key: string;
