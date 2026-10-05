@@ -166,7 +166,7 @@ export default function CheckFlightPage({
     {
       q: `How do I check if ${fn ?? `my ${shortName} flight`} has Starlink?`,
       a: fn
-        ? `Pick your travel date above. ${airlineName} assigns the aircraft about 2 days before departure, and the answer then comes from that aircraft. Before that, you get ${cfg.flightHistoryModel ? `the share of recent ${fn} flights that had Starlink` : `the share of the aircraft flying ${fn} that have Starlink`}.`
+        ? `Pick your travel date above. ${airlineName} assigns the aircraft about 2 days before departure, and the answer then comes from that aircraft. Before that, you get ${cfg.flightHistoryModel ? `Starlink odds from recent ${fn} flights, weighted to the latest` : `the share of the aircraft flying ${fn} that have Starlink`}.`
         : `Enter your flight number (for example ${flightExample}) and travel date above. We check the aircraft scheduled for that flight against our list of Starlink aircraft.`,
     },
     {

@@ -28,15 +28,15 @@ export interface LegWeighting {
 }
 
 /**
- * Chosen by `starlink-predictor --leg-backtest` (every ADS-B draw in a
- * held-out fortnight, priced from the leg's draws before its day): 7d beat
- * 10/14/21d, the previous 30d, an equal-weight 60d window and a last-14d rate
- * on Brier and log-loss in each fortnight to Oct 5 2026 (10d tied it on the
- * final week). A route's mix moves in weeks when it changes metal (UA2278
- * SFO-ORD: 757s out, A321neos in), and 30d read the old mix for a month.
- * α 5-8 scored slightly better still; left at 3 pending its own sweep.
+ * Chosen by `starlink-predictor --leg-backtest` (every matched ADS-B
+ * departure in a held-out fortnight, priced from the leg's draws before its
+ * day). 7d with α=8 beat 10/14/21d, 30d, an equal-weight 60d window and a
+ * last-14d rate on Brier and log-loss in the fortnights ending Sep 21 and
+ * Oct 5 2026, and tied 10d in the one ending Sep 7, when the ADS-B record was
+ * three weeks old. A route's mix moves in weeks when it changes metal, and
+ * 30d read the old mix for a month. α=8 beat α=3 at every half-life.
  */
-export const LEG_WEIGHTING: LegWeighting = { halfLifeDays: 7, priorStrength: 3, windowDays: 90 };
+export const LEG_WEIGHTING: LegWeighting = { halfLifeDays: 7, priorStrength: 8, windowDays: 90 };
 
 /** Below this many draws on the leg, its odds are the share of its aircraft types. */
 export const LEG_MIN_DRAWS = 3;
@@ -91,8 +91,10 @@ export function legEstimate(
   return { probability: (s + a * (prior ?? s / n)) / (n + a), enough, effective, count };
 }
 
-/** The recent rate against the window's, compared only past these sizes. */
+/** The last two weeks against the last eight (the span the board charts),
+ * compared only past these sizes. */
 export const TREND_RECENT_DAYS = 14;
+export const TREND_WINDOW_DAYS = 56;
 export const TREND_MIN_POINTS = 0.15;
 const TREND_MIN_RECENT = 6;
 const TREND_MIN_OLDER = 6;
@@ -101,17 +103,13 @@ export type LegTrend = "up" | "down" | null;
 
 /**
  * "up"/"down" when the last two weeks' Starlink rate is 15+ points off the
- * whole window's, both counted plainly, with enough draws on each side for
+ * last eight weeks', both counted plainly, with enough draws on each side for
  * the gap not to be noise.
  */
-export function legTrend(
-  draws: readonly LegDraw[],
-  nowSec: number,
-  w: LegWeighting = LEG_WEIGHTING
-): LegTrend {
-  const since = nowSec - w.windowDays * DAY;
+export function legTrend(draws: readonly LegDraw[], nowSec: number): LegTrend {
+  const since = nowSec - TREND_WINDOW_DAYS * DAY;
   const recentSince = nowSec - TREND_RECENT_DAYS * DAY;
-  const all = draws.filter((d) => d.t >= since && d.t <= nowSec);
+  const all = draws.filter((d) => d.t > since && d.t <= nowSec);
   const recent = all.filter((d) => d.t > recentSince);
   if (recent.length < TREND_MIN_RECENT || all.length - recent.length < TREND_MIN_OLDER) return null;
   const rate = (xs: readonly LegDraw[]) => xs.filter((d) => d.equipped).length / xs.length;

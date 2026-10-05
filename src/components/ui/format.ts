@@ -44,11 +44,13 @@ export function probPhrase(p: number): string {
   return p > 0 && p < 1 ? `about ${label}` : label;
 }
 
-/** A flight number's history share, worded and rounded one way on the page,
- * the card, the APIs and the calendar feed: "about 12% of 49 recent UA1932
- * flights had Starlink". Lowercase, no period, so callers can lead with it. */
+/** A flight number's history odds, worded and rounded one way on the page,
+ * the card, the APIs and the calendar feed: "about 12% Starlink odds, weighted
+ * to recent UA1932 flights (49 tracked)". Odds, not a share: the estimate is
+ * recency-weighted and smoothed, so "12% of 49 had it" would be a count it
+ * isn't. Lowercase, no period, so callers can lead with it. */
 export function flightShare(p: number, fn: string, n?: number): string {
-  return `${probPhrase(p)} of ${n ? `${fmt(n)} ` : ""}recent ${fn} flights had Starlink`;
+  return `${probPhrase(p)} Starlink odds, weighted to recent ${fn} flights${n ? ` (${fmt(n)} tracked)` : ""}`;
 }
 
 /** The estimate for a flight number with no history, never called an install

@@ -1472,7 +1472,17 @@ const apiRouteFlights: Handler = ({ url, reader, tenant }) => {
   }
   const board = buildRouteFlightBoard(cfg, reader, origin, destination, { date });
   recordRouteFlightsView(cfg, "api", board);
-  return json(board, { cache: CACHE.fiveMinutes });
+  // The latest-flights list is most of the payload; the planner's card asks for it.
+  const body =
+    url.searchParams.get("history") === "1"
+      ? board
+      : {
+          ...board,
+          flights: board.flights.map((f) =>
+            f.history ? { ...f, history: { ...f.history, recent: undefined } } : f
+          ),
+        };
+  return json(body, { cache: CACHE.fiveMinutes });
 };
 
 const apiMismatches: Handler = ({ reader }) => {

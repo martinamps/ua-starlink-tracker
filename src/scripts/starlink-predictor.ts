@@ -2349,6 +2349,10 @@ function mainlineFleetRate(reader: ScopedReader): number {
 /** An ADS-B sighting this close to a leg's scheduled departure (time of day) is that leg. */
 const ADSB_LEG_MATCH_SEC = 2 * 3600;
 const LEG_DUPLICATE_SEC = 12 * 3600;
+/** A landed sighting shorter than this share of a leg's block time flew another leg. */
+const ADSB_MIN_AIRBORNE_SHARE = 0.6;
+/** Unseen this long, a sighting has landed and its airborne time is final. */
+const ADSB_LANDED_SEC = 30 * 60;
 
 export interface LegPrediction extends Prediction {
   /** "leg_history" when the leg's own draws carry the number, else the share of its types. */
@@ -2459,10 +2463,97 @@ export function predictLeg(
   return answer;
 }
 
+type PairOf = { departure_airport: string; arrival_airport: string };
+const pairOf = (l: PairOf) => `${l.departure_airport}-${l.arrival_airport}`;
+
+/** An ADS-B departure matched to one leg. `exact`: final, the only leg its
+ * clock and airborne time fit, so it may stand in for that departure's log row. */
+type LegSighting = LegDraw & { exact: boolean };
+
+interface LegSchedule {
+  /** Each pair's scheduled time of day: its newest logged departure. */
+  clock: Map<string, number>;
+  /** Each pair's median logged block time, when the log has arrivals. */
+  block: Map<string, number>;
+  /** One logged departure per pair and local day, the tail seen last. */
+  perDay: RouteFlightLeg[];
+}
+
+function legSchedule(legs: readonly RouteFlightLeg[]): LegSchedule {
+  const latest = new Map<string, RouteFlightLeg>();
+  for (const l of legs) {
+    const k = `${pairOf(l)}|${l.dep_date}`;
+    const prev = latest.get(k);
+    if (!prev || l.last_seen > prev.last_seen) latest.set(k, l);
+  }
+  const perDay = [...latest.values()].sort((a, b) => a.departure_time - b.departure_time);
+  const clock = new Map<string, number>();
+  const blocks = new Map<string, number[]>();
+  for (const l of perDay) {
+    clock.set(pairOf(l), secOfDay(l.departure_time));
+    if (l.arrival_time !== null && l.arrival_time > l.departure_time) {
+      const list = blocks.get(pairOf(l)) ?? [];
+      list.push(l.arrival_time - l.departure_time);
+      blocks.set(pairOf(l), list);
+    }
+  }
+  const block = new Map(
+    [...blocks].map(([k, v]) => [k, v.sort((a, b) => a - b)[Math.floor(v.length / 2)]] as const)
+  );
+  return { clock, block, perDay };
+}
+
 /**
- * One leg's draws: its logged departures (one per local day, the tail seen
- * last) and the ADS-B sightings whose time of day matches that leg's schedule
- * and no other leg's. Null when the leg was never logged as departed.
+ * ADS-B departures of the number that fit this leg, oldest first, one per
+ * departure. A sighting fits a pair when it left within ADSB_LEG_MATCH_SEC of
+ * that pair's clock and, once it has landed, stayed airborne long enough for
+ * it: UA2278's 55-minute SAN-SFO hop at SFO-ORD's hour is not SFO-ORD.
+ */
+function legSightings(
+  index: LegIndex,
+  fleet: LegFleet,
+  schedule: LegSchedule,
+  flightNumber: string,
+  target: string,
+  nowSec: number
+): LegSighting[] {
+  const since = nowSec - ADSB_DRAW_WINDOW_DAYS * 86400;
+  const raw = (index.adsb.get(flightNumber) ?? [])
+    .filter((d) => d.first_seen >= since && d.first_seen <= nowSec)
+    .sort((a, b) => a.first_seen - b.first_seen || a.tail_number.localeCompare(b.tail_number));
+  const out: LegSighting[] = [];
+  for (const d of raw) {
+    const tail = fleet.tails.get(d.tail_number);
+    if (!tail) continue;
+    const landed = nowSec - d.last_seen >= ADSB_LANDED_SEC;
+    const airborne = d.last_seen - d.first_seen;
+    const fits = [...schedule.clock].filter(([pair, sod]) => {
+      if (clockDistance(secOfDay(d.first_seen), sod) > ADSB_LEG_MATCH_SEC) return false;
+      const block = schedule.block.get(pair);
+      return !landed || block === undefined || airborne >= ADSB_MIN_AIRBORNE_SHARE * block;
+    });
+    if (fits.length === 0) continue;
+    const [pair] = fits.reduce((a, b) =>
+      clockDistance(secOfDay(d.first_seen), b[1]) < clockDistance(secOfDay(d.first_seen), a[1])
+        ? b
+        : a
+    );
+    if (pair !== target) continue;
+    if (out.some((x) => Math.abs(x.t - d.first_seen) < LEG_DUPLICATE_SEC)) continue;
+    out.push({
+      t: d.first_seen,
+      tail: d.tail_number,
+      ...tail,
+      source: "adsb",
+      exact: landed && fits.length === 1 && schedule.block.has(pair),
+    });
+  }
+  return out;
+}
+
+/**
+ * One leg's draws: its logged departures and the ADS-B departures that fit it
+ * (legSightings). Null when the leg was never logged as departed.
  */
 function computeLegDraws(
   index: LegIndex,
@@ -2472,28 +2563,24 @@ function computeLegDraws(
   destination: string,
   nowSec: number
 ): LegDraw[] | null {
-  const legs = index.legs.get(flightNumber) ?? [];
-  const pairOf = (l: { departure_airport: string; arrival_airport: string }) =>
-    `${l.departure_airport}-${l.arrival_airport}`;
-  const target = `${origin}-${destination}`;
-
-  const perDay = new Map<string, (typeof legs)[number]>();
-  for (const l of legs) {
-    const k = `${pairOf(l)}|${l.dep_date}`;
-    const prev = perDay.get(k);
-    if (!prev || l.last_seen > prev.last_seen) perDay.set(k, l);
-  }
-  // Departed legs only: a coming assignment is the answer, not history.
-  const onLeg = [...perDay.values()].filter(
-    (l) => pairOf(l) === target && l.departure_time <= nowSec
+  return (
+    legDrawsAndSightings(index, fleet, flightNumber, origin, destination, nowSec)?.draws ?? null
   );
-  if (onLeg.length === 0) return null;
+}
 
-  // Each pair's scheduled time of day: its newest logged departure.
-  const schedule = new Map<string, number>();
-  for (const l of [...perDay.values()].sort((a, b) => a.departure_time - b.departure_time)) {
-    schedule.set(pairOf(l), secOfDay(l.departure_time));
-  }
+function legDrawsAndSightings(
+  index: LegIndex,
+  fleet: LegFleet,
+  flightNumber: string,
+  origin: string,
+  destination: string,
+  nowSec: number
+): { draws: LegDraw[]; sightings: LegSighting[] } | null {
+  const target = `${origin}-${destination}`;
+  const schedule = legSchedule(index.legs.get(flightNumber) ?? []);
+  // Departed legs only: a coming assignment is the answer, not history.
+  const onLeg = schedule.perDay.filter((l) => pairOf(l) === target && l.departure_time <= nowSec);
+  if (onLeg.length === 0) return null;
 
   const draws: LegDraw[] = onLeg.map((l) => {
     const known = fleet.tails.get(l.tail_number);
@@ -2507,31 +2594,23 @@ function computeLegDraws(
     };
   });
 
-  const since = nowSec - ADSB_DRAW_WINDOW_DAYS * 86400;
-  for (const d of index.adsb.get(flightNumber) ?? []) {
-    if (d.first_seen < since || d.first_seen > nowSec) continue;
-    const tail = fleet.tails.get(d.tail_number);
-    if (!tail) continue;
-    let nearest: string | null = null;
-    let best = Number.POSITIVE_INFINITY;
-    for (const [pair, sod] of schedule) {
-      const dist = clockDistance(secOfDay(d.first_seen), sod);
-      if (dist < best) {
-        best = dist;
-        nearest = pair;
-      }
-    }
-    if (nearest !== target || best > ADSB_LEG_MATCH_SEC) continue;
-    const same = draws.findIndex((x) => Math.abs(x.t - d.first_seen) < LEG_DUPLICATE_SEC);
-    const seen = { t: d.first_seen, tail: d.tail_number, ...tail, source: "adsb" as const };
-    if (same === -1) draws.push(seen);
-    // The plane seen flying beats the one logged for that departure: the log
-    // keeps a pre-swap tail (UA2278 Oct 3: logged N14528, flown by N17408).
-    else if (draws[same].source === "log" && draws[same].tail !== d.tail_number) {
-      draws[same] = seen;
+  const sightings = legSightings(index, fleet, schedule, flightNumber, target, nowSec);
+  for (const s of sightings) {
+    const near = draws.findIndex((x) => Math.abs(x.t - s.t) < LEG_DUPLICATE_SEC);
+    const { exact, ...seen } = s;
+    if (near === -1) draws.push(seen);
+    // The plane seen flying beats the one logged for that same departure (the
+    // log can keep a pre-swap tail), but only on an unambiguous match.
+    else if (
+      exact &&
+      draws[near].source === "log" &&
+      draws[near].tail !== s.tail &&
+      Math.abs(draws[near].t - s.t) <= ADSB_LEG_MATCH_SEC
+    ) {
+      draws[near] = seen;
     }
   }
-  return draws.sort((a, b) => a.t - b.t);
+  return { draws: draws.sort((a, b) => a.t - b.t), sightings };
 }
 
 /**
@@ -2582,7 +2661,7 @@ function computeLeg(
   return {
     flight_number: flightNumber,
     probability: est.probability,
-    confidence: est.enough ? confidenceFor(est.count) : "low",
+    confidence: est.enough ? confidenceFor(est.effective) : "low",
     method: "flight_history_smoothed",
     n_observations: est.count,
     n_recent_observations: draws.filter((d) => d.t >= recentSince).length,
@@ -2633,11 +2712,13 @@ export type { Prediction };
 type LegArm = { name: string; predict: (train: LegDraw[], at: number) => number | null };
 
 /**
- * Scores per-leg weightings on held-out departures: every ADS-B draw in the
- * final `testDays` (the unbiased record; the log over-samples Starlink tails)
- * is priced from the leg's draws that departed before its local day began,
- * with `now` at the draw. Legs are matched once on the full build, so the
- * leg assignment knows the current schedule; labels never leak.
+ * Scores per-leg weightings on held-out departures: every ADS-B departure
+ * matched to a leg in the test window (one per departure, whether or not it
+ * also became a draw; the log over-samples Starlink tails), each priced from
+ * the leg's draws that departed before its local day began. Legs are matched
+ * once on the full build, so the matching knows the current schedule; labels
+ * never leak. "Trend legs" are the ones legTrend flags as of the window start.
+ * The interval is a by-leg bootstrap of the Brier gap, chosen minus previous.
  */
 function legBacktest(dbPath: string, testDays: number, until: number | null): void {
   const db = new Database(dbPath, { readonly: true });
@@ -2651,7 +2732,7 @@ function legBacktest(dbPath: string, testDays: number, until: number | null): vo
   const testTo = until ?? anchor + 1;
   const testFrom = testTo - testDays * 86400;
 
-  const weighted = (halfLifeDays: number | null, windowDays: number, priorStrength = 3) => ({
+  const weighted = (halfLifeDays: number | null, windowDays: number, priorStrength: number) => ({
     halfLifeDays,
     windowDays,
     priorStrength,
@@ -2659,65 +2740,111 @@ function legBacktest(dbPath: string, testDays: number, until: number | null): vo
   const est = (w: LegWeighting) => (train: LegDraw[], at: number) =>
     legEstimate(train, share, at, w).probability;
   const arms: LegArm[] = [
-    { name: "equal-weight 60d", predict: est(weighted(null, 60)) },
-    { name: "half-life 30d (previous)", predict: est(weighted(30, 90)) },
-    ...[7, 10, 14, 21].map((h) => ({ name: `half-life ${h}d`, predict: est(weighted(h, 90)) })),
-    ...[5, 8].map((a) => ({ name: `half-life 7d, α=${a}`, predict: est(weighted(7, 90, a)) })),
+    { name: "equal-weight 60d, α=3", predict: est(weighted(null, 60, 3)) },
+    { name: "half-life 30d, α=3 (before #155)", predict: est(weighted(30, 90, 3)) },
+    { name: "half-life 7d, α=3 (#155)", predict: est(weighted(7, 90, 3)) },
+    { name: "half-life 30d, α=8", predict: est(weighted(30, 90, 8)) },
+    ...[7, 10, 14, 21].map((h) => ({
+      name: `half-life ${h}d, α=8`,
+      predict: est(weighted(h, 90, 8)),
+    })),
     {
-      name: "last 14d, else 60d",
+      name: "last 14d, else 60d, α=8",
       predict: (train, at) => {
         const recent = train.filter((d) => d.t >= at - 14 * 86400);
         return recent.length >= LEG_MIN_DRAWS
-          ? legEstimate(recent, share, at, weighted(null, 14)).probability
-          : legEstimate(train, share, at, weighted(null, 60)).probability;
+          ? legEstimate(recent, share, at, weighted(null, 14, 8)).probability
+          : legEstimate(train, share, at, weighted(null, 60, 8)).probability;
       },
     },
   ];
+  const chosen = arms.findIndex(
+    (a) => a.name === `half-life ${LEG_WEIGHTING.halfLifeDays}d, α=${LEG_WEIGHTING.priorStrength}`
+  );
+  const previous = 1;
 
-  const scores = arms.map(() => ({ brier: 0, logLoss: 0, n: 0 }));
-  const shifted = arms.map(() => ({ brier: 0, logLoss: 0, n: 0 }));
+  type Rec = { leg: string; y: number; p: number[]; trend: boolean };
+  const recs: Rec[] = [];
   let legs = 0;
   for (const [fn, list] of index.legs) {
     const pairs = new Set(list.map((l) => `${l.departure_airport}|${l.arrival_airport}`));
     for (const pair of pairs) {
       const [o, d] = pair.split("|");
-      const draws = computeLegDraws(index, fleet, fn, o, d, anchor);
-      if (!draws) continue;
-      const targets = draws.filter((x) => x.source === "adsb" && x.t >= testFrom && x.t < testTo);
+      const built = legDrawsAndSightings(index, fleet, fn, o, d, anchor);
+      if (!built) continue;
+      const targets = built.sightings.filter((x) => x.t >= testFrom && x.t < testTo);
       if (targets.length === 0) continue;
       legs++;
-      const regimeChange = legTrend(draws, anchor) !== null;
+      const trend =
+        legTrend(
+          built.draws.filter((x) => x.t < testFrom),
+          testFrom
+        ) !== null;
       for (const target of targets) {
         const dayStart = target.t - secOfDay(target.t);
-        const train = draws.filter((x) => x.t < dayStart);
-        const actual = target.equipped ? 1 : 0;
-        arms.forEach((arm, i) => {
-          const p = arm.predict(train, target.t);
-          if (p === null) return;
-          const q = Math.min(1 - 1e-4, Math.max(1e-4, p));
-          const ll = -(actual * Math.log(q) + (1 - actual) * Math.log(1 - q));
-          for (const acc of regimeChange ? [scores[i], shifted[i]] : [scores[i]]) {
-            acc.brier += (p - actual) ** 2;
-            acc.logLoss += ll;
-            acc.n++;
-          }
-        });
+        const train = built.draws.filter((x) => x.t < dayStart);
+        const p = arms.map((arm) => arm.predict(train, target.t));
+        if (p.some((x) => x === null)) continue;
+        recs.push({ leg: `${fn}|${pair}`, y: target.equipped ? 1 : 0, p: p as number[], trend });
       }
     }
   }
   db.close();
+
+  const score = (rs: readonly Rec[], i: number) => {
+    let brier = 0;
+    let logLoss = 0;
+    for (const r of rs) {
+      const q = Math.min(1 - 1e-4, Math.max(1e-4, r.p[i]));
+      brier += (r.p[i] - r.y) ** 2;
+      logLoss -= r.y * Math.log(q) + (1 - r.y) * Math.log(1 - q);
+    }
+    return { brier: brier / rs.length, logLoss: logLoss / rs.length };
+  };
+  const trendRecs = recs.filter((r) => r.trend);
   console.log(
-    `Per-leg backtest: ${legs} legs, ADS-B draws ${new Date(testFrom * 1000).toISOString().slice(0, 10)}..${new Date(testTo * 1000).toISOString().slice(0, 10)}\n`
+    `Per-leg backtest: ${legs} legs, ${recs.length} ADS-B departures ${new Date(testFrom * 1000).toISOString().slice(0, 10)}..${new Date(testTo * 1000).toISOString().slice(0, 10)}\n`
   );
-  console.log("| Arm | n | Brier | Log-loss | n (trend legs) | Brier | Log-loss |");
-  console.log("|---|---|---|---|---|---|---|");
+  console.log(`| Arm | Brier | Log-loss | Brier, trend legs (n=${trendRecs.length}) | Log-loss |`);
+  console.log("|---|---|---|---|---|");
   arms.forEach((arm, i) => {
-    const a = scores[i];
-    const b = shifted[i];
+    const a = score(recs, i);
+    const b = score(trendRecs, i);
+    const f = (x: number) => (Number.isFinite(x) ? x.toFixed(4) : "–");
     console.log(
-      `| ${arm.name} | ${a.n} | ${(a.brier / a.n).toFixed(4)} | ${(a.logLoss / a.n).toFixed(4)} | ${b.n} | ${(b.brier / b.n).toFixed(4)} | ${(b.logLoss / b.n).toFixed(4)} |`
+      `| ${arm.name} | ${f(a.brier)} | ${f(a.logLoss)} | ${f(b.brier)} | ${f(b.logLoss)} |`
     );
   });
+
+  // By-leg bootstrap, fixed seed so reruns print the same interval.
+  const byLeg = new Map<string, { d: number; n: number }>();
+  for (const r of recs) {
+    const e = byLeg.get(r.leg) ?? { d: 0, n: 0 };
+    e.d += (r.p[chosen] - r.y) ** 2 - (r.p[previous] - r.y) ** 2;
+    e.n++;
+    byLeg.set(r.leg, e);
+  }
+  const groups = [...byLeg.values()];
+  let seed = 1;
+  const rand = () => {
+    seed = (seed * 48271) % 2147483647;
+    return seed / 2147483647;
+  };
+  const gaps: number[] = [];
+  for (let b = 0; b < 1000; b++) {
+    let d = 0;
+    let n = 0;
+    for (let k = 0; k < groups.length; k++) {
+      const g = groups[Math.floor(rand() * groups.length)];
+      d += g.d;
+      n += g.n;
+    }
+    gaps.push(d / n);
+  }
+  gaps.sort((a, b) => a - b);
+  console.log(
+    `\nBrier ${arms[chosen].name} minus ${arms[previous].name}: ${(score(recs, chosen).brier - score(recs, previous).brier).toFixed(4)} [95% ${gaps[25].toFixed(4)}, ${gaps[974].toFixed(4)}]`
+  );
 }
 
 // ============================================================================

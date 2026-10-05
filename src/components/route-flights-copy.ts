@@ -32,10 +32,10 @@ export function oddsTone(row: RouteFlightRow): Tone {
     : "neutral";
 }
 
-/** "26 recent flights": the effective count, since recent departures weigh most. */
-export function recentFlights(r: Pick<RouteFlightRow, "n_effective" | "n_observations">): string {
-  const n = Math.max(1, Math.round(r.n_effective ?? r.n_observations ?? 0));
-  return `${fmt(n)} recent flight${n === 1 ? "" : "s"}`;
+/** "53 flights, weighted to recent": the plain count, and that it isn't an even average. */
+export function recentFlights(r: Pick<RouteFlightRow, "n_observations">): string {
+  const n = r.n_observations ?? 0;
+  return `${fmt(n)} flight${n === 1 ? "" : "s"}, weighted to recent`;
 }
 
 /** What the forecast rests on, under the big cell. */
