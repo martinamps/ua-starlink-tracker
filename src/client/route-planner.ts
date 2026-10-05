@@ -1,11 +1,14 @@
 /**
- * /route-planner: ask /api/plan-route and draw each itinerary as a path of
- * legs colored by their Starlink odds. The search lives in ?origin=&destination=
- * rather than /route-planner/O/D: that path is the route page, and it 404s for
- * pairs without data, so a reload would lose the search.
+ * /route-planner: list every nonstop on the pair first (/api/route-flights),
+ * then ask /api/plan-route and draw each itinerary as a path of legs colored
+ * by their Starlink odds. The search lives in ?origin=&destination= rather
+ * than /route-planner/O/D: that path is the route page, and it 404s for pairs
+ * without data, so a reload would lose the search.
  */
+import type { RouteFlightBoard } from "../api/route-flights";
 import { probLabel, probTier } from "../components/ui/format";
 import { esc } from "./esc";
+import { renderRouteFlights } from "./route-flights";
 
 interface Leg {
   route: string;
@@ -165,18 +168,32 @@ export function wireRoutePlanner(): void {
   const out = document.getElementById("route-results");
   const originInput = document.getElementById("origin") as HTMLInputElement | null;
   const destInput = document.getElementById("destination") as HTMLInputElement | null;
+  const dateInput = document.getElementById("travel-date") as HTMLInputElement | null;
+  const board = document.getElementById("route-flights");
   if (!form || !out || !originInput || !destInput) return;
   const params = new URLSearchParams(window.location.search);
   if (params.get("origin") && params.get("destination")) {
     originInput.value = params.get("origin") ?? "";
     destInput.value = params.get("destination") ?? "";
+    if (dateInput) dateInput.value = params.get("date") ?? "";
   }
   const search = () => {
     const origin = originInput.value.trim().toUpperCase();
     const dest = destInput.value.trim().toUpperCase();
     if (!origin || !dest) return;
     const query = `origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(dest)}`;
-    history.replaceState(null, "", `/route-planner?${query}`);
+    const date = dateInput?.value ?? "";
+    const dated = date ? `${query}&date=${encodeURIComponent(date)}` : query;
+    history.replaceState(null, "", `/route-planner?${dated}`);
+    if (board) {
+      board.innerHTML = "";
+      fetch(`/api/route-flights?${dated}`)
+        .then((r) => (r.ok ? (r.json() as Promise<RouteFlightBoard>) : null))
+        .then((d) => {
+          if (d) board.innerHTML = renderRouteFlights(d);
+        })
+        .catch(() => {});
+    }
     out.innerHTML = '<div class="text-center text-sm text-muted py-8">Finding flights…</div>';
     fetch(`/api/plan-route?${query}`)
       .then((r) => r.json() as Promise<PlanBody>)

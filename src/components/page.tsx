@@ -25,7 +25,7 @@ import { AirportBars } from "./home/rollout";
 import { ToolsSection } from "./home/tools";
 import { ClientScriptTag } from "./layout";
 import type { Link } from "./layout";
-import { Eyebrow, PageHeader, PageShell, Panel, Section, StatInline } from "./layout";
+import { Eyebrow, LINK, PageHeader, PageShell, Panel, Section, StatInline } from "./layout";
 import { PassengerBanner } from "./passenger-banner";
 import { fmt, longDate, pct } from "./ui/format";
 
@@ -222,6 +222,13 @@ export default function Page({
               Does your flight have Starlink?
             </Eyebrow>
             <FlightSearchForm site={site} id="home-flight-search" hideLabels withScript={false} />
+            {features.routePlannerPage && (
+              <p className="mt-2 text-center text-xs">
+                <a href="/route-planner" className={LINK} id="home-route-board-link">
+                  Or compare every flight on a route →
+                </a>
+              </p>
+            )}
           </Panel>
         </div>
       )}

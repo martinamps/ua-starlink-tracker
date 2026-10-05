@@ -76,16 +76,32 @@ export default function RoutePlannerPage({
                 />
               </div>
             </div>
+            <div>
+              <Eyebrow as="label" htmlFor="travel-date" className="mb-2 block">
+                Date (optional)
+              </Eyebrow>
+              <input
+                type="date"
+                id="travel-date"
+                name="date"
+                className="w-full bg-base border border-subtle rounded px-3 py-2 text-primary focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/30"
+              />
+            </div>
             <button type="submit" className={`${buttonClass("primary", "lg")} w-full`}>
               Find flights
             </button>
           </form>
           <p className="text-xs text-muted mt-3 text-center">
-            Ranked by the odds of Starlink on each leg.
+            Every nonstop first, then connections, ranked by the odds of Starlink on each leg.
           </p>
         </Panel>
       </div>
 
+      <section
+        id="route-flights"
+        aria-live="polite"
+        className="relative max-w-3xl mx-auto w-full empty:hidden"
+      />
       <div id="route-results" className="relative max-w-3xl mx-auto w-full mb-10" />
 
       <div className="relative max-w-2xl mx-auto w-full mb-10">

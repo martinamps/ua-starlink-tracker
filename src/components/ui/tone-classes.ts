@@ -17,6 +17,13 @@ export const TONE_TEXT: Record<Tone, string> = {
   neutral: "text-muted",
 };
 
+/** Tone per probTier (format.ts): likely, maybe, unlikely. */
+export const PROB_TIER_TONE = {
+  likely: "success",
+  maybe: "warn",
+  unlikely: "neutral",
+} as const satisfies Record<"likely" | "maybe" | "unlikely", Tone>;
+
 /** The tone's color. Neutral text is the muted text grey, as in TONE_TEXT. */
 export const toneColor = (tone: Tone) =>
   tone === "neutral" ? "var(--color-text-muted)" : `var(--color-${tone})`;
