@@ -1,6 +1,6 @@
 import type { AirlineConfig } from "../../airlines/registry";
 import { denominatorIsPublishable } from "../../utils/share-cards";
-import { fmt } from "../ui/format";
+import { fmt, pct } from "../ui/format";
 
 export interface HomeHeadline {
   /** "United Starlink Tracker" — also the site's brand title and WebSite.name. */
@@ -21,6 +21,8 @@ export function homeHeadline(cfg: AirlineConfig, n: number, total: number): Home
   return {
     name: `${cfg.shortName} Starlink Tracker`,
     count: `${fmt(n)} of ${fmt(total)}`,
-    share: `${Math.round((n / total) * 100)}%`,
+    // pct(), not Math.round: the hero and /fleet floor shares, and the title
+    // must never state a higher share than the page under it.
+    share: pct(n, total),
   };
 }
