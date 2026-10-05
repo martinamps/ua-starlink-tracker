@@ -2320,10 +2320,9 @@ export async function handleMcpRequest(
     response = rpcError(msg.id ?? null, -32603, "Internal error");
   }
 
-  // Ping and notifications are noise in Plausible.
-  if (msg.method === "initialize" || msg.method === "tools/list") {
-    trackMcpEvent(req, analytics, { method: msg.method });
-  } else if (msg.method === "tools/call") {
+  // Only tool calls are real use: hosted connectors re-run the handshake
+  // every few minutes without ever calling a tool, which swamped the goal.
+  if (msg.method === "tools/call") {
     const toolName = typeof msg.params?.name === "string" ? msg.params.name : "unknown";
     trackMcpEvent(req, analytics, { method: "tools/call", tool: toolName });
   }
