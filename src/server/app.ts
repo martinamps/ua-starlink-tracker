@@ -133,7 +133,11 @@ import CheckFlightPage, {
   type InvalidFlightQuery,
 } from "../components/check-flight-page";
 import ChromePage, {
+  CHROME_OG_IMAGE_ALT,
+  CHROME_OG_IMAGE_URL,
+  CHROME_PAGE_UPDATED,
   CHROME_PAGE_URL,
+  chromeMetaDescription,
   chromeSoftwareJsonLd,
   extensionCoverage,
 } from "../components/chrome-page";
@@ -294,6 +298,11 @@ interface PageMeta {
   /** og:type — "website" (tools, indexes) unless a page overrides with
    * "article" (dated editorial content: timeline, methodology, intent pages). */
   ogType?: "website" | "article";
+  /** Full canonical + og:url, for a page whose canonical lives on another host. */
+  canonicalUrl?: string;
+  /** Full og:image/twitter:image URL, replacing the brand's share card. */
+  socialImageUrl?: string;
+  ogImageAlt?: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1539,6 +1548,7 @@ const mcp: Handler = async (ctx) => {
 // metered handler to arbitrary paths. Browsers don't follow redirects on
 // preflight, so OPTIONS is answered here.
 const MCP_ALIAS_PATH = "/mcp.com/mcp";
+const EXTENSION_ALIAS = /^\/extension\/?$/;
 function mcpAliasResponse(req: Request, url: URL): Response {
   if (req.method === "OPTIONS") return corsPreflight("/mcp");
   return redirect(`/mcp${url.search}`, 308, MCP_CORS_HEADERS);
@@ -1572,6 +1582,9 @@ interface SitePage {
    * and out of sitemap.xml — for a utility page that exists for the visitor
    * already on the site, not for a searcher. */
   indexable?: boolean;
+  /** A fixed last-changed date for copy that doesn't move with the fleet data;
+   * pages without one take the site-wide data stamp. */
+  lastmod?: string;
 }
 
 /**
@@ -1738,15 +1751,14 @@ const SITE_PAGES: SitePage[] = [
       `- [Is Starlink free?](https://${h}/is-starlink-free) — pricing, sign-in fine print, and speeds`,
   },
   { path: "/mcp", feature: "mcpPage", changefreq: "monthly", priority: "0.6" },
-  // Served on every host but canonical on United's, so only United lists it;
-  // the footer links it everywhere.
+  // Served on every host but canonical on United's, so only United lists it.
+  // llms.txt covers it in its own Chrome section, not the Pages list.
   {
     path: "/chrome",
     feature: "chromeExtension",
     changefreq: "monthly",
     priority: "0.6",
-    llmsLine: () =>
-      `- [Chrome extension](${CHROME_PAGE_URL}) — Starlink badges on Google Flights results`,
+    lastmod: CHROME_PAGE_UPDATED,
   },
   {
     path: "/live-tv",
@@ -1944,7 +1956,7 @@ const sitemap: Handler = (ctx) => {
         path: p.path,
         changefreq: p.changefreq,
         priority: p.priority,
-        lastmod: lastUpdated,
+        lastmod: p.lastmod ?? lastUpdated,
       })),
     ...airlineEntries,
     ...factsEntries,
@@ -2636,6 +2648,8 @@ function buildBaseTemplateVars(
     html: reactHtml,
     host: site.canonicalHost,
     canonicalPath: escapeHtmlAttr(canonicalPath),
+    canonicalUrl: escapeHtmlAttr(`https://${site.canonicalHost}${canonicalPath}`),
+    socialImageUrl: `https://${site.canonicalHost}${resolveSocialImage(brand)}`,
     robotsMeta: "index, follow",
     ogType: "website",
     analyticsSnippet: analyticsSnippet(site),
@@ -2703,8 +2717,9 @@ async function renderSubPage<P extends { site: SiteConfig }>(
   // else — a per-flight permalink, whose sitemap stamp is that flight row's
   // own touch time — publishes no dateModified rather than a second, different
   // date for the same URL.
-  const sitePageIso = sitePages(ctx).some((p) => p.path === canonicalPath)
-    ? stampedIso(ctx.reader.getLastUpdatedRaw())
+  const sitePage = sitePages(ctx).find((p) => p.path === canonicalPath);
+  const sitePageIso = sitePage
+    ? (sitePage.lastmod ?? stampedIso(ctx.reader.getLastUpdatedRaw()))
     : undefined;
   htmlVariables.webPageJsonLd = sitePageJsonLd(ctx.site, {
     path: canonicalPath,
@@ -3819,28 +3834,30 @@ const howToCheckPage: Handler = (ctx) => {
   });
 };
 
-/** One page for every host, canonical on United's (CHROME_PAGE_URL): the
- * extension spans airlines, but its link equity is pooled there. */
-const chromePage: Handler = (ctx) => {
-  const coverage = extensionCoverage();
-  return renderSubPage(
-    { ...ctx, site: { ...ctx.site, canonicalHost: new URL(CHROME_PAGE_URL).host } },
+/** One page for every host. Only the canonical and og:url move to United's
+ * (CHROME_PAGE_URL); each tenant keeps its own WebSite/WebPage JSON-LD,
+ * analytics and feed links. */
+const chromePage: Handler = (ctx) =>
+  renderSubPage(
+    ctx,
     ChromePage,
     "/chrome",
     {
       siteTitle: "Google Flights Starlink Indicator: Free Chrome Extension",
-      siteDescription: `See which flights have Starlink Wi-Fi right in Google Flights. A free Chrome extension with verified and likely Starlink badges: ${coverage}.`,
+      siteDescription: chromeMetaDescription(),
       keywords:
         "starlink chrome extension, google flights starlink, google flights wifi, which flights have starlink, united starlink google flights",
       ogTitle: "See which flights have Starlink, right in Google Flights",
-      ogDescription: `A free Chrome extension that badges Starlink flights in Google Flights results: ${coverage}.`,
+      ogDescription: chromeMetaDescription(),
       pageJsonLd: jsonLdBlock(chromeSoftwareJsonLd()),
-    }
+      canonicalUrl: CHROME_PAGE_URL,
+      socialImageUrl: CHROME_OG_IMAGE_URL,
+      ogImageAlt: CHROME_OG_IMAGE_ALT,
+    },
+    undefined,
+    200,
+    CHROME_PAGE_UPDATED
   );
-};
-
-const extensionAlias: Handler = (ctx) =>
-  Response.redirect(`https://${ctx.site.canonicalHost}/chrome${ctx.url.search}`, 301);
 
 const isStarlinkFreePage: Handler = (ctx) => {
   const cfg = siteAirline(ctx.site);
@@ -4622,7 +4639,6 @@ export function createApp(db: Database): App {
     "/live-tv": read(liveTvPage, "liveTvPage"),
     // Every host serves the extension page; it is multi-airline.
     "/chrome": read(chromePage),
-    "/extension": read(extensionAlias),
     "/data/starlink-tails.csv": read(starlinkTailsCsv),
     "/airlines": read(airlinesIndexPage, "airlinesPages"),
     "/compare": read(comparePage, "comparePages"),
@@ -4741,6 +4757,12 @@ export function createApp(db: Database): App {
       return text("Misdirected Request", "text/plain", { status: 421 });
     }
     const tenant = site.scope === "ALL" ? "ALL" : AIRLINES[site.scope];
+
+    // A shorthand for /chrome, kept out of the route table (and so out of the
+    // `route` tag budget) like the www alias redirects.
+    if (EXTENSION_ALIAS.test(url.pathname) && (req.method === "GET" || req.method === "HEAD")) {
+      return Response.redirect(`https://${site.canonicalHost}/chrome${url.search}`, 301);
+    }
 
     const m = match(url.pathname);
     const route = m?.route ?? "/*";

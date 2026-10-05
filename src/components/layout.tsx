@@ -397,6 +397,27 @@ function PageNavLinks({ links }: { links?: Link[] }) {
   );
 }
 
+/** /chrome is canonical on United's site, so other hosts link there directly
+ * rather than through a cross-domain canonical. That link is a deliberate
+ * cross-tenant mention, marked like CrossSiteLinks. */
+function ChromeExtensionLink({ site }: { site: SiteConfig }) {
+  const className = "text-secondary hover:text-primary transition-colors";
+  if (site.key === SITES.united.key) {
+    return (
+      <a href="/chrome" className={className}>
+        Chrome extension
+      </a>
+    );
+  }
+  return (
+    <div data-cross-site-links className="inline">
+      <a href={`https://${SITES.united.canonicalHost}/chrome`} className={className}>
+        Chrome extension
+      </a>
+    </div>
+  );
+}
+
 function SiteFooter({ site, pageLinks }: { site: SiteConfig; pageLinks?: Link[] }) {
   return (
     <footer className="relative mt-auto border-t border-subtle py-6 text-center text-sm text-muted">
@@ -431,13 +452,10 @@ function SiteFooter({ site, pageLinks }: { site: SiteConfig; pageLinks?: Link[] 
         >
           GitHub
         </a>
-        {/* Every host serves /chrome (canonical on United's), so no feature gate. */}
         <span className="text-subtle" aria-hidden="true">
           ·
         </span>
-        <a href="/chrome" className="text-secondary hover:text-primary transition-colors">
-          Chrome extension
-        </a>
+        <ChromeExtensionLink site={site} />
         {site.features.intentPages && (
           <>
             <span className="text-subtle" aria-hidden="true">

@@ -11,10 +11,10 @@
     <meta property="og:title" content="{{ogTitle}}" />
     <meta property="og:description" content="{{ogDescription}}" />
     <meta property="og:type" content="{{ogType}}" />
-    <meta property="og:url" content="https://{{host}}{{canonicalPath}}" />
+    <meta property="og:url" content="{{canonicalUrl}}" />
     <meta name="twitter:title" content="{{ogTitle}}" />
     <meta name="twitter:description" content="{{ogDescription}}" />
-    <link rel="canonical" href="https://{{host}}{{canonicalPath}}" />
+    <link rel="canonical" href="{{canonicalUrl}}" />
     <link rel="alternate" type="text/markdown" href="/llms.txt" title="LLM-friendly content" />
     <!-- Favicon (per-tenant; standard paths resolve by Host) -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
@@ -24,11 +24,11 @@
     <link rel="manifest" href="/site.webmanifest">
 
     <!-- Open Graph Image -->
-    <meta property="og:image" content="https://{{host}}{{socialImagePath}}">
+    <meta property="og:image" content="{{socialImageUrl}}">
     <meta property="og:image:width" content="1200">
     <meta property="og:image:height" content="630">
     <meta property="og:image:alt" content="{{ogImageAlt}}">
-    <meta name="twitter:image" content="https://{{host}}{{socialImagePath}}">
+    <meta name="twitter:image" content="{{socialImageUrl}}">
     <meta name="twitter:card" content="summary_large_image">
     {{headSnippet}}
     
