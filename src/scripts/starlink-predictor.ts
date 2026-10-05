@@ -31,9 +31,11 @@ import {
   AIRLINES,
   type AirlineConfig,
   COMMUNITY_SOURCE_UPDATED_META,
+  GUIDE_MARK_TTL_DAYS,
   type SubfleetDef,
   type WifiPhase,
   airlineHomeUrl,
+  isGuideStale,
   programTypeOf,
   publicAirlines,
   siteForAirline,
@@ -1198,7 +1200,14 @@ export type CarrierPrediction =
   // Community-source carriers (AF). Per programme type, never one blended
   // number: a flight number doesn't pin the type, and the types run from
   // "not started" to nearly done.
-  | { kind: "type_progress"; types: TypeProgress[]; guideUpdated: string | null }
+  // guideStale: the guide is past GUIDE_MARK_TTL_DAYS, so its non-Starlink
+  // marks are history, not status (registry.ts has the policy).
+  | {
+      kind: "type_progress";
+      types: TypeProgress[];
+      guideUpdated: string | null;
+      guideStale: boolean;
+    }
   | {
       kind: "type_rate";
       type: TypeProgress;
@@ -1209,6 +1218,7 @@ export type CarrierPrediction =
       ambiguous?: TypeProgress[];
       types: TypeProgress[];
       guideUpdated: string | null;
+      guideStale: boolean;
     }
   // The two below come only from check-flight-core, which knows the
   // assigned tail; carrierPrediction never returns them.
@@ -1220,6 +1230,7 @@ export type CarrierPrediction =
       /** null = the guide doesn't list this tail yet. */
       mark: GuideMark | null;
       guideUpdated: string | null;
+      guideStale: boolean;
     }
   | { kind: "partner_operated"; tail: string };
 
@@ -1242,18 +1253,29 @@ function communityPrediction(
   cfg: AirlineConfig,
   reader: ScopedReader,
   aircraftType: string | null | undefined,
-  noModel: CarrierPrediction
+  noModel: CarrierPrediction,
+  nowMs: number
 ): CarrierPrediction {
   // Before the first guide sync every type would read "not started".
   const guideUpdated = reader.getMeta(COMMUNITY_SOURCE_UPDATED_META);
   const types = guideUpdated ? reader.getTypeProgress() : [];
   if (types.length === 0) return noModel;
+  const guideStale = isGuideStale(guideUpdated, nowMs);
   if (aircraftType) {
     const { key } = programTypeOf(cfg, aircraftType);
     if (namesUnflownVariant(cfg, aircraftType, key))
-      return { kind: "type_progress", types, guideUpdated };
+      return { kind: "type_progress", types, guideUpdated, guideStale };
     const row = types.find((t) => t.key === key && t.total > 0);
-    if (row) return { kind: "type_rate", type: row, share: typeShare(row), types, guideUpdated };
+    if (row) {
+      return {
+        kind: "type_rate",
+        type: row,
+        share: typeShare(row),
+        types,
+        guideUpdated,
+        guideStale,
+      };
+    }
     const split = types.filter(
       (t) => !t.excluded && t.key !== key && normalizeAircraftType(t.label) === key
     );
@@ -1272,10 +1294,11 @@ function communityPrediction(
         ambiguous: split,
         types,
         guideUpdated,
+        guideStale,
       };
     }
   }
-  return { kind: "type_progress", types, guideUpdated };
+  return { kind: "type_progress", types, guideUpdated, guideStale };
 }
 
 const PHASE_ORDER: readonly WifiPhase[] = ["confirmed", "rolling", "negative"];
@@ -1307,7 +1330,7 @@ export function carrierPrediction(
   cfg: AirlineConfig,
   reader: ScopedReader,
   flightNumber: string,
-  ctx: { aircraftType?: string | null } = {}
+  ctx: { aircraftType?: string | null; nowMs?: number } = {}
 ): CarrierPrediction {
   const noModel: CarrierPrediction = {
     kind: "no_model",
@@ -1318,7 +1341,9 @@ export function carrierPrediction(
   // as this carrier's answer.
   if (reader.scope !== cfg.code) return noModel;
 
-  if (cfg.communitySource) return communityPrediction(cfg, reader, ctx.aircraftType, noModel);
+  if (cfg.communitySource) {
+    return communityPrediction(cfg, reader, ctx.aircraftType, noModel, ctx.nowMs ?? Date.now());
+  }
 
   const groups = phaseSplit(cfg);
   if (groups) return { kind: "type_split", groups };
@@ -1363,10 +1388,21 @@ function guideRef(cfg: AirlineConfig, guideUpdated: string | null) {
   };
 }
 
+/** What replaces an expired non-Starlink mark: the guide's age and the
+ * airline's own dated fleet target. */
+function staleGuideNote(cfg: AirlineConfig): string {
+  const target = cfg.communitySource?.fleetTarget;
+  const age = `That guide is over ${GUIDE_MARK_TTL_DAYS} days old and installs continue`;
+  return target
+    ? `${age}; ${target.text} (${target.source.label}, ${formatFactDate(target.asOf)})`
+    : age;
+}
+
 const plural = (label: string) => (/\d$|[A-Z]$/.test(label) ? `${label}s` : label);
 
-/** "At least: 777-300ER 34 of 43, …; not started on 787-9, …; A318/A330 retiring". */
-function typeProgressSummary(types: readonly TypeProgress[]): string {
+/** "At least: 777-300ER 34 of 43, …; not started on 787-9, …; A318/A330 retiring".
+ * A stale guide can only say none were listed, not that none have started. */
+function typeProgressSummary(types: readonly TypeProgress[], stale: boolean): string {
   const live = types.filter((t) => !t.excluded && t.total > 0);
   const done = live.filter((t) => t.equipped === t.total).map((t) => `${t.label} all ${t.total}`);
   const going = live
@@ -1376,7 +1412,7 @@ function typeProgressSummary(types: readonly TypeProgress[]): string {
   const retiring = types.filter((t) => t.excluded).map((t) => t.label);
   return [
     done.length + going.length > 0 ? `At least: ${[...done, ...going].join(", ")}` : null,
-    idle.length > 0 ? `not started on ${idle.join(", ")}` : null,
+    idle.length > 0 ? `${stale ? "none listed on" : "not started on"} ${idle.join(", ")}` : null,
     retiring.length > 0 ? `${retiring.join("/")} retiring` : null,
   ]
     .filter(Boolean)
@@ -1406,14 +1442,21 @@ function describeTypeRate(
       `${cfg.name}'s ${name} are not in the Starlink programme${note ? ` — ${note.toLowerCase()}` : ""}`
     );
   }
+  const stale = answer.guideStale ? staleGuideNote(cfg) : null;
   if (t.equipped === 0) {
-    return joinSentences(`No ${cfg.name} ${t.label} is listed with Starlink yet ${cite}`);
+    return joinSentences(
+      answer.guideStale
+        ? `No ${cfg.name} ${t.label} was listed with Starlink ${cite}`
+        : `No ${cfg.name} ${t.label} is listed with Starlink yet ${cite}`,
+      stale
+    );
   }
   if (t.equipped === t.total) {
     return joinSentences(`All ${t.total} ${cfg.name} ${name} have Starlink ${cite}`);
   }
   return joinSentences(
     `At least ${t.equipped} of ${t.total} ${cfg.name} ${name} have Starlink ${cite}`,
+    stale,
     "The aircraft is assigned about two days before departure"
   );
 }
@@ -1425,10 +1468,12 @@ function describeAssigned(
   const on = `Scheduled on ${answer.tail}${answer.programLabel ? ` (${answer.programLabel})` : ""}`;
   const g = guideRef(cfg, answer.guideUpdated);
   const guide = `the ${g.label}${g.date ? ` updated ${g.date}` : ""}`;
-  if (answer.mark === null) return joinSentences(`${on}; not yet listed in ${guide}`);
   if (answer.mark === "starlink") {
     return joinSentences(`${on}; listed with Starlink in ${guide}, not yet confirmed here`);
   }
+  const stale = answer.guideStale ? staleGuideNote(cfg) : null;
+  if (answer.mark === null) return joinSentences(`${on}; not yet listed in ${guide}`, stale);
+  if (stale) return joinSentences(`${on}; not on the Starlink list in ${guide}`, stale);
   const has = answer.mark === "legacy" ? "it has legacy WiFi" : "no WiFi listed";
   return joinSentences(`${on}; not on the Starlink list in ${guide} — ${has}`);
 }
@@ -1444,7 +1489,7 @@ export function describeCarrierPrediction(
   if (answer.kind === "type_progress") {
     const g = guideRef(cfg, answer.guideUpdated);
     return joinSentences(
-      `On ${cfg.name}-operated flights, Starlink depends on the aircraft type. ${typeProgressSummary(answer.types)}`,
+      `On ${cfg.name}-operated flights, Starlink depends on the aircraft type. ${typeProgressSummary(answer.types, answer.guideStale)}`,
       `Per-aircraft status from the ${g.label}${g.date ? ` (updated ${g.date})` : ""}`
     );
   }

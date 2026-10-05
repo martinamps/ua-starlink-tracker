@@ -23,6 +23,7 @@ import {
   COMMUNITY_SOURCE_UPDATED_META,
   enabledAirlines,
   hubLookupAirlines,
+  isGuideStale,
   programTypeOf,
   publicAirlines,
 } from "../airlines/registry";
@@ -849,7 +850,7 @@ async function verdictFromRows(
   // it with its guide status, and skip the live lookup that would only find
   // the same tail.
   if (cfg.communitySource) {
-    const assigned = assignedFromDb(cfg, reader, unequipped);
+    const assigned = assignedFromDb(cfg, reader, unequipped, now);
     if (assigned) {
       return {
         verdict: { kind: "no_model", window, normalized, answer: assigned, fr24Error: false },
@@ -899,7 +900,7 @@ async function verdictFromRows(
       }
       const assigned =
         cfg.communitySource && segments.length > 0
-          ? assignedFromSegments(cfg, reader, segments)
+          ? assignedFromSegments(cfg, reader, segments, now)
           : null;
       if (assigned) {
         return {
@@ -937,7 +938,10 @@ async function verdictFromRows(
         kind: "no_model",
         window,
         normalized,
-        answer: carrierPrediction(cfg, reader, normalized, { aircraftType: deps.aircraftType }),
+        answer: carrierPrediction(cfg, reader, normalized, {
+          aircraftType: deps.aircraftType,
+          nowMs: now * 1000,
+        }),
         fr24Error,
         ...(fr24Shed ? { fr24Shed } : {}),
       },
@@ -986,7 +990,8 @@ type AssignedAnswer = Extract<
 function assignedFromDb(
   cfg: AirlineConfig,
   reader: ScopedReader,
-  unequipped: readonly UnequippedAssignment[]
+  unequipped: readonly UnequippedAssignment[],
+  now: number
 ): AssignedAnswer | null {
   // Before the first guide sync every tail would read "not yet listed".
   const guideUpdated = reader.getMeta(COMMUNITY_SOURCE_UPDATED_META);
@@ -999,6 +1004,7 @@ function assignedFromDb(
     programLabel: programTypeOf(cfg, row.aircraft_type).label,
     mark: row.mark,
     guideUpdated,
+    guideStale: isGuideStale(guideUpdated, now * 1000),
   };
 }
 
@@ -1007,7 +1013,8 @@ function assignedFromDb(
 function assignedFromSegments(
   cfg: AirlineConfig,
   reader: ScopedReader,
-  segments: readonly FallbackSegment[]
+  segments: readonly FallbackSegment[],
+  now: number
 ): AssignedAnswer | null {
   const own = segments.find((s) => cfg.tailPattern.test(s.tail_number));
   if (!own) return { kind: "partner_operated", tail: segments[0].tail_number };
@@ -1022,6 +1029,7 @@ function assignedFromSegments(
     programLabel: programTypeOf(cfg, aircraftType).label,
     mark: guide?.mark ?? null,
     guideUpdated,
+    guideStale: isGuideStale(guideUpdated, now * 1000),
   };
 }
 

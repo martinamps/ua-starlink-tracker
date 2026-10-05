@@ -1,6 +1,12 @@
 import type { Database } from "bun:sqlite";
-import { AIRLINES } from "../airlines/registry";
+import {
+  AIRLINES,
+  COMMUNITY_SOURCE_UPDATED_META,
+  enabledAirlines,
+  isGuideStale,
+} from "../airlines/registry";
 import { FR24_UPCOMING_CAP } from "../api/flightradar24-api";
+import { getFleetGuideTails } from "../database/database";
 import { GAUGES, metrics, normalizeAirlineTag } from "../observability/metrics";
 import { type JobHandle, startJob } from "../utils/job-runner";
 import { info, error as logError } from "../utils/logger";
@@ -161,6 +167,72 @@ export function emitDataFreshness(db: Database, queries = FRESHNESS_QUERIES): vo
   emitRowCounts(db);
   emitCappedFutureShare(db);
   emitStoredFleetProgress(db);
+  emitCommunityGuides(db);
+}
+
+export type CommunityGuideTailState =
+  | "starlink_listed"
+  | "not_starlink_current"
+  | "not_starlink_expired"
+  | "not_in_guide";
+
+export interface CommunityGuideState {
+  airline: string;
+  ageSec: number;
+  stale: boolean;
+  tails: Record<CommunityGuideTailState, number>;
+}
+
+/** Per community-source airline with a stored guide: its age and how many
+ * roster tails each answer state covers under the aging policy. */
+export function communityGuideStates(db: Database, nowMs = Date.now()): CommunityGuideState[] {
+  const out: CommunityGuideState[] = [];
+  for (const cfg of enabledAirlines().filter((a) => a.communitySource)) {
+    // Namespaced only: getMeta's bare-key fallback could age another airline.
+    const row = db
+      .query("SELECT value FROM meta WHERE key = ?")
+      .get(`${cfg.code}:${COMMUNITY_SOURCE_UPDATED_META}`) as { value: string } | null;
+    const updatedMs = row ? Date.parse(row.value) : Number.NaN;
+    if (!row || Number.isNaN(updatedMs)) continue;
+    const stale = isGuideStale(row.value, nowMs);
+    const tails: Record<CommunityGuideTailState, number> = {
+      starlink_listed: 0,
+      not_starlink_current: 0,
+      not_starlink_expired: 0,
+      not_in_guide: 0,
+    };
+    for (const t of getFleetGuideTails(db, cfg.code)) {
+      if (!t.inRoster) continue;
+      if (t.mark === "starlink") tails.starlink_listed++;
+      else if (t.mark === null) tails.not_in_guide++;
+      else if (stale) tails.not_starlink_expired++;
+      else tails.not_starlink_current++;
+    }
+    out.push({
+      airline: cfg.code,
+      ageSec: Math.max(0, Math.floor((nowMs - updatedMs) / 1000)),
+      stale,
+      tails,
+    });
+  }
+  return out;
+}
+
+function emitCommunityGuides(db: Database): void {
+  try {
+    for (const g of communityGuideStates(db)) {
+      const airline = normalizeAirlineTag(g.airline);
+      metrics.gauge(GAUGES.COMMUNITY_GUIDE_AGE_SECONDS, g.ageSec, {
+        airline,
+        stale: String(g.stale),
+      });
+      for (const [state, n] of Object.entries(g.tails)) {
+        metrics.gauge(GAUGES.COMMUNITY_GUIDE_TAILS, n, { airline, state });
+      }
+    }
+  } catch (err) {
+    logError("Community-guide gauge failed", err);
+  }
 }
 
 function emitStoredFleetProgress(db: Database): void {

@@ -12,6 +12,7 @@ import { normalizeAircraftType } from "../src/airlines/aircraft-families";
 import {
   AIRLINES,
   COMMUNITY_SOURCE_UPDATED_META,
+  GUIDE_MARK_TTL_DAYS,
   SITES,
   isOutsideProgramme,
   programTypeOf,
@@ -118,7 +119,9 @@ const FIXTURE_TAILS = sections.flatMap((s, si) =>
 );
 const STARS = FIXTURE_TAILS.filter((t) => t.mark === "★");
 type GuideMark = "starlink" | "legacy" | "none";
-const GUIDE_UPDATED = "2026-09-12";
+// Relative to the clock: flights are seeded for tomorrow, and a fixed date
+// would cross GUIDE_MARK_TTL_DAYS and flip every non-★ answer to stale.
+const GUIDE_UPDATED = new Date(Date.now() - 7 * 86400_000).toISOString().slice(0, 10);
 const GUIDE = {
   tails: FIXTURE_TAILS.map((t) => ({
     tail: t.tail,
@@ -438,8 +441,89 @@ describe("AF answers", () => {
     expect(called).toBe(0);
     if (v.kind !== "no_model" || v.answer.kind !== "assigned_unconfirmed") throw new Error(v.kind);
     expect(v.answer.tail).toBe(legacy);
+    expect(v.answer.guideStale).toBe(false);
     expect(describeCarrierPrediction(AF, v.answer)).toMatch(/legacy WiFi/);
     db.close();
+  });
+
+  describe("aging past GUIDE_MARK_TTL_DAYS", () => {
+    const ageGuide = (db: Database, days: number) =>
+      setMeta(
+        db,
+        COMMUNITY_SOURCE_UPDATED_META,
+        new Date(Date.now() - days * 86400_000).toISOString(),
+        "AF"
+      );
+    const target = AF.communitySource?.fleetTarget?.text as string;
+
+    test("a non-★ tail's mark expires: no status claim, the airline's target instead", async () => {
+      const db = appliedDb();
+      ageGuide(db, GUIDE_MARK_TTL_DAYS + 2);
+      const legacy = GUIDE.tails.find((t) => t.mark === "legacy" && t.programType === "B787")
+        ?.tail as string;
+      addFlight(db, legacy, "AF300", "XXA", NOON, { airline: "AF" });
+      const v = await verdictOn(db, "AF300");
+      if (v.kind !== "no_model" || v.answer.kind !== "assigned_unconfirmed")
+        throw new Error(v.kind);
+      expect(v.answer.guideStale).toBe(true);
+      const text = describeCarrierPrediction(AF, v.answer);
+      expect(text).not.toMatch(/legacy WiFi|no WiFi listed/);
+      expect(text).toContain(target);
+      const wire = communityWireFields(v.answer);
+      expect(wire.guide_stale).toBe(true);
+      expect(wire.guide_updated).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      db.close();
+    });
+
+    test("a ★ tail never expires", async () => {
+      const db = appliedDb();
+      ageGuide(db, 400);
+      const star = STARS.find((t) => t.header === "A350-941 (Cabin G)")?.tail as string;
+      addFlight(db, star, "AF100", "XXA", NOON, { airline: "AF" });
+      const v = await verdictOn(db, "AF100");
+      expect(v.kind).toBe("scheduled");
+      if (v.kind === "scheduled") expect(verdictConfidence(v)).toBe("likely");
+      db.close();
+    });
+
+    test("type answers say 'none listed', never 'not started', and keep counts as floors", () => {
+      const db = appliedDb();
+      ageGuide(db, GUIDE_MARK_TTL_DAYS + 2);
+      const reader = createReaderFactory(db)("AF");
+      const progress = carrierPrediction(AF, reader, "AF200");
+      if (progress.kind !== "type_progress") throw new Error(progress.kind);
+      expect(progress.guideStale).toBe(true);
+      const summary = describeCarrierPrediction(AF, progress);
+      expect(summary).not.toMatch(/not started/);
+      expect(communityWireFields(progress).guide_stale).toBe(true);
+      const idle = carrierPrediction(AF, reader, "AF200", { aircraftType: "Boeing 787-9" });
+      if (idle.kind !== "type_rate") throw new Error(idle.kind);
+      expect(idle.type.equipped).toBe(0);
+      const idleText = describeCarrierPrediction(AF, idle);
+      expect(idleText).not.toMatch(/listed with Starlink yet/);
+      expect(idleText).toContain(target);
+      const partial = carrierPrediction(AF, reader, "AF200", {
+        aircraftType: "Boeing 777-328(ER)",
+      });
+      if (partial.kind !== "type_rate") throw new Error(partial.kind);
+      expect(describeCarrierPrediction(AF, partial)).toMatch(/^At least \d+ of \d+/);
+      db.close();
+    });
+
+    test("the clock decides, not the call site: nowMs before the TTL is fresh", () => {
+      const db = appliedDb();
+      const reader = createReaderFactory(db)("AF");
+      const at = (days: number) =>
+        carrierPrediction(AF, reader, "AF200", {
+          nowMs: Date.parse(`${GUIDE_UPDATED}T00:00:00Z`) + days * 86400_000,
+        });
+      const fresh = at(GUIDE_MARK_TTL_DAYS);
+      const stale = at(GUIDE_MARK_TTL_DAYS + 1);
+      if (fresh.kind !== "type_progress" || stale.kind !== "type_progress") throw new Error();
+      expect(fresh.guideStale).toBe(false);
+      expect(stale.guideStale).toBe(true);
+      db.close();
+    });
   });
 
   const seg = (tail: string) => ({
@@ -676,13 +760,24 @@ describe("/airlines/air-france page", () => {
     expect(html).toContain('id="F-HOZZ"');
     expect(html).not.toContain("F-GUOB");
     expect(html).not.toMatch(/SYNTHETIC-(CABIN|SEAT)/);
-    expect(html).not.toMatch(/hasn't been updated/);
+    expect(html).not.toMatch(/over \d+ days old/);
     db.close();
   });
 
-  test("a stale guide says so", () => {
+  test("a stale guide says so, keeps its ★ marks and expires the rest", () => {
     const db = appliedDb();
-    expect(render(db, "2026-06-01T00:00:00.000Z")).toMatch(/hasn(&#x27;|')t been updated/);
+    const fresh = render(db, "2026-09-12T00:00:00.000Z");
+    const stale = render(db, "2026-06-01T00:00:00.000Z");
+    expect(stale).toMatch(/over \d+ days old/);
+    expect(stale).toContain(AF.communitySource?.fleetTarget?.source.url as string);
+    expect(stale).toContain("None listed");
+    expect(stale).not.toContain("Not started");
+    expect(stale).not.toContain("Legacy Wi-Fi");
+    expect(stale).toContain("may have it now");
+    expect(fresh).toContain("Legacy Wi-Fi");
+    const starChips = (html: string) => (html.match(/>Starlink</g) ?? []).length;
+    expect(starChips(stale)).toBe(starChips(fresh));
+    expect(starChips(stale)).toBeGreaterThan(0);
     db.close();
   });
 

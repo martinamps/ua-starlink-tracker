@@ -57,6 +57,7 @@ import {
   airlineSlug,
   brandMetadata,
   hubContentAirlines,
+  isGuideStale,
   publicAirlines,
   resolveSite,
   siteAirline,
@@ -4159,6 +4160,9 @@ function buildCompareSide(ctx: RequestContext, cfg: AirlineConfig): CompareSide 
     breakdown: phases || typeProgress ? [] : subfleetBreakdown(cfg, reader),
     phases,
     typeProgress,
+    typeProgressStale:
+      typeProgress !== null &&
+      isGuideStale(reader.getMeta(COMMUNITY_SOURCE_UPDATED_META), Date.now()),
     facts: factsForCode(cfg.code),
     checkFlightUrl: liveSite?.features.checkFlightPage
       ? `https://${liveSite.canonicalHost}/check-flight`

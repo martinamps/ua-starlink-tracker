@@ -132,6 +132,8 @@ rather than raising the number.
 | `starlink.data.freshness_seconds` | Age of each pipeline's newest write, tagged `job`/`dataset`, `airline`. `job:fleet_progress,airline:alaska` is the Alaska tracker ingest (daily; ages only when it fails) |
 | `starlink.fleet_progress.count` | Per-segment `total`/`complete` rollups, `UA` from the progress sheets, `AS` from Alaska's newsroom tracker |
 | `starlink.fleet_progress.unattributed` | `aircraft_type`, `airline`: aircraft Alaska counts as connected that we can't yet name by registration (its connected count minus our equipped listings). Persistently above 0 = manual tail attribution backlog |
+| `starlink.community_guide.age_seconds` | Age of a frozen community fleet guide (AF), from its own date; tags `airline`, `stale`. Not a `data.freshness_seconds` job: it ages by design, so the freshness monitors would page forever |
+| `starlink.community_guide.tails` | Roster tails by what answers may still say under the aging policy; tags `airline`, `state` (`starlink_listed`, `not_starlink_current`, `not_starlink_expired`, `not_in_guide`) |
 
 The Alaska tracker ingest also counts `starlink.scraper.sync{source:alaska_tracker}` with `status:success|error`; `error` means the page failed to fetch or its table no longer parses, and the last good chart keeps serving.
 
