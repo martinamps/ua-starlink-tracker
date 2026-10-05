@@ -36,8 +36,8 @@ export const content: AirlineContent = {
 
   intro: () => (
     <>
-      Alaska is replacing its paid Intelsat Wi-Fi with free Starlink. Check your flight or see which
-      aircraft have it.
+      Alaska Airlines is replacing its paid Intelsat Wi-Fi with free Starlink, starting with its
+      regional E175s. Check your flight or see which Alaska planes have it.
     </>
   ),
 

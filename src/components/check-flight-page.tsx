@@ -190,7 +190,7 @@ export default function CheckFlightPage({
     ? "That isn't a flight number"
     : fn
       ? `Does ${fn} have Starlink Wi-Fi?`
-      : `Check your ${airlineName} flight for Starlink Wi-Fi`;
+      : `Does my ${shortName} flight have Starlink?`;
   const dek = invalid
     ? `Enter ${article(shortName)} ${shortName} flight number to check it.`
     : answer

@@ -4,7 +4,7 @@
  * flights and the FAQ. The pieces live in home/; this file orders them.
  */
 import type { AirlineContent, ContentStats, HubHomeLinks } from "../airlines/content";
-import { type SiteConfig, siteAirline } from "../airlines/registry";
+import { AIRLINES, type SiteConfig, siteAirline } from "../airlines/registry";
 import type { PopularFlight } from "../database/database";
 import type {
   Aircraft,
@@ -19,6 +19,7 @@ import { HeaderStatStrip, PopularFlightsLinks, ShareCardLink } from "./atoms";
 import { Faq, homeFaqItems, homeFaqSections } from "./faq";
 import { FlightSearchForm } from "./flight-search-form";
 import { AircraftList } from "./home/aircraft-list";
+import { homeHeadline } from "./home/headline";
 import { AirportBars } from "./home/rollout";
 import { ToolsSection } from "./home/tools";
 import { ClientScriptTag } from "./layout";
@@ -131,6 +132,21 @@ function orderedAircraft(starlink: Aircraft[], flightsByTail: Record<string, Fli
     .sort((a, b) => updated(b) - updated(a));
 }
 
+function HomeTitle({ site, stats }: { site: SiteConfig; stats: ContentStats }) {
+  const cfg = site.scope === "ALL" ? undefined : AIRLINES[site.scope];
+  const headline = cfg && homeHeadline(cfg, stats.starlinkCount, stats.totalCount);
+  if (!headline) return <>{site.brand.heading ?? site.brand.title}</>;
+  return (
+    <>
+      {headline.name}
+      <span className="sr-only">: </span>
+      <span className="mt-1 block text-xl text-secondary sm:text-2xl">
+        {`${headline.count} planes have Starlink`}
+      </span>
+    </>
+  );
+}
+
 export default function Page({
   total,
   starlink,
@@ -176,7 +192,7 @@ export default function Page({
       pageLinks={pageLinks}
       before={showPassengerBanner ? <PassengerBanner site={site} /> : null}
     >
-      <PageHeader title={site.brand.heading ?? site.brand.title} dek={content.intro(stats)}>
+      <PageHeader title={<HomeTitle site={site} stats={stats} />} dek={content.intro(stats)}>
         <HeaderStatStrip
           items={
             typeof content.headerStats === "function"

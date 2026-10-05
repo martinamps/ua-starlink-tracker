@@ -51,6 +51,8 @@ export interface PageBrand {
   title: string;
   /** Homepage H1 when it differs from the site name in `title`. */
   heading?: string;
+  /** WebSite.alternateName: the longer name people also search for. */
+  alternateName?: string;
   tagline: string;
   /** SEO `<title>` tag */
   siteTitle: string;
@@ -348,7 +350,9 @@ const AIRLINE_DEFS = {
       rosterIsProgramScope: true,
     },
     brand: {
-      title: "United Airlines Starlink Tracker",
+      // Matches the homepage <title> lead and H1 so Google keeps our title.
+      title: "United Starlink Tracker",
+      alternateName: "United Airlines Starlink Tracker",
       tagline: "Tracking United Airlines aircraft with Starlink WiFi",
       // {{starlinkCount}}/{{totalAircraftCount}} resolve in buildBaseTemplateVars();
       // og:title intentionally has no count — social platforms cache OG metadata.
@@ -515,12 +519,13 @@ const AIRLINE_DEFS = {
       rosterIsProgramScope: true,
     },
     brand: {
-      title: "Alaska Airlines Starlink Tracker",
+      title: "Alaska Starlink Tracker",
+      alternateName: "Alaska Airlines Starlink Tracker",
       tagline: "Tracking Alaska Airlines aircraft with Starlink WiFi",
       siteTitle: "Alaska Starlink Tracker — Which Flights Have Free Starlink WiFi?",
       description:
         "Track which Alaska Airlines flights have free Starlink WiFi. Live status for every Starlink-equipped aircraft, installation progress, and upcoming flight schedules.",
-      ogTitle: "Alaska Airlines Starlink Tracker",
+      ogTitle: "Alaska Starlink Tracker — Which Alaska Planes Have Starlink",
       ogDescription:
         "Live statistics showing Alaska Airlines Starlink WiFi installation progress across the fleet.",
       keywords:
