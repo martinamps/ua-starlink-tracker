@@ -245,7 +245,7 @@ export interface AirlineConfig {
    * tailPatterns() from the same body as tailScanPattern. */
   tailPattern: RegExp;
   /** Global word-boundary scan variant of tailPattern, for pulling
-   * registrations out of prose (FlyerTalk posts, wikiposts). Safe to share:
+   * registrations out of prose. Safe to share:
    * String.match(/g/) and matchAll don't depend on lastIndex. */
   tailScanPattern: RegExp;
   /** Rollout story — hub status card + llms.txt copy. Required so a new
@@ -628,6 +628,8 @@ const AIRLINE_DEFS = {
     ...FRANCE_TAIL,
     minFleetSanity: 200,
     verifierBackend: null,
+    // No live writer: the guide is no longer imported, so AF:lastUpdated stays
+    // at the stored guide's own date instead of the daily fleet sync's.
     lastUpdatedOwner: "community-sync",
     flightHistoryModel: false,
     verifySite: "airfrance.com",
@@ -861,7 +863,7 @@ function hawaiianTypeToWifi(aircraftType: string): StarlinkStatus | null {
 }
 
 // AS: regional E175s 100% equipped (Q1 2026 earnings call). Mainline 737/787
-// is per-tail mid-rollout — null, settled by FlyerTalk/verifier evidence.
+// is per-tail mid-rollout — null, settled per tail by stored evidence.
 function alaskaTypeToWifi(aircraftType: string): StarlinkStatus | null {
   return normalizeAircraftType(aircraftType) === "E175" ? "confirmed" : null;
 }

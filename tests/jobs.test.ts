@@ -28,7 +28,6 @@ import {
 } from "../src/scripts/data-freshness";
 import { buildRoster, fleetSyncInitialDelayMs, rosterSources } from "../src/scripts/fleet-sync";
 import { ingestQatarSchedule } from "../src/scripts/qatar-schedule-ingester";
-import { SOURCE_AIRLINE } from "../src/scripts/residential-sync";
 import { type SheetScrapeResult, runSheetScrape } from "../src/scripts/sheet-scrape";
 import type { FleetStats } from "../src/types";
 import { type JobClock, createOutageBreaker, startJob } from "../src/utils/job-runner";
@@ -618,9 +617,6 @@ describe("data-freshness coverage", () => {
           "INSERT INTO adsb_sweeps (swept_at, provider, requests, latency_ms, tails_queried, observed, airborne, matched, mismatched, no_assignment, no_callsign) VALUES (?, 'airplanes.live', 1, 250, 425, 40, 36, 11, 0, 25, 0)"
         ).run(ts);
         break;
-      case "residential_sync":
-        setMeta(db, "residentialSyncAt", new Date(ts * 1000).toISOString(), airline);
-        break;
       default:
         throw new Error(`no seeder for freshness job ${job} — add one with the query`);
     }
@@ -758,55 +754,7 @@ describe("qatar_ingester freshness sentinel", () => {
   });
 });
 
-describe("residential_sync freshness gauge", () => {
-  type GaugeCall = { name: string; value: number; tags?: Record<string, string | number> };
-
-  function residentialGauges(
-    db: ReturnType<typeof makeSyntheticDb>,
-    queries?: Record<string, string>
-  ): GaugeCall[] {
-    const calls: GaugeCall[] = [];
-    const original = metrics.gauge;
-    metrics.gauge = (name, value, tags) => {
-      calls.push({ name, value, tags });
-    };
-    try {
-      emitDataFreshness(db, queries);
-    } finally {
-      metrics.gauge = original;
-    }
-    return calls.filter(
-      (c) => c.name === "data.freshness_seconds" && c.tags?.job === "residential_sync"
-    );
-  }
-
-  test("a stamped airline reports age since its residentialSyncAt", () => {
-    const db = makeSyntheticDb();
-    setMeta(db, "residentialSyncAt", new Date(Date.now() - 3_600_000).toISOString(), "AS");
-    const as = residentialGauges(db).find((c) => c.tags?.airline === normalizeAirlineTag("AS"));
-    expect(as?.tags?.dataset).toBe("residential_sync");
-    expect(as?.value as number).toBeGreaterThanOrEqual(3590);
-    expect(as?.value as number).toBeLessThan(4000);
-    db.close();
-  });
-
-  test("a missing stamp emits maximally stale instead of going mute", () => {
-    const db = makeSyntheticDb();
-    const calls = residentialGauges(db);
-    expect(calls.length).toBe(FRESHNESS_COVERAGE.residential_sync.length);
-    for (const c of calls) expect(c.value).toBeGreaterThan(50 * 365 * 24 * 3600);
-    db.close();
-  });
-
-  test("QR disabled → QR is not tracked", () => {
-    expect(buildFreshnessCoverage(false).residential_sync).not.toContain("QR");
-    const db = makeSyntheticDb();
-    const calls = residentialGauges(db, buildFreshnessQueries(false));
-    expect(calls.map((c) => c.tags?.airline)).not.toContain(normalizeAirlineTag("QR"));
-    expect(calls.map((c) => c.tags?.airline)).toContain(normalizeAirlineTag("AS"));
-    db.close();
-  });
-
+describe("data freshness sweep", () => {
   // The daily sync alone left pct_change(last_1d) monitors on No Data.
   test("the sweep re-emits the stored fleet-progress rollups", () => {
     const db = makeSyntheticDb();
@@ -830,20 +778,6 @@ describe("residential_sync freshness gauge", () => {
       expect(c.tags?.segment).toBe("mainline_nb");
       expect(c.tags?.airline).toBe(normalizeAirlineTag("UA"));
     }
-    db.close();
-  });
-
-  // residential-sync stamps AF:residentialSyncAt; the gauge ignored it.
-  test("every airline residential-sync stamps is tracked", () => {
-    const stamped = Object.values(SOURCE_AIRLINE).filter((code) => AIRLINES[code]?.enabled);
-    expect(stamped.length).toBeGreaterThan(0);
-    for (const code of stamped) expect(FRESHNESS_COVERAGE.residential_sync).toContain(code);
-
-    const db = makeSyntheticDb();
-    setMeta(db, "residentialSyncAt", new Date(Date.now() - 3_600_000).toISOString(), "AF");
-    const af = residentialGauges(db).find((c) => c.tags?.airline === normalizeAirlineTag("AF"));
-    expect(af?.value as number).toBeGreaterThanOrEqual(3590);
-    expect(af?.value as number).toBeLessThan(4000);
     db.close();
   });
 });

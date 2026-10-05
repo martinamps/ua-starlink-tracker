@@ -1,20 +1,27 @@
 /**
- * Air France: FlyerTalk guide parse + community-tier apply, programme-type
+ * Air France: the stored community fleet guide read back as programme-type
  * denominators, per-type answers that never blend, key-less assigned-tail
- * answers, and the hub page. The guide fixture is synthetic (built below —
- * no real cabin or seat text), and every DB is an in-memory clone.
+ * answers, and the hub page. The guide fixture is synthetic (built below),
+ * and every DB is an in-memory clone.
  */
 
 import type { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { normalizeAircraftType } from "../src/airlines/aircraft-families";
-import { AIRLINES, SITES, isOutsideProgramme, programTypeOf } from "../src/airlines/registry";
+import {
+  AIRLINES,
+  COMMUNITY_SOURCE_UPDATED_META,
+  SITES,
+  isOutsideProgramme,
+  programTypeOf,
+} from "../src/airlines/registry";
 import { resolveFlightVerdict, verdictConfidence } from "../src/api/check-flight-core";
 import { breakerEffect } from "../src/api/flight-updater";
 import { renderCheckFlightVerdict } from "../src/api/mcp-server";
 import { CommunityAirlinePage, TypeShareTable } from "../src/components/community-airline-page";
 import {
+  addDiscoveredStarlinkPlane,
   getFleetDiscoveryStats,
   getHubStats,
   getNextCommunityFleetTailNeedingFlights,
@@ -23,15 +30,12 @@ import {
   getTypeProgress,
   reconcileConsensus,
   reconcileTypeDeterministicFleets,
+  refreshFleetMeta,
+  setMeta,
+  stampLastUpdatedAt,
   upsertFleetAircraft,
 } from "../src/database/database";
 import { createReaderFactory } from "../src/database/reader";
-import {
-  type ParsedGuide,
-  applyAirFranceGuide,
-  parseAirFranceGuide,
-} from "../src/scripts/flyertalk-airfrance";
-import { isDeterministicFetchError } from "../src/scripts/residential-sync";
 import {
   carrierPrediction,
   carrierRouteAnswer,
@@ -113,45 +117,17 @@ const FIXTURE_TAILS = sections.flatMap((s, si) =>
   s.marks.map((mark, i) => ({ tail: tailOf(si, i), mark, fr24: s.fr24, header: s.header }))
 );
 const STARS = FIXTURE_TAILS.filter((t) => t.mark === "★");
-const LEGEND_MISMATCH = sections
-  .filter((s) => s.legendHasStar === false)
-  .reduce((n, s) => n + s.marks.filter((m) => m === "★").length, 0);
-
-// Marks render three ways on FlyerTalk: a bare entity, a colour span, and
-// (rarely) a space before the star.
-function markHtml(mark: Mark, i: number): string {
-  const entity = mark === "★" ? "&#9733;" : "&#9734;";
-  if (!mark) return "";
-  if (i % 3 === 1) return `<span style="color:#333333">${entity}</span>`;
-  return i % 5 === 4 ? ` ${entity}` : entity;
-}
-
-function guideHtml(opts: { sections?: Array<FixtureSection | string>; footer?: boolean } = {}) {
-  const lines: string[] = [];
-  let si = 0;
-  for (const s of opts.sections ?? SECTIONS) {
-    if (typeof s === "string") {
-      lines.push(`<b><u>${s.replace(/&/g, "&amp;")}</u></b>`);
-      continue;
-    }
-    lines.push(`<b>${s.header}</b>`);
-    lines.push(s.marks.map((m, i) => `${tailOf(si, i)}${markHtml(m, i)}`).join(" / "));
-    lines.push("Configuration: SYNTHETIC-CABIN-LAYOUT");
-    lines.push(
-      s.legendHasStar === false
-        ? "Wi-Fi: legacy (&#9734; equipped)"
-        : "Wi-Fi: &#9733; Starlink / &#9734; legacy Wi-Fi"
-    );
-    lines.push("J seat: SYNTHETIC-SEAT in a 1-2-1 configuration");
-    si++;
-  }
-  if (opts.footer !== false)
-    lines.push("<i>Version 1.0 by curator - last updated 12 September 2026</i>");
-  return `<html><div id="wikipost-2213677">${lines.join("<br />\n")}</div><!--  END WIKIPOST   -->
-<div class="post">Spotted F-GZZZ&#9733; today</div></html>`;
-}
-
-const GUIDE = parseAirFranceGuide(guideHtml());
+type GuideMark = "starlink" | "legacy" | "none";
+const GUIDE_UPDATED = "2026-09-12";
+const GUIDE = {
+  tails: FIXTURE_TAILS.map((t) => ({
+    tail: t.tail,
+    mark: (t.mark === "★" ? "starlink" : t.mark === "☆" ? "legacy" : "none") as GuideMark,
+    section: t.header,
+    programType: programTypeOf(AF, t.header).key,
+    operator: /^Embraer/.test(t.header) ? "Air France HOP" : null,
+  })),
+};
 const GUIDE_ONLY = FIXTURE_TAILS.find((t) => t.header === "Embraer 190 (Cabin J)")?.tail as string;
 const MISMATCHED = FIXTURE_TAILS.find((t) => t.header === "777-328ER (Cabin B)")?.tail as string;
 
@@ -168,198 +144,72 @@ function seedRoster(db: Database) {
   upsertFleetAircraft(db, "F-HOZZ", "Airbus A220-300", "fr24", "mainline", null, "AF");
 }
 
+/** The stored state the last guide import left: community-tier ★ tails that
+ * match the roster's programme type, the guide rows, and the guide's date. */
+function seedGuide(db: Database) {
+  const roster = new Map(
+    (
+      db
+        .query("SELECT tail_number, aircraft_type FROM united_fleet WHERE airline = 'AF'")
+        .all() as { tail_number: string; aircraft_type: string | null }[]
+    ).map((r) => [r.tail_number, r.aircraft_type])
+  );
+  for (const g of GUIDE.tails) {
+    if (g.mark !== "starlink" || !roster.has(g.tail)) continue;
+    const type = roster.get(g.tail) ?? null;
+    if (programTypeOf(AF, type).key !== g.programType) continue;
+    upsertFleetAircraft(db, g.tail, type, "flyertalk_af", "mainline", null, "AF", {
+      starlinkStatus: "confirmed",
+      verifiedWifi: null,
+      evidence: "community",
+    });
+    addDiscoveredStarlinkPlane(db, g.tail, type, "Starlink", g.operator ?? AF.name, "mainline", {
+      sheetGid: "flyertalk_af",
+      airline: "AF",
+      evidence: "community",
+    });
+  }
+  refreshFleetMeta(db, "AF");
+  const iso = `${GUIDE_UPDATED}T00:00:00.000Z`;
+  const ins = db.query(
+    `INSERT INTO fleet_guide_tails
+       (airline, tail_number, section, program_type, mark, guide_updated, fetched_at)
+     VALUES ('AF', ?, ?, ?, ?, ?, 0)`
+  );
+  for (const g of GUIDE.tails) ins.run(g.tail, g.section, g.programType, g.mark, iso);
+  setMeta(db, COMMUNITY_SOURCE_UPDATED_META, iso, "AF");
+  stampLastUpdatedAt(db, "AF", "community-sync", iso);
+}
+
 function appliedDb(): Database {
   const db = makeSyntheticDb();
   seedRoster(db);
-  applyAirFranceGuide(db, GUIDE);
+  seedGuide(db);
   return db;
 }
 
 const one = <T>(db: Database, sql: string, ...p: Array<string | number>) =>
   db.query(sql).get(...p) as T;
 
-// ── parse ───────────────────────────────────────────────────────────────────
+// ── stored guide ────────────────────────────────────────────────────────────
 
-describe("parseAirFranceGuide", () => {
-  test("structure: sections, tails, marks, operators, dates", () => {
-    expect(GUIDE.sections).toBeGreaterThanOrEqual(15);
-    expect(GUIDE.tails.length).toBe(FIXTURE_TAILS.length);
-    for (const t of GUIDE.tails) expect(AF.tailPattern.test(t.tail)).toBe(true);
-    expect(new Set(GUIDE.tails.map((t) => t.mark))).toEqual(
-      new Set(["starlink", "legacy", "none"])
-    );
-    expect(GUIDE.tails.filter((t) => t.mark === "starlink").length).toBe(STARS.length);
-    expect(GUIDE.updatedAt).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-    expect(GUIDE.legendMismatch).toBe(LEGEND_MISMATCH);
-    const keys = new Set(GUIDE.tails.map((t) => t.programType));
-    expect(keys.has("B777-200ER")).toBe(true);
-    expect(keys.has("B777-300ER")).toBe(true);
-    expect(keys.has("B777")).toBe(false);
-    const hop = GUIDE.tails.filter((t) => t.operator === "Air France HOP");
-    expect(hop.length).toBeGreaterThan(0);
-    expect(hop.every((t) => /^E1[79]0$/.test(t.programType))).toBe(true);
-  });
-
-  test("span-wrapped and spaced stars parse; a reply-post tail does not", () => {
-    const spanned = GUIDE.tails.find((t) => t.tail === tailOf(1, 1));
-    const spaced = GUIDE.tails.find((t) => t.tail === tailOf(1, 4));
-    expect(spanned?.mark).toBe("starlink");
-    expect(spaced?.mark).toBe("starlink");
-    expect(GUIDE.tails.some((t) => t.tail === "F-GZZZ")).toBe(false);
-  });
-
-  test.each([
-    ["missing block", () => parseAirFranceGuide("<html>nothing</html>")],
-    ["missing footer", () => parseAirFranceGuide(guideHtml({ footer: false }))],
-    [
-      "unknown type header",
-      () =>
-        parseAirFranceGuide(
-          guideHtml({ sections: [...SECTIONS, { header: "Concorde", fr24: "x", marks: [""] }] })
-        ),
-    ],
-    [
-      "bare 777 header",
-      () =>
-        parseAirFranceGuide(
-          guideHtml({ sections: [...SECTIONS, { header: "777", fr24: "x", marks: [""] }] })
-        ),
-    ],
-    [
-      "duplicate tail",
-      () => {
-        const html = guideHtml().replace(tailOf(2, 0), tailOf(1, 0));
-        return parseAirFranceGuide(html);
-      },
-    ],
-    ["too few tails", () => parseAirFranceGuide(guideHtml({ sections: SECTIONS.slice(0, 8) }))],
-  ])("%s throws a deterministic layout error", (_label, run) => {
-    let err: unknown;
-    try {
-      run();
-    } catch (e) {
-      err = e;
-    }
-    expect(err).toBeInstanceOf(Error);
-    expect(isDeterministicFetchError(err)).toBe(true);
-  });
-});
-
-// ── apply ───────────────────────────────────────────────────────────────────
-
-describe("applyAirFranceGuide", () => {
-  test("★ tails become community-tier confirmed; nothing claims verified", () => {
-    const db = makeSyntheticDb();
-    seedRoster(db);
-    const r = applyAirFranceGuide(db, GUIDE);
-    expect(r.absent).toEqual([GUIDE_ONLY]);
-    expect(r.mismatch).toEqual([MISMATCHED]);
+describe("stored community guide", () => {
+  test("★ tails read as community-tier confirmed; nothing claims verified", () => {
+    const db = appliedDb();
     const confirmed = one<{ n: number; verified: number }>(
       db,
       "SELECT COUNT(*) n, SUM(verified_wifi IS NOT NULL OR verified_at IS NOT NULL) verified FROM united_fleet WHERE airline='AF' AND starlink_status='confirmed'"
     );
     expect(confirmed.n).toBe(STARS.length - 2);
     expect(confirmed.verified).toBe(0);
-    const sp = db
-      .query(
-        "SELECT TailNumber, sheet_gid, OperatedBy, verified_wifi FROM starlink_planes WHERE airline='AF'"
-      )
-      .all() as {
-      TailNumber: string;
-      sheet_gid: string;
-      OperatedBy: string;
-      verified_wifi: string | null;
-    }[];
-    expect(sp.length).toBe(confirmed.n);
-    expect(sp.every((r) => r.sheet_gid === "flyertalk_af" && r.verified_wifi === null)).toBe(true);
-    const hopTail = FIXTURE_TAILS.find(
-      (t) => t.header === "Embraer 190 (Cabin J)" && t.tail !== GUIDE_ONLY
-    )?.tail;
-    const mainTail = FIXTURE_TAILS.find((t) => t.header === "A350-941 (Cabin G)")?.tail;
-    expect(sp.find((r) => r.TailNumber === hopTail)?.OperatedBy).toBe("Air France HOP");
-    expect(sp.find((r) => r.TailNumber === mainTail)?.OperatedBy).not.toBe("Air France HOP");
-    expect(
-      one<{ n: number }>(
-        db,
-        "SELECT COUNT(*) n FROM united_fleet WHERE airline='AF' AND operated_by IS NOT NULL"
-      ).n
-    ).toBe(0);
-    const stamp = one<{ value: string }>(
-      db,
-      "SELECT value FROM meta WHERE key='AF:lastUpdated'"
-    ).value;
-    expect(Number.isNaN(Date.parse(stamp))).toBe(false);
-    expect(stamp).toContain("T");
     expect(getFleetDiscoveryStats(db, ["AF"]).verified_starlink).toBe(0);
     db.close();
-  });
-
-  test("idempotent; the guide table is replaced, not appended", () => {
-    const db = appliedDb();
-    const before = one<{ n: number }>(
-      db,
-      "SELECT COUNT(*) n FROM starlink_planes WHERE airline='AF'"
-    ).n;
-    applyAirFranceGuide(db, GUIDE);
-    expect(
-      one<{ n: number }>(db, "SELECT COUNT(*) n FROM starlink_planes WHERE airline='AF'").n
-    ).toBe(before);
-    expect(
-      one<{ n: number }>(db, "SELECT COUNT(*) n FROM fleet_guide_tails WHERE airline='AF'").n
-    ).toBe(GUIDE.tails.length);
-    db.close();
-  });
-
-  const unstar = (guide: ParsedGuide, n: number): ParsedGuide => {
-    const drop = new Set(
-      guide.tails
-        .filter((t) => t.mark === "starlink" && t.tail !== GUIDE_ONLY && t.tail !== MISMATCHED)
-        .slice(0, n)
-        .map((t) => t.tail)
-    );
-    return {
-      ...guide,
-      tails: guide.tails.map((t) => (drop.has(t.tail) ? { ...t, mark: "legacy" as const } : t)),
-    };
-  };
-
-  test("delisted tails are reported, not demoted — unless the owner asks, and never to negative", () => {
-    const db = appliedDb();
-    const r = applyAirFranceGuide(db, unstar(GUIDE, 2));
-    expect(r.delisted.length).toBe(2);
-    expect(r.demoted).toBe(0);
-    const tail = r.delisted[0];
-    expect(
-      one<{ s: string }>(db, "SELECT starlink_status s FROM united_fleet WHERE tail_number=?", tail)
-        .s
-    ).toBe("confirmed");
-
-    const d = applyAirFranceGuide(db, unstar(GUIDE, 2), { demoteDelisted: true });
-    expect(d.demoted).toBe(2);
-    expect(
-      one<{ s: string }>(db, "SELECT starlink_status s FROM united_fleet WHERE tail_number=?", tail)
-        .s
-    ).toBe("unknown");
-    expect(
-      one<{ n: number }>(db, "SELECT COUNT(*) n FROM starlink_planes WHERE TailNumber=?", tail).n
-    ).toBe(0);
-    db.close();
-  });
-
-  test("refuses more than 10 delisted, and a roster below minFleetSanity", () => {
-    const db = appliedDb();
-    expect(() => applyAirFranceGuide(db, unstar(GUIDE, 11))).toThrow(/refusing/);
-    db.close();
-    const empty = makeSyntheticDb();
-    expect(() => applyAirFranceGuide(empty, GUIDE)).toThrow(/fleet sync/);
-    empty.close();
   });
 
   test("no AF tail is ever negative, through every reconcile path", () => {
     const db = appliedDb();
     reconcileTypeDeterministicFleets(db);
     reconcileConsensus(db);
-    applyAirFranceGuide(db, unstar(GUIDE, 3), { demoteDelisted: true });
     expect(
       one<{ n: number }>(
         db,
@@ -802,7 +652,6 @@ describe("/airlines/air-france page", () => {
         types: reader.getTypeProgress(),
         tails: reader.getFleetGuideTails(),
         guideUpdated,
-        lastSynced: "2026-09-18T00:00:00.000Z",
         facts: null,
         nowMs,
       })

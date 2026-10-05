@@ -187,7 +187,6 @@ export function CommunityAirlinePage({
   types,
   tails,
   guideUpdated,
-  lastSynced,
   facts,
   nowMs,
   pageLinks,
@@ -199,7 +198,6 @@ export function CommunityAirlinePage({
   tails: readonly FleetGuideTail[];
   /** Curator's last edit, full ISO; null before the first sync. */
   guideUpdated: string | null;
-  lastSynced: string | null;
   facts: AirlineFactsEntry | null;
   nowMs: number;
   pageLinks?: Link[];
@@ -277,9 +275,7 @@ export function CommunityAirlinePage({
                 {source.label}
               </a>
               {source.author ? `, curated by ${source.author}` : ""}
-              {guideDate ? ` (last updated ${guideDate})` : ""}
-              {lastSynced ? `; synced here ${formatFactDate(lastSynced.slice(0, 10))}` : ""}. The
-              fleet roster is from FlightRadar24.
+              {guideDate ? ` as of ${guideDate}` : ""}. The fleet roster is from FlightRadar24.
             </p>
             <p className="text-sm text-muted leading-relaxed">
               Community-curated — not verified against {cfg.verifySite}. A Starlink mark in the
@@ -288,8 +284,8 @@ export function CommunityAirlinePage({
             </p>
             {stale && (
               <p className="text-sm text-warn leading-relaxed mt-2">
-                The guide hasn't been updated in over {GUIDE_STALE_DAYS} days — recent installs may
-                be missing from these counts.
+                Our copy of the guide hasn't been updated in over {GUIDE_STALE_DAYS} days — recent
+                installs may be missing from these counts.
               </p>
             )}
           </Panel>

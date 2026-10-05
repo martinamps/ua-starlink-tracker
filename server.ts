@@ -144,8 +144,7 @@ if (JOBS_ENABLED) {
     })
   );
 
-  // Daily UA ship→tail sheet sync. (FlyerTalk QR/AS scrapes run via
-  // residential-sync from a non-OVH IP — prod gets 403.)
+  // Daily UA ship→tail sheet sync.
   track(
     startJob({
       name: "ship_number_sync",

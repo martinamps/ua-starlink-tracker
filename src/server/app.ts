@@ -4068,7 +4068,6 @@ function communityAirlinePage(
       types,
       tails: reader.getFleetGuideTails(),
       guideUpdated,
-      lastSynced: reader.getMeta("residentialSyncAt"),
       facts: factsForCode(cfg.code),
       nowMs: Date.now(),
     },
