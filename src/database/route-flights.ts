@@ -33,7 +33,30 @@ export interface RouteFlightLeg {
 
 type LegFilter = { origin: string; destination: string } | null;
 
-function loggedLegs(db: Database, airline: string, filter: LegFilter): RouteFlightLeg[] {
+/**
+ * A future leg the log still holds after its tail's schedule was refreshed
+ * without it: the plane was swapped off. The updater only follows equipped
+ * tails, so nothing newer replaces the row, and the board kept showing the
+ * Starlink plane (about one future UA slot in nine on prod data).
+ */
+const SUPERSEDED_FUTURE_LEG = `uf.departure_time > ?
+  AND EXISTS (
+    SELECT 1 FROM upcoming_flights r
+    WHERE r.tail_number = uf.tail_number AND r.airline = uf.airline
+      AND r.last_updated > uf.last_seen
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM upcoming_flights m
+    WHERE m.tail_number = uf.tail_number AND m.airline = uf.airline
+      AND m.departure_airport = uf.departure_airport AND m.departure_time = uf.departure_time
+  )`;
+
+function loggedLegs(
+  db: Database,
+  airline: string,
+  filter: LegFilter,
+  nowSec: number | null = null
+): RouteFlightLeg[] {
   const cfg = AIRLINES[airline];
   if (!cfg) return [];
   // Partners count, as departure slots count them: AS832 on a Hawaiian A330
@@ -45,6 +68,10 @@ function loggedLegs(db: Database, airline: string, filter: LegFilter): RouteFlig
         params: [filter.origin, filter.destination],
       }
     : { sql: "1=1", params: [] as string[] };
+  const live =
+    nowSec === null
+      ? { sql: "", params: [] as number[] }
+      : { sql: ` AND NOT (${SUPERSEDED_FUTURE_LEG})`, params: [nowSec] };
   const rows = db
     .query(
       `SELECT uf.airline, uf.flight_number, uf.departure_airport, uf.arrival_airport, uf.dep_date,
@@ -56,9 +83,9 @@ function loggedLegs(db: Database, airline: string, filter: LegFilter): RouteFlig
                 AS listed_verified
        FROM flight_assignment_log uf
        WHERE ${where.sql} AND uf.departure_time IS NOT NULL AND uf.arrival_airport IS NOT NULL
-         AND ${scope.sql}`
+         AND ${scope.sql}${live.sql}`
     )
-    .all(...where.params, ...scope.params) as Array<{
+    .all(...where.params, ...scope.params, ...live.params) as Array<{
     airline: string;
     flight_number: string;
     departure_airport: string;
@@ -132,7 +159,7 @@ export function getRouteFlightLegs(
   if (!cfg) return [];
   const marketed = canonicalPermalinkFor(cfg);
   return [
-    ...loggedLegs(db, airline, { origin, destination }),
+    ...loggedLegs(db, airline, { origin, destination }, nowSec),
     ...scheduledLegs(db, airline, origin, destination, nowSec),
   ].filter((l) => marketed.test(l.flight_number));
 }
