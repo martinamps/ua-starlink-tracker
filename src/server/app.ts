@@ -146,6 +146,7 @@ import IsStarlinkFreePage, {
 } from "../components/is-starlink-free-page";
 import type { Link as PageLink } from "../components/layout";
 
+import { homeHeadline } from "../components/home/headline";
 import LiveTvPage, { liveTvTypeRows } from "../components/live-tv-page";
 import McpPage from "../components/mcp-page";
 import MethodologyPage, { hasMethodology } from "../components/methodology-page";
@@ -156,7 +157,6 @@ import RoutePage, { type RouteDeparture, routeVerdict } from "../components/rout
 import RoutePlannerPage from "../components/route-planner-page";
 import RoutesPage from "../components/routes-page";
 import TimelinePage, { getTimeline, hasTimeline } from "../components/timeline-page";
-import { fmt } from "../components/ui/format";
 import {
   DEPARTURE_WINDOW_HOURS,
   PERMALINK_STALE_NOTE_DAYS,
@@ -456,6 +456,7 @@ function siteWebJsonLd(site: SiteConfig, description: string): string {
     "@context": "https://schema.org",
     "@type": "WebSite",
     name: site.brand.title,
+    alternateName: site.brand.alternateName,
     description,
     url: `https://${site.canonicalHost}/`,
     potentialAction: {
@@ -2687,12 +2688,13 @@ function subPageMeta(
   const short = cfg?.shortName ?? "Tracked Fleets";
   if (page === "check-flight")
     return {
-      // Tool intent — avoid soaking "united starlink tracker" brand impressions
-      // (check-flight previously sat at ~2% CTR on that query at position ~1).
-      siteTitle: `Check ${article(short)} ${short} Flight for Starlink WiFi — Flight Number Lookup`,
-      siteDescription: `Enter ${article(short)} ${short} flight number and date for a live Starlink answer — verified near departure, with a probability estimate earlier from past assignments.`,
+      // The question people search, never the brand: brand impressions belong
+      // to the homepage (check-flight once sat at ~2% CTR on "united starlink
+      // tracker" at position ~1).
+      siteTitle: `Does My ${short} Flight Have Starlink? Check by Flight Number`,
+      siteDescription: `Enter your ${short} flight number and date to see if your plane has Starlink Wi-Fi: a firm yes or no once the aircraft is assigned, and odds before that.`,
       keywords: `check ${cfg?.iata ?? "airline"} flight starlink, does my ${short.toLowerCase()} flight have starlink, ${name} flight wifi lookup, starlink flight checker`,
-      ogTitle: `Check ${article(short)} ${short} Flight for Starlink`,
+      ogTitle: `Does My ${short} Flight Have Starlink?`,
       ogDescription: `Flight-number lookup for ${short} Starlink WiFi — live answer by date when assignments publish.`,
     };
   if (page === "routes")
@@ -2716,16 +2718,17 @@ function subPageMeta(
       ogTitle: `Find Starlink-Equipped ${short} Flights`,
       ogDescription: `Search ${short} flights between any two airports ranked by Starlink probability and connected hours.`,
     };
-  // On the hub there is no carrier, and "${short} Fleet" degenerated to
-  // "Tracked Fleets Fleet"; "every ${name} aircraft" likewise read "every
-  // tracked airlines aircraft".
-  const fleetLead = cfg ? `${short} Fleet` : "Tracked Fleets";
-  const fleetOf = cfg ? `${name} aircraft` : "aircraft from every tracked airline";
+  // The hub's fleet page stays multi-airline: "which united planes have
+  // starlink" belongs to the United site, which the hub used to outrank.
+  const fleetTitle = cfg
+    ? `Which ${short} Planes Have Starlink? Fleet List by Tail`
+    : "Airline Fleets with Starlink — Every Tracked Plane by Tail";
+  const fleetOf = cfg ? `${name} plane` : "plane from every tracked airline";
   return {
-    siteTitle: `${fleetLead} WiFi Map — Starlink vs Other Providers by Tail`,
-    siteDescription: `Browse every ${fleetOf}, colored by WiFi provider. See which types still lack Starlink and how many equipped planes are flying right now.`,
+    siteTitle: fleetTitle,
+    siteDescription: `Every ${fleetOf} by type and tail, colored by Wi-Fi provider: which have Starlink, which types still lack it, and how many are flying now.`,
     keywords: `${name} fleet wifi map, starlink by tail number, aircraft wifi provider, ${short.toLowerCase()} starlink fleet`,
-    ogTitle: `${fleetLead} WiFi Map`,
+    ogTitle: cfg ? `Which ${short} Planes Have Starlink?` : "Airline Fleets with Starlink",
     ogDescription: "Every tail number, colored by WiFi provider — Starlink vs legacy systems.",
   };
 }
@@ -4237,11 +4240,9 @@ function homeMeta(
     };
   }
   const cfg = AIRLINES[site.scope];
-  const { starlinkCount: n, totalCount: total } = stats;
-  if (!cfg || !denominatorIsPublishable(n, total, cfg.rollout.rosterIsProgramScope)) return null;
-  const count = `${fmt(n)} of ${fmt(total)}`;
-  const share = `${Math.round((n / total) * 100)}%`;
-  const lead = `${cfg.shortName} Starlink Tracker`;
+  const headline = cfg && homeHeadline(cfg, stats.starlinkCount, stats.totalCount);
+  if (!cfg || !headline) return null;
+  const { name: lead, count, share } = headline;
   const siteTitle =
     [
       `${lead}: ${count} Planes Have Starlink (${share})`,

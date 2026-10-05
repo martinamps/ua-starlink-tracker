@@ -1218,12 +1218,12 @@ describe("SEO meta", () => {
     expect(parsed.mainEntity.length).toBeGreaterThan(3);
   });
 
-  test("/check-flight title leads with tool intent and short brand name", async () => {
+  test("/check-flight title leads with the question, not the brand", async () => {
     const html = await getHtml("/check-flight");
     const title = html.match(/<title>([^<]+)<\/title>/)?.[1] ?? "";
-    // Tool-intent lead — avoid soaking "united starlink tracker" brand SERPs.
-    expect(title.startsWith("Check a United Flight for Starlink")).toBe(true);
-    expect(title).not.toContain("United Airlines Starlink Tracker");
+    // Question-intent lead — avoid soaking "united starlink tracker" brand SERPs.
+    expect(title.startsWith("Does My United Flight Have Starlink")).toBe(true);
+    expect(title).not.toContain("Starlink Tracker");
     expect(title).not.toContain("{{");
   });
 

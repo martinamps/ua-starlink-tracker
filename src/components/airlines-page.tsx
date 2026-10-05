@@ -206,7 +206,7 @@ function TrackerCta({ overview }: { overview: AirlineOverview }) {
   if (!trackerHost && !cfg.publicInHub) return null;
   const href = trackerHost ? `https://${trackerHost}/` : airlineHomeUrl(cfg.code);
   const label = trackerHost
-    ? `Full ${cfg.shortName} tracker → ${trackerHost}`
+    ? `${cfg.shortName} Starlink Tracker → ${trackerHost}`
     : `Live ${cfg.shortName} data on the hub tracker →`;
   return <ButtonLink href={href}>{label}</ButtonLink>;
 }

@@ -18,6 +18,7 @@ import {
   chipClass,
 } from "../../components/layout";
 import type { Link } from "../../components/layout";
+import { TrackerLinks } from "../../components/tracker-links";
 import { fmt } from "../../components/ui/format";
 import { AIRLINES, SITES, airlineHomeUrl, publicAirlines } from "../registry";
 import { AIRLINE_FACTS, type AirlineFactsEntry, type RolloutFactsStatus } from "../rollout-facts";
@@ -186,6 +187,7 @@ const HubHero = ({ site, perAirlineStats = [], recentInstalls = [], hubLinks }: 
           </a>
         </p>
       </section>
+      <TrackerLinks />
       <RouteComparePanel />
       <Panel pad="sm">
         <Eyebrow className="mb-2">Already booked? Check a flight</Eyebrow>
@@ -330,14 +332,15 @@ export const content: AirlineContent = {
           ),
         },
         {
-          q: "Does United have Starlink?",
+          q: "Where can I track United's Starlink rollout?",
           a: () => (
             <p>
-              Yes, and it's the biggest rollout we track. The{" "}
+              On the{" "}
               <a href={UNITED_URL} className={LINK}>
                 United Starlink Tracker
-              </a>{" "}
-              has the live count, every equipped aircraft and a flight check.
+              </a>
+              , which has the live count, every equipped aircraft and a flight check. United's is
+              the biggest rollout we track.
             </p>
           ),
         },

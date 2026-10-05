@@ -111,12 +111,12 @@ describe("routeVerdict", () => {
 });
 
 describe("page copy", () => {
-  test("AS check-flight description uses 'an Alaska', not 'a Alaska'", async () => {
+  test("AS check-flight description never reads 'a Alaska'", async () => {
     const body = await (
       await app.dispatch(req("/check-flight", AS, { headers: { Accept: "text/html" } }))
     ).text();
-    expect(body).not.toContain("Enter a Alaska");
-    expect(body).toContain("Enter an Alaska");
+    expect(body).not.toContain("a Alaska");
+    expect(body).toContain("Enter your Alaska flight number");
   });
 
   test("hub /fleet title does not read 'Fleets Fleet'", async () => {

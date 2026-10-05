@@ -8,6 +8,7 @@ import { InstallPipelineSection, type PipelineMap } from "./fleet/pipeline";
 import { CarrierSection, type FleetTypeLink, TypeBarsSection } from "./fleet/type-bars";
 import type { Link } from "./layout";
 import { EYEBROW, PANEL, PageHeader, PageShell, SECTION_WIDE } from "./layout";
+import { TrackerLinks } from "./tracker-links";
 import { fmt, pct } from "./ui/format";
 
 export type { FleetTypeLink };
@@ -96,8 +97,8 @@ export default function FleetPage({
   const typeLinkByFamily = new Map(typeLinks.map((l) => [l.family, l]));
   const scopeCode = site.scope !== "ALL" ? site.scope : null;
   const title = scopeCode
-    ? `${AIRLINES[scopeCode].name} fleet: Starlink rollout`
-    : "Tracked fleets: Starlink rollout";
+    ? `Which ${AIRLINES[scopeCode].shortName} planes have Starlink?`
+    : "Airline fleets with Starlink";
   // The express/mainline split only reads right when the page is one airline's.
   const pace = scopeCode ? data.installPace : null;
   return (
@@ -113,6 +114,12 @@ export default function FleetPage({
       >
         <SubfleetLine pace={pace} />
       </PageHeader>
+
+      {!scopeCode && (
+        <div className={SECTION_WIDE}>
+          <TrackerLinks />
+        </div>
+      )}
 
       <TypeBarsSection families={data.families} typeLinks={typeLinkByFamily} />
       <LivePulse pulse={data.pulse} />
