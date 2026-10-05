@@ -139,7 +139,7 @@ import {
   routeIsHistorical,
 } from "./database";
 import { type ProgrammeHeadline, programmeHeadline } from "./roster";
-import { type RouteFlightLeg, getFlightNumberLegs, getRouteFlightLegs } from "./route-flights";
+import { type RouteFlightLeg, getAllFlightLegs, getRouteFlightLegs } from "./route-flights";
 import { getRouteFlightLastSeen } from "./route-history";
 
 export type { Database };
@@ -281,8 +281,8 @@ export interface ScopedReader {
   /** Logged and scheduled departures on a pair under their marketed numbers,
    * with each tail's equipped status. */
   getRouteFlightLegs(origin: string, destination: string, nowSec: number): RouteFlightLeg[];
-  /** Every logged leg of one flight number's stored spellings, on any pair. */
-  getFlightNumberLegs(variants: readonly string[]): RouteFlightLeg[];
+  /** Every logged leg of the airline on every pair (the per-leg model's input). */
+  getAllFlightLegs(): RouteFlightLeg[];
   getFlightHistorySummary(variants: string[]): FlightHistorySummary;
   getFlightRoutePairs(variants: string[]): FlightRoutePair[];
   /** Newest observation for the airline (unix sec), the reference point for
@@ -501,7 +501,7 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     getRouteFlightNumbers: (o, d) => getRouteFlightNumbers(db, o, d, soleAirline()),
     getRouteFlightLastSeen: (o, d) => getRouteFlightLastSeen(db, o, d, soleAirline()),
     getRouteFlightLegs: (o, d, now) => getRouteFlightLegs(db, soleAirline(), o, d, now),
-    getFlightNumberLegs: (v) => getFlightNumberLegs(db, soleAirline(), v),
+    getAllFlightLegs: () => getAllFlightLegs(db, soleAirline()),
     getFlightHistorySummary: (v) => getFlightHistorySummary(db, v, airlines),
     getFlightRoutePairs: (v) => getFlightRoutePairs(db, v, airlines),
     getObservationAnchor: () => (scope === "ALL" ? 0 : getObservationAnchor(db, scope)),

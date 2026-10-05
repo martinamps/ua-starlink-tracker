@@ -26,11 +26,7 @@
 
 import { Database } from "bun:sqlite";
 import { aircraftName, normalizeAircraftType } from "../airlines/aircraft-families";
-import {
-  buildAirlineFlightNumberVariants,
-  ensureAirlinePrefix,
-  inferSubfleet,
-} from "../airlines/flight-number";
+import { ensureAirlinePrefix, inferSubfleet } from "../airlines/flight-number";
 import {
   AIRLINES,
   type AirlineConfig,
@@ -57,6 +53,7 @@ import type {
   TypeProgress,
 } from "../database/database";
 import { type ScopedReader, aggregatePenetration, createReaderFactory } from "../database/reader";
+import type { RouteFlightLeg } from "../database/route-flights";
 import { airportDistanceMiles, detourBoundMiles, hubAllowedForTrip } from "../utils/airport-geo";
 import { flightDateWindow, matchesLocalDate } from "../utils/airport-tz";
 import { memo, perOwner } from "../utils/ttl-cache";
@@ -1076,7 +1073,7 @@ export function predictRoute(
     const existing = seen.get(normalized);
     if (existing && rf.route_obs <= existing.route_observations) continue;
 
-    const pred = predictFlight(reader, normalized);
+    const pred = predictLegOrFlight(reader, normalized, rf.departure_airport, rf.arrival_airport);
     seen.set(normalized, {
       ...pred,
       route: `${rf.departure_airport}-${rf.arrival_airport}`,
@@ -1886,7 +1883,7 @@ function buildRouteGraph(
       // Use the MAX of (historical prediction, confirmed swap-adjusted) —
       // a flight with 100% history shouldn't drop to 90% just because it's
       // also in the snapshot.
-      const hist = predictFlight(reader, uaNum);
+      const hist = predictLegOrFlight(reader, uaNum, dep, arr);
       const confirmedP = CONFIRMED_PROB[confirmedFleet];
       pred =
         hist.probability >= confirmedP
@@ -1901,7 +1898,7 @@ function buildRouteGraph(
               n_observations: 1,
             };
     } else {
-      pred = predictFlight(reader, uaNum);
+      pred = predictLegOrFlight(reader, uaNum, dep, arr);
     }
 
     if (pred.probability < minLegProb) continue;
@@ -2316,7 +2313,7 @@ export function routeBaseline(
   const edge = reader.getDirectRouteEdge(o, d);
   const flightNumber = edge ? uaPrefix(edge.flight_number) : null;
   const probability = flightNumber
-    ? predictFlight(reader, flightNumber).probability
+    ? predictLegOrFlight(reader, flightNumber, o, d).probability
     : mainlineFleetRate(reader);
   return {
     route: `${o}-${d}`,
@@ -2359,6 +2356,41 @@ interface LegFleet {
 
 /** Roster tails with their family and equipped status (the one equipped
  * definition), and each family's equipped share. Rebuilt at most hourly. */
+interface LegIndex {
+  legs: Map<string, RouteFlightLeg[]>;
+  adsb: Map<string, AdsbFlightDraw[]>;
+  /** Answers already priced from this build, so every surface reads one number. */
+  answers: Map<string, LegPrediction | null>;
+}
+
+/** Every logged leg and ADS-B draw, by flight number, so the planner can price
+ * thousands of edges without a query each. Rebuilt at most every 15 minutes;
+ * the board, scoped check-flight and the planner all read the same build. */
+const legIndexMemo = perOwner<ScopedReader, ReturnType<typeof memo<LegIndex>>>(() =>
+  memo<LegIndex>({ ttlSec: 900, maxEntries: 1 })
+);
+
+function legIndex(reader: ScopedReader): LegIndex {
+  return legIndexMemo(reader)("index", () => {
+    const legs = new Map<string, RouteFlightLeg[]>();
+    for (const l of reader.getAllFlightLegs()) {
+      const list = legs.get(l.flight_number);
+      if (list) list.push(l);
+      else legs.set(l.flight_number, [l]);
+    }
+    const adsb = new Map<string, AdsbFlightDraw[]>();
+    if (adsbDrawsEnabled()) {
+      const since = Math.floor(Date.now() / 1000) - ADSB_DRAW_WINDOW_DAYS * 86400;
+      for (const d of reader.getAdsbFlightDraws(since)) {
+        const list = adsb.get(d.flight_number);
+        if (list) list.push(d);
+        else adsb.set(d.flight_number, [d]);
+      }
+    }
+    return { legs, adsb, answers: new Map() };
+  });
+}
+
 const legFleetMemo = perOwner<ScopedReader, ReturnType<typeof memo<LegFleet>>>(() =>
   memo<LegFleet>({ ttlSec: 3600, maxEntries: 1 })
 );
@@ -2404,10 +2436,24 @@ export function predictLeg(
   nowSec = Math.floor(Date.now() / 1000)
 ): LegPrediction | null {
   if (reader.scope === "ALL") return null;
-  const cfg = AIRLINES[reader.scope];
-  const legs = reader
-    .getFlightNumberLegs(buildAirlineFlightNumberVariants(cfg, flightNumber))
-    .filter((l) => l.flight_number === flightNumber);
+  const index = legIndex(reader);
+  const key = `${flightNumber}|${origin}|${destination}`;
+  const cached = index.answers.get(key);
+  if (cached !== undefined) return cached;
+  const answer = computeLeg(reader, index, flightNumber, origin, destination, nowSec);
+  index.answers.set(key, answer);
+  return answer;
+}
+
+function computeLeg(
+  reader: ScopedReader,
+  index: LegIndex,
+  flightNumber: string,
+  origin: string,
+  destination: string,
+  nowSec: number
+): LegPrediction | null {
+  const legs = index.legs.get(flightNumber) ?? [];
   const pairOf = (l: { departure_airport: string; arrival_airport: string }) =>
     `${l.departure_airport}-${l.arrival_airport}`;
   const target = `${origin}-${destination}`;
@@ -2444,9 +2490,10 @@ export function predictLeg(
     };
   });
 
-  if (adsbDrawsEnabled()) {
+  {
     const since = nowSec - ADSB_DRAW_WINDOW_DAYS * 86400;
-    for (const d of reader.getAdsbFlightDrawsFor(flightNumber, since)) {
+    for (const d of index.adsb.get(flightNumber) ?? []) {
+      if (d.first_seen < since) continue;
       const tail = fleet.tails.get(d.tail_number);
       if (!tail) continue;
       let nearest: string | null = null;
@@ -2508,6 +2555,24 @@ export function predictLeg(
       .slice(0, 3)
       .map(([name]) => name),
   };
+}
+
+/**
+ * One leg's odds wherever a leg is known: predictLeg, else the flight
+ * number's own history. Scoped check-flight, the planner's edges and baseline,
+ * and predict_route all price a leg through here, so they agree.
+ */
+export function predictLegOrFlight(
+  reader: ScopedReader,
+  flightNumber: string,
+  origin: string,
+  destination: string,
+  nowSec?: number
+): Prediction {
+  const leg = predictLeg(reader, flightNumber, origin, destination, nowSec);
+  if (!leg) return predictFlight(reader, flightNumber);
+  const { basis: _basis, aircraft: _aircraft, ...pred } = leg;
+  return pred;
 }
 
 export type { Prediction };

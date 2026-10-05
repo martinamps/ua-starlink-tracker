@@ -14,7 +14,16 @@ import { getSitemapRoutes } from "../src/database/database";
 import { createReaderFactory } from "../src/database/reader";
 import { DAY_SEC, isoDateDaysAgo, unixNow } from "../src/database/sql/windows";
 import { createApp } from "../src/server/app";
-import { addFleet, addPlane, bodyOf, jsonOf, makeFreshDb, openSnapshot, req } from "./helpers";
+import {
+  addFleet,
+  addFlight,
+  addPlane,
+  bodyOf,
+  jsonOf,
+  makeFreshDb,
+  openSnapshot,
+  req,
+} from "./helpers";
 
 const UA = SITES.united.canonicalHost;
 const AS_HOST = SITES.alaska.canonicalHost;
@@ -258,6 +267,8 @@ describe("board behavior (synthetic)", () => {
     log("UA", "UA777", "N111UA", at(-2, 18));
     // Alaska's own flight on the same pair.
     log("AS", "AS999", "N644AS", at(-2));
+    // The planner prices edges from the live schedule.
+    addFlight(sdb, "N111UA", "UA100", "ORD", at(1, 20), { arrivalAirport: "IAD" });
     // The route page serves only pairs the route cache knows.
     sdb
       .query(
@@ -298,6 +309,29 @@ describe("board behavior (synthetic)", () => {
       UA
     );
     expect(c.prediction.probability).toBeCloseTo(row(b, "UA100").probability ?? -1, 6);
+  });
+
+  test("plan-route prices a leg as the board and scoped check-flight do", async () => {
+    const date = isoDateDaysAgo(-20, now);
+    const fromBoard = row(board(date, "ORD", "IAD"), "UA100").probability;
+    const check = await jsonOf(
+      sapp,
+      `/api/check-flight?flight_number=UA100&date=${date}&origin=ORD&destination=IAD`,
+      UA
+    );
+    const plan = await jsonOf(sapp, "/api/plan-route?origin=ORD&destination=IAD", UA);
+    const leg = plan.itineraries
+      .flatMap(
+        (it: { legs: Array<{ flight_number: string; route: string; probability: number }> }) =>
+          it.legs
+      )
+      .find(
+        (l: { flight_number: string; route: string }) =>
+          l.flight_number === "UA100" && l.route === "ORD-IAD"
+      );
+    expect(fromBoard).not.toBeNull();
+    expect(leg?.probability).toBeCloseTo(fromBoard ?? -1, 6);
+    expect(check.prediction.probability).toBeCloseTo(fromBoard ?? -1, 6);
   });
 
   test("operating spellings collapse to the marketed number", () => {

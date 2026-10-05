@@ -4,7 +4,7 @@ import { AIRLINES } from "../airlines/registry";
 import { departureLocalDate } from "./assignment-log";
 import { getDepartureSlots, slotScope } from "./database";
 import { listedVerifiedSql, tailEquippedSql } from "./sql/equipped";
-import { placeholders, tailAircraftTypeSql } from "./sql/fragments";
+import { tailAircraftTypeSql } from "./sql/fragments";
 import { DEPARTURE_WINDOW_SEC } from "./sql/windows";
 
 /**
@@ -31,7 +31,7 @@ export interface RouteFlightLeg {
   last_seen: number;
 }
 
-type LegFilter = { origin: string; destination: string } | { flightNumbers: readonly string[] };
+type LegFilter = { origin: string; destination: string } | null;
 
 function loggedLegs(db: Database, airline: string, filter: LegFilter): RouteFlightLeg[] {
   const cfg = AIRLINES[airline];
@@ -39,16 +39,12 @@ function loggedLegs(db: Database, airline: string, filter: LegFilter): RouteFlig
   // Partners count, as departure slots count them: AS832 on a Hawaiian A330
   // is an Alaska departure on the pair.
   const scope = slotScope(airline, true);
-  const where =
-    "origin" in filter
-      ? {
-          sql: "uf.departure_airport = ? AND uf.arrival_airport = ?",
-          params: [filter.origin, filter.destination],
-        }
-      : {
-          sql: `uf.flight_number IN (${placeholders(filter.flightNumbers) || "NULL"})`,
-          params: [...filter.flightNumbers],
-        };
+  const where = filter
+    ? {
+        sql: "uf.departure_airport = ? AND uf.arrival_airport = ?",
+        params: [filter.origin, filter.destination],
+      }
+    : { sql: "1=1", params: [] as string[] };
   const rows = db
     .query(
       `SELECT uf.airline, uf.flight_number, uf.departure_airport, uf.arrival_airport, uf.dep_date,
@@ -141,11 +137,7 @@ export function getRouteFlightLegs(
   ].filter((l) => marketed.test(l.flight_number));
 }
 
-/** Every logged leg of one flight number (its stored spellings), on any pair. */
-export function getFlightNumberLegs(
-  db: Database,
-  airline: string,
-  variants: readonly string[]
-): RouteFlightLeg[] {
-  return variants.length ? loggedLegs(db, airline, { flightNumbers: variants }) : [];
+/** Every logged leg of the airline, on every pair: the per-leg model's input. */
+export function getAllFlightLegs(db: Database, airline: string): RouteFlightLeg[] {
+  return loggedLegs(db, airline, null);
 }
