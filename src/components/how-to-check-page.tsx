@@ -3,6 +3,7 @@ import { type SiteConfig, siteAirline } from "../airlines/registry";
 import { article } from "../utils/grammar";
 import { JsonLd } from "./faq";
 import { FlightSearchForm } from "./flight-search-form";
+import { freeAccess } from "./is-starlink-free-page";
 import type { Link } from "./layout";
 import { PageHeader, PageShell, Section } from "./layout";
 
@@ -24,11 +25,12 @@ export default function HowToCheckPage({ site, pageLinks, currentPath }: HowToCh
   const short = cfg.shortName;
   const example = `${cfg.iata}123`;
   const host = site.canonicalHost;
+  const freeProgram = freeAccess(cfg.code)?.program;
   // Only the united backend observes the Wi-Fi listing itself; other verifiers
   // see equipment type, so the "verified" claim must not overstate there.
   const verifiedClaim =
     cfg.verifierBackend === "united"
-      ? `the Wi-Fi ${cfg.name} lists for that aircraft on ${cfg.verifySite}`
+      ? `the Wi-Fi ${cfg.verifySite} lists for it`
       : "the aircraft assigned and where its type stands in the rollout";
 
   const steps: Step[] = [
@@ -59,7 +61,7 @@ export default function HowToCheckPage({ site, pageLinks, currentPath }: HowToCh
       name: "Read the answer",
       body: (
         <>
-          About 2 days before departure, {cfg.name} assigns the aircraft, and the answer comes from{" "}
+          About 2 days before departure, {short} assigns the aircraft, and the answer comes from{" "}
           {verifiedClaim}. Earlier than that, you get a probability based on the aircraft that
           recently flew that flight number.
         </>
@@ -77,7 +79,7 @@ export default function HowToCheckPage({ site, pageLinks, currentPath }: HowToCh
     <PageShell site={site} currentPath={currentPath} pageLinks={pageLinks}>
       <PageHeader
         title={`How to check if your ${short} flight has Starlink`}
-        dek="Starlink depends on the aircraft. Here's how to check yours."
+        dek="Starlink depends on the aircraft, and the aircraft is assigned about 2 days out."
       />
 
       <Section title="Check by flight number">
@@ -132,11 +134,7 @@ export default function HowToCheckPage({ site, pageLinks, currentPath }: HowToCh
           <li>
             <span className="font-semibold text-primary">On {cfg.verifySite}.</span>{" "}
             {cfg.verifierBackend === "united" ? (
-              <>
-                Once an aircraft is assigned, the flight status page lists its Wi-Fi. We check the
-                same page, one aircraft at a time, so each aircraft is re-checked about every three
-                days.
-              </>
+              <>Once an aircraft is assigned, the flight status page lists its Wi-Fi.</>
             ) : (
               <>It shows the aircraft scheduled for your flight, which decides the Wi-Fi.</>
             )}
@@ -146,9 +144,11 @@ export default function HowToCheckPage({ site, pageLinks, currentPath }: HowToCh
 
       <Section title="What the answer means">
         <p className="text-sm leading-relaxed text-secondary">
-          A <span className="font-semibold text-primary">verified yes</span> means we saw the
-          assigned aircraft's Wi-Fi ourselves. A{" "}
-          <span className="font-semibold text-primary">probability</span> means no aircraft is
+          A <span className="font-semibold text-primary">verified yes</span> means{" "}
+          {cfg.verifierBackend === "united"
+            ? "we saw the assigned aircraft's Wi-Fi ourselves"
+            : "the assigned aircraft's type has Starlink"}
+          . A <span className="font-semibold text-primary">probability</span> means no aircraft is
           assigned yet, so it's based on the flight's recent history. Some {short} aircraft still
           have older Wi-Fi while the{" "}
           <a href="/fleet" className="text-accent hover:underline">
@@ -160,6 +160,7 @@ export default function HowToCheckPage({ site, pageLinks, currentPath }: HowToCh
               {" "}
               <a href="/is-starlink-free" className="text-accent hover:underline">
                 Starlink Wi-Fi is free
+                {freeProgram ? ` with ${freeProgram}` : ""}
               </a>
               .
             </>
@@ -171,7 +172,7 @@ export default function HowToCheckPage({ site, pageLinks, currentPath }: HowToCh
         data={{
           "@context": "https://schema.org",
           "@type": "HowTo",
-          name: `How to check if ${article(cfg.name)} ${cfg.name} flight has Starlink WiFi`,
+          name: `How to check if ${article(cfg.name)} ${cfg.name} flight has Starlink Wi-Fi`,
           description: `Check any ${cfg.name} flight for free Starlink Wi-Fi by flight number and date: verified near departure, a labeled probability before that.`,
           totalTime: "PT1M",
           step: steps.map((s, i) => ({

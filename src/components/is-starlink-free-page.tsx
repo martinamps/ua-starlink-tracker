@@ -9,6 +9,8 @@ import { PageHeader, PageShell, Section, StatInline } from "./layout";
 interface FreeAccess {
   /** One-sentence direct answer, honest fine print included. */
   answer: string;
+  /** The free programme the answer depends on, for titles. */
+  program: string;
   /** How you connect on board. */
   access: string;
 }
@@ -17,13 +19,14 @@ const ACCESS: Record<string, FreeAccess> = {
   UA: {
     answer:
       "Yes. United Starlink Wi-Fi is free for MileagePlus members, and joining MileagePlus is free.",
+    program: "MileagePlus",
     access:
       "On board, connect to the Wi-Fi network and sign in with your MileagePlus number, or join on the spot. You don't need to buy anything or have status.",
   },
 };
 
-export function hasFreeAnswer(code: string): boolean {
-  return code in ACCESS;
+export function freeAccess(code: string): FreeAccess | null {
+  return ACCESS[code] ?? null;
 }
 
 /** The same sentence llms.txt hands agents, so the human-facing page and the
@@ -67,14 +70,12 @@ export default function IsStarlinkFreePage({
       {/* Speed claims stay qualitative: nothing here is cited to a measured
           figure, and published speed tests vary too much by flight to quote. */}
       <Section title="What you get">
-        <ul className="list-disc space-y-2 pl-5 text-sm leading-relaxed text-secondary">
-          <li>Fast enough for streaming and video calls on most flights.</li>
-          <li>Coverage over oceans and remote areas, where ground-based systems drop out.</li>
-          <li>The same service for every passenger, in every cabin.</li>
-        </ul>
+        <p className="text-sm leading-relaxed text-secondary">
+          Fast enough to stream, with coverage over oceans.
+        </p>
       </Section>
 
-      <Section title="The catch: it's only on some planes">
+      <Section title="Only some planes have it">
         <div className="space-y-3 text-sm leading-relaxed text-secondary">
           <p>
             <StatInline n={starlinkCount} /> of <StatInline n={totalCount} /> {cfg.name} aircraft
@@ -91,21 +92,17 @@ export default function IsStarlinkFreePage({
               </>
             )}
           </p>
-          <p>
-            Whether your flight has it depends on the aircraft.{" "}
-            <a href="/check-flight" className="text-accent hover:underline">
-              Check your flight
-            </a>
-            :
-          </p>
           {site.features.checkFlightPage && (
-            <FlightSearchForm site={site} id="free-flight-search" prefillDate />
+            <>
+              <p>Check your flight:</p>
+              <FlightSearchForm site={site} id="free-flight-search" prefillDate />
+            </>
           )}
           {site.features.timelinePage && (
             <p>
-              See how fast the gap is closing on the{" "}
+              Rollout progress is on the{" "}
               <a href="/timeline" className="text-accent hover:underline">
-                rollout timeline
+                timeline
               </a>
               .
             </p>

@@ -10,6 +10,8 @@
 import { aircraftName } from "../airlines/aircraft-families";
 import {
   ageLabel,
+  capitalize,
+  flightShare,
   fmt,
   monthDay,
   probLabel,
@@ -125,15 +127,6 @@ function wifiPhrase(v: string | null | undefined): string {
   return `${w} Wi-Fi`;
 }
 
-const TONE_LABEL: Record<AnswerTone, string> = {
-  yes: "Yes",
-  no: "No",
-  likely: "Likely",
-  maybe: "Maybe",
-  unlikely: "Unlikely",
-  unknown: "Not sure yet",
-};
-
 const ANSWER_TONE: Record<AnswerTone, Tone> = {
   yes: "success",
   likely: "success",
@@ -227,10 +220,11 @@ function watchRow(ctx: AnswerContext): string {
   const path = `/cal/${encodeURIComponent(ctx.flightNumber)}/${encodeURIComponent(ctx.date)}.ics`;
   const webcal = `webcal://${ctx.host}${path}`;
   const google = `https://calendar.google.com/calendar/r?cid=${encodeURIComponent(webcal)}`;
-  return `<div class="mt-4 border-t border-subtle pt-4"><h3 class="text-sm font-semibold text-primary">Watch this flight</h3><div class="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-sm"><a href="${esc(webcal)}" data-watch="webcal" class="text-accent hover:underline">Apple / Outlook</a><a href="${esc(google)}" data-watch="google" target="_blank" rel="noopener noreferrer" class="text-accent hover:underline">Google Calendar</a><a href="${esc(path)}" data-watch="ics" download class="text-accent hover:underline">Download .ics</a></div><p class="mt-2 text-xs text-muted">A calendar event that updates itself when the aircraft is assigned or swapped. Apple refreshes about hourly, Google every 8–24 hours.</p></div>`;
+  return `<div class="mt-4 border-t border-subtle pt-4"><h3 class="text-sm font-semibold text-primary">Watch this flight</h3><div class="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-sm"><a href="${esc(webcal)}" data-watch="webcal" class="text-accent hover:underline">Apple / Outlook</a><a href="${esc(google)}" data-watch="google" target="_blank" rel="noopener noreferrer" class="text-accent hover:underline">Google Calendar</a><a href="${esc(path)}" data-watch="ics" download class="text-accent hover:underline">Download .ics</a></div><p class="mt-2 text-xs text-muted">Adds a calendar event that updates when the aircraft is assigned or changes.</p></div>`;
 }
 
-const CHANGE_NOTE = "Aircraft can change. Check again the day before.";
+/** The page's one swap caveat: firm cards carry it, nothing else repeats it. */
+const CHANGE_NOTE = "Aircraft can be swapped before departure.";
 
 function card(answer: AnswerTone, headline: string, body: string): string {
   const tone = ANSWER_TONE[answer];
@@ -258,7 +252,7 @@ function timingNote(ctx: AnswerContext, airlineName: string): string {
   if (ctx.daysOut > 2) {
     return `${airlineName} assigns aircraft about 2 days before departure. Check again then for a firm answer.`;
   }
-  return "No aircraft is assigned yet. Check again closer to departure.";
+  return "We don't have the aircraft assignment yet. Check again closer to departure.";
 }
 
 export function renderFlightAnswer(body: CheckFlightBody, ctx: AnswerContext): FlightAnswer {
@@ -283,7 +277,7 @@ export function renderFlightAnswer(body: CheckFlightBody, ctx: AnswerContext): F
     const flights = body.flights ?? [];
     const first = flights[0] ?? {};
     const verified = body.confidence !== "likely";
-    const headline = `Yes — ${on} has Starlink (${[first.tail_number, verified ? "verified" : "install reported"].filter(Boolean).join(", ")})`;
+    const headline = `Yes — ${on} has Starlink (${[first.tail_number, verified ? "verified" : "listed, not yet verified"].filter(Boolean).join(", ")})`;
     const legs = flights.map((f) => flightRows(f, ctx)).join("");
     const html = card(
       "yes",
@@ -298,7 +292,7 @@ export function renderFlightAnswer(body: CheckFlightBody, ctx: AnswerContext): F
     const firmNo = segments.every((s) => s.hasStarlink === false);
     const first = segments[0];
     const headline = firmNo
-      ? `No — ${on} doesn't have Starlink (${first.tail_number}, verified)`
+      ? `No — ${on} doesn't have Starlink`
       : `Not sure yet — ${on} is on ${first.tail_number}, which we haven't checked`;
     const segHtml = segments
       .map((s) => {
@@ -327,7 +321,7 @@ export function renderFlightAnswer(body: CheckFlightBody, ctx: AnswerContext): F
 
   if (body.hasStarlink === false) {
     const m = body.message?.match(/assigned to tail (\S+), verified as (.+?) WiFi/);
-    const headline = `No — ${on} doesn't have Starlink (${m ? `${m[1]}, ` : ""}verified)`;
+    const headline = `No — ${on} doesn't have Starlink`;
     const detail = m
       ? `The assigned aircraft, ${tail(m[1])}, has ${esc(wifiPhrase(m[2]))}.`
       : esc(body.message ?? body.reason ?? "The assigned aircraft doesn't have Starlink.");
@@ -352,7 +346,7 @@ export function renderFlightAnswer(body: CheckFlightBody, ctx: AnswerContext): F
     const headline = `${on} has passed`;
     const usual =
       hasPred && pred && (pred.n_observations ?? 0) > 0
-        ? ` Recent ${fn} flights had Starlink ${probPhrase(pred.probability)} of the time.`
+        ? ` ${capitalize(flightShare(pred.probability, fn))}.`
         : "";
     return {
       tone: "unknown",
@@ -367,7 +361,7 @@ export function renderFlightAnswer(body: CheckFlightBody, ctx: AnswerContext): F
   }
 
   if (!hasPred || !pred) {
-    const headline = `Not sure yet — it depends on the aircraft ${on} gets`;
+    const headline = `Not sure yet about ${on}`;
     const text =
       body.message ?? body.reason ?? "Starlink depends on the aircraft assigned to the flight.";
     return {
@@ -387,19 +381,20 @@ export function renderFlightAnswer(body: CheckFlightBody, ctx: AnswerContext): F
   const tone: AnswerTone = typeRule ? "yes" : probTier(pred.probability);
   const headline = typeRule
     ? `Yes — every aircraft that flies ${fn} has Starlink`
-    : `${TONE_LABEL[tone]} — ${probPhrase(pred.probability)} chance ${on} has Starlink`;
+    : `${capitalize(probPhrase(pred.probability))} chance ${on} has Starlink`;
   const n = pred.n_observations ?? 0;
+  // The headline already gives the number, so the API's "~N% Starlink probability:" lead goes.
   const basis =
     body.confidence === "predicted"
       ? n > 0
         ? `Based on the aircraft on ${fmt(n)} recent ${fn} flights.`
         : `We haven't seen ${fn} yet, so this is our estimate for flights like it.`
-      : (body.message ?? "");
-  const note = typeRule ? "" : (degradedNote(body.message) ?? timingNote(ctx, ctx.airlineName));
-  const html = card(
-    tone,
-    headline,
-    `${typeRule ? "" : probabilityBar(pred.probability, tone)}<p class="mt-3 text-sm text-secondary">${esc(basis)} ${esc(note)}</p>${watchRow(ctx)}`
-  );
+      : capitalize((body.message ?? "").replace(/^~\d+% Starlink probability: /, ""));
+  const note = degradedNote(body.message) ?? timingNote(ctx, ctx.airlineName);
+  // A type rule's headline is the whole answer; the API's sentence would repeat it.
+  const detail = typeRule
+    ? ""
+    : `${probabilityBar(pred.probability, tone)}<p class="mt-3 text-sm text-secondary">${esc(basis)} ${esc(note)}</p>`;
+  const html = card(tone, headline, `${detail}${watchRow(ctx)}`);
   return { tone, headline, html, firm: false };
 }

@@ -96,7 +96,7 @@ describe("buildWatchIcs", () => {
   test("prediction: odds summary, all-day event, no invented time", () => {
     const ics = buildWatchIcs(base);
     expectWellFormedIcs(ics);
-    expect(prop(ics, "SUMMARY")).toStartWith("UA123 · Starlink odds ~");
+    expect(prop(ics, "SUMMARY")).toMatch(/^UA123 · [<>]?\d+% chance of Starlink$/);
     expect(icsLines(ics)).toContain("DTSTART;VALUE=DATE:20261001");
     expect(prop(ics, "SEQUENCE")).toBe("0");
   });

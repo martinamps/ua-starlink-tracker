@@ -89,7 +89,7 @@ function RoutesTable({ routes, linkable }: { routes: MergedRoute[]; linkable: bo
       <thead>
         <tr>
           <Th>Route</Th>
-          <Th>Starlink flights</Th>
+          <Th>Starlink departures</Th>
           <Th numeric>Next departure</Th>
         </tr>
       </thead>
@@ -177,8 +177,8 @@ export default function RoutesPage({
         title="Where Starlink is flying"
         dek={
           total > 0
-            ? `${fmt(total)} ${shortName ? `${shortName} ` : ""}Starlink flights in the ${schedule.windowLabel}.`
-            : `No ${airlineName} Starlink flights are assigned in the ${schedule.windowLabel} yet.`
+            ? `${fmt(total)} ${shortName ? `${shortName} ` : ""}Starlink departures in the ${schedule.windowLabel}.`
+            : `No ${airlineName} Starlink departures are assigned in the ${schedule.windowLabel} yet.`
         }
       />
 
@@ -192,8 +192,7 @@ export default function RoutesPage({
             <Panel pad="sm" className="mt-4">
               <RoutesTable routes={routes} linkable={linkable} />
               <p className="mt-4 text-xs text-muted text-pretty">
-                Based on aircraft assigned so far. Assignments firm up about two days out, so a
-                route missing here may still have Starlink.
+                Counts only aircraft assigned so far, so a missing route may still have Starlink.
                 {updatedAt ? ` Data updated ${utcDateTime(updatedAt)}.` : ""}
               </p>
             </Panel>
@@ -201,7 +200,7 @@ export default function RoutesPage({
           {airports && airports.rows.length > 0 && (
             <div className="min-w-0">
               <SectionTitle>Busiest airports</SectionTitle>
-              <p className="mt-1 text-sm text-secondary">Starlink departures, next 48 hours.</p>
+              <p className="mt-1 text-sm text-secondary">By departure airport.</p>
               <Panel pad="sm" className="mt-4">
                 <AirportBars rows={airports.rows} columns={1} />
               </Panel>

@@ -47,6 +47,7 @@ import {
   wifiPhaseFamilies,
 } from "../airlines/registry";
 import { formatFactDate } from "../airlines/rollout-facts";
+import { bandLabel } from "../components/ui/format";
 import type { AdsbFlightDraw } from "../database/adsb-flight-draws";
 import type {
   FleetRosterEntry,
@@ -1473,7 +1474,7 @@ function describeAssigned(
   const g = guideRef(cfg, answer.guideUpdated);
   const guide = `the ${g.label}${g.date ? ` updated ${g.date}` : ""}`;
   if (answer.mark === "starlink") {
-    return joinSentences(`${on}; listed with Starlink in ${guide}, not yet confirmed here`);
+    return joinSentences(`${on}; listed with Starlink in ${guide}, not yet verified`);
   }
   const stale = answer.guideStale ? staleGuideNote(cfg) : null;
   if (answer.mark === null) return joinSentences(`${on}; not yet listed in ${guide}`, stale);
@@ -1515,11 +1516,20 @@ export function describeCarrierPrediction(
   }
   const { sf, pen } = answer;
   const pct = (pen.pct * 100).toFixed(0);
-  const hint = sf.flightNumberHint ? `, ${sf.flightNumberHint}` : "";
-  const basis = pen.synthetic
-    ? `${sf.label}${hint} — ${sf.overrideReason ?? "Starlink status is set by the operating subfleet"}`
-    : `${pen.equipped} of ${pen.total} ${sf.label}${hint} aircraft equipped`;
-  return joinSentences(`~${pct}% Starlink probability (${basis})`, cfg.rollout.phaseNote);
+  // bandLabel drops the label's parentheses, so the hint is the only parenthetical.
+  const band = `${bandLabel(sf.label)} aircraft${sf.flightNumberHint ? ` (${sf.flightNumberHint})` : ""}`;
+  const lead = `~${pct}% Starlink probability`;
+  // A band that settles the answer gets no airline-wide rollout note: a
+  // Hawaiian A330 flight has nothing to do with Alaska's 737s.
+  if (pen.synthetic) {
+    if (pen.pct >= 1) return joinSentences(`${lead}: every ${band} has Starlink`);
+    if (pen.pct <= 0) return joinSentences(`${lead}: ${band} don't have Starlink`);
+    return joinSentences(`${lead}: ${band}`);
+  }
+  return joinSentences(
+    `${lead}: ${pen.equipped} of ${pen.total} ${band} have Starlink`,
+    cfg.rollout.phaseNote
+  );
 }
 
 /**

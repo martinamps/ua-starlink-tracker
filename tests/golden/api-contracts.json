@@ -170,7 +170,7 @@
         "n_observations": 0,
         "n_recent_observations": 0
       },
-      "message": "Aircraft assignment not yet published — United Airlines assigns aircraft ~2 days before departure. No history for this flight number; ~2% is our estimate for flights we haven't yet seen on a Starlink aircraft, from the mainline fleet's current Starlink share.",
+      "message": "Aircraft assignment not yet published — United Airlines assigns aircraft ~2 days before departure. No history for UA1007 yet; about 2% is our estimate for new mainline flight numbers.",
       "flights": []
     }
   },
@@ -193,7 +193,7 @@
         "n_observations": 0,
         "n_recent_observations": 0
       },
-      "message": "We couldn't confirm the aircraft assignment right now — try again shortly. No history for this flight number; ~2% is our estimate for flights we haven't yet seen on a Starlink aircraft, from the mainline fleet's current Starlink share.",
+      "message": "We couldn't confirm the aircraft assignment right now — try again shortly. No history for UA1008 yet; about 2% is our estimate for new mainline flight numbers.",
       "flights": []
     }
   },
@@ -216,7 +216,7 @@
         "n_observations": 5,
         "n_recent_observations": 5
       },
-      "message": "Aircraft assignment not yet published — United Airlines assigns aircraft ~2 days before departure. ~80% of observed departures of this flight used a Starlink-equipped aircraft (5 observations).",
+      "message": "Aircraft assignment not yet published — United Airlines assigns aircraft ~2 days before departure. About 80% of 5 recent UA1009 flights had Starlink.",
       "flights": []
     }
   },
@@ -239,7 +239,7 @@
         "n_observations": 0,
         "n_recent_observations": 0
       },
-      "message": "Aircraft assignment not yet published — United Airlines assigns aircraft ~2 days before departure. No history for this flight number; ~2% is our estimate for flights we haven't yet seen on a Starlink aircraft, from the mainline fleet's current Starlink share.",
+      "message": "Aircraft assignment not yet published — United Airlines assigns aircraft ~2 days before departure. No history for UA1010 yet; about 2% is our estimate for new mainline flight numbers.",
       "flights": []
     }
   },
@@ -262,7 +262,7 @@
         "n_observations": 0,
         "n_recent_observations": 0
       },
-      "message": "No aircraft assignment on record — 2026-09-14 has already passed. No history for this flight number; ~2% is our estimate for flights we haven't yet seen on a Starlink aircraft, from the mainline fleet's current Starlink share.",
+      "message": "No aircraft assignment on record — 2026-09-14 has already passed. No history for UA1010 yet; about 2% is our estimate for new mainline flight numbers.",
       "flights": []
     }
   },
@@ -508,7 +508,7 @@
         "n_observations": 5,
         "n_recent_observations": 5
       },
-      "message": "Aircraft assignment not yet published — United Airlines assigns aircraft ~2 days before departure. ~80% of observed departures of this flight used a Starlink-equipped aircraft (5 observations).",
+      "message": "Aircraft assignment not yet published — United Airlines assigns aircraft ~2 days before departure. About 80% of 5 recent UA1009 flights had Starlink.",
       "flights": []
     }
   },
@@ -532,7 +532,7 @@
         "n_observations": 0,
         "n_recent_observations": 0
       },
-      "message": "Aircraft assignment not yet published — United Airlines assigns aircraft ~2 days before departure. No history for this flight number; ~2% is our estimate for flights we haven't yet seen on a Starlink aircraft, from the mainline fleet's current Starlink share.",
+      "message": "Aircraft assignment not yet published — United Airlines assigns aircraft ~2 days before departure. No history for UA1010 yet; about 2% is our estimate for new mainline flight numbers.",
       "flights": []
     }
   },
@@ -712,7 +712,7 @@
       "probability": 0.8,
       "confidence": "high",
       "n_recent_observations": 5,
-      "reason": "No schedule data for this date; ~80% based on 5 historical observations.",
+      "reason": "No schedule data for this date; about 80% of 5 recent UA1009 flights had Starlink.",
       "flights": []
     }
   },
@@ -732,7 +732,7 @@
       "probability": 0.02,
       "confidence": "low",
       "n_recent_observations": 0,
-      "reason": "No schedule data for this date. No history for this flight number; ~2% is our estimate for flights we haven't yet seen on a Starlink aircraft, from the mainline fleet's current Starlink share.",
+      "reason": "No schedule data for this date. No history for UA1010 yet; about 2% is our estimate for new mainline flight numbers.",
       "flights": []
     }
   },
@@ -1416,10 +1416,10 @@
       "LAST-MODIFIED:20260919T080000Z",
       "SEQUENCE:0",
       "SUMMARY:UA1002 SFO→DEN · Starlink ✅ N3002 (Boeing 737-900)",
-      "DESCRIPTION:Aircraft: N3002 (Boeing 737-900) — Starlink likely (listed as",
-      "  installed\\, not yet verified onboard).\\n\\nAircraft usually assigned ~2 da",
-      " ys out\\; Google Calendar refreshes every 8–24h\\, Apple ~hourly.\\nhttps:/",
-      " /unitedstarlinktracker.com/check-flight/UA1002/2026-09-20?utm_source=cal",
+      "DESCRIPTION:Aircraft: N3002 (Boeing 737-900) — Starlink listed\\, not yet ",
+      " verified.\\n\\nAircraft usually assigned ~2 days out\\; Google Calendar refre",
+      " shes every 8–24h\\, Apple ~hourly.\\nhttps://unitedstarlinktracker.com/che",
+      " ck-flight/UA1002/2026-09-20?utm_source=cal",
       "URL:https://unitedstarlinktracker.com/check-flight/UA1002/2026-09-20?utm_so",
       " urce=cal",
       "TRANSP:TRANSPARENT",
@@ -1490,12 +1490,13 @@
       "DTEND:20260920T170000Z",
       "LAST-MODIFIED:20260919T080000Z",
       "SEQUENCE:1",
-      "SUMMARY:UA1005 · Starlink odds ~2%",
-      "DESCRIPTION:Current aircraft not confirmed. ~2% is the fleet-wide Starlink ",
-      " install rate.\\n\\nAssignment history:\\nN3001 first seen assigned Sep 19\\, 3",
-      " :00 AM CDT\\n\\nAircraft usually assigned ~2 days out\\; Google Calendar refr",
-      " eshes every 8–24h\\, Apple ~hourly.\\nhttps://unitedstarlinktracker.com/ch",
-      " eck-flight/UA1005/2026-09-20?utm_source=cal",
+      "SUMMARY:UA1005 · 2% chance of Starlink",
+      "DESCRIPTION:Current aircraft not confirmed. No history for UA1005 yet\\; abo",
+      " ut 2% is our estimate for new flight numbers.\\n\\nAssignment history:\\nN300",
+      " 1 first seen assigned Sep 19\\, 3:00 AM CDT\\n\\nAircraft usually assigned ~2",
+      "  days out\\; Google Calendar refreshes every 8–24h\\, Apple ~hourly.\\nhttp",
+      " s://unitedstarlinktracker.com/check-flight/UA1005/2026-09-20?utm_source=ca",
+      " l",
       "URL:https://unitedstarlinktracker.com/check-flight/UA1005/2026-09-20?utm_so",
       " urce=cal",
       "TRANSP:TRANSPARENT",
@@ -1566,12 +1567,13 @@
       "DTEND:20260920T170000Z",
       "LAST-MODIFIED:20260919T080000Z",
       "SEQUENCE:1",
-      "SUMMARY:UA1007 · Starlink odds ~2%",
-      "DESCRIPTION:Current aircraft not confirmed. ~2% is the fleet-wide Starlink ",
-      " install rate.\\n\\nAssignment history:\\nN3999 first seen assigned Sep 19\\, 3",
-      " :00 AM CDT\\n\\nAircraft usually assigned ~2 days out\\; Google Calendar refr",
-      " eshes every 8–24h\\, Apple ~hourly.\\nhttps://unitedstarlinktracker.com/ch",
-      " eck-flight/UA1007/2026-09-20?utm_source=cal",
+      "SUMMARY:UA1007 · 2% chance of Starlink",
+      "DESCRIPTION:Current aircraft not confirmed. No history for UA1007 yet\\; abo",
+      " ut 2% is our estimate for new flight numbers.\\n\\nAssignment history:\\nN399",
+      " 9 first seen assigned Sep 19\\, 3:00 AM CDT\\n\\nAircraft usually assigned ~2",
+      "  days out\\; Google Calendar refreshes every 8–24h\\, Apple ~hourly.\\nhttp",
+      " s://unitedstarlinktracker.com/check-flight/UA1007/2026-09-20?utm_source=ca",
+      " l",
       "URL:https://unitedstarlinktracker.com/check-flight/UA1007/2026-09-20?utm_so",
       " urce=cal",
       "TRANSP:TRANSPARENT",
@@ -1604,11 +1606,11 @@
       "DTEND;VALUE=DATE:20260921",
       "LAST-MODIFIED:20260919T080000Z",
       "SEQUENCE:0",
-      "SUMMARY:UA1008 · Starlink odds ~2%",
-      "DESCRIPTION:No aircraft assigned yet. ~2% is the fleet-wide Starlink instal",
-      " l rate.\\n\\nAircraft usually assigned ~2 days out\\; Google Calendar refresh",
-      " es every 8–24h\\, Apple ~hourly.\\nhttps://unitedstarlinktracker.com/check",
-      " -flight/UA1008/2026-09-20?utm_source=cal",
+      "SUMMARY:UA1008 · 2% chance of Starlink",
+      "DESCRIPTION:No aircraft assigned yet. No history for UA1008 yet\\; about 2% ",
+      " is our estimate for new flight numbers.\\n\\nAircraft usually assigned ~2 da",
+      " ys out\\; Google Calendar refreshes every 8–24h\\, Apple ~hourly.\\nhttps:/",
+      " /unitedstarlinktracker.com/check-flight/UA1008/2026-09-20?utm_source=cal",
       "URL:https://unitedstarlinktracker.com/check-flight/UA1008/2026-09-20?utm_so",
       " urce=cal",
       "TRANSP:TRANSPARENT",
@@ -1641,11 +1643,11 @@
       "DTEND;VALUE=DATE:20260930",
       "LAST-MODIFIED:20260919T080000Z",
       "SEQUENCE:0",
-      "SUMMARY:UA1009 · Starlink odds ~80%",
-      "DESCRIPTION:No aircraft assigned yet. ~80% of 5 observed departures of this",
-      "  flight used a Starlink aircraft.\\n\\nAircraft usually assigned ~2 days out",
-      " \\; Google Calendar refreshes every 8–24h\\, Apple ~hourly.\\nhttps://unite",
-      " dstarlinktracker.com/check-flight/UA1009/2026-09-29?utm_source=cal",
+      "SUMMARY:UA1009 · 80% chance of Starlink",
+      "DESCRIPTION:No aircraft assigned yet. About 80% of 5 recent UA1009 flights ",
+      " had Starlink.\\n\\nAircraft usually assigned ~2 days out\\; Google Calendar r",
+      " efreshes every 8–24h\\, Apple ~hourly.\\nhttps://unitedstarlinktracker.com",
+      " /check-flight/UA1009/2026-09-29?utm_source=cal",
       "URL:https://unitedstarlinktracker.com/check-flight/UA1009/2026-09-29?utm_so",
       " urce=cal",
       "TRANSP:TRANSPARENT",
@@ -1678,11 +1680,11 @@
       "DTEND;VALUE=DATE:20260930",
       "LAST-MODIFIED:20260919T080000Z",
       "SEQUENCE:0",
-      "SUMMARY:UA1010 · Starlink odds ~2%",
-      "DESCRIPTION:No aircraft assigned yet. ~2% is the fleet-wide Starlink instal",
-      " l rate.\\n\\nAircraft usually assigned ~2 days out\\; Google Calendar refresh",
-      " es every 8–24h\\, Apple ~hourly.\\nhttps://unitedstarlinktracker.com/check",
-      " -flight/UA1010/2026-09-29?utm_source=cal",
+      "SUMMARY:UA1010 · 2% chance of Starlink",
+      "DESCRIPTION:No aircraft assigned yet. No history for UA1010 yet\\; about 2% ",
+      " is our estimate for new flight numbers.\\n\\nAircraft usually assigned ~2 da",
+      " ys out\\; Google Calendar refreshes every 8–24h\\, Apple ~hourly.\\nhttps:/",
+      " /unitedstarlinktracker.com/check-flight/UA1010/2026-09-29?utm_source=cal",
       "URL:https://unitedstarlinktracker.com/check-flight/UA1010/2026-09-29?utm_so",
       " urce=cal",
       "TRANSP:TRANSPARENT",

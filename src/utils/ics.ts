@@ -9,6 +9,7 @@
  */
 
 import type { SiteConfig } from "../airlines/registry";
+import { capitalize, coldShare, flightShare, probLabel } from "../components/ui/format";
 import type { AssignmentLogRow, SameDayAlternative } from "../database/assignment-log";
 import { toIata } from "./airport-code";
 import { airportTimezone } from "./airport-tz";
@@ -115,7 +116,7 @@ export function watchSummary(input: WatchIcsInput): string {
       body =
         verdict.probability === null
           ? `${fn} · Starlink status pending`
-          : `${fn} · Starlink odds ~${Math.round(verdict.probability * 100)}%`;
+          : `${fn} · ${probLabel(verdict.probability)} chance of Starlink`;
       break;
     case "yes": {
       const route = dep && arr ? ` ${toIata(dep)}→${toIata(arr)}` : "";
@@ -160,7 +161,7 @@ function formatLocalTime(unixSec: number, airport: string | null): string {
 }
 
 export function watchDescription(input: WatchIcsInput): string[] {
-  const { verdict, history, alternatives, dep } = input;
+  const { fn, verdict, history, alternatives, dep } = input;
   const lines: string[] = [];
   const legRows = dep ? history.filter((h) => h.departure_airport === dep) : history;
   // Rows for the date mean a tail was seen and has since moved off: the
@@ -173,13 +174,13 @@ export function watchDescription(input: WatchIcsInput): string[] {
         verdict.probability === null
           ? pending
           : verdict.observations > 0
-            ? `${pending} ~${Math.round(verdict.probability * 100)}% of ${verdict.observations} observed departures of this flight used a Starlink aircraft.`
-            : `${pending} ~${Math.round(verdict.probability * 100)}% is the fleet-wide Starlink install rate.`
+            ? `${pending} ${capitalize(flightShare(verdict.probability, fn, verdict.observations))}.`
+            : `${pending} ${coldShare(verdict.probability, fn)}.`
       );
       break;
     case "yes":
       lines.push(
-        `Aircraft: ${verdict.tail}${verdict.aircraft ? ` (${verdict.aircraft})` : ""} — Starlink ${verdict.confidence === "verified" ? "verified" : "likely (listed as installed, not yet verified onboard)"}.`
+        `Aircraft: ${verdict.tail}${verdict.aircraft ? ` (${verdict.aircraft})` : ""} — Starlink ${verdict.confidence === "verified" ? "verified" : "listed, not yet verified"}.`
       );
       break;
     case "no":

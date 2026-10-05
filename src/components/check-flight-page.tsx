@@ -25,7 +25,7 @@ import {
   Section,
   SectionTitle,
 } from "./layout";
-import { fmt, probPhrase, probTier } from "./ui/format";
+import { bandLabel, capitalize, flightShare, fmt, probPhrase } from "./ui/format";
 
 export type { DatedAnswer, FlightFacts, InvalidFlightQuery } from "./check-flight/types";
 
@@ -51,20 +51,13 @@ const AIRPORT_ZONES: Record<string, string> = (() => {
   return byZone;
 })();
 
-const USUAL_LEAD = { likely: "Usually yes", maybe: "Sometimes", unlikely: "Usually no" } as const;
-
-/** "Hawaiian-operated (A330/A321neo)" → "Hawaiian-operated A330/A321neo". */
-const bandLabel = (label: string) => label.replace(/\s*\((.*)\)$/, " $1");
-
-/** The undated answer: how often this flight gets Starlink. Prefers the
- * model's number (the one the API and MCP quote) over the raw check tally. */
+/** The undated answer: how often this flight gets Starlink, number first.
+ * Prefers the model's number (the one the API and MCP quote) over the raw
+ * check tally. */
 function usualSummary(flight: FlightFacts): string {
   const fn = flight.flightNumber;
   const pred = flight.prediction;
-  if (pred && pred.n_observations > 0) {
-    const lead = USUAL_LEAD[probTier(pred.probability)];
-    return `${lead}: ${probPhrase(pred.probability)} of recent ${fn} flights had Starlink.`;
-  }
+  if (pred && pred.n_observations > 0) return `${capitalize(flightShare(pred.probability, fn))}.`;
   const rule = flight.typeRule;
   if (rule) {
     const band = bandLabel(rule.label);
@@ -72,14 +65,11 @@ function usualSummary(flight: FlightFacts): string {
       return `Yes: ${fn} flies ${band} aircraft, and every one has Starlink.`;
     if (rule.probability <= 0)
       return `No: ${fn} flies ${band} aircraft, which don't have Starlink.`;
-    return `${USUAL_LEAD[probTier(rule.probability)]}: ${probPhrase(rule.probability)} of the ${band} aircraft that fly ${fn} have Starlink.`;
+    return `${capitalize(probPhrase(rule.probability))} of the ${band} aircraft that fly ${fn} have Starlink.`;
   }
   const { observedStarlink: s, observedTotal: n } = flight;
-  if (n > 0) {
-    const lead = USUAL_LEAD[probTier(s / n)];
-    return `${lead}: the aircraft had Starlink in ${fmt(s)} of ${fmt(n)} recent checks.`;
-  }
-  return `We haven't seen ${fn} yet.`;
+  if (n > 0) return `The aircraft had Starlink in ${fmt(s)} of ${fmt(n)} recent checks.`;
+  return `No Starlink history for ${fn} yet.`;
 }
 
 /** A type rule of all or nothing: no date can change the answer. */
@@ -121,15 +111,15 @@ function InvalidQueryNotice({
   const quoted = invalid.query ? `“${invalid.query}”` : "That";
   return (
     <div className="mb-4 rounded border border-subtle bg-surface-elevated p-4 text-sm">
-      <p className="text-primary">
-        {invalid.reason === "other-carrier"
-          ? `${quoted} isn't ${article(shortName)} ${shortName} flight number. This site covers ${shortName} flights only.`
-          : `${quoted} isn't a flight number.`}
-      </p>
-      <p className="mt-1 text-secondary">
-        Flight numbers look like <span className="font-mono">{example}</span>: a two-letter airline
-        code and 1–4 digits.
-      </p>
+      {invalid.reason === "other-carrier" ? (
+        <p className="text-primary">
+          {`${quoted} isn't ${article(shortName)} ${shortName} flight number.`}
+        </p>
+      ) : (
+        <p className="text-secondary">
+          Try something like <span className="font-mono">{example}</span>.
+        </p>
+      )}
       {invalid.airportHint && showRoutePlanner && (
         <p className="mt-2 text-secondary">
           Looking for an airport or a route? Try the{" "}
@@ -176,26 +166,30 @@ export default function CheckFlightPage({
     {
       q: `How do I check if ${fn ?? `my ${shortName} flight`} has Starlink?`,
       a: fn
-        ? `Pick your travel date above. About 2 days before departure, ${airlineName} assigns the aircraft, and the answer comes from that aircraft. Earlier than that, you get a probability based on the aircraft that recently flew ${fn}.`
+        ? `Pick your travel date above. ${airlineName} assigns the aircraft about 2 days before departure, and the answer then comes from that aircraft. Before that, you get ${cfg.flightHistoryModel ? `the share of recent ${fn} flights that had Starlink` : `the share of the aircraft flying ${fn} that have Starlink`}.`
         : `Enter your flight number (for example ${flightExample}) and travel date above. We check the aircraft scheduled for that flight against our list of Starlink aircraft.`,
     },
     {
       q: "How accurate is this?",
-      a: `${accuracyCopy} Aircraft can change up to departure, so check again the day before you fly.`,
+      // A dated page says the swap caveat once, in the answer card.
+      a: answer
+        ? accuracyCopy
+        : `${accuracyCopy} Aircraft can be swapped before departure, so check again the day before you fly.`,
     },
   ];
 
   const title = invalid
-    ? "That isn't a flight number"
+    ? invalid.reason === "other-carrier"
+      ? `Not ${article(shortName)} ${shortName} flight`
+      : `${invalid.query ? `“${invalid.query}”` : "That"} isn't a flight number`
     : fn
       ? `Does ${fn} have Starlink Wi-Fi?`
       : `Does my ${shortName} flight have Starlink?`;
-  const dek = invalid
-    ? `Enter ${article(shortName)} ${shortName} flight number to check it.`
-    : answer
+  const dek =
+    invalid || answer
       ? undefined
       : flight
-        ? `${usualSummary(flight)}${typeSettled(flight) ? "" : " Pick a date for a firm answer."}`
+        ? `${usualSummary(flight)}${typeSettled(flight) ? "" : " A firm answer comes about 2 days before departure, once the aircraft is assigned."}`
         : "Enter your flight number and date to see whether your aircraft has Starlink.";
 
   const scheduledOnDate = answer?.firm === true;
@@ -243,15 +237,13 @@ export default function CheckFlightPage({
           />
           {site.features.intentPages && (
             <p className="mt-4 text-sm text-muted">
-              New here?{" "}
               <a href="/how-to-check" className={LINK}>
                 How the check works
               </a>
-              .{" "}
+              {" · "}
               <a href="/is-starlink-free" className={LINK}>
-                Starlink Wi-Fi is free
+                Is Starlink Wi-Fi free?
               </a>
-              .
             </p>
           )}
         </Panel>

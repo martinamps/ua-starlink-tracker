@@ -2,7 +2,7 @@
  * The hub's route comparer: /api/compare-route per airline, one bar each. The
  * form and its preset chips are RouteComparePanel (content/hub.tsx).
  */
-import { pct, probLabel, probPct } from "../components/ui/format";
+import { fmt, pct, probLabel, probPct } from "../components/ui/format";
 import { pillStyle } from "../components/ui/tone-classes";
 import { esc } from "./esc";
 import { meterHtml } from "./meter";
@@ -44,8 +44,8 @@ const shorten = (label?: string) =>
     .replace(/\s*Fleet$/i, "")
     .trim();
 
-const fleetTip = (a: CompareResult, b: Breakdown) =>
-  `${esc(b.total)} ${esc(shorten(b.label))} aircraft in ${esc(a.shortName || a.name)}’s fleet — ${esc(b.equipped)} have Starlink`;
+const fleetTip = (b: Breakdown) =>
+  `${esc(fmt(b.equipped ?? 0))} of ${esc(fmt(b.total ?? 0))} ${esc(shorten(b.label))} aircraft have Starlink`;
 
 function tip(cls: string, tipText: string, inner: string): string {
   if (!tipText) return `<span class="${cls}">${inner}</span>`;
@@ -67,13 +67,13 @@ function renderResult(a: CompareResult, O: string, D: string): string {
             ? ` ${tip("text-[8px] px-1 py-px rounded no-underline", "Pick a flight in this group for the best Starlink odds", `<span style="background:color-mix(in srgb,${esc(color)} 18%,transparent);color:${esc(color)};padding:1px 4px;border-radius:3px">best bet</span>`)}`
             : "";
         const counts = b.equipped != null ? `${esc(b.equipped)}/${esc(b.total)} aircraft · ` : "";
-        return `<div class="mt-1.5 ml-3"><div class="flex justify-between font-mono text-xs"><span>${tip("text-secondary", b.hint ? `Flight numbers ${esc(b.hint)}` : "", esc(shorten(b.label)))}${best}</span>${tip("text-accent tip-l", b.equipped != null ? fleetTip(a, b) : "", `${counts}${b.equipped != null && b.total ? pct(b.equipped, b.total) : probLabel(b.pct)}`)}</div>${meterHtml(b.pct, { color })}</div>`;
+        return `<div class="mt-1.5 ml-3"><div class="flex justify-between font-mono text-xs"><span>${tip("text-secondary", b.hint ? `Flight numbers ${esc(b.hint)}` : "", esc(shorten(b.label)))}${best}</span>${tip("text-accent tip-l", b.equipped != null ? fleetTip(b) : "", `${counts}${b.equipped != null && b.total ? pct(b.equipped, b.total) : probLabel(b.pct)}`)}</div>${meterHtml(b.pct, { color })}</div>`;
       })
       .join("");
     return `<div class="mb-3">${head}${rows}</div>`;
   }
   const first = (a.breakdown || [])[0];
-  const pctTip = first && first.equipped != null ? fleetTip(a, first) : "";
+  const pctTip = first && first.equipped != null ? fleetTip(first) : "";
   const chip =
     probPct(a.probability) < 50 && a.kind !== "type_rule" && rp
       ? pill(rp, "try a connection", color)
@@ -105,7 +105,7 @@ export function wireRouteCompare(): void {
         const D = esc((d.destination || "").toUpperCase());
         out.innerHTML =
           (d.results || []).map((r) => renderResult(r, O, D)).join("") ||
-          `<span class="font-mono text-xs text-muted">No tracked airline shows a Starlink-equipped nonstop on ${O} ⇄ ${D} yet.</span>`;
+          `<span class="font-mono text-xs text-muted">No tracked airline has data for a nonstop on ${O} ⇄ ${D}.</span>`;
         footer?.classList.remove("hidden");
         // The hub has no planner of its own; United's is the one that exists.
         if (plannerLink)

@@ -82,7 +82,7 @@ export function PopularFlightsLinks({
         ))}
       </div>
       <p className="text-xs text-muted mt-4 leading-snug">
-        The {airlineName} flights we see most. Each shows its Starlink history and a check by date.
+        The {airlineName} flights we track most often.
       </p>
     </Panel>
   );

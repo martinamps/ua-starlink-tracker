@@ -6,10 +6,8 @@ import React from "react";
 import { aircraftName } from "../../airlines/aircraft-families";
 import { airportTimezone } from "../../utils/airport-tz";
 import { Chip, Section, StatInline } from "../layout";
-import { fmt, formatDuration, probPhrase, shortDate, zonedDeparture } from "../ui/format";
+import { fmt, formatDuration, shortDate, zonedDeparture } from "../ui/format";
 import type { FlightFacts } from "./types";
-
-const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 function lastSeenLabel(sec: number | null): string | null {
   if (!sec || sec * 1000 > Date.now()) return null;
@@ -27,13 +25,13 @@ export function FlightFactBlocks({
   const hasHistory =
     flight.observedTotal > 0 || flight.aircraftTypes.length > 0 || flight.lastStarlink !== null;
   const pred = flight.prediction;
+  const modelled = !!pred && pred.n_observations > 0;
+  const checked = flight.observedTotal > 0;
+  const last = flight.lastStarlink;
   return (
     <>
       {flight.upcoming.length > 0 && (
-        <Section
-          title={`Next ${fn} departures`}
-          dek="Aircraft can change up to departure. Check your date above for the current answer."
-        >
+        <Section title={`Next ${fn} departures`}>
           <ul className="divide-y divide-subtle text-sm">
             {flight.upcoming.map((u) => (
               <li
@@ -72,24 +70,35 @@ export function FlightFactBlocks({
       {hasHistory && (
         <Section title={`${fn} Starlink history`}>
           <div className="space-y-2 text-sm leading-relaxed text-secondary">
-            {pred && pred.n_observations > 0 && (
+            {(modelled || checked) && (
               <p>
-                <StatInline>{capitalize(probPhrase(pred.probability))}</StatInline> of recent {fn}{" "}
-                flights had a Starlink aircraft, from <StatInline n={pred.n_observations} /> flights
-                observed.
+                {modelled && (
+                  <>
+                    Based on <StatInline n={pred?.n_observations ?? 0} /> recent flights
+                    {checked ? "; " : "."}
+                  </>
+                )}
+                {checked && (
+                  <>
+                    Starlink found in <StatInline n={flight.observedStarlink} /> of{" "}
+                    <StatInline n={flight.observedTotal} /> Wi-Fi checks
+                    {flight.observedSince ? ` since ${shortDate(flight.observedSince)}` : ""}
+                    {last ? (
+                      <>
+                        {" "}
+                        (last <span className="font-mono">{last.tail}</span>,{" "}
+                        {shortDate(last.checked_at)})
+                      </>
+                    ) : null}
+                    .
+                  </>
+                )}
               </p>
             )}
-            {flight.observedTotal > 0 && (
+            {last && !checked && (
               <p>
-                Starlink found in <StatInline n={flight.observedStarlink} /> of{" "}
-                <StatInline n={flight.observedTotal} /> Wi-Fi checks of aircraft flying {fn}
-                {flight.observedSince ? ` since ${shortDate(flight.observedSince)}` : ""}.
-              </p>
-            )}
-            {flight.lastStarlink && (
-              <p>
-                Last verified on Starlink: {shortDate(flight.lastStarlink.checked_at)} (
-                <span className="font-mono">{flight.lastStarlink.tail}</span>).
+                Last verified on Starlink: <span className="font-mono">{last.tail}</span>,{" "}
+                {shortDate(last.checked_at)}.
               </p>
             )}
             {flight.aircraftTypes.length > 0 && (
@@ -161,8 +170,7 @@ export function FlightFactBlocks({
 
       {flight.siblings.length > 0 && flight.routes[0] && (
         <Section
-          title="Other flights on this route"
-          dek={`${flight.routes[0].departure_airport} to ${flight.routes[0].arrival_airport}. Each flight number has its own aircraft history.`}
+          title={`Other ${flight.routes[0].departure_airport} → ${flight.routes[0].arrival_airport} flights`}
         >
           <div className="flex flex-wrap gap-2">
             {flight.siblings.map((s) => (
