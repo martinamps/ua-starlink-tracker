@@ -78,7 +78,7 @@ export default function RoutePlannerPage({
             </div>
             <div>
               <Eyebrow as="label" htmlFor="travel-date" className="mb-2 block">
-                Date (optional)
+                Date
               </Eyebrow>
               <input
                 type="date"
@@ -92,7 +92,7 @@ export default function RoutePlannerPage({
             </button>
           </form>
           <p className="text-xs text-muted mt-3 text-center">
-            Every nonstop first, then connections, ranked by the odds of Starlink on each leg.
+            Nonstops first, then connections by Starlink odds.
           </p>
         </Panel>
       </div>

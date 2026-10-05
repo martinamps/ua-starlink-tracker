@@ -1,17 +1,21 @@
+import type React from "react";
 import type { RouteFlightBoard, RouteFlightRow } from "../api/route-flights";
 import { FIELD_CLASS } from "./flight-search-form";
 import { LINK, Section, Td, Th, buttonClass } from "./layout";
 import {
-  ASSIGNMENT_CAVEAT,
+  VERIFIED_LEGEND,
+  VERIFIED_MARK,
   assignmentTone,
   boardDek,
   emptyBoardMessage,
+  hasVerifiedRow,
   oddsDetail,
   oddsTone,
 } from "./route-flights-copy";
 import { Pill, TONE_TEXT } from "./ui/tone";
 
 function FlightCell({ row }: { row: RouteFlightRow }) {
+  const a = row.assignment;
   return (
     <Td className="pr-3">
       <a
@@ -20,14 +24,14 @@ function FlightCell({ row }: { row: RouteFlightRow }) {
       >
         {row.flight_number}
       </a>
-      <span className="whitespace-nowrap text-muted">
-        {" "}
-        · {row.typical_departure ? `usually ${row.typical_departure}` : "time not logged"}
-      </span>
-      {row.assignment && (
-        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-secondary">
-          <Pill tone={assignmentTone(row)}>{row.assignment.label}</Pill>
-          <span className="text-muted">{ASSIGNMENT_CAVEAT}</span>
+      {row.typical_departure && (
+        <span className="whitespace-nowrap text-muted"> · {row.typical_departure}</span>
+      )}
+      {a && (
+        <div className="mt-1">
+          <Pill tone={assignmentTone(row)}>
+            {a.starlink === "verified" ? `${a.label} ${VERIFIED_MARK}` : a.label}
+          </Pill>
         </div>
       )}
     </Td>
@@ -39,11 +43,14 @@ export function RouteFlightsSection({
   board,
   path,
   plannerHref,
+  footerAction,
 }: {
   board: RouteFlightBoard;
   /** The page's own path, which the date form GETs. */
   path: string;
   plannerHref: string;
+  /** Rendered after the note: the slot for a per-route action (e.g. alerts). */
+  footerAction?: React.ReactNode;
 }) {
   const empty = emptyBoardMessage(board);
   return (
@@ -53,10 +60,10 @@ export function RouteFlightsSection({
           method="get"
           action={path}
           className="mb-4 flex flex-wrap items-end gap-2"
-          aria-label="Filter by travel date"
+          aria-label="Filter by date"
         >
           <label className="text-xs text-muted" htmlFor="board-date">
-            Travel date (optional)
+            Date
             <input
               id="board-date"
               type="date"
@@ -66,30 +73,29 @@ export function RouteFlightsSection({
             />
           </label>
           <button type="submit" className={buttonClass("secondary", "sm")}>
-            Show flights that day
+            Filter
           </button>
           {board.date && (
             <a href={path} className={`text-xs ${LINK}`}>
-              Clear date
+              Clear
             </a>
           )}
         </form>
       )}
       {empty ? (
-        <p className="text-sm text-secondary text-pretty">
+        <p className="text-sm text-secondary">
           {empty}{" "}
           <a href={plannerHref} className={LINK}>
             Compare connections
           </a>
-          .
         </p>
       ) : (
         <table className="w-full text-sm">
           <thead>
             <tr>
               <Th>Flight</Th>
-              <Th optional>Usually flies</Th>
-              <Th numeric>Starlink odds</Th>
+              <Th optional>Aircraft</Th>
+              <Th numeric>Odds</Th>
             </tr>
           </thead>
           <tbody>
@@ -110,7 +116,11 @@ export function RouteFlightsSection({
           </tbody>
         </table>
       )}
-      <p className="mt-4 text-xs text-muted text-pretty">{board.note}</p>
+      <p className="mt-4 text-xs text-muted">
+        {board.note}
+        {hasVerifiedRow(board) && ` ${VERIFIED_LEGEND}`}
+        {footerAction && <> {footerAction}</>}
+      </p>
     </Section>
   );
 }

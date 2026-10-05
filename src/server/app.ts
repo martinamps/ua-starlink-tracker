@@ -2164,7 +2164,7 @@ The homepage carries one dated, self-contained sentence (HTML element id \`starl
       ? `**"Best Starlink flight from SFO to Newark?"** → https://${host}/route-planner compares the nonstop with Starlink connections (up to 2 stops, only when the extra travel time is modest), ranked by the share of flying time expected on Starlink.`
       : null,
     boardPair
-      ? `**"Which ${boardPair.origin} to ${boardPair.destination} flight should I book for Starlink?"** → https://${host}/route-planner/${boardPair.origin}/${boardPair.destination} lists every nonstop seen recently with its Starlink odds, usual departure time and aircraft, and the assigned plane once known (\`GET https://${host}/api/route-flights?origin=${boardPair.origin}&destination=${boardPair.destination}\`, optional \`&date=YYYY-MM-DD\`). They are odds, not a guarantee: the airline can swap the plane.`
+      ? `**"Which ${boardPair.origin} to ${boardPair.destination} flight should I book for Starlink?"** → https://${host}/route-planner/${boardPair.origin}/${boardPair.destination} lists every recent nonstop with its Starlink odds, departure time, aircraft and assigned plane (\`GET https://${host}/api/route-flights?origin=${boardPair.origin}&destination=${boardPair.destination}\`, optional \`&date=YYYY-MM-DD\`). Planes can be swapped before departure.`
       : null,
     `**"How is the rollout going?"** → https://${host}/ has the live count and a chart over time.${features.fleetPage ? ` https://${host}/fleet shows every aircraft and its WiFi provider.` : ""}`,
     // The access sentence comes from the same per-airline copy /is-starlink-free
@@ -3287,7 +3287,7 @@ function routePageMeta(
   return {
     siteTitle: question,
     siteDescription: n
-      ? `Starlink odds for every ${cfg.shortName} nonstop from ${pair} (${n} flight${n === 1 ? "" : "s"}), with usual departure times, aircraft and any assigned plane. ${verdict}`
+      ? `Starlink odds for ${n === 1 ? "the" : `all ${n}`} ${cfg.shortName} ${pair} nonstop${n === 1 ? "" : "s"}, with departure times, aircraft and assigned planes.`
       : `Does ${cfg.name} fly Starlink on ${pair}? ${verdict}`,
     keywords: `${route.origin} ${route.destination} starlink, ${pair} wifi, ${cfg.shortName.toLowerCase()} ${route.origin} ${route.destination} starlink`,
     ogTitle: question,

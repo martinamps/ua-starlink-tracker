@@ -5,21 +5,17 @@
  * gives (same predictor, same number), when it usually leaves, what it usually
  * flies, and the tail already assigned when one is.
  *
- * Served from the DB only. The odds are per flight number and never a promise:
- * every row says so, and an assigned tail can still be swapped.
+ * Served from the DB only. The odds are per flight number, never a promise;
+ * the board's one-line note says so once, not every row.
  */
 
 import { aircraftName } from "../airlines/aircraft-families";
 import type { AirlineConfig } from "../airlines/registry";
-import { probLabel, probPhrase, zonedDeparture, zonedIsoDate } from "../components/ui/format";
+import { probLabel, zonedDeparture, zonedIsoDate } from "../components/ui/format";
 import type { ScopedReader } from "../database/reader";
 import type { RouteFlightLeg } from "../database/route-flights";
 import { DAY_SEC, DEPARTURE_WINDOW_SEC, unixNow } from "../database/sql/windows";
-import {
-  carrierPrediction,
-  describeCarrierPrediction,
-  predictFlight,
-} from "../scripts/starlink-predictor";
+import { carrierPrediction, predictFlight } from "../scripts/starlink-predictor";
 import { airportTimezone, flightDateWindow, isRealIsoDate } from "../utils/airport-tz";
 import { verdictSummary } from "./check-flight-core";
 
@@ -44,7 +40,7 @@ export interface RouteFlightAssignment {
   tail_number: string;
   aircraft_type: string | null;
   starlink: AssignedStarlink;
-  /** "Thu Oct 9: N37525, Starlink (verified)". */
+  /** "Thu Oct 9 · N37525 · Starlink"; `starlink` says verified or listed. */
   label: string;
 }
 
@@ -69,7 +65,7 @@ export interface RouteFlightRow {
   /** Aircraft families it usually gets, most frequent first. */
   aircraft_types: string[];
   assignment: RouteFlightAssignment | null;
-  /** The row's full sentence: odds, their basis, and that the plane can change. */
+  /** The row in one line: odds, their basis, and the next assigned plane. */
   summary: string;
 }
 
@@ -122,19 +118,17 @@ function latestPerDay(legs: readonly RouteFlightLeg[]): RouteFlightLeg[] {
 
 function assignmentOf(leg: RouteFlightLeg, zone: string | undefined): RouteFlightAssignment {
   const starlink: AssignedStarlink = leg.verified ? "verified" : leg.equipped ? "listed" : "none";
-  const status =
-    starlink === "verified"
-      ? "Starlink (verified)"
-      : starlink === "listed"
-        ? "Starlink (listed, not yet verified)"
-        : "no Starlink";
   return {
     date: leg.dep_date,
     departure_time: leg.departure_time,
     tail_number: leg.tail_number,
     aircraft_type: leg.aircraft_type,
     starlink,
-    label: `${zonedDeparture(leg.departure_time, zone).day.replace(",", "")}: ${leg.tail_number}, ${status}`,
+    label: [
+      zonedDeparture(leg.departure_time, zone).day.replace(",", ""),
+      leg.tail_number,
+      starlink === "none" ? "No Starlink" : "Starlink",
+    ].join(" · "),
   };
 }
 
@@ -181,8 +175,8 @@ function flightOdds(
         enough && s.probability !== null ? probLabel(s.probability) : "Not enough history",
       sentence:
         enough && s.probability !== null
-          ? `${capitalize(probPhrase(s.probability))} odds of Starlink, from the aircraft ${flightNumber} drew on ${n} tracked flights.`
-          : `Not enough history to give ${flightNumber} odds yet (${n} tracked flight${n === 1 ? "" : "s"}).`,
+          ? `${probLabel(s.probability)} Starlink odds from ${n} flights.`
+          : `Not enough history (${n} flight${n === 1 ? "" : "s"}).`,
     };
   }
   const answer = carrierPrediction(cfg, reader, flightNumber);
@@ -200,7 +194,10 @@ function flightOdds(
     basis: "aircraft_type",
     enough_history: s.probability !== null,
     odds_label: s.probability === null ? "Depends on aircraft" : `~${probLabel(s.probability)}`,
-    sentence: describeCarrierPrediction(cfg, answer),
+    sentence:
+      s.probability === null
+        ? "Starlink depends on the aircraft type."
+        : `~${probLabel(s.probability)} Starlink odds by aircraft type.`,
   };
 }
 
@@ -264,9 +261,6 @@ export function buildRouteFlightBoard(
     const assignment = upcoming ? assignmentOf(upcoming, zone) : null;
 
     const odds = flightOdds(cfg, reader, fn, date ?? today);
-    const swap = assignment
-      ? ` Assigned ${assignment.label}; ${cfg.shortName} can still swap the plane.`
-      : ` Odds, not a guarantee: ${cfg.shortName} can swap the plane up to departure.`;
     rows.push({
       flight_number: fn,
       typical_departure: typical,
@@ -281,7 +275,7 @@ export function buildRouteFlightBoard(
       odds_label: odds.odds_label,
       aircraft_types: types,
       assignment,
-      summary: `${odds.sentence}${swap}`,
+      summary: assignment ? `${odds.sentence} Next: ${assignment.label}.` : odds.sentence,
       sortMinutes: clockMinutes(typical),
     });
   }
@@ -303,11 +297,9 @@ export function buildRouteFlightBoard(
     nonstop: numbers.size > 0,
     min_observations: ROUTE_BOARD_MIN_OBSERVATIONS,
     flights: rows.map(({ sortMinutes: _, ...r }) => r),
-    note: `Odds, not a guarantee. They come from the aircraft each flight has recently used, and ${cfg.shortName} can swap the plane up to departure. Check your flight number 1–2 days out to see the assigned aircraft.`,
+    note: `Odds come from ${cfg.flightHistoryModel ? "recent flights" : "aircraft type"}. Planes can be swapped before departure.`,
   };
 }
-
-const capitalize = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
 
 /** Distinct display names, most frequent first. */
 function mostCommonList(raw: readonly string[]): string[] {

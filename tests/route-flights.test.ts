@@ -73,12 +73,13 @@ describe("GET /api/route-flights", () => {
     expect(b.date).toBeNull();
     expect(typeof b.nonstop).toBe("boolean");
     expect(b.min_observations).toBe(ROUTE_BOARD_MIN_OBSERVATIONS);
-    expect(b.note).toContain("not a guarantee");
+    expect(b.note).toContain("Planes can be swapped");
     expect(Array.isArray(b.flights)).toBe(true);
     for (const f of b.flights) {
       expect(Object.keys(f).sort()).toEqual([...ROW_KEYS].sort());
       expect(f.flight_number).toMatch(/^UA\d{1,4}$/);
-      expect(f.summary).toMatch(/not a guarantee|can still swap/);
+      // The caveat lives once, in the note — never repeated per row.
+      expect(f.summary).not.toMatch(/swap|guarantee/i);
     }
   });
 
@@ -163,7 +164,9 @@ describe("route page board", () => {
     const board = body.indexOf('id="all-flights"');
     expect(board).toBeGreaterThan(0);
     expect(body.indexOf("Flight numbers on this route")).toBeGreaterThan(board);
-    expect(body).toContain("not a guarantee");
+    const section = body.slice(board, body.indexOf("Flight numbers on this route"));
+    expect(section.match(/swapped/g)?.length ?? 0).toBe(1);
+    expect(section).not.toContain("(verified)");
   });
 
   test("a date filters the board; a bad one is ignored", async () => {
@@ -252,11 +255,11 @@ describe("board behavior (synthetic)", () => {
     expect(row?.assignment?.tail_number).toBe("N111UA");
     expect(row?.assignment?.starlink).toBe("verified");
     expect(row?.assignment?.label).toMatch(
-      /^[A-Z][a-z]{2} [A-Z][a-z]{2} \d{1,2}: N111UA, Starlink \(verified\)$/
+      /^[A-Z][a-z]{2} [A-Z][a-z]{2} \d{1,2} · N111UA · Starlink$/
     );
     expect(row?.typical_departure).toMatch(/^7:00 AM P[DS]T$/);
     expect(row?.aircraft_types[0]).toBe("757");
-    expect(row?.summary).toContain("can still swap");
+    expect(row?.summary).toContain(`Next: ${row?.assignment?.label}.`);
   });
 
   test("a weekday the flight was never seen on drops it; thin history stays", () => {

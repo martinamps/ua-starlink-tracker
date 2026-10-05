@@ -15,29 +15,31 @@ export function oddsTone(row: RouteFlightRow): Tone {
 
 /** The line under the percentage: what the number rests on. */
 export function oddsDetail(row: RouteFlightRow): string {
-  if (row.basis === "aircraft_type") return "by aircraft type";
+  if (row.basis === "aircraft_type") return "by type";
   const n = row.n_observations ?? 0;
-  const flights = `${fmt(n)} flight${n === 1 ? "" : "s"}`;
-  return row.enough_history ? `from ${flights}` : `only ${flights}`;
+  return `${fmt(n)} flight${n === 1 ? "" : "s"}`;
 }
 
 export function assignmentTone(row: RouteFlightRow): Tone {
   return row.assignment && row.assignment.starlink !== "none" ? "success" : "neutral";
 }
 
-export const ASSIGNMENT_CAVEAT = "can still be swapped";
+/** One mark on a verified assignment, explained once in the legend. */
+export const VERIFIED_MARK = "✓";
+export const VERIFIED_LEGEND = `${VERIFIED_MARK} Starlink confirmed on that plane.`;
+
+export function hasVerifiedRow(board: RouteFlightBoard): boolean {
+  return board.flights.some((f) => f.assignment?.starlink === "verified");
+}
 
 /** The board's empty state, or null when it has rows. */
 export function emptyBoardMessage(board: RouteFlightBoard): string | null {
   if (board.flights.length > 0) return null;
-  const pair = `${board.origin} to ${board.destination}`;
-  if (!board.nonstop) {
-    return `No ${board.airline} nonstop from ${pair} has been seen in the past week. Connections can still have Starlink.`;
-  }
-  return `None of the ${pair} nonstops we track was seen flying on a ${board.weekday ?? "that day"}.`;
+  if (!board.nonstop) return "No nonstop seen this week.";
+  return `No nonstop seen on a ${board.weekday ?? "that day"}.`;
 }
 
 export function boardDek(board: RouteFlightBoard): string {
-  const day = board.date && board.weekday ? ` Showing flights seen on ${board.weekday}s.` : "";
-  return `Every nonstop seen recently, best Starlink odds first. Times are local to ${board.origin}.${day}`;
+  const day = board.date && board.weekday ? ` ${board.weekday}s only.` : "";
+  return `Best odds first. Times local to ${board.origin}.${day}`;
 }
