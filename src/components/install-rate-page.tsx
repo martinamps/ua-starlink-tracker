@@ -6,7 +6,7 @@ import {
   MonthlyInstallsBars,
   PaceBullets,
 } from "./charts/cumulative-installs";
-import { nearestPaceGap, paceWindowText } from "./charts/rollout-math";
+import { nearestPaceGap, paceWindowSpan, paceWindowText } from "./charts/rollout-math";
 import { type CiteStat, CiteThis } from "./cite-this";
 import type { Link } from "./layout";
 import { EYEBROW, PANEL, PageHeader, PageShell, SECTION, StatInline } from "./layout";
@@ -23,6 +23,9 @@ export interface AirlineInstallRate {
   /** THIS airline's own data-freshness date. Per airline, not per page: the
    * hub renders several tenants at once and each carries its own stamp. */
   asOfDate: string;
+  /** What the count is of: "United Airlines aircraft", "Alaska and Hawaiian
+   * Airbus aircraft", "Alaska-operated aircraft". */
+  noun: string;
   stats: InstallRateStats;
 }
 
@@ -45,7 +48,7 @@ function targetStatus(p: TargetProjection): string {
   const due = `Due ${formatFactDate(p.target.deadline)}`;
   // equipped is a live row count and total a separately scraped meta value;
   // mid-reconcile they can disagree, and nothing is projected from that.
-  if (p.rosterDisagrees) return `${due} · counts disagree, no projection`;
+  if (p.rosterDisagrees) return `${due} · no projection (fleet counts out of sync)`;
   if (p.verdict === "reached") return `${due} · reached`;
   const parts = [due, `${fmt(p.remaining)} to go`];
   if (p.projectedMonth) parts.push(`at current pace: ${monthYear(p.projectedMonth)}`);
@@ -69,7 +72,7 @@ function TargetRow({ p, shortName }: { p: TargetProjection; shortName: string })
           halves of the ratio, so the page names the roster. */}
       {p.scope.label && (
         <p className="mt-1 text-sm text-secondary">
-          Measured across {p.scope.label}: {fmt(p.scope.equipped)} of {fmt(p.scope.total)}.
+          {p.scope.label}: {fmt(p.scope.equipped)} of {fmt(p.scope.total)} have Starlink.
         </p>
       )}
       {/* The count under a share-of-fleet target is our arithmetic, so it must
@@ -78,11 +81,11 @@ function TargetRow({ p, shortName }: { p: TargetProjection; shortName: string })
         <p className="mt-1 text-xs text-muted">
           {p.target.fractionOfTracked === 1
             ? `Fleet size is our count, not ${shortName}'s.`
-            : `${probLabel(p.target.fractionOfTracked ?? 1)} of our fleet count of ${fmt(p.derivedFrom)}, not a figure ${shortName} published.`}
+            : `${fmt(p.targetCount)} is ${probLabel(p.target.fractionOfTracked ?? 1).toLowerCase()} of our count of ${fmt(p.derivedFrom)}, not ${shortName}'s figure.`}
         </p>
       )}
       <p className="mt-1 text-xs text-muted">
-        Stated {formatFactDate(p.target.statedOn)}. Source:{" "}
+        Stated {formatFactDate(p.target.statedOn)} ·{" "}
         <a
           href={p.target.source.url}
           target="_blank"
@@ -100,6 +103,7 @@ function AirlineSection({ a }: { a: AirlineInstallRate }) {
   const { stats } = a;
   const statId = `install-rate-stat-${a.code.toLowerCase()}`;
   const hasHistory = stats.months.length >= 2;
+  const gap = nearestPaceGap(stats);
   return (
     <div className={PANEL}>
       <div className="mb-3 flex items-center justify-between gap-2">
@@ -117,9 +121,10 @@ function AirlineSection({ a }: { a: AirlineInstallRate }) {
           hub, one shared date once post-dated a stale airline by four months. */}
       <p id={statId} className="mb-4 text-sm text-secondary">
         As of {a.asOfDate}, <StatInline n={stats.equipped} /> of <StatInline n={stats.total} />{" "}
-        {a.name} aircraft{stats.rosterDisagrees ? "" : ` (${pct(stats.equipped, stats.total)})`}{" "}
-        have Starlink.
-        {stats.paceMonthly !== null && (
+        {a.noun}
+        {stats.rosterDisagrees ? "" : ` (${pct(stats.equipped, stats.total)})`} have Starlink.
+        {/* With a target, the pace sits in the bullets below; say it once. */}
+        {stats.paceMonthly !== null && !gap && (
           <>
             {" "}
             Installs have averaged about <StatInline n={Math.round(stats.paceMonthly)} /> a month
@@ -142,9 +147,9 @@ function AirlineSection({ a }: { a: AirlineInstallRate }) {
             airlineName={a.name}
             milestones={rolloutTimeline(a.code)?.milestones}
           />
-          {stats.paceMonthly !== null && stats.projections.length > 0 && (
+          {gap && (
             <div className="mt-6 border-t border-subtle pt-5">
-              <div className={EYEBROW}>Pace needed vs. now</div>
+              <div className={EYEBROW}>Pace needed vs. now ({paceWindowSpan(stats)})</div>
               <PaceBullets stats={stats} accent={a.accentColor} />
             </div>
           )}
@@ -190,7 +195,7 @@ function AirlineSection({ a }: { a: AirlineInstallRate }) {
 function singleDek(a: AirlineInstallRate): string {
   const gap = nearestPaceGap(a.stats);
   if (gap) {
-    return `Is ${a.shortName} on pace? About ${fmt(gap.actual)} installs a month, against the ${fmt(gap.needed)} a month needed for ${fmt(gap.target.targetCount)} by ${formatFactDate(gap.target.target.deadline)}.`;
+    return `${a.shortName} is installing about ${fmt(gap.actual)} aircraft a month. ${fmt(gap.target.targetCount)} by ${formatFactDate(gap.target.target.deadline)} needs ${fmt(gap.needed)} a month.`;
   }
   if (a.stats.paceMonthly !== null) {
     return `${a.shortName} is installing Starlink on about ${fmt(a.stats.paceMonthly)} aircraft a month.`;
@@ -209,7 +214,7 @@ export default function InstallRatePage({
   return (
     <PageShell site={site} currentPath={currentPath} pageLinks={pageLinks}>
       <PageHeader
-        title="Starlink install rate index"
+        title="Starlink install pace"
         dek={
           single
             ? singleDek(single)
@@ -225,8 +230,7 @@ export default function InstallRatePage({
 
       <section className={SECTION}>
         <p className="text-center text-xs text-muted">
-          Pace averages up to the last three full months, and projections assume it holds. Seed data
-          and one-day imports are left out.
+          Pace is the average of the last three full months; projections assume it holds.
           {site.features.methodologyPage && (
             <>
               {" "}

@@ -28,8 +28,7 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
     cruise_mph: 530,
     first_flight: 1997,
     engines: "2× CFM56-7B",
-    fun_fact:
-      "Same body Boeing turns into private jets for billionaires — just with 120 more seats.",
+    fun_fact: "The Boeing Business Jet is the same airframe, minus about 100 seats.",
   },
   "B737-800": {
     seats: 166,
@@ -39,7 +38,7 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
     cruise_mph: 530,
     first_flight: 1997,
     engines: "2× CFM56-7B",
-    fun_fact: "Over 5,000 built — the most-produced jet airliner variant in history.",
+    fun_fact: "Nearly 5,000 built, the most-produced jet airliner variant ever.",
   },
   "B737-900": {
     seats: "167–179",
@@ -49,7 +48,8 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
     cruise_mph: 530,
     first_flight: 2000,
     engines: "2× CFM56-7B",
-    fun_fact: "Longest 737 for its time but carried no extra people — ran out of emergency exits.",
+    fun_fact:
+      "The original -900 was longer than the -800 but couldn't seat more people. Not enough exits.",
   },
   "B737-MAX8": {
     seats: 166,
@@ -60,7 +60,7 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
     first_flight: 2016,
     engines: "2× CFM LEAP-1B",
     fun_fact:
-      "Grounded worldwide for 20 months after two crashes — longest ban on a U.S. jet ever.",
+      "Grounded worldwide for 20 months after two crashes, the longest grounding of a U.S. airliner.",
   },
   "B737-MAX9": {
     seats: 179,
@@ -70,7 +70,7 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
     cruise_mph: 530,
     first_flight: 2017,
     engines: "2× CFM LEAP-1B",
-    fun_fact: "Yes, this is the one whose door panel blew off mid-flight on Alaska in 2024.",
+    fun_fact: "Yes, this is the type that lost a door plug mid-flight in January 2024.",
   },
   "B737-MAX10": {
     seats: 191,
@@ -80,7 +80,8 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
     cruise_mph: 530,
     first_flight: 2021,
     engines: "2× CFM LEAP-1B",
-    fun_fact: "So long its landing gear has to telescope taller at takeoff or the tail would drag.",
+    fun_fact:
+      "So long its landing gear stretches taller for takeoff, or the tail would hit the runway.",
   },
   B757: {
     seats: "169–234",
@@ -90,8 +91,7 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
     cruise_mph: 530,
     first_flight: 1982,
     engines: "2× PW2000 or RR RB211",
-    fun_fact:
-      "Pilots love it — absurdly overpowered, climbs like a rocket, out of production since 2004.",
+    fun_fact: "Pilots love how overpowered it is. Boeing stopped building it in 2004.",
   },
   B717: {
     seats: 128,
@@ -102,7 +102,7 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
     first_flight: 1998,
     engines: "2× RR BR715",
     fun_fact:
-      "Really a McDonnell Douglas MD-95 — Boeing inherited it in the merger and renamed it rather than cancel the orders.",
+      "Really a McDonnell Douglas MD-95. Boeing inherited it in the 1997 merger and renamed it.",
   },
   // Boeing widebody
   B747: {
@@ -113,8 +113,7 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
     cruise_mph: 570,
     first_flight: 1969,
     engines: "4× GEnx-2B67",
-    fun_fact:
-      "The original jumbo — designed in 16 months by 50,000 people in a factory built around the unfinished plane.",
+    fun_fact: "The original jumbo. Boeing built the world's largest building by volume to make it.",
   },
   B747F: {
     seats: "—",
@@ -125,7 +124,7 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
     first_flight: 2010,
     engines: "4× GEnx-2B67",
     fun_fact:
-      "The nose swings up so cargo loads straight through the front — the hump existed so freight could one day do exactly this.",
+      "The nose swings up so cargo loads straight through the front. That's why the cockpit sits in the hump.",
   },
   B767: {
     seats: "167–240",
@@ -136,7 +135,7 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
     first_flight: 1981,
     engines: "2× GE CF6-80C2 or PW4000",
     fun_fact:
-      "First wide-body designed for just two pilots — put an entire profession out of work.",
+      "One of the first widebodies flown by just two pilots. Flight engineers were not fans.",
   },
   B777: {
     seats: "276–350",
@@ -147,7 +146,7 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
     first_flight: 1994,
     engines: "2× PW4000 or GE90-115B",
     fun_fact:
-      "Each engine is wider than the entire body of a 737 — the most powerful jet engines ever.",
+      "The 777-300ER's GE90-115B is the most powerful jet engine in airline service, with a fan nearly as wide as a 737's cabin.",
   },
   B777F: {
     seats: "—",
@@ -158,7 +157,7 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
     first_flight: 2008,
     engines: "2× GE90-110B1",
     fun_fact:
-      "Carries 102 tonnes of freight on two engines — it killed the four-engine freighter business almost single-handedly.",
+      "Hauls 102 tonnes of freight on two engines, which made four-engine freighters a hard sell.",
   },
   B787: {
     seats: "243–318",
@@ -169,7 +168,7 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
     first_flight: 2009,
     engines: "2× GEnx-1B",
     fun_fact:
-      "Higher cabin humidity and pressure than other jets — passengers actually feel less wrecked.",
+      "Higher cabin humidity and a lower cabin altitude than older jets, so you land a little less wrecked.",
   },
   // Airbus
   A220: {
@@ -180,8 +179,7 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
     cruise_mph: 515,
     first_flight: 2015,
     engines: "2× PW1500G",
-    fun_fact:
-      "Designed by Bombardier as the CSeries — Airbus took the programme over in 2018 and renamed it.",
+    fun_fact: "Designed by Bombardier as the CSeries. Airbus took it over in 2018 and renamed it.",
   },
   A318: {
     seats: "107–132",
@@ -191,7 +189,7 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
     cruise_mph: 515,
     first_flight: 2002,
     engines: "2× CFM56-5B or PW6000",
-    fun_fact: "The smallest member of the A320 family — fewer than 100 were ever built.",
+    fun_fact: "The smallest A320-family jet. Only 80 were built.",
   },
   A319: {
     seats: 126,
@@ -201,7 +199,7 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
     cruise_mph: 515,
     first_flight: 1995,
     engines: "2× IAE V2524-A5",
-    fun_fact: "The smallest plane United flies that can still cross the Atlantic nonstop.",
+    fun_fact: "Shorter than the A320 but with more range: the same fuel, fewer people.",
   },
   A320: {
     seats: 150,
@@ -212,7 +210,7 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
     first_flight: 1987,
     engines: "2× IAE V2527-A5",
     fun_fact:
-      "First airliner flown by joystick instead of a steering wheel — scandalized pilots in 1987.",
+      "First airliner flown with a sidestick instead of a control yoke, which scandalized pilots in 1987.",
   },
   A321: {
     seats: 200,
@@ -222,7 +220,7 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
     cruise_mph: 518,
     first_flight: 2016,
     engines: "2× PW1133G-JM",
-    fun_fact: "First plane where United let you pair your AirPods to the seatback screen.",
+    fun_fact: "Airbus's best-seller today, flying routes that once needed a widebody.",
   },
   A330: {
     seats: 278,
@@ -233,7 +231,7 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
     first_flight: 1992,
     engines: "2× PW4000 or RR Trent 700",
     fun_fact:
-      "Shares its fuselage cross-section with the 1972 A300 — Airbus has been stretching the same tube for 50 years.",
+      "Same fuselage width as the 1972 A300. Airbus has been stretching that tube for 50 years.",
   },
   A350: {
     seats: "—",
@@ -243,8 +241,7 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
     cruise_mph: 561,
     first_flight: 2013,
     engines: "2× RR Trent XWB-84",
-    fun_fact:
-      "Over half the plane is carbon fiber — the wings bend upward 13 feet in flight. United has none yet.",
+    fun_fact: "Over half the airframe is carbon fiber, which doesn't corrode like aluminum.",
   },
   A380: {
     seats: 517,
@@ -254,8 +251,7 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
     cruise_mph: 561,
     first_flight: 2005,
     engines: "4× RR Trent 900 or EA GP7200",
-    fun_fact:
-      "So big most airports had to rebuild gates and taxiways for it — production ended after just 251 built.",
+    fun_fact: "So big that airports rebuilt gates and taxiways for it. Airbus stopped after 251.",
   },
   // Regional jets
   E175: {
@@ -267,7 +263,7 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
     first_flight: 2003,
     engines: "2× GE CF34-8E",
     fun_fact:
-      "Sized to the exact 76-seat limit that pilot unions negotiated — any bigger and it's illegal to fly.",
+      "Sized to the 76-seat cap in US pilot scope clauses. One more seat and mainline pilots would have to fly it.",
   },
   E170: {
     seats: "70–78",
@@ -277,7 +273,7 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
     cruise_mph: 500,
     first_flight: 2002,
     engines: "2× GE CF34-8E",
-    fun_fact: "The original E-Jet — the E175 and E190 are stretches of the same design.",
+    fun_fact: "The original E-Jet. The E175 and E190 are stretches of it.",
   },
   E190: {
     seats: "96–114",
@@ -297,7 +293,7 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
     cruise_mph: 515,
     first_flight: 1995,
     engines: "2× RR AE 3007",
-    fun_fact: "Only one seat on the left side — half the plane gets a private window seat.",
+    fun_fact: "Seated 1-2, so a third of the cabin gets a window and an aisle to itself.",
   },
   "CRJ-200": {
     seats: 50,
@@ -307,8 +303,7 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
     cruise_mph: 488,
     first_flight: 1991,
     engines: "2× GE CF34-3B1",
-    fun_fact:
-      "It's a stretched private jet. Windows are at knee height, ceiling brushes your hair. Comically cramped.",
+    fun_fact: "A stretched Challenger business jet, which is why the windows sit so low.",
   },
   "CRJ-550": {
     seats: 50,
@@ -329,7 +324,7 @@ export const AIRCRAFT_SPECS: Record<string, AircraftSpec> = {
     cruise_mph: 515,
     first_flight: 1999,
     engines: "2× GE CF34-8C",
-    fun_fact: "The first small jet where your carry-on might actually fit in the overhead bin.",
+    fun_fact: "Bigger overhead bins than the CRJ200, so your carry-on might actually fit.",
   },
 };
 

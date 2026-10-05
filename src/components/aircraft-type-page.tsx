@@ -24,12 +24,12 @@ import {
   sheetTypeName,
   stationKey,
 } from "./fleet/pipeline";
-import { PROVIDER_LABEL, ProviderLegend } from "./fleet/providers";
+import { ProviderLegend, providerLabels } from "./fleet/providers";
 import { ShareBarRow, providerCounts } from "./fleet/type-bars";
 import { FlightSearchForm } from "./flight-search-form";
 import type { Link } from "./layout";
 import { EYEBROW, H2, LINK, PANEL, PageHeader, PageShell, StatInline } from "./layout";
-import { fmt, shortDate } from "./ui/format";
+import { capitalize, fmt, shortDate } from "./ui/format";
 
 interface AircraftTypeSibling {
   slug: string;
@@ -89,9 +89,7 @@ function TailMatrix({
   const copy = tenantCopy(data.airline);
   // Where the airline publishes nothing per tail, an unlit square is "no
   // data", never "not checked yet": nobody is going to check it.
-  const labels: Record<WifiProvider, string> = copy.checksEveryTail
-    ? PROVIDER_LABEL
-    : { ...PROVIDER_LABEL, unknown: "No per-aircraft data" };
+  const labels = providerLabels(copy.checksEveryTail ? "tail" : "type");
   return (
     <div
       className="mt-5 border-t border-subtle pt-4"
@@ -142,7 +140,7 @@ function Header({
           <a href={official.url} className={LINK} rel="noopener noreferrer" target="_blank">
             {official.sourceLabel}
           </a>
-          , updated {formatFactDate(official.asOf)}.
+          {`, updated ${formatFactDate(official.asOf)}.`}
         </p>
       )}
       {target?.asOf && (
@@ -172,16 +170,18 @@ function VariantsSection({ data }: { data: AircraftTypePageData }) {
 function PipelineSection({ def, data }: { def: AircraftPageDef; data: AircraftTypePageData }) {
   const p = data.pipeline;
   if (!p) return null;
+  if (
+    p.starlink_complete + p.in_mod + p.verification_needed === 0 &&
+    p.tails.length === 0 &&
+    data.starlink === 0
+  )
+    return null;
   const queued = p.tails.filter((t) => t.state === "scheduled").length;
   const stations = stationKey(p.tails.map((t) => t.mod_location));
   return (
     <section className={CARD}>
       <h2 className={H2_CARD}>{def.short} install pipeline</h2>
-      {sheetComparison(p, data.starlink).map((line) => (
-        <p key={line} className="text-sm text-secondary leading-relaxed">
-          {line}
-        </p>
-      ))}
+      <p className="text-sm text-secondary leading-relaxed">{sheetComparison(p, data.starlink)}</p>
       <PipelineBar
         complete={p.starlink_complete}
         verifying={p.verification_needed}
@@ -197,10 +197,12 @@ function PipelineSection({ def, data }: { def: AircraftPageDef; data: AircraftTy
             const shared = p.rows.filter((o) => sheetTypeName(o.type_code) === name).length > 1;
             return (
               <li key={r.type_code}>
-                {shared ? `${name} (${r.type_code})` : name}: {fmt(r.starlink_complete)} of{" "}
-                {fmt(r.total)} complete
-                {r.in_mod > 0 ? `, ${fmt(r.in_mod)} in mod` : ""}
-                {r.verification_needed > 0 ? `, ${fmt(r.verification_needed)} verifying` : ""}
+                {shared && r.type_code !== name ? `${name} (${r.type_code})` : name}:{" "}
+                {fmt(r.starlink_complete)} of {fmt(r.total)} complete
+                {r.in_mod > 0 ? `, ${fmt(r.in_mod)} being installed` : ""}
+                {r.verification_needed > 0
+                  ? `, ${fmt(r.verification_needed)} awaiting verification`
+                  : ""}
               </li>
             );
           })}
@@ -214,7 +216,7 @@ function PipelineSection({ def, data }: { def: AircraftPageDef; data: AircraftTy
         </div>
       )}
       {p.movements.length > 0 && <MovementsPanel movements={p.movements} anchorBase="/fleet" />}
-      {stations && <p className="text-xs text-muted mt-3">Mod stations: {stations}</p>}
+      {stations && <p className="text-xs text-muted mt-3">Install stations: {stations}</p>}
     </section>
   );
 }
@@ -235,8 +237,11 @@ function RecentSection({ def, data }: { def: AircraftPageDef; data: AircraftType
         ))}
       </ul>
       <p className="text-xs text-muted mt-3">
-        The date we first saw Starlink on each {def.short}, leaving out bulk imports
-        {data.firstSeen ? `. The first was ${shortDate(data.firstSeen.slice(0, 10))}` : ""}.
+        Date we first saw Starlink on each.
+        {data.firstSeen &&
+        !data.recentInstalls.some((r) => r.date.slice(0, 10) === data.firstSeen?.slice(0, 10))
+          ? ` The first ${def.short} was ${shortDate(data.firstSeen.slice(0, 10))}.`
+          : ""}
       </p>
     </section>
   );
@@ -250,7 +255,8 @@ function RoutesSection({ def, data }: { def: AircraftPageDef; data: AircraftType
       <h2 className={H2_CARD}>Where Starlink {def.short}s fly in the next 48 hours</h2>
       <p className="text-sm text-muted mb-3">
         {fmt(departures)} scheduled {departures === 1 ? "departure" : "departures"} on {fmt(pairs)}{" "}
-        {pairs === 1 ? "route" : "routes"}. The busiest:
+        {pairs === 1 ? "route" : "routes"}
+        {data.routes.length < pairs ? ". The busiest:" : "."}
       </p>
       <ul className="text-sm text-secondary grid sm:grid-cols-2 gap-x-4 gap-y-1">
         {data.routes.map((r) => (
@@ -297,7 +303,7 @@ function FlightsSection({
   const caption = starlinkOnly
     ? `Flights that recently had a Starlink ${def.short}.`
     : SHARE_KINDS.has(answer.kind)
-      ? `Flights that often got ${a} ${def.short} in the last 30 days.`
+      ? "Most frequent in the last 30 days."
       : expect === "none"
         ? `Flights that usually get ${a} ${def.short}, so expect no Wi-Fi.`
         : expect
@@ -334,7 +340,7 @@ function FactsSection({ facts, airline }: { facts: RolloutFact[]; airline: strin
             className="text-sm text-secondary leading-relaxed"
           >
             {f.asOf && <span className="text-muted">{formatFactDate(f.asOf)} · </span>}
-            {factText(f)}{" "}
+            {capitalize(factText(f))}{" "}
             <a href={f.source.url} className={LINK} rel="noopener noreferrer" target="_blank">
               {f.source.label}
             </a>
@@ -492,7 +498,6 @@ export default function AircraftTypePage({
         <SiblingsSection siblings={siblings} airline={airline} />
 
         <p className="text-sm text-muted text-center">
-          The aircraft on your flight is what counts.{" "}
           {checkFlight ? (
             <a href="/check-flight" className={LINK}>
               Check your flight →

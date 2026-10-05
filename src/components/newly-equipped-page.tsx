@@ -1,4 +1,5 @@
 import { aircraftName } from "../airlines/aircraft-families";
+import { marketingFlightNumber } from "../airlines/flight-number";
 import { AIRLINES, type SiteConfig } from "../airlines/registry";
 import type { FirstFlight, PerAirlineStat, RecentInstall } from "../types";
 import type { Link } from "./layout";
@@ -15,7 +16,42 @@ interface NewlyEquippedPageProps {
   currentPath?: string;
 }
 
-function InstallRow({ install, first }: { install: RecentInstall; first?: FirstFlight }) {
+const OPERATOR_CASE: Record<string, string> = {
+  skywest: "SkyWest",
+  gojet: "GoJet",
+  commutair: "CommutAir",
+};
+
+/** The operator as a reader names it, or null when it is just the airline the
+ * row is grouped under. Roster strings arrive as FR24 spells them ("Skywest
+ * dba UAX", "SkyWest floater"). */
+export function operatorLabel(raw: string | null, airline: string): string | null {
+  if (!raw || raw === airline) return null;
+  const express = /\s+dba UAX$/i.test(raw);
+  const base = raw.replace(/\s+dba UAX$/i, "").replace(/\s+floater$/i, "");
+  const name = OPERATOR_CASE[base.toLowerCase()] ?? base;
+  if (name === airline) return null;
+  return express ? `${name} (United Express)` : name;
+}
+
+/** "UA3880 MIA → SFO": the marketing number the rest of the site uses, never
+ * the stored ICAO callsign (UAL3880, GJS4616). */
+export function firstFlightLabel(first: FirstFlight): string {
+  const cfg = AIRLINES[first.airline];
+  const fn = cfg ? marketingFlightNumber(cfg, first.flight_number) : first.flight_number;
+  return `${fn} ${first.origin} → ${first.destination}`;
+}
+
+function InstallRow({
+  install,
+  first,
+  airlineName,
+}: {
+  install: RecentInstall;
+  first?: FirstFlight;
+  airlineName: string;
+}) {
+  const operator = operatorLabel(install.OperatedBy, airlineName);
   return (
     <div
       id={install.TailNumber}
@@ -25,9 +61,7 @@ function InstallRow({ install, first }: { install: RecentInstall; first?: FirstF
       <div className="flex items-baseline gap-3 flex-wrap">
         <span className="font-mono text-sm text-accent">{install.TailNumber}</span>
         <span className="text-xs text-secondary">{aircraftName(install.Aircraft)}</span>
-        {install.OperatedBy && (
-          <span className="text-xs text-muted hidden sm:inline">{install.OperatedBy}</span>
-        )}
+        {operator && <span className="text-xs text-muted hidden sm:inline">{operator}</span>}
         <span className="text-xs text-muted tabular-nums ml-auto">
           Found {shortDate(install.DateFound.slice(0, 10))}
         </span>
@@ -37,11 +71,9 @@ function InstallRow({ install, first }: { install: RecentInstall; first?: FirstF
         // the tail equipped, not when the antenna went on, so the true first
         // flight is often unknowable. Same wording the syndicated feed uses.
         <div className="text-xs text-muted mt-1">
-          First observed Starlink flight:{" "}
-          <span className="font-mono text-secondary">
-            {first.flight_number} {first.origin} → {first.destination}
-          </span>{" "}
-          on {monthDay(first.departed_at)}
+          First seen flying Starlink:{" "}
+          <span className="font-mono text-secondary">{firstFlightLabel(first)}</span>,{" "}
+          {monthDay(first.departed_at)}
         </div>
       )}
     </div>
@@ -82,7 +114,7 @@ export default function NewlyEquippedPage({
           </div>
           {grouped.length === 0 ? (
             <p className="text-sm text-muted">
-              No new installs on record right now. Aircraft appear here the day we find them.
+              No new installs yet. Aircraft appear here the day we find them.
             </p>
           ) : (
             grouped.map((g) => (
@@ -98,17 +130,18 @@ export default function NewlyEquippedPage({
                   {g.cfg.name}
                 </div>
                 {g.rows.map((r) => (
-                  <InstallRow key={r.TailNumber} install={r} first={firstFlights[r.TailNumber]} />
+                  <InstallRow
+                    key={r.TailNumber}
+                    install={r}
+                    first={firstFlights[r.TailNumber]}
+                    airlineName={g.cfg.name}
+                  />
                 ))}
               </div>
             ))
           )}
           <p className="text-xs text-muted mt-4">
-            Dates are when we first saw Starlink on the aircraft. Follow the{" "}
-            <a href="/feed.xml" className="text-accent hover:underline">
-              Atom feed
-            </a>{" "}
-            for new installs.
+            Dates are when we first saw Starlink on the aircraft.
             {site.features.methodologyPage && (
               <>
                 {" "}

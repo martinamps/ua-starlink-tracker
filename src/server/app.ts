@@ -12,6 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import React from "react";
 import ReactDOMServer from "react-dom/server";
+import { aircraftName } from "../airlines/aircraft-families";
 import {
   type AircraftAnswer,
   type AircraftPageDef,
@@ -21,6 +22,7 @@ import {
   aircraftTypeFaq,
   aircraftTypeTitle,
   answerFor,
+  answerSummary,
   newestOfficial,
   officialCountFor,
   resolveAircraftSlug,
@@ -130,6 +132,7 @@ import {
   type TypePhase,
   factsHeadline,
 } from "../components/airlines-page";
+import { trackingMethod } from "../components/atoms";
 import { paceWindowSpan } from "../components/charts/rollout-math";
 import CheckFlightPage, {
   type DatedAnswer,
@@ -167,14 +170,24 @@ import { homeHeadline } from "../components/home/headline";
 import LiveTvPage, { liveTvTypeRows } from "../components/live-tv-page";
 import McpPage from "../components/mcp-page";
 import MethodologyPage, { hasMethodology } from "../components/methodology-page";
-import NewlyEquippedPage from "../components/newly-equipped-page";
+import NewlyEquippedPage, {
+  firstFlightLabel,
+  operatorLabel,
+} from "../components/newly-equipped-page";
 import NotFoundPage from "../components/not-found-page";
 import Page, { buildContentStats } from "../components/page";
 import RoutePage from "../components/route-page";
 import RoutePlannerPage from "../components/route-planner-page";
 import RoutesPage from "../components/routes-page";
 import TimelinePage, { getTimeline, hasTimeline } from "../components/timeline-page";
-import { capitalize, coldShare, flightShare, fmt, probPhrase } from "../components/ui/format";
+import {
+  capitalize,
+  coldShare,
+  flightShare,
+  fmt,
+  pct as pctLabel,
+  probPhrase,
+} from "../components/ui/format";
 import {
   DEPARTURE_WINDOW_HOURS,
   PERMALINK_STALE_NOTE_DAYS,
@@ -1681,7 +1694,7 @@ const SITE_PAGES: SitePage[] = [
     priority: "0.7",
     navLabel: "Fleet",
     llmsLine: (h) =>
-      `- [Fleet rollout](https://${h}/fleet) — every aircraft, colored by WiFi provider`,
+      `- [Fleet rollout](https://${h}/fleet) — every aircraft, colored by Wi-Fi provider`,
   },
   {
     path: "/airlines",
@@ -1718,7 +1731,7 @@ const SITE_PAGES: SitePage[] = [
     hasData: hasInstallRate,
     navLabel: "Install pace",
     llmsLine: (h) =>
-      `- [Install Rate Index](https://${h}/install-rate) — observed installs/month vs. the airline's stated targets, with sources`,
+      `- [Install pace](https://${h}/install-rate) — observed installs/month vs. the airline's stated targets, with sources`,
   },
   {
     path: "/embed",
@@ -2321,10 +2334,11 @@ const feedXml: Handler = (ctx) => {
     .map((i) => {
       const name = airlineNames.get(i.airline) ?? i.airline;
       const url = `https://${host}/newly-equipped#${encodeURIComponent(i.TailNumber)}`;
-      const operated = i.OperatedBy ? `, operated by ${i.OperatedBy}` : "";
+      const operator = operatorLabel(i.OperatedBy, name);
+      const operated = operator ? `, operated by ${operator}` : "";
       const ff = firstFlights[i.TailNumber];
       const firstFlightLine = ff
-        ? ` First observed Starlink flight: ${ff.flight_number} ${ff.origin} → ${ff.destination} on ${new Date(ff.departed_at * 1000).toISOString().slice(0, 10)}.`
+        ? ` First seen flying Starlink: ${firstFlightLabel(ff)} on ${new Date(ff.departed_at * 1000).toISOString().slice(0, 10)}.`
         : "";
       // "first observed with", not "joined the fleet on": DateFound is when
       // this tracker found the tail equipped, not when the antenna went on.
@@ -2368,16 +2382,16 @@ const newlyEquippedPage: Handler = (ctx) => {
   );
   const meta: PageMeta = short
     ? {
-        siteTitle: `Which ${short} Aircraft Just Got Starlink? — Newly Equipped Log`,
-        siteDescription: `Every ${cfg.name} aircraft as it joins the Starlink-equipped fleet — tail number, aircraft type, and install date, newest first, with an Atom feed for auto-updates.`,
+        siteTitle: `Which ${short} Aircraft Just Got Starlink? Newly Equipped Log`,
+        siteDescription: `${cfg.name} aircraft newly found with Starlink, newest first: tail, type and date first seen. Atom feed included.`,
         keywords: `${cfg.name.toLowerCase()} new starlink aircraft, ${short.toLowerCase()} starlink installs, ${short.toLowerCase()} starlink rss feed, newly equipped starlink`,
         ogTitle: `Newly Equipped ${short} Starlink Aircraft`,
-        ogDescription: `${cfg.name} aircraft as they join the Starlink-equipped fleet — newest first, with feed subscription.`,
+        ogDescription: `${cfg.name} aircraft newly found with Starlink, newest first.`,
       }
     : {
-        siteTitle: "Which Aircraft Just Got Starlink? — New Installs Across Airlines",
+        siteTitle: "Which Aircraft Just Got Starlink? New Installs Across Airlines",
         siteDescription:
-          "Every tracked aircraft as it joins a Starlink-equipped fleet, across all tracked airlines — tail number, aircraft type, and install date, with an Atom feed for auto-updates.",
+          "Aircraft newly found with Starlink across every tracked airline, newest first: tail, type and date first seen. Atom feed included.",
         keywords:
           "new starlink aircraft, starlink install log, airline starlink rss feed, newly equipped starlink",
         ogTitle: "Newly Equipped Starlink Aircraft",
@@ -2411,9 +2425,19 @@ function asOfLabel(raw: string | null, nowMs: number): string {
 function airlineInstallRate(
   getReader: RequestContext["getReader"],
   cfg: AirlineConfig,
-  nowMs: number
+  nowMs: number,
+  /** The tenant's own page: count over the programme scope its headline and
+   * /fleet use (Alaska with Hawaiian's Airbus fleet), so one page never mixes
+   * that figure with the single-operator one. The hub keeps single-operator
+   * rows, labelled, so no partner tail is counted under two airlines. */
+  tenantScope = false
 ): AirlineInstallRate {
   const r = getReader(cfg.code);
+  const programme = r.getProgrammeHeadline();
+  const own =
+    tenantScope && programme
+      ? { equipped: programme.equipped, total: programme.total }
+      : { equipped: r.countStarlinkPlanes(), total: r.getTotalCount() };
   return {
     code: cfg.code,
     name: cfg.name,
@@ -2425,30 +2449,43 @@ function airlineInstallRate(
     // dating them all with the serving reader's stamp post-dated a stale
     // airline's figures by four months, on the sentence meant to be quoted.
     asOfDate: asOfLabel(r.getLastUpdatedRaw(), nowMs),
+    noun: programme
+      ? tenantScope
+        ? programme.noun
+        : `${cfg.shortName}-operated aircraft`
+      : `${cfg.name} aircraft`,
     stats: computeInstallRate({
       daily: r.getDailyInstalls(),
-      equipped: r.countStarlinkPlanes(),
-      total: r.getTotalCount(),
+      equipped: own.equipped,
+      total: own.total,
       targets: rolloutTargets(cfg.code),
       // A target stated over more than one carrier's fleet ("half the combined
       // Alaska/Hawaiian fleet") resolves against those tenants' summed rosters
       // — BOTH halves of it. Threading only the denominator through here left
       // an AS-only numerator under an AS+HA target and published "107 to go"
       // against a real gap of 65.
+      // A partnered programme (Alaska's) states its multi-carrier targets over
+      // the same scope as its headline, so those targets read that one figure.
       scopeFor: (t) =>
-        t.fractionSpans
+        t.fractionSpans && programme
           ? {
-              equipped: t.fractionSpans.reduce(
-                (sum, code) => sum + getReader(code).countStarlinkPlanes(),
-                0
-              ),
-              total: t.fractionSpans.reduce(
-                (sum, code) => sum + getReader(code).getTotalCount(),
-                0
-              ),
-              label: spanLabel(t.fractionSpans),
+              equipped: programme.equipped,
+              total: programme.total,
+              label: tenantScope ? null : programme.noun,
             }
-          : { equipped: r.countStarlinkPlanes(), total: r.getTotalCount(), label: null },
+          : t.fractionSpans
+            ? {
+                equipped: t.fractionSpans.reduce(
+                  (sum, code) => sum + getReader(code).countStarlinkPlanes(),
+                  0
+                ),
+                total: t.fractionSpans.reduce(
+                  (sum, code) => sum + getReader(code).getTotalCount(),
+                  0
+                ),
+                label: spanLabel(t.fractionSpans),
+              }
+            : { ...own, label: null },
       nowMs,
     }),
   };
@@ -2465,7 +2502,7 @@ function spanLabel(codes: readonly string[]): string | null {
 function installRateAirlines(ctx: RequestContext, nowMs: number): AirlineInstallRate[] {
   const cfg = tenantConfig(ctx.tenant);
   return cfg
-    ? [airlineInstallRate(ctx.getReader, cfg, nowMs)]
+    ? [airlineInstallRate(ctx.getReader, cfg, nowMs, true)]
     : publicAirlines().map((a) => airlineInstallRate(ctx.getReader, a, nowMs));
 }
 
@@ -2478,21 +2515,20 @@ const installRatePage: Handler = (ctx) => {
   const airlines = installRateAirlines(ctx, Date.now());
   const meta: PageMeta = cfg
     ? {
-        siteTitle: `Will ${cfg.shortName} Hit Its Starlink Target? — Install Rate Index`,
-        siteDescription: `How fast ${cfg.name} is actually installing Starlink: observed installs per month, the current pace, and a straight-line projection against the airline's stated targets — with sources.`,
+        siteTitle: `Will ${cfg.shortName} Hit Its Starlink Target? Install Pace`,
+        siteDescription: `${cfg.shortName}'s Starlink installs per month and current pace, against its stated targets, with sources.`,
         keywords: `${cfg.name.toLowerCase()} starlink rollout pace, ${cfg.shortName.toLowerCase()} starlink target, when will ${cfg.shortName.toLowerCase()} finish starlink, starlink install rate`,
         ogTitle: `Will ${cfg.shortName} Hit Its Starlink Target?`,
-        ogDescription: `${cfg.name}'s observed Starlink install pace vs. its stated rollout targets, updated continuously.`,
+        ogDescription: `${cfg.shortName}'s Starlink install pace against its stated targets.`,
       }
     : {
-        siteTitle: "Starlink Install Rate Index — Which Airline Is Installing Fastest?",
+        siteTitle: "Airline Starlink Install Pace vs. Stated Targets",
         siteDescription:
-          "Observed Starlink installs per month for every tracked airline, the current pace, and straight-line projections against each airline's stated rollout targets — with sources.",
+          "Starlink installs per month for every tracked airline and the current pace, against each airline's stated targets, with sources.",
         keywords:
           "starlink install rate, airline starlink rollout pace, starlink rollout targets, which airline installs starlink fastest",
-        ogTitle: "Starlink Install Rate Index",
-        ogDescription:
-          "Every tracked airline's observed Starlink install pace vs. its stated targets.",
+        ogTitle: "Airline Starlink Install Pace",
+        ogDescription: "Every tracked airline's Starlink install pace against its stated targets.",
       };
   return renderSubPage(ctx, InstallRatePage, "/install-rate", meta, {
     airlines,
@@ -2798,14 +2834,14 @@ function subPageMeta(
   // starlink" belongs to the United site, which the hub used to outrank.
   const fleetTitle = cfg
     ? `Which ${short} Planes Have Starlink? Fleet List by Tail`
-    : "Airline Fleets with Starlink — Every Tracked Plane by Tail";
+    : "Airline Fleets with Starlink: Every Tracked Plane by Tail";
   const fleetOf = cfg ? `${name} plane` : "plane from every tracked airline";
   return {
     siteTitle: fleetTitle,
-    siteDescription: `Every ${fleetOf} by type and tail, colored by Wi-Fi provider: which have Starlink, which types still lack it, and how many are flying now.`,
+    siteDescription: `Every ${fleetOf} by type and tail, with its Wi-Fi provider and whether it has Starlink.`,
     keywords: `${name} fleet wifi map, starlink by tail number, aircraft wifi provider, ${short.toLowerCase()} starlink fleet`,
     ogTitle: cfg ? `Which ${short} Planes Have Starlink?` : "Airline Fleets with Starlink",
-    ogDescription: "Every tail number, colored by WiFi provider — Starlink vs legacy systems.",
+    ogDescription: "Every tail number, colored by Wi-Fi provider.",
   };
 }
 
@@ -3420,7 +3456,7 @@ function fleetItemListJsonLd(
         return {
           "@type": "ListItem",
           position: i + 1,
-          name: `${f.family} — ${f.starlink} of ${f.total} Starlink`,
+          name: `${aircraftName(f.family)}: ${f.starlink} of ${f.total} with Starlink`,
           ...(slug ? { url: `https://${ctx.site.canonicalHost}/fleet/${slug}` } : {}),
         };
       })
@@ -3432,7 +3468,7 @@ function fleetItemListJsonLd(
   return jsonLdBlock({
     "@context": "https://schema.org",
     "@type": "ItemList",
-    name: `${subject} fleet by WiFi provider`,
+    name: `${subject} fleet by Wi-Fi provider`,
     numberOfItems: useFamilies ? families.length : data.allTails.length,
     itemListElement,
   });
@@ -3458,6 +3494,8 @@ const fleetPage: Handler = (ctx) => {
       shareCard: resolveShareCard(ctx.site.scope),
       cite: citeStat(ctx),
       typeLinks,
+      installRateHref:
+        ctx.site.features.installRatePage && hasInstallRate(ctx) ? "/install-rate" : null,
     }
   );
 };
@@ -3526,7 +3564,7 @@ function aircraftTypeMeta(
   const p = data.pipeline;
   const pending = p
     ? [
-        p.in_mod > 0 ? `${p.in_mod} more in mod` : "",
+        p.in_mod > 0 ? `${p.in_mod} more being installed` : "",
         p.verification_needed > 0 ? `${p.verification_needed} awaiting verification` : "",
       ].filter(Boolean)
     : [];
@@ -3534,7 +3572,7 @@ function aircraftTypeMeta(
     SHARE_KINDS.has(answer.kind) && pending.length > 0
       ? ` ${pending.join(" and ")} per the United fleet progress sheet.`
       : "";
-  const description = `${answer.headline} ${answer.sentence}${pipelineClause} Every tail, where they fly, and how to check your flight.`;
+  const description = `${answerSummary(data, def, answer)}${pipelineClause} See every tail and where they fly.`;
   const breadcrumb = jsonLdBlock(
     breadcrumbJsonLd(ctx.site.canonicalHost, [
       { name: "Home", path: "/" },
@@ -3799,8 +3837,8 @@ const timelinePage: Handler = (ctx) => {
     TimelinePage,
     "/timeline",
     {
-      siteTitle: `${cfg.shortName} Starlink Rollout Timeline — Every Milestone, Dated`,
-      siteDescription: `The ${cfg.name} Starlink rollout, milestone by milestone: from the first flight in ${first.date.slice(0, 4)} to ${starlinkCount.toLocaleString("en-US")} equipped aircraft today, plus the airline's stated targets — each dated and sourced.`,
+      siteTitle: `${cfg.shortName} Starlink Rollout Timeline: Every Milestone, Dated`,
+      siteDescription: `${cfg.shortName}'s Starlink rollout, dated and sourced, from ${formatFactDate(first.date)} to ${starlinkCount.toLocaleString("en-US")} aircraft with Starlink today, plus ${cfg.shortName}'s stated targets.`,
       keywords: `${cfg.name.toLowerCase()} starlink rollout, ${cfg.shortName.toLowerCase()} starlink timeline, when will ${cfg.shortName.toLowerCase()} have starlink, ${cfg.shortName.toLowerCase()} starlink schedule`,
       ogTitle: `${cfg.shortName} Starlink Rollout Timeline`,
       ogDescription: `Every dated milestone in the ${cfg.name} Starlink rollout, plus stated targets and the live equipped-aircraft count.`,
@@ -3813,7 +3851,7 @@ const timelinePage: Handler = (ctx) => {
         itemListElement: timeline.milestones.map((m, i) => ({
           "@type": "ListItem",
           position: i + 1,
-          name: `${m.date} — ${m.title}`,
+          name: `${m.date}: ${m.title}`,
         })),
       }),
     },
@@ -3957,7 +3995,22 @@ function airlineOverview(
     cfg,
     stat: getReader(cfg.code).getPerAirlineStats()[0],
     trackerHost: siteForAirline(cfg.code, true)?.canonicalHost ?? null,
+    scopeNote: programmeScopeNote(getReader, cfg),
   };
+}
+
+/** The hub counts each airline's own aircraft so no partner tail is counted
+ * twice; where the airline itself reports a wider scope (Alaska with Hawaiian's
+ * Airbus fleet), one line says so and gives that figure. */
+function programmeScopeNote(
+  getReader: RequestContext["getReader"],
+  cfg: AirlineConfig
+): string | null {
+  const partners = cfg.programmePartners?.partners ?? [];
+  const p = partners.length > 0 ? getReader(cfg.code).getProgrammeHeadline() : null;
+  if (!p || p.total === 0) return null;
+  const with_ = partners.map((x) => x.label).join(" and ");
+  return `${cfg.shortName}'s count is ${cfg.shortName}-operated aircraft only. With ${with_} aircraft, as ${cfg.shortName} counts: ${fmt(p.equipped)} of ${fmt(p.total)} (${pctLabel(p.equipped, p.total)}).`;
 }
 
 /** "a" or "an" for an airline's short name. English picks by sound, not
@@ -3985,8 +4038,13 @@ function trackedFlightLinks(): TrackedLink[] {
 
 const airlinesIndexPage: Handler = (ctx) => {
   const overviews = hubContentAirlines().map((cfg) => airlineOverview(ctx.getReader, cfg));
-  const names = overviews.map((o) => o.cfg.name);
-  const rosterCount = contentOnlyFacts().length;
+  const named = (method: ReturnType<typeof trackingMethod>) =>
+    overviews.filter((o) => trackingMethod(o.cfg) === method).map((o) => o.cfg.shortName);
+  const perPlane = named("tail").join(" and ");
+  const byType = named("type").join(" and ");
+  const roster = contentOnlyFacts();
+  const others = roster.filter((e) => e.status !== "not_starlink").length;
+  const negatives = roster.length - others;
   // "Which airlines have Starlink" is the hub HOMEPAGE's query — titling this
   // page for it too would cannibalize it, so this one takes the list angle.
   return renderSubPage(
@@ -3994,12 +4052,12 @@ const airlinesIndexPage: Handler = (ctx) => {
     AirlinesIndexPage,
     "/airlines",
     {
-      siteTitle: "Starlink WiFi by Airline — Full List & Rollout Comparison",
-      siteDescription: `The full list of airlines with Starlink Wi-Fi: ${names.join(", ")} tracked live, plus ${rosterCount} more rollouts and the airlines that chose something else, every status dated and sourced.`,
+      siteTitle: "Starlink Wi-Fi by Airline: Full List & Rollout Comparison",
+      siteDescription: `Every airline with Starlink Wi-Fi: ${perPlane} tracked plane by plane${byType ? `, ${byType} by aircraft type` : ""}, plus ${others} more rollouts and ${negatives} airlines that chose something else.`,
       keywords:
         "starlink wifi airlines list, airlines with starlink, airline starlink comparison, starlink rollout by airline, airlines without starlink",
-      ogTitle: "Starlink WiFi by Airline — Full List & Comparison",
-      ogDescription: `Every Starlink rollout compared — ${names.join(", ")} tracked live, plus dated, sourced status for every announced program and notable holdout.`,
+      ogTitle: "Starlink Wi-Fi by Airline: Full List & Comparison",
+      ogDescription: `Starlink rollouts compared by airline: live counts for ${perPlane}, dated status for everyone else.`,
     },
     { airlines: overviews, roster: contentOnlyFacts(), comparisons: compareLinks(ctx) },
     200,
@@ -4034,10 +4092,9 @@ function factsTitle(entry: AirlineFactsEntry): string {
 
 function factsPageMeta(entry: AirlineFactsEntry): PageMeta {
   const short = entry.shortName.toLowerCase();
-  const stamp = factsStamp(entry);
   return {
     siteTitle: factsTitle(entry),
-    siteDescription: `${entry.summary} Every claim dated and sourced — ${stamp.label} ${formatFactDate(stamp.date)}.`,
+    siteDescription: entry.summary,
     keywords: `${entry.name.toLowerCase()} starlink, does ${short} have starlink, ${short} starlink wifi, ${short} wifi`,
     ogTitle: factsHeadline(entry),
     ogDescription: entry.summary,
@@ -4090,15 +4147,15 @@ const airlineDetailPage: Handler = (ctx) => {
         // Comparison-hub framing — avoid "<airline> starlink tracker" titles that
         // cannibalize the live brand host on brand SERPs.
         siteTitle: indexable
-          ? `${cfg.name} Starlink Tracker: Which Planes Have WiFi`
-          : `${cfg.name} Starlink on the Hub — See the Full Tracker for Flight Checks`,
+          ? `Does ${cfg.shortName} Have Starlink? By Aircraft Type`
+          : `${cfg.name} Starlink Rollout`,
         siteDescription: indexable
-          ? `Where the ${cfg.name} Starlink rollout stands beside other carriers: ${cfg.rollout.phaseNote} Fleet counts and percent equipped, updated continuously.`
-          : `Hub snapshot of the ${cfg.name} Starlink rollout (${cfg.rollout.phaseNote}). For flight checks and the live tracker, use ${liveTracker!.canonicalHost}.`,
+          ? `${cfg.name} Starlink by aircraft type. ${cfg.rollout.phaseNote}`
+          : `${cfg.rollout.phaseNote} Check a flight at ${liveTracker!.canonicalHost}.`,
         keywords: indexable
           ? `${cfg.name.toLowerCase()} starlink rollout, ${cfg.shortName.toLowerCase()} starlink compared, airlines with starlink wifi`
           : `${cfg.name.toLowerCase()} starlink compared, ${cfg.shortName.toLowerCase()} starlink hub`,
-        ogTitle: `${cfg.name} Starlink — Hub Comparison Snapshot`,
+        ogTitle: `${cfg.name} Starlink Rollout`,
         ogDescription: cfg.rollout.phaseNote,
         ...(indexable ? {} : { robotsMeta: "noindex, follow" }),
       },
@@ -4252,6 +4309,7 @@ function buildCompareSide(ctx: RequestContext, cfg: AirlineConfig): CompareSide 
       typeProgress !== null &&
       isGuideStale(reader.getMeta(COMMUNITY_SOURCE_UPDATED_META), Date.now()),
     facts: factsForCode(cfg.code),
+    scopeNote: phases || typeProgress ? null : programmeScopeNote(ctx.getReader, cfg),
     checkFlightUrl: liveSite?.features.checkFlightPage
       ? `https://${liveSite.canonicalHost}/check-flight`
       : null,
@@ -4294,11 +4352,11 @@ const comparePage: Handler = (ctx) => {
     ComparePage,
     canonicalPath,
     {
-      siteTitle: `${vs}: Which Has More Starlink WiFi?`,
-      siteDescription: `${first.name} vs ${second.name} on Starlink WiFi — live install counts, percent of fleet equipped, per-fleet-group rates, and rollout timelines side by side, from tail-level tracking data.`,
+      siteTitle: `${vs}: Which Has More Starlink Wi-Fi?`,
+      siteDescription: `${first.name} vs ${second.name}: how many aircraft have Starlink and where each rollout stands, side by side.`,
       keywords: `${vs.toLowerCase()} starlink, ${vs.toLowerCase()} wifi, ${first.shortName.toLowerCase()} or ${second.shortName.toLowerCase()} starlink, ${first.name.toLowerCase()} vs ${second.name.toLowerCase()}`,
-      ogTitle: `${vs}: Starlink WiFi Compared`,
-      ogDescription: `Live install counts and rollout status for ${first.name} and ${second.name}, side by side.`,
+      ogTitle: `${vs}: Starlink Wi-Fi Compared`,
+      ogDescription: `Starlink counts and rollout status for ${first.name} and ${second.name}, side by side.`,
     },
     { left, right },
     200,

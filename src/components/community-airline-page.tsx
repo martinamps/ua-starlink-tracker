@@ -62,8 +62,8 @@ export function TypeShareTable({
       <Eyebrow className="mb-1">By aircraft type</Eyebrow>
       {!compact && (
         <p className="text-xs text-muted leading-relaxed mb-2">
-          Your booking shows the aircraft type — the best guide until the plane is assigned about
-          two days out. On a 777, check whether it is the -300ER or -200ER.
+          Until a plane is assigned (about two days out), your booking's aircraft type is the best
+          guide. On a 777, check -300ER vs -200ER.
         </p>
       )}
       {types.map((t) => {
@@ -96,7 +96,7 @@ function tailChip(t: FleetGuideTail, stale: boolean): Chip {
   if (!t.inRoster) return { text: "Not in current fleet", tone: "text-muted" };
   if (t.delisted) return { text: "Delisted — recheck", tone: "text-warn" };
   if (stale && (t.mark === "legacy" || t.mark === "none")) {
-    return { text: "Not listed then — may have it now", tone: "text-muted" };
+    return { text: "Not marked", tone: "text-muted" };
   }
   switch (t.mark) {
     case "starlink":
@@ -226,10 +226,7 @@ export function CommunityAirlinePage({
   const official = facts?.facts.find((f) => f.asOf);
   return (
     <PageShell site={site} pageLinks={pageLinks} currentPath={currentPath}>
-      <PageHeader
-        title={`Does my ${cfg.name} flight have Starlink?`}
-        dek={`${cfg.rollout.statusLabel} — ${cfg.rollout.phaseNote}`}
-      />
+      <PageHeader title={`${cfg.name} Starlink Wi-Fi`} dek={cfg.rollout.phaseNote} />
       <section className={SECTION}>
         <Panel>
           <div className="flex items-center justify-between gap-2 mb-3">
@@ -256,7 +253,7 @@ export function CommunityAirlinePage({
               >
                 {official.source.label}
               </a>
-              . The guide trails installs, so read every count here as a floor.
+              .
             </p>
           )}
           {types.length > 0 && <TypeShareTable types={types} stale={stale} />}
@@ -293,15 +290,13 @@ export function CommunityAirlinePage({
               {guideDate ? ` as of ${guideDate}` : ""}. The fleet roster is from FlightRadar24.
             </p>
             <p className="text-sm text-muted leading-relaxed">
-              Community-curated — not verified against {cfg.verifySite}. A Starlink mark in the
-              guide reads as "likely" here, never "verified", and an aircraft the guide doesn't mark
-              is unknown, not a no.
+              Community-curated, not checked against {cfg.verifySite}. Counts are floors: aircraft
+              the guide doesn't mark may have Starlink.
             </p>
             {stale && (
               <p className="text-sm text-warn leading-relaxed mt-2">
-                Our copy of the guide is over {GUIDE_MARK_TTL_DAYS} days old. Its Starlink marks
-                still stand (a retrofit isn't removed), but recent installs are missing, so an
-                aircraft it doesn't mark may well have Starlink now.
+                Our copy of the guide is over {GUIDE_MARK_TTL_DAYS} days old, so recent installs are
+                missing.
                 {target && (
                   <>
                     {" "}
@@ -345,6 +340,6 @@ export function communityPageDescription(
   const label = cfg.communitySource?.label ?? "community fleet guide";
   // No type list: with real counts it always ran past the meta clamp.
   return total > 0
-    ? `At least ${equipped} of ${total} ${cfg.name} jets have Starlink per the ${label}${date}. Check your flight, aircraft type or tail.`
+    ? `At least ${equipped} of ${total} ${cfg.name} aircraft have Starlink per the ${label}${date}. Check your flight, aircraft type or tail.`
     : cfg.brand.description;
 }

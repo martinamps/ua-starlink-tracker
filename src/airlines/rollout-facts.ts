@@ -61,6 +61,10 @@ interface RolloutFactBase {
   /** Verbatim excerpt of `fact` a type page renders instead of the whole
    * claim, for facts whose other clauses are about a different fleet. */
   pageText?: string;
+  /** A later fact replaces this one's figures (a revised target, a plan
+   * overtaken by events). Airline and type pages drop it so two answers never
+   * sit side by side; /timeline keeps the dated record. */
+  superseded?: true;
 }
 
 /** A claim the source itself dates. Only these move the page's lastmod. */
@@ -132,8 +136,10 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
       "Starlink active on more than 560 aircraft per United's September 2026 release; targeting more than 880 by the end of 2026 (per its October 2026 posts on X) and the full fleet by the end of 2027.",
     facts: [
       {
-        fact: "Starlink is installed on 450 United mainline and United Express aircraft, per United's Q2 2026 results release; the airline expects nearly 1,000 by the end of 2026 and says it remains on track to bring Starlink to the whole fleet by the end of 2027.",
+        fact: "Starlink is on 450 United mainline and United Express aircraft; the airline expects nearly 1,000 by the end of 2026 and says it remains on track to bring Starlink to the whole fleet by the end of 2027.",
         asOf: "2026-07-15",
+        // The Oct 3 post cut "nearly 1,000" to "more than 880".
+        superseded: true,
         source: {
           label: "United Q2 2026 results (PR Newswire)",
           url: "https://www.prnewswire.com/news-releases/united-posts-q2-results-above-wall-street-expectations-and-raises-full-year-2026-adjusted-eps-guidance-despite-a-nearly-6-billion-increase-in-anticipated-fuel-costs-302826793.html",
@@ -143,7 +149,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
       {
         // The whole-fleet-by-2027 clause lives on fact 1: it is in the Q2
         // release, not this one.
-        fact: "United's first Starlink-equipped widebody entered transatlantic service in June 2026 — the first of nearly 60 United widebody aircraft expected to have Starlink during the year — with the entire widebody fleet expected to be outfitted by the following summer.",
+        fact: "United's first Starlink widebody entered transatlantic service in June 2026, the first of nearly 60 United widebody aircraft expected to have Starlink during the year. The entire widebody fleet is expected to have it by the following summer.",
         asOf: "2026-06-22",
         source: {
           label: "United press release (PR Newswire)",
@@ -152,7 +158,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         aircraftPages: ["777", "787", "767"],
       },
       {
-        fact: "Starlink is now active on more than 560 United mainline and United Express aircraft, per United's September 17, 2026 release. United says live TV streaming on seatback screens is on more than 220 Starlink-equipped mainline aircraft, with plans to reach 700 mainline planes early next year, and that it expects to complete Starlink installations before the end of 2027.",
+        fact: "Starlink is now active on more than 560 United mainline and United Express aircraft. United says live TV streaming on seatback screens is on more than 220 Starlink-equipped mainline aircraft, with plans to reach 700 mainline planes early next year, and that it expects to complete Starlink installations before the end of 2027.",
         asOf: "2026-09-17",
         source: {
           label: "United press release (PR Newswire)",
@@ -162,10 +168,12 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
       {
         // Supersedes the "nearly 1,000 by year end" in the Q2 release (fact 1),
         // which stays as the dated record of the earlier goal.
-        fact: "United now says it will have more than 880 aircraft equipped with Starlink by the end of 2026, and expects the entire fleet to have Starlink by the end of 2027.",
+        fact: "United says it will have more than 880 aircraft with Starlink by the end of 2026, and the whole fleet by the end of 2027.",
+        pageText:
+          "more than 880 aircraft with Starlink by the end of 2026, and the whole fleet by the end of 2027.",
         asOf: "2026-10-03",
         source: {
-          label: "@united on X, Oct 3, 2026",
+          label: "@united on X",
           url: "https://x.com/united/status/2106516734148562984",
         },
         aircraftPages: ["*"],
@@ -179,7 +187,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     iata: "AS",
     trackedCode: "AS",
     status: "installing",
-    statusLabel: "Installing",
+    statusLabel: "Installing (regional done)",
     summary:
       "More than 40% of the Alaska Air Group fleet had Starlink as of the September 29, 2026 investor day, including every Alaska regional aircraft and Hawaiian's long-haul fleet. Alaska mainline has barely started: 12 737-8 MAX connected, with the announced E175, 737, and 787 program targeted to finish in early 2027. Free for Atmos Rewards members via T-Mobile.",
     facts: [
@@ -230,7 +238,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
       {
         // Alaska's own tracker, refreshed monthly — the dateline is the chart's
         // "last updated" stamp, so a later refresh means a new fact, not an edit.
-        fact: "Alaska's Starlink installation tracker, last updated Sept. 25, 2026, shows 38% of aircraft equipped: all 93 Embraer 175s, all 18 Airbus A321-200neo and all 24 Airbus A330 aircraft, plus 12 Boeing 737-8 MAX with 8 more pending. No Boeing 737-800, 737-900, 737-9 MAX or Boeing 787 was connected yet.",
+        fact: "Alaska's Starlink installation tracker shows 38% of aircraft equipped: all 93 Embraer 175s, all 18 Airbus A321-200neo and all 24 Airbus A330 aircraft, plus 12 Boeing 737-8 MAX with 8 more pending. No Boeing 737-800, 737-900, 737-9 MAX or Boeing 787 was connected yet.",
         asOf: "2026-09-25",
         source: {
           label: "Alaska Airlines newsroom — Starlink tracker",
@@ -256,12 +264,12 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     iata: "HA",
     trackedCode: "HA",
     status: "complete",
-    statusLabel: "Airbus fleet done",
+    statusLabel: "Complete (Airbus fleet)",
     summary:
-      "Every A330 and A321neo has had free Starlink since September 2024 — Hawaiian was the first major U.S. carrier to debut Starlink and the first major airline to offer it at no cost. The 787-9s are next in line; Hawaiian does not plan to offer connectivity on its 717 interisland jets.",
+      "Every A330 and A321neo has had free Starlink since September 2024. Hawaiian was the first major U.S. carrier to debut Starlink and the first major airline to offer it at no cost. It does not plan to offer connectivity on its 717 interisland jets.",
     facts: [
       {
-        fact: "Hawaiian completed Starlink installation across its 24 A330s, having become the first major U.S. carrier to debut Starlink in February 2024 on its A321neos — and, per the same release, the first major airline to offer travelers Starlink at no cost.",
+        fact: "Hawaiian completed Starlink installation across its 24 A330s, having become the first major U.S. carrier to debut Starlink in February 2024 on its A321neos. Per the same release, it was also the first major airline to offer travelers Starlink at no cost.",
         asOf: "2024-09-24",
         source: {
           label: "Hawaiian Airlines newsroom (Alaska Air Group)",
@@ -269,8 +277,11 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         },
       },
       {
-        fact: "With the A321neos and A330-200s done, the Boeing 787-9 fleet is next in line for installation. Hawaiian's only other type is the Boeing 717, and the airline does not plan to offer connectivity on those aircraft — they fly short interisland routes.",
+        fact: "With the A321neos and A330-200s done, the Boeing 787-9 fleet is next in line for installation. Hawaiian's only other type is the Boeing 717, and the airline does not plan to offer connectivity on those aircraft, which fly short interisland routes.",
         asOf: "2025-08-20",
+        // Hawaiian's 787s now fly for Alaska, so "next in line" no longer
+        // describes this airline.
+        superseded: true,
         source: {
           label: "One Mile at a Time",
           url: "https://onemileatatime.com/news/hawaiian-airlines-free-starlink-wi-fi/",
@@ -301,9 +312,9 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     iata: "QR",
     trackedCode: "QR",
     status: "installing",
-    statusLabel: "Widebodies nearly done",
+    statusLabel: "Mostly done (widebodies)",
     summary:
-      "150 Starlink widebodies as of August 2026 — the completed 777, A350, and 787-8 programmes plus the world's first 787-9 — with the 787 programme finishing by the end of 2026. The A330s and A380s are not in the announced programme and Qatar has not said whether they ever will be.",
+      "150 Starlink widebodies as of August 2026: the finished 777, A350 and 787-8 programmes plus the world's first 787-9. The 787 programme is due to finish by the end of 2026. The A330s and A380s are not in the announced programme, and Qatar has not said whether they will be.",
     facts: [
       {
         fact: "Qatar Airways reached 150 Starlink-equipped widebodies, including the world's first Starlink-equipped Boeing 787-9 and the completed 787-8 sub-fleet, and remains on track to finish the 787 rollout by the end of 2026. The 777 programme was completed in nine months and the A350 programme in eight.",
@@ -314,7 +325,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         },
       },
       {
-        fact: "Starlink is deployed across the Boeing 777, Airbus A350, and Boeing 787-8 fleets. Qatar Airways has not confirmed whether its remaining widebodies — the Airbus A330s and A380s — will receive it. Complimentary Wi-Fi runs the whole journey via Privilege Club authentication or enrolment, though gate-to-gate access can be unavailable at some airports for local regulatory reasons.",
+        fact: "Starlink is deployed across the Boeing 777, Airbus A350, and Boeing 787-8 fleets. Qatar Airways has not confirmed whether its remaining widebodies, the Airbus A330s and A380s, will receive it. Complimentary Wi-Fi runs the whole journey via Privilege Club authentication or enrolment, though gate-to-gate access can be unavailable at some airports for local regulatory reasons.",
         asOf: "2026-08-27",
         source: {
           label: "Travel Tomorrow",
@@ -380,7 +391,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     aliases: ["austrian", "swiss"],
     facts: [
       {
-        fact: "Lufthansa operated its first Starlink flight on August 19, 2026 — A320neo D-AINM on LH234 Frankfurt–Rome — with up to ten more A320-family aircraft planned for 2026 and a group-wide rollout to some 850 aircraft by 2029. Access is free for Miles & More members and Travel ID users.",
+        fact: "Lufthansa operated its first Starlink flight on August 19, 2026 (A320neo D-AINM on LH234 Frankfurt–Rome), with up to ten more A320-family aircraft planned for 2026 and a group-wide rollout to some 850 aircraft by 2029. Access is free for Miles & More members and Travel ID users.",
         asOf: "2026-08-19",
         source: {
           label: "Lufthansa Group newsroom",
@@ -430,9 +441,9 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     // Five aircraft out of a fleet of 300-plus, with installs stopped: the
     // derived "Yes — Rollout Under Way" is the wrong answer for all but a
     // rounding error of BA passengers. Same call as Southwest and Lufthansa.
-    headline: "Does British Airways Have Starlink? Barely — Installs Paused",
+    headline: "Does British Airways Have Starlink? On 5 Aircraft — Installs Paused",
     summary:
-      "British Airways equipped just five aircraft before pausing installs in June 2026; they are expected to resume in October 2026, and Starlink is free in every cabin where it is fitted. The IAG deal (announced November 2025) covers 500+ aircraft, including sister airlines Aer Lingus and Iberia, which have their own pages.",
+      "British Airways equipped five aircraft before pausing installs in June 2026; they are expected to resume in October 2026, and Starlink is free in every cabin on equipped aircraft. The IAG deal (announced November 2025) covers 500+ aircraft, including Aer Lingus and Iberia.",
     aliases: ["british-airways", "vueling", "level"],
     facts: [
       {
@@ -440,7 +451,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         // Runway Girl article no client can open, and it does not survive
         // checking: IAG's release says nothing about pricing or cabins at all.
         // The free-in-every-cabin promise is British Airways' own, below.
-        fact: "IAG announced a partnership to implement Starlink-enabled high-speed Wi-Fi on Aer Lingus, British Airways, Iberia, LEVEL and Vueling aircraft — more than 500 across the group — with the first aircraft due to go live in early 2026.",
+        fact: "IAG announced a partnership to implement Starlink-enabled high-speed Wi-Fi on Aer Lingus, British Airways, Iberia, LEVEL and Vueling aircraft, more than 500 across the group, with the first aircraft due to go live in early 2026.",
         asOf: "2025-11-06",
         // IAG publishes press notices only as PDFs — iairgroup.com's
         // /press-releases/2025/iag-announces-strategic-investment-in-wifi/ 302s
@@ -455,7 +466,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         },
       },
       {
-        fact: "British Airways says Starlink is available to all customers, in every cabin, free of charge, and that its entire fleet of more than 300 aircraft will have it within two years — covering its long-haul and short-haul fleets but excluding BA Cityflyer.",
+        fact: "British Airways says Starlink is available to all customers, in every cabin, free of charge, and that its entire fleet of more than 300 aircraft will have it within two years, covering its long-haul and short-haul fleets but excluding BA Cityflyer.",
         asOf: "2026-03-19",
         source: {
           label: "British Airways media centre",
@@ -471,7 +482,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         },
       },
       {
-        fact: "British Airways paused Starlink installations after equipping just five aircraft — G-ZBJA, G-ZBJI, G-ZBJJ, G-ZBJK and G-ZBJM — since the rollout began in March 2026. The airline says installations are expected to resume in October 2026 after the busy summer season, because the programme is aligned with scheduled maintenance, and that the technology will reach its whole fleet of more than 300 aircraft over roughly two years.",
+        fact: "British Airways paused Starlink installations after equipping just five aircraft (G-ZBJA, G-ZBJI, G-ZBJJ, G-ZBJK and G-ZBJM) since the rollout began in March 2026. The airline says installations are expected to resume in October 2026 after the busy summer season, because the programme is aligned with scheduled maintenance, and that the technology will reach its whole fleet of more than 300 aircraft over roughly two years.",
         asOf: "2026-06-07",
         source: {
           label: "Simple Flying",
@@ -501,7 +512,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         },
       },
       {
-        fact: "IAG announced a partnership to implement Starlink-enabled high-speed Wi-Fi on Aer Lingus, British Airways, Iberia, LEVEL and Vueling aircraft — more than 500 across the group — with the first aircraft due to go live in early 2026.",
+        fact: "IAG announced a partnership to implement Starlink-enabled high-speed Wi-Fi on Aer Lingus, British Airways, Iberia, LEVEL and Vueling aircraft, more than 500 across the group, with the first aircraft due to go live in early 2026.",
         asOf: "2025-11-06",
         source: {
           label: "Head for Points (reporting IAG's 6 November 2025 release)",
@@ -543,7 +554,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         },
       },
       {
-        fact: "IAG announced a partnership to implement Starlink-enabled high-speed Wi-Fi on Aer Lingus, British Airways, Iberia, LEVEL and Vueling aircraft — more than 500 across the group — with the first aircraft due to go live in early 2026.",
+        fact: "IAG announced a partnership to implement Starlink-enabled high-speed Wi-Fi on Aer Lingus, British Airways, Iberia, LEVEL and Vueling aircraft, more than 500 across the group, with the first aircraft due to go live in early 2026.",
         asOf: "2025-11-06",
         source: {
           label: "Head for Points (reporting IAG's 6 November 2025 release)",
@@ -558,9 +569,9 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     shortName: "Air France",
     iata: "AF",
     status: "installing",
-    statusLabel: "Majority done",
+    statusLabel: "Mostly done",
     summary:
-      "Nearly 60% of the fleet had Starlink installed as of June 2026, with the rollout due to complete by the end of 2026. Free in every cabin with a Flying Blue login.",
+      "Nearly 60% of the fleet had Starlink as of June 2026, with the rollout due to complete by the end of 2026. Free in every cabin with a Flying Blue login.",
     facts: [
       {
         fact: "Nearly 60% of Air France's fleet has Starlink installed, with the airline hoping to complete the rollout by the end of 2026.",
@@ -583,7 +594,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         // automated client clears (the path is right — a Wayback capture proves
         // the page exists — it is bot-blocked, not dead). This is the same Air
         // France release carried verbatim on a wire that is readable.
-        fact: "Air France chose Starlink for its onboard Wi-Fi, offering it completely free of charge in all travel cabins, accessible by logging into a Flying Blue account — which customers without one can create onboard in a few clicks, free.",
+        fact: "Air France chose Starlink for its onboard Wi-Fi, offering it completely free of charge in all travel cabins, accessible by logging into a Flying Blue account, which customers without one can create onboard in a few clicks, free.",
         asOf: "2024-09-27",
         source: {
           label: "Air France press release (WebWire)",
@@ -606,7 +617,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
       "All 81 A320neos equipped as of September 1, 2026, six months after the March 24, 2026 launch, with the remaining aircraft types to follow. Free gate-to-gate for EuroBonus members.",
     facts: [
       {
-        fact: "SAS went live with Starlink on March 24, 2026 — the first airline in Europe to introduce it on an Airbus A320 — rolling out across the A320 fleet first, with additional aircraft types to follow later in the year subject to regulatory approvals.",
+        fact: "SAS went live with Starlink on March 24, 2026, the first airline in Europe to introduce it on an Airbus A320, rolling out across the A320 fleet first, with additional aircraft types to follow later in the year subject to regulatory approvals.",
         asOf: "2026-03-24",
         source: {
           label: "SAS Group press release",
@@ -642,10 +653,10 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     status: "installing",
     statusLabel: "Installing",
     summary:
-      "The 100th equipped 737 was celebrated in October 2025 — the world's largest Starlink-equipped 737 fleet — with 787 installs due to finish by the end of 2026. Free for WestJet Rewards members via TELUS.",
+      "100 aircraft equipped by October 2025, the world's largest Starlink 737 fleet; 787 installs are due to finish by the end of 2026. Free for WestJet Rewards members via TELUS.",
     facts: [
       {
-        fact: "WestJet equipped its 100th aircraft with Wi-Fi presented by TELUS and powered by Starlink — the world's largest fleet of Starlink-equipped 737s — free for WestJet Rewards members.",
+        fact: "WestJet equipped its 100th aircraft with Wi-Fi presented by TELUS and powered by Starlink, the world's largest fleet of Starlink-equipped 737s, free for WestJet Rewards members.",
         asOf: "2025-10-09",
         source: {
           label: "WestJet media room",
@@ -672,7 +683,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     status: "installing",
     statusLabel: "A350 fleet done",
     summary:
-      "All 12 A350s completed on June 2, 2026 — five months ahead of schedule. The 787 project starts in the second half of 2026 and A330neo installs commence in 2027, when Virgin plans 100% fleet connectivity.",
+      "All 12 A350s done June 2, 2026, five months early. 787 installs start in the second half of 2026 and A330neo installs in 2027, when Virgin plans to finish the fleet.",
     facts: [
       {
         fact: "Virgin Atlantic completed Starlink across all 12 of its A350s, five months ahead of schedule; 75% of customers now connect during an A350 flight, compared with 10% across the rest of the fleet.",
@@ -702,12 +713,12 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     status: "installing",
     statusLabel: "Installing",
     summary:
-      "First Starlink carrier in Latin America — first flight July 4, 2026 (737 MAX 9 HP-9901CMP) — with the fleet due complete by Q1 2027. Free for ConnectMiles elite tiers and business class; other passengers pay.",
+      "Latin America's first Starlink airline: first flight July 4, 2026 (737 MAX 9 HP-9901CMP), fleet due by Q1 2027. Free for ConnectMiles elites and business class; others pay.",
     facts: [
       {
         // copaair.com returns 401 to every automated client and has no archive
         // snapshot, so both facts are re-sourced to reachable trade press.
-        fact: "Copa's first Starlink-equipped aircraft — a Boeing 737 MAX 9, registration HP-9901CMP — made its inaugural flight on July 4, 2026, with implementation across the fleet planned for the first quarter of 2027.",
+        fact: "Copa's first Starlink-equipped aircraft, a Boeing 737 MAX 9 registered HP-9901CMP, made its inaugural flight on July 4, 2026, with implementation across the fleet planned for the first quarter of 2027.",
         asOf: "2026-07-06",
         source: {
           label: "Aviación al Día",
@@ -732,7 +743,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     status: "installing",
     statusLabel: "Installing",
     summary:
-      "First European airline to fly Starlink (February 2025), installing across its A220-300 fleet — free with no login on equipped aircraft. airBaltic itself publishes no completed-fleet count; treat third-party completed-fleet claims as unverified.",
+      "First European airline to fly Starlink (February 2025), installing across its A220-300 fleet; free with no login. airBaltic publishes no count of finished aircraft.",
     facts: [
       {
         fact: "airBaltic became the first European airline to launch Starlink, with its first equipped A220-300 flying in February 2025 and installation continuing across the fleet.",
@@ -743,7 +754,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         },
       },
       {
-        fact: "airBaltic advertises free Starlink internet from boarding through the flight, but publishes no count of how much of the A220 fleet is finished — third-party claims of a completed fleet are not confirmed by the airline.",
+        fact: "airBaltic advertises free Starlink internet from boarding through the flight, but publishes no count of how much of the A220 fleet is finished.",
         // airBaltic's product page carries no date of its own; this is when we
         // last read it, and it deliberately does not move the page's lastmod.
         accessed: "2026-08-29",
@@ -767,14 +778,14 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     // no primary source has published a count since the first flight.
     headline: "Does Southwest Have Starlink? Rolling Out — First Aircraft Flew June 22",
     summary:
-      "One confirmed Starlink aircraft (N8543Z, first flight June 22, 2026), with 300+ of Southwest's 800-plus aircraft targeted by the end of 2026. Free for Rapid Rewards members via T-Mobile; Southwest has published no timeline for the rest of the fleet, and Viasat-equipped jets are not in the Starlink plan.",
+      "One confirmed Starlink aircraft (N8543Z, first flight June 22, 2026). Southwest targets 300+ of its 800-plus aircraft by the end of 2026, not including its Viasat-equipped jets. Free for Rapid Rewards members via T-Mobile.",
     facts: [
       {
         // The type is not in this source — Upgraded Points names the tail and
         // never writes "737" — so it moved to the Simple Flying fact below,
         // which does. Southwest's fleet being all-737 is true and irrelevant:
         // a claim is sourced by the page it cites, not by common knowledge.
-        fact: "Southwest's first Starlink-equipped aircraft, N8543Z, carried passengers on June 22, 2026 (Dallas to Albuquerque) — the first of more than 300 aircraft Southwest aims to equip by the end of 2026. Southwest has over 800 aircraft in its fleet and says it eventually plans to bring Starlink to all of them, though no timeline has been given for the full rollout.",
+        fact: "Southwest's first Starlink-equipped aircraft, N8543Z, carried passengers on June 22, 2026 (Dallas to Albuquerque), the first of more than 300 aircraft Southwest aims to equip by the end of 2026. Southwest has over 800 aircraft in its fleet and says it eventually plans to bring Starlink to all of them, though no timeline has been given for the full rollout.",
         asOf: "2026-06-22",
         source: {
           label: "Upgraded Points",
@@ -817,7 +828,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     aliases: ["asiana"],
     facts: [
       {
-        fact: "Korean Air turned on free Starlink Wi-Fi as of September 15, 2026, initially on four widebody aircraft — three Airbus A350-900s and one Boeing 777-300ER — deployed on medium and long haul routes across the Americas, Europe, and Southeast Asia, with all Korean Air and ex-Asiana planes planned to have the service by the end of 2027.",
+        fact: "Korean Air turned on free Starlink Wi-Fi as of September 15, 2026, initially on four widebody aircraft (three Airbus A350-900s and one Boeing 777-300ER) deployed on medium and long haul routes across the Americas, Europe, and Southeast Asia, with all Korean Air and ex-Asiana planes planned to have the service by the end of 2027.",
         asOf: "2026-09-15",
         source: {
           label: "One Mile at a Time",
@@ -874,12 +885,12 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     status: "complete",
     statusLabel: "Complete",
     summary:
-      "All eight Boeing 787s equipped — the first fully Starlink-enabled fleet in Asia. Free for every passenger, in every cabin.",
+      "All eight Boeing 787s equipped, the first fully Starlink-enabled fleet in Asia. Free in every cabin.",
     facts: [
       {
         // The March source is a forecast ("will be completed"), so it cannot
         // carry the completion claim — that rests on the CEO fact below.
-        fact: "ZIPAIR began Starlink installation across its Boeing 787 fleet in early February 2026, with completion planned by spring 2026 — free of charge for all passengers, and set to make ZIPAIR the first airline in Asia to operate a fully Starlink-enabled fleet.",
+        fact: "ZIPAIR began Starlink installation across its Boeing 787 fleet in early February 2026, with completion planned by spring 2026, free of charge for all passengers, and set to make ZIPAIR the first airline in Asia to operate a fully Starlink-enabled fleet.",
         asOf: "2026-03-02",
         source: {
           label: "Future Travel Experience",
@@ -904,7 +915,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     status: "complete",
     statusLabel: "Complete",
     summary:
-      "The first air carrier to adopt Starlink — its entire active fleet of 40 Embraer jets equipped by May 2023, complimentary on every flight with no login.",
+      "The first air carrier to adopt Starlink; all 40 active Embraer jets equipped by May 2023, free with no login.",
     facts: [
       {
         // Was "first airline in the world to COMPLETE a Starlink rollout",
@@ -940,7 +951,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     // by the definition above — `installing` would answer the page's own
     // question ("does flydubai have Starlink?") with a Yes no source supports.
     status: "announced",
-    statusLabel: "Rolling out in 2026",
+    statusLabel: "Planned for 2026",
     summary:
       "Signed with SpaceX at the Dubai Airshow (November 18, 2025) to put Starlink on 100 Boeing 737s during 2026.",
     facts: [
@@ -963,7 +974,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     statusLabel: "Installs begin Q1 2027",
     headline: "Does American Have Starlink? Not Yet — Airbus Installs Begin in 2027",
     summary:
-      "500+ Airbus narrowbodies only, announced May 26, 2026, with installs beginning in Q1 2027. No other American aircraft is in the Starlink program as announced; AAdvantage members already get free Wi-Fi on more than 900 Viasat- or Intelsat-equipped aircraft, sponsored by AT&T.",
+      "Announced May 26, 2026 for 500+ Airbus narrowbodies only, with installs from Q1 2027. AAdvantage members already get free Viasat or Intelsat Wi-Fi on more than 900 aircraft, sponsored by AT&T.",
     facts: [
       {
         // Re-sourced from Runway Girl (403s every client) to American's own
@@ -977,7 +988,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         },
       },
       {
-        fact: "The announced scope is the A320 family only — A319s, A320s, A321s, A321neos, and A321XLRs — with no official plans to extend Starlink to any other American aircraft. American runs Viasat on most of its narrowbodies today and Panasonic on most of its widebodies; neither is part of the Starlink program as announced.",
+        fact: "The announced scope is the A320 family only (A319s, A320s, A321s, A321neos, and A321XLRs), with no official plans to extend Starlink to any other American aircraft. American runs Viasat on most of its narrowbodies today and Panasonic on most of its widebodies; neither is part of the Starlink program as announced.",
         asOf: "2026-05-26",
         source: {
           label: "One Mile at a Time",
@@ -1001,7 +1012,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
   {
     slug: "singapore",
     name: "Singapore Airlines",
-    shortName: "Singapore",
+    shortName: "Singapore Airlines",
     iata: "SQ",
     status: "announced",
     statusLabel: "From Q1 2027",
@@ -1034,7 +1045,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     status: "announced",
     statusLabel: "Installs from 2027",
     summary:
-      "Starlink agreement announced June 15, 2026: installs start in 2027 on the 32 Boeing 737s, followed by six 777s and 17 787s, with the retrofit program due to be completed by 2029.",
+      "Starlink agreement announced June 15, 2026: installs start in 2027 on the 32 Boeing 737s, followed by six 777s and 17 787s, with the rollout due to be completed by 2029.",
     facts: [
       {
         fact: "El Al signed an agreement with Starlink to introduce free onboard connectivity in phases rather than through a rapid fleetwide installation: it plans to begin with its fleet of 32 Boeing 737s in 2027, followed by its six Boeing 777s and 17 Boeing 787s, and expects the retrofit program to be completed by 2029.",
@@ -1055,9 +1066,9 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     iata: "5J",
     status: "announced",
     statusLabel: "From 2027",
-    headline: "Do Frontier, Wizz Air & Cebu Pacific Have Starlink? Not Yet — Committed",
+    headline: "Do Frontier, Wizz Air & Cebu Pacific Have Starlink? Not Yet — From 2027",
     summary:
-      "Frontier, Wizz Air, Volaris, JetSMART, and Cebu Pacific — the Indigo Partners portfolio — expect Starlink on more than 1,000 aircraft, with Frontier's first equipped aircraft due in early 2027.",
+      "The Indigo Partners airlines (Frontier, Wizz Air, Volaris, JetSMART and Cebu Pacific) expect Starlink on more than 1,000 aircraft; Frontier's first is due in early 2027.",
     aliases: ["cebu-pacific", "frontier", "wizz-air", "volaris", "jetsmart"],
     facts: [
       {
@@ -1097,10 +1108,10 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     headline: "Does Air Canada Have Starlink? Only on Charter Jets and Some Regional Q400s",
     title: "Does Air Canada Have Starlink? Only Charter Jets, Some Q400s",
     summary:
-      "Not on the mainline fleet. Air Canada's four Jetz charter A320s were fitted with Starlink in summer 2025, and nine Jazz-operated Dash 8-400s at Billy Bishop were due to start flying from October 2025 with free Wi-Fi sponsored by Bell. The widely quoted 25 is the cabin refit, not the Wi-Fi fit.",
+      "Not on the mainline fleet. Only Air Canada's four Jetz charter A320s (Starlink since summer 2025) and nine Jazz-operated Dash 8-400s at Billy Bishop, due from October 2025 with free Wi-Fi sponsored by Bell.",
     facts: [
       {
-        fact: "Air Canada's Jetz fleet — four A320s configured for charter operations — had Starlink inflight internet installed over the summer of 2025, with limited commercial availability.",
+        fact: "Air Canada's Jetz fleet, four A320s configured for charter operations, had Starlink inflight internet installed over the summer of 2025, with limited commercial availability.",
         asOf: "2025-09-11",
         source: {
           label: "PaxEx.Aero",
@@ -1111,7 +1122,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         // The 25 is the CABIN programme; Wi-Fi is "on select aircraft
         // initially". Reading 25 as the Starlink count is the error the old
         // entry made, and Air Canada's own release settles it in one sentence.
-        fact: "Air Canada announced that 25 De Havilland Dash 8-400s operated for Air Canada Express by Jazz Aviation will undergo a full cabin redesign with new seating and interiors and, on select aircraft initially flying from Billy Bishop Toronto City Airport, onboard Fast, Free Wi-Fi sponsored by Bell — an industry first for the type, beginning in October. Installation of Wi-Fi on the balance of the Dash 8-400 fleet is still being determined. Air Canada's own release does not name Starlink.",
+        fact: "Air Canada announced that 25 De Havilland Dash 8-400s operated for Air Canada Express by Jazz Aviation will undergo a full cabin redesign with new seating and interiors and, on select aircraft initially flying from Billy Bishop Toronto City Airport, onboard Fast, Free Wi-Fi sponsored by Bell, an industry first for the type, beginning in October. Installation of Wi-Fi on the balance of the Dash 8-400 fleet is still being determined. Air Canada's own release does not name Starlink.",
         asOf: "2025-09-17",
         source: {
           label: "Air Canada media release",
@@ -1119,7 +1130,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         },
       },
       {
-        fact: "De Havilland Canada announced Starlink in-flight internet on the Dash 8-400 the same day, as a factory option or a retrofit for in-service aircraft — the first De Havilland Canada aircraft in the world to deliver the service, with gate-to-gate internet access even in remote regions.",
+        fact: "De Havilland Canada announced Starlink in-flight internet on the Dash 8-400 the same day, as a factory option or a retrofit for in-service aircraft, the first De Havilland Canada aircraft in the world to deliver the service, with gate-to-gate internet access even in remote regions.",
         asOf: "2025-09-17",
         source: {
           label: "De Havilland Canada",
@@ -1127,7 +1138,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         },
       },
       {
-        fact: "Air Canada planned to fit nine of the Dash 8-400s initially — enough to cover Billy Bishop flights to Ottawa and Montreal plus spares — with the first aircraft expected to enter passenger service in October 2025.",
+        fact: "Air Canada planned to fit nine of the Dash 8-400s initially, enough to cover Billy Bishop flights to Ottawa and Montreal plus spares, with the first aircraft expected to enter passenger service in October 2025.",
         asOf: "2025-09-17",
         source: {
           label: "PaxEx.Aero",
@@ -1146,13 +1157,13 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     status: "trial",
     statusLabel: "Trial only",
     summary:
-      "Trialling Starlink since June 2025 on one A320 (ZK OXE), with an ATR turboprop joining later that month — the first airline in the world to trial Wi-Fi on a turboprop. Air NZ says it is still weighing connectivity options for its domestic fleet.",
+      "Trialling Starlink since June 2025 on one A320 (ZK OXE) and an ATR turboprop. Air NZ is still weighing connectivity options for its domestic fleet.",
     facts: [
       {
         // The release says only "an ATR" — never "ATR 72-600" — and its
         // first-ever claim is about trialling Wi-Fi on a turboprop, not about
         // installing Starlink on one. ZK OXE is the A320, not the turboprop.
-        fact: "Air New Zealand began a domestic Starlink trial on June 10, 2025 with Airbus A320 ZK OXE, an ATR turboprop to follow later that month — in the airline's words, the first airline in the world to trial Wi-Fi on a turboprop. Wi-Fi is free during the trial, and customer feedback will guide the airline's decision-making as it considers connectivity options for its domestic fleet.",
+        fact: "Air New Zealand began a domestic Starlink trial on June 10, 2025 with Airbus A320 ZK OXE, an ATR turboprop to follow later that month. In the airline's words, it is the first airline in the world to trial Wi-Fi on a turboprop. Wi-Fi is free during the trial, and customer feedback will guide the airline's decision-making as it considers connectivity options for its domestic fleet.",
         asOf: "2025-06-10",
         source: {
           label: "Air New Zealand newsroom",
@@ -1171,11 +1182,11 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     status: "not_starlink",
     negative: "chose",
     statusLabel: "Chose Amazon Leo",
-    headline: "Does Delta Have Starlink? No — Here's What They Chose Instead",
+    headline: "Does Delta Have Starlink? No — It Chose Amazon Leo",
     insteadOf:
       "Amazon Leo (LEO satellites) from 2028; free Viasat/Hughes-powered Delta Sync Wi-Fi for SkyMiles members meanwhile",
     summary:
-      "No. Delta signed with Amazon Leo — Amazon's LEO satellite constellation — for an initial 500 aircraft with installs beginning in 2028, free for SkyMiles members. Until then Delta's free Delta Sync Wi-Fi runs on Viasat and Hughes.",
+      "Delta chose Amazon Leo for an initial 500 aircraft from 2028, free for SkyMiles members. Until then, Delta Sync Wi-Fi runs on Viasat and Hughes.",
     facts: [
       {
         fact: "Delta signed with Amazon Leo (Amazon's low-Earth-orbit constellation, formerly Project Kuiper) rather than Starlink, with an initial installation on 500 aircraft beginning in 2028.",
@@ -1194,7 +1205,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         },
       },
       {
-        fact: "Until Leo arrives, Delta's existing free Wi-Fi (Delta Sync, free for SkyMiles members) continues on Viasat and Hughes satellite service across most of the mainline fleet — fast enough for browsing and streaming, but not a LEO system.",
+        fact: "Until Leo arrives, Delta's existing free Wi-Fi (Delta Sync, free for SkyMiles members) continues on Viasat and Hughes satellite service across most of the mainline fleet.",
         asOf: "2026-03-31",
         source: {
           label: "CNBC",
@@ -1213,7 +1224,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     statusLabel: "Chose SES multi-orbit",
     insteadOf: "SES multi-orbit (GEO + Eutelsat OneWeb LEO) on 60+ new Airbus and Embraer aircraft",
     summary:
-      "No Starlink deal announced. LATAM expanded its SES deal instead — multi-orbit GEO plus Eutelsat OneWeb LEO connectivity — investing over US$25 million to equip more than 60 new Airbus and Embraer aircraft.",
+      "LATAM chose SES multi-orbit (GEO plus Eutelsat OneWeb LEO), investing over US$25 million to equip more than 60 new Airbus and Embraer aircraft.",
     facts: [
       {
         // The SES release carries the aircraft scope and nothing else: no
@@ -1235,10 +1246,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         },
       },
       {
-        // The negative is phrased as a checkable property of the cited pages —
-        // neither names Starlink — rather than a claim about the world that no
-        // source asserts. Same pattern on the other negative entries.
-        fact: "LATAM said on August 25, 2026 that it will invest more than US$25 million in the programme and offer the service free of charge to LATAM Pass members. Neither this announcement nor the SES release names Starlink.",
+        fact: "LATAM said on August 25, 2026 that it will invest more than US$25 million in the programme and offer the service free of charge to LATAM Pass members.",
         asOf: "2026-08-25",
         source: {
           label: "Air Data News",
@@ -1258,7 +1266,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     insteadOf:
       "Viasat Amara on its six B767-300ERs, then more new international aircraft; free Wi-Fi in all classes",
     summary:
-      "No Starlink deal announced. ANA picked Viasat's next-generation Amara system instead — all six of its B767-300ERs by FY 2026, then additional new international aircraft — with free Wi-Fi in all classes on international routes and a target of more than 80% of the international fleet by the end of 2030.",
+      "ANA chose Viasat Amara: all six B767-300ERs by FY 2026, then new international aircraft, with free Wi-Fi in all classes on international routes and a target of more than 80% of the international fleet by the end of 2030.",
     facts: [
       {
         // Second failure for this one claim, in a second form. The per-type
@@ -1268,7 +1276,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         // ours, summed off that image. A number read out of a picture and a
         // number added up from one are both unsourced; this now says only what
         // ANA's own sentences say.
-        fact: "ANA selected Viasat Amara, Viasat's next-generation in-flight connectivity solution, and is launching free, high-speed in-flight internet in all classes on international routes, starting with its B767-300ERs: three by the end of FY 2025 and all six by FY 2026, with the system also going into additional new international aircraft after FY 2026. ANA aims to offer the free service on more than 80% of its international fleet by the end of 2030. The release does not name Starlink.",
+        fact: "ANA selected Viasat Amara, Viasat's next-generation in-flight connectivity solution, and is launching free, high-speed in-flight internet in all classes on international routes, starting with its B767-300ERs: three by the end of FY 2025 and all six by FY 2026, with the system also going into additional new international aircraft after FY 2026. ANA aims to offer the free service on more than 80% of its international fleet by the end of 2030.",
         asOf: "2025-08-05",
         source: {
           label: "ANA Group press release",
@@ -1287,14 +1295,14 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     statusLabel: "Chose Viasat Amara",
     insteadOf: "Viasat Amara across the majority of the fleet",
     summary:
-      "No Starlink deal announced. Etihad expanded its Viasat partnership in November 2025, deploying Viasat Amara across the majority of its widebody and narrowbody fleet.",
+      "Etihad expanded its Viasat partnership in November 2025, deploying Viasat Amara across the majority of its widebody and narrowbody fleet.",
     facts: [
       {
         // The release gives no 2026 timeline of any kind (the old wording's
         // "equipped through 2026" was not in it), and etihad.com is unreachable
         // to every automated client — so this cites Viasat's copy of the same
         // release, which is readable and carries the identical text.
-        fact: "Etihad announced an expanded Viasat partnership deploying the next-generation Viasat Amara solution across the majority of its fleet, widebody and narrowbody. Its A321LRs, in service since August 2025, and its A350 deliveries from April 2025 are factory-installed with Viasat's system, joining 787s in service since 2023. The release does not name Starlink.",
+        fact: "Etihad announced an expanded Viasat partnership deploying the next-generation Viasat Amara solution across the majority of its fleet, widebody and narrowbody. Its A321LRs, in service since August 2025, and its A350 deliveries from April 2025 are factory-installed with Viasat's system, joining 787s in service since 2023.",
         asOf: "2025-11-18",
         source: {
           label: "Viasat newsroom (Etihad release)",
@@ -1314,10 +1322,10 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     insteadOf:
       "Viasat Ka-band Wi-Fi on 68 narrowbody and regional aircraft, free for Flying Blue members",
     summary:
-      "No Starlink deal announced. KLM extended its Viasat partnership instead: free Wi-Fi for Flying Blue members on 68 narrowbody and regional aircraft, switched on from January 22, 2026 — while sister airline Air France chose Starlink.",
+      "KLM chose Viasat: free Wi-Fi for Flying Blue members on 68 narrowbody and regional aircraft from January 22, 2026. Sister airline Air France chose Starlink.",
     facts: [
       {
-        fact: "Viasat announced it will deliver fast, full, and free in-flight connectivity for KLM Royal Dutch Airlines, including KLM Cityhopper, across the airline's narrowbody and regional fleets for members of its Flying Blue loyalty program, with a rollout across 68 aircraft in total. The release does not name Starlink.",
+        fact: "Viasat announced it will deliver fast, full, and free in-flight connectivity for KLM Royal Dutch Airlines, including KLM Cityhopper, across the airline's narrowbody and regional fleets for members of its Flying Blue loyalty program, with a rollout across 68 aircraft in total.",
         asOf: "2026-01-21",
         source: {
           label: "Viasat newsroom (KLM release)",
@@ -1342,10 +1350,9 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     status: "not_starlink",
     negative: "unannounced",
     statusLabel: "No Starlink commitment",
-    insteadOf:
-      "Anuvu Dedicated Space upgrades across 100+ narrowbodies; no Starlink deal announced",
+    insteadOf: "Anuvu Dedicated Space upgrades across 100+ narrowbodies",
     summary:
-      "No Starlink commitment. Turkish is upgrading more than 100 narrowbodies with Anuvu's Dedicated Space service instead, and has announced no Starlink agreement.",
+      "Turkish is upgrading more than 100 narrowbodies with Anuvu's Dedicated Space service.",
     facts: [
       {
         // Past tense: a future-dated April 2026 target published in August 2026
@@ -1359,7 +1366,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         },
       },
       {
-        fact: "Turkish Airlines announced plans for free Wi-Fi in July 2024, signing an MoU with TCI Aircraft Interiors and Turksat, and has made no further announcement since; free unlimited Wi-Fi is still limited to its highest Miles & Smiles elite tiers. Turksat's coverage is not global, and Starlink is named only as one provider Turkish could have chosen to fill the gaps. Treat any 'Turkish has Starlink' claim as unconfirmed until the airline says so.",
+        fact: "Turkish Airlines announced plans for free Wi-Fi in July 2024, signing an MoU with TCI Aircraft Interiors and Turksat, and has made no further announcement since; free unlimited Wi-Fi is still limited to its highest Miles & Smiles elite tiers. Turksat's coverage is not global, and Starlink is named only as one provider Turkish could have chosen to fill the gaps.",
         asOf: "2026-04-29",
         source: {
           label: "AwardWallet — Turkish Airlines Wi-Fi guide",
@@ -1376,9 +1383,9 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     status: "not_starlink",
     negative: "unannounced",
     statusLabel: "No Starlink program",
-    insteadOf: "Viasat GX satellite Wi-Fi; no Starlink agreement announced",
+    insteadOf: "Viasat GX satellite Wi-Fi",
     summary:
-      "No Starlink program announced. Philippine Airlines flies Viasat's GX satellite Wi-Fi — a GX customer since 2017, with its A350-1000s taking the system through the HBCplus programme.",
+      "Philippine Airlines flies Viasat's GX satellite Wi-Fi: a GX customer since 2017, with its A350-1000s taking the system through the HBCplus programme.",
     facts: [
       {
         // The myPAL Wi-Fi plan table (three paid tiers, two MB allowances, a
@@ -1390,7 +1397,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         // dropped rather than moved to a source that merely looks readable;
         // what stays is the question this page exists to answer, which is who
         // supplies PAL's connectivity.
-        fact: "Philippine Airlines' inflight connectivity runs on Viasat's GX network, acquired through the Inmarsat buyout: PAL has been a GX customer since 2017 and an early adopter of line-fit installations from 2018, and Airbus confirmed that PAL's incoming A350-1000s will take GX capacity through its HBCplus programme. The announcement does not name Starlink.",
+        fact: "Philippine Airlines' inflight connectivity runs on Viasat's GX network, acquired through the Inmarsat buyout: PAL has been a GX customer since 2017 and an early adopter of line-fit installations from 2018, and Airbus confirmed that PAL's incoming A350-1000s will take GX capacity through its HBCplus programme.",
         asOf: "2024-06-04",
         source: {
           label: "PaxEx.Aero",
@@ -1523,42 +1530,42 @@ export interface RolloutTimeline {
 
 const UA_TIMELINE_SOURCES = {
   faaCertE175: {
-    label: "United, Mar 31, 2025",
+    label: "United",
     url: "https://united.mediaroom.com/2025-03-31-United-Receives-FAA-Certification-on-Starlink-Aircraft-and-Schedules-First-Commercial-Flight-for-May-2025",
     published: "2025-03-31",
   },
   faaCert737: {
-    label: "United, Sep 26, 2025",
+    label: "United",
     url: "https://united.mediaroom.com/2025-09-26-United-Receives-FAA-Certification-for-First-Starlink-Equipped-Mainline-Aircraft",
     published: "2025-09-26",
   },
   firstMainlineFlight: {
-    label: "United, Oct 14, 2025",
+    label: "United",
     url: "https://www.prnewswire.com/news-releases/united-schedules-first-starlink-equipped-mainline-flight-for-take-off-302582565.html",
     published: "2025-10-14",
   },
   regional300: {
-    label: "United, Feb 2, 2026",
+    label: "United",
     url: "https://united.mediaroom.com/2026-02-02-United-Spotlights-Starlink-Wi-Fi-in-New-Big-Game-Ad-as-Airline-Completes-Installation-on-300-Regional-Aircraft",
     published: "2026-02-02",
   },
   firstWidebodyFlight: {
-    label: "United, Jun 22, 2026",
+    label: "United",
     url: "https://www.prnewswire.com/news-releases/united-accelerates-starlink-wi-fi-rollout-with-first-widebody-transatlantic-flight-302806746.html",
     published: "2026-06-22",
   },
   dish560: {
-    label: "United, Sep 17, 2026",
+    label: "United",
     url: "https://www.prnewswire.com/news-releases/united-teams-up-with-dish-to-broadcast-professional-and-college-football-games-live-on-starlink-enabled-seatback-screens-302882330.html",
     published: "2026-09-17",
   },
   x880: {
-    label: "@united on X, Oct 3, 2026",
+    label: "@united on X",
     url: "https://x.com/united/status/2106516734148562984",
     published: "2026-10-03",
   },
   q2y2026: {
-    label: "United Q2 2026 results, Jul 15, 2026",
+    label: "United Q2 2026 results",
     url: "https://www.prnewswire.com/news-releases/united-posts-q2-results-above-wall-street-expectations-and-raises-full-year-2026-adjusted-eps-guidance-despite-a-nearly-6-billion-increase-in-anticipated-fuel-costs-302826793.html",
     published: "2026-07-15",
   },
@@ -1578,7 +1585,7 @@ export const ROLLOUT_TIMELINES: Partial<Record<KnownAirlineCode, RolloutTimeline
       {
         date: "2025-05",
         title: "First passenger flight",
-        fact: "The first Starlink-equipped United customer flight flew on an Embraer 175 regional aircraft in May 2025.",
+        fact: "United's first Starlink passenger flight was on an Embraer 175 regional aircraft in May 2025.",
         source: UA_TIMELINE_SOURCES.faaCert737,
       },
       {
@@ -1619,7 +1626,7 @@ export const ROLLOUT_TIMELINES: Partial<Record<KnownAirlineCode, RolloutTimeline
       },
       {
         date: "2026-10-03",
-        title: "Year-end target revised to 880+",
+        title: "Year-end target cut to 880+ (from nearly 1,000)",
         fact: "United said it will have more than 880 aircraft equipped with Starlink by the end of 2026.",
         source: UA_TIMELINE_SOURCES.x880,
       },
@@ -1633,7 +1640,7 @@ export const ROLLOUT_TIMELINES: Partial<Record<KnownAirlineCode, RolloutTimeline
       {
         when: "End of 2026",
         fact: "Nearly 60 widebodies.",
-        source: UA_TIMELINE_SOURCES.q2y2026,
+        source: UA_TIMELINE_SOURCES.firstWidebodyFlight,
       },
       {
         when: "Summer 2027",

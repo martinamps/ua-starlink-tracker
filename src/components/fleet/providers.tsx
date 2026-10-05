@@ -15,7 +15,7 @@ export const PROVIDER_ORDER: WifiProvider[] = [
 
 export const PROVIDER_LABEL: Record<WifiProvider, string> = {
   starlink: "Starlink",
-  starlink_listed: "Starlink, reported but not yet confirmed",
+  starlink_listed: "Starlink (listed, not yet verified)",
   viasat: "Viasat",
   panasonic: "Panasonic",
   thales: "Thales",
@@ -33,6 +33,16 @@ export const WIFI_CLASS: Record<WifiProvider, string> = {
   none: "wifi-none",
   unknown: "wifi-unknown",
 };
+
+/** Where an airline publishes nothing per tail, an unlit tail is "no data",
+ * never "not checked yet": nobody is going to check it. The hub mixes both. */
+export function providerLabels(scope: "tail" | "type" | "mixed"): Record<WifiProvider, string> {
+  if (scope === "tail") return PROVIDER_LABEL;
+  return {
+    ...PROVIDER_LABEL,
+    unknown: scope === "type" ? "No per-aircraft data" : "No data yet",
+  };
+}
 
 export type ProviderCounts = Record<WifiProvider, number>;
 

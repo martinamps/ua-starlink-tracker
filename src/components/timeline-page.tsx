@@ -8,10 +8,10 @@ import {
 } from "../airlines/rollout-facts";
 import type { InstallRateStats } from "../utils/install-rate";
 import { CumulativeInstallsChart, PaceBullets } from "./charts/cumulative-installs";
-import { nearestPaceGap, paceWindowText } from "./charts/rollout-math";
+import { nearestPaceGap, paceWindowSpan } from "./charts/rollout-math";
 import type { Link } from "./layout";
 import { PageHeader, PageShell, Section, StatInline } from "./layout";
-import { fmt, pct } from "./ui/format";
+import { pct } from "./ui/format";
 
 /** The /timeline handler 404s for an airline without a timeline, the same
  * content gate /methodology uses. */
@@ -23,7 +23,9 @@ export function getTimeline(code: string): RolloutTimeline | null {
   return rolloutTimeline(code);
 }
 
-const SourceLine = ({ source }: { source: TimelineSource }) => (
+/** The source's own dateline shows only where it isn't the date beside it
+ * (a target's statement date, or a milestone reported after the fact). */
+const SourceLine = ({ source, date }: { source: TimelineSource; date?: string }) => (
   <p className="mt-1 text-xs text-muted">
     Source:{" "}
     <a
@@ -34,6 +36,7 @@ const SourceLine = ({ source }: { source: TimelineSource }) => (
     >
       {source.label}
     </a>
+    {source.published !== date && `, ${formatFactDate(source.published)}`}
   </p>
 );
 
@@ -102,15 +105,8 @@ export default function TimelinePage({
           dek={
             stats.paceMonthly !== null ? (
               <>
-                About <StatInline n={Math.round(stats.paceMonthly)} /> installs a month over{" "}
-                {paceWindowText(stats)}.
-                {gap && (
-                  <>
-                    {" "}
-                    {fmt(gap.target.targetCount)} by {formatFactDate(gap.target.target.deadline)}{" "}
-                    needs about <StatInline n={Math.round(gap.needed)} /> a month.
-                  </>
-                )}
+                About <StatInline n={Math.round(stats.paceMonthly)} /> installs a month (
+                {paceWindowSpan(stats)}).
               </>
             ) : undefined
           }
@@ -121,9 +117,11 @@ export default function TimelinePage({
             airlineName={cfg.name}
             milestones={timeline.milestones}
           />
-          <div className="mt-6 border-t border-subtle pt-5">
-            <PaceBullets stats={stats} accent={accent} />
-          </div>
+          {gap && (
+            <div className="mt-6 border-t border-subtle pt-5">
+              <PaceBullets stats={stats} accent={accent} />
+            </div>
+          )}
         </Section>
       )}
 
@@ -137,7 +135,7 @@ export default function TimelinePage({
               <div>
                 <h3 className="font-display text-base text-primary">{m.title}</h3>
                 <p className="mt-0.5 text-sm text-secondary">{m.fact}</p>
-                <SourceLine source={m.source} />
+                <SourceLine source={m.source} date={m.date} />
               </div>
             </li>
           ))}

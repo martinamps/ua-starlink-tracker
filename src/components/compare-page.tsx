@@ -41,12 +41,14 @@ export interface CompareSide {
   facts: AirlineFactsEntry | null;
   /** Flight-level lookup on the airline's own surface, when one exists. */
   checkFlightUrl: string | null;
+  /** See AirlineOverview.scopeNote. */
+  scopeNote?: string | null;
 }
 
-/** A rule-set share has no counts behind it: "every aircraft", "none", or the share. */
+/** A rule-set share has no counts behind it: "All", "None", or the share. */
 function syntheticShare(p: number): string {
-  if (p >= 1) return "every aircraft · 100%";
-  if (p <= 0) return "none · 0%";
+  if (p >= 1) return "All";
+  if (p <= 0) return "None";
   return probLabel(p);
 }
 
@@ -80,8 +82,9 @@ function SidePanel({ side }: { side: CompareSide }) {
             {fmt(stat.starlink)}
           </StatValue>
           <div className="text-sm text-secondary mb-2">
-            aircraft have Starlink · {pct(stat.starlink, fleet)} of the fleet
+            have Starlink ({pct(stat.starlink, fleet)})
           </div>
+          {side.scopeNote && <p className="text-xs text-muted mb-2">{side.scopeNote}</p>}
           <Meter
             share={stat.starlink / fleet}
             color={cfg.brand.accentColor}
@@ -95,13 +98,7 @@ function SidePanel({ side }: { side: CompareSide }) {
           )}
         </>
       )}
-      {fleet === 0 && (
-        <p className="text-sm text-muted mb-3">
-          No per-aircraft counts yet — coverage begins as {cfg.shortName} installation data lands.
-        </p>
-      )}
-
-      {side.phases ? <PhaseTable phases={side.phases} /> : null}
+      {side.phases ? <PhaseTable phases={side.phases} note={false} /> : null}
       {side.typeProgress ? (
         <TypeShareTable types={side.typeProgress} stale={side.typeProgressStale} compact />
       ) : null}
@@ -133,7 +130,7 @@ function SidePanel({ side }: { side: CompareSide }) {
       <div className="mt-auto flex flex-wrap gap-2">
         {side.trackerHost && (
           <ButtonLink href={`https://${side.trackerHost}/`} size="sm">
-            Full {cfg.shortName} tracker →
+            {cfg.shortName} Starlink Tracker →
           </ButtonLink>
         )}
         {side.checkFlightUrl && (
@@ -159,13 +156,13 @@ export default function ComparePage({
   pageLinks?: Link[];
   currentPath?: string;
 }) {
-  const heading = `${left.cfg.shortName} vs ${right.cfg.shortName}: Starlink WiFi`;
+  const heading = `${left.cfg.shortName} vs ${right.cfg.shortName}: Starlink Wi-Fi`;
+  const sides = [left, right];
+  const shares = sides.some((s) => s.stat.total > 0 && !s.phases && !s.typeProgress);
+  const byType = sides.some((s) => s.phases || s.typeProgress);
   return (
     <PageShell site={site} currentPath={currentPath} pageLinks={pageLinks}>
-      <PageHeader
-        title={heading}
-        dek="Install counts, rates by fleet group and where each rollout stands, side by side."
-      />
+      <PageHeader title={heading} dek="Where each Starlink rollout stands, side by side." />
 
       <section className="relative w-full max-w-5xl mx-auto mb-6">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -173,23 +170,21 @@ export default function ComparePage({
           <SidePanel side={right} />
         </div>
         <p className="text-xs text-muted leading-relaxed mt-3 max-w-3xl">
-          Percentages are shares of each airline's whole fleet, the same figure its own tracker
-          shows. Airlines that decide Starlink by aircraft type get a per-type table instead,
-          because their fleets include types that aren't in the programme. Either way, your flight's
-          answer depends on the aircraft assigned, so check the flight number.
+          {shares && "Shares are of each airline's whole fleet. "}
+          {byType && "Where the table is by type, your aircraft type decides it. "}
+          Your flight depends on the aircraft assigned.
         </p>
       </section>
 
       <section className="relative w-full max-w-3xl mx-auto mb-8">
         <Panel>
-          <Eyebrow className="mb-2">Flying a specific route?</Eyebrow>
+          <Eyebrow className="mb-2">By route</Eyebrow>
           <p className="text-sm text-muted leading-relaxed">
-            The{" "}
+            Compare airlines on a nonstop route with the{" "}
             <a href="/" className="text-accent hover:underline">
-              route comparer on the homepage
-            </a>{" "}
-            scores a nonstop city pair per airline — which carrier's planes on that exact route have
-            Starlink today.
+              homepage route comparer
+            </a>
+            .
           </p>
         </Panel>
       </section>

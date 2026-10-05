@@ -3,15 +3,16 @@ import { Sparkline } from "../charts/sparkline";
 import { Eyebrow, Panel, Section, StatValue } from "../layout";
 import { fmt, monthDay } from "../ui/format";
 
-// computePulse's window: six hours back to 66 ahead.
-const PULSE_WINDOW = "from 6 hours ago to 66 hours ahead";
+// computePulse's window runs six hours back to 66 ahead; "next 3 days" is
+// close enough for a reader and avoids the odd 6/66 split.
+const PULSE_WINDOW = "next 3 days";
 
 export function LivePulse({ pulse }: { pulse: FleetPageData["pulse"] }) {
   const haveData = pulse.sparkline.length > 0;
   return (
     <Section bare wide className="text-center">
       <Panel className="glow-accent">
-        <Eyebrow>Live pulse</Eyebrow>
+        <Eyebrow>In the air now</Eyebrow>
         <div className="flex items-baseline justify-center gap-3 mb-1">
           {pulse.now > 0 && <span className="status-dot animate-pulse-glow" />}
           <StatValue size="xl" accent>
@@ -19,9 +20,7 @@ export function LivePulse({ pulse }: { pulse: FleetPageData["pulse"] }) {
           </StatValue>
         </div>
         <p className="text-sm text-secondary mb-4">
-          {haveData
-            ? "Starlink aircraft in the air now"
-            : "Airborne count unavailable while data refreshes"}
+          {haveData ? "Starlink aircraft" : "No flight data right now"}
         </p>
         {haveData && pulse.peak > 0 ? (
           <Sparkline
@@ -31,14 +30,11 @@ export function LivePulse({ pulse }: { pulse: FleetPageData["pulse"] }) {
             label={`Starlink aircraft in the air, ${PULSE_WINDOW}. Peak ${fmt(pulse.peak)}.`}
           />
         ) : (
-          <div className="h-16 flex items-center justify-center text-muted text-xs">
-            No flight data
-          </div>
+          <div className="h-16" />
         )}
         {haveData && (
           <p className="text-xs text-muted mt-2 tabular-nums">
-            Peak {fmt(pulse.peak)} · low {fmt(pulse.trough)} · {fmt(pulse.totalHours)} Starlink
-            flight hours scheduled, {PULSE_WINDOW}
+            Next 3 days: peak {fmt(pulse.peak)}, low {fmt(pulse.trough)} in the air at once.
           </p>
         )}
       </Panel>
@@ -46,14 +42,21 @@ export function LivePulse({ pulse }: { pulse: FleetPageData["pulse"] }) {
   );
 }
 
-export function InstallPaceSection({ pace }: { pace: FleetPageData["installPace"] }) {
+export function InstallPaceSection({
+  pace,
+  projectionHref,
+}: {
+  pace: FleetPageData["installPace"];
+  /** /install-rate when this host serves it. Its 3-month whole-fleet pace is
+   * the site's one projection, so this page links there instead of making its own. */
+  projectionHref?: string | null;
+}) {
   if (!pace || pace.weeks.length === 0) return null;
   const totalRecent = pace.weeks.reduce((s, w) => s + w.installs, 0);
   if (totalRecent === 0 && pace.express.starlink === 0 && pace.mainline.starlink === 0) return null;
   const peak = Math.max(1, ...pace.weeks.map((w) => w.installs));
   const first = pace.weeks[0];
   const current = pace.weeks[pace.weeks.length - 1];
-  const weekly = pace.mainlinePaceWk;
 
   return (
     <Section
@@ -61,9 +64,8 @@ export function InstallPaceSection({ pace }: { pace: FleetPageData["installPace"
       title="Install pace"
       dek={
         <>
-          Aircraft added per week. New installs usually show up here within a few days.{" "}
-          {fmt(totalRecent)} added in the last {pace.weeks.length} weeks, counting this partial
-          week.
+          Aircraft added per week: {fmt(totalRecent)} in the last {pace.weeks.length} weeks, this
+          week so far included.
         </>
       }
     >
@@ -92,12 +94,11 @@ export function InstallPaceSection({ pace }: { pace: FleetPageData["installPace"
         <span>Week of {monthDay(first.weekStart)}</span>
         <span>This week so far</span>
       </div>
-      {pace.projectedFinishMonth && (
+      {projectionHref && (
         <p className="text-sm text-secondary mt-4 text-pretty">
-          At about {fmt(weekly, weekly < 10 ? 1 : 0)} mainline installs a week, the remaining{" "}
-          {fmt(pace.remainingMainline)} mainline aircraft would be done around{" "}
-          <strong className="font-semibold text-primary">{pace.projectedFinishMonth}</strong>.
-          That's a straight-line estimate from the last six weeks.
+          <a href={projectionHref} className="text-accent hover:underline">
+            Monthly pace and projected finish against stated targets →
+          </a>
         </p>
       )}
     </Section>
