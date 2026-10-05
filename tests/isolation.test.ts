@@ -140,6 +140,8 @@ const ENDPOINTS = [
   "/embed",
   "/install-rate",
   "/live-tv",
+  "/chrome",
+  "/extension",
   "/data/starlink-tails.csv",
 ];
 
