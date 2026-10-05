@@ -110,6 +110,11 @@ describe("GET /api/route-flights", () => {
         expect(f.history.weeks.length).toBe(8);
         expect(f.history.recent.length).toBeLessThanOrEqual(6);
         for (const w of f.history.weeks) expect(w.starlink).toBeLessThanOrEqual(w.flights);
+        // The card's "over 8 weeks" is the bars' total, not a longer window.
+        const sum = (k: "flights" | "starlink") =>
+          f.history.weeks.reduce((n: number, w: Record<string, number>) => n + w[k], 0);
+        expect(f.history.window).toEqual({ flights: sum("flights"), starlink: sum("starlink") });
+        expect(f.history.last_14_days.flights).toBeLessThanOrEqual(f.history.window.flights);
       }
     }
   });
@@ -303,8 +308,14 @@ describe("board behavior (synthetic)", () => {
     );
     for (let d = 1; d <= 56; d++) {
       const t = at(-d, 15) + 600;
-      sighting.run("UA400", d <= 14 ? "N111UA" : "N222UA", t, t + 3600);
+      sighting.run("UA400", d <= 14 ? "N111UA" : "N222UA", t, t + 3.5 * 3600);
     }
+    // UA600 SFO-ORD (a 4h block) on the 757 every day. ADS-B saw the A321neo
+    // fly the whole leg on day -4, so it replaces that day's log row; on day
+    // -2 it was up 50 minutes at the same hour, a hop on some other leg.
+    for (const d of [-6, -5, -4, -3, -2, -1]) log("UA", "UA600", "N222UA", at(d, 12));
+    sighting.run("UA600", "N111UA", at(-4, 12) + 1200, at(-4, 12) + 1200 + 3.6 * 3600);
+    sighting.run("UA600", "N111UA", at(-2, 12) + 1800, at(-2, 12) + 1800 + 50 * 60);
     for (const d of [-3, -2, -1]) log("UA", "UA400", "N111UA", at(d, 15), ["SFO", "DEN"]);
     addFlight(sdb, "N111UA", "UA400", "SFO", at(1, 15), {
       arrivalAirport: "DEN",
@@ -381,7 +392,7 @@ describe("board behavior (synthetic)", () => {
     expect(r.probability).toBeGreaterThan(0.7);
     expect(r.trend).toBe("up");
     expect(r.n_effective).toBeLessThan(r.n_observations ?? 0);
-    expect(r.summary).toMatch(/from \d+ recent flights\./);
+    expect(r.summary).toMatch(/from \d+ flights, weighted to recent\./);
     const last = r.history?.weeks.at(-1);
     expect(last?.flights).toBeGreaterThanOrEqual(6);
     expect(last?.starlink).toBe(last?.flights ?? -1);
@@ -405,6 +416,24 @@ describe("board behavior (synthetic)", () => {
     // Seconds apart, so decay moves the fourth decimal at most.
     expect(check.prediction.probability).toBeCloseTo(r.probability ?? -1, 4);
     expect(leg?.probability).toBeCloseTo(r.probability ?? -1, 4);
+  });
+
+  test("ADS-B replaces a logged tail only for a sighting that flew the whole leg", () => {
+    const r = row(board(), "UA600");
+    expect(r.n_observations).toBe(6);
+    const byDate = new Map(r.history?.recent?.map((f) => [f.date, f.tail]));
+    expect(byDate.get(departureLocalDate("SFO", at(-4, 12)))).toBe("N111UA");
+    expect(byDate.get(departureLocalDate("SFO", at(-2, 12)))).toBe("N222UA");
+  });
+
+  test("the API sends the latest-flights list only with ?history=1", async () => {
+    const plain = await jsonOf(sapp, "/api/route-flights?origin=SFO&destination=ORD", UA);
+    const full = await jsonOf(sapp, "/api/route-flights?origin=SFO&destination=ORD&history=1", UA);
+    const of = (b: { flights: Array<{ flight_number: string; history: unknown }> }) =>
+      b.flights.find((f) => f.flight_number === "UA600")?.history as Record<string, unknown>;
+    expect(of(plain).weeks).toBeDefined();
+    expect(of(plain).recent).toBeUndefined();
+    expect(Array.isArray(of(full).recent)).toBe(true);
   });
 
   test("operating spellings collapse to the marketed number", () => {

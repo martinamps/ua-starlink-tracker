@@ -21,6 +21,8 @@ export interface RouteFlightLeg {
   /** Departure-airport local date the leg flies on. */
   dep_date: string;
   departure_time: number;
+  /** Logged or scheduled arrival, when known: the leg's block time with departure_time. */
+  arrival_time: number | null;
   tail_number: string;
   aircraft_type: string | null;
   /** equippedSql over the tail's listing. */
@@ -75,7 +77,7 @@ function loggedLegs(
   const rows = db
     .query(
       `SELECT uf.airline, uf.flight_number, uf.departure_airport, uf.arrival_airport, uf.dep_date,
-              uf.departure_time, uf.tail_number, uf.last_seen,
+              uf.departure_time, uf.arrival_time, uf.tail_number, uf.last_seen,
               ${tailAircraftTypeSql("uf.tail_number", "uf.airline")} AS aircraft_type,
               CASE WHEN ${tailEquippedSql("uf.tail_number", "uf.airline")} THEN 1 ELSE 0 END
                 AS equipped,
@@ -92,6 +94,7 @@ function loggedLegs(
     arrival_airport: string;
     dep_date: string;
     departure_time: number;
+    arrival_time: number | null;
     tail_number: string;
     last_seen: number;
     aircraft_type: string | null;
@@ -104,6 +107,7 @@ function loggedLegs(
     arrival_airport: r.arrival_airport,
     dep_date: r.dep_date,
     departure_time: r.departure_time,
+    arrival_time: r.arrival_time,
     tail_number: r.tail_number,
     aircraft_type: r.aircraft_type,
     equipped: r.equipped === 1,
@@ -135,6 +139,7 @@ function scheduledLegs(
             arrival_airport: s.arrival_airport,
             dep_date: departureLocalDate(s.departure_airport, s.departure_time),
             departure_time: s.departure_time,
+            arrival_time: s.arrival_time ?? null,
             tail_number: s.tail_number,
             aircraft_type: s.aircraft_type,
             equipped: s.equipped === 1,

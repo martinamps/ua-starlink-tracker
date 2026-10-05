@@ -34,6 +34,7 @@ import {
   type LegDraw,
   type LegTrend,
   TREND_RECENT_DAYS,
+  TREND_WINDOW_DAYS,
 } from "../scripts/leg-estimate";
 import {
   carrierPrediction,
@@ -47,8 +48,8 @@ import { verdictSummary } from "./check-flight-core";
 /** Below this many draws on the leg, its odds are the share of its aircraft types. */
 export const ROUTE_BOARD_MIN_OBSERVATIONS = LEG_MIN_DRAWS;
 
-/** Weeks the odds history charts, and departures it lists. */
-const HISTORY_WEEKS = 8;
+/** Weeks the odds history charts (the trend's window), and departures it lists. */
+const HISTORY_WEEKS = TREND_WINDOW_DAYS / 7;
 const HISTORY_RECENT = 6;
 
 /** Logged days a departure time needs before the board calls it usual. */
@@ -82,9 +83,10 @@ export interface RouteFlightTally {
 export interface RouteFlightHistory {
   /** Seven-day spans ending now, oldest first, by their first origin-local day. */
   weeks: Array<RouteFlightTally & { start: string }>;
-  /** The latest departures on the leg, newest first. Date is origin-local. */
-  recent: Array<{ date: string; tail: string; type: string | null; starlink: boolean }>;
-  /** The trend's two sides: the last two weeks, and every draw the model kept. */
+  /** The latest departures on the leg, newest first. Date is origin-local.
+   * The page always has them; GET /api/route-flights only with ?history=1. */
+  recent?: Array<{ date: string; tail: string; type: string | null; starlink: boolean }>;
+  /** The trend's two sides: the last two weeks, and the eight the bars show. */
   last_14_days: RouteFlightTally;
   window: RouteFlightTally;
 }
@@ -284,7 +286,7 @@ export function legHistory(
     flights: 0,
     starlink: 0,
   }));
-  const past = draws.filter((d) => d.t <= nowSec);
+  const past = draws.filter((d) => d.t <= nowSec && d.t > from);
   for (const d of past) {
     const w = weeks[HISTORY_WEEKS - 1 - Math.floor((nowSec - d.t) / WEEK_SEC)];
     if (!w) continue;

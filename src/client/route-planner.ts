@@ -188,7 +188,7 @@ export function wireRoutePlanner(): void {
     history.replaceState(null, "", `/route-planner?${query}`);
     if (board) board.innerHTML = "";
     out.innerHTML = '<div class="text-center text-sm text-muted py-8">Finding flights…</div>';
-    const boardReq = fetch(`/api/route-flights?${query}`, { signal: ctrl.signal })
+    const boardReq = fetch(`/api/route-flights?${query}&history=1`, { signal: ctrl.signal })
       .then((r) => (r.ok ? (r.json() as Promise<RouteFlightBoard>) : null))
       .catch(() => null);
     const planReq = fetch(`/api/plan-route?${query}`, { signal: ctrl.signal }).then(

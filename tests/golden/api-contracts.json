@@ -216,7 +216,7 @@
         "n_observations": 5,
         "n_recent_observations": 5
       },
-      "message": "Aircraft assignment not yet published — United Airlines assigns aircraft ~2 days before departure. About 80% of 5 recent UA1009 flights had Starlink.",
+      "message": "Aircraft assignment not yet published — United Airlines assigns aircraft ~2 days before departure. About 80% Starlink odds, weighted to recent UA1009 flights (5 tracked).",
       "flights": []
     }
   },
@@ -508,7 +508,7 @@
         "n_observations": 5,
         "n_recent_observations": 5
       },
-      "message": "Aircraft assignment not yet published — United Airlines assigns aircraft ~2 days before departure. About 80% of 5 recent UA1009 flights had Starlink.",
+      "message": "Aircraft assignment not yet published — United Airlines assigns aircraft ~2 days before departure. About 80% Starlink odds, weighted to recent UA1009 flights (5 tracked).",
       "flights": []
     }
   },
@@ -712,7 +712,7 @@
       "probability": 0.8,
       "confidence": "high",
       "n_recent_observations": 5,
-      "reason": "No schedule data for this date; about 80% of 5 recent UA1009 flights had Starlink.",
+      "reason": "No schedule data for this date; about 80% Starlink odds, weighted to recent UA1009 flights (5 tracked).",
       "flights": []
     }
   },
@@ -1644,10 +1644,10 @@
       "LAST-MODIFIED:20260919T080000Z",
       "SEQUENCE:0",
       "SUMMARY:UA1009 · 80% chance of Starlink",
-      "DESCRIPTION:No aircraft assigned yet. About 80% of 5 recent UA1009 flights ",
-      " had Starlink.\\n\\nAircraft usually assigned ~2 days out\\; Google Calendar r",
-      " efreshes every 8–24h\\, Apple ~hourly.\\nhttps://unitedstarlinktracker.com",
-      " /check-flight/UA1009/2026-09-29?utm_source=cal",
+      "DESCRIPTION:No aircraft assigned yet. About 80% Starlink odds\\, weighted to",
+      "  recent UA1009 flights (5 tracked).\\n\\nAircraft usually assigned ~2 days o",
+      " ut\\; Google Calendar refreshes every 8–24h\\, Apple ~hourly.\\nhttps://uni",
+      " tedstarlinktracker.com/check-flight/UA1009/2026-09-29?utm_source=cal",
       "URL:https://unitedstarlinktracker.com/check-flight/UA1009/2026-09-29?utm_so",
       " urce=cal",
       "TRANSP:TRANSPARENT",

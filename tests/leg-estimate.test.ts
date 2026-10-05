@@ -162,7 +162,8 @@ describe("legHistory", () => {
     expect(html).toContain('aria-describedby="odds-history-UA2278"');
     expect(html).toContain('id="odds-history-UA2278" role="tooltip" hidden');
     expect(html.match(/<rect class="oh-(track|none)"/g)?.length).toBe(8);
-    expect(html).toContain("12 recent flights");
+    expect(html).toContain("56 flights, weighted to recent");
+    expect(html).toContain("over 8 weeks");
     expect(html).toContain("↑");
     expect(html).toContain("Weighted toward recent flights.");
   });

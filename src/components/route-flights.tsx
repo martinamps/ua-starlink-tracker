@@ -121,7 +121,7 @@ export function RouteFlightsSection({
         {hasVerifiedRow(board) && ` ${VERIFIED_LEGEND}`}
         {footerAction && <> {footerAction}</>}
       </p>
-      {!empty && <ClientScriptTag name="route-board" />}
+      {board.flights.some((f) => f.history) && <ClientScriptTag name="route-board" />}
     </Section>
   );
 }
