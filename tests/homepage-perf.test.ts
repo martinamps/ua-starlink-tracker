@@ -37,9 +37,9 @@ afterEach(() => {
 });
 
 describe("pill time formatting", () => {
-  test("a known epoch formats as weekday + 24h UTC", () => {
-    expect(formatPillTime(Date.UTC(2026, 8, 19, 6, 40) / 1000)).toBe("SAT 06:40 UTC");
-    expect(formatPillTime(Date.UTC(2026, 8, 20, 0, 5) / 1000)).toBe("SUN 00:05 UTC");
+  test("a known epoch formats as weekday + 24h, in UTC", () => {
+    expect(formatPillTime(Date.UTC(2026, 8, 19, 6, 40) / 1000)).toBe("SAT 06:40");
+    expect(formatPillTime(Date.UTC(2026, 8, 20, 0, 5) / 1000)).toBe("SUN 00:05");
   });
 
   test("output matches the toLocale*String spelling it replaced", () => {
@@ -52,7 +52,7 @@ describe("pill time formatting", () => {
         minute: "2-digit",
         hour12: false,
         timeZone: "UTC",
-      })} UTC`;
+      })}`;
       expect(formatPillTime(t)).toBe(legacy);
     }
   });

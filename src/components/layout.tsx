@@ -348,7 +348,7 @@ function CrossSiteLinks({ site }: { site: SiteConfig }) {
     .filter(({ site: s }) => s.key !== site.key)
     .map(({ site: s, airline }) => ({
       href: `https://${s.canonicalHost}/`,
-      label: `${airline.shortName} Starlink tracker`,
+      label: `${airline.shortName} Starlink Tracker`,
     }));
   if (site.scope !== "ALL") {
     links.push({

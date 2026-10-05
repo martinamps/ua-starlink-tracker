@@ -53,7 +53,6 @@ export interface PageBrand {
   heading?: string;
   /** WebSite.alternateName: the longer name people also search for. */
   alternateName?: string;
-  tagline: string;
   /** SEO `<title>` tag */
   siteTitle: string;
   /** Meta description / og:description fallback */
@@ -198,7 +197,7 @@ export interface AirlineConfig {
    * single-operator so no tail is counted twice. */
   programmePartners?: {
     partners: ReadonlyArray<{ airline: AirlineCode; families: readonly string[]; label: string }>;
-    /** What the combined count is of: "Alaska and Hawaiian Airbus aircraft". */
+    /** What the combined count is of: "Alaska planes and Hawaiian Airbus jets". */
     noun: string;
   };
   /** Starlink is free only for members of this programme ("Atmos Rewards"),
@@ -374,19 +373,19 @@ const AIRLINE_DEFS = {
         "Started with regional jets in early 2025; rolling out across United Express and mainline.",
       rosterIsProgramScope: true,
     },
+    freeForMembersOf: "MileagePlus",
     brand: {
       // Matches the homepage <title> lead and H1 so Google keeps our title.
       title: "United Starlink Tracker",
       alternateName: "United Airlines Starlink Tracker",
-      tagline: "Tracking United Airlines aircraft with Starlink WiFi",
       // {{starlinkCount}}/{{totalAircraftCount}} resolve in buildBaseTemplateVars();
       // og:title intentionally has no count — social platforms cache OG metadata.
-      siteTitle: "United Starlink Tracker — {{starlinkCount}} Aircraft Have Starlink Today",
+      siteTitle: "United Starlink Tracker: {{starlinkCount}} Aircraft Have Starlink Today",
       description:
-        "{{starlinkCount}} of {{totalAircraftCount}} United aircraft have Starlink today, verified against united.com. Check any flight by number, browse the fleet, and watch the install rate.",
-      ogTitle: "United Starlink Tracker — Live Fleet Rollout",
+        "{{starlinkCount}} of {{totalAircraftCount}} United aircraft have Starlink. Check any United flight by number and date.",
+      ogTitle: "United Starlink Tracker: Live Fleet Rollout",
       ogDescription:
-        "Check any United flight for free Starlink WiFi. Per-tail status verified against united.com, live rollout progress, and the best routes for fast internet.",
+        "Check any United flight for Starlink Wi-Fi, free with MileagePlus, with plane-by-plane status checked against united.com.",
       keywords: "united starlink tracker, united starlink wifi",
       accentColor: "#0ea5e9",
       accentColorDim: "#0284c7",
@@ -438,13 +437,12 @@ const AIRLINE_DEFS = {
     },
     brand: {
       title: "Hawaiian Airlines Starlink Tracker",
-      tagline: "Tracking Hawaiian Airlines aircraft with Starlink WiFi",
-      siteTitle: "Hawaiian Airlines Starlink — Every A330 and A321neo Has Free WiFi",
+      siteTitle: "Hawaiian Airlines Starlink: Every A330 and A321neo Has Free Wi-Fi",
       description:
-        "Hawaiian Airlines completed its Starlink rollout in September 2024. Every Airbus A330 and A321neo has free, gate-to-gate Starlink WiFi; the 717 interisland fleet does not have WiFi. See which aircraft is on your flight.",
-      ogTitle: "Hawaiian Airlines Starlink — Rollout Complete",
+        "Every Hawaiian Airbus A330 and A321neo has had free, gate-to-gate Starlink Wi-Fi since September 2024. The 717 interisland jets have no Wi-Fi. See which aircraft is on your flight.",
+      ogTitle: "Hawaiian Airlines Starlink: Airbus Fleet Done",
       ogDescription:
-        "Every Hawaiian A330 and A321neo has free gate-to-gate Starlink — the first U.S. carrier with a full fleet install. 717 interisland flights have no WiFi.",
+        "Every Hawaiian A330 and A321neo has free gate-to-gate Starlink Wi-Fi. The 717 interisland jets have none.",
       keywords:
         "hawaiian airlines starlink, hawaiian airlines wifi, does hawaiian have wifi, hawaiian a330 starlink, hawaiian a321neo wifi, hawaiian 717 wifi, hawaiian interisland wifi, free wifi hawaiian airlines",
       accentColor: "#413691",
@@ -481,7 +479,7 @@ const AIRLINE_DEFS = {
     // same scope so the two can be compared.
     programmePartners: {
       partners: [{ airline: "HA", families: ["A321", "A330"], label: "Hawaiian A321neo & A330" }],
-      noun: "Alaska and Hawaiian Airbus aircraft",
+      noun: "Alaska planes and Hawaiian Airbus jets",
     },
     freeForMembersOf: "Atmos Rewards",
     subfleets: [
@@ -558,13 +556,10 @@ const AIRLINE_DEFS = {
     brand: {
       title: "Alaska Starlink Tracker",
       alternateName: "Alaska Airlines Starlink Tracker",
-      tagline: "Tracking Alaska Airlines aircraft with Starlink WiFi",
-      siteTitle: "Alaska Starlink Tracker — Which Flights Have Free Starlink WiFi?",
-      description:
-        "Track which Alaska Airlines flights have Starlink WiFi. Live status for every Starlink-equipped aircraft, installation progress, and upcoming flight schedules.",
-      ogTitle: "Alaska Starlink Tracker — Which Alaska Planes Have Starlink",
-      ogDescription:
-        "Live statistics showing Alaska Airlines Starlink WiFi installation progress across the fleet.",
+      siteTitle: "Alaska Starlink Tracker: Which Flights Have Starlink Wi-Fi?",
+      description: "Which Alaska planes have Starlink Wi-Fi and where they fly next.",
+      ogTitle: "Alaska Starlink Tracker: Which Alaska Planes Have Starlink",
+      ogDescription: "Which Alaska planes have Starlink Wi-Fi, and a check for your flight.",
       keywords:
         "alaska airlines starlink, alaska starlink tracker, alaska wifi, 737 MAX starlink, E175 starlink, check alaska flight starlink",
       accentColor: "#01426a",
@@ -630,13 +625,12 @@ const AIRLINE_DEFS = {
     },
     brand: {
       title: "Qatar Airways Starlink Tracker",
-      tagline: "Tracking Qatar Airways aircraft with Starlink WiFi",
-      siteTitle: "Qatar Starlink Tracker — Which Flights Have Free Starlink WiFi?",
+      siteTitle: "Qatar Starlink Tracker: Which Flights Have Free Starlink Wi-Fi?",
       description:
-        "Track which Qatar Airways flights have free Starlink WiFi. 777, A350 and 787-8 fleets complete (787-8 Aug 2026); 787-9 installs under way, due end-2026. Check your flight by number and date.",
+        "Which Qatar Airways flights have free Starlink Wi-Fi, by aircraft type. Check your flight by number and date.",
       ogTitle: "Qatar Airways Starlink Tracker",
       ogDescription:
-        "777, A350 and 787-8 fleets complete (787-8 Aug 2026); 787-9 installs under way, due end-2026. Check your QR flight to see which aircraft is scheduled.",
+        "Which Qatar Airways aircraft types have free Starlink Wi-Fi. Check your QR flight to see which aircraft is scheduled.",
       keywords:
         "qatar airways starlink, qatar starlink tracker, qatar wifi, B777 starlink, A350 starlink, B787 starlink, check qatar flight starlink, qr wifi",
       accentColor: "#5c0632",
@@ -713,13 +707,12 @@ const AIRLINE_DEFS = {
     },
     brand: {
       title: "Air France Starlink Tracker",
-      tagline: "Tracking Air France aircraft with Starlink WiFi",
-      siteTitle: "Does Air France Have Starlink? Yes — Check by Aircraft Type & Tail",
+      siteTitle: "Does Air France Have Starlink? Check by Aircraft Type and Tail",
       description:
-        "Which Air France aircraft have free Starlink WiFi, by aircraft type and tail number, from the FlyerTalk fleet guide.",
-      ogTitle: "Air France Starlink — By Aircraft Type",
+        "Which Air France aircraft have free Starlink Wi-Fi, by aircraft type and tail number, from the FlyerTalk fleet guide.",
+      ogTitle: "Air France Starlink: By Aircraft Type",
       ogDescription:
-        "Which Air France aircraft have free Starlink WiFi, by aircraft type and tail number.",
+        "Which Air France aircraft have free Starlink Wi-Fi, by aircraft type and tail number.",
       keywords:
         "air france starlink, air france wifi, air france 777 starlink, air france a350 wifi, air france a220 wifi",
       accentColor: "#002157",
@@ -1076,15 +1069,14 @@ export const HUB_BRAND: PageBrand = {
   // H1 must stay comparison-intent — "Airline Starlink Tracker" competed with
   // unitedstarlinktracker.com for "united starlink tracker" (Hub ~4% CTR vs
   // United ~86% on the same impressions).
-  title: "Which Airlines Have Starlink WiFi?",
+  title: "Which Airlines Have Starlink Wi-Fi?",
   heading: "Which airlines have Starlink Wi-Fi?",
-  tagline: "Compare every Starlink rollout — United, Hawaiian, Alaska, and more",
-  siteTitle: "Starlink WiFi by Airline — Which Airlines Have Starlink in 2026?",
+  siteTitle: "Starlink Wi-Fi by Airline: Which Airlines Have Starlink in 2026?",
   description:
-    "Compare airlines with Starlink WiFi side by side: United and Alaska tracked live tail-by-tail, Hawaiian's and Qatar's widebody fleets, and more carriers as they launch. Fleet counts and percent equipped, not a single-airline tracker.",
-  ogTitle: "Which Airlines Have Starlink WiFi? — Full List & Comparison",
+    "Starlink Wi-Fi by airline. United and Alaska are tracked plane by plane, Hawaiian and Qatar by aircraft type, and every other announced rollout has a dated source.",
+  ogTitle: "Which Airlines Have Starlink Wi-Fi? Full List and Comparison",
   ogDescription:
-    "Every airline with Starlink WiFi, compared: fleet counts, percent equipped, and rollout status — with live per-aircraft tracking where available.",
+    "How far each airline's Starlink Wi-Fi rollout has got, with a dated source for each.",
   keywords:
     "which airlines have starlink, starlink wifi airlines list, airlines with starlink wifi, airline starlink comparison, in-flight starlink wifi, free airplane wifi",
   accentColor: "#0ea5e9",

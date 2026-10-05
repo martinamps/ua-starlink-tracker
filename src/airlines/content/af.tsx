@@ -5,14 +5,12 @@ import type { AirlineContent, HeroProps } from "./index";
 // exhaustiveness guarantee and any future homepage. The hub's
 // /airlines/air-france page is the real surface, and it renders by aircraft
 // type, never one blended percentage.
-const AFHero = ({ stats, statSentence }: HeroProps) => (
+const AFHero = ({ stats }: HeroProps) => (
   <RolloutPanel
     stats={stats}
-    noun="Air France aircraft, at least"
+    noun="Air France aircraft"
     segments={[{ label: "Starlink", n: stats.starlinkCount, total: stats.totalCount }]}
-  >
-    {statSentence}
-  </RolloutPanel>
+  />
 );
 
 export const content: AirlineContent = {

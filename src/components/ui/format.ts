@@ -131,12 +131,13 @@ export function monthDay(input: DateInput, nowSec?: number): string {
 /** "Sep 2026" for a YYYY-MM month key. */
 export const monthYear = (month: string) => utc(`${month}-01`, { month: "short", year: "numeric" });
 
-/** "MON 14:30 UTC": the homepage pill clock, 24-hour like the permalink page. */
+/** "MON 14:30", always UTC: the homepage pill clock, 24-hour like the
+ * permalink page. The caller names the zone. */
 export function formatPillTime(epochSec: number): string {
   const d = new Date(epochSec * 1000);
   const day = formatter("UTC", { weekday: "short" }).format(d).toUpperCase();
   const hhmm = formatter("UTC", { hour: "2-digit", minute: "2-digit", hour12: false }).format(d);
-  return `${day} ${hhmm} UTC`;
+  return `${day} ${hhmm}`;
 }
 
 /**

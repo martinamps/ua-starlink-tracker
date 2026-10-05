@@ -119,7 +119,7 @@ export const content: AirlineContent = {
           a: () => (
             <p>
               No. Hawaiian's Airbus flights keep Starlink, now under Alaska (AS) flight numbers.
-              Alaska plans to finish adding Starlink to its own fleet in early 2027.
+              Alaska plans to finish its own fleet by the end of 2027.
             </p>
           ),
         },

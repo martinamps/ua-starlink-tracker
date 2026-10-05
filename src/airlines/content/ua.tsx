@@ -11,7 +11,11 @@ const installsPerMonth = (s: ContentStats): number | null =>
 const express = (s: ContentStats) => s.fleetStats?.express ?? { starlink: 0, total: 0 };
 const mainline = (s: ContentStats) => s.fleetStats?.mainline ?? { starlink: 0, total: 0 };
 
-const UAHero = ({ stats, statSentence }: HeroProps) => (
+// United's June 22, 2026 release, the source of the widebody figures.
+const UA_WIDEBODY_RELEASE =
+  "https://www.prnewswire.com/news-releases/united-accelerates-starlink-wi-fi-rollout-with-first-widebody-transatlantic-flight-302806746.html";
+
+const UAHero = ({ stats }: HeroProps) => (
   <RolloutPanel
     stats={stats}
     noun="United aircraft"
@@ -19,15 +23,13 @@ const UAHero = ({ stats, statSentence }: HeroProps) => (
       { label: "United Express", n: express(stats).starlink, total: express(stats).total },
       { label: "Mainline", n: mainline(stats).starlink, total: mainline(stats).total },
     ]}
-  >
-    {statSentence}
-  </RolloutPanel>
+  />
 );
 
 export const content: AirlineContent = {
   headerStats: (s) => [
     <span key="free" className="text-success font-semibold">
-      Free
+      Free with MileagePlus
     </span>,
     ...(installsPerMonth(s)
       ? [
@@ -41,8 +43,8 @@ export const content: AirlineContent = {
 
   intro: () => (
     <>
-      United is adding free Starlink Wi-Fi to every plane. Check your flight, see which aircraft
-      have it, or find a route that does.
+      United is adding Starlink Wi-Fi to every plane, starting with its United Express regional
+      jets.
     </>
   ),
 
@@ -51,28 +53,24 @@ export const content: AirlineContent = {
   answers: [
     {
       q: "Does United have Starlink?",
-      a: (s) => (
-        <p>
-          Yes. <StatInline n={s.starlinkCount} /> of {fmt(s.totalCount)} United aircraft (
-          {pct(s.starlinkCount, s.totalCount)}) have free Starlink Wi-Fi
-          {s.asOf ? <> as of {s.asOf}</> : null}. {fleetTargetSentence("UA", "United")}
-        </p>
-      ),
+      // The panel above gives the count; the structured answer keeps it.
+      a: () => <p>Yes. {fleetTargetSentence("UA", "United")}</p>,
+      ld: (s) =>
+        `Yes. ${fmt(s.starlinkCount)} of ${fmt(s.totalCount)} United aircraft (${pct(s.starlinkCount, s.totalCount)}) have Starlink Wi-Fi${s.asOf ? ` as of ${s.asOf}` : ""}. ${fleetTargetSentence("UA", "United")}`,
     },
     {
       q: "Which United planes have Starlink?",
-      a: (s) => (
+      a: () => (
         <p>
-          Mostly United Express regional jets: <StatInline n={express(s).starlink} /> of{" "}
-          {fmt(express(s).total)} ({pct(express(s).starlink, express(s).total)}) have it, against{" "}
-          <StatInline n={mainline(s).starlink} /> of {fmt(mainline(s).total)} mainline aircraft (
-          {pct(mainline(s).starlink, mainline(s).total)}). The{" "}
+          Mostly United Express regional jets. The panel above has the split, and the{" "}
           <a href="/fleet" className={LINK}>
             fleet page
           </a>{" "}
-          lists every one.
+          lists every plane.
         </p>
       ),
+      ld: (s) =>
+        `Mostly United Express regional jets: ${fmt(express(s).starlink)} of ${fmt(express(s).total)} (${pct(express(s).starlink, express(s).total)}) have it, against ${fmt(mainline(s).starlink)} of ${fmt(mainline(s).total)} mainline aircraft (${pct(mainline(s).starlink, mainline(s).total)}).`,
     },
     {
       q: "Do all United flights have Starlink?",
@@ -116,16 +114,15 @@ export const content: AirlineContent = {
       items: [
         {
           q: "How do I maximize my chances of getting Starlink?",
-          a: (s) => (
+          a: () => (
             <p>
               Use the{" "}
               <a href="/route-planner" className={LINK}>
                 route planner
               </a>
-              . It ranks nonstop flights and one-stop connections by their odds of Starlink. United
-              Express is at {pct(express(s).starlink, express(s).total)} and mainline at{" "}
-              {pct(mainline(s).starlink, mainline(s).total)}, so a connection on two Express jets
-              can beat a nonstop on mainline. Denver to Chicago nonstop is mainline, for example,
+              . It ranks nonstop flights and one-stop connections by their chance of Starlink.
+              Express jets are far likelier to have it than mainline, so a connection on two Express
+              jets can beat a mainline nonstop. Denver to Chicago nonstop is mainline, for example,
               while Denver to Aspen to Chicago is Express on both legs.
             </p>
           ),
@@ -135,9 +132,17 @@ export const content: AirlineContent = {
           a: () => (
             <p>
               On some. Widebody installs began with UA14, Newark to London on a Boeing 777-200, on
-              June 22, 2026. United expects nearly 60 widebodies to have Starlink during 2026 and
-              the whole widebody fleet by summer 2027. Starlink works over oceans and near the
-              poles, so long-haul flights gain the most.{" "}
+              June 22, 2026. In{" "}
+              <a
+                href={UA_WIDEBODY_RELEASE}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={LINK}
+              >
+                that day's release
+              </a>
+              , United said nearly 60 widebodies would have Starlink during 2026 and the whole
+              widebody fleet by summer 2027.{" "}
               <a href="/check-flight" className={LINK}>
                 Check your flight
               </a>{" "}
@@ -158,9 +163,9 @@ export const content: AirlineContent = {
               United's first Starlink install was in March 2025, and{" "}
               <StatInline n={s.starlinkCount} /> aircraft have it today. The{" "}
               <a href="/install-rate" className={LINK}>
-                install rate page
+                install pace page
               </a>{" "}
-              tracks the pace against United's targets.
+              tracks it against United's targets.
             </p>
           ),
         },
@@ -195,12 +200,7 @@ export const content: AirlineContent = {
         },
         {
           q: "What can I do with Starlink Wi-Fi?",
-          a: () => (
-            <p>
-              Stream video in 4K, watch live sports, make video calls and download large files, the
-              same as on a good home connection.
-            </p>
-          ),
+          a: () => <p>Stream video, watch live sports and make video calls.</p>,
         },
       ],
     },
@@ -235,12 +235,12 @@ export const content: AirlineContent = {
           ),
         },
         {
-          q: "Can I use this with Claude, ChatGPT, or other AI assistants?",
+          q: "Can I use this with Claude or other AI assistants?",
           a: () => (
             <p>
               Yes. The free{" "}
               <a href="/mcp" className={LINK}>
-                MCP connector
+                MCP server
               </a>{" "}
               works with Claude Desktop, Cursor and any MCP client. Ask things like "does UA4680
               next week have Starlink?" or "find me the best way to fly SFO to JAX with Starlink".

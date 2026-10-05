@@ -84,7 +84,7 @@ describe("tenant resolution", () => {
     expect(hubManifest.status).toBe(200);
 
     expect(await uaManifest.json()).toMatchObject({ name: "United Starlink Tracker" });
-    expect(await hubManifest.json()).toMatchObject({ name: "Which Airlines Have Starlink WiFi?" });
+    expect(await hubManifest.json()).toMatchObject({ name: "Which Airlines Have Starlink Wi-Fi?" });
   });
 });
 

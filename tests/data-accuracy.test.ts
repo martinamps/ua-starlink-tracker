@@ -466,7 +466,7 @@ describe("homepage list", () => {
     const all = elementAttrs(html, "filter-all");
     expect(all["data-filter"]).toBe("all");
     expect(Number(all["data-count"])).toBe(rows);
-    expect(html).toContain(`Latest ${rows} of ${equipped}`);
+    expect(html).toContain(`The ${rows} most recently flown of ${equipped}`);
   });
 });
 

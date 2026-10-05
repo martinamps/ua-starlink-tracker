@@ -28,7 +28,7 @@ export function PassengerBanner({ site }: { site: SiteConfig }) {
           id="psgr-form"
           mode="report"
           placeholder="UA2019"
-          submitLabel="Confirm flight"
+          submitLabel="Send"
           hideLabels
           withScript={false}
         />

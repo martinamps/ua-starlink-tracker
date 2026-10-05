@@ -2,7 +2,6 @@
  * The airline homepage's rollout panel: one headline number, one stacked bar
  * that splits it by fleet segment, and a 12-week install sparkline.
  */
-import type React from "react";
 import type { ContentStats } from "../../airlines/content";
 import { excludeMassWriteDays } from "../../utils/install-rate";
 import { Sparkline } from "../charts/sparkline";
@@ -79,24 +78,25 @@ function WeeklySparkline({ values }: { values: number[] }) {
   );
 }
 
+/**
+ * The headline block carries id="starlink-stat": the count llms.txt and
+ * /methodology tell people to cite, dated by the page's "Data last updated" line.
+ */
 export function RolloutPanel({
   stats,
   segments,
   noun = "aircraft",
-  children,
 }: {
   stats: ContentStats;
   segments: RolloutSegment[];
   /** "United aircraft" etc. */
   noun?: string;
-  /** The citable stat sentence and any footnote. */
-  children?: React.ReactNode;
 }) {
   const { starlinkCount: n, totalCount: total, installs30d, weeklyInstalls: weekly } = stats;
   return (
     <Panel as="section" aria-label="Rollout progress" className={SECTION_WIDE}>
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
+        <div id="starlink-stat">
           <p className="font-display text-4xl text-primary tabular-nums">
             {fmt(n)}{" "}
             <span className="text-xl text-secondary">
@@ -136,7 +136,6 @@ export function RolloutPanel({
           </li>
         </ul>
       </div>
-      {children && <div className="mt-4 border-t border-subtle pt-4">{children}</div>}
     </Panel>
   );
 }

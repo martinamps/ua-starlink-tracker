@@ -24,6 +24,15 @@ const PILLS_SM = 2;
 const PILLS_MD = 4;
 const PILLS_XL = 6;
 
+/** The sheet's operator spelling for display: "Skywest dba UAX" → "SkyWest".
+ * The Express badge already says United Express. */
+export function operatorName(raw: string | null | undefined): string {
+  return (raw ?? "")
+    .replace(/\s+(dba UAX|floater)$/i, "")
+    .replace(/^Skywest\b/, "SkyWest")
+    .trim();
+}
+
 /**
  * `/check-flight/{marketing number}` for a pill, or null when it can't reach a
  * real permalink and must keep its outbound link.
@@ -90,8 +99,9 @@ function FlightPills({
         // permalink is filed under rather than the operating callsign.
         const tooltip = href ? href.slice("/check-flight/".length) : flight.flight_number;
         // departure_time is a UTC epoch; the clock is pinned to UTC and named,
-        // 24-hour like /check-flight/{fn}, so the two read as one clock.
-        const when = formatPillTime(flight.departure_time);
+        // 24-hour like /check-flight/{fn}, so the two read as one clock. From md
+        // up the column header names the zone, so the pill drops it.
+        const clock = formatPillTime(flight.departure_time);
         return (
           <a
             // biome-ignore lint/suspicious/noArrayIndexKey: a tail can fly one number twice
@@ -101,13 +111,16 @@ function FlightPills({
             data-flight-tooltip={tooltip}
             // The visible text is an airport pair and a clock; the label restates
             // it with the flight number for screen readers (WCAG 2.5.3).
-            aria-label={`Flight ${tooltip}, ${dep} to ${arr}, departs ${when}`}
+            aria-label={`Flight ${tooltip}, ${dep} to ${arr}, departs ${clock} UTC`}
             className={`flight-pill ${visibility}`}
           >
             <span className="text-accent font-medium">{dep}</span>
             <span className="text-muted">→</span>
             <span className="text-accent font-medium">{arr}</span>
-            <span className="text-muted text-[10px]">{when}</span>
+            <span className="text-muted text-[10px]">
+              {clock}
+              <span className="md:hidden"> UTC</span>
+            </span>
           </a>
         );
       })}
@@ -162,6 +175,7 @@ export function AircraftList({
   permalinkAirline,
   showFleetLink,
   fleetTotal,
+  title = "Aircraft with Starlink",
 }: {
   /** Every equipped tail, freshest flight data first. */
   aircraft: Aircraft[];
@@ -173,6 +187,8 @@ export function AircraftList({
   showFleetLink: boolean;
   /** Every aircraft /fleet lists, equipped or not: where a missed search falls back to. */
   fleetTotal: number;
+  /** Names the scope where it is narrower than the page's headline count. */
+  title?: string;
 }) {
   const airlineOf = (p: Aircraft) => airlineByTail[p.TailNumber] || "UA";
   const permalink = permalinker(permalinkAirline, airlineByTail);
@@ -183,7 +199,7 @@ export function AircraftList({
 
   return (
     <Panel pad="none" className={`${SECTION_WIDE} overflow-hidden`}>
-      <SectionTitle className="px-4 md:px-6 pt-4 pb-0">Aircraft with Starlink</SectionTitle>
+      <SectionTitle className="px-4 md:px-6 pt-4 pb-0">{title}</SectionTitle>
       <div className="px-4 md:px-6 py-3 border-b border-subtle">
         <div className="flex flex-col sm:flex-row gap-3">
           <div className="relative flex-1">
@@ -236,10 +252,10 @@ export function AircraftList({
           <div
             id="search-count"
             aria-live="polite"
-            data-default={capped ? `Latest ${fmt(shown.length)} of ${fmt(aircraft.length)}` : ""}
+            data-default={capped ? `${fmt(shown.length)} of ${fmt(aircraft.length)}` : ""}
             className="hidden sm:flex items-center text-xs font-mono text-muted whitespace-nowrap"
           >
-            {capped ? `Latest ${fmt(shown.length)} of ${fmt(aircraft.length)}` : null}
+            {capped ? `${fmt(shown.length)} of ${fmt(aircraft.length)}` : null}
           </div>
           <div className="flex gap-1.5 sm:gap-2">
             <button
@@ -271,12 +287,14 @@ export function AircraftList({
         <div className="col-span-3">Aircraft</div>
         <div className="col-span-2">Type</div>
         <div className="col-span-3">Operator</div>
-        <div className="col-span-4">Upcoming Flights</div>
+        <div className="col-span-4">Upcoming flights (UTC)</div>
       </div>
 
       <div className="overflow-auto" style={{ maxHeight: "65vh" }}>
         {aircraft.length === 0 ? (
-          <div className="p-12 text-center text-muted font-mono">No aircraft data available</div>
+          <div className="p-12 text-center text-muted font-mono">
+            No aircraft have Starlink yet.
+          </div>
         ) : (
           <div className="divide-y divide-subtle">
             {shown.map((plane, idx) => {
@@ -329,7 +347,9 @@ export function AircraftList({
                     </div>
 
                     <div className="md:col-span-3 text-xs md:text-sm text-muted mb-3 md:mb-0 pl-5 md:pl-0">
-                      {plane.OperatedBy || "—"}
+                      {badge && plane.OperatedBy === AIRLINES[airline]?.name
+                        ? null
+                        : operatorName(plane.OperatedBy) || "—"}
                     </div>
 
                     <div className="md:col-span-4 pt-3 md:pt-0 border-t md:border-t-0 border-subtle">
@@ -347,7 +367,6 @@ export function AircraftList({
               <p className="text-secondary">No aircraft match.</p>
               {showFleetLink && (
                 <p className="mt-1 text-muted">
-                  {capped ? `This list holds the latest ${fmt(shown.length)}. ` : null}
                   <a
                     id="list-empty-fleet"
                     href="/fleet"
@@ -367,8 +386,8 @@ export function AircraftList({
           id="list-cap"
           className="px-4 md:px-6 py-3 border-t border-subtle text-center text-sm text-muted"
         >
-          Showing {fmt(shown.length)} of {fmt(aircraft.length)}, most recently flown first. Search
-          and filters cover these rows.
+          The {fmt(shown.length)} most recently flown of {fmt(aircraft.length)}. Search covers only
+          these.
           {showFleetLink && (
             <>
               {" "}
