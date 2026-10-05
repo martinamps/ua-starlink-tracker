@@ -147,7 +147,8 @@ describe("hub /airlines/{slug} detail pages (tracked airlines)", () => {
       const entry = factsForCode(cfg.code);
       if (!entry) continue;
       const body = await (await get(`/airlines/${airlineSlug(cfg)}`, hub.canonicalHost)).text();
-      for (const fact of entry.facts) {
+      // Superseded facts stay on /timeline, not here.
+      for (const fact of entry.facts.filter((f) => !f.superseded)) {
         const { date } = factStamp(fact);
         expect(body, `${cfg.code} missing stamp ${date}`).toContain(formatFactDate(date));
         expect(body, `${cfg.code} missing source ${fact.source.url}`).toContain(fact.source.url);
@@ -258,8 +259,7 @@ describe("hub /airlines/{slug} facts pages (content-level roster)", () => {
     const body = await (await get("/airlines/american", hub.canonicalHost)).text();
     expect(body).toContain("Airbus");
     expect(body).toContain("2027");
-    // Built to age into a tracker: the page says tracking begins with installs.
-    expect(body).toContain("grows into a live tracker");
+    expect(body).toContain("Not Yet");
   });
 
   test("aliases 301 to their canonical entry", async () => {

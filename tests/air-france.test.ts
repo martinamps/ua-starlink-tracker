@@ -773,7 +773,7 @@ describe("/airlines/air-france page", () => {
     expect(stale).toContain("None listed");
     expect(stale).not.toContain("Not started");
     expect(stale).not.toContain("Legacy Wi-Fi");
-    expect(stale).toContain("may have it now");
+    expect(stale).toContain("Not marked");
     expect(fresh).toContain("Legacy Wi-Fi");
     const starChips = (html: string) => (html.match(/>Starlink</g) ?? []).length;
     expect(starChips(stale)).toBe(starChips(fresh));

@@ -97,9 +97,12 @@ const BODY_GROUPS: Array<{ key: BodyClass; label: string }> = [
 export function TypeBarsSection({
   families,
   typeLinks,
+  unknownLabel = "not checked yet",
 }: {
   families: FleetFamily[];
   typeLinks: Map<string, FleetTypeLink>;
+  /** What an unlit tail means on this host, lowercased for mid-sentence use. */
+  unknownLabel?: string;
 }) {
   const known = families.filter((f) => f.family !== "unknown");
   const unlisted = families.find((f) => f.family === "unknown");
@@ -114,12 +117,12 @@ export function TypeBarsSection({
     <Section
       wide
       title="Starlink by aircraft type"
-      dek="Sorted by share within each group. Other colors show the Wi-Fi system the rest have today."
+      dek="Other colors show the Wi-Fi the rest have today."
     >
       <ProviderLegend
         className="mb-4"
         providers={["starlink", "viasat", "panasonic", "thales"]}
-        after={<li className="text-muted">Empty track: no Wi-Fi or not checked yet</li>}
+        after={<li className="text-muted">Empty track: no Wi-Fi or {unknownLabel}</li>}
       />
       <div className="grid gap-x-8 gap-y-6 lg:grid-cols-3">
         {groups.map((g) => {
@@ -169,15 +172,12 @@ export function CarrierSection({ carriers }: { carriers: FleetCarrier[] }) {
       Number(!!a.unattributed) - Number(!!b.unattributed) || b.pct - a.pct || b.total - a.total
   );
   return (
-    <Section
-      title="Regional carriers"
-      dek="Share of each regional carrier's aircraft with Starlink."
-    >
+    <Section title="Regional carriers">
       <ul>
         {sorted.map((c) => (
           <ShareBarRow
             key={c.name}
-            label={c.unattributed ? "Unlisted carrier" : c.name}
+            label={c.unattributed ? "Carrier not on record" : c.name}
             n={c.confirmed}
             total={c.total}
           />

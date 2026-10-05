@@ -308,7 +308,7 @@ function flightNum(fn: string): number {
 // 1000-1299 interisland (HA code retired 2026-04-22).
 const isHaMetal = (n: number) => n >= 800 && n <= 999;
 const isHaInterisland = (n: number) => n >= 1000 && n <= 1299;
-const HA_INTERISLAND_REASON = "Interisland — Boeing 717, no WiFi";
+const HA_INTERISLAND_REASON = "Interisland Boeing 717: no Wi-Fi";
 
 const AIRLINE_DEFS = {
   UA: {
@@ -334,7 +334,7 @@ const AIRLINE_DEFS = {
     subfleets: [
       {
         key: "express",
-        label: "United Express Fleet",
+        label: "United Express",
         flightNumberHint: "UA3000-6999",
         match: (fn) => {
           const n = flightNum(fn);
@@ -343,7 +343,7 @@ const AIRLINE_DEFS = {
       },
       {
         key: "mainline",
-        label: "United Mainline Fleet",
+        label: "United mainline",
         flightNumberHint: "UA1-2999",
         match: (fn) => {
           const n = flightNum(fn);
@@ -368,7 +368,7 @@ const AIRLINE_DEFS = {
     // Whole fleet eligible — Express + mainline both in the program.
     rollout: {
       status: "in_progress",
-      statusLabel: "In progress",
+      statusLabel: "Installing",
       phaseNote:
         "Started with regional jets in early 2025; rolling out across United Express and mainline.",
       rosterIsProgramScope: true,
@@ -404,7 +404,7 @@ const AIRLINE_DEFS = {
     iata: "HA",
     icao: "HAL",
     operators: [{ icao: "HAL", iata: "HA" }],
-    subfleets: [{ key: "mainline", label: "Hawaiian Fleet", match: () => true }],
+    subfleets: [{ key: "mainline", label: "Hawaiian", match: () => true }],
     fr24Slug: "ha-hal",
     metricTag: "hawaiian",
     ...FAA_TAIL,
@@ -413,15 +413,18 @@ const AIRLINE_DEFS = {
     flightHistoryModel: false,
     verifySite: "hawaiianairlines.com",
     typeDeterministicWifi: hawaiianTypeToWifi,
+    // Hawaiian flies only the neo, and every other page names it that way.
+    programTypes: [[/A321/i, "A321", "A321neo"]],
     // 717 interisland fleet was never in scope (no WiFi provider) and is being retired —
     // see HA's own press release. Denominator is the Airbus fleet only.
     rollout: {
       status: "complete",
-      // Matches rollout-facts: the Airbus fleet is done, the 787-9s are still to
-      // come (HAWAIIAN_PHASE_BY_FAMILY), so "Complete" overstated it.
-      statusLabel: "Airbus fleet done",
-      phaseNote:
-        "Every A330 and A321neo has Starlink; the 787-9s are next. The 717 interisland jets won't get it.",
+      // The stage word the hub lists use (atoms.tsx), scoped: the 717s were
+      // never in the programme, so a bare "Complete" would overstate it.
+      statusLabel: "Complete (Airbus fleet)",
+      // Hawaiian's 787s now fly for Alaska (app.ts passengerPhases), so they
+      // are no longer "next" here.
+      phaseNote: "Every A330 and A321neo has Starlink. The 717 interisland jets won't get it.",
       // The 717s are counted but never eligible, so 42/61 understates a
       // finished rollout.
       rosterIsProgramScope: false,
@@ -547,7 +550,7 @@ const AIRLINE_DEFS = {
     // mainline only on the 737-8 MAX; no other 737 or 787 connected.
     rollout: {
       status: "phase_done",
-      statusLabel: "Regional fleet done",
+      statusLabel: "Installing (regional done)",
       phaseNote:
         "Every regional E175 has Starlink. Mainline has started with the 737-8 MAX; no other 737 or 787 is connected yet.",
       // Mainline is in the programme too — the whole roster is the denominator.
@@ -591,7 +594,7 @@ const AIRLINE_DEFS = {
     // QR runs the same flight number across very different equipment day-to-day
     // (DOH-CAI may be 359 on QR1303 and 788 on QR1301 same date), so flight-
     // number partition is meaningless. One bucket; UI can break out by type.
-    subfleets: [{ key: "mainline", label: "Qatar Fleet", match: () => true }],
+    subfleets: [{ key: "mainline", label: "Qatar Airways", match: () => true }],
     classifyFleet: () => "mainline",
     fr24Slug: "qr-qtr",
     metricTag: "qatar",
@@ -616,9 +619,9 @@ const AIRLINE_DEFS = {
     typeDeterministicWifi: qatarTypeToStarlink,
     rollout: {
       status: "phase_done",
-      statusLabel: "Widebodies done",
+      statusLabel: "Mostly done (widebodies)",
       phaseNote:
-        "777, A350 and 787-8 fleets complete (787-8 Aug 2026); 787-9 installs under way, due end-2026. Narrowbodies and freighters are not in the program.",
+        "777, A350 and 787-8 fleets done; 787-9 installs due by the end of 2026. The A380, A330, narrowbodies and freighters are not in the announced programme.",
       // Roster counts ~277 including narrowbodies and freighters the programme
       // excludes; the in-scope widebody fleet is roughly half that.
       rosterIsProgramScope: false,
@@ -656,7 +659,7 @@ const AIRLINE_DEFS = {
     // HOP! flies AF-marketed numbers under its own callsigns, which carry no
     // marketed number, so HOP is deliberately not a prefix here.
     operators: [{ icao: "AFR", iata: "AF" }],
-    subfleets: [{ key: "mainline", label: "Air France Fleet", match: () => true }],
+    subfleets: [{ key: "mainline", label: "Air France", match: () => true }],
     classifyFleet: () => "mainline",
     // af-afr lists the HOP E-jets too; the a5-hop page is empty.
     fr24Slug: "af-afr",
@@ -697,7 +700,7 @@ const AIRLINE_DEFS = {
     fleetFallbackFlights: true,
     rollout: {
       status: "in_progress",
-      statusLabel: "Majority done",
+      statusLabel: "Mostly done",
       // Dated: an undated "has not started" outlives the rollout it describes.
       phaseNote:
         "Nearly 60% of the fleet had Starlink as of June 2026; Air France plans the whole fleet by the end of 2026.",

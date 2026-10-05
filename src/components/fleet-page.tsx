@@ -1,3 +1,4 @@
+import { tenantCopy } from "../airlines/aircraft-pages";
 import { AIRLINES, type SiteConfig } from "../airlines/registry";
 import type { FleetAnchorRow, FleetPageData } from "../types";
 import { ShareCardLink } from "./atoms";
@@ -5,11 +6,12 @@ import { type CiteStat, CiteThis } from "./cite-this";
 import { HangarFloor, TailRegistry } from "./fleet/hangar";
 import { InstallPaceSection, LivePulse } from "./fleet/pace";
 import { InstallPipelineSection, type PipelineMap } from "./fleet/pipeline";
+import { providerLabels } from "./fleet/providers";
 import { CarrierSection, type FleetTypeLink, TypeBarsSection } from "./fleet/type-bars";
 import type { Link } from "./layout";
 import { EYEBROW, PANEL, PageHeader, PageShell, SECTION_WIDE } from "./layout";
 import { TrackerLinks } from "./tracker-links";
-import { fmt, pct } from "./ui/format";
+import { fmt, pct, shortDate } from "./ui/format";
 
 export type { FleetTypeLink };
 
@@ -39,10 +41,10 @@ function OfficialAnchorsSection({ anchors }: { anchors: FleetAnchorRow[] }) {
                 rel="noreferrer"
                 className="text-accent hover:underline tabular-nums"
               >
-                {a.value}
+                {/^\d+$/.test(a.value) ? fmt(Number(a.value)) : a.value}
               </a>{" "}
               <span className="text-muted">
-                ({a.source_form}, as of {a.as_of_date})
+                ({a.source_form}, {shortDate(a.as_of_date)})
               </span>
             </li>
           ))}
@@ -90,6 +92,8 @@ interface FleetPageProps {
   cite?: CiteStat | null;
   /** Served /fleet/{slug} pages. */
   typeLinks?: FleetTypeLink[];
+  /** /install-rate when this host serves it. */
+  installRateHref?: string | null;
 }
 
 export default function FleetPage({
@@ -100,6 +104,7 @@ export default function FleetPage({
   currentPath,
   cite,
   typeLinks = [],
+  installRateHref = null,
 }: FleetPageProps) {
   const pipeline: PipelineMap = new Map(data.progressTails.map((r) => [r.tail, r]));
   const typeLinkByFamily = new Map(typeLinks.map((l) => [l.family, l]));
@@ -109,6 +114,9 @@ export default function FleetPage({
     : "Airline fleets with Starlink";
   // The express/mainline split only reads right when the page is one airline's.
   const pace = scopeCode ? data.installPace : null;
+  const labels = providerLabels(
+    scopeCode ? (tenantCopy(scopeCode).checksEveryTail ? "tail" : "type") : "mixed"
+  );
   return (
     <PageShell site={site} currentPath={currentPath} pageLinks={pageLinks}>
       <PageHeader
@@ -143,18 +151,32 @@ export default function FleetPage({
         </div>
       )}
 
-      <TypeBarsSection families={data.families} typeLinks={typeLinkByFamily} />
+      <TypeBarsSection
+        families={data.families}
+        typeLinks={typeLinkByFamily}
+        unknownLabel={labels.unknown.toLowerCase()}
+      />
       <LivePulse pulse={data.pulse} />
-      <InstallPaceSection pace={data.installPace} />
+      <InstallPaceSection pace={data.installPace} projectionHref={installRateHref} />
       <InstallPipelineSection
         progress={data.progress}
         tails={data.progressTails}
         movements={data.movements}
       />
       <OfficialAnchorsSection anchors={data.anchors} />
-      <HangarFloor families={data.families} pipeline={pipeline} typeLinks={typeLinkByFamily} />
+      <HangarFloor
+        families={data.families}
+        pipeline={pipeline}
+        typeLinks={typeLinkByFamily}
+        labels={labels}
+      />
       <CarrierSection carriers={data.carriers} />
-      <TailRegistry allTails={data.allTails} pipeline={pipeline} typeLinks={typeLinkByFamily} />
+      <TailRegistry
+        allTails={data.allTails}
+        pipeline={pipeline}
+        typeLinks={typeLinkByFamily}
+        labels={labels}
+      />
 
       <ShareCardLink path={shareCard} />
 

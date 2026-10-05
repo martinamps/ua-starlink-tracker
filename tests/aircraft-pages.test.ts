@@ -24,6 +24,7 @@ import {
   aircraftTypeFaq,
   aircraftTypeTitle,
   answerFor,
+  answerSummary,
   officialCountFor,
   resolveAircraftSlug,
   typeFactsFor,
@@ -357,8 +358,8 @@ describe("answerFor", () => {
       expect(a.headline).not.toMatch(/^No\b/);
       expect(a.sentence).not.toMatch(/^No\b/);
     }
-    expect(`${a.headline} ${a.sentence}`).toContain(def.short);
-    expect(`${a.headline} ${a.sentence}`).toMatch(/\d/);
+    expect(answerSummary(data, def, a)).toContain(def.short);
+    expect(answerSummary(data, def, a)).toMatch(/\d/);
   });
 
   test("the listed-driven verifying case names the listing", () => {
@@ -367,7 +368,7 @@ describe("answerFor", () => {
       UA_787,
       null
     );
-    expect(a.sentence).toContain("awaiting a united.com check");
+    expect(a.sentence).toContain("not yet verified on united.com");
   });
 
   test("100% only when every tail has it; floors elsewhere", () => {
@@ -525,7 +526,7 @@ describe("answerFor edge verdicts", () => {
   test("'every one we've checked' needs the checked tails to cover the type", () => {
     const a = answerFor(input({ total: 21, starlink: 1, checked: 1, unchecked: 20 }), UA_787, null);
     expect(a.kind).toBe("some");
-    expect(a.headline).toMatch(/^One does/);
+    expect(a.headline).toMatch(/^1 of 21\b/);
     expect(a.sentence).toContain("20 tails not checked yet");
   });
 
@@ -539,7 +540,8 @@ describe("answerFor edge verdicts", () => {
       providers: { starlink: 1, viasat: 171, unknown: 1 } as Record<WifiProvider, number>,
     });
     const a = answerFor(data, UA_787, null);
-    expect(a.headline).toBe("One does: 1 of 173 (<1%).");
+    expect(a.headline).toBe("1 of 173 (<1%).");
+    expect(answerSummary(data, UA_787, a)).toMatch(/^1 of United's 173 787s has Starlink/);
     const faq = aircraftTypeFaq(data, UA_787, [], null, { freeAccess: "Yes, free for all." });
     const text = faq.map((f) => f.a).join(" ");
     expect(text).toContain("the one equipped United 787:");
@@ -797,7 +799,7 @@ describe("listed-but-unconfirmed tails (synthetic)", () => {
     const def = aircraftPagesFor("UA").find((x) => x.slug === "e175") as AircraftPageDef;
     const answer = answerFor(d as AircraftTypePageData, def, null);
     expect(answer.effective).toBe(fam?.starlink);
-    expect(answer.sentence).toContain("not yet confirmed on united.com");
+    expect(answer.sentence).toContain("not yet verified on united.com");
     db.close();
   });
 });

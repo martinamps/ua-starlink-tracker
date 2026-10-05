@@ -3,7 +3,7 @@ import { TYPE_DISPLAY } from "../../airlines/aircraft-pages";
 import { AIRLINES } from "../../airlines/registry";
 import type { FleetMovement, FleetProgressRow, FleetProgressTailRow } from "../../types";
 import { EYEBROW, H2, LINK, PANEL, SECTION_WIDE, StatValue } from "../layout";
-import { fmt, longDate, monthDay, pct } from "../ui/format";
+import { fmt, monthDay, pct, shortDate } from "../ui/format";
 import { Meter } from "../ui/meter";
 
 export type PipelineMap = Map<string, FleetProgressTailRow>;
@@ -67,9 +67,9 @@ export function sheetTypeName(code: string): string {
 }
 
 const PIPELINE_LABEL: Record<FleetProgressTailRow["state"], string> = {
-  in_mod: "Starlink install under way",
-  verification_needed: "install finished, awaiting verification",
-  scheduled: "queued for a future mod line",
+  in_mod: "being installed",
+  verification_needed: "awaiting verification",
+  scheduled: "queued for install",
 };
 
 export function pipelinePhrase(state: FleetProgressTailRow["state"], loc: string | null): string {
@@ -121,7 +121,7 @@ export function PipelineBar({
   const segs = [
     { n: complete, cls: "bar-complete", label: "complete" },
     { n: verifying, cls: "bar-verif", label: "awaiting verification" },
-    { n: inMod, cls: "bar-inmod", label: "in a mod line" },
+    { n: inMod, cls: "bar-inmod", label: "being installed" },
     { n: queued, cls: "bar-queued", label: "queued" },
   ].filter((s) => s.n > 0);
   return (
@@ -155,15 +155,13 @@ const MOVEMENT_GLYPH: Record<FleetMovement["kind"], { ch: string; cls: string }>
 function movementText(m: FleetMovement): string {
   switch (m.kind) {
     case "entered_mod":
-      return m.mod_location ? `entered the ${m.mod_location} mod line` : "entered a mod line";
+      return pipelinePhrase("in_mod", m.mod_location);
     case "to_verification":
-      return "install finished, awaiting verification";
+      return pipelinePhrase("verification_needed", null);
     case "queued":
-      return m.mod_location
-        ? `queued for the ${m.mod_location} mod line`
-        : "queued for a future mod line";
+      return pipelinePhrase("scheduled", m.mod_location);
     case "confirmed":
-      return "now showing Starlink";
+      return "Starlink verified";
   }
 }
 
@@ -212,27 +210,22 @@ export function MovementsPanel({
 const SEGMENT_LABELS: Record<string, string> = {
   mainline_nb: "Mainline narrowbody",
   mainline_wb: "Mainline widebody",
-  express: "Express & regional",
+  express: "Regional",
 };
 
 function Swatch({ cls }: { cls: string }) {
   return <span aria-hidden="true" className={`inline-block w-2 h-2 rounded-[1px] mr-1.5 ${cls}`} />;
 }
 
-const OFFICIAL_SEGMENT_LABELS: Record<string, string> = {
-  ...SEGMENT_LABELS,
-  express: "Regional",
-};
-
 function officialSegmentLabel(airline: string, segment: string): string {
   if (segment === "partner") {
     return AIRLINES[airline]?.programmePartners?.partners[0]?.label ?? "Partner-operated";
   }
-  return OFFICIAL_SEGMENT_LABELS[segment] ?? segment;
+  return SEGMENT_LABELS[segment] ?? segment;
 }
 
 // An airline's own per-type tracker: connected and pending counts only — no
-// mod lines, no tail names — so it gets its own section, not the sheet's.
+// install stations, no tail names — so it gets its own section, not the sheet's.
 function OfficialTrackerSection({
   progress,
   tracker,
@@ -241,19 +234,19 @@ function OfficialTrackerSection({
   tracker: { label: string; url: string };
 }) {
   const totals = progress.filter((r) => r.type_code === "Totals");
-  const updated = longDate(totals.find((r) => r.sheet_updated)?.sheet_updated);
+  const stamp = totals.find((r) => r.sheet_updated)?.sheet_updated;
+  const updated = stamp ? shortDate(stamp) : null;
   const name = AIRLINES[totals[0].airline]?.shortName ?? totals[0].airline;
   return (
     <section className={SECTION_WIDE}>
       <h2 className={H2}>Install progress, per {name}</h2>
       <p className="mt-1 mb-4 text-sm text-secondary text-pretty">
-        Counts from{" "}
+        From{" "}
         <a href={tracker.url} className={LINK} rel="noopener">
-          {name}'s own Starlink tracker
+          {name}'s Starlink tracker
         </a>
-        {updated ? ` (chart updated ${updated})` : ""}. {name} publishes how many of each type are
-        connected, not which ones, and keeps its own fleet list, so these totals can differ from our
-        counts above.
+        {updated ? ` (${updated})` : ""}. {name} counts by type, not by tail, so totals can differ
+        from ours.
       </p>
       <div className="grid md:grid-cols-3 gap-4">
         {totals.map((seg) => {
@@ -292,7 +285,7 @@ function OfficialTrackerSection({
   );
 }
 
-// Forward-looking: aircraft in or queued for a mod line. The historical
+// Forward-looking: aircraft being installed or queued. The historical
 // counterpart is InstallPaceSection.
 export function InstallPipelineSection({
   progress,
@@ -323,11 +316,8 @@ export function InstallPipelineSection({
     <section className={SECTION_WIDE}>
       <h2 className={H2}>Install pipeline</h2>
       <p className="mt-1 mb-4 text-sm text-secondary text-pretty">
-        Aircraft in a mod line now, from the community progress sheet
-        {updated ? ` (updated ${updated} ET)` : ""}. The sheet keeps its own fleet list, so its
-        totals run slightly different from our counts above. The in-mod and verifying counts are the
-        sheet's own totals; the tail chips are the aircraft we could read off its color coding, less
-        any the sheet still lists that we already count as equipped, so the two can differ by a few.
+        Aircraft being installed now, per the community progress sheet
+        {updated ? ` (updated ${updated} ET)` : ""}. Its counts can differ slightly from ours.
       </p>
       <div className="grid md:grid-cols-3 gap-4">
         {totals.map((seg) => {
@@ -354,7 +344,7 @@ export function InstallPipelineSection({
                 {seg.in_mod !== null && (
                   <li>
                     <Swatch cls="bar-inmod" />
-                    {fmt(seg.in_mod)} in a mod line now
+                    {fmt(seg.in_mod)} being installed
                   </li>
                 )}
                 {seg.verification_needed !== null && (
@@ -385,13 +375,13 @@ export function InstallPipelineSection({
         <div className="grid md:grid-cols-2 gap-4 mt-4">
           {inModTypes.length > 0 && (
             <div className={PANEL}>
-              <div className={EYEBROW}>Active mod lines by type</div>
+              <div className={EYEBROW}>Being installed, by type</div>
               <ul className="grid grid-cols-2 gap-2 text-sm text-secondary">
                 {inModTypes.map((r) => (
                   <li key={`${r.segment}-${r.type_code}`}>
-                    {sheetTypeName(r.type_code)}: {fmt(r.in_mod ?? 0)} in mod
+                    {sheetTypeName(r.type_code)}: {fmt(r.in_mod ?? 0)}
                     {(r.verification_needed ?? 0) > 0
-                      ? `, ${fmt(r.verification_needed ?? 0)} verifying`
+                      ? `, ${fmt(r.verification_needed ?? 0)} awaiting verification`
                       : ""}
                   </li>
                 ))}
@@ -400,7 +390,7 @@ export function InstallPipelineSection({
           )}
           {scheduled.length > 0 && (
             <div className={PANEL}>
-              <div className={EYEBROW}>Queued for future mod lines</div>
+              <div className={EYEBROW}>Queued for install</div>
               <div className="flex flex-wrap gap-1.5">
                 {scheduled.map((t) => (
                   <PipelineTailChip key={t.tail} row={t} />
@@ -411,7 +401,7 @@ export function InstallPipelineSection({
         </div>
       )}
       {tails.length > 0 && <MovementsPanel movements={movements} />}
-      {stations && <p className="text-xs text-muted mt-3">Mod stations: {stations}</p>}
+      {stations && <p className="text-xs text-muted mt-3">Install stations: {stations}</p>}
     </section>
   );
 }

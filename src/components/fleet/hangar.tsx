@@ -1,5 +1,5 @@
 import { isStarlinkProvider } from "../../database/sql/equipped";
-import type { FleetFamily, FleetTail } from "../../types";
+import type { FleetFamily, FleetTail, WifiProvider } from "../../types";
 import { AIRCRAFT_SPECS, type AircraftSpec } from "../../utils/aircraft-specs";
 import { H2, SECTION_WIDE } from "../layout";
 import { fmt, pct } from "../ui/format";
@@ -156,10 +156,12 @@ export function HangarFloor({
   families,
   pipeline,
   typeLinks,
+  labels = PROVIDER_LABEL,
 }: {
   families: FleetFamily[];
   pipeline: PipelineMap;
   typeLinks: Map<string, FleetTypeLink>;
+  labels?: Record<WifiProvider, string>;
 }) {
   const counts = providerCounts(families.flatMap((f) => f.tails));
   const count = (state: string) => [...pipeline.values()].filter((r) => r.state === state).length;
@@ -174,6 +176,7 @@ export function HangarFloor({
       <ProviderLegend
         className="mb-4"
         providers={PROVIDER_ORDER.filter((p) => counts[p] > 0)}
+        labels={labels}
         after={
           <>
             {inMod > 0 && (
@@ -182,7 +185,7 @@ export function HangarFloor({
                   aria-hidden="true"
                   className="pipe-mod inline-block w-2.5 h-2.5 rounded-[1px]"
                 />
-                In a mod line
+                Being installed
               </li>
             )}
             {verifying > 0 && (
@@ -191,7 +194,7 @@ export function HangarFloor({
                   aria-hidden="true"
                   className="pipe-verif inline-block w-2.5 h-2.5 rounded-[1px]"
                 />
-                Install awaiting verification
+                Awaiting verification
               </li>
             )}
           </>
@@ -239,21 +242,21 @@ export function TailRegistry({
   allTails,
   pipeline,
   typeLinks,
+  labels = PROVIDER_LABEL,
 }: {
   allTails: FleetTail[];
   pipeline: PipelineMap;
   typeLinks: Map<string, FleetTypeLink>;
+  labels?: Record<WifiProvider, string>;
 }) {
   const counts = providerCounts(allTails);
   return (
     <section className={SECTION_WIDE}>
       <h2 className={H2}>Tail registry</h2>
       <p className="mt-1 mb-3 text-sm text-secondary">
-        All {fmt(allTails.length)} aircraft. Search with{" "}
-        <kbd className="px-1 bg-surface border border-subtle rounded text-xs">⌘F</kbd>; click one to
-        open it on FlightAware.
+        All {fmt(allTails.length)} aircraft. Click one to open it on FlightAware.
       </p>
-      <ProviderLegend counts={counts} className="mb-4" />
+      <ProviderLegend counts={counts} labels={labels} className="mb-4" />
       <div className="bg-surface border border-subtle rounded-lg p-4 font-mono text-xs leading-[1.7] columns-[20ch] gap-x-3">
         {allTails.map((t) => {
           const dot = registryDot(t, pipeline);

@@ -326,6 +326,7 @@ function factDate(f: RolloutFact): string {
 export function typeFactsFor(code: string, slug: string): RolloutFact[] {
   const facts = factsForCode(code)?.facts ?? [];
   return facts
+    .filter((f) => !f.superseded)
     .filter((f) => f.aircraftPages?.includes(slug) || f.aircraftPages?.includes("*"))
     .sort((a, b) => factDate(b).localeCompare(factDate(a)));
 }
@@ -387,7 +388,7 @@ const TENANT_COPY: Record<AircraftPageTenant, TenantCopy> = {
   AS: {
     airline: "Alaska",
     possessive: "Alaska's",
-    evidence: "confirmed from per-aircraft reports",
+    evidence: "each confirmed on a flight",
     checksEveryTail: false,
   },
 };
@@ -398,7 +399,7 @@ export function tenantCopy(code: string): TenantCopy {
 
 export const PROVIDER_NAMES: Record<WifiProvider, string> = {
   starlink: "Starlink",
-  starlink_listed: "Starlink, reported but unconfirmed",
+  starlink_listed: "Starlink, listed, not yet verified",
   viasat: "Viasat",
   panasonic: "Panasonic",
   thales: "Thales",
@@ -494,7 +495,7 @@ export function answerFor(
   const oDate = O ? formatFactDate(O.asOf) : "";
   const listedTail =
     L > 0
-      ? ` ${L} of ${plural(L, "them is", "them are")} listed by the fleet sheet and not yet confirmed on united.com.`
+      ? ` ${L === 1 ? "One is" : `${L} are`} listed by the fleet sheet, not yet verified on united.com.`
       : "";
   // "each verified against united.com" cannot be said of a count that carries
   // listed tails; listedTail then does the attributing.
@@ -529,30 +530,30 @@ export function answerFor(
     return build(
       "most",
       `${O.count} do, per ${copy.airline}.`,
-      `${copy.airline} reports ${connected} (tracker updated ${oDate}), but our roster lists only ${T}, so no fleet share is shown. We have tail-level confirmation for ${s}.`,
-      `${copy.airline} reports ${connected} (${oDate}). We have tail-level confirmation for ${s}. ${SWAP_NOTE}`
+      `${copy.airline} reports ${connected}, but we list only ${T}, so no share is shown. We've confirmed ${s} on flights.`,
+      `${copy.airline} reports ${connected} (${oDate}). We've confirmed ${s} on flights. ${SWAP_NOTE}`
     );
   }
 
   const attributedShare = () =>
-    `${copy.airline} reports ${O?.count} of its ${T} ${shorts} connected (${oDate}), about ${share}. We have tail-level confirmation for ${s}. ${SWAP_NOTE}`;
+    `${copy.airline} reports ${O?.count} of its ${T} ${shorts} connected (${oDate}), about ${share}. We've confirmed ${s} on flights. ${SWAP_NOTE}`;
 
   const everyTail = copy.checksEveryTail ? K === 0 && U === 0 : s === T || O?.all === true;
   if (E > 0 && E === T && everyTail) {
     if (O?.all && attributed) {
       const ours =
         s === T
-          ? `every one of the ${T} in our roster is ${copy.evidence}`
-          : `${s} of the ${T} in our roster are ${copy.evidence}`;
+          ? `all ${T} we list are ${copy.evidence}`
+          : `${s} of the ${T} we list are ${copy.evidence}`;
       return build(
         "all",
         "Yes, every one.",
-        `${copy.airline} reports all ${O.count} of its ${shorts} connected (tracker updated ${oDate}), and ${ours}.${listedTail}`,
+        `${copy.airline} reports all ${O.count} of its ${shorts} connected, and ${ours}.${listedTail}`,
         `Every ${copy.airline} ${short} has Starlink per ${copy.possessive} own count, so it's near-certain unless the aircraft is swapped for another type.`
       );
     }
     const officialNote = O?.all
-      ? ` ${copy.airline} reports all ${O.count} of its ${shorts} connected (tracker updated ${oDate}).`
+      ? ` ${copy.airline} reports all ${O.count} of its ${shorts} connected.`
       : "";
     return build(
       "all",
@@ -567,29 +568,27 @@ export function answerFor(
       "all_checked",
       "Every one we've checked.",
       `${E} of ${T} ${copy.airline} ${shorts} have Starlink${verifiedNote}.${listedTail} ${U} ${plural(U, "tail")} not checked yet.`,
-      `Every ${short} we've checked has Starlink, so it's near-certain unless the aircraft is swapped for another type or you draw ${U === 1 ? "the one unchecked tail" : `one of the ${U} unchecked`}.`
+      `Every ${short} we've checked has Starlink. The aircraft can still be swapped before departure.`
     );
   }
 
   if (s > 0 || (O !== null && O.count > 0)) {
-    const most = E / T >= 0.5;
-    const kind = most ? "most" : "some";
-    const lead = E === 1 ? "One does" : most ? "Most do" : "Some do";
+    const kind = E / T >= 0.5 ? "most" : "some";
     if (attributed) {
       return build(
         kind,
-        `${lead}, per ${copy.airline}: ${E} of ${T} (${share}).`,
-        `${copy.airline} reports ${O?.count} of its ${T} ${shorts} connected (tracker updated ${oDate}). We can confirm ${s} of them ourselves, from per-aircraft reports.`,
+        `${E} of ${T} (${share}), per ${copy.airline}.`,
+        `${copy.airline} reports ${O?.count} of its ${T} ${shorts} connected. We've confirmed ${s} on flights.`,
         attributedShare()
       );
     }
     return build(
       kind,
-      `${lead}: ${E} of ${T} (${share}).`,
+      `${E} of ${T} (${share}).`,
       L > 0
         ? `${s} of ${plural(s, "them is", "them are")} ${copy.evidence}.${listedTail}${uncheckedTail}`
-        : `Every Starlink ${short} counted here is ${copy.evidence}.${uncheckedTail}`,
-      `${share} of ${copy.possessive} ${shorts} have Starlink (${E} of ${T}). ${SWAP_NOTE}`
+        : uncheckedTail.trim(),
+      SWAP_NOTE
     );
   }
 
@@ -602,13 +601,13 @@ export function answerFor(
     : "";
   const inMod = p?.in_mod ?? 0;
   const finished = p ? p.starlink_complete + p.verification_needed : 0;
-  const modTail = inMod > 0 ? ` ${inMod} more in mod.` : "";
+  const modTail = inMod > 0 ? ` ${inMod} more being installed.` : "";
   if (L > 0 || finished > 0) {
-    const listed = `${L} ${plural(L, "tail is", "tails are")} listed with Starlink, awaiting a united.com check.`;
+    const listed = `${L} ${plural(L, "tail is", "tails are")} listed with Starlink, not yet verified on united.com.`;
     const sentence =
       finished > 0
-        ? `${finished} ${plural(finished, "install")} finished per ${sheet}, none confirmed on united.com yet for the ${short}.${modTail}${L > 0 ? ` ${listed}` : ""}`
-        : `${copy.airline} ${short}: ${listed} None is confirmed there yet.${modTail}`;
+        ? `${finished} ${plural(finished, "install")} finished per ${sheet}, none verified on united.com yet for the ${short}.${modTail}${L > 0 ? ` ${listed}` : ""}`
+        : `${copy.airline} ${short}: ${listed}${modTail}`;
     return build("verifying", "Not verified yet.", sentence);
   }
 
@@ -616,15 +615,15 @@ export function answerFor(
     return build(
       "unknown",
       "Not checked yet.",
-      `None of ${copy.possessive} ${T} ${shorts} has been checked on united.com yet.${inMod > 0 ? ` ${inMod} ${plural(inMod, "is", "are")} in mod per ${sheet}.` : ""}`
+      `None of ${copy.possessive} ${T} ${shorts} has been checked on united.com yet.${inMod > 0 ? ` ${inMod} ${plural(inMod, "is", "are")} being installed per ${sheet}.` : ""}`
     );
   }
 
   if (O && O.count === 0) {
     return build(
       "official_none",
-      `Not yet, per ${copy.possessive} own tracker.`,
-      `${copy.possessive} Starlink tracker (updated ${oDate}) shows no ${short} connected yet; our roster has ${T}.`
+      "Not yet.",
+      `${copy.possessive} Starlink tracker (${oDate}) shows no ${short} connected yet.`
     );
   }
 
@@ -632,12 +631,12 @@ export function answerFor(
     return build(
       "unknown",
       "Unconfirmed.",
-      `${copy.airline} hasn't published a count for the ${short}; we have no confirmed tails among its ${T} yet.`
+      `${copy.airline} hasn't published a count for the ${short}, and we haven't confirmed any of the ${T} we list.`
     );
   }
 
   const checked =
-    U > 0 ? `${T - U} checked on united.com, ${U} not checked yet` : "each checked on united.com";
+    U > 0 ? `${T - U} checked on united.com, ${U} not yet` : "each checked on united.com";
   if (inMod > 0) {
     return build(
       "installing",
@@ -649,8 +648,26 @@ export function answerFor(
   return build(
     "none",
     `Not yet: 0 of ${T}.`,
-    `None of ${copy.possessive} ${T} ${shorts} has Starlink yet, ${checked}.`
+    `None of ${copy.possessive} ${T} ${shorts} has Starlink yet (${checked}).`
   );
+}
+
+/** The verdict as one self-contained sentence, for the FAQ and the meta
+ * description, which are read without the page's H1 naming the type. */
+export function answerSummary(
+  data: Pick<AircraftTypePageData, "airline" | "total">,
+  def: AircraftPageDef,
+  answer: Pick<AircraftAnswer, "kind" | "headline" | "sentence" | "effective">
+): string {
+  if (answer.kind !== "most" && answer.kind !== "some") {
+    return `${answer.headline} ${answer.sentence}`.trim();
+  }
+  const copy = tenantCopy(data.airline);
+  const E = answer.effective;
+  const T = data.total;
+  const per = answer.headline.endsWith(`per ${copy.airline}.`) ? `, per ${copy.airline}` : "";
+  const count = `${E} of ${copy.possessive} ${T} ${def.short}s ${plural(E, "has", "have")} Starlink (${pct(E, T)})${per}.`;
+  return `${count} ${answer.sentence}`.trim();
 }
 
 export const TITLE_MAX = 60;
@@ -698,7 +715,7 @@ export function aircraftTypeTitle(
       ladder.push(`${airline} ${s} Starlink: Not Verified Yet`);
       break;
     case "installing":
-      ladder.push(`${airline} ${s} Starlink: Not Yet, Retrofit Under Way`);
+      ladder.push(`${airline} ${s} Starlink: Not Yet, Installs Under Way`);
       ladder.push(`${airline} ${s} Starlink: Not Yet`);
       break;
     case "official_none":
@@ -717,16 +734,10 @@ export function aircraftTypeTitle(
 
 /** The United progress sheet next to our own count, attributed both ways and
  * neutral about which runs ahead (ours is above the sheet as often as below). */
-export function sheetComparison(pipeline: AircraftTypePipeline, starlink: number): string[] {
+export function sheetComparison(pipeline: AircraftTypePipeline, starlink: number): string {
   const fetched = formatFactDate(isoDay(pipeline.fetched_at));
   const n = (v: number) => v.toLocaleString("en-US");
-  const lines = [
-    `The United fleet progress sheet (fetched ${fetched}) shows ${n(pipeline.starlink_complete)} complete, ${n(pipeline.in_mod)} in mod and ${n(pipeline.verification_needed)} awaiting verification. We've verified ${n(starlink)} on united.com.`,
-  ];
-  if (pipeline.starlink_complete !== starlink) {
-    lines.push("The sheet and united.com update separately, so the counts can differ.");
-  }
-  return lines;
+  return `Progress sheet (${fetched}): ${n(pipeline.starlink_complete)} complete, ${n(pipeline.in_mod)} being installed, ${n(pipeline.verification_needed)} awaiting verification. Verified on united.com: ${n(starlink)}.`;
 }
 
 const TARGET_RE = /\bby (the )?(end|fall|summer|spring|following|early|mid)/i;
@@ -775,7 +786,7 @@ export function aircraftTypeFaq(
   const items: TypeFaqItem[] = [
     {
       q: `Does the ${copy.airline} ${short} have Starlink?`,
-      a: `${answer.headline} ${answer.sentence}`,
+      a: answerSummary(data, def, answer),
     },
   ];
 
@@ -798,9 +809,12 @@ export function aircraftTypeFaq(
 
   const target = answer.kind === "all" ? null : targetFact(facts, def.slug);
   if (target?.asOf) {
+    const scope = target.aircraftPages?.includes(def.slug)
+      ? `${copy.possessive} stated target for the ${short}`
+      : `${copy.possessive} fleet-wide target, which covers the ${short}`;
     items.push({
       q: `When will every ${copy.airline} ${short} have Starlink?`,
-      a: `${copy.airline} hasn't given a date for the ${short}. Its closest stated target (${target.source.label}, ${formatFactDate(target.asOf)}): ${factText(target)}`,
+      a: `${scope} (${target.source.label}, ${formatFactDate(target.asOf)}): ${factText(target)}`,
     });
   }
 
@@ -833,11 +847,11 @@ export function aircraftTypeFaq(
       data.flightNumbersScope === "starlink_only"
         ? {
             q: `Which ${copy.airline} flights recently had a Starlink ${short}?`,
-            a: `In the last 30 days, a Starlink-equipped ${short} flew ${linked.join(", ")} most often. Check your own flight by number for the tail actually assigned.`,
+            a: `In the last 30 days, a Starlink ${short} flew ${linked.join(", ")} most often.`,
           }
         : {
             q: `Which ${copy.airline} flights usually use ${article(short)} ${short}?`,
-            a: `Over the last 30 days of observed assignments, ${linked.join(", ")} most often got ${article(short)} ${short}. Check your own flight by number for the tail actually assigned.`,
+            a: `In the last 30 days, ${linked.join(", ")} most often got ${article(short)} ${short}.`,
           }
     );
   }
@@ -848,8 +862,8 @@ export function aircraftTypeFaq(
     (official.count > data.starlink || answer.kind === "official_none")
   ) {
     items.push({
-      q: "Why does this page cite Alaska instead of tail data?",
-      a: `Alaska doesn't publish WiFi status per aircraft, so for the ${short} this page quotes ${copy.possessive} own Starlink tracker (updated ${formatFactDate(official.asOf)}) and counts only tails we can confirm ourselves: ${data.starlink} so far.`,
+      q: `Why does this page use ${copy.possessive} own count?`,
+      a: `${copy.airline} doesn't publish Wi-Fi per aircraft, so this page uses ${copy.possessive} own count. We've confirmed ${data.starlink} ${plural(data.starlink, short, shorts)} on flights.`,
     });
   }
 

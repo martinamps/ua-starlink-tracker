@@ -98,8 +98,8 @@ export const ROLLOUT_TONE: Record<AirlineConfig["rollout"]["status"], Tone> = {
 
 /**
  * One status vocabulary for every airline on the hub, /airlines and /compare.
- * The registry's free-text labels ("Regional fleet done", "Widebodies nearly
- * done") stay on detail pages; lists and tables speak only these words.
+ * Detail pages show the registry's statusLabel, which is one of these words
+ * plus a scope ("Installing (regional done)"); lists and tables use the bare word.
  */
 type Stage = "Announced" | "Trial" | "Installing" | "Mostly done" | "Complete" | "Not Starlink";
 

@@ -56,23 +56,23 @@ export interface RolloutTargetDef {
 // year-end count comes from @united's own post, which revised the Q2 exhibit's
 // "nearly 1,000" and serves its text without a login.
 const UA_X_2026_10_03 = {
-  title: "United Airlines (@united) on X, October 3, 2026",
+  title: "United Airlines (@united) on X",
   url: "https://x.com/united/status/2106516734148562984",
 };
 const UA_Q1_2026 = {
-  title: "United Airlines Q1 2026 earnings release (SEC Form 8-K, Ex-99.1, April 21, 2026)",
+  title: "United Airlines Q1 2026 earnings release (SEC Form 8-K, Ex-99.1)",
   url: "https://www.sec.gov/Archives/edgar/data/100517/000010051726000089/ual_erx03312026xex991.htm",
 };
 
 const AS_LAUNCH = {
-  title: "Alaska Airlines newsroom — Starlink selection announcement (August 20, 2025)",
+  title: "Alaska Airlines newsroom: Starlink selection announcement",
   url: "https://news.alaskaair.com/guest-experience/alaska-airlines-to-launch-new-era-of-inflight-connectivity/",
 };
 // The half-by-end-2026 split is NOT in the Starlink announcement above, nor in
 // the Q4 2025 earnings press release — it lives in Air Group's quarterly
 // supplemental decks, which restate it each quarter against a current count.
 const AS_Q2_2026_SUPPLEMENTAL = {
-  title: "Alaska Air Group Q2 2026 supplemental information (SEC Form 8-K, Ex-99.2, July 21, 2026)",
+  title: "Alaska Air Group Q2 2026 supplemental information (SEC Form 8-K, Ex-99.2)",
   url: "https://www.sec.gov/Archives/edgar/data/766421/000076642126000036/alksupplemental2q26.htm",
 };
 

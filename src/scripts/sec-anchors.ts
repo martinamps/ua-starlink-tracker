@@ -55,7 +55,7 @@ export const SEED_ANCHORS: Array<Omit<FleetAnchorRow, "added_at">> = [
   {
     airline: "UA",
     as_of_date: "2026-03-31",
-    scope: "Starlink installed, dual-class United Express",
+    scope: "United Express two-cabin jets with Starlink",
     metric: "starlink_installed_dual_class_uax",
     value: "327",
     source_form: "UAL Q1 2026 earnings 8-K",
