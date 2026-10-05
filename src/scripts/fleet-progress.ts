@@ -13,7 +13,9 @@ import { type JobHandle, startJob } from "../utils/job-runner";
 import { info, error as logError, warn } from "../utils/logger";
 import { fetchSheetCsv } from "../utils/utils";
 
-export type ProgressSegment = "mainline_nb" | "mainline_wb" | "express";
+// "partner": another operator's aircraft an airline's own tracker counts
+// (Hawaiian's Airbus jets on Alaska's chart).
+export type ProgressSegment = "mainline_nb" | "mainline_wb" | "express" | "partner";
 
 const MAINLINE_PROGRESS_DOC = "1QQyca_aIbxrV7uXuYfNdHuTygHwsaTFC9uf_dZbKWnI";
 const EXPRESS_PROGRESS_DOC = "1rADs3NACwfFOgqQATmj9CXWkwFH00yGUwmN1zrrT4u8";

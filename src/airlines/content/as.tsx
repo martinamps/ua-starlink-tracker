@@ -8,36 +8,37 @@ import type { AirlineContent, ContentStats, HeroProps } from "./index";
 const regional = (s: ContentStats) => s.fleetStats?.express ?? { starlink: 0, total: 0 };
 const mainline = (s: ContentStats) => s.fleetStats?.mainline ?? { starlink: 0, total: 0 };
 
-// Alaska's own tracker (Sep 25, 2026; rollout-facts) counts Hawaiian's Airbus
-// jets too, so its percentage runs higher than this Alaska-only roster.
-const ALASKA_OWN_FIGURE =
-  "Alaska's own tracker put the combined Alaska and Hawaiian fleet at 38% on Sep 25, 2026.";
-
+// The headline spans the same fleets as Alaska's own tracker: Alaska's
+// aircraft plus Hawaiian's A321neo and A330s (registry programmePartners).
 const ASHero = ({ stats, statSentence }: HeroProps) => (
   <RolloutPanel
     stats={stats}
-    noun="Alaska aircraft"
+    noun={stats.noun ?? "Alaska aircraft"}
     segments={[
       { label: "Regional E175s", n: regional(stats).starlink, total: regional(stats).total },
       { label: "Mainline", n: mainline(stats).starlink, total: mainline(stats).total },
+      ...(stats.partners ?? []).map((p) => ({ label: p.label, n: p.starlink, total: p.total })),
     ]}
   >
     {statSentence}
-    <p className="mt-2 text-xs text-muted">{ALASKA_OWN_FIGURE}</p>
   </RolloutPanel>
 );
 
+const partnerClause = (s: ContentStats) =>
+  (s.partners ?? []).map((p) => (
+    <span key={p.label}>
+      , and <StatInline n={p.starlink} /> of {fmt(p.total)} {p.label} jets, which also fly Alaska
+      flight numbers
+    </span>
+  ));
+
 export const content: AirlineContent = {
-  headerStats: [
-    <span key="free" className="text-success font-semibold">
-      Free for Atmos Rewards members
-    </span>,
-  ],
+  headerStats: [],
 
   intro: () => (
     <>
-      Alaska Airlines is replacing its paid Intelsat Wi-Fi with free Starlink, starting with its
-      regional E175s. Check your flight or see which Alaska planes have it.
+      Alaska Airlines is replacing its Intelsat Wi-Fi with Starlink, starting with its regional
+      E175s. Check your flight or see which Alaska planes have it.
     </>
   ),
 
@@ -48,8 +49,8 @@ export const content: AirlineContent = {
       q: "Does Alaska Airlines have Starlink?",
       a: (s) => (
         <p>
-          Yes. <StatInline n={s.starlinkCount} /> of {fmt(s.totalCount)} Alaska aircraft (
-          {pct(s.starlinkCount, s.totalCount)}) have free Starlink Wi-Fi
+          Yes. <StatInline n={s.starlinkCount} /> of {fmt(s.totalCount)}{" "}
+          {s.noun ?? "Alaska aircraft"} ({pct(s.starlinkCount, s.totalCount)}) have Starlink Wi-Fi
           {s.asOf ? <> as of {s.asOf}</> : null}. {fleetTargetSentence("AS", "Alaska")}
         </p>
       ),
@@ -58,10 +59,13 @@ export const content: AirlineContent = {
       q: "Which Alaska planes have Starlink?",
       a: (s) => (
         <p>
-          <StatInline n={regional(s).starlink} /> of {fmt(regional(s).total)} regional E175s and{" "}
-          <StatInline n={mainline(s).starlink} /> of {fmt(mainline(s).total)} mainline jets.
-          Mainline installs started with the 737 MAX 8; Alaska's Sep 25 tracker showed no 737-800,
-          737-900, 737 MAX 9 or 787 connected yet.
+          <StatInline n={regional(s).starlink} /> of {fmt(regional(s).total)} regional E175s,{" "}
+          <StatInline n={mainline(s).starlink} /> of {fmt(mainline(s).total)} mainline jets
+          {partnerClause(s)}. Mainline installs started with the 737 MAX 8; the{" "}
+          <a href="/fleet" className={LINK}>
+            fleet page
+          </a>{" "}
+          shows Alaska's own count for each type.
         </p>
       ),
     },
@@ -109,8 +113,9 @@ export const content: AirlineContent = {
           q: "Is Alaska's Starlink Wi-Fi free?",
           a: () => (
             <p>
-              Yes, for Atmos Rewards members. The Wi-Fi is sponsored by T-Mobile and Atmos Rewards
-              is free to join. Aircraft not yet converted still carry the paid Intelsat system.
+              It is free for Atmos Rewards members, under a T-Mobile sponsorship; joining Atmos
+              Rewards costs nothing. Aircraft not yet converted still carry the paid Intelsat
+              system.
             </p>
           ),
         },
@@ -142,6 +147,22 @@ export const content: AirlineContent = {
     {
       title: "About this data",
       items: [
+        {
+          q: "Why can this count differ from Alaska's own percentage?",
+          a: () => (
+            <p>
+              Alaska's installation tracker states one percentage across Alaska's E175s, 737s and
+              787s plus Hawaiian's A321neo and A330s, and the headline here counts the same fleets.
+              What remains is fleet lists: Alaska's table leaves out the 737-700s, which we count as
+              not yet equipped, and our roster can differ from Alaska's by an aircraft or two in a
+              type. The{" "}
+              <a href="/fleet" className={LINK}>
+                fleet page
+              </a>{" "}
+              shows Alaska's own per-type counts next to ours.
+            </p>
+          ),
+        },
         {
           q: "How is this data collected?",
           a: () => (

@@ -53,11 +53,19 @@ function OfficialAnchorsSection({ anchors }: { anchors: FleetAnchorRow[] }) {
 }
 
 /** Regional and mainline, the split the homepage reports (getFleetStats buckets). */
-function SubfleetLine({ pace }: { pace: FleetPageData["installPace"] }) {
+function SubfleetLine({
+  pace,
+  partners = [],
+}: {
+  pace: FleetPageData["installPace"];
+  /** Programme-partner slices the header count includes (Hawaiian's Airbus on Alaska). */
+  partners?: Array<{ label: string; g: { starlink: number; total: number } }>;
+}) {
   if (!pace) return null;
   const parts = [
     { label: "Regional", g: pace.express },
     { label: "Mainline", g: pace.mainline },
+    ...partners,
   ].filter((x) => x.g.total > 0);
   if (parts.length < 2) return null;
   return (
@@ -112,7 +120,21 @@ export default function FleetPage({
           </>
         }
       >
-        <SubfleetLine pace={pace} />
+        <SubfleetLine
+          pace={pace}
+          partners={(scopeCode ? (AIRLINES[scopeCode].programmePartners?.partners ?? []) : []).map(
+            (p) => {
+              const fams = data.families.filter((f) => p.families.includes(f.family));
+              return {
+                label: p.label,
+                g: {
+                  starlink: fams.reduce((s, f) => s + f.starlink, 0),
+                  total: fams.reduce((s, f) => s + f.total, 0),
+                },
+              };
+            }
+          )}
+        />
       </PageHeader>
 
       {!scopeCode && (

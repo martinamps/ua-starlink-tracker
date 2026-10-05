@@ -138,6 +138,7 @@ import {
   routeHasData,
   routeIsHistorical,
 } from "./database";
+import { type ProgrammeHeadline, programmeHeadline } from "./roster";
 import { getRouteFlightLastSeen } from "./route-history";
 
 export type { Database };
@@ -207,6 +208,11 @@ export interface ScopedReader {
   /** Roster plus guide-only tails with their guide marks; single-airline scope only. */
   getFleetGuideTails(): FleetGuideTail[];
   getFleetPageData(): FleetPageData;
+  /** /fleet for this tenant: getFleetPageData plus programme-partner tails. */
+  getProgrammeFleetPageData(): FleetPageData;
+  /** The tenant headline over its programme partners too; null when it has
+   * none (the headline then stays on getStarlinkPlanes/getTotalCount). */
+  getProgrammeHeadline(): ProgrammeHeadline | null;
   /** Physical departures in a window, newest row per slot, with the equipped
    * test the headline counts use. `partners` adds operatingPartners' rows that
    * carry this scope's marketed numbers. */
@@ -445,6 +451,11 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     getTypeProgress: () => getTypeProgress(db, soleAirline()),
     getFleetGuideTails: () => getFleetGuideTails(db, soleAirline()),
     getFleetPageData: () => getFleetPageData(db, airlines),
+    getProgrammeFleetPageData: () =>
+      getFleetPageData(db, airlines, {
+        withPartners: scope !== "ALL" && Boolean(AIRLINES[scope]?.programmePartners),
+      }),
+    getProgrammeHeadline: () => (scope === "ALL" ? null : programmeHeadline(db, scope)),
     getDepartureSlots: (q) => getDepartureSlots(db, airlines, q),
     getAirportDepartures: () => airportsMemo("", () => getAirportDepartures(db, airlines)),
     getRouteStarlinkSchedule: () => scheduleMemo("", () => getRouteStarlinkSchedule(db, airlines)),

@@ -172,6 +172,13 @@ day (`bun src/scripts/alaska-tracker.ts` runs it once by hand):
 - A type marked "Update complete" settles every roster tail of that type as a
   type-rule listing, unless our roster holds more of it than Alaska counts.
 
+The tracker's percentage covers Alaska's E175s, 737s and 787s plus Hawaiian's
+A321neo and A330s (stored under the `partner` segment). The Alaska site's
+headline uses the same scope: registry `programmePartners` →
+`tenantProgrammeRoster` / `programmeHeadline` (title, H1, JSON-LD, hero, FAQ,
+"Cite this" and /fleet). Per-airline counts (`programmeRoster`, meta, the APIs,
+MCP, hub cards) stay single-operator, so no Hawaiian tail is summed twice.
+
 Still manual: the counts never say *which* tails are connected, so a
 partly-done type (the 737-8 MAX today) gains named tails only from stored
 confirmations. `starlink.fleet_progress.unattributed` measures that gap. A

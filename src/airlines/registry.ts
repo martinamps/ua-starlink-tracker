@@ -191,6 +191,19 @@ export interface AirlineConfig {
    * flights on HA aircraft). Read ONLY by per-flight assignment lookups —
    * counts, stats, sitemaps and fleet reads stay single-airline. */
   operatingPartners?: readonly AirlineCode[];
+  /** Partner-operated families the airline's own Starlink programme counts
+   * (Alaska's tracker includes Hawaiian's A321neo and A330s, which also fly
+   * AS800-999). Read ONLY by the tenant's headline and /fleet, via
+   * tenantProgrammeRoster; per-airline stats, APIs and hub sums stay
+   * single-operator so no tail is counted twice. */
+  programmePartners?: {
+    partners: ReadonlyArray<{ airline: AirlineCode; families: readonly string[]; label: string }>;
+    /** What the combined count is of: "Alaska and Hawaiian Airbus aircraft". */
+    noun: string;
+  };
+  /** Starlink is free only for members of this programme ("Atmos Rewards"),
+   * so headline copy must not call it plainly free. Absent = free for all. */
+  freeForMembersOf?: string;
   /** Map FR24/ICAO aircraft-type strings to a subfleet key for fleet-sync. Defaults to 'mainline'. */
   classifyFleet?: (aircraftType: string) => string;
   fr24Slug?: string;
@@ -463,6 +476,14 @@ const AIRLINE_DEFS = {
     ],
     sharedOperators: [{ icao: "SKW", iata: "OO" }],
     operatingPartners: ["HA"],
+    // Alaska's newsroom tracker states one percentage over Alaska's E175s,
+    // 737s and 787s plus Hawaiian's A321neo and A330s; the headline uses the
+    // same scope so the two can be compared.
+    programmePartners: {
+      partners: [{ airline: "HA", families: ["A321", "A330"], label: "Hawaiian A321neo & A330" }],
+      noun: "Alaska and Hawaiian Airbus aircraft",
+    },
+    freeForMembersOf: "Atmos Rewards",
     subfleets: [
       // AS800-999 are AS-marketed flights on Hawaiian A330/A321neo metal
       // post-merger — every one of those aircraft has Starlink.
@@ -540,7 +561,7 @@ const AIRLINE_DEFS = {
       tagline: "Tracking Alaska Airlines aircraft with Starlink WiFi",
       siteTitle: "Alaska Starlink Tracker — Which Flights Have Free Starlink WiFi?",
       description:
-        "Track which Alaska Airlines flights have free Starlink WiFi. Live status for every Starlink-equipped aircraft, installation progress, and upcoming flight schedules.",
+        "Track which Alaska Airlines flights have Starlink WiFi. Live status for every Starlink-equipped aircraft, installation progress, and upcoming flight schedules.",
       ogTitle: "Alaska Starlink Tracker — Which Alaska Planes Have Starlink",
       ogDescription:
         "Live statistics showing Alaska Airlines Starlink WiFi installation progress across the fleet.",
