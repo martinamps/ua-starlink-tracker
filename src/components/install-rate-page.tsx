@@ -195,7 +195,7 @@ function AirlineSection({ a }: { a: AirlineInstallRate }) {
 function singleDek(a: AirlineInstallRate): string {
   const gap = nearestPaceGap(a.stats);
   if (gap) {
-    return `${a.shortName} is installing about ${fmt(gap.actual)} aircraft a month. ${fmt(gap.target.targetCount)} by ${formatFactDate(gap.target.target.deadline)} needs ${fmt(gap.needed)}.`;
+    return `${a.shortName} is installing about ${fmt(gap.actual)} aircraft a month. ${fmt(gap.target.targetCount)} by ${formatFactDate(gap.target.target.deadline)} needs ${fmt(gap.needed)} a month.`;
   }
   if (a.stats.paceMonthly !== null) {
     return `${a.shortName} is installing Starlink on about ${fmt(a.stats.paceMonthly)} aircraft a month.`;

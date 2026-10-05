@@ -1045,7 +1045,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     status: "announced",
     statusLabel: "Installs from 2027",
     summary:
-      "Starlink agreement announced June 15, 2026: installs start in 2027 on the 32 Boeing 737s, followed by six 777s and 17 787s, with the retrofit program due to be completed by 2029.",
+      "Starlink agreement announced June 15, 2026: installs start in 2027 on the 32 Boeing 737s, followed by six 777s and 17 787s, with the rollout due to be completed by 2029.",
     facts: [
       {
         fact: "El Al signed an agreement with Starlink to introduce free onboard connectivity in phases rather than through a rapid fleetwide installation: it plans to begin with its fleet of 32 Boeing 737s in 2027, followed by its six Boeing 777s and 17 Boeing 787s, and expects the retrofit program to be completed by 2029.",

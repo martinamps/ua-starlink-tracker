@@ -375,14 +375,19 @@ export function InstallPipelineSection({
         <div className="grid md:grid-cols-2 gap-4 mt-4">
           {inModTypes.length > 0 && (
             <div className={PANEL}>
-              <div className={EYEBROW}>Being installed, by type</div>
+              <div className={EYEBROW}>By type</div>
               <ul className="grid grid-cols-2 gap-2 text-sm text-secondary">
                 {inModTypes.map((r) => (
                   <li key={`${r.segment}-${r.type_code}`}>
-                    {sheetTypeName(r.type_code)}: {fmt(r.in_mod ?? 0)}
-                    {(r.verification_needed ?? 0) > 0
-                      ? `, ${fmt(r.verification_needed ?? 0)} awaiting verification`
-                      : ""}
+                    {sheetTypeName(r.type_code)}:{" "}
+                    {[
+                      (r.in_mod ?? 0) > 0 ? `${fmt(r.in_mod ?? 0)} being installed` : "",
+                      (r.verification_needed ?? 0) > 0
+                        ? `${fmt(r.verification_needed ?? 0)} awaiting verification`
+                        : "",
+                    ]
+                      .filter(Boolean)
+                      .join(", ")}
                   </li>
                 ))}
               </ul>

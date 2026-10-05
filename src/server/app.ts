@@ -4010,7 +4010,7 @@ function programmeScopeNote(
   const p = partners.length > 0 ? getReader(cfg.code).getProgrammeHeadline() : null;
   if (!p || p.total === 0) return null;
   const with_ = partners.map((x) => x.label).join(" and ");
-  return `${cfg.shortName}-operated aircraft only. Counting ${with_} aircraft too, as ${cfg.shortName} does: ${fmt(p.equipped)} of ${fmt(p.total)} (${pctLabel(p.equipped, p.total)}).`;
+  return `${cfg.shortName}'s count is ${cfg.shortName}-operated aircraft only. With ${with_} aircraft, as ${cfg.shortName} counts: ${fmt(p.equipped)} of ${fmt(p.total)} (${pctLabel(p.equipped, p.total)}).`;
 }
 
 /** "a" or "an" for an airline's short name. English picks by sound, not

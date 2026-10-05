@@ -814,7 +814,7 @@ export function aircraftTypeFaq(
       : `${copy.possessive} fleet-wide target, which covers the ${short}`;
     items.push({
       q: `When will every ${copy.airline} ${short} have Starlink?`,
-      a: `${scope} (${target.source.label}, ${formatFactDate(target.asOf)}): ${factText(target)}`,
+      a: `${scope} (${formatFactDate(target.asOf)}): ${factText(target)} Source: ${target.source.label}.`,
     });
   }
 

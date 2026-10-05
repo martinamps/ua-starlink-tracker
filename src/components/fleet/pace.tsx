@@ -96,9 +96,8 @@ export function InstallPaceSection({
       </div>
       {projectionHref && (
         <p className="text-sm text-secondary mt-4 text-pretty">
-          Monthly pace and projected finish against stated targets:{" "}
           <a href={projectionHref} className="text-accent hover:underline">
-            Install pace →
+            Monthly pace and projected finish against stated targets →
           </a>
         </p>
       )}

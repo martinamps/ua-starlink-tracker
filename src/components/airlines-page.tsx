@@ -473,7 +473,7 @@ export function AirlineDetailPage({
           {phases && <PhaseTable phases={phases} />}
           {showBlended && (stat.installs30d ?? 0) > 0 && (
             <div className="text-xs text-secondary mb-1">
-              +{fmt(stat.installs30d ?? 0)} aircraft equipped in the last 30 days
+              +{fmt(stat.installs30d ?? 0)} in the last 30 days
             </div>
           )}
           <p className="text-sm text-muted leading-relaxed mt-3">

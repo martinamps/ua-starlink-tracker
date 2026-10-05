@@ -29,7 +29,7 @@ import { ShareBarRow, providerCounts } from "./fleet/type-bars";
 import { FlightSearchForm } from "./flight-search-form";
 import type { Link } from "./layout";
 import { EYEBROW, H2, LINK, PANEL, PageHeader, PageShell, StatInline } from "./layout";
-import { fmt, shortDate } from "./ui/format";
+import { capitalize, fmt, shortDate } from "./ui/format";
 
 interface AircraftTypeSibling {
   slug: string;
@@ -340,7 +340,7 @@ function FactsSection({ facts, airline }: { facts: RolloutFact[]; airline: strin
             className="text-sm text-secondary leading-relaxed"
           >
             {f.asOf && <span className="text-muted">{formatFactDate(f.asOf)} · </span>}
-            {factText(f)}{" "}
+            {capitalize(factText(f))}{" "}
             <a href={f.source.url} className={LINK} rel="noopener noreferrer" target="_blank">
               {f.source.label}
             </a>
