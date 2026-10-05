@@ -4,7 +4,13 @@
  * count is labelled for what it is — a floor from a community-curated list.
  */
 
-import { type AirlineConfig, type SiteConfig, programTypeOf } from "../airlines/registry";
+import {
+  type AirlineConfig,
+  GUIDE_MARK_TTL_DAYS,
+  type SiteConfig,
+  isGuideStale,
+  programTypeOf,
+} from "../airlines/registry";
 import { type AirlineFactsEntry, formatFactDate } from "../airlines/rollout-facts";
 import type { FleetGuideTail, TypeProgress } from "../database/database";
 import { typeShare } from "../scripts/starlink-predictor";
@@ -16,13 +22,16 @@ import { Eyebrow, PageHeader, PageShell, Panel, SECTION, StatValue } from "./lay
 import { fmt } from "./ui/format";
 import { Meter } from "./ui/meter";
 
-/** Past this, the guide may be missing installs and the page says so. */
-const GUIDE_STALE_DAYS = 45;
-
-function typeRowText(t: TypeProgress): { text: string; tone: string } {
+// A stale guide can say none were listed, not that none have started.
+function typeRowText(t: TypeProgress, stale: boolean): { text: string; tone: string } {
   if (t.excluded)
     return { text: `Retiring — not in the programme (${t.total})`, tone: "text-muted" };
-  if (t.equipped === 0) return { text: `Not started — 0 of ${t.total}`, tone: "text-muted" };
+  if (t.equipped === 0) {
+    return {
+      text: `${stale ? "None listed" : "Not started"} — 0 of ${t.total}`,
+      tone: "text-muted",
+    };
+  }
   if (t.equipped === t.total) return { text: `All ${t.total}`, tone: "text-success" };
   return { text: `At least ${t.equipped} of ${t.total}`, tone: "text-warn" };
 }
@@ -41,9 +50,11 @@ function programmeTotals(types: readonly TypeProgress[]): {
 
 export function TypeShareTable({
   types,
+  stale = false,
   compact = false,
 }: {
   types: readonly TypeProgress[];
+  stale?: boolean;
   compact?: boolean;
 }) {
   return (
@@ -56,7 +67,7 @@ export function TypeShareTable({
         </p>
       )}
       {types.map((t) => {
-        const { text, tone } = typeRowText(t);
+        const { text, tone } = typeRowText(t, stale);
         return (
           <div key={t.key} className="py-1.5 border-b border-subtle last:border-0">
             <div className="flex items-center justify-between gap-3">
@@ -80,9 +91,13 @@ export function TypeShareTable({
 
 type Chip = { text: string; tone: string };
 
-function tailChip(t: FleetGuideTail): Chip {
+// Past the TTL only a Starlink mark is still a status (registry.ts).
+function tailChip(t: FleetGuideTail, stale: boolean): Chip {
   if (!t.inRoster) return { text: "Not in current fleet", tone: "text-muted" };
   if (t.delisted) return { text: "Delisted — recheck", tone: "text-warn" };
+  if (stale && (t.mark === "legacy" || t.mark === "none")) {
+    return { text: "Not listed then — may have it now", tone: "text-muted" };
+  }
   switch (t.mark) {
     case "starlink":
       return { text: "Starlink", tone: "text-success" };
@@ -95,7 +110,11 @@ function tailChip(t: FleetGuideTail): Chip {
   }
 }
 
-function TailLookup({ cfg, tails }: { cfg: AirlineConfig; tails: readonly FleetGuideTail[] }) {
+function TailLookup({
+  cfg,
+  tails,
+  stale,
+}: { cfg: AirlineConfig; tails: readonly FleetGuideTail[]; stale: boolean }) {
   return (
     <Panel>
       <Eyebrow as="label" htmlFor="tail-filter" className="mb-2 block">
@@ -119,7 +138,7 @@ function TailLookup({ cfg, tails }: { cfg: AirlineConfig; tails: readonly FleetG
           </thead>
           <tbody>
             {tails.map((t) => {
-              const chip = tailChip(t);
+              const chip = tailChip(t, stale);
               return (
                 <tr key={t.tail} id={t.tail} data-tail-row="" className="border-t border-subtle">
                   <td className="py-1 text-primary">{t.tail}</td>
@@ -177,10 +196,6 @@ function FlightCheck({
   );
 }
 
-function daysBetween(fromIso: string, nowMs: number): number {
-  return Math.floor((nowMs - Date.parse(fromIso)) / 86400_000);
-}
-
 export function CommunityAirlinePage({
   site,
   cfg,
@@ -206,7 +221,8 @@ export function CommunityAirlinePage({
   const source = cfg.communitySource;
   const { equipped, total } = programmeTotals(types);
   const guideDate = guideUpdated ? formatFactDate(guideUpdated.slice(0, 10)) : null;
-  const stale = guideUpdated !== null && daysBetween(guideUpdated, nowMs) > GUIDE_STALE_DAYS;
+  const stale = isGuideStale(guideUpdated, nowMs);
+  const target = source?.fleetTarget;
   const official = facts?.facts.find((f) => f.asOf);
   return (
     <PageShell site={site} pageLinks={pageLinks} currentPath={currentPath}>
@@ -231,8 +247,7 @@ export function CommunityAirlinePage({
           )}
           {official && (
             <p className="text-xs text-muted leading-relaxed mb-3">
-              {cfg.shortName}'s own figure ({formatFactDate(official.asOf as string)}):{" "}
-              {official.fact}{" "}
+              Latest reported figure ({formatFactDate(official.asOf as string)}): {official.fact}{" "}
               <a
                 href={official.source.url}
                 target="_blank"
@@ -244,7 +259,7 @@ export function CommunityAirlinePage({
               . The guide trails installs, so read every count here as a floor.
             </p>
           )}
-          {types.length > 0 && <TypeShareTable types={types} />}
+          {types.length > 0 && <TypeShareTable types={types} stale={stale} />}
         </Panel>
       </section>
 
@@ -256,7 +271,7 @@ export function CommunityAirlinePage({
 
       {tails.length > 0 && (
         <section className={SECTION}>
-          <TailLookup cfg={cfg} tails={tails} />
+          <TailLookup cfg={cfg} tails={tails} stale={stale} />
         </section>
       )}
 
@@ -284,8 +299,24 @@ export function CommunityAirlinePage({
             </p>
             {stale && (
               <p className="text-sm text-warn leading-relaxed mt-2">
-                Our copy of the guide hasn't been updated in over {GUIDE_STALE_DAYS} days — recent
-                installs may be missing from these counts.
+                Our copy of the guide is over {GUIDE_MARK_TTL_DAYS} days old. Its Starlink marks
+                still stand (a retrofit isn't removed), but recent installs are missing, so an
+                aircraft it doesn't mark may well have Starlink now.
+                {target && (
+                  <>
+                    {" "}
+                    {target.text} (
+                    <a
+                      href={target.source.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-accent hover:underline"
+                    >
+                      {target.source.label}
+                    </a>
+                    , {formatFactDate(target.asOf)}).
+                  </>
+                )}
               </p>
             )}
           </Panel>

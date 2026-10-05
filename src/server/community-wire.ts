@@ -46,10 +46,19 @@ const GUIDE_STATUS = {
   none: "no_wifi_listed",
 } as const;
 
+/** The guide's date and whether its non-Starlink marks have expired, so a
+ * client can show the same caveat the prose carries. */
+function guideFields(answer: { guideUpdated: string | null; guideStale: boolean }) {
+  return {
+    guide_updated: answer.guideUpdated?.slice(0, 10) ?? null,
+    guide_stale: answer.guideStale,
+  };
+}
+
 export function communityWireFields(answer: CarrierPrediction): Record<string, unknown> {
   switch (answer.kind) {
     case "type_progress":
-      return { by_type: byType(answer.types) };
+      return { by_type: byType(answer.types), ...guideFields(answer) };
     case "type_rate":
       return {
         type_rate: {
@@ -61,6 +70,7 @@ export function communityWireFields(answer: CarrierPrediction): Record<string, u
           ...(answer.ambiguous ? { ambiguous: true } : { status: typeStatus(answer.type) }),
         },
         by_type: byType(answer.types),
+        ...guideFields(answer),
       };
     case "assigned_unconfirmed":
       return {
@@ -69,6 +79,7 @@ export function communityWireFields(answer: CarrierPrediction): Record<string, u
           aircraft_type: answer.aircraftType,
           guide_status: answer.mark ? GUIDE_STATUS[answer.mark] : "not_in_guide",
         },
+        ...guideFields(answer),
       };
     case "partner_operated":
       return { assignment: { tail_number: answer.tail, operated_by_other: true } };

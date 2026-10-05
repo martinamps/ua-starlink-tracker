@@ -233,7 +233,15 @@ export interface AirlineConfig {
   /** Per-tail status comes from a curated community list, not an observation
    * loop. Answers built on it say "likely", never "verified", and it never
    * writes a negative: a tail missing from the list is unknown, not a no. */
-  communitySource?: { label: string; url: string; author?: string };
+  communitySource?: {
+    label: string;
+    url: string;
+    author?: string;
+    /** The airline's own dated fleet-wide target, quoted once a frozen guide's
+     * non-Starlink marks expire (see GUIDE_MARK_TTL_DAYS): the type-level
+     * statement that replaces a per-tail "no" nobody can refresh. */
+    fleetTarget?: { text: string; asOf: string; source: { label: string; url: string } };
+  };
   /** Types flying today that the programme will never equip (retiring). They
    * leave every denominator and render as "retiring"; status is never written
    * from this list. */
@@ -651,6 +659,14 @@ const AIRLINE_DEFS = {
       label: "FlyerTalk Air France fleet guide",
       url: "https://www.flyertalk.com/forum/air-france-frequence-plus/2213677-complete-guide-air-france-fleet.html",
       author: "hellolaurent",
+      fleetTarget: {
+        text: "Air France plans to have Starlink on its entire fleet by the end of 2026",
+        asOf: "2025-09-23",
+        source: {
+          label: "Aviation Week",
+          url: "https://aviationweek.com/air-transport/interiors-connectivity/air-france-pushes-ahead-starlink-connectivity-installations",
+        },
+      },
     },
     programExclusions: {
       families: ["A318", "A319", "A330"],
@@ -667,8 +683,9 @@ const AIRLINE_DEFS = {
     rollout: {
       status: "in_progress",
       statusLabel: "Majority done",
+      // Dated: an undated "has not started" outlives the rollout it describes.
       phaseNote:
-        "Installs are under way on the 777-300ER, A350, A220 and E190 fleets; the 787-9, 777-200ER, A321 and E170 have not started.",
+        "Nearly 60% of the fleet had Starlink as of June 2026; Air France plans the whole fleet by the end of 2026.",
       // Freighters and programExclusions leave every AF denominator, so the
       // roster that remains is the programme's own.
       rosterIsProgramScope: true,
@@ -950,6 +967,28 @@ export function isOutsideProgramme(code: AirlineCode, family: string): boolean {
 /** Meta key (per airline) holding the community source's own last-edit date
  * as full ISO. Answers cite it; freshness surfaces age it. */
 export const COMMUNITY_SOURCE_UPDATED_META = "communitySourceUpdatedAt";
+
+/**
+ * Aging policy for a community guide nobody can refresh. A Starlink mark never
+ * expires: a retrofit is not removed, so a tail listed ★ on the guide's date
+ * still has it, and dropping or diluting that mark would only make the answer
+ * worse. Everything on the other side — "legacy Wi-Fi", "no Wi-Fi", "not
+ * started on this type" — describes a rollout in motion (about 15 installs a
+ * month in 2026), so after this many days answers stop stating it as the
+ * aircraft's status, say how old it is, and quote the airline's own fleet
+ * target instead. Counts stay, labelled as floors.
+ */
+export const GUIDE_MARK_TTL_DAYS = 45;
+
+export function guideAgeDays(guideUpdated: string, nowMs: number): number {
+  return Math.floor((nowMs - Date.parse(guideUpdated)) / 86400_000);
+}
+
+/** False before the first guide and for an unparseable stamp: nothing to age. */
+export function isGuideStale(guideUpdated: string | null, nowMs: number): boolean {
+  if (!guideUpdated || Number.isNaN(Date.parse(guideUpdated))) return false;
+  return guideAgeDays(guideUpdated, nowMs) > GUIDE_MARK_TTL_DAYS;
+}
 
 export interface ProgramType {
   key: string;

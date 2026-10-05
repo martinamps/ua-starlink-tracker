@@ -7,7 +7,12 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { AIRLINES, enabledAirlines } from "../src/airlines/registry";
+import {
+  AIRLINES,
+  COMMUNITY_SOURCE_UPDATED_META,
+  GUIDE_MARK_TTL_DAYS,
+  enabledAirlines,
+} from "../src/airlines/registry";
 import { checkNewPlanes } from "../src/api/flight-updater";
 import { FlightRadar24API } from "../src/api/flightradar24-api";
 import type { QatarFlight, fetchByRoute } from "../src/api/qatar-status";
@@ -24,6 +29,7 @@ import {
   FRESHNESS_QUERIES,
   buildFreshnessCoverage,
   buildFreshnessQueries,
+  communityGuideStates,
   emitDataFreshness,
 } from "../src/scripts/data-freshness";
 import { buildRoster, fleetSyncInitialDelayMs, rosterSources } from "../src/scripts/fleet-sync";
@@ -32,7 +38,7 @@ import { type SheetScrapeResult, runSheetScrape } from "../src/scripts/sheet-scr
 import type { FleetStats } from "../src/types";
 import { type JobClock, createOutageBreaker, startJob } from "../src/utils/job-runner";
 import type { fetchAllSheets } from "../src/utils/utils";
-import { addQatarRow, makeSyntheticDb } from "./helpers";
+import { addFleet, addQatarRow, makeSyntheticDb } from "./helpers";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // startJob runner — fake clock, ticks driven manually
@@ -779,6 +785,72 @@ describe("data freshness sweep", () => {
       expect(c.tags?.airline).toBe(normalizeAirlineTag("UA"));
     }
     db.close();
+  });
+});
+
+describe("community guide gauges", () => {
+  // Three roster tails: one ★, one legacy, one the guide never listed.
+  function seededGuide(guideUpdatedIso: string) {
+    const db = makeSyntheticDb();
+    for (const tail of ["F-HTAA", "F-HTAB", "F-HTAC"]) {
+      addFleet(db, tail, "unknown", { airline: "AF", aircraftType: "Airbus A350-941" });
+    }
+    const ins = db.query(
+      `INSERT INTO fleet_guide_tails (airline, tail_number, section, program_type, mark, guide_updated, fetched_at)
+       VALUES ('AF', ?, 'A350', 'A350', ?, ?, 0)`
+    );
+    ins.run("F-HTAA", "starlink", guideUpdatedIso);
+    ins.run("F-HTAB", "legacy", guideUpdatedIso);
+    setMeta(db, COMMUNITY_SOURCE_UPDATED_META, guideUpdatedIso, "AF");
+    return db;
+  }
+  const daysAgo = (d: number) => new Date(Date.now() - d * 86400_000).toISOString();
+
+  test.each([
+    [5, false, "not_starlink_current"],
+    [GUIDE_MARK_TTL_DAYS + 2, true, "not_starlink_expired"],
+  ] as const)("a %i-day-old guide: stale=%p, legacy tail is %s", (days, stale, legacyState) => {
+    const db = seededGuide(daysAgo(days));
+    const [af] = communityGuideStates(db);
+    expect(af.airline).toBe("AF");
+    expect(af.stale).toBe(stale);
+    expect(af.ageSec).toBeGreaterThan((days - 1) * 86400);
+    expect(af.tails.starlink_listed).toBe(1);
+    expect(af.tails.not_in_guide).toBe(1);
+    expect(af.tails[legacyState]).toBe(1);
+    db.close();
+  });
+
+  test("no stored guide → no gauge; a guide → age and per-state gauges, airline-tagged", () => {
+    const calls: Array<{ name: string; tags?: Record<string, string | number> }> = [];
+    const original = metrics.gauge;
+    metrics.gauge = (name, _value, tags) => {
+      calls.push({ name, tags });
+    };
+    try {
+      const empty = makeSyntheticDb();
+      emitDataFreshness(empty);
+      empty.close();
+      expect(calls.some((c) => c.name.startsWith("community_guide."))).toBe(false);
+      const db = seededGuide(daysAgo(60));
+      emitDataFreshness(db);
+      db.close();
+    } finally {
+      metrics.gauge = original;
+    }
+    const age = calls.filter((c) => c.name === "community_guide.age_seconds");
+    expect(age.length).toBe(1);
+    expect(age[0].tags).toEqual({ airline: normalizeAirlineTag("AF"), stale: "true" });
+    const tails = calls.filter((c) => c.name === "community_guide.tails");
+    expect(tails.map((c) => c.tags?.state).sort()).toEqual([
+      "not_in_guide",
+      "not_starlink_current",
+      "not_starlink_expired",
+      "starlink_listed",
+    ]);
+    expect(tails.every((c) => c.tags?.airline === normalizeAirlineTag("AF"))).toBe(true);
+    // Not a data.freshness job: the freshness monitors would page on it forever.
+    expect(Object.keys(FRESHNESS_QUERIES).some((j) => j.includes("community"))).toBe(false);
   });
 });
 

@@ -125,7 +125,30 @@ copy of the community "Complete Guide to the Air France Fleet", stored as
 never "verified", and nothing is ever written negative. There is no live import
 any more (and no official per-tail source), so the data is frozen:
 `AF:lastUpdated` and `AF:communitySourceUpdatedAt` hold the guide's own date,
-answers cite it, and the hub page flags it once it is over 45 days old.
+and answers cite it.
+
+**No automated official source exists.** corporate.airfrance.com,
+airfranceklm.com and airfrance.com all refuse automated clients (bot
+challenge / 403), the Air France-KLM developer API needs a key, and FR24,
+the FAA/DGAC registries and planespotters carry no Wi-Fi field. Air France has
+published a fleet-wide target (whole fleet by end-2026) but no per-type
+completion statement, so no AF type can be settled by rule yet. The automated
+parts are the FR24 roster and flight assignments, plus the aging policy below.
+When Air France states that a type is complete, add a `typeDeterministicWifi`
+rule for that type with the dated source, as QR does.
+
+**Aging policy** (`GUIDE_MARK_TTL_DAYS` = 45, `isGuideStale` in `registry.ts`):
+
+- A Starlink mark never expires. Retrofits aren't removed, so a tail listed
+  ★ on the guide's date still has it; downgrading it would make answers worse.
+- Every other mark — "legacy Wi-Fi", "no Wi-Fi", "not started on this type" —
+  describes a rollout in motion (~15 installs a month in 2026). Past the TTL,
+  answers stop stating it as the aircraft's status: they say the guide is old
+  and quote the airline's dated fleet target (`communitySource.fleetTarget`).
+  Type counts stay, labelled "at least". The wire carries `guide_updated` and
+  `guide_stale`.
+- `community_guide.age_seconds` and `community_guide.tails` (see
+  OBSERVABILITY.md) show the age and how many tails each state covers.
 
 QR and AS no longer take community tails either. QR is fully settled by its
 type rule plus the Qatar schedule ingester; AS mainline tails keep their stored

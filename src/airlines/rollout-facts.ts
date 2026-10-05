@@ -560,6 +560,14 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         },
       },
       {
+        fact: "Air France expects to equip around a third of its aircraft with Starlink by the end of 2025 and its entire fleet by the end of 2026.",
+        asOf: "2025-09-23",
+        source: {
+          label: "Aviation Week",
+          url: "https://aviationweek.com/air-transport/interiors-connectivity/air-france-pushes-ahead-starlink-connectivity-installations",
+        },
+      },
+      {
         // corporate.airfrance.com sits behind a Cloudflare challenge that no
         // automated client clears (the path is right — a Wayback capture proves
         // the page exists — it is bot-blocked, not dead). This is the same Air

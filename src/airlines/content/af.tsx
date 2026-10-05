@@ -44,9 +44,10 @@ export const content: AirlineContent = {
           q: "Does my Air France flight have Starlink?",
           a: () => (
             <p>
-              It depends on the aircraft. Most 777-300ERs, A350s, A220s and E190s have it; the
-              787-9, 777-200ER, A321 and E170 have not started. Per-aircraft status comes from the
-              FlyerTalk Air France fleet guide, a community-curated list.
+              It depends on the aircraft. As of June 2026 most 777-300ERs, A350s, A220s and E190s
+              had it, and Air France plans the whole fleet by the end of 2026. Per-aircraft status
+              comes from a dated copy of the FlyerTalk Air France fleet guide, a community-curated
+              list.
             </p>
           ),
         },

@@ -511,6 +511,16 @@ export const GAUGES = {
   // an hour after their refresh — the signature of a cap keeping the furthest
   // flights instead of the nearest. tags: airline
   UPCOMING_CAPPED_FUTURE_SHARE: "upcoming.capped_future_share",
+
+  // Community fleet guide (AF) with no live import: seconds since the guide's
+  // own date. Deliberately not a data.freshness_seconds job — it ages by
+  // design, and the freshness monitors would page on it forever.
+  // tags: airline, stale (true|false — past GUIDE_MARK_TTL_DAYS)
+  COMMUNITY_GUIDE_AGE_SECONDS: "community_guide.age_seconds",
+  // Roster tails (freighters dropped) by what an answer may still say about
+  // them under the aging policy. tags: airline, state (starlink_listed|
+  // not_starlink_current|not_starlink_expired|not_in_guide)
+  COMMUNITY_GUIDE_TAILS: "community_guide.tails",
 } as const;
 
 /**

@@ -36,6 +36,8 @@ export interface CompareSide {
   /** Per-programme-type counts for a community-source airline (AF) — also
    * rendered instead of a blended number. */
   typeProgress?: TypeProgress[] | null;
+  /** The guide behind typeProgress is past its mark TTL. */
+  typeProgressStale?: boolean;
   facts: AirlineFactsEntry | null;
   /** Flight-level lookup on the airline's own surface, when one exists. */
   checkFlightUrl: string | null;
@@ -100,7 +102,9 @@ function SidePanel({ side }: { side: CompareSide }) {
       )}
 
       {side.phases ? <PhaseTable phases={side.phases} /> : null}
-      {side.typeProgress ? <TypeShareTable types={side.typeProgress} compact /> : null}
+      {side.typeProgress ? (
+        <TypeShareTable types={side.typeProgress} stale={side.typeProgressStale} compact />
+      ) : null}
 
       <p className="text-sm text-muted leading-relaxed mb-4">{cfg.rollout.phaseNote}</p>
 
