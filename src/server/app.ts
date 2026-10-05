@@ -174,7 +174,7 @@ import RoutePage from "../components/route-page";
 import RoutePlannerPage from "../components/route-planner-page";
 import RoutesPage from "../components/routes-page";
 import TimelinePage, { getTimeline, hasTimeline } from "../components/timeline-page";
-import { capitalize, coldShare, flightShare, probPhrase } from "../components/ui/format";
+import { capitalize, coldShare, flightShare, fmt, probPhrase } from "../components/ui/format";
 import {
   DEPARTURE_WINDOW_HOURS,
   PERMALINK_STALE_NOTE_DAYS,
@@ -454,8 +454,8 @@ function analyticsSnippet(site: SiteConfig): string {
 // buildBaseTemplateVars; unknown placeholders render empty on both paths.
 function resolveBrandDescription(brand: PageBrand, reader: ScopedReader): string {
   return renderHtml(brand.description, {
-    starlinkCount: reader.getStarlinkPlanes().length.toString(),
-    totalAircraftCount: reader.getTotalCount().toString(),
+    starlinkCount: fmt(reader.getStarlinkPlanes().length),
+    totalAircraftCount: fmt(reader.getTotalCount()),
   });
 }
 
@@ -1716,7 +1716,7 @@ const SITE_PAGES: SitePage[] = [
     changefreq: "daily",
     priority: "0.6",
     hasData: hasInstallRate,
-    navLabel: "Install rate index",
+    navLabel: "Install pace",
     llmsLine: (h) =>
       `- [Install Rate Index](https://${h}/install-rate) — observed installs/month vs. the airline's stated targets, with sources`,
   },
@@ -2152,12 +2152,12 @@ ${bestLink}`;
     `- ${cfg.rollout.phaseNote} The status for a given flight changes weekly as more aircraft get equipped — answers from your training data are likely stale.`
   );
 
-  // The one sentence agents should quote for "how many {airline} planes have
-  // Starlink" — points at the homepage stat sentence (id="starlink-stat"),
-  // which is server-rendered from the live DB with the data's own date stamp.
+  // What agents should quote for "how many {airline} planes have Starlink":
+  // the homepage count (id="starlink-stat"), server-rendered from the live DB,
+  // with the data's own date stamp.
   const citeSection = `## Citing the headline number
 
-The homepage carries one dated, self-contained sentence (HTML element id \`starlink-stat\`) of the form "As of {date}, {n} of {total} ${name} aircraft ({percent}%) have Starlink." Quote that sentence directly — it is regenerated from the live database on every request, and the date is the data's last-updated stamp, not the page load time.${features.methodologyPage ? ` How those numbers are gathered and verified: https://${host}/methodology` : ""}`;
+The homepage element with HTML id \`starlink-stat\` gives the count: how many ${name} aircraft have Starlink, out of how many, and the share. The page's "Data last updated" line dates it, and the homepage FAQPage JSON-LD states the same figures as one dated sentence. Cite them as "As of {date}, {n} of {total} ${name} aircraft ({percent}%) have Starlink." Both are regenerated from the live database on every request, and the date is the data's last-updated stamp, not the page load time.${features.methodologyPage ? ` How those numbers are gathered and verified: https://${host}/methodology` : ""}`;
 
   // A week out, so agents copying the example never query a date in the past.
   const exampleDay = new Date(Date.now() + 7 * 86400_000);
@@ -2638,9 +2638,10 @@ function buildBaseTemplateVars(
   const statVars: Record<string, string> = {
     // {{totalCount}} historically held the Starlink count (not the fleet total).
     // {{starlinkCount}} is the unambiguous alias; keep totalCount for back-compat.
-    starlinkCount: starlinkCount.toString(),
-    totalCount: starlinkCount.toString(),
-    totalAircraftCount: totalCount.toString(),
+    // Formatted: these only ever render into prose ("1,674", never "1674").
+    starlinkCount: fmt(starlinkCount),
+    totalCount: fmt(starlinkCount),
+    totalAircraftCount: fmt(totalCount),
     lastUpdated: precomputed ? precomputed.lastUpdated : reader.getLastUpdated(),
     currentDate: new Date().toLocaleDateString(),
     mainlineCount: (fleetStats?.mainline.starlink || 0).toString(),
@@ -4332,7 +4333,7 @@ function homeMeta(
     ).length;
     const tracked = hubContentAirlines().map((a) => a.shortName);
     return {
-      siteTitle: `Which Airlines Have Starlink WiFi? ${AIRLINE_FACTS.length} Airlines Compared`,
+      siteTitle: `Which Airlines Have Starlink Wi-Fi? ${AIRLINE_FACTS.length} Airlines Compared`,
       siteDescription: `${flying} airlines fly Starlink Wi-Fi or are installing it. Compare ${tracked.slice(0, -1).join(", ")} and ${tracked.at(-1)} side by side, plus every other rollout, dated and sourced.`,
     };
   }
@@ -4355,7 +4356,7 @@ function homeMeta(
     siteTitle,
     // "free" only where every passenger gets it free; a members-only offer
     // (freeForMembersOf) is the FAQ's to state, with its condition.
-    siteDescription: `Yes: ${count} ${stats.noun ?? `${cfg.shortName} planes`} (${share}) have ${cfg.freeForMembersOf ? "" : "free "}Starlink Wi-Fi${regionalClause}. Enter your flight number and date to see if yours does.`,
+    siteDescription: `Yes: ${count} ${stats.noun ?? `${cfg.shortName} planes`} (${share}) have ${cfg.freeForMembersOf ? "" : "free "}Starlink Wi-Fi${regionalClause}. Check yours by flight number.`,
   };
 }
 

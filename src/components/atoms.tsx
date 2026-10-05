@@ -1,4 +1,5 @@
 import React from "react";
+import { aircraftName } from "../airlines/aircraft-families";
 import {
   AIRLINES,
   type AirlineConfig,
@@ -9,6 +10,7 @@ import type { RolloutFactsStatus } from "../airlines/rollout-facts";
 import type { PopularFlight } from "../database/database";
 import type { PerAirlineStat, RecentInstall } from "../types";
 import { denominatorIsPublishable } from "../utils/share-cards";
+import { operatorName } from "./home/aircraft-list";
 import { ButtonLink, Chip, Eyebrow, Panel } from "./layout";
 import { fmt, monthDay, pct } from "./ui/format";
 import { Meter } from "./ui/meter";
@@ -41,7 +43,7 @@ export function ShareCardLink({ path }: { path?: string | null }) {
           <polyline points="7 10 12 15 17 10" />
           <line x1="12" y1="15" x2="12" y2="3" />
         </svg>
-        Share this stat — download the card
+        Download share card
       </ButtonLink>
     </div>
   );
@@ -196,6 +198,10 @@ export function AirlineProgressList({ stats }: { stats: PerAirlineStat[] }) {
                 {trackingMethod(cfg) === "type" && (
                   <span className="text-xs text-muted">by aircraft type</span>
                 )}
+                {/* The airline's own site counts its partner fleets too; this row doesn't. */}
+                {cfg.programmePartners && (
+                  <span className="text-xs text-muted">{cfg.shortName}-operated</span>
+                )}
               </span>
               <StagePill info={trackedStage(cfg, stat)} />
             </div>
@@ -266,11 +272,11 @@ export function RecentInstallsFeed({
                       {r.TailNumber}
                     </span>
                     <span className="font-mono text-xs text-muted flex-1 truncate">
-                      {r.Aircraft}
+                      {aircraftName(r.Aircraft)}
                     </span>
-                    {r.OperatedBy && (
+                    {r.OperatedBy && r.OperatedBy !== g.cfg.name && (
                       <span className="font-mono text-xs text-secondary truncate hidden sm:inline">
-                        {r.OperatedBy}
+                        {operatorName(r.OperatedBy)}
                       </span>
                     )}
                     <span className="font-mono text-xs text-muted w-12 text-right">

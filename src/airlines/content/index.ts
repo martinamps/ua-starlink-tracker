@@ -27,7 +27,7 @@ export interface ContentStats {
   /** Hub only: one row per tracked airline. */
   perAirline?: PerAirlineStat[];
   /** What totalCount counts when the headline spans programme partners
-   * ("Alaska and Hawaiian Airbus aircraft"); absent = the airline's own. */
+   * ("Alaska planes and Hawaiian Airbus jets"); absent = the airline's own. */
   noun?: string;
   /** The partner slices inside that headline, one per partner. */
   partners?: Array<{ label: string; starlink: number; total: number }>;
@@ -40,6 +40,9 @@ export interface ContentStats {
 export interface HomeFaqEntry {
   q: string;
   a: (s: ContentStats) => ReactNode;
+  /** JSON-LD answer when it should carry more than the visible one, e.g. a
+   * count the page states once in its panel rather than again in the answer. */
+  ld?: (s: ContentStats) => string;
 }
 
 export interface FaqSection {

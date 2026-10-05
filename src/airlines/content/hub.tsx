@@ -46,6 +46,12 @@ const byType = (code: string) => {
   return cfg ? trackingMethod(cfg) === "type" : false;
 };
 
+// Matches the progress row's label: the airline's own site counts partner fleets too.
+const operatedBy = (code: string) => {
+  const cfg = AIRLINES[code];
+  return cfg?.programmePartners ? ` ${cfg.shortName}-operated` : "";
+};
+
 const FLYING_COUNT = AIRLINE_FACTS.filter(
   (e) => e.status === "installing" || e.status === "complete"
 ).length;
@@ -114,7 +120,7 @@ function RouteComparePanel() {
     <Panel>
       <Eyebrow className="mb-1">Starlink odds by airline</Eyebrow>
       <div className="text-xs font-mono text-muted leading-relaxed mb-3">
-        Share of each carrier's planes on this nonstop route that have Starlink today.
+        Share of each airline's planes on this nonstop route that have Starlink today.
       </div>
       <form id="hub-compare-route" className="flex flex-col sm:flex-row gap-2">
         <input
@@ -157,7 +163,7 @@ function RouteComparePanel() {
         id="hub-compare-footer"
         className="mt-3 text-xs font-mono text-muted leading-relaxed hidden"
       >
-        Carrier missing? It only shows up once one of its Starlink planes has flown here.{" "}
+        An airline appears once one of its Starlink planes has flown this route.{" "}
         {/* Static href must be a real page: /route-planner 404s on the hub, and
             crawlers see this SSR value — client JS only rewrites it to the
             per-route URL after a comparison runs. */}
@@ -166,7 +172,7 @@ function RouteComparePanel() {
           href={`https://${SITES.united.canonicalHost}/route-planner`}
           className={LINK}
         >
-          Route Planner →
+          Route planner →
         </a>
       </div>
     </Panel>
@@ -190,7 +196,7 @@ const HubHero = ({ site, perAirlineStats = [], recentInstalls = [], hubLinks }: 
       <TrackerLinks />
       <RouteComparePanel />
       <Panel pad="sm">
-        <Eyebrow className="mb-2">Already booked? Check a flight</Eyebrow>
+        <Eyebrow className="mb-2">Check a flight</Eyebrow>
         <FlightSearchForm
           site={site}
           id="hub-check-flight"
@@ -218,8 +224,7 @@ export const content: AirlineContent = {
 
   intro: () => (
     <>
-      {AIRLINE_FACTS.length} airlines, from finished fleets to firm no's, each with a dated source.
-      We count{" "}
+      {AIRLINE_FACTS.length} airlines, each with a dated source. We count{" "}
       {list(
         publicAirlines()
           .filter((a) => !a.communitySource && a.rollout.rosterIsProgramScope)
@@ -251,30 +256,31 @@ export const content: AirlineContent = {
       a: ({ perAirline = [] }) => {
         const [top, ...rest] = [...perAirline].sort((a, b) => b.starlink - a.starlink);
         if (!top) return <p>See the full list for each airline's count.</p>;
+        const typeCounted = [top, ...rest].filter((r) => byType(r.code)).map((r) => r.name);
         return (
           <p>
-            Of the airlines tracked here, {top.name} has the most, with{" "}
-            <StatInline n={top.starlink} /> planes
+            {top.name}, with <StatInline n={top.starlink} />
             {top.code === "UA" ? (
               <>
                 {" "}
-                on the{" "}
+                (see the{" "}
                 <a href={UNITED_URL} className={LINK}>
                   United Starlink Tracker
                 </a>
+                )
               </>
             ) : null}
             .{" "}
             {rest.length > 0 && (
               <>
-                Next:{" "}
-                {list(
-                  rest.map(
-                    (r) =>
-                      `${r.name} (${fmt(r.starlink)}${byType(r.code) ? ", counted by aircraft type" : ""})`
-                  )
-                )}
-                .
+                Next: {list(rest.map((r) => `${r.name} (${fmt(r.starlink)}${operatedBy(r.code)})`))}
+                .{" "}
+              </>
+            )}
+            {typeCounted.length > 0 && (
+              <>
+                {list(typeCounted)} {typeCounted.length === 1 ? "is" : "are"} counted by aircraft
+                type.
               </>
             )}
           </p>
@@ -285,9 +291,8 @@ export const content: AirlineContent = {
       q: "Is Starlink Wi-Fi free on every airline?",
       a: () => (
         <p>
-          Not always, and the rules differ. United's is free for MileagePlus members, Alaska's for
-          Atmos Rewards members, and Hawaiian's and Qatar's for every passenger. Each airline's page
-          on the{" "}
+          It varies. United's is free for MileagePlus members, Alaska's for Atmos Rewards members,
+          and Hawaiian's and Qatar's for every passenger. Each airline's page on the{" "}
           <a href="/airlines" className={LINK}>
             full list
           </a>{" "}
@@ -339,8 +344,7 @@ export const content: AirlineContent = {
               <a href={UNITED_URL} className={LINK}>
                 United Starlink Tracker
               </a>
-              , which has the live count, every equipped aircraft and a flight check. United's is
-              the biggest rollout we track.
+              , which has the live count, every plane with Starlink and a flight check.
             </p>
           ),
         },
@@ -356,7 +360,7 @@ export const content: AirlineContent = {
               Fleet rosters and flight schedules come from public aviation data. Starlink status is
               confirmed per aircraft against each airline's own systems where they show it (United,
               Alaska), and by aircraft type where the airline has finished whole types (Hawaiian,
-              Qatar). Airlines we don't track aircraft by aircraft get dated, sourced status pages.
+              Qatar). Other airlines get a status page with dated sources.
             </p>
           ),
         },

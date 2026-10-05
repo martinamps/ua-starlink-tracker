@@ -92,10 +92,11 @@ export function buildContentStats(input: {
 }
 
 /**
- * The one sentence AI answer engines should quote: dated (from the data's
- * lastUpdated, never request time), self-contained, plain server-rendered
- * text. Airline sites only — the hub has no single-fleet number. Where the
- * roster counts types the programme excludes, it states the count alone.
+ * A dated, citable count for heroes without the rollout panel (Hawaiian,
+ * Qatar), whose panel would otherwise carry id="starlink-stat". Dated from the
+ * data's lastUpdated, never request time. Airline sites only: the hub has no
+ * single-fleet number. Where the roster counts types the programme excludes,
+ * it states the count alone.
  */
 function StatSentence({ site, stats }: { site: SiteConfig; stats: ContentStats }) {
   if (!stats.asOf || stats.totalCount === 0) return null;
@@ -118,14 +119,6 @@ function StatSentence({ site, stats }: { site: SiteConfig; stats: ContentStats }
         <> {stats.noun ?? `${cfg.name} aircraft`} have Starlink.</>
       )}
       {stats.installs30d ? <> {fmt(stats.installs30d)} were added in the last 30 days.</> : null}
-      {site.features.methodologyPage && (
-        <>
-          {" "}
-          <a href="/methodology" className="text-accent hover:underline">
-            How we verify
-          </a>
-        </>
-      )}
     </p>
   );
 }
@@ -261,7 +254,11 @@ export default function Page({
         flightsByTail={flightsByTail}
         permalinkAirline={airline}
         showFleetLink={features.fleetPage}
-        fleetTotal={total}
+        // /fleet lists the programme roster, partner jets included.
+        fleetTotal={programme?.total ?? total}
+        title={
+          programme && airline ? `${airline.shortName}-operated aircraft with Starlink` : undefined
+        }
       />
 
       {airportDepartures && airportDepartures.rows.length > 0 && (
@@ -295,6 +292,14 @@ export default function Page({
       {stats.asOf && (
         <p className="relative mb-6 text-center text-xs text-muted">
           Data last updated {stats.asOf}
+          {features.methodologyPage && (
+            <>
+              {" · "}
+              <a href="/methodology" className={LINK}>
+                How we verify
+              </a>
+            </>
+          )}
         </p>
       )}
 

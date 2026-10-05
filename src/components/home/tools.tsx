@@ -123,7 +123,7 @@ export function ToolsSection({ site }: { site: SiteConfig }) {
           <ToolCard
             id="chrome-extension"
             icon={<ChromeIcon />}
-            name="Chrome Extension"
+            name="Chrome extension"
             audience="For Google Flights"
             href="/chrome"
             cta="Get the extension →"
@@ -135,8 +135,8 @@ export function ToolsSection({ site }: { site: SiteConfig }) {
           <ToolCard
             id="mcp"
             icon={<McpIcon />}
-            name="MCP Server"
-            audience="For Claude, Cursor & AI assistants"
+            name="MCP server"
+            audience="For Claude, Cursor and other AI assistants"
             href="/mcp"
             cta="Setup instructions →"
           >

@@ -201,13 +201,14 @@ export default function MethodologyPage({
       <Section title="Citing this data" id="cite">
         <Prose>
           <p>
-            Quote the dated sentence on the{" "}
+            Quote the count on the{" "}
             <a href="/" className="text-accent hover:underline">
               homepage
             </a>{" "}
             (element id <code className="font-mono">starlink-stat</code>), which gives the{" "}
             {cfg.name} count, the fleet total and the percentage. The numbers change as installs are
-            verified, so include the date. Credit to {site.canonicalHost} is appreciated. The{" "}
+            verified, so include the date from the page's "Data last updated" line. Credit to{" "}
+            {site.canonicalHost} is appreciated. The{" "}
             <a
               href="https://github.com/martinamps/ua-starlink-tracker"
               target="_blank"

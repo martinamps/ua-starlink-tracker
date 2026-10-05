@@ -88,7 +88,7 @@ export function breadcrumbJsonLd(host: string, crumbs: Array<{ name: string; pat
 }
 
 export const homeFaqItems = (entries: HomeFaqEntry[], stats: ContentStats): FaqEntry[] =>
-  entries.map((e) => ({ q: e.q, a: e.a(stats) }));
+  entries.map((e) => ({ q: e.q, a: e.a(stats), ld: e.ld?.(stats) }));
 
 /** Homepage FAQPage JSON-LD as a <script> block, answers rendered from the components the reader sees. */
 export function homeFaqJsonLd(

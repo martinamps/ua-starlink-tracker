@@ -1,5 +1,5 @@
 /**
- * Citable-stat surfaces: the homepage stat sentence (what AI answer engines
+ * Citable-stat surfaces: the homepage count (what AI answer engines
  * quote) and the /methodology page (what earns the citation). Shape-only —
  * counts and dates come from the snapshot and must survive data drift.
  */
@@ -28,44 +28,45 @@ const getText = async (path: string, host: string) => {
 // them so assertions see the sentence as extracted text, the way crawlers do.
 const visibleText = (html: string) => html.replace(/<!--.*?-->/g, "");
 
-describe("homepage stat sentence", () => {
+describe("homepage citable count", () => {
   const airlineSites = Object.values(SITES).filter((s) => s.scope !== "ALL");
+  const plain = (html: string) =>
+    visibleText(html)
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ");
 
   test.each(airlineSites.map((s) => [s.key, s] as const))(
-    "%s: one dated, self-contained sentence with live numbers",
+    "%s: one starlink-stat element with live numbers, dated on the page",
     async (_key, site) => {
       const { status, text } = await getText("/", site.canonicalHost);
       expect(status).toBe(200);
-      // Fails closed on a zero denominator (no fleet-total meta yet) — a
-      // "0 of 0" sentence would be worse than none.
-      if (getReader(site.scope).getTotalCount() === 0) {
-        expect(text).not.toContain('id="starlink-stat"');
-        return;
-      }
-      expect(text).toContain('id="starlink-stat"');
-      // Tags dropped too: the counts sit in <strong> for emphasis.
-      const body = visibleText(text).replace(/<[^>]+>/g, "");
-      // "As of July 19, 2026, 981 of 1,516 United Airlines aircraft (36%) have
-      // Starlink." — numbers/date from data, never pinned. Where the roster
-      // counts types the programme excludes, the count stands alone.
+      // No fleet-total meta yet: nothing citable to check.
+      if (getReader(site.scope).getTotalCount() === 0) return;
+      expect(text.split('id="starlink-stat"').length - 1).toBe(1);
+      // The rollout panel ("981 of 1,516 United aircraft 36% have Starlink")
+      // or, on heroes without one, the sentence ("As of July 19, 2026, 160
+      // Qatar Airways aircraft have Starlink."). Numbers from data, never pinned.
+      const stat = plain(text.slice(text.indexOf('id="starlink-stat"')).slice(0, 2000));
       const cfg = AIRLINES[site.scope as string];
-      const sentence = cfg.rollout.rosterIsProgramScope
-        ? /As of [A-Z][a-z]+ \d{1,2}, \d{4}, [\d,]+ of [\d,]+ [^(]+ aircraft \(\d{1,3}%\) have\s+Starlink\./
-        : /As of [A-Z][a-z]+ \d{1,2}, \d{4}, [\d,]+ [^(.]+ aircraft have Starlink\./;
-      expect(body).toMatch(sentence);
+      expect(stat).toMatch(
+        cfg.rollout.rosterIsProgramScope
+          ? /[\d,]+ of [\d,]+ [^.]+?\d{1,3}%\)? have\s+Starlink/
+          : /[\d,]+ [^.]+? aircraft have Starlink/
+      );
+      expect(plain(text)).toMatch(/Data last updated [A-Z][a-z]+ \d{1,2}, \d{4}/);
     }
   );
 
-  test("hub renders no stat sentence (no single-fleet number)", async () => {
+  test("hub renders no starlink-stat element (no single-fleet number)", async () => {
     const { status, text } = await getText("/", SITES.airline.canonicalHost);
     expect(status).toBe(200);
     expect(text).not.toContain('id="starlink-stat"');
   });
 
-  test("united: sentence links to /methodology", async () => {
+  test("united: the date line links to /methodology", async () => {
     const { text } = await getText("/", SITES.united.canonicalHost);
-    const stat = text.slice(text.indexOf('id="starlink-stat"'));
-    expect(stat.slice(0, stat.indexOf("</p>"))).toContain('href="/methodology"');
+    const dated = visibleText(text).slice(visibleText(text).indexOf("Data last updated"));
+    expect(dated.slice(0, dated.indexOf("</p>"))).toContain('href="/methodology"');
   });
 });
 
@@ -95,7 +96,7 @@ describe("/methodology gating", () => {
     }
   });
 
-  test("llms.txt points agents at the stat sentence", async () => {
+  test("llms.txt points agents at the starlink-stat count", async () => {
     const { text } = await getText("/llms.txt", SITES.united.canonicalHost);
     expect(text).toContain("starlink-stat");
     expect(text).toContain("/methodology");

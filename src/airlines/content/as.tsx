@@ -10,7 +10,7 @@ const mainline = (s: ContentStats) => s.fleetStats?.mainline ?? { starlink: 0, t
 
 // The headline spans the same fleets as Alaska's own tracker: Alaska's
 // aircraft plus Hawaiian's A321neo and A330s (registry programmePartners).
-const ASHero = ({ stats, statSentence }: HeroProps) => (
+const ASHero = ({ stats }: HeroProps) => (
   <RolloutPanel
     stats={stats}
     noun={stats.noun ?? "Alaska aircraft"}
@@ -19,26 +19,32 @@ const ASHero = ({ stats, statSentence }: HeroProps) => (
       { label: "Mainline", n: mainline(stats).starlink, total: mainline(stats).total },
       ...(stats.partners ?? []).map((p) => ({ label: p.label, n: p.starlink, total: p.total })),
     ]}
-  >
-    {statSentence}
-  </RolloutPanel>
+  />
 );
 
-const partnerClause = (s: ContentStats) =>
-  (s.partners ?? []).map((p) => (
-    <span key={p.label}>
-      , and <StatInline n={p.starlink} /> of {fmt(p.total)} {p.label} jets, which also fly Alaska
-      flight numbers
-    </span>
-  ));
+/** "All 93 regional E175s" once a group is finished, "12 of 254 mainline jets" before. */
+const share = (n: number, total: number, what: string, lead = false) => (
+  <>
+    {n === total && total > 0 ? (
+      <>
+        {lead ? "All" : "all"} <StatInline n={n} />
+      </>
+    ) : (
+      <>
+        <StatInline n={n} /> of {fmt(total)}
+      </>
+    )}{" "}
+    {what}
+  </>
+);
 
 export const content: AirlineContent = {
   headerStats: [],
 
   intro: () => (
     <>
-      Alaska Airlines is replacing its Intelsat Wi-Fi with Starlink, starting with its regional
-      E175s. Check your flight or see which Alaska planes have it.
+      Alaska Airlines is replacing its paid Intelsat Wi-Fi with Starlink, starting with its regional
+      E175s.
     </>
   ),
 
@@ -47,21 +53,26 @@ export const content: AirlineContent = {
   answers: [
     {
       q: "Does Alaska Airlines have Starlink?",
-      a: (s) => (
-        <p>
-          Yes. <StatInline n={s.starlinkCount} /> of {fmt(s.totalCount)}{" "}
-          {s.noun ?? "Alaska aircraft"} ({pct(s.starlinkCount, s.totalCount)}) have Starlink Wi-Fi
-          {s.asOf ? <> as of {s.asOf}</> : null}. {fleetTargetSentence("AS", "Alaska")}
-        </p>
-      ),
+      // The panel above gives the count; the structured answer keeps it.
+      a: () => <p>Yes. {fleetTargetSentence("AS", "Alaska")}</p>,
+      ld: (s) =>
+        `Yes. ${fmt(s.starlinkCount)} of ${fmt(s.totalCount)} ${s.noun ?? "Alaska aircraft"} (${pct(s.starlinkCount, s.totalCount)}) have Starlink Wi-Fi${s.asOf ? ` as of ${s.asOf}` : ""}. ${fleetTargetSentence("AS", "Alaska")}`,
     },
     {
       q: "Which Alaska planes have Starlink?",
       a: (s) => (
         <p>
-          <StatInline n={regional(s).starlink} /> of {fmt(regional(s).total)} regional E175s,{" "}
-          <StatInline n={mainline(s).starlink} /> of {fmt(mainline(s).total)} mainline jets
-          {partnerClause(s)}. Mainline installs started with the 737 MAX 8; the{" "}
+          {share(regional(s).starlink, regional(s).total, "regional E175s", true)}
+          {s.partners?.length ? ", " : " and "}
+          {share(mainline(s).starlink, mainline(s).total, "mainline jets")}
+          {(s.partners ?? []).map((p) => (
+            <span key={p.label}>
+              {" "}
+              and {share(p.starlink, p.total, `${p.label.replace(" & ", " and ")} jets`)}, which
+              also fly Alaska flight numbers
+            </span>
+          ))}
+          . Mainline installs started with the 737 MAX 8; the{" "}
           <a href="/fleet" className={LINK}>
             fleet page
           </a>{" "}
@@ -73,9 +84,12 @@ export const content: AirlineContent = {
       q: "Do all Alaska flights have Starlink?",
       a: (s) => (
         <p>
-          No. {pct(regional(s).starlink, regional(s).total)} of regional E175s have it, but only{" "}
-          {pct(mainline(s).starlink, mainline(s).total)} of mainline aircraft, so most 737 flights
-          don't yet. Aircraft without Starlink still carry Alaska's older paid Wi-Fi.
+          No.{" "}
+          {regional(s).total > 0 && regional(s).starlink === regional(s).total
+            ? "All"
+            : `${pct(regional(s).starlink, regional(s).total)} of`}{" "}
+          regional E175s have it, but only {pct(mainline(s).starlink, mainline(s).total)} of
+          mainline aircraft, so most 737 flights don't yet.
         </p>
       ),
     },
@@ -107,16 +121,12 @@ export const content: AirlineContent = {
 
   faq: [
     {
-      title: "Alaska's rollout",
+      title: "Flying Alaska",
       items: [
         {
           q: "Is Alaska's Starlink Wi-Fi free?",
           a: () => (
-            <p>
-              It is free for Atmos Rewards members, under a T-Mobile sponsorship; joining Atmos
-              Rewards costs nothing. Aircraft not yet converted still carry the paid Intelsat
-              system.
-            </p>
+            <p>Yes, for Atmos Rewards members, and joining is free. T-Mobile sponsors it.</p>
           ),
         },
         {
@@ -126,21 +136,34 @@ export const content: AirlineContent = {
               Hawaiian's A330s and A321neos all have Starlink. Its Boeing 717s, which fly the short
               interisland hops, have no Wi-Fi. See{" "}
               <a href={airlineHomeUrl("HA")} className={LINK}>
-                the Hawaiian tracker
-              </a>{" "}
-              for that fleet.
+                Hawaiian's aircraft
+              </a>
+              .
             </p>
           ),
         },
         {
           q: "Do Horizon Air and SkyWest regional flights have Starlink?",
-          a: (s) => (
-            <p>
-              Yes. Alaska's regional E175s, flown by Horizon Air and SkyWest, were the first to get
-              Starlink. {fmt(regional(s).starlink)} of the {fmt(regional(s).total)} in our roster
-              have it, and both operators' aircraft are counted.
-            </p>
-          ),
+          a: (s) => {
+            const { starlink, total } = regional(s);
+            return (
+              <p>
+                Yes.{" "}
+                {starlink === total && total > 0 ? (
+                  <>
+                    All {fmt(total)} of Alaska's E175s, flown by Horizon Air and SkyWest, have
+                    Starlink.
+                  </>
+                ) : (
+                  <>
+                    {fmt(starlink)} of Alaska's {fmt(total)} E175s, flown by Horizon Air and
+                    SkyWest, have Starlink.
+                  </>
+                )}{" "}
+                They were the first to get it.
+              </p>
+            );
+          },
         },
       ],
     },
@@ -151,15 +174,14 @@ export const content: AirlineContent = {
           q: "Why can this count differ from Alaska's own percentage?",
           a: () => (
             <p>
-              Alaska's installation tracker states one percentage across Alaska's E175s, 737s and
-              787s plus Hawaiian's A321neo and A330s, and the headline here counts the same fleets.
-              What remains is fleet lists: Alaska's table leaves out the 737-700s, which we count as
-              not yet equipped, and our roster can differ from Alaska's by an aircraft or two in a
-              type. We also round shares down, never up. The{" "}
+              Both count the same fleets, Hawaiian's A321neos and A330s included. Alaska's list
+              leaves out the 737-700s, which we count as not yet having Starlink. Our roster can
+              also differ from Alaska's by an aircraft or two in a type, and we round shares down.
+              The{" "}
               <a href="/fleet" className={LINK}>
                 fleet page
               </a>{" "}
-              shows Alaska's own per-type counts next to ours.
+              shows both counts for each type.
             </p>
           ),
         },
