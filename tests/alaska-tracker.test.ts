@@ -5,9 +5,10 @@
 import type { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { newestOfficial } from "../src/airlines/aircraft-pages";
+import { SHEET_CODE_TO_FAMILY, newestOfficial } from "../src/airlines/aircraft-pages";
 import { InstallPipelineSection } from "../src/components/fleet/pipeline";
 import { getFleetProgress } from "../src/database/database";
+import { programmeHeadline, programmeRoster, tenantProgrammeRoster } from "../src/database/roster";
 import {
   parseAlaskaTracker,
   parseNewsroomDate,
@@ -88,7 +89,7 @@ describe("parseAlaskaTracker", () => {
 });
 
 describe("trackerProgressRows", () => {
-  test("keeps Alaska types only and rolls each segment into a Totals row", () => {
+  test("maps every chart row to a type code and rolls each segment into a Totals row", () => {
     const rows = trackerProgressRows(parseAlaskaTracker(trackerHtml(LIVE_ROWS)));
     const types = rows.filter((r) => r.type_code !== "Totals");
     expect(types.length).toBeGreaterThan(0);
@@ -100,8 +101,10 @@ describe("trackerProgressRows", () => {
         segTypes.reduce((s, r) => s + (r.starlink_complete ?? 0), 0)
       );
     }
-    // Hawaiian's Airbus rows share the table but are not Alaska's fleet.
-    expect(rows.some((r) => /^(321|330|A3)/.test(r.type_code))).toBe(false);
+    // Hawaiian's Airbus rows are on Alaska's chart; they stay, in their own segment.
+    const partner = rows.filter((r) => r.segment === "partner" && r.type_code !== "Totals");
+    expect(partner.length).toBeGreaterThan(0);
+    for (const r of partner) expect(SHEET_CODE_TO_FAMILY[r.type_code]).toMatch(/^A3/);
   });
 });
 
@@ -166,5 +169,36 @@ describe("tracker surfaces", () => {
     );
     expect(html).toContain("news.alaskaair.com");
     expect(html).not.toContain("community progress sheet");
+  });
+});
+
+describe("programme headline", () => {
+  function seedHa(db: Database, type: string, n: number, prefix: string): void {
+    const now = Math.floor(Date.now() / 1000);
+    const q = db.query(
+      `INSERT INTO united_fleet (tail_number, aircraft_type, first_seen_source, first_seen_at, last_seen_at, fleet, starlink_status, airline)
+       VALUES (?, ?, 'ha_seed', ?, ?, 'mainline', 'confirmed', 'HA')`
+    );
+    for (let i = 0; i < n; i++) q.run(`N${prefix}${i}HA`, type, now, now);
+  }
+
+  test("Alaska's headline adds Hawaiian's Airbus jets, never its 717s; per-airline rosters stay single-operator", () => {
+    const db = makeSyntheticDb();
+    seedRoster(db, "Embraer E175LR", 3, "6");
+    seedRoster(db, "Boeing 737 MAX 8", 4, "9");
+    seedHa(db, "Airbus A321-271N", 2, "21");
+    seedHa(db, "Airbus A330-243", 2, "33");
+    seedHa(db, "Boeing 717-22A", 2, "71");
+    const h = programmeHeadline(db, "AS");
+    const own = programmeRoster(db, "AS").length;
+    const partnerTails = tenantProgrammeRoster(db, "AS").filter((t) => t.airline === "HA");
+    expect(h).not.toBeNull();
+    expect(h?.total).toBe(own + partnerTails.length);
+    expect(partnerTails.length).toBeGreaterThan(0);
+    expect(partnerTails.every((t) => t.family === "A321" || t.family === "A330")).toBe(true);
+    expect(h?.partners.reduce((s, p) => s + p.total, 0)).toBe(partnerTails.length);
+    expect(typeof h?.noun).toBe("string");
+    expect(programmeRoster(db, "AS").every((t) => t.airline === "AS")).toBe(true);
+    expect(programmeHeadline(db, "UA")).toBeNull();
   });
 });

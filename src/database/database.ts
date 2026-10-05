@@ -80,7 +80,7 @@ import { excludeMassWriteDays } from "../utils/install-rate";
 import { debug, info, error as logError, warn } from "../utils/logger";
 import { ensureAdsbFlightDrawsTable } from "./adsb-flight-draws";
 import { ASSIGNMENT_LOG_DDL, logFlightAssignments, pruneAssignmentLog } from "./assignment-log";
-import { countRoster, fleetRoster, programmeRoster } from "./roster";
+import { countRoster, fleetRoster, programmeRoster, tenantProgrammeRoster } from "./roster";
 import {
   equippedSql,
   fleetStatusFromWifi,
@@ -5025,9 +5025,13 @@ const FLEET_PAGE_TTL_MS = 60_000;
  * leaderboard, body-class provider split, live-airborne pulse with a
  * 30-min-bucketed sparkline, and the full tail list. Memoized for 60s.
  */
-export function getFleetPageData(db: Database, airline?: AirlineFilter): FleetPageData {
+export function getFleetPageData(
+  db: Database,
+  airline?: AirlineFilter,
+  opts: { withPartners?: boolean } = {}
+): FleetPageData {
   const now = Date.now();
-  const key = filterKey(airline);
+  const key = `${filterKey(airline)}${opts.withPartners ? "+partners" : ""}`;
   let perDb = fleetPageCache.get(db);
   if (!perDb) {
     perDb = new Map();
@@ -5037,7 +5041,7 @@ export function getFleetPageData(db: Database, airline?: AirlineFilter): FleetPa
   if (cached && now - cached.at < FLEET_PAGE_TTL_MS) {
     return cached.data;
   }
-  const data = computeFleetPageData(db, airline);
+  const data = computeFleetPageData(db, airline, opts.withPartners ?? false);
   perDb.set(key, { data, at: now });
   return data;
 }
@@ -5907,8 +5911,16 @@ function emptyProviders(): Record<WifiProvider, number> {
   };
 }
 
-function computeFleetPageData(db: Database, airline?: AirlineFilter): FleetPageData {
-  const rows = programmeRoster(db, airline);
+// withPartners: a single-airline /fleet that also counts its programme
+// partners' tails (tenantProgrammeRoster), so its header matches the homepage.
+function computeFleetPageData(
+  db: Database,
+  airline: AirlineFilter | undefined,
+  withPartners: boolean
+): FleetPageData {
+  const sole = typeof airline === "string" ? airline : airline?.length === 1 ? airline[0] : null;
+  const rows =
+    withPartners && sole ? tenantProgrammeRoster(db, sole) : programmeRoster(db, airline);
 
   const allTails: FleetTail[] = [];
   const familyMap = new Map<string, FleetFamily>();

@@ -15,7 +15,7 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { isOutsideProgramme } from "../airlines/registry";
+import { AIRLINES, isOutsideProgramme } from "../airlines/registry";
 import { normalizeAircraftType } from "../observability/metrics";
 import { listedVerifiedSql, tailEquippedSql } from "./sql/equipped";
 import { type AirlineFilter, withAirline } from "./sql/fragments";
@@ -70,6 +70,49 @@ export function programmeRoster(db: Database, airline: AirlineFilter): RosterTai
 export interface RosterCount {
   total: number;
   equipped: number;
+}
+
+/**
+ * A tenant's programme as the airline itself counts it: its own programme
+ * roster plus the partner-operated families its programme names
+ * (programmePartners). Only the tenant's headline and /fleet read this; every
+ * per-airline count stays on programmeRoster so cross-airline sums never see a
+ * partner tail twice.
+ */
+export function tenantProgrammeRoster(db: Database, code: string): RosterTail[] {
+  const partners = AIRLINES[code]?.programmePartners?.partners ?? [];
+  return [
+    ...programmeRoster(db, code),
+    ...partners.flatMap((p) =>
+      programmeRoster(db, p.airline).filter((t) => p.families.includes(t.family))
+    ),
+  ];
+}
+
+export interface ProgrammeHeadline extends RosterCount {
+  noun: string;
+  /** One row per partner slice, for the hero's segment list. */
+  partners: Array<RosterCount & { label: string }>;
+}
+
+/** The tenant headline over tenantProgrammeRoster; null for an airline with no
+ * programme partners, whose headline stays on its per-airline figures. */
+export function programmeHeadline(db: Database, code: string): ProgrammeHeadline | null {
+  const cfg = AIRLINES[code]?.programmePartners;
+  if (!cfg) return null;
+  const tally = (tails: readonly RosterTail[]): RosterCount => ({
+    total: tails.length,
+    equipped: tails.filter((t) => t.equipped).length,
+  });
+  const all = tenantProgrammeRoster(db, code);
+  return {
+    ...tally(all),
+    noun: cfg.noun,
+    partners: cfg.partners.map((p) => ({
+      label: p.label,
+      ...tally(all.filter((t) => t.airline === p.airline && p.families.includes(t.family))),
+    })),
+  };
 }
 
 /** Totals keyed by `keyOf`, in first-seen order. */

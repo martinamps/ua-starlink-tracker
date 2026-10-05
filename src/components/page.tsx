@@ -6,6 +6,7 @@
 import type { AirlineContent, ContentStats, HubHomeLinks } from "../airlines/content";
 import { AIRLINES, type SiteConfig, siteAirline } from "../airlines/registry";
 import type { PopularFlight } from "../database/database";
+import type { ProgrammeHeadline } from "../database/roster";
 import type {
   Aircraft,
   AirportDepartures,
@@ -52,6 +53,9 @@ interface PageProps {
   /** Most-observed flight numbers — crawlable inlinks into the permalink corpus. */
   popularFlights?: PopularFlight[];
   hubLinks?: HubHomeLinks;
+  /** The tenant's programme headline (with partner fleets); replaces the
+   * starlink/total pair in every count the page states. */
+  programme?: ProgrammeHeadline | null;
 }
 
 /** The one ContentStats the homepage body and its FAQPage JSON-LD both render from. */
@@ -65,11 +69,18 @@ export function buildContentStats(input: {
   weeklyInstalls?: number[];
   lastUpdated?: string;
   perAirline?: PerAirlineStat[];
+  programme?: ProgrammeHeadline | null;
 }): ContentStats {
-  const { starlinkCount, totalCount } = input;
+  const { programme } = input;
   return {
-    starlinkCount,
-    totalCount,
+    starlinkCount: programme?.equipped ?? input.starlinkCount,
+    totalCount: programme?.total ?? input.totalCount,
+    noun: programme?.noun,
+    partners: programme?.partners.map((p) => ({
+      label: p.label,
+      starlink: p.equipped,
+      total: p.total,
+    })),
     fleetStats: input.fleetStats,
     installsPerMonth: input.installsPerMonth,
     installsPaceWindow: input.installsPaceWindow,
@@ -100,11 +111,11 @@ function StatSentence({ site, stats }: { site: SiteConfig; stats: ContentStats }
       {ratio ? (
         <>
           {" "}
-          of {fmt(stats.totalCount)} {cfg.name} aircraft (
+          of {fmt(stats.totalCount)} {stats.noun ?? `${cfg.name} aircraft`} (
           {pct(stats.starlinkCount, stats.totalCount)}) have Starlink.
         </>
       ) : (
-        <> {cfg.name} aircraft have Starlink.</>
+        <> {stats.noun ?? `${cfg.name} aircraft`} have Starlink.</>
       )}
       {stats.installs30d ? <> {fmt(stats.installs30d)} were added in the last 30 days.</> : null}
       {site.features.methodologyPage && (
@@ -168,6 +179,7 @@ export default function Page({
   pageLinks,
   popularFlights = [],
   hubLinks,
+  programme,
 }: PageProps) {
   const aircraft = orderedAircraft(starlink, flightsByTail);
   const stats = buildContentStats({
@@ -180,6 +192,7 @@ export default function Page({
     weeklyInstalls,
     lastUpdated,
     perAirline: perAirlineStats,
+    programme,
   });
   const features = site.features;
   // The hub has checkFlightPage off and siteAirline() throws there.

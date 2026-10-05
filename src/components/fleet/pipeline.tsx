@@ -224,6 +224,13 @@ const OFFICIAL_SEGMENT_LABELS: Record<string, string> = {
   express: "Regional",
 };
 
+function officialSegmentLabel(airline: string, segment: string): string {
+  if (segment === "partner") {
+    return AIRLINES[airline]?.programmePartners?.partners[0]?.label ?? "Partner-operated";
+  }
+  return OFFICIAL_SEGMENT_LABELS[segment] ?? segment;
+}
+
 // An airline's own per-type tracker: connected and pending counts only — no
 // mod lines, no tail names — so it gets its own section, not the sheet's.
 function OfficialTrackerSection({
@@ -256,7 +263,7 @@ function OfficialTrackerSection({
           );
           return (
             <div key={seg.segment} className={PANEL}>
-              <div className={EYEBROW}>{OFFICIAL_SEGMENT_LABELS[seg.segment] ?? seg.segment}</div>
+              <div className={EYEBROW}>{officialSegmentLabel(seg.airline, seg.segment)}</div>
               <StatValue
                 unit={`of ${seg.total !== null ? fmt(seg.total) : "?"} connected${seg.total ? ` · ${pct(complete, seg.total)}` : ""}`}
               >

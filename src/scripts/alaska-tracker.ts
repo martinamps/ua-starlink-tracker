@@ -6,14 +6,13 @@
  * is the only automatable first-party signal for its mainline.
  *
  * Writes:
- *  - fleet_progress rows for AS (segments express / mainline_nb / mainline_wb),
- *    which the fleet page, the type pages' official counts, the freshness
- *    gauge and the fleet_progress.count gauges already read;
+ *  - fleet_progress rows under AS (segments express / mainline_nb /
+ *    mainline_wb, and partner for Hawaiian's A321neo/A330, which Alaska's
+ *    chart counts too), read by /fleet, the type pages' official counts, the
+ *    freshness gauge and the fleet_progress.count gauges;
  *  - for a type Alaska marks "Update complete", a type-rule listing for every
- *    roster tail of that type (settleOfficiallyCompleteType's guard applies).
- *
- * Hawaiian's A321neo/A330 rows on the same table are skipped: HA's Airbus
- * fleet is settled by its own type rule.
+ *    roster tail of that type in its operator's roster
+ *    (settleOfficiallyCompleteType's guard applies).
  */
 
 import type { Database } from "bun:sqlite";
@@ -38,16 +37,19 @@ const TRACKER_URL = AIRLINES.AS.officialTracker?.url ?? "";
 const USER_AGENT = "ua-starlink-tracker (+https://unitedstarlinktracker.com)";
 
 // Family → the fleet_progress type code the type pages already map
-// (SHEET_CODE_TO_FAMILY). Families outside this map are not Alaska-operated.
-const FAMILY_CODE: Readonly<Record<string, { code: string; segment: ProgressSegment }>> = {
-  E175: { code: "E175", segment: "express" },
-  "B737-800": { code: "738", segment: "mainline_nb" },
-  "B737-900": { code: "739", segment: "mainline_nb" },
-  "B737-MAX8": { code: "38M", segment: "mainline_nb" },
-  "B737-MAX9": { code: "39M", segment: "mainline_nb" },
-  B787: { code: "789", segment: "mainline_wb" },
+// (SHEET_CODE_TO_FAMILY) and the roster whose tails it names.
+const FAMILY_CODE: Readonly<
+  Record<string, { code: string; segment: ProgressSegment; airline: "AS" | "HA" }>
+> = {
+  E175: { code: "E175", segment: "express", airline: "AS" },
+  "B737-800": { code: "738", segment: "mainline_nb", airline: "AS" },
+  "B737-900": { code: "739", segment: "mainline_nb", airline: "AS" },
+  "B737-MAX8": { code: "38M", segment: "mainline_nb", airline: "AS" },
+  "B737-MAX9": { code: "39M", segment: "mainline_nb", airline: "AS" },
+  B787: { code: "789", segment: "mainline_wb", airline: "AS" },
+  A321: { code: "321", segment: "partner", airline: "HA" },
+  A330: { code: "332", segment: "partner", airline: "HA" },
 };
-const HAWAIIAN_FAMILIES = new Set(["A321", "A330"]);
 
 export interface TrackerRow {
   label: string;
@@ -199,9 +201,7 @@ export async function runAlaskaTrackerSync(
         return { outcome: "error", rows: 0, settled: 0 };
       }
 
-      const unknown = parsed.rows.filter(
-        (r) => !FAMILY_CODE[r.family] && !HAWAIIAN_FAMILIES.has(r.family)
-      );
+      const unknown = parsed.rows.filter((r) => !FAMILY_CODE[r.family]);
       if (unknown.length > 0) {
         warn(`alaska-tracker: unmapped types skipped: ${unknown.map((r) => r.label).join(", ")}`);
       }
@@ -223,8 +223,9 @@ export async function runAlaskaTrackerSync(
 
       let settled = 0;
       for (const r of parsed.rows) {
-        if (!FAMILY_CODE[r.family] || r.pending > 0 || r.connected === 0) continue;
-        const res = settleOfficiallyCompleteType(db, "AS", r.family, r.connected);
+        const mapped = FAMILY_CODE[r.family];
+        if (!mapped || r.pending > 0 || r.connected === 0) continue;
+        const res = settleOfficiallyCompleteType(db, mapped.airline, r.family, r.connected);
         settled += res.settled;
         if (res.skipped === "roster_exceeds_official") {
           warn(
@@ -233,13 +234,17 @@ export async function runAlaskaTrackerSync(
         }
       }
 
-      const equipped = equippedCountByFamily(db, "AS");
+      const equipped = {
+        AS: equippedCountByFamily(db, "AS"),
+        HA: equippedCountByFamily(db, "HA"),
+      };
       for (const r of parsed.rows) {
-        if (!FAMILY_CODE[r.family]) continue;
+        const mapped = FAMILY_CODE[r.family];
+        if (!mapped) continue;
         metrics.gauge(
           GAUGES.FLEET_PROGRESS_UNATTRIBUTED,
-          Math.max(0, r.connected - (equipped.get(r.family) ?? 0)),
-          { aircraft_type: r.family, airline: airlineTag }
+          Math.max(0, r.connected - (equipped[mapped.airline].get(r.family) ?? 0)),
+          { aircraft_type: r.family, airline: normalizeAirlineTag(mapped.airline) }
         );
       }
 

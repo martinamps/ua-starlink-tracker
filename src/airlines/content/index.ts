@@ -26,6 +26,11 @@ export interface ContentStats {
   asOf?: string;
   /** Hub only: one row per tracked airline. */
   perAirline?: PerAirlineStat[];
+  /** What totalCount counts when the headline spans programme partners
+   * ("Alaska and Hawaiian Airbus aircraft"); absent = the airline's own. */
+  noun?: string;
+  /** The partner slices inside that headline, one per partner. */
+  partners?: Array<{ label: string; starlink: number; total: number }>;
 }
 
 /**

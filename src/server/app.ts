@@ -3379,7 +3379,7 @@ function fleetItemListJsonLd(
 }
 
 const fleetPage: Handler = (ctx) => {
-  const data = ctx.reader.getFleetPageData();
+  const data = ctx.reader.getProgrammeFleetPageData();
   const typeLinks: FleetTypeLink[] = servedAircraftPages(ctx).map((d) => ({
     family: d.family,
     slug: d.slug,
@@ -3822,9 +3822,11 @@ const starlinkTailsCsv: Handler = (ctx) => {
 /** The homepage headline's numbers, for the "Cite this" line; null on the hub. */
 function citeStat(ctx: RequestContext): CiteStat | null {
   if (ctx.tenant === "ALL") return null;
+  const programme = ctx.reader.getProgrammeHeadline();
   return {
-    starlink: ctx.reader.countStarlinkPlanes(),
-    total: ctx.reader.getTotalCount(),
+    starlink: programme?.equipped ?? ctx.reader.countStarlinkPlanes(),
+    total: programme?.total ?? ctx.reader.getTotalCount(),
+    noun: programme?.noun,
     // Raw, never the now() fallback: an unstamped fleet cites no date at all.
     lastUpdated: ctx.reader.getLastUpdatedRaw() ?? undefined,
   };
@@ -4235,6 +4237,7 @@ function homeMeta(
   stats: {
     starlinkCount: number;
     totalCount: number;
+    noun?: string;
     fleetStats?: ReturnType<ScopedReader["getFleetStats"]>;
   }
 ): { siteTitle: string; siteDescription: string } | null {
@@ -4265,7 +4268,9 @@ function homeMeta(
       : "";
   return {
     siteTitle,
-    siteDescription: `Yes: ${count} ${cfg.shortName} planes (${share}) have free Starlink Wi-Fi${regionalClause}. Enter your flight number and date to see if yours does.`,
+    // "free" only where every passenger gets it free; a members-only offer
+    // (freeForMembersOf) is the FAQ's to state, with its condition.
+    siteDescription: `Yes: ${count} ${stats.noun ?? `${cfg.shortName} planes`} (${share}) have ${cfg.freeForMembersOf ? "" : "free "}Starlink Wi-Fi${regionalClause}. Enter your flight number and date to see if yours does.`,
   };
 }
 
@@ -4280,6 +4285,7 @@ const homePage: Handler = async (ctx) => {
   const starlink = reader.getStarlinkPlanes();
   const lastUpdated = reader.getLastUpdated();
   const fleetStats = reader.getFleetStats();
+  const programme = reader.getProgrammeHeadline();
   const flightsByTail = groupEquippedFlightsByTail(starlink, reader.getUpcomingFlights());
   const nowMs = Date.now();
   const daily = isHub ? [] : reader.getDailyInstalls();
@@ -4321,6 +4327,7 @@ const homePage: Handler = async (ctx) => {
       pageLinks: pageNavLinks(ctx, "/"),
       popularFlights: site.features.checkFlightPage ? reader.getPopularFlights() : undefined,
       hubLinks: isHub ? hubHomeLinks(ctx) : undefined,
+      programme,
     })
   );
   // Page applies date overrides that never change counts, so the JSON-LD
@@ -4335,13 +4342,14 @@ const homePage: Handler = async (ctx) => {
     weeklyInstalls: weekly,
     lastUpdated,
     perAirline: isHub ? perAirlineStats : undefined,
+    programme,
   });
 
   const template = await getHtmlTemplate();
   const baseVars = buildBaseTemplateVars(ctx, reactHtml, "/", {
     fleetStats,
-    totalCount: total,
-    starlinkCount: starlink.length,
+    totalCount: stats.totalCount,
+    starlinkCount: stats.starlinkCount,
     lastUpdated,
   });
   const meta = homeMeta(site, stats);

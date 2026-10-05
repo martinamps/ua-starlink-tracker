@@ -7,6 +7,8 @@ export interface CiteStat {
   starlink: number;
   total: number;
   lastUpdated?: string;
+  /** What `total` counts, when not just this airline's own aircraft. */
+  noun?: string;
 }
 
 /** One visible "Cite this" line for pages the press quotes numbers from.
@@ -27,8 +29,8 @@ export function CiteThis({ site, cite }: { site: SiteConfig; cite?: CiteStat | n
       <a href="/methodology#cite" className="text-accent hover:underline">
         Cite this
       </a>
-      : {fmt(cite.starlink)} of {fmt(cite.total)} {cfg.name} aircraft (as of {date}),{" "}
-      {site.canonicalHost}
+      : {fmt(cite.starlink)} of {fmt(cite.total)} {cite.noun ?? `${cfg.name} aircraft`} (as of{" "}
+      {date}), {site.canonicalHost}
     </p>
   );
 }
