@@ -1,5 +1,4 @@
 import { RolloutPanel } from "../../components/home/rollout";
-import { CHROME_EXTENSION_URL } from "../../components/home/tools";
 import { LINK, StatInline } from "../../components/layout";
 import { fmt, pct } from "../../components/ui/format";
 import { fleetTargetSentence } from "./fleet-target";
@@ -95,7 +94,7 @@ export const content: AirlineContent = {
           </a>
           . About two days before departure United assigns the aircraft and you get a firm yes or
           no. Further out you get the odds, based on the planes that flight has used recently. The{" "}
-          <a href={CHROME_EXTENSION_URL} target="_blank" rel="noopener noreferrer" className={LINK}>
+          <a href="/chrome" className={LINK}>
             Chrome extension
           </a>{" "}
           shows the same answer on Google Flights.

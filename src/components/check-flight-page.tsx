@@ -15,7 +15,6 @@ import { FlightFactBlocks } from "./check-flight/fact-blocks";
 import type { DatedAnswer, FlightFacts, InvalidFlightQuery } from "./check-flight/types";
 import { Faq, type FaqEntry, JsonLd, breadcrumbJsonLd, scriptSafeJson } from "./faq";
 import { FlightSearchForm } from "./flight-search-form";
-import { CHROME_EXTENSION_URL } from "./home/tools";
 import {
   ClientScriptTag,
   LINK,
@@ -277,12 +276,7 @@ export default function CheckFlightPage({
           {site.features.chromeExtension && (
             <li>
               Shopping on Google Flights? The free{" "}
-              <a
-                href={CHROME_EXTENSION_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                className={LINK}
-              >
+              <a href="/chrome" className={LINK}>
                 Chrome extension
               </a>{" "}
               marks {shortName} flights that have Starlink.

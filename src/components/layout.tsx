@@ -431,6 +431,13 @@ function SiteFooter({ site, pageLinks }: { site: SiteConfig; pageLinks?: Link[] 
         >
           GitHub
         </a>
+        {/* Every host serves /chrome (canonical on United's), so no feature gate. */}
+        <span className="text-subtle" aria-hidden="true">
+          ·
+        </span>
+        <a href="/chrome" className="text-secondary hover:text-primary transition-colors">
+          Chrome extension
+        </a>
         {site.features.intentPages && (
           <>
             <span className="text-subtle" aria-hidden="true">

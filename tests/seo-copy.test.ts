@@ -247,17 +247,25 @@ describe("meta description clamp", () => {
 });
 
 describe("SoftwareApplication JSON-LD", () => {
-  test("ships only on /how-to-check", async () => {
+  test("ships only on /chrome", async () => {
     const flight = (await samplePages(UA)).find((p) => /^\/check-flight\/./.test(p));
-    for (const path of ["/", "/route-planner", "/check-flight", flight ?? "/check-flight/UA1"]) {
+    for (const path of [
+      "/",
+      "/route-planner",
+      "/check-flight",
+      "/how-to-check",
+      flight ?? "/check-flight/UA1",
+    ]) {
       expect({ path, has: (await html(path, UA)).includes('"SoftwareApplication"') }).toEqual({
         path,
         has: false,
       });
     }
-    const guide = await html("/how-to-check", UA);
-    expect(guide).toContain('"SoftwareApplication"');
-    expect(guide).toContain("Google Flights Starlink Indicator");
+    const page = await html("/chrome", UA);
+    expect(page).toContain('"SoftwareApplication"');
+    expect(page).toContain('"applicationCategory":"TravelApplication"');
+    expect(page).toContain("Google Flights Starlink Indicator");
+    expect(page).not.toContain("aggregateRating");
   });
 });
 

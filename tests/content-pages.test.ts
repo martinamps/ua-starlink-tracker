@@ -10,6 +10,8 @@
 
 import { beforeAll, describe, expect, test } from "bun:test";
 import { SITES } from "../src/airlines/registry";
+import { EXTENSION_MULTI_AIRLINE_LIVE } from "../src/components/chrome-page";
+import { CHROME_EXTENSION_URL } from "../src/components/home/tools";
 import { freeAccessAnswer } from "../src/components/is-starlink-free-page";
 import { getTimeline, hasTimeline } from "../src/components/timeline-page";
 import {
@@ -172,6 +174,49 @@ describe("intent pages", () => {
         ).toBe(site.features.intentPages);
       }
     }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("/chrome extension page", () => {
+  const CANONICAL = `<link rel="canonical" href="https://${UA}/chrome"`;
+
+  test("serves on every host, canonical on United's", async () => {
+    for (const site of Object.values(SITES)) {
+      const { status, text } = await getText("/chrome", site.canonicalHost);
+      expect(status, site.key).toBe(200);
+      expect(text, site.key).toContain(CANONICAL);
+      expect(text, site.key).toContain(CHROME_EXTENSION_URL);
+      expect(text, site.key).toContain("Add to Chrome — free");
+      expect(text, site.key).toContain('"FAQPage"');
+      expect(text, site.key).toMatch(/<img [^>]*width="1280"[^>]*height="800"/);
+    }
+  });
+
+  test("copy follows the multi-airline flag", async () => {
+    const { text } = await getText("/chrome", UA);
+    expect(text.includes("Next update")).toBe(!EXTENSION_MULTI_AIRLINE_LIVE);
+  });
+
+  test("/extension 301s to /chrome", async () => {
+    for (const site of Object.values(SITES)) {
+      const res = await app.dispatch(req("/extension", site.canonicalHost));
+      expect(res.status, site.key).toBe(301);
+      expect(res.headers.get("location"), site.key).toBe(`https://${site.canonicalHost}/chrome`);
+    }
+  });
+
+  test("only United's sitemap and llms.txt list it; every footer links it", async () => {
+    for (const site of Object.values(SITES)) {
+      const host = site.canonicalHost;
+      const { text: map } = await getText("/sitemap.xml", host);
+      expect(map.includes(`https://${host}/chrome<`), `${site.key} sitemap`).toBe(host === UA);
+      const { text: home } = await getText("/", host);
+      expect(home, `${site.key} footer`).toContain('href="/chrome"');
+    }
+    const { text: llms } = await getText("/llms.txt", UA);
+    expect(llms).toContain(`https://${UA}/chrome`);
   });
 });
 

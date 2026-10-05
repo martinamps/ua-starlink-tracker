@@ -3,7 +3,6 @@ import { type SiteConfig, siteAirline } from "../airlines/registry";
 import { article } from "../utils/grammar";
 import { JsonLd } from "./faq";
 import { FlightSearchForm } from "./flight-search-form";
-import { CHROME_EXTENSION_URL } from "./home/tools";
 import type { Link } from "./layout";
 import { PageHeader, PageShell, Section } from "./layout";
 
@@ -115,12 +114,7 @@ export default function HowToCheckPage({ site, pageLinks, currentPath }: HowToCh
           {site.features.chromeExtension && (
             <li>
               <span className="font-semibold text-primary">While shopping.</span> The free{" "}
-              <a
-                href={CHROME_EXTENSION_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-accent hover:underline"
-              >
+              <a href="/chrome" className="text-accent hover:underline">
                 Chrome extension
               </a>{" "}
               marks Starlink flights on Google Flights.

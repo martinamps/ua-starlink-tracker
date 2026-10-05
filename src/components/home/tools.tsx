@@ -12,7 +12,6 @@ function ToolCard({
   audience,
   href,
   cta,
-  external = false,
   children,
 }: {
   id: string;
@@ -21,7 +20,6 @@ function ToolCard({
   audience: string;
   href: string;
   cta: string;
-  external?: boolean;
   children: React.ReactNode;
 }) {
   return (
@@ -34,11 +32,7 @@ function ToolCard({
         </div>
       </div>
       <p className="text-sm text-secondary leading-relaxed mb-4 flex-1">{children}</p>
-      <a
-        href={href}
-        {...(external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
-        className="text-xs text-accent hover:underline font-mono"
-      >
+      <a href={href} className="text-xs text-accent hover:underline font-mono">
         {cta}
       </a>
     </Panel>
@@ -134,9 +128,8 @@ export function ToolsSection({ site }: { site: SiteConfig }) {
             icon={<ChromeIcon />}
             name="Chrome Extension"
             audience="For Google Flights"
-            href={CHROME_EXTENSION_URL}
-            cta="Add to Chrome →"
-            external
+            href="/chrome"
+            cta="Get the extension →"
           >
             See which flights have Starlink right in your Google Flights results.
           </ToolCard>
