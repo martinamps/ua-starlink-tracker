@@ -129,7 +129,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     status: "installing",
     statusLabel: "Installing",
     summary:
-      "Starlink active on more than 560 aircraft per United's September 2026 release; targeting close to 1,000 by the end of 2026 and the full fleet by the end of 2027.",
+      "Starlink active on more than 560 aircraft per United's September 2026 release; targeting more than 880 by the end of 2026 (per its October 2026 posts on X) and the full fleet by the end of 2027.",
     facts: [
       {
         fact: "Starlink is installed on 450 United mainline and United Express aircraft, per United's Q2 2026 results release; the airline expects nearly 1,000 by the end of 2026 and says it remains on track to bring Starlink to the whole fleet by the end of 2027.",
@@ -158,6 +158,17 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
           label: "United press release (PR Newswire)",
           url: "https://www.prnewswire.com/news-releases/united-teams-up-with-dish-to-broadcast-professional-and-college-football-games-live-on-starlink-enabled-seatback-screens-302882330.html",
         },
+      },
+      {
+        // Supersedes the "nearly 1,000 by year end" in the Q2 release (fact 1),
+        // which stays as the dated record of the earlier goal.
+        fact: "United now says it will have more than 880 aircraft equipped with Starlink by the end of 2026, and expects the entire fleet to have Starlink by the end of 2027.",
+        asOf: "2026-10-03",
+        source: {
+          label: "@united on X, Oct 3, 2026",
+          url: "https://x.com/united/status/2106516734148562984",
+        },
+        aircraftPages: ["*"],
       },
     ],
   },
@@ -1541,6 +1552,11 @@ const UA_TIMELINE_SOURCES = {
     url: "https://www.prnewswire.com/news-releases/united-teams-up-with-dish-to-broadcast-professional-and-college-football-games-live-on-starlink-enabled-seatback-screens-302882330.html",
     published: "2026-09-17",
   },
+  x880: {
+    label: "@united on X, Oct 3, 2026",
+    url: "https://x.com/united/status/2106516734148562984",
+    published: "2026-10-03",
+  },
   q2y2026: {
     label: "United Q2 2026 results, Jul 15, 2026",
     url: "https://www.prnewswire.com/news-releases/united-posts-q2-results-above-wall-street-expectations-and-raises-full-year-2026-adjusted-eps-guidance-despite-a-nearly-6-billion-increase-in-anticipated-fuel-costs-302826793.html",
@@ -1592,7 +1608,7 @@ export const ROLLOUT_TIMELINES: Partial<Record<KnownAirlineCode, RolloutTimeline
       {
         date: "2026-07-15",
         title: "450 aircraft equipped",
-        fact: "United reported Starlink installed on 450 mainline and United Express aircraft.",
+        fact: "United reported Starlink installed on 450 mainline and United Express aircraft, and said it expected nearly 1,000 by the end of 2026.",
         source: UA_TIMELINE_SOURCES.q2y2026,
       },
       {
@@ -1601,11 +1617,22 @@ export const ROLLOUT_TIMELINES: Partial<Record<KnownAirlineCode, RolloutTimeline
         fact: "United said Starlink was active on more than 560 mainline and United Express aircraft.",
         source: UA_TIMELINE_SOURCES.dish560,
       },
+      {
+        date: "2026-10-03",
+        title: "Year-end target revised to 880+",
+        fact: "United said it will have more than 880 aircraft equipped with Starlink by the end of 2026.",
+        source: UA_TIMELINE_SOURCES.x880,
+      },
     ],
     targets: [
       {
         when: "End of 2026",
-        fact: "Nearly 1,000 aircraft, including nearly 60 widebodies.",
+        fact: "More than 880 aircraft equipped with Starlink.",
+        source: UA_TIMELINE_SOURCES.x880,
+      },
+      {
+        when: "End of 2026",
+        fact: "Nearly 60 widebodies.",
         source: UA_TIMELINE_SOURCES.q2y2026,
       },
       {

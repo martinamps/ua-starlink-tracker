@@ -51,11 +51,13 @@ export interface RolloutTargetDef {
 
 // United's own newsroom (united.com/…/announcements/cision-*) blocks automated
 // fetching outright, so its content cannot be verified from here — and one
-// undated link was standing for both targets below. These are the same
-// sentences, in United's 8-K earnings exhibits, permanently archived on EDGAR.
-const UA_Q2_2026 = {
-  title: "United Airlines Q2 2026 earnings release (SEC Form 8-K, Ex-99.1, July 15, 2026)",
-  url: "https://www.sec.gov/Archives/edgar/data/100517/000010051726000135/ual_erx06302026xex991.htm",
+// undated link was standing for both targets below. The fleet-wide target uses
+// the same sentence from United's 8-K earnings exhibit, archived on EDGAR. The
+// year-end count comes from @united's own post, which revised the Q2 exhibit's
+// "nearly 1,000" and serves its text without a login.
+const UA_X_2026_10_03 = {
+  title: "United Airlines (@united) on X, October 3, 2026",
+  url: "https://x.com/united/status/2106516734148562984",
 };
 const UA_Q1_2026 = {
   title: "United Airlines Q1 2026 earnings release (SEC Form 8-K, Ex-99.1, April 21, 2026)",
@@ -80,12 +82,13 @@ const AS_Q2_2026_SUPPLEMENTAL = {
 const ROLLOUT_TARGETS: Record<KnownAirlineCode, RolloutTargetDef[]> = {
   UA: [
     {
-      // "…450 aircraft installed and nearly 1,000 expected by year end."
-      label: "Close to 1,000 aircraft equipped",
+      // "We'll have more than 880 aircraft equipped with Starlink by the end of
+      // 2026" — revises the Q2 release's "nearly 1,000 expected by year end".
+      label: "More than 880 aircraft equipped",
       deadline: "2026-12-31",
-      count: 1000,
-      statedOn: "2026-07-15",
-      source: UA_Q2_2026,
+      count: 880,
+      statedOn: "2026-10-03",
+      source: UA_X_2026_10_03,
     },
     {
       // "Starlink installations expected fleet-wide by the end of 2027."

@@ -170,7 +170,7 @@ export const content: AirlineContent = {
           a: (s) => (
             <p>
               United's target is every United and United Express aircraft by the end of 2027, with
-              close to 1,000 expected by the end of 2026. Today {pct(s.starlinkCount, s.totalCount)}{" "}
+              more than 880 expected by the end of 2026. Today {pct(s.starlinkCount, s.totalCount)}{" "}
               of the {fmt(s.totalCount)}
               -plane fleet has it. The{" "}
               <a href="/timeline" className={LINK}>
