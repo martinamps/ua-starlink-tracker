@@ -1,9 +1,11 @@
 import { aircraftName } from "../airlines/aircraft-families";
 import { type SiteConfig, siteAirline } from "../airlines/registry";
+import type { RouteFlightBoard } from "../api/route-flights";
 import type { RouteSummary } from "../database/database";
 import { airportTimezone } from "../utils/airport-tz";
 import type { Link } from "./layout";
 import { Chip, PageHeader, PageShell, Section, Td, Th } from "./layout";
+import { RouteFlightsSection } from "./route-flights";
 import { fmt, formatDuration, monthDay, zonedDeparture } from "./ui/format";
 
 /** One physical Starlink departure on the pair, under its marketing number. */
@@ -183,6 +185,8 @@ interface RoutePageProps {
   site: SiteConfig;
   /** Upcoming Starlink departures on the pair, departure time ascending. */
   departures?: RouteDeparture[];
+  /** Every nonstop on the pair with its odds; the page's first section. */
+  board?: RouteFlightBoard;
   /** Newest route-cache sighting per flight number (unix sec). */
   lastSeen?: Map<string, number>;
   /** The server's routeHasData answer for destination→origin; the reverse-leg
@@ -196,6 +200,7 @@ export default function RoutePage({
   route,
   site,
   departures = [],
+  board,
   lastSeen = new Map(),
   reverseLinkable = false,
   pageLinks,
@@ -210,13 +215,17 @@ export default function RoutePage({
   return (
     <PageShell site={site} currentPath={currentPath} pageLinks={pageLinks}>
       <PageHeader
-        title={
-          <>
-            {route.origin} to {route.destination} Starlink WiFi
-          </>
-        }
+        title={`Which ${route.origin} to ${route.destination} flights have Starlink?`}
         dek={routeVerdict(route, airlineName, departures)}
       />
+
+      {board && (
+        <RouteFlightsSection
+          board={board}
+          path={`/route-planner/${route.origin}/${route.destination}`}
+          plannerHref={plannerHref}
+        />
+      )}
 
       {departures.length > 0 && (
         <Section

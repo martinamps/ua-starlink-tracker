@@ -441,6 +441,9 @@ export const COUNTERS = {
   //   outcome (ok|redirect|not_found), verdict (all|all_checked|most|some|verifying|installing|none|
   //   official_none|unknown|n/a), indexable (true|false)
   AIRCRAFT_PAGE_VIEW: "aircraft_page.view",
+  // "Every flight on this route" board served — tags: airline, surface (api|page),
+  //   outcome (nonstop|no_nonstop), dated (true|false)
+  ROUTE_FLIGHTS_VIEW: "route_flights.view",
   // A QR answer hit an equipment code missing from QATAR_EQUIPMENT (answered
   // as unknown, never no) — tags: airline, code (3-char IATA code | invalid)
   QATAR_UNKNOWN_EQUIPMENT: "qatar.unknown_equipment",

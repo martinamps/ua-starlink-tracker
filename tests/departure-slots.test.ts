@@ -390,7 +390,11 @@ describe("operating partners on route surfaces", () => {
     addFlight(db, "N373HA", "ASA864", "HND", T + 3600, { arrivalAirport: "HNL", airline: "HA" });
     const res = await createApp(db).dispatch(req("/route-planner/HND/HNL", AS_HOST));
     expect(res.status).toBe(200);
-    const html = (await res.text()).replace(/<!-- -->/g, "");
+    // The nonstop board above it has its own table; read the departures one.
+    const html = sectionOf(
+      (await res.text()).replace(/<!-- -->/g, ""),
+      "Upcoming Starlink flights"
+    );
     const tbody = html.match(/<tbody>([\s\S]*?)<\/tbody>/)?.[1];
     expect(tbody).toBeDefined();
     const rows = (tbody ?? "").split("<tr").slice(1);

@@ -126,6 +126,8 @@ const ENDPOINTS = [
   "/api/data",
   "/api/fleet-summary",
   "/api/routes",
+  // SEA-SAN carries the AS118 canary in the schedule; the UA board must not.
+  "/api/route-flights?origin=SEA&destination=SAN",
   "/api/check-flight?flight_number=HA9999&date=2026-03-22",
   "/api/check-flight?flight_number=QR9999&date=2026-03-22",
   "/api/mismatches",
@@ -643,6 +645,18 @@ describe("AS host isolation", () => {
     for (const t of REAL_AS_TAILS) expect(text).toContain(t);
     for (const t of REAL_HA_TAILS) expect(text).not.toContain(t);
     expect(text).not.toMatch(/N\d{3}HA/);
+  });
+
+  test("/api/route-flights: the AS board lists AS118, the UA board never does", async () => {
+    const as = await bodyOf("/api/route-flights?origin=SEA&destination=SAN", AS_HOST);
+    expect(as.status).toBe(200);
+    expect(
+      JSON.parse(as.text).flights.map((f: { flight_number: string }) => f.flight_number)
+    ).toContain("AS118");
+    const ua = await bodyOf("/api/route-flights?origin=SEA&destination=SAN", UA);
+    expect(ua.status).toBe(200);
+    expect(ua.text).not.toContain("AS118");
+    expect(ua.text).not.toContain("N644AS");
   });
 
   test("UA host /api/data has zero AS tails", async () => {

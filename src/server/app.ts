@@ -89,6 +89,7 @@ import {
   legOffRoute,
   legPrefix,
   legSubject,
+  normalizeAirportCode,
   parseLegQuery,
   recordFlightLookup,
   recordLegScope,
@@ -113,6 +114,7 @@ import {
   qatarHistoryReason,
   qatarNoDataReason,
 } from "../api/qatar-verdict";
+import { type RouteFlightBoard, buildRouteFlightBoard } from "../api/route-flights";
 import { clientScriptResponse } from "../client/bundle";
 import AircraftTypePage from "../components/aircraft-type-page";
 import {
@@ -1398,6 +1400,41 @@ const apiPlanRoute: Handler = ({ url, reader, tenant }) => {
   return json({ origin, destination, itineraries, baseline });
 };
 
+function recordRouteFlightsView(
+  cfg: AirlineConfig,
+  surface: "api" | "page",
+  board: RouteFlightBoard
+): void {
+  metrics.increment(COUNTERS.ROUTE_FLIGHTS_VIEW, {
+    airline: normalizeAirlineTag(cfg.code),
+    surface,
+    outcome: board.nonstop ? "nonstop" : "no_nonstop",
+    dated: board.date ? "true" : "false",
+  });
+}
+
+/**
+ * Every nonstop on a pair with its Starlink odds, typical departure, usual
+ * aircraft and any assigned tail. DB only; additive, not a pinned contract.
+ */
+const apiRouteFlights: Handler = ({ url, reader, tenant }) => {
+  const cfg = tenantConfig(tenant);
+  if (!cfg) return jsonError(404, "Not found");
+  const origin = normalizeAirportCode(url.searchParams.get("origin"));
+  const destination = normalizeAirportCode(url.searchParams.get("destination"));
+  if (!origin || !destination) {
+    return jsonError(400, "origin and destination must be IATA airport codes");
+  }
+  if (origin === destination) return jsonError(400, "Origin and destination must differ");
+  const date = url.searchParams.get("date")?.trim() || null;
+  if (date && !isRealIsoDate(date)) {
+    return jsonError(400, "Invalid date format. Use YYYY-MM-DD");
+  }
+  const board = buildRouteFlightBoard(cfg, reader, origin, destination, { date });
+  recordRouteFlightsView(cfg, "api", board);
+  return json(board, { cache: CACHE.fiveMinutes });
+};
+
 const apiMismatches: Handler = ({ reader }) => {
   const summary = reader.getVerificationSummary();
   const mismatches = reader.getWifiMismatches();
@@ -2100,6 +2137,10 @@ The homepage carries one dated, self-contained sentence (HTML element id \`starl
     day: "numeric",
     timeZone: "UTC",
   });
+  // A pair this airline's route pages serve, so the example never 404s.
+  const boardPair = features.routePlannerPage
+    ? (plannerPopularRoutes(ctx)[0] ?? { origin: "SFO", destination: "ORD" })
+    : null;
   const checkFlightExampleUrl = sampleFlight
     ? `https://${host}/check-flight/${sampleFlight}/${exampleDate}`
     : `https://${host}/check-flight`;
@@ -2109,6 +2150,9 @@ The homepage carries one dated, self-contained sentence (HTML element id \`starl
       : null,
     features.routePlannerPage
       ? `**"Best Starlink flight from SFO to Newark?"** → https://${host}/route-planner compares the nonstop with Starlink connections (up to 2 stops, only when the extra travel time is modest), ranked by the share of flying time expected on Starlink.`
+      : null,
+    boardPair
+      ? `**"Which ${boardPair.origin} to ${boardPair.destination} flight should I book for Starlink?"** → https://${host}/route-planner/${boardPair.origin}/${boardPair.destination} lists every nonstop seen recently with its Starlink odds, usual departure time and aircraft, and the assigned plane once known (\`GET https://${host}/api/route-flights?origin=${boardPair.origin}&destination=${boardPair.destination}\`, optional \`&date=YYYY-MM-DD\`). They are odds, not a guarantee: the airline can swap the plane.`
       : null,
     `**"How is the rollout going?"** → https://${host}/ has the live count and a chart over time.${features.fleetPage ? ` https://${host}/fleet shows every aircraft and its WiFi provider.` : ""}`,
     // The access sentence comes from the same per-airline copy /is-starlink-free
@@ -2140,6 +2184,7 @@ For one-off lookups without MCP, the JSON API is open (no auth, CORS enabled, ~6
 - Add \`&origin=DEN&destination=SAN\` (IATA) to answer one leg of a multi-leg flight number; the response gains \`leg: { origin, destination, match, otherLegs }\` (otherLegs lists only legs we hold assignments for — not a complete itinerary)
 - \`GET https://${host}/api/predict-flight?flight_number=${iata}4680\` → \`{ probability, confidence, n_observations }\`
 - \`GET https://${host}/api/plan-route?origin=SFO&destination=JAX\` → ranked itineraries with \`joint_probability\`
+- \`GET https://${host}/api/route-flights?origin=SFO&destination=ORD&date=${exampleDate}\` → every nonstop on the pair with \`probability\`, \`typical_departure\`, \`aircraft_types\` and any assigned tail (\`date\` optional)
 `
     : "";
 
@@ -3216,18 +3261,21 @@ function routePageMeta(
   ctx: RequestContext,
   cfg: AirlineConfig,
   route: RouteSummary,
-  departures: RouteDeparture[]
+  departures: RouteDeparture[],
+  board: RouteFlightBoard
 ): PageMeta {
   const pair = `${route.origin} to ${route.destination}`;
   const verdict = routeVerdict(route, cfg.name, departures);
-  const numbers = route.flightNumbers.slice(0, 6).map((f) => f.flight_number);
+  // The question the H1 asks, with the carrier, which searchers type.
+  const question = `Which ${cfg.shortName} ${pair} Flights Have Starlink?`;
+  const n = board.flights.length;
   return {
-    siteTitle: `${pair} Starlink WiFi — ${cfg.shortName} Flights`,
-    siteDescription: `Does ${cfg.name} fly Starlink on ${pair}? ${verdict}${
-      numbers.length ? ` Flight numbers on this route: ${numbers.join(", ")}.` : ""
-    }`,
+    siteTitle: question,
+    siteDescription: n
+      ? `Starlink odds for every ${cfg.shortName} nonstop from ${pair} (${n} flight${n === 1 ? "" : "s"}), with usual departure times, aircraft and any assigned plane. ${verdict}`
+      : `Does ${cfg.name} fly Starlink on ${pair}? ${verdict}`,
     keywords: `${route.origin} ${route.destination} starlink, ${pair} wifi, ${cfg.shortName.toLowerCase()} ${route.origin} ${route.destination} starlink`,
-    ogTitle: `${pair} — Starlink WiFi on ${cfg.shortName}`,
+    ogTitle: question,
     ogDescription: verdict,
     pageJsonLd: jsonLdBlock({
       "@context": "https://schema.org",
@@ -3308,6 +3356,11 @@ const routePlannerPage: Handler = (ctx) => {
     const departures = routeStarlinkDepartures(ctx.reader, route);
     const lastSeen = ctx.reader.getRouteFlightLastSeen(parsed.origin, parsed.destination);
     const reverseLinkable = ctx.reader.routeHasData(parsed.destination, parsed.origin);
+    const dateParam = ctx.url.searchParams.get("date");
+    const board = buildRouteFlightBoard(cfg, ctx.reader, parsed.origin, parsed.destination, {
+      date: dateParam && isRealIsoDate(dateParam) ? dateParam : null,
+    });
+    recordRouteFlightsView(cfg, "page", board);
     // Historical pairs stay reachable (flight permalinks link them) but no
     // longer index; recently seen ones do, whatever the 48h window holds.
     const indexable = !ctx.reader.routeIsHistorical(parsed.origin, parsed.destination);
@@ -3316,10 +3369,10 @@ const routePlannerPage: Handler = (ctx) => {
       RoutePage,
       `/route-planner/${parsed.origin}/${parsed.destination}`,
       {
-        ...routePageMeta(ctx, cfg, route, departures),
+        ...routePageMeta(ctx, cfg, route, departures, board),
         ...(indexable ? {} : { robotsMeta: "noindex, follow" }),
       },
-      { route, departures, lastSeen, reverseLinkable }
+      { route, departures, board, lastSeen, reverseLinkable }
     );
   }
   if (ctx.url.pathname !== "/route-planner") {
@@ -4589,6 +4642,7 @@ export function createApp(db: Database): App {
     "/api/compare-route": read(apiCompareRoute),
     "/api/predict-flight": read(apiPredictFlight),
     "/api/plan-route": read(apiPlanRoute),
+    "/api/route-flights": read(apiRouteFlights, "routePlannerPage"),
     "/api/mismatches": read(apiMismatches),
     "/api/fleet-discovery": read(apiFleetDiscovery),
     "/api/passenger-probe": { handler: apiPassengerProbe, methods: ["POST"] },

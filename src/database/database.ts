@@ -5635,7 +5635,10 @@ export type DepartureSlot = Flight & {
  * scope also takes its operatingPartners' rows that carry its own marketed
  * numbers (AS832 on a Hawaiian A330 is an Alaska departure).
  */
-function slotScope(airline: AirlineFilter, partners: boolean): { sql: string; params: string[] } {
+export function slotScope(
+  airline: AirlineFilter,
+  partners: boolean
+): { sql: string; params: string[] } {
   if (airline === undefined) return { sql: "1=1", params: [] };
   const codes = typeof airline === "string" ? [airline] : airline;
   const own = airlineIn(codes, "uf.airline");

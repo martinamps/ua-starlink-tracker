@@ -78,6 +78,7 @@ All metrics are prefixed with `starlink.` for easy filtering in Datadog.
 | `starlink.vendor.request` | `vendor:flightaware\|fr24\|united`, `type:flights\|fleet\|verification`, `status:success\|rate_limited\|error` | External API call |
 | `starlink.http.request` | `method`, `route`, `status_code`, `tenant`, `client_class`, `ext_version` (extension only) | HTTP request served (`route` is the matched route-table entry, or `unmatched`) |
 | `starlink.http.rate_limited` | `route`, `tenant`, `airline`, `bucket:api\|mcp\|page`, `client_class`, `ext_version` (extension only) | Per-IP limiter returned a 429 (also counted in `http.request` as `status_code:429`) |
+| `starlink.route_flights.view` | `airline`, `surface:api\|page`, `outcome:nonstop\|no_nonstop`, `dated:true\|false` | "Every flight on this route" board served (`/api/route-flights`, route pages) |
 | `starlink.mcp.tool_call` | `tool`, `airline`, `outcome:success\|error\|unknown_tool`, `client_class` (MCP enum below) | MCP tool dispatched; `starlink.mcp.tool_duration_ms` carries the same tags |
 
 ### Client tags
@@ -106,15 +107,15 @@ the route table is the thing to watch:
 
 | Source | Count |
 |---|---|
-| Exact entries in `routes` | 36 |
+| Exact entries in `routes` | 37 |
 | Prefix families in `prefixRoutes` | 7 (5 of which reuse an exact entry's tag) |
 | `unmatched` | 1 |
-| **Distinct `route` tag values** | **39** |
+| **Distinct `route` tag values** | **40** |
 
-**Budget: keep it under 40.** The old "max 25" predates the distribution
+**Budget: keep it under 45.** The old "max 25" predates the distribution
 surfaces (`/newly-equipped`, `/feed.xml`, `/badge.svg`, `/embed`,
 `/install-rate`), the hub `/compare` family, and the per-airline API families,
-and was already exceeded by the routes it did not list. 40 leaves room for a new URL family without a
+and was already exceeded by the routes it did not list. Raised from 40 to 45 when `/chrome`, `/extension` and `/api/route-flights` landed together; 45 leaves room for a new URL family without a
 re-audit while staying well inside a sane per-metric tag budget.
 
 To add a route, add it to `routes` (or `prefixRoutes`) in

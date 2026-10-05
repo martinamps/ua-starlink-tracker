@@ -90,7 +90,8 @@ describe("/route-planner/{origin}/{destination}", () => {
     const res = await get(`/route-planner/${origin}/${destination}`);
     expect(res.status).toBe(200);
     const body = await res.text();
-    expect(body).toContain(`${origin} to ${destination} Starlink WiFi`);
+    expect(body).toContain(`Which ${origin} to ${destination} flights have Starlink?`);
+    expect(body).toContain('id="all-flights"');
     expect(body).toContain(
       `<link rel="canonical" href="https://${UA}/route-planner/${origin}/${destination}"`
     );

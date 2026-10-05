@@ -40,6 +40,8 @@ export const ASSIGNMENT_LOG_DDL = `
     PRIMARY KEY (airline, flight_number, dep_date, departure_airport, tail_number)
   );
   CREATE INDEX IF NOT EXISTS idx_fal_dep_date ON flight_assignment_log(dep_date);
+  CREATE INDEX IF NOT EXISTS idx_fal_route
+    ON flight_assignment_log(departure_airport, arrival_airport);
 `;
 
 /** Kept past departure so a feed refreshed the day after still shows the swap. */
