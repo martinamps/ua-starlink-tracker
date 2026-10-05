@@ -363,8 +363,7 @@ export function seatbackLiveTv(
 }
 
 export const SEATBACK_LIVE_TV_COPY: Record<SeatbackLiveTv, string> = {
-  likely: "Live TV on the seatback screen: likely — this aircraft type has seatback screens.",
-  possible:
-    "Live TV on the seatback screen: possible — some older cabins of this type have no seatback screen.",
-  no: "Live TV on the seatback screen: no — United Express jets have no seatback screens, so stream on your own device.",
+  likely: "Live TV: likely (this type has seatback screens).",
+  possible: "Live TV: possible (some older cabins of this type have no seatback screen).",
+  no: "Live TV: no seatback screens on United Express; stream on your own device.",
 };

@@ -25,6 +25,7 @@ interface CheckAnyBody {
   error?: string;
   hasStarlink?: boolean | null;
   probability?: number;
+  confidence?: string;
   basis?: unknown;
   airline?: string;
   reason?: string;
@@ -33,14 +34,14 @@ interface CheckAnyBody {
 
 /**
  * One line for a check-any answer. A firm yes or no leads; a probability with
- * a basis is a floor ("≥40%"), without one an estimate ("~40%"). Community
+ * a basis is a floor ("≥40%"), without one an estimate ("40%"). Community
  * answers state only a firm yes: everything else is the server's own sentence.
  */
 function checkAnyHtml(d: CheckAnyBody, community: boolean): string {
   if (d.error) return `<span class="text-warn">${esc(d.error)}</span>`;
   const sentence = esc(d.reason || d.message || "");
   if (community) {
-    return `${d.hasStarlink === true ? '<span class="text-success">Starlink (likely)</span> · ' : ""}${sentence}`;
+    return `${d.hasStarlink === true ? '<span class="text-success">Starlink (listed, not yet verified)</span> · ' : ""}${sentence}`;
   }
   const p = typeof d.probability === "number" ? d.probability : null;
   const [label, cls] =
@@ -53,8 +54,10 @@ function checkAnyHtml(d: CheckAnyBody, community: boolean): string {
           : p !== null && d.basis
             ? [`≥${Math.floor(p * 100)}% Starlink`, "text-accent"]
             : p !== null
-              ? [`~${probLabel(p)} Starlink`, "text-accent"]
-              : ["Unknown", "text-muted"];
+              ? [`${probLabel(p)} Starlink`, "text-accent"]
+              : d.confidence === "type"
+                ? ["Depends on aircraft", "text-muted"]
+                : ["Unknown", "text-muted"];
   return `<span class="${cls}">${label}</span> · ${esc(d.airline || "")} · ${sentence}`;
 }
 

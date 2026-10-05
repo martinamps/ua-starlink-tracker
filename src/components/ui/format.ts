@@ -44,6 +44,26 @@ export function probPhrase(p: number): string {
   return p > 0 && p < 1 ? `about ${label}` : label;
 }
 
+/** A flight number's history share, worded and rounded one way on the page,
+ * the card, the APIs and the calendar feed: "about 12% of 49 recent UA1932
+ * flights had Starlink". Lowercase, no period, so callers can lead with it. */
+export function flightShare(p: number, fn: string, n?: number): string {
+  return `${probPhrase(p)} of ${n ? `${fmt(n)} ` : ""}recent ${fn} flights had Starlink`;
+}
+
+/** The estimate for a flight number with no history, never called an install
+ * rate: the express prior sits far below express penetration on purpose. */
+export function coldShare(p: number, fn: string, group?: string): string {
+  return `No history for ${fn} yet; ${probPhrase(p)} is our estimate for new ${group ? `${group} ` : ""}flight numbers`;
+}
+
+/** A subfleet label for prose: "Mainline (737/787)" → "mainline 737/787",
+ * "Hawaiian-operated (A330/A321neo)" → "Hawaiian-operated A330/A321neo". */
+export const bandLabel = (label: string) =>
+  label.replace(/\s*\((.*)\)$/, " $1").replace(/^(Mainline|Regional)\b/, (w) => w.toLowerCase());
+
+export const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
 export type ProbTier = "likely" | "maybe" | "unlikely";
 
 /** The one likely / maybe / unlikely cut: 70% and 40%. */

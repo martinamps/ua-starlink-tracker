@@ -140,7 +140,7 @@ export default function McpPage({ site, pageLinks, currentPath }: McpPageProps) 
                 </code>{" "}
                 and name it "Starlink Tracker"
               </p>
-              <p>3. That's it. Seven tools are ready in your next chat.</p>
+              <p>3. The tools are available in your next chat.</p>
             </div>
             <img
               src="/static/mcp-add-dialog.webp"
@@ -152,9 +152,9 @@ export default function McpPage({ site, pageLinks, currentPath }: McpPageProps) 
             />
             <p className="pt-2 border-t border-subtle">
               <strong className="text-secondary">ChatGPT &amp; other MCP clients:</strong> same URL,{" "}
-              <code className="font-mono text-xs">http</code> transport. It's a standard JSON-RPC
-              2.0 endpoint with no auth and no SDK. In ChatGPT, enable Developer Mode in Advanced
-              settings, then Settings → Connectors → Create.{" "}
+              <code className="font-mono text-xs">http</code> transport. Standard JSON-RPC 2.0, no
+              auth. In ChatGPT, enable Developer Mode in Advanced settings, then Settings →
+              Connectors → Create.{" "}
               <a
                 href="https://modelcontextprotocol.io/specification/2025-06-18/basic/transports"
                 target="_blank"

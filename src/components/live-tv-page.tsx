@@ -85,15 +85,15 @@ export function liveTvFaq(): Array<{ q: string; a: string }> {
   return [
     {
       q: "Can I watch live football on my United flight?",
-      a: "Yes, if the aircraft is a Starlink-equipped United mainline jet with a seatback screen. DISH streams nine live channels (ABC, CBS, FOX, NBC, ESPN, ESPN2, FS1, NFL Network and TNF on Prime Video) to Starlink-enabled seatback screens, starting on more than 220 mainline aircraft, on domestic flights through Super Bowl LXI in February 2027.",
+      a: "Yes, if the aircraft is a United mainline jet with Starlink and a seatback screen. DISH streams nine live channels (ABC, CBS, FOX, NBC, ESPN, ESPN2, FS1, NFL Network and TNF on Prime Video) to seatback screens on Starlink aircraft, starting on more than 220 mainline aircraft, on domestic flights through Super Bowl LXI in February 2027.",
     },
     {
       q: "Does United Express have live TV?",
-      a: "No. United Express regional jets (E175, CRJ-550) have Starlink Wi-Fi but no seatback screens, so there is no screen to show live TV on. You can still stream on your own phone, tablet or laptop over the Starlink Wi-Fi.",
+      a: "No. United Express regional jets (E175, CRJ-550) have Starlink Wi-Fi but no seatback screens. You can still stream on your own device.",
     },
     {
       q: "How do I know if my flight has live TV?",
-      a: "Check your flight number and date. If the assigned aircraft has Starlink and is a mainline jet, live TV on the seatback is likely. Aircraft are assigned about two days before departure, and some older 737-800 and 737-900 cabins have no seatback screen, so those count as possible rather than certain.",
+      a: "Check your flight number and date. If the assigned aircraft has Starlink and is a mainline jet, live TV on the seatback is likely. Aircraft are assigned about two days before departure.",
     },
     {
       q: "Is the Starlink Wi-Fi free?",
@@ -123,10 +123,10 @@ export default function LiveTvPage({
         dek={`You need a ${cfg.shortName} mainline jet with Starlink and a seatback screen. United Express jets have Starlink but no seatback screens, so stream on your own device.`}
       />
 
-      <Section title="The answer">
+      <Section title="What's on">
         <div className="space-y-3 text-sm leading-relaxed text-secondary">
           <p>
-            DISH streams live TV, including football, to Starlink-equipped seatback screens on
+            DISH streams live TV, including football, to seatback screens on Starlink aircraft on
             domestic flights through Super Bowl LXI in February 2027.
           </p>
           <p className="text-muted">
@@ -164,8 +164,8 @@ export default function LiveTvPage({
               (<StatInline>{share}</StatInline> of {fmt(mainlineTotal)})
             </>
           )}
-          . <StatInline n={likely} /> are types with seatback screens, so live TV is likely.{" "}
-          <StatInline n={possible} /> are types where some cabins have no screen, so it's possible.
+          . <StatInline n={likely} /> are types with seatback screens. <StatInline n={possible} />{" "}
+          are types where some cabins have no screen.
         </p>
         {byType.length > 0 && (
           <table className="mt-4 w-full text-sm">
@@ -195,7 +195,7 @@ export default function LiveTvPage({
           <p className="mt-4 text-sm leading-relaxed text-muted">
             {LIVE_TV_TARGET_FACT && (
               <>
-                United's own figure, which counts live TV, not Starlink: {LIVE_TV_TARGET_FACT.fact}{" "}
+                United's own figures: {LIVE_TV_TARGET_FACT.fact}{" "}
                 <a
                   href={LIVE_TV_TARGET_FACT.source.url}
                   target="_blank"

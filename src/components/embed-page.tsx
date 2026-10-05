@@ -48,8 +48,8 @@ export default function EmbedPage({
         title="Embed the Live Starlink Badge"
         dek={
           <>
-            A small SVG badge with the count of {subject} aircraft that have Starlink. It updates
-            itself hourly, so your page keeps current without edits.
+            A small SVG badge with the live count of {subject} aircraft that have Starlink, updated
+            hourly.
           </>
         }
       />
@@ -61,8 +61,7 @@ export default function EmbedPage({
             <img src="/badge.svg" alt={alt} height={20} />
           </p>
           <p className="text-xs text-muted leading-snug">
-            Served straight from this tracker's database and updated hourly — caches may hold an
-            older copy for up to a day. No script, no tracking — one cacheable SVG.
+            No script, no tracking. Caches may serve a copy up to a day old.
           </p>
         </div>
 
@@ -74,25 +73,23 @@ export default function EmbedPage({
           />
           <Snippet label="Markdown" code={`[![${alt}](${badgeUrl})](${homeUrl})`} />
           <p className="text-xs text-muted leading-snug">
-            The badge is an image, so it works anywhere an <code>&lt;img&gt;</code> works — READMEs,
-            blog posts, forum signatures, wikis. Linking it back here keeps readers one click from
-            the full per-aircraft data, but the badge works without the link too.
+            Works anywhere an image does. The link is optional.
           </p>
         </div>
 
         {(inFleetSummary || feedAvailable) && (
           <div className={`${PANEL} mb-4`}>
-            <div className={EYEBROW}>Want the numbers instead?</div>
+            <div className={EYEBROW}>Raw data</div>
             {inFleetSummary && (
               <p className="text-sm text-muted leading-relaxed">
-                The same live data is available as JSON at{" "}
+                Same data as JSON:{" "}
                 <a
                   href="/api/fleet-summary"
                   className="text-accent hover:underline font-mono text-xs"
                 >
                   /api/fleet-summary
                 </a>{" "}
-                (CORS enabled, no auth) if you'd rather render your own widget.
+                (CORS, no auth).
               </p>
             )}
             {feedAvailable && (
@@ -101,7 +98,7 @@ export default function EmbedPage({
                 <a href="/feed.xml" className="text-accent hover:underline">
                   Atom feed
                 </a>{" "}
-                announces each newly equipped aircraft as it lands.
+                lists each aircraft as it gets Starlink.
               </p>
             )}
           </div>

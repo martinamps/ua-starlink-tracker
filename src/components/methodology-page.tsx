@@ -34,7 +34,7 @@ const SOURCES: Record<string, DataSource[]> = {
       name: "Community fleet spreadsheet",
       cadence: "hourly",
       detail:
-        "United fleet enthusiasts keep a per-aircraft equipment sheet. Its Starlink entries count as reported installs until our own check confirms or contradicts them.",
+        "United fleet enthusiasts keep a per-aircraft equipment sheet. Its Starlink entries count as reports until our own check confirms or contradicts them.",
     },
     {
       name: "Flightradar24 fleet and schedules",
@@ -60,9 +60,27 @@ const SOURCES: Record<string, DataSource[]> = {
       name: "Community install reports",
       cadence: "checked continuously",
       detail:
-        "Frequent-flyer forums track which mainline 737s and 787s have been retrofitted. We record these as reports, never as verified.",
+        "Frequent-flyer forums track which mainline 737s and 787s have Starlink. We record these as reports, never as verified.",
     },
   ],
+};
+
+/** What "verified" means and how the sources settle, per airline: United's
+ * site shows each aircraft's Wi-Fi, Alaska's shows only its type. */
+const CHECKS: Record<string, { verified: string; reported: string; reconcile: string }> = {
+  UA: {
+    verified: "We saw Starlink listed on united.com for a flight that aircraft flew.",
+    reported:
+      "A community source says it has Starlink. It counts toward the total and waits for our own check.",
+    reconcile:
+      "Once an hour we reconcile the sources. Our own checks win: an aircraft we find with another Wi-Fi system comes out of the total, whatever the spreadsheet says.",
+  },
+  AS: {
+    verified:
+      "Alaskaair.com showed the aircraft on a flight, and it's an E175, a type where every aircraft has Starlink.",
+    reported: "A community source says it has Starlink. It counts toward the total.",
+    reconcile: "Once an hour we reconcile the sources.",
+  },
 };
 
 /** True when SOURCES documents this airline — the /methodology handler 404s
@@ -84,14 +102,12 @@ export default function MethodologyPage({
 }: MethodologyPageProps) {
   const cfg = siteAirline(site);
   const sources = SOURCES[cfg.code] ?? [];
+  const checks = CHECKS[cfg.code];
   const dateLabel = longDate(lastUpdated);
 
   return (
     <PageShell site={site} currentPath={currentPath} pageLinks={pageLinks}>
-      <PageHeader
-        title={`How we verify ${cfg.shortName} Starlink data`}
-        dek="Where the data comes from and how we confirm each aircraft."
-      />
+      <PageHeader title={`How we verify ${cfg.shortName} Starlink data`} />
 
       <Section title="Where the data comes from" dek={`We cross-check ${sources.length} sources:`}>
         <ul className="space-y-4 text-sm leading-relaxed">
@@ -109,26 +125,23 @@ export default function MethodologyPage({
 
       <Section title="How an aircraft counts as having Starlink">
         <Prose>
-          <p>Each aircraft has one of three levels of certainty:</p>
+          <p>An aircraft is verified or reported:</p>
           <ul className="list-disc space-y-2 pl-5">
             <li>
-              <span className="font-semibold text-primary">Verified.</span> We saw Starlink listed
-              on the airline's own site for a flight that aircraft flew.
+              <span className="font-semibold text-primary">Verified.</span> {checks?.verified}
             </li>
             <li>
-              <span className="font-semibold text-primary">Reported.</span> A community source says
-              it's installed. It counts toward the total and waits for our own check.
-            </li>
-            <li>
-              <span className="font-semibold text-primary">Predicted.</span> More than about 2 days
-              out, no aircraft is assigned yet, so a flight's answer is a probability from the
-              aircraft it has used before. Predictions never change the fleet count.
+              <span className="font-semibold text-primary">Reported.</span> {checks?.reported}
             </li>
           </ul>
           <p>
-            Once an hour we reconcile the sources. Our own checks win: an aircraft we find with
-            another Wi-Fi system comes out of the total, whatever the spreadsheet says.
+            A flight more than about 2 days out has no aircraft yet, so its answer is a probability
+            {cfg.flightHistoryModel
+              ? " from the aircraft it has used before"
+              : " from the share of its aircraft type with Starlink"}
+            . Predictions never change the fleet count.
           </p>
+          <p>{checks?.reconcile}</p>
         </Prose>
       </Section>
 
@@ -137,7 +150,7 @@ export default function MethodologyPage({
           <p>
             Checks and schedule updates run all day, and every page reads the live database, so a
             change shows up on the next page load.
-            {dateLabel && <> This airline's data was last updated {dateLabel}.</>}
+            {dateLabel && <> Last updated {dateLabel}.</>}
           </p>
         </Prose>
       </Section>
@@ -167,9 +180,13 @@ export default function MethodologyPage({
               /api/data
             </a>{" "}
             is open JSON, no key needed. It lists the Starlink {cfg.shortName} aircraft we count
-            (type, operator, date found, and the Wi-Fi the community sheet lists), the fleet totals
-            behind the headline percentage, the last-updated time, and upcoming flights for each of
-            those aircraft. Read <code className="font-mono">lastUpdated</code> with the counts.
+            (type, operator
+            {cfg.verifierBackend === "united"
+              ? ", date found, and the Wi-Fi the community sheet lists"
+              : " and date found"}
+            ), the fleet totals behind the headline percentage, the last-updated time, and upcoming
+            flights for each of those aircraft. Read <code className="font-mono">lastUpdated</code>{" "}
+            with the counts.
           </p>
           <p>
             The same aircraft with the date each was found, as a spreadsheet:{" "}

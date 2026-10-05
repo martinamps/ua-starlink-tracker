@@ -159,7 +159,7 @@ import HowToCheckPage from "../components/how-to-check-page";
 import InstallRatePage, { type AirlineInstallRate } from "../components/install-rate-page";
 import IsStarlinkFreePage, {
   freeAccessAnswer,
-  hasFreeAnswer,
+  freeAccess,
 } from "../components/is-starlink-free-page";
 import type { Link as PageLink } from "../components/layout";
 
@@ -174,6 +174,7 @@ import RoutePage from "../components/route-page";
 import RoutePlannerPage from "../components/route-planner-page";
 import RoutesPage from "../components/routes-page";
 import TimelinePage, { getTimeline, hasTimeline } from "../components/timeline-page";
+import { capitalize, coldShare, flightShare, probPhrase } from "../components/ui/format";
 import {
   DEPARTURE_WINDOW_HOURS,
   PERMALINK_STALE_NOTE_DAYS,
@@ -1128,7 +1129,6 @@ function checkFlightBody(
       // reads `hasStarlink || false` so null is behaviourally identical for it,
       // and null is already part of this contract (no_model, type branches).
       const pred = verdict.pred;
-      const pct = Math.round(pred.probability * 100);
       // During an FR24 outage we genuinely don't know whether an assignment
       // exists — don't claim it isn't published yet. Nor when other legs of
       // the number are assigned: the leg note names them instead.
@@ -1151,8 +1151,8 @@ function checkFlightBody(
         },
         message: withLegNote(
           pred.n_observations > 0
-            ? `${assignmentNote}~${pct}% of observed departures of this flight used a Starlink-equipped aircraft (${pred.n_observations} observation${pred.n_observations === 1 ? "" : "s"}).`
-            : `${assignmentNote}${coldPredictionNote(pred, pct)}`,
+            ? `${assignmentNote}${capitalize(flightShare(pred.probability, verdict.normalized, pred.n_observations))}.`
+            : `${assignmentNote}${coldPredictionNote(pred, verdict.normalized)}`,
           verdict
         ),
         ...legField(verdict),
@@ -1279,11 +1279,10 @@ const apiCheckAnyFlight: Handler = async ({ req, url, reader, getReader, tenant 
       // rather than a confident "No Starlink" (upcoming_flights only covers ~47h).
       const pred = verdict.pred;
       recordPrediction(pred, cfg.code);
-      const pct = Math.round(pred.probability * 100);
       const informative = pred.n_observations > 0;
       const history = informative
-        ? `~${pct}% based on ${pred.n_observations} historical observation${pred.n_observations === 1 ? "" : "s"}.`
-        : coldPredictionNote(pred, pct);
+        ? `${flightShare(pred.probability, verdict.normalized, pred.n_observations)}.`
+        : coldPredictionNote(pred, verdict.normalized);
       // Other legs of the number are scheduled; the leg note names them.
       const lead = legOffRoute(verdict)
         ? ""
@@ -1294,7 +1293,7 @@ const apiCheckAnyFlight: Handler = async ({ req, url, reader, getReader, tenant 
         probability: summary.probability,
         confidence: pred.confidence,
         n_recent_observations: pred.n_recent_observations,
-        reason: withLegNote(`${lead}${history}`, verdict),
+        reason: withLegNote(lead ? `${lead}${history}` : capitalize(history), verdict),
         ...legField(verdict),
         flights: [],
       });
@@ -1550,7 +1549,7 @@ const mcp: Handler = async (ctx) => {
     const short = siteAirline(site).shortName;
     return renderSubPage(ctx, McpPage, "/mcp", {
       siteTitle: `Add Starlink Tracker to Claude — ${short} Starlink MCP Connector`,
-      siteDescription: `Add the ${site.brand.title} to Claude Desktop in 30 seconds — just paste one URL. Ask Claude to check flights, predict Starlink probability, or plan routes with live data.`,
+      siteDescription: `Paste one URL into Claude Desktop to check ${short} flights for Starlink, get odds and plan routes.`,
       keywords: `claude starlink connector, ${short.toLowerCase()} starlink mcp, claude ${short.toLowerCase()} flights, starlink tracker claude, claude custom connector, ai assistant ${short.toLowerCase()} wifi`,
       ogTitle: "Add Starlink Tracker to Claude",
       ogDescription: `Paste one URL into Claude Desktop. Ask Claude about ${short} Starlink flights, probabilities, and routing.`,
@@ -2583,10 +2582,10 @@ const embedPage: Handler = (ctx) => {
     "/embed",
     {
       siteTitle: `Add a Live ${short} Starlink Badge to Your Site — Embed`,
-      siteDescription: `Embed an auto-updating SVG badge with the live count of ${subject} aircraft that have Starlink WiFi. One image tag, no script — copy the HTML or Markdown snippet.`,
+      siteDescription: `An auto-updating SVG badge with the live count of ${subject} aircraft that have Starlink Wi-Fi. One image tag, no script.`,
       keywords: `${short.toLowerCase()} starlink badge, starlink rollout badge, embed starlink stats, ${short.toLowerCase()} starlink widget`,
       ogTitle: `Live ${short} Starlink Badge`,
-      ogDescription: `Auto-updating badge with the live ${subject} Starlink aircraft count — embed it with one image tag.`,
+      ogDescription: `An auto-updating badge with the live count of ${subject} aircraft that have Starlink. One image tag.`,
       // follow, not nofollow: the page is a dead end for a searcher but a live
       // internal link hub for a crawler already here. Same call the sitemap
       // makes via SitePage.indexable — see the /embed entry there.
@@ -2769,28 +2768,30 @@ function subPageMeta(
       siteDescription: `Enter your ${short} flight number and date to see if your plane has Starlink Wi-Fi: a firm yes or no once the aircraft is assigned, and odds before that.`,
       keywords: `check ${cfg?.iata ?? "airline"} flight starlink, does my ${short.toLowerCase()} flight have starlink, ${name} flight wifi lookup, starlink flight checker`,
       ogTitle: `Does My ${short} Flight Have Starlink?`,
-      ogDescription: `Flight-number lookup for ${short} Starlink WiFi — live answer by date when assignments publish.`,
+      ogDescription: `Enter your ${short} flight number and date: a firm yes or no once the aircraft is assigned, odds before that.`,
     };
   if (page === "routes")
     return {
       // Drop "| ${brand.title}" — that appended the brand-tracker name into the
       // SERP title and pulled brand impressions onto a 0.25% CTR utility page.
-      siteTitle: `${short} Starlink Flights Today — Live Routes by Departure`,
-      siteDescription: `Every ${name} departure scheduled on a Starlink-equipped aircraft over the next 48 hours, grouped by route and counted from live tail assignments.`,
+      siteTitle: `${short} Starlink Flights in the Next 48 Hours, by Route`,
+      siteDescription: `Every ${name} departure on a Starlink aircraft in the next 48 hours, grouped by route.`,
       keywords: `${name} starlink routes today, ${cfg?.iata ?? "airline"} starlink departures, live starlink routes, starlink wifi flights today`,
-      ogTitle: `${short} Starlink Flights Today`,
-      ogDescription: `Live count of ${name} departures on Starlink-equipped aircraft by route, next 48 hours.`,
+      ogTitle: `${short} Starlink Flights, Next 48 Hours`,
+      ogDescription: `${name} departures on Starlink aircraft in the next 48 hours, by route.`,
     };
   if (page === "route-planner")
     return {
       // Tool/snippet intent — was ranking for "united starlink tracker" at
       // pos ~1.8 with 0.27% CTR (7 clicks / 2614 impr). Lead with the job:
       // find Starlink-equipped flights between airports.
-      siteTitle: `Find Starlink-Equipped ${short} Flights Between Airports`,
-      siteDescription: `Pick two airports to find ${name} flights and one-stop connections on Starlink-equipped aircraft. Ranked by Starlink probability and connected hours — not a brand tracker homepage.`,
+      siteTitle: `Find ${short} Flights With Starlink Between Airports`,
+      siteDescription: cfg?.flightHistoryModel
+        ? `Pick two airports to see which ${name} nonstops and connections are most likely to have Starlink, ranked by the odds on each leg.`
+        : `Pick two airports to see which ${name} nonstops are most likely to have Starlink.`,
       keywords: `starlink flights between airports, ${cfg?.iata ?? "airline"} starlink route finder, find starlink equipped flights, ${name} starlink connections`,
-      ogTitle: `Find Starlink-Equipped ${short} Flights`,
-      ogDescription: `Search ${short} flights between any two airports ranked by Starlink probability and connected hours.`,
+      ogTitle: `Find ${short} Flights With Starlink`,
+      ogDescription: `Search ${short} flights between any two airports, ranked by the odds of Starlink.`,
     };
   // The hub's fleet page stays multi-airline: "which united planes have
   // starlink" belongs to the United site, which the hub used to outrank.
@@ -2968,8 +2969,9 @@ function permalinkPrediction(
   }
 }
 
-/** A flight-number band whose aircraft type fixes the answer (AS800–999), so
- * the undated page states the rule instead of "we haven't seen it". */
+/** A model-less carrier's flight-number band and its Starlink share (AS800–999
+ * all, AS1 a few percent), so the undated page quotes the same number as the
+ * meta and the API instead of claiming no history. */
 function permalinkTypeRule(
   reader: ScopedReader,
   cfg: AirlineConfig,
@@ -2978,7 +2980,7 @@ function permalinkTypeRule(
   if (cfg.flightHistoryModel) return null;
   try {
     const answer = carrierPrediction(cfg, reader, flightNumber);
-    return answer.kind === "penetration" && answer.sf.penetrationOverride !== undefined
+    return answer.kind === "penetration"
       ? { probability: answer.pen.pct, label: answer.sf.label }
       : null;
   } catch {
@@ -3014,17 +3016,17 @@ function notObservedSince(
 /** Never "fleet-wide install rate": the express cold prior is deliberately far
  * below express penetration, because a flight number with no history is
  * structurally a flight on unequipped regional jets. */
-function coldPredictionNote(pred: Prediction, pct: number): string {
-  const base = `No history for this flight number; ~${pct}% is our estimate for flights we haven't yet seen on a Starlink aircraft`;
-  if (pred.method === "fleet_prior_express") return `${base} — most are older regional jets.`;
-  if (pred.method === "fleet_prior_mainline") {
-    return `${base}, from the mainline fleet's current Starlink share.`;
+function coldPredictionNote(pred: Prediction, fn: string): string {
+  if (pred.method === "fleet_prior_express") {
+    return `${coldShare(pred.probability, fn)}, which mostly fly older regional jets.`;
   }
-  return `${base}.`;
+  const group = pred.method === "fleet_prior_mainline" ? "mainline" : undefined;
+  return `${coldShare(pred.probability, fn, group)}.`;
 }
 
-/** One-sentence answer for meta copy. Never "0% of the time" — a zero reads
- * as a verdict on the flight when it's really the rollout's current edge. */
+/** One-sentence answer for meta copy, worded like the page's. Never a bare
+ * "0%": a zero reads as a verdict on the flight when it's really the
+ * rollout's current edge. */
 function flightMetaAnswer(
   reader: ScopedReader,
   cfg: AirlineConfig,
@@ -3035,36 +3037,32 @@ function flightMetaAnswer(
   // raw check tally is checks, not departures.
   const modelled = facts.prediction;
   if (modelled && modelled.n_observations > 0) {
-    const pct = Math.round(modelled.probability * 100);
-    return pct > 0
-      ? ` Historically it gets a Starlink-equipped aircraft about ${pct}% of the time.`
-      : " It almost never gets a Starlink-equipped aircraft.";
+    return ` ${capitalize(flightShare(modelled.probability, flightNumber))}.`;
   }
   if (facts.observedStarlink > 0) {
     return ` Starlink found on ${facts.observedStarlink} of ${facts.observedTotal} aircraft checks.`;
   }
   if (facts.observedTotal > 0) {
-    return " Observed departures used aircraft still awaiting installation.";
+    return " None of the aircraft we checked on it had Starlink.";
   }
   try {
     if (cfg.flightHistoryModel) {
       const pred = predictFlight(reader, flightNumber);
-      const pct = Math.round(pred.probability * 100);
-      if (pct > 0 && (pred.n_observations > 0 || pred.confidence !== "low")) {
-        return ` Historically it gets a Starlink-equipped aircraft about ${pct}% of the time.`;
+      if (pred.probability > 0 && (pred.n_observations > 0 || pred.confidence !== "low")) {
+        return ` ${capitalize(flightShare(pred.probability, flightNumber))}.`;
       }
     } else {
       // Model-less carriers: only a uniform subfleet penetration is an honest
       // number for meta copy; split/no-model carriers get none.
       const answer = carrierPrediction(cfg, reader, flightNumber);
       if (answer.kind === "penetration" && Math.round(answer.pen.pct * 100) > 0) {
-        return ` About ${Math.round(answer.pen.pct * 100)}% of this fleet group has Starlink.`;
+        return ` ${capitalize(probPhrase(answer.pen.pct))} of the aircraft that fly it have Starlink.`;
       }
     }
   } catch {
     // Best-effort — meta still works without a probability.
   }
-  return " Installs are still rolling out across this fleet.";
+  return "";
 }
 
 function flightPageMeta(
@@ -3095,11 +3093,11 @@ function flightPageMeta(
   // people actually type, and it fits well inside the ~60 chars Google renders
   // once the brand suffix is gone (Google appends the site name itself).
   return {
-    siteTitle: `Does ${flightNumber}${routeLabel} Have Starlink WiFi?`,
-    siteDescription: `Does ${cfg.name} ${flightNumber}${routeLabel} have free Starlink WiFi?${answer} Pick a date for a firm answer once aircraft assignments publish.`,
+    siteTitle: `Does ${flightNumber}${routeLabel} Have Starlink Wi-Fi?`,
+    siteDescription: `Does ${cfg.name} ${flightNumber}${routeLabel} have free Starlink Wi-Fi?${answer} Pick a date for a firm answer once aircraft assignments publish.`,
     keywords: `${flightNumber} starlink, does ${flightNumber} have wifi, ${flightNumber} wifi, ${cfg.name} ${flightNumber} starlink`,
-    ogTitle: `Does ${flightNumber}${routeLabel} Have Starlink WiFi?`,
-    ogDescription: `${cfg.name} ${flightNumber}${routeLabel} — check Starlink availability and get a probability estimate.`,
+    ogTitle: `Does ${flightNumber}${routeLabel} Have Starlink Wi-Fi?`,
+    ogDescription: `${cfg.name} ${flightNumber}${routeLabel}.${answer || " Check it for Starlink Wi-Fi by date."}`,
     pageJsonLd,
   };
 }
@@ -3116,10 +3114,10 @@ function invalidFlightMeta(ctx: RequestContext, reason: InvalidFlightQuery["reas
     reason === "other-carrier" ? `Not ${a} ${carrier}Flight Number` : "Not a Flight Number";
   return {
     siteTitle: `${lead} — Check ${a} ${carrier}Flight for Starlink`,
-    siteDescription: `That isn't ${a} ${carrier}flight number. Enter a flight number and date to check whether your aircraft has free Starlink WiFi.`,
+    siteDescription: `${reason === "other-carrier" ? `That isn't ${a} ${carrier}flight number.` : "That isn't a flight number."} Enter a flight number and date to check whether your aircraft has free Starlink Wi-Fi.`,
     keywords: `check ${carrier.toLowerCase()}flight starlink, does my flight have starlink`,
     ogTitle: lead,
-    ogDescription: `Enter ${a} ${carrier}flight number and date to check for Starlink WiFi.`,
+    ogDescription: `Enter ${a} ${carrier}flight number and date to check for Starlink Wi-Fi.`,
     robotsMeta: "noindex, nofollow",
   };
 }
@@ -3131,11 +3129,11 @@ function invalidFlightMeta(ctx: RequestContext, reason: InvalidFlightQuery["reas
  * instead, with a title that names the flight rather than reusing the hub's. */
 function unknownFlightMeta(flightNumber: string, cfg: AirlineConfig): PageMeta {
   return {
-    siteTitle: `${flightNumber} — No Starlink Data Yet`,
-    siteDescription: `We have no schedule data for ${cfg.name} ${flightNumber} yet. Enter the flight number and date below to check for free Starlink WiFi.`,
+    siteTitle: `${flightNumber}: No Starlink History Yet`,
+    siteDescription: `We haven't seen ${cfg.name} ${flightNumber} yet. Enter a date to check it for free Starlink Wi-Fi.`,
     keywords: `${flightNumber} starlink, does ${flightNumber} have wifi`,
-    ogTitle: `${flightNumber} — No Starlink Data Yet`,
-    ogDescription: `Check ${cfg.name} ${flightNumber} for Starlink WiFi.`,
+    ogTitle: `${flightNumber}: No Starlink History Yet`,
+    ogDescription: `Check ${cfg.name} ${flightNumber} for Starlink Wi-Fi.`,
     robotsMeta: "noindex, follow",
   };
 }
@@ -3740,10 +3738,10 @@ const methodologyPage: Handler = (ctx) => {
     "/methodology",
     {
       siteTitle: `How ${ctx.site.brand.title} Verifies Starlink Data — Methodology`,
-      siteDescription: `Where this ${cfg.name} Starlink tracker's numbers come from: direct verification against ${cfg.verifySite}, fleet and schedule data, registry cross-references, and hourly consensus reconciliation — plus how to cite the headline stat.`,
+      siteDescription: `Where the ${cfg.name} Starlink numbers come from, how each aircraft is confirmed, and how to cite them.`,
       keywords: `${cfg.name.toLowerCase()} starlink data, ${cfg.shortName.toLowerCase()} starlink tracker methodology, how starlink tracker works, starlink rollout data source`,
       ogTitle: `How ${ctx.site.brand.title} Verifies Starlink Data`,
-      ogDescription: `The data sources, verification loops, and consensus rules behind this ${cfg.shortName} Starlink tracker's numbers.`,
+      ogDescription: `The sources and checks behind this ${cfg.shortName} Starlink tracker's numbers.`,
       ogType: "article",
       pageJsonLd: datasetJsonLd,
     },
@@ -3758,12 +3756,12 @@ const routesPage: Handler = (ctx) => {
   const routesJsonLd = jsonLdBlock({
     "@context": "https://schema.org",
     "@type": "ItemList",
-    name: `Routes with scheduled Starlink departures — ${ctx.site.brand.title}`,
+    name: `Routes with scheduled Starlink departures · ${ctx.site.brand.title}`,
     numberOfItems: schedule.rows.length,
     itemListElement: schedule.rows.slice(0, 25).map((r, i) => ({
       "@type": "ListItem",
       position: i + 1,
-      name: `${r.origin} to ${r.destination} — ${r.departures} Starlink departure${r.departures === 1 ? "" : "s"}`,
+      name: `${r.origin} to ${r.destination}: ${r.departures} Starlink departure${r.departures === 1 ? "" : "s"}`,
       ...(ctx.site.features.routePlannerPage
         ? { url: `https://${ctx.site.canonicalHost}/route-planner/${r.origin}/${r.destination}` }
         : {}),
@@ -3825,11 +3823,11 @@ const timelinePage: Handler = (ctx) => {
 const howToCheckPage: Handler = (ctx) => {
   const cfg = siteAirline(ctx.site);
   return renderSubPage(ctx, HowToCheckPage, "/how-to-check", {
-    siteTitle: `How to Check If Your ${cfg.shortName} Flight Has Starlink WiFi`,
-    siteDescription: `Four steps to a real answer: enter your ${cfg.shortName} flight number and date, read the verified-vs-predicted result, and re-check before departure. Plus tail-number lookup and booking-time tricks.`,
+    siteTitle: `How to Check If Your ${cfg.shortName} Flight Has Starlink Wi-Fi`,
+    siteDescription: `Enter your ${cfg.shortName} flight number and date to see if it has Starlink: verified once the aircraft is assigned, a probability before that. Also by tail number or route.`,
     keywords: `how to check ${cfg.shortName.toLowerCase()} starlink, how to know if my flight has starlink, does my ${cfg.shortName.toLowerCase()} flight have starlink, check flight wifi`,
     ogTitle: `How to Check If Your ${cfg.shortName} Flight Has Starlink`,
-    ogDescription: `Flight-number check, tail-number lookup, and booking-time tools — how to tell whether ${article(cfg.name)} ${cfg.name} flight has free Starlink WiFi.`,
+    ogDescription: `How to tell whether ${article(cfg.name)} ${cfg.name} flight has Starlink Wi-Fi: by flight number, tail number or route.`,
     ogType: "article",
   });
 };
@@ -3862,17 +3860,18 @@ const chromePage: Handler = (ctx) =>
 const isStarlinkFreePage: Handler = (ctx) => {
   const cfg = siteAirline(ctx.site);
   // Content gate like /methodology: no per-airline access story, no page.
-  if (!hasFreeAnswer(cfg.code)) return notFound(ctx.site);
+  const access = freeAccess(cfg.code);
+  if (!access) return notFound(ctx.site);
   return renderSubPage(
     ctx,
     IsStarlinkFreePage,
     "/is-starlink-free",
     {
-      siteTitle: `Is ${cfg.shortName} Starlink WiFi Free? Yes — Here's the Fine Print`,
-      siteDescription: `${cfg.name} Starlink WiFi is free — no purchase, no data caps. What you need to sign in and the one catch: only Starlink-equipped aircraft have it. Check your flight.`,
+      siteTitle: `Is ${cfg.shortName} Starlink Wi-Fi Free? Yes, with ${access.program}`,
+      siteDescription: `${access.answer.replace(/^Yes\. /, "")} Only some ${cfg.shortName} planes have it, so check your flight.`,
       keywords: `is ${cfg.shortName.toLowerCase()} starlink free, is ${cfg.shortName.toLowerCase()} wifi free, ${cfg.shortName.toLowerCase()} starlink cost, free wifi ${cfg.name.toLowerCase()}`,
-      ogTitle: `Is ${cfg.shortName} Starlink WiFi Free?`,
-      ogDescription: `Yes — free on every Starlink-equipped ${cfg.name} aircraft. The fine print, the speeds, and how to check your flight.`,
+      ogTitle: `Is ${cfg.shortName} Starlink Wi-Fi Free?`,
+      ogDescription: `Free for ${access.program} members on every ${cfg.shortName} plane with Starlink. How to connect and how to check your flight.`,
       ogType: "article",
     },
     {
@@ -3932,7 +3931,7 @@ const liveTvPage: Handler = (ctx) => {
         "united live tv, united live football, united dish live tv, united nfl inflight, united seatback live tv, united starlink tv",
       ogTitle: "Live TV & Football on United Flights",
       ogDescription:
-        "Which United planes can show DISH live TV and football on the seatback — and why United Express can't.",
+        "Which United planes can show DISH live TV and football on the seatback. United Express jets can't.",
       ogType: "article",
     },
     {
