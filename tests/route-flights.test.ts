@@ -223,7 +223,8 @@ describe("board behavior (synthetic)", () => {
     fn: string,
     tail: string,
     dep: number,
-    pair: [string, string] = ["SFO", "ORD"]
+    pair: [string, string] = ["SFO", "ORD"],
+    lastSeen = now
   ) {
     sdb
       .query(
@@ -241,8 +242,8 @@ describe("board behavior (synthetic)", () => {
         tail,
         dep,
         dep + 4 * 3600,
-        now,
-        now
+        lastSeen,
+        lastSeen
       );
   }
 
@@ -268,7 +269,14 @@ describe("board behavior (synthetic)", () => {
     // Alaska's own flight on the same pair.
     log("AS", "AS999", "N644AS", at(-2));
     // The planner prices edges from the live schedule.
-    addFlight(sdb, "N111UA", "UA100", "ORD", at(1, 20), { arrivalAirport: "IAD" });
+    addFlight(sdb, "N111UA", "UA100", "SFO", at(1), { arrivalAirport: "ORD", lastUpdated: now });
+    addFlight(sdb, "N111UA", "UA100", "ORD", at(1, 20), {
+      arrivalAirport: "IAD",
+      lastUpdated: now,
+    });
+    // Logged on the A321neo yesterday, then gone from its refreshed schedule:
+    // a swap to a plane the updater doesn't follow.
+    log("UA", "UA300", "N111UA", at(1, 22), ["SFO", "ORD"], now - 7200);
     // The route page serves only pairs the route cache knows.
     sdb
       .query(
@@ -347,6 +355,11 @@ describe("board behavior (synthetic)", () => {
     expect(r.assignment?.past).toBe(false);
     expect(r.assignment?.label).toMatch(/^[A-Z][a-z]{2} [A-Z][a-z]{2} \d{1,2} · N111UA$/);
     expect(r.departure_label).toMatch(/^usually 7:00 AM$/);
+  });
+
+  test("a plane swapped off a future leg no longer answers it", () => {
+    const r = board().flights.find((f) => f.flight_number === "UA300");
+    expect(r?.assignment ?? null).toBeNull();
   });
 
   test("a past date names the plane that flew", () => {
