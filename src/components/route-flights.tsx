@@ -1,19 +1,17 @@
 import type React from "react";
 import type { RouteFlightBoard, RouteFlightRow } from "../api/route-flights";
 import { FIELD_CLASS } from "./flight-search-form";
-import { LINK, Section, Td, Th, buttonClass } from "./layout";
+import { ClientScriptTag, LINK, Section, Td, Th, buttonClass } from "./layout";
+import { oddsCellHtml } from "./odds-history";
 import {
   VERIFIED_LEGEND,
   assignmentPill,
   boardDek,
   emptyBoardMessage,
   hasVerifiedRow,
-  oddsCell,
-  oddsDetail,
-  oddsTone,
   rowMarker,
 } from "./route-flights-copy";
-import { Pill, TONE_TEXT } from "./ui/tone";
+import { Pill } from "./ui/tone";
 
 function FlightCell({ row, board }: { row: RouteFlightRow; board: RouteFlightBoard }) {
   const pill = assignmentPill(row);
@@ -108,10 +106,10 @@ export function RouteFlightsSection({
                   {row.aircraft_types.length ? row.aircraft_types.join(", ") : "—"}
                 </Td>
                 <Td numeric>
-                  <div className={`whitespace-nowrap font-display ${TONE_TEXT[oddsTone(row)]}`}>
-                    {oddsCell(row)}
-                  </div>
-                  <div className="text-xs text-muted">{oddsDetail(row)}</div>
+                  <div
+                    // biome-ignore lint/security/noDangerouslySetInnerHtml: oddsCellHtml escapes every value; the planner's bundle draws the same cell
+                    dangerouslySetInnerHTML={{ __html: oddsCellHtml(row) }}
+                  />
                 </Td>
               </tr>
             ))}
@@ -123,6 +121,7 @@ export function RouteFlightsSection({
         {hasVerifiedRow(board) && ` ${VERIFIED_LEGEND}`}
         {footerAction && <> {footerAction}</>}
       </p>
+      {!empty && <ClientScriptTag name="route-board" />}
     </Section>
   );
 }

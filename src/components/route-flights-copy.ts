@@ -32,13 +32,15 @@ export function oddsTone(row: RouteFlightRow): Tone {
     : "neutral";
 }
 
-/** The line under the big cell: what the forecast rests on. */
-export function oddsDetail(row: RouteFlightRow): string {
-  const basis =
-    row.basis === "aircraft_type"
-      ? "by type"
-      : `${fmt(row.n_observations ?? 0)} tracked flight${row.n_observations === 1 ? "" : "s"}`;
-  return row.assignment && row.probability !== null ? `${row.odds_label} · ${basis}` : basis;
+/** "26 recent flights": the effective count, since recent departures weigh most. */
+export function recentFlights(r: Pick<RouteFlightRow, "n_effective" | "n_observations">): string {
+  const n = Math.max(1, Math.round(r.n_effective ?? r.n_observations ?? 0));
+  return `${fmt(n)} recent flight${n === 1 ? "" : "s"}`;
+}
+
+/** What the forecast rests on, under the big cell. */
+export function oddsBasis(row: RouteFlightRow): string {
+  return row.basis === "aircraft_type" ? "by type" : recentFlights(row);
 }
 
 /** A row's one marker, when it has one. */
