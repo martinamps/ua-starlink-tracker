@@ -169,9 +169,9 @@ export const content: AirlineContent = {
           q: "When will all United flights have Starlink?",
           a: (s) => (
             <p>
-              United's target is every United and United Express aircraft by the end of 2027. It
-              reported 450 equipped with its Q2 2026 results and expects close to 1,000 by the end
-              of 2026. Today {pct(s.starlinkCount, s.totalCount)} of the {fmt(s.totalCount)}
+              United's target is every United and United Express aircraft by the end of 2027, with
+              close to 1,000 expected by the end of 2026. Today {pct(s.starlinkCount, s.totalCount)}{" "}
+              of the {fmt(s.totalCount)}
               -plane fleet has it. The{" "}
               <a href="/timeline" className={LINK}>
                 rollout timeline
