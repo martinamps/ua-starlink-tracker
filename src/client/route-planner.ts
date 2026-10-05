@@ -67,7 +67,7 @@ function renderLeg(leg: Leg): string {
   if (leg.flight_number === "(any)") {
     return `<div class="flex items-center justify-between py-2 border-l-2 border-subtle pl-3 ml-1"><div class="text-sm"><div class="font-mono text-muted">${from} → ${to}</div><div class="text-xs text-muted">Any flight works for this leg</div></div>${odds}</div>`;
   }
-  const conf = leg.confidence === "high" ? "" : ` · ${esc(leg.confidence)} confidence`;
+  const conf = leg.confidence === "low" ? " · low confidence" : "";
   const checks = `${leg.n_observations} check${leg.n_observations === 1 ? "" : "s"}`;
   return `<div class="flex items-center justify-between py-2 border-l-2 pl-3 ml-1" style="border-color:${color}"><div class="text-sm"><div class="font-mono text-secondary">${esc(leg.flight_number)} <span class="text-muted">${from} → ${to}</span></div><div class="text-xs text-muted">Based on ${checks}${conf}</div></div>${odds}</div>`;
 }
@@ -105,9 +105,10 @@ function renderItinerary(it: Itinerary, rank: number): string {
   const direct = via.length === 0;
   const origin = esc(legs[0].route.split("-")[0]);
   const dest = esc(legs[legs.length - 1].route.split("-")[1]);
-  const headerPct = probLabel(full ? it.joint_probability : it.at_least_one_probability);
-  const headerLabel = full ? (direct ? "Starlink" : "all legs") : "final leg Starlink";
-  const headerColor = probColor(full ? it.joint_probability : legs[legs.length - 1].probability);
+  const headerP = full ? it.joint_probability : it.at_least_one_probability;
+  const headerPct = probLabel(headerP);
+  const headerLabel = full ? (direct ? "Starlink" : "all legs") : "at least one leg";
+  const headerColor = probColor(headerP);
   const flying =
     typeof it.total_flight_hours === "number" ? ` · ${fmtHours(it.total_flight_hours)} flying` : "";
   const badge = direct
@@ -131,9 +132,17 @@ function baselineHtml(b: Baseline | undefined): string {
   return `<div class="text-xs text-muted mb-3 leading-relaxed">${label}${probLabel(b.probability)} Starlink · ~${fmtHours(b.expected_starlink_hours)} Starlink of ~${fmtHours(b.duration_hours)} flying</div>`;
 }
 
-function renderResults(out: HTMLElement, data: PlanBody): void {
+/**
+ * Itineraries ranked as the API ranks them. When the nonstop board above has
+ * rows, an empty plan says nothing more: the board already answers.
+ */
+function renderResults(out: HTMLElement, data: PlanBody, boardHasRows: boolean): void {
   const itins = data.itineraries ?? [];
   if (itins.length === 0) {
+    if (boardHasRows) {
+      out.innerHTML = "";
+      return;
+    }
     // A sparse nonstop's budget yields to the fastest connection, so an empty
     // result there also means no connection has Starlink legs.
     const soft =
@@ -143,24 +152,12 @@ function renderResults(out: HTMLElement, data: PlanBody): void {
       data.message ||
       (soft
         ? "No connection between these airports has Starlink on its legs."
-        : "No connection adds meaningful Starlink time without a long detour over the nonstop.");
-    out.innerHTML = `<div class="bg-surface border border-subtle rounded-lg p-6 text-center"><div class="text-secondary font-display mb-2">No Starlink options found</div><p class="text-sm text-muted">${esc(message)}</p>${baselineHtml(data.baseline)}</div>`;
+        : "No connection adds meaningful Starlink time without a long detour.");
+    out.innerHTML = `<div class="bg-surface border border-subtle rounded-lg p-6 text-center"><p class="text-sm text-muted">${esc(message)}</p>${baselineHtml(data.baseline)}</div>`;
     return;
   }
-  const full = itins.filter((i) => i.coverage === "full");
-  const partial = itins.filter((i) => i.coverage === "partial");
-  let html = itins.some((i) => i.via.length === 0) ? "" : baselineHtml(data.baseline);
-  if (full.length > 0) {
-    html += `<div class="mb-6"><h3 class="font-display text-lg text-primary mb-3">Starlink on every leg</h3>${full.map((it, i) => renderItinerary(it, i + 1)).join("")}</div>`;
-  }
-  if (partial.length > 0) {
-    const note =
-      full.length === 0
-        ? '<div class="text-xs text-muted mb-3 leading-relaxed">No option has Starlink on every leg. These have it on at least one.</div>'
-        : "";
-    html += `<div><h3 class="font-display text-lg text-primary mb-2">Starlink on some legs</h3>${note}${partial.map((it, i) => renderItinerary(it, full.length + i + 1)).join("")}</div>`;
-  }
-  out.innerHTML = html;
+  const baseline = itins.some((i) => i.via.length === 0) ? "" : baselineHtml(data.baseline);
+  out.innerHTML = `${baseline}${itins.map((it, i) => renderItinerary(it, i + 1)).join("")}`;
 }
 
 export function wireRoutePlanner(): void {
@@ -177,28 +174,35 @@ export function wireRoutePlanner(): void {
     destInput.value = params.get("destination") ?? "";
     if (dateInput) dateInput.value = params.get("date") ?? "";
   }
+  // A newer search aborts the one in flight, so a slow answer can't land last.
+  let inFlight: AbortController | null = null;
   const search = () => {
     const origin = originInput.value.trim().toUpperCase();
     const dest = destInput.value.trim().toUpperCase();
     if (!origin || !dest) return;
-    const query = `origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(dest)}`;
+    inFlight?.abort();
+    const ctrl = new AbortController();
+    inFlight = ctrl;
     const date = dateInput?.value ?? "";
-    const dated = date ? `${query}&date=${encodeURIComponent(date)}` : query;
-    history.replaceState(null, "", `/route-planner?${dated}`);
-    if (board) {
-      board.innerHTML = "";
-      fetch(`/api/route-flights?${dated}`)
-        .then((r) => (r.ok ? (r.json() as Promise<RouteFlightBoard>) : null))
-        .then((d) => {
-          if (d) board.innerHTML = renderRouteFlights(d);
-        })
-        .catch(() => {});
-    }
+    const query = `origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(dest)}${date ? `&date=${encodeURIComponent(date)}` : ""}`;
+    history.replaceState(null, "", `/route-planner?${query}`);
+    if (board) board.innerHTML = "";
     out.innerHTML = '<div class="text-center text-sm text-muted py-8">Finding flights…</div>';
-    fetch(`/api/plan-route?${query}`)
-      .then((r) => r.json() as Promise<PlanBody>)
-      .then((d) => renderResults(out, d))
+    const boardReq = fetch(`/api/route-flights?${query}`, { signal: ctrl.signal })
+      .then((r) => (r.ok ? (r.json() as Promise<RouteFlightBoard>) : null))
+      .catch(() => null);
+    const planReq = fetch(`/api/plan-route?${query}`, { signal: ctrl.signal }).then(
+      (r) => r.json() as Promise<PlanBody>
+    );
+    Promise.all([boardReq, planReq])
+      .then(([b, plan]) => {
+        if (ctrl.signal.aborted) return;
+        const rows = b ? renderRouteFlights(b) : "";
+        if (board) board.innerHTML = rows;
+        renderResults(out, plan, rows !== "");
+      })
       .catch(() => {
+        if (ctrl.signal.aborted) return;
         out.innerHTML =
           '<div class="text-sm text-danger text-center">Something went wrong. Please try again.</div>';
       });

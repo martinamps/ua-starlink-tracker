@@ -108,3 +108,15 @@ export function tailHash(tailNumber: string): number {
   }
   return hash;
 }
+
+/** SQL: the tail's aircraft type, roster first, then its listing. Correlated
+ * subqueries, so a duplicate listing can't fan out the caller's rows. */
+export function tailAircraftTypeSql(tailExpr: string, airlineExpr: string): string {
+  return `COALESCE(
+    (SELECT _tf.aircraft_type FROM united_fleet _tf
+     WHERE _tf.tail_number = ${tailExpr} AND _tf.airline = ${airlineExpr}),
+    (SELECT _tl.Aircraft FROM starlink_planes _tl
+     WHERE _tl.TailNumber = ${tailExpr} AND _tl.airline = ${airlineExpr}
+     ORDER BY _tl.id LIMIT 1)
+  )`;
+}

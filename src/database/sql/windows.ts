@@ -42,3 +42,8 @@ export function lookupWindowPosition(
 export function inLookupWindow(start: number, end: number, now = unixNow()): boolean {
   return lookupWindowPosition(start, end, now) === "inside";
 }
+
+/** "Recently" on a route: the assignment log's own retention. Numbers last
+ * seen on a pair longer ago are mostly schedule changes now flying elsewhere. */
+export const ROUTE_RECENT_DAYS = 7;
+export const ROUTE_RECENT_SEC = ROUTE_RECENT_DAYS * DAY_SEC;

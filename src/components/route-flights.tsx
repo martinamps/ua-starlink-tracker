@@ -4,18 +4,20 @@ import { FIELD_CLASS } from "./flight-search-form";
 import { LINK, Section, Td, Th, buttonClass } from "./layout";
 import {
   VERIFIED_LEGEND,
-  VERIFIED_MARK,
-  assignmentTone,
+  assignmentPill,
   boardDek,
   emptyBoardMessage,
   hasVerifiedRow,
+  oddsCell,
   oddsDetail,
   oddsTone,
+  rowMarker,
 } from "./route-flights-copy";
 import { Pill, TONE_TEXT } from "./ui/tone";
 
-function FlightCell({ row }: { row: RouteFlightRow }) {
-  const a = row.assignment;
+function FlightCell({ row, board }: { row: RouteFlightRow; board: RouteFlightBoard }) {
+  const pill = assignmentPill(row);
+  const marker = rowMarker(row, board);
   return (
     <Td className="pr-3">
       <a
@@ -24,14 +26,14 @@ function FlightCell({ row }: { row: RouteFlightRow }) {
       >
         {row.flight_number}
       </a>
-      {row.typical_departure && (
-        <span className="whitespace-nowrap text-muted"> · {row.typical_departure}</span>
+      {row.departure_label && <span className="text-muted"> · {row.departure_label}</span>}
+      {row.aircraft_types[0] && (
+        <span className="text-muted sm:hidden"> · {row.aircraft_types[0]}</span>
       )}
-      {a && (
+      {marker && <span className="text-xs text-muted"> · {marker}</span>}
+      {pill && (
         <div className="mt-1">
-          <Pill tone={assignmentTone(row)}>
-            {a.starlink === "verified" ? `${a.label} ${VERIFIED_MARK}` : a.label}
-          </Pill>
+          <Pill tone={row.assignment?.starlink === "none" ? "neutral" : "success"}>{pill}</Pill>
         </div>
       )}
     </Td>
@@ -54,7 +56,7 @@ export function RouteFlightsSection({
 }) {
   const empty = emptyBoardMessage(board);
   return (
-    <Section id="all-flights" title="All nonstop flights" dek={boardDek(board)}>
+    <Section id="all-flights" title="Nonstop flights" dek={empty ? undefined : boardDek(board)}>
       {board.nonstop && (
         <form
           method="get"
@@ -101,13 +103,13 @@ export function RouteFlightsSection({
           <tbody>
             {board.flights.map((row) => (
               <tr key={row.flight_number} className="align-top">
-                <FlightCell row={row} />
+                <FlightCell row={row} board={board} />
                 <Td optional className="pr-3 text-secondary">
                   {row.aircraft_types.length ? row.aircraft_types.join(", ") : "—"}
                 </Td>
                 <Td numeric>
                   <div className={`whitespace-nowrap font-display ${TONE_TEXT[oddsTone(row)]}`}>
-                    {row.odds_label}
+                    {oddsCell(row)}
                   </div>
                   <div className="text-xs text-muted">{oddsDetail(row)}</div>
                 </Td>

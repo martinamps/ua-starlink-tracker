@@ -1,8 +1,8 @@
 /**
  * "Every flight on this route": GET /api/route-flights, the board on the route
  * pages, and the entry points into it. Snapshot tests assert shapes only; the
- * synthetic DB pins the behavior (codeshare collapse, assignment wording,
- * weekday filter, tenant isolation) with rows it seeds itself.
+ * synthetic DB pins the behavior (per-leg odds, codeshare collapse, weekday
+ * gaps, one-offs, past dates, tenant isolation) with rows it seeds itself.
  */
 
 import type { Database } from "bun:sqlite";
@@ -12,7 +12,7 @@ import { ROUTE_BOARD_MIN_OBSERVATIONS, buildRouteFlightBoard } from "../src/api/
 import { departureLocalDate } from "../src/database/assignment-log";
 import { getSitemapRoutes } from "../src/database/database";
 import { createReaderFactory } from "../src/database/reader";
-import { DAY_SEC, unixNow } from "../src/database/sql/windows";
+import { DAY_SEC, isoDateDaysAgo, unixNow } from "../src/database/sql/windows";
 import { createApp } from "../src/server/app";
 import { addFleet, addPlane, bodyOf, jsonOf, makeFreshDb, openSnapshot, req } from "./helpers";
 
@@ -29,10 +29,8 @@ beforeAll(() => {
   app = createApp(db);
 });
 
-const page = (path: string, host = UA) =>
-  app.dispatch(
-    req(path, host, { headers: { Accept: "text/html", "x-forwarded-for": "127.0.0.1" } })
-  );
+const page = (path: string, host = UA, a = app) =>
+  a.dispatch(req(path, host, { headers: { Accept: "text/html", "x-forwarded-for": "127.0.0.1" } }));
 
 function someRoute() {
   const routes = getSitemapRoutes(db, "UA");
@@ -40,11 +38,16 @@ function someRoute() {
   return routes[0];
 }
 
+/** Far enough out that no assignment or live lookup answers: a pure forecast. */
+const FORECAST_DATE = isoDateDaysAgo(-20);
+
 const ROW_KEYS = [
   "flight_number",
   "typical_departure",
+  "departure_label",
   "weekdays",
   "departures_logged",
+  "established",
   "operates_on_date",
   "probability",
   "n_observations",
@@ -69,58 +72,54 @@ describe("GET /api/route-flights", () => {
     const b = await res.json();
     expect(b.origin).toBe(origin);
     expect(b.destination).toBe(destination);
-    expect(b.airline).toBe(AIRLINES.UA.name);
+    expect(b.airline).toBe(AIRLINES.UA.shortName);
     expect(b.date).toBeNull();
     expect(typeof b.nonstop).toBe("boolean");
     expect(b.min_observations).toBe(ROUTE_BOARD_MIN_OBSERVATIONS);
-    expect(b.note).toContain("Planes can be swapped");
-    expect(Array.isArray(b.flights)).toBe(true);
+    expect(b.note).toMatch(/^Odds come from .+\. Planes can be swapped before departure\.$/);
     for (const f of b.flights) {
       expect(Object.keys(f).sort()).toEqual([...ROW_KEYS].sort());
       expect(f.flight_number).toMatch(/^UA\d{1,4}$/);
       // The caveat lives once, in the note — never repeated per row.
       expect(f.summary).not.toMatch(/swap|guarantee/i);
+      if (f.typical_departure) expect(f.typical_departure).toMatch(/^\d{1,2}:\d{2}\s[AP]M$/);
     }
   });
 
-  test("rows are ordered by odds, rows without enough history last", async () => {
+  test("odds equal /api/check-flight scoped to the same leg", async () => {
     const { origin, destination } = someRoute();
     const b = await jsonOf(
+      app,
+      `/api/route-flights?origin=${origin}&destination=${destination}&date=${FORECAST_DATE}`,
+      UA
+    );
+    for (const f of b.flights
+      .filter((x: { probability: number | null }) => x.probability !== null)
+      .slice(0, 3)) {
+      const c = await jsonOf(
+        app,
+        `/api/check-flight?flight_number=${f.flight_number}&date=${FORECAST_DATE}&origin=${origin}&destination=${destination}`,
+        UA
+      );
+      expect(c.prediction?.probability).toBeCloseTo(f.probability, 6);
+    }
+  });
+
+  test("a date keeps every row and echoes its weekday", async () => {
+    const { origin, destination } = someRoute();
+    const plain = await jsonOf(
       app,
       `/api/route-flights?origin=${origin}&destination=${destination}`,
       UA
     );
-    const key = (f: { enough_history: boolean; probability: number | null }) =>
-      (f.enough_history ? 2 : 0) + (f.probability ?? -1);
-    for (let i = 1; i < b.flights.length; i++) {
-      expect(key(b.flights[i - 1])).toBeGreaterThanOrEqual(key(b.flights[i]));
-    }
-  });
-
-  test("odds match the flight's own prediction", async () => {
-    const { origin, destination } = someRoute();
-    const b = await jsonOf(
+    const dated = await jsonOf(
       app,
-      `/api/route-flights?origin=${origin}&destination=${destination}`,
+      `/api/route-flights?origin=${origin}&destination=${destination}&date=${FORECAST_DATE}`,
       UA
     );
-    for (const f of b.flights.slice(0, 3)) {
-      const p = await jsonOf(app, `/api/predict-flight?flight_number=${f.flight_number}`, UA);
-      expect(f.probability).toBe(p.probability);
-      expect(f.n_observations).toBe(p.n_observations);
-    }
-  });
-
-  test("a date filters to that weekday and is echoed", async () => {
-    const { origin, destination } = someRoute();
-    const b = await jsonOf(
-      app,
-      `/api/route-flights?origin=${origin}&destination=${destination}&date=2026-10-08`,
-      UA
-    );
-    expect(b.date).toBe("2026-10-08");
-    expect(b.weekday).toBe("Thu");
-    for (const f of b.flights) expect(f.operates_on_date).not.toBe(false);
+    expect(dated.date).toBe(FORECAST_DATE);
+    expect(dated.weekday).toMatch(/^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)$/);
+    expect(dated.flights.length).toBe(plain.flights.length);
   });
 
   test("bad input is a 400, never a 500", async () => {
@@ -129,8 +128,11 @@ describe("GET /api/route-flights", () => {
       "origin=SFO",
       "origin=SFO&destination=SFO",
       "origin=SF&destination=ORD",
+      "origin=XXX&destination=ORD",
       "origin=SFO&destination=ORD&date=2026-02-30",
       "origin=SFO&destination=ORD&date=tomorrow",
+      `origin=SFO&destination=ORD&date=${isoDateDaysAgo(3)}`,
+      `origin=SFO&destination=ORD&date=${isoDateDaysAgo(-400)}`,
     ]) {
       const { status } = await bodyOf(app, `/api/route-flights?${q}`, UA);
       expect(status, q).toBe(400);
@@ -149,10 +151,15 @@ describe("GET /api/route-flights", () => {
       expect(status, host).toBe(404);
     }
   });
+
+  test("/api/compare-route refuses a same-airport pair", async () => {
+    const { status } = await bodyOf(app, "/api/compare-route?origin=SFO&destination=SFO", HUB);
+    expect(status).toBe(400);
+  });
 });
 
-describe("route page board", () => {
-  test("leads with the question and the nonstop board", async () => {
+describe("route page", () => {
+  test("leads with the question, then the board, and nothing that contradicts it", async () => {
     const { origin, destination } = someRoute();
     const res = await page(`/route-planner/${origin}/${destination}`);
     expect(res.status).toBe(200);
@@ -161,17 +168,17 @@ describe("route page board", () => {
       `<title>Which ${AIRLINES.UA.shortName} ${origin} to ${destination} Flights Have Starlink?`
     );
     expect(body).toContain(`Which ${origin} to ${destination} flights have Starlink?`);
-    const board = body.indexOf('id="all-flights"');
-    expect(board).toBeGreaterThan(0);
-    expect(body.indexOf("Flight numbers on this route")).toBeGreaterThan(board);
-    const section = body.slice(board, body.indexOf("Flight numbers on this route"));
-    expect(section.match(/swapped/g)?.length ?? 0).toBe(1);
-    expect(section).not.toContain("(verified)");
+    expect(body).toContain('id="all-flights"');
+    expect(body).toContain("Nonstop flights");
+    expect(body).not.toContain("Flight numbers on this route");
+    expect(body).not.toContain("Upcoming Starlink flights");
+    expect(body.match(/swapped/g)?.length ?? 0).toBe(1);
+    expect(body).not.toContain("(verified)");
   });
 
   test("a date filters the board; a bad one is ignored", async () => {
     const { origin, destination } = someRoute();
-    for (const q of ["?date=2026-10-08", "?date=nope"]) {
+    for (const q of [`?date=${FORECAST_DATE}`, "?date=nope", "?date=2020-01-01"]) {
       const res = await page(`/route-planner/${origin}/${destination}${q}`);
       expect(res.status, q).toBe(200);
       expect(await res.text()).toContain('id="all-flights"');
@@ -185,7 +192,9 @@ describe("route page board", () => {
   });
 
   test("airline homepages link into the planner; the hub does not", async () => {
-    expect(await (await page("/")).text()).toContain('id="home-route-board-link"');
+    const home = await (await page("/")).text();
+    expect(home).toContain('id="home-route-board-link"');
+    expect(home).toContain("Or see which flights on a route have Starlink →");
     expect(await (await page("/", HUB)).text()).not.toContain('id="home-route-board-link"');
   });
 });
@@ -196,27 +205,35 @@ describe("board behavior (synthetic)", () => {
   const now = unixNow();
   const dayStart = Math.floor(now / DAY_SEC) * DAY_SEC;
   // 14:00Z is 7am at SFO in either daylight or standard time.
-  const at = (offsetDays: number) => dayStart + offsetDays * DAY_SEC + 14 * 3600;
+  const at = (offsetDays: number, hourZ = 14) => dayStart + offsetDays * DAY_SEC + hourZ * 3600;
   let sdb: Database;
   let sapp: ReturnType<typeof createApp>;
 
-  function log(airline: string, fn: string, tail: string, dep: number, lastSeen = now) {
+  function log(
+    airline: string,
+    fn: string,
+    tail: string,
+    dep: number,
+    pair: [string, string] = ["SFO", "ORD"]
+  ) {
     sdb
       .query(
         `INSERT INTO flight_assignment_log
            (airline, flight_number, dep_date, departure_airport, arrival_airport, tail_number,
             starlink, departure_time, arrival_time, first_seen, last_seen)
-         VALUES (?, ?, ?, 'SFO', 'ORD', ?, NULL, ?, ?, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)`
       )
       .run(
         airline,
         fn,
-        departureLocalDate("SFO", dep),
+        departureLocalDate(pair[0], dep),
+        pair[0],
+        pair[1],
         tail,
         dep,
         dep + 4 * 3600,
-        lastSeen,
-        lastSeen
+        now,
+        now
       );
   }
 
@@ -226,23 +243,62 @@ describe("board behavior (synthetic)", () => {
     addFleet(sdb, "N111UA", "confirmed", { aircraftType: "Airbus A321-271NX" });
     addFleet(sdb, "N222UA", "negative", { aircraftType: "Boeing 757-224" });
     addPlane(sdb, "N644AS", "Starlink", { airline: "AS", aircraft: "737-700" });
-    // UA100: five logged days, offsets -7..-3, plus tomorrow on an equipped tail.
-    for (const d of [-7, -6, -5, -4, -3]) log("UA", "UA100", "N222UA", at(d));
+    // UA100 is a through flight: a 757 SFO-ORD, then a Starlink A321neo ORD-IAD.
+    // Five logged days (-7..-3), so two weekdays are missing from its log.
+    for (const d of [-7, -6, -5, -4, -3]) {
+      log("UA", "UA100", "N222UA", at(d));
+      log("UA", "UA100", "N111UA", at(d, 20), ["ORD", "IAD"]);
+    }
+    // Tomorrow's SFO-ORD leg already has the A321neo assigned.
     log("UA", "UA100", "N111UA", at(1));
-    // A regional codeshare logged under its operating spelling.
-    log("UA", "SKW5212", "N222UA", at(-2));
+    // A regional codeshare under its operating spelling, two days.
+    log("UA", "SKW5212", "N222UA", at(-2, 16));
+    log("UA", "SKW5212", "N222UA", at(-1, 16));
+    // A one-off: logged on this pair once.
+    log("UA", "UA777", "N111UA", at(-2, 18));
     // Alaska's own flight on the same pair.
     log("AS", "AS999", "N644AS", at(-2));
+    // The route page serves only pairs the route cache knows.
+    sdb
+      .query(
+        `INSERT INTO flight_routes (flight_number, origin, destination, duration_sec, first_seen_at, last_seen_at, seen_count)
+         VALUES ('UA100', 'SFO', 'ORD', 15000, ?, ?, 5)`
+      )
+      .run(at(-7), at(-3));
     sapp = createApp(sdb);
   });
 
   afterAll(() => sdb.close());
 
-  const board = (date?: string) =>
-    buildRouteFlightBoard(AIRLINES.UA, createReaderFactory(sdb)("UA"), "SFO", "ORD", {
+  const board = (date?: string, origin = "SFO", destination = "ORD") =>
+    buildRouteFlightBoard(AIRLINES.UA, createReaderFactory(sdb)("UA"), origin, destination, {
       date,
       nowSec: now,
     });
+  const row = (b: ReturnType<typeof board>, fn: string) => {
+    const r = b.flights.find((f) => f.flight_number === fn);
+    if (!r) throw new Error(`${fn} missing from the board`);
+    return r;
+  };
+
+  test("odds are per leg: the 757 leg and the A321neo leg of one number differ", () => {
+    const sfo = row(board(), "UA100");
+    const ord = row(board(undefined, "ORD", "IAD"), "UA100");
+    expect(sfo.probability).toBe(0);
+    expect(sfo.aircraft_types).toEqual(["757"]);
+    expect(ord.probability).toBeGreaterThan(0.5);
+  });
+
+  test("the board equals check-flight scoped to that leg", async () => {
+    const date = isoDateDaysAgo(-20, now);
+    const b = board(date);
+    const c = await jsonOf(
+      sapp,
+      `/api/check-flight?flight_number=UA100&date=${date}&origin=SFO&destination=ORD`,
+      UA
+    );
+    expect(c.prediction.probability).toBeCloseTo(row(b, "UA100").probability ?? -1, 6);
+  });
 
   test("operating spellings collapse to the marketed number", () => {
     const fns = board().flights.map((f) => f.flight_number);
@@ -250,31 +306,59 @@ describe("board behavior (synthetic)", () => {
     expect(fns).not.toContain("SKW5212");
   });
 
-  test("the upcoming tail is named with its equipped status", () => {
-    const row = board().flights.find((f) => f.flight_number === "UA100");
-    expect(row?.assignment?.tail_number).toBe("N111UA");
-    expect(row?.assignment?.starlink).toBe("verified");
-    expect(row?.assignment?.label).toMatch(
-      /^[A-Z][a-z]{2} [A-Z][a-z]{2} \d{1,2} · N111UA · Starlink$/
-    );
-    expect(row?.typical_departure).toMatch(/^7:00 AM P[DS]T$/);
-    expect(row?.aircraft_types[0]).toBe("757");
-    expect(row?.summary).toContain(`Next: ${row?.assignment?.label}.`);
+  test("an assigned plane answers the row; the forecast moves to the detail", () => {
+    const r = row(board(), "UA100");
+    expect(r.assignment?.tail_number).toBe("N111UA");
+    expect(r.assignment?.starlink).toBe("verified");
+    expect(r.assignment?.past).toBe(false);
+    expect(r.assignment?.label).toMatch(/^[A-Z][a-z]{2} [A-Z][a-z]{2} \d{1,2} · N111UA$/);
+    expect(r.departure_label).toMatch(/^usually 7:00 AM$/);
   });
 
-  test("a weekday the flight was never seen on drops it; thin history stays", () => {
-    const unseen = new Date((dayStart + 6 * DAY_SEC) * 1000).toISOString().slice(0, 10);
-    const fns = board(unseen).flights.map((f) => f.flight_number);
-    expect(fns).not.toContain("UA100");
-    expect(fns).toContain("UA5212");
+  test("a past date names the plane that flew", () => {
+    const yesterday = departureLocalDate("SFO", at(-1, 16));
+    const r = row(board(yesterday), "UA5212");
+    expect(r.assignment?.past).toBe(true);
+    expect(r.assignment?.label).toContain("flew on N222UA");
   });
 
-  test("no flight history means no percentage", () => {
+  test("a weekday missing from the log is listed last, never dropped", () => {
+    const unseen = departureLocalDate("SFO", at(6));
+    const b = board(unseen);
+    const r = row(b, "UA100");
+    expect(r.operates_on_date).toBe(false);
+    const seenOrUnknown = b.flights.filter((f) => f.established && f.operates_on_date !== false);
+    const idx = b.flights.indexOf(r);
+    for (const f of seenOrUnknown) expect(b.flights.indexOf(f)).toBeLessThan(idx);
+  });
+
+  test("a one-off sighting is marked and listed last", () => {
+    const b = board();
+    const r = row(b, "UA777");
+    expect(r.established).toBe(false);
+    expect(b.flights.at(-1)?.flight_number).toBe("UA777");
+  });
+
+  test("times carry no zone name, so a date across DST can't mislabel them", () => {
+    const winter = isoDateDaysAgo(-60, now);
+    for (const f of board(winter).flights) {
+      if (f.typical_departure) expect(f.typical_departure).not.toMatch(/[PMCE][DS]T/);
+    }
+  });
+
+  test("few draws give the type share, not a history percentage", () => {
     for (const f of board().flights) {
+      if (f.basis === "aircraft_type") expect(f.enough_history).toBe(false);
       if ((f.n_observations ?? 0) < ROUTE_BOARD_MIN_OBSERVATIONS) {
         expect(f.enough_history).toBe(false);
-        expect(f.odds_label).toBe("Not enough history");
       }
+    }
+  });
+
+  test("the page lists each board number once and no older sections", async () => {
+    const body = await (await page("/route-planner/SFO/ORD", UA, sapp)).text();
+    for (const fn of ["UA100", "UA5212", "UA777"]) {
+      expect(body.match(new RegExp(`href="/check-flight/${fn}"`, "g"))?.length, fn).toBe(1);
     }
   });
 

@@ -1,35 +1,46 @@
 /**
  * "Every flight on this route": the nonstop board behind the route pages, the
  * planner and GET /api/route-flights. For each marketed number seen on a pair
- * recently it states the Starlink odds the flight's own check-flight answer
- * gives (same predictor, same number), when it usually leaves, what it usually
- * flies, and the tail already assigned when one is.
+ * recently it gives that leg's Starlink odds (the same answer /api/check-flight
+ * gives scoped to the leg), when it leaves, what it flies on this leg, and the
+ * plane already assigned when there is one.
  *
- * Served from the DB only. The odds are per flight number, never a promise;
- * the board's one-line note says so once, not every row.
+ * Served from the DB only. The odds are a forecast, never a promise; the
+ * board's one-line note says so once, not every row.
  */
 
 import { aircraftName } from "../airlines/aircraft-families";
 import type { AirlineConfig } from "../airlines/registry";
-import { probLabel, zonedDeparture, zonedIsoDate } from "../components/ui/format";
+import {
+  probLabel,
+  zonedClock,
+  zonedDeparture,
+  zonedIsoDate,
+  zonedMinutes,
+  zonedWeekday,
+} from "../components/ui/format";
 import type { ScopedReader } from "../database/reader";
 import type { RouteFlightLeg } from "../database/route-flights";
-import { DAY_SEC, DEPARTURE_WINDOW_SEC, unixNow } from "../database/sql/windows";
-import { carrierPrediction, predictFlight } from "../scripts/starlink-predictor";
+import {
+  DAY_SEC,
+  DEPARTURE_WINDOW_SEC,
+  ROUTE_RECENT_SEC,
+  isoDateDaysAgo,
+  unixNow,
+} from "../database/sql/windows";
+import { LEG_MIN_DRAWS, carrierPrediction, predictLeg } from "../scripts/starlink-predictor";
 import { airportTimezone, flightDateWindow, isRealIsoDate } from "../utils/airport-tz";
 import { verdictSummary } from "./check-flight-core";
 
-/** Below this many observed draws a flight's percentage is mostly the prior. */
-export const ROUTE_BOARD_MIN_OBSERVATIONS = 3;
+/** Below this many draws on the leg, its odds are the share of its aircraft types. */
+export const ROUTE_BOARD_MIN_OBSERVATIONS = LEG_MIN_DRAWS;
 
-/** "Recently" on a pair: the assignment log's own retention. Numbers last
- * seen longer ago are mostly schedule changes that now fly another pair. */
-export const ROUTE_BOARD_RECENT_DAYS = 7;
+/** Logged days a departure time needs before the board calls it usual. */
+const USUAL_TIME_DAYS = 3;
 
-/** Fewer logged days than this can't show that a weekday is missing. */
-const WEEKDAY_EVIDENCE_DAYS = 5;
-
-const MAX_TYPES = 3;
+/** A date the board answers for: yesterday through the booking horizon. */
+const DATE_PAST_DAYS = 1;
+const DATE_AHEAD_DAYS = 330;
 
 export type AssignedStarlink = "verified" | "listed" | "none";
 
@@ -40,32 +51,38 @@ export interface RouteFlightAssignment {
   tail_number: string;
   aircraft_type: string | null;
   starlink: AssignedStarlink;
-  /** "Thu Oct 9 · N37525 · Starlink"; `starlink` says verified or listed. */
+  /** Already departed: the plane that flew, not one that will. */
+  past: boolean;
+  /** "Thu Oct 9 · N37525", or "Sat Oct 3 · flew on N37525". */
   label: string;
 }
 
 export interface RouteFlightRow {
   flight_number: string;
-  /** Most common recent local departure time at the origin, e.g. "6:30 AM PDT". */
+  /** Local clock time at the origin, no zone name: "8:15 AM". */
   typical_departure: string | null;
-  /** Weekdays it was seen departing ("Mon"…"Sun"), from logged departures. */
+  /** "usually 8:15 AM", "next 2:30 PM" or "last seen 2:30 PM". */
+  departure_label: string | null;
+  /** Weekdays it was seen departing on this leg ("Mon"…"Sun"). */
   weekdays: string[];
-  /** Departures behind typical_departure and weekdays. */
+  /** Days it was logged on this leg. */
   departures_logged: number;
-  /** With a date: seen on that weekday (true), seen only on others (false), unknown (null). */
+  /** Logged on this leg on two or more days; one-offs are listed last. */
+  established: boolean;
+  /** With a date: seen on that weekday (true), only on others (false, listed last), unknown (null). */
   operates_on_date: boolean | null;
   probability: number | null;
   n_observations: number | null;
   confidence: string | null;
-  /** "flight_history" for the per-flight predictor, "aircraft_type" for registry shares. */
+  /** "flight_history" from this leg's own draws, "aircraft_type" from type shares. */
   basis: "flight_history" | "aircraft_type";
   enough_history: boolean;
-  /** Short odds label for a table cell: "93%", "~100%", "Not enough history". */
+  /** The forecast: "93%", "~100%", "Not enough history". */
   odds_label: string;
-  /** Aircraft families it usually gets, most frequent first. */
+  /** Aircraft it flies on this leg, most frequent first. */
   aircraft_types: string[];
   assignment: RouteFlightAssignment | null;
-  /** The row in one line: odds, their basis, and the next assigned plane. */
+  /** The row in one line. */
   summary: string;
 }
 
@@ -75,35 +92,20 @@ export interface RouteFlightBoard {
   airline: string;
   date: string | null;
   weekday: string | null;
-  /** Any nonstop seen on the pair recently, before the date filter. */
+  /** Any nonstop seen on the pair recently. */
   nonstop: boolean;
   min_observations: number;
   flights: RouteFlightRow[];
   note: string;
 }
 
-const weekdayOf = (sec: number, zone: string | null | undefined) =>
-  zonedDeparture(sec, zone).day.split(",")[0];
-
-/** "6:30 AM PDT" → minutes after midnight, for ordering equal odds by time. */
-function clockMinutes(label: string | null): number {
-  const m = label?.match(/(\d{1,2}):(\d{2})\s*([AP])M/i);
-  if (!m) return Number.POSITIVE_INFINITY;
-  return ((Number(m[1]) % 12) + (m[3].toUpperCase() === "P" ? 12 : 0)) * 60 + Number(m[2]);
-}
-
-function mostCommon(values: readonly string[]): string | null {
-  const counts = new Map<string, number>();
-  for (const v of values) counts.set(v, (counts.get(v) ?? 0) + 1);
-  let best: string | null = null;
-  let bestN = 0;
-  for (const [v, n] of counts) {
-    if (n > bestN) {
-      best = v;
-      bestN = n;
-    }
-  }
-  return best;
+/** Yesterday through ~11 months out; anything else is a typo or a scrape. */
+export function routeBoardDateOk(date: string, nowSec = unixNow()): boolean {
+  if (!isRealIsoDate(date)) return false;
+  return (
+    date >= isoDateDaysAgo(DATE_PAST_DAYS, nowSec) &&
+    date <= isoDateDaysAgo(-DATE_AHEAD_DAYS, nowSec)
+  );
 }
 
 /** One leg per flight and local day: the tail seen last, so a swap replaces it. */
@@ -116,19 +118,22 @@ function latestPerDay(legs: readonly RouteFlightLeg[]): RouteFlightLeg[] {
   return [...best.values()].sort((a, b) => a.departure_time - b.departure_time);
 }
 
-function assignmentOf(leg: RouteFlightLeg, zone: string | undefined): RouteFlightAssignment {
+function assignmentOf(
+  leg: RouteFlightLeg,
+  zone: string | undefined,
+  nowSec: number
+): RouteFlightAssignment {
   const starlink: AssignedStarlink = leg.verified ? "verified" : leg.equipped ? "listed" : "none";
+  const past = leg.departure_time <= nowSec;
+  const day = `${zonedWeekday(leg.departure_time, zone)} ${zonedDeparture(leg.departure_time, zone).date}`;
   return {
     date: leg.dep_date,
     departure_time: leg.departure_time,
     tail_number: leg.tail_number,
     aircraft_type: leg.aircraft_type,
     starlink,
-    label: [
-      zonedDeparture(leg.departure_time, zone).day.replace(",", ""),
-      leg.tail_number,
-      starlink === "none" ? "No Starlink" : "Starlink",
-    ].join(" · "),
+    past,
+    label: past ? `${day} · flew on ${leg.tail_number}` : `${day} · ${leg.tail_number}`,
   };
 }
 
@@ -139,23 +144,39 @@ interface Odds {
   basis: RouteFlightRow["basis"];
   enough_history: boolean;
   odds_label: string;
-  sentence: string;
+  aircraft: string[] | null;
 }
 
+const NO_HISTORY: Odds = {
+  probability: null,
+  n_observations: 0,
+  confidence: null,
+  basis: "flight_history",
+  enough_history: false,
+  odds_label: "Not enough history",
+  aircraft: null,
+};
+
 /**
- * The odds a flight's own check-flight answer would give, read through
- * verdictSummary so the board and /api/check-flight cannot disagree.
+ * The leg's odds as /api/check-flight scoped to this origin and destination
+ * gives them (predictLeg through verdictSummary), or the carrier's type share
+ * where there is no flight-history model.
  */
-function flightOdds(
+function legOdds(
   cfg: AirlineConfig,
   reader: ScopedReader,
   flightNumber: string,
-  dateForWindow: string
+  origin: string,
+  destination: string,
+  windowDate: string,
+  nowSec: number
 ): Odds {
-  const window = flightDateWindow(dateForWindow);
-  if (!window) throw new Error(`invalid board date ${dateForWindow}`);
+  const window = flightDateWindow(windowDate, nowSec);
+  if (!window) return NO_HISTORY;
   if (cfg.flightHistoryModel) {
-    const pred = predictFlight(reader, flightNumber);
+    const leg = predictLeg(reader, flightNumber, origin, destination, nowSec);
+    if (!leg) return NO_HISTORY;
+    const { basis, aircraft, ...pred } = leg;
     const s = verdictSummary({
       kind: "prediction",
       window,
@@ -163,28 +184,23 @@ function flightOdds(
       pred,
       fr24Error: false,
     });
-    const n = s.observations ?? 0;
-    const enough = s.probability !== null && n >= ROUTE_BOARD_MIN_OBSERVATIONS;
+    const p = s.probability ?? leg.probability;
+    const history = basis === "leg_history";
     return {
-      probability: s.probability,
-      n_observations: n,
+      probability: p,
+      n_observations: s.observations,
       confidence: pred.confidence,
-      basis: "flight_history",
-      enough_history: enough,
-      odds_label:
-        enough && s.probability !== null ? probLabel(s.probability) : "Not enough history",
-      sentence:
-        enough && s.probability !== null
-          ? `${probLabel(s.probability)} Starlink odds from ${n} flights.`
-          : `Not enough history (${n} flight${n === 1 ? "" : "s"}).`,
+      basis: history ? "flight_history" : "aircraft_type",
+      enough_history: history,
+      odds_label: history ? probLabel(p) : `~${probLabel(p)}`,
+      aircraft,
     };
   }
-  const answer = carrierPrediction(cfg, reader, flightNumber);
   const s = verdictSummary({
     kind: "no_model",
     window,
     normalized: flightNumber,
-    answer,
+    answer: carrierPrediction(cfg, reader, flightNumber),
     fr24Error: false,
   });
   return {
@@ -194,11 +210,47 @@ function flightOdds(
     basis: "aircraft_type",
     enough_history: s.probability !== null,
     odds_label: s.probability === null ? "Depends on aircraft" : `~${probLabel(s.probability)}`,
-    sentence:
-      s.probability === null
-        ? "Starlink depends on the aircraft type."
-        : `~${probLabel(s.probability)} Starlink odds by aircraft type.`,
+    aircraft: null,
   };
+}
+
+/** Display names of the types logged on the leg, most frequent first. */
+function loggedTypes(days: readonly RouteFlightLeg[]): string[] {
+  const counts = new Map<string, number>();
+  for (const d of days) {
+    if (!d.aircraft_type) continue;
+    const name = aircraftName(d.aircraft_type);
+    counts.set(name, (counts.get(name) ?? 0) + 1);
+  }
+  return [...counts]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, 3)
+    .map(([name]) => name);
+}
+
+/** What a row is ranked on: the assigned plane when there is one, else the odds. */
+function rankOdds(r: RouteFlightRow): number {
+  const a = r.assignment;
+  if (a && !a.past) return a.starlink === "none" ? 0 : 1;
+  return r.probability ?? -1;
+}
+
+/** Listed first to last: regulars, flights not seen on the asked weekday, one-offs. */
+function rankGroup(r: RouteFlightRow): number {
+  if (!r.established) return 2;
+  return r.operates_on_date === false ? 1 : 0;
+}
+
+function summaryOf(r: Omit<RouteFlightRow, "summary">): string {
+  const odds =
+    r.probability === null
+      ? `${r.odds_label}.`
+      : r.basis === "flight_history"
+        ? `${r.odds_label} Starlink odds from ${r.n_observations} tracked flights.`
+        : `${r.odds_label} Starlink odds by aircraft type.`;
+  const a = r.assignment;
+  if (!a) return odds;
+  return `${odds} ${a.label} · ${a.starlink === "none" ? "No Starlink" : "Starlink"}.`;
 }
 
 export function buildRouteFlightBoard(
@@ -209,63 +261,67 @@ export function buildRouteFlightBoard(
   opts: { date?: string | null; nowSec?: number } = {}
 ): RouteFlightBoard {
   const nowSec = opts.nowSec ?? unixNow();
-  const date = opts.date && isRealIsoDate(opts.date) ? opts.date : null;
+  const date = opts.date && routeBoardDateOk(opts.date, nowSec) ? opts.date : null;
   const zone = airportTimezone(origin);
-  const weekday = date ? weekdayOf(Date.parse(`${date}T12:00:00Z`) / 1000, "UTC") : null;
+  const weekday = date ? zonedWeekday(Date.parse(`${date}T12:00:00Z`) / 1000, "UTC") : null;
 
   const legsByFlight = new Map<string, RouteFlightLeg[]>();
-  for (const l of reader.getRouteFlightLegs(origin, destination)) {
+  for (const l of reader.getRouteFlightLegs(origin, destination, nowSec)) {
     const list = legsByFlight.get(l.flight_number);
     if (list) list.push(l);
     else legsByFlight.set(l.flight_number, [l]);
   }
 
-  // Recent = in the live schedule, logged this week, or sighted in the route
-  // cache within the same week of the airline's newest observation.
+  // Recent = logged this week or in the live schedule, or sighted in the
+  // route cache within the week before the airline's newest observation.
   const anchor = reader.getObservationAnchor() || nowSec;
   const lastSeen = reader.getRouteFlightLastSeen(origin, destination);
-  const numbers = new Set<string>(legsByFlight.keys());
+  const sightings = new Map<string, number>();
   for (const f of reader.getRouteFlightNumbers(origin, destination).flightNumbers) {
-    const seen = lastSeen.get(f.flight_number) ?? 0;
-    if (f.scheduled === 1 || anchor - seen <= ROUTE_BOARD_RECENT_DAYS * DAY_SEC) {
-      numbers.add(f.flight_number);
+    if (f.scheduled === 1 || anchor - (lastSeen.get(f.flight_number) ?? 0) <= ROUTE_RECENT_SEC) {
+      sightings.set(f.flight_number, f.times);
     }
   }
+  const numbers = new Set<string>([...legsByFlight.keys(), ...sightings.keys()]);
 
-  const today = zone
-    ? zonedIsoDate(nowSec, zone)
-    : new Date(nowSec * 1000).toISOString().slice(0, 10);
-  const rows: Array<RouteFlightRow & { sortMinutes: number }> = [];
+  const today = zone ? zonedIsoDate(nowSec, zone) : isoDateDaysAgo(0, nowSec);
+  const rows: Array<RouteFlightRow & { minutes: number }> = [];
   for (const fn of numbers) {
     const days = latestPerDay(legsByFlight.get(fn) ?? []);
-    const departed = days.filter((d) => d.departure_time <= nowSec);
-    const timed = departed.length > 0 ? departed : days;
-    const typical = mostCommon(timed.map((d) => zonedDeparture(d.departure_time, zone).time));
-    const weekdays = [...new Set(days.map((d) => weekdayOf(d.departure_time, zone)))];
-    const operates =
-      weekday === null || days.length === 0
-        ? null
-        : weekdays.includes(weekday)
-          ? true
-          : days.length >= WEEKDAY_EVIDENCE_DAYS
-            ? false
-            : null;
-    if (operates === false) continue;
+    const upcoming = days.find((d) => d.departure_time > nowSec);
+    const newest = upcoming ?? days.at(-1);
+    const clock = newest ? zonedClock(newest.departure_time, zone) : null;
+    const departureLabel = !newest
+      ? null
+      : days.length >= USUAL_TIME_DAYS
+        ? `usually ${clock}`
+        : newest.departure_time > nowSec
+          ? `next ${clock}`
+          : `last seen ${clock}`;
+    const weekdays = [...new Set(days.map((d) => zonedWeekday(d.departure_time, zone)))];
+    const operates = weekday === null || days.length === 0 ? null : weekdays.includes(weekday);
 
-    const types = mostCommonList(days.map((d) => d.aircraft_type).filter(Boolean) as string[]);
-    const upcoming = date
+    const shown = date
       ? days.find((d) => d.dep_date === date)
       : days.find(
           (d) => d.departure_time > nowSec && d.departure_time <= nowSec + DEPARTURE_WINDOW_SEC
         );
-    const assignment = upcoming ? assignmentOf(upcoming, zone) : null;
-
-    const odds = flightOdds(cfg, reader, fn, date ?? today);
-    rows.push({
+    const assignment = shown ? assignmentOf(shown, zone, nowSec) : null;
+    const odds = legOdds(cfg, reader, fn, origin, destination, date ?? today, nowSec);
+    const row: Omit<RouteFlightRow, "summary"> = {
       flight_number: fn,
-      typical_departure: typical,
+      typical_departure: clock,
+      departure_label: departureLabel,
       weekdays,
       departures_logged: days.length,
+      // Two logged days, or a leg history (ADS-B included) that a one-off
+      // can't build. The route cache's count only speaks for a number the log
+      // never caught: it re-stamps one departure many times.
+      established:
+        days.length >= 2 ||
+        (odds.basis === "flight_history" &&
+          (odds.n_observations ?? 0) >= ROUTE_BOARD_MIN_OBSERVATIONS) ||
+        (days.length === 0 && (sightings.get(fn) ?? 0) >= 2),
       operates_on_date: operates,
       probability: odds.probability,
       n_observations: odds.n_observations,
@@ -273,43 +329,40 @@ export function buildRouteFlightBoard(
       basis: odds.basis,
       enough_history: odds.enough_history,
       odds_label: odds.odds_label,
-      aircraft_types: types,
+      aircraft_types: odds.aircraft ?? loggedTypes(days),
       assignment,
-      summary: assignment ? `${odds.sentence} Next: ${assignment.label}.` : odds.sentence,
-      sortMinutes: clockMinutes(typical),
+    };
+    rows.push({
+      ...row,
+      summary: summaryOf(row),
+      minutes: newest ? zonedMinutes(newest.departure_time, zone) : DAY_SEC,
     });
   }
 
   rows.sort(
     (a, b) =>
-      Number(b.enough_history) - Number(a.enough_history) ||
-      (b.probability ?? -1) - (a.probability ?? -1) ||
-      a.sortMinutes - b.sortMinutes ||
+      rankGroup(a) - rankGroup(b) ||
+      rankOdds(b) - rankOdds(a) ||
+      a.minutes - b.minutes ||
       a.flight_number.localeCompare(b.flight_number)
   );
 
+  const bases = new Set(rows.map((r) => r.basis));
+  const source =
+    bases.size === 2
+      ? "recent flights and aircraft type"
+      : bases.has("aircraft_type")
+        ? "aircraft type"
+        : "recent flights";
   return {
     origin,
     destination,
-    airline: cfg.name,
+    airline: cfg.shortName,
     date,
     weekday,
     nonstop: numbers.size > 0,
     min_observations: ROUTE_BOARD_MIN_OBSERVATIONS,
-    flights: rows.map(({ sortMinutes: _, ...r }) => r),
-    note: `Odds come from ${cfg.flightHistoryModel ? "recent flights" : "aircraft type"}. Planes can be swapped before departure.`,
+    flights: rows.map(({ minutes: _, ...r }) => r),
+    note: `Odds come from ${source}. Planes can be swapped before departure.`,
   };
-}
-
-/** Distinct display names, most frequent first. */
-function mostCommonList(raw: readonly string[]): string[] {
-  const counts = new Map<string, number>();
-  for (const r of raw) {
-    const name = aircraftName(r);
-    counts.set(name, (counts.get(name) ?? 0) + 1);
-  }
-  return [...counts]
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-    .slice(0, MAX_TYPES)
-    .map(([name]) => name);
 }
