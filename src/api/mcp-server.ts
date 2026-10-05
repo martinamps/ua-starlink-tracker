@@ -44,6 +44,7 @@ import { inLookupWindow, lookupWindowPosition, unixNow } from "../database/sql/w
 import {
   COUNTERS,
   DISTRIBUTIONS,
+  classifyMcpClient,
   mcpClientTags,
   metrics,
   normalizeScopeTag,
@@ -89,6 +90,7 @@ import {
   recordUntrackedLookup,
   resolveFlightVerdict,
   verdictAssignment,
+  verdictConfidence,
   verdictTelemetry,
   wifiLabel,
   withLeg,
@@ -279,7 +281,7 @@ function buildTools(scope: Scope) {
   const tools = [
     {
       name: "check_flight",
-      description: `Use when the user asks "does my flight have Starlink/WiFi?" with a specific ${carrierAdj} flight number and date. Returns FIRM YES if assigned to a verified-Starlink plane, FIRM NO if assigned to a verified non-Starlink plane, or a probability estimate if no assignment exists yet (assignments publish ~2 days out). For dates further out, call predict_flight_starlink directly — check_flight just falls through to the same estimate with extra latency.`,
+      description: `Use when the user asks "does my flight have Starlink/WiFi?" with a specific ${carrierAdj} flight number and date. Returns YES if the published aircraft assignment is a plane verified to have Starlink, LIKELY YES if that plane is listed as Starlink-equipped but not yet verified, NO if it is a plane verified to have other WiFi, or a probability estimate if no assignment exists yet (assignments publish ~2 days out). An assignment can still change through an aircraft swap. For dates further out, call predict_flight_starlink directly — check_flight just falls through to the same estimate with extra latency.`,
       inputSchema: {
         type: "object",
         properties: {
@@ -410,7 +412,7 @@ function buildTools(scope: Scope) {
             minimum: 1,
             maximum: 20,
             description:
-              "Maximum number of full-coverage itineraries (default 8). Up to 3 partial baselines may be appended.",
+              "Maximum number of itineraries with a Starlink-flown flight on every leg (default 8). Up to 3 partial baselines may be appended.",
             examples: [8],
           },
           date: {
@@ -462,8 +464,9 @@ function buildTools(scope: Scope) {
     {
       name: "search_starlink_flights",
       description:
-        'Use when the user asks "what Starlink flights leave from X tomorrow?" or wants confirmed near-term departures. ' +
-        "Returns CONFIRMED Starlink flights in the next ~2 days — firm schedule, not prediction. " +
+        'Use when the user asks "what Starlink flights leave from X tomorrow?" or wants scheduled near-term departures. ' +
+        "Returns flights in the next ~2 days whose currently assigned aircraft is Starlink-equipped (verified or listed) — " +
+        "a published assignment, not a prediction, though an aircraft swap can still change it. " +
         "Pass at least one of origin or destination (both narrows to a single route). " +
         "Aircraft assignments aren't published further out, so for later dates use " +
         "predict_route_starlink or plan_starlink_itinerary instead.",
@@ -502,7 +505,7 @@ const TOOL_TITLES: Record<string, string> = {
   predict_flight_starlink: "Predict flight Starlink odds",
   plan_starlink_itinerary: "Plan a Starlink itinerary",
   predict_route_starlink: "Starlink odds by route",
-  search_starlink_flights: "Search confirmed Starlink flights",
+  search_starlink_flights: "Search scheduled Starlink flights",
 };
 
 // Only these two can reach FR24 (lookupFlightRoutes / the tail lookup); the
@@ -786,9 +789,13 @@ export async function renderCheckFlightVerdict(
     // fallback that /api/check-flight uses (disabled on the hub for both, see
     // toolCheckFlight), so MCP and the extension API converge per host.
     case "fr24": {
+      const lead =
+        verdictConfidence(verdict) === "verified"
+          ? `✈️ Yes! Flight ${legSubject(verdict)} on ${date} is assigned to a verified Starlink aircraft (via live tail lookup):`
+          : `Likely yes — ${legSubject(verdict)} on ${date} is assigned to a Starlink-listed aircraft not yet verified against ${cfg.verifySite} (via live tail lookup):`;
       return textResult(
         withLegNote(
-          `✈️ Yes! Flight ${legSubject(verdict)} on ${date} is assigned to a Starlink aircraft (via live tail lookup):\n\n${verdict.starlink.map(renderSeg).join("\n")}\n\nStarlink WiFi is free on all equipped ${cfg.shortName} flights.`,
+          `${lead}\n\n${verdict.starlink.map(renderSeg).join("\n")}\n\nStarlink WiFi is free on all equipped ${cfg.shortName} flights.`,
           verdict
         )
       );
@@ -1636,7 +1643,7 @@ function toolPlanStarlinkItinerary(
         ? "otherwise advise booking the nonstop — no Starlink routing meaningfully improves odds on mainline-only routes"
         : "otherwise advise the fastest United connection — there is no nonstop to fall back on";
     return textResult(
-      `${headline}${baselineLine ? `\n\n${baselineLine}` : ""}\n\nNo reasonable path through the Starlink route graph connects these airports. This may be a mainline-only route, where fleet-wide coverage is much lower than on express.\n\n**Fallbacks**: (1) \`search_starlink_flights\` with just \`destination="${dest}"\` or \`origin="${orig}"\` — confirmed near-term assignments may exist even when historical probability is low; (2) if the user has a specific flight, \`predict_flight_starlink\` for a per-flight estimate; (3) ${lastResort}.`
+      `${headline}${baselineLine ? `\n\n${baselineLine}` : ""}\n\nNo reasonable path through the Starlink route graph connects these airports. This may be a mainline-only route, where fleet-wide coverage is much lower than on express.\n\n**Fallbacks**: (1) \`search_starlink_flights\` with just \`destination="${dest}"\` or \`origin="${orig}"\` — near-term assignments to Starlink aircraft may exist even when historical probability is low; (2) if the user has a specific flight, \`predict_flight_starlink\` for a per-flight estimate; (3) ${lastResort}.`
     );
   }
 
@@ -1659,7 +1666,7 @@ function toolPlanStarlinkItinerary(
     const fleetTag = inferSubfleet(cfg, leg.flight_number) === "mainline" ? " [Mainline]" : "";
     const dur = leg.duration_hours !== null ? ` ~${fmtHours(leg.duration_hours)}` : "";
     const tag = leg.confirmed
-      ? "(confirmed near-term assignment)"
+      ? "(assigned to a Starlink-equipped tail)"
       : confidenceTag(leg.n_observations, leg.confidence);
     return `${leg.flight_number}${fleetTag} (${leg.route}${dur}) — ${pct}% ${tag}`;
   };
@@ -1701,7 +1708,7 @@ function toolPlanStarlinkItinerary(
 
   const sections: string[] = [];
   if (fullItins.length > 0) {
-    sections.push(`**Full Starlink coverage**:
+    sections.push(`**Starlink flight on every leg** (predicted odds per leg, not a guarantee):
 
 ${fullItins.map(renderItin).join("\n\n")}`);
   }
@@ -2027,7 +2034,7 @@ function toolSearchStarlinkFlights(
   if (total === 0) {
     const routeDesc = origin && destination ? `${origin}→${destination}` : origin || destination;
     return textResult(
-      `No confirmed Starlink flights found for ${routeDesc} in the next ~2 days.\n\nNote: this tool only sees confirmed assignments through ~${dataHorizon}. If you need dates beyond that, use predict_route_starlink or plan_starlink_itinerary for probability-based planning instead — absence from this tool does NOT mean no Starlink.`
+      `No scheduled Starlink flights found for ${routeDesc} in the next ~2 days.\n\nNote: this tool only sees published aircraft assignments through ~${dataHorizon}. If you need dates beyond that, use predict_route_starlink or plan_starlink_itinerary for probability-based planning instead — absence from this tool does NOT mean no Starlink.`
     );
   }
 
@@ -2045,7 +2052,7 @@ function toolSearchStarlinkFlights(
 
   const routeDesc = origin && destination ? `${origin}→${destination}` : origin || destination;
   return textResult(
-    `Found ${total} confirmed Starlink flight${total === 1 ? "" : "s"} for ${routeDesc} (showing ${shown.length}):\n\n${lines.join("\n")}\n\nSchedule data extends through ~${dataHorizon}. For dates beyond that, use predict_route_starlink or plan_starlink_itinerary.`
+    `Found ${total} scheduled Starlink flight${total === 1 ? "" : "s"} for ${routeDesc} (showing ${shown.length}):\n\n${lines.join("\n")}\n\nScheduled = the currently assigned aircraft is Starlink-equipped (verified or listed); an aircraft swap can still change it. Schedule data extends through ~${dataHorizon}. For dates beyond that, use predict_route_starlink or plan_starlink_itinerary.`
   );
 }
 
@@ -2134,7 +2141,7 @@ Tool selection:
 • Routing/tradeoff → plan_starlink_itinerary (${planner ? "multi-stop, coverage ratio" : scope === "ALL" ? "per-airline nonstop comparison" : "nonstop odds by aircraft type"})
 • Specific flight number → check_flight (≤2 days out) or predict_flight_starlink (further out, pass date)
 ${scope === "ALL" ? HUB_LOOKUP_INSTRUCTION : ""}• Route without flight number → predict_route_starlink
-• search_starlink_flights = next ~2 days confirmed only
+• search_starlink_flights = next ~2 days, published assignments only
 ${
   embedsAlternatives
     ? `
@@ -2150,13 +2157,15 @@ function recordMcpToolCall(
   tool: string,
   scope: Scope,
   outcome: "success" | "error" | "unknown_tool",
-  startMs: number
+  startMs: number,
+  clientClass: string
 ): void {
   // Bound the `tool` tag — /mcp is public and `params.name` is caller-controlled.
   const tags = {
     tool: TOOL_NAMES.includes(tool) ? tool : "unknown",
     airline: normalizeScopeTag(scope),
     outcome,
+    client_class: clientClass,
   };
   metrics.increment(COUNTERS.MCP_TOOL_CALL, tags);
   // unknown_tool durations are just switch overhead — meaningless distribution noise.
@@ -2170,7 +2179,8 @@ async function handleToolsCall(
   getReader: GetReader,
   scope: Scope,
   id: string | number | null,
-  params: Record<string, unknown> | undefined
+  params: Record<string, unknown> | undefined,
+  clientClass: string
 ): Promise<JsonRpcResponse> {
   const toolName = typeof params?.name === "string" ? params.name : undefined;
   const args = (params?.arguments as Record<string, unknown>) || {};
@@ -2205,7 +2215,7 @@ async function handleToolsCall(
         result = toolSearchStarlinkFlights(reader, args);
         break;
       default: {
-        recordMcpToolCall(toolName, scope, "unknown_tool", startMs);
+        recordMcpToolCall(toolName, scope, "unknown_tool", startMs, clientClass);
         const suggestion = suggestTool(toolName);
         const hint = suggestion ? ` Did you mean "${suggestion}"?` : "";
         return rpcError(
@@ -2216,11 +2226,11 @@ async function handleToolsCall(
       }
     }
   } catch (err) {
-    recordMcpToolCall(toolName, scope, "error", startMs);
+    recordMcpToolCall(toolName, scope, "error", startMs, clientClass);
     throw err;
   }
 
-  recordMcpToolCall(toolName, scope, result.isError ? "error" : "success", startMs);
+  recordMcpToolCall(toolName, scope, result.isError ? "error" : "success", startMs, clientClass);
   return rpcResult(id, result);
 }
 
@@ -2229,7 +2239,8 @@ async function dispatch(
   getReader: GetReader,
   scope: Scope,
   hostScope: Scope,
-  msg: JsonRpcRequest
+  msg: JsonRpcRequest,
+  clientClass: string
 ): Promise<JsonRpcResponse | null> {
   const id = msg.id ?? null;
   const isNotification = msg.id === undefined;
@@ -2244,7 +2255,7 @@ async function dispatch(
     case "tools/list":
       return rpcResult(id, { tools: buildTools(scope) });
     case "tools/call":
-      return handleToolsCall(reader, getReader, scope, id, msg.params);
+      return handleToolsCall(reader, getReader, scope, id, msg.params, clientClass);
     default:
       if (isNotification) return null;
       return rpcError(id, -32601, `Method not found: ${msg.method}`);
@@ -2295,7 +2306,14 @@ export async function handleMcpRequest(
 
   let response: JsonRpcResponse | null;
   try {
-    response = await dispatch(reader, getReader, scope, hostScope, msg);
+    response = await dispatch(
+      reader,
+      getReader,
+      scope,
+      hostScope,
+      msg,
+      classifyMcpClient(req.headers.get("user-agent"))
+    );
   } catch (err) {
     // The detail stays in the log: an exception message can carry SQL or paths.
     logError(`MCP handler error in ${msg.method}`, err);

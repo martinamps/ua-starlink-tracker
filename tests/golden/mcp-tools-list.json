@@ -5,7 +5,7 @@
     "tools": [
       {
         "name": "check_flight",
-        "description": "Use when the user asks \"does my flight have Starlink/WiFi?\" with a specific United Airlines flight number and date. Returns FIRM YES if assigned to a verified-Starlink plane, FIRM NO if assigned to a verified non-Starlink plane, or a probability estimate if no assignment exists yet (assignments publish ~2 days out). For dates further out, call predict_flight_starlink directly — check_flight just falls through to the same estimate with extra latency.",
+        "description": "Use when the user asks \"does my flight have Starlink/WiFi?\" with a specific United Airlines flight number and date. Returns YES if the published aircraft assignment is a plane verified to have Starlink, LIKELY YES if that plane is listed as Starlink-equipped but not yet verified, NO if it is a plane verified to have other WiFi, or a probability estimate if no assignment exists yet (assignments publish ~2 days out). An assignment can still change through an aircraft swap. For dates further out, call predict_flight_starlink directly — check_flight just falls through to the same estimate with extra latency.",
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -163,7 +163,7 @@
               "type": "integer",
               "minimum": 1,
               "maximum": 20,
-              "description": "Maximum number of full-coverage itineraries (default 8). Up to 3 partial baselines may be appended.",
+              "description": "Maximum number of itineraries with a Starlink-flown flight on every leg (default 8). Up to 3 partial baselines may be appended.",
               "examples": [8]
             },
             "date": {
@@ -240,7 +240,7 @@
       },
       {
         "name": "search_starlink_flights",
-        "description": "Use when the user asks \"what Starlink flights leave from X tomorrow?\" or wants confirmed near-term departures. Returns CONFIRMED Starlink flights in the next ~2 days — firm schedule, not prediction. Pass at least one of origin or destination (both narrows to a single route). Aircraft assignments aren't published further out, so for later dates use predict_route_starlink or plan_starlink_itinerary instead.",
+        "description": "Use when the user asks \"what Starlink flights leave from X tomorrow?\" or wants scheduled near-term departures. Returns flights in the next ~2 days whose currently assigned aircraft is Starlink-equipped (verified or listed) — a published assignment, not a prediction, though an aircraft swap can still change it. Pass at least one of origin or destination (both narrows to a single route). Aircraft assignments aren't published further out, so for later dates use predict_route_starlink or plan_starlink_itinerary instead.",
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -272,9 +272,9 @@
             }
           ]
         },
-        "title": "Search confirmed Starlink flights",
+        "title": "Search scheduled Starlink flights",
         "annotations": {
-          "title": "Search confirmed Starlink flights",
+          "title": "Search scheduled Starlink flights",
           "readOnlyHint": true,
           "destructiveHint": false,
           "idempotentHint": true,

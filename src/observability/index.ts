@@ -27,6 +27,7 @@ export {
   normalizeExtVersion,
   requestClientTags,
   mcpClientTags,
+  classifyMcpClient,
   bucketDaysOut,
   normalizeLegMatch,
   normalizeLegReason,

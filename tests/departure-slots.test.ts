@@ -292,7 +292,7 @@ describe("a tail swap onto a non-Starlink tail removes the departure", () => {
       origin: "LNK",
       destination: "DEN",
     });
-    expect(text).toMatch(/^Found 1 confirmed Starlink flight /);
+    expect(text).toMatch(/^Found 1 scheduled Starlink flight /);
     expect(text).not.toContain("UA5763");
   });
 

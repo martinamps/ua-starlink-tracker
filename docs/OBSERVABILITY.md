@@ -76,7 +76,21 @@ All metrics are prefixed with `starlink.` for easy filtering in Datadog.
 | `starlink.verification.check` | `result:success\|error` | Verification attempt |
 | `starlink.verification.mismatch` | - | Spreadsheet/United.com WiFi mismatch |
 | `starlink.vendor.request` | `vendor:flightaware\|fr24\|united`, `type:flights\|fleet\|verification`, `status:success\|rate_limited\|error` | External API call |
-| `starlink.http.request` | `method`, `route`, `status_code`, `tenant`, `client_class` | HTTP request served (`route` is the matched route-table entry, or `unmatched`) |
+| `starlink.http.request` | `method`, `route`, `status_code`, `tenant`, `client_class`, `ext_version` (extension only) | HTTP request served (`route` is the matched route-table entry, or `unmatched`) |
+| `starlink.http.rate_limited` | `route`, `tenant`, `airline`, `bucket:api\|mcp\|page`, `client_class`, `ext_version` (extension only) | Per-IP limiter returned a 429 (also counted in `http.request` as `status_code:429`) |
+| `starlink.mcp.tool_call` | `tool`, `airline`, `outcome:success\|error\|unknown_tool`, `client_class` (MCP enum below) | MCP tool dispatched; `starlink.mcp.tool_duration_ms` carries the same tags |
+
+### Client tags
+
+`client_class` is always a fixed enum, never the raw user agent:
+
+- **HTTP metrics** (`classifyRequest`): `extension`, `other-extension`, the named crawlers (`claude`, `googlebot`, `bingbot`, …), `bot`, `browser`, `unknown`.
+- **MCP tool metrics** (`classifyMcpClient`): `claude`, `chatgpt` (includes Codex), `cursor`, `vscode`, `bot`, `other`, `unknown`. MCP here is stateless, so tool calls carry no `clientInfo`; the user agent is the only signal.
+- **`ext_version`** rides along only with `client_class:extension`, from the extension's `client=ext-<version>` param: `1.x`, `2.0`, `2.1`, `2.x` (2.2+), `other`, `none` (pre-2.0.1 builds, which sent no param). Graph adoption with `sum:starlink.http.request{client_class:extension} by {ext_version}`.
+
+### Rate-limit log
+
+Each 429 also writes a `warn` line, message `rate limited`, carrying the `http.rate_limited` tags plus `suppressed`. It's throttled to one line per distinct tag set per minute; `suppressed` counts the 429s folded into that line since the previous one. IPs and raw user agents are never logged.
 
 ### Route Tag Cardinality (`http.request` and friends)
 

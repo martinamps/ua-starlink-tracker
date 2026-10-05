@@ -438,7 +438,7 @@ describe("MCP tools", () => {
       arguments: { origin: "OR" },
     });
     const text = json.result.content[0].text;
-    expect(text).toContain("No confirmed Starlink flights");
+    expect(text).toContain("No scheduled Starlink flights");
   });
 
   test("check_flight: rejects 5-digit flight numbers (REST 400s too — see core tests)", async () => {

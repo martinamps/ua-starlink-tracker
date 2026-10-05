@@ -1864,7 +1864,7 @@
         "content": [
           {
             "type": "text",
-            "text": "✈️ Yes! Flight UA1005 on 2026-09-20 is assigned to a Starlink aircraft (via live tail lookup):\n\n- UA1005 (IAH→DEN) on Boeing 737-800 tail N3001 — tracked as Starlink (unverified). Departs 2026-09-20T14:00:00.000Z.\n\nStarlink WiFi is free on all equipped United flights."
+            "text": "Likely yes — UA1005 on 2026-09-20 is assigned to a Starlink-listed aircraft not yet verified against united.com (via live tail lookup):\n\n- UA1005 (IAH→DEN) on Boeing 737-800 tail N3001 — tracked as Starlink (unverified). Departs 2026-09-20T14:00:00.000Z.\n\nStarlink WiFi is free on all equipped United flights."
           }
         ]
       }

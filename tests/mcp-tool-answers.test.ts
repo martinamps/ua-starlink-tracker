@@ -165,7 +165,7 @@ describe("search_starlink_flights", () => {
     const as = await call("AS", "search_starlink_flights", { origin: "SAN" });
     expect(as.text).toContain("AS3292 SAN→AUS");
     expect(as.text).not.toContain("OO3292");
-    expect(as.text).toMatch(/^Found 1 confirmed Starlink flight for/);
+    expect(as.text).toMatch(/^Found 1 scheduled Starlink flight for/);
     const ha = await call("HA", "search_starlink_flights", { origin: "GUM" });
     expect(ha.text).toContain("AS9917 GUM→CRK");
     expect(ha.text).not.toContain("ASA9917");
