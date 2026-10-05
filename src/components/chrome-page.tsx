@@ -129,17 +129,19 @@ const AIRLINES_COVERED: Airline[] = [
   { name: "Qatar Airways", v2: true },
 ];
 
+// /static/ is edge-cached for a day under its name, so a recropped image
+// ships under a new filename rather than over the old one.
 const SCREENSHOT_W = "505";
 
 const SCREENSHOTS = [
   {
-    src: "/static/chrome-united-predicted.webp",
+    src: "/static/chrome-odds-united.webp",
     height: "300",
     alt: "Four Denver to Aspen United Express flights ten days out, marked with gray odds badges: Starlink ~95%, ~94%, ~98% and ~96%.",
     caption: "Booking ahead: gray badges show the odds before a plane is assigned.",
   },
   {
-    src: "/static/chrome-alaska-installed.webp",
+    src: "/static/chrome-installed-alaska.webp",
     height: "598",
     alt: "Seattle to Portland results: a Horizon-operated and a SkyWest-operated Alaska flight carry a green 'Starlink (installed)' badge; other Alaska and Delta flights have none.",
     caption: "Alaska and Horizon: green badges for aircraft with Starlink installed.",
@@ -275,7 +277,7 @@ export default function ChromePage({
       <figure className="relative mx-auto mb-10 w-full max-w-3xl">
         <Screenshot
           eager
-          src="/static/chrome-united-verified.webp"
+          src="/static/chrome-badges-united.webp"
           height="598"
           alt="Chicago O'Hare to Madison results: five United and United Express flights carry a blue 'Starlink' badge next to the departure time; the American flights and one United flight have none."
         />
