@@ -129,7 +129,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     status: "installing",
     statusLabel: "Installing",
     summary:
-      "450 aircraft equipped per United's Q2 2026 release; targeting close to 1,000 by the end of 2026 and the full fleet by the end of 2027.",
+      "Starlink active on more than 560 aircraft per United's September 2026 release; targeting close to 1,000 by the end of 2026 and the full fleet by the end of 2027.",
     facts: [
       {
         fact: "Starlink is installed on 450 United mainline and United Express aircraft, per United's Q2 2026 results release; the airline expects nearly 1,000 by the end of 2026 and says it remains on track to bring Starlink to the whole fleet by the end of 2027.",
@@ -152,7 +152,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         aircraftPages: ["777", "787", "767"],
       },
       {
-        fact: "United says live TV streaming on seatback screens is on more than 220 Starlink-equipped mainline aircraft, with plans to reach 700 mainline planes early next year.",
+        fact: "Starlink is now active on more than 560 United mainline and United Express aircraft, per United's September 17, 2026 release. United says live TV streaming on seatback screens is on more than 220 Starlink-equipped mainline aircraft, with plans to reach 700 mainline planes early next year, and that it expects to complete Starlink installations before the end of 2027.",
         asOf: "2026-09-17",
         source: {
           label: "United press release (PR Newswire)",
@@ -170,8 +170,18 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     status: "installing",
     statusLabel: "Installing",
     summary:
-      "Roughly 150 aircraft equipped across Alaska, Hawaiian, and Horizon — every Alaska Air Group regional aircraft plus about 50 mainline jets — with the announced E175, 737, and 787 program targeted to finish in early 2027. Free for Atmos Rewards members via T-Mobile.",
+      "More than 40% of the Alaska Air Group fleet had Starlink as of the September 29, 2026 investor day, including every Alaska regional aircraft and Hawaiian's long-haul fleet. Alaska mainline has barely started: 12 737-8 MAX connected, with the announced E175, 737, and 787 program targeted to finish in early 2027. Free for Atmos Rewards members via T-Mobile.",
     facts: [
+      {
+        // Group-wide figure: the denominator spans Alaska, Hawaiian and Horizon,
+        // so it stays off the Alaska type pages.
+        fact: "Alaska Air Group has outfitted more than 40% of its fleet with Starlink Wi-Fi, with installations complete across the entire long-haul fleet operated by Hawaiian Airlines and the full Alaska Airlines regional fleet, executives said at the September 29, 2026 investor day.",
+        asOf: "2026-09-29",
+        source: {
+          label: "Aviation Week (Alaska Air Group investor day)",
+          url: "https://aviationweek.com/air-transport/airlines-lessors/alaska-air-group-nears-halfway-point-starlink-installations",
+        },
+      },
       {
         // "All of its regional aircraft" is Alaska AIR GROUP's statement —
         // group regional is Horizon and SkyWest, not an Alaska-mainline subset.
@@ -209,8 +219,8 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
       {
         // Alaska's own tracker, refreshed monthly — the dateline is the chart's
         // "last updated" stamp, so a later refresh means a new fact, not an edit.
-        fact: "Alaska's Starlink installation tracker, last updated Aug. 28, 2026, shows 38% of aircraft equipped: all 93 Embraer 175s, all 18 Airbus A321-200neo and all 24 Airbus A330 aircraft, plus 12 Boeing 737-8 MAX with 8 more pending. No Boeing 737-800, 737-900, 737-9 MAX or Boeing 787 was connected yet.",
-        asOf: "2026-08-28",
+        fact: "Alaska's Starlink installation tracker, last updated Sept. 25, 2026, shows 38% of aircraft equipped: all 93 Embraer 175s, all 18 Airbus A321-200neo and all 24 Airbus A330 aircraft, plus 12 Boeing 737-8 MAX with 8 more pending. No Boeing 737-800, 737-900, 737-9 MAX or Boeing 787 was connected yet.",
+        asOf: "2026-09-25",
         source: {
           label: "Alaska Airlines newsroom — Starlink tracker",
           url: "https://news.alaskaair.com/alaska-airlines-wifi-connectivity/",
@@ -253,6 +263,14 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         source: {
           label: "One Mile at a Time",
           url: "https://onemileatatime.com/news/hawaiian-airlines-free-starlink-wi-fi/",
+        },
+      },
+      {
+        fact: "Alaska Air Group executives said at the September 29, 2026 investor day that Starlink installations are complete across the entire long-haul fleet operated by Hawaiian Airlines, and that more than 40% of the group's fleet now has Starlink Wi-Fi.",
+        asOf: "2026-09-29",
+        source: {
+          label: "Aviation Week (Alaska Air Group investor day)",
+          url: "https://aviationweek.com/air-transport/airlines-lessors/alaska-air-group-nears-halfway-point-starlink-installations",
         },
       },
       {
@@ -343,11 +361,12 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     iata: "LH",
     status: "installing",
     statusLabel: "First aircraft flying",
-    // One aircraft out of ~850 is a Yes only in the narrowest sense; the
-    // derived "Yes — Rollout Under Way" would imply a fleet you can plan around.
-    headline: "Does Lufthansa Have Starlink? Just Started — One Aircraft Flying",
+    // A handful of aircraft out of ~850 is a Yes only in the narrowest sense;
+    // the derived "Yes — Rollout Under Way" would imply a fleet you can plan around.
+    headline: "Does Lufthansa Have Starlink? Just Started — First Aircraft Flying",
     summary:
-      "First Starlink flight on August 19, 2026 (A320neo D-AINM, Frankfurt–Rome); rolling out to some 850 aircraft group-wide by 2029.",
+      "First Starlink flight on August 19, 2026 (A320neo D-AINM, Frankfurt–Rome), followed by Austrian (A320neo OE-LXF) in September and SWISS (A320neo HB-JDM) on September 28; rolling out to some 850 aircraft group-wide by 2029.",
+    aliases: ["austrian", "swiss"],
     facts: [
       {
         fact: "Lufthansa operated its first Starlink flight on August 19, 2026 — A320neo D-AINM on LH234 Frankfurt–Rome — with up to ten more A320-family aircraft planned for 2026 and a group-wide rollout to some 850 aircraft by 2029. Access is free for Miles & More members and Travel ID users.",
@@ -355,6 +374,22 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         source: {
           label: "Lufthansa Group newsroom",
           url: "https://newsroom.lufthansagroup.com/en/lufthansa-takes-off-with-starlink-high-speed-internet-for-the-first-time/",
+        },
+      },
+      {
+        fact: "Austrian Airlines' first Starlink aircraft, A320neo OE-LXF, took off on its first scheduled flight to Porto in September 2026. Austrian aims to have 20 of its aircraft fitted with Lufthansa Group Wi-Fi powered by Starlink by the end of the 2026/27 winter flight schedule, free for all Miles & More members and Travel ID users across all travel classes.",
+        asOf: "2026-09-08",
+        source: {
+          label: "PAX International (Austrian Airlines release)",
+          url: "https://www.pax-intl.com/ife-connectivity/connectivity-and-satellites/2026/09/08/austrian-airlines-brings-starlink-high-speed-internet-onboard/",
+        },
+      },
+      {
+        fact: "SWISS's first Starlink aircraft, A320neo HB-JDM, entered scheduled service on September 28, 2026 on LX1852 from Zurich to Thessaloniki. SWISS will soon equip three aircraft from the A320 family and expects its entire fleet to have the technology by the end of 2029.",
+        asOf: "2026-09-28",
+        source: {
+          label: "PAX International (SWISS release)",
+          url: "https://www.pax-intl.com/ife-connectivity/connectivity-and-satellites/2026/09/29/swiss-connects-passengers-with-starlink-wi-fi-onboard/",
         },
       },
       {
@@ -776,6 +811,36 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         source: {
           label: "TeslaNorth",
           url: "https://teslanorth.com/2026/09/15/asiana-airlines-starlink-free-wifi-onboard/",
+        },
+      },
+    ],
+  },
+  {
+    slug: "gulf-air",
+    name: "Gulf Air",
+    shortName: "Gulf Air",
+    iata: "GF",
+    status: "installing",
+    statusLabel: "First aircraft flying",
+    // No count beyond the first aircraft: Gulf Air has published none since.
+    headline: "Does Gulf Air Have Starlink? Rolling Out — First Aircraft Since May 12",
+    summary:
+      "First Starlink aircraft in service since May 12, 2026, free in all cabins. Gulf Air plans Starlink across its entire fleet of roughly 45 Airbus A320-family and Boeing 787 aircraft, with no completion date given.",
+    facts: [
+      {
+        fact: "Gulf Air plans to introduce free Starlink Wi-Fi across its entire fleet, gate to gate and regardless of cabin or ticket type. The first Airbus A320-family aircraft was expected to get the service as of mid-2026, and it is not yet known how long fitting the entire fleet will take; the airline has roughly 45 aircraft, including Airbus A320-family and Boeing 787 planes.",
+        asOf: "2026-01-28",
+        source: {
+          label: "One Mile at a Time",
+          url: "https://onemileatatime.com/news/gulf-air-free-starlink-wi-fi/",
+        },
+      },
+      {
+        fact: "Gulf Air commenced deployment of its first aircraft equipped with Starlink inflight Wi-Fi on May 12, 2026, available to passengers in all cabin classes for free.",
+        asOf: "2026-05-12",
+        source: {
+          label: "CAPA — Centre for Aviation",
+          url: "https://centreforaviation.com/news/gulf-air-launches-first-aircraft-equipped-with-starlink-1359284",
         },
       },
     ],
@@ -1220,6 +1285,37 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     ],
   },
   {
+    slug: "klm",
+    name: "KLM Royal Dutch Airlines",
+    shortName: "KLM",
+    iata: "KL",
+    status: "not_starlink",
+    negative: "chose",
+    statusLabel: "Chose Viasat",
+    insteadOf:
+      "Viasat Ka-band Wi-Fi on 68 narrowbody and regional aircraft, free for Flying Blue members",
+    summary:
+      "No Starlink deal announced. KLM extended its Viasat partnership instead: free Wi-Fi for Flying Blue members on 68 narrowbody and regional aircraft, switched on from January 22, 2026 — while sister airline Air France chose Starlink.",
+    facts: [
+      {
+        fact: "Viasat announced it will deliver fast, full, and free in-flight connectivity for KLM Royal Dutch Airlines, including KLM Cityhopper, across the airline's narrowbody and regional fleets for members of its Flying Blue loyalty program, with a rollout across 68 aircraft in total. The release does not name Starlink.",
+        asOf: "2026-01-21",
+        source: {
+          label: "Viasat newsroom (KLM release)",
+          url: "https://www.viasat.com/news/latest-news/aviation/2026/klm-to-accelerate-free-in-flight-wi-fi-offering-across-europe--p/",
+        },
+      },
+      {
+        fact: "KLM enabled the complimentary Viasat Ka-band service on half the European fleet as of 22 January 2026, with the remaining planes rolling out in the months ahead. KLM's decision to extend its Viasat partnership came 15 months after Air France chose Starlink.",
+        asOf: "2026-01-21",
+        source: {
+          label: "PaxEx.Aero",
+          url: "https://paxex.aero/klm-free-wifi-europe/",
+        },
+      },
+    ],
+  },
+  {
     slug: "turkish",
     name: "Turkish Airlines",
     shortName: "Turkish",
@@ -1432,6 +1528,11 @@ const UA_TIMELINE_SOURCES = {
     url: "https://www.prnewswire.com/news-releases/united-accelerates-starlink-wi-fi-rollout-with-first-widebody-transatlantic-flight-302806746.html",
     published: "2026-06-22",
   },
+  dish560: {
+    label: "United, Sep 17, 2026",
+    url: "https://www.prnewswire.com/news-releases/united-teams-up-with-dish-to-broadcast-professional-and-college-football-games-live-on-starlink-enabled-seatback-screens-302882330.html",
+    published: "2026-09-17",
+  },
   q2y2026: {
     label: "United Q2 2026 results, Jul 15, 2026",
     url: "https://www.prnewswire.com/news-releases/united-posts-q2-results-above-wall-street-expectations-and-raises-full-year-2026-adjusted-eps-guidance-despite-a-nearly-6-billion-increase-in-anticipated-fuel-costs-302826793.html",
@@ -1485,6 +1586,12 @@ export const ROLLOUT_TIMELINES: Partial<Record<KnownAirlineCode, RolloutTimeline
         title: "450 aircraft equipped",
         fact: "United reported Starlink installed on 450 mainline and United Express aircraft.",
         source: UA_TIMELINE_SOURCES.q2y2026,
+      },
+      {
+        date: "2026-09-17",
+        title: "560+ aircraft equipped",
+        fact: "United said Starlink was active on more than 560 mainline and United Express aircraft.",
+        source: UA_TIMELINE_SOURCES.dish560,
       },
     ],
     targets: [

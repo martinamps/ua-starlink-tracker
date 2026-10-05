@@ -8,10 +8,10 @@ import type { AirlineContent, ContentStats, HeroProps } from "./index";
 const regional = (s: ContentStats) => s.fleetStats?.express ?? { starlink: 0, total: 0 };
 const mainline = (s: ContentStats) => s.fleetStats?.mainline ?? { starlink: 0, total: 0 };
 
-// Alaska's own tracker (Aug 28, 2026; rollout-facts) counts Hawaiian's Airbus
+// Alaska's own tracker (Sep 25, 2026; rollout-facts) counts Hawaiian's Airbus
 // jets too, so its percentage runs higher than this Alaska-only roster.
 const ALASKA_OWN_FIGURE =
-  "Alaska's own tracker put the combined Alaska and Hawaiian fleet at 38% on Aug 28, 2026.";
+  "Alaska's own tracker put the combined Alaska and Hawaiian fleet at 38% on Sep 25, 2026.";
 
 const ASHero = ({ stats, statSentence }: HeroProps) => (
   <RolloutPanel
@@ -60,7 +60,7 @@ export const content: AirlineContent = {
         <p>
           <StatInline n={regional(s).starlink} /> of {fmt(regional(s).total)} regional E175s and{" "}
           <StatInline n={mainline(s).starlink} /> of {fmt(mainline(s).total)} mainline jets.
-          Mainline installs started with the 737 MAX 8; Alaska's Aug 28 tracker showed no 737-800,
+          Mainline installs started with the 737 MAX 8; Alaska's Sep 25 tracker showed no 737-800,
           737-900, 737 MAX 9 or 787 connected yet.
         </p>
       ),
