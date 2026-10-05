@@ -199,6 +199,39 @@ describe("computeInstallRate", () => {
     expect(p.targetCount - p.scope.equipped).toBe(p.remaining);
   });
 
+  test("a fraction over the airline's own fleet figure resolves against that figure", () => {
+    // Alaska's "1/3 of fleet (134 aircraft) ... 50% by YE" is half of ~402,
+    // 717s included; half of our 389 would be a target Alaska never set.
+    const stats = computeInstallRate({
+      daily: daily(["2026-03", 20], ["2026-04", 20], ["2026-05", 20]),
+      equipped: 105,
+      total: 347,
+      targets: [
+        {
+          label: "half the combined fleet",
+          deadline: "2026-12-31",
+          fractionOfTracked: 0.5,
+          fractionSpans: ["AS", "HA"],
+          statedFleet: { count: 402, basis: "1/3 = 134" },
+          statedOn: "2026-01-01",
+          source: TARGET.source,
+        },
+      ],
+      scopeFor: () => ({ equipped: 147, total: 389, label: "Alaska and Hawaiian" }),
+      nowMs: NOW,
+    });
+    const [p] = stats.projections;
+    expect(p.targetCount).toBe(201);
+    expect(p.derivedFrom).toBe(402);
+    expect(p.derivedFromStated).toBe(true);
+    expect(p.remaining).toBe(54);
+  });
+
+  test("every stated fraction names its own fleet figure when it has one", () => {
+    const half = rolloutTargets("AS").find((t) => t.fractionOfTracked === 0.5);
+    expect(half?.statedFleet?.count).toBe(402);
+  });
+
   test("an impossible roster projects nothing instead of a confident verdict", () => {
     // equipped is a live row count, total a separately scraped meta value;
     // nothing ties them to one snapshot. A fixture with 102 installs against a

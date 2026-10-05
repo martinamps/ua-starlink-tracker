@@ -47,6 +47,8 @@ export interface TargetProjection {
   derived: boolean;
   /** Roster the fraction was taken of; null for a stated absolute count. */
   derivedFrom: number | null;
+  /** True when derivedFrom is the airline's own fleet figure, not our roster. */
+  derivedFromStated: boolean;
   /** The roster this target's progress is measured over — both halves of it. */
   scope: TargetScope;
   remaining: number;
@@ -221,12 +223,22 @@ export function computeInstallRate(opts: {
   const projections: TargetProjection[] = targets.map((target) => {
     const scope = opts.scopeFor?.(target) ?? { equipped, total, label: null };
     const derived = target.count === undefined;
-    const targetCount =
-      target.count ?? Math.ceil((target.fractionOfTracked ?? 1) * Math.max(scope.total, 0));
-    const derivedFrom = derived ? scope.total : null;
+    const base = target.statedFleet?.count ?? Math.max(scope.total, 0);
+    const targetCount = target.count ?? Math.ceil((target.fractionOfTracked ?? 1) * base);
+    const derivedFrom = derived ? base : null;
+    const derivedFromStated = derived && target.statedFleet !== undefined;
     const rosterDisagrees = scope.equipped > scope.total;
     const remaining = Math.max(0, targetCount - scope.equipped);
-    const common = { target, targetCount, derived, derivedFrom, scope, remaining, rosterDisagrees };
+    const common = {
+      target,
+      targetCount,
+      derived,
+      derivedFrom,
+      derivedFromStated,
+      scope,
+      remaining,
+      rosterDisagrees,
+    };
     // Impossible inputs project nothing. `equipped` is a live row count and
     // `total` a separately scraped meta value; mid-reconcile they can disagree,
     // and a fixture roster of 6 with 102 installs rendered a confident

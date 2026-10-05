@@ -42,6 +42,10 @@ export interface RolloutTargetDef {
    * tenant reading it — Alaska's "combined Alaska/Hawaiian fleet" is half of
    * AS+HA, and an AS-scoped reader alone would silently publish half of AS. */
   fractionSpans?: readonly KnownAirlineCode[];
+  /** The fleet size the airline's own statement puts the fraction over, when
+   * it differs from our roster. The fraction resolves against this, so the
+   * target is the airline's share of the airline's denominator. */
+  statedFleet?: { count: number; basis: string };
   /** Date the airline made THIS statement (YYYY-MM-DD). Rendered next to the
    * source: a target is only as current as the statement behind it, and a
    * reader has no way to tell a fresh commitment from a stale one otherwise. */
@@ -113,6 +117,10 @@ const ROLLOUT_TARGETS: Record<KnownAirlineCode, RolloutTargetDef[]> = {
       // Resolving 0.5 against the AS reader alone published "175 aircraft"
       // under Alaska's byline, a number Alaska never said.
       fractionSpans: ["AS", "HA"],
+      // Its "1/3 = 134" puts that fleet at ~402, Hawaiian's 717s included;
+      // our roster leaves them out. The 717s get no Wi-Fi, so our equipped
+      // count is still the numerator, but the half is half of Alaska's fleet.
+      statedFleet: { count: 402, basis: '"1/3 of fleet (134 aircraft)"' },
       statedOn: "2026-07-21",
       source: AS_Q2_2026_SUPPLEMENTAL,
     },

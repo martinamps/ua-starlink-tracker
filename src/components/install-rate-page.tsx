@@ -79,9 +79,11 @@ function TargetRow({ p, shortName }: { p: TargetProjection; shortName: string })
           never read as the airline's published figure. */}
       {p.derived && p.derivedFrom !== null && (
         <p className="mt-1 text-xs text-muted">
-          {p.target.fractionOfTracked === 1
-            ? `Fleet size is our count, not ${shortName}'s.`
-            : `${fmt(p.targetCount)} is ${probLabel(p.target.fractionOfTracked ?? 1).toLowerCase()} of our count of ${fmt(p.derivedFrom)}, not ${shortName}'s figure.`}
+          {p.derivedFromStated && p.target.statedFleet
+            ? `${fmt(p.targetCount)} is ${probLabel(p.target.fractionOfTracked ?? 1).toLowerCase()} of the ${fmt(p.derivedFrom)} aircraft ${shortName}'s ${p.target.statedFleet.basis} implies.`
+            : p.target.fractionOfTracked === 1
+              ? `Fleet size is our count, not ${shortName}'s.`
+              : `${fmt(p.targetCount)} is ${probLabel(p.target.fractionOfTracked ?? 1).toLowerCase()} of our count of ${fmt(p.derivedFrom)}, not ${shortName}'s figure.`}
         </p>
       )}
       <p className="mt-1 text-xs text-muted">
