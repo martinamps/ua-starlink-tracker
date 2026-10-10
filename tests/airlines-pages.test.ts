@@ -255,6 +255,15 @@ describe("hub /airlines/{slug} facts pages (content-level roster)", () => {
     expect(body).toContain("Amazon Leo");
   });
 
+  test("headlines name the airline the way searchers do", async () => {
+    for (const entry of AIRLINE_FACTS.filter((e) => !e.headline)) {
+      const name = entry.titleName ?? entry.shortName;
+      expect(factsHeadline(entry).startsWith(`Does ${name} Have Starlink?`), entry.slug).toBe(true);
+    }
+    const body = await (await get("/airlines/turkish", hub.canonicalHost)).text();
+    expect(body).toContain("<title>Does Turkish Airlines Have Starlink?");
+  });
+
   test("the American page states the Airbus-only scope and 2027 start", async () => {
     const body = await (await get("/airlines/american", hub.canonicalHost)).text();
     expect(body).toContain("Airbus");
