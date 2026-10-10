@@ -10,7 +10,7 @@ testing; set it back before release.
 
 ## Setup sanity
 
-- [ ] `chrome://extensions` shows version 2.1.1, no errors on the card
+- [ ] `chrome://extensions` shows version 2.2.0, no errors on the card
 - [ ] Service worker "Inspect views" console shows no errors on load
 - [ ] Permissions listed: only unitedstarlinktracker.com — no storage, no new hosts
 
@@ -25,7 +25,7 @@ testing; set it back before release.
       wording and (for predictions) observation count
 - [ ] DevTools Network tab (service worker): UA lookups go to
       `unitedstarlinktracker.com/api/check-flight` and carry
-      `&client=ext-2.1.1` after `flight_number` and `date` (and after
+      `&client=ext-2.2.0` after `flight_number` and `date` (and after
       `origin`/`destination` on itinerary-decoded cards)
 
 ## Alaska / Hawaiian-operated (hub endpoint)
@@ -90,6 +90,19 @@ Google Flights lists Hawaiian-operated flights only under Alaska `AS` numbers
       (more legs than the extension looks up — fails closed)
 - [ ] A TIM leg whose origin equals its destination sends no `origin`/
       `destination` at all
+
+## Starlink only toggle (2.2)
+
+- [ ] SFO → EWR tomorrow: a "Starlink only" chip appears bottom-right once
+      results are answered; on a page with no tracked flights it never appears
+- [ ] Toggle on: UA cards with no badge (verified no, or prediction below the
+      bar) dim; badged cards and non-tracked airlines (Delta, JetBlue) stay as is
+- [ ] Toggle off: every card back to full opacity; badges unchanged
+- [ ] With the toggle on, scroll / "View more flights": late cards dim once
+      answered, cards still loading are left alone
+- [ ] Change dates (SPA navigation): toggle stays on, new results follow it
+- [ ] Reload the tab: toggle is off again (state is in memory only, no
+      `storage` permission)
 
 ## Layout and drift resilience
 

@@ -255,6 +255,50 @@
     }
   }
 
+  // ── "Starlink only" filter ─────────────────────────────────────────────────
+
+  // Dims, never hides: Google's result list is virtualized, and a card we
+  // have no answer for may still be the flight the user wants.
+  const DIM_CLASS = "starlink-only-dim";
+  // In memory for the life of the tab: persisting it would need the "storage"
+  // permission, which the manifest deliberately doesn't ask for.
+  let starlinkOnly = false;
+  let filterChip = null;
+
+  function ensureFilterChip() {
+    if (filterChip?.isConnected) return;
+    filterChip = document.createElement("button");
+    filterChip.type = "button";
+    filterChip.className = "starlink-only-toggle";
+    filterChip.textContent = "Starlink only";
+    filterChip.title = "Dim flights without a verified, installed or predicted Starlink badge";
+    filterChip.setAttribute("aria-pressed", String(starlinkOnly));
+    filterChip.addEventListener("click", () => {
+      starlinkOnly = !starlinkOnly;
+      filterChip.setAttribute("aria-pressed", String(starlinkOnly));
+      applyFilter();
+    });
+    document.body.appendChild(filterChip);
+  }
+
+  /** Dims settled non-Starlink cards while the toggle is on; the chip shows
+   * only on pages where we answered for at least one card. */
+  function applyFilter() {
+    try {
+      let answered = false;
+      for (const card of findFlightCards()) {
+        const entry = settledCards.get(card);
+        const dim = entry?.dim === true && entry.signature === cardSignature(card);
+        if (entry?.badged || dim) answered = true;
+        card.classList.toggle(DIM_CLASS, starlinkOnly && dim);
+      }
+      if (answered) ensureFilterChip();
+      if (filterChip) filterChip.hidden = !answered;
+    } catch (err) {
+      log("filter failed", err);
+    }
+  }
+
   // ── main pass ──────────────────────────────────────────────────────────────
 
   // Lookups per pass run this many cards at a time: a pass used to cost the
@@ -316,7 +360,7 @@
     // failure would strand it unbadged for the rest of the session: nothing
     // else clears settledCards short of an SPA navigation.
     const settled = outcomes.every((outcome) => !outcome.retryable);
-    if (settled) settledCards.set(card, { signature, badged, badge });
+    if (settled) settledCards.set(card, { signature, badged, badge, dim: lib.shouldDim(combined) });
     return settled;
   }
 
@@ -340,6 +384,7 @@
       } else if (action === "process") {
         settledCards.delete(card);
         removeBadge(card);
+        card.classList.remove(DIM_CLASS);
         pending.push(card);
       }
     }
@@ -396,6 +441,7 @@
     if (gen === generation) {
       if (unsettled) scheduleRetryPass();
       else cancelRetryPass();
+      applyFilter();
     }
     return { newCards };
   }
@@ -420,6 +466,10 @@
       for (const badge of document.querySelectorAll(".starlink-wifi-badge")) {
         retire(badge);
       }
+      for (const card of document.querySelectorAll(`.${DIM_CLASS}`)) {
+        card.classList.remove(DIM_CLASS);
+      }
+      if (filterChip) filterChip.hidden = true;
     } catch {
       // removal is cosmetic; keep going
     }
@@ -455,6 +505,7 @@
     const debouncedRepair = debounce(() => {
       try {
         if (cardsNeedingWork().length > 0) debouncedProcess();
+        applyFilter();
       } catch {
         // repair is cosmetic
       }
