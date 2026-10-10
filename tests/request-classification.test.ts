@@ -14,7 +14,7 @@ import {
   normalizeExtVersion,
   requestClientTags,
 } from "../src/observability/metrics";
-import { API_RATE_LIMIT, createApp } from "../src/server/app";
+import { API_RATE_LIMIT, EXTENSION_RATE_LIMIT, createApp } from "../src/server/app";
 import { createLogThrottle } from "../src/utils/log-throttle";
 import { openSnapshot, req } from "./helpers";
 
@@ -186,7 +186,7 @@ describe("rate-limited responses", () => {
     const calls = captureIncrements();
     const headers = { "User-Agent": CHROME_UA, "cf-connecting-ip": "203.0.113.9" };
     let last: Response | null = null;
-    for (let i = 0; i <= API_RATE_LIMIT; i++) {
+    for (let i = 0; i <= EXTENSION_RATE_LIMIT; i++) {
       last = await limited.dispatch(
         req("/api/check-flight?client=ext-2.1.1", UA_HOST, { headers })
       );
@@ -196,11 +196,43 @@ describe("rate-limited responses", () => {
     expect(rl.length).toBe(1);
     expect(rl[0].tags).toMatchObject({
       route: "/api/check-flight",
-      bucket: "api",
+      bucket: "ext",
       client_class: "extension",
       ext_version: "2.1",
       airline: "united",
     });
     expect(Object.values(rl[0].tags)).not.toContain("203.0.113.9");
+  });
+
+  test("our extension gets its own larger bucket; everyone else keeps the shared one", async () => {
+    const limited = createApp(openSnapshot());
+    const flood = async (headers: Record<string, string>, n: number) => {
+      const statuses: number[] = [];
+      for (let i = 0; i < n; i++) {
+        const res = await limited.dispatch(req("/api/check-flight", UA_HOST, { headers }));
+        statuses.push(res.status);
+      }
+      return statuses;
+    };
+
+    const ext = await flood(
+      { Origin: OWN_ORIGIN, "cf-connecting-ip": "203.0.113.20" },
+      EXTENSION_RATE_LIMIT + 1
+    );
+    expect(ext.slice(0, EXTENSION_RATE_LIMIT)).not.toContain(429);
+    expect(ext[EXTENSION_RATE_LIMIT]).toBe(429);
+
+    const web = await flood({ "cf-connecting-ip": "203.0.113.21" }, API_RATE_LIMIT + 1);
+    expect(web.slice(0, API_RATE_LIMIT)).not.toContain(429);
+    expect(web[API_RATE_LIMIT]).toBe(429);
+
+    const copycat = await flood(
+      {
+        Origin: "chrome-extension://abcdefghijklmnopabcdefghijklmnop",
+        "cf-connecting-ip": "203.0.113.22",
+      },
+      API_RATE_LIMIT + 1
+    );
+    expect(copycat[API_RATE_LIMIT]).toBe(429);
   });
 });
