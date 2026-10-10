@@ -255,7 +255,7 @@ describe("hub /airlines/{slug} facts pages (content-level roster)", () => {
     expect(body).toContain("Amazon Leo");
   });
 
-  test("the American page states the Airbus-only scope and 2027 start", async () => {
+  test("the American page states the mainline scope and 2027 start", async () => {
     const body = await (await get("/airlines/american", hub.canonicalHost)).text();
     expect(body).toContain("Airbus");
     expect(body).toContain("2027");
