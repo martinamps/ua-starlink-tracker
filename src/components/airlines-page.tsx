@@ -542,25 +542,26 @@ function titleCase(label: string): string {
 /** Question-form H1 for a facts page; entry.headline overrides. */
 export function factsHeadline(entry: AirlineFactsEntry): string {
   if (entry.headline) return entry.headline;
+  const name = entry.titleName ?? entry.shortName;
   switch (entry.status) {
     case "complete":
-      return `Does ${entry.shortName} Have Starlink? Yes — Rollout Complete`;
+      return `Does ${name} Have Starlink? Yes — Rollout Complete`;
     case "installing":
-      return `Does ${entry.shortName} Have Starlink? Yes — ${
+      return `Does ${name} Have Starlink? Yes — ${
         entry.statusLabel === "Installing" ? "Rollout Under Way" : titleCase(entry.statusLabel)
       }`;
     case "announced":
-      return `Does ${entry.shortName} Have Starlink? Not Yet — ${titleCase(entry.statusLabel)}`;
+      return `Does ${name} Have Starlink? Not Yet — ${titleCase(entry.statusLabel)}`;
     case "trial":
-      return `Does ${entry.shortName} Have Starlink? Trial Aircraft Only`;
+      return `Does ${name} Have Starlink? Trial Aircraft Only`;
     case "not_starlink":
       // A bare "No" is a verified claim. We can only verify it where the
       // airline announced something else; where we have simply found no
       // announcement, the headline says exactly that — and matches the body,
       // which tells the reader to treat the negative as unconfirmed.
       return entry.negative === "unannounced"
-        ? `Does ${entry.shortName} Have Starlink? No Deal Announced`
-        : `Does ${entry.shortName} Have Starlink? No`;
+        ? `Does ${name} Have Starlink? No Deal Announced`
+        : `Does ${name} Have Starlink? No`;
   }
 }
 
