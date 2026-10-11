@@ -41,9 +41,6 @@ const HAHero = ({ stats, statSentence }: HeroProps) => {
 
 export const content: AirlineContent = {
   headerStats: [
-    <span key="free" className="text-success font-semibold">
-      Free
-    </span>,
     <span key="g2g">Gate-to-gate</span>,
     <span key="done">
       <span className="text-success font-semibold">Airbus fleet complete</span> Sep 2024

@@ -28,9 +28,6 @@ const UAHero = ({ stats }: HeroProps) => (
 
 export const content: AirlineContent = {
   headerStats: (s) => [
-    <span key="free" className="text-success font-semibold">
-      Free with MileagePlus
-    </span>,
     ...(installsPerMonth(s)
       ? [
           <span key="installs">
@@ -39,12 +36,13 @@ export const content: AirlineContent = {
           </span>,
         ]
       : []),
+    ...(s.asOf ? [<span key="updated">Updated {s.asOf}</span>] : []),
   ],
 
   intro: () => (
     <>
-      United is adding Starlink Wi-Fi to every plane, starting with its United Express regional
-      jets.
+      United Airlines is adding Starlink Wi-Fi to every plane, starting with its United Express
+      regional jets.
     </>
   ),
 
@@ -53,24 +51,28 @@ export const content: AirlineContent = {
   answers: [
     {
       q: "Does United have Starlink?",
-      // The panel above gives the count; the structured answer keeps it.
-      a: () => <p>Yes. {fleetTargetSentence("UA", "United")}</p>,
-      ld: (s) =>
-        `Yes. ${fmt(s.starlinkCount)} of ${fmt(s.totalCount)} United aircraft (${pct(s.starlinkCount, s.totalCount)}) have Starlink Wi-Fi${s.asOf ? ` as of ${s.asOf}` : ""}. ${fleetTargetSentence("UA", "United")}`,
+      a: (s) => (
+        <p>
+          Yes. <StatInline n={s.starlinkCount} /> of {fmt(s.totalCount)} United aircraft (
+          {pct(s.starlinkCount, s.totalCount)}) have Starlink Wi-Fi
+          {s.asOf ? <> as of {s.asOf}</> : null}. {fleetTargetSentence("UA", "United")}
+        </p>
+      ),
     },
     {
       q: "Which United planes have Starlink?",
-      a: () => (
+      a: (s) => (
         <p>
-          Mostly United Express regional jets. The panel above has the split, and the{" "}
+          Mostly United Express regional jets: <StatInline n={express(s).starlink} /> of{" "}
+          {fmt(express(s).total)} ({pct(express(s).starlink, express(s).total)}) have it, against{" "}
+          <StatInline n={mainline(s).starlink} /> of {fmt(mainline(s).total)} mainline aircraft (
+          {pct(mainline(s).starlink, mainline(s).total)}). The{" "}
           <a href="/fleet" className={LINK}>
             fleet page
           </a>{" "}
           lists every plane.
         </p>
       ),
-      ld: (s) =>
-        `Mostly United Express regional jets: ${fmt(express(s).starlink)} of ${fmt(express(s).total)} (${pct(express(s).starlink, express(s).total)}) have it, against ${fmt(mainline(s).starlink)} of ${fmt(mainline(s).total)} mainline aircraft (${pct(mainline(s).starlink, mainline(s).total)}).`,
     },
     {
       q: "Do all United flights have Starlink?",
