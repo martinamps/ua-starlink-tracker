@@ -296,6 +296,18 @@ describe("badging policy", () => {
     expect(extLib.shouldBadge(predicted(0.95, "low"))).toBe(false);
   });
 
+  test("Starlink only dims settled answers that fall short of a badge, never unknowns", () => {
+    const claim = (status: string) => ({ ...extLib.unknownClaim(), status });
+    expect(extLib.shouldDim(claim("verified"))).toBe(false);
+    expect(extLib.shouldDim(claim("installed"))).toBe(false);
+    expect(extLib.shouldDim(predicted(0.92))).toBe(false);
+    expect(extLib.shouldDim(claim("no_starlink"))).toBe(true);
+    expect(extLib.shouldDim(predicted(0.4))).toBe(true);
+    expect(extLib.shouldDim(predicted(0.95, "low"))).toBe(true);
+    expect(extLib.shouldDim(extLib.unknownClaim())).toBe(false);
+    expect(extLib.shouldDim(null)).toBe(false);
+  });
+
   test("multi-leg combine: the weakest leg wins", () => {
     const verified = { ...extLib.unknownClaim(), status: "verified" };
     const installed = { ...extLib.unknownClaim(), status: "installed" };
@@ -866,8 +878,8 @@ describe("extension release guardrails", () => {
     expect(parseListingVersion("<html>no version here</html>")).toBeNull();
   });
 
-  test("2.1.1 is the first store build of the leg-scoped series", () => {
-    expect(manifest.version).toBe("2.1.1");
+  test("2.2.0 adds the Starlink-only toggle", () => {
+    expect(manifest.version).toBe("2.2.0");
   });
 });
 

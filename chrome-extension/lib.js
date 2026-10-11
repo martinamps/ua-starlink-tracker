@@ -401,6 +401,16 @@ const StarlinkTrackerLib = (() => {
     );
   }
 
+  /**
+   * "Starlink only" dims a card only on an answer that falls short of a badge:
+   * a verified no, or a prediction below the bar. Unknown (untracked carrier,
+   * outage, no data yet) is never dimmed — we have no answer to filter on.
+   */
+  function shouldDim(claim) {
+    if (!claim || shouldBadge(claim)) return false;
+    return claim.status === "no_starlink" || claim.status === "predicted";
+  }
+
   // ── badge copy ─────────────────────────────────────────────────────────────
 
   // A prediction is never a certainty, so it never reads as 100%.
@@ -693,6 +703,7 @@ const StarlinkTrackerLib = (() => {
     claimFromResponse,
     combineClaims,
     shouldBadge,
+    shouldDim,
     badgeLabel,
     badgeTitle,
     cardBadgeTitle,
