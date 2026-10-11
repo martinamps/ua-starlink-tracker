@@ -197,6 +197,7 @@ import { contradictingWifi } from "../database/sql/equipped";
 import { unixNow } from "../database/sql/windows";
 import {
   COUNTERS,
+  classifyRequest,
   metrics,
   normalizeAircraftType,
   normalizeAirlineTag,
@@ -4640,6 +4641,9 @@ function corsPreflight(pathname: string): Response {
 }
 
 export const API_RATE_LIMIT = 100;
+// One Google Flights results page fans out a lookup per card and leg, so our
+// own extension gets a bucket that a single busy search can't exhaust.
+export const EXTENSION_RATE_LIMIT = 300;
 const API_RATE_WINDOW_MS = 60_000;
 const RATE_LIMIT_LOG_INTERVAL_MS = 60_000;
 const LOCAL_IPS = new Set(["127.0.0.1", "::1", "localhost"]);
@@ -4690,7 +4694,7 @@ export function createApp(db: Database): App {
       lastSweep = now;
     }
     const hits = (ipHits.get(key) ?? []).filter((t) => now - t < API_RATE_WINDOW_MS);
-    if (hits.length >= API_RATE_LIMIT) {
+    if (hits.length >= (bucket === "ext" ? EXTENSION_RATE_LIMIT : API_RATE_LIMIT)) {
       ipHits.set(key, hits);
       return true;
     }
@@ -4848,7 +4852,9 @@ export function createApp(db: Database): App {
     // fetched by other people's pages — CORS-open, cacheable, and embedded at
     // whatever rate a third party's traffic dictates.
     const meterClass = url.pathname.startsWith("/api/")
-      ? "api"
+      ? classifyRequest(req, url) === "extension"
+        ? "ext"
+        : "api"
       : url.pathname === "/mcp" && req.method !== "GET" && req.method !== "HEAD"
         ? "mcp"
         : url.pathname.startsWith("/check-flight/") ||
