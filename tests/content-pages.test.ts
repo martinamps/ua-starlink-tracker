@@ -29,7 +29,7 @@ import {
   seedFleetAnchors,
 } from "../src/database/database";
 import { createReaderFactory } from "../src/database/reader";
-import { createApp } from "../src/server/app";
+import { API_RATE_LIMIT, createApp } from "../src/server/app";
 import { CHROME_EXTENSION_URL } from "../src/utils/chrome-extension";
 import { makeSyntheticDb, openSnapshot, req } from "./helpers";
 
@@ -300,7 +300,7 @@ describe("/chrome extension page", () => {
     expect(app.routeTags).not.toContain("/extension");
   });
 
-  test("sitemap lists it once on United with a fixed lastmod; llms.txt once", async () => {
+  test("sitemap lists it once on United with a fixed lastmod; every llms.txt once", async () => {
     for (const site of Object.values(SITES)) {
       const host = site.canonicalHost;
       const { text: map } = await getText("/sitemap.xml", host);
@@ -308,8 +308,11 @@ describe("/chrome extension page", () => {
     }
     const { text: map } = await getText("/sitemap.xml", UA);
     expect(map).toMatch(new RegExp(`/chrome</loc>\\s*<lastmod>${CHROME_PAGE_UPDATED}</lastmod>`));
-    const { text: llms } = await getText("/llms.txt", UA);
-    expect(llms.split(CHROME_PAGE_URL).length - 1).toBe(1);
+    for (const site of Object.values(SITES)) {
+      const { text: llms } = await getText("/llms.txt", site.canonicalHost);
+      expect(llms.split(`https://${site.canonicalHost}/chrome`).length - 1, site.key).toBe(1);
+      if (site.features.mcpPage) expect(llms, site.key).toContain(`${API_RATE_LIMIT} req/min/IP`);
+    }
   });
 
   test("footers link it: relative on United, straight to United elsewhere", async () => {
