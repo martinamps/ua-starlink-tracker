@@ -971,11 +971,18 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     shortName: "American",
     iata: "AA",
     status: "announced",
-    statusLabel: "Installs begin Q1 2027",
-    headline: "Does American Have Starlink? Not Yet — Airbus Installs Begin in 2027",
+    statusLabel: "Installs begin early 2027",
     summary:
-      "Announced May 26, 2026 for 500+ Airbus narrowbodies only, with installs from Q1 2027. AAdvantage members already get free Viasat or Intelsat Wi-Fi on more than 900 aircraft, sponsored by AT&T.",
+      "Announced October 8, 2026 for every mainline jet, more than 1,000 Airbus and Boeing aircraft, with installs from early 2027. AAdvantage members already get free Viasat or Intelsat Wi-Fi on more than 900 aircraft, sponsored by AT&T.",
     facts: [
+      {
+        fact: "American will bring Starlink to all mainline aircraft, including Airbus narrowbodies and Boeing narrowbodies and widebodies, with installations beginning in early 2027. It plans to equip more than 1,000 mainline aircraft with Starlink's Performance Aero Terminal, which can deliver speeds of up to 1 Gbps per terminal.",
+        asOf: "2026-10-08",
+        source: {
+          label: "American Airlines newsroom",
+          url: "https://news.aa.com/news/news-details/2026/Full-fleet-full-speed-full-connection-American-Airlines-will-bring-Starlink-to-every-mainline-jet-MKG-OB-10/default.aspx",
+        },
+      },
       {
         // Re-sourced from Runway Girl (403s every client) to American's own
         // newsroom. The release makes no statement about what flies today, so
@@ -988,14 +995,6 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         },
       },
       {
-        fact: "The announced scope is the A320 family only (A319s, A320s, A321s, A321neos, and A321XLRs), with no official plans to extend Starlink to any other American aircraft. American runs Viasat on most of its narrowbodies today and Panasonic on most of its widebodies; neither is part of the Starlink program as announced.",
-        asOf: "2026-05-26",
-        source: {
-          label: "One Mile at a Time",
-          url: "https://onemileatatime.com/news/american-airlines-free-starlink-wi-fi/",
-        },
-      },
-      {
         // The release gives no percentage — the old "~90%" was derived, not
         // quoted. Its own figures are the count and the fleet-share wording.
         fact: "In January 2026 American began rolling out free inflight Wi-Fi for AAdvantage members, sponsored by AT&T and powered by Viasat and Intelsat: more than 900 mainline aircraft are equipped, covering 100% of its narrowbody and dual-class regional fleets.",
@@ -1005,6 +1004,28 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
           url: "https://news.aa.com/news/news-details/2026/American-Airlines-launches-FREE-high-speed-Wi-Fi-sponsored-by-ATT-available-on-more-aircraft-than-any-other-carrier-in-the-world/default.aspx",
           mirror:
             "https://web.archive.org/web/20260805102424/https://news.aa.com/news/news-details/2026/American-Airlines-launches-FREE-high-speed-Wi-Fi-sponsored-by-ATT-available-on-more-aircraft-than-any-other-carrier-in-the-world/default.aspx",
+        },
+      },
+    ],
+  },
+  {
+    slug: "royal-air-maroc",
+    name: "Royal Air Maroc",
+    shortName: "Royal Air Maroc",
+    iata: "AT",
+    status: "announced",
+    statusLabel: "Installs from early 2027",
+    summary:
+      "Announced October 7, 2026: Starlink on 41 aircraft, installed gradually from early 2027, free for Safar Flyer members.",
+    facts: [
+      {
+        // RAM announced on social media, not in a press release; Morocco World
+        // News carries the aircraft count and start date.
+        fact: "Royal Air Maroc will gradually equip 41 of its aircraft with Starlink Wi-Fi starting in early 2027, offering free access to members of its Safar Flyer loyalty program. The airline says this makes it the first African airline to offer Starlink connectivity onboard.",
+        asOf: "2026-10-07",
+        source: {
+          label: "Morocco World News",
+          url: "https://www.moroccoworldnews.com/2026/10/341102/royal-air-maroc-to-equip-41-aircraft-with-starlink-wi-fi-starting-in-2027/",
         },
       },
     ],
@@ -1316,14 +1337,19 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     name: "KLM Royal Dutch Airlines",
     shortName: "KLM",
     iata: "KL",
-    status: "not_starlink",
-    negative: "chose",
-    statusLabel: "Chose Viasat",
-    insteadOf:
-      "Viasat Ka-band Wi-Fi on 68 narrowbody and regional aircraft, free for Flying Blue members",
+    status: "announced",
+    statusLabel: "Long-haul from mid-2027",
     summary:
-      "KLM chose Viasat: free Wi-Fi for Flying Blue members on 68 narrowbody and regional aircraft from January 22, 2026. Sister airline Air France chose Starlink.",
+      "KLM chose Starlink for free Wi-Fi on intercontinental flights from mid-2027, rolled out in phases, for Flying Blue members. Its European fleet keeps Viasat, free for Flying Blue members on 68 narrowbody and regional aircraft.",
     facts: [
+      {
+        fact: "KLM has chosen Starlink for free high-speed Wi-Fi on its intercontinental flights, starting in mid-2027. The service will be rolled out in phases, available in all cabin classes, and free for Flying Blue members.",
+        asOf: "2026-10-08",
+        source: {
+          label: "KLM newsroom",
+          url: "https://news.klm.com/free-high-speed-wi-fi-on-klm-intercontinental-flights/",
+        },
+      },
       {
         fact: "Viasat announced it will deliver fast, full, and free in-flight connectivity for KLM Royal Dutch Airlines, including KLM Cityhopper, across the airline's narrowbody and regional fleets for members of its Flying Blue loyalty program, with a rollout across 68 aircraft in total.",
         asOf: "2026-01-21",
