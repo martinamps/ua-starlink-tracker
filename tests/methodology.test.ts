@@ -8,7 +8,7 @@ import { beforeAll, describe, expect, test } from "bun:test";
 import { AIRLINES, SITES } from "../src/airlines/registry";
 import { createReaderFactory } from "../src/database/reader";
 import { createApp } from "../src/server/app";
-import { openSnapshot, req } from "./helpers";
+import { openSnapshot, req, sectionOf } from "./helpers";
 
 let app: ReturnType<typeof createApp>;
 let getReader: ReturnType<typeof createReaderFactory>;
@@ -61,6 +61,24 @@ describe("homepage citable count", () => {
     const { status, text } = await getText("/", SITES.airline.canonicalHost);
     expect(status).toBe(200);
     expect(text).not.toContain('id="starlink-stat"');
+  });
+
+  test("united: the header is dated and the quick answers state the counts", async () => {
+    const { text } = await getText("/", SITES.united.canonicalHost);
+    const page = plain(text);
+    const date = "[A-Z][a-z]+ \\d{1,2}, \\d{4}";
+    expect(page).not.toMatch(
+      /As of [A-Z][a-z]+ \d{1,2}, \d{4}, [\d,]+ of [\d,]+ United Airlines planes/
+    );
+    expect(page).not.toContain("Free with MileagePlus");
+    expect(page).toMatch(new RegExp(`Updated ${date}`));
+    const answers = plain(sectionOf(text, "Quick answers"));
+    expect(answers).toMatch(
+      new RegExp(
+        `Yes\\. [\\d,]+ of [\\d,]+ United aircraft \\(\\S+%\\) have Starlink Wi-Fi as of ${date}\\.`
+      )
+    );
+    expect(answers).toMatch(/[\d,]+ of [\d,]+ \(\S+%\) have it, against [\d,]+ of [\d,]+ mainline/);
   });
 
   test("united: the date line links to /methodology", async () => {

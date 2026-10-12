@@ -29,9 +29,6 @@ const QRHero = ({ stats, statSentence }: HeroProps) => (
 
 export const content: AirlineContent = {
   headerStats: [
-    <span key="free" className="text-success font-semibold">
-      Free
-    </span>,
     <span key="widebodies">
       <span className="text-accent font-semibold">777 and A350</span> complete
     </span>,
