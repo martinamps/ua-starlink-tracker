@@ -92,6 +92,9 @@ export interface AirlineFactsEntry {
   slug: string;
   name: string;
   shortName: string;
+  /** The name searchers use, where shortName is ambiguous or abbreviated
+   * ("Turkish", "Air NZ"). Headlines use it over shortName. */
+  titleName?: string;
   /** IATA code — used for slug-variant 301s, never as a canonical URL. */
   iata: string;
   /** Registry code when we track this airline at tail level; the detail page
@@ -709,6 +712,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     slug: "copa",
     name: "Copa Airlines",
     shortName: "Copa",
+    titleName: "Copa Airlines",
     iata: "CM",
     status: "installing",
     statusLabel: "Installing",
@@ -969,6 +973,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     slug: "american",
     name: "American Airlines",
     shortName: "American",
+    titleName: "American Airlines",
     iata: "AA",
     status: "announced",
     statusLabel: "Installs begin early 2027",
@@ -1174,6 +1179,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     slug: "air-new-zealand",
     name: "Air New Zealand",
     shortName: "Air NZ",
+    titleName: "Air New Zealand",
     iata: "NZ",
     status: "trial",
     statusLabel: "Trial only",
@@ -1372,6 +1378,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     slug: "turkish",
     name: "Turkish Airlines",
     shortName: "Turkish",
+    titleName: "Turkish Airlines",
     iata: "TK",
     status: "not_starlink",
     negative: "unannounced",
