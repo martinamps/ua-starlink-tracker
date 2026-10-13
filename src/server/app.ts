@@ -270,6 +270,7 @@ import {
   tenantConfig,
   tenantScope,
 } from "./context";
+import { type CrawlerDns, createCrawlerVerifier } from "./crawler-verify";
 import {
   PROBE_SNIPPET,
   StarlinkIpDetector,
@@ -1940,13 +1941,17 @@ const sitemap: Handler = (ctx) => {
   const { reader, site, tenant, getReader } = ctx;
   const baseUrl = `https://${site.canonicalHost}`;
   const lastUpdated = stampedIso(reader.getLastUpdatedRaw());
+  // Per-flight and per-route lastmod is when the page's flight set last
+  // changed, not the last refresh: a stamp that moves every few minutes
+  // teaches crawlers to ignore it.
+  const changedIso = (sec: number) => (sec ? new Date(sec * 1000).toISOString() : undefined);
   const flightEntries =
     site.features.checkFlightPage && tenantConfig(tenant)
       ? reader.getSitemapFlights().map((f) => ({
           path: `/check-flight/${f.flight_number}`,
           changefreq: "weekly",
           priority: "0.6",
-          lastmod: f.last_touched ? new Date(f.last_touched * 1000).toISOString() : undefined,
+          lastmod: changedIso(f.changed_at),
         }))
       : [];
   const routeEntries =
@@ -1955,7 +1960,7 @@ const sitemap: Handler = (ctx) => {
           path: `/route-planner/${r.origin}/${r.destination}`,
           changefreq: "weekly",
           priority: "0.6",
-          lastmod: r.last_touched ? new Date(r.last_touched * 1000).toISOString() : undefined,
+          lastmod: changedIso(r.changed_at),
         }))
       : [];
   const hubUrls = hubUrlFamilies(site, getReader);
@@ -3480,9 +3485,10 @@ const routePlannerPage: Handler = (ctx) => {
     });
     recordRouteFlightsView(cfg, "page", board);
     const flightNumbers = routeFlightNumbers(ctx, board);
-    // Historical pairs stay reachable (flight permalinks link them) but no
-    // longer index; recently seen ones do, whatever the 48h window holds.
-    const indexable = !ctx.reader.routeIsHistorical(parsed.origin, parsed.destination);
+    // A pair with an empty board that nobody flew this week stays reachable
+    // (flight permalinks link it) but doesn't index, and the sitemap skips it.
+    const indexable =
+      board.flights.length > 0 || ctx.reader.routeIsRecent(parsed.origin, parsed.destination);
     return renderSubPage(
       ctx,
       RoutePage,
@@ -4720,8 +4726,9 @@ function clientIp(req: Request): string {
   );
 }
 
-export function createApp(db: Database): App {
+export function createApp(db: Database, opts: { crawlerDns?: CrawlerDns } = {}): App {
   const getReader = createReaderFactory(db);
+  const verifiedCrawler = createCrawlerVerifier(opts.crawlerDns);
   const detector = passengerVerifyEnabled ? new StarlinkIpDetector(db) : null;
   const ipHits = new Map<string, number[]>();
   let lastSweep = 0;
@@ -4940,13 +4947,21 @@ export function createApp(db: Database): App {
           bucket: meterClass,
           ...requestClientTags(req, url),
         };
-        metrics.increment(COUNTERS.HTTP_RATE_LIMITED, tags);
-        // Bounded tags only (never the IP or raw UA), one line per tag set
-        // per interval — the burst being logged must not flood the log.
-        const suppressed = rateLimitLog(Object.values(tags).join("|"), Date.now());
-        if (suppressed !== null) logWarn("rate limited", { ...tags, suppressed });
-        countRequest(req, url, m, tenant, 429);
-        return jsonError(429, "rate limit exceeded", { headers: { "Retry-After": "60" } });
+        // Pages are what search engines index: a DNS-verified Googlebot or
+        // Bingbot crawls them past the per-IP budget. The API stays metered.
+        const crawler =
+          meterClass === "page" ? await verifiedCrawler(ip, req.headers.get("user-agent")) : null;
+        if (crawler) {
+          metrics.increment(COUNTERS.HTTP_RATE_LIMIT_EXEMPT, { ...tags, crawler });
+        } else {
+          metrics.increment(COUNTERS.HTTP_RATE_LIMITED, tags);
+          // Bounded tags only (never the IP or raw UA), one line per tag set
+          // per interval — the burst being logged must not flood the log.
+          const suppressed = rateLimitLog(Object.values(tags).join("|"), Date.now());
+          if (suppressed !== null) logWarn("rate limited", { ...tags, suppressed });
+          countRequest(req, url, m, tenant, 429);
+          return jsonError(429, "rate limit exceeded", { headers: { "Retry-After": "60" } });
+        }
       }
     }
 
