@@ -166,5 +166,15 @@ describe("legHistory", () => {
     expect(html).toContain("over 8 weeks");
     expect(html).toContain("↑");
     expect(html).toContain("Weighted toward recent flights.");
+    expect(html).not.toContain("<title>");
+    expect(html.match(/<g role="img" aria-label="Week of [^"]+"/g)?.length).toBe(8);
+
+    const lazy = oddsCellHtml(row as unknown as Parameters<typeof oddsCellHtml>[0], {
+      lazy: true,
+    });
+    expect(lazy).toContain('aria-describedby="odds-history-UA2278"');
+    expect(lazy).toContain('data-fn="UA2278"');
+    expect(lazy).not.toContain('role="tooltip"');
+    expect(lazy).not.toContain("<svg");
   });
 });

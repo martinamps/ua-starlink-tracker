@@ -187,6 +187,7 @@ import {
   fmt,
   pct as pctLabel,
   probPhrase,
+  zonedDeparture,
 } from "../components/ui/format";
 import {
   DEPARTURE_WINDOW_HOURS,
@@ -3332,15 +3333,65 @@ export function parseRoutePath(pathname: string): { origin: string; destination:
   return { origin, destination };
 }
 
-function routePageMeta(ctx: RequestContext, cfg: AirlineConfig, board: RouteFlightBoard): PageMeta {
+/** Every number the route page links: the pair's flown numbers, most flown
+ * first, then any the board holds that the route cache has not caught yet. */
+function routeFlightNumbers(ctx: RequestContext, board: RouteFlightBoard): string[] {
+  const listed = ctx.reader
+    .getRouteFlightNumbers(board.origin, board.destination)
+    .flightNumbers.map((f) => f.flight_number);
+  return [...new Set([...listed, ...board.flights.map((f) => f.flight_number)])];
+}
+
+/** The search snippet: the board's own facts, never a count it doesn't show. */
+function routeMetaDescription(
+  cfg: AirlineConfig,
+  board: RouteFlightBoard,
+  flightNumbers: string[]
+): string {
+  const pair = `${board.origin} to ${board.destination}`;
+  const n = board.flights.length;
+  if (n === 0) {
+    if (flightNumbers.length === 0)
+      return `${cfg.shortName} nonstops from ${pair} and their Starlink odds.`;
+    const shown = flightNumbers.slice(0, 3);
+    const more = flightNumbers.length - shown.length;
+    const list =
+      more > 0
+        ? `${shown.join(", ")} and ${fmt(more)} more`
+        : shown.length > 1
+          ? `${shown.slice(0, -1).join(", ")} and ${shown.at(-1)}`
+          : shown[0];
+    return `${cfg.shortName} has flown ${pair} as ${list}. No nonstop seen in the past week.`;
+  }
+  const nonstops = `${n === 1 ? "the" : `all ${fmt(n)}`} ${cfg.shortName} ${pair} nonstop${n === 1 ? "" : "s"}`;
+  const odds = `Starlink odds for ${nonstops} seen in the past week.`;
+  if (board.date) return odds;
+  const assigned = board.flights
+    .flatMap((f) =>
+      f.assignment && !f.assignment.past && f.assignment.starlink !== "none"
+        ? [{ fn: f.flight_number, t: f.assignment.departure_time }]
+        : []
+    )
+    .sort((a, b) => a.t - b.t);
+  if (assigned.length === 0) {
+    return `${odds} None has a Starlink plane assigned in the next ${DEPARTURE_WINDOW_HOURS} hours.`;
+  }
+  const at = zonedDeparture(assigned[0].t, airportTimezone(board.origin));
+  const k = assigned.length;
+  return `${fmt(k)} of ${fmt(n)} ${cfg.shortName} ${pair} nonstops ${k === 1 ? "has" : "have"} a Starlink plane assigned in the next ${DEPARTURE_WINDOW_HOURS} hours. The next is ${assigned[0].fn} on ${at.date} at ${at.time}.`;
+}
+
+function routePageMeta(
+  ctx: RequestContext,
+  cfg: AirlineConfig,
+  board: RouteFlightBoard,
+  flightNumbers: string[]
+): PageMeta {
   const { origin, destination } = board;
   const pair = `${origin} to ${destination}`;
   // The question the H1 asks, with the carrier, which searchers type.
   const question = `Which ${cfg.shortName} ${pair} Flights Have Starlink?`;
-  const n = board.flights.length;
-  const description = n
-    ? `Starlink odds for ${n === 1 ? "the" : `all ${n}`} ${cfg.shortName} ${pair} nonstop${n === 1 ? "" : "s"} seen in the past week, with departure times, aircraft and assigned planes.`
-    : `${cfg.shortName} nonstops from ${pair} and their Starlink odds.`;
+  const description = routeMetaDescription(cfg, board, flightNumbers);
   return {
     siteTitle: question,
     siteDescription: description,
@@ -3351,18 +3402,19 @@ function routePageMeta(ctx: RequestContext, cfg: AirlineConfig, board: RouteFlig
       "@context": "https://schema.org",
       "@type": "ItemList",
       name: `${cfg.name} flights on ${origin} → ${destination}`,
-      numberOfItems: n,
-      itemListElement: board.flights.slice(0, 25).map((f, i) => ({
+      numberOfItems: flightNumbers.length,
+      itemListElement: flightNumbers.map((fn, i) => ({
         "@type": "ListItem",
         position: i + 1,
-        url: `https://${ctx.site.canonicalHost}/check-flight/${f.flight_number}`,
-        name: `${cfg.name} ${f.flight_number}`,
+        url: `https://${ctx.site.canonicalHost}/check-flight/${fn}`,
+        name: `${cfg.name} ${fn}`,
       })),
     }),
   };
 }
 
 const ROUTES_PAGE_ROWS = 60;
+const HOME_POPULAR_ROUTES = 12;
 const PLANNER_POPULAR_ROUTES = 60;
 // getSitemapRoutes scans flight_routes (~20ms on prod data); the link block
 // only needs to track the schedule, so it is rebuilt at most every 10 minutes.
@@ -3427,6 +3479,7 @@ const routePlannerPage: Handler = (ctx) => {
       date: ctx.url.searchParams.get("date"),
     });
     recordRouteFlightsView(cfg, "page", board);
+    const flightNumbers = routeFlightNumbers(ctx, board);
     // Historical pairs stay reachable (flight permalinks link them) but no
     // longer index; recently seen ones do, whatever the 48h window holds.
     const indexable = !ctx.reader.routeIsHistorical(parsed.origin, parsed.destination);
@@ -3435,10 +3488,16 @@ const routePlannerPage: Handler = (ctx) => {
       RoutePage,
       `/route-planner/${parsed.origin}/${parsed.destination}`,
       {
-        ...routePageMeta(ctx, cfg, board),
+        ...routePageMeta(ctx, cfg, board, flightNumbers),
         ...(indexable ? {} : { robotsMeta: "noindex, follow" }),
       },
-      { origin: parsed.origin, destination: parsed.destination, board, reverseLinkable }
+      {
+        origin: parsed.origin,
+        destination: parsed.destination,
+        board,
+        flightNumbers,
+        reverseLinkable,
+      }
     );
   }
   if (ctx.url.pathname !== "/route-planner") {
@@ -4486,6 +4545,10 @@ const homePage: Handler = async (ctx) => {
       shareCard: resolveShareCard(site.scope),
       pageLinks: pageNavLinks(ctx, "/"),
       popularFlights: site.features.checkFlightPage ? reader.getPopularFlights() : undefined,
+      popularRoutes:
+        site.features.routePlannerPage && !isHub
+          ? reader.getRankedStarlinkRoutePairs(0, HOME_POPULAR_ROUTES)
+          : undefined,
       hubLinks: isHub ? hubHomeLinks(ctx) : undefined,
       programme,
     })

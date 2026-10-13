@@ -3,8 +3,11 @@
  * leg's departures, the latest few, and how the number is weighted. One
  * string renderer for the server-rendered route page and the planner's
  * bundle, so the two never draw a cell differently; client/odds-history.ts
- * opens the card on hover, focus or tap. The chart's oh-* rules live in
- * styles/tailwind.css. No JSX: browser bundles import it.
+ * opens the card on hover, focus or tap. The route page ships cells without
+ * their cards (eight weeks of bars per row were most of its text, all of it
+ * hidden), and the client draws a card from /api/route-flights?history=1 the
+ * first time it opens. The chart's oh-* rules live in styles/tailwind.css.
+ * No JSX: browser bundles import it.
  */
 import type { RouteFlightHistory, RouteFlightRow } from "../api/route-flights";
 import { esc } from "../client/esc";
@@ -47,14 +50,14 @@ function weeksChart(h: RouteFlightHistory): string {
         fillH > 0
           ? `<rect class="oh-fill" x="${x}" y="${(BAR_TOP + BAR_H - fillH).toFixed(1)}" width="${BAR_W}" height="${fillH.toFixed(1)}" rx="2"/>`
           : "";
-      const title =
+      const label =
         w.flights > 0
           ? `Week of ${day}: ${w.starlink} of ${w.flights} on planes now with Starlink`
           : `Week of ${day}: none seen`;
-      return `<g><title>${esc(title)}</title>${track}${fill}<text class="oh-n" x="${cx}" y="${BAR_TOP + BAR_H + 13}">${w.flights > 0 ? `${w.starlink}/${w.flights}` : "–"}</text><text class="oh-wk" x="${cx}" y="${BAR_TOP + BAR_H + 26}">${esc(tick)}</text></g>`;
+      return `<g role="img" aria-label="${esc(label)}">${track}${fill}<text class="oh-n" x="${cx}" y="${BAR_TOP + BAR_H + 13}">${w.flights > 0 ? `${w.starlink}/${w.flights}` : "–"}</text><text class="oh-wk" x="${cx}" y="${BAR_TOP + BAR_H + 26}">${esc(tick)}</text></g>`;
     })
     .join("");
-  return `<svg viewBox="0 0 ${CHART_W} ${BAR_TOP + BAR_H + 30}" class="mt-2 block w-full" role="img" aria-label="Flights on Starlink planes, by week">${bars}</svg>`;
+  return `<svg viewBox="0 0 ${CHART_W} ${BAR_TOP + BAR_H + 30}" class="mt-2 block w-full" role="group" aria-label="Flights on Starlink planes, by week">${bars}</svg>`;
 }
 
 function recentList(h: RouteFlightHistory): string {
@@ -80,8 +83,17 @@ function methodLine(row: RouteFlightRow, h: RouteFlightHistory): string {
   return `${base} Last 2 weeks: ${r.starlink} of ${r.flights} on planes now with Starlink, against ${w.starlink} of ${w.flights} over 8 weeks.`;
 }
 
-function historyCard(id: string, row: RouteFlightRow, h: RouteFlightHistory): string {
-  return `<div id="${id}" role="tooltip" hidden class="js-odds-card absolute right-0 top-full z-30 mt-2 w-72 max-w-[calc(100vw-2rem)] rounded-lg border border-subtle bg-surface-elevated p-3 text-left shadow-xl shadow-black/40"><div class="font-mono text-xs uppercase tracking-wider text-muted">On Starlink planes, by week</div>${weeksChart(h)}${recentList(h)}<p class="mt-3 border-t border-subtle pt-2 text-xs text-secondary text-pretty">${esc(methodLine(row, h))}</p></div>`;
+export function oddsCardId(flightNumber: string): string {
+  return `odds-history-${esc(flightNumber)}`;
+}
+
+/** The card's frame around `body`, hidden until opened. */
+export function oddsCardShell(id: string, body: string): string {
+  return `<div id="${id}" role="tooltip" hidden class="js-odds-card absolute right-0 top-full z-30 mt-2 w-72 max-w-[calc(100vw-2rem)] rounded-lg border border-subtle bg-surface-elevated p-3 text-left shadow-xl shadow-black/40">${body}</div>`;
+}
+
+export function oddsCardBody(row: RouteFlightRow, h: RouteFlightHistory): string {
+  return `<div class="font-mono text-xs uppercase tracking-wider text-muted">On Starlink planes, by week</div>${weeksChart(h)}${recentList(h)}<p class="mt-3 border-t border-subtle pt-2 text-xs text-secondary text-pretty">${esc(methodLine(row, h))}</p>`;
 }
 
 /** The basis line, after the odds when an assigned plane's answer is the big text. */
@@ -93,10 +105,12 @@ function detailHtml(row: RouteFlightRow): string {
   return basis;
 }
 
-/** The odds cell's inner markup; with a history, a button that opens its card. */
-export function oddsCellHtml(row: RouteFlightRow): string {
+/** The odds cell's inner markup; with a history, a button that opens its card.
+ * `lazy` leaves the card out for the client to draw on first open. */
+export function oddsCellHtml(row: RouteFlightRow, opts: { lazy?: boolean } = {}): string {
   const big = `<div class="whitespace-nowrap font-display ${TONE_TEXT[oddsTone(row)]}">${esc(oddsCell(row))}${row.assignment ? "" : trendHtml(row)}<span class="sr-only"> · </span></div>`;
   if (!row.history) return `${big}<div class="text-xs text-muted">${detailHtml(row)}</div>`;
-  const id = `odds-history-${esc(row.flight_number)}`;
-  return `<div class="js-odds-hist relative inline-block align-top"><button type="button" class="js-odds-trigger cursor-help rounded text-right focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50" aria-describedby="${id}">${big}<div class="text-xs text-muted underline decoration-dotted underline-offset-2">${detailHtml(row)}</div></button>${historyCard(id, row, row.history)}</div>`;
+  const id = oddsCardId(row.flight_number);
+  const card = opts.lazy ? "" : oddsCardShell(id, oddsCardBody(row, row.history));
+  return `<div class="js-odds-hist relative inline-block align-top" data-fn="${esc(row.flight_number)}"><button type="button" class="js-odds-trigger cursor-help rounded text-right focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50" aria-describedby="${id}">${big}<div class="text-xs text-muted underline decoration-dotted underline-offset-2">${detailHtml(row)}</div></button>${card}</div>`;
 }

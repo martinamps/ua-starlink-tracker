@@ -16,7 +16,7 @@ import type {
   RecentInstall,
 } from "../types";
 import { denominatorIsPublishable } from "../utils/share-cards";
-import { HeaderStatStrip, PopularFlightsLinks, ShareCardLink } from "./atoms";
+import { HeaderStatStrip, PopularFlightsLinks, PopularRoutesLinks, ShareCardLink } from "./atoms";
 import { Faq, homeFaqItems, homeFaqSections } from "./faq";
 import { FlightSearchForm } from "./flight-search-form";
 import { AircraftList } from "./home/aircraft-list";
@@ -52,6 +52,8 @@ interface PageProps {
   pageLinks?: Link[];
   /** Most-observed flight numbers — crawlable inlinks into the permalink corpus. */
   popularFlights?: PopularFlight[];
+  /** Pairs with the most Starlink departures — inlinks into the route pages. */
+  popularRoutes?: Array<{ origin: string; destination: string }>;
   hubLinks?: HubHomeLinks;
   /** The tenant's programme headline (with partner fleets); replaces the
    * starlink/total pair in every count the page states. */
@@ -171,6 +173,7 @@ export default function Page({
   shareCard,
   pageLinks,
   popularFlights = [],
+  popularRoutes = [],
   hubLinks,
   programme,
 }: PageProps) {
@@ -274,9 +277,12 @@ export default function Page({
 
       <ToolsSection site={site} />
 
-      {airline && popularFlights.length > 0 && (
-        <Section bare wide>
-          <PopularFlightsLinks flights={popularFlights} airlineName={airline.name} />
+      {airline && (popularFlights.length > 0 || popularRoutes.length > 0) && (
+        <Section bare wide className="space-y-3">
+          <PopularRoutesLinks routes={popularRoutes} />
+          {popularFlights.length > 0 && (
+            <PopularFlightsLinks flights={popularFlights} airlineName={airline.name} />
+          )}
         </Section>
       )}
 
