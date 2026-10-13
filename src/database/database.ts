@@ -109,6 +109,7 @@ import {
   DAY_SEC,
   DEPARTURE_WINDOW_HOURS,
   DEPARTURE_WINDOW_SEC,
+  ROUTE_RECENT_SEC,
   TRAILING_WINDOW_DAYS,
   TRAILING_WINDOW_SEC,
   isoDateDaysAgo,
@@ -2308,8 +2309,51 @@ export function getRoutesForFlightVariants(
 
 export interface SitemapFlight {
   flight_number: string;
-  /** Latest data touch (unix sec); 0 when unknown — emit no <lastmod> rather than lie. */
+  /** Latest data touch (unix sec); 0 when unknown. Ages entries out, never a lastmod:
+   * every schedule refresh moves it. */
   last_touched: number;
+  /** When the page's flight set last changed (unix sec): the newest assignment
+   * first logged for it or the newest route first seen on it; 0 when unknown —
+   * emit no <lastmod> rather than lie. */
+  changed_at: number;
+}
+
+/**
+ * When each flight number's (or pair's) assignments last changed: the newest
+ * flight_assignment_log row first seen. A refresh that re-sees the same plane
+ * on the same departure moves only last_seen, so this moves when a departure
+ * or a swap appears, which is when the page's answer can change.
+ */
+function assignmentFirstSeen(
+  db: Database,
+  airline: string,
+  key: (r: { flight_number: string; airline: string; o: string; d: string | null }) =>
+    | string
+    | null,
+  nowSec: number
+): Map<string, number> {
+  const scope = slotScope(airline, true);
+  const rows = db
+    .query(
+      `SELECT uf.flight_number, uf.airline, uf.departure_airport AS o, uf.arrival_airport AS d,
+              MAX(uf.first_seen) AS t
+       FROM flight_assignment_log uf
+       WHERE ${scope.sql} AND uf.first_seen <= ?
+       GROUP BY uf.flight_number, uf.airline, uf.departure_airport, uf.arrival_airport`
+    )
+    .all(...scope.params, nowSec) as Array<{
+    flight_number: string;
+    airline: string;
+    o: string;
+    d: string | null;
+    t: number;
+  }>;
+  const out = new Map<string, number>();
+  for (const r of rows) {
+    const k = key(r);
+    if (k) out.set(k, Math.max(out.get(k) ?? 0, r.t));
+  }
+  return out;
 }
 
 /**
@@ -2361,26 +2405,45 @@ export function getSitemapFlights(db: Database, airline: AirlineCode): SitemapFl
   const inUpcoming = new Set(latest.keys());
   const cached = db
     .query(
-      `SELECT flight_number, MAX(last_seen_at) AS t, SUM(seen_count) AS seen
+      `SELECT flight_number, MAX(last_seen_at) AS t, MAX(first_seen_at) AS first,
+              SUM(seen_count) AS seen
        FROM flight_routes
        WHERE flight_number GLOB ? GROUP BY flight_number`
     )
     .all(prefixGlob(cfg.iata)) as {
     flight_number: string;
     t: number | null;
+    first: number | null;
     seen: number | null;
   }[];
+  const routeFirstSeen = new Map<string, number>();
   for (const r of cached) {
     const fn = permalinkFlightNumber(cfg, r.flight_number);
     if (!marketing.test(fn)) continue;
+    if (r.first && r.first <= nowSec) {
+      routeFirstSeen.set(fn, Math.max(routeFirstSeen.get(fn) ?? 0, r.first));
+    }
     if (inUpcoming.has(fn) || (r.seen ?? 0) >= SITEMAP_FLIGHT_MIN_SEEN) {
       touch(r.flight_number, r.t);
     }
   }
+  const assigned = assignmentFirstSeen(
+    db,
+    airline,
+    (r) => permalinkFlightNumber(cfg, slotFlightKey(r.flight_number, r.airline) ?? r.flight_number),
+    nowSec
+  );
   const cutoff = sitemapStaleCutoff(db, airline);
   return [...latest]
     .filter(([fn, t]) => inUpcoming.has(fn) || !isSitemapStale(t, cutoff))
-    .map(([flight_number, last_touched]) => ({ flight_number, last_touched }))
+    .map(([flight_number, last_touched]) => ({
+      flight_number,
+      last_touched,
+      changed_at: Math.max(
+        assigned.get(flight_number) ?? 0,
+        routeFirstSeen.get(flight_number) ?? 0
+      ),
+    }))
     .sort((a, b) => a.flight_number.localeCompare(b.flight_number, undefined, { numeric: true }));
 }
 
@@ -2581,23 +2644,31 @@ function computePopularFlights(db: Database, cfg: AirlineConfig, limit: number):
 export interface SitemapRoute {
   origin: string;
   destination: string;
-  /** Newest data-touch across the pair; 0 when unknown so callers omit lastmod. */
+  /** Newest data-touch across the pair; 0 when unknown. Orders, never a lastmod. */
   last_touched: number;
+  /** When the pair's flight set last changed: the newest assignment logged on
+   * it or the newest number first seen on it; 0 when unknown, so no lastmod. */
+  changed_at: number;
 }
 
 /**
- * Directed route pairs worth advertising, with real per-route lastmod.
+ * Directed route pairs worth advertising: exactly the pairs whose page
+ * indexes, i.e. flown recently (routeIsRecent). A pair unseen for a week has an
+ * empty board and goes noindex, so advertising it would contradict the page.
  *
- * Anchored on flight_routes rather than the live upcoming_flights window: the
- * window only covers 48 hours, so gating on it would add and drop thousands of
- * URLs every couple of days. flight_routes is airline-agnostic (the PK carries
- * the IATA prefix), so scoping is a GLOB on flight_number — same trick
- * getSitemapFlights uses.
+ * Anchored on flight_routes as well as the live window: the window only covers
+ * 48 hours, while the route cache and the assignment log span the board's
+ * week. flight_routes is airline-agnostic (the PK carries the IATA prefix), so
+ * scoping is a GLOB on flight_number — same trick getSitemapFlights uses.
  */
 export function getSitemapRoutes(db: Database, airline: string): SitemapRoute[] {
   const cfg = AIRLINES[airline];
   if (!cfg) return [];
   const nowSec = unixNow();
+  const anchor = getObservationAnchor(db, airline, nowSec);
+  const recentCutoff = anchor - ROUTE_RECENT_SEC;
+  const pairKey = (r: { o: string; d: string | null }) => (r.d ? `${r.o}-${r.d}` : null);
+  const logged = assignmentFirstSeen(db, airline, pairKey, nowSec);
   const latest = new Map<string, number>();
   const touch = (origin: string, destination: string, t: number | null) => {
     if (!isCleanAirportPair(origin, destination)) return;
@@ -2619,7 +2690,8 @@ export function getSitemapRoutes(db: Database, airline: string): SitemapRoute[] 
   const inUpcoming = new Set(latest.keys());
   const cached = db
     .query(
-      `SELECT origin, destination, MAX(last_seen_at) AS t, SUM(seen_count) AS seen
+      `SELECT origin, destination, MAX(last_seen_at) AS t, MAX(first_seen_at) AS first,
+              SUM(seen_count) AS seen
        FROM flight_routes
        WHERE flight_number GLOB ? GROUP BY origin, destination`
     )
@@ -2627,27 +2699,35 @@ export function getSitemapRoutes(db: Database, airline: string): SitemapRoute[] 
     origin: string;
     destination: string;
     t: number | null;
+    first: number | null;
     seen: number | null;
   }[];
+  const routeFirstSeen = new Map<string, number>();
   for (const r of cached) {
     if (!isCleanAirportPair(r.origin, r.destination)) continue;
     const key = `${r.origin}-${r.destination}`;
-    if (inUpcoming.has(key) || (r.seen ?? 0) >= SITEMAP_ROUTE_MIN_SEEN) {
-      touch(r.origin, r.destination, r.t);
-    }
+    if (r.first && r.first <= nowSec) routeFirstSeen.set(key, r.first);
+    // A pair only the assignment log holds 404s (routeHasData reads the
+    // schedule and the route cache), so the log alone never adds one.
+    const recent = logged.has(key) || (r.t ?? 0) >= recentCutoff;
+    const enough = logged.has(key) || (r.seen ?? 0) >= SITEMAP_ROUTE_MIN_SEEN;
+    if (inUpcoming.has(key) || (recent && enough)) touch(r.origin, r.destination, r.t);
   }
-  const cutoff = sitemapStaleCutoff(db, airline);
   return [...latest]
-    .filter(([key, t]) => inUpcoming.has(key) || !isSitemapStale(t, cutoff))
     .map(([key, last_touched]) => {
       const [origin, destination] = key.split("-");
-      return { origin, destination, last_touched };
+      return {
+        origin,
+        destination,
+        last_touched,
+        changed_at: Math.max(logged.get(key) ?? 0, routeFirstSeen.get(key) ?? 0),
+      };
     })
     .sort((a, b) => a.origin.localeCompare(b.origin) || a.destination.localeCompare(b.destination));
 }
 
 /**
- * Sitemap entries outside the live window drop out once this many days older
+ * Flight sitemap entries outside the live window drop out once this many days older
  * than the airline's newest observation. The page keeps serving 200 and
  * indexable — seasonal flights come back — the sitemap just stops asking
  * crawlers to spend budget on a flight nobody has seen since spring.
@@ -2720,19 +2800,14 @@ export function routeHasData(
   );
 }
 
-/** A route page this long past its last sighting is historical and goes
- * noindex. Deliberately not the sitemap rule: that one tracks the 48h window
- * and a sighting floor, so indexability would flap with the schedule. */
-export const ROUTE_NOINDEX_STALE_DAYS = 60;
-
 /**
- * Has this pair gone unseen for ROUTE_NOINDEX_STALE_DAYS? Any schedule row
- * counts as current, the same exemption getSitemapRoutes grants, so no
- * sitemap URL can come back noindex. Measured against the airline's newest
- * observation (a stalled ingest ages nothing); unknown or future timestamps
- * are not evidence of staleness.
+ * Was this pair flown within the board's week (ROUTE_RECENT_DAYS)? A schedule
+ * row, an assignment-log row, or a route-cache sighting that recent all count,
+ * measured against the airline's newest observation so a stalled ingest ages
+ * nothing. A pair that fails has an empty board, so its page goes noindex and
+ * getSitemapRoutes, whose members all pass, leaves it out.
  */
-export function routeIsHistorical(
+export function routeIsRecent(
   db: Database,
   origin: string,
   destination: string,
@@ -2740,23 +2815,23 @@ export function routeIsHistorical(
 ): boolean {
   const cfg = AIRLINES[airline];
   if (!cfg) return false;
-  const q = withAirline(
-    "SELECT 1 FROM upcoming_flights WHERE departure_airport = ? AND arrival_airport = ?",
-    airline,
-    "",
-    [origin, destination]
-  );
-  if (db.query(`${q.sql} LIMIT 1`).get(...q.params)) return false;
-  const anchor = getObservationAnchor(db, airline);
-  if (anchor === 0) return false;
+  const scope = slotScope(airline, true);
+  for (const table of ["upcoming_flights", "flight_assignment_log"]) {
+    const hit = db
+      .query(
+        `SELECT 1 FROM ${table} uf
+         WHERE ${scope.sql} AND uf.departure_airport = ? AND uf.arrival_airport = ? LIMIT 1`
+      )
+      .get(...scope.params, origin, destination);
+    if (hit) return true;
+  }
   const row = db
     .query(
       `SELECT MAX(last_seen_at) AS t FROM flight_routes
-       WHERE origin = ? AND destination = ? AND flight_number GLOB ? AND last_seen_at <= ?`
+       WHERE origin = ? AND destination = ? AND flight_number GLOB ?`
     )
-    .get(origin, destination, prefixGlob(cfg.iata), anchor) as { t: number | null } | null;
-  const last = row?.t ?? 0;
-  return last > 0 && anchor - last > ROUTE_NOINDEX_STALE_DAYS * DAY_SEC;
+    .get(origin, destination, prefixGlob(cfg.iata)) as { t: number | null } | null;
+  return (row?.t ?? 0) >= getObservationAnchor(db, airline) - ROUTE_RECENT_SEC;
 }
 
 export interface RouteSummary {

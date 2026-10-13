@@ -236,3 +236,56 @@ describe("rate-limited responses", () => {
     expect(copycat[API_RATE_LIMIT]).toBe(429);
   });
 });
+
+describe("verified search crawlers and the page limit", () => {
+  const GOOGLEBOT_UA = "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)";
+  let reverseLookups = 0;
+  const dns = {
+    reverse: async (ip: string) => {
+      reverseLookups++;
+      if (ip === "66.249.66.1") return ["crawl-66-249-66-1.googlebot.com"];
+      if (ip === "198.51.100.7") return ["crawl-fake.googlebot.com"];
+      return ["host.example.net"];
+    },
+    lookup: async (host: string) =>
+      host === "crawl-66-249-66-1.googlebot.com" ? ["66.249.66.1"] : ["192.0.2.1"],
+  };
+
+  async function flood(path: string, ip: string, ua: string, n = API_RATE_LIMIT + 5) {
+    const limited = createApp(openSnapshot(), { crawlerDns: dns });
+    const statuses: number[] = [];
+    for (let i = 0; i < n; i++) {
+      const res = await limited.dispatch(
+        req(path, UA_HOST, { headers: { "User-Agent": ua, "cf-connecting-ip": ip } })
+      );
+      statuses.push(res.status);
+    }
+    return statuses;
+  }
+
+  test("a DNS-verified Googlebot crawls pages past the limit, looked up once", async () => {
+    const calls = captureIncrements();
+    reverseLookups = 0;
+    const statuses = await flood("/badge.svg", "66.249.66.1", GOOGLEBOT_UA);
+    expect(statuses).not.toContain(429);
+    expect(reverseLookups).toBe(1);
+    const exempt = calls.filter((c) => c.name === "http.rate_limit_exempt");
+    expect(exempt.length).toBe(5);
+    expect(exempt[0].tags).toMatchObject({ bucket: "page", crawler: "googlebot" });
+    expect(Object.values(exempt[0].tags)).not.toContain("66.249.66.1");
+  });
+
+  test("the user agent alone exempts nothing", async () => {
+    // No crawler domain in reverse DNS; a crawler domain that doesn't resolve back.
+    for (const ip of ["203.0.113.30", "198.51.100.7"]) {
+      const statuses = await flood("/badge.svg", ip, GOOGLEBOT_UA);
+      expect(statuses[API_RATE_LIMIT], ip).toBe(429);
+    }
+  });
+
+  test("ordinary visitors and the API stay limited", async () => {
+    expect((await flood("/badge.svg", "66.249.66.1", CHROME_UA))[API_RATE_LIMIT]).toBe(429);
+    const api = await flood("/api/check-flight", "66.249.66.1", GOOGLEBOT_UA);
+    expect(api[API_RATE_LIMIT]).toBe(429);
+  });
+});

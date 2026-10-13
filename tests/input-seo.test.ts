@@ -1,7 +1,7 @@
 /**
  * Input validation and crawl hygiene: impossible dates and same-airport plans
  * are refused, pasted callsigns resolve to the permalink, alias hosts land in
- * one hop, route pages noindex only once historical, and structured data
+ * one hop, route pages noindex once nobody flew them this week, and structured data
  * rides only on indexable pages.
  */
 
@@ -9,12 +9,13 @@ import { beforeAll, describe, expect, test } from "bun:test";
 import { buildFlightLookupVariants } from "../src/airlines/flight-number";
 import { AIRLINES, SITES } from "../src/airlines/registry";
 import {
-  ROUTE_NOINDEX_STALE_DAYS,
   flightNumberHasData,
+  getSitemapFlights,
   getSitemapRoutes,
-  routeIsHistorical,
+  routeIsRecent,
 } from "../src/database/database";
 import { createReaderFactory } from "../src/database/reader";
+import { ROUTE_RECENT_DAYS } from "../src/database/sql/windows";
 import { createApp } from "../src/server/app";
 import { flightDateWindow, isRealIsoDate } from "../src/utils/airport-tz";
 import { addFlight, bodyOf, makeSyntheticDb, openSnapshot, req } from "./helpers";
@@ -130,54 +131,79 @@ describe("alias host redirects land in one hop", () => {
   });
 });
 
-describe("route pages noindex only once historical", () => {
+describe("route pages noindex once nobody flew them this week", () => {
   const robots = (page: string) => page.match(/<meta name="robots" content="([^"]+)"/)?.[1];
   const DAY = 86400;
 
   function syntheticRoutes() {
     const sdb = makeSyntheticDb();
     const anchor = Math.floor(Date.now() / 1000) - DAY;
-    const route = (fn: string, o: string, d: string, lastSeen: number) =>
+    const route = (fn: string, o: string, d: string, lastSeen: number, seen = 1) =>
       sdb
         .query(
           `INSERT INTO flight_routes (flight_number, origin, destination, first_seen_at, last_seen_at, seen_count)
-           VALUES (?, ?, ?, ?, ?, 1)`
+           VALUES (?, ?, ?, ?, ?, ?)`
         )
-        .run(fn, o, d, lastSeen, lastSeen);
-    route("UA1", "SFO", "EWR", anchor);
-    route("UA2", "SFO", "SIN", anchor - (ROUTE_NOINDEX_STALE_DAYS - 5) * DAY);
-    route("UA3", "ORD", "SBA", anchor - (ROUTE_NOINDEX_STALE_DAYS + 5) * DAY);
-    route("UA4", "MEX", "IAH", anchor - (ROUTE_NOINDEX_STALE_DAYS + 5) * DAY);
+        .run(fn, o, d, lastSeen - 30 * DAY, lastSeen, seen);
+    route("UA1", "SFO", "EWR", anchor, 6);
+    route("UA2", "SFO", "SIN", anchor - (ROUTE_RECENT_DAYS - 2) * DAY, 6);
+    route("UA3", "ORD", "SBA", anchor - (ROUTE_RECENT_DAYS + 2) * DAY, 6);
+    route("UA4", "MEX", "IAH", anchor - 90 * DAY, 6);
     addFlight(sdb, "N1", "UA4", "MEX", anchor - 90 * DAY, { arrivalAirport: "IAH" });
     return sdb;
   }
 
-  test("only a pair unseen past the window with no schedule row is historical", () => {
+  test("a pair is recent with a sighting this week or any schedule row", () => {
     const sdb = syntheticRoutes();
-    expect(routeIsHistorical(sdb, "SFO", "EWR", "UA")).toBe(false);
-    // Outside the 48h window and under the sitemap's sighting floor, still indexable.
-    expect(routeIsHistorical(sdb, "SFO", "SIN", "UA")).toBe(false);
-    expect(routeIsHistorical(sdb, "ORD", "SBA", "UA")).toBe(true);
-    // A schedule row keeps it current, as it keeps the pair in the sitemap.
-    expect(routeIsHistorical(sdb, "MEX", "IAH", "UA")).toBe(false);
+    expect(routeIsRecent(sdb, "SFO", "EWR", "UA")).toBe(true);
+    expect(routeIsRecent(sdb, "SFO", "SIN", "UA")).toBe(true);
+    expect(routeIsRecent(sdb, "ORD", "SBA", "UA")).toBe(false);
+    expect(routeIsRecent(sdb, "MEX", "IAH", "UA")).toBe(true);
   });
 
-  test("the page's robots follows the rule", async () => {
-    const sapp = createApp(syntheticRoutes());
+  test("the page's robots and the sitemap follow the rule", async () => {
+    const sdb = syntheticRoutes();
+    const sapp = createApp(sdb);
     const page = async (p: string) =>
       robots(await (await sapp.dispatch(req(p, UA, { headers: { Accept: "text/html" } }))).text());
     expect(await page("/route-planner/SFO/SIN")).toBe("index, follow");
     expect(await page("/route-planner/ORD/SBA")).toBe("noindex, follow");
+    const advertised = getSitemapRoutes(sdb, "UA").map((r) => `${r.origin}-${r.destination}`);
+    expect(advertised).toContain("SFO-SIN");
+    expect(advertised).not.toContain("ORD-SBA");
   });
 
-  test("no sitemap route is historical on the snapshot", async () => {
+  test("route lastmod is when the flight set changed, not the last sighting", () => {
+    const sdb = syntheticRoutes();
+    const r = getSitemapRoutes(sdb, "UA").find(
+      (x) => x.origin === "SFO" && x.destination === "EWR"
+    );
+    expect(r?.changed_at).toBe((r?.last_touched ?? 0) - 30 * DAY);
+  });
+
+  test("flight lastmod is the newest assignment first seen, not the refresh", () => {
+    const sdb = syntheticRoutes();
+    const anchor = Math.floor(Date.now() / 1000) - DAY;
+    sdb
+      .query(
+        `INSERT INTO flight_assignment_log
+           (airline, flight_number, dep_date, departure_airport, arrival_airport, tail_number,
+            starlink, departure_time, arrival_time, first_seen, last_seen)
+         VALUES ('UA', 'UA1', '2026-01-01', 'SFO', 'EWR', 'N1', 1, ?, ?, ?, ?)`
+      )
+      .run(anchor, anchor + 3600, anchor - 3 * DAY, anchor);
+    const f = getSitemapFlights(sdb, "UA").find((x) => x.flight_number === "UA1");
+    expect(f?.last_touched).toBe(anchor);
+    expect(f?.changed_at).toBe(anchor - 3 * DAY);
+  });
+
+  test("no sitemap route is noindex on the snapshot", async () => {
     const routes = getSitemapRoutes(db, "UA");
     if (routes.length === 0) throw new Error("snapshot has no routes — run bun run test:setup");
     for (const r of routes) {
-      expect(
-        routeIsHistorical(db, r.origin, r.destination, "UA"),
-        `${r.origin}-${r.destination}`
-      ).toBe(false);
+      expect(routeIsRecent(db, r.origin, r.destination, "UA"), `${r.origin}-${r.destination}`).toBe(
+        true
+      );
     }
     const res = await html(`/route-planner/${routes[0].origin}/${routes[0].destination}`);
     expect(res.status).toBe(200);

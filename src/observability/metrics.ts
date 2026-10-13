@@ -380,6 +380,9 @@ export const COUNTERS = {
   // Per-IP rate limit triggered on a metered surface — tags: route, tenant,
   //   airline, bucket (api|mcp|page), client_class, ext_version (extension traffic)
   HTTP_RATE_LIMITED: "http.rate_limited",
+  // Over the page limit but served: a reverse-DNS-verified search crawler —
+  //   the http.rate_limited tags plus crawler (googlebot|bingbot)
+  HTTP_RATE_LIMIT_EXEMPT: "http.rate_limit_exempt",
 
   // united_fleet.starlink_status changed (consensus verdict flipped)
   // tags: fleet, from (confirmed|negative|unknown), to, airline

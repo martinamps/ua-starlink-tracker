@@ -136,7 +136,7 @@ import {
   getVerificationSummary,
   getWifiMismatches,
   routeHasData,
-  routeIsHistorical,
+  routeIsRecent,
 } from "./database";
 import { type ProgrammeHeadline, programmeHeadline } from "./roster";
 import { type RouteFlightLeg, getAllFlightLegs, getRouteFlightLegs } from "./route-flights";
@@ -268,8 +268,8 @@ export interface ScopedReader {
   flightNumberHasData(variants: string[]): boolean;
   /** Existence gate for /route-planner/{origin}/{destination}; mirrors getSitemapRoutes. */
   routeHasData(origin: string, destination: string): boolean;
-  /** Unseen for ROUTE_NOINDEX_STALE_DAYS — the route page goes noindex. */
-  routeIsHistorical(origin: string, destination: string): boolean;
+  /** Flown within the board's week; otherwise the route page goes noindex. */
+  routeIsRecent(origin: string, destination: string): boolean;
   getRouteSummary(origin: string, destination: string): RouteSummary;
   /** Equipped departures on the pair in the next 48h, under their marketed numbers. */
   getRouteDepartures(origin: string, destination: string): RouteDepartureRow[];
@@ -495,7 +495,7 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
 
     flightNumberHasData: (v) => flightNumberHasData(db, v, airlines),
     routeHasData: (o, d) => routeHasData(db, o, d, soleAirline()),
-    routeIsHistorical: (o, d) => routeIsHistorical(db, o, d, soleAirline()),
+    routeIsRecent: (o, d) => routeIsRecent(db, o, d, soleAirline()),
     getRouteSummary: (o, d) => getRouteSummary(db, o, d, soleAirline()),
     getRouteDepartures: (o, d) => getRouteDepartures(db, soleAirline(), o, d),
     getRouteFlightNumbers: (o, d) => getRouteFlightNumbers(db, o, d, soleAirline()),
