@@ -90,6 +90,31 @@ export function PopularFlightsLinks({
   );
 }
 
+/** Inlinks into the /route-planner/{o}/{d} corpus, which the homepage
+ * otherwise never reached: the pairs with the most Starlink departures. */
+export function PopularRoutesLinks({
+  routes,
+}: {
+  routes: Array<{ origin: string; destination: string }>;
+}) {
+  if (routes.length === 0) return null;
+  return (
+    <Panel data-popular-routes="">
+      <Eyebrow>Popular routes</Eyebrow>
+      <div className="flex flex-wrap gap-2">
+        {routes.map((r) => (
+          <Chip
+            key={`${r.origin}-${r.destination}`}
+            href={`/route-planner/${r.origin}/${r.destination}`}
+          >
+            {r.origin} → {r.destination}
+          </Chip>
+        ))}
+      </div>
+    </Panel>
+  );
+}
+
 export const ROLLOUT_TONE: Record<AirlineConfig["rollout"]["status"], Tone> = {
   complete: "success",
   phase_done: "warn",

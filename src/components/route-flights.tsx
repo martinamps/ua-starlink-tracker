@@ -53,6 +53,12 @@ export function RouteFlightsSection({
   footerAction?: React.ReactNode;
 }) {
   const empty = emptyBoardMessage(board);
+  const historySrc = `/api/route-flights?${new URLSearchParams({
+    origin: board.origin,
+    destination: board.destination,
+    ...(board.date ? { date: board.date } : {}),
+    history: "1",
+  })}`;
   return (
     <Section id="all-flights" title="Nonstop flights" dek={empty ? undefined : boardDek(board)}>
       {board.nonstop && (
@@ -90,7 +96,7 @@ export function RouteFlightsSection({
           </a>
         </p>
       ) : (
-        <table className="w-full text-sm">
+        <table className="w-full text-sm" data-history-src={historySrc}>
           <thead>
             <tr>
               <Th>Flight</Th>
@@ -108,7 +114,7 @@ export function RouteFlightsSection({
                 <Td numeric>
                   <div
                     // biome-ignore lint/security/noDangerouslySetInnerHtml: oddsCellHtml escapes every value; the planner's bundle draws the same cell
-                    dangerouslySetInnerHTML={{ __html: oddsCellHtml(row) }}
+                    dangerouslySetInnerHTML={{ __html: oddsCellHtml(row, { lazy: true }) }}
                   />
                 </Td>
               </tr>

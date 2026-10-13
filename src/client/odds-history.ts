@@ -4,13 +4,58 @@
  * so the planner's boards, drawn after load, need no rewiring. Escape or a tap
  * elsewhere closes it. The card opens below the cell, so it never covers the
  * row's own number; it flips above when the viewport has no room below.
+ *
+ * A board marked data-history-src (the route page) ships its cells without
+ * cards; the first open fetches that board once and draws every card from it.
  */
+import type { RouteFlightBoard } from "../api/route-flights";
+import { oddsCardBody, oddsCardId, oddsCardShell } from "../components/odds-history";
 
 const OPEN_DELAY_MS = 80;
 const CLOSE_DELAY_MS = 150;
 const GAP_PX = 8;
 
 let wired = false;
+
+const boards = new Map<string, Promise<RouteFlightBoard>>();
+
+function loadBoard(src: string): Promise<RouteFlightBoard> {
+  let p = boards.get(src);
+  if (!p) {
+    p = fetch(src).then((r) => {
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json() as Promise<RouteFlightBoard>;
+    });
+    // A failed load is retried on the next open, not cached.
+    p.catch(() => boards.delete(src));
+    boards.set(src, p);
+  }
+  return p;
+}
+
+const cardNote = (text: string) => `<p class="text-xs text-muted">${text}</p>`;
+
+/** Draws a lazy row's card: a placeholder now, the history once the board arrives. */
+function drawCard(root: HTMLElement, onReady: (card: HTMLElement) => void): HTMLElement | null {
+  const src = root.closest<HTMLElement>("[data-history-src]")?.dataset.historySrc;
+  const fn = root.dataset.fn;
+  if (!src || !fn) return null;
+  root.insertAdjacentHTML("beforeend", oddsCardShell(oddsCardId(fn), cardNote("Loading…")));
+  const card = root.querySelector<HTMLElement>(".js-odds-card");
+  if (!card) return null;
+  loadBoard(src)
+    .then((board) => {
+      const row = board.flights.find((f) => f.flight_number === fn);
+      card.innerHTML = row?.history
+        ? oddsCardBody(row, row.history)
+        : cardNote("No history for this flight.");
+    })
+    .catch(() => {
+      card.remove();
+    })
+    .finally(() => onReady(card));
+  return card;
+}
 
 export function wireOddsHistory(): void {
   if (wired) return;
@@ -48,7 +93,11 @@ export function wireOddsHistory(): void {
   function show(root: HTMLElement, pin: boolean): void {
     clearTimeout(timer);
     if (open !== root) hide();
-    const card = cardOf(root);
+    const card =
+      cardOf(root) ??
+      drawCard(root, (drawn) => {
+        if (open === root && drawn.isConnected) place(root, drawn);
+      });
     if (!card) return;
     card.hidden = false;
     place(root, card);

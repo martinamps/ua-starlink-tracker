@@ -496,11 +496,55 @@ describe("board behavior (synthetic)", () => {
     }
   });
 
-  test("the page lists each board number once and no older sections", async () => {
+  test("each board number links once from the board and once from the full list", async () => {
     const body = await (await page("/route-planner/SFO/ORD", UA, sapp)).text();
+    expect(body.match(/All flight numbers on this route/g)?.length).toBe(1);
     for (const fn of ["UA100", "UA5212", "UA777"]) {
-      expect(body.match(new RegExp(`href="/check-flight/${fn}"`, "g"))?.length, fn).toBe(1);
+      expect(body.match(new RegExp(`href="/check-flight/${fn}"`, "g"))?.length, fn).toBe(2);
     }
+  });
+
+  test("the homepage links its popular routes, and each one serves", async () => {
+    const home = await (await page("/", UA, sapp)).text();
+    expect(home).toContain("data-popular-routes");
+    const linked = [...home.matchAll(/href="(\/route-planner\/[A-Z]{3}\/[A-Z]{3})"/g)].map(
+      (m) => m[1]
+    );
+    expect(linked).toContain("/route-planner/SFO/ORD");
+    for (const path of linked) expect((await page(path, UA, sapp)).status, path).toBe(200);
+    expect(await (await page("/", HUB, sapp)).text()).not.toContain("data-popular-routes");
+  });
+
+  test("the page ships no hidden history cards; the board names where to fetch them", async () => {
+    const body = await (await page("/route-planner/SFO/ORD", UA, sapp)).text();
+    expect(body).not.toContain('role="tooltip"');
+    expect(body).not.toContain("<title>Week");
+    expect(body).toContain(
+      'data-history-src="/api/route-flights?origin=SFO&amp;destination=ORD&amp;history=1"'
+    );
+  });
+
+  test("the ItemList covers the full number list, and the snippet states the board's facts", async () => {
+    const body = await (await page("/route-planner/SFO/ORD", UA, sapp)).text();
+    const ld = [...body.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)]
+      .map((m) => JSON.parse(m[1]))
+      .flatMap((j) => (Array.isArray(j) ? j : [j]))
+      .find((j) => j["@type"] === "ItemList");
+    const listed = [...body.matchAll(/id="flight-numbers"[\s\S]*?<\/section>/g)][0]?.[0] ?? "";
+    const chips = [...listed.matchAll(/href="\/check-flight\/([^"]+)"/g)].map((m) => m[1]);
+    expect(chips.length).toBeGreaterThan(0);
+    expect(ld.numberOfItems).toBe(chips.length);
+    expect(ld.itemListElement.map((i: { url: string }) => i.url.split("/").pop())).toEqual(chips);
+    const desc = body.match(/<meta name="description" content="([^"]*)"/)?.[1] ?? "";
+    const assigned = board().flights.filter(
+      (f) => f.assignment && !f.assignment.past && f.assignment.starlink !== "none"
+    );
+    expect(assigned.map((f) => f.flight_number)).toEqual(["UA100"]);
+    expect(desc).toMatch(
+      new RegExp(
+        `^1 of ${board().flights.length} United SFO to ORD nonstops has a Starlink plane assigned in the next 48 hours\\. The next is UA100 on `
+      )
+    );
   });
 
   test("each host sees only its own airline's flights", async () => {
