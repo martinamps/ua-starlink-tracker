@@ -268,6 +268,34 @@ describe("the batched consensus sweep agrees with the per-tail settle", () => {
   });
 });
 
+describe("a run of another provider after Starlink", () => {
+  test("does not settle a Starlink tail negative; the percentage still decides", () => {
+    const db = makeSyntheticDb();
+    const log = (tail: string, daysAgo: number, provider: string) =>
+      db
+        .query(
+          `INSERT INTO starlink_verification_log
+             (tail_number, source, checked_at, has_starlink, wifi_provider, tail_confirmed, error, airline)
+           VALUES (?, 'united', ?, ?, ?, 1, NULL, 'UA')`
+        )
+        .run(tail, NOW - daysAgo * 86400, provider === "Starlink" ? 1 : 0, provider);
+    const verdict = (tail: string) =>
+      computeWifiConsensus(db, tail, { sources: OBSERVED_WIFI_SOURCES, airline: "UA" }).verdict;
+
+    for (const d of [20, 15, 10, 8]) log("N1LAG", d, "Starlink");
+    for (const d of [5, 3, 1]) log("N1LAG", d, "Viasat");
+    expect(verdict("N1LAG")).toBeNull();
+
+    for (const d of [10, 8]) log("N2LAG", d, "Starlink");
+    for (const d of [7, 6, 5, 3, 2, 1]) log("N2LAG", d, "Viasat");
+    expect(verdict("N2LAG")).toBe("Viasat");
+
+    for (const d of [5, 3, 1]) log("N3OLD", d, "Viasat");
+    expect(verdict("N3OLD")).toBe("Viasat");
+    db.close();
+  });
+});
+
 describe("/fleet operating carriers", () => {
   test("express tails naming no regional count under one row; totals add up", () => {
     const db = makeSyntheticDb();

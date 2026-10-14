@@ -3928,29 +3928,18 @@ function settleConsensus(obs: ConsensusObservation[], rule: ConsensusRule): Wifi
 
   // Recency override: a fresh retrofit shows as old-provider→new-provider in
   // the 30d window, dragging the average below threshold for weeks until the
-  // pre-retrofit obs age out. If the last 3 clean obs all agree, trust that —
-  // a monotonic transition is a stronger signal than the rolling percentage.
+  // pre-retrofit obs age out. If the last 3 clean obs are all Starlink, trust
+  // that. Only that direction: installs don't come out, so a run of another
+  // provider after Starlink is the airline's data lagging, and must win on the
+  // percentage like any other evidence.
   const streak = 3;
-  if (n >= streak) {
-    const recent = obs.slice(0, streak);
-    const allStarlink = recent.every((o) => o.has_starlink === 1);
-    const allSame = new Set(recent.map((o) => o.wifi_provider)).size === 1;
-    if (allStarlink) {
-      return {
-        verdict: "Starlink",
-        n,
-        starlinkPct,
-        reason: `last ${streak} consecutive obs all Starlink (retrofit transition)`,
-      };
-    }
-    if (allSame && recent[0].has_starlink === 0) {
-      return {
-        verdict: recent[0].wifi_provider,
-        n,
-        starlinkPct,
-        reason: `last ${streak} consecutive obs all ${recent[0].wifi_provider}`,
-      };
-    }
+  if (n >= streak && obs.slice(0, streak).every((o) => o.has_starlink === 1)) {
+    return {
+      verdict: "Starlink",
+      n,
+      starlinkPct,
+      reason: `last ${streak} consecutive obs all Starlink (retrofit transition)`,
+    };
   }
 
   if (starlinkPct >= threshold) {
