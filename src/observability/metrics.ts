@@ -339,6 +339,24 @@ export function bucketDaysOut(days: number): string {
   return "31_plus";
 }
 
+export const SETTLE_RULES = [
+  "insufficient",
+  "retrofit_streak",
+  "majority_starlink",
+  "majority_other",
+  "ambiguous",
+  "disputed_hold",
+  "sustained_other",
+  "regional_flap",
+  "legacy_only",
+] as const;
+export type SettleRule = (typeof SETTLE_RULES)[number];
+const SETTLE_RULE_SET: ReadonlySet<string> = new Set(SETTLE_RULES);
+
+export function normalizeSettleRule(raw: string | null | undefined): string {
+  return raw && SETTLE_RULE_SET.has(raw) ? raw : "other";
+}
+
 // ============ Metric Names ============
 
 /**
@@ -387,6 +405,12 @@ export const COUNTERS = {
   // united_fleet.starlink_status changed (consensus verdict flipped)
   // tags: fleet, from (confirmed|negative|unknown), to, airline
   FLEET_STATUS_CHANGE: "fleet.status_change",
+
+  // A listing's settled wifi crossed the equipped line (verified_wifi between
+  // Starlink/unverified and another provider). tags: direction (to_starlink|
+  //   from_starlink), reason (normalizeSettleRule), path (reconcile|verifier),
+  //   airline. Normal is ~0–1 from_starlink a day; a burst means upstream noise.
+  CONSENSUS_SETTLE_TRANSITION: "consensus.settle_transition",
 
   // Consensus verdict disagrees with the Google Sheet's wifi claim
   // tags: fleet, sheet_says (starlink|not_starlink), crawler_says, airline
@@ -470,6 +494,15 @@ export const GAUGES = {
   // Misses by cause — tags: airline, window, call, cause (swap|stale|unattributed)
   PRECISION_FIRM_CALL_MISS: "precision.firm_call.miss",
   PRECISION_LEGACY_PRIOR_PCT: "precision.legacy_prior_pct",
+
+  // Headline equipped count (equippedSql over the listings) — tags: airline
+  FLEET_EQUIPPED: "fleet.equipped",
+  // Tails with both a Starlink and a named other-provider clean read in the
+  // last 7 days — upstream feed disagreement. tags: airline
+  CONSENSUS_CONFLICTING_TAILS: "consensus.conflicting_tails",
+  // Listed tails the consensus sweep kept on Starlink against a non-Starlink
+  // window (established history, not yet sustained-negative). tags: airline
+  CONSENSUS_DISPUTED_TAILS: "consensus.disputed_tails",
 
   // Surface contradiction sweep — tags: airline, vector
   SURFACE_CONTRADICTION_TOTAL: "surface_contradiction.total",
