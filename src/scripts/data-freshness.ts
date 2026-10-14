@@ -6,7 +6,11 @@ import {
   isGuideStale,
 } from "../airlines/registry";
 import { FR24_UPCOMING_CAP } from "../api/flightradar24-api";
-import { getFleetGuideTails } from "../database/database";
+import {
+  conflictingReadingTails,
+  equippedCountsByAirline,
+  getFleetGuideTails,
+} from "../database/database";
 import { GAUGES, metrics, normalizeAirlineTag } from "../observability/metrics";
 import { type JobHandle, startJob } from "../utils/job-runner";
 import { info, error as logError } from "../utils/logger";
@@ -166,6 +170,7 @@ export function emitDataFreshness(db: Database, queries = FRESHNESS_QUERIES): vo
   }
   emitRowCounts(db);
   emitCappedFutureShare(db);
+  emitConsensusHealth(db);
   emitStoredFleetProgress(db);
   emitCommunityGuides(db);
 }
@@ -273,6 +278,22 @@ export function cappedFutureShareByAirline(
        ) GROUP BY airline`
     )
     .all(cap) as Array<{ airline: string; share: number }>;
+}
+
+/** Headline and feed-disagreement gauges: a settle burst moves both. */
+function emitConsensusHealth(db: Database): void {
+  try {
+    for (const { airline, equipped } of equippedCountsByAirline(db)) {
+      metrics.gauge(GAUGES.FLEET_EQUIPPED, equipped, { airline: normalizeAirlineTag(airline) });
+    }
+    for (const { airline, tails } of conflictingReadingTails(db)) {
+      metrics.gauge(GAUGES.CONSENSUS_CONFLICTING_TAILS, tails, {
+        airline: normalizeAirlineTag(airline),
+      });
+    }
+  } catch (err) {
+    logError("Consensus health gauges failed", err);
+  }
 }
 
 function emitCappedFutureShare(db: Database): void {

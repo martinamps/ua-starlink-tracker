@@ -282,9 +282,10 @@ describe("a run of another provider after Starlink", () => {
     const verdict = (tail: string) =>
       computeWifiConsensus(db, tail, { sources: OBSERVED_WIFI_SOURCES, airline: "UA" }).verdict;
 
+    // Established history: the ambiguous window is held on Starlink.
     for (const d of [20, 15, 10, 8]) log("N1LAG", d, "Starlink");
     for (const d of [5, 3, 1]) log("N1LAG", d, "Viasat");
-    expect(verdict("N1LAG")).toBeNull();
+    expect(verdict("N1LAG")).toBe("Starlink");
 
     for (const d of [10, 8]) log("N2LAG", d, "Starlink");
     for (const d of [7, 6, 5, 3, 2, 1]) log("N2LAG", d, "Viasat");
@@ -292,6 +293,112 @@ describe("a run of another provider after Starlink", () => {
 
     for (const d of [5, 3, 1]) log("N3OLD", d, "Viasat");
     expect(verdict("N3OLD")).toBe("Viasat");
+    db.close();
+  });
+});
+
+describe("an established Starlink tail is not settled negative by a noisy feed", () => {
+  const consensus = (db: Database, tail: string) =>
+    computeWifiConsensus(db, tail, { sources: OBSERVED_WIFI_SOURCES, airline: "UA" });
+  const listing = (db: Database, tail: string) =>
+    db
+      .query(
+        `SELECT f.starlink_status, sp.verified_wifi FROM united_fleet f
+         JOIN starlink_planes sp ON sp.TailNumber = f.tail_number AND sp.airline = f.airline
+         WHERE f.tail_number = ?`
+      )
+      .get(tail);
+
+  test("a retrofit followed by a burst of Viasat stays Starlink, and the sweep restores it", () => {
+    const db = makeSyntheticDb();
+    addPlane(db, "N34460", "Viasat");
+    addFleet(db, "N34460", "negative", { verifiedWifi: "Viasat" });
+    for (const d of [80, 70, 60]) check(db, "N34460", NOW - d * 86400, "Viasat");
+    for (const d of [28, 24, 20, 16]) check(db, "N34460", NOW - d * 86400, "Starlink");
+    for (let d = 10; d >= 1; d--) check(db, "N34460", NOW - d * 86400 + 3600, "Viasat");
+
+    expect(consensus(db, "N34460")).toMatchObject({ verdict: "Starlink", rule: "disputed_hold" });
+    expect(reconcileConsensus(db, NOW)).toBe(1);
+    expect(listing(db, "N34460")).toEqual({
+      starlink_status: "confirmed",
+      verified_wifi: "Starlink",
+    });
+    expect(reconcileConsensus(db, NOW + 3600)).toBe(0);
+    db.close();
+  });
+
+  test("a flapping tail stays Starlink", () => {
+    const db = makeSyntheticDb();
+    addPlane(db, "N35260", null);
+    addFleet(db, "N35260", "negative");
+    const reads: Array<[number, string]> = [
+      [25, "Starlink"],
+      [20, "Starlink"],
+      [15, "Starlink"],
+      [10, "Thales"],
+      [9, "Thales"],
+      [8, "Thales"],
+      [7, "Thales"],
+      [5, "Starlink"],
+      [3, "Thales"],
+      [2, "Thales"],
+    ];
+    for (const [d, p] of reads) check(db, "N35260", NOW - d * 86400, p);
+
+    expect(consensus(db, "N35260")).toMatchObject({ verdict: "Starlink", rule: "disputed_hold" });
+    reconcileConsensus(db, NOW);
+    expect(listing(db, "N35260")).toEqual({
+      starlink_status: "confirmed",
+      verified_wifi: "Starlink",
+    });
+    db.close();
+  });
+
+  test("Starlink only before the window and sustained other reads since, unlisted, settles negative", () => {
+    const db = makeSyntheticDb();
+    for (const d of [60, 55, 50]) check(db, "N15710", NOW - d * 86400, "Starlink");
+    for (let d = 24; d >= 2; d -= 2) check(db, "N15710", NOW - d * 86400, "Viasat");
+    expect(consensus(db, "N15710")).toMatchObject({ verdict: "Viasat", rule: "sustained_other" });
+
+    // The same evidence on a tail the community sheet still lists is held.
+    addPlane(db, "N15710", null);
+    expect(consensus(db, "N15710")).toMatchObject({ verdict: "Starlink", rule: "disputed_hold" });
+    db.close();
+  });
+
+  test("too few other reads since the last Starlink one is not sustained", () => {
+    const db = makeSyntheticDb();
+    for (const d of [60, 55, 50]) check(db, "N34131", NOW - d * 86400, "Starlink");
+    for (const d of [20, 15, 10, 5]) check(db, "N34131", NOW - d * 86400, "Panasonic");
+    expect(consensus(db, "N34131")).toMatchObject({ verdict: "Starlink", rule: "disputed_hold" });
+    db.close();
+  });
+
+  test("a thin Starlink history (one swap-misattributed flight) does not hold", () => {
+    const db = makeSyntheticDb();
+    check(db, "N1THIN", NOW - 20 * 86400, "Starlink");
+    check(db, "N1THIN", NOW - 19 * 86400, "Starlink");
+    for (const d of [9, 7, 5, 3, 1]) check(db, "N1THIN", NOW - d * 86400, "Viasat");
+    expect(consensus(db, "N1THIN")).toMatchObject({ verdict: "Viasat", rule: "majority_other" });
+    db.close();
+  });
+
+  test("history is airline-scoped and errored rows never count", () => {
+    const db = makeSyntheticDb();
+    for (const d of [28, 24, 20]) {
+      db.query(
+        `INSERT INTO starlink_verification_log
+           (tail_number, source, checked_at, has_starlink, wifi_provider, tail_confirmed, error, airline)
+         VALUES ('N2SCOP', 'united', ?, 1, 'Starlink', 1, NULL, 'AS')`
+      ).run(NOW - d * 86400);
+      db.query(
+        `INSERT INTO starlink_verification_log
+           (tail_number, source, checked_at, has_starlink, wifi_provider, tail_confirmed, error, airline)
+         VALUES ('N2SCOP', 'united', ?, 1, 'Starlink', 1, 'timeout', 'UA')`
+      ).run(NOW - d * 86400);
+    }
+    for (const d of [9, 6, 3, 1]) check(db, "N2SCOP", NOW - d * 86400, "Viasat");
+    expect(consensus(db, "N2SCOP").verdict).toBe("Viasat");
     db.close();
   });
 });

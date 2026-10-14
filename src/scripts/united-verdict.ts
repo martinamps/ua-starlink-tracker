@@ -17,6 +17,7 @@ import {
   bumpDiscoveryPriority,
   computeWifiConsensus,
   consensusToFleetStatus,
+  emitSettleTransition,
   getFleetEntryByTail,
   getShipToTailMap,
   logVerification,
@@ -263,22 +264,19 @@ function settleConsensus(
     airline: "UA",
   });
   const status = consensusToFleetStatus(consensus.verdict);
+  // Read starlink_planes, NOT united_fleet: updateVerifiedWifi writes
+  // starlink_planes.verified_wifi, and the two tables both carry the column.
+  const listing = db
+    .query("SELECT verified_wifi FROM starlink_planes WHERE TailNumber = ? AND airline = 'UA'")
+    .get(tail) as { verified_wifi: string | null } | null;
   if (status !== null) {
     // Change-gated: a re-confirmation of the value already on file is a debug
     // fact, a transition is the event worth an info line. The un-gated version
     // re-logged every settle and was a top log-volume shape (~80/day of
     // "verified_wifi → Starlink" for tails that were already Starlink).
-    // Read starlink_planes, NOT united_fleet: updateVerifiedWifi writes
-    // starlink_planes.verified_wifi, and the two tables both carry the column.
-    const prev =
-      (
-        db
-          .query(
-            "SELECT verified_wifi FROM starlink_planes WHERE TailNumber = ? AND airline = 'UA'"
-          )
-          .get(tail) as { verified_wifi: string | null } | null
-      )?.verified_wifi ?? null;
+    const prev = listing?.verified_wifi ?? null;
     updateVerifiedWifi(db, tail, "UA", consensus.verdict);
+    if (listing) emitSettleTransition(prev, consensus.verdict, consensus, "verifier", "UA");
     const line = `${tail}${tag}: verified_wifi → ${consensus.verdict} (${consensus.reason})`;
     if (prev === consensus.verdict) (log.debug ?? log.info)(line);
     else log.info(line);
@@ -291,6 +289,7 @@ function settleConsensus(
     // Ambiguous — clear to NULL so the check-flight filter
     // (IS NULL OR = 'Starlink') falls through to spreadsheet trust.
     updateVerifiedWifi(db, tail, "UA", null);
+    if (listing) emitSettleTransition(listing.verified_wifi, null, consensus, "verifier", "UA");
     log.info(`${tail}${tag}: consensus ambiguous, verified_wifi cleared (${consensus.reason})`);
   }
   return consensus;

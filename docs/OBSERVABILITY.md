@@ -80,6 +80,7 @@ All metrics are prefixed with `starlink.` for easy filtering in Datadog.
 | `starlink.http.rate_limited` | `route`, `tenant`, `airline`, `bucket:api\|ext\|mcp\|page`, `client_class`, `ext_version` (extension only) | Per-IP limiter returned a 429 (also counted in `http.request` as `status_code:429`). `/api/*` calls classified `client_class:extension` use the `ext` bucket (`EXTENSION_RATE_LIMIT`, 300/min); every other bucket allows `API_RATE_LIMIT` (100/min) |
 | `starlink.http.rate_limit_exempt` | the `http.rate_limited` tags plus `crawler:googlebot\|bingbot` | Over the `page` limit but served: the UA claims Googlebot/Bingbot and the IP's reverse DNS (forward-confirmed) is in the engine's domain. Cached per IP |
 | `starlink.route_flights.view` | `airline`, `surface:api\|page`, `outcome:nonstop\|no_nonstop`, `dated:true\|false` | "Every flight on this route" board served (`/api/route-flights`, route pages) |
+| `starlink.consensus.settle_transition` | `direction:to_starlink\|from_starlink`, `reason` (settle rule), `path:reconcile\|verifier`, `airline` | A listing's settled wifi crossed the equipped line. Normal is ~0–1 `from_starlink` a day; a burst means upstream feed noise |
 | `starlink.mcp.tool_call` | `tool`, `airline`, `outcome:success\|error\|unknown_tool`, `client_class` (MCP enum below) | MCP tool dispatched; `starlink.mcp.tool_duration_ms` carries the same tags |
 
 ### Client tags
@@ -135,6 +136,9 @@ rather than raising the number. Pure redirects (the www aliases, `/extension`
 | `starlink.data.freshness_seconds` | Age of each pipeline's newest write, tagged `job`/`dataset`, `airline`. `job:fleet_progress,airline:alaska` is the Alaska tracker ingest (daily; ages only when it fails) |
 | `starlink.fleet_progress.count` | Per-segment `total`/`complete` rollups, `UA` from the progress sheets, `AS` from Alaska's newsroom tracker |
 | `starlink.fleet_progress.unattributed` | `aircraft_type`, `airline`: aircraft Alaska counts as connected that we can't yet name by registration (its connected count minus our equipped listings). Persistently above 0 = manual tail attribution backlog |
+| `starlink.fleet.equipped` | `airline`: the headline equipped count (5-min sweep) |
+| `starlink.consensus.conflicting_tails` | `airline`: tails with both a Starlink and a named other-provider read in the last 7 days (5-min sweep) |
+| `starlink.consensus.disputed_tails` | `airline`: listed tails held on Starlink against a non-Starlink window by their established history (hourly reconcile) |
 | `starlink.community_guide.age_seconds` | Age of a frozen community fleet guide (AF), from its own date; tags `airline`, `stale`. Not a `data.freshness_seconds` job: it ages by design, so the freshness monitors would page forever |
 | `starlink.community_guide.tails` | Roster tails by what answers may still say under the aging policy; tags `airline`, `state` (`starlink_listed`, `not_starlink_current`, `not_starlink_expired`, `not_in_guide`) |
 

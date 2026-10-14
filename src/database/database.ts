@@ -34,10 +34,13 @@ import {
 import { instrumentDatabase } from "../observability/db-timing";
 import {
   COUNTERS,
+  GAUGES,
+  type SettleRule,
   metrics,
   normalizeAircraftType,
   normalizeAirlineTag,
   normalizeFleet,
+  normalizeSettleRule,
   normalizeStarlinkStatus,
   normalizeWifiProvider,
 } from "../observability/metrics";
@@ -93,6 +96,7 @@ import {
 import {
   type AirlineFilter,
   ROUTE_AIRPORT_RE,
+  type SqlParam,
   airlineCodes,
   airlineIn,
   cleanAirportPairSql,
@@ -3839,6 +3843,8 @@ export interface WifiConsensus {
   n: number;
   starlinkPct: number;
   reason: string;
+  /** Which rule decided; the bounded tag for settle metrics. */
+  rule?: SettleRule;
 }
 
 /**
@@ -3896,6 +3902,7 @@ const NONE_ONLY_AFTER_STARLINK: WifiConsensus = {
   n: 0,
   starlinkPct: 0,
   reason: "None-only after prior Starlink (regional flap), inconclusive",
+  rule: "regional_flap",
 };
 
 /** United "None" flaps dropped on a tail seen on Starlink before; null when
@@ -3923,6 +3930,7 @@ function settleConsensus(obs: ConsensusObservation[], rule: ConsensusRule): Wifi
       n,
       starlinkPct,
       reason: `insufficient recent obs (${n} in last ${windowDays}d, need ${minObs})`,
+      rule: "insufficient",
     };
   }
 
@@ -3939,6 +3947,7 @@ function settleConsensus(obs: ConsensusObservation[], rule: ConsensusRule): Wifi
       n,
       starlinkPct,
       reason: `last ${streak} consecutive obs all Starlink (retrofit transition)`,
+      rule: "retrofit_streak",
     };
   }
 
@@ -3948,6 +3957,7 @@ function settleConsensus(obs: ConsensusObservation[], rule: ConsensusRule): Wifi
       n,
       starlinkPct,
       reason: `${starlinkObs}/${n} recent obs Starlink (${(starlinkPct * 100).toFixed(0)}%)`,
+      rule: "majority_starlink",
     };
   }
 
@@ -3964,6 +3974,7 @@ function settleConsensus(obs: ConsensusObservation[], rule: ConsensusRule): Wifi
       n,
       starlinkPct,
       reason: `${n - starlinkObs}/${n} recent obs NOT Starlink (${((1 - starlinkPct) * 100).toFixed(0)}%), provider: ${mostCommon}`,
+      rule: "majority_other",
     };
   }
 
@@ -3972,6 +3983,134 @@ function settleConsensus(obs: ConsensusObservation[], rule: ConsensusRule): Wifi
     n,
     starlinkPct,
     reason: `ambiguous: ${starlinkObs}/${n} Starlink recently — likely mid-retrofit or data noise`,
+    rule: "ambiguous",
+  };
+}
+
+/**
+ * Installs don't come out. In Oct 2026 united.com's flight-status feed began
+ * naming ViaSat/Thales on dozens of 737s that had read Starlink for weeks or
+ * months (N34460 on UA304: Starlink every check Sep 28–Oct 6, then "Internet
+ * by ViaSat"); the 30-day percentage settled 30+ of them negative and the
+ * headline fell 619 → 600. So once a tail has an established Starlink history,
+ * later readings from the same feed dispute it rather than overturn it.
+ *
+ * Established: 3 clean Starlink reads spanning 3 days — more than one
+ * swap-misattributed flight, and met by every tail that flipped (the thinnest
+ * had 4 reads over 4–9 days).
+ */
+const ESTABLISHED_STARLINK = { minObs: 3, minSpanSec: 3 * DAY_SEC };
+
+/**
+ * A disputed tail goes negative only on overwhelming, sustained evidence: no
+ * Starlink read for a full trailing window, at least 10 named other-provider
+ * reads since the last one, and no independent listing (community sheet,
+ * seed, FlyerTalk) still saying Starlink. Anything short of that stays
+ * Starlink for a manual correction. Sized on the full log: the only two
+ * earlier Starlink→other tails (N15710, N34131: Starlink reads on unlisted
+ * mainline tails) had 17 and 14 such reads and still settle; the Oct-2026
+ * burst peaked at 9 in its first 8 days.
+ */
+const SUSTAINED_OTHER = { quietSec: TRAILING_WINDOW_SEC, minOtherObs: 10 };
+
+interface StarlinkHistory {
+  starlinkObs: number;
+  firstStarlinkAt: number;
+  lastStarlinkAt: number;
+  /** Named other-provider reads after the last Starlink one (united "None" excluded). */
+  otherSince: number;
+  independentListing: boolean;
+}
+
+type HistoryRow = Omit<StarlinkHistory, "independentListing"> & { tail_number: string };
+
+/** All-time Starlink history per tail over the rows the settle reads (clean,
+ * tail-confirmed, the caller's sources and airline scope). */
+function starlinkHistorySql(
+  sources: readonly VerificationSource[],
+  airline: AirlineFilter,
+  tail?: string
+): { sql: string; params: SqlParam[] } {
+  const obs = withAirline(
+    `SELECT tail_number, has_starlink, wifi_provider, checked_at FROM starlink_verification_log
+     WHERE source IN (${placeholders(sources)}) AND tail_confirmed = 1 AND ${CLEAN_OBSERVATION_WHERE}
+       ${tail === undefined ? "" : "AND tail_number = ?"}`,
+    airline,
+    "",
+    tail === undefined ? [...sources] : [...sources, tail]
+  );
+  return {
+    sql: `WITH obs AS (${obs.sql}),
+      s AS (SELECT tail_number, COUNT(*) AS n, MIN(checked_at) AS first_at, MAX(checked_at) AS last_at
+            FROM obs WHERE has_starlink = 1 GROUP BY tail_number)
+      SELECT s.tail_number, s.n AS starlinkObs, s.first_at AS firstStarlinkAt,
+             s.last_at AS lastStarlinkAt, COUNT(o.tail_number) AS otherSince
+      FROM s LEFT JOIN obs o ON o.tail_number = s.tail_number AND o.has_starlink = 0
+        AND o.wifi_provider <> 'None' AND o.checked_at > s.last_at
+      GROUP BY s.tail_number`,
+    params: obs.params,
+  };
+}
+
+/** A Starlink listing we didn't derive ourselves: not discovery, not a type rule. */
+const INDEPENDENT_LISTING_WHERE = `COALESCE(sheet_gid, '') NOT IN ('discovery', 'type_deterministic')
+  AND ${sheetSaysStarlink("wifi")}`;
+
+function starlinkHistory(
+  db: Database,
+  tail: string,
+  sources: readonly VerificationSource[],
+  airline: AirlineFilter
+): StarlinkHistory | null {
+  const q = starlinkHistorySql(sources, airline, tail);
+  const row = db.query(q.sql).get(...q.params) as HistoryRow | null;
+  if (!row) return null;
+  const listing = withAirline(
+    `SELECT 1 FROM starlink_planes WHERE TailNumber = ? AND ${INDEPENDENT_LISTING_WHERE}`,
+    airline,
+    "",
+    [tail]
+  );
+  return { ...row, independentListing: db.query(listing.sql).get(...listing.params) != null };
+}
+
+/**
+ * The retrofit-sticky rule over a window settle: a non-Starlink or ambiguous
+ * verdict on an established Starlink tail stays Starlink ("disputed") unless
+ * SUSTAINED_OTHER holds. Insufficient and flap-only results pass through:
+ * they carry no evidence either way.
+ */
+function holdEstablishedStarlink(
+  c: WifiConsensus,
+  history: () => StarlinkHistory | null,
+  now: number
+): WifiConsensus {
+  if (c.rule !== "majority_other" && c.rule !== "ambiguous") return c;
+  const h = history();
+  if (
+    !h ||
+    h.starlinkObs < ESTABLISHED_STARLINK.minObs ||
+    h.lastStarlinkAt - h.firstStarlinkAt < ESTABLISHED_STARLINK.minSpanSec
+  ) {
+    return c;
+  }
+  const sustained =
+    now - h.lastStarlinkAt >= SUSTAINED_OTHER.quietSec &&
+    h.otherSince >= SUSTAINED_OTHER.minOtherObs &&
+    !h.independentListing;
+  if (sustained) {
+    return {
+      ...c,
+      reason: `${c.reason}; sustained: ${h.otherSince} other reads since the last Starlink one, no independent listing`,
+      rule: c.verdict === null ? c.rule : "sustained_other",
+    };
+  }
+  const since = new Date(h.firstStarlinkAt * 1000).toISOString().slice(0, 10);
+  return {
+    ...c,
+    verdict: "Starlink",
+    reason: `disputed: ${h.starlinkObs} Starlink reads since ${since} hold over ${c.reason}`,
+    rule: "disputed_hold",
   };
 }
 
@@ -4021,7 +4160,13 @@ export function computeWifiConsensus(
     () => hasPriorUnitedStarlink(db, tailNumber, opts.airline)
   );
   if (confirmed === null) return NONE_ONLY_AFTER_STARLINK;
-  if (confirmed.length > 0) return settleConsensus(confirmed, rule);
+  if (confirmed.length > 0) {
+    return holdEstablishedStarlink(
+      settleConsensus(confirmed, rule),
+      () => starlinkHistory(db, tailNumber, sources, opts.airline),
+      unixNow()
+    );
+  }
 
   // Grace fallback: if zero confirmed rows, read legacy NULL rows so display
   // counts (n, starlinkPct) aren't zero during the 30d transition. Legacy is
@@ -4038,6 +4183,7 @@ export function computeWifiConsensus(
     n,
     starlinkPct: legacy.filter((o) => o.has_starlink === 1).length / n,
     reason: `legacy obs only (${n} pre-tail_confirmed rows) — display-only, not settling`,
+    rule: "legacy_only",
   };
 }
 
@@ -4317,20 +4463,134 @@ function reconcileAirlineConsensus(
     )
     .all(airline) as Array<{ tail: string; current: string | null }>;
 
+  let histories: Map<string, StarlinkHistory> | null = null;
+  const historyOf = (tail: string): StarlinkHistory | null => {
+    histories ??= airlineStarlinkHistories(db, airline);
+    return histories.get(tail) ?? null;
+  };
+
+  let disputed = 0;
   const heal = listed.flatMap(({ tail, current }) => {
     const window = obsByTail.get(tail);
     if (!window) return [];
     const obs = discountRegionalFlaps(window, () => hasPriorUnitedStarlink(db, tail, airline));
     if (!obs?.length) return [];
-    const { verdict } = settleConsensus(obs, rule);
+    const settled = holdEstablishedStarlink(settleConsensus(obs, rule), () => historyOf(tail), now);
+    if (settled.rule === "disputed_hold") disputed++;
+    const { verdict } = settled;
     if (verdict === null || verdict === current) return [];
     // A retrofit being demoted this sweep must not be re-settled negative by it.
-    return verdict !== "Starlink" && skip.has(tail) ? [] : [{ tail, verdict }];
+    if (verdict !== "Starlink" && skip.has(tail)) return [];
+    return [{ tail, current, verdict, settled }];
   });
+
+  // The fleet row follows the listing here, as syncSpreadsheetToFleet would on
+  // the next scrape, so a re-settle reaches the headline in one sweep. Tails
+  // being demoted this sweep are left to demoteNegatives.
+  const fleetRow = db.query(
+    "SELECT starlink_status, fleet, airline FROM united_fleet WHERE tail_number = ? AND airline = ?"
+  );
+  const setFleet = db.query(
+    "UPDATE united_fleet SET starlink_status = ?, verified_wifi = ? WHERE tail_number = ? AND airline = ?"
+  );
   db.transaction(() => {
-    for (const h of heal) updateVerifiedWifi(db, h.tail, airline, h.verdict);
+    for (const h of heal) {
+      updateVerifiedWifi(db, h.tail, airline, h.verdict);
+      if (skip.has(h.tail)) continue;
+      const prev = fleetRow.get(h.tail, airline) as Parameters<typeof emitFleetStatusChange>[0];
+      const next = fleetStatusFromWifi(h.verdict);
+      if (prev && prev.starlink_status !== next) {
+        setFleet.run(next, h.verdict, h.tail, airline);
+        emitFleetStatusChange(prev, next);
+      }
+    }
   })();
+  for (const h of heal) {
+    emitSettleTransition(h.current, h.verdict, h.settled, "reconcile", airline);
+    if (h.settled.rule === "disputed_hold" || h.settled.rule === "sustained_other") {
+      info(`${h.tail}: verified_wifi ${h.current ?? "NULL"} → ${h.verdict} (${h.settled.reason})`);
+    }
+  }
+  metrics.gauge(GAUGES.CONSENSUS_DISPUTED_TAILS, disputed, {
+    airline: normalizeAirlineTag(airline),
+  });
   return heal.length;
+}
+
+function airlineStarlinkHistories(db: Database, airline: string): Map<string, StarlinkHistory> {
+  const q = starlinkHistorySql(OBSERVED_WIFI_SOURCES, airline);
+  const rows = db.query(q.sql).all(...q.params) as HistoryRow[];
+  const independent = new Set(
+    (
+      db
+        .query(
+          `SELECT TailNumber FROM starlink_planes WHERE airline = ? AND ${INDEPENDENT_LISTING_WHERE}`
+        )
+        .values(airline) as [string][]
+    ).map(([t]) => t)
+  );
+  return new Map(
+    rows.map(({ tail_number, ...h }) => [
+      tail_number,
+      { ...h, independentListing: independent.has(tail_number) },
+    ])
+  );
+}
+
+const onStarlink = (wifi: string | null) => wifi === null || wifi === "Starlink";
+
+/**
+ * Count a listing's settle when it crosses the equipped line (an unverified
+ * listing counts as equipped, so NULL sits on the Starlink side).
+ */
+export function emitSettleTransition(
+  prev: string | null,
+  next: string | null,
+  settled: WifiConsensus,
+  path: "reconcile" | "verifier",
+  airline: string
+): void {
+  if (onStarlink(prev) === onStarlink(next)) return;
+  metrics.increment(COUNTERS.CONSENSUS_SETTLE_TRANSITION, {
+    direction: onStarlink(next) ? "to_starlink" : "from_starlink",
+    reason: normalizeSettleRule(settled.rule),
+    path,
+    airline: normalizeAirlineTag(airline),
+  });
+}
+
+/**
+ * Tails whose clean reads in the last 7 days include both Starlink and a named
+ * other provider, per airline: the feed disagreeing with itself. A jump is
+ * the early signal of upstream noise like the Oct-2026 ViaSat/Thales burst.
+ */
+export function conflictingReadingTails(
+  db: Database,
+  now = unixNow()
+): Array<{ airline: string; tails: number }> {
+  return db
+    .query(
+      `SELECT airline, COUNT(*) AS tails FROM (
+         SELECT airline, tail_number FROM starlink_verification_log
+         WHERE checked_at >= ? AND tail_confirmed = 1 AND airline IS NOT NULL
+           AND source IN (${placeholders(OBSERVED_WIFI_SOURCES)}) AND ${CLEAN_OBSERVATION_WHERE}
+         GROUP BY airline, tail_number
+         HAVING SUM(has_starlink = 1) > 0 AND SUM(has_starlink = 0 AND wifi_provider <> 'None') > 0
+       ) GROUP BY airline`
+    )
+    .all(now - 7 * DAY_SEC, ...OBSERVED_WIFI_SOURCES) as Array<{ airline: string; tails: number }>;
+}
+
+/** The headline equipped count per airline with listings (equippedSql). */
+export function equippedCountsByAirline(
+  db: Database
+): Array<{ airline: string; equipped: number }> {
+  return db
+    .query(
+      `SELECT sp.airline, COUNT(*) AS equipped FROM starlink_planes sp
+       WHERE sp.airline IS NOT NULL AND ${equippedSql("sp")} GROUP BY sp.airline`
+    )
+    .all() as Array<{ airline: string; equipped: number }>;
 }
 
 /**
