@@ -83,6 +83,7 @@ import { excludeMassWriteDays } from "../utils/install-rate";
 import { debug, info, error as logError, warn } from "../utils/logger";
 import { ensureAdsbFlightDrawsTable } from "./adsb-flight-draws";
 import { ASSIGNMENT_LOG_DDL, logFlightAssignments, pruneAssignmentLog } from "./assignment-log";
+import { hasHeldUaMembership, isMembershipHeld } from "./fleet-membership-holds";
 import { countRoster, fleetRoster, programmeRoster, tenantProgrammeRoster } from "./roster";
 import {
   equippedSql,
@@ -999,12 +1000,20 @@ export function updateDatabase(
   fleetStats: FleetStats,
   airline: string
 ): string | null {
+  if (hasHeldUaMembership(db, airline)) {
+    return "UA/N63571 membership requires explicit archived repair before sheet replacement";
+  }
+  const admittedAircraft = starlinkAircraft.filter((aircraft) => {
+    if (!isMembershipHeld(airline, aircraft.TailNumber || "")) return true;
+    warn("skipping held UA/N63571 membership from sheet");
+    return false;
+  });
   const existingSheetRows = (
     db
       .query(`SELECT COUNT(*) AS n FROM starlink_planes WHERE ${SHEET_ROSTER_WHERE}`)
       .get(airline) as { n: number }
   ).n;
-  const refusal = rosterReplaceRefusal(starlinkAircraft.length, existingSheetRows);
+  const refusal = rosterReplaceRefusal(admittedAircraft.length, existingSheetRows);
   if (refusal) {
     logError(
       `updateDatabase(${airline}): refusing roster replace — ${refusal}; keeping existing data`
@@ -1126,7 +1135,7 @@ export function updateDatabase(
       WHERE TailNumber = ? AND sheet_gid = 'discovery' AND airline = ?
     `);
 
-    for (const aircraft of starlinkAircraft) {
+    for (const aircraft of admittedAircraft) {
       const tailNumber = aircraft.TailNumber || "";
       if (!looksLikeValidTailNumber(tailNumber)) {
         warn(`skipping invalid tail '${tailNumber}' from sheet ${aircraft.sheet_gid}`);
@@ -4808,6 +4817,10 @@ export function upsertFleetAircraft(
     evidence: "observed" | "type_rule" | "community";
   }
 ): void {
+  if (isMembershipHeld(airline, tailNumber)) {
+    warn("skipping held UA/N63571 fleet upsert");
+    return;
+  }
   const now = unixNow();
   // Empty/placeholder type strings must not clobber a real value via COALESCE.
   const type = aircraftType?.trim();
@@ -5070,6 +5083,10 @@ export function syncSpreadsheetToFleet(db: Database, airline: string): number {
 
   const sync = db.transaction(() => {
     for (const plane of spreadsheetPlanes) {
+      if (isMembershipHeld(airline, plane.TailNumber)) {
+        warn("skipping held UA/N63571 spreadsheet-to-fleet sync");
+        continue;
+      }
       // NULL verified_wifi means unverified — must map to 'unknown', not
       // 'negative'. The UPDATE CASE guard bootstraps unknown→this value, so
       // computing 'negative' here was dragging freshly-reset tails back every
@@ -5157,6 +5174,11 @@ export function addDiscoveredStarlinkPlane(
     throw new Error(
       `addDiscoveredStarlinkPlane(${tailNumber}): opts.evidence must be "observed", "type_rule" or "community"`
     );
+  }
+
+  if (isMembershipHeld(opts.airline, tailNumber)) {
+    warn("skipping held UA/N63571 discovered listing");
+    return;
   }
 
   // Check if already in starlink_planes
