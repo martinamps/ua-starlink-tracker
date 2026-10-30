@@ -1070,6 +1070,10 @@ describe("degradation and cache (snapshot)", () => {
         const html = await (await get(`/fleet/${def.slug}`, host)).text();
         expect(html.includes(">Recently added</h2>"), def.slug).toBe(d.recentInstalls.length > 0);
         expect(html.includes("install pipeline"), def.slug).toBe(d.pipeline !== null);
+        // Variant counts are verified planes; say so, since the sheet can run ahead.
+        expect(html.includes("Verified on united.com.</p>"), def.slug).toBe(
+          code === "UA" && (d.variants?.length ?? 0) >= 2
+        );
         expect(html.includes("fly in the next 48 hours"), def.slug).toBe(d.routes.length > 0);
       }
     }
