@@ -10,7 +10,7 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, setSystemTime, test } from "bun:test";
 import extLib from "../chrome-extension/lib.js";
 import { dohDateISO } from "../src/api/qatar-status";
 import { addDaysISO } from "../src/api/qatar-verdict";
@@ -485,10 +485,17 @@ describe("Qatar claims", () => {
 
   describe("round trip through the hub handler", () => {
     let app: ReturnType<typeof createApp>;
-    const nowSec = Math.floor(Date.now() / 1000);
+    // Pinned mid IATA summer season: the verdict uses only the query's own
+    // season once it has enough days, so a wall-clock window that straddles
+    // the late-Oct or late-Mar changeover drops the days before it and the
+    // "20 days" below stop being 20.
+    const nowSec = Date.parse("2026-07-15T12:00:00Z") / 1000;
     const day = (offset: number) => addDaysISO(dohDateISO(nowSec), offset);
 
+    afterAll(() => setSystemTime());
+
     beforeAll(() => {
+      setSystemTime(new Date(nowSec * 1000));
       const db = makeSyntheticDb();
       const leg = (fn: string, date: string, eq: string) => {
         const dep = Date.parse(`${date}T06:40:00Z`) / 1000;

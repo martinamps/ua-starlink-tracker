@@ -237,8 +237,17 @@ describe("route page", () => {
 describe("board behavior (synthetic)", () => {
   const now = unixNow();
   const dayStart = Math.floor(now / DAY_SEC) * DAY_SEC;
-  // 14:00Z is 7am at SFO in either daylight or standard time.
+  // 14:00Z is 7am at SFO in daylight time and 6am in standard time, so a
+  // label assertion derives the hour from the clock instead of pinning it.
   const at = (offsetDays: number, hourZ = 14) => dayStart + offsetDays * DAY_SEC + hourZ * 3600;
+  const sfoHour = (sec: number) =>
+    Number(
+      new Intl.DateTimeFormat("en-US", {
+        timeZone: "America/Los_Angeles",
+        hour: "numeric",
+        hourCycle: "h23",
+      }).format(new Date(sec * 1000))
+    );
   let sdb: Database;
   let sapp: ReturnType<typeof createApp>;
 
@@ -448,7 +457,8 @@ describe("board behavior (synthetic)", () => {
     expect(r.assignment?.starlink).toBe("verified");
     expect(r.assignment?.past).toBe(false);
     expect(r.assignment?.label).toMatch(/^[A-Z][a-z]{2} [A-Z][a-z]{2} \d{1,2} · N111UA$/);
-    expect(r.departure_label).toMatch(/^usually 7:00 AM$/);
+    // Tomorrow's leg sets the clock: 6 or 7 AM depending on the season.
+    expect(r.departure_label).toMatch(new RegExp(`^usually ${sfoHour(at(1))}:00 AM$`));
   });
 
   test("a plane swapped off a future leg no longer answers it", () => {
