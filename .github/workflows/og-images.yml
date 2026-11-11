@@ -10,7 +10,10 @@ permissions:
 
 jobs:
   generate:
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest moved to 26.04 in Nov 2026 and Playwright 1.59
+    # refuses to install chromium deps there ("does not support chromium on
+    # ubuntu26.04-x64"). Move to ubuntu-latest with a Playwright bump.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -38,6 +41,12 @@ jobs:
         # git status, not git diff: the diff is blind to untracked files, so a
         # brand-new artifact would report "no changes" on the very run that
         # created it.
+        #
+        # HUSKY=0: `bun install` runs `prepare: husky`, so `git push` would run
+        # the dev pre-push hook (lint + the whole test suite) and an unrelated
+        # failing test blocks the image refresh. test.yml is the test gate.
+        env:
+          HUSKY: "0"
         run: |
           GLOBS=('static/social-image*.webp' 'static/share-card-*.png')
           if [ -z "$(git status --porcelain -- "${GLOBS[@]}")" ]; then
