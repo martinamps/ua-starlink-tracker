@@ -623,6 +623,12 @@ describe("data-freshness coverage", () => {
           "INSERT INTO adsb_sweeps (swept_at, provider, requests, latency_ms, tails_queried, observed, airborne, matched, mismatched, no_assignment, no_callsign) VALUES (?, 'airplanes.live', 1, 250, 425, 40, 36, 11, 0, 25, 0)"
         ).run(ts);
         break;
+      case "sheet_scrape":
+        db.query("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)").run(
+          `${airline}:lastUpdated`,
+          new Date(ts * 1000).toISOString()
+        );
+        break;
       default:
         throw new Error(`no seeder for freshness job ${job} — add one with the query`);
     }

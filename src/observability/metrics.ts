@@ -366,6 +366,12 @@ export const COUNTERS = {
   // Scraper events
   SCRAPER_SYNC: "scraper.sync", // tags: source, airline, status (success|partial|aborted|error|noop)
   PLANES_DISCOVERED: "planes.discovered", // tags: source, airline
+  // A fleet write refused at the membership gate (fleet-admission.ts) —
+  // tags: source (FleetSource), reason (invalid_registration|non_airliner), airline
+  FLEET_ROW_REJECTED: "fleet.row_rejected",
+  // Sheet tab list drifted from the gids we know (utils.ts reconcileSheetTabs) —
+  // tags: state (vanished_empty|vanished_listed|new), airline
+  SHEET_TAB_DRIFT: "sheet.tab_drift",
 
   // Trusted positive Starlink verification. Fires on EVERY positive re-check,
   // not only new installs (~50x the install count) — for installs use

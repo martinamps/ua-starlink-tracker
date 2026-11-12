@@ -8,6 +8,7 @@
 
 import type { Database } from "bun:sqlite";
 import {
+  SHEET_ROSTER_WHERE,
   reconcileConsensus,
   reconcileTypeDeterministicFleets,
   syncSpreadsheetToFleet,
@@ -37,7 +38,16 @@ export async function runSheetScrape(
     async (span): Promise<SheetScrapeResult> => {
       span.setTag("job.type", "background");
       try {
-        const { totalAircraftCount, starlinkAircraft, fleetStats } = await fetchSheets();
+        const listedGids = new Set(
+          (
+            db
+              .query(`SELECT DISTINCT sheet_gid FROM starlink_planes WHERE ${SHEET_ROSTER_WHERE}`)
+              .all("UA") as { sheet_gid: string | null }[]
+          ).flatMap((r) => (r.sheet_gid ? [r.sheet_gid] : []))
+        );
+        const { totalAircraftCount, starlinkAircraft, fleetStats } = await fetchSheets({
+          listedGids,
+        });
         // A run the job runner has abandoned (stuck escape) can still have its
         // sheet fetch resolve minutes later. Its DELETE/re-INSERT + lastUpdated
         // stamp would silently regress the successor's roster under a fresh
@@ -123,6 +133,11 @@ export async function runSheetScrape(
       } catch (err) {
         logError("Error updating starlink data", err);
         span.setTag("error", true);
+        metrics.increment(COUNTERS.SCRAPER_SYNC, {
+          source: "sheet",
+          airline: normalizeAirlineTag("UA"),
+          status: "error",
+        });
         return { outcome: "error", total: 0, starlinkCount: 0 };
       }
     },
