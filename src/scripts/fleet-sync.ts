@@ -90,6 +90,7 @@ export async function syncFleetFromFR24(
   total: number;
   new: number;
   updated: number;
+  rejected: number;
   error?: string;
 }> {
   const airlineTag = normalizeAirlineTag(cfg.code);
@@ -101,6 +102,7 @@ export async function syncFleetFromFR24(
       total: 0,
       new: 0,
       updated: 0,
+      rejected: 0,
       error: undefined as string | undefined,
     };
 
@@ -140,9 +142,12 @@ export async function syncFleetFromFR24(
       }
 
       const allAircraft = buildRoster(cfg, scraped);
+      // The floor counts real registrations only: a parser that returns page
+      // chrome ("History", type names) must not clear it on volume.
+      const validCount = allAircraft.filter((a) => cfg.tailPattern.test(a.registration)).length;
 
-      if (allAircraft.length < cfg.minFleetSanity) {
-        result.error = `Suspiciously low aircraft count: ${allAircraft.length} (expected ${cfg.minFleetSanity}+)`;
+      if (validCount < cfg.minFleetSanity) {
+        result.error = `Suspiciously low aircraft count: ${validCount} valid of ${allAircraft.length} (expected ${cfg.minFleetSanity}+)`;
         logError(`FR24 sync aborted (${cfg.code})`, result.error);
         span.setTag("error", true);
         span.setTag("abort_reason", result.error);
@@ -165,9 +170,10 @@ export async function syncFleetFromFR24(
       );
 
       // One transaction for the ~1.6k upserts: one commit, not one per tail.
+      const admitted: RosterEntry[] = [];
       db.transaction(() => {
         for (const aircraft of allAircraft) {
-          upsertFleetAircraft(
+          const ok = upsertFleetAircraft(
             db,
             aircraft.registration,
             aircraft.aircraftType,
@@ -176,9 +182,11 @@ export async function syncFleetFromFR24(
             aircraft.operator,
             cfg.code
           );
+          if (ok) admitted.push(aircraft);
+          else result.rejected++;
         }
       })();
-      for (const aircraft of allAircraft) {
+      for (const aircraft of admitted) {
         if (existingTails.has(aircraft.registration)) {
           result.updated++;
         } else {
@@ -187,7 +195,7 @@ export async function syncFleetFromFR24(
         }
       }
 
-      result.total = allAircraft.length;
+      result.total = admitted.length;
       result.success = true;
 
       // Meta totals follow the lastUpdated owner: the sheet scrape owns
@@ -199,13 +207,16 @@ export async function syncFleetFromFR24(
 
       span.setTag("planes.new", result.new);
       span.setTag("planes.updated", result.updated);
+      span.setTag("planes.rejected", result.rejected);
       metrics.increment(COUNTERS.SCRAPER_SYNC, {
         source: "fr24",
         airline: airlineTag,
         status: result.error ? "partial" : "success",
       });
 
-      info(`FR24 sync complete (${cfg.code}): ${result.new} new, ${result.updated} updated`);
+      info(
+        `FR24 sync complete (${cfg.code}): ${result.new} new, ${result.updated} updated, ${result.rejected} rejected`
+      );
     } catch (err) {
       result.error = err instanceof Error ? err.message : String(err);
       logError(`FR24 sync error (${cfg.code})`, result.error);
@@ -254,6 +265,7 @@ export async function syncFullFleet(db: Database): Promise<{
     total: number;
     new: number;
     updated: number;
+    rejected: number;
     error?: string;
   }>;
   spreadsheet: { success: boolean; synced: number; error?: string };

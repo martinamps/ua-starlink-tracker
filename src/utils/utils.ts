@@ -1,4 +1,5 @@
 import { looksLikeValidTailNumber } from "../airlines/registry";
+import { COUNTERS, metrics, normalizeAirlineTag } from "../observability/metrics";
 import { BROWSER_USER_AGENT } from "./constants";
 import { error as logError, warn } from "./logger";
 
@@ -6,32 +7,114 @@ import { error as logError, warn } from "./logger";
  * CSV Fetch & Parse Logic
  */
 
-// Express fleet spreadsheet
-const expressSpreadsheetId = "1Mmu1m381RnGMgqxMiEqMni3zJ8uxdfpbeaP6XtN1yxM";
-const expressGids = [13, 1106195214, 11, 1735263052, 6, 9, 5, 969079667];
-
-// Mainline fleet spreadsheet
-const mainlineSpreadsheetId = "1ZlYgN_IZmd6CSx_nXnuP0L0PiodapDRx3RmNkIpxXAo";
-const mainlineGids = [0, 1, 948315825, 3, 4, 6, 5, 70572532, 7, 8, 10, 12, 15, 13, 2098141434];
-
-// Function to create CSV export URLs for each sheet
-function createCsvExportUrls() {
-  // Create URLs for express fleet sheets
-  const expressUrls = expressGids.map((gid) => ({
-    gid,
+/** The community fleet spreadsheets and the tabs we read from each. A tab the
+ * owner adds is logged, not read, until someone classifies it here. */
+export const FLEET_SHEETS = [
+  {
     fleet: "express",
-    url: `https://docs.google.com/spreadsheets/d/${expressSpreadsheetId}/export?format=csv&gid=${gid}`,
-  }));
-
-  // Create URLs for mainline fleet sheets
-  const mainlineUrls = mainlineGids.map((gid) => ({
-    gid,
+    docId: "1Mmu1m381RnGMgqxMiEqMni3zJ8uxdfpbeaP6XtN1yxM",
+    // gid 1735263052 was deleted upstream ~2026-10-27 (it listed no Starlink tails).
+    gids: [13, 1106195214, 11, 6, 9, 5, 969079667],
+  },
+  {
     fleet: "mainline",
-    url: `https://docs.google.com/spreadsheets/d/${mainlineSpreadsheetId}/export?format=csv&gid=${gid}`,
-  }));
+    docId: "1ZlYgN_IZmd6CSx_nXnuP0L0PiodapDRx3RmNkIpxXAo",
+    gids: [0, 1, 948315825, 3, 4, 6, 5, 70572532, 7, 8, 10, 12, 15, 13, 2098141434],
+  },
+] as const;
 
-  // Combine both sets of URLs
-  return [...expressUrls, ...mainlineUrls];
+const SHEET_FETCH_TIMEOUT_MS = 30_000;
+
+export interface SheetTab {
+  gid: number;
+  name: string;
+}
+
+/** Tab list from a public sheet's htmlview page, which declares each tab as
+ * `items.push({name: "E175", ..., gid: "13", ...})`. */
+export function parseSheetTabs(html: string): SheetTab[] {
+  const tabs: SheetTab[] = [];
+  for (const m of html.matchAll(
+    /items\.push\(\{name:\s*"((?:[^"\\]|\\.)*)"[^}]*?gid:\s*"(-?\d+)"/g
+  )) {
+    tabs.push({ gid: Number(m[2]), name: m[1].replace(/\\\//g, "/") });
+  }
+  return tabs;
+}
+
+/** The live tab list, or null when it can't be read (the scrape then falls
+ * back to the known gids and fails closed on any missing one). */
+export async function fetchSheetTabs(docId: string): Promise<SheetTab[] | null> {
+  try {
+    const res = await fetch(`https://docs.google.com/spreadsheets/d/${docId}/htmlview`, {
+      redirect: "follow",
+      headers: { "User-Agent": BROWSER_USER_AGENT, "Accept-Language": "en-US,en;q=0.5" },
+      signal: AbortSignal.timeout(SHEET_FETCH_TIMEOUT_MS),
+    });
+    if (!res.ok) return null;
+    const tabs = parseSheetTabs(await res.text());
+    return tabs.length > 0 ? tabs : null;
+  } catch {
+    return null;
+  }
+}
+
+export interface TabReconciliation {
+  fetch: number[];
+  /** Deleted upstream and nothing listed from it: safe to skip. */
+  vanishedEmpty: number[];
+  /** Deleted upstream while listings still cite it: replacing the roster
+   * would delete those listings, so the scrape refuses. */
+  vanishedListed: number[];
+  added: SheetTab[];
+}
+
+export function reconcileSheetTabs(
+  known: readonly number[],
+  live: SheetTab[] | null,
+  listedGids: ReadonlySet<string>
+): TabReconciliation {
+  if (!live) return { fetch: [...known], vanishedEmpty: [], vanishedListed: [], added: [] };
+  const liveGids = new Set(live.map((t) => t.gid));
+  const vanished = known.filter((g) => !liveGids.has(g));
+  return {
+    fetch: known.filter((g) => liveGids.has(g)),
+    vanishedEmpty: vanished.filter((g) => !listedGids.has(String(g))),
+    vanishedListed: vanished.filter((g) => listedGids.has(String(g))),
+    added: live.filter((t) => !known.includes(t.gid)),
+  };
+}
+
+const loggedTabDrift = new Set<string>();
+
+function reportTabDrift(fleet: string, r: TabReconciliation): void {
+  const once = (key: string, log: () => void) => {
+    if (loggedTabDrift.has(key)) return;
+    loggedTabDrift.add(key);
+    log();
+  };
+  const count = (state: string) =>
+    metrics.increment(COUNTERS.SHEET_TAB_DRIFT, { airline: normalizeAirlineTag("UA"), state });
+  for (const gid of r.vanishedEmpty) {
+    count("vanished_empty");
+    once(`gone:${gid}`, () =>
+      warn(`Sheet tab gid=${gid} (${fleet}) no longer exists and lists nothing; skipping it`)
+    );
+  }
+  for (const gid of r.vanishedListed) {
+    count("vanished_listed");
+    logError(
+      `Sheet tab gid=${gid} (${fleet}) no longer exists but starlink_planes still lists tails from it; refusing the roster replace`
+    );
+  }
+  for (const tab of r.added) {
+    count("new");
+    once(`new:${tab.gid}`, () =>
+      warn(
+        `New sheet tab ${JSON.stringify(tab.name)} gid=${tab.gid} (${fleet}) is not read; add it to FLEET_SHEETS if it belongs in the roster`
+      )
+    );
+  }
 }
 
 // Function to parse CSV with proper handling of quoted fields
@@ -107,6 +190,7 @@ export async function fetchSheetCsv(docId: string, gid: number): Promise<string>
         "Accept-Language": "en-US,en;q=0.5",
         "Cache-Control": "no-cache",
       },
+      signal: AbortSignal.timeout(SHEET_FETCH_TIMEOUT_MS),
     }
   );
   if (!response.ok) {
@@ -143,8 +227,32 @@ export function looksLikeStarlinkTypo(raw: string | null | undefined): boolean {
 }
 
 // Function to fetch all CSV data and filter for Starlink WiFi
-export async function fetchAllSheets() {
-  const exportUrls = createCsvExportUrls();
+export async function fetchAllSheets(
+  opts: {
+    /** sheet_gid values starlink_planes currently lists from. */
+    listedGids?: ReadonlySet<string>;
+    fetchTabs?: typeof fetchSheetTabs;
+    fetchCsv?: typeof fetchSheetCsv;
+  } = {}
+) {
+  const {
+    listedGids = new Set<string>(),
+    fetchTabs = fetchSheetTabs,
+    fetchCsv = fetchSheetCsv,
+  } = opts;
+  const exportUrls: Array<{ gid: number; fleet: string; docId: string }> = [];
+  const blockingGids: number[] = [];
+  for (const sheet of FLEET_SHEETS) {
+    const r = reconcileSheetTabs(sheet.gids, await fetchTabs(sheet.docId), listedGids);
+    reportTabDrift(sheet.fleet, r);
+    blockingGids.push(...r.vanishedListed);
+    for (const gid of r.fetch) exportUrls.push({ gid, fleet: sheet.fleet, docId: sheet.docId });
+  }
+  if (blockingGids.length > 0) {
+    throw new Error(
+      `fetchAllSheets: tab(s) ${blockingGids.join(", ")} deleted upstream while still listed; aborting to avoid deleting their listings`
+    );
+  }
   const warnedWifi = new Set<string>();
   const starlinkAircraft: Record<string, string>[] = [];
 
@@ -158,20 +266,7 @@ export async function fetchAllSheets() {
 
   for (const sheet of exportUrls) {
     try {
-      const response = await fetch(sheet.url, {
-        redirect: "follow",
-        headers: {
-          "User-Agent": BROWSER_USER_AGENT,
-          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9",
-          "Accept-Language": "en-US,en;q=0.5",
-          "Cache-Control": "no-cache",
-        },
-      });
-      if (!response.ok) {
-        throw new Error(`HTTP error! Status: ${response.status}`);
-      }
-      const csvText = await response.text();
-      const { rows } = parseCSV(csvText);
+      const { rows } = parseCSV(await fetchCsv(sheet.docId, sheet.gid));
 
       // Add to the appropriate fleet total
       if (sheet.fleet === "express") {

@@ -34,6 +34,46 @@ export async function launchFR24Browser(): Promise<Browser> {
   });
 }
 
+export interface FleetPageRow {
+  links: { text: string; href: string }[];
+  /** <td> or role="cell" texts; the type sits at index 1 in both layouts. */
+  cells: string[];
+}
+
+export function parseExpectedFleetSize(pageText: string): number {
+  const m = pageText.match(/Number of aircraft(?: in fleet)?:?\s*(\d[\d,]*)/i);
+  return m ? Number.parseInt(m[1].replace(/,/g, ""), 10) : -1;
+}
+
+const lastSegment = (href: string) =>
+  href
+    .replace(/[?#].*$/, "")
+    .replace(/\/+$/, "")
+    .split("/")
+    .pop()
+    ?.toLowerCase() ?? "";
+
+/**
+ * One aircraft per row. A row links to /data/aircraft/ three ways: the
+ * registration (/data/aircraft/n202ha, text "N202HA"), the type
+ * (/data/aircraft/a21n, text "Airbus A321-271N") and "History". Only the
+ * registration link's text matches its own URL slug, so that identity picks
+ * it; reading every link's text as a registration is how the 2026-11-05
+ * redesign put "Boeing 757-224" and "History" into united_fleet.
+ */
+export function parseFleetRows(rows: FleetPageRow[]): FR24Aircraft[] {
+  const out: FR24Aircraft[] = [];
+  const seen = new Set<string>();
+  for (const row of rows) {
+    const reg = row.links.find((l) => l.text && l.text.toLowerCase() === lastSegment(l.href));
+    if (!reg || seen.has(reg.text)) continue;
+    seen.add(reg.text);
+    const typeLink = row.links.find((l) => l.text && lastSegment(l.href) !== lastSegment(reg.href));
+    out.push({ registration: reg.text, aircraftType: typeLink?.text ?? row.cells[1] ?? "" });
+  }
+  return out;
+}
+
 /**
  * Scrape an airline's fleet roster from FlightRadar24.
  * Pass `sharedBrowser` when calling sequentially for multiple slugs — repeated
@@ -120,69 +160,46 @@ export async function scrapeFlightRadar24Fleet(
     await page.evaluate(() => window.scrollTo(0, 500));
     await page.waitForTimeout(1000);
 
-    // Check if all aircraft are visible or if we need to expand sections
-    let totalExpected = -1;
-    try {
-      const countText = await page
-        .locator("text=/Number of aircraft in fleet:\\s*\\d+/")
-        .textContent({ timeout: 3000 });
-      const match = countText?.match(/(\d+)/);
-      if (match) {
-        totalExpected = Number.parseInt(match[1], 10);
-        console.log(`Expected fleet size: ${totalExpected}`);
-      }
-    } catch {
-      console.log("Could not determine expected fleet size");
-    }
+    // "Number of aircraft in fleet: 1644" before the 2026-11 redesign,
+    // "Number of aircraft1644" after.
+    const totalExpected = parseExpectedFleetSize(
+      await page.evaluate(() => document.body?.textContent ?? "")
+    );
+    console.log(`Expected fleet size: ${totalExpected}`);
 
-    // Get all visible aircraft - they might already be expanded
-    let aircraftCount = await page.locator('a[href*="/data/aircraft/"]').count();
-    console.log(`Initially visible aircraft: ${aircraftCount}`);
-
-    // If not all visible, click expand buttons
-    if (totalExpected > 0 && aircraftCount < totalExpected) {
-      console.log("Expanding aircraft type sections...");
-
-      // Find and click all expand buttons/rows
-      const expandableRows = await page.$$("table tbody tr");
-      for (const row of expandableRows) {
+    // The old table hid each type's tails behind a clickable header row; the
+    // redesign renders every row up front, collapsed panels included.
+    const visible = await page.locator('a[href*="/data/aircraft/"]').count();
+    if (totalExpected > 0 && visible < totalExpected) {
+      for (const row of await page.$$("table tbody tr")) {
         const tds = await row.$$("td");
-        if (tds.length >= 2) {
-          const secondCell = await tds[1].textContent();
-          // If second cell is a number, this is a type header row
-          if (secondCell && /^\d+$/.test(secondCell.trim())) {
-            await row.click();
-            await page.waitForTimeout(500);
-          }
+        const secondCell = tds.length >= 2 ? await tds[1].textContent() : null;
+        if (secondCell && /^\d+$/.test(secondCell.trim())) {
+          await row.click();
+          await page.waitForTimeout(500);
         }
       }
-
       await page.waitForTimeout(2000);
-      aircraftCount = await page.locator('a[href*="/data/aircraft/"]').count();
-      console.log(`After expanding: ${aircraftCount} aircraft`);
     }
 
-    // Extract all aircraft data
     console.log("Extracting aircraft data...");
-    const aircraft = await page.evaluate(() => {
-      const links = document.querySelectorAll('a[href*="/data/aircraft/"]');
-      const results: { registration: string; aircraftType: string }[] = [];
-      const seen = new Set<string>();
-
-      for (const link of links) {
-        const registration = link.textContent?.trim();
-        if (!registration || seen.has(registration)) continue;
-        seen.add(registration);
-
-        const row = link.closest("tr");
-        const tds = row?.querySelectorAll("td") || [];
-        const aircraftType = tds[1]?.textContent?.trim() || "";
-
-        results.push({ registration, aircraftType });
-      }
-
-      return results;
-    });
+    const rows: FleetPageRow[] = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('tr, [role="row"]'))
+        .map((row) => ({
+          links: Array.from(row.querySelectorAll('a[href*="/data/aircraft/"]')).map((a) => ({
+            text: a.textContent?.trim() ?? "",
+            href: a.getAttribute("href") ?? "",
+          })),
+          cells: Array.from(row.querySelectorAll('td, [role="cell"]')).map(
+            (td) => td.textContent?.trim() ?? ""
+          ),
+        }))
+        .filter((r) => r.links.length > 0)
+    );
+    const aircraft = parseFleetRows(rows);
+    if (totalExpected > 0 && aircraft.length !== totalExpected) {
+      console.warn(`FR24 ${slug}: parsed ${aircraft.length} of ${totalExpected} aircraft`);
+    }
 
     result.aircraft = aircraft;
     result.success = aircraft.length > 0 || totalExpected === 0;

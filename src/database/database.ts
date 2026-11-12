@@ -83,6 +83,7 @@ import { excludeMassWriteDays } from "../utils/install-rate";
 import { debug, info, error as logError, warn } from "../utils/logger";
 import { ensureAdsbFlightDrawsTable } from "./adsb-flight-draws";
 import { ASSIGNMENT_LOG_DDL, logFlightAssignments, pruneAssignmentLog } from "./assignment-log";
+import { fleetRejectReason, recordFleetRejection } from "./fleet-admission";
 import { countRoster, fleetRoster, programmeRoster, tenantProgrammeRoster } from "./roster";
 import {
   equippedSql,
@@ -4807,7 +4808,7 @@ export function upsertFleetAircraft(
     verifiedWifi: string | null;
     evidence: "observed" | "type_rule" | "community";
   }
-): void {
+): boolean {
   const now = unixNow();
   // Empty/placeholder type strings must not clobber a real value via COALESCE.
   const type = aircraftType?.trim();
@@ -4821,6 +4822,15 @@ export function upsertFleetAircraft(
     fleet: string | null;
     airline: string | null;
   } | null;
+
+  const rejected = fleetRejectReason(db, airline, tailNumber, {
+    aircraftType: safeType,
+    isNew: !existing,
+  });
+  if (rejected) {
+    recordFleetRejection(airline, tailNumber, source, rejected);
+    return false;
+  }
 
   if (existing) {
     db.query(`
@@ -4880,6 +4890,7 @@ export function upsertFleetAircraft(
       airline
     );
   }
+  return true;
 }
 
 /**
@@ -5083,6 +5094,14 @@ export function syncSpreadsheetToFleet(db: Database, airline: string): number {
         fleet: string | null;
         airline: string | null;
       } | null;
+      const rejected = fleetRejectReason(db, airline, plane.TailNumber, {
+        aircraftType: type,
+        isNew: !existing,
+      });
+      if (rejected) {
+        recordFleetRejection(airline, plane.TailNumber, "spreadsheet", rejected);
+        continue;
+      }
       if (existing) {
         if (starlinkStatus !== "unknown" && existing.starlink_status !== starlinkStatus) {
           transitions.push({ prev: existing, next: starlinkStatus });

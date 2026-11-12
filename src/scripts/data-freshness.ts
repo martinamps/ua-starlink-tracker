@@ -4,6 +4,7 @@ import {
   COMMUNITY_SOURCE_UPDATED_META,
   enabledAirlines,
   isGuideStale,
+  lastUpdatedOwner,
 } from "../airlines/registry";
 import { FR24_UPCOMING_CAP } from "../api/flightradar24-api";
 import {
@@ -17,6 +18,12 @@ import { info, error as logError } from "../utils/logger";
 import { type ProgressRollup, emitFleetProgressCounts } from "./fleet-progress";
 
 const EMIT_INTERVAL_MS = 5 * 60 * 1000;
+
+function sheetOwnedAirlines(): string[] {
+  return enabledAirlines()
+    .filter((a) => lastUpdatedOwner(a.code) === "sheet-scrape")
+    .map((a) => a.code);
+}
 
 // Per-job freshness anchor: the newest timestamp that proves the pipeline
 // actually wrote data, grouped by airline. Skips airlines with no rows so an
@@ -57,6 +64,17 @@ export function buildFreshnessQueries(qrEnabled = AIRLINES.QR.enabled): Record<s
     SELECT 'UA' AS airline, MAX(swept_at) AS ts
     FROM adsb_sweeps`,
   };
+  // The sheet scrape stamps <airline>:lastUpdated only after a roster replace
+  // is accepted, so a scrape that runs hourly but refuses every time (the
+  // Oct 27–Nov 12 2026 deleted-tab outage) ages this gauge. One row per
+  // sheet-owned airline even when the stamp is missing (ts NULL → epoch 0).
+  queries.sheet_scrape = sheetOwnedAirlines()
+    .map(
+      (code) => `
+    SELECT '${code}' AS airline,
+      (SELECT CAST(strftime('%s', value) AS INTEGER) FROM meta WHERE key = '${code}:lastUpdated') AS ts`
+    )
+    .join(" UNION ALL");
   // QR writes none of the airline-column tables — only qatar_schedule, whose
   // last_updated is touched solely on successful upserts. Without this gauge
   // a dead ingester is invisible until the prune drains the table (~48h).
@@ -86,6 +104,7 @@ export function buildFreshnessCoverage(
     fleet_progress: ["UA", "AS"],
     faa_registry: ["UA"],
     adsb_sweep: ["UA"],
+    sheet_scrape: sheetOwnedAirlines(),
   };
   if (qrEnabled) coverage.qatar_ingester = ["QR"];
   return coverage;
@@ -151,7 +170,7 @@ export function emitDataFreshness(db: Database, queries = FRESHNESS_QUERIES): vo
           // return a null MAX on an empty table — the maximally stale state must
           // still emit so the monitor can fire (epoch 0 / meta-stamp fallback).
           if (job === "qatar_ingester") ts = metaLastUpdatedEpoch(db, row.airline) ?? 0;
-          else if (job === "faa_registry" || job === "adsb_sweep") ts = 0;
+          else if (job === "faa_registry" || job === "adsb_sweep" || job === "sheet_scrape") ts = 0;
           else continue;
         }
         const ageSec = Math.max(0, now - ts);
