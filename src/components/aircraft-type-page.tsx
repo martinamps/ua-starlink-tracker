@@ -163,6 +163,9 @@ function VariantsSection({ data }: { data: AircraftTypePageData }) {
           <ShareBarRow key={v.label} label={v.label} n={v.starlink} total={v.total} />
         ))}
       </ul>
+      {tenantCopy(data.airline).checksEveryTail && (
+        <p className="text-xs text-muted mt-3">Verified on united.com.</p>
+      )}
     </section>
   );
 }
