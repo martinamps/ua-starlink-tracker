@@ -59,6 +59,8 @@ export interface TailGridParse {
   rejected: Array<{ state: string; parsed: number; expected: number | null }>;
   /** Non-legend colors seen on tail cells, for drift logging. */
   unknownColors: Array<{ color: string; count: number }>;
+  /** Tails in a Verification/station shared color that their column didn't settle. */
+  heldOut: Array<{ tail: string; type_code: string; station: string }>;
 }
 
 function colorDistance(a: string, b: number[]): number {
@@ -123,9 +125,22 @@ function withinTolerance(parsed: number, expected: number | null): boolean {
   return Math.abs(parsed - expected) <= Math.max(2, Math.ceil(expected * 0.25));
 }
 
+// The WB legend gives Verification needed and SAL (G1) the same green. A tail in
+// such a color takes the one reading its type column has room for, and none when
+// both or neither fit: on 2026-11-13 the 77W column was 1 In Mod, 0 Verification,
+// so N2846U was at SAL, not done.
+function settleSharedColor(
+  tails: number,
+  room: { inMod: number; verification: number }
+): FleetProgressTailState | null {
+  if (room.inMod >= tails && room.verification <= 0) return "in_mod";
+  if (room.verification >= tails && room.inMod <= 0) return "verification_needed";
+  return null;
+}
+
 /** Decode one tab's grid into validated per-tail pipeline rows. */
 export function parseProgressTailGrid(grid: GridCell[][], segment: ProgressSegment): TailGridParse {
-  const empty: TailGridParse = { rows: [], rejected: [], unknownColors: [] };
+  const empty: TailGridParse = { rows: [], rejected: [], unknownColors: [], heldOut: [] };
   const headerIdx = grid.findIndex((row) => row.some((c) => c.v === "Totals"));
   if (headerIdx === -1) return empty;
   const header = grid[headerIdx];
@@ -148,6 +163,9 @@ export function parseProgressTailGrid(grid: GridCell[][], segment: ProgressSegme
   // Summary rollup (Totals column, else the sum across type columns) — the
   // expected tally each color-derived state must match.
   const expected = new Map<InternalState, number | null>();
+  // Per type column too, for settleSharedColor. These cells are hand-typed (an
+  // "o" sat under 78X on 2026-11-13); one that won't parse reads as 0.
+  const columnExpected = new Map<number, Partial<Record<InternalState, number>>>();
   let sheetUpdated: string | null = null;
   let tailStart = headerIdx + 1;
   for (let r = headerIdx + 1; r < grid.length; r++) {
@@ -166,6 +184,10 @@ export function parseProgressTailGrid(grid: GridCell[][], segment: ProgressSegme
       sheetUpdated = row.slice(1).find((c) => c.v)?.v ?? null;
     }
     if (!field || expected.has(field)) continue;
+    for (const { col } of columns) {
+      const n = toCount(row[col]?.v);
+      if (n !== null) columnExpected.set(col, { ...columnExpected.get(col), [field]: n });
+    }
     if (totalsCol !== -1) {
       expected.set(field, toCount(row[totalsCol]?.v));
     } else {
@@ -176,11 +198,14 @@ export function parseProgressTailGrid(grid: GridCell[][], segment: ProgressSegme
 
   // Classify every tail cell by color. Precedence: the tab's own state colors,
   // then its mod-location colors, then the cross-tab fallbacks, then near-blue
-  // as complete. First sighting wins for duplicated tails.
+  // as complete. First sighting wins for duplicated tails. A Verification color
+  // that is also an open station's waits for settleSharedColor.
   const tally = new Map<InternalState, number>();
   const candidates: ProgressTailParsedRow[] = [];
   const unknown = new Map<string, number>();
   const seen = new Set<string>();
+  const columnTally = new Map<number, Map<InternalState, number>>();
+  const sharedColorTails = new Map<number, Array<{ type: string; tail: string; loc: string }>>();
   for (let r = tailStart; r < grid.length; r++) {
     for (const { col, type } of columns) {
       const cell = grid[r]?.[col];
@@ -190,6 +215,13 @@ export function parseProgressTailGrid(grid: GridCell[][], segment: ProgressSegme
       if (!color || color === WHITE || legend.idleColors.has(color)) continue;
       let state: InternalState | null = legend.stateColors.get(color) ?? null;
       let loc: string | null = null;
+      const station = legend.locColors.get(color);
+      if (state === "verification_needed" && station && !station.future) {
+        const tails = sharedColorTails.get(col) ?? [];
+        tails.push({ type, tail: cell.v, loc: station.loc });
+        sharedColorTails.set(col, tails);
+        continue;
+      }
       if (!state) {
         const locEntry = legend.locColors.get(color);
         if (locEntry) {
@@ -203,6 +235,9 @@ export function parseProgressTailGrid(grid: GridCell[][], segment: ProgressSegme
         unknown.set(color, (unknown.get(color) ?? 0) + 1);
         continue;
       }
+      const colTally = columnTally.get(col) ?? new Map<InternalState, number>();
+      colTally.set(state, (colTally.get(state) ?? 0) + 1);
+      columnTally.set(col, colTally);
       tally.set(state, (tally.get(state) ?? 0) + 1);
       if (state === "complete") continue;
       candidates.push({
@@ -211,6 +246,38 @@ export function parseProgressTailGrid(grid: GridCell[][], segment: ProgressSegme
         tail: cell.v,
         state,
         mod_location: loc,
+        sheet_updated: sheetUpdated,
+      });
+    }
+  }
+
+  // One answer per column, so a re-sort can't swap two tails' readings. Queued
+  // tails take In Mod room (the rollup may count them), which can only hold a
+  // tail out; a column with no rollup numbers keeps the legend's state.
+  const heldOut: TailGridParse["heldOut"] = [];
+  for (const [col, tails] of sharedColorTails) {
+    const colExpected = columnExpected.get(col);
+    const colTally = columnTally.get(col) ?? new Map<InternalState, number>();
+    const inModParsed = (colTally.get("in_mod") ?? 0) + (colTally.get("scheduled") ?? 0);
+    const verifParsed = colTally.get("verification_needed") ?? 0;
+    const state = colExpected
+      ? settleSharedColor(tails.length, {
+          inMod: (colExpected.in_mod ?? 0) - inModParsed,
+          verification: (colExpected.verification_needed ?? 0) - verifParsed,
+        })
+      : "verification_needed";
+    for (const { type, tail, loc } of tails) {
+      if (!state) {
+        heldOut.push({ tail, type_code: type, station: loc });
+        continue;
+      }
+      tally.set(state, (tally.get(state) ?? 0) + 1);
+      candidates.push({
+        segment,
+        type_code: type,
+        tail,
+        state,
+        mod_location: state === "in_mod" ? loc : null,
         sheet_updated: sheetUpdated,
       });
     }
@@ -251,6 +318,7 @@ export function parseProgressTailGrid(grid: GridCell[][], segment: ProgressSegme
     rows: candidates.filter((c) => accepted.has(c.state)),
     rejected,
     unknownColors: [...unknown.entries()].map(([color, count]) => ({ color, count })),
+    heldOut,
   };
 }
 
@@ -378,6 +446,10 @@ export async function runFleetProgressTailsSync(
           if (parse.unknownColors.length > 0) {
             const detail = parse.unknownColors.map((u) => `${u.color}×${u.count}`).join(" ");
             warn(`fleet-progress-tails: ${sheet.segment} unrecognized cell colors: ${detail}`);
+          }
+          if (parse.heldOut.length > 0) {
+            const detail = parse.heldOut.map((h) => `${h.tail}@${h.station}?`).join(" ");
+            warn(`fleet-progress-tails: ${sheet.segment} shared-color tails held out: ${detail}`);
           }
           const oldRows = getFleetProgressTails(db, "UA").filter(
             (r) => r.segment === sheet.segment
