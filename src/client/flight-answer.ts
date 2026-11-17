@@ -226,6 +226,10 @@ function watchRow(ctx: AnswerContext): string {
 /** The page's one swap caveat: firm cards carry it, nothing else repeats it. */
 const CHANGE_NOTE = "Aircraft can be swapped before departure.";
 
+/** The caveat with its remedy right under it: a watch that updates on a swap. */
+const swapNote = (ctx: AnswerContext) =>
+  `<p class="mt-3 text-sm text-muted">${CHANGE_NOTE}</p>${watchRow(ctx)}`;
+
 function card(answer: AnswerTone, headline: string, body: string): string {
   const tone = ANSWER_TONE[answer];
   return `<div class="rounded-lg border p-5 ${TONE_CARD[tone] ?? NEUTRAL_CARD}" data-tone="${answer}"><h2 class="font-display text-xl ${headlineClass(tone)} text-balance">${esc(headline)}</h2>${body}</div>`;
@@ -282,7 +286,7 @@ export function renderFlightAnswer(body: CheckFlightBody, ctx: AnswerContext): F
     const html = card(
       "yes",
       headline,
-      `${legs}${body.message ? `<p class="mt-3 text-sm text-secondary">${esc(body.message)}</p>` : ""}${liveTvLine(first, ctx)}<p class="mt-3 text-sm text-muted">${CHANGE_NOTE}</p>${flightAwareLink(first, ctx)}${watchRow(ctx)}`
+      `${legs}${body.message ? `<p class="mt-3 text-sm text-secondary">${esc(body.message)}</p>` : ""}${liveTvLine(first, ctx)}${flightAwareLink(first, ctx)}${swapNote(ctx)}`
     );
     return { tone: "yes", headline, html, firm: true };
   }
@@ -314,7 +318,7 @@ export function renderFlightAnswer(body: CheckFlightBody, ctx: AnswerContext): F
     const html = card(
       tone,
       headline,
-      `${segHtml}<p class="mt-3 text-sm text-muted">${CHANGE_NOTE}</p>${alternativesHtml(body.sameDayAlternatives, ctx, first.origin ?? ctx.origin)}${routePlannerCta(first.origin, first.destination, ctx)}${watchRow(ctx)}`
+      `${segHtml}${swapNote(ctx)}${alternativesHtml(body.sameDayAlternatives, ctx, first.origin ?? ctx.origin)}${routePlannerCta(first.origin, first.destination, ctx)}`
     );
     return { tone, headline, html, firm: true };
   }
@@ -333,7 +337,7 @@ export function renderFlightAnswer(body: CheckFlightBody, ctx: AnswerContext): F
     const html = card(
       "no",
       headline,
-      `<p class="mt-2 text-sm text-secondary">${detail}${degraded}</p><p class="mt-3 text-sm text-muted">${CHANGE_NOTE}</p>${alternativesHtml(body.sameDayAlternatives, ctx, origin)}${watchRow(ctx)}`
+      `<p class="mt-2 text-sm text-secondary">${detail}${degraded}</p>${swapNote(ctx)}${alternativesHtml(body.sameDayAlternatives, ctx, origin)}`
     );
     return { tone: "no", headline, html, firm: true };
   }
