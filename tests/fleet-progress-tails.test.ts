@@ -44,6 +44,18 @@ const MAINLINE_GRID: GridCell[][] = [
   [c("ILN (G3)", ILN), c("N79279", ILN)],
 ];
 
+// The 2026-11-13 WB shape: its legend gives Verification needed and SAL (G1)
+// the same green; 77W's rollup says 1 In Mod, 0 Verification, 788's the reverse.
+const WIDEBODY_GRID: GridCell[][] = [
+  [c("Type"), c("77W"), c("788"), c("Totals")],
+  [c("In Mod", PINK), c("1"), c("0"), c("1")],
+  [c("Verification needed", GREEN), c("0"), c("1"), c("1")],
+  [c("SAL (G1)", GREEN)],
+  [c("Future locations??")],
+  [c("ILN (G3)", ILN)],
+  [c(""), c("N2846U", GREEN), c("N28912", GREEN)],
+];
+
 describe("parseProgressTailGrid", () => {
   test("decodes states from the tab's own legend and keeps complete out of storage", () => {
     const parse = parseProgressTailGrid(MAINLINE_GRID, "mainline_nb");
@@ -71,6 +83,64 @@ describe("parseProgressTailGrid", () => {
     const parse = parseProgressTailGrid(grid, "mainline_nb");
     expect(parse.unknownColors).toEqual([{ color: MYSTERY, count: 1 }]);
     expect(parse.rows.some((r) => r.tail === "N33262")).toBe(false);
+  });
+
+  test("a color both Verification and a station use follows its column's rollup", () => {
+    const parse = parseProgressTailGrid(WIDEBODY_GRID, "mainline_wb");
+    const byTail = new Map(parse.rows.map((r) => [r.tail, r]));
+    // 77W has In Mod room and no Verification room: the green is SAL.
+    expect(byTail.get("N2846U")).toMatchObject({ state: "in_mod", mod_location: "SAL" });
+    // 788 is the reverse: the same green is the state, with no station.
+    expect(byTail.get("N28912")).toMatchObject({
+      state: "verification_needed",
+      mod_location: null,
+    });
+    expect(parse.heldOut).toEqual([]);
+    expect(parse.rejected).toEqual([]);
+  });
+
+  test("a shared-color tail whose column fits both readings is held out, not guessed", () => {
+    const grid = WIDEBODY_GRID.map((row) => [...row]);
+    grid[2] = [c("Verification needed", GREEN), c("1"), c("1"), c("2")];
+    const parse = parseProgressTailGrid(grid, "mainline_wb");
+    expect(parse.rows.some((r) => r.tail === "N2846U")).toBe(false);
+    expect(parse.heldOut).toEqual([{ tail: "N2846U", type_code: "77W", station: "SAL" }]);
+  });
+
+  test("a queued tail takes its column's In Mod room, so a shared-color tail is held out", () => {
+    const grid = WIDEBODY_GRID.map((row) => [...row]);
+    grid.push([c(""), c("N2847U", ILN)]);
+    const parse = parseProgressTailGrid(grid, "mainline_wb");
+    const byTail = new Map(parse.rows.map((r) => [r.tail, r]));
+    expect(byTail.get("N2847U")).toMatchObject({ state: "scheduled", mod_location: "ILN" });
+    expect(byTail.has("N2846U")).toBe(false);
+    expect(parse.heldOut.map((h) => h.tail)).toEqual(["N2846U"]);
+  });
+
+  test("shared-color tails in one column get one answer, whatever their order", () => {
+    for (const second of [0, 1]) {
+      const grid = WIDEBODY_GRID.map((row) => [...row]);
+      grid[6] = [c(""), c(second ? "N2847U" : "N2846U", GREEN), c("N28912", GREEN)];
+      grid.push([c(""), c(second ? "N2846U" : "N2847U", GREEN)]);
+      // One In Mod slot for two green tails: no reading covers both.
+      const short = parseProgressTailGrid(grid, "mainline_wb");
+      expect(short.heldOut.map((h) => h.tail).sort()).toEqual(["N2846U", "N2847U"]);
+      // Two In Mod slots: both at SAL.
+      grid[1] = [c("In Mod", PINK), c("2"), c("0"), c("2")];
+      const room = parseProgressTailGrid(grid, "mainline_wb");
+      const atSal = room.rows.filter((r) => r.mod_location === "SAL").map((r) => r.tail);
+      expect(atSal.sort()).toEqual(["N2846U", "N2847U"]);
+    }
+  });
+
+  test("without per-column rollup numbers a shared-color tail keeps the legend's state", () => {
+    const grid = WIDEBODY_GRID.map((row) => [...row]);
+    grid[1] = [c("In Mod", PINK), c(""), c(""), c("0")];
+    grid[2] = [c("Verification needed", GREEN), c(""), c(""), c("2")];
+    const parse = parseProgressTailGrid(grid, "mainline_wb");
+    const byTail = new Map(parse.rows.map((r) => [r.tail, r]));
+    expect(byTail.get("N2846U")).toMatchObject({ state: "verification_needed" });
+    expect(parse.heldOut).toEqual([]);
   });
 
   test("a duplicated tail is only counted once", () => {
@@ -145,7 +215,7 @@ describe("parseProgressTailGrid", () => {
       [c(""), c("N922EV", YELLOW)],
     ];
     const parse = parseProgressTailGrid(grid, "express");
-    expect(parse).toEqual({ rows: [], rejected: [], unknownColors: [] });
+    expect(parse).toEqual({ rows: [], rejected: [], unknownColors: [], heldOut: [] });
   });
 
   // Live mainline_nb (2026-09-20): the rollup's In Mod reconciles only when
