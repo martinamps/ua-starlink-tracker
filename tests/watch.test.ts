@@ -256,6 +256,34 @@ describe("/cal/{fn}/{date}.ics", () => {
     expect(jsonIsland(text, "check-flight-config").watchEnabled).toBe(true);
   });
 
+  test("firm answers put the Watch row right under the swap caveat", () => {
+    const date = isoDaysFromNow(1);
+    const no = renderFlightAnswer(
+      {
+        hasStarlink: false,
+        confidence: "verified",
+        message: "UA100 is assigned to tail N1, verified as Viasat WiFi — not Starlink.",
+        flights: [],
+        sameDayAlternatives: [
+          { flight_number: "UA200", departure_time: Date.now() / 1000, tail_number: "N2" },
+        ],
+      },
+      answerCtx(date, true)
+    ).html;
+    const yes = renderFlightAnswer(
+      { hasStarlink: true, confidence: "verified", flights: [{ tail_number: "N1" }] },
+      answerCtx(date, true)
+    ).html;
+    for (const html of [no, yes]) {
+      const caveat = html.indexOf("Aircraft can be swapped before departure.");
+      expect(caveat).toBeGreaterThan(-1);
+      expect(html.indexOf("Watch this flight")).toBeGreaterThan(caveat);
+    }
+    expect(no.indexOf("Watch this flight")).toBeLessThan(
+      no.indexOf("Starlink flights on this route")
+    );
+  });
+
   test("alternative links carry the asked-about date and never say 'today'", () => {
     const date = isoDaysFromNow(1);
     const html = renderFlightAnswer(
