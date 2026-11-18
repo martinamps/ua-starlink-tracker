@@ -23,12 +23,15 @@ import {
   type AirlineConfig,
   type LastUpdatedOwner,
   OBSERVED_WIFI_SOURCES,
+  type ProgrammeExclusionReason,
   VERIFICATION_SOURCES,
   enabledAirlines,
   isOutsideProgramme,
   lastUpdatedOwner,
   looksLikeValidTailNumber,
   programTypeOf,
+  programmeExclusionLabel,
+  programmeExclusionReason,
   verifierSourceTag,
 } from "../airlines/registry";
 import { instrumentDatabase } from "../observability/db-timing";
@@ -3503,6 +3506,8 @@ export interface TypeProgress {
   notInGuide: number;
   /** A programExclusions family: shown, never summed into a denominator. */
   excluded: boolean;
+  /** Why an excluded type is out; unset when `excluded` is false. */
+  exclusionReason?: ProgrammeExclusionReason;
 }
 
 /** Equipped/total per programme type from the full roster. Freighters are
@@ -3524,13 +3529,15 @@ export function getTypeProgress(db: Database, airline: string): TypeProgress[] {
   for (const t of fleetRoster(db, airline)) {
     if (isFreighterFamily(t.family)) continue;
     const { key, label } = programTypeOf(cfg, t.aircraft_type);
+    const excluded = isOutsideProgramme(airline, t.family);
     const acc = byKey.get(key) ?? {
       key,
       label,
       equipped: 0,
       total: 0,
       notInGuide: 0,
-      excluded: isOutsideProgramme(airline, t.family),
+      excluded,
+      ...(excluded ? { exclusionReason: programmeExclusionReason(airline) } : {}),
     };
     acc.total++;
     if (t.equipped) acc.equipped++;
@@ -6332,10 +6339,54 @@ function computeFleetPageData(
     }
   }
 
+  // Excluded types stay visible (labelled) but never enter totals, pulse,
+  // carriers, or the tail registry.
+  if (sole) {
+    const excludedFamilies = AIRLINES[sole]?.programExclusions?.families ?? [];
+    const inProgramme = new Set(rows.map((r) => r.tail_number));
+    const exclusionLabel = programmeExclusionLabel(sole);
+    for (const r of fleetRoster(db, sole)) {
+      // Freighters are also outside the programme; they stay off this page.
+      if (inProgramme.has(r.tail_number) || !excludedFamilies.includes(r.family)) continue;
+      const family = r.family === "other" ? "unknown" : r.family;
+      const rawProvider = normalizeWifiProvider(r.verified_wifi);
+      const provider: WifiProvider =
+        rawProvider === "other" || rawProvider === "starlink"
+          ? "unknown"
+          : (rawProvider as WifiProvider);
+      const tail: FleetTail = {
+        tail: r.tail_number,
+        type: r.aircraft_type || "",
+        family,
+        provider,
+        fleet: normalizeFleet(r.fleet) as FleetTail["fleet"],
+        verified_at: r.verified_at,
+      };
+      let fam = familyMap.get(family);
+      if (!fam) {
+        fam = {
+          family,
+          body: bodyClassOf(family),
+          total: 0,
+          starlink: 0,
+          tails: [],
+          outsideProgramme: { label: exclusionLabel },
+        };
+        familyMap.set(family, fam);
+      }
+      fam.total++;
+      fam.tails.push(tail);
+    }
+  }
+
   const families = [...familyMap.values()].sort((a, b) => {
     if (a.family === "unknown") return 1;
     if (b.family === "unknown") return -1;
-    return b.starlink / b.total - a.starlink / a.total || b.total - a.total;
+    return (
+      Number(!!a.outsideProgramme) - Number(!!b.outsideProgramme) ||
+      b.starlink / b.total - a.starlink / a.total ||
+      b.total - a.total
+    );
   });
 
   const carriers: FleetCarrier[] = [...carrierMap.entries()]
@@ -7015,7 +7066,9 @@ function computeAircraftTypePages(
 
   const fleet = getFleetPageData(db, [airline]);
   const families = new Map(fleet.families.map((f) => [f.family, f]));
-  const tailFamily = new Map(fleet.allTails.map((t) => [t.tail, t.family]));
+  const tailFamily = new Map(
+    fleet.families.flatMap((f) => f.tails.map((t) => [t.tail, t.family] as const))
+  );
   const dataClock = maxOf(
     db,
     "SELECT MAX(checked_at) AS t FROM starlink_verification_log WHERE airline = ?",
@@ -7262,6 +7315,7 @@ function computeAircraftTypePages(
       flightNumbersScope,
       lastmodIso: lastmod > 0 ? new Date(lastmod).toISOString() : undefined,
       dataClock,
+      ...(fam.outsideProgramme ? { outsideProgramme: fam.outsideProgramme } : {}),
     });
   }
   return out;
