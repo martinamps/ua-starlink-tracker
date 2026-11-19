@@ -317,11 +317,20 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     status: "installing",
     statusLabel: "Mostly done (widebodies)",
     summary:
-      "150 Starlink widebodies as of August 2026: the finished 777, A350 and 787-8 programmes plus the world's first 787-9. The 787 programme is due to finish by the end of 2026. The A330s and A380s are not in the announced programme, and Qatar has not said whether they will be.",
+      "170 Starlink widebodies as of November 2026, more than 95% of the planned widebody rollout, with up to 373 Starlink flights a day across 777s, 787s and A350s. The A330s and A380s are not in the announced programme, and Qatar has not said whether they will be.",
     facts: [
+      {
+        fact: "Qatar Airways has equipped 170 widebody aircraft with Starlink, more than 95 percent of its planned widebody deployment, across the Boeing 777-300ER, 777-200LR, 787-8 and 787-9 and the Airbus A350-900 and A350-1000. It operates up to 373 Starlink-enabled flights a day, and more than 31 million passengers have used the free service since it launched on October 22, 2024.",
+        asOf: "2026-11-16",
+        source: {
+          label: "The Peninsula",
+          url: "https://thepeninsulaqatar.com/article/17/11/2026/qatar-airways-starlink-benefits-over-31-million-passengers",
+        },
+      },
       {
         fact: "Qatar Airways reached 150 Starlink-equipped widebodies, including the world's first Starlink-equipped Boeing 787-9 and the completed 787-8 sub-fleet, and remains on track to finish the 787 rollout by the end of 2026. The 777 programme was completed in nine months and the A350 programme in eight.",
         asOf: "2026-08-21",
+        superseded: true,
         source: {
           label: "Qatar Airways press release",
           url: "https://www.qatarairways.com/press-releases/en-WW/269475-qatar-airways-150-starlink-equipped-widebody-aircraft-now-include-world-s-first-starlink-equipped-boeing-787-9/",
@@ -500,12 +509,20 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     shortName: "Aer Lingus",
     iata: "EI",
     status: "installing",
-    statusLabel: "Long-haul rollout under way",
+    statusLabel: "On all transatlantic routes",
     // No tail count on purpose: FlyerTalk and aggregator counts disagree (1 to
     // 10 aircraft) and no first-party source publishes one.
     summary:
-      "Live since March 29, 2026 (Airbus A330 EI-EIN, Dublin to New York JFK), free in every cabin. Aircraft flying to North America go first, and the whole long-haul fleet is due by Q1 2027.",
+      "Free in every cabin on all transatlantic routes as of November 2026; live since March 29, 2026 (Airbus A330 EI-EIN, Dublin to New York JFK). The whole long-haul fleet is due by Q1 2027.",
     facts: [
+      {
+        fact: "Aer Lingus says free Starlink Wi-Fi is already available across all of its transatlantic routes.",
+        asOf: "2026-11-18",
+        source: {
+          label: "Aer Lingus media centre",
+          url: "https://mediacentre.aerlingus.com/pressrelease/details/108/26586",
+        },
+      },
       {
         fact: "Aer Lingus' first Starlink aircraft, Airbus A330 EI-EIN, flew EI105 from Dublin to New York JFK on March 29, 2026, with Wi-Fi available across all cabins for free. Aer Lingus will equip all aircraft in a phased rollout, beginning with aircraft flying to North America, followed by those serving European destinations, and expects Starlink across its long-haul fleet by Q1 2027.",
         asOf: "2026-03-29",
