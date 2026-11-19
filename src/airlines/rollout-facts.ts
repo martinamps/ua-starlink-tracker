@@ -541,6 +541,14 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
       "Free Starlink in every cabin on all eight A321XLRs (completed November 12, 2026) and on several A350s and A330s. First flight June 23, 2026 (A330-300 EC-MAA, Madrid to Sao Paulo); part of IAG's 500+ aircraft Starlink deal.",
     facts: [
       {
+        fact: "Iberia Express starts installing Starlink on its first aircraft in the coming days and expects to equip 16 of its Airbus A321neo and A320ceo within two months, free for every passenger regardless of cabin, on routes linking Madrid with the Canary and Balearic Islands.",
+        asOf: "2026-11-18",
+        source: {
+          label: "Europa Press",
+          url: "https://www.europapress.es/economia/noticia-iberia-express-inicia-instalacion-conexion-starlink-espera-transformar-16-aviones-dos-meses-20261118115042.html",
+        },
+      },
+      {
         fact: "All eight of Iberia's Airbus A321XLRs have Starlink; the last, EC-OIL, left the La Muñoza maintenance base on November 12, 2026. The service is free for all passengers regardless of cabin or fare type, and is already installed on several of Iberia's A350s and A330s.",
         asOf: "2026-11-12",
         source: {
