@@ -824,11 +824,11 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     shortName: "Korean Air",
     iata: "KE",
     status: "installing",
-    statusLabel: "First widebodies live",
+    statusLabel: "Installing",
     // Asiana only: the Jin Air / Air Busan / Air Seoul scope rests on one
     // report no other source repeats, so those brands do not 301 here.
     summary:
-      "Free Starlink live since September 15, 2026 on four Korean Air widebodies (three A350-900s and one 777-300ER) plus nine A350-900s and an A330-300 at Asiana, with every Korean Air and ex-Asiana aircraft targeted by the end of 2027.",
+      "Free Starlink since September 15, 2026, now on 42 Korean Air and Asiana aircraft (about 20% of their combined fleet of 208), including 14 A350s and 7 A330s at Asiana. Every Korean Air and ex-Asiana aircraft is targeted by the end of 2027.",
     aliases: ["asiana"],
     facts: [
       {
@@ -845,6 +845,22 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         source: {
           label: "TeslaNorth",
           url: "https://teslanorth.com/2026/09/15/asiana-airlines-starlink-free-wifi-onboard/",
+        },
+      },
+      {
+        fact: "Korean Air and Asiana have expanded free Starlink from 14 to 42 aircraft, 20.2% of their combined fleet of 208.",
+        accessed: "2026-11-17",
+        source: {
+          label: "Aju Press",
+          url: "https://www.ajupress.com/view/20261117160470611",
+        },
+      },
+      {
+        fact: "Asiana offers Starlink on select routes flown by 14 A350s and 7 A330s, and says it cannot confirm in advance whether a given flight will have it because aircraft assignments can change.",
+        accessed: "2026-11-17",
+        source: {
+          label: "Asiana Airlines",
+          url: "https://flyasiana.com/C/US/EN/contents/inflight-wi-fi",
         },
       },
     ],
