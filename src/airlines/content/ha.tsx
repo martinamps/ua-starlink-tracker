@@ -101,8 +101,8 @@ export const content: AirlineContent = {
           q: "Is Hawaiian Airlines Starlink Wi-Fi free?",
           a: () => (
             <p>
-              Yes, free for every passenger with no paywall. Connect to the "Starlink WiFi on
-              HawaiianAir" network and you're online from gate to gate.
+              Yes, for Atmos Rewards members, and joining is free. Connect to the Wi-Fi network and
+              sign in or join on board; guests under 18 can connect with their reservation details.
             </p>
           ),
         },

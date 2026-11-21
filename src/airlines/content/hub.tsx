@@ -291,8 +291,9 @@ export const content: AirlineContent = {
       q: "Is Starlink Wi-Fi free on every airline?",
       a: () => (
         <p>
-          It varies. United's is free for MileagePlus members, Alaska's for Atmos Rewards members,
-          and Hawaiian's and Qatar's for every passenger. Each airline's page on the{" "}
+          It varies. United's is free for MileagePlus members, and Alaska's and Hawaiian's for Atmos
+          Rewards members. Qatar gives everyone 45 minutes, and the whole flight with a Privilege
+          Club login. All three programmes are free to join. Each airline's page on the{" "}
           <a href="/airlines" className={LINK}>
             full list
           </a>{" "}

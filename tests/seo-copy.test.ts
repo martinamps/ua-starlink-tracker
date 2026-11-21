@@ -62,9 +62,16 @@ describe("page copy", () => {
     ).text();
     expect(body).not.toContain("no login wall or loyalty requirement");
     expect(body).not.toContain("free to every passenger, gate-to-gate, with no login");
+    expect(body).not.toContain("for every passenger");
     expect(body).toContain("MileagePlus");
     expect(body).toContain("Hawaiian");
     expect(body).toContain("Alaska");
+  });
+
+  test("Alaska llms.txt names the Atmos Rewards sign-in for free Wi-Fi", async () => {
+    const llms = await (await app.dispatch(req("/llms.txt", SITES.alaska.canonicalHost))).text();
+    expect(llms).toContain("Free for Atmos Rewards members");
+    expect(llms).not.toContain("no account, no purchase");
   });
 });
 
