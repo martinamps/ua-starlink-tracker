@@ -556,6 +556,15 @@ describe("hub host shows enabled airlines only", () => {
     expect(text).not.toContain("https://qatarstarlinktracker.com/");
   });
 
+  test("homepage description names the leading airlines with their counts", async () => {
+    const { text } = await bodyOf("/", HUB);
+    const desc = text.match(/<meta name="description" content="([^"]*)"/)?.[1] ?? "";
+    expect(desc).toMatch(
+      /airlines fly Starlink Wi-Fi or are installing it\. Most planes: \S+ \([\d,]+\)/
+    );
+    expect(desc).toEndWith("Check any flight by number.");
+  });
+
   test("hub sitemap stays generic", async () => {
     const { text } = await bodyOf("/sitemap.xml", HUB);
     expect(text).toContain("<loc>https://airlinestarlinktracker.com/</loc>");
