@@ -530,16 +530,32 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     shortName: "Iberia",
     iata: "IB",
     status: "installing",
-    statusLabel: "First aircraft flying",
-    // One aircraft confirmed: the derived "Yes — Rollout Under Way" would
-    // imply a fleet you can plan around. Same call as Lufthansa.
-    headline: "Does Iberia Have Starlink? Rolling Out — First Aircraft Flew June 23",
+    statusLabel: "All 8 A321XLRs, some A350s and A330s",
+    // The A321XLR subfleet is done; the widebodies have no published count.
+    // "Yes — Rollout Under Way" would overstate a fleet you can plan around.
+    headline: "Does Iberia Have Starlink? On All A321XLRs, Some Widebodies",
     // Iberia's own release (grupo.iberia.com, which 403s every automated
     // client) also gives a flight number and an end-2026 fleet share; neither
     // appears on a readable copy, so neither is published here.
     summary:
-      "First Starlink flight on June 23, 2026 (Airbus A330-300 EC-MAA, Madrid to Sao Paulo), with free high-speed Wi-Fi; part of IAG's 500+ aircraft Starlink deal.",
+      "Free Starlink in every cabin on all eight A321XLRs (completed November 12, 2026) and on several A350s and A330s. First flight June 23, 2026 (A330-300 EC-MAA, Madrid to Sao Paulo); part of IAG's 500+ aircraft Starlink deal.",
     facts: [
+      {
+        fact: "Iberia Express starts installing Starlink on its first aircraft in the coming days and expects to equip 16 of its Airbus A321neo and A320ceo within two months, free for every passenger regardless of cabin, on routes linking Madrid with the Canary and Balearic Islands.",
+        asOf: "2026-11-18",
+        source: {
+          label: "Europa Press",
+          url: "https://www.europapress.es/economia/noticia-iberia-express-inicia-instalacion-conexion-starlink-espera-transformar-16-aviones-dos-meses-20261118115042.html",
+        },
+      },
+      {
+        fact: "All eight of Iberia's Airbus A321XLRs have Starlink; the last, EC-OIL, left the La Muñoza maintenance base on November 12, 2026. The service is free for all passengers regardless of cabin or fare type, and is already installed on several of Iberia's A350s and A330s.",
+        asOf: "2026-11-12",
+        source: {
+          label: "Aviacionline",
+          url: "https://www.aviacionline.com/english/commercial-aviation/europe/spain/all-of-iberia-s-a321xlrs-now-have-starlink-on-board_a6af5a5d74aa3de49099284b9",
+        },
+      },
       {
         fact: "The first Iberia aircraft fitted with Starlink, an Airbus A330-300 registered EC-MAA, departed Madrid-Barajas for Sao Paulo Guarulhos shortly before midnight on June 23, 2026.",
         asOf: "2026-06-23",
