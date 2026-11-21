@@ -1421,11 +1421,17 @@ function typeProgressSummary(types: readonly TypeProgress[], stale: boolean): st
     .filter((t) => t.equipped > 0 && t.equipped < t.total)
     .map((t) => `${t.label} ${t.equipped} of ${t.total}`);
   const idle = live.filter((t) => t.equipped === 0).map((t) => t.label);
-  const retiring = types.filter((t) => t.excluded).map((t) => t.label);
+  const excluded = types.filter((t) => t.excluded);
+  const excludedClause =
+    excluded.length === 0
+      ? null
+      : excluded[0].exclusionReason === "not_planned"
+        ? `${excluded.map((t) => t.label).join("/")}: no Starlink planned`
+        : `${excluded.map((t) => t.label).join("/")} retiring`;
   return [
     done.length + going.length > 0 ? `At least: ${[...done, ...going].join(", ")}` : null,
     idle.length > 0 ? `${stale ? "none listed on" : "not started on"} ${idle.join(", ")}` : null,
-    retiring.length > 0 ? `${retiring.join("/")} retiring` : null,
+    excludedClause,
   ]
     .filter(Boolean)
     .join("; ");

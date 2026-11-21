@@ -769,6 +769,7 @@ const apiFleetSummary: Handler = ({ getReader }) => {
       installed: f.starlink,
       total: f.total,
       percentage: f.total > 0 ? Math.round((f.starlink / f.total) * 1000) / 10 : 0,
+      ...(f.outsideProgramme ? { excluded: true, label: f.outsideProgramme.label } : {}),
     }));
     return {
       code: cfg.code,
@@ -3537,7 +3538,9 @@ function fleetItemListJsonLd(
         return {
           "@type": "ListItem",
           position: i + 1,
-          name: `${aircraftName(f.family)}: ${f.starlink} of ${f.total} with Starlink`,
+          name: f.outsideProgramme
+            ? `${aircraftName(f.family)}: ${f.outsideProgramme.label}`
+            : `${aircraftName(f.family)}: ${f.starlink} of ${f.total} with Starlink`,
           ...(slug ? { url: `https://${ctx.site.canonicalHost}/fleet/${slug}` } : {}),
         };
       })
@@ -3740,7 +3743,17 @@ const aircraftTypePage: Handler = (ctx) => {
     .filter((d) => d.slug !== def.slug)
     .flatMap((d) => {
       const s = ctx.reader.getAircraftTypePage(d.slug);
-      return s ? [{ slug: d.slug, short: d.short, starlink: s.equipped, total: s.total }] : [];
+      return s
+        ? [
+            {
+              slug: d.slug,
+              short: d.short,
+              starlink: s.equipped,
+              total: s.total,
+              ...(s.outsideProgramme ? { outsideProgramme: s.outsideProgramme } : {}),
+            },
+          ]
+        : [];
     });
   const clockIso = data.dataClock
     ? new Date(data.dataClock * 1000).toISOString()

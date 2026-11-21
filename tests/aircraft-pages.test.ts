@@ -258,6 +258,7 @@ describe("provider buckets (snapshot)", () => {
 // ── 5. answerFor ────────────────────────────────────────────────────────────
 
 const UA_E175 = aircraftPagesFor("UA").find((d) => d.slug === "e175") as AircraftPageDef;
+const UA_ERJ145 = aircraftPagesFor("UA").find((d) => d.slug === "erj-145") as AircraftPageDef;
 const UA_787 = aircraftPagesFor("UA").find((d) => d.slug === "787") as AircraftPageDef;
 const AS_MAX8 = aircraftPagesFor("AS").find((d) => d.slug === "737-max-8") as AircraftPageDef;
 const AS_E175 = aircraftPagesFor("AS").find((d) => d.slug === "e175") as AircraftPageDef;
@@ -343,6 +344,17 @@ describe("answerFor", () => {
       null,
     ],
     ["none", UA_787, input({ knownOther: 10 }), null],
+    [
+      "not_planned",
+      UA_ERJ145,
+      input({
+        family: "ERJ-145",
+        total: 55,
+        knownOther: 55,
+        outsideProgramme: { label: "No Starlink planned" },
+      }),
+      null,
+    ],
     ["official_none", AS_738, input({ airline: "AS", unchecked: 10, checked: 0 }), official(0)],
     ["unknown", AS_738, input({ airline: "AS", unchecked: 10, checked: 0 }), null],
   ];
@@ -352,7 +364,7 @@ describe("answerFor", () => {
     expect(a.kind).toBe(kind);
     expect(a.indexable).toBe(!["none", "official_none", "unknown"].includes(kind));
     expect(a.shareLine === null).toBe(
-      ["verifying", "installing", "none", "official_none", "unknown"].includes(kind)
+      ["verifying", "installing", "none", "official_none", "not_planned", "unknown"].includes(kind)
     );
     if (["verifying", "official_none", "unknown"].includes(kind)) {
       expect(a.headline).not.toMatch(/^No\b/);

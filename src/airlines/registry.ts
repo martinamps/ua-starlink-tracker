@@ -254,10 +254,15 @@ export interface AirlineConfig {
      * statement that replaces a per-tail "no" nobody can refresh. */
     fleetTarget?: { text: string; asOf: string; source: { label: string; url: string } };
   };
-  /** Types flying today that the programme will never equip (retiring). They
-   * leave every denominator and render as "retiring"; status is never written
-   * from this list. */
-  programExclusions?: { families: readonly string[]; note: string; source: string };
+  /** Types flying today that the programme will never equip. They leave
+   * every denominator. `reason` chooses the label ("retiring" by default,
+   * matching Air France); status is never written from this list. */
+  programExclusions?: {
+    families: readonly string[];
+    note: string;
+    source: string;
+    reason?: ProgrammeExclusionReason;
+  };
   /** Airline-local programme types, tested against the raw type string before
    * the shared family. For a carrier whose sub-variants have opposite status
    * (AF 777-200ER vs 777-300ER) while the global family must stay whole for
@@ -365,7 +370,17 @@ const AIRLINE_DEFS = {
     lastUpdatedOwner: "sheet-scrape",
     flightHistoryModel: true,
     verifySite: "united.com",
-    // Whole fleet eligible — Express + mainline both in the program.
+    programExclusions: {
+      families: ["ERJ-145"],
+      reason: "not_planned",
+      note: "No Starlink planned",
+      // PaxEx (Oct 2025): United is not putting Starlink on the ERJ-145s.
+      // Runway Girl (Mar 2026) covers the CRJ-200 → CRJ-450 conversion, which
+      // is why those stay in the denominator: https://runwaygirlnetwork.com/2026/03/united-airlines-transforms-devils-chariot-into-premium-crj-450/
+      source: "https://paxex.aero/united-airlines-crj450-premium-twist-crj200/",
+    },
+    // Mainline and most Express types are in the programme; ERJ-145s are not
+    // (programExclusions). The remaining roster is the programme's own.
     rollout: {
       status: "in_progress",
       statusLabel: "Installing",
@@ -972,6 +987,10 @@ export const OBSERVED_WIFI_SOURCES: readonly VerificationSource[] = [
   ),
 ].sort();
 
+/** Why a programme exclusion is out. Air France's types are retiring;
+ * United's ERJ-145s will keep flying without Starlink. */
+export type ProgrammeExclusionReason = "retiring" | "not_planned";
+
 /** The one denominator rule: freighters and a programme's declared
  * exclusions are in the roster but never in a "how many of how many". */
 export function isOutsideProgramme(code: AirlineCode, family: string): boolean {
@@ -979,6 +998,15 @@ export function isOutsideProgramme(code: AirlineCode, family: string): boolean {
     isFreighterFamily(family) ||
     Boolean(AIRLINES[code]?.programExclusions?.families.includes(family))
   );
+}
+
+export function programmeExclusionReason(code: string): ProgrammeExclusionReason {
+  return AIRLINES[code]?.programExclusions?.reason ?? "retiring";
+}
+
+/** Short label for an excluded type: "Retiring" or "No Starlink planned". */
+export function programmeExclusionLabel(code: string): string {
+  return programmeExclusionReason(code) === "not_planned" ? "No Starlink planned" : "Retiring";
 }
 
 /** Meta key (per airline) holding the community source's own last-edit date

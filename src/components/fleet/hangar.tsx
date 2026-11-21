@@ -163,7 +163,8 @@ export function HangarFloor({
   typeLinks: Map<string, FleetTypeLink>;
   labels?: Record<WifiProvider, string>;
 }) {
-  const counts = providerCounts(families.flatMap((f) => f.tails));
+  const hangarFamilies = families.filter((f) => !f.outsideProgramme);
+  const counts = providerCounts(hangarFamilies.flatMap((f) => f.tails));
   const count = (state: string) => [...pipeline.values()].filter((r) => r.state === state).length;
   const inMod = count("in_mod");
   const verifying = count("verification_needed");
@@ -201,7 +202,7 @@ export function HangarFloor({
         }
       />
       <div className="fam-container gap-3">
-        {families.map((fam) => (
+        {hangarFamilies.map((fam) => (
           <FamilyBlock
             key={fam.family}
             fam={fam}

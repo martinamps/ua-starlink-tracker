@@ -443,6 +443,7 @@ type AnswerInput = Pick<
   | "listedAwaitingVerification"
   | "pipeline"
   | "dataClock"
+  | "outsideProgramme"
 >;
 
 const INDEXABLE_KINDS: ReadonlySet<AircraftVerdictKind> = new Set([
@@ -452,6 +453,7 @@ const INDEXABLE_KINDS: ReadonlySet<AircraftVerdictKind> = new Set([
   "some",
   "verifying",
   "installing",
+  "not_planned",
 ]);
 
 export const SHARE_KINDS: ReadonlySet<AircraftVerdictKind> = new Set([
@@ -524,6 +526,14 @@ export function answerFor(
     official: O,
     rosterShort,
   });
+
+  if (data.outsideProgramme) {
+    return build(
+      "not_planned",
+      "No Starlink planned.",
+      `${copy.airline} is not putting Starlink on its ${T} ${shorts}.`
+    );
+  }
 
   if (O && rosterShort) {
     const connected = `${O.count} ${plural(O.count, short, shorts)} connected`;
@@ -725,6 +735,10 @@ export function aircraftTypeTitle(
       ladder.push(`Does the ${airline} ${s} Have Starlink? Not Yet`);
       ladder.push(`${airline} ${s} Starlink: Not Yet`);
       break;
+    case "not_planned":
+      ladder.push(`Does the ${airline} ${s} Have Starlink? No`);
+      ladder.push(`${airline} ${s} Starlink: Not Planned`);
+      break;
     case "unknown":
       break;
   }
@@ -807,7 +821,8 @@ export function aircraftTypeFaq(
     });
   }
 
-  const target = answer.kind === "all" ? null : targetFact(facts, def.slug);
+  const target =
+    answer.kind === "all" || answer.kind === "not_planned" ? null : targetFact(facts, def.slug);
   if (target?.asOf) {
     const scope = target.aircraftPages?.includes(def.slug)
       ? `${copy.possessive} stated target for the ${short}`

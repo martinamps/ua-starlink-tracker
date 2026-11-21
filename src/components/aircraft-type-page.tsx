@@ -36,6 +36,7 @@ interface AircraftTypeSibling {
   short: string;
   starlink: number;
   total: number;
+  outsideProgramme?: { label: string };
 }
 
 interface AircraftTypePageProps {
@@ -62,6 +63,7 @@ const VERDICT_CLASS: Record<AircraftVerdictKind, string> = {
   installing: "verdict verdict-no",
   none: "verdict verdict-no",
   official_none: "verdict verdict-no",
+  not_planned: "verdict verdict-no",
   unknown: "verdict verdict-wait",
 };
 
@@ -397,6 +399,7 @@ function SiblingsSection({
             href={`/fleet/${s.slug}`}
             n={s.starlink}
             total={s.total}
+            status={s.outsideProgramme?.label}
           />
         ))}
       </ul>

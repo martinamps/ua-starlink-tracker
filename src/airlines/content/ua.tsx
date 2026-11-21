@@ -41,8 +41,8 @@ export const content: AirlineContent = {
 
   intro: () => (
     <>
-      United Airlines is adding Starlink Wi-Fi to every plane, starting with its United Express
-      regional jets.
+      United Airlines is adding Starlink Wi-Fi to its mainline and most United Express aircraft,
+      starting with regional jets. The ERJ-145s are not in the programme.
     </>
   ),
 
@@ -175,10 +175,10 @@ export const content: AirlineContent = {
           q: "When will all United flights have Starlink?",
           a: (s) => (
             <p>
-              United's target is every United and United Express aircraft by the end of 2027, with
-              more than 880 expected by the end of 2026. Today {pct(s.starlinkCount, s.totalCount)}{" "}
-              of the {fmt(s.totalCount)}
-              -plane fleet has it. The{" "}
+              United's target is to finish the rollout by the end of 2027, with more than 880
+              expected by the end of 2026. The ERJ-145s are not part of that plan. Today{" "}
+              {pct(s.starlinkCount, s.totalCount)} of the {fmt(s.totalCount)}-plane fleet has it.
+              The{" "}
               <a href="/timeline" className={LINK}>
                 rollout timeline
               </a>{" "}

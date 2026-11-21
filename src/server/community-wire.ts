@@ -21,10 +21,10 @@ export function aircraftTypeParam(url: URL): string | null {
   return raw && AIRCRAFT_TYPE_PARAM.test(raw) ? raw : null;
 }
 
-export type TypeStatus = "in_progress" | "not_started" | "complete" | "retiring";
+export type TypeStatus = "in_progress" | "not_started" | "complete" | "retiring" | "not_planned";
 
 export function typeStatus(t: TypeProgress): TypeStatus {
-  if (t.excluded) return "retiring";
+  if (t.excluded) return t.exclusionReason === "not_planned" ? "not_planned" : "retiring";
   if (t.equipped === 0) return "not_started";
   return t.equipped === t.total ? "complete" : "in_progress";
 }
