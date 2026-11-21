@@ -394,6 +394,16 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     aliases: ["austrian", "swiss", "brussels-airlines"],
     facts: [
       {
+        // Internal letter, not a company announcement; Lufthansa declined to add
+        // anything. It doesn't say how access will be charged, so neither do we.
+        fact: "An internal Lufthansa Airlines board letter reported on November 20, 2026 says ten more aircraft a month are to get Starlink, and that the airline wants to earn revenue from Wi-Fi access. The letter doesn't say how; access is free with a Travel ID or Miles & More account for now.",
+        asOf: "2026-11-20",
+        source: {
+          label: "airliners.de",
+          url: "https://www.airliners.de/lufthansa-starlink-einbau-flugzeuge-monat-beschleunigen/91635",
+        },
+      },
+      {
         fact: "Brussels Airlines' first Starlink aircraft, A320neo OO-SBA, flew its first commercial flight with Wi-Fi on November 9, 2026 (SN2257 Brussels–Copenhagen). Brussels Airlines plans to have 15 aircraft equipped by the first half of 2027, free in all booking classes for passengers with a Travel ID or Miles & More account.",
         asOf: "2026-11-09",
         source: {
