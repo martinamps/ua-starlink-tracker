@@ -1084,6 +1084,36 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     ],
   },
   {
+    slug: "easyjet",
+    name: "easyJet",
+    shortName: "easyJet",
+    iata: "U2",
+    status: "announced",
+    statusLabel: "Installs from 2027",
+    summary:
+      "Announced October 26, 2026: Starlink on the A320, A320neo and A321neo fleet from the first half of 2027, completing by early 2028. Not planned for the A319s.",
+    facts: [
+      {
+        fact: "easyJet will offer Wi-Fi onboard for the first time, with Starlink deployed from the first half of 2027 across its A320, A320neo and A321neo fleet. The rollout is expected to be completed by early 2028.",
+        asOf: "2026-10-26",
+        source: {
+          label: "easyJet Media Centre",
+          url: "https://www.easyjet.com/en/news/airline/story/easyjet-to-offer-connectivity-onboard-for-the-first-time-with-starlink-the-fastest-wi-fi-in-the-sky-with-rapid-roll-out-coming-from-2027",
+          mirror:
+            "https://web.archive.org/web/20261030095740/https://www.easyjet.com/en/news/airline/story/easyjet-to-offer-connectivity-onboard-for-the-first-time-with-starlink-the-fastest-wi-fi-in-the-sky-with-rapid-roll-out-coming-from-2027",
+        },
+      },
+      {
+        fact: "easyJet's A319-100s, which are gradually being replaced, will not get Starlink, according to the airline. The announcement did not say whether the Wi-Fi will be free.",
+        asOf: "2026-10-26",
+        source: {
+          label: "AeroTime",
+          url: "https://www.aerotime.aero/articles/easyjet-starlink-wifi-spacex-airbus-elon-musk",
+        },
+      },
+    ],
+  },
+  {
     slug: "cebu-pacific-indigo",
     // Same brand-led rule as IAG: Frontier and Wizz Air carry the search
     // volume that the group name absorbs but can never rank for.

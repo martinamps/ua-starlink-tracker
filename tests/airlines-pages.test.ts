@@ -180,7 +180,7 @@ describe("hub /airlines/{slug} detail pages (tracked airlines)", () => {
   });
 
   test("unknown airline 404s — no invented content", async () => {
-    for (const slug of ["ryanair", "easyjet", "not-an-airline"]) {
+    for (const slug of ["ryanair", "jet2", "not-an-airline"]) {
       expect(factsBySlug(slug)).toBeNull();
       const res = await get(`/airlines/${slug}`, hub.canonicalHost);
       expect(res.status, slug).toBe(404);
