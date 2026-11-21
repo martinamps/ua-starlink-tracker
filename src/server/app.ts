@@ -4480,6 +4480,15 @@ function homeMeta(
   const headline = cfg && homeHeadline(cfg, stats.starlinkCount, stats.totalCount);
   if (!cfg || !headline) return null;
   const { name: lead, count, share } = headline;
+  const noun = stats.noun ?? `${cfg.shortName} planes`;
+  // United's own checker answers only within 3 days of departure and is the
+  // official result for the brand query, so the title says what it can't do.
+  if (cfg.code === "UA") {
+    return {
+      siteTitle: `${lead}: Check Any Flight on Any Date`,
+      siteDescription: `${count} ${noun} (${share}) have Starlink Wi-Fi. Get odds for any flight and date, look up every equipped plane by tail, and rank connections.`,
+    };
+  }
   const siteTitle =
     [
       `${lead}: ${count} Planes Have Starlink (${share})`,
@@ -4489,13 +4498,13 @@ function homeMeta(
   const express = stats.fleetStats?.express;
   const regionalClause =
     express && express.total > 0 && express.starlink > (stats.fleetStats?.mainline.starlink ?? 0)
-      ? `, most of them ${cfg.code === "UA" ? "United Express" : "regional"} jets`
+      ? ", most of them regional jets"
       : "";
   return {
     siteTitle,
     // "free" only where every passenger gets it free; a members-only offer
     // (freeForMembersOf) is the FAQ's to state, with its condition.
-    siteDescription: `Yes: ${count} ${stats.noun ?? `${cfg.shortName} planes`} (${share}) have ${cfg.freeForMembersOf ? "" : "free "}Starlink Wi-Fi${regionalClause}. Check yours by flight number.`,
+    siteDescription: `Yes: ${count} ${noun} (${share}) have ${cfg.freeForMembersOf ? "" : "free "}Starlink Wi-Fi${regionalClause}. Check yours by flight number.`,
   };
 }
 
