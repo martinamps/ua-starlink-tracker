@@ -67,7 +67,12 @@ export const content: AirlineContent = {
         },
         {
           q: "Is Qatar Airways' Starlink Wi-Fi free?",
-          a: () => <p>Yes, free for every passenger, gate to gate, with no purchase required.</p>,
+          a: () => (
+            <p>
+              Yes. Everyone gets 45 minutes free; log in to Privilege Club, which is free to join,
+              and it's free for the whole flight.
+            </p>
+          ),
         },
         {
           q: "Does my Qatar Airways flight have Starlink?",

@@ -402,6 +402,7 @@ const AIRLINE_DEFS = {
     enabled: true,
     publicInHub: true,
     iata: "HA",
+    freeForMembersOf: "Atmos Rewards",
     icao: "HAL",
     operators: [{ icao: "HAL", iata: "HA" }],
     subfleets: [{ key: "mainline", label: "Hawaiian", match: () => true }],
