@@ -11,11 +11,11 @@ const installsPerMonth = (s: ContentStats): number | null =>
 const express = (s: ContentStats) => s.fleetStats?.express ?? { starlink: 0, total: 0 };
 const mainline = (s: ContentStats) => s.fleetStats?.mainline ?? { starlink: 0, total: 0 };
 
-// United's June 22, 2026 release, the source of the widebody figures.
 // United's Nov. 12, 2026 release: Starlink on more than half of daily flights.
 const UA_DAILY_FLIGHTS_RELEASE =
   "https://www.united.com/en/us/newsroom/announcements/cision-125497";
 
+// United's June 22, 2026 release, the source of the widebody figures.
 const UA_WIDEBODY_RELEASE =
   "https://www.prnewswire.com/news-releases/united-accelerates-starlink-wi-fi-rollout-with-first-widebody-transatlantic-flight-302806746.html";
 
