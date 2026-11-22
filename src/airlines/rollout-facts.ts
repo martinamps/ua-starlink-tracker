@@ -192,7 +192,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     status: "installing",
     statusLabel: "Installing (regional done)",
     summary:
-      "More than 40% of the Alaska Air Group fleet had Starlink as of the September 29, 2026 investor day, including every Alaska regional aircraft and Hawaiian's long-haul fleet. Alaska mainline has barely started: 12 737-8 MAX connected, with the announced E175, 737, and 787 program targeted to finish in early 2027. Free for Atmos Rewards members via T-Mobile.",
+      "More than 40% of the Alaska Air Group fleet had Starlink as of the September 29, 2026 investor day, including every Alaska regional aircraft and Hawaiian's long-haul fleet. Alaska mainline has barely started: 12 737-8 MAX and 4 737-9 MAX connected on Alaska's October 26, 2026 tracker, with the announced E175, 737, and 787 program targeted to finish in early 2027. Free for Atmos Rewards members via T-Mobile.",
     facts: [
       {
         // Group-wide figure: the denominator spans Alaska, Hawaiian and Horizon,
@@ -252,6 +252,25 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
           e175: 93,
           "737-max-8": 12,
           "737-max-9": 0,
+          "737-800": 0,
+          "737-900": 0,
+          "787": 0,
+        },
+        officialAll: ["e175"],
+        superseded: true,
+      },
+      {
+        fact: "Alaska's Starlink installation tracker shows 40% of aircraft equipped: all 93 Embraer 175s, all 18 Airbus A321-200neo and all 24 Airbus A330 aircraft, plus 12 Boeing 737-8 MAX (8 pending) and 4 Boeing 737-9 MAX (76 pending). No Boeing 737-800, 737-900 or Boeing 787 was connected yet.",
+        asOf: "2026-10-26",
+        source: {
+          label: "Alaska Airlines newsroom — Starlink tracker",
+          url: "https://news.alaskaair.com/alaska-airlines-wifi-connectivity/",
+        },
+        aircraftPages: ["e175", "737-max-8", "737-max-9", "737-800", "737-900", "787"],
+        officialCounts: {
+          e175: 93,
+          "737-max-8": 12,
+          "737-max-9": 4,
           "737-800": 0,
           "737-900": 0,
           "787": 0,
