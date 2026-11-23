@@ -19,6 +19,9 @@ const UA_DAILY_FLIGHTS_RELEASE =
 const UA_WIDEBODY_RELEASE =
   "https://www.prnewswire.com/news-releases/united-accelerates-starlink-wi-fi-rollout-with-first-widebody-transatlantic-flight-302806746.html";
 
+// The address United's 2026-10-15 release links for its own tracker.
+const UA_OWN_TRACKER = "https://starlinktracker.united.com/program/starlink";
+
 const UAHero = ({ stats }: HeroProps) => (
   <RolloutPanel
     stats={stats}
@@ -110,7 +113,11 @@ export const content: AirlineContent = {
           <a href="/chrome" className={LINK}>
             Chrome extension
           </a>{" "}
-          shows the same answer on Google Flights.
+          shows the same answer on Google Flights. United also has its own{" "}
+          <a href={UA_OWN_TRACKER} className={LINK} target="_blank" rel="noopener noreferrer">
+            Starlink tracker
+          </a>
+          , for flights "within three days of departure", in United's words.
         </p>
       ),
     },

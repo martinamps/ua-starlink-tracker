@@ -4563,13 +4563,25 @@ function homeMeta(
   const express = stats.fleetStats?.express;
   const regionalClause =
     express && express.total > 0 && express.starlink > (stats.fleetStats?.mainline.starlink ?? 0)
-      ? `, most of them ${cfg.code === "UA" ? "United Express" : "regional"} jets`
+      ? ", most of them regional jets"
       : "";
+  // "free" only where every passenger gets it free; a members-only offer
+  // (freeForMembersOf) is the FAQ's to state, with its condition.
+  const answer = (clause: string) =>
+    `Yes: ${count} ${stats.noun ?? `${cfg.shortName} planes`} (${share}) have ${cfg.freeForMembersOf ? "" : "free "}Starlink Wi-Fi${clause}.`;
+  if (cfg.code === "UA") {
+    // United's own tracker answers "within three days of departure" (its
+    // 2026-10-15 release), so the snippet says what we give at booking time.
+    // It states only what this site does, never what United's does not. The
+    // regional clause is left out: with it the line passes the snippet's length.
+    return {
+      siteTitle,
+      siteDescription: `${answer("")} Check any flight on any date: odds weeks ahead, a firm yes or no once a plane is assigned.`,
+    };
+  }
   return {
     siteTitle,
-    // "free" only where every passenger gets it free; a members-only offer
-    // (freeForMembersOf) is the FAQ's to state, with its condition.
-    siteDescription: `Yes: ${count} ${stats.noun ?? `${cfg.shortName} planes`} (${share}) have ${cfg.freeForMembersOf ? "" : "free "}Starlink Wi-Fi${regionalClause}. Check yours by flight number.`,
+    siteDescription: `${answer(regionalClause)} Check yours by flight number.`,
   };
 }
 
