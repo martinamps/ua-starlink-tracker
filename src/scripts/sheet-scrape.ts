@@ -14,6 +14,7 @@ import {
   syncSpreadsheetToFleet,
   updateDatabase,
 } from "../database/database";
+import { failureKindOf, recordSourceFailure, recordSourceSuccess } from "../database/source-health";
 import { COUNTERS, metrics, normalizeAirlineTag, withSpan } from "../observability";
 import type { JobRunContext } from "../utils/job-runner";
 import { info, error as logError } from "../utils/logger";
@@ -63,6 +64,7 @@ export async function runSheetScrape(
           // — same observable shape as fleet-sync's aborted path.
           span.setTag("error", true);
           span.setTag("abort_reason", refusal);
+          recordSourceFailure(db, "sheet_scrape", "UA", "refused");
           metrics.increment(COUNTERS.SCRAPER_SYNC, {
             source: "sheet",
             airline: normalizeAirlineTag("UA"),
@@ -79,6 +81,7 @@ export async function runSheetScrape(
             airline: normalizeAirlineTag("UA"),
             status: "success",
           });
+          recordSourceSuccess(db, "sheet_scrape", "UA");
           span.setTag("total_aircraft", totalAircraftCount);
           span.setTag("starlink_count", starlinkAircraft.length);
           info(
@@ -133,6 +136,7 @@ export async function runSheetScrape(
       } catch (err) {
         logError("Error updating starlink data", err);
         span.setTag("error", true);
+        recordSourceFailure(db, "sheet_scrape", "UA", failureKindOf(err));
         metrics.increment(COUNTERS.SCRAPER_SYNC, {
           source: "sheet",
           airline: normalizeAirlineTag("UA"),

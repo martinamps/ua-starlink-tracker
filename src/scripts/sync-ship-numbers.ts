@@ -12,6 +12,7 @@
 import type { Database } from "bun:sqlite";
 import { AIRLINES } from "../airlines/registry";
 import { initializeDatabase, setMeta, updateShipNumber } from "../database/database";
+import { recordSyncOutcome } from "../database/source-health";
 import { COUNTERS, metrics, normalizeAirlineTag } from "../observability/metrics";
 import { BROWSER_USER_AGENT } from "../utils/constants";
 import { info, error as logError } from "../utils/logger";
@@ -112,6 +113,14 @@ export async function syncShipNumbers(deps: {
     airline: normalizeAirlineTag("UA"),
     status,
   });
+  // "noop" means the tabs loaded and nothing changed, which is a good read,
+  // unless they loaded with no ship rows in them at all.
+  recordSyncOutcome(
+    db,
+    "ship_numbers",
+    "UA",
+    status === "noop" ? (counts.rowsSeen > 0 ? "success" : "empty") : status
+  );
   const summary = `${counts.fetchedGids}/${SHIP_SHEET_GIDS.length} sheets, ${counts.rowsSeen} rows, ${counts.changed} changed`;
   if (status === "error") {
     throw new Error(`Ship number sync failed: ${summary}`);

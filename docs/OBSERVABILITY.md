@@ -144,6 +144,28 @@ rather than raising the number. Pure redirects (the www aliases, `/extension`
 
 The Alaska tracker ingest also counts `starlink.scraper.sync{source:alaska_tracker}` with `status:success|error`; `error` means the page failed to fetch or its table no longer parses, and the last good chart keeps serving.
 
+### Source health
+
+Every outside source a job reads on a schedule keeps a record in `meta` (`<scope>:source_health.<source>`): its last good read, its last failure and that failure's kind. A good read means usable data came back. A page that loads and parses to nothing is a failure of kind `empty` or `refused`. The record lives in the database, so a restart does not reset it. Code: `src/database/source-health.ts`.
+
+| Metric | Description |
+|--------|-------------|
+| `starlink.source.hours_since_success` | Gauge, 5-min sweep. Tags `source`, `airline` (`all` for a source every airline shares). Hours since that source last gave usable data; for a source that has never succeeded, hours since it was first watched |
+| `starlink.source.quiet` | Gauge, same sweep and tags. `1` while the source is past its own threshold, else `0` |
+| `starlink.source.failure` | Count. Tags `source`, `airline`, `kind:error\|timeout\|blocked\|empty\|refused\|partial`. One per failed read. `source:flight_schedule,kind:empty` includes parked tails that have no schedule, so read that pair as a rate, not as errors |
+
+Thresholds, in hours: `sheet_scrape` 6, `united_site` 6, `flight_schedule` 3, `adsb` 3, `qatar_schedule` 6, `alaska_site` 72 (its good reads come in bursts with ordinary gaps of about two days), `bts` 1488 (62 days; the file is monthly), and 72 for the daily jobs (`fleet_roster`, `alaska_tracker`, `fleet_progress`, `fleet_progress_tails`, `ship_numbers`, `faa_registry`, `sec_filings`, `starlink_geofeed`).
+
+When a source passes its threshold the server posts one notice to `SLACK_WEBHOOK_URL`, and one more when the source returns. Without the webhook nothing is posted; the outage is still logged once at error level (`source-health: … Data source quiet …`) and shows in the gauges. A Datadog monitor that does not depend on Slack:
+
+```
+max(last_15m):max:starlink.source.quiet{*} by {source,airline} >= 1
+```
+
+Set it to notify on missing data after 30 minutes: the sweep emits every 5, so silence means the server or its jobs are down.
+
+While a source behind an airline's pages is quiet (`sheet_scrape`, `united_site`, `flight_schedule`, `fleet_roster`, `alaska_site`, `alaska_tracker`, `qatar_schedule`), that airline's "last updated" date is held at the source's last good read.
+
 ## Tracing
 
 ### Span Names

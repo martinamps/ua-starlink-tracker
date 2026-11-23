@@ -8,6 +8,7 @@
 import type { Database } from "bun:sqlite";
 import { rmSync } from "node:fs";
 import { replaceFaaRegistry } from "../database/database";
+import { recordSyncOutcome } from "../database/source-health";
 import { COUNTERS, GAUGES, metrics, normalizeAirlineTag, withSpan } from "../observability";
 import type { FaaRegistryRow } from "../types";
 import { downloadZipToTemp, spawnLines } from "../utils/bulk-data";
@@ -312,7 +313,10 @@ export function startFaaRegistryJob(db: Database): JobHandle {
     intervalMs: 24 * 3600 * 1000,
     initialDelayMs: 20 * 60 * 1000,
     run: async () => {
-      await runFaaRegistrySync(db);
+      const r = await runFaaRegistrySync(db);
+      // A registry file that resolves none of our tails is an empty answer.
+      const empty = r.outcome === "success" && r.tracked > 0 && r.resolved === 0;
+      recordSyncOutcome(db, "faa_registry", "UA", empty ? "empty" : r.outcome);
     },
   });
 }
