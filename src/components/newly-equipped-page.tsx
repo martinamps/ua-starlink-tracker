@@ -1,7 +1,7 @@
 import { aircraftName } from "../airlines/aircraft-families";
 import { marketingFlightNumber } from "../airlines/flight-number";
 import { AIRLINES, type SiteConfig } from "../airlines/registry";
-import type { FirstFlight, PerAirlineStat, RecentInstall } from "../types";
+import type { FirstFlight, PerAirlineStat, RecentInstall, ReportedInstall } from "../types";
 import type { Link } from "./layout";
 import { EYEBROW, PANEL, PageHeader, PageShell, SECTION } from "./layout";
 import { monthDay, shortDate } from "./ui/format";
@@ -9,6 +9,9 @@ import { monthDay, shortDate } from "./ui/format";
 interface NewlyEquippedPageProps {
   site: SiteConfig;
   installs: RecentInstall[];
+  /** Sheet listings our own check has not confirmed. Rendered apart from
+   * `installs` and never counted; empty on every tenant without a sheet. */
+  reported?: ReportedInstall[];
   airlines: PerAirlineStat[];
   /** First observed departure per tail; sparse — most tails have none yet. */
   firstFlights: Record<string, FirstFlight>;
@@ -80,9 +83,35 @@ function InstallRow({
   );
 }
 
+function ReportedRow({ row, airlineName }: { row: ReportedInstall; airlineName: string }) {
+  const operator = operatorLabel(row.OperatedBy, airlineName);
+  return (
+    <div
+      id={row.TailNumber}
+      className="py-2.5 border-b border-subtle last:border-0"
+      style={{ scrollMarginTop: "5rem" }}
+    >
+      <div className="flex items-baseline gap-3 flex-wrap">
+        <span className="font-mono text-sm text-secondary">{row.TailNumber}</span>
+        <span className="text-xs text-secondary">{aircraftName(row.Aircraft)}</span>
+        {operator && <span className="text-xs text-muted hidden sm:inline">{operator}</span>}
+        <span className="text-xs text-muted tabular-nums ml-auto">
+          First seen {shortDate(row.DateFound.slice(0, 10))}
+        </span>
+      </div>
+      <div className="text-xs text-muted mt-1">
+        Not confirmed: our check still reads{" "}
+        <span className="text-secondary">{row.observed_wifi}</span>
+        {row.observed_at ? `, last checked ${monthDay(row.observed_at)}` : ""}.
+      </div>
+    </div>
+  );
+}
+
 export default function NewlyEquippedPage({
   site,
   installs,
+  reported = [],
   airlines,
   firstFlights,
   pageLinks,
@@ -153,6 +182,31 @@ export default function NewlyEquippedPage({
           </p>
         </div>
       </section>
+
+      {reported.length > 0 && (
+        <section className={SECTION}>
+          <div className={PANEL}>
+            <div className={EYEBROW}>Reported, not yet confirmed</div>
+            <p className="text-sm text-muted mb-3">
+              The community fleet sheet lists these aircraft with Starlink, but our own check of the
+              airline's site still shows another provider. They are not in our count. An airline's
+              site can take several days to show a new install; each one moves to the list above
+              when our check agrees.
+            </p>
+            {reported.map((r) => (
+              <ReportedRow
+                key={r.TailNumber}
+                row={r}
+                airlineName={airlines.find((a) => a.code === r.airline)?.name ?? r.airline}
+              />
+            ))}
+            <p className="text-xs text-muted mt-4">
+              Dates are when we first saw the listing on the sheet, which can be later than the day
+              it was added.
+            </p>
+          </div>
+        </section>
+      )}
     </PageShell>
   );
 }

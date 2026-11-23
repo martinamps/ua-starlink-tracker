@@ -225,6 +225,7 @@ import type {
   FirstFlight,
   FleetPageData,
   Flight,
+  ReportedInstall,
 } from "../types";
 import { AIRCRAFT_SPECS } from "../utils/aircraft-specs";
 import {
@@ -2330,6 +2331,15 @@ function firstFlightsFor(
   );
 }
 
+/** The log's second list: sheet listings our own check has not confirmed.
+ * United only: the mismatch is between the UA community sheet and our check of
+ * united.com, and no other tenant has a sheet to disagree with. Bounded by the
+ * reader's age cap, so the limit is a backstop, not a window. */
+const REPORTED_LIMIT = 50;
+function reportedInstallsFor({ site, reader }: RequestContext): ReportedInstall[] {
+  return site.scope === "UA" ? reader.getReportedInstalls(REPORTED_LIMIT) : [];
+}
+
 const feedXml: Handler = (ctx) => {
   const { site, reader } = ctx;
   // An Atom document with zero entries is a broken subscription, not an empty
@@ -2338,48 +2348,85 @@ const feedXml: Handler = (ctx) => {
   if (!hasInstallLog(ctx)) return notFound(site);
   const host = site.canonicalHost;
   const installs = reader.getRecentInstalls(FEED_LIMIT, recentInstallCap(site.scope, FEED_LIMIT));
+  const reported = reportedInstallsFor(ctx);
   const firstFlights = firstFlightsFor(reader, installs);
   const airlineNames = new Map(publicAirlines().map((a) => [a.code, a.name]));
 
-  // Honest <updated>: newest install date, else the data's own stamp — never
+  // Honest <updated>: newest entry date, else the data's own stamp — never
   // the request clock (same discipline as the sitemap's lastmod).
   const rawStamp = Date.parse(reader.getLastUpdatedRaw() ?? "");
-  const updated = installs.length
-    ? installIso(installs[0].DateFound)
-    : Number.isFinite(rawStamp)
-      ? new Date(rawStamp).toISOString()
-      : "1970-01-01T00:00:00Z";
+  const newest = [installs[0], reported[0]]
+    .filter((r) => r !== undefined)
+    .map((r) => installIso(r.DateFound))
+    .sort()
+    .at(-1);
+  const updated =
+    newest ??
+    (Number.isFinite(rawStamp) ? new Date(rawStamp).toISOString() : "1970-01-01T00:00:00Z");
 
-  const entries = installs
-    .map((i) => {
-      const name = airlineNames.get(i.airline) ?? i.airline;
-      const url = `https://${host}/newly-equipped#${encodeURIComponent(i.TailNumber)}`;
-      const operator = operatorLabel(i.OperatedBy, name);
-      const operated = operator ? `, operated by ${operator}` : "";
-      const ff = firstFlights[i.TailNumber];
-      const firstFlightLine = ff
-        ? ` First seen flying Starlink: ${firstFlightLabel(ff)} on ${new Date(ff.departed_at * 1000).toISOString().slice(0, 10)}.`
-        : "";
-      // "first observed with", not "joined the fleet on": DateFound is when
-      // this tracker found the tail equipped, not when the antenna went on.
-      // The page says so in its footer; a syndicated entry travels into press
-      // and aggregators without that footer, so it carries its own caveat.
-      return `  <entry>
+  const confirmedEntries = installs.map((i) => {
+    const name = airlineNames.get(i.airline) ?? i.airline;
+    const url = `https://${host}/newly-equipped#${encodeURIComponent(i.TailNumber)}`;
+    const operator = operatorLabel(i.OperatedBy, name);
+    const operated = operator ? `, operated by ${operator}` : "";
+    const ff = firstFlights[i.TailNumber];
+    const firstFlightLine = ff
+      ? ` First seen flying Starlink: ${firstFlightLabel(ff)} on ${new Date(ff.departed_at * 1000).toISOString().slice(0, 10)}.`
+      : "";
+    // "first observed with", not "joined the fleet on": DateFound is when
+    // this tracker found the tail equipped, not when the antenna went on.
+    // The page says so in its footer; a syndicated entry travels into press
+    // and aggregators without that footer, so it carries its own caveat.
+    return {
+      day: installIso(i.DateFound),
+      xml: `  <entry>
     <title>${escapeXml(`${name} ${i.TailNumber} (${i.Aircraft}) now has Starlink`)}</title>
     <id>${escapeXml(url)}</id>
     <link href="${escapeXml(url)}"/>
     <updated>${installIso(i.DateFound)}</updated>
+    <category term="confirmed"/>
     <summary>${escapeXml(
       `${name} aircraft ${i.TailNumber} (${i.Aircraft}${operated}) was first observed with Starlink on ${i.DateFound.slice(0, 10)} — the date this tracker found it equipped, not necessarily the install date.${firstFlightLine}`
     )}</summary>
-  </entry>`;
-    })
+  </entry>`,
+    };
+  });
+
+  // A different kind of entry, not an early copy of the confirmed one: its own
+  // title, category and id, so a reader that posts every "now has Starlink"
+  // title never announces an unconfirmed tail, and the confirmed entry still
+  // arrives as new the day our check agrees. The link is the same #TAIL anchor
+  // either way, since the row moves lists but keeps its id.
+  const reportedEntries = reported.map((i) => {
+    const name = airlineNames.get(i.airline) ?? i.airline;
+    const url = `https://${host}/newly-equipped#${encodeURIComponent(i.TailNumber)}`;
+    const operator = operatorLabel(i.OperatedBy, name);
+    const operated = operator ? `, operated by ${operator}` : "";
+    return {
+      day: installIso(i.DateFound),
+      xml: `  <entry>
+    <title>${escapeXml(`${name} ${i.TailNumber} (${i.Aircraft}) reported with Starlink, not yet confirmed`)}</title>
+    <id>${escapeXml(`tag:${host},2026:reported:${i.TailNumber}`)}</id>
+    <link href="${escapeXml(url)}"/>
+    <updated>${installIso(i.DateFound)}</updated>
+    <category term="reported"/>
+    <summary>${escapeXml(
+      `${name} aircraft ${i.TailNumber} (${i.Aircraft}${operated}) is listed with Starlink on the community-maintained fleet sheet, where this tracker first saw it on ${i.DateFound.slice(0, 10)} — the date this tracker first read the listing, not necessarily the day it was added. This tracker's own check of the airline's site still reads ${i.observed_wifi}, so the aircraft is not confirmed and is not in the tracker's Starlink count.`
+    )}</summary>
+  </entry>`,
+    };
+  });
+
+  // Stable sort: on a shared day the confirmed entries stay ahead.
+  const entries = [...confirmedEntries, ...reportedEntries]
+    .sort((a, b) => (a.day < b.day ? 1 : a.day > b.day ? -1 : 0))
+    .map((e) => e.xml)
     .join("\n");
 
   const body = `<?xml version="1.0" encoding="utf-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom">
   <title>${escapeXml(`${site.brand.title} — Newly Equipped Aircraft`)}</title>
-  <subtitle>${escapeXml("Aircraft as this tracker first observes them with Starlink, newest first. Dates are when the install was found, not when the antenna went on.")}</subtitle>
+  <subtitle>${escapeXml(`Aircraft as this tracker first observes them with Starlink, newest first. Dates are when the install was found, not when the antenna went on.${reported.length ? ' Entries titled "reported" are community listings this tracker has not confirmed, dated by when this tracker first read the listing.' : ""}`)}</subtitle>
   <link href="https://${host}/feed.xml" rel="self"/>
   <link href="https://${host}/newly-equipped"/>
   <id>https://${host}/feed.xml</id>
@@ -2420,6 +2467,7 @@ const newlyEquippedPage: Handler = (ctx) => {
       };
   return renderSubPage(ctx, NewlyEquippedPage, "/newly-equipped", meta, {
     installs,
+    reported: reportedInstallsFor(ctx),
     airlines: ctx.reader.getPerAirlineStats(),
     firstFlights: firstFlightsFor(ctx.reader, installs),
   });
