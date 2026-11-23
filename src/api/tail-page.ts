@@ -21,6 +21,7 @@ import type { TailAnswerKind, TailFlight, TailRecord } from "../database/tails";
 import { TAIL_RECENT_DAYS, tailFlightPair } from "../database/tails";
 import { airportTimezone } from "../utils/airport-tz";
 import { article } from "../utils/grammar";
+import { wifiPhrase } from "../utils/reported-reason";
 
 /** Rows in each flight list; a tail flies six or more legs a day. */
 export const TAIL_FLIGHT_ROWS = 12;
@@ -99,11 +100,6 @@ interface TailPageOptions {
   nowSec?: number;
 }
 
-/** verified_wifi 'None' means no Wi-Fi installed; it is never a provider name. */
-function wifiPhrase(raw: string | null): string {
-  return !raw || /^none$/i.test(raw) ? "no Wi-Fi" : `${raw} Wi-Fi`;
-}
-
 /** A reading as a noun: "Starlink", "Viasat Wi-Fi", "no Wi-Fi". */
 const readingLabel = (raw: string) => (/^starlink$/i.test(raw) ? "Starlink" : wifiPhrase(raw));
 
@@ -129,11 +125,30 @@ function answerFor(r: TailRecord, site: string): { answer: string; note: string 
         answer: `${tail} is listed with Starlink.`,
         note: `Our own check of ${site} has not confirmed it yet. It is in our count.`,
       };
-    case "reported":
+    case "reported": {
+      const reason = r.reported?.reason ?? "other_provider";
+      const count = "It is not in our count.";
+      if (reason === "awaiting_check") {
+        const unchecked = (r.reported?.checks_since_listed ?? 0) === 0;
+        const before =
+          unchecked && r.fleet?.verified_wifi
+            ? ` Our last settled reading, ${wifiPhrase(r.fleet.verified_wifi)}, dates from before we saw the listing.`
+            : "";
+        return {
+          answer: unchecked
+            ? `The community fleet sheet lists ${tail} with Starlink. We have not checked it on ${site} since we first saw the listing.`
+            : `The community fleet sheet lists ${tail} with Starlink. Our reads of it on ${site} since the listing have not settled on a reading.`,
+          note: `${count} We have not confirmed that it has Starlink; this page changes when our own check reads it.${before}`,
+        };
+      }
       return {
         answer: `The community fleet sheet lists ${tail} with Starlink, but our own check of ${site} still reads ${wifiPhrase(r.otherWifi)}.`,
-        note: "It is not in our count. An airline's site can take several days to show a new install; this page changes when our check agrees.",
+        note:
+          reason === "no_wifi"
+            ? `${count} Our check has never read Starlink on this plane; this page changes when it does.`
+            : `${count} An airline's site can take several days to show a new install; this page changes when our check agrees.`,
       };
+    }
     case "observed":
       return {
         answer: `Our check of ${site} read Starlink on ${tail}, but no fleet list names the plane yet.`,

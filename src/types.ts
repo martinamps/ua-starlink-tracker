@@ -1,6 +1,7 @@
 // Shared types for the application
 
 import type { SUBFLEET_KEY_LIST } from "./airlines/registry";
+import type { UncountedReason } from "./database/sql/listed-not-counted";
 
 // Derived from the registry's literal key list (which tests/vocabulary.test.ts
 // pins against the runtime-derived SUBFLEET_KEYS) — no third copy to drift.
@@ -67,10 +68,14 @@ export interface RecentInstall {
 
 /** A sheet listing our own check has not confirmed: shown apart, never counted. */
 export interface ReportedInstall extends RecentInstall {
-  /** The provider our check of the airline's site still reads. */
-  observed_wifi: string;
-  /** Unix seconds of that reading's last write; null on rows that predate the column. */
+  /** Why it isn't counted (database/sql/listed-not-counted.ts). */
+  reason: UncountedReason;
+  /** The reading our check holds against the listing; null while it awaits a check. */
+  observed_wifi: string | null;
+  /** Unix seconds of that reading's last write; null without one, and on rows that predate the column. */
   observed_at: number | null;
+  /** Clean reads of ours since the day the listing was first seen. */
+  checks_since_listed: number;
 }
 
 /** A newly equipped tail's first observed revenue departure (first_flights). */
@@ -221,6 +226,8 @@ export interface FleetPageData {
   progressTails: FleetProgressTailRow[];
   /** Recent pipeline transitions + confirmed-live installs, newest first. */
   movements: FleetMovement[];
+  /** Sheet-listed tails no count includes, with the reason (United's page only). */
+  sheetReported: ReportedInstall[];
 }
 
 /** One per-type row of the install pipeline (United Fleet Site progress workbooks). */

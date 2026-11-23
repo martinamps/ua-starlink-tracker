@@ -112,6 +112,12 @@ import {
   withAirline,
 } from "./sql/fragments";
 import {
+  UNITED_STARLINK_READ_WHERE,
+  independentListingSql,
+  listedNotCountedSql,
+  uncountedReason,
+} from "./sql/listed-not-counted";
+import {
   DAY_SEC,
   DEPARTURE_WINDOW_HOURS,
   DEPARTURE_WINDOW_SEC,
@@ -3886,13 +3892,9 @@ function isUnitedNoneObservation(o: {
 }
 
 function hasPriorUnitedStarlink(db: Database, tailNumber: string, airline: AirlineFilter): boolean {
-  const q = withAirline(
-    `tail_number = ? AND tail_confirmed = 1 AND has_starlink = 1 AND source = 'united'
-     AND error IS NULL`,
-    airline,
-    "",
-    [tailNumber]
-  );
+  const q = withAirline(`tail_number = ? AND ${UNITED_STARLINK_READ_WHERE}`, airline, "", [
+    tailNumber,
+  ]);
   return (
     db.query(`SELECT 1 FROM starlink_verification_log WHERE ${q.sql} LIMIT 1`).get(...q.params) !=
     null
@@ -4068,9 +4070,7 @@ function starlinkHistorySql(
   };
 }
 
-/** A Starlink listing we didn't derive ourselves: not discovery, not a type rule. */
-const INDEPENDENT_LISTING_WHERE = `COALESCE(sheet_gid, '') NOT IN ('discovery', 'type_deterministic')
-  AND ${sheetSaysStarlink("wifi")}`;
+const INDEPENDENT_LISTING_WHERE = independentListingSql();
 
 function starlinkHistory(
   db: Database,
@@ -4728,40 +4728,111 @@ const WIFI_MISMATCH_PREDICATE = `verified_wifi IS NOT NULL
 /** A reported listing drops off the log after this long without our check
  * agreeing: a sheet row that never confirms is more likely a wrong listing
  * than a slow one (N77426 sat at 31 of 31 Viasat reads before the sheet
- * withdrew it). */
+ * withdrew it), and a parked plane we cannot check is not news for months. */
 export const REPORTED_MAX_AGE_DAYS = 30;
 
+type ListedNotCountedRow = Omit<ReportedInstall, "reason" | "observed_wifi" | "observed_at"> & {
+  listing_wifi: string | null;
+  listing_at: number | null;
+  settled_wifi: string | null;
+  settled_at: number | null;
+  ever_starlink: number;
+  dated: number;
+};
+
 /**
- * Tails the community sheet lists as Starlink while our own check still reads
- * another provider: the sheet side of /api/mismatches, dated like an install.
- * Never equipped (equippedSql needs verified_wifi NULL or 'Starlink'), so a
- * tail is in this list or in getRecentInstalls, never both, and no count
- * reads it. Independent listings only: a row our own discovery wrote is not a
- * sheet listing, and it outlives a contrary check until the next good scrape
- * purges it, which in November 2026 was three weeks away.
+ * Every tail the community sheet lists as Starlink and no count includes, with
+ * the reason (sql/listed-not-counted.ts). One row per tail. Never equipped, so
+ * a tail is here or in the equipped set, never both. Independent listings
+ * only: a row our own discovery wrote is not a sheet listing, and it outlives
+ * a contrary check until the next good scrape purges it, which in November
+ * 2026 was three weeks away. Sheet-fed airlines only: United today.
+ *
+ * `scope` narrows it. "log" is what the dated install log shows: organically
+ * dated rows inside REPORTED_MAX_AGE_DAYS. "tail" is what a tail's own page
+ * calls reported: the log's rows, plus any listing still awaiting our check,
+ * since nothing we read has contradicted it however old it is.
  */
+export function getListedNotCounted(
+  db: Database,
+  airline: AirlineFilter,
+  opts: { scope?: "log" | "tail"; limit?: number; now?: number } = {}
+): ReportedInstall[] {
+  const sp = "starlink_planes";
+  const ofTail = `tail_number = ${sp}.TailNumber AND airline = ${sp}.airline`;
+  const settled = (column: string) =>
+    `(SELECT uf.${column} FROM united_fleet uf
+      WHERE uf.tail_number = ${sp}.TailNumber AND uf.airline = ${sp}.airline
+        AND uf.starlink_status = 'negative')`;
+  const q = withAirline(
+    `SELECT airline, TailNumber, aircraft as Aircraft, OperatedBy, DateFound,
+            verified_wifi AS listing_wifi, verified_at AS listing_at,
+            ${settled("verified_wifi")} AS settled_wifi,
+            ${settled("verified_at")} AS settled_at,
+            EXISTS (SELECT 1 FROM starlink_verification_log
+                    WHERE ${ofTail} AND ${UNITED_STARLINK_READ_WHERE}) AS ever_starlink,
+            (SELECT COUNT(*) FROM starlink_verification_log
+             WHERE ${ofTail} AND tail_confirmed = 1 AND ${CLEAN_OBSERVATION_WHERE}
+               AND checked_at >= COALESCE(
+                 CAST(strftime('%s', substr(${sp}.DateFound, 1, 10)) AS INTEGER), 0)
+            ) AS checks_since_listed,
+            (${INSTALL_FILTER}) AS dated
+     FROM ${sp}
+     WHERE ${listedNotCountedSql(sp)}`,
+    // Only a sheet-fed airline has a sheet to disagree with.
+    airlineCodes(airline).filter((code) => AIRLINES[code]?.lastUpdatedOwner === "sheet-scrape")
+  );
+  // A tail listed twice speaks through the row that carries a verdict.
+  const rows = db
+    .query(`${q.sql} ORDER BY airline, TailNumber, verified_wifi IS NULL, id`)
+    .all(...q.params) as ListedNotCountedRow[];
+  const cutoff = new Date(((opts.now ?? unixNow()) - REPORTED_MAX_AGE_DAYS * DAY_SEC) * 1000)
+    .toISOString()
+    .slice(0, 10);
+  const seen = new Set<string>();
+  const out: ReportedInstall[] = [];
+  for (const r of rows) {
+    const key = `${r.airline}:${r.TailNumber}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const why = uncountedReason({
+      listingWifi: r.listing_wifi,
+      settledWifi: r.settled_wifi,
+      everReadStarlink: r.ever_starlink === 1,
+    });
+    if (!why) continue;
+    const inLog = r.dated === 1 && (r.DateFound ?? "").slice(0, 10) >= cutoff;
+    if (opts.scope === "log" && !inLog) continue;
+    if (opts.scope === "tail" && !inLog && why.reason !== "awaiting_check") continue;
+    const fromListing = why.observedWifi !== null && why.observedWifi === r.listing_wifi;
+    out.push({
+      airline: r.airline,
+      TailNumber: r.TailNumber,
+      Aircraft: r.Aircraft,
+      OperatedBy: r.OperatedBy,
+      DateFound: r.DateFound,
+      reason: why.reason,
+      observed_wifi: why.observedWifi,
+      observed_at: why.observedWifi === null ? null : fromListing ? r.listing_at : r.settled_at,
+      checks_since_listed: r.checks_since_listed,
+    });
+  }
+  out.sort(
+    (a, b) =>
+      (b.DateFound ?? "").localeCompare(a.DateFound ?? "") ||
+      a.TailNumber.localeCompare(b.TailNumber)
+  );
+  return opts.limit === undefined ? out : out.slice(0, opts.limit);
+}
+
+/** The install log's second list: getListedNotCounted, narrowed to the log. */
 export function getReportedInstalls(
   db: Database,
   airline: AirlineFilter,
   limit = 25,
   now = unixNow()
 ): ReportedInstall[] {
-  const q = withAirline(
-    `SELECT airline, TailNumber, aircraft as Aircraft, OperatedBy, DateFound,
-            verified_wifi AS observed_wifi, verified_at AS observed_at
-     FROM starlink_planes
-     WHERE verified_wifi IS NOT NULL AND verified_wifi != 'None'
-       AND ${SHEET_YES_VERIFIED_NO}
-       AND ${INDEPENDENT_LISTING_WHERE}
-       AND ${INSTALL_FILTER}
-       AND substr(DateFound, 1, 10) >= date(?, 'unixepoch', '-${REPORTED_MAX_AGE_DAYS} days')`,
-    airline,
-    "",
-    [now]
-  );
-  return db
-    .query(`${q.sql} ORDER BY DateFound DESC, TailNumber LIMIT ?`)
-    .all(...q.params, limit) as ReportedInstall[];
+  return getListedNotCounted(db, airline, { scope: "log", limit, now });
 }
 
 export function getWifiMismatches(db: Database, airline?: AirlineFilter): WifiMismatch[] {
@@ -6474,6 +6545,7 @@ function computeFleetPageData(
       ? getFleetProgressTails(db, airline).filter((r) => !equippedTails.has(r.tail))
       : [],
     movements: soleAirline ? computeFleetMovements(db, airline) : [],
+    sheetReported: soleAirline ? getListedNotCounted(db, soleAirline) : [],
   };
 }
 

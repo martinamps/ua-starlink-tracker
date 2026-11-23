@@ -3,7 +3,7 @@ import { AIRLINES, type SiteConfig } from "../airlines/registry";
 import type { FleetAnchorRow, FleetPageData } from "../types";
 import { ShareCardLink } from "./atoms";
 import { type CiteStat, CiteThis } from "./cite-this";
-import { HangarFloor, TailRegistry } from "./fleet/hangar";
+import { HangarFloor, type TailMarks, TailRegistry } from "./fleet/hangar";
 import { InstallPaceSection, LivePulse } from "./fleet/pace";
 import { InstallPipelineSection, type PipelineMap } from "./fleet/pipeline";
 import { providerLabels } from "./fleet/providers";
@@ -108,6 +108,10 @@ export default function FleetPage({
   installRateHref = null,
 }: FleetPageProps) {
   const pipeline: PipelineMap = new Map(data.progressTails.map((r) => [r.tail, r]));
+  const marks: TailMarks = {
+    pipeline,
+    reported: new Map(data.sheetReported.map((r) => [r.TailNumber, r])),
+  };
   const typeLinkByFamily = new Map(typeLinks.map((l) => [l.family, l]));
   const scopeCode = site.scope !== "ALL" ? site.scope : null;
   const title = scopeCode
@@ -167,14 +171,14 @@ export default function FleetPage({
       <OfficialAnchorsSection anchors={data.anchors} />
       <HangarFloor
         families={data.families}
-        pipeline={pipeline}
+        marks={marks}
         typeLinks={typeLinkByFamily}
         labels={labels}
       />
       <CarrierSection carriers={data.carriers} />
       <TailRegistry
         allTails={data.allTails}
-        pipeline={pipeline}
+        marks={marks}
         typeLinks={typeLinkByFamily}
         labels={labels}
         tailHref={(tail) => tailHref(site, tail)}

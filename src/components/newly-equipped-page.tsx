@@ -2,6 +2,7 @@ import { aircraftName } from "../airlines/aircraft-families";
 import { marketingFlightNumber } from "../airlines/flight-number";
 import { AIRLINES, type SiteConfig } from "../airlines/registry";
 import type { FirstFlight, PerAirlineStat, RecentInstall, ReportedInstall } from "../types";
+import { reportedClause } from "../utils/reported-reason";
 import type { Link } from "./layout";
 import { EYEBROW, PANEL, PageHeader, PageShell, SECTION } from "./layout";
 import { tailHref } from "./tail-link";
@@ -123,8 +124,7 @@ function ReportedRow({
         </span>
       </div>
       <div className="text-xs text-muted mt-1">
-        Not confirmed: our check still reads{" "}
-        <span className="text-secondary">{row.observed_wifi}</span>
+        Not confirmed: {reportedClause(row)}
         {row.observed_at ? `, last checked ${monthDay(row.observed_at)}` : ""}.
       </div>
     </div>
@@ -213,9 +213,9 @@ export default function NewlyEquippedPage({
             <div className={EYEBROW}>Reported, not yet confirmed</div>
             <p className="text-sm text-muted mb-3">
               The community fleet sheet lists these aircraft with Starlink, but our own check of the
-              airline's site still shows another provider. They are not in our count. An airline's
-              site can take several days to show a new install; each one moves to the list above
-              when our check agrees.
+              airline's site has not confirmed them: it reads something else, or has not read the
+              plane since the listing. They are not in our count. An airline's site can take several
+              days to show a new install; each one moves to the list above when our check agrees.
             </p>
             {reported.map((r) => (
               <ReportedRow

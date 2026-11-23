@@ -109,6 +109,7 @@ import {
   getFlightRoutePairs,
   getHubStats,
   getLastUpdated,
+  getListedNotCounted,
   getMeta,
   getObservationAnchor,
   getObservedDirectFlightNumbers,
@@ -195,6 +196,8 @@ export interface ScopedReader {
   getRecentInstalls(limit?: number, perAirlineCap?: number): RecentInstall[];
   /** Sheet listings our check has not confirmed; disjoint from getRecentInstalls. */
   getReportedInstalls(limit?: number): ReportedInstall[];
+  /** Every sheet-listed tail no count includes, with its reason; no log window. */
+  getListedNotCounted(): ReportedInstall[];
   /** First observed post-install revenue departures for the given tails (sparse). */
   getFirstFlights(tails: readonly string[]): FirstFlight[];
   /** Organic installs per calendar day (labelled bulk seeds excluded); ascending. */
@@ -472,6 +475,7 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     getRecentInstalls: (limit, perAirlineCap) =>
       getRecentInstalls(db, airlines, limit, perAirlineCap),
     getReportedInstalls: (limit) => getReportedInstalls(db, airlines, limit),
+    getListedNotCounted: () => getListedNotCounted(db, airlines),
     getFirstFlights: (tails) => getFirstFlights(db, tails, airlines),
     getDailyInstalls: () => getDailyInstalls(db, airlines),
     getPerAirlineStats: () => buildPerAirlineStats(db, airlines),

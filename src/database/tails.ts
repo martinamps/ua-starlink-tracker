@@ -16,7 +16,7 @@ import type { Database } from "bun:sqlite";
 import { canonicalPermalinkFor, marketingFlightNumber } from "../airlines/flight-number";
 import { AIRLINES } from "../airlines/registry";
 import { normalizeWifiProvider } from "../observability/metrics";
-import type { FaaRegistryRow, FirstFlight, FleetProgressTailRow } from "../types";
+import type { FaaRegistryRow, FirstFlight, FleetProgressTailRow, ReportedInstall } from "../types";
 import { excludeMassWriteDays } from "../utils/install-rate";
 import {
   CLEAN_OBSERVATION_WHERE,
@@ -26,7 +26,7 @@ import {
   getFaaRegistryByTail,
   getFirstFlights,
   getFleetProgressTails,
-  getReportedInstalls,
+  getListedNotCounted,
   isBulkRow,
 } from "./database";
 import { isEquipped, tailEvidence } from "./sql/equipped";
@@ -58,7 +58,7 @@ export type TailAnswerKind =
   | "verified"
   /** Equipped by its listing; no observation of our own yet. */
   | "listed"
-  /** The sheet lists it; our check still reads another provider. Not counted. */
+  /** The sheet lists it and no count includes it (sql/listed-not-counted.ts). */
   | "reported"
   /** Our check read Starlink, but no listing stands behind it. Not counted. */
   | "observed"
@@ -69,7 +69,7 @@ export type TailAnswerKind =
 interface TailClassInput {
   listing: { verified_wifi: string | null } | null;
   fleet: { starlink_status: string | null; verified_wifi: string | null } | null;
-  /** In getReportedInstalls: an independent, recent listing our check contradicts. */
+  /** In getListedNotCounted's "tail" scope: a sheet listing no count includes. */
   reported: boolean;
 }
 
@@ -174,6 +174,8 @@ export interface TailRecord {
   kind: TailAnswerKind;
   /** Named provider behind a "reported" or "other" answer. */
   otherWifi: string | null;
+  /** The log's row for a "reported" tail: why it isn't counted. */
+  reported: ReportedInstall | null;
   listing: TailListing | null;
   fleet: TailFleetRow | null;
   checks: TailChecks;
@@ -262,10 +264,11 @@ export function getTailRecord(
       }
     : null;
 
-  const reported = getReportedInstalls(db, airline, REPORTED_LIMIT, nowSec).some(
-    (r) => r.TailNumber === tail
-  );
-  const kind = classifyTail({ listing, fleet, reported });
+  const reportedRow =
+    getListedNotCounted(db, airline, { scope: "tail", now: nowSec }).find(
+      (r) => r.TailNumber === tail
+    ) ?? null;
+  const kind = classifyTail({ listing, fleet, reported: reportedRow !== null });
   const equipped = kind === "verified" || kind === "listed";
   const pipeline = equipped
     ? null
@@ -275,7 +278,10 @@ export function getTailRecord(
     tail,
     kind,
     otherWifi:
-      kind === "reported" ? (listing?.verified_wifi ?? null) : otherProvider({ listing, fleet }),
+      kind === "reported"
+        ? (reportedRow?.observed_wifi ?? null)
+        : otherProvider({ listing, fleet }),
+    reported: kind === "reported" ? reportedRow : null,
     listing,
     fleet,
     checks: tailChecks(db, airline, tail),
@@ -285,9 +291,6 @@ export function getTailRecord(
     indexable: tailIndexable(kind, pipeline !== null),
   };
 }
-
-/** Past any real count of reported listings; the reader's own default is a page size. */
-const REPORTED_LIMIT = 100_000;
 
 export interface TailFlight {
   /** The marketed number ("UA5212"), as the rest of the site prints it. */
@@ -461,7 +464,7 @@ export function getTailIndex(db: Database, airline: string, nowSec = unixNow()):
     if (!listings.has(r.tail)) listings.set(r.tail, r);
   }
   const reported = new Set(
-    getReportedInstalls(db, airline, REPORTED_LIMIT, nowSec).map((r) => r.TailNumber)
+    getListedNotCounted(db, airline, { scope: "tail", now: nowSec }).map((r) => r.TailNumber)
   );
   const pipeline = new Set(getFleetProgressTails(db, airline).map((r) => r.tail));
   const massDays = massImportDays(db, airline);

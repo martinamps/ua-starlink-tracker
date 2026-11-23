@@ -132,9 +132,11 @@ beforeAll(() => {
     `INSERT INTO fleet_progress_tails (airline, segment, type_code, tail, state, mod_location, sheet_updated, fetched_at)
      VALUES ('UA', 'mainline', '739', 'N6MOD', 'in_mod', 'MLB', '2026-11-20', ?)`
   ).run(now);
-  // N8NEG: still listed, but the verifier settled it negative. A stale
-  // schedule row must not read as a Starlink flight.
+  // N8NEG: still listed by our own discovery, but the verifier settled it
+  // negative. A stale schedule row must not read as a Starlink flight. (A
+  // sheet listing in this state is "reported": tests/listed-not-counted.test.ts.)
   addPlane(db, "N8NEG", null);
+  db.query("UPDATE starlink_planes SET sheet_gid = 'discovery' WHERE TailNumber = 'N8NEG'").run();
   addFleet(db, "N8NEG", "negative", { verifiedWifi: "None", verifiedAt: now - 2 * DAY });
   addFlight(db, "N8NEG", "UA800", "DEN", now + 4 * HOUR, { arrivalAirport: "ORD" });
 
