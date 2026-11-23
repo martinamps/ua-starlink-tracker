@@ -280,6 +280,14 @@ import {
 } from "./passenger-detect";
 import { recordWatchCtaShown, sameDayAlternativesField, watchFeed } from "./watch";
 
+import {
+  type AirportBoard,
+  airportMetaDescription,
+  buildAirportBoard,
+  indexableAirports,
+} from "../api/airport-board";
+import AirportPage from "../components/airport-page";
+
 type Handler = (ctx: RequestContext) => Response | Promise<Response>;
 
 /** A route table entry. Dispatch enforces `methods` and `feature` before the
@@ -1963,6 +1971,16 @@ const sitemap: Handler = (ctx) => {
           lastmod: changedIso(r.changed_at),
         }))
       : [];
+  // No lastmod: an airport's board moves with every departure, and a stamp
+  // that moves every few minutes teaches crawlers to ignore it.
+  const airportEntries =
+    site.features.airportPages && tenantConfig(tenant)
+      ? indexableAirports(reader).map((airport) => ({
+          path: `/routes/${airport}`,
+          changefreq: "daily",
+          priority: "0.6",
+        }))
+      : [];
   const hubUrls = hubUrlFamilies(site, getReader);
   // Each hub airline page's lastmod is that airline's own data freshness, not
   // the hub-wide max — an airline without a stamp yet omits lastmod rather
@@ -2011,6 +2029,7 @@ const sitemap: Handler = (ctx) => {
     ...compareEntries,
     ...flightEntries,
     ...routeEntries,
+    ...airportEntries,
     ...aircraftPageEntries(ctx),
   ];
   const body = `<?xml version="1.0" encoding="UTF-8"?>
@@ -2211,6 +2230,8 @@ The homepage element with HTML id \`starlink-stat\` gives the count: how many ${
   const boardPair = features.routePlannerPage
     ? (plannerPopularRoutes(ctx)[0] ?? { origin: "SFO", destination: "ORD" })
     : null;
+  // An airport whose page indexes, so the example is one the sitemap lists.
+  const boardAirport = features.airportPages ? busiestIndexableAirport(reader) : undefined;
   const checkFlightExampleUrl = sampleFlight
     ? `https://${host}/check-flight/${sampleFlight}/${exampleDate}`
     : `https://${host}/check-flight`;
@@ -2223,6 +2244,9 @@ The homepage element with HTML id \`starlink-stat\` gives the count: how many ${
       : null,
     boardPair
       ? `**"Which ${boardPair.origin} to ${boardPair.destination} flight should I book for Starlink?"** → https://${host}/route-planner/${boardPair.origin}/${boardPair.destination} lists every recent nonstop with its Starlink odds, departure time, aircraft and assigned plane (\`GET https://${host}/api/route-flights?origin=${boardPair.origin}&destination=${boardPair.destination}\`, optional \`&date=YYYY-MM-DD\`). Planes can be swapped before departure.`
+      : null,
+    boardAirport
+      ? `**"Which flights from ${boardAirport} have Starlink?"** → https://${host}/routes/${boardAirport} lists every ${name} departure from ${boardAirport} with a Starlink plane assigned in the next ${DEPARTURE_WINDOW_HOURS} hours, by destination, and how many Starlink planes flew from there in the last few days.`
       : null,
     `**"How is the rollout going?"** → https://${host}/ has the live count and a chart over time.${features.fleetPage ? ` https://${host}/fleet shows every aircraft and its WiFi provider.` : ""}`,
     // The access sentence comes from the same per-airline copy /is-starlink-free
@@ -3480,6 +3504,11 @@ const routePlannerPage: Handler = (ctx) => {
     const cfg = siteAirline(ctx.site);
     if (!ctx.reader.routeHasData(parsed.origin, parsed.destination)) return notFound(ctx.site);
     const reverseLinkable = ctx.reader.routeHasData(parsed.destination, parsed.origin);
+    // The origin always has an airport page (its gate mirrors this one); the
+    // destination has one only when the airline departs from it too.
+    const airportLinks = ctx.site.features.airportPages
+      ? [parsed.origin, parsed.destination].filter((a) => ctx.reader.airportHasData(a))
+      : [];
     const board = buildRouteFlightBoard(cfg, ctx.reader, parsed.origin, parsed.destination, {
       date: ctx.url.searchParams.get("date"),
     });
@@ -3503,6 +3532,7 @@ const routePlannerPage: Handler = (ctx) => {
         board,
         flightNumbers,
         reverseLinkable,
+        airportLinks,
       }
     );
   }
@@ -3902,6 +3932,82 @@ const routesPage: Handler = (ctx) => {
       updatedAt: ctx.reader.getLastUpdatedRaw(),
     }
   );
+};
+
+/** `/routes/ORD` → "ORD"; anything else → null. */
+export function parseAirportPath(pathname: string): string | null {
+  const rest = pathname.slice("/routes".length).replace(/^\/+|\/+$/g, "");
+  const airport = rest.toUpperCase();
+  return ROUTE_AIRPORT_RE.test(airport) ? airport : null;
+}
+
+/** The busiest airport in the live window whose page indexes, else any that does. */
+function busiestIndexableAirport(reader: ScopedReader): string | undefined {
+  const indexable = indexableAirports(reader);
+  return (
+    reader
+      .getAirportDepartures()
+      .rows.map((r) => r.airport)
+      .find((a) => indexable.includes(a)) ?? indexable[0]
+  );
+}
+
+function airportPageMeta(ctx: RequestContext, cfg: AirlineConfig, board: AirportBoard): PageMeta {
+  const { airport } = board;
+  // The question the H1 asks, with the carrier, as on the route pages.
+  const question = `Which ${cfg.shortName} Flights From ${airport} Have Starlink?`;
+  const description = airportMetaDescription(board);
+  const routes = board.destinations.filter((d) => d.linkable);
+  return {
+    siteTitle: question,
+    siteDescription: description,
+    keywords: `${airport} starlink flights, ${cfg.shortName.toLowerCase()} ${airport} starlink, ${airport} flights with starlink wifi`,
+    ogTitle: question,
+    ogDescription: description,
+    // Structured data only where the page indexes, as on the type pages.
+    ...(board.indexable && routes.length > 0
+      ? {
+          pageJsonLd: jsonLdBlock({
+            "@context": "https://schema.org",
+            "@type": "ItemList",
+            name: `${cfg.name} routes from ${airport} flown by Starlink planes`,
+            numberOfItems: routes.length,
+            itemListElement: routes.map((d, i) => ({
+              "@type": "ListItem",
+              position: i + 1,
+              name: `${airport} to ${d.destination}`,
+              url: `https://${ctx.site.canonicalHost}/route-planner/${airport}/${d.destination}`,
+            })),
+          }),
+        }
+      : {}),
+    ...(board.indexable ? {} : { robotsMeta: "noindex, follow" }),
+  };
+}
+
+const airportPage: Handler = (ctx) => {
+  // /routes/{airport}: one page per airport the airline departs from. Unknown
+  // codes 404, so the family is bounded by real data like the route pages.
+  const airport = parseAirportPath(ctx.url.pathname);
+  if (!airport) {
+    // "/routes/" itself is the routes page's trailing-slash spelling.
+    if (ctx.url.pathname.replace(/\/+$/, "") === "/routes") {
+      return Response.redirect(`https://${ctx.site.canonicalHost}/routes${ctx.url.search}`, 301);
+    }
+    return notFound(ctx.site);
+  }
+  const canonicalPath = `/routes/${airport}`;
+  if (ctx.url.pathname !== canonicalPath) {
+    return Response.redirect(`https://${ctx.site.canonicalHost}${canonicalPath}`, 301);
+  }
+  // airportPages is airline-site-only; siteAirline throws (fail closed) on the hub.
+  const cfg = siteAirline(ctx.site);
+  if (!ctx.reader.airportHasData(airport)) return notFound(ctx.site);
+  const board = buildAirportBoard(cfg, ctx.reader, airport);
+  return renderSubPage(ctx, AirportPage, canonicalPath, airportPageMeta(ctx, cfg, board), {
+    board,
+    updatedAt: ctx.reader.getLastUpdatedRaw(),
+  });
 };
 
 const timelinePage: Handler = (ctx) => {
@@ -4698,6 +4804,10 @@ function canonicalAliasPath(pathname: string): string {
     const parsed = parseRoutePath(pathname);
     if (parsed) return `/route-planner/${parsed.origin}/${parsed.destination}`;
   }
+  if (pathname.startsWith("/routes/")) {
+    const airport = parseAirportPath(pathname);
+    if (airport) return `/routes/${airport}`;
+  }
   return pathname.replace(/\/+$/, "") || "/";
 }
 
@@ -4835,6 +4945,7 @@ export function createApp(db: Database, opts: { crawlerDns?: CrawlerDns } = {}):
     ["/cal/", read(watchFeed)],
     ["/check-flight/", read(checkFlightPage, "checkFlightPage")],
     ["/route-planner/", read(routePlannerPage, "routePlannerPage")],
+    ["/routes/", read(airportPage, "airportPages")],
     ["/airlines/", read(airlineDetailPage, "airlinesPages")],
     ["/compare/", read(comparePage, "comparePages")],
     ["/static/", { handler: staticDir }],

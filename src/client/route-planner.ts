@@ -173,6 +173,10 @@ export function wireRoutePlanner(): void {
     originInput.value = params.get("origin") ?? "";
     destInput.value = params.get("destination") ?? "";
     if (dateInput) dateInput.value = params.get("date") ?? "";
+  } else if (params.get("origin")) {
+    // An airport page's "plan a trip from here": the origin arrives filled in.
+    originInput.value = (params.get("origin") ?? "").toUpperCase().slice(0, 4);
+    destInput.focus();
   }
   // A newer search aborts the one in flight, so a slow answer can't land last.
   let inFlight: AbortController | null = null;

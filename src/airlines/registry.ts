@@ -121,6 +121,9 @@ export interface SiteFeatures {
   /** /fleet/{slug} aircraft-type pages. Single-airline tenants only: the hub
    * would need a page per airline per type, and those hosts already rank. */
   aircraftPages: boolean;
+  /** /routes/{airport}: the Starlink departures from one airport. Needs the
+   * route pages (every row links one) and a live departure window. */
+  airportPages: boolean;
 }
 
 export interface SiteConfig {
@@ -1108,6 +1111,7 @@ const AIRLINE_SITE_FEATURES: SiteFeatures = {
   installRatePage: true,
   liveTvPage: false,
   aircraftPages: false,
+  airportPages: false,
 };
 
 export const SITES: Record<string, SiteConfig> = {
@@ -1132,6 +1136,7 @@ export const SITES: Record<string, SiteConfig> = {
       intentPages: true,
       liveTvPage: true,
       aircraftPages: true,
+      airportPages: true,
     },
   },
   airline: {
@@ -1163,6 +1168,7 @@ export const SITES: Record<string, SiteConfig> = {
       installRatePage: true,
       liveTvPage: false,
       aircraftPages: false,
+      airportPages: false,
     },
   },
   hawaiian: {

@@ -271,7 +271,7 @@ export default function Page({
           dek={`Top ${Math.min(12, airportDepartures.rows.length)} airports, ${airportDepartures.windowLabel}.`}
           wide
         >
-          <AirportBars rows={airportDepartures.rows} />
+          <AirportBars rows={airportDepartures.rows} linked={features.airportPages} />
         </Section>
       )}
 

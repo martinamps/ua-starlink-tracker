@@ -202,7 +202,7 @@ export default function RoutesPage({
               <SectionTitle>Busiest airports</SectionTitle>
               <p className="mt-1 text-sm text-secondary">By departure airport.</p>
               <Panel pad="sm" className="mt-4">
-                <AirportBars rows={airports.rows} columns={1} />
+                <AirportBars rows={airports.rows} columns={1} linked={site.features.airportPages} />
               </Panel>
             </div>
           )}
