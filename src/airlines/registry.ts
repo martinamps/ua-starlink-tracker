@@ -547,13 +547,13 @@ const AIRLINE_DEFS = {
       url: "https://news.alaskaair.com/alaska-airlines-wifi-connectivity/",
     },
     typeDeterministicWifi: alaskaTypeToWifi,
-    // Alaska's own tracker (Aug. 28, 2026 fact in rollout-facts): E175s done,
-    // mainline only on the 737-8 MAX; no other 737 or 787 connected.
+    // Alaska's own tracker (Oct. 26, 2026 fact in rollout-facts): E175s done,
+    // mainline on the 737-8 MAX and 737-9 MAX; no 737-800, 737-900 or 787.
     rollout: {
       status: "phase_done",
       statusLabel: "Installing (regional done)",
       phaseNote:
-        "Every regional E175 has Starlink. Mainline has started with the 737-8 MAX; no other 737 or 787 is connected yet.",
+        "Every regional E175 has Starlink. Mainline has started with the 737-8 MAX and 737-9 MAX; no 737-800, 737-900 or 787 is connected yet.",
       // Mainline is in the programme too — the whole roster is the denominator.
       rosterIsProgramScope: true,
     },
