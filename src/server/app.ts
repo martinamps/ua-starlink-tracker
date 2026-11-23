@@ -3363,7 +3363,7 @@ const checkFlightPage: Handler = async (ctx) => {
         ctx.url.pathname,
         unknownFlightMeta(fn, cfg),
         // noindex but follow: hand the crawler somewhere real to go.
-        { popular: reader.getPopularFlights(), noindex: true, dated }
+        { popular: reader.getPopularFlights(), noindex: true, dated, unknownFlight: fn }
       );
     }
     const facts = buildFlightFacts(reader, cfg, fn, variants);

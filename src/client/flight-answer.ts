@@ -220,7 +220,7 @@ function watchRow(ctx: AnswerContext): string {
   const path = `/cal/${encodeURIComponent(ctx.flightNumber)}/${encodeURIComponent(ctx.date)}.ics`;
   const webcal = `webcal://${ctx.host}${path}`;
   const google = `https://calendar.google.com/calendar/r?cid=${encodeURIComponent(webcal)}`;
-  return `<div class="mt-4 border-t border-subtle pt-4"><h3 class="text-sm font-semibold text-primary">Watch this flight</h3><div class="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-sm"><a href="${esc(webcal)}" data-watch="webcal" class="text-accent hover:underline">Apple / Outlook</a><a href="${esc(google)}" data-watch="google" target="_blank" rel="noopener noreferrer" class="text-accent hover:underline">Google Calendar</a><a href="${esc(path)}" data-watch="ics" download class="text-accent hover:underline">Download .ics</a></div><p class="mt-2 text-xs text-muted">Adds a calendar event that updates when the aircraft is assigned or changes.</p></div>`;
+  return `<div class="mt-4 border-t border-subtle pt-4"><h3 class="text-sm font-semibold text-primary">Watch this flight</h3><div class="flex flex-wrap gap-x-4 text-sm"><a href="${esc(webcal)}" data-watch="webcal" class="py-2 text-accent hover:underline">Apple / Outlook</a><a href="${esc(google)}" data-watch="google" target="_blank" rel="noopener noreferrer" class="py-2 text-accent hover:underline">Google Calendar</a><a href="${esc(path)}" data-watch="ics" download class="py-2 text-accent hover:underline">Download .ics</a></div><p class="text-xs text-muted">Adds a calendar event that updates when the aircraft is assigned or changes.</p></div>`;
 }
 
 /** The page's one swap caveat: firm cards carry it, nothing else repeats it. */

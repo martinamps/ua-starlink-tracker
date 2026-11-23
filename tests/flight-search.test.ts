@@ -7,6 +7,7 @@ import { describe, expect, test } from "bun:test";
 import { canonicalFlightFor } from "../src/airlines/flight-input";
 import { flightInputRules } from "../src/airlines/flight-number";
 import { AIRLINES, SITES } from "../src/airlines/registry";
+import { checkPageLink, shapeHint } from "../src/client/flight-search";
 import { createApp } from "../src/server/app";
 import { openSnapshot, req } from "./helpers";
 
@@ -89,5 +90,97 @@ describe("client bundles", () => {
       expect(res.headers.get("Content-Type")).toContain("javascript");
       expect(res.headers.get("Cache-Control")).toContain("immutable");
     }
+  });
+});
+
+describe("the date starts on today wherever a visitor types a flight", () => {
+  const AS = SITES.alaska.canonicalHost;
+  const HUB = SITES.airline.canonicalHost;
+  const formTag = (html: string, id: string) =>
+    html.match(new RegExp(`<form[^>]*id="${id}"[^>]*>`))?.[0] ?? "";
+
+  test.each([
+    [UA, "/", "home-flight-search"],
+    [AS, "/", "home-flight-search"],
+    [UA, "/check-flight", "check-flight-form"],
+    [HUB, "/", "hub-check-flight"],
+  ])("%s%s #%s asks the browser to prefill the date", async (host, path, id) => {
+    const html = await (await app.dispatch(req(path, host))).text();
+    expect(formTag(html, id)).toContain("data-prefill-date");
+  });
+
+  test("the flight field turns phone autocorrect off and offers a search key", async () => {
+    const html = await (await app.dispatch(req("/check-flight", UA))).text();
+    const input = html.match(/<input[^>]*id="check-flight-form-number"[^>]*>/)?.[0] ?? "";
+    expect(input.toLowerCase()).toContain('autocorrect="off"');
+    expect(input.toLowerCase()).toContain('enterkeyhint="search"');
+  });
+});
+
+describe("a flight number we hold no rows for", () => {
+  // Outside every carrier's real numbering, so no snapshot can hold it.
+  const cases: [host: string, fn: string][] = [
+    [UA, "UA9998"],
+    [SITES.alaska.canonicalHost, "AS9998"],
+  ];
+  for (const [host, fn] of cases) {
+    test(`${host} /check-flight/${fn} keeps the number instead of an empty form`, async () => {
+      const res = await app.dispatch(req(`/check-flight/${fn}`, host));
+      expect(res.status).toBe(200);
+      const html = await res.text();
+      expect(html).toContain(`Does ${fn} have Starlink Wi-Fi?</h1>`);
+      const input = html.match(/<input[^>]*id="check-flight-form-number"[^>]*>/)?.[0] ?? "";
+      expect(input).toContain(`value="${fn}"`);
+      expect(html).toContain("noindex, follow");
+    });
+  }
+});
+
+describe("the hub's check hands off to the airline's own page", () => {
+  const HUB = SITES.airline.canonicalHost;
+  const pages = async () => {
+    const html = await (await app.dispatch(req("/", HUB))).text();
+    const raw = html.match(/data-check-pages="([^"]*)"/)?.[1] ?? "";
+    return JSON.parse(raw.replaceAll("&quot;", '"')) as Record<
+      string,
+      { url: string; site: string }
+    >;
+  };
+
+  test("the form carries one check page per live airline site that has one", async () => {
+    const map = await pages();
+    for (const site of Object.values(SITES)) {
+      if (site.scope === "ALL") continue;
+      const entry = map[AIRLINES[site.scope].name];
+      if (site.live && site.features.checkFlightPage) {
+        expect(entry?.url).toBe(`https://${site.canonicalHost}/check-flight`);
+      } else {
+        expect(entry).toBeUndefined();
+      }
+    }
+  });
+
+  test("an answer links the dated permalink, and that permalink is served", async () => {
+    const map = await pages();
+    const link = checkPageLink({ airline: AIRLINES.UA.name }, map, "ua 544", "2027-01-05");
+    const href = link.match(/href="([^"]+)"/)?.[1];
+    expect(href).toBe(`https://${UA}/check-flight/UA544/2027-01-05`);
+    const res = await app.dispatch(req(new URL(href as string).pathname, UA));
+    expect(res.status).toBe(200);
+  });
+
+  test("no link for an error, an airline without a site, or an entry that is not a number", async () => {
+    const map = await pages();
+    const ua = AIRLINES.UA.name;
+    expect(checkPageLink({ error: "x", airline: ua }, map, "UA1", "2027-01-05")).toBe("");
+    expect(checkPageLink({ airline: AIRLINES.HA.name }, map, "HA51", "2027-01-05")).toBe("");
+    expect(checkPageLink({ airline: ua }, map, "<b>", "2027-01-05")).toBe("");
+  });
+
+  test("an error explains the shape only when the entry is not code plus number", () => {
+    expect(shapeHint("hello", "UA1736")).toContain("UA1736");
+    expect(shapeHint("1736", "UA1736")).toContain("UA1736");
+    expect(shapeHint("dl 1", "UA1736")).toBe("");
+    expect(shapeHint("hello", "")).toBe("");
   });
 });

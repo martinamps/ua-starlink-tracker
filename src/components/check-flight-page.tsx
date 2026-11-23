@@ -32,6 +32,9 @@ export type { DatedAnswer, FlightFacts, InvalidFlightQuery } from "./check-fligh
 interface CheckFlightPageProps {
   site: SiteConfig;
   flight?: FlightFacts;
+  /** A well-formed number we hold no rows for: no facts to show, but the page
+   * still names it and keeps it in the form rather than dropping what was typed. */
+  unknownFlight?: string;
   invalid?: InvalidFlightQuery;
   dated?: DatedAnswer;
   /** Rendered on the generic (non-permalink) page only — permalinks link
@@ -136,6 +139,7 @@ function InvalidQueryNotice({
 export default function CheckFlightPage({
   site,
   flight,
+  unknownFlight,
   invalid,
   dated,
   popular = [],
@@ -146,7 +150,7 @@ export default function CheckFlightPage({
   const cfg = siteAirline(site);
   const airlineName = flight?.airlineName ?? cfg.name;
   const host = site.canonicalHost;
-  const fn = flight?.flightNumber ?? dated?.flightNumber;
+  const fn = flight?.flightNumber ?? dated?.flightNumber ?? unknownFlight;
   const flightExample = fn ?? `${cfg.iata}123`;
   const shortName = cfg.shortName;
 
@@ -190,7 +194,9 @@ export default function CheckFlightPage({
       ? undefined
       : flight
         ? `${usualSummary(flight)}${typeSettled(flight) ? "" : " A firm answer comes about 2 days before departure, once the aircraft is assigned."}`
-        : "Enter your flight number and date to see whether your aircraft has Starlink.";
+        : fn
+          ? `Pick your travel date to check ${fn}.`
+          : "Enter your flight number and date to see whether your aircraft has Starlink.";
 
   const scheduledOnDate = answer?.firm === true;
   const crumbs = [

@@ -462,6 +462,7 @@ export default function AircraftTypePage({
                 site={site}
                 id="type-flight-search"
                 submitLabel="Check my flight"
+                prefillDate
                 hideLabels
                 className="mt-3"
               />
