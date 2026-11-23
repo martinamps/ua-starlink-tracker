@@ -61,25 +61,74 @@ function checkAnyHtml(d: CheckAnyBody, community: boolean): string {
   return `<span class="${cls}">${label}</span> · ${esc(d.airline || "")} · ${sentence}`;
 }
 
+export type CheckPages = Record<string, { url: string; site: string }>;
+
+/**
+ * The hub answers from stored schedules alone; the airline's own page names
+ * the aircraft and re-checks close to departure, so a hub answer hands off to it.
+ */
+export function checkPageLink(
+  d: CheckAnyBody,
+  pages: CheckPages,
+  raw: string,
+  date: string
+): string {
+  const page = d.airline ? pages[d.airline] : undefined;
+  const fn = canonicalFlightInput(raw);
+  if (!page || d.error || !/^[A-Z0-9]+$/.test(fn)) return "";
+  const href = `${page.url}/${encodeURIComponent(fn)}/${encodeURIComponent(date)}`;
+  return `<a href="${esc(href)}" class="mt-1 block py-2 text-accent hover:underline">See ${esc(fn)} on ${esc(page.site)} →</a>`;
+}
+
+/** An error on an entry that isn't code-plus-number shaped ("hello", "1736")
+ * gets a worked example; a well-formed number of an untracked airline does not. */
+export function shapeHint(raw: string, example: string): string {
+  if (!example || /^[A-Z][A-Z0-9]{1,2}\d{1,4}$/.test(canonicalFlightInput(raw))) return "";
+  return `<span class="block text-muted">Type the airline code and number together, like ${esc(example)}.</span>`;
+}
+
 function wireCheckAny(form: HTMLFormElement): void {
   const out = document.getElementById(`${form.id}-result`);
   if (!out) return;
   const community = form.dataset.answer === "community";
+  let pages: CheckPages = {};
+  try {
+    pages = JSON.parse(form.dataset.checkPages ?? "{}");
+  } catch {
+    // No hand-off links; the answer itself still prints.
+  }
+  const number = form.querySelector('input[name="flight_number"]') as HTMLInputElement | null;
+  const button = form.querySelector('button[type="submit"]') as HTMLButtonElement | null;
+  // The placeholder lists real examples ("UA1736, HA51…"); the first one is the hint.
+  const example = number?.placeholder.split(",")[0].replace(/…$/, "").trim() ?? "";
   form.addEventListener("submit", (e) => {
     e.preventDefault();
     const params = new URLSearchParams();
     new FormData(form).forEach((v, k) => {
       if (v) params.set(k, String(v));
     });
+    const typed = params.get("flight_number") ?? "";
+    // Submitting from the keyboard leaves it open over the answer on a phone.
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
     out.classList.remove("hidden");
     out.textContent = "Checking…";
+    out.setAttribute("aria-busy", "true");
+    if (button) button.disabled = true;
     fetch(`/api/check-any-flight?${params}`)
       .then((r) => r.json() as Promise<CheckAnyBody>)
       .then((d) => {
-        out.innerHTML = checkAnyHtml(d, community);
+        out.innerHTML =
+          checkAnyHtml(d, community) +
+          (d.error ? shapeHint(typed, example) : "") +
+          checkPageLink(d, pages, typed, params.get("date") ?? "");
       })
       .catch(() => {
-        out.textContent = "Lookup failed.";
+        out.textContent = "Couldn't get an answer. Check your connection and try again.";
+      })
+      .finally(() => {
+        out.removeAttribute("aria-busy");
+        if (button) button.disabled = false;
+        out.scrollIntoView({ block: "nearest" });
       });
   });
 }

@@ -217,7 +217,13 @@ export default function Page({
             <Eyebrow as="h2" className="mb-2 text-center">
               Does your flight have Starlink?
             </Eyebrow>
-            <FlightSearchForm site={site} id="home-flight-search" hideLabels withScript={false} />
+            <FlightSearchForm
+              site={site}
+              id="home-flight-search"
+              prefillDate
+              hideLabels
+              withScript={false}
+            />
             {features.routePlannerPage && (
               <p className="mt-2 text-center text-xs">
                 <a href="/route-planner" className={LINK} id="home-route-board-link">
