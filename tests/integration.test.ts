@@ -432,13 +432,17 @@ describe("MCP tools", () => {
     expect(json.result.isError).toBeUndefined();
   });
 
-  test("search_starlink_flights: exact airport match (2-letter codes should return 0)", async () => {
+  test("search_starlink_flights: exact airport match (a 2-letter code never matches ORD)", async () => {
     const json = await mcpCall("tools/call", {
       name: "search_starlink_flights",
       arguments: { origin: "OR" },
     });
+    // Not an airport code: an error that says so, not ORD's flights and not a
+    // plain "none found" that would read as a real answer.
+    expect(json.result.isError).toBe(true);
     const text = json.result.content[0].text;
-    expect(text).toContain("No scheduled Starlink flights");
+    expect(text).toContain("Unknown airport code OR");
+    expect(text).not.toContain("ORD");
   });
 
   test("check_flight: rejects 5-digit flight numbers (REST 400s too — see core tests)", async () => {
