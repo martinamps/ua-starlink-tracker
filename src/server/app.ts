@@ -169,7 +169,7 @@ import type { Link as PageLink } from "../components/layout";
 
 import { homeHeadline } from "../components/home/headline";
 import LiveTvPage, { liveTvTypeRows } from "../components/live-tv-page";
-import McpPage from "../components/mcp-page";
+import McpPage, { mcpPageCopy } from "../components/mcp-page";
 import MethodologyPage, { hasMethodology } from "../components/methodology-page";
 import NewlyEquippedPage, {
   firstFlightLabel,
@@ -1571,16 +1571,28 @@ const mcp: Handler = async (ctx) => {
   const mcpProtocolGet =
     accept.includes("text/event-stream") || accept.includes("application/json");
   if (req.method === "HEAD" || (req.method === "GET" && !mcpProtocolGet)) {
-    if (!site.features.mcpPage) {
-      return notFound(site);
-    }
-    // mcpPage is airline-site-only; siteAirline throws (fail closed) on the hub.
-    const short = siteAirline(site).shortName;
-    return renderSubPage(ctx, McpPage, "/mcp", {
+    // Every host serves the setup page: the address is the one MCP registries
+    // print, so a person who opens it must not meet a 404. Only mcpPage hosts
+    // advertise it (sitemap, llms.txt, footer); elsewhere robots.txt keeps
+    // disallowing /mcp and the page says noindex for anything that fetches it anyway.
+    const short = tenantConfig(tenant)?.shortName ?? "Multi-Airline";
+    const meta = {
       siteTitle: `Add Starlink Tracker to Claude — ${short} Starlink MCP Connector`,
-      siteDescription: `Paste one URL into Claude Desktop to check ${short} flights for Starlink, get odds and plan routes.`,
       keywords: `claude starlink connector, ${short.toLowerCase()} starlink mcp, claude ${short.toLowerCase()} flights, starlink tracker claude, claude custom connector, ai assistant ${short.toLowerCase()} wifi`,
       ogTitle: "Add Starlink Tracker to Claude",
+    };
+    if (!site.features.mcpPage) {
+      const description = `Paste one URL into Claude Desktop. ${mcpPageCopy(site).dek}`;
+      return renderSubPage(ctx, McpPage, "/mcp", {
+        ...meta,
+        siteDescription: description,
+        ogDescription: description,
+        robotsMeta: "noindex, follow",
+      });
+    }
+    return renderSubPage(ctx, McpPage, "/mcp", {
+      ...meta,
+      siteDescription: `Paste one URL into Claude Desktop to check ${short} flights for Starlink, get odds and plan routes.`,
       ogDescription: `Paste one URL into Claude Desktop. Ask Claude about ${short} Starlink flights, probabilities, and routing.`,
     });
   }

@@ -8,7 +8,7 @@ import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { SITES } from "../src/airlines/registry";
+import { SITES, hubLookupAirlines } from "../src/airlines/registry";
 import { MCP_SERVER_VERSION } from "../src/api/mcp-server";
 import { setupTables } from "../src/database/database";
 import { createApp } from "../src/server/app";
@@ -22,6 +22,12 @@ const REGISTRY: Array<[string, string]> = [
 const readServerJson = (file: string) =>
   JSON.parse(readFileSync(join(import.meta.dir, "..", "registry", file), "utf8"));
 
+const releaseLine = (version: string) => {
+  const [major, minor, patch] = version.split(".");
+  expect(Number.isInteger(Number(patch)), version).toBe(true);
+  return `${major}.${minor}`;
+};
+
 function emptyApp() {
   const db = new Database(":memory:");
   setupTables(db);
@@ -31,14 +37,20 @@ function emptyApp() {
 describe("registry server.json", () => {
   test.each(REGISTRY)("%s matches serverInfo and its host", async (file, host) => {
     const s = readServerJson(file);
-    expect(s.version).toBe(MCP_SERVER_VERSION);
+    // The registry refuses a republish under a version it already holds, so a
+    // listing-text fix raises the entry's own patch number; the release line
+    // (major.minor) is the server's.
+    expect(releaseLine(s.version)).toBe(releaseLine(MCP_SERVER_VERSION));
     const domain = host.replace(/\.com$/, "");
     expect(s.name).toBe(`com.${domain}/starlink-tracker`);
     expect(s.remotes).toEqual([{ type: "streamable-http", url: `https://${host}/mcp` }]);
     expect(s.description.length).toBeLessThanOrEqual(100);
+    if (host === SITES.airline.canonicalHost) {
+      for (const a of hubLookupAirlines()) expect(s.description, a.code).toContain(a.shortName);
+    }
 
     const init = await postMcp(emptyApp(), host, "initialize", { protocolVersion: "2025-06-18" });
-    expect(init.result.serverInfo.version).toBe(s.version);
+    expect(init.result.serverInfo.version).toBe(MCP_SERVER_VERSION);
     expect(init.result.serverInfo.websiteUrl).toBe(`https://${host}`);
     expect(typeof init.result.serverInfo.title).toBe("string");
   });

@@ -21,7 +21,7 @@ upstream scraping), `DEV_SITE` / `DEV_TENANT` (which tenant localhost serves).
 
 | Source | Purpose | Rate Limit |
 |--------|---------|------------|
-| **Google Sheets** | Starlink installation status (source of truth) | Hourly scrape |
+| **Google Sheets** | Starlink installation reports, confirmed or contradicted by the United.com check | Hourly scrape |
 | **FlightRadar24 API** | Flight schedules (free, no auth) | 2s between requests |
 | **United.com** | Verification via Playwright scraping | 60s between checks |
 | **FlightAware AeroAPI** | Fallback for flight data (paid) | 1s between requests |
