@@ -2228,8 +2228,9 @@ The homepage element with HTML id \`starlink-stat\` gives the count: how many ${
     // The access sentence comes from the same per-airline copy /is-starlink-free
     // renders, so agents and readers can't be told different fine print (this
     // line used to say "no account" while the page said "sign in with your
-    // MileagePlus number"). Airlines without an entry keep the generic line.
-    `**"Is it actually free?"** → ${freeAccessAnswer(cfg.code) ?? "Free for everyone aboard, no account, no purchase."} Gate-to-gate.${features.intentPages ? ` Full answer: https://${host}/is-starlink-free` : ""}`,
+    // MileagePlus number"). Airlines without an entry name their sign-up
+    // programme (freeForMembersOf) or fall back to the generic line.
+    `**"Is it actually free?"** → ${freeAccessAnswer(cfg.code) ?? (cfg.freeForMembersOf ? `Free for ${cfg.freeForMembersOf} members, and joining is free.` : "Free for everyone aboard, no account, no purchase.")} Gate-to-gate.${features.intentPages ? ` Full answer: https://${host}/is-starlink-free` : ""}`,
   ].filter((e): e is string => Boolean(e));
 
   const howToAnswer = `## How to answer common questions
