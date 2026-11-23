@@ -11,9 +11,16 @@ const installsPerMonth = (s: ContentStats): number | null =>
 const express = (s: ContentStats) => s.fleetStats?.express ?? { starlink: 0, total: 0 };
 const mainline = (s: ContentStats) => s.fleetStats?.mainline ?? { starlink: 0, total: 0 };
 
+// United's Nov. 12, 2026 release: Starlink on more than half of daily flights.
+const UA_DAILY_FLIGHTS_RELEASE =
+  "https://www.united.com/en/us/newsroom/announcements/cision-125497";
+
 // United's June 22, 2026 release, the source of the widebody figures.
 const UA_WIDEBODY_RELEASE =
   "https://www.prnewswire.com/news-releases/united-accelerates-starlink-wi-fi-rollout-with-first-widebody-transatlantic-flight-302806746.html";
+
+// The address United's 2026-10-15 release links for its own tracker.
+const UA_OWN_TRACKER = "https://starlinktracker.united.com/program/starlink";
 
 const UAHero = ({ stats }: HeroProps) => (
   <RolloutPanel
@@ -79,8 +86,17 @@ export const content: AirlineContent = {
       a: (s) => (
         <p>
           No, not yet. {pct(s.starlinkCount, s.totalCount)} of the fleet has it, so it depends on
-          the plane assigned to your flight. United Express flights (UA3000 to UA6999) are the
-          likeliest to have it.
+          the plane assigned to your flight. United's own figure is higher:{" "}
+          <a
+            href={UA_DAILY_FLIGHTS_RELEASE}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={LINK}
+          >
+            more than half of daily flights
+          </a>{" "}
+          as of November 12, 2026, because its regional jets, most of which have Starlink, fly more
+          trips a day. United Express flights (UA3000 to UA6999) are the likeliest to have it.
         </p>
       ),
     },
@@ -97,7 +113,11 @@ export const content: AirlineContent = {
           <a href="/chrome" className={LINK}>
             Chrome extension
           </a>{" "}
-          shows the same answer on Google Flights.
+          shows the same answer on Google Flights. United also has its own{" "}
+          <a href={UA_OWN_TRACKER} className={LINK} target="_blank" rel="noopener noreferrer">
+            Starlink tracker
+          </a>
+          , for flights "within three days of departure", in United's words.
         </p>
       ),
     },

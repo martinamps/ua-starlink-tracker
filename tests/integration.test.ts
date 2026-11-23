@@ -1206,6 +1206,17 @@ describe("SEO meta", () => {
     expect(html).not.toContain("{{totalAircraftCount}}");
   });
 
+  test("homepage description keeps the live count and says any date, unclamped", async () => {
+    const html = await getHtml("/");
+    const description = html.match(/<meta name="description" content="([^"]*)"/)?.[1] ?? "";
+    expect(description).toMatch(
+      /^Yes: [\d,]+ of [\d,]+ United planes \(\d+%\) have Starlink Wi-Fi/
+    );
+    expect(description).toContain("any flight on any date");
+    expect(description).not.toContain("…");
+    expect(description.length).toBeLessThanOrEqual(158);
+  });
+
   test("homepage emits FAQPage JSON-LD with no unresolved {{vars}}", async () => {
     const html = await getHtml("/");
     const ld = html.match(

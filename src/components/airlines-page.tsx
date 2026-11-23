@@ -9,6 +9,7 @@
  */
 
 import { aircraftName } from "../airlines/aircraft-families";
+import { ownCountAsOf, publishedCount, trackingMethod } from "../airlines/published-count";
 import {
   type AirlineConfig,
   type SiteConfig,
@@ -25,14 +26,7 @@ import {
   formatFactDate,
 } from "../airlines/rollout-facts";
 import type { PerAirlineStat } from "../types";
-import {
-  ROLLOUT_TONE,
-  StagePill,
-  factsStage,
-  shareIsPublishable,
-  trackedStage,
-  trackingMethod,
-} from "./atoms";
+import { ROLLOUT_TONE, StagePill, factsStage, shareIsPublishable, trackedStage } from "./atoms";
 import {
   ButtonLink,
   Chip,
@@ -85,6 +79,9 @@ export interface TypePhase {
   /** Roster counts for the family, when known. */
   equipped?: number;
   total?: number;
+  /** Roster aircraft of the family held back by name: not confirmed fitted,
+   * so "every one" would overstate a confirmed family. */
+  heldBack?: { count: number; group: string };
 }
 
 const PHASE_LABEL: Record<WifiPhase, { text: string; tone: Tone }> = {
@@ -113,8 +110,14 @@ export function PhaseTable({
   return (
     <div className="mb-4">
       <Eyebrow className="mb-1">By aircraft type</Eyebrow>
-      {phases.map(({ family, label, phase, equipped, total }) => {
-        const p = PHASE_LABEL[phase];
+      {phases.map(({ family, label, phase, equipped, total, heldBack }) => {
+        const p =
+          phase === "confirmed" && heldBack
+            ? {
+                text: `Starlink on most · ${fmt(heldBack.count)} ${heldBack.group} not confirmed`,
+                tone: PHASE_LABEL.confirmed.tone,
+              }
+            : PHASE_LABEL[phase];
         return (
           <div
             key={family}
@@ -132,7 +135,7 @@ export function PhaseTable({
                 </span>
               )}
             </span>
-            <span className={TONE_TEXT[p.tone]}>{p.text}</span>
+            <span className={`text-right ${TONE_TEXT[p.tone]}`}>{p.text}</span>
           </div>
         );
       })}
@@ -239,6 +242,16 @@ const METHOD_LABEL = {
 function EquippedCell({ o }: { o: AirlineOverview }) {
   const { cfg, stat } = o;
   if (stat.total === 0) return <span className="text-muted">No data yet</span>;
+  const published = publishedCount(cfg, stat.starlink);
+  if (published.basis === "type") return <span className="text-muted">By type</span>;
+  if (published.basis === "airline") {
+    return (
+      <>
+        {fmt(published.count)}
+        <span className="block text-xs text-muted">{ownCountAsOf(published)}</span>
+      </>
+    );
+  }
   if (shareIsPublishable(cfg, stat)) {
     return (
       <>
@@ -276,6 +289,9 @@ export function AirlinesIndexPage({
     .map((o) => o.cfg.shortName);
   const byType = airlines
     .filter((o) => trackingMethod(o.cfg) === "type")
+    .map((o) => o.cfg.shortName);
+  const ownFigure = airlines
+    .filter((o) => publishedCount(o.cfg, o.stat.starlink).basis === "airline")
     .map((o) => o.cfg.shortName);
   const scopeNotes = airlines.flatMap((o) => (o.scopeNote ? [o.scopeNote] : []));
   return (
@@ -337,7 +353,9 @@ export function AirlinesIndexPage({
         {(byType.length > 0 || scopeNotes.length > 0) && (
           <p className="mt-3 text-xs text-muted">
             {byType.length > 0 &&
-              `${byType.join(" and ")} ${byType.length === 1 ? "is" : "are"} counted by aircraft type, so no fleet share is shown, and the count can run ahead of the airline's own figure. `}
+              `${byType.join(" and ")} ${byType.length === 1 ? "is" : "are"} counted by aircraft type, so no fleet share is shown: adding up aircraft types is not a count of installs. `}
+            {ownFigure.length > 0 &&
+              `${ownFigure.join(" and ")}'s figure is the airline's own, with its date. `}
             {scopeNotes.join(" ")}
           </p>
         )}

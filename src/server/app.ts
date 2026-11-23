@@ -43,6 +43,7 @@ import {
   permalinkCarrier,
   stripFlightNumberZeros,
 } from "../airlines/flight-number";
+import { statedCount, trackingMethod } from "../airlines/published-count";
 import {
   AIRLINES,
   type AirlineCode,
@@ -59,7 +60,9 @@ import {
   airlineSlug,
   brandMetadata,
   hubContentAirlines,
+  hubLookupAirlines,
   isGuideStale,
+  programTypeOf,
   publicAirlines,
   resolveSite,
   siteAirline,
@@ -132,7 +135,6 @@ import {
   type TypePhase,
   factsHeadline,
 } from "../components/airlines-page";
-import { trackingMethod } from "../components/atoms";
 import { paceWindowSpan } from "../components/charts/rollout-math";
 import CheckFlightPage, {
   type DatedAnswer,
@@ -168,7 +170,7 @@ import type { Link as PageLink } from "../components/layout";
 
 import { homeHeadline } from "../components/home/headline";
 import LiveTvPage, { liveTvTypeRows } from "../components/live-tv-page";
-import McpPage from "../components/mcp-page";
+import McpPage, { mcpPageCopy } from "../components/mcp-page";
 import MethodologyPage, { hasMethodology } from "../components/methodology-page";
 import NewlyEquippedPage, {
   firstFlightLabel,
@@ -225,6 +227,8 @@ import type {
   FirstFlight,
   FleetPageData,
   Flight,
+  PerAirlineStat,
+  ReportedInstall,
 } from "../types";
 import { AIRCRAFT_SPECS } from "../utils/aircraft-specs";
 import {
@@ -849,7 +853,7 @@ function qatarWireBody(
   const hub = dialect === "hub";
   if (verdict.kind === "qatar") {
     const hostConfidence =
-      verdict.qclass === "yes" || verdict.qclass === "no"
+      verdict.qclass === "yes" || verdict.qclass === "no" || verdict.qclass === "partly"
         ? "type"
         : verdict.qclass === "rolling"
           ? "rolling"
@@ -857,6 +861,8 @@ function qatarWireBody(
     return {
       hasStarlink: verdict.hasStarlink,
       airline,
+      // A partly fitted type: the same key and number type a history answer carries.
+      ...(verdict.probability !== undefined ? { probability: verdict.probability } : {}),
       confidence: hub ? "type" : hostConfidence,
       ...(hub ? { basis: "schedule" } : {}),
       reason: withLegNote(`${legPrefix(verdict)}${verdict.reason}`, verdict),
@@ -1568,16 +1574,28 @@ const mcp: Handler = async (ctx) => {
   const mcpProtocolGet =
     accept.includes("text/event-stream") || accept.includes("application/json");
   if (req.method === "HEAD" || (req.method === "GET" && !mcpProtocolGet)) {
-    if (!site.features.mcpPage) {
-      return notFound(site);
-    }
-    // mcpPage is airline-site-only; siteAirline throws (fail closed) on the hub.
-    const short = siteAirline(site).shortName;
-    return renderSubPage(ctx, McpPage, "/mcp", {
+    // Every host serves the setup page: the address is the one MCP registries
+    // print, so a person who opens it must not meet a 404. Only mcpPage hosts
+    // advertise it (sitemap, llms.txt, footer); elsewhere robots.txt keeps
+    // disallowing /mcp and the page says noindex for anything that fetches it anyway.
+    const short = tenantConfig(tenant)?.shortName ?? "Multi-Airline";
+    const meta = {
       siteTitle: `Add Starlink Tracker to Claude — ${short} Starlink MCP Connector`,
-      siteDescription: `Paste one URL into Claude Desktop to check ${short} flights for Starlink, get odds and plan routes.`,
       keywords: `claude starlink connector, ${short.toLowerCase()} starlink mcp, claude ${short.toLowerCase()} flights, starlink tracker claude, claude custom connector, ai assistant ${short.toLowerCase()} wifi`,
       ogTitle: "Add Starlink Tracker to Claude",
+    };
+    if (!site.features.mcpPage) {
+      const description = `Paste one URL into Claude Desktop. ${mcpPageCopy(site).dek}`;
+      return renderSubPage(ctx, McpPage, "/mcp", {
+        ...meta,
+        siteDescription: description,
+        ogDescription: description,
+        robotsMeta: "noindex, follow",
+      });
+    }
+    return renderSubPage(ctx, McpPage, "/mcp", {
+      ...meta,
+      siteDescription: `Paste one URL into Claude Desktop to check ${short} flights for Starlink, get odds and plan routes.`,
       ogDescription: `Paste one URL into Claude Desktop. Ask Claude about ${short} Starlink flights, probabilities, and routing.`,
     });
   }
@@ -2228,8 +2246,9 @@ The homepage element with HTML id \`starlink-stat\` gives the count: how many ${
     // The access sentence comes from the same per-airline copy /is-starlink-free
     // renders, so agents and readers can't be told different fine print (this
     // line used to say "no account" while the page said "sign in with your
-    // MileagePlus number"). Airlines without an entry keep the generic line.
-    `**"Is it actually free?"** → ${freeAccessAnswer(cfg.code) ?? "Free for everyone aboard, no account, no purchase."} Gate-to-gate.${features.intentPages ? ` Full answer: https://${host}/is-starlink-free` : ""}`,
+    // MileagePlus number"). Airlines without an entry name their sign-up
+    // programme (freeForMembersOf) or fall back to the generic line.
+    `**"Is it actually free?"** → ${freeAccessAnswer(cfg.code) ?? (cfg.freeForMembersOf ? `Free for ${cfg.freeForMembersOf} members, and joining is free.` : "Free for everyone aboard, no account, no purchase.")} Gate-to-gate.${features.intentPages ? ` Full answer: https://${host}/is-starlink-free` : ""}`,
   ].filter((e): e is string => Boolean(e));
 
   const howToAnswer = `## How to answer common questions
@@ -2329,6 +2348,15 @@ function firstFlightsFor(
   );
 }
 
+/** The log's second list: sheet listings our own check has not confirmed.
+ * United only: the mismatch is between the UA community sheet and our check of
+ * united.com, and no other tenant has a sheet to disagree with. Bounded by the
+ * reader's age cap, so the limit is a backstop, not a window. */
+const REPORTED_LIMIT = 50;
+function reportedInstallsFor({ site, reader }: RequestContext): ReportedInstall[] {
+  return site.scope === "UA" ? reader.getReportedInstalls(REPORTED_LIMIT) : [];
+}
+
 const feedXml: Handler = (ctx) => {
   const { site, reader } = ctx;
   // An Atom document with zero entries is a broken subscription, not an empty
@@ -2337,48 +2365,85 @@ const feedXml: Handler = (ctx) => {
   if (!hasInstallLog(ctx)) return notFound(site);
   const host = site.canonicalHost;
   const installs = reader.getRecentInstalls(FEED_LIMIT, recentInstallCap(site.scope, FEED_LIMIT));
+  const reported = reportedInstallsFor(ctx);
   const firstFlights = firstFlightsFor(reader, installs);
   const airlineNames = new Map(publicAirlines().map((a) => [a.code, a.name]));
 
-  // Honest <updated>: newest install date, else the data's own stamp — never
+  // Honest <updated>: newest entry date, else the data's own stamp — never
   // the request clock (same discipline as the sitemap's lastmod).
   const rawStamp = Date.parse(reader.getLastUpdatedRaw() ?? "");
-  const updated = installs.length
-    ? installIso(installs[0].DateFound)
-    : Number.isFinite(rawStamp)
-      ? new Date(rawStamp).toISOString()
-      : "1970-01-01T00:00:00Z";
+  const newest = [installs[0], reported[0]]
+    .filter((r) => r !== undefined)
+    .map((r) => installIso(r.DateFound))
+    .sort()
+    .at(-1);
+  const updated =
+    newest ??
+    (Number.isFinite(rawStamp) ? new Date(rawStamp).toISOString() : "1970-01-01T00:00:00Z");
 
-  const entries = installs
-    .map((i) => {
-      const name = airlineNames.get(i.airline) ?? i.airline;
-      const url = `https://${host}/newly-equipped#${encodeURIComponent(i.TailNumber)}`;
-      const operator = operatorLabel(i.OperatedBy, name);
-      const operated = operator ? `, operated by ${operator}` : "";
-      const ff = firstFlights[i.TailNumber];
-      const firstFlightLine = ff
-        ? ` First seen flying Starlink: ${firstFlightLabel(ff)} on ${new Date(ff.departed_at * 1000).toISOString().slice(0, 10)}.`
-        : "";
-      // "first observed with", not "joined the fleet on": DateFound is when
-      // this tracker found the tail equipped, not when the antenna went on.
-      // The page says so in its footer; a syndicated entry travels into press
-      // and aggregators without that footer, so it carries its own caveat.
-      return `  <entry>
+  const confirmedEntries = installs.map((i) => {
+    const name = airlineNames.get(i.airline) ?? i.airline;
+    const url = `https://${host}/newly-equipped#${encodeURIComponent(i.TailNumber)}`;
+    const operator = operatorLabel(i.OperatedBy, name);
+    const operated = operator ? `, operated by ${operator}` : "";
+    const ff = firstFlights[i.TailNumber];
+    const firstFlightLine = ff
+      ? ` First seen flying Starlink: ${firstFlightLabel(ff)} on ${new Date(ff.departed_at * 1000).toISOString().slice(0, 10)}.`
+      : "";
+    // "first observed with", not "joined the fleet on": DateFound is when
+    // this tracker found the tail equipped, not when the antenna went on.
+    // The page says so in its footer; a syndicated entry travels into press
+    // and aggregators without that footer, so it carries its own caveat.
+    return {
+      day: installIso(i.DateFound),
+      xml: `  <entry>
     <title>${escapeXml(`${name} ${i.TailNumber} (${i.Aircraft}) now has Starlink`)}</title>
     <id>${escapeXml(url)}</id>
     <link href="${escapeXml(url)}"/>
     <updated>${installIso(i.DateFound)}</updated>
+    <category term="confirmed"/>
     <summary>${escapeXml(
       `${name} aircraft ${i.TailNumber} (${i.Aircraft}${operated}) was first observed with Starlink on ${i.DateFound.slice(0, 10)} — the date this tracker found it equipped, not necessarily the install date.${firstFlightLine}`
     )}</summary>
-  </entry>`;
-    })
+  </entry>`,
+    };
+  });
+
+  // A different kind of entry, not an early copy of the confirmed one: its own
+  // title, category and id, so a reader that posts every "now has Starlink"
+  // title never announces an unconfirmed tail, and the confirmed entry still
+  // arrives as new the day our check agrees. The link is the same #TAIL anchor
+  // either way, since the row moves lists but keeps its id.
+  const reportedEntries = reported.map((i) => {
+    const name = airlineNames.get(i.airline) ?? i.airline;
+    const url = `https://${host}/newly-equipped#${encodeURIComponent(i.TailNumber)}`;
+    const operator = operatorLabel(i.OperatedBy, name);
+    const operated = operator ? `, operated by ${operator}` : "";
+    return {
+      day: installIso(i.DateFound),
+      xml: `  <entry>
+    <title>${escapeXml(`${name} ${i.TailNumber} (${i.Aircraft}) reported with Starlink, not yet confirmed`)}</title>
+    <id>${escapeXml(`tag:${host},2026:reported:${i.TailNumber}`)}</id>
+    <link href="${escapeXml(url)}"/>
+    <updated>${installIso(i.DateFound)}</updated>
+    <category term="reported"/>
+    <summary>${escapeXml(
+      `${name} aircraft ${i.TailNumber} (${i.Aircraft}${operated}) is listed with Starlink on the community-maintained fleet sheet, where this tracker first saw it on ${i.DateFound.slice(0, 10)} — the date this tracker first read the listing, not necessarily the day it was added. This tracker's own check of the airline's site still reads ${i.observed_wifi}, so the aircraft is not confirmed and is not in the tracker's Starlink count.`
+    )}</summary>
+  </entry>`,
+    };
+  });
+
+  // Stable sort: on a shared day the confirmed entries stay ahead.
+  const entries = [...confirmedEntries, ...reportedEntries]
+    .sort((a, b) => (a.day < b.day ? 1 : a.day > b.day ? -1 : 0))
+    .map((e) => e.xml)
     .join("\n");
 
   const body = `<?xml version="1.0" encoding="utf-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom">
   <title>${escapeXml(`${site.brand.title} — Newly Equipped Aircraft`)}</title>
-  <subtitle>${escapeXml("Aircraft as this tracker first observes them with Starlink, newest first. Dates are when the install was found, not when the antenna went on.")}</subtitle>
+  <subtitle>${escapeXml(`Aircraft as this tracker first observes them with Starlink, newest first. Dates are when the install was found, not when the antenna went on.${reported.length ? ' Entries titled "reported" are community listings this tracker has not confirmed, dated by when this tracker first read the listing.' : ""}`)}</subtitle>
   <link href="https://${host}/feed.xml" rel="self"/>
   <link href="https://${host}/newly-equipped"/>
   <id>https://${host}/feed.xml</id>
@@ -2419,6 +2484,7 @@ const newlyEquippedPage: Handler = (ctx) => {
       };
   return renderSubPage(ctx, NewlyEquippedPage, "/newly-equipped", meta, {
     installs,
+    reported: reportedInstallsFor(ctx),
     airlines: ctx.reader.getPerAirlineStats(),
     firstFlights: firstFlightsFor(ctx.reader, installs),
   });
@@ -4350,6 +4416,14 @@ function passengerPhases(code: AirlineCode, reader: ScopedReader): TypePhase[] |
   const table = wifiPhaseFamilies(code);
   if (!table) return null;
   const counts = new Map(reader.getTypeProgress().map((t) => [t.key, t]));
+  const cfg = AIRLINES[code];
+  const heldBack = new Map<string, { count: number; group: string }>();
+  for (const t of cfg.heldBackTail ? reader.getFleetRoster() : []) {
+    const held = cfg.heldBackTail?.(t.tail_number);
+    if (!held) continue;
+    const { key } = programTypeOf(cfg, t.aircraft_type);
+    heldBack.set(key, { count: (heldBack.get(key)?.count ?? 0) + 1, group: held.group });
+  }
   return (
     Object.entries(table)
       .filter(([family]) => !family.endsWith("F"))
@@ -4364,8 +4438,16 @@ function passengerPhases(code: AirlineCode, reader: ScopedReader): TypePhase[] |
       )
       .map(([family, phase]) => {
         const c = counts.get(family);
+        const held = heldBack.get(family);
         return c
-          ? { family, label: c.label, phase, equipped: c.equipped, total: c.total }
+          ? {
+              family,
+              label: c.label,
+              phase,
+              equipped: c.equipped,
+              total: c.total,
+              ...(held ? { heldBack: held } : {}),
+            }
           : { family, phase };
       })
   );
@@ -4464,16 +4546,39 @@ function homeMeta(
     totalCount: number;
     noun?: string;
     fleetStats?: ReturnType<ScopedReader["getFleetStats"]>;
+    perAirline?: PerAirlineStat[];
   }
 ): { siteTitle: string; siteDescription: string } | null {
   if (site.scope === "ALL") {
-    const flying = AIRLINE_FACTS.filter(
-      (e) => e.status === "installing" || e.status === "complete"
-    ).length;
-    const tracked = hubContentAirlines().map((a) => a.shortName);
+    const flying = new Set(
+      AIRLINE_FACTS.filter((e) => e.status === "installing" || e.status === "complete").map(
+        (e) => e.trackedCode ?? e.slug
+      )
+    );
+    // Names an airline only with a count that needs no caveat (statedCount).
+    // "of its own": the count leaves out the partner aircraft that the
+    // airline's own site adds to its total.
+    const stated = (stats.perAirline ?? [])
+      .flatMap((r) => {
+        const cfg = AIRLINES[r.code];
+        const count = cfg && statedCount(cfg, r.starlink);
+        return cfg && count ? [{ cfg, count }] : [];
+      })
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 3)
+      .map(
+        ({ cfg, count }, i) =>
+          `${cfg.shortName} ${i === 0 ? "has it on" : "on"} ${fmt(count)}${i === 0 ? " aircraft" : ""}${cfg.programmePartners ? " of its own" : ""}`
+      );
+    const counts = stated.length
+      ? ` ${stated.length > 1 ? `${stated.slice(0, -1).join(", ")} and ${stated.at(-1)}` : stated[0]}.`
+      : "";
+    // The flight check answers for the lookup airlines, not for every rollout.
+    const checkable = hubLookupAirlines().filter((a) => flying.has(a.code)).length;
+    const check = checkable ? ` Check a flight by number on ${checkable} of them.` : "";
     return {
       siteTitle: `Which Airlines Have Starlink Wi-Fi? ${AIRLINE_FACTS.length} Airlines Compared`,
-      siteDescription: `${flying} airlines fly Starlink Wi-Fi or are installing it. Compare ${tracked.slice(0, -1).join(", ")} and ${tracked.at(-1)} side by side, plus every other rollout, dated and sourced.`,
+      siteDescription: `${flying.size} airlines fly Starlink Wi-Fi or are installing it.${counts}${check}`,
     };
   }
   const cfg = AIRLINES[site.scope];
@@ -4489,13 +4594,25 @@ function homeMeta(
   const express = stats.fleetStats?.express;
   const regionalClause =
     express && express.total > 0 && express.starlink > (stats.fleetStats?.mainline.starlink ?? 0)
-      ? `, most of them ${cfg.code === "UA" ? "United Express" : "regional"} jets`
+      ? ", most of them regional jets"
       : "";
+  // "free" only where every passenger gets it free; a members-only offer
+  // (freeForMembersOf) is the FAQ's to state, with its condition.
+  const answer = (clause: string) =>
+    `Yes: ${count} ${stats.noun ?? `${cfg.shortName} planes`} (${share}) have ${cfg.freeForMembersOf ? "" : "free "}Starlink Wi-Fi${clause}.`;
+  if (cfg.code === "UA") {
+    // United's own tracker answers "within three days of departure" (its
+    // 2026-10-15 release), so the snippet says what we give at booking time.
+    // It states only what this site does, never what United's does not. The
+    // regional clause is left out: with it the line passes the snippet's length.
+    return {
+      siteTitle,
+      siteDescription: `${answer("")} Check any flight on any date: odds weeks ahead, a firm yes or no once a plane is assigned.`,
+    };
+  }
   return {
     siteTitle,
-    // "free" only where every passenger gets it free; a members-only offer
-    // (freeForMembersOf) is the FAQ's to state, with its condition.
-    siteDescription: `Yes: ${count} ${stats.noun ?? `${cfg.shortName} planes`} (${share}) have ${cfg.freeForMembersOf ? "" : "free "}Starlink Wi-Fi${regionalClause}. Check yours by flight number.`,
+    siteDescription: `${answer(regionalClause)} Check yours by flight number.`,
   };
 }
 
@@ -4742,13 +4859,7 @@ export function createApp(db: Database, opts: { crawlerDns?: CrawlerDns } = {}):
     } catch {
       body = {};
     }
-    handlePassengerProbe(
-      db,
-      ip,
-      onStarlinkIp,
-      req.headers.get("user-agent"),
-      (body ?? {}) as Record<string, unknown>
-    );
+    handlePassengerProbe(db, ip, onStarlinkIp, (body ?? {}) as Record<string, unknown>);
     return empty(202, SECURITY_HEADERS.api);
   };
 
@@ -4995,10 +5106,13 @@ export function createApp(db: Database, opts: { crawlerDns?: CrawlerDns } = {}):
         span.setTag("http.route", route);
         span.setTag("resource.name", `${req.method} ${route}`);
         span.setTag("tenant", tenantScope(tenant));
-        span.setTag("http.client_ip", ip);
+        // A report's trace would otherwise put the address and browser next to
+        // the moment a flight number was stored, which the banner says we don't keep.
+        const anonymous = route === "/api/passenger-probe";
+        if (!anonymous) span.setTag("http.client_ip", ip);
         if (onStarlinkIp) span.setTag("starlink_ip", true);
         const ua = req.headers.get("user-agent");
-        if (ua) span.setTag("http.useragent", ua);
+        if (ua && !anonymous) span.setTag("http.useragent", ua);
         // The requested path, not just the matched route. Without it "which
         // URLs are 404ing" is unanswerable — the span only carried the matched
         // prefix, and an unmatched path carried "/*". Pathname only: query

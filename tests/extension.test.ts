@@ -543,8 +543,10 @@ describe("Qatar claims", () => {
         await jsonOf(app, `/api/check-any-flight?flight_number=${fn}&date=${date}`, HUB_HOST)
       );
 
-    test("in-window 777 → installed; A380 → no_starlink", async () => {
-      expect((await claimFor("QR1", day(1))).status).toBe("installed");
+    // A 777-300ER is never "installed": nine of the type are held back by name
+    // (tests/qatar-held-back.test.ts covers the odds it gets instead).
+    test("in-window 777-300ER is not installed; A380 → no_starlink", async () => {
+      expect((await claimFor("QR1", day(1))).status).not.toBe("installed");
       expect((await claimFor("QR3", day(1))).status).toBe("no_starlink");
     });
 

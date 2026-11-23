@@ -21,7 +21,7 @@ upstream scraping), `DEV_SITE` / `DEV_TENANT` (which tenant localhost serves).
 
 | Source | Purpose | Rate Limit |
 |--------|---------|------------|
-| **Google Sheets** | Starlink installation status (source of truth) | Hourly scrape |
+| **Google Sheets** | Starlink installation reports, confirmed or contradicted by the United.com check | Hourly scrape |
 | **FlightRadar24 API** | Flight schedules (free, no auth) | 2s between requests |
 | **United.com** | Verification via Playwright scraping | 60s between checks |
 | **FlightAware AeroAPI** | Fallback for flight data (paid) | 1s between requests |
@@ -43,6 +43,11 @@ bun run knip             # Unused files and exports (entries in knip.json)
 bun run test:setup       # Snapshot plane-data.sqlite → .test-snapshot.sqlite (readonly)
 bun run test             # Everything under tests/
 ```
+
+`test:setup` shells out to the `sqlite3` command-line tool, which Bun does not
+provide: install it first (`apt-get install sqlite3`, `brew install sqlite`).
+Without it the script stops before the snapshot is ready and every test that
+opens the snapshot fails.
 
 Shared fixtures live in `tests/helpers.ts`: `openSnapshot()` / `makeSyntheticDb()`,
 `req` / `jsonOf` for app dispatch, and `postMcp` / `mcpTool` / `mcpDirect` /

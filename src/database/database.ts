@@ -70,6 +70,7 @@ import type {
   InstallPaceWeek,
   PipelineEventRow,
   RecentInstall,
+  ReportedInstall,
   RouteSchedule,
   RouteScheduleRow,
   SecFilingRow,
@@ -679,8 +680,11 @@ export function setupTables(db: Database) {
     `);
   }
 
-  // Passenger-verify dark-launch probe results. Everything except ip / in_geofeed
-  // is client-asserted; trust filtering happens at read time.
+  // Passenger-verify dark-launch probe results. Everything except in_geofeed is
+  // client-asserted; trust filtering happens at read time. ip, router_id and
+  // ua_hash are no longer written (rows before that change still carry them),
+  // and ip_prefix now holds a keyed hash that is blanked after the dedupe
+  // window: src/server/passenger-report-fields.ts says what each column holds.
   if (!tableExists(db, "passenger_reports")) {
     db.exec(`
       CREATE TABLE passenger_reports (
@@ -1127,12 +1131,23 @@ export function updateDatabase(
       WHERE TailNumber = ? AND sheet_gid = 'discovery' AND airline = ?
     `);
 
+    // The sheet can carry one tail on two rows (N89349 sat on two E175 rows,
+    // typed "ERJ-175" and "E175SC"). One listing per tail, first row wins:
+    // a second row made every count over starlink_planes one higher than the
+    // roster's count of the same aircraft.
+    const written = new Set<string>();
+
     for (const aircraft of starlinkAircraft) {
       const tailNumber = aircraft.TailNumber || "";
       if (!looksLikeValidTailNumber(tailNumber)) {
         warn(`skipping invalid tail '${tailNumber}' from sheet ${aircraft.sheet_gid}`);
         continue;
       }
+      if (written.has(tailNumber)) {
+        warn(`skipping second sheet row for tail '${tailNumber}' (sheet ${aircraft.sheet_gid})`);
+        continue;
+      }
+      written.add(tailNumber);
 
       // Sheet value wins if present; otherwise preserve what we had; otherwise
       // fall back to united_fleet (FR24-sourced). Prevents blank sheet cells
@@ -4292,10 +4307,26 @@ export function reconcileTypeDeterministicFleets(db: Database): number {
     const update = db.query(
       "UPDATE united_fleet SET starlink_status = ? WHERE tail_number = ? AND airline = ?"
     );
+    // A tail the rule names as an exception ("unknown") must not stay listed:
+    // a listing is what every count reads as equipped. Whatever wrote the
+    // listing, the named exception outranks it; nothing observes these tails.
+    const unsettle = db.query(
+      "UPDATE united_fleet SET starlink_status = 'unknown', verified_wifi = NULL, verified_at = NULL WHERE tail_number = ? AND airline = ?"
+    );
+    const unlist = db.query("DELETE FROM starlink_planes WHERE TailNumber = ? AND airline = ?");
     let changed = 0;
     const apply = db.transaction(
       (pending: Array<(typeof rows)[number] & { next: StarlinkStatus }>) => {
         for (const r of pending) {
+          if (r.next === "unknown") {
+            const unlisted = unlist.run(r.tail_number, a.code).changes;
+            if (r.starlink_status !== "unknown") {
+              unsettle.run(r.tail_number, a.code);
+              emitFleetStatusChange(r, "unknown");
+            }
+            if (unlisted > 0 || r.starlink_status !== "unknown") changed++;
+            continue;
+          }
           update.run(r.next, r.tail_number, a.code);
           emitFleetStatusChange(r, r.next);
           if (r.next === "confirmed") {
@@ -4314,8 +4345,11 @@ export function reconcileTypeDeterministicFleets(db: Database): number {
       }
     );
     apply(
-      rows.flatMap((r) => {
-        const next = a.typeDeterministicWifi?.(r.aircraft_type) ?? null;
+      rows.flatMap((r): Array<(typeof rows)[number] & { next: StarlinkStatus }> => {
+        const next = a.typeDeterministicWifi?.(r.aircraft_type, r.tail_number) ?? null;
+        // A held-back tail is always passed on: its status may already read
+        // "unknown" while a listing from before the exception still stands.
+        if (next === "unknown") return [{ ...r, next }];
         return next === null || next === r.starlink_status ? [] : [{ ...r, next }];
       })
     );
@@ -4690,6 +4724,45 @@ const WIFI_MISMATCH_PREDICATE = `verified_wifi IS NOT NULL
          OR
          (NOT ${sheetSaysStarlink("wifi")} AND verified_wifi = 'Starlink')
        )`;
+
+/** A reported listing drops off the log after this long without our check
+ * agreeing: a sheet row that never confirms is more likely a wrong listing
+ * than a slow one (N77426 sat at 31 of 31 Viasat reads before the sheet
+ * withdrew it). */
+export const REPORTED_MAX_AGE_DAYS = 30;
+
+/**
+ * Tails the community sheet lists as Starlink while our own check still reads
+ * another provider: the sheet side of /api/mismatches, dated like an install.
+ * Never equipped (equippedSql needs verified_wifi NULL or 'Starlink'), so a
+ * tail is in this list or in getRecentInstalls, never both, and no count
+ * reads it. Independent listings only: a row our own discovery wrote is not a
+ * sheet listing, and it outlives a contrary check until the next good scrape
+ * purges it, which in November 2026 was three weeks away.
+ */
+export function getReportedInstalls(
+  db: Database,
+  airline: AirlineFilter,
+  limit = 25,
+  now = unixNow()
+): ReportedInstall[] {
+  const q = withAirline(
+    `SELECT airline, TailNumber, aircraft as Aircraft, OperatedBy, DateFound,
+            verified_wifi AS observed_wifi, verified_at AS observed_at
+     FROM starlink_planes
+     WHERE verified_wifi IS NOT NULL AND verified_wifi != 'None'
+       AND ${SHEET_YES_VERIFIED_NO}
+       AND ${INDEPENDENT_LISTING_WHERE}
+       AND ${INSTALL_FILTER}
+       AND substr(DateFound, 1, 10) >= date(?, 'unixepoch', '-${REPORTED_MAX_AGE_DAYS} days')`,
+    airline,
+    "",
+    [now]
+  );
+  return db
+    .query(`${q.sql} ORDER BY DateFound DESC, TailNumber LIMIT ?`)
+    .all(...q.params, limit) as ReportedInstall[];
+}
 
 export function getWifiMismatches(db: Database, airline?: AirlineFilter): WifiMismatch[] {
   const q = withAirline(
@@ -5631,39 +5704,53 @@ export function getStarlinkPrefixes(
 }
 
 export interface PassengerReportInsert {
-  ip: string;
-  ip_prefix: string;
+  dedupe_key: string;
   in_geofeed: boolean;
   source: string;
   outcome: string;
   claimed_flight: string | null;
   claimed_tail: string | null;
   claimed_date: string | null;
-  router_id: string | null;
-  ua_hash: string | null;
   airborne_match: boolean;
 }
 
+/** `ip` is NOT NULL from the original schema, so it gets "" rather than the
+ * address; router_id and ua_hash are left NULL. */
 export function recordPassengerReport(db: Database, r: PassengerReportInsert): void {
   db.query(`
     INSERT INTO passenger_reports
       (reported_at, ip, ip_prefix, in_geofeed, source, outcome,
-       claimed_flight, claimed_tail, claimed_date, router_id, ua_hash, airborne_match)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       claimed_flight, claimed_tail, claimed_date, airborne_match)
+    VALUES (?, '', ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     unixNow(),
-    r.ip,
-    r.ip_prefix,
+    r.dedupe_key,
     r.in_geofeed ? 1 : 0,
     r.source,
     r.outcome,
     r.claimed_flight,
     r.claimed_tail,
     r.claimed_date,
-    r.router_id,
-    r.ua_hash,
     r.airborne_match ? 1 : 0
   );
+}
+
+/**
+ * Blanks dedupe keys that have outlived the window they exist for. The range
+ * matches only the keyed hashes ("h:…"), so rows written before hashing, whose
+ * ip_prefix is a readable "v4:…"/"v6:…" prefix, are left exactly as they are.
+ */
+export function expirePassengerDedupeKeys(
+  db: Database,
+  windowSec: number,
+  nowSec = unixNow()
+): number {
+  return db
+    .query(
+      `UPDATE passenger_reports SET ip_prefix = ''
+       WHERE ip_prefix >= 'h:' AND ip_prefix < 'h;' AND reported_at <= ?`
+    )
+    .run(nowSec - windowSec).changes;
 }
 
 export function isFlightAirborne(
@@ -5689,7 +5776,7 @@ export function isFlightAirborne(
  * submission from the same client. */
 export function passengerReportSeenRecently(
   db: Database,
-  ipPrefix: string,
+  dedupeKey: string,
   source: string,
   tail: string | null,
   windowSec: number
@@ -5701,7 +5788,7 @@ export function passengerReportSeenRecently(
        WHERE ip_prefix = ? AND reported_at > ? AND source = ? AND claimed_tail IS ?
        LIMIT 1`
     )
-    .get(ipPrefix, since, source, tail);
+    .get(dedupeKey, since, source, tail);
   return row !== null;
 }
 

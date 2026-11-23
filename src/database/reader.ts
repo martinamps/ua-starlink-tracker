@@ -26,6 +26,7 @@ import type {
   Flight,
   PerAirlineStat,
   RecentInstall,
+  ReportedInstall,
   RouteSchedule,
 } from "../types";
 import { memo } from "../utils/ttl-cache";
@@ -115,6 +116,7 @@ import {
   getQatarScheduleStats,
   getRankedStarlinkRoutePairs,
   getRecentInstalls,
+  getReportedInstalls,
   getRouteDepartures,
   getRouteFlightNumbers,
   getRouteFlights,
@@ -164,6 +166,8 @@ export interface ScopedReader {
   countStarlinkPlanes(): number;
   getAirlineByTail(): Record<string, string>;
   getRecentInstalls(limit?: number, perAirlineCap?: number): RecentInstall[];
+  /** Sheet listings our check has not confirmed; disjoint from getRecentInstalls. */
+  getReportedInstalls(limit?: number): ReportedInstall[];
   /** First observed post-install revenue departures for the given tails (sparse). */
   getFirstFlights(tails: readonly string[]): FirstFlight[];
   /** Organic installs per calendar day (labelled bulk seeds excluded); ascending. */
@@ -419,6 +423,7 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     getAirlineByTail: () => getAirlineByTail(db, airlines),
     getRecentInstalls: (limit, perAirlineCap) =>
       getRecentInstalls(db, airlines, limit, perAirlineCap),
+    getReportedInstalls: (limit) => getReportedInstalls(db, airlines, limit),
     getFirstFlights: (tails) => getFirstFlights(db, tails, airlines),
     getDailyInstalls: () => getDailyInstalls(db, airlines),
     getPerAirlineStats: () => buildPerAirlineStats(db, airlines),
