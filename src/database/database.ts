@@ -1127,12 +1127,23 @@ export function updateDatabase(
       WHERE TailNumber = ? AND sheet_gid = 'discovery' AND airline = ?
     `);
 
+    // The sheet can carry one tail on two rows (N89349 sat on two E175 rows,
+    // typed "ERJ-175" and "E175SC"). One listing per tail, first row wins:
+    // a second row made every count over starlink_planes one higher than the
+    // roster's count of the same aircraft.
+    const written = new Set<string>();
+
     for (const aircraft of starlinkAircraft) {
       const tailNumber = aircraft.TailNumber || "";
       if (!looksLikeValidTailNumber(tailNumber)) {
         warn(`skipping invalid tail '${tailNumber}' from sheet ${aircraft.sheet_gid}`);
         continue;
       }
+      if (written.has(tailNumber)) {
+        warn(`skipping second sheet row for tail '${tailNumber}' (sheet ${aircraft.sheet_gid})`);
+        continue;
+      }
+      written.add(tailNumber);
 
       // Sheet value wins if present; otherwise preserve what we had; otherwise
       // fall back to united_fleet (FR24-sourced). Prevents blank sheet cells

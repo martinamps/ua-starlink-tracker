@@ -498,7 +498,7 @@ describe("QR verdict: observed-type history beyond the window", () => {
     expect(v.mix.reduce((n, m) => n + m.count, 0)).toBe(v.nDays);
   });
 
-  test("next season with few in-season days borrows all history, one grade down", async () => {
+  test("a date in the next season borrows all history and is graded low", async () => {
     const now = utc("2026-10-20T08:00:00Z");
     const db = makeSyntheticDb();
     for (let i = -28; i <= 6; i++) historyLeg(db, "QR51", addDaysISO("2026-10-20", i), "77W");
@@ -506,8 +506,33 @@ describe("QR verdict: observed-type history beyond the window", () => {
     if (v.kind !== "qatar_history") throw new Error(v.kind);
     expect(v.season.query).toBe("W26");
     expect(v.season.shifted).toBe(true);
-    expect(v.grade).toBe("medium");
+    expect(v.nDays).toBeGreaterThanOrEqual(14);
+    expect(v.probability).toBeGreaterThan(0.8);
+    expect(v.grade).toBe("low");
     expect(qatarHistoryReason(v)).toContain("2026-10-25");
+  });
+
+  // 35 all-fitted days in W26 once answered a September 2027 date "medium",
+  // which the extension badges; the same history still grades a date inside
+  // W26 "high".
+  test("the grade drops at the season boundary, not by distance", async () => {
+    const now = utc("2026-11-23T08:00:00Z");
+    const db = makeSyntheticDb();
+    for (let i = -28; i <= 6; i++) historyLeg(db, "QR7", addDaysISO("2026-11-23", i), "77W");
+    const grade = async (date: string) => {
+      const v = await verdict(db, "QR7", date, now);
+      if (v.kind !== "qatar_history") throw new Error(v.kind);
+      return { grade: v.grade, probability: v.probability, shifted: v.season.shifted };
+    };
+    const lastOfWinter = await grade("2027-03-27");
+    expect(lastOfWinter.shifted).toBe(false);
+    expect(lastOfWinter.grade).toBe("high");
+    for (const date of ["2027-03-28", "2027-07-15", "2027-09-15"]) {
+      const next = await grade(date);
+      expect(next.shifted).toBe(true);
+      expect(next.grade).toBe("low");
+      expect(next.probability).toBe(lastOfWinter.probability);
+    }
   });
 
   test("just after a season change, borrowing the last season costs a grade", async () => {
