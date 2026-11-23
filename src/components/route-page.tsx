@@ -15,6 +15,8 @@ interface RoutePageProps {
   /** The server's routeHasData answer for destination→origin; the reverse-leg
    * link renders only when that page serves. */
   reverseLinkable?: boolean;
+  /** The pair's airports whose /routes/{airport} page serves. */
+  airportLinks?: string[];
   pageLinks?: Link[];
   currentPath?: string;
 }
@@ -28,6 +30,7 @@ export default function RoutePage({
   board,
   flightNumbers = [],
   reverseLinkable = false,
+  airportLinks = [],
   pageLinks,
   currentPath,
 }: RoutePageProps) {
@@ -67,6 +70,14 @@ export default function RoutePage({
           <a href={plannerHref} className={LINK}>
             Connections
           </a>
+          {airportLinks.map((airport) => (
+            <span key={airport}>
+              {" · "}
+              <a href={`/routes/${airport}`} className={LINK}>
+                Starlink flights from {airport}
+              </a>
+            </span>
+          ))}
         </p>
       </section>
     </PageShell>

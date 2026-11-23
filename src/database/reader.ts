@@ -36,6 +36,13 @@ import {
   getAdsbFlightDrawsFor,
 } from "./adsb-flight-draws";
 import {
+  type AirportDepartureRow,
+  type AirportHistory,
+  airportHasData,
+  getAirportHistory,
+  getAirportStarlinkDepartures,
+} from "./airports";
+import {
   type AssignmentLogRow,
   type ResolvedLeg,
   type SameDayAlternative,
@@ -154,6 +161,13 @@ export type { Database };
  * invisible and keeps the build off the request path.
  */
 const DEPARTURE_AGGREGATE_MEMO = { ttlSec: 60, maxEntries: 64 };
+
+/**
+ * The airport history joins a week of the assignment log to departure_log for
+ * every airport at once. It moves by a few departures an hour, and the airport
+ * pages' index rule should not flip between two requests a minute apart.
+ */
+const AIRPORT_HISTORY_MEMO = { ttlSec: 900, maxEntries: 1 };
 
 export type Scope = AirlineCode | "ALL";
 
@@ -294,6 +308,15 @@ export interface ScopedReader {
    * staleness copy; 0 on the hub or with no data. */
   getObservationAnchor(): number;
 
+  // /routes/{airport}
+  /** Existence gate for /routes/{airport}; true for every route page's origin. */
+  airportHasData(airport: string): boolean;
+  /** Equipped departures from the airport in the next 48h, under their marketed numbers. */
+  getAirportStarlinkDepartures(airport: string): AirportDepartureRow[];
+  /** Starlink departures flown per airport over the last few days; the airport
+   * pages' index rule and the sitemap read the same build. */
+  getAirportHistory(): AirportHistory;
+
   // Single-tail lookups + best-effort writes. Airline-scoped like everything
   // else: a tenant's FR24 fallback must not resolve another airline's tail.
   getStarlinkPlaneByTail(
@@ -416,6 +439,7 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
   const airportsMemo = memo<AirportDepartures>(DEPARTURE_AGGREGATE_MEMO);
   const scheduleMemo = memo<RouteSchedule>(DEPARTURE_AGGREGATE_MEMO);
   const rankedMemo = memo<Array<{ origin: string; destination: string }>>(DEPARTURE_AGGREGATE_MEMO);
+  const airportHistoryMemo = memo<AirportHistory>(AIRPORT_HISTORY_MEMO);
   const r: ScopedReader = {
     scope,
     airlines,
@@ -511,6 +535,10 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     getFlightHistorySummary: (v) => getFlightHistorySummary(db, v, airlines),
     getFlightRoutePairs: (v) => getFlightRoutePairs(db, v, airlines),
     getObservationAnchor: () => (scope === "ALL" ? 0 : getObservationAnchor(db, scope)),
+
+    airportHasData: (a) => airportHasData(db, a, soleAirline()),
+    getAirportStarlinkDepartures: (a) => getAirportStarlinkDepartures(db, soleAirline(), a),
+    getAirportHistory: () => airportHistoryMemo("", () => getAirportHistory(db, soleAirline())),
 
     getStarlinkPlaneByTail: (tail) => getStarlinkPlaneByTail(db, tail, airlines),
     getFleetEntryByTail: (tail) => getFleetEntryByTail(db, tail, airlines),

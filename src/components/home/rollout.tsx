@@ -3,6 +3,7 @@
  * that splits it by fleet segment, and a 12-week install sparkline.
  */
 import type { ContentStats } from "../../airlines/content";
+import { ROUTE_AIRPORT_RE } from "../../database/sql/fragments";
 import { excludeMassWriteDays } from "../../utils/install-rate";
 import { Sparkline } from "../charts/sparkline";
 import { Panel, SECTION_WIDE, StatInline } from "../layout";
@@ -141,15 +142,19 @@ export function RolloutPanel({
 }
 
 /** Top airports by Starlink departures, as bars scaled to the busiest. One
- * column where the list sits in a sidebar (/routes), two on the homepage. */
+ * column where the list sits in a sidebar (/routes), two on the homepage.
+ * `linked` points each code at its /routes/{airport} page, which serves for
+ * any airport with a departure in the window. */
 export function AirportBars({
   rows,
   limit = 12,
   columns = 2,
+  linked = false,
 }: {
   rows: { airport: string; count: number }[];
   limit?: number;
   columns?: 1 | 2;
+  linked?: boolean;
 }) {
   const top = rows.slice(0, limit);
   if (top.length === 0) return null;
@@ -161,7 +166,16 @@ export function AirportBars({
           key={r.airport}
           className="grid grid-cols-[3rem_1fr_3.5rem] items-center gap-3 py-1.5 text-sm"
         >
-          <span className="font-mono text-primary">{r.airport}</span>
+          {linked && ROUTE_AIRPORT_RE.test(r.airport) ? (
+            <a
+              href={`/routes/${r.airport}`}
+              className="font-mono text-primary hover:text-accent transition-colors"
+            >
+              {r.airport}
+            </a>
+          ) : (
+            <span className="font-mono text-primary">{r.airport}</span>
+          )}
           <Meter
             share={max > 0 ? r.count / max : 0}
             label={`${r.airport}: ${fmt(r.count)} Starlink departures`}

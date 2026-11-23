@@ -99,7 +99,7 @@ const SWEEP_SAMPLE = 60;
 const SWEEP_TIMEOUT_MS = 60_000;
 
 const isParameterized = (p: string) =>
-  /^\/check-flight\/.+/.test(p) || /^\/route-planner\/.+\/.+/.test(p);
+  /^\/check-flight\/.+/.test(p) || /^\/route-planner\/.+\/.+/.test(p) || /^\/routes\/.+/.test(p);
 
 /**
  * Static URLs in full, plus every Nth parameterized URL — first and last
@@ -164,6 +164,15 @@ for (const site of Object.values(SITES)) {
             `${site.key} sitemap advertises ${path} with no data behind it`
           ).toBe(true);
           routesChecked++;
+          continue;
+        }
+        const airport = path.match(/^\/routes\/(.+)$/);
+        if (airport) {
+          expect(airport[1], `${site.key} sitemap advertises ${path}`).toMatch(ROUTE_AIRPORT_RE);
+          expect(
+            site.features.airportPages && reader!.airportHasData(airport[1]),
+            `${site.key} sitemap advertises ${path} with no page behind it`
+          ).toBe(true);
         }
       }
       // Guards the guard: if either enumerator stops emitting URLs this test
