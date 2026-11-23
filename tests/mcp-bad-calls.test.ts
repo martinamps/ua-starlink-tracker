@@ -118,10 +118,7 @@ describe("codes that are not airports", () => {
     }
   });
 
-  test("search rejects a code no airport has and the same airport twice", async () => {
-    const unknown = await call("UA", "search_starlink_flights", { origin: "XQZ" });
-    expect(unknown.isError).toBe(true);
-    expect(unknown.text).toContain("Unknown airport code XQZ");
+  test("search rejects the same airport twice", async () => {
     const same = await call("UA", "search_starlink_flights", { origin: "SFO", destination: "sfo" });
     expect(same.isError).toBe(true);
     expect(same.text).toContain("are the same");
@@ -139,6 +136,78 @@ describe("codes that are not airports", () => {
           expect(good.text).not.toContain("Unknown airport code");
         }
       }
+    }
+  });
+});
+
+// The tracker's coordinates table and stored flights are not a list of the
+// world's airports. A well-formed code outside both was once refused as
+// "Unknown airport code": Glasgow, Christchurch and Nuuk on United's site,
+// Kigali on Qatar's, Nadi on Alaska's. Without a complete list a code cannot
+// be called unknown, so these say what the data shows instead.
+describe("a well-formed code the tracker has no flights for", () => {
+  const UNSEEN: [Scope, string, string, string][] = [
+    ["UA", "EWR", "GLA", "United Airlines"],
+    ["UA", "SFO", "CHC", "United Airlines"],
+    ["UA", "EWR", "GOH", "United Airlines"],
+    ["QR", "DOH", "KGL", "Qatar Airways"],
+    ["AS", "SEA", "NAN", "Alaska Airlines"],
+    // No airport has this code. The tracker cannot know that, and does not say so.
+    ["UA", "EWR", "XQZ", "United Airlines"],
+  ];
+
+  test("is answered on every route tool, never called an unknown code", async () => {
+    for (const [scope, origin, destination, airline] of UNSEEN) {
+      for (const name of ROUTE_TOOLS) {
+        for (const args of [
+          { origin, destination },
+          { origin: destination, destination: origin },
+        ]) {
+          const label = `${scope} ${name} ${args.origin}-${args.destination}`;
+          const answer = await call(scope, name, args);
+          expect(answer.isError, `${label}: ${answer.text}`).toBe(false);
+          expect(answer.text, label).not.toContain("Unknown airport code");
+          expect(answer.text, label).toContain(
+            `no ${airline} flights on record to or from ${destination}`
+          );
+        }
+      }
+    }
+  });
+
+  test("one-sided calls answer too, and the planner is not sent a dead end", async () => {
+    for (const name of ["search_starlink_flights", "predict_route_starlink"]) {
+      for (const args of [{ origin: "GLA" }, { destination: "XQZ" }]) {
+        const answer = await call("UA", name, args);
+        expect(answer.isError, `${name}: ${answer.text}`).toBe(false);
+        expect(answer.text).toContain("flights on record");
+      }
+    }
+    const search = await call("UA", "search_starlink_flights", {
+      origin: "EWR",
+      destination: "GLA",
+    });
+    expect(search.text).toContain("No scheduled Starlink flights found for EWR→GLA");
+    expect(search.text).not.toContain("plan_starlink_itinerary");
+  });
+
+  test("counts as a success on the call counter", async () => {
+    for (const name of ROUTE_TOOLS) {
+      expect(
+        await reasonOf(() => raw("UA", name, { origin: "EWR", destination: "GLA" })),
+        name
+      ).toBe("success:none");
+    }
+  });
+
+  test("the hub and airports the tracker knows are answered as before", async () => {
+    const hub = await call("ALL", "search_starlink_flights", { origin: "EWR", destination: "GLA" });
+    expect(hub.isError).toBe(false);
+    expect(hub.text).not.toContain("flights on record");
+    for (const name of ROUTE_TOOLS) {
+      const known = await call("UA", name, { origin: "SFO", destination: "EWR" });
+      expect(known.isError, name).toBe(false);
+      expect(known.text, name).not.toContain("flights on record");
     }
   });
 });

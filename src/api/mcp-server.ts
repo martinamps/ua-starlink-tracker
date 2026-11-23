@@ -1661,8 +1661,8 @@ function toolPlanStarlinkItinerary(
   }
   const cfg = scopeCfg(reader.scope);
   if (!cfg) return scopeConfigError(reader.scope);
-  const unknown = unknownAirportError(cfg, reader, origin, destination);
-  if (unknown) return unknown;
+  const unseen = noFlightsOnRecord(cfg, reader, origin, destination);
+  if (unseen) return unseen;
   // The itinerary planner runs on the flight-history model. Model-less
   // carriers answer the nonstop from the registry (route rule / penetration).
   if (!cfg.flightHistoryModel) {
@@ -1839,8 +1839,8 @@ function toolPredictRouteStarlink(
   }
   const cfg = scopeCfg(reader.scope);
   if (!cfg) return scopeConfigError(reader.scope);
-  const unknown = unknownAirportError(cfg, reader, origin, destination);
-  if (unknown) return unknown;
+  const unseen = noFlightsOnRecord(cfg, reader, origin, destination);
+  if (unseen) return unseen;
   // predictRoute ranks flights with the flight-history model — model-less
   // carriers get the registry answer (route rule / penetration) instead.
   if (!cfg.flightHistoryModel) {
@@ -1908,32 +1908,42 @@ Probability and confidence are independent: 92% with 4 obs (medium) is a *less c
 }
 
 /**
- * isError only when a code can't be an airport or nothing has ever seen it.
- * AIRPORT_COORDS alone would reject real regional airports it lacks, so the
- * schedule snapshot and flight_routes history get a vote too. Without this,
- * origin "XXX" came back as a normal "no routings" answer that told the agent
- * to call search_starlink_flights with origin="XXX".
+ * A well-formed code the tracker has never met is not an "unknown airport":
+ * AIRPORT_COORDS holds ~590 airports and the airline's stored flights a few
+ * hundred more, so Glasgow, Christchurch and Kigali sat outside both and were
+ * refused as codes that do not exist. No complete, current IATA list is to be
+ * had in-repo, so the claim is only what the data shows: no flights on record.
+ * Still short-circuits, as a plain answer: fed on, an unseen code made the
+ * planner invent positioning legs and the search advise the planner.
  */
-function unknownAirportError(
+function unseenAirports(
   cfg: AirlineConfig,
   reader: ScopedReader,
   ...codes: (string | undefined)[]
-): ToolResult | null {
+): string[] {
   const prefixes = [cfg.iata, cfg.icao, ...cfg.carrierPrefixes];
-  for (const raw of codes) {
-    if (!raw) continue;
-    const code = raw.toUpperCase();
-    const known =
-      /^[A-Z]{3}$/.test(code) &&
-      (AIRPORT_COORDS[code] !== undefined || reader.airlineServesAirports(prefixes, code));
-    if (!known) {
-      return toolError(
-        `Unknown airport code ${code}. Use a 3-letter IATA airport code (e.g. SFO).`,
-        "unknown_airport"
-      );
-    }
-  }
-  return null;
+  return codes.filter(
+    (code): code is string =>
+      !!code && AIRPORT_COORDS[code] === undefined && !reader.airlineServesAirports(prefixes, code)
+  );
+}
+
+function noFlightsOnRecordNote(cfg: AirlineConfig, unseen: readonly string[]): string {
+  const codes = unseen.join(" or ");
+  return `The tracker has no ${cfg.name} flights on record to or from ${codes}: none in its flight assignments or route history. That is not a verdict on Starlink, nor a claim that ${cfg.name} never flies there. If ${codes} is not the airport you meant, use its 3-letter IATA airport code (e.g. SFO); a city code such as NYC is not one. For a specific flight, use check_flight with the flight number and date.`;
+}
+
+function noFlightsOnRecord(
+  cfg: AirlineConfig,
+  reader: ScopedReader,
+  origin: string | undefined,
+  destination: string | undefined
+): ToolResult | null {
+  const unseen = unseenAirports(cfg, reader, origin, destination);
+  if (unseen.length === 0) return null;
+  recordFlightLookup("mcp", "no_data", "none", reader.scope);
+  const route = origin && destination ? `${origin}→${destination}` : origin || destination;
+  return textResult(`No Starlink prediction for ${route}. ${noFlightsOnRecordNote(cfg, unseen)}`);
 }
 
 // A scope can be registered (VALID_SCOPES) before its airline config exists —
@@ -2114,11 +2124,15 @@ function toolSearchStarlinkFlights(
   const shown = flights.slice(0, limit);
 
   if (total === 0) {
-    // "None found" for a code no airport has would read as a real answer.
-    // Checked only here: a code with flights on the board is plainly real.
-    const unknown = pinnedCfg && unknownAirportError(pinnedCfg, reader, origin, destination);
-    if (unknown) return unknown;
     const routeDesc = origin && destination ? `${origin}→${destination}` : origin || destination;
+    // Sending an airport the tracker has never met on to the route tools would
+    // dead-end there, so it gets the reason in place of that advice.
+    const unseen = pinnedCfg ? unseenAirports(pinnedCfg, reader, origin, destination) : [];
+    if (pinnedCfg && unseen.length > 0) {
+      return textResult(
+        `No scheduled Starlink flights found for ${routeDesc} in the next ~2 days.\n\n${noFlightsOnRecordNote(pinnedCfg, unseen)}`
+      );
+    }
     return textResult(
       `No scheduled Starlink flights found for ${routeDesc} in the next ~2 days.\n\nNote: this tool only sees published aircraft assignments through ~${dataHorizon}. If you need dates beyond that, use predict_route_starlink or plan_starlink_itinerary for probability-based planning instead — absence from this tool does NOT mean no Starlink.`
     );
