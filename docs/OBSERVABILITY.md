@@ -76,7 +76,7 @@ All metrics are prefixed with `starlink.` for easy filtering in Datadog.
 | `starlink.verification.check` | `result:success\|error` | Verification attempt |
 | `starlink.verification.mismatch` | - | Spreadsheet/United.com WiFi mismatch |
 | `starlink.vendor.request` | `vendor:flightaware\|fr24\|united`, `type:flights\|fleet\|verification`, `status:success\|rate_limited\|error` | External API call |
-| `starlink.http.request` | `method`, `route`, `status_code`, `tenant`, `client_class`, `ext_version` (extension only) | HTTP request served (`route` is the matched route-table entry, or `unmatched`) |
+| `starlink.http.request` | `method`, `route`, `status_code`, `tenant`, `client_class`, `ext_version` (extension only), `visit_source` | HTTP request served (`route` is the matched route-table entry, or `unmatched`) |
 | `starlink.http.rate_limited` | `route`, `tenant`, `airline`, `bucket:api\|ext\|mcp\|page`, `client_class`, `ext_version` (extension only) | Per-IP limiter returned a 429 (also counted in `http.request` as `status_code:429`). `/api/*` calls classified `client_class:extension` use the `ext` bucket (`EXTENSION_RATE_LIMIT`, 300/min); every other bucket allows `API_RATE_LIMIT` (100/min) |
 | `starlink.http.rate_limit_exempt` | the `http.rate_limited` tags plus `crawler:googlebot\|bingbot` | Over the `page` limit but served: the UA claims Googlebot/Bingbot and the IP's reverse DNS (forward-confirmed) is in the engine's domain. Cached per IP |
 | `starlink.route_flights.view` | `airline`, `surface:api\|page`, `outcome:nonstop\|no_nonstop`, `dated:true\|false` | "Every flight on this route" board served (`/api/route-flights`, route pages) |
@@ -90,6 +90,39 @@ All metrics are prefixed with `starlink.` for easy filtering in Datadog.
 - **HTTP metrics** (`classifyRequest`): `extension`, `other-extension`, the named crawlers (`claude`, `googlebot`, `bingbot`, …), `bot`, `browser`, `unknown`.
 - **MCP tool metrics** (`classifyMcpClient`): `claude`, `chatgpt` (includes Codex), `cursor`, `vscode`, `bot`, `other`, `unknown`. MCP here is stateless, so tool calls carry no `clientInfo`; the user agent is the only signal.
 - **`ext_version`** rides along only with `client_class:extension`, from the extension's `client=ext-<version>` param: `1.x`, `2.0`, `2.1`, `2.x` (2.2+), `other`, `none` (pre-2.0.1 builds, which sent no param). Graph adoption with `sum:starlink.http.request{client_class:extension} by {ext_version}`.
+
+### Visit source (`http.request` only)
+
+`visit_source` says where a request came from, as one of nine fixed words
+(`classifyVisitSource` in `src/observability/metrics.ts`). The first rule that
+fires wins:
+
+| Value | Rule |
+|---|---|
+| `extension` | `client_class` is `extension` or `other-extension`; or a search engine's page is the referrer/origin of an `/api/*` or `/mcp` call (a script on Google Flights, not a search visit) |
+| `search` | Referer (else Origin) host is a search engine: Google's search hosts, Bing, DuckDuckGo, Yahoo, Yandex, Baidu, Ecosia, Brave, Kagi, Startpage, Qwant, Naver, or the Google app on Android |
+| `assistant` | Referer host or `utm_source` names an assistant: ChatGPT, Claude, Perplexity, Gemini, Copilot, Grok, Meta AI, Mistral, DeepSeek, Poe, You, Phind |
+| `social` | Referer host or `utm_source` names a social site or forum: Facebook, Instagram, Threads, X/Twitter, Reddit, LinkedIn, YouTube, TikTok, Bluesky, Pinterest, Hacker News, FlyerTalk |
+| `calendar` | `utm_source=cal`, the link this site writes into its own calendar events |
+| `own` | Referer/Origin is one of our hosts, or `Sec-Fetch-Site` is `same-origin`/`same-site`. Our pages send `Referrer-Policy: no-referrer`, so the fetch-metadata header is what marks in-site clicks, assets and our own scripts' API calls |
+| `other` | Any other referrer, origin or `utm_source`, or `Sec-Fetch-Site: cross-site` with nothing named |
+| `direct` | `Sec-Fetch-Site: none`: typed, bookmarked, or opened from an app outside the browser |
+| `none` | No signal at all: most robots and scripts, and browsers too old to send fetch metadata |
+
+**Budget: 9 values, closed.** An unknown host or `utm_source` is `other`, never a
+new value; to recognise a new site, add its domain to one of the three lists.
+Only the word is emitted: the referrer's host, path and query are read inside
+`classifyVisitSource` and go to no metric, span or log.
+
+A user agent alone never makes a request `assistant`. An assistant's fetcher is
+already `client_class:claude|gptbot|perplexity`; `visit_source:assistant` is a
+person who followed a link out of an assistant. Robots can send any referrer,
+so read the tag with `client_class:browser`, and leave out `visit_source:own`
+(a page view's own assets and API calls) to count arrivals:
+
+```
+sum:starlink.http.request{client_class:browser AND status_code:200 AND NOT route:unmatched AND NOT route:/mcp AND NOT route:/api* AND NOT route:/static AND NOT visit_source:own} by {visit_source,tenant}.as_count().rollup(sum, 604800)
+```
 
 ### Rate-limit log
 

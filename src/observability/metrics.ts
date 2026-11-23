@@ -48,6 +48,9 @@
  *                    unknown                                         (+3 new)
  *   ext_version:     1.x | 2.0 | 2.x | other | none — only when
  *                    client_class:extension                          (5)
+ *   visit_source:    http.request only (classifyVisitSource): extension |
+ *                    search | assistant | social | calendar | own | direct |
+ *                    other | none                                    (9)
  *   confidence:      high | medium | low | none                      (4)
  *   outcome:         verified_yes | verified_no | type_yes | type_no |
  *                    predicted | no_data | error                     (7)
@@ -61,7 +64,7 @@
  */
 
 import { detectAirline } from "../airlines/flight-number";
-import { AIRLINES, SUBFLEET_KEYS, operatorIatas } from "../airlines/registry";
+import { AIRLINES, SUBFLEET_KEYS, operatorIatas, resolveSite } from "../airlines/registry";
 import { CHROME_EXTENSION_ID } from "../utils/chrome-extension";
 import { tracer } from "./tracer";
 
@@ -209,6 +212,188 @@ export function requestClientTags(req: Request, url: URL): Tags {
     client_class: clientClass,
     ext_version: normalizeExtVersion(url.searchParams.get("client")),
   };
+}
+
+// ============ Visit source ============
+
+/**
+ * Where a request came from, as one of nine fixed words. The referrer, origin
+ * and utm_source are read here and nowhere else, and only the word leaves:
+ * no host, path or query of the referring page reaches a metric, span or log.
+ */
+export const VISIT_SOURCES = [
+  "extension",
+  "search",
+  "assistant",
+  "social",
+  "calendar",
+  "own",
+  "direct",
+  "other",
+  "none",
+] as const;
+export type VisitSource = (typeof VISIT_SOURCES)[number];
+type OutsideSource = "search" | "assistant" | "social";
+
+// Registrable domains; a host matches as the domain itself or any subdomain.
+const SOURCE_DOMAINS: ReadonlyArray<readonly [OutsideSource, readonly string[]]> = [
+  [
+    "assistant",
+    [
+      "chatgpt.com",
+      "chat.openai.com",
+      "claude.ai",
+      "perplexity.ai",
+      "gemini.google.com",
+      "copilot.microsoft.com",
+      "grok.com",
+      "meta.ai",
+      "chat.mistral.ai",
+      "chat.deepseek.com",
+      "poe.com",
+      "you.com",
+      "phind.com",
+    ],
+  ],
+  [
+    "search",
+    [
+      "bing.com",
+      "duckduckgo.com",
+      "yahoo.com",
+      "yahoo.co.jp",
+      "yandex.com",
+      "yandex.ru",
+      "baidu.com",
+      "ecosia.org",
+      "search.brave.com",
+      "kagi.com",
+      "startpage.com",
+      "qwant.com",
+      "naver.com",
+    ],
+  ],
+  [
+    "social",
+    [
+      "facebook.com",
+      "instagram.com",
+      "threads.net",
+      "threads.com",
+      "t.co",
+      "twitter.com",
+      "x.com",
+      "reddit.com",
+      "linkedin.com",
+      "lnkd.in",
+      "youtube.com",
+      "tiktok.com",
+      "bsky.app",
+      "pinterest.com",
+      "news.ycombinator.com",
+      "flyertalk.com",
+    ],
+  ],
+];
+
+// Google's search hosts only (google.com, www.google.co.uk, news.google.com):
+// mail., docs. and the rest of google.com are not search and fall to "other".
+const GOOGLE_SEARCH_HOST = /^(?:(?:www|news)\.)?google\.(?:com?\.)?[a-z]{2,3}$/;
+
+// An Android app's referrer names its package where a site would name a host.
+const ANDROID_PACKAGES: Record<string, OutsideSource> = {
+  "com.google.android.googlequicksearchbox": "search",
+  "com.reddit.frontpage": "social",
+  "com.twitter.android": "social",
+  "com.facebook.katana": "social",
+  "com.linkedin.android": "social",
+};
+
+// utm_source is free text; a bare product name counts like its host.
+const UTM_ALIASES: Record<string, OutsideSource> = {
+  chatgpt: "assistant",
+  openai: "assistant",
+  perplexity: "assistant",
+  claude: "assistant",
+  copilot: "assistant",
+  gemini: "assistant",
+  reddit: "social",
+  twitter: "social",
+  facebook: "social",
+  linkedin: "social",
+};
+// The one utm_source this site writes itself: the link inside a calendar event (utils/ics.ts).
+const OWN_CALENDAR_UTM = "cal";
+
+function outsideSourceOfHost(host: string): OutsideSource | null {
+  for (const [source, domains] of SOURCE_DOMAINS) {
+    if (domains.some((d) => host === d || host.endsWith(`.${d}`))) return source;
+  }
+  return GOOGLE_SEARCH_HOST.test(host) ? "search" : null;
+}
+
+/** own | search | assistant | social | other for a Referer or Origin value, null when it names nothing. */
+function sourceOfReferrer(raw: string | null): VisitSource | null {
+  if (!raw || raw === "null") return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return null;
+  }
+  const host = parsed.hostname.toLowerCase();
+  if (!host) return null;
+  if (parsed.protocol === "android-app:") return ANDROID_PACKAGES[host] ?? "other";
+  if (resolveSite(host)) return "own";
+  return outsideSourceOfHost(host) ?? "other";
+}
+
+function sourceOfUtm(raw: string | null): VisitSource | null {
+  if (!raw) return null;
+  const value = raw.slice(0, 64).trim().toLowerCase();
+  if (!value) return null;
+  if (value === OWN_CALENDAR_UTM) return "calendar";
+  // A utm_source never proves a search visit (ads and newsletters say "google" too).
+  const named = UTM_ALIASES[value] ?? outsideSourceOfHost(value);
+  return named && named !== "search" ? named : "other";
+}
+
+/**
+ * The first rule that fires wins:
+ *  1. our extension, or another one, by `clientClass`                → extension
+ *  2. Referer (else Origin) names a search engine, assistant or
+ *     social site; a search engine on /api/* or /mcp is a script on
+ *     that engine's page (the extension on Google Flights), not a
+ *     search visit                                                   → that class | extension
+ *  3. Referer/Origin is one of our own hosts                         → own
+ *  4. utm_source: ours (cal), an assistant's or a social site's      → calendar | assistant | social
+ *  5. Sec-Fetch-Site same-origin/same-site. Our pages send no
+ *     referrer (Referrer-Policy: no-referrer), so this is how
+ *     in-site clicks and our own scripts' calls are seen             → own
+ *  6. any other referrer, origin or utm_source, or Sec-Fetch-Site
+ *     cross-site with nothing named                                  → other
+ *  7. Sec-Fetch-Site none: typed, bookmarked or opened from an app   → direct
+ *  8. no signal at all: most robots and scripts                      → none
+ *
+ * A user agent alone never makes a request "assistant": an assistant's
+ * fetcher is already `client_class` claude | gptbot | perplexity, and this
+ * tag is about where a visit came from, not who is asking.
+ */
+export function classifyVisitSource(req: Request, url: URL, clientClass: string): VisitSource {
+  if (clientClass === "extension" || clientClass === "other-extension") return "extension";
+  const referred =
+    sourceOfReferrer(req.headers.get("referer")) ?? sourceOfReferrer(req.headers.get("origin"));
+  if (referred === "search") {
+    const scripted = url.pathname.startsWith("/api/") || url.pathname === "/mcp";
+    return scripted ? "extension" : "search";
+  }
+  if (referred && referred !== "other") return referred;
+  const utm = sourceOfUtm(url.searchParams.get("utm_source"));
+  if (utm && utm !== "other") return utm;
+  const fetchSite = req.headers.get("sec-fetch-site");
+  if (fetchSite === "same-origin" || fetchSite === "same-site") return "own";
+  if (referred || utm || fetchSite === "cross-site") return "other";
+  return fetchSite === "none" ? "direct" : "none";
 }
 
 /** `client_class` for /mcp tool calls, which carry no request of their own to classify. */
@@ -419,7 +604,8 @@ export const COUNTERS = {
   VENDOR_REQUEST: "vendor.request",
 
   // HTTP requests
-  // tags: method, route (allowlisted), status_code, tenant, client_class
+  // tags: method, route (allowlisted), status_code, tenant, client_class,
+  //   visit_source (classifyVisitSource)
   HTTP_REQUEST: "http.request",
 
   // A new SEC filing surfaced for anchor review — tags: company, form, airline

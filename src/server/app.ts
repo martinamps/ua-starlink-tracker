@@ -202,6 +202,7 @@ import { unixNow } from "../database/sql/windows";
 import {
   COUNTERS,
   classifyRequest,
+  classifyVisitSource,
   metrics,
   normalizeAircraftType,
   normalizeAirlineTag,
@@ -469,13 +470,15 @@ function countRequest(
   tenant: Tenant,
   status: number
 ): void {
+  const client = requestClientTags(req, url);
   metrics.increment(COUNTERS.HTTP_REQUEST, {
     method: req.method,
     route: metricRoute(m),
     status_code: status,
     tenant: tenantScope(tenant),
     airline: httpAirlineTag(tenant),
-    ...requestClientTags(req, url),
+    ...client,
+    visit_source: classifyVisitSource(req, url, String(client.client_class)),
   });
 }
 

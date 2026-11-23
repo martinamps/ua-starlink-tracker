@@ -24,6 +24,7 @@ export {
   normalizeStarlinkStatus,
   classifyUserAgent,
   classifyRequest,
+  classifyVisitSource,
   normalizeExtVersion,
   requestClientTags,
   mcpClientTags,
