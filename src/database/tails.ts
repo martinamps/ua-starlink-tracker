@@ -176,6 +176,10 @@ export interface TailRecord {
   otherWifi: string | null;
   /** The log's row for a "reported" tail: why it isn't counted. */
   reported: ReportedInstall | null;
+  /** The row /fleet marks "sheet lists Starlink, not counted" from, held past
+   * the log's window too, where the kind is "other": the page then still says
+   * what the sheet lists, so it cannot answer a plain "No" under a marked cell. */
+  sheetListing: ReportedInstall | null;
   listing: TailListing | null;
   fleet: TailFleetRow | null;
   checks: TailChecks;
@@ -270,6 +274,12 @@ export function getTailRecord(
     ) ?? null;
   const kind = classifyTail({ listing, fleet, reported: reportedRow !== null });
   const equipped = kind === "verified" || kind === "listed";
+  const sheetListing =
+    reportedRow ??
+    (row && !equipped
+      ? (getListedNotCounted(db, airline, { now: nowSec }).find((r) => r.TailNumber === tail) ??
+        null)
+      : null);
   const pipeline = equipped
     ? null
     : (getFleetProgressTails(db, airline).find((r) => r.tail === tail) ?? null);
@@ -282,6 +292,7 @@ export function getTailRecord(
         ? (reportedRow?.observed_wifi ?? null)
         : otherProvider({ listing, fleet }),
     reported: kind === "reported" ? reportedRow : null,
+    sheetListing,
     listing,
     fleet,
     checks: tailChecks(db, airline, tail),

@@ -167,6 +167,24 @@ function pipelineAnswer(r: TailRecord) {
     : null;
 }
 
+const contradictedSentence = (tail: string, site: string, wifi: string | null) =>
+  `The community fleet sheet lists ${tail} with Starlink, but our own check of ${site} still reads ${wifiPhrase(wifi)}.`;
+
+/**
+ * For a listing whose reads "have not settled" while the rows below show a
+ * "Settled reading": that row is the roster's verdict on the plane, and the
+ * unsettled one is the listing's. Empty when the row is not shown.
+ */
+function settledRowNote(r: TailRecord): string {
+  const { fleet, listing } = r;
+  if (!fleet?.verified_at || !fleet.verified_wifi) return "";
+  const listedSec = listing?.found ? Date.parse(`${listing.found}T00:00:00Z`) / 1000 : Number.NaN;
+  const reading = `The settled reading below, ${wifiPhrase(fleet.verified_wifi)},`;
+  return fleet.verified_at < listedSec
+    ? ` ${reading} was made before we saw the listing.`
+    : ` ${reading} is our verdict on the plane; no verdict of ours stands on the listing itself yet.`;
+}
+
 function answerFor(r: TailRecord, site: string): { answer: string; note: string | null } {
   const { tail } = r;
   const inPipeline = pipelineAnswer(r);
@@ -195,7 +213,7 @@ function answerFor(r: TailRecord, site: string): { answer: string; note: string 
         const before =
           unchecked && r.fleet?.verified_wifi
             ? ` Our last settled reading, ${wifiPhrase(r.fleet.verified_wifi)}, dates from before we saw the listing.`
-            : "";
+            : settledRowNote(r);
         return {
           answer: unchecked
             ? `The community fleet sheet lists ${tail} with Starlink. We have not checked it on ${site} since we first saw the listing.`
@@ -204,7 +222,7 @@ function answerFor(r: TailRecord, site: string): { answer: string; note: string 
         };
       }
       return {
-        answer: `The community fleet sheet lists ${tail} with Starlink, but our own check of ${site} still reads ${wifiPhrase(r.otherWifi)}.`,
+        answer: contradictedSentence(tail, site, r.otherWifi),
         note:
           reason === "no_wifi"
             ? `${count} Our check has never read Starlink on this plane; this page changes when it does.`
@@ -217,6 +235,14 @@ function answerFor(r: TailRecord, site: string): { answer: string; note: string 
         note: "It is not in our count until a listing stands behind the reading.",
       };
     case "other":
+      // Past the log's window /fleet still marks the cell, so the page still
+      // names the listing. The answer stays "No" and the page out of search.
+      if (r.sheetListing) {
+        return {
+          answer: contradictedSentence(tail, site, r.sheetListing.observed_wifi ?? r.otherWifi),
+          note: "It is not in our count: our check has not agreed with the listing. This page changes if it does.",
+        };
+      }
       return { answer: `${tail} does not have Starlink.${readingSentence(r, site)}`, note: null };
     default:
       return {
@@ -230,12 +256,15 @@ function evidenceFacts(r: TailRecord, site: string): TailFact[] {
   const facts: TailFact[] = [];
   const { listing, checks, fleet } = r;
   const equipped = r.kind === "verified" || r.kind === "listed";
-  if (listing?.found && (equipped || r.kind === "reported")) {
+  const marked = r.kind === "reported" || r.sheetListing !== null;
+  if (listing?.found && (equipped || marked)) {
     const by = listing.ownDiscovery ? "found by our own check" : "from the community fleet sheet";
     facts.push({
       label: equipped ? "On our list since" : "Sheet listing first seen",
       value: `${shortDate(listing.found)}${listing.foundApprox ? " or earlier" : ""}, ${by}`,
     });
+  } else if (r.sheetListing && r.kind !== "reported") {
+    facts.push({ label: "Community fleet sheet", value: "Lists this plane with Starlink" });
   }
   // The settled reading is the consensus of several checks; the latest check
   // is one reading and can disagree with it, so each is shown under its name.

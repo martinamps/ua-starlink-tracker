@@ -1399,6 +1399,11 @@ export function getRecentInstalls(
  * predicate and would chart as a real install spike. Only a per-day series can
  * see that shape, so the Install Rate Index detects it downstream
  * (excludeMassWriteDays) before it rolls up to months.
+ *
+ * A DateFound that is not a real calendar day is left out of the series (the
+ * tail stays counted): one such row once took down every page that charts or
+ * paces installs, and an empty one most of the site, since it sorts first and
+ * becomes the series' opening month.
  */
 export function getDailyInstalls(
   db: Database,
@@ -1408,7 +1413,8 @@ export function getDailyInstalls(
     `SELECT substr(DateFound, 1, 10) AS day, COUNT(*) AS installs
      FROM starlink_planes
      WHERE ${equippedSql("starlink_planes")}
-       AND ${INSTALL_FILTER}`,
+       AND ${INSTALL_FILTER}
+       AND substr(DateFound, 1, 10) = date(substr(DateFound, 1, 10))`,
     airline
   );
   return db.query(`${q.sql} GROUP BY day ORDER BY day`).all(...q.params) as {

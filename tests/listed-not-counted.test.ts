@@ -70,7 +70,13 @@ const SHOWN: Record<string, UncountedReason> = {
   N71NON: "no_wifi",
   N3OTH: "other_provider",
   N4OLD: "other_provider",
+  N4OLDN: "no_wifi",
+  N4SEED: "other_provider",
+  N4NODT: "other_provider",
+  N7NEWR: "awaiting_check",
 };
+/** Shown, but not in the dated log: past its window, or on a tab it never dates. */
+const OFF_LOG = ["N4OLD", "N4OLDN", "N4SEED", "N4NODT", "N5OLDA"];
 /** Sheet-listed, uncounted, and hidden on purpose: united.com's regional flap. */
 const FLAPS = ["N72FLP", "N73FLP"];
 const COUNTED = ["N1CNT", "N2LST", "N8DUP"];
@@ -117,6 +123,23 @@ beforeAll(() => {
   addFleet(db, "N3OTH", "negative", { verifiedWifi: "Viasat", verifiedAt: now - DAY });
   list("N4OLD", { verified: "Viasat", foundDaysAgo: REPORTED_MAX_AGE_DAYS + 15 });
   addFleet(db, "N4OLD", "negative", { verifiedWifi: "Viasat", verifiedAt: now - DAY });
+
+  // The same past the window with a lasting "no Wi-Fi", and a listing on a
+  // bulk tab, which the log never dates.
+  list("N4OLDN", { verified: "None", foundDaysAgo: REPORTED_MAX_AGE_DAYS + 15 });
+  addFleet(db, "N4OLDN", "negative", { verifiedWifi: "None", verifiedAt: now - DAY });
+  read("N4OLDN", "None", 1);
+  list("N4SEED", { verified: "Viasat", foundDaysAgo: 3, gid: "ua_seed" });
+  addFleet(db, "N4SEED", "negative", { verifiedWifi: "Viasat", verifiedAt: now - DAY });
+  // Contradicted, and undated: no log can place it.
+  list("N4NODT", { verified: "Viasat", foundDaysAgo: 3 });
+  db.run("UPDATE starlink_planes SET DateFound = NULL WHERE TailNumber = 'N4NODT'");
+  addFleet(db, "N4NODT", "negative", { verifiedWifi: "Viasat", verifiedAt: now - DAY });
+
+  // No verdict on the listing; the roster settled Viasat on reads since it.
+  list("N7NEWR", { verified: null, foundDaysAgo: 8 });
+  addFleet(db, "N7NEWR", "negative", { verifiedWifi: "Viasat", verifiedAt: now - DAY });
+  for (const d of [3, 2, 1]) read("N7NEWR", "Viasat", d);
 
   // Ours, not the sheet's.
   list("N6DISC", { verified: "Viasat", foundDaysAgo: 1, gid: "discovery" });
@@ -235,10 +258,9 @@ describe("getListedNotCounted", () => {
 
   test("the log ages out old listings; a tail's page keeps an unchecked one", () => {
     const log = getReportedInstalls(db, "UA", 100).map((r) => r.TailNumber);
-    const old = ["N4OLD", "N5OLDA"];
     expect(log.sort()).toEqual(
       Object.keys(SHOWN)
-        .filter((t) => !old.includes(t))
+        .filter((t) => !OFF_LOG.includes(t))
         .sort()
     );
     const page = getListedNotCounted(db, "UA", { scope: "tail" }).map((r) => r.TailNumber);
@@ -373,7 +395,7 @@ describe("/newly-equipped and its feed", () => {
     expect(entry("N3OTH")).toContain(
       "This tracker&apos;s own check of the airline&apos;s site still reads Viasat"
     );
-    for (const tail of Object.keys(SHOWN).filter((t) => !t.includes("OLD"))) {
+    for (const tail of Object.keys(SHOWN).filter((t) => !OFF_LOG.includes(t))) {
       expect(entry(tail), tail).toContain("reported with Starlink, not yet confirmed</title>");
       expect(entry(tail), tail).not.toContain("now has Starlink");
     }
@@ -381,12 +403,13 @@ describe("/newly-equipped and its feed", () => {
   });
 });
 
-describe("/fleet", () => {
-  const titleOf = (html: string, tail: string) =>
-    html.match(new RegExp(`id="t-${tail}"[^>]*title="([^"]*)"`))?.[1] ??
-    html.match(new RegExp(`title="([^"]*)"[^>]*id="t-${tail}"`))?.[1] ??
-    "";
+/** The hover line of a tail's cell on /fleet. */
+const titleOf = (html: string, tail: string) =>
+  html.match(new RegExp(`id="t-${tail}"[^>]*title="([^"]*)"`))?.[1] ??
+  html.match(new RegExp(`title="([^"]*)"[^>]*id="t-${tail}"`))?.[1] ??
+  "";
 
+describe("/fleet", () => {
   test("every shown tail carries the mark and its reason", async () => {
     const { status, text } = await bodyOf(app, "/fleet", UA);
     expect(status).toBe(200);
@@ -432,6 +455,23 @@ describe("/fleet/{tail}", () => {
     expect(body).not.toContain("dates from before we saw the listing");
   });
 
+  test("unsettled reads above a settled-reading row say which reading is which", async () => {
+    // The roster's verdict on N79PRK is older than the listing.
+    const older = await page("N79PRK");
+    expect(older).toContain("Settled reading");
+    expect(older).toContain(
+      "The settled reading below, Panasonic Wi-Fi, was made before we saw the listing."
+    );
+    // N7NEWR's is newer: the roster settled, the listing has no verdict yet.
+    const newer = await page("N7NEWR");
+    expect(newer).toContain("have not settled on a reading");
+    expect(newer).toContain("Settled reading");
+    expect(newer).toContain(
+      "The settled reading below, Viasat Wi-Fi, is our verdict on the plane; no verdict of ours stands on the listing itself yet."
+    );
+    expect(newer).not.toContain("was made before we saw the listing");
+  });
+
   test("a lasting no Wi-Fi says we have never read Starlink on it", async () => {
     const body = await page("N71NON");
     expect(body).toContain(
@@ -444,11 +484,43 @@ describe("/fleet/{tail}", () => {
     expect(await page("N5OLDA")).toContain("The community fleet sheet lists N5OLDA with Starlink.");
   });
 
-  test("a flap and a contradicted listing past the window keep their plain no", async () => {
-    for (const tail of [...FLAPS, "N4OLD"]) {
+  test("a flap keeps its plain no", async () => {
+    for (const tail of FLAPS) {
       const body = await page(tail);
       expect(body, tail).toContain(`${tail} does not have Starlink.`);
       expect(body, tail).not.toContain("The community fleet sheet lists");
+    }
+  });
+
+  test("a contradicted listing past the window still names the sheet, as /fleet's mark does", async () => {
+    const fleet = (await bodyOf(app, "/fleet", UA)).text;
+    for (const [tail, reads] of [
+      ["N4OLD", "Viasat Wi-Fi"],
+      ["N4OLDN", "no Wi-Fi"],
+      ["N4SEED", "Viasat Wi-Fi"],
+      ["N4NODT", "Viasat Wi-Fi"],
+    ]) {
+      expect(titleOf(fleet, tail), tail).toContain("sheet lists Starlink, not counted");
+      const body = await page(tail);
+      expect(body, tail).toContain(
+        `The community fleet sheet lists ${tail} with Starlink, but our own check of united.com still reads ${reads}.`
+      );
+      expect(body, tail).toContain("It is not in our count");
+      expect(body, tail).toContain(
+        tail === "N4NODT" ? "Lists this plane with Starlink" : "Sheet listing first seen"
+      );
+      // Still a "No", still out of search: only the wording moved.
+      expect(body, tail).not.toContain("Not confirmed");
+      expect(body, tail).not.toContain(`${tail} does not have Starlink.`);
+      expect(body, tail).toMatch(/<meta name="robots" content="noindex/);
+    }
+  });
+
+  test("every tail /fleet marks names the sheet on its own page", async () => {
+    for (const r of getListedNotCounted(db, "UA")) {
+      expect(await page(r.TailNumber), r.TailNumber).toContain(
+        `The community fleet sheet lists ${r.TailNumber} with Starlink`
+      );
     }
   });
 });

@@ -1525,7 +1525,9 @@ const apiMismatches: Handler = ({ reader }) => {
       verified_at: new Date(m.verified_at * 1000).toISOString(),
       date_found: m.DateFound,
     })),
-    // Every sheet-listed tail no count includes, the rows above among them.
+    // Every sheet-listed tail no count includes. A row above is among them
+    // only when it is such a listing: a discovery row, or a second row of a
+    // counted tail, is a mismatch and not here.
     // Its own key, so `mismatches` keeps a provider and a date on every row:
     // a tail awaiting our check has neither.
     listed_not_counted: reader.getListedNotCounted().map((r) => ({
