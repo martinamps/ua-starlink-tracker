@@ -115,7 +115,8 @@ import {
 // Protocol versions we support (newest first)
 const SUPPORTED_PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26"];
 
-// registry/server.*.json must carry the same value (tests/mcp-registry.test.ts).
+// registry/server.*.json carry the same major.minor; their patch number is the
+// listing's own revision (tests/mcp-registry.test.ts).
 export const MCP_SERVER_VERSION = "1.0.0";
 
 /** The host's own site: a ?scope= override still lives on the host it was asked on. */

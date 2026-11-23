@@ -14,7 +14,7 @@
 
 import { beforeAll, describe, expect, test } from "bun:test";
 import { TITLE_MAX, aircraftPagesFor, aircraftTypeTitle } from "../src/airlines/aircraft-pages";
-import { SITES } from "../src/airlines/registry";
+import { SITES, hubLookupAirlines } from "../src/airlines/registry";
 import { getSitemapRoutes } from "../src/database/database";
 import { clampMetaDescription, createApp } from "../src/server/app";
 import type { AircraftVerdictKind } from "../src/types";
@@ -78,6 +78,46 @@ describe("/mcp content negotiation", () => {
   test("an MCP-protocol GET still reaches the protocol handler", async () => {
     const res = await app.dispatch(req("/mcp", UA, { headers: { Accept: "text/event-stream" } }));
     expect((res.headers.get("content-type") ?? "").includes("text/html")).toBe(false);
+  });
+});
+
+describe("/mcp on hosts that do not advertise it", () => {
+  const unadvertised = Object.values(SITES).filter((s) => !s.features.mcpPage);
+
+  test("a browser gets the setup page for that host's own address, noindex", async () => {
+    expect(unadvertised.length).toBeGreaterThan(0);
+    for (const site of unadvertised) {
+      const host = site.canonicalHost;
+      const res = await app.dispatch(req("/mcp", host, { headers: { Accept: "text/html" } }));
+      expect(res.status, host).toBe(200);
+      const body = await res.text();
+      expect(body, host).toContain(`https://${host}/mcp`);
+      expect(body, host).toContain('<meta name="robots" content="noindex, follow"');
+    }
+  });
+
+  test("search engines' view is unchanged: robots disallows it, the sitemap omits it", async () => {
+    for (const site of unadvertised) {
+      const host = site.canonicalHost;
+      const robots = await (await app.dispatch(req("/robots.txt", host))).text();
+      expect(robots, host).toContain("Disallow: /mcp");
+      const sitemap = await (await app.dispatch(req("/sitemap.xml", host))).text();
+      expect(sitemap, host).not.toContain(`https://${host}/mcp<`);
+    }
+  });
+
+  test("the advertised page stays indexable", async () => {
+    const body = await (
+      await app.dispatch(req("/mcp", UA, { headers: { Accept: "text/html" } }))
+    ).text();
+    expect(body).not.toContain("noindex");
+  });
+
+  test("the hub page names every airline its connector looks up", async () => {
+    const body = await (
+      await app.dispatch(req("/mcp", HUB, { headers: { Accept: "text/html" } }))
+    ).text();
+    for (const a of hubLookupAirlines()) expect(body, a.code).toContain(a.shortName);
   });
 });
 
