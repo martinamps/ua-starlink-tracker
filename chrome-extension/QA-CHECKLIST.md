@@ -16,11 +16,54 @@ About ten minutes, one sitting, in order. Use a desktop window at least
 robot check, which is why these are done by hand). Keep the page's DevTools
 console open throughout.
 
+### Routes and dates, and how to check them on the day
+
+The pass runs on two United routes and one Alaska route. Which aircraft fly
+where changes daily, so each is named with the reason it was chosen, and all
+three were checked against the live tracker on **2026-11-23**:
+
+- **Newark ↔ Washington National (EWR ↔ DCA)**, the main route. Every United
+  nonstop there is a GoJet CRJ-550, a type with 103 of its 104 aircraft
+  fitted, so nearly every United nonstop gets a badge on any date. On the
+  day checked: 18 flights EWR → DCA and 17 DCA → EWR had a Starlink aircraft
+  assigned through 25 November, all of them CRJ-550s, and every flight number
+  in both directions was predicted at 97% or more. This stops being true
+  only if United moves the route to another aircraft type.
+- **Chicago O'Hare → Newark (ORD → EWR)**, the mixed route for step 12. It
+  is flown by partly fitted mainline types, so some United cards get a badge
+  and some don't. On the day checked, two weeks out: 4 of its 11 flight
+  numbers were at 80% or more (UA1856 87%, UA1273 86%, UA2475 82%, UA1236
+  81%) and 7 below (down to UA2151 at 45%).
+- **Honolulu → Los Angeles (HNL → LAX)**, for Alaska. The Hawaiian-operated
+  AS800-999 flights are a fully fitted subfleet, answered as Starlink on any
+  date.
+
+**Before step 1, confirm the routes still work today** (one minute). Open
+`unitedstarlinktracker.com/routes`, the tracker's own list of routes with
+Starlink departures in the next 48 hours, and find EWR ⇄ DCA and ORD ⇄ EWR,
+each with departures in both directions. If one is missing, take another pair
+from that list that has departures both ways and use it wherever the steps
+name the missing one; the busiest pairs are at the top. To check a single
+flight, enter its number and date at `unitedstarlinktracker.com/check-flight`.
+A step that shows no badge on a route the list doesn't carry is a stale
+route, not a failed build.
+
+**Which dates give which badge.** United assigns aircraft about two days
+ahead. A departure **today or tomorrow** gets a blue "Starlink" (verified) or
+green "Starlink (installed)" badge from the assigned aircraft. A departure
+**three or more days out** has no aircraft yet and gets a gray "Starlink
+~NN%" badge from the flight number's history, and only at 80% or more. Use
+about two weeks out wherever a step asks for gray badges.
+
+### The steps
+
 1. [ ] **Search from the home page.** Open `google.com/travel/flights`, fill
-       in a round trip SFO → EWR leaving tomorrow and returning about two
+       in a round trip EWR → DCA leaving tomorrow and returning about two
        weeks later, press Search. *Look for:* blue "Starlink" or green
-       "Starlink (installed)" badges on some United results within a few
-       seconds, without reloading.
+       "Starlink (installed)" badges on most United nonstops within a few
+       seconds, without reloading. One or two without a badge is normal (an
+       aircraft not yet assigned, or the one unfitted CRJ-550); none at all
+       is a failure, once the routes list above shows the route.
 2. [ ] **Badge placement.** *Look for:* each badge sitting inline right after
        the flight times. Pinned to the card's corner is the fallback and is
        acceptable; covering text is not. No card has two badges.
@@ -29,31 +72,48 @@ console open throughout.
        count).
 4. [ ] **Expand and collapse.** Open one result's "Flight details", then close
        it. *Look for:* every other card's badge back within about a second.
-5. [ ] **Load more.** Scroll down and press "View more flights". *Look for:*
-       the late cards get badges without a reload.
-6. [ ] **Starlink only.** Press the "Starlink only" chip, bottom right.
-       *Look for:* United cards without a badge go dim (they are dimmed, never
-       hidden); badged cards and other airlines stay as they are. Press it
-       again: everything back to full.
-7. [ ] **Date arrows, fast.** Click the > arrow next to the departure date
-       four or five times quickly. *Look for:* once the list settles, no
-       blue or green badge is left over from the first date: this far out any
-       badge is a gray "Starlink ~NN%", and its tooltip speaks of a chance,
-       not of a verified aircraft.
-8. [ ] **Date picker.** Pick a departure date about two weeks out in the
-       calendar. *Look for:* the old badges are gone, and any badge on the new
-       results is a gray "Starlink ~NN%" of 80% or more.
-9. [ ] **Round trip.** Go back to tomorrow's date, choose an outbound flight,
-       and wait for the return results. *Look for:* any badge there is a gray
-       percentage (the return is two weeks out), not a blue or green one
-       carried over from tomorrow.
-10. [ ] **Narrow window.** Drag the window narrower than 1024px and back.
-        *Look for:* badges move to the card's corner and back, never doubled.
-11. [ ] **From a search link.** In a new tab, search Google for "flights from
-        SFO to EWR" and follow the link into Flights
-        (`/travel/flights?q=…`). *Look for:* badges without a reload.
-12. [ ] **One other airline.** Search HNL → LAX for tomorrow. *Look for:* at
-        least one badge on an Alaska result.
+5. [ ] **Load more.** Scroll down and press "View more flights" (or "Other
+       departing flights"), if the page offers it. *Look for:* the late cards
+       that are United nonstops get badges without a reload. Connecting
+       itineraries get one only when every leg qualifies, so most have none.
+6. [ ] **Date arrows, fast.** Click the > arrow next to the departure date
+       four or five times quickly. *Look for:* once the list settles, at
+       least one United nonstop has a gray "Starlink ~NN%" badge whose
+       tooltip speaks of a chance, and no blue or green badge is left over
+       from the first date (five days out, no aircraft is assigned yet).
+7. [ ] **Date picker.** Pick a departure date about two weeks out in the
+       calendar. *Look for:* the old badges are gone, and most United
+       nonstops carry a gray "Starlink ~NN%" of 80% or more (on this route,
+       97% to 99% when checked).
+8. [ ] **Round trip.** Set the departure back to tomorrow, choose an outbound
+       flight, and wait for the return results. *Look for:* at least one
+       badge on the return results, and every badge on them gray (the return
+       is two weeks out), not blue or green carried over from tomorrow. The
+       outbound flight you chose, if Google repeats it above the return
+       results, rightly keeps its own blue or green badge.
+9. [ ] **Narrow window.** Drag the window narrower than 1024px and back.
+       *Look for:* badges move to the card's corner and back, never doubled.
+10. [ ] **From a search link.** In a new tab, search Google for "flights from
+        EWR to DCA" and follow the link into Flights
+        (`/travel/flights?q=…`). *Look for:* badges without a reload. Google
+        picks the dates here: gray badges if the departure is three or more
+        days out, blue or green if sooner.
+11. [ ] **One other airline.** Search HNL → LAX one way, for tomorrow. *Look
+        for:* at least one badge on an Alaska result. Leave this page open
+        for the next step's last check.
+12. [ ] **Starlink only, on a mixed route.** In another tab, search ORD → EWR
+        one way, about two weeks out. *Look for:* gray badges on some United
+        nonstops and none on others. Press the "Starlink only" chip, bottom
+        right. *Look for:* the cards that go dim (dimmed, never hidden) are
+        those the tracker answered as not Starlink or under 80%: here, the
+        United cards without a badge. Badged cards stay as they are, and so
+        do cards of airlines the extension doesn't cover (Delta, American,
+        JetBlue and the like). Press it again: everything back to full. If
+        every United card on the page has a badge, there is nothing to dim:
+        try another date. Then press the chip on the HNL → LAX page from
+        step 11: unbadged Alaska cards dim too, mainline Alaska among them
+        (Alaska is an airline the extension covers, and its mainline is far
+        below 80%). That is correct, not a fault.
 13. [ ] **Console.** *Look for:* no errors or warnings from the extension in
         the page's console across all of the above.
 
@@ -92,9 +152,10 @@ The reference list, section by section.
 
 ## United (frozen endpoint)
 
-- [ ] Search a UA-heavy route (e.g. SFO → EWR, tomorrow). Blue "Starlink" or
-      green "Starlink (installed)" badges appear on some results within a few
-      seconds
+- [ ] Search a route from the tracker's live list at
+      `unitedstarlinktracker.com/routes` (e.g. ORD → EWR, tomorrow; see
+      "Routes and dates" above). Blue "Starlink" or green "Starlink
+      (installed)" badges appear on some results within a few seconds
 - [ ] Search the same route ~2 weeks out. Gray "Starlink ~NN%" badges appear
       only on flights at ≥80%; no badge on the rest
 - [ ] Hover each badge tier — tooltip explains verified / installed / predicted
@@ -175,10 +236,12 @@ Google Flights lists Hawaiian-operated flights only under Alaska `AS` numbers
 
 ## Starlink only toggle (2.2)
 
-- [ ] SFO → EWR tomorrow: a "Starlink only" chip appears bottom-right once
-      results are answered; on a page with no tracked flights it never appears
-- [ ] Toggle on: UA cards with no badge (verified no, or prediction below the
-      bar) dim; badged cards and non-tracked airlines (Delta, JetBlue) stay as is
+- [ ] ORD → EWR tomorrow (or another route from the tracker's live list): a
+      "Starlink only" chip appears bottom-right once results are answered; on a page with no tracked flights it never appears
+- [ ] Toggle on: cards answered as not Starlink or below the bar dim. That is
+      UA cards with no badge, and on other routes unbadged cards of the other
+      covered airlines too (Alaska mainline, Qatar's A380). Badged cards and
+      non-tracked airlines (Delta, JetBlue) stay as is
 - [ ] Toggle off: every card back to full opacity; badges unchanged
 - [ ] With the toggle on, scroll / "View more flights": late cards dim once
       answered, cards still loading are left alone
