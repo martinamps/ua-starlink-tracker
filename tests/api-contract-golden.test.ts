@@ -118,6 +118,9 @@ function qrHistory(db: Database, fn: string, date: string, eq: string): void {
   );
 }
 
+const QR_777 = { airline: "QR", aircraftType: "Boeing 777-3DZ(ER)" };
+const QR_788 = { airline: "QR", aircraftType: "Boeing 787-8 Dreamliner" };
+
 function seed(): Database {
   const db = makeFreshDb();
   // Scheduled yes, verified and spreadsheet-only.
@@ -149,6 +152,13 @@ function seed(): Database {
     airline: "AS",
   });
   // QR: published yes / no / rolling / cancelled, history beyond the window, and no data.
+  // A roster for the two types with held-back aircraft, so their odds are pinned.
+  for (let i = 0; i < 48; i++) addFleet(db, `A7-B${i}`, "confirmed", QR_777);
+  for (const t of ["OA", "OB", "OC", "OD", "OE", "OF", "OG", "OH", "OI"]) {
+    addFleet(db, `A7-B${t}`, "unknown", QR_777);
+  }
+  for (let i = 0; i < 30; i++) addFleet(db, `A7-BC${i}`, "confirmed", QR_788);
+  for (const t of ["UA", "UB"]) addFleet(db, `A7-B${t}`, "unknown", QR_788);
   qrSchedule(db, "QR1", D1, "77W");
   qrSchedule(db, "QR3", D1, "388");
   qrSchedule(db, "QR5", D1, "788");

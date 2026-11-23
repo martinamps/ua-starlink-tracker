@@ -200,16 +200,16 @@ describe("qatar_equipment_history persistence", () => {
 });
 
 describe("QR verdict: published schedule window", () => {
-  test("classifies at read time: a 788 stored as Rolling answers yes", async () => {
+  test("classifies at read time: a 788 stored as Rolling answers as a fitted type", async () => {
     const db = makeSyntheticDb();
     scheduleRow(db, "QR1", at(3), "788", { wifi: "Rolling" });
     const v = await verdict(db, "QR1", at(3));
     expect(v.kind).toBe("qatar");
     if (v.kind === "qatar") {
-      expect(v.hasStarlink).toBe(true);
-      expect(v.qclass).toBe("yes");
-      expect(v.reason).toContain("Qatar reports");
-      expect(v.reason).toContain("787-8 fleet");
+      // Fitted, but two leased 787-8s are held back by name: odds, never "rolling".
+      expect(v.hasStarlink).toBeNull();
+      expect(v.qclass).toBe("partly");
+      expect(v.reason).toContain("787-8s count as fitted");
     }
   });
 
@@ -269,7 +269,7 @@ describe("QR verdict: published schedule window", () => {
 
   test("a row only in history is answered through the union", async () => {
     const db = makeSyntheticDb();
-    historyLeg(db, "QR15", at(1), "77W");
+    historyLeg(db, "QR15", at(1), "359");
     const v = await verdict(db, "QR15", at(1));
     expect(v.kind).toBe("qatar");
     if (v.kind === "qatar") expect(v.hasStarlink).toBe(true);
@@ -318,7 +318,7 @@ describe("QR verdict: published schedule window", () => {
 
   test("REST/MCP telemetry keeps type answers apart from verified ones", async () => {
     const db = makeSyntheticDb();
-    scheduleRow(db, "QR1", at(1), "77W");
+    scheduleRow(db, "QR1", at(1), "359");
     scheduleRow(db, "QR3", at(1), "388");
     const yes = verdictTelemetry(await verdict(db, "QR1", at(1)));
     const no = verdictTelemetry(await verdict(db, "QR3", at(1)));
@@ -591,8 +591,9 @@ describe("QR verdict: swap risk inside the window", () => {
     }
     scheduleRow(db, "QR500", at(3), "788");
     const v = await verdict(db, "QR500", at(3));
+    // Answered from the schedule, not as swap-risk history.
     expect(v.kind).toBe("qatar");
-    if (v.kind === "qatar") expect(v.hasStarlink).toBe(true);
+    if (v.kind === "qatar") expect(v.qclass).toBe("partly");
   });
 
   test("not-yet-flown days and late first sightings don't count as swaps", async () => {
@@ -613,7 +614,7 @@ describe("QR verdict: swap risk inside the window", () => {
   test("+1 keeps the firm scheduled-type yes", async () => {
     const v = await verdict(swappy(), "QR7", at(1));
     expect(v.kind).toBe("qatar");
-    if (v.kind === "qatar") expect(v.hasStarlink).toBe(true);
+    if (v.kind === "qatar") expect(v.qclass).toBe("partly");
   });
 });
 

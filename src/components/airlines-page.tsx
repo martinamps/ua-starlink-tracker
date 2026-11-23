@@ -85,6 +85,9 @@ export interface TypePhase {
   /** Roster counts for the family, when known. */
   equipped?: number;
   total?: number;
+  /** Roster aircraft of the family held back by name: not confirmed fitted,
+   * so "every one" would overstate a confirmed family. */
+  heldBack?: { count: number; group: string };
 }
 
 const PHASE_LABEL: Record<WifiPhase, { text: string; tone: Tone }> = {
@@ -113,8 +116,14 @@ export function PhaseTable({
   return (
     <div className="mb-4">
       <Eyebrow className="mb-1">By aircraft type</Eyebrow>
-      {phases.map(({ family, label, phase, equipped, total }) => {
-        const p = PHASE_LABEL[phase];
+      {phases.map(({ family, label, phase, equipped, total, heldBack }) => {
+        const p =
+          phase === "confirmed" && heldBack
+            ? {
+                text: `Starlink on most · ${fmt(heldBack.count)} ${heldBack.group} not confirmed`,
+                tone: PHASE_LABEL.confirmed.tone,
+              }
+            : PHASE_LABEL[phase];
         return (
           <div
             key={family}
@@ -132,7 +141,7 @@ export function PhaseTable({
                 </span>
               )}
             </span>
-            <span className={TONE_TEXT[p.tone]}>{p.text}</span>
+            <span className={`text-right ${TONE_TEXT[p.tone]}`}>{p.text}</span>
           </div>
         );
       })}

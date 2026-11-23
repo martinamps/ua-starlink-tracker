@@ -4292,10 +4292,26 @@ export function reconcileTypeDeterministicFleets(db: Database): number {
     const update = db.query(
       "UPDATE united_fleet SET starlink_status = ? WHERE tail_number = ? AND airline = ?"
     );
+    // A tail the rule names as an exception ("unknown") must not stay listed:
+    // a listing is what every count reads as equipped. Whatever wrote the
+    // listing, the named exception outranks it; nothing observes these tails.
+    const unsettle = db.query(
+      "UPDATE united_fleet SET starlink_status = 'unknown', verified_wifi = NULL, verified_at = NULL WHERE tail_number = ? AND airline = ?"
+    );
+    const unlist = db.query("DELETE FROM starlink_planes WHERE TailNumber = ? AND airline = ?");
     let changed = 0;
     const apply = db.transaction(
       (pending: Array<(typeof rows)[number] & { next: StarlinkStatus }>) => {
         for (const r of pending) {
+          if (r.next === "unknown") {
+            const unlisted = unlist.run(r.tail_number, a.code).changes;
+            if (r.starlink_status !== "unknown") {
+              unsettle.run(r.tail_number, a.code);
+              emitFleetStatusChange(r, "unknown");
+            }
+            if (unlisted > 0 || r.starlink_status !== "unknown") changed++;
+            continue;
+          }
           update.run(r.next, r.tail_number, a.code);
           emitFleetStatusChange(r, r.next);
           if (r.next === "confirmed") {
@@ -4314,8 +4330,11 @@ export function reconcileTypeDeterministicFleets(db: Database): number {
       }
     );
     apply(
-      rows.flatMap((r) => {
-        const next = a.typeDeterministicWifi?.(r.aircraft_type) ?? null;
+      rows.flatMap((r): Array<(typeof rows)[number] & { next: StarlinkStatus }> => {
+        const next = a.typeDeterministicWifi?.(r.aircraft_type, r.tail_number) ?? null;
+        // A held-back tail is always passed on: its status may already read
+        // "unknown" while a listing from before the exception still stands.
+        if (next === "unknown") return [{ ...r, next }];
         return next === null || next === r.starlink_status ? [] : [{ ...r, next }];
       })
     );

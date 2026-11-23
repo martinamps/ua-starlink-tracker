@@ -228,8 +228,14 @@ export interface AirlineConfig {
    * figures; UA's fleet_progress rows come from a community sheet instead. */
   officialTracker?: { label: string; url: string };
   /** For airlines whose Starlink status is fully determined by aircraft type
-   * (no per-tail observation needed). null = leave as unknown (in progress). */
-  typeDeterministicWifi?: (aircraftType: string) => StarlinkStatus | null;
+   * (no per-tail observation needed). null = leave as it is (in progress, or a
+   * type string we don't recognise). "unknown" = this tail is named as an
+   * exception to its type's rule: the reconcile un-settles it and drops its
+   * listing, so it counts nowhere as equipped. */
+  typeDeterministicWifi?: (aircraftType: string, tailNumber?: string) => StarlinkStatus | null;
+  /** Tails named as exceptions to their type's rule, with the evidence. Pages
+   * read it to say why a "done" type counts fewer aircraft than it flies. */
+  heldBackTail?: (tailNumber: string | null | undefined) => HeldBackTail | null;
   /** Type-deterministic route rule for airlines whose Starlink status depends only on aircraft type / route class, not per-tail observation. */
   routeTypeRule?: (
     origin: string,
@@ -617,6 +623,7 @@ const AIRLINE_DEFS = {
     flightHistoryModel: false,
     verifySite: "qatarairways.com",
     typeDeterministicWifi: qatarTypeToStarlink,
+    heldBackTail: qatarHeldBackTail,
     rollout: {
       status: "phase_done",
       statusLabel: "Mostly done (widebodies)",
@@ -802,6 +809,83 @@ const QATAR_PHASE_BY_FAMILY: Record<string, WifiPhase> = {
   B737: "negative",
 };
 
+/** How strong the case is that a tail is outside its type's rule. */
+export type HeldBackEvidence =
+  /** Passengers on these aircraft report paid Wi-Fi, and Qatar's own count leaves them out. */
+  | "passenger_reports"
+  /** Qatar's own count leaves the group out; nothing names the tails. */
+  | "count_only"
+  /** A fleet site reports them parked; whether they are fitted has no source. The thinnest. */
+  | "reported_parked";
+
+export interface HeldBackTail {
+  /** The IATA equipment code Qatar publishes for this airframe's type. */
+  equipment: string;
+  /** What sets the group apart, as a noun phrase for copy. */
+  group: string;
+  evidence: HeldBackEvidence;
+  /** Newest date a source supports the reason. */
+  asOf: string;
+  reason: string;
+}
+
+const EX_CATHAY: HeldBackTail = {
+  equipment: "77W",
+  group: "second-hand",
+  evidence: "passenger_reports",
+  asOf: "2026-07-15",
+  reason:
+    "Second-hand from Cathay Pacific. Qatar called 54 777s the whole 777 programme (The Peninsula, 2025-07-10) while flying 64; passengers on the ex-Cathay aircraft report paid Wi-Fi and no Starlink (One Mile at a Time reader comments, 2026-01-07 to 2026-07-15).",
+};
+const EX_VIRGIN_AUSTRALIA: HeldBackTail = {
+  equipment: "77W",
+  group: "second-hand",
+  evidence: "count_only",
+  asOf: "2026-03-12",
+  reason:
+    "Second-hand from Virgin Australia, still in Virgin Australia's cabin (Australian Frequent Flyer, 2026-03-12). Outside Qatar's count of 54 fitted 777s; no passenger report found either way.",
+};
+// Thinner than the 777s: the lease is well sourced, "parked since 03/2026" is
+// a fleet site's remark we could not open ourselves, and nothing says whether
+// they are fitted. Qatar's August 2026 count of 150 leaves no room for them.
+const OMAN_AIR_LEASE: HeldBackTail = {
+  equipment: "788",
+  group: "leased",
+  evidence: "reported_parked",
+  asOf: "2026-03",
+  reason:
+    "Leased from Oman Air, in Oman Air's cabin. Reported parked since March 2026 (Airfleets, read second-hand); fitted or not is unsourced, and Qatar's count of 150 in August 2026 leaves no room for them.",
+};
+
+// QR tails their type's phase does not settle. Qatar publishes no tail list,
+// so each entry rests on the evidence its `reason` names; none shows a tail's
+// wiring. A held-back tail is "not confirmed", never "negative": it leaves
+// every count and every listing, and its type's flight answers become odds
+// (qatarFittedShares). To restore one, delete its line — the next reconcile
+// settles it by type again. One more 777 with Qatar's own customer code is
+// outside Qatar's count of 54 and can't be named; it stays counted.
+const QATAR_HELD_BACK_TAILS: Readonly<Record<string, HeldBackTail>> = {
+  "A7-BOA": EX_CATHAY,
+  "A7-BOB": EX_CATHAY,
+  "A7-BOC": EX_CATHAY,
+  "A7-BOD": EX_CATHAY,
+  "A7-BOH": EX_CATHAY,
+  "A7-BOI": EX_CATHAY,
+  "A7-BOE": EX_VIRGIN_AUSTRALIA,
+  "A7-BOF": EX_VIRGIN_AUSTRALIA,
+  "A7-BOG": EX_VIRGIN_AUSTRALIA,
+  "A7-BUA": OMAN_AIR_LEASE,
+  "A7-BUB": OMAN_AIR_LEASE,
+};
+
+export function qatarHeldBackTail(tailNumber: string | null | undefined): HeldBackTail | null {
+  return tailNumber ? (QATAR_HELD_BACK_TAILS[tailNumber.toUpperCase()] ?? null) : null;
+}
+
+export function qatarHeldBackTails(): ReadonlyArray<readonly [string, HeldBackTail]> {
+  return Object.entries(QATAR_HELD_BACK_TAILS);
+}
+
 // Collapse normalizeAircraftType's granular families to QR program families:
 // the program treats the whole 737/A320 lineups uniformly. The 787 is the
 // opposite — QR's program splits it by sub-variant, which the shared family
@@ -853,6 +937,24 @@ export function qatarEquipment(
   return QATAR_EQUIPMENT[code.toUpperCase()] ?? null;
 }
 
+// The roster names airframes the way FR24 does ("Boeing 777-3DZ(ER)"); Qatar's
+// schedule names them by IATA code. Only passenger types the programme fits
+// need a row: this joins a roster count to a scheduled code, nothing else.
+const QATAR_ROSTER_EQUIPMENT: ReadonlyArray<readonly [RegExp, string]> = [
+  [/777-3/i, "77W"],
+  [/777-2/i, "77L"],
+  [/787-8/i, "788"],
+  [/787-9/i, "789"],
+  [/A350-9/i, "359"],
+  [/A350-10/i, "351"],
+];
+
+/** The equipment code Qatar's schedule uses for a roster type string. */
+export function qatarEquipmentCodeOfType(aircraftType: string | null | undefined): string | null {
+  const raw = aircraftType ?? "";
+  return QATAR_ROSTER_EQUIPMENT.find(([re]) => re.test(raw))?.[1] ?? null;
+}
+
 export function qatarStarlinkPhase(family: string | null): WifiPhase | null {
   return family ? (QATAR_PHASE_BY_FAMILY[family] ?? null) : null;
 }
@@ -884,10 +986,19 @@ export function providerLabel(status: StarlinkStatus | null): "Starlink" | "None
 // Catch-all is null so an FR24 type-string format drift produces no
 // observation instead of mass-flipping confirmed tails on reconcile
 // (unrecognized strings normalize to "other"/"unknown" — no phase).
-export function qatarTypeToStarlink(aircraftType: string): StarlinkStatus | null {
-  return phaseToStatus(
-    qatarStarlinkPhase(qatarProgramFamily(normalizeAircraftType(aircraftType), aircraftType))
-  );
+//
+// A held-back tail answers "unknown" whatever its type's phase says, so the
+// exception outlives a phase flip (the 787-9 switch included).
+export function qatarTypeToStarlink(
+  aircraftType: string,
+  tailNumber?: string,
+  /** The phase table to read; a test passes a flipped one to ask what a
+   * programme change would settle. */
+  phases: Readonly<Record<string, WifiPhase>> = QATAR_PHASE_BY_FAMILY
+): StarlinkStatus | null {
+  if (qatarHeldBackTail(tailNumber)) return "unknown";
+  const family = qatarProgramFamily(normalizeAircraftType(aircraftType), aircraftType);
+  return phaseToStatus(phases[family] ?? null);
 }
 
 // HA program truth: Airbus fleet complete (Sep 2024), 787s pending install,

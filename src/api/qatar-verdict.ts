@@ -10,12 +10,16 @@
  *     days this flight number flew a fully fitted type, season-aware.
  *  3. Otherwise an explicit no-data answer — never a guessed no.
  *
+ * A fitted type some of whose aircraft are held back by name (the registry's
+ * QATAR_HELD_BACK_TAILS) is never a yes: Qatar publishes the type, not the
+ * airframe, so the answer is the share of that type we count as fitted.
+ *
  * Everything is served from the DB (qatar_schedule, qatar_equipment_history,
  * qatar_fetch_coverage) that the hourly ingester writes.
  */
 
 import { zeroPaddedVariants } from "../airlines/flight-number";
-import { qatarEquipment } from "../airlines/registry";
+import { qatarEquipment, qatarEquipmentCodeOfType, qatarHeldBackTails } from "../airlines/registry";
 import type { QatarHistoryRow, QatarScheduleRow } from "../database/database";
 import type { ScopedReader } from "../database/reader";
 import {
@@ -66,7 +70,71 @@ export interface QatarLeg {
   klass: QatarClass;
 }
 
-export type QatarScheduleClass = QatarClass | "mixed" | "cancelled";
+/** "partly": a fitted type with aircraft held back by name — odds, not a yes. */
+export type QatarScheduleClass = QatarClass | "partly" | "mixed" | "cancelled";
+
+/** A fitted type some of whose aircraft are not confirmed fitted. */
+export interface QatarTypeShare {
+  equipment_code: string;
+  /** Held-back aircraft of this type on the roster. */
+  held: number;
+  /** What sets them apart ("second-hand", "leased"). */
+  group: string;
+  /** Roster aircraft of this type; null when the roster holds none, and then
+   * there is no share to quote. */
+  total: number | null;
+  share: number | null;
+}
+
+export type QatarFittedShares = ReadonlyMap<string, QatarTypeShare>;
+
+const NO_SHARES: QatarFittedShares = new Map();
+
+/**
+ * The fitted share of each scheduled type that has held-back aircraft, from
+ * the roster. A type with none on the roster any more (returned to a lessor)
+ * drops out and answers by type again; an empty roster keeps the entry with
+ * no share, so a fresh database never says yes for such a type.
+ */
+export function qatarFittedShares(
+  roster: ReadonlyArray<{ tail_number: string; aircraft_type: string | null }>
+): QatarFittedShares {
+  const totals = new Map<string, number>();
+  const onRoster = new Set<string>();
+  for (const r of roster) {
+    const code = qatarEquipmentCodeOfType(r.aircraft_type);
+    if (code) totals.set(code, (totals.get(code) ?? 0) + 1);
+    onRoster.add(r.tail_number.toUpperCase());
+  }
+  const out = new Map<string, QatarTypeShare>();
+  for (const [tail, h] of qatarHeldBackTails()) {
+    const total = totals.get(h.equipment) ?? 0;
+    if (total > 0 && !onRoster.has(tail)) continue;
+    const e = out.get(h.equipment) ?? {
+      equipment_code: h.equipment,
+      held: 0,
+      group: h.group,
+      total: total > 0 ? total : null,
+      share: null,
+    };
+    e.held++;
+    e.share = e.total !== null && e.total > e.held ? (e.total - e.held) / e.total : null;
+    out.set(h.equipment, e);
+  }
+  return out;
+}
+
+const shortType = (code: string) => qatarEquipmentName(code).replace(/^(Boeing|Airbus) /, "");
+
+/** "48 of Qatar's 57 777-300ERs count as fitted with Starlink; 9 second-hand aircraft aren't confirmed." */
+export function qatarShareSentence(t: QatarTypeShare): string {
+  const type = `${shortType(t.equipment_code)}s`;
+  const lead =
+    t.total !== null && t.share !== null
+      ? `${t.total - t.held} of Qatar's ${t.total} ${type} count as fitted with Starlink`
+      : `Most of Qatar's ${type} count as fitted with Starlink`;
+  return `${lead}; ${t.held} ${t.group} aircraft aren't confirmed.`;
+}
 
 export interface QatarMixEntry {
   equipment_code: string | null;
@@ -86,6 +154,8 @@ export type QatarVerdict =
       qclass: QatarScheduleClass;
       reason: string;
       rows: QatarLeg[];
+      /** "partly" only: the scheduled type's fitted share, when the roster gives one. */
+      probability?: number;
     }
   | {
       kind: "qatar_no_data";
@@ -126,6 +196,7 @@ export type QatarVerdict =
       mix: QatarMixEntry[];
       season: { query: string | null; used: string; shifted: boolean; tooFar: boolean };
       mostlyRolling: boolean;
+      partly?: QatarTypeShare[];
       swapRisk?: boolean;
       /** swapRisk: flown days first published on a fitted type, and how many
        * of those Qatar moved off one before departure. */
@@ -233,6 +304,9 @@ export interface QatarHistoryStats {
   /** 787-9 (installs under way) is the most common type: a maybe, so no
    * yes-share floor is reported. */
   mostlyRolling: boolean;
+  /** Fitted types among the yes days that have held-back aircraft; the
+   * probability is already scaled by their fitted share. Absent when none. */
+  partly?: QatarTypeShare[];
 }
 
 const GRADE_DOWN: Record<QatarGrade, QatarGrade> = { high: "medium", medium: "low", low: "low" };
@@ -246,7 +320,8 @@ const GRADE_DOWN: Record<QatarGrade, QatarGrade> = { high: "medium", medium: "lo
 export function qatarHistoryStats(
   rows: readonly HistoryInput[],
   queryDate: string,
-  todayDate: string
+  todayDate: string,
+  shares: QatarFittedShares = NO_SHARES
 ): QatarHistoryStats {
   const all = qatarOperatingDays(rows.filter((r) => !isCancelled(r.flight_status)));
   const qs = iataSeasonKey(queryDate);
@@ -299,6 +374,24 @@ export function qatarHistoryStats(
   const mostlyRolling =
     rollingDays > 0 && rollingDays >= yesDays && rollingDays >= noDays + unknownDays;
 
+  // A yes day on a partly fitted type is a yes only for its fitted share. The
+  // Wilson bound covers which type flies; the share is a known proportion of
+  // that type, so it scales the bound rather than entering the sample.
+  const partly = new Map<string, QatarTypeShare>();
+  let fittedDays = 0;
+  for (const c of used) {
+    if (c.klass !== "yes") continue;
+    let dayShare = 1;
+    for (const l of c.legs) {
+      const t = shares.get((l.equipment_code ?? "").toUpperCase());
+      if (!t) continue;
+      partly.set(t.equipment_code, t);
+      dayShare = Math.min(dayShare, t.share ?? 1);
+    }
+    fittedDays += dayShare;
+  }
+  const fittedShare = yesDays > 0 ? fittedDays / yesDays : 1;
+
   return {
     nDays,
     nFlown,
@@ -309,12 +402,13 @@ export function qatarHistoryStats(
     unknownDays,
     probability:
       !season.tooFar && !mostlyRolling && nDays >= MIN_PROBABILITY_DAYS
-        ? wilsonLowerBound(yesDays, nDays)
+        ? wilsonLowerBound(yesDays, nDays) * fittedShare
         : null,
     grade,
     mix: [...mixMap.values()].sort((a, b) => b.count - a.count),
     season,
     mostlyRolling,
+    ...(partly.size > 0 ? { partly: [...partly.values()] } : {}),
   };
 }
 
@@ -536,7 +630,8 @@ function scheduleAnswer(
   rows: QatarLeg[],
   normalized: string,
   date: string,
-  window: FlightDateWindow
+  window: FlightDateWindow,
+  shares: QatarFittedShares
 ): Extract<QatarVerdict, { kind: "qatar" }> {
   const base = { kind: "qatar" as const, window, normalized, rows };
   const active = rows.filter((r) => !isCancelled(r.flight_status));
@@ -563,6 +658,27 @@ function scheduleAnswer(
     };
   }
   if (classes.size === 1 && classes.has("yes")) {
+    const partly = [
+      ...new Map(
+        active.flatMap((r) => {
+          const t = shares.get((r.equipment_code ?? "").toUpperCase());
+          return t ? [[t.equipment_code, t] as const] : [];
+        })
+      ).values(),
+    ];
+    if (partly.length > 0) {
+      // The legs share an airframe, so the weakest type's share is the answer's.
+      const share = partly.some((t) => t.share === null)
+        ? null
+        : Math.min(...partly.map((t) => t.share as number));
+      return {
+        ...base,
+        hasStarlink: null,
+        qclass: "partly",
+        ...(share !== null ? { probability: share } : {}),
+        reason: `Scheduled ${types} ${routeText(active)}. ${partly.map(qatarShareSentence).join(" ")} Qatar doesn't publish which aircraft flies, and can change the aircraft before departure.`,
+      };
+    }
     return {
       ...base,
       hasStarlink: true,
@@ -618,14 +734,19 @@ export function resolveQatarVerdict(
     );
     return recentRows;
   };
-  const history = () => qatarHistoryStats(recent(), date, today);
+  let shareMap: QatarFittedShares | null = null;
+  const shares = () => {
+    shareMap ??= qatarFittedShares(reader.getFleetRoster());
+    return shareMap;
+  };
+  const history = () => qatarHistoryStats(recent(), date, today, shares());
 
   const rows = liveRows ?? liveLegs(reader, variants, date, window);
   if (rows.length > 0) {
-    const answer = scheduleAnswer(rows, normalized, date, window);
+    const answer = scheduleAnswer(rows, normalized, date, window, shares());
     // Two or more days out, a fitted type on a number Qatar often swaps after
     // publishing is a probability, not a yes: 77W→388 and 788→789 swaps happen.
-    if (answer.qclass === "yes" && daysOut >= 2) {
+    if ((answer.qclass === "yes" || answer.qclass === "partly") && daysOut >= 2) {
       const swaps = qatarSwapStats(recent(), nowSec);
       if (swaps.observed >= MIN_SUBSET_DAYS && swaps.swapped / swaps.observed > SWAP_RISK_SHARE) {
         return {
@@ -635,7 +756,10 @@ export function resolveQatarVerdict(
           daysOut,
           basis: "schedule",
           ...history(),
-          probability: wilsonLowerBound(swaps.observed - swaps.swapped, swaps.observed),
+          // The scheduled type's own fitted share scales the stay-put odds.
+          probability:
+            wilsonLowerBound(swaps.observed - swaps.swapped, swaps.observed) *
+            (answer.qclass === "partly" ? (answer.probability ?? 1) : 1),
           grade: swaps.observed >= 14 ? "high" : "medium",
           swapRisk: true,
           swapObserved: swaps.observed,
@@ -726,6 +850,8 @@ export function qatarHistoryReason(v: Extract<QatarVerdict, { kind: "qatar_histo
   if (v.partlyPublished) notes.push("Qatar hasn't published its full schedule for this date yet.");
   else if (v.notFetched) notes.push("Qatar hasn't been checked for this date yet.");
   const tail = notes.length ? ` ${notes.join(" ")}` : "";
+  // Said only where a held-back type is among the days the estimate rests on.
+  const partly = v.partly?.length ? ` ${v.partly.map(qatarShareSentence).join(" ")}` : "";
 
   if (v.season.tooFar) {
     return `More than a schedule season ahead; Qatar's equipment plans aren't observable yet. ${QATAR_FAMILY_SENTENCE}`;
@@ -740,7 +866,10 @@ export function qatarHistoryReason(v: Extract<QatarVerdict, { kind: "qatar_histo
   }
   if (v.swapRisk && v.scheduledRow && v.probability !== null) {
     const n = v.swapObserved ?? 0;
-    return `Scheduled ${qatarEquipmentName(v.scheduledRow.equipment_code)} (Starlink-fitted type), but Qatar moved ${v.normalized} off a fitted type after publishing it on ${v.swapDays ?? 0} of its last ${n} flown day${n === 1 ? "" : "s"}; at least ${pctFloor(v.probability)}% chance it stays on a fitted type.${tail}`;
+    const odds = v.partly?.length
+      ? `at least ${pctFloor(v.probability)}% chance of a fitted aircraft`
+      : `at least ${pctFloor(v.probability)}% chance it stays on a fitted type`;
+    return `Scheduled ${qatarEquipmentName(v.scheduledRow.equipment_code)} (Starlink-fitted type), but Qatar moved ${v.normalized} off a fitted type after publishing it on ${v.swapDays ?? 0} of its last ${n} flown day${n === 1 ? "" : "s"}; ${odds}.${partly}${tail}`;
   }
   if (v.probability === null) {
     return `Qatar publishes the aircraft about a week ahead. ${lastDays} — too few to estimate yet.${tail}`;
@@ -749,5 +878,8 @@ export function qatarHistoryReason(v: Extract<QatarVerdict, { kind: "qatar_histo
     return `Qatar publishes the aircraft about a week ahead. ${lastDays} — none on a Starlink-fitted type.${tail}`;
   }
   const pct = pctFloor(v.probability);
-  return `Qatar publishes the aircraft about a week ahead. ${lastDays} — ${v.yesDays} on types Qatar reports fully fitted with Starlink${pct > 0 ? ` (at least ${pct}%)` : ""}.${tail}`;
+  const fitted = v.partly?.length
+    ? "on types in Qatar's Starlink programme"
+    : "on types Qatar reports fully fitted with Starlink";
+  return `Qatar publishes the aircraft about a week ahead. ${lastDays} — ${v.yesDays} ${fitted}${pct > 0 ? ` (at least ${pct}%)` : ""}.${partly}${tail}`;
 }
