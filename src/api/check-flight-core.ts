@@ -348,6 +348,7 @@ export function verdictTelemetry(
       return { outcome: "no_data", confidence: "none" };
     case "qatar":
       if (verdict.qclass === "yes") return { outcome: "type_yes", confidence: "medium" };
+      if (verdict.qclass === "partly") return { outcome: "predicted", confidence: "medium" };
       if (verdict.qclass === "no") return { outcome: "type_no", confidence: "medium" };
       if (verdict.qclass === "cancelled") return { outcome: "no_data", confidence: "none" };
       return { outcome: "predicted", confidence: "low" };
@@ -461,7 +462,14 @@ export function verdictSummary(verdict: AnsweredVerdict): VerdictSummary {
         observations: verdict.pred.n_observations,
       };
     case "qatar":
-      return { ...none, hasStarlink: verdict.hasStarlink, confidence: "type" };
+      return {
+        ...none,
+        hasStarlink: verdict.hasStarlink,
+        confidence: "type",
+        ...(verdict.probability !== undefined
+          ? { probability: verdict.probability, observations: 0 }
+          : {}),
+      };
     case "qatar_no_data":
       return { ...none, hasStarlink: null, confidence: "no_data" };
     case "qatar_history":

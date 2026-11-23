@@ -959,7 +959,9 @@ function renderQatarCheckFlight(
         ? `❌ No Starlink: ${subjectBase} on ${date}.`
         : verdict.qclass === "cancelled"
           ? `${subjectBase} on ${date}: cancelled.`
-          : `Maybe — ${subjectBase} on ${date}.`;
+          : verdict.qclass === "partly" && verdict.probability !== undefined
+            ? `${verdict.probability >= 0.8 ? "Likely" : "Uncertain"} — about ${Math.floor(verdict.probability * 100)}% of the scheduled aircraft type is fitted — ${subjectBase} on ${date}.`
+            : `Maybe — ${subjectBase} on ${date}.`;
   return text(
     withLegNote(
       `${headline} ${verdict.reason}${lines.length ? `\n\n${lines.join("\n")}` : ""}`,

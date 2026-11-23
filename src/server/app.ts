@@ -62,6 +62,7 @@ import {
   hubContentAirlines,
   hubLookupAirlines,
   isGuideStale,
+  programTypeOf,
   publicAirlines,
   resolveSite,
   siteAirline,
@@ -852,7 +853,7 @@ function qatarWireBody(
   const hub = dialect === "hub";
   if (verdict.kind === "qatar") {
     const hostConfidence =
-      verdict.qclass === "yes" || verdict.qclass === "no"
+      verdict.qclass === "yes" || verdict.qclass === "no" || verdict.qclass === "partly"
         ? "type"
         : verdict.qclass === "rolling"
           ? "rolling"
@@ -860,6 +861,8 @@ function qatarWireBody(
     return {
       hasStarlink: verdict.hasStarlink,
       airline,
+      // A partly fitted type: the same key and number type a history answer carries.
+      ...(verdict.probability !== undefined ? { probability: verdict.probability } : {}),
       confidence: hub ? "type" : hostConfidence,
       ...(hub ? { basis: "schedule" } : {}),
       reason: withLegNote(`${legPrefix(verdict)}${verdict.reason}`, verdict),
@@ -4413,6 +4416,14 @@ function passengerPhases(code: AirlineCode, reader: ScopedReader): TypePhase[] |
   const table = wifiPhaseFamilies(code);
   if (!table) return null;
   const counts = new Map(reader.getTypeProgress().map((t) => [t.key, t]));
+  const cfg = AIRLINES[code];
+  const heldBack = new Map<string, { count: number; group: string }>();
+  for (const t of cfg.heldBackTail ? reader.getFleetRoster() : []) {
+    const held = cfg.heldBackTail?.(t.tail_number);
+    if (!held) continue;
+    const { key } = programTypeOf(cfg, t.aircraft_type);
+    heldBack.set(key, { count: (heldBack.get(key)?.count ?? 0) + 1, group: held.group });
+  }
   return (
     Object.entries(table)
       .filter(([family]) => !family.endsWith("F"))
@@ -4427,8 +4438,16 @@ function passengerPhases(code: AirlineCode, reader: ScopedReader): TypePhase[] |
       )
       .map(([family, phase]) => {
         const c = counts.get(family);
+        const held = heldBack.get(family);
         return c
-          ? { family, label: c.label, phase, equipped: c.equipped, total: c.total }
+          ? {
+              family,
+              label: c.label,
+              phase,
+              equipped: c.equipped,
+              total: c.total,
+              ...(held ? { heldBack: held } : {}),
+            }
           : { family, phase };
       })
   );

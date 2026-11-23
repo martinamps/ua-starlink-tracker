@@ -791,11 +791,12 @@
       "vary": "Host"
     },
     "json": {
-      "hasStarlink": true,
+      "hasStarlink": null,
       "airline": "Qatar Airways",
+      "probability": 0.8421052631578947,
       "confidence": "type",
       "basis": "schedule",
-      "reason": "Scheduled Boeing 777-300ER DOH→LHR. Qatar reports its 777 fleet fully fitted with Starlink. Qatar can change the aircraft before departure.",
+      "reason": "Scheduled Boeing 777-300ER DOH→LHR. 48 of Qatar's 57 777-300ERs count as fitted with Starlink; 9 second-hand aircraft aren't confirmed. Qatar doesn't publish which aircraft flies, and can change the aircraft before departure.",
       "flights": [
         {
           "tail_number": null,
@@ -851,11 +852,12 @@
       "vary": "Host"
     },
     "json": {
-      "hasStarlink": true,
+      "hasStarlink": null,
       "airline": "Qatar Airways",
+      "probability": 0.9375,
       "confidence": "type",
       "basis": "schedule",
-      "reason": "Scheduled Boeing 787-8 DOH→LHR. Qatar reports its 787-8 fleet fully fitted with Starlink. Qatar can change the aircraft before departure.",
+      "reason": "Scheduled Boeing 787-8 DOH→LHR. 30 of Qatar's 32 787-8s count as fitted with Starlink; 2 leased aircraft aren't confirmed. Qatar doesn't publish which aircraft flies, and can change the aircraft before departure.",
       "flights": [
         {
           "tail_number": null,
@@ -932,7 +934,7 @@
     "json": {
       "hasStarlink": null,
       "airline": "Qatar Airways",
-      "probability": 0.8808234818732034,
+      "probability": 0.7417460899984867,
       "confidence": "high",
       "basis": "history",
       "n_recent_observations": 20,
@@ -948,7 +950,7 @@
         }
       ],
       "season_shift": false,
-      "reason": "Qatar publishes the aircraft about a week ahead. QR7 over its last 20 operating days (flown and scheduled): 777-300ER ×20 — 20 on types Qatar reports fully fitted with Starlink (at least 88%).",
+      "reason": "Qatar publishes the aircraft about a week ahead. QR7 over its last 20 operating days (flown and scheduled): 777-300ER ×20 — 20 on types in Qatar's Starlink programme (at least 74%). 48 of Qatar's 57 777-300ERs count as fitted with Starlink; 9 second-hand aircraft aren't confirmed.",
       "flights": []
     }
   },
@@ -1154,10 +1156,11 @@
       "vary": "Host"
     },
     "json": {
-      "hasStarlink": true,
+      "hasStarlink": null,
       "airline": "Qatar Airways",
+      "probability": 0.8421052631578947,
       "confidence": "type",
-      "reason": "Scheduled Boeing 777-300ER DOH→LHR. Qatar reports its 777 fleet fully fitted with Starlink. Qatar can change the aircraft before departure.",
+      "reason": "Scheduled Boeing 777-300ER DOH→LHR. 48 of Qatar's 57 777-300ERs count as fitted with Starlink; 9 second-hand aircraft aren't confirmed. Qatar doesn't publish which aircraft flies, and can change the aircraft before departure.",
       "flights": [
         {
           "flight_number": "QR1",
@@ -1218,10 +1221,11 @@
       "vary": "Host"
     },
     "json": {
-      "hasStarlink": true,
+      "hasStarlink": null,
       "airline": "Qatar Airways",
+      "probability": 0.9375,
       "confidence": "type",
-      "reason": "Scheduled Boeing 787-8 DOH→LHR. Qatar reports its 787-8 fleet fully fitted with Starlink. Qatar can change the aircraft before departure.",
+      "reason": "Scheduled Boeing 787-8 DOH→LHR. 30 of Qatar's 32 787-8s count as fitted with Starlink; 2 leased aircraft aren't confirmed. Qatar doesn't publish which aircraft flies, and can change the aircraft before departure.",
       "flights": [
         {
           "flight_number": "QR5",
@@ -1316,7 +1320,7 @@
     "json": {
       "hasStarlink": null,
       "airline": "Qatar Airways",
-      "probability": 0.8808234818732034,
+      "probability": 0.7417460899984867,
       "confidence": "high",
       "basis": "history",
       "n_recent_observations": 20,
@@ -1332,7 +1336,7 @@
         }
       ],
       "season_shift": false,
-      "reason": "Qatar publishes the aircraft about a week ahead. QR7 over its last 20 operating days (flown and scheduled): 777-300ER ×20 — 20 on types Qatar reports fully fitted with Starlink (at least 88%).",
+      "reason": "Qatar publishes the aircraft about a week ahead. QR7 over its last 20 operating days (flown and scheduled): 777-300ER ×20 — 20 on types in Qatar's Starlink programme (at least 74%). 48 of Qatar's 57 777-300ERs count as fitted with Starlink; 9 second-hand aircraft aren't confirmed.",
       "flights": []
     }
   },
@@ -2244,7 +2248,7 @@
         "content": [
           {
             "type": "text",
-            "text": "✈️ Yes, by scheduled aircraft type — QR1 on 2026-09-20. Scheduled Boeing 777-300ER DOH→LHR. Qatar reports its 777 fleet fully fitted with Starlink. Qatar can change the aircraft before departure.\n\n- QR1 (DOH→LHR) on Boeing 777-300ER. Departs 2026-09-20T06:40:00.000Z."
+            "text": "Likely — about 84% of the scheduled aircraft type is fitted — QR1 on 2026-09-20. Scheduled Boeing 777-300ER DOH→LHR. 48 of Qatar's 57 777-300ERs count as fitted with Starlink; 9 second-hand aircraft aren't confirmed. Qatar doesn't publish which aircraft flies, and can change the aircraft before departure.\n\n- QR1 (DOH→LHR) on Boeing 777-300ER. Departs 2026-09-20T06:40:00.000Z."
           }
         ]
       }
@@ -2266,7 +2270,7 @@
         "content": [
           {
             "type": "text",
-            "text": "✈️ Yes, by scheduled aircraft type — QR5 on 2026-09-20. Scheduled Boeing 787-8 DOH→LHR. Qatar reports its 787-8 fleet fully fitted with Starlink. Qatar can change the aircraft before departure.\n\n- QR5 (DOH→LHR) on Boeing 787-8. Departs 2026-09-20T06:40:00.000Z."
+            "text": "Likely — about 93% of the scheduled aircraft type is fitted — QR5 on 2026-09-20. Scheduled Boeing 787-8 DOH→LHR. 30 of Qatar's 32 787-8s count as fitted with Starlink; 2 leased aircraft aren't confirmed. Qatar doesn't publish which aircraft flies, and can change the aircraft before departure.\n\n- QR5 (DOH→LHR) on Boeing 787-8. Departs 2026-09-20T06:40:00.000Z."
           }
         ]
       }
@@ -2332,7 +2336,7 @@
         "content": [
           {
             "type": "text",
-            "text": "**QR7 on 2026-10-09**: likely — at least 88% Starlink (high confidence, 20 recent and scheduled operating days). Qatar publishes the aircraft about a week ahead. QR7 over its last 20 operating days (flown and scheduled): 777-300ER ×20 — 20 on types Qatar reports fully fitted with Starlink (at least 88%)."
+            "text": "**QR7 on 2026-10-09**: uncertain — at least 74% Starlink (high confidence, 20 recent and scheduled operating days). Qatar publishes the aircraft about a week ahead. QR7 over its last 20 operating days (flown and scheduled): 777-300ER ×20 — 20 on types in Qatar's Starlink programme (at least 74%). 48 of Qatar's 57 777-300ERs count as fitted with Starlink; 9 second-hand aircraft aren't confirmed."
           }
         ]
       }
