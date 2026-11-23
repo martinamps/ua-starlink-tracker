@@ -22,10 +22,12 @@ import {
   SHEET_ROSTER_WHERE,
   addDiscoveredStarlinkPlane,
   countQatarForwardSchedule,
+  countStarlinkPlanes,
   getHubStats,
   getMeta,
   getNextAlaskaVerifyTarget,
   getNextPlanesToVerify,
+  getStarlinkPlanes,
   getVerificationObservations,
   reconcileTypeDeterministicFleets,
   recordQatarFetchCoverage,
@@ -648,6 +650,56 @@ describe("updateDatabase roster floor", () => {
     expect(refusal === null).toBe(replaced);
     expect(sheetCount(db)).toBe(replaced ? parsed : existing);
     expect(getMeta(db, "lastUpdated", "UA") === "OLD").toBe(!replaced);
+    db.close();
+  });
+});
+
+describe("updateDatabase writes one listing per tail", () => {
+  const row = (tail: string, aircraft: string) => ({
+    TailNumber: tail,
+    Aircraft: aircraft,
+    WiFi: "StrLnk",
+    sheet_gid: "200",
+    sheet_type: "E175",
+    fleet: "express" as const,
+    OperatedBy: "Mesa dba UAX",
+  });
+  const listings = (db: Database, tail: string) =>
+    db
+      .query("SELECT aircraft FROM starlink_planes WHERE TailNumber = ? AND airline = 'UA'")
+      .all(tail) as { aircraft: string }[];
+
+  test("a tail on two sheet rows is listed once, and the headline counts it once", () => {
+    const db = makeSyntheticDb();
+    const rows = [
+      row("N89349", "ERJ-175"),
+      row("N88301", "ERJ-175"),
+      row("N89349", "E175SC"),
+      row("N88302", "ERJ-175"),
+    ];
+
+    expect(updateDatabase(db, 900, rows, STATS, "UA")).toBeNull();
+
+    expect(listings(db, "N89349")).toEqual([{ aircraft: "ERJ-175" }]);
+    expect(countStarlinkPlanes(db, "UA")).toBe(3);
+    expect(getStarlinkPlanes(db, "UA")).toHaveLength(3);
+
+    // The hourly rewrite must not bring the second row back.
+    updateDatabase(db, 900, rows, STATS, "UA");
+    expect(listings(db, "N89349")).toHaveLength(1);
+    db.close();
+  });
+
+  test("a discovered tail the sheet repeats keeps its one row", () => {
+    const db = makeSyntheticDb();
+    addDiscoveredStarlinkPlane(db, "N89349", "ERJ-175", "Starlink", "Mesa dba UAX", "express", {
+      airline: "UA",
+      evidence: "observed",
+    });
+
+    updateDatabase(db, 900, [row("N89349", "ERJ-175"), row("N89349", "E175SC")], STATS, "UA");
+
+    expect(listings(db, "N89349")).toHaveLength(1);
     db.close();
   });
 });

@@ -240,8 +240,9 @@ const GRADE_DOWN: Record<QatarGrade, QatarGrade> = { high: "medium", medium: "lo
 /**
  * Probability that `queryDate` flies a fully fitted type, from observed
  * operating days. Airlines re-plan equipment per IATA season, so the query's
- * own season is used alone once it has enough days; otherwise borrowing
- * other seasons' days costs a grade; two or more seasons out is not observable.
+ * own season is used alone once it has enough days; borrowing another
+ * season's days inside today's season costs a grade; a date in the next
+ * season is graded "low"; two or more seasons out is not observable.
  */
 export function qatarHistoryStats(
   rows: readonly HistoryInput[],
@@ -294,7 +295,12 @@ export function qatarHistoryStats(
   let grade: QatarGrade = nDays >= 14 ? "high" : nDays >= MIN_SUBSET_DAYS ? "medium" : "low";
   const borrowsOtherSeasons =
     used === all && qs !== null && all.some((c) => iataSeasonKey(c.serviceDate) !== qs);
-  if (season.shifted || borrowsOtherSeasons) grade = GRADE_DOWN[grade];
+  // A date in the season after today's rests wholly on another season's
+  // plan, and history is kept 60 days, so nothing past the first weeks of a
+  // new season can ever be checked against what flew. "low" keeps the number
+  // in the answer and off every badge, up to a year out.
+  if (season.shifted) grade = "low";
+  else if (borrowsOtherSeasons) grade = GRADE_DOWN[grade];
 
   const mostlyRolling =
     rollingDays > 0 && rollingDays >= yesDays && rollingDays >= noDays + unknownDays;
