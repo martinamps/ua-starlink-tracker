@@ -7,7 +7,6 @@ import {
   type AirportBoardDestination,
   airportDek,
   perDayLabel,
-  shareLabel,
 } from "../api/airport-board";
 import type { Link } from "./layout";
 import { LINK, PageHeader, PageShell, Panel, SECTION, Section, StatValue, Td, Th } from "./layout";
@@ -49,11 +48,11 @@ function Stat({
 }
 
 function Stats({ board }: { board: AirportBoard }) {
-  const { history, share, airline, airport } = board;
+  const { history, airport } = board;
   if (history.starlink === 0 && board.departures.length === 0) return null;
   return (
     <Panel as="section" aria-label={`Starlink at ${airport}`} className={SECTION}>
-      <div className="grid gap-5 sm:grid-cols-3">
+      <div className="grid gap-5 sm:grid-cols-2">
         <Stat value={fmt(board.departures.length)}>
           Starlink {board.departures.length === 1 ? "departure" : "departures"} assigned in the next{" "}
           {board.windowHours} hours
@@ -61,13 +60,6 @@ function Stats({ board }: { board: AirportBoard }) {
         {history.starlink > 0 && (
           <Stat value={perDayLabel(history.starlink / history.days)} unit="a day">
             flown by Starlink planes: {fmt(history.starlink)} in the last {history.days} days
-          </Stat>
-        )}
-        {share && (
-          <Stat value={shareLabel(share)}>
-            of {airline}&apos;s domestic departures here: {perDayLabel(share.starlinkPerDay)} a day
-            on Starlink planes in the last {history.days} days, against{" "}
-            {perDayLabel(share.allPerDay)} a day in all in {share.month} (U.S. DOT)
           </Stat>
         )}
       </div>

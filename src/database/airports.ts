@@ -1,19 +1,16 @@
 /**
  * Readers behind /routes/{airport}: what leaves one airport on a Starlink
- * plane, and how that compares with everything the airline flies there.
+ * plane, and what Starlink planes flew from it lately.
  *
  * The schedule tables hold tracked tails only (the updater follows the
  * Starlink roster), so they can count Starlink departures but never an
- * airport's whole schedule. The one stored record of every departure is the
- * DOT census (bts_monthly_routes: United-marketed, US domestic, months old),
- * which is why the share is a rate against a named month and not a count of
- * this week's flights.
+ * airport's whole schedule. Nothing here reads the DOT census for one either:
+ * it is months old, too far from this week's schedule to divide by.
  */
 
 import type { Database } from "bun:sqlite";
 import { canonicalPermalinkFor } from "../airlines/flight-number";
 import { AIRLINES } from "../airlines/registry";
-import { airportCountry } from "../utils/airport-geo";
 import { getDepartureSlots, getObservationAnchor, slotScope } from "./database";
 import { tailEquippedSql } from "./sql/equipped";
 import { ROUTE_AIRPORT_RE, isCleanAirportPair, prefixGlob } from "./sql/fragments";
@@ -26,10 +23,6 @@ import { DAY_SEC, DEPARTURE_WINDOW_SEC, unixNow } from "./sql/windows";
  * labelled "7 days" would run short.
  */
 export const AIRPORT_HISTORY_DAYS = 6;
-
-/** The census is published about two months behind; past this it is no longer
- * a fair picture of the schedule and the share is left off. */
-const CENSUS_MAX_AGE_DAYS = 240;
 
 export interface AirportDepartureRow {
   /** The marketed number, a valid /check-flight permalink on the tenant's site. */
@@ -107,8 +100,6 @@ export function airportHasData(db: Database, airport: string, airline: string): 
 export interface AirportHistoryEntry {
   /** Departures flown by planes that have Starlink, all destinations. */
   starlink: number;
-  /** The same, to US airports only: the census's own scope. */
-  domestic: number;
   /** Per destination, most departures first. */
   destinations: Array<{ destination: string; starlink: number }>;
 }
@@ -161,11 +152,8 @@ export function getAirportHistory(
   const airports = new Map<string, AirportHistoryEntry>();
   for (const r of rows) {
     if (!isCleanAirportPair(r.origin, r.destination)) continue;
-    const entry = airports.get(r.origin) ?? { starlink: 0, domestic: 0, destinations: [] };
+    const entry = airports.get(r.origin) ?? { starlink: 0, destinations: [] };
     entry.starlink += r.n;
-    if (airportCountry(r.origin) === "US" && airportCountry(r.destination) === "US") {
-      entry.domestic += r.n;
-    }
     entry.destinations.push({ destination: r.destination, starlink: r.n });
     airports.set(r.origin, entry);
   }
@@ -175,43 +163,4 @@ export function getAirportHistory(
     );
   }
   return { days: AIRPORT_HISTORY_DAYS, from, to: anchor, airports };
-}
-
-export interface AirportCensus {
-  /** "2026-08". */
-  month: string;
-  daysInMonth: number;
-  /** Departures performed from each origin that month. */
-  performed: Map<string, number>;
-}
-
-/**
- * The newest census month's departures per origin. United only: the table has
- * no airline column and bts-sync ingests United-marketed flights. Null when
- * there is no census or its newest month is too old to compare against.
- */
-export function getAirportCensus(
-  db: Database,
-  airline: string,
-  nowSec = unixNow()
-): AirportCensus | null {
-  if (airline !== "UA") return null;
-  const newest = db.query("SELECT MAX(month) AS month FROM bts_monthly_routes").get() as {
-    month: string | null;
-  } | null;
-  const month = newest?.month;
-  if (!month || !/^\d{4}-\d{2}$/.test(month)) return null;
-  const [year, mon] = month.split("-").map(Number);
-  const monthEnd = Date.UTC(year, mon, 1) / 1000;
-  if (nowSec - monthEnd > CENSUS_MAX_AGE_DAYS * DAY_SEC) return null;
-  const rows = db
-    .query(
-      "SELECT origin, SUM(performed) AS performed FROM bts_monthly_routes WHERE month = ? GROUP BY origin"
-    )
-    .all(month) as Array<{ origin: string; performed: number }>;
-  return {
-    month,
-    daysInMonth: new Date(Date.UTC(year, mon, 0)).getUTCDate(),
-    performed: new Map(rows.map((r) => [r.origin, r.performed])),
-  };
 }

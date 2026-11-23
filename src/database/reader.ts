@@ -35,11 +35,9 @@ import {
   getAdsbFlightDrawsFor,
 } from "./adsb-flight-draws";
 import {
-  type AirportCensus,
   type AirportDepartureRow,
   type AirportHistory,
   airportHasData,
-  getAirportCensus,
   getAirportHistory,
   getAirportStarlinkDepartures,
 } from "./airports";
@@ -313,8 +311,6 @@ export interface ScopedReader {
   /** Starlink departures flown per airport over the last few days; the airport
    * pages' index rule and the sitemap read the same build. */
   getAirportHistory(): AirportHistory;
-  /** The newest DOT census month's departures per origin; null without one. */
-  getAirportCensus(): AirportCensus | null;
 
   // Single-tail lookups + best-effort writes. Airline-scoped like everything
   // else: a tenant's FR24 fallback must not resolve another airline's tail.
@@ -439,7 +435,6 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
   const scheduleMemo = memo<RouteSchedule>(DEPARTURE_AGGREGATE_MEMO);
   const rankedMemo = memo<Array<{ origin: string; destination: string }>>(DEPARTURE_AGGREGATE_MEMO);
   const airportHistoryMemo = memo<AirportHistory>(AIRPORT_HISTORY_MEMO);
-  const airportCensusMemo = memo<AirportCensus | null>({ ttlSec: 3600, maxEntries: 1 });
   const r: ScopedReader = {
     scope,
     airlines,
@@ -538,7 +533,6 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     airportHasData: (a) => airportHasData(db, a, soleAirline()),
     getAirportStarlinkDepartures: (a) => getAirportStarlinkDepartures(db, soleAirline(), a),
     getAirportHistory: () => airportHistoryMemo("", () => getAirportHistory(db, soleAirline())),
-    getAirportCensus: () => airportCensusMemo("", () => getAirportCensus(db, soleAirline())),
 
     getStarlinkPlaneByTail: (tail) => getStarlinkPlaneByTail(db, tail, airlines),
     getFleetEntryByTail: (tail) => getFleetEntryByTail(db, tail, airlines),

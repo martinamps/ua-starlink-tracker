@@ -4,13 +4,15 @@
  * airport's slice of what /routes counts), grouped by destination, plus what
  * Starlink planes flew from here over the last few days.
  *
- * Served from the DB only. The share is the one figure that leans on an
- * outside record (the DOT census), and it carries that record's month.
+ * Served from the DB only. It prints counts and never a share of the
+ * airport's departures: the schedule tables hold Starlink planes alone, and
+ * the one stored record of every departure (the DOT census) is months old,
+ * which moves an airport's total by a quarter or more between seasons.
  */
 
 import { aircraftName } from "../airlines/aircraft-families";
 import type { AirlineConfig } from "../airlines/registry";
-import { fmt, monthYear, zonedDeparture } from "../components/ui/format";
+import { fmt, zonedDeparture } from "../components/ui/format";
 import type { ScopedReader } from "../database/reader";
 import { DEPARTURE_WINDOW_HOURS, unixNow } from "../database/sql/windows";
 import { airportTimezone } from "../utils/airport-tz";
@@ -51,17 +53,6 @@ export interface AirportBoardDestination {
   linkable: boolean;
 }
 
-export interface AirportShare {
-  /** Starlink's domestic departures a day over the history span. */
-  starlinkPerDay: number;
-  /** Every domestic departure a day in the census month. */
-  allPerDay: number;
-  /** starlinkPerDay / allPerDay, never above 1. */
-  ratio: number;
-  /** "Aug 2026". */
-  month: string;
-}
-
 export interface AirportBoard {
   airport: string;
   /** Short airline name ("United"). */
@@ -73,7 +64,6 @@ export interface AirportBoard {
   destinations: AirportBoardDestination[];
   /** Departures Starlink planes flew from here over the last `days` days. */
   history: { days: number; starlink: number };
-  share: AirportShare | null;
   indexable: boolean;
 }
 
@@ -131,27 +121,6 @@ export function buildAirportBoard(
         a.destination.localeCompare(b.destination)
     );
 
-  const census = reader.getAirportCensus();
-  const performed = census?.performed.get(airport) ?? 0;
-  let share: AirportShare | null = null;
-  // Under a departure a day the census month is a handful of flights, and a
-  // ratio against it is noise.
-  if (census && flown && flown.domestic > 0 && performed >= census.daysInMonth) {
-    const starlinkPerDay = flown.domestic / history.days;
-    const allPerDay = performed / census.daysInMonth;
-    // More Starlink departures than the census had departures at all: the
-    // schedule has changed since that month (a seasonal station, a new route),
-    // so the month is no denominator for this week.
-    if (starlinkPerDay <= allPerDay) {
-      share = {
-        starlinkPerDay,
-        allPerDay,
-        ratio: starlinkPerDay / allPerDay,
-        month: monthYear(census.month),
-      };
-    }
-  }
-
   return {
     airport,
     airline: cfg.shortName,
@@ -159,7 +128,6 @@ export function buildAirportBoard(
     departures,
     destinations,
     history: { days: history.days, starlink: flown?.starlink ?? 0 },
-    share,
     indexable: (flown?.starlink ?? 0) >= AIRPORT_INDEX_MIN_DEPARTURES,
   };
 }
@@ -178,15 +146,6 @@ const plural = (n: number, one: string, many = `${one}s`) => (n === 1 ? one : ma
 
 /** A daily rate: whole above ten, one decimal below, so 0.5 a day is not "1". */
 export const perDayLabel = (n: number) => fmt(n, n >= 10 ? 0 : 1);
-
-/**
- * The share in words. The two rates come from different months, so it is
- * "about", and buildAirportBoard leaves it off where they disagree outright.
- */
-export function shareLabel(share: AirportShare): string {
-  if (share.ratio < 0.01) return "Under 1%";
-  return `About ${Math.round(share.ratio * 100)}%`;
-}
 
 /** The page's lead: the window's count, or the plainest true thing without one. */
 export function airportDek(board: AirportBoard): string {

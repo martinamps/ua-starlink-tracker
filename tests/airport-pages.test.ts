@@ -16,7 +16,6 @@ import {
   airportDek,
   buildAirportBoard,
   indexableAirports,
-  shareLabel,
 } from "../src/api/airport-board";
 import {
   AIRPORT_HISTORY_DAYS,
@@ -106,7 +105,7 @@ beforeAll(() => {
      VALUES ('UA900', 'ORD', 'DEN', 9000, ?, ?, 1)`
   ).run(now - DAY, now - 60);
 
-  // The census: Denver's month, 20 domestic departures a day.
+  // A census month for Denver: the page must print no share from it.
   db.query(
     "INSERT INTO bts_monthly_routes (month, origin, dest, performed) VALUES (?, ?, ?, ?)"
   ).run(censusMonth(), "DEN", "ORD", 600);
@@ -197,49 +196,23 @@ describe("/routes/{airport}", () => {
     );
   });
 
-  test("the share is domestic Starlink departures a day against the census month's", () => {
-    const board = buildAirportBoard(AIRLINES.UA, createReaderFactory(db)("UA"), "DEN");
-    // YYZ is not domestic, so two of the three daily departures count.
-    const perDay = (2 * (AIRPORT_HISTORY_DAYS - 1)) / AIRPORT_HISTORY_DAYS;
-    expect(board.share?.starlinkPerDay).toBeCloseTo(perDay);
-    expect(board.share?.allPerDay).toBeCloseTo(600 / (board.share ? daysIn(censusMonth()) : 30));
-    expect(shareLabel(board.share!)).toMatch(/^About \d+%$/);
-    // No census row for the airport: no share, rather than a guess.
-    expect(buildAirportBoard(AIRLINES.UA, createReaderFactory(db)("UA"), "GJT").share).toBeNull();
-  });
-
-  test("a share is never printed above the census's own count", () => {
-    const fresh = makeFreshDb();
-    addPlane(fresh, "N1VER", "Starlink");
-    const flown = fresh.query(
-      "INSERT INTO departure_log (tail_number, airport, departed_at, airline) VALUES (?, ?, ?, 'UA')"
-    );
-    for (let i = 0; i < 12; i++) {
-      const t = now - DAY - i * HOUR;
-      logFlightAssignments(
-        fresh,
-        "UA",
-        "N1VER",
-        [
-          {
-            flight_number: `UA${500 + i}`,
-            departure_airport: "HDN",
-            arrival_airport: "DEN",
-            departure_time: t,
-            arrival_time: t + HOUR,
-          },
-        ],
-        now
-      );
-      flown.run("N1VER", "HDN", t);
+  test("no share of the airport's departures is printed, census row or not", async () => {
+    // DEN has a census row and Starlink departures: all a share would need.
+    for (const path of ["/routes/DEN", "/routes/GJT", "/routes/ORD"]) {
+      const body = await page(path);
+      const airportPage = [
+        body.match(/<title>[\s\S]*?<\/title>/)?.[0] ?? "",
+        ...[...body.matchAll(/<meta[^>]+(?:description|title)[^>]*>/g)].map((m) => m[0]),
+        ...[...body.matchAll(/<script type="application\/ld\+json">[\s\S]*?<\/script>/g)].map(
+          (m) => m[0]
+        ),
+        visibleText(body.match(/<body[\s\S]*<\/body>/)?.[0] ?? ""),
+      ].join("\n");
+      expect(airportPage.length, path).toBeGreaterThan(200);
+      expect(airportPage, path).not.toMatch(/\d\s*%|percent|\bshare\b|domestic departures|DOT\b/i);
     }
-    // One departure a day in the census month; twelve flown this week.
-    fresh
-      .query("INSERT INTO bts_monthly_routes (month, origin, dest, performed) VALUES (?, ?, ?, ?)")
-      .run(censusMonth(), "HDN", "DEN", daysIn(censusMonth()));
-    const board = buildAirportBoard(AIRLINES.UA, createReaderFactory(fresh)("UA"), "HDN");
-    expect(board.history.starlink).toBe(12);
-    expect(board.share).toBeNull();
+    const board = buildAirportBoard(AIRLINES.UA, createReaderFactory(db)("UA"), "DEN");
+    expect(Object.keys(board).filter((k) => /share|ratio|census/i.test(k))).toEqual([]);
   });
 
   test("lowercase and trailing-slash spellings 301 to the one canonical address", async () => {
@@ -369,7 +342,7 @@ describe("links into the family", () => {
   });
 });
 
-function daysIn(month: string): number {
-  const [y, m] = month.split("-").map(Number);
-  return new Date(Date.UTC(y, m, 0)).getUTCDate();
+/** Text a reader sees: tags, inline styles and scripts are not the page's words. */
+function visibleText(html: string): string {
+  return html.replace(/<(script|style)[\s\S]*?<\/\1>/g, " ").replace(/<[^>]+>/g, " ");
 }
