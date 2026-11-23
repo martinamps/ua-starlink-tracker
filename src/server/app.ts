@@ -43,6 +43,7 @@ import {
   permalinkCarrier,
   stripFlightNumberZeros,
 } from "../airlines/flight-number";
+import { publishedCount, trackingMethod } from "../airlines/published-count";
 import {
   AIRLINES,
   type AirlineCode,
@@ -132,7 +133,6 @@ import {
   type TypePhase,
   factsHeadline,
 } from "../components/airlines-page";
-import { trackingMethod } from "../components/atoms";
 import { paceWindowSpan } from "../components/charts/rollout-math";
 import CheckFlightPage, {
   type DatedAnswer,
@@ -225,6 +225,7 @@ import type {
   FirstFlight,
   FleetPageData,
   Flight,
+  PerAirlineStat,
 } from "../types";
 import { AIRCRAFT_SPECS } from "../utils/aircraft-specs";
 import {
@@ -4464,16 +4465,33 @@ function homeMeta(
     totalCount: number;
     noun?: string;
     fleetStats?: ReturnType<ScopedReader["getFleetStats"]>;
+    perAirline?: PerAirlineStat[];
   }
 ): { siteTitle: string; siteDescription: string } | null {
   if (site.scope === "ALL") {
     const flying = AIRLINE_FACTS.filter(
       (e) => e.status === "installing" || e.status === "complete"
     ).length;
-    const tracked = hubContentAirlines().map((a) => a.shortName);
+    // A snippet has no room for a date or a caveat, so it names only the
+    // airlines counted plane by plane, and says that is what they are: an
+    // airline known by type may have more aircraft than one named here.
+    const counted = (stats.perAirline ?? [])
+      .flatMap((r) => {
+        const cfg = AIRLINES[r.code];
+        const published = cfg && publishedCount(cfg, r.starlink);
+        return cfg && published?.basis === "tracked" && published.count > 0
+          ? [{ cfg, count: published.count }]
+          : [];
+      })
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 3)
+      .map(({ cfg, count }) => {
+        const n = fmt(count);
+        return `${cfg.shortName} (${cfg.programmePartners ? `${n} ${cfg.shortName}-operated` : n})`;
+      });
     return {
       siteTitle: `Which Airlines Have Starlink Wi-Fi? ${AIRLINE_FACTS.length} Airlines Compared`,
-      siteDescription: `${flying} airlines fly Starlink Wi-Fi or are installing it. Compare ${tracked.slice(0, -1).join(", ")} and ${tracked.at(-1)} side by side, plus every other rollout, dated and sourced.`,
+      siteDescription: `${flying} airlines fly Starlink Wi-Fi or are installing it.${counted.length ? ` Counted plane by plane: ${counted.join(", ")}.` : ""} Check any flight by number.`,
     };
   }
   const cfg = AIRLINES[site.scope];

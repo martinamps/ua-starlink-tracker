@@ -29,6 +29,7 @@ import {
   marketingFlightNumber,
   normalizeAirlineFlightNumber,
 } from "../airlines/flight-number";
+import { trackingMethod } from "../airlines/published-count";
 import {
   AIRLINES,
   type AirlineCode,
@@ -38,6 +39,7 @@ import {
   hubLookupAirlines,
   siteForAirline,
 } from "../airlines/registry";
+import { type AirlineOwnCount, airlineOwnCount } from "../airlines/rollout-facts";
 import type { FlightAssignmentRow } from "../database/database";
 import { type Scope, type ScopedReader, aggregatePenetration } from "../database/reader";
 import { inLookupWindow, lookupWindowPosition, unixNow } from "../database/sql/windows";
@@ -1879,6 +1881,17 @@ function aircraftShare(starlink: number, total: number, rosterIsProgramScope: bo
     : `${starlink} aircraft`;
 }
 
+/** An airline known by aircraft type has no count of its own here: the sum of
+ * its finished types is labelled as that, never as "N aircraft have Starlink",
+ * and the airline's own figure rides beside it with its date. */
+function byTypeCount(starlink: number): string {
+  return `counted by aircraft type, not plane by plane: ${starlink} aircraft on the fleet list are of a type whose whole fleet has Starlink (a fleet-list sum, not a count of installs)`;
+}
+
+function ownFigure(own: AirlineOwnCount): string {
+  return `${own.count} aircraft as of ${own.asOf} (${own.sourceLabel}: ${own.url})`;
+}
+
 function toolGetFleetStats(reader: ScopedReader): ToolResult {
   const lastUpdated = reader.getLastUpdated();
 
@@ -1893,10 +1906,17 @@ function toolGetFleetStats(reader: ScopedReader): ToolResult {
     const floor = (a: { code: string }) => Boolean(AIRLINES[a.code]?.communitySource);
     const inScope = (a: { code: string }) =>
       AIRLINES[a.code]?.rollout.rosterIsProgramScope ?? false;
-    const lines = per.map(
-      (a) =>
-        `**${a.name}**: ${floor(a) ? "at least " : ""}${aircraftShare(a.starlink, a.total, inScope(a))}${a.phaseNote ? ` — ${a.phaseNote}` : ""}`
-    );
+    const byType = (a: { code: string }) => {
+      const cfg = AIRLINES[a.code];
+      return cfg ? trackingMethod(cfg) === "type" : false;
+    };
+    const lines = per.map((a) => {
+      const own = byType(a) ? airlineOwnCount(a.code) : null;
+      const count = byType(a)
+        ? `${byTypeCount(a.starlink)}${own ? `; the airline's own figure is ${ownFigure(own)}` : ""}`
+        : `${floor(a) ? "at least " : ""}${aircraftShare(a.starlink, a.total, inScope(a))}`;
+      return `**${a.name}**: ${count}${a.phaseNote ? ` — ${a.phaseNote}` : ""}`;
+    });
     const text = `Starlink Installation Progress (as of ${lastUpdated}):
 
 **All tracked airlines**: ${per.some(floor) ? "at least " : ""}${aircraftShare(agg.starlink, agg.total, per.every(inScope))} have Starlink WiFi
@@ -1929,11 +1949,14 @@ ${lines.join("\n")}`;
   // quoting this never contradicts the site it points to.
   const programme = reader.getProgrammeHeadline();
   const ownLine = `${aircraftShare(starlinkPlanes.length, totalCount, inScope)} have Starlink WiFi`;
+  const own = trackingMethod(cfg) === "type" ? airlineOwnCount(cfg.code) : null;
   const text = [
     `${cfg.name} Starlink Installation Progress (as of ${lastUpdated}):`,
-    programme
-      ? `**${programme.noun} (the site's headline)**: ${aircraftShare(programme.equipped, programme.total, inScope)} have Starlink WiFi\n**${cfg.shortName}-operated only**: ${ownLine}`
-      : `**Combined Fleet**: ${ownLine}`,
+    trackingMethod(cfg) === "type"
+      ? `**Combined Fleet**: ${byTypeCount(starlinkPlanes.length)}.${own ? `\n**The airline's own figure**: ${ownFigure(own)}` : ""}`
+      : programme
+        ? `**${programme.noun} (the site's headline)**: ${aircraftShare(programme.equipped, programme.total, inScope)} have Starlink WiFi\n**${cfg.shortName}-operated only**: ${ownLine}`
+        : `**Combined Fleet**: ${ownLine}`,
     subfleetLines.join("\n"),
     familyLines.length > 0 ? `**By Aircraft Type**:\n${familyLines.join("\n")}` : null,
     `**Rollout**: ${cfg.rollout.statusLabel} — ${cfg.rollout.phaseNote}`,
@@ -1971,9 +1994,15 @@ function toolListStarlinkAircraft(
 
   const carrier =
     reader.scope === "ALL" ? "tracked airlines" : AIRLINES[reader.scope]?.name || reader.scope;
+  const scopeCfg = reader.scope === "ALL" ? undefined : AIRLINES[reader.scope];
+  // A by-type list is every aircraft of the finished types, not checked tails.
+  const noun =
+    scopeCfg && trackingMethod(scopeCfg) === "type"
+      ? "aircraft of fully equipped types (counted by aircraft type, not checked plane by plane)"
+      : "Starlink-equipped aircraft";
   const header = fleet
-    ? `${total} Starlink-equipped aircraft in the ${carrier} ${fleet} fleet`
-    : `${total} Starlink-equipped aircraft (${carrier})`;
+    ? `${total} ${noun} in the ${carrier} ${fleet} fleet`
+    : `${total} ${noun} (${carrier})`;
 
   return textResult(`${header} (showing ${shown.length}):\n\n${lines.join("\n")}`);
 }

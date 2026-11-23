@@ -58,6 +58,11 @@ interface RolloutFactBase {
    * ("all 93 Embraer 175s"). A bare count has no denominator, so without this
    * a short roster would read the count as "every one". */
   officialAll?: readonly string[];
+  /** The airline's own fleet-wide count of aircraft with Starlink, exactly as
+   * `fact` states it ("150 Starlink-equipped widebodies"). Where this site
+   * only knows an airline by aircraft type, this dated figure is the one count
+   * a ranking may print: a sum of fleet-list types is not a count of installs. */
+  officialFleetCount?: number;
   /** Verbatim excerpt of `fact` a type page renders instead of the whole
    * claim, for facts whose other clauses are about a different fleet. */
   pageText?: string;
@@ -326,6 +331,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
           label: "Qatar Airways press release",
           url: "https://www.qatarairways.com/press-releases/en-WW/269475-qatar-airways-150-starlink-equipped-widebody-aircraft-now-include-world-s-first-starlink-equipped-boeing-787-9/",
         },
+        officialFleetCount: 150,
       },
       {
         fact: "Starlink is deployed across the Boeing 777, Airbus A350, and Boeing 787-8 fleets. Qatar Airways has not confirmed whether its remaining widebodies, the Airbus A330s and A380s, will receive it. Complimentary Wi-Fi runs the whole journey via Privilege Club authentication or enrolment, though gate-to-gate access can be unavailable at some airports for local regulatory reasons.",
@@ -1467,6 +1473,30 @@ export function factsAliasTarget(slug: string): string | null {
 
 export function factsForCode(code: string): AirlineFactsEntry | null {
   return AIRLINE_FACTS.find((e) => e.trackedCode === code) ?? null;
+}
+
+export interface AirlineOwnCount {
+  count: number;
+  /** The fact's own date. Printed beside the count wherever it shows. */
+  asOf: string;
+  sourceLabel: string;
+  url: string;
+}
+
+/** The airline's own newest fleet-wide count, from the current dated fact that
+ * states one. A superseded fact never answers: once a later fact replaces its
+ * figures, the airline has no count here until that later fact carries one. */
+export function airlineOwnCount(code: string): AirlineOwnCount | null {
+  const fact = (factsForCode(code)?.facts ?? [])
+    .filter((f) => !f.superseded && f.asOf && f.officialFleetCount !== undefined)
+    .sort((a, b) => (b.asOf as string).localeCompare(a.asOf as string))[0];
+  if (!fact?.asOf || fact.officialFleetCount === undefined) return null;
+  return {
+    count: fact.officialFleetCount,
+    asOf: fact.asOf,
+    sourceLabel: fact.source.label,
+    url: fact.source.url,
+  };
 }
 
 /** Entries with no tail-level tracking — the content-only part of the roster. */
