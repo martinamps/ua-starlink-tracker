@@ -2,6 +2,7 @@
 // UA tenant — the gate lives in passenger-detect.ts, not here. Behavior is
 // src/client/passenger-banner.ts, shipped in the homepage bundle.
 import type { SiteConfig } from "../airlines/registry";
+import { PASSENGER_REPORT_PRIVACY_NOTE } from "../server/passenger-report-fields";
 import { FlightSearchForm } from "./flight-search-form";
 
 export function PassengerBanner({ site }: { site: SiteConfig }) {
@@ -35,8 +36,8 @@ export function PassengerBanner({ site }: { site: SiteConfig }) {
         <output id="psgr-thanks" className="mt-2 hidden text-sm text-success">
           Thanks, recorded.
         </output>
-        <p className="mt-2 text-xs text-muted">
-          We store only the flight number and that your IP is in Starlink's published range.
+        <p id="psgr-privacy" className="mt-2 text-xs text-muted">
+          {PASSENGER_REPORT_PRIVACY_NOTE}
         </p>
       </div>
     </div>
