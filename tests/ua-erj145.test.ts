@@ -10,6 +10,7 @@ import { fleetTargetSentence } from "../src/airlines/content/fleet-target";
 import { content as uaContent } from "../src/airlines/content/ua";
 import {
   isOutsideProgramme,
+  programmeExclusionCaveat,
   programmeExclusionLabel,
   programmeExclusionReason,
 } from "../src/airlines/registry";
@@ -224,6 +225,64 @@ describe("United copy after the ERJ-145 exclusion", () => {
  * runs the scrape itself, with only the network fetch stubbed, and then reads
  * every surface that prints the fleet size.
  */
+/**
+ * United's own line is "the whole fleet by the end of 2027". Wherever that
+ * line, or a count that leaves the ERJ-145s out, is printed, the sentence
+ * that squares the two is printed with it.
+ */
+describe("United's whole-fleet line never sits beside the exclusion unexplained", () => {
+  const UA = SITES.united.canonicalHost;
+  const text = (html: string) =>
+    html
+      .replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/g, " ")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/&#x27;/g, "'")
+      .replace(/\s+/g, " ");
+
+  test("the caveat is attributed, names the type, and exists only for a reported exclusion", () => {
+    const ua = programmeExclusionCaveat("UA");
+    expect(ua?.text).toContain("ERJ-145s");
+    expect(ua?.text).toMatch(/Reports say/);
+    expect(ua?.text).toMatch(/no United statement/);
+    expect(ua?.short).toContain("ERJ-145s");
+    expect(ua?.report?.url).toMatch(/^https:\/\//);
+    // Retiring types contradict nothing Air France said.
+    expect(programmeExclusionCaveat("AF")).toBeNull();
+    expect(programmeExclusionCaveat("AS")).toBeNull();
+  });
+
+  test("/fleet/erj-145, /timeline and /install-rate carry it next to the whole-fleet line", async () => {
+    const db = seeded();
+    refreshFleetMeta(db, "UA");
+    const app = createApp(db);
+    const caveat = programmeExclusionCaveat("UA");
+
+    const erj = text((await bodyOf(app, "/fleet/erj-145", UA)).text);
+    expect(erj).toContain("Not in the Starlink rollout.");
+    expect(erj).toContain("the whole fleet by the end of 2027");
+    expect(erj).toContain(caveat?.text ?? "missing");
+
+    const timeline = text((await bodyOf(app, "/timeline", UA)).text);
+    expect(timeline).toContain("The whole fleet, mainline and United Express.");
+    expect(timeline).toContain(caveat?.text ?? "missing");
+
+    const rate = text((await bodyOf(app, "/install-rate", UA)).text);
+    expect(rate).toContain("Entire fleet equipped");
+    expect(rate).toContain(caveat?.short ?? "missing");
+    db.close();
+  });
+
+  test("the home count says what it counts and that the ERJ-145s are out of it", async () => {
+    const db = seeded();
+    refreshFleetMeta(db, "UA");
+    const home = text((await bodyOf(createApp(db), "/", UA)).text);
+    expect(home).toMatch(/[\d,]+ of [\d,]+ United aircraft in the rollout/);
+    expect(home).toContain("so the count leaves them out");
+    expect(home).not.toMatch(/-plane fleet/);
+    db.close();
+  });
+});
+
 describe("one United total on every surface after the scrape's write", () => {
   const UA = SITES.united.canonicalHost;
   const SHEET_TOTAL = 1818;

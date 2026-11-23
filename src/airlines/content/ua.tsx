@@ -18,7 +18,7 @@ const UA_WIDEBODY_RELEASE =
 const UAHero = ({ stats }: HeroProps) => (
   <RolloutPanel
     stats={stats}
-    noun="United aircraft"
+    noun="United aircraft in the rollout"
     segments={[
       { label: "United Express", n: express(stats).starlink, total: express(stats).total },
       { label: "Mainline", n: mainline(stats).starlink, total: mainline(stats).total },
@@ -42,7 +42,8 @@ export const content: AirlineContent = {
   intro: () => (
     <>
       United Airlines is adding Starlink Wi-Fi to its mainline and most United Express aircraft,
-      starting with regional jets. The ERJ-145s are not expected to get it.
+      starting with regional jets. The ERJ-145s are not expected to get it, so the count leaves them
+      out.
     </>
   ),
 
@@ -55,7 +56,8 @@ export const content: AirlineContent = {
         <p>
           Yes. <StatInline n={s.starlinkCount} /> of {fmt(s.totalCount)} United aircraft (
           {pct(s.starlinkCount, s.totalCount)}) have Starlink Wi-Fi
-          {s.asOf ? <> as of {s.asOf}</> : null}. {fleetTargetSentence("UA", "United")}
+          {s.asOf ? <> as of {s.asOf}</> : null}. {fleetTargetSentence("UA", "United")} The count
+          leaves them out.
         </p>
       ),
     },
@@ -177,8 +179,8 @@ export const content: AirlineContent = {
             <p>
               United's target is to finish the rollout by the end of 2027, with more than 880
               expected by the end of 2026. Reports say the ERJ-145s are not part of that plan. Today{" "}
-              {pct(s.starlinkCount, s.totalCount)} of the {fmt(s.totalCount)}-plane fleet has it.
-              The{" "}
+              {pct(s.starlinkCount, s.totalCount)} of the {fmt(s.totalCount)} aircraft in the
+              rollout have it. The{" "}
               <a href="/timeline" className={LINK}>
                 rollout timeline
               </a>{" "}

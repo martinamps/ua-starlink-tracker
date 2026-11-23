@@ -60,6 +60,7 @@ import {
   brandMetadata,
   hubContentAirlines,
   isGuideStale,
+  programmeExclusionCaveat,
   publicAirlines,
   resolveSite,
   siteAirline,
@@ -4102,7 +4103,7 @@ function programmeScopeNote(
 ): string | null {
   const partners = cfg.programmePartners?.partners ?? [];
   const p = partners.length > 0 ? getReader(cfg.code).getProgrammeHeadline() : null;
-  if (!p || p.total === 0) return null;
+  if (!p || p.total === 0) return programmeExclusionCaveat(cfg.code)?.short ?? null;
   const with_ = partners.map((x) => x.label).join(" and ");
   return `${cfg.shortName}'s count is ${cfg.shortName}-operated aircraft only. With ${with_} aircraft, as ${cfg.shortName} counts: ${fmt(p.equipped)} of ${fmt(p.total)} (${pctLabel(p.equipped, p.total)}).`;
 }

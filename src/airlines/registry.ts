@@ -262,6 +262,9 @@ export interface AirlineConfig {
     note: string;
     source: string;
     reason?: ProgrammeExclusionReason;
+    /** The report that states the exclusion outright, linked wherever the
+     * airline's own whole-fleet line is shown beside it. */
+    report?: { label: string; url: string };
   };
   /** Airline-local programme types, tested against the raw type string before
    * the shared family. For a carrier whose sub-variants have opposite status
@@ -385,6 +388,10 @@ const AIRLINE_DEFS = {
       // The same reports put the CRJ-200s in the rollout as CRJ-450s, which is
       // why those stay in the denominator.
       source: "https://paxex.aero/united-airlines-crj450-premium-twist-crj200/",
+      report: {
+        label: "Runway Girl Network, March 2026",
+        url: "https://runwaygirlnetwork.com/2026/03/united-airlines-transforms-devils-chariot-into-premium-crj-450/",
+      },
     },
     // Mainline and most Express types are in the programme; ERJ-145s are not
     // (programExclusions). The remaining roster is the programme's own.
@@ -1019,6 +1026,31 @@ export function programmeExclusionLabel(code: string): string {
   return programmeExclusionReason(code) === "not_in_programme"
     ? "Not in the programme"
     : "Retiring";
+}
+
+export interface ProgrammeExclusionCaveat {
+  text: string;
+  /** For a line under a count, where the whole-fleet statement is not quoted. */
+  short: string;
+  report?: { label: string; url: string };
+}
+
+/** United says "the whole fleet"; reports say the ERJ-145s are left out; our
+ * count follows the reports. Any page that prints the airline's whole-fleet
+ * line next to the exclusion (or to a count that applies it) prints this too,
+ * so a reader never meets the two answers without the sentence between them.
+ * Null for airlines with no reported exclusion: a retiring type contradicts
+ * nothing the airline said. */
+export function programmeExclusionCaveat(code: string): ProgrammeExclusionCaveat | null {
+  const cfg = AIRLINES[code];
+  const excl = cfg?.programExclusions;
+  if (!cfg || excl?.reason !== "not_in_programme") return null;
+  const types = excl.families.map((f) => `${f}s`).join(" and ");
+  return {
+    text: `${cfg.shortName}'s whole-fleet target does not name the ${types}. Reports say they are left out of the rollout, and we have found no ${cfg.shortName} statement on the type itself. Our count follows the reports and leaves them out.`,
+    short: `Our ${cfg.shortName} count leaves out the ${types}, which reports say are not part of the rollout.`,
+    ...(excl.report ? { report: excl.report } : {}),
+  };
 }
 
 /** Meta key (per airline) holding the community source's own last-edit date

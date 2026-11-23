@@ -1,4 +1,4 @@
-import type { SiteConfig } from "../airlines/registry";
+import { type SiteConfig, programmeExclusionCaveat } from "../airlines/registry";
 import { formatFactDate, rolloutTimeline } from "../airlines/rollout-facts";
 import type { InstallRateStats, TargetProjection, TargetVerdict } from "../utils/install-rate";
 import {
@@ -56,7 +56,16 @@ function targetStatus(p: TargetProjection): string {
   return parts.join(" · ");
 }
 
-function TargetRow({ p, shortName }: { p: TargetProjection; shortName: string }) {
+function TargetRow({
+  p,
+  shortName,
+  exclusionNote,
+}: {
+  p: TargetProjection;
+  shortName: string;
+  /** Which types a whole-fleet target's count leaves out, where any are. */
+  exclusionNote: string | null;
+}) {
   const verdict = VERDICT_TONE[p.verdict];
   return (
     <li className="border-b border-subtle py-3 last:border-0">
@@ -82,7 +91,7 @@ function TargetRow({ p, shortName }: { p: TargetProjection; shortName: string })
           {p.derivedFromStated && p.target.statedFleet
             ? `${fmt(p.targetCount)} is ${probLabel(p.target.fractionOfTracked ?? 1).toLowerCase()} of the ${fmt(p.derivedFrom)} aircraft ${shortName}'s ${p.target.statedFleet.basis} implies.`
             : p.target.fractionOfTracked === 1
-              ? `Fleet size is our count, not ${shortName}'s.`
+              ? `Fleet size is our count, not ${shortName}'s.${exclusionNote ? ` ${exclusionNote}` : ""}`
               : `${fmt(p.targetCount)} is ${probLabel(p.target.fractionOfTracked ?? 1).toLowerCase()} of our count of ${fmt(p.derivedFrom)}, not ${shortName}'s figure.`}
         </p>
       )}
@@ -185,6 +194,7 @@ function AirlineSection({ a }: { a: AirlineInstallRate }) {
                 key={`${p.target.label}-${p.target.deadline}`}
                 p={p}
                 shortName={a.shortName}
+                exclusionNote={programmeExclusionCaveat(a.code)?.short ?? null}
               />
             ))}
           </ul>

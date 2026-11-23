@@ -10,7 +10,12 @@ import {
   targetFact,
   tenantCopy,
 } from "../airlines/aircraft-pages";
-import type { SiteConfig } from "../airlines/registry";
+import {
+  type ProgrammeExclusionCaveat,
+  type SiteConfig,
+  programmeExclusionCaveat,
+  siteAirline,
+} from "../airlines/registry";
 import { type RolloutFact, formatFactDate } from "../airlines/rollout-facts";
 import type { AircraftTypePageData, AircraftVerdictKind, WifiProvider } from "../types";
 import type { AircraftSpec } from "../utils/aircraft-specs";
@@ -330,7 +335,28 @@ function FlightsSection({
   );
 }
 
-function FactsSection({ facts, airline }: { facts: RolloutFact[]; airline: string }) {
+function CaveatReport({ caveat }: { caveat: ProgrammeExclusionCaveat }) {
+  if (!caveat.report) return null;
+  return (
+    <>
+      {" "}
+      <a href={caveat.report.url} className={LINK} rel="noopener noreferrer" target="_blank">
+        {caveat.report.label}
+      </a>
+    </>
+  );
+}
+
+function FactsSection({
+  facts,
+  airline,
+  caveat,
+}: {
+  facts: RolloutFact[];
+  airline: string;
+  /** Set on a type the airline's own statements do not square with. */
+  caveat: ProgrammeExclusionCaveat | null;
+}) {
   if (facts.length === 0) return null;
   return (
     <section className={CARD}>
@@ -349,6 +375,12 @@ function FactsSection({ facts, airline }: { facts: RolloutFact[]; airline: strin
           </li>
         ))}
       </ul>
+      {caveat && (
+        <p className="mt-4 border-t border-subtle pt-3 text-sm text-secondary leading-relaxed">
+          <strong className="text-primary">How this fits the answer above.</strong> {caveat.text}
+          <CaveatReport caveat={caveat} />
+        </p>
+      )}
     </section>
   );
 }
@@ -477,7 +509,15 @@ export default function AircraftTypePage({
         <RecentSection def={def} data={data} />
         <RoutesSection def={def} data={data} />
         <FlightsSection def={def} data={data} answer={answer} />
-        <FactsSection facts={facts.filter((f) => f !== headerTarget)} airline={airline} />
+        <FactsSection
+          facts={facts.filter((f) => f !== headerTarget)}
+          airline={airline}
+          caveat={
+            answer.kind === "not_in_programme"
+              ? programmeExclusionCaveat(siteAirline(site).code)
+              : null
+          }
+        />
         <SpecsSection def={def} spec={spec} />
         <Faq
           variant="card"
