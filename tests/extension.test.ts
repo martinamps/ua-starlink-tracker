@@ -296,16 +296,20 @@ describe("badging policy", () => {
     expect(extLib.shouldBadge(predicted(0.95, "low"))).toBe(false);
   });
 
-  test("Starlink only dims settled answers that fall short of a badge, never unknowns", () => {
+  test("Starlink only sorts settled answers into three tiers, never unknowns", () => {
     const claim = (status: string) => ({ ...extLib.unknownClaim(), status });
-    expect(extLib.shouldDim(claim("verified"))).toBe(false);
-    expect(extLib.shouldDim(claim("installed"))).toBe(false);
-    expect(extLib.shouldDim(predicted(0.92))).toBe(false);
-    expect(extLib.shouldDim(claim("no_starlink"))).toBe(true);
-    expect(extLib.shouldDim(predicted(0.4))).toBe(true);
-    expect(extLib.shouldDim(predicted(0.95, "low"))).toBe(true);
-    expect(extLib.shouldDim(extLib.unknownClaim())).toBe(false);
-    expect(extLib.shouldDim(null)).toBe(false);
+    expect(extLib.filterTier(claim("verified"))).toBe("starlink");
+    expect(extLib.filterTier(claim("installed"))).toBe("starlink");
+    expect(extLib.filterTier(predicted(0.92))).toBe("starlink");
+    expect(extLib.filterTier(claim("no_starlink"))).toBe("no");
+    expect(extLib.filterTier(predicted(0.4))).toBe("no");
+    // Odds held off the badge are not a no: a low grade, or just under the bar.
+    expect(extLib.filterTier(predicted(0.95, "low"))).toBe("maybe");
+    expect(extLib.filterTier(predicted(0.74))).toBe("maybe");
+    expect(extLib.filterTier(predicted(0.5))).toBe("maybe");
+    expect(extLib.filterTier(predicted(0.49))).toBe("no");
+    expect(extLib.filterTier(extLib.unknownClaim())).toBeNull();
+    expect(extLib.filterTier(null)).toBeNull();
   });
 
   test("multi-leg combine: the weakest leg wins", () => {
@@ -887,8 +891,8 @@ describe("extension release guardrails", () => {
     expect(parseListingVersion("<html>no version here</html>")).toBeNull();
   });
 
-  test("2.2.0 adds the Starlink-only toggle", () => {
-    expect(manifest.version).toBe("2.2.0");
+  test("2.3.0 adds the maybe tier and the type-share tooltips", () => {
+    expect(manifest.version).toBe("2.3.0");
   });
 });
 
@@ -1077,5 +1081,226 @@ describe("leg-scoped lookups", () => {
     );
     expect(body.leg.origin).toBe("SFO");
     expect(CLAIM_STATUSES).toContain(extLib.normalizeClaim(body).status);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// v2.3: type-share tooltips and the "maybe" tier, on the hub's answers as they
+// are today and as the open Qatar changes will make them
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("type-share odds and the Starlink-only tiers", () => {
+  const SWAP_WORDING = "has flown other aircraft";
+  const ASSIGN_WORDING = "~2 days before departure";
+
+  const qatarLeg = (type: string) => [
+    { tail_number: null, aircraft_type: type, starlink: "yes", departure_airport: "DOH" },
+  ];
+
+  // The hub's answer for a scheduled 777-300ER today: a yes by type.
+  const scheduleYes = {
+    hasStarlink: true,
+    airline: "Qatar Airways",
+    confidence: "type",
+    basis: "schedule",
+    reason: "Scheduled Boeing 777-300ER DOH→LHR.",
+    flights: qatarLeg("Boeing 777-300ER"),
+  };
+  // The same flight once some aircraft of the type are held back: no yes, the
+  // type's fitted share as `probability`, still `confidence: "type"`.
+  const scheduleShare = (probability: number, type: string) => ({
+    hasStarlink: null,
+    airline: "Qatar Airways",
+    probability,
+    confidence: "type",
+    basis: "schedule",
+    reason: `Scheduled ${type} DOH→LHR.`,
+    flights: qatarLeg(type),
+  });
+  const history = (probability: number, confidence: string, basis = "history") => ({
+    hasStarlink: null,
+    airline: "Qatar Airways",
+    probability,
+    confidence,
+    basis,
+    n_recent_observations: 35,
+    n_flown: 28,
+    n_scheduled: 7,
+    window_days: 60,
+    type_mix: [],
+    season_shift: confidence === "low",
+    reason: "x",
+    flights: basis === "schedule" ? qatarLeg("Boeing 777-300ER") : [],
+  });
+  // Alaska, any date with no aircraft on file: the subfleet's equipped share.
+  const alaskaShare = {
+    hasStarlink: null,
+    airline: "Alaska Airlines",
+    confidence: "type",
+    probability: 0.994,
+    reason: "~99% Starlink probability",
+    flights: [],
+  };
+
+  test("a scheduled type's fitted share says what the number is, not a swap history", () => {
+    for (const [p, type, pct] of [
+      [0.8421052631578947, "Boeing 777-300ER", "84%"],
+      [0.9375, "Boeing 787-8", "94%"],
+    ] as const) {
+      const claim = extLib.normalizeClaim(scheduleShare(p, type));
+      expect(claim.status).toBe("predicted");
+      expect(claim.typeShare).toBe(true);
+      expect(claim.predictionConfidence).toBeNull();
+      expect(extLib.shouldBadge(claim)).toBe(true);
+      expect(extLib.badgeLabel(claim)).toBe(`Starlink ~${pct}`);
+      const title = extLib.badgeTitle(claim);
+      expect(title).toBe(
+        `Scheduled aircraft type (${type}): about ${pct} of that type in the Qatar Airways fleet counts as fitted with Starlink. Qatar Airways doesn't say which aircraft flies, and a swap can change the type.`
+      );
+      expect(title).not.toContain(SWAP_WORDING);
+      expect(title).not.toContain("verified");
+    }
+  });
+
+  test("answers that are not a type share keep their wording", () => {
+    const yes = extLib.normalizeClaim(scheduleYes);
+    expect(yes.status).toBe("installed");
+    expect(yes.typeShare).toBeUndefined();
+    expect(extLib.badgeTitle(yes)).toContain("Scheduled aircraft (Boeing 777-300ER) is a type");
+
+    // Swap risk: graded, on the schedule basis. This one has flown other aircraft.
+    const swap = extLib.normalizeClaim(history(0.84, "high", "schedule"));
+    expect(swap.typeShare).toBeUndefined();
+    expect(extLib.badgeTitle(swap)).toContain(SWAP_WORDING);
+
+    const far = extLib.normalizeClaim(history(0.928, "medium"));
+    expect(far.typeShare).toBeUndefined();
+    expect(extLib.badgeTitle(far)).toContain("35 recent and scheduled operating days");
+
+    // United's frozen shape carries its grade inside `prediction`.
+    const ua = extLib.normalizeClaim({
+      hasStarlink: null,
+      confidence: "predicted",
+      prediction: { probability: 0.9, confidence: "high", n_observations: 8 },
+      flights: [],
+    });
+    expect(ua.status).toBe("predicted");
+    expect(ua.typeShare).toBeUndefined();
+    expect(extLib.badgeTitle(ua)).toContain(ASSIGN_WORDING);
+  });
+
+  test("an Alaska share never speaks of the two-day assignment, at any distance", () => {
+    const claim = extLib.normalizeClaim(alaskaShare);
+    expect(claim.status).toBe("predicted");
+    expect(claim.typeShare).toBe(true);
+    expect(extLib.shouldBadge(claim)).toBe(true);
+    const title = extLib.badgeTitle(claim);
+    expect(title).toBe(
+      "About 99% of the Alaska Airlines aircraft that fly flights like this one have Starlink. The tracker has no specific aircraft on file for this flight."
+    );
+    expect(title).not.toContain(ASSIGN_WORDING);
+    // A whole subfleet is sent as 1; the label caps at ~99% and the words follow.
+    const all = extLib.normalizeClaim({ ...alaskaShare, probability: 1 });
+    expect(extLib.badgeLabel(all)).toBe("Starlink ~99%");
+    expect(extLib.badgeTitle(all)).toStartWith("Nearly all of the Alaska Airlines aircraft");
+    // No airline name on the payload still reads as a sentence.
+    const { airline: _airline, ...anonymous } = alaskaShare;
+    expect(extLib.badgeTitle(extLib.normalizeClaim(anonymous))).toContain(
+      "of the airline's aircraft that fly"
+    );
+  });
+
+  test("a type share that is the weakest leg keeps its wording on the card", () => {
+    const share = { ...extLib.normalizeClaim(alaskaShare), flightNumber: "AS801" };
+    const verified = {
+      ...extLib.normalizeClaim({ hasStarlink: true, confidence: "verified", flights: [] }),
+      flightNumber: "AS2100",
+    };
+    const combined = extLib.combineClaims([verified, share]);
+    expect(combined.typeShare).toBe(true);
+    const title = extLib.cardBadgeTitle(combined, [verified, share]);
+    expect(title).toStartWith("AS801: About 99% of the Alaska Airlines aircraft");
+    expect(title).not.toContain(ASSIGN_WORDING);
+  });
+
+  test("next-season odds graded low: no badge, and not dimmed like a no", () => {
+    // QR7 on a date in the next schedule season: "medium" today, "low" once
+    // next-season dates are graded down. The number is the same either way.
+    const today = extLib.normalizeClaim(history(0.928, "medium"));
+    expect(extLib.shouldBadge(today)).toBe(true);
+    expect(extLib.filterTier(today)).toBe("starlink");
+
+    const graded = extLib.normalizeClaim(history(0.928, "low"));
+    expect(extLib.shouldBadge(graded)).toBe(false);
+    expect(extLib.filterTier(graded)).toBe("maybe");
+
+    const a380 = extLib.normalizeClaim({ ...scheduleYes, hasStarlink: false });
+    expect(extLib.filterTier(a380)).toBe("no");
+    expect(extLib.filterTier(extLib.normalizeClaim(history(0, "high")))).toBe("no");
+    // Two seasons out the hub sends no number: unknown, never dimmed.
+    const { probability: _p, ...tooFar } = history(0, "none");
+    expect(extLib.filterTier(extLib.normalizeClaim(tooFar))).toBeNull();
+  });
+
+  test("a far-out 777-300ER under the bar is a maybe, not a no", () => {
+    const claim = extLib.normalizeClaim(history(0.7417460899984867, "high"));
+    expect(extLib.shouldBadge(claim)).toBe(false);
+    expect(extLib.filterTier(claim)).toBe("maybe");
+  });
+
+  test("an itinerary is filtered by its weakest leg", () => {
+    const verified = extLib.normalizeClaim({ hasStarlink: true, confidence: "verified" });
+    const maybe = extLib.normalizeClaim(history(0.928, "low"));
+    const no = extLib.normalizeClaim({ hasStarlink: false, confidence: "verified" });
+    expect(extLib.filterTier(extLib.combineClaims([verified, maybe]))).toBe("maybe");
+    expect(extLib.filterTier(extLib.combineClaims([verified, maybe, no]))).toBe("no");
+    expect(extLib.filterTier(extLib.combineClaims([verified, extLib.unknownClaim()]))).toBeNull();
+  });
+
+  test("the content script and stylesheet carry both dim tiers", async () => {
+    const dir = `${import.meta.dir}/../chrome-extension`;
+    const [content, css] = await Promise.all([
+      Bun.file(`${dir}/content.js`).text(),
+      Bun.file(`${dir}/styles.css`).text(),
+    ]);
+    for (const cls of ["starlink-only-dim", "starlink-only-maybe"]) {
+      expect(content).toContain(`"${cls}"`);
+      expect(css).toContain(`.${cls} {`);
+    }
+    expect(content).toContain("lib.filterTier(");
+    expect(content).not.toContain("shouldDim");
+  });
+
+  describe("against the hub handler", () => {
+    let app: ReturnType<typeof createApp>;
+
+    beforeAll(() => {
+      app = createApp(openSnapshot());
+    });
+
+    // Tomorrow and three weeks out get the same registry answer whenever no
+    // aircraft is on file, so the tooltip must be true for both.
+    test("Alaska registry odds read the same one day out and three weeks out", async () => {
+      const today = extLib.localTodayIso();
+      for (const fn of ["AS850", "AS2402"]) {
+        const titles: string[] = [];
+        for (const offset of [1, 21]) {
+          const body = await jsonOf(
+            app,
+            `/api/check-any-flight?flight_number=${fn}&date=${addDaysISO(today, offset)}`,
+            HUB_HOST
+          );
+          const claim = extLib.normalizeClaim(body);
+          if (claim.status !== "predicted") continue;
+          expect(body.confidence, fn).toBe("type");
+          expect(claim.typeShare, fn).toBe(true);
+          const title = extLib.badgeTitle(claim);
+          expect(title, fn).toContain("aircraft that fly flights like this one");
+          expect(title, fn).not.toContain(ASSIGN_WORDING);
+          titles.push(title);
+        }
+        expect(new Set(titles).size, fn).toBeLessThanOrEqual(1);
+      }
+    });
   });
 });

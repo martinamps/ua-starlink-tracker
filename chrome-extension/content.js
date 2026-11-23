@@ -30,7 +30,7 @@
   const MAX_ATTR_SCAN_ELEMENTS = 400;
 
   const lookup = lib.createClaimLookup((message) => chrome.runtime.sendMessage(message));
-  // Settled cards → {signature, badged, badge}. Keyed by element so Google's
+  // Settled cards → {signature, badged, badge, tier}. Keyed by element so Google's
   // in-place re-renders (which strip our badges) can be repaired from memory.
   let settledCards = new WeakMap();
   // Bumped on every navigation; a pass that started under an older generation
@@ -259,7 +259,10 @@
 
   // Dims, never hides: Google's result list is virtualized, and a card we
   // have no answer for may still be the flight the user wants.
-  const DIM_CLASS = "starlink-only-dim";
+  const TIER_CLASSES = Object.freeze({ no: "starlink-only-dim", maybe: "starlink-only-maybe" });
+  const TIER_CLASS_SELECTOR = Object.values(TIER_CLASSES)
+    .map((c) => `.${c}`)
+    .join(",");
   // In memory for the life of the tab: persisting it would need the "storage"
   // permission, which the manifest deliberately doesn't ask for.
   let starlinkOnly = false;
@@ -271,7 +274,8 @@
     filterChip.type = "button";
     filterChip.className = "starlink-only-toggle";
     filterChip.textContent = "Starlink only";
-    filterChip.title = "Dim flights without a verified, installed or predicted Starlink badge";
+    filterChip.title =
+      "Dim flights without a Starlink badge. Flights with better-than-even Starlink odds but no badge are dimmed less.";
     filterChip.setAttribute("aria-pressed", String(starlinkOnly));
     filterChip.addEventListener("click", () => {
       starlinkOnly = !starlinkOnly;
@@ -281,16 +285,23 @@
     document.body.appendChild(filterChip);
   }
 
-  /** Dims settled non-Starlink cards while the toggle is on; the chip shows
-   * only on pages where we answered for at least one card. */
+  function clearTier(card) {
+    card.classList.remove(...Object.values(TIER_CLASSES));
+  }
+
+  /** Dims settled cards by tier while the toggle is on: a no fully, a maybe
+   * lightly. The chip shows only on pages where we answered for at least one
+   * card. */
   function applyFilter() {
     try {
       let answered = false;
       for (const card of findFlightCards()) {
         const entry = settledCards.get(card);
-        const dim = entry?.dim === true && entry.signature === cardSignature(card);
-        if (entry?.badged || dim) answered = true;
-        card.classList.toggle(DIM_CLASS, starlinkOnly && dim);
+        const tier = entry && entry.signature === cardSignature(card) ? entry.tier : null;
+        if (tier) answered = true;
+        for (const [name, cls] of Object.entries(TIER_CLASSES)) {
+          card.classList.toggle(cls, starlinkOnly && tier === name);
+        }
       }
       if (answered) ensureFilterChip();
       if (filterChip) filterChip.hidden = !answered;
@@ -360,7 +371,9 @@
     // failure would strand it unbadged for the rest of the session: nothing
     // else clears settledCards short of an SPA navigation.
     const settled = outcomes.every((outcome) => !outcome.retryable);
-    if (settled) settledCards.set(card, { signature, badged, badge, dim: lib.shouldDim(combined) });
+    if (settled) {
+      settledCards.set(card, { signature, badged, badge, tier: lib.filterTier(combined) });
+    }
     return settled;
   }
 
@@ -384,7 +397,7 @@
       } else if (action === "process") {
         settledCards.delete(card);
         removeBadge(card);
-        card.classList.remove(DIM_CLASS);
+        clearTier(card);
         pending.push(card);
       }
     }
@@ -466,8 +479,8 @@
       for (const badge of document.querySelectorAll(".starlink-wifi-badge")) {
         retire(badge);
       }
-      for (const card of document.querySelectorAll(`.${DIM_CLASS}`)) {
-        card.classList.remove(DIM_CLASS);
+      for (const card of document.querySelectorAll(TIER_CLASS_SELECTOR)) {
+        clearTier(card);
       }
       if (filterChip) filterChip.hidden = true;
     } catch {
