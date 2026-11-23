@@ -4703,7 +4703,9 @@ export const REPORTED_MAX_AGE_DAYS = 30;
  * another provider: the sheet side of /api/mismatches, dated like an install.
  * Never equipped (equippedSql needs verified_wifi NULL or 'Starlink'), so a
  * tail is in this list or in getRecentInstalls, never both, and no count
- * reads it.
+ * reads it. Independent listings only: a row our own discovery wrote is not a
+ * sheet listing, and it outlives a contrary check until the next good scrape
+ * purges it, which in November 2026 was three weeks away.
  */
 export function getReportedInstalls(
   db: Database,
@@ -4717,6 +4719,7 @@ export function getReportedInstalls(
      FROM starlink_planes
      WHERE verified_wifi IS NOT NULL AND verified_wifi != 'None'
        AND ${SHEET_YES_VERIFIED_NO}
+       AND ${INDEPENDENT_LISTING_WHERE}
        AND ${INSTALL_FILTER}
        AND substr(DateFound, 1, 10) >= date(?, 'unixepoch', '-${REPORTED_MAX_AGE_DAYS} days')`,
     airline,

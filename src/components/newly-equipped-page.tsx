@@ -96,7 +96,7 @@ function ReportedRow({ row, airlineName }: { row: ReportedInstall; airlineName: 
         <span className="text-xs text-secondary">{aircraftName(row.Aircraft)}</span>
         {operator && <span className="text-xs text-muted hidden sm:inline">{operator}</span>}
         <span className="text-xs text-muted tabular-nums ml-auto">
-          Listed {shortDate(row.DateFound.slice(0, 10))}
+          First seen {shortDate(row.DateFound.slice(0, 10))}
         </span>
       </div>
       <div className="text-xs text-muted mt-1">
@@ -200,6 +200,10 @@ export default function NewlyEquippedPage({
                 airlineName={airlines.find((a) => a.code === r.airline)?.name ?? r.airline}
               />
             ))}
+            <p className="text-xs text-muted mt-4">
+              Dates are when we first saw the listing on the sheet, which can be later than the day
+              it was added.
+            </p>
           </div>
         </section>
       )}

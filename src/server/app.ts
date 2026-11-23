@@ -2410,7 +2410,7 @@ const feedXml: Handler = (ctx) => {
     <updated>${installIso(i.DateFound)}</updated>
     <category term="reported"/>
     <summary>${escapeXml(
-      `${name} aircraft ${i.TailNumber} (${i.Aircraft}${operated}) is listed with Starlink on the community-maintained fleet sheet, where this tracker first saw it on ${i.DateFound.slice(0, 10)}. This tracker's own check of the airline's site still reads ${i.observed_wifi}, so the aircraft is not confirmed and is not in the tracker's Starlink count.`
+      `${name} aircraft ${i.TailNumber} (${i.Aircraft}${operated}) is listed with Starlink on the community-maintained fleet sheet, where this tracker first saw it on ${i.DateFound.slice(0, 10)} — the date this tracker first read the listing, not necessarily the day it was added. This tracker's own check of the airline's site still reads ${i.observed_wifi}, so the aircraft is not confirmed and is not in the tracker's Starlink count.`
     )}</summary>
   </entry>`,
     };
@@ -2425,7 +2425,7 @@ const feedXml: Handler = (ctx) => {
   const body = `<?xml version="1.0" encoding="utf-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom">
   <title>${escapeXml(`${site.brand.title} — Newly Equipped Aircraft`)}</title>
-  <subtitle>${escapeXml(`Aircraft as this tracker first observes them with Starlink, newest first. Dates are when the install was found, not when the antenna went on.${reported.length ? ' Entries titled "reported" are community listings this tracker has not confirmed.' : ""}`)}</subtitle>
+  <subtitle>${escapeXml(`Aircraft as this tracker first observes them with Starlink, newest first. Dates are when the install was found, not when the antenna went on.${reported.length ? ' Entries titled "reported" are community listings this tracker has not confirmed, dated by when this tracker first read the listing.' : ""}`)}</subtitle>
   <link href="https://${host}/feed.xml" rel="self"/>
   <link href="https://${host}/newly-equipped"/>
   <id>https://${host}/feed.xml</id>

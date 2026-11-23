@@ -56,6 +56,9 @@ beforeAll(() => {
   seed(db, "N30002", { verified: "Viasat", found: daysAgo(REPORTED_MAX_AGE_DAYS + 5) });
   seed(db, "N30003", { verified: "Viasat", found: daysAgo(2), gid: "ua_seed" });
   seed(db, "N30004", { wifi: "Viasat", verified: "Viasat", found: daysAgo(2) });
+  // Ours, not the sheet's: a discovery row whose later check read another
+  // provider, still in the table because the purge waits on a good scrape.
+  seed(db, "N30005", { verified: "Viasat", found: daysAgo(1), gid: "discovery" });
   app = createApp(db);
 });
 
@@ -86,6 +89,10 @@ describe("getReportedInstalls", () => {
     expect(getReportedInstalls(db, "UA", 25, later)).toEqual([]);
   });
 
+  test("leaves out rows our own discovery wrote", () => {
+    expect(getReportedInstalls(db, "UA").map((r) => r.TailNumber)).not.toContain("N30005");
+  });
+
   test("is scoped to the airline asked for", () => {
     expect(getReportedInstalls(db, "AS")).toEqual([]);
   });
@@ -108,13 +115,17 @@ describe("/newly-equipped", () => {
       expect(reportedHtml).not.toContain(`id="${tail}"`);
     }
     expect(reportedHtml).toContain("not in our count");
-    expect(reportedHtml).toContain("Listed ");
+    // DateFound is the day our scrape first read the listing, so the row and
+    // the panel's footer must say that and never "Listed <date>".
+    expect(reportedHtml).toContain("First seen ");
+    expect(reportedHtml).not.toMatch(/Listed\s+[A-Z][a-z]{2} \d/);
+    expect(reportedHtml).toContain("Dates are when we first saw the listing on the sheet");
     expect(reportedHtml).toContain("Viasat");
   });
 
   test("excluded rows appear nowhere on the page", async () => {
     const { text } = await bodyOf(app, "/newly-equipped", UA);
-    for (const tail of ["N30001", "N30002", "N30003", "N30004"]) {
+    for (const tail of ["N30001", "N30002", "N30003", "N30004", "N30005"]) {
       expect(text).not.toContain(`id="${tail}"`);
     }
   });
@@ -150,6 +161,7 @@ describe("/feed.xml", () => {
       expect(e).toContain("reported with Starlink, not yet confirmed</title>");
       expect(e).not.toContain("now has Starlink");
       expect(e).toContain("is not confirmed and is not in the tracker&apos;s Starlink count");
+      expect(e).toContain("the date this tracker first read the listing");
       expect(e).toMatch(/<id>tag:[^<]+:reported:N2000\d<\/id>/);
       expect(e).toMatch(/<link href="https:\/\/[^"]+\/newly-equipped#N2000\d"\/>/);
     }
@@ -180,6 +192,11 @@ describe("/feed.xml", () => {
     expect(text).not.toContain('term="reported"');
     expect(text).not.toContain("N20001");
   });
+
+  test("a discovery row is in neither kind of entry", async () => {
+    const { text } = await bodyOf(app, "/feed.xml", UA);
+    expect(text).not.toContain("N30005");
+  });
 });
 
 describe("counts and the confirmed list stay as they were", () => {
@@ -203,6 +220,7 @@ describe("counts and the confirmed list stay as they were", () => {
     seed(twin, "N30002", { verified: "Viasat", found: daysAgo(REPORTED_MAX_AGE_DAYS + 5) });
     seed(twin, "N30003", { verified: "Viasat", found: daysAgo(2), gid: "ua_seed" });
     seed(twin, "N30004", { wifi: "Viasat", verified: "Viasat", found: daysAgo(2) });
+    seed(twin, "N30005", { verified: "Viasat", found: daysAgo(1), gid: "discovery" });
     const after = await jsonOf(createApp(twin), "/api/fleet-summary", UA);
     expect({ ...after, generatedAt: null }).toEqual({ ...before, generatedAt: null });
     twin.close();
