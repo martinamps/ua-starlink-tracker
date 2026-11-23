@@ -424,9 +424,35 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
     // the derived "Yes — Rollout Under Way" would imply a fleet you can plan around.
     headline: "Does Lufthansa Have Starlink? Just Started — First Aircraft Flying",
     summary:
-      "First Starlink flight on August 19, 2026 (A320neo D-AINM, Frankfurt–Rome), followed by Austrian (A320neo OE-LXF) in September and SWISS (A320neo HB-JDM) on September 28; rolling out to some 850 aircraft group-wide by 2029.",
-    aliases: ["austrian", "swiss"],
+      "First Starlink flight on August 19, 2026 (A320neo D-AINM, Frankfurt–Rome), followed by Austrian (A320neo OE-LXF) in September, SWISS (A320neo HB-JDM) on September 28 and Brussels Airlines (A320neo OO-SBA) on November 9. The first long-haul aircraft, Lufthansa's A350-1000 D-AIFA, flies with it from December 3; rolling out to some 850 aircraft group-wide by 2029.",
+    aliases: ["austrian", "swiss", "brussels-airlines"],
     facts: [
+      {
+        // Internal letter, not a company announcement; Lufthansa declined to add
+        // anything. It doesn't say how access will be charged, so neither do we.
+        fact: "An internal Lufthansa Airlines board letter reported on November 20, 2026 says ten more aircraft a month are to get Starlink, and that the airline wants to earn revenue from Wi-Fi access. The letter doesn't say how; access is free with a Travel ID or Miles & More account for now.",
+        asOf: "2026-11-20",
+        source: {
+          label: "airliners.de",
+          url: "https://www.airliners.de/lufthansa-starlink-einbau-flugzeuge-monat-beschleunigen/91635",
+        },
+      },
+      {
+        fact: "Brussels Airlines' first Starlink aircraft, A320neo OO-SBA, flew its first commercial flight with Wi-Fi on November 9, 2026 (SN2257 Brussels–Copenhagen). Brussels Airlines plans to have 15 aircraft equipped by the first half of 2027, free in all booking classes for passengers with a Travel ID or Miles & More account.",
+        asOf: "2026-11-09",
+        source: {
+          label: "Brussels Airlines press release",
+          url: "https://press.brusselsairlines.com/free-starlink-high-speed-wi-fi-takes-off-with-brussels-airlines",
+        },
+      },
+      {
+        fact: "Lufthansa's first Airbus A350-1000, D-AIFA, is the group's first long-haul aircraft with Starlink Wi-Fi, starting with its first scheduled flight, Munich to Tokyo Haneda, on December 3, 2026.",
+        asOf: "2026-11-11",
+        source: {
+          label: "Lufthansa Group newsroom",
+          url: "https://newsroom.lufthansagroup.com/en/lufthansas-first-airbus-a350-1000-welcome-to-munich/",
+        },
+      },
       {
         fact: "Lufthansa operated its first Starlink flight on August 19, 2026 (A320neo D-AINM on LH234 Frankfurt–Rome), with up to ten more A320-family aircraft planned for 2026 and a group-wide rollout to some 850 aircraft by 2029. Access is free for Miles & More members and Travel ID users.",
         asOf: "2026-08-19",
