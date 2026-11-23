@@ -18,6 +18,7 @@ import {
   syncSpreadsheetToFleet,
   upsertFleetAircraft,
 } from "../database/database";
+import { recordSourceFailure, recordSourceSuccess } from "../database/source-health";
 import { COUNTERS, metrics, normalizeAirlineTag, withSpan } from "../observability";
 import { type JobHandle, startJob } from "../utils/job-runner";
 import { info, error as logError } from "../utils/logger";
@@ -326,6 +327,10 @@ export function startFleetSync(db: Database): JobHandle {
             span.setTag(`fr24.${r.airline}.success`, r.success ? 1 : 0);
             span.setTag(`fr24.${r.airline}.total`, r.total);
             span.setTag(`fr24.${r.airline}.new`, r.new);
+            // success with an error set = a regional roster was missing.
+            if (r.success && !r.error) recordSourceSuccess(db, "fleet_roster", r.airline);
+            else
+              recordSourceFailure(db, "fleet_roster", r.airline, r.success ? "partial" : "error");
             if (r.success) {
               info(
                 `Scheduled fleet sync (${r.airline}): ${r.total} aircraft (${r.new} new, ${r.updated} updated)`

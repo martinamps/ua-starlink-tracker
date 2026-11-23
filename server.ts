@@ -13,6 +13,7 @@ import {
   recordFirstFlights,
   warmAircraftTypePages,
 } from "./src/database/database";
+import { startSourceHealthJob } from "./src/database/source-health";
 import { startAdsbSweepJob } from "./src/scripts/adsb-sweep";
 import { startAlaskaTrackerJob } from "./src/scripts/alaska-tracker";
 import { startAlaskaVerifier } from "./src/scripts/alaska-verifier";
@@ -126,6 +127,11 @@ if (JOBS_ENABLED) {
   // Data-freshness gauges: derived from MAX(timestamp) in the DB, not a
   // ran-at heartbeat — catches "loop alive but writes nothing" silent failures.
   track(startFreshnessEmitter(db));
+
+  // Per-source last success/failure, kept in meta: gauges every 5 minutes and
+  // one Slack notice when a source passes its quiet threshold, one when it
+  // returns (the freshness gauges above have no memory and no voice).
+  track(startSourceHealthJob(db));
 
   track(
     startJob({

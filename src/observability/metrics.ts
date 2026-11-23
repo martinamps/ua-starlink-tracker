@@ -54,6 +54,10 @@
  *   tool:            7 MCP tool names (TOOL_NAMES) | unknown         (~8)
  *   state:           watch.feed_fetch: prediction | yes | no | swap | none  (5)
  *   surface:         watch.cta_shown: check_flight                   (1)
+ *   source:          source.* metrics only: SourceId in database/source-health.ts (15).
+ *                    (scraper.sync and others carry their own `source` values)
+ *   kind:            source.failure: error | timeout | blocked | empty | refused |
+ *                    partial                                         (6)
  */
 
 import { detectAirline } from "../airlines/flight-number";
@@ -372,6 +376,10 @@ export const COUNTERS = {
   // Sheet tab list drifted from the gids we know (utils.ts reconcileSheetTabs) —
   // tags: state (vanished_empty|vanished_listed|new), airline
   SHEET_TAB_DRIFT: "sheet.tab_drift",
+  // A scheduled read of an outside source failed, counting "answered with
+  // nothing usable" as a failure (utils/source-health.ts) — tags: source
+  // (SourceId), kind (error|timeout|blocked|empty|refused|partial), airline
+  SOURCE_FAILURE: "source.failure",
 
   // Trusted positive Starlink verification. Fires on EVERY positive re-check,
   // not only new installs (~50x the install count) — for installs use
@@ -493,6 +501,13 @@ export const GAUGES = {
   // tags: job (see FRESHNESS_QUERIES in data-freshness.ts for the full set),
   //   dataset (mirrors job — DD monitors group by dataset), airline
   DATA_FRESHNESS_SECONDS: "data.freshness_seconds",
+  // Hours since an outside source last gave us usable data, from the stored
+  // per-source record (utils/source-health.ts), sampled every 5 minutes.
+  // tags: source (SourceId), airline
+  SOURCE_HOURS_SINCE_SUCCESS: "source.hours_since_success",
+  // 1 while that source is past its own quiet threshold, else 0: one monitor
+  // covers every source without repeating the thresholds. tags: source, airline
+  SOURCE_QUIET: "source.quiet",
 
   // Backtest precision of firm "yes/no Starlink" calls — tags: airline, window, call
   PRECISION_FIRM_CALL: "precision.firm_call",

@@ -143,6 +143,7 @@ import {
 import { type ProgrammeHeadline, programmeHeadline } from "./roster";
 import { type RouteFlightLeg, getAllFlightLegs, getRouteFlightLegs } from "./route-flights";
 import { getRouteFlightLastSeen } from "./route-history";
+import { capToQuietSources } from "./source-health";
 
 export type { Database };
 
@@ -440,14 +441,14 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     getLastUpdated: () =>
       scope === "ALL"
         ? (airlines
-            .map((c) => getLastUpdated(db, c))
+            .map((c) => capToQuietSources(db, c, getLastUpdated(db, c)))
             .filter(Boolean)
             .sort()
             .at(-1) ?? "")
-        : getLastUpdated(db, scope),
+        : (capToQuietSources(db, scope, getLastUpdated(db, scope)) ?? ""),
     getLastUpdatedRaw: () =>
       airlines
-        .map((c) => getMeta(db, "lastUpdated", c))
+        .map((c) => capToQuietSources(db, c, getMeta(db, "lastUpdated", c)))
         .filter((v): v is string => v !== null)
         .sort()
         .at(-1) ?? null,
