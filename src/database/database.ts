@@ -1253,10 +1253,11 @@ export function stampLastUpdatedAt(
 }
 
 /**
- * Recompute meta totals for an airline from united_fleet rows. UA's meta is
- * owned by the hourly spreadsheet scrape (updateDatabase); for HA/AS this is
- * the only periodic writer — without it their meta freezes at seed time.
- * lastUpdated goes through stampLastUpdated as the "fleet-meta" writer.
+ * Recompute meta totals for an airline from its programme roster: the one
+ * writer of the published totals. Callers: the sheet scrape (updateDatabase),
+ * the fleet sync, the seeds, and boot (refreshSheetOwnedFleetMeta).
+ * lastUpdated goes through stampLastUpdated as the "fleet-meta" writer, so it
+ * moves only for airlines that writer owns.
  */
 export function refreshFleetMeta(db: Database, airline: string): void {
   // Two-bucket meta shape: every non-mainline subfleet reports as express.
@@ -1281,6 +1282,20 @@ export function refreshFleetMeta(db: Database, airline: string): void {
   // owner is "fleet-meta" (the default). For UA the scrape owns the stamp, so
   // the updateDatabase call below can never steal it.
   stampLastUpdated(db, airline, "fleet-meta");
+}
+
+/**
+ * Boot-time refresh for airlines whose totals otherwise move only when the
+ * sheet scrape succeeds. A deploy can change the programme (a new exclusion),
+ * and /fleet reads the roster live; without this the cached headline would
+ * disagree with it until Google Sheets next answers. Limited to sheet-owned
+ * airlines because for the rest refreshFleetMeta also stamps lastUpdated, and
+ * a restart is not fresh data.
+ */
+export function refreshSheetOwnedFleetMeta(db: Database): void {
+  for (const a of enabledAirlines()) {
+    if (lastUpdatedOwner(a.code) === "sheet-scrape") refreshFleetMeta(db, a.code);
+  }
 }
 
 export function getTotalCount(db: Database, airline: string): number {

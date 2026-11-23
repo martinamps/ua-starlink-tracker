@@ -372,11 +372,18 @@ const AIRLINE_DEFS = {
     verifySite: "united.com",
     programExclusions: {
       families: ["ERJ-145"],
-      reason: "not_planned",
-      note: "No Starlink planned",
-      // PaxEx (Oct 2025): United is not putting Starlink on the ERJ-145s.
-      // Runway Girl (Mar 2026) covers the CRJ-200 → CRJ-450 conversion, which
-      // is why those stay in the denominator: https://runwaygirlnetwork.com/2026/03/united-airlines-transforms-devils-chariot-into-premium-crj-450/
+      reason: "not_in_programme",
+      note: "Not in the programme",
+      // Two trade reports from March 2026, both in the reporter's own words,
+      // neither quoting United: PaxEx (24 Mar), "The ERJ145s will not be
+      // modified and, for now, will remain in the fleet", and Runway Girl
+      // (https://runwaygirlnetwork.com/2026/03/united-airlines-transforms-devils-chariot-into-premium-crj-450/),
+      // which calls the E145 "the sole unconnected aircraft in United's fleet
+      // once the Starlink rollout is complete in 2027". United itself has not
+      // said so in anything we found, so site copy attributes the claim
+      // ("not expected", "reports say") rather than stating United's intent.
+      // The same reports put the CRJ-200s in the rollout as CRJ-450s, which is
+      // why those stay in the denominator.
       source: "https://paxex.aero/united-airlines-crj450-premium-twist-crj200/",
     },
     // Mainline and most Express types are in the programme; ERJ-145s are not
@@ -988,8 +995,11 @@ export const OBSERVED_WIFI_SOURCES: readonly VerificationSource[] = [
 ].sort();
 
 /** Why a programme exclusion is out. Air France's types are retiring;
- * United's ERJ-145s will keep flying without Starlink. */
-export type ProgrammeExclusionReason = "retiring" | "not_planned";
+ * United's ERJ-145s keep flying and are reported to be left out of the
+ * rollout. The label says "not in the programme", not "no Starlink planned":
+ * the second would claim the airline ruled the type out, which it has not
+ * said (same reasoning as PHASE_LABEL.negative in airlines-page.tsx). */
+export type ProgrammeExclusionReason = "retiring" | "not_in_programme";
 
 /** The one denominator rule: freighters and a programme's declared
  * exclusions are in the roster but never in a "how many of how many". */
@@ -1004,9 +1014,11 @@ export function programmeExclusionReason(code: string): ProgrammeExclusionReason
   return AIRLINES[code]?.programExclusions?.reason ?? "retiring";
 }
 
-/** Short label for an excluded type: "Retiring" or "No Starlink planned". */
+/** Short label for an excluded type: "Retiring" or "Not in the programme". */
 export function programmeExclusionLabel(code: string): string {
-  return programmeExclusionReason(code) === "not_planned" ? "No Starlink planned" : "Retiring";
+  return programmeExclusionReason(code) === "not_in_programme"
+    ? "Not in the programme"
+    : "Retiring";
 }
 
 /** Meta key (per airline) holding the community source's own last-edit date

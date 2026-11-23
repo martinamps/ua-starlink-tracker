@@ -1425,8 +1425,8 @@ function typeProgressSummary(types: readonly TypeProgress[], stale: boolean): st
   const excludedClause =
     excluded.length === 0
       ? null
-      : excluded[0].exclusionReason === "not_planned"
-        ? `${excluded.map((t) => t.label).join("/")}: no Starlink planned`
+      : excluded[0].exclusionReason === "not_in_programme"
+        ? `${excluded.map((t) => t.label).join("/")} not in the programme`
         : `${excluded.map((t) => t.label).join("/")} retiring`;
   return [
     done.length + going.length > 0 ? `At least: ${[...done, ...going].join(", ")}` : null,

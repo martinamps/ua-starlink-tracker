@@ -63,7 +63,7 @@ const VERDICT_CLASS: Record<AircraftVerdictKind, string> = {
   installing: "verdict verdict-no",
   none: "verdict verdict-no",
   official_none: "verdict verdict-no",
-  not_planned: "verdict verdict-no",
+  not_in_programme: "verdict verdict-no",
   unknown: "verdict verdict-wait",
 };
 

@@ -25,8 +25,11 @@ import { Meter } from "./ui/meter";
 // A stale guide can say none were listed, not that none have started.
 function typeRowText(t: TypeProgress, stale: boolean): { text: string; tone: string } {
   if (t.excluded) {
-    const label = t.exclusionReason === "not_planned" ? "No Starlink planned" : "Retiring";
-    return { text: `${label} — not in the programme (${t.total})`, tone: "text-muted" };
+    const text =
+      t.exclusionReason === "not_in_programme"
+        ? `Not in the programme (${t.total})`
+        : `Retiring — not in the programme (${t.total})`;
+    return { text, tone: "text-muted" };
   }
   if (t.equipped === 0) {
     return {

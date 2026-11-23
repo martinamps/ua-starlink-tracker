@@ -10,6 +10,7 @@ import {
   openDatabase,
   pruneCrashRows,
   recordFirstFlights,
+  refreshSheetOwnedFleetMeta,
   warmAircraftTypePages,
 } from "./src/database/database";
 import { startAdsbSweepJob } from "./src/scripts/adsb-sweep";
@@ -47,6 +48,7 @@ const JOBS_ENABLED = process.env.DISABLE_JOBS !== "1";
 // One handle for the server and every in-process job; migrations run once, here.
 const db = openDatabase();
 migrate(db);
+refreshSheetOwnedFleetMeta(db);
 const app = createApp(db);
 
 info(`Server starting on port ${PORT}. Environment: ${process.env.NODE_ENV || "development"}`);

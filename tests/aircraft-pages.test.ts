@@ -345,13 +345,13 @@ describe("answerFor", () => {
     ],
     ["none", UA_787, input({ knownOther: 10 }), null],
     [
-      "not_planned",
+      "not_in_programme",
       UA_ERJ145,
       input({
         family: "ERJ-145",
         total: 55,
         knownOther: 55,
-        outsideProgramme: { label: "No Starlink planned" },
+        outsideProgramme: { label: "Not in the programme" },
       }),
       null,
     ],
@@ -364,7 +364,9 @@ describe("answerFor", () => {
     expect(a.kind).toBe(kind);
     expect(a.indexable).toBe(!["none", "official_none", "unknown"].includes(kind));
     expect(a.shareLine === null).toBe(
-      ["verifying", "installing", "none", "official_none", "not_planned", "unknown"].includes(kind)
+      ["verifying", "installing", "none", "official_none", "not_in_programme", "unknown"].includes(
+        kind
+      )
     );
     if (["verifying", "official_none", "unknown"].includes(kind)) {
       expect(a.headline).not.toMatch(/^No\b/);

@@ -10,9 +10,9 @@ export function fleetTargetSentence(code: string, name: string): string {
   if (!target) return "";
   const year = target.deadline.slice(0, 4);
   const excl = AIRLINES[code]?.programExclusions;
-  if (excl?.reason === "not_planned") {
+  if (excl?.reason === "not_in_programme") {
     const types = excl.families.join(" and ");
-    return `${name} plans to finish the rollout by the end of ${year}. The ${types}s are not part of that plan.`;
+    return `${name} plans to finish the rollout by the end of ${year}. The ${types}s are not expected to be part of it.`;
   }
   return `${name} plans to equip every plane by the end of ${year}.`;
 }
