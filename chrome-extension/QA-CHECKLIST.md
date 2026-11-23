@@ -127,8 +127,9 @@ manifest's permissions and the package's contents.
 
 The 2.2.0 run of 2026-11-23 also loaded the unpacked extension in Chromium on
 a local stand-in for the Flights page, fed by the live tracker's answers. It
-agreed with every item in these sections, apart from the lines marked "under
-review": Setup sanity, United, Alaska / Hawaiian-operated, Qatar, Untracked
+agreed with every item in these sections as they now read (two Qatar lines
+were rewritten after it: QR1 had stopped flying, and the far-date line named
+a seven-month limit the tracker never had): Setup sanity, United, Alaska / Hawaiian-operated, Qatar, Untracked
 airlines and negatives, Multi-leg itineraries, Leg-scoped lookups, Starlink
 only toggle, Failure honesty, and the package line under Release. It could not
 show anything about Google's own markup, which is what the pass above is for.
@@ -188,21 +189,36 @@ Google Flights lists Hawaiian-operated flights only under Alaska `AS` numbers
 
 ## Qatar (hub endpoint, equipment type)
 
-- [ ] DOH → LHR tomorrow: QR1/7/15 (777/A350) get green "Starlink
-      (installed)"; QR3/11 (A380) get no badge. Hover names the scheduled type
-      and the swap caveat; lookups go to `airlinestarlinktracker.com/api/check-any-flight`.
-      *Under review (2026-11-23): the tracker had no answer for QR1, so it got
-      no badge; QR7 and QR15 behaved as written. Don't fail a release on QR1
-      until the tracker's answer is settled*
-- [ ] DOH → LHR 3+ weeks out: QR1/7 get gray "Starlink ~8x-9x%" (hover cites
-      the number of operating days); QR3/11 get no badge
+Qatar's flight numbers come and go with its schedule, so pick them on the day:
+the Google results for DOH → LHR show which fly, and
+`airlinestarlinktracker.com/api/check-any-flight?flight_number=QR7&date=YYYY-MM-DD`
+shows what the tracker answers for each (`hasStarlink` true or false inside
+about six days, a `probability` further out). Checked on 2026-11-23: the route
+ran QR3, 5, 7, 11, 15, 105, 109 and 119. QR1 was not flying, so the tracker
+had no answer for it and it rightly got no badge.
+
+- [ ] DOH → LHR tomorrow: flights scheduled on a 777 or A350 get green
+      "Starlink (installed)" (QR5, 7, 15, 105 and 109 on 2026-11-23); flights
+      on the A380 get no badge (QR3 and QR11). Hover names the scheduled type
+      and the swap caveat; lookups go to `airlinestarlinktracker.com/api/check-any-flight`
+- [ ] DOH → LHR 3+ weeks out, inside the current schedule season: the same
+      777/A350 flights get gray "Starlink ~8x-9x%" (hover cites the number of
+      operating days; QR5, 7, 15 and 109 at 93% and QR105 at 88% on
+      2026-11-23); the A380 flights get no badge
 - [ ] A flight scheduled on a 787-9 gets no badge (installs under way)
 - [ ] JFK → DOH → BKK on QR+QR: one badge only when both legs qualify
 - [ ] A QR + British Airways itinerary gets no badge and no lookup
-- [ ] A date more than ~7 months out gets no badge. *Under review
-      (2026-11-23): QR7 still showed "Starlink ~93%" ten months out; what the
-      tracker should answer that far ahead is being settled, so don't fail a
-      release on this line*
+- [ ] A date past the end of the current schedule season (seasons change on
+      the last Sunday of March and of October; the current one ends
+      2027-03-27). Which answer is right depends on the tracker, not on the
+      extension, so first ask the hub address above for such a date and read
+      `confidence`:
+      - `low` (the tracker once pull request 192 is deployed): no badge on
+        any date in the next season.
+      - `medium` (the tracker before it, as on 2026-11-23): the gray
+        "Starlink ~NN%" badge still shows through the whole next season, up
+        to eleven months out (QR7 at 93% for 2027-09-15).
+      Either way, a date two seasons out (after 2027-10-30) gets no badge
 
 ## Untracked airlines and negatives
 
