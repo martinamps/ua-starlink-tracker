@@ -4,13 +4,32 @@
  * of its finished types as "aircraft with Starlink".
  */
 
-import type { Database } from "bun:sqlite";
-import { beforeAll, describe, expect, test } from "bun:test";
-import { publishedCount, trackingMethod } from "../src/airlines/published-count";
-import { type AirlineConfig, hubContentAirlines } from "../src/airlines/registry";
-import { AIRLINE_FACTS, airlineOwnCount } from "../src/airlines/rollout-facts";
+import { Database } from "bun:sqlite";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { copyFileSync, rmSync } from "node:fs";
+import {
+  checkedPlaneByPlane,
+  publishedCount,
+  statedCount,
+  trackingMethod,
+} from "../src/airlines/published-count";
+import {
+  type AirlineConfig,
+  enabledAirlines,
+  hubContentAirlines,
+  hubLookupAirlines,
+} from "../src/airlines/registry";
+import { AIRLINE_FACTS, airlineOwnCount, airlineOwnTypeTotal } from "../src/airlines/rollout-facts";
 import { createApp } from "../src/server/app";
-import { bodyOf as bodyOfApp, mcpReq, openSnapshot, toolText } from "./helpers";
+import {
+  TEST_DB,
+  addPlane,
+  bodyOf as bodyOfApp,
+  jsonOf,
+  mcpReq,
+  openSnapshot,
+  toolText,
+} from "./helpers";
 
 const HUB = "airlinestarlinktracker.com";
 
@@ -67,15 +86,180 @@ describe("the published-count rule", () => {
   });
 });
 
-describe("hub home page", () => {
-  test("the search description names only airlines counted plane by plane", async () => {
-    const { text } = await bodyOf("/");
-    const desc = text.match(/<meta name="description" content="([^"]*)"/)?.[1] ?? "";
-    expect(desc).toMatch(
-      /airlines fly Starlink Wi-Fi or are installing it\. Counted plane by plane: \S+ \([\d,]+/
+describe("the count a search description may state", () => {
+  const typeRuled = () =>
+    enabledAirlines().filter((cfg) => trackingMethod(cfg) === "tail" && cfg.typeDeterministicWifi);
+
+  test("an airline checked plane by plane states its tracked count", () => {
+    const tail = enabledAirlines().find(checkedPlaneByPlane);
+    if (!tail) throw new Error("no airline is checked plane by plane: nothing is tested");
+    expect(statedCount(tail, 7)).toBe(7);
+    expect(statedCount(tail, 0)).toBeNull();
+  });
+
+  test("an airline with a type rule is not plane by plane, whatever its phase table says", () => {
+    if (typeRuled().length === 0) {
+      throw new Error("no airline has a type rule without a phase table: nothing is tested");
+    }
+    for (const cfg of enabledAirlines()) {
+      if (!cfg.typeDeterministicWifi && !cfg.communitySource) continue;
+      expect(checkedPlaneByPlane(cfg)).toBe(false);
+      expect(statedCount(cfg, 123456)).toBeNull();
+    }
+  });
+
+  test("a count settled by type is stated only when it equals the airline's own dated figure", () => {
+    let checked = 0;
+    for (const cfg of enabledAirlines()) {
+      if (checkedPlaneByPlane(cfg)) continue;
+      const own = airlineOwnCount(cfg.code)?.count ?? airlineOwnTypeTotal(cfg.code)?.total;
+      if (own === undefined) continue;
+      expect(statedCount(cfg, own)).toBe(own);
+      expect(statedCount(cfg, own + 1)).toBeNull();
+      expect(statedCount(cfg, own - 1)).toBeNull();
+      checked++;
+    }
+    expect(checked).toBeGreaterThan(0);
+  });
+
+  test("a community list is never stated, even beside a plane-by-plane method", () => {
+    const tail = enabledAirlines().find(checkedPlaneByPlane);
+    if (!tail) throw new Error("no airline is checked plane by plane: nothing is tested");
+    const community = {
+      ...tail,
+      communitySource: { label: "a forum list", url: "https://x.test" },
+    };
+    expect(checkedPlaneByPlane(community)).toBe(false);
+    expect(statedCount(community, 7)).toBeNull();
+    for (const cfg of enabledAirlines().filter((a) => a.communitySource)) {
+      if (!airlineOwnCount(cfg.code)) expect(statedCount(cfg, 7)).toBeNull();
+    }
+  });
+
+  test("the per-type total is the newest current dated fact's counts, each stated by its text", () => {
+    for (const entry of AIRLINE_FACTS) {
+      if (!entry.trackedCode) continue;
+      const total = airlineOwnTypeTotal(entry.trackedCode);
+      const current = entry.facts.filter((f) => !f.superseded && f.asOf && f.officialCounts);
+      expect(total === null).toBe(current.length === 0);
+      if (!total) continue;
+      const fact = current.find((f) => f.asOf === total.asOf);
+      const counts = Object.values(fact?.officialCounts ?? {});
+      expect(total.total).toBe(counts.reduce((a, b) => a + b, 0));
+      for (const n of counts.filter((c) => c > 0)) expect(fact?.fact).toContain(String(n));
+    }
+  });
+});
+
+describe("hub search description on seeded counts", () => {
+  // An airline with a type rule and a per-type total on file (Alaska today):
+  // seeded so that its tracked count equals that total, then one past it.
+  let tmp: string;
+  let wdb: Database;
+  let cfg: AirlineConfig;
+  let own: number;
+
+  beforeAll(() => {
+    const found = enabledAirlines().find(
+      (a) => a.publicInHub && !checkedPlaneByPlane(a) && airlineOwnTypeTotal(a.code)
     );
-    expect(desc).toEndWith("Check any flight by number.");
-    for (const { cfg } of byType) expect(desc).not.toContain(cfg.shortName);
+    if (!found) throw new Error("no type-ruled airline has a per-type total: nothing is tested");
+    cfg = found;
+    own = airlineOwnTypeTotal(cfg.code)?.total ?? 0;
+    tmp = `/tmp/ua-stated-count-${process.pid}-${Date.now()}.sqlite`;
+    copyFileSync(TEST_DB, tmp);
+    wdb = new Database(tmp);
+    const have = (
+      wdb.query("SELECT COUNT(*) n FROM starlink_planes WHERE airline = ?").get(cfg.code) as {
+        n: number;
+      }
+    ).n;
+    for (let i = have; i < own; i++) addPlane(wdb, `N${1000 + i}ZZ`, null, { airline: cfg.code });
+  });
+
+  afterAll(() => {
+    wdb.close();
+    rmSync(tmp, { force: true });
+  });
+
+  const describeHub = async () => metaDescription((await bodyOfApp(createApp(wdb), "/", HUB)).text);
+
+  test("its count is stated while it equals the airline's own figures, and dropped once it doesn't", async () => {
+    const matching = await describeHub();
+    const figure = `${cfg.shortName} (?:has it )?on ${own.toLocaleString("en-US")}`;
+    expect(matching).toMatch(new RegExp(figure));
+    expect(matching).not.toContain("plane by plane");
+    expect(matching).toMatch(/ Check a flight by number on \d+ of them\.$/);
+
+    addPlane(wdb, "N9999ZZ", null, { airline: cfg.code });
+    const ahead = await describeHub();
+    expect(ahead).not.toContain(cfg.shortName);
+    expect(ahead).toMatch(/ Check a flight by number on \d+ of them\.$/);
+  });
+});
+
+/** Every description a search engine or an assistant reads off a hub page:
+ * the meta tags, the structured data's own descriptions, llms.txt's summary. */
+function descriptionsOf(html: string, llms: string): string[] {
+  const plain = (t: string) => t.replace(/&#x27;/g, "'").replace(/&amp;/g, "&");
+  return [
+    ...[...html.matchAll(/<meta (?:name|property)="[\w:]*description" content="([^"]*)"/g)].map(
+      (m) => plain(m[1])
+    ),
+    ...[...html.matchAll(/"description":"((?:[^"\\]|\\.)*)"/g)].map((m) => JSON.parse(`"${m[1]}"`)),
+    ...llms.split("\n").flatMap((l) => (l.startsWith("> ") ? [l.slice(2)] : [])),
+  ];
+}
+
+const metaDescription = (html: string) =>
+  html.match(/<meta name="description" content="([^"]*)"/)?.[1] ?? "";
+
+describe("hub home page", () => {
+  test("the search description states a count only for an airline whose count needs no caveat", async () => {
+    const { text } = await bodyOf("/");
+    const desc = metaDescription(text);
+    expect(desc).toMatch(
+      /^\d+ airlines fly Starlink Wi-Fi or are installing it\.( [^.]+\.)? Check a flight by number on \d+ of them\.$/
+    );
+    expect(desc).not.toContain("plane by plane");
+    expect(desc).not.toContain("-operated");
+    for (const cfg of enabledAirlines()) {
+      const stated = desc.match(new RegExp(`${esc(cfg.shortName)} (?:has it )?on ([\\d,]+)`));
+      if (!stated) {
+        expect(desc).not.toContain(cfg.shortName);
+        continue;
+      }
+      const n = Number(stated[1].replace(/,/g, ""));
+      expect(statedCount(cfg, n)).toBe(n);
+    }
+  });
+
+  test("the search description offers the flight check for the airlines that answer it, not for every rollout", async () => {
+    const desc = metaDescription((await bodyOf("/")).text);
+    const [, rollouts, checkable] =
+      desc.match(/^(\d+) airlines .* Check a flight by number on (\d+) of them\.$/) ?? [];
+    expect(desc).not.toContain("any flight");
+    expect(Number(checkable)).toBe(hubLookupAirlines().length);
+    expect(Number(checkable)).toBeLessThan(Number(rollouts));
+    for (const cfg of hubLookupAirlines()) {
+      const json = await jsonOf(
+        app,
+        `/api/check-any-flight?flight_number=${cfg.iata}9999&date=2026-03-22`,
+        HUB
+      );
+      expect(json.error ?? "").not.toContain("not tracked");
+    }
+  });
+
+  test("no description calls an airline with a type rule or a community list plane by plane", async () => {
+    const [{ text: html }, { text: llms }] = await Promise.all([bodyOf("/"), bodyOf("/llms.txt")]);
+    const descriptions = descriptionsOf(html, llms);
+    expect(descriptions.length).toBeGreaterThan(3);
+    const notPlaneByPlane = enabledAirlines().filter((cfg) => !checkedPlaneByPlane(cfg));
+    for (const sentence of descriptions.flatMap((d) => d.split(/(?<=\.)\s+/))) {
+      if (!/plane[ -]by[ -]plane/i.test(sentence)) continue;
+      for (const cfg of notPlaneByPlane) expect(sentence).not.toContain(cfg.shortName);
+    }
   });
 
   test("the most-planes answer ranks a by-type airline by its own dated figure or not at all", async () => {

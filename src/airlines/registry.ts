@@ -1076,7 +1076,7 @@ export const HUB_BRAND: PageBrand = {
   heading: "Which airlines have Starlink Wi-Fi?",
   siteTitle: "Starlink Wi-Fi by Airline: Which Airlines Have Starlink in 2026?",
   description:
-    "Starlink Wi-Fi by airline. United and Alaska are tracked plane by plane, Hawaiian and Qatar by aircraft type, and every other announced rollout has a dated source.",
+    "Starlink Wi-Fi by airline. United, Alaska, Hawaiian and Qatar are tracked here, and every other announced rollout has a dated source.",
   ogTitle: "Which Airlines Have Starlink Wi-Fi? Full List and Comparison",
   ogDescription:
     "How far each airline's Starlink Wi-Fi rollout has got, with a dated source for each.",

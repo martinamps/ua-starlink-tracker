@@ -1499,6 +1499,19 @@ export function airlineOwnCount(code: string): AirlineOwnCount | null {
   };
 }
 
+/** The airline's own per-type counts added up, from its newest current dated
+ * fact that states them (Alaska's tracker: 93 E175s, 12 737-8 MAX). Only ever a
+ * check on a count tracked here: no source states this total, so it is never
+ * printed as the airline's figure the way `airlineOwnCount` is. */
+export function airlineOwnTypeTotal(code: string): { total: number; asOf: string } | null {
+  const fact = (factsForCode(code)?.facts ?? [])
+    .filter((f) => !f.superseded && f.asOf && f.officialCounts)
+    .sort((a, b) => (b.asOf as string).localeCompare(a.asOf as string))[0];
+  if (!fact?.asOf || !fact.officialCounts) return null;
+  const total = Object.values(fact.officialCounts).reduce((sum, n) => sum + n, 0);
+  return { total, asOf: fact.asOf };
+}
+
 /** Entries with no tail-level tracking — the content-only part of the roster. */
 export function contentOnlyFacts(): AirlineFactsEntry[] {
   return AIRLINE_FACTS.filter((e) => !e.trackedCode);

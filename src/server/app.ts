@@ -43,7 +43,7 @@ import {
   permalinkCarrier,
   stripFlightNumberZeros,
 } from "../airlines/flight-number";
-import { publishedCount, trackingMethod } from "../airlines/published-count";
+import { statedCount, trackingMethod } from "../airlines/published-count";
 import {
   AIRLINES,
   type AirlineCode,
@@ -60,6 +60,7 @@ import {
   airlineSlug,
   brandMetadata,
   hubContentAirlines,
+  hubLookupAirlines,
   isGuideStale,
   publicAirlines,
   resolveSite,
@@ -4469,29 +4470,35 @@ function homeMeta(
   }
 ): { siteTitle: string; siteDescription: string } | null {
   if (site.scope === "ALL") {
-    const flying = AIRLINE_FACTS.filter(
-      (e) => e.status === "installing" || e.status === "complete"
-    ).length;
-    // A snippet has no room for a date or a caveat, so it names only the
-    // airlines counted plane by plane, and says that is what they are: an
-    // airline known by type may have more aircraft than one named here.
-    const counted = (stats.perAirline ?? [])
+    const flying = new Set(
+      AIRLINE_FACTS.filter((e) => e.status === "installing" || e.status === "complete").map(
+        (e) => e.trackedCode ?? e.slug
+      )
+    );
+    // Names an airline only with a count that needs no caveat (statedCount).
+    // "of its own": the count leaves out the partner aircraft that the
+    // airline's own site adds to its total.
+    const stated = (stats.perAirline ?? [])
       .flatMap((r) => {
         const cfg = AIRLINES[r.code];
-        const published = cfg && publishedCount(cfg, r.starlink);
-        return cfg && published?.basis === "tracked" && published.count > 0
-          ? [{ cfg, count: published.count }]
-          : [];
+        const count = cfg && statedCount(cfg, r.starlink);
+        return cfg && count ? [{ cfg, count }] : [];
       })
       .sort((a, b) => b.count - a.count)
       .slice(0, 3)
-      .map(({ cfg, count }) => {
-        const n = fmt(count);
-        return `${cfg.shortName} (${cfg.programmePartners ? `${n} ${cfg.shortName}-operated` : n})`;
-      });
+      .map(
+        ({ cfg, count }, i) =>
+          `${cfg.shortName} ${i === 0 ? "has it on" : "on"} ${fmt(count)}${i === 0 ? " aircraft" : ""}${cfg.programmePartners ? " of its own" : ""}`
+      );
+    const counts = stated.length
+      ? ` ${stated.length > 1 ? `${stated.slice(0, -1).join(", ")} and ${stated.at(-1)}` : stated[0]}.`
+      : "";
+    // The flight check answers for the lookup airlines, not for every rollout.
+    const checkable = hubLookupAirlines().filter((a) => flying.has(a.code)).length;
+    const check = checkable ? ` Check a flight by number on ${checkable} of them.` : "";
     return {
       siteTitle: `Which Airlines Have Starlink Wi-Fi? ${AIRLINE_FACTS.length} Airlines Compared`,
-      siteDescription: `${flying} airlines fly Starlink Wi-Fi or are installing it.${counted.length ? ` Counted plane by plane: ${counted.join(", ")}.` : ""} Check any flight by number.`,
+      siteDescription: `${flying.size} airlines fly Starlink Wi-Fi or are installing it.${counts}${check}`,
     };
   }
   const cfg = AIRLINES[site.scope];
