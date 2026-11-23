@@ -24,6 +24,7 @@ import {
   getMeta,
   getNextPlanesToVerify,
   initializeDatabase,
+  recordDiscoveryLag,
   setMeta,
   updateFleetVerificationResult,
   updateFlights,
@@ -380,6 +381,14 @@ export async function verifyPlane(
         // First time consensus flips to Starlink → add to starlink_planes and
         // seed its flight cache. Re-checks of already-confirmed planes skip this.
         if (statusChanged && starlinkStatus === "confirmed") {
+          // Before the insert below: a tail the sheet already lists was the
+          // sheet's find, and its lag was emitted when the sheet listed it.
+          const sheetListed = db
+            .query(
+              "SELECT 1 FROM starlink_planes WHERE TailNumber = ? AND airline = 'UA' AND sheet_gid != 'discovery'"
+            )
+            .get(plane.tail_number);
+          if (!sheetListed) recordDiscoveryLag(db, plane.tail_number, "UA", "own", plane.fleet);
           addDiscoveredStarlinkPlane(
             db,
             plane.tail_number,

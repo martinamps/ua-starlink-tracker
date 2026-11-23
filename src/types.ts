@@ -129,6 +129,8 @@ export interface FleetAircraft {
   check_attempts: number;
   last_check_error: string | null;
   rts_until?: number | null;
+  adsb_last_airborne?: number | null;
+  gap_pulled_at?: number | null;
 }
 
 // ============ /fleet page data ============

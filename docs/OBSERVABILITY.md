@@ -126,6 +126,29 @@ push the table past the budget, group the new URLs behind a prefix family
 rather than raising the number. Pure redirects (the www aliases, `/extension`
 → `/chrome`) are answered in `dispatch` before the table and take no tag.
 
+### Discovery lag
+
+`starlink.discovery.lag_hours` (distribution; tags `first_source:own|sheet`,
+`trigger:scheduled|ground_gap|sheet`, `fleet`, `airline`) is the number the "fastest to find new
+tails" claim is judged by. One point per tail that becomes known as Starlink after our own checks
+had read it as something else: the hours since that last non-Starlink reading.
+
+- `first_source:own`: a fleet-discovery check confirmed the tail before the community sheet listed it.
+  `trigger` says which check: `scheduled` (the tail's regular re-check) or `ground_gap` (a check
+  pulled forward when the tail flew again after 36 hours unseen).
+- `first_source:sheet`: the sheet listed a tail our checks still held as non-Starlink.
+
+Read it three ways: the **count by `first_source`** is who got there first, **p50/p90 of the value**
+is how stale our last look was when the tail turned up, and the **count by `trigger`** is whether the
+ground-gap allowance finds anything. A tail never read as non-Starlink (a new delivery) emits
+nothing, so the count is retrofits only.
+
+The schedule behind it lives in `src/database/discovery-cadence.ts`. Negative tails are re-checked
+on a per-family interval (3 to 28 days, by installs found per negative tail over 30 days) that
+spends 90% of what the old flat 14 days did. The other 10% is a daily allowance of ground-gap
+checks, for negative tails of a family being retrofitted. The two never add up to more than the old
+budget, so `starlink.vendor.request{vendor:united}` should not rise because of them.
+
 ### Gauges
 
 | Metric | Description |

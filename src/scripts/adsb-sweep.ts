@@ -16,7 +16,13 @@ import {
   pruneAdsbFlightDraws,
   upsertAdsbFlightDraws,
 } from "../database/adsb-flight-draws";
-import { getFleetTailsWithStatus, getMeta, recordAdsbSweep, setMeta } from "../database/database";
+import {
+  getFleetTailsWithStatus,
+  getMeta,
+  recordAdsbSweep,
+  recordAirborneSightings,
+  setMeta,
+} from "../database/database";
 import {
   COUNTERS,
   DISTRIBUTIONS,
@@ -61,6 +67,7 @@ const PROVIDERS: AdsbProvider[] = [
   },
 ];
 
+const SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 const PROVIDER_RATE_GAP_MS = 1100;
 /** Per-request ceiling. Failover is serial across three providers and each may
  * page through the fleet, so an unbounded request is what let one slow upstream
@@ -370,6 +377,19 @@ export async function runAdsbSweepShadow(
         );
         recordFlightDraws(db, observations, now);
 
+        const returned = recordAirborneSightings(
+          db,
+          "UA",
+          observations.filter((o) => o.airborne === 1).map((o) => o.tail_number),
+          now,
+          SWEEP_INTERVAL_MS / 1000
+        );
+        if (returned.length > 0) {
+          info("adsb-shadow: airborne after a ground gap, discovery re-check pulled forward", {
+            tails: returned,
+          });
+        }
+
         for (const [result, value] of Object.entries(counts)) {
           metrics.gauge(GAUGES.ADSB_SHADOW_OBSERVATIONS, value, { result, airline: airlineTag });
         }
@@ -460,7 +480,7 @@ export function startAdsbSweepJob(db: Database): JobHandle {
   const breaker = createOutageBreaker(ADSB_OUTAGE_FAILURES, ADSB_OUTAGE_SKIP_TICKS);
   return startJob({
     name: "adsb_sweep",
-    intervalMs: 5 * 60 * 1000,
+    intervalMs: SWEEP_INTERVAL_MS,
     initialDelayMs: 2 * 60 * 1000,
     // A sweep now has a bounded worst case: 3 providers x their paging, each
     // request capped at PROVIDER_REQUEST_TIMEOUT_MS. The default 15-minute

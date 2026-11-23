@@ -582,6 +582,16 @@ export const DISTRIBUTIONS = {
   // tags: vendor, type, status
   VENDOR_DURATION_MS: "vendor.duration_ms",
 
+  // Hours between our last non-Starlink reading of a tail and the moment it
+  // became known as Starlink. One point per newly found tail that had such a
+  // reading; new deliveries have none and emit nothing.
+  // tags: first_source (own = a discovery check got there first | sheet = the
+  //   community sheet listed it first), trigger (scheduled | ground_gap for an
+  //   own find, sheet otherwise), fleet, airline
+  // The count by first_source is who was first; p50/p90 is how late we were;
+  // trigger says whether the ground-gap allowance is finding anything.
+  DISCOVERY_LAG_HOURS: "discovery.lag_hours",
+
   // MCP tool latency in milliseconds — tags: tool, airline, outcome, client_class
   MCP_TOOL_DURATION_MS: "mcp.tool_duration_ms",
 
