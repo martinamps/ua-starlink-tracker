@@ -1,18 +1,94 @@
 # Manual QA checklist — Google Flights Starlink Indicator
 
 The DOM-facing paths can't be unit-tested (Google Flights markup, extension
-messaging, real breakpoints). Run this checklist in a real browser before
-tagging a release. Load the unpacked extension fresh (`chrome://extensions` →
-reload) before starting.
+messaging, real breakpoints). Before a release, do the short pass below by
+hand in a real Chrome; the full checklist after it is the reference, and most
+of it needs no Google at all. Load the unpacked extension fresh
+(`chrome://extensions` → reload) before starting.
 
 Tip: set `DEBUG = true` in `content.js` for verbose per-pass logging while
 testing; set it back before release.
+
+## Release pass: the checks only Google Flights can show
+
+About ten minutes, one sitting, in order. Use a desktop window at least
+1024px wide, signed in as usual (Google answers automated browsers with a
+robot check, which is why these are done by hand). Keep the page's DevTools
+console open throughout.
+
+1. [ ] **Search from the home page.** Open `google.com/travel/flights`, fill
+       in a round trip SFO → EWR leaving tomorrow and returning about two
+       weeks later, press Search. *Look for:* blue "Starlink" or green
+       "Starlink (installed)" badges on some United results within a few
+       seconds, without reloading.
+2. [ ] **Badge placement.** *Look for:* each badge sitting inline right after
+       the flight times. Pinned to the card's corner is the fallback and is
+       acceptable; covering text is not. No card has two badges.
+3. [ ] **Hover a badge.** *Look for:* a tooltip that says in words what the
+       badge means (verified, installed, or a percentage with an observation
+       count).
+4. [ ] **Expand and collapse.** Open one result's "Flight details", then close
+       it. *Look for:* every other card's badge back within about a second.
+5. [ ] **Load more.** Scroll down and press "View more flights". *Look for:*
+       the late cards get badges without a reload.
+6. [ ] **Starlink only.** Press the "Starlink only" chip, bottom right.
+       *Look for:* United cards without a badge go dim (they are dimmed, never
+       hidden); badged cards and other airlines stay as they are. Press it
+       again: everything back to full.
+7. [ ] **Date arrows, fast.** Click the > arrow next to the departure date
+       four or five times quickly. *Look for:* once the list settles, no
+       blue or green badge is left over from the first date: this far out any
+       badge is a gray "Starlink ~NN%", and its tooltip speaks of a chance,
+       not of a verified aircraft.
+8. [ ] **Date picker.** Pick a departure date about two weeks out in the
+       calendar. *Look for:* the old badges are gone, and any badge on the new
+       results is a gray "Starlink ~NN%" of 80% or more.
+9. [ ] **Round trip.** Go back to tomorrow's date, choose an outbound flight,
+       and wait for the return results. *Look for:* any badge there is a gray
+       percentage (the return is two weeks out), not a blue or green one
+       carried over from tomorrow.
+10. [ ] **Narrow window.** Drag the window narrower than 1024px and back.
+        *Look for:* badges move to the card's corner and back, never doubled.
+11. [ ] **From a search link.** In a new tab, search Google for "flights from
+        SFO to EWR" and follow the link into Flights
+        (`/travel/flights?q=…`). *Look for:* badges without a reload.
+12. [ ] **One other airline.** Search HNL → LAX for tomorrow. *Look for:* at
+        least one badge on an Alaska result.
+13. [ ] **Console.** *Look for:* no errors or warnings from the extension in
+        the page's console across all of the above.
+
+### What needs no repeating by hand
+
+`bun test tests/extension.test.ts` covers the extension's logic: which host
+and address each airline's lookup goes to, the `client` tag, itinerary
+decoding, the badge ladder and the 80% bar, the weakest-leg and mixed-carrier
+rules, leg-scoped lookups, what "Starlink only" dims, retry scheduling, the
+manifest's permissions and the package's contents.
+
+The 2.2.0 run of 2026-11-23 also loaded the unpacked extension in Chromium on
+a local stand-in for the Flights page, fed by the live tracker's answers. It
+agreed with every item in these sections, apart from the lines marked "under
+review": Setup sanity, United, Alaska / Hawaiian-operated, Qatar, Untracked
+airlines and negatives, Multi-leg itineraries, Leg-scoped lookups, Starlink
+only toggle, Failure honesty, and the package line under Release. It could not
+show anything about Google's own markup, which is what the pass above is for.
+One item neither covers: a 3-leg card with one flight number, for want of a
+real one to search for.
+
+Known for a later version, not a reason to fail the pass: an Alaska
+percentage badge one day before departure carries the far-date tooltip
+("Airlines assign the actual aircraft ~2 days before departure").
+
+## Full checklist
+
+The reference list, section by section.
 
 ## Setup sanity
 
 - [ ] `chrome://extensions` shows version 2.2.0, no errors on the card
 - [ ] Service worker "Inspect views" console shows no errors on load
-- [ ] Permissions listed: only unitedstarlinktracker.com — no storage, no new hosts
+- [ ] Site access listed: unitedstarlinktracker.com and www.google.com (the
+      content script's site, listed for 1.2.0 too) — no storage, no other hosts
 
 ## United (frozen endpoint)
 
@@ -37,14 +113,13 @@ Google Flights lists Hawaiian-operated flights only under Alaska `AS` numbers
       badges; lookups go to `airlinestarlinktracker.com/api/check-any-flight`
       with `flight_number=AS8…`
 - [ ] Search SEA → PDX within ~2 days: Alaska/Horizon E175 results get badges
-- [ ] Far-future SEA → PDX (E175 regional, AS2000+): gray "Starlink ~100%"
+- [ ] Far-future SEA → PDX (E175 regional, AS2000+): gray "Starlink ~99%"
       badges — Alaska's subfleet answer carries a probability past the
-      assignment window
+      assignment window, and the badge caps a prediction at 99%
 - [ ] Far-future SEA → LAX (mainline 737, AS1-1999): no badge — the mainline
       subfleet is mid-rollout, far below the 80% bar
-- [ ] Far-future HNL → LAX: the AS800-899 results (Hawaiian A330/A321neo) get
-      a gray "Starlink ~100%" badge from the `hawaiian_metal` subfleet. Until
-      the registry range is widened past AS899, AS900-999 shows no badge
+- [ ] Far-future HNL → LAX: the AS800-999 results (Hawaiian A330/A321neo) get
+      a gray "Starlink ~99%" badge from the `hawaiian_metal` subfleet
 - [ ] Far-future HNL → OGG (interisland, AS1000-1299 on the 717): no badge
 - [ ] (Dead-safe path, only if Google shows `HA` numbers again) a far-future
       HA-numbered flight gets no badge: HA's answer is a per-type split with no
@@ -54,13 +129,19 @@ Google Flights lists Hawaiian-operated flights only under Alaska `AS` numbers
 
 - [ ] DOH → LHR tomorrow: QR1/7/15 (777/A350) get green "Starlink
       (installed)"; QR3/11 (A380) get no badge. Hover names the scheduled type
-      and the swap caveat; lookups go to `airlinestarlinktracker.com/api/check-any-flight`
+      and the swap caveat; lookups go to `airlinestarlinktracker.com/api/check-any-flight`.
+      *Under review (2026-11-23): the tracker had no answer for QR1, so it got
+      no badge; QR7 and QR15 behaved as written. Don't fail a release on QR1
+      until the tracker's answer is settled*
 - [ ] DOH → LHR 3+ weeks out: QR1/7 get gray "Starlink ~8x-9x%" (hover cites
       the number of operating days); QR3/11 get no badge
 - [ ] A flight scheduled on a 787-9 gets no badge (installs under way)
 - [ ] JFK → DOH → BKK on QR+QR: one badge only when both legs qualify
 - [ ] A QR + British Airways itinerary gets no badge and no lookup
-- [ ] A date more than ~7 months out gets no badge
+- [ ] A date more than ~7 months out gets no badge. *Under review
+      (2026-11-23): QR7 still showed "Starlink ~93%" ten months out; what the
+      tracker should answer that far ahead is being settled, so don't fail a
+      release on this line*
 
 ## Untracked airlines and negatives
 
@@ -82,8 +163,9 @@ Google Flights lists Hawaiian-operated flights only under Alaska `AS` numbers
 - [ ] A card whose TIM is `ORD-DEN-UA-318,DEN-DRO-UA-1217` asks for UA1217 with
       `origin=DEN&destination=DRO` (Network tab)
 - [ ] A through flight with UA1217 on both legs makes 2 lookups, one per leg;
-      when it badges, the tooltip names the leg that set the badge
-      (e.g. "UA1217 DEN→DRO: …")
+      it shows one badge. The tooltip names a leg (e.g. "UA1217 DEN→DRO: …")
+      only when the two legs' answers differ, and then it names the weaker
+      one; legs that agree name none
 - [ ] A UA540 SFO → DEN card no longer shows DEN → SAN's tail in the response
       `flights` (Network tab)
 - [ ] A 3-leg same-number card still badges; a 5+ leg card shows no badge

@@ -44,6 +44,11 @@ bun run test:setup       # Snapshot plane-data.sqlite → .test-snapshot.sqlite 
 bun run test             # Everything under tests/
 ```
 
+`test:setup` shells out to the `sqlite3` command-line tool, which Bun does not
+provide: install it first (`apt-get install sqlite3`, `brew install sqlite`).
+Without it the script stops before the snapshot is ready and every test that
+opens the snapshot fails.
+
 Shared fixtures live in `tests/helpers.ts`: `openSnapshot()` / `makeSyntheticDb()`,
 `req` / `jsonOf` for app dispatch, and `postMcp` / `mcpTool` / `mcpDirect` /
 `toolText` for MCP JSON-RPC. Tests read structure from runtime data
