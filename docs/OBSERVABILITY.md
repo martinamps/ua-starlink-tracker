@@ -81,7 +81,7 @@ All metrics are prefixed with `starlink.` for easy filtering in Datadog.
 | `starlink.http.rate_limit_exempt` | the `http.rate_limited` tags plus `crawler:googlebot\|bingbot` | Over the `page` limit but served: the UA claims Googlebot/Bingbot and the IP's reverse DNS (forward-confirmed) is in the engine's domain. Cached per IP |
 | `starlink.route_flights.view` | `airline`, `surface:api\|page`, `outcome:nonstop\|no_nonstop`, `dated:true\|false` | "Every flight on this route" board served (`/api/route-flights`, route pages) |
 | `starlink.consensus.settle_transition` | `direction:to_starlink\|from_starlink`, `reason` (settle rule), `path:reconcile\|verifier`, `airline` | A listing's settled wifi crossed the equipped line. Normal is ~0–1 `from_starlink` a day; a burst means upstream feed noise |
-| `starlink.mcp.tool_call` | `tool`, `airline`, `outcome:success\|error\|unknown_tool`, `client_class` (MCP enum below) | MCP tool dispatched; `starlink.mcp.tool_duration_ms` carries the same tags |
+| `starlink.mcp.tool_call` | `tool`, `airline`, `outcome:success\|error\|unknown_tool`, `reason:none\|missing_argument\|invalid_argument\|unknown_airport\|same_airport\|not_tracked\|config\|exception`, `client_class` (MCP enum below) | MCP tool dispatched; `starlink.mcp.tool_duration_ms` carries the same tags. `reason` says why an `outcome:error` call failed: only `config` and `exception` are the server's fault, the rest are correct refusals of a bad call (registry crawlers call every tool with no arguments daily, which is `missing_argument`). Read a tool's health as `outcome:error AND reason:(config OR exception)` |
 
 ### Client tags
 

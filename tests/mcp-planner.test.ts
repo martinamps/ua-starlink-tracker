@@ -250,9 +250,17 @@ describe("synthetic SFO→EWR", () => {
     expect(text).not.toContain("YYZ");
   });
 
-  test("unknown airport codes are tool errors; real ones are not", async () => {
+  test("malformed airport codes are tool errors; well-formed ones are not", async () => {
     for (const name of ["plan_starlink_itinerary", "predict_route_starlink"]) {
-      for (const origin of ["XXX", "SF0", "SFOO"]) {
+      // A well-formed code nothing has seen is answered, not refused: the
+      // tracker holds no complete airport list to call it unknown from.
+      const unseen = await mcp("UA", "tools/call", {
+        name,
+        arguments: { origin: "XXX", destination: "EWR" },
+      });
+      expect(unseen.result.isError, name).toBeUndefined();
+      expect(unseen.result.content[0].text).toContain("no United Airlines flights on record");
+      for (const origin of ["SF0", "SFOO"]) {
         const bad = await mcp("UA", "tools/call", {
           name,
           arguments: { origin, destination: "EWR" },

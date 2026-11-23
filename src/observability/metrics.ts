@@ -257,6 +257,22 @@ export function normalizeScopeTag(scope: string): string {
   return scope === "ALL" ? "all" : normalizeAirlineTag(scope);
 }
 
+const MCP_ERROR_REASONS = new Set([
+  "missing_argument",
+  "invalid_argument",
+  "unknown_airport",
+  "same_airport",
+  "not_tracked",
+  "config",
+  "exception",
+]);
+
+/** `reason` on mcp.tool_call: why a call ended in an error, `none` otherwise. */
+export function normalizeMcpErrorReason(raw: string | null | undefined): string {
+  if (!raw) return "none";
+  return MCP_ERROR_REASONS.has(raw) ? raw : "other";
+}
+
 const LEG_MATCHES = new Set(["exact", "origin", "unmatched", "no_data", "unscoped"]);
 const LEG_REASONS = new Set([
   "none",

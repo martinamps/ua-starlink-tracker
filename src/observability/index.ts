@@ -31,6 +31,7 @@ export {
   bucketDaysOut,
   normalizeLegMatch,
   normalizeLegReason,
+  normalizeMcpErrorReason,
   normalizeLegEffect,
   normalizeEquipmentCodeTag,
 } from "./metrics";
