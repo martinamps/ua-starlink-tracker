@@ -11,6 +11,10 @@ const installsPerMonth = (s: ContentStats): number | null =>
 const express = (s: ContentStats) => s.fleetStats?.express ?? { starlink: 0, total: 0 };
 const mainline = (s: ContentStats) => s.fleetStats?.mainline ?? { starlink: 0, total: 0 };
 
+// United's Nov. 12, 2026 release: Starlink on more than half of daily flights.
+const UA_DAILY_FLIGHTS_RELEASE =
+  "https://www.united.com/en/us/newsroom/announcements/cision-125497";
+
 // United's June 22, 2026 release, the source of the widebody figures.
 const UA_WIDEBODY_RELEASE =
   "https://www.prnewswire.com/news-releases/united-accelerates-starlink-wi-fi-rollout-with-first-widebody-transatlantic-flight-302806746.html";
@@ -79,8 +83,17 @@ export const content: AirlineContent = {
       a: (s) => (
         <p>
           No, not yet. {pct(s.starlinkCount, s.totalCount)} of the fleet has it, so it depends on
-          the plane assigned to your flight. United Express flights (UA3000 to UA6999) are the
-          likeliest to have it.
+          the plane assigned to your flight. United's own figure is higher:{" "}
+          <a
+            href={UA_DAILY_FLIGHTS_RELEASE}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={LINK}
+          >
+            more than half of daily flights
+          </a>{" "}
+          as of November 12, 2026, because its regional jets, most of which have Starlink, fly more
+          trips a day. United Express flights (UA3000 to UA6999) are the likeliest to have it.
         </p>
       ),
     },
