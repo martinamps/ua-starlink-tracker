@@ -146,7 +146,7 @@ The Alaska tracker ingest also counts `starlink.scraper.sync{source:alaska_track
 
 ### Source health
 
-Every outside source a job reads on a schedule keeps a record in `meta` (`<scope>:source_health.<source>`): its last good read, its last failure and that failure's kind. A good read means usable data came back. A page that loads and parses to nothing is a failure of kind `empty` or `refused`. The record lives in the database, so a restart does not reset it. Code: `src/database/source-health.ts`.
+Every outside source a job reads on a schedule keeps a record in `meta` (`<scope>:source_health.<source>`): its last good read, its last failure and that failure's kind. A good read means usable data came back. A page that loads and parses to nothing is a failure of kind `empty` or `refused`. The record lives in the database, so a restart does not reset it. The ADS-B sweep is the one exception: its last good read is taken from its own `adsb_sweeps` table (the newest sweep that observed any aircraft). Code: `src/database/source-health.ts`.
 
 | Metric | Description |
 |--------|-------------|

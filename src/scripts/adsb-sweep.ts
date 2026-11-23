@@ -17,7 +17,6 @@ import {
   upsertAdsbFlightDraws,
 } from "../database/adsb-flight-draws";
 import { getFleetTailsWithStatus, getMeta, recordAdsbSweep, setMeta } from "../database/database";
-import { failureKindOf, recordSourceFailure, recordSourceSuccess } from "../database/source-health";
 import {
   COUNTERS,
   DISTRIBUTIONS,
@@ -276,13 +275,8 @@ export async function runAdsbSweepShadow(
           airline: airlineTag,
         });
         span.setTag("error", true);
-        recordSourceFailure(db, "adsb", "UA", failureKindOf(err));
         return { outcome: "error", observed: 0, airborne: 0, counts };
       }
-      // Some of a thousand-tail fleet is always in range of a receiver, so a
-      // sweep that sees none of it was answered with nothing.
-      if (swept.aircraft.length > 0) recordSourceSuccess(db, "adsb", "UA");
-      else recordSourceFailure(db, "adsb", "UA", "empty");
 
       try {
         const { aircraft, stats } = swept;

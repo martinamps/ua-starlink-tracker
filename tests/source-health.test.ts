@@ -358,6 +358,33 @@ describe("what is watched", () => {
     db.close();
   });
 
+  test("the ADS-B sweep's clock comes from its own table, empty sweeps excluded", async () => {
+    withoutWebhook();
+    const db = makeFreshDb();
+    const sweep = (atMs: number, observed: number) =>
+      db
+        .query(
+          `INSERT INTO adsb_sweeps (swept_at, provider, requests, latency_ms, tails_queried,
+             observed, airborne, matched, mismatched, no_assignment, no_callsign)
+           VALUES (?, 'test', 1, 250, 425, ?, 0, 0, 0, 0, 0)`
+        )
+        .run(Math.floor(atMs / 1000), observed);
+    const adsb = async (now: number) =>
+      (await checkSourceHealth(db, { now })).find((r) => r.id === "adsb");
+
+    sweep(T0, 40);
+    expect((await adsb(T0 + HOUR))?.hoursSinceSuccess).toBeCloseTo(1, 5);
+    // Sweeps that keep running but see no aircraft do not move the clock.
+    sweep(T0 + 2 * HOUR, 0);
+    sweep(T0 + 4 * HOUR, 0);
+    const quiet = await adsb(T0 + 4 * HOUR);
+    expect(quiet?.hoursSinceSuccess).toBeCloseTo(4, 5);
+    expect(quiet?.quiet).toBe(true);
+    sweep(T0 + 5 * HOUR, 12);
+    expect((await adsb(T0 + 5 * HOUR))?.quiet).toBe(false);
+    db.close();
+  });
+
   test("a flag-gated source is watched only once it has reported", async () => {
     withWebhook();
     const db = makeFreshDb();

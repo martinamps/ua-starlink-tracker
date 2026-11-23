@@ -59,6 +59,9 @@ interface SourceDef {
   /** Decides what a page says about a plane or a flight, so a page's "last
    * updated" may not read fresher than this source's last good read. */
   feedsPages?: boolean;
+  /** For a job that already stores each good run in a table of its own: read
+   * the last one from there (ms) instead of having the job report it. */
+  lastSuccessFrom?: (db: Database) => number | null;
   /** Runs only under a flag or key: watched once it has reported at all, so
    * a deployment that never enabled it never alarms. */
   optional?: boolean;
@@ -176,11 +179,20 @@ export const SOURCES: Record<SourceId, SourceDef> = {
     scopes: () => ["ALL"],
     optional: true,
   },
+  // Some of a thousand-tail fleet is always in range of a receiver, so a
+  // sweep that observed no aircraft was answered with nothing. Its failures
+  // already count in vendor.request{vendor:adsb,status:error}.
   adsb: {
     label: "ADS-B sweep",
     cadence: "every 5 minutes",
     quietAfterHours: 3,
     scopes: only("UA"),
+    lastSuccessFrom: (db) => {
+      const row = db
+        .query("SELECT MAX(swept_at) AS ts FROM adsb_sweeps WHERE observed > 0")
+        .get() as { ts: number | null } | null;
+      return row?.ts ? row.ts * 1000 : null;
+    },
   },
 };
 
@@ -418,6 +430,13 @@ export async function checkSourceHealth(
       // Persists firstSeenAt on first sight, so the clock survives a restart
       // even for a source that has never reported.
       let state = updateSourceState(db, id, scope, now, () => {});
+      const stored = def.lastSuccessFrom?.(db) ?? null;
+      if (stored !== null && stored > (state.lastSuccessAt ?? 0)) {
+        state = updateSourceState(db, id, scope, now, (s) => {
+          s.lastSuccessAt = stored;
+          s.failuresSinceSuccess = 0;
+        });
+      }
       const since = state.lastSuccessAt ?? state.firstSeenAt;
       const quietMs = Math.max(0, now - since);
       const quiet = quietMs > def.quietAfterHours * HOUR_MS;
