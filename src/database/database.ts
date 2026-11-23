@@ -70,6 +70,7 @@ import type {
   InstallPaceWeek,
   PipelineEventRow,
   RecentInstall,
+  ReportedInstall,
   RouteSchedule,
   RouteScheduleRow,
   SecFilingRow,
@@ -4690,6 +4691,42 @@ const WIFI_MISMATCH_PREDICATE = `verified_wifi IS NOT NULL
          OR
          (NOT ${sheetSaysStarlink("wifi")} AND verified_wifi = 'Starlink')
        )`;
+
+/** A reported listing drops off the log after this long without our check
+ * agreeing: a sheet row that never confirms is more likely a wrong listing
+ * than a slow one (N77426 sat at 31 of 31 Viasat reads before the sheet
+ * withdrew it). */
+export const REPORTED_MAX_AGE_DAYS = 30;
+
+/**
+ * Tails the community sheet lists as Starlink while our own check still reads
+ * another provider: the sheet side of /api/mismatches, dated like an install.
+ * Never equipped (equippedSql needs verified_wifi NULL or 'Starlink'), so a
+ * tail is in this list or in getRecentInstalls, never both, and no count
+ * reads it.
+ */
+export function getReportedInstalls(
+  db: Database,
+  airline: AirlineFilter,
+  limit = 25,
+  now = unixNow()
+): ReportedInstall[] {
+  const q = withAirline(
+    `SELECT airline, TailNumber, aircraft as Aircraft, OperatedBy, DateFound,
+            verified_wifi AS observed_wifi, verified_at AS observed_at
+     FROM starlink_planes
+     WHERE verified_wifi IS NOT NULL AND verified_wifi != 'None'
+       AND ${SHEET_YES_VERIFIED_NO}
+       AND ${INSTALL_FILTER}
+       AND substr(DateFound, 1, 10) >= date(?, 'unixepoch', '-${REPORTED_MAX_AGE_DAYS} days')`,
+    airline,
+    "",
+    [now]
+  );
+  return db
+    .query(`${q.sql} ORDER BY DateFound DESC, TailNumber LIMIT ?`)
+    .all(...q.params, limit) as ReportedInstall[];
+}
 
 export function getWifiMismatches(db: Database, airline?: AirlineFilter): WifiMismatch[] {
   const q = withAirline(

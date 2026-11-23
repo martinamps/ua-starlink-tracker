@@ -65,6 +65,14 @@ export interface RecentInstall {
   DateFound: string;
 }
 
+/** A sheet listing our own check has not confirmed: shown apart, never counted. */
+export interface ReportedInstall extends RecentInstall {
+  /** The provider our check of the airline's site still reads. */
+  observed_wifi: string;
+  /** Unix seconds of that reading's last write; null on rows that predate the column. */
+  observed_at: number | null;
+}
+
 /** A newly equipped tail's first observed revenue departure (first_flights). */
 export interface FirstFlight {
   tail_number: string;
