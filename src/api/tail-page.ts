@@ -19,6 +19,7 @@ import type { ScopedReader } from "../database/reader";
 import { unixNow } from "../database/sql/windows";
 import type { TailAnswerKind, TailFlight, TailRecord } from "../database/tails";
 import { TAIL_RECENT_DAYS, tailFlightPair } from "../database/tails";
+import type { FleetProgressTailRow } from "../types";
 import { airportTimezone } from "../utils/airport-tz";
 import { article } from "../utils/grammar";
 import { wifiPhrase } from "../utils/reported-reason";
@@ -67,6 +68,8 @@ export interface TailPageModel {
   /** The answer in a sentence, then the caveat that belongs with it. */
   answer: string;
   note: string | null;
+  /** The install pipeline's state for a tail we do not count ("being installed"). */
+  installStatus: string | null;
   /** "737 MAX 9", null when no table names the type. */
   typeName: string | null;
   typeHref: string | null;
@@ -112,8 +115,67 @@ const VERDICT: Record<TailAnswerKind, { verdict: string; tone: Tone }> = {
   unchecked: { verdict: "Not checked yet", tone: "neutral" },
 };
 
+/** The provider as what our check read, never as what the plane has: the
+ * reading can trail an install by days. */
+function readingSentence(r: TailRecord, site: string): string {
+  if (!r.otherWifi) return "";
+  return /^none$/i.test(r.otherWifi)
+    ? ` ${capitalize(site)} lists no Wi-Fi on it.`
+    : ` Our check of ${site} reads ${wifiPhrase(r.otherWifi)}.`;
+}
+
+/**
+ * A tail the install pipeline names is in search because of that state, so the
+ * state leads its answer instead of a bare "No". "Not verified yet" is for an
+ * install the sheet calls finished, "Not yet" for one under way or queued, as
+ * on the type pages. Neither is a yes: the tail stays out of the count.
+ *
+ * The sentences are short on purpose: state, count and reading all have to
+ * land inside the search snippet's length, so the mod station stays in the
+ * "Install status" row.
+ */
+const PIPELINE_ANSWER: Record<
+  FleetProgressTailRow["state"],
+  { verdict: string; tone: Tone; lead: (tail: string) => string; note: string }
+> = {
+  in_mod: {
+    verdict: "Not yet",
+    tone: "neutral",
+    lead: (tail) => `${tail} is being fitted with Starlink, per the community progress sheet.`,
+    note: "This page changes when our own check reads Starlink on the plane.",
+  },
+  verification_needed: {
+    verdict: "Not verified yet",
+    tone: "warn",
+    lead: (tail) =>
+      `The community progress sheet lists ${tail} as fitted with Starlink, awaiting verification.`,
+    note: "An airline's site can take several days to show a new install; this page changes when our own check reads Starlink on the plane.",
+  },
+  scheduled: {
+    verdict: "Not yet",
+    tone: "neutral",
+    lead: (tail) => `${tail} is queued for a Starlink install, per the community progress sheet.`,
+    note: "This page changes when our own check reads Starlink on the plane.",
+  },
+};
+
+/** The pipeline's answer applies where the page would otherwise say "No" or
+ * "Not checked yet"; a reported or observed tail keeps its own wording. */
+function pipelineAnswer(r: TailRecord) {
+  return r.pipeline && (r.kind === "other" || r.kind === "unchecked")
+    ? PIPELINE_ANSWER[r.pipeline.state]
+    : null;
+}
+
 function answerFor(r: TailRecord, site: string): { answer: string; note: string | null } {
   const { tail } = r;
+  const inPipeline = pipelineAnswer(r);
+  if (inPipeline) {
+    return {
+      answer: `${inPipeline.lead(tail)} Not in our count yet.${readingSentence(r, site)}`,
+      note: inPipeline.note,
+    };
+  }
   switch (r.kind) {
     case "verified":
       return {
@@ -155,14 +217,7 @@ function answerFor(r: TailRecord, site: string): { answer: string; note: string 
         note: "It is not in our count until a listing stands behind the reading.",
       };
     case "other":
-      return {
-        answer: !r.otherWifi
-          ? `${tail} does not have Starlink.`
-          : /^none$/i.test(r.otherWifi)
-            ? `${tail} does not have Starlink. ${capitalize(site)} lists no Wi-Fi on it.`
-            : `${tail} does not have Starlink. It has ${wifiPhrase(r.otherWifi)}.`,
-        note: null,
-      };
+      return { answer: `${tail} does not have Starlink.${readingSentence(r, site)}`, note: null };
     default:
       return {
         answer: `We have no Wi-Fi reading for ${tail} yet.`,
@@ -171,7 +226,7 @@ function answerFor(r: TailRecord, site: string): { answer: string; note: string 
   }
 }
 
-function evidenceFacts(r: TailRecord, cfg: AirlineConfig, site: string): TailFact[] {
+function evidenceFacts(r: TailRecord, site: string): TailFact[] {
   const facts: TailFact[] = [];
   const { listing, checks, fleet } = r;
   const equipped = r.kind === "verified" || r.kind === "listed";
@@ -203,7 +258,7 @@ function evidenceFacts(r: TailRecord, cfg: AirlineConfig, site: string): TailFac
   if (r.pipeline) {
     facts.push({
       label: "Install status",
-      value: `${capitalize(pipelinePhrase(r.pipeline.state, r.pipeline.mod_location))}, per the ${cfg.shortName} fleet progress sheet${r.pipeline.sheet_updated ? ` (${r.pipeline.sheet_updated})` : ""}`,
+      value: `${capitalize(pipelinePhrase(r.pipeline.state, r.pipeline.mod_location))}, per the community progress sheet${r.pipeline.sheet_updated ? ` (${r.pipeline.sheet_updated})` : ""}`,
     });
   }
   if (r.firstFlight) {
@@ -293,16 +348,19 @@ export function buildTailPage(
     : { days: 0, total: 0, airports: [] };
   const raw = r.fleet?.aircraft_type ?? r.listing?.aircraft ?? null;
   const typeHref = raw ? (opts.typeHrefFor?.(raw) ?? null) : null;
+  const inPipeline = pipelineAnswer(r);
   return {
     tail,
     airline: cfg.shortName,
     kind: r.kind,
     indexable: r.indexable,
     ...VERDICT[r.kind],
+    ...(inPipeline ? { verdict: inPipeline.verdict, tone: inPipeline.tone } : {}),
     ...answerFor(r, site),
+    installStatus: inPipeline && r.pipeline ? pipelinePhrase(r.pipeline.state, null) : null,
     typeName: raw ? aircraftName(raw) : null,
     typeHref,
-    evidence: evidenceFacts(r, cfg, site),
+    evidence: evidenceFacts(r, site),
     plane: planeFacts(r, cfg, typeHref),
     dated: datedSentence(r),
     faaRead: r.faa ? shortDate(r.faa.last_refreshed) : null,
@@ -324,14 +382,19 @@ export function buildTailPage(
   };
 }
 
-/** "Does N12345 Have Starlink? United 737 MAX 9". */
+/** "Does N12345 Have Starlink? United 737 MAX 9", with the install state
+ * ahead of the plane for a tail in the pipeline ("Being installed, United…"). */
 export function tailPageTitle(m: TailPageModel): string {
   const plane = m.typeName ? `${m.airline} ${m.typeName}` : `${m.airline} aircraft`;
-  return `Does ${m.tail} Have Starlink? ${plane}`;
+  const status = m.installStatus ? `${capitalize(m.installStatus)}, ` : "";
+  return `Does ${m.tail} Have Starlink? ${status}${plane}`;
 }
 
-/** The search snippet: the verdict, the answer, and the dates behind it. */
+/** The search snippet: the verdict, the answer, and the dates behind it. A
+ * pipeline tail's answer opens on its install state, which is the verdict in
+ * full, so the one-word form is left off to keep the reading inside the clamp. */
 export function tailMetaDescription(m: TailPageModel): string {
   const plane = m.typeName ? ` ${m.tail} is ${article(m.airline)} ${m.airline} ${m.typeName}.` : "";
-  return `${m.verdict}. ${m.answer}${m.dated ? ` ${m.dated}` : ""}${plane}`;
+  const verdict = m.installStatus ? "" : `${m.verdict}. `;
+  return `${verdict}${m.answer}${m.dated ? ` ${m.dated}` : ""}${plane}`;
 }

@@ -11,7 +11,7 @@
 import type { Database } from "bun:sqlite";
 import { beforeAll, describe, expect, test } from "bun:test";
 import { AIRLINES, SITES } from "../src/airlines/registry";
-import { buildTailPage, tailMetaDescription } from "../src/api/tail-page";
+import { buildTailPage, tailMetaDescription, tailPageTitle } from "../src/api/tail-page";
 import { type AnswerContext, renderFlightAnswer } from "../src/client/flight-answer";
 import { logFlightAssignments } from "../src/database/assignment-log";
 import { logVerification } from "../src/database/database";
@@ -132,6 +132,19 @@ beforeAll(() => {
     `INSERT INTO fleet_progress_tails (airline, segment, type_code, tail, state, mod_location, sheet_updated, fetched_at)
      VALUES ('UA', 'mainline', '739', 'N6MOD', 'in_mod', 'MLB', '2026-11-20', ?)`
   ).run(now);
+  // N9FIT, N9DON, N9QUE: read on another provider while the pipeline has them
+  // in mod, finished and awaiting verification, and queued.
+  for (const [tail, state, loc] of [
+    ["N9FIT", "in_mod", "RFD"],
+    ["N9DON", "verification_needed", null],
+    ["N9QUE", "scheduled", null],
+  ] as const) {
+    addFleet(db, tail, "negative", { verifiedWifi: "Viasat", verifiedAt: now - 3 * DAY });
+    db.query(
+      `INSERT INTO fleet_progress_tails (airline, segment, type_code, tail, state, mod_location, sheet_updated, fetched_at)
+       VALUES ('UA', 'mainline', '739', ?, ?, ?, '2026-11-20', ?)`
+    ).run(tail, state, loc, now);
+  }
   // N8NEG: still listed by our own discovery, but the verifier settled it
   // negative. A stale schedule row must not read as a Starlink flight. (A
   // sheet listing in this state is "reported": tests/listed-not-counted.test.ts.)
@@ -155,6 +168,13 @@ const get = (path: string, host = UA) =>
     req(path, host, { headers: { Accept: "text/html", "x-forwarded-for": "127.0.0.1" } })
   );
 const page = async (path: string) => (await get(path)).text();
+const metaDescription = (doc: string) =>
+  doc.match(/<meta name="description" content="([^"]*)"/)?.[1]?.replace(/&#x27;|&#39;/g, "'");
+const model = (tail: string) => {
+  const m = buildTailPage(AIRLINES.UA, createReaderFactory(db)("UA"), tail);
+  if (!m) throw new Error(`no page for ${tail}`);
+  return m;
+};
 const robots = (doc: string) => doc.match(/<meta name="robots" content="([^"]*)"/)?.[1];
 const verdict = (doc: string) => doc.match(/id="tail-answer"[^>]*>([^<]*)</)?.[1];
 const sitemapEntries = async () => {
@@ -249,7 +269,7 @@ describe("/fleet/{tail}", () => {
       N3REP: "Not confirmed",
       N4VIA: "No",
       N5NEW: "Not checked yet",
-      N6MOD: "Not checked yet",
+      N6MOD: "Not yet",
       N8NEG: "No",
     };
     for (const [tail, expected] of Object.entries(answers)) {
@@ -308,7 +328,15 @@ describe("/fleet/{tail}", () => {
 
   test("a tail without Starlink names the provider and shows no flights", async () => {
     const body = await page("/fleet/N4VIA");
-    expect(body).toContain("N4VIA does not have Starlink. It has Viasat Wi-Fi.");
+    expect(body).toContain(
+      "N4VIA does not have Starlink. Our check of united.com reads Viasat Wi-Fi."
+    );
+    expect(verdict(body)).toBe("No");
+    const m = model("N4VIA");
+    expect(tailPageTitle(m)).toMatch(/^Does N4VIA Have Starlink\? United /);
+    expect(tailMetaDescription(m)).toStartWith(
+      "No. N4VIA does not have Starlink. Our check of united.com reads Viasat Wi-Fi."
+    );
     expect(body).not.toContain('id="upcoming"');
     // Listed, settled negative, with a schedule row still cached.
     const neg = await page("/fleet/N8NEG");
@@ -321,6 +349,57 @@ describe("/fleet/{tail}", () => {
     const body = await page("/fleet/N6MOD");
     expect(body).toContain("Install status");
     expect(body).toContain("Being installed at MLB");
+  });
+
+  test("a tail being fitted says so in the answer, the title and the description", async () => {
+    const body = await page("/fleet/N9FIT");
+    expect(verdict(body)).toBe("Not yet");
+    const answer =
+      "N9FIT is being fitted with Starlink, per the community progress sheet. Not in our count yet. Our check of united.com reads Viasat Wi-Fi.";
+    expect(body).toContain(answer);
+    expect(body).toContain("<title>Does N9FIT Have Starlink? Being installed, United ");
+    expect(metaDescription(body)).toStartWith(answer);
+    expect(body).toContain(
+      "Being installed at RFD (Rockford, IL), per the community progress sheet"
+    );
+    expect(robots(body)).not.toContain("noindex");
+    expect(model("N9FIT").kind).toBe("other");
+  });
+
+  test("a tail fitted and awaiting verification says so, and is not a yes", async () => {
+    const body = await page("/fleet/N9DON");
+    expect(verdict(body)).toBe("Not verified yet");
+    const answer =
+      "The community progress sheet lists N9DON as fitted with Starlink, awaiting verification. Not in our count yet. Our check of united.com reads Viasat Wi-Fi.";
+    expect(body).toContain(answer);
+    expect(body).toContain("<title>Does N9DON Have Starlink? Awaiting verification, United ");
+    // The clamp trims the closing stop when more follows; the reading is whole.
+    expect(metaDescription(body)).toStartWith(answer.slice(0, -1));
+    expect(body).not.toContain('id="upcoming"');
+    expect(model("N9DON").kind).toBe("other");
+  });
+
+  test("a queued tail, and one in the pipeline with no reading, name the state too", async () => {
+    const queued = model("N9QUE");
+    expect(queued.verdict).toBe("Not yet");
+    expect(queued.answer).toStartWith(
+      "N9QUE is queued for a Starlink install, per the community progress sheet. Not in our count yet."
+    );
+    expect(tailPageTitle(queued)).toContain("Queued for install, United ");
+    const unread = model("N6MOD");
+    expect(unread.kind).toBe("unchecked");
+    expect(unread.verdict).toBe("Not yet");
+    expect(unread.answer).toBe(
+      "N6MOD is being fitted with Starlink, per the community progress sheet. Not in our count yet."
+    );
+  });
+
+  test("no answer words a provider as what the plane has", () => {
+    for (const { tail } of getTailIndex(db, "UA")) {
+      const m = model(tail);
+      expect(`${m.answer} ${m.note ?? ""}`).not.toMatch(/\bIt has\b/);
+      expect(m.installStatus === null).toBe(!["Not yet", "Not verified yet"].includes(m.verdict));
+    }
   });
 
   test("lowercase, a missing N and a trailing slash 301 to the one address", async () => {
@@ -383,7 +462,7 @@ describe("index rule", () => {
 
   test("the sitemap lists exactly the tails whose page indexes", async () => {
     const listed = (await sitemapEntries()).map((e) => e.tail).sort();
-    expect(listed).toEqual(["N1VER", "N2LIST", "N3REP", "N6MOD"]);
+    expect(listed).toEqual(["N1VER", "N2LIST", "N3REP", "N6MOD", "N9DON", "N9FIT", "N9QUE"]);
     for (const entry of getTailIndex(db, "UA")) {
       const body = await page(`/fleet/${entry.tail}`);
       expect(robots(body), entry.tail).toBe(entry.indexable ? "index, follow" : "noindex, follow");
