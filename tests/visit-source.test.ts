@@ -48,6 +48,10 @@ describe("classifyVisitSource", () => {
       ["https://www.bing.com/search?q=united+starlink", "search"],
       ["https://duckduckgo.com/", "search"],
       ["android-app://com.google.android.googlequicksearchbox/", "search"],
+      ["https://google.com.au/", "search"],
+      ["https://uk.search.yahoo.com/", "search"],
+      ["https://yandex.com.tr/", "search"],
+      ["https://search.aol.com/", "search"],
       ["https://chatgpt.com/", "assistant"],
       ["https://www.perplexity.ai/search/abc", "assistant"],
       ["https://claude.ai/chat/123", "assistant"],
@@ -75,15 +79,37 @@ describe("classifyVisitSource", () => {
     }
   });
 
-  test("a search engine's page calling the API is the extension, not a search visit", () => {
+  test("search means a results host, not the rest of a portal", () => {
+    for (const referer of [
+      "https://mail.yahoo.com/",
+      "https://finance.yahoo.com/",
+      "https://www.yahoo.com/",
+      "https://blog.naver.com/",
+      "https://cafe.naver.com/",
+      "https://mail.yandex.ru/",
+      "https://tieba.baidu.com/",
+      "https://news.google.com/",
+      "https://www.google.dev/",
+      "https://google.zip/",
+      "https://www.msn.com/",
+      "https://x.bing.com/",
+    ]) {
+      expect(source("/", { Referer: referer }), referer).toBe("other");
+    }
+  });
+
+  test("a search referrer is a search visit on any page, and proves nothing on the API", () => {
     const google = { Referer: "https://www.google.com/" };
-    expect(source("/api/check-flight?flight_number=UA1&date=2026-06-01", google)).toBe("extension");
+    expect(source("/check-flight/UA1", google)).toBe("search");
+    expect(source("/mcp", google)).toBe("search");
+    // Some script on a search page: not a visit, and not our extension, which
+    // sends no referrer and is known only by its own marks.
+    expect(source("/api/check-flight?flight_number=UA1&date=2026-06-01", google)).toBe("other");
     expect(
       source("/api/check-any-flight?flight_number=HA50&date=2026-06-01", {
         Origin: "https://www.google.com",
       })
-    ).toBe("extension");
-    expect(source("/check-flight/UA1", google)).toBe("search");
+    ).toBe("other");
   });
 
   test("extension traffic is its own class whatever else it carries", () => {
@@ -142,12 +168,45 @@ describe("classifyVisitSource", () => {
       `https://${"a".repeat(5000)}.example/`,
       "https://[::1]/",
       "data:text/html,<script>",
+      "android-app://constructor/",
+      "android-app://__proto__/",
+      "android-app://toString/",
+      "android-app://hasOwnProperty",
     ];
     for (const value of junk) {
       for (const headers of [{ Referer: value }, { Origin: value }, { "Sec-Fetch-Site": value }]) {
         expect(VISIT_SOURCES).toContain(source("/", headers));
       }
       expect(VISIT_SOURCES).toContain(source(`/?utm_source=${encodeURIComponent(value)}`));
+    }
+  });
+
+  test("a name every object inherits is an unknown source, not a tenth value", () => {
+    const inherited = [
+      "constructor",
+      "__proto__",
+      "prototype",
+      "toString",
+      "valueOf",
+      "hasOwnProperty",
+      "isPrototypeOf",
+      "toLocaleString",
+      "propertyIsEnumerable",
+      "__defineGetter__",
+      "__lookupGetter__",
+    ];
+    for (const name of inherited) {
+      for (const utm of [name, name.toUpperCase(), ` ${name} `]) {
+        expect(source(`/?utm_source=${encodeURIComponent(utm)}`), `utm ${utm}`).toBe("other");
+      }
+      for (const header of ["Referer", "Origin"]) {
+        for (const path of ["/", "/api/check-flight", "/mcp"]) {
+          expect(source(path, { [header]: `android-app://${name}/` }), `${header} ${name}`).toBe(
+            "other"
+          );
+          expect(source(path, { [header]: `https://${name}/` }), `${header} ${name}`).toBe("other");
+        }
+      }
     }
   });
 });
@@ -167,7 +226,7 @@ describe("the request counter", () => {
       expect(VISIT_SOURCES).toContain(call.tags.visit_source as (typeof VISIT_SOURCES)[number]);
       expect(typeof call.tags.client_class).toBe("string");
     }
-    expect(http.map((c) => c.tags.visit_source)).toEqual(["search", "extension", "search"]);
+    expect(http.map((c) => c.tags.visit_source)).toEqual(["search", "other", "search"]);
   });
 
   test("emits nothing of the referrer but the word", async () => {

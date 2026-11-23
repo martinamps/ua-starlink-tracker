@@ -99,18 +99,21 @@ fires wins:
 
 | Value | Rule |
 |---|---|
-| `extension` | `client_class` is `extension` or `other-extension`; or a search engine's page is the referrer/origin of an `/api/*` or `/mcp` call (a script on Google Flights, not a search visit) |
-| `search` | Referer (else Origin) host is a search engine: Google's search hosts, Bing, DuckDuckGo, Yahoo, Yandex, Baidu, Ecosia, Brave, Kagi, Startpage, Qwant, Naver, or the Google app on Android |
+| `extension` | `client_class` is `extension` or `other-extension`: the extension's own marks (its version param or its origin) and nothing else |
+| `search` | Referer (else Origin) host is a search engine's results host, on any path but `/api/*`: `google.com` and Google's country hosts (bare or `www.`), Bing, DuckDuckGo, `search.yahoo.com` and its country hosts, Yandex, Baidu, Ecosia, Brave Search, Kagi, Startpage, Qwant, `search.naver.com`, `search.aol.com`, or the Google app on Android. Exact hosts: a portal's mail, news, finance, blog and forum hosts are `other` |
 | `assistant` | Referer host or `utm_source` names an assistant: ChatGPT, Claude, Perplexity, Gemini, Copilot, Grok, Meta AI, Mistral, DeepSeek, Poe, You, Phind |
 | `social` | Referer host or `utm_source` names a social site or forum: Facebook, Instagram, Threads, X/Twitter, Reddit, LinkedIn, YouTube, TikTok, Bluesky, Pinterest, Hacker News, FlyerTalk |
 | `calendar` | `utm_source=cal`, the link this site writes into its own calendar events |
 | `own` | Referer/Origin is one of our hosts, or `Sec-Fetch-Site` is `same-origin`/`same-site`. Our pages send `Referrer-Policy: no-referrer`, so the fetch-metadata header is what marks in-site clicks, assets and our own scripts' API calls |
-| `other` | Any other referrer, origin or `utm_source`, or `Sec-Fetch-Site: cross-site` with nothing named |
+| `other` | Any other referrer, origin or `utm_source`, or `Sec-Fetch-Site: cross-site` with nothing named. Also a search engine's page as referrer/origin of an `/api/*` call: some script on that page, which is neither a search visit nor our extension (the extension sends no referrer) |
 | `direct` | `Sec-Fetch-Site: none`: typed, bookmarked, or opened from an app outside the browser |
 | `none` | No signal at all: most robots and scripts, and browsers too old to send fetch metadata |
 
 **Budget: 9 values, closed.** An unknown host or `utm_source` is `other`, never a
-new value; to recognise a new site, add its domain to one of the three lists.
+new value; to recognise a new site, add its host to one of the lists. The lists
+a visitor's value is looked up in are `Map`s and `Set`s, and
+`classifyVisitSource` turns anything outside the nine into `other` before it
+returns.
 Only the word is emitted: the referrer's host, path and query are read inside
 `classifyVisitSource` and go to no metric, span or log.
 
@@ -118,10 +121,14 @@ A user agent alone never makes a request `assistant`. An assistant's fetcher is
 already `client_class:claude|gptbot|perplexity`; `visit_source:assistant` is a
 person who followed a link out of an assistant. Robots can send any referrer,
 so read the tag with `client_class:browser`, and leave out `visit_source:own`
-(a page view's own assets and API calls) to count arrivals:
+(a page view's own assets and API calls) to count arrivals. The query keeps
+pages only: GETs, without the API, static files, feeds, robots and sitemap
+files, the badge, the CSV, calendar files and the embed route. `/mcp` stays in
+as a page, since `method:get` leaves its POSTed tool calls out. A new route
+that isn't a page needs its own `NOT route:` here.
 
 ```
-sum:starlink.http.request{client_class:browser AND status_code:200 AND NOT route:unmatched AND NOT route:/mcp AND NOT route:/api* AND NOT route:/static AND NOT visit_source:own} by {visit_source,tenant}.as_count().rollup(sum, 604800)
+sum:starlink.http.request{client_class:browser AND method:get AND status_code:200 AND NOT route:unmatched AND NOT route:/api* AND NOT route:/static AND NOT route:/feed.xml AND NOT route:/robots.txt AND NOT route:/sitemap.xml AND NOT route:/llms.txt AND NOT route:/badge.svg AND NOT route:/data/starlink-tails.csv AND NOT route:/cal AND NOT route:/embed AND NOT route:/.well-known/mcp-registry-auth AND NOT visit_source:own} by {visit_source,tenant}.as_count().rollup(sum, 604800)
 ```
 
 ### Rate-limit log
