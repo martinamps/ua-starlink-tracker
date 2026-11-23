@@ -40,11 +40,12 @@ depends on the airline:
   any date the search returns.
 - **Alaska** — no per-flight history, but the subfleet a flight number belongs
   to has one equipped share, so predicted badges show at any date for the
-  ~100%-equipped subfleets (AS800-899 on Hawaiian A330/A321neo metal, and the
-  regional E175s) and stay off for the mid-rollout mainline.
+  fully equipped subfleets (AS800-999 on Hawaiian A330/A321neo metal, and the
+  regional E175s) and stay off for the mid-rollout mainline. Those badges read
+  "Starlink ~99%": a prediction is capped at 99%, never shown as 100%.
 - **Hawaiian** — Google Flights now lists Hawaiian-operated flights only under
   Alaska `AS` numbers, so they are answered as Alaska flights: the A330/A321neo
-  routes (AS800-899, e.g. HNL → LAX) get badges at any date, and the
+  routes (AS800-999, e.g. HNL → LAX) get badges at any date, and the
   interisland 717s (AS1000-1299) get none, because they have no Starlink.
   `HA`-numbered lookups still work if Google ever shows them again, but an
   `HA` number doesn't pin the aircraft type, so before the ~2-day assignment
