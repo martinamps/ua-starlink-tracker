@@ -4,6 +4,7 @@ import { AIRLINES, type SiteConfig } from "../airlines/registry";
 import type { FirstFlight, PerAirlineStat, RecentInstall, ReportedInstall } from "../types";
 import type { Link } from "./layout";
 import { EYEBROW, PANEL, PageHeader, PageShell, SECTION } from "./layout";
+import { tailHref } from "./tail-link";
 import { monthDay, shortDate } from "./ui/format";
 
 interface NewlyEquippedPageProps {
@@ -45,11 +46,29 @@ export function firstFlightLabel(first: FirstFlight): string {
   return `${fn} ${first.origin} → ${first.destination}`;
 }
 
+/** The tail, linked to its own page where this host has one. */
+function TailName({
+  site,
+  row,
+  tone,
+}: { site: SiteConfig; row: RecentInstall; tone: "text-accent" | "text-secondary" }) {
+  const href = tailHref(site, row.TailNumber, row.airline);
+  return href ? (
+    <a href={href} className={`font-mono text-sm ${tone} hover:underline`}>
+      {row.TailNumber}
+    </a>
+  ) : (
+    <span className={`font-mono text-sm ${tone}`}>{row.TailNumber}</span>
+  );
+}
+
 function InstallRow({
+  site,
   install,
   first,
   airlineName,
 }: {
+  site: SiteConfig;
   install: RecentInstall;
   first?: FirstFlight;
   airlineName: string;
@@ -62,7 +81,7 @@ function InstallRow({
       style={{ scrollMarginTop: "5rem" }}
     >
       <div className="flex items-baseline gap-3 flex-wrap">
-        <span className="font-mono text-sm text-accent">{install.TailNumber}</span>
+        <TailName site={site} row={install} tone="text-accent" />
         <span className="text-xs text-secondary">{aircraftName(install.Aircraft)}</span>
         {operator && <span className="text-xs text-muted hidden sm:inline">{operator}</span>}
         <span className="text-xs text-muted tabular-nums ml-auto">
@@ -83,7 +102,11 @@ function InstallRow({
   );
 }
 
-function ReportedRow({ row, airlineName }: { row: ReportedInstall; airlineName: string }) {
+function ReportedRow({
+  site,
+  row,
+  airlineName,
+}: { site: SiteConfig; row: ReportedInstall; airlineName: string }) {
   const operator = operatorLabel(row.OperatedBy, airlineName);
   return (
     <div
@@ -92,7 +115,7 @@ function ReportedRow({ row, airlineName }: { row: ReportedInstall; airlineName: 
       style={{ scrollMarginTop: "5rem" }}
     >
       <div className="flex items-baseline gap-3 flex-wrap">
-        <span className="font-mono text-sm text-secondary">{row.TailNumber}</span>
+        <TailName site={site} row={row} tone="text-secondary" />
         <span className="text-xs text-secondary">{aircraftName(row.Aircraft)}</span>
         {operator && <span className="text-xs text-muted hidden sm:inline">{operator}</span>}
         <span className="text-xs text-muted tabular-nums ml-auto">
@@ -160,6 +183,7 @@ export default function NewlyEquippedPage({
                 </div>
                 {g.rows.map((r) => (
                   <InstallRow
+                    site={site}
                     key={r.TailNumber}
                     install={r}
                     first={firstFlights[r.TailNumber]}
@@ -195,6 +219,7 @@ export default function NewlyEquippedPage({
             </p>
             {reported.map((r) => (
               <ReportedRow
+                site={site}
                 key={r.TailNumber}
                 row={r}
                 airlineName={airlines.find((a) => a.code === r.airline)?.name ?? r.airline}

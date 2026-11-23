@@ -499,6 +499,10 @@ export const COUNTERS = {
   //   outcome (ok|redirect|not_found), verdict (all|all_checked|most|some|verifying|installing|none|
   //   official_none|unknown|n/a), indexable (true|false)
   AIRCRAFT_PAGE_VIEW: "aircraft_page.view",
+  // /fleet/{tail} page request — tags: airline, outcome (ok|redirect),
+  //   answer (verified|listed|reported|observed|other|unchecked|n/a), indexable (true|false).
+  //   Never the tail: a registration is not a tag value.
+  TAIL_PAGE_VIEW: "tail_page.view",
   // "Every flight on this route" board served — tags: airline, surface (api|page),
   //   outcome (nonstop|no_nonstop), dated (true|false)
   ROUTE_FLIGHTS_VIEW: "route_flights.view",

@@ -10,6 +10,7 @@ import { providerLabels } from "./fleet/providers";
 import { CarrierSection, type FleetTypeLink, TypeBarsSection } from "./fleet/type-bars";
 import type { Link } from "./layout";
 import { EYEBROW, PANEL, PageHeader, PageShell, SECTION_WIDE } from "./layout";
+import { tailHref } from "./tail-link";
 import { TrackerLinks } from "./tracker-links";
 import { fmt, pct, shortDate } from "./ui/format";
 
@@ -176,6 +177,7 @@ export default function FleetPage({
         pipeline={pipeline}
         typeLinks={typeLinkByFamily}
         labels={labels}
+        tailHref={(tail) => tailHref(site, tail)}
       />
 
       <ShareCardLink path={shareCard} />

@@ -124,6 +124,10 @@ export interface SiteFeatures {
   /** /routes/{airport}: the Starlink departures from one airport. Needs the
    * route pages (every row links one) and a live departure window. */
   airportPages: boolean;
+  /** /fleet/{tail}: one page per aircraft. Only where the verifier reads every
+   * tail and the roster is the airline's own: the page's answer is a per-plane
+   * check, which the type-rule airlines don't have. */
+  tailPages: boolean;
 }
 
 export interface SiteConfig {
@@ -1224,6 +1228,7 @@ const AIRLINE_SITE_FEATURES: SiteFeatures = {
   liveTvPage: false,
   aircraftPages: false,
   airportPages: false,
+  tailPages: false,
 };
 
 export const SITES: Record<string, SiteConfig> = {
@@ -1249,6 +1254,7 @@ export const SITES: Record<string, SiteConfig> = {
       liveTvPage: true,
       aircraftPages: true,
       airportPages: true,
+      tailPages: true,
     },
   },
   airline: {
@@ -1281,6 +1287,7 @@ export const SITES: Record<string, SiteConfig> = {
       liveTvPage: false,
       aircraftPages: false,
       airportPages: false,
+      tailPages: false,
     },
   },
   hawaiian: {

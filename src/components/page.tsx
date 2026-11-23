@@ -263,6 +263,7 @@ export default function Page({
         flightsByTail={flightsByTail}
         permalinkAirline={airline}
         showFleetLink={features.fleetPage}
+        tailPages={features.tailPages}
         // /fleet lists the programme roster, partner jets included.
         fleetTotal={programme?.total ?? total}
         title={

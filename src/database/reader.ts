@@ -151,6 +151,18 @@ import { type ProgrammeHeadline, programmeHeadline } from "./roster";
 import { type RouteFlightLeg, getAllFlightLegs, getRouteFlightLegs } from "./route-flights";
 import { getRouteFlightLastSeen } from "./route-history";
 import { capToQuietSources } from "./source-health";
+import {
+  type TailDepartures,
+  type TailFlight,
+  type TailIndexEntry,
+  type TailRecord,
+  getTailDepartures,
+  getTailIndex,
+  getTailRecentFlights,
+  getTailRecord,
+  getTailUpcomingFlights,
+  resolveTail,
+} from "./tails";
 
 export type { Database };
 
@@ -317,6 +329,16 @@ export interface ScopedReader {
    * pages' index rule and the sitemap read the same build. */
   getAirportHistory(): AirportHistory;
 
+  // /fleet/{tail}
+  /** A typed tail (any case, with or without the N) as the airline stores it; null when it has none. */
+  resolveTail(segment: string): string | null;
+  getTailRecord(tail: string): TailRecord | null;
+  getTailUpcomingFlights(tail: string): TailFlight[];
+  getTailRecentFlights(tail: string): TailFlight[];
+  getTailDepartures(tail: string): TailDepartures;
+  /** Every tail with a page, classified by the page's own rule; the sitemap's source. */
+  getTailIndex(): TailIndexEntry[];
+
   // Single-tail lookups + best-effort writes. Airline-scoped like everything
   // else: a tenant's FR24 fallback must not resolve another airline's tail.
   getStarlinkPlaneByTail(
@@ -440,6 +462,7 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
   const scheduleMemo = memo<RouteSchedule>(DEPARTURE_AGGREGATE_MEMO);
   const rankedMemo = memo<Array<{ origin: string; destination: string }>>(DEPARTURE_AGGREGATE_MEMO);
   const airportHistoryMemo = memo<AirportHistory>(AIRPORT_HISTORY_MEMO);
+  const tailIndexMemo = memo<TailIndexEntry[]>(DEPARTURE_AGGREGATE_MEMO);
   const r: ScopedReader = {
     scope,
     airlines,
@@ -539,6 +562,13 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     airportHasData: (a) => airportHasData(db, a, soleAirline()),
     getAirportStarlinkDepartures: (a) => getAirportStarlinkDepartures(db, soleAirline(), a),
     getAirportHistory: () => airportHistoryMemo("", () => getAirportHistory(db, soleAirline())),
+
+    resolveTail: (segment) => resolveTail(db, soleAirline(), segment),
+    getTailRecord: (tail) => getTailRecord(db, soleAirline(), tail),
+    getTailUpcomingFlights: (tail) => getTailUpcomingFlights(db, soleAirline(), tail),
+    getTailRecentFlights: (tail) => getTailRecentFlights(db, soleAirline(), tail),
+    getTailDepartures: (tail) => getTailDepartures(db, soleAirline(), tail),
+    getTailIndex: () => tailIndexMemo("", () => getTailIndex(db, soleAirline())),
 
     getStarlinkPlaneByTail: (tail) => getStarlinkPlaneByTail(db, tail, airlines),
     getFleetEntryByTail: (tail) => getFleetEntryByTail(db, tail, airlines),

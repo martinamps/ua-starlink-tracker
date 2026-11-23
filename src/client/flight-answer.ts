@@ -87,6 +87,8 @@ export interface AnswerContext {
   liveTv: Record<SeatbackLiveTv, string> | null;
   watchEnabled: boolean;
   routePlannerEnabled: boolean;
+  /** /fleet/{tail} serves on this host, for the planes we list. */
+  tailPages: boolean;
   /** Host for webcal:// links. */
   host: string;
 }
@@ -153,6 +155,13 @@ function row(label: string, valueHtml: string): string {
 const tail = (t: string | null | undefined) =>
   `<span class="font-mono text-primary">${esc(t)}</span>`;
 
+/** A plane on our Starlink list, linked to its page where the host has them.
+ * Only for listed tails: a fallback segment's tail may be on no roster. */
+const listedTail = (t: string | null | undefined, ctx: AnswerContext) =>
+  ctx.tailPages && t && /^N[A-Z0-9]{1,5}$/.test(t)
+    ? `<a href="/fleet/${esc(t)}" class="font-mono text-primary hover:text-accent transition-colors">${esc(t)}</a>`
+    : tail(t);
+
 const typeName = (t: string | null | undefined) => (t ? ` · ${esc(aircraftName(t))}` : "");
 
 function flightRows(f: WireFlight, ctx: AnswerContext): string {
@@ -165,7 +174,7 @@ function flightRows(f: WireFlight, ctx: AnswerContext): string {
     rows.push(row("Departs", `${esc(when.day)}, ${esc(when.time)}`));
   }
   if (f.tail_number) {
-    rows.push(row("Aircraft", `${tail(f.tail_number)}${typeName(f.aircraft_type)}`));
+    rows.push(row("Aircraft", `${listedTail(f.tail_number, ctx)}${typeName(f.aircraft_type)}`));
   }
   if (f.operated_by) rows.push(row("Operated by", esc(f.operated_by)));
   return `<dl class="mt-3 space-y-1.5 text-sm">${rows.join("")}</dl>`;
@@ -198,7 +207,7 @@ function alternativesHtml(
   const items = list
     .map(
       (a) =>
-        `<li><a href="/check-flight/${encodeURIComponent(a.flight_number)}/${encodeURIComponent(ctx.date)}" class="text-accent hover:underline">${esc(a.flight_number)}</a> at ${esc(departs(a.departure_time, origin, ctx).time)} · ${tail(a.tail_number)}${typeName(a.aircraft_type)}</li>`
+        `<li><a href="/check-flight/${encodeURIComponent(a.flight_number)}/${encodeURIComponent(ctx.date)}" class="text-accent hover:underline">${esc(a.flight_number)}</a> at ${esc(departs(a.departure_time, origin, ctx).time)} · ${listedTail(a.tail_number, ctx)}${typeName(a.aircraft_type)}</li>`
     )
     .join("");
   return `<div class="mt-4"><h3 class="text-sm font-semibold text-primary">Starlink flights on this route that day</h3><ul class="mt-1 space-y-1 text-sm text-secondary">${items}</ul></div>`;

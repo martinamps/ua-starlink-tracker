@@ -6096,6 +6096,8 @@ export interface DepartureSlotQuery {
   /** Restrict to one airport pair (route pages). */
   origin?: string;
   destination?: string;
+  /** Restrict to one aircraft (tail pages). */
+  tail?: string;
 }
 
 /** departureSlotsSql bound to a scope, as a derived table plus its params. */
@@ -6117,6 +6119,10 @@ function departureSlots(
   if (q.destination) {
     clause = `${clause} AND uf.arrival_airport = ?`;
     params.push(q.destination);
+  }
+  if (q.tail) {
+    clause = `${clause} AND uf.tail_number = ?`;
+    params.push(q.tail);
   }
   return { sql: `(${departureSlotsSql(clause)})`, params: [...params, q.from, q.to] };
 }

@@ -243,30 +243,42 @@ export function TailRegistry({
   pipeline,
   typeLinks,
   labels = PROVIDER_LABEL,
+  tailHref,
 }: {
   allTails: FleetTail[];
   pipeline: PipelineMap;
   typeLinks: Map<string, FleetTypeLink>;
   labels?: Record<WifiProvider, string>;
+  /** The tail's own page where this host has one; otherwise the row opens FlightAware. */
+  tailHref?: (tail: string) => string | null;
 }) {
   const counts = providerCounts(allTails);
+  const ownPages = allTails.length > 0 && allTails.every((t) => tailHref?.(t.tail));
   return (
     <section className={SECTION_WIDE}>
       <h2 className={H2}>Tail registry</h2>
       <p className="mt-1 mb-3 text-sm text-secondary">
-        All {fmt(allTails.length)} aircraft. Click one to open it on FlightAware.
+        All {fmt(allTails.length)} aircraft. Click one{" "}
+        {ownPages
+          ? "for its page: Starlink status, checks and flights."
+          : "to open it on FlightAware."}
       </p>
       <ProviderLegend counts={counts} labels={labels} className="mb-4" />
       <div className="bg-surface border border-subtle rounded-lg p-4 font-mono text-xs leading-[1.7] columns-[20ch] gap-x-3">
         {allTails.map((t) => {
           const dot = registryDot(t, pipeline);
+          const own = tailHref?.(t.tail) ?? null;
           return (
             <a
               key={t.tail}
               id={`t-${t.tail}`}
-              href={`https://flightaware.com/live/flight/${t.tail}`}
-              target="_blank"
-              rel="nofollow noreferrer noopener"
+              {...(own
+                ? { href: own }
+                : {
+                    href: `https://flightaware.com/live/flight/${t.tail}`,
+                    target: "_blank",
+                    rel: "nofollow noreferrer noopener",
+                  })}
               title={`${familyLabel(t.family, typeLinks)} · ${tailTitle(t, pipeline)}`}
               className={registryClass(t, pipeline)}
             >

@@ -4,8 +4,10 @@
  */
 import React from "react";
 import { aircraftName } from "../../airlines/aircraft-families";
+import type { SiteConfig } from "../../airlines/registry";
 import { airportTimezone } from "../../utils/airport-tz";
 import { Chip, Section, StatInline } from "../layout";
+import { tailHref } from "../tail-link";
 import { fmt, formatDuration, shortDate, zonedDeparture } from "../ui/format";
 import type { FlightFacts } from "./types";
 
@@ -15,9 +17,11 @@ function lastSeenLabel(sec: number | null): string | null {
 }
 
 export function FlightFactBlocks({
+  site,
   flight,
   scheduledOnDate,
 }: {
+  site: SiteConfig;
   flight: FlightFacts;
   scheduledOnDate: boolean;
 }) {
@@ -52,7 +56,16 @@ export function FlightFactBlocks({
                     </span>
                   </div>
                   <div className="text-muted">
-                    <span className="font-mono">{u.tail_number}</span>
+                    {u.starlink && tailHref(site, u.tail_number) ? (
+                      <a
+                        href={tailHref(site, u.tail_number) ?? undefined}
+                        className="font-mono hover:text-accent transition-colors"
+                      >
+                        {u.tail_number}
+                      </a>
+                    ) : (
+                      <span className="font-mono">{u.tail_number}</span>
+                    )}
                     {u.aircraft_type ? ` · ${aircraftName(u.aircraft_type)}` : ""}
                   </div>
                 </div>

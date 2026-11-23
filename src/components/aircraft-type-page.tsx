@@ -29,6 +29,7 @@ import { ShareBarRow, providerCounts } from "./fleet/type-bars";
 import { FlightSearchForm } from "./flight-search-form";
 import type { Link } from "./layout";
 import { EYEBROW, H2, LINK, PANEL, PageHeader, PageShell, StatInline } from "./layout";
+import { tailHref } from "./tail-link";
 import { capitalize, fmt, shortDate } from "./ui/format";
 
 interface AircraftTypeSibling {
@@ -221,7 +222,11 @@ function PipelineSection({ def, data }: { def: AircraftPageDef; data: AircraftTy
   );
 }
 
-function RecentSection({ def, data }: { def: AircraftPageDef; data: AircraftTypePageData }) {
+function RecentSection({
+  site,
+  def,
+  data,
+}: { site: SiteConfig; def: AircraftPageDef; data: AircraftTypePageData }) {
   if (data.recentInstalls.length === 0) return null;
   return (
     <section className={CARD}>
@@ -229,7 +234,10 @@ function RecentSection({ def, data }: { def: AircraftPageDef; data: AircraftType
       <ul className="text-sm text-secondary grid grid-cols-2 sm:grid-cols-3 gap-1">
         {data.recentInstalls.map((r) => (
           <li key={r.tail}>
-            <a href={`/fleet#t-${r.tail}`} className={`${LINK} font-mono text-xs`}>
+            <a
+              href={tailHref(site, r.tail) ?? `/fleet#t-${r.tail}`}
+              className={`${LINK} font-mono text-xs`}
+            >
               {r.tail}
             </a>{" "}
             <span className="text-muted">{shortDate(r.date.slice(0, 10))}</span>
@@ -472,7 +480,7 @@ export default function AircraftTypePage({
 
         <VariantsSection data={data} />
         <PipelineSection def={def} data={data} />
-        <RecentSection def={def} data={data} />
+        <RecentSection site={site} def={def} data={data} />
         <RoutesSection def={def} data={data} />
         <FlightsSection def={def} data={data} answer={answer} />
         <FactsSection facts={facts.filter((f) => f !== headerTarget)} airline={airline} />

@@ -96,6 +96,7 @@ function answerContext(site: SiteConfig, dated: DatedAnswer, flight?: FlightFact
     liveTv: site.features.liveTvPage ? SEATBACK_LIVE_TV_COPY : null,
     watchEnabled: watchFeedEnabled(site),
     routePlannerEnabled: site.features.routePlannerPage,
+    tailPages: site.features.tailPages,
     host: site.canonicalHost,
   };
 }
@@ -255,7 +256,7 @@ export default function CheckFlightPage({
         </Panel>
       </Section>
 
-      {flight && <FlightFactBlocks flight={flight} scheduledOnDate={scheduledOnDate} />}
+      {flight && <FlightFactBlocks site={site} flight={flight} scheduledOnDate={scheduledOnDate} />}
       {!flight && popular.length > 0 && (
         <Section bare>
           <PopularFlightsLinks flights={popular} airlineName={cfg.name} />

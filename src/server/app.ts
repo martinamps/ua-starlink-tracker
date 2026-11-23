@@ -292,6 +292,14 @@ import {
 } from "../api/airport-board";
 import AirportPage from "../components/airport-page";
 
+import {
+  type TailPageModel,
+  buildTailPage,
+  tailMetaDescription,
+  tailPageTitle,
+} from "../api/tail-page";
+import TailPage from "../components/tail-page";
+
 type Handler = (ctx: RequestContext) => Response | Promise<Response>;
 
 /** A route table entry. Dispatch enforces `methods` and `feature` before the
@@ -1999,6 +2007,17 @@ const sitemap: Handler = (ctx) => {
           priority: "0.6",
         }))
       : [];
+  // A tail's lastmod is the day it joined our list, the one change that turns
+  // its answer; flights move hourly and are no reason to recrawl.
+  const tailEntries =
+    site.features.tailPages && tenantConfig(tenant)
+      ? indexableTails(reader).map((t) => ({
+          path: `/fleet/${t.tail}`,
+          changefreq: "weekly",
+          priority: "0.5",
+          ...(t.found ? { lastmod: t.found } : {}),
+        }))
+      : [];
   const hubUrls = hubUrlFamilies(site, getReader);
   // Each hub airline page's lastmod is that airline's own data freshness, not
   // the hub-wide max — an airline without a stamp yet omits lastmod rather
@@ -2049,6 +2068,7 @@ const sitemap: Handler = (ctx) => {
     ...routeEntries,
     ...airportEntries,
     ...aircraftPageEntries(ctx),
+    ...tailEntries,
   ];
   const body = `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
@@ -2250,6 +2270,12 @@ The homepage element with HTML id \`starlink-stat\` gives the count: how many ${
     : null;
   // An airport whose page indexes, so the example is one the sitemap lists.
   const boardAirport = features.airportPages ? busiestIndexableAirport(reader) : undefined;
+  // The newest find whose page indexes, so the example is one the sitemap lists.
+  const exampleTail = features.tailPages
+    ? indexableTails(reader)
+        .filter((t) => t.found)
+        .sort((a, b) => (b.found ?? "").localeCompare(a.found ?? ""))[0]?.tail
+    : undefined;
   const checkFlightExampleUrl = sampleFlight
     ? `https://${host}/check-flight/${sampleFlight}/${exampleDate}`
     : `https://${host}/check-flight`;
@@ -2265,6 +2291,9 @@ The homepage element with HTML id \`starlink-stat\` gives the count: how many ${
       : null,
     boardAirport
       ? `**"Which flights from ${boardAirport} have Starlink?"** → https://${host}/routes/${boardAirport} lists every ${name} departure from ${boardAirport} with a Starlink plane assigned in the next ${DEPARTURE_WINDOW_HOURS} hours, by destination, and how many Starlink planes flew from there in the last few days.`
+      : null,
+    exampleTail
+      ? `**"Does plane ${exampleTail} have Starlink?"** → https://${host}/fleet/${exampleTail} answers for that one aircraft: whether it has Starlink, when it joined the list, what our last check of it read, and its coming flights. Every ${name} aircraft has one, at the same address with its own tail number.`
       : null,
     `**"How is the rollout going?"** → https://${host}/ has the live count and a chart over time.${features.fleetPage ? ` https://${host}/fleet shows every aircraft and its WiFi provider.` : ""}`,
     // The access sentence comes from the same per-airline copy /is-starlink-free
@@ -3864,6 +3893,97 @@ const aircraftTypePage: Handler = (ctx) => {
   );
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// /fleet/{tail} aircraft pages
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Tails whose page indexes: the sitemap's list, by the page's own rule. */
+function indexableTails(reader: ScopedReader) {
+  return reader.getTailIndex().filter((t) => t.indexable);
+}
+
+function tailPageMeta(ctx: RequestContext, m: TailPageModel): PageMeta {
+  const description = tailMetaDescription(m);
+  const brand = m.airline.toLowerCase();
+  return {
+    siteTitle: tailPageTitle(m),
+    siteDescription: description,
+    keywords: `${m.tail} starlink, ${m.tail} wifi, ${brand} ${m.tail}, does ${m.tail} have starlink`,
+    ogTitle: `Does ${m.tail} Have Starlink?`,
+    ogDescription: description,
+    pageJsonLd: jsonLdBlock(
+      breadcrumbJsonLd(ctx.site.canonicalHost, [
+        { name: "Home", path: "/" },
+        { name: "Fleet", path: "/fleet" },
+        ...(m.typeHref && m.typeName ? [{ name: m.typeName, path: m.typeHref }] : []),
+        { name: m.tail, path: `/fleet/${m.tail}` },
+      ])
+    ),
+    ...(m.indexable ? {} : { robotsMeta: "noindex, follow" }),
+  };
+}
+
+function recordTailPageView(
+  ctx: RequestContext,
+  outcome: "ok" | "redirect",
+  model?: TailPageModel
+): void {
+  metrics.increment(COUNTERS.TAIL_PAGE_VIEW, {
+    airline: normalizeAirlineTag(tenantConfig(ctx.tenant)?.code),
+    outcome,
+    answer: model?.kind ?? "n/a",
+    indexable: model?.indexable ? "true" : "false",
+  });
+}
+
+/**
+ * /fleet/{tail}: the tail half of the /fleet/ family. Null when the segment is
+ * not a tail this airline has, so the type-page handler answers (a slug, or
+ * the plain 404). A type slug or alias always wins: "/fleet/757" is the 757
+ * page, never tail N757.
+ */
+function tailPage(ctx: RequestContext): Promise<Response> | Response | null {
+  const cfg = tenantConfig(ctx.tenant);
+  if (!ctx.site.features.tailPages || !cfg) return null;
+  const rest = ctx.url.pathname.slice("/fleet/".length);
+  const segment = rest.replace(/\/+$/, "");
+  if (!segment || segment.includes("/") || resolveAircraftSlug(cfg.code, segment)) return null;
+  const tail = ctx.reader.resolveTail(segment);
+  if (!tail) return null;
+  const canonicalPath = `/fleet/${tail}`;
+  if (ctx.url.pathname !== canonicalPath) {
+    recordTailPageView(ctx, "redirect");
+    return Response.redirect(`https://${ctx.site.canonicalHost}${canonicalPath}`, 301);
+  }
+  const { features } = ctx.site;
+  const model = buildTailPage(cfg, ctx.reader, tail, {
+    typeHrefFor: (raw) => {
+      const family = normalizeAircraftType(raw);
+      const def = servedAircraftPages(ctx).find((d) => d.family === family);
+      return def ? `/fleet/${def.slug}` : null;
+    },
+    flightLinks: features.checkFlightPage,
+    routeLinks: features.routePlannerPage,
+    airportHref: (airport) =>
+      features.airportPages && ctx.reader.airportHasData(airport) ? `/routes/${airport}` : null,
+  });
+  if (!model) return null;
+  const wayOn: PageLink[] = [
+    ...(model.typeHref && model.typeName
+      ? [{ href: model.typeHref, label: `Every ${model.airline} ${model.typeName}` }]
+      : []),
+    ...(features.checkFlightPage ? [{ href: "/check-flight", label: "Check a flight" }] : []),
+    ...(features.newlyEquippedPage && hasInstallLog(ctx)
+      ? [{ href: "/newly-equipped", label: "Newly equipped aircraft" }]
+      : []),
+    ...(features.fleetPage ? [{ href: "/fleet", label: "The whole fleet" }] : []),
+  ];
+  recordTailPageView(ctx, "ok", model);
+  return renderSubPage(ctx, TailPage, canonicalPath, tailPageMeta(ctx, model), { model, wayOn });
+}
+
+const fleetSubPage: Handler = (ctx) => tailPage(ctx) ?? aircraftTypePage(ctx);
+
 function aircraftPageEntries(
   ctx: RequestContext
 ): Array<{ path: string; changefreq: string; priority: string; lastmod?: string }> {
@@ -5060,7 +5180,7 @@ export function createApp(db: Database, opts: { crawlerDns?: CrawlerDns } = {}):
     ["/airlines/", read(airlineDetailPage, "airlinesPages")],
     ["/compare/", read(comparePage, "comparePages")],
     ["/static/", { handler: staticDir }],
-    ["/fleet/", read(aircraftTypePage)],
+    ["/fleet/", read(fleetSubPage)],
   ];
 
   function match(pathname: string): { entry: Route; route: string } | null {
