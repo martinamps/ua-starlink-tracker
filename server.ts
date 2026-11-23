@@ -6,6 +6,7 @@ import { checkNewPlanes, startFlightUpdater } from "./src/api/flight-updater";
 import { closeFR24Transport } from "./src/api/fr24-browser-transport";
 import {
   archivePastDepartures,
+  expirePassengerDedupeKeys,
   migrate,
   openDatabase,
   pruneCrashRows,
@@ -30,6 +31,10 @@ import { startStarlinkVerifier } from "./src/scripts/starlink-verifier";
 import { syncShipNumbers } from "./src/scripts/sync-ship-numbers";
 import { createApp } from "./src/server/app";
 import { passengerVerifyEnabled } from "./src/server/passenger-detect";
+import {
+  DEDUPE_KEY_SWEEP_INTERVAL_SEC,
+  DEDUPE_WINDOW_SEC,
+} from "./src/server/passenger-report-fields";
 import { pingIndexNow } from "./src/utils/indexnow";
 import { type JobHandle, type JobRunContext, startJob } from "./src/utils/job-runner";
 import { info, error as logError } from "./src/utils/logger";
@@ -181,6 +186,20 @@ if (JOBS_ENABLED) {
 
   // Starlink RFC 8805 geofeed → backs the passenger-verify dark-launch probe.
   if (passengerVerifyEnabled) track(startGeofeedJob(db));
+
+  // Blanks report dedupe keys past their window when no new report has done
+  // it; the banner tells visitors the key is gone within a day. Not gated on
+  // PASSENGER_VERIFY: switching the probe off must not strand the last keys.
+  track(
+    startJob({
+      name: "expire_passenger_dedupe_keys",
+      intervalMs: DEDUPE_KEY_SWEEP_INTERVAL_SEC * 1000,
+      initialDelayMs: 5 * 60 * 1000,
+      run: () => {
+        expirePassengerDedupeKeys(db, DEDUPE_WINDOW_SEC);
+      },
+    })
+  );
 
   // Daily prune of subprocess-crash log rows (no observation, just noise).
   track(

@@ -679,8 +679,11 @@ export function setupTables(db: Database) {
     `);
   }
 
-  // Passenger-verify dark-launch probe results. Everything except ip / in_geofeed
-  // is client-asserted; trust filtering happens at read time.
+  // Passenger-verify dark-launch probe results. Everything except in_geofeed is
+  // client-asserted; trust filtering happens at read time. ip, router_id and
+  // ua_hash are no longer written (rows before that change still carry them),
+  // and ip_prefix now holds a keyed hash that is blanked after the dedupe
+  // window: src/server/passenger-report-fields.ts says what each column holds.
   if (!tableExists(db, "passenger_reports")) {
     db.exec(`
       CREATE TABLE passenger_reports (
@@ -5631,39 +5634,53 @@ export function getStarlinkPrefixes(
 }
 
 export interface PassengerReportInsert {
-  ip: string;
-  ip_prefix: string;
+  dedupe_key: string;
   in_geofeed: boolean;
   source: string;
   outcome: string;
   claimed_flight: string | null;
   claimed_tail: string | null;
   claimed_date: string | null;
-  router_id: string | null;
-  ua_hash: string | null;
   airborne_match: boolean;
 }
 
+/** `ip` is NOT NULL from the original schema, so it gets "" rather than the
+ * address; router_id and ua_hash are left NULL. */
 export function recordPassengerReport(db: Database, r: PassengerReportInsert): void {
   db.query(`
     INSERT INTO passenger_reports
       (reported_at, ip, ip_prefix, in_geofeed, source, outcome,
-       claimed_flight, claimed_tail, claimed_date, router_id, ua_hash, airborne_match)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       claimed_flight, claimed_tail, claimed_date, airborne_match)
+    VALUES (?, '', ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     unixNow(),
-    r.ip,
-    r.ip_prefix,
+    r.dedupe_key,
     r.in_geofeed ? 1 : 0,
     r.source,
     r.outcome,
     r.claimed_flight,
     r.claimed_tail,
     r.claimed_date,
-    r.router_id,
-    r.ua_hash,
     r.airborne_match ? 1 : 0
   );
+}
+
+/**
+ * Blanks dedupe keys that have outlived the window they exist for. The range
+ * matches only the keyed hashes ("h:…"), so rows written before hashing, whose
+ * ip_prefix is a readable "v4:…"/"v6:…" prefix, are left exactly as they are.
+ */
+export function expirePassengerDedupeKeys(
+  db: Database,
+  windowSec: number,
+  nowSec = unixNow()
+): number {
+  return db
+    .query(
+      `UPDATE passenger_reports SET ip_prefix = ''
+       WHERE ip_prefix >= 'h:' AND ip_prefix < 'h;' AND reported_at <= ?`
+    )
+    .run(nowSec - windowSec).changes;
 }
 
 export function isFlightAirborne(
@@ -5689,7 +5706,7 @@ export function isFlightAirborne(
  * submission from the same client. */
 export function passengerReportSeenRecently(
   db: Database,
-  ipPrefix: string,
+  dedupeKey: string,
   source: string,
   tail: string | null,
   windowSec: number
@@ -5701,7 +5718,7 @@ export function passengerReportSeenRecently(
        WHERE ip_prefix = ? AND reported_at > ? AND source = ? AND claimed_tail IS ?
        LIMIT 1`
     )
-    .get(ipPrefix, since, source, tail);
+    .get(dedupeKey, since, source, tail);
   return row !== null;
 }
 

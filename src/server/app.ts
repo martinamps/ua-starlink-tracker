@@ -4742,13 +4742,7 @@ export function createApp(db: Database, opts: { crawlerDns?: CrawlerDns } = {}):
     } catch {
       body = {};
     }
-    handlePassengerProbe(
-      db,
-      ip,
-      onStarlinkIp,
-      req.headers.get("user-agent"),
-      (body ?? {}) as Record<string, unknown>
-    );
+    handlePassengerProbe(db, ip, onStarlinkIp, (body ?? {}) as Record<string, unknown>);
     return empty(202, SECURITY_HEADERS.api);
   };
 
@@ -4995,10 +4989,13 @@ export function createApp(db: Database, opts: { crawlerDns?: CrawlerDns } = {}):
         span.setTag("http.route", route);
         span.setTag("resource.name", `${req.method} ${route}`);
         span.setTag("tenant", tenantScope(tenant));
-        span.setTag("http.client_ip", ip);
+        // A report's trace would otherwise put the address and browser next to
+        // the moment a flight number was stored, which the banner says we don't keep.
+        const anonymous = route === "/api/passenger-probe";
+        if (!anonymous) span.setTag("http.client_ip", ip);
         if (onStarlinkIp) span.setTag("starlink_ip", true);
         const ua = req.headers.get("user-agent");
-        if (ua) span.setTag("http.useragent", ua);
+        if (ua && !anonymous) span.setTag("http.useragent", ua);
         // The requested path, not just the matched route. Without it "which
         // URLs are 404ing" is unanswerable — the span only carried the matched
         // prefix, and an unmatched path carried "/*". Pathname only: query
