@@ -124,3 +124,106 @@ describe("/routes", () => {
     expect(await r.text()).toStartWith("<svg");
   });
 });
+
+/**
+ * Hit-tests the rendered SVG the way a browser does: of the circles that take
+ * input at that width, the last one painted under the point wins. Dense hubs
+ * from the real map, where a quieter neighbour's dot covers a hub's centre.
+ */
+describe("/routes map clicks", () => {
+  const DENSE: [string, number][] = [
+    ["ORD", 14],
+    ["MDW", 1],
+    ["EWR", 12],
+    ["LGA", 3],
+    ["JFK", 2],
+    ["DEN", 11],
+    ["LAX", 10],
+    ["BUR", 2],
+    ["SNA", 1],
+    ["LGB", 1],
+    ["IAD", 9],
+    ["DCA", 4],
+    ["BWI", 1],
+    ["SFO", 8],
+    ["OAK", 1],
+    ["SJC", 2],
+    ["FLL", 6],
+    ["MIA", 2],
+    ["PBI", 1],
+  ];
+  let dense: ReturnType<typeof createApp>;
+
+  beforeAll(() => {
+    const d = makeFreshDb();
+    addPlane(d, "N3VER", "Starlink");
+    let n = 100;
+    for (const [code, departures] of DENSE)
+      for (let i = 0; i < departures; i++)
+        addFlight(d, "N3VER", `UA${n++}`, code, now + HOUR + n * 60, {
+          arrivalAirport: code === "DEN" ? "ORD" : "DEN",
+        });
+    // Arrivals only: drawn, but no page to open.
+    addFlight(d, "N3VER", `UA${n++}`, "DEN", now + 2 * HOUR, { arrivalAirport: "HPN" });
+    dense = createApp(d);
+  });
+
+  type Circle = {
+    href: string | null;
+    x: number;
+    y: number;
+    r: number;
+    phone: boolean;
+    wide: boolean;
+  };
+
+  function circlesOf(svg: string): Circle[] {
+    const out: Circle[] = [];
+    let href: string | null = null;
+    let linkTakesTaps = true;
+    for (const tag of svg.match(/<a [^>]*>|<\/a>|<circle [^>]*>/g) ?? []) {
+      if (tag.startsWith("</a")) href = null;
+      else if (tag.startsWith("<a ")) {
+        href = tag.match(/href="\/routes\/([A-Z]{3})"/)?.[1] ?? null;
+        linkTakesTaps = !tag.includes("pointer-events-none");
+      } else {
+        const num = (k: string) => Number(tag.match(new RegExp(` ${k}="([-\\d.]+)"`))?.[1]);
+        const cls = tag.match(/class="([^"]*)"/)?.[1] ?? "";
+        const live = !tag.includes('pointer-events="none"');
+        out.push({
+          href,
+          x: num("cx"),
+          y: num("cy"),
+          r: num("r"),
+          phone: live && (href === null || linkTakesTaps) && !/(^| )hidden( |$)/.test(cls),
+          wide: live && !cls.split(" ").includes("sm:hidden"),
+        });
+      }
+    }
+    return out;
+  }
+
+  const hitAt = (cs: Circle[], x: number, y: number, mode: "phone" | "wide") =>
+    cs.findLast((c) => c[mode] && Math.hypot(c.x - x, c.y - y) <= c.r);
+
+  test("a click on the centre of every airport's dot opens that airport, at every width", async () => {
+    const { text } = await bodyOf(dense, "/routes", UA);
+    const map = sectionOf(text, "The Starlink network");
+    const cs = circlesOf(map.slice(map.indexOf("<svg"), map.indexOf("</svg>")));
+    // Each link's dot is its last circle; it takes no clicks itself.
+    const dots = cs.filter((c, i) => c.href && cs[i + 1]?.href !== c.href);
+    expect(dots.map((d) => d.href).sort()).toEqual(DENSE.map(([c]) => c).sort());
+    for (const d of dots) {
+      expect(d.phone || d.wide).toBe(false);
+      // Wide screens: every airport, hubs and their close neighbours alike.
+      expect(`${d.href} -> ${hitAt(cs, d.x, d.y, "wide")?.href}`).toBe(`${d.href} -> ${d.href}`);
+      // Phones: an airport either takes the tap itself or takes no taps.
+      const tap = hitAt(cs, d.x, d.y, "phone");
+      if (cs.some((c) => c.href === d.href && c.phone))
+        expect(`${d.href} -> ${tap?.href}`).toBe(`${d.href} -> ${d.href}`);
+    }
+    // The hubs whose centres a neighbour once took, and the busiest, take phone taps.
+    for (const hub of ["ORD", "EWR", "DEN", "LAX", "SFO"])
+      expect(cs.some((c) => c.href === hub && c.phone)).toBe(true);
+  });
+});

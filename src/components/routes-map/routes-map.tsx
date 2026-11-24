@@ -23,16 +23,30 @@ const HIT_WIDE = 22;
  * taps on the map: 16 px across on a 360 px phone. */
 const HIT_PHONE_MIN = 27;
 
-/** Each airport, busiest first, gets the room its busier neighbours left, up
- * to the cap. An airport that takes no taps still holds its room as a dead
- * zone, so a tap on its dot never lands on a neighbour. */
-function packTargets(busiestFirst: MapAirport[], cap: number, floor: (a: MapAirport) => number) {
+/** Phones: each airport, busiest first, gets the room its busier neighbours
+ * left, up to the cap, so targets never overlap. An airport too crowded to
+ * take taps still holds its room as a dead zone. */
+function packPhoneTargets(busiestFirst: MapAirport[]) {
   const placed: { x: number; y: number; r: number }[] = [];
   return busiestFirst.map((a) => {
-    let r = cap;
+    let r = HIT_PHONE;
     for (const p of placed) r = Math.min(r, Math.hypot(a.x - p.x, a.y - p.y) - p.r);
-    r = Math.max(r, floor(a));
     placed.push({ x: a.x, y: a.y, r });
+    return r;
+  });
+}
+
+/** Wider screens: targets paint busiest first, so a quieter airport's target
+ * lies on top of a busier one's. It stops short of every busier airport's
+ * dot, or of half the gap between their centres where the dots overlap, so
+ * a click on any dot's middle is that airport's own. */
+function wideTargets(busiestFirst: MapAirport[], max: number) {
+  return busiestFirst.map((a, i) => {
+    let r = HIT_WIDE;
+    for (const b of busiestFirst.slice(0, i)) {
+      const d = Math.hypot(a.x - b.x, a.y - b.y);
+      r = Math.min(r, d - Math.min(dotRadius(b.departures, max), d / 2));
+    }
     return r;
   });
 }
@@ -40,16 +54,19 @@ function packTargets(busiestFirst: MapAirport[], cap: number, floor: (a: MapAirp
 /**
  * Two hundred airports can't each get 24 px on a phone. So on phones only an
  * airport with room for a usable target takes taps on the map, and the list
- * under it links every airport. On wider screens every airport gets what room
- * is left, never less than its dot.
+ * under it links every airport. On wider screens every airport takes clicks.
+ * The dots themselves take none: only these targets decide.
  */
 function hitRadii(busiestFirst: MapAirport[], max: number) {
-  const phone = packTargets(busiestFirst, HIT_PHONE, () => 0);
-  const wide = packTargets(busiestFirst, HIT_WIDE, (a) => dotRadius(a.departures, max));
+  const phone = packPhoneTargets(busiestFirst);
+  const wide = wideTargets(busiestFirst, max);
   return new Map(
     busiestFirst.map((a, i) => [
       a.code,
-      { phone: phone[i] >= HIT_PHONE_MIN ? Math.round(phone[i]) : null, wide: wide[i] },
+      {
+        phone: phone[i] >= HIT_PHONE_MIN ? Math.floor(phone[i]) : null,
+        wide: Math.floor(wide[i] * 10) / 10,
+      },
     ])
   );
 }
@@ -129,7 +146,7 @@ export function RoutesMap({
             />
             {/* No role="img": it would hide the airport links from screen
                 readers; the title names the map. Airports go busiest first,
-                so focus follows the labels and small dots paint on top. */}
+                so focus follows the labels. */}
             <svg
               viewBox={`0 0 ${MAP_WIDTH} ${MAP_HEIGHT}`}
               className="absolute inset-0 h-full w-full"
@@ -145,23 +162,25 @@ export function RoutesMap({
                   />
                 ))}
               </g>
-              {/* Each link's last circle is its dot; any before it are
-                  invisible tap targets. Focus lights the dot up. */}
+              {/* Each link's last circle is its dot, which takes no clicks;
+                  the invisible circles before it are the targets. Airports
+                  with no page paint first, under every target. Focus lights
+                  the dot up. */}
               <g
                 className="fill-primary stroke-surface [&_a]:outline-none [&_a:focus-visible>circle:last-child]:fill-accent [&_a:focus-visible>circle:last-child]:stroke-primary [&_a:focus-visible>circle:last-child]:stroke-[5] [&_a>circle:not(:last-child)]:fill-transparent [&_a>circle:not(:last-child)]:stroke-none"
                 fillOpacity="0.92"
                 strokeWidth="1.5"
               >
-                {busiest.map((ap) => {
+                {[...busiest.filter((a) => !hits.has(a.code)), ...linked].map((ap) => {
                   const title = `${ap.code}: ${fmt(ap.departures)} Starlink departure${ap.departures === 1 ? "" : "s"}`;
-                  const r = dotRadius(ap.departures, maxAirport);
-                  const dot = (
-                    <circle cx={ap.x} cy={ap.y} r={r.toFixed(1)}>
-                      <title>{title}</title>
-                    </circle>
-                  );
-                  if (!(airportLinks && ap.departures > 0)) return <g key={ap.code}>{dot}</g>;
-                  const { phone, wide } = hits.get(ap.code) ?? { phone: null, wide: r };
+                  const r = dotRadius(ap.departures, maxAirport).toFixed(1);
+                  const hit = hits.get(ap.code);
+                  if (!hit)
+                    return (
+                      <circle key={ap.code} cx={ap.x} cy={ap.y} r={r}>
+                        <title>{title}</title>
+                      </circle>
+                    );
                   // No taps at all, not just a small target: Chrome snaps a tap
                   // to the smallest link near the finger, so a crowded dot
                   // would steal taps meant for the hub beside it. Keyboards
@@ -171,18 +190,16 @@ export function RoutesMap({
                       key={ap.code}
                       href={`/routes/${ap.code}`}
                       aria-label={title}
-                      className={phone ? undefined : "pointer-events-none sm:pointer-events-auto"}
+                      className={
+                        hit.phone ? undefined : "pointer-events-none sm:pointer-events-auto"
+                      }
                     >
-                      {phone && <circle cx={ap.x} cy={ap.y} r={phone} className="sm:hidden" />}
-                      {wide > r + 0.5 && (
-                        <circle
-                          cx={ap.x}
-                          cy={ap.y}
-                          r={wide.toFixed(1)}
-                          className="hidden sm:inline"
-                        />
+                      <title>{title}</title>
+                      {hit.phone && (
+                        <circle cx={ap.x} cy={ap.y} r={hit.phone} className="sm:hidden" />
                       )}
-                      {dot}
+                      <circle cx={ap.x} cy={ap.y} r={hit.wide} className="hidden sm:inline" />
+                      <circle cx={ap.x} cy={ap.y} r={r} pointerEvents="none" />
                     </a>
                   );
                 })}
