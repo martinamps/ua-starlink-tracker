@@ -13,6 +13,7 @@ import { watchFeedEnabled } from "../utils/ics";
 import { PopularFlightsLinks } from "./atoms";
 import { FlightFactBlocks } from "./check-flight/fact-blocks";
 import type { DatedAnswer, FlightFacts, InvalidFlightQuery } from "./check-flight/types";
+import { usualSummary } from "./check-flight/usual";
 import { Faq, type FaqEntry, JsonLd, breadcrumbJsonLd, scriptSafeJson } from "./faq";
 import { FlightSearchForm } from "./flight-search-form";
 import {
@@ -25,7 +26,6 @@ import {
   Section,
   SectionTitle,
 } from "./layout";
-import { bandLabel, capitalize, flightShare, fmt, probPhrase } from "./ui/format";
 
 export type { DatedAnswer, FlightFacts, InvalidFlightQuery } from "./check-flight/types";
 
@@ -54,34 +54,17 @@ const AIRPORT_ZONES: Record<string, string> = (() => {
   return byZone;
 })();
 
-/** The undated answer: how often this flight gets Starlink, number first.
- * Prefers the model's number (the one the API and MCP quote) over the raw
- * check tally. */
-function usualSummary(flight: FlightFacts): string {
-  const fn = flight.flightNumber;
-  const pred = flight.prediction;
-  if (pred && pred.n_observations > 0) return `${capitalize(flightShare(pred.probability, fn))}.`;
-  const rule = flight.typeRule;
-  if (rule) {
-    const band = bandLabel(rule.label);
-    if (rule.probability >= 1)
-      return `Yes: ${fn} flies ${band} aircraft, and every one has Starlink.`;
-    if (rule.probability <= 0)
-      return `No: ${fn} flies ${band} aircraft, which don't have Starlink.`;
-    return `${capitalize(probPhrase(rule.probability))} of the ${band} aircraft that fly ${fn} have Starlink.`;
-  }
-  const { observedStarlink: s, observedTotal: n } = flight;
-  if (n > 0) return `The aircraft had Starlink in ${fmt(s)} of ${fmt(n)} recent checks.`;
-  return `No Starlink history for ${fn} yet.`;
-}
-
 /** A type rule of all or nothing: no date can change the answer. */
 const typeSettled = (flight: FlightFacts) =>
   !flight.prediction?.n_observations &&
   !!flight.typeRule &&
   (flight.typeRule.probability >= 1 || flight.typeRule.probability <= 0);
 
-function answerContext(site: SiteConfig, dated: DatedAnswer, flight?: FlightFacts): AnswerContext {
+export function answerContext(
+  site: SiteConfig,
+  dated: DatedAnswer,
+  flight?: FlightFacts
+): AnswerContext {
   const cfg = siteAirline(site);
   const origin = flight?.routes[0]?.departure_airport ?? null;
   return {

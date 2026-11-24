@@ -714,6 +714,12 @@ export const COUNTERS = {
   //   answer (verified|listed|reported|observed|other|unchecked|n/a), indexable (true|false).
   //   Never the tail: a registration is not a tag value.
   TAIL_PAGE_VIEW: "tail_page.view",
+  // /static/share/* picture request — tags: airline, kind (flight|tail|airport|invalid),
+  //   outcome (drawn|cached|moved|site_card|shed|error). moved: a dated flight address
+  //   answered by the undated picture; site_card: no picture, the site's card;
+  //   shed: over the drawing budget; error: the drawing threw. Never the
+  //   flight, tail or airport.
+  SHARE_PICTURE: "share_picture.request",
   // "Every flight on this route" board served — tags: airline, surface (api|page),
   //   outcome (nonstop|no_nonstop), dated (true|false)
   ROUTE_FLIGHTS_VIEW: "route_flights.view",

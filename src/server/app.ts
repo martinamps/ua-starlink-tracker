@@ -250,7 +250,7 @@ import { article } from "../utils/grammar";
 import { computeInstallRate, hasInstallRateContent } from "../utils/install-rate";
 import { createLogThrottle } from "../utils/log-throttle";
 import { error as logError, warn as logWarn } from "../utils/logger";
-import { memo, perOwner } from "../utils/ttl-cache";
+import { lruCache, memo, perOwner } from "../utils/ttl-cache";
 import {
   CACHE,
   CORS_ANY_ORIGIN,
@@ -295,12 +295,23 @@ import {
 import AirportPage from "../components/airport-page";
 
 import {
+  type ShareAnswer,
+  type SharePictureRequest,
+  airportShareAnswer,
+  flightSharePicture,
+  parseSharePicturePath,
+  sharePictureDate,
+  sharePicturePath,
+  tailShareAnswer,
+} from "../api/share-picture";
+import {
   type TailPageModel,
   buildTailPage,
   tailMetaDescription,
   tailPageTitle,
 } from "../api/tail-page";
 import TailPage from "../components/tail-page";
+import { drawShareCard } from "../share/card";
 
 type Handler = (ctx: RequestContext) => Response | Promise<Response>;
 
@@ -3268,7 +3279,8 @@ function flightPageMeta(
   reader: ScopedReader,
   flightNumber: string,
   cfg: AirlineConfig,
-  facts: FlightFacts
+  facts: FlightFacts,
+  dated?: DatedAnswer
 ): PageMeta {
   const route = facts.routes[0] ?? null;
   const routeLabel = route ? ` (${route.departure_airport} → ${route.arrival_airport})` : "";
@@ -3297,6 +3309,7 @@ function flightPageMeta(
     ogTitle: `Does ${flightNumber}${routeLabel} Have Starlink Wi-Fi?`,
     ogDescription: `${cfg.name} ${flightNumber}${routeLabel}.${answer || " Check it for Starlink Wi-Fi by date."}`,
     pageJsonLd,
+    ...sharePictureMeta(ctx, flightSharePicture(ctx.site, facts, dated)),
   };
 }
 
@@ -3444,7 +3457,7 @@ const checkFlightPage: Handler = async (ctx) => {
       ctx,
       CheckFlightPage,
       `/check-flight/${fn}`,
-      flightPageMeta(ctx, reader, fn, cfg, facts),
+      flightPageMeta(ctx, reader, fn, cfg, facts, dated),
       {
         flight: { ...facts, aircraftTypeLinks: aircraftTypeLinks(ctx, facts.aircraftTypes) },
         dated,
@@ -3940,6 +3953,7 @@ function tailPageMeta(ctx: RequestContext, m: TailPageModel): PageMeta {
       ])
     ),
     ...(m.indexable ? {} : { robotsMeta: "noindex, follow" }),
+    ...sharePictureMeta(ctx, pictureOf("tail", m.tail, tailShareAnswer(m))),
   };
 }
 
@@ -4188,6 +4202,7 @@ function airportPageMeta(ctx: RequestContext, cfg: AirlineConfig, board: Airport
         }
       : {}),
     ...(board.indexable ? {} : { robotsMeta: "noindex, follow" }),
+    ...sharePictureMeta(ctx, pictureOf("airport", airport, airportShareAnswer(board))),
   };
 }
 
@@ -4972,6 +4987,166 @@ const homePage: Handler = async (ctx) => {
   );
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Share pictures: /static/share/{flight|tail|airport}/….png
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface SharePicture {
+  /** Under /static: "/share/tail/N12345.png". */
+  path: string;
+  answer: ShareAnswer;
+}
+
+const pictureOf = (
+  kind: SharePictureRequest["kind"],
+  id: string,
+  answer: ShareAnswer | null
+): SharePicture | null => (answer ? { path: sharePicturePath(kind, id), answer } : null);
+
+/**
+ * og:image for a page that has an answer to picture. The data date rides the
+ * URL: chat apps key their image cache on it, so a link pasted tomorrow gets
+ * tomorrow's picture. The handler ignores the query, so it mints no drawing.
+ */
+function sharePictureMeta(ctx: RequestContext, picture: SharePicture | null): Partial<PageMeta> {
+  const asOf = sharePictureDate(ctx.reader.getLastUpdatedRaw());
+  if (!picture || !asOf) return {};
+  return {
+    socialImageUrl: `https://${ctx.site.canonicalHost}/static${picture.path}?d=${asOf}`,
+    ogImageAlt: escapeHtmlAttr(picture.answer.sentence),
+  };
+}
+
+/**
+ * The picture a /static/share address stands for, by the rule its page uses:
+ * the same gates (feature, carrier, canonical spelling, rows behind it) and
+ * the same model. Null where the page shares the site's card instead.
+ */
+async function sharePictureFor(
+  ctx: RequestContext,
+  r: SharePictureRequest
+): Promise<SharePicture | null> {
+  const cfg = tenantConfig(ctx.tenant);
+  if (!cfg) return null;
+  const { features } = ctx.site;
+  if (r.kind === "flight") {
+    if (!features.checkFlightPage) return null;
+    const fn = stripFlightNumberZeros(icaoCallsignToIata(canonicalFlightInput(r.id)));
+    if (fn !== r.id || !CANONICAL_FLIGHT_PERMALINK.test(fn)) return null;
+    if (permalinkCarrier(cfg, fn) !== cfg) return null;
+    const variants = buildFlightLookupVariants(cfg, fn);
+    if (!ctx.reader.flightNumberHasData(variants)) return null;
+    const facts = buildFlightFacts(ctx.reader, cfg, fn, variants);
+    const dated = r.date ? await datedAnswer(cfg, ctx.reader, fn, r.date) : undefined;
+    return flightSharePicture(ctx.site, facts, dated);
+  }
+  if (r.kind === "tail") {
+    if (!features.tailPages || resolveAircraftSlug(cfg.code, r.id)) return null;
+    if (ctx.reader.resolveTail(r.id) !== r.id) return null;
+    const model = buildTailPage(cfg, ctx.reader, r.id);
+    return model ? pictureOf("tail", r.id, tailShareAnswer(model)) : null;
+  }
+  if (!features.airportPages || parseAirportPath(`/routes/${r.id}`) !== r.id) return null;
+  if (!ctx.reader.airportHasData(r.id)) return null;
+  return pictureOf("airport", r.id, airportShareAnswer(buildAirportBoard(cfg, ctx.reader, r.id)));
+}
+
+const SHARE_PICTURE_TTL_SEC = 900;
+
+export interface SharePictureLimits {
+  /** Drawn pictures held in memory, about 70 KB each: 9 MB at the default. */
+  maxEntries: number;
+  /** New drawings a minute, whole process. Past it a request gets the site's
+   * card, so no crowd of crawlers can turn the server into a renderer. */
+  drawsPerMinute: number;
+}
+
+export const SHARE_PICTURE_LIMITS: SharePictureLimits = { maxEntries: 128, drawsPerMinute: 120 };
+
+function createSharePictureHandler(limits: SharePictureLimits): Handler {
+  const drawn = lruCache<ArrayBuffer>({
+    ttlSec: SHARE_PICTURE_TTL_SEC,
+    maxEntries: limits.maxEntries,
+  });
+  let windowStart = 0;
+  let draws = 0;
+  const mayDraw = (nowMs: number): boolean => {
+    if (nowMs - windowStart >= 60_000) {
+      windowStart = nowMs;
+      draws = 0;
+    }
+    if (draws >= limits.drawsPerMinute) return false;
+    draws++;
+    return true;
+  };
+
+  return async (ctx) => {
+    if (!READ_METHODS.includes(ctx.req.method as "GET" | "HEAD")) {
+      return methodNotAllowed(READ_METHODS);
+    }
+    const request = parseSharePicturePath(ctx.url.pathname.slice("/static".length));
+    const count = (outcome: "drawn" | "cached" | "moved" | "site_card" | "shed" | "error") =>
+      metrics.increment(COUNTERS.SHARE_PICTURE, {
+        airline: httpAirlineTag(ctx.tenant),
+        kind: request?.kind ?? "invalid",
+        outcome,
+      });
+    // Short, because an aircraft swap changes a dated answer within the hour;
+    // a chat app keeps its own copy far longer, which is what the stamp is for.
+    const png = (bytes: ArrayBuffer) => text(bytes, "image/png", { cache: CACHE.fifteenMinutes });
+    // Anything that is not a picture lands on the site's own card, so a link
+    // a chat app cached keeps a preview after its page stops having an answer.
+    const siteCard = (cache: string) =>
+      redirect(resolveSocialImage(ctx.site.brand), 302, { "Cache-Control": cache });
+    if (!request) {
+      count("site_card");
+      return siteCard(CACHE.day);
+    }
+    // The parsed request, never the raw path or query: a key only a valid
+    // address can form.
+    const address = sharePicturePath(request.kind, request.id, request.date);
+    const key = `${ctx.site.canonicalHost}${address}`;
+    const held = drawn.get(key);
+    if (held) {
+      count("cached");
+      return png(held);
+    }
+    const picture = await sharePictureFor(ctx, request);
+    const asOf = sharePictureDate(ctx.reader.getLastUpdatedRaw());
+    if (!picture || !asOf) {
+      count("site_card");
+      return siteCard(CACHE.hour);
+    }
+    // A date with no answer of its own shares the flight's undated picture.
+    if (picture.path !== address) {
+      count("moved");
+      return redirect(`/static${picture.path}`, 302, { "Cache-Control": CACHE.hour });
+    }
+    if (!mayDraw(Date.now())) {
+      count("shed");
+      return siteCard(CACHE.fiveMinutes);
+    }
+    let bytes: ArrayBuffer;
+    try {
+      bytes = drawShareCard({
+        ...picture.answer,
+        label: ctx.site.brand.title,
+        domain: ctx.site.canonicalHost,
+        accent: ctx.site.brand.accentColor,
+        asOf,
+      }).buffer as ArrayBuffer;
+    } catch (err) {
+      // A picture is an extra: a drawing fault must not cost the link its preview.
+      logError(`Share picture failed for ${address}`, err);
+      count("error");
+      return siteCard(CACHE.fiveMinutes);
+    }
+    drawn.set(key, bytes);
+    count("drawn");
+    return png(bytes);
+  };
+}
+
 const staticDir: Handler = ({ url, site }) => {
   const subPath = url.pathname.replace(/^\/static\//, "");
   const filePath = path.join(STATIC_DIR, subPath);
@@ -5093,7 +5268,19 @@ function clientIp(req: Request): string {
   );
 }
 
-export function createApp(db: Database, opts: { crawlerDns?: CrawlerDns } = {}): App {
+export function createApp(
+  db: Database,
+  opts: { crawlerDns?: CrawlerDns; sharePictures?: Partial<SharePictureLimits> } = {}
+): App {
+  const sharePicture = createSharePictureHandler({
+    ...SHARE_PICTURE_LIMITS,
+    ...opts.sharePictures,
+  });
+  // The pictures ride the /static family, and so its `route` tag: they are
+  // image assets like the cards beside them, and the tag budget has no room
+  // for a family of their own.
+  const staticFamily: Handler = (ctx) =>
+    ctx.url.pathname.startsWith("/static/share/") ? sharePicture(ctx) : staticDir(ctx);
   const getReader = createReaderFactory(db);
   const verifiedCrawler = createCrawlerVerifier(opts.crawlerDns);
   const detector = passengerVerifyEnabled ? new StarlinkIpDetector(db) : null;
@@ -5199,7 +5386,7 @@ export function createApp(db: Database, opts: { crawlerDns?: CrawlerDns } = {}):
     ["/routes/", read(airportPage, "airportPages")],
     ["/airlines/", read(airlineDetailPage, "airlinesPages")],
     ["/compare/", read(comparePage, "comparePages")],
-    ["/static/", { handler: staticDir }],
+    ["/static/", { handler: staticFamily }],
     ["/fleet/", read(fleetSubPage)],
   ];
 
@@ -5280,6 +5467,7 @@ export function createApp(db: Database, opts: { crawlerDns?: CrawlerDns } = {}):
     // calls drive live FR24 reverse lookups, OPTIONS preflights ride the same
     // budget — GET is the HTML setup page and stays unmetered like other
     // pages); /check-flight/{fn} permalink SSR (runs predictions per request);
+    // /static/share/* pictures, which read the same rows and draw a PNG;
     // and /badge.svg, which is the one surface deliberately designed to be
     // fetched by other people's pages — CORS-open, cacheable, and embedded at
     // whatever rate a third party's traffic dictates.
@@ -5290,6 +5478,7 @@ export function createApp(db: Database, opts: { crawlerDns?: CrawlerDns } = {}):
       : url.pathname === "/mcp" && req.method !== "GET" && req.method !== "HEAD"
         ? "mcp"
         : url.pathname.startsWith("/check-flight/") ||
+            url.pathname.startsWith("/static/share/") ||
             url.pathname.startsWith("/cal/") ||
             url.pathname === "/badge.svg"
           ? "page"

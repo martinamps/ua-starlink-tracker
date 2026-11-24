@@ -160,6 +160,17 @@ surfaces (`/newly-equipped`, `/feed.xml`, `/badge.svg`, `/embed`,
 and was already exceeded by the routes it did not list. 40 leaves room for a new URL family without a
 re-audit while staying well inside a sane per-metric tag budget.
 
+The share pictures (`/static/share/{flight|tail|airport}/….png`, the og:image
+of a flight, tail or airport page) are drawn per request but ride the
+`/static` family and its tag, for that reason. Tell them apart with
+`share_picture.request` (tags: `airline`, `kind`, `outcome`): `drawn` and
+`cached` are pictures, `moved` a dated flight address answered by the undated
+picture, `site_card` an address with no picture (redirected to the site's
+card), `shed` a request over the process-wide drawing budget
+(`SHARE_PICTURE_LIMITS` in `src/server/app.ts`), and `error` a drawing that
+threw (logged; the request still gets the site's card). A rising `shed` count
+means something is enumerating picture addresses.
+
 To add a route, add it to `routes` (or `prefixRoutes`) in
 `src/server/app.ts` — the metric tag follows automatically. If a change would
 push the table past the budget, group the new URLs behind a prefix family
