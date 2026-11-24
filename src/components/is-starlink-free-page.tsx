@@ -13,6 +13,8 @@ interface FreeAccess {
   program: string;
   /** How you connect on board. */
   access: string;
+  /** What the airline doesn't allow on board, from its own published rules. */
+  limits?: string;
 }
 
 const ACCESS: Record<string, FreeAccess> = {
@@ -21,7 +23,8 @@ const ACCESS: Record<string, FreeAccess> = {
       "Yes. United Starlink Wi-Fi is free for MileagePlus members, and joining MileagePlus is free.",
     program: "MileagePlus",
     access:
-      "On board, connect to the Wi-Fi network and sign in with your MileagePlus number, or join on the spot. You don't need to buy anything or have status.",
+      "On board, connect to the Wi-Fi network and sign in with your MileagePlus number, or join on the spot. You don't need to buy anything or have status. Before it connects, you watch a short ad, sometimes two.",
+    limits: "Voice and video calls aren't allowed on United flights.",
   },
 };
 
@@ -71,7 +74,7 @@ export default function IsStarlinkFreePage({
           figure, and published speed tests vary too much by flight to quote. */}
       <Section title="What you get">
         <p className="text-sm leading-relaxed text-secondary">
-          Fast enough to stream, with coverage over oceans.
+          Fast enough to stream, with coverage over oceans.{copy.limits && ` ${copy.limits}`}
         </p>
       </Section>
 

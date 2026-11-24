@@ -202,7 +202,12 @@ export const content: AirlineContent = {
         },
         {
           q: "What can I do with Starlink Wi-Fi?",
-          a: () => <p>Stream video, watch live sports and make video calls.</p>,
+          a: () => (
+            <p>
+              Browse, work and stream video, including live sports. Voice and video calls aren't
+              allowed on United flights.
+            </p>
+          ),
         },
       ],
     },
