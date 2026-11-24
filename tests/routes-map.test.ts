@@ -93,6 +93,26 @@ describe("/routes", () => {
     expect(map).not.toContain("<script");
   });
 
+  test("airport links reach screen readers and have phone-sized tap targets", async () => {
+    const { text } = await bodyOf(app, "/routes", UA);
+    const map = sectionOf(text, "The Starlink network");
+    // role="img" would hide every link inside the picture.
+    expect(map).not.toContain('role="img"');
+    expect(map).toMatch(/<a href="\/routes\/SFO" aria-label="SFO: 2 Starlink departures"/);
+    // Busiest first: focus order follows the labels.
+    expect(map.indexOf('href="/routes/SFO"')).toBeLessThan(map.indexOf('href="/routes/ORD"'));
+    // The tap circle on phones: 41 map units is 12 px on a 300 px wide map.
+    const sfo = map.slice(map.indexOf('href="/routes/SFO"'));
+    const phoneR = Number(sfo.match(/r="([\d.]+)"[^>]*class="sm:hidden"/)?.[1]);
+    expect(phoneR).toBeGreaterThanOrEqual(27);
+    expect(phoneR).toBeLessThanOrEqual(41);
+    // Every linked airport is also one tap away in the phone list.
+    const list = map.slice(map.indexOf("<details"), map.indexOf("</details>"));
+    expect(list).toContain("All 3 airports on the map");
+    for (const code of ["DEN", "ORD", "SFO"]) expect(list).toContain(`href="/routes/${code}"`);
+    expect(list).not.toContain('href="/routes/EWR"');
+  });
+
   test("the coastline is a year-cached SVG under /static", async () => {
     const { text } = await bodyOf(app, "/routes", UA);
     const href = text.match(/\/static\/routes-map\.[a-z0-9]+\.svg/)?.[0];
