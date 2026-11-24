@@ -129,6 +129,7 @@ import {
   getRouteFlightNumbers,
   getRouteFlights,
   getRouteGraphEdges,
+  getRouteNetworkRows,
   getRouteStarlinkSchedule,
   getRouteSummary,
   getRoutesForFlightVariants,
@@ -254,6 +255,8 @@ export interface ScopedReader {
   getDepartureSlots(q: DepartureSlotQuery): DepartureSlot[];
   getAirportDepartures(): AirportDepartures;
   getRouteStarlinkSchedule(): RouteSchedule;
+  /** Every equipped pair in the same window, for the /routes map. */
+  getRouteNetworkRows(): RouteSchedule;
   /** Route pairs in getRouteStarlinkSchedule order, past `offset`. */
   getRankedStarlinkRoutePairs(
     offset: number,
@@ -463,6 +466,7 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
   };
   const airportsMemo = memo<AirportDepartures>(DEPARTURE_AGGREGATE_MEMO);
   const scheduleMemo = memo<RouteSchedule>(DEPARTURE_AGGREGATE_MEMO);
+  const networkMemo = memo<RouteSchedule>(DEPARTURE_AGGREGATE_MEMO);
   const rankedMemo = memo<Array<{ origin: string; destination: string }>>(DEPARTURE_AGGREGATE_MEMO);
   const airportHistoryMemo = memo<AirportHistory>(AIRPORT_HISTORY_MEMO);
   const tailIndexMemo = memo<TailIndexEntry[]>(DEPARTURE_AGGREGATE_MEMO);
@@ -522,6 +526,7 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     getDepartureSlots: (q) => getDepartureSlots(db, airlines, q),
     getAirportDepartures: () => airportsMemo("", () => getAirportDepartures(db, airlines)),
     getRouteStarlinkSchedule: () => scheduleMemo("", () => getRouteStarlinkSchedule(db, airlines)),
+    getRouteNetworkRows: () => networkMemo("", () => getRouteNetworkRows(db, airlines)),
     getRankedStarlinkRoutePairs: (offset, limit) =>
       rankedMemo(`${offset}:${limit}`, () =>
         getRankedStarlinkRoutePairs(db, airlines, offset, limit)

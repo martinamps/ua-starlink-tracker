@@ -181,6 +181,8 @@ import NotFoundPage from "../components/not-found-page";
 import Page, { buildContentStats } from "../components/page";
 import RoutePage from "../components/route-page";
 import RoutePlannerPage from "../components/route-planner-page";
+import { BASEMAP_SVG } from "../components/routes-map/basemap-svg";
+import { type RouteNetwork, buildRouteNetwork } from "../components/routes-map/network";
 import RoutesPage from "../components/routes-page";
 import TimelinePage, { getTimeline, hasTimeline } from "../components/timeline-page";
 import {
@@ -231,6 +233,7 @@ import type {
   Flight,
   PerAirlineStat,
   ReportedInstall,
+  RouteSchedule,
 } from "../types";
 import { AIRCRAFT_SPECS } from "../utils/aircraft-specs";
 import {
@@ -607,6 +610,19 @@ for (const p of SOCIAL_IMAGE_PATHS) {
     );
   }
 }
+
+/** The /routes map's coastlines: committed, so hashed once at boot. */
+const ROUTES_BASEMAP_HREF = `/static/routes-map.${Bun.hash(BASEMAP_SVG).toString(36)}.svg`;
+staticResponses.set(
+  ROUTES_BASEMAP_HREF,
+  new Response(BASEMAP_SVG, {
+    headers: {
+      ...BASE_RESPONSE_HEADERS,
+      "Content-Type": "image/svg+xml",
+      "Cache-Control": CACHE.year,
+    },
+  })
+);
 
 /**
  * Compiled Tailwind, fingerprinted and registered as a tenant-agnostic asset.
@@ -4119,6 +4135,18 @@ const methodologyPage: Handler = (ctx) => {
   );
 };
 
+/** Keyed by the reader's memoised rows, so a map is projected once per refresh. */
+const routeNetworks = new WeakMap<RouteSchedule, RouteNetwork>();
+function routeNetwork(reader: ScopedReader): RouteNetwork {
+  const rows = reader.getRouteNetworkRows();
+  let net = routeNetworks.get(rows);
+  if (!net) {
+    net = buildRouteNetwork(rows.rows);
+    routeNetworks.set(rows, net);
+  }
+  return net;
+}
+
 const routesPage: Handler = (ctx) => {
   const schedule = ctx.reader.getRouteStarlinkSchedule();
   // ItemList over the live-window route rows; URLs only where the route pages
@@ -4150,6 +4178,8 @@ const routesPage: Handler = (ctx) => {
       airports: ctx.reader.getAirportDepartures(),
       popularFlights,
       updatedAt: ctx.reader.getLastUpdatedRaw(),
+      network: routeNetwork(ctx.reader),
+      basemapHref: ROUTES_BASEMAP_HREF,
     }
   );
 };

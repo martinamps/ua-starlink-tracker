@@ -6330,6 +6330,17 @@ export function getRouteStarlinkSchedule(
   return { rows, totalDepartures: total, windowLabel: `next ${DEPARTURE_WINDOW_HOURS} hours` };
 }
 
+/** Every equipped route pair in the live window, uncapped: the /routes map
+ * draws the whole network, where the table only ranks the busiest. */
+export function getRouteNetworkRows(
+  db: Database,
+  airline?: AirlineFilter,
+  nowSec = unixNow()
+): RouteSchedule {
+  const { rows, total } = rankedEquippedRoutes(db, airline, nowSec, -1, 0);
+  return { rows, totalDepartures: total, windowLabel: `next ${DEPARTURE_WINDOW_HOURS} hours` };
+}
+
 // Ten charted weeks plus the partial current one.
 const INSTALL_PACE_LOOKBACK_DAYS = 77;
 
