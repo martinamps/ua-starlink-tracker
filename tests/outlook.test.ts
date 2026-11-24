@@ -68,6 +68,20 @@ describe("typeOutlook", () => {
     expect(o.dateStatable).toBe(false);
   });
 
+  test("a line opened inside 90 days is starting, with no projection", () => {
+    const fresh = Array.from({ length: MIN_INSTALLS_FOR_PACE }, (_, i) => daysAgo(i + 1));
+    const o = typeOutlook({
+      family: "B737-MAX8",
+      equipped: fresh.length,
+      total: 100,
+      installedAt: fresh,
+      now: NOW,
+    });
+    expect(o.status).toBe("starting");
+    expect(o.projection).toBeNull();
+    expect(o.next60Days).toBeNull();
+  });
+
   test("a projected range is ordered and dated", () => {
     const o = typeOutlook({
       family: "B737-800",

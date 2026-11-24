@@ -35,7 +35,7 @@ export const MIN_INSTALLS_FOR_PACE = 6;
 /**
  * Measured by the backtest of 2026-11-24 (UA, 723 dated installs, cutoffs
  * every 15 days from 2026-03-01, horizons 30 to 90 days, 30-day window).
- * Error per install = Σ|projected − actual| / Σ actual. Types pooled: 33–41%;
+ * Error per install = Σ|projected − actual| / Σ actual. Types pooled: 31–37%;
  * the whole airline: 25–34%. That checks how many tails come next, which is
  * what `next60Days` states.
  *
@@ -109,7 +109,16 @@ export interface PublishedTargetPace extends PublishedTarget {
   onPace: boolean | null;
 }
 
-export type TypeOutlookStatus = "complete" | "projected" | "no_pace";
+/**
+ * "starting": installs are running (enough in the projection window) but the
+ * line opened inside the last 90 days. The backtest's worst misses were these:
+ * the 737 MAX 9 went 10, then 29, then 21 a month, so its first months
+ * projected 20 where 50 came, and 29 where 21 came.
+ */
+export type TypeOutlookStatus = "complete" | "projected" | "starting" | "no_pace";
+
+/** A line counts as running, not starting, with this many installs in 90 days. */
+export const MIN_INSTALLS_RUNNING = 3 * MIN_INSTALLS_FOR_PACE;
 
 export interface CompletionRange {
   /** YYYY-MM-DD at the window's rate. */
@@ -159,14 +168,23 @@ function isoDate(unixSec: number): string {
   return new Date(unixSec * 1000).toISOString().slice(0, 10);
 }
 
-/** Installs per month at `windowDays`, or null when the window is too thin. */
+/** Installs per month at `windowDays`, or null when the window is too thin or
+ * the line is still starting. */
 export function projectionRate(
   installedAt: readonly number[],
   now: number,
   windowDays: PaceWindowDays = PROJECTION_WINDOW_DAYS
 ): number | null {
-  const w = paceWindows(installedAt, now).find((p) => p.days === windowDays)!;
-  return w.installs >= MIN_INSTALLS_FOR_PACE ? w.perMonth : null;
+  const windows = paceWindows(installedAt, now);
+  const w = windows.find((p) => p.days === windowDays)!;
+  const quarter = windows.find((p) => p.days === 90)!;
+  if (w.installs < MIN_INSTALLS_FOR_PACE || quarter.installs < MIN_INSTALLS_RUNNING) return null;
+  return w.perMonth;
+}
+
+function lineStarting(installedAt: readonly number[], now: number): boolean {
+  const w = paceWindows(installedAt, now).find((p) => p.days === PROJECTION_WINDOW_DAYS)!;
+  return w.installs >= MIN_INSTALLS_FOR_PACE;
 }
 
 export function typeOutlook(input: TypeOutlookInput): TypeOutlook {
@@ -180,7 +198,7 @@ export function typeOutlook(input: TypeOutlookInput): TypeOutlook {
   let status: TypeOutlookStatus;
   let projection: CompletionRange | null = null;
   if (total > 0 && remaining === 0) status = "complete";
-  else if (rate === null) status = "no_pace";
+  else if (rate === null) status = lineStarting(dated, now) ? "starting" : "no_pace";
   else {
     status = "projected";
     const months = remaining / rate;
