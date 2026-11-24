@@ -3,7 +3,7 @@
  * Exports United Airlines fleet data as a backup/verification source
  */
 
-import type { Browser, Page } from "playwright";
+import type { Browser, BrowserContext, Page } from "playwright";
 import { chromium } from "playwright-extra";
 import StealthPlugin from "puppeteer-extra-plugin-stealth";
 import { AIRLINES } from "../airlines/registry";
@@ -90,6 +90,7 @@ export async function scrapeFlightRadar24Fleet(
   };
 
   let browser: Browser | null = null;
+  let context: BrowserContext | null = null;
   let page: Page | null = null;
   const ownsBrowser = !sharedBrowser;
 
@@ -98,7 +99,7 @@ export async function scrapeFlightRadar24Fleet(
 
     browser = sharedBrowser ?? (await launchFR24Browser());
 
-    const context = await browser.newContext({
+    context = await browser.newContext({
       userAgent: BROWSER_USER_AGENT,
       viewport: { width: 1920, height: 1080 },
       locale: "en-US",
@@ -210,6 +211,9 @@ export async function scrapeFlightRadar24Fleet(
     console.error("Scrape error:", result.error);
   } finally {
     if (page) await page.close().catch(() => {});
+    // A shared browser outlives this call: without this, every slug's context
+    // stays open in it until the whole fleet sync ends.
+    if (context) await context.close().catch(() => {});
     if (browser && ownsBrowser) await browser.close().catch(() => {});
   }
 
