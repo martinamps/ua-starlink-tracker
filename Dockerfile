@@ -4,7 +4,9 @@ WORKDIR /app
 
 # Install Chromium runtime dependencies (required for Playwright's browser)
 # plus curl + unzip (FAA registry job downloads and streams the daily bulk zip)
+# and tini (PID 1; see ENTRYPOINT)
 RUN apt-get update && apt-get install -y \
+    tini \
     curl \
     libnss3 \
     libatk1.0-0 \
@@ -54,4 +56,10 @@ ENV DD_GIT_REPOSITORY_URL=github.com/martinamps/ua-starlink-tracker
 ENV DD_TRACE_AGENT_HOSTNAME=host.docker.internal
 ENV DD_RUNTIME_METRICS_ENABLED=false
 
+# Every United check leaves Chromium helpers orphaned; they are re-parented to
+# PID 1, and Bun never reaps children it didn't spawn, so each became a zombie
+# for the container's life (~1,700 a day, ~55 KB kernel memory each, toward the
+# container's task limit). tini reaps them and forwards SIGTERM to the server.
+# tests/dockerfile-init.test.ts keeps this line.
+ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["bun", "--smol", "server.ts"]
