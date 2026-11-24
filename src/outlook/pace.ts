@@ -36,15 +36,24 @@ export const MIN_INSTALLS_FOR_PACE = 6;
  * Measured by the backtest of 2026-11-24 (UA, 723 dated installs, cutoffs
  * every 15 days from 2026-03-01, horizons 30 to 90 days, 30-day window).
  * Error per install = Σ|projected − actual| / Σ actual. Types pooled: 33–41%;
- * the whole airline: 25–34%. A projected date is stated only within
- * `maxStatableMonths`: the backtest has no case past 90 days to check it by.
+ * the whole airline: 25–34%. That checks how many tails come next, which is
+ * what `next60Days` states.
+ *
+ * A completion date is a different claim, and none has been checked: no type
+ * finished inside the dated history after the method could see it, and the
+ * ones near the end (A321, CRJ-550) slowed well below their pace for the last
+ * tails. `maxStatableMonths` stays 0, so no projected completion date is
+ * stated, until a backtest checks one.
  */
 export const OUTLOOK_BACKTEST = {
   measuredOn: "2026-11-24",
   relativeError: 0.4,
   fleetRelativeError: 0.35,
-  maxStatableMonths: 3,
+  maxStatableMonths: 0,
 } as const;
+
+/** The horizon `next60Days` states, inside the backtest's checked span. */
+export const NEXT_DAYS = 60;
 
 export interface PaceWindow {
   days: PaceWindowDays;
@@ -126,7 +135,11 @@ export interface TypeOutlook {
   status: TypeOutlookStatus;
   /** Present when status is "projected". */
   projection: CompletionRange | null;
-  /** True only where the backtest says a date at this horizon has held. */
+  /** Installs expected over the next NEXT_DAYS at the window's rate, ±
+   * the measured error, capped at what remains. Present when "projected". */
+  next60Days: { low: number; likely: number; high: number } | null;
+  /** True only where the backtest says a completion date at this horizon has
+   * held. False everywhere while OUTLOOK_BACKTEST.maxStatableMonths is 0. */
   dateStatable: boolean;
   published: PublishedTargetPace[];
 }
@@ -191,6 +204,18 @@ export function typeOutlook(input: TypeOutlookInput): TypeOutlook {
     trend: paceTrend(pace),
     status,
     projection,
+    next60Days:
+      rate === null || status !== "projected"
+        ? null
+        : (() => {
+            const likely = (rate * NEXT_DAYS) / MONTH_DAYS;
+            const cap = (x: number) => Math.min(remaining, Math.round(x));
+            return {
+              low: cap(likely * (1 - relErr)),
+              likely: cap(likely),
+              high: cap(likely * (1 + relErr)),
+            };
+          })(),
     dateStatable:
       projection !== null &&
       projection.latest !== null &&

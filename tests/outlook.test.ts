@@ -98,6 +98,22 @@ describe("typeOutlook", () => {
     expect(far.dateStatable).toBe(false);
   });
 
+  test("the next 60 days are an ordered range, never past what remains", () => {
+    const o = typeOutlook({ family: "X", equipped: 40, total: 45, installedAt: busy, now: NOW });
+    const n = o.next60Days!;
+    expect(n.low).toBeLessThanOrEqual(n.likely);
+    expect(n.likely).toBeLessThanOrEqual(n.high);
+    expect(n.high).toBeLessThanOrEqual(o.remaining);
+    const thin = typeOutlook({
+      family: "X",
+      equipped: 1,
+      total: 45,
+      installedAt: [daysAgo(1)],
+      now: NOW,
+    });
+    expect(thin.next60Days).toBeNull();
+  });
+
   test("undated equipped tails count but don't pace", () => {
     const o = typeOutlook({
       family: "X",

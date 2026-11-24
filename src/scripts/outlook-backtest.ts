@@ -225,7 +225,7 @@ for (const h of [30, 60]) {
 
 // 3. Today's outlook, and real routes where the database has their departures.
 const line = (t: TypeOutlook) =>
-  `| ${t.family} | ${t.equipped} of ${t.total} | ${t.pace.map((p) => p.installs).join(" / ")} | ${t.trend} | ${t.status} | ${t.projection ? `${t.projection.earliest} to ${t.projection.latest ?? "open"} (likely ${t.projection.likely})` : "–"} | ${t.dateStatable ? "yes" : "no"} | ${t.published.map((p) => `${p.label} (${p.deadline}): needs ${num(p.requiredPerMonth)}/month${p.onPace === null ? "" : p.onPace ? ", on pace" : ", behind"}`).join("; ") || "–"} |`;
+  `| ${t.family} | ${t.equipped} of ${t.total} | ${t.pace.map((p) => p.installs).join(" / ")} | ${t.trend} | ${t.status} | ${t.projection ? `${t.projection.earliest} to ${t.projection.latest ?? "open"} (likely ${t.projection.likely})` : "–"} | ${t.next60Days ? `${t.next60Days.low}–${t.next60Days.high} (likely ${t.next60Days.likely})` : "–"} | ${t.published.map((p) => `${p.label} (${p.deadline}): needs ${num(p.requiredPerMonth)}/month${p.onPace === null ? "" : p.onPace ? ", on pace" : ", behind"}`).join("; ") || "–"} |`;
 const todayOutlook = (() => {
   if (inputs.db) return airlineOutlook(inputs.db, "UA", now);
   const build = (family: string) =>
@@ -247,7 +247,7 @@ const todayOutlook = (() => {
 })();
 console.log("\n## Today's outlook\n");
 console.log(
-  "| type | equipped | installs 30/60/90 d | trend | status | range | date statable | published |"
+  "| type | equipped | installs 30/60/90 d | trend | status | completion at pace (not stated) | next 60 days | published |"
 );
 console.log("|---|---|---|---|---|---|---|---|");
 console.log(line(todayOutlook.fleet));
