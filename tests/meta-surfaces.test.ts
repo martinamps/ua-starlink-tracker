@@ -308,6 +308,8 @@ const BASE_HEADERS = [
   "Strict-Transport-Security",
   "Referrer-Policy",
   "Content-Security-Policy",
+  "X-App-Commit",
+  "X-App-Started",
 ] as const;
 
 function assertBaseHeaders(res: Response, label: string) {
@@ -337,6 +339,22 @@ describe("base security headers on every response", () => {
     ];
     for (const [path, host] of cases) {
       assertBaseHeaders(await get(path, host), `${path} on ${host}`);
+    }
+  });
+
+  test("build stamp rides preflight, MCP, and redirects too", async () => {
+    const UA = "unitedstarlinktracker.com";
+    const responses: Array<[string, Response]> = [
+      [
+        "OPTIONS /api/check-flight",
+        await app.dispatch(req("/api/check-flight", UA, { method: "OPTIONS" })),
+      ],
+      ["POST /mcp", await app.dispatch(mcpReq(UA, "tools/list", {}))],
+      ["www redirect", await get("/fleet", `www.${UA}`)],
+    ];
+    for (const [label, res] of responses) {
+      expect(res.headers.get("X-App-Commit"), label).toMatch(/^([0-9a-f]{7,40}|unknown)$/);
+      expect(Number.isNaN(Date.parse(res.headers.get("X-App-Started") ?? "")), label).toBe(false);
     }
   });
 

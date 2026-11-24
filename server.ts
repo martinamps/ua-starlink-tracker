@@ -39,6 +39,7 @@ import {
 import { pingIndexNow } from "./src/utils/indexnow";
 import { type JobHandle, type JobRunContext, startJob } from "./src/utils/job-runner";
 import { info, error as logError } from "./src/utils/logger";
+import { BUILD_COMMIT, PROCESS_STARTED } from "./src/utils/running-build";
 import { sleep } from "./src/utils/sleep";
 
 process.on("unhandledRejection", (reason) => {
@@ -55,7 +56,9 @@ const db = openDatabase();
 migrate(db);
 const app = createApp(db);
 
-info(`Server starting on port ${PORT}. Environment: ${process.env.NODE_ENV || "development"}`);
+info(
+  `Server starting on port ${PORT}. Environment: ${process.env.NODE_ENV || "development"}. Commit: ${BUILD_COMMIT}, started ${PROCESS_STARTED}`
+);
 
 Bun.serve({
   port: PORT,

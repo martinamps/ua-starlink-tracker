@@ -1,6 +1,7 @@
 import { normalizeAirlineFlightNumber } from "../airlines/flight-number";
 import { AIRLINES, analyticsOrigins } from "../airlines/registry";
 import { airportTimezone, icaoToIata, localDateISO } from "./airport-tz";
+import { BUILD_HEADERS } from "./running-build";
 
 // Database path
 export const DB_PATH =
@@ -85,6 +86,7 @@ export const BASE_RESPONSE_HEADERS: Record<string, string> = {
   "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
   "Referrer-Policy": "no-referrer",
   "Content-Security-Policy": "default-src 'none'",
+  ...BUILD_HEADERS,
 };
 
 /** The one wildcard origin every CORS-open surface grants. */
