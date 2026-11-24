@@ -1,7 +1,7 @@
 import { normalizeAirlineFlightNumber } from "../airlines/flight-number";
 import { AIRLINES, analyticsOrigins } from "../airlines/registry";
 import { airportTimezone, icaoToIata, localDateISO } from "./airport-tz";
-import { BUILD_HEADERS } from "./build-info";
+import { BUILD_HEADERS } from "./running-build";
 
 // Database path
 export const DB_PATH =

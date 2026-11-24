@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { BUILD_HEADERS, resolveCommit } from "../src/utils/build-info";
+import { BUILD_HEADERS, resolveCommit } from "../src/utils/running-build";
 
 describe("resolveCommit", () => {
   const SHA = "5bd2a62d4ebaf341a629b7f487048fc2d3f797be";

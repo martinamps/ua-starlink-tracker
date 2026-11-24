@@ -30,10 +30,10 @@ import { startStarlinkVerifier } from "./src/scripts/starlink-verifier";
 import { syncShipNumbers } from "./src/scripts/sync-ship-numbers";
 import { createApp } from "./src/server/app";
 import { passengerVerifyEnabled } from "./src/server/passenger-detect";
-import { BUILD_COMMIT, PROCESS_STARTED } from "./src/utils/build-info";
 import { pingIndexNow } from "./src/utils/indexnow";
 import { type JobHandle, type JobRunContext, startJob } from "./src/utils/job-runner";
 import { info, error as logError } from "./src/utils/logger";
+import { BUILD_COMMIT, PROCESS_STARTED } from "./src/utils/running-build";
 import { sleep } from "./src/utils/sleep";
 
 process.on("unhandledRejection", (reason) => {
