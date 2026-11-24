@@ -30,6 +30,7 @@ import { startStarlinkVerifier } from "./src/scripts/starlink-verifier";
 import { syncShipNumbers } from "./src/scripts/sync-ship-numbers";
 import { createApp } from "./src/server/app";
 import { passengerVerifyEnabled } from "./src/server/passenger-detect";
+import { BUILD_COMMIT, PROCESS_STARTED } from "./src/utils/build-info";
 import { pingIndexNow } from "./src/utils/indexnow";
 import { type JobHandle, type JobRunContext, startJob } from "./src/utils/job-runner";
 import { info, error as logError } from "./src/utils/logger";
@@ -49,7 +50,9 @@ const db = openDatabase();
 migrate(db);
 const app = createApp(db);
 
-info(`Server starting on port ${PORT}. Environment: ${process.env.NODE_ENV || "development"}`);
+info(
+  `Server starting on port ${PORT}. Environment: ${process.env.NODE_ENV || "development"}. Commit: ${BUILD_COMMIT}, started ${PROCESS_STARTED}`
+);
 
 Bun.serve({
   port: PORT,
