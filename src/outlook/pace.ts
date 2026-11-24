@@ -1,0 +1,209 @@
+/**
+ * Install pace and a "when is this type done?" outlook, as pure functions over
+ * dated installs. Callers bring the counts: equipped and total from
+ * programmeRoster (src/database/roster.ts), install dates from the equipped
+ * tails' listing dates. Nothing here reads a clock or a database, so the
+ * backtest can replay any past day exactly as the live reader runs today.
+ *
+ * The error bands are not guesses: OUTLOOK_BACKTEST holds what the backtest in
+ * src/outlook/backtest.ts measured on our own install history (method and
+ * figures in reports/rollout-outlook.md). Re-run `bun run outlook-backtest`
+ * and update it when the history has grown.
+ */
+
+import { DAY_SEC } from "../database/sql/windows";
+
+export const MONTH_DAYS = 30.44;
+
+/** The family key of the whole-airline outlook. */
+export const FLEET = "ALL";
+const MONTH_SEC = MONTH_DAYS * DAY_SEC;
+
+export const PACE_WINDOWS_DAYS = [30, 60, 90] as const;
+export type PaceWindowDays = (typeof PACE_WINDOWS_DAYS)[number];
+
+/** The window the projection reads: the backtest's least-error window for the
+ * whole airline at every horizon tried, and for types pooled (reports/
+ * rollout-outlook.md, "Which window"). Installs come in bursts as a type's
+ * line opens, so the latest month says more than the quarter. */
+export const PROJECTION_WINDOW_DAYS: PaceWindowDays = 30;
+
+/** Below this many installs in the projection window there is no install line
+ * running for the type, and a rate would be one stray listing. */
+export const MIN_INSTALLS_FOR_PACE = 6;
+
+/**
+ * Measured by the backtest of 2026-11-24 (UA, 723 dated installs, cutoffs
+ * every 15 days from 2026-03-01, horizons 30 to 90 days, 30-day window).
+ * Error per install = Σ|projected − actual| / Σ actual. Types pooled: 33–41%;
+ * the whole airline: 25–34%. A projected date is stated only within
+ * `maxStatableMonths`: the backtest has no case past 90 days to check it by.
+ */
+export const OUTLOOK_BACKTEST = {
+  measuredOn: "2026-11-24",
+  relativeError: 0.4,
+  fleetRelativeError: 0.35,
+  maxStatableMonths: 3,
+} as const;
+
+export interface PaceWindow {
+  days: PaceWindowDays;
+  installs: number;
+  /** Installs per 30.44 days over the window. */
+  perMonth: number;
+}
+
+/** Installs dated in each trailing window ending at `now` (unix seconds). */
+export function paceWindows(installedAt: readonly number[], now: number): PaceWindow[] {
+  return PACE_WINDOWS_DAYS.map((days) => {
+    const from = now - days * DAY_SEC;
+    const installs = installedAt.filter((t) => t > from && t <= now).length;
+    return { days, installs, perMonth: installs / (days / MONTH_DAYS) };
+  });
+}
+
+export type PaceTrend = "speeding_up" | "steady" | "slowing" | "none";
+
+/**
+ * The last 30 days against the 90-day rate. Within ±35% is "steady": the
+ * month-to-month noise of a type's installs (reports/rollout-outlook.md) is
+ * about that wide, so a smaller move is not a change of pace.
+ */
+export function paceTrend(windows: readonly PaceWindow[]): PaceTrend {
+  const w30 = windows.find((w) => w.days === 30);
+  const w90 = windows.find((w) => w.days === 90);
+  if (!w30 || !w90 || w90.installs < MIN_INSTALLS_FOR_PACE) return "none";
+  const ratio = w30.perMonth / w90.perMonth;
+  if (ratio > 1.35) return "speeding_up";
+  if (ratio < 0.65) return "slowing";
+  return "steady";
+}
+
+/** A date the airline itself published, carried beside our projection. */
+export interface PublishedTarget {
+  label: string;
+  /** YYYY-MM-DD, end of the stated period. */
+  deadline: string;
+  /** The airline's own aircraft count, when the statement gives one; else the
+   * target is every tail of the scope. */
+  count?: number;
+  statedOn: string;
+  source: { title: string; url: string };
+}
+
+export interface PublishedTargetPace extends PublishedTarget {
+  /** Installs a month still needed to meet it, from `now`; null once the
+   * deadline has passed. Arithmetic, not a forecast. */
+  requiredPerMonth: number | null;
+  /** Observed rate (projection window) at or above the required one; null
+   * when there is no rate or no time left. */
+  onPace: boolean | null;
+}
+
+export type TypeOutlookStatus = "complete" | "projected" | "no_pace";
+
+export interface CompletionRange {
+  /** YYYY-MM-DD at the window's rate. */
+  likely: string;
+  /** The rate's measured error either side: 1 ± relativeError. */
+  earliest: string;
+  /** null when the slow end of the band has no finite date. */
+  latest: string | null;
+  months: number;
+}
+
+export interface TypeOutlook {
+  family: string;
+  equipped: number;
+  total: number;
+  remaining: number;
+  /** equipped / total, 0 when total is 0. */
+  share: number;
+  /** Equipped tails with no install date: counted, but not in the pace. */
+  undated: number;
+  pace: PaceWindow[];
+  trend: PaceTrend;
+  status: TypeOutlookStatus;
+  /** Present when status is "projected". */
+  projection: CompletionRange | null;
+  /** True only where the backtest says a date at this horizon has held. */
+  dateStatable: boolean;
+  published: PublishedTargetPace[];
+}
+
+export interface TypeOutlookInput {
+  family: string;
+  equipped: number;
+  total: number;
+  /** Install time (unix seconds) of each equipped tail; null when undated. */
+  installedAt: readonly (number | null)[];
+  now: number;
+  published?: readonly PublishedTarget[];
+  relativeError?: number;
+}
+
+function isoDate(unixSec: number): string {
+  return new Date(unixSec * 1000).toISOString().slice(0, 10);
+}
+
+/** Installs per month at `windowDays`, or null when the window is too thin. */
+export function projectionRate(
+  installedAt: readonly number[],
+  now: number,
+  windowDays: PaceWindowDays = PROJECTION_WINDOW_DAYS
+): number | null {
+  const w = paceWindows(installedAt, now).find((p) => p.days === windowDays)!;
+  return w.installs >= MIN_INSTALLS_FOR_PACE ? w.perMonth : null;
+}
+
+export function typeOutlook(input: TypeOutlookInput): TypeOutlook {
+  const { family, equipped, total, now } = input;
+  const relErr = input.relativeError ?? OUTLOOK_BACKTEST.relativeError;
+  const dated = input.installedAt.filter((t): t is number => t !== null);
+  const remaining = Math.max(0, total - equipped);
+  const pace = paceWindows(dated, now);
+  const rate = projectionRate(dated, now);
+
+  let status: TypeOutlookStatus;
+  let projection: CompletionRange | null = null;
+  if (total > 0 && remaining === 0) status = "complete";
+  else if (rate === null) status = "no_pace";
+  else {
+    status = "projected";
+    const months = remaining / rate;
+    const at = (m: number) => isoDate(Math.round(now + m * MONTH_SEC));
+    projection = {
+      months,
+      likely: at(months),
+      earliest: at(remaining / (rate * (1 + relErr))),
+      latest: relErr < 1 ? at(remaining / (rate * (1 - relErr))) : null,
+    };
+  }
+
+  return {
+    family,
+    equipped,
+    total,
+    remaining,
+    share: total > 0 ? equipped / total : 0,
+    undated: input.installedAt.length - dated.length,
+    pace,
+    trend: paceTrend(pace),
+    status,
+    projection,
+    dateStatable:
+      projection !== null &&
+      projection.latest !== null &&
+      projection.months <= OUTLOOK_BACKTEST.maxStatableMonths,
+    published: (input.published ?? []).map((t) => {
+      const monthsLeft = (Date.parse(`${t.deadline}T23:59:59Z`) / 1000 - now) / MONTH_SEC;
+      const needed = Math.max(0, (t.count ?? total) - equipped);
+      const requiredPerMonth = monthsLeft > 0 ? needed / monthsLeft : null;
+      return {
+        ...t,
+        requiredPerMonth,
+        onPace: requiredPerMonth === null || rate === null ? null : rate >= requiredPerMonth,
+      };
+    }),
+  };
+}
