@@ -11,6 +11,8 @@ import { COUNTERS, metrics } from "../src/observability/metrics";
 import {
   DAILY_URL_CAP,
   type IndexNow,
+  WAITING_MAX_AGE_SEC,
+  WAITING_MAX_TAILS,
   createIndexNow,
   ensureIndexNowKey,
   indexNowOn,
@@ -38,6 +40,8 @@ let received: Submission[] = [];
 let answer: { status: number; headers?: Record<string, string>; delayMs?: number } = {
   status: 200,
 };
+/** Per-host answers that win over `answer`: one site failing, another not. */
+let statusFor: Record<string, number> = {};
 
 const counted: Array<Record<string, unknown>> = [];
 const originalIncrement = metrics.increment;
@@ -49,7 +53,10 @@ beforeAll(() => {
       const body = (await request.json()) as Omit<Submission, "contentType">;
       received.push({ ...body, contentType: request.headers.get("content-type") });
       if (answer.delayMs) await Bun.sleep(answer.delayMs);
-      return new Response("", { status: answer.status, headers: answer.headers });
+      return new Response("", {
+        status: statusFor[body.host] ?? answer.status,
+        headers: answer.headers,
+      });
     },
   });
   endpoint = `http://127.0.0.1:${engine.port}/indexnow`;
@@ -95,6 +102,7 @@ beforeEach(() => {
   received = [];
   counted.length = 0;
   answer = { status: 200 };
+  statusFor = {};
   clock = Date.parse("2026-11-25T12:00:00Z");
   db = makeFreshDb();
   listUnited("N501GJ");
@@ -132,6 +140,41 @@ describe("the key", () => {
       "k<y>12345",
     ]) {
       expect(readIndexNowKey(db, { INDEXNOW_KEY: bad }), bad).toBe(key);
+    }
+  });
+
+  test("an INDEXNOW_KEY of the wrong shape is warned about once, and never printed", () => {
+    const lines: string[] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => {
+      lines.push(args.map(String).join(" "));
+    };
+    try {
+      const cases: Array<[string, RegExp]> = [
+        ["sh0rt", /shorter than 8/],
+        ["a".repeat(129), /longer than 128/],
+        ["k<y>12345_secret", /other than letters, digits and hyphens/],
+        ["abcdef0123456789\n", /whitespace/],
+      ];
+      for (const [bad, cause] of cases) {
+        lines.length = 0;
+        expect(ensureIndexNowKey(db, { INDEXNOW_KEY: bad })).toBe(key);
+        const warned = lines.filter((l) => l.includes("INDEXNOW_KEY"));
+        expect(warned.length, bad).toBe(1);
+        expect(JSON.parse(warned[0]).level).toBe("warn");
+        expect(warned[0]).toMatch(cause);
+        expect(warned[0]).toContain("falling back");
+        expect(warned[0].includes(bad.trim()), bad).toBe(false);
+        expect(warned[0].includes(key)).toBe(false);
+      }
+      lines.length = 0;
+      expect(ensureIndexNowKey(db, { INDEXNOW_KEY: "abcdef0123456789" })).toBe("abcdef0123456789");
+      expect(ensureIndexNowKey(db, {})).toBe(key);
+      expect(ensureIndexNowKey(db, { INDEXNOW_KEY: "" })).toBe(key);
+      expect(ensureIndexNowKey(db, { INDEXNOW_KEY: "short", INDEXNOW_DISABLED: "1" })).toBeNull();
+      expect(lines.filter((l) => l.includes("INDEXNOW_KEY"))).toEqual([]);
+    } finally {
+      console.error = original;
     }
   });
 
@@ -176,6 +219,16 @@ describe("the switch", () => {
     expect(indexNowOn({ NODE_ENV: "test" })).toBe(false);
     expect(indexNowOn({ NODE_ENV: "production", DISABLE_JOBS: "1" })).toBe(false);
     expect(indexNowOn({ NODE_ENV: "production", INDEXNOW_DISABLED: "1" })).toBe(false);
+  });
+
+  test("off for 1 or true in any case; anything else leaves it on", () => {
+    for (const value of ["1", "true", "TRUE", "True", " true ", " 1\n"]) {
+      expect(indexNowOn({ NODE_ENV: "production", INDEXNOW_DISABLED: value }), value).toBe(false);
+      expect(readIndexNowKey(db, { INDEXNOW_DISABLED: value }), value).toBeNull();
+    }
+    for (const value of ["", "0", "false", "no", "off", "11", "truthy"]) {
+      expect(indexNowOn({ NODE_ENV: "production", INDEXNOW_DISABLED: value }), value).toBe(true);
+    }
   });
 
   test("off: no key is made or read, and the key file is gone", async () => {
@@ -295,6 +348,391 @@ describe("a newly listed tail", () => {
   });
 });
 
+describe("a missed announcement is made up", () => {
+  const tailPage = (tail: string) => `/fleet/${tail}`;
+  const timesSent = (host: string, path: string) => pathsFor(host).filter((p) => p === path).length;
+  const waitingTails = () =>
+    (
+      JSON.parse(
+        (
+          db.query("SELECT value FROM meta WHERE key = 'UA:indexnowWaiting'").get() as {
+            value: string;
+          } | null
+        )?.value ?? "[]"
+      ) as Array<{ tail: string }>
+    ).map((w) => w.tail);
+  /** Passes five minutes apart, as the job runs them. */
+  async function passes(n: number, instance: IndexNow = indexNow) {
+    for (let i = 0; i < n; i++) {
+      minutes(5);
+      await instance.announceNewTails();
+    }
+  }
+  /** The most addresses `host` was sent inside any 24 hours. */
+  function worstDay(host: string, sentAt: Array<[string, number]>): number {
+    const times = sentAt.filter(([h]) => h === host).map(([, at]) => at);
+    return Math.max(
+      0,
+      ...times.map((t) => times.filter((u) => u >= t && u < t + 86_400_000).length)
+    );
+  }
+
+  test("first seen at the day's cap: sent whole once there is room, once", async () => {
+    await indexNow.announceNewTails();
+    const filler = Array.from({ length: DAILY_URL_CAP }, (_, i): [string, number] => [
+      `https://${UA}/filler-${i}`,
+      Math.floor(clock / 1000),
+    ]);
+    db.query("INSERT OR REPLACE INTO meta (key, value) VALUES ('ALL:indexnowSent:united', ?)").run(
+      JSON.stringify({ sent: filler })
+    );
+    listUnited("N502GJ");
+    await indexNow.announceNewTails();
+    expect(forHost(UA)).toEqual([]);
+    expect(forHost(HUB).length).toBe(1);
+    expect(counted.map((t) => t.status)).toEqual(["shed", "success"]);
+    expect(waitingTails()).toEqual(["N502GJ"]);
+
+    // Still full an hour short of a day later.
+    minutes(23 * 60 - 5);
+    await passes(1);
+    expect(forHost(UA)).toEqual([]);
+    minutes(60);
+    await passes(1);
+    expect(forHost(UA).length).toBe(1);
+    expect(pathsFor(UA)).toContain(tailPage("N502GJ"));
+    expect(pathsFor(UA)).toContain("/fleet");
+    expect(waitingTails()).toEqual([]);
+
+    await passes(4);
+    expect(timesSent(UA, tailPage("N502GJ"))).toBe(1);
+    // The hub accepted it the first time and is not told again.
+    expect(forHost(HUB).length).toBe(1);
+  });
+
+  test("an announcement that only half fits under the cap waits for all of it", async () => {
+    await indexNow.announceNewTails();
+    const filler = Array.from({ length: DAILY_URL_CAP - 2 }, (_, i): [string, number] => [
+      `https://${UA}/filler-${i}`,
+      Math.floor(clock / 1000),
+    ]);
+    db.query("INSERT OR REPLACE INTO meta (key, value) VALUES ('ALL:indexnowSent:united', ?)").run(
+      JSON.stringify({ sent: filler })
+    );
+    listUnited("N502GJ");
+    await passes(3);
+    expect(forHost(UA)).toEqual([]);
+    minutes(24 * 60);
+    await passes(1);
+    expect(forHost(UA).length).toBe(1);
+    expect(pathsFor(UA)).toContain(tailPage("N502GJ"));
+    expect(pathsFor(UA)).toContain("/");
+  });
+
+  test("first seen in a 429 pause: sent when the pause ends, once", async () => {
+    await indexNow.announceNewTails();
+    answer = { status: 429, headers: { "Retry-After": "7200" } };
+    expect(await indexNow.submit("UA", ["/methodology"])).toBe("rate_limited");
+    answer = { status: 200 };
+    received = [];
+
+    listUnited("N502GJ");
+    await passes(12);
+    expect(forHost(UA)).toEqual([]);
+    expect(waitingTails()).toEqual(["N502GJ"]);
+    await passes(13);
+    expect(forHost(UA).length).toBe(1);
+    expect(pathsFor(UA)).toContain(tailPage("N502GJ"));
+    await passes(4);
+    expect(timesSent(UA, tailPage("N502GJ"))).toBe(1);
+    expect(forHost(HUB).length).toBe(1);
+  });
+
+  test("answered with a 429 itself: sent after the time the engine asked, once", async () => {
+    await indexNow.announceNewTails();
+    answer = { status: 429, headers: { "Retry-After": "1800" } };
+    listUnited("N502GJ");
+    await indexNow.announceNewTails();
+    expect(forHost(UA).length).toBe(1);
+    expect(forHost(HUB).length).toBe(1);
+    answer = { status: 200 };
+    received = [];
+    await passes(5);
+    expect(received).toEqual([]);
+    await passes(2);
+    expect(forHost(UA).length).toBe(1);
+    expect(forHost(HUB).length).toBe(1);
+    expect(pathsFor(UA)).toContain(tailPage("N502GJ"));
+    await passes(4);
+    expect(received.length).toBe(2);
+  });
+
+  test("a failed send (refused, unreachable, timed out) is retried, once accepted never again", async () => {
+    const failing: Array<[string, () => IndexNow]> = [
+      ["500", () => build()],
+      ["403", () => build()],
+      ["unreachable", () => build({ endpoint: "http://127.0.0.1:1/indexnow" })],
+      [
+        "thrown",
+        () =>
+          build({
+            fetch: (() => {
+              throw new Error("boom");
+            }) as unknown as typeof fetch,
+          }),
+      ],
+      ["timeout", () => build({ timeoutMs: 50 })],
+    ];
+    await indexNow.announceNewTails();
+    let n = 0;
+    for (const [how, make] of failing) {
+      const tail = `N51${n++}GJ`;
+      received = [];
+      answer =
+        how === "500" || how === "403"
+          ? { status: Number(how) }
+          : how === "timeout"
+            ? { status: 200, delayMs: 400 }
+            : { status: 200 };
+      listUnited(tail);
+      minutes(7 * 60);
+      await make().announceNewTails();
+      expect(waitingTails(), how).toEqual([tail]);
+
+      answer = { status: 200 };
+      received = [];
+      // Five minutes on the site is still backing off.
+      await passes(1);
+      expect(received, how).toEqual([]);
+      await passes(1);
+      expect(timesSent(UA, tailPage(tail)), how).toBe(1);
+      expect(forHost(HUB).length, how).toBe(1);
+      expect(waitingTails(), how).toEqual([]);
+      await passes(4);
+      expect(timesSent(UA, tailPage(tail)), how).toBe(1);
+      expect(received.length, how).toBe(2);
+    }
+  });
+
+  test("a restart between the miss and the retry loses nothing", async () => {
+    await indexNow.announceNewTails();
+    answer = { status: 500 };
+    listUnited("N502GJ");
+    await indexNow.announceNewTails();
+    expect(waitingTails()).toEqual(["N502GJ"]);
+    answer = { status: 200 };
+    received = [];
+
+    const restarted = build();
+    await passes(1, restarted);
+    expect(received).toEqual([]);
+    await passes(1, build());
+    expect(timesSent(UA, tailPage("N502GJ"))).toBe(1);
+    expect(forHost(HUB).length).toBe(1);
+    await passes(4, build());
+    expect(received.length).toBe(2);
+  });
+
+  test("one site accepted and the other failed: only the other is retried", async () => {
+    await indexNow.announceNewTails();
+    statusFor = { [HUB]: 500 };
+    listUnited("N502GJ");
+    await indexNow.announceNewTails();
+    expect(forHost(UA).length).toBe(1);
+    expect(forHost(HUB).length).toBe(1);
+    statusFor = {};
+    await passes(4);
+    minutes(7 * 60);
+    await passes(2);
+    expect(forHost(UA).length).toBe(1);
+    expect(forHost(HUB).length).toBe(2);
+    expect(waitingTails()).toEqual([]);
+  });
+
+  test("tails that pile up while sends fail go out together, oldest named first", async () => {
+    await indexNow.announceNewTails();
+    answer = { status: 500 };
+    const tails = ["N521GJ", "N522GJ", "N523GJ", "N524GJ", "N525GJ", "N526GJ", "N527GJ"];
+    for (const tail of tails) {
+      listUnited(tail);
+      await passes(1);
+    }
+    expect(waitingTails()).toEqual(tails);
+    answer = { status: 200 };
+    received = [];
+    minutes(7 * 60);
+    await passes(1);
+    expect(forHost(UA).length).toBe(1);
+    const named = pathsFor(UA).filter((p) => /^\/fleet\/N/.test(p));
+    expect(named).toEqual(tails.slice(0, 5).map(tailPage));
+    expect(waitingTails()).toEqual([]);
+    await passes(4);
+    expect(forHost(UA).length).toBe(1);
+  });
+
+  test("an outage of days stays inside the cap, backs off, and is made up after it", async () => {
+    await indexNow.announceNewTails();
+    answer = { status: 500 };
+    const sentAt: Array<[string, number]> = [];
+    listUnited("N502GJ");
+    let seen = 0;
+    for (let i = 0; i < 12 * 24 * 3; i++) {
+      await passes(1);
+      for (const s of received.slice(seen)) for (const _ of s.urlList) sentAt.push([s.host, clock]);
+      seen = received.length;
+    }
+    for (const host of [UA, HUB]) {
+      expect(worstDay(host, sentAt), host).toBeLessThanOrEqual(DAILY_URL_CAP);
+      // Tries, not one per pass: 864 passes ran.
+      expect(forHost(host).length, host).toBeLessThan(30);
+      expect(forHost(host).length, host).toBeGreaterThan(3);
+    }
+    expect(waitingTails()).toEqual(["N502GJ"]);
+
+    answer = { status: 200 };
+    const before = received.length;
+    minutes(24 * 60);
+    await passes(2);
+    const made = received.slice(before);
+    expect(made.filter((s) => s.host === UA).length).toBe(1);
+    expect(made.filter((s) => s.host === HUB).length).toBe(1);
+    expect(made.find((s) => s.host === UA)?.urlList).toContain(`https://${UA}/fleet/N502GJ`);
+    expect(waitingTails()).toEqual([]);
+  });
+
+  test("what waits is bounded: it falls off after the longest wait", async () => {
+    await indexNow.announceNewTails();
+    answer = { status: 500 };
+    listUnited("N502GJ");
+    await indexNow.announceNewTails();
+    expect(waitingTails()).toEqual(["N502GJ"]);
+    clock += (WAITING_MAX_AGE_SEC - 600) * 1000;
+    await indexNow.announceNewTails();
+    expect(waitingTails()).toEqual(["N502GJ"]);
+    clock += 601 * 1000;
+    answer = { status: 200 };
+    received = [];
+    await indexNow.announceNewTails();
+    expect(waitingTails()).toEqual([]);
+    await passes(3);
+    minutes(26 * 60);
+    await passes(1);
+    expect(received).toEqual([]);
+  });
+
+  test("what waits is bounded: past the most that may wait, the newest are not queued", async () => {
+    await indexNow.announceNewTails();
+    answer = { status: 500 };
+    const first: string[] = [];
+    for (let i = 0; i < WAITING_MAX_TAILS; i++) first.push(`N8${String(i).padStart(2, "0")}UA`);
+    for (const tail of first) listUnited(tail);
+    await indexNow.announceNewTails();
+    for (let i = 0; i < 25; i++) listUnited(`N9${String(i).padStart(2, "0")}UA`);
+    await passes(1);
+    expect(waitingTails()).toEqual(first);
+    answer = { status: 200 };
+    received = [];
+    minutes(7 * 60);
+    await passes(1);
+    expect(forHost(UA).length).toBe(1);
+    expect(waitingTails()).toEqual([]);
+    // The ones that fell off are not news later either.
+    await passes(4);
+    expect(forHost(UA).length).toBe(1);
+  });
+
+  test("a waiting tail that is off the list keeps waiting and goes out when it is back", async () => {
+    await indexNow.announceNewTails();
+    answer = { status: 500 };
+    listUnited("N502GJ");
+    await indexNow.announceNewTails();
+    answer = { status: 200 };
+    received = [];
+    db.query("DELETE FROM starlink_planes WHERE TailNumber = 'N502GJ'").run();
+    await passes(12);
+    expect(received).toEqual([]);
+    expect(waitingTails()).toEqual(["N502GJ"]);
+    addPlane(db, "N502GJ", "Starlink", { aircraft: "Boeing 737-900" });
+    await passes(1);
+    expect(timesSent(UA, tailPage("N502GJ"))).toBe(1);
+    await passes(4);
+    expect(timesSent(UA, tailPage("N502GJ"))).toBe(1);
+  });
+
+  test("the first pass sends nothing for tails already listed, whatever the engine answers", async () => {
+    for (const status of [200, 429, 500]) {
+      const fresh = makeFreshDb();
+      for (const tail of ["N501GJ", "N502GJ", "N503GJ"]) {
+        addPlane(fresh, tail, "Starlink", { aircraft: "Boeing 737-900" });
+        addFleet(fresh, tail, "confirmed", {
+          verifiedWifi: "Starlink",
+          aircraftType: "Boeing 737-900",
+        });
+      }
+      answer = { status };
+      received = [];
+      counted.length = 0;
+      const local = createIndexNow({
+        db: fresh,
+        key,
+        dispatch: createApp(fresh).dispatch,
+        endpoint,
+        now: () => clock,
+      });
+      await local.announceNewTails();
+      answer = { status: 200 };
+      for (const wait of [5, 5, 10, 60, 7 * 60, 26 * 60]) {
+        minutes(wait);
+        await local.announceNewTails();
+      }
+      expect(received, String(status)).toEqual([]);
+      expect(counted, String(status)).toEqual([]);
+      expect(
+        fresh.query("SELECT value FROM meta WHERE key LIKE '%indexnowWaiting'").all(),
+        String(status)
+      ).toEqual([]);
+      fresh.close();
+    }
+  });
+
+  test("a list recorded by the earlier job is kept: nothing on it is sent after a deploy", async () => {
+    listUnited("N502GJ");
+    db.query("INSERT OR REPLACE INTO meta (key, value) VALUES ('UA:indexnowAnnounced', ?)").run(
+      JSON.stringify(["N501GJ", "N502GJ"])
+    );
+    await passes(3);
+    expect(received).toEqual([]);
+    listUnited("N503GJ");
+    await passes(1);
+    expect(pathsFor(UA)).toContain(tailPage("N503GJ"));
+    expect(pathsFor(UA)).not.toContain(tailPage("N502GJ"));
+  });
+
+  test("a broken waiting list in the database is survived", async () => {
+    await indexNow.announceNewTails();
+    for (const junk of [
+      "{not json",
+      '{"a":1}',
+      '[null, 3, {"tail":5}, {"tail":"N1","at":"x","sites":["united"]}, {"tail":"<script>","at":1,"sites":"united"}]',
+      JSON.stringify([
+        { tail: "../../api/data", at: Math.floor(clock / 1000), sites: ["united", "nowhere"] },
+      ]),
+    ]) {
+      db.query("INSERT OR REPLACE INTO meta (key, value) VALUES ('UA:indexnowWaiting', ?)").run(
+        junk
+      );
+      minutes(15);
+      await indexNow.announceNewTails();
+    }
+    for (const s of received) {
+      for (const u of s.urlList) expect(u, u).not.toMatch(/api|script|\.\./);
+    }
+    listUnited("N502GJ");
+    await passes(3);
+    expect(timesSent(UA, tailPage("N502GJ"))).toBe(1);
+  });
+});
+
 describe("the daily cap", () => {
   test("a site never sends more than the cap in 24 hours, then sends again", async () => {
     await indexNow.announceNewTails();
@@ -397,12 +835,13 @@ describe("hostile and odd input", () => {
     for (const host of hosts) expect([UA, HUB, AS]).toContain(host);
   });
 
-  test("a refusal is counted, logged, and not retried", async () => {
+  test("a refusal is counted, logged, and not retried by the caller", async () => {
     for (const status of [400, 403, 422, 500]) {
       received = [];
       counted.length = 0;
       answer = { status };
-      minutes(15);
+      // Past the longest pause a run of failures can set.
+      minutes(7 * 60);
       expect(await indexNow.submit("UA", ["/"]), String(status)).toBe("error");
       expect(received.length, String(status)).toBe(1);
       expect(counted.map((t) => t.status)).toEqual(["error"]);
