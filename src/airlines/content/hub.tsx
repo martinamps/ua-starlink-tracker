@@ -378,10 +378,11 @@ export const content: AirlineContent = {
           q: "How is this data collected?",
           a: () => (
             <p>
-              Fleet rosters and flight schedules come from public aviation data. Starlink status is
-              confirmed per aircraft against each airline's own systems where they show it (United,
-              Alaska), and by aircraft type where the airline has finished whole types (Hawaiian,
-              Qatar). Other airlines get a status page with dated sources.
+              Fleet rosters and flight schedules come from public aviation data.{" "}
+              {countingMethodSentences(publicAirlines(), "tracked")} An aircraft checked on its own
+              is checked against its airline's own systems. Airlines that have finished whole types
+              are tracked by aircraft type (Hawaiian, Qatar). Other airlines get a status page with
+              dated sources.
             </p>
           ),
         },

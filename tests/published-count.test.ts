@@ -352,6 +352,26 @@ describe("hub home page", () => {
     }
   });
 
+  test("the sources answer on the hub home page calls no airline with a type rule per-aircraft", async () => {
+    const notPlaneByPlane = hubContentAirlines().filter((cfg) => !checkedPlaneByPlane(cfg));
+    const { text } = await bodyOf("/");
+    const answer =
+      text.match(
+        /"name":"How is this data collected\?","acceptedAnswer":\{"@type":"Answer","text":"([^"]*)"/
+      )?.[1] ?? "";
+    const sentences = answer.split(/(?<=\.)\s+/);
+    const perAircraft = (s: string) => saysPlaneByPlane(s) || /per aircraft/i.test(s);
+    expect(sentences.some(perAircraft)).toBe(true);
+    for (const sentence of sentences.filter(perAircraft)) {
+      for (const cfg of notPlaneByPlane) expect(sentence).not.toContain(cfg.shortName);
+    }
+    for (const cfg of notPlaneByPlane.filter(partlyByType)) {
+      expect(
+        sentences.some((s) => s.includes(cfg.shortName) && /partly by aircraft type/.test(s))
+      ).toBe(true);
+    }
+  });
+
   test("the most-planes answer ranks a by-type airline by its own dated figure or not at all", async () => {
     const { text } = await bodyOf("/");
     const answer =
