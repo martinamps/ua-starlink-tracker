@@ -123,6 +123,18 @@ export function resetFr24SlotClock(): void {
 
 export const FR24_QUEUE_SHED_MESSAGE = "shed: queue";
 
+export const FR24_ASSIGNMENT_FETCH_TIMEOUT_MS = 8000;
+
+// A caller with a deadline spends it on the queue first; the fetch gets what
+// is left, never more than the usual timeout.
+export function assignmentFetchTimeoutMs(
+  deadlineMs: number | undefined,
+  elapsedMs: number
+): number {
+  if (deadlineMs === undefined) return FR24_ASSIGNMENT_FETCH_TIMEOUT_MS;
+  return Math.max(0, Math.min(FR24_ASSIGNMENT_FETCH_TIMEOUT_MS, deadlineMs - elapsedMs));
+}
+
 // FR24 lists a registration's flights newest-first. Capping that list unsorted
 // kept a busy regional tail's furthest-future legs and dropped the leg in the
 // air plus the next several hours (310 of 561 UA tails sat at the old cap of 10,
@@ -362,7 +374,12 @@ export class FlightRadar24API {
   async getFlightAssignments(
     flightNumber: string,
     targetDateUnix: number,
-    opts: { maxRetries?: number; maxWaitMs?: number } = {}
+    opts: {
+      maxRetries?: number;
+      maxWaitMs?: number;
+      /** Queue wait plus fetch must end inside this; the fetch timeout shrinks by the wait. */
+      deadlineMs?: number;
+    } = {}
   ): Promise<
     Array<{
       origin: string;
@@ -375,11 +392,15 @@ export class FlightRadar24API {
   > {
     const url = `${this.baseUrl}/flight/list.json?query=${encodeURIComponent(flightNumber)}&fetchBy=flight&page=1&limit=25`;
     const airline = flightAirlineTag(flightNumber);
+    const startedMs = Date.now();
 
     try {
       return await this.retryWithBackoff(
         async () => {
-          const response = await this.fetchFr24(url, 8000);
+          const response = await this.fetchFr24(
+            url,
+            assignmentFetchTimeoutMs(opts.deadlineMs, Date.now() - startedMs)
+          );
 
           if (!response.ok) {
             metrics.increment(COUNTERS.VENDOR_REQUEST, {

@@ -34,6 +34,7 @@ import { TRAILING_WINDOW_SEC, unixNow } from "../database/sql/windows";
 import {
   COUNTERS,
   DISTRIBUTIONS,
+  type LookupCaller,
   type Tags,
   bucketDaysOut,
   metrics,
@@ -554,6 +555,8 @@ export interface ResolveDeps {
   leg?: LegQuery;
   /** A leg was asked for but can't be used: answer unscoped and say why. */
   unscoped?: UnscopedLeg;
+  /** Who is asking; tags a shed live lookup. Absent = other. */
+  caller?: LookupCaller;
 }
 
 export async function resolveFlightVerdict(
@@ -890,7 +893,7 @@ async function verdictFromRows(
   if (deps.lookupTail !== null) {
     const lookup = deps.lookupTail ?? lookupFlightTailVerdict;
     try {
-      raw = await lookup(reader, normalized, date, window.start, window.end, now);
+      raw = await lookup(reader, normalized, date, window.start, window.end, now, deps.caller);
     } catch (err) {
       // FR24 outage ≠ "no assignment published" — never a confident no.
       // Anything else (e.g. a DB error) must not masquerade as an outage.
