@@ -5,6 +5,8 @@ import {
   ownCountCredit,
   publishedCount,
   trackingMethod,
+  typeSumCredit,
+  typeSumParts,
 } from "../airlines/published-count";
 import { AIRLINES, type AirlineConfig, airlineHomeUrl } from "../airlines/registry";
 import type { RolloutFactsStatus } from "../airlines/rollout-facts";
@@ -194,7 +196,8 @@ export function StagePill({ info }: { info: StageInfo }) {
  * fleet share is publishable. Where it isn't (the roster counts types the
  * programme excludes) the row gives the count and the airline's own note, never
  * a ratio that would make a finished rollout look two-thirds done. An airline
- * known by aircraft type shows its own dated figure or no count (see
+ * known by aircraft type shows its own dated figure, our sum of its source's
+ * whole-type counts, or no count (see
  * published-count.ts), and ranks by that.
  */
 export function AirlineProgressList({ stats }: { stats: PerAirlineStat[] }) {
@@ -247,9 +250,12 @@ export function AirlineProgressList({ stats }: { stats: PerAirlineStat[] }) {
                   {fmt(published.count)}
                 </strong>{" "}
                 aircraft with Starlink
-                {published.basis === "airline" && (
+                {published.basis !== "tracked" && (
                   <>
-                    , {ownCountCredit(cfg, published)} (
+                    {published.basis === "airline"
+                      ? `, ${ownCountCredit(cfg, published)}`
+                      : `: ${typeSumParts(published)}, ${typeSumCredit(published)}`}{" "}
+                    (
                     <a
                       href={published.url}
                       target="_blank"
@@ -261,7 +267,8 @@ export function AirlineProgressList({ stats }: { stats: PerAirlineStat[] }) {
                     )
                   </>
                 )}
-                . {stat.phaseNote}
+                .{published.basis === "type-sum" && " The total is our sum of those counts."}{" "}
+                {stat.phaseNote}
               </p>
             )}
             {(stat.installs30d ?? 0) > 0 && (

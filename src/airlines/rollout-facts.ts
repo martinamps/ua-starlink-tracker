@@ -63,6 +63,16 @@ interface RolloutFactBase {
    * only knows an airline by aircraft type, this dated figure is the one count
    * a ranking may print: a sum of fleet-list types is not a count of installs. */
   officialFleetCount?: number;
+  /** Types `fact` states as wholly fitted, each with its count as stated ("all
+   * 18 Airbus A321-200neo"), named as a sentence prints them. `officialCounts`
+   * is keyed by type-page slug, and an airline known only by type has no type
+   * pages. The hub adds these up for such an airline and prints the sum beside
+   * its parts, credited to `by` ("per Alaska's installation tracker"): the
+   * parts are the source's, the sum is this site's. */
+  wholeTypes?: {
+    by: string;
+    types: ReadonlyArray<{ name: string; count: number }>;
+  };
   /** Verbatim excerpt of `fact` a type page renders instead of the whole
    * claim, for facts whose other clauses are about a different fleet. */
   pageText?: string;
@@ -328,6 +338,23 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
         source: {
           label: "AirlineGeeks",
           url: "https://airlinegeeks.com/2026/06/25/alaska-hawaiian-expand-starlink-wifi-to-around-150-aircraft/",
+        },
+      },
+      {
+        // The chart's two Hawaiian rows: 18 and 24 connected, the pending
+        // column reading "Update complete". It prints no Hawaiian total.
+        fact: "Alaska's Starlink installation tracker lists all 18 Airbus A321-200neo and all 24 Airbus A330 aircraft as connected, with the update complete on both types.",
+        asOf: "2026-10-26",
+        source: {
+          label: "Alaska Airlines newsroom — Starlink tracker",
+          url: "https://news.alaskaair.com/alaska-airlines-wifi-connectivity/",
+        },
+        wholeTypes: {
+          by: "Alaska's installation tracker",
+          types: [
+            { name: "A321neo", count: 18 },
+            { name: "A330", count: 24 },
+          ],
         },
       },
     ],
@@ -1634,6 +1661,33 @@ export function airlineOwnTypeTotal(code: string): { total: number; asOf: string
   if (!fact?.asOf || !fact.officialCounts) return null;
   const total = Object.values(fact.officialCounts).reduce((sum, n) => sum + n, 0);
   return { total, asOf: fact.asOf };
+}
+
+export interface AirlineOwnTypeSum extends AirlineOwnCount {
+  /** The counts the source states, one per wholly fitted type. `count` is
+   * their sum, which the source does not state. */
+  parts: ReadonlyArray<{ name: string; count: number }>;
+  /** Who states the parts, as a sentence credits them. */
+  by: string;
+}
+
+/** The airline's wholly fitted types added up, from its newest current dated
+ * fact that states any. A type the fact doesn't call complete adds nothing,
+ * and with no such type there is no sum. */
+export function airlineOwnTypeSum(code: string): AirlineOwnTypeSum | null {
+  const fact = (factsForCode(code)?.facts ?? [])
+    .filter((f) => !f.superseded && f.asOf && f.wholeTypes?.types.some((t) => t.count > 0))
+    .sort((a, b) => (b.asOf as string).localeCompare(a.asOf as string))[0];
+  if (!fact?.asOf || !fact.wholeTypes) return null;
+  const parts = fact.wholeTypes.types.filter((t) => t.count > 0);
+  return {
+    count: parts.reduce((sum, t) => sum + t.count, 0),
+    parts,
+    by: fact.wholeTypes.by,
+    asOf: fact.asOf,
+    sourceLabel: fact.source.label,
+    url: fact.source.url,
+  };
 }
 
 /** Entries with no tail-level tracking — the content-only part of the roster. */

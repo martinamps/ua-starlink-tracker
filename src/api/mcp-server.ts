@@ -39,7 +39,12 @@ import {
   hubLookupAirlines,
   siteForAirline,
 } from "../airlines/registry";
-import { type AirlineOwnCount, airlineOwnCount } from "../airlines/rollout-facts";
+import {
+  type AirlineOwnCount,
+  type AirlineOwnTypeSum,
+  airlineOwnCount,
+  airlineOwnTypeSum,
+} from "../airlines/rollout-facts";
 import type { FlightAssignmentRow } from "../database/database";
 import { type Scope, type ScopedReader, aggregatePenetration } from "../database/reader";
 import { inLookupWindow, lookupWindowPosition, unixNow } from "../database/sql/windows";
@@ -1979,6 +1984,21 @@ function ownFigure(own: AirlineOwnCount): string {
   return `${own.count} aircraft as of ${own.asOf} (${own.sourceLabel}: ${own.url})`;
 }
 
+/** The sum is made here; the source states only the per-type counts. */
+function typeSumLine(sum: AirlineOwnTypeSum): string {
+  const parts = sum.parts.map((p) => `${p.count} ${p.name}`).join(" + ");
+  return `${sum.by} counts ${parts} as of ${sum.asOf}, every aircraft of each type (${sum.sourceLabel}: ${sum.url}); added up here, that is ${sum.count} aircraft, a total the source does not state`;
+}
+
+/** What an airline known by type has beyond the fleet-list sum: its own dated
+ * figure, else its source's whole-type counts added up, else nothing. */
+function byTypeSourced(code: string): string | null {
+  const own = airlineOwnCount(code);
+  if (own) return `the airline's own figure is ${ownFigure(own)}`;
+  const sum = airlineOwnTypeSum(code);
+  return sum ? typeSumLine(sum) : null;
+}
+
 function toolGetFleetStats(reader: ScopedReader): ToolResult {
   const lastUpdated = reader.getLastUpdated();
 
@@ -1998,9 +2018,9 @@ function toolGetFleetStats(reader: ScopedReader): ToolResult {
       return cfg ? trackingMethod(cfg) === "type" : false;
     };
     const lines = per.map((a) => {
-      const own = byType(a) ? airlineOwnCount(a.code) : null;
+      const sourced = byType(a) ? byTypeSourced(a.code) : null;
       const count = byType(a)
-        ? `${byTypeCount(a.starlink)}${own ? `; the airline's own figure is ${ownFigure(own)}` : ""}`
+        ? `${byTypeCount(a.starlink)}${sourced ? `; ${sourced}` : ""}`
         : `${floor(a) ? "at least " : ""}${aircraftShare(a.starlink, a.total, inScope(a))}`;
       return `**${a.name}**: ${count}${a.phaseNote ? ` — ${a.phaseNote}` : ""}`;
     });
@@ -2037,10 +2057,11 @@ ${lines.join("\n")}`;
   const programme = reader.getProgrammeHeadline();
   const ownLine = `${aircraftShare(starlinkPlanes.length, totalCount, inScope)} have Starlink WiFi`;
   const own = trackingMethod(cfg) === "type" ? airlineOwnCount(cfg.code) : null;
+  const sum = trackingMethod(cfg) === "type" && !own ? airlineOwnTypeSum(cfg.code) : null;
   const text = [
     `${cfg.name} Starlink Installation Progress (as of ${lastUpdated}):`,
     trackingMethod(cfg) === "type"
-      ? `**Combined Fleet**: ${byTypeCount(starlinkPlanes.length)}.${own ? `\n**The airline's own figure**: ${ownFigure(own)}` : ""}`
+      ? `**Combined Fleet**: ${byTypeCount(starlinkPlanes.length)}.${own ? `\n**The airline's own figure**: ${ownFigure(own)}` : sum ? `\n**Per-type counts on file**: ${typeSumLine(sum)}` : ""}`
       : programme
         ? `**${programme.noun} (the site's headline)**: ${aircraftShare(programme.equipped, programme.total, inScope)} have Starlink WiFi\n**${cfg.shortName}-operated only**: ${ownLine}`
         : `**Combined Fleet**: ${ownLine}`,

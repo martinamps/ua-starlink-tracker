@@ -19,7 +19,12 @@ import {
   hubContentAirlines,
   hubLookupAirlines,
 } from "../src/airlines/registry";
-import { AIRLINE_FACTS, airlineOwnCount, airlineOwnTypeTotal } from "../src/airlines/rollout-facts";
+import {
+  AIRLINE_FACTS,
+  airlineOwnCount,
+  airlineOwnTypeSum,
+  airlineOwnTypeTotal,
+} from "../src/airlines/rollout-facts";
 import { createApp } from "../src/server/app";
 import {
   TEST_DB,
@@ -60,7 +65,7 @@ describe("the published-count rule", () => {
     for (const { cfg } of byType) {
       const p = publishedCount(cfg, 123456);
       expect(p.basis).not.toBe("tracked");
-      if (p.basis === "airline") {
+      if (p.basis === "airline" || p.basis === "type-sum") {
         expect(p.count).not.toBe(123456);
         expect(p.asOf).toMatch(/^\d{4}-\d{2}/);
         expect(p.url).toStartWith("https://");
@@ -82,6 +87,42 @@ describe("the published-count rule", () => {
       );
       expect(own === null).toBe(current.length === 0);
       if (own) expect(current.map((f) => f.asOf)).toContain(own.asOf);
+    }
+  });
+
+  test("a sum of whole types is its fact's stated counts, dated, and never outranks the airline's own figure", () => {
+    let sums = 0;
+    for (const entry of AIRLINE_FACTS) {
+      for (const f of entry.facts) {
+        if (!f.wholeTypes) continue;
+        expect(f.asOf, entry.slug).toBeDefined();
+        expect(f.wholeTypes.by.length, entry.slug).toBeGreaterThan(0);
+        // The fact states each count and calls the type complete; the sum
+        // itself is nobody's claim, so it is never an officialFleetCount.
+        for (const t of f.wholeTypes.types) expect(f.fact, entry.slug).toContain(`all ${t.count} `);
+        expect(f.officialFleetCount, entry.slug).toBeUndefined();
+      }
+      if (!entry.trackedCode) continue;
+      const sum = airlineOwnTypeSum(entry.trackedCode);
+      const current = entry.facts.filter(
+        (f) => !f.superseded && f.asOf && f.wholeTypes?.types.some((t) => t.count > 0)
+      );
+      expect(sum === null).toBe(current.length === 0);
+      if (!sum) continue;
+      sums++;
+      expect(current.map((f) => f.asOf)).toContain(sum.asOf);
+      expect(sum.parts.length).toBeGreaterThan(0);
+      expect(sum.count).toBe(sum.parts.reduce((a, p) => a + p.count, 0));
+      expect(sum.url).toStartWith("https://");
+    }
+    expect(sums).toBeGreaterThan(0);
+    for (const { cfg } of byType) {
+      const expected = airlineOwnCount(cfg.code)
+        ? "airline"
+        : airlineOwnTypeSum(cfg.code)
+          ? "type-sum"
+          : "type";
+      expect(publishedCount(cfg, 7).basis).toBe(expected);
     }
   });
 });
@@ -272,9 +313,20 @@ describe("hub home page", () => {
     for (const { cfg } of byType) {
       const own = airlineOwnCount(cfg.code);
       const ranked = new RegExp(`${esc(cfg.name)}(, with| \\()`);
+      const sum = airlineOwnTypeSum(cfg.code);
       if (own) {
         expect(answer).toMatch(
           new RegExp(`${esc(cfg.name)}(, with | \\()[\\d,]+, its own figure as of \\w+`)
+        );
+      } else if (sum) {
+        // The sum never stands without its parts, who counted them and when.
+        expect(answer).toMatch(
+          new RegExp(
+            `${esc(cfg.name)}(, with | \\()[\\d,]+, our sum of [\\d,]+ [^.()]* per [^.()]+ as of \\w+ \\d`
+          )
+        );
+        expect(answer).toMatch(
+          new RegExp(`${esc(cfg.name)}[^.]* per-type counts a source gives\\.`)
         );
       } else {
         expect(answer).not.toMatch(ranked);
@@ -294,6 +346,11 @@ describe("hub home page", () => {
       if (own) {
         expect(row).toMatch(/aircraft with Starlink, per [^<]+ as of \w+ \d/);
         expect(row).toContain(`href="${own.url}"`);
+      } else if (airlineOwnTypeSum(cfg.code)) {
+        const sum = airlineOwnTypeSum(cfg.code);
+        expect(row).toMatch(/aircraft with Starlink: [\d,]+ [^<]*, per [^<]+ as of \w+ \d/);
+        expect(row).toContain(`href="${sum?.url}"`);
+        expect(row).toContain("The total is our sum");
       } else {
         expect(row).not.toContain("aircraft with Starlink");
       }
@@ -310,7 +367,10 @@ describe("hub /airlines", () => {
       expect(at).toBeGreaterThan(-1);
       const row = text.slice(at, text.indexOf("</tr>", at)).replace(/<!-- -->/g, "");
       if (airlineOwnCount(cfg.code)) expect(row).toMatch(/[\d,]+<span[^>]*>as of \w+ \d/);
-      else expect(row).toContain("By type");
+      else if (airlineOwnTypeSum(cfg.code)) {
+        expect(row).toMatch(/[\d,]+<span[^>]*>[\d,]+ [^<]*, per [^<]+ as of \w+ \d/);
+        expect(text).toContain("our sum of the per-type counts");
+      } else expect(row).toContain("By type");
     }
   });
 });
@@ -330,7 +390,31 @@ describe("MCP fleet answers for a by-type airline", () => {
       expect(text).not.toMatch(/\d aircraft have Starlink WiFi/);
       const own = airlineOwnCount(cfg.code);
       if (own) expect(text).toContain(`${own.count} aircraft as of ${own.asOf}`);
+      const sum = own ? null : airlineOwnTypeSum(cfg.code);
+      if (sum) {
+        expect(text).toContain(`as of ${sum.asOf}`);
+        expect(text).toContain(`that is ${sum.count} aircraft, a total the source does not state`);
+        for (const p of sum.parts) expect(text).toContain(`${p.count} ${p.name}`);
+      }
     }
+  });
+
+  test("the hub's line for a by-type airline carries the same sourced figure", async () => {
+    const r = await app.dispatch(
+      mcpReq(HUB, "tools/call", { name: "get_fleet_stats", arguments: {} })
+    );
+    const text = toolText(await r.json()).text;
+    let lines = 0;
+    for (const { cfg } of byType) {
+      const line = text.split("\n").find((l) => l.startsWith(`**${cfg.name}**`));
+      if (!line) continue;
+      lines++;
+      expect(line).toContain("counted by aircraft type, not plane by plane");
+      const sum = airlineOwnCount(cfg.code) ? null : airlineOwnTypeSum(cfg.code);
+      if (sum)
+        expect(line).toContain(`that is ${sum.count} aircraft, a total the source does not state`);
+    }
+    expect(lines).toBeGreaterThan(0);
   });
 
   test("list_starlink_aircraft says its list is by type", async () => {
