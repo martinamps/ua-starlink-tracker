@@ -1,5 +1,10 @@
 import { tenantCopy } from "../airlines/aircraft-pages";
-import { ownCountAsOf } from "../airlines/published-count";
+import {
+  BY_TYPE_METHOD,
+  byTypeSumBasis,
+  ownCountAsOf,
+  trackingMethod,
+} from "../airlines/published-count";
 import { AIRLINES, type SiteConfig } from "../airlines/registry";
 import type { AirlineChartCount } from "../database/roster";
 import type { FleetAnchorRow, FleetPageData } from "../types";
@@ -125,9 +130,14 @@ export default function FleetPage({
     : "Airline fleets with Starlink";
   // The express/mainline split only reads right when the page is one airline's.
   const pace = scopeCode ? data.installPace : null;
-  const labels = providerLabels(
-    scopeCode ? (tenantCopy(scopeCode).checksEveryTail ? "tail" : "type") : "mixed"
-  );
+  // Known by aircraft type: the lit aircraft are a sum of fleet-list rows.
+  const byType = scopeCode ? trackingMethod(AIRLINES[scopeCode]) === "type" : false;
+  const labels = {
+    ...providerLabels(
+      scopeCode ? (tenantCopy(scopeCode).checksEveryTail ? "tail" : "type") : "mixed"
+    ),
+    ...(byType && { starlink_listed: "Starlink by aircraft type, not checked plane by plane" }),
+  };
   return (
     <PageShell site={site} currentPath={currentPath} pageLinks={pageLinks}>
       <PageHeader
@@ -139,6 +149,13 @@ export default function FleetPage({
               {pct(data.totalStarlink, data.totalFleet)}) with Starlink.{" "}
               {AIRLINES[scopeCode].shortName}'s own count is {fmt(airlineCount.connected)} of{" "}
               {fmt(airlineCount.total)} {ownCountAsOf(airlineCount)}.
+            </>
+          ) : byType && scopeCode ? (
+            // No share: a part of a list picked by a type rule is not a share
+            // of aircraft counted.
+            <>
+              {fmt(data.totalStarlink)} of the {fmt(data.totalFleet)} aircraft on our fleet list are
+              of {byTypeSumBasis(scopeCode)}. They are {BY_TYPE_METHOD}.
             </>
           ) : (
             <>

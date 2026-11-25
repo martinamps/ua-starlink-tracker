@@ -176,8 +176,13 @@ describe("/badge.svg", () => {
       // Shape, not values: a denominator only where the tracked roster IS the
       // programme's own scope AND the two counts are consistent.
       const cfg = airlineOf(site);
-      expect(svg, site.key).toMatch(/\d+ (of \d+ aircraft|aircraft equipped)/);
-      if (cfg && !cfg.rollout.rosterIsProgramScope) {
+      // An airline known by aircraft type prints a sum, worded as one
+      // (tests/by-type-sums.test.ts).
+      const byType = cfg ? wifiPhaseFamilies(cfg.code) !== null : false;
+      expect(svg, site.key).toMatch(
+        byType ? /\d+, by aircraft type/ : /\d+ (of \d+ aircraft|aircraft equipped)/
+      );
+      if (cfg && !cfg.rollout.rosterIsProgramScope && !byType) {
         expect(svg, site.key).toMatch(/\d+ aircraft equipped/);
       }
     }

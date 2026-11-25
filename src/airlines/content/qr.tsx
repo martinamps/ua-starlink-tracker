@@ -1,6 +1,6 @@
 import { Eyebrow, SECTION_WIDE, StatValue } from "../../components/layout";
 import { fmt } from "../../components/ui/format";
-import { ownCountAsOf, ownFigureNote } from "../published-count";
+import { BY_TYPE_SUM_LABEL, ownCountAsOf, ownFigureNote } from "../published-count";
 import { type QatarProgrammeState, listedTypes, qatarProgrammeState } from "../registry";
 import { formatFactDate } from "../rollout-facts";
 import type { AirlineContent, HeroProps } from "./index";
@@ -80,12 +80,12 @@ const QRHero = ({ stats, statSentence }: HeroProps) => {
       {statSentence && <div className="mb-3">{statSentence}</div>}
       <div className="grid grid-cols-1 gap-px overflow-hidden rounded-lg border border-subtle bg-subtle sm:grid-cols-2">
         <div className="bg-surface p-5 text-center">
-          <Eyebrow className="">Aircraft with Starlink</Eyebrow>
+          <Eyebrow className="">{BY_TYPE_SUM_LABEL}</Eyebrow>
           <StatValue size="lg" className="mt-2">
             {fmt(stats.starlinkCount)}
           </StatValue>
           <div className="text-xs text-secondary mt-1">
-            Counted by aircraft type.
+            Not checked plane by plane.
             <OwnFigure />
           </div>
         </div>

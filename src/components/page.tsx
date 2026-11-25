@@ -4,7 +4,12 @@
  * flights and the FAQ. The pieces live in home/; this file orders them.
  */
 import type { AirlineContent, ContentStats, HubHomeLinks } from "../airlines/content";
-import { byTypeSumBasis, trackingMethod } from "../airlines/published-count";
+import {
+  BY_TYPE_METHOD,
+  BY_TYPE_SUM_LABEL,
+  byTypeSumBasis,
+  trackingMethod,
+} from "../airlines/published-count";
 import { AIRLINES, type SiteConfig, siteAirline } from "../airlines/registry";
 import type { PopularFlight } from "../database/database";
 import type { ProgrammeHeadline } from "../database/roster";
@@ -115,7 +120,7 @@ function StatSentence({ site, stats }: { site: SiteConfig; stats: ContentStats }
   const noun = stats.noun ?? `${cfg.name} aircraft`;
   const byType = trackingMethod(cfg) === "type";
   const claim = byType
-    ? `are of ${byTypeSumBasis(cfg.code)}. They are counted by aircraft type, not checked plane by plane.`
+    ? `are of ${byTypeSumBasis(cfg.code)}. They are ${BY_TYPE_METHOD}.`
     : "have Starlink.";
   return (
     <p id="starlink-stat" className="text-sm text-secondary leading-relaxed">
@@ -280,7 +285,11 @@ export default function Page({
         // /fleet lists the programme roster, partner jets included.
         fleetTotal={programme?.total ?? total}
         title={
-          programme && airline ? `${airline.shortName}-operated aircraft with Starlink` : undefined
+          programme && airline
+            ? `${airline.shortName}-operated aircraft with Starlink`
+            : airline && trackingMethod(airline) === "type"
+              ? BY_TYPE_SUM_LABEL
+              : undefined
         }
       />
 

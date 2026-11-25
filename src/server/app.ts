@@ -46,7 +46,9 @@ import {
   stripFlightNumberZeros,
 } from "../airlines/flight-number";
 import {
+  byTypeBadgeValue,
   byTypeSumBasis,
+  byTypeSumSentence,
   countingMethodSentences,
   leadCount,
   ownCountAsOf,
@@ -1863,7 +1865,7 @@ const SITE_PAGES: SitePage[] = [
     indexable: false,
     navLabel: "Embed a badge",
     llmsLine: (h) =>
-      `- [Embed badge](https://${h}/embed) — auto-updating SVG badge with the live equipped count (https://${h}/badge.svg)`,
+      `- [Embed badge](https://${h}/embed) — auto-updating SVG badge with ${badgeFigureWords(h)} (https://${h}/badge.svg)`,
   },
   {
     path: "/methodology",
@@ -2811,14 +2813,22 @@ const BADGE_CHAR_W = 6.3;
 const BADGE_ACCENT_FALLBACK = "#0ea5e9";
 const HEX_COLOR = /^#[0-9a-fA-F]{3,8}$/;
 
-export function badgeSvgMarkup(label: string, value: string, accent: string): string {
+/** `spoken` replaces "label: value" in the name a screen reader and a hover
+ * give the picture, where a longer sentence costs no width. */
+export function badgeSvgMarkup(
+  label: string,
+  value: string,
+  accent: string,
+  spoken?: string
+): string {
   const lw = Math.round(label.length * BADGE_CHAR_W) + 20;
   const vw = Math.round(value.length * BADGE_CHAR_W) + 20;
   const l = escapeXml(label);
   const v = escapeXml(value);
+  const name = spoken ? escapeXml(spoken) : `${l}: ${v}`;
   const a = HEX_COLOR.test(accent) ? accent : BADGE_ACCENT_FALLBACK;
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${lw + vw}" height="20" role="img" aria-label="${l}: ${v}">
-  <title>${l}: ${v}</title>
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${lw + vw}" height="20" role="img" aria-label="${name}">
+  <title>${name}</title>
   <rect width="${lw}" height="20" rx="3" fill="#1a2332"/>
   <rect x="${lw}" width="${vw}" height="20" rx="3" fill="${a}"/>
   <rect x="${lw}" width="3" height="20" fill="${a}"/>
@@ -2852,9 +2862,19 @@ const badgeSvg: Handler = ({ site, reader, tenant }) => {
   const equipped = programme?.equipped ?? reader.countStarlinkPlanes();
   const total = programme?.total ?? reader.getTotalCount();
   const label = cfg ? `${cfg.shortName} Starlink` : "Airline Starlink";
-  const value = badgeValue(equipped, total, cfg?.rollout.rosterIsProgramScope ?? true);
+  // Known by aircraft type: the figure is a sum of fleet-list rows, so the
+  // badge says so in the words it has room for and in full in its name.
+  const byType = cfg && trackingMethod(cfg) === "type" ? cfg : null;
+  const value = byType
+    ? byTypeBadgeValue(equipped)
+    : badgeValue(equipped, total, cfg?.rollout.rosterIsProgramScope ?? true);
   return text(
-    badgeSvgMarkup(label, value, site.brand.accentColor),
+    badgeSvgMarkup(
+      label,
+      value,
+      site.brand.accentColor,
+      byType ? `${byTypeSumSentence(byType, equipped)}.` : undefined
+    ),
     "image/svg+xml; charset=utf-8",
     {
       // An hour of edge/browser caching keeps embeds cheap while the count
@@ -2866,10 +2886,19 @@ const badgeSvg: Handler = ({ site, reader, tenant }) => {
   );
 };
 
+/** What the badge's figure is, for the lines that describe the badge. */
+function badgeFigureWords(host: string): string {
+  const cfg = Object.values(AIRLINES).find((a) => siteForAirline(a.code)?.canonicalHost === host);
+  return cfg && trackingMethod(cfg) === "type"
+    ? "this site's sum by aircraft type, not a count of installs"
+    : "the live equipped count";
+}
+
 const embedPage: Handler = (ctx) => {
   const cfg = tenantConfig(ctx.tenant);
   const short = cfg?.shortName ?? "Airline";
   const subject = cfg?.name ?? "tracked airlines";
+  const byType = cfg ? trackingMethod(cfg) === "type" : false;
   // apiFleetSummary iterates publicAirlines(); a tenant with publicInHub false
   // (QR) is absent from its own host's payload, so don't send readers there.
   const inFleetSummary = !cfg || publicAirlines().some((a) => a.code === cfg.code);
@@ -2883,10 +2912,14 @@ const embedPage: Handler = (ctx) => {
     "/embed",
     {
       siteTitle: `Add a Live ${short} Starlink Badge to Your Site — Embed`,
-      siteDescription: `An auto-updating SVG badge with the live count of ${subject} aircraft that have Starlink Wi-Fi. One image tag, no script.`,
+      siteDescription: byType
+        ? `An auto-updating SVG badge with this site's sum of ${subject} aircraft of Starlink types, counted by aircraft type. One image tag, no script.`
+        : `An auto-updating SVG badge with the live count of ${subject} aircraft that have Starlink Wi-Fi. One image tag, no script.`,
       keywords: `${short.toLowerCase()} starlink badge, starlink rollout badge, embed starlink stats, ${short.toLowerCase()} starlink widget`,
       ogTitle: `Live ${short} Starlink Badge`,
-      ogDescription: `An auto-updating badge with the live count of ${subject} aircraft that have Starlink. One image tag.`,
+      ogDescription: byType
+        ? `An auto-updating badge with this site's sum of ${subject} aircraft of Starlink types, counted by aircraft type. One image tag.`
+        : `An auto-updating badge with the live count of ${subject} aircraft that have Starlink. One image tag.`,
       // follow, not nofollow: the page is a dead end for a searcher but a live
       // internal link hub for a crawler already here. Same call the sitemap
       // makes via SitePage.indexable — see the /embed entry there.

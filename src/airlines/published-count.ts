@@ -66,6 +66,31 @@ export function byTypeSumBasis(code: string): string {
     : "fully equipped types";
 }
 
+/** How a by-type sum was reached, for any sentence that prints one. */
+export const BY_TYPE_METHOD = "counted by aircraft type, not checked plane by plane";
+
+/** The sum in one sentence, for places with room for it: "149 Qatar Airways
+ * aircraft on our fleet list are of types the airline reports finished,
+ * leaving out 11 that aren't confirmed, counted by aircraft type, not checked
+ * plane by plane". */
+export function byTypeSumSentence(cfg: AirlineConfig, sum: number): string {
+  return `${fmt(sum)} ${cfg.name} aircraft on our fleet list are of ${byTypeSumBasis(cfg.code)}, ${BY_TYPE_METHOD}`;
+}
+
+/** The heading over a by-type sum, or over the aircraft it adds up. */
+export const BY_TYPE_SUM_LABEL = "On our fleet list, by aircraft type";
+
+/** The badge's value for a by-type airline. Exactly as long as the
+ * "N aircraft equipped" it replaces, so a badge already on someone's page
+ * keeps its width. */
+export function byTypeBadgeValue(sum: number): string {
+  return `${fmt(sum)}, by aircraft type`;
+}
+
+/** The caption under a by-type sum on the share pictures (set in capitals,
+ * no longer than the longest caption the card already carries). */
+export const BY_TYPE_CARD_CAPTION = "ON OUR LIST, COUNTED BY TYPE";
+
 /** Every aircraft is checked on its own: no aircraft-type rule and no
  * community list settles any of them. Alaska is not this: its type rule marks
  * every E175 on the fleet list, most of its count, the way Qatar's does. */
