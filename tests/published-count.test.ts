@@ -468,8 +468,8 @@ describe("Qatar's own figure on the hub home page", () => {
 
   test("the /airlines table and MCP name the paper beside the figure too", async () => {
     const { text } = await bodyOf("/airlines");
-    expect(text.replace(/<!-- -->/g, "")).toContain(
-      "as of Nov 16, 2026, as reported by The Peninsula"
+    expect(text.replace(/<!-- -->/g, "").replace(/<[^>]+>/g, " ")).toMatch(
+      /as of Nov 16, 2026\s+as reported by The Peninsula/
     );
     const res = await app.dispatch(
       mcpReq(HUB, "tools/call", { name: "get_fleet_stats", arguments: {} }, { query: "?scope=QR" })

@@ -12,7 +12,7 @@ import { aircraftName } from "../airlines/aircraft-families";
 import {
   checkedPlaneByPlane,
   countingMethodSentences,
-  ownCountSourced,
+  ownCountAsOf,
   partlyByType,
   publishedCount,
   trackingMethod,
@@ -260,7 +260,15 @@ function EquippedCell({ o }: { o: AirlineOverview }) {
     return (
       <>
         {fmt(published.count)}
-        <span className="block text-xs text-muted">{ownCountSourced(published)}</span>
+        <span className="block text-xs text-muted">{ownCountAsOf(published)}</span>
+        {published.reportedBy && (
+          // Two short lines: the cell does not wrap, and one long line
+          // widened the table past a phone's screen.
+          <span className="block text-xs text-muted">
+            as reported by
+            <span className="block">{published.reportedBy}</span>
+          </span>
+        )}
       </>
     );
   }
