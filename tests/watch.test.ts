@@ -281,11 +281,48 @@ describe("/cal/{fn}/{date}.ics", () => {
     host: UA_HOST,
   });
 
+  const OFFER = "Add this flight to your calendar";
+
+  test("the calendar offer promises no instant alert and sets the one-time file apart", () => {
+    const date = isoDaysFromNow(5);
+    const pending = renderFlightAnswer(
+      { hasStarlink: null, prediction: { probability: 0.5 }, flights: [] },
+      answerCtx(date, true)
+    ).html;
+    const firm = renderFlightAnswer(
+      { hasStarlink: true, confidence: "verified", flights: [{ tail_number: "N1" }] },
+      answerCtx(date, true)
+    ).html;
+    for (const html of [pending, firm]) {
+      expect(html).toContain("not an instant alert");
+      // The two subscriptions come before the file, which says it will not update.
+      const file = html.indexOf('data-watch="ics"');
+      expect(html.indexOf('data-watch="webcal"')).toBeLessThan(file);
+      expect(html.indexOf('data-watch="google"')).toBeLessThan(file);
+      expect(html.slice(file)).toContain("will not update");
+      // Every link names its destination without the heading around it.
+      expect(html.match(/<span class="sr-only">Add to <\/span>/g)?.length).toBe(2);
+      expect(html).toContain('aria-labelledby="flight-calendar-title"');
+    }
+    // Before assignment the event holds odds, so only a firm card says "this answer".
+    expect(firm).toContain("The event shows this answer");
+    expect(pending).toContain("once we see it assigned");
+    expect(pending).not.toContain("The event shows this answer");
+  });
+
+  test("no calendar offer past the feed's reach or for a date already over", () => {
+    const body = { hasStarlink: null, prediction: { probability: 0.5 }, flights: [] };
+    const far = { ...answerCtx(isoDaysFromNow(331), true), daysOut: 331 };
+    expect(renderFlightAnswer(body, far).html).not.toContain(OFFER);
+    const past = { ...answerCtx(isoDaysFromNow(-3), true), daysOut: -3 };
+    expect(renderFlightAnswer(body, past).html).not.toContain(OFFER);
+  });
+
   test("the answer card carries the Watch row only where the feed serves", async () => {
     const date = isoDaysFromNow(5);
     const body = { hasStarlink: null, prediction: { probability: 0.5 }, flights: [] };
     const on = renderFlightAnswer(body, answerCtx(date, true)).html;
-    expect(on).toContain("Watch this flight");
+    expect(on).toContain(OFFER);
     expect(on).toContain(`webcal://${UA_HOST}/cal/UA100/${date}.ics`);
     expect(renderFlightAnswer(body, answerCtx(date, false)).html).not.toContain("webcal://");
     const { text } = await bodyOf(app, `/check-flight/UA100/${date}`, UA_HOST);
@@ -313,11 +350,9 @@ describe("/cal/{fn}/{date}.ics", () => {
     for (const html of [no, yes]) {
       const caveat = html.indexOf("Aircraft can be swapped before departure.");
       expect(caveat).toBeGreaterThan(-1);
-      expect(html.indexOf("Watch this flight")).toBeGreaterThan(caveat);
+      expect(html.indexOf(OFFER)).toBeGreaterThan(caveat);
     }
-    expect(no.indexOf("Watch this flight")).toBeLessThan(
-      no.indexOf("Starlink flights on this route")
-    );
+    expect(no.indexOf(OFFER)).toBeLessThan(no.indexOf("Starlink flights on this route"));
   });
 
   test("alternative links carry the asked-about date and never say 'today'", () => {
