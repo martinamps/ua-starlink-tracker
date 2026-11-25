@@ -106,11 +106,14 @@ about two weeks out wherever a step asks for gray badges.
         Alaska result. Hover every gray "Starlink ~NN%" badge on an Alaska
         card (if tomorrow shows only blue and green ones, pick a date three
         weeks out, where the AS800-999 flights are gray). *Look for:* the
-        tooltip is "Nearly all of the Alaska Airlines aircraft that fly
-        flights like this one have Starlink. The tracker has no specific
-        aircraft on file for this flight." (or it starts "About NN% of the
-        Alaska Airlines aircraft…" when the share is under 99.5%). It must
-        not say "~2 days before departure", tomorrow or three weeks out.
+        tooltip is "All of the Alaska Airlines aircraft that fly flights
+        like this one have Starlink. The tracker has no specific aircraft on
+        file for this flight." when the badge reads ~100% (the whole
+        subfleet is equipped). Short of that it starts "Over 99% of the
+        Alaska Airlines aircraft…" for a share above 99%, and "About NN% of
+        the Alaska Airlines aircraft…" below, NN being the badge's number.
+        It must not say "~2 days before departure", tomorrow or three weeks
+        out.
         Leave this page open for the next step's last check.
 12. [ ] **Starlink only, three levels (new in 2.3.0).** In another tab,
         search ORD → EWR one way, about two weeks out. *Look for:* gray
@@ -234,20 +237,26 @@ Google Flights lists Hawaiian-operated flights only under Alaska `AS` numbers
       badges; lookups go to `airlinestarlinktracker.com/api/check-any-flight`
       with `flight_number=AS8…`
 - [ ] Search SEA → PDX within ~2 days: Alaska/Horizon E175 results get badges
-- [ ] Far-future SEA → PDX (E175 regional, AS2000+): gray "Starlink ~99%"
+- [ ] Far-future SEA → PDX (E175 regional, AS2000+): gray "Starlink ~NN%"
       badges — Alaska's subfleet answer carries a probability past the
-      assignment window, and the badge caps a prediction at 99%
+      assignment window, and the badge prints that share rounded to the
+      nearest whole number, as the site does. It reads "~100%" only when the
+      tracker answers a `probability` of exactly 1 (every aircraft in the
+      subfleet equipped); anything short of that reads "~99%" at most
 - [ ] Far-future SEA → LAX (mainline 737, AS1-1999): no badge — the mainline
       subfleet is mid-rollout, far below the 80% bar
 - [ ] Far-future HNL → LAX: the AS800-999 results (Hawaiian A330/A321neo) get
-      a gray "Starlink ~99%" badge from the `hawaiian_metal` subfleet
+      a gray "Starlink ~NN%" badge from the `hawaiian_metal` subfleet, by
+      the same rule ("~100%" for a whole subfleet, else "~99%" at most)
 - [ ] Far-future HNL → OGG (interisland, AS1000-1299 on the 717): no badge
 - [ ] (2.3.0) Hover a gray Alaska badge on HNL → LAX or SEA → PDX for
       tomorrow, then on the same search three weeks out. Both times the
-      tooltip is "Nearly all of the Alaska Airlines aircraft that fly flights
-      like this one have Starlink. The tracker has no specific aircraft on
-      file for this flight." For a subfleet under 99.5% it starts "About NN%
-      of the Alaska Airlines aircraft…" instead. It never says "~2 days
+      tooltip is "All of the Alaska Airlines aircraft that fly flights like
+      this one have Starlink. The tracker has no specific aircraft on file
+      for this flight." when the badge reads ~100%. For a share above 99% but
+      short of the whole subfleet it starts "Over 99% of the Alaska Airlines
+      aircraft…", and below that "About NN% of the Alaska Airlines
+      aircraft…", NN being the badge's number. It never says "~2 days
       before departure". Tomorrow's page may show only blue and green badges
       (aircraft already assigned); then there is no gray one to hover, and
       only the three-weeks-out half applies
@@ -276,18 +285,21 @@ had no answer for it and it rightly got no badge.
       - `hasStarlink` is `null`, `confidence` is `"type"` and there is a
         `probability` (the tracker once pull request 195 is deployed): a
         gray "Starlink ~NN%" badge, NN being that probability as a
-        percentage. Its tooltip starts "Scheduled aircraft type (Boeing
+        percentage rounded down, as the site's sentence rounds it (0.9375
+        reads 93, not 94). Its tooltip starts "Scheduled aircraft type (Boeing
         777-300ER): about NN% of that type in the Qatar Airways fleet counts
         as fitted with Starlink." and ends "Qatar Airways doesn't say which
         aircraft flies, and a swap can change the type." It nowhere says the
-        flight "has flown other aircraft". If the probability is under 0.8
-        there is no badge
+        flight "has flown other aircraft". If the probability is exactly 1
+        the badge reads "~100%" and the tooltip says "all of that type". If
+        it is under 0.8 there is no badge
       - `hasStarlink` is `true` (the tracker before it): green "Starlink
         (installed)", as for the A350
 - [ ] DOH → LHR 3+ weeks out, inside the current schedule season: A350
       flights get gray "Starlink ~8x-9x%" (hover starts "At least ~NN% —
       based on the aircraft types on" and cites the number of operating
-      days); the A380 flights get no badge. A flight number that mostly
+      days; NN is rounded down, and reads 99 at most); the A380 flights get
+      no badge. A flight number that mostly
       flies the 777-300ER has its number scaled by that type's fitted share
       once pull request 195 is deployed, and then may fall under 80% and
       show no badge (with "Starlink only" on it dims lightly); before that
