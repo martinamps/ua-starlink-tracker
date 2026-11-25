@@ -30,12 +30,13 @@ Bun + SQLite + server-rendered React, multi-tenant by Host (`src/airlines/regist
 | Starlink verifier | 60 s | Verify UA tails against United.com |
 | Fleet discovery | 90 s | Find newly-equipped UA tails |
 | Alaska verifier | 90 s | HA/AS wifi from alaskaair.com |
-| Alaska tracker | 24 hr | AS per-type counts from Alaska's newsroom tracker → `fleet_progress`; complete types settle per tail |
+| Alaska tracker | 24 hr | AS per-type counts from Alaska's newsroom tracker → `fleet_progress`; complete types settle per tail, unless the chart fails its bounds (`src/database/chart-bounds.ts`), which settles none |
 | Qatar schedule ingester | 1 hr | Per-flight QR equipment → `qatar_schedule` |
 | Archive departures / first-flight watch | 5 min | `departure_log`, `first_flights`; week-old assignment rows move to `flown_assignments` (kept a year) |
 | Fleet sync | 24 hr | Full FR24 fleet pull, every enabled airline |
 | Daily jobs | 24 hr | Ship numbers, fleet progress (+ tails), FAA registry, SEC anchors, BTS, geofeed, crash-row prune |
 | ADS-B sweep, data-freshness gauges | 5 min | Metrics only (FR24 stays the serving source) |
+| IndexNow new tails | 5 min | Reads the equipped list; when a tail is new, submits that tail's changed pages for each live site (40 addresses a site a day; INDEXNOW_DISABLED=1 turns it off) |
 
 Community tail lists are no longer imported: QR rides its type rule + schedule ingester, AS its verifier, and AF serves its last stored guide, dated.
 
