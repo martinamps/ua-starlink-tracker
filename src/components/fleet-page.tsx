@@ -1,5 +1,7 @@
 import { tenantCopy } from "../airlines/aircraft-pages";
+import { ownCountAsOf } from "../airlines/published-count";
 import { AIRLINES, type SiteConfig } from "../airlines/registry";
+import type { AirlineChartCount } from "../database/roster";
 import type { FleetAnchorRow, FleetPageData } from "../types";
 import { ShareCardLink } from "./atoms";
 import { type CiteStat, CiteThis } from "./cite-this";
@@ -91,6 +93,8 @@ interface FleetPageProps {
   pageLinks?: Link[];
   currentPath?: string;
   cite?: CiteStat | null;
+  /** The airline's own chart, while it counts more than the tails named here. */
+  airlineCount?: AirlineChartCount | null;
   /** Served /fleet/{slug} pages. */
   typeLinks?: FleetTypeLink[];
   /** /install-rate when this host serves it. */
@@ -104,6 +108,7 @@ export default function FleetPage({
   pageLinks,
   currentPath,
   cite,
+  airlineCount = null,
   typeLinks = [],
   installRateHref = null,
 }: FleetPageProps) {
@@ -127,10 +132,19 @@ export default function FleetPage({
       <PageHeader
         title={title}
         dek={
-          <>
-            {fmt(data.totalStarlink)} of {fmt(data.totalFleet)} aircraft (
-            {pct(data.totalStarlink, data.totalFleet)}) have Starlink.
-          </>
+          airlineCount && scopeCode ? (
+            <>
+              We can name {fmt(data.totalStarlink)} of {fmt(data.totalFleet)} aircraft (
+              {pct(data.totalStarlink, data.totalFleet)}) with Starlink.{" "}
+              {AIRLINES[scopeCode].shortName}'s own count is {fmt(airlineCount.connected)} of{" "}
+              {fmt(airlineCount.total)} {ownCountAsOf(airlineCount)}.
+            </>
+          ) : (
+            <>
+              {fmt(data.totalStarlink)} of {fmt(data.totalFleet)} aircraft (
+              {pct(data.totalStarlink, data.totalFleet)}) have Starlink.
+            </>
+          )
         }
       >
         <SubfleetLine

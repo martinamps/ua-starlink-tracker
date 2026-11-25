@@ -89,10 +89,34 @@ export function tenantProgrammeRoster(db: Database, code: string): RosterTail[] 
   ];
 }
 
+/**
+ * The airline's own by-type chart, as stored with the chart's own date, for
+ * the case where it counts more aircraft than this site can name by tail.
+ */
+export interface AirlineChartCount {
+  connected: number;
+  total: number;
+  /** The chart's own "last updated" date, YYYY-MM-DD. Printed beside the count. */
+  asOf: string;
+  sourceLabel: string;
+  url: string;
+  /** The chart is at least as new as the newest named tail, so it leads the
+   * headline; false = the named count leads and the chart sits beside it. */
+  leads: boolean;
+  /** Per family, the aircraft the chart counts beyond the tails named here. */
+  unnamed: Array<{ family: string; count: number }>;
+  /** Families where the fleet list and the chart differ in size; `chart` is
+   * null for a family the chart leaves out. */
+  rosterDiff: Array<{ family: string; ours: number; chart: number | null }>;
+}
+
 export interface ProgrammeHeadline extends RosterCount {
   noun: string;
   /** One row per partner slice, for the hero's segment list. */
   partners: Array<RosterCount & { label: string }>;
+  /** Set by programmeHeadlineWithChart (airline-count.ts); null or absent
+   * when the airline's chart counts no more than the named tails. */
+  airlineCount?: AirlineChartCount | null;
 }
 
 /** The tenant headline over tenantProgrammeRoster; null for an airline with no

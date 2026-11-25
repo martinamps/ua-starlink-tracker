@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { Link } from "../../components/layout";
+import type { AirlineChartCount } from "../../database/roster";
 import type { Aircraft, FleetStats, PerAirlineStat, RecentInstall } from "../../types";
 import type { AirlineCode, KnownAirlineCode, SiteConfig, Tenant } from "../registry";
 import { content as af } from "./af";
@@ -31,6 +32,9 @@ export interface ContentStats {
   noun?: string;
   /** The partner slices inside that headline, one per partner. */
   partners?: Array<{ label: string; starlink: number; total: number }>;
+  /** The airline's own stored chart, while it counts more than the tails
+   * named here (starlinkCount stays the named count). */
+  airlineCount?: AirlineChartCount | null;
 }
 
 /**
