@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import { isStarlinkProvider } from "../../database/sql/equipped";
 import type {
   FleetFamily,
@@ -313,7 +314,10 @@ export function TailRegistry({
           : "to open it on FlightAware."}
       </p>
       <ProviderLegend counts={counts} labels={labels} className="mb-4" />
-      <div className="bg-surface border border-subtle rounded-lg p-4 font-mono text-xs leading-[1.7] columns-[20ch] gap-x-3">
+      <div
+        className="tail-registry bg-surface border border-subtle rounded-lg p-4 font-mono text-xs leading-[1.7] columns-[20ch] gap-x-3"
+        style={{ "--tail-rows": allTails.length } as CSSProperties}
+      >
         {allTails.map((t) => {
           const dot = registryDot(t, marks);
           const own = tailHref?.(t.tail) ?? null;
