@@ -1,4 +1,5 @@
 import type { CheckFlightBody } from "../../client/flight-answer";
+import type { TypeOutlookRef } from "../outlook-copy";
 
 export interface FlightRouteFact {
   departure_airport: string;
@@ -61,6 +62,9 @@ export interface FlightFacts {
   notObservedSince?: number | null;
   /** aircraftTypes with their /fleet/{slug} page, each page linked once. */
   aircraftTypeLinks?: Array<{ label: string; href: string | null }>;
+  /** The rollout outlook of the type seen on this number most recently, where
+   * that type is still being fitted and its pace was backtested. */
+  typeOutlook?: TypeOutlookRef | null;
 }
 
 /** A permalink segment that is not a flight number this site can answer for.

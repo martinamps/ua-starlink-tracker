@@ -25,7 +25,9 @@ export interface RouteMonth {
   departures: number;
   starlink: number;
   share: number;
-  /** False for the current month, which is still filling. */
+  /** False for the current month, which is still filling, and for a month
+   * that began before the departure history we keep: neither is a month's
+   * worth of departures. */
   complete: boolean;
 }
 
@@ -76,7 +78,9 @@ export function isStarlinkDeparture(d: RouteDeparture): boolean {
 export function routeMonths(
   departures: readonly RouteDeparture[],
   now: number,
-  count = 4
+  count = 4,
+  /** Unix seconds the departure history reaches back to, when it is cut. */
+  historyFrom?: number
 ): RouteMonth[] {
   const keys = monthKeys(now, count);
   const current = monthKey(now);
@@ -88,7 +92,9 @@ export function routeMonths(
       departures: inMonth.length,
       starlink,
       share: inMonth.length ? starlink / inMonth.length : 0,
-      complete: month !== current,
+      complete:
+        month !== current &&
+        (historyFrom === undefined || Date.parse(`${month}-01T00:00:00Z`) / 1000 >= historyFrom),
     };
   });
 }
@@ -129,8 +135,9 @@ export function routeOutlook(opts: {
   outlooks: ReadonlyMap<string, TypeOutlook>;
   now: number;
   monthsBack?: number;
+  historyFrom?: number;
 }): RouteOutlook {
-  const months = routeMonths(opts.departures, opts.now, opts.monthsBack ?? 4);
+  const months = routeMonths(opts.departures, opts.now, opts.monthsBack ?? 4, opts.historyFrom);
   const windowStart = Date.parse(`${months[0].month}-01T00:00:00Z`) / 1000;
   const inWindow = opts.departures.filter(
     (d) => d.departedAt >= windowStart && d.departedAt <= opts.now + DAY_SEC

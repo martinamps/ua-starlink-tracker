@@ -12,8 +12,10 @@ import { slotFlightKey } from "../airlines/flight-number";
 import { FLEET, OUTLOOK_BACKTEST, type TypeOutlook, typeOutlook } from "../outlook/pace";
 import { publishedTargets } from "../outlook/published";
 import { type RouteDeparture, type RouteOutlook, monthKeys, routeOutlook } from "../outlook/route";
+import { ADSB_FLIGHT_DRAW_RETENTION_DAYS } from "./adsb-flight-draws";
 import { fleetRoster, programmeRoster } from "./roster";
 import { placeholders } from "./sql/fragments";
+import { DAY_SEC } from "./sql/windows";
 
 const ISO_DAY = /^(\d{4}-\d{2}-\d{2})/;
 
@@ -35,6 +37,15 @@ export function listingTimes(db: Database, airline: string): Map<string, number 
     .all(airline) as Array<{ tail: string; found: string | null }>;
   return new Map(rows.map((r) => [r.tail, listingTime(r.found)]));
 }
+
+/**
+ * Airlines whose install dates the backtest replayed (reports/
+ * rollout-outlook.md). A page states an outlook for these only: elsewhere a
+ * listing date can be a whole type settling on one day, which is not a pace.
+ */
+const BACKTESTED_AIRLINES: ReadonlySet<string> = new Set(["UA"]);
+
+export const hasBacktestedOutlook = (airline: string) => BACKTESTED_AIRLINES.has(airline);
 
 export interface AirlineOutlook {
   airline: string;
@@ -91,7 +102,7 @@ export function routeOutlookFor(
   now: number,
   outlook: AirlineOutlook = airlineOutlook(db, airline, now)
 ): RouteOutlookResult | null {
-  if (airline !== "UA") return null;
+  if (!hasBacktestedOutlook(airline)) return null;
   const windowStart = Date.parse(`${monthKeys(now, ROUTE_MONTHS)[0]}-01T00:00:00Z`) / 1000;
 
   const pairsByKey = new Map<string, Set<string>>();
@@ -159,6 +170,9 @@ export function routeOutlookFor(
       outlooks,
       now,
       monthsBack: ROUTE_MONTHS,
+      // The draws are pruned past the retention, so the oldest month read is
+      // usually a few days of departures, not a month.
+      historyFrom: now - ADSB_FLIGHT_DRAW_RETENTION_DAYS * DAY_SEC,
     }),
     flightNumbers,
     excludedFlightNumbers,

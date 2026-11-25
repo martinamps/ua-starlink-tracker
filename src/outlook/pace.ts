@@ -97,6 +97,10 @@ export interface PublishedTarget {
    * target is every tail of the scope. */
   count?: number;
   statedOn: string;
+  /** The statement as a clause after "{Airline}'s target is": "every aircraft by the
+   * end of 2027". Absent where the deadline has no plain reading, and then no
+   * page sentence is built on it. */
+  says?: string;
   source: { title: string; url: string };
 }
 
@@ -139,6 +143,8 @@ export interface TypeOutlook {
   share: number;
   /** Equipped tails with no install date: counted, but not in the pace. */
   undated: number;
+  /** Earliest dated install (unix seconds); null when none is dated. */
+  firstInstalledAt: number | null;
   pace: PaceWindow[];
   trend: PaceTrend;
   status: TypeOutlookStatus;
@@ -218,6 +224,7 @@ export function typeOutlook(input: TypeOutlookInput): TypeOutlook {
     remaining,
     share: total > 0 ? equipped / total : 0,
     undated: input.installedAt.length - dated.length,
+    firstInstalledAt: dated.length > 0 ? dated.reduce((a, b) => Math.min(a, b)) : null,
     pace,
     trend: paceTrend(pace),
     status,

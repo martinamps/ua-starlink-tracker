@@ -18,6 +18,7 @@ import {
   type AircraftPageDef,
   SHARE_KINDS,
   type TypeFaqItem,
+  aircraftPageForFamily,
   aircraftPagesFor,
   aircraftTypeFaq,
   aircraftTypeTitle,
@@ -178,6 +179,12 @@ import NewlyEquippedPage, {
   operatorLabel,
 } from "../components/newly-equipped-page";
 import NotFoundPage from "../components/not-found-page";
+import {
+  type RouteOutlookView,
+  type TypeOutlookRef,
+  routeOutlookView as buildRouteOutlookView,
+  hasTypeOutlook,
+} from "../components/outlook-copy";
 import Page, { buildContentStats } from "../components/page";
 import RoutePage from "../components/route-page";
 import RoutePlannerPage from "../components/route-planner-page";
@@ -3475,7 +3482,14 @@ const checkFlightPage: Handler = async (ctx) => {
       `/check-flight/${fn}`,
       flightPageMeta(ctx, reader, fn, cfg, facts, dated),
       {
-        flight: { ...facts, aircraftTypeLinks: aircraftTypeLinks(ctx, facts.aircraftTypes) },
+        flight: {
+          ...facts,
+          aircraftTypeLinks: aircraftTypeLinks(ctx, facts.aircraftTypes),
+          // The type seen on the number most recently: what the next one is likeliest to be.
+          typeOutlook: facts.aircraftTypes[0]
+            ? typeOutlookRef(ctx, reader, cfg, normalizeAircraftType(facts.aircraftTypes[0]))
+            : null,
+        },
         dated,
       }
     );
@@ -3631,6 +3645,18 @@ function computePlannerPopularRoutes(ctx: RequestContext): RoutePair[] {
   return [...picked.values()];
 }
 
+function routeOutlookView(
+  ctx: RequestContext,
+  cfg: AirlineConfig,
+  origin: string,
+  destination: string
+): RouteOutlookView | null {
+  const route = ctx.reader.getRouteOutlook(origin, destination);
+  return route
+    ? buildRouteOutlookView(route, (family) => typeOutlookRef(ctx, ctx.reader, cfg, family))
+    : null;
+}
+
 const routePlannerPage: Handler = (ctx) => {
   // Per-route permalinks: /route-planner/{origin}/{destination}. Unknown pairs
   // 404 so the ~10k links off the flight permalinks can't collapse into one
@@ -3677,6 +3703,7 @@ const routePlannerPage: Handler = (ctx) => {
         flightNumbers,
         reverseLinkable,
         airportLinks,
+        outlook: routeOutlookView(ctx, cfg, parsed.origin, parsed.destination),
       }
     );
   }
@@ -3936,6 +3963,7 @@ const aircraftTypePage: Handler = (ctx) => {
       checkFlight: ctx.site.features.checkFlightPage,
       // Specs describe United's configurations; Alaska's cabins differ.
       spec: cfg.code === "UA" ? (AIRCRAFT_SPECS[def.family] ?? null) : null,
+      outlook: typeOutlookRef(ctx, ctx.reader, cfg, def.family),
     },
     200,
     data.lastmodIso
@@ -4073,6 +4101,31 @@ function aircraftTypeLinks(
     used.add(def.slug);
     return { label, href: `/fleet/${def.slug}` };
   });
+}
+
+/**
+ * One family's rollout outlook for a page of `cfg`'s, or null where the page
+ * should say nothing: no backtested pace for the airline, a family without a
+ * type page (so without a name a reader knows), or a type already complete.
+ */
+function typeOutlookRef(
+  ctx: RequestContext,
+  reader: ScopedReader,
+  cfg: AirlineConfig,
+  family: string
+): TypeOutlookRef | null {
+  const all = reader.getRolloutOutlook();
+  const outlook = all?.families.find((f) => f.family === family);
+  const def = aircraftPageForFamily(cfg.code, family);
+  if (!all || !outlook || !def || !hasTypeOutlook(outlook)) return null;
+  const served = tenantConfig(ctx.tenant) && servedAircraftPages(ctx).includes(def);
+  return {
+    airline: cfg.shortName,
+    short: def.short,
+    href: served ? `/fleet/${def.slug}` : null,
+    outlook,
+    now: all.now,
+  };
 }
 
 const methodologyPage: Handler = (ctx) => {

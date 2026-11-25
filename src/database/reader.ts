@@ -29,7 +29,7 @@ import type {
   ReportedInstall,
   RouteSchedule,
 } from "../types";
-import { memo } from "../utils/ttl-cache";
+import { lruCache, memo } from "../utils/ttl-cache";
 import {
   type AdsbFlightDraw,
   getAdsbFlightDraws,
@@ -149,10 +149,18 @@ import {
   routeHasData,
   routeIsRecent,
 } from "./database";
+import {
+  type AirlineOutlook,
+  type RouteOutlookResult,
+  airlineOutlook,
+  hasBacktestedOutlook,
+  routeOutlookFor,
+} from "./outlook";
 import { type ProgrammeHeadline, programmeHeadline } from "./roster";
 import { type RouteFlightLeg, getAllFlightLegs, getRouteFlightLegs } from "./route-flights";
 import { getRouteFlightLastSeen } from "./route-history";
 import { capToQuietSources } from "./source-health";
+import { unixNow } from "./sql/windows";
 import {
   type TailDepartures,
   type TailFlight,
@@ -182,6 +190,11 @@ const DEPARTURE_AGGREGATE_MEMO = { ttlSec: 60, maxEntries: 64 };
  * pages' index rule should not flip between two requests a minute apart.
  */
 const AIRPORT_HISTORY_MEMO = { ttlSec: 900, maxEntries: 1 };
+// Install dates move with the hourly scrape, a month's share with the 5-minute
+// sweep; neither changes a sentence inside a quarter of an hour. The route
+// cache is keyed by a caller's URL, so it has a hard ceiling.
+const OUTLOOK_MEMO = { ttlSec: 900, maxEntries: 1 };
+const ROUTE_OUTLOOK_CACHE = { ttlSec: 900, maxEntries: 512 };
 
 export type Scope = AirlineCode | "ALL";
 
@@ -391,6 +404,13 @@ export interface ScopedReader {
   /** Existence + Starlink count for the served gate, without the full page pass. */
   getAircraftTypeGate(slug: string): { total: number; starlink: number } | null;
 
+  /** Per-type install pace and outlook; null on the hub and for an airline
+   * whose install dates were never backtested. */
+  getRolloutOutlook(): AirlineOutlook | null;
+  /** A route's Starlink share by month and the types that fly it; null where
+   * getRolloutOutlook is. */
+  getRouteOutlook(origin: string, destination: string): RouteOutlookResult | null;
+
   // QR equipment history + fetch coverage; airline-agnostic like qatar_schedule.
   getQatarEquipmentHistory(
     variants: readonly string[],
@@ -470,6 +490,12 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
   const rankedMemo = memo<Array<{ origin: string; destination: string }>>(DEPARTURE_AGGREGATE_MEMO);
   const airportHistoryMemo = memo<AirportHistory>(AIRPORT_HISTORY_MEMO);
   const tailIndexMemo = memo<TailIndexEntry[]>(DEPARTURE_AGGREGATE_MEMO);
+  const outlookMemo = memo<AirlineOutlook>(OUTLOOK_MEMO);
+  const routeOutlookCache = lruCache<RouteOutlookResult | null>(ROUTE_OUTLOOK_CACHE);
+  const rolloutOutlook = (): AirlineOutlook | null =>
+    scope === "ALL" || !hasBacktestedOutlook(scope)
+      ? null
+      : outlookMemo(scope, () => airlineOutlook(db, scope, unixNow()));
   const r: ScopedReader = {
     scope,
     airlines,
@@ -600,6 +626,17 @@ function buildReader(db: Database, scope: Scope): ScopedReader {
     getAircraftTypePage: (slug) =>
       scope === "ALL" ? null : getAircraftTypePageData(db, scope, slug),
     getAircraftTypeGate: (slug) => (scope === "ALL" ? null : getAircraftTypeGate(db, scope, slug)),
+    getRolloutOutlook: rolloutOutlook,
+    getRouteOutlook: (origin, destination) => {
+      const outlook = rolloutOutlook();
+      if (scope === "ALL" || !outlook) return null;
+      const key = `${origin}-${destination}`;
+      const hit = routeOutlookCache.get(key);
+      if (hit !== undefined) return hit;
+      const value = routeOutlookFor(db, scope, origin, destination, unixNow(), outlook);
+      routeOutlookCache.set(key, value);
+      return value;
+    },
   };
   return Object.freeze(r);
 }

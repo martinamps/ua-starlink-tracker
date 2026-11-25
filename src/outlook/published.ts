@@ -26,6 +26,7 @@ const FAMILY_TARGETS: Record<
         label: "Entire widebody fleet equipped by summer 2027",
         deadline: "2027-09-22",
         statedOn: "2026-06-22",
+        says: "its entire widebody fleet by summer 2027",
         source: UA_WIDEBODY_2026_06_22,
       },
     },
@@ -44,7 +45,10 @@ export function publishedTargets(airline: string, family: string): PublishedTarg
     .map((e) => e.target);
   for (const t of rolloutTargets(airline)) {
     const base = { label: t.label, deadline: t.deadline, statedOn: t.statedOn, source: t.source };
-    if (t.fractionOfTracked === 1 && !t.fractionSpans && !t.statedFleet) out.push(base);
+    // Only a year-end deadline has a plain reading to put in the airline's mouth.
+    const yearEnd = t.deadline.match(/^(\d{4})-12-31$/)?.[1];
+    if (t.fractionOfTracked === 1 && !t.fractionSpans && !t.statedFleet)
+      out.push(yearEnd ? { ...base, says: `every aircraft by the end of ${yearEnd}` } : base);
     else if (family === FLEET && t.count !== undefined) out.push({ ...base, count: t.count });
   }
   return out;

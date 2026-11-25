@@ -7,6 +7,7 @@ import { aircraftName } from "../../airlines/aircraft-families";
 import type { SiteConfig } from "../../airlines/registry";
 import { airportTimezone } from "../../utils/airport-tz";
 import { Chip, Section, StatInline } from "../layout";
+import { countSentence, followSentence } from "../outlook-copy";
 import { tailHref } from "../tail-link";
 import { fmt, formatDuration, shortDate, zonedDeparture } from "../ui/format";
 import type { FlightFacts } from "./types";
@@ -32,6 +33,7 @@ export function FlightFactBlocks({
   const modelled = !!pred && pred.n_observations > 0;
   const checked = flight.observedTotal > 0;
   const last = flight.lastStarlink;
+  const outlook = flight.typeOutlook ?? null;
   return (
     <>
       {flight.upcoming.length > 0 && (
@@ -133,6 +135,12 @@ export function FlightFactBlocks({
                   </React.Fragment>
                 ))}
                 .
+              </p>
+            )}
+            {outlook && (
+              <p id="type-outlook">
+                {countSentence(outlook.outlook, `${outlook.airline} ${outlook.short}s`)}{" "}
+                {followSentence(outlook.outlook, outlook.airline, outlook.now)}
               </p>
             )}
           </div>
