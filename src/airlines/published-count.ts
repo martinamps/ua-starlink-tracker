@@ -22,9 +22,11 @@ import { type AirlineConfig, wifiPhaseFamilies } from "./registry";
 import {
   type AirlineOwnCount,
   type AirlineOwnTypeSum,
+  type RolloutFact,
   airlineOwnCount,
   airlineOwnTypeSum,
   airlineOwnTypeTotal,
+  factsForCode,
   formatFactDate,
 } from "./rollout-facts";
 
@@ -114,6 +116,22 @@ export function byPublishedCount<T extends { published: PublishedCount }>(rows: 
 /** "as of Aug 21, 2026": the date never leaves an airline's own figure. */
 export function ownCountAsOf(own: Pick<AirlineOwnCount, "asOf">): string {
   return `as of ${formatFactDate(own.asOf)}`;
+}
+
+/** What a by-type site prints beside its fleet-list sum: the airline's own
+ * dated count where a current fact carries one, else its newest current dated
+ * fact quoted whole, so the line can never name a figure a later fact retired. */
+export type OwnFigureNote =
+  | { kind: "count"; own: AirlineOwnCount }
+  | { kind: "fact"; fact: RolloutFact & { asOf: string } };
+
+export function ownFigureNote(code: string): OwnFigureNote | null {
+  const own = airlineOwnCount(code);
+  if (own) return { kind: "count", own };
+  const fact = (factsForCode(code)?.facts ?? [])
+    .filter((f): f is RolloutFact & { asOf: string } => !f.superseded && Boolean(f.asOf))
+    .sort((a, b) => b.asOf.localeCompare(a.asOf))[0];
+  return fact ? { kind: "fact", fact } : null;
 }
 
 export function ownCountCredit(cfg: AirlineConfig, own: AirlineOwnCount): string {

@@ -36,6 +36,7 @@ import {
   type AirlineConfig,
   type AnalyticsConfig,
   SITES,
+  heldBackCount,
   hubLookupAirlines,
   siteForAirline,
 } from "../airlines/registry";
@@ -1975,9 +1976,14 @@ function aircraftShare(starlink: number, total: number, rosterIsProgramScope: bo
 
 /** An airline known by aircraft type has no count of its own here: the sum of
  * its finished types is labelled as that, never as "N aircraft have Starlink",
- * and the airline's own figure rides beside it with its date. */
-function byTypeCount(starlink: number): string {
-  return `counted by aircraft type, not plane by plane: ${starlink} aircraft on the fleet list are of a type whose whole fleet has Starlink (a fleet-list sum, not a count of installs)`;
+ * and the airline's own figure rides beside it with its date. "Whole fleet"
+ * is said only while no aircraft of those types is held back. */
+function byTypeCount(starlink: number, heldBack: number): string {
+  const what =
+    heldBack > 0
+      ? `are of a type the airline reports finished, after leaving out ${heldBack} aircraft of those types that aren't confirmed`
+      : "are of a type whose whole fleet has Starlink";
+  return `counted by aircraft type, not plane by plane: ${starlink} aircraft on the fleet list ${what} (a fleet-list sum, not a count of installs)`;
 }
 
 function ownFigure(own: AirlineOwnCount): string {
@@ -2020,7 +2026,7 @@ function toolGetFleetStats(reader: ScopedReader): ToolResult {
     const lines = per.map((a) => {
       const sourced = byType(a) ? byTypeSourced(a.code) : null;
       const count = byType(a)
-        ? `${byTypeCount(a.starlink)}${sourced ? `; ${sourced}` : ""}`
+        ? `${byTypeCount(a.starlink, heldBackCount(a.code))}${sourced ? `; ${sourced}` : ""}`
         : `${floor(a) ? "at least " : ""}${aircraftShare(a.starlink, a.total, inScope(a))}`;
       return `**${a.name}**: ${count}${a.phaseNote ? ` — ${a.phaseNote}` : ""}`;
     });
@@ -2061,7 +2067,7 @@ ${lines.join("\n")}`;
   const text = [
     `${cfg.name} Starlink Installation Progress (as of ${lastUpdated}):`,
     trackingMethod(cfg) === "type"
-      ? `**Combined Fleet**: ${byTypeCount(starlinkPlanes.length)}.${own ? `\n**The airline's own figure**: ${ownFigure(own)}` : sum ? `\n**Per-type counts on file**: ${typeSumLine(sum)}` : ""}`
+      ? `**Combined Fleet**: ${byTypeCount(starlinkPlanes.length, heldBackCount(cfg.code))}.${own ? `\n**The airline's own figure**: ${ownFigure(own)}` : sum ? `\n**Per-type counts on file**: ${typeSumLine(sum)}` : ""}`
       : programme
         ? `**${programme.noun} (the site's headline)**: ${aircraftShare(programme.equipped, programme.total, inScope)} have Starlink WiFi\n**${cfg.shortName}-operated only**: ${ownLine}`
         : `**Combined Fleet**: ${ownLine}`,
@@ -2103,10 +2109,12 @@ function toolListStarlinkAircraft(
   const carrier =
     reader.scope === "ALL" ? "tracked airlines" : AIRLINES[reader.scope]?.name || reader.scope;
   const scopeCfg = reader.scope === "ALL" ? undefined : AIRLINES[reader.scope];
-  // A by-type list is every aircraft of the finished types, not checked tails.
+  // A by-type list is every aircraft of the finished types that isn't held
+  // back, not checked tails.
+  const held = scopeCfg ? heldBackCount(scopeCfg.code) : 0;
   const noun =
     scopeCfg && trackingMethod(scopeCfg) === "type"
-      ? "aircraft of fully equipped types (counted by aircraft type, not checked plane by plane)"
+      ? `aircraft of ${held > 0 ? `types the airline reports finished, leaving out ${held} that aren't confirmed` : "fully equipped types"} (counted by aircraft type, not checked plane by plane)`
       : "Starlink-equipped aircraft";
   const header = fleet
     ? `${total} ${noun} in the ${carrier} ${fleet} fleet`
