@@ -144,8 +144,20 @@ export function ownFigureNote(code: string): OwnFigureNote | null {
   return fact ? { kind: "fact", fact } : null;
 }
 
+/** "as of Nov 16, 2026, as reported by The Peninsula": the date, and the
+ * publisher too when the figure reached us through one. */
+export function ownCountSourced(own: AirlineOwnCount): string {
+  return `${ownCountAsOf(own)}${own.reportedBy ? `, as reported by ${own.reportedBy}` : ""}`;
+}
+
+/** The words before the source link. From the airline's own page: "per Qatar
+ * Airways as of Aug 21, 2026", the link following in brackets. Through
+ * another publisher: "the airline's own figure as of Nov 16, 2026, as
+ * reported by", and the link is that publisher's name. */
 export function ownCountCredit(cfg: AirlineConfig, own: AirlineOwnCount): string {
-  return `per ${cfg.name} ${ownCountAsOf(own)}`;
+  return own.reportedBy
+    ? `the airline's own figure ${ownCountAsOf(own)}, as reported by`
+    : `per ${cfg.name} ${ownCountAsOf(own)}`;
 }
 
 const listed = (parts: string[]) =>

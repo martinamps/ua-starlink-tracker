@@ -221,6 +221,12 @@ describe("no Qatar page or MCP answer calls a type complete beside a table that 
       expect(home).toContain(
         `Qatar's own figure is ${note.own.count} as of ${formatFactDate(note.own.asOf)}`
       );
+      // A figure that reached us through a newspaper names the newspaper.
+      if (note.own.reportedBy) {
+        expect(home.replace(/\s+/g, " ")).toContain(
+          `as of ${formatFactDate(note.own.asOf)}, as reported by ${note.own.reportedBy} .`
+        );
+      }
     } else if (note?.kind === "fact") {
       expect(own).toBeNull();
       expect(note.fact.asOf).toBe(newest);

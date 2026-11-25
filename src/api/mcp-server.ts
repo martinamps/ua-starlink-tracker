@@ -1987,7 +1987,7 @@ function byTypeCount(starlink: number, heldBack: number): string {
 }
 
 function ownFigure(own: AirlineOwnCount): string {
-  return `${own.count} aircraft as of ${own.asOf} (${own.sourceLabel}: ${own.url})`;
+  return `${own.count} aircraft as of ${own.asOf} (${own.reportedBy ? `as reported by ${own.reportedBy}` : own.sourceLabel}: ${own.url})`;
 }
 
 /** The sum is made here; the source states only the per-type counts. */

@@ -26,7 +26,21 @@ function OwnFigure() {
     return (
       <>
         {" "}
-        Qatar's own figure is {fmt(note.own.count)} {ownCountAsOf(note.own)}.
+        Qatar's own figure is {fmt(note.own.count)} {ownCountAsOf(note.own)}
+        {note.own.reportedBy && (
+          <>
+            , as reported by{" "}
+            <a
+              href={note.own.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-accent hover:underline"
+            >
+              {note.own.reportedBy}
+            </a>
+          </>
+        )}
+        .
       </>
     );
   }

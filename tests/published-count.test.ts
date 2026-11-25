@@ -9,6 +9,8 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { copyFileSync, rmSync } from "node:fs";
 import {
   checkedPlaneByPlane,
+  ownCountCredit,
+  ownCountSourced,
   partlyByType,
   publishedCount,
   statedCount,
@@ -413,7 +415,14 @@ describe("hub home page", () => {
       expect(row).toContain("by aircraft type");
       const own = airlineOwnCount(cfg.code);
       if (own) {
-        expect(row).toMatch(/aircraft with Starlink, per [^<]+ as of \w+ \d/);
+        // The airline's page is credited to the airline; another publisher's
+        // report of the airline's figure names that publisher as the link.
+        expect(row).toMatch(
+          own.reportedBy
+            ? /aircraft with Starlink, the airline(&#x27;|')s own figure as of \w+ \d[^<]*, as reported by <a /
+            : /aircraft with Starlink, per [^<]+ as of \w+ \d/
+        );
+        if (own.reportedBy) expect(row).not.toContain(`per ${cfg.name}`);
         expect(row).toContain(`href="${own.url}"`);
       } else if (airlineOwnTypeSum(cfg.code)) {
         const sum = airlineOwnTypeSum(cfg.code);
@@ -441,16 +450,67 @@ describe("Qatar's own figure on the hub home page", () => {
     const at = text.indexOf(`>${qr.name}</a>`);
     expect(at).toBeGreaterThan(-1);
     const row = text.slice(at, text.indexOf("</li>", at)).replace(/<!-- -->/g, "");
-    expect(row.replace(/<[^>]+>/g, "")).toContain(
-      "170 aircraft with Starlink, per Qatar Airways as of Nov 16, 2026"
+    expect(own?.reportedBy).toBe("The Peninsula");
+    expect(row.replace(/<[^>]+>/g, "").replace(/&#x27;/g, "'")).toContain(
+      "170 aircraft with Starlink, the airline's own figure as of Nov 16, 2026, as reported by The Peninsula."
     );
+    expect(row).not.toContain("per Qatar Airways");
     expect(row).toContain(`href="${own?.url}"`);
 
     const answer =
       text.match(
         /"name":"Which airline has the most Starlink planes\?","acceptedAnswer":\{"@type":"Answer","text":"([^"]*)"/
       )?.[1] ?? "";
-    expect(answer).toMatch(/Qatar Airways(, with | \()170, its own figure as of Nov 16, 2026/);
+    expect(answer).toMatch(
+      /Qatar Airways(, with | \()170, its own figure as of Nov 16, 2026, as reported by The Peninsula/
+    );
+  });
+
+  test("the /airlines table and MCP name the paper beside the figure too", async () => {
+    const { text } = await bodyOf("/airlines");
+    expect(text.replace(/<!-- -->/g, "")).toContain(
+      "as of Nov 16, 2026, as reported by The Peninsula"
+    );
+    const res = await app.dispatch(
+      mcpReq(HUB, "tools/call", { name: "get_fleet_stats", arguments: {} }, { query: "?scope=QR" })
+    );
+    const stats = toolText(await res.json()).text;
+    expect(stats).toContain(
+      "170 aircraft as of 2026-11-16 (as reported by The Peninsula: https://"
+    );
+  });
+});
+
+describe("crediting an airline's own figure", () => {
+  const cfg = { name: "Example Air" } as AirlineConfig;
+  const own = { count: 12, asOf: "2026-08-21", sourceLabel: "Example Air press release", url: "x" };
+  const relayed = { ...own, sourceLabel: "The Daily", reportedBy: "The Daily" };
+
+  test("from the airline's own page it is credited to the airline", () => {
+    expect(ownCountCredit(cfg, own)).toBe("per Example Air as of Aug 21, 2026");
+    expect(ownCountSourced(own)).toBe("as of Aug 21, 2026");
+  });
+
+  test("through another publisher it is the airline's figure as that publisher reported it", () => {
+    expect(ownCountCredit(cfg, relayed)).toBe(
+      "the airline's own figure as of Aug 21, 2026, as reported by"
+    );
+    expect(ownCountCredit(cfg, relayed)).not.toContain("per Example Air");
+    expect(ownCountSourced(relayed)).toBe("as of Aug 21, 2026, as reported by The Daily");
+  });
+
+  test("a second-hand source is marked on the stored fact, and only there", () => {
+    for (const entry of AIRLINE_FACTS) {
+      for (const f of entry.facts) {
+        // A page labelled as the airline's own is not another publisher's report.
+        if (f.source.secondHand) expect(f.source.label, entry.slug).not.toContain(entry.shortName);
+      }
+      if (!entry.trackedCode) continue;
+      const count = airlineOwnCount(entry.trackedCode);
+      if (!count) continue;
+      const fact = entry.facts.find((f) => f.source.url === count.url);
+      expect(count.reportedBy).toBe(fact?.source.secondHand ? fact.source.label : undefined);
+    }
   });
 });
 

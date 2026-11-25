@@ -12,7 +12,7 @@ import { aircraftName } from "../airlines/aircraft-families";
 import {
   checkedPlaneByPlane,
   countingMethodSentences,
-  ownCountAsOf,
+  ownCountSourced,
   partlyByType,
   publishedCount,
   trackingMethod,
@@ -260,7 +260,7 @@ function EquippedCell({ o }: { o: AirlineOverview }) {
     return (
       <>
         {fmt(published.count)}
-        <span className="block text-xs text-muted">{ownCountAsOf(published)}</span>
+        <span className="block text-xs text-muted">{ownCountSourced(published)}</span>
       </>
     );
   }

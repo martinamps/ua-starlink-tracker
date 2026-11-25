@@ -18,7 +18,7 @@ import { fmt } from "../../components/ui/format";
 import {
   byPublishedCount,
   countingMethodSentences,
-  ownCountAsOf,
+  ownCountSourced,
   publishedCount,
   typeSumFigure,
 } from "../published-count";
@@ -258,7 +258,7 @@ export const content: AirlineContent = {
           r.published.basis === "tracked"
             ? `${fmt(r.published.count)}${operatedBy(r.code)}`
             : r.published.basis === "airline"
-              ? `${fmt(r.published.count)}, its own figure ${ownCountAsOf(r.published)}`
+              ? `${fmt(r.published.count)}, its own figure ${ownCountSourced(r.published)}`
               : r.published.basis === "type-sum"
                 ? typeSumFigure(r.published)
                 : null;
