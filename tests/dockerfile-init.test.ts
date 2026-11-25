@@ -27,6 +27,37 @@ describe("Dockerfile runs the server under an init", () => {
   });
 });
 
+// A plain install resolves package.json's ranges on build day, so production
+// ran package versions no test had run under.
+describe("Dockerfile installs what bun.lock holds", () => {
+  const lines = readFileSync(join(import.meta.dir, "..", "Dockerfile"), "utf8")
+    .split("\n")
+    .map((l) => l.trim());
+  const installs = lines.flatMap((l, i) => (/^RUN .*\bbun (install|i|add)\b/.test(l) ? [i] : []));
+
+  test("the only install is frozen, after the lockfile is copied", () => {
+    expect(installs).toHaveLength(1);
+    expect(lines[installs[0]]).toBe("RUN bun install --frozen-lockfile");
+    const copy = lines.findIndex((l) => /^COPY (?:.* )?bun\.lock .*\.\/$/.test(l));
+    expect(copy).toBeGreaterThan(-1);
+    expect(copy).toBeLessThan(installs[0]);
+    expect(lines[copy]).toContain("package.json");
+  });
+
+  test("the browser comes from the installed Playwright, not a fresh download of the CLI", () => {
+    const browser = lines.findIndex((l) => l === "RUN bunx playwright install chromium");
+    expect(browser).toBeGreaterThan(installs[0]);
+  });
+
+  test(".dockerignore lets bun.lock into the build", () => {
+    const ignored = readFileSync(join(import.meta.dir, "..", ".dockerignore"), "utf8")
+      .split("\n")
+      .map((l) => l.trim());
+    expect(ignored).not.toContain("bun.lock");
+    expect(ignored).not.toContain("*.lock");
+  });
+});
+
 describe("countZombieChildren", () => {
   const fake = (stats: Record<string, string>) => ({
     pids: () => Object.keys(stats),

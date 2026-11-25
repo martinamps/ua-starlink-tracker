@@ -26,8 +26,13 @@ RUN apt-get update && apt-get install -y \
     unzip \
     && rm -rf /var/lib/apt/lists/*
 
-COPY package.json .
-RUN bun install
+# bun.lock is what CI's tests ran under. A plain `bun install` here once took
+# whatever was newest on build day (Playwright six minors past the lockfile), so
+# two builds of one commit differed and a revert didn't bring its packages back.
+# --frozen-lockfile fails the build if package.json and bun.lock disagree.
+# tests/dockerfile-init.test.ts keeps these lines.
+COPY package.json bun.lock ./
+RUN bun install --frozen-lockfile
 
 # Install Playwright's bundled Chromium to the same path used by scripts
 ENV PLAYWRIGHT_BROWSERS_PATH=/app/do_not_commit/playwright-browsers
