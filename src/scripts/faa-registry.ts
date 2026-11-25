@@ -39,6 +39,27 @@ export interface FaaSyncResult {
 const REGISTERED_STATUS = new Set(["V", "14", "15", "24", "25", "26", "28"]);
 const isRegistered = (statusCode: string) => REGISTERED_STATUS.has(statusCode);
 
+// Meanings for the flag's log line only. A code missing here is still flagged,
+// with the bare code shown: the list decides nothing.
+const STATUS_MEANING: Record<string, string> = {
+  "6": "Administratively Canceled",
+  "7": "Sale Reported",
+  "9": "Registration Revoked",
+  "13": "Registration Expired",
+  "16": "Registration Expired, Pending Cancellation",
+  "27": "Registration Expired",
+  "29": "Registration Expired, Pending Cancellation",
+  D: "Expired Dealer",
+  E: "Revoked by Enforcement Action",
+  W: "Registration Ineffective or Invalid",
+};
+
+function statusReason(statusCode: string): string {
+  if (!statusCode) return "FAA status blank";
+  const meaning = STATUS_MEANING[statusCode];
+  return meaning ? `FAA status ${statusCode} (${meaning})` : `FAA status ${statusCode}`;
+}
+
 // FAA N-NUMBER columns carry no leading N.
 const stripN = (tail: string) => tail.trim().toUpperCase().replace(/^N/, "");
 
@@ -181,7 +202,7 @@ export function buildFaaRecords(opts: {
     if (opts.starlinkTails.has(tail) && (!m || !isRegistered(m.statusCode))) {
       flags.wrongYes.push({
         tail,
-        reason: m ? `FAA status ${m.statusCode}` : "not in FAA registry",
+        reason: m ? statusReason(m.statusCode) : "not in FAA registry",
       });
     }
 
