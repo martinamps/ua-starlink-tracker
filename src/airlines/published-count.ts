@@ -50,6 +50,34 @@ export function checkedPlaneByPlane(cfg: AirlineConfig): boolean {
   return trackingMethod(cfg) === "tail" && !cfg.typeDeterministicWifi;
 }
 
+/** Counted on this site, but a rule on aircraft type settles part of the
+ * fleet and only the rest is checked aircraft by aircraft (Alaska). */
+export function partlyByType(cfg: AirlineConfig): boolean {
+  return trackingMethod(cfg) === "tail" && !checkedPlaneByPlane(cfg);
+}
+
+const namesAre = (names: string[]) =>
+  `${names.length > 2 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : names.join(" and ")} ${names.length === 1 ? "is" : "are"}`;
+
+/** "United is counted plane by plane. Alaska is counted partly by aircraft
+ * type.": one sentence per method, so no airline with a type rule shares a
+ * sentence with "plane by plane". */
+export function countingMethodSentences(
+  airlines: AirlineConfig[],
+  verb: "counted" | "tracked" = "counted"
+): string {
+  const names = (pick: (cfg: AirlineConfig) => boolean) =>
+    airlines.filter(pick).map((a) => a.shortName);
+  const perPlane = names(checkedPlaneByPlane);
+  const partly = names(partlyByType);
+  return [
+    perPlane.length > 0 && `${namesAre(perPlane)} ${verb} plane by plane.`,
+    partly.length > 0 && `${namesAre(partly)} ${verb} partly by aircraft type.`,
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
 /**
  * The count a search description may state for an airline, or null to leave
  * the airline unnamed. A snippet has no room for a date, a source or a caveat,

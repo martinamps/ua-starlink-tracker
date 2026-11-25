@@ -15,7 +15,12 @@ import {
 import type { Link } from "../../components/layout";
 import { TrackerLinks } from "../../components/tracker-links";
 import { fmt } from "../../components/ui/format";
-import { byPublishedCount, ownCountAsOf, publishedCount } from "../published-count";
+import {
+  byPublishedCount,
+  countingMethodSentences,
+  ownCountAsOf,
+  publishedCount,
+} from "../published-count";
 import { AIRLINES, SITES, airlineHomeUrl, publicAirlines } from "../registry";
 import { AIRLINE_FACTS, type AirlineFactsEntry, type RolloutFactsStatus } from "../rollout-facts";
 import type { AirlineContent, HeroProps, HubHomeLinks } from "./index";
@@ -215,13 +220,8 @@ export const content: AirlineContent = {
 
   intro: () => (
     <>
-      {AIRLINE_FACTS.length} airlines, each with a dated source. We count{" "}
-      {list(
-        publicAirlines()
-          .filter((a) => !a.communitySource && a.rollout.rosterIsProgramScope)
-          .map((a) => a.shortName)
-      )}{" "}
-      plane by plane.
+      {AIRLINE_FACTS.length} airlines, each with a dated source.{" "}
+      {countingMethodSentences(publicAirlines())}
     </>
   ),
 
