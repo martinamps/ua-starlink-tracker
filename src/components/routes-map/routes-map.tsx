@@ -1,5 +1,5 @@
 import { MAP_HEIGHT, MAP_WIDTH } from "../../utils/map-projection";
-import { Panel, SectionTitle } from "../layout";
+import { ClientScriptTag, Eyebrow, Panel, SectionTitle } from "../layout";
 import { fmt, pct, utcDateTime } from "../ui/format";
 import type { MapAirport, MapArc, RouteNetwork } from "./network";
 
@@ -52,10 +52,12 @@ function wideTargets(busiestFirst: MapAirport[], max: number) {
 }
 
 /**
- * Two hundred airports can't each get 24 px on a phone. So on phones only an
- * airport with room for a usable target takes taps on the map, and the list
- * under it links every airport. On wider screens every airport takes clicks.
- * The dots themselves take none: only these targets decide.
+ * Two hundred airports can't each get 24 px on a phone. On wider screens
+ * every airport takes clicks through these targets; the dots themselves take
+ * none. On phones client/routes-map.ts decides what a tap opens, from where
+ * the finger landed, and the packed phone targets here are what is left when
+ * that script hasn't run: only an airport with room for a usable target takes
+ * taps, and the list under the map links every airport.
  */
 function hitRadii(busiestFirst: MapAirport[], max: number) {
   const phone = packPhoneTargets(busiestFirst);
@@ -68,6 +70,39 @@ function hitRadii(busiestFirst: MapAirport[], max: number) {
         wide: Math.floor(wide[i] * 10) / 10,
       },
     ])
+  );
+}
+
+/**
+ * Phones only, and empty until a tap lands where several dots share a
+ * fingertip: client/routes-map.ts fills it with those airports and places it
+ * by the tap. Markup lives here so the stylesheet compiles its classes.
+ */
+function TapChooser({ airports }: { airports: number }) {
+  return (
+    <dialog
+      className="js-map-chooser absolute inset-x-2 z-30 m-0 w-auto rounded-lg border border-subtle bg-surface-elevated p-3 text-primary shadow-xl shadow-black/40 sm:hidden"
+      aria-label="Airports near your tap"
+    >
+      <div className="flex items-center justify-between gap-3">
+        <Eyebrow className="">Airports near your tap</Eyebrow>
+        <button
+          type="button"
+          className="js-map-chooser-close -m-3 p-3 text-sm text-secondary hover:text-accent"
+          aria-label="Close"
+        >
+          ✕
+        </button>
+      </div>
+      <div className="js-map-chooser-list mt-2 grid grid-cols-4 gap-2" />
+      <p className="js-map-chooser-more mt-2 text-xs text-muted" hidden />
+      <button
+        type="button"
+        className="js-map-chooser-all mt-1 py-2 text-xs text-accent hover:underline"
+      >
+        {`Not here? See all ${fmt(airports)} airports`}
+      </button>
+    </dialog>
   );
 }
 
@@ -93,8 +128,9 @@ const OFF_MAP_SHOWN = 12;
 
 /**
  * Every route with a Starlink departure in the live window, on one map.
- * Lines and dots are a server-rendered SVG over a cached coastline image, so
- * the page ships no script for it; each dot links to its airport's page.
+ * Lines and dots are a server-rendered SVG over a cached coastline image;
+ * each dot links to its airport's page. The one script it ships settles
+ * which airport a tap means on phones, where dots sit closer than a finger.
  */
 export function RoutesMap({
   net,
@@ -131,9 +167,9 @@ export function RoutesMap({
         that airport.
       </p>
       <Panel pad="sm" className="mt-4">
-        <figure className="m-0">
+        <figure className="relative m-0">
           <div
-            className="relative w-full overflow-hidden rounded"
+            className="js-map relative w-full overflow-hidden rounded"
             style={{ aspectRatio: `${MAP_WIDTH} / ${MAP_HEIGHT}` }}
           >
             <img
@@ -149,7 +185,7 @@ export function RoutesMap({
                 so focus follows the labels. */}
             <svg
               viewBox={`0 0 ${MAP_WIDTH} ${MAP_HEIGHT}`}
-              className="absolute inset-0 h-full w-full"
+              className="absolute inset-0 h-full w-full [-webkit-tap-highlight-color:transparent]"
             >
               <title>{`Map: ${summary}.${airportLinks ? " Each airport links to its page." : ""}`}</title>
               <g fill="none" strokeLinecap="round" className="stroke-accent">
@@ -167,7 +203,7 @@ export function RoutesMap({
                   with no page paint first, under every target. Focus lights
                   the dot up. */}
               <g
-                className="fill-primary stroke-surface [&_a]:outline-none [&_a:focus-visible>circle:last-child]:fill-accent [&_a:focus-visible>circle:last-child]:stroke-primary [&_a:focus-visible>circle:last-child]:stroke-[5] [&_a>circle:not(:last-child)]:fill-transparent [&_a>circle:not(:last-child)]:stroke-none"
+                className="fill-primary stroke-surface [&_a]:outline-none [&_a:focus-visible>circle:last-child]:fill-accent [&_a:focus-visible>circle:last-child]:stroke-primary [&_a:focus-visible>circle:last-child]:stroke-[5] [&_a[data-near]>circle:last-child]:fill-accent [&_a>circle:not(:last-child)]:fill-transparent [&_a>circle:not(:last-child)]:stroke-none"
                 fillOpacity="0.92"
                 strokeWidth="1.5"
               >
@@ -226,7 +262,14 @@ export function RoutesMap({
                   );
                 })}
             </svg>
+            {linked.length > 0 && (
+              <div
+                className="js-map-ring pointer-events-none absolute size-6 -translate-x-1/2 -translate-y-1/2 rounded-full border border-accent sm:hidden"
+                hidden
+              />
+            )}
           </div>
+          {linked.length > 0 && <TapChooser airports={linked.length} />}
           <figcaption className="mt-3 text-xs text-muted text-pretty">
             {offFlights > 0
               ? `${pct(net.drawnDepartures, net.totalDepartures)} of ${fmt(net.totalDepartures)} departures are on this map. `
@@ -236,7 +279,7 @@ export function RoutesMap({
             {updatedAt ? ` Data updated ${utcDateTime(updatedAt)}.` : ""}
           </figcaption>
           {linked.length > 0 && (
-            <details className="mt-3 text-xs sm:hidden">
+            <details className="js-map-list mt-3 text-xs sm:hidden">
               <summary className="cursor-pointer py-1 text-secondary">
                 {`All ${fmt(linked.length)} airports on the map`}
               </summary>
@@ -276,6 +319,7 @@ export function RoutesMap({
           )}
         </figure>
       </Panel>
+      {linked.length > 0 && <ClientScriptTag name="routes-map" />}
     </section>
   );
 }
