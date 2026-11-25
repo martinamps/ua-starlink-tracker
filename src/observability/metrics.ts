@@ -23,9 +23,10 @@
  *   status:          success | error | rate_limited | timeout | killed |
  *                    exit_error | parse_error | spawn_error | partial |
  *                    aborted | scrape_error | noop | shed            (~13)
- *   reason:          breaker | bucket | queue — fr24 assignments status:shed only (3)
- *   caller:          page | extension | other — fr24 assignments status:shed only
- *                    (classifyLookupCaller)                            (3)
+ *   reason:          breaker | bucket | queue | budget — fr24 assignments
+ *                    status:shed only (normalizeLookupShedReason)      (4)
+ *   caller:          page | api | extension | mcp | other — fr24 assignments
+ *                    status:shed only (classifyLookupCaller; mcp from the route) (5)
  *   bucket:          api | mcp | page — http.rate_limited only (the limiter's meter) (3)
  *   http_status:     upstream HTTP status code on vendor.request error/
  *                    rate_limited emits (fr24 only)                  (~10)
@@ -181,6 +182,11 @@ const NAMED_CRAWLERS: ReadonlyArray<readonly [string, RegExp]> = [
 const KNOWN_SCRAPER_AGENTS: ReadonlySet<string> = new Set([
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36",
 ]);
+// Scrapers that give their own name, which no browser carries, so the name is
+// enough and a version bump stays in the class. PageIndexer sends "Mozilla/5.0
+// (compatible; PageIndexer/1.0)": 2,497 requests to Alaska's site from one
+// address on 25 Nov 2026, counted as `browser` for the "Mozilla".
+const NAMED_SCRAPER_AGENTS = /\bPageIndexer\b/i;
 
 // The header is a stranger's text. Real agents run under ~300 characters;
 // past this cap the rest is never read, so a huge value costs nothing to class.
@@ -190,7 +196,7 @@ export function classifyUserAgent(raw: string | null | undefined): string {
   if (!raw) return "unknown";
   const ua = raw.length > MAX_UA_LENGTH ? raw.slice(0, MAX_UA_LENGTH) : raw;
   if (/UA-Starlink-Extension|starlink-tracker-ext/i.test(ua)) return "extension";
-  if (KNOWN_SCRAPER_AGENTS.has(ua)) return "scraper";
+  if (KNOWN_SCRAPER_AGENTS.has(ua) || NAMED_SCRAPER_AGENTS.test(ua)) return "scraper";
   for (const [bucket, re] of NAMED_CRAWLERS) {
     if (re.test(ua)) return bucket;
   }
@@ -444,7 +450,7 @@ function visitSourceByRule(req: Request, url: URL, clientClass: string): VisitSo
   return fetchSite === "none" ? "direct" : "none";
 }
 
-const LOOKUP_CALLERS = ["page", "extension", "other"] as const;
+const LOOKUP_CALLERS = ["page", "api", "extension", "mcp", "other"] as const;
 export type LookupCaller = (typeof LOOKUP_CALLERS)[number];
 const LOOKUP_CALLER_SET: ReadonlySet<string> = new Set(LOOKUP_CALLERS);
 
@@ -452,18 +458,30 @@ export function normalizeLookupCaller(raw: string | null | undefined): LookupCal
   return raw && LOOKUP_CALLER_SET.has(raw) ? (raw as LookupCaller) : "other";
 }
 
+const LOOKUP_SHED_REASONS = ["breaker", "bucket", "queue", "budget"] as const;
+export type LookupShedReason = (typeof LOOKUP_SHED_REASONS)[number];
+const LOOKUP_SHED_REASON_SET: ReadonlySet<string> = new Set(LOOKUP_SHED_REASONS);
+
+/** An unknown reason reads as `queue`, the reason every shed had before the others existed. */
+export function normalizeLookupShedReason(raw: string | null | undefined): LookupShedReason {
+  return raw && LOOKUP_SHED_REASON_SET.has(raw) ? (raw as LookupShedReason) : "queue";
+}
+
 /**
- * Who a shed live lookup was for. `extension` is our own store build only
- * (classifyRequest); `page` is a browser on one of our own pages, by the same
- * rule that makes a visit `own`; everything else, a copycat extension, an
- * outside tool, a script or an MCP call, is `other`. A script can forge the
- * page's headers, so read `page` as "says it is our page".
+ * Who a shed live lookup was for, on /api/*. `extension` is our own store
+ * build only (classifyRequest); `page` is a browser on one of our own pages,
+ * by the same rule that makes a visit `own`; `api` is any other request with a
+ * browser's agent: the API opened directly, called from someone else's page,
+ * or a script dressed as a browser. The rest, a copycat extension, a named
+ * tool or crawler, a bare script, is `other`. `mcp` is never returned here:
+ * the /mcp route sets it. A script can forge any of these headers, so read
+ * `page` as "says it is our page".
  */
 export function classifyLookupCaller(req: Request, url: URL): LookupCaller {
   const clientClass = classifyRequest(req, url);
   if (clientClass === "extension") return "extension";
   if (clientClass !== "browser") return "other";
-  return classifyVisitSource(req, url, clientClass) === "own" ? "page" : "other";
+  return classifyVisitSource(req, url, clientClass) === "own" ? "page" : "api";
 }
 
 /** `client_class` for /mcp tool calls, which carry no request of their own to classify. */

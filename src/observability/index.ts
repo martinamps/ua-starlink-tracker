@@ -28,6 +28,7 @@ export {
   classifyVisitSource,
   classifyLookupCaller,
   normalizeLookupCaller,
+  normalizeLookupShedReason,
   normalizeExtVersion,
   requestClientTags,
   mcpClientTags,
@@ -39,4 +40,4 @@ export {
   normalizeLegEffect,
   normalizeEquipmentCodeTag,
 } from "./metrics";
-export type { LookupCaller, Tags } from "./metrics";
+export type { LookupCaller, LookupShedReason, Tags } from "./metrics";

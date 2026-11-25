@@ -13,9 +13,11 @@ import { inLookupWindow, unixNow } from "../database/sql/windows";
 import {
   COUNTERS,
   type LookupCaller,
+  type LookupShedReason,
   flightAirlineTag,
   metrics,
   normalizeLookupCaller,
+  normalizeLookupShedReason,
 } from "../observability";
 import { matchesLocalDate } from "../utils/airport-tz";
 import { warn } from "../utils/logger";
@@ -26,6 +28,7 @@ import {
   Fr24UnavailableError,
   MIN_REQUEST_INTERVAL,
 } from "./flightradar24-api";
+import { LookupBudget, currentLookupAsker, lookupAllowance } from "./lookup-budget";
 
 const fr24 = new FlightRadar24API();
 type Assignment = Awaited<ReturnType<FlightRadar24API["getFlightAssignments"]>>;
@@ -78,20 +81,40 @@ export function cachedFlightAssignments(
   flightNumber: string,
   targetDateUnix: number,
   nowSec = unixNow(),
-  caller: LookupCaller = "other"
+  callerOverride?: LookupCaller
 ): Promise<Assignment> {
   const key = `${flightNumber}:${Math.floor(targetDateUnix / 86400)}`;
   const now = nowSec;
   const cached = assignmentCache.get(key, now);
   if (cached) return cached;
 
+  // Joining a lookup already under way (above) costs a caller nothing; only a
+  // lookup of its own counts against its share.
+  const asker = currentLookupAsker();
+  const caller = callerOverride ?? asker?.caller ?? "other";
+  const shareKey = asker?.key ?? null;
+  if (shareKey !== null && !lookupBudget.take(shareKey, lookupAllowance(caller), now)) {
+    countShed(flightNumber, "budget", caller);
+    return Promise.reject(new Fr24UnavailableError("shed: budget"));
+  }
+  const settleShare = (asked: boolean) => {
+    if (shareKey !== null) lookupBudget.settle(shareKey, { asked });
+  };
+
   const shed = fr24RequestShedReason(now);
   if (shed) {
+    settleShare(false);
     countShed(flightNumber, shed, caller);
     return Promise.reject(new Fr24UnavailableError(`shed: ${shed}`));
   }
 
-  const promise = fetchAssignments(flightNumber, targetDateUnix);
+  let promise: Promise<Assignment>;
+  try {
+    promise = fetchAssignments(flightNumber, targetDateUnix);
+  } catch (err) {
+    settleShare(true);
+    throw err;
+  }
   // A failure replays briefly instead of re-running the retry ladder per
   // request. A queue shed never reached FR24, so there is no outage to replay:
   // the next ask may find a free slot. An empty answer near departure is
@@ -108,17 +131,20 @@ export function cachedFlightAssignments(
     });
   promise.then(
     () => {
+      settleShare(true);
       countLookup();
       fr24ThrottleStreak = 0;
     },
     (err) => {
       if (isQueueShed(err)) {
+        settleShare(false);
         refundFr24Token();
         // Requests that joined this promise are not counted: one FR24 slot
         // was refused, and the tag names who asked for it.
         countShed(flightNumber, "queue", caller);
         return;
       }
+      settleShare(true);
       countLookup();
       if (isFr24Throttle(err)) openFr24Breaker(now);
       // Logged here — where the failure is PRODUCED — not in the consumer.
@@ -145,17 +171,14 @@ let fr24Tokens = FR24_REQUEST_BUCKET_PER_MIN;
 let fr24TokensAt = 0;
 let fr24ThrottledUntil = 0;
 let fr24ThrottleStreak = 0;
+const lookupBudget = new LookupBudget();
 
-function countShed(
-  flightNumber: string,
-  reason: "breaker" | "bucket" | "queue",
-  caller: LookupCaller
-): void {
+function countShed(flightNumber: string, reason: LookupShedReason, caller: LookupCaller): void {
   metrics.increment(COUNTERS.VENDOR_REQUEST, {
     vendor: "fr24",
     type: "assignments",
     status: "shed",
-    reason,
+    reason: normalizeLookupShedReason(reason),
     caller: normalizeLookupCaller(caller),
     airline: flightAirlineTag(flightNumber),
   });
@@ -166,6 +189,7 @@ function resetFr24RequestGuards(): void {
   fr24TokensAt = 0;
   fr24ThrottledUntil = 0;
   fr24ThrottleStreak = 0;
+  lookupBudget.clear();
 }
 
 function fr24RequestShedReason(nowSec: number): "breaker" | "bucket" | null {
@@ -328,7 +352,7 @@ export async function lookupFlightTailVerdict(
   startOfDay: number,
   endOfDay: number,
   nowSec = unixNow(),
-  caller: LookupCaller = "other"
+  caller?: LookupCaller
 ): Promise<FallbackSegment[] | null> {
   if (!inLookupWindow(startOfDay, endOfDay, nowSec)) return null;
 
