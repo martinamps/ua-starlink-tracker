@@ -18,7 +18,7 @@
 import { fmt } from "../components/ui/format";
 import type { AirlineChartCount } from "../database/roster";
 import { aircraftName } from "./aircraft-families";
-import { type AirlineConfig, heldBackCount, wifiPhaseFamilies } from "./registry";
+import { AIRLINES, type AirlineConfig, heldBackCount, wifiPhaseFamilies } from "./registry";
 import {
   type AirlineOwnCount,
   type AirlineOwnTypeSum,
@@ -86,6 +86,63 @@ export const BY_TYPE_SUM_LABEL = "On our fleet list, by aircraft type";
 export function byTypeBadgeValue(sum: number): string {
   return `${fmt(sum)}, by aircraft type`;
 }
+
+/**
+ * An all-airline figure, split by how each airline is known. Only airlines
+ * counted on this site add up to a total of aircraft that have Starlink; an
+ * airline known by aircraft type stays beside the total as its own fleet-list
+ * sum, never inside it.
+ */
+export interface SplitTotal {
+  counted: {
+    /** Short names, in registry order. */
+    names: string[];
+    starlink: number;
+    total: number;
+    /** Every counted airline's roster is its programme's own denominator. */
+    rosterIsProgramScope: boolean;
+  };
+  byType: Array<{ cfg: AirlineConfig; sum: number }>;
+}
+
+export function splitByMethod(
+  per: ReadonlyArray<{ code: string; starlink: number; total: number }>
+): SplitTotal {
+  // Registry order, so every place names the airlines the same way round.
+  const order = Object.keys(AIRLINES);
+  const rows = per
+    .flatMap((r) => (AIRLINES[r.code] ? [{ ...r, cfg: AIRLINES[r.code] }] : []))
+    .sort((a, b) => order.indexOf(a.cfg.code) - order.indexOf(b.cfg.code));
+  const counted = rows.filter((r) => trackingMethod(r.cfg) !== "type");
+  return {
+    counted: {
+      names: counted.map((r) => r.cfg.shortName),
+      starlink: counted.reduce((s, r) => s + r.starlink, 0),
+      total: counted.reduce((s, r) => s + r.total, 0),
+      rosterIsProgramScope: counted.every((r) => r.cfg.rollout.rosterIsProgramScope),
+    },
+    byType: rows
+      .filter((r) => trackingMethod(r.cfg) === "type" && r.starlink > 0)
+      .map((r) => ({ cfg: r.cfg, sum: r.starlink })),
+  };
+}
+
+/** "United and Alaska": whose aircraft a split total counts. */
+export function countedNames(split: SplitTotal): string {
+  return listed(split.counted.names);
+}
+
+/** "Hawaiian's 42 on our fleet list are counted by aircraft type, not checked
+ * plane by plane": what a split total leaves out, or null when nothing is. */
+export function leftOutByType(split: SplitTotal): string | null {
+  if (split.byType.length === 0) return null;
+  const one = split.byType.length === 1 && split.byType[0].sum === 1;
+  return `${listed(split.byType.map((b) => `${b.cfg.shortName}'s ${fmt(b.sum)}`))} on our fleet list ${one ? "is" : "are"} ${BY_TYPE_METHOD}`;
+}
+
+/** Beside a by-type airline's row count where a list holds both kinds of
+ * aircraft: "HAWAIIAN AIRLINES (42 by type)". */
+export const BY_TYPE_TAB_NOTE = "by type";
 
 /** The caption under a by-type sum on the share pictures (set in capitals,
  * no longer than the longest caption the card already carries). */
@@ -185,7 +242,7 @@ export function ownCountCredit(cfg: AirlineConfig, own: AirlineOwnCount): string
     : `per ${cfg.name} ${ownCountAsOf(own)}`;
 }
 
-const listed = (parts: string[]) =>
+export const listed = (parts: string[]) =>
   parts.length > 2 ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}` : parts.join(" and ");
 
 const typeCount = (n: number, family: string) =>

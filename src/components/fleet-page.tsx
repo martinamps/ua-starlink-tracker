@@ -2,7 +2,10 @@ import { tenantCopy } from "../airlines/aircraft-pages";
 import {
   BY_TYPE_METHOD,
   byTypeSumBasis,
+  countedNames,
+  leftOutByType,
   ownCountAsOf,
+  splitByMethod,
   trackingMethod,
 } from "../airlines/published-count";
 import { AIRLINES, type SiteConfig } from "../airlines/registry";
@@ -132,11 +135,18 @@ export default function FleetPage({
   const pace = scopeCode ? data.installPace : null;
   // Known by aircraft type: the lit aircraft are a sum of fleet-list rows.
   const byType = scopeCode ? trackingMethod(AIRLINES[scopeCode]) === "type" : false;
+  // Several airlines: only those counted on this site make the total. The
+  // by-type ones are named beside it with their own fleet-list sum.
+  const split = scopeCode ? null : splitByMethod(data.byAirline);
+  const leftOut = split && leftOutByType(split);
   const labels = {
     ...providerLabels(
       scopeCode ? (tenantCopy(scopeCode).checksEveryTail ? "tail" : "type") : "mixed"
     ),
     ...(byType && { starlink_listed: "Starlink by aircraft type, not checked plane by plane" }),
+    ...(leftOut && {
+      starlink_listed: "Starlink, listed or by aircraft type, not checked plane by plane",
+    }),
   };
   return (
     <PageShell site={site} currentPath={currentPath} pageLinks={pageLinks}>
@@ -156,6 +166,12 @@ export default function FleetPage({
             <>
               {fmt(data.totalStarlink)} of the {fmt(data.totalFleet)} aircraft on our fleet list are
               of {byTypeSumBasis(scopeCode)}. They are {BY_TYPE_METHOD}.
+            </>
+          ) : split && leftOut ? (
+            <>
+              {fmt(split.counted.starlink)} of {fmt(split.counted.total)} {countedNames(split)}{" "}
+              aircraft ({pct(split.counted.starlink, split.counted.total)}) have Starlink. {leftOut}
+              .
             </>
           ) : (
             <>

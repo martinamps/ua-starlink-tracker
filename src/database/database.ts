@@ -17,6 +17,7 @@ import {
   slotFlightKey,
   slotFlightPrefixes,
 } from "../airlines/flight-number";
+import { trackingMethod } from "../airlines/published-count";
 import {
   AIRLINES,
   type AirlineCode,
@@ -6503,19 +6504,28 @@ function computeFleetPageData(
   } as Record<BodyClass, Record<WifiProvider, number>>;
 
   let totalStarlink = 0;
+  const airlineMap = new Map<string, { code: string; starlink: number; total: number }>();
 
   for (const r of rows) {
     const family = r.family === "other" ? "unknown" : r.family;
     const { equipped } = r;
+    const own = airlineMap.get(r.airline) ?? { code: r.airline, starlink: 0, total: 0 };
+    own.total++;
+    if (equipped) own.starlink++;
+    airlineMap.set(r.airline, own);
     // The observed provider. A Starlink observation on a tail the one
     // definition doesn't count (a settle or listing says otherwise) is a
     // conflict, shown as unchecked rather than as a second Starlink count.
     const rawProvider = normalizeWifiProvider(r.verified_wifi);
+    // On a page over several airlines, an airline known by aircraft type keeps
+    // out of the squares counted one by one, whatever a single row carries.
+    const byTypeAmongOthers =
+      !sole && AIRLINES[r.airline] && trackingMethod(AIRLINES[r.airline]) === "type";
     const provider: WifiProvider = equipped
       ? // Every equipped tail lands in a Starlink bucket, so the squares always
         // add up to the count the header, the type bars and MCP report. Without
         // an observation of its own it is "reported, not confirmed".
-        rawProvider === "starlink" || r.listedVerified
+        (rawProvider === "starlink" || r.listedVerified) && !byTypeAmongOthers
         ? "starlink"
         : "starlink_listed"
       : rawProvider === "other" || rawProvider === "starlink"
@@ -6593,6 +6603,7 @@ function computeFleetPageData(
     allTails,
     totalFleet: allTails.length,
     totalStarlink,
+    byAirline: [...airlineMap.values()],
     installPace,
     // Single-airline narrative like installPace — the hub page must not show
     // one airline's pipeline as if it covered every tracked fleet.

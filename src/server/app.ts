@@ -49,10 +49,13 @@ import {
   byTypeBadgeValue,
   byTypeSumBasis,
   byTypeSumSentence,
+  countedNames,
   countingMethodSentences,
   leadCount,
+  leftOutByType,
   ownCountAsOf,
   rosterDiffSentence,
+  splitByMethod,
   statedCount,
   trackingMethod,
   unnamedSentence,
@@ -2866,15 +2869,26 @@ const badgeSvg: Handler = ({ site, reader, tenant }) => {
   // Known by aircraft type: the figure is a sum of fleet-list rows, so the
   // badge says so in the words it has room for and in full in its name.
   const byType = cfg && trackingMethod(cfg) === "type" ? cfg : null;
+  // Every airline at once: the figure is the airlines counted on this site.
+  // One known by aircraft type is left out of it and named in the badge's
+  // spoken name, which has the room the picture lacks.
+  const split = cfg ? null : splitByMethod(reader.getPerAirlineStats());
+  const leftOut = split && leftOutByType(split);
   const value = byType
     ? byTypeBadgeValue(equipped)
-    : badgeValue(equipped, total, cfg?.rollout.rosterIsProgramScope ?? true);
+    : split && leftOut
+      ? badgeValue(split.counted.starlink, split.counted.total, split.counted.rosterIsProgramScope)
+      : badgeValue(equipped, total, cfg?.rollout.rosterIsProgramScope ?? true);
   return text(
     badgeSvgMarkup(
       label,
       value,
       site.brand.accentColor,
-      byType ? `${byTypeSumSentence(byType, equipped)}.` : undefined
+      byType
+        ? `${byTypeSumSentence(byType, equipped)}.`
+        : split && leftOut
+          ? `${label}: ${value}, ${countedNames(split)} only. ${leftOut}.`
+          : undefined
     ),
     "image/svg+xml; charset=utf-8",
     {

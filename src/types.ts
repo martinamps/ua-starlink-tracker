@@ -216,6 +216,9 @@ export interface FleetPageData {
   allTails: FleetTail[];
   totalFleet: number;
   totalStarlink: number;
+  /** The same two figures per airline, so a page over several airlines can
+   * keep those known by aircraft type out of its total. */
+  byAirline: Array<{ code: string; starlink: number; total: number }>;
   /** null on the hub site — install pace is a single-airline narrative. */
   installPace: InstallPace | null;
   /** Per-type install pipeline rows (empty until the fleet-progress job has run). */

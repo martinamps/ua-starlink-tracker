@@ -19,12 +19,20 @@ import {
   byTypeBadgeValue,
   byTypeSumBasis,
   byTypeSumSentence,
+  leftOutByType,
+  splitByMethod,
   trackingMethod,
 } from "../src/airlines/published-count";
-import { AIRLINES, type AirlineConfig, siteForAirline } from "../src/airlines/registry";
+import {
+  AIRLINES,
+  type AirlineConfig,
+  SITES,
+  publicAirlines,
+  siteForAirline,
+} from "../src/airlines/registry";
 import { reconcileTypeDeterministicFleets } from "../src/database/database";
 import { badgeSvgMarkup, badgeValue, createApp } from "../src/server/app";
-import { bodyOf, makeFreshDb, openSnapshot } from "./helpers";
+import { addFleet, addPlane, bodyOf, makeFreshDb, mcpTool, openSnapshot } from "./helpers";
 
 type App = ReturnType<typeof createApp>;
 
@@ -376,4 +384,223 @@ describe("airlines counted by tail read as before", () => {
       expect(share.params.get("sub")).toBe("OF 100 AIRCRAFT HAVE STARLINK");
     });
   }
+});
+
+/**
+ * The hub prints figures over every airline at once. Such a figure may add up
+ * only airlines counted on this site: one known by aircraft type is left out
+ * and named beside it, with its fleet-list sum worded as one. The split comes
+ * from trackingMethod, so a by-type airline added to the hub is left out too;
+ * the seeds below must then grow, or the first test here fails.
+ */
+describe("no hub total adds a by-type sum to aircraft counted on this site", () => {
+  const HUB = SITES.airline.canonicalHost;
+  const hubAirlines = publicAirlines();
+  const hubByType = hubAirlines.filter((a) => trackingMethod(a) === "type");
+  const hubCounted = hubAirlines.filter((a) => trackingMethod(a) !== "type");
+
+  /** Fleets sized so no figure of one kind equals a figure of another. */
+  const COUNTED_SEEDS: Record<string, { equipped: number; bare: number; type: string }> = {
+    UA: { equipped: 18, bare: 9, type: "Boeing 737-900" },
+    AS: { equipped: 6, bare: 5, type: "Boeing 737-800" },
+  };
+
+  let app: App;
+  let pages: Array<{ path: string; body: string }>;
+  let stats: string;
+  let list: string;
+  let mainlineList: string;
+  const counted = { starlink: 0, total: 0 };
+  let sum = 0;
+  let listedTotal = 0;
+
+  beforeAll(async () => {
+    const db = makeFreshDb();
+    for (const cfg of hubCounted) {
+      const seed = COUNTED_SEEDS[cfg.code];
+      for (let i = 0; i < seed.equipped + seed.bare; i++) {
+        const tail = `N${100 + i}${cfg.code}`;
+        const equipped = i < seed.equipped;
+        addFleet(db, tail, equipped ? "confirmed" : "negative", {
+          airline: cfg.code,
+          aircraftType: seed.type,
+          verifiedWifi: equipped ? "Starlink" : "None",
+        });
+        if (equipped) addPlane(db, tail, "Starlink", { airline: cfg.code, aircraft: seed.type });
+      }
+      db.run("UPDATE united_fleet SET fleet = 'mainline' WHERE airline = ?", [cfg.code]);
+      db.run("INSERT INTO meta (key, value) VALUES (?, '2026-11-25T06:00:00.000Z')", [
+        `${cfg.code}:lastUpdated`,
+      ]);
+      db.run("INSERT INTO meta (key, value) VALUES (?, ?)", [
+        `${cfg.code}:totalAircraftCount`,
+        String(seed.equipped + seed.bare),
+      ]);
+      counted.starlink += seed.equipped;
+      counted.total += seed.equipped + seed.bare;
+    }
+    // The by-type fleets, copied row for row from their own seeds.
+    for (const cfg of hubByType) {
+      const src = SEEDS[cfg.code]();
+      for (const table of ["united_fleet", "starlink_planes", "meta"]) {
+        const rows = src
+          .query(
+            table === "meta"
+              ? "SELECT * FROM meta WHERE key LIKE ?"
+              : `SELECT * FROM ${table} WHERE airline = ?`
+          )
+          .all(table === "meta" ? `${cfg.code}:%` : cfg.code) as Array<Record<string, unknown>>;
+        for (const row of rows) {
+          const cols = Object.keys(row).filter((c) => c !== "id");
+          db.query(
+            `INSERT INTO ${table} (${cols.join(", ")}) VALUES (${cols.map(() => "?").join(", ")})`
+          ).run(...(cols.map((c) => row[c]) as Array<string | number | null>));
+        }
+      }
+      sum += (
+        db
+          .query(
+            "SELECT COUNT(*) AS n FROM united_fleet WHERE airline = ? AND starlink_status = 'confirmed'"
+          )
+          .get(cfg.code) as { n: number }
+      ).n;
+      listedTotal += (
+        db.query("SELECT COUNT(*) AS n FROM united_fleet WHERE airline = ?").get(cfg.code) as {
+          n: number;
+        }
+      ).n;
+    }
+    app = createApp(db);
+    pages = await sweep(app, HUB);
+    stats = (await mcpTool(app, HUB, "get_fleet_stats")).text;
+    list = (await mcpTool(app, HUB, "list_starlink_aircraft", { limit: 500 })).text;
+    mainlineList = (await mcpTool(app, HUB, "list_starlink_aircraft", { fleet: "mainline" })).text;
+  });
+
+  test("every airline on the hub is seeded, and one of them is known by type", () => {
+    expect(hubCounted.map((a) => a.code).sort()).toEqual(Object.keys(COUNTED_SEEDS).sort());
+    expect(hubByType.length).toBeGreaterThan(0);
+    for (const cfg of hubByType) expect(SEEDS[cfg.code], cfg.code).toBeDefined();
+    expect(sum).toBeGreaterThan(0);
+    expect(new Set([counted.starlink, sum, counted.starlink + sum]).size).toBe(3);
+    expect(pages.map((p) => p.path)).toEqual(
+      expect.arrayContaining(["/", "/fleet", "/embed", "/badge.svg", "/llms.txt"])
+    );
+  });
+
+  test("the split leaves out every by-type airline in the registry, whatever the hub lists", () => {
+    const all = Object.values(AIRLINES);
+    const split = splitByMethod(all.map((a) => ({ code: a.code, starlink: 7, total: 9 })));
+    const byType = all.filter((a) => trackingMethod(a) === "type");
+    expect(split.byType.map((b) => b.cfg.code).sort()).toEqual(byType.map((a) => a.code).sort());
+    expect(split.counted.starlink).toBe(7 * (all.length - byType.length));
+    expect(split.counted.total).toBe(9 * (all.length - byType.length));
+    for (const a of byType) expect(split.counted.names).not.toContain(a.shortName);
+    expect(leftOutByType(split)).toContain(BY_TYPE_METHOD);
+    expect(leftOutByType(splitByMethod([{ code: "UA", starlink: 7, total: 9 }]))).toBeNull();
+  });
+
+  test("no page, feed, picture or tool answer prints the mixed total", () => {
+    const mixed = counted.starlink + sum;
+    const said = [
+      ...pages.flatMap(({ path, body }) => saidOn(body).map((piece) => ({ path, piece }))),
+      // "(showing N)" is the number of rows printed under the header, which
+      // has by then said how many are of each kind.
+      ...[stats, list, mainlineList].flatMap((t) =>
+        saidOn(t.replace(/\*\*/g, "").replace(/ \(showing \d+\):/, ":")).map((piece) => ({
+          path: "mcp",
+          piece,
+        }))
+      ),
+    ];
+    // The mixed total as aircraft with Starlink, under any wording. A share
+    // ("66%") is not a count.
+    const counts = (piece: string) => piece.replace(/\d+(?:\.\d+)?%/g, "");
+    expect(
+      said.filter(({ piece }) => hasNumber(counts(piece), mixed) && CLAIM.test(piece))
+    ).toEqual([]);
+    // "N of M": the mixed total over any fleet, or any count over the mixed fleet.
+    const of = new RegExp(
+      `(?<![\\d,.])(?:${mixed} of (?:the )?[\\d,]+|[\\d,]+ of (?:the )?${counted.total + listedTotal})(?![\\d])`
+    );
+    expect(said.filter(({ piece }) => of.test(piece))).toEqual([]);
+    // A row count beside a filter that holds both kinds.
+    expect(said.filter(({ piece }) => new RegExp(`^ALL \\(?${mixed}\\)?$`).test(piece))).toEqual(
+      []
+    );
+  });
+
+  test("the fleet page's heading counts only the counted airlines and names the rest", async () => {
+    const header = headerOf(pages.find((p) => p.path === "/fleet")?.body ?? "");
+    const names = hubCounted.map((a) => a.shortName);
+    expect(header).toContain(`${counted.starlink} of ${counted.total} ${names.join(" and ")}`);
+    expect(header).toContain("have Starlink.");
+    for (const cfg of hubByType) expect(header).toContain(`${cfg.shortName}'s `);
+    expect(header).toContain(`on our fleet list are ${BY_TYPE_METHOD}.`);
+  });
+
+  test("the fleet page's squares keep a by-type airline out of the checked ones", () => {
+    const said = saidOn(pages.find((p) => p.path === "/fleet")?.body ?? "");
+    expect(said).toContain(`${counted.starlink} Starlink`);
+    expect(said).toContain(
+      `${sum} Starlink, listed or by aircraft type, not checked plane by plane`
+    );
+  });
+
+  test("the badge shows the counted airlines, at the size it had, and says who is left out", () => {
+    const svg = pages.find((p) => p.path === "/badge.svg")?.body ?? "";
+    const value = `${counted.starlink} of ${counted.total} aircraft`;
+    expect(svg).toContain(`>${value}</text>`);
+    expect(svg).toContain(">Airline Starlink</text>");
+    const name = svg.match(/aria-label="([^"]*)"/)?.[1].replace(/&apos;/g, "'") ?? "";
+    expect(name).toStartWith(`Airline Starlink: ${value}, `);
+    expect(name).toContain(BY_TYPE_METHOD);
+    for (const cfg of hubByType) expect(name).toContain(`${cfg.shortName}'s `);
+    const was = badgeSvgMarkup(
+      "Airline Starlink",
+      `${counted.starlink + sum} of ${counted.total + listedTotal} aircraft`,
+      "#000"
+    );
+    const size = (s: string) => s.match(/<svg[^>]* width="(\d+)" height="(\d+)"/)?.slice(1);
+    expect(size(svg)).toEqual(size(was) as string[]);
+  });
+
+  test("the home list gives no row count over both kinds, and marks the by-type tab", () => {
+    const said = saidOn(pages.find((p) => p.path === "/")?.body ?? "");
+    expect(said).toContain("ALL");
+    for (const cfg of hubByType) {
+      expect(
+        said.some((p) => p.startsWith(`${cfg.name.toUpperCase()} (`) && p.endsWith(" by type)"))
+      ).toBe(true);
+    }
+    for (const cfg of hubCounted) {
+      expect(said.some((p) => new RegExp(`^${cfg.name.toUpperCase()} \\(\\d+\\)$`).test(p))).toBe(
+        true
+      );
+    }
+  });
+
+  test("get_fleet_stats totals the counted airlines and says who is not in the total", () => {
+    const total = stats.split("\n").find((l) => l.includes("have Starlink WiFi")) ?? "";
+    expect(total).toContain(`${counted.starlink} of ${counted.total} aircraft`);
+    for (const cfg of hubCounted) expect(total.split("**")[1]).toContain(cfg.name);
+    for (const cfg of hubByType) {
+      expect(total.split("**")[1]).not.toContain(cfg.name);
+      expect(total.split("Not in this total:")[1]).toContain(cfg.name);
+    }
+    expect(total).toContain(BY_TYPE_METHOD);
+    expect(stats).not.toContain("All tracked airlines");
+  });
+
+  test("list_starlink_aircraft heads the list with the counted aircraft, then the by-type ones", () => {
+    for (const text of [list, mainlineList]) {
+      const header = text.split("\n")[0];
+      expect(header).toStartWith(`${counted.starlink} Starlink-equipped aircraft `);
+      expect(header).toContain(`${BY_TYPE_METHOD} (showing `);
+      for (const cfg of hubByType)
+        expect(header).toContain(` ${cfg.shortName} aircraft on the fleet list`);
+    }
+    // Every aircraft is still listed: the header changed, the rows did not.
+    expect(list.split("\n\n")[1].split("\n")).toHaveLength(counted.starlink + sum);
+  });
 });
