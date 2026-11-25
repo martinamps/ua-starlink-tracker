@@ -378,12 +378,12 @@ function withClampedMeta(vars: Record<string, string>): Record<string, string> {
   };
 }
 
-/** index.html's look without its page machinery: the theme block, fonts and
- * stylesheet, but no scripts, analytics, JSON-LD, social tags or canonical. A
- * dead URL has nothing to canonicalize to and nothing to measure. */
+/** index.html's look without its page machinery: the theme block (which
+ * carries the @font-face rules) and stylesheet, but no scripts, analytics,
+ * JSON-LD, social tags or canonical. A dead URL has nothing to canonicalize to
+ * and nothing to measure. */
 function notFoundTemplate(template: string): string {
   const style = template.match(/<style>[\s\S]*?<\/style>/)?.[0] ?? "";
-  const fonts = template.match(/<link href="https:\/\/fonts\.googleapis\.com[^>]*>/)?.[0] ?? "";
   return `<!DOCTYPE html>
 <html lang="en">
   <head>
@@ -393,7 +393,6 @@ function notFoundTemplate(template: string): string {
     <meta name="robots" content="noindex, nofollow" />
     <meta name="theme-color" content="{{accentColor}}" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    ${fonts}
     {{stylesheetTag}}
     ${style}
   </head>
@@ -4616,7 +4615,9 @@ const staticDir: Handler = ({ url, site }) => {
     if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
       const ext = path.extname(filePath).toLowerCase().substring(1);
       const contentType = CONTENT_TYPES[ext] || "application/octet-stream";
-      return text(Bun.file(filePath), contentType, { cache: CACHE.day });
+      // Font file names carry a content hash (index.html), so they never change.
+      const cache = subPath.startsWith("fonts/") ? CACHE.year : CACHE.day;
+      return text(Bun.file(filePath), contentType, { cache });
     }
   } catch (err) {
     logError(`Error serving static file ${filePath}`, err);
