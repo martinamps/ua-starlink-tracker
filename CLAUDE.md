@@ -36,7 +36,7 @@ Bun + SQLite + server-rendered React, multi-tenant by Host (`src/airlines/regist
 | Fleet sync | 24 hr | Full FR24 fleet pull, every enabled airline |
 | Daily jobs | 24 hr | Ship numbers, fleet progress (+ tails), FAA registry, SEC anchors, BTS, geofeed, crash-row prune |
 | ADS-B sweep, data-freshness gauges | 5 min | Metrics only (FR24 stays the serving source) |
-| IndexNow new tails | 5 min | Reads the equipped list; when a tail is new, submits that tail's changed pages for each live site (40 addresses a site a day; INDEXNOW_DISABLED=1 turns it off) |
+| IndexNow new tails | 5 min | Reads the equipped list; when a tail is new, submits that tail's changed pages for each live site, and again at a later pass if the send was capped, paused or failed (40 addresses a site a day; INDEXNOW_DISABLED=1 or true turns it off) |
 
 Community tail lists are no longer imported: QR rides its type rule + schedule ingester, AS its verifier, and AF serves its last stored guide, dated.
 
