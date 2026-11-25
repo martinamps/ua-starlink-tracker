@@ -869,6 +869,11 @@ export const GAUGES = {
   // them under the aging policy. tags: airline, state (starlink_listed|
   // not_starlink_current|not_starlink_expired|not_in_guide)
   COMMUNITY_GUIDE_TAILS: "community_guide.tails",
+
+  // Exited children of the server not yet reaped (state Z, parent = server).
+  // 0 under the image's tini init; a climb means the server is PID 1 again and
+  // every United check's orphaned Chromium helpers pile up. tags: airline:all
+  PROCESS_ZOMBIES: "process.zombies",
 } as const;
 
 /**

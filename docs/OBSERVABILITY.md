@@ -195,6 +195,7 @@ rather than raising the number. Pure redirects (the www aliases, `/extension`
 | `starlink.consensus.disputed_tails` | `airline`: listed tails held on Starlink against a non-Starlink window by their established history (hourly reconcile) |
 | `starlink.community_guide.age_seconds` | Age of a frozen community fleet guide (AF), from its own date; tags `airline`, `stale`. Not a `data.freshness_seconds` job: it ages by design, so the freshness monitors would page forever |
 | `starlink.community_guide.tails` | Roster tails by what answers may still say under the aging policy; tags `airline`, `state` (`starlink_listed`, `not_starlink_current`, `not_starlink_expired`, `not_in_guide`) |
+| `starlink.process.zombies` | `airline:all`: the server's exited children not yet reaped (5-min sweep). 0 while the image runs the server under `tini`; a climb means it is PID 1 again and every United check's orphaned Chromium helpers pile up as zombies toward the container's task limit |
 
 The Alaska tracker ingest also counts `starlink.scraper.sync{source:alaska_tracker}` with `status:success|error`; `error` means the page failed to fetch or its table no longer parses, and the last good chart keeps serving.
 
