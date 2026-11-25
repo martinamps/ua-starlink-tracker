@@ -8,6 +8,10 @@
  * is arithmetic, and it has run ten ahead of the airline's own figure while
  * also counting none of a type that is mid-install. For those airlines the
  * only count is the airline's own, printed with its date, or none at all.
+ * Where the airline's source states no total but calls whole types complete
+ * with a count each (Hawaiian on Alaska's tracker), those counts may be added
+ * up: the sum is printed with its parts, the source and the date, and worded
+ * as this site's sum.
  * The by-type table stays what it is: fleet sizes by type.
  */
 
@@ -17,7 +21,9 @@ import { aircraftName } from "./aircraft-families";
 import { type AirlineConfig, wifiPhaseFamilies } from "./registry";
 import {
   type AirlineOwnCount,
+  type AirlineOwnTypeSum,
   airlineOwnCount,
+  airlineOwnTypeSum,
   airlineOwnTypeTotal,
   formatFactDate,
 } from "./rollout-facts";
@@ -34,13 +40,18 @@ export type PublishedCount =
   | { basis: "tracked"; count: number }
   /** Known by type; the count is the airline's own dated figure. */
   | ({ basis: "airline" } & AirlineOwnCount)
-  /** Known by type, and the airline's own figure isn't on file: no count. */
+  /** Known by type; the count is this site's sum of the counts a source gives
+   * for the airline's wholly fitted types. */
+  | ({ basis: "type-sum" } & AirlineOwnTypeSum)
+  /** Known by type, and neither figure is on file: no count. */
   | { basis: "type" };
 
 export function publishedCount(cfg: AirlineConfig, tracked: number): PublishedCount {
   if (trackingMethod(cfg) !== "type") return { basis: "tracked", count: tracked };
   const own = airlineOwnCount(cfg.code);
-  return own ? { basis: "airline", ...own } : { basis: "type" };
+  if (own) return { basis: "airline", ...own };
+  const sum = airlineOwnTypeSum(cfg.code);
+  return sum ? { basis: "type-sum", ...sum } : { basis: "type" };
 }
 
 /** Every aircraft is checked on its own: no aircraft-type rule and no
@@ -86,6 +97,22 @@ const listed = (parts: string[]) =>
 
 const typeCount = (n: number, family: string) =>
   `${fmt(n)} ${aircraftName(family)}${n === 1 ? "" : "s"}`;
+
+/** "18 A321neos and 24 A330s": the counts as the source gives them. */
+export function typeSumParts(sum: AirlineOwnTypeSum): string {
+  return listed(sum.parts.map((p) => typeCount(p.count, p.name)));
+}
+
+/** "per Alaska's installation tracker as of Oct 26, 2026" */
+export function typeSumCredit(sum: AirlineOwnTypeSum): string {
+  return `per ${sum.by} ${ownCountAsOf(sum)}`;
+}
+
+/** "42, our sum of 18 A321neos and 24 A330s per Alaska's installation tracker
+ * as of Oct 26, 2026": the figure for a sentence that ranks it. */
+export function typeSumFigure(sum: AirlineOwnTypeSum): string {
+  return `${fmt(sum.count)}, our sum of ${typeSumParts(sum)} ${typeSumCredit(sum)}`;
+}
 
 /** The headline figure and whose it is: the airline's chart while it counts
  * more than the named tails and is no older than them, else the named count. */

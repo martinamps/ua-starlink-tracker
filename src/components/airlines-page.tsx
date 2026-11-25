@@ -9,7 +9,13 @@
  */
 
 import { aircraftName } from "../airlines/aircraft-families";
-import { ownCountAsOf, publishedCount, trackingMethod } from "../airlines/published-count";
+import {
+  ownCountAsOf,
+  publishedCount,
+  trackingMethod,
+  typeSumCredit,
+  typeSumParts,
+} from "../airlines/published-count";
 import {
   type AirlineConfig,
   type SiteConfig,
@@ -252,6 +258,16 @@ function EquippedCell({ o }: { o: AirlineOverview }) {
       </>
     );
   }
+  if (published.basis === "type-sum") {
+    return (
+      <>
+        {fmt(published.count)}
+        <span className="block text-xs text-muted">
+          {typeSumParts(published)}, {typeSumCredit(published)}
+        </span>
+      </>
+    );
+  }
   if (shareIsPublishable(cfg, stat)) {
     return (
       <>
@@ -292,6 +308,9 @@ export function AirlinesIndexPage({
     .map((o) => o.cfg.shortName);
   const ownFigure = airlines
     .filter((o) => publishedCount(o.cfg, o.stat.starlink).basis === "airline")
+    .map((o) => o.cfg.shortName);
+  const summed = airlines
+    .filter((o) => publishedCount(o.cfg, o.stat.starlink).basis === "type-sum")
     .map((o) => o.cfg.shortName);
   const scopeNotes = airlines.flatMap((o) => (o.scopeNote ? [o.scopeNote] : []));
   return (
@@ -356,6 +375,8 @@ export function AirlinesIndexPage({
               `${byType.join(" and ")} ${byType.length === 1 ? "is" : "are"} counted by aircraft type, so no fleet share is shown: adding up aircraft types is not a count of installs. `}
             {ownFigure.length > 0 &&
               `${ownFigure.join(" and ")}'s figure is the airline's own, with its date. `}
+            {summed.length > 0 &&
+              `${summed.join(" and ")}'s figure is our sum of the per-type counts its source gives, with their date. `}
             {scopeNotes.join(" ")}
           </p>
         )}

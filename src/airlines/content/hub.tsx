@@ -15,7 +15,7 @@ import {
 import type { Link } from "../../components/layout";
 import { TrackerLinks } from "../../components/tracker-links";
 import { fmt } from "../../components/ui/format";
-import { byPublishedCount, ownCountAsOf, publishedCount } from "../published-count";
+import { byPublishedCount, ownCountAsOf, publishedCount, typeSumFigure } from "../published-count";
 import { AIRLINES, SITES, airlineHomeUrl, publicAirlines } from "../registry";
 import { AIRLINE_FACTS, type AirlineFactsEntry, type RolloutFactsStatus } from "../rollout-facts";
 import type { AirlineContent, HeroProps, HubHomeLinks } from "./index";
@@ -251,18 +251,22 @@ export const content: AirlineContent = {
             return cfg ? [{ ...r, published: publishedCount(cfg, r.starlink) }] : [];
           })
         );
-        // Only a count ranks: plane by plane, or the airline's own dated figure.
+        // Only a count ranks: plane by plane, the airline's own dated figure, or
+        // our sum of the whole-type counts its source gives.
         const figure = (r: (typeof rows)[number]) =>
           r.published.basis === "tracked"
             ? `${fmt(r.published.count)}${operatedBy(r.code)}`
             : r.published.basis === "airline"
               ? `${fmt(r.published.count)}, its own figure ${ownCountAsOf(r.published)}`
-              : null;
+              : r.published.basis === "type-sum"
+                ? typeSumFigure(r.published)
+                : null;
         const [top, ...rest] = rows.filter((r) => r.published.basis !== "type");
         if (!top) return <p>See the full list for each airline's count.</p>;
-        const names = (basis: "airline" | "type") =>
+        const names = (basis: "airline" | "type-sum" | "type") =>
           rows.filter((r) => r.published.basis === basis).map((r) => r.name);
         const ownFigure = names("airline");
+        const summed = names("type-sum");
         const unranked = names("type");
         return (
           <p>
@@ -283,6 +287,13 @@ export const content: AirlineContent = {
                 {list(ownFigure)} {ownFigure.length === 1 ? "is" : "are"} counted by aircraft type
                 here, so {ownFigure.length === 1 ? "that figure is" : "those figures are"} the
                 airline's own.{" "}
+              </>
+            )}
+            {summed.length > 0 && (
+              <>
+                {list(summed)} {summed.length === 1 ? "is" : "are"} counted by aircraft type here,
+                so {summed.length === 1 ? "that figure adds" : "those figures add"} up the per-type
+                counts a source gives.{" "}
               </>
             )}
             {unranked.length > 0 && (
