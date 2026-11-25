@@ -350,6 +350,7 @@ export const AIRLINE_FACTS: AirlineFactsEntry[] = [
           label: "The Peninsula",
           url: "https://thepeninsulaqatar.com/article/17/11/2026/qatar-airways-starlink-benefits-over-31-million-passengers",
         },
+        officialFleetCount: 170,
       },
       {
         fact: "Qatar Airways reached 150 Starlink-equipped widebodies, including the world's first Starlink-equipped Boeing 787-9 and the completed 787-8 sub-fleet, and remains on track to finish the 787 rollout by the end of 2026. The 777 programme was completed in nine months and the A350 programme in eight.",
