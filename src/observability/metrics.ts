@@ -685,7 +685,9 @@ export const COUNTERS = {
   // External API calls
   // tags: vendor (fr24|flightaware|united|qatar|alaska|adsb|indexnow), type, status
   // united status values: success | timeout | killed | exit_error | parse_error | spawn_error
-  // fr24/flightaware/adsb/indexnow status values: success | error | rate_limited
+  // fr24/flightaware/adsb status values: success | error | rate_limited
+  // indexnow (type:ping, airline) status values: success | rate_limited | timeout |
+  //   error | shed (our own daily cap, or a 429 pause still running)
   // fr24 assignments adds status:shed (request-path guard refused), tagged
   //   reason (breaker|bucket|queue), caller (page|extension|other) and airline
   // qatar status values: success | error | partial
